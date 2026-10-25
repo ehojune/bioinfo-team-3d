@@ -1425,6 +1425,8 @@ class Hub:
                     prior_meta.get("continuation_refusal_recovery") == task.meta.get("continuation_refusal_recovery") and
                     # A consult belongs to one ask; another ask's consult is not its prior attempt.
                     prior_meta.get("ask_id") == task.meta.get("ask_id") and
+                    # The first report and its claim-check corrections are different synthesis calls (#956).
+                    prior_meta.get("report_correction") == task.meta.get("report_correction") and
                     prior_meta.get("recruit_identity") == task.meta.get("recruit_identity"))
 
     @staticmethod

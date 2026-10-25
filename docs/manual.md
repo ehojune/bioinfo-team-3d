@@ -1210,7 +1210,7 @@ CP1 카드 **전에** 기존 안전 walker로 산출을 검증합니다. 외부 
 
 ### 보고서·verify
 
-accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를 단 보고서를 쓰고, labhq가 앵커를 검사해 문제가 없으면 `research_reported`, 있으면 본문 뒤에 "Claim check"를 붙여 `report_incomplete`로 끝냅니다.
+accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를 단 보고서를 쓰고, labhq가 앵커를 검사해 문제가 없으면 `research_reported`입니다. 문제가 있으면 바로 끝내지 않고 CSO에게 문제 원문과 인용 가능한 claim 목록을 주며 "분석을 다시 하지 말고 결론마다 앵커를 달라"고 최대 2번(`REPORT_CORRECTIONS`) 되돌려 고치게 합니다(#956, 교정 횟수는 `research_contract.report_corrections`). 고친 보고서로 다시 검사하고, 끝까지 문제가 남으면 본문 뒤에 "Claim check"를 붙여 `report_incomplete`로 끝냅니다.
 실패한 조회는 보고서에 따로 남습니다.
 규약은 [`docs/research_protocol.md`](research_protocol.md)(#90).
 

@@ -35,7 +35,7 @@ FAILED_LOOKUP = {"id": "e2", "kind": "database_annotation", "observation": "GEO 
 
 
 def _hub(*, review=ACCEPT, report=REPORT, artifact_path=None, failed_lookup=False, synthesis_usd=None,
-         contract_violation=False):
+         contract_violation=False, reports=None):
     settings = _settings()
     settings.orchestrator.reviewer_agent = "sci_reviewer"
     holder = {}
@@ -66,7 +66,8 @@ def _hub(*, review=ACCEPT, report=REPORT, artifact_path=None, failed_lookup=Fals
         if kind == "review":
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=review)
         if kind == "synthesis":
-            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text=report, cost_usd=synthesis_usd)
+            text = reports.pop(0) if reports else report  # one text per synthesis call, corrections included
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text=text, cost_usd=synthesis_usd)
         raise AssertionError(f"unexpected task kind {kind}")
 
     hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
@@ -631,3 +632,105 @@ def test_refused_original_is_visible_but_cannot_reenter_through_a_recitation():
                         artifact_sha256={"s1/accepted-attachment": "a" * 64}) == {"anchors": 1, "problems": []}
     problems = check_report("Conclusion [[claim:s1/c2]]", {"s1": ledger}, refused=refused)["problems"]
     assert len(problems) == 1 and "accepted-attachment" in problems[0]
+
+
+# ---------- #956: the claim check sends the report back instead of ending the request ----------
+
+UNANCHORED = "The donor-level effect is present."
+
+
+@pytest.mark.asyncio
+async def test_a_report_without_anchors_is_corrected_once_and_then_reported():
+    hub = _hub(reports=[UNANCHORED, REPORT])
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert _kinds(hub) == ["plan", "step", "review", "synthesis", "synthesis"]
+    assert req["outcome"] == "research_reported" and req["status"] == "done"
+    assert req["research_contract"]["report_check"] == {"anchors": 1, "problems": []}
+    assert req["research_contract"]["report_corrections"] == 1
+    fix = hub.calls[4]
+    assert fix.meta["report_correction"] == 1 and fix.meta["title"] == "연구 보고서 교정"
+    assert "anchors no claim" in fix.prompt  # the problem verbatim
+    assert "[[claim:s1/c1]]" in fix.prompt and UNANCHORED in fix.prompt  # the citable anchors and the report to fix
+    assert "Do not redo the analysis" in fix.prompt
+    assert req["report"].startswith(REPORT) and "Claim check:" not in req["execution_record"]
+
+
+@pytest.mark.asyncio
+async def test_a_report_that_stays_unanchored_after_the_corrections_is_incomplete():
+    hub = _hub(reports=[UNANCHORED] * 3)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert _kinds(hub) == ["plan", "step", "review", "synthesis", "synthesis", "synthesis"]  # first + 2 corrections
+    assert req["outcome"] == "report_incomplete" and req["status"] == "failed"
+    assert req["research_contract"]["report_corrections"] == 2
+    assert any("anchors no claim" in line for line in req["research_contract"]["report_check"]["problems"])
+    assert "Claim check:" in req["execution_record"]
+
+
+@pytest.mark.asyncio
+async def test_a_second_correction_can_pass():
+    hub = _hub(reports=[UNANCHORED, "The effect is present [[claim:s1/c9]].", REPORT])
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert _kinds(hub) == ["plan", "step", "review", "synthesis", "synthesis", "synthesis"]
+    assert req["outcome"] == "research_reported" and req["research_contract"]["report_corrections"] == 2
+    assert "claim c9 is not in step s1" in hub.calls[5].prompt  # the second round quotes the new problem
+
+
+@pytest.mark.asyncio
+async def test_a_report_that_passes_the_first_check_is_not_sent_back():
+    hub = _hub(reports=[REPORT])
+    await Orchestrator(hub).run_request("r")
+    assert _kinds(hub) == ["plan", "step", "review", "synthesis"]
+    assert "report_corrections" not in hub.requests["r"]["research_contract"]
+    assert hub.requests["r"]["outcome"] == "research_reported"
+
+
+@pytest.mark.asyncio
+async def test_a_long_report_goes_back_whole_and_is_not_elided():
+    long_report = UNANCHORED + "\n\n" + ("Methods paragraph with real content. " * 700) + "\n\nEND-OF-LONG-REPORT"
+    hub = _hub(reports=[long_report, long_report + " [[claim:s1/c1]]"])
+    await Orchestrator(hub).run_request("r")
+    fix = hub.calls[4].prompt
+    assert len(long_report) > 12000 and "END-OF-LONG-REPORT" in fix and long_report in fix
+    assert hub.requests["r"]["outcome"] == "research_reported"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_budget_card_during_a_correction_keeps_the_finished_report(monkeypatch):
+    from labhq.orchestrator.cso import BudgetExceeded
+
+    original = Orchestrator.run_step
+
+    async def refuse_corrections(self, task, *args, **kwargs):
+        if task.meta.get("report_correction"):
+            raise BudgetExceeded("the PI refused the budget card")
+        return await original(self, task, *args, **kwargs)
+
+    monkeypatch.setattr(Orchestrator, "run_step", refuse_corrections)
+    hub = _hub(reports=[UNANCHORED])
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["outcome"] == "report_incomplete" and req["status"] == "failed"
+    assert req["report"].startswith(UNANCHORED)  # not replaced by an internal error report
+    assert any("anchors no claim" in line for line in req["research_contract"]["report_check"]["problems"])
+
+
+def test_a_correction_call_is_not_recovered_as_the_first_report():
+    from labhq.gateway.server import Hub as GatewayHub
+    from labhq.models import Task
+
+    def entry(correction):
+        meta = {"kind": "synthesis", **({"report_correction": correction} if correction else {})}
+        return {"request_id": "r", "kind": "synthesis", "step_id": None, "revision": 0, "parse_attempt": 0,
+                "parent_task": None, "payload": {"meta": meta}}
+
+    first = Task(agent_id="cso", request_id="r", prompt="p", meta={"kind": "synthesis"})
+    fix1 = Task(agent_id="cso", request_id="r", prompt="p", meta={"kind": "synthesis", "report_correction": 1})
+    assert GatewayHub._matches_recovery(first, entry(None))
+    assert not GatewayHub._matches_recovery(first, entry(1))
+    assert GatewayHub._matches_recovery(fix1, entry(1))
+    assert not GatewayHub._matches_recovery(fix1, entry(None)) and not GatewayHub._matches_recovery(fix1, entry(2))
