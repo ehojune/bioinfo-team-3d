@@ -1016,7 +1016,7 @@ internal 구역을 가리키는 작업·project·참고 폴더 별칭은 Claude�
 | 항목 | 구현 근거와 남은 확인 |
 |---|---|
 | 로컬 job·취소 | [#937](https://github.com/ehojune/bioinfo-team-3d/pull/937) job 기록 재로드, [#968](https://github.com/ehojune/bioinfo-team-3d/pull/968) 복구 runner에 취소 재전송 회귀가 병합됐습니다. 대체 transport·무해한 job으로 취소 트리 잔류 0·완료 깨움 없음·다른 요청 보존을 확인했습니다. runner가 꺼진 동안에는 job 종료를 보장하지 않습니다. |
-| 저장·소유권 | [#967](https://github.com/ehojune/bioinfo-team-3d/pull/967) runner state 소유권 경쟁 수정은 병합됐습니다. gateway publish 저장 대기 [#966](https://github.com/ehojune/bioinfo-team-3d/pull/966)은 미병합이며 동기 helper·SavedResults 전환 [#965](https://github.com/ehojune/bioinfo-team-3d/issues/965)는 후속입니다. |
+| 저장·소유권 | [#967](https://github.com/ehojune/bioinfo-team-3d/pull/967) runner state 소유권 경쟁 수정과 [#966](https://github.com/ehojune/bioinfo-team-3d/pull/966) gateway publish 저장 대기는 병합됐습니다. 동기 helper·SavedResults 전환 [#965](https://github.com/ehojune/bioinfo-team-3d/issues/965)는 [#972](https://github.com/ehojune/bioinfo-team-3d/pull/972) OPEN으로 미완료이며 #606 전체 완료는 미검증입니다. |
 | 운영 미검증 | 실제 WebSocket 재연결·gateway OS 재시작·새 설치에서의 실제 요청·반복 복구·지원 요청 end-to-end는 미검증입니다. [새 설치 mock 검사](reference/clean-install-922.md)와 회귀 CI를 운영 PASS로 세지 않습니다. |
 
 ### 승인·예산
