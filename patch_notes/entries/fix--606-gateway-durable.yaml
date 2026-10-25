@@ -1,5 +1,9 @@
 pr: 966
 rows:
+- sha: 'edb898c'
+  at: 2026-10-26 05:00
+  summary: 화면 전송이 끝난 뒤 중복·누락과 lock 상태를 검사합니다.
+  text: 'Linux 3.10 CI가 찾은 readiness 경계 2건을 수정했습니다. 자동 sender 완료를 관찰하고 기존 client·새 client의 중복/누락 assertion과 lock 해제를 검사합니다. production·기존 assertion·timeout은 유지하며 관련 mock/static 27건 통과.'
 - sha: '52d85dc'
   at: 2026-10-26 04:45
   summary: 끊긴 화면 연결을 뒤쪽 이벤트에서도 건너뜁니다.
