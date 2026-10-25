@@ -193,6 +193,9 @@ def _retry_after(response: httpx.Response) -> float | None:
     return wait if wait is not None and math.isfinite(wait) and wait >= 0 else None
 
 
+DECODED_BODY_HEADERS = frozenset({"content-encoding", "content-length", "transfer-encoding"})
+
+
 class ResponseTooLarge(Exception):
     """A streamed HTTP response crossed its caller-supplied byte limit."""
 
@@ -229,8 +232,12 @@ class Http:
                                 if len(body) + len(chunk) > response_limit:
                                     raise ResponseTooLarge(response_limit)
                                 body.extend(chunk)
+                        # aiter_bytes() already decoded the body: the old Content-Encoding and sizes would make
+                        # httpx decode it a second time and fail with DecodingError (#954).
+                        headers = httpx.Headers([(name, value) for name, value in streamed.headers.multi_items()
+                                                 if name.lower() not in DECODED_BODY_HEADERS])
                         response = httpx.Response(
-                            streamed.status_code, headers=streamed.headers, content=bytes(body),
+                            streamed.status_code, headers=headers, content=bytes(body),
                             request=streamed.request, extensions=streamed.extensions)
             except httpx.TransportError as exc:
                 if attempt == MAX_ATTEMPTS:

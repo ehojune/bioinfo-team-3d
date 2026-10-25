@@ -714,3 +714,62 @@ def test_qc_and_review_weigh_abstract_only_numbers():
     assert "no access_level column" in qc and "limitations must give those counts" in qc
     _, review = _prompt("sci_reviewer")
     assert "access_level column" in review and "abstract only is weaker evidence" in review
+
+
+async def test_a_gzip_oa_copy_is_decoded_once_on_the_response_limit_path(tmp_path):
+    """#954: the stream was decoded, then rebuilt with its old Content-Encoding, so httpx decoded it again and failed."""
+    import gzip
+
+    pdf = complete_fallback_pdf("Compressed open access copy")
+
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([record("123", None, "N", None)])
+        if request.url.host == "api.unpaywall.org":
+            return httpx.Response(200, json={
+                "doi": "10.1000/test", "is_oa": True, "oa_status": "green",
+                "best_oa_location": {"url_for_pdf": "http://93.184.216.34/paper.pdf", "url": "http://93.184.216.34/paper",
+                                     "host_type": "repository", "license": "cc-by", "version": "acceptedVersion"},
+                "oa_locations": []})
+        if request.url.host == "api.openalex.org":
+            return httpx.Response(200, json={"meta": {"count": 0}, "results": []})
+        if request.url.host == "93.184.216.34":
+            return httpx.Response(200, content=gzip.compress(pdf),
+                                  headers={"content-type": "application/pdf", "content-encoding": "gzip"})
+        raise AssertionError(request.url)
+
+    annotator, _calls = make(handler, tmp_path, unpaywall_email="owner@example.org")
+    row = (await annotator.fulltext(["PMID:123"]))["results"][0]
+    assert row["access_level"] == "full_text" and row["read_source"] == "Unpaywall", row
+    text = (tmp_path / "work" / row["text_file"]).read_text(encoding="utf-8")
+    assert "Compressed open access copy" in text
+
+
+async def test_the_http_layer_drops_the_stale_encoding_headers_after_decoding(tmp_path):
+    import gzip
+
+    body = b"hello compressed world"
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(
+        200, content=gzip.compress(body), headers={"content-encoding": "gzip", "x-keep": "1"})))
+    response = await annot.Http(client, FakeTime().sleep, FakeTime().clock).request(
+        "europepmc", "GET", "http://93.184.216.34/x", response_limit=1000)
+    assert response.content == body and response.headers["x-keep"] == "1"
+    assert "content-encoding" not in response.headers
+
+
+async def test_one_papers_exception_does_not_fail_the_other_ids(tmp_path):
+    def handler(request):
+        if request.url.host == "api.openalex.org":
+            return httpx.Response(200, json={"meta": {"count": 0}, "results": []})
+        if request.url.path.endswith("/fullTextXML"):
+            return httpx.Response(200, text=JATS) if "PMC999" in request.url.path else httpx.Response(404)
+        if request.url.params.get("query") == 'EXT_ID:111 AND SRC:MED':
+            raise httpx.DecodingError("Error -3 while decompressing data")
+        return search_answer([record("123", "PMC999")])
+
+    annotator, _calls = make(handler, tmp_path)
+    rows = (await annotator.fulltext(["PMID:111", "PMID:123"]))["results"]
+    assert len(rows) == 2
+    bad, good = rows
+    assert "DecodingError" in json.dumps(bad, ensure_ascii=False) and bad.get("access_level") is None
+    assert good["access_level"] == "full_text" and good["text_file"]
