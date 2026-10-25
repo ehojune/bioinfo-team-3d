@@ -1,0 +1,5 @@
+rows:
+- sha: '82ed196'
+  at: 2026-10-25 08:30
+  summary: 논문 본문 조회가 압축 응답 하나 때문에 호출 전체가 실패하던 문제를 고쳤습니다.
+  text: '응답 크기 상한 경로가 이미 풀린 바이트를 원래 Content-Encoding 헤더와 다시 묶어 httpx가 두 번 풀다 DecodingError를 냈다. 다시 만드는 응답에서 content-encoding, content-length, transfer-encoding 헤더를 뺐다. fulltext는 ID별로 조회·저장 예외를 격리해 사유를 그 ID 결과에 남기고 모든 ID가 실패할 때만 호출이 실패한다. gzip 응답, 헤더 제거, ID 격리 테스트 3건(수정 전 실패)과 literature·annot 묶음 117건 통과. 실제 NEJM 사본 재조회는 확인하지 않았다.'
