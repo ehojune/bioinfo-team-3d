@@ -5763,18 +5763,19 @@ class Orchestrator:
         corrections = 0
         while check["problems"] and corrections < REPORT_CORRECTIONS:
             corrections += 1
-            fixed = await self.run_step(Task(
-                agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
-                prompt=report_correction(check["problems"], "\n".join(map(_citable_claim_line, citable)) or "(none)",
-                                         clip(body, n)),
-                meta={**refs, "kind": "synthesis", "request": text, "title": "연구 보고서 교정",
-                      "report_correction": corrections, "final_budget_turn": True,
-                      **({"workdir": workdir} if workdir else {})}))
-            if rid in self.budget_denials:
-                budget_denied("synthesis", review)
-                return
-            if not fixed.ok:
-                break  # the first report and its problems stand
+            try:
+                # The whole report, never clipped: the corrected text replaces it, so nothing may be elided (#956).
+                fixed = await self.run_step(Task(
+                    agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
+                    prompt=report_correction(check["problems"],
+                                             "\n".join(map(_citable_claim_line, citable)) or "(none)", body),
+                    meta={**refs, "kind": "synthesis", "request": text, "title": "연구 보고서 교정",
+                          "report_correction": corrections, "final_budget_turn": True,
+                          **({"workdir": workdir} if workdir else {})}))
+            except BudgetExceeded:
+                break  # a refused budget card: the finished report and its problems stand, as for a late denial
+            if rid in self.budget_denials or not fixed.ok:
+                break  # the report written so far and its problems stand
             body, model_appendix = _split_report_appendix(report_body(fixed.text))
             check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
                                  artifact_sha256=artifact_sha256)

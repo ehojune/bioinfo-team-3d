@@ -687,3 +687,50 @@ async def test_a_report_that_passes_the_first_check_is_not_sent_back():
     assert _kinds(hub) == ["plan", "step", "review", "synthesis"]
     assert "report_corrections" not in hub.requests["r"]["research_contract"]
     assert hub.requests["r"]["outcome"] == "research_reported"
+
+
+@pytest.mark.asyncio
+async def test_a_long_report_goes_back_whole_and_is_not_elided():
+    long_report = UNANCHORED + "\n\n" + ("Methods paragraph with real content. " * 700) + "\n\nEND-OF-LONG-REPORT"
+    hub = _hub(reports=[long_report, long_report + " [[claim:s1/c1]]"])
+    await Orchestrator(hub).run_request("r")
+    fix = hub.calls[4].prompt
+    assert len(long_report) > 12000 and "END-OF-LONG-REPORT" in fix and long_report in fix
+    assert hub.requests["r"]["outcome"] == "research_reported"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_budget_card_during_a_correction_keeps_the_finished_report(monkeypatch):
+    from labhq.orchestrator.cso import BudgetExceeded
+
+    original = Orchestrator.run_step
+
+    async def refuse_corrections(self, task, *args, **kwargs):
+        if task.meta.get("report_correction"):
+            raise BudgetExceeded("the PI refused the budget card")
+        return await original(self, task, *args, **kwargs)
+
+    monkeypatch.setattr(Orchestrator, "run_step", refuse_corrections)
+    hub = _hub(reports=[UNANCHORED])
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["outcome"] == "report_incomplete" and req["status"] == "failed"
+    assert req["report"].startswith(UNANCHORED)  # not replaced by an internal error report
+    assert any("anchors no claim" in line for line in req["research_contract"]["report_check"]["problems"])
+
+
+def test_a_correction_call_is_not_recovered_as_the_first_report():
+    from labhq.gateway.server import Hub as GatewayHub
+    from labhq.models import Task
+
+    def entry(correction):
+        meta = {"kind": "synthesis", **({"report_correction": correction} if correction else {})}
+        return {"request_id": "r", "kind": "synthesis", "step_id": None, "revision": 0, "parse_attempt": 0,
+                "parent_task": None, "payload": {"meta": meta}}
+
+    first = Task(agent_id="cso", request_id="r", prompt="p", meta={"kind": "synthesis"})
+    fix1 = Task(agent_id="cso", request_id="r", prompt="p", meta={"kind": "synthesis", "report_correction": 1})
+    assert GatewayHub._matches_recovery(first, entry(None))
+    assert not GatewayHub._matches_recovery(first, entry(1))
+    assert GatewayHub._matches_recovery(fix1, entry(1))
+    assert not GatewayHub._matches_recovery(fix1, entry(None)) and not GatewayHub._matches_recovery(fix1, entry(2))
