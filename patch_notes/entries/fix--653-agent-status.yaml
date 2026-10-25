@@ -1,5 +1,9 @@
 pr: null
 rows:
+  - sha: 16adbf2
+    at: "2026-10-26 04:58"
+    summary: "차례를 기다리는 직원의 표시를 데스크톱과 휴대폰 화면에서 확인했습니다."
+    text: "test: 실제 Chrome 32 view를 대조해 차례 대기 상태·문구·chip 크기의 visual baseline 갱신"
   - sha: 735c608
     at: "2026-10-26 04:48"
     summary: "다시 접속해도 실패하거나 산출물이 빠진 단계를 시작 전으로 표시하지 않습니다."
