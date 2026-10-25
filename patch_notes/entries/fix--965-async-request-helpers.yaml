@@ -1,0 +1,6 @@
+pr: 972
+rows:
+- sha: 'c966089'
+  at: 2026-10-26 06:30
+  summary: 결과와 검토 내용을 저장하는 동안에도 다른 요청에 응답합니다.
+  text: 'request helper와 SavedResults 추가·pop·삭제를 async 저장으로 전환했습니다. request별 순서, commit 뒤 상태·event·delivery 반영, 오류·취소 판정과 CP4 receipt 재시작 복구를 검증했습니다. 관련 mock/static 915 passed, 1 skipped, subtest 12 passed. 초기화·CLI용 sync API와 #606의 잔여 직접 저장 경계는 유지합니다.'
