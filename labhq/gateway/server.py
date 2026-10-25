@@ -21,6 +21,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
+import anyio
 import httpx
 import yaml
 from fastapi import BackgroundTasks, Request, Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -2497,6 +2498,20 @@ class Hub:
 
     # ----- events -----
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
+        # Cancellation cannot release event_lock while a commit's outcome is unknown.
+        # Finish this publication (including request persistence) before propagating it.
+        pending = asyncio.create_task(self._publish_durable(copy.deepcopy(ev), runner_id, runner_seq))
+        cancelled = False
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                cancelled = True
+        pending.result()  # A storage error takes precedence over cancellation.
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _publish_durable(self, ev: dict, runner_id: str | None, runner_seq: int | None) -> None:
         internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
         if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
             ev = {**ev, "data": {**ev.get("data", {}), "level": "debug"}}
@@ -2506,8 +2521,8 @@ class Hub:
             await self._flush_committed_events()
             durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
                               ev.get("type") in ProjectReporter.HANDLED)
-            ev = self.store.append_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
-                                         reporter_delivery=durable_report)
+            ev = await self.store.aappend_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
+                                               reporter_delivery=durable_report)
             self.events.append(ev)
             dead = []
             for c in list(self.clients):
@@ -2519,7 +2534,11 @@ class Hub:
                 self.clients.discard(c)
             rid = ev.get("request_id")
             if rid in self.requests:
-                self.save_request(rid)
+                # Read the latest state after event delivery; a prior snapshot could
+                # overwrite a newer synchronous save made while the event committed.
+                cp4.reconcile(self.requests[rid])
+                self.requests[rid]["updated_at"] = time.time()
+                await self.store.aput("request", rid, self.requests[rid])
         if self.reporter.enabled():
             self.reporter.submit(ev)
         self.pi_interpreter.schedule(ev)
@@ -4406,7 +4425,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         finally:
             if runner_id:
                 if hub.unregister_runner(runner_id, ws):
-                    await hub.publish({"type": "runner.offline", "ts": time.time(), "data": {"runner_id": runner_id}})
+                    # ASGI disconnect may already be inside a cancelled AnyIO scope.
+                    # Finish the offline publication before leaving that scope.
+                    with anyio.CancelScope(shield=True):
+                        await hub.publish({"type": "runner.offline", "ts": time.time(), "data": {"runner_id": runner_id}})
 
     @app.websocket("/ws/client")
     async def ws_client(ws: WebSocket, token: str = "", since: int | None = None) -> None:

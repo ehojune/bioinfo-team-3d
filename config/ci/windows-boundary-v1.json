@@ -114,6 +114,7 @@
     "tests/test_facilities_staff.py",
     "tests/test_followup.py",
     "tests/test_fulltext_receipt.py",
+    "tests/test_gateway_publish_durable.py",
     "tests/test_general_evidence.py",
     "tests/test_gif_encode.py",
     "tests/test_git_hooks.py",
@@ -412,7 +413,8 @@
     "tests/test_continuation_refusal_static.py": "Continuation model-refusal identity, original-round/cost preservation and explicit recovery choice; extracted production decision code with inert synchronous fakes, no runtime.",
     "tests/test_recruit_inherited_budget_static.py": "Reserved plan recruitment inherits the parent hold and remaining allowance through the actual nested Task and Claude budget argv; extracted production guards/accounting with inert fakes, no runtime.",
     "tests/test_recovery_fake_check.py": "Owned native gateway/runner force-kill, restart, SQLite replay, receipt accounting and process-handle cleanup; deterministic mock, loopback only.",
-    "tests/test_recovery_interrupted_selection_924.py": "Interrupted result/direct checkpoint selection, live task adoption and preserved cost history; in-process fake dispatch."
+    "tests/test_recovery_interrupted_selection_924.py": "Interrupted result/direct checkpoint selection, live task adoption and preserved cost history; in-process fake dispatch.",
+    "tests/test_gateway_publish_durable.py": "Gateway SQLite publication, cancellation and durable delivery ordering."
   },
   "mixed_nodes": {
     "tests/test_environment_signatures.py": {

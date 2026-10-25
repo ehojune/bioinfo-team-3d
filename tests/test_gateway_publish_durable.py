@@ -1,0 +1,176 @@
+"""Gateway publication uses the SQLite lane without blocking its event loop."""
+import asyncio
+from collections import deque
+from contextlib import contextmanager
+import json
+import threading
+from types import SimpleNamespace
+
+import pytest
+
+from labhq import durable
+from labhq.gateway.server import Hub
+from labhq.store import StateStore
+
+
+@pytest.fixture
+def gateway(tmp_path):
+    hub = Hub.__new__(Hub)
+    hub.store = StateStore(tmp_path / "gateway.sqlite3")
+    hub.event_lock = asyncio.Lock()
+    hub.pending_committed = deque()
+    hub.events = deque()
+    hub.clients = set()
+    hub.requests = {"r": {"id": "r", "status": "running", "results": {}}}
+    hub.s = SimpleNamespace(gateway=SimpleNamespace(event_buffer=100))
+    hub.reporter = SimpleNamespace(enabled=lambda: False)
+    hub.pi_interpreter = SimpleNamespace(schedule=lambda event: None)
+    yield hub
+    hub.store.close()
+
+
+def stall_commit(hub, monkeypatch, number=1, fail=False):
+    entered, release = threading.Event(), threading.Event()
+    transaction = hub.store._transaction
+    count = 0
+
+    @contextmanager
+    def blocked():
+        nonlocal count
+        with transaction() as conn:
+            yield conn
+            count += 1
+            if count == number:
+                entered.set()
+                if not release.wait(5):
+                    raise TimeoutError("test did not release commit")
+                if fail:
+                    raise OSError("commit failed")
+
+    monkeypatch.setattr(hub.store, "_transaction", blocked)
+    return entered, release
+
+
+async def until_entered(entered):
+    # Poll only a mock boundary; no server, worker or child process is started.
+    async def wait():
+        while not entered.is_set():
+            await asyncio.sleep(0.001)
+    await asyncio.wait_for(wait(), 2)
+
+
+def event(label="first", request=True):
+    return {"type": "request.created", "ts": 1, "request_id": "r" if request else None,
+            "data": {"text": label}}
+
+
+@pytest.mark.parametrize("active_lane", [False, True])
+@pytest.mark.parametrize("commit", [1, 2])
+async def test_heartbeat_during_event_and_request_commit(gateway, monkeypatch, active_lane, commit):
+    hub = gateway
+    assert durable.lane(hub.store.lane).shutdown(5)
+    if active_lane:
+        await durable.run(hub.store.lane, lambda: None)
+    entered, release = stall_commit(hub, monkeypatch, commit)
+    task = asyncio.create_task(hub.publish(event()))
+    try:
+        await until_entered(entered)
+        beats = []
+        asyncio.get_running_loop().call_soon(beats.append, "heartbeat")
+        await asyncio.sleep(0.01)
+        assert beats == ["heartbeat"] and not task.done()
+        assert hub.store.get("request", "r") is None
+    finally:
+        release.set()
+        await task
+    assert hub.store.get("request", "r")["status"] == "running"
+
+
+async def test_fifo_snapshot_and_restart(gateway, monkeypatch):
+    hub = gateway
+    entered, release = stall_commit(hub, monkeypatch)
+    original = event()
+    first = asyncio.create_task(hub.publish(original, "runner", 1))
+    try:
+        await until_entered(entered)
+        original["data"]["text"] = "mutated"
+        hub.requests["r"]["results"]["new"] = {"text": "latest"}
+        second = asyncio.create_task(hub.publish(event("second"), "runner", 2))
+        await asyncio.sleep(0.01)
+        assert hub.event_lock.locked() and not second.done()
+    finally:
+        release.set()
+        await first
+    await second
+    assert [e["data"]["text"] for e in hub.events] == ["first", "second"]
+    reopened = StateStore(hub.store.path)
+    try:
+        assert reopened.events_since(0) == list(hub.events)
+        assert reopened.runner_seen("runner") == 2
+        assert reopened.get("request", "r")["results"] == {"new": {"text": "latest"}}
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("commit", [1, 2])
+@pytest.mark.parametrize("fail", [False, True])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_repeated_cancel_waits_for_commit_outcome(gateway, monkeypatch, commit, fail, cancel):
+    hub = gateway
+    entered, release = stall_commit(hub, monkeypatch, commit, fail)
+    delivered, reported = [], []
+
+    class Client:
+        async def send_text(self, text):
+            delivered.append(json.loads(text))
+
+    hub.clients.add(Client())
+    hub.reporter = SimpleNamespace(enabled=lambda: True, submit=reported.append)
+    task = asyncio.create_task(hub.publish(event(), "runner", 7))
+    try:
+        await until_entered(entered)
+        if cancel:
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+        await asyncio.sleep(0.01)
+        assert not task.done() and hub.event_lock.locked()
+    finally:
+        release.set()
+    if fail or cancel:
+        with pytest.raises(OSError if fail else asyncio.CancelledError):
+            await task
+    else:
+        await task
+    assert not hub.event_lock.locked()
+    persisted = hub.store.events_since(0)
+    assert len(persisted) == (0 if fail and commit == 1 else 1)
+    assert len(delivered) == len(persisted)
+    assert len(reported) == (0 if fail else 1)
+    assert hub.store.runner_seen("runner") == (0 if fail and commit == 1 else 7)
+    assert (hub.store.get("request", "r") is not None) == (not fail)
+    if not fail:
+        assert hub.store.all("reporter_delivery") == {str(persisted[0]["seq"]): persisted[0]}
+
+
+async def test_request_snapshot_does_not_replace_a_later_save(gateway, monkeypatch):
+    hub = gateway
+    entered, release = stall_commit(hub, monkeypatch, 2)
+    first = asyncio.create_task(hub.publish(event()))
+    try:
+        await until_entered(entered)
+        hub.requests["r"]["status"] = "completed"
+        later = asyncio.create_task(hub.publish(event("later")))
+        await asyncio.sleep(0.01)
+        assert not later.done()
+    finally:
+        release.set()
+        await first
+    await later
+    assert hub.store.get("request", "r")["status"] == "completed"
+
+
+async def test_publication_without_request(gateway):
+    await gateway.publish(event(request=False))
+    assert len(gateway.events) == 1
+    assert gateway.store.all("request") == {}

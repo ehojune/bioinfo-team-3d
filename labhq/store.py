@@ -150,6 +150,13 @@ class StateStore:
                      runner_seq: int | None = None, reporter_delivery: bool = False) -> dict:
         return durable.call(self.lane, self._append_event_now, body, limit, runner_id, runner_seq, reporter_delivery)
 
+    async def aappend_event(self, body: dict, limit: int, runner_id: str | None = None,
+                            runner_seq: int | None = None, reporter_delivery: bool = False) -> dict:
+        # Serialize before yielding: the writer must never inspect mutable gateway state.
+        snapshot = json.loads(_dumps(body))
+        return await durable.run(self.lane, self._append_event_now, snapshot, limit,
+                                 runner_id, runner_seq, reporter_delivery)
+
     def _append_event_now(self, body: dict, limit: int, runner_id: str | None, runner_seq: int | None,
                           reporter_delivery: bool) -> dict:
         with self._transaction() as conn:
