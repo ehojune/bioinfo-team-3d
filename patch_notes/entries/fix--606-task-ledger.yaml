@@ -1,0 +1,10 @@
+pr: 979
+rows:
+  - sha: '93a4a25'
+    at: '2026-10-26 14:50'
+    summary: 'task 완료와 취소가 겹쳐도 취소 intent가 뒤늦게 남지 않습니다.'
+    text: 'P2 4374299436의 양방향 완료 경쟁을 수정 전 2 failed로 재현했습니다. 완료 후 intent 생성·전송을 거부하고 완료 표시 뒤 cleanup합니다. 관련 mock/static 118 passed·1 skipped이며 Windows 필수 cohort에 회귀를 등록했습니다.'
+  - sha: 'f304762'
+    at: '2026-10-26 14:43'
+    summary: 'task 취소를 저장하는 동안 gateway가 다른 요청을 처리합니다.'
+    text: 'cancel_task의 task_cancel intent를 기존 SQLite async writer로 저장합니다. commit 뒤 전송하며 반복 취소·rollback·DB 재열기·offline replay를 mock으로 검증했습니다. 다른 task 원장 경계는 #606에 남습니다.'

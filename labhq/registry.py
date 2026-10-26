@@ -10,6 +10,7 @@ import asyncio
 import logging
 import time
 from pathlib import Path
+from typing import Callable
 
 import yaml
 
@@ -32,8 +33,22 @@ class Registry:
         self.contract_dir = Path(contract_dir) if contract_dir else self.agents_dir / "contract"
         self.agents: dict[str, AgentSpec] = {}
         self.paths: dict[str, Path] = {}
+        self._rehire_lock = asyncio.Lock()
+        self._sync_publications: dict[str, object] = {}
 
     def load(self) -> None:
+        # Read and expiry/archive belong to the same FILES job. Otherwise a reload can read an expired copy,
+        # wait behind an in-flight rehire, then archive its newly committed files using the old snapshot.
+        staged = Registry(self.agents_dir, self.talent_dir, self.contract_dir)
+        durable.call(durable.FILES, staged._load_now)
+        # Keep live dictionaries on the caller's thread, matching the synchronous API's publication contract.
+        self.agents.clear()
+        self.agents.update(staged.agents)
+        self.paths.clear()
+        self.paths.update(staged.paths)
+        self._sync_publications = {**self._sync_publications, **staged._sync_publications}
+
+    def _load_now(self) -> None:
         self.agents.clear()
         self.paths.clear()
         for folder in (self.agents_dir / "core", self.contract_dir):
@@ -72,6 +87,7 @@ class Registry:
             path.unlink()
         self.agents.pop(spec.id, None)
         self.paths.pop(spec.id, None)
+        self._sync_publications = {**self._sync_publications, spec.id: object()}
 
     # ----- queries -----
     def get(self, agent_id: str) -> AgentSpec:
@@ -120,6 +136,8 @@ class Registry:
         assert spec.employment == Employment.contract and spec.contract
         p = self._write_contract_copies(spec, _dump(spec))
         self._remember(spec, p)
+        # Replace the map so an isolated copy.copy Registry cannot mark its live parent's sync publication.
+        self._sync_publications = {**self._sync_publications, spec.id: object()}
         return p
 
     def extend(self, agent_id: str, days: float) -> AgentSpec:
@@ -140,10 +158,62 @@ class Registry:
         spec = self.get(agent_id)
         self._archive(spec, self.paths.get(agent_id), "released")
 
-    def rehire(self, slug: str, days: float) -> AgentSpec:
+    async def arehire(self, slug: str, days: float, *, on_commit: Callable[[], None] | None = None,
+                     validate: Callable[[AgentSpec], None] | None = None) -> AgentSpec:
+        """Read, verify and save on FILES; publish on the loop before announcing a rehire.
+
+        Once submitted, settle both the write and publication despite repeated cancellation.
+        A storage/publication error takes precedence over cancellation. Sync callers keep `rehire`.
+        """
+        async with self._rehire_lock:
+            # Flush earlier writes. Their loop callbacks may still be queued when this waiter resumes.
+            await durable.run(durable.FILES, lambda: None)
+            previous = self._sync_publications
+            staged = Registry(self.agents_dir, self.talent_dir, self.contract_dir)
+            loop = asyncio.get_running_loop()
+            published = loop.create_future()
+
+            def publish(spec: AgentSpec) -> None:
+                try:
+                    # A later sync rehire can finish on the loop before this queued callback runs (#977).
+                    # Earlier async callbacks are FIFO predecessors, not newer synchronous publications.
+                    if self._sync_publications.get(spec.id) is previous.get(spec.id):
+                        self._remember(spec, staged.paths[spec.id])
+                    if on_commit is not None:
+                        on_commit()
+                except BaseException as exc:
+                    published.set_exception(exc)
+                else:
+                    published.set_result(spec)
+
+            def job() -> None:
+                spec = staged.rehire(slug, days, validate=validate)
+                loop.call_soon_threadsafe(publish, spec)
+
+            write = asyncio.wrap_future(durable.submit(durable.FILES, job))
+
+            async def commit() -> AgentSpec:
+                await write
+                return await published
+
+            pending = asyncio.create_task(commit())
+            cancelled = None
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError as exc:
+                    cancelled = exc
+            spec = pending.result()
+            if cancelled is not None:
+                raise cancelled
+            return spec
+
+    def rehire(self, slug: str, days: float, *, validate: Callable[[AgentSpec], None] | None = None) -> AgentSpec:
         p = self.talent_dir / slug / "contract.yaml"
         spec = AgentSpec.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")))
         assert spec.contract
+        if validate is not None:
+            validate(spec)
         from .recruit.provenance import provenance_changes
 
         # The skill and MCP folders are hashed at hiring (#424): a rehire says which ones changed since, and the

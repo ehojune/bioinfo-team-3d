@@ -327,6 +327,7 @@
     "tests/test_system_ca.py",
     "tests/test_task_attempt_projection.py",
     "tests/test_task_cancel.py",
+    "tests/test_task_cancel_durable_606.py",
     "tests/test_task_local_install_669.py",
     "tests/test_task_read_scope.py",
     "tests/test_text_encoding.py",
@@ -418,6 +419,7 @@
     "tests/test_recovery_interrupted_selection_924.py": "Interrupted result/direct checkpoint selection, live task adoption and preserved cost history; in-process fake dispatch.",
     "tests/test_gateway_publish_durable.py": "Gateway SQLite publication, cancellation and durable delivery ordering.",
     "tests/test_approval_durable_606.py": "Approval SQLite transactions, commit failure, repeated cancellation, per-card races and reconnect/ACK ordering; in-process fake commits.",
+    "tests/test_task_cancel_durable_606.py": "Task cancel SQLite intent ordering, heartbeat, rollback, repeated cancellation, completion races and restart replay; in-process fake commits.",
     "tests/test_request_persistence_965.py": "Awaited request/result changes, SQLite FIFO, cancellation, review receipts and restart persistence; in-process fake commits."
   },
   "mixed_nodes": {

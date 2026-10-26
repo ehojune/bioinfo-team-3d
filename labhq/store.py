@@ -123,6 +123,10 @@ class StateStore:
             if kind == "approval" and conn.execute(
                     "SELECT 1 FROM state WHERE kind='approval_decision' AND key=?", (key,)).fetchone():
                 return
+            if kind == "task_cancel":
+                task = self._get_on(conn, "task", key) or {}
+                if task.get("completed") and not task.get("abandoned"):
+                    return  # A queued cancel cannot resurrect intent after the result's cleanup.
             conn.execute("INSERT OR REPLACE INTO state VALUES (?, ?, ?)", (kind, key, raw))
 
     def delete(self, kind: str, key: str) -> None:
