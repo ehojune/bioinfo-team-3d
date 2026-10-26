@@ -1,5 +1,9 @@
 pr: 990
 rows:
+- sha: 9211f9d
+  at: '2026-10-26 22:01'
+  text: 종료 정산 중 halt를 거절하고 revision 전진 뒤 취소된 attach의 예약을 반환한다(Refs #606).
+  summary: 리뷰 P1·P2를 수정 전 2 FAIL로 재현하고 관련 161건을 검증했다. close 후 새 row의 알림은 보존한다.
 - sha: 23b2273
   at: '2026-10-26 21:40'
   text: 질문-only turn의 완료 이벤트를 답변 후로 미루고 취소된 attach의 drop 알림 몫만 반환한다(Refs #606).
