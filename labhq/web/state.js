@@ -295,26 +295,45 @@ function resetSnapshotState() {
 function stepJobs(rid) {
   const q = S.requests.get(rid), result = {};
   if (!q || isTerminalRequest(q.status)) return result;
-  const add = (jid, sid) => {
+  const add = (job, sid) => {
     if (!sid || ['done', 'skipped', 'error', 'failed', 'halted', 'cancelled'].includes(q.steps[sid])) return;
-    const id = String(jid), job = S.jobs.get(id);
+    const id = String(job.id);
     const rows = result[sid] ||= [];
-    if (job && ['completed', 'failed', 'cancelled', 'unknown_finished', 'error'].includes(job.state)) return;
-    if (!rows.some(row => row.id === id)) rows.push({id, name: job?.name || id, state: job?.state || 'missing'});
+    if (['completed', 'failed', 'cancelled', 'unknown_finished', 'error'].includes(job.state)) return;
+    if (!rows.some(row => row.id === id)) rows.push({id, name: job.name || id, state: job.state || 'missing'});
   };
-  for (const [jid, context] of S.jobContext) {
+  for (const context of S.jobContext.values()) {
     const task = S.activeTasks.get(context.task_id);
     const sid = context.step_id || S.taskStep.get(context.task_id) || task?.step_id;
     const current = S.stepDetails.get(`${rid}:${sid}`)?.task_id;
     if ((context.request_id || task?.request_id) === rid && (!current || !context.task_id || current === context.task_id))
-      add(jid, sid);
+      add(context, sid);
   }
   for (const task of S.activeTasks.values()) if (task.request_id === rid) {
     const current = S.stepDetails.get(`${rid}:${task.step_id}`)?.task_id;
     if (!current || current === task.id)
-      for (const jid of task.activity?.jobs || []) add(jid, task.step_id);
+      for (const jid of task.activity?.jobs || []) {
+        const job = S.jobContext.get(JSON.stringify([task.id, String(jid)]));
+        add(job && (!job.request_id || job.request_id === rid) ? job : {id:jid}, task.step_id);
+      }
   }
   return result;
+}
+function trackJob(ev) {
+  const d = ev.data || {}, jid = String(d.job_id);
+  // Scheduler ids are runner-local. Task ids identify their owner across runners.
+  let key = ev.task_id ? JSON.stringify([ev.task_id, jid]) : null;
+  if (!key) {
+    const candidates = [...S.jobContext].filter(([, row]) => row.id === jid &&
+      (!ev.request_id || row.request_id === ev.request_id));
+    if (candidates.length !== 1) return;
+    key = candidates[0][0];
+  }
+  const previous = S.jobContext.get(key) || {};
+  S.jobContext.set(key, {...previous, id:jid, name:d.name || previous.name,
+    state:ev.type === 'job.submitted' ? 'queued' : d.state,
+    request_id:ev.request_id || previous.request_id, task_id:ev.task_id || previous.task_id,
+    step_id:S.taskStep.get(ev.task_id) || previous.step_id});
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
   hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
@@ -908,14 +927,12 @@ function apply(ev, replay = false) {
           fullText: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${fullNote}` }, ts, rid); break; }
     case 'job.submitted': {
       const jid = String(d.job_id);
-      S.jobContext.set(jid, {request_id: rid, task_id: ev.task_id, step_id: S.taskStep.get(ev.task_id)});
+      trackJob(ev);
       S.jobs.set(jid, { id: jid, name: d.name, state: 'queued', agent: id, ts });
       feed({ who: id, text: `${jid.startsWith('local-') ? '로컬 계산' : 'HPC 작업'} 제출: ${d.name || ''} (${d.job_id})` }, ts, rid); break;
     }
     case 'job.state': {
-      const jid = String(d.job_id), context = S.jobContext.get(jid) || {};
-      S.jobContext.set(jid, {request_id: rid || context.request_id, task_id: ev.task_id || context.task_id,
-        step_id: S.taskStep.get(ev.task_id) || context.step_id});
+      trackJob(ev);
       const j = S.jobs.get(String(d.job_id)) || { id: String(d.job_id), name: d.name, agent: id };
       Object.assign(j, { state: d.state, exit: d.exit_status, ts }); S.jobs.set(j.id, j);
       break;

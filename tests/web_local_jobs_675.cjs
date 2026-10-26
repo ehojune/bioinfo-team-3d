@@ -90,6 +90,23 @@ test('terminal request and step clear display even without a final job event', (
     assert.equal(Object.keys(q.stepJobs).length, 0);
   }
 });
+for (const job_id of ['42', 'local-shared']) test(`same scheduler ID ${job_id} stays scoped to its task`, () => {
+  const {o, emit, q} = setup();
+  emit('job.submitted', {job_id, name:'First'});
+  emit('job.submitted', {job_id, name:'Second'}, 'r2');
+  emit('task.result', {ok:true, pending_jobs:[job_id]});
+  emit('task.result', {ok:true, pending_jobs:[job_id]}, 'r2');
+  emit('job.state', {job_id, state:'running'});
+  assert.equal(q.stepJobs.s1[0].name, 'First');
+  assert.equal(q.stepJobs.s1[0].state, 'running');
+  assert.equal(o.S.requests.get('r2').stepJobs.s1[0].name, 'Second');
+  assert.equal(o.S.requests.get('r2').stepJobs.s1[0].state, 'queued');
+  o.apply({type:'job.state', data:{job_id, state:'cancelled'}});
+  assert.equal(q.stepJobs.s1[0].state, 'running', 'ambiguous events must not change owned jobs');
+  emit('job.state', {job_id, state:'completed'});
+  assert.equal(q.stepJobs.s1.length, 0);
+  assert.equal(o.S.requests.get('r2').stepJobs.s1[0].name, 'Second');
+});
 test('next turn and authoritative empty snapshot remove old job ownership', () => {
   const {o, emit, q} = setup();
   emit('job.submitted', {job_id:'local-one', name:'Old turn'});
