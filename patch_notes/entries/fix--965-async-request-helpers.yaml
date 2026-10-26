@@ -1,5 +1,9 @@
 pr: 972
 rows:
+- sha: 'a1a092b'
+  at: 2026-10-26 11:12
+  summary: 요청 취소 때 보고된 비용과 quota 대기 취소를 보존합니다.
+  text: 'task 비용 저장 뒤 완료를 기록하고 대기 소비자 취소 뒤 저장을 await합니다. 비용·quota는 barrier로 재현했고 재시작 검사는 task 완료를 기다립니다. 기존 assertion과 unknown·중복 비용·다른 요청 보존 검사를 유지합니다. 관련 5파일 최종 결과 합계 172 passed, 1 skipped(state 재검사 60 passed 포함).'
 - sha: '0b8a3cb'
   at: 2026-10-26 06:30
   summary: 저장 위치를 고르다 연결이 끊겨도 같은 답을 다시 처리합니다.
