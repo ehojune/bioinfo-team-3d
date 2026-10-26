@@ -1,5 +1,9 @@
 pr: 980
 rows:
+- sha: 2f177d1
+  at: '2026-10-26 14:50'
+  text: plan-rehire mock 파일을 기존 Windows runner cohort 이름으로 옮겨 Windows에서도 모든 회귀를 실행한다.
+  summary: Windows inventory 거절을 해소하며 test·CI 정책은 그대로 유지합니다.
 - sha: c75b1a8
   at: '2026-10-26 14:46'
   text: plan-rehire의 계약 읽기·검사·두 파일 저장을 FILES writer에서 기다리고 Registry·roster를 FIFO 순서로 반영한다(Refs #606).
