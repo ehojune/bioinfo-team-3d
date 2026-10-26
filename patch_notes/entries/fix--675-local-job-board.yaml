@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: 2163c58
+    at: "2026-10-26 13:46"
+    summary: "로컬 계산을 요청 단계에 연결해 이름과 상태를 표시하고 HPC 작업과 구분합니다."
+    text: "기존 job event·snapshot pending_jobs로 공통 단계 흐름·task card·3D 요청 줄을 갱신합니다. 종료·재접속·다른 요청 회귀 mock을 추가했으며 실제 진행률은 추정하지 않습니다. Refs #675."
