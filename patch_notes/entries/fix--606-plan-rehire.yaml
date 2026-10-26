@@ -1,5 +1,9 @@
 pr: 980
 rows:
+- sha: 5d068f9
+  at: '2026-10-26 15:04'
+  text: Python 3.10 wait_for의 재취소가 내부 저장 완료 판정보다 먼저 반환하지 않도록 planning의 취소 전달·대기를 분리한다.
+  summary: 반복 취소에도 두 파일·Registry·roster 반영과 저장 오류 판정을 끝까지 기다립니다.
 - sha: 7d648b7
   at: '2026-10-26 14:54'
   text: 이전 async publication과 최신 sync 쓰기를 구분하고 writer가 읽은 실제 계약의 재채용 자격을 저장 전에 재검증한다(P1 4374314239·4374314243).
