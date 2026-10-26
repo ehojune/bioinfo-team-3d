@@ -65,7 +65,9 @@ async def test_plan_rehire_keeps_heartbeat_running(plan_rehire, monkeypatch, act
 
 @pytest.mark.parametrize('fail_at', [None, 1, 2])
 @pytest.mark.parametrize('cancel', [False, True])
-async def test_rehire_commit_order_errors_and_repeated_cancel(plan_rehire, monkeypatch, fail_at, cancel):
+@pytest.mark.parametrize('interruptible_cleanup', [False, True])
+async def test_rehire_commit_order_errors_and_repeated_cancel(plan_rehire, monkeypatch, fail_at, cancel,
+                                                            interruptible_cleanup):
     import labhq.registry as registry_module
     r, task = plan_rehire
     original = registry_module.atomic_write_text
@@ -73,6 +75,21 @@ async def test_rehire_commit_order_errors_and_repeated_cancel(plan_rehire, monke
     entered, release = threading.Event(), threading.Event()
     writes = []
     loop_thread = threading.get_ident()
+
+    if interruptible_cleanup:
+        async def legacy_wait_for(coro, timeout):
+            # Model Python 3.10's interruptible wait_for cancellation cleanup on newer Python too.
+            inner = asyncio.create_task(coro)
+            try:
+                return await asyncio.shield(inner)
+            except asyncio.CancelledError:
+                inner.cancel()
+                await asyncio.shield(inner)
+                raise
+
+        monkeypatch.setattr(planning, 'asyncio', SimpleNamespace(
+            create_task=asyncio.create_task, shield=asyncio.shield, wait_for=legacy_wait_for,
+            CancelledError=asyncio.CancelledError, TimeoutError=asyncio.TimeoutError))
 
     def write(path, text):
         assert threading.get_ident() != loop_thread
