@@ -332,3 +332,33 @@ async def test_later_hire_publication_cannot_be_overwritten_by_update_waiter(run
     live, talent = copies(runner)
     assert live.read_bytes() == talent.read_bytes()
     assert yaml.safe_load(live.read_text(encoding='utf8'))['name'] == 'later hire'
+
+
+async def test_sync_plan_rehire_is_preserved_when_update_callback_is_queued(runner, monkeypatch):
+    original = Registry._write_contract_copies
+    entered, release = threading.Event(), threading.Event()
+    loop_thread = threading.get_ident()
+
+    def blocked(self, spec, text):
+        if threading.get_ident() == loop_thread:
+            # Registry.rehire reads its spec before synchronous writes wait behind the existing FILES job.
+            release.set()
+        else:
+            entered.set()
+            assert release.wait(3)
+        return original(self, spec, text)
+
+    monkeypatch.setattr(Registry, '_write_contract_copies', blocked)
+    update = asyncio.create_task(runner._on_message({'type': 'contract.update', 'action': 'activate',
+                                                     'agent_id': 'c_x'}))
+    try:
+        await wait_entered(entered)
+        rehired = runner.registry.rehire('x', 2)
+    finally:
+        release.set()
+    await update
+    assert runner.registry.get('c_x') is rehired
+    assert runner.receipts[-1]['c_x']['contract']['expires_at'] == rehired.contract.expires_at
+    live, talent = copies(runner)
+    assert live.read_bytes() == talent.read_bytes()
+    assert yaml.safe_load(live.read_text(encoding='utf8'))['contract']['expires_at'] == rehired.contract.expires_at

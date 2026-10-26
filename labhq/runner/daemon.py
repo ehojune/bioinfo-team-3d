@@ -859,6 +859,7 @@ class Runner:
             await durable.run(durable.FILES, lambda: None)
             staged = copy.copy(self)
             staged.registry = copy.copy(self.registry)
+            previous = dict(self.registry.agents)
             staged.registry.agents = {key: spec.model_copy(deep=True)
                                       for key, spec in self.registry.agents.items()}
             staged.registry.paths = dict(self.registry.paths)
@@ -868,6 +869,12 @@ class Runner:
             def publish(spec: AgentSpec | None) -> None:
                 try:
                     agent_id = spec.id if msg.get("action") == "rehire" and spec is not None else msg.get("agent_id")
+                    # A synchronous plan rehire can wait behind this job on the loop, publish a newer object,
+                    # then return before this callback is serviced. Its completed write supersedes this snapshot.
+                    if self.registry.agents.get(agent_id) is not previous.get(agent_id):
+                        self._send_roster()
+                        published.set_result(None)
+                        return
                     # Only publish the affected entry; unrelated recruitment may have finished during the write.
                     if agent_id in staged.registry.agents:
                         self.registry.agents[agent_id] = staged.registry.agents[agent_id]
