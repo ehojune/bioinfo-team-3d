@@ -1,5 +1,9 @@
 pr: 976
 rows:
+  - sha: 'baed103'
+    at: '2026-10-26 13:42'
+    summary: 'runner 승인 전달이 막혀도 10초 뒤 취소와 카드 lock을 정리합니다.'
+    text: 'P1 4373997996을 fake WebSocket으로 재현했습니다(수정 전 2 failed). 전달 timeout 뒤 연결 등록을 해제하고 결정·전달 행을 보존합니다. 반복 취소·후속 ACK를 포함한 관련 140 passed·12 skipped입니다.'
   - sha: '2435ae5'
     at: '2026-10-26 13:35'
     summary: '일반 승인 카드·결정·runner 전달을 한 transaction으로 저장합니다.'
