@@ -110,6 +110,7 @@ async def test_obsolete_publish_cards_close(tmp_path, ending):
     card = ApprovalRequest(kind="result_publish", request_id="r", summary="publish?")
     hub.approvals[card.id] = {"approval": card.model_dump(mode="json"), "origin": None,
                               "future": asyncio.get_running_loop().create_future()}
+    closed = hub.approvals[card.id]["future"]
     hub.save_approval(card.id)
     if ending == "revise":
         hub.create_revised_request("r", "change plan")
@@ -118,7 +119,7 @@ async def test_obsolete_publish_cards_close(tmp_path, ending):
     else:
         hub.requests["r"]["status"] = ending
         hub.commit_terminal("r", "request.failed", {})
-    await asyncio.sleep(0)
+    await asyncio.wait_for(asyncio.shield(closed), 5)
     assert card.id not in hub.approvals
     assert hub.store.get("approval_decision", card.id)["state"] == "expired"
 

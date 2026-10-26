@@ -1,0 +1,18 @@
+pr: 976
+rows:
+  - sha: '496ff4c'
+    at: '2026-10-26 14:03'
+    summary: '번역이 늦게 끝나도 이미 답한 승인 카드가 다시 열리지 않습니다.'
+    text: 'P1 4374092270의 늦은 번역 snapshot 저장 경쟁을 수정 전 2 failed로 재현했습니다. writer transaction에서 이미 결정된 카드의 재삽입을 거부합니다. 관련 52 passed이며 DB 재열기에서도 결정만 남는지 확인했습니다.'
+  - sha: '46e7f08'
+    at: '2026-10-26 13:51'
+    summary: '재개 승인과 만료가 겹쳐도 먼저 저장한 결정을 보존합니다.'
+    text: 'P1 4374026562의 expiry·async/sync retirement 경쟁 3 failed를 고쳤습니다. 카드→event/request lock 순서를 지키고 retirement 삭제·결정을 단일 transaction으로 저장합니다. 관련 131 passed·12 subtests, 추가 34 passed입니다. CI 카드 종료 fixture는 실제 future 완료를 기다리며 기존 assertion을 유지합니다.'
+  - sha: 'baed103'
+    at: '2026-10-26 13:42'
+    summary: '직원에게 승인 답을 보내다 막히면 연결을 정리하고 재접속 때 다시 보냅니다.'
+    text: 'P1 4373997996을 fake WebSocket으로 재현했습니다(수정 전 2 failed). 전달 timeout 뒤 연결 등록을 해제하고 결정·전달 행을 보존합니다. 반복 취소·후속 ACK를 포함한 관련 140 passed·12 skipped입니다.'
+  - sha: '2435ae5'
+    at: '2026-10-26 13:35'
+    summary: '승인을 저장하다 오류가 나도 카드와 결정을 잃지 않도록 고쳤습니다.'
+    text: '기존 durable writer와 카드별 lock으로 생성·응답·timeout·close·재접속 전달·ACK를 직렬화하고 commit 뒤 memory·future·전송을 반영합니다. 반복 취소·저장 오류·DB 재열기와 storage 재시도·facilities 대기·resume CP1 계약을 관련 mock/static으로 확인했습니다. task 원장·전용 복구 경로 잔여와 실제 운영 검증은 #606에 남습니다.'

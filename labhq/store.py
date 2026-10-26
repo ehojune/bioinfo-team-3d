@@ -118,6 +118,11 @@ class StateStore:
 
     def _put_now(self, kind: str, key: str, raw: str) -> None:
         with self._transaction() as conn:
+            # Display translations and sync recovery callers can queue a stale
+            # card snapshot behind its answer. Never resurrect a decided card.
+            if kind == "approval" and conn.execute(
+                    "SELECT 1 FROM state WHERE kind='approval_decision' AND key=?", (key,)).fetchone():
+                return
             conn.execute("INSERT OR REPLACE INTO state VALUES (?, ?, ?)", (kind, key, raw))
 
     def delete(self, kind: str, key: str) -> None:
@@ -129,6 +134,25 @@ class StateStore:
 
     async def adelete(self, kind: str, key: str) -> None:
         await durable.run(self.lane, self._delete_now, kind, key)
+
+    def commit_approval(self, aid: str, decision: dict, delivery: dict | None = None) -> None:
+        """Replace a pending card with its answer and optional runner delivery atomically."""
+        durable.call(self.lane, self._commit_approval_now, aid, _dumps(decision),
+                     _dumps(delivery) if delivery is not None else None)
+
+    async def acommit_approval(self, aid: str, decision: dict, delivery: dict | None = None) -> None:
+        # Serialize before the first await: the writer never sees mutable caller state.
+        raw = _dumps(decision)
+        queued = _dumps(delivery) if delivery is not None else None
+        await durable.run(self.lane, self._commit_approval_now, aid, raw, queued)
+
+    def _commit_approval_now(self, aid: str, raw: str, queued: str | None) -> None:
+        with self._transaction() as conn:
+            conn.execute("DELETE FROM state WHERE kind='approval' AND key=?", (aid,))
+            conn.execute("INSERT OR REPLACE INTO state VALUES ('approval_decision', ?, ?)", (aid, raw))
+            conn.execute("DELETE FROM state WHERE kind='decision' AND key=?", (aid,))
+            if queued is not None:
+                conn.execute("INSERT INTO state VALUES ('decision', ?, ?)", (aid, queued))
 
     def all(self, kind: str) -> dict[str, dict]:
         return {key: json.loads(body) for key, body in

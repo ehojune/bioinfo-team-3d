@@ -14,6 +14,7 @@
     "tests/test_annot_literature.py",
     "tests/test_annot_regulatory.py",
     "tests/test_approval_closed_grammar.py",
+    "tests/test_approval_durable_606.py",
     "tests/test_approval_fatigue.py",
     "tests/test_approval_timeout.py",
     "tests/test_ask.py",
@@ -416,6 +417,7 @@
     "tests/test_recovery_fake_check.py": "Owned native gateway/runner force-kill, restart, SQLite replay, receipt accounting and process-handle cleanup; deterministic mock, loopback only.",
     "tests/test_recovery_interrupted_selection_924.py": "Interrupted result/direct checkpoint selection, live task adoption and preserved cost history; in-process fake dispatch.",
     "tests/test_gateway_publish_durable.py": "Gateway SQLite publication, cancellation and durable delivery ordering.",
+    "tests/test_approval_durable_606.py": "Approval SQLite transactions, commit failure, repeated cancellation, per-card races and reconnect/ACK ordering; in-process fake commits.",
     "tests/test_request_persistence_965.py": "Awaited request/result changes, SQLite FIFO, cancellation, review receipts and restart persistence; in-process fake commits."
   },
   "mixed_nodes": {
