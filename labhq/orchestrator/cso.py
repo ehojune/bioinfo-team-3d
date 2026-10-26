@@ -3322,13 +3322,6 @@ class Orchestrator:
             await self.hub.resolve_ask(ask, runner_id,
                                       self._facilities_fallback_answer(answer) if fallback else answer)
 
-        if fallback and any((entry.get("ask") or {}).get("to") == "facilities" and
-                            (entry.get("answer") or {}).get("routed_to") == "cso" and
-                            (entry.get("answer") or {}).get("status") == "answered" for entry in same_step):
-            await resolve_consult(ask_result(
-                reason="이 단계에는 이미 CSO 대체 답변이 있습니다. 부재한 시설팀으로 재문의하지 않습니다.",
-                **{"from": "labhq", "routed_to": routed}))
-            return
         if routed not in self.hub.agents:
             await resolve_consult(ask_result(
                 reason=f"대상 직원 {routed!r}이 roster에 없습니다",
@@ -3392,6 +3385,18 @@ class Orchestrator:
                 prompt += "\nThe doctor snapshot describes your runner, not necessarily the blocked employee's host."
         overrides = dict(READ_ONLY_OVERRIDES)
         async with self._consult_lock(ask.request_id, routed):
+            # Re-read after acquiring the lock: another ask may have answered while we waited.
+            # Publish the answer before releasing this same lock below.
+            if fallback and any(
+                    other_id != ask.id and (entry.get("ask") or {}).get("to") == "facilities" and
+                    (entry.get("answer") or {}).get("routed_to") == "cso" and
+                    (entry.get("answer") or {}).get("status") == "answered" and
+                    tuple(entry.get("scope") or self._ask_scope(entry.get("ask") or {})) == scope
+                    for other_id, entry in self.hub.store.all("ask").items()):
+                await resolve_consult(ask_result(
+                    reason="이 단계에는 이미 CSO 대체 답변이 있습니다. 부재한 시설팀으로 재문의하지 않습니다.",
+                    **{"from": "labhq", "routed_to": routed}))
+                return
             # After a gateway restart the runner may still be running this ask's consult.
             # Adopt its result; when its outcome is unknown, isolate the new consult.
             adopt = getattr(self.hub, "adopt_consult", None)
@@ -3437,11 +3442,11 @@ class Orchestrator:
                 request["cso_session_id"], request["cso_workdir"] = result.session_id, result.workdir
                 if ask.request_id in self.hub.requests:
                     await persist_request(self.hub, ask.request_id)
-        answered = result.ok and bool(result.text.strip())
-        answer = result.text.strip() if answered else f"상담 실패: {result.error or 'empty answer'}"
-        await resolve_consult(ask_result(
-            answer=answer if answered else None, reason=None if answered else answer,
-            **{"from": routed, "routed_to": routed, "remaining_asks": max(0, 2 - task_count)}))
+            answered = result.ok and bool(result.text.strip())
+            answer = result.text.strip() if answered else f"상담 실패: {result.error or 'empty answer'}"
+            await resolve_consult(ask_result(
+                answer=answer if answered else None, reason=None if answered else answer,
+                **{"from": routed, "routed_to": routed, "remaining_asks": max(0, 2 - task_count)}))
 
     # ---------- follow-up on a finished request (#36) ----------
     async def run_followup(self, rid: str, fid: str) -> None:

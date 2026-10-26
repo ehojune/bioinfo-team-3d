@@ -2,6 +2,9 @@
 
 Only fake consults and temporary stores; no operator DB, model or repair execution.
 """
+import asyncio
+from contextlib import asynccontextmanager
+
 import pytest
 
 from labhq.gateway.server import Hub
@@ -133,6 +136,44 @@ async def test_continuation_task_keeps_same_step_reask_guard(support):
     await hub.orchestrator.answer_ask(ask, "fake")
     assert len(calls) == 1
     assert hub.store.get("ask", ask.id)["answer"]["status"] == "rejected"
+
+
+async def test_overlapping_same_step_reasks_dispatch_only_one_fallback(support, monkeypatch):
+    hub, calls = support
+    entered, release, queued = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original_lock = hub.orchestrator._consult_lock
+
+    @asynccontextmanager
+    async def tracked_lock(*args):
+        if entered.is_set():
+            queued.set()
+        async with original_lock(*args):
+            yield
+
+    monkeypatch.setattr(hub.orchestrator, "_consult_lock", tracked_lock)
+
+    async def dispatch(task):
+        calls.append(task)
+        entered.set()
+        await release.wait()
+        return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="시설팀에 재문의하세요")
+
+    hub.dispatch = dispatch
+    first = asyncio.create_task(hub.orchestrator.answer_ask(question(), "fake"))
+    await asyncio.wait_for(entered.wait(), 5)
+    repeat = question(question="기다리는 동안 시설팀에 다시 문의합니다")
+    second = asyncio.create_task(hub.orchestrator.answer_ask(repeat, "fake"))
+    try:
+        await asyncio.wait_for(queued.wait(), 5)
+        release.set()
+        await asyncio.wait_for(asyncio.gather(first, second), 5)
+        assert len(calls) == 1
+        assert hub.store.get("ask", repeat.id)["answer"]["status"] == "rejected"
+    finally:
+        release.set()
+        for task in (first, second):
+            task.cancel()
+        await asyncio.gather(first, second, return_exceptions=True)
 
 
 async def test_installation_hard_stop_still_goes_to_pi_without_cso(support):
