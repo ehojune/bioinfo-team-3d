@@ -14,6 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:05 | [`e732a8c`](https://github.com/ehojune/bioinfo-team-3d/pull/985/commits/e732a8c) | **시설팀 복귀 뒤 동일 질문은 과거 CSO fallback cache를 건너뜁니다.**<br>P2 4375525575를 수정 전 1 failed로 재현했습니다. 부재 시 cache 안내를 유지하고 가용 시설팀은 직접 상담합니다. 관련 mock 149 passed입니다. |
+| 17:59 | [`c9cb80c`](https://github.com/ehojune/bioinfo-team-3d/pull/985/commits/c9cb80c) | **겹쳐 들어온 같은 단계 재문의도 CSO 상담을 한 번만 실행합니다.**<br>P2 4375474605의 경쟁을 수정 전 1 failed로 재현했습니다. lock 안에서 durable ask를 다시 확인하고 답변 저장까지 잠금을 유지합니다. main #982·#984 반영 후 관련 mock 149 passed입니다. |
+| 17:55 | [`f1528b7`](https://github.com/ehojune/bioinfo-team-3d/pull/985/commits/f1528b7) | **시설팀 부재·cached/adopted 답변·같은 단계 재문의 거부를 manual 한 곳에 기록합니다.**<br>P2 4375433823 수정입니다. #982의 manual 반영 뒤 편집했으며 194,351→194,556자입니다. 실제 복구 검증과 roster/doctor 연결은 별도 범위입니다. |
+| 17:54 | [`724a59d`](https://github.com/ehojune/bioinfo-team-3d/pull/985/commits/724a59d) | **시설팀 fallback 회귀 11건을 Windows 필수 cohort에 등록합니다.**<br>Windows CI가 새 test inventory 누락으로 실행 전 거부한 원인을 고쳤습니다. validate_profile과 해당 mock 11 passed이며 assertion·coverage는 유지합니다. |
+| 17:47 | [`cc52edd`](https://github.com/ehojune/bioinfo-team-3d/pull/985/commits/cc52edd) | **시설팀이 없을 때 CSO 대체 답변에 부재 사실을 알리고 같은 단계의 재문의를 막습니다.**<br>과거 cached/adopted 상담에도 안내를 붙입니다. 비식별 신규 회귀의 수정 전 8 failed·1 passed와 수정 후 관련 mock 148 passed를 확인했습니다. 실제 시설팀 복구·roster/doctor 연결은 #983에 남습니다. |
 | 17:42 | [`b31ff8f`](https://github.com/ehojune/bioinfo-team-3d/pull/982/commits/b31ff8f) | **저장 경계와 로드맵의 포괄적인 task/result/control 표현을 수정했습니다. 제품 코드 변경은 없습니다.**<br>manual에 activity·halt/resume intent의 async 저장과 최신 row 병합을 명시하고 남은 sync 경계를 구분한다(Refs |
 | 16:21 | [`00525cc`](https://github.com/ehojune/bioinfo-team-3d/pull/982/commits/00525cc) | **job.submitted 경쟁 1 failed → PASS. 기존 job handler를 바꾸지 않고 durable replay 약속을 검증합니다.**<br>뒤따른 전체-row 쓰기가 halt intent를 지우면 성공/queued 대신 대기 거절 또는 재시도를 반환한다(Refs |
 | 16:18 | [`498460d`](https://github.com/ehojune/bioinfo-team-3d/pull/984/commits/498460d) | **인재풀 읽기·hash 확인 중 heartbeat가 멈추지 않으며 취소 뒤 새 재고용을 시작하지 않습니다.**<br>계획 채용의 talent YAML·probation·provenance 읽기 판정을 기존 FILES lane으로 옮기고 writer 재검증과 loop publication을 유지한다(Refs |
