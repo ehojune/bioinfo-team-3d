@@ -1,5 +1,9 @@
 pr: 990
 rows:
+- sha: 7cd7d7e
+  at: '2026-10-26 20:36'
+  text: caller 취소 전 commit된 steer의 같은 ID 전송을 정산한다(Refs #606).
+  summary: 리뷰 P2는 asyncio·AnyIO 2 FAIL → 관련 122 PASS로 검증했다. W3 변경 뒤 manual에 step 경계를 반영했다.
 - sha: c47bfce
   at: '2026-10-26 20:32'
   text: step 종료 표식을 revision별로 적용해 새 revision은 열고 이전 turn의 늦은 attach는 막는다(Refs #606).
