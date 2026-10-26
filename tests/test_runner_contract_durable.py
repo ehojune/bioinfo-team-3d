@@ -260,3 +260,75 @@ async def test_cancel_while_waiting_for_lock_does_not_write(runner, monkeypatch)
         with pytest.raises(asyncio.CancelledError):
             await task
     assert runner.receipts == []
+
+
+async def test_update_snapshots_after_earlier_same_id_recruitment(runner, monkeypatch):
+    original = Registry._write_contract_copies
+    entered, release = threading.Event(), threading.Event()
+    hired = runner.registry.get('c_x').model_copy(deep=True)
+    hired.name = 'new hire'
+    hired.contract.source_commit = 'a' * 40
+    hired.contract.verification = {'new': 'provenance'}
+
+    def blocked(self, spec, text):
+        if spec.name == 'new hire' and not entered.is_set():
+            entered.set()
+            assert release.wait(3)
+        return original(self, spec, text)
+
+    monkeypatch.setattr(Registry, '_write_contract_copies', blocked)
+    hire = asyncio.create_task(runner.registry.asave_contract(hired))
+    update = None
+    try:
+        await wait_entered(entered)
+        update = asyncio.create_task(runner._on_message({'type': 'contract.update', 'action': 'activate',
+                                                         'agent_id': 'c_x'}))
+        await asyncio.sleep(.02)
+    finally:
+        release.set()
+    await asyncio.gather(hire, update)
+    saved = runner.registry.get('c_x')
+    assert saved.name == 'new hire'
+    assert saved.contract.source_commit == 'a' * 40
+    assert saved.contract.verification == {'new': 'provenance'}
+    assert saved.contract.status == 'active'
+    live, talent = copies(runner)
+    assert live.read_bytes() == talent.read_bytes()
+    assert yaml.safe_load(live.read_text(encoding='utf8'))['name'] == 'new hire'
+
+
+async def test_later_hire_publication_cannot_be_overwritten_by_update_waiter(runner, monkeypatch):
+    original = Registry._write_contract_copies
+    entered, release, hired_written = threading.Event(), threading.Event(), threading.Event()
+    hired = runner.registry.get('c_x').model_copy(deep=True)
+    hired.name = 'later hire'
+    hired.contract.source_commit = 'b' * 40
+
+    def blocked(self, spec, text):
+        if spec.name != 'later hire':
+            entered.set()
+            assert release.wait(3)
+        result = original(self, spec, text)
+        if spec.name == 'later hire':
+            hired_written.set()
+        return result
+
+    monkeypatch.setattr(Registry, '_write_contract_copies', blocked)
+    update = asyncio.create_task(runner._on_message({'type': 'contract.update', 'action': 'activate',
+                                                     'agent_id': 'c_x'}))
+    hire = None
+    try:
+        await wait_entered(entered)
+        hire = asyncio.create_task(runner.registry.asave_contract(hired))
+        await asyncio.sleep(0)  # queue the later FILES job
+    finally:
+        release.set()
+    # Let the writer finish both files before the loop processes its callbacks. This controls the callback race,
+    # not a disk latency test: publication must follow the lane even when the loop is busy with other callbacks.
+    assert hired_written.wait(3)
+    await asyncio.gather(update, hire)
+    assert runner.registry.get('c_x').name == 'later hire'
+    assert runner.registry.get('c_x').contract.source_commit == 'b' * 40
+    live, talent = copies(runner)
+    assert live.read_bytes() == talent.read_bytes()
+    assert yaml.safe_load(live.read_text(encoding='utf8'))['name'] == 'later hire'

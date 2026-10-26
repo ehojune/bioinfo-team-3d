@@ -854,26 +854,44 @@ class Runner:
             self._send_roster()
             return
         async with self._contract_lock:
+            # Recruitment publishes its new spec on the loop before its FILES job completes. Observe those earlier
+            # publications, then snapshot AND submit without yielding so a later hire cannot overtake this update.
+            await durable.run(durable.FILES, lambda: None)
             staged = copy.copy(self)
             staged.registry = copy.copy(self.registry)
             staged.registry.agents = {key: spec.model_copy(deep=True)
                                       for key, spec in self.registry.agents.items()}
             staged.registry.paths = dict(self.registry.paths)
+            loop = asyncio.get_running_loop()
+            published = loop.create_future()
+
+            def publish(spec: AgentSpec | None) -> None:
+                try:
+                    agent_id = spec.id if msg.get("action") == "rehire" and spec is not None else msg.get("agent_id")
+                    # Only publish the affected entry; unrelated recruitment may have finished during the write.
+                    if agent_id in staged.registry.agents:
+                        self.registry.agents[agent_id] = staged.registry.agents[agent_id]
+                        self.registry.paths[agent_id] = staged.registry.paths[agent_id]
+                    elif agent_id in self.registry.agents and msg.get("action") == "release":
+                        self.registry.agents.pop(agent_id, None)
+                        self.registry.paths.pop(agent_id, None)
+                    self._send_roster()
+                except BaseException as exc:
+                    published.set_exception(exc)
+                else:
+                    published.set_result(spec)
+
+            def job() -> None:
+                spec = staged._contract_update(msg)
+                # Match Registry.asave_contract: publication is scheduled by the FIFO writer before it advances
+                # to a later hire, rather than by an awaiting task that may resume after that hire's publication.
+                loop.call_soon_threadsafe(publish, spec)
+
+            write = asyncio.wrap_future(durable.submit(durable.FILES, job))
 
             async def commit() -> None:
-                spec = await durable.run(durable.FILES, staged._contract_update, msg)
-                if msg.get("action") == "rehire" and spec is not None:
-                    agent_id = spec.id
-                else:
-                    agent_id = msg.get("agent_id")
-                # Only publish the affected entry; unrelated recruitment may have finished during the write.
-                if agent_id in staged.registry.agents:
-                    self.registry.agents[agent_id] = staged.registry.agents[agent_id]
-                    self.registry.paths[agent_id] = staged.registry.paths[agent_id]
-                elif agent_id in self.registry.agents and msg.get("action") == "release":
-                    self.registry.agents.pop(agent_id, None)
-                    self.registry.paths.pop(agent_id, None)
-                self._send_roster()
+                await write
+                spec = await published
                 if msg.get("action") == "rehire" and spec is not None and spec.contract:
                     changed = spec.contract.verification.get("rehire_changed")
                     if changed:
