@@ -518,6 +518,34 @@ async def test_resume_expiry_and_retirement_cannot_overwrite_committing_answer(l
 
 
 @pytest.mark.parametrize("operation", ["resolve", "close"])
+async def test_late_translation_save_cannot_reinsert_a_decided_card(live_hub, monkeypatch, operation):
+    hub = live_hub
+    card, _ = pending_card(hub)
+    entered, release = hold_commit(hub.store, monkeypatch)
+    action = hub.resolve_approval(card.id, True) if operation == "resolve" else hub.close_approval(card.id, "closed")
+    task = asyncio.create_task(action)
+    timer = None
+    try:
+        await wait_barrier(entered)
+        hub.approvals[card.id]["approval"]["pi_display"] = {"status": "translated", "text": "mock display"}
+        timer = threading.Timer(0.1, release.set)
+        timer.start()
+        hub.save_approval(card.id)  # PiInterpreter's existing synchronous update
+        await task
+        reopened = StateStore(hub.store.path)
+        try:
+            assert reopened.get("approval", card.id) is None
+            assert reopened.get("approval_decision", card.id) is not None
+        finally:
+            reopened.close()
+    finally:
+        release.set()
+        if timer:
+            timer.join()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("operation", ["resolve", "close"])
 async def test_second_commit_failure_does_not_lose_card_on_restart(tmp_path, monkeypatch, operation):
     hub = Hub.__new__(Hub)
     hub.store = StateStore(tmp_path / "gateway.sqlite3")

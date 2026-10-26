@@ -118,6 +118,11 @@ class StateStore:
 
     def _put_now(self, kind: str, key: str, raw: str) -> None:
         with self._transaction() as conn:
+            # Display translations and sync recovery callers can queue a stale
+            # card snapshot behind its answer. Never resurrect a decided card.
+            if kind == "approval" and conn.execute(
+                    "SELECT 1 FROM state WHERE kind='approval_decision' AND key=?", (key,)).fetchone():
+                return
             conn.execute("INSERT OR REPLACE INTO state VALUES (?, ?, ?)", (kind, key, raw))
 
     def delete(self, kind: str, key: str) -> None:
