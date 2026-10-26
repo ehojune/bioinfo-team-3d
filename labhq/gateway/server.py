@@ -2593,8 +2593,6 @@ class Hub:
     async def _publish_control(self, tid: str, entry: dict, data: dict,
                                *, lifecycle: tuple[dict | None] | None = None) -> None:
         """What the PI's request did, for the staff sheet. A halted task stays halted until resumed or expired."""
-        if lifecycle is None:
-            lifecycle = (self.store.get("task_control_closed", tid),)
         await self._control_state(tid, data, lifecycle=lifecycle, event={
             "type": "agent.control", "ts": time.time(), "task_id": tid,
             "agent_id": (entry.get("payload") or {}).get("agent_id"),

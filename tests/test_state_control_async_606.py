@@ -171,7 +171,7 @@ async def test_same_row_fifo_runner_latest_and_delete_no_resurrection(hub, monke
         finally:
             other.store.close()
         # PI controls through an ended turn remain supported for the live step.
-        await hub._publish_control("t", {}, {"paused": False})
+        await hub.control_task("t", "resume")
         assert hub.store.get("task_control_closed", "t") is None
         assert hub.task_controls["t"]["paused"] is False
     else:
@@ -198,6 +198,14 @@ async def test_control_started_before_result_delete_cannot_reopen_row(hub, monke
                                       "data": {"task_id": "t", "agent_id": "mock", "ok": True}})
     resume.set()
     await pending
+    assert hub.store.get("task_control_state", "t") is None
+    assert "t" not in hub.task_controls
+    assert not [e for e in hub.events if e["type"] == "agent.control"]
+
+
+async def test_result_generated_control_cannot_reopen_closed_row(hub):
+    await hub._control_state("t", None)
+    await hub._publish_control("t", {}, {"action": "halt_as_pause", "paused": True, "source": "gateway"})
     assert hub.store.get("task_control_state", "t") is None
     assert "t" not in hub.task_controls
     assert not [e for e in hub.events if e["type"] == "agent.control"]
