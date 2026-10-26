@@ -9,6 +9,7 @@ Closes #965. Refs #606; 잔여 직접 저장 경계가 있어 #606은 닫지 않
 
 - #973 병합 main을 충돌 없이 반영했습니다. halt 진입 취소·resume·timeout과 async 저장 통합 mock/static 33 passed입니다. 별도 기능 수정은 없습니다.
 - 후속 `a1a092b3`: 비용 commit 뒤 task 완료를 기록하고 quota 소비자 취소 뒤 저장을 await합니다. 기존 head 비용·재시작 실패와 barrier 비용·quota 실패를 재현했습니다. 재시작 검사 5건은 고정 polling 대신 완료 task를 기다리며 assertion을 유지합니다. 관련 5파일 최종 결과 합계 **172 passed, 1 skipped**(state 최종 60 passed 포함). DB 재열기·중복 합산 방지·unknown·다른 요청 카드 보존을 확인했습니다.
-- #972 hold 유지: 수정 diff 총괄 확인·최종 head 필수 CI 성공·미해결 P1=0 뒤 해제·담당 병합합니다. 봇 PASS는 미확인입니다.
+- 후속 `31ae1d9e`: 새 봇 P1 4373460589의 저장 경계 2곳에서 수정 전 2 failed. 호출자 취소를 runner 중단·카드 정리·terminal 기록 뒤 전달합니다. 관련 lifecycle·active-cancel·persistence·task-cancel 95 passed, 기존 CI 실패 3건 3 passed. process-loss 복구 assertion은 유지하고 카드 준비는 완료 신호를 기다립니다.
+- #972 hold 유지: 최종 head 필수 CI 성공·알려진 미해결 P1=0·충돌 없음 뒤 담당 병합합니다. #974의 PI 임시 리뷰 생략에 따라 별도 리뷰·총괄 재확인은 기다리지 않으며 봇 PASS로 기록하지 않습니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>

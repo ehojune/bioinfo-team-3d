@@ -1,5 +1,9 @@
 pr: 972
 rows:
+- sha: '31ae1d9'
+  at: 2026-10-26 11:32
+  summary: 취소 호출자가 끊겨도 runner 중단과 terminal 기록을 마칩니다.
+  text: '봇 P1 4373460589의 저장 경계 2곳에서 수정 전 2 failed를 재현했습니다. 취소 정리를 마친 뒤 호출자 취소를 전달합니다. 관련 4파일 95 passed, 기존 CI 실패 3건 3 passed. process-loss 복구와 카드 준비 완료 신호를 보존했습니다.'
 - sha: 'a1a092b'
   at: 2026-10-26 11:12
   summary: 요청 취소 때 보고된 비용과 quota 대기 취소를 보존합니다.
