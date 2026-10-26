@@ -1,5 +1,9 @@
 pr: 980
 rows:
+- sha: b9d7f7e
+  at: '2026-10-26 15:25'
+  text: sync Registry.load의 읽기·만료 archive를 FILES 단일 job으로 묶어 재채용 전 만료 snapshot이 새 계약을 지우지 않게 한다(P1 4374470002).
+  summary: 재채용과 reload가 겹쳐도 두 파일·Registry·roster가 일치합니다.
 - sha: 62a149f
   at: '2026-10-26 15:17'
   text: wait_for는 shield하고 내부 task에 취소를 한 번 전달한 뒤 실제 결과를 확인해 Python 3.10의 저장 오류 masking을 막는다.
