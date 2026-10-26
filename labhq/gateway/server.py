@@ -2625,12 +2625,14 @@ class Hub:
     async def _publish_control(self, tid: str, entry: dict, data: dict,
                                *, lifecycle: tuple[dict | None] | None = None) -> None:
         """What the PI's request did, for the staff sheet. A halted task stays halted until resumed or expired."""
-        if self._entry_step(tid, entry) in getattr(self, "_closed_steps", set()):
-            return
-        await self._control_state(tid, data, lifecycle=lifecycle, event={
-            "type": "agent.control", "ts": time.time(), "task_id": tid,
-            "agent_id": (entry.get("payload") or {}).get("agent_id"),
-            "request_id": entry.get("request_id"), "data": data})
+        key = self._entry_step(tid, entry)
+        async with self._step_lock(key):
+            if key in getattr(self, "_closed_steps", set()):
+                return
+            await self._control_state(tid, data, lifecycle=lifecycle, event={
+                "type": "agent.control", "ts": time.time(), "task_id": tid,
+                "agent_id": (entry.get("payload") or {}).get("agent_id"),
+                "request_id": entry.get("request_id"), "data": data})
 
     async def _deliver_step_control(self, key: str, tid: str, target: str | None,
                                     message: dict | None, entry: dict, data: dict, lifecycle):
@@ -2638,6 +2640,11 @@ class Hub:
         async def deliver():
             if key in getattr(self, "_closed_steps", {}) or not self._step_alive(entry):
                 raise ValueError("step ended")
+            current = self.store.get("task", target) if target else None
+            if target and (target in getattr(self, "_finishing_step_tasks", set()) or
+                           not current or (current.get("completed") and not current.get("abandoned"))):
+                await self._settle_steers(target, entry, None)
+                return False
             sent = bool(target and message) and await self._push(target, message)
             if key in getattr(self, "_closed_steps", {}) or not self._step_alive(entry):
                 raise ValueError("step ended")

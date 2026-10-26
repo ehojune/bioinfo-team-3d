@@ -335,6 +335,46 @@ async def test_revision_attachment_accepts_previous_result_context(hub):
     assert hub.store.get("step_control", key)["last_task"] == "revised"
 
 
+async def test_result_starting_after_steer_commit_prevents_send(hub, monkeypatch):
+    save = hub._save_step
+
+    async def finishing(key, state):
+        await save(key, state)
+        hub._finishing_step_tasks = {"t"}
+
+    monkeypatch.setattr(hub, "_save_step", finishing)
+    reply = await hub.control_task("t", "steer", "next turn")
+    assert reply["queued"] and not reply["sent"]
+    hub._push.assert_not_called()
+    key = hub._entry_step("t", hub.store.get("task", "t"))
+    assert hub._step(key)["steers"][0]["task"] is None
+
+
+async def test_close_serializes_with_control_publication(hub, monkeypatch):
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = hub._control_state
+
+    async def held(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        await original(*args, **kwargs)
+
+    monkeypatch.setattr(hub, "_control_state", held)
+    entry = hub.store.get("task", "t")
+    publication = asyncio.create_task(hub._publish_control("t", entry, {"action": "pause"}))
+    await entered.wait()
+    close = asyncio.create_task(hub._close_step_controls("req", "s1"))
+    try:
+        await asyncio.sleep(0.05)
+        assert not close.done()
+        release.set()
+        await asyncio.gather(publication, close)
+        assert hub._entry_step("t", entry) in hub._closed_steps
+    finally:
+        release.set()
+        await asyncio.gather(publication, close, return_exceptions=True)
+
+
 @pytest.mark.parametrize("operation", ["pause", "resume", "steer", "attach", "settle", "close"])
 async def test_step_rollback_suppresses_wake_send_and_notice(hub, monkeypatch, operation):
     key = hub._entry_step("t", hub.store.get("task", "t"))
