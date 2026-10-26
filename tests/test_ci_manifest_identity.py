@@ -1,5 +1,6 @@
 """Bounded manifest diagnostics with fake git only; no CI or process execution."""
 import copy
+import json
 
 import pytest
 
@@ -129,3 +130,109 @@ def test_parent_mismatch_stays_denied_and_logs_only_bounded_public_shas(producer
     assert '"length": 4' in output and '"expected":' in output
     assert 'f' * 40 in output and 'c' * 40 in output
     assert "arbitrary-private-value" not in output and len(output) < 500
+
+
+@pytest.fixture
+def upload():
+    original = dict(name='pytest-windows', run_id=42, run_attempt=1, head_sha='d' * 40,
+        status='completed', conclusion='success', created_at='2026-10-25T01:00:00Z',
+        started_at='2026-10-25T01:00:01Z', completed_at='2026-10-25T01:08:00Z')
+    copied = dict(original, run_attempt=3, created_at='2026-10-25T03:00:00Z')
+    artifact = dict(id=77, name='coverage-windows-42-1', expired=False,
+        created_at='2026-10-25T01:07:55Z', updated_at='2026-10-25T01:07:55Z',
+        workflow_run=dict(id=42, head_sha='d' * 40, repository_id=123, head_repository_id=123))
+    data = {1: original, 3: copied, 'artifacts': [artifact]}
+    def request(path):
+        if path.endswith('/artifacts?per_page=100'):
+            return dict(total_count=len(data['artifacts']), artifacts=data['artifacts'])
+        attempt = int(path.split('/attempts/')[1].split('/')[0])
+        return dict(total_count=1, jobs=[data[attempt]])
+    return data, request
+
+
+def select(request):
+    return cs.windows_artifact(dict(id=42, run_attempt=3), 'd' * 40, 123, request)
+
+
+def test_copied_success_resolves_original_upload(upload):
+    _, request = upload
+    assert select(request) == (77, 1)
+
+
+def test_fresh_execution_keeps_current_attempt(upload):
+    data, request = upload
+    data[3] = dict(data[1], run_attempt=3)
+    data['artifacts'][0]['name'] = 'coverage-windows-42-3'
+    assert select(request) == (77, 3)
+
+
+@pytest.mark.parametrize('case', ['missing', 'expired', 'foreign-run', 'foreign-head', 'foreign-repo',
+    'failed', 'running', 'newer-execution', 'copied-only', 'before-job', 'after-job', 'duplicate',
+    'wrong-job-run', 'wrong-job-head', 'wrong-job-attempt'])
+def test_unbound_or_missing_upload_stays_denied(upload, case):
+    data, request = upload
+    artifact = data['artifacts'][0]
+    if case == 'missing':
+        data['artifacts'] = []
+    elif case == 'expired':
+        artifact['expired'] = True
+    elif case.startswith('foreign-'):
+        artifact['workflow_run'][{'foreign-run': 'id', 'foreign-head': 'head_sha',
+                                  'foreign-repo': 'repository_id'}[case]] = 'bad'
+    elif case in {'failed', 'running'}:
+        data[3]['conclusion'] = 'failure' if case == 'failed' else None
+        data[3]['status'] = 'completed' if case == 'failed' else 'in_progress'
+    elif case == 'newer-execution':
+        data[3]['started_at'] = '2026-10-25T03:00:01Z'
+    elif case == 'copied-only':
+        artifact['name'] = 'coverage-windows-42-3'
+    elif case == 'before-job':
+        artifact['created_at'] = '2026-10-25T00:00:00Z'
+    elif case == 'after-job':
+        artifact['updated_at'] = '2026-10-25T02:00:00Z'
+    elif case == 'duplicate':
+        data['artifacts'].append(copy.deepcopy(artifact))
+    else:
+        data[1][{'wrong-job-run': 'run_id', 'wrong-job-head': 'head_sha',
+                 'wrong-job-attempt': 'run_attempt'}[case]] = 'bad'
+    with pytest.raises(ValueError):
+        select(request)
+
+
+def test_incomplete_api_page_stays_denied(upload):
+    _, request = upload
+    def incomplete(path):
+        result = request(path)
+        result['total_count'] += 1
+        return result
+    with pytest.raises(ValueError, match='incomplete producer jobs'):
+        select(incomplete)
+
+
+def test_verified_partial_receipt_is_validated_but_never_reusable(producer, upload, monkeypatch, tmp_path):
+    current, needs, event, _, _ = producer
+    _, request = upload
+    event_path = tmp_path / 'event.json'
+    event_path.write_text(json.dumps(event), encoding='utf-8')
+    monkeypatch.setenv('GITHUB_EVENT_PATH', str(event_path))
+    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '3')
+    monkeypatch.setenv('CI_WINDOWS_ARTIFACT_ID', '77')
+    monkeypatch.setattr(cs, 'api', request)
+    with pytest.raises(cs.NonReusablePartialRerun):
+        cs.produce_manifest(current, needs, event)
+    output = tmp_path / 'output.txt'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.setenv('CI_NEEDS', json.dumps(needs))
+    monkeypatch.setattr(cs, 'identity', lambda: current)
+    monkeypatch.setattr(cs.sys, 'argv', ['ci_skip.py', 'manifest'])
+    monkeypatch.chdir(tmp_path)
+    cs.main()
+    assert output.read_text(encoding='utf-8') == 'reusable=false\nreason=partial-rerun\n'
+    assert not (tmp_path / 'ci-result.json').exists()
+    monkeypatch.setenv('CI_WINDOWS_ARTIFACT_ID', '78')
+    with pytest.raises(ValueError, match='unbound prior-attempt'):
+        cs.produce_manifest(current, needs, event)
+    monkeypatch.setenv('CI_WINDOWS_ARTIFACT_ID', '77')
+    needs['pytest-windows']['outputs']['receipt'] = 'bad'
+    with pytest.raises(ValueError, match='missing/mismatched Windows'):
+        cs.produce_manifest(current, needs, event)
