@@ -68,11 +68,15 @@ test('HPC rack excludes local calculations from its running count', () => {
   assert.match(rack['aria-label'], /실행 중 1건/);
 });
 
-test('task-less snapshot without job identity does not invent an HPC wait', () => {
+test('task-less snapshot without job identity does not invent an HPC wait', async () => {
   const o = create();
   o.apply({type:'snapshot', data:{agents:[{id:'analyst'}], requests:[{id:'r1',status:'running',
     plan:{steps:[{id:'s1',agent_id:'analyst'}]},step_status:{s1:'hibernating'}}],staff_tasks:[]}});
   assert.equal(o.stateText(o.ag('analyst')), '작업·응답 대기');
+  const flow = new Element();
+  (await load()).syncStepFlow(flow, o.S.requests.get('r1'));
+  assert.match(flow.children[0].textContent, /작업·응답 대기/);
+  assert.doesNotMatch(flow.children[0].textContent, /HPC/);
 });
 test('local submission, state and request ownership reach the shared flow and task card', async () => {
   const {o, emit, q} = setup(), ui = await load();

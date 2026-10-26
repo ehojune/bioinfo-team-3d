@@ -7,8 +7,8 @@ const pad = n => String(n).padStart(2, '0');
 export function stepWaitLabel(status, jobs) {
   const local = (jobs || []).filter(job => String(job.id).startsWith('local-'));
   const hpc = (jobs || []).some(job => !String(job.id).startsWith('local-'));
-  const label = status === 'hibernating' && jobs
-    ? local.length ? hpc ? '로컬 계산·HPC 대기' : '계산 대기' : jobs.length ? 'HPC 대기' : '후속 처리 대기'
+  const label = status === 'hibernating'
+    ? !jobs ? '작업·응답 대기' : local.length ? hpc ? '로컬 계산·HPC 대기' : '계산 대기' : jobs.length ? 'HPC 대기' : '후속 처리 대기'
     : STATUS[status] || status;
   return label + (local.length ? ` · ${local.map(job => `로컬 계산 ${job.name}: ${{queued:'대기', running:'실행 중', held:'보류', suspended:'일시정지', missing:'상태 확인 중'}[job.state] || '상태 확인 중'}`).join(' / ')} · 진행률 모름` : '');
 }
