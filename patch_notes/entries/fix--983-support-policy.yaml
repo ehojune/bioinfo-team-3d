@@ -1,5 +1,9 @@
 pr: 991
 rows:
+  - sha: '6ec0747'
+    at: '2026-10-26 22:27'
+    summary: 'manual에 시설팀 지원 선언과 준비 gate의 범위를 안내합니다.'
+    text: '#990 구현 종료 뒤 한 문단과 상세 reference 링크를 반영했습니다. LF 기준 194,939→195,168자입니다.'
   - sha: '4d09a77'
     at: '2026-10-26 22:25'
     summary: '시설팀 지원 회귀를 Windows doctor cohort에 포함합니다.'
