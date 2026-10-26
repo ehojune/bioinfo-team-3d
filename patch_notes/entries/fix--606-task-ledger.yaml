@@ -1,0 +1,6 @@
+pr: 979
+rows:
+  - sha: 'f304762'
+    at: '2026-10-26 14:43'
+    summary: 'task 취소를 저장하는 동안 gateway가 다른 요청을 처리합니다.'
+    text: 'cancel_task의 task_cancel intent를 기존 SQLite async writer로 저장합니다. commit 뒤 전송하며 반복 취소·rollback·DB 재열기·offline replay를 mock으로 검증했습니다. 다른 task 원장 경계는 #606에 남습니다.'
