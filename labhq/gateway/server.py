@@ -2621,6 +2621,12 @@ class Hub:
         stored_halt = ((entry.get("result") or {}).get("error_kind") == "halted"
                        and not entry.get("halt_wait_finished"))
         if action == "resume" and (tid in self.halted_waits or stored_halt):
+            cancelled = False
+            if tid not in self.halted_waits:
+                entry, cancelled = await self._publication_write(self.store.aupdate_task_control(tid, "resume"))
+                current = self.store.get("task", tid)
+                if not current or current.get("halt_wait_finished") or not self._step_alive(current):
+                    raise ValueError("이 단계는 끝나서 전달할 수 없어요")
             state = self._step(key)
             # A resume after a halt also lifts a pause that came before the halt; one sent after it stays.
             if state["paused"] and int(state.get("pause_op") or 0) < int(state.get("halt_op") or 0):
@@ -2628,8 +2634,8 @@ class Hub:
                 self._save_step(key, state)
             if tid in self.halted_waits:
                 self.halted_waits[tid].set()
-            else:  # result is visible, but the orchestrator has not registered its waiter yet
-                self.store.put("task", tid, {**entry, "halt_resume_requested": True})
+            if cancelled:
+                raise asyncio.CancelledError
             return {"task_id": tid, "action": action, "resumed_halted": True, "sent": False, "queued": False}
         live = not entry.get("completed") or bool(entry.get("abandoned"))
         if action == "halt":
@@ -2637,7 +2643,20 @@ class Hub:
                 raise ValueError("이 작업은 이미 끝나 멈출 것이 없어요")
             if self._turn_waits(tid, entry):
                 raise ValueError(HALT_WHILE_WAITING)
-            self.store.put("task", tid, {**entry, "halt_requested": True})  # kept until its result comes back
+            entry, cancelled = await self._publication_write(self.store.aupdate_task_control(tid, "halt"))
+            if cancelled:
+                raise asyncio.CancelledError
+            current = self.store.get("task", tid)
+            if (not current or (current.get("completed") and not current.get("abandoned"))
+                    or not self._step_alive(current)):
+                raise ValueError("이 작업은 이미 끝나 멈출 것이 없어요")
+            if not current.get("halt_requested"):
+                # A queued whole-row writer may have overtaken this commit.
+                # Never promise offline replay unless the intent still exists.
+                if self._turn_waits(tid, current):
+                    raise ValueError(HALT_WHILE_WAITING)
+                raise ValueError("작업 상태가 바뀌었어요. 다시 시도해 주세요")
+            entry = current
             state = self._step(key)
             state["ops"] = int(state.get("ops") or 0) + 1
             state["halt_op"] = state["ops"]
@@ -3184,47 +3203,51 @@ class Hub:
         # can evict a tool start while a quiet command is still running.
         if typ in {"agent.status", "agent.tool", "agent.tool_result", "agent.log"}:
             tid = msg.get("task_id")
-            task = self.store.get("task", tid) if tid else None
-            if task and not task.get("completed"):
-                activity = dict(task.get("activity") or {})
-                data = msg.get("data") or {}
-                if typ == "agent.status":
-                    activity.update(data)
-                    for key in ("ask", "approval", "jobs", "asks"):
-                        activity[key] = data.get(key)
-                    if data.get("state") == "working":
+            if tid:
+                # Own inputs before yielding; the reducer only touches the latest
+                # activity on the writer thread, never a pre-await task snapshot.
+                data = copy.deepcopy(msg.get("data") or {})
+                activity_at = msg.get("ts") or time.time()
+
+                def update_activity(activity: dict) -> dict:
+                    if typ == "agent.status":
+                        activity.update(data)
+                        for key in ("ask", "approval", "jobs", "asks"):
+                            activity[key] = data.get(key)
+                        if data.get("state") == "working":
+                            activity.pop("warning", None)
+                    elif typ == "agent.tool":
+                        if activity.get("state") in {None, "queued", "waiting"}:
+                            activity["state"] = "working"
+                        tools = dict(activity.get("tools") or {})
+                        if not data.get("completed"):
+                            tools[data.get("id") or "legacy"] = {**data, "at": activity_at}
+                        activity["tools"] = tools
                         activity.pop("warning", None)
-                elif typ == "agent.tool":
-                    if activity.get("state") in {None, "queued", "waiting"}:
+                    elif typ == "agent.tool_result":
+                        tools = dict(activity.get("tools") or {})
+                        tools.pop(data.get("id") or "legacy", None)
+                        activity["tools"] = tools
                         activity["state"] = "working"
-                    tools = dict(activity.get("tools") or {})
-                    if not data.get("completed"):
-                        tools[data.get("id") or "legacy"] = {**data, "at": msg.get("ts") or time.time()}
-                    activity["tools"] = tools
-                    activity.pop("warning", None)
-                elif typ == "agent.tool_result":
-                    tools = dict(activity.get("tools") or {})
-                    tools.pop(data.get("id") or "legacy", None)
-                    activity["tools"] = tools
-                    activity["state"] = "working"
-                    activity.pop("ask", None)
-                    activity.pop("approval", None)
-                    activity.pop("warning", None)
-                elif data.get("level") in {"warn", "alert"}:
-                    activity["warning"] = data.get("text")
-                elif data.get("level") not in {"debug", "thinking"}:
-                    activity.pop("warning", None)
-                lookup = data.get("external_lookup") if typ == "agent.log" else None
-                if isinstance(lookup, dict):
-                    # #676: one line on the task board while a public lookup waits; the final status clears it.
-                    if lookup.get("status") == "waiting":
-                        activity["external_wait"] = {
-                            "tool": str(lookup.get("tool") or ""), "elapsed_s": lookup.get("elapsed_s"),
-                            "timeout_s": lookup.get("timeout_s"), "at": msg.get("ts") or time.time()}
-                    else:
-                        activity.pop("external_wait", None)
-                if activity != (task.get("activity") or {}):
-                    self.store.put("task", tid, {**task, "activity": activity})
+                        activity.pop("ask", None)
+                        activity.pop("approval", None)
+                        activity.pop("warning", None)
+                    elif data.get("level") in {"warn", "alert"}:
+                        activity["warning"] = data.get("text")
+                    elif data.get("level") not in {"debug", "thinking"}:
+                        activity.pop("warning", None)
+                    lookup = data.get("external_lookup") if typ == "agent.log" else None
+                    if isinstance(lookup, dict):
+                        # #676: one line on the task board while a public lookup waits; the final status clears it.
+                        if lookup.get("status") == "waiting":
+                            activity["external_wait"] = {
+                                "tool": str(lookup.get("tool") or ""), "elapsed_s": lookup.get("elapsed_s"),
+                                "timeout_s": lookup.get("timeout_s"), "at": activity_at}
+                        else:
+                            activity.pop("external_wait", None)
+                    return activity
+
+                await self.store.aupdate_task_activity(tid, update_activity)
         if typ == "runner.roster":
             self.set_roster(runner_id, msg.get("agents", []), msg.get("capabilities"))
             await self.publish({"type": "roster.updated", "ts": time.time(), "data": {"agents": list(self.agents.values())}})
