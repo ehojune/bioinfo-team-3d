@@ -2,7 +2,7 @@ pr: 980
 rows:
 - sha: 7d648b7
   at: '2026-10-26 14:54'
-  text: 先行 async publication과 최신 sync 쓰기를 구분하고 writer가 읽은 실제 계약의 재채용 자격을 저장 전에 재검증한다(P1 4374314239·4374314243).
+  text: 이전 async publication과 최신 sync 쓰기를 구분하고 writer가 읽은 실제 계약의 재채용 자격을 저장 전에 재검증한다(P1 4374314239·4374314243).
   summary: 경쟁 중에도 파일·Registry·roster를 일치시키고 바뀐 수습·payload·hash를 승인 없이 승격하지 않습니다.
 - sha: 2f177d1
   at: '2026-10-26 14:50'
