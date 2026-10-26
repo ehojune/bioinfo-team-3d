@@ -16,4 +16,4 @@
 - required 미충족은 기존 fail 집계·configuration readiness·doctor/init exit 1에 연결됩니다. required인 기존 설정의 init dry-run도 exit 1이며 파일은 쓰지 않습니다.
 - `ready`와 CSO 대체 표시는 실제 응답·provider 잔여·승인된 수정·원 단계 복구를 증명하지 않습니다. 실제 설치판 복구는 **UNVERIFIED**이며 #983은 OPEN입니다. runtime admission과 기존 login warning 정책은 바꾸지 않습니다.
 
-검증: `tests/test_facilities_support_983.py`, `tests/test_init_wizard.py`, `tests/test_doctor.py`, `tests/test_facilities_fallback_983.py`. 모두 격리 mock/static 근거입니다.
+검증: `tests/test_doctor_facilities_support_983.py`, `tests/test_init_wizard.py`, `tests/test_doctor.py`, `tests/test_facilities_fallback_983.py`. 모두 격리 mock/static 근거입니다.

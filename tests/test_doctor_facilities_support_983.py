@@ -1,4 +1,4 @@
-"""Profile intent gates use synthetic local evidence only; no CLI, daemon or network starts."""
+"""Doctor profile intent gates use synthetic evidence only; no CLI, daemon or network starts."""
 from pathlib import Path
 
 import pytest
