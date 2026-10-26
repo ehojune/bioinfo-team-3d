@@ -3207,6 +3207,18 @@ class Orchestrator:
             return await wait(agent_id, session_id, workdir, request_id=rid, step_id=step)
         return (None, None) if self._consult_resource_busy(agent_id, session_id, workdir) else (session_id, workdir)
 
+    @staticmethod
+    def _facilities_fallback_answer(answer: dict) -> dict:
+        """Keep the missing target visible even in adopted or legacy cached replies."""
+        notice = ("시설팀(facilities)이 현재 roster에 없거나 재접속하지 않아 CSO가 대체 담당입니다. "
+                  "시설팀에 다시 문의하지 마세요. 아래 답변의 시설팀 재문의 안내는 따르지 마세요. "
+                  "CSO 답변은 시설팀 진단·수정·복구 성공을 뜻하지 않습니다. "
+                  "해결 근거가 없으면 현재 단계를 중단하고 PI에게 지원 복구 판단을 요청하세요.")
+        field = "answer" if answer.get("status") == "answered" else "reason"
+        text = answer.get(field) or ""
+        return {**answer, "requested_to": "facilities", "fallback_reason": "facilities_unavailable",
+                field: text if text.startswith(notice) else notice + "\n\n" + text}
+
     async def answer_ask(self, ask: AskRequest, runner_id: str) -> None:
         """Route one bounded question. Hard stops are classified before any model runs."""
         normalized_refs = [str(PurePosixPath(ref.replace("\\", "/"))) for ref in ask.refs]
@@ -3223,6 +3235,10 @@ class Orchestrator:
         for other_id, entry in entries.items():
             if other_id != ask.id and entry.get("signature") == signature and entry.get("state") == "resolved":
                 cached = ask_result(**{**entry["answer"], "cached": True})
+                if ask.to == "facilities" and cached.get("routed_to") == "cso":
+                    if "facilities" in self.hub.agents:
+                        continue  # Support returned: the old fallback must not hide the available target.
+                    cached = self._facilities_fallback_answer(cached)
                 await self.hub.resolve_ask(ask, runner_id, cached)
                 return
 
@@ -3301,8 +3317,15 @@ class Orchestrator:
             self.hub.store.put("ask", ask.id, {**(self.hub.store.get("ask", ask.id) or {}), "routed_to": routed})
             if routed not in self.hub.agents and wait_online and status == "waiting_for_runner":
                 await wait_online(routed, self.hub.s.gateway.resume_wait_s)
+
+        fallback = requested == "facilities" and routed == "cso"
+
+        async def resolve_consult(answer: dict) -> None:
+            await self.hub.resolve_ask(ask, runner_id,
+                                      self._facilities_fallback_answer(answer) if fallback else answer)
+
         if routed not in self.hub.agents:
-            await self.hub.resolve_ask(ask, runner_id, ask_result(
+            await resolve_consult(ask_result(
                 reason=f"대상 직원 {routed!r}이 roster에 없습니다",
                 **{"from": "labhq", "routed_to": routed}))
             return
@@ -3311,7 +3334,7 @@ class Orchestrator:
         except ValueError as error:  # its request's CSO model cannot be honored: never answer as another model
             refusal = str(error)
         if refusal:  # a consult runs as the runner's read-only profile; an engine that ignores it could write
-            await self.hub.resolve_ask(ask, runner_id, ask_result(
+            await resolve_consult(ask_result(
                 reason=refusal, **{"from": "labhq", "routed_to": routed}))
             return
         # The question and refs come from the asking task: restricted inputs there never reach staff that send data
@@ -3319,11 +3342,11 @@ class Orchestrator:
         restricted = ask.source_restricted or self._request_restricted(ask.request_id)
         hosts = external_hosts(self.hub.agents.get(routed) or {})
         if not_yet_active(self.hub.agents.get(routed) or {}):
-            await self.hub.resolve_ask(ask, runner_id, ask_result(
+            await resolve_consult(ask_result(
                 reason=probation_refusal(routed), **{"from": "labhq", "routed_to": routed}))
             return
         if restricted and hosts:
-            await self.hub.resolve_ask(ask, runner_id, ask_result(
+            await resolve_consult(ask_result(
                 reason=consult_refusal(hosts), **{"from": "labhq", "routed_to": routed}))
             return
 
@@ -3344,6 +3367,14 @@ class Orchestrator:
             request=clip(request.get("text") or "", 4000), plan=clip(json.dumps(request.get("plan") or {},
                                                                                  ensure_ascii=False), 6000),
         )
+        if fallback:
+            prompt += ("\n\nThe requested target is facilities, but facilities is unavailable in the current roster "
+                       "after any reconnect wait. You (CSO) are the actual fallback responder. "
+                       "State that facilities is unavailable and that CSO is answering instead. "
+                       "Do not ask or tell the employee to contact facilities again, including via a colleague ask. "
+                       "Give only evidence-backed advice within existing permissions. If you cannot resolve the "
+                       "blocker, tell the employee to stop the blocked step and ask PI to decide how to restore "
+                       "support. Do not claim facilities diagnosis, repair or recovery occurred.")
         if routed == "facilities":
             if automatic:
                 # No research request, plan, paths, artifacts or prior conversation enters automatic diagnosis.
@@ -3356,6 +3387,18 @@ class Orchestrator:
                 prompt += "\nThe doctor snapshot describes your runner, not necessarily the blocked employee's host."
         overrides = dict(READ_ONLY_OVERRIDES)
         async with self._consult_lock(ask.request_id, routed):
+            # Re-read after acquiring the lock: another ask may have answered while we waited.
+            # Publish the answer before releasing this same lock below.
+            if fallback and any(
+                    other_id != ask.id and (entry.get("ask") or {}).get("to") == "facilities" and
+                    (entry.get("answer") or {}).get("routed_to") == "cso" and
+                    (entry.get("answer") or {}).get("status") == "answered" and
+                    tuple(entry.get("scope") or self._ask_scope(entry.get("ask") or {})) == scope
+                    for other_id, entry in self.hub.store.all("ask").items()):
+                await resolve_consult(ask_result(
+                    reason="이 단계에는 이미 CSO 대체 답변이 있습니다. 부재한 시설팀으로 재문의하지 않습니다.",
+                    **{"from": "labhq", "routed_to": routed}))
+                return
             # After a gateway restart the runner may still be running this ask's consult.
             # Adopt its result; when its outcome is unknown, isolate the new consult.
             adopt = getattr(self.hub, "adopt_consult", None)
@@ -3401,11 +3444,11 @@ class Orchestrator:
                 request["cso_session_id"], request["cso_workdir"] = result.session_id, result.workdir
                 if ask.request_id in self.hub.requests:
                     await persist_request(self.hub, ask.request_id)
-        answered = result.ok and bool(result.text.strip())
-        answer = result.text.strip() if answered else f"상담 실패: {result.error or 'empty answer'}"
-        await self.hub.resolve_ask(ask, runner_id, ask_result(
-            answer=answer if answered else None, reason=None if answered else answer,
-            **{"from": routed, "routed_to": routed, "remaining_asks": max(0, 2 - task_count)}))
+            answered = result.ok and bool(result.text.strip())
+            answer = result.text.strip() if answered else f"상담 실패: {result.error or 'empty answer'}"
+            await resolve_consult(ask_result(
+                answer=answer if answered else None, reason=None if answered else answer,
+                **{"from": routed, "routed_to": routed, "remaining_asks": max(0, 2 - task_count)}))
 
     # ---------- follow-up on a finished request (#36) ----------
     async def run_followup(self, rid: str, fid: str) -> None:
