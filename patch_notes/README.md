@@ -14,7 +14,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:25 | [`b9d7f7e`](https://github.com/ehojune/bioinfo-team-3d/pull/980/commits/b9d7f7e) | **재채용과 reload가 겹쳐도 두 파일·Registry·roster가 일치합니다.**<br>sync Registry.load의 읽기·만료 archive를 FILES 단일 job으로 묶어 재채용 전 만료 snapshot이 새 계약을 지우지 않게 한다(P1 4374470002). |
+| 15:17 | [`62a149f`](https://github.com/ehojune/bioinfo-team-3d/pull/980/commits/62a149f) | **취소와 저장 실패가 겹쳐도 저장 오류를 잃지 않습니다.**<br>wait_for는 shield하고 내부 task에 취소를 한 번 전달한 뒤 실제 결과를 확인해 Python 3.10의 저장 오류 masking을 막는다. |
+| 15:04 | [`5d068f9`](https://github.com/ehojune/bioinfo-team-3d/pull/980/commits/5d068f9) | **반복 취소에도 두 파일·Registry·roster 반영과 저장 오류 판정을 끝까지 기다립니다.**<br>Python 3.10 wait_for의 재취소가 내부 저장 완료 판정보다 먼저 반환하지 않도록 planning의 취소 전달·대기를 분리한다. |
+| 14:54 | [`7d648b7`](https://github.com/ehojune/bioinfo-team-3d/pull/980/commits/7d648b7) | **경쟁 중에도 파일·Registry·roster를 일치시키고 바뀐 수습·payload·hash를 승인 없이 승격하지 않습니다.**<br>이전 async publication과 최신 sync 쓰기를 구분하고 writer가 읽은 실제 계약의 재채용 자격을 저장 전에 재검증한다(P1 4374314239·4374314243). |
+| 14:50 | [`2f177d1`](https://github.com/ehojune/bioinfo-team-3d/pull/980/commits/2f177d1) | **Windows inventory 거절을 해소하며 test·CI 정책은 그대로 유지합니다.**<br>plan-rehire mock 파일을 기존 Windows runner cohort 이름으로 옮겨 Windows에서도 모든 회귀를 실행한다. |
 | 14:50 | [`93a4a25`](https://github.com/ehojune/bioinfo-team-3d/pull/979/commits/93a4a25) | **task 완료와 취소가 겹쳐도 취소 intent가 뒤늦게 남지 않습니다.**<br>P2 4374299436의 양방향 완료 경쟁을 수정 전 2 failed로 재현했습니다. 완료 후 intent 생성·전송을 거부하고 완료 표시 뒤 cleanup합니다. 관련 mock/static 118 passed·1 skipped이며 Windows 필수 cohort에 회귀를 등록했습니다. |
+| 14:46 | [`c75b1a8`](https://github.com/ehojune/bioinfo-team-3d/pull/980/commits/c75b1a8) | **느린 재채용 저장 중 heartbeat를 유지하고 반복 취소에도 저장 결과를 판정합니다.**<br>plan-rehire의 계약 읽기·검사·두 파일 저장을 FILES writer에서 기다리고 Registry·roster를 FIFO 순서로 반영한다(Refs |
 | 14:43 | [`f304762`](https://github.com/ehojune/bioinfo-team-3d/pull/979/commits/f304762) | **task 취소를 저장하는 동안 gateway가 다른 요청을 처리합니다.**<br>cancel_task의 task_cancel intent를 기존 SQLite async writer로 저장합니다. commit 뒤 전송하며 반복 취소·rollback·DB 재열기·offline replay를 mock으로 검증했습니다. 다른 task 원장 경계는 #606에 남습니다. |
 | 14:03 | [`496ff4c`](https://github.com/ehojune/bioinfo-team-3d/pull/976/commits/496ff4c) | **번역이 늦게 끝나도 이미 답한 승인 카드가 다시 열리지 않습니다.**<br>P1 4374092270의 늦은 번역 snapshot 저장 경쟁을 수정 전 2 failed로 재현했습니다. writer transaction에서 이미 결정된 카드의 재삽입을 거부합니다. 관련 52 passed이며 DB 재열기에서도 결정만 남는지 확인했습니다. |
 | 13:56 | [`8f76417`](https://github.com/ehojune/bioinfo-team-3d/pull/978/commits/8f76417) | **이미 시작된 로컬 계산이 계속 대기로 보이던 표시를 고쳤습니다.**<br>runner는 프로세스를 시작한 뒤 job.submitted를 보내므로 local- 제출을 실행 중으로 기록합니다. 합성 running event 없이 초기 표시를 검증하며 HPC 제출은 대기를 유지합니다. |

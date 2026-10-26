@@ -4,6 +4,19 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+plan-rehire가 느린 계약 저장으로 event loop를 막는 경계를 async로 전환합니다. Refs #606.
+
+- `Registry.arehire()`는 별도 Registry에서 읽기·provenance 검사·두 파일 저장을 기존 FILES 단일 job으로 실행합니다. 성공 뒤 loop에서 Registry·roster를 반영하며 sync API는 유지합니다.
+- mock 150ms 저장 중 idle/active heartbeat: 수정 전 2 failed → 수정 후 통과. 동일 ID update/hire/rehire, FIFO publication, snapshot, 반복 취소, 저장 오류·재시도, 두 복사본·재로드를 검증했습니다.
+- P1 4374314239·4374314243의 지연된 이전 publication·교체된 부적격 계약을 5 failed로 재현했습니다. sync 쓰기 표식으로 FIFO 판정을 보완하고 writer가 읽은 계약의 payload·수습·hash 자격을 저장 전에 다시 검사합니다.
+- CI Python 3.10의 반복 취소 3 failed와 저장 오류 masking 2 failed를 수정했습니다. wait_for를 shield하고 내부 task에 취소를 한 번 전달한 뒤 실제 결과를 확인합니다. 3.10의 취소 cleanup·오류 masking을 모사한 회귀도 추가했습니다.
+- reload 경쟁 P1 4374470002를 1 failed로 재현했습니다. sync load의 읽기·만료 archive를 FILES 단일 job으로 묶고 live Registry는 호출자 쪽에서 반영합니다.
+- 관련 pytest 185 passed, 39 subtests passed. public·diff·Windows cohort 검사 통과. 실제 process·디스크 지연·운영·연구·HPC·설치·배포는 실행하지 않았습니다.
+- `hold` 해제 조건: 최종 head CI 성공·실제 리뷰 완료·알려진 P1 수정검증·충돌 없음·head guard 확인.
+- 앞선 talent_pool·probation·provenance preflight 읽기와 sync reload의 대기는 남습니다. gateway/task/job 잔여와 별개이며 #606은 OPEN 유지합니다. 공통 문서는 담당 순서대로 별도 통합합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Refs #606. task 취소 intent 저장 하나를 기존 SQLite async writer로 옮겼습니다.
 
 - `Hub.cancel_task()`는 저장 성공 뒤 runner에 취소를 보냅니다. 반복 취소에도 commit 결과·오류를 확인하며 실패하면 전송하지 않습니다. 저장된 intent는 재접속 때 다시 보냅니다.
