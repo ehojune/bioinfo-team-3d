@@ -525,6 +525,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
         if repo:
             data.setdefault("dev_log", {})["repo"] = repo
         if existing is not None:
+            data["runner"]["facilities_support"] = existing.runner.facilities_support
             # Consent belongs to its target too; --force must not redirect an existing opt-in.
             bioinfo = data.setdefault("policy", {}).setdefault("bioinfo_agent", {})
             for key in ("pipeline_pr", "pipeline_repo", "pipeline_base_branch"):
