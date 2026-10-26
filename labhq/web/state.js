@@ -357,6 +357,12 @@ const runnerWaitsFor = (a, q) => q.status === 'waiting_for_runner' &&
   (q.runnerMissing.size ? q.runnerMissing.has(a.id) : q.resumeMissing.length ? q.resumeMissing.includes(a.id)
     : q.mode === 'direct' ? q.agent_id === a.id
       : a.id === 'cso' && !q.plan.length && ['orchestrate', 'plan_only'].includes(q.mode));
+const jobWaitText = ids => {
+  const local = ids.some(id => String(id).startsWith('local-'));
+  const hpc = ids.some(id => !String(id).startsWith('local-'));
+  return local ? hpc ? '로컬 계산·HPC 작업 기다리는 중' : '로컬 계산 기다리는 중'
+    : hpc ? 'HPC 작업 기다리는 중' : '후속 처리 기다리는 중';
+};
 function requestStaffStatus(a) {
   const requests = sortRequests([...S.requests.values()].filter(q => participates(a, q)));
   const active = requests.filter(q => isActiveRequest(q.status));
@@ -370,7 +376,9 @@ function requestStaffStatus(a) {
       ['waiting_login','로그인 대기'], ['waiting_quota','한도 대기'], ['waiting_facilities_fix','환경 수정 승인 대기']]) {
       if (steps.includes(step)) return {state:'waiting', text};
     }
-    if (steps.includes('hibernating')) return {state:'hibernating', text:'HPC 작업 기다리는 중'};
+    if (steps.includes('hibernating')) return {state:'hibernating', text:jobWaitText(active.flatMap(q =>
+      q.plan.filter(s => s.agent_id === a.id && q.steps[s.id] === 'hibernating')
+        .flatMap(s => (q.stepJobs[s.id] || []).map(job => job.id))))};
     if (steps.length && steps.every(s => ['done', 'skipped'].includes(s))) return {state:'done', text:'담당 단계 완료'};
     if (active.some(q => runnerWaitsFor(a, q))) return {state:'waiting', text:'러너 기다림'};
     return {state:'queued', text:'차례 대기'};
@@ -419,7 +427,12 @@ const stateText = (a, vs = visual(a)) => {
     if (controlledState(t) === 'paused') return '일시 정지됨';
     if (vs === 'queued') return '차례 기다리는 중';
     if (vs === 'waiting') return activity.ask ? '답 기다리는 중' : 'PI 결정 기다리는 중';
-    if (vs === 'hibernating') return (activity.jobs || []).length ? 'HPC 작업 기다리는 중' : '답 기다리는 중';
+    if (vs === 'hibernating') {
+      const jobs = (activity.jobs || []).filter(jid => !['completed', 'failed', 'cancelled', 'unknown_finished', 'error']
+        .includes(S.jobContext.get(JSON.stringify([t.id, String(jid)]))?.state));
+      return jobs.length ? jobWaitText(jobs) : (activity.asks || []).length ? '답 기다리는 중'
+        : (activity.jobs || []).length ? jobWaitText([]) : '답 기다리는 중';
+    }
     if (vs === 'working' && activity.external_wait) return externalWaitText(activity.external_wait);
     if (vs === 'working') return tool ? `${/Bash|PowerShell|shell|command_execution/i.test(tool.name) ? '명령' : '도구'} 실행 중 · ${Math.max(0, Math.floor((now() - tool.at) / 60))}분째` : '생각하는 중';
   }
@@ -427,7 +440,10 @@ const stateText = (a, vs = visual(a)) => {
     const status = requestStaffStatus(a);
     if (status) return status.text;
   }
-  return vs === 'hibernating' && a.waitFor === 'answer' ? '답 기다리는 중' : STATE_KO[vs];
+  if (vs === 'hibernating' && a.waitFor === 'answer') return '답 기다리는 중';
+  if (vs === 'hibernating' && ['local', 'mixed'].includes(a.waitFor))
+    return a.waitFor === 'local' ? jobWaitText(['local-']) : jobWaitText(['local-', 'hpc']);
+  return STATE_KO[vs];
 };
 function toolInputLine(input) {
   let value = input;
@@ -778,7 +794,9 @@ function apply(ev, replay = false) {
       trackTask(a, ev.task_id, d.state || a.state, d.task, Boolean(d.halted), rid, S.taskStep.get(ev.task_id));
       // Display only, like usage and trace: kept out of the replayed state the golden hashes compare.
       if (['hibernating', 'waiting', 'working', 'idle', 'done'].includes(d.state)) Object.defineProperty(a, 'waitFor', { writable: true, configurable: true, enumerable: false,
-        value: (d.jobs || []).length ? 'hpc' : d.ask || (d.asks || []).length ? 'answer' : '' });
+        value: (d.jobs || []).length ? (d.jobs.some(jid => String(jid).startsWith('local-'))
+          ? d.jobs.some(jid => !String(jid).startsWith('local-')) ? 'mixed' : 'local' : 'hpc')
+          : d.ask || (d.asks || []).length ? 'answer' : '' });
       if (d.task) a.task = d.task;
       if (d.state === 'done' || d.state === 'idle') a.tool = '';
       if (d.error) { a.error = d.error; logTo(a, `오류: ${d.error}`, ts); }

@@ -24,6 +24,49 @@ function setup() {
   const emit = (type, data, rid='r1') => o.apply({type, data, request_id:rid, task_id:rid+'-task', agent_id:'analyst'});
   return {o, emit, q:o.S.requests.get('r1')};
 }
+
+test('staff waiting labels distinguish local jobs, HPC, asks and terminal jobs', () => {
+  const {o, emit} = setup();
+  o.apply({type:'snapshot', data:{agents:[{id:'analyst'}], requests:[], staff_tasks:[]}});
+  emit('request.created', {text:'local wait'});
+  emit('request.plan', {steps:[{id:'s1', agent_id:'analyst'}]});
+  emit('task.dispatched', {step_id:'s1', kind:'step'});
+  const agent = o.ag('analyst');
+  emit('job.submitted', {job_id:'local-one', name:'GSEA'});
+  emit('task.result', {ok:true, pending_jobs:['local-one']});
+  assert.equal(o.stateText(agent), '로컬 계산 기다리는 중');
+  emit('job.state', {job_id:'local-one', state:'completed'});
+  assert.equal(o.stateText(agent), '후속 처리 기다리는 중');
+  emit('task.result', {ok:true, pending_jobs:['42']});
+  assert.equal(o.stateText(agent), 'HPC 작업 기다리는 중');
+  emit('task.result', {ok:true, pending_jobs:['local-two', '42']});
+  assert.equal(o.stateText(agent), '로컬 계산·HPC 작업 기다리는 중');
+  emit('task.result', {ok:true, pending_jobs:[], pending_asks:['ask-one']});
+  assert.equal(o.stateText(agent), '답 기다리는 중');
+});
+
+test('task-less local wait survives roster refresh without changing HPC or ask labels', () => {
+  const o = create();
+  o.apply({type:'snapshot', data:{agents:[{id:'analyst'}]}});
+  o.apply({type:'agent.status', agent_id:'analyst', data:{state:'hibernating', jobs:['local-one']}});
+  o.apply({type:'roster.updated', data:{agents:[{id:'analyst', state:'hibernating'}]}});
+  assert.equal(o.stateText(o.ag('analyst')), '로컬 계산 기다리는 중');
+});
+
+test('2.5D visible staff badge retains the local or followup wait label', async () => {
+  const ui = await import('data:text/javascript;base64,' + fs.readFileSync(path.join(web, 'ui/office-art.js')).toString('base64'));
+  for (const detail of ['로컬 계산 기다리는 중', '로컬 계산·HPC 작업 기다리는 중', '후속 처리 기다리는 중'])
+    assert.equal(ui.officeStatus({}, 'hibernating', detail).text, detail);
+});
+
+test('HPC rack excludes local calculations from its running count', () => {
+  const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
+  const source = html.slice(html.indexOf('function renderRack()'), html.indexOf('function renderDoor()'));
+  const rack = {dataset:{}, setAttribute(name,value) { this[name] = value; }};
+  const S = {jobs:new Map([['local-one',{id:'local-one',state:'running'}], ['42',{id:'42',state:'running'}]])};
+  vm.runInNewContext(source + '\nrenderRack();', {S, $:()=>rack, esc:String});
+  assert.match(rack['aria-label'], /실행 중 1건/);
+});
 test('local submission, state and request ownership reach the shared flow and task card', async () => {
   const {o, emit, q} = setup(), ui = await load();
   emit('job.submitted', {job_id:'local-one', name:'GSEA'});
