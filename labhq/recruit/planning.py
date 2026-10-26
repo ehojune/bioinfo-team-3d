@@ -331,6 +331,18 @@ async def run_task(runner, task):
         row = task.meta["recruit"]
         pid = paper_key(row.get("paper") or row.get("repo"))
         payload = conversion_payload(row)
+
+        def validate_rehire(candidate):
+            c = candidate.contract
+            if (not c or paper_key(c.paper or c.repo) != pid or c.kind not in {"technician", "full"}
+                    or c.verification.get("conversion_payload") != payload):
+                raise ValueError("rehire contract no longer matches the approved conversion")
+            passed, _ = paper2agent.probation(c.kind, c.verification.get("probe_tools") or [],
+                                             c.skill_dir, c.verification.get("offer_status"))
+            if (not passed or c.status == "probation" or provenance.missing_hashes(candidate)
+                    or provenance.provenance_changes(candidate)):
+                raise ValueError("rehire contract no longer passes probation/hash checks")
+
         for spec in runner.registry.talent_pool():
             c = spec.contract
             if not c or paper_key(c.paper or c.repo) != pid or c.kind not in {"technician", "full"}:
@@ -346,7 +358,7 @@ async def run_task(runner, task):
             current = runner.registry.agents.get(spec.id)
             if not current or not current.contract or current.contract.expires_at <= time.time():
                 spec = await runner.registry.arehire(runner.registry._slug(spec), runner.s.recruit.default_ttl_days,
-                                                     on_commit=runner._send_roster)
+                                                     on_commit=runner._send_roster, validate=validate_rehire)
             elif current.contract.status != "active":
                 return {"status": "failed", "error": "인재풀 직원이 active가 아님"}
             else:

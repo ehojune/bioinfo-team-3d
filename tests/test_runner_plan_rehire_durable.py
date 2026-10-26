@@ -212,12 +212,12 @@ async def test_rehire_read_verification_and_snapshot_stay_on_writer(plan_rehire,
     loop_thread = threading.get_ident()
     entered, release = threading.Event(), threading.Event()
 
-    def blocked(self, slug, days):
+    def blocked(self, slug, days, **kwargs):
         assert threading.get_ident() != loop_thread
         assert self is not r.registry
         entered.set()
         assert release.wait(3)
-        return original(self, slug, days)
+        return original(self, slug, days, **kwargs)
 
     monkeypatch.setattr(Registry, 'rehire', blocked)
     old_live, old_talent = copies(r)
@@ -274,3 +274,85 @@ async def test_cancel_before_submission_does_not_rehire(plan_rehire, monkeypatch
         with pytest.raises(asyncio.CancelledError):
             await pending
     assert r.receipts == []
+
+
+async def test_earlier_queued_hire_callback_does_not_suppress_rehire(plan_rehire, monkeypatch):
+    r, _ = plan_rehire
+    loop = asyncio.get_running_loop()
+    schedule = loop.call_soon_threadsafe
+    callbacks = []
+
+    def defer(callback, *args, **kwargs):
+        if callback == r.registry._remember:
+            callbacks.append((callback, args))
+            return None
+        return schedule(callback, *args, **kwargs)
+
+    monkeypatch.setattr(loop, 'call_soon_threadsafe', defer)
+    hired = r.registry.get('c_x').model_copy(deep=True)
+    hired.name = 'earlier hire'
+    await r.registry.asave_contract(hired)
+    monkeypatch.setattr(loop, 'call_soon_threadsafe', schedule)
+    assert len(callbacks) == 1
+    original = Registry._write_contract_copies
+    entered, release = threading.Event(), threading.Event()
+
+    def blocked(self, spec, text):
+        entered.set()
+        assert release.wait(3)
+        return original(self, spec, text)
+
+    monkeypatch.setattr(Registry, '_write_contract_copies', blocked)
+    pending = asyncio.create_task(r.registry.arehire('x', 3, on_commit=r._send_roster))
+    try:
+        await wait_entered(entered)
+        callback, args = callbacks[0]
+        callback(*args)  # older FIFO publication is serviced after rehire's snapshot
+    finally:
+        release.set()
+    saved = await pending
+    assert r.registry.get('c_x') is saved
+    assert saved.name == 'earlier hire'
+    assert r.receipts[-1]['c_x'] == saved.model_dump(mode='json')
+
+
+@pytest.mark.parametrize('invalid', ['probation', 'payload', 'kind', 'hash', 'paper'])
+async def test_rehire_rechecks_actual_writer_snapshot(plan_rehire, monkeypatch, invalid):
+    r, task = plan_rehire
+    entered, release = threading.Event(), threading.Event()
+
+    def block():
+        entered.set()
+        assert release.wait(3)
+
+    blocker = durable.submit(durable.FILES, block)
+    await wait_entered(entered)
+    replacement = r.registry.get('c_x').model_copy(deep=True)
+    if invalid == 'probation':
+        replacement.contract.status = 'probation'
+    elif invalid == 'payload':
+        replacement.contract.verification['conversion_payload'] = {'different': True}
+    elif invalid == 'kind':
+        replacement.contract.kind = 'reader'
+    elif invalid == 'paper':
+        replacement.contract.paper = 'PMID:87654321'
+    else:
+        replacement.name = 'missing hashes'
+        monkeypatch.setattr(planning.provenance, 'missing_hashes', lambda spec: spec.name == 'missing hashes')
+    hire = asyncio.create_task(r.registry.asave_contract(replacement))
+    await asyncio.sleep(0)  # queue replacement after blocker, before rehire's barrier
+    pending = asyncio.create_task(planning.run_task(r, task))
+    try:
+        await asyncio.sleep(.01)  # preflight still sees the original talent file
+        assert not pending.done()
+    finally:
+        release.set()
+    await asyncio.wrap_future(blocker)
+    await hire
+    result = await pending
+    assert result.structured['status'] == 'failed'
+    assert r.receipts == []
+    assert r.registry.get('c_x').model_dump(mode='json') == replacement.model_dump(mode='json')
+    live, talent = copies(r)
+    assert live.read_bytes() == talent.read_bytes()
+    assert yaml.safe_load(live.read_text(encoding='utf8'))['contract']['expires_at'] == 1
