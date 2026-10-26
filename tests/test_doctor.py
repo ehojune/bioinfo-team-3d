@@ -1,8 +1,11 @@
 import json
+import shutil
+from types import SimpleNamespace
 import pytest
 from labhq import doctor
 from labhq.adapters import codex as codex_mod
 from labhq.settings import DataZone, Settings
+from labhq.registry import Registry
 
 
 @pytest.fixture(autouse=True)
@@ -22,6 +25,155 @@ def _settings(tmp_path):
                                                "agents_dir": str(agents.parent)},
                                     "gateway": {"state_dir": str(tmp_path / "gateway")},
                                     "hpc": {"scheduler": "none"}})
+
+
+def test_doctor_reads_custom_contract_roster(tmp_path):
+    settings = _settings(tmp_path)
+    settings.runner.contract_dir = str(tmp_path / "instance-contracts")
+    folder = tmp_path / "instance-contracts"
+    folder.mkdir()
+    (folder / "facilities.yaml").write_text(
+        "id: facilities\nname: Facilities\nrole: test\nengine: mock\n"
+        "employment: contract\ncontract:\n  hired_at: 1\n  expires_at: 9999999999\n  status: active\n",
+        encoding="utf-8",
+    )
+    assert {a.id for a in doctor._roster(settings)} == {"worker", "facilities"}
+
+
+@pytest.mark.parametrize("content", ["not: [valid", "id: invalid\nengine: unsupported\n"])
+def test_doctor_custom_contract_preserves_yaml_errors(tmp_path, content):
+    import yaml
+
+    settings = _settings(tmp_path)
+    settings.runner.contract_dir = str(tmp_path / "contracts")
+    folder = tmp_path / "contracts"
+    folder.mkdir()
+    path = folder / "invalid.yaml"
+    path.write_text(content, encoding="utf-8")
+    before = path.read_bytes(), path.stat().st_mtime_ns
+    with pytest.raises((ValueError, yaml.YAMLError)):
+        doctor._roster(settings)
+    with pytest.raises((ValueError, yaml.YAMLError)):
+        Registry(tmp_path / "agents", tmp_path / "talent", folder).load()
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+    assert not (tmp_path / "talent").exists()
+
+
+def test_doctor_missing_custom_directory_does_not_fall_back_or_create_it(tmp_path):
+    settings = _settings(tmp_path)
+    settings.runner.contract_dir = str(tmp_path / "missing")
+    _write_roster_agent(tmp_path / "agents" / "contract", "ignored.yaml", "ignored", expires_at=9999999999)
+    assert [a.id for a in doctor._roster(settings)] == ["worker"]
+    assert not (tmp_path / "missing").exists()
+
+
+def _write_roster_agent(folder, filename, agent_id, *, employment="contract", status="active", expires_at=200,
+                        name=None, contract=True):
+    import yaml
+
+    folder.mkdir(parents=True, exist_ok=True)
+    data = {"id": agent_id, "name": name or agent_id, "role": "synthetic", "engine": "mock",
+            "employment": employment}
+    if contract:
+        data["contract"] = {"hired_at": 1, "expires_at": expires_at, "status": status}
+    (folder / filename).write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+@pytest.mark.parametrize("custom", [False, True])
+def test_doctor_roster_matches_registry_without_archiving(tmp_path, monkeypatch, custom):
+    import labhq.registry as registry_module
+
+    monkeypatch.setattr(registry_module.time, "time", lambda: 100)
+    settings = _settings(tmp_path)
+    base = tmp_path / "agents"
+    folder = tmp_path / "custom" if custom else base / "contract"
+    if custom:
+        settings.runner.contract_dir = str(folder)
+        _write_roster_agent(base / "contract", "ignored.yaml", "ignored")
+    _write_roster_agent(base / "core", "a.yaml", "duplicate", name="core")
+    _write_roster_agent(folder, "a.yaml", "duplicate", name="first contract")
+    _write_roster_agent(folder, "z.yaml", "duplicate", name="last contract")
+    _write_roster_agent(folder, "expired-duplicate.yaml", "worker", expires_at=99)
+    _write_roster_agent(folder, "active.yaml", "active")
+    _write_roster_agent(folder, "probation.yaml", "probation", status="probation")
+    _write_roster_agent(folder, "boundary.yaml", "boundary", expires_at=100)
+    _write_roster_agent(folder, "expired.yaml", "expired", expires_at=99)
+    _write_roster_agent(folder, "status-expired.yaml", "status_expired", status="expired")
+    _write_roster_agent(folder, "archived.yaml", "archived", status="archived")
+    _write_roster_agent(folder, "missing.yaml", "missing", contract=False)
+    # Runner treats employment as authoritative, even if a core agent has stale contract metadata.
+    _write_roster_agent(base / "core", "core-meta.yaml", "core_meta", employment="core", expires_at=1)
+    (folder / "_disabled.yaml").write_text("not: [valid", encoding="utf-8")
+
+    def snapshot(root):
+        return {str(p.relative_to(root)): (p.is_dir(), p.stat().st_mtime_ns,
+                                          p.read_bytes() if p.is_file() else None)
+                for p in root.rglob("*")}
+
+    before = snapshot(tmp_path)
+    with monkeypatch.context() as patch:
+        patch.setattr(Registry, "load", lambda *a: pytest.fail("doctor must not call Registry.load"))
+        patch.setattr(Registry, "_archive", lambda *a: pytest.fail("doctor must not archive"))
+        actual = doctor._roster(settings)
+    assert snapshot(tmp_path) == before
+    assert {a.id for a in actual} == {"duplicate", "active", "probation", "boundary", "core_meta"}
+    assert next(a.name for a in actual if a.id == "duplicate") == "last contract"
+
+    # Compare against the real lifecycle loader on a disposable copy, leaving doctor inputs intact.
+    shutil.copytree(base, tmp_path / "runner-agents")
+    runner_contract = None
+    if custom:
+        runner_contract = tmp_path / "runner-contracts"
+        shutil.copytree(folder, runner_contract)
+    reg = Registry(tmp_path / "runner-agents", tmp_path / "talent", runner_contract)
+    reg.load()
+    assert [a.model_dump() for a in actual] == [a.model_dump() for a in reg.agents.values()]
+    assert any((tmp_path / "talent").glob("*/contract.yaml"))
+
+
+@pytest.mark.parametrize("force_engine", [None, "mock"])
+def test_doctor_checks_custom_contract_effective_engine_readonly(tmp_path, monkeypatch, force_engine):
+    from labhq.runner import daemon
+
+    settings = _settings(tmp_path)
+    settings.runner.force_engine = force_engine
+    settings.runner.contract_dir = str(tmp_path / "custom")
+    (tmp_path / "agents" / "core" / "worker.yaml").unlink()
+    _write_roster_agent(tmp_path / "custom", "facilities.yaml", "facilities", expires_at=9999999999)
+    path = tmp_path / "custom" / "facilities.yaml"
+    path.write_text(path.read_text(encoding="utf-8").replace("engine: mock", "engine: codex"), encoding="utf-8")
+    before = {p.relative_to(tmp_path): (p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
+              for p in tmp_path.rglob("*")}
+    # Resolve to an existing fixture file; no executable or real CLI probe is run.
+    executable = path
+    monkeypatch.setattr(doctor, "_resolve_command", lambda *a: [str(executable)])
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+    monkeypatch.setattr(doctor, "_probe", lambda *a, **kw: pytest.fail("real CLI probe forbidden"))
+    monkeypatch.setattr(doctor.subprocess, "Popen", lambda *a, **kw: pytest.fail("subprocess forbidden"))
+    monkeypatch.setattr(doctor, "_network_check", lambda *a: pytest.fail("network forbidden"))
+    for name in ("_memory_limit_row", "_research_row", "_semantics_row", "_bioinfo_row", "_github_token_row",
+                 "_private_paths_row", "_alphagenome_row", "_paper2agent_row"):
+        monkeypatch.setattr(doctor, name, lambda *a, **kw: doctor._row("fixture", "mock", "ok", "", ""))
+    for name in ("_semantic_device_rows", "_instance_rows", "_disk_rows", "_sandbox_homes_row", "_sandbox_version_rows"):
+        monkeypatch.setattr(doctor, name, lambda *a, **kw: [])
+    monkeypatch.setattr(doctor, "_claude_staff_row", lambda *a: None)
+    monkeypatch.setattr(doctor, "_python3_alias_row", lambda: None)
+    checked = []
+    monkeypatch.setattr(doctor, "_adapter_check", lambda s, a: checked.append((a.id, a.engine.value)))
+    from labhq.knowledge import recall
+    monkeypatch.setattr(recall, "health", lambda s: {"available": True, "count": 0, "last_success": None,
+                                                   "fallback": None})
+    report = doctor.collect(settings, dry_run=True, require_roster=True)
+    assert checked == [("facilities", force_engine or "codex")]
+    assert any(r["group"] == "staff" and r["name"] == "facilities" for r in report["checks"])
+    assert {p.relative_to(tmp_path): (p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
+            for p in tmp_path.rglob("*")} == before
+
+    reg = Registry(tmp_path / "agents", tmp_path / "talent", tmp_path / "custom")
+    reg.load()
+    monkeypatch.setattr(daemon, "adapter_preflight_error", lambda *a: None)
+    runner = SimpleNamespace(registry=reg, s=settings, ws_root=tmp_path / "runs")
+    assert [(a["id"], a["engine"]) for a in daemon.Runner.roster(runner)] == checked
 
 
 def test_doctor_shows_semantics_stop_time_reason_and_reenable_command(tmp_path):

@@ -4,6 +4,17 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+PR #989 · Refs #983. doctor가 runner의 custom `contract_dir`에 있는 유효한 직원도 검사합니다.
+
+- YAML 로드 순서·계약 유효성 규칙을 공유하고 기본/custom 경로·만료/archived·중복 ID 결과를 runner와 맞췄습니다. doctor는 파일을 이동하거나 수정하지 않습니다.
+- custom 경로 누락 회귀: 수정 전 1 failed, 수정 후 통과. 기본/custom·오류 처리·force_engine·파일/디렉터리 불변을 포함한 관련 mock/static 235 passed.
+- Python 3.10 syntax·public·diff 검사 통과. manual 한 문단 갱신: 194,818→194,939자(LF 기준).
+- 시설팀 필수/선택 정책은 후속입니다. 실제 설치판 복구는 UNVERIFIED, #983 OPEN·#987 hold 유지. 운영 roster·설치·배포·HPC는 실행하지 않았습니다.
+
+최종 head CI·같은 head 실제 bot review·P1=0·head guard를 확인한 뒤 담당자가 병합합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Refs #606 — control-state 저장 경계만 수정합니다.
 
 - PI·runner·result·halt 만료가 같은 row의 lock을 공유하고 async commit 뒤 memory/event를 반영합니다. PI 제어는 step별로 전송부터 순서를 지킵니다. 삭제 표식과 PI 시작 시점의 세대로 늦은 메시지·진행 중 제어의 부활을 막습니다.
