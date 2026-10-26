@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:35 | [`165166b`](https://github.com/ehojune/bioinfo-team-3d/pull/973/commits/165166b) | **이전 실패 artifact가 있어도 현재 성공한 Windows 실행의 receipt를 수집합니다.**<br>이전 실패 producer는 후보에서 제외합니다. 실패·성공 artifact 순서를 바꾼 경우와 현재 성공 artifact 누락을 검증했고 관련 mock/static 611 passed입니다. |
+| 10:31 | [`dc1c625`](https://github.com/ehojune/bioinfo-team-3d/pull/973/commits/dc1c625) | **Windows만 재실행해도 다른 gate의 복사 결과를 재사용 증거로 발행하지 않습니다.**<br>모든 run_attempt > 1은 receipt 검증 뒤 reusable manifest를 발행하지 않습니다. fresh Windows와 복사된 다른 gate 조합을 추가해 관련 mock/static 609 passed를 확인했습니다. |
+| 10:26 | [`9d8a899`](https://github.com/ehojune/bioinfo-team-3d/pull/973/commits/9d8a899) | **failed-job 재실행에서도 실제 Windows 실행의 receipt를 수집합니다.**<br>같은 run/head의 성공 producer와 원래 attempt·upload 시간을 대조해 artifact ID를 선택합니다. coverage 검증은 유지하며 이전 attempt receipt는 재사용 manifest로 발행하지 않습니다. 관련 mock/static 608 passed와 실제 실패 run API 대조를 확인했습니다. |
+| 06:30 | [`a963448`](https://github.com/ehojune/bioinfo-team-3d/pull/973/commits/a963448) | **멈춤 대기에 들어가다 취소돼도 대기 화면을 정리합니다.**<br>wait_halted의 초기 publish 두 지점을 기존 cleanup 안에 넣었습니다. 각 진입 지점의 일반·요청 취소를 barrier로 재현해 수정 전 4 failed, 수정 후 관련 mock/static 10 passed를 확인했습니다. 종료 이벤트·취소 전파·제어/DB 정리·resume·timeout assertion을 유지했습니다. 첫 검증 명령의 hook subprocess 실행 범위 이탈은 status에 기록했습니다. |
 | 06:00 | [`39649e4`](https://github.com/ehojune/bioinfo-team-3d/commit/39649e4) | **러너를 기다리는 직원만 대기로 표시하고 다른 직원의 차례를 구분합니다.**<br>fix: runner_wait의 대상 직원을 보존하고 dispatch·대기 종료 시 정리하는 회귀검사 추가 |
 | 05:58 | [`2a9d36c`](https://github.com/ehojune/bioinfo-team-3d/commit/2a9d36c) | **CSO가 실제 맡는 팀 요청과 계획 요청은 참여한 일로 표시합니다.**<br>fix: orchestrate·plan_only mode를 CSO 참여 근거로 쓰되 무관한 direct 요청은 제외 |
 | 05:53 | [`f0bed64`](https://github.com/ehojune/bioinfo-team-3d/commit/f0bed64) | **직접 맡긴 요청이 러너 연결을 기다릴 때 대기 이유를 표시합니다.**<br>fix: 첫 dispatch 전 waiting_for_runner 상태를 차례 대기와 구분하고 회귀검사 추가 |
