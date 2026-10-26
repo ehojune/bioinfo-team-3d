@@ -1,5 +1,9 @@
 pr: 990
 rows:
+- sha: a2dbca7
+  at: '2026-10-26 22:24'
+  text: result admission lock을 halt intent에 한정해 pause 전송 중 result 정산을 보존한다(Refs #606).
+  summary: 신규 halt 회귀 3건과 기존 result 삭제 경쟁을 합쳐 4 PASS. 전체 관련 검증과 최종 head CI·리뷰는 잔여다.
 - sha: 404664c
   at: '2026-10-26 22:23'
   text: result snapshot과 종료 정산 표식을 PI intent·전송 판정과 직렬화한다(Refs #606).
