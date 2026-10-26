@@ -1,5 +1,9 @@
 pr: 988
 rows:
+- sha: a99601d
+  at: '2026-10-26 19:33'
+  text: result에서 만든 제어 알림은 닫힌 row를 재개하지 못하고 새 PI 동작만 재개를 허용한다(Refs #606).
+  summary: 삭제 row 재개 1 failed → PASS. 신규 mock 25건 포함 관련 158 passed입니다.
 - sha: 345fe4f
   at: '2026-10-26 19:29'
   text: 같은 step의 PI 제어를 runner 전송부터 순서대로 처리해 늦은 pause의 덮어쓰기를 막는다(Refs #606).
