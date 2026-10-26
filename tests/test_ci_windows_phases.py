@@ -428,7 +428,8 @@ def test_workflow_barrier_download_binding_no_skip_and_ten_minute_total():
     assert 'receipt' in job['outputs'] and 'execution' in job['outputs']
     manifest = jobs['validation-manifest']['steps']
     assert any(x.get('uses') == 'actions/download-artifact@v4' and
-               x['with']['name'] == 'coverage-windows-${{ github.run_id }}-${{ github.run_attempt }}' for x in manifest)
+               x['with']['artifact-ids'] == '${{ steps.windows-artifact.outputs.artifact-id }}'
+               and x['with']['merge-multiple'] is True for x in manifest)
     browser = (suite.ROOT/'tests/web_resizable_panels.cjs').read_text(encoding='utf-8')
     assert "process.env.LABHQ_REQUIRE_RESIZABLE_BROWSER === '1' && skipReason()" in browser
     assert 'throw new Error(`required resizable browser unavailable:' in browser

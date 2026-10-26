@@ -1,0 +1,18 @@
+pr: 973
+rows:
+- sha: '165166b'
+  at: 2026-10-26 10:35
+  summary: 이전 실패 artifact가 있어도 현재 성공한 Windows 실행의 receipt를 수집합니다.
+  text: '이전 실패 producer는 후보에서 제외합니다. 실패·성공 artifact 순서를 바꾼 경우와 현재 성공 artifact 누락을 검증했고 관련 mock/static 611 passed입니다.'
+- sha: 'dc1c625'
+  at: 2026-10-26 10:31
+  summary: Windows만 재실행해도 다른 gate의 복사 결과를 재사용 증거로 발행하지 않습니다.
+  text: '모든 run_attempt > 1은 receipt 검증 뒤 reusable manifest를 발행하지 않습니다. fresh Windows와 복사된 다른 gate 조합을 추가해 관련 mock/static 609 passed를 확인했습니다.'
+- sha: '9d8a899'
+  at: 2026-10-26 10:26
+  summary: failed-job 재실행에서도 실제 Windows 실행의 receipt를 수집합니다.
+  text: '같은 run/head의 성공 producer와 원래 attempt·upload 시간을 대조해 artifact ID를 선택합니다. coverage 검증은 유지하며 이전 attempt receipt는 재사용 manifest로 발행하지 않습니다. 관련 mock/static 608 passed와 실제 실패 run API 대조를 확인했습니다.'
+- sha: 'a963448'
+  at: 2026-10-26 06:30
+  summary: 멈춤 대기에 들어가다 취소돼도 대기 화면을 정리합니다.
+  text: 'wait_halted의 초기 publish 두 지점을 기존 cleanup 안에 넣었습니다. 각 진입 지점의 일반·요청 취소를 barrier로 재현해 수정 전 4 failed, 수정 후 관련 mock/static 10 passed를 확인했습니다. 종료 이벤트·취소 전파·제어/DB 정리·resume·timeout assertion을 유지했습니다. 첫 검증 명령의 hook subprocess 실행 범위 이탈은 status에 기록했습니다.'
