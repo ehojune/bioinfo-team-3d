@@ -1,5 +1,9 @@
 pr: 981
 rows:
+  - sha: 01d87d3
+    at: "2026-10-26 15:40"
+    summary: "직원 대기와 HPC rack 안내를 현재 화면에 맞췄습니다."
+    text: "manual P1을 수정하고 #979/#980 병합 뒤 async 저장 범위와 남은 sync 경계를 통합했습니다. manual·HANDOFF 합계 222자를 줄였으며 운영 PASS로 확대하지 않습니다."
   - sha: 53fd6ea
     at: "2026-10-26 14:49"
     summary: "로컬 계산을 기다리는 직원이 HPC 작업 중으로 보이던 표시를 고쳤습니다."
