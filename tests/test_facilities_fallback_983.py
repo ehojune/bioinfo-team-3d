@@ -77,7 +77,7 @@ async def test_available_facilities_still_receives_question_after_prior_fallback
     await hub.orchestrator.answer_ask(question(), "fake")
     hub.agents["facilities"] = {"engine": "mock"}
     hub.agent_runner["facilities"] = "fake"
-    ask = question(question="도구 경로를 직접 진단해 주세요")
+    ask = question()  # Same signature: a restored facilities roster must bypass the old CSO cache.
     await hub.orchestrator.answer_ask(ask, "fake")
     answer = hub.store.get("ask", ask.id)["answer"]
     assert [task.agent_id for task in calls] == ["cso", "facilities"]

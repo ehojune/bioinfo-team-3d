@@ -3236,6 +3236,8 @@ class Orchestrator:
             if other_id != ask.id and entry.get("signature") == signature and entry.get("state") == "resolved":
                 cached = ask_result(**{**entry["answer"], "cached": True})
                 if ask.to == "facilities" and cached.get("routed_to") == "cso":
+                    if "facilities" in self.hub.agents:
+                        continue  # Support returned: the old fallback must not hide the available target.
                     cached = self._facilities_fallback_answer(cached)
                 await self.hub.resolve_ask(ask, runner_id, cached)
                 return
