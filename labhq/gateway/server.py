@@ -3045,7 +3045,7 @@ class Hub:
 
     @staticmethod
     async def _publication_write(write):
-        """Only a durable commit is uninterruptible; preserve its error on cancel."""
+        """Settle a durable operation and its required cleanup; preserve errors on cancel."""
         cancelled = False
         with anyio.CancelScope(shield=True):
             pending = asyncio.create_task(write)
@@ -4287,42 +4287,48 @@ class Hub:
         stop_steps = getattr(self.orchestrator, "cancel_steps", None)
         if stop_steps is not None:
             unwinding.extend(stop_steps(rid))  # parallel steps and the briefing run beside it
-        # No yield between removing wait markers and cancelling their consumers: an
-        # unblocked quota waiter must not mistake request cancellation for a resume.
-        await self.asave_request(rid)
-        cancelled = []
-        for tid, entry in self.store.all("task").items():
-            if entry.get("request_id") != rid:
-                continue
-            waiter = self.jobs_waiters.pop(tid, None)  # a step parked on HPC jobs stops waiting for them
-            if waiter is not None and not waiter.done():
-                waiter.cancel()
-            if (not entry.get("completed") or entry.get("abandoned")) and await self.cancel_task(tid):
-                cancelled.append(tid)
-            elif entry.get("completed"):
-                # A step parked on its jobs has no running task to cancel: its runner ends the local jobs it started,
-                # so no process outlives the request (#675).
-                runner_id = self.task_runner.get(tid) or entry.get("runner_id")
-                if runner_id:
-                    # Kept until that runner confirms (task.jobs_cancelled): a runner that is away or restarting
-                    # gets it again when it reconnects (flush_task_cancels).
-                    self.store.put("jobs_cancel", tid, {"runner_id": runner_id, "requested_at": time.time()})
-                    try:
-                        await self.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": tid})
-                    except RunnerUnavailable:
-                        pass
-        req["cancelled_tasks"] = cancelled
-        await self.asave_request(rid)  # a restart before the terminal record still reports these
-        for aid, entry in list(self.approvals.items()):
-            if entry["approval"].get("request_id") == rid:
-                await self.close_approval(aid, "요청 취소로 닫힘")
-        for engine in sorted({str(entry.get("engine") or "") for entry in login.values()}):
-            await self.login_recovered(engine, reason="request cancelled")
-        if unwinding:
-            await asyncio.wait(unwinding, timeout=5)  # let them unwind before the terminal record
-        await self._await_cancelled_results(rid, cancelled)
-        await self._afinish_cancel(rid)
-        return {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": cancelled}
+        # The quota consumers above are cancelled before this first yield.
+        async def finish():
+            # Finish runner stops and bookkeeping before propagating caller cancellation.
+            await self.asave_request(rid)
+            cancelled = []
+            for tid, entry in self.store.all("task").items():
+                if entry.get("request_id") != rid:
+                    continue
+                waiter = self.jobs_waiters.pop(tid, None)  # a step parked on HPC jobs stops waiting for them
+                if waiter is not None and not waiter.done():
+                    waiter.cancel()
+                if (not entry.get("completed") or entry.get("abandoned")) and await self.cancel_task(tid):
+                    cancelled.append(tid)
+                elif entry.get("completed"):
+                    # A step parked on its jobs has no running task to cancel: its runner ends the local jobs it started,
+                    # so no process outlives the request (#675).
+                    runner_id = self.task_runner.get(tid) or entry.get("runner_id")
+                    if runner_id:
+                        # Kept until that runner confirms (task.jobs_cancelled): a runner that is away or restarting
+                        # gets it again when it reconnects (flush_task_cancels).
+                        self.store.put("jobs_cancel", tid, {"runner_id": runner_id, "requested_at": time.time()})
+                        try:
+                            await self.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": tid})
+                        except RunnerUnavailable:
+                            pass
+            req["cancelled_tasks"] = cancelled
+            await self.asave_request(rid)  # a restart before the terminal record still reports these
+            for aid, entry in list(self.approvals.items()):
+                if entry["approval"].get("request_id") == rid:
+                    await self.close_approval(aid, "요청 취소로 닫힘")
+            for engine in sorted({str(entry.get("engine") or "") for entry in login.values()}):
+                await self.login_recovered(engine, reason="request cancelled")
+            if unwinding:
+                await asyncio.wait(unwinding, timeout=5)  # let them unwind before the terminal record
+            await self._await_cancelled_results(rid, cancelled)
+            await self._afinish_cancel(rid)
+            return {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": cancelled}
+
+        result, cancelled = await self._publication_write(finish())
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
 
     def _finish_cancel(self, rid: str) -> None:
         """Write a cancelled request's report and terminal record. ``cancelling`` leaves in that same commit."""
