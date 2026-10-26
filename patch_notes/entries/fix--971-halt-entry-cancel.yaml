@@ -1,5 +1,9 @@
 pr: 973
 rows:
+- sha: '165166b'
+  at: 2026-10-26 10:35
+  summary: 이전 실패 artifact가 있어도 현재 성공한 Windows 실행의 receipt를 수집합니다.
+  text: '이전 실패 producer는 후보에서 제외합니다. 실패·성공 artifact 순서를 바꾼 경우와 현재 성공 artifact 누락을 검증했고 관련 mock/static 611 passed입니다.'
 - sha: 'dc1c625'
   at: 2026-10-26 10:31
   summary: Windows만 재실행해도 다른 gate의 복사 결과를 재사용 증거로 발행하지 않습니다.

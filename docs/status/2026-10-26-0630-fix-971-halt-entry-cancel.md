@@ -9,7 +9,7 @@ Closes #971. Refs #606, #970. #972보다 먼저 병합하는 최소 수정입니
 Refs #974. failed-job 재실행의 수집 오류도 수정했습니다.
 
 - 같은 run/head의 유효한 Windows 실행과 원래 job·upload 시간을 대조해 artifact ID를 선택합니다. 누락·다른 출처·시간 불일치는 거부하며 coverage 검증을 유지합니다.
-- 모든 재실행 run은 receipt 검증 뒤 reusable manifest를 발행하지 않습니다. Windows만 새로 실행한 경우도 포함합니다. 관련 mock/static 609 passed, 실제 실패 run API에서 artifact 12615771377·attempt 1 선택을 확인했습니다.
+- 모든 재실행 run은 receipt 검증 뒤 reusable manifest를 발행하지 않습니다. Windows만 새로 실행한 경우도 포함합니다. 이전 실패 artifact는 후보에서 제외합니다. 관련 mock/static 611 passed, 실제 실패 run API에서 artifact 12615771377·attempt 1 선택을 확인했습니다.
 - 최종 head CI·동일 head 봇 완료·미해결 P1=0 확인 뒤 #973→#972 순서로 병합합니다. #972 봇 대기는 #974 PI 예외이며 PASS로 기록하지 않습니다.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
