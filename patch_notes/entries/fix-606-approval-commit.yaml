@@ -1,0 +1,5 @@
+rows:
+  - sha: '2435ae5'
+    at: '2026-10-26 13:35'
+    summary: '일반 승인 카드·결정·runner 전달을 한 transaction으로 저장합니다.'
+    text: '기존 durable writer와 카드별 lock으로 생성·응답·timeout·close·재접속 전달·ACK를 직렬화하고 commit 뒤 memory·future·전송을 반영합니다. 반복 취소·저장 오류·DB 재열기와 storage 재시도·facilities 대기·resume CP1 계약을 관련 mock/static으로 확인했습니다. task 원장·전용 복구 경로 잔여와 실제 운영 검증은 #606에 남습니다.'
