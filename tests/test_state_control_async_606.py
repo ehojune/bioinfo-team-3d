@@ -211,6 +211,19 @@ async def test_result_generated_control_cannot_reopen_closed_row(hub):
     assert not [e for e in hub.events if e["type"] == "agent.control"]
 
 
+async def test_pi_queue_through_finished_turn_ignores_late_runner_feedback(hub):
+    entry = hub.store.get("task", "t")
+    hub.store.put("task", "t", {**entry, "completed": True})
+    await hub._control_state("t", None)
+    await hub.control_task("t", "pause")
+    await hub.on_runner_message("r", {"type": "agent.control", "task_id": "t", "runner_seq": 2,
+                                      "data": {"paused": False, "source": "old-runner"}})
+    assert hub.task_controls["t"]["paused"] is True
+    assert hub.task_controls["t"]["source"] == "gateway"
+    assert hub.store.runner_seen("r") == 2
+    assert len([e for e in hub.events if e["type"] == "agent.control"]) == 1
+
+
 async def test_pi_controls_keep_step_order_while_first_send_waits(hub, monkeypatch):
     entered, release = asyncio.Event(), asyncio.Event()
     sends = []

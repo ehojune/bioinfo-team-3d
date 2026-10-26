@@ -2619,6 +2619,13 @@ class Hub:
                     return
                 if lifecycle is not None and self.store.get("task_control_closed", tid) != lifecycle[0]:
                     return  # This PI operation began before completion/expiry deleted its target.
+                task = self.store.get("task", tid) or {}
+                if runner_id is not None and task.get("completed") and not task.get("abandoned"):
+                    # A fresh PI queue may use this finished turn's id. Feedback
+                    # from that old runner turn cannot overwrite the new intent.
+                    if runner_seq is not None:
+                        await self.store.amark_runner(runner_id, runner_seq)
+                    return
                 prev = self.task_controls.get(tid) or {}
                 merged = {**({} if replace else prev), **data, "ts": time.time()}
                 if not replace and prev.get("halted") and tid in self.halted_waits:
