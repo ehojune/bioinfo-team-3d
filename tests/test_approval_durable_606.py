@@ -442,6 +442,40 @@ async def test_reconnect_flush_does_not_send_a_decision_superseded_while_waiting
 
 
 @pytest.mark.parametrize("operation", ["resolve", "close"])
+async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_hub, monkeypatch, operation):
+    hub = live_hub
+    card, _ = pending_card(hub, "runner")
+    entered, release = asyncio.Event(), asyncio.Event()
+    class Socket:
+        async def send_text(self, payload):
+            entered.set()
+            await release.wait()
+    hub.runners["runner"] = Socket()
+    hub.runner_locks["runner"] = asyncio.Lock()
+    monkeypatch.setattr("labhq.gateway.server.CLIENT_SEND_TIMEOUT_S", 0.05)
+    action = hub.resolve_approval(card.id, True) if operation == "resolve" else hub.close_approval(card.id, "closed")
+    task = asyncio.create_task(action)
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        assert hub.store.get("approval", card.id) is None
+        assert hub.store.get("approval_decision", card.id) is not None
+        assert hub.store.get("decision", card.id) is not None
+        for _ in range(3):
+            task.cancel()
+            await asyncio.sleep(0)
+        done, _ = await asyncio.wait({task}, timeout=0.5)
+        assert task in done, "runner backpressure held cancellation and the card lock indefinitely"
+        assert "runner" not in hub.runners
+    finally:
+        release.set()
+        result = (await asyncio.gather(task, return_exceptions=True))[0]
+    assert isinstance(result, asyncio.CancelledError)
+    assert hub.store.get("decision", card.id) is not None
+    await hub.on_runner_message("runner", {"type": "approval.ack", "id": card.id})
+    assert hub.store.get("decision", card.id) is None
+
+
+@pytest.mark.parametrize("operation", ["resolve", "close"])
 async def test_second_commit_failure_does_not_lose_card_on_restart(tmp_path, monkeypatch, operation):
     hub = Hub.__new__(Hub)
     hub.store = StateStore(tmp_path / "gateway.sqlite3")

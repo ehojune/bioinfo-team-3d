@@ -2434,10 +2434,18 @@ class Hub:
         """Caller holds this card's lock; re-read after waiting for a competing ACK/timeout."""
         entry = self.store.get("decision", aid)
         if entry and entry["origin"] == runner_id:
-            await self.send_runner(runner_id, {"type": "approval.resolved", "id": aid,
-                                               "approved": entry["approved"], "note": entry["note"],
-                                               **({'choice': entry['choice']}
-                                                  if entry.get('choice') in DECISION_CHOICES else {})})
+            ws = self.runners.get(runner_id)
+            try:
+                await asyncio.wait_for(self.send_runner(runner_id, {
+                    "type": "approval.resolved", "id": aid,
+                    "approved": entry["approved"], "note": entry["note"],
+                    **({'choice': entry['choice']} if entry.get('choice') in DECISION_CHOICES else {})}),
+                    CLIENT_SEND_TIMEOUT_S)
+            except asyncio.TimeoutError as exc:
+                if ws is not None:
+                    self.unregister_runner(runner_id, ws)
+                # The delivery stays durable until ACK, including after backpressure.
+                raise RunnerUnavailable(f"runner {runner_id} approval delivery timed out") from exc
 
     async def cancel_task(self, tid: str) -> bool:
         """Ask the task's runner to stop it and keep the ask until the task ends (PR #396 review).
@@ -4242,7 +4250,10 @@ class Hub:
             self._cancel_resume_timer(approval_id)
             if entry["origin"]:
                 if entry["origin"] in self.runners:
-                    await self._send_decision(entry["origin"], approval_id)
+                    try:
+                        await self._send_decision(entry["origin"], approval_id)
+                    except RunnerUnavailable:
+                        pass  # committed decision is replayed on reconnect
             elif entry.get("future") and not entry["future"].done():
                 entry["future"].set_result({"approved": approved, "note": note, **chosen})
             elif entry["approval"].get("kind") == "resume":
