@@ -32,16 +32,16 @@ test('local submission, state and request ownership reach the shared flow and ta
   emit('task.result', {ok:true, pending_jobs:['local-one']});
   const flow = new Element();
   ui.syncStepFlow(flow, q);
-  assert.match(flow.children[0].textContent, /로컬 계산 GSEA: 대기.*진행률 모름/);
+  assert.match(flow.children[0].textContent, /로컬 계산 GSEA: 실행 중.*진행률 모름/);
   assert.doesNotMatch(flow.children[0].textContent, /HPC|Other/);
-  emit('job.state', {job_id:'local-one', state:'running'});
+  emit('job.state', {job_id:'local-one', state:'suspended'});
   ui.syncStepFlow(flow, q);
-  assert.match(flow.children[0].textContent, /GSEA: 실행 중/);
+  assert.match(flow.children[0].textContent, /GSEA: 일시정지/);
   assert.equal(q.stepJobs.s1.length, 1);
   const board = new Element();
   ui.syncTaskBoard(board, q, o.S.stepDetails);
   const allText = node => node.textContent + node.children.map(allText).join(' ');
-  assert.match(allText(board), /GSEA: 실행 중/);
+  assert.match(allText(board), /GSEA: 일시정지/);
   assert.doesNotMatch(allText(board), /Other/);
 });
 test('2.5D task card cache changes on job-only updates and step flow switches requests', async () => {
@@ -52,7 +52,7 @@ test('2.5D task card cache changes on job-only updates and step flow switches re
   const cacheContext = vm.createContext({q, S:o.S, staffNames:[], statusText:'', requestDigest:[], details:[], snapshotLoaded:true});
   emit('job.submitted', {job_id:'local-one', name:'GSEA'});
   const before = vm.runInContext(cache, vm.createContext({...cacheContext}));
-  emit('job.state', {job_id:'local-one', state:'running'});
+  emit('job.state', {job_id:'local-one', state:'held'});
   const after = vm.runInContext(cache, vm.createContext({...cacheContext}));
   assert.notEqual(after, before, 'a job state change must invalidate the enclosing request card cache');
   emit('job.submitted', {job_id:'local-other', name:'Other'}, 'r2');
@@ -100,7 +100,7 @@ for (const job_id of ['42', 'local-shared']) test(`same scheduler ID ${job_id} s
   assert.equal(q.stepJobs.s1[0].name, 'First');
   assert.equal(q.stepJobs.s1[0].state, 'running');
   assert.equal(o.S.requests.get('r2').stepJobs.s1[0].name, 'Second');
-  assert.equal(o.S.requests.get('r2').stepJobs.s1[0].state, 'queued');
+  assert.equal(o.S.requests.get('r2').stepJobs.s1[0].state, job_id.startsWith('local-') ? 'running' : 'queued');
   o.apply({type:'job.state', data:{job_id, state:'cancelled'}});
   assert.equal(q.stepJobs.s1[0].state, 'running', 'ambiguous events must not change owned jobs');
   emit('job.state', {job_id, state:'completed'});

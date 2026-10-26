@@ -102,9 +102,9 @@ const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').repla
   jobEvent('request.plan', {steps:[{id:'s1', agent_id:'analyst'}]});
   jobEvent('task.dispatched', {step_id:'s1'});
   jobEvent('job.submitted', {job_id:'local-gsea', name:'GSEA'});
-  assert.match(textIn(requestRowForLocal()), /로컬 계산 GSEA: 대기/);
-  jobEvent('job.state', {job_id:'local-gsea', state:'running'});
   assert.match(textIn(requestRowForLocal()), /로컬 계산 GSEA: 실행 중/);
+  jobEvent('job.state', {job_id:'local-gsea', state:'held'});
+  assert.match(textIn(requestRowForLocal()), /로컬 계산 GSEA: 보류/);
   jobEvent('job.state', {job_id:'local-gsea', state:'completed'});
   assert.doesNotMatch(textIn(requestRowForLocal()), /로컬 계산 GSEA/);
   function requestRowForLocal() { return element('requests').children.find(row => row.dataset.requestId === 'local-request'); }

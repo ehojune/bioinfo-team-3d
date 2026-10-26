@@ -331,7 +331,8 @@ function trackJob(ev) {
   }
   const previous = S.jobContext.get(key) || {};
   S.jobContext.set(key, {...previous, id:jid, name:d.name || previous.name,
-    state:ev.type === 'job.submitted' ? 'queued' : d.state,
+    // Local submission is emitted after process start; its next event may be terminal.
+    state:ev.type === 'job.submitted' ? jid.startsWith('local-') ? 'running' : 'queued' : d.state,
     request_id:ev.request_id || previous.request_id, task_id:ev.task_id || previous.task_id,
     step_id:S.taskStep.get(ev.task_id) || previous.step_id});
 }
@@ -928,7 +929,7 @@ function apply(ev, replay = false) {
     case 'job.submitted': {
       const jid = String(d.job_id);
       trackJob(ev);
-      S.jobs.set(jid, { id: jid, name: d.name, state: 'queued', agent: id, ts });
+      S.jobs.set(jid, { id: jid, name: d.name, state: jid.startsWith('local-') ? 'running' : 'queued', agent: id, ts });
       feed({ who: id, text: `${jid.startsWith('local-') ? '로컬 계산' : 'HPC 작업'} 제출: ${d.name || ''} (${d.job_id})` }, ts, rid); break;
     }
     case 'job.state': {
