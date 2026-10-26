@@ -72,6 +72,7 @@ global.fetch = async (url, options) => { fetched.push([url, options.headers.Auth
 const decide = fs.readFileSync(path.join(root, 'ui/decide.js'), 'utf8');
 const decideUrl = 'data:text/javascript;base64,' + Buffer.from(decide).toString('base64');
 const source = fs.readFileSync(path.join(root, 'lab3d/src/live.js'), 'utf8').replace("'../../ui/decide.js'", `'${decideUrl}'`)
+    .replace("'../../ui/tasks.js'", "'data:text/javascript;base64," + Buffer.from(fs.readFileSync(path.join(root, 'ui/tasks.js'), 'utf8')).toString('base64') + "'")
     .replace("'../../ui/shutdown.js'", "'data:text/javascript;base64," + Buffer.from(fs.readFileSync(path.join(root, 'ui/shutdown.js'), 'utf8')).toString('base64') + "'");
 (async () => {
   const {startLiveOffice} = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));

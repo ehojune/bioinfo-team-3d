@@ -150,6 +150,7 @@ global.WebSocket = class { constructor(url) { this.url = url; this.readyState = 
 const decide = fs.readFileSync(path.join(root, 'ui/decide.js'), 'utf8');
 const decideUrl = 'data:text/javascript;base64,' + Buffer.from(decide).toString('base64');
 const source = live3d.replace("'../../ui/decide.js'", `'${decideUrl}'`)
+    .replace("'../../ui/tasks.js'", "'data:text/javascript;base64," + Buffer.from(fs.readFileSync(path.join(root, 'ui/tasks.js'), 'utf8')).toString('base64') + "'")
     .replace("'../../ui/shutdown.js'", "'data:text/javascript;base64," + Buffer.from(fs.readFileSync(path.join(root, 'ui/shutdown.js'), 'utf8')).toString('base64') + "'");
 const rowLine = id => {
   const row = element('requests').children.find(node => node.dataset?.requestId === id);
