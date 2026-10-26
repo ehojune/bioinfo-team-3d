@@ -16,3 +16,7 @@ rows:
     at: "2026-10-26 14:57"
     summary: "job 정보가 없는 단계 흐름도 HPC 대기로 단정하지 않습니다."
     text: "browser에서 정보 없는 snapshot의 badge·직원 strip·단계 흐름이 같은 작업·응답 대기 문구를 표시함을 확인했습니다."
+  - sha: 006f875
+    at: "2026-10-26 15:05"
+    summary: "기존 대기 회귀검사와 3D 계산 안내를 같은 기준으로 맞췄습니다."
+    text: "bot P1의 기존 unknown/HPC 기대값을 분리하고 취소 검사를 유지했습니다. 3D HPC rack에서도 local job을 제외하며 범례·설명을 작업·응답 대기로 통일했습니다."
