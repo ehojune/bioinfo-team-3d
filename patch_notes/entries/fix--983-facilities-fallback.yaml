@@ -1,5 +1,9 @@
 pr: 985
 rows:
+  - sha: 'e732a8c'
+    at: '2026-10-26 18:05'
+    summary: '시설팀 복귀 뒤 동일 질문은 과거 CSO fallback cache를 건너뜁니다.'
+    text: 'P2 4375525575를 수정 전 1 failed로 재현했습니다. 부재 시 cache 안내를 유지하고 가용 시설팀은 직접 상담합니다. 관련 mock 149 passed입니다.'
   - sha: 'c9cb80c'
     at: '2026-10-26 17:59'
     summary: '겹쳐 들어온 같은 단계 재문의도 CSO 상담을 한 번만 실행합니다.'

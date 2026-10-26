@@ -2,6 +2,7 @@ Refs #983 — 시설팀 부재 안내·재문의 순환 방지의 부분 수정�
 
 - facilities→CSO fallback의 prompt와 답변에 시설팀 부재·실제 대체 담당을 명시합니다. 과거 cached/adopted 답변에도 안내를 붙이고 같은 단계의 재문의를 추가 상담 없이 거부합니다.
 - 시설팀 가용 경로·재접속 대기·hard stop·read-only 경계는 유지합니다. CSO 응답을 시설팀 진단·수정·복구 성공으로 표시하지 않습니다.
+- 시설팀 복귀 뒤 동일 질문이 과거 CSO fallback cache를 우회하도록 고쳤습니다(P2 수정 전 1 failed → 관련 mock 149 passed).
 - 비식별 신규 회귀는 수정 전 8 failed·1 passed. 동시 재문의 P2는 추가 회귀 1 failed로 재현한 뒤 lock 내부 재확인·답변 저장으로 고쳤습니다. main #982·#984 반영 후 관련 mock 149 passed입니다.
 - Windows 새 test inventory 거부를 고쳐 신규 회귀 12건을 필수 cohort에 등록했습니다. profile·patch-note·문서 목차·public·diff 검사 PASS입니다.
 - #982의 manual 반영 뒤 시설팀 설명 한 곳에 새 계약을 기록해 manual P2를 수정했습니다(main 대비 194,563→194,768자).
