@@ -72,14 +72,20 @@ class Store:
 def hub(req=None):
     h = NS(requests={"r": req or refused_request()}, store=Store(), approvals={}, events=[], saved=[], created=[],
            s=NS(orchestrator=NS(cso_models=["old", "new"], cso_agent="cso")), agents={"cso": {"model": "old"}})
-    scope = extracted("labhq/gateway/server.py", {"_round_dispatched", "_continuation_refusal_context", "_model_refusal_request", "offer_model_refusal"},
+    scope = extracted("labhq/gateway/server.py", {"_round_dispatched", "_continuation_refusal_context", "_model_refusal_request", "_offer_model_refusal"},
                       {"research_continuation": logic(), "REASON": "safe refusal", "ApprovalRequest": Card,
                        "RequestIn": lambda **kw: NS(**kw)}, owner="Hub", synchronous=True)
-    for name in ("_round_dispatched", "_continuation_refusal_context", "_model_refusal_request", "offer_model_refusal"):
+    for name in ("_round_dispatched", "_continuation_refusal_context", "_model_refusal_request", "_offer_model_refusal"):
         setattr(h, name, scope[name].__get__(h))
+    h.offer_model_refusal = h._offer_model_refusal  # test the decision logic inside the async lifecycle wrapper
     h.save_request = lambda rid: h.saved.append(rid)
     h.asave_request = h.save_request  # awaits are stripped by this static extraction
     h.save_approval = lambda aid: h.saved.append(aid)
+    def add_approval(aid, entry):
+        h.approvals[aid] = entry
+        h.save_approval(aid)
+        return True
+    h._add_approval = add_approval
     h.publish = lambda event: h.events.append(event)
     def create(body, extra): h.created.append((body, extra)); return "new-request"
     h.create_request = create

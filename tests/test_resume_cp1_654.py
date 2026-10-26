@@ -196,10 +196,10 @@ async def test_the_cp1_token_is_saved_before_the_resume_card_is_resolved(tmp_pat
     hub.interrupt_request("r")
     card = next(a["approval"] for a in hub.approvals.values() if a["approval"]["kind"] == "resume")
 
-    def dies(kind, key):
+    def dies(aid, decision, delivery):
         raise _Restart()
 
-    monkeypatch.setattr(hub.store, "delete", dies)
+    monkeypatch.setattr(hub.store, "_commit_approval_now", dies)
     with pytest.raises(_Restart):
         await hub.resolve_approval(card["id"], True)
     # The stop came after the token save and before the card was resolved: nothing is lost either way.
