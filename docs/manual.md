@@ -277,12 +277,12 @@ PI 토큰으로 `POST /api/shutdown`을 호출하며 `down`의 상태 재확인�
 |---|---|---|
 | 생각하는 중 · 명령 실행 중 | 타이핑, 모니터 켜짐. 명령은 실행 시간을 분 단위로 표시 | 초록 (A) |
 | PI 결정 기다리는 중 · 차례 기다리는 중 | 손 들기·느낌표 또는 대기 움직임 | 호박색 (G) |
-| HPC 작업 기다리는 중 · 답 기다리는 중 | 호흡·말풍선, 서버 랙 불빛 깜빡임 | 파랑 (C) |
+| 로컬 계산 · HPC · 작업·응답 대기 | 호흡·말풍선. 관측된 job으로 로컬/HPC/혼합을 구분하며 정보가 없으면 작업·응답 대기 | 파랑 (C) |
 | 문제 발생 | 흔들림, 땀방울 | 빨강 (T) |
 | 완료 | 폴짝, 체크 표시 | — |
 
 - 뒷벽 **화이트보드**: 처리 방식(팀·단독·직접 맡김)과 단계(브리핑 → 계획 → 실행 → 리뷰 → 보고). 연구 요청은 CP1 승인을 기다리는 동안 계획에 머물고 첫 단계를 보내면 실행으로 넘어갑니다. 계획 단계의 담당·상태는 탭 위 흐름 줄에서, 지시·산출물은 작업판에서 봅니다. 3D 요청 행의 처리 방식 이름은 같습니다.
-- **서버 랙**: 최근 HPC 작업 8개의 불빛, **입구**: 파견직이 들어올 때 문이 열리고 걸어 들어옴
+- **서버 랙**: 최근 HPC 작업 8개의 불빛(로컬 job 제외), **입구**: 파견직이 들어올 때 문이 열리고 걸어 들어옴
 - 오른쪽(폰에서는 패널 맨 위 탭): **결정**, **작업판**, **사내 메신저**, HPC 목록. 2D 폰 화면은 결정 카드를 사무실보다 먼저 보여 줍니다. 결정 탭 배지는 승인·채용 제안·보고서 검토 대기 수이며 0건이면 숨깁니다. 로그인 대기는 별도 운영 문제로 표시합니다.
 - 2D 결정 카드는 **질문 → 사실 2~3칸 → 쉬운 설명 → 승인·거절 → 메모** 순서입니다. 원문·명령은 **자세히**에서 확인합니다. 없는 자원·비용 값은 추측하지 않고 **미제공**으로 표시합니다. 승인 버튼은 전폭·48px이며 상태는 점과 글자를 함께 씁니다.
 - 지난 결정마다 로컬 날짜·시각과 **요청 보고서** 링크(보고서가 있을 때)를 보여 줍니다. **×**는 이 브라우저의 목록에서만 숨기며 gateway 결정·감사 기록은 보존합니다. 숨김은 모드·인스턴스별 localStorage에 저장하고, 저장이 막히면 현재 페이지에서만 유지합니다. 대기 카드에는 ×가 없습니다.
@@ -454,7 +454,7 @@ Gateway의 event·request·결과 추가/삭제·보고서 검토 저장은 같�
 
 일반 승인 생성·결정·timeout·close·runner 전달/ACK도 DB writer에서 await합니다. 카드 삭제·결정·전달 행은 한 transaction으로 저장하며 같은 카드의 경쟁을 직렬화합니다. commit 결과를 확인한 뒤 카드 제거·future 완료·전달을 진행하고, 재접속 전달은 ACK·timeout 뒤 최신 행을 다시 읽습니다. runner 승인 전달은 최대 10초이며 시간 초과 때 연결 등록을 해제하고 전달 행을 보존합니다. 저장 중 취소돼도 시작한 commit의 성공·오류를 확인합니다. storage 선택 중 취소는 저장된 선택으로 재시도하는 기존 계약을 유지합니다.
 
-Runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 outbox·ack도 writer로 옮겼습니다. Gateway의 task 원장·일부 전용 복구 경로의 직접 SQLite 저장과 초기화/CLI용 sync API는 남습니다(#606). 이전 조사 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)를 봅니다.
+Runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 outbox·ack도 writer로 옮겼습니다. Gateway 일반 승인(#976)·task 취소 intent(#979)와 plan-rehire 계약 저장(#980)도 async로 옮겼습니다. task/result/control·채용 preflight·전용 복구·초기화/CLI의 sync 경계는 남습니다(#606). 이전 조사 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)를 봅니다.
 
 ### topic 점검표와 선행 연구 기준
 
@@ -1020,7 +1020,7 @@ internal 구역을 가리키는 작업·project·참고 폴더 별칭은 Claude�
 | 항목 | 구현 근거와 남은 확인 |
 |---|---|
 | 로컬 job·취소 | [#937](https://github.com/ehojune/bioinfo-team-3d/pull/937) job 기록 재로드, [#968](https://github.com/ehojune/bioinfo-team-3d/pull/968) 복구 runner에 취소 재전송 회귀가 병합됐습니다. 대체 transport·무해한 job으로 취소 트리 잔류 0·완료 깨움 없음·다른 요청 보존을 확인했습니다. runner가 꺼진 동안에는 job 종료를 보장하지 않습니다. |
-| 저장·소유권 | [#967](https://github.com/ehojune/bioinfo-team-3d/pull/967) runner state 소유권 경쟁·[#966](https://github.com/ehojune/bioinfo-team-3d/pull/966) publish 저장 대기·[#972](https://github.com/ehojune/bioinfo-team-3d/pull/972) request helper·SavedResults async 전환은 병합됐습니다. 잔여 직접 저장 경계가 있어 #606 전체 완료는 미검증입니다. |
+| 저장·소유권 | #967 소유권 경쟁, #966·#972·#976·[#979](https://github.com/ehojune/bioinfo-team-3d/pull/979)·[#980](https://github.com/ehojune/bioinfo-team-3d/pull/980) 저장 경계 async 전환 병합. task/result/control·채용 preflight 등 sync 경계는 남아 #606은 OPEN입니다. 실디스크·운영 성능은 미검증입니다. |
 | 운영 미검증 | 실제 WebSocket 재연결·gateway OS 재시작·새 설치에서의 실제 요청·반복 복구·지원 요청 end-to-end는 미검증입니다. [새 설치 mock 검사](reference/clean-install-922.md)와 회귀 CI를 운영 PASS로 세지 않습니다. |
 
 ### 승인·예산
@@ -1308,7 +1308,7 @@ report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니�
   스케줄러 명령은 `PATH`·`HOME`·locale과 `SGE_*`·`PBS_*`·`SLURM_*`·`SBATCH_*` 같은 스케줄러 변수만 받습니다. 그래서 `#$ -V`·`#PBS -V`도 broker token이나 API key를 잡에 넘기지 못합니다.
   로그인 노드에서만 qsub·sbatch가 된다면 `ssh_host` 지정 — 이때 작업공간은 공유 파일시스템에 있어야 합니다.
   **HPC 비활성**: `scheduler: none`이면 HPC 제출·큐·상태·취소와 내부 명령 실행을 오류로 거부하고 HPC job을 갱신하지 않습니다.
-  **로컬 job**(#675): 10분 넘는 계산은 `labhq_job`의 `job_submit(command, name, expected_minutes)`·`job_status`·`job_list`·`job_cancel`로 냅니다([analyst](../agents/core/analyst.yaml)·[bioinfo-agent](../agents/core/bioinfo-agent.yaml), Claude 직원만). Codex는 OS sandbox 밖 실행을 막기 위해 거절합니다. HPC scheduler 없이도 쓰지만 WSL runner는 지원하지 않습니다. runner가 승인 gate로 명령을 판정하고 슬롯을 잡아 작은 wrapper로 시작합니다. 동시 실행은 `runner.max_parallel`개이며 로그·종료 코드 `exit`는 runner 상태 폴더에 둡니다. 직원은 제출 뒤 턴을 끝내고 단계는 완료 시 `jobs.finished`로 깨어납니다. 작업판의 단계 흐름·task card와 3D 요청 줄은 로컬 계산을 HPC와 구분해 이름·관측 상태를 표시합니다. 진행률·완료 예정 시각은 추정하지 않습니다. 재접속 때 제출 event가 없으면 `pending_jobs`의 ID·상태 확인 중만 표시합니다. 단계·요청 취소(`task.cancel`·`task.jobs_cancel`)는 확인된 job 트리를 종료하고 단계를 깨우지 않습니다. 시작 중 취소도 적용하며 끝난 job의 상태는 취소로 바꾸지 않습니다. runner 재시작은 PID·생성 시각을 대조해 이어받고, 종료됐으면 `exit`로 완료·실패를 읽으며 근거가 없으면 `unknown_finished`입니다. `labhq down` 뒤에도 job은 돌고 다음 runner가 이어받으므로 runner를 다시 켜지 않으면 남습니다. 제출 응답이 끊기면 재제출 전에 `job_list`로 확인합니다. `nohup … &`·뒤쪽 `&`·`setsid`·`disown`·`Start-Process`(`-Wait`·`-Verb` 없이)·`Start-Job`과 중첩 셸의 같은 명령은 카드 없이 거절하고 `job_submit`을 안내합니다. 공유 환경 설치도 일반 셸처럼 거절합니다. 다만 Claude의 사전 허용 셸 명령(예: `python *`)은 gate를 거치지 않을 수 있어 모든 우회를 막는다는 보장은 없습니다.
+  **로컬 job**(#675): 10분 넘는 계산은 `labhq_job`의 `job_submit(command, name, expected_minutes)`·`job_status`·`job_list`·`job_cancel`로 냅니다([analyst](../agents/core/analyst.yaml)·[bioinfo-agent](../agents/core/bioinfo-agent.yaml), Claude 직원만). Codex는 OS sandbox 밖 실행을 막기 위해 거절합니다. HPC scheduler 없이도 쓰지만 WSL runner는 지원하지 않습니다. runner가 승인 gate로 명령을 판정하고 슬롯을 잡아 작은 wrapper로 시작합니다. 동시 실행은 `runner.max_parallel`개이며 로그·종료 코드 `exit`는 runner 상태 폴더에 둡니다. 직원은 제출 뒤 턴을 끝내고 단계는 완료 시 `jobs.finished`로 깨어납니다. 단계 흐름·task card·3D 요청 줄은 계산명·관측 상태를, 직원·캐릭터는 로컬/HPC 대기를 구분해 표시합니다. 진행률·완료 예정 시각은 추정하지 않습니다. 재접속 때 제출 event가 없으면 `pending_jobs`의 ID·상태 확인 중만 표시합니다. 단계·요청 취소(`task.cancel`·`task.jobs_cancel`)는 확인된 job 트리를 종료하고 단계를 깨우지 않습니다. 시작 중 취소도 적용하며 끝난 job의 상태는 취소로 바꾸지 않습니다. runner 재시작은 PID·생성 시각을 대조해 이어받고, 종료됐으면 `exit`로 완료·실패를 읽으며 근거가 없으면 `unknown_finished`입니다. `labhq down` 뒤에도 job은 돌고 다음 runner가 이어받으므로 runner를 다시 켜지 않으면 남습니다. 제출 응답이 끊기면 재제출 전에 `job_list`로 확인합니다. `nohup … &`·뒤쪽 `&`·`setsid`·`disown`·`Start-Process`(`-Wait`·`-Verb` 없이)·`Start-Job`과 중첩 셸의 같은 명령은 카드 없이 거절하고 `job_submit`을 안내합니다. 공유 환경 설치도 일반 셸처럼 거절합니다. 다만 Claude의 사전 허용 셸 명령(예: `python *`)은 gate를 거치지 않을 수 있어 모든 우회를 막는다는 보장은 없습니다.
   저장된 job은 마지막 상태 그대로 남으며 완료·빈 큐로 간주하지 않습니다. 로컬 runner 연결과 분석 경로는 유지하지만 임의 shell의 HPC 접근을 막는 OS sandbox는 아닙니다([검증 범위](reference/scheduler-none-829.md)).
 - **직원** (`agents/core/*.yaml`): `engine`, `model`, `effort`(Claude Code·Codex만), `tools`(사전 허용), `builtin_mcp`(`approval`, `hpc`, `annot`),
   `permission_mode`, `project_dirs`.
