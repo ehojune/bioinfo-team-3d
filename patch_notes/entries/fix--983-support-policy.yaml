@@ -1,6 +1,6 @@
-pr: null
+pr: 991
 rows:
-  - sha: 'c59c2314'
+  - sha: 'c59c231'
     at: '2026-10-26 22:21'
     summary: 'profile이 시설팀 지원 요구를 선언하고 doctor가 준비 증거를 판정합니다.'
     text: 'required 미충족은 FAIL, optional+ready만 OK, unspecified는 WARN입니다. init 명시 값 보존과 격리 회귀로 확인했으며 실제 복구는 UNVERIFIED입니다.'
