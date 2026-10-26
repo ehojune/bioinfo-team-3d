@@ -1,5 +1,9 @@
 pr: 977
 rows:
+- sha: d9222b9
+  at: '2026-10-26 13:49'
+  text: 저장 중 sync plan-rehire가 반영한 최신 Registry 객체를 예약된 계약 callback이 덮어쓰지 않도록 보완한다(P1 4374032253).
+  summary: 계약 갱신과 동기 재채용이 겹쳐도 파일·메모리·roster가 최신 재채용을 유지합니다.
 - sha: 25815cd
   at: '2026-10-26 13:44'
   text: 같은 ID의 recruitment와 계약 갱신이 FIFO 순서대로 snapshot·Registry·roster를 반영하도록 보완한다(P1 4374010475).
