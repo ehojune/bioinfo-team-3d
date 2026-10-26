@@ -1,5 +1,9 @@
 pr: 985
 rows:
+  - sha: '724a59d'
+    at: '2026-10-26 17:54'
+    summary: '시설팀 fallback 회귀 11건을 Windows 필수 cohort에 등록합니다.'
+    text: 'Windows CI가 새 test inventory 누락으로 실행 전 거부한 원인을 고쳤습니다. validate_profile과 해당 mock 11 passed이며 assertion·coverage는 유지합니다.'
   - sha: 'cc52edd'
     at: '2026-10-26 17:47'
     summary: '시설팀이 없을 때 CSO 대체 답변에 부재 사실을 알리고 같은 단계의 재문의를 막습니다.'
