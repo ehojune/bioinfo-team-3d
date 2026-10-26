@@ -44,6 +44,32 @@ test('local submission, state and request ownership reach the shared flow and ta
   assert.match(allText(board), /GSEA: 실행 중/);
   assert.doesNotMatch(allText(board), /Other/);
 });
+test('2.5D task card cache changes on job-only updates and step flow switches requests', async () => {
+  const {o, emit, q} = setup(), ui = await load();
+  const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
+  const render = html.slice(html.indexOf('function renderRequest()'));
+  const cache = render.slice(render.indexOf('  const key ='), render.indexOf('  if (key === reqKey)')) + '\nkey;';
+  const cacheContext = vm.createContext({q, S:o.S, staffNames:[], statusText:'', requestDigest:[], details:[], snapshotLoaded:true});
+  emit('job.submitted', {job_id:'local-one', name:'GSEA'});
+  const before = vm.runInContext(cache, vm.createContext({...cacheContext}));
+  emit('job.state', {job_id:'local-one', state:'running'});
+  const after = vm.runInContext(cache, vm.createContext({...cacheContext}));
+  assert.notEqual(after, before, 'a job state change must invalidate the enclosing request card cache');
+  emit('job.submitted', {job_id:'local-other', name:'Other'}, 'r2');
+  const flow = new Element();
+  ui.syncStepFlow(flow, q);
+  assert.match(flow.children[0].textContent, /GSEA/);
+  ui.syncStepFlow(flow, o.S.requests.get('r2'));
+  assert.match(flow.children[0].textContent, /Other/);
+  assert.doesNotMatch(flow.children[0].textContent, /GSEA/);
+  q.plan.push({id:'s2', agent_id:'analyst'}); q.steps.s2 = 'working';
+  o.apply({type:'task.dispatched', request_id:'r1', task_id:'second-step', data:{step_id:'s2'}});
+  o.apply({type:'job.submitted', request_id:'r1', task_id:'second-step', data:{job_id:'local-s2', name:'Second'}});
+  ui.syncStepFlow(flow, q);
+  assert.match(flow.children[0].textContent, /GSEA/);
+  assert.doesNotMatch(flow.children[0].textContent, /Second/);
+  assert.match(flow.children[1].textContent, /Second/);
+});
 for (const state of ['completed','failed','cancelled','unknown_finished','error'])
   test(`terminal job ${state} clears pending display without affecting another request`, async () => {
     const {o, emit, q} = setup();
