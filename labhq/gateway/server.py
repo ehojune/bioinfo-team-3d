@@ -2479,6 +2479,9 @@ class Hub:
         if cancelled:
             # The committed intent survives cancellation and is replayed on reconnect.
             raise asyncio.CancelledError
+        current = self.store.get("task", tid)
+        if current and current.get("completed") and not current.get("abandoned"):
+            return True  # The result overtook intent persistence; no cancel remains to send.
         try:
             await self.send_runner(runner_id, {"type": "task.cancel", "task_id": tid})
         except RunnerUnavailable:
@@ -3300,7 +3303,6 @@ class Hub:
             if task:  # steers this turn did not deliver go back to its step (#59 ①)
                 self._settle_steers(tid, task, result.control)
             if tid:
-                self.store.delete("task_cancel", tid)  # the task ended: a kept cancel has nothing left to stop
                 if result.error_kind == "halted":
                     self.task_controls[tid] = {"paused": False, "halt": True, "halted": True, "ts": time.time()}
                     self.store.put("task_control_state", tid, self.task_controls[tid])
@@ -3349,6 +3351,9 @@ class Hub:
                                               "completed": True, "result": result.model_dump(mode="json")})
                 self._refresh_roster()
                 self._session_state_changed()
+            if tid:
+                # Completion must be visible before cleanup so a queued cancel cannot recreate the intent.
+                self.store.delete("task_cancel", tid)
             fut = self.futures.pop(msg.get("task_id") or "", None)
             if fut and not fut.done():
                 fut.set_result(result)
