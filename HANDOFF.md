@@ -13,12 +13,12 @@
 
 main·열린 PR을 대조한 큐입니다. 구현·CI 통과는 운영 PASS나 새 실행 승인이 아닙니다. 기존 실행 계약과 중단 결정을 유지하며, 지원 범위는 [manual](docs/manual.md#중단-조건-한눈에)을 봅니다.
 
-문서 PR #970은 hold입니다. #971 수정 PR #973→#972→[#653 snapshot 후속](https://github.com/ehojune/bioinfo-team-3d/issues/653#issuecomment-6403355901) 반영 뒤 manual을 통합합니다. #969 본 수정은 병합됐고 #653은 열린 상태입니다. 최종 head CI·동일 head 리뷰 완료·모든 head 미해결 P1=0 뒤 #970을 병합하며 후속 실행 GO는 별도입니다.
+[#973](https://github.com/ehojune/bioinfo-team-3d/pull/973) halt 진입 취소·[#972](https://github.com/ehojune/bioinfo-team-3d/pull/972) async 저장·[#975](https://github.com/ehojune/bioinfo-team-3d/pull/975) snapshot 후속이 병합돼 #965·#653은 CLOSED입니다. 문서 PR #970은 [최종 통합 배정](https://github.com/ehojune/bioinfo-team-3d/pull/970#issuecomment-6407311846)의 CI·알려진 P1·충돌/head guard를 확인해 담당 병합합니다. PI 임시 리뷰 생략을 적용하며 후속 실행 GO는 별도입니다.
 
 | 순서 | 현재 상태·다음 일 |
 |---|---|
 | 종료 조건 · [#877](https://github.com/ehojune/bioinfo-team-3d/issues/877#issuecomment-6370526043) | API 단절 뒤 기한 종료·잔류 0은 특정 설치판의 무해한 증명에서 PASS. 실제 adapter timeout/cancel·복구 중복 방지·full-capability doctor는 미평가. 요청 전체 상한 확인이 남아 OPEN이며 새 실행 GO는 별도 |
-| 저장 · [#606](https://github.com/ehojune/bioinfo-team-3d/issues/606) | [#966](https://github.com/ehojune/bioinfo-team-3d/pull/966) publish 저장 대기는 병합(`929eded9`). [#965](https://github.com/ehojune/bioinfo-team-3d/issues/965)의 동기 helper·SavedResults 전환은 [#972](https://github.com/ehojune/bioinfo-team-3d/pull/972) OPEN으로 미완료. #606 전체 완료는 미검증 |
+| 저장 · [#606](https://github.com/ehojune/bioinfo-team-3d/issues/606) | #966 publish 저장 대기와 #972 request helper·SavedResults async 전환 병합. 잔여 직접 저장 경계가 있어 #606 전체 완료는 미검증 |
 | 복구 · [#675](https://github.com/ehojune/bioinfo-team-3d/issues/675) | [#937](https://github.com/ehojune/bioinfo-team-3d/pull/937) 로컬 job 구현·[#968](https://github.com/ehojune/bioinfo-team-3d/pull/968) 취소 재전송 회귀 병합. 실제 transport·OS 재시작은 미검증; WSL·진행률은 잔여 |
 | 소유권 · [#618](https://github.com/ehojune/bioinfo-team-3d/issues/618) | [#967](https://github.com/ehojune/bioinfo-team-3d/pull/967) 병합으로 획득 경쟁 P1 해소. broker port P2는 보류하며 v1 선결에 추가하지 않음 |
 | 디스크 · [#678](https://github.com/ehojune/bioinfo-team-3d/issues/678) | [#920](https://github.com/ehojune/bioinfo-team-3d/pull/920) 시작 전 여유 검사 병합. 다운로드·압축 해제 직전 검사와 실제 부족 상황 검증은 잔여 |
