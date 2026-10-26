@@ -166,6 +166,23 @@ def test_fresh_execution_keeps_current_attempt(upload):
     assert select(request) == (77, 3)
 
 
+@pytest.mark.parametrize('reverse', [False, True])
+def test_old_failed_upload_does_not_block_fresh_success(upload, reverse):
+    data, request = upload
+    data[1]['conclusion'] = 'failure'
+    data[3].update(started_at='2026-10-25T03:00:01Z', completed_at='2026-10-25T03:08:00Z')
+    fresh = copy.deepcopy(data['artifacts'][0])
+    fresh.update(id=78, name='coverage-windows-42-3',
+                 created_at='2026-10-25T03:07:55Z', updated_at='2026-10-25T03:07:55Z')
+    data['artifacts'].append(fresh)
+    if reverse:
+        data['artifacts'].reverse()
+    assert select(request) == (78, 3)
+    data['artifacts'] = [a for a in data['artifacts'] if a['id'] != 78]
+    with pytest.raises(ValueError, match='missing/ambiguous bound'):
+        select(request)
+
+
 @pytest.mark.parametrize('case', ['missing', 'expired', 'foreign-run', 'foreign-head', 'foreign-repo',
     'failed', 'running', 'newer-execution', 'copied-only', 'before-job', 'after-job', 'duplicate',
     'wrong-job-run', 'wrong-job-head', 'wrong-job-attempt'])

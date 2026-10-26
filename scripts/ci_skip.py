@@ -575,13 +575,14 @@ def windows_artifact(run, head, repository_id, request=None):
             raise ValueError('missing/ambiguous Windows producer')
         job = rows[0]
         if not (job['run_id'] == run['id'] and job['run_attempt'] == attempt
-                and job['head_sha'] == head and job['status'] == 'completed'
-                and job['conclusion'] == 'success'):
-            raise ValueError('unbound/failed Windows producer')
+                and job['head_sha'] == head):
+            raise ValueError('unbound Windows producer')
         return job
     def time(value):
         return datetime.fromisoformat(value.replace('Z', '+00:00'))
     effective = jobs(run['run_attempt'])
+    if effective['status'] != 'completed' or effective['conclusion'] != 'success':
+        raise ValueError('failed/incomplete effective Windows producer')
     data = request(f"actions/runs/{run['id']}/artifacts?per_page=100")
     if data['total_count'] != len(data['artifacts']):
         raise ValueError('incomplete producer artifacts')
@@ -598,6 +599,8 @@ def windows_artifact(run, head, repository_id, request=None):
                 and origin['repository_id'] == origin['head_repository_id'] == repository_id):
             raise ValueError('unbound Windows artifact')
         job = effective if attempt == run['run_attempt'] else jobs(attempt)
+        if job['status'] != 'completed' or job['conclusion'] != 'success':
+            continue  # always() uploads from old failed jobs are not candidates.
         if (job['started_at'], job['completed_at']) != (effective['started_at'], effective['completed_at']):
             continue  # An older success is not the effective execution.
         if (time(job['created_at']) <= time(job['started_at'])
