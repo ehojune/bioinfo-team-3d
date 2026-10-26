@@ -4,6 +4,16 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Refs #675. 취소 회귀검사의 PID readiness race를 수정했습니다.
+
+- 파일 존재 대신 양수 PID를 읽을 때까지 기존 40초 안에서 기다리고 읽은 값을 보관합니다.
+- 프로세스 종료·다른 job 보존·완료 깨움 없음 assertion을 유지합니다. 제품 코드는 바꾸지 않았습니다.
+- 로컬: `pytest tests/test_local_jobs_675.py -q -k pid_readiness` → 6 passed, 31 deselected. missing→empty→valid 및 missing/empty/invalid/0/-1 timeout을 fake clock으로 확인했습니다.
+- Windows CI inventory 검증 통과. 실제 통합 경로는 CI에서 검증합니다. 로컬 실프로세스·Chrome·WSL은 실행하지 않았습니다.
+- 최종 head CI·실제 리뷰·P0/P1·head guard 확인 전 hold를 유지합니다. #675의 다른 잔여 범위와 Windows 두 실패의 원인 미확정 상태는 그대로입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Refs #983 — 시설팀 부재 안내·재문의 순환 방지의 부분 수정입니다.
 
 - facilities→CSO fallback의 prompt와 답변에 시설팀 부재·실제 대체 담당을 명시합니다. 과거 cached/adopted 답변에도 안내를 붙이고 같은 단계의 재문의를 추가 상담 없이 거부합니다.
