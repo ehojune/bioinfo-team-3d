@@ -331,6 +331,18 @@ async def run_task(runner, task):
         row = task.meta["recruit"]
         pid = paper_key(row.get("paper") or row.get("repo"))
         payload = conversion_payload(row)
+
+        def validate_rehire(candidate):
+            c = candidate.contract
+            if (not c or paper_key(c.paper or c.repo) != pid or c.kind not in {"technician", "full"}
+                    or c.verification.get("conversion_payload") != payload):
+                raise ValueError("rehire contract no longer matches the approved conversion")
+            passed, _ = paper2agent.probation(c.kind, c.verification.get("probe_tools") or [],
+                                             c.skill_dir, c.verification.get("offer_status"))
+            if (not passed or c.status == "probation" or provenance.missing_hashes(candidate)
+                    or provenance.provenance_changes(candidate)):
+                raise ValueError("rehire contract no longer passes probation/hash checks")
+
         for spec in runner.registry.talent_pool():
             c = spec.contract
             if not c or paper_key(c.paper or c.repo) != pid or c.kind not in {"technician", "full"}:
@@ -345,10 +357,12 @@ async def run_task(runner, task):
                 return {"status": "failed", "error": "인재풀 수습·hash 확인 실패"}
             current = runner.registry.agents.get(spec.id)
             if not current or not current.contract or current.contract.expires_at <= time.time():
-                spec = runner.registry.rehire(runner.registry._slug(spec), runner.s.recruit.default_ttl_days)
+                spec = await runner.registry.arehire(runner.registry._slug(spec), runner.s.recruit.default_ttl_days,
+                                                     on_commit=runner._send_roster, validate=validate_rehire)
             elif current.contract.status != "active":
                 return {"status": "failed", "error": "인재풀 직원이 active가 아님"}
-            runner._send_roster()
+            else:
+                runner._send_roster()
             return {"status": "active", "agent_id": spec.id, "reused": True}
         name = "plan-" + _batch_key(payload)[:24]
         conversion = paper2agent.Recruitment(runner, {
@@ -366,7 +380,25 @@ async def run_task(runner, task):
         return {"status": "active", "agent_id": spec.id, "reused": False}
 
     try:
-        receipt = await asyncio.wait_for(recruit(), timeout=runner.s.runner.task_timeout_s)
+        work = asyncio.create_task(recruit())
+        pending = asyncio.create_task(asyncio.wait_for(work, timeout=runner.s.runner.task_timeout_s))
+        cancelled = None
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError as exc:
+                # Cancel the work once, leaving wait_for shielded: its Python 3.10 cancellation cleanup can
+                # mask a child's storage error or be interrupted before the nested writer settles.
+                if cancelled is None:
+                    cancelled = exc
+                    work.cancel()
+        # Python 3.10 wait_for can finish cancelled while its child finished with a storage error.
+        # Keep the child handle and observe that result before the timeout/cancellation wrapper's result.
+        if work.done() and not work.cancelled():
+            work.result()
+        receipt = pending.result()
+        if cancelled is not None:
+            raise cancelled
     except asyncio.TimeoutError:
         receipt = {"status": "timed_out"}
     except Exception as exc:
