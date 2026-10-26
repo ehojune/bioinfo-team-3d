@@ -2867,8 +2867,7 @@ class Hub:
         def attach(state):
             nonlocal dropped
             revision = int(task.meta.get("revision") or 0)
-            if (not self._step_alive({"request_id": task.request_id, **task.meta})
-                    or revision < state["revision"]):
+            if revision < state["revision"]:
                 return False
             state["revision"] = revision
             state["last_task"] = task.id
@@ -3731,8 +3730,7 @@ class Hub:
         if self.controllable(task.meta.get("kind"), task.meta.get("step_id"), task.request_id):
             key = self.step_key(task.request_id, task.meta.get("step_id"), task.meta.get("kind"), task.id)
             if (key in getattr(self, "_closed_steps", set()) or
-                    int(task.meta.get("revision") or 0) < self._step(key)["revision"] or
-                    not self._step_alive({"request_id": task.request_id, **task.meta})):
+                    int(task.meta.get("revision") or 0) < self._step(key)["revision"]):
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0,
                                   cost_known=True, error="step ended before dispatch")
         fut = asyncio.get_running_loop().create_future()

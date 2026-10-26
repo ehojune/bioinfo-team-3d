@@ -325,6 +325,16 @@ async def test_new_revision_reopens_step_but_old_turn_cannot(hub):
     assert hub.store.get("step_control", key) is None
 
 
+async def test_revision_attachment_accepts_previous_result_context(hub):
+    key = hub._entry_step("t", hub.store.get("task", "t"))
+    await hub._close_step_controls("req", "s1")
+    # Revision construction may retain its previous result as context.
+    hub.requests["req"]["results"]["s1"] = {"ok": True, "text": "previous"}
+    revised = task("revised").model_copy(update={"meta": {"kind": "step", "step_id": "s1", "revision": 1}})
+    await hub._attach_steers(revised)
+    assert hub.store.get("step_control", key)["last_task"] == "revised"
+
+
 @pytest.mark.parametrize("operation", ["pause", "resume", "steer", "attach", "settle", "close"])
 async def test_step_rollback_suppresses_wake_send_and_notice(hub, monkeypatch, operation):
     key = hub._entry_step("t", hub.store.get("task", "t"))
