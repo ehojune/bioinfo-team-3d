@@ -104,6 +104,27 @@ test('team runner waits apply only to the named employee and clear on dispatch o
   assert.equal(q.runnerMissing.size,0);
   assert.equal(o.stateText(o.ag('engineer')),'차례 대기');
 });
+test('snapshot wait targets override stale replay and tolerate legacy or malformed payloads', () => {
+  for (const waits of [undefined, null, [], {bad:null}, {bad:{agent_id:42}}, {},
+    {a:{agent_id:'ANALYST'}, duplicate:{agent_id:'analyst'}}]) {
+    const o = fixture();
+    const r = {id:'current', mode:'orchestrate', status:'waiting_for_runner',
+      plan:{steps:[{id:'a',agent_id:'analyst'}, {id:'b',agent_id:'engineer'}]}};
+    if (waits !== undefined) r.runner_waits = waits;
+    o.apply({type:'snapshot',data:{agents:[{id:'analyst'}, {id:'engineer'}], requests:[r]}});
+    assert.equal(o.stateText(o.ag('analyst')), waits?.a ? '러너 기다림' : '차례 대기');
+    assert.equal(o.stateText(o.ag('engineer')), '차례 대기');
+    if (waits?.a) {
+      o.apply({type:'snapshot',data:{agents:[{id:'analyst'}, {id:'engineer'}],
+        recent_events:[{type:'request.runner_wait',request_id:r.id,data:{agent_id:'engineer'}}],
+        requests:[r]}});
+      assert.equal(o.stateText(o.ag('engineer')), '차례 대기');
+      o.apply({type:'request.status',request_id:r.id,data:{status:'running'}});
+      assert.equal(o.stateText(o.ag('analyst')), '차례 대기');
+    }
+  }
+});
+
 test('task-less live agent activity takes priority over current plan and past review', () => {
   for (const [data, visual, text] of [
     [{state:'waiting',asks:['ask']},'hibernating','답 기다리는 중'],

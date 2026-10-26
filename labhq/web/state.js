@@ -637,6 +637,15 @@ function apply(ev, replay = false) {
         const q = req(r.id);
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
         q.pi_review_pending = r.pi_review_pending === true; q.pi_reviewed_at = r.pi_reviewed_at || null; q.agent_id = r.agent_id || '';
+        // Current request memory outlives the 200-event replay. Older snapshots can still use replay evidence.
+        if (r.status !== 'waiting_for_runner' || Object.hasOwn(r, 'runner_waits')) {
+          q.runnerMissing.clear();
+          if (r.status === 'waiting_for_runner' && r.runner_waits && typeof r.runner_waits === 'object' && !Array.isArray(r.runner_waits)) {
+            for (const wait of Object.values(r.runner_waits)) {
+              if (typeof wait?.agent_id === 'string' && wait.agent_id.trim()) q.runnerMissing.add(wait.agent_id.trim().toLowerCase());
+            }
+          }
+        }
         q.final_checkpoint = r.final_checkpoint || null;
         q.resultStorage = r.result_storage || {};
         q.updated_at = Math.max(q.updated_at, Number(r.updated_at) || 0);

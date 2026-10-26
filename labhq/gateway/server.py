@@ -4815,6 +4815,7 @@ class Hub:
                                                                   "references", "pi_notes", "route", "route_decision",
                                                                   "bundle_path", "bundle_status", "bundle_grade",
                                                                   "bundle_grade_reasons", "bundle_warning", "result_storage")},
+                          "runner_waits": r.get("runner_waits") or {},
                           **({"semantic_devices": r["semantic_devices"]} if r.get("semantic_devices") else {}),
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
