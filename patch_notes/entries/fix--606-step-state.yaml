@@ -1,0 +1,5 @@
+rows:
+- sha: cf36af2
+  at: '2026-10-26 20:27'
+  text: step 제어를 최신 row 기준으로 직렬화하고 async commit 뒤 wake·전송을 처리한다(Refs #606).
+  summary: 경쟁·rollback·반복 취소·steer replay·격리 복구 읽기를 mock으로 검증한다. 실제 운영 성능은 미검증이다.
