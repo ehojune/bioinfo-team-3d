@@ -2538,6 +2538,7 @@ class Hub:
         return {"steers": [dict(steer) for steer in state.get("steers") or [] if isinstance(steer, dict)],
                 "paused": bool(state.get("paused")), "dropped": int(state.get("dropped") or 0),
                 "dropped_told": int(state.get("dropped_told") or 0), "agent_id": state.get("agent_id"),
+                "drop_reservations": dict(state.get("drop_reservations") or {}),
                 "last_task": state.get("last_task"), "ops": int(state.get("ops") or 0),
                 "pause_op": int(state.get("pause_op") or 0), "halt_op": int(state.get("halt_op") or 0),
                 "revision": int(state.get("revision") or 0)}
@@ -2644,6 +2645,8 @@ class Hub:
             if target and (target in getattr(self, "_finishing_step_tasks", set()) or
                            not current or (current.get("completed") and not current.get("abandoned"))):
                 await self._settle_steers(target, entry, None)
+                if (message or {}).get("action") == "halt":
+                    raise ValueError("task ended before halt delivery")
                 return False
             sent = bool(target and message) and await self._push(target, message)
             if key in getattr(self, "_closed_steps", {}) or not self._step_alive(entry):
@@ -2885,18 +2888,20 @@ class Hub:
                     steers.append({"id": steer["id"], "text": steer["text"]})
             dropped = max(0, state["dropped"] - state["dropped_told"])
             state["dropped_told"] = state["dropped"]
+            if dropped:
+                # Ownership survives revision advances, but not closing the row.
+                state["drop_reservations"][task.id] = dropped
 
         _, cancelled = await self._update_step(key, attach, reopen=int(task.meta.get("revision") or 0))
         if cancelled:
             # No payload reached dispatch. Return both IDs and its drop notice,
             # preserving any newer queue/counter changes under the same lock.
             def release(state):
-                if state["revision"] != int(task.meta.get("revision") or 0):
-                    return False
                 for steer in state["steers"]:
                     if steer.get("task") == task.id:
                         steer["task"] = None
-                state["dropped_told"] = max(0, state["dropped_told"] - dropped)
+                reserved = state["drop_reservations"].pop(task.id, 0)
+                state["dropped_told"] = max(0, state["dropped_told"] - reserved)
                 self._cap_steers(state)
 
             await self._update_step(key, release)
@@ -2921,6 +2926,7 @@ class Hub:
                     steer["task"] = None
                 kept.append(steer)
             state["steers"] = kept
+            state["drop_reservations"].pop(tid, None)
             self._cap_steers(state)
 
         _, cancelled = await self._update_step(key, settle)

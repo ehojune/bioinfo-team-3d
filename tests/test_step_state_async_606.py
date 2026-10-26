@@ -366,6 +366,46 @@ async def test_cancelled_attach_restores_only_its_drop_notice(hub, monkeypatch):
     assert [s["text"] for s in replay.meta["steers"]] == ["new instruction"]
 
 
+@pytest.mark.parametrize("close_first", [False, True])
+async def test_cancelled_attach_cleanup_survives_revision_advance(hub, monkeypatch, close_first):
+    key = hub.step_key("req", "s1", "step", "")
+    await hub.store.aput("step_control", key, {"last_task": "t", "dropped": 4, "dropped_told": 1,
+        "steers": [{"id": "old", "text": "old instruction", "task": None}]})
+    update = hub._update_step
+    once = True
+
+    async def interrupted(key, change, **kwargs):
+        nonlocal once
+        result = await update(key, change, **kwargs)
+        if once:
+            once = False
+            if close_first:
+                await hub._close_step_controls("req", "s1")
+            revised = task("revision").model_copy(update={"meta": {
+                "kind": "step", "step_id": "s1", "revision": 1}})
+            await hub._attach_steers(revised)
+            if close_first:
+                # Notices on a newly opened row do not belong to the old attach.
+                await update(key, lambda state: state.update(dropped=5, dropped_told=5))
+            return result[0], True
+        return result
+
+    monkeypatch.setattr(hub, "_update_step", interrupted)
+    with pytest.raises(asyncio.CancelledError):
+        await hub._attach_steers(task())
+    state = hub._step(key)
+    assert state["revision"] == 1
+    if close_first:
+        assert (state["dropped"], state["dropped_told"]) == (5, 5)
+        assert not state["steers"]
+    else:
+        assert state["steers"][0]["task"] is None
+        replay = task("replay").model_copy(update={"meta": {"kind": "step", "step_id": "s1", "revision": 1}})
+        attached = await hub._attach_steers(replay)
+        assert attached.meta["steer_dropped"] == 3
+        assert [s["id"] for s in attached.meta["steers"]] == ["old"]
+
+
 @pytest.mark.parametrize("resumable", [False, True])
 async def test_blocking_turn_keeps_step_open_until_answered(hub, monkeypatch, resumable):
     hub.store.delete("task", "t")  # Only the DAG's own turns are live.
@@ -424,6 +464,20 @@ async def test_result_starting_after_steer_commit_prevents_send(hub, monkeypatch
     hub._push.assert_not_called()
     key = hub._entry_step("t", hub.store.get("task", "t"))
     assert hub._step(key)["steers"][0]["task"] is None
+
+
+async def test_result_starting_after_halt_commit_is_refused(hub, monkeypatch):
+    save = hub._save_step
+
+    async def finishing(key, state):
+        await save(key, state)
+        hub._finishing_step_tasks = {"t"}
+
+    monkeypatch.setattr(hub, "_save_step", finishing)
+    with pytest.raises(ValueError, match="ended"):
+        await hub.control_task("t", "halt")
+    hub._push.assert_not_called()
+    assert not [e for e in hub.events if e.get("type") == "agent.control"]
 
 
 async def test_close_serializes_with_control_publication(hub, monkeypatch):
