@@ -1,5 +1,9 @@
 pr: 990
 rows:
+- sha: 404664c
+  at: '2026-10-26 22:23'
+  text: result snapshot과 종료 정산 표식을 PI intent·전송 판정과 직렬화한다(Refs #606).
+  summary: durable halt 뒤 응답 거절과 pause가 엇갈리는 P1의 ask·실패·성공 회귀를 3 FAIL에서 3 PASS로 검증했다.
 - sha: 0ee0aaa
   at: '2026-10-26 22:08'
   text: 종료 경쟁 때 이번 steer ID만 반환하고 기존 예약은 result의 delivered 정산에 맡긴다(Refs #606).
