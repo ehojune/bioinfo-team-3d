@@ -55,7 +55,7 @@ test('task-less local wait survives roster refresh without changing HPC or ask l
 
 test('2.5D visible staff badge retains the local or followup wait label', async () => {
   const ui = await import('data:text/javascript;base64,' + fs.readFileSync(path.join(web, 'ui/office-art.js')).toString('base64'));
-  for (const detail of ['로컬 계산 기다리는 중', '로컬 계산·HPC 작업 기다리는 중', '후속 처리 기다리는 중'])
+  for (const detail of ['로컬 계산 기다리는 중', '로컬 계산·HPC 작업 기다리는 중', '후속 처리 기다리는 중', '작업·응답 대기'])
     assert.equal(ui.officeStatus({}, 'hibernating', detail).text, detail);
 });
 
