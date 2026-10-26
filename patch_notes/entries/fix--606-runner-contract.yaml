@@ -1,5 +1,9 @@
 pr: 977
 rows:
+- sha: 25815cd
+  at: '2026-10-26 13:44'
+  text: 같은 ID의 recruitment와 계약 갱신이 FIFO 순서대로 snapshot·Registry·roster를 반영하도록 보완한다(P1 4374010475).
+  summary: 앞뒤로 채용이 겹쳐도 새 설정과 provenance를 이전 계약으로 덮어쓰지 않습니다.
 - sha: 0e95ad1
   at: '2026-10-26 13:37'
   text: runner 계약 갱신을 기존 writer에서 기다리고 저장 성공 뒤 Registry와 roster를 반영한다(Refs #606).
