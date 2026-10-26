@@ -1,5 +1,9 @@
 pr: 985
 rows:
+  - sha: 'c9cb80c'
+    at: '2026-10-26 17:59'
+    summary: '겹쳐 들어온 같은 단계 재문의도 CSO 상담을 한 번만 실행합니다.'
+    text: 'P2 4375474605의 경쟁을 수정 전 1 failed로 재현했습니다. lock 안에서 durable ask를 다시 확인하고 답변 저장까지 잠금을 유지합니다. main #982·#984 반영 후 관련 mock 149 passed입니다.'
   - sha: 'f1528b7'
     at: '2026-10-26 17:55'
     summary: '시설팀 부재·cached/adopted 답변·같은 단계 재문의 거부를 manual 한 곳에 기록합니다.'
