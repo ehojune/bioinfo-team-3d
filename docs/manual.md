@@ -1009,9 +1009,17 @@ internal 구역을 가리키는 작업·project·참고 폴더 별칭은 Claude�
 | 실패 | 일시적 실패는 `orchestrator.step_max_attempts=2`까지 시도합니다. 요청 전체가 실패 2회에 중단되는 전역 규칙은 없습니다. |
 | PI 카드 | 결정 카드는 기본 7일, 도구 gate는 1시간입니다. 재개 카드 기한은 원래 생성 시각 기준이며, 기한 초과는 `resume_timed_out`입니다. 재시작 때 다른 결정 카드는 닫히고 재개 카드로 돌아갑니다. |
 
-시운전 B의 **90분(카드 대기 포함)·요청 $9·작업 $3·HTTP 9회**는 별도 승인 계약입니다. GO 요청의 **proof 실패 2회 중단·CP1/CP2/예산 카드 10분 내 응답**도 운영 조건이며 제품의 전역 자동 중단·카드 timeout 기본값은 아닙니다. 재시작으로 기한·상한·counter를 초기화하지 않습니다. 실행에는 해당 GO가 필요합니다. 코드 위치와 fake 복구 재현의 한계는 [대조표](reference/recovery-stop-924.md)를 봅니다.
+요청별 시간·비용·조회 상한과 중단·응답 조건은 별도 승인 계약을 따릅니다. 재시작으로 기한·상한·counter를 초기화하지 않습니다. 과거 실행 승인은 새 실행의 GO가 아닙니다. 코드 위치와 fake 복구 재현의 한계는 [대조표](reference/recovery-stop-924.md)를 봅니다.
 
 재개하면 완료 단계는 재사용합니다. 이미 중단 결과가 저장된 task는 승인 뒤 새 task ID로 이어 가며, 같은 중단 결과로 재개 카드를 반복해서 열지 않습니다.
+
+**제한된 v1의 지원·복구 조건(2026-10-26):** [#882](https://github.com/ehojune/bioinfo-team-3d/issues/882)의 목표는 Windows gateway/runner에서 공개 문헌 요청을 끝까지 확인하는 것입니다. 통합 종료 증명과 별도 GO가 먼저이며, HPC·WSL·기관 로그인·원자료는 이 확인 범위에서 제외합니다. v1 운영 지원 완료를 선언한 상태는 아닙니다.
+
+| 항목 | 구현 근거와 남은 확인 |
+|---|---|
+| 로컬 job·취소 | [#937](https://github.com/ehojune/bioinfo-team-3d/pull/937) job 기록 재로드, [#968](https://github.com/ehojune/bioinfo-team-3d/pull/968) 복구 runner에 취소 재전송 회귀가 병합됐습니다. 대체 transport·무해한 job으로 취소 트리 잔류 0·완료 깨움 없음·다른 요청 보존을 확인했습니다. runner가 꺼진 동안에는 job 종료를 보장하지 않습니다. |
+| 저장·소유권 | [#967](https://github.com/ehojune/bioinfo-team-3d/pull/967) runner state 소유권 경쟁·[#966](https://github.com/ehojune/bioinfo-team-3d/pull/966) publish 저장 대기·[#972](https://github.com/ehojune/bioinfo-team-3d/pull/972) request helper·SavedResults async 전환은 병합됐습니다. 잔여 직접 저장 경계가 있어 #606 전체 완료는 미검증입니다. |
+| 운영 미검증 | 실제 WebSocket 재연결·gateway OS 재시작·새 설치에서의 실제 요청·반복 복구·지원 요청 end-to-end는 미검증입니다. [새 설치 mock 검사](reference/clean-install-922.md)와 회귀 CI를 운영 PASS로 세지 않습니다. |
 
 ### 승인·예산
 
@@ -1461,7 +1469,7 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
 | 버전 | 정의 | 통과 기준 | 지금 | 남은 것 |
 |---|---|---|---|---|
 | v0.25 | PI가 공개 데이터로 labhq를 시험한다 | PI 공개 데이터 요청 5건 중 4건 이상이 개발자 손 없이 보고서까지 간다. 요청당 승인 카드 3장 이하(설치·예산 질문 제외) | **2026-10-04 선언.** 근거는 PI 본인 시운전 전 총괄 리허설: PI 요청 세트 5건 중 4건이 리뷰 accept까지 갔고, 카드는 요청당 0~1장(설치·예산 제외)이었다. 리허설에서 나온 결함(게이트 오탐, 수정 라운드의 위 단계 결과, 웹 토큰 진입, CSO의 PC 사정 인식, 단계 실패 재계획)을 고쳤다. 그 전에 같은 계정 실행의 개인 경로 차단, 직원 전용 설정 폴더, 모의 시운전 2~12차 결함 수정이 들어갔다 | PI 본인 시운전 결과를 #373에 붙이기 |
-| v0.5 | PI가 자기 공개 데이터로 로컬에서 연구한다 | 연구 lane 2건을 CP2 승인·보고서까지 완주하고 `labhq verify`가 문제 없음(exit 0) | **2026-10-08 선언.** 근거: 실제 CLI로 연구 요청 2건이 CP1 → 12단계 → CP2 → 리뷰 accept → claim 앵커 보고서까지 갔고 `labhq verify`가 exit 0이었다. 10차 모의 시운전(GSE10072, 앵커 58·문제 0)과 v0.5 시운전 8차(GSE19804 60쌍 + 검증 GSE32863, claim 22·근거 31·거부 1, 앵커 48·문제 0, 산출 67개 hash 일치, RO-Crate·MANIFEST 대조 통과). 두 번째 요청의 1~7차는 실제 요청에서만 드러난 결함으로 멈췄고 모두 고쳤다(#467 #470 #474 #476 #478 #480 #483 #486). 연구 lane은 `evidence_checkpoint`를 켜면 CP2 승인 뒤 리뷰와 claim 앵커를 검사한 보고서까지 간다. 단계 근거가 수집 안 된 파일을 인용하면 CP2 전에 한 번 고치게 한다(#487). 요청 묶음은 RO-Crate(Process Run Crate)와 MANIFEST로 기술하고 `labhq verify`가 사본을 대조한다(#471). 패키지가 필요한 요청은 계획 첫머리 환경 단계만 공유 environment에 설치하고, 뒤 단계의 추가 설치는 자기 폴더로 격리한다(#344, #456). revise 뒤에는 PI가 새 CP1로 이어 갈 수 있고 바뀐 단계만 다시 돈다(코드·test; 두 요청 모두 리뷰가 accept여서 실제 CLI 미실측). CP4는 opt-in 검토 완료에 연결했다(모의 검증). CP3는 없다. pack은 `single_cell_de@3`과 `bulk_tumor_normal@3` 둘. topic별 근거 논문은 43 topic 모두 30편 이상, 모두 1286편([목록](reference/topic_papers.md)) | 이어 가기 실측, PI 본인 시운전 결과를 현재 창구 [#760](https://github.com/ehojune/bioinfo-team-3d/issues/760)에 붙이기 |
+| v0.5 | PI가 자기 공개 데이터로 로컬에서 연구한다 | 연구 lane 2건을 CP2 승인·보고서까지 완주하고 `labhq verify`가 문제 없음(exit 0) | **2026-10-08 선언.** 근거: 실제 CLI로 연구 요청 2건이 CP1 → 12단계 → CP2 → 리뷰 accept → claim 앵커 보고서까지 갔고 `labhq verify`가 exit 0이었다. 10차 모의 시운전(GSE10072, 앵커 58·문제 0)과 v0.5 시운전 8차(GSE19804 60쌍 + 검증 GSE32863, claim 22·근거 31·거부 1, 앵커 48·문제 0, 산출 67개 hash 일치, RO-Crate·MANIFEST 대조 통과). 두 번째 요청의 1~7차는 실제 요청에서만 드러난 결함으로 멈췄고 모두 고쳤다(#467 #470 #474 #476 #478 #480 #483 #486). 연구 lane은 `evidence_checkpoint`를 켜면 CP2 승인 뒤 리뷰와 claim 앵커를 검사한 보고서까지 간다. 단계 근거가 수집 안 된 파일을 인용하면 CP2 전에 한 번 고치게 한다(#487). 요청 묶음은 RO-Crate(Process Run Crate)와 MANIFEST로 기술하고 `labhq verify`가 사본을 대조한다(#471). 패키지가 필요한 요청은 계획 첫머리 환경 단계만 공유 environment에 설치하고, 뒤 단계의 추가 설치는 자기 폴더로 격리한다(#344, #456). revise 뒤에는 PI가 새 CP1로 이어 갈 수 있고 바뀐 단계만 다시 돈다(코드·test; 두 요청 모두 리뷰가 accept여서 실제 CLI 미실측). CP4는 opt-in 검토 완료에 연결했다(모의 검증). CP3는 없다. pack은 `single_cell_de@3`과 `bulk_tumor_normal@3` 둘. topic별 근거 논문은 43 topic 모두 30편 이상, 모두 1286편([목록](reference/topic_papers.md)) | 이어 가기 실측, PI 본인 시운전 결과를 현재 창구 [#883](https://github.com/ehojune/bioinfo-team-3d/issues/883)에 붙이기 |
 | v0.75 | PI가 HPC에서 **공개** 데이터로 연구한다 | 클러스터 러너로 공개 데이터 분석 잡 1건 이상을 내고 끝까지 받아 보고서에 넣는다 | Slurm은 가짜 fixture로만 확인했다. 실제 HPC 접근 방식이 정해지기 전에는 분석 잡을 내지 않는다 | HPC 접근·제출 조건 확인([이전 논의](reference/handoff-history-2026-10-19.md#결정-대기-pi)), Linux 클러스터 러너, 실제 제출 |
 | v0.9 | PI가 통제 데이터로 연구한다(HPC 위) | 통제 데이터 연구 1건을 끝내고, 원본이 클러스터 밖이나 LLM 대화로 나가지 않았음을 감사 기록으로 보인다 | Windows 러너는 restricted 구역이 있으면 뜨지 않는다. topic별 근거 논문은 43 topic 모두 30편 이상 | 러너 계정 분리, 통제 데이터 시험 |
 | v0.95 | 다른 연구자가 문서만 보고 설치해 공개 데이터로 한 건을 끝낸다 | 개발자 개입 없이 설치·doctor fail 0·요청 1건 완주 | Windows 새 clone·venv에서 mock 요청·묶음·verify·down까지 자동 리허설한다. `labhq init`·doctor와 Windows 러너 전용 계정 절차서가 있다 | 실제 외부 연구자 완주, 계정 분리 자동화 |
