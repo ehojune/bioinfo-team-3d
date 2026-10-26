@@ -1,5 +1,9 @@
 pr: 982
 rows:
+- sha: b31ff8f
+  at: '2026-10-26 17:42'
+  text: manual에 activity·halt/resume intent의 async 저장과 최신 row 병합을 명시하고 남은 sync 경계를 구분한다(Refs #606).
+  summary: 저장 경계와 로드맵의 포괄적인 task/result/control 표현을 수정했습니다. 제품 코드 변경은 없습니다.
 - sha: 00525cc
   at: '2026-10-26 16:21'
   text: 뒤따른 전체-row 쓰기가 halt intent를 지우면 성공/queued 대신 대기 거절 또는 재시도를 반환한다(Refs #606).
