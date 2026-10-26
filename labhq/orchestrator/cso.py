@@ -6,6 +6,7 @@ where dependencies allow (hibernate on HPC jobs, resume when they finish) → sc
 """
 
 from __future__ import annotations
+from ..request_persistence import create_revised_request, persist_request, remove_result, save_result
 
 import asyncio
 import copy
@@ -2908,7 +2909,7 @@ class Orchestrator:
         checks.append(record)
         if len(checks) > 4:
             del checks[:-4]
-        self.hub.save_request(rid)
+        await persist_request(self.hub, rid)
         current_errors = {(row.get("code"), row.get("stage"))
                           for row in record["errors"] if isinstance(row, dict)}
         if current_errors and current_errors != previous_errors:
@@ -2923,7 +2924,7 @@ class Orchestrator:
         record["advisory"] = semantic_devices.advisory_state(
             req.get("semantics_ab"), record.get(semantic_devices.DEVICE))
         req["semantic_devices"] = record
-        self.hub.save_request(rid)
+        await persist_request(self.hub, rid)
         await self._emit(rid, "request.semantic_devices", record)
 
     async def _plan_clarification(self, rid: str, candidate: dict) -> tuple[str, dict | None]:
@@ -2943,14 +2944,14 @@ class Orchestrator:
             req["pending_questions"] = []
             req.pop("pending_question_details", None)
             req.pop("clarification_failure", None)
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             return "done", None
         req["pending_questions"] = [question["question"] for question in details]
         if has_structure(details):
             req["pending_question_details"] = details
         else:
             req.pop("pending_question_details", None)
-        self.hub.save_request(rid)
+        await persist_request(self.hub, rid)
         await self._emit(rid, "request.questions", {"questions": req["pending_questions"], "details": details})
         if not self.cfg.wait_for_clarification:
             if storage and not req.get("result_storage"):
@@ -2990,7 +2991,7 @@ class Orchestrator:
         req.setdefault("clarifications", []).append(entry)
         req["pending_questions"] = []
         req.pop("pending_question_details", None)
-        self.hub.save_request(rid)
+        await persist_request(self.hub, rid)
         return "answered", entry
 
     def _output_vocab(self) -> output_vocab.Vocab | None:
@@ -3035,10 +3036,10 @@ class Orchestrator:
         if check.get("decision") not in ("declined", "timed_out"):
             if not self.cfg.wait_for_clarification:
                 check["decision"] = "not_asked"
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
                 return True
             check["decision"] = "pending"
-            self.hub.save_request(rid)  # the plan and the pending card survive a restart together
+            await persist_request(self.hub, rid)  # the plan and the pending card survive a restart together
             reason = check.get("reason", "").rstrip(" .") or "사유 없음"
             decision = await self.hub.request_approval(
                 kind="scope", request_id=rid, summary=short(f"이 요청은 랩 범위 밖으로 보입니다: {reason}. 진행할까요?", 700),
@@ -3046,13 +3047,13 @@ class Orchestrator:
                         "steps": len((req.get("plan") or {}).get("steps") or [])})
             check["decision"] = ("proceed" if decision.get("approved") else
                                  "timed_out" if decision.get("state") == "timed_out" else "declined")
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             if check["decision"] == "proceed":
                 return True
         req["outcome"] = "out_of_scope_timed_out" if check["decision"] == "timed_out" else "out_of_scope_declined"
         why = "the approval timed out" if check["decision"] == "timed_out" else "the PI declined it"
-        self._finish(rid, f"Out-of-scope request stopped: {why}; no step was dispatched.", {}, ok=False,
-                     error="범위 밖 요청이라 실행하지 않았습니다")
+        (await self._finish(rid, f"Out-of-scope request stopped: {why}; no step was dispatched.", {}, ok=False,
+                     error="범위 밖 요청이라 실행하지 않았습니다"))
         return False
 
     def _request_identity(self, rid: str | None, agent_id: str | None) -> dict[str, str] | None:
@@ -3399,7 +3400,7 @@ class Orchestrator:
             if routed == self.cfg.cso_agent and result.session_id:
                 request["cso_session_id"], request["cso_workdir"] = result.session_id, result.workdir
                 if ask.request_id in self.hub.requests:
-                    self.hub.save_request(ask.request_id)
+                    await persist_request(self.hub, ask.request_id)
         answered = result.ok and bool(result.text.strip())
         answer = result.text.strip() if answered else f"상담 실패: {result.error or 'empty answer'}"
         await self.hub.resolve_ask(ask, runner_id, ask_result(
@@ -3415,7 +3416,7 @@ class Orchestrator:
         direct = req.get("mode") == "direct" or req.get("followup_agent_id") == agent
         async def refuse(reason: str, outcome: str) -> None:
             entry.update(status="failed", answer="", error=reason, answered_at=time.time())
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             if getattr(self.hub, "semantics_shadow", None) is not None:  # semantics-hook: actions
                 self.hub.semantics_shadow.after_followup(rid, fid, "ended", outcome)  # semantics-hook: actions
             await self._emit(rid, "request.followup_done", {
@@ -3495,7 +3496,7 @@ class Orchestrator:
                      resumed_session=task.resume_session_id, answered_at=time.time())
         if not direct and result.session_id and self.hub.supports_resume(agent):
             req["cso_session_id"], req["cso_workdir"] = result.session_id, result.workdir or workdir
-        self.hub.save_request(rid)
+        await persist_request(self.hub, rid)
         if getattr(self.hub, "semantics_shadow", None) is not None:  # semantics-hook: actions
             self.hub.semantics_shadow.after_followup(rid, fid, "ended", status)  # semantics-hook: actions
         await self._emit(rid, "request.followup_done", {
@@ -3583,28 +3584,28 @@ class Orchestrator:
         optional_support = bool(task.meta.get("facilities_diagnosis") or task.meta.get("kind") in
                                 {"paper_skill", "recruit_check", "plan_recruit"})
 
-        def quota_deadline() -> float:
+        async def quota_deadline() -> float:
             req = self.hub.requests[rid]
             windows = req.setdefault("quota_windows", {})
             if engine not in windows:
                 started = time.time()
                 windows[engine] = {"started_at": started,
                                    "deadline_at": started + self.cfg.quota_max_wait_s}
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
             return float(windows[engine]["deadline_at"])
 
-        def clear_quota_window() -> None:
+        async def clear_quota_window() -> None:
             req = self.hub.requests.get(rid) or {}
             if (req.get("quota_windows") or {}).pop(engine, None) is not None:
                 if not req.get("quota_windows"):
                     req.pop("quota_windows", None)
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
 
         def quota_failure(current: Task, reason: str) -> TaskResult:
             return TaskResult(task_id=current.id, agent_id=current.agent_id, ok=False,
                               error_kind="quota_wait_limit", error=reason)
 
-        def login_deadline(current: Task) -> float:
+        async def login_deadline(current: Task) -> float:
             """The request's window for this engine, joined by the turn about to park on it (every login park
             goes through here, so leave_login_window sees every recovering turn)."""
             req = self.hub.requests[rid]
@@ -3615,11 +3616,11 @@ class Orchestrator:
                 windows[engine] = {"started_at": started,
                                    "deadline_at": (float(hold["deadline_at"]) if hold else
                                                    started + self.cfg.login_wait_max_s)}
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
             window = windows[engine]
             if turn_key(current) not in (window.get("turns") or []):
                 window["turns"] = [*(window.get("turns") or []), turn_key(current)]
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
             return float(window["deadline_at"])
 
         def turn_key(current: Task) -> str:
@@ -3629,7 +3630,7 @@ class Orchestrator:
             ask_id = current.meta.get("ask_id") if not current.meta.get("step_id") else None
             return f"{base}:{ask_id}" if ask_id else base
 
-        def leave_login_window(current: Task) -> None:
+        async def leave_login_window(current: Task) -> None:
             """The window is per request and engine and lives while any of its turns is recovering, parked or
             retrying (PR #398 review): a turn removes only itself, and the last one out drops the window."""
             req = self.hub.requests.get(rid) or {}
@@ -3643,15 +3644,15 @@ class Orchestrator:
             if turns:
                 if turns != window.get("turns"):
                     window["turns"] = turns
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                 return
             req["login_windows"].pop(engine, None)
             if not req.get("login_windows"):
                 req.pop("login_windows", None)
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
 
         async def login_failure(current: Task, reason: str) -> TaskResult:
-            leave_login_window(current)
+            (await leave_login_window(current))
             finished = getattr(self.hub, "login_recovered", None)
             if finished is not None:
                 await finished(engine, reason="expired")
@@ -3680,7 +3681,7 @@ class Orchestrator:
                     return TaskResult(task_id=current.id, agent_id=current.agent_id, ok=False,
                                       error="facilities engine login required")
                 if login_hold:
-                    deadline = login_deadline(current)
+                    deadline = (await login_deadline(current))
                     if not await self.hub.wait_login(rid, key, engine,
                                                      resume_at=float(login_hold["resume_at"]),
                                                      deadline_at=deadline,
@@ -3692,7 +3693,7 @@ class Orchestrator:
                 if optional_support and hold:
                     return quota_failure(current, "facilities engine quota unavailable")
                 if hold:
-                    deadline = quota_deadline()
+                    deadline = (await quota_deadline())
                     if not await self.hub.wait_quota(rid, key, engine,
                                                      resume_at=float(hold["resume_at"]),
                                                      deadline_at=deadline,
@@ -3726,7 +3727,7 @@ class Orchestrator:
                             raise research_continuation.ReuseApprovalRequired('reuse proof changed; renewed CP1 required')
                         if not carried.get('dispatch_started'):
                             carried['dispatch_started'] = True
-                            self.hub.save_request(rid)
+                            await persist_request(self.hub, rid)
                 if current.meta.get('kind') in {'step', 'result_correction', 'slot_repair'} and current.meta.get('paper_skills'):
                     attempt_task = await self._resolve_step_paper_skills(attempt_task)
                 if current.meta.get('kind') == 'paper_skill':
@@ -3734,8 +3735,8 @@ class Orchestrator:
                     plan = (self.hub.requests.get(rid) or {}).get('plan') or {}
                     approved = paper_skills.attachments(plan, selected['step_id'], selected['agent_id'], rid)
                     if selected not in approved:
-                        self._check_paper_selection(rid, [selected])  # rejects drift, never substitutes a paper
-                    self._check_paper_selection(rid, approved)  # after queued/attempt-event awaits, before dispatch
+                        (await self._check_paper_selection(rid, [selected]))  # rejects drift, never substitutes a paper
+                    (await self._check_paper_selection(rid, approved))  # after queued/attempt-event awaits, before dispatch
                 offline = False
                 # Observe the configuration at the actual dispatch boundary, including every retry/wake/repair.
                 # A mixed or unproved execution must never inherit the configuration shown before CP1 waited.
@@ -3769,7 +3770,7 @@ class Orchestrator:
                         proofs[execution_step] = execution_inputs
                     elif proofs[execution_step] != execution_inputs:
                         proofs[execution_step] = None  # sticky mixed-input attempts
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                 # Last await before the send: hold this attempt's whole cap now (#862, opt-in).
                 attempt_task = await self._reserve_dispatch(rid, attempt_task, optional=optional_support)
                 try:
@@ -3783,10 +3784,10 @@ class Orchestrator:
                         res = await self.hub.dispatch(dispatched)
                     res = paper_skills.with_preparation_outcome(res, attempt_task)
                 except asyncio.CancelledError:
-                    self._release_if_unsent(rid, attempt_task.id)
+                    (await self._release_if_unsent(rid, attempt_task.id))
                     raise
                 except Exception as exc:
-                    self._release_if_unsent(rid, attempt_task.id)
+                    (await self._release_if_unsent(rid, attempt_task.id))
                     res = TaskResult(task_id=attempt_task.id, agent_id=current.agent_id, ok=False, error=str(exc))
                     kind = failure_kind(exc, engine)
                     offline = isinstance(exc, RunnerUnavailable)
@@ -3794,22 +3795,22 @@ class Orchestrator:
                         execution_req['reuse_tools'][execution_step] = None
                         execution_req['reuse_no_request_inputs'][execution_step] = False
                         execution_req['reuse_input_proof'][execution_step] = None
-                        self.hub.save_request(rid)
+                        await persist_request(self.hub, rid)
                 else:
                     if execution_step and execution_req.get('research_contract'):
                         after_inputs = await asyncio.to_thread(capture, execution_req, self.hub.s, dispatched.meta)
                         if (after_inputs != execution_inputs or execution_inputs is None
                                 or res.request_input_sha256 != execution_inputs['sha256']):
                             execution_req['reuse_input_proof'][execution_step] = None
-                        self.hub.save_request(rid)
+                        await persist_request(self.hub, rid)
                         after = self._research_reuse_tools(rid, execution_req.get('plan') or {}).get(execution_step)
                         if (research_continuation.has_request_inputs(execution_req)
                                 or research_continuation.has_request_inputs(dispatched.meta)):
                             execution_req['reuse_no_request_inputs'][execution_step] = False
-                            self.hub.save_request(rid)
+                            await persist_request(self.hub, rid)
                         if after != execution_signature or res.task_id != attempt_task.id:
                             execution_req['reuse_tools'][execution_step] = None
-                            self.hub.save_request(rid)
+                            await persist_request(self.hub, rid)
                     if is_model_refusal(res):
                         res = res.model_copy(update={"ok": False, "error_kind": "model_refused",
                                                      "error": MODEL_REFUSAL_REASON})
@@ -3817,7 +3818,7 @@ class Orchestrator:
                     if kind != "login":  # a rejected login never starts a billed model turn
                         self._count_cost(rid, res.task_id, res)
                     self._count_recorded_costs(rid)
-                    self._release_dispatch_hold(rid, attempt_task.id)
+                    (await self._release_dispatch_hold(rid, attempt_task.id))
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
                         previous_session = res.session_id
@@ -3906,14 +3907,14 @@ class Orchestrator:
                     continue
                 login = not res.ok and is_login_error(engine, res.error)
                 if login:
-                    deadline = login_deadline(current)
+                    deadline = (await login_deadline(current))
                     window = self.hub.requests[rid]["login_windows"][engine]
                     if window.get("task_id") == res.task_id:
                         resume_at = float(window["resume_at"])
                     else:
                         resume_at = time.time() + self.cfg.login_retry_s
                         window.update(task_id=res.task_id, resume_at=resume_at)
-                        self.hub.save_request(rid)
+                        await persist_request(self.hub, rid)
                     if resume_at > deadline:
                         return await login_failure(current, "engine login wait exceeded the configured maximum; "
                                                    f"retry={resume_at:.0f}, deadline={deadline:.0f}")
@@ -3943,20 +3944,20 @@ class Orchestrator:
                 recovered = getattr(self.hub, "login_recovered", None)
                 if recovered is not None:
                     await recovered(engine)
-                leave_login_window(current)
+                (await leave_login_window(current))
                 quota = None if res.ok else received_quota_wait(engine, res.error, res.quota_reset_at,
                                                                  default_wait_s=self.cfg.quota_default_wait_s)
                 if quota is None:
-                    clear_quota_window()
+                    (await clear_quota_window())
                     return res
-                deadline = quota_deadline()
+                deadline = (await quota_deadline())
                 window = self.hub.requests[rid]["quota_windows"][engine]
                 if window.get("task_id") == res.task_id:
                     resume_at = float(window["resume_at"])
                 else:
                     resume_at = quota.resume_at
                     window.update(task_id=res.task_id, resume_at=resume_at, reset_time_parsed=quota.parsed)
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                 if resume_at > deadline:
                     return quota_failure(current, f"subscription quota reset exceeds the configured maximum; "
                                                   f"reset={resume_at:.0f}, deadline={deadline:.0f}")
@@ -4482,7 +4483,7 @@ class Orchestrator:
         return sum(amount if _usd_amount(amount) else self._unknown_reserve(limit)
                    for tid, amount in holds.items() if tid not in settled) + translation_unknown_extra
 
-    def _prune_dispatch_holds(self, rid: str) -> None:
+    async def _prune_dispatch_holds(self, rid: str) -> None:
         req = self.hub.requests.get(rid) or {}
         holds = req.get("budget_holds")
         if not holds:
@@ -4490,7 +4491,7 @@ class Orchestrator:
         settled = self.cost_tasks.get(rid, set())
         if settled & set(holds):
             req["budget_holds"] = {tid: amount for tid, amount in holds.items() if tid not in settled}
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
 
     def _turn_cap(self, task: Task, remaining: float) -> float | None:
         """The most this turn may cost: its own, its agent's and the per-task cap, else what the request has left."""
@@ -4513,7 +4514,7 @@ class Orchestrator:
         while True:
             async with self.budget_locks.setdefault(rid, asyncio.Lock()):
                 self._count_recorded_costs(rid)
-                self._prune_dispatch_holds(rid)
+                (await self._prune_dispatch_holds(rid))
                 if rid in self.budget_denials:
                     raise BudgetExceeded(self.budget_denials[rid])
                 req = self.hub.requests.get(rid) or {}
@@ -4534,13 +4535,13 @@ class Orchestrator:
                     holds = req.setdefault("budget_holds", {})
                     if adopted not in self.cost_tasks.get(rid, set()) and not _usd_amount(holds.get(adopted)):
                         holds[adopted] = cap if cap is not None else self._unknown_reserve(limit)
-                        self.hub.save_request(rid)
+                        await persist_request(self.hub, rid)
                     return task
                 if cap is not None and bound + cap <= limit:
                     holds = req.setdefault("budget_holds", {})
                     previous = holds.get(task.id)
                     holds[task.id] = max(cap, previous) if _usd_amount(previous) else cap
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                     self.dispatch_inflight.setdefault(rid, set()).add(task.id)
                     return task.model_copy(update={"budget_usd": cap, "request_budget_remaining_usd": cap})
                 if optional:
@@ -4549,7 +4550,7 @@ class Orchestrator:
                 needed = cap if cap is not None else self._unknown_reserve(limit)
             await self._check_budget(rid, reserve=needed)  # approval raises the cap; a denial raises here
 
-    def _drop_unsent_holds(self, rid: str) -> None:
+    async def _drop_unsent_holds(self, rid: str) -> None:
         """At a request's (re)start, release holds of attempts the gateway provably never sent (#862 review P2-2).
 
         The gateway stores a task before sending it and records an unknown outcome when a send fails, so an id with
@@ -4566,25 +4567,25 @@ class Orchestrator:
                 if tid in inflight or tid in recorded or store.get("task", tid) is not None}
         if len(kept) != len(holds):
             req["budget_holds"] = kept
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
 
-    def _release_if_unsent(self, rid: str, task_id: str) -> None:
+    async def _release_if_unsent(self, rid: str, task_id: str) -> None:
         """A cancelled or failed dispatch: release the hold only when the gateway neither stored the task (it stores
         before sending) nor recorded a cost for it; a possibly sent turn keeps its hold."""
         store = getattr(self.hub, "store", None)
         req = self.hub.requests.get(rid) or {}
         if (store is not None and task_id in (req.get("budget_holds") or {})
                 and task_id not in (req.get("cost_by_task") or {}) and store.get("task", task_id) is None):
-            self._release_dispatch_hold(rid, task_id)
+            (await self._release_dispatch_hold(rid, task_id))
 
-    def _release_dispatch_hold(self, rid: str, task_id: str) -> None:
+    async def _release_dispatch_hold(self, rid: str, task_id: str) -> None:
         """After dispatch returned: the gateway recorded the turn's cost before answering, or never sent it (a
         refusal, cancel or offline result, or an earlier task id from restart recovery). Never on an exception or
         cancellation, where the turn may still be running."""
         holds = (self.hub.requests.get(rid) or {}).get("budget_holds")
         if holds and task_id in holds:
             holds.pop(task_id)
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
 
     # ---------- DAG ----------
     def _bind_paper_dispatch_identity(self, rid: str, requested: str, durable: str) -> None:
@@ -4595,7 +4596,7 @@ class Orchestrator:
         if amount:
             holds[durable] = max(holds.get(durable, 0.0), amount)
 
-    def _check_paper_selection(self, rid: str, selected: list[dict],
+    async def _check_paper_selection(self, rid: str, selected: list[dict],
                                expected: tuple[str, str] | None = None) -> None:
         req = self.hub.requests[rid]
         if req.get('status') == 'cancelled':
@@ -4616,7 +4617,7 @@ class Orchestrator:
             if contract:
                 contract['approval'] = {**approval, 'approved': False, 'status': 'approval_required'}
             req['outcome'] = 'reuse_approval_required'
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             raise research_continuation.ReuseApprovalRequired('paper selection changed; renewed approval required')
 
     def _paper_build_allowance(self, rid: str, execution_slots: int) -> float:
@@ -4638,7 +4639,7 @@ class Orchestrator:
         batch = paper_skills.ApprovedBuilds(rows, self.hub.s)
         # Admission cannot open a budget card or raise the CP1 cap. Reserve before starting any build.
         async with self.budget_locks.setdefault(rid, asyncio.Lock()):
-            self._check_paper_selection(rid, rows)  # approval may change while waiting for this lock
+            (await self._check_paper_selection(rid, rows))  # approval may change while waiting for this lock
             self._count_recorded_costs(rid)
             for key, task in batch.tasks.items():
                 if key in batch.disabled:
@@ -4652,7 +4653,7 @@ class Orchestrator:
                 self.paper_budget_holds.setdefault(rid, {})[task.id] = cap
 
         async def run(task):
-            self._check_paper_selection(rid, rows)
+            (await self._check_paper_selection(rid, rows))
             result = await self.run_step(task)
             if task.id not in self.paper_task_ids.get(rid, {}):  # legacy/fake dispatch without the binding hook
                 self._bind_paper_dispatch_identity(rid, task.id, result.task_id)
@@ -4699,20 +4700,20 @@ class Orchestrator:
         req = self.hub.requests[rid]
         selected = task.meta['paper_skills']
 
-        def check_selection() -> None:
-            self._check_paper_selection(rid, selected, (task.meta['step_id'], task.agent_id))
+        async def check_selection() -> None:
+            (await self._check_paper_selection(rid, selected, (task.meta['step_id'], task.agent_id)))
 
-        check_selection()
+        (await check_selection())
         # No lead time outside a DAG cohort: omit deferred advice rather than start and wait here.
         batch = self.paper_builds.get(rid) or paper_skills.ApprovedBuilds(selected, self.hub.s)
         resolved = await batch.resolve(selected)
-        check_selection()  # approval or selection may change while the bounded conversion awaits
+        (await check_selection())  # approval or selection may change while the bounded conversion awaits
         await self._check_budget(rid)
         contract = req.get('research_contract') or {}
         if (contract.get('continuation') or {}).get('reuse_snapshot'):
             if not await self._verify_research_reuse(rid, req['plan']):
                 raise research_continuation.ReuseApprovalRequired('reuse proof changed during paper build')
-        check_selection()  # budget/reuse checks above may themselves await an approval or file proof
+        (await check_selection())  # budget/reuse checks above may themselves await an approval or file proof
         return task.model_copy(update={'meta': {**task.meta, 'paper_skills': resolved}})
 
     async def run_dag(self, rid: str, request: str, steps: list[dict], results: dict[str, TaskResult],
@@ -4768,10 +4769,10 @@ class Orchestrator:
         async def skip(sid: str, reason: str, upstream_ids: list[str] | None = None) -> None:
             previous = results.get(sid)
             if feedback and sid in feedback and previous and previous.ok:
-                results[sid] = previous.model_copy(update={"revision_failed": f"skipped: {reason}"})
+                await save_result(results, sid, previous.model_copy(update={"revision_failed": f"skipped: {reason}"}))
             else:
-                results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False,
-                                          error=f"skipped: {reason}")
+                await save_result(results, sid, TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False,
+                                                          error=f"skipped: {reason}"))
             await self._emit(rid, "request.step_skipped", {"step_id": sid, "status": "skipped",
                                                             "upstream": upstream_ids or [], "reason": reason})
 
@@ -4953,7 +4954,7 @@ class Orchestrator:
                 current = outcome
                 limit = self.hub.s.research.result_corrections
 
-                def save_salvage(refused_rows: list[dict], unsupported_claims: list[dict]) -> None:
+                async def save_salvage(refused_rows: list[dict], unsupported_claims: list[dict]) -> None:
                     if req_state is None:
                         return
                     contract = req_state.get("research_contract") or {}
@@ -4965,7 +4966,7 @@ class Orchestrator:
                         salvage.pop(step["id"], None)
                         if not salvage:
                             contract.pop("result_salvage", None)
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
 
                 # The last result that passed the contract and only cited a file labhq did not collect (#485). An
                 # optional correction that fails, touches no collected file but writes others, or ends worse falls
@@ -4978,9 +4979,9 @@ class Orchestrator:
                         original.provenance = {**original.provenance, 'runs': {
                             **original.provenance.get('runs', {}), **via.provenance.get('runs', {})}}
 
-                def accept(ledger: Any, via: TaskResult) -> TaskResult:
+                async def accept(ledger: Any, via: TaskResult) -> TaskResult:
                     collect_paper_usage(via)
-                    save_salvage([], [])
+                    await save_salvage([], [])
                     return original.model_copy(update={
                         "structured": ledger.model_dump(mode="json"),
                         "session_id": via.session_id or original.session_id,
@@ -5001,7 +5002,7 @@ class Orchestrator:
                     if record is None:
                         record = records[step["id"]] = {"slots": slots, "asked": False, "answers": {},
                                                       "plan_sha256": research_plan_sha256(research_plan)}
-                        self.hub.save_request(rid)
+                        await persist_request(self.hub, rid)
                         if (current.session_id and self.hub.supports_resume(step["agent_id"]) and
                                 self._optional_turn_budget_available(rid)):
                             request_limit = (req_state.get("budget_usd") or
@@ -5026,7 +5027,7 @@ class Orchestrator:
                                     parent_task=current.task_id, title=f"{step['id']}: 누락 칸 확인",
                                     **({"workdir": current.workdir} if current.workdir else {})))
                             record["asked"] = True
-                            self.hub.save_request(rid)
+                            await persist_request(self.hub, rid)
                             try:
                                 answer = await self.run_step(question)
                             except (ShutdownInterrupted, research_continuation.ReuseApprovalRequired):
@@ -5045,14 +5046,14 @@ class Orchestrator:
                                 collect_paper_usage(answer)
                                 record["answers"] = (answer.structured if isinstance(answer.structured, dict)
                                                      else extract_json(answer.text))
-                            self.hub.save_request(rid)
+                            await persist_request(self.hub, rid)
                     ledger = repair_result_slots(structured, slots, record.get("answers"))
                     validate_research_result(ledger.model_dump(mode="json"), plan=research_plan)
                     via = (current if answer is None else current.model_copy(update={
                         "tool_errors": list(dict.fromkeys([*current.tool_errors, *answer.tool_errors])),
                         **merged_tool_call_update(current, answer),
                     }))
-                    return accept(ledger, via)
+                    return await accept(ledger, via)
 
                 for correction in range(limit + 1):
                     asked = blocking_question(current)
@@ -5086,9 +5087,9 @@ class Orchestrator:
                         if problems:
                             bindable = (validated_result, current)
                     if not problems and validated_result is not None:
-                        return accept(validated_result, current)
+                        return await accept(validated_result, current)
                     if correction == limit and bindable is not None:
-                        return accept(bindable[0], current)
+                        return await accept(bindable[0], current)
                     if correction == limit:
                         # A result that still asks the PI a blocking question is never salvaged into CP2: the
                         # employee said it cannot go on without that decision (PR #353 review).
@@ -5101,10 +5102,10 @@ class Orchestrator:
                             slots = missing_result_slots(candidate, plan=research_plan, expected_step_id=step["id"])
                             if slots:
                                 repaired = await repair_slots(candidate, slots)
-                                save_salvage(refused_rows, unsupported_claims)
+                                await save_salvage(refused_rows, unsupported_claims)
                                 return repaired
                         if salvaged is not None and refused_rows:
-                            save_salvage(refused_rows, unsupported_claims)
+                            await save_salvage(refused_rows, unsupported_claims)
                             return original.model_copy(update={
                                 "structured": salvaged.model_dump(mode="json"),
                                 "session_id": current.session_id or original.session_id,
@@ -5139,7 +5140,7 @@ class Orchestrator:
                         **merged_tool_call_update(current, corrected),
                     })
                     if not current.ok and bindable is not None:
-                        return accept(bindable[0], current)
+                        return await accept(bindable[0], current)
                     if not current.ok:
                         return current.model_copy(update={
                             "outputs": original.outputs, "output_sha256": original.output_sha256,
@@ -5150,7 +5151,7 @@ class Orchestrator:
                         })
                     if (current.unreported_outputs and bindable is not None
                             and not set(current.unreported_outputs) & set(original.outputs)):
-                        return accept(bindable[0], current)  # collected files and their hashes are untouched
+                        return await accept(bindable[0], current)  # collected files and their hashes are untouched
                     if current.unreported_outputs:
                         # A correction only rewrites the result JSON. A file it changed would no longer match the
                         # hash CP2 binds evidence to, so the step fails instead (PR #352 review).
@@ -5192,7 +5193,8 @@ class Orchestrator:
                 if ready:
                     continue
                 for sid in todo:
-                    results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error="unmet dependencies")
+                    await save_result(results, sid, TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False,
+                                                               error="unmet dependencies"))
                 break
             done, _ = await asyncio.wait(running.values(), return_when=asyncio.FIRST_COMPLETED)
             for sid, t in list(running.items()):
@@ -5224,10 +5226,10 @@ class Orchestrator:
                             f"{outcome.error_kind or failure_kind(outcome) or 'terminal'}: {outcome.error or 'unknown error'}",
                             "tool_errors": list(dict.fromkeys([*previous.tool_errors, *outcome.tool_errors])),
                             **merged_tool_call_update(previous, outcome)})
-                    results[sid] = outcome
+                    await save_result(results, sid, outcome)
                     if not outcome.ok and failure_kind(outcome) not in {"environment", "login", "quota"}:
-                        self._record_dev_failure(rid, sid, outcome.error or "unknown error",
-                                                 outcome.error_kind or failure_kind(outcome) or "terminal")
+                        (await self._record_dev_failure(rid, sid, outcome.error or "unknown error",
+                                                 outcome.error_kind or failure_kind(outcome) or "terminal"))
                     progress_storage = getattr(self.hub, "result_storage", None)
                     if progress_storage is not None:
                         try:
@@ -5238,7 +5240,7 @@ class Orchestrator:
                             saved = (self.hub.requests.get(rid, {}).get("result_storage") or {})
                             saved["progress_warning"] = (
                                 "단계별 GitHub 진행 게시에 실패했습니다. 요청은 계속 진행합니다.")
-                            self.hub.save_request(rid)
+                            await persist_request(self.hub, rid)
                     environment = None if outcome.ok else environment_problem(outcome)
                     await self._emit(rid, "request.step_done", {"step_id": sid, "ok": results[sid].ok,
                                                                 "agent_id": by_id[sid]["agent_id"],
@@ -5256,14 +5258,14 @@ class Orchestrator:
                         if sid in decisions:
                             if req_state is not None:
                                 req_state["pending_questions"] = [question.strip()]
-                                self.hub.save_request(rid)
+                                await persist_request(self.hub, rid)
                             raise RuntimeError(f"step {sid} still requires a blocking decision after its answer")
                         # Forget the question-only result before waiting (durably): a restart during the wait must
                         # re-run the step, not treat it as done and feed dependents a question.
-                        results.pop(sid, None)
+                        await remove_result(results, sid, None)
                         if req_state is not None:
                             req_state["pending_questions"] = [question.strip()]
-                            self.hub.save_request(rid)
+                            await persist_request(self.hub, rid)
                         if not hasattr(self.hub, "store"):  # lightweight unit-test hubs
                             decision = await self.hub.request_approval(
                                 kind="clarify", request_id=rid,
@@ -5285,10 +5287,10 @@ class Orchestrator:
                             answer = answers[0]
                         outcome = read_ask_results(answers)
                         if outcome["status"] == "rejected":
-                            results[sid] = rejected_step(res, f"{question.strip()}: {outcome['reason']}")
+                            await save_result(results, sid, rejected_step(res, f"{question.strip()}: {outcome['reason']}"))
                             if req_state is not None:
                                 req_state["pending_questions"] = []
-                                self.hub.save_request(rid)
+                                await persist_request(self.hub, rid)
                             await self._emit(rid, "request.step_done", {"step_id": sid, "ok": False,
                                 "agent_id": res.agent_id, "reason": results[sid].error})
                             continue
@@ -5299,7 +5301,7 @@ class Orchestrator:
                         if req_state is not None:
                             req_state["pending_questions"] = []
                             req_state.setdefault("step_decisions", {})[sid] = decisions[sid]
-                            self.hub.save_request(rid)
+                            await persist_request(self.hub, rid)
                         todo.add(sid)
 
     async def _research_after_steps(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult],
@@ -5332,12 +5334,12 @@ class Orchestrator:
                                       if no_successful_branch_terminal else {}),
                                    **({"budget": self.budget_denials[rid]} if rid in self.budget_denials else {})}
             req["outcome"] = "research_failed"
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             branch_report = (("\n\n" + _branch_terminal_status_table(branch_states))
                              if no_successful_branch_terminal else "")
-            self._finish(rid, self.report_results(steps, results, n) + branch_report +
+            (await self._finish(rid, self.report_results(steps, results, n) + branch_report +
                          "\n\nResearch stopped before CP2. labhq does not re-plan a frozen research PLAN; a changed "
-                         "plan needs a new CP1 approval of its hash.", serialized(), ok=False)
+                         "plan needs a new CP1 approval of its hash.", serialized(), ok=False))
             return
         all_steps = steps
         steps = successful
@@ -5358,12 +5360,12 @@ class Orchestrator:
             contract["failure"] = {"steps": sorted(unbound), "plan_sha256": contract["plan_sha256"],
                                    "unbound_results": unbound}
             req["outcome"] = "research_failed"
-            self.hub.save_request(rid)
-            self._finish(rid, self.report_results(steps, results, n) +
+            await persist_request(self.hub, rid)
+            (await self._finish(rid, self.report_results(steps, results, n) +
                          "\n\nResearch stopped before CP2: these step results do not validate under the frozen plan "
                          f"{contract['plan_sha256'][:12]}:\n" +
                          "\n".join(f"- {sid}: {'; '.join(problems)}" for sid, problems in sorted(unbound.items())),
-                         serialized(), ok=False)
+                         serialized(), ok=False))
             return
         ledgers = {s["id"]: results[s["id"]].structured for s in steps}
         ancestors = step_ancestors(all_steps)
@@ -5538,7 +5540,7 @@ class Orchestrator:
                     "source_verification_reports": source_reports} if live_resolver is not None else {}),
                 **({"result_salvage": salvage} if salvage else {})}
         req["outcome"] = f"evidence_{decided}"
-        self.hub.save_request(rid)
+        await persist_request(self.hub, rid)
         audit = f"CP2 evidence review: {decided}."
         if warnings:
             audit += "\n결과 한계:\n" + "\n".join(f"- {line}" for line in warnings)
@@ -5594,8 +5596,8 @@ class Orchestrator:
                        "report did not run.")
         if source_audit:
             report = _append_report_metadata(report, [source_audit])
-        self._finish(rid, report, serialized(), ok=decided == "approved",
-                     error=None if decided == "approved" else RESEARCH_END_ERRORS.get(f"evidence_{decided}"))
+        (await self._finish(rid, report, serialized(), ok=decided == "approved",
+                     error=None if decided == "approved" else RESEARCH_END_ERRORS.get(f"evidence_{decided}")))
 
     async def _blind_draft(self, rid: str, req: dict, text: str, refs: dict) -> bool:
         """The sealed blind draft (#889): the reviewer answers the original request alone, after CP1 approval and
@@ -5608,7 +5610,7 @@ class Orchestrator:
             return True
         if req.get("results"):  # a draft written after a team result would not be blind
             contract[blind_draft.KEY] = blind_draft.unavailable("results_exist")
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             return True
         denied: str | None = None
         reply: TaskResult | None = None
@@ -5624,14 +5626,14 @@ class Orchestrator:
             contract["failure"] = {"steps": [], "plan_sha256": contract["plan_sha256"], "stage": "blind_draft",
                                    "budget": self.budget_denials.get(rid, denied)}
             req["outcome"] = "research_failed"
-            self.hub.save_request(rid)
-            self._finish(rid, "Research plan approved, but the blind draft's budget card was not approved; no "
-                         "employee research step was dispatched.", {}, ok=False)
+            await persist_request(self.hub, rid)
+            (await self._finish(rid, "Research plan approved, but the blind draft's budget card was not approved; no "
+                         "employee research step was dispatched.", {}, ok=False))
             return False
         contract[blind_draft.KEY] = (
             blind_draft.seal(reply.text or "", results_exist=bool(req.get("results"))) if reply.ok
             else blind_draft.unavailable(short(reply.error or "draft task failed", 200)))
-        self.hub.save_request(rid)
+        await persist_request(self.hub, rid)
         return True
 
     async def _research_report(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult], n: int,
@@ -5651,7 +5653,7 @@ class Orchestrator:
         from ..research import final_checkpoint as cp4
         if cp4.enabled(req) and contract.get("final_draft"):
             cp4.reconcile(req)
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             return
         plan_hash = contract["plan_sha256"]
         refs = reference_meta(req)
@@ -5662,23 +5664,23 @@ class Orchestrator:
         source_section = claim_evidence_section(claim_evidence_rows(ledgers, refused=refused,
                                                                     unsupported=unsupported))
 
-        def end(outcome: str, report: str, ok: bool, review: dict | None, failure: dict | None = None,
+        async def end(outcome: str, report: str, ok: bool, review: dict | None, failure: dict | None = None,
                 error: str | None = None) -> None:
             if failure is not None:
                 contract["failure"] = {"steps": [], "plan_sha256": plan_hash, **failure}
             req["outcome"] = outcome
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             if source_section:
                 report = _before_bench_block(report, source_section)
             if lookup_section:
                 report = _execution_warning_summary(report)
-            self._finish(rid, _append_report_metadata(report, lookup_section), serialized(), ok=ok, review=review,
-                         error=None if ok else error or RESEARCH_END_ERRORS.get(outcome))
+            (await self._finish(rid, _append_report_metadata(report, lookup_section), serialized(), ok=ok, review=review,
+                         error=None if ok else error or RESEARCH_END_ERRORS.get(outcome)))
 
-        def budget_denied(stage: str, review: dict | None) -> None:
-            end("research_failed", cp2_report + f"\n\nResearch {stage} stopped: the budget was not approved.",
+        async def budget_denied(stage: str, review: dict | None) -> None:
+            (await end("research_failed", cp2_report + f"\n\nResearch {stage} stopped: the budget was not approved.",
                 False, review, {"stage": stage, "budget": self.budget_denials[rid]},
-                error="예산 승인을 받지 못해 연구를 멈췄어요")
+                error="예산 승인을 받지 못해 연구를 멈췄어요"))
 
         stored = contract.get("review") or {}
         review: dict = {}
@@ -5709,7 +5711,7 @@ class Orchestrator:
                     meta={**refs, "kind": "review", "outputs": ["outputs/review.json"], "parse_attempt": parse_attempt, "request": text,
                           "title": "연구 리뷰"}))
                 if rid in self.budget_denials:
-                    budget_denied("review", None)
+                    (await budget_denied("review", None))
                     return
                 parsed = (lenient_review(reply.structured, RESEARCH_LANE_REVIEW_SCHEMA)
                           or lenient_review(extract_json(reply.text), RESEARCH_LANE_REVIEW_SCHEMA))
@@ -5720,21 +5722,21 @@ class Orchestrator:
                     break
             if not review:
                 reason = (reply.error if reply else None) or "missing or invalid research review"
-                end("research_review_unparsed", cp2_report + f"\n\nResearch review: unparsed ({reason}).", False,
-                    {"status": "review_unparsed", "reason": reason})
+                (await end("research_review_unparsed", cp2_report + f"\n\nResearch review: unparsed ({reason}).", False,
+                    {"status": "review_unparsed", "reason": reason}))
                 return
             contract["review"] = {"plan_sha256": plan_hash, "reviewer": reviewer, **review}
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
         issues = _research_issue_lines(review["issues"])
         if review["verdict"] == "revise":
             note = await self._research_continue(rid, review, results)
             if note is None:  # the PI continued: a new plan, CP1 and run took this request over
                 return
-            end("research_review_revise", "\n".join([
+            (await end("research_review_revise", "\n".join([
                 cp2_report, "", f"Research review ({reviewer}): revise.", *issues,
                 "labhq does not re-run a frozen research PLAN; a fixed plan needs a new CP1 approval of its hash.",
                 *([note] if note else [])]),
-                False, review)
+                False, review))
             return
 
         citable, other = claim_rows(ledgers, unsupported, refused=refused)
@@ -5765,11 +5767,11 @@ class Orchestrator:
                   **({"workdir": workdir} if workdir else {})}))
         if not final.ok:
             if rid in self.budget_denials:
-                budget_denied("synthesis", review)
+                (await budget_denied("synthesis", review))
             else:
-                end("research_failed", cp2_report + f"\n\nSynthesis failed: {final.error}", False, review,
+                (await end("research_failed", cp2_report + f"\n\nSynthesis failed: {final.error}", False, review,
                     {"stage": "synthesis", "error": final.error or "unknown error"},
-                    error=f"보고서 작성에 실패했어요: {short(final.error or '원인을 알 수 없어요', 120)}")
+                    error=f"보고서 작성에 실패했어요: {short(final.error or '원인을 알 수 없어요', 120)}"))
             return
         # A report that finished keeps its text and check even if the budget card after it was denied; the denial
         # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).
@@ -5812,8 +5814,8 @@ class Orchestrator:
             body = _before_bench_block(body, body_reference)
         req["execution_record"] = _appendix_sections("", [*claim_check, cp2_audit])
         report = body.rstrip() + ("\n\n" + model_appendix if model_appendix else "")
-        end("report_incomplete" if check["problems"] else "research_reported", report,
-            not check["problems"] and rid not in self.budget_denials, review)
+        (await end("report_incomplete" if check["problems"] else "research_reported", report,
+            not check["problems"] and rid not in self.budget_denials, review))
 
     async def _research_continue(self, rid: str, review: dict | None, results: dict[str, TaskResult], *,
                                  cp2_note: str | None = None) -> str | None:
@@ -5876,7 +5878,7 @@ class Orchestrator:
                                             "approval_id": decision.get("approval_id"), **trigger,
                                             **({"pi_request": cp2_note} if cp2_revise else {}),
                                             **({"note": decided["note"]} if decided["note"] else {})}
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
         if decided.get("decision") != "approved":
             return ("이어 가기 카드가 답 없이 닫혀 새 CP1을 열지 않았습니다." if decided.get("state") == "timed_out"
                     else "PI가 새 CP1로 이어 가기를 거절했습니다.")
@@ -6028,7 +6030,7 @@ class Orchestrator:
         self._apply_carry(rid, carry)
         self.hub.requests[rid]['research_contract']['continuation'].update(
             reuse_snapshot=snapshot, verified=False)
-        self.hub.save_request(rid)
+        await persist_request(self.hub, rid)
 
     async def _verify_research_reuse(self, rid: str, plan: dict) -> bool:
         """Recheck the CP1 seal on every resume/dispatch boundary; never downgrade reuse to a rerun."""
@@ -6056,10 +6058,10 @@ class Orchestrator:
             carried['approval_required'] = 'reuse snapshot/proof changed after CP1; renewed approval required'
             contract['approval'] = {**approval, 'approved': False, 'status': 'approval_required'}
             req['outcome'] = 'reuse_approval_required'
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             return False
         carried['refused_reuse'] = []
-        self.hub.save_request(rid)
+        await persist_request(self.hub, rid)
         return True
 
     @staticmethod
@@ -6242,7 +6244,7 @@ class Orchestrator:
 
         if phase == "solo":
             req.setdefault("solo_started_at", time.time())
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             catalog = topic_checklists.load()
             solo_context = (plan_review_context(req.get("plan"), catalog, req.get("analysis_precedents")) +
                             plan_report_context(req.get("plan"), catalog, req.get("analysis_precedents")))
@@ -6253,12 +6255,12 @@ class Orchestrator:
                 meta={**refs, "kind": "direct", "title": f"단독 처리: {req.get('text', '')[:80]}",
                       "project_dirs": req.get("project_dirs", []), "max_attempts": 1}))
             req["solo_result"] = result.model_dump(mode="json")
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             phase = solo_phase(req, self.cfg)
             if rid in self.budget_denials:
-                self._finish(rid, result.text or result.error or "task failed",
+                (await self._finish(rid, result.text or result.error or "task failed",
                              {"direct": result.model_dump(mode="json")}, ok=False,
-                             error=self.budget_denials[rid])
+                             error=self.budget_denials[rid]))
                 return True
 
         stored = req.get("solo_result")
@@ -6268,7 +6270,7 @@ class Orchestrator:
             if not reviewer or reviewer not in self.hub.agents:
                 req["route_decision"] = {**decision, "mode": "team", "fallback": True,
                                          "reason": "solo science reviewer unavailable"}
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
                 await self._emit(rid, "request.route", req["route_decision"])
                 return False
             reviewed = await self.run_step(Task(
@@ -6286,20 +6288,20 @@ class Orchestrator:
             ) if reviewed.ok and parsed else {
                 "status": "review_unparsed", "reason": reviewed.error or "missing or invalid verdict"}
             req["solo_review"] = review
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             await self._emit(rid, "request.review", {"revision": 0, **review})
             phase = solo_phase(req, self.cfg)
             if rid in self.budget_denials:
-                self._finish(rid, result.text or result.error or "task failed",
+                (await self._finish(rid, result.text or result.error or "task failed",
                              {"direct": result.model_dump(mode="json")}, ok=False,
-                             review=review, error=self.budget_denials[rid])
+                             review=review, error=self.budget_denials[rid]))
                 return True
 
         if phase == "fallback":
             reason = decision.get("reason") or (_solo_result_problem(result) if result else "")
             reason = reason or "solo science review did not accept the result"
             req["route_decision"] = {**decision, "mode": "team", "fallback": True, "reason": reason}
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             await self._emit(rid, "request.route", req["route_decision"])
             return False
 
@@ -6319,7 +6321,7 @@ class Orchestrator:
         report = _append_report_metadata(report, [f"처리 방식: 단독 ({agent})", f"단독 턴 비용: {cost}",
                                                    f"산출 경로: {paths or 'none'}"])
         req["followup_agent_id"] = agent
-        self._finish(rid, report, {"direct": result.model_dump(mode="json")}, ok=True, review=review)
+        (await self._finish(rid, report, {"direct": result.model_dump(mode="json")}, ok=True, review=review))
         return True
 
     # ---------- request entry point ----------
@@ -6331,7 +6333,7 @@ class Orchestrator:
         from ..research import final_checkpoint as cp4
         if cp4.enabled(req) and (req.get("research_contract") or {}).get("final_draft"):
             cp4.reconcile(req)
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             return  # a saved final draft never goes through synthesis again, even with changed settings
         req.pop("shutdown_evidence", None)  # a new attempt must not inherit the previous shutdown verdict
         refs = reference_meta(req)
@@ -6342,7 +6344,7 @@ class Orchestrator:
             self.cost[rid] = float(req.get("cost_usd") or 0)
             self.cost_tasks[rid] = set(req.get("cost_by_task") or {})
             self._seed_cost(rid, req)
-            self._drop_unsent_holds(rid)
+            (await self._drop_unsent_holds(rid))
         try:
             research_pilot = bool(self.hub.s.research.enabled)
             intake = (classify_intake(req["text"], req.get("work_kind", "auto"),
@@ -6357,18 +6359,18 @@ class Orchestrator:
                 await self._semantic_devices_check(rid, "request_start")
             if req.get("research_contract") and not research_pilot:
                 req["outcome"] = "research_disabled"
-                self._finish(rid, "This request carries a frozen research contract, but research.enabled is now "
+                (await self._finish(rid, "This request carries a frozen research contract, but research.enabled is now "
                              "off. No step was dispatched and nothing was re-planned; turn the research pilot "
-                             "back on to resume it.", {}, ok=False)
+                             "back on to resume it.", {}, ok=False))
                 return
             if intake:
                 req["intake"] = intake.model_dump(mode="json")
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
             if req["mode"] == "direct":
                 if research_lane:
                     req["outcome"] = "needs_research"
-                    self._finish(rid, "연구로 지정한 요청은 직원 한 명에게 직접 보낼 수 없습니다. 팀(CSO)에게 보내면 "
-                                 "계획을 세워 CP1 승인을 받습니다.", {}, ok=False)
+                    (await self._finish(rid, "연구로 지정한 요청은 직원 한 명에게 직접 보낼 수 없습니다. 팀(CSO)에게 보내면 "
+                                 "계획을 세워 CP1 승인을 받습니다.", {}, ok=False))
                     return
                 await self._plan_clarification(rid, {})
                 vocab = self._output_vocab()
@@ -6382,9 +6384,9 @@ class Orchestrator:
                           **({"output_types_vocab": vocab.sha256} if vocab else {})}))
                 if res.output_types_stats:
                     req["output_types_stats"] = res.output_types_stats
-                    self.hub.save_request(rid)
-                self._finish(rid, res.text, {"direct": res.model_dump(mode="json")},
-                             ok=res.ok and rid not in self.budget_denials)
+                    await persist_request(self.hub, rid)
+                (await self._finish(rid, res.text, {"direct": res.model_dump(mode="json")},
+                             ok=res.ok and rid not in self.budget_denials))
                 return
 
             # A contract hire on probation stays on the web roster as 수습 but is not offered to the CSO (#424).
@@ -6405,7 +6407,7 @@ class Orchestrator:
                     record = req.get("semantic_devices") or {}
                     semantic_devices.add_error(record, code="checklist_load_failed")
                     req["semantic_devices"] = record
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                     await self._emit(rid, "request.semantic_devices", record)
             n = self.cfg.context_chars_per_step
             frozen_pack_snapshot = ((req.get("research_contract") or {}).get("pack_snapshot")
@@ -6425,13 +6427,13 @@ class Orchestrator:
                     record = req.get("semantic_devices") or {}
                     semantic_devices.add_error(record, code=code)
                     req["semantic_devices"] = record
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                     await self._emit(rid, "request.semantic_devices", record)
                     if frozen_pack_snapshot is not None:
                         req["outcome"] = "pack_snapshot_missing"
-                        self._finish(rid, "CP1에서 고정한 research pack snapshot을 복원하지 못해 재개를 중단했습니다. "
+                        (await self._finish(rid, "CP1에서 고정한 research pack snapshot을 복원하지 못해 재개를 중단했습니다. "
                                      "기존 snapshot은 그대로 보존했습니다.", {}, ok=False,
-                                     error="고정한 research pack snapshot을 복원하지 못했습니다.")
+                                     error="고정한 research pack snapshot을 복원하지 못했습니다."))
                         return
                 configured_pack_defs = {}
             packs = configured_pack_defs
@@ -6440,12 +6442,12 @@ class Orchestrator:
             capabilities = format_capabilities(roster, getattr(self.hub, "runner_capabilities", None))
 
             async def finish_research_plan(plan: dict[str, Any]) -> bool:
-                def end_revised(new_rid: str, note: str) -> None:
+                async def end_revised(new_rid: str, note: str) -> None:
                     # Not a failure: the PI asked for another plan, which the new request writes (CP1 수정 요청).
                     req["outcome"] = "plan_revision_requested"
-                    self._finish(rid, f"CP1에서 계획 수정을 요청해 이 요청은 단계를 돌리지 않고 끝냅니다. PI 메모를 넣은 "
+                    (await self._finish(rid, f"CP1에서 계획 수정을 요청해 이 요청은 단계를 돌리지 않고 끝냅니다. PI 메모를 넣은 "
                                  f"새 요청 {new_rid}에서 계획을 다시 세우고 새 CP1을 받습니다."
-                                 + (f"\nPI 메모: {note}" if note.strip() else ""), {}, ok=True)
+                                 + (f"\nPI 메모: {note}" if note.strip() else ""), {}, ok=True))
 
                 stored = req.get("research_contract") or {}
                 previous = stored.get("approval")
@@ -6476,7 +6478,7 @@ class Orchestrator:
                     **({} if legacy_pack_contract else {"pack_applicability": plan.get("pack_applicability") or {}}),
                     "approval": approval,
                 }
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
                 plan_hash = req["research_contract"]["plan_sha256"]
                 carried = req["research_contract"].get("continuation") or {}
                 # Every continuation CP1/resume uses the same sealed executable reuse contract (#797).
@@ -6485,8 +6487,8 @@ class Orchestrator:
                                             and self._archived_continuation_decision(req))
                 if carried and not reuse_pending and not archived_before_adoption:
                     await self._verify_research_reuse(rid, plan)
-                    self._finish(rid, "이어 가기 계획과 재사용 snapshot이 다릅니다. 새 CP1 승인이 필요합니다.",
-                                 {}, ok=False, error="reuse approval required")
+                    (await self._finish(rid, "이어 가기 계획과 재사용 snapshot이 다릅니다. 새 CP1 승인이 필요합니다.",
+                                 {}, ok=False, error="reuse approval required"))
                     return False
                 if reuse_pending and approval.get("status") != "approved":
                     await self._prepare_research_reuse(rid, plan)
@@ -6495,7 +6497,7 @@ class Orchestrator:
                 revised_to = req.get("revised_to") or (lookup(rid) if callable(lookup) else None)
                 if revised_to:
                     req["revised_to"] = revised_to  # saved by _finish: the link survives a stop before it was written
-                    end_revised(revised_to, str((stored.get("approval") or {}).get("note") or ""))
+                    (await end_revised(revised_to, str((stored.get("approval") or {}).get("note") or "")))
                     return False
                 # CP1 수정 요청 opens a new request from the PI's note (Hub.create_revised_request), so only at a first
                 # CP1 before any step: not in a continuation round (its plan rests on that round's results), and not
@@ -6509,7 +6511,7 @@ class Orchestrator:
                         and str(decided.get("note") or "").strip()):
                     approval = dict(decided)
                     req["research_contract"]["approval"] = approval
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                 elif approval.get("status") != "approved":
                     offered_reuse_sha = ((carried.get('reuse_snapshot') or {}).get('sha256')
                                          if reuse_pending else None)
@@ -6612,39 +6614,39 @@ class Orchestrator:
                             "configured_cap_usd": budget["configured_cap_usd"], "source": configured_source})
                     req["research_contract"]["approval"] = approval
                     req.pop("resume_cp1", None)  # consumed by this very save
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                 approved = bool(approval.get("approved"))
                 if not approved and approval.get("status") == "timed_out":
                     req["outcome"] = "plan_timed_out"  # no answer is not a rejection (R5)
-                    self._finish(rid, "CP1 계획 카드에 기한 안에 답이 없어 연구 단계를 보내지 않고 끝냈습니다"
+                    (await self._finish(rid, "CP1 계획 카드에 기한 안에 답이 없어 연구 단계를 보내지 않고 끝냈습니다"
                                  "(policy.approvals.pi_decision_timeout_s). 같은 요청을 다시 보내면 새 CP1이 뜹니다.",
-                                 {}, ok=False, error="CP1 계획 카드 시간 초과")
+                                 {}, ok=False, error="CP1 계획 카드 시간 초과"))
                     return False
                 revision_note = str(approval.get("note") or "").strip()
                 if not approved and approval.get("choice") == "revise" and can_revise and revision_note:
                     try:
-                        new_rid = self.hub.create_revised_request(rid, revision_note)
+                        new_rid = await create_revised_request(self.hub, rid, revision_note)
                     except (KeyError, ValueError) as error:  # a project, CSO model or reference no longer allowed
                         req["outcome"] = "plan_revision_failed"
-                        self._finish(rid, "CP1 수정 요청으로 새 요청을 열지 못해 이 요청은 단계를 돌리지 않고 끝납니다"
+                        (await self._finish(rid, "CP1 수정 요청으로 새 요청을 열지 못해 이 요청은 단계를 돌리지 않고 끝납니다"
                                      f"({safe_failure_cause(str(error))}). 아래 메모를 넣어 요청을 다시 보내 주세요."
-                                     f"\nPI 메모: {revision_note}", {}, ok=False, error="CP1 수정 요청 실패")
+                                     f"\nPI 메모: {revision_note}", {}, ok=False, error="CP1 수정 요청 실패"))
                         return False
-                    end_revised(new_rid, revision_note)
+                    (await end_revised(new_rid, revision_note))
                     return False
                 if not approved:
                     req["outcome"] = "plan_rejected"
                     note = str(approval.get("note") or "").strip()
-                    self._finish(rid, "연구 계획을 승인하지 않아 단계를 실행하지 않았습니다. " +
+                    (await self._finish(rid, "연구 계획을 승인하지 않아 단계를 실행하지 않았습니다. " +
                                  ("계획만 고치려면 다음에는 거절 대신 CP1 수정 요청을 메모와 함께 고르세요(새 요청으로 다시 "
                                   "계획합니다)." if can_revise else "계획을 바꾸려면 요청 문장을 고쳐 새로 보내세요.") +
                                  (f"\nPI 메모: {note}" if note else ""), {}, ok=False,
-                                 error="연구 계획(CP1) 거절")
+                                 error="연구 계획(CP1) 거절"))
                     return False
                 if reuse_pending and not await self._verify_research_reuse(rid, plan):
-                    self._finish(rid, "재사용 산출 또는 승인 snapshot의 증거가 바뀌어 중단했습니다. "
+                    (await self._finish(rid, "재사용 산출 또는 승인 snapshot의 증거가 바뀌어 중단했습니다. "
                                  "재실행하지 않았으며, 새 CP1 승인이 필요합니다.", {}, ok=False,
-                                 error="reuse approval required")
+                                 error="reuse approval required"))
                     return False
                 # The cost so far is judged against the cap CP1 just set, before any end without dispatch: a plan_only
                 # or checkpoint-off request would otherwise finish over its approved budget without a card (#499).
@@ -6653,15 +6655,15 @@ class Orchestrator:
                     req["research_contract"]["failure"] = {"steps": [], "plan_sha256": plan_hash, "stage": "cp1",
                                                            "budget": self.budget_denials[rid]}
                     req["outcome"] = "research_failed"
-                    self.hub.save_request(rid)
-                    self._finish(rid, "Research plan approved, but the cost so far passed its spending cap and the "
+                    await persist_request(self.hub, rid)
+                    (await self._finish(rid, "Research plan approved, but the cost so far passed its spending cap and the "
                                  "budget card was not approved; no employee research step was dispatched.", {},
-                                 ok=False)
+                                 ok=False))
                     return False
                 if not execution_enabled:
                     req["outcome"] = "plan_approved"
-                    self._finish(rid, "Research plan frozen and approved. Evidence checkpoint is off, so the "
-                                 "request stops before employee dispatch.", {}, ok=True)
+                    (await self._finish(rid, "Research plan frozen and approved. Evidence checkpoint is off, so the "
+                                 "request stops before employee dispatch.", {}, ok=True))
                     return False
                 if reuse_pending:
                     # Proof alone does not authorize execution: rollback must still cover a denied budget card.
@@ -6669,7 +6671,7 @@ class Orchestrator:
                 if not await self._blind_draft(rid, req, text, refs):
                     return False
                 req["outcome"] = "research_running"
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
                 return True
 
             async def prepare_recruits():
@@ -6684,7 +6686,7 @@ class Orchestrator:
                                   if req["plan"].get("branches") else self.cfg.max_steps)
                 validate_steps(req["plan"]["steps"], known, research_limit, orchestration,
                                guard=self._external_guard(rid))
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
 
             if resume and not continuation and req.get("plan", {}).get("steps"):
                 if not research_lane and not await self._scope_gate(rid, req):
@@ -6721,7 +6723,7 @@ class Orchestrator:
                                       topic_checklists.ANSWER.fullmatch(frozen_answers[item].strip())]
                         if reasonless:
                             req["checklist_reasonless"] = reasonless
-                            self.hub.save_request(rid)
+                            await persist_request(self.hub, rid)
                         stored_problems = [problem for problem in stored_problems
                                            if problem.split(" must ", 1)[0].removeprefix("checklist.")
                                            not in reasonless]
@@ -6734,7 +6736,7 @@ class Orchestrator:
                     warnings = req["plan"].get("warnings") or []
                 elif req["mode"] == "plan_only":  # restarted after the plan was saved: still no step runs
                     req["outcome"] = "plan_only"
-                    self._finish(rid, "Plan completed.", {}, ok=True)
+                    (await self._finish(rid, "Plan completed.", {}, ok=True))
                     return
                 else:
                     req["plan"] = _carry_assumptions(None, req["plan"])
@@ -6751,7 +6753,7 @@ class Orchestrator:
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                 decision, created = self._ensure_route_decision(req, roster, research=research_lane)
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
                 if created:
                     await self._emit(rid, "request.route", decision)
                 if not research_lane and await self._run_solo(rid, text, refs):
@@ -6811,7 +6813,7 @@ class Orchestrator:
                         precedent_job = self._step_task(rid, self.run_step(precedent_task))
                     else:
                         req["analysis_precedents"] = precedent_warning("agent_unavailable")
-                        self.hub.save_request(rid)
+                        await persist_request(self.hub, rid)
 
                 async def stop_precedent_job() -> None:
                     """A request that ends before planning must not leave the literature scout running or its
@@ -6839,11 +6841,11 @@ class Orchestrator:
                     b = await brief_job
                     if not b.ok:
                         await stop_precedent_job()
-                        self._finish(rid, f"브리핑 실패: {b.error}", {"briefing": b.model_dump(mode="json")}, ok=False)
+                        (await self._finish(rid, f"브리핑 실패: {b.error}", {"briefing": b.model_dump(mode="json")}, ok=False))
                         return
                     if rid in self.budget_denials:
                         await stop_precedent_job()
-                        self._finish(rid, "브리핑 뒤 예산 승인 거부", {"briefing": b.model_dump(mode="json")}, ok=False)
+                        (await self._finish(rid, "브리핑 뒤 예산 승인 거부", {"briefing": b.model_dump(mode="json")}, ok=False))
                         return
                     briefing = b.text
                 if precedent_job:
@@ -6860,9 +6862,9 @@ class Orchestrator:
                         parsed = normalize_precedents(raw)
                     req["analysis_precedents"] = (parsed if parsed is not None else precedent_warning(
                         "parse_failed" if precedent_result is not None and precedent_result.ok else "failed"))
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                 req["checklist_contract"] = 1
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
 
                 reuse_advisory = ""  # semantics-hook
 
@@ -6916,7 +6918,7 @@ class Orchestrator:
                     if planned.session_id:
                         req["cso_session_id"] = planned.session_id
                         req["cso_workdir"] = planned.workdir
-                        self.hub.save_request(rid)
+                        await persist_request(self.hub, rid)
                     if planned.error_kind == "model_refused":
                         raise ModelRefused(planned)
                     return planned
@@ -6940,19 +6942,19 @@ class Orchestrator:
                                 req["outcome"] = "clarify_timed_out"
                             questions = "\n".join(f"- {question}" for question in req.get("pending_questions") or [])
                             req["clarification_failure"] = reason
-                            self._finish(rid, reason + ("\n\n남은 질문:\n" + questions if questions else ""), {},
-                                         ok=False, error=reason)
+                            (await self._finish(rid, reason + ("\n\n남은 질문:\n" + questions if questions else ""), {},
+                                         ok=False, error=reason))
                             return None, current
                         text += answered_questions_prompt([entry])
                         current = await make_plan(text + suffix)
                         if not current.ok:
                             reason = f"답변 반영 계획을 만들지 못했습니다: {safe_failure_cause(current.error)}"
-                            self._finish(rid, reason, {}, ok=False, error=reason)
+                            (await self._finish(rid, reason, {}, ok=False, error=reason))
                             return None, current
                         if rid in self.budget_denials:
                             reason = "답변 반영 계획의 예산 승인이 거부되었습니다."
-                            self._finish(rid, reason, {"plan": current.model_dump(mode="json")},
-                                         ok=False, error=reason)
+                            (await self._finish(rid, reason, {"plan": current.model_dump(mode="json")},
+                                         ok=False, error=reason))
                             return None, current
                         candidate = _carry_assumptions(
                             candidate, current.structured if isinstance(current.structured, dict)
@@ -6961,11 +6963,11 @@ class Orchestrator:
                 plan_res = await make_plan(text)
                 if not plan_res.ok:
                     reason = plan_res.error or "계획 결과를 받지 못했습니다."
-                    self._finish(rid, f"계획 실패: {reason}", {"plan": plan_res.model_dump(mode="json")},
-                                 ok=False, error=reason)
+                    (await self._finish(rid, f"계획 실패: {reason}", {"plan": plan_res.model_dump(mode="json")},
+                                 ok=False, error=reason))
                     return
                 if rid in self.budget_denials:
-                    self._finish(rid, "계획 뒤 예산 승인 거부", {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                    (await self._finish(rid, "계획 뒤 예산 승인 거부", {"plan": plan_res.model_dump(mode="json")}, ok=False))
                     return
                 plan = _carry_assumptions(
                     None, plan_res.structured if isinstance(plan_res.structured, dict)
@@ -7015,7 +7017,7 @@ class Orchestrator:
                         req["semantics_ab"] = {"arm": offer.get("arm"), "offered": [], "status": "error",
                                                "error": {"code": error.get("code") or
                                                          "semantics_advisory_projection_failed"}}
-                        self.hub.save_request(rid)
+                        await persist_request(self.hub, rid)
                         await self._semantic_device_error(
                             rid, code=str(error.get("code") or "semantics_advisory_projection_failed"))
                     elif offer is not None and offer.get("status") == "not_evaluated":
@@ -7024,11 +7026,11 @@ class Orchestrator:
                             "status": "not_evaluated",
                             "reason": str(offer.get("reason") or "snapshot_unavailable"),
                         }
-                        self.hub.save_request(rid)
+                        await persist_request(self.hub, rid)
                     elif offer is not None:  # ab: ids offered (shadow arm: would be), frozen for the end record
                         req["semantics_ab"] = {"arm": offer["arm"], "offered": list(offer["offered"]),
                                                "status": "ok"}
-                        self.hub.save_request(rid)
+                        await persist_request(self.hub, rid)
                     if offer is not None and offer.get("status", "ok") == "ok" and offer["offered"]:
                         # Both arms re-plan once, so they pay for the same CSO calls. Only the advisory arm's
                         # prompt gains the list; the shadow arm sends its first prompt again.
@@ -7042,11 +7044,11 @@ class Orchestrator:
                             reuse_advisory = "\n".join(lines)
                         plan_res = await make_plan(text)
                         if not plan_res.ok:
-                            self._finish(rid, f"A/B re-plan failed: {plan_res.error}", {}, ok=False)
+                            (await self._finish(rid, f"A/B re-plan failed: {plan_res.error}", {}, ok=False))
                             return
                         if rid in self.budget_denials:
-                            self._finish(rid, "A/B 재계획 뒤 예산 승인 거부",
-                                         {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                            (await self._finish(rid, "A/B 재계획 뒤 예산 승인 거부",
+                                         {"plan": plan_res.model_dump(mode="json")}, ok=False))
                             return
                         plan = _carry_assumptions(
                             plan, plan_res.structured if isinstance(plan_res.structured, dict)
@@ -7187,16 +7189,16 @@ class Orchestrator:
                             req["outcome"] = "plan_invalid"
                             req["plan_validation"].update(errors=problems)
                             report = plan_invalid_report(problems, configured_pack_defs, PLAN_CORRECTIONS)
-                            self._finish(rid, report, {}, ok=False, error=report.split("\n", 1)[0])
+                            (await self._finish(rid, report, {}, ok=False, error=report.split("\n", 1)[0]))
                             return
                         correction_suffix = "\n\n" + plan_correction(problems)
                         plan_res = await make_plan(text + correction_suffix)
                         if not plan_res.ok:
-                            self._finish(rid, f"Research re-plan failed: {plan_res.error}", {}, ok=False)
+                            (await self._finish(rid, f"Research re-plan failed: {plan_res.error}", {}, ok=False))
                             return
                         if rid in self.budget_denials:
-                            self._finish(rid, "교정 계획 뒤 예산 승인 거부",
-                                         {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                            (await self._finish(rid, "교정 계획 뒤 예산 승인 거부",
+                                         {"plan": plan_res.model_dump(mode="json")}, ok=False))
                             return
                         plan = _carry_assumptions(
                             plan, plan_res.structured if isinstance(plan_res.structured, dict)
@@ -7241,11 +7243,11 @@ class Orchestrator:
                                                  "\nReturn a complete corrected PLAN.")
                             plan_res = await make_plan(text + correction_suffix)
                             if not plan_res.ok:
-                                self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False)
+                                (await self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False))
                                 return
                             if rid in self.budget_denials:
-                                self._finish(rid, "교정 계획 뒤 예산 승인 거부",
-                                             {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                                (await self._finish(rid, "교정 계획 뒤 예산 승인 거부",
+                                             {"plan": plan_res.model_dump(mode="json")}, ok=False))
                                 return
                             plan = _carry_assumptions(
                                 plan, plan_res.structured if isinstance(plan_res.structured, dict)
@@ -7261,11 +7263,11 @@ class Orchestrator:
                                                  "\nReturn a complete corrected PLAN.")
                             plan_res = await make_plan(text + correction_suffix)
                             if not plan_res.ok:
-                                self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False)
+                                (await self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False))
                                 return
                             if rid in self.budget_denials:
-                                self._finish(rid, "교정 계획 뒤 예산 승인 거부",
-                                             {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                                (await self._finish(rid, "교정 계획 뒤 예산 승인 거부",
+                                             {"plan": plan_res.model_dump(mode="json")}, ok=False))
                                 return
                             plan = _carry_assumptions(
                                 plan, plan_res.structured if isinstance(plan_res.structured, dict)
@@ -7293,7 +7295,7 @@ class Orchestrator:
                 if research_lane and continuation:
                     self._adopt_continuation_plan(rid, req["plan"], active_pack_hashes)
                 decision, created = self._ensure_route_decision(req, roster, research=research_lane)
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
                 if created:
                     await self._emit(rid, "request.route", decision)
                 await self._emit(rid, "request.plan", {**req["plan"], "processing": decision})
@@ -7301,14 +7303,14 @@ class Orchestrator:
                     await self._emit(rid, "recruit.suggested", {
                         "handled": True, "recruits": req["plan"]["recruit_results"]})
                 if not steps:
-                    self._finish(rid, plan_res.text or "CSO returned no steps.", {}, ok=False)
+                    (await self._finish(rid, plan_res.text or "CSO returned no steps.", {}, ok=False))
                     return
                 if research_lane:
                     if not await finish_research_plan(req["plan"]):
                         return
                 elif req["mode"] == "plan_only":
                     req["outcome"] = "plan_only"
-                    self._finish(rid, plan_res.text or "Plan completed.", {}, ok=True)
+                    (await self._finish(rid, plan_res.text or "Plan completed.", {}, ok=True))
                     return
                 elif await self._run_solo(rid, text, refs):
                     return
@@ -7336,11 +7338,11 @@ class Orchestrator:
                 progress = req.setdefault("replan_progress", {"attempts": 0, "max": limit, "in_flight": False})
                 history = req.setdefault("replan_history", [])
 
-                def record(status: str, attempt: int | None = None, **entry: Any) -> str:
+                async def record(status: str, attempt: int | None = None, **entry: Any) -> str:
                     history.append({"attempt": attempt, "trigger": trigger, "status": status, **entry})
                     progress["in_flight"] = False
                     progress.pop("trigger", None)
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                     return status if status in {"applied", "declined"} else "failed"
 
                 by_id = {s["id"]: s for s in steps}
@@ -7367,7 +7369,7 @@ class Orchestrator:
                     blocked = [f"{sid}: {reason}" for sid in by_id if sid in results and not results[sid].ok
                                and (reason := block_reason(results[sid]))]
                     if blocked:
-                        return record("blocked", reason="; ".join(blocked))
+                        return (await record("blocked", reason="; ".join(blocked)))
                 used_attempts = max((int(entry.get("attempt") or 0) for entry in history
                                      if entry.get("trigger") == trigger), default=0)
                 # A restart re-asks the attempt it interrupted; a cap lowered meanwhile still applies to it.
@@ -7376,11 +7378,11 @@ class Orchestrator:
                     used_attempts = max(used_attempts, int(progress.get("attempts") or 0))
                 attempt = max(used_attempts, 1) if same_in_flight else used_attempts + 1
                 if attempt > limit:
-                    return record("limit", reason=f"re-plan limit reached ({used_attempts}/{limit})")
+                    return (await record("limit", reason=f"re-plan limit reached ({used_attempts}/{limit})"))
                 progress.update(attempts=attempt, max=limit, in_flight=True, trigger=trigger)
                 if review_progress is not None:
                     req["review_progress"] = {**review_progress, "phase": "replan"}
-                self.hub.save_request(rid)  # counted before the CSO call, so a restart cannot reset the cap
+                await persist_request(self.hub, rid)  # counted before the CSO call, so a restart cannot reset the cap
 
                 unfinished = [sid for sid in by_id if sid not in completed]
                 flagged = sorted({issue.get("step_id") for issue in (review or {}).get("issues") or []
@@ -7430,7 +7432,7 @@ class Orchestrator:
                     if planned.session_id:
                         req["cso_session_id"] = planned.session_id
                         req["cso_workdir"] = planned.workdir
-                        self.hub.save_request(rid)
+                        await persist_request(self.hub, rid)
                     if not planned.ok:
                         raise ValueError(f"CSO re-plan failed: {planned.error or 'unknown error'}")
                     if rid in self.budget_denials:
@@ -7457,7 +7459,7 @@ class Orchestrator:
                                       "re-plan needs PI clarification; the card timed out unanswered"
                                       if status == "timed_out" else
                                       "re-plan needs PI clarification that was denied or unanswered")
-                            return record("failed", attempt, reason=reason)
+                            return (await record("failed", attempt, reason=reason))
                         text += answered_questions_prompt([entry])
                         parse_attempt += 1
                         candidate = _carry_assumptions(candidate, await ask_cso(parse_attempt))
@@ -7466,7 +7468,7 @@ class Orchestrator:
                         raise ValueError("re-plan steps and drop must be lists")
                     if not raw:
                         if review is not None and not drop:
-                            return record("declined", attempt, notes=str(candidate.get("notes") or ""))
+                            return (await record("declined", attempt, notes=str(candidate.get("notes") or "")))
                         raise ValueError(str(candidate.get("notes") or "CSO returned no replacement steps"))
                     ids = [step.get("id") if isinstance(step, dict) else None for step in raw]
                     if any(not isinstance(sid, str) or not sid.strip() for sid in ids):
@@ -7499,7 +7501,7 @@ class Orchestrator:
                         w.startswith((f"step {sid}: added dependency on ", f"step {sid}: reference to "))
                         for sid in by_id)]
                 except (BudgetExceeded, TypeError, ValueError) as error:  # PlanOutputsError is a ValueError
-                    return record("failed", attempt, reason=str(error))
+                    return (await record("failed", attempt, reason=str(error)))
 
                 retired_ids = [sid for sid in by_id if sid in retired]
                 prior = {sid: {"ok": results[sid].ok,
@@ -7541,8 +7543,8 @@ class Orchestrator:
                     req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                 if review_progress is not None:
                     req["review_progress"] = {**review_progress, "phase": "replanned"}
-                outcome = record("applied", attempt, retired=retired_ids, added=ids, prior_results=prior,
-                                 notes=str(candidate.get("notes") or ""))
+                outcome = (await record("applied", attempt, retired=retired_ids, added=ids, prior_results=prior,
+                                 notes=str(candidate.get("notes") or "")))
                 await self._emit(rid, "request.plan", req["plan"])
                 return outcome
 
@@ -7572,18 +7574,18 @@ class Orchestrator:
                 return
             await recover_failures()
             if rid in self.budget_denials or has_failures():
-                self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False)
+                (await self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False))
                 return
 
             progress = req.get("review_progress") or {}
             if progress.get("phase") in {"revision", "replanned"}:  # its steps ran above; review them next
                 progress.update(phase="review", last_completed_revision=progress["next_revision"])
                 req["review_progress"] = progress
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
             elif progress.get("phase") == "replan":  # restarted while the CSO re-planned: review again, then re-plan
                 progress.update(phase="review", next_revision=progress["last_completed_review"])
                 req["review_progress"] = progress
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
             review: dict = progress.get("review") or {}
             if review.get("verdict") in {"accept", "revise"} and isinstance(review.get("issues"), list):
                 # A review saved before generic priorities existed resumes with its missing priorities as P1.
@@ -7608,8 +7610,8 @@ class Orchestrator:
                         meta={**refs, "kind": "review", "outputs": ["outputs/review.json"], "revision": rev, "parse_attempt": parse_attempt,
                               "request": text, "title": f"과학 리뷰 #{rev}"}))
                     if rid in self.budget_denials:
-                        self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,
-                                     review={"status": "budget_denied"})
+                        (await self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,
+                                     review={"status": "budget_denied"}))
                         return
                     parsed = lenient_review(r.structured, REVIEW_SCHEMA) or lenient_review(
                         extract_json(r.text), REVIEW_SCHEMA)
@@ -7620,9 +7622,9 @@ class Orchestrator:
                 if not review:
                     review = {"status": "review_unparsed", "reason": r.error or "missing or invalid verdict"}
                     await self._emit(rid, "request.review", {"revision": rev, **review})
-                    self._finish(rid, self.report_results(steps, results, n) +
+                    (await self._finish(rid, self.report_results(steps, results, n) +
                                  f"\n\nReview: review_unparsed ({review['reason']})",
-                                 serialized_results(), ok=False, review=review)
+                                 serialized_results(), ok=False, review=review))
                     return
                 await self._emit(rid, "request.review", {"revision": rev, **review})
                 progress = {"phase": "review", "next_revision": rev + 1, "review": review,
@@ -7631,24 +7633,24 @@ class Orchestrator:
                 if review.get("verdict") != "revise":
                     progress["phase"] = "synthesis"
                     req["review_progress"] = progress
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                     break
                 if rev >= self.cfg.max_revisions:
                     progress["phase"] = "unresolved"
                     req["review_progress"] = progress
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                     break
                 p1_review = review_at_priority(review, "P1")
                 if await attempt_replan(p1_review, progress) == "applied":
                     await self.run_dag(rid, text, steps, results, only={s["id"] for s in steps} - set(results))
                     await recover_failures()
                     if rid in self.budget_denials or has_failures():
-                        self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,
-                                     review=review)
+                        (await self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,
+                                     review=review))
                         return
                     progress.update(phase="review", last_completed_revision=rev + 1)
                     req["review_progress"] = progress
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                     continue
                 # Off, declined or failed: the reviewer's notes go to the flagged steps in place, as before #271.
                 feedback: dict[str, str] = {}
@@ -7659,7 +7661,7 @@ class Orchestrator:
                 if not feedback:
                     progress["phase"] = "unresolved"
                     req["review_progress"] = progress
-                    self.hub.save_request(rid)
+                    await persist_request(self.hub, rid)
                     break
                 feedback = with_downstream_revisions(steps, feedback)
                 progress["phase"] = "revision"
@@ -7670,15 +7672,15 @@ class Orchestrator:
                                     **({"previous_result": results[sid].model_dump(mode="json")}
                                        if sid in results else {})}
                     req.setdefault("results", {}).pop(sid, None)
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
                 await self.run_dag(rid, text, steps, results, only=set(feedback), feedback=feedback)
                 await recover_failures()
                 if rid in self.budget_denials or has_failures():
-                    self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,
-                                 review=review)
+                    (await self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,
+                                 review=review))
                     return
                 progress.update(phase="review", last_completed_revision=rev + 1)
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
 
             # Still "revise" when revising stopped (F5): the CSO writes the report with the open issues in their own
             # section and the request stays failed. A failed or budget-denied synthesis ends with the step results.
@@ -7686,7 +7688,7 @@ class Orchestrator:
             reference_issues = [*issues_at_priority(review, "P2"), *issues_at_priority(review, "P3")]
             if unresolved:
                 req["outcome"] = "review_unresolved"
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
             resumable = self.hub.supports_resume(self.cfg.cso_agent)
             # After a restart a consult the gateway lost can still run in this session and workdir (#112).
             session_id, workdir = await self._free_session(
@@ -7713,9 +7715,9 @@ class Orchestrator:
                 body = (final.text if final.ok else self.report_results(steps, results, n) +
                         f"\n\nSynthesis failed: {final.error}")
                 report = _append_report_metadata(body, ["Review: revisions unresolved."])
-                self._finish(rid, report,
+                (await self._finish(rid, report,
                              serialized_results(), ok=False, review=review,
-                             error="리뷰 지적이 수정 상한 뒤에도 남아 있습니다")
+                             error="리뷰 지적이 수정 상한 뒤에도 남아 있습니다"))
                 return
             final = await self.run_step(synthesis)
             review_appendix = ("남은 P2·P3 지적 원문:\n" + "\n".join(
@@ -7727,15 +7729,15 @@ class Orchestrator:
             if reference and not REVIEW_REFERENCE_HEADING.search(body):
                 body = _before_bench_block(body, reference)
             report = _append_report_metadata(body, [review_appendix]) if review_appendix else body
-            self._finish(rid, report, serialized_results(),
-                         ok=final.ok and rid not in self.budget_denials, review=review)
+            (await self._finish(rid, report, serialized_results(),
+                         ok=final.ok and rid not in self.budget_denials, review=review))
         except research_continuation.ReuseApprovalRequired:
-            self._finish(rid, "재사용 증거가 바뀌어 단계를 보내지 않았습니다. 새 CP1 승인이 필요합니다.",
-                         req.get('results') or {}, ok=False, error="reuse approval required")
+            (await self._finish(rid, "재사용 증거가 바뀌어 단계를 보내지 않았습니다. 새 CP1 승인이 필요합니다.",
+                         req.get('results') or {}, ok=False, error="reuse approval required"))
         except ModelRefused as exc:
             req["outcome"] = "model_refused"
-            self._finish(rid, MODEL_REFUSAL_REASON, {"plan": exc.result.model_dump(mode="json")},
-                         ok=False, error=MODEL_REFUSAL_REASON)
+            (await self._finish(rid, MODEL_REFUSAL_REASON, {"plan": exc.result.model_dump(mode="json")},
+                         ok=False, error=MODEL_REFUSAL_REASON))
             await self.hub.offer_model_refusal(rid)
         except ShutdownInterrupted as exc:
             await asyncio.gather(*self.cancel_steps(rid), return_exceptions=True)
@@ -7743,7 +7745,7 @@ class Orchestrator:
         except Exception as e:
             if self._continuation_unstarted(req):
                 # Ends as the revise it continued, with that round's plan and results put back (``_finish``).
-                self._finish(rid, f"{type(e).__name__}: {e}", {}, ok=False, error=f"{type(e).__name__}: {e}")
+                (await self._finish(rid, f"{type(e).__name__}: {e}", {}, ok=False, error=f"{type(e).__name__}: {e}"))
                 return
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
             execution = []
@@ -7756,7 +7758,7 @@ class Orchestrator:
                 execution.append("Pending PI decisions/questions:\n" + "\n".join(
                     f"- {question}" for question in req["pending_questions"]))
             serialized_saved = {key: value.model_dump(mode="json") for key, value in saved.items()}
-            self._record_dev_failure(rid, "request", req["error"], "internal")
+            (await self._record_dev_failure(rid, "request", req["error"], "internal"))
             summary, _feed_error = failed_request_summary(req, serialized_saved, req["error"])
             req["report"] = (summary + "\n\n## 결론과 권고\n요청을 완료하지 못했습니다. 실행 기록의 원인과 "
                              "다음 조치를 확인하세요.\n\n## 결과\n확정할 최종 결과가 없습니다.\n\n## 방법 요약\n"
@@ -7778,7 +7780,9 @@ class Orchestrator:
                       **_terminal_reports(rid, req.get("report") or "", req.get("report_appendix") or "", req.get("execution_record") or ""),
                       "cost_usd": float(req.get("cost_usd") or 0),
                       "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary")}
-            if hasattr(self.hub, "schedule_terminal"):
+            if hasattr(self.hub, "aschedule_terminal"):
+                await self.hub.aschedule_terminal(rid, "request.failed", failed)
+            elif hasattr(self.hub, "schedule_terminal"):
                 self.hub.schedule_terminal(rid, "request.failed", failed)
             elif hasattr(self.hub, "commit_terminal"):
                 self.hub.commit_terminal(rid, "request.failed", failed)
@@ -7877,7 +7881,7 @@ class Orchestrator:
         solo = route.get("mode") == "solo" and not route.get("fallback")  # the plan's steps never ran
         return checklist_appendix(plan, review, catalog, precedents, owner=SOLO_OWNER if solo else None)
 
-    def _record_dev_failure(self, rid: str, step_id: str, cause: str, kind: str) -> None:
+    async def _record_dev_failure(self, rid: str, step_id: str, cause: str, kind: str) -> None:
         """Record an error fingerprint in the configured round log, or a local JSONL outbox."""
         import hashlib
 
@@ -7896,24 +7900,25 @@ class Orchestrator:
                     stream.write(json.dumps(record, ensure_ascii=False) + "\n")
             except OSError:
                 req["dev_report_error"] = "개발 기록 저장 실패"
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
                 return
         records.append(record)
-        self.hub.save_request(rid)
+        await persist_request(self.hub, rid)
 
-    def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,
+    async def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,
                 error: str | None = None) -> None:
-        req = self.hub.requests[rid]
+        before = copy.deepcopy(self.hub.requests[rid])
+        req = copy.deepcopy(before)
         if req.get("status") == "cancelled":
             return  # request cancel already wrote its report and terminal record (R13)
         from ..research import final_checkpoint as cp4
         if cp4.enabled(req) and (req.get("research_contract") or {}).get("final_draft"):
-            cp4.reconcile(req)
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             return  # preserve the exact body and audit the PI saw
         report, results, review = self._unstarted_continuation_end(req, report, results, review)
         if not ok and _developer_action(error or report) and not req.get("dev_reports"):
-            self._record_dev_failure(rid, "request", error or report, "internal")
+            (await self._record_dev_failure(rid, "request", error or report, "internal"))
+            req["dev_reports"] = copy.deepcopy(self.hub.requests[rid].get("dev_reports") or [])
         report, report_appendix = _split_report_appendix(report)
         report_appendix, legacy_execution = split_appendix(report_appendix)
         execution = [req.get("execution_record") or "", legacy_execution]
@@ -8049,10 +8054,15 @@ class Orchestrator:
                         pi_review_pending=True, pi_reviewed_at=None)
         if error:  # one readable office-feed line; `labhq send` prints report first, or error when report is absent
             req["error"] = data["error"] = error
+        if hasattr(self.hub, "aschedule_terminal"):
+            await self.hub.aschedule_terminal(rid, "request.completed", data, request=req, before=before)
+            return
+        from ..request_persistence import apply_changes
+        apply_changes(self.hub.requests[rid], before, req)
         if hasattr(self.hub, "schedule_terminal"):
             self.hub.schedule_terminal(rid, "request.completed", data)
         elif hasattr(self.hub, "commit_terminal"):
             self.hub.commit_terminal(rid, "request.completed", data)
         else:  # Lightweight orchestration test doubles do not persist state.
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             asyncio.get_running_loop().create_task(self._emit(rid, "request.completed", data))

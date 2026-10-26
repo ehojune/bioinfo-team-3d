@@ -187,7 +187,7 @@ async def test_checklist_render_failure_is_in_the_execution_record(monkeypatch):
     monkeypatch.setattr(topic_checklists, "load",
                         lambda *a, **k: (_ for _ in ()).throw(ValueError("PRIVATE CHECKLIST BODY")))
 
-    Orchestrator(hub)._finish("r", "# 결과", {}, ok=True)
+    (await Orchestrator(hub)._finish("r", "# 결과", {}, ok=True))
 
     error = hub.requests["r"]["semantic_devices"]["errors"][-1]
     assert error["code"] == "checklist_render_failed"
@@ -277,7 +277,7 @@ async def test_cp1_preserves_load_error_that_already_affected_the_plan(monkeypat
     assert record["status"] == "error"
     assert record["errors"][0]["code"] == "checklist_load_failed"
     hub.requests["r"]["plan"] = valid_plan(topics=[])
-    orchestrator._finish("r", "# 결과", {}, ok=True)
+    (await orchestrator._finish("r", "# 결과", {}, ok=True))
     assert "checklist_load_failed" in hub.requests["r"]["execution_record"]
 
 

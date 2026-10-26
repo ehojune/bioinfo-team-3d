@@ -159,7 +159,7 @@ async def test_request_wake_retry_and_wrap_sum_three_fixture_calls(tmp_path, mon
     assert hub.requests["r"]["cost_usd"] == pytest.approx(0.0664079)
     assert hub.requests["r"]["usage"]["input_tokens"] == 30
     assert hub.requests["r"]["usage"]["output_tokens"] == 120
-    orch._finish("r", "fixture report", {}, result.ok)
+    (await orch._finish("r", "fixture report", {}, result.ok))
     assert hub.requests["r"]["cost_usd"] == pytest.approx(0.0664079)
     if flow == "wrap":
         assert not result.ok and result.partial_results

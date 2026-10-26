@@ -1,0 +1,18 @@
+pr: 972
+rows:
+- sha: '2bd3a7a'
+  at: 2026-10-26 11:32
+  summary: 취소 호출자가 끊겨도 runner 중단과 terminal 기록을 마칩니다.
+  text: '봇 P1 4373460589의 저장 경계 2곳에서 수정 전 2 failed를 재현했습니다. 취소 정리를 마친 뒤 호출자 취소를 전달합니다. 관련 4파일 95 passed, 기존 CI 실패 3건 3 passed. process-loss 복구와 카드 준비 완료 신호를 보존했습니다.'
+- sha: 'a1a092b'
+  at: 2026-10-26 11:12
+  summary: 요청 취소 때 보고된 비용과 quota 대기 취소를 보존합니다.
+  text: 'task 비용 저장 뒤 완료를 기록하고 대기 소비자 취소 뒤 저장을 await합니다. 비용·quota는 barrier로 재현했고 재시작 검사는 task 완료를 기다립니다. 기존 assertion과 unknown·중복 비용·다른 요청 보존 검사를 유지합니다. 관련 5파일 최종 결과 합계 172 passed, 1 skipped(state 재검사 60 passed 포함).'
+- sha: '0b8a3cb'
+  at: 2026-10-26 06:30
+  summary: 저장 위치를 고르다 연결이 끊겨도 같은 답을 다시 처리합니다.
+  text: '봇 P2 4372414536에 따라 storage 선택 receipt를 남깁니다. commit 뒤 취소된 카드는 같은 선택으로 재시도하고 재시작은 저장된 선택으로 해결합니다. 다른 선택의 재전송은 거부합니다. CI가 찾은 semantics 제거 표식도 보완했습니다. 관련 mock/static 97 passed.'
+- sha: 'c966089'
+  at: 2026-10-26 06:30
+  summary: 결과와 검토 내용을 저장하는 동안에도 다른 요청에 응답합니다.
+  text: 'request helper와 SavedResults 추가·pop·삭제를 async 저장으로 전환했습니다. request별 순서, commit 뒤 상태·event·delivery 반영, 오류·취소 판정과 CP4 receipt 재시작 복구를 검증했습니다. 관련 mock/static 915 passed, 1 skipped, subtest 12 passed. 초기화·CLI용 sync API와 #606의 잔여 직접 저장 경계는 유지합니다.'

@@ -78,16 +78,19 @@ async def test_restart_keeps_approval_and_resumes_only_remaining_steps(tmp_path)
 
     hub.orchestrator.run_step = fake_step
     await hub.resolve_approval(resume_id, True)
-    for _ in range(100):
-        if hub.requests["r1"]["status"] == "done":
-            break
-        await asyncio.sleep(0.01)
+    # Completion includes async saves, terminal commit and cleanup; polling one
+    # second of wall time can observe a still-running request on a busy writer.
+    await hub.request_tasks["r1"]
     assert hub.requests["r1"]["status"] == "done"
     assert called == ["s2", "review", "s2", "review", "synthesis"]
     assert hub.requests["r1"]["cost_usd"] == 2.5
     assert hub.orchestrator.cost["r1"] == 2.5
     assert hub.requests["r1"]["results"]["s1"]["text"] == "saved"
     assert "s2" in hub.store.all("request")["r1"]["results"]
+    assert hub.store.get("request", "r1")["status"] == "done"
+    restarted = Hub(s)
+    assert restarted.requests["r1"]["status"] == "done"
+    restarted.store.close()
     hub.unregister_runner("runner1", socket)
     with TestClient(app) as client:
         headers = {"Authorization": f"Bearer {s.gateway.client_token}"}
@@ -282,10 +285,7 @@ async def test_late_result_becomes_request_checkpoint_before_resume(tmp_path):
     restored.orchestrator.run_step = fake_step
     aid = next(aid for aid, entry in restored.approvals.items() if entry["approval"]["kind"] == "resume")
     await restored.resolve_approval(aid, True)
-    for _ in range(100):
-        if restored.requests["r"]["status"] == "done":
-            break
-        await asyncio.sleep(0.01)
+    await restored.request_tasks["r"]
     assert restored.requests["r"]["status"] == "done"
     assert calls == ["step", "review", "synthesis"]
     assert restored.requests["r"]["cost_usd"] == 1.25
@@ -366,7 +366,7 @@ def test_terminal_checkpoint_replays_once_to_reporter_after_restart(tmp_path):
         first.requests["r"] = {"id": "r", "mode": "direct", "text": "study", "status": "running",
                                "project_id": "p"}
         first._queue_terminal_delivery = lambda event: None  # process exits just after commit
-        first.orchestrator._finish("r", "finished", {}, ok=True)
+        (await first.orchestrator._finish("r", "finished", {}, ok=True))
         assert first.store.get("request", "r")["status"] == "done"
         assert [e["type"] for e in first.store.events_since(0)] == ["request.completed"]
         assert len(first.store.all("terminal_delivery")) == 1
@@ -403,7 +403,7 @@ def test_restart_creates_missing_issue_before_terminal_report(tmp_path):
         first.reporter.submit = lambda event: None  # event persisted, issue not yet opened
         await first.publish({"type": "request.created", "request_id": "r", "data": {"text": "study"}})
         assert [event["type"] for event in first.store.all("reporter_delivery").values()] == ["request.created"]
-        first.orchestrator._finish("r", "finished", {}, ok=True)
+        (await first.orchestrator._finish("r", "finished", {}, ok=True))
         first.store.close()
 
     asyncio.run(checkpoint_then_stop())
@@ -667,10 +667,7 @@ async def test_restart_during_retry_adopts_only_final_attempt(tmp_path, retry_ok
     hub.orchestrator.run_step = fake_step
     aid = next(iter(hub.approvals))
     await hub.resolve_approval(aid, True)
-    for _ in range(100):
-        if hub.requests["r"]["status"] in {"done", "failed"}:
-            break
-        await asyncio.sleep(0.01)
+    await hub.request_tasks["r"]
     assert hub.requests["r"]["status"] == ("done" if retry_ok else "failed")
     assert hub.requests["r"]["results"]["s"]["task_id"] == "retry-attempt"
     assert hub.requests["r"]["results"]["s"]["ok"] is retry_ok
@@ -743,10 +740,7 @@ async def test_restart_during_revision_preserves_feedback_and_adopts_revision(tm
 
     hub.orchestrator.run_step = resumed_step
     await hub.resolve_approval(next(iter(hub.approvals)), True)
-    for _ in range(100):
-        if hub.requests["r"]["status"] == "done":
-            break
-        await asyncio.sleep(0.01)
+    await hub.request_tasks["r"]
     assert hub.requests["r"]["status"] == "done"
     assert hub.requests["r"]["results"]["s"]["text"] == "revised"
     assert hub.requests["r"].get("pending_revisions") == {}
@@ -1405,6 +1399,7 @@ async def test_resume_denial_publishes_request_failed(tmp_path):
     first.save_request("r")
     first.store.close()
     restored = Hub(s)
+    restored.pi_interpreter.schedule = lambda event: None
     aid = next(iter(restored.approvals))
     await restored.resolve_approval(aid, False)
     assert restored.requests["r"]["status"] == "failed"
@@ -1524,10 +1519,7 @@ async def test_resume_waits_for_runner_and_reoffers_after_timeout(tmp_path):
     assert any(e["type"] == "request.resume_waiting" for e in hub.events)
     socket = CaptureSocket()
     hub.register_runner("local", socket, [{"id": "a"}])
-    for _ in range(50):
-        if hub.requests["r1"]["status"] == "done":
-            break
-        await asyncio.sleep(0.01)
+    await hub.request_tasks["r1"]
     assert hub.requests["r1"]["status"] == "done" and calls == ["a"]
 
     hub.requests["r2"] = {"id": "r2", "status": "running", "mode": "direct",

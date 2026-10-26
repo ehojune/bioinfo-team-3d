@@ -72,17 +72,30 @@ DENIED = {"approved": False, "note": ""}
 # ----- R5: an unanswered PI decision parks the request; it never ends as a deny -----
 
 @pytest.mark.asyncio
-async def test_pi_decision_cards_outlive_the_gate_timeout_and_park_active_requests(tmp_path):
+async def test_pi_decision_cards_outlive_the_gate_timeout_and_park_active_requests(tmp_path, monkeypatch):
     s = _settings(tmp_path)
     s.policy.approvals.timeout_s = 1  # the gate timeout; it used to end every card below after one second
     hub = Hub(s)
     kinds = sorted(PI_DECISION_KINDS - {"resume"})  # a resume card has no waiter; tested below
+    parked = asyncio.Event()
+    seen = set()
+    publish = hub.publish
+
+    async def status_published(event):
+        await publish(event)
+        if event["type"] == "approval.requested":
+            seen.add(event["data"]["kind"])
+            if seen == set(kinds):
+                parked.set()
+
+    monkeypatch.setattr(hub, "publish", status_published)
     for kind in kinds:
         _request(hub, f"r_{kind}")
         if kind == "result_publish":
             hub.requests[f"r_{kind}"]["status"] = "done"
             hub.review_done(f"r_{kind}")
     waits = {kind: asyncio.create_task(hub.request_approval(kind, f"{kind}?", f"r_{kind}")) for kind in kinds}
+    await asyncio.wait_for(parked.wait(), 3)
     await asyncio.sleep(1.4)
     assert not [kind for kind, wait in waits.items() if wait.done()]
     assert {kind: hub.requests[f"r_{kind}"]["status"] for kind in kinds} == {
@@ -210,7 +223,7 @@ async def _until(predicate, timeout=3.0):
 
 
 @pytest.mark.asyncio
-async def test_cancel_stops_a_planning_request_and_its_live_task(tmp_path):
+async def test_cancel_stops_a_planning_request_and_its_live_task(tmp_path, monkeypatch):
     from labhq.gateway.server import RequestIn
 
     hub = Hub(_team_settings(tmp_path))
@@ -224,9 +237,25 @@ async def test_cancel_stops_a_planning_request_and_its_live_task(tmp_path):
     cancelling = asyncio.create_task(hub.cancel_request(rid))
     await _until(lambda: {"type": "task.cancel", "task_id": plan_task} in ws.sent)
     # The cancelled turn reports back (with its cost) before the terminal record is written.
-    await hub.on_runner_message("local", {"type": "task.result", "task_id": plan_task, "request_id": rid,
+    cost_entered, release_cost = asyncio.Event(), asyncio.Event()
+    record_cost = hub._arecord_task_cost
+
+    async def delayed_cost(*args, **kwargs):
+        cost_entered.set()
+        await release_cost.wait()
+        await record_cost(*args, **kwargs)
+
+    monkeypatch.setattr(hub, "_arecord_task_cost", delayed_cost)
+    reporting = asyncio.create_task(hub.on_runner_message("local", {"type": "task.result", "task_id": plan_task, "request_id": rid,
                                           "data": TaskResult(task_id=plan_task, agent_id="cso", ok=False,
-                                                             error="cancelled", cost_usd=0.4).model_dump(mode="json")})
+                                                             error="cancelled", cost_usd=0.4).model_dump(mode="json")}))
+    await asyncio.wait_for(cost_entered.wait(), 1)
+    try:
+        assert not hub.store.get("task", plan_task).get("completed")
+        assert not cancelling.done()
+    finally:
+        release_cost.set()
+        await reporting
     out = await asyncio.wait_for(cancelling, 3)
     assert out == {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": [plan_task]}
     assert orchestration.done() and rid not in hub.request_tasks
@@ -235,6 +264,13 @@ async def test_cancel_stops_a_planning_request_and_its_live_task(tmp_path):
     final = [e for e in hub.events if e["type"] == "request.completed" and e["request_id"] == rid]
     assert len(final) == 1 and final[0]["data"]["status"] == "cancelled" and final[0]["data"]["ok"] is False
     assert final[0]["data"]["cost_usd"] == pytest.approx(0.4) and final[0]["data"]["cost_known"] is True
+    assert hub.store.get("request", rid)["cost_usd"] == pytest.approx(0.4)
+    restarted = Hub(hub.s)
+    assert restarted.requests[rid]["cost_usd"] == pytest.approx(0.4)
+    restarted.store.close()
+    # A runner replay must not add the same turn twice.
+    await record_cost(rid, plan_task, TaskResult(task_id=plan_task, agent_id="cso", ok=False, cost_usd=0.4))
+    assert hub.requests[rid]["cost_usd"] == pytest.approx(0.4)
 
     # Nothing else is sent, and a second cancel answers the same.
     sent = len(ws.sent)
@@ -244,6 +280,49 @@ async def test_cancel_stops_a_planning_request_and_its_live_task(tmp_path):
                                                "cancelled_tasks": [plan_task]}
     assert hub.requests[rid]["status"] == "cancelled"
     assert len([e for e in hub.events if e["type"] == "request.completed" and e["request_id"] == rid]) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("save_number", [1, 2])
+async def test_caller_cancel_during_cancel_save_still_stops_runner(tmp_path, monkeypatch, save_number):
+    hub = Hub(_settings(tmp_path))
+    hub.cancel_result_wait_s = 0
+    _request(hub, "r")
+    _request(hub, "other")
+    ws = CaptureSocket()
+    hub.register_runner("local", ws, ROSTER, "inc")
+    task = Task(agent_id="worker", request_id="r", prompt="inert")
+    hub.store.put("task", task.id, {"request_id": "r", "runner_id": "local",
+                                  "payload": task.model_dump(mode="json")})
+    hub.task_runner[task.id] = "local"
+    entered, release = asyncio.Event(), asyncio.Event()
+    save = hub.asave_request
+    calls = 0
+
+    async def blocked_save(rid):
+        nonlocal calls
+        calls += 1
+        if calls == save_number:
+            entered.set()
+            await release.wait()
+        await save(rid)
+
+    monkeypatch.setattr(hub, "asave_request", blocked_save)
+    cancelling = asyncio.create_task(hub.cancel_request("r"))
+    await asyncio.wait_for(entered.wait(), 1)
+    cancelling.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelling
+    assert {"type": "task.cancel", "task_id": task.id} in ws.sent
+    assert hub.store.get("request", "r")["cancelled_tasks"] == [task.id]
+    assert "cancelling" not in hub.requests["r"]
+    assert len([e for e in hub.events if e["type"] == "request.completed" and e["request_id"] == "r"]) == 1
+    assert hub.requests["other"]["status"] == "running"
+    restarted = Hub(hub.s)
+    assert restarted.requests["r"]["cancelled_tasks"] == [task.id]
+    assert "cancelling" not in restarted.requests["r"]
+    restarted.store.close()
 
 
 @pytest.mark.asyncio
@@ -288,18 +367,37 @@ async def test_cancel_stops_parallel_steps_and_a_late_card_from_the_runner_is_cl
 
 
 @pytest.mark.asyncio
-async def test_cancel_releases_a_quota_wait_and_closes_the_requests_cards(tmp_path):
+async def test_cancel_releases_a_quota_wait_and_closes_the_requests_cards(tmp_path, monkeypatch):
     hub = Hub(_settings(tmp_path))
     _request(hub, "r", results={"s1": TaskResult(task_id="t1", agent_id="worker", ok=True, text="표 완성",
                                                  outputs=["outputs/qc.tsv"], workdir_id="w1").model_dump(mode="json")},
              plan={"steps": [{"id": "s1", "agent_id": "worker"}, {"id": "s2", "agent_id": "worker"}]})
     _request(hub, "other")
+    quota_entered, release_quota = asyncio.Event(), asyncio.Event()
+    publish, save = hub.publish, hub.asave_request
+
+    async def parked_publish(event):
+        await publish(event)
+        if event["type"] == "request.step_quota_wait":
+            quota_entered.set()
+            await release_quota.wait()
+
+    async def cancellation_save(rid):
+        if rid == "r" and hub.requests[rid]["status"] == "cancelled":
+            release_quota.set()
+            await asyncio.wait({held}, timeout=1)
+            assert held.cancelled(), "cancel must reach the waiter before persistence yields"
+        await save(rid)
+
+    monkeypatch.setattr(hub, "publish", parked_publish)
+    monkeypatch.setattr(hub, "asave_request", cancellation_save)
     now = time.time()
     held = hub.track_request("r", hub.wait_quota("r", "s2", "codex", resume_at=now + 3600, deadline_at=now + 7200,
                                                   reason="usage limit"))
     card = asyncio.create_task(hub.request_approval("budget", "계속할까요?", "r"))
     others = asyncio.create_task(hub.request_approval("clarify", "다른 요청", "other"))
     await _until(lambda: hub.requests["r"].get("quota_waits") and len(hub.approvals) == 2)
+    await asyncio.wait_for(quota_entered.wait(), 1)
 
     await hub.cancel_request("r")
     assert held.cancelled() and hub.quota_hold("codex") is None
@@ -1042,7 +1140,7 @@ async def test_a_follow_up_on_a_cancelled_request_is_refused_up_front(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_cancel_still_being_recorded_holds_down_and_a_restart_finishes_it(tmp_path):
+async def test_a_cancel_still_being_recorded_holds_down_and_a_restart_finishes_it(tmp_path, monkeypatch):
     """#521 P2 12: status is cancelled before the turns report and the terminal record is written; `down` in that
     window used to pass, and a restart skipped the request because cancelled is not active."""
     from fastapi.testclient import TestClient
@@ -1056,6 +1154,13 @@ async def test_a_cancel_still_being_recorded_holds_down_and_a_restart_finishes_i
     rid = hub.create_request(RequestIn(text="공개 데이터 QC 요약"))
     await _until(lambda: any(m.get("type") == "task.dispatch" for m in ws.sent))
     plan_task = next(m["task"]["id"] for m in ws.sent if m.get("type") == "task.dispatch")
+    crash = asyncio.Event()
+
+    async def process_lost(*args, **kwargs):
+        await crash.wait()
+        raise RuntimeError("simulated gateway process loss")
+
+    monkeypatch.setattr(hub, "_await_cancelled_results", process_lost)
     cancelling = asyncio.create_task(hub.cancel_request(rid))
     await _until(lambda: {"type": "task.cancel", "task_id": plan_task} in ws.sent)
     await _until(lambda: hub.requests[rid].get("cancelled_tasks"))  # now waiting for the turn to report
@@ -1063,8 +1168,8 @@ async def test_a_cancel_still_being_recorded_holds_down_and_a_restart_finishes_i
     assert readiness["ready"] is False and readiness["requests"] == []
     assert [(row["id"], row["stage"]) for row in readiness["finishing"]] == [(rid, "cancel")]
 
-    cancelling.cancel()  # the gateway dies before the terminal record
-    with pytest.raises(asyncio.CancelledError):
+    crash.set()  # Process loss, unlike caller cancellation, cannot finish cleanup.
+    with pytest.raises(RuntimeError, match="simulated gateway process loss"):
         await cancelling
     assert not [e for e in hub.store.events_since(0) if e["type"] == "request.completed"]
     app = create_app(s)
