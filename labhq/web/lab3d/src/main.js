@@ -53,7 +53,7 @@ s.build();
 const labels=new Map();
 chars.forEach(c=>{const label=document.createElement('div');label.className='tag';label.dataset.agent=c.id;stage.appendChild(label);labels.set(c.id,label);const opt=document.createElement('option');opt.value=c.id;opt.textContent=c.name;$('character').appendChild(opt);});
 STATES.forEach(state=>{const opt=document.createElement('option');opt.value=state;opt.textContent=STATE_LABELS[state];$('state').appendChild(opt);});
-const detail={queued:'자기 차례를 기다리며 천천히 숨을 쉽니다.',working:'손을 움직이며 맡은 업무를 진행합니다.',waiting:'<b>빨간 깃발 = PI 승인 대기.</b> 손을 들고 기다립니다.',hibernating:'HPC 작업을 기다리는 중입니다. 세션은 쉬고 있습니다.',done:'일을 마치고 작은 박수를 보냅니다.',error:'땀방울 = 문제가 생겼습니다. 확인이 필요합니다.'};
+const detail={queued:'자기 차례를 기다리며 천천히 숨을 쉽니다.',working:'손을 움직이며 맡은 업무를 진행합니다.',waiting:'<b>빨간 깃발 = PI 승인 대기.</b> 손을 들고 기다립니다.',hibernating:'계산이나 답변을 기다리는 중입니다. 세션은 쉬고 있습니다.',done:'일을 마치고 작은 박수를 보냅니다.',error:'땀방울 = 문제가 생겼습니다. 확인이 필요합니다.'};
 // #660: selecting the fox shows the current request's paper list, rebuilt only when that data changes.
 function updateLiterature(){const box=$('literature');if(!box)return;const show=Boolean(live)&&selected==='lit_scout';box.hidden=!show;if(!show)return;
   const {rid,view,loading}=live.paperLiterature();if(box._rid===rid&&box._view===view&&box._loading===loading)return;box._rid=rid;box._view=view;box._loading=loading;
@@ -194,7 +194,7 @@ function syncLive(S, visual, stateText, currentTask) {
   const q=S.requests.get(S.current);
   const nextBoard=JSON.stringify(q||null);
   if(nextBoard!==boardKey){boardKey=nextBoard;updateBoard(q);}
-  const running=[...S.jobs.values()].filter(j=>j.state==='running').length;
+  const running=[...S.jobs.values()].filter(j=>j.state==='running'&&!String(j.id).startsWith('local-')).length;
   leds.forEach((led,i)=>{led.visible=i<running;});
   liveApprovalCount=S.approvals.size+S.engineHolds.size+[...S.requests.values()].filter(globalThis.LabHQState.needsPiReview).length;updatePanel();$('approval-chip').hidden=!liveApprovalCount;$('approval-chip').textContent=`승인·검토·로그인 대기 ${liveApprovalCount}`;requestRender();
 }

@@ -66,6 +66,9 @@ test('HPC rack excludes local calculations from its running count', () => {
   const S = {jobs:new Map([['local-one',{id:'local-one',state:'running'}], ['42',{id:'42',state:'running'}]])};
   vm.runInNewContext(source + '\nrenderRack();', {S, $:()=>rack, esc:String});
   assert.match(rack['aria-label'], /실행 중 1건/);
+  const main = fs.readFileSync(path.join(web, 'lab3d/src/main.js'), 'utf8');
+  const count = main.match(/const running=([^;]+);/)[1];
+  assert.equal(vm.runInNewContext(count, {S}), 1, '3D rack uses the same HPC-only count');
 });
 
 test('task-less snapshot without job identity does not invent an HPC wait', async () => {
