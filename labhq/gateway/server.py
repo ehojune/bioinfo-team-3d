@@ -2632,6 +2632,20 @@ class Hub:
             "agent_id": (entry.get("payload") or {}).get("agent_id"),
             "request_id": entry.get("request_id"), "data": data})
 
+    async def _deliver_step_control(self, key: str, tid: str, target: str | None,
+                                    message: dict | None, entry: dict, data: dict, lifecycle):
+        """Settle the committed intent's send before propagating caller cancellation."""
+        async def deliver():
+            if key in getattr(self, "_closed_steps", {}) or not self._step_alive(entry):
+                raise ValueError("step ended")
+            sent = bool(target and message) and await self._push(target, message)
+            if key in getattr(self, "_closed_steps", {}) or not self._step_alive(entry):
+                raise ValueError("step ended")
+            await self._publish_control(target or tid, entry, {**data, "sent": sent}, lifecycle=lifecycle)
+            return sent
+
+        return await self._publication_write(deliver())
+
     async def _control_state(self, tid: str, data: dict | None, *, replace: bool = False,
                              lifecycle: tuple[dict | None] | None = None,
                              event: dict | None = None, runner_id=None, runner_seq=None) -> None:
@@ -2754,15 +2768,13 @@ class Hub:
                 state["halt_op"] = state["ops"]
 
             state, cancelled = await self._update_step(key, halt)
-            if cancelled:
-                raise asyncio.CancelledError
             if state is None or not self._step_alive(entry) or key in getattr(self, "_closed_steps", set()):
                 raise ValueError("step ended")
-            sent = await self._push(tid, {"action": "halt"})
-            if key in getattr(self, "_closed_steps", set()) or not self._step_alive(entry):
-                raise ValueError("step ended")
-            await self._publish_control(tid, entry, {"action": "halt", "halt": True, "source": "gateway",
-                                                     "sent": sent}, lifecycle=lifecycle)
+            sent, interrupted = await self._deliver_step_control(
+                key, tid, tid, {"action": "halt"}, entry,
+                {"action": "halt", "halt": True, "source": "gateway"}, lifecycle)
+            if cancelled or interrupted:
+                raise asyncio.CancelledError
             return {"task_id": tid, "action": action, "sent": sent, "queued": not sent}
         target, message = None, None
 
@@ -2791,18 +2803,15 @@ class Hub:
                 message = {"action": "resume"}
 
         state, cancelled = await self._update_step(key, change, wake=action == "resume")
-        if cancelled:
-            raise asyncio.CancelledError
         if state is None or not self._step_alive(entry) or key in getattr(self, "_closed_steps", set()):
             raise ValueError("step ended")
         lifecycle = (self.store.get("task_control_closed", target or tid),)
-        sent = bool(target and message) and await self._push(target, message)
-        if key in getattr(self, "_closed_steps", set()) or not self._step_alive(entry):
-            raise ValueError("step ended")
-        await self._publish_control(target or tid, entry, {
-            "action": action, "paused": state["paused"], "source": "gateway", "sent": sent,
+        sent, interrupted = await self._deliver_step_control(key, tid, target, message, entry, {
+            "action": action, "paused": state["paused"], "source": "gateway",
             "steers_pending": sum(1 for steer in state["steers"] if not steer.get("task")),
-            "steers_dropped": state["dropped"]}, lifecycle=lifecycle)
+            "steers_dropped": state["dropped"]}, lifecycle)
+        if cancelled or interrupted:
+            raise asyncio.CancelledError
         return {"task_id": tid, "action": action, "sent": sent, "queued": not sent}
 
     async def _push_task_state(self, tid: str, *, steers: bool = True) -> None:

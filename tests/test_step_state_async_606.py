@@ -374,6 +374,7 @@ async def test_cancel_settles_step_and_replays_committed_ids(hub, monkeypatch, o
     initial = hub.store.get("step_control", key)
     hub.step_resume_events[key] = asyncio.Event()
     entered, release = threading.Event(), threading.Event()
+    hub._push.reset_mock()
     transaction = hub.store._transaction
     once = True
 
@@ -442,6 +443,7 @@ async def test_cancel_settles_step_and_replays_committed_ids(hub, monkeypatch, o
                 assert hub.step_resume_events[key].is_set()
             else:
                 assert [s["text"] for s in state["steers"]] == ["keep", "replay"]
+                assert [c.args[1]["steer"]["id"] for c in hub._push.call_args_list] == [state["steers"][-1]["id"]]
                 hub._push.reset_mock()
                 await hub._push_task_state("t")
                 assert [c.args[1]["steer"]["id"] for c in hub._push.call_args_list] == [s["id"] for s in state["steers"]]

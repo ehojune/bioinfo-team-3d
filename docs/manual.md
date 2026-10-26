@@ -454,7 +454,7 @@ Gateway의 event·request·결과 추가/삭제·보고서 검토 저장은 같�
 
 일반 승인 생성·결정·timeout·close·runner 전달/ACK도 DB writer에서 await합니다. 카드 삭제·결정·전달 행은 한 transaction으로 저장하며 같은 카드의 경쟁을 직렬화합니다. commit 결과를 확인한 뒤 카드 제거·future 완료·전달을 진행하고, 재접속 전달은 ACK·timeout 뒤 최신 행을 다시 읽습니다. runner 승인 전달은 최대 10초이며 시간 초과 때 연결 등록을 해제하고 전달 행을 보존합니다. 저장 중 취소돼도 시작한 commit의 성공·오류를 확인합니다. storage 선택 중 취소는 저장된 선택으로 재시도하는 기존 계약을 유지합니다.
 
-Runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 outbox·ack도 writer로 옮겼습니다. Gateway 일반 승인(#976)·task 취소 intent(#979)와 plan-rehire 계약 저장(#980)도 async입니다. runner activity·halt/resume task intent(#982)는 같은 SQLite writer에서 await하며 transaction 안의 최신 row에 해당 필드만 병합합니다. PI·runner의 control-state 저장과 result/만료에 따른 해당 row 삭제도 task별로 직렬화해 commit 뒤 memory·알림을 반영합니다. 삭제 표식은 늦은 runner 메시지의 부활을 막고 새 PI 제어는 살아 있는 step을 다시 제어합니다. step·result 수신의 나머지 저장·dispatch와 전용 복구·초기화/CLI의 sync 경계는 남습니다(#606). 채용 preflight 읽기는 #984에서 async로 전환했습니다. 이전 조사 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)를 봅니다.
+Runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 outbox·ack도 writer로 옮겼습니다. Gateway 일반 승인(#976)·task 취소 intent(#979)와 plan-rehire 계약 저장(#980)도 async입니다. runner activity·halt/resume task intent(#982)는 같은 SQLite writer에서 await하며 transaction 안의 최신 row에 해당 필드만 병합합니다. PI·runner의 control-state 저장과 result/만료에 따른 해당 row 삭제도 task별로 직렬화해 commit 뒤 memory·알림을 반영합니다. 삭제 표식은 늦은 runner 메시지의 부활을 막고 새 PI 제어는 살아 있는 step을 다시 제어합니다. step 제어도 최신 row를 직렬 갱신하고 commit 뒤 wake·전송을 처리합니다. result 수신의 나머지 저장·dispatch와 전용 복구·초기화/CLI의 sync 경계는 남습니다(#606). 채용 preflight 읽기는 #984에서 async로 전환했습니다. 이전 조사 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)를 봅니다.
 
 ### topic 점검표와 선행 연구 기준
 
@@ -1020,7 +1020,7 @@ internal 구역을 가리키는 작업·project·참고 폴더 별칭은 Claude�
 | 항목 | 구현 근거와 남은 확인 |
 |---|---|
 | 로컬 job·취소 | [#937](https://github.com/ehojune/bioinfo-team-3d/pull/937) job 기록 재로드, [#968](https://github.com/ehojune/bioinfo-team-3d/pull/968) 복구 runner에 취소 재전송 회귀가 병합됐습니다. 대체 transport·무해한 job으로 취소 트리 잔류 0·완료 깨움 없음·다른 요청 보존을 확인했습니다. runner가 꺼진 동안에는 job 종료를 보장하지 않습니다. |
-| 저장·소유권 | #967 소유권 경쟁과 #966·#972·#976·#979·#980·#982 저장 경계, #984 채용 preflight 읽기 전환 병합. control-state는 task별 async commit·삭제 후 부활 방지를 적용합니다. step·result 수신의 나머지 저장·dispatch 등 sync 경계는 남아 #606은 OPEN입니다. 실디스크·운영 성능은 미검증입니다. |
+| 저장·소유권 | #967 소유권 경쟁과 #966·#972·#976·#979·#980·#982 저장 경계, #984 채용 preflight 읽기 전환 병합. control-state는 task별 async commit·삭제 후 부활 방지를 적용합니다. step 제어도 async이며 result 수신의 나머지 저장·dispatch 등 sync 경계는 남아 #606은 OPEN입니다. 실디스크·운영 성능은 미검증입니다. |
 | 운영 미검증 | 실제 WebSocket 재연결·gateway OS 재시작·새 설치에서의 실제 요청·반복 복구·지원 요청 end-to-end는 미검증입니다. [새 설치 mock 검사](reference/clean-install-922.md)와 회귀 CI를 운영 PASS로 세지 않습니다. |
 
 ### 승인·예산
