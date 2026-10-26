@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:42 | [`b31ff8f`](https://github.com/ehojune/bioinfo-team-3d/pull/982/commits/b31ff8f) | **저장 경계와 로드맵의 포괄적인 task/result/control 표현을 수정했습니다. 제품 코드 변경은 없습니다.**<br>manual에 activity·halt/resume intent의 async 저장과 최신 row 병합을 명시하고 남은 sync 경계를 구분한다(Refs |
+| 16:21 | [`00525cc`](https://github.com/ehojune/bioinfo-team-3d/pull/982/commits/00525cc) | **job.submitted 경쟁 1 failed → PASS. 기존 job handler를 바꾸지 않고 durable replay 약속을 검증합니다.**<br>뒤따른 전체-row 쓰기가 halt intent를 지우면 성공/queued 대신 대기 거절 또는 재시도를 반환한다(Refs |
+| 16:12 | [`ff3546c`](https://github.com/ehojune/bioinfo-team-3d/pull/982/commits/ff3546c) | **commit 결과·취소를 판정하고 실패 시 control 전송/성공 알림을 막으며 지연 중 등록된 resume waiter를 깨웁니다.**<br>halt/resume intent를 최신 task row에 async 병합해 ACK된 activity 덮어쓰기·삭제/완료 복원을 막는다(Refs |
+| 15:41 | [`bc267ce`](https://github.com/ehojune/bioinfo-team-3d/pull/982/commits/bc267ce) | **activity 저장 성공 뒤 publish·ACK하며 실패·취소 때 미확정 메시지를 ACK하지 않습니다.**<br>runner activity를 SQLite writer에서 최신 task row에 적용해 느린 commit 중 loop를 유지하고 완료·control·동시 activity를 보존한다(Refs |
 | 15:40 | [`01d87d3`](https://github.com/ehojune/bioinfo-team-3d/pull/981/commits/01d87d3) | **직원 대기와 HPC rack 안내를 현재 화면에 맞췄습니다.**<br>manual P1을 수정하고 #979/#980 병합 뒤 async 저장 범위와 남은 sync 경계를 통합했습니다. manual·HANDOFF 합계 222자를 줄였으며 운영 PASS로 확대하지 않습니다. |
 | 15:25 | [`b9d7f7e`](https://github.com/ehojune/bioinfo-team-3d/pull/980/commits/b9d7f7e) | **재채용과 reload가 겹쳐도 두 파일·Registry·roster가 일치합니다.**<br>sync Registry.load의 읽기·만료 archive를 FILES 단일 job으로 묶어 재채용 전 만료 snapshot이 새 계약을 지우지 않게 한다(P1 4374470002). |
 | 15:24 | [`0d5d4a0`](https://github.com/ehojune/bioinfo-team-3d/pull/981/commits/0d5d4a0) | **task 기록이 없는 로컬 계산도 종료 뒤 대기 표시를 지웁니다.**<br>bot P2의 호환 경로에서 agent job 관측을 roster 갱신 뒤에도 보존하고 terminal event를 반영합니다. 관련 Node 66건·legacy reducer 43 event를 확인했습니다. |
