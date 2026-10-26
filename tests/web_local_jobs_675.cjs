@@ -67,6 +67,13 @@ test('HPC rack excludes local calculations from its running count', () => {
   vm.runInNewContext(source + '\nrenderRack();', {S, $:()=>rack, esc:String});
   assert.match(rack['aria-label'], /실행 중 1건/);
 });
+
+test('task-less snapshot without job identity does not invent an HPC wait', () => {
+  const o = create();
+  o.apply({type:'snapshot', data:{agents:[{id:'analyst'}], requests:[{id:'r1',status:'running',
+    plan:{steps:[{id:'s1',agent_id:'analyst'}]},step_status:{s1:'hibernating'}}],staff_tasks:[]}});
+  assert.equal(o.stateText(o.ag('analyst')), '작업·응답 대기');
+});
 test('local submission, state and request ownership reach the shared flow and task card', async () => {
   const {o, emit, q} = setup(), ui = await load();
   emit('job.submitted', {job_id:'local-one', name:'GSEA'});

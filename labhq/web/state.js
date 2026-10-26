@@ -376,9 +376,12 @@ function requestStaffStatus(a) {
       ['waiting_login','로그인 대기'], ['waiting_quota','한도 대기'], ['waiting_facilities_fix','환경 수정 승인 대기']]) {
       if (steps.includes(step)) return {state:'waiting', text};
     }
-    if (steps.includes('hibernating')) return {state:'hibernating', text:jobWaitText(active.flatMap(q =>
-      q.plan.filter(s => s.agent_id === a.id && q.steps[s.id] === 'hibernating')
-        .flatMap(s => (q.stepJobs[s.id] || []).map(job => job.id))))};
+    if (steps.includes('hibernating')) {
+      const jobs = active.flatMap(q => (q.mode === 'direct' && q.agent_id === a.id ? ['direct']
+        : q.plan.filter(s => s.agent_id === a.id).map(s => s.id))
+        .filter(sid => q.steps[sid] === 'hibernating').flatMap(sid => (q.stepJobs[sid] || []).map(job => job.id)));
+      return {state:'hibernating', text:jobs.length ? jobWaitText(jobs) : '작업·응답 대기'};
+    }
     if (steps.length && steps.every(s => ['done', 'skipped'].includes(s))) return {state:'done', text:'담당 단계 완료'};
     if (active.some(q => runnerWaitsFor(a, q))) return {state:'waiting', text:'러너 기다림'};
     return {state:'queued', text:'차례 대기'};
