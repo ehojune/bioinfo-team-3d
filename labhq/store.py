@@ -137,6 +137,30 @@ class StateStore:
                 conn.execute("UPDATE state SET body=? WHERE kind='task' AND key=?",
                              (_dumps({**task, "activity": activity}), key))
 
+    async def aupdate_task_control(self, key: str, action: str) -> dict:
+        """Set only a halt/resume intent on the current eligible row, in writer order."""
+        if action not in {"halt", "resume"}:
+            raise ValueError(action)
+        return await durable.run(self.lane, self._update_task_control_now, key, action)
+
+    def _update_task_control_now(self, key: str, action: str) -> dict:
+        with self._transaction() as conn:
+            task = self._get_on(conn, "task", key)
+            if not task:
+                raise KeyError(key)
+            if action == "halt":
+                if task.get("completed") and not task.get("abandoned"):
+                    raise ValueError("task already completed")
+                field = "halt_requested"
+            else:
+                if ((task.get("result") or {}).get("error_kind") != "halted"
+                        or task.get("halt_wait_finished")):
+                    raise ValueError("task is no longer waiting after halt")
+                field = "halt_resume_requested"
+            updated = {**task, field: True}
+            conn.execute("UPDATE state SET body=? WHERE kind='task' AND key=?", (_dumps(updated), key))
+        return updated
+
     def _put_now(self, kind: str, key: str, raw: str) -> None:
         with self._transaction() as conn:
             # Display translations and sync recovery callers can queue a stale
