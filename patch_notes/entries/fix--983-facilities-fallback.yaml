@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: 'cc52edd8'
+    at: '2026-10-26 17:47'
+    summary: '시설팀이 없을 때 CSO 대체 답변에 부재 사실을 알리고 같은 단계의 재문의를 막습니다.'
+    text: '과거 cached/adopted 상담에도 안내를 붙입니다. 비식별 신규 회귀의 수정 전 8 failed·1 passed와 수정 후 관련 mock 148 passed를 확인했습니다. 실제 시설팀 복구·roster/doctor 연결은 #983에 남습니다.'
