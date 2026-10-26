@@ -1,5 +1,9 @@
 pr: 982
 rows:
+- sha: ff3546c
+  at: '2026-10-26 16:12'
+  text: halt/resume intent를 최신 task row에 async 병합해 ACK된 activity 덮어쓰기·삭제/완료 복원을 막는다(Refs #606).
+  summary: commit 결과·취소를 판정하고 실패 시 control 전송/성공 알림을 막으며 지연 중 등록된 resume waiter를 깨웁니다.
 - sha: bc267ce
   at: '2026-10-26 15:41'
   text: runner activity를 SQLite writer에서 최신 task row에 적용해 느린 commit 중 loop를 유지하고 완료·control·동시 activity를 보존한다(Refs #606).
