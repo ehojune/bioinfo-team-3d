@@ -543,7 +543,10 @@ async def test_adoption_never_takes_another_agents_consult_or_session(tmp_path):
         await hub.orchestrator.answer_ask(ask, "local")
         assert [task.agent_id for task in calls] == ["cso"]
         assert hub.requests["r"]["cso_session_id"] == "cso-next"
-        assert hub.store.get("ask", "the-ask")["answer"]["answer"] == "Use bay 2"
+        answer = hub.store.get("ask", "the-ask")["answer"]
+        assert answer["answer"].endswith("\n\nUse bay 2")
+        assert answer["fallback_reason"] == "facilities_unavailable"
+        assert "시설팀에 다시 문의하지 마세요" in answer["answer"]
     finally:
         hub.store.close()
 
@@ -949,7 +952,9 @@ async def test_facilities_ask_without_facilities_goes_to_the_cso_without_waiting
         await second.on_runner_message("local", result_frame(running["id"], "Use bay 2", "cso-next"))
         await settle(second)
         answer = second.store.get("ask", ask.id)["answer"]
-        assert answer["answer"] == "Use bay 2" and answer["from"] == "cso"
+        assert answer["answer"].endswith("\n\nUse bay 2") and answer["from"] == "cso"
+        assert answer["fallback_reason"] == "facilities_unavailable"
+        assert "시설팀에 다시 문의하지 마세요" in answer["answer"]
         assert consults(local) == [] and "facilities" not in waits
     finally:
         second.store.close()
@@ -992,7 +997,9 @@ async def test_facilities_ask_falls_back_to_the_cso_when_facilities_never_return
         assert [task.agent_id for task in calls] == ["cso"]
         entry = hub.store.get("ask", ask.id)
         assert entry["routed_to"] == "cso" and entry["state"] == "resolved"
-        assert entry["answer"]["answer"] == "Use bay 2"
+        assert entry["answer"]["answer"].endswith("\n\nUse bay 2")
+        assert entry["answer"]["fallback_reason"] == "facilities_unavailable"
+        assert "시설팀에 다시 문의하지 마세요" in entry["answer"]["answer"]
         assert entry["answer"]["from"] == "cso" and entry["answer"]["routed_to"] == "cso"
     finally:
         hub.store.close()
@@ -1029,7 +1036,10 @@ async def test_unrouted_facilities_ask_uses_the_durable_roster_and_waits_for_cso
         await hub.orchestrator.answer_ask(ask, "local")
         assert waits == ["facilities", "cso"]
         assert [task.agent_id for task in calls] == ["cso"]
-        assert hub.store.get("ask", ask.id)["answer"]["answer"] == "Use bay 2"
+        answer = hub.store.get("ask", ask.id)["answer"]
+        assert answer["answer"].endswith("\n\nUse bay 2")
+        assert answer["fallback_reason"] == "facilities_unavailable"
+        assert "시설팀에 다시 문의하지 마세요" in answer["answer"]
     finally:
         hub.store.close()
 
