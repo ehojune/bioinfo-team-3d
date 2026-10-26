@@ -22,6 +22,7 @@ from .adapters.base import _resolve_command, codex_app_choice, expand_env
 from .adapters import adapter_preflight_error, get_adapter
 from . import bioinfo_link, disk_space, github_token, instance_guard
 from .models import AgentSpec, Engine
+from .registry import is_employed, iter_agent_specs
 from . import private_paths as private_path_module
 from .private_paths import (PrivatePaths, configured_claude_config_dir, in_pi_claude, inside_any,
                             plugin_keep_dirs, resolve_private_paths, staff_claude_config_dir)
@@ -354,18 +355,15 @@ def _safe_executable_path(path: str, env: dict[str, str]) -> str:
 
 def _roster(settings: Settings) -> list[AgentSpec]:
     base = settings.path(settings.runner.agents_dir)
+    contract = settings.path(settings.runner.contract_dir) if settings.runner.contract_dir else None
     agents = {}
-    for kind in ("core", "contract"):
-        guard_test_path(base / kind)
-        for path in sorted((base / kind).glob("*.yaml")):
-            if path.name.startswith("_"):
-                continue
-            guard_test_path(path)
-            spec = AgentSpec.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
-            if spec.contract and (spec.contract.status in ("expired", "archived") or
-                                  time.time() > spec.contract.expires_at):
-                continue
+    for spec, _ in iter_agent_specs(base, contract, check_path=guard_test_path):
+        if is_employed(spec, time.time()):
             agents[spec.id] = spec
+        elif spec.contract and spec.contract.status not in ("expired", "archived"):
+            # Registry archives elapsed contracts and removes any earlier entry with the same ID.
+            # Mirror that roster result without archiving or changing the source files.
+            agents.pop(spec.id, None)
     return list(agents.values())
 
 

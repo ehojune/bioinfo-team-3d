@@ -10,7 +10,7 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 import yaml
 
@@ -23,6 +23,28 @@ log = logging.getLogger(__name__)
 
 def _dump(spec: AgentSpec) -> str:
     return yaml.safe_dump(spec.model_dump(mode="json", exclude_none=True), allow_unicode=True, sort_keys=False)
+
+
+def iter_agent_specs(agents_dir: Path, contract_dir: Path | None = None, *,
+                     check_path: Callable[[Path], object] | None = None) -> Iterator[tuple[AgentSpec, Path]]:
+    """Read definitions in runner precedence order; never change contract files."""
+    for folder in (agents_dir / "core", contract_dir if contract_dir else agents_dir / "contract"):
+        if check_path:
+            check_path(folder)
+        for path in sorted(folder.glob("*.yaml")):
+            if path.name.startswith("_"):
+                continue
+            if check_path:
+                check_path(path)
+            yield AgentSpec.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) or {}), path
+
+
+def is_employed(spec: AgentSpec, now: float) -> bool:
+    """Core staff stay active; contract staff need an unexpired, non-archived contract."""
+    if spec.employment != Employment.contract:
+        return True
+    c = spec.contract
+    return c is not None and c.status not in ("expired", "archived") and not now > c.expires_at
 
 
 class Registry:
@@ -51,21 +73,20 @@ class Registry:
     def _load_now(self) -> None:
         self.agents.clear()
         self.paths.clear()
-        for folder in (self.agents_dir / "core", self.contract_dir):
-            for p in sorted(folder.glob("*.yaml")):
-                if p.name.startswith("_"):
-                    continue
-                spec = AgentSpec.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")) or {})
-                if spec.employment == Employment.contract and not self._still_employed(spec, p):
-                    continue
-                self.agents[spec.id] = spec
-                self.paths[spec.id] = p
+        for spec, p in iter_agent_specs(self.agents_dir, self.contract_dir):
+            if spec.employment == Employment.contract and not self._still_employed(spec, p):
+                continue
+            self.agents[spec.id] = spec
+            self.paths[spec.id] = p
 
     def _still_employed(self, spec: AgentSpec, path: Path) -> bool:
+        now = time.time()
+        if is_employed(spec, now):
+            return True
         c = spec.contract
         if c is None or c.status in ("expired", "archived"):
             return False
-        if time.time() > c.expires_at:
+        if now > c.expires_at:
             self._archive(spec, path, "expired")
             return False
         return True
