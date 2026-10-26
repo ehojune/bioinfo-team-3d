@@ -20,3 +20,7 @@ rows:
     at: "2026-10-26 15:05"
     summary: "기존 대기 회귀검사와 3D 계산 안내를 같은 기준으로 맞췄습니다."
     text: "bot P1의 기존 unknown/HPC 기대값을 분리하고 취소 검사를 유지했습니다. 3D HPC rack에서도 local job을 제외하며 범례·설명을 작업·응답 대기로 통일했습니다."
+  - sha: 3cc14bb
+    at: "2026-10-26 15:16"
+    summary: "대기 회귀검사의 Python 실행 확인 문구를 갱신했습니다."
+    text: "세 OS CI에서 Node 검사는 통과했으나 wrapper가 옛 성공 문구를 요구한 실패를 수정했습니다. 해당 pytest 1 passed를 확인했습니다."
