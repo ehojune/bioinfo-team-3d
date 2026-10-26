@@ -1,5 +1,9 @@
 pr: 985
 rows:
+  - sha: 'f1528b7'
+    at: '2026-10-26 17:55'
+    summary: '시설팀 부재·cached/adopted 답변·같은 단계 재문의 거부를 manual 한 곳에 기록합니다.'
+    text: 'P2 4375433823 수정입니다. #982의 manual 반영 뒤 편집했으며 194,351→194,556자입니다. 실제 복구 검증과 roster/doctor 연결은 별도 범위입니다.'
   - sha: '724a59d'
     at: '2026-10-26 17:54'
     summary: '시설팀 fallback 회귀 11건을 Windows 필수 cohort에 등록합니다.'
