@@ -16,7 +16,7 @@ main·열린 PR을 대조한 큐입니다. 구현·CI 통과는 운영 PASS나 �
 | 순서 | 현재 상태·다음 일 |
 |---|---|
 | 종료 조건 · [#877](https://github.com/ehojune/bioinfo-team-3d/issues/877#issuecomment-6370526043) | API 단절 뒤 기한 종료·잔류 0은 특정 설치판의 무해한 증명에서 PASS. 실제 adapter timeout/cancel·복구 중복 방지·full-capability doctor는 미평가. 요청 전체 상한 확인이 남아 OPEN이며 새 실행 GO는 별도 |
-| 저장 · [#606](https://github.com/ehojune/bioinfo-team-3d/issues/606) | #966·#972·#976·[#979](https://github.com/ehojune/bioinfo-team-3d/pull/979)·[#980](https://github.com/ehojune/bioinfo-team-3d/pull/980) 저장 경계 async 전환 병합. task/result/control·채용 preflight 등 sync 경계는 남아 OPEN; 실디스크·운영 성능 미검증 |
+| 저장 · [#606](https://github.com/ehojune/bioinfo-team-3d/issues/606) | #966·#972·#976·#979·#980, [#982](https://github.com/ehojune/bioinfo-team-3d/pull/982) activity·halt/resume task intent 저장, [#984](https://github.com/ehojune/bioinfo-team-3d/pull/984) 채용 preflight 읽기 async 전환 병합. task·step·control_state·result 수신·dispatch의 sync 저장은 [잔여 조사](https://github.com/ehojune/bioinfo-team-3d/issues/606#issuecomment-6412613009)대로 남아 OPEN. 실디스크·운영 성능 미검증 |
 | 복구 · [#675](https://github.com/ehojune/bioinfo-team-3d/issues/675) | #937·#968 로컬 job·취소 회귀와 #978 계산 표시 병합. 정적 browser fixture QA·대기 오표시 수정은 [#981](https://github.com/ehojune/bioinfo-team-3d/pull/981). 실제 transport·OS 재시작·WSL은 미검증이며 계산 진행률은 추정하지 않음 |
 | 소유권 · [#618](https://github.com/ehojune/bioinfo-team-3d/issues/618) | [#967](https://github.com/ehojune/bioinfo-team-3d/pull/967) 병합으로 획득 경쟁 P1 해소. broker port P2는 보류하며 v1 선결에 추가하지 않음 |
 | 디스크 · [#678](https://github.com/ehojune/bioinfo-team-3d/issues/678) | [#920](https://github.com/ehojune/bioinfo-team-3d/pull/920) 시작 전 여유 검사 병합. 다운로드·압축 해제 직전 검사와 실제 부족 상황 검증은 잔여 |
