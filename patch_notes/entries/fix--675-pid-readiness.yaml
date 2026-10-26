@@ -1,0 +1,6 @@
+pr: 986
+rows:
+  - sha: '1f3061c'
+    at: '2026-10-26 18:56'
+    summary: '취소 회귀검사는 파일 생성 뒤 양수 PID가 기록될 때까지 기다립니다.'
+    text: '기존 40초·프로세스 종료·다른 요청 보존 assertion을 유지합니다. missing→empty→valid와 유효값 없는 timeout을 mock 6건으로 확인했습니다.'

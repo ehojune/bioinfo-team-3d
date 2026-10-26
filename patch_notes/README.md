@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:56 | [`1f3061c`](https://github.com/ehojune/bioinfo-team-3d/pull/986/commits/1f3061c) | **취소 회귀검사는 파일 생성 뒤 양수 PID가 기록될 때까지 기다립니다.**<br>기존 40초·프로세스 종료·다른 요청 보존 assertion을 유지합니다. missing→empty→valid와 유효값 없는 timeout을 mock 6건으로 확인했습니다. |
 | 18:05 | [`e732a8c`](https://github.com/ehojune/bioinfo-team-3d/pull/985/commits/e732a8c) | **시설팀 복귀 뒤 동일 질문은 과거 CSO fallback cache를 건너뜁니다.**<br>P2 4375525575를 수정 전 1 failed로 재현했습니다. 부재 시 cache 안내를 유지하고 가용 시설팀은 직접 상담합니다. 관련 mock 149 passed입니다. |
 | 17:59 | [`c9cb80c`](https://github.com/ehojune/bioinfo-team-3d/pull/985/commits/c9cb80c) | **겹쳐 들어온 같은 단계 재문의도 CSO 상담을 한 번만 실행합니다.**<br>P2 4375474605의 경쟁을 수정 전 1 failed로 재현했습니다. lock 안에서 durable ask를 다시 확인하고 답변 저장까지 잠금을 유지합니다. main #982·#984 반영 후 관련 mock 149 passed입니다. |
 | 17:55 | [`f1528b7`](https://github.com/ehojune/bioinfo-team-3d/pull/985/commits/f1528b7) | **시설팀 부재·cached/adopted 답변·같은 단계 재문의 거부를 manual 한 곳에 기록합니다.**<br>P2 4375433823 수정입니다. #982의 manual 반영 뒤 편집했으며 194,351→194,556자입니다. 실제 복구 검증과 roster/doctor 연결은 별도 범위입니다. |
