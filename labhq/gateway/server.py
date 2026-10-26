@@ -2650,6 +2650,12 @@ class Hub:
             if (not current or (current.get("completed") and not current.get("abandoned"))
                     or not self._step_alive(current)):
                 raise ValueError("이 작업은 이미 끝나 멈출 것이 없어요")
+            if not current.get("halt_requested"):
+                # A queued whole-row writer may have overtaken this commit.
+                # Never promise offline replay unless the intent still exists.
+                if self._turn_waits(tid, current):
+                    raise ValueError(HALT_WHILE_WAITING)
+                raise ValueError("작업 상태가 바뀌었어요. 다시 시도해 주세요")
             entry = current
             state = self._step(key)
             state["ops"] = int(state.get("ops") or 0) + 1

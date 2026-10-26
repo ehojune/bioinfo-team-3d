@@ -344,3 +344,22 @@ async def test_resume_wakes_waiter_registered_during_commit(control_hub, monkeyp
     finally:
         release.set()
         await asyncio.gather(pending, return_exceptions=True)
+
+
+async def test_erased_halt_without_waiting_is_rejected_for_retry(control_hub, monkeypatch):
+    hub = control_hub
+    initial = row("halt")
+    hub.store.put("task", "t", initial)
+    original = hub.store.aupdate_task_control
+
+    async def overwritten(*args):
+        result = await original(*args)
+        await hub.store.aput("task", "t", {**initial, "accepted": True})
+        return result
+
+    monkeypatch.setattr(hub.store, "aupdate_task_control", overwritten)
+    with pytest.raises(ValueError, match="다시 시도"):
+        await hub.control_task("t", "halt")
+    assert hub.store.get("task", "t") == {**initial, "accepted": True}
+    hub._push.assert_not_called()
+    hub._publish_control.assert_not_called()
