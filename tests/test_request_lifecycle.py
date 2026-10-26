@@ -210,7 +210,7 @@ async def _until(predicate, timeout=3.0):
 
 
 @pytest.mark.asyncio
-async def test_cancel_stops_a_planning_request_and_its_live_task(tmp_path):
+async def test_cancel_stops_a_planning_request_and_its_live_task(tmp_path, monkeypatch):
     from labhq.gateway.server import RequestIn
 
     hub = Hub(_team_settings(tmp_path))
@@ -224,9 +224,25 @@ async def test_cancel_stops_a_planning_request_and_its_live_task(tmp_path):
     cancelling = asyncio.create_task(hub.cancel_request(rid))
     await _until(lambda: {"type": "task.cancel", "task_id": plan_task} in ws.sent)
     # The cancelled turn reports back (with its cost) before the terminal record is written.
-    await hub.on_runner_message("local", {"type": "task.result", "task_id": plan_task, "request_id": rid,
+    cost_entered, release_cost = asyncio.Event(), asyncio.Event()
+    record_cost = hub._arecord_task_cost
+
+    async def delayed_cost(*args, **kwargs):
+        cost_entered.set()
+        await release_cost.wait()
+        await record_cost(*args, **kwargs)
+
+    monkeypatch.setattr(hub, "_arecord_task_cost", delayed_cost)
+    reporting = asyncio.create_task(hub.on_runner_message("local", {"type": "task.result", "task_id": plan_task, "request_id": rid,
                                           "data": TaskResult(task_id=plan_task, agent_id="cso", ok=False,
-                                                             error="cancelled", cost_usd=0.4).model_dump(mode="json")})
+                                                             error="cancelled", cost_usd=0.4).model_dump(mode="json")}))
+    await asyncio.wait_for(cost_entered.wait(), 1)
+    try:
+        assert not hub.store.get("task", plan_task).get("completed")
+        assert not cancelling.done()
+    finally:
+        release_cost.set()
+        await reporting
     out = await asyncio.wait_for(cancelling, 3)
     assert out == {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": [plan_task]}
     assert orchestration.done() and rid not in hub.request_tasks
@@ -235,6 +251,13 @@ async def test_cancel_stops_a_planning_request_and_its_live_task(tmp_path):
     final = [e for e in hub.events if e["type"] == "request.completed" and e["request_id"] == rid]
     assert len(final) == 1 and final[0]["data"]["status"] == "cancelled" and final[0]["data"]["ok"] is False
     assert final[0]["data"]["cost_usd"] == pytest.approx(0.4) and final[0]["data"]["cost_known"] is True
+    assert hub.store.get("request", rid)["cost_usd"] == pytest.approx(0.4)
+    restarted = Hub(hub.s)
+    assert restarted.requests[rid]["cost_usd"] == pytest.approx(0.4)
+    restarted.store.close()
+    # A runner replay must not add the same turn twice.
+    await record_cost(rid, plan_task, TaskResult(task_id=plan_task, agent_id="cso", ok=False, cost_usd=0.4))
+    assert hub.requests[rid]["cost_usd"] == pytest.approx(0.4)
 
     # Nothing else is sent, and a second cancel answers the same.
     sent = len(ws.sent)
@@ -288,18 +311,37 @@ async def test_cancel_stops_parallel_steps_and_a_late_card_from_the_runner_is_cl
 
 
 @pytest.mark.asyncio
-async def test_cancel_releases_a_quota_wait_and_closes_the_requests_cards(tmp_path):
+async def test_cancel_releases_a_quota_wait_and_closes_the_requests_cards(tmp_path, monkeypatch):
     hub = Hub(_settings(tmp_path))
     _request(hub, "r", results={"s1": TaskResult(task_id="t1", agent_id="worker", ok=True, text="표 완성",
                                                  outputs=["outputs/qc.tsv"], workdir_id="w1").model_dump(mode="json")},
              plan={"steps": [{"id": "s1", "agent_id": "worker"}, {"id": "s2", "agent_id": "worker"}]})
     _request(hub, "other")
+    quota_entered, release_quota = asyncio.Event(), asyncio.Event()
+    publish, save = hub.publish, hub.asave_request
+
+    async def parked_publish(event):
+        await publish(event)
+        if event["type"] == "request.step_quota_wait":
+            quota_entered.set()
+            await release_quota.wait()
+
+    async def cancellation_save(rid):
+        if rid == "r" and hub.requests[rid]["status"] == "cancelled":
+            release_quota.set()
+            await asyncio.wait({held}, timeout=1)
+            assert held.cancelled(), "cancel must reach the waiter before persistence yields"
+        await save(rid)
+
+    monkeypatch.setattr(hub, "publish", parked_publish)
+    monkeypatch.setattr(hub, "asave_request", cancellation_save)
     now = time.time()
     held = hub.track_request("r", hub.wait_quota("r", "s2", "codex", resume_at=now + 3600, deadline_at=now + 7200,
                                                   reason="usage limit"))
     card = asyncio.create_task(hub.request_approval("budget", "계속할까요?", "r"))
     others = asyncio.create_task(hub.request_approval("clarify", "다른 요청", "other"))
     await _until(lambda: hub.requests["r"].get("quota_waits") and len(hub.approvals) == 2)
+    await asyncio.wait_for(quota_entered.wait(), 1)
 
     await hub.cancel_request("r")
     assert held.cancelled() and hub.quota_hold("codex") is None

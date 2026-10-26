@@ -3219,10 +3219,6 @@ class Hub:
                 result = result.model_copy(update={"pipeline_submission": None})
                 msg = {**msg, "data": result.model_dump(mode="json")}
             if task:
-                # A reported result supersedes an abandonment: the task did finish (#112).
-                self.store.put("task", tid, {**{k: v for k, v in task.items() if k != "abandoned"},
-                                              "completed": True, "result": result.model_dump(mode="json")})
-                self._refresh_roster()
                 payload = task.get("payload") or {}
                 meta = payload.get("meta") or {}
                 request = self.requests.get(task.get("request_id") or "")
@@ -3233,7 +3229,6 @@ class Hub:
                     request["cso_session_id"] = result.session_id
                     request["cso_workdir"] = result.workdir or meta.get("workdir") or request.get("cso_workdir")
                     await self.asave_request(task["request_id"])
-                self._session_state_changed()
             if task and task.get("request_id") in self.requests and (task.get("step_id") or task.get("kind") == "direct"):
                 rid = task["request_id"]
                 sid = task.get("step_id") or "direct"
@@ -3242,6 +3237,13 @@ class Hub:
                                 "revision": task.get("revision", 0),
                                 "result": result.model_dump(mode="json")})
             (await self._arecord_task_cost(rid, tid, result))
+            if task:
+                # Cancel waits on completed: publish it only after the cost snapshot commits.
+                # A reported result also supersedes an abandonment (#112).
+                self.store.put("task", tid, {**{k: v for k, v in task.items() if k != "abandoned"},
+                                              "completed": True, "result": result.model_dump(mode="json")})
+                self._refresh_roster()
+                self._session_state_changed()
             fut = self.futures.pop(msg.get("task_id") or "", None)
             if fut and not fut.done():
                 fut.set_result(result)
@@ -4277,7 +4279,6 @@ class Hub:
         for fix in (req.get("facilities_fixes") or {}).values():
             if fix.get("status") in {"waiting", "approved"}:
                 fix["status"] = "cancelled"
-        await self.asave_request(rid)
         orchestration = self.request_tasks.pop(rid, None)
         unwinding = []
         if orchestration is not None and orchestration is not asyncio.current_task() and not orchestration.done():
@@ -4286,6 +4287,9 @@ class Hub:
         stop_steps = getattr(self.orchestrator, "cancel_steps", None)
         if stop_steps is not None:
             unwinding.extend(stop_steps(rid))  # parallel steps and the briefing run beside it
+        # No yield between removing wait markers and cancelling their consumers: an
+        # unblocked quota waiter must not mistake request cancellation for a resume.
+        await self.asave_request(rid)
         cancelled = []
         for tid, entry in self.store.all("task").items():
             if entry.get("request_id") != rid:
