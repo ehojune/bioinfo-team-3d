@@ -506,6 +506,51 @@ async def test_finishing_control_preserves_previously_delivered_reservations(hub
     hub._push.assert_not_called()
 
 
+@pytest.mark.parametrize("outcome", ["ask", "failure", "success"])
+async def test_halt_intent_and_result_snapshot_are_serialized(hub, monkeypatch, outcome):
+    committed, release, settling = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original = hub.store.aupdate_task_control
+    settle = hub._settle_steers
+
+    async def held_intent(*args):
+        value = await original(*args)
+        committed.set()
+        await release.wait()
+        return value
+
+    async def observe_settlement(*args):
+        settling.set()
+        return await settle(*args)
+
+    monkeypatch.setattr(hub.store, "aupdate_task_control", held_intent)
+    monkeypatch.setattr(hub, "_settle_steers", observe_settlement)
+    control = asyncio.create_task(hub.control_task("t", "halt"))
+    await asyncio.wait_for(committed.wait(), 2)
+    result = TaskResult(task_id="t", agent_id="mock", ok=outcome != "failure",
+                        pending_asks=["ask"] if outcome == "ask" else [],
+                        error="interrupted" if outcome == "failure" else None)
+    incoming = asyncio.create_task(hub.on_runner_message("r", {
+        "type": "task.result", "task_id": "t", "request_id": "req",
+        "data": result.model_dump(mode="json")}))
+    try:
+        await asyncio.sleep(0.05)
+        assert not settling.is_set(), "result consumed an unacknowledged halt intent"
+        release.set()
+        response = await asyncio.wait_for(control, 2)
+        await asyncio.wait_for(incoming, 2)
+        assert response["sent"] and not response["queued"]
+        saved = hub.store.get("task", "t")["result"]
+        assert saved["error_kind"] == ("halted" if outcome == "failure" else None)
+        key = hub.step_key("req", "s1", "step", "t")
+        assert hub._step(key)["paused"] is (outcome == "ask")
+    finally:
+        release.set()
+        for work in (control, incoming):
+            if not work.done():
+                work.cancel()
+        await asyncio.gather(control, incoming, return_exceptions=True)
+
+
 async def test_close_serializes_with_control_publication(hub, monkeypatch):
     entered, release = asyncio.Event(), asyncio.Event()
     original = hub._control_state

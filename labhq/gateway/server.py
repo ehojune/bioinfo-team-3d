@@ -2710,13 +2710,15 @@ class Hub:
         if cancelled:
             raise asyncio.CancelledError
 
-    async def control_task(self, tid: str, action: str, text: str | None = None) -> dict:
-        """Keep PI actions on one step in invocation order, including runner sends."""
+    def _pi_control_lock(self, key: str):
         if not hasattr(self, "_pi_control_locks"):
             self._pi_control_locks = WeakValueDictionary()
+        return self._pi_control_locks.setdefault(key, asyncio.Lock())
+
+    async def control_task(self, tid: str, action: str, text: str | None = None) -> dict:
+        """Keep PI actions on one step in invocation order, including runner sends."""
         key = self._entry_step(tid, self.store.get("task", tid) or {})
-        lock = self._pi_control_locks.setdefault(key, asyncio.Lock())
-        async with lock:
+        async with self._pi_control_lock(key):
             return await self._control_task(tid, action, text)
 
     async def _control_task(self, tid: str, action: str, text: str | None = None) -> dict:
@@ -3492,13 +3494,15 @@ class Hub:
         if typ == "task.result":
             rid = msg.get("request_id")
             tid = msg.get("task_id") or ""
-            task = self.store.get("task", tid) if tid else None
             result = TaskResult.model_validate(msg["data"])
-            # Once result settlement begins this turn cannot consume new steers.
-            # Completion/cost persistence may still yield before task.completed.
-            if not hasattr(self, "_finishing_step_tasks"):
-                self._finishing_step_tasks = set()
-            self._finishing_step_tasks.add(tid)
+            key = self._entry_step(tid, self.store.get("task", tid) or {})
+            # Snapshot and finishing admission are atomic with PI intent/send.
+            # Release before settlement, which takes the step/control locks.
+            async with self._pi_control_lock(key):
+                task = self.store.get("task", tid) if tid else None
+                if not hasattr(self, "_finishing_step_tasks"):
+                    self._finishing_step_tasks = set()
+                self._finishing_step_tasks.add(tid)
             halt_at_wait = bool(task) and waiting(result) and (result.error_kind == "halted"
                                                               or bool(task.get("halt_requested")))
             if halt_at_wait:
