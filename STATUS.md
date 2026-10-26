@@ -24,6 +24,21 @@ Refs #606 — runner `contract.update` 저장 경계.
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
+Refs #606. 일반 승인 저장을 기존 durable writer로 옮겼습니다. task 원장·runner daemon 잔여가 있어 issue는 닫지 않습니다.
+
+- 카드 삭제·결정·runner 전달 행을 한 transaction으로 저장합니다. 같은 카드의 응답·timeout·close·재접속 전달·ACK를 직렬화하고 commit 뒤 memory·future·전송을 반영합니다.
+- 반복 취소에도 시작한 commit의 성공·오류를 확인합니다. 실패하면 카드와 미완료 future를 보존합니다. runner replay는 답한 카드를 다시 열지 않습니다.
+- storage 선택 중 취소·재시도, facilities 대기 상태, resume CP1 저장 순서를 유지합니다. 기존 mock은 새 transaction 경계를 주입하도록 갱신했고 assertion은 유지했습니다.
+- 관련 mock/static 실행은 각각 142 passed, 87 passed, 14 passed·12 subtests passed입니다(중복 포함). 기존 실패 8건과 새 barrier 회귀로 heartbeat·rollback·경쟁·반복/level 취소·DB 재열기·재접속/ACK를 검증했습니다.
+- manual·Windows CI inventory를 반영했습니다. 실제 디스크 지연·실제 process 재시작·운영 검증은 미실행입니다. 설치·배포·연구·HPC 실행은 없습니다.
+- 최종 head 필수 CI·알려진 미해결 P1·충돌/head guard 뒤 담당 병합합니다. PI 임시 리뷰 대기 생략을 적용하며 봇 PASS로 기록하지 않습니다.
+- 봇 P1 4373997996: runner backpressure 수정 전 2 failed, 수정 뒤 관련 140 passed·12 skipped입니다. 승인 전달은 최대 10초이며 timeout 뒤 연결 등록을 해제하고 durable 전달 행을 보존합니다. 반복 취소 후 lock 해제·후속 ACK도 확인했습니다.
+- 봇 P1 4374026562: resume expiry·async/sync retirement 경쟁을 수정 전 3 failed로 재현했습니다. 같은 카드 lock을 event/request lock보다 먼저 잡고 retirement도 단일 transaction으로 저장합니다. sync 호출이 진행 중 승인과 겹치면 async retirement로 넘깁니다. 관련 복구·CP4·취소 mock/static 131 passed·12 subtests passed입니다.
+- CI `08021c4d`의 publish 카드 종료 검사 2건은 `sleep(0)` 뒤 비동기 commit 완료를 가정했습니다. 같은 카드의 완료 future를 기다리도록 readiness만 바꾸고 카드 제거·DB expired assertion은 유지했습니다.
+- 봇 P1 4374092270: 늦은 번역 snapshot이 결정된 카드를 다시 저장하는 경쟁을 수정 전 2 failed로 재현했습니다. writer transaction에서 결정 존재를 확인해 재삽입을 거부하며 관련 52 passed입니다. DB 재열기에서도 카드가 다시 열리지 않았습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Closes #653. gateway snapshot에 요청 메모리의 `runner_waits`를 포함하고 공통 reducer가 대상 직원을 복원합니다. 비대상 직원은 차례 대기를 유지합니다. 영속 schema 변경은 없습니다.
 
 - 수정 전: 후속 이벤트 200·201개에서 통합 회귀 2 failed.
