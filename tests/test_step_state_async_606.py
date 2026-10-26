@@ -11,7 +11,7 @@ import pytest
 from labhq import durable
 from labhq.gateway.server import Hub
 from labhq.settings import Settings
-from labhq.models import Task
+from labhq.models import Task, TaskResult
 from labhq.store import StateStore
 
 
@@ -335,6 +335,82 @@ async def test_revision_attachment_accepts_previous_result_context(hub):
     assert hub.store.get("step_control", key)["last_task"] == "revised"
 
 
+async def test_cancelled_attach_restores_only_its_drop_notice(hub, monkeypatch):
+    key = hub.step_key("req", "s1", "step", "")
+    await hub.store.aput("step_control", key, {"last_task": "t", "dropped": 4, "dropped_told": 1})
+    update = hub._update_step
+    once = True
+
+    async def interrupted(key, change, **kwargs):
+        nonlocal once
+        result = await update(key, change, **kwargs)
+        if once:
+            once = False
+            # Another sender has already reported two newer drops. Returning
+            # this payload's reservation must preserve that separate notice.
+            def newer(state):
+                state["dropped"] += 2
+                state["dropped_told"] += 2
+                state["steers"].append({"id": "new", "text": "new instruction", "task": None})
+            await update(key, newer)
+            return result[0], True
+        return result
+
+    monkeypatch.setattr(hub, "_update_step", interrupted)
+    with pytest.raises(asyncio.CancelledError):
+        await hub._attach_steers(task())
+    state = hub._step(key)
+    assert (state["dropped"], state["dropped_told"]) == (6, 3)
+    replay = await hub._attach_steers(task("replay"))
+    assert replay.meta["steer_dropped"] == 3
+    assert [s["text"] for s in replay.meta["steers"]] == ["new instruction"]
+
+
+@pytest.mark.parametrize("resumable", [False, True])
+async def test_blocking_turn_keeps_step_open_until_answered(hub, monkeypatch, resumable):
+    hub.store.delete("task", "t")  # Only the DAG's own turns are live.
+    steps = [{"id": "s1", "agent_id": "mock", "instruction": "compare", "depends_on": []},
+             {"id": "s2", "agent_id": "mock", "instruction": "use comparison", "depends_on": ["s1"]}]
+    hub.requests["req"].update(text="study", mode="orchestrate", plan={"steps": steps})
+    hub.runners["runner"] = object()
+    hub.set_roster("runner", [{"id": "mock", "engine": "mock"}])
+    hub.s.orchestrator.step_max_attempts = 1
+    monkeypatch.setattr(hub, "supports_resume", lambda agent: resumable)
+    dispatched = []
+
+    async def send(runner, frame):
+        if frame["type"] != "task.dispatch":
+            return
+        sent = Task.model_validate(frame["task"])
+        dispatched.append(sent)
+        first = len(dispatched) == 1
+        result = TaskResult(task_id=sent.id, agent_id=sent.agent_id, ok=True,
+                            text="blocked" if first else "done", session_id="mock-session",
+                            blocking_decision="Which cohort?" if first else None,
+                            control={"delivered": [s["id"] for s in sent.meta.get("steers", [])]})
+        await hub.on_runner_message(runner, {"type": "task.result", "task_id": sent.id,
+                                            "request_id": "req", "data": result.model_dump(mode="json")})
+
+    async def answer(ask, origin):
+        assert "s1" not in hub.requests["req"]["results"]
+        # A steer while the question waits belongs to the answer's turn.
+        reply = await hub.control_task(dispatched[0].id, "steer", "keep this instruction")
+        assert reply["queued"]
+
+    monkeypatch.setattr(hub, "send_runner", send)
+    monkeypatch.setattr(hub.orchestrator, "answer_ask", answer)
+    monkeypatch.setattr(hub, "wait_asks", AsyncMock(return_value=[{"from": "cso", "answer": "cases"}]))
+    await hub.orchestrator.run_dag("req", "study", steps, hub.result_map("req"))
+    assert [t.meta["step_id"] for t in dispatched] == ["s1", "s1", "s2"], hub.requests["req"]["results"]
+    assert dispatched[1].resume_session_id == ("mock-session" if resumable else None)
+    assert [s["text"] for s in dispatched[1].meta["steers"]] == ["keep this instruction"]
+    assert all(row["ok"] for row in hub.requests["req"]["results"].values())
+    done = [e["data"]["step_id"] for e in hub.events if e["type"] == "request.step_done"]
+    assert done == ["s1", "s2"]
+    key = hub.step_key("req", "s1", "step", "")
+    assert key in hub._closed_steps and hub.store.get("step_control", key) is None
+
+
 async def test_result_starting_after_steer_commit_prevents_send(hub, monkeypatch):
     save = hub._save_step
 
@@ -422,6 +498,9 @@ async def test_cancel_settles_step_and_replays_committed_ids(hub, monkeypatch, o
     if operation == "resume":
         await hub.control_task("t", "pause")
     initial = hub.store.get("step_control", key)
+    if operation == "attach":
+        initial.update(dropped=4, dropped_told=1)
+        await hub.store.aput("step_control", key, initial)
     hub.step_resume_events[key] = asyncio.Event()
     entered, release = threading.Event(), threading.Event()
     hub._push.reset_mock()
@@ -488,6 +567,9 @@ async def test_cancel_settles_step_and_replays_committed_ids(hub, monkeypatch, o
                 assert state is None
             elif operation == "attach":
                 assert state["steers"][0]["task"] is None
+                assert state["dropped_told"] == 1
+                replay = await hub._attach_steers(task("replay"))
+                assert replay.meta["steer_dropped"] == 3
             elif operation == "resume":
                 assert not state["paused"]
                 assert hub.step_resume_events[key].is_set()

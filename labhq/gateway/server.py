@@ -2888,8 +2888,18 @@ class Hub:
 
         _, cancelled = await self._update_step(key, attach, reopen=int(task.meta.get("revision") or 0))
         if cancelled:
-            # No payload was handed to dispatch. Return the reservation for replay.
-            await self._release_steers(task)
+            # No payload reached dispatch. Return both IDs and its drop notice,
+            # preserving any newer queue/counter changes under the same lock.
+            def release(state):
+                if state["revision"] != int(task.meta.get("revision") or 0):
+                    return False
+                for steer in state["steers"]:
+                    if steer.get("task") == task.id:
+                        steer["task"] = None
+                state["dropped_told"] = max(0, state["dropped_told"] - dropped)
+                self._cap_steers(state)
+
+            await self._update_step(key, release)
             raise asyncio.CancelledError
         if not steers and not dropped:
             return task
