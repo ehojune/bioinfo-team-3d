@@ -1,5 +1,9 @@
 pr: 988
 rows:
+- sha: 7163bcf
+  at: '2026-10-26 19:42'
+  text: 종료 turn의 늦은 runner feedback이 새 PI의 step 제어 intent를 덮어쓰지 않게 한다(Refs #606).
+  summary: 해당 경쟁 1 failed → PASS. 신규 mock 26건 포함 관련 159 passed입니다.
 - sha: a99601d
   at: '2026-10-26 19:33'
   text: result에서 만든 제어 알림은 닫힌 row를 재개하지 못하고 새 PI 동작만 재개를 허용한다(Refs #606).
