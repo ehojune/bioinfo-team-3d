@@ -10,6 +10,7 @@ import asyncio
 import logging
 import time
 from pathlib import Path
+from typing import Callable
 
 import yaml
 
@@ -32,6 +33,7 @@ class Registry:
         self.contract_dir = Path(contract_dir) if contract_dir else self.agents_dir / "contract"
         self.agents: dict[str, AgentSpec] = {}
         self.paths: dict[str, Path] = {}
+        self._rehire_lock = asyncio.Lock()
 
     def load(self) -> None:
         self.agents.clear()
@@ -139,6 +141,54 @@ class Registry:
     def release(self, agent_id: str) -> None:
         spec = self.get(agent_id)
         self._archive(spec, self.paths.get(agent_id), "released")
+
+    async def arehire(self, slug: str, days: float, *, on_commit: Callable[[], None] | None = None) -> AgentSpec:
+        """Read, verify and save on FILES; publish on the loop before announcing a rehire.
+
+        Once submitted, settle both the write and publication despite repeated cancellation.
+        A storage/publication error takes precedence over cancellation. Sync callers keep `rehire`.
+        """
+        async with self._rehire_lock:
+            # Flush earlier writer publications before recording the identity used by the sync-write guard.
+            await durable.run(durable.FILES, lambda: None)
+            previous = dict(self.agents)
+            staged = Registry(self.agents_dir, self.talent_dir, self.contract_dir)
+            loop = asyncio.get_running_loop()
+            published = loop.create_future()
+
+            def publish(spec: AgentSpec) -> None:
+                try:
+                    # A later sync rehire can finish on the loop before this queued callback runs (#977).
+                    if self.agents.get(spec.id) is previous.get(spec.id):
+                        self._remember(spec, staged.paths[spec.id])
+                    if on_commit is not None:
+                        on_commit()
+                except BaseException as exc:
+                    published.set_exception(exc)
+                else:
+                    published.set_result(spec)
+
+            def job() -> None:
+                spec = staged.rehire(slug, days)
+                loop.call_soon_threadsafe(publish, spec)
+
+            write = asyncio.wrap_future(durable.submit(durable.FILES, job))
+
+            async def commit() -> AgentSpec:
+                await write
+                return await published
+
+            pending = asyncio.create_task(commit())
+            cancelled = None
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError as exc:
+                    cancelled = exc
+            spec = pending.result()
+            if cancelled is not None:
+                raise cancelled
+            return spec
 
     def rehire(self, slug: str, days: float) -> AgentSpec:
         p = self.talent_dir / slug / "contract.yaml"

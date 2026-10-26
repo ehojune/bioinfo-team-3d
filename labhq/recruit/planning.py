@@ -345,10 +345,12 @@ async def run_task(runner, task):
                 return {"status": "failed", "error": "인재풀 수습·hash 확인 실패"}
             current = runner.registry.agents.get(spec.id)
             if not current or not current.contract or current.contract.expires_at <= time.time():
-                spec = runner.registry.rehire(runner.registry._slug(spec), runner.s.recruit.default_ttl_days)
+                spec = await runner.registry.arehire(runner.registry._slug(spec), runner.s.recruit.default_ttl_days,
+                                                     on_commit=runner._send_roster)
             elif current.contract.status != "active":
                 return {"status": "failed", "error": "인재풀 직원이 active가 아님"}
-            runner._send_roster()
+            else:
+                runner._send_roster()
             return {"status": "active", "agent_id": spec.id, "reused": True}
         name = "plan-" + _batch_key(payload)[:24]
         conversion = paper2agent.Recruitment(runner, {
