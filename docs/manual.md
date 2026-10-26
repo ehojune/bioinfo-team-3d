@@ -626,7 +626,7 @@ Windows 러너는 직원 Python이 OS 신뢰 저장소도 믿게 합니다. 기�
 | `request.created` · `github.posted` · `github.failed` | 요청 접수, GitHub 보고 | 메신저에 링크 |
 | `request.followup` · `request.followup_done` | 끝난 요청에 이어 묻기와 답 | 작업판의 질문·답 목록 |
 | `request.note` | 실행 중 요청에 보낸 PI 메모 | 요청 카드·작업판에 시각과 함께 표시 |
-| `request.resume_waiting` · `request.resumed` · `request.resume_timeout` | 재개 승인 뒤 runner 기다림·재개·기다림 초과 | `러너 기다림`(빠진 직원) → `진행 중`, 초과면 `중단됨`과 새 재개 카드 |
+| `request.resume_waiting` · `request.resumed` · `request.resume_timeout` | 재개 승인 뒤 runner 기다림·재개·기다림 초과 | `러너 기다림`(빠진 직원) → `진행 중`, 초과면 `중단됨`과 새 재개 카드. 일반 dispatch의 runner 대기 대상도 snapshot에서 복원하므로 최근 200개 이벤트 밖으로 밀려나도 해당 직원만 대기로 표시합니다. |
 | `request.continued` | 연구 리뷰 revise 뒤 PI가 이어 가기를 승인했거나 CP2에서 수정 요청을 골라 새 계획으로 넘어감(`round`, CP2면 `trigger: cp2_revise`) | CP1·CP2·이어 가기 카드의 `이어 가기 차수` 칸 |
 
 REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`status`, `limit`; 본문 `references`·`default_references`. direct 요청의 직원은 연결된 runner·저장된 runner roster·`runner.agents_dir` 중 한 곳에 있으면 받아서 runner를 기다리고, 어디에도 없으면 404), `GET /api/requests/{id}`, `GET /api/requests/{id}/report-pdf`(그림이 든 PDF, 브라우저가 없으면 HTML과 `X-Labhq-Reason`), `POST /api/requests/{id}/notes` (`{"text"}`, 미종료 요청만, 2,000자·20개), `POST /api/requests/{id}/followup` (`{"text"}`, 끝난 요청만, 한 번에 하나),
