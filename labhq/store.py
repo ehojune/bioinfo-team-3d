@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
@@ -116,6 +117,32 @@ class StateStore:
     async def aput(self, kind: str, key: str, body: dict) -> None:
         """`put` for a coroutine: the body is serialized now, the commit runs on the durable writer thread."""
         await durable.run(self.lane, self._put_now, kind, key, _dumps(body))
+
+    async def acontrol_state(self, key: str, body: dict | None, *, reopen: bool = False) -> bool:
+        """Commit a control row or its deletion marker in one transaction.
+
+        Only a fresh PI control may reopen a closed row; delayed runner updates
+        and replayed results cannot restore it after completion or halt expiry.
+        """
+        raw = _dumps(body) if body is not None else None
+        return await durable.run(self.lane, self._control_state_now, key, raw, reopen)
+
+    def _control_state_now(self, key: str, raw: str | None, reopen: bool) -> bool:
+        with self._transaction() as conn:
+            if raw is None:
+                conn.execute("DELETE FROM state WHERE kind='task_control_state' AND key=?", (key,))
+                conn.execute("INSERT OR REPLACE INTO state VALUES ('task_control_closed', ?, ?)",
+                             (key, _dumps({"closed_at_ns": time.time_ns()})))
+                return True
+            if not reopen and self._get_on(conn, "task_control_closed", key) is not None:
+                return False
+            if reopen:
+                conn.execute("DELETE FROM state WHERE kind='task_control_closed' AND key=?", (key,))
+            conn.execute("INSERT OR REPLACE INTO state VALUES ('task_control_state', ?, ?)", (key, raw))
+        return True
+
+    async def amark_runner(self, runner_id: str, seq: int) -> None:
+        await durable.run(self.lane, self._mark_runner_now, runner_id, seq)
 
     async def aupdate_task_activity(self, key: str, update: Callable[[dict], dict]) -> None:
         """Apply a pure activity reducer to the latest live task on its writer lane.
