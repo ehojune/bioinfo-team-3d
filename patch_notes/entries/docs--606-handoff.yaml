@@ -1,6 +1,6 @@
-pr: 0
+pr: 987
 rows:
-- sha: 9fd63ef
+- sha: 14d9ce0
   at: '2026-10-26 19:08'
   summary: 저장 지연 개선의 완료 범위와 남은 작업을 인수인계 표에서 구분합니다.
   text: HANDOFF의 #606 행에 #982 activity·halt/resume task intent 저장과 #984 채용 preflight 읽기 전환을 반영하고 잔여 sync 저장·실디스크 및 운영 미검증을 유지합니다.
