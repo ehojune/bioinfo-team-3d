@@ -67,6 +67,7 @@ def boundary(hub, monkeypatch, *, delay=0.2, fail=False):
                 entered.set()
                 assert release.wait(5), "mock commit controller timed out"
                 if fail:
+                    trace.append("rollback")
                     raise OSError("mock control commit failure")
         if selected:
             trace.append("commit-done")
@@ -117,7 +118,7 @@ async def test_control_task_commit_heartbeat_memory_event_reopen(hub, monkeypatc
         assert during == {"memory": {}, "row": None}
         if delay:
             if fail:
-                assert "heartbeat" in trace
+                assert trace.index("heartbeat") < trace.index("rollback")
             else:
                 assert trace.index("heartbeat") < trace.index("commit-done")
         path, expected = hub.store.path, hub.store.get("task_control_state", "t")
@@ -200,6 +201,30 @@ async def test_control_started_before_result_delete_cannot_reopen_row(hub, monke
     assert hub.store.get("task_control_state", "t") is None
     assert "t" not in hub.task_controls
     assert not [e for e in hub.events if e["type"] == "agent.control"]
+
+
+async def test_pi_controls_keep_step_order_while_first_send_waits(hub, monkeypatch):
+    entered, release = asyncio.Event(), asyncio.Event()
+    sends = []
+
+    async def push(tid, message):
+        sends.append(message["action"])
+        if message["action"] == "pause":
+            entered.set()
+            await release.wait()
+        return True
+
+    monkeypatch.setattr(hub, "_push", push)
+    first = asyncio.create_task(hub.control_task("t", "pause"))
+    await entered.wait()
+    second = asyncio.create_task(hub.control_task("t", "resume"))
+    await asyncio.sleep(0.02)
+    release.set()
+    await asyncio.gather(first, second)
+    assert sends == ["pause", "resume"]
+    assert hub.task_controls["t"]["paused"] is False
+    assert hub._step(hub._entry_step("t", hub.store.get("task", "t")))["paused"] is False
+    assert [e["data"]["action"] for e in hub.events if e["type"] == "agent.control"] == ["pause", "resume"]
 
 
 async def test_runner_then_pi_merges_current_row_and_freezes_input(hub, monkeypatch):

@@ -2638,6 +2638,15 @@ class Hub:
             raise asyncio.CancelledError
 
     async def control_task(self, tid: str, action: str, text: str | None = None) -> dict:
+        """Keep PI actions on one step in invocation order, including runner sends."""
+        if not hasattr(self, "_pi_control_locks"):
+            self._pi_control_locks = WeakValueDictionary()
+        key = self._entry_step(tid, self.store.get("task", tid) or {})
+        lock = self._pi_control_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            return await self._control_task(tid, action, text)
+
+    async def _control_task(self, tid: str, action: str, text: str | None = None) -> dict:
         """Steer, pause, resume or halt through task ``tid`` (#59 ①). The step it belongs to owns the request: steers wait
         in the step's queue until a turn delivers them, a pause holds the step's next dispatch, and the step's turn that
         is out now (``tid`` or a later one) gets the request at once. Resume of a halted step releases its park.
