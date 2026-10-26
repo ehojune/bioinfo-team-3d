@@ -2644,7 +2644,17 @@ class Hub:
             current = self.store.get("task", target) if target else None
             if target and (target in getattr(self, "_finishing_step_tasks", set()) or
                            not current or (current.get("completed") and not current.get("abandoned"))):
-                await self._settle_steers(target, entry, None)
+                if (message or {}).get("action") == "steer":
+                    steer_id = message["steer"]["id"]
+
+                    def release(state):
+                        # Existing reservations belong to the result's delivered report.
+                        for steer in state["steers"]:
+                            if steer["id"] == steer_id and steer.get("task") == target:
+                                steer["task"] = None
+                        self._cap_steers(state)
+
+                    await self._update_step(key, release)
                 if (message or {}).get("action") == "halt":
                     raise ValueError("task ended before halt delivery")
                 return False

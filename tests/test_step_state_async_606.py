@@ -480,6 +480,32 @@ async def test_result_starting_after_halt_commit_is_refused(hub, monkeypatch):
     assert not [e for e in hub.events if e.get("type") == "agent.control"]
 
 
+@pytest.mark.parametrize("action", ["pause", "halt", "steer"])
+async def test_finishing_control_preserves_previously_delivered_reservations(hub, monkeypatch, action):
+    key = hub.step_key("req", "s1", "step", "t")
+    await hub.store.aput("step_control", key, {"last_task": "t", "steers": [
+        {"id": "delivered", "text": "already executed", "task": "t"}]})
+    save = hub._save_step
+
+    async def finishing(key, state):
+        await save(key, state)
+        hub._finishing_step_tasks = {"t"}
+
+    monkeypatch.setattr(hub, "_save_step", finishing)
+    if action == "halt":
+        with pytest.raises(ValueError, match="ended"):
+            await hub.control_task("t", action)
+    else:
+        await hub.control_task("t", action, "new instruction" if action == "steer" else None)
+    assert hub._step(key)["steers"][0]["task"] == "t"
+    await hub._settle_steers("t", hub.store.get("task", "t"), {"delivered": ["delivered"]})
+    remaining = hub._step(key)["steers"]
+    assert all(s["id"] != "delivered" for s in remaining)
+    assert all(s["task"] is None for s in remaining)
+    assert len(remaining) == (1 if action == "steer" else 0)
+    hub._push.assert_not_called()
+
+
 async def test_close_serializes_with_control_publication(hub, monkeypatch):
     entered, release = asyncio.Event(), asyncio.Event()
     original = hub._control_state
