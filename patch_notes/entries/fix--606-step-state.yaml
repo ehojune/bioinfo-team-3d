@@ -1,5 +1,9 @@
 pr: 990
 rows:
+- sha: 59340c3
+  at: '2026-10-26 21:04'
+  text: 전송 직전 종료 중인 turn의 steer 예약을 반환하고 control publication과 step close를 직렬화한다(Refs #606).
+  summary: 최종 리뷰 P1·P2의 격리 회귀 2 FAIL을 재현하고 수정 뒤 관련 85 PASS를 확인했다. Linux e2e 실패는 미해결이며 hold를 유지한다.
 - sha: 5d7a94f
   at: '2026-10-26 20:50'
   text: 기존 revision dispatch 자격을 보존하고 복구 test는 durable dispatch readiness를 기다린다(Refs #606).
