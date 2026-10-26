@@ -445,7 +445,7 @@ const stateText = (a, vs = visual(a)) => {
   }
   if (vs === 'hibernating' && a.waitFor === 'answer') return '답 기다리는 중';
   if (vs === 'hibernating' && ['local', 'mixed'].includes(a.waitFor))
-    return a.waitFor === 'local' ? jobWaitText(['local-']) : jobWaitText(['local-', 'hpc']);
+    return jobWaitText((a.waitJobs?.rows || []).filter(job => !['completed', 'failed', 'cancelled', 'unknown_finished', 'error'].includes(job.state)).map(job => job.id));
   return STATE_KO[vs];
 };
 function toolInputLine(input) {
@@ -534,6 +534,7 @@ function upsertAgent(a) {
   // Not part of the replayed state: the trace survives roster updates but stays out of state comparisons.
   Object.defineProperty(next, 'trace', { value: prev.trace || [], writable: true, enumerable: false });
   Object.defineProperty(next, 'waitFor', { value: prev.waitFor || '', writable: true, configurable: true, enumerable: false });
+  Object.defineProperty(next, 'waitJobs', { value: prev.waitJobs, writable: true, configurable: true, enumerable: false });
   // The staff member's live tasks, task id -> {state, title} (#59 ①): two can run at once, and the staff sheet's
   // control rows each act on one of them (PR #532 review).
   Object.defineProperty(next, 'tasks', { value: prev.tasks || new Map(), writable: true, configurable: true, enumerable: false });
@@ -800,6 +801,9 @@ function apply(ev, replay = false) {
         value: (d.jobs || []).length ? (d.jobs.some(jid => String(jid).startsWith('local-'))
           ? d.jobs.some(jid => !String(jid).startsWith('local-')) ? 'mixed' : 'local' : 'hpc')
           : d.ask || (d.asks || []).length ? 'answer' : '' });
+      if (['hibernating', 'waiting', 'working', 'idle', 'done'].includes(d.state)) Object.defineProperty(a, 'waitJobs', {
+        writable:true, configurable:true, enumerable:false,
+        value:{request_id:rid, task_id:ev.task_id, rows:(d.jobs || []).map(jid => ({id:String(jid)}))} });
       if (d.task) a.task = d.task;
       if (d.state === 'done' || d.state === 'idle') a.tool = '';
       if (d.error) { a.error = d.error; logTo(a, `오류: ${d.error}`, ts); }
@@ -955,6 +959,10 @@ function apply(ev, replay = false) {
     }
     case 'job.state': {
       trackJob(ev);
+      const wait = ag(id)?.waitJobs;
+      if (wait && (!rid || !wait.request_id || rid === wait.request_id) &&
+          (!ev.task_id || !wait.task_id || ev.task_id === wait.task_id))
+        for (const job of wait.rows) if (job.id === String(d.job_id)) job.state = d.state;
       const j = S.jobs.get(String(d.job_id)) || { id: String(d.job_id), name: d.name, agent: id };
       Object.assign(j, { state: d.state, exit: d.exit_status, ts }); S.jobs.set(j.id, j);
       break;

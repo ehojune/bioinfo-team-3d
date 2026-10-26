@@ -51,6 +51,8 @@ test('task-less local wait survives roster refresh without changing HPC or ask l
   o.apply({type:'agent.status', agent_id:'analyst', data:{state:'hibernating', jobs:['local-one']}});
   o.apply({type:'roster.updated', data:{agents:[{id:'analyst', state:'hibernating'}]}});
   assert.equal(o.stateText(o.ag('analyst')), '로컬 계산 기다리는 중');
+  o.apply({type:'job.state',agent_id:'analyst',data:{job_id:'local-one',state:'completed'}});
+  assert.equal(o.stateText(o.ag('analyst')), '후속 처리 기다리는 중');
 });
 
 test('2.5D visible staff badge retains the local or followup wait label', async () => {
