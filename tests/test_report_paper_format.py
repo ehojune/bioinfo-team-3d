@@ -98,15 +98,15 @@ def test_bundle_keeps_science_appendix_and_moves_operations(tmp_path):
     assert "GSE10072" in editor_prompt(docs, "질문")
 
 
-def test_finish_keeps_review_assumptions_and_sources_but_not_run_details():
+async def test_finish_keeps_review_assumptions_and_sources_but_not_run_details():
     from test_cso import FakeHub
     hub = FakeHub(None)
     hub.commit_terminal = lambda *args: None
     hub.requests["r"]["plan"] = {"steps": [{"id": "A", "agent_id": "worker"}],
                                   "assumptions": [{"choice": "paired", "reason": "same donor"}]}
     report = "# 제목\n\n## 요약(Abstract)\n질문\n\n## 서론\nGSE10072 PMID 12345678\n\n## 방법\n방법\n\n## 결과\n결과\n\n## 논의\n한계\n\n## 결론\n결론\n\n## 참고\n"
-    cso.Orchestrator(hub)._finish("r", report, {"A": {"status": "done"}}, True,
-                                {"verdict": "accept", "issues": [{"priority": "P2", "problem": "small sample", "request": "limit claim"}]})
+    (await cso.Orchestrator(hub)._finish("r", report, {"A": {"status": "done"}}, True,
+                                {"verdict": "accept", "issues": [{"priority": "P2", "problem": "small sample", "request": "limit claim"}]}))
     req = hub.requests["r"]
     assert "Step status" not in req["report_appendix"]
     assert "Step status" in req["execution_record"]

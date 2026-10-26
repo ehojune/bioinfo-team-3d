@@ -4,6 +4,59 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Closes #653. gateway snapshot에 요청 메모리의 `runner_waits`를 포함하고 공통 reducer가 대상 직원을 복원합니다. 비대상 직원은 차례 대기를 유지합니다. 영속 schema 변경은 없습니다.
+
+- 수정 전: 후속 이벤트 200·201개에서 통합 회귀 2 failed.
+- 수정 후: 199·200·201개 snapshot→Node reducer, ledger, 관련 web 검사 11 passed. 구형·잘못된 payload와 오래된 replay 덮어쓰기 검사도 통과했습니다.
+- public·diff 검사 통과. 2.5D·3D의 공통 판정 호출부는 기존 그대로 사용합니다.
+- 실제 browser QA·운영 재현은 미검증입니다. PI 임시 리뷰 생략을 적용하며 최종 head CI·알려진 P1·head가드는 병합 전에 확인합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Closes #971. Refs #606, #970. #972보다 먼저 병합하는 최소 수정입니다.
+
+- `wait_halted()`의 초기 두 publish를 기존 cleanup try/finally 안으로 옮겼습니다. 진입 중 취소도 종료 이벤트·대기/제어 상태를 정리하고 CancelledError를 전달합니다.
+- 두 publish를 각각 barrier로 멈춘 일반/요청 취소 4개 조합: 수정 전 **4 failed**, 수정 후 관련 mock/static **10 passed**. `halted_waits`·`pi_waits`·task control·DB 정리와 resume·timeout을 확인했습니다. 기존 종료 이벤트·취소 전파 assertion은 유지했습니다.
+- resume 검사는 등록 직후가 아닌 `waiting_pi` 발행 완료를 기다리도록 readiness만 고쳤습니다. 취소 재현 지점은 늦추지 않았습니다. temp/state는 저장소·OS TEMP 밖에 격리했습니다.
+- 첫 green 명령에 `test_staff_control.py` 전체를 잘못 포함해 hook subprocess도 실행됐습니다. 중단 후 명시한 mock/static node 10개만 검증했습니다. 연구·HPC 실행은 없습니다. 실제 process gate는 기존 CI 결과로 판단합니다.
+- manual·patch notes를 포함합니다. 최종 head 필수 CI·동일 head 봇 완료·모든 head 미해결 P1=0 뒤 병합하고 #972에 반영합니다.
+
+Refs #974. failed-job 재실행의 수집 오류도 수정했습니다.
+
+- 같은 run/head의 유효한 Windows 실행과 원래 job·upload 시간을 대조해 artifact ID를 선택합니다. 누락·다른 출처·시간 불일치는 거부하며 coverage 검증을 유지합니다.
+- 모든 재실행 run은 receipt 검증 뒤 reusable manifest를 발행하지 않습니다. Windows만 새로 실행한 경우도 포함합니다. 이전 실패 artifact는 후보에서 제외합니다. 관련 mock/static 611 passed, 실제 실패 run API에서 artifact 12615771377·attempt 1 선택을 확인했습니다.
+- 최종 head CI·동일 head 봇 완료·미해결 P1=0 확인 뒤 #973→#972 순서로 병합합니다. #972 봇 대기는 #974 PI 예외이며 PASS로 기록하지 않습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Closes #965. Refs #606; 잔여 직접 저장 경계가 있어 #606은 닫지 않습니다.
+
+- request helper·SavedResults의 추가/`pop`/삭제·review·terminal 호출부를 async API로 전환했습니다. CLI·초기화용 sync API는 유지합니다.
+- request별 lock 안에서 snapshot을 확정합니다. commit 뒤 변경 필드만 반영해 await 중 다른 변경을 보존하며 저장 오류는 호출자에게 전달합니다.
+- 취소는 시작한 저장 결과와 후속 상태 적용을 확인한 뒤 전달합니다. CP4 receipt·terminal event transaction, round record, 재시작의 결과 추가/삭제를 보존합니다. group commit은 없습니다.
+- storage 카드 선택은 receipt를 저장해 commit 뒤 취소돼도 같은 선택을 재처리합니다. 재시작은 저장된 선택으로 카드를 해결하며 다른 선택의 재전송은 거부합니다. 봇 P2와 semantics 제거 표식 누락을 수정했고 관련 mock/static 97개가 통과했습니다.
+- 로컬 관련 mock/static **915 passed, 1 skipped, subtest 12 passed**. 지연 commit heartbeat·FIFO·실패 rollback·반복 취소·결과 삭제·CP4 결정 4종과 DB 재열기를 포함합니다. 실제 process 검증은 기존 CI 범위입니다.
+- manual·Windows test inventory·patch notes를 함께 갱신했습니다. 최종 head 필수 CI·미해결 P1=0 확인 뒤 병합합니다. 봇 대기는 #974 PI 지시로 생략하며 봇 PASS로 기록하지 않습니다. runner/jobs·감시 도구·연구·HPC는 범위 밖입니다.
+
+- #973 병합 main을 충돌 없이 반영했습니다. halt 진입 취소·resume·timeout과 async 저장 통합 mock/static 33 passed입니다. 별도 기능 수정은 없습니다.
+- 후속 `a1a092b3`: 비용 commit 뒤 task 완료를 기록하고 quota 소비자 취소 뒤 저장을 await합니다. 기존 head 비용·재시작 실패와 barrier 비용·quota 실패를 재현했습니다. 재시작 검사 5건은 고정 polling 대신 완료 task를 기다리며 assertion을 유지합니다. 관련 5파일 최종 결과 합계 **172 passed, 1 skipped**(state 최종 60 passed 포함). DB 재열기·중복 합산 방지·unknown·다른 요청 카드 보존을 확인했습니다.
+- 후속 `2bd3a7ab`: 새 봇 P1 4373460589의 저장 경계 2곳에서 수정 전 2 failed. 호출자 취소를 runner 중단·카드 정리·terminal 기록 뒤 전달합니다. 관련 lifecycle·active-cancel·persistence·task-cancel 95 passed, 기존 CI 실패 3건 3 passed. process-loss 복구 assertion은 유지하고 카드 준비는 완료 신호를 기다립니다.
+- #972 hold 유지: 최종 head 필수 CI 성공·알려진 미해결 P1=0·충돌 없음 뒤 담당 병합합니다. #974의 PI 임시 리뷰 생략에 따라 별도 리뷰·총괄 재확인은 기다리지 않으며 봇 PASS로 기록하지 않습니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Closes #653
+
+현재 요청의 담당 단계가 지난 요청의 PI 검토 대기에 가려지던 직원 표시를 수정했습니다. CSO의 무조건 참여 예외를 없애고 검토 대기에 짧은 요청 제목을 붙였습니다. 2.5D·3D는 공통 state 판정을 쓰며 실행 task·승인·경고의 우선순위를 유지합니다.
+
+- 변경: `state.js`, `office-art.js`, 회귀검사·visual baseline, manual.
+- 재현: 새 Node 검사 수정 전 4 failed·1 passed. 봇 P1의 task 없는 답 대기와 P2의 direct·runner 대상·실패 snapshot·CSO mode 참여를 재현해 수정했고 관련 7개 파일 67 passed. 요청 전환·직원 제어 추가 22 passed.
+- 검사: `git diff --check`, public 검사, patch-note·status 검사.
+- Browser: Chrome desktop·phone 32 view PASS. baseline은 세 직원의 차례 대기 상태·문구와 chip 폭·위치 변경 60개만 반영했습니다.
+- 한계: 3D는 공통 판정·표시 호출부 정적 대조이며 실제 browser QA와 운영 재현은 UNVERIFIED. 연구·HPC 실행 없음.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Refs #675. runner 부재 중 취소를 복구한 runner에 재전송하는 통합 회귀검사를 보존했습니다. production 변경은 없습니다.
 
 - 무해한 Python job 2개로 취소한 요청의 wrapper·자식 잔류 0, 완료 깨움 없음, 다른 요청 보존, 연결 실패만으로 취소하지 않음을 확인합니다.
@@ -11,6 +64,18 @@ Refs #675. runner 부재 중 취소를 복구한 runner에 재전송하는 통�
 - 관련 pytest: 4 passed, 27 deselected. Windows selection 계약·public·diff 검사 통과.
 - CI inventory 예상 목록도 갱신했습니다. 해당 계약 pytest 3 passed.
 - 실제 WebSocket 재연결·gateway OS 재시작·연구·WSL은 미검증입니다. #675의 WSL·진행률 범위는 남습니다. 필수 CI·동일 head 봇 리뷰 뒤 병합합니다.
+
+Refs #606. publish 우선 단계이며 issue를 닫지 않습니다. 동기 helper·SavedResults 전환은 #965입니다.
+
+- event·request 저장을 기존 FIFO SQLite writer에서 await합니다. loop에서 payload를 확정하고 writer에는 복사·직렬화한 값만 넘깁니다.
+- 취소돼도 개별 commit의 결과·오류를 확인합니다. network는 취소 가능하며 pending delivery는 lock 반환 뒤 독립적으로 재개합니다. client 전송은 최대 10초, 취소·시간 초과 때 별도 1초 제한 close로 reconnect·DB replay를 유도합니다.
+- 동기 checkpoint가 높은 seq를 먼저 반영해도 buffer는 최신 event를 seq 순으로 보존합니다. REST history·replay-gap snapshot도 WebSocket과 같은 ordering lock을 사용합니다.
+- 번역·보고 소비자는 저장 완료 뒤 예약합니다. 두 요청의 login notice도 await 뒤 원자적으로 확인·예약해 중복을 막습니다.
+- 검증: 관련 mock/static **292 passed**, 후속 delivery readiness 검사 **27 passed**. heartbeat, request 유무·idle/active lane, FIFO·snapshot, error·반복 cancel·AnyIO 취소 뒤 후속 동작 차단, backpressure·자동 delivery 재개·끊긴 client의 후속 전송 제외, runner cursor·reporter intent·DB 재개 읽기를 포함합니다. 기존 assertion·timeout은 유지했습니다. Windows inventory·public·diff·patch notes 검사 PASS.
+- 초기 durable suite 검사 39 passed에는 실수로 로컬 crash subprocess 검사가 포함됐습니다. mock/static 한도를 벗어난 실행이며 이후 로컬 검사는 subprocess 없이 진행했습니다. 연구·HPC는 실행하지 않았습니다.
+- manual·patch notes·동일 status 기록을 포함합니다. 실제 process 검증은 기존 CI 범위입니다. 최종 head 필수 CI·동일 head 봇 리뷰·미해결 P1=0 뒤 병합하며 동기 저장 경계 전체 해결·실디스크 성능은 미검증입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
 # runner state 소유 획득 경쟁
 

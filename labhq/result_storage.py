@@ -1,5 +1,6 @@
 """Request-local storage choices and a reviewed, text-only repository edition (#558)."""
 from __future__ import annotations
+from .request_persistence import persist_request, update_request
 
 import asyncio
 import base64
@@ -708,6 +709,32 @@ class ResultStorage:
             return True
         return False
 
+    async def ainherited(self, rid):
+        req = self.hub.requests[rid]
+        if req.get("result_storage"):
+            return True
+        parent = (req.get("meta") or {}).get("revised_from")
+        previous = (self.hub.requests.get(parent) or {}).get("result_storage") or {}
+        if previous:
+            req["result_storage"] = {key: value for key, value in previous.items()
+                                     if key in {"mode", "repo", "visibility", "allow_public", "branch"}}
+            req["result_storage"]["status"] = "selected"
+            self._mark_end_ask(req, req["result_storage"])
+            await persist_request(self.hub, rid)
+            return True
+        project = self.s.project(req.get("project_id"))
+        if project:
+            can_publish = project.repo and (project.visibility != "public" or project.allow_public_reports)
+            req["result_storage"] = {"mode": "existing" if can_publish else "local", "repo": project.repo,
+                "visibility": project.visibility, "allow_public": project.allow_public_reports,
+                "branch": project.branch, "status": "selected"}
+            self._mark_end_ask(req, req["result_storage"])
+            await persist_request(self.hub, rid)
+            return True
+        return False
+
+
+
     @staticmethod
     def _choice_snapshot(saved: dict) -> dict:
         return {key: saved[key] for key in (
@@ -782,7 +809,7 @@ class ResultStorage:
                 ).model_dump(mode="json", exclude={"timeout_s"})
             marker["state"] = "asked"
             self.hub.approvals[approval["id"]] = {"approval": approval, "origin": None}
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             self.hub.save_approval(approval["id"])
             await self.hub.publish({"type": "approval.requested", "request_id": rid, "data": approval})
             return approval
@@ -808,7 +835,7 @@ class ResultStorage:
 
     async def card(self, rid, *, late=False, end=False):
         req = self.hub.requests[rid]
-        if not end and (req.get("result_storage") or (not late and self.inherited(rid))):
+        if not end and (req.get("result_storage") or (not late and await self.ainherited(rid))):
             return None
         research = (req.get("intake") or {}).get("work_kind") == "research" or req.get("research_contract")
         if not late and not end and not research and not self.s.github.ask_storage:
@@ -834,12 +861,23 @@ class ResultStorage:
                         progress_available=available and not controlled_request(req, self.s))
         return card
 
-    async def select(self, rid, choice, *, late=False, end=False):
+    async def select(self, rid, choice, *, late=False, end=False, approval_id=None):
         async with self._card_lock:
-            return await self._select(rid, choice, late=late, end=end)
+            return await self._select(rid, choice, late=late, end=end, approval_id=approval_id)
 
-    async def _select(self, rid, choice, *, late=False, end=False):
+    async def _select(self, rid, choice, *, late=False, end=False, approval_id=None):
         req = self.hub.requests[rid]
+        requested = copy.deepcopy(choice)
+        receipt = req.get("storage_selection_receipt") or {}
+        if approval_id and receipt.get("approval_id") == approval_id:
+            if (receipt.get("choice") != requested or receipt.get("late") != late
+                    or receipt.get("end") != end):
+                raise ValueError("이미 저장한 카드 선택과 다릅니다. 같은 선택으로 다시 답해 주세요.")
+            # A commit can precede cancellation or a crash before card resolution.
+            # Replaying that exact card completes its scheduling without a second choice/API call.
+            if late or end:
+                await self.aschedule(rid)
+            return req["result_storage"]
         if late and req.get("result_storage"):
             raise ValueError("이미 저장 위치를 골랐거나 게시한 요청입니다.")
         check_choice(choice, end=end)
@@ -908,11 +946,14 @@ class ResultStorage:
         elif not end:
             saved["progress_push"] = False
         req["result_storage"] = saved
+        if approval_id:
+            req["storage_selection_receipt"] = {"approval_id": approval_id, "choice": requested,
+                                                 "late": late, "end": end}
         if not late and not end:
             self._mark_end_ask(req, saved)
-        self.hub.save_request(rid)
+        await persist_request(self.hub, rid)
         if late or end:
-            self.schedule(rid)
+            await self.aschedule(rid)
         return saved
 
     @staticmethod
@@ -1055,7 +1096,7 @@ class ResultStorage:
         saved.update(progress_warning=text, progress_status="disabled" if disable else "warning")
         if disable:
             saved["progress_push"] = False
-        self.hub.save_request(rid)
+        await persist_request(self.hub, rid)
         await self.hub.publish({"type": "request.progress_push", "request_id": rid,
                                 "data": {"ok": False, "warning": text, "disabled": disable}})
 
@@ -1086,7 +1127,7 @@ class ResultStorage:
             saved.update(progress_status="pushed", progress_last_step=step_id,
                          progress_files=published, progress_omitted=omitted)
             saved.pop("progress_warning", None)
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             await self.hub.publish({"type": "request.progress_push", "request_id": rid, "data": {
                 "ok": True, "step_id": step_id, "branch": branch,
                 "omitted": omitted.get(step_id, []), "internal": step_id in internal_steps,
@@ -1105,19 +1146,36 @@ class ResultStorage:
 
     def schedule(self, rid):
         req = self.hub.requests[rid]
+        action = self._schedule_action(req)
+        if action == "skip":
+            self._skip_end_marker(req)
+            self.hub.save_request(rid)
+            action = self._schedule_action(req)
+        self._schedule_ready(rid, action)
+
+    async def aschedule(self, rid):
+        req = self.hub.requests[rid]
+        action = self._schedule_action(req)
+        if action == "skip":
+            await update_request(self.hub, rid, self._skip_end_marker)
+            action = self._schedule_action(self.hub.requests[rid])
+        self._schedule_ready(rid, action)
+
+    def _skip_end_marker(self, req):
+        marker = req.get("storage_end_ask") or {}
+        marker["state"] = "skipped"
+        marker["final"] = self._choice_snapshot(req.get("result_storage") or {})
+
+    def _schedule_action(self, req):
         saved = req.get("result_storage") or {}
         marker = req.get("storage_end_ask") or {}
         if marker.get("state") in {"pending", "asked"}:
             if req.get("status") in {"failed", "cancelled"} or saved.get("status") == "published":
-                marker["state"] = "skipped"
-                marker["final"] = self._choice_snapshot(saved)
-                self.hub.save_request(rid)
+                return "skip"
             else:
                 if (req.get("status") in {"done", "completed"} and req.get("pi_reviewed_at")
                         and not req.get("bundle_pending")):
-                    task = self.end_tasks.get(rid)
-                    if task is None or task.done():
-                        self.end_tasks[rid] = asyncio.create_task(self.open_end_card(rid))
+                    return "end"
                 return
         if saved.get("after_review") and (not req.get("pi_reviewed_at") or req.get("bundle_pending")):
             return
@@ -1125,7 +1183,14 @@ class ResultStorage:
             return
         if saved.get("status") == "interrupted" and self._editor_connection() is None:
             return  # A gateway restart must also wait for the editor, not publish a fallback draft.
-        if rid not in self.tasks or self.tasks[rid].done():
+        return "finish"
+
+    def _schedule_ready(self, rid, action):
+        if action == "end":
+            task = self.end_tasks.get(rid)
+            if task is None or task.done():
+                self.end_tasks[rid] = asyncio.create_task(self.open_end_card(rid))
+        elif action == "finish" and (rid not in self.tasks or self.tasks[rid].done()):
             self.tasks[rid] = asyncio.create_task(self.finish(rid))
 
     def _editor_connection(self):
@@ -1181,7 +1246,7 @@ class ResultStorage:
             for key in ("draft_path", "pdf", "warning", "error_type"):
                 saved.pop(key, None)
             saved["status"] = "selected"  # a restart before the new draft is saved builds it from scratch
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             self.tasks[rid] = asyncio.create_task(self.finish(rid))
             return {"request_id": rid, "status": "redrafting", "closed_cards": cards}
 
@@ -1216,7 +1281,7 @@ class ResultStorage:
             for key in ("warning", "error_type", "draft_path", "branch"):
                 saved.pop(key, None)
             saved.update(choice, after_review=True, converted_from="local")
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             self.schedule(rid)
             return {"request_id": rid, "status": "converting", "repo": saved["repo"],
                     "waiting_review": bool(not req.get("pi_reviewed_at") or req.get("bundle_pending")), "note": note}
@@ -1263,7 +1328,7 @@ class ResultStorage:
             saved.setdefault("editions", []).append(previous)
             saved["rebuild"] = {"from_repo": previous.get("repo"), "from_url": previous.get("report_url"),
                                 "repo": saved.get("repo"), "editor": editor_edition(), "date": datetime.date.today().isoformat()}
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             self.tasks[rid] = asyncio.create_task(self.finish(rid))
             return {"request_id": rid, "status": "rebuilding", "repo": saved.get("repo"),
                     "new_repository": bool(choice), "note": note}
@@ -1333,7 +1398,7 @@ class ResultStorage:
             for key in ("warning", "error_type"):
                 saved.pop(key, None)
             saved["status"] = "draft"  # finish reads the folder back and opens the card, as after a restart
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             self.tasks[rid] = asyncio.create_task(self.finish(rid))
             return {"request_id": rid, "status": "republishing", "closed_cards": cards}
 
@@ -1607,7 +1672,7 @@ class ResultStorage:
                 saved["pdf"] = {"included": bool(pdf), "bytes": len(pdf or b""), "note": "" if pdf else pdf_skip_line(reason),
                                 "size_note": reason if pdf else ""}
                 saved.update(draft_path=str(target), status="draft")
-                self.hub.save_request(rid)
+                await persist_request(self.hub, rid)
             if saved.get("mode") == "local":
                 saved["status"] = "local"
                 return
@@ -1646,8 +1711,8 @@ class ResultStorage:
                                    f"{report_path}")
             if hasattr(self.hub, "rounds"):
                 try:
-                    self.hub.rounds.write(rid)
-                    self.hub.rounds.submit(rid)
+                    await self.hub.rounds.awrite(rid)
+                    await self.hub.rounds.asubmit(rid)
                 except Exception as exc:
                     saved["round_warning"] = (
                         f"게시를 마쳤지만 운전 기록을 갱신하지 못했습니다({type(exc).__name__}).")
@@ -1669,7 +1734,7 @@ class ResultStorage:
             saved.update(status="failed", warning=str(exc) if isinstance(exc, (PublishAccessError, EditionCheckError))
                          else upload_failed_text(rid))
         finally:
-            self.hub.save_request(rid)
+            await persist_request(self.hub, rid)
             await self.hub.publish({"type": "request.storage", "request_id": rid,
                                     "data": {"result_storage": saved}})
 

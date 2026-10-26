@@ -383,7 +383,7 @@ async def test_timeout_cancels_only_interpreter_and_does_not_retry(hub, monkeypa
     assert hub.requests['r']['cost_known'] is False
 
 
-def test_final_report_keeps_interpretation_cost_and_optional_style_appendix(hub, monkeypatch, tmp_path):
+async def test_final_report_keeps_interpretation_cost_and_optional_style_appendix(hub, monkeypatch, tmp_path):
     from labhq.orchestrator.cso import Orchestrator
     from labhq import report_style
     monkeypatch.setattr(report_style, 'humanizer_skill', lambda: tmp_path / 'SKILL.md')
@@ -391,7 +391,7 @@ def test_final_report_keeps_interpretation_cost_and_optional_style_appendix(hub,
     monkeypatch.setattr(hub, 'commit_terminal', lambda *args, **kwargs: None)
     orchestrator = Orchestrator(hub)
     orchestrator.cost['r'] = 0.5
-    orchestrator._finish('r', '결과를 가지고 있다.', {}, True)
+    (await orchestrator._finish('r', '결과를 가지고 있다.', {}, True))
     assert hub.requests['r']['cost_usd'] == 1.0
     assert 'WARN' in hub.requests['r']['execution_record']
 

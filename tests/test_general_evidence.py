@@ -123,7 +123,7 @@ async def test_general_report_warns_without_copying_long_tool_output():
                         evidence_path_warnings=["outputs/missing.tsv"],
                         tool_errors=["fixture lookup failed\n" + "PRIVATE " * 200,
                                      "second failure should only affect the count"])
-    Orchestrator(hub)._finish("r", "Narrative", {"A": {**result.model_dump(mode="json"), "status": "done"}}, ok=True)
+    (await Orchestrator(hub)._finish("r", "Narrative", {"A": {**result.model_dump(mode="json"), "status": "done"}}, ok=True))
     report = hub.requests["r"]["report"]
     appendix = hub.requests["r"]["execution_record"]
 

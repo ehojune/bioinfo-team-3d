@@ -79,7 +79,9 @@ async def test_general_ab_request_records_after_restart_and_compares(tmp_path, c
         hub = Hub(settings)
         assert hub.requests[rid]["status"] == "interrupted"
         # Exercise the real resume dispatcher, with only execution replaced by a local terminal checkpoint.
-        hub.resume_agents = lambda request_id: set()
+        async def resume_agents(request_id):
+            return set()
+        hub.aresume_agents = resume_agents
 
         async def finish(request_id, resume=False):
             assert resume

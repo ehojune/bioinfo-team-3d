@@ -303,7 +303,34 @@ const phaseLabel = q => q.phase === 'done' ? '완료' : (PHASES.find(([key]) => 
 
 const ag = id => S.agents.get(String(id || '').toLowerCase());
 const hasPiDecision = a => [...S.approvals.values()].some(p => String(p.agent_id || '').toLowerCase() === a.id);
-const completedForReview = a => [...S.requests.values()].some(q => needsPiReview(q) && (q.agent_id === a.id || q.plan.some(s => s.agent_id === a.id) || a.id === 'cso'));
+// Request participation is evidence-based, including CSO. Active plans outrank old reports.
+const participates = (a, q) => q.agent_id === a.id || q.plan.some(s => s.agent_id === a.id)
+  || (a.id === 'cso' && ['orchestrate', 'plan_only'].includes(q.mode));
+const runnerWaitsFor = (a, q) => q.status === 'waiting_for_runner' &&
+  (q.runnerMissing.size ? q.runnerMissing.has(a.id) : q.resumeMissing.length ? q.resumeMissing.includes(a.id)
+    : q.mode === 'direct' ? q.agent_id === a.id
+      : a.id === 'cso' && !q.plan.length && ['orchestrate', 'plan_only'].includes(q.mode));
+function requestStaffStatus(a) {
+  const requests = sortRequests([...S.requests.values()].filter(q => participates(a, q)));
+  const active = requests.filter(q => isActiveRequest(q.status));
+  if (active.length) {
+    const steps = active.flatMap(q => q.mode === 'direct' && q.agent_id === a.id
+      ? [q.steps.direct || 'pending']
+      : q.plan.filter(s => s.agent_id === a.id).map(s => q.steps[s.id] || 'pending'));
+    if (steps.some(s => ['working', 'running'].includes(s))) return {state:'working', text:'작업 중'};
+    if (steps.some(s => ['error', 'failed', 'incomplete'].includes(s))) return {state:'error', text:'문제 발생'};
+    for (const [step, text] of [['halted','멈춤 · 재개 가능'], ['paused','일시 정지됨'],
+      ['waiting_login','로그인 대기'], ['waiting_quota','한도 대기'], ['waiting_facilities_fix','환경 수정 승인 대기']]) {
+      if (steps.includes(step)) return {state:'waiting', text};
+    }
+    if (steps.includes('hibernating')) return {state:'hibernating', text:'HPC 작업 기다리는 중'};
+    if (steps.length && steps.every(s => ['done', 'skipped'].includes(s))) return {state:'done', text:'담당 단계 완료'};
+    if (active.some(q => runnerWaitsFor(a, q))) return {state:'waiting', text:'러너 기다림'};
+    return {state:'queued', text:'차례 대기'};
+  }
+  const review = requests.find(needsPiReview);
+  return review ? {state:'done', text:`작업 끝 · PI 검토 대기 · ${short(review.text || review.id, 32)}`} : null;
+}
 const controlledState = t => {
   if (!t) return '';
   const c = S.taskControl.get(t.id) || t.control || {};
@@ -325,8 +352,11 @@ const taskState = a => {
   if (state === 'waiting') return 'hibernating';
   return ['queued', 'waiting', 'hibernating', 'error'].includes(state) ? state : 'working';
 };
-const visual = a => warning(a) ? 'error' : taskState(a) || (hasPiDecision(a) ? 'waiting' : completedForReview(a) ? 'done' : a.state === 'waiting' ? (a.waitFor === 'answer' ? 'hibernating' : 'idle') : a.state === 'done' && now() - (a.stateAt || 0) > 3
-  ? 'idle' : STATE_KO[a.state] ? a.state : 'idle');
+// Older/replayed streams can carry live agent activity without a task ledger entry.
+const liveAgentState = a => ['queued', 'working', 'hibernating', 'error'].includes(a.state) ? a.state
+  : a.state === 'waiting' && a.waitFor === 'answer' ? 'hibernating' : '';
+const visual = a => warning(a) ? 'error' : taskState(a) || (hasPiDecision(a) ? 'waiting' : liveAgentState(a) || requestStaffStatus(a)?.state || (a.state === 'waiting' ? (a.waitFor === 'answer' ? 'hibernating' : 'idle') : a.state === 'done' && now() - (a.stateAt || 0) > 3
+  ? 'idle' : STATE_KO[a.state] ? a.state : 'idle'));
 // 'hibernating' covers HPC jobs and unanswered asks (runner agent.status: jobs, asks); a PI question is not HPC.
 // "외부 응답 대기 n분째 / 상한 m분": the last progress event's elapsed time plus the time since it arrived.
 function externalWaitText(wait) {
@@ -346,7 +376,10 @@ const stateText = (a, vs = visual(a)) => {
     if (vs === 'working' && activity.external_wait) return externalWaitText(activity.external_wait);
     if (vs === 'working') return tool ? `${/Bash|PowerShell|shell|command_execution/i.test(tool.name) ? '명령' : '도구'} 실행 중 · ${Math.max(0, Math.floor((now() - tool.at) / 60))}분째` : '생각하는 중';
   }
-  if (vs === 'done' && completedForReview(a)) return '작업 끝 · PI 검토 대기';
+  if (!t && !hasPiDecision(a) && !liveAgentState(a)) {
+    const status = requestStaffStatus(a);
+    if (status) return status.text;
+  }
   return vs === 'hibernating' && a.waitFor === 'answer' ? '답 기다리는 중' : STATE_KO[vs];
 };
 function toolInputLine(input) {
@@ -367,6 +400,7 @@ function toolActivitySummary(tool = {}) {
 function trackActivity(ev) {
   const d = ev.data || {}, tid = ev.task_id;
   if (!tid) return;
+  if (ev.type === 'task.dispatched' && ev.request_id) req(ev.request_id).runnerMissing.delete(String(ev.agent_id || '').toLowerCase());
   if (ev.type === 'task.dispatched' && ev.request_id && (d.step_id || d.kind)) {
     for (const [oldId, old] of S.activeTasks) if (oldId !== tid && old.request_id === ev.request_id &&
       old.step_id === (d.step_id || d.kind)) S.activeTasks.delete(oldId);
@@ -460,6 +494,7 @@ function req(rid) {
     Object.defineProperty(q, 'bundleWarning', { value: '', writable: true, enumerable: false });
     Object.defineProperty(q, 'skipWarningsShown', { value: new Set(), writable: true, enumerable: false });  // #446
     Object.defineProperty(q, 'resumeMissing', { value: [], writable: true, enumerable: false });  // R14
+    Object.defineProperty(q, 'runnerMissing', { value: new Set(), enumerable: false });
     S.requests.set(rid, q);
   }
   return S.requests.get(rid);
@@ -602,6 +637,15 @@ function apply(ev, replay = false) {
         const q = req(r.id);
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
         q.pi_review_pending = r.pi_review_pending === true; q.pi_reviewed_at = r.pi_reviewed_at || null; q.agent_id = r.agent_id || '';
+        // Current request memory outlives the 200-event replay. Older snapshots can still use replay evidence.
+        if (r.status !== 'waiting_for_runner' || Object.hasOwn(r, 'runner_waits')) {
+          q.runnerMissing.clear();
+          if (r.status === 'waiting_for_runner' && r.runner_waits && typeof r.runner_waits === 'object' && !Array.isArray(r.runner_waits)) {
+            for (const wait of Object.values(r.runner_waits)) {
+              if (typeof wait?.agent_id === 'string' && wait.agent_id.trim()) q.runnerMissing.add(wait.agent_id.trim().toLowerCase());
+            }
+          }
+        }
         q.final_checkpoint = r.final_checkpoint || null;
         q.resultStorage = r.result_storage || {};
         q.updated_at = Math.max(q.updated_at, Number(r.updated_at) || 0);
@@ -980,8 +1024,10 @@ function apply(ev, replay = false) {
       break;
     case 'recruit.failed': feed({ who: 'recruiter', text: `채용하지 못했어요: ${short(d.error, 120)}`, fullText: `채용하지 못했어요: ${d.error || ''}`, cls: 'alert' }, ts, rid); break;
     // A status the gateway sets itself: waiting_pi, waiting_for_runner, interrupted, running (R5, R15, #494).
-    case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; break; }
-    case 'request.runner_wait': feed({ who: 'system', text: d.message || '러너를 기다려요', cls: 'alert' }, ts, rid); break;
+    case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; if (q.status !== 'waiting_for_runner') q.runnerMissing.clear(); break; }
+    case 'request.runner_wait':
+      for (const target of d.missing_agents || [d.agent_id]) if (target) req(rid).runnerMissing.add(String(target).toLowerCase());
+      feed({ who: 'system', text: d.message || '러너를 기다려요', cls: 'alert' }, ts, rid); break;
     case 'request.reviewed': { const q = req(rid); q.pi_review_pending = d.pi_review_pending === true; q.pi_reviewed_at = d.pi_reviewed_at; if (d.status) q.status = d.status; if (d.final_checkpoint) q.final_checkpoint = d.final_checkpoint; if (S.current === rid && isPastRequest(q)) pickCurrent(); break; }
     case 'request.completed': case 'request.failed': {
       for (const [tid, task] of S.activeTasks) if (task.request_id === rid) S.activeTasks.delete(tid);

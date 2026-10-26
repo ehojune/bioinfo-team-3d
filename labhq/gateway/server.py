@@ -21,6 +21,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
+import anyio
 import httpx
 import yaml
 from fastapi import BackgroundTasks, Request, Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -51,6 +52,7 @@ from ..research.contract import classify_intake, plan_sha256
 from ..research.packs import check_configured_packs
 from ..request_status import (has_active_followup, is_active_followup, is_active_request,
                               is_office_request, is_terminal_request)
+from ..request_persistence import apply_changes
 from ..settings import Settings
 from ..security import token_matches
 from .. import durable
@@ -62,6 +64,7 @@ log = logging.getLogger(__name__)
 # #126: a snapshot goes to every client on each connect, so a long follow-up answer travels as its head only.
 # The full answer stays on the request (GET /api/requests/{id}); the web loads it when the PI opens it.
 SNAPSHOT_ANSWER_CHARS = 2000
+CLIENT_SEND_TIMEOUT_S = 10.0
 # Terminal reports can be as large as 20,000 characters and repeat once per finished request.
 SNAPSHOT_REPORT_CHARS = 2000
 # A step card shows this much of a task's result text; a replayed task.result needs no more.
@@ -274,6 +277,45 @@ class SavedResults(dict):
     def __delitem__(self, key: str) -> None:
         self.pop(key)
 
+    async def aset(self, key: str, value: TaskResult) -> None:
+        hub, rid = self.hub, self.rid
+        if not hasattr(hub, "asave_request"):  # In-memory bench/test adapter.
+            self[key] = value
+            return
+        value = value.model_copy(deep=True)
+        hub._request_changed(rid)
+        async with hub._request_lock(rid):
+            before = copy.deepcopy(hub.requests[rid])
+            updated = copy.deepcopy(before)
+            updated.setdefault("results", {})[key] = value.model_dump(mode="json")
+            updated.get("pending_revisions", {}).pop(key, None)
+            cancelled = await hub._save_request_snapshot(rid, before, updated)
+            super().__setitem__(key, value)
+        await hub.aclear_step_jobs(rid, key)
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def apop(self, key: str, *default):
+        hub, rid = self.hub, self.rid
+        if not hasattr(hub, "asave_request"):
+            return self.pop(key, *default)
+        hub._request_changed(rid)
+        async with hub._request_lock(rid):
+            value = dict(self).pop(key, *default)  # Validate dict.pop's arity and missing-key contract first.
+            before = copy.deepcopy(hub.requests[rid])
+            updated = copy.deepcopy(before)
+            removed = (updated.get("results") or {}).pop(key, None)
+            cancelled = False
+            if removed is not None:
+                cancelled = await hub._save_request_snapshot(rid, before, updated)
+            super().pop(key, *default)
+        if cancelled:
+            raise asyncio.CancelledError
+        return value
+
+    async def adelete(self, key: str) -> None:
+        await self.apop(key)
+
 
 class Hub:
     result_review_required = True
@@ -286,6 +328,8 @@ class Hub:
         from ..knowledge.recall import KnowledgeRecall
         self.knowledge = KnowledgeRecall(self)
         self.event_lock = asyncio.Lock()
+        self.request_locks: dict[str, asyncio.Lock] = {}
+        self.request_versions: dict[str, int] = {}
         self.runners: dict[str, WebSocket] = {}
         self.runner_incarnations: dict[str, str | None] = {}
         # Per runner process (hello "process"): the incarnation is kept on disk across restarts, this is not (#521).
@@ -357,7 +401,9 @@ class Hub:
             card = entry["approval"]
             rid = card.get("request_id")
             saved = (self.requests.get(rid) or {}).get("result_storage")
-            if card.get("kind") == "result_storage" and (card.get("detail") or {}).get("late_storage") and saved:
+            selection = (self.requests.get(rid) or {}).get("storage_selection_receipt") or {}
+            if (card.get("kind") == "result_storage" and saved and
+                    ((card.get("detail") or {}).get("late_storage") or selection.get("approval_id") == aid)):
                 # select() may have committed before the old process removed its card. Replay both updates
                 # before deleting it, so another interruption can safely retry this reconciliation.
                 note = "저장된 선택으로 저장 위치 카드를 복구했습니다."
@@ -437,73 +483,178 @@ class Hub:
                 self.rounds.write(rid)
 
     def save_request(self, rid: str) -> None:
+        self._request_changed(rid)
         cp4.reconcile(self.requests[rid])
         self.requests[rid]["updated_at"] = time.time()
         self.store.put("request", rid, self.requests[rid])
 
+    def _request_lock(self, rid: str) -> asyncio.Lock:
+        if not hasattr(self, "request_locks"):
+            self.request_locks = {}
+        return self.request_locks.setdefault(rid, asyncio.Lock())
+
+    def _request_changed(self, rid: str) -> int:
+        if not hasattr(self, "request_versions"):
+            self.request_versions = {}
+        revision = self.request_versions.get(rid, 0) + 1
+        self.request_versions[rid] = revision
+        return revision
+
+    async def _save_request_snapshot(self, rid: str, before: dict, updated: dict) -> bool:
+        cp4.reconcile(updated)
+        updated["updated_at"] = time.time()
+        _, cancelled = await self._publication_write(self.store.aput("request", rid, updated))
+        apply_changes(self.requests[rid], before, updated)
+        return cancelled
+
+    async def asave_request(self, rid: str) -> None:
+        revision = self._request_changed(rid)
+        _, cancelled = await self._publication_write(self._asave_request(rid, revision))
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _asave_request(self, rid: str, revision: int) -> None:
+        async with self._request_lock(rid):
+            before = copy.deepcopy(self.requests[rid])
+            previous = self.store.get("request", rid)
+            try:
+                cancelled = await self._save_request_snapshot(rid, before, copy.deepcopy(before))
+            except Exception:
+                if self.request_versions.get(rid) == revision:
+                    if previous is not None:
+                        apply_changes(self.requests[rid], before, previous)
+                    elif self.requests[rid] == before:
+                        self.requests.pop(rid, None)
+                raise
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def aupdate_request(self, rid: str, update: Callable[[dict], Any]):
+        self._request_changed(rid)
+        async with self._request_lock(rid):
+            before = copy.deepcopy(self.requests[rid])
+            updated = copy.deepcopy(before)
+            answer = update(updated)
+            cancelled = await self._save_request_snapshot(rid, before, updated)
+        if cancelled:
+            raise asyncio.CancelledError
+        return answer
+
     def review_done(self, rid: str, *, decision: str = "accepted", revision: int | None = None,
                     target_sha256: str | None = None) -> dict:
         """PI acknowledgment is independent of execution and never blocks another request."""
-        req = self.requests[rid]
-        contract = req.get("research_contract") or {}
-        timeout_ack = (req.get("status") == "failed" and
-                       (contract.get("final_receipt") or {}).get("decision") == "timed_out"
-                       and revision is None and target_sha256 is None)
-        if cp4.enabled(req) and contract.get("final_draft") and not timeout_ack:
-            return self._final_review(rid, decision, revision=revision, target_sha256=target_sha256)
-        if not is_terminal_request(req.get("status")) or req.get("cancelling"):
-            raise ValueError("보고서가 끝난 요청만 검토 완료로 표시합니다")
-        self.retire_resume_cards(rid, "보고서를 검토 완료로 표시해 재개 카드를 닫았습니다")
-        if not req.get("pi_reviewed_at"):
-            at = time.time()
-            updated = copy.deepcopy(req)
-            updated.update(pi_review_pending=False, pi_reviewed_at=at, updated_at=at)
-            audit = {"actor": "pi", "at": at, "outcome": req["status"]}
-            updated.setdefault("pi_review_audit", []).append(audit)
-            event = self.store.commit_request_event(rid, updated,
-                {"type": "request.reviewed", "ts": at, "request_id": rid,
-                 "data": {**audit, "pi_reviewed_at": at, "pi_review_pending": False}}, self.s.gateway.event_buffer)
-            req.update(updated)
-            self.result_storage.schedule(rid)
-            self.events.append(event)
-            self.pending_committed.append((event, tuple(self.clients)))
-            asyncio.get_running_loop().create_task(self._send_committed_event())
-        return {"request_id": rid, "pi_review_pending": False, "pi_reviewed_at": req["pi_reviewed_at"]}
+        plan = self._review_plan(rid, decision, revision=revision, target_sha256=target_sha256)
+        note = ("보고서를 검토해 재개 카드를 닫았습니다" if plan[-1] else
+                "보고서를 검토 완료로 표시해 재개 카드를 닫았습니다")
+        self.retire_resume_cards(rid, note)
+        return self._commit_review(rid, plan)
 
     def _final_review(self, rid: str, decision: str, **target) -> dict:
-        req = self.requests[rid]
+        plan = self._review_plan(rid, decision, final=True, **target)
         self.retire_resume_cards(rid, "보고서를 검토해 재개 카드를 닫았습니다")
-        updated = copy.deepcopy(req)
-        receipt = cp4.decide(updated, decision, **target)
-        if req.get("pi_reviewed_at") and req == updated:
-            return {"request_id": rid, "status": req["status"], "pi_review_pending": False,
-                    "pi_reviewed_at": req["pi_reviewed_at"], "final_checkpoint": cp4.summary(req)}
-        at = receipt["decided_at"]
-        reviewed_at = None if decision == "timed_out" else at
+        return self._commit_review(rid, plan)
+
+    def _review_plan(self, rid: str, decision: str, *, revision=None, target_sha256=None, final=False):
+        before = copy.deepcopy(self.requests[rid])
+        contract = before.get("research_contract") or {}
+        timeout_ack = (before.get("status") == "failed" and
+                       (contract.get("final_receipt") or {}).get("decision") == "timed_out"
+                       and revision is None and target_sha256 is None)
+        final = final or (cp4.enabled(before) and bool(contract.get("final_draft")) and not timeout_ack)
+        updated = copy.deepcopy(before)
+        if final:
+            receipt = cp4.decide(updated, decision, revision=revision, target_sha256=target_sha256)
+            answer = {"request_id": rid, "status": updated["status"], "pi_review_pending": False,
+                      "pi_reviewed_at": before.get("pi_reviewed_at"), "final_checkpoint": cp4.summary(updated)}
+            if before.get("pi_reviewed_at") and before == updated:
+                return before, None, None, answer, True
+            at = receipt["decided_at"]
+            reviewed_at = None if decision == "timed_out" else at
+            audit = {"actor": receipt["decider"], "at": at, "outcome": updated["status"], "receipt": receipt}
+        else:
+            if not is_terminal_request(before.get("status")) or before.get("cancelling"):
+                raise ValueError("보고서가 끝난 요청만 검토 완료로 표시합니다")
+            answer = {"request_id": rid, "pi_review_pending": False, "pi_reviewed_at": before.get("pi_reviewed_at")}
+            if before.get("pi_reviewed_at"):
+                return before, None, None, answer, False
+            at = reviewed_at = time.time()
+            audit = {"actor": "pi", "at": at, "outcome": before["status"]}
         updated.update(pi_review_pending=reviewed_at is None, pi_reviewed_at=reviewed_at, updated_at=at)
-        audit = {"actor": receipt["decider"], "at": at, "outcome": updated["status"], "receipt": receipt}
         updated.setdefault("pi_review_audit", []).append(audit)
-        updated["bundle_pending"] = bool(req.get("bundle_path") or req.get("bundle_pending")
-                                         or self._has_bundle_workdir(rid))
-        data = {"request_id": rid, "status": updated["status"], "pi_review_pending": reviewed_at is None,
-                "pi_reviewed_at": reviewed_at, "final_checkpoint": cp4.summary(updated)}
-        event = self.store.commit_terminal(rid, updated,
-            {"type": "request.reviewed", "ts": at, "request_id": rid, "data": {**audit, **data}},
-            self.s.gateway.event_buffer)
-        req.update(updated)
-        self.knowledge.notify()
-        if not updated["bundle_pending"]:
-            self.result_storage.schedule(rid)  # otherwise the refreshed bundle commit schedules it
-        self.events.append(event)
-        self.pending_committed.append((event, tuple(self.clients)))
-        asyncio.get_running_loop().create_task(self._send_committed_event())
-        self._queue_terminal_delivery(event)
-        timer = self.final_review_timers.pop(rid, None)
-        if timer and timer is not asyncio.current_task():
-            timer.cancel()
-        if updated["bundle_pending"]:
-            asyncio.get_running_loop().create_task(self._refresh_final_bundle(rid))
-        return data
+        answer.update(pi_review_pending=reviewed_at is None, pi_reviewed_at=reviewed_at)
+        if final:
+            updated["bundle_pending"] = bool(before.get("bundle_path") or before.get("bundle_pending")
+                                             or self._has_bundle_workdir(rid))
+            answer["final_checkpoint"] = cp4.summary(updated)
+            data = {**audit, **answer}
+        else:
+            data = {**audit, "pi_reviewed_at": at, "pi_review_pending": False}
+        body = {"type": "request.reviewed", "ts": at, "request_id": rid, "data": data}
+        return before, updated, body, answer, final
+
+    def _apply_review(self, rid: str, plan, event: dict, *, owner=None, queue_delivery=True) -> bool:
+        before, updated, _, _, final = plan
+        apply_changes(self.requests[rid], before, updated)
+        self._record_published_event(event)
+        self._queue_committed_event(event)
+        self._schedule_committed_events()
+        if final:
+            self.knowledge.notify()
+            if queue_delivery:
+                self._queue_terminal_delivery(event)
+            timer = self.final_review_timers.pop(rid, None)
+            if timer and timer is not (owner or asyncio.current_task()):
+                timer.cancel()
+            if updated["bundle_pending"]:
+                asyncio.get_running_loop().create_task(self._refresh_final_bundle(rid))
+        return not final or not updated["bundle_pending"]
+
+    def _commit_review(self, rid: str, plan) -> dict:
+        _, updated, body, answer, final = plan
+        if updated is not None:
+            commit = self.store.commit_terminal if final else self.store.commit_request_event
+            event = commit(rid, updated, body, self.s.gateway.event_buffer)
+            if self._apply_review(rid, plan, event):
+                self.result_storage.schedule(rid)
+        return answer
+
+    async def areview_done(self, rid: str, *, decision="accepted", revision=None, target_sha256=None):
+        return await self._areview(rid, decision, revision=revision, target_sha256=target_sha256)
+
+    async def _afinal_review(self, rid: str, decision: str, **target):
+        return await self._areview(rid, decision, final=True, **target)
+
+    async def _areview(self, rid, decision, **target):
+        answer, cancelled = await self._publication_write(
+            self._areview_checkpoint(rid, decision, owner=asyncio.current_task(), **target))
+        if cancelled:
+            raise asyncio.CancelledError
+        return answer
+
+    async def _areview_checkpoint(self, rid: str, decision: str, *, owner=None, **target):
+        self._request_changed(rid)
+        cancelled, schedule_storage = False, False
+        async with self.event_lock, self._request_lock(rid):
+            plan = self._review_plan(rid, decision, **target)
+            note = ("보고서를 검토해 재개 카드를 닫았습니다" if plan[-1] else
+                    "보고서를 검토 완료로 표시해 재개 카드를 닫았습니다")
+            await self._aretire_resume_cards_locked(rid, note)
+            _, updated, body, answer, final = plan
+            if updated is not None:
+                commit = self.store.acommit_terminal if final else self.store.acommit_request_event
+                event, cancelled = await self._publication_write(commit(rid, updated, body, self.s.gateway.event_buffer))
+                schedule_storage = self._apply_review(rid, plan, event, owner=owner, queue_delivery=False)
+                if final:
+                    await self._aqueue_terminal_delivery(event)
+        if schedule_storage:
+            asynchronous = getattr(self.result_storage, "aschedule", None)
+            if asynchronous is not None:
+                await asynchronous(rid)
+            else:
+                self.result_storage.schedule(rid)
+        if cancelled:
+            raise asyncio.CancelledError
+        return answer
 
     async def _refresh_final_bundle(self, rid: str) -> None:
         prior = self.terminal_tasks.get(rid)
@@ -513,7 +664,7 @@ class Hub:
             if not self.requests[rid].get("bundle_pending"):
                 return
         self.requests[rid]["bundle_pending"] = True
-        self.save_request(rid)
+        await self.asave_request(rid)
         await self._schedule_bundle(rid, {})
 
     def recover_final_reviews(self) -> None:
@@ -526,7 +677,7 @@ class Hub:
             draft = self.requests[rid]["research_contract"]["final_draft"]
             await asyncio.sleep(max(0, draft["deadline_at"] - time.time()))
             if self.requests[rid].get("status") == "review_pending":
-                self._final_review(rid, "timed_out")
+                await self._afinal_review(rid, "timed_out")
         finally:
             self.final_review_timers.pop(rid, None)
 
@@ -646,7 +797,7 @@ class Hub:
         req["status"] = status
         if status == "failed":
             await self.close_publish_cards(rid)
-        self.save_request(rid)
+        await self.asave_request(rid)
         if before != status:
             await self.publish({"type": "request.status", "ts": time.time(), "request_id": rid,
                                 "data": {"status": status, "previous": before}})
@@ -658,7 +809,7 @@ class Hub:
             return
         before = req.get("status") if before is None else before
         self._sync_hold_status(req)
-        self.save_request(rid)
+        await self.asave_request(rid)
         if req.get("status") != before:
             await self.publish({"type": "request.status", "ts": time.time(), "request_id": rid,
                                 "data": {"status": req.get("status"), "previous": before}})
@@ -672,6 +823,16 @@ class Hub:
         self.save_request(rid)
         return entry
 
+    async def _aremove_quota_wait(self, rid: str, step_id: str) -> dict | None:
+        def update(req):
+            entry = (req.get("quota_waits") or {}).pop(step_id, None)
+            if not req.get("quota_waits"):
+                req.pop("quota_waits", None)
+            self._sync_hold_status(req)
+            return entry
+        return await self.aupdate_request(rid, update)
+
+
     def _remove_login_wait(self, rid: str, step_id: str) -> dict | None:
         req = self.requests[rid]
         entry = (req.get("login_waits") or {}).pop(step_id, None)
@@ -681,6 +842,16 @@ class Hub:
         self.save_request(rid)
         return entry
 
+    async def _aremove_login_wait(self, rid: str, step_id: str) -> dict | None:
+        def update(req):
+            entry = (req.get("login_waits") or {}).pop(step_id, None)
+            if not req.get("login_waits"):
+                req.pop("login_waits", None)
+            self._sync_hold_status(req)
+            return entry
+        return await self.aupdate_request(rid, update)
+
+
     async def release_quota(self, engine: str, *, manual: bool) -> list[tuple[str, str]]:
         """Release an account hold and every step sharing that engine."""
         released = []
@@ -689,7 +860,7 @@ class Hub:
             for step_id, entry in list((req.get("quota_waits") or {}).items()):
                 if entry.get("engine") != engine:
                     continue
-                self._remove_quota_wait(rid, step_id)
+                await self._aremove_quota_wait(rid, step_id)
                 released.append((rid, step_id))
                 await self.publish({"type": "request.step_quota_resumed", "ts": time.time(),
                                     "request_id": rid, "data": {"step_id": step_id, "engine": engine,
@@ -710,7 +881,7 @@ class Hub:
         if is_active_request(req.get("status")):
             # A follow-up on a finished request parks without reopening it: done/failed stays (#302 review).
             req["status"] = "waiting_quota"
-        self.save_request(rid)
+        await self.asave_request(rid)
         if previous != entry:
             await self.publish({"type": "request.step_quota_wait", "ts": time.time(), "request_id": rid,
                                 "data": {"step_id": step_id, "engine": engine,
@@ -721,7 +892,7 @@ class Hub:
                 return True
             now = time.time()
             if now >= deadline_at:
-                self._remove_quota_wait(rid, step_id)
+                await self._aremove_quota_wait(rid, step_id)
                 return False
             if now >= hold["resume_at"]:
                 await self.release_quota(engine, manual=False)
@@ -739,7 +910,7 @@ class Hub:
             for step_id, entry in list((req.get("login_waits") or {}).items()):
                 if entry.get("engine") != engine:
                     continue
-                self._remove_login_wait(rid, step_id)
+                await self._aremove_login_wait(rid, step_id)
                 released.append((rid, step_id))
                 await self.publish({"type": "request.step_login_resumed", "ts": time.time(),
                                     "request_id": rid, "data": {"step_id": step_id, "engine": engine,
@@ -766,7 +937,6 @@ class Hub:
                          deadline_at: float, reason: str, agent_id: str | None = None) -> bool:
         """Park until the PI logs in, the retry clock fires, or the bounded wait expires."""
         req = self.requests[rid]
-        first_notice = engine not in self.login_notices
         started = (((req.get("login_windows") or {}).get(engine) or {}).get("started_at") or time.time())
         runner_id = self.agent_runner.get(agent_id or "")
         entry = {"engine": engine, "resume_at": resume_at, "deadline_at": deadline_at,
@@ -776,13 +946,15 @@ class Hub:
         previous = (req.get("login_waits") or {}).get(step_id)
         req.setdefault("login_waits", {})[step_id] = entry
         self._sync_hold_status(req)
-        self.save_request(rid)
+        await self.asave_request(rid)
         if previous != entry:
             await self.publish({"type": "request.step_login_wait", "ts": time.time(), "request_id": rid,
                                 "data": {"step_id": step_id, "engine": engine, "resume_at": resume_at,
                                          "deadline_at": deadline_at, "reason": short(reason, 500),
                                          "command": command}})
-        if first_notice:
+        # publish() now yields during storage. Claim the shared notice only after
+        # that await, with no yield between checking and marking the engine.
+        if engine not in self.login_notices:
             self.login_notices.add(engine)
             await self.publish({"type": "engine.login_wait", "ts": time.time(), "request_id": rid,
                                 "data": {"engine": engine, "command": command,
@@ -793,7 +965,7 @@ class Hub:
                 return True
             now = time.time()
             if now >= deadline_at:
-                self._remove_login_wait(rid, step_id)
+                await self._aremove_login_wait(rid, step_id)
                 return False
             if now >= hold["resume_at"]:
                 await self.release_login(engine, manual=False)
@@ -829,7 +1001,7 @@ class Hub:
                 changed = True
         if changed:
             self._sync_hold_status(req)
-            self.save_request(rid)
+            await self.asave_request(rid)
         # A still-open phone card is durable, but its old event-loop timer is not. Restore the remaining interval;
         # the timeout path saves a decision and wakes this request just like an approve/decline response.
         waiting = [entry for entry in facilities.values() if entry.get("status") == "waiting"]
@@ -1105,6 +1277,19 @@ class Hub:
                     self.store.delete("jobs_done", tid)
                     self.jobs_done.pop(tid, None)
 
+    async def aclear_step_jobs(self, rid: str, step_id: str) -> None:
+        cancelled = False
+        for tid, task in self.store.all("task").items():
+            if task.get("request_id") == rid and (task.get("step_id") or task.get("kind")) == step_id:
+                if tid in self.jobs_done:
+                    previous = copy.deepcopy(self.jobs_done[tid])
+                    _, interrupted = await self._publication_write(self.store.adelete("jobs_done", tid))
+                    cancelled = cancelled or interrupted
+                    if self.jobs_done.get(tid) == previous:
+                        self.jobs_done.pop(tid, None)
+        if cancelled:
+            raise asyncio.CancelledError
+
     def _bundle_outcome(self, rid: str, request: dict | None = None, tasks: dict | None = None,
                         runner_capabilities: dict | None = None) -> dict:
         """Build against a terminal snapshot; safe to call in a worker thread."""
@@ -1124,38 +1309,42 @@ class Hub:
             return {"warning": f"요청 묶음을 만들지 못했습니다: {exc}"}
 
     def _apply_bundle_outcome(self, rid: str, data: dict, outcome: dict) -> None:
+        self._apply_bundle_to_request(self.requests[rid], data, outcome)
+
+    def _apply_bundle_to_request(self, request: dict, data: dict, outcome: dict) -> None:
+        rid = request.get("id", "unknown")
         bundled = outcome.get("bundle")
         if bundled:
-            self.requests[rid]["bundle_conversion"] = bundled.get("conversion_record") or ""
-            self.requests[rid]["bundle_path"] = data["bundle_path"] = bundled["path"]
-            self.requests[rid]["bundle_status"] = data["bundle_status"] = bundled["status"]
-            self.requests[rid]["bundle_grade"] = data["bundle_grade"] = bundled.get("grade")
-            self.requests[rid]["bundle_grade_reasons"] = data["bundle_grade_reasons"] = bundled.get("grade_reasons") or []
+            request["bundle_conversion"] = bundled.get("conversion_record") or ""
+            request["bundle_path"] = data["bundle_path"] = bundled["path"]
+            request["bundle_status"] = data["bundle_status"] = bundled["status"]
+            request["bundle_grade"] = data["bundle_grade"] = bundled.get("grade")
+            request["bundle_grade_reasons"] = data["bundle_grade_reasons"] = bundled.get("grade_reasons") or []
             if bundled.get("crate_warning"):
                 warning = str(bundled["crate_warning"])
-                self.requests[rid]["bundle_warning"] = data["bundle_warning"] = warning
+                request["bundle_warning"] = data["bundle_warning"] = warning
                 log.warning("request bundle RO-Crate unavailable for %s: %s", rid, warning)
             else:
-                self.requests[rid].pop("bundle_warning", None)
+                request.pop("bundle_warning", None)
                 data.pop("bundle_warning", None)
             return
         warning = str(outcome["warning"])
         if outcome.get("appendix"):
-            appendix = str(self.requests[rid].get("execution_record") or "")
+            appendix = str(request.get("execution_record") or "")
             if warning not in appendix:
                 appendix = appendix.rstrip() + ("\n\n" if appendix.strip() else "") + warning
-                self.requests[rid]["execution_record"] = appendix
+                request["execution_record"] = appendix
                 if isinstance(data.get("execution_record"), str) and not data.get("execution_record_truncated"):
                     data["execution_record"] = appendix
-        self.requests[rid].pop("bundle_path", None)
-        self.requests[rid].pop("bundle_status", None)
-        self.requests[rid].pop("bundle_grade", None)
-        self.requests[rid].pop("bundle_grade_reasons", None)
+        request.pop("bundle_path", None)
+        request.pop("bundle_status", None)
+        request.pop("bundle_grade", None)
+        request.pop("bundle_grade_reasons", None)
         data.pop("bundle_path", None)
         data.pop("bundle_status", None)
         data.pop("bundle_grade", None)
         data.pop("bundle_grade_reasons", None)
-        self.requests[rid]["bundle_warning"] = data["bundle_warning"] = warning
+        request["bundle_warning"] = data["bundle_warning"] = warning
         log.warning("request bundle unavailable for %s: %s", rid, warning)
 
     def _commit_bundle_record(self, rid: str, data: dict) -> None:
@@ -1218,6 +1407,76 @@ class Hub:
         self._commit_terminal_record(rid, typ, data)
         return self._schedule_bundle(rid, data)
 
+    async def aschedule_terminal(self, rid, typ, data, *, request=None, before=None):
+        answer, cancelled = await self._publication_write(
+            self._aschedule_terminal(rid, typ, data, request=request, before=before))
+        if cancelled:
+            raise asyncio.CancelledError
+        return answer
+
+    async def _aschedule_terminal(self, rid: str, typ: str, data: dict, *,
+                                 request: dict | None = None, before: dict | None = None):
+        prior = self.terminal_tasks.get(rid)
+        if prior is not None:
+            return prior
+        request = copy.deepcopy(self.requests[rid] if request is None else request)
+        before = copy.deepcopy(self.requests[rid] if before is None else before)
+        has_workdir = any(isinstance(row, Mapping) and row.get("workdir_id")
+                          for row in (request.get("results") or {}).values())
+        outcome = None
+        if not has_workdir and (request.get("results") or self._dispatched_work_task(rid)):
+            outcome = await asyncio.to_thread(self._bundle_outcome, rid, request,
+                copy.deepcopy(self.store.all("task")), copy.deepcopy(self.runner_capabilities))
+        cancelled = False
+        async with self.event_lock, self._request_lock(rid):
+            current = copy.deepcopy(self.requests[rid])
+            if current.get("status") == "cancelled" and request.get("status") != "cancelled":
+                return None
+            updated = copy.deepcopy(current)
+            apply_changes(updated, before, request)
+            cp4.reconcile(updated)
+            if has_workdir:
+                updated["bundle_pending"] = True
+            if outcome is not None:
+                self._apply_bundle_to_request(updated, data, outcome)
+            if is_terminal_request(updated.get("status")):
+                await self._aretire_resume_cards_locked(rid, "요청이 끝나 재개 카드를 닫았습니다")
+            updated.update(pi_review_pending=True, pi_reviewed_at=None)
+            payload = {**copy.deepcopy(data), "pi_review_pending": True, "pi_reviewed_at": None}
+            if cp4.enabled(updated):
+                payload.update(status=updated["status"], final_checkpoint=cp4.summary(updated))
+            review_pending = cp4.enabled(updated) and updated.get("status") == "review_pending"
+            commit = self.store.acommit_request_event if review_pending else self.store.acommit_terminal
+            event, cancelled = await self._publication_write(commit(rid, updated,
+                {"type": typ, "ts": time.time(), "request_id": rid, "data": payload}, self.s.gateway.event_buffer))
+            apply_changes(self.requests[rid], current, updated)
+            self.knowledge.notify()
+            self._record_published_event(event)
+            self._queue_committed_event(event)
+            self._schedule_committed_events()
+            self._restart_request_asks(rid)
+            asyncio.get_running_loop().create_task(self._close_step_controls(rid))
+            self.recover_final_reviews()
+            if updated.get("status") in {"failed", "interrupted"}:
+                asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
+            if not review_pending:
+                await self._aqueue_terminal_delivery(event)
+            if getattr(self, "semantics_shadow", None) is not None:  # semantics-hook
+                self.semantics_shadow.after_request(rid)  # semantics-hook
+        try:
+            await self.rounds.awrite(rid)
+            await self.rounds.asubmit(rid)
+        except OSError as exc:
+            log.warning("round record write failed for %s: %s", rid, exc)
+        if self.requests[rid].get("mode") == "direct":
+            await self.aclear_step_jobs(rid, "direct")
+        if not review_pending and not has_workdir:
+            await self.result_storage.aschedule(rid)
+        task = self._schedule_bundle(rid, data) if has_workdir else None
+        if cancelled:
+            raise asyncio.CancelledError
+        return task
+
     def _schedule_bundle(self, rid: str, data: dict) -> asyncio.Task:
         """Build one pending bundle in a worker, both after terminal commit and after restart."""
         prior = self.terminal_tasks.get(rid)
@@ -1252,16 +1511,36 @@ class Hub:
         from ..research import semantic_device_report
         freeze_pending = semantic_device_report.freeze_pending_observation
         await freeze_pending(self.semantics_shadow, request, self.requests[rid], self.s)  # semantics-hook
-        outcome = await asyncio.to_thread(
-            self._bundle_outcome, rid, request, tasks, runner_capabilities)
-        if cp4.summary(request) != cp4.summary(self.requests[rid]):
-            # PI decided while this draft bundle was being copied. Keep the durable pending marker
-            # until the bundle containing that receipt is committed.
-            await self._commit_terminal_async(rid, data, copy.deepcopy(self.requests[rid]), tasks,
-                                              runner_capabilities)
-            return
-        self._apply_bundle_outcome(rid, data, outcome)
-        self._commit_bundle_record(rid, data)
+        while True:
+            outcome = await asyncio.to_thread(
+                self._bundle_outcome, rid, request, tasks, runner_capabilities)
+            async with self.event_lock, self._request_lock(rid):
+                if cp4.summary(request) != cp4.summary(self.requests[rid]):
+                    # A receipt can arrive while copying or waiting for the event lock.
+                    request = copy.deepcopy(self.requests[rid])
+                    continue
+                before = copy.deepcopy(self.requests[rid])
+                updated = copy.deepcopy(before)
+                self._apply_bundle_to_request(updated, data, outcome)
+                updated.pop("bundle_pending", None)
+                updated["updated_at"] = time.time()
+                event, cancelled = await self._publication_write(self.store.acommit_request_event(
+                    rid, updated, {"type": "request.bundle", "ts": time.time(), "request_id": rid,
+                    "data": {key: data[key] for key in ("bundle_path", "bundle_status", "bundle_grade",
+                        "bundle_grade_reasons", "bundle_warning") if key in data}}, self.s.gateway.event_buffer))
+                apply_changes(self.requests[rid], before, updated)
+                self._record_published_event(event)
+                self._queue_committed_event(event)
+                self._schedule_committed_events()
+                break
+        await self.result_storage.aschedule(rid)
+        try:
+            await self.rounds.awrite(rid)
+            await self.rounds.asubmit(rid)
+        except OSError as exc:
+            log.warning("round record bundle update failed for %s: %s", rid, exc)
+        if cancelled:
+            raise asyncio.CancelledError
 
     def _commit_terminal_record(self, rid: str, typ: str, data: dict) -> None:
         # Failure never changes the request outcome, and terminal requests loaded after a restart do not pass this
@@ -1313,6 +1592,18 @@ class Hub:
         else:
             self.store.delete("terminal_delivery", str(seq))
 
+    async def _aqueue_terminal_delivery(self, event: dict) -> None:
+        seq = event["seq"]
+        if seq in self.terminal_queued:
+            return
+        if self.reporter.enabled():
+            self.terminal_queued.add(seq)
+            self.reporter.submit(event)
+        else:
+            _, cancelled = await self._publication_write(self.store.adelete("terminal_delivery", str(seq)))
+            if cancelled:
+                raise asyncio.CancelledError
+
     def recover_terminal_deliveries(self) -> None:
         self.rounds.recover()
         # The request row itself is the durable source for an issue that was not opened
@@ -1348,19 +1639,69 @@ class Hub:
         async with self.event_lock:
             await self._flush_committed_events()
 
-    async def _flush_committed_events(self) -> None:
+    async def _flush_committed_events(self, delivered: list[dict] | None = None) -> None:
         # Called under event_lock, before allocating any later live event sequence.
         while self.pending_committed:
-            event, clients = self.pending_committed.popleft()
+            event, clients = self.pending_committed[0]
             dead = []
-            for client in clients:
+            while clients:
+                client = clients[0]
+                if client not in self.clients:
+                    clients = clients[1:]
+                    self.pending_committed[0] = (event, clients)
+                    continue
                 try:
-                    await client.send_text(json.dumps(event, ensure_ascii=False, default=str))
+                    await asyncio.wait_for(client.send_text(json.dumps(event, ensure_ascii=False, default=str)),
+                                           CLIENT_SEND_TIMEOUT_S)
+                except asyncio.CancelledError:
+                    # A backpressured client must not hold the next publisher too.
+                    self._disconnect_cancelled_client(client)
+                    self.pending_committed[0] = (event, clients[1:])
+                    raise
+                except asyncio.TimeoutError:
+                    self._disconnect_cancelled_client(client)
                 except Exception:
                     dead.append(client)
+                clients = clients[1:]
+                self.pending_committed[0] = (event, clients)
+            self.pending_committed.popleft()
             for client in dead:
                 self.clients.discard(client)
-            self.pi_interpreter.schedule(event)
+            if delivered is None:
+                self.pi_interpreter.schedule(event)
+            else:
+                delivered.append(event)
+
+    def _disconnect_cancelled_client(self, client) -> None:
+        self.clients.discard(client)
+        close = getattr(client, "close", None)
+        if close is None:
+            return
+
+        async def close_socket():
+            # Close independently of the cancelled sender, with a bounded network
+            # wait. The browser reconnects and replays the committed sequence.
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(close(code=1012), 1.0)
+
+        closing = getattr(self, "client_close_tasks", None)
+        if closing is None:
+            closing = self.client_close_tasks = set()
+        task = asyncio.create_task(close_socket())
+        closing.add(task)
+        task.add_done_callback(closing.discard)
+
+    def _schedule_committed_events(self) -> None:
+        prior = getattr(self, "committed_sender", None)
+        if prior is not None and not prior.done():
+            return
+        task = self.committed_sender = asyncio.create_task(self._send_committed_event())
+
+        def finished(sender):
+            if not sender.cancelled() and (exc := sender.exception()) is not None:
+                log.error("committed event delivery failed: %s", exc)
+
+        task.add_done_callback(finished)
 
     def result_map(self, rid: str) -> SavedResults:
         return SavedResults(self, rid)
@@ -1477,6 +1818,21 @@ class Hub:
                                                 "approval_id": approval_id, "decided_at": time.time()}
             self.save_request(rid)
 
+    async def _arecord_resume_cp1(self, card: dict, approval_id: str, note: str = "") -> None:
+        """An approved resume card that showed the plan is the PI's CP1 answer for that plan hash, once (#654)."""
+        rid = card.get("request_id")
+        target = (card.get("detail") or {}).get("cp1_target_sha256")
+        if not target or rid not in self.requests:
+            return
+        def update(req):
+            plan = req.get("plan")
+            if isinstance(plan, dict) and plan_sha256(plan) == target:
+                req["resume_cp1"] = {"approved": True, "target_sha256": target, "note": note or "",
+                                     "approval_id": approval_id, "decided_at": time.time()}
+        await self.aupdate_request(rid, update)
+
+
+
     def _attach_resume_plans(self) -> None:
         """Startup recovery opens resume cards before the orchestrator exists; give them the plan afterwards (#654)."""
         for aid, entry in list(self.approvals.items()):
@@ -1526,6 +1882,36 @@ class Hub:
             closed.append(aid)
         if closed and loop is not None:
             loop.create_task(self._send_committed_event())
+        return closed
+
+    async def aretire_resume_cards(self, rid: str, note: str) -> list[str]:
+        async with self.event_lock, self._request_lock(rid):
+            return await self._aretire_resume_cards_locked(rid, note)
+
+    async def _aretire_resume_cards_locked(self, rid: str, note: str) -> list[str]:
+        closed, cancelled = [], False
+        for aid, entry in list(self.approvals.items()):
+            card = copy.deepcopy(entry["approval"])
+            if card.get("kind") != "resume" or card.get("request_id") != rid:
+                continue
+            _, interrupted = await self._publication_write(self.store.adelete("approval", aid))
+            cancelled = cancelled or interrupted
+            self._cancel_resume_timer(aid)
+            self.approvals.pop(aid, None)
+            answer = {"approval": card, "origin": None, "approved": False, "note": note,
+                      "state": "expired", "decided_at": time.time()}
+            _, interrupted = await self._publication_write(self.store.aput("approval_decision", aid, answer))
+            cancelled = cancelled or interrupted
+            event, interrupted = await self._publication_write(self.store.aappend_event(
+                {"type": "approval.expired", "ts": time.time(), "request_id": rid, "data": {"id": aid, "note": note}},
+                self.s.gateway.event_buffer))
+            cancelled = cancelled or interrupted
+            self._record_published_event(event)
+            self._queue_committed_event(event)
+            self._schedule_committed_events()
+            closed.append(aid)
+        if cancelled:
+            raise asyncio.CancelledError
         return closed
 
     def _resume_deadline(self, approval: dict) -> float:
@@ -1581,7 +1967,7 @@ class Hub:
         if req is not None and req.get("status") == "interrupted":
             self._restore_unstarted_continuation(rid, req)
             req.update(status="failed", outcome="resume_timed_out", error=note, finished_at=time.time())
-            self.schedule_terminal(rid, "request.failed", {"error": note})
+            (await self.aschedule_terminal(rid, "request.failed", {"error": note}))
         return True
 
     async def expire_stale_resume_cards(self) -> None:
@@ -1595,6 +1981,14 @@ class Hub:
 
         pending = pending_receipt_agents(self.requests[rid], self)
         return self._resume_agents(rid) | pending
+
+    async def aresume_agents(self, rid: str) -> set[str]:
+        from ..recruit.planning import apending_receipt_agents
+
+        pending = await apending_receipt_agents(self.requests[rid], self)
+        return self._resume_agents(rid) | pending
+
+
 
     def _resume_agents(self, rid: str) -> set[str]:
         req = self.requests[rid]
@@ -1661,8 +2055,8 @@ class Hub:
                 raise ValueError("선택한 CSO 모델이 더 이상 허용되지 않습니다.")
         except ValueError as exc:
             req.update(status="failed", error=str(exc), finished_at=time.time())
-            self.save_request(rid)
-            self.schedule_terminal(rid, "request.failed", {"error": req["error"]})
+            await self.asave_request(rid)
+            (await self.aschedule_terminal(rid, "request.failed", {"error": req["error"]}))
             return
         await self._set_status(rid, "waiting_for_runner")
         deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
@@ -1670,17 +2064,17 @@ class Hub:
         while True:
             if req.get("status") == "cancelled":
                 return
-            missing = {aid for aid in self.resume_agents(rid)
+            missing = {aid for aid in (await self.aresume_agents(rid))
                        if self.agent_runner.get(aid) not in self.runners}
             if req.get("recruit_contract_failure"):
                 error = "계획에 배정된 파견직 계약이 종료되었습니다: " + ", ".join(req["recruit_contract_failure"])
                 req.update(status="failed", outcome="recruit_contract_ended", error=error, finished_at=time.time())
-                self.save_request(rid)
+                await self.asave_request(rid)
                 for aid, entry in list(self.approvals.items()):
                     card = entry["approval"]
                     if card.get("request_id") == rid and card.get("kind") == "resume":
                         await self.close_approval(aid, error)
-                self.schedule_terminal(rid, "request.failed", {"error": error})
+                (await self.aschedule_terminal(rid, "request.failed", {"error": error}))
                 return
             if not missing:
                 if continuation_retry:
@@ -1693,12 +2087,12 @@ class Hub:
                             raise ValueError("이어 가기 단계가 이미 전송되어 복구 선택을 적용하지 않았습니다.")
                     except ValueError as exc:
                         req.update(status="failed", error=str(exc), finished_at=time.time())
-                        self.save_request(rid)
-                        self.schedule_terminal(rid, "request.failed", {"error": req["error"]})
+                        await self.asave_request(rid)
+                        (await self.aschedule_terminal(rid, "request.failed", {"error": req["error"]}))
                         return
                 await self._set_status(rid, "running")
                 await self.publish({"type": "request.resumed", "ts": time.time(), "request_id": rid,
-                                    "data": {"agents": sorted(self.resume_agents(rid))}})
+                                    "data": {"agents": sorted((await self.aresume_agents(rid)))}})
                 self.recovery_started[rid] = time.time()
                 self.recovery_steps.add(rid)
                 try:
@@ -1757,6 +2151,42 @@ class Hub:
         self._session_state_changed()
         self.result_storage.resume_interrupted()
 
+    async def aregister_runner(self, runner_id: str, ws: WebSocket, agents: list[dict],
+                        incarnation: str | None = None, capabilities: dict | None = None,
+                        process: str | None = None) -> None:
+        old = self.runners.get(runner_id)
+        if old is not None and old is not ws and hasattr(old, "close"):
+            async def close_old() -> None:
+                try:
+                    await old.close(code=1000)
+                except RuntimeError:  # it may already be closed while the replacement connects
+                    pass
+            asyncio.get_running_loop().create_task(close_old())
+        if incarnation:
+            self.store.runner_incarnation(runner_id, incarnation)
+        self.runners[runner_id] = ws
+        started = self.recruits_running.get(runner_id) or {}
+        # unregister_runner drops runner_incarnations on every disconnect, so compare with the process that started them.
+        # The incarnation survives a restart, so the process id decides (#521); an entry started by a runner that sent
+        # none (None == None) falls to the incarnation rule, as for cards.
+        if (("process" in started and started["process"] != process) or
+                (incarnation and started.get("incarnation") and started["incarnation"] != incarnation)):
+            self.recruits_running.pop(runner_id, None)  # a new runner process: the old one's recruitments died with it
+        self.runner_incarnations[runner_id] = incarnation
+        self.runner_processes[runner_id] = process
+        self.runner_locks.setdefault(runner_id, asyncio.Lock())
+        self.set_roster(runner_id, agents, capabilities)
+        hosted_agents = {aid for aid, a in self.effective_roster().items() if a["runner_id"] == runner_id}
+        for tid, entry in self.store.all("task").items():
+            if (not entry.get("completed") and
+                    (entry.get("payload") or {}).get("agent_id") in hosted_agents and
+                    not self._same_runner_generation(entry, runner_id, incarnation)):
+                (await self._aabandon_previous_generation(tid, entry))
+        self._session_state_changed()
+        self.result_storage.resume_interrupted()
+
+
+
     def _record_task_cost(self, rid: str | None, tid: str, result: TaskResult, *,
                           outcome_unknown: bool = False) -> None:
         """Count a task's cost on its request once (#270).
@@ -1804,6 +2234,50 @@ class Hub:
         req["usage"] = totals
         self.save_request(rid)
 
+    async def _arecord_task_cost(self, rid: str | None, tid: str, result: TaskResult, *,
+                                 outcome_unknown: bool = False) -> None:
+        if rid not in self.requests or not tid:
+            return
+        def update(req):
+            costs = req.setdefault("cost_by_task", {})
+            if tid in costs:
+                return
+            agent = self.agents.get(result.agent_id)
+            item = outcome_unknown_item(result, agent) if outcome_unknown else task_cost_item(result, agent)
+            store = getattr(self, "store", None)
+            task_entry = store.get("task", tid) if store is not None else None
+            task_entry = task_entry or {}
+            if task_entry.get("step_id"):
+                item["step_id"] = str(task_entry["step_id"])
+            if outcome_unknown:
+                # A call the gateway gave up on has no runner provenance: name the engine/model it was dispatched with
+                # (a task's own agent_overrides), not the staff member's default (#942).
+                override = (((task_entry.get("payload") or {}).get("meta") or {}).get("agent_overrides") or {})
+                for key in ("engine", "model"):
+                    if isinstance(override.get(key), str) and override[key]:
+                        item[key] = override[key]
+            item["recorded_at"] = time.time()
+            amount = float(item["usd"]) if item["status"] != "unknown" else 0.0
+            costs[tid] = amount if item["status"] != "unknown" else None
+            req.setdefault("cost_items", {})[tid] = item
+            req["cost_usd"] = float(req.get("cost_usd") or 0) + amount
+            req["cost_known"] = req.get("cost_known", True) and item["status"] != "unknown"
+            summary = request_cost_summary(req)
+            if summary is None:
+                req.pop("cost_summary", None)
+            else:
+                req["cost_summary"] = summary
+            req["usage_known"] = req.get("usage_known", True) and result.usage_known and not outcome_unknown
+            req.setdefault("usage_by_task", {})[tid] = result.usage
+            totals: dict[str, int] = {}
+            for usage in req["usage_by_task"].values():
+                for key, count in usage.items():
+                    totals[key] = totals.get(key, 0) + count
+            req["usage"] = totals
+        await self.aupdate_request(rid, update)
+
+
+
     def _abandon_previous_generation(self, tid: str, entry: dict) -> TaskResult:
         agent_id = (entry.get("payload") or {}).get("agent_id") or "unknown"
         result = TaskResult(task_id=tid, agent_id=agent_id, ok=False,
@@ -1818,6 +2292,23 @@ class Hub:
             future.set_result(result)
         self._session_state_changed()
         return result
+
+    async def _aabandon_previous_generation(self, tid: str, entry: dict) -> TaskResult:
+        agent_id = (entry.get("payload") or {}).get("agent_id") or "unknown"
+        result = TaskResult(task_id=tid, agent_id=agent_id, ok=False,
+                            error="runner generation changed; prior task delivery or outcome unknown; "
+                                  "manual recovery required")
+        await self.store.aput("task", tid, {**entry, "completed": True, "abandoned": True,
+                                     "result": result.model_dump(mode="json")})
+        self._refresh_roster()
+        (await self._arecord_task_cost(entry.get("request_id"), tid, result, outcome_unknown=True))
+        future = self.futures.get(tid)
+        if future and not future.done():
+            future.set_result(result)
+        self._session_state_changed()
+        return result
+
+
 
     def _orphan_reason(self, entry: dict, runner_id: str, incarnation: str | None, hosted: set[str],
                        process: str | None = None) -> str | None:
@@ -2237,13 +2728,13 @@ class Hub:
             req.setdefault("pi_waits", {})[key] = {"kind": "halt", "since": time.time(),
                                                    "deadline_at": time.time() + bound, "task_id": tid,
                                                    "step_id": step_id}
-        await self.publish({"type": "request.step_halted", "ts": time.time(), "request_id": rid, "task_id": tid,
-                            "agent_id": result.agent_id,
-                            "data": {"step_id": step_id, "session_id": result.session_id}})
-        if parked:
-            await self._publish_hold_status(rid)
         resumed, reason = False, "timed_out"
         try:
+            await self.publish({"type": "request.step_halted", "ts": time.time(), "request_id": rid, "task_id": tid,
+                                "agent_id": result.agent_id,
+                                "data": {"step_id": step_id, "session_id": result.session_id}})
+            if parked:
+                await self._publish_hold_status(rid)
             await asyncio.wait_for(event.wait(), bound)
             resumed = True
         except asyncio.TimeoutError:
@@ -2496,35 +2987,81 @@ class Hub:
                 *agent.get("mcp", [])]
 
     # ----- events -----
+    def _queue_committed_event(self, event: dict) -> None:
+        queued = sorted([*self.pending_committed, (event, tuple(self.clients))], key=lambda item: item[0]["seq"])
+        self.pending_committed.clear()
+        self.pending_committed.extend(queued)
+
+    def _record_published_event(self, ev: dict) -> None:
+        # A synchronous checkpoint can commit a higher sequence while publish
+        # awaits its writer. Keep the newest buffer entries in database order.
+        if not self.events or self.events[-1]["seq"] < ev["seq"]:
+            self.events.append(ev)
+            return
+        ordered = sorted([*self.events, ev], key=lambda entry: entry["seq"])
+        self.events.clear()
+        self.events.extend(ordered)
+
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
+        ev = copy.deepcopy(ev)
         internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
         if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
             ev = {**ev, "data": {**ev.get("data", {}), "level": "debug"}}
         if ev.get('type') == 'approval.requested':
             ev = {**ev, 'data': with_approval_copy(ev.get('data') or {})}
-        async with self.event_lock:
-            await self._flush_committed_events()
-            durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
-                              ev.get("type") in ProjectReporter.HANDLED)
-            ev = self.store.append_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
-                                         reporter_delivery=durable_report)
-            self.events.append(ev)
-            dead = []
-            for c in list(self.clients):
+        cancelled = False
+        delivered = []
+        try:
+            async with self.event_lock:
+                await self._flush_committed_events()
+                durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
+                                  ev.get("type") in ProjectReporter.HANDLED)
+                ev, cancelled = await self._publication_write(self.store.aappend_event(
+                    ev, self.s.gateway.event_buffer, runner_id, runner_seq, reporter_delivery=durable_report))
+                self._record_published_event(ev)
+                self._queue_committed_event(ev)
                 try:
-                    await c.send_text(json.dumps(ev, ensure_ascii=False, default=str))
-                except Exception:
-                    dead.append(c)
-            for c in dead:
-                self.clients.discard(c)
-            rid = ev.get("request_id")
-            if rid in self.requests:
-                self.save_request(rid)
+                    if not cancelled:
+                        await self._flush_committed_events(delivered)
+                except asyncio.CancelledError:
+                    cancelled = True
+                rid = ev.get("request_id")
+                if rid in self.requests:
+                    try:
+                        await self.asave_request(rid)
+                    except asyncio.CancelledError:
+                        cancelled = True
+        finally:
+            if self.pending_committed:
+                self._schedule_committed_events()
         if self.reporter.enabled():
             self.reporter.submit(ev)
-        self.pi_interpreter.schedule(ev)
+        for event in delivered:
+            self.pi_interpreter.schedule(event)
+        if cancelled:
+            raise asyncio.CancelledError
         if ev.get("type") in ("request.step_done", "request.step_skipped") and ev.get("request_id"):
             await self._close_step_controls(ev["request_id"], (ev.get("data") or {}).get("step_id"))
+
+    @staticmethod
+    async def _publication_write(write):
+        """Settle a durable operation and its required cleanup; preserve errors on cancel."""
+        cancelled = False
+        with anyio.CancelScope(shield=True):
+            pending = asyncio.create_task(write)
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    cancelled = True
+            result = pending.result()
+        # Level cancellation may have been hidden throughout the shield, without
+        # injecting CancelledError into the commit wait (including no-client events).
+        try:
+            await anyio.lowlevel.checkpoint_if_cancelled()
+        except asyncio.CancelledError:
+            cancelled = True
+        return result, cancelled
 
     async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                 incarnation: str | None = None) -> None:
@@ -2682,10 +3219,6 @@ class Hub:
                 result = result.model_copy(update={"pipeline_submission": None})
                 msg = {**msg, "data": result.model_dump(mode="json")}
             if task:
-                # A reported result supersedes an abandonment: the task did finish (#112).
-                self.store.put("task", tid, {**{k: v for k, v in task.items() if k != "abandoned"},
-                                              "completed": True, "result": result.model_dump(mode="json")})
-                self._refresh_roster()
                 payload = task.get("payload") or {}
                 meta = payload.get("meta") or {}
                 request = self.requests.get(task.get("request_id") or "")
@@ -2695,8 +3228,7 @@ class Hub:
                          (meta.get("workdir") and meta.get("workdir") == request.get("cso_workdir")))):
                     request["cso_session_id"] = result.session_id
                     request["cso_workdir"] = result.workdir or meta.get("workdir") or request.get("cso_workdir")
-                    self.save_request(task["request_id"])
-                self._session_state_changed()
+                    await self.asave_request(task["request_id"])
             if task and task.get("request_id") in self.requests and (task.get("step_id") or task.get("kind") == "direct"):
                 rid = task["request_id"]
                 sid = task.get("step_id") or "direct"
@@ -2704,7 +3236,14 @@ class Hub:
                                {"task_id": tid, "attempt": task.get("attempt", 1),
                                 "revision": task.get("revision", 0),
                                 "result": result.model_dump(mode="json")})
-            self._record_task_cost(rid, tid, result)
+            (await self._arecord_task_cost(rid, tid, result))
+            if task:
+                # Cancel waits on completed: publish it only after the cost snapshot commits.
+                # A reported result also supersedes an abandonment (#112).
+                self.store.put("task", tid, {**{k: v for k, v in task.items() if k != "abandoned"},
+                                              "completed": True, "result": result.model_dump(mode="json")})
+                self._refresh_roster()
+                self._session_state_changed()
             fut = self.futures.pop(msg.get("task_id") or "", None)
             if fut and not fut.done():
                 fut.set_result(result)
@@ -2854,7 +3393,7 @@ class Hub:
                 if not self._same_runner_generation(entry, current_runner,
                                                     self.runner_incarnations.get(current_runner)):
                     self.recovered_tasks.add(tid)
-                    return self._abandon_previous_generation(tid, entry)
+                    return (await self._aabandon_previous_generation(tid, entry))
                 return await self._await_prior_task(tid, entry, task.agent_id, task.request_id, sid)
         paused = await self._wait_step_resumed(task)  # the PI paused this step: its next turn waits (#59 ①)
         if paused is not None:
@@ -2923,7 +3462,7 @@ class Hub:
                     self._release_steers(task)
                     result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
                                         error="task delivery uncertain; manual recovery required")
-                    self._record_task_cost(task.request_id, task.id, result, outcome_unknown=True)
+                    (await self._arecord_task_cost(task.request_id, task.id, result, outcome_unknown=True))
                     return result
                 if fut.done():
                     break
@@ -2939,7 +3478,7 @@ class Hub:
                     result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
                                         error=f"{refused.error + '; ' if refused else ''}"
                                               f"delivery to runner {rid} uncertain; manual recovery required")
-                    self._record_task_cost(task.request_id, task.id, result, outcome_unknown=True)
+                    (await self._arecord_task_cost(task.request_id, task.id, result, outcome_unknown=True))
                     return result
                 try:
                     await self.send_runner(target, {"type": "task.dispatch", "task": task.model_dump(mode="json")})
@@ -2954,9 +3493,9 @@ class Hub:
             self._release_steers(task)
             # The frame may already have reached the runner: an unaccounted cost, never a silent $0 (#270). The CSO's
             # pre-dispatch hold (#862) settles on this record instead of outliving the deleted task entry.
-            self._record_task_cost(task.request_id, task.id,
+            (await self._arecord_task_cost(task.request_id, task.id,
                                    TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
-                                              error="task delivery failed; outcome unknown"), outcome_unknown=True)
+                                              error="task delivery failed; outcome unknown"), outcome_unknown=True))
             self.store.delete("task", task.id)
             raise
         return await fut
@@ -2994,7 +3533,7 @@ class Hub:
                     result = TaskResult(task_id=tid, agent_id=agent_id, ok=False,
                                         error="recovery runner unavailable; manual restart required")
                     # Dispatched before the restart and never answered: the runner may have spent anything (#270).
-                    self._record_task_cost(request_id, tid, result, outcome_unknown=True)
+                    (await self._arecord_task_cost(request_id, tid, result, outcome_unknown=True))
                     return result
                 try:
                     await asyncio.wait_for(asyncio.shield(future), 0.1)
@@ -3269,7 +3808,7 @@ class Hub:
                 entry["answer"] = ask_result(reason="시설팀이 없거나 offline입니다", **{"from": "labhq"})
             self.store.put("ask", ask_id, entry)
         req.setdefault("facilities_diagnoses", {})[key] = ask_id
-        self.save_request(rid)
+        await self.asave_request(rid)
         if entry.get("state") == "resolved":
             return
         ask = AskRequest.model_validate(entry["ask"])
@@ -3345,7 +3884,7 @@ class Hub:
                      "note": decision.get("note") or "", "state": decision.get("state") or "resolved"}
             fixes[step_id] = saved
             self._sync_hold_status(req_state)
-            self.save_request(rid)
+            await self.asave_request(rid)
             return {"approved": bool(decision.get("approved")), **saved}
 
         if saved:
@@ -3380,7 +3919,7 @@ class Hub:
                                   if key in proposal}}
             fixes[step_id] = saved
             req_state["status"] = "waiting_facilities_fix"
-            self.save_request(rid)
+            await self.asave_request(rid)
             await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
                                 "data": approval.model_dump(mode="json")})
 
@@ -3401,7 +3940,7 @@ class Hub:
         saved.update(status=status, approved=bool(answer.get("approved")), note=answer.get("note") or "",
                      state=answer.get("state") or "resolved")
         self._sync_hold_status(req_state)
-        self.save_request(rid)
+        await self.asave_request(rid)
         return {"approved": bool(answer.get("approved")), **saved}
 
     async def record_facilities_fix(self, rid: str, step_id: str, record: dict) -> None:
@@ -3413,7 +3952,7 @@ class Hub:
             status = "succeeded" if record.get("ok") else "failed"
         entry.update(status=status, execution=record)
         self._sync_hold_status(req)
-        self.save_request(rid)
+        await self.asave_request(rid)
         await self.publish({"type": "request.facilities_fix", "ts": time.time(), "request_id": rid,
                             "data": {"step_id": step_id, "ok": record.get("ok"), "status": status,
                                      "fix_id": record.get("fix_id"), "action": record.get("action"),
@@ -3450,7 +3989,7 @@ class Hub:
         self.approvals[card.id] = {"approval": card.model_dump(mode="json"), "origin": None, "future": None}
         self.save_approval(card.id)
         req["model_refusal_approval_id"] = card.id
-        self.save_request(rid)
+        await self.asave_request(rid)
         await self.publish({"type": "approval.requested", "request_id": rid, "data": card.model_dump(mode="json")})
 
     def _model_refusal_request(self, rid: str, decision: dict | None, *,
@@ -3509,6 +4048,64 @@ class Hub:
                          budget_usd=old.get("requested_budget_usd", old.get("budget_usd")))
         return self.create_request(body, extra={"model_refusal_from": rid})
 
+    async def _amodel_refusal_request(self, rid: str, decision: dict | None, *,
+                               approval_id: str | None = None, continuation: dict | None = None) -> str:
+        old = self.requests[rid]
+        retry = ((old.get("research_contract") or {}).get("continuation") or {}).get("refusal_retry") or {}
+        if approval_id and retry.get("approval_id") == approval_id:
+            if (retry.get("identity") != continuation or retry.get("decision") != decision
+                    or old.get("status") not in {"waiting_for_runner", "running", "interrupted"}
+                    or not research_continuation.refusal_retry_pending(old)
+                    or self._round_dispatched(rid, old)
+                    or old.get("cso_model") not in self.s.orchestrator.cso_models):
+                raise ValueError("이어 가기 복구 선택이 바뀌었거나 이미 끝났습니다.")
+            return rid  # Saved before card resolution: replay never allocates another round/request.
+        context = self._continuation_refusal_context(rid)
+        if old.get("status") != "failed" or (old.get("outcome") != "model_refused" and context is None):
+            raise ValueError("모델 거부로 끝난 요청에서만 새 계획을 선택할 수 있습니다.")
+        if context is not None and (context != continuation or not approval_id
+                                    or old.get("model_refusal_approval_id") != approval_id):
+            raise ValueError("이어 가기 복구 카드의 요청이나 계획이 바뀌었습니다.")
+        if continuation is not None and context is None:
+            raise ValueError("이어 가기 복구 카드가 더 이상 현재 계획을 가리키지 않습니다.")
+        if not isinstance(decision, dict):
+            raise ValueError("다른 CSO 모델 또는 수정한 요청을 명시적으로 선택해 주세요.")
+        action = decision.get("action")
+        text, model = old["text"], old.get("cso_model")
+        if action == "model" and set(decision) == {"action", "cso_model"}:
+            model = decision["cso_model"]
+            current = old.get("cso_model") or (self.agents.get(self.s.orchestrator.cso_agent) or {}).get("model")
+            if not isinstance(model, str) or model not in self.s.orchestrator.cso_models or model == current:
+                raise ValueError("허용된 다른 CSO 모델을 선택해 주세요.")
+        elif action == "edit" and set(decision) == {"action", "text"}:
+            text = decision["text"]
+            if not isinstance(text, str) or not text.strip() or len(text) > 4000 or text.strip() == old["text"].strip():
+                raise ValueError("수정한 요청을 1~4000자로 적어 주세요.")
+            text = text.strip()
+        else:
+            raise ValueError("알 수 없는 계획 거부 후속 선택입니다.")
+        if context is not None and action == "model":
+            research_continuation.prepare_refusal_retry(old, context, decision, approval_id)
+            (await self.asave_request(rid))
+            return rid
+        # A crash after creation but before recording the answer must not open a second request.
+        found = next((key for key, req in self.requests.items() if req.get("model_refusal_from") == rid), None)
+        if found:
+            return found
+        fields = {key: old[key] for key in ("mode", "work_kind", "scope_status", "project_dirs",
+                                          "project_id", "route") if key in old}
+        # Stored provenance is not input: revalidate only the public Reference fields.
+        fields["references"] = [{key: ref[key] for key in ("kind", "value", "note") if key in ref}
+                                for ref in old.get("references") or []]
+        # Provenance such as a bench case_id stays with the new request (#779). revised_from is CP1 lineage: the CP1
+        # 수정 요청 lookup and stored results read it, and this request links back through model_refusal_from instead.
+        fields["meta"] = {key: value for key, value in (old.get("meta") or {}).items() if key != "revised_from"}
+        body = RequestIn(**fields, text=text, cso_model=model, default_references=False,
+                         budget_usd=old.get("requested_budget_usd", old.get("budget_usd")))
+        return (await self.acreate_request(body, extra={"model_refusal_from": rid}))
+
+
+
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "",
                                choice: str | None = None, storage: dict | None = None,
                                model_refusal: dict | None = None) -> None:
@@ -3526,8 +4123,8 @@ class Hub:
         pending = self.approvals.get(approval_id)
         retry_id = None
         if pending and pending["approval"].get("kind") == "model_refused" and approved:
-            retry_id = self._model_refusal_request(pending["approval"]["request_id"], model_refusal,
-                approval_id=approval_id, continuation=(pending["approval"].get("detail") or {}).get("continuation"))
+            retry_id = (await self._amodel_refusal_request(pending["approval"]["request_id"], model_refusal,
+                approval_id=approval_id, continuation=(pending["approval"].get("detail") or {}).get("continuation")))
         if pending and approved and pending["approval"].get("kind") == "result_publish":
             req = self.requests.get(pending["approval"].get("request_id")) or {}
             if not req.get("pi_reviewed_at"):
@@ -3536,7 +4133,7 @@ class Hub:
             rid = pending["approval"]["request_id"]
             detail = pending["approval"]["detail"]
             storage = await self.result_storage.select(rid, storage if approved and storage else {"mode": "local"},
-                late=bool(detail.get("late_storage")), end=bool(detail.get("storage_end")))
+                late=bool(detail.get("late_storage")), end=bool(detail.get("storage_end")), approval_id=approval_id)
             await self.publish({"type": "request.storage", "request_id": rid, "data": {"result_storage": storage}})
         self._cancel_facilities_timeout(approval_id)
         self._cancel_resume_timer(approval_id)
@@ -3551,7 +4148,7 @@ class Hub:
         if storage is not None:
             chosen["storage"] = storage
         if approved and entry["approval"].get("kind") == "resume":
-            self._record_resume_cp1(entry["approval"], approval_id, note)  # before the card is resolved (#654 review)
+            (await self._arecord_resume_cp1(entry["approval"], approval_id, note))  # before the card is resolved (#654 review)
         self.store.delete("approval", approval_id)
         self.store.put("approval_decision", approval_id,
                        {"approval": entry["approval"], "origin": entry["origin"], "approved": approved,
@@ -3577,7 +4174,7 @@ class Hub:
             if saved is not None:
                 saved.update(status="approved" if approved else "declined", approved=approved, note=note)
                 self._sync_hold_status(self.requests[rid])
-                self.save_request(rid)
+                await self.asave_request(rid)
             if facilities_hold:
                 self.track_request(rid, self.resume_when_ready(rid))
         a = entry["approval"]
@@ -3590,7 +4187,7 @@ class Hub:
             rid = a["request_id"]
             self._restore_unstarted_continuation(rid, self.requests[rid])
             self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
-            self.schedule_terminal(rid, "request.failed", {"error": "resume declined"})
+            (await self.aschedule_terminal(rid, "request.failed", {"error": "resume declined"}))
         if a.get("kind") == "pipeline_contribute":
             await self.publish({"type": "pipeline.ready", "ts": time.time(), "task_id": a.get("task_id"),
                                 "request_id": a.get("request_id"), "data": {}})
@@ -3664,8 +4261,8 @@ class Hub:
         if status == "cancelled":
             return {"request_id": rid, "status": "cancelled", "already": True,
                     "cancelled_tasks": list(req.get("cancelled_tasks") or [])}
-        if status == "review_pending":
-            return {**self._final_review(rid, "cancelled"), "cancelled_tasks": []}
+        if not active_only and status == "review_pending":
+            return {**(await self._afinal_review(rid, "cancelled")), "cancelled_tasks": []}
         if is_terminal_request(status):
             raise ValueError(f"이미 끝난 요청입니다({status})")
         self._restore_unstarted_continuation(rid, req)
@@ -3682,7 +4279,6 @@ class Hub:
         for fix in (req.get("facilities_fixes") or {}).values():
             if fix.get("status") in {"waiting", "approved"}:
                 fix["status"] = "cancelled"
-        self.save_request(rid)
         orchestration = self.request_tasks.pop(rid, None)
         unwinding = []
         if orchestration is not None and orchestration is not asyncio.current_task() and not orchestration.done():
@@ -3691,39 +4287,48 @@ class Hub:
         stop_steps = getattr(self.orchestrator, "cancel_steps", None)
         if stop_steps is not None:
             unwinding.extend(stop_steps(rid))  # parallel steps and the briefing run beside it
-        cancelled = []
-        for tid, entry in self.store.all("task").items():
-            if entry.get("request_id") != rid:
-                continue
-            waiter = self.jobs_waiters.pop(tid, None)  # a step parked on HPC jobs stops waiting for them
-            if waiter is not None and not waiter.done():
-                waiter.cancel()
-            if (not entry.get("completed") or entry.get("abandoned")) and await self.cancel_task(tid):
-                cancelled.append(tid)
-            elif entry.get("completed"):
-                # A step parked on its jobs has no running task to cancel: its runner ends the local jobs it started,
-                # so no process outlives the request (#675).
-                runner_id = self.task_runner.get(tid) or entry.get("runner_id")
-                if runner_id:
-                    # Kept until that runner confirms (task.jobs_cancelled): a runner that is away or restarting
-                    # gets it again when it reconnects (flush_task_cancels).
-                    self.store.put("jobs_cancel", tid, {"runner_id": runner_id, "requested_at": time.time()})
-                    try:
-                        await self.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": tid})
-                    except RunnerUnavailable:
-                        pass
-        req["cancelled_tasks"] = cancelled
-        self.save_request(rid)  # a restart before the terminal record still reports these
-        for aid, entry in list(self.approvals.items()):
-            if entry["approval"].get("request_id") == rid:
-                await self.close_approval(aid, "요청 취소로 닫힘")
-        for engine in sorted({str(entry.get("engine") or "") for entry in login.values()}):
-            await self.login_recovered(engine, reason="request cancelled")
-        if unwinding:
-            await asyncio.wait(unwinding, timeout=5)  # let them unwind before the terminal record
-        await self._await_cancelled_results(rid, cancelled)
-        self._finish_cancel(rid)
-        return {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": cancelled}
+        # The quota consumers above are cancelled before this first yield.
+        async def finish():
+            # Finish runner stops and bookkeeping before propagating caller cancellation.
+            await self.asave_request(rid)
+            cancelled = []
+            for tid, entry in self.store.all("task").items():
+                if entry.get("request_id") != rid:
+                    continue
+                waiter = self.jobs_waiters.pop(tid, None)  # a step parked on HPC jobs stops waiting for them
+                if waiter is not None and not waiter.done():
+                    waiter.cancel()
+                if (not entry.get("completed") or entry.get("abandoned")) and await self.cancel_task(tid):
+                    cancelled.append(tid)
+                elif entry.get("completed"):
+                    # A step parked on its jobs has no running task to cancel: its runner ends the local jobs it started,
+                    # so no process outlives the request (#675).
+                    runner_id = self.task_runner.get(tid) or entry.get("runner_id")
+                    if runner_id:
+                        # Kept until that runner confirms (task.jobs_cancelled): a runner that is away or restarting
+                        # gets it again when it reconnects (flush_task_cancels).
+                        self.store.put("jobs_cancel", tid, {"runner_id": runner_id, "requested_at": time.time()})
+                        try:
+                            await self.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": tid})
+                        except RunnerUnavailable:
+                            pass
+            req["cancelled_tasks"] = cancelled
+            await self.asave_request(rid)  # a restart before the terminal record still reports these
+            for aid, entry in list(self.approvals.items()):
+                if entry["approval"].get("request_id") == rid:
+                    await self.close_approval(aid, "요청 취소로 닫힘")
+            for engine in sorted({str(entry.get("engine") or "") for entry in login.values()}):
+                await self.login_recovered(engine, reason="request cancelled")
+            if unwinding:
+                await asyncio.wait(unwinding, timeout=5)  # let them unwind before the terminal record
+            await self._await_cancelled_results(rid, cancelled)
+            await self._afinish_cancel(rid)
+            return {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": cancelled}
+
+        result, cancelled = await self._publication_write(finish())
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
 
     def _finish_cancel(self, rid: str) -> None:
         """Write a cancelled request's report and terminal record. ``cancelling`` leaves in that same commit."""
@@ -3749,6 +4354,32 @@ class Hub:
                 "cost_summary": req.get("cost_summary"), "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}
         self.schedule_terminal(rid, "request.completed", data)
+
+    async def _afinish_cancel(self, rid: str) -> None:
+        """Write a cancelled request's report and terminal record. ``cancelling`` leaves in that same commit."""
+        before = copy.deepcopy(self.requests[rid])
+        req = copy.deepcopy(before)
+        pending = req.pop("cancelling", None) or {}
+        report, appendix = self._cancel_report(req, list(req.get("cancelled_tasks") or []),
+                                               dict.fromkeys(pending.get("quota_steps") or []))
+        from ..report_format import split_appendix
+        from ..report_contract import (available_result_files, build_report_package, reader_markdown,
+                                       validate_report_package, with_report_front)
+        appendix, execution = split_appendix(appendix)
+        req.update(report=report, report_appendix=appendix, execution_record=execution)
+        package = build_report_package(req, report, dict(req.get("results") or {}))
+        req["report_package"] = package.to_dict()
+        req["report_contract_check"] = validate_report_package(
+            package,
+            available_files=available_result_files(dict(req.get("results") or {})),
+            reader_documents={"web·bundle·PDF": reader_markdown(with_report_front(report, package))},
+        )
+        data = {"ok": False, "status": "cancelled", "error": req["error"],
+                "report_package": req["report_package"], **_terminal_reports(rid, report, appendix, execution),
+                "cost_usd": req.get("cost_usd", 0), "cost_known": req.get("cost_known", True),
+                "cost_summary": req.get("cost_summary"), "usage": req.get("usage", {}),
+                "usage_known": req.get("usage_known", True)}
+        await self.aschedule_terminal(rid, "request.completed", data, request=req, before=before)
 
     def _round_dispatched(self, rid: str, req: dict) -> bool:
         """Whether a step task of the request's current research round is in the task ledger (#90).
@@ -3784,7 +4415,7 @@ class Hub:
         for rid, req in list(self.requests.items()):
             if req.get("status") == "cancelled" and req.get("cancelling") is not None:
                 await self._await_cancelled_results(rid, list(req.get("cancelled_tasks") or []), wait_s=0)
-                self._finish_cancel(rid)
+                await self._afinish_cancel(rid)
                 finished.append(rid)
         return finished
 
@@ -3802,9 +4433,9 @@ class Hub:
         for tid in silent():
             entry = self.store.get("task", tid) or {}
             agent_id = (entry.get("payload") or {}).get("agent_id") or "unknown"
-            self._record_task_cost(rid, tid, TaskResult(task_id=tid, agent_id=agent_id, ok=False,
+            (await self._arecord_task_cost(rid, tid, TaskResult(task_id=tid, agent_id=agent_id, ok=False,
                                                         error="request cancelled before the turn reported"),
-                                   outcome_unknown=True)
+                                   outcome_unknown=True))
 
     @staticmethod
     def _cancel_report(req: dict, cancelled: list[str], quota: dict) -> tuple[str, str]:
@@ -3882,6 +4513,53 @@ class Hub:
         self.track_request(rid, self._start_request(rid))
         return rid
 
+    async def acreate_request(self, body, extra=None):
+        answer, cancelled = await self._publication_write(self._acreate_request(body, extra))
+        if cancelled:
+            raise asyncio.CancelledError
+        return answer
+
+    async def _acreate_request(self, body: RequestIn, extra: dict[str, Any] | None = None) -> str:
+        """``extra``: request fields saved in the same first write (a CP1 수정 요청's links, plan and answers)."""
+        if body.mode == "direct" and body.route == "team":
+            raise ValueError("route=team cannot be used with direct mode")
+        if body.mode == "direct" and body.cso_model:
+            raise ValueError("cso_model is only valid for orchestrate or plan_only requests")
+        if body.cso_model and body.cso_model not in self.s.orchestrator.cso_models:
+            allowed = ", ".join(self.s.orchestrator.cso_models) or "(none)"
+            raise ValueError(f"cso_model {body.cso_model!r} is not allowed; allowed models: {allowed}")
+        rid = new_id("req")
+        req = {"id": rid, "status": "running", "created_at": time.time(),
+               "cost_known": True, "usage": {}, **body.model_dump(),
+               # The budget the PI asked for; budget_usd may later rise on a budget card (a CP1 수정 요청 carries this).
+               "requested_budget_usd": body.budget_usd, **(extra or {})}
+        proj = self.s.project(body.project_id)
+        if body.project_id and proj is None:
+            raise KeyError(f"unknown project {body.project_id!r}")
+        if proj and proj.local_dir and proj.local_dir not in req["project_dirs"]:
+            req["project_dirs"] = [*req["project_dirs"], proj.local_dir]  # agents work in the project clone
+        # Fixed at creation: a later config edit must not change what a running or resumed request points at.
+        req["references"] = effective_references(body.references, body.default_references, self.s)
+        # A dropped query may be a credential: kept only in this internal store, never in the request record,
+        # snapshot, prompts or reports.
+        originals = [{"value": r.value, "original": r.original} for r in body.references if r.original]
+        req["environment"] = environment_snapshot(self)
+        research = self.s.research
+        intake = classify_intake(body.text, body.work_kind, mode=body.mode)
+        req["research_options"] = {"contract_version": 2, "final_checkpoint": bool(
+            research.enabled and research.evidence_checkpoint and research.final_checkpoint
+            and body.mode == "orchestrate" and intake.work_kind == "research")}
+        self.requests[rid] = req
+        if proj:
+            await self.result_storage.ainherited(rid)
+        if originals:
+            await self.store.aput("reference_original", rid, {"references": originals})
+        (await self.asave_request(rid))
+        self.track_request(rid, self._start_request(rid))
+        return rid
+
+
+
     def revised_request_of(self, rid: str) -> str | None:
         """The request a CP1 수정 요청 of ``rid`` opened, found by meta.revised_from (saved in its first write)."""
         return next((other for other, req in self.requests.items()
@@ -3936,6 +4614,57 @@ class Hub:
             asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
         return new_rid
 
+    async def acreate_revised_request(self, rid: str, note: str) -> str:
+        """CP1 수정 요청: a new research request with the PI's note, the previous plan to revise (``revision_of``), the
+        answers and PI notes already given, the same references, project, requested budget and CSO model. It plans again
+        from the note and asks a new CP1; the old request ends (no step ran). Everything the new request reads is in
+        its first save, and a request already opened for ``rid`` is returned, so a restart never opens a second one.
+        Raises what create_request raises (a removed project or CSO model, a reference no longer allowed)."""
+        old = self.requests[rid]
+        existing = self.revised_request_of(rid)
+        if existing:
+            if old.get("revised_to") != existing:
+                old["revised_to"] = existing
+                (await self.asave_request(rid))
+            if self.result_storage.publish_cards(rid):
+                asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
+            return existing
+        text = (str(old.get("text") or "").rstrip() +
+                f"\n\n[CP1 수정 요청 · {rid}] PI가 이전 계획에 남긴 고칠 점:\n{note.strip()}")
+        # A URL whose query was dropped is rebuilt from its original, so it is cleaned (and flagged) the same way again.
+        originals = {item.get("value"): item.get("original")
+                     for item in (self.store.get("reference_original", rid) or {}).get("references") or []
+                     if item.get("original")}
+        # Only the request's own pointers: the PI's defaults come back through default_references (#36). Plain dicts:
+        # RequestIn re-runs Reference.normalize on an instance, which would clear the original kept above.
+        references = [{"kind": ref["kind"], "note": ref.get("note"),
+                       "value": originals.get(ref["value"], ref["value"]) if ref["kind"] == "url" else ref["value"]}
+                      for ref in old.get("references") or [] if ref.get("source", "request") == "request"]
+        contract = old.get("research_contract") or {}
+        extra: dict[str, Any] = {
+            "revised_from": rid,
+            "revision_of": {"request_id": rid, "plan_sha256": contract.get("plan_sha256"),
+                            "plan": copy.deepcopy(old.get("plan")), "note": note.strip()}}
+        if old.get("clarifications"):  # answered once; not counted against this request's own clarify cards
+            extra["clarifications"] = [{**copy.deepcopy(entry), "inherited": True} for entry in old["clarifications"]]
+        if old.get("pi_notes"):  # notes sent before CP1 shaped the old plan; the latest ones, so a chain stays bounded
+            extra["pi_notes"] = [{**copy.deepcopy(note), "inherited": True} for note in old["pi_notes"][-MAX_PI_NOTES:]]
+        body = RequestIn(text=text, mode=old.get("mode", "orchestrate"), work_kind="research",
+                         scope_status=old.get("scope_status", "in_scope"),
+                         project_dirs=list(old.get("project_dirs") or []), references=references,
+                         default_references=bool(old.get("default_references", True)),
+                         budget_usd=old.get("requested_budget_usd", old.get("budget_usd")),
+                         project_id=old.get("project_id"), cso_model=old.get("cso_model"),
+                         route=old.get("route", "auto"), meta={**(old.get("meta") or {}), "revised_from": rid})
+        new_rid = (await self.acreate_request(body, extra=extra))
+        old["revised_to"] = new_rid
+        (await self.asave_request(rid))
+        if self.result_storage.publish_cards(rid):
+            asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
+        return new_rid
+
+
+
     def start_followup(self, rid: str, text: str) -> dict:
         """Ask a finished request one more question in the same session and workspace (#36). Not a new request."""
         req = self.requests[rid]
@@ -3963,6 +4692,41 @@ class Hub:
         asyncio.get_running_loop().create_task(self.orchestrator.run_followup(rid, entry["id"]))
         return entry
 
+    async def astart_followup(self, rid, text):
+        answer, cancelled = await self._publication_write(self._astart_followup(rid, text))
+        if cancelled:
+            raise asyncio.CancelledError
+        return answer
+
+    async def _astart_followup(self, rid: str, text: str) -> dict:
+        """Ask a finished request one more question in the same session and workspace (#36). Not a new request."""
+        req = self.requests[rid]
+        if not is_terminal_request(req.get("status")):
+            raise ValueError(f"request is {req.get('status')}; ask a follow-up after it finishes")
+        if req.get("status") == "cancelled":  # every turn of a cancelled request is refused, so it could only fail
+            raise ValueError("취소한 요청에는 이어 묻기를 보낼 수 없습니다. 새 요청을 보내세요")
+        if has_active_followup(req):
+            raise ValueError("a follow-up for this request is still running")
+        if req.get("followup_agent_id"):
+            agent = req["followup_agent_id"]
+        elif req.get("mode") == "direct":
+            agent = req.get("agent_id")
+        else:
+            agent = self.s.orchestrator.cso_agent
+        if agent not in self.agents:
+            raise ValueError(f"agent {agent!r} is not on any connected runner")
+        refusal = read_only_refusal(agent, self.agents[agent].get("engine"))
+        if refusal:
+            raise ValueError(refusal)
+        entry = {"id": new_id("fu"), "text": text.strip(), "agent_id": agent, "status": "running",
+                 "asked_at": time.time()}
+        req.setdefault("followups", []).append(entry)
+        (await self.asave_request(rid))
+        asyncio.get_running_loop().create_task(self.orchestrator.run_followup(rid, entry["id"]))
+        return entry
+
+
+
     async def add_note(self, rid: str, text: str) -> dict:
         """Store a PI note for later turns without interrupting the turn already running."""
         req = self.requests[rid]
@@ -3976,7 +4740,7 @@ class Hub:
             raise ValueError(f"메모는 요청마다 {MAX_PI_NOTES}개까지 보낼 수 있습니다")
         entry = {"id": new_id("note"), "text": text.strip(), "at": time.time()}
         notes.append(entry)
-        self.save_request(rid)
+        await self.asave_request(rid)
         await self.publish({"type": "request.note", "ts": entry["at"], "request_id": rid, "data": entry})
         return entry
 
@@ -3995,7 +4759,7 @@ class Hub:
                     # A runner that came back without the agent ends the wait early; that is not a timeout (#521).
                     reason = (self._runner_wait_failure(first) if self._waits_for_runner(probe, first=True)
                               else self._no_runner_hosts(first))
-                    self.orchestrator._finish(rid, reason, {}, ok=False, error=reason)
+                    (await self.orchestrator._finish(rid, reason, {}, ok=False, error=reason))
                 return
             if self.requests[rid].get("status") == "cancelled":
                 return
@@ -4051,6 +4815,7 @@ class Hub:
                                                                   "references", "pi_notes", "route", "route_decision",
                                                                   "bundle_path", "bundle_status", "bundle_grade",
                                                                   "bundle_grade_reasons", "bundle_warning", "result_storage")},
+                          "runner_waits": r.get("runner_waits") or {},
                           **({"semantic_devices": r["semantic_devices"]} if r.get("semantic_devices") else {}),
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
@@ -4388,8 +5153,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             hello = json.loads(await ws.receive_text())
             runner_id = hello["runner_id"]
             incarnation, process = hello.get("incarnation"), hello.get("process")
-            hub.register_runner(runner_id, ws, hello.get("agents", []), incarnation,
-                                hello.get("capabilities"), process)
+            (await hub.aregister_runner(runner_id, ws, hello.get("agents", []), incarnation,
+                                hello.get("capabilities"), process))
             await hub.expire_orphan_approvals(runner_id, incarnation, process)
             await hub.flush_decisions(runner_id)
             await hub.flush_ask_answers(runner_id)
@@ -4406,7 +5171,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         finally:
             if runner_id:
                 if hub.unregister_runner(runner_id, ws):
-                    await hub.publish({"type": "runner.offline", "ts": time.time(), "data": {"runner_id": runner_id}})
+                    # Storage settles under its own shield; a disconnected ASGI
+                    # caller may cancel network delivery after that commit.
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await hub.publish({"type": "runner.offline", "ts": time.time(), "data": {"runner_id": runner_id}})
 
     @app.websocket("/ws/client")
     async def ws_client(ws: WebSocket, token: str = "", since: int | None = None) -> None:
@@ -4468,7 +5236,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         if body.mode == "direct" and not_yet_active(hub.agents.get(body.agent_id or "") or {}):
             raise HTTPException(409, probation_refusal(str(body.agent_id)))  # still on probation (#424)
         try:
-            return {"request_id": hub.create_request(body)}
+            return {"request_id": (await hub.acreate_request(body))}
         except KeyError as e:
             raise HTTPException(404, str(e))
         except ValueError as e:  # a reference outside the runner's roots or in a restricted zone
@@ -4583,7 +5351,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                           "visibility": body.get("visibility", "private")}
                 check_choice(choice, end=True)  # before the review is saved (PR #711 review)
                 hub.result_storage.check_end_choice(rid, decision=decision)
-            result = hub.review_done(rid, decision=decision, revision=body.get("revision"),
+            result = await hub.areview_done(rid, decision=decision, revision=body.get("revision"),
                                      target_sha256=body.get("target_sha256"))
             card = await hub.result_storage.open_end_card(rid)
             if choice is not None:
@@ -4602,7 +5370,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         if rid not in hub.requests:
             raise HTTPException(404)
         try:
-            entry = hub.start_followup(rid, body.text)
+            entry = (await hub.astart_followup(rid, body.text))
         except ValueError as e:  # still running, one already pending, or no runner hosts the agent
             if hub.semantics_shadow is not None:  # semantics-hook: actions
                 hub.semantics_shadow.after_followup(rid, None, "refused")  # semantics-hook: actions
@@ -4854,14 +5622,16 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.get("/api/events", dependencies=[Depends(auth)])
     async def events(limit: int = 200, since: int | None = None) -> list[dict]:
-        if since is None:
-            return list(hub.events)[-limit:]
-        oldest, latest = hub.store.event_bounds()
-        if since < oldest - 1 or since > latest:
-            snap = hub.snapshot()
-            snap["replay_gap"] = {"requested_since": since, "oldest_seq": oldest}
-            return [snap]
-        return hub.store.events_since(since, max(1, limit))
+        # Match WebSocket replay: no partial buffer while publication awaits a commit.
+        async with hub.event_lock:
+            if since is None:
+                return list(hub.events)[-limit:]
+            oldest, latest = hub.store.event_bounds()
+            if since < oldest - 1 or since > latest:
+                snap = hub.snapshot()
+                snap["replay_gap"] = {"requested_since": since, "oldest_seq": oldest}
+                return [snap]
+            return hub.store.events_since(since, max(1, limit))
 
     @app.get("/api/shutdown-readiness", dependencies=[Depends(auth)])
     async def shutdown_readiness() -> dict:

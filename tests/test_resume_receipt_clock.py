@@ -20,7 +20,7 @@ async def test_resume_fixture_controls_deadline_without_changing_real_loop(outco
     hub.requests = {"r": {"status": "interrupted"}}
     hub.agent_runner = {"hire": "runner"}
     hub.runners = {}
-    hub.resume_agents = lambda rid: {"hire"}
+    hub.aresume_agents = AsyncMock(return_value={"hire"})
     hub.publish = AsyncMock()
     hub.orchestrator = SimpleNamespace(run_request=AsyncMock())
     hub.recovery_started, hub.recovery_steps = {}, set()

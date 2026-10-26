@@ -350,16 +350,22 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install pyyaml
+      - id: windows-artifact
+        run: python scripts/ci_skip.py windows-artifact >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
-          name: coverage-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          artifact-ids: ${{ steps.windows-artifact.outputs.artifact-id }}
           path: windows-receipts
+          merge-multiple: true
       - id: manifest
         run: python scripts/ci_skip.py manifest
         env:
           GH_TOKEN: ${{ github.token }}
           CI_NEEDS: ${{ toJSON(needs) }}
           CI_WINDOWS_RECEIPT_DIR: windows-receipts
+          CI_WINDOWS_ARTIFACT_ID: ${{ steps.windows-artifact.outputs.artifact-id }}
       - uses: actions/upload-artifact@v4
         if: steps.manifest.outputs.reusable == 'true'
         with:

@@ -1,5 +1,6 @@
 """Finish approved technical hiring before freezing a request's plan (#549)."""
 from __future__ import annotations
+from ..request_persistence import persist_request
 
 import asyncio
 import copy
@@ -180,6 +181,47 @@ def pending_receipt_agents(req, hub):
     return {row["agent_id"] for pid, row in batch.get("results", {}).items()
             if pid in pending_papers and row.get("status") == "active" and row.get("agent_id")}
 
+async def apending_receipt_agents(req, hub):
+    """Reconcile all remaining assignments before waiting for a runner, including frozen plans."""
+    plan = req.get("plan") or {}
+    frozen = bool(req.get("research_contract") or req.get("results"))
+    # Read legacy frozen proposals as saved; validation is for new plans, not canonical snapshots.
+    batch = (req.get("plan_recruitment") or {}).get(_batch_key(plan.get("recruit") or []), {})
+    changed = [_refresh_receipt(row, hub) for row in batch.get("results", {}).values()]
+    remaining = {s["agent_id"] for s in plan.get("steps", []) if s["id"] not in (req.get("results") or {})}
+    ended = set()
+    for aid in remaining:
+        probe = {"status": "active", "agent_id": aid}
+        if _refresh_receipt(probe, hub):
+            ended.add(aid)
+    restored = False if frozen else _restore_fallbacks(plan, batch)
+    if not frozen:
+        for step in plan.get("steps", []):
+            if step["id"] in (req.get("results") or {}) or step["agent_id"] not in ended:
+                continue
+            fallback = batch.get("fallback_agents", {}).get(step["id"])
+            if fallback and fallback not in ended:
+                step["agent_id"] = fallback
+                restored = True
+    unresolved = ended.intersection(s["agent_id"] for s in plan.get("steps", [])
+                                   if s["id"] not in (req.get("results") or {}))
+    if unresolved:
+        req["recruit_contract_failure"] = sorted(unresolved)
+    if any(changed) or restored or unresolved:
+        await persist_request(hub, req["id"])
+    remaining_steps = {s["id"] for s in plan.get("steps", [])
+                       if s["id"] not in (req.get("results") or {})}
+    pending_papers = set()
+    for proposal in plan.get("recruit") or []:
+        step_ids = proposal.get("step_ids")
+        # Legacy proposals without target metadata keep the conservative wait.
+        if not isinstance(step_ids, list) or not step_ids or remaining_steps.intersection(step_ids):
+            pending_papers.add(paper_key(proposal.get("paper") or proposal.get("repo")))
+    return {row["agent_id"] for pid, row in batch.get("results", {}).items()
+            if pid in pending_papers and row.get("status") == "active" and row.get("agent_id")}
+
+
+
 
 async def prepare_plan(plan, rid, hub, run):
     plan = copy.deepcopy(plan)
@@ -217,7 +259,7 @@ async def prepare_plan(plan, rid, hub, run):
 
     if "check" not in batch:
         batch["check"] = await dispatch("recruit_check")
-        hub.save_request(rid)
+        await persist_request(hub, rid)
     available = batch["check"].get("status") == "ready"
     if available and "approval" not in batch and batch.get("approval_started"):
         # Gateway restart expires pending cards. Recover a decision already made; never open a second hire card.
@@ -228,14 +270,14 @@ async def prepare_plan(plan, rid, hub, run):
         batch["approval"] = saved or {"approved": False, "state": "expired", "note": "채용 승인 대기 중단"}
     if available and "approval" not in batch:
         batch["approval_started"] = True
-        hub.save_request(rid)
+        await persist_request(hub, rid)
         batch["approval"] = await hub.request_approval(
             kind="recruit_plan", request_id=rid,
             summary=f"논문 재현 파견직 {len(proposals)}건 채용: 수습 통과하면 바로 투입합니다. "
                     "승인하면 변환·수습(인재풀에 있으면 재고용) 후 이번 계획을 확정합니다.",
             detail={"gate": "recruit_plan", "target_sha256": key, "recruits": proposals,
                     "activate_on_pass": True})
-        hub.save_request(rid)
+        await persist_request(hub, rid)
     approved = available and batch.get("approval", {}).get("approved")
     rows = []
     for row in proposals:
@@ -245,10 +287,10 @@ async def prepare_plan(plan, rid, hub, run):
                                      {"status": ("timed_out" if batch.get("approval", {}).get("state") in {"timed_out", "expired"}
                                                  else "denied") if available else
                                       batch["check"].get("status", "failed")})
-            hub.save_request(rid)
+            await persist_request(hub, rid)
         receipt = batch["results"][pid]
         if _refresh_receipt(receipt, hub):
-            hub.save_request(rid)
+            await persist_request(hub, rid)
         _restore_fallbacks(plan, batch)
         agent = hub.agents.get(receipt.get("agent_id")) or {}
         active = (receipt.get("status") == "active" and agent.get("employment") == "contract"

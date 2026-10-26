@@ -78,7 +78,7 @@ test('budget card explains unknown costs and both decisions in sentences', async
 });
 test('whiteboard exposes completed report action and staff keep completion until review', () => {
   const office=state.createOfficeState();
-  office.apply({type:'snapshot',data:{agents:[{id:'cso'}],requests:[{id:'r',text:'Study',status:'done',pi_review_pending:true}]}});
+  office.apply({type:'snapshot',data:{agents:[{id:'cso'}],requests:[{id:'r',agent_id:'cso',text:'Study',status:'done',pi_review_pending:true}]}});
   const html=fs.readFileSync(require('node:path').join(__dirname,'../labhq/web/index.html'),'utf8');
   const board={dataset:{},innerHTML:''};
   const vm=require('node:vm'), ctx=vm.createContext({S:office.S,LabHQState:state,$:()=>board,

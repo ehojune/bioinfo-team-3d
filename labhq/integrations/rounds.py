@@ -524,6 +524,46 @@ class RoundRecorder:
             replace_file(temporary, target)
         return record
 
+    @staticmethod
+    def _write_record(directory: str, rid: str, record: dict) -> None:
+        directory = Path(directory)
+        for suffix, body in (("json", json.dumps(record, ensure_ascii=False, indent=2, default=str) + "\n"),
+                             ("md", render_record(record))):
+            target = directory / f"{rid}.{suffix}"
+            temporary = target.with_suffix(f".{suffix}.tmp")
+            temporary.write_text(body, encoding="utf-8")
+            replace_file(temporary, target)
+
+    async def awrite(self, rid: str, sources: dict[str, dict[str, list[dict]]] | None = None) -> dict:
+        from .. import durable
+        from ..request_persistence import persist_request
+
+        req = self.hub.requests[rid]
+        if not req.get("environment"):
+            req["environment"] = self._stored_environment(rid) or environment_snapshot(self.hub)
+            await persist_request(self.hub, rid)
+        record = build_record(self.hub, rid, sources)
+        snapshot = json.loads(json.dumps(record, ensure_ascii=False, default=str))
+        # Neither the request nor the recorder itself crosses into the writer.
+        _, cancelled = await self.hub._publication_write(
+            durable.run(durable.FILES, self._write_record, str(self.directory), rid, snapshot))
+        if cancelled:
+            raise asyncio.CancelledError
+        return record
+
+    async def asubmit(self, rid: str, *, attempts: int = 0) -> None:
+        if not self.s.dev_log.enabled or not self.s.dev_log.repo or root_zone_restricted(self.s.policy):
+            return
+        self.generation += 1
+        generation = self.generation
+        body = {"request_id": rid, "generation": generation, "attempts": attempts, "state": "pending"}
+        _, cancelled = await self.hub._publication_write(self.hub.store.aput("round_delivery", rid, body))
+        if self.worker is None or self.worker.done():
+            self.worker = asyncio.get_running_loop().create_task(self._run())
+        self.queue.put_nowait((rid, generation))
+        if cancelled:
+            raise asyncio.CancelledError
+
     def _stored_environment(self, rid: str) -> dict | None:
         try:
             env = json.loads((self.directory / f"{rid}.json").read_text(encoding="utf-8")).get("environment")

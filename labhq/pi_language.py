@@ -1,5 +1,6 @@
 """Optional, one-shot display interpretation. Original events remain authoritative."""
 from __future__ import annotations
+from .request_persistence import persist_request, record_task_cost
 
 import asyncio
 import json
@@ -140,7 +141,7 @@ class PiInterpreter:
             # Reserve the entire call ceiling, including failed/unknown calls, across restarts.
             # Establish an explicit empty research-hold ledger for translation-only requests.
             req.setdefault("budget_holds", {})
-            hub.save_request(rid)
+            await persist_request(hub, rid)
             reservation_id = f"pi_text_{key}"
             reservations[reservation_id] = {
                 "reservation_id": reservation_id, "task_id": reservation_id,
@@ -169,7 +170,7 @@ class PiInterpreter:
                                   "plugin_dirs": [], "allow_skills": False, "required_skills": [],
                                   "project_dirs": []}})
             result = await asyncio.wait_for(hub.dispatch(task), cfg.timeout_s)
-            hub._record_task_cost(rid, task.id, result)
+            await record_task_cost(hub, rid, task.id, result)
             hub.orchestrator._count_cost(rid, task.id, result)
             text = plain_text(result.text)
             if (result.ok and re.search(r"[가-힣]", text) and not code_or_path(text)
@@ -180,7 +181,7 @@ class PiInterpreter:
                 await hub.cancel_task(task.id)
                 # Name the model the call really used (the override), not the staff member's own: the cost item of an
                 # unknown call said claude-opus-5-5 for a haiku call (#942).
-                hub._record_task_cost(rid, task.id, TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
+                await record_task_cost(hub, rid, task.id, TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
                                                             provenance={"engine": "claude_code", "model": cfg.model}),
                                       outcome_unknown=True)
                 hub.orchestrator._count_cost(rid, task.id)
@@ -196,7 +197,7 @@ class PiInterpreter:
                 for followup in hub.requests[rid].get("followups") or []:
                     if followup.get("id") == followup_id:
                         followup["pi_display"] = display
-                hub.save_request(rid)
+                await persist_request(hub, rid)
             for saved in hub.events:
                 if saved["seq"] == event["seq"]:
                     saved.setdefault("data", {})["pi_display"] = display

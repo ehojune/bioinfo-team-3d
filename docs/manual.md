@@ -316,7 +316,7 @@ PI 토큰으로 `POST /api/shutdown`을 호출하며 `down`의 상태 재확인�
 
 ### 직원 제어
 
-실행 중인 직원의 상세 시트에 **방향 보내기**(입력칸, 2,000자), **일시 정지**/**재개**, **멈추기** 버튼이 뜹니다(#59). 한 직원이 작업 둘을 동시에 하면 작업마다 줄이 따로 생깁니다. 같은 동작은 `labhq task steer|pause|resume|halt <task_id> ["방향"]`와 `POST /api/tasks/{id}/steer|pause|resume|halt`(PI 토큰)로도 됩니다. 취소와 달리 세션을 버리지 않습니다.
+실행 중인 직원의 상세 시트에 **방향 보내기**(입력칸, 2,000자), **일시 정지**/**재개**, **멈추기** 버튼이 뜹니다(#59). 한 직원이 작업 둘을 동시에 하면 작업마다 줄이 따로 생깁니다. 같은 동작은 `labhq task steer|pause|resume|halt <task_id> ["방향"]`와 `POST /api/tasks/{id}/steer|pause|resume|halt`(PI 토큰)로도 됩니다. 취소와 달리 세션을 버리지 않습니다. 멈춤 대기에 들어가다 요청이 취소돼도 대기 기록과 재개 버튼을 정리합니다.
 
 요청은 작업(task)이 아니라 그 작업이 속한 **단계**에 걸립니다. 단계의 HPC 대기 뒤 turn, 재시도, 멈춤 뒤 재개 turn이 모두 같은 단계입니다. 계획 단계 작업과 직접 맡긴 작업만 받습니다. 상담·이어 묻기·리뷰·브리핑·선행 연구·채용 같은 작업은 API·CLI가 409로 거절하고 시트에 줄이 없습니다.
 
@@ -450,7 +450,9 @@ labhq는 상태를 쓸 때마다 디스크에 확실히 내려갈 때까지(fsyn
 
 SQLite는 읽기 연결과 쓰기 연결을 나눠(WAL) 읽기가 커밋을 기다리지 않습니다.
 
-옮긴 곳은 runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 runner의 outbox·ack입니다. gateway의 SQLite 쓰기(이벤트 순번, 요청 행, task 원장)는 아직 loop에서 동기로 돕니다. 기존 코드와 테스트가 "기다림 없이 한 번에 끝난다"는 가정으로 짜여 있어서 따로 다루기로 했습니다. 쓰기 지점별 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)에 있습니다.
+Gateway의 event·request·결과 추가/삭제·보고서 검토 저장은 같은 DB writer에서 await합니다. 같은 request의 저장은 직렬화하며 commit 뒤 상태와 전송을 반영합니다. 취소돼도 commit 결과를 확인하며, 보고된 task 비용 저장 뒤 완료를 기록합니다. quota 대기 취소는 저장 대기 전에 전달합니다. 요청 취소 호출자가 끊겨도 runner 취소·카드 정리·terminal 기록을 마친 뒤 취소를 전달합니다. WebSocket 전송은 client마다 최대 10초이며 취소·시간 초과 때 연결을 닫아 재연결 replay를 유도합니다.
+
+Runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 outbox·ack도 writer로 옮겼습니다. Gateway의 task 원장·일반 승인 등 직접 SQLite 저장과 초기화/CLI용 sync API는 남습니다(#606). 이전 조사 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)를 봅니다.
 
 ### topic 점검표와 선행 연구 기준
 
@@ -612,7 +614,7 @@ Windows 러너는 직원 Python이 OS 신뢰 저장소도 믿게 합니다. 기�
 
 | 이벤트 | 의미 | UI 매핑 아이디어 |
 |---|---|---|
-| `agent.status` (queued · working · waiting · hibernating · done · error) | 직원 상태 | 타이핑 / 손들기 / 잠자기 zZ / 박수 / 땀 |
+| `agent.status` (queued · working · waiting · hibernating · done · error) | 직원 상태 | 타이핑 / 손들기 / 잠자기 zZ / 박수 / 땀. 2.5D·3D 모두 현재 요청의 담당 단계를 우선하고 아직 시작하지 않았으면 `차례 대기`로 표시합니다. 지난 요청의 검토 대기에는 짧은 요청 제목을 붙이며 CSO도 참여한 요청만 셉니다. |
 | `agent.tool` · `agent.log` · `agent.usage` | 도구 사용·발화·비용 | 도구 아이콘, 말풍선, 비용 게이지 |
 | `task.dispatched` · `task.result` | 업무 배정·완료 | 서류가 책상 사이를 이동 |
 | `approval.requested` · `approval.resolved` | 승인 요청·결과 | 폰 푸시, 책상 위 빨간 깃발 |
@@ -624,7 +626,7 @@ Windows 러너는 직원 Python이 OS 신뢰 저장소도 믿게 합니다. 기�
 | `request.created` · `github.posted` · `github.failed` | 요청 접수, GitHub 보고 | 메신저에 링크 |
 | `request.followup` · `request.followup_done` | 끝난 요청에 이어 묻기와 답 | 작업판의 질문·답 목록 |
 | `request.note` | 실행 중 요청에 보낸 PI 메모 | 요청 카드·작업판에 시각과 함께 표시 |
-| `request.resume_waiting` · `request.resumed` · `request.resume_timeout` | 재개 승인 뒤 runner 기다림·재개·기다림 초과 | `러너 기다림`(빠진 직원) → `진행 중`, 초과면 `중단됨`과 새 재개 카드 |
+| `request.resume_waiting` · `request.resumed` · `request.resume_timeout` | 재개 승인 뒤 runner 기다림·재개·기다림 초과 | `러너 기다림`(빠진 직원) → `진행 중`, 초과면 `중단됨`과 새 재개 카드. 일반 dispatch의 runner 대기 대상도 snapshot에서 복원하므로 최근 200개 이벤트 밖으로 밀려나도 해당 직원만 대기로 표시합니다. |
 | `request.continued` | 연구 리뷰 revise 뒤 PI가 이어 가기를 승인했거나 CP2에서 수정 요청을 골라 새 계획으로 넘어감(`round`, CP2면 `trigger: cp2_revise`) | CP1·CP2·이어 가기 카드의 `이어 가기 차수` 칸 |
 
 REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`status`, `limit`; 본문 `references`·`default_references`. direct 요청의 직원은 연결된 runner·저장된 runner roster·`runner.agents_dir` 중 한 곳에 있으면 받아서 runner를 기다리고, 어디에도 없으면 404), `GET /api/requests/{id}`, `GET /api/requests/{id}/report-pdf`(그림이 든 PDF, 브라우저가 없으면 HTML과 `X-Labhq-Reason`), `POST /api/requests/{id}/notes` (`{"text"}`, 미종료 요청만, 2,000자·20개), `POST /api/requests/{id}/followup` (`{"text"}`, 끝난 요청만, 한 번에 하나),

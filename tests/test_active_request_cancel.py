@@ -30,7 +30,7 @@ class FakeHub:
         self.requests = {"r": {"id": "r", "created_at": 123.5, "status": status}}
         self.decisions = []
 
-    def _final_review(self, rid, decision):
+    async def _afinal_review(self, rid, decision):
         self.decisions.append(decision)
         self.requests[rid]["status"] = decision
         return {"request_id": rid, "status": decision}
@@ -83,7 +83,12 @@ class ActiveCancel(unittest.IsolatedAsyncioTestCase):
         hub = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Hub")
         fn = next(n for n in hub.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "cancel_request")
         transition = next(n for n in fn.body if isinstance(n, ast.Assign) and any(isinstance(x, ast.Name) and x.id == "now" for x in n.targets))
-        self.assertFalse(any(isinstance(n, ast.Await) and n.lineno < transition.lineno for n in ast.walk(fn)))
+        legacy_review = next(n for n in fn.body if isinstance(n, ast.If)
+                             and ast.unparse(n.test) == "not active_only and status == 'review_pending'")
+        legacy_awaits = {id(n) for n in ast.walk(legacy_review) if isinstance(n, ast.Await)}
+        self.assertEqual(len(legacy_awaits), 1)
+        self.assertFalse(any(isinstance(n, ast.Await) and n.lineno < transition.lineno
+                             and id(n) not in legacy_awaits for n in ast.walk(fn)))
 
     def test_cli_uses_distinct_route_and_never_falls_back_on_old_gateway(self):
         tree = ast.parse((ROOT / "labhq/cli.py").read_text(encoding="utf-8"))

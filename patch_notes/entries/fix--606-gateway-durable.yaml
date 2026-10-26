@@ -1,0 +1,54 @@
+pr: 966
+rows:
+- sha: 'edb898c'
+  at: 2026-10-26 05:00
+  summary: 화면 전송이 끝난 뒤 중복·누락과 lock 상태를 검사합니다.
+  text: 'Linux 3.10 CI가 찾은 readiness 경계 2건을 수정했습니다. 자동 sender 완료를 관찰하고 기존 client·새 client의 중복/누락 assertion과 lock 해제를 검사합니다. production·기존 assertion·timeout은 유지하며 관련 mock/static 27건 통과.'
+- sha: '52d85dc'
+  at: 2026-10-26 04:45
+  summary: 끊긴 화면 연결을 뒤쪽 이벤트에서도 건너뜁니다.
+  text: '봇 P2 4372148050의 반복 timeout을 pending event 3개로 재현했습니다(1 failed). broadcast에서 빠진 client는 후속 snapshot 전송에서도 제외합니다. 건강한 client의 seq 1·2·3 수신과 관련 mock/static 292건을 확인했습니다.'
+- sha: '6cf63c4'
+  at: 2026-10-26 04:40
+  summary: 저장 중 들어온 취소 뒤에는 다음 작업을 시작하지 않습니다.
+  text: '봇 P2 4372130381의 AnyIO 취소 누락을 client 없는 경로에서 1 failed로 재현했습니다. commit 결과 확인 뒤 shield 밖에서 취소 checkpoint를 검사합니다. 저장 완료와 caller 후속 동작 차단을 포함한 mock/static 291건 통과.'
+- sha: '70abfec'
+  at: 2026-10-26 04:35
+  summary: 발행이 취소돼도 남은 화면 전송을 바로 이어갑니다.
+  text: '봇 P2 4372112318을 수정했습니다. lock 반환 뒤 pending delivery를 독립적으로 재개하고 client 전송은 10초로 제한합니다. 다음 event 없이 남은 client가 수신하는 검사와 network timeout·close를 추가했습니다. 관련 mock/static 290건 통과.'
+- sha: '19a76e2'
+  at: 2026-10-26 04:30
+  summary: 두 요청이 동시에 로그인 대기에 들어가도 안내는 한 번만 보냅니다.
+  text: 'Linux 3.12 CI의 중복 notice race를 두 task의 동일 await 경계로 재현했습니다(1 failed). publish 완료 뒤 shared notice를 원자적으로 확인·예약하도록 고쳤습니다. 기존 단언·상한을 유지하고 관련 mock/static 67건을 통과했습니다.'
+- sha: 'ea8011a'
+  at: 2026-10-26 04:20
+  summary: 전송이 취소된 화면 연결을 닫아 저장된 이벤트를 다시 받게 합니다.
+  text: '봇 P2 4372064831을 수정했습니다. broadcast에서 제외한 client를 독립된 1초 제한 close로 종료해 reconnect/replay를 유도합니다. 취소·close 호출·저장·다음 발행을 포함한 gateway 회귀 22건 통과.'
+- sha: '8b8bbf3'
+  at: 2026-10-26 04:15
+  summary: 연결 종료 때도 저장만 취소에서 보호합니다.
+  text: 'AnyIO cancellation scope도 DB commit에서만 차폐합니다. ASGI 연결 종료 전체를 보호하던 범위를 없애고 network 취소 뒤 저장 완료·다음 발행을 검증했습니다. gateway 새 회귀 22건과 disconnect 검사 통과.'
+- sha: 'edbedcb'
+  at: 2026-10-26 04:00
+  summary: 막힌 화면 연결을 취소해도 저장 결과를 확인하고 다음 이벤트를 처리합니다.
+  text: '봇 P2 4372034223에 따라 취소 차폐를 개별 DB commit으로 제한했습니다. 전송 취소 때 막힌 client를 제외하고 남은 delivery를 보존합니다. commit 결과·오류를 확인한 뒤 lock을 반환하며 다음 발행과 DB replay를 검증했습니다. 관련 mock/static 287건 통과.'
+- sha: '6022553'
+  at: 2026-10-26 04:00
+  summary: 이벤트 기록 조회도 저장과 발행 순서를 기다립니다.
+  text: '봇 P2 4372012596에 따라 REST history를 WebSocket과 같은 event lock으로 보호했습니다. 일반 history·since·replay-gap snapshot 세 경로를 추가해 회귀 20건을 통과했습니다.'
+- sha: '8cc75b9'
+  at: 2026-10-26 04:00
+  summary: 이벤트 발행을 마친 뒤 번역과 보고 작업을 시작합니다.
+  text: 'CI가 찾은 번역·비용 작업의 조기 실행을 고쳤습니다. caller가 저장 완료를 확인하는 turn에서 소비자를 예약합니다. 기존 readiness test는 sleep(0) 대신 event·dispatch 완료를 기다리며 assertion·timeout은 유지합니다. 관련 검사 127건과 95건을 통과했습니다.'
+- sha: '3949453'
+  at: 2026-10-26 04:00
+  summary: 동기 저장이 겹쳐도 이벤트 표시 순서를 보존합니다.
+  text: '봇 P1 4371985762를 buffer 1·10에서 2 failed로 재현했습니다. async commit 중 동기 review가 높은 seq를 먼저 반영해도 buffer에는 최신 seq를 순서대로 남깁니다. delivery·DB 순서를 함께 검사했고 관련 mock/static 78건을 통과했습니다.'
+- sha: '5a2c95a'
+  at: 2026-10-26 04:00
+  summary: 저장 대기가 남은 gateway 기능을 매뉴얼에 구분했습니다.
+  text: '봇 P2 4371973611의 상충 설명을 고쳤습니다. publish의 await 저장과 task 원장·승인·리뷰 등 남은 동기 helper를 구분합니다.'
+- sha: '43db8c8'
+  at: 2026-10-26 04:00
+  summary: 이벤트 저장을 기다리는 동안에도 gateway가 다른 요청에 응답합니다.
+  text: 'publish의 event·request 저장을 SQLite writer에서 await하고 event payload를 복사합니다. 반복 취소에도 commit 결과·발행 순서를 확인합니다. mock 지연·FIFO·오류·재시작 읽기를 검증했습니다. 동기 helper와 SavedResults 전환은 #965에 남습니다.'
