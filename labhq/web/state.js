@@ -280,6 +280,7 @@ Object.defineProperty(S, 'taskControl', { value: new Map(), enumerable: false })
 Object.defineProperty(S, 'taskKind', { value: new Map(), enumerable: false });
 Object.defineProperty(S, 'demoStatus', { value: null, writable: true, enumerable: false });
 Object.defineProperty(S, 'activeTasks', { value: new Map(), enumerable: false });
+Object.defineProperty(S, 'jobContext', { value: new Map(), enumerable: false });
 Object.defineProperty(S, 'sessionStartedAt', { value: 0, writable: true, enumerable: false });
 function resetSnapshotState() {
   S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
@@ -288,6 +289,32 @@ function resetSnapshotState() {
   S.taskControl.clear(); S.taskKind.clear();
   S.defaultRefs = [];
   S.activeTasks.clear();
+  S.jobContext.clear();
+}
+// Event identity and snapshot pending_jobs are the only sources of step ownership.
+function stepJobs(rid) {
+  const q = S.requests.get(rid), result = {};
+  if (!q || isTerminalRequest(q.status)) return result;
+  const add = (jid, sid) => {
+    if (!sid || ['done', 'skipped', 'error', 'failed', 'halted', 'cancelled'].includes(q.steps[sid])) return;
+    const id = String(jid), job = S.jobs.get(id);
+    const rows = result[sid] ||= [];
+    if (job && ['completed', 'failed', 'cancelled', 'unknown_finished', 'error'].includes(job.state)) return;
+    if (!rows.some(row => row.id === id)) rows.push({id, name: job?.name || id, state: job?.state || 'missing'});
+  };
+  for (const [jid, context] of S.jobContext) {
+    const task = S.activeTasks.get(context.task_id);
+    const sid = context.step_id || S.taskStep.get(context.task_id) || task?.step_id;
+    const current = S.stepDetails.get(`${rid}:${sid}`)?.task_id;
+    if ((context.request_id || task?.request_id) === rid && (!current || !context.task_id || current === context.task_id))
+      add(jid, sid);
+  }
+  for (const task of S.activeTasks.values()) if (task.request_id === rid) {
+    const current = S.stepDetails.get(`${rid}:${task.step_id}`)?.task_id;
+    if (!current || current === task.id)
+      for (const jid of task.activity?.jobs || []) add(jid, task.step_id);
+  }
+  return result;
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
   hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
@@ -495,6 +522,7 @@ function req(rid) {
     Object.defineProperty(q, 'skipWarningsShown', { value: new Set(), writable: true, enumerable: false });  // #446
     Object.defineProperty(q, 'resumeMissing', { value: [], writable: true, enumerable: false });  // R14
     Object.defineProperty(q, 'runnerMissing', { value: new Set(), enumerable: false });
+    Object.defineProperty(q, 'stepJobs', { get: () => stepJobs(rid), enumerable: false });
     S.requests.set(rid, q);
   }
   return S.requests.get(rid);
@@ -688,6 +716,8 @@ function apply(ev, replay = false) {
         S.activeTasks.clear();
         for (const task of staffTasks) S.activeTasks.set(task.id, {...task,
           activity: {...(task.activity || {}), tools: {...(task.activity?.tools || {})}}});
+        for (const [jid, context] of S.jobContext)
+          if (context.task_id && !S.activeTasks.has(context.task_id)) S.jobContext.delete(jid);
       }
       for (const task of d.running_tasks || []) {
         if (!task.request_id || !task.step_id) continue;
@@ -876,8 +906,16 @@ function apply(ev, replay = false) {
       feed(unanswered ? { who: 'system', text: `${unanswered}${note}`, fullText: `${unanswered}${fullNote}` }
         : { who: 'pi', text: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${note}`,
           fullText: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${fullNote}` }, ts, rid); break; }
-    case 'job.submitted': S.jobs.set(String(d.job_id), { id: String(d.job_id), name: d.name, state: 'queued', agent: id, ts }); feed({ who: id, text: `HPC 작업 제출: ${d.name || ''} (${d.job_id})` }, ts, rid); break;
+    case 'job.submitted': {
+      const jid = String(d.job_id);
+      S.jobContext.set(jid, {request_id: rid, task_id: ev.task_id, step_id: S.taskStep.get(ev.task_id)});
+      S.jobs.set(jid, { id: jid, name: d.name, state: 'queued', agent: id, ts });
+      feed({ who: id, text: `${jid.startsWith('local-') ? '로컬 계산' : 'HPC 작업'} 제출: ${d.name || ''} (${d.job_id})` }, ts, rid); break;
+    }
     case 'job.state': {
+      const jid = String(d.job_id), context = S.jobContext.get(jid) || {};
+      S.jobContext.set(jid, {request_id: rid || context.request_id, task_id: ev.task_id || context.task_id,
+        step_id: S.taskStep.get(ev.task_id) || context.step_id});
       const j = S.jobs.get(String(d.job_id)) || { id: String(d.job_id), name: d.name, agent: id };
       Object.assign(j, { state: d.state, exit: d.exit_status, ts }); S.jobs.set(j.id, j);
       break;
