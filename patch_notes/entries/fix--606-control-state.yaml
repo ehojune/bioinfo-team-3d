@@ -1,5 +1,9 @@
-pr: null
+pr: 988
 rows:
+- sha: 345fe4f
+  at: '2026-10-26 19:29'
+  text: 같은 step의 PI 제어를 runner 전송부터 순서대로 처리해 늦은 pause의 덮어쓰기를 막는다(Refs #606).
+  summary: 전송 경쟁 1 failed → PASS. 신규 mock 24건 포함 관련 157 passed이며 rollback 중 heartbeat도 검증했습니다.
 - sha: 2cdf7ae
   at: '2026-10-26 19:25'
   text: control-state를 task별 async commit으로 직렬화하고 commit 뒤 memory·event를 반영한다(Refs #606).
