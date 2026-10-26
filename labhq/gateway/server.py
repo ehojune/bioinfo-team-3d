@@ -2715,10 +2715,18 @@ class Hub:
             self._pi_control_locks = WeakValueDictionary()
         return self._pi_control_locks.setdefault(key, asyncio.Lock())
 
+    def _halt_result_lock(self, tid: str):
+        if not hasattr(self, "_halt_result_locks"):
+            self._halt_result_locks = WeakValueDictionary()
+        return self._halt_result_locks.setdefault(tid, asyncio.Lock())
+
     async def control_task(self, tid: str, action: str, text: str | None = None) -> dict:
         """Keep PI actions on one step in invocation order, including runner sends."""
         key = self._entry_step(tid, self.store.get("task", tid) or {})
         async with self._pi_control_lock(key):
+            if action == "halt":
+                async with self._halt_result_lock(tid):
+                    return await self._control_task(tid, action, text)
             return await self._control_task(tid, action, text)
 
     async def _control_task(self, tid: str, action: str, text: str | None = None) -> dict:
@@ -3495,10 +3503,9 @@ class Hub:
             rid = msg.get("request_id")
             tid = msg.get("task_id") or ""
             result = TaskResult.model_validate(msg["data"])
-            key = self._entry_step(tid, self.store.get("task", tid) or {})
-            # Snapshot and finishing admission are atomic with PI intent/send.
+            # Snapshot and finishing admission are atomic with halt intent/send.
             # Release before settlement, which takes the step/control locks.
-            async with self._pi_control_lock(key):
+            async with self._halt_result_lock(tid):
                 task = self.store.get("task", tid) if tid else None
                 if not hasattr(self, "_finishing_step_tasks"):
                     self._finishing_step_tasks = set()
