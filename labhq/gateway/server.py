@@ -2728,13 +2728,13 @@ class Hub:
             req.setdefault("pi_waits", {})[key] = {"kind": "halt", "since": time.time(),
                                                    "deadline_at": time.time() + bound, "task_id": tid,
                                                    "step_id": step_id}
-        await self.publish({"type": "request.step_halted", "ts": time.time(), "request_id": rid, "task_id": tid,
-                            "agent_id": result.agent_id,
-                            "data": {"step_id": step_id, "session_id": result.session_id}})
-        if parked:
-            await self._publish_hold_status(rid)
         resumed, reason = False, "timed_out"
         try:
+            await self.publish({"type": "request.step_halted", "ts": time.time(), "request_id": rid, "task_id": tid,
+                                "agent_id": result.agent_id,
+                                "data": {"step_id": step_id, "session_id": result.session_id}})
+            if parked:
+                await self._publish_hold_status(rid)
             await asyncio.wait_for(event.wait(), bound)
             resumed = True
         except asyncio.TimeoutError:

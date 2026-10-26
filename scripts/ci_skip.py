@@ -553,6 +553,64 @@ class NonReusableBaseDrift(ValueError):
     """Independently confirmed full-test checkout, never reusable evidence."""
 
 
+class NonReusablePartialRerun(ValueError):
+    """Validated partial rerun, without a same-attempt reusable manifest."""
+
+
+def windows_artifact(run, head, repository_id, request=None):
+    """Bind the effective Windows execution to its original upload, not a copied job.
+
+    GitHub copies successful jobs into later attempts with new IDs/created_at.
+    Their execution times stay unchanged. Only an original job whose creation
+    precedes execution and whose upload falls inside that execution is accepted.
+    """
+    from datetime import datetime
+    request = request or api
+    def jobs(attempt):
+        data = request(f"actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100")
+        if data['total_count'] != len(data['jobs']):
+            raise ValueError('incomplete producer jobs')
+        rows = [j for j in data['jobs'] if j['name'] == 'pytest-windows']
+        if len(rows) != 1:
+            raise ValueError('missing/ambiguous Windows producer')
+        job = rows[0]
+        if not (job['run_id'] == run['id'] and job['run_attempt'] == attempt
+                and job['head_sha'] == head):
+            raise ValueError('unbound Windows producer')
+        return job
+    def time(value):
+        return datetime.fromisoformat(value.replace('Z', '+00:00'))
+    effective = jobs(run['run_attempt'])
+    if effective['status'] != 'completed' or effective['conclusion'] != 'success':
+        raise ValueError('failed/incomplete effective Windows producer')
+    data = request(f"actions/runs/{run['id']}/artifacts?per_page=100")
+    if data['total_count'] != len(data['artifacts']):
+        raise ValueError('incomplete producer artifacts')
+    matches = []
+    for artifact in data['artifacts']:
+        match = re.fullmatch(r'coverage-windows-' + str(run['id']) + r'-(\d+)', artifact['name'])
+        if not match:
+            continue
+        attempt = int(match[1])
+        if not 0 < attempt <= run['run_attempt'] or artifact['expired'] is not False:
+            continue
+        origin = artifact['workflow_run']
+        if not (origin['id'] == run['id'] and origin['head_sha'] == head
+                and origin['repository_id'] == origin['head_repository_id'] == repository_id):
+            raise ValueError('unbound Windows artifact')
+        job = effective if attempt == run['run_attempt'] else jobs(attempt)
+        if job['status'] != 'completed' or job['conclusion'] != 'success':
+            continue  # always() uploads from old failed jobs are not candidates.
+        if (job['started_at'], job['completed_at']) != (effective['started_at'], effective['completed_at']):
+            continue  # An older success is not the effective execution.
+        if (time(job['created_at']) <= time(job['started_at'])
+                <= time(artifact['created_at']) <= time(artifact['updated_at']) <= time(job['completed_at'])):
+            matches.append((artifact['id'], attempt))
+    if len(matches) != 1 or type(matches[0][0]) is not int or matches[0][0] <= 0:
+        raise ValueError('missing/ambiguous bound Windows artifact')
+    return matches[0]
+
+
 def confirmed_base_drift(current: dict, snapshot: dict, parents: list[str], run: dict) -> bool:
     """Recognize only the observed forward-main/event snapshot drift.
 
@@ -656,6 +714,10 @@ def produce_manifest(current: dict, needs: dict, event: dict) -> dict:
     if git("rev-parse", f"{source}:{WORKFLOW}") != result["workflow_blob"]:
         raise ValueError("unbound checkout/workflow identity: workflow-blob")
     result['windows_execution'] = windows_receipt(current, needs, run, snapshot['head_sha'])
+    # A fresh Windows job says nothing about whether other successful gates
+    # were copied. Conservatively keep every rerun out of the reuse cache.
+    if run['run_attempt'] != 1:
+        raise NonReusablePartialRerun('validated rerun; no reusable manifest')
     return result
 
 
@@ -679,12 +741,26 @@ def windows_receipt(current, needs, run, head):
     if (outputs.get('execution') != phases.EXECUTION or outputs.get('receipt') != phases.digest(proof)
             or phases.read(directory / 'windows-proof.json') != proof):
         raise ValueError('missing/mismatched Windows phase receipt')
-    validate_windows_execution(proof, current, run, head, current['checkout_sha'], os.environ['GITHUB_WORKFLOW_REF'])
+    producer_run = run
+    if proof['context']['attempt'] != run['run_attempt']:
+        event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text(encoding='utf-8'))
+        artifact_id, attempt = windows_artifact(run, head, pr_snapshot(event['pull_request'])['repository_id'])
+        if (str(artifact_id) != os.environ.get('CI_WINDOWS_ARTIFACT_ID')
+                or attempt != proof['context']['attempt']):
+            raise ValueError('unbound prior-attempt Windows receipt')
+        producer_run = dict(id=run['id'], run_attempt=attempt)
+    validate_windows_execution(proof, current, producer_run, head, current['checkout_sha'], os.environ['GITHUB_WORKFLOW_REF'])
     return proof
 
 
 def main() -> None:
-    if sys.argv[1:] == ['windows-identity']:
+    if sys.argv[1:] == ['windows-artifact']:
+        event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text(encoding='utf-8'))
+        snapshot = pr_snapshot(event['pull_request'])
+        artifact_id, _ = windows_artifact(dict(id=int(os.environ['GITHUB_RUN_ID']),
+            run_attempt=int(os.environ['GITHUB_RUN_ATTEMPT'])), snapshot['head_sha'], snapshot['repository_id'])
+        print(f'artifact-id={artifact_id}')
+    elif sys.argv[1:] == ['windows-identity']:
         import platform
         import uuid
         from scripts import ci_windows_phases as phases
@@ -710,6 +786,9 @@ def main() -> None:
         except NonReusableBaseDrift:
             print("ci_skip: confirmed event/tested-base drift; no reusable manifest", file=sys.stderr)
             output = "reusable=false\nreason=base-drift\n"
+        except NonReusablePartialRerun:
+            print('ci_skip: validated partial rerun; no reusable manifest', file=sys.stderr)
+            output = 'reusable=false\nreason=partial-rerun\n'
         else:
             Path("ci-result.json").write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
             output = "reusable=true\nreason=bound\n"

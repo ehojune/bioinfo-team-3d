@@ -180,6 +180,56 @@ async def test_a_halt_wait_ended_by_request_cancel_still_closes_the_halted_row(t
     assert not hub.halted_waits
 
 
+@pytest.mark.parametrize("publication", ["request.step_halted", "request.status"])
+@pytest.mark.parametrize("request_cancelled", [False, True])
+async def test_cancel_during_halt_entry_cleans_every_registered_wait(
+        tmp_path, monkeypatch, publication, request_cancelled):
+    hub = _hub(tmp_path)
+    halted = TaskResult(task_id="t1", agent_id="worker", ok=False, error_kind="halted", session_id="S")
+    row = hub.store.get("task", "t1")
+    hub.store.put("task", "t1", {**row, "halt_resume_requested": True})
+    hub.task_controls["t1"] = {"action": "halt"}
+    hub.store.put("task_control_state", "t1", {"action": "halt"})
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_publish, blocked = hub.publish, False
+
+    async def publish(event, *args, **kwargs):
+        nonlocal blocked
+        if event["type"] == publication and not blocked:
+            blocked = True
+            entered.set()
+            await release.wait()
+        return await original_publish(event, *args, **kwargs)
+
+    monkeypatch.setattr(hub, "publish", publish)
+    waiter = asyncio.create_task(hub.wait_halted("r", "A", halted))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        assert "t1" in hub.halted_waits and "halt:t1" in hub.requests["r"]["pi_waits"]
+        if request_cancelled:
+            hub.requests["r"]["status"] = "cancelled"
+            hub.save_request("r")
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+    finally:
+        release.set()
+        if not waiter.done():
+            waiter.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await waiter
+    [closed] = [event for event in hub.events if event["type"] == "request.step_halt_expired"]
+    assert closed["task_id"] == "t1" and closed["data"] == {"step_id": "A", "reason": "cancelled"}
+    assert not [event for event in hub.events if event["type"] == "request.step_resumed"]
+    assert not hub.halted_waits and "pi_waits" not in hub.requests["r"]
+    assert "t1" not in hub.task_controls and hub.store.get("task_control_state", "t1") is None
+    row = hub.store.get("task", "t1")
+    assert row["halt_wait_finished"] and "halt_resume_requested" not in row
+    saved = hub.store.get("request", "r")
+    assert "pi_waits" not in saved
+    assert saved["status"] == hub.requests["r"]["status"] == ("cancelled" if request_cancelled else "running")
+
+
 @pytest.mark.asyncio
 async def test_a_paused_task_that_goes_into_an_hpc_wait_keeps_its_pause_after_a_reload(tmp_path):
     hub = _hub(tmp_path)

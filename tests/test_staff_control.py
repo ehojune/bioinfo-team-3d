@@ -410,7 +410,7 @@ async def test_a_halted_step_parks_until_the_pi_resumes_it_on_the_same_session(t
     step = asyncio.create_task(Orchestrator(hub).run_step(
         Task(agent_id="worker", request_id="r", prompt="work", meta={"kind": "step", "step_id": "A"})))
     for _ in range(100):
-        if hub.halted_waits:
+        if hub.halted_waits and hub.requests["r"]["status"] == "waiting_pi":
             break
         await asyncio.sleep(0.01)
     halted_id = calls[0].id

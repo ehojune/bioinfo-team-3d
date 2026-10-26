@@ -316,7 +316,7 @@ PI 토큰으로 `POST /api/shutdown`을 호출하며 `down`의 상태 재확인�
 
 ### 직원 제어
 
-실행 중인 직원의 상세 시트에 **방향 보내기**(입력칸, 2,000자), **일시 정지**/**재개**, **멈추기** 버튼이 뜹니다(#59). 한 직원이 작업 둘을 동시에 하면 작업마다 줄이 따로 생깁니다. 같은 동작은 `labhq task steer|pause|resume|halt <task_id> ["방향"]`와 `POST /api/tasks/{id}/steer|pause|resume|halt`(PI 토큰)로도 됩니다. 취소와 달리 세션을 버리지 않습니다.
+실행 중인 직원의 상세 시트에 **방향 보내기**(입력칸, 2,000자), **일시 정지**/**재개**, **멈추기** 버튼이 뜹니다(#59). 한 직원이 작업 둘을 동시에 하면 작업마다 줄이 따로 생깁니다. 같은 동작은 `labhq task steer|pause|resume|halt <task_id> ["방향"]`와 `POST /api/tasks/{id}/steer|pause|resume|halt`(PI 토큰)로도 됩니다. 취소와 달리 세션을 버리지 않습니다. 멈춤 대기에 들어가다 요청이 취소돼도 대기 기록과 재개 버튼을 정리합니다.
 
 요청은 작업(task)이 아니라 그 작업이 속한 **단계**에 걸립니다. 단계의 HPC 대기 뒤 turn, 재시도, 멈춤 뒤 재개 turn이 모두 같은 단계입니다. 계획 단계 작업과 직접 맡긴 작업만 받습니다. 상담·이어 묻기·리뷰·브리핑·선행 연구·채용 같은 작업은 API·CLI가 409로 거절하고 시트에 줄이 없습니다.
 
@@ -614,7 +614,7 @@ Windows 러너는 직원 Python이 OS 신뢰 저장소도 믿게 합니다. 기�
 
 | 이벤트 | 의미 | UI 매핑 아이디어 |
 |---|---|---|
-| `agent.status` (queued · working · waiting · hibernating · done · error) | 직원 상태 | 타이핑 / 손들기 / 잠자기 zZ / 박수 / 땀 |
+| `agent.status` (queued · working · waiting · hibernating · done · error) | 직원 상태 | 타이핑 / 손들기 / 잠자기 zZ / 박수 / 땀. 2.5D·3D 모두 현재 요청의 담당 단계를 우선하고 아직 시작하지 않았으면 `차례 대기`로 표시합니다. 지난 요청의 검토 대기에는 짧은 요청 제목을 붙이며 CSO도 참여한 요청만 셉니다. |
 | `agent.tool` · `agent.log` · `agent.usage` | 도구 사용·발화·비용 | 도구 아이콘, 말풍선, 비용 게이지 |
 | `task.dispatched` · `task.result` | 업무 배정·완료 | 서류가 책상 사이를 이동 |
 | `approval.requested` · `approval.resolved` | 승인 요청·결과 | 폰 푸시, 책상 위 빨간 깃발 |

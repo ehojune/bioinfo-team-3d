@@ -4,6 +4,18 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Closes #653
+
+현재 요청의 담당 단계가 지난 요청의 PI 검토 대기에 가려지던 직원 표시를 수정했습니다. CSO의 무조건 참여 예외를 없애고 검토 대기에 짧은 요청 제목을 붙였습니다. 2.5D·3D는 공통 state 판정을 쓰며 실행 task·승인·경고의 우선순위를 유지합니다.
+
+- 변경: `state.js`, `office-art.js`, 회귀검사·visual baseline, manual.
+- 재현: 새 Node 검사 수정 전 4 failed·1 passed. 봇 P1의 task 없는 답 대기와 P2의 direct·runner 대상·실패 snapshot·CSO mode 참여를 재현해 수정했고 관련 7개 파일 67 passed. 요청 전환·직원 제어 추가 22 passed.
+- 검사: `git diff --check`, public 검사, patch-note·status 검사.
+- Browser: Chrome desktop·phone 32 view PASS. baseline은 세 직원의 차례 대기 상태·문구와 chip 폭·위치 변경 60개만 반영했습니다.
+- 한계: 3D는 공통 판정·표시 호출부 정적 대조이며 실제 browser QA와 운영 재현은 UNVERIFIED. 연구·HPC 실행 없음.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Refs #675. runner 부재 중 취소를 복구한 runner에 재전송하는 통합 회귀검사를 보존했습니다. production 변경은 없습니다.
 
 - 무해한 Python job 2개로 취소한 요청의 wrapper·자식 잔류 0, 완료 깨움 없음, 다른 요청 보존, 연결 실패만으로 취소하지 않음을 확인합니다.
@@ -11,6 +23,18 @@ Refs #675. runner 부재 중 취소를 복구한 runner에 재전송하는 통�
 - 관련 pytest: 4 passed, 27 deselected. Windows selection 계약·public·diff 검사 통과.
 - CI inventory 예상 목록도 갱신했습니다. 해당 계약 pytest 3 passed.
 - 실제 WebSocket 재연결·gateway OS 재시작·연구·WSL은 미검증입니다. #675의 WSL·진행률 범위는 남습니다. 필수 CI·동일 head 봇 리뷰 뒤 병합합니다.
+
+Refs #606. publish 우선 단계이며 issue를 닫지 않습니다. 동기 helper·SavedResults 전환은 #965입니다.
+
+- event·request 저장을 기존 FIFO SQLite writer에서 await합니다. loop에서 payload를 확정하고 writer에는 복사·직렬화한 값만 넘깁니다.
+- 취소돼도 개별 commit의 결과·오류를 확인합니다. network는 취소 가능하며 pending delivery는 lock 반환 뒤 독립적으로 재개합니다. client 전송은 최대 10초, 취소·시간 초과 때 별도 1초 제한 close로 reconnect·DB replay를 유도합니다.
+- 동기 checkpoint가 높은 seq를 먼저 반영해도 buffer는 최신 event를 seq 순으로 보존합니다. REST history·replay-gap snapshot도 WebSocket과 같은 ordering lock을 사용합니다.
+- 번역·보고 소비자는 저장 완료 뒤 예약합니다. 두 요청의 login notice도 await 뒤 원자적으로 확인·예약해 중복을 막습니다.
+- 검증: 관련 mock/static **292 passed**, 후속 delivery readiness 검사 **27 passed**. heartbeat, request 유무·idle/active lane, FIFO·snapshot, error·반복 cancel·AnyIO 취소 뒤 후속 동작 차단, backpressure·자동 delivery 재개·끊긴 client의 후속 전송 제외, runner cursor·reporter intent·DB 재개 읽기를 포함합니다. 기존 assertion·timeout은 유지했습니다. Windows inventory·public·diff·patch notes 검사 PASS.
+- 초기 durable suite 검사 39 passed에는 실수로 로컬 crash subprocess 검사가 포함됐습니다. mock/static 한도를 벗어난 실행이며 이후 로컬 검사는 subprocess 없이 진행했습니다. 연구·HPC는 실행하지 않았습니다.
+- manual·patch notes·동일 status 기록을 포함합니다. 실제 process 검증은 기존 CI 범위입니다. 최종 head 필수 CI·동일 head 봇 리뷰·미해결 P1=0 뒤 병합하며 동기 저장 경계 전체 해결·실디스크 성능은 미검증입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
 # runner state 소유 획득 경쟁
 
