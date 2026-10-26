@@ -1,5 +1,9 @@
 pr: 990
 rows:
+- sha: 0ee0aaa
+  at: '2026-10-26 22:08'
+  text: 종료 경쟁 때 이번 steer ID만 반환하고 기존 예약은 result의 delivered 정산에 맡긴다(Refs #606).
+  summary: pause·halt·steer가 전달 완료된 지시를 재예약하는 P1을 3 FAIL로 재현하고 관련 164 PASS로 검증했다.
 - sha: a97dee5
   at: '2026-10-26 22:01'
   text: 종료 정산 중 halt를 거절하고 revision 전진 뒤 취소된 attach의 예약을 반환한다(Refs #606).
