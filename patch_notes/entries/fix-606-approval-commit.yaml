@@ -1,5 +1,9 @@
 pr: 976
 rows:
+  - sha: '46e7f08'
+    at: '2026-10-26 13:51'
+    summary: 'resume 승인 commit과 expiry·retirement가 같은 카드 lock을 사용합니다.'
+    text: 'P1 4374026562의 expiry·async/sync retirement 경쟁 3 failed를 고쳤습니다. 카드→event/request lock 순서를 지키고 retirement 삭제·결정을 단일 transaction으로 저장합니다. 관련 131 passed·12 subtests, 추가 34 passed입니다. CI 카드 종료 fixture는 실제 future 완료를 기다리며 기존 assertion을 유지합니다.'
   - sha: 'baed103'
     at: '2026-10-26 13:42'
     summary: 'runner 승인 전달이 막혀도 10초 뒤 취소와 카드 lock을 정리합니다.'
