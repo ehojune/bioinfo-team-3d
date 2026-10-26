@@ -1,0 +1,6 @@
+pr: 0
+rows:
+- sha: 6294a45c
+  at: '2026-10-26 14:46'
+  text: plan-rehire의 계약 읽기·검사·두 파일 저장을 FILES writer에서 기다리고 Registry·roster를 FIFO 순서로 반영한다(Refs #606).
+  summary: 느린 재채용 저장 중 heartbeat를 유지하고 반복 취소에도 저장 결과를 판정합니다.
