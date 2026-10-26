@@ -24,3 +24,11 @@ rows:
     at: "2026-10-26 15:16"
     summary: "대기 회귀검사의 Python 실행 확인 문구를 갱신했습니다."
     text: "세 OS CI에서 Node 검사는 통과했으나 wrapper가 옛 성공 문구를 요구한 실패를 수정했습니다. 해당 pytest 1 passed를 확인했습니다."
+  - sha: 92256fb
+    at: "2026-10-26 15:22"
+    summary: "검토한 Windows 검사 파일의 판본을 갱신했습니다."
+    text: "Node wrapper 성공 문구 변경에 맞춰 source pin만 갱신했습니다. 필수 node 목록은 유지하며 profile 검증·관련 CI 검사 62건이 통과했습니다."
+  - sha: 0d5d4a0
+    at: "2026-10-26 15:24"
+    summary: "task 기록이 없는 로컬 계산도 종료 뒤 대기 표시를 지웁니다."
+    text: "bot P2의 호환 경로에서 agent job 관측을 roster 갱신 뒤에도 보존하고 terminal event를 반영합니다. 관련 Node 66건·legacy reducer 43 event를 확인했습니다."
