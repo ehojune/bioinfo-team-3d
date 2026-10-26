@@ -2474,7 +2474,11 @@ class Hub:
             return False
         if entry and entry.get("completed") and not entry.get("abandoned"):
             return True  # it reported a result; an abandoned task may still be running in an older runner process
-        self.store.put("task_cancel", tid, {"runner_id": runner_id, "requested_at": time.time()})
+        _, cancelled = await self._publication_write(self.store.aput(
+            "task_cancel", tid, {"runner_id": runner_id, "requested_at": time.time()}))
+        if cancelled:
+            # The committed intent survives cancellation and is replayed on reconnect.
+            raise asyncio.CancelledError
         try:
             await self.send_runner(runner_id, {"type": "task.cancel", "task_id": tid})
         except RunnerUnavailable:
