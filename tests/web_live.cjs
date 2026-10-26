@@ -40,6 +40,7 @@ global.WebSocket = class {
 const decide = fs.readFileSync(path.join(root,'ui/decide.js'),'utf8');
 const decideUrl = 'data:text/javascript;base64,'+Buffer.from(decide).toString('base64');
 const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').replace("'../../ui/decide.js'", `'${decideUrl}'`)
+    .replace("'../../ui/tasks.js'", "'data:text/javascript;base64," + Buffer.from(fs.readFileSync(path.join(root, 'ui/tasks.js'), 'utf8')).toString('base64') + "'")
     .replace("'../../ui/shutdown.js'", "'data:text/javascript;base64," + Buffer.from(fs.readFileSync(path.join(root, 'ui/shutdown.js'), 'utf8')).toString('base64') + "'");
 (async()=>{
   const {startLiveOffice} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
@@ -96,6 +97,17 @@ const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').repla
   S.agents.get('analyst').stateAt-=4;
   timers.shift()();assert.equal(shown,'idle','3D display returns to waiting after three seconds');
   assert.equal(S.agents.get('analyst').state,'done','display must not change event state');
+  const jobEvent = (type, data) => event({type, data, request_id:'local-request', task_id:'local-task', agent_id:'analyst'});
+  jobEvent('request.created', {text:'Local calculation'});
+  jobEvent('request.plan', {steps:[{id:'s1', agent_id:'analyst'}]});
+  jobEvent('task.dispatched', {step_id:'s1'});
+  jobEvent('job.submitted', {job_id:'local-gsea', name:'GSEA'});
+  assert.match(textIn(requestRowForLocal()), /로컬 계산 GSEA: 실행 중/);
+  jobEvent('job.state', {job_id:'local-gsea', state:'held'});
+  assert.match(textIn(requestRowForLocal()), /로컬 계산 GSEA: 보류/);
+  jobEvent('job.state', {job_id:'local-gsea', state:'completed'});
+  assert.doesNotMatch(textIn(requestRowForLocal()), /로컬 계산 GSEA/);
+  function requestRowForLocal() { return element('requests').children.find(row => row.dataset.requestId === 'local-request'); }
   ws.close();assert.equal(S.conn,'offline');assert.equal(element('token-form').hidden,false);
   timers.shift()();ws=sockets.at(-1);assert(ws.url.endsWith('&since=16'));
   ws.readyState=1;ws.onopen();

@@ -783,7 +783,7 @@ function renderRequest() {
   const statusText = q ? LabHQState.requestStatusText(q, S.approvals) : '';
   const all = LabHQState.sortRequests(S.requests.values());
   const requestDigest = all.map(r => [r.id, r.status, r.text, r.pi_review_pending, r.pi_reviewed_at, Math.round(r.cost * 100), r.costKnown]);
-  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, requestDigest, q.id, q.phase, q.status, q.error, q.steps, details, q.github.length, q.pipelinePr, q.report, q.reportPackage, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? `none:${JSON.stringify(requestDigest)}` : `loading:${S.conn}`;
+  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, requestDigest, q.id, q.phase, q.status, q.error, q.steps, q.stepJobs, details, q.github.length, q.pipelinePr, q.report, q.reportPackage, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? `none:${JSON.stringify(requestDigest)}` : `loading:${S.conn}`;
   if (key === reqKey) return;
   reqKey = key;
   const current = all.filter(r => !LabHQState.isPastRequest(r)), past = all.filter(LabHQState.isPastRequest);

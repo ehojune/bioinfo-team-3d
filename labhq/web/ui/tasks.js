@@ -4,11 +4,20 @@ export const STATUS = { pending:'대기', queued:'대기', working:'진행 중',
 const COLUMN = { pending:'waiting', queued:'waiting', working:'working', waiting_quota:'working', waiting_login:'working', waiting_facilities_fix:'working', hibernating:'working', halted:'working', paused:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
 
 const pad = n => String(n).padStart(2, '0');
+export function stepWaitLabel(status, jobs) {
+  const local = (jobs || []).filter(job => String(job.id).startsWith('local-'));
+  const hpc = (jobs || []).some(job => !String(job.id).startsWith('local-'));
+  const label = status === 'hibernating' && jobs
+    ? local.length ? hpc ? '로컬 계산·HPC 대기' : '계산 대기' : jobs.length ? 'HPC 대기' : '후속 처리 대기'
+    : STATUS[status] || status;
+  return label + (local.length ? ` · ${local.map(job => `로컬 계산 ${job.name}: ${{queued:'대기', running:'실행 중', held:'보류', suspended:'일시정지', missing:'상태 확인 중'}[job.state] || '상태 확인 중'}`).join(' / ')} · 진행률 모름` : '');
+}
 // A compact plan trail shared by all tabs, separate from the whiteboard's request phases.
 export function syncStepFlow(container, request, options = {}) {
   const plan = request?.plan || [], steps = request?.steps || {};
   container.hidden = !plan.length;
-  const key = JSON.stringify(plan.map(s => [s.id, steps[s.id], options.nick?.(s.agent_id) || s.agent_id]));
+  const jobs = request?.stepJobs || {};
+  const key = JSON.stringify([request?.id, plan.map(s => [s.id, steps[s.id], options.nick?.(s.agent_id) || s.agent_id, jobs[s.id]])]);
   if (container._flowKey === key) return;
   container._flowKey = key;
   const done = s => ['done', 'skipped'].includes(steps[s.id]);
@@ -22,7 +31,7 @@ export function syncStepFlow(container, request, options = {}) {
       row.setAttribute('aria-label', `완료·건너뜀 ${end - i}단계`); rows.push(row); i = end; continue;
     }
     const s = plan[i++], status = steps[s.id] || 'pending', row = doc().createElement('li');
-    row.textContent = `${s.id} ${options.nick?.(s.agent_id) || s.agent_id || '미배정'} ${done(s) ? '✓' : s === current ? '●' : '○'} ${STATUS[status] || status}`;
+    row.textContent = `${s.id} ${options.nick?.(s.agent_id) || s.agent_id || '미배정'} ${done(s) ? '✓' : s === current ? '●' : '○'} ${stepWaitLabel(status, jobs[s.id])}`;
     if (s === current) row.setAttribute('aria-current', 'step');
     rows.push(row);
   }
@@ -50,7 +59,7 @@ function cardFor(step, status, detail, options) {
   add(title, 'small', `${options.nick ? options.nick(step.agent_id) : step.agent_id || '미배정'} · ${step.id}`, 'task-owner');
   const badge = add(summary, 'span', '', `task-status status-label status-${status}`);
   add(badge, 'span', '', 'status-dot').setAttribute('aria-hidden', 'true');
-  add(badge, 'span', STATUS[status] || status);
+  add(badge, 'span', stepWaitLabel(status, options.jobs));
   add(card, 'p', step.instruction || '', 'task-instruction');
   add(card, 'p', `${options.nick ? options.nick(step.agent_id) : step.agent_id || '미배정'} · 시도 ${detail.attempts || 0}회`, 'task-meta');
   list(card, '산출물', detail.outputs);
@@ -95,6 +104,7 @@ function cardFor(step, status, detail, options) {
 export function syncTaskBoard(container, request, stepDetails, options = {}) {
   if (!request) { container.replaceChildren(add(doc().createElement('div'), 'p', '아직 요청이 없어요.', 'empty-note')); return; }
   const board = doc().createElement('div'); board.className = 'kanban';
+  const jobs = request.stepJobs || {};
   const columns = {};
   for (const [id, title] of [['working','진행'],['review','확인'],['waiting','대기'],['done','완료']]) {
     const column = add(board, id === 'done' ? 'details' : 'section', '', 'kanban-column');
@@ -104,7 +114,7 @@ export function syncTaskBoard(container, request, stepDetails, options = {}) {
   for (const step of request.plan || []) {
     const status = request.steps[step.id] || 'pending';
     const detail = stepDetails.get(`${request.id}:${step.id}`) || { attempts:0, outputs:[], missing_outputs:[], review_issues:[] };
-    columns[COLUMN[status] || 'waiting'].append(cardFor(step, status, detail, options));
+    columns[COLUMN[status] || 'waiting'].append(cardFor(step, status, detail, {...options, jobs:jobs[step.id]}));
   }
   for (const [id, column] of Object.entries(columns)) {
     const count = column.children.length - 1;

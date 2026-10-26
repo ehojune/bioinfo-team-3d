@@ -299,6 +299,7 @@ class Runner:
         self.process = uuid.uuid4().hex  # never saved: tells the gateway a restart from a reconnect (#521)
         self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir),
                                  settings.path(settings.runner.contract_dir) if settings.runner.contract_dir else None)
+        self._contract_lock = asyncio.Lock()
         self.ws_root = settings.path(settings.runner.workspace_root)
         self.input_hash_cache = InputHashCache(
             settings.path(settings.runner.state_dir) / "input-sha256-cache.json")
@@ -754,8 +755,7 @@ class Runner:
             else:
                 await self._recruit(msg)  # send the refusal without creating a background conversion
         elif typ == "contract.update":
-            self._contract_update(msg)
-            self._send_roster()
+            await self._acontract_update(msg)
 
     async def _store_approval_attachment(self, msg: dict) -> tuple[bool, str]:
         """Write only the PDF filename already fixed by this pending card, inside its live task workspace."""
@@ -845,23 +845,90 @@ class Runner:
                     "멈춤을 받았어요. 멈추면 따로 알립니다")
         return None
 
-    def _contract_update(self, msg: dict) -> None:
+    async def _acontract_update(self, msg: dict) -> None:
+        # Own the payload before yielding. Serialize snapshots through publication, including when the receiver
+        # is cancelled repeatedly: the next update must see the committed version, never the pre-write object.
+        msg = copy.deepcopy(msg)
+        if msg.get("action") != "release" and not paper2agent.enabled(self.s):
+            log.warning("contract update refused: recruit.enabled=false")
+            self._send_roster()
+            return
+        async with self._contract_lock:
+            # Recruitment publishes its new spec on the loop before its FILES job completes. Observe those earlier
+            # publications, then snapshot AND submit without yielding so a later hire cannot overtake this update.
+            await durable.run(durable.FILES, lambda: None)
+            staged = copy.copy(self)
+            staged.registry = copy.copy(self.registry)
+            previous = dict(self.registry.agents)
+            staged.registry.agents = {key: spec.model_copy(deep=True)
+                                      for key, spec in self.registry.agents.items()}
+            staged.registry.paths = dict(self.registry.paths)
+            loop = asyncio.get_running_loop()
+            published = loop.create_future()
+
+            def publish(spec: AgentSpec | None) -> None:
+                try:
+                    agent_id = spec.id if msg.get("action") == "rehire" and spec is not None else msg.get("agent_id")
+                    # A synchronous plan rehire can wait behind this job on the loop, publish a newer object,
+                    # then return before this callback is serviced. Its completed write supersedes this snapshot.
+                    if self.registry.agents.get(agent_id) is not previous.get(agent_id):
+                        self._send_roster()
+                        published.set_result(None)
+                        return
+                    # Only publish the affected entry; unrelated recruitment may have finished during the write.
+                    if agent_id in staged.registry.agents:
+                        self.registry.agents[agent_id] = staged.registry.agents[agent_id]
+                        self.registry.paths[agent_id] = staged.registry.paths[agent_id]
+                    elif agent_id in self.registry.agents and msg.get("action") == "release":
+                        self.registry.agents.pop(agent_id, None)
+                        self.registry.paths.pop(agent_id, None)
+                    self._send_roster()
+                except BaseException as exc:
+                    published.set_exception(exc)
+                else:
+                    published.set_result(spec)
+
+            def job() -> None:
+                spec = staged._contract_update(msg)
+                # Match Registry.asave_contract: publication is scheduled by the FIFO writer before it advances
+                # to a later hire, rather than by an awaiting task that may resume after that hire's publication.
+                loop.call_soon_threadsafe(publish, spec)
+
+            write = asyncio.wrap_future(durable.submit(durable.FILES, job))
+
+            async def commit() -> None:
+                await write
+                spec = await published
+                if msg.get("action") == "rehire" and spec is not None and spec.contract:
+                    changed = spec.contract.verification.get("rehire_changed")
+                    if changed:
+                        await self.emit(Event(type="contract.warning", agent_id=spec.id,
+                                              data={"agent_id": spec.id, "changed": changed}))
+
+            pending = asyncio.create_task(commit())
+            cancelled = None
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError as exc:
+                    cancelled = exc
+            pending.result()  # A storage error takes precedence over cancellation; never announce completion.
+            if cancelled is not None:
+                raise cancelled
+
+    def _contract_update(self, msg: dict) -> AgentSpec | None:
         if msg.get("action") != "release" and not paper2agent.enabled(self.s):
             log.warning("contract update refused: recruit.enabled=false")
             return
         action, days = msg.get("action"), float(msg.get("days") or self.s.recruit.default_ttl_days)
         if action == "extend":
-            self.registry.extend(msg["agent_id"], days)
+            return self.registry.extend(msg["agent_id"], days)
         elif action == "release":
             self.registry.release(msg["agent_id"])
         elif action == "activate":
-            self.registry.activate(msg["agent_id"])
+            return self.registry.activate(msg["agent_id"])
         elif action == "rehire":
-            spec = self.registry.rehire(msg["slug"], days)
-            changed = spec.contract.verification.get("rehire_changed") if spec.contract else None
-            if changed:  # #424: the PI sees it in the feed, not only in the runner log
-                asyncio.get_running_loop().create_task(self.emit(Event(
-                    type="contract.warning", agent_id=spec.id, data={"agent_id": spec.id, "changed": changed})))
+            return self.registry.rehire(msg["slug"], days)
 
     async def _recruit(self, msg: dict) -> None:
         if not paper2agent.enabled(self.s):

@@ -14,6 +14,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:56 | [`8f76417`](https://github.com/ehojune/bioinfo-team-3d/pull/978/commits/8f76417) | **이미 시작된 로컬 계산이 계속 대기로 보이던 표시를 고쳤습니다.**<br>runner는 프로세스를 시작한 뒤 job.submitted를 보내므로 local- 제출을 실행 중으로 기록합니다. 합성 running event 없이 초기 표시를 검증하며 HPC 제출은 대기를 유지합니다. |
+| 13:51 | [`c08de09`](https://github.com/ehojune/bioinfo-team-3d/pull/978/commits/c08de09) | **서로 다른 계산의 작업 번호가 같아도 요청 단계가 섞이지 않도록 고쳤습니다.**<br>새 단계 표시용 관측을 task_id·job_id로 구분하고 소유자가 불명확한 상태 event는 적용하지 않습니다. bot P2의 같은 scheduler ID 충돌 회귀를 검사했습니다. |
+| 13:50 | [`8b9b70e`](https://github.com/ehojune/bioinfo-team-3d/pull/978/commits/8b9b70e) | **계산 상태가 바뀌면 요청의 작업 카드도 바로 갱신합니다.**<br>2.5D 요청 cache에 stepJobs를 포함하고 job-only 갱신·요청 전환·동시 단계 격리 회귀검사를 추가했습니다. |
+| 13:49 | [`d9222b9`](https://github.com/ehojune/bioinfo-team-3d/pull/977/commits/d9222b9) | **계약 갱신과 동기 재채용이 겹쳐도 파일·메모리·roster가 최신 재채용을 유지합니다.**<br>저장 중 sync plan-rehire가 반영한 최신 Registry 객체를 예약된 계약 callback이 덮어쓰지 않도록 보완한다(P1 4374032253). |
+| 13:46 | [`2163c58`](https://github.com/ehojune/bioinfo-team-3d/pull/978/commits/2163c58) | **로컬 계산을 요청 단계에 연결해 이름과 상태를 표시하고 HPC 작업과 구분합니다.**<br>기존 job event·snapshot pending_jobs로 공통 단계 흐름·task card·3D 요청 줄을 갱신합니다. 종료·재접속·다른 요청 회귀 mock을 추가했으며 실제 진행률은 추정하지 않습니다. Refs #675. |
+| 13:44 | [`25815cd`](https://github.com/ehojune/bioinfo-team-3d/pull/977/commits/25815cd) | **앞뒤로 채용이 겹쳐도 새 설정과 provenance를 이전 계약으로 덮어쓰지 않습니다.**<br>같은 ID의 recruitment와 계약 갱신이 FIFO 순서대로 snapshot·Registry·roster를 반영하도록 보완한다(P1 4374010475). |
+| 13:37 | [`0e95ad1`](https://github.com/ehojune/bioinfo-team-3d/pull/977/commits/0e95ad1) | **느린 계약 저장 중에도 event loop가 진행되며 저장 오류에는 새 roster를 보내지 않습니다.**<br>runner 계약 갱신을 기존 writer에서 기다리고 저장 성공 뒤 Registry와 roster를 반영한다(Refs |
 | 12:15 | [`e958806`](https://github.com/ehojune/bioinfo-team-3d/pull/970/commits/e958806) | **저장 후속의 완료 상태를 지원 안내에 반영했습니다.**<br>HANDOFF·manual에 #973·#972·#975 병합과 #965·#653 종결을 반영하고 #606 전체·실제 운영 미검증 및 PI 임시 리뷰 생략을 구분했습니다. |
 | 11:55 | [`9ad1ac9`](https://github.com/ehojune/bioinfo-team-3d/pull/975/commits/9ad1ac9) | **재접속해도 러너를 기다리는 직원과 차례를 기다리는 직원을 구분합니다.**<br>fix: runner_waits snapshot 복원과 199·200·201개 이벤트 경계 회귀검사 추가 (#653) |
 | 11:32 | [`2bd3a7a`](https://github.com/ehojune/bioinfo-team-3d/pull/972/commits/2bd3a7a) | **취소 호출자가 끊겨도 runner 중단과 terminal 기록을 마칩니다.**<br>봇 P1 4373460589의 저장 경계 2곳에서 수정 전 2 failed를 재현했습니다. 취소 정리를 마친 뒤 호출자 취소를 전달합니다. 관련 4파일 95 passed, 기존 CI 실패 3건 3 passed. process-loss 복구와 카드 준비 완료 신호를 보존했습니다. |
