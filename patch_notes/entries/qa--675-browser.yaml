@@ -1,0 +1,5 @@
+rows:
+  - sha: eef04148
+    at: "2026-10-26 14:49"
+    summary: "로컬 계산을 기다리는 직원이 HPC 작업 중으로 보이던 표시를 고쳤습니다."
+    text: "정적 Chrome fixture QA에서 발견한 2.5D·3D 직원 대기 문구와 HPC rack 집계를 수정했습니다. 종료·snapshot·요청 분리 화면을 확인했으며 실제 운영 검증은 아닙니다. Refs #675."
