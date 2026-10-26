@@ -1,5 +1,9 @@
 pr: 973
 rows:
+- sha: 'dc1c625'
+  at: 2026-10-26 10:31
+  summary: Windows만 재실행해도 다른 gate의 복사 결과를 재사용 증거로 발행하지 않습니다.
+  text: '모든 run_attempt > 1은 receipt 검증 뒤 reusable manifest를 발행하지 않습니다. fresh Windows와 복사된 다른 gate 조합을 추가해 관련 mock/static 609 passed를 확인했습니다.'
 - sha: '9d8a899'
   at: 2026-10-26 10:26
   summary: failed-job 재실행에서도 실제 Windows 실행의 receipt를 수집합니다.
