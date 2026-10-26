@@ -1,5 +1,9 @@
 pr: 990
 rows:
+- sha: 23b2273
+  at: '2026-10-26 21:40'
+  text: 질문-only turn의 완료 이벤트를 답변 후로 미루고 취소된 attach의 drop 알림 몫만 반환한다(Refs #606).
+  summary: 질문 답변 뒤 같은 단계가 계속 실행되며 전달 전 취소로 누락됐던 방향 수 알림을 다음 turn에 보존한다.
 - sha: 59340c3
   at: '2026-10-26 21:04'
   text: 전송 직전 종료 중인 turn의 steer 예약을 반환하고 control publication과 step close를 직렬화한다(Refs #606).
