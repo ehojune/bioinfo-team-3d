@@ -1,5 +1,9 @@
 pr: 973
 rows:
+- sha: '9d8a899'
+  at: 2026-10-26 10:26
+  summary: failed-job 재실행에서도 실제 Windows 실행의 receipt를 수집합니다.
+  text: '같은 run/head의 성공 producer와 원래 attempt·upload 시간을 대조해 artifact ID를 선택합니다. coverage 검증은 유지하며 이전 attempt receipt는 재사용 manifest로 발행하지 않습니다. 관련 mock/static 608 passed와 실제 실패 run API 대조를 확인했습니다.'
 - sha: 'a963448'
   at: 2026-10-26 06:30
   summary: 멈춤 대기에 들어가다 취소돼도 대기 화면을 정리합니다.
