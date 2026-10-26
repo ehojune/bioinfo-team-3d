@@ -711,8 +711,10 @@ def produce_manifest(current: dict, needs: dict, event: dict) -> dict:
     if git("rev-parse", f"{source}:{WORKFLOW}") != result["workflow_blob"]:
         raise ValueError("unbound checkout/workflow identity: workflow-blob")
     result['windows_execution'] = windows_receipt(current, needs, run, snapshot['head_sha'])
-    if result['windows_execution']['context']['attempt'] != run['run_attempt']:
-        raise NonReusablePartialRerun('validated prior-attempt Windows execution; no reusable manifest')
+    # A fresh Windows job says nothing about whether other successful gates
+    # were copied. Conservatively keep every rerun out of the reuse cache.
+    if run['run_attempt'] != 1:
+        raise NonReusablePartialRerun('validated rerun; no reusable manifest')
     return result
 
 

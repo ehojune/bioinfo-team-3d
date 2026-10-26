@@ -236,3 +236,20 @@ def test_verified_partial_receipt_is_validated_but_never_reusable(producer, uplo
     needs['pytest-windows']['outputs']['receipt'] = 'bad'
     with pytest.raises(ValueError, match='missing/mismatched Windows'):
         cs.produce_manifest(current, needs, event)
+
+
+def test_fresh_windows_retry_cannot_certify_copied_other_gates(producer, monkeypatch, tmp_path):
+    from tests.test_ci_windows_phases import fake_context, make_receipts
+    from scripts import ci_windows_phases as phases
+    current, needs, _, _, _ = producer
+    context = fake_context(current, checkout=current['checkout_sha'])
+    context['attempt'] = 3
+    context['workflow_ref'] = cs.os.environ['GITHUB_WORKFLOW_REF']
+    directory = tmp_path / 'fresh-windows'
+    proof = make_receipts(directory, context)
+    needs['pytest-windows']['outputs']['receipt'] = phases.digest(proof)
+    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '3')
+    monkeypatch.setenv('CI_WINDOWS_RECEIPT_DIR', str(directory))
+    # Other gate outputs still carry their original success and tree.
+    with pytest.raises(cs.NonReusablePartialRerun):
+        cs.produce_manifest(current, needs, producer[2])
