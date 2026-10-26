@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 11:55 | [`9ad1ac9`](https://github.com/ehojune/bioinfo-team-3d/pull/975/commits/9ad1ac9) | **재접속해도 러너를 기다리는 직원과 차례를 기다리는 직원을 구분합니다.**<br>fix: runner_waits snapshot 복원과 199·200·201개 이벤트 경계 회귀검사 추가 (#653) |
 | 11:32 | [`2bd3a7a`](https://github.com/ehojune/bioinfo-team-3d/pull/972/commits/2bd3a7a) | **취소 호출자가 끊겨도 runner 중단과 terminal 기록을 마칩니다.**<br>봇 P1 4373460589의 저장 경계 2곳에서 수정 전 2 failed를 재현했습니다. 취소 정리를 마친 뒤 호출자 취소를 전달합니다. 관련 4파일 95 passed, 기존 CI 실패 3건 3 passed. process-loss 복구와 카드 준비 완료 신호를 보존했습니다. |
 | 11:12 | [`a1a092b`](https://github.com/ehojune/bioinfo-team-3d/pull/972/commits/a1a092b) | **요청 취소 때 보고된 비용과 quota 대기 취소를 보존합니다.**<br>task 비용 저장 뒤 완료를 기록하고 대기 소비자 취소 뒤 저장을 await합니다. 비용·quota는 barrier로 재현했고 재시작 검사는 task 완료를 기다립니다. 기존 assertion과 unknown·중복 비용·다른 요청 보존 검사를 유지합니다. 관련 5파일 최종 결과 합계 172 passed, 1 skipped(state 재검사 60 passed 포함). |
 | 10:35 | [`165166b`](https://github.com/ehojune/bioinfo-team-3d/pull/973/commits/165166b) | **이전 실패 artifact가 있어도 현재 성공한 Windows 실행의 receipt를 수집합니다.**<br>이전 실패 producer는 후보에서 제외합니다. 실패·성공 artifact 순서를 바꾼 경우와 현재 성공 artifact 누락을 검증했고 관련 mock/static 611 passed입니다. |

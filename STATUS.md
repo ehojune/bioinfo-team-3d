@@ -4,6 +4,15 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Closes #653. gateway snapshot에 요청 메모리의 `runner_waits`를 포함하고 공통 reducer가 대상 직원을 복원합니다. 비대상 직원은 차례 대기를 유지합니다. 영속 schema 변경은 없습니다.
+
+- 수정 전: 후속 이벤트 200·201개에서 통합 회귀 2 failed.
+- 수정 후: 199·200·201개 snapshot→Node reducer, ledger, 관련 web 검사 11 passed. 구형·잘못된 payload와 오래된 replay 덮어쓰기 검사도 통과했습니다.
+- public·diff 검사 통과. 2.5D·3D의 공통 판정 호출부는 기존 그대로 사용합니다.
+- 실제 browser QA·운영 재현은 미검증입니다. PI 임시 리뷰 생략을 적용하며 최종 head CI·알려진 P1·head가드는 병합 전에 확인합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Closes #971. Refs #606, #970. #972보다 먼저 병합하는 최소 수정입니다.
 
 - `wait_halted()`의 초기 두 publish를 기존 cleanup try/finally 안으로 옮겼습니다. 진입 중 취소도 종료 이벤트·대기/제어 상태를 정리하고 CancelledError를 전달합니다.
