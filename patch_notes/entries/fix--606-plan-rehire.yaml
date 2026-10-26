@@ -1,5 +1,9 @@
 pr: 980
 rows:
+- sha: 62a149f
+  at: '2026-10-26 15:17'
+  text: wait_for는 shield하고 내부 task에 취소를 한 번 전달한 뒤 실제 결과를 확인해 Python 3.10의 저장 오류 masking을 막는다.
+  summary: 취소와 저장 실패가 겹쳐도 저장 오류를 잃지 않습니다.
 - sha: 5d068f9
   at: '2026-10-26 15:04'
   text: Python 3.10 wait_for의 재취소가 내부 저장 완료 판정보다 먼저 반환하지 않도록 planning의 취소 전달·대기를 분리한다.
