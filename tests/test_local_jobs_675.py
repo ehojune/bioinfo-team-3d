@@ -35,6 +35,21 @@ def _eventually(check, seconds=40.0):
     raise AssertionError("condition not reached in time")
 
 
+def _wait_for_pid(path):
+    pid = None
+
+    def ready():
+        nonlocal pid
+        try:
+            pid = int(path.read_text())
+        except (FileNotFoundError, ValueError):
+            return False
+        return pid > 0
+
+    _eventually(ready)  # file creation can precede the PID write; keep the same 40-second deadline
+    return pid
+
+
 def _runner(tmp_path):
     s = Settings()
     for key in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
@@ -44,6 +59,43 @@ def _runner(tmp_path):
     runner.registry.agents = {"worker": AgentSpec(id="worker", name="worker", role="test", engine=Engine.claude_code,
                                                   builtin_mcp=[])}
     return s, runner
+
+
+def test_pid_readiness_waits_for_missing_then_empty_then_valid(monkeypatch):
+    reads = [FileNotFoundError(), "", "123\n"]
+    clock = iter([0.0, 0.0, 0.1, 0.2])
+    sleeps = []
+
+    def read_text():
+        value = reads.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+    assert _wait_for_pid(SimpleNamespace(read_text=read_text)) == 123
+    assert not reads  # the valid PID is retained without a second file read
+    assert sleeps == [0.1, 0.1]
+
+
+@pytest.mark.parametrize("value", [FileNotFoundError(), "", "invalid", "0", "-1"])
+def test_pid_readiness_without_a_positive_pid_keeps_the_40_second_deadline(monkeypatch, value):
+    clock = iter([0.0, 0.0, 39.9, 40.0])
+    reads, sleeps = [], []
+
+    def read_text():
+        reads.append(True)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+    with pytest.raises(AssertionError, match="condition not reached in time"):
+        _wait_for_pid(SimpleNamespace(read_text=read_text))
+    assert len(reads) == 2
+    assert sleeps == [0.1, 0.1]
 
 
 async def _drive(runner, job_id, seconds=40.0):
@@ -644,8 +696,8 @@ async def test_offline_request_cancel_replayed_to_restarted_runner_ends_only_its
     cancelled, _ = await board.run(body, request_id="cancel-me")
     preserved, _ = await board.run(body, request_id="keep-me")
     ended_pid = board.runner.jobs[submitted[0]["job_id"]]["local"]["pid"]
-    _eventually(child_file.exists)
-    tree = [(pid, local_jobs._created(pid)) for pid in [ended_pid, int(child_file.read_text())]]
+    child_pid = _wait_for_pid(child_file)
+    tree = [(pid, local_jobs._created(pid)) for pid in [ended_pid, child_pid]]
     assert all(created for _, created in tree)
     board.runner._local_watch.cancel()
     await asyncio.gather(board.runner._local_watch, return_exceptions=True)
