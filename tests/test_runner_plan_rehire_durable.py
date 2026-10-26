@@ -79,12 +79,15 @@ async def test_rehire_commit_order_errors_and_repeated_cancel(plan_rehire, monke
     if interruptible_cleanup:
         async def legacy_wait_for(coro, timeout):
             # Model Python 3.10's interruptible wait_for cancellation cleanup on newer Python too.
-            inner = asyncio.create_task(coro)
+            inner = asyncio.ensure_future(coro)
             try:
                 return await asyncio.shield(inner)
             except asyncio.CancelledError:
                 inner.cancel()
-                await asyncio.shield(inner)
+                try:
+                    await asyncio.shield(inner)
+                except Exception:
+                    pass  # Python 3.10 can mask the completed child's error with the original cancellation.
                 raise
 
         monkeypatch.setattr(planning, 'asyncio', SimpleNamespace(

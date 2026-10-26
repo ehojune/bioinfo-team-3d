@@ -380,18 +380,23 @@ async def run_task(runner, task):
         return {"status": "active", "agent_id": spec.id, "reused": False}
 
     try:
-        pending = asyncio.create_task(asyncio.wait_for(recruit(), timeout=runner.s.runner.task_timeout_s))
+        work = asyncio.create_task(recruit())
+        pending = asyncio.create_task(asyncio.wait_for(work, timeout=runner.s.runner.task_timeout_s))
         cancelled = None
         while not pending.done():
             try:
                 await asyncio.shield(pending)
             except asyncio.CancelledError as exc:
-                # Python 3.10 wait_for's cancellation cleanup is itself interruptible. Forward cancellation
-                # once, then let the nested writer settle even when the outer task is cancelled repeatedly.
+                # Cancel the work once, leaving wait_for shielded: its Python 3.10 cancellation cleanup can
+                # mask a child's storage error or be interrupted before the nested writer settles.
                 if cancelled is None:
                     cancelled = exc
-                    pending.cancel()
-        receipt = pending.result()  # preserve storage errors before reporting cancellation
+                    work.cancel()
+        # Python 3.10 wait_for can finish cancelled while its child finished with a storage error.
+        # Keep the child handle and observe that result before the timeout/cancellation wrapper's result.
+        if work.done() and not work.cancelled():
+            work.result()
+        receipt = pending.result()
         if cancelled is not None:
             raise cancelled
     except asyncio.TimeoutError:
