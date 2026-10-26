@@ -94,6 +94,7 @@ class RunnerSettings(BaseModel):
     state_dir: str = Field(default_factory=lambda: os.environ.get("LABHQ_STATE_DIR", "~/.labhq/state"))
     outbox_limit: int = 20000
     force_engine: str | None = None  # "mock" runs every agent with the mock engine (demo/tests)
+    facilities_support: Literal["unspecified", "required", "optional"] = "unspecified"
     mock_delay_s: float = Field(default=0.05, ge=0)  # only the web demo increases this
     # Read-only roots for `path` references (#36); each project's local_dir also counts.
     reference_roots: list[str] = []

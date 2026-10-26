@@ -135,6 +135,8 @@ doctor의 `disk` 행은 작업·임시·Codex/Claude 직원 홈의 드라이브 
 
 doctor는 roster가 쓰는 엔진만 검사하고, 생략한 네트워크·dry-run 로그인 검사는 한 줄로 묶습니다. `runner.contract_dir`를 지정하면 기본 `agents/contract` 대신 그 폴더를 읽고, 계약 유효성·중복 ID 우선순위도 runner와 맞춥니다. 만료 계약의 파일 이동·수정은 하지 않습니다. fail이 하나라도 있거나, 활성 직원이 없거나, roster 엔진 실행 파일이 하나라도 없으면 끝에 `실행 준비: 아니오`와 이유를 표시합니다. 다른 warn은 준비 여부를 바꾸지 않습니다.
 
+`runner.facilities_support`는 기본 `unspecified`(항상 WARN)입니다. `required`는 부재·실패·미확인·dry-run·mock이면 FAIL이며, `optional`은 ready만 OK입니다. init은 기존 명시 값을 보존합니다(`--force` 포함). [판정표와 준비 증거의 한계](reference/facilities-support-983.md)를 확인하세요.
+
 | doctor 항목 | 판정 | 고치는 명령 |
 |---|---|---|
 | Paper2Agent | recruiter·skill이 없거나 설정한 commit과 설치본이 다르면 fail. mock·데모는 skip | `labhq doctor --fix` |

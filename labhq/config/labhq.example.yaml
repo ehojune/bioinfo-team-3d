@@ -20,6 +20,7 @@ gateway:
 #   backoff_cap_s: 120
 
 runner:
+  facilities_support: unspecified  # required: doctor 준비 필수, optional: 부재 허용, unspecified: 요구 미선언
   id: lab-workstation
   max_parallel: 4
   consult_parallel: 2             # 막힌 직원의 질의 답변 전용 슬롯(일반 task와 분리)

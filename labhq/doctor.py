@@ -620,6 +620,59 @@ def _paper2agent_row(settings: Settings, agents: list[AgentSpec], fix: bool = Fa
     return _row("staff", "paper2agent", "fail", detail, hint)
 
 
+def _login_evidence(code: int | None, raw: str) -> str:
+    """Keep unavailable status separate from an explicit signed-out result; never publish raw auth output."""
+    if code is None:
+        return "unverified"
+    text = raw.strip().lower()
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        payload = None
+    if isinstance(payload, dict) and payload.get("loggedIn") is False:
+        return "blocked"
+    if text in {"not logged in", "not logged in.", "signed out", "not authenticated"}:
+        return "blocked"
+    authenticated = (isinstance(payload, dict) and payload.get("loggedIn") is True) or (
+        text == "logged in" or text.startswith("logged in using ") or text == "signed in")
+    return "ready" if code == 0 and authenticated else "unverified"
+
+
+def _facilities_support_row(settings: Settings, agents: list[AgentSpec], forced: Engine | None,
+                            invalid_force: bool, versions: dict[str, str], logins: dict[str, str],
+                            preflights: dict[str, bool], dry_run: bool) -> dict:
+    """Assess only the effective facilities agent using evidence already collected by doctor."""
+    policy = settings.runner.facilities_support
+    agent = next((agent for agent in agents if agent.id == "facilities"), None)
+    reasons = []
+    if agent is None:
+        state = "absent"
+        reasons.append("시설팀 지원 없음; 대체 담당 CSO (실응답 준비 미검증)")
+    else:
+        engine = (forced or agent.engine).value
+        if invalid_force or preflights.get(agent.id) is False:
+            state = "blocked"
+            reasons.append("invalid force_engine or facilities preflight failed")
+        elif engine == "mock":
+            state = "mock_only"
+            reasons.append("mock evidence only")
+        elif versions.get(engine) == "blocked" or logins.get(engine) == "blocked":
+            state = "blocked"
+            reasons.append("executable/version or login failed")
+        elif dry_run or versions.get(engine) != "ready" or logins.get(engine) != "ready":
+            state = "unverified"
+            reasons.append("dry-run: probes skipped" if dry_run else "version/login evidence unavailable")
+        else:
+            state = "ready"
+            reasons.append("executable/version, facilities preflight and login checked; response/quota/recovery unverified")
+    status = "fail" if policy == "required" and state != "ready" else (
+        "ok" if policy != "unspecified" and state == "ready" else "warn")
+    declaration = "; 시설팀 지원 요구 미선언" if policy == "unspecified" else ""
+    return _row("support", "facilities", status,
+                f"policy={policy}; state={state}{declaration}; " + "; ".join(reasons),
+                "runner.facilities_support: required/optional/unspecified; optional은 직원 비활성화 명령이 아닙니다.")
+
+
 def collect(settings: Settings, *, requested_config: str | None = None, network: bool = False,
             dry_run: bool = False, require_roster: bool = False, fix: bool = False,
             require_paper2agent: bool = True, github_transport=None, runtime: bool = False) -> dict:
@@ -762,6 +815,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                          "Set each engine: cli staff member's cli.command and cli.env.PATH."))
     codex_now: dict[str, str | list[str] | None] = {"version": None, "command": None}
     login_codes: dict[str, int | None] = {}  # the CLI's own status command, with engines.<name>.env applied
+    version_evidence: dict[str, str] = {}
+    login_evidence: dict[str, str] = {}
     for name in settings.engines.__class__.model_fields:
         if name not in roster_engines:
             continue
@@ -776,10 +831,13 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             resolved, found = [], False
         available[name] = found
         if not found:
+            version_evidence[name] = "blocked"
             rows.append(_row("engine", name, "warn", "executable missing or unsupported shim",
                              f"Install {name} or set engines.{name}.bin and prefix_args."))
             continue
         code, raw = (None, "") if dry_run else _probe([*resolved, "--version"], env)
+        version_evidence[name] = ("unverified" if code is None else "blocked" if code != 0 else
+                                  "ready" if _version(raw) != "unreported" else "unverified")
         detail = _safe_executable_path(resolved[0], env) + (" (probe skipped: dry-run)" if dry_run else " " + _version(raw))
         if name == "codex":
             codex_now.update(version=_version(raw) if code == 0 and _version(raw) != "unreported" else None,
@@ -793,8 +851,9 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         if dry_run:
             continue
         if name in LOGIN:
-            code, _ = (None, "") if dry_run else _probe([*resolved, *LOGIN[name]], env)
+            code, auth_raw = _probe([*resolved, *LOGIN[name]], env)
             login_codes[name] = code
+            login_evidence[name] = _login_evidence(code, auth_raw)
             rows.append(_row("login", name, "ok" if code == 0 else "warn",
                              "status command succeeded" if code == 0 else "status unavailable or signed out",
                              f"Check {name} login locally; doctor never starts login."))
@@ -806,6 +865,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                          f"dry-run: login not checked ({len(roster_engines)} engines)",
                          "Run doctor without dry-run to check login."))
     sandbox_homes: set[Path] = set()
+    preflights: dict[str, bool] = {}
     for agent in agents:
         if invalid_force:
             rows.append(_row("staff", agent.id, "fail", "invalid runner.force_engine",
@@ -821,6 +881,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             error = _adapter_check(settings, agent)
         except OSError:
             error = "adapter preflight files inaccessible"
+        preflights[agent.id] = not bool(error)
         if error:
             for raw in agent.plugin_dirs:
                 error = error.replace(raw, _safe_path(raw))
@@ -839,6 +900,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         if plugin:
             rows.append(_row("plugin", agent.id, "warn" if error else "ok", error or "plugin ready",
                              "Set the plugin directory and install its required skill."))
+    rows.append(_facilities_support_row(settings, agents, forced, invalid_force, version_evidence,
+                                        login_evidence, preflights, dry_run))
     private = _doctor_private(settings, agents, forced)
     rows.append(_private_paths_row(private))
     rows.append(_alphagenome_row(settings))

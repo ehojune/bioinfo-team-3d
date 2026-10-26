@@ -95,6 +95,64 @@ def test_pipeline_consent_yes_stays_off(monkeypatch):
     assert _data()["policy"]["bioinfo_agent"]["pipeline_pr"] is False
 
 
+@pytest.mark.parametrize("policy", ["required", "optional", "unspecified"])
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_facilities_support_preserved_on_reinit(monkeypatch, policy, force, dry_run):
+    wizard.run(yes=True)
+    target = Path("config/labhq.yaml")
+    data = _data()
+    data["runner"]["facilities_support"] = policy
+    target.write_text(yaml.safe_dump(data), encoding="utf-8")
+    before = target.read_bytes()
+    seen = []
+    original = doctor.collect
+
+    def collect(settings, **kwargs):
+        seen.append(settings.runner.facilities_support)
+        return original(settings, **kwargs)
+
+    monkeypatch.setattr(doctor, "collect", collect)
+    wizard.run(yes=True, force=force, dry_run=dry_run)
+    assert seen == [policy]
+    assert _data()["runner"]["facilities_support"] == policy
+    if dry_run or not force:
+        assert target.read_bytes() == before
+
+
+@pytest.mark.parametrize("instance", [None, "synthetic"])
+def test_new_init_facilities_intent_unspecified(instance):
+    wizard.run(yes=True, instance=instance)
+    assert _data()["runner"]["facilities_support"] == "unspecified"
+
+
+def test_existing_undeclared_init_remains_undeclared():
+    wizard.run(yes=True)
+    target = Path("config/labhq.yaml")
+    data = _data()
+    data["runner"].pop("facilities_support")
+    target.write_text(yaml.safe_dump(data), encoding="utf-8")
+    before = target.read_bytes()
+    wizard.run(yes=True)
+    assert target.read_bytes() == before
+    wizard.run(yes=True, force=True)
+    assert _data()["runner"]["facilities_support"] == "unspecified"
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_required_init_dry_run_fails_without_writes(force):
+    wizard.run(yes=True)
+    target = Path("config/labhq.yaml")
+    data = _data()
+    data["runner"]["facilities_support"] = "required"
+    target.write_text(yaml.safe_dump(data), encoding="utf-8")
+    before = target.read_bytes()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["init", "--yes", "--dry-run"] + (["--force"] if force else []))
+    assert exc.value.code == 1
+    assert target.read_bytes() == before
+
+
 @pytest.mark.parametrize("broken", ["gateway: [", "gateway: {port: invalid}"])
 def test_force_replaces_unreadable_config(broken):
     target = Path("config/labhq.yaml")
