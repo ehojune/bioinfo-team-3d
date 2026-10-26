@@ -635,7 +635,7 @@ class Hub:
     async def _areview_checkpoint(self, rid: str, decision: str, *, owner=None, **target):
         self._request_changed(rid)
         cancelled, schedule_storage = False, False
-        async with self.event_lock, self._request_lock(rid):
+        async with self._resume_card_locks(rid), self.event_lock, self._request_lock(rid):
             plan = self._review_plan(rid, decision, **target)
             note = ("보고서를 검토해 재개 카드를 닫았습니다" if plan[-1] else
                     "보고서를 검토 완료로 표시해 재개 카드를 닫았습니다")
@@ -1423,7 +1423,7 @@ class Hub:
             outcome = await asyncio.to_thread(self._bundle_outcome, rid, request,
                 copy.deepcopy(self.store.all("task")), copy.deepcopy(self.runner_capabilities))
         cancelled = False
-        async with self.event_lock, self._request_lock(rid):
+        async with self._resume_card_locks(rid), self.event_lock, self._request_lock(rid):
             current = copy.deepcopy(self.requests[rid])
             if current.get("status") == "cancelled" and request.get("status") != "cancelled":
                 return None
@@ -1859,16 +1859,21 @@ class Hub:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None  # at startup no page is connected; one that connects replays the stored event
+        if loop is not None and any(self._approval_lock(aid).locked() for aid, entry in self.approvals.items()
+                if entry["approval"].get("kind") == "resume" and entry["approval"].get("request_id") == rid):
+            # Sync compatibility cannot await an in-flight answer on this loop.
+            # Defer retirement rather than overwrite its durable decision.
+            loop.create_task(self.aretire_resume_cards(rid, note))
+            return []
         closed = []
         for aid, entry in list(self.approvals.items()):
             card = entry["approval"]
             if card.get("kind") != "resume" or card.get("request_id") != rid:
                 continue
+            self.store.commit_approval(aid, {"approval": card, "origin": None, "approved": False, "note": note,
+                                             "state": "expired", "decided_at": time.time()})
             self._cancel_resume_timer(aid)
             self.approvals.pop(aid, None)
-            self.store.delete("approval", aid)
-            self.store.put("approval_decision", aid, {"approval": card, "origin": None, "approved": False, "note": note,
-                                                      "state": "expired", "decided_at": time.time()})
             event = self.store.append_event({"type": "approval.expired", "ts": time.time(), "request_id": rid,
                                              "data": {"id": aid, "note": note}}, self.s.gateway.event_buffer)
             self.events.append(event)
@@ -1879,8 +1884,19 @@ class Hub:
             loop.create_task(self._send_committed_event())
         return closed
 
+    @contextlib.asynccontextmanager
+    async def _resume_card_locks(self, rid: str):
+        # Card locks precede event/request locks, matching a resume answer. Waiting
+        # for a card while holding event_lock would deadlock its post-commit publish.
+        ids = sorted(aid for aid, entry in self.approvals.items()
+                     if entry["approval"].get("kind") == "resume" and entry["approval"].get("request_id") == rid)
+        async with contextlib.AsyncExitStack() as stack:
+            for aid in ids:
+                await stack.enter_async_context(self._approval_lock(aid))
+            yield
+
     async def aretire_resume_cards(self, rid: str, note: str) -> list[str]:
-        async with self.event_lock, self._request_lock(rid):
+        async with self._resume_card_locks(rid), self.event_lock, self._request_lock(rid):
             return await self._aretire_resume_cards_locked(rid, note)
 
     async def _aretire_resume_cards_locked(self, rid: str, note: str) -> list[str]:
@@ -1889,14 +1905,12 @@ class Hub:
             card = copy.deepcopy(entry["approval"])
             if card.get("kind") != "resume" or card.get("request_id") != rid:
                 continue
-            _, interrupted = await self._publication_write(self.store.adelete("approval", aid))
+            answer = {"approval": card, "origin": None, "approved": False, "note": note,
+                      "state": "expired", "decided_at": time.time()}
+            _, interrupted = await self._publication_write(self.store.acommit_approval(aid, answer))
             cancelled = cancelled or interrupted
             self._cancel_resume_timer(aid)
             self.approvals.pop(aid, None)
-            answer = {"approval": card, "origin": None, "approved": False, "note": note,
-                      "state": "expired", "decided_at": time.time()}
-            _, interrupted = await self._publication_write(self.store.aput("approval_decision", aid, answer))
-            cancelled = cancelled or interrupted
             event, interrupted = await self._publication_write(self.store.aappend_event(
                 {"type": "approval.expired", "ts": time.time(), "request_id": rid, "data": {"id": aid, "note": note}},
                 self.s.gateway.event_buffer))
@@ -1941,20 +1955,22 @@ class Hub:
 
     async def expire_resume_card(self, aid: str) -> bool:
         """End a resume card unanswered past its bound: the request fails as resume_timed_out, not as declined."""
+        return await self._approval_operation(aid, self._expire_resume_card(aid, caller=asyncio.current_task()))
+
+    async def _expire_resume_card(self, aid: str, *, caller=None) -> bool:
         entry = self.approvals.get(aid)
         if entry is None or entry["approval"].get("kind") != "resume":
             return False
         approval = entry["approval"]
         if time.time() < self._resume_deadline(approval):
             return False
-        self._cancel_resume_timer(aid)
         days = round(self.s.policy.approvals.pi_decision_timeout_s / 86400, 1)
         note = f"재개 카드에 {days:g}일 동안 답이 없어 요청을 끝냈습니다"
-        self.approvals.pop(aid, None)
-        self.store.delete("approval", aid)
         answer = {"approved": False, "note": note, "state": "timed_out"}
-        self.store.put("approval_decision", aid, {"approval": approval, "origin": None, **answer,
-                                                  "decided_at": time.time()})
+        await self.store.acommit_approval(aid, {"approval": approval, "origin": None, **answer,
+                                               "decided_at": time.time()})
+        self.approvals.pop(aid, None)
+        self._cancel_approval_timers(aid, caller)
         rid = approval.get("request_id")
         await self.publish({"type": "approval.resolved", "ts": time.time(), "request_id": rid,
                             "data": {"id": aid, **answer}})

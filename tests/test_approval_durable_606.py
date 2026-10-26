@@ -475,6 +475,48 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
     assert hub.store.get("decision", card.id) is None
 
 
+@pytest.mark.parametrize("operation", ["expire", "retire", "sync_retire"])
+async def test_resume_expiry_and_retirement_cannot_overwrite_committing_answer(live_hub, monkeypatch, operation):
+    hub = live_hub
+    hub.requests["r"] = {"id": "r", "status": "interrupted", "mode": "orchestrate", "text": "mock"}
+    card = ApprovalRequest(kind="resume", request_id="r", summary="mock", created_at=1)
+    hub.approvals[card.id] = {"approval": card.model_dump(mode="json"), "origin": None}
+    hub.save_approval(card.id)
+    async def set_status(rid, status):
+        hub.requests[rid]["status"] = status
+    async def noop(*args, **kwargs):
+        pass
+    monkeypatch.setattr(hub, "_set_status", set_status)
+    monkeypatch.setattr(hub, "_restart_request_asks", lambda rid: None)
+    monkeypatch.setattr(hub, "resume_when_ready", noop)
+    monkeypatch.setattr(hub, "track_request", lambda rid, coro: coro.close())
+    monkeypatch.setattr(hub, "aschedule_terminal", noop)
+    entered, release = hold_commit(hub.store, monkeypatch)
+    resolving = asyncio.create_task(hub.resolve_approval(card.id, True, "PI answer"))
+    timer = None
+    try:
+        await wait_barrier(entered)
+        # Release from another thread so the old synchronous expiry/retirement
+        # cannot freeze the test's own event loop before its failure is observed.
+        timer = threading.Timer(0.1, release.set)
+        timer.start()
+        if operation == "expire":
+            await hub.expire_resume_card(card.id)
+        elif operation == "retire":
+            await hub.aretire_resume_cards("r", "retired")
+        else:
+            hub.retire_resume_cards("r", "retired")
+        await resolving
+        assert hub.store.get("approval_decision", card.id)["approved"] is True
+        assert hub.requests["r"]["status"] == "waiting_for_runner"
+        assert not any(e.get("data", {}).get("state") == "timed_out" for e in hub.events)
+    finally:
+        release.set()
+        if timer:
+            timer.join()
+        await asyncio.gather(resolving, return_exceptions=True)
+
+
 @pytest.mark.parametrize("operation", ["resolve", "close"])
 async def test_second_commit_failure_does_not_lose_card_on_restart(tmp_path, monkeypatch, operation):
     hub = Hub.__new__(Hub)
