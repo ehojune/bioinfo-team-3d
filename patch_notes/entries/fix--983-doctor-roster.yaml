@@ -1,0 +1,6 @@
+pr: 989
+rows:
+  - sha: 'd3cf8cc'
+    at: '2026-10-26 20:16'
+    summary: 'doctor가 runner의 custom contract_dir 직원도 읽기 전용으로 검사합니다.'
+    text: '기본/custom 경로·계약 유효성·중복 ID 우선순위를 맞췄습니다. 누락 회귀는 수정 전 1 failed이며 수정 후 관련 mock/static 235 passed입니다. 실제 설치판 복구와 시설팀 필수/선택 정책은 #983에 남습니다.'

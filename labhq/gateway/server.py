@@ -2590,19 +2590,68 @@ class Hub:
         state["dropped_told"] = state["dropped"]
         return {"action": "steer", "steer": {"id": steer["id"], "text": steer["text"]}, "dropped": dropped}
 
-    async def _publish_control(self, tid: str, entry: dict, data: dict) -> None:
+    async def _publish_control(self, tid: str, entry: dict, data: dict,
+                               *, lifecycle: tuple[dict | None] | None = None) -> None:
         """What the PI's request did, for the staff sheet. A halted task stays halted until resumed or expired."""
-        prev = self.task_controls.get(tid) or {}
-        merged = {**prev, **data, "ts": time.time()}
-        if prev.get("halted") and tid in self.halted_waits:
-            merged["halted"] = True
-        self.task_controls[tid] = merged
-        self.store.put("task_control_state", tid, merged)
-        await self.publish({"type": "agent.control", "ts": time.time(), "task_id": tid,
-                            "agent_id": (entry.get("payload") or {}).get("agent_id"),
-                            "request_id": entry.get("request_id"), "data": data})
+        await self._control_state(tid, data, lifecycle=lifecycle, event={
+            "type": "agent.control", "ts": time.time(), "task_id": tid,
+            "agent_id": (entry.get("payload") or {}).get("agent_id"),
+            "request_id": entry.get("request_id"), "data": data})
+
+    async def _control_state(self, tid: str, data: dict | None, *, replace: bool = False,
+                             lifecycle: tuple[dict | None] | None = None,
+                             event: dict | None = None, runner_id=None, runner_seq=None) -> None:
+        """Serialize this row's PI/runner/result/expiry writers through publication.
+
+        Deletion blocks late runner updates even after reload. A fresh PI action
+        can still control a live step through its previous, completed turn.
+        """
+        if not hasattr(self, "_control_locks"):
+            self._control_locks = WeakValueDictionary()
+        lock = self._control_locks.setdefault(tid, asyncio.Lock())
+        data, event = copy.deepcopy(data), copy.deepcopy(event)
+
+        async def commit():
+            async with lock:
+                if data is None:
+                    await self.store.acontrol_state(tid, None)
+                    self.task_controls.pop(tid, None)
+                    return
+                if lifecycle is not None and self.store.get("task_control_closed", tid) != lifecycle[0]:
+                    return  # This PI operation began before completion/expiry deleted its target.
+                task = self.store.get("task", tid) or {}
+                if runner_id is not None and task.get("completed") and not task.get("abandoned"):
+                    # A fresh PI queue may use this finished turn's id. Feedback
+                    # from that old runner turn cannot overwrite the new intent.
+                    if runner_seq is not None:
+                        await self.store.amark_runner(runner_id, runner_seq)
+                    return
+                prev = self.task_controls.get(tid) or {}
+                merged = {**({} if replace else prev), **data, "ts": time.time()}
+                if not replace and prev.get("halted") and tid in self.halted_waits:
+                    merged["halted"] = True
+                if not await self.store.acontrol_state(tid, merged, reopen=lifecycle is not None):
+                    if runner_seq is not None:
+                        await self.store.amark_runner(runner_id, runner_seq)
+                    return
+                self.task_controls[tid] = merged
+                if event is not None:
+                    await self.publish(event, runner_id=runner_id, runner_seq=runner_seq)
+
+        _, cancelled = await self._publication_write(commit())
+        if cancelled:
+            raise asyncio.CancelledError
 
     async def control_task(self, tid: str, action: str, text: str | None = None) -> dict:
+        """Keep PI actions on one step in invocation order, including runner sends."""
+        if not hasattr(self, "_pi_control_locks"):
+            self._pi_control_locks = WeakValueDictionary()
+        key = self._entry_step(tid, self.store.get("task", tid) or {})
+        lock = self._pi_control_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            return await self._control_task(tid, action, text)
+
+    async def _control_task(self, tid: str, action: str, text: str | None = None) -> dict:
         """Steer, pause, resume or halt through task ``tid`` (#59 ①). The step it belongs to owns the request: steers wait
         in the step's queue until a turn delivers them, a pause holds the step's next dispatch, and the step's turn that
         is out now (``tid`` or a later one) gets the request at once. Resume of a halted step releases its park.
@@ -2618,6 +2667,7 @@ class Hub:
         if not self._step_alive(entry):
             raise ValueError("이 단계는 끝나서 전달할 수 없어요")
         key = self._entry_step(tid, entry)
+        lifecycle = (self.store.get("task_control_closed", tid),)
         stored_halt = ((entry.get("result") or {}).get("error_kind") == "halted"
                        and not entry.get("halt_wait_finished"))
         if action == "resume" and (tid in self.halted_waits or stored_halt):
@@ -2663,7 +2713,7 @@ class Hub:
             self._save_step(key, state)
             sent = await self._push(tid, {"action": "halt"})
             await self._publish_control(tid, entry, {"action": "halt", "halt": True, "source": "gateway",
-                                                     "sent": sent})
+                                                     "sent": sent}, lifecycle=lifecycle)
             return {"task_id": tid, "action": action, "sent": sent, "queued": not sent}
         state = self._step(key)
         state["agent_id"] = state["agent_id"] or (entry.get("payload") or {}).get("agent_id")
@@ -2688,11 +2738,12 @@ class Hub:
             if event:
                 event.set()
         self._save_step(key, state)
+        lifecycle = (self.store.get("task_control_closed", target or tid),)
         sent = bool(target and message) and await self._push(target, message)
         await self._publish_control(target or tid, entry, {
             "action": action, "paused": state["paused"], "source": "gateway", "sent": sent,
             "steers_pending": sum(1 for steer in state["steers"] if not steer.get("task")),
-            "steers_dropped": state["dropped"]})
+            "steers_dropped": state["dropped"]}, lifecycle=lifecycle)
         return {"task_id": tid, "action": action, "sent": sent, "queued": not sent}
 
     async def _push_task_state(self, tid: str, *, steers: bool = True) -> None:
@@ -2865,22 +2916,25 @@ class Hub:
             reason = "cancelled"  # request cancel stopped the orchestration
             raise
         finally:
-            self.halted_waits.pop(tid, None)
-            entry = self.store.get("task", tid)
-            if entry:
-                entry.pop("halt_resume_requested", None)
-                self.store.put("task", tid, {**entry, "halt_wait_finished": True})
-            self.task_controls.pop(tid, None)
-            self.store.delete("task_control_state", tid)
-            if parked and (req.get("pi_waits") or {}).pop(key, None) is not None:
-                if not req.get("pi_waits"):
-                    req.pop("pi_waits", None)
-                await self._publish_hold_status(rid)
-            # Open pages drop the resume button whatever ended the wait: resumed, the bound passed and the step goes
-            # on as failed, or the request was cancelled (PR #532 review).
-            await self.publish({"type": "request.step_resumed" if resumed else "request.step_halt_expired",
-                                "ts": time.time(), "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
-                                "data": {"step_id": step_id, **({} if resumed else {"reason": reason})}})
+            async def finish_wait():
+                self.halted_waits.pop(tid, None)
+                entry = self.store.get("task", tid)
+                if entry:
+                    entry.pop("halt_resume_requested", None)
+                    self.store.put("task", tid, {**entry, "halt_wait_finished": True})
+                await self._control_state(tid, None)
+                if parked and (req.get("pi_waits") or {}).pop(key, None) is not None:
+                    if not req.get("pi_waits"):
+                        req.pop("pi_waits", None)
+                    await self._publish_hold_status(rid)
+                # Clear the resume button even if cancellation repeats during the durable deletion.
+                await self.publish({"type": "request.step_resumed" if resumed else "request.step_halt_expired",
+                                    "ts": time.time(), "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
+                                    "data": {"step_id": step_id, **({} if resumed else {"reason": reason})}})
+
+            _, cancelled = await self._publication_write(finish_wait())
+            if cancelled:
+                raise asyncio.CancelledError
         return resumed
 
     async def flush_ask_answers(self, runner_id: str) -> None:
@@ -3281,12 +3335,8 @@ class Hub:
                         steer["task"] = None
                 self._save_step(key, state)
         if typ == "agent.control" and msg.get("task_id"):  # the staff sheet's paused/halted line survives a reload
-            prev = self.task_controls.get(msg["task_id"]) or {}
-            merged = {**prev, **(msg.get("data") or {}), "ts": time.time()}
-            if prev.get("halted") and msg["task_id"] in self.halted_waits:
-                merged["halted"] = True  # only a resume or an expiry ends a halt
-            self.task_controls[msg["task_id"]] = merged
-            self.store.put("task_control_state", msg["task_id"], merged)
+            await self._control_state(msg["task_id"], msg.get("data") or {}, event=msg,
+                                      runner_id=runner_id, runner_seq=runner_seq)
         if typ == "ask.ack":
             entry = self.store.get("ask", str(msg["id"]))
             if entry:
@@ -3327,12 +3377,11 @@ class Hub:
                 self._settle_steers(tid, task, result.control)
             if tid:
                 if result.error_kind == "halted":
-                    self.task_controls[tid] = {"paused": False, "halt": True, "halted": True, "ts": time.time()}
-                    self.store.put("task_control_state", tid, self.task_controls[tid])
+                    await self._control_state(tid, {"paused": False, "halt": True, "halted": True}, replace=True)
                 elif waiting(result):
                     pass  # an HPC or answer wait keeps its pause: the wake turn still waits for resume (PR #532 review)
-                elif self.task_controls.pop(tid, None) is not None:
-                    self.store.delete("task_control_state", tid)
+                else:
+                    await self._control_state(tid, None)
             if (result.pipeline_submission is not None and result.agent_id in PIPELINE_AUTHORS
                     and self.s.policy.bioinfo_agent.pipeline_pr
                     and result.ok and not waiting(result)):
@@ -3465,7 +3514,8 @@ class Hub:
                  else None)
         if entry and entry.get("count"):
             entry["count"] -= 1
-        await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
+        if typ != "agent.control" or not msg.get("task_id"):
+            await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
         if pipeline_event is not None:
             await self.publish(pipeline_event)
         if runner_seq is not None:

@@ -4,6 +4,26 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+PR #989 · Refs #983. doctor가 runner의 custom `contract_dir`에 있는 유효한 직원도 검사합니다.
+
+- YAML 로드 순서·계약 유효성 규칙을 공유하고 기본/custom 경로·만료/archived·중복 ID 결과를 runner와 맞췄습니다. doctor는 파일을 이동하거나 수정하지 않습니다.
+- custom 경로 누락 회귀: 수정 전 1 failed, 수정 후 통과. 기본/custom·오류 처리·force_engine·파일/디렉터리 불변을 포함한 관련 mock/static 235 passed.
+- Python 3.10 syntax·public·diff 검사 통과. manual 한 문단 갱신: 194,818→194,939자(LF 기준).
+- 시설팀 필수/선택 정책은 후속입니다. 실제 설치판 복구는 UNVERIFIED, #983 OPEN·#987 hold 유지. 운영 roster·설치·배포·HPC는 실행하지 않았습니다.
+
+최종 head CI·같은 head 실제 bot review·P1=0·head guard를 확인한 뒤 담당자가 병합합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+Refs #606 — control-state 저장 경계만 수정합니다.
+
+- PI·runner·result·halt 만료가 같은 row의 lock을 공유하고 async commit 뒤 memory/event를 반영합니다. PI 제어는 step별로 전송부터 순서를 지킵니다. 삭제 표식과 PI 시작 시점의 세대로 늦은 메시지·진행 중 제어의 부활을 막습니다.
+- 반복 asyncio/AnyIO 취소 뒤 commit·rollback을 판정합니다. halt 정리는 제어 row 삭제와 대기 표시·만료 알림까지 마칩니다. step·task/result/dispatch 전체 전환은 범위 밖입니다.
+- 수정 전 memory/rollback 회귀 8 failed, PI 전송 경쟁·result의 삭제 row 재개·종료 turn feedback의 새 PI intent 덮어쓰기 각 1 failed. 신규 격리 mock 26건 포함 관련 회귀 결과와 public·diff·Windows state cohort·patch-note·최종 head CI·실제 리뷰는 PR에 기록합니다.
+- 실제 API·실디스크 성능·실프로세스 재시작·운영은 미검증입니다. 복구 검증은 격리 Store/Hub 재열기이며 #606은 OPEN 유지합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 Refs #675. 취소 회귀검사의 PID readiness race를 수정했습니다.
 
 - 파일 존재 대신 양수 PID를 읽을 때까지 기존 40초 안에서 기다리고 읽은 값을 보관합니다.

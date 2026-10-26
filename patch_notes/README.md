@@ -14,6 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:16 | [`d3cf8cc`](https://github.com/ehojune/bioinfo-team-3d/pull/989/commits/d3cf8cc) | **doctor가 runner의 custom contract\_dir 직원도 읽기 전용으로 검사합니다.**<br>기본/custom 경로·계약 유효성·중복 ID 우선순위를 맞췄습니다. 누락 회귀는 수정 전 1 failed이며 수정 후 관련 mock/static 235 passed입니다. 실제 설치판 복구와 시설팀 필수/선택 정책은 #983에 남습니다. |
+| 19:42 | [`7163bcf`](https://github.com/ehojune/bioinfo-team-3d/pull/988/commits/7163bcf) | **해당 경쟁 1 failed → PASS. 신규 mock 26건 포함 관련 159 passed입니다.**<br>종료 turn의 늦은 runner feedback이 새 PI의 step 제어 intent를 덮어쓰지 않게 한다(Refs |
+| 19:33 | [`a99601d`](https://github.com/ehojune/bioinfo-team-3d/pull/988/commits/a99601d) | **삭제 row 재개 1 failed → PASS. 신규 mock 25건 포함 관련 158 passed입니다.**<br>result에서 만든 제어 알림은 닫힌 row를 재개하지 못하고 새 PI 동작만 재개를 허용한다(Refs |
+| 19:29 | [`345fe4f`](https://github.com/ehojune/bioinfo-team-3d/pull/988/commits/345fe4f) | **전송 경쟁 1 failed → PASS. 신규 mock 24건 포함 관련 157 passed이며 rollback 중 heartbeat도 검증했습니다.**<br>같은 step의 PI 제어를 runner 전송부터 순서대로 처리해 늦은 pause의 덮어쓰기를 막는다(Refs |
+| 19:25 | [`2cdf7ae`](https://github.com/ehojune/bioinfo-team-3d/pull/988/commits/2cdf7ae) | **PI·runner·result·halt 만료의 경쟁, 삭제 뒤 부활, 실패·반복 취소와 격리 복구 읽기를 mock으로 검증했습니다.**<br>control-state를 task별 async commit으로 직렬화하고 commit 뒤 memory·event를 반영한다(Refs |
 | 18:56 | [`1f3061c`](https://github.com/ehojune/bioinfo-team-3d/pull/986/commits/1f3061c) | **취소 회귀검사는 파일 생성 뒤 양수 PID가 기록될 때까지 기다립니다.**<br>기존 40초·프로세스 종료·다른 요청 보존 assertion을 유지합니다. missing→empty→valid와 유효값 없는 timeout을 mock 6건으로 확인했습니다. |
 | 18:05 | [`e732a8c`](https://github.com/ehojune/bioinfo-team-3d/pull/985/commits/e732a8c) | **시설팀 복귀 뒤 동일 질문은 과거 CSO fallback cache를 건너뜁니다.**<br>P2 4375525575를 수정 전 1 failed로 재현했습니다. 부재 시 cache 안내를 유지하고 가용 시설팀은 직접 상담합니다. 관련 mock 149 passed입니다. |
 | 17:59 | [`c9cb80c`](https://github.com/ehojune/bioinfo-team-3d/pull/985/commits/c9cb80c) | **겹쳐 들어온 같은 단계 재문의도 CSO 상담을 한 번만 실행합니다.**<br>P2 4375474605의 경쟁을 수정 전 1 failed로 재현했습니다. lock 안에서 durable ask를 다시 확인하고 답변 저장까지 잠금을 유지합니다. main #982·#984 반영 후 관련 mock 149 passed입니다. |

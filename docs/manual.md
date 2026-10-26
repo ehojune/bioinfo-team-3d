@@ -133,7 +133,7 @@ doctor는 **설정 준비**와 **운영 준비**를 나눠 표시합니다. 배�
 Windows에서 검토한 독립 owner Job을 쓰는 인스턴스는 state 밖의 운영자 계약 pin, `contained-runtime.json`, fresh owner challenge로 네 daemon 세대를 확인하면 `contained_verified`로 표시합니다. 실제 검사 코드의 배포 경로·hash도 대조합니다. 기본 detached 검사는 유지하며 인증·runner 연결 실패를 지우지 않습니다. owner receipt의 수명 상한은 `runner.contained_max_s`(기본 5400초, 하한 60·상한 86400)이고, 15시간처럼 긴 연구 실행은 발급하는 owner도 같은 값으로 맞춰야 합니다(#938). 직원 자식·요청 종료·연구 GO를 확인한 값은 아닙니다. [receipt·RPC 계약과 한계](reference/contained-runtime.md).
 doctor의 `disk` 행은 작업·임시·Codex/Claude 직원 홈의 드라이브 여유를 읽습니다. gateway 상태 폴더(`gateway.state_dir`, SQLite·이벤트)가 이들과 다른 드라이브에 있으면 그 드라이브도 따로 읽고, 같은 드라이브면 행을 반복하지 않습니다. 폴더가 아직 없으면 가장 가까운 기존 부모를 검사합니다. 기본 경고는 10 GiB 미만 또는 5% 미만이며 `runner.disk_warning_free_gb`·`runner.disk_warning_free_percent`로 바꿉니다(각각 0이면 해당 기준 해제). 조회 실패도 warn입니다. 단계가 앞 단계 산출을 `inputs/<단계>`로 복사할 때는 runner가 먼저 파일 크기 합을 작업 드라이브 여유와 비교해, 크기 합이 여유보다 크면 파일 내용을 복사하기 전에 멈추고 그 입력을 쓸 수 없다고 이유(필요·여유 크기)와 함께 활동 기록과 직원 안내에 남깁니다. 압축 볼륨처럼 실제 사용량이 파일 크기와 다른 드라이브에서는 이 계산이 맞는다고 보장하지 않습니다. 직원은 CSO에게 묻고, 원본 산출은 그대로입니다. 여유를 읽지 못하면 이전처럼 상한 안에서 복사하고, 복사 중 디스크가 차면 `disk full during copy`로 알립니다. 직원이 셸로 받는 다운로드는 크기를 미리 알 수 없어 이 검사가 막지 않습니다. task를 시작할 때(#678)는 runner가 작업 폴더 드라이브의 여유를 다시 읽습니다. `runner.disk_fail_free_gb`(기본 2 GiB, 0이면 끔) 아래이면 task를 시작하지 않고 **디스크 여유 부족** 카드로 PI에게 묻습니다. 승인하면 시작하고, 거절하거나 24시간 안에 답이 없으면(runner가 건 시간 제한) 시작하지 않고 이유를 남깁니다. 웹은 이 카드가 열려 있는 동안 요청을 PI 결정 대기로 보여 줍니다. 판단은 실제로 이번 실행이 쓰는 작업 폴더(재개·재시도로 다른 드라이브를 쓰는 경우 포함)의 드라이브 여유를 기준으로 하며, 작업 폴더를 만들거나 실행 슬롯을 잡기 전에 합니다. 경고 기준(위 10 GiB·5%) 아래이면 작업판 로그에 경고만 남기고 진행합니다. 드라이브를 읽지 못하면 막지 않고, 환경 자동 수정(`facilities_fix`)은 이 검사를 받지 않습니다. 큰 원자료용 폴더는 선택 설정 `runner.bulk_data_root`로 정합니다. 값이 있으면 직원 브리핑에 "큰 원자료(수 GB 이상)는 이 폴더 아래에 받으세요"가 여유 공간과 함께 한 줄 들어갑니다. 이 폴더는 작업 폴더 밖이라 쓰기에 새 허가를 주지 않으며 평소처럼 승인 판정을 거칩니다. 통제 구역에 걸치면 브리핑에 쓰지 않고 경고를 남깁니다. 값이 없으면 지금과 같습니다. 설정한 작업 폴더는 이름과 무관하게 게시 전 개인 경로 검사에 포함됩니다. [검증 근거](reference/disk-preflight-752.md).
 
-doctor는 roster가 쓰는 엔진만 검사하고, 생략한 네트워크·dry-run 로그인 검사는 한 줄로 묶습니다. fail이 하나라도 있거나, 활성 직원이 없거나, roster 엔진 실행 파일이 하나라도 없으면 끝에 `실행 준비: 아니오`와 이유를 표시합니다. 다른 warn은 준비 여부를 바꾸지 않습니다.
+doctor는 roster가 쓰는 엔진만 검사하고, 생략한 네트워크·dry-run 로그인 검사는 한 줄로 묶습니다. `runner.contract_dir`를 지정하면 기본 `agents/contract` 대신 그 폴더를 읽고, 계약 유효성·중복 ID 우선순위도 runner와 맞춥니다. 만료 계약의 파일 이동·수정은 하지 않습니다. fail이 하나라도 있거나, 활성 직원이 없거나, roster 엔진 실행 파일이 하나라도 없으면 끝에 `실행 준비: 아니오`와 이유를 표시합니다. 다른 warn은 준비 여부를 바꾸지 않습니다.
 
 | doctor 항목 | 판정 | 고치는 명령 |
 |---|---|---|
@@ -454,7 +454,7 @@ Gateway의 event·request·결과 추가/삭제·보고서 검토 저장은 같�
 
 일반 승인 생성·결정·timeout·close·runner 전달/ACK도 DB writer에서 await합니다. 카드 삭제·결정·전달 행은 한 transaction으로 저장하며 같은 카드의 경쟁을 직렬화합니다. commit 결과를 확인한 뒤 카드 제거·future 완료·전달을 진행하고, 재접속 전달은 ACK·timeout 뒤 최신 행을 다시 읽습니다. runner 승인 전달은 최대 10초이며 시간 초과 때 연결 등록을 해제하고 전달 행을 보존합니다. 저장 중 취소돼도 시작한 commit의 성공·오류를 확인합니다. storage 선택 중 취소는 저장된 선택으로 재시도하는 기존 계약을 유지합니다.
 
-Runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 outbox·ack도 writer로 옮겼습니다. Gateway 일반 승인(#976)·task 취소 intent(#979)와 plan-rehire 계약 저장(#980)도 async입니다. runner activity·halt/resume task intent(#982)는 같은 SQLite writer에서 await하며 transaction 안의 최신 row에 해당 필드만 병합합니다. step/control_state·result/dispatch 등 다른 task 전체-row 쓰기와 채용 preflight·전용 복구·초기화/CLI의 sync 경계는 남습니다(#606). 이전 조사 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)를 봅니다.
+Runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 outbox·ack도 writer로 옮겼습니다. Gateway 일반 승인(#976)·task 취소 intent(#979)와 plan-rehire 계약 저장(#980)도 async입니다. runner activity·halt/resume task intent(#982)는 같은 SQLite writer에서 await하며 transaction 안의 최신 row에 해당 필드만 병합합니다. PI·runner의 control-state 저장과 result/만료에 따른 해당 row 삭제도 task별로 직렬화해 commit 뒤 memory·알림을 반영합니다. 삭제 표식은 늦은 runner 메시지의 부활을 막고 새 PI 제어는 살아 있는 step을 다시 제어합니다. step·result 수신의 나머지 저장·dispatch와 전용 복구·초기화/CLI의 sync 경계는 남습니다(#606). 채용 preflight 읽기는 #984에서 async로 전환했습니다. 이전 조사 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)를 봅니다.
 
 ### topic 점검표와 선행 연구 기준
 
@@ -1020,7 +1020,7 @@ internal 구역을 가리키는 작업·project·참고 폴더 별칭은 Claude�
 | 항목 | 구현 근거와 남은 확인 |
 |---|---|
 | 로컬 job·취소 | [#937](https://github.com/ehojune/bioinfo-team-3d/pull/937) job 기록 재로드, [#968](https://github.com/ehojune/bioinfo-team-3d/pull/968) 복구 runner에 취소 재전송 회귀가 병합됐습니다. 대체 transport·무해한 job으로 취소 트리 잔류 0·완료 깨움 없음·다른 요청 보존을 확인했습니다. runner가 꺼진 동안에는 job 종료를 보장하지 않습니다. |
-| 저장·소유권 | #967 소유권 경쟁, #966·#972·#976·[#979](https://github.com/ehojune/bioinfo-team-3d/pull/979)·[#980](https://github.com/ehojune/bioinfo-team-3d/pull/980) 저장 경계 async 전환 병합. #982는 runner activity·halt/resume task intent를 전환합니다. step/control_state·result/dispatch·채용 preflight 등 sync 경계는 남아 #606은 OPEN입니다. 실디스크·운영 성능은 미검증입니다. |
+| 저장·소유권 | #967 소유권 경쟁과 #966·#972·#976·#979·#980·#982 저장 경계, #984 채용 preflight 읽기 전환 병합. control-state는 task별 async commit·삭제 후 부활 방지를 적용합니다. step·result 수신의 나머지 저장·dispatch 등 sync 경계는 남아 #606은 OPEN입니다. 실디스크·운영 성능은 미검증입니다. |
 | 운영 미검증 | 실제 WebSocket 재연결·gateway OS 재시작·새 설치에서의 실제 요청·반복 복구·지원 요청 end-to-end는 미검증입니다. [새 설치 mock 검사](reference/clean-install-922.md)와 회귀 CI를 운영 PASS로 세지 않습니다. |
 
 ### 승인·예산
