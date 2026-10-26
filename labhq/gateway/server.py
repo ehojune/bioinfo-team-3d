@@ -2541,11 +2541,39 @@ class Hub:
                 "last_task": state.get("last_task"), "ops": int(state.get("ops") or 0),
                 "pause_op": int(state.get("pause_op") or 0), "halt_op": int(state.get("halt_op") or 0)}
 
-    def _save_step(self, key: str, state: dict) -> None:
+    async def _save_step(self, key: str, state: dict) -> None:
         if state["steers"] or state["paused"] or state.get("last_task"):
-            self.store.put("step_control", key, {**state, "updated_at": time.time()})
+            await self.store.aput("step_control", key, {**state, "updated_at": time.time()})
         else:
-            self.store.delete("step_control", key)
+            await self.store.adelete("step_control", key)
+
+    def _step_lock(self, key: str) -> asyncio.Lock:
+        if not hasattr(self, "_step_locks"):
+            self._step_locks = WeakValueDictionary()
+        return self._step_locks.setdefault(key, asyncio.Lock())
+
+    async def _update_step(self, key: str, update, *, wake: bool = False):
+        """Read/modify/commit the latest row under its lock, including cancellation.
+
+        Callbacks run on the loop without yielding. Sends remain outside this
+        lock: runner feedback and closure must progress during a blocked send.
+        Closed keys guard in-flight work; restored request/results guard reloads.
+        """
+        async def commit():
+            async with self._step_lock(key):
+                if key in getattr(self, "_closed_steps", set()):
+                    return None
+                state = self._step(key)
+                if update(state) is False:
+                    return None
+                await self._save_step(key, state)
+                if wake:
+                    event = self.step_resume_events.get(key)
+                    if event:
+                        event.set()
+                return state
+
+        return await self._publication_write(commit())
 
     def _step_alive(self, entry: dict) -> bool:
         """Whether the step can still get another turn: its request is active and its result is not in yet."""
@@ -2558,7 +2586,8 @@ class Hub:
     def _live_task(self, key: str) -> str | None:
         """The step's turn that is out now (dispatched and not finished), newest first."""
         found = [(entry.get("dispatched_at", 0), tid) for tid, entry in self.store.all("task").items()
-                 if (not entry.get("completed") or entry.get("abandoned")) and self._entry_step(tid, entry) == key]
+                 if (not entry.get("completed") or entry.get("abandoned"))
+                 and tid not in getattr(self, "_finishing_step_tasks", set()) and self._entry_step(tid, entry) == key]
         return max(found)[1] if found else None
 
     async def _push(self, tid: str, message: dict) -> bool:
@@ -2593,6 +2622,8 @@ class Hub:
     async def _publish_control(self, tid: str, entry: dict, data: dict,
                                *, lifecycle: tuple[dict | None] | None = None) -> None:
         """What the PI's request did, for the staff sheet. A halted task stays halted until resumed or expired."""
+        if self._entry_step(tid, entry) in getattr(self, "_closed_steps", set()):
+            return
         await self._control_state(tid, data, lifecycle=lifecycle, event={
             "type": "agent.control", "ts": time.time(), "task_id": tid,
             "agent_id": (entry.get("payload") or {}).get("agent_id"),
@@ -2664,7 +2695,8 @@ class Hub:
         entry = entry or {}
         if entry and not self.controllable(entry.get("kind"), entry.get("step_id"), entry.get("request_id")):
             raise ValueError(NOT_CONTROLLABLE.format(kind=entry.get("kind") or "?"))
-        if not self._step_alive(entry):
+        if (not self._step_alive(entry) or
+                self._entry_step(tid, entry) in getattr(self, "_closed_steps", set())):
             raise ValueError("이 단계는 끝나서 전달할 수 없어요")
         key = self._entry_step(tid, entry)
         lifecycle = (self.store.get("task_control_closed", tid),)
@@ -2677,17 +2709,22 @@ class Hub:
                 current = self.store.get("task", tid)
                 if not current or current.get("halt_wait_finished") or not self._step_alive(current):
                     raise ValueError("이 단계는 끝나서 전달할 수 없어요")
-            state = self._step(key)
-            # A resume after a halt also lifts a pause that came before the halt; one sent after it stays.
-            if state["paused"] and int(state.get("pause_op") or 0) < int(state.get("halt_op") or 0):
-                state["paused"] = False
-                self._save_step(key, state)
+            def resume(state):
+                # A pause after the halt stays; an earlier pause is lifted.
+                if state["paused"] and int(state.get("pause_op") or 0) < int(state.get("halt_op") or 0):
+                    state["paused"] = False
+                else:
+                    return False
+
+            _, interrupted = await self._update_step(key, resume, wake=True)
+            cancelled |= interrupted
             if tid in self.halted_waits:
                 self.halted_waits[tid].set()
             if cancelled:
                 raise asyncio.CancelledError
             return {"task_id": tid, "action": action, "resumed_halted": True, "sent": False, "queued": False}
-        live = not entry.get("completed") or bool(entry.get("abandoned"))
+        live = ((not entry.get("completed") or bool(entry.get("abandoned")))
+                and tid not in getattr(self, "_finishing_step_tasks", set()))
         if action == "halt":
             if not live:
                 raise ValueError("이 작업은 이미 끝나 멈출 것이 없어요")
@@ -2707,39 +2744,58 @@ class Hub:
                     raise ValueError(HALT_WHILE_WAITING)
                 raise ValueError("작업 상태가 바뀌었어요. 다시 시도해 주세요")
             entry = current
-            state = self._step(key)
-            state["ops"] = int(state.get("ops") or 0) + 1
-            state["halt_op"] = state["ops"]
-            self._save_step(key, state)
+            def halt(state):
+                if not self._step_alive(entry):
+                    return False
+                state["ops"] = int(state.get("ops") or 0) + 1
+                state["halt_op"] = state["ops"]
+
+            state, cancelled = await self._update_step(key, halt)
+            if cancelled:
+                raise asyncio.CancelledError
+            if state is None or not self._step_alive(entry) or key in getattr(self, "_closed_steps", set()):
+                raise ValueError("step ended")
             sent = await self._push(tid, {"action": "halt"})
+            if key in getattr(self, "_closed_steps", set()) or not self._step_alive(entry):
+                raise ValueError("step ended")
             await self._publish_control(tid, entry, {"action": "halt", "halt": True, "source": "gateway",
                                                      "sent": sent}, lifecycle=lifecycle)
             return {"task_id": tid, "action": action, "sent": sent, "queued": not sent}
-        state = self._step(key)
-        state["agent_id"] = state["agent_id"] or (entry.get("payload") or {}).get("agent_id")
-        state["last_task"] = state["last_task"] or tid  # the row a paused step is resumed from
-        target = tid if live else self._live_task(key)
-        message = None
-        if action == "steer":
-            steer = {"id": new_id("steer"), "text": text or "", "at": time.time(), "task": target}
-            state["steers"].append(steer)
-            self._cap_steers(state)
-            if target:
-                message = self._steer_message(state, steer)
-        elif action == "pause":
-            state["paused"] = True
-            state["ops"] = int(state.get("ops") or 0) + 1
-            state["pause_op"] = state["ops"]
-            message = {"action": "pause"}
-        else:
-            state["paused"] = False
-            message = {"action": "resume"}
-            event = self.step_resume_events.get(key)
-            if event:
-                event.set()
-        self._save_step(key, state)
+        target, message = None, None
+
+        def change(state):
+            nonlocal target, message
+            if not self._step_alive(entry):
+                return False
+            state["agent_id"] = state["agent_id"] or (entry.get("payload") or {}).get("agent_id")
+            state["last_task"] = state["last_task"] or tid
+            current = self.store.get("task", tid) or {}
+            target = (tid if current and (not current.get("completed") or current.get("abandoned"))
+                      and tid not in getattr(self, "_finishing_step_tasks", set()) else self._live_task(key))
+            if action == "steer":
+                steer = {"id": new_id("steer"), "text": text or "", "at": time.time(), "task": target}
+                state["steers"].append(steer)
+                self._cap_steers(state)
+                if target:
+                    message = self._steer_message(state, steer)
+            elif action == "pause":
+                state["paused"] = True
+                state["ops"] += 1
+                state["pause_op"] = state["ops"]
+                message = {"action": "pause"}
+            else:
+                state["paused"] = False
+                message = {"action": "resume"}
+
+        state, cancelled = await self._update_step(key, change, wake=action == "resume")
+        if cancelled:
+            raise asyncio.CancelledError
+        if state is None or not self._step_alive(entry) or key in getattr(self, "_closed_steps", set()):
+            raise ValueError("step ended")
         lifecycle = (self.store.get("task_control_closed", target or tid),)
         sent = bool(target and message) and await self._push(target, message)
+        if key in getattr(self, "_closed_steps", set()) or not self._step_alive(entry):
+            raise ValueError("step ended")
         await self._publish_control(target or tid, entry, {
             "action": action, "paused": state["paused"], "source": "gateway", "sent": sent,
             "steers_pending": sum(1 for steer in state["steers"] if not steer.get("task")),
@@ -2750,7 +2806,8 @@ class Hub:
         """Send a task that is out now everything the PI asked of it or its step: halt, pause, and the steers marked
         for it. The runner applies a steer id once."""
         entry = self.store.get("task", tid)
-        if not entry or (entry.get("completed") and not entry.get("abandoned")):
+        if (not entry or (entry.get("completed") and not entry.get("abandoned"))
+                or tid in getattr(self, "_finishing_step_tasks", set())):
             return
         if entry.get("halt_requested"):
             await self._push(tid, {"action": "halt"})
@@ -2763,11 +2820,20 @@ class Hub:
             for steer_id in [s["id"] for s in self._step(key)["steers"] if s.get("task") == tid]:
                 # Every send yields. Re-read the queue, and commit before sending, so a concurrent control, result,
                 # or step closure is never overwritten by the snapshot this flush started with.
-                state = self._step(key)
-                steer = next((s for s in state["steers"] if s["id"] == steer_id and s.get("task") == tid), None)
-                if steer is not None:
+                message = None
+
+                def prepare(state):
+                    nonlocal message
+                    steer = next((s for s in state["steers"] if s["id"] == steer_id and s.get("task") == tid), None)
+                    if steer is None or not self._step_alive(entry):
+                        return False
                     message = self._steer_message(state, steer)
-                    self._save_step(key, state)
+
+                _, cancelled = await self._update_step(key, prepare)
+                if cancelled:
+                    raise asyncio.CancelledError
+                if (message is not None and self._step_alive(entry)
+                        and key not in getattr(self, "_closed_steps", set())):
                     await self._push(tid, message)
 
     async def flush_task_controls(self, runner_id: str) -> None:
@@ -2779,50 +2845,61 @@ class Hub:
                     and (not entry.get("completed") or entry.get("abandoned"))):
                 await self._push_task_state(tid)
 
-    def _attach_steers(self, task: Task) -> Task:
-        """The step's undelivered steers go with this turn (in its payload, so a re-send carries them too)."""
+    async def _attach_steers(self, task: Task) -> Task:
+        """Reserve undelivered steer IDs before constructing this turn's payload."""
         if not self.controllable(task.meta.get("kind"), task.meta.get("step_id"), task.request_id):
             return task
         key = self.step_key(task.request_id, task.meta.get("step_id"), task.meta.get("kind"), task.id)
-        state = self._step(key)
-        state["last_task"] = task.id
-        state["agent_id"] = state["agent_id"] or task.agent_id
-        steers = []
-        for steer in state["steers"]:
-            if not steer.get("task") or steer.get("task") == task.id:
-                steer["task"] = task.id
-                steers.append({"id": steer["id"], "text": steer["text"]})
-        dropped = max(0, state["dropped"] - state["dropped_told"])
-        state["dropped_told"] = state["dropped"]
-        self._save_step(key, state)
+        steers, dropped = [], 0
+
+        def attach(state):
+            nonlocal dropped
+            if not self._step_alive({"request_id": task.request_id, **task.meta}):
+                return False
+            state["last_task"] = task.id
+            state["agent_id"] = state["agent_id"] or task.agent_id
+            for steer in state["steers"]:
+                if not steer.get("task") or steer.get("task") == task.id:
+                    steer["task"] = task.id
+                    steers.append({"id": steer["id"], "text": steer["text"]})
+            dropped = max(0, state["dropped"] - state["dropped_told"])
+            state["dropped_told"] = state["dropped"]
+
+        _, cancelled = await self._update_step(key, attach)
+        if cancelled:
+            # No payload was handed to dispatch. Return the reservation for replay.
+            await self._release_steers(task)
+            raise asyncio.CancelledError
         if not steers and not dropped:
             return task
         return task.model_copy(update={"meta": {**task.meta, "steers": steers, "steer_dropped": dropped}})
 
-    def _settle_steers(self, tid: str, entry: dict, report: dict | None) -> None:
-        """A turn ended: steers it delivered leave the step; the rest wait for the step's next turn."""
+    async def _settle_steers(self, tid: str, entry: dict, report: dict | None) -> None:
+        """Remove delivered IDs and release the rest against the latest step row."""
         key = self._entry_step(tid, entry)
-        stored = self.store.get("step_control", key)
-        if not stored:
-            return
-        state = self._step(key)
         delivered = set((report or {}).get("delivered") or [])
-        kept = []
-        for steer in state["steers"]:
-            if steer.get("task") == tid:
-                if steer["id"] in delivered:
-                    continue
-                steer["task"] = None
-            kept.append(steer)
-        state["steers"] = kept
-        self._cap_steers(state)
-        self._save_step(key, state)
 
-    def _release_steers(self, task: Task) -> None:
-        """The dispatch gave up without a result: the steers it carried wait for the step's next turn again. If the
-        runner did get them they may come twice; none is lost."""
-        self._settle_steers(task.id, {"request_id": task.request_id, "step_id": task.meta.get("step_id"),
-                                      "kind": task.meta.get("kind")}, None)
+        def settle(state):
+            if not self.store.get("step_control", key):
+                return False
+            kept = []
+            for steer in state["steers"]:
+                if steer.get("task") == tid:
+                    if steer["id"] in delivered:
+                        continue
+                    steer["task"] = None
+                kept.append(steer)
+            state["steers"] = kept
+            self._cap_steers(state)
+
+        _, cancelled = await self._update_step(key, settle)
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _release_steers(self, task: Task) -> None:
+        """An uncertain dispatch keeps its IDs for replay; the runner deduplicates."""
+        await self._settle_steers(task.id, {"request_id": task.request_id, "step_id": task.meta.get("step_id"),
+                                            "kind": task.meta.get("kind")}, None)
 
     async def _wait_step_resumed(self, task: Task) -> TaskResult | None:
         """Hold the step's next turn while the PI keeps it paused. None: send it. A result: the PI-decision bound passed
@@ -2871,20 +2948,36 @@ class Hub:
 
     async def _close_step_controls(self, rid: str, step_id: str | None = None) -> None:
         """The step (or the whole request) ended: steers it never delivered are reported to the PI as not delivered."""
-        for key, stored in list(self.store.all("step_control").items()):
+        keys = set(self.store.all("step_control")) | set(getattr(self, "_step_locks", {}))
+        if step_id is not None:
+            keys.add(self.step_key(rid, step_id, None, ""))
+        cancelled = False
+        for key in keys:
             try:
                 request_id, step = json.loads(key)
             except (ValueError, TypeError):
                 continue
             if request_id != rid or (step_id is not None and step != step_id):
                 continue
-            self.store.delete("step_control", key)
-            undelivered = [steer.get("text") for steer in stored.get("steers") or [] if isinstance(steer, dict)]
-            if undelivered:
-                await self.publish({"type": "agent.control", "ts": time.time(), "request_id": rid,
-                                    "task_id": stored.get("last_task"), "agent_id": stored.get("agent_id"),
-                                    "data": {"action": "undelivered", "undelivered": undelivered, "step_id": step,
-                                             "source": "gateway"}})
+
+            async def close():
+                async with self._step_lock(key):
+                    stored = self.store.get("step_control", key) or {}
+                    await self.store.adelete("step_control", key)
+                    if not hasattr(self, "_closed_steps"):
+                        self._closed_steps = set()
+                    self._closed_steps.add(key)
+                undelivered = [s.get("text") for s in stored.get("steers") or [] if isinstance(s, dict)]
+                if undelivered:
+                    await self.publish({"type": "agent.control", "ts": time.time(), "request_id": rid,
+                                        "task_id": stored.get("last_task"), "agent_id": stored.get("agent_id"),
+                                        "data": {"action": "undelivered", "undelivered": undelivered, "step_id": step,
+                                                 "source": "gateway"}})
+
+            _, interrupted = await self._publication_write(close())
+            cancelled |= interrupted
+        if cancelled:
+            raise asyncio.CancelledError
 
     async def wait_halted(self, rid: str, step_id: str, result: TaskResult) -> bool:
         """Park a step the PI halted until the PI resumes it (POST /api/tasks/{id}/resume) (#59 ①).
@@ -3329,11 +3422,16 @@ class Hub:
             # sent again when the runner accepts the task. An ended one gives it back to the step.
             if entry and not live and msg.get("action") == "steer" and msg.get("steer_id"):
                 key = self._entry_step(tid, entry)
-                state = self._step(key)
-                for steer in state["steers"]:
-                    if steer["id"] == msg["steer_id"] and steer.get("task") == tid:
-                        steer["task"] = None
-                self._save_step(key, state)
+                def nack(state):
+                    if not self.store.get("step_control", key):
+                        return False
+                    for steer in state["steers"]:
+                        if steer["id"] == msg["steer_id"] and steer.get("task") == tid:
+                            steer["task"] = None
+
+                _, cancelled = await self._update_step(key, nack)
+                if cancelled:
+                    raise asyncio.CancelledError
         if typ == "agent.control" and msg.get("task_id"):  # the staff sheet's paused/halted line survives a reload
             await self._control_state(msg["task_id"], msg.get("data") or {}, event=msg,
                                       runner_id=runner_id, runner_seq=runner_seq)
@@ -3346,6 +3444,11 @@ class Hub:
             tid = msg.get("task_id") or ""
             task = self.store.get("task", tid) if tid else None
             result = TaskResult.model_validate(msg["data"])
+            # Once result settlement begins this turn cannot consume new steers.
+            # Completion/cost persistence may still yield before task.completed.
+            if not hasattr(self, "_finishing_step_tasks"):
+                self._finishing_step_tasks = set()
+            self._finishing_step_tasks.add(tid)
             halt_at_wait = bool(task) and waiting(result) and (result.error_kind == "halted"
                                                               or bool(task.get("halt_requested")))
             if halt_at_wait:
@@ -3355,12 +3458,17 @@ class Hub:
                     result = result.model_copy(update={"ok": True, "error_kind": None, "error": None})
                     msg = {**msg, "data": result.model_dump(mode="json")}
                 key = self._entry_step(tid, task)
-                state = self._step(key)
-                state["paused"] = True
-                state["ops"] = int(state.get("ops") or 0) + 1
-                state["pause_op"] = state["ops"]
-                state["last_task"] = state["last_task"] or tid
-                self._save_step(key, state)
+                def pause(state):
+                    if not self._step_alive(task):
+                        return False
+                    state["paused"] = True
+                    state["ops"] += 1
+                    state["pause_op"] = state["ops"]
+                    state["last_task"] = state["last_task"] or tid
+
+                _, cancelled = await self._update_step(key, pause)
+                if cancelled:
+                    raise asyncio.CancelledError
                 await self._publish_control(tid, task, {"action": "halt_as_pause", "paused": True, "halt": False,
                                                         "source": "gateway"})
                 await self.publish({"type": "agent.log", "ts": time.time(), "task_id": tid,
@@ -3374,7 +3482,7 @@ class Hub:
                                                    "error": f"{HALTED_ERROR} ({result.error or 'interrupted'})"})
                 msg = {**msg, "data": result.model_dump(mode="json")}
             if task:  # steers this turn did not deliver go back to its step (#59 ①)
-                self._settle_steers(tid, task, result.control)
+                await self._settle_steers(tid, task, result.control)
             if tid:
                 if result.error_kind == "halted":
                     await self._control_state(tid, {"paused": False, "halt": True, "halted": True}, replace=True)
@@ -3423,6 +3531,7 @@ class Hub:
                                               "completed": True, "result": result.model_dump(mode="json")})
                 self._refresh_roster()
                 self._session_state_changed()
+            self._finishing_step_tasks.discard(tid)
             if tid:
                 # Completion must be visible before cleanup so a queued cancel cannot recreate the intent.
                 self.store.delete("task_cancel", tid)
@@ -3600,7 +3709,13 @@ class Hub:
         if task.agent_id in PIPELINE_AUTHORS and self.s.policy.bioinfo_agent.pipeline_pr:
             # Off by default (#300). The gateway's one setting decides; a runner sends pipeline files only when asked.
             task.meta["pipeline_pr"] = True
-        task = self._attach_steers(task)
+        task = await self._attach_steers(task)
+        if self.controllable(task.meta.get("kind"), task.meta.get("step_id"), task.request_id):
+            key = self.step_key(task.request_id, task.meta.get("step_id"), task.meta.get("kind"), task.id)
+            if (key in getattr(self, "_closed_steps", set()) or
+                    not self._step_alive({"request_id": task.request_id, **task.meta})):
+                return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0,
+                                  cost_known=True, error="step ended before dispatch")
         fut = asyncio.get_running_loop().create_future()
         self.futures[task.id] = fut
         self.task_runner[task.id] = rid
@@ -3638,7 +3753,7 @@ class Hub:
                         break
                     self.futures.pop(task.id, None)
                     self.task_runner.pop(task.id, None)
-                    self._release_steers(task)
+                    await self._release_steers(task)
                     result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
                                         error="task delivery uncertain; manual recovery required")
                     (await self._arecord_task_cost(task.request_id, task.id, result, outcome_unknown=True))
@@ -3653,7 +3768,7 @@ class Hub:
                     # not a certain $0 (same bookkeeping as the timeout above).
                     self.futures.pop(task.id, None)
                     self.task_runner.pop(task.id, None)
-                    self._release_steers(task)
+                    await self._release_steers(task)
                     result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
                                         error=f"{refused.error + '; ' if refused else ''}"
                                               f"delivery to runner {rid} uncertain; manual recovery required")
@@ -3669,7 +3784,7 @@ class Hub:
         except Exception:
             self.futures.pop(task.id, None)
             self.task_runner.pop(task.id, None)
-            self._release_steers(task)
+            await self._release_steers(task)
             # The frame may already have reached the runner: an unaccounted cost, never a silent $0 (#270). The CSO's
             # pre-dispatch hold (#862) settles on this record instead of outliving the deleted task entry.
             (await self._arecord_task_cost(task.request_id, task.id,
@@ -3708,7 +3823,7 @@ class Hub:
                 elif deadline is None:
                     deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
                 if deadline is not None and asyncio.get_running_loop().time() >= deadline:
-                    self._settle_steers(tid, entry, None)  # its steers wait for the step's next turn
+                    await self._settle_steers(tid, entry, None)  # its steers wait for the step's next turn
                     result = TaskResult(task_id=tid, agent_id=agent_id, ok=False,
                                         error="recovery runner unavailable; manual restart required")
                     # Dispatched before the restart and never answered: the runner may have spent anything (#270).

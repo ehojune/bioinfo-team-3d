@@ -360,6 +360,7 @@
     "tests/test_wsl_shared.py"
   ],
   "boundary_cohorts": {
+    "tests/test_step_state_async_606.py": "Step-control SQLite commit/rollback, heartbeat, latest-row races, cancellation and steer replay; isolated in-process mocks.",
     "tests/test_facilities_fallback_983.py": "Missing facilities fallback notices and bounded same-step reasks (#983).",
     "tests/test_git_hooks.py": "Native Git shell hooks, linked worktree paths and replay author/message preservation; isolated histories and inert global hooks.",
     "tests/test_contained_readiness.py": "Contained Windows owner/Job, current process generation, named-pipe identity and deadline boundaries; all handles and IPC are faked.",
