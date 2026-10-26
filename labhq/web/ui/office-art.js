@@ -72,6 +72,7 @@ export function officeHead(kind) {
   return `<svg viewBox="22 14 116 94" aria-hidden="true" focusable="false"><rect x="22" y="14" width="116" height="94" rx="40" fill="#F2EFE9"/>${SELECTED[kind] || companion(kind)}</svg>`;
 }
 export function officeStatus(a, vs, detail='') {
+  if (vs === 'hibernating' && /로컬 계산|후속 처리|작업·응답 대기/.test(detail)) return {kind:vs,text:detail};
   if (detail.includes('답 기다')) return {kind:'answer',text:'답 기다리는 중'};
   if (/PI 검토/.test(detail)) return {kind:'decision',text:detail};
   if (vs==='waiting' && /승인|PI 결정/.test(detail)) return {kind:'decision',text:'승인 기다려요'};

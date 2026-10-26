@@ -4,6 +4,26 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 로컬 계산 browser QA — Refs #675
+
+정적 Chrome fixture에서 발견한 직원/캐릭터의 local job HPC 오표시와 HPC rack 건수를 고칩니다. backend 변경은 없습니다.
+
+| 상태 | 2.5D | 3D |
+|---|---|---|
+| 계산 중 | 이름·실행 중·진행률 모름 | 요청 줄과 캐릭터 대기 구분 |
+| terminal 직후 | 해당 계산 문구 제거 | 해당 요청 줄에서 제거·다른 요청 보존 |
+| snapshot/요청 전환 | ID·상태 확인 중·요청 분리 | 두 요청의 ID·상태를 각각 복구 |
+
+- 수정 전 local 대기 회귀 실패 → 수정 후 관련 Node 66 passed, legacy reducer 43 event PASS.
+- bot P2 badge 회귀도 수정 전 실패·수정 후 성공. browser에서 job 정보 없는 badge·strip·단계 흐름의 대기 문구 일치를 확인했습니다.
+- bot P1의 기존 `web_issue106` 기대값을 unknown/HPC 두 경우로 분리하고 취소 검사를 유지했습니다. 3D rack·범례·설명 P2도 수정했으며 관련 검사 PASS입니다.
+- 해당 Python Node wrapper도 새 성공 문구로 맞춰 1 passed를 확인했습니다. 최종 3D live/demo 화면에서 대기·범례·설명 일치도 확인했습니다.
+- Windows source pin만 갱신하고 필수 node는 유지했습니다(profile 검증·CI 검사 62 passed). task 없는 local 대기도 terminal event 뒤 제거하는 호환 회귀를 확인했습니다.
+- screenshot·정적 fixture는 worker3 scratch `675-qa/`에 보존합니다. 정적 fixture QA이며 실제 transport·OS 재시작·연구·WSL·운영은 미검증입니다. #675는 닫지 않습니다.
+- #979/#980 병합 main을 반영했습니다. manual P1 4374507406의 직원 대기 표·HPC-only rack 안내를 고치고 async 저장 범위와 남은 sync 경계를 manual/HANDOFF에 통합했습니다. README 한영판은 대조 후 유지했습니다.
+- 문서 길이: manual 194,280→194,351자, HANDOFF 4,582→4,289자(합계 222자 감소). diff·public·patch-notes·notes-index·integrations 검사 통과. backend·CI gate 변경은 없습니다.
+- 최종 head CI·실제 리뷰·알려진 P1·head guard 확인까지 hold입니다. 이전 head의 clean-install은 PASS이며 validation-manifest identity 실패는 별도 조사 중입니다.
+
 plan-rehire가 느린 계약 저장으로 event loop를 막는 경계를 async로 전환합니다. Refs #606.
 
 - `Registry.arehire()`는 별도 Registry에서 읽기·provenance 검사·두 파일 저장을 기존 FILES 단일 job으로 실행합니다. 성공 뒤 loop에서 Registry·roster를 반영하며 sync API는 유지합니다.
