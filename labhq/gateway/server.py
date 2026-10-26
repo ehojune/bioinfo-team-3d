@@ -3184,47 +3184,51 @@ class Hub:
         # can evict a tool start while a quiet command is still running.
         if typ in {"agent.status", "agent.tool", "agent.tool_result", "agent.log"}:
             tid = msg.get("task_id")
-            task = self.store.get("task", tid) if tid else None
-            if task and not task.get("completed"):
-                activity = dict(task.get("activity") or {})
-                data = msg.get("data") or {}
-                if typ == "agent.status":
-                    activity.update(data)
-                    for key in ("ask", "approval", "jobs", "asks"):
-                        activity[key] = data.get(key)
-                    if data.get("state") == "working":
+            if tid:
+                # Own inputs before yielding; the reducer only touches the latest
+                # activity on the writer thread, never a pre-await task snapshot.
+                data = copy.deepcopy(msg.get("data") or {})
+                activity_at = msg.get("ts") or time.time()
+
+                def update_activity(activity: dict) -> dict:
+                    if typ == "agent.status":
+                        activity.update(data)
+                        for key in ("ask", "approval", "jobs", "asks"):
+                            activity[key] = data.get(key)
+                        if data.get("state") == "working":
+                            activity.pop("warning", None)
+                    elif typ == "agent.tool":
+                        if activity.get("state") in {None, "queued", "waiting"}:
+                            activity["state"] = "working"
+                        tools = dict(activity.get("tools") or {})
+                        if not data.get("completed"):
+                            tools[data.get("id") or "legacy"] = {**data, "at": activity_at}
+                        activity["tools"] = tools
                         activity.pop("warning", None)
-                elif typ == "agent.tool":
-                    if activity.get("state") in {None, "queued", "waiting"}:
+                    elif typ == "agent.tool_result":
+                        tools = dict(activity.get("tools") or {})
+                        tools.pop(data.get("id") or "legacy", None)
+                        activity["tools"] = tools
                         activity["state"] = "working"
-                    tools = dict(activity.get("tools") or {})
-                    if not data.get("completed"):
-                        tools[data.get("id") or "legacy"] = {**data, "at": msg.get("ts") or time.time()}
-                    activity["tools"] = tools
-                    activity.pop("warning", None)
-                elif typ == "agent.tool_result":
-                    tools = dict(activity.get("tools") or {})
-                    tools.pop(data.get("id") or "legacy", None)
-                    activity["tools"] = tools
-                    activity["state"] = "working"
-                    activity.pop("ask", None)
-                    activity.pop("approval", None)
-                    activity.pop("warning", None)
-                elif data.get("level") in {"warn", "alert"}:
-                    activity["warning"] = data.get("text")
-                elif data.get("level") not in {"debug", "thinking"}:
-                    activity.pop("warning", None)
-                lookup = data.get("external_lookup") if typ == "agent.log" else None
-                if isinstance(lookup, dict):
-                    # #676: one line on the task board while a public lookup waits; the final status clears it.
-                    if lookup.get("status") == "waiting":
-                        activity["external_wait"] = {
-                            "tool": str(lookup.get("tool") or ""), "elapsed_s": lookup.get("elapsed_s"),
-                            "timeout_s": lookup.get("timeout_s"), "at": msg.get("ts") or time.time()}
-                    else:
-                        activity.pop("external_wait", None)
-                if activity != (task.get("activity") or {}):
-                    self.store.put("task", tid, {**task, "activity": activity})
+                        activity.pop("ask", None)
+                        activity.pop("approval", None)
+                        activity.pop("warning", None)
+                    elif data.get("level") in {"warn", "alert"}:
+                        activity["warning"] = data.get("text")
+                    elif data.get("level") not in {"debug", "thinking"}:
+                        activity.pop("warning", None)
+                    lookup = data.get("external_lookup") if typ == "agent.log" else None
+                    if isinstance(lookup, dict):
+                        # #676: one line on the task board while a public lookup waits; the final status clears it.
+                        if lookup.get("status") == "waiting":
+                            activity["external_wait"] = {
+                                "tool": str(lookup.get("tool") or ""), "elapsed_s": lookup.get("elapsed_s"),
+                                "timeout_s": lookup.get("timeout_s"), "at": activity_at}
+                        else:
+                            activity.pop("external_wait", None)
+                    return activity
+
+                await self.store.aupdate_task_activity(tid, update_activity)
         if typ == "runner.roster":
             self.set_roster(runner_id, msg.get("agents", []), msg.get("capabilities"))
             await self.publish({"type": "roster.updated", "ts": time.time(), "data": {"agents": list(self.agents.values())}})

@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import threading
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -115,6 +116,26 @@ class StateStore:
     async def aput(self, kind: str, key: str, body: dict) -> None:
         """`put` for a coroutine: the body is serialized now, the commit runs on the durable writer thread."""
         await durable.run(self.lane, self._put_now, kind, key, _dumps(body))
+
+    async def aupdate_task_activity(self, key: str, update: Callable[[dict], dict]) -> None:
+        """Apply a pure activity reducer to the latest live task on its writer lane.
+
+        The reducer runs on the writer thread and must own its captured inputs.
+        Reading inside the transaction prevents a queued activity from restoring
+        a stale task snapshot over completion, control, or another activity.
+        """
+        await durable.run(self.lane, self._update_task_activity_now, key, update)
+
+    def _update_task_activity_now(self, key: str, update: Callable[[dict], dict]) -> None:
+        with self._transaction() as conn:
+            task = self._get_on(conn, "task", key)
+            if not task or task.get("completed"):
+                return
+            previous = task.get("activity") or {}
+            activity = update(dict(previous))
+            if activity != previous:
+                conn.execute("UPDATE state SET body=? WHERE kind='task' AND key=?",
+                             (_dumps({**task, "activity": activity}), key))
 
     def _put_now(self, kind: str, key: str, raw: str) -> None:
         with self._transaction() as conn:
