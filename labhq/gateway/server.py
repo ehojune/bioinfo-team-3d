@@ -2539,7 +2539,8 @@ class Hub:
                 "paused": bool(state.get("paused")), "dropped": int(state.get("dropped") or 0),
                 "dropped_told": int(state.get("dropped_told") or 0), "agent_id": state.get("agent_id"),
                 "last_task": state.get("last_task"), "ops": int(state.get("ops") or 0),
-                "pause_op": int(state.get("pause_op") or 0), "halt_op": int(state.get("halt_op") or 0)}
+                "pause_op": int(state.get("pause_op") or 0), "halt_op": int(state.get("halt_op") or 0),
+                "revision": int(state.get("revision") or 0)}
 
     async def _save_step(self, key: str, state: dict) -> None:
         if state["steers"] or state["paused"] or state.get("last_task"):
@@ -2552,7 +2553,7 @@ class Hub:
             self._step_locks = WeakValueDictionary()
         return self._step_locks.setdefault(key, asyncio.Lock())
 
-    async def _update_step(self, key: str, update, *, wake: bool = False):
+    async def _update_step(self, key: str, update, *, wake: bool = False, reopen: int | None = None):
         """Read/modify/commit the latest row under its lock, including cancellation.
 
         Callbacks run on the loop without yielding. Sends remain outside this
@@ -2561,12 +2562,14 @@ class Hub:
         """
         async def commit():
             async with self._step_lock(key):
-                if key in getattr(self, "_closed_steps", set()):
+                closed = getattr(self, "_closed_steps", {})
+                if key in closed and (reopen is None or reopen <= closed[key]):
                     return None
                 state = self._step(key)
                 if update(state) is False:
                     return None
                 await self._save_step(key, state)
+                closed.pop(key, None)
                 if wake:
                     event = self.step_resume_events.get(key)
                     if event:
@@ -2854,8 +2857,11 @@ class Hub:
 
         def attach(state):
             nonlocal dropped
-            if not self._step_alive({"request_id": task.request_id, **task.meta}):
+            revision = int(task.meta.get("revision") or 0)
+            if (not self._step_alive({"request_id": task.request_id, **task.meta})
+                    or revision < state["revision"]):
                 return False
+            state["revision"] = revision
             state["last_task"] = task.id
             state["agent_id"] = state["agent_id"] or task.agent_id
             for steer in state["steers"]:
@@ -2865,7 +2871,7 @@ class Hub:
             dropped = max(0, state["dropped"] - state["dropped_told"])
             state["dropped_told"] = state["dropped"]
 
-        _, cancelled = await self._update_step(key, attach)
+        _, cancelled = await self._update_step(key, attach, reopen=int(task.meta.get("revision") or 0))
         if cancelled:
             # No payload was handed to dispatch. Return the reservation for replay.
             await self._release_steers(task)
@@ -2965,8 +2971,11 @@ class Hub:
                     stored = self.store.get("step_control", key) or {}
                     await self.store.adelete("step_control", key)
                     if not hasattr(self, "_closed_steps"):
-                        self._closed_steps = set()
-                    self._closed_steps.add(key)
+                        self._closed_steps = {}
+                    revision = max([int(stored.get("revision") or 0)] + [
+                        int(row.get("revision") or 0) for tid, row in self.store.all("task").items()
+                        if self._entry_step(tid, row) == key])
+                    self._closed_steps[key] = max(revision, self._closed_steps.get(key, 0))
                 undelivered = [s.get("text") for s in stored.get("steers") or [] if isinstance(s, dict)]
                 if undelivered:
                     await self.publish({"type": "agent.control", "ts": time.time(), "request_id": rid,
@@ -3713,6 +3722,7 @@ class Hub:
         if self.controllable(task.meta.get("kind"), task.meta.get("step_id"), task.request_id):
             key = self.step_key(task.request_id, task.meta.get("step_id"), task.meta.get("kind"), task.id)
             if (key in getattr(self, "_closed_steps", set()) or
+                    int(task.meta.get("revision") or 0) < self._step(key)["revision"] or
                     not self._step_alive({"request_id": task.request_id, **task.meta})):
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0,
                                   cost_known=True, error="step ended before dispatch")

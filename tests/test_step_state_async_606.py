@@ -309,6 +309,22 @@ async def test_close_during_send_suppresses_late_control_notice(hub, monkeypatch
         await asyncio.gather(pending, return_exceptions=True)
 
 
+async def test_new_revision_reopens_step_but_old_turn_cannot(hub):
+    key = hub._entry_step("t", hub.store.get("task", "t"))
+    await hub.control_task("t", "pause")
+    await hub._close_step_controls("req", "s1")
+    await hub._attach_steers(task("late-old"))
+    assert hub.store.get("step_control", key) is None
+    revised = task("revised").model_copy(update={"meta": {"kind": "step", "step_id": "s1", "revision": 1}})
+    await hub._attach_steers(revised)
+    assert hub.store.get("step_control", key)["last_task"] == "revised"
+    await hub._attach_steers(task("late-again"))
+    assert hub.store.get("step_control", key)["last_task"] == "revised"
+    await hub._close_step_controls("req", "s1")
+    await hub._attach_steers(revised)
+    assert hub.store.get("step_control", key) is None
+
+
 @pytest.mark.parametrize("operation", ["pause", "resume", "steer", "attach", "settle", "close"])
 async def test_step_rollback_suppresses_wake_send_and_notice(hub, monkeypatch, operation):
     key = hub._entry_step("t", hub.store.get("task", "t"))
