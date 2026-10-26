@@ -161,7 +161,7 @@ NODE_WEB_MARKERS = {
     'web_issue126.cjs': 'full answer on demand in 2.5D and 3D: OK',
     'web_issue75.cjs': 'mobile staff collapse and bounded grouped decision history: OK',
     'web_ask.cjs': 'web_ask: ask/answer feed, refusal, targets and replay passed',
-    'web_issue106.cjs': 'snapshot task priority, cancellation and hibernating label: OK',
+    'web_issue106.cjs': 'snapshot task priority, cancellation and unknown/HPC wait labels: OK',
     'web_issue87.cjs': 'snapshot restores an active step after a 200-event replay gap: OK',
     'web_issue58.cjs': 'web issue58 tests passed',
     'web_assumptions.cjs': 'assumptions web tests passed',

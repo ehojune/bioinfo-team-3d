@@ -1,7 +1,7 @@
 import { C } from './primitives.js';
 
 export const STATES=['queued','working','waiting','hibernating','done','error'];
-export const STATE_LABELS={queued:'대기',working:'작업 중',waiting:'승인 대기',hibernating:'HPC 대기',done:'완료',error:'오류'};
+export const STATE_LABELS={queued:'대기',working:'작업 중',waiting:'승인 대기',hibernating:'작업·응답 대기',done:'완료',error:'오류'};
 export const STATE_COLORS={queued:'#a3a48d',working:'#64856f',waiting:C.red,hibernating:C.blue,done:'#c69c48',error:'#b4755d'};
 export const ROSTER=[
   {id:'cso',name:'부엉이 CSO',species:'부엉이',role:'질문 설계 · 업무 배분',prop:'질문 분기 카드',fur:'#A87B50',seat:[-5.6,-3.9],state:'waiting'},

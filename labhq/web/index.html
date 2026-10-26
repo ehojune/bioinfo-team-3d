@@ -638,7 +638,7 @@ function renderBoard() {
   el.innerHTML = `<p class="board-title">${esc(processingLabel(q) || '요청 진행')}</p>${resume ? `<p class="req-meta">${esc(resume)}</p>` : ''}${phaseList(q)}${LabHQState.needsPiReview(q) ? `<p>✓ ${esc(LabHQState.requestStatusText(q))}</p><button class="btn go" style="font-size:1.1em;padding:10px 18px" data-open-review="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '보고서 열기' : '결과·이유 보기'}</button>` : ''}`;
 }
 function renderRack() {
-  const jobs = [...S.jobs.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 8);
+  const jobs = [...S.jobs.values()].filter(j => !String(j.id).startsWith('local-')).sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 8);
   const key = jobs.map(j => j.id + j.state).join();
   const el = $('#rack');
   if (el.dataset.key === key) return;
