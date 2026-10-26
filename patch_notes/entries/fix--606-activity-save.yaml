@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: bc267cef
+  at: '2026-10-26 15:41'
+  text: runner activity를 SQLite writer에서 최신 task row에 적용해 느린 commit 중 loop를 유지하고 완료·control·동시 activity를 보존한다(Refs #606).
+  summary: activity 저장 성공 뒤 publish·ACK하며 실패·취소 때 미확정 메시지를 ACK하지 않습니다.
