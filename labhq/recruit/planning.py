@@ -11,6 +11,8 @@ import time
 import yaml
 
 from ..models import Task, TaskResult
+from .. import durable
+from ..registry import Registry
 from ..interruption import ShutdownInterrupted
 from . import paper2agent, paper_skills, provenance
 
@@ -311,6 +313,23 @@ async def prepare_plan(plan, rid, hub, run):
     return plan
 
 
+def _rehire_candidate(registry, pid, payload):
+    """Read and check detached candidates on FILES; never publish live registry state."""
+    for spec in registry.talent_pool():
+        c = spec.contract
+        if not c or paper_key(c.paper or c.repo) != pid or c.kind not in {"technician", "full"}:
+            continue
+        if c.verification.get("conversion_payload") != payload:
+            continue
+        passed, _ = paper2agent.probation(c.kind, c.verification.get("probe_tools") or [],
+                                         c.skill_dir, c.verification.get("offer_status"))
+        if (not passed or c.status == "probation" or provenance.missing_hashes(spec)
+                or provenance.provenance_changes(spec)):
+            return None, {"status": "failed", "error": "인재풀 수습·hash 확인 실패"}
+        return spec, None
+    return None, None
+
+
 async def run_task(runner, task):
     """A tracked runner task wraps the existing recruiter and announces the roster before its receipt."""
     if not paper2agent.enabled(runner.s):
@@ -343,18 +362,13 @@ async def run_task(runner, task):
                     or provenance.provenance_changes(candidate)):
                 raise ValueError("rehire contract no longer passes probation/hash checks")
 
-        for spec in runner.registry.talent_pool():
-            c = spec.contract
-            if not c or paper_key(c.paper or c.repo) != pid or c.kind not in {"technician", "full"}:
-                continue
-            if c.verification.get("conversion_payload") != payload:
-                continue
-            # A failed probation or changed payload must never be silently promoted by rehire.
-            passed, _ = paper2agent.probation(c.kind, c.verification.get("probe_tools") or [],
-                                             c.skill_dir, c.verification.get("offer_status"))
-            if (not passed or c.status == "probation" or provenance.missing_hashes(spec)
-                    or provenance.provenance_changes(spec)):
-                return {"status": "failed", "error": "인재풀 수습·hash 확인 실패"}
+        # Only immutable paths cross into the reader job. Cancellation leaves a read-only job;
+        # no rehire is submitted until this await returns successfully.
+        snapshot = Registry(runner.registry.agents_dir, runner.registry.talent_dir, runner.registry.contract_dir)
+        spec, rejected = await durable.run(durable.FILES, _rehire_candidate, snapshot, pid, payload)
+        if rejected is not None:
+            return rejected
+        if spec is not None:
             current = runner.registry.agents.get(spec.id)
             if not current or not current.contract or current.contract.expires_at <= time.time():
                 spec = await runner.registry.arehire(runner.registry._slug(spec), runner.s.recruit.default_ttl_days,

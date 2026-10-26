@@ -1,0 +1,6 @@
+pr: 984
+rows:
+- sha: 498460d
+  at: '2026-10-26 16:18'
+  text: 계획 채용의 talent YAML·probation·provenance 읽기 판정을 기존 FILES lane으로 옮기고 writer 재검증과 loop publication을 유지한다(Refs #606).
+  summary: 인재풀 읽기·hash 확인 중 heartbeat가 멈추지 않으며 취소 뒤 새 재고용을 시작하지 않습니다.
