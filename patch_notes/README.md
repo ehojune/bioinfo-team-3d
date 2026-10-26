@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:50 | [`93a4a25`](https://github.com/ehojune/bioinfo-team-3d/pull/979/commits/93a4a25) | **task 완료와 취소가 겹쳐도 취소 intent가 뒤늦게 남지 않습니다.**<br>P2 4374299436의 양방향 완료 경쟁을 수정 전 2 failed로 재현했습니다. 완료 후 intent 생성·전송을 거부하고 완료 표시 뒤 cleanup합니다. 관련 mock/static 118 passed·1 skipped이며 Windows 필수 cohort에 회귀를 등록했습니다. |
+| 14:43 | [`f304762`](https://github.com/ehojune/bioinfo-team-3d/pull/979/commits/f304762) | **task 취소를 저장하는 동안 gateway가 다른 요청을 처리합니다.**<br>cancel_task의 task_cancel intent를 기존 SQLite async writer로 저장합니다. commit 뒤 전송하며 반복 취소·rollback·DB 재열기·offline replay를 mock으로 검증했습니다. 다른 task 원장 경계는 #606에 남습니다. |
 | 14:03 | [`496ff4c`](https://github.com/ehojune/bioinfo-team-3d/pull/976/commits/496ff4c) | **번역이 늦게 끝나도 이미 답한 승인 카드가 다시 열리지 않습니다.**<br>P1 4374092270의 늦은 번역 snapshot 저장 경쟁을 수정 전 2 failed로 재현했습니다. writer transaction에서 이미 결정된 카드의 재삽입을 거부합니다. 관련 52 passed이며 DB 재열기에서도 결정만 남는지 확인했습니다. |
 | 13:56 | [`8f76417`](https://github.com/ehojune/bioinfo-team-3d/pull/978/commits/8f76417) | **이미 시작된 로컬 계산이 계속 대기로 보이던 표시를 고쳤습니다.**<br>runner는 프로세스를 시작한 뒤 job.submitted를 보내므로 local- 제출을 실행 중으로 기록합니다. 합성 running event 없이 초기 표시를 검증하며 HPC 제출은 대기를 유지합니다. |
 | 13:51 | [`c08de09`](https://github.com/ehojune/bioinfo-team-3d/pull/978/commits/c08de09) | **서로 다른 계산의 작업 번호가 같아도 요청 단계가 섞이지 않도록 고쳤습니다.**<br>새 단계 표시용 관측을 task_id·job_id로 구분하고 소유자가 불명확한 상태 event는 적용하지 않습니다. bot P2의 같은 scheduler ID 충돌 회귀를 검사했습니다. |

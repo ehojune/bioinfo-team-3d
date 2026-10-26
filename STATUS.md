@@ -4,6 +4,16 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+Refs #606. task 취소 intent 저장 하나를 기존 SQLite async writer로 옮겼습니다.
+
+- `Hub.cancel_task()`는 저장 성공 뒤 runner에 취소를 보냅니다. 반복 취소에도 commit 결과·오류를 확인하며 실패하면 전송하지 않습니다. 저장된 intent는 재접속 때 다시 보냅니다.
+- 지연 mock의 idle/active lane heartbeat 2 failed를 재현한 뒤 통과했습니다. 관련 mock/static 118 passed·1 skipped입니다. commit→send 순서·반복/AnyIO 취소·rollback·DB 재열기·offline replay를 확인했습니다.
+- 리뷰 P2 4374299436의 완료/취소 경쟁은 수정 전 2 failed로 재현했습니다. writer가 완료된 task의 intent 생성을 거부하고 완료 표시 뒤 intent를 정리합니다. await 뒤 완료 여부를 다시 확인해 전송도 생략합니다. 신규 회귀를 Windows 필수 cohort에 등록했습니다.
+- 다른 task/result/control 동기 저장은 남아 #606을 열어 둡니다. 공통 manual은 별도 통합합니다. 실디스크 성능·실프로세스 재시작·운영·연구·HPC·배포는 미검증입니다.
+- PR #979는 최종 head CI·실제 리뷰·알려진 P1=0 확인까지 `hold`를 유지합니다. 조건 충족 뒤 담당이 병합합니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 # 로컬 계산 작업판 표시 — Refs #675
 
 - 변경: 기존 job event·pending_jobs를 요청/단계에 연결하고 공통 단계 흐름·task card·3D 요청 줄에 로컬 계산 이름·관측 상태를 표시합니다. 로컬 제출은 프로세스 시작 후 event라는 runner 계약에 맞춰 실행 중으로 표시합니다. HPC와 구분하며 진행률은 모름으로 둡니다.
