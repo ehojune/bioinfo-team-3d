@@ -37,6 +37,18 @@ class Registry:
         self._sync_publications: dict[str, object] = {}
 
     def load(self) -> None:
+        # Read and expiry/archive belong to the same FILES job. Otherwise a reload can read an expired copy,
+        # wait behind an in-flight rehire, then archive its newly committed files using the old snapshot.
+        staged = Registry(self.agents_dir, self.talent_dir, self.contract_dir)
+        durable.call(durable.FILES, staged._load_now)
+        # Keep live dictionaries on the caller's thread, matching the synchronous API's publication contract.
+        self.agents.clear()
+        self.agents.update(staged.agents)
+        self.paths.clear()
+        self.paths.update(staged.paths)
+        self._sync_publications = {**self._sync_publications, **staged._sync_publications}
+
+    def _load_now(self) -> None:
         self.agents.clear()
         self.paths.clear()
         for folder in (self.agents_dir / "core", self.contract_dir):

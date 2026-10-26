@@ -376,3 +376,35 @@ async def test_rehire_rechecks_actual_writer_snapshot(plan_rehire, monkeypatch, 
     live, talent = copies(r)
     assert live.read_bytes() == talent.read_bytes()
     assert yaml.safe_load(live.read_text(encoding='utf8'))['contract']['expires_at'] == 1
+
+
+async def test_reload_does_not_archive_pre_rehire_snapshot(plan_rehire, monkeypatch):
+    r, _ = plan_rehire
+    original_write, original_call = Registry._write_contract_copies, durable.call
+    entered, release = threading.Event(), threading.Event()
+    loop_thread = threading.get_ident()
+
+    def blocked(self, spec, text):
+        entered.set()
+        assert release.wait(3)
+        return original_write(self, spec, text)
+
+    def call(name, fn, *args, **kwargs):
+        if threading.get_ident() == loop_thread:
+            # Old load first reaches FILES after reading an expired spec; ordered load queues before reading.
+            release.set()
+        return original_call(name, fn, *args, **kwargs)
+
+    monkeypatch.setattr(Registry, '_write_contract_copies', blocked)
+    monkeypatch.setattr(durable, 'call', call)
+    pending = asyncio.create_task(r.registry.arehire('x', 3, on_commit=r._send_roster))
+    try:
+        await wait_entered(entered)
+        r.registry.load()
+    finally:
+        release.set()
+    spec = await pending
+    assert r.registry.get('c_x').contract.expires_at == spec.contract.expires_at
+    live, talent = copies(r)
+    assert live.exists() and live.read_bytes() == talent.read_bytes()
+    assert r.receipts[-1]['c_x'] == spec.model_dump(mode='json')
