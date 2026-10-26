@@ -1,5 +1,9 @@
 pr: 990
 rows:
+- sha: 5d7a94f
+  at: '2026-10-26 20:50'
+  text: 기존 revision dispatch 자격을 보존하고 복구 test는 durable dispatch readiness를 기다린다(Refs #606).
+  summary: CI의 기존 경로 차단·한 loop-turn 가정을 바로잡고 신규 44건과 실패 mock 11건을 합쳐 55 PASS로 검증했다.
 - sha: 7cd7d7e
   at: '2026-10-26 20:36'
   text: caller 취소 전 commit된 steer의 같은 ID 전송을 정산한다(Refs #606).
