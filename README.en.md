@@ -227,6 +227,8 @@ Details are in [Safety measures](docs/manual.md#%EC%95%88%EC%A0%84-%EC%9E%A5%EC%
 
 Each version has pass criteria, and meeting them moves it on to the next version. Features merged since the v0.5 declaration passed tests and CI; their behavior and scientific benefit on real research requests remain unverified. The criteria, current status, and remaining work are in the [manual's roadmap](docs/manual.md#%EB%A1%9C%EB%93%9C%EB%A7%B5).
 
+Facilities support requirements and readiness evidence are distinguished in the [support policy table](docs/reference/facilities-support-983.md) (Korean). A doctor readiness result does not prove that a support request or recovery succeeded.
+
 ## Further reading
 
 | Document | Who it is for |
