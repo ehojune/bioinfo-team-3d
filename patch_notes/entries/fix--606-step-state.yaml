@@ -1,5 +1,9 @@
 pr: 990
 rows:
+- sha: 4618a13
+  at: '2026-10-27 17:10'
+  text: 이전 revision의 전달이 거부되면 해당 작업의 방향과 알림 예약을 반환한다(Refs #606).
+  summary: 경합으로 전달되지 않은 방향과 버린 수 알림이 다음 turn에 남도록 고쳤다.
 - sha: a2dbca7
   at: '2026-10-26 22:24'
   text: result admission lock을 halt intent에 한정해 pause 전송 중 result 정산을 보존한다(Refs #606).
