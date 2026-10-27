@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:27 | [`6ec0747`](https://github.com/ehojune/bioinfo-team-3d/pull/991/commits/6ec0747) | **manual에 시설팀 지원 선언과 준비 gate의 범위를 안내합니다.**<br>#990 구현 종료 뒤 한 문단과 상세 reference 링크를 반영했습니다. LF 기준 194,939→195,168자입니다. |
+| 22:25 | [`4d09a77`](https://github.com/ehojune/bioinfo-team-3d/pull/991/commits/4d09a77) | **시설팀 지원 회귀를 Windows doctor cohort에 포함합니다.**<br>기존 doctor 분류를 적용해 inventory 검사와 60건 회귀를 통과했습니다. patch-note SHA 형식도 바로잡았습니다. |
+| 22:21 | [`c59c231`](https://github.com/ehojune/bioinfo-team-3d/pull/991/commits/c59c231) | **profile이 시설팀 지원 요구를 선언하고 doctor가 준비 증거를 판정합니다.**<br>required 미충족은 FAIL, optional+ready만 OK, unspecified는 WARN입니다. init 명시 값 보존과 격리 회귀로 확인했으며 실제 복구는 UNVERIFIED입니다. |
 | 21:30 | [`88777e6`](https://github.com/ehojune/bioinfo-team-3d/pull/987/commits/88777e6) | **인수인계 표에 control-state와 doctor 후속 병합을 반영합니다.**<br>최신 main을 통합하고 |
 | 20:16 | [`d3cf8cc`](https://github.com/ehojune/bioinfo-team-3d/pull/989/commits/d3cf8cc) | **doctor가 runner의 custom contract\_dir 직원도 읽기 전용으로 검사합니다.**<br>기본/custom 경로·계약 유효성·중복 ID 우선순위를 맞췄습니다. 누락 회귀는 수정 전 1 failed이며 수정 후 관련 mock/static 235 passed입니다. 실제 설치판 복구와 시설팀 필수/선택 정책은 #983에 남습니다. |
 | 19:42 | [`7163bcf`](https://github.com/ehojune/bioinfo-team-3d/pull/988/commits/7163bcf) | **해당 경쟁 1 failed → PASS. 신규 mock 26건 포함 관련 159 passed입니다.**<br>종료 turn의 늦은 runner feedback이 새 PI의 step 제어 intent를 덮어쓰지 않게 한다(Refs |
