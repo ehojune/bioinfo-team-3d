@@ -9,9 +9,11 @@
 2. test는 바꾼 곳만, 전체 suite는 CI에 맡깁니다. 실제 설정·PI 인스턴스·원자료는 업무 범위와 승인 없이 건드리지 않습니다.
 3. 끝날 때 PR과 `docs/status/`에 결과를 쓰고 이 문서의 우선순위를 갱신합니다. 지난 큐·결정은 [참고 기록](docs/reference/README.md)에 두고 여기에는 현재 것만 남깁니다.
 
-## 현재 우선순위 (2026-10-26)
+## 현재 우선순위 (2026-10-27)
 
 main·열린 PR을 대조한 큐입니다. 구현·CI 통과는 운영 PASS나 새 실행 승인이 아닙니다. 기존 실행 계약과 중단 결정을 유지하며, 지원 범위는 [manual](docs/manual.md#중단-조건-한눈에)을 봅니다.
+
+[역할 복귀·중단 기준](docs/reference/lead-operations.md#현재-역할과-중단)을 먼저 확인합니다. #990은 [동일 head CI 재실행](https://github.com/ehojune/bioinfo-team-3d/actions/runs/40330420664/attempts/3) 10개 job 성공으로 권한·CI 복구를 확인했지만 알려진 attach/revision 경계 결함의 수정·병합은 남아 hold입니다. 개발 재개 승인을 뜻하지 않습니다.
 
 | 순서 | 현재 상태·다음 일 |
 |---|---|
@@ -20,7 +22,7 @@ main·열린 PR을 대조한 큐입니다. 구현·CI 통과는 운영 PASS나 �
 | 복구 · [#675](https://github.com/ehojune/bioinfo-team-3d/issues/675) | #937·#968 로컬 job·취소 회귀와 #978 계산 표시 병합. 정적 browser fixture QA·대기 오표시 수정은 [#981](https://github.com/ehojune/bioinfo-team-3d/pull/981). 실제 transport·OS 재시작·WSL은 미검증이며 계산 진행률은 추정하지 않음 |
 | 소유권 · [#618](https://github.com/ehojune/bioinfo-team-3d/issues/618) | [#967](https://github.com/ehojune/bioinfo-team-3d/pull/967) 병합으로 획득 경쟁 P1 해소. broker port P2는 보류하며 v1 선결에 추가하지 않음 |
 | 디스크 · [#678](https://github.com/ehojune/bioinfo-team-3d/issues/678) | [#920](https://github.com/ehojune/bioinfo-team-3d/pull/920) 시작 전 여유 검사 병합. 다운로드·압축 해제 직전 검사와 실제 부족 상황 검증은 잔여 |
-| 지원 · [#882](https://github.com/ehojune/bioinfo-team-3d/issues/882) | [#989](https://github.com/ehojune/bioinfo-team-3d/pull/989) doctor의 custom contract_dir roster 정합 병합. [#983](https://github.com/ehojune/bioinfo-team-3d/issues/983) 시설팀 필수/선택 정책은 잔여. 새 설치·반복 실행·복구·지원 요청 end-to-end는 운영 미검증. 실제 실행은 별도 GO 필요 |
+| 지원 · [#882](https://github.com/ehojune/bioinfo-team-3d/issues/882) | [#989](https://github.com/ehojune/bioinfo-team-3d/pull/989) roster 정합과 [#991](https://github.com/ehojune/bioinfo-team-3d/pull/991) 시설팀 지원 요구·doctor 판정 병합. [#983](https://github.com/ehojune/bioinfo-team-3d/issues/983)의 새 설치·반복 실행·복구·지원 요청 end-to-end는 운영 미검증. 실제 실행은 별도 GO 필요 |
 | 이후 · [#739](https://github.com/ehojune/bioinfo-team-3d/issues/739) | dry-run·필수 gate·전체 검토와 별도 비교 승인 뒤 동일 조건 비교. 구현·회귀 CI만으로 연구 효용을 판정하지 않음 |
 
 설치·doctor 통과는 연구 요청 성공의 근거가 아닙니다. P2A 생성→부착→사용→산출과 장치 효용은 요청별 근거로 판단하며 비해당 pack은 미평가로 남깁니다.
