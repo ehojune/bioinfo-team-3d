@@ -2,6 +2,8 @@
 
 시작 전에 `HANDOFF.md`와 `STATUS.md`를 읽는다.
 
+[현재 역할과 중단](docs/reference/lead-operations.md#현재-역할과-중단)을 확인한다. Claude 전체 총괄 복귀는 실제 기동·개발 재개와 별개이며, 옛 자동화·한도를 복원하는 지시가 아니다.
+
 - 문서는 읽는 사람별로 나뉜다: `README.md`(처음 써 보는 사람), `docs/manual.md`(깊이 보려는 사람), `docs/pi-qa.md`(PI), 이 파일·`AGENTS.md`·`HANDOFF.md`(개발). 동작을 바꾸면 manual의 해당 절을 고친다.
 - 작업 순서는 HANDOFF.md, 개발 담당·위임·점검·한도는 [운영 기준](docs/reference/lead-operations.md)과 [현재 창구 #883](https://github.com/ehojune/bioinfo-team-3d/issues/883)의 최신 PI 인계를 따른다. 병합 전 PR의 동작은 manual·README에 출시된 것으로 쓰지 않는다.
 - 단계마다 브랜치에서 작업하고 PR을 연다. main에 직접 push하지 않는다. 병합 판단은 최신 PI 인계를 따르며 CI 통과가 조건이다. 자동 병합 워크플로는 껐다.
