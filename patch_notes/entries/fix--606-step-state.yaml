@@ -1,5 +1,9 @@
 pr: 990
 rows:
+- sha: 9a8af6b
+  at: '2026-10-27 17:16'
+  text: 새 dispatch 경합 회귀를 Windows boundary CI에 포함한다(Refs #606).
+  summary: Windows test 선택 목록을 보완해 새 회귀도 검사한다.
 - sha: 4618a13
   at: '2026-10-27 17:10'
   text: 이전 revision의 전달이 거부되면 해당 작업의 방향과 알림 예약을 반환한다(Refs #606).
