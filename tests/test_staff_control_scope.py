@@ -228,6 +228,11 @@ async def test_a_steer_that_overtakes_the_first_dispatch_frame_is_sent_again_onc
     hub.publish = publish
     run = asyncio.create_task(hub.dispatch(_step("t1")))
     await _wait_frame(ws, "task.dispatch", "t1")
+    # The post-dispatch replay now awaits its own durable step commit.
+    async def wait_replay():
+        while len(_frames(ws, "task.control", "t1")) < 2:
+            await asyncio.sleep(0.01)
+    await asyncio.wait_for(wait_replay(), 3.0)
     [early, after_frame] = _frames(ws, "task.control", "t1")
     steer_id = early["steer"]["id"]
     assert after_frame["steer"]["id"] == steer_id  # resend immediately after dispatch, even before acceptance

@@ -5285,16 +5285,16 @@ class Orchestrator:
                                 "단계별 GitHub 진행 게시에 실패했습니다. 요청은 계속 진행합니다.")
                             await persist_request(self.hub, rid)
                     environment = None if outcome.ok else environment_problem(outcome)
-                    await self._emit(rid, "request.step_done", {"step_id": sid, "ok": results[sid].ok,
-                                                                "agent_id": by_id[sid]["agent_id"],
-                                                                "attempts": self.attempts.get(rid, {}).get(sid, 0),
-                                                                "reason": results[sid].error,
-                                                                 **({"warnings": results[sid].step_warnings}
-                                                                    if results[sid].step_warnings else {}),
-                                                                **({"environment": environment} if environment
-                                                                   else {}),
-                                                                **({"facilities_fix": results[sid].facilities_fix}
-                                                                   if results[sid].facilities_fix else {})})
+                    # A question-only turn continues at the same revision after
+                    # its answer. Closing it here would reject that next turn.
+                    if not asked:
+                        await self._emit(rid, "request.step_done", {"step_id": sid, "ok": results[sid].ok,
+                            "agent_id": by_id[sid]["agent_id"],
+                            "attempts": self.attempts.get(rid, {}).get(sid, 0),
+                            "reason": results[sid].error,
+                            **({"warnings": results[sid].step_warnings} if results[sid].step_warnings else {}),
+                            **({"environment": environment} if environment else {}),
+                            **({"facilities_fix": results[sid].facilities_fix} if results[sid].facilities_fix else {})})
                     res = results[sid]
                     question = blocking_question(res)
                     if res.ok and question:

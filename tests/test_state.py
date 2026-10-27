@@ -251,7 +251,7 @@ async def test_late_result_becomes_request_checkpoint_before_resume(tmp_path):
     task = Task(id="task-1", agent_id="worker", request_id="r", prompt="analyze",
                 meta={"kind": "step", "step_id": "s1"})
     pending = asyncio.create_task(first.dispatch(task))
-    await asyncio.sleep(0)
+    await wait_for_dispatch(socket, task.id)
     assert first.store.get("task", "task-1")["step_id"] == "s1"
     pending.cancel()
     try:
@@ -1263,11 +1263,12 @@ async def test_completed_direct_result_finishes_without_original_agent(tmp_path,
     first.requests["r"] = {"id": "r", "mode": "direct", "agent_id": "retired", "text": "work",
                            "status": "running"}
     first.save_request("r")
-    first.register_runner("local", CaptureSocket(), [{"id": "retired"}], "inc")
+    socket = CaptureSocket()
+    first.register_runner("local", socket, [{"id": "retired"}], "inc")
     task = Task(id="direct-done", agent_id="retired", request_id="r", prompt="work",
                 meta={"kind": "direct"})
     waiting = asyncio.create_task(first.dispatch(task))
-    await asyncio.sleep(0)
+    await wait_for_dispatch(socket, task.id)
     result = TaskResult(task_id=task.id, agent_id="retired", ok=True, text="finished", cost_usd=0.3)
     await first.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
                                             "task_id": task.id, "request_id": "r",

@@ -51,7 +51,7 @@ async def test_halt_after_activity_read_keeps_committed_tool(tmp_path, monkeypat
     monkeypatch.setattr(hub, "controllable", lambda *args: True)
     monkeypatch.setattr(hub, "_step_alive", lambda *args: True)
     monkeypatch.setattr(hub, "_turn_waits", lambda *args: False)
-    monkeypatch.setattr(hub, "_save_step", lambda *args: None)
+    monkeypatch.setattr(hub, "_save_step", AsyncMock())
     monkeypatch.setattr(hub, "_push", AsyncMock(return_value=True))
     monkeypatch.setattr(hub, "publish", AsyncMock())
     monkeypatch.setattr(hub, "send_runner", send)
@@ -81,7 +81,7 @@ def control_hub(tmp_path, monkeypatch):
     monkeypatch.setattr(hub, "controllable", lambda *args: True)
     monkeypatch.setattr(hub, "_step_alive", lambda *args: True)
     monkeypatch.setattr(hub, "_turn_waits", lambda *args: False)
-    monkeypatch.setattr(hub, "_save_step", lambda *args: None)
+    monkeypatch.setattr(hub, "_save_step", AsyncMock())
     monkeypatch.setattr(hub, "_push", AsyncMock(return_value=True))
     monkeypatch.setattr(hub, "_publish_control", AsyncMock())
     yield hub
@@ -308,7 +308,7 @@ async def test_resume_wakes_waiter_registered_during_commit(control_hub, monkeyp
     key = hub._entry_step("t", row("resume"))
     state = hub._step(key)
     state.update(paused=True, pause_op=1, halt_op=2)
-    hub._save_step(key, state)
+    await hub._save_step(key, state)
     # Keep a real step row for the pause-order cleanup being asserted.
     hub.store.put("step_control", key, state)
     entered, release = threading.Event(), threading.Event()
@@ -323,7 +323,7 @@ async def test_resume_wakes_waiter_registered_during_commit(control_hub, monkeyp
 
     monkeypatch.setattr(hub.store, "_transaction", blocked_commit)
     saved = []
-    monkeypatch.setattr(hub, "_save_step", lambda key, state: saved.append(dict(state)))
+    monkeypatch.setattr(hub, "_save_step", AsyncMock(side_effect=lambda key, state: saved.append(dict(state))))
     pending = asyncio.create_task(hub.control_task("t", "resume"))
     event = asyncio.Event()
     try:

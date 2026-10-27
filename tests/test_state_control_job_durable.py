@@ -39,7 +39,7 @@ async def test_job_submission_cannot_erase_queued_halt(tmp_path, monkeypatch):
     monkeypatch.setattr(hub.store, "get", observe_read)
     monkeypatch.setattr(hub, "controllable", lambda *args: True)
     monkeypatch.setattr(hub, "_step_alive", lambda *args: True)
-    monkeypatch.setattr(hub, "_save_step", lambda *args: None)
+    monkeypatch.setattr(hub, "_save_step", AsyncMock())
     monkeypatch.setattr(hub, "_push", AsyncMock(return_value=False))
     monkeypatch.setattr(hub, "publish", AsyncMock())
     monkeypatch.setattr(hub, "send_runner", AsyncMock())

@@ -332,7 +332,8 @@ PI 토큰으로 `POST /api/shutdown`을 호출하며 `down`의 상태 재확인�
 | 아직 시작하지 않은 turn(실행 순서·준비·정지 대기) | 정지는 시작을 막고, 재개 후 실행 직전에 입력 hash를 갱신함. 방향은 시작할 때 프롬프트 앞에 붙고, 멈추기는 시작하지 않고 바로 `halted`로 끝냄 | 같음 |
 
 - **제어는 어디에 남나**: 쓰일 때까지 gateway가 단계마다 보관합니다(방향 대기열, 정지 표시, 멈춤 요청). 방향은 hook이 전달하거나 그 방향을 담은 프롬프트로 CLI가 시작될 때, 정지는 재개할 때, 멈춤은 `halted` 결과가 나올 때 쓰인 것으로 봅니다. 기한으로 지우지 않습니다. runner는 지금 맡은 작업에만 적용하고(`runner.state_dir/control/<task>.json`, 직원 쓰기 범위 밖, 모든 읽기·쓰기는 파일 잠금 아래), 작업이 끝나면 전달하지 못한 방향을 `task.result`로 돌려줘 gateway가 그 단계에 다시 둡니다. 맡지 않은 작업의 제어는 `control.nack`으로 돌려보내고, gateway는 작업 frame을 보낸 뒤 제어를 다시 보냅니다. dispatch 알림과 frame 사이에 도착한 방향도 포함합니다. 단계가 끝날 때까지 쓰이지 않은 방향은 직원 기록과 메신저에 "전달 못 한 방향 수정"으로 알립니다.
-- 방향은 단계마다 20개까지 쌓이고, 넘치면 오래된 것부터 버리고 버린 수를 다음 전달에 함께 알립니다.
+- 방향은 단계마다 20개까지 쌓이고, 넘치면 오래된 것부터 버리고 버린 수를 다음 전달에 함께 알립니다. 전달 준비 중 취소되거나 이전 revision의 전달이 거부되면 그 작업의 방향과 버린 수 알림을 다음 turn에 남깁니다.
+- 종료 정산이 먼저 시작되면 멈추기를 거절합니다. 멈추기 처리가 먼저 시작되면 저장·전송 판정 뒤 결과를 정산해 응답과 정지 상태를 맞춥니다.
 - 연결이 끊긴 동안 재개해도 재연결 때 runner의 정지가 풀립니다. 요청이나 단계가 끝나면 남은 실행 작업에도 제어를 보내지 않습니다.
 - 멈춘 결과는 실패가 아니라 `halted`이고, 확보한 session id를 남깁니다. 단계는 재시도·환경 수정 없이 PI 재개를 기다리고(요청은 `PI 결정 대기`, 상한 `pi_decision_timeout_s`), 세션 재개를 지원하고 id가 있으면 같은 세션으로 이어 갑니다. 결과 저장 직후 대기 등록 전에 보낸 재개도 보관합니다. 멈추기 전에 걸어 둔 일시 정지도 함께 풀리고, 멈춘 뒤 다시 일시 정지했으면 남습니다. 그동안 보낸 방향은 재개 turn 앞에 붙습니다. 작업판에는 `멈춤 · 재개 가능`으로 보이고, 상한이 지나거나 요청을 취소하면 재개 버튼이 사라집니다. 멈춤을 보낸 뒤 runner가 꺼져 작업이 끊겨도 실패 대신 `halted`로 끝납니다. 정지된 단계가 다음 turn을 기다리는 동안에도 요청은 `PI 결정 대기`이고, 마지막 작업 줄에서 재개합니다.
 - `engine: cli`는 시작 시 `status` 또는 `started` 이벤트에 `session_id`를 보내도 됩니다. 멈출 때 id가 없으면 결과와 로그에 "같은 세션 재개 불가"를 표시합니다. 이 경우나 세션 재개를 지원하지 않는 Gemini·Antigravity는 새 turn에 원래 지시와 이전 결과 요약을 넘깁니다.
@@ -456,7 +457,7 @@ Gateway의 event·request·결과 추가/삭제·보고서 검토 저장은 같�
 
 일반 승인 생성·결정·timeout·close·runner 전달/ACK도 DB writer에서 await합니다. 카드 삭제·결정·전달 행은 한 transaction으로 저장하며 같은 카드의 경쟁을 직렬화합니다. commit 결과를 확인한 뒤 카드 제거·future 완료·전달을 진행하고, 재접속 전달은 ACK·timeout 뒤 최신 행을 다시 읽습니다. runner 승인 전달은 최대 10초이며 시간 초과 때 연결 등록을 해제하고 전달 행을 보존합니다. 저장 중 취소돼도 시작한 commit의 성공·오류를 확인합니다. storage 선택 중 취소는 저장된 선택으로 재시도하는 기존 계약을 유지합니다.
 
-Runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 outbox·ack도 writer로 옮겼습니다. Gateway 일반 승인(#976)·task 취소 intent(#979)와 plan-rehire 계약 저장(#980)도 async입니다. runner activity·halt/resume task intent(#982)는 같은 SQLite writer에서 await하며 transaction 안의 최신 row에 해당 필드만 병합합니다. PI·runner의 control-state 저장과 result/만료에 따른 해당 row 삭제도 task별로 직렬화해 commit 뒤 memory·알림을 반영합니다. 삭제 표식은 늦은 runner 메시지의 부활을 막고 새 PI 제어는 살아 있는 step을 다시 제어합니다. step·result 수신의 나머지 저장·dispatch와 전용 복구·초기화/CLI의 sync 경계는 남습니다(#606). 채용 preflight 읽기는 #984에서 async로 전환했습니다. 이전 조사 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)를 봅니다.
+Runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 outbox·ack도 writer로 옮겼습니다. Gateway 일반 승인(#976)·task 취소 intent(#979)와 plan-rehire 계약 저장(#980)도 async입니다. runner activity·halt/resume task intent(#982)는 같은 SQLite writer에서 await하며 transaction 안의 최신 row에 해당 필드만 병합합니다. PI·runner의 control-state 저장과 result/만료에 따른 해당 row 삭제도 task별로 직렬화해 commit 뒤 memory·알림을 반영합니다. 삭제 표식은 늦은 runner 메시지의 부활을 막고 새 PI 제어는 살아 있는 step을 다시 제어합니다. step 제어도 최신 row를 직렬 갱신하고 commit 뒤 wake·전송을 처리합니다. result 수신의 나머지 저장·dispatch와 전용 복구·초기화/CLI의 sync 경계는 남습니다(#606). 채용 preflight 읽기는 #984에서 async로 전환했습니다. 이전 조사 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)를 봅니다.
 
 ### topic 점검표와 선행 연구 기준
 
@@ -1022,7 +1023,7 @@ internal 구역을 가리키는 작업·project·참고 폴더 별칭은 Claude�
 | 항목 | 구현 근거와 남은 확인 |
 |---|---|
 | 로컬 job·취소 | [#937](https://github.com/ehojune/bioinfo-team-3d/pull/937) job 기록 재로드, [#968](https://github.com/ehojune/bioinfo-team-3d/pull/968) 복구 runner에 취소 재전송 회귀가 병합됐습니다. 대체 transport·무해한 job으로 취소 트리 잔류 0·완료 깨움 없음·다른 요청 보존을 확인했습니다. runner가 꺼진 동안에는 job 종료를 보장하지 않습니다. |
-| 저장·소유권 | #967 소유권 경쟁과 #966·#972·#976·#979·#980·#982 저장 경계, #984 채용 preflight 읽기 전환 병합. control-state는 task별 async commit·삭제 후 부활 방지를 적용합니다. step·result 수신의 나머지 저장·dispatch 등 sync 경계는 남아 #606은 OPEN입니다. 실디스크·운영 성능은 미검증입니다. |
+| 저장·소유권 | #967 소유권 경쟁과 #966·#972·#976·#979·#980·#982 저장 경계, #984 채용 preflight 읽기 전환 병합. control-state는 task별 async commit·삭제 후 부활 방지를 적용합니다. step 제어도 async이며 result 수신의 나머지 저장·dispatch 등 sync 경계는 남아 #606은 OPEN입니다. 실디스크·운영 성능은 미검증입니다. |
 | 운영 미검증 | 실제 WebSocket 재연결·gateway OS 재시작·새 설치에서의 실제 요청·반복 복구·지원 요청 end-to-end는 미검증입니다. [새 설치 mock 검사](reference/clean-install-922.md)와 회귀 CI를 운영 PASS로 세지 않습니다. |
 
 ### 승인·예산
@@ -1185,7 +1186,7 @@ CP2 카드는 claim 근거를 갈래별로 묶어 단계·상태·근거 종류�
 이 교정이 실패하거나 모으지 않은 파일만 새로 쓰거나 그대로 두면 단계는 교정 전 결과로 통과하고 CP2가 그 행을 거부합니다.
 단계가 끝나면 runner가 표 형식과 문헌 접근 기록을 봅니다. 표의 구분자·칸 수 오류를 경고하고, 문헌은 후보·선정·확보(본문·초록·서지)·결론 근거를 서로 다른 분모로 셉니다. 못 읽은 결론 근거 논문은 ID와 사유를 남깁니다. 이 원장과 기존 조회 전체·결론 근거 집계는 CP2 카드와 보고서 `## 한계`(일반 요청은 `## 보고서 경고`)에 들어갑니다. 같은 응답의 PMID·PMCID·DOI·OpenAlex ID는 한 논문의 별칭으로 맞춥니다(#697, #710, #735, #744).
 보고하지 않은 산출 목록에서 `__pycache__` 아래 파일은 뺍니다(관찰 기록에는 남음). 직원 실행 환경에는 `PYTHONDONTWRITEBYTECODE=1`을 넣어 처음부터 만들지 않습니다(설정이나 runner 환경에 값이 있으면 그 값을 씁니다).
-단계가 결정이 필요해 멈추면(`blocking_decision`) 산출·원장 검사 전에 CSO가 먼저 답하고, hard-stop 질문만 PI에게 올립니다. 답을 받으면 단계를 다시 실행합니다.
+단계가 결정이 필요해 멈추면(`blocking_decision`) 산출·원장 검사 전에 CSO가 먼저 답하고, hard-stop 질문만 PI에게 올립니다. 질문만 남긴 turn은 단계 완료로 알리지 않으며 답을 받으면 같은 단계에서 계속합니다.
 연구 요청은 일반 재계획·리뷰·합성에 들어가지 않습니다.
 직원의 StructuredOutput JSON 파싱 오류는 같은 세션에서 자동 재시도합니다(`runner.structured_output_retries`, 기본 2회, 0이면 끔). 오류 원문은 작업 폴더의 `.tmp/structured_output_failures/`에 저장합니다. 잘린 계획은 단계 설명·반복·큰 표를 줄여 다시 받고, 비ASCII 문자는 `\u` escape로 늘리지 않습니다.
 유효한 계획이 `orchestrator.plan_max_chars`(기본 50,000자)를 넘으면 실제 크기와 상한을 경고로 기록하되 자르지 않습니다. 재시도는 task 한도와 요청 잔여 한도 중 작은 금액 안에서만 하며, 비용·사용량을 앞선 호출까지 합산합니다.
