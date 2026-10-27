@@ -35,6 +35,22 @@ Refs #983. `runner.facilities_support`로 시설팀 지원 요구를 선언합�
 
 🤖 Co-Authored-By: Codex (gpt-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
+Refs #606 — step_control 저장과 continuation/close 경계를 수정합니다.
+
+- `4618a13`: attach 뒤 revision이 전진해 dispatch가 거부되면 그 task의 steer·drop 알림 예약만 반환합니다. 격리 재현 1 FAIL·2 PASS → 관련 61 PASS. 추가 제어 검증은 150 PASS·7 FAIL 후 checkout PYTHONPATH 지정으로 실패 7건 PASS입니다. 최종 head CI·리뷰와 병합은 대기합니다.
+- `4bafedca` Windows CI는 새 test의 inventory 누락으로 시작 전 실패했습니다. `9a8af6b`로 해당 회귀를 Windows boundary cohort에 추가했으며 profile validation PASS입니다.
+- PI·attach·settle·release·NACK·close는 최신 row를 lock 안에서 갱신하고 SQLite writer commit 뒤 wake/send합니다. 취소 정산·revision 경계·runner dedup을 유지합니다.
+- `23b2273`은 질문-only turn을 완료로 알리지 않아 같은 revision의 답변 후속 turn과 대기 중 steer를 보존합니다. 최종 성공·거절·skip은 기존 close를 거칩니다.
+- 취소된 attach는 steer 예약과 자신이 선점한 drop 알림 몫만 반환합니다. 동시 갱신과 rollback을 보존합니다.
+- `a97dee5`: 전송 직전 종료 정산 중인 halt는 거절합니다. 취소된 attach는 revision 전진 뒤에도 자기 예약을 반환하며 close 후 새 row의 알림은 보존합니다. 리뷰 P1·P2 회귀 2 FAIL → PASS, 관련 154 PASS·subprocess PYTHONPATH 지정 후 7 PASS입니다.
+- `0ee0aaa`: 종료 경쟁 때 새 steer ID만 반환하고 기존 예약은 result의 delivered 정산에 맡깁니다. 후속 P1은 pause·halt·steer 3 FAIL → 관련 164 PASS입니다.
+- Linux 3.10/3.12 CI의 mock e2e 실패와 같은 `step ended before dispatch`를 로컬에서 재현했습니다(1 FAIL). 격리 회귀 4 FAIL → 4 PASS, 동시 drop 알림 보존 1 PASS. mock e2e·followup·ask·CSO 430 PASS, 제어 92 PASS. fake CLI import 실패 6건은 test PYTHONPATH 지정 뒤 7 PASS(추가 1건 포함)로 확인했습니다. 설치·assertion 변경은 없습니다.
+- manual 후속 수정 195,066→195,145자(LF). public·diff 검사 PASS. 근거는 [PR #990](https://github.com/ehojune/bioinfo-team-3d/pull/990)의 test·CI·리뷰 기록입니다.
+- hold는 최종 head CI·같은 head 실제 리뷰·알려진 P0/P1 해결·main/head guard 뒤 해제합니다. #987과 최신 main의 W3 HANDOFF·기록을 충돌 없이 통합했습니다.
+- #606 OPEN. 복구는 격리 Store 재열기로 검증했으며 실제 API·실디스크 성능·실프로세스 재시작·운영 복구는 UNVERIFIED입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 PR #989 · Refs #983. doctor가 runner의 custom `contract_dir`에 있는 유효한 직원도 검사합니다.
 
 - YAML 로드 순서·계약 유효성 규칙을 공유하고 기본/custom 경로·만료/archived·중복 ID 결과를 runner와 맞췄습니다. doctor는 파일을 이동하거나 수정하지 않습니다.

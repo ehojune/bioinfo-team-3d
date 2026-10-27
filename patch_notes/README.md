@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:16 | [`9a8af6b`](https://github.com/ehojune/bioinfo-team-3d/pull/990/commits/9a8af6b) | **Windows test 선택 목록을 보완해 새 회귀도 검사한다.**<br>새 dispatch 경합 회귀를 Windows boundary CI에 포함한다(Refs |
+| 17:10 | [`4618a13`](https://github.com/ehojune/bioinfo-team-3d/pull/990/commits/4618a13) | **경합으로 전달되지 않은 방향과 버린 수 알림이 다음 turn에 남도록 고쳤다.**<br>이전 revision의 전달이 거부되면 해당 작업의 방향과 알림 예약을 반환한다(Refs |
 | 17:00 | [`51f5af7`](https://github.com/ehojune/bioinfo-team-3d/pull/993/commits/51f5af7) | **임시 총괄과 복귀 후 총괄의 책임 시점을 구분했습니다.**<br>역할 표의 효력을 10/28 21시 이후로 명시하고 그 전 Codex 임시 총괄 책임을 적어 리뷰 P1을 수정했다. |
 | 16:55 | [`eaa3327`](https://github.com/ehojune/bioinfo-team-3d/pull/993/commits/eaa3327) | **개발팀 인계와 실제 작업 재개를 구분하고 지원 준비 판정의 한계를 안내했습니다.**<br>총괄 역할·worker 완료 책임·중단 조건을 운영 기준에 모으고 |
 
@@ -23,8 +25,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 |---|---|---|
 | 22:27 | [`6ec0747`](https://github.com/ehojune/bioinfo-team-3d/pull/991/commits/6ec0747) | **manual에 시설팀 지원 선언과 준비 gate의 범위를 안내합니다.**<br>#990 구현 종료 뒤 한 문단과 상세 reference 링크를 반영했습니다. LF 기준 194,939→195,168자입니다. |
 | 22:25 | [`4d09a77`](https://github.com/ehojune/bioinfo-team-3d/pull/991/commits/4d09a77) | **시설팀 지원 회귀를 Windows doctor cohort에 포함합니다.**<br>기존 doctor 분류를 적용해 inventory 검사와 60건 회귀를 통과했습니다. patch-note SHA 형식도 바로잡았습니다. |
+| 22:24 | [`a2dbca7`](https://github.com/ehojune/bioinfo-team-3d/pull/990/commits/a2dbca7) | **신규 halt 회귀 3건과 기존 result 삭제 경쟁을 합쳐 4 PASS. 전체 관련 검증과 최종 head CI·리뷰는 잔여다.**<br>result admission lock을 halt intent에 한정해 pause 전송 중 result 정산을 보존한다(Refs |
+| 22:23 | [`404664c`](https://github.com/ehojune/bioinfo-team-3d/pull/990/commits/404664c) | **durable halt 뒤 응답 거절과 pause가 엇갈리는 P1의 ask·실패·성공 회귀를 3 FAIL에서 3 PASS로 검증했다.**<br>result snapshot과 종료 정산 표식을 PI intent·전송 판정과 직렬화한다(Refs |
 | 22:21 | [`c59c231`](https://github.com/ehojune/bioinfo-team-3d/pull/991/commits/c59c231) | **profile이 시설팀 지원 요구를 선언하고 doctor가 준비 증거를 판정합니다.**<br>required 미충족은 FAIL, optional+ready만 OK, unspecified는 WARN입니다. init 명시 값 보존과 격리 회귀로 확인했으며 실제 복구는 UNVERIFIED입니다. |
+| 22:08 | [`0ee0aaa`](https://github.com/ehojune/bioinfo-team-3d/pull/990/commits/0ee0aaa) | **pause·halt·steer가 전달 완료된 지시를 재예약하는 P1을 3 FAIL로 재현하고 관련 164 PASS로 검증했다.**<br>종료 경쟁 때 이번 steer ID만 반환하고 기존 예약은 result의 delivered 정산에 맡긴다(Refs |
+| 22:01 | [`a97dee5`](https://github.com/ehojune/bioinfo-team-3d/pull/990/commits/a97dee5) | **리뷰 P1·P2를 수정 전 2 FAIL로 재현하고 관련 161건을 검증했다. close 후 새 row의 알림은 보존한다.**<br>종료 정산 중 halt를 거절하고 revision 전진 뒤 취소된 attach의 예약을 반환한다(Refs |
+| 21:40 | [`23b2273`](https://github.com/ehojune/bioinfo-team-3d/pull/990/commits/23b2273) | **질문 답변 뒤 같은 단계가 계속 실행되며 전달 전 취소로 누락됐던 방향 수 알림을 다음 turn에 보존한다.**<br>질문-only turn의 완료 이벤트를 답변 후로 미루고 취소된 attach의 drop 알림 몫만 반환한다(Refs |
 | 21:30 | [`88777e6`](https://github.com/ehojune/bioinfo-team-3d/pull/987/commits/88777e6) | **인수인계 표에 control-state와 doctor 후속 병합을 반영합니다.**<br>최신 main을 통합하고 |
+| 21:04 | [`59340c3`](https://github.com/ehojune/bioinfo-team-3d/pull/990/commits/59340c3) | **최종 리뷰 P1·P2의 격리 회귀 2 FAIL을 재현하고 수정 뒤 관련 85 PASS를 확인했다. Linux e2e 실패는 미해결이며 hold를 유지한다.**<br>전송 직전 종료 중인 turn의 steer 예약을 반환하고 control publication과 step close를 직렬화한다(Refs |
+| 20:50 | [`5d7a94f`](https://github.com/ehojune/bioinfo-team-3d/pull/990/commits/5d7a94f) | **CI의 기존 경로 차단·한 loop-turn 가정을 바로잡고 신규 44건과 실패 mock 11건을 합쳐 55 PASS로 검증했다.**<br>기존 revision dispatch 자격을 보존하고 복구 test는 durable dispatch readiness를 기다린다(Refs |
+| 20:36 | [`7cd7d7e`](https://github.com/ehojune/bioinfo-team-3d/pull/990/commits/7cd7d7e) | **리뷰 P2는 asyncio·AnyIO 2 FAIL → 관련 122 PASS로 검증했다. W3 변경 뒤 manual에 step 경계를 반영했다.**<br>caller 취소 전 commit된 steer의 같은 ID 전송을 정산한다(Refs |
+| 20:32 | [`c47bfce`](https://github.com/ehojune/bioinfo-team-3d/pull/990/commits/c47bfce) | **재개 회귀 1 FAIL → PASS, 신규 mock 43 PASS. PR 번호 누락으로 실패한 notes-index schema도 바로잡는다.**<br>step 종료 표식을 revision별로 적용해 새 revision은 열고 이전 turn의 늦은 attach는 막는다(Refs |
+| 20:27 | [`cf36af2`](https://github.com/ehojune/bioinfo-team-3d/pull/990/commits/cf36af2) | **경쟁·rollback·반복 취소·steer replay·격리 복구 읽기를 mock으로 검증한다. 실제 운영 성능은 미검증이다.**<br>step 제어를 최신 row 기준으로 직렬화하고 async commit 뒤 wake·전송을 처리한다(Refs |
 | 20:16 | [`d3cf8cc`](https://github.com/ehojune/bioinfo-team-3d/pull/989/commits/d3cf8cc) | **doctor가 runner의 custom contract\_dir 직원도 읽기 전용으로 검사합니다.**<br>기본/custom 경로·계약 유효성·중복 ID 우선순위를 맞췄습니다. 누락 회귀는 수정 전 1 failed이며 수정 후 관련 mock/static 235 passed입니다. 실제 설치판 복구와 시설팀 필수/선택 정책은 #983에 남습니다. |
 | 19:42 | [`7163bcf`](https://github.com/ehojune/bioinfo-team-3d/pull/988/commits/7163bcf) | **해당 경쟁 1 failed → PASS. 신규 mock 26건 포함 관련 159 passed입니다.**<br>종료 turn의 늦은 runner feedback이 새 PI의 step 제어 intent를 덮어쓰지 않게 한다(Refs |
 | 19:33 | [`a99601d`](https://github.com/ehojune/bioinfo-team-3d/pull/988/commits/a99601d) | **삭제 row 재개 1 failed → PASS. 신규 mock 25건 포함 관련 158 passed입니다.**<br>result에서 만든 제어 알림은 닫힌 row를 재개하지 못하고 새 PI 동작만 재개를 허용한다(Refs |
