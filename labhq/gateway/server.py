@@ -2916,19 +2916,27 @@ class Hub:
         if cancelled:
             # No payload reached dispatch. Return both IDs and its drop notice,
             # preserving any newer queue/counter changes under the same lock.
-            def release(state):
-                for steer in state["steers"]:
-                    if steer.get("task") == task.id:
-                        steer["task"] = None
-                reserved = state["drop_reservations"].pop(task.id, 0)
-                state["dropped_told"] = max(0, state["dropped_told"] - reserved)
-                self._cap_steers(state)
-
-            await self._update_step(key, release)
+            await self._release_unpublished_attachment(key, task.id)
             raise asyncio.CancelledError
         if not steers and not dropped:
             return task
         return task.model_copy(update={"meta": {**task.meta, "steers": steers, "steer_dropped": dropped}})
+
+    async def _release_unpublished_attachment(self, key: str, tid: str) -> None:
+        """Return only this unsent attachment's reservations on the latest row."""
+        def release(state):
+            if not self.store.get("step_control", key):
+                return False
+            for steer in state["steers"]:
+                if steer.get("task") == tid:
+                    steer["task"] = None
+            reserved = state["drop_reservations"].pop(tid, 0)
+            state["dropped_told"] = max(0, state["dropped_told"] - reserved)
+            self._cap_steers(state)
+
+        _, cancelled = await self._update_step(key, release)
+        if cancelled:
+            raise asyncio.CancelledError
 
     async def _settle_steers(self, tid: str, entry: dict, report: dict | None) -> None:
         """Remove delivered IDs and release the rest against the latest step row."""
@@ -3775,6 +3783,7 @@ class Hub:
             key = self.step_key(task.request_id, task.meta.get("step_id"), task.meta.get("kind"), task.id)
             if (key in getattr(self, "_closed_steps", set()) or
                     int(task.meta.get("revision") or 0) < self._step(key)["revision"]):
+                await self._release_unpublished_attachment(key, task.id)
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0,
                                   cost_known=True, error="step ended before dispatch")
         fut = asyncio.get_running_loop().create_future()
