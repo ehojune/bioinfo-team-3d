@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:32 | [`1a2671e`](https://github.com/ehojune/bioinfo-team-3d/pull/999/commits/1a2671e) | **테스트가 파일 열기를 막아 둔 사이 CI 진단 기록이 터지던 간헐 실패를 고쳤습니다.**<br>CI 진단 파일 쓰기를 Path.open에서 분리하고 request-input test의 Path.open guard를 보호 폴더로 좁혀 xdist INTERNALERROR를 없앤다 (#998). |
 | 07:16 | [`9ac6743`](https://github.com/ehojune/bioinfo-team-3d/pull/997/commits/9ac6743) | **일부만 고쳐진 논문 스킬 설치본도 점검에서 걸러냅니다.**<br>일부만 패치된 Paper2Agent 설치본도 doctor가 준비 안 됨으로 보고해 --fix가 다시 설치하거나 불일치를 알리게 한다. |
 | 07:16 | [`03c04af`](https://github.com/ehojune/bioinfo-team-3d/pull/997/commits/03c04af) | **일부만 고쳐진 설치본 판정을 테스트로 고정했습니다.**<br>일부만 패치된 설치본이 준비 안 됨으로 판정되는 회귀 test를 추가한다. |
 | 06:59 | [`2ef0c6b`](https://github.com/ehojune/bioinfo-team-3d/pull/997/commits/2ef0c6b) | **새 회귀 테스트가 Python 3.10에서도 통과하도록 고쳤습니다.**<br>패치된 표현식을 한 namespace에서 평가해 Python 3.10에서도 comprehension이 변수를 찾게 한다. |
