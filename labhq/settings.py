@@ -55,6 +55,10 @@ class RunnerSettings(BaseModel):
     os_account: str | None = None  # the dedicated OS account the runner must run as (docs/runner-account.md)
     max_parallel: int = 4
     consult_parallel: int = Field(default=2, ge=1)
+    # Runaway breaker (#59): a signal that stays tripped moves warn -> constrain -> stop, one stage per new observation
+    # and at most once per beat. The stop stage halts the task only when breaker_hard_stop is on.
+    breaker_hard_stop: bool = False
+    breaker_beat_s: float = Field(default=10, gt=0, allow_inf_nan=False)
     workspace_root: str = "~/.labhq/runs"
     disk_warning_free_gb: float = Field(default=10, ge=0, allow_inf_nan=False)
     disk_warning_free_percent: float = Field(default=5, ge=0, le=100, allow_inf_nan=False)
