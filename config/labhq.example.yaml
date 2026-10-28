@@ -23,6 +23,8 @@ runner:
   facilities_support: unspecified  # required: doctor 준비 필수, optional: 부재 허용, unspecified: 요구 미선언
   id: lab-workstation
   max_parallel: 4
+  # breaker_hard_stop: false        # 폭주 차단기의 stop 단계가 task를 실제로 멈출지(기본 끔: 표시만)
+  # breaker_beat_s: 10              # 차단기가 한 단계씩 올라가는 최소 간격(초)
   consult_parallel: 2             # 막힌 직원의 질의 답변 전용 슬롯(일반 task와 분리)
   workspace_root: ~/.labhq/runs     # 태스크별 실험노트 폴더
   # disk_fail_free_gb: 2            # 작업 드라이브 여유가 이보다 적으면 PI가 답하기 전엔 task를 시작하지 않음(0이면 끔)

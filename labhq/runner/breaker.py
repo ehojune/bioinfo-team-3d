@@ -7,6 +7,8 @@ tool errors in a row. Nothing here has side effects; the runner turns a trip int
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,6 +16,58 @@ from ..util import tool_input_fingerprint
 
 REPEAT_LIMIT = 8  # the same tool call (name + input) back to back
 ERROR_LIMIT = 5  # tool calls in a row that each failed
+
+
+@dataclass
+class BreakerPolicy:
+    """Advance on new detector observations; enforcement is the caller's responsibility.
+
+    A restriction stays latched until explicitly released. ``hard_stop`` governs enforcement of
+    the stop stage, not whether that stage is reported.
+    """
+
+    hard_stop: bool = False
+    stage: str = "normal"
+
+    def observe(self, *, signalled: bool) -> str | None:
+        if not signalled:
+            return self.release() if self.stage == "warn" else None
+        next_stage = {"normal": "warn", "warn": "constrain", "constrain": "stop"}.get(self.stage)
+        if next_stage is None:
+            return None
+        self.stage = next_stage
+        return next_stage
+
+    def release(self) -> str | None:
+        if self.stage == "normal":
+            return None
+        self.stage = "normal"
+        return "normal"
+
+
+@dataclass
+class Escalation:
+    """One task's stage ladder: a signal that stays tripped moves it up at most once per beat, only on a new observation."""
+
+    policy: BreakerPolicy
+    beat_s: float = 10.0
+    clock: Callable[[], float] = time.monotonic
+    _last: float | None = None
+
+    def observe(self, active: bool) -> str | None:
+        if not active:
+            return self.policy.observe(signalled=False)
+        now = self.clock()
+        if self._last is not None and now - self._last < self.beat_s:
+            return None
+        stage = self.policy.observe(signalled=True)
+        if stage:
+            self._last = now
+        return stage
+
+    def release(self) -> str | None:
+        self._last = None
+        return self.policy.release()
 
 
 def _call_key(data: dict[str, Any]) -> str | None:
@@ -60,11 +114,41 @@ class Breaker:
                 return self._trip("tool_errors", self._errors)
         return None
 
+    @property
+    def active(self) -> bool:
+        """A signal is over its limit right now (``observe`` reports each signal's first crossing only)."""
+        return self._repeats >= self.repeat_limit or self._errors >= self.error_limit
+
+    def stage_record(self, stage: str, enforcement: str, *, hard_stop: bool = False) -> dict[str, Any]:
+        """The ``agent.breaker`` body for a stage change. ``enforcement`` says what really happened: ``applied``,
+        ``unsupported`` (the engine has no hook, so nothing was restricted), ``off`` (stop with hardStop off),
+        ``halt`` or ``released``."""
+        repeat = self._repeats >= self.repeat_limit
+        return {"signal": "repeat" if repeat else "tool_errors", "count": self._repeats if repeat else self._errors,
+                "tool": self._last_tool, "mode": "enforce", "stage": stage, "enforcement": enforcement,
+                "hard_stop": hard_stop}
+
     def _trip(self, signal: str, count: int) -> dict[str, Any] | None:
         if signal in self._tripped:
             return None
         self._tripped.add(signal)
         return {"signal": signal, "count": count, "tool": self._last_tool, "mode": "shadow"}
+
+
+def stage_text(record: dict[str, Any]) -> str:
+    tool = record.get("tool") or "도구"
+    stage, how = record.get("stage"), record.get("enforcement")
+    if stage == "normal":
+        return "폭주 차단기를 풀었어요"
+    if stage == "warn":
+        return f"폭주 의심: {tool}에서 다시 감지했어요 (경고만, 멈추지 않음)"
+    if stage == "constrain":
+        if how == "unsupported":
+            return f"폭주 의심 계속({tool}): 이 엔진은 도구를 제한할 수 없어 제한하지 못했어요 (표시만)"
+        return f"폭주 의심 계속({tool}): 읽기 도구만 허용하도록 제한했어요. PI가 풀 때까지 유지됩니다"
+    if how == "halt":
+        return f"폭주 의심 계속({tool}): 세션을 보존한 채 멈췄어요. 재개할 수 있어요"
+    return f"폭주 의심 계속({tool}): 멈출 단계지만 hardStop이 꺼져 있어 멈추지 않았어요 (표시만)"
 
 
 def trip_text(trip: dict[str, Any]) -> str:

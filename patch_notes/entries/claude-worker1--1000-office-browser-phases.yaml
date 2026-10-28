@@ -1,0 +1,6 @@
+pr: 1001
+rows:
+- sha: cad9084
+  at: 2026-10-29 08:02
+  text: web_office_browser가 Browser.close 답을 5초만 기다리고 단계 이름을 stderr에 남겨, 측정 뒤 150초 멈춤이 어느 단계인지 보이게 한다 (#1000).
+  summary: 브라우저 시험이 마지막 닫기 단계에서 멈추지 않게 하고 멈춘 위치를 로그에 남깁니다.
