@@ -1,4 +1,7 @@
 """Runaway breaker stages and enforcement (#59 ②): beat-paced escalation, engine support, hardStop, PI release."""
+import functools
+import itertools
+
 import pytest
 
 from labhq.gateway.server import Hub
@@ -52,7 +55,9 @@ def _runner(tmp_path, monkeypatch, engine, *, hard_stop=False, calls=11, between
     settings = Settings()
     settings.runner.state_dir = str(tmp_path / "state")
     settings.runner.workspace_root = str(tmp_path / "runs")
-    settings.runner.breaker_beat_s = 1e-9
+    settings.runner.breaker_beat_s = 0.5
+    ticks = itertools.count()  # a fake clock: the Windows monotonic clock is too coarse for back-to-back events
+    monkeypatch.setattr("labhq.runner.daemon.Escalation", functools.partial(Escalation, clock=lambda: float(next(ticks))))
     settings.runner.breaker_hard_stop = hard_stop
     runner = Runner(settings)
     agent = AgentSpec(id="engineer", name="Engineer", role="test", engine=engine, builtin_mcp=[])

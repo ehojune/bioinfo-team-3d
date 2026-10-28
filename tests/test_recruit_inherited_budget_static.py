@@ -123,7 +123,8 @@ def accounting_runner(reserve=True):
     durable = FakeDurable()
     methods = extract("labhq/runner/daemon.py", {"_bind_recruitment_conversion", "_recruitment_cost_fields"},
                       {"durable": durable}, owner="Runner")
-    runner = NS(s=settings(reserve), store=FakeStore(), tasks={}, _result_queued=set(), _recruitment_conversions={})
+    runner = NS(s=settings(reserve), store=FakeStore(), tasks={}, breakers={}, _result_queued=set(),
+                _recruitment_conversions={})
     for name in ("_bind_recruitment_conversion", "_recruitment_cost_fields"):
         setattr(runner, name, methods[name].__get__(runner))
     task = NS(id="outer", request_id="request", agent_id="recruiter", meta={"kind": "plan_recruit"})
