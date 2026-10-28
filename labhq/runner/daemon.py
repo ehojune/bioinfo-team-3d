@@ -812,14 +812,12 @@ class Runner:
         await self.emit(Event(type="agent.breaker", data=record, **base))
         await self.emit(Event(type="agent.log", data={"level": "alert", "text": stage_text(record)}, **base))
 
-    async def release_breaker(self, task_id: str) -> None:
-        """The PI lifted the restriction: the hook allows every tool again and the ladder restarts."""
-        escalation = self.breakers.get(task_id)
-        if escalation is not None and escalation.release():
-            record = {"stage": "normal", "enforcement": "released", "mode": "enforce", "signal": None}
-            base = dict(task_id=task_id, agent_id=self.controls.agent_of(task_id), request_id=self.task_req.get(task_id))
-            await self.emit(Event(type="agent.breaker", data=record, **base))
-            await self.emit(Event(type="agent.log", data={"level": "info", "text": stage_text(record)}, **base))
+    async def _announce_breaker_release(self, task_id: str) -> None:
+        """Say the PI lifted the restriction (the ladder was already reset by ``_on_control``)."""
+        record = {"stage": "normal", "enforcement": "released", "mode": "enforce", "signal": None}
+        base = dict(task_id=task_id, agent_id=self.controls.agent_of(task_id), request_id=self.task_req.get(task_id))
+        await self.emit(Event(type="agent.breaker", data=record, **base))
+        await self.emit(Event(type="agent.log", data={"level": "info", "text": stage_text(record)}, **base))
 
     CONTROL_RETRY_S = (0.2, 1.0)  # waits before the second and third attempt; then the gateway's resend takes over
 
@@ -831,6 +829,10 @@ class Runner:
         base = dict(task_id=tid, agent_id=self.controls.agent_of(tid) or msg.get("agent_id"),
                     request_id=self.task_req.get(tid) or msg.get("request_id"))
         error: Exception | None = None
+        # Reset the ladder before the hook is released: a tool event arriving meanwhile must not climb from constrain to
+        # stop and halt the task the PI is freeing (PR #995 review).
+        ladder = self.breakers.get(tid) if msg.get("action") == "release_constraint" else None
+        released = bool(ladder and ladder.release())
         for wait in (0.0, *self.CONTROL_RETRY_S):
             if wait:
                 await asyncio.sleep(wait)
@@ -852,8 +854,8 @@ class Runner:
             return
         base["agent_id"] = self.controls.agent_of(tid) or base["agent_id"]
         await self.emit(Event(type="agent.control", data=summary, **base))
-        if msg.get("action") == "release_constraint":
-            await self.release_breaker(tid)
+        if released:
+            await self._announce_breaker_release(tid)
         note = self._control_note(summary)
         if note:
             await self.emit(Event(type="agent.log", data={"level": "info", "text": note}, **base))
@@ -1022,7 +1024,8 @@ class Runner:
     async def _run_guarded(self, task: Task) -> None:
         try:
             await self.run_task(task)
-        except BaseException as e:  # cancelled or crashed: the gateway must still get a result
+        except BaseException as e:
+            self.breakers.pop(task.id, None)  # a crash or cancel skips emit_final  # cancelled or crashed: the gateway must still get a result
             self.event_buffers.pop(task.id, None)
             cancelled = isinstance(e, asyncio.CancelledError)
             if not cancelled:
