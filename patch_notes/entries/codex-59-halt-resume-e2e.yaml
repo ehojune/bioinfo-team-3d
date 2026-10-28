@@ -1,5 +1,9 @@
 pr: 994
 rows:
+  - sha: 650bf07
+    at: "2026-10-29 05:20"
+    text: "fix: include halt resume test in Windows inventory"
+    summary: "Windows CI에서 중단과 재개 검증을 실행하도록 등록합니다."
   - sha: b3e020a
     at: "2026-10-29 05:14"
     text: "test: connect halt and resume control flow"
