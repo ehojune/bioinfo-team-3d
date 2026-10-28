@@ -10,6 +10,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-29
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 07:16 | [`9ac6743`](https://github.com/ehojune/bioinfo-team-3d/pull/997/commits/9ac6743) | **일부만 고쳐진 논문 스킬 설치본도 점검에서 걸러냅니다.**<br>일부만 패치된 Paper2Agent 설치본도 doctor가 준비 안 됨으로 보고해 --fix가 다시 설치하거나 불일치를 알리게 한다. |
+| 07:16 | [`03c04af`](https://github.com/ehojune/bioinfo-team-3d/pull/997/commits/03c04af) | **일부만 고쳐진 설치본 판정을 테스트로 고정했습니다.**<br>일부만 패치된 설치본이 준비 안 됨으로 판정되는 회귀 test를 추가한다. |
+| 06:59 | [`2ef0c6b`](https://github.com/ehojune/bioinfo-team-3d/pull/997/commits/2ef0c6b) | **새 회귀 테스트가 Python 3.10에서도 통과하도록 고쳤습니다.**<br>패치된 표현식을 한 namespace에서 평가해 Python 3.10에서도 comprehension이 변수를 찾게 한다. |
+| 06:44 | [`38af359`](https://github.com/ehojune/bioinfo-team-3d/pull/997/commits/38af359) | **새 회귀 테스트를 Windows 검사 목록에 등록했습니다.**<br>새 회귀 test를 Windows 경계 test 목록에 등록해 CI 선택 검사를 맞춘다. |
+| 06:33 | [`d2d5d6f`](https://github.com/ehojune/bioinfo-team-3d/pull/997/commits/d2d5d6f) | **논문 스킬 설치 때 Windows 경로 버그를 자동으로 고치고 그 기록을 남깁니다.**<br>setup-paper2agent가 reading_package.py의 Windows 경로 결함(str(relative_to) 네 곳)을 설치본에 패치하고 고정 upstream commit·적용 결과를 provenance에 남긴다. |
+
 ## 2026-10-27
 
 | 시간 | 커밋 | 주요 변경사항 |
