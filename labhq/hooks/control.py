@@ -45,7 +45,7 @@ STEER_HEADER = "[PI 방향 수정] 실행 중에 PI가 보낸 지시입니다. �
 def new_state(task_id: str = "") -> dict[str, Any]:
     """``steers`` wait for delivery; ``prompt_steers`` went into the turn's prompt and count as delivered once the CLI
     starts; ``delivered_ids`` reached Claude (hook) or a started CLI. The runner reports the three to the gateway."""
-    return {"version": 1, "task_id": task_id, "paused": False, "halt": None, "halted_at": None, "steers": [],
+    return {"version": 1, "task_id": task_id, "paused": False, "constrained": False, "halt": None, "halted_at": None, "steers": [],
             "next_seq": 1, "dropped": 0, "dropped_told": 0, "delivered": 0, "prompt_steers": [], "delivered_ids": []}
 
 
@@ -201,6 +201,10 @@ def apply_control(state: dict[str, Any], action: str, text: str | None = None, s
         state["paused"] = True
     elif action == "resume":
         state["paused"] = False
+    elif action == "constrain":
+        state["constrained"] = True
+    elif action == "release_constraint":
+        state["constrained"] = False
     elif action == "halt":
         state["halt"] = {"requested_at": time.time() if now is None else now}
         state["paused"] = False  # resuming a halted task continues it; it does not start paused again
@@ -211,7 +215,7 @@ def apply_control(state: dict[str, Any], action: str, text: str | None = None, s
 
 def summary(state: dict[str, Any] | None) -> dict[str, Any]:
     state = state or new_state()
-    return {"paused": bool(state["paused"]), "halt": bool(state["halt"]), "halted": bool(state["halted_at"]),
+    return {"paused": bool(state["paused"]), "constrained": bool(state["constrained"]), "halt": bool(state["halt"]), "halted": bool(state["halted_at"]),
             "steers_pending": len(state["steers"]), "steers_delivered": int(state["delivered"]),
             "steers_dropped": int(state["dropped"])}
 
@@ -224,7 +228,7 @@ def _halt(path: str | Path, state: dict[str, Any]) -> dict[str, Any]:
     return {"continue": False, "stopReason": HALT_REASON}
 
 
-def pre_tool_use(path: str | Path, *, hold_s: float = PAUSE_HOLD_S, poll_s: float = PAUSE_POLL_S,
+def pre_tool_use(path: str | Path, *, tool_name: str = "", hold_s: float = PAUSE_HOLD_S, poll_s: float = PAUSE_POLL_S,
                  sleep: Callable[[float], Any] = time.sleep,
                  clock: Callable[[], float] = time.monotonic) -> dict[str, Any] | None:
     """Halt stops Claude before the tool runs; pause holds the call, then denies it if the PI has not resumed."""
@@ -240,6 +244,9 @@ def pre_tool_use(path: str | Path, *, hold_s: float = PAUSE_HOLD_S, poll_s: floa
     if state["paused"]:
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                        "permissionDecisionReason": PAUSE_REASON}}
+    if state["constrained"] and tool_name not in {"Read", "Glob", "Grep"}:
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": "Runaway restriction: read-only tools only until released."}}
     return None
 
 
@@ -280,13 +287,16 @@ def main(argv: list[str] | None = None) -> int:
     """Fail open: a broken control file must not stop the staff run. JSON goes out as ASCII, whatever the console."""
     args = sys.argv[1:] if argv is None else argv
     event = EVENTS.get(args[0] if args else "post", "PostToolUse")
+    tool_name = ""
     with contextlib.suppress(Exception):
-        sys.stdin.buffer.read()  # Claude writes the tool call; the decision does not depend on it
+        payload = json.load(sys.stdin.buffer)
+        if isinstance(payload, dict) and isinstance(payload.get("tool_name"), str):
+            tool_name = payload["tool_name"]
     path = os.environ.get(CONTROL_ENV)
     if not path:
         return 0
     try:
-        out = pre_tool_use(path) if event == "PreToolUse" else post_tool_use(path, event)
+        out = pre_tool_use(path, tool_name=tool_name) if event == "PreToolUse" else post_tool_use(path, event)
     except Exception:
         return 0
     if out:

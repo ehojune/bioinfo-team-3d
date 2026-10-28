@@ -16,6 +16,33 @@ REPEAT_LIMIT = 8  # the same tool call (name + input) back to back
 ERROR_LIMIT = 5  # tool calls in a row that each failed
 
 
+@dataclass
+class BreakerPolicy:
+    """Advance on new detector observations; enforcement is the caller's responsibility.
+
+    A restriction stays latched until explicitly released. ``hard_stop`` governs enforcement of
+    the stop stage, not whether that stage is reported.
+    """
+
+    hard_stop: bool = False
+    stage: str = "normal"
+
+    def observe(self, *, signalled: bool) -> str | None:
+        if not signalled:
+            return self.release() if self.stage == "warn" else None
+        next_stage = {"normal": "warn", "warn": "constrain", "constrain": "stop"}.get(self.stage)
+        if next_stage is None:
+            return None
+        self.stage = next_stage
+        return next_stage
+
+    def release(self) -> str | None:
+        if self.stage == "normal":
+            return None
+        self.stage = "normal"
+        return "normal"
+
+
 def _call_key(data: dict[str, Any]) -> str | None:
     if "input_fingerprint" in data:
         return data["input_fingerprint"]
