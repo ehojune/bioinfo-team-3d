@@ -1,0 +1,5 @@
+rows:
+- sha: 842e929
+  at: 2026-10-29 08:53
+  text: Codex 등 Claude 외 직원에게 labhq_job을 연결하거나 안내하지 않고 대안(labhq_hpc·조각 나누기·PI에게 묻기)을 안내한다 (#1003).
+  summary: Codex 직원이 쓸 수 없는 긴 계산 도구로 안내받던 문제를 고쳐 쓸 수 있는 방법을 안내합니다.
