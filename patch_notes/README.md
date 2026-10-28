@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 08:20 | [`591b9da`](https://github.com/ehojune/bioinfo-team-3d/pull/1002/commits/591b9da) | **Windows에서 R이 늦게 뜰 때 실제 R 문법 검사 시험이 시간 초과로 실패하던 것을 막고 단계 시간을 기록합니다.**<br>실제 Rscript를 띄우는 parse 시험 2건만 호출당 60초를 주고 version·syntax 단계 시간을 통과할 때도 경고 요약으로 남긴다 (#898). |
+| 08:20 | [`f1c9add`](https://github.com/ehojune/bioinfo-team-3d/pull/1002/commits/f1c9add) | **재현 검증의 문법 검사 시간 한도와 Windows에서 R이 늦게 뜬 관측을 매뉴얼에 적었습니다.**<br>매뉴얼에 재현 receipt 문법 검사의 도구 호출당 10초 한도와 Windows의 느린 Rscript 시작 관측을 적는다 (#898). |
 | 08:02 | [`cad9084`](https://github.com/ehojune/bioinfo-team-3d/pull/1001/commits/cad9084) | **브라우저 시험이 마지막 닫기 단계에서 멈추지 않게 하고 멈춘 위치를 로그에 남깁니다.**<br>web_office_browser가 Browser.close 답을 5초만 기다리고 단계 이름을 stderr에 남겨, 측정 뒤 150초 멈춤이 어느 단계인지 보이게 한다 (#1000). |
 | 07:32 | [`1a2671e`](https://github.com/ehojune/bioinfo-team-3d/pull/999/commits/1a2671e) | **테스트가 파일 열기를 막아 둔 사이 CI 진단 기록이 터지던 간헐 실패를 고쳤습니다.**<br>CI 진단 파일 쓰기를 Path.open에서 분리하고 request-input test의 Path.open guard를 보호 폴더로 좁혀 xdist INTERNALERROR를 없앤다 (#998). |
 | 07:16 | [`9ac6743`](https://github.com/ehojune/bioinfo-team-3d/pull/997/commits/9ac6743) | **일부만 고쳐진 논문 스킬 설치본도 점검에서 걸러냅니다.**<br>일부만 패치된 Paper2Agent 설치본도 doctor가 준비 안 됨으로 보고해 --fix가 다시 설치하거나 불일치를 알리게 한다. |
