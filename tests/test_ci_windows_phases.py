@@ -572,6 +572,19 @@ def crash(message):
     return SimpleNamespace(reprcrash=SimpleNamespace(message=message))
 
 
+def test_the_diagnostic_write_survives_a_test_that_patches_path_open_to_fail(tmp_path, monkeypatch):
+    # #998: a test guarding Path.open with pytest.fail made the call-phase report flush raise Failed (not an OSError)
+    # out of pytest_runtest_logreport, which xdist reports as INTERNALERROR. The flush must not use Path.open.
+    path = tmp_path / 'diagnostics-gw0.json'
+    diagnostics = suite.StageDiagnostics(path, 'parallel', 'gw0', clock=lambda: 0, interval=0)
+    monkeypatch.setattr(Path, 'open', lambda *a, **k: pytest.fail('guarded input opened'))
+    monkeypatch.setattr(Path, 'write_text', lambda *a, **k: pytest.fail('Path.write_text used'))
+    diagnostics.record(fake_report('tests/test_fake.py::test_ok', duration=0.5))
+    monkeypatch.undo()
+    saved = json.loads(path.read_text(encoding='utf-8'))
+    assert saved['reports'] == 1 and diagnostics.warned is False
+
+
 def test_a_failure_is_on_disk_with_stage_duration_and_first_line_before_the_session_ends(tmp_path):
     clock = SimpleNamespace(now=50.0)
     path = tmp_path / 'diagnostics-gw3.json'

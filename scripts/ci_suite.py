@@ -9,6 +9,7 @@ import faulthandler
 import gc
 import hashlib
 import importlib.metadata
+import io
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,8 @@ except ImportError:  # older pytest has no built-in subtests; nothing is exclude
 
 from scripts.ci_selection import ROOT, PROFILES, WINDOWS_BOUNDARY, WINDOWS_PREVIEW, host_resource, include_windows, policy, read_changes
 from scripts import ci_windows_phases as windows
+
+_REAL_OPEN = io.open  # bound before any test patches Path.open or builtins.open
 
 
 def pytest_addoption(parser):
@@ -247,8 +250,10 @@ class StageDiagnostics:
         """Replace the file whole, so a cancelled process leaves the last complete record."""
         temporary = self.path.with_name('.' + self.path.name + '.tmp')
         try:
-            temporary.write_text(json.dumps(self.data, ensure_ascii=False, allow_nan=False, indent=1) + '\n',
-                                 encoding='utf-8')
+            # io.open bound at import, not Path.write_text: a test that patches Path.open or builtins.open for its own
+            # guard must not break this diagnostic write, and pytest.fail raised there is no OSError (#998).
+            with _REAL_OPEN(temporary, 'w', encoding='utf-8') as handle:
+                handle.write(json.dumps(self.data, ensure_ascii=False, allow_nan=False, indent=1) + '\n')
             os.replace(temporary, self.path)
             self.last_write = self.clock()
         except (OSError, ValueError):

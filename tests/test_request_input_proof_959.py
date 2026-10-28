@@ -102,7 +102,14 @@ def test_restricted_and_private_inputs_not_opened(tmp_path, monkeypatch):
     settings, request, folder = fixture(tmp_path)
     from labhq.settings import DataZone
     from pathlib import Path
-    monkeypatch.setattr(Path, 'open', lambda *a, **k: pytest.fail('guarded input opened'))
+    real_open = Path.open
+    guarded = folder.resolve()
+
+    def open_unless_guarded(self, *a, **k):  # only the guarded input; the rest of the process still opens files (#998)
+        if guarded in (self.resolve(), *self.resolve().parents):
+            pytest.fail('guarded input opened')
+        return real_open(self, *a, **k)
+    monkeypatch.setattr(Path, 'open', open_unless_guarded)
     settings.policy.data_zones = [DataZone(path=str(folder))]
     assert capture(request, settings) is None
     settings.policy.data_zones = []
