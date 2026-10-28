@@ -77,6 +77,62 @@ DRAFT_STATUSES = frozenset({"mechanical_failure", "unreviewed", "unresolved_disc
                             "failed", "failure"})
 SOURCE_MARKER = ".labhq-source.json"  # which Paper2Agent commit setup-paper2agent installed
 
+# Known upstream defects patched into the installed copy (#662). Paper2Agent's reading_package.py builds bundle keys
+# with str(path.relative_to(root)), which is backslash-separated on Windows and no longer matches the manifest and
+# evidence keys. as_posix() is identical on POSIX. Each `old` text must occur exactly once; a file that already holds
+# every `new` text (upstream fixed it, or an earlier install patched it) is left alone; anything else is a mismatch.
+UPSTREAM_PATCHES = (
+    {"id": "windows-relative-to-posix", "file": "paper2skill/scripts/reading_package.py",
+     "upstream_commit": "8c2d059165ef8cdcb70dbea76655b9c2b55b38e6",
+     "replace": (
+         ("str(evidence.relative_to(work))", "evidence.relative_to(work).as_posix()"),
+         ("str(p.relative_to(stage))", "p.relative_to(stage).as_posix()"),
+         ("str(path.relative_to(root))", "path.relative_to(root).as_posix()"),
+         ("str(p.relative_to(output))", "p.relative_to(output).as_posix()"),
+     )},
+)
+
+
+def patch_state(skill: Path, patch: dict) -> str:
+    """absent (no such file) / unpatched / patched / mismatch for one patch against a skill folder."""
+    target = skill / patch["file"]
+    if not target.is_file():
+        return "absent"
+    text = target.read_text(encoding="utf-8")
+    olds = [text.count(old) for old, _ in patch["replace"]]
+    news = [text.count(new) for _, new in patch["replace"]]
+    if all(n == 1 for n in olds):
+        return "unpatched"
+    if not any(olds) and all(n == 1 for n in news):
+        return "patched"
+    return "mismatch"
+
+
+def apply_upstream_patches(skill: Path) -> list[dict]:
+    """Patch a staged skill copy and return the provenance records. A mismatch raises, so a changed upstream is
+    reported instead of installed with the defect or half a patch."""
+    records = []
+    for patch in UPSTREAM_PATCHES:
+        state = patch_state(skill, patch)
+        if state == "mismatch":
+            raise RuntimeError(f"Paper2Agent patch {patch['id']} does not match {patch['file']}; upstream changed. "
+                               "Review the patch before installing this commit")
+        if state == "unpatched":
+            target = skill / patch["file"]
+            text = target.read_text(encoding="utf-8")
+            for old, new in patch["replace"]:
+                text = text.replace(old, new)
+            target.write_text(text, encoding="utf-8", newline="")
+        records.append({"id": patch["id"], "file": patch["file"], "upstream_commit": patch["upstream_commit"],
+                        "result": {"unpatched": "applied", "patched": "already_patched", "absent": "file_absent"}[state]})
+    return records
+
+
+def skill_patched(skill: Path) -> bool:
+    """False when an installed copy still carries a known defect that setup-paper2agent would patch."""
+    return all(patch_state(skill, patch) != "unpatched" for patch in UPSTREAM_PATCHES)
+
+
 CONTRACT_PROMPT = """You are {name}, a contract specialist (파견직) hired into the lab from a published method.
 Source paper: {paper}
 Code: {repo}
@@ -315,7 +371,6 @@ def install_skill(source: str, cache: Path, commit: str | None = None,
     skill = repo / "skills" / "paper2agent"
     if not skill.is_dir() or not (skill / "SKILL.md").is_file():
         raise FileNotFoundError(f"Paper2Agent source skill is missing SKILL.md: {skill}")
-    marker = json.dumps({"source": origin or source, "commit": installed}) + "\n"  # where it really came from
     staged: list[tuple[Path, Path]] = []
     published: set[Path] = set()
     backups: set[Path] = set()
@@ -328,6 +383,8 @@ def install_skill(source: str, cache: Path, commit: str | None = None,
             shutil.copytree(skill, stage / "new")
             if not (stage / "new" / "SKILL.md").is_file():
                 raise FileNotFoundError(f"Staged Paper2Agent skill is missing SKILL.md: {stage / 'new'}")
+            patches = apply_upstream_patches(stage / "new")  # a mismatch aborts before either copy is replaced
+            marker = json.dumps({"source": origin or source, "commit": installed, "patches": patches}) + "\n"
             (stage / "new" / SOURCE_MARKER).write_text(marker, encoding="utf-8")
         for dst, stage in staged:
             if dst.exists() or dst.is_symlink():
