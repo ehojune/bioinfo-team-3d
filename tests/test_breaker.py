@@ -6,7 +6,8 @@ import pytest
 from labhq.adapters import get_adapter
 from labhq.adapters.base import RunState
 from labhq.models import AgentSpec, Engine, Task, TaskResult
-from labhq.runner.breaker import Breaker, trip_text
+from labhq.runner.breaker import Breaker, BreakerPolicy, trip_text
+from labhq.hooks import control as control_hook
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 from labhq.util import tool_input_fingerprint
@@ -30,6 +31,39 @@ def raw_call(route, value):
 
 
 ROUTES = ["claude_code", "antigravity", "codex_shell", "codex_mcp", "codex_edit", "codex_web"]
+
+
+def test_constraint_is_task_local_and_denies_unknown_tools_until_release(tmp_path):
+    constrained, other = tmp_path / "a.json", tmp_path / "b.json"
+    control_hook.update_state(constrained, lambda state: control_hook.apply_control(state, "constrain"), create="a")
+    control_hook.update_state(other, lambda state: None, create="b")
+    assert control_hook.pre_tool_use(constrained, tool_name="Read") is None
+    for name in ("Bash", "Write", "mcp__server__tool", ""):
+        decision = control_hook.pre_tool_use(constrained, tool_name=name)
+        assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert control_hook.pre_tool_use(other, tool_name="Bash") is None
+    control_hook.update_state(constrained, lambda state: control_hook.apply_control(state, "release_constraint"))
+    assert control_hook.pre_tool_use(constrained, tool_name="Bash") is None
+
+
+def test_policy_advances_on_observations_and_requires_release():
+    policy = BreakerPolicy()
+    assert policy.observe(signalled=True) == "warn"
+    assert policy.observe(signalled=True) == "constrain"
+    assert policy.observe(signalled=True) == "stop"
+    assert not policy.hard_stop
+    assert policy.observe(signalled=False) is None  # quiet cannot silently lift a restriction
+    assert policy.release() == "normal"
+    assert policy.release() is None
+
+
+def test_policy_stop_is_opt_in_and_quiet_warning_recovers():
+    policy = BreakerPolicy(hard_stop=True)
+    assert policy.observe(signalled=True) == "warn"
+    assert policy.observe(signalled=False) == "normal"
+    assert [policy.observe(signalled=True) for _ in range(4)] == ["warn", "constrain", "stop", None]
+    assert policy.observe(signalled=False) is None
+    assert policy.release() == "normal"
 
 
 async def replay_calls(route, values):

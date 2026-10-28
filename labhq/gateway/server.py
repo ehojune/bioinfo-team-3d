@@ -2729,6 +2729,16 @@ class Hub:
                     return await self._control_task(tid, action, text)
             return await self._control_task(tid, action, text)
 
+    async def release_breaker(self, tid: str) -> dict:
+        """The PI lifts a runaway-breaker restriction (#59). Sent to the runner holding the task; an unreachable runner
+        keeps the restriction, so ``sent`` says whether it was delivered."""
+        entry = self.store.get("task", tid)
+        if not entry:
+            raise KeyError(tid)
+        if entry.get("completed") and not entry.get("abandoned"):
+            raise ValueError("이 작업은 이미 끝났어요")
+        return {"task_id": tid, "action": "release_breaker", "sent": await self._push(tid, {"action": "release_constraint"})}
+
     async def _control_task(self, tid: str, action: str, text: str | None = None) -> dict:
         """Steer, pause, resume or halt through task ``tid`` (#59 ①). The step it belongs to owns the request: steers wait
         in the step's queue until a turn delivers them, a pause holds the step's next dispatch, and the step's turn that
@@ -5948,6 +5958,15 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.post("/api/tasks/{tid}/halt", dependencies=[Depends(auth)])
     async def halt(tid: str) -> dict:
         return await _control(tid, "halt")
+
+    @app.post("/api/tasks/{tid}/breaker/release", dependencies=[Depends(auth)])
+    async def release_breaker(tid: str) -> dict:
+        try:
+            return {"ok": True, **await hub.release_breaker(tid)}
+        except KeyError:
+            raise HTTPException(404)
+        except ValueError as error:
+            raise HTTPException(409, str(error))
 
     @app.post("/api/requests/{rid}/steps/{step_id}/resume-quota", dependencies=[Depends(auth)])
     async def resume_quota(rid: str, step_id: str) -> dict:

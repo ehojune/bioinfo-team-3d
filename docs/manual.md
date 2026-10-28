@@ -953,6 +953,8 @@ flowchart LR
 
 ### 폭주 감지 (그림자)
 
+경고 뒤에도 신호가 이어지면 차단기가 한 단계씩 올라갑니다(warn → constrain → stop). 올리는 것은 새 관측이 있을 때뿐이고, 한 단계에서 다음까지 `runner.breaker_beat_s`(기본 10초) 이상 걸립니다. 경고만 나고 조용해지면 저절로 풀리지만 constrain 이후는 PI가 풀 때까지 유지됩니다(`POST /api/tasks/{id}/breaker/release`). constrain은 hook이 도는 Claude 직원에게만 읽기 도구(Read·Glob·Grep)만 남기고, hook이 없는 엔진은 `enforcement: unsupported`로 표시할 뿐 제한한 것으로 세지 않습니다. stop은 `runner.breaker_hard_stop: true`일 때만 기존 halt 경로로 세션을 보존한 채 멈추고, 꺼져 있으면(기본) 표시만 합니다. 아직 없는 것: constrain 때 CSO 승인, compaction 구간 예외(보류), 작업판의 해제 버튼.
+
 같은 도구·입력 8회 또는 실패한 도구 호출 5회가 연속되면 신호별로 한 번 경고합니다. 직원은 계속 실행됩니다. Claude·Codex·Antigravity는 preview 전에 도구 이름과 원본 입력의 SHA-256 fingerprint를 계산합니다. JSON 키 순서는 정렬하고 문자열 공백은 보존합니다. 이벤트에는 기존 preview와 hash만 보냅니다. 입력 미보고나 fingerprint 없는 잘린 preview는 반복 횟수에서 제외하고 연속 횟수를 끊습니다. 한 호출의 오류 여러 줄은 실패 한 번으로 셉니다.
 
 ### 승인 게이트와 쓰기 범위
