@@ -110,3 +110,8 @@ def test_absent_script_is_recorded_not_failed_and_unpatched_copy_is_detected(tmp
     (old / "paper2skill" / "scripts").mkdir(parents=True)
     (old / SCRIPT).write_text(BUGGY, encoding="utf-8")
     assert not p2a.skill_patched(old)  # doctor treats an earlier, unpatched install as not ready
+    half = tmp_path / "half"
+    (half / "paper2skill" / "scripts").mkdir(parents=True)
+    (half / SCRIPT).write_text(BUGGY.replace("str(path.relative_to(root))", "path.relative_to(root).as_posix()"),
+                               encoding="utf-8")
+    assert not p2a.skill_patched(half)  # a half-patched install is not ready either; --fix reinstalls or reports it
