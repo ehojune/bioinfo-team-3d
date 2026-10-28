@@ -8,3 +8,7 @@ rows:
   at: 2026-10-29 06:44
   text: 새 회귀 test를 Windows 경계 test 목록에 등록해 CI 선택 검사를 맞춘다.
   summary: 새 회귀 테스트를 Windows 검사 목록에 등록했습니다.
+- sha: 2ef0c6b
+  at: 2026-10-29 06:59
+  text: 패치된 표현식을 한 namespace에서 평가해 Python 3.10에서도 comprehension이 변수를 찾게 한다.
+  summary: 새 회귀 테스트가 Python 3.10에서도 통과하도록 고쳤습니다.
