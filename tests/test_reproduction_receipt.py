@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import time
+import warnings
 import unicodedata
 
 import pytest
@@ -79,9 +80,12 @@ def test_real_bash_syntax_without_running_the_script(tmp_path, source, status):
     assert receipt["files"][0]["execution"]["status"] == "not_rerun"
 
 
+REAL_R_TIMEOUT_S = 60  # per Rscript process, for the two real-R cases only (#898)
+
+
 @pytest.fixture
 def r_parser_trace(monkeypatch, record_property):
-    """Measure each subprocess without changing the receipt's ten-second deadline."""
+    """Measure each subprocess; the stages are printed and recorded whether the test passes or fails."""
     run = subprocess.run
     stages = []
 
@@ -105,12 +109,19 @@ def r_parser_trace(monkeypatch, record_property):
     yield stages
     record_property("r_parser_stages", json.dumps(stages))
     print("R parser stages: " + json.dumps(stages))
+    # The CI log shows no captured output of a passing test (and none from a parallel worker), but it does print the
+    # warnings summary: this makes the version/syntax times visible on a pass too, so R's start time can be collected (#898).
+    warnings.warn("R parser stages: " + json.dumps(stages), UserWarning, stacklevel=1)
 
 
 @pytest.mark.skipif(shutil.which("Rscript") is None, reason="Rscript unavailable; command and missing-tool paths are tested")
 @pytest.mark.parametrize("source,status", [("stop('not evaluated')\n", "pass"), ("if (\n", "fail")])
 def test_real_r_parse_without_running_the_script(tmp_path, source, status, r_parser_trace):
-    receipt = rr.build_receipt({"run.R": source}, tools={"r": shutil.which("Rscript")}, temp_root=tmp_path)
+    # #898: this checks that real R parses without running the script, not how fast Rscript starts. On the Windows runner
+    # one start took 7.7 s and the next (syntax) passed the 10 s default (run 40022968041). Only these two real-R cases
+    # get 60 s; the product default stays 10 s and the mocked timeout tests below still assert it.
+    receipt = rr.build_receipt({"run.R": source}, tools={"r": shutil.which("Rscript")}, temp_root=tmp_path,
+                               timeout=REAL_R_TIMEOUT_S)
     assert receipt["files"][0]["syntax"]["status"] == status
     assert receipt["files"][0]["execution"]["status"] == "not_rerun"
 
