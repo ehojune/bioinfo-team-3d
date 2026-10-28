@@ -129,8 +129,8 @@ def apply_upstream_patches(skill: Path) -> list[dict]:
 
 
 def skill_patched(skill: Path) -> bool:
-    """False when an installed copy still carries a known defect that setup-paper2agent would patch."""
-    return all(patch_state(skill, patch) != "unpatched" for patch in UPSTREAM_PATCHES)
+    """False when an installed copy is unpatched or only half patched; reinstalling patches it or reports the mismatch."""
+    return all(patch_state(skill, patch) in ("patched", "absent") for patch in UPSTREAM_PATCHES)
 
 
 CONTRACT_PROMPT = """You are {name}, a contract specialist (파견직) hired into the lab from a published method.
