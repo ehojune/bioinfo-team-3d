@@ -23,6 +23,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 06:59 | [`2ef0c6b`](https://github.com/ehojune/bioinfo-team-3d/pull/997/commits/2ef0c6b) | **새 회귀 테스트가 Python 3.10에서도 통과하도록 고쳤습니다.**<br>패치된 표현식을 한 namespace에서 평가해 Python 3.10에서도 comprehension이 변수를 찾게 한다. |
 | 06:44 | [`38af359`](https://github.com/ehojune/bioinfo-team-3d/pull/997/commits/38af359) | **새 회귀 테스트를 Windows 검사 목록에 등록했습니다.**<br>새 회귀 test를 Windows 경계 test 목록에 등록해 CI 선택 검사를 맞춘다. |
 | 06:33 | [`d2d5d6f`](https://github.com/ehojune/bioinfo-team-3d/pull/997/commits/d2d5d6f) | **논문 스킬 설치 때 Windows 경로 버그를 자동으로 고치고 그 기록을 남깁니다.**<br>setup-paper2agent가 reading_package.py의 Windows 경로 결함(str(relative_to) 네 곳)을 설치본에 패치하고 고정 upstream commit·적용 결과를 provenance에 남긴다. |
+| 05:58 | [`d3488e3`](https://github.com/ehojune/bioinfo-team-3d/pull/995/commits/d3488e3) | **Windows에서 흔들리던 차단기 테스트와 가짜 실행기 설정을 고쳤습니다.**<br>차단기 beat 테스트에 가짜 시계를 주입하고(Windows 시계 해상도), recruit 정적 테스트의 가짜 runner에 breakers를 추가한다. |
+| 05:42 | [`9a75fed`](https://github.com/ehojune/bioinfo-team-3d/pull/995/commits/9a75fed) | **새 차단기 테스트를 자동 검사 목록에 올리고, 해제 직후 잘못 멈추는 경우와 상태가 남는 경우를 고쳤습니다.**<br>차단기 테스트를 Windows inventory에 등록하고, 해제 때 ladder를 먼저 초기화하며 비정상 종료에서도 breaker 상태를 지운다 (#995 리뷰 P2). |
+| 05:27 | [`96d79d3`](https://github.com/ehojune/bioinfo-team-3d/pull/995/commits/96d79d3) | **같은 일을 반복하는 직원을 단계적으로 제한하고, 지원하지 않는 엔진은 제한하지 못했다고 정직하게 표시하며, PI가 해제할 수 있게 했습니다.**<br>폭주 차단기 단계 집행 — beat 승격, hook 엔진만 constrain, 미지원 엔진 unsupported 표시, hardStop일 때만 halt, PI 해제 API (#59). |
+| 05:21 | [`9bbbde3`](https://github.com/ehojune/bioinfo-team-3d/pull/995/commits/9bbbde3) | **폭주 차단기가 경고에서 제한, 정지로 올라가는 규칙의 초안을 보존했습니다.**<br>폭주 차단기 단계 정책(BreakerPolicy)과 hook의 constrain 상태 초안을 보존한다 (#59, Codex 인계분). |
 
 ## 2026-10-27
 
