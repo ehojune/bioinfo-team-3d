@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import math
+from collections.abc import Awaitable, Callable
 
 from ..adapters.base import RunContext
 from ..models import TaskResult
@@ -53,7 +55,10 @@ async def _record_plan_size(ctx: RunContext, result: TaskResult) -> None:
     })
 
 
-async def run_with_json_retries(adapter, ctx: RunContext) -> TaskResult:
+async def run_with_json_retries(
+    adapter, ctx: RunContext,
+    admit_retry: Callable[[TaskResult, float | None], Awaitable[float | None]] | None = None,
+) -> TaskResult:
     """Each retry resumes the same workspace/session and has its own accounting baseline."""
     emit, record = ctx.emit, ctx.record_run
     baseline: dict = {}
@@ -111,6 +116,22 @@ async def run_with_json_retries(adapter, ctx: RunContext) -> TaskResult:
                     "error": "StructuredOutput 형식 오류: " + parse_error,
                 })
                 break
+            if admit_retry is not None:
+                # The caller must settle the finished attempt and atomically reserve the next one.
+                # None denies admission; never start another paid call on a failed admission.
+                try:
+                    admitted = await admit_retry(result, remaining)
+                except Exception:
+                    admitted = None
+                if (isinstance(admitted, bool) or not isinstance(admitted, (int, float))
+                        or not math.isfinite(admitted) or admitted <= 0):
+                    result = result.model_copy(update={
+                        "ok": False, "structured": None, "text": "", "blocking_decision": None,
+                        "error_kind": FORMAT_ERROR,
+                        "error": "StructuredOutput 형식 오류: 재시도 예산을 확보하지 못했습니다. " + parse_error,
+                    })
+                    break
+                remaining = min(remaining, admitted) if remaining is not None else admitted
             await emit("agent.log", {"level": "info", "text": (
                 f"StructuredOutput 형식 오류 자동 재시도 {attempt + 1}/{ctx.settings.runner.structured_output_retries}")})
             compact = truncation_suspected and ctx.task.meta.get("kind") in {"plan", "replan"}
