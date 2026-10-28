@@ -12,7 +12,7 @@ rows:
   at: 2026-10-29 05:42
   text: 차단기 테스트를 Windows inventory에 등록하고, 해제 때 ladder를 먼저 초기화하며 비정상 종료에서도 breaker 상태를 지운다 (#995 리뷰 P2).
   summary: 새 차단기 테스트를 자동 검사 목록에 올리고, 해제 직후 잘못 멈추는 경우와 상태가 남는 경우를 고쳤습니다.
-- sha: d3488e39
+- sha: d3488e3
   at: 2026-10-29 05:58
   text: 차단기 beat 테스트에 가짜 시계를 주입하고(Windows 시계 해상도), recruit 정적 테스트의 가짜 runner에 breakers를 추가한다.
   summary: Windows에서 흔들리던 차단기 테스트와 가짜 실행기 설정을 고쳤습니다.
