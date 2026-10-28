@@ -1,0 +1,9 @@
+rows:
+- sha: 9bbbde3
+  at: 2026-10-29 05:21
+  text: 폭주 차단기 단계 정책(BreakerPolicy)과 hook의 constrain 상태 초안을 보존한다 (#59, Codex 인계분).
+  summary: 폭주 차단기가 경고에서 제한, 정지로 올라가는 규칙의 초안을 보존했습니다.
+- sha: 96d79d3
+  at: 2026-10-29 05:27
+  text: 폭주 차단기 단계 집행 — beat 승격, hook 엔진만 constrain, 미지원 엔진 unsupported 표시, hardStop일 때만 halt, PI 해제 API (#59).
+  summary: 같은 일을 반복하는 직원을 단계적으로 제한하고, 지원하지 않는 엔진은 제한하지 못했다고 정직하게 표시하며, PI가 해제할 수 있게 했습니다.
