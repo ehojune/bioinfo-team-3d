@@ -3,6 +3,7 @@
   "profile": "windows-boundary-v6",
   "default": "boundary",
   "known_tests": [
+    "tests/test_59_halt_resume_e2e.py",
     "tests/test_active_request_cancel.py",
     "tests/test_adapters_fake_cli.py",
     "tests/test_agent_capabilities.py",
