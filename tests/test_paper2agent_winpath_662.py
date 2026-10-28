@@ -66,12 +66,12 @@ def test_patched_expressions_match_on_windows_paths_where_the_original_did_not(t
     case = _case(tmp_path, monkeypatch, BUGGY)
     _install(case)
     text = (case.dst["codex"] / SCRIPT).read_text(encoding="utf-8")
+    env = {"evidence": work / "e" / "x.md", "work": work, "p": child, "stage": stage, "path": child, "root": stage,
+           "items": [child], "outputs": [child], "output": stage}
     for line in text.splitlines():
-        env = {"evidence": work / "e" / "x.md", "work": work, "p": child, "stage": stage, "path": child, "root": stage,
-               "items": [child], "outputs": [child], "output": stage}
-        value = eval(line.split("=", 1)[1].strip(), {}, env)
-        flat = value.values() if isinstance(value, dict) else value
-        assert not any("\\" in str(k) for k in (value if isinstance(value, (set, dict)) else [value])) , line
+        value = eval(line.split("=", 1)[1].strip(), dict(env))  # one namespace: comprehensions see it on 3.10 too
+        keys = list(value) if isinstance(value, (dict, set)) else [value]
+        assert keys and all("\\" not in str(key) for key in keys), line
 
 
 def test_reinstall_of_a_patched_copy_changes_nothing(tmp_path, monkeypatch):
