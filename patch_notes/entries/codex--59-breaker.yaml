@@ -8,3 +8,7 @@ rows:
   at: 2026-10-29 05:27
   text: 폭주 차단기 단계 집행 — beat 승격, hook 엔진만 constrain, 미지원 엔진 unsupported 표시, hardStop일 때만 halt, PI 해제 API (#59).
   summary: 같은 일을 반복하는 직원을 단계적으로 제한하고, 지원하지 않는 엔진은 제한하지 못했다고 정직하게 표시하며, PI가 해제할 수 있게 했습니다.
+- sha: 9a75fed
+  at: 2026-10-29 05:42
+  text: 차단기 테스트를 Windows inventory에 등록하고, 해제 때 ladder를 먼저 초기화하며 비정상 종료에서도 breaker 상태를 지운다 (#995 리뷰 P2).
+  summary: 새 차단기 테스트를 자동 검사 목록에 올리고, 해제 직후 잘못 멈추는 경우와 상태가 남는 경우를 고쳤습니다.
