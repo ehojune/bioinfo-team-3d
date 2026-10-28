@@ -170,6 +170,7 @@
     "tests/test_p2_followups_1013.py",
     "tests/test_paper2agent_install.py",
     "tests/test_paper2agent_required.py",
+    "tests/test_paper2agent_winpath_662.py",
     "tests/test_paper_skill_670.py",
     "tests/test_paper_skill_attach.py",
     "tests/test_paper_skill_lazy.py",
