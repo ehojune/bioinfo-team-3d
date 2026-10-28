@@ -874,6 +874,8 @@ flowchart LR
 
 `labhq setup-paper2agent --commit <40-hex>`(또는 `recruit.skill_commit`)는 그 commit만 설치합니다. checkout이 다른 commit이면 기존 설치를 건드리지 않고 멈춥니다. 고정하지 않으면 최신 HEAD를 설치하고 그 commit을 출력합니다. `recruit.skill_source`를 바꾸면 캐시 checkout의 origin과 비교해, 다르거나 origin을 읽을 수 없으면 pull하지 않고 옆에 새로 clone한 뒤 바꿔 끼웁니다(clone 실패 때 옛 checkout 유지). 설치한 commit은 skill 폴더의 `.labhq-source.json`에 남고, 채용 때 계약서 `verification.paper2agent_commit`으로 옮겨집니다.
 
+설치할 때 알려진 upstream 결함도 설치본에 패치합니다. `paper2skill/scripts/reading_package.py`의 `str(path.relative_to(root))` 네 곳이 Windows에서 역슬래시 경로를 만들어 bundle의 `files`·`evidence` 키가 어긋나므로 `.as_posix()`로 바꿉니다. 이미 고쳐진 사본은 다시 건드리지 않고, 패치 대상 문구가 맞지 않으면(upstream 변경) 설치를 멈추고 기존 설치는 그대로 둡니다. 적용 결과(`applied`·`already_patched`·`file_absent`)는 `.labhq-source.json`의 `patches`에 고정한 upstream commit과 함께 남고, `labhq doctor`는 패치되지 않은 옛 설치본을 준비 안 됨으로 보고합니다(`--fix`가 다시 설치).
+
 ### 세 가지 유형
 
 | 유형 | 입력 | Paper2Agent 경로 | 할 수 있는 일 |

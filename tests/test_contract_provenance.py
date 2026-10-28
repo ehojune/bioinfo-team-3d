@@ -358,7 +358,7 @@ def test_a_pinned_install_fetches_and_checks_out_that_commit(install):
         ["git", "-C", repo, "fetch", "--depth", "1", "origin", COMMIT],
         ["git", "-C", repo, "checkout", "--detach", "FETCH_HEAD"]]
     for dst in install.destinations.values():
-        assert _marker(dst) == {"source": SOURCE, "commit": COMMIT}
+        assert {k: v for k, v in _marker(dst).items() if k != "patches"} == {"source": SOURCE, "commit": COMMIT}
         assert (dst / "SKILL.md").read_text(encoding="utf-8") == "new skill\n"
     assert paper2agent.installed_commit("codex") == COMMIT
 
@@ -561,7 +561,7 @@ def test_a_changed_skill_source_is_cloned_fresh_not_pulled_from_the_old_origin(i
     assert not list(install.cache.glob(".Paper2Agent-*")), "the swap folder is cleaned up"
     for dst in install.destinations.values():
         assert (dst / "SKILL.md").read_text(encoding="utf-8") == "fresh skill\n"
-        assert _marker(dst) == {"source": SOURCE, "commit": COMMIT}
+        assert {k: v for k, v in _marker(dst).items() if k != "patches"} == {"source": SOURCE, "commit": COMMIT}
 
 
 def test_a_failed_clone_of_a_changed_source_keeps_the_old_checkout_and_installs(install):
