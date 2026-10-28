@@ -12,3 +12,7 @@ rows:
   at: 2026-10-29 06:59
   text: 패치된 표현식을 한 namespace에서 평가해 Python 3.10에서도 comprehension이 변수를 찾게 한다.
   summary: 새 회귀 테스트가 Python 3.10에서도 통과하도록 고쳤습니다.
+- sha: 9ac6743
+  at: 2026-10-29 07:16
+  text: 일부만 패치된 Paper2Agent 설치본도 doctor가 준비 안 됨으로 보고해 --fix가 다시 설치하거나 불일치를 알리게 한다.
+  summary: 일부만 고쳐진 논문 스킬 설치본도 점검에서 걸러냅니다.
