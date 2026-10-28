@@ -1,0 +1,5 @@
+rows:
+- sha: d2d5d6f
+  at: 2026-10-29 06:33
+  text: setup-paper2agent가 reading_package.py의 Windows 경로 결함(str(relative_to) 네 곳)을 설치본에 패치하고 고정 upstream commit·적용 결과를 provenance에 남긴다.
+  summary: 논문 스킬 설치 때 Windows 경로 버그를 자동으로 고치고 그 기록을 남깁니다.
