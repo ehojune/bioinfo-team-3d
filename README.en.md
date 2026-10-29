@@ -26,7 +26,7 @@
 
 <p align="center"><a href="README.md">한국어</a> · <b>English</b></p>
 
-The [manual](docs/manual.en.md) is available in English; PI Q&A, other detailed docs and the web UI are in Korean.
+The [manual](docs/manual.en.md), [PI Q&A](docs/pi-qa.en.md), [research protocol](docs/research_protocol.en.md) and [vocabulary tables](docs/vocabulary.en.md) are available in English; other detailed docs and the web UI are in Korean.
 
 labhq is a bioinformatics **multi-agent orchestration platform** that runs Claude Code and Codex like **lab staff**.
 Write a request in the web office and the CSO plans it, staff split the execution, and science review leads to a report.
@@ -145,7 +145,7 @@ Records get meaning in three layers. The lower the layer, the firmer; the higher
 | Semantics | Agreements on what to judge with the tags | CP1 approved-plan hash, rule packs per topic, input-fit verdicts, report evidence anchors |
 | Ontology | Relations between tags | A few parent-child relations and an object view of provenance, owner and approval state. Computed as a shadow for now |
 
-The shadow only records. `semantics: ab` (the `labhq init` preset) gives reuse candidates to half of research requests as a reference, so the effect can be compared; the effect has not yet been evaluated. [Semantic model](docs/manual.en.md#semantic-model-and-ontology) · [Vocabulary, topics, checklists](docs/vocabulary.md) (Korean)
+The shadow only records. `semantics: ab` (the `labhq init` preset) gives reuse candidates to half of research requests as a reference, so the effect can be compared; the effect has not yet been evaluated. [Semantic model](docs/manual.en.md#semantic-model-and-ontology) · [Vocabulary, topics, checklists](docs/vocabulary.en.md)
 
 ## Getting started on the web
 
@@ -234,10 +234,10 @@ Facilities support requirements and readiness evidence are distinguished in the 
 | Document | Who it is for |
 |---|---|
 | [Manual](docs/manual.en.md) | Readers who want depth: command line, config, safety measures, the research lane, known limits |
-| [PI Q&A](docs/pi-qa.md) | What the PI asked, the answers, and the decisions made |
-| [Research protocol](docs/research_protocol.md) | The research lane's contract and checkpoints |
+| [PI Q&A](docs/pi-qa.en.md) | What the PI asked, the answers, and the decisions made |
+| [Research protocol](docs/research_protocol.en.md) | The research lane's contract and checkpoints |
 | [References](docs/references.en.md) | Literature and projects used for design, implementation, and tool connections |
-| [Vocabulary, topics, checklists](docs/vocabulary.md) (Korean) | Readers who want tables of what each topic is, its checklist, and the key vocabulary terms |
+| [Vocabulary, topics, checklists](docs/vocabulary.en.md) | Readers who want tables of what each topic is, its checklist, and the key vocabulary terms |
 | [Patch notes](patch_notes/README.md) | What changed |
 | [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | Developers changing labhq: rules, structure, and current queue (Korean) |
 | [Reference records](docs/reference/README.md) | Evidence and historical decisions, for lookup only |
