@@ -5,7 +5,7 @@
 1. `labhq/tools/wiki_mcp.py`: 호출마다 계약 v1 한 줄(검색어·snippet은 해시·길이만, `source_level: tertiary`)을 append. 실패는 코드 하나(`wiki_disabled`·`root_problem`·`index_failed`·`not_found`·`range_invalid`)로 기록. `status`는 root 경로를 숨긴다.
 2. `labhq/wiki/index.py`: `read()` 추가 — 색인에 있는 노트만 열고(절대 경로·`..`은 `not_found`), 한 번에 200줄, 파일 전체 sha256.
 3. `Runner._mcp_servers`: `wiki`가 `builtin_mcp`에 있고 `wiki.enabled`·`external_model_allowed`가 모두 켜졌을 때만 `labhq_wiki` 부착. runner roster에 `wiki_tools`를 실어 gateway `_agent_mcp`가 같은 조건으로 목록을 만든다.
-4. `lit_scout`·`biologist`·`sci_reviewer`에 `wiki` 부착. manual 한·영, `config/ci` Windows inventory.
+4. `lit_scout`·`biologist`에 `wiki` 부착(`sci_reviewer`는 read-only라 runner가 builtin MCP를 떼므로 제외). manual 한·영, `config/ci` Windows inventory.
 
 ## 테스트 결과
 - Windows `tests/test_wiki_mcp.py`·`tests/test_wiki_index.py` 통과, 관련 test(`test_agent_prompts`·`test_isolation`·`test_e2e_mock`)와 `windows_boundary` 계열 145 passed.

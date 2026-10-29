@@ -118,7 +118,7 @@ def test_the_tool_attaches_only_with_the_opt_in(tmp_path, allowed, attached):
 
 
 def test_the_three_staff_carry_the_tool():
-    for name in ("lit_scout", "biologist", "sci_reviewer"):
+    for name in ("lit_scout", "biologist"):  # sci_reviewer is read-only: the runner strips its builtin MCP
         text = (Path(__file__).parent.parent / "agents" / "core" / f"{name}.yaml").read_text(encoding="utf-8")
         assert re.search(r"^builtin_mcp:.*\bwiki\b", text, re.M), name
 
@@ -154,3 +154,12 @@ def test_status_is_not_logged(wiki_mcp):
     module, log = wiki_mcp
     call(module.status)
     assert not log.exists()
+
+
+def test_a_long_read_cites_only_the_lines_it_returned(wiki_mcp, tmp_path):
+    module, log = wiki_mcp
+    note = Path(module.S.wiki.root) / "long.md"
+    note.write_text(chr(10).join("x" * 1000 for _ in range(100)), encoding="utf-8")
+    answer = json.loads(call(module.read, "long.md", 1, 100))["hit"]
+    assert answer["line_end"] < 100 and answer["line_end"] == answer["snippet"].count(chr(10)) + 1
+    assert lines(log)[-1]["hits"][0]["line_end"] == answer["line_end"]

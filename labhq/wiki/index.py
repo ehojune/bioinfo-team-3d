@@ -328,7 +328,14 @@ def read(settings: Any, rel_path: str, line_start: int = 1, line_end: int | None
     if first < 1 or last < first or first > len(lines) or last - first + 1 > READ_MAX_LINES:
         raise ValueError("range_invalid")
     last = min(last, len(lines))
-    text = chr(10).join(lines[first - 1:last])[:READ_MAX_CHARS]
+    taken, size = [], 0
+    for line in lines[first - 1:last]:  # the range cites only lines the model really received
+        if taken and size + len(line) + 1 > READ_MAX_CHARS:
+            break
+        taken.append(line[:READ_MAX_CHARS])
+        size += len(line) + 1
+    last = first + len(taken) - 1
+    text = chr(10).join(taken)
     return dict(rel_path=rel, title=title, heading="", line_start=first, line_end=last,
                 sha256=hashlib.sha256(raw).hexdigest(), mtime=_iso(mtime_ns), snippet=text,
                 origin={origins[0][0]: origins[0][1]} if origins else None,

@@ -7,7 +7,7 @@ model: gpt-6-astra
 model_tier: reasoning
 sandbox: read-only  # runner grants writes only to this task's outputs/ and .tmp/
 tools: [WebSearch]  # Codex: live web search
-builtin_mcp: [wiki]
+builtin_mcp: []
 mcp:  # citation checks only; queries leave the PC, never send restricted data (#274)
   - name: pubmed
     type: http

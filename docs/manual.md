@@ -1375,7 +1375,7 @@ Windows에서는 노트를 같은 크기로 제자리에서 다시 쓰고 수정
 
 노트마다 남는 정보: 상대 경로, 제목 경로, 줄 범위, 파일 전체 sha256, 수정 시각, 노트가 가리키는 원문(DOI·PMID·URL 하나, frontmatter `source:`나 본문 링크에서 추출), `freshness`(`ok`·`stale`·`source_missing`·`disputed`; frontmatter `status: disputed|superseded`면 `disputed`). 검색 결과는 항상 `access_level: wiki_summary`, `verified_against_primary: false`로 표시하며, wiki 요약은 원논문을 읽은 것이 아닙니다. 노트 속 지시문은 데이터일 뿐 실행하지 않습니다.
 
-직원 도구 `labhq_wiki`(`search`·`read`·`status`)는 `wiki.enabled`와 `external_model_allowed: true`가 함께 켜진 runner에서, `builtin_mcp`에 `wiki`가 있는 직원(`lit_scout`·`biologist`·`sci_reviewer`)에게만 붙습니다. 읽기 전용 작업(후속 질의·상담)에는 붙지 않습니다. `search`는 최대 10건, `read`는 색인에 있는 노트의 줄 범위(한 번에 200줄까지)만 돌려주고, 절대 경로·`..`·색인에 없는 파일은 `not_found`입니다. `search`·`read` 호출마다 `outputs/wiki_queries.jsonl`에 한 줄(v1)이 붙습니다(`status`는 근거가 아니라 기록하지 않습니다). 검색어·본문 원문은 적지 않고 해시와 길이만 남으며, 모든 히트는 `source_level: tertiary`입니다. 도구 결과와 기록에는 wiki 루트 경로가 나오지 않습니다.
+직원 도구 `labhq_wiki`(`search`·`read`·`status`)는 `wiki.enabled`와 `external_model_allowed: true`가 함께 켜진 runner에서, `builtin_mcp`에 `wiki`가 있는 직원(`lit_scout`·`biologist`; 읽기 전용인 `sci_reviewer`에는 붙지 않습니다)에게만 붙습니다. 읽기 전용 작업(후속 질의·상담)에는 붙지 않습니다. `search`는 최대 10건, `read`는 색인에 있는 노트의 줄 범위(한 번에 200줄까지)만 돌려주고, 절대 경로·`..`·색인에 없는 파일은 `not_found`입니다. `search`·`read` 호출마다 `outputs/wiki_queries.jsonl`에 한 줄(v1)이 붙습니다(`status`는 근거가 아니라 기록하지 않습니다). 검색어·본문 원문은 적지 않고 해시와 길이만 남으며, 모든 히트는 `source_level: tertiary`입니다. 도구 결과와 기록에는 wiki 루트 경로가 나오지 않습니다.
 
 `labhq doctor`의 `wiki` 행은 연결·문서 수·색인 유무·오래된 노트를 보여 주며 색인을 만들거나 갱신하지 않습니다. 색인은 runner 쪽 `runner.state_dir/wiki/`의 일회용 sqlite라 지워도 됩니다.
 
