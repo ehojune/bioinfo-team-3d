@@ -284,13 +284,13 @@ def _trace_call(trace, phase, function, *args, role=None, wait_ms=None, **kwargs
 
 
 def _provider_summary(events):
-    """Where the launch stopped, for a failed verdict: the direct attempt, then the provider phases and deadline."""
+    """Launch stages for a verdict: the direct attempt, then the WMI provider phases (ms since its start) and total."""
     parts = []
     for event in events:
         provider = event.get("provider") or {}
         phases = ",".join(f"{p['phase']}@{p['elapsed_ms']:.0f}" for p in provider.get("phases", []))
-        parts.append(f"{event['status']}" + (f"[{event.get('phase')}/{event.get('reason')}: {phases}; total_ms={provider.get('elapsed_ms')}]"
-                                              if event["status"] == "wmi_failed" else ""))
+        detail = f"{event.get('phase')}/{event.get('reason')}: " if event["status"] == "wmi_failed" else ""
+        parts.append(event["status"] + (f"[{detail}{phases}; total_ms={provider.get('elapsed_ms')}]" if provider else ""))
     return " -> ".join(parts)
 
 
@@ -406,6 +406,7 @@ def test_allowed_breakaway_child_survives_parent_job_close(tmp_path, capsys):
         _trace_event(case, "body_positive")
         with capsys.disabled():
             print("WIN795 POSITIVE: successful launch, parent Job closed, child survived; owned cleanup follows")
+            print("WIN1029 launch stages: " + _provider_summary(case.events))
 
 
 def test_denied_direct_and_mock_denied_provider_record_no_pid_or_readiness(tmp_path, capsys):
@@ -438,6 +439,7 @@ def test_wmi_escapes_owned_outer_nonbreakaway_inner_silent_job(tmp_path, capsys)
         _trace_event(case, "body_positive")
         with capsys.disabled():
             print("WIN795 NESTED POSITIVE: WMI bootstrap/fake role survived both owned Job closes; cleanup follows")
+            print("WIN1029 launch stages: " + _provider_summary(case.events))
 
 
 @pytest.mark.parametrize("failure", ["unknown_job", "receipt_timeout"])

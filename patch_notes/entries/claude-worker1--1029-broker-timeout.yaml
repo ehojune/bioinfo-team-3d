@@ -1,0 +1,18 @@
+pr: 1035
+rows:
+  - sha: "fd441a9"
+    at: "2026-10-29 21:41"
+    summary: "Windows에서 첫 실행이 느린 PC도 백그라운드 실행 준비 시간을 10초 대신 15초까지 기다립니다."
+    text: "fix: WMI provider 제한을 요청 만료(20 s)에서 bootstrap 여유 5 s를 뺀 15 s로 두고 양성 시험이 단계 시간을 출력 (#1029)"
+  - sha: "0fefa9f"
+    at: "2026-10-29 21:43"
+    summary: "매뉴얼에 Windows 백그라운드 실행 준비 대기 시간이 15초라고 적었습니다."
+    text: "docs: manual 한·영에 WMI provider 대기 상한 15 s를 반영 (#1029)"
+  - sha: "c349f42"
+    at: "2026-10-29 21:54"
+    summary: "대기 시간을 바꿔도 다른 시험이 옛 값에 묶여 깨지지 않게 상수를 참조하도록 고쳤습니다."
+    text: "test: broker 시험이 provider 상한을 PROVIDER_TIMEOUT으로 참조 (#1029)"
+  - sha: "bc66106"
+    at: "2026-10-29 22:04"
+    summary: "항상 WMI를 거치는 시험에서도 준비 단계별 시간을 기록하게 했습니다."
+    text: "test: WMI를 항상 거치는 nested 양성 시험도 단계 시간을 출력 (#1029)"

@@ -130,10 +130,16 @@ def test_failed_open_never_terminates_wmi_returned_pid(world):
     world.native.k.TerminateProcess.assert_not_called()
 
 
+def test_provider_budget_leaves_the_bootstrap_time_to_start_inside_the_request_expiry():
+    # The bootstrap rejects a request older than TIMEOUT; a provider that may run as long as TIMEOUT would hand it a dead one.
+    assert broker.PROVIDER_TIMEOUT == broker.TIMEOUT - broker.BOOTSTRAP_MARGIN
+    assert 10 < broker.PROVIDER_TIMEOUT < broker.TIMEOUT
+
+
 def test_create_timeout_is_unknown_and_never_retried_or_treated_as_owned(world):
     import subprocess
 
-    failure = subprocess.TimeoutExpired("fake-powershell", 10)
+    failure = subprocess.TimeoutExpired("fake-powershell", broker.PROVIDER_TIMEOUT)
     world.create.side_effect = failure
     with pytest.raises(broker.BrokerFailure, match="provider_timeout") as caught:
         launch(world)
@@ -168,7 +174,7 @@ def test_wmi_return_code_is_not_a_success_pid(tmp_path, monkeypatch, code):
     assert payload["environment"] == ["FAKE=not-a-secret"]
     assert "not-a-secret" not in str(args)  # Values are data over stdin, never PowerShell source/argv/files.
     assert "a & $(bad);.py" in payload["command"]
-    assert kwargs["timeout"] == 10 and kwargs["creationflags"] == 0x08000000
+    assert kwargs["timeout"] == broker.PROVIDER_TIMEOUT and kwargs["creationflags"] == 0x08000000
     assert ".ShowWindow = 0" in broker.WMI_SCRIPT
 
 
