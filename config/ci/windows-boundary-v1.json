@@ -70,6 +70,7 @@
     "tests/test_clean_office.py",
     "tests/test_cli_adapter.py",
     "tests/test_cli_bundle_wait.py",
+    "tests/test_cli_exit_evidence.py",
     "tests/test_cli_launch.py",
     "tests/test_cli_open.py",
     "tests/test_coarse_plan_799.py",

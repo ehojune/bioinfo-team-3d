@@ -635,6 +635,7 @@ class RunState:
     # events enabled, keep the transport fragments until its tool_result says whether the call failed.
     structured_output_streams: dict[int, dict[str, Any]] = field(default_factory=dict)
     structured_output_raw: dict[str, str] = field(default_factory=dict)
+    mcp_status: list[dict[str, str]] = field(default_factory=list)  # {name, status} the CLI reported at start
 
 
 @dataclass
@@ -1044,6 +1045,7 @@ class AgentAdapter(ABC):
                                   error=f"runner could not record the CLI start: {type(exc).__name__}: {exc}",
                                   cleanup_evidence=self._cleanup_evidence(cleanup, proc))
         st = RunState()
+        started_at = time.monotonic()
         tool_activity = _ToolActivity(self.engine)
         stderr_tail: deque[str] = deque(maxlen=60)
         result_arrived = asyncio.Event()
@@ -1294,13 +1296,46 @@ class AgentAdapter(ABC):
         res.cleanup_evidence = self._cleanup_evidence(cleanup, proc)
         ctx.commands_ran = st.commands_ran
         if res.error and stderr and ("empty CLI stream" in res.error or "IneligibleTierError" in stderr):
-            res.error = f"{res.error}: {short(stderr, 500)}"
+            res.error = f"{res.error}: {short(self._clean_stderr(stderr_tail, 5), 500)}"
         if returncode not in (0, None) and not res.error:
-            res.error = f"exit {returncode}: " + " | ".join(list(stderr_tail)[-5:])
+            res.error = f"exit {returncode}: " + self._clean_stderr(stderr_tail, 5)
+        if not res.ok and not st.result_seen and not ended_after_result:
+            await self._record_exit_evidence(ctx, res, st, returncode, stderr_tail, time.monotonic() - started_at)
         # The CLI's own stderr counts only when the run failed; a failed command's output counts either way, because
         # an agent that gave up after "No module named x" can still exit 0 with its outputs missing (#35).
         res.environment = env_signatures.scan_run(self.engine, stderr_tail if not res.ok else (), st.failed_outputs)
         return res
+
+    def _clean_stderr_lines(self, stderr_tail: deque[str], count: int) -> list[str]:
+        """The last non-empty stderr lines minus labhq's own Job announcement, with secrets and zones masked."""
+        from ..integrations.github import sanitize
+        from ..runner.memory_limit import JOB_ACTIVE
+
+        lines = [line for line in stderr_tail if line.strip() and not line.strip().startswith(JOB_ACTIVE)][-count:]
+        return [sanitize(line, self.settings.policy, limit=300) for line in lines]
+
+    def _clean_stderr(self, stderr_tail: deque[str], count: int) -> str:
+        return " | ".join(self._clean_stderr_lines(stderr_tail, count))
+
+    async def _record_exit_evidence(self, ctx: RunContext, res: TaskResult, st: RunState, returncode: int | None,
+                                    stderr_tail: deque[str], elapsed_s: float) -> None:
+        """A CLI that ended without any result says why in the result, an event and `.labhq/exit_evidence.json` (#1045).
+
+        The exit code, the end of stderr without labhq's own Job announcement, the run time and the MCP servers'
+        start status; secrets and restricted paths are masked. A CLI that gave a result is not touched."""
+        masked = self._clean_stderr_lines(stderr_tail, 8)
+        evidence = {"exit_code": returncode, "elapsed_s": round(elapsed_s, 1), "stderr_tail": masked,
+                    "mcp": st.mcp_status or None}
+        summary = (f"CLI 종료 증거: exit {returncode}, {elapsed_s:.1f}s, stderr "
+                   + (" | ".join(masked[-3:]) if masked else "(출력 없음)")
+                   + (", MCP " + ", ".join(f"{m['name']}={m['status']}" for m in st.mcp_status)
+                      if st.mcp_status else ", MCP 시작 정보 없음"))
+        res.error = f"{res.error or 'CLI가 결과 없이 끝남'} [{short(summary, 600)}]"
+        await ctx.emit("agent.log", {"level": "warn", "text": short(summary, 800)})
+        try:
+            await ctx.awrite_meta("exit_evidence.json", json.dumps(evidence, ensure_ascii=False, indent=1))
+        except OwnedPathError:
+            pass  # the .labhq link case is already reported with stderr_tail.txt
 
     @staticmethod
     async def _kill(proc: asyncio.subprocess.Process) -> dict[str, Any]:

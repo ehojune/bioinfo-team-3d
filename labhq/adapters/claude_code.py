@@ -434,6 +434,8 @@ class ClaudeCodeAdapter(AgentAdapter):
             return
         if typ == "system" and ev.get("subtype") == "init":
             st.session_id = ev.get("session_id")
+            st.mcp_status = [{"name": str(m.get("name")), "status": str(m.get("status"))}
+                             for m in ev.get("mcp_servers", []) if isinstance(m, dict)][:20]
             record_model_id(st, ctx, ev.get("model"))
             await ctx.emit("agent.status", {"state": "working", "model": ev.get("model"),
                                             "mcp": [m.get("name") for m in ev.get("mcp_servers", []) if isinstance(m, dict)]})
