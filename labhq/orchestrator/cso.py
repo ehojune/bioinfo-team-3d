@@ -6998,8 +6998,7 @@ class Orchestrator:
                                                        max_branches=self.cfg.max_branches,
                                                        max_branch_steps=self.cfg.max_branch_steps,
                                                        active_packs=active_pack_hashes,
-                                                       expected_intake=intake, pack_definitions=packs,
-                                                       scheduler_steps=scheduler_clone_extra(req["plan"].get("steps")))
+                                                       expected_intake=intake, pack_definitions=packs)
                     req["plan"] = validated.model_dump(mode="json")
                     if req.get("checklist_contract"):
                         stored_problems = checklist_errors(req["plan"], checklist_catalog,
@@ -7597,8 +7596,7 @@ class Orchestrator:
                         req["plan"] = validate_research_plan(
                             req["plan"], max_steps=self.cfg.max_steps, max_branches=self.cfg.max_branches,
                             max_branch_steps=self.cfg.max_branch_steps, active_packs=active_pack_hashes,
-                            expected_intake=intake, pack_definitions=packs,
-                            scheduler_steps=scheduler_clone_extra(steps)).model_dump(mode="json")
+                            expected_intake=intake, pack_definitions=packs).model_dump(mode="json")
                         steps = req["plan"]["steps"]
                     else:
                         steps, _ = validate_steps(steps, known, self.cfg.max_steps, orchestration,

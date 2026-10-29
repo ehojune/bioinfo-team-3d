@@ -851,16 +851,37 @@ def _pack_value_errors(supplied_all: Any, plan: ResearchPlan | None, active_pack
     return errors
 
 
+def scheduler_clones_by_branch(steps: Any) -> dict[Any, int]:
+    """Runner environment clones the scheduler added, counted for the branch each one sits in (#674).
+
+    A logical environment step is split into one clone per consuming runner and every clone keeps its branch, so a
+    branch's allowance grows only by its own clones; they never count toward the step limits."""
+    found: dict[tuple[Any, str], int] = {}
+    for step in steps if isinstance(steps, list) else []:
+        get = step.get if isinstance(step, dict) else (lambda key, default=None: getattr(step, key, default))
+        binding = get("environment_binding")
+        logical = binding.get("logical_step_id") if isinstance(binding, dict) else getattr(binding, "logical_step_id", None)
+        if isinstance(logical, str):
+            key = (get("branch"), logical)
+            found[key] = found.get(key, 0) + 1
+    extra: dict[Any, int] = {}
+    for (branch, _logical), count in found.items():
+        extra[branch] = extra.get(branch, 0) + count - 1
+    return extra
+
+
 def _contract_errors(plan: ResearchPlan | None, value: Any, *, max_steps: int, max_branches: int,
                      max_branch_steps: int, active_packs: dict[str, str],
                      expected_intake: IntakeDecision | None,
-                     pack_definitions: dict[str, Any] | None, scheduler_steps: int = 0) -> list[str]:
+                     pack_definitions: dict[str, Any] | None) -> list[str]:
     """Every check after the schema. A draft that fails the schema still gets its pack checks."""
     raw = value if isinstance(value, dict) else {}
     errors: list[str] = []
     steps = plan.steps if plan is not None else raw.get("steps")
     raw_branches = plan.branches if plan is not None else raw.get("branches")
     branches = raw_branches if isinstance(raw_branches, list) else []
+    clones = scheduler_clones_by_branch(steps)  # runner environment clones: not the planner's steps (#674)
+    scheduler_steps = sum(clones.values())
     if branches:
         if len(branches) > max_branches:
             errors.append(f"research plan has {len(branches)} branches; maximum is {max_branches}; "
@@ -871,12 +892,12 @@ def _contract_errors(plan: ResearchPlan | None, value: Any, *, max_steps: int, m
             for branch_id in branch_ids:
                 count = sum((step.branch if isinstance(step, ResearchStep) else step.get("branch")) == branch_id
                             for step in steps if isinstance(step, (ResearchStep, dict)))
-                if count > max_branch_steps + scheduler_steps:
+                if count > max_branch_steps + clones.get(branch_id, 0):
                     errors.append(f"research branch {branch_id} has {count} steps; maximum is {max_branch_steps}; "
                                   "re-plan without truncation")
             synthesis = sum((step.branch if isinstance(step, ResearchStep) else step.get("branch")) == "synthesis"
                             for step in steps if isinstance(step, (ResearchStep, dict)))
-            if synthesis > 3 + scheduler_steps:
+            if synthesis > 3 + clones.get("synthesis", 0):
                 errors.append(f"research plan has {synthesis} synthesis steps; maximum is 3; "
                               "re-plan without truncation")
             total_limit = len(branches) * max_branch_steps + 3 + scheduler_steps
@@ -914,7 +935,7 @@ def schema_error_lines(error: ValidationError) -> list[str]:
 def research_plan_errors(value: Any, *, max_steps: int, max_branches: int = 5, max_branch_steps: int = 8,
                          active_packs: dict[str, str],
                          expected_intake: IntakeDecision | None = None,
-                         pack_definitions: dict[str, Any] | None = None, scheduler_steps: int = 0) -> list[str]:
+                         pack_definitions: dict[str, Any] | None = None) -> list[str]:
     """All problems of a PLAN at once, so one correction can fix them together (#222)."""
     try:
         plan: ResearchPlan | None = ResearchPlan.model_validate(value)
@@ -923,8 +944,7 @@ def research_plan_errors(value: Any, *, max_steps: int, max_branches: int = 5, m
         plan, errors = None, schema_error_lines(error)
     return errors + _contract_errors(plan, value, max_steps=max_steps, max_branches=max_branches,
                                      max_branch_steps=max_branch_steps, active_packs=active_packs,
-                                     expected_intake=expected_intake, pack_definitions=pack_definitions,
-                                     scheduler_steps=scheduler_steps)
+                                     expected_intake=expected_intake, pack_definitions=pack_definitions)
 
 
 def with_pack_refs(value: Any, refs: list[dict[str, str]]) -> Any:
@@ -937,14 +957,12 @@ def with_pack_refs(value: Any, refs: list[dict[str, str]]) -> Any:
 def validate_research_plan(value: Any, *, max_steps: int, max_branches: int = 5, max_branch_steps: int = 8,
                            active_packs: dict[str, str],
                            expected_intake: IntakeDecision | None = None,
-                           pack_definitions: dict[str, Any] | None = None, scheduler_steps: int = 0) -> ResearchPlan:
-    """``scheduler_steps``: steps the scheduler added (runner environment clones); they do not count toward the
-    step limits (#674)."""
+                           pack_definitions: dict[str, Any] | None = None) -> ResearchPlan:
+    """Runner environment clones the scheduler added do not count toward the step limits (#674)."""
     plan = ResearchPlan.model_validate(value)
     errors = _contract_errors(plan, value, max_steps=max_steps, max_branches=max_branches,
                               max_branch_steps=max_branch_steps, active_packs=active_packs,
-                              expected_intake=expected_intake, pack_definitions=pack_definitions,
-                              scheduler_steps=scheduler_steps)
+                              expected_intake=expected_intake, pack_definitions=pack_definitions)
     if errors:
         raise ValueError("; ".join(errors))
     return plan

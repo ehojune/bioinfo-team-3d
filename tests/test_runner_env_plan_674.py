@@ -292,22 +292,25 @@ def test_runner_environment_clones_do_not_count_toward_max_steps():
         validate_steps(restored, {"a", "b", "old"}, 3, excluded=set(), reject_excess=True)
 
 
-def test_research_step_limits_leave_room_for_scheduler_clones():
+def test_research_step_limits_leave_room_for_scheduler_clones_in_their_own_branch_only():
     from labhq.research.contract import research_plan_errors
 
-    raw = {"steps": [{} for _ in range(3)], "branches": []}
+    def clone(branch=None):
+        return {"environment_binding": {"logical_step_id": "env"}, **({"branch": branch} if branch else {})}
 
-    def limit_errors(**extra):
-        return [e for e in research_plan_errors(raw, max_steps=2, active_packs={}, **extra) if "maximum is" in e]
+    def limit_errors(raw, **kw):
+        return [e for e in research_plan_errors(raw, active_packs={}, max_steps=2, **kw) if "maximum is" in e]
 
-    assert limit_errors()  # three steps are over a limit of two
-    assert not limit_errors(scheduler_steps=1)
-    branched = {"steps": [{"branch": "a"} for _ in range(4)], "branches": [{"id": "a"}]}
-    errors = research_plan_errors(branched, max_steps=2, max_branches=5, max_branch_steps=3, active_packs={})
-    assert any("branch a has 4 steps" in e for e in errors)
-    errors = research_plan_errors(branched, max_steps=2, max_branches=5, max_branch_steps=3, active_packs={},
-                                  scheduler_steps=1)
-    assert not any("branch a has" in e for e in errors)
+    assert limit_errors({"steps": [{}, {}, {}], "branches": []})  # three plain steps are over a limit of two
+    # Two clones of one logical environment add one step beyond the planner's own two.
+    assert not limit_errors({"steps": [clone(), clone(), {}], "branches": []})
+    assert limit_errors({"steps": [clone(), clone(), {}, {}], "branches": []})
+    # Branched: the allowance grows only for the branch that holds the clones.
+    steps = [{"branch": "a"}, {"branch": "a"}, clone("a"), clone("a"), *[{"branch": "b"} for _ in range(4)]]
+    errors = limit_errors({"steps": steps, "branches": [{"id": "a"}, {"id": "b"}]}, max_branches=5, max_branch_steps=3)
+    assert any("branch b has 4 steps" in e for e in errors) and not any("branch a has" in e for e in errors)
+    steps = [{"branch": "a"}, {"branch": "a"}, clone("a"), clone("a"), *[{"branch": "b"} for _ in range(3)]]
+    assert not limit_errors({"steps": steps, "branches": [{"id": "a"}, {"id": "b"}]}, max_branches=5, max_branch_steps=3)
 
 
 def _bound_task(runner="wsl", runtime="wsl", **meta):
