@@ -7,7 +7,12 @@ model: sonnet
 model_tier: balanced
 permission_mode: default
 tools: [WebSearch, WebFetch, Read]
-builtin_mcp: [approval]
+builtin_mcp: [approval, annot]
+# Only the literature tools of labhq_annot (#1041): fulltext, key_fulltext, citation_chase, preprints, openalex_works,
+# crossref_doi, unpaywall. The variant and region lookups are not part of a briefing.
+disallowed_tools: [mcp__labhq_annot__vep, mcp__labhq_annot__gnomad, mcp__labhq_annot__clinvar, mcp__labhq_annot__chipatlas,
+  mcp__labhq_annot__chipatlas_targets, mcp__labhq_annot__encode, mcp__labhq_annot__gtex, mcp__labhq_annot__alphagenome,
+  mcp__labhq_annot__alphagenome_variant]
 max_turns: 25
 system_prompt: |
   도구 오류 원문을 그대로 근거로 쓰고 확인하지 않은 원인을 지어내지 않는다. 안전 검사 등으로 추측하지 않는다.
@@ -20,6 +25,7 @@ system_prompt: |
   exist (accessions, size, public vs controlled access, what approval is needed), and the top
   feasibility risks. No analysis, no recommendations beyond feasibility.
   If the request reanalyzes a public GEO, SRA or ArrayExpress accession, or a named cohort, open the
-  original study's full text at PMC or the publisher. In at most five lines summarize its preprocessing
+  original study's full text with labhq_annot fulltext (PMID, PMCID or DOI), not an ad-hoc script; check a DOI with
+  crossref_doi. Open PMC or the publisher on the web only when fulltext cannot. In at most five lines summarize its preprocessing
   and normalization, pairing or repeated measures, covariates and batch, statistical model and thresholds,
   and validation. Say explicitly when the full text could not be opened.
