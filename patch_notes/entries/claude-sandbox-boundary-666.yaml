@@ -1,5 +1,9 @@
 pr: 1018
 rows:
+  - sha: 2eb9b56
+    at: "2026-10-29 15:00"
+    summary: "Windows 시험 목록과 기록 형식을 바로잡습니다."
+    text: "fix: register boundary tests in Windows inventory"
   - sha: 0851aad
     at: "2026-10-29 14:53"
     summary: "실제 launcher 재현의 선행 조건을 명확히 합니다."
