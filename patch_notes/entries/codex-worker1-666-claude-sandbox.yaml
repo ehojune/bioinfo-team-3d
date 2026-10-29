@@ -24,3 +24,7 @@ rows:
     at: "2026-10-29 17:05"
     summary: "sandbox 정책의 전체 CI를 다시 실행합니다."
     text: "Trigger fresh full CI for sandbox policy"
+  - sha: a81c53f
+    at: "2026-10-29 17:27"
+    summary: "main과 병합하며 Windows 테스트 목록을 보존합니다."
+    text: "Merge main and preserve sandbox Windows tests"
