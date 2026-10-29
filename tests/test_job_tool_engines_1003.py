@@ -60,6 +60,16 @@ def test_the_job_tool_is_mounted_only_for_claude_staff(tmp_path):
         runner.store.close()
 
 
+def test_an_agent_record_without_an_engine_key_is_a_claude_agent_for_the_job_tool():
+    """AgentSpec's engine defaults to claude_code, so a stored agent dict that omits the key gets labhq_job too."""
+    from labhq.gateway.server import Hub
+
+    assert "labhq_job" in Hub._agent_mcp({"builtin_mcp": ["job"]})
+    assert "labhq_job" not in Hub._agent_mcp({"builtin_mcp": ["job"], "engine": "codex"})
+    assert "labhq_job" not in Hub._agent_mcp({"builtin_mcp": []})
+    assert AgentSpec(id="a", name="a", role="test").engine == Engine.claude_code  # the default this mirrors
+
+
 def test_no_core_codex_agent_lists_the_job_tool():
     for path in sorted((ROOT / "agents").rglob("*.yaml")):
         spec = yaml.safe_load(path.read_text(encoding="utf-8")) or {}

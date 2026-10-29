@@ -3328,7 +3328,7 @@ class Hub:
         builtin = agent.get("builtin_mcp", [])
         return [*(["labhq_approval"] if "approval" in builtin else []),
                 *(["labhq_hpc"] if "hpc" in builtin and agent.get("scheduler", "none") != "none" else []),
-                *(["labhq_job"] if "job" in builtin and agent.get("engine") == "claude_code" else []),
+                *(["labhq_job"] if "job" in builtin and agent.get("engine", "claude_code") == "claude_code" else []),
                 *(["labhq_annot"] if "annot" in builtin else []),
                 *(["labhq_ask"] if agent.get("engine") != "antigravity" else []),
                 *agent.get("mcp", [])]

@@ -1,0 +1,6 @@
+pr: 1009
+rows:
+- sha: 06b647a
+  at: 2026-10-29 10:10
+  text: office browser 시험의 DevTools 호출이 ws.send 예외 때 timer를 지우고 즉시 reject하며, gateway 직원 MCP 목록이 engine 키가 없는 직원 기록을 claude_code로 보아 labhq_job을 표시한다 (#1001·#1004 비차단 지적).
+  summary: 브라우저 시험의 닫힌 소켓 처리와 엔진 정보가 없는 직원 기록의 도구 목록을 다듬었습니다.
