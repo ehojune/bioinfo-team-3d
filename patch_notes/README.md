@@ -14,9 +14,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:40 | [`cfa258a`](https://github.com/ehojune/bioinfo-team-3d/pull/1032/commits/cfa258a) | **매뉴얼이 환경 단계의 시작 전 검사를 설명합니다.**<br>manual 한·영에 환경 단계가 시작 전에 자기 binding(runner·runtime·step)을 확인하고 어긋나면 비용 없이 거부한다는 설명을 더한다 |
+| 21:20 | [`ec88526`](https://github.com/ehojune/bioinfo-team-3d/pull/1032/commits/ec88526) | **runner가 지정되지 않은 환경 작업은 시작되지 않습니다.**<br>환경 단계 dispatch에 session_runner가 없거나 다르면 거부한다 |
+| 21:05 | [`c5c59b3`](https://github.com/ehojune/bioinfo-team-3d/pull/1032/commits/c5c59b3) | **형식이 잘못된 환경 작업이 runner를 비정상 종료시키지 않고 비용 없이 거부됩니다.**<br>환경 단계 dispatch의 session_runner가 배열·객체 같은 값이어도 해시하지 않고 비교해 runner 불일치 거부로 끝낸다 |
+| 20:50 | [`66fbd13`](https://github.com/ehojune/bioinfo-team-3d/pull/1032/commits/66fbd13) | **단계 정체가 증명되지 않은 환경 작업은 시작되지 않습니다.**<br>환경 단계 dispatch에 step ID가 없거나 binding과 다르면 거부한다 |
 | 20:36 | [`ed17ce4`](https://github.com/ehojune/bioinfo-team-3d/pull/1031/commits/ed17ce4) | **예열은 실제 첫 실행 조건을 가리므로 빼고, 실패 때 멈춘 단계를 적는 요약만 남겼습니다.**<br>시험: provider 예열을 뺌 — production cold-start 경계를 가리므로 단계 요약만 둔다 (#1029) |
 | 20:30 | [`0f0d409`](https://github.com/ehojune/bioinfo-team-3d/pull/1034/commits/0f0d409) | **폴더 이름에 특수문자가 있어도 hook 명령이 실행되게 했고, 기록의 경로 표기를 바로잡았습니다.**<br>hook 명령의 Windows 경로에 든 달러·백틱·따옴표를 bash 큰따옴표 안에서 이스케이프하고, status의 깨진 로그 경로와 시험 주석을 고친다 (#1034 리뷰 P2·P3). |
 | 20:25 | [`1788e18`](https://github.com/ehojune/bioinfo-team-3d/pull/1031/commits/1788e18) | **다른 시험이 직접 호출하는 시험 함수의 인자를 바꾸지 않도록 예열을 usefixtures로 걸었습니다.**<br>시험: 예열 fixture를 인자가 아니라 usefixtures로 걸어 직접 호출을 깨지 않음 (#1029) |
+| 20:25 | [`489af2c`](https://github.com/ehojune/bioinfo-team-3d/pull/1032/commits/489af2c) | **다른 runner나 다른 OS용으로 정해진 환경 단계가 이 runner에서 시작되지 않습니다.**<br>runner가 환경 단계의 단수 environment_binding(계약 형식, runner ID, runtime, step ID)을 엔진 시작 전에 검사하고 어긋나면 비용 없이 거부한다 |
 | 20:15 | [`1b23b23`](https://github.com/ehojune/bioinfo-team-3d/pull/1031/commits/1b23b23) | **예열을 실제 WMI를 쓰는 두 시험에만 걸어 fake로 도는 진단 시험이 깨지지 않게 했습니다.**<br>시험: 예열을 owned_launch가 아니라 실제 WMI 시험 fixture로 옮김 (#1029) |
 | 20:14 | [`6b5346a`](https://github.com/ehojune/bioinfo-team-3d/pull/1034/commits/6b5346a) | **Windows에서 직원 제어(멈춤·방향 전달)와 폭주 차단기의 hook이 실제로 동작하지 않던 문제를 고쳤습니다.**<br>Claude hook 명령을 슬래시 경로를 따옴표로 감싼 형태로 만들어 Windows Git Bash에서 실행되게 한다. 만든 명령을 실제 bash로 돌리는 시험을 넣는다 (#1030). |
 | 20:04 | [`4e7538d`](https://github.com/ehojune/bioinfo-team-3d/pull/1031/commits/4e7538d) | **Windows 검사에서 가끔 실패하던 Job 탈출 시험이 느린 PowerShell 첫 기동 때문에 실패하지 않도록 예열하고, 실패하면 어느 단계에서 멈췄는지 적게 했습니다.**<br>시험: Windows breakaway 시험 전에 WMI provider를 예열하고 실패 시 단계 요약을 남김 (#1029) |
