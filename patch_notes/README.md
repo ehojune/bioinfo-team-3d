@@ -14,7 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:34 | [`e788037`](https://github.com/ehojune/bioinfo-team-3d/pull/1028/commits/e788037) | **승인을 기다리는 사이 멈춤을 눌렀을 때 거절 응답이 와도 멈춤이 빠지지 않게 했습니다.**<br>CSO 응답이 거절이어도 대기 중에 받은 halt·pause를 먼저 적용하고 halt를 기록한다 (#1028 리뷰 P1). |
+| 19:24 | [`8aaf6fe`](https://github.com/ehojune/bioinfo-team-3d/pull/1028/commits/8aaf6fe) | **승인을 기다리는 사이 멈춤을 눌러도 호출이 실행되지 않게 했고, 서버를 다시 켠 뒤에도 제한 중 호출을 판정할 수 있게 했습니다.**<br>CSO 응답을 기다린 뒤 control 파일을 다시 읽어 그사이의 halt·pause가 허용보다 먼저 적용되게 하고(P1), 제한 회차를 gateway state에 저장해 재시작 뒤에도 판정하게 한다 (#1028 리뷰). |
+| 19:12 | [`958470b`](https://github.com/ehojune/bioinfo-team-3d/pull/1028/commits/958470b) | **제한 중 도구 호출의 내용이 기록에 남지 않게 했고, 서버를 다시 켜도 허용 횟수가 초기화되지 않게 했습니다.**<br>restricted.requested 이벤트에서 호출 입력을 빼 runner 기록·재전송 대기열에 남기지 않고(P1), 판정한 호출·허용 횟수를 gateway state에 저장해 재시작 뒤에도 잇는다 (#1028 리뷰). |
 | 19:00 | [`e404b8d`](https://github.com/ehojune/bioinfo-team-3d/pull/1025/commits/e404b8d) | **코드 변경 없이 CI를 다시 시작합니다.**<br>Windows 풀 timeout(9분 제한)으로 실패한 CI를 다시 돌리기 위해 빈 커밋을 올린다 |
+| 18:59 | [`18ed324`](https://github.com/ehojune/bioinfo-team-3d/pull/1028/commits/18ed324) | **이미 거절된 호출이 뒤늦게 허용 횟수를 써 버리지 않게 했습니다.**<br>연결이 끊겼다 돌아와 다시 보낸 90초 넘은 restricted 요청은 판정·예산에 쓰지 않고 거절한다 (#1028 리뷰 P2). |
+| 18:46 | [`e5c419d`](https://github.com/ehojune/bioinfo-team-3d/pull/1028/commits/e5c419d) | **도구가 제한된 직원이 꼭 필요한 호출을 하려 할 때 CSO가 한 번씩 허용하거나 거절하고, 같은 일을 되풀이하면 막습니다.**<br>constrain 중 읽기 밖의 도구 호출을 hook→runner broker /restricted→gateway CSO 순으로 한 번씩 판정한다(같은 호출 1회, 제한당 5회, 회차 불일치·종료·무응답은 거절, 허용은 기존 권한 검사를 면제하지 않음) (#1008). |
 | 18:45 | [`9c0fca1`](https://github.com/ehojune/bioinfo-team-3d/pull/1025/commits/9c0fca1) | **비정상적으로 중첩된 manifest가 runner를 멈추지 않고 환경 단계 실패로 끝납니다.**<br>너무 깊게 중첩된 runner-manifest.json의 RecursionError를 환경 단계 실패로 처리해 runner 결과 정리가 중단되지 않게 한다 |
 | 18:20 | [`07858f2`](https://github.com/ehojune/bioinfo-team-3d/pull/1025/commits/07858f2) | **매뉴얼이 환경 단계 자체가 실패하는 경우를 설명합니다.**<br>manual 한·영에 환경 단계가 끝날 때 manifest·binding·interpreter를 대조하고 어긋나면 실패 처리한다는 설명을 더한다 |
 | 18:05 | [`7b41aaf`](https://github.com/ehojune/bioinfo-team-3d/pull/1025/commits/7b41aaf) | **job이나 질문을 기다리는 환경 단계가 아직 manifest를 쓰기 전에 실패 처리되지 않습니다.**<br>환경 단계의 manifest·binding 검증을 선언 산출 검사와 같은 최종 턴 조건에서만 한다 |
