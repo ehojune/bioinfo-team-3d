@@ -21,6 +21,58 @@ INVENTORY = '.labhq-inputs.json'
 MAX_FILES = 200
 
 
+def validate_runner_env(root, source, artifact, expected):
+    """Validate a collected runner manifest and its local venv; do not expose an alias.
+
+    ``expected`` must come from the pinned plan, never from the manifest itself. This is
+    a validation primitive: the caller must keep the source protected for its lifetime.
+    """
+    root = Path(root).resolve(strict=True)
+    source = Path(source).absolute()
+    parts = source.relative_to(root).parts
+    if not parts or source != source.resolve(strict=True):
+        raise ValueError('environment source is not a plain workspace')
+    if not isinstance(expected, dict):
+        raise ValueError('pinned environment mapping is missing')
+    runtime = expected.get('runtime')
+    python = {'windows': '.venv/Scripts/python.exe', 'linux': '.venv/bin/python',
+              'wsl': '.venv/bin/python'}.get(runtime if isinstance(runtime, str) else None)
+    if python is None:
+        raise ValueError('invalid pinned runtime')
+    if (type(expected.get('version')) is not int or expected['version'] != 1 or
+            expected.get('venv_path') != '.venv' or expected.get('python_path') != python):
+        raise ValueError('invalid pinned environment contract')
+    for key in ('logical_step_id', 'step_id', 'runner_id'):
+        value = expected.get(key)
+        if not isinstance(value, str) or not INPUT_STEP_ID.fullmatch(value) or value != value.rstrip(' .'):
+            raise ValueError('invalid pinned environment identity')
+    path = 'outputs/env/runner-manifest.json'
+    if path not in artifact.get('outputs', []):
+        raise ValueError('collected environment manifest is missing')
+    digest = artifact.get('output_sha256', {}).get(path)
+    if not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest):
+        raise ValueError('environment manifest hash is missing')
+    with _folder(root, (*parts, 'outputs', 'env')) as held:
+        with os.fdopen(held.open_read_file('runner-manifest.json'), 'rb') as opened:
+            if os.fstat(opened.fileno()).st_nlink != 1:
+                raise ValueError('environment manifest is hard-linked')
+            data = opened.read(1024 * 1024 + 1)
+    if len(data) > 1024 * 1024 or hashlib.sha256(data).hexdigest() != digest:
+        raise ValueError('environment manifest hash differs')
+    manifest = json.loads(data)
+    contract = {'version': 1, 'logical_step_id': expected['logical_step_id'],
+                'step_id': expected['step_id'], 'runner_id': expected['runner_id'],
+                'runtime': runtime, 'venv_path': '.venv', 'python_path': python}
+    if (not isinstance(manifest, dict) or type(manifest.get('version')) is not int or
+            any(manifest.get(key) != value for key, value in contract.items())):
+        raise ValueError('environment manifest differs from pinned plan')
+    with _folder(root, (*parts, *python.split('/')[:-1])) as held:
+        with os.fdopen(held.open_read_file(python.split('/')[-1]), 'rb') as opened:
+            if os.fstat(opened.fileno()).st_nlink != 1:
+                raise ValueError('environment interpreter is hard-linked')
+    return source / '.venv'
+
+
 def _parts(name):
     parts = str(name).split('/')
     if (not parts or any(p in {'', '.', '..', INVENTORY} or p != p.rstrip(' .') or
