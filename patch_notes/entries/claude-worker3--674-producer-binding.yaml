@@ -1,5 +1,9 @@
 pr: 1032
 rows:
+- sha: 'cfa258a'
+  at: 2026-10-29 21:40
+  text: manual 한·영에 환경 단계가 시작 전에 자기 binding(runner·runtime·step)을 확인하고 어긋나면 비용 없이 거부한다는 설명을 더한다
+  summary: 매뉴얼이 환경 단계의 시작 전 검사를 설명합니다.
 - sha: 'ec88526'
   at: 2026-10-29 21:20
   text: 환경 단계 dispatch에 session_runner가 없거나 다르면 거부한다
