@@ -77,6 +77,10 @@ class Escalation:
                 self.episode += 1
         return stage
 
+    def compacted(self) -> str | None:
+        """A warning that rested on the old context is dropped; a restriction stays until the PI lifts it."""
+        return self.release() if self.policy.stage == "warn" else None
+
     def release(self) -> str | None:
         self._last = None
         return self.policy.release()
@@ -125,6 +129,14 @@ class Breaker:
             if self._errors >= self.error_limit:
                 return self._trip("tool_errors", self._errors)
         return None
+
+    def reset_window(self) -> None:
+        """The agent's context was just compacted: it may redo what it did before, which is not a loop. Count again from
+        here, so the next signal is a new observation (#1008)."""
+        self._last_call, self._last_tool = None, ""
+        self._repeats = self._errors = 0
+        self._last_failed = False
+        self._tripped.clear()
 
     @property
     def repeating(self) -> bool:
