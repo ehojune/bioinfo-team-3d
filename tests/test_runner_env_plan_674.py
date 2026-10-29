@@ -239,3 +239,14 @@ def test_research_step_roundtrip_keeps_binding_and_legacy_omits_new_fields():
 def test_unknown_runner_runtime_or_creator_fails_closed(runners, runtimes, allowed):
     with pytest.raises(ValueError):
         split_runner_environments(plan(), runners, runtimes, lambda _: allowed)
+
+
+def test_runner_id_is_not_restricted_to_the_step_id_grammar():
+    runners = {"a": "lab pc 1", "b": "lab pc 1"}
+    result = split_runner_environments(plan(), runners, {"lab pc 1": "linux"}, lambda _: True)
+    binding = next(s for s in result if s["id"] == "a")["environment_bindings"][0]
+    assert binding["runner_id"] == "lab pc 1"
+    from labhq.research.contract import EnvironmentBinding
+    assert EnvironmentBinding.model_validate(binding).runner_id == "lab pc 1"
+    from labhq.orchestrator.cso import environment_runner_pin
+    assert environment_runner_pin({"environment_bindings": [binding]}) == "lab pc 1"

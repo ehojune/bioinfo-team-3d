@@ -482,7 +482,7 @@ def split_runner_environments(steps: list[dict], agent_runner: dict[str, str],
         groups: dict[str, list[dict]] = {}
         for step in consumers:
             runner = agent_runner.get(step["agent_id"])
-            if (not isinstance(runner, str) or not INPUT_STEP_ID.fullmatch(runner)
+            if (not isinstance(runner, str) or not 0 < len(runner) <= 256
                     or runner_runtime.get(runner) not in {"windows", "linux", "wsl"}):
                 raise ValueError(f"step {step['id']}: runner or runtime unknown")
             groups.setdefault(runner, []).append(step)
@@ -534,7 +534,8 @@ def environment_runner_pin(step: dict) -> str | None:
         if (type(item.get("version")) is not int or item["version"] != 1
                 or not isinstance(runtime, str) or runtime not in {"windows", "linux", "wsl"}
                 or any(not isinstance(item.get(key), str) or not INPUT_STEP_ID.fullmatch(item[key])
-                       for key in ("logical_step_id", "step_id", "runner_id"))
+                       for key in ("logical_step_id", "step_id"))
+                or not isinstance(runner, str) or not 0 < len(runner) <= 256
                 or item.get("venv_path") != ".venv" or item.get("python_path") != expected_python):
             raise ValueError("invalid environment binding")
         runners.add(runner)

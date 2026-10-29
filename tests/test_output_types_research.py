@@ -44,7 +44,9 @@ CANARY = "CANARY-research-91c2"
 # 72274c0b…, and both schemas and VALID_PLAN_SHA are unchanged.
 # #890 adds the optional selection_record to the plan schema (new schema hash below); a plan without it keeps
 # VALID_PLAN_SHA, and the prompt, minus its one new rule, still hashes to the previous value.
-RESEARCH_PLAN_SCHEMA_SHA = "885ae981b0294b79094d25fec680337d142dd93f98946d41f247517057977556"
+# #674 adds the optional environment_binding(s) to research steps (new schema hash below); a plan without them keeps
+# VALID_PLAN_SHA, and the prompt and result schema hashes are unchanged.
+RESEARCH_PLAN_SCHEMA_SHA = "6064277c29766de85dd07346896ceb6417b74d74213bbf517af784e0cc65bb8d"
 # #905 extends only the result schema with optional source access metadata and citation lineage.
 RESEARCH_RESULT_SCHEMA_SHA = "596679add2478c0eff0eddaddd8d85604b0148770fb5a4aaa0a0235e836ca179"
 # #798/#671 change only paper timing/parallel fallback; normalize that sentence to exact previous prompts.

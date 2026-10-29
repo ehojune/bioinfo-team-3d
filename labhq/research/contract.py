@@ -209,7 +209,7 @@ class EnvironmentBinding(StrictModel):
     version: Literal[1]
     logical_step_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
     step_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
-    runner_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+    runner_id: str = Field(min_length=1, max_length=256)  # any runner.id the settings accept
     runtime: Literal["windows", "linux", "wsl"]
     venv_path: Literal[".venv"]
     python_path: Literal[".venv/Scripts/python.exe", ".venv/bin/python"]
