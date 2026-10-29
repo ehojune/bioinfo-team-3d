@@ -1,0 +1,6 @@
+pr: 1018
+rows:
+  - sha: 08de79a
+    at: "2026-10-29 14:51"
+    summary: "Claude sandbox 경계 시험에서 실행 거부와 미검증을 구분합니다."
+    text: "test: classify Claude sandbox boundary evidence (#666)"
