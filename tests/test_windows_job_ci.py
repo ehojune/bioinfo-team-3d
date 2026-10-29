@@ -439,6 +439,7 @@ def test_wmi_escapes_owned_outer_nonbreakaway_inner_silent_job(tmp_path, capsys)
         _trace_event(case, "body_positive")
         with capsys.disabled():
             print("WIN795 NESTED POSITIVE: WMI bootstrap/fake role survived both owned Job closes; cleanup follows")
+            print("WIN1029 launch stages: " + _provider_summary(case.events))
 
 
 @pytest.mark.parametrize("failure", ["unknown_job", "receipt_timeout"])
