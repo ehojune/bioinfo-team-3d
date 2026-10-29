@@ -47,15 +47,23 @@ def root_problem(settings: Any, root: Path | None = None) -> str | None:
     real = root.resolve()
     # A link in the middle of the path must not carry the folder out of the allowed roots (checked on real paths).
     allowed_roots = [Path(r).resolve() for r in reference_roots(settings)]
-    holder = next((a for a in allowed_roots if real == a or real.is_relative_to(a)), None)
-    if holder is None:
+    holders = [a for a in allowed_roots if real == a or real.is_relative_to(a)]
+    if not holders:
         return "the wiki root resolves outside runner.reference_roots"
-    if os.name != "nt":  # another filesystem mounted between the allowed root and the folder (or on it)
-        step = real
-        while step != holder:
-            if os.path.ismount(step):
-                return f"a mount point lies between runner.reference_roots and the wiki root ({step.name})"
-            step = step.parent
+    if os.name != "nt":
+        # Another filesystem mounted between an allowed root and the folder: refused unless some allowed root
+        # reaches the folder without crossing one (an explicitly allowed nested root counts).
+        def crossing(holder: Path) -> str | None:
+            step = real
+            while step != holder:
+                if os.path.ismount(step):
+                    return step.name
+                step = step.parent
+            return None
+
+        crossed = [crossing(h) for h in holders]
+        if all(crossed):
+            return f"a mount point lies between runner.reference_roots and the wiki root ({crossed[0]})"
     for private, _label in configured_private_paths(settings):
         # Both spellings: a private path may itself be an alias of the folder (compared by its real path too).
         try:

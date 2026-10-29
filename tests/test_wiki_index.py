@@ -317,3 +317,49 @@ def test_a_private_path_given_as_an_alias_of_the_wiki_is_compared_by_its_real_pa
     alias.symlink_to(root, target_is_directory=True)
     settings.policy.private_paths = [str(alias)]
     assert "private path" in walker.root_problem(settings)
+
+
+def test_a_note_that_can_no_longer_be_read_leaves_the_index(tmp_path, monkeypatch):
+    settings, root = make_settings(tmp_path)
+    index.reindex(settings)
+    note = root / "no-source.md"
+    note.write_text(note.read_text(encoding="utf-8") + "\nRevoked-permission marker phrase.\n", encoding="utf-8")
+    index.reindex(settings)
+    assert index.search(settings, "Revoked-permission marker")
+    note.write_text(note.read_text(encoding="utf-8") + "\nChanged again.\n", encoding="utf-8")
+    real_read = index._read
+
+    def deny(path, limit):
+        if Path(path).name == "no-source.md":
+            raise PermissionError("revoked")
+        return real_read(path, limit)
+
+    monkeypatch.setattr(index, "_read", deny)
+    stats = index.reindex(settings)
+    assert stats["unreadable"] == 1 and stats["removed"] == 1
+    assert not index.search(settings, "Revoked-permission marker")
+
+
+def test_disconnect_also_removes_a_leftover_rollback_journal(tmp_path):
+    settings, _ = make_settings(tmp_path)
+    index.reindex(settings)
+    journal = index.index_path(settings).with_name("index.sqlite3-journal")
+    journal.write_bytes(b"note text from an interrupted update")
+    assert index.disconnect(settings) is True
+    assert not journal.exists() and not index.index_path(settings).exists()
+
+
+@posix_only
+def test_an_explicitly_allowed_nested_root_may_sit_on_another_filesystem(tmp_path, monkeypatch):
+    settings, root = make_settings(tmp_path)
+    archive = tmp_path / "refs" / "archive"
+    (archive).mkdir()
+    moved = archive / "wiki"
+    shutil.copytree(FIXTURE, moved)
+    settings.wiki = WikiSettings(enabled=True, root=str(moved))
+    settings.runner.reference_roots = [str(tmp_path / "refs"), str(archive)]
+    real_ismount = os.path.ismount
+    monkeypatch.setattr(os.path, "ismount", lambda p: str(p) == str(archive.resolve()) or real_ismount(p))
+    assert walker.root_problem(settings) is None
+    settings.runner.reference_roots = [str(tmp_path / "refs")]
+    assert "mount point" in walker.root_problem(settings)

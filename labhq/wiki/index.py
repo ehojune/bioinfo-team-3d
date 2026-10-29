@@ -193,16 +193,17 @@ def reindex(settings: Any) -> dict:
             "SELECT id, rel_path, size, mtime_ns, file_id, sha256 FROM docs")}
         seen = set()
         for item in files:
-            seen.add(item.rel_path)
             row = known.get(item.rel_path)
             if row and (row[2], row[3], row[4]) == (item.size, item.mtime_ns, item.file_id):
+                seen.add(item.rel_path)
                 stats["unchanged"] += 1
                 continue
             try:
                 raw = _read(item.path, settings.wiki.max_file_bytes)
             except OSError:
-                stats["unreadable"] += 1
+                stats["unreadable"] += 1  # not marked seen: an earlier copy of a note that can no longer be read goes
                 continue
+            seen.add(item.rel_path)
             if len(raw) > settings.wiki.max_file_bytes:
                 stats["skipped"]["too_large"] = stats["skipped"].get("too_large", 0) + 1
                 continue
@@ -333,7 +334,8 @@ def disconnect(settings: Any) -> bool:
     """Delete this instance's index. The wiki folder is never touched."""
     path = index_path(settings)
     removed = False
-    for candidate in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        candidate = path.with_name(path.name + suffix)
         try:
             candidate.unlink()
             removed = True
