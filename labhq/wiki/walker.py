@@ -12,8 +12,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ..intake import _is_link, check_reference_path, reference_roots, scan_reference_dir
-from ..policy import restricted_paths
+from ..intake import _is_link, check_reference_path, overlaps_zone, reference_roots, scan_reference_dir
+from ..runner.workspace import restricted_zones
 from ..private_paths import configured_private_paths, credential_path, inside_any
 
 
@@ -46,9 +46,16 @@ def root_problem(settings: Any, root: Path | None = None) -> str | None:
         return str(error)
     real = root.resolve()
     # A link in the middle of the path must not carry the folder out of the allowed roots (checked on real paths).
-    if not any(real == allowed or real.is_relative_to(allowed) for allowed in
-               (Path(r).resolve() for r in reference_roots(settings))):
+    allowed_roots = [Path(r).resolve() for r in reference_roots(settings)]
+    holder = next((a for a in allowed_roots if real == a or real.is_relative_to(a)), None)
+    if holder is None:
         return "the wiki root resolves outside runner.reference_roots"
+    if os.name != "nt":  # another filesystem mounted between the allowed root and the folder (or on it)
+        step = real
+        while step != holder:
+            if os.path.ismount(step):
+                return f"a mount point lies between runner.reference_roots and the wiki root ({step.name})"
+            step = step.parent
     for private, _label in configured_private_paths(settings):
         if inside_any(str(real), [private]) or inside_any(private, [str(real)]):
             return "the wiki root overlaps a private path"
@@ -56,7 +63,9 @@ def root_problem(settings: Any, root: Path | None = None) -> str | None:
         folder = str(settings.path(getattr(settings.runner, name)).resolve())
         if inside_any(str(real), [folder]) or inside_any(folder, [str(real)]):
             return f"the wiki root overlaps runner.{name}"
-    zones = [Path(z) for z in restricted_paths(settings.policy)]
+    zones = restricted_zones(settings)  # real paths, as the runner compares them
+    if overlaps_zone(real, zones):
+        return "the wiki root overlaps a restricted data zone"
     return scan_reference_dir(real, zones, settings.runner.reference_scan_max_entries,
                               settings.runner.reference_scan_max_depth)
 

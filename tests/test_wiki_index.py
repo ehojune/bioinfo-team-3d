@@ -266,3 +266,24 @@ def test_a_link_in_the_middle_of_the_path_cannot_leave_the_allowed_roots(tmp_pat
     assert "outside runner.reference_roots" in walker.root_problem(settings)
     with pytest.raises(ValueError):
         index.reindex(settings)
+
+
+@posix_only
+def test_a_mount_point_between_the_allowed_root_and_the_wiki_is_refused(tmp_path, monkeypatch):
+    settings, root = make_settings(tmp_path)
+    real_ismount = os.path.ismount
+    monkeypatch.setattr(os.path, "ismount", lambda p: str(p) == str(root.resolve()) or real_ismount(p))
+    assert "mount point" in walker.root_problem(settings)
+
+
+@posix_only
+def test_a_restricted_zone_given_as_a_link_is_compared_by_its_real_path(tmp_path):
+    from labhq.settings import DataZone
+
+    settings, root = make_settings(tmp_path)
+    alias = tmp_path / "zone-alias"
+    alias.symlink_to(root, target_is_directory=True)
+    settings.policy.data_zones = [DataZone(path=str(alias), level="restricted")]
+    assert walker.root_problem(settings)
+    with pytest.raises(ValueError):
+        index.reindex(settings)
