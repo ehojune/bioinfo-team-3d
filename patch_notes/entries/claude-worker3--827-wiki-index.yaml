@@ -1,5 +1,9 @@
 pr: 1039
 rows:
+- sha: '05524f3'
+  at: 2026-10-30 06:40
+  text: wiki 루트를 해석된 경로로 reference_roots와 비교하고(중간 링크 우회 차단), 저장된 색인의 루트가 현재 루트와 다르면 사용 가능으로 표시하지 않는다
+  summary: 링크로 허용 폴더 밖을 가리키는 wiki 경로가 거부되고, 폴더를 바꾸면 이전 색인을 쓰지 않습니다.
 - sha: 'e9b12e2'
   at: 2026-10-30 06:10
   text: 새 시험 tests/test_wiki_index.py를 Windows inventory(config/ci)의 검토된 목록에 등록한다
