@@ -115,6 +115,10 @@ class Breaker:
         return None
 
     @property
+    def repeating(self) -> bool:
+        return self._repeats >= self.repeat_limit
+
+    @property
     def active(self) -> bool:
         """A signal is over its limit right now (``observe`` reports each signal's first crossing only)."""
         return self._repeats >= self.repeat_limit or self._errors >= self.error_limit

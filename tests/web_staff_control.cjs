@@ -25,6 +25,11 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
   // A turn held before it starts is queued and paused; one that ended paused keeps resume for the session's next turn.
   assert.deepEqual(staffControl({ state: 'queued', taskId: 't2' }, { paused: true }).actions, ['steer', 'resume', 'halt']);
   assert.deepEqual(staffControl({ state: 'idle', taskId: 't2' }, { paused: true }).actions, ['steer', 'resume']);
+  // #59 ②: a task the runaway breaker limited shows a release button, and only while it runs.
+  const limited = staffControl(working, { constrained: true });
+  assert.deepEqual(limited.actions, ['steer', 'pause', 'halt', 'release_breaker']);
+  assert.equal(limited.status, '도구 제한 중');
+  assert.deepEqual(staffControl({ state: 'idle', taskId: 't1' }, { constrained: true }).actions, []);
   const halted = staffControl({ state: 'idle', taskId: 't1' }, { halted: true, halt: true });
   assert.deepEqual(halted.actions, ['resume']);
   assert.equal(halted.status, '멈춤 · 재개 가능');
@@ -77,7 +82,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
   // The page wires the module and the REST call; demo mode (no api) shows no controls.
   const page = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
   assert.match(page, /import \{controlHtml, controlKey, staffControls\} from '\.\/ui\/control\.js';/);
-  assert.match(page, /control: \(id, action, text\) => post\(`\/api\/tasks\/\$\{encodeURIComponent\(id\)\}\/\$\{action\}`/);
+  assert.match(page, /control: \(id, action, text\) => post\(`\/api\/tasks\/\$\{encodeURIComponent\(id\)\}\/\$\{action === 'release_breaker' \? 'breaker\/release' : action\}`/);
   assert.match(page, /return api\?\.control \? staffControls\(a, tid => S\.taskControl\.get\(tid\) \|\| \{\}\) : \[\];/);
   const board = await load('tasks.js');
   assert.ok(board.syncTaskBoard);
