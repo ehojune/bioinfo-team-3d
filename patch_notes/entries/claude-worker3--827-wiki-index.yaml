@@ -1,5 +1,9 @@
 pr: 1039
 rows:
+- sha: 'c444414'
+  at: 2026-10-30 08:15
+  text: policy.private_paths가 별칭이어도 실제 경로와 양방향으로 비교하고, wiki connect가 출력하는 설정 줄을 YAML serializer로 인코딩한다
+  summary: 링크로 이름 붙인 비공개 경로와 겹치는 폴더는 연결되지 않고, 특수문자가 든 경로도 설정에 그대로 옮겨집니다.
 - sha: 'fb14ded'
   at: 2026-10-30 07:45
   text: manual 한·영에 내 LLM-wiki 연결(labhq wiki 명령 5개, wiki 설정 표, 노트별 보존 정보, 연결 거부 조건) 절을 더한다
