@@ -1,5 +1,9 @@
 pr: 1021
 rows:
+- sha: 'c042fc0'
+  at: 2026-10-29 16:50
+  text: 검증이 모두 통과해도 보호된 interpreter 별칭이 없으면 소비 단계를 계속 거부하고(ENVIRONMENT_ALIAS_AVAILABLE=False) 사유로 구분한다
+  summary: 검증된 환경도 소비 단계에 전달할 수 있게 되기 전까지는 계속 막습니다.
 - sha: '495a3b0'
   at: 2026-10-29 16:30
   text: 'runner가 환경 binding이 붙은 소비 단계를 시작하기 전에 자기 run 기록의 성공 여부, 수집된 runner-manifest.json의 hash·내용과 binding 일치, interpreter 존재를 검증하고 통과해도 보호된 별칭이 없어 계속 거부하며 사유로 구분한다. manual 영·한 반영'
