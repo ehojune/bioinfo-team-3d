@@ -463,7 +463,8 @@ async def run_env_producer(tmp_path, monkeypatch, manifest, *, interpreter=True,
 
     runner = _runner(tmp_path, monkeypatch, write)
     runner.s.runner.id = PRODUCER_BINDING['runner_id']
-    task = _task(outputs=[PRODUCER_LOCK, PRODUCER_MANIFEST], step_id="env", environment_binding=PRODUCER_BINDING if binding is None else binding)
+    task = _task(outputs=[PRODUCER_LOCK, PRODUCER_MANIFEST], step_id="env", session_runner=PRODUCER_BINDING["runner_id"],
+                 environment_binding=PRODUCER_BINDING if binding is None else binding)
     return await runner.run_task(task)
 
 
@@ -513,7 +514,8 @@ async def test_a_paused_environment_step_is_not_held_to_its_binding_yet(tmp_path
     runner = holder["runner"] = _runner(tmp_path, monkeypatch, lambda _workdir: None, reply=reply)
     runner.s.runner.id = PRODUCER_BINDING['runner_id']
     result = await runner.run_task(_task(outputs=[PRODUCER_LOCK, PRODUCER_MANIFEST],
-                                         environment_binding=PRODUCER_BINDING, step_id="env"))
+                                         environment_binding=PRODUCER_BINDING, step_id="env",
+                                         session_runner=PRODUCER_BINDING["runner_id"]))
     assert result.ok, result.error
 
 
@@ -527,7 +529,8 @@ async def test_a_deeply_nested_manifest_fails_the_step_instead_of_aborting_the_r
     runner = _runner(tmp_path, monkeypatch, write)
     runner.s.runner.id = PRODUCER_BINDING['runner_id']
     result = await runner.run_task(_task(outputs=[PRODUCER_LOCK, PRODUCER_MANIFEST],
-                                         environment_binding=PRODUCER_BINDING, step_id="env"))
+                                         environment_binding=PRODUCER_BINDING, step_id="env",
+                                         session_runner=PRODUCER_BINDING["runner_id"]))
     assert not result.ok and "pinned binding" in result.error
 
 
@@ -537,7 +540,8 @@ async def test_a_deeply_nested_manifest_fails_the_step_instead_of_aborting_the_r
                                                               else ".venv/Scripts/python.exe"}, "runtime mismatch"),
     ({"venv_path": "../x"}, "invalid binding contract"), ({"step_id": "bad/step"}, "invalid binding contract"),
     ({"step_id": "other"}, "step mismatch"), ({"__drop_step__": True}, "step mismatch"),
-    ({"__session__": ["lab pc 1"]}, "runner mismatch"), ({"__session__": {"a": 1}}, "runner mismatch")])
+    ({"__session__": ["lab pc 1"]}, "runner mismatch"), ({"__session__": {"a": 1}}, "runner mismatch"),
+    ({"__session__": None}, "runner mismatch")])
 def test_producer_binding_is_checked_before_the_step_runs(change, reason):
     from types import SimpleNamespace
     from labhq.models import Task

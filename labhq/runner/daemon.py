@@ -1587,7 +1587,7 @@ class Runner:
                 not isinstance(runner_id, str) or not 0 < len(runner_id) <= 256):
             return prefix + "invalid binding contract"
         session = task.meta.get("session_runner")  # compared, never hashed: it may be any JSON value
-        if runner_id != self.s.runner.id or (session is not None and session != self.s.runner.id):
+        if runner_id != self.s.runner.id or session != self.s.runner.id:  # a valid dispatch always names the runner
             return prefix + "runner mismatch"
         if binding["runtime"] != runtime:
             return prefix + "runtime mismatch"
