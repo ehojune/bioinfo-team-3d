@@ -8,3 +8,4 @@
 | 설계 선택 | probe(2.1.310)로 hook `ask`가 permission-prompt로 가는 것을 확인했지만, permission-prompt 도구(approval_mcp)는 정책이 허용하는 호출을 바로 허용해 제한을 우회할 수 있어 `ask`는 쓰지 않고 hook이 직접 묻는 방식을 택했다 |
 | 시험 | `tests/test_breaker_enforcement.py` +7(hook 질의·거절 경로·broker 엔드포인트 계약·runner 전달과 풀린 제한·무응답·판정 규칙·종료 작업·gateway 응답과 피드) |
 | 범위 밖/미검증 | 실제 Claude 세션에서 hook→broker→gateway 전 구간, 작업판 UI(피드 한 줄만), Codex 등 hook 없는 엔진, 실제 network E2E |
+| CI 메모 | head `7c7b7b0a`의 pytest-windows가 `tests/test_windows_job_ci.py::test_allowed_breakaway_child_survives_parent_job_close`(기존 Windows 흔들림, 10-23에도 관측)로 실패했다. 재실행이 두 신원 모두 권한 오류로 거부돼 기록만 바꾼 커밋으로 새 run을 돌린다 |
