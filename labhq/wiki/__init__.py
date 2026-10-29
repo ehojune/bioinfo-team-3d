@@ -18,8 +18,11 @@ def cli_main(settings, action, target, parser) -> int:
             files, skipped = walker.list_files(probe)
             print(f"연결할 수 있습니다: {target}\n  색인 대상 {len(files)}개"
                   + (f", 건너뜀 {dict(skipped)}" if skipped else ""))
-            print("설정 파일에 다음을 넣은 뒤 `labhq wiki reindex`를 실행하세요(wiki 폴더는 읽기만 합니다):\n"
-                  f"wiki:\n  enabled: true\n  root: {target}\n  external_model_allowed: false")
+            import yaml
+
+            block = yaml.safe_dump({"wiki": {"enabled": True, "root": str(target), "external_model_allowed": False}},
+                                   allow_unicode=True, sort_keys=False, default_flow_style=False)
+            print("설정 파일에 다음을 넣은 뒤 `labhq wiki reindex`를 실행하세요(wiki 폴더는 읽기만 합니다):" + chr(10) + block.rstrip())
         elif action == "status":
             info = index.status(settings)
             print(f"wiki: {'켜짐' if info['enabled'] else '꺼짐'} root={info['root'] or '-'}")

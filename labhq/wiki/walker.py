@@ -57,7 +57,13 @@ def root_problem(settings: Any, root: Path | None = None) -> str | None:
                 return f"a mount point lies between runner.reference_roots and the wiki root ({step.name})"
             step = step.parent
     for private, _label in configured_private_paths(settings):
-        if inside_any(str(real), [private]) or inside_any(private, [str(real)]):
+        # Both spellings: a private path may itself be an alias of the folder (compared by its real path too).
+        try:
+            real_private = str(Path(private).resolve())
+        except (OSError, RuntimeError):
+            real_private = private
+        if any(inside_any(str(real), [spelling]) or inside_any(spelling, [str(real)])
+               for spelling in {private, real_private}):
             return "the wiki root overlaps a private path"
     for name in ("workspace_root", "state_dir"):
         folder = str(settings.path(getattr(settings.runner, name)).resolve())

@@ -287,3 +287,33 @@ def test_a_restricted_zone_given_as_a_link_is_compared_by_its_real_path(tmp_path
     assert walker.root_problem(settings)
     with pytest.raises(ValueError):
         index.reindex(settings)
+
+
+def test_connect_prints_a_root_that_yaml_reads_back_unchanged(tmp_path, capsys):
+    import yaml
+
+    settings, _ = make_settings(tmp_path)
+    odd = tmp_path / "refs" / "wiki #1 [draft]"
+    shutil.copytree(FIXTURE, odd)
+    off = settings.model_copy(update={"wiki": WikiSettings()})
+    assert wiki.cli_main(off, "connect", str(odd), Parser()) == 0
+    shown = capsys.readouterr().out.split("wiki:" + chr(10), 1)[1]
+    assert yaml.safe_load("wiki:" + chr(10) + shown)["wiki"]["root"] == str(odd)
+
+
+@posix_only
+def test_a_private_path_given_as_an_alias_of_the_wiki_is_compared_by_its_real_path(tmp_path):
+    settings, root = make_settings(tmp_path)
+    alias = tmp_path / "private-alias"
+    alias.symlink_to(root, target_is_directory=True)
+    settings.policy.private_paths = [str(alias)]
+    assert "private path" in walker.root_problem(settings)
+
+
+@posix_only
+def test_a_private_path_given_as_an_alias_of_the_wiki_is_compared_by_its_real_path(tmp_path):
+    settings, root = make_settings(tmp_path)
+    alias = tmp_path / "private-alias"
+    alias.symlink_to(root, target_is_directory=True)
+    settings.policy.private_paths = [str(alias)]
+    assert "private path" in walker.root_problem(settings)
