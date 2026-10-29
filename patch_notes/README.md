@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:56 | [`611b67c`](https://github.com/ehojune/bioinfo-team-3d/pull/1007/commits/611b67c) | **디스크 여유가 시작 기준보다 적으면 점검 명령이 실패로 알려 줍니다.**<br>doctor가 작업 폴더·gateway 상태 드라이브의 여유가 task 시작 기준(runner.disk_fail_free_gb, 기본 2 GiB) 미만이면 warn이 아니라 fail로 보고한다 (#678). |
 | 09:54 | [`9ea950d`](https://github.com/ehojune/bioinfo-team-3d/pull/994/commits/9ea950d) | **main의 새 테스트 목록과 이 PR의 목록 충돌을 합쳤습니다.**<br>main 병합: Windows inventory 충돌 해소 (#59) |
 | 09:54 | [`f1ca881`](https://github.com/ehojune/bioinfo-team-3d/pull/994/commits/f1ca881) | **중단 뒤 재개 시험의 범위와 실제 network는 검증하지 않았다는 한계를 매뉴얼에 적었습니다.**<br>문서: halt→resume 시험 범위와 한계를 manual에 적는다 (#59) |
 | 09:42 | [`fe65cd6`](https://github.com/ehojune/bioinfo-team-3d/pull/1006/commits/fe65cd6) | **출력 형식 오류를 다시 시도한 단계의 비용이 두 번 합산되지 않는다는 시험을 추가했습니다.**<br>형식 오류 repair가 있는 단계에서 요청 비용 합계가 dispatch별 비용의 합과 같고 합산된 repair 결과가 다시 더해지지 않음을 고정하는 회귀 test를 추가한다 (#673 후속). |
