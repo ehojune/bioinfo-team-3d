@@ -3258,11 +3258,10 @@ class Orchestrator:
                 return agent.get("sandbox") == "workspace-write"
             if agent.get("engine") == "claude_code":
                 builtin = agent.get("builtin_tools")
-                tools = agent.get("tools") or []
                 denied = agent.get("disallowed_tools") or []
                 return (agent.get("permission_mode") != "plan"
                         and (builtin is None or "Bash" in builtin.split(","))
-                        and "Bash" in tools and not any(x.startswith("Bash") for x in denied))
+                        and not any(x.startswith("Bash") for x in denied))
             return False
 
         runners = getattr(self.hub, "agent_runner", {})

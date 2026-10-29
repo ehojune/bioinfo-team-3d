@@ -64,6 +64,19 @@ def test_creator_can_be_original_on_consumer_runner():
                                   lambda agent: agent in {"old", "wrong"})
 
 
+def test_claude_bash_capability_does_not_require_preapproval():
+    hub = FakeHub(None)
+    hub.agents = {"old": {"engine": "claude_code", "tools": ["Bash(python *)"]},
+                  "a": {"engine": "mock"}, "b": {"engine": "mock"}}
+    hub.agent_runner = {"old": "r", "a": "r", "b": "r"}
+    hub.runners = {"r": object()}
+    hub.runner_capabilities = {"r": {"runtime_env": "linux"}}
+    assert Orchestrator(hub)._prepare_runner_environments(plan())[0]["agent_id"] == "old"
+    hub.agents["old"]["disallowed_tools"] = ["Bash"]
+    with pytest.raises(ValueError, match="no authorized creator"):
+        Orchestrator(hub)._prepare_runner_environments(plan())
+
+
 def test_transitive_consumer_receives_its_runner_binding():
     source = plan()
     source[2]["depends_on"] = ["a"]
