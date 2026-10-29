@@ -52,6 +52,18 @@ def test_single_runner_selects_first_authorized_consumer():
     assert result[1]["depends_on"] == result[2]["depends_on"] == ["env"]
 
 
+def test_creator_can_be_original_on_consumer_runner():
+    runners = {"old": "win", "a": "win", "b": "wsl", "wrong": "elsewhere"}
+    result = split_runner_environments(plan(), runners, {"win": "windows", "wsl": "wsl"},
+                                       lambda agent: agent in {"old", "b", "wrong"})
+    clones = [step for step in result if "environment_binding" in step]
+    assert [(step["agent_id"], step["environment_binding"]["runner_id"]) for step in clones] == [
+        ("old", "win"), ("b", "wsl")]
+    with pytest.raises(ValueError, match="no authorized creator on runner wsl"):
+        split_runner_environments(plan(), runners, {"win": "windows", "wsl": "wsl"},
+                                  lambda agent: agent in {"old", "wrong"})
+
+
 def test_transitive_consumer_receives_its_runner_binding():
     source = plan()
     source[2]["depends_on"] = ["a"]

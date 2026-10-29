@@ -488,7 +488,9 @@ def split_runner_environments(steps: list[dict], agent_runner: dict[str, str],
             groups.setdefault(runner, []).append(step)
         clones = []
         for index, (runner, members) in enumerate(groups.items()):
-            eligible = next((s["agent_id"] for s in members if can_create(s["agent_id"])), None)
+            candidates = [env["agent_id"], *(s["agent_id"] for s in members)]
+            eligible = next((agent for agent in candidates
+                             if agent_runner.get(agent) == runner and can_create(agent)), None)
             if eligible is None:
                 raise ValueError(f"environment {logical}: no authorized creator on runner {runner}")
             clone_id = logical if index == 0 else f"env_{hashlib.sha256((logical + chr(0) + runner).encode()).hexdigest()[:24]}"
