@@ -167,7 +167,8 @@ class DisabledRecruit(unittest.TestCase):
                        {'paper2agent': policy(), 'TaskResult': Result, 'Event': Result}, owner='Runner')
         events = []
         async def emit(event): events.append(event)
-        runner = NS(s=settings(), emit=emit)
+        async def no_environment_refusal(task): return None
+        runner = NS(s=settings(), emit=emit, _refuse_unprotected_environment=no_environment_refusal)
         for name in ('run_task','_run_task'):
             for task in (NS(id='t',agent_id='recruiter',request_id='r',meta={}),
                          NS(id='t',agent_id='worker',request_id='r',meta={'kind':'paper_skill'}),

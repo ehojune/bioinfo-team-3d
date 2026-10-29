@@ -1564,7 +1564,63 @@ class Runner:
         drop()
         return False
 
+    def _environment_refusal_reason(self, task: Task) -> str | None:
+        bindings = task.meta.get("environment_bindings", [])
+        if isinstance(bindings, list) and not bindings:
+            return None
+        prefix = "runner environment inputs unavailable: "
+        if not isinstance(bindings, list):
+            return prefix + "invalid bindings"
+        steps = task.meta.get("upstream_steps")
+        artifacts = task.meta.get("upstream_artifacts")
+        if not isinstance(steps, dict) or not isinstance(artifacts, dict):
+            return prefix + "ancestor mapping missing"
+        runtime = ("wsl" if self.s.runner.environment == "wsl" else
+                   "windows" if sys.platform == "win32" else "linux")
+        for binding in bindings:
+            if not isinstance(binding, dict):
+                return prefix + "invalid binding"
+            python = {"windows": ".venv/Scripts/python.exe", "linux": ".venv/bin/python",
+                      "wsl": ".venv/bin/python"}.get(binding.get("runtime") if isinstance(binding.get("runtime"), str) else None)
+            identities = (binding.get("logical_step_id"), binding.get("step_id"))
+            runner_id = binding.get("runner_id")
+            if (type(binding.get("version")) is not int or binding["version"] != 1 or
+                    python is None or binding.get("venv_path") != ".venv" or
+                    binding.get("python_path") != python or
+                    any(not isinstance(x, str) or not INPUT_STEP_ID.fullmatch(x) or x != x.rstrip(" .")
+                        for x in identities) or not isinstance(runner_id, str) or not 0 < len(runner_id) <= 256):
+                return prefix + "invalid binding contract"
+            if binding["runner_id"] != self.s.runner.id or task.meta.get("session_runner") != self.s.runner.id:
+                return prefix + "runner mismatch"
+            if binding["runtime"] != runtime:
+                return prefix + "runtime mismatch"
+            sid = binding["step_id"]
+            artifact = artifacts.get(sid)
+            if (not isinstance(steps.get(sid), str) or not steps[sid] or
+                    not isinstance(artifact, dict) or not isinstance(artifact.get("task_id"), str) or
+                    not artifact["task_id"] or artifact.get("workdir") != steps[sid]):
+                return prefix + "ancestor mapping mismatch"
+        # Neither task metadata nor accepted_task's finished marker establishes success.
+        # Do not call validate_runner_env on untrusted paths or create an alias until a
+        # runner-verifiable success receipt and protected lifetime are implemented.
+        return prefix + "successful ancestor receipt and protected alias capability are unverified"
+
+    async def _refuse_unprotected_environment(self, task: Task) -> TaskResult | None:
+        error = self._environment_refusal_reason(task)
+        if error is None:
+            return None
+        result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=error,
+                            cost_usd=0.0, cost_known=True)
+        base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
+        await self.emit_all([
+            Event(type="agent.status", data={"state": "error", "error": error}, **base),
+            Event(type="task.result", data=result.model_dump(mode="json"), **base)])
+        return result
+
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
+        refusal = await self._refuse_unprotected_environment(task)
+        if refusal is not None:
+            return refusal
         if paper2agent.disabled_task(self.s, task):
             result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                                 error="recruitment and Paper2Agent are disabled (recruit.enabled=false)")
@@ -1673,6 +1729,9 @@ class Runner:
                 "작업 폴더 밖이라 쓰기는 평소처럼 승인을 거칠 수 있습니다.")
 
     async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
+        refusal = await self._refuse_unprotected_environment(task)
+        if refusal is not None:
+            return refusal
         # Recheck after asynchronous preparation, and protect internal/direct callers too.
         if paper2agent.disabled_task(self.s, task):
             result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
