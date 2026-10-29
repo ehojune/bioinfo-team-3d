@@ -4,3 +4,7 @@ rows:
   at: 2026-10-29 16:20
   text: Claude Code의 compact_boundary 프레임을 agent.compaction으로 받아 반복·오류 집계를 다시 세고 경고 단계를 푼다. 다른 엔진은 신호가 없어 해당 없음 (#1008).
   summary: Claude Code가 대화를 압축한 직후 같은 일을 다시 하는 것을 폭주로 보고 멈추지 않게 했습니다.
+- sha: fe1c35c
+  at: 2026-10-29 16:33
+  text: manual의 compaction 신호 설명을 "실행 파일의 프레임 정의에서 확인, 실제 세션은 미관측"으로 바로잡는다 (#1022 리뷰 P2).
+  summary: 압축 신호를 실제로 받아 본 것처럼 보이던 매뉴얼 문구를 사실대로 고쳤습니다.
