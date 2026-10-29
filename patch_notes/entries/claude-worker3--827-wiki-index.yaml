@@ -1,5 +1,9 @@
 pr: 1039
 rows:
+- sha: '3f93302'
+  at: 2026-10-30 09:20
+  text: wiki 루트를 runner.reference_roots로만 허용하고(프로젝트 local_dir 제외), trigram 없이 만든 색인에 trigram이 생기면 FTS를 다시 채운다
+  summary: 프로젝트 폴더는 wiki로 연결되지 않고, SQLite 환경이 바뀌어도 검색이 비지 않습니다.
 - sha: 'd2ed7ca'
   at: 2026-10-30 08:50
   text: 읽기 권한이 사라진 노트는 색인에서도 지우고, wiki disconnect가 rollback journal도 지우며, 중첩된 허용 root가 있으면 mount를 건너지 않는 root를 인정한다
