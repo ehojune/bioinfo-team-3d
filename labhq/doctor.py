@@ -125,6 +125,24 @@ def _semantic_device_rows(settings: Settings) -> list[dict]:
     ]
 
 
+def _wiki_row(settings: Settings) -> dict:
+    """The linked LLM-wiki (#827): off by default; read-only, it never creates or refreshes the index."""
+    if not settings.wiki.enabled:
+        return _row("knowledge", "wiki", "skip", "not linked (wiki.enabled is false)",
+                    "Optional: `labhq wiki connect <folder>` checks a folder and prints the config to add.")
+    from .wiki.index import status
+
+    info = status(settings)
+    detail = (f"root={info['root']}; docs={info['docs']}; chunks={info['chunks']}; stale={info['stale']}; "
+              f"index={'present' if info['available'] else 'absent'}")
+    if info["root_problem"]:
+        return _row("knowledge", "wiki", "warn", f"{detail}; problem: {info['root_problem']}",
+                    "Fix wiki.root: it must be a plain folder inside runner.reference_roots, outside private paths.")
+    if not info["available"]:
+        return _row("knowledge", "wiki", "warn", detail, "Run `labhq wiki reindex` to build the index.")
+    return _row("knowledge", "wiki", "ok", detail, "")
+
+
 def _row(group: str, name: str, status: str, detail: str, hint: str) -> dict:
     return {"group": group, "name": name, "status": status, "detail": detail, "hint": hint}
 
@@ -919,6 +937,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                      f"count={recall['count']}; last_success={recall['last_success'] or 'never'}; "
                      f"fallback={recall['fallback'] if recall['fallback'] is not None else 'unknown'}",
                      "Start this instance's gateway to build or retry its local index."))
+    rows.append(_wiki_row(settings))
     claude_staff = _claude_staff_row(settings, agents, forced, private, login_codes.get("claude_code"))
     if claude_staff:
         rows.append(claude_staff)

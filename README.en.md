@@ -205,6 +205,7 @@ If the runner is off, a **러너 꺼짐** (Runner off) bar shows at the top of t
 4. **요청 취소** (Cancel request) stops running work and keeps a partial report of finished steps. While a request runs, **이 요청에 메모** (Note on this request) reaches the next plan or step.
 
 Pick a staff member or drag a yellow note onto a desk to give work directly. Attach GitHub URLs, DOIs, and paths with **참고** (Reference).
+You can link your own LLM-wiki folder as a read-only reference with `labhq wiki connect <folder>` (setting `wiki:`, off by default). So far it covers the index and search commands; the staff tool and report integration are the next phase. Each note keeps its relative path, lines, hash, modification time and origin DOI, and a summary note is never counted as reading the original paper. Real use is unverified. ([#827](https://github.com/ehojune/bioinfo-team-3d/issues/827))
 [Phone access](docs/manual.en.md#starting-and-connecting) · [Screens and approvals](docs/manual.en.md#web-office)
 
 ## Using it safely

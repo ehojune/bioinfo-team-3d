@@ -612,6 +612,30 @@ class LiteratureSettings(BaseModel):
         return self
 
 
+class WikiSettings(BaseModel):
+    """A user LLM-wiki folder linked as a local reference whose notes keep their provenance (#827). Off by default.
+
+    The root must be inside ``runner.reference_roots``; it is only read, never changed. ``external_model_allowed``
+    must be true before a later phase attaches any tool that hands note text to a staff model.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    root: str | None = None
+    external_model_allowed: bool = False
+    extensions: list[Literal[".md", ".txt"]] = [".md", ".txt"]
+    stale_days: int = Field(default=365, ge=1)
+    max_files: int = Field(default=5000, ge=1, le=100000)
+    max_file_bytes: int = Field(default=2 * 1024 * 1024, ge=1, le=16 * 1024 * 1024)
+
+    @model_validator(mode="after")
+    def enabled_needs_a_root(self) -> "WikiSettings":
+        if self.enabled and not (self.root and self.root.strip()):
+            raise ValueError("wiki.enabled needs wiki.root")
+        return self
+
+
 class AnnotSettings(BaseModel):
     """labhq_annot lookups (#435). The AlphaGenome API key lives only in this file, which `labhq init` writes for the
     runner account alone (POSIX 0600, Windows without inherited access); the config holds the location, never the
@@ -705,6 +729,7 @@ class Settings(BaseModel):
     lab: LabSettings = LabSettings()
     research: ResearchSettings = ResearchSettings()
     literature: LiteratureSettings = LiteratureSettings()
+    wiki: WikiSettings = WikiSettings()
     pi_profile: PiProfileSettings = PiProfileSettings()
     github: GitHubSettings = GitHubSettings()
     annot: AnnotSettings = AnnotSettings()
