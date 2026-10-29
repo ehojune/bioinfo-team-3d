@@ -1,5 +1,9 @@
 pr: 1046
 rows:
+- sha: 'f1dba9b'
+  at: 2026-10-30 07:45
+  text: 종료 증거와 stderr 오류 문구에서 CLI·MCP server가 실제로 받은 token·secret류 환경 값을 패턴과 무관하게 가린다
+  summary: 알려진 형식이 아닌 비밀값도 CLI 종료 기록에 실리지 않습니다.
 - sha: 'bc3584b'
   at: 2026-10-30 07:14
   text: 종료 증거는 CLI가 스스로 결과 없이 끝난 경우에만 붙이고, labhq가 시간 초과·무응답으로 끝낸 실행의 오류 문구는 그대로 둔다
