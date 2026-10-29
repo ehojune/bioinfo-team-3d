@@ -32,7 +32,7 @@ def shell(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("count", range(len(PHASES) + 1))
 def test_timeout_retains_only_received_phases_and_never_retries(shell, tmp_path, monkeypatch, count):
-    failure = subprocess.TimeoutExpired("fake-powershell", 10, output=frames(count))
+    failure = subprocess.TimeoutExpired("fake-powershell", broker.PROVIDER_TIMEOUT, output=frames(count))
     run = Mock(side_effect=failure)
     monkeypatch.setattr(broker.subprocess, "run", run)
     diagnostic = {}
@@ -44,7 +44,7 @@ def test_timeout_retains_only_received_phases_and_never_retries(shell, tmp_path,
     assert diagnostic["elapsed_ms"] == 10000
     assert "private" not in json.dumps(diagnostic)
     run.assert_called_once()
-    assert run.call_args.kwargs["timeout"] == 10
+    assert run.call_args.kwargs["timeout"] == broker.PROVIDER_TIMEOUT
     assert run.call_args.kwargs["stderr"] == subprocess.DEVNULL
 
 
@@ -61,7 +61,7 @@ def test_success_parses_progress_separately_from_returned_pid(shell, tmp_path, m
 
 @pytest.mark.parametrize("count,reply", [(count, b'{"code":0,"pid":222}' if count == len(PHASES) else b"") for count in range(1,len(PHASES)+1)])
 def test_timeout_journal_keeps_phase_and_duration_without_ack_or_pid(world, shell, monkeypatch, count, reply):
-    failure = subprocess.TimeoutExpired("SECRET-command", 10, output=frames(count) + reply,
+    failure = subprocess.TimeoutExpired("SECRET-command", broker.PROVIDER_TIMEOUT, output=frames(count) + reply,
                                         stderr=b"SECRET-stderr")
     run = Mock(side_effect=failure)
     monkeypatch.setattr(broker.subprocess, "run", run)
@@ -213,7 +213,7 @@ def test_stdout_is_described_by_kind_and_size_only(output, stdout, size, status)
 
 @pytest.mark.parametrize("output", [None, b"", frames(len(PHASES)) + b'{"code":0,"pid":222}'], ids=["none", "empty", "full"])
 def test_a_timed_out_provider_journals_its_stdout_kind_but_never_its_pid(world, shell, monkeypatch, output):
-    run = Mock(side_effect=subprocess.TimeoutExpired("SECRET-command", 10, output=output))
+    run = Mock(side_effect=subprocess.TimeoutExpired("SECRET-command", broker.PROVIDER_TIMEOUT, output=output))
     monkeypatch.setattr(broker.subprocess, "run", run)
     world.create.side_effect = CREATE
     with pytest.raises(broker.BrokerFailure, match="provider_timeout"):

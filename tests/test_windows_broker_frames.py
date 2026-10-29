@@ -138,7 +138,7 @@ def test_create_sends_only_framed_stdin_and_rejects_oversize_before_any_spawn(sh
     assert payload['environment'] == ['FAKE=PRIVATE-值😀']
     assert payload['flags'] == FLAGS and payload['command'] == broker.subprocess.list2cmdline(['C:\\python.exe','C:\\a b.py'])
     assert 'PRIVATE' not in str(args) and 'env' not in kw
-    assert kw['timeout']==10 and kw['stderr'] is broker.subprocess.DEVNULL
+    assert kw['timeout']==broker.PROVIDER_TIMEOUT and kw['stderr'] is broker.subprocess.DEVNULL
     run.reset_mock()
     ticks = iter([70.0, 80.0])
     monkeypatch.setattr(broker.time, 'monotonic', lambda: next(ticks))
