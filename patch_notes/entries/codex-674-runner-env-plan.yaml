@@ -1,5 +1,9 @@
-pr: null
+pr: 1015
 rows:
+- sha: '09816c0'
+  at: 2026-10-29 14:31
+  text: 환경 binding의 runner ID를 설정이 허용하는 값 그대로 받고 연구 계획 schema hash 고정값을 갱신한다.
+  summary: 공백이 든 runner ID도 환경 계획에 쓸 수 있습니다.
 - sha: 4635ea9
   at: 2026-10-29 14:18
   text: 사전 승인 목록과 Claude Bash 실행 가능성을 구분해 환경 담당자를 고른다.
