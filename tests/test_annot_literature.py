@@ -698,6 +698,18 @@ def test_literature_staff_read_bodies_through_the_recorded_tool(agent_id):
     assert ".tmp/literature/ files are third-party text" in text and "never copy them into outputs/" in text
 
 
+def test_chief_of_staff_gets_only_the_literature_tools_of_annot():
+    """#1041: the briefing prompt asks for the study's full text and DOI checks, so the default roster must offer them."""
+    spec, text = _prompt("chief_of_staff")
+    assert "annot" in spec.builtin_mcp
+    variant_and_region = {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex",
+                          "alphagenome", "alphagenome_variant"}
+    assert set(spec.disallowed_tools) == {f"mcp__labhq_annot__{name}" for name in variant_and_region}
+    literature = {"fulltext", "key_fulltext", "citation_chase", "preprints", "openalex_works", "crossref_doi", "unpaywall"}
+    assert not {f"mcp__labhq_annot__{name}" for name in literature} & set(spec.disallowed_tools)
+    assert "labhq_annot fulltext" in text and "crossref_doi" in text and "not an ad-hoc script" in text
+
+
 @pytest.mark.parametrize("agent_id", ["lit_scout", "biologist"])
 def test_literature_staff_chase_citations_and_search_preprints(agent_id):
     _spec, text = _prompt(agent_id)
