@@ -250,3 +250,20 @@ def test_runner_id_is_not_restricted_to_the_step_id_grammar():
     assert EnvironmentBinding.model_validate(binding).runner_id == "lab pc 1"
     from labhq.orchestrator.cso import environment_runner_pin
     assert environment_runner_pin({"environment_bindings": [binding]}) == "lab pc 1"
+
+
+@pytest.mark.asyncio
+async def test_plan_only_request_does_not_bind_runners(tmp_path, monkeypatch):
+    source = cont._plan(1)["steps"]
+    source[0]["outputs"] = [ENV_LOCK_OUTPUT]
+    source[0]["agent_id"] = source[1]["agent_id"] = "worker"
+    hub = cont._hub(tmp_path, [cont.CP1], reviews=[cont.ACCEPT], plan_extra={"steps": source})
+    hub.requests["r"]["mode"] = "plan_only"
+
+    def refuse(self, steps):
+        raise AssertionError("plan_only must not require a connected consumer runner")
+
+    monkeypatch.setattr(Orchestrator, "_prepare_runner_environments", refuse)
+    await Orchestrator(hub).run_request("r")
+    assert hub.requests["r"]["status"] != "failed", hub.requests["r"].get("report")
+    assert "environment_binding" not in json.dumps(hub.requests["r"]["plan"])

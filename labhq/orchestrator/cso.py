@@ -7568,7 +7568,8 @@ class Orchestrator:
                         return
                 await prepare_recruits()
                 steps = req["plan"]["steps"]
-                if any(ENV_LOCK_OUTPUT in step.get("outputs", []) for step in steps):
+                # A plan-only request never executes, so it must not wait for a consumer runner (#674).
+                if req["mode"] != "plan_only" and any(ENV_LOCK_OUTPUT in step.get("outputs", []) for step in steps):
                     steps = self._prepare_runner_environments(steps)
                     req["plan"] = {**req["plan"], "steps": steps}
                     if research_lane:
