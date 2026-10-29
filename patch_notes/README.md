@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:12 | [`cd02532`](https://github.com/ehojune/bioinfo-team-3d/pull/996/commits/cd02532) | **병렬 단계의 출력 형식 오류 재시도가 요청 예산 한도를 넘지 않게 했습니다.**<br>StructuredOutput 형식 오류 재시도를 runner 안의 반복에서 gateway의 새 dispatch로 옮겨 병렬 단계가 요청 예산을 승인 없이 넘지 못하게 한다 (#673). |
 | 08:53 | [`842e929`](https://github.com/ehojune/bioinfo-team-3d/pull/1004/commits/842e929) | **Codex 직원이 쓸 수 없는 긴 계산 도구로 안내받던 문제를 고쳐 쓸 수 있는 방법을 안내합니다.**<br>Codex 등 Claude 외 직원에게 labhq_job을 연결하거나 안내하지 않고 대안(labhq_hpc·조각 나누기·PI에게 묻기)을 안내한다 (#1003). |
 | 08:20 | [`591b9da`](https://github.com/ehojune/bioinfo-team-3d/pull/1002/commits/591b9da) | **Windows에서 R이 늦게 뜰 때 실제 R 문법 검사 시험이 시간 초과로 실패하던 것을 막고 단계 시간을 기록합니다.**<br>실제 Rscript를 띄우는 parse 시험 2건만 호출당 60초를 주고 version·syntax 단계 시간을 통과할 때도 경고 요약으로 남긴다 (#898). |
 | 08:20 | [`f1c9add`](https://github.com/ehojune/bioinfo-team-3d/pull/1002/commits/f1c9add) | **재현 검증의 문법 검사 시간 한도와 Windows에서 R이 늦게 뜬 관측을 매뉴얼에 적었습니다.**<br>매뉴얼에 재현 receipt 문법 검사의 도구 호출당 10초 한도와 Windows의 느린 Rscript 시작 관측을 적는다 (#898). |
@@ -27,6 +28,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 05:58 | [`d3488e3`](https://github.com/ehojune/bioinfo-team-3d/pull/995/commits/d3488e3) | **Windows에서 흔들리던 차단기 테스트와 가짜 실행기 설정을 고쳤습니다.**<br>차단기 beat 테스트에 가짜 시계를 주입하고(Windows 시계 해상도), recruit 정적 테스트의 가짜 runner에 breakers를 추가한다. |
 | 05:42 | [`9a75fed`](https://github.com/ehojune/bioinfo-team-3d/pull/995/commits/9a75fed) | **새 차단기 테스트를 자동 검사 목록에 올리고, 해제 직후 잘못 멈추는 경우와 상태가 남는 경우를 고쳤습니다.**<br>차단기 테스트를 Windows inventory에 등록하고, 해제 때 ladder를 먼저 초기화하며 비정상 종료에서도 breaker 상태를 지운다 (#995 리뷰 P2). |
 | 05:27 | [`96d79d3`](https://github.com/ehojune/bioinfo-team-3d/pull/995/commits/96d79d3) | **같은 일을 반복하는 직원을 단계적으로 제한하고, 지원하지 않는 엔진은 제한하지 못했다고 정직하게 표시하며, PI가 해제할 수 있게 했습니다.**<br>폭주 차단기 단계 집행 — beat 승격, hook 엔진만 constrain, 미지원 엔진 unsupported 표시, hardStop일 때만 halt, PI 해제 API (#59). |
+| 05:22 | [`84c198d`](https://github.com/ehojune/bioinfo-team-3d/pull/996/commits/84c198d) | **병렬 예산 초과 재현 시험을 남겼습니다.**<br>재시도 허용 callback 초안과 병렬 예산 회귀 test를 보존한다 (callback은 cd02532에서 gateway 재dispatch로 대체). |
 | 05:21 | [`9bbbde3`](https://github.com/ehojune/bioinfo-team-3d/pull/995/commits/9bbbde3) | **폭주 차단기가 경고에서 제한, 정지로 올라가는 규칙의 초안을 보존했습니다.**<br>폭주 차단기 단계 정책(BreakerPolicy)과 hook의 constrain 상태 초안을 보존한다 (#59, Codex 인계분). |
 
 ## 2026-10-27
