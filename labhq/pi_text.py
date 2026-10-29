@@ -114,6 +114,13 @@ def approval_copy(kind: str, summary: str, detail: dict) -> dict[str, str]:
                   if isinstance(free, (int, float)) and isinstance(floor, (int, float)) else
                   '디스크가 차면 이 작업과 gateway가 멈출 수 있습니다.')
         outcome = '승인하면 이 작업을 그대로 시작합니다. 거절하거나 시간이 끝나면 시작하지 않고 이유를 남깁니다.'
+    elif kind == 'wsl_setup':
+        one = 'WSL 준비가 덜 됐어요. 셋업할까요?'
+        missing = detail.get('missing') if isinstance(detail.get('missing'), list) else []
+        reason = ('bioinfo-agent는 이 PC의 WSL에서 돌아가는데 아직 준비되지 않았습니다.'
+                  + (f" 빠진 것: {', '.join(plain_text(item) for item in missing[:8])}." if missing else ''))
+        outcome = ('승인하면 관리자 권한이 필요 없는 준비(Nextflow 설치, WSL 안 labhq, runner 등록)를 바로 합니다. '
+                   '관리자 명령이 남으면 카드가 보여 주고, 요청은 기다리지 않고 멈춥니다. 거절하면 셋업하지 않습니다.')
     elif kind == 'literature_pdf':
         papers = detail.get('papers') if isinstance(detail.get('papers'), list) else []
         one = f'핵심 논문 {len(papers)}편의 PDF를 요청합니다.'

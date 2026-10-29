@@ -108,6 +108,7 @@ CANCEL_RESULT_WAIT_S = 10.0
 # A PDF upload succeeds only after the runner confirms its workspace write.
 ATTACHMENT_ACK_TIMEOUT_S = 30.0
 # Statuses a hold sets and _sync_hold_status may lift again.
+WSL_BOUND_AGENTS = frozenset({"bioinfo-agent"})  # staff that only run in the local WSL runner (#612)
 HOLD_STATES = frozenset({"waiting_login", "waiting_quota", "waiting_facilities_fix", "waiting_pi"})
 
 
@@ -3290,6 +3291,106 @@ class Hub:
     def _no_runner_hosts(agent_id: str) -> str:
         return f"연결된 러너 중 {agent_id} 직원을 맡은 곳이 없습니다 (no runner hosts agent {agent_id!r})"
 
+    @staticmethod
+    def _wsl_not_ready(task: Task, note: str) -> TaskResult:
+        # Nothing was sent, so nothing was spent: a real $0.
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
+                          error_kind="wsl_not_ready", error=note)
+
+    def _native_hosts(self, agent_id: str) -> bool:
+        """Some runner other than the WSL one has this agent on its roster, now or last time it connected."""
+        wsl_id = self.s.runner.wsl.id
+        rosters = {rid: entry.get("agents", []) for rid, entry in getattr(self, "last_runner_rosters", {}).items()}
+        rosters.update(getattr(self, "runner_agents", {}))
+        return any(rid != wsl_id and any(agent.get("id") == agent_id for agent in staff)
+                   for rid, staff in rosters.items())
+
+    async def offer_wsl_setup(self, task: Task) -> TaskResult | None:
+        """The agent runs only in the local WSL runner and that runner is not ready (#612): ask the PI once per request
+        whether to set it up. None: nothing to say, carry on as before. A result: the task stops here, without waiting
+        for a runner that will not come on its own."""
+        from .. import wsl_setup
+        from ..cli import _gateway_is_local
+
+        rid = task.request_id or ""
+        if task.agent_id not in WSL_BOUND_AGENTS or rid not in self.requests or not wsl_setup.configured(self.s):
+            return None
+        if self._native_hosts(task.agent_id):
+            return None  # a native runner hosts it and is only away: the normal wait for it applies, not a WSL setup
+        async with self._approval_lock(f"wslsetup:{rid}"):
+            state = self.requests[rid].setdefault("wsl_setup", {})
+            if state.get("status") in {"declined", "timed_out", "failed", "blocked"}:
+                return self._wsl_not_ready(task, state.get("note") or "WSL가 준비되지 않았습니다")
+            if state.get("status") == "ready":
+                return None
+            try:
+                rows = await asyncio.wait_for(asyncio.to_thread(wsl_setup.check, self.s), 60)
+            except Exception:  # a check that cannot run says nothing about readiness: keep the old behaviour
+                return None
+            if not wsl_setup.pending_rows(rows):
+                return None
+            detail = wsl_setup.card_detail(rows)
+            if not _gateway_is_local(self.s):
+                state.update(status="blocked", note=(
+                    "WSL 셋업은 gateway와 같은 PC에서만 실행합니다. WSL이 있는 PC에서 `labhq setup-wsl`을 실행하세요."))
+                await self.asave_request(rid)
+                return self._wsl_not_ready(task, state["note"])
+            approval = ApprovalRequest(kind="wsl_setup", request_id=rid, summary="WSL 준비가 덜 됐어요. 셋업할까요?",
+                                       detail={"agent_id": task.agent_id, **detail},
+                                       timeout_s=self.s.policy.approvals.timeout_s)
+            fut = asyncio.get_running_loop().create_future()
+            await self._add_approval(approval.id, {"approval": approval.model_dump(mode="json"), "origin": None,
+                                                   "future": fut})
+            await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
+                                "data": approval.model_dump(mode="json")})
+            remaining = max(0.0, approval.created_at + approval.timeout_s - time.time())
+            try:
+                answer = await asyncio.wait_for(asyncio.shield(fut), remaining)
+            except asyncio.TimeoutError:
+                answer = await self._timeout_approval(approval.id)
+            if not answer.get("approved"):
+                timed_out = answer.get("state") == "timed_out"
+                state.update(status="timed_out" if timed_out else "declined", note=(
+                    "WSL 셋업 승인이 없어 bioinfo-agent를 쓸 수 없습니다. 직접 준비하려면 `labhq setup-wsl`을 실행하세요."))
+                await self.asave_request(rid)
+                return self._wsl_not_ready(task, state["note"])
+            if getattr(self, "_wsl_setup_running", False):
+                state.update(status="failed", note="다른 WSL 셋업이 아직 진행 중입니다. 끝난 뒤 `labhq setup-wsl --check`로 확인하세요.")
+                await self.asave_request(rid)
+                return self._wsl_not_ready(task, state["note"])
+            self._wsl_setup_running = True
+            work = asyncio.ensure_future(asyncio.to_thread(wsl_setup.setup, self.s))
+            # A running thread cannot be stopped: the flag stays up until it ends, whatever the wait below does.
+            work.add_done_callback(lambda done: (setattr(self, "_wsl_setup_running", False),
+                                                 done.cancelled() or done.exception()))  # a late failure is read, not lost
+            try:
+                rows = await asyncio.wait_for(asyncio.shield(work), wsl_setup.SETUP_LIMIT_S)
+            except Exception as exc:  # the exception text can carry installer output: only its type is kept
+                log.warning("WSL setup from card failed: %s", type(exc).__name__)
+                still = isinstance(exc, asyncio.TimeoutError)
+                state.update(status="failed", note=(
+                    "WSL 셋업이 15분 안에 끝나지 않았습니다. 준비가 백그라운드에서 계속될 수 있으니 끝난 뒤 "
+                    "`labhq setup-wsl --check`로 확인하세요." if still else
+                    f"WSL 셋업을 마치지 못했습니다({type(exc).__name__}). `labhq setup-wsl`로 직접 확인하세요."))
+                await self.asave_request(rid)
+                return self._wsl_not_ready(task, state["note"])
+            left = wsl_setup.card_detail(rows)
+            if wsl_setup.pending_rows(rows):
+                commands = left["admin_commands"][:5]
+                state.update(status="failed", note="WSL 셋업을 했지만 아직 준비되지 않았습니다. 남은 것: "
+                             + ", ".join(left["missing"][:8]) + (". 관리자 명령: " + " / ".join(commands) if commands else ""))
+                await self.asave_request(rid)
+                await self.publish({"type": "agent.log", "ts": time.time(), "task_id": task.id,
+                                    "agent_id": task.agent_id, "request_id": rid,
+                                    "data": {"level": "warn", "text": state["note"]}})
+                return self._wsl_not_ready(task, state["note"])
+            state.update(status="ready")
+            await self.asave_request(rid)
+            await self.publish({"type": "agent.log", "ts": time.time(), "task_id": task.id,
+                                "agent_id": task.agent_id, "request_id": rid,
+                                "data": {"level": "info", "text": "WSL 셋업을 마쳤어요. runner가 연결되면 이어 갑니다"}})
+            return None
+
     async def wait_for_runner(self, task: Task, *, first: bool = False) -> bool:
         """Park the task's request as waiting_for_runner until a runner hosting the agent connects, at most
         gateway.runner_wait_s. Nothing was sent yet, so nothing is uncertain or spent. False also when a roster
@@ -3859,6 +3960,10 @@ class Hub:
         if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                               error="request cancelled")
+        if self.agent_runner.get(task.agent_id) not in self.runners:
+            stopped = await self.offer_wsl_setup(task)  # the local WSL runner is not ready: one PI card, not a wait
+            if stopped is not None:
+                return stopped
         if self.agent_runner.get(task.agent_id) not in self.runners and self._waits_for_runner(task):
             arrived = await self.wait_for_runner(task)
             if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":

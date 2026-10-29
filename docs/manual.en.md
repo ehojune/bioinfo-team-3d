@@ -157,6 +157,8 @@ On an installation without WSL configured, `doctor` prints only a line saying th
 2. `labhq -c <config> setup-wsl` prepares the missing Nextflow (24.10.5), editable labhq venv and runner config. It saves enablement only after confirming analysis readiness and the connection. It only gives guidance for Claude CLI installation and login and for administrator commands.
 3. After that, `up` and `down` also start and stop the WSL runner. To control it separately, use `wsl-runner start` or `wsl-runner stop` with the same config. It reuses the existing supervisor and process-identity checks.
 
+**When WSL is not ready (#612).** When work given to `bioinfo-agent` (a direct request or an already planned step) has nowhere to go and the config has `runner.wsl`, one card per request asks "WSL is not ready yet. Set it up?". A yes makes the gateway run the same preparation as `setup-wsl` in a thread. Fifteen minutes is the limit of the wait: a preparation already started cannot be stopped, and no other setup is started until it ends. If another native runner hosts the same agent (for instance, briefly disconnected), the existing wait applies and no card is shown. If commands that need administrator rights remain, the card and the error show them, and the request stops at once instead of waiting for a runner (cost $0). A no or a timeout is not asked again within the same request. If the gateway is not on the PC that has WSL, nothing runs and only `labhq setup-wsl` is suggested. The card and feed carry item names and fixed advice, never installer output. The "run location card" that lets automatic planning pick WSL comes with #578.
+
 | `runner.wsl` setting | Default / purpose |
 |---|---|
 | `distro`, `user` | `Ubuntu-22.04`, the distro's default user |
