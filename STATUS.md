@@ -102,6 +102,13 @@ labhq/runner/step_inputs.py, labhq/adapters/held_dir.py, tests/test_runner_env_i
 - Real WSL probes, executable harness integration and effective policy evidence remain UNVERIFIED: the W1 launch contract always refuses execution.
 - Existing gates remain in place. Hold until the executable contract and disposable fixture are available and the real probes are reviewed.
 
+# Claude sandbox 정책 계약 (#666)
+
+- 설정 source와 약화 설정을 거부하는 offline 계약을 추가했습니다. 기존 gate는 유지합니다.
+- `python -m pytest tests/test_claude_sandbox.py -q`: 37 passed. 빈 domain 목록에 strict allowlist를 적용합니다.
+- 실제 effective settings, WSL 보호, launcher 실행은 미검증입니다. 실행은 항상 거부합니다.
+- 후속: 신뢰된 설정 source와 실행 중 설정 변경 차단, 실제 엔진 정책 확인 및 W3 경계 시험이 필요합니다.
+
 # 해제 ACK·durable 재전송 (#1008)
 
 | 항목 | 내용 |
