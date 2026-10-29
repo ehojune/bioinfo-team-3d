@@ -1,5 +1,9 @@
 pr: 1032
 rows:
+- sha: 'c5c59b3'
+  at: 2026-10-29 21:05
+  text: 환경 단계 dispatch의 session_runner가 배열·객체 같은 값이어도 해시하지 않고 비교해 runner 불일치 거부로 끝낸다
+  summary: 형식이 잘못된 환경 작업이 runner를 비정상 종료시키지 않고 비용 없이 거부됩니다.
 - sha: '66fbd13'
   at: 2026-10-29 20:50
   text: 환경 단계 dispatch에 step ID가 없거나 binding과 다르면 거부한다
