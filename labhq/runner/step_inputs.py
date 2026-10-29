@@ -99,6 +99,20 @@ def validate_runner_env(root, source, artifact, expected, request_id=None):
     return source / '.venv'
 
 
+def producer_environment_problem(root, workdir, outputs, hashes, binding):
+    """Why a finished environment step does not match its pinned binding, or None when it does (#674).
+
+    The runner checks the collected ``runner-manifest.json`` (hash and exact contract) and the interpreter before it
+    reports the step as successful, so a producer that wrote ``{}`` or another runner's binding fails right there."""
+    try:
+        validate_runner_env(root, workdir, {'outputs': list(outputs), 'output_sha256': dict(hashes)}, binding)
+    except ValueError as exc:
+        return str(exc)
+    except (OSError, TypeError, KeyError, AttributeError) as exc:
+        return type(exc).__name__
+    return None
+
+
 # System runtimes an interpreter link may point to; the venv itself is always allowed.
 SYSTEM_RUNTIME_ROOTS = ('/usr/bin', '/usr/local/bin', '/usr/lib', '/bin')
 _TRUSTED_OWNER = 0

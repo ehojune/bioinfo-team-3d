@@ -2449,6 +2449,14 @@ class Runner:
                 warning = "선택 산출 누락: " + ", ".join(result.missing_optional_outputs)
                 result.step_warnings = list(dict.fromkeys([*result.step_warnings, warning]))
                 await emit("agent.log", {"level": "warn", "text": warning})
+        binding = task.meta.get("environment_binding")
+        if result.ok and isinstance(binding, dict):
+            from .step_inputs import producer_environment_problem
+            problem = await asyncio.to_thread(producer_environment_problem, self.ws_root, ws.dir,
+                                              result.outputs, result.output_sha256, binding)
+            if problem:
+                result.ok = False
+                result.error = "incomplete: runner environment does not match the pinned binding: " + problem
         # Bytecode caches are the interpreter's, not the employee's: 21 unreported files of the v0.5 trial included
         # outputs/lib/__pycache__ (#485). They stay in the observed records.
         result.unreported_outputs = sorted(row["path"] for row in observed_outputs
