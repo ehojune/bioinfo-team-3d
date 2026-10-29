@@ -120,7 +120,7 @@ def test_a_missing_state_folder_is_judged_by_its_existing_parent_and_an_unknown_
     assert "private volume detail" not in str(rows)
 
 
-def test_volume_number_zero_is_unknown_so_a_full_state_volume_still_warns(tmp_path, monkeypatch):
+def test_volume_number_zero_is_unknown_so_a_full_state_volume_still_gets_its_own_row(tmp_path, monkeypatch):
     """UNC and special volumes can report st_dev 0 everywhere; equal zeros are no proof of one volume."""
     import os as real_os
     state = tmp_path / "share" / "state"
@@ -140,7 +140,8 @@ def test_volume_number_zero_is_unknown_so_a_full_state_volume_still_warns(tmp_pa
         doctor._volume(tmp_path)
     rows = doctor._disk_rows(_state_settings(tmp_path, state))
     gateway = [row for row in rows if row["name"] == "gateway state disk"]
-    assert len(gateway) == 1 and gateway[0]["status"] == "warn"
+    # 1 GiB free is under the start floor (runner.disk_fail_free_gb, 2): the gateway state drive fails, not only warns (#678)
+    assert len(gateway) == 1 and gateway[0]["status"] == "fail"
     assert all(row["status"] == "ok" for row in rows if row is not gateway[0])
     assert not state.parent.exists()
 
@@ -220,3 +221,30 @@ def test_edition_never_publishes_custom_workspace_after_cleaning(tmp_path):
         assert "local_path" in str(exc)
     else:
         assert all("/analysis/odd-name" not in body for body in files.values() if isinstance(body, str))
+
+
+def _fail_settings(tmp_path):
+    return Settings(runner={"workspace_root": str(tmp_path / "work")}, gateway={"state_dir": str(tmp_path / "state")})
+
+
+def test_doctor_fails_the_drives_the_runner_and_gateway_write_to_below_the_start_floor(tmp_path, monkeypatch):
+    settings = _fail_settings(tmp_path)
+    monkeypatch.setattr(doctor.tempfile, "gettempdir", lambda: str(tmp_path / "temporary"))
+    monkeypatch.setattr(doctor, "_volume", lambda path: path.name if path.name == "state" else "shared")
+    monkeypatch.setattr(disk_space, "usage", lambda path: space(100, 1.5))  # under 2 GiB everywhere
+    rows = {row["name"]: row["status"] for row in doctor._disk_rows(settings)}
+    assert rows["workspace disk"] == "fail" and rows["gateway state disk"] == "fail"
+    assert rows["temporary disk"] == "warn"  # a warning level only: no task starts there
+    assert all(status == "warn" for name, status in rows.items() if "staff home" in name)
+
+
+def test_between_the_floor_and_the_warning_level_it_only_warns_and_a_zero_floor_turns_fail_off(tmp_path, monkeypatch):
+    settings = _fail_settings(tmp_path)
+    monkeypatch.setattr(doctor, "_volume", lambda path: "shared")
+    monkeypatch.setattr(disk_space, "usage", lambda path: space(100, 5))  # 5 GiB: warn (10 GiB) but not fail (2 GiB)
+    assert {row["name"]: row["status"] for row in doctor._disk_rows(settings)}["workspace disk"] == "warn"
+    monkeypatch.setattr(disk_space, "usage", lambda path: space(100, 1))
+    settings.runner.disk_fail_free_gb = 0
+    assert {row["name"]: row["status"] for row in doctor._disk_rows(settings)}["workspace disk"] == "warn"
+    settings.runner.disk_fail_free_gb = 2
+    assert {row["name"]: row["status"] for row in doctor._disk_rows(settings)}["workspace disk"] == "fail"

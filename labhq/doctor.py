@@ -167,13 +167,19 @@ def _disk_rows(settings: Settings) -> list[dict]:
             space = disk_space.usage(path)
             status = "warn" if disk_space.low(space, runner.disk_warning_free_gb,
                                                runner.disk_warning_free_percent) else "ok"
+            # The drives the runner and the gateway write to: below the level the runner asks the PI before starting a
+            # task on (runner.disk_fail_free_gb) a run is likely to fill them, so doctor fails here (#678). Temporary
+            # and staff-home drives stay warnings.
+            if (name in {"workspace disk", "gateway state disk"} and runner.disk_fail_free_gb
+                    and space.free < runner.disk_fail_free_gb * disk_space.GIB):
+                status = "fail"
             detail = (f"여유 {space.free / disk_space.GIB:.1f} GiB / {space.total / disk_space.GIB:.1f} GiB "
                       f"({100 * space.free / space.total:.1f}%)" if space.total else "용량 확인 불가")
         except (OSError, ValueError):
             status, detail = "warn", "드라이브 여유 공간을 확인하지 못했습니다"
         rows.append(_row("disk", name, status, detail,
-                         "runner.disk_warning_free_gb·disk_warning_free_percent를 확인하고 여유 있는 드라이브를 고르세요. "
-                         "자동 이동·삭제는 하지 않습니다."))
+                         "runner.disk_warning_free_gb·disk_warning_free_percent·disk_fail_free_gb를 확인하고 여유 있는 "
+                         "드라이브를 고르세요. 자동 이동·삭제는 하지 않습니다."))
     return rows
 
 
