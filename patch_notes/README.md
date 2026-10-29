@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:11 | [`2fd8feb`](https://github.com/ehojune/bioinfo-team-3d/pull/1014/commits/2fd8feb) | **영문 매뉴얼 첫머리가 현재 영문판이 있는 문서를 정확히 알려 줍니다.**<br>영문 매뉴얼 머리말의 언어 안내를 영문판 현황에 맞게 고침 |
+| 13:58 | [`0063375`](https://github.com/ehojune/bioinfo-team-3d/pull/1014/commits/0063375) | **한국어 매뉴얼 맨 위에서 영문판 문서로 바로 갈 수 있습니다.**<br>한국어 매뉴얼 머리에 영문판 안내 추가 |
+| 13:56 | [`14ebe15`](https://github.com/ehojune/bioinfo-team-3d/pull/1014/commits/14ebe15) | **연구 수행 규약·PI Q&amp;A·어휘 표의 영문판을 추가하고 영문 README와 영문 매뉴얼이 이를 가리킵니다.**<br>영문 문서 3종 추가(docs/research_protocol.en.md, pi-qa.en.md, vocabulary.en.md), README.en과 manual.en의 해당 링크를 영문판으로, AGENTS.md에 영문판 동시 갱신 안내 |
 | 13:41 | [`90381b2`](https://github.com/ehojune/bioinfo-team-3d/pull/1010/commits/90381b2) | **도구 제한이 걸려도 작업판에 해제 버튼이 안 뜨던 문제를 고쳤습니다.**<br>constrain 단계도 agent.control summary를 보내 작업판이 제한 상태와 해제 버튼을 보이게 한다 (#1010 리뷰 P1). |
 | 13:35 | [`2632ab6`](https://github.com/ehojune/bioinfo-team-3d/pull/1012/commits/2632ab6) | **영어 독자가 읽을 수 있는 영문 매뉴얼을 추가하고 영문 README가 영문 매뉴얼로 연결됩니다.**<br>영문 매뉴얼 docs/manual.en.md 추가(한국어 manual과 같은 절 구조, 코드·명령·설정 키는 원문), README.en의 Further reading·본문 링크를 영문판으로, AGENTS.md에 한국어 manual을 고칠 때 영문판도 같은 PR에서 고친다는 안내 |
 | 13:29 | [`8ac9307`](https://github.com/ehojune/bioinfo-team-3d/pull/1010/commits/8ac9307) | **제한 해제 요청이 아직 전달되지 않았다면 연결 뒤에 전달된다고 알립니다.**<br>제한 해제 버튼이 runner에 닿지 않았을 때 "러너가 연결되면 전달해요"로 안내한다 (#1008). |
