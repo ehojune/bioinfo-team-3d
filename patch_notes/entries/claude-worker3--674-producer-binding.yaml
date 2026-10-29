@@ -1,5 +1,9 @@
 pr: 1032
 rows:
+- sha: '66fbd13'
+  at: 2026-10-29 20:50
+  text: 환경 단계 dispatch에 step ID가 없거나 binding과 다르면 거부한다
+  summary: 단계 정체가 증명되지 않은 환경 작업은 시작되지 않습니다.
 - sha: '489af2c'
   at: 2026-10-29 20:25
   text: runner가 환경 단계의 단수 environment_binding(계약 형식, runner ID, runtime, step ID)을 엔진 시작 전에 검사하고 어긋나면 비용 없이 거부한다
