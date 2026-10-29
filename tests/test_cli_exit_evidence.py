@@ -86,3 +86,11 @@ async def test_a_secret_the_run_really_received_is_masked_even_without_a_known_p
         env={"MY_SERVICE_TOKEN": odd, "LABHQ_BROKER_TOKEN": "tok-value-123456789"})
     text = res.error + (workdir / ".labhq" / "exit_evidence.json").read_text(encoding="utf-8") + str(events)
     assert odd not in text and "tok-value-123456789" not in text
+
+
+async def test_a_multi_line_secret_is_masked_across_lines(tmp_path):
+    pem = chr(10).join(["-----BEGIN KEY-----", "bodybodybody0123456789", "morebodymorebody987654", "-----END KEY-----"])
+    dump = chr(10).join(["start", *pem.splitlines(), "end"])
+    res, events, workdir = await run_fake(tmp_path, [], dump.splitlines(), 0, env={"MY_PRIVATE_KEY": pem})
+    text = res.error + (workdir / ".labhq" / "exit_evidence.json").read_text(encoding="utf-8") + str(events)
+    assert "bodybodybody0123456789" not in text and "morebodymorebody987654" not in text

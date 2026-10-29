@@ -1314,16 +1314,21 @@ class AgentAdapter(ABC):
     def _secret_values(cls, ctx: RunContext, child_env: dict[str, str]) -> list[str]:
         """Values this run really handed to the CLI and its MCP servers under secret-looking names."""
         sources = [child_env, ctx.env, *(server.env for server in ctx.mcp_servers)]
-        return sorted({value for source in sources for key, value in (source or {}).items()
-                       if isinstance(value, str) and len(value) >= 8 and cls._SECRET_KEY.search(key)})
+        values = {value for source in sources for key, value in (source or {}).items()
+                  if isinstance(value, str) and len(value) >= 8 and cls._SECRET_KEY.search(key)}
+        # A multi-line value (a PEM key) is also masked line by line, in case stderr shows only part of it.
+        values.update(line.strip() for value in list(values) for line in value.splitlines() if len(line.strip()) >= 8)
+        return sorted(values, key=len, reverse=True)
 
     def _clean_stderr_lines(self, stderr_tail: deque[str], count: int, secrets: list[str] = ()) -> list[str]:
         """The last non-empty stderr lines minus labhq's own Job announcement, with secrets and zones masked."""
         from ..integrations.github import sanitize
         from ..runner.memory_limit import JOB_ACTIVE
 
-        lines = [line for line in stderr_tail if line.strip() and not line.strip().startswith(JOB_ACTIVE)][-count:]
-        return [sanitize(line, self.settings.policy, secrets, limit=300) for line in lines]
+        # The whole tail is masked as one text before lines are picked, so a secret spanning lines cannot slip through.
+        text = sanitize(chr(10).join(stderr_tail), self.settings.policy, secrets, limit=None)
+        lines = [line for line in text.split(chr(10)) if line.strip() and not line.strip().startswith(JOB_ACTIVE)]
+        return [short(line, 300) for line in lines[-count:]]
 
     def _clean_stderr(self, stderr_tail: deque[str], count: int, secrets: list[str] = ()) -> str:
         return " | ".join(self._clean_stderr_lines(stderr_tail, count, secrets))
