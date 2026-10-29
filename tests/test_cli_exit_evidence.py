@@ -18,7 +18,8 @@ INIT = {"type": "system", "subtype": "init", "session_id": "s1", "model": "claud
 RESULT = {"type": "result", "subtype": "success", "result": "끝", "session_id": "s1", "total_cost_usd": 0.1}
 
 
-async def run_fake(tmp: Path, stdout_events: list[dict], stderr_lines: list[str], exit_code: int):
+async def run_fake(tmp: Path, stdout_events: list[dict], stderr_lines: list[str], exit_code: int,
+                   env: dict[str, str] | None = None):
     script = tmp / "fake_cli.py"
     script.write_text(
         "import sys\nsys.stdout.reconfigure(encoding='utf-8')\nsys.stderr.reconfigure(encoding='utf-8')\n"
@@ -37,7 +38,7 @@ async def run_fake(tmp: Path, stdout_events: list[dict], stderr_lines: list[str]
 
     workdir = tmp / "wd"
     workdir.mkdir()
-    env = {"LABHQ_BROKER_URL": "http://127.0.0.1:9", "LABHQ_BROKER_TOKEN": "tok", "LABHQ_TASK_ID": "t1"}
+    env = {"LABHQ_BROKER_URL": "http://127.0.0.1:9", "LABHQ_BROKER_TOKEN": "tok", "LABHQ_TASK_ID": "t1", **(env or {})}
     mcp = [McpServerSpec(name="labhq_ask", command="python", args=["-m", "labhq.tools.ask_mcp"], env=dict(env))]
     ctx = RunContext(task=Task(agent_id="lit_scout", prompt="do it"), agent=agent, workdir=workdir, settings=settings,
                      mcp_servers=mcp, env=dict(env), emit=emit, prompt="do it")
@@ -76,3 +77,12 @@ async def test_a_normal_run_writes_no_evidence(tmp_path):
 async def test_no_stderr_is_stated_not_invented(tmp_path, stderr):
     res, _, _ = await run_fake(tmp_path, [], stderr, 0)
     assert not res.ok and ("(출력 없음)" in res.error) == (not stderr)
+
+
+async def test_a_secret_the_run_really_received_is_masked_even_without_a_known_pattern(tmp_path):
+    odd = "zz-not-a-known-pattern-9f8e7d6c"
+    res, events, workdir = await run_fake(
+        tmp_path, [], [f"LABHQ_BROKER_TOKEN=tok-value-123456789 dump {odd}"], 0,
+        env={"MY_SERVICE_TOKEN": odd, "LABHQ_BROKER_TOKEN": "tok-value-123456789"})
+    text = res.error + (workdir / ".labhq" / "exit_evidence.json").read_text(encoding="utf-8") + str(events)
+    assert odd not in text and "tok-value-123456789" not in text

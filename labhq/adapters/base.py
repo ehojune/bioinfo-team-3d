@@ -1295,35 +1295,46 @@ class AgentAdapter(ABC):
         res.exit_code = returncode
         res.cleanup_evidence = self._cleanup_evidence(cleanup, proc)
         ctx.commands_ran = st.commands_ran
+        secrets = self._secret_values(ctx, env)
         if res.error and stderr and ("empty CLI stream" in res.error or "IneligibleTierError" in stderr):
-            res.error = f"{res.error}: {short(self._clean_stderr(stderr_tail, 5), 500)}"
+            res.error = f"{res.error}: {short(self._clean_stderr(stderr_tail, 5, secrets), 500)}"
         if returncode not in (0, None) and not res.error:
-            res.error = f"exit {returncode}: " + self._clean_stderr(stderr_tail, 5)
+            res.error = f"exit {returncode}: " + self._clean_stderr(stderr_tail, 5, secrets)
         if not res.ok and not st.result_seen and (res.error or "").startswith(("empty CLI stream", "exit ")):
-            await self._record_exit_evidence(ctx, res, st, returncode, stderr_tail, time.monotonic() - started_at)
+            await self._record_exit_evidence(ctx, res, st, returncode, stderr_tail, time.monotonic() - started_at,
+                                             secrets)
         # The CLI's own stderr counts only when the run failed; a failed command's output counts either way, because
         # an agent that gave up after "No module named x" can still exit 0 with its outputs missing (#35).
         res.environment = env_signatures.scan_run(self.engine, stderr_tail if not res.ok else (), st.failed_outputs)
         return res
 
-    def _clean_stderr_lines(self, stderr_tail: deque[str], count: int) -> list[str]:
+    _SECRET_KEY = re.compile(r"token|secret|passw|credential|api[_-]?key|auth|private|session|cookie", re.IGNORECASE)
+
+    @classmethod
+    def _secret_values(cls, ctx: RunContext, child_env: dict[str, str]) -> list[str]:
+        """Values this run really handed to the CLI and its MCP servers under secret-looking names."""
+        sources = [child_env, ctx.env, *(server.env for server in ctx.mcp_servers)]
+        return sorted({value for source in sources for key, value in (source or {}).items()
+                       if isinstance(value, str) and len(value) >= 8 and cls._SECRET_KEY.search(key)})
+
+    def _clean_stderr_lines(self, stderr_tail: deque[str], count: int, secrets: list[str] = ()) -> list[str]:
         """The last non-empty stderr lines minus labhq's own Job announcement, with secrets and zones masked."""
         from ..integrations.github import sanitize
         from ..runner.memory_limit import JOB_ACTIVE
 
         lines = [line for line in stderr_tail if line.strip() and not line.strip().startswith(JOB_ACTIVE)][-count:]
-        return [sanitize(line, self.settings.policy, limit=300) for line in lines]
+        return [sanitize(line, self.settings.policy, secrets, limit=300) for line in lines]
 
-    def _clean_stderr(self, stderr_tail: deque[str], count: int) -> str:
-        return " | ".join(self._clean_stderr_lines(stderr_tail, count))
+    def _clean_stderr(self, stderr_tail: deque[str], count: int, secrets: list[str] = ()) -> str:
+        return " | ".join(self._clean_stderr_lines(stderr_tail, count, secrets))
 
     async def _record_exit_evidence(self, ctx: RunContext, res: TaskResult, st: RunState, returncode: int | None,
-                                    stderr_tail: deque[str], elapsed_s: float) -> None:
+                                    stderr_tail: deque[str], elapsed_s: float, secrets: list[str] = ()) -> None:
         """A CLI that ended without any result says why in the result, an event and `.labhq/exit_evidence.json` (#1045).
 
         The exit code, the end of stderr without labhq's own Job announcement, the run time and the MCP servers'
         start status; secrets and restricted paths are masked. A CLI that gave a result is not touched."""
-        masked = self._clean_stderr_lines(stderr_tail, 8)
+        masked = self._clean_stderr_lines(stderr_tail, 8, secrets)
         evidence = {"exit_code": returncode, "elapsed_s": round(elapsed_s, 1), "stderr_tail": masked,
                     "mcp": st.mcp_status or None}
         summary = (f"CLI 종료 증거: exit {returncode}, {elapsed_s:.1f}s, stderr "
