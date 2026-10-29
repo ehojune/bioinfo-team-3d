@@ -410,21 +410,39 @@ GENERAL_RESULT_RULES = (
 
 # The rest of the lab rules for staff that write (not read-only tasks). Writes outside the workspace and paths
 # built from shell variables each raised a PI approval card in the 2nd mock trial (2026-10-03).
-WORKSPACE_WRITE_RULES = (
+# The long-computation rule differs by engine: only Claude staff can use labhq_job, because a job the runner starts
+# runs outside the OS sandbox a Codex (or other engine) run keeps its commands in, and only the Claude approval gate
+# refuses detaching commands (#1003).
+_WRITE_RULES_HEAD = (
     "- Put temporary files and scripts under ./.tmp/ in your workspace; writing to /tmp or %TEMP% outside it needs PI "
     "approval.\n"
     "- In shell commands, write paths relative to your workspace, not built from shell variables; the approval gate "
-    "cannot resolve a variable path and asks the PI.\n"
+    "cannot resolve a variable path and asks the PI.\n")
+_LONG_COMPUTATION_JOB = (
     "- Wait for every command to finish and verify its result before ending your turn; ending the turn stops "
     "background work and finishes the step with only the outputs present then. A computation that takes more than "
     "10 minutes goes through labhq_job (job_submit with the command and an estimate, then end your turn and you "
     "are resumed when it finishes) or the labhq_hpc tools, or ask the PI before proceeding; never detach it with "
-    "nohup, a trailing & or Start-Process, which is refused.\n"
+    "nohup, a trailing & or Start-Process, which is refused.\n")
+_LONG_COMPUTATION_NO_JOB = (
+    "- Wait for every command to finish and verify its result before ending your turn; ending the turn stops "
+    "background work and finishes the step with only the outputs present then. labhq_job is not available to you: a "
+    "job the runner starts would run outside the sandbox this engine keeps your commands in. A computation that takes "
+    "more than 10 minutes goes through the labhq_hpc tools when you have them; otherwise split it into parts that each "
+    "finish, with their output saved to a file, or ask the PI before proceeding. Do not leave a process running in "
+    "the background (nohup, a trailing & or Start-Process): ending your turn stops it.\n")
+_WRITE_RULES_TAIL = (
     "- If the plan has an environment step, run packages from its interpreter, by the path it reported, but never "
     "install into that shared environment. If you need an extra package, for example to read a file you received, install it into ./.pylib in your "
     "own workspace without asking (python -m pip install --target ./.pylib <package>==<version>) and put ./.pylib first on PYTHONPATH. For R use "
     "./.rlib explicitly; never write into another step's workspace. Record task-local Python packages with "
     "`python -m pip freeze --path ./.pylib` (or the package table from ./.rlib) in outputs/env/<step id>.txt.\n")
+WORKSPACE_WRITE_RULES = _WRITE_RULES_HEAD + _LONG_COMPUTATION_JOB + _WRITE_RULES_TAIL
+WORKSPACE_WRITE_RULES_NO_JOB = _WRITE_RULES_HEAD + _LONG_COMPUTATION_NO_JOB + _WRITE_RULES_TAIL
+
+
+def workspace_write_rules(engine: object) -> str:
+    return WORKSPACE_WRITE_RULES if getattr(engine, "value", engine) == "claude_code" else WORKSPACE_WRITE_RULES_NO_JOB
 
 
 def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open: bool = False) -> str:
@@ -454,7 +472,7 @@ def role_footer(ctx: "RunContext") -> str:
     return (ROLE_FOOTER + (GENERAL_RESULT_RULES if ctx.task.meta.get("general_result_contract") else "") +
             skills +
             ("\nWrite only in your own task's outputs/ and .tmp/. Inputs, upstream results, other tasks and project "
-             "sources are read-only.\n" if ctx.read_only else WORKSPACE_WRITE_RULES) +
+             "sources are read-only.\n" if ctx.read_only else workspace_write_rules(ctx.agent.engine)) +
             private_paths_section(ctx.private_labels, bool(ctx.private_open_reads)))
 
 

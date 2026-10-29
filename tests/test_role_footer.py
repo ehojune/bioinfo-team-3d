@@ -2,7 +2,8 @@
 
 import pytest
 
-from labhq.adapters.base import GENERAL_RESULT_RULES, ROLE_FOOTER, WORKSPACE_WRITE_RULES, RunContext, role_footer
+from labhq.adapters.base import (GENERAL_RESULT_RULES, ROLE_FOOTER, WORKSPACE_WRITE_RULES, RunContext, role_footer,
+                                 workspace_write_rules)
 from labhq.adapters.claude_code import ClaudeCodeAdapter
 from labhq.adapters.codex import CodexAdapter
 from labhq.models import AgentSpec, Engine, Task
@@ -30,7 +31,10 @@ def test_writing_staff_get_the_temp_folder_and_relative_path_rules(tmp_path):
     assert PATH_RULE in footer and "approval gate" in footer
     assert WAIT_RULE in footer and "ending the turn stops background work" in footer
     assert "labhq_hpc" in footer and "ask the PI" in footer
-    assert footer == ROLE_FOOTER + WORKSPACE_WRITE_RULES  # nothing else is configured
+    # nothing else is configured; Codex is not told to use labhq_job, Claude is (#1003)
+    assert footer == ROLE_FOOTER + workspace_write_rules(Engine.codex) and "job_submit" not in footer
+    claude = role_footer(_ctx(tmp_path, Engine.claude_code, read_only=False))
+    assert claude == ROLE_FOOTER + WORKSPACE_WRITE_RULES and "job_submit" in claude
 
 
 def test_read_only_staff_get_only_the_scoped_write_rules(tmp_path):
