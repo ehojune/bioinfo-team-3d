@@ -1195,7 +1195,7 @@ $('#sheet').addEventListener('click', async e => {
   if (act === 'close') return closeSheet();
   if (act === 'log') { d.dataset.log = btn.dataset.view; openSheet(id); return; }
   if (act === 'assign') { closeSheet(); $('#send-mode').value = 'request'; $('#target').value = id; renderComposerMode(); $('#ask').focus(); toast(`${nick(id)}에게 맡길 내용을 적어 주세요`); return; }
-  if (['steer', 'pause', 'resume', 'halt'].includes(act)) {  // #59 ①: acts on the task the sheet shows
+  if (['steer', 'pause', 'resume', 'halt', 'release_breaker'].includes(act)) {  // #59 ①: acts on the task the sheet shows
     const row = btn.closest('.staff-control'), task = row?.dataset.task, input = row?.querySelector('textarea.steer-text');
     const text = act === 'steer' ? (input?.value || '').trim() : '';
     if (!task) return;
@@ -1204,8 +1204,8 @@ $('#sheet').addEventListener('click', async e => {
       const out = await api.control(task, act, text);
       if (act === 'steer' && input) input.value = '';
       toast(out?.resumed_halted ? '멈췄던 작업을 재개해요' : { steer: '방향 수정을 보냈어요', pause: '일시 정지를 보냈어요',
-        resume: '재개를 보냈어요', halt: '멈춤을 보냈어요' }[act] + (out && out.sent === false
-          ? (act === 'halt' ? ' · 러너가 연결되면 전달해요' : ' · 같은 단계의 다음 turn에 적용해요') : ''));
+        resume: '재개를 보냈어요', halt: '멈춤을 보냈어요', release_breaker: '도구 제한 해제를 보냈어요' }[act] + (out && out.sent === false
+          ? (['halt', 'release_breaker'].includes(act) ? ' · 러너가 연결되면 전달해요' : ' · 같은 단계의 다음 turn에 적용해요') : ''));
     } catch (err) { toast(`보내지 못했어요: ${err.message}`); }
     return;
   }
@@ -1303,7 +1303,7 @@ function startLive() {
     recruit: s => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }),
     contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
     cancel: id => post(`/api/tasks/${encodeURIComponent(id)}/cancel`, {}),
-    control: (id, action, text) => post(`/api/tasks/${encodeURIComponent(id)}/${action}`, action === 'steer' ? { text } : {}),
+    control: (id, action, text) => post(`/api/tasks/${encodeURIComponent(id)}/${action === 'release_breaker' ? 'breaker/release' : action}`, action === 'steer' ? { text } : {}),
     storage: rid => post(`/api/requests/${encodeURIComponent(rid)}/storage`, {}),
     reviewDone: (rid, target = {}) => post(`/api/requests/${encodeURIComponent(rid)}/review-done`, target),
     cancelRequest: rid => post(`/api/requests/${encodeURIComponent(rid)}/cancel`, {}),

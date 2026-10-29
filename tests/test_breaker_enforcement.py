@@ -109,6 +109,9 @@ async def test_a_hooked_engine_is_restricted_to_read_tools_and_the_pi_can_releas
     try:
         await runner.run_task(Task(agent_id="engineer", prompt="loop", meta={"kind": "step"}))
         assert seen["constrained"] is True
+        # The staff sheet only learns of the restriction (and shows its release button) through agent.control.
+        controls = [e["data"] for e in sent if e["type"] == "agent.control"]
+        assert controls and controls[0]["constrained"] is True and controls[0]["source"] == "breaker"
         assert seen["bash"]["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert seen["after"] is False
         assert _stages(sent) == [("constrain", "applied"), ("normal", "released")]
@@ -163,3 +166,54 @@ async def test_gateway_release_reaches_the_runner_and_refuses_finished_tasks(tmp
         await hub.release_breaker("done")
     with pytest.raises(KeyError):
         await hub.release_breaker("nope")
+
+
+async def test_denied_calls_after_constrain_do_not_push_the_task_to_stop(tmp_path, monkeypatch):
+    # #1008: once restricted, a failing call may be the restriction's own denial; only a repeat keeps climbing.
+    runner, sent, _ = _runner(tmp_path, monkeypatch, Engine.claude_code, calls=0)
+
+    class Denied:
+        async def run(self, ctx):
+            same = {"name": "shell", "input": "x", "input_fingerprint": tool_input_fingerprint("shell", "x")}
+            for _ in range(8):
+                await ctx.emit("agent.tool", same)  # repeat signal: warn
+            for i in range(30):
+                await ctx.emit("agent.tool", {"name": "Bash", "input": f"c{i}",
+                                             "input_fingerprint": tool_input_fingerprint("Bash", f"c{i}")})
+                await ctx.emit("agent.tool_error", {"text": "Runaway restriction: read-only tools only"})
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="done")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Denied())
+    try:
+        await runner.run_task(Task(agent_id="engineer", prompt="loop", meta={"kind": "step"}))
+        stages = [stage for stage, _ in _stages(sent)]
+        assert "constrain" in stages and "stop" not in stages, "error streaks alone never reach stop"
+    finally:
+        runner.store.close()
+
+
+async def test_a_breaker_halt_reaches_the_gateway_as_a_pi_halt_and_a_release_waits_for_the_runner(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    hub.requests["r"] = {"id": "r", "text": "work", "mode": "team", "status": "running"}
+    hub.store.put("task", "t1", {"request_id": "r", "runner_id": "pc-a", "payload": {"agent_id": "worker"},
+                                 "accepted": True, "step_id": "s1", "kind": "step", "dispatched_at": 1.0})
+    sent, online = [], {"pc-a": False}
+
+    async def send_runner(runner_id, message):
+        if not online[runner_id]:
+            from labhq.models import RunnerUnavailable
+            raise RunnerUnavailable("offline")
+        sent.append(message)
+
+    hub.send_runner = send_runner
+    await hub._note_runner_halt("t1")
+    assert hub.store.get("task", "t1")["halt_requested"] is True  # a reconnecting runner is told to halt again
+    assert (await hub.release_breaker("t1"))["sent"] is False
+    online["pc-a"] = True
+    await hub._push_task_state("t1")
+    assert [m["action"] for m in sent if m["action"] != "halt"] == ["release_constraint"]
+    sent.clear()
+    await hub._push_task_state("t1")
+    assert all(m["action"] != "release_constraint" for m in sent), "delivered once"
