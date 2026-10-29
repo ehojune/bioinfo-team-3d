@@ -510,8 +510,6 @@ def split_runner_environments(steps: list[dict], agent_runner: dict[str, str],
                 if clone_id not in step["depends_on"]:
                     step["depends_on"].append(clone_id)
                 step.setdefault("environment_bindings", []).append(copy.deepcopy(binding))
-                executable = "Scripts/python.exe" if runtime == "windows" else "bin/python"
-                step["instruction"] += f"\nUse the runner-local interpreter at inputs/{logical}/{runner}/{executable}."
         position = planned.index(env)
         planned[position:position + 1] = clones
     return planned

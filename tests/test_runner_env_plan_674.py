@@ -41,6 +41,7 @@ def test_split_is_stable_and_rewires_with_platform_manifest():
         consumer = next(s for s in result if s["id"] in {"a", "b"} and s["agent_id"] == env["agent_id"])
         assert consumer["depends_on"] == [env["id"]]
         assert consumer["environment_bindings"] == [binding]
+        assert "runner-local interpreter at inputs/" not in consumer["instruction"]
         assert binding["python_path"] == (".venv/Scripts/python.exe" if binding["runtime"] == "windows" else ".venv/bin/python")
 
 
