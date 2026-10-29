@@ -199,6 +199,31 @@ async def test_restart_during_the_card_asks_again_from_the_stored_plan_and_runs_
     assert req["status"] == "done"
 
 
+@pytest.mark.asyncio
+async def test_restart_during_scope_card_binds_environment_before_dispatch(monkeypatch):
+    env_steps = [
+        {"id": "env", "agent_id": "worker", "instruction": "install", "outputs": [cso.ENV_LOCK_OUTPUT], "depends_on": []},
+        {"id": "analysis", "agent_id": "worker", "instruction": "run", "outputs": [], "depends_on": ["env"]},
+    ]
+    monkeypatch.setattr(__import__(__name__, fromlist=["STEPS"]), "STEPS", env_steps)
+    monkeypatch.setattr(Orchestrator, "_prepare_runner_environments",
+                        lambda self, steps: cso.split_runner_environments(
+                            steps, {"worker": "wsl"}, {"wsl": "wsl"}, lambda _: True))
+    hub = Hub(decision="hang")
+    first = asyncio.create_task(Orchestrator(hub).run_request("r"))
+    await asyncio.wait_for(hub.asked.wait(), 5)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert not any("environment_binding" in s for s in hub.requests["r"]["plan"]["steps"])
+    hub.decision = {"approved": True}
+    await Orchestrator(hub).run_request("r", resume=True)
+    saved = hub.requests["r"]["plan"]["steps"]
+    assert saved[0]["environment_binding"]["runner_id"] == "wsl"
+    assert saved[1]["environment_bindings"] == [saved[0]["environment_binding"]]
+    assert kinds(hub, "step")[0].meta["session_runner"] == "wsl"
+
+
 @pytest.mark.parametrize("decision, steps", [("proceed", ["A", "B"]), ("declined", [])])
 @pytest.mark.asyncio
 async def test_restart_uses_a_saved_decision_without_asking(decision, steps):
