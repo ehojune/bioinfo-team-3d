@@ -47,7 +47,8 @@ esac
 
 # 주석 줄을 뺀 사본에서 trailer를 읽는다: interpret-trailers 는 auto 가 고른 글자를 알지 못한다.
 parse_trailers() {
-  awk -v cc="$COMMENT_CHARS" '{ c = substr($0, 1, 1); if (!(cc != "" && c != "" && index(cc, c))) print }' "$MSG"     | git interpret-trailers --parse 2>/dev/null
+  awk -v cc="$COMMENT_CHARS" '{ c = substr($0, 1, 1); if (c != "" && index(cc, c) && $0 ~ /^. -+ >8 -+$/) exit
+                              if (!(cc != "" && c != "" && index(cc, c))) print }' "$MSG"     | git interpret-trailers --parse 2>/dev/null
 }
 TRAILERS=$(parse_trailers)
 
@@ -57,11 +58,16 @@ rewrite_last_paragraph() {
   awk -v pattern="$1" -v from="$2" -v to="$3" -v cc="$COMMENT_CHARS" '
     { line[NR] = $0 }
     END {
-      last = NR
+      total = NR; msgend = NR
+      for (i = 1; i <= total; i++) {
+        c = substr(line[i], 1, 1)
+        if (c != "" && index(cc, c) && line[i] ~ /^. -+ >8 -+$/) { msgend = i - 1; break }
+      }
+      last = msgend
       while (last > 0 && (line[last] ~ /^[ 	]*$/ || (cc != "" && substr(line[last], 1, 1) != "" && index(cc, substr(line[last], 1, 1))))) last--
       first = last
       while (first > 1 && line[first - 1] !~ /^[ 	]*$/) first--
-      for (i = 1; i <= NR; i++) {
+      for (i = 1; i <= total; i++) {
         l = line[i]
         if (i >= first && i <= last && tolower(l) ~ pattern) { idx = index(l, from); if (idx) l = substr(l, 1, idx - 1) to substr(l, idx + length(from)) }
         print l

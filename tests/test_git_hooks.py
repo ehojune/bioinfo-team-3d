@@ -401,3 +401,15 @@ def test_the_configured_comment_character_does_not_hide_the_trailer_block(histor
     out = run_commit_msg(history, f"Subject\n\nbody\n\nCo-Authored-By: Codex {OLD_CODEX}\n\n{comments}")
     assert f"Co-Authored-By: Codex {CODEX_BOT}\n" in out and OLD_CODEX not in out
     assert out.endswith(comments)
+
+
+def test_a_scissors_divider_keeps_the_diff_below_it_out_of_the_message(history):
+    """`git commit -v` appends `# ---- >8 ----` and the diff; only the message above is read or rewritten."""
+    scissors = "# ------------------------ >8 ------------------------\n"
+    diff = (f"diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+Co-Authored-By: Codex {OLD_CODEX}\n\n"
+            f"+Co-authored-by: Example <example@example.com>\n")
+    out = run_commit_msg(history, f"Subject\n\nbody\n\nCo-Authored-By: Codex {OLD_CODEX}\n\n{scissors}{diff}")
+    assert f"Co-Authored-By: Codex {CODEX_BOT}\n\n{scissors}" in out  # the real trailer above the divider was rewritten
+    assert out.endswith(scissors + diff)  # the diff below it, with its trailer-like lines, is byte for byte the same
+    added = run_commit_msg(history, f"Subject\n\nbody\n\n{scissors}{diff}", LABHQ_COMMIT_MODEL="gpt-6")
+    assert added.endswith(scissors + diff) and any(line.startswith("Co-authored-by: Codex (gpt-6)") for line in added.splitlines()[:6])
