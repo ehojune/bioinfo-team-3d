@@ -61,6 +61,7 @@
     "tests/test_ci_windows10m.py",
     "tests/test_ci_windows_phases.py",
     "tests/test_claude_inbound.py",
+    "tests/test_claude_sandbox.py",
     "tests/test_claude_sandbox_boundary.py",
     "tests/test_claude_staff_home.py",
     "tests/test_claude_write_paths.py",
