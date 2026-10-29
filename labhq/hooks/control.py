@@ -322,8 +322,10 @@ def hook_command(argv: list[str], *, windows: bool | None = None) -> str:
     windows = os.name == "nt" if windows is None else windows
     executable, *rest = argv
     if windows:
-        return " ".join(['"' + str(executable).replace("\\", "/").replace('"', "") + '"',
-                         *([subprocess.list2cmdline(rest)] if rest else [])])
+        path = str(executable).replace(chr(92), "/")
+        for special in ('"', "$", chr(96)):  # still live inside bash double quotes: one escape each
+            path = path.replace(special, chr(92) + special)
+        return " ".join(['"' + path + '"', *([subprocess.list2cmdline(rest)] if rest else [])])
     return shlex.join([str(executable), *rest])
 
 

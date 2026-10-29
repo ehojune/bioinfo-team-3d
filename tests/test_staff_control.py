@@ -455,7 +455,7 @@ def _bash():
     git = shutil.which("git")
     if not git:
         return None
-    for root in Path(git).resolve().parents:  # ...\Git\cmd\git.exe or ...\Git\mingw64in\git.exe
+    for root in Path(git).resolve().parents:  # Git/cmd/git.exe or Git/mingw64/bin/git.exe: look for Git/bin/bash.exe upward
         for candidate in (root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"):
             if candidate.is_file():
                 return str(candidate)
@@ -496,3 +496,21 @@ def test_the_hook_commands_labhq_builds_run_under_a_real_bash(tmp_path):
     done = subprocess.run([bash, "-c", recorder["hooks"][0]["command"]], input=b"{}", capture_output=True,
                           env={**env, hook.CONTROL_ENV: ""}, cwd=str(tmp_path), timeout=60)
     assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
+
+
+def test_a_windows_path_with_shell_characters_survives_bash_quoting(tmp_path):
+    from labhq.hooks.control import hook_command
+
+    command = hook_command(["C:/work/$env/`x`/python.exe", "-m", "m"], windows=True)
+    bs = chr(92)
+    assert command == '"C:/work/' + bs + '$env/' + bs + '`x' + bs + '`/python.exe" -m m'
+    bash = _bash()
+    if bash is None:
+        pytest.skip("no bash on this machine")
+    folder = tmp_path / "d$ir`x`"
+    folder.mkdir()
+    tool = folder / "tool.sh"
+    tool.write_bytes(b"#!/bin/sh" + bytes([10]) + b"echo \"$@\"" + bytes([10]))
+    tool.chmod(0o755)
+    done = subprocess.run([bash, "-c", hook_command([str(tool), "pre"], windows=True)], capture_output=True, timeout=60)
+    assert done.returncode == 0 and done.stdout.strip() == b"pre", done.stderr.decode("utf-8", "replace")

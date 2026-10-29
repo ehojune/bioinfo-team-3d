@@ -20,4 +20,4 @@
 | halt → resume | **확인**: `POST /api/tasks/{id}/resume` → 같은 session id(`05e5fc48…`)로 새 turn이 시작됨. 재개된 모델이 응답 1을 다시 해서 차단기가 또 halt함(직원 행동이지 결함 아님) |
 | 중복 호출 거절·허용 상한 5회 | **실제 세션에서는 미확인**: 이번에는 판정 요청이 1건뿐이었다. 단위 시험으로만 확인(#1028) |
 
-모델 호출은 probe 1회 + 재시험 약 4~5회(응답 단위 추정). 로그: `D:\.labhq\dev	mp\claude-worker2\e2e1030uns6-10-29	ask_30dfe613ca_prober\events.jsonl`(재개 turn 포함), 게이트웨이 피드는 `state-gw\gateway.sqlite3`의 `events`.
+모델 호출은 probe 1회 + 재시험 약 4~5회(응답 단위 추정). 로그: `D:/.labhq/dev/tmp/claude-worker2/e2e1030/runs/2026-10-29/task_30dfe613ca_prober/events.jsonl`(재개 turn 포함), 게이트웨이 피드는 `state-gw/gateway.sqlite3`의 `events`.
