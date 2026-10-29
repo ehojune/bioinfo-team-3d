@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:54 | [`9ea950d`](https://github.com/ehojune/bioinfo-team-3d/pull/994/commits/9ea950d) | **main의 새 테스트 목록과 이 PR의 목록 충돌을 합쳤습니다.**<br>main 병합: Windows inventory 충돌 해소 (#59) |
+| 09:54 | [`f1ca881`](https://github.com/ehojune/bioinfo-team-3d/pull/994/commits/f1ca881) | **중단 뒤 재개 시험의 범위와 실제 network는 검증하지 않았다는 한계를 매뉴얼에 적었습니다.**<br>문서: halt→resume 시험 범위와 한계를 manual에 적는다 (#59) |
 | 09:42 | [`fe65cd6`](https://github.com/ehojune/bioinfo-team-3d/pull/1006/commits/fe65cd6) | **출력 형식 오류를 다시 시도한 단계의 비용이 두 번 합산되지 않는다는 시험을 추가했습니다.**<br>형식 오류 repair가 있는 단계에서 요청 비용 합계가 dispatch별 비용의 합과 같고 합산된 repair 결과가 다시 더해지지 않음을 고정하는 회귀 test를 추가한다 (#673 후속). |
 | 09:29 | [`f24505b`](https://github.com/ehojune/bioinfo-team-3d/pull/1005/commits/f24505b) | **요청 묶음을 만드는 도중 폴더를 바꿔치기해도 엉뚱한 곳이 지워지지 않게 했습니다.**<br>요청 묶음을 만드는 동안 requests/ 폴더를 한 번 열어 붙잡고, 삭제와 교체 직전에 같은 폴더인지 확인해 symlink 바꿔치기가 삭제 대상을 옮기지 못하게 한다 (#405). |
 | 09:12 | [`cd02532`](https://github.com/ehojune/bioinfo-team-3d/pull/996/commits/cd02532) | **병렬 단계의 출력 형식 오류 재시도가 요청 예산 한도를 넘지 않게 했습니다.**<br>StructuredOutput 형식 오류 재시도를 runner 안의 반복에서 gateway의 새 dispatch로 옮겨 병렬 단계가 요청 예산을 승인 없이 넘지 못하게 한다 (#673). |
@@ -32,6 +34,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 05:27 | [`96d79d3`](https://github.com/ehojune/bioinfo-team-3d/pull/995/commits/96d79d3) | **같은 일을 반복하는 직원을 단계적으로 제한하고, 지원하지 않는 엔진은 제한하지 못했다고 정직하게 표시하며, PI가 해제할 수 있게 했습니다.**<br>폭주 차단기 단계 집행 — beat 승격, hook 엔진만 constrain, 미지원 엔진 unsupported 표시, hardStop일 때만 halt, PI 해제 API (#59). |
 | 05:22 | [`84c198d`](https://github.com/ehojune/bioinfo-team-3d/pull/996/commits/84c198d) | **병렬 예산 초과 재현 시험을 남겼습니다.**<br>재시도 허용 callback 초안과 병렬 예산 회귀 test를 보존한다 (callback은 cd02532에서 gateway 재dispatch로 대체). |
 | 05:21 | [`9bbbde3`](https://github.com/ehojune/bioinfo-team-3d/pull/995/commits/9bbbde3) | **폭주 차단기가 경고에서 제한, 정지로 올라가는 규칙의 초안을 보존했습니다.**<br>폭주 차단기 단계 정책(BreakerPolicy)과 hook의 constrain 상태 초안을 보존한다 (#59, Codex 인계분). |
+| 05:20 | [`f7043c9`](https://github.com/ehojune/bioinfo-team-3d/pull/994/commits/f7043c9) | **Windows CI에서 중단과 재개 검증을 실행하도록 등록합니다.**<br>fix: include halt resume test in Windows inventory |
+| 05:14 | [`b3e020a`](https://github.com/ehojune/bioinfo-team-3d/pull/994/commits/b3e020a) | **직원 중단과 같은 세션 재개, 다른 요청의 독립성을 검증합니다.**<br>test: connect halt and resume control flow |
 
 ## 2026-10-27
 
