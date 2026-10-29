@@ -60,7 +60,8 @@ def validate_runner_env(root, source, artifact, expected, request_id=None):
         run = run or {}
         if (not request_id or task.get('request_id') != request_id or
                 (task.get('meta') or {}).get('step_id') != expected.get('step_id') or run.get('ok') is not True or
-                run.get('request_id', task.get('request_id')) != request_id):
+                run.get('request_id', task.get('request_id')) != request_id or
+                run.get('step_id', (task.get('meta') or {}).get('step_id')) != expected.get('step_id')):
             raise ValueError('environment step is not a successful step of this request')
     path = 'outputs/env/runner-manifest.json'
     if path not in artifact.get('outputs', []):

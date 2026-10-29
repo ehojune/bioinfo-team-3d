@@ -396,12 +396,17 @@ async def test_daemon_validates_a_genuine_environment_but_stays_closed_without_a
 
 
 @pytest.mark.skipif(os.name != 'nt', reason='windows runtime binding')
-@pytest.mark.parametrize('failure', ['no_receipt', 'failed_run', 'other_request', 'tampered', 'no_interpreter'])
+@pytest.mark.parametrize('failure', ['no_receipt', 'failed_run', 'other_request', 'tampered', 'no_interpreter', 'other_step_run'])
 async def test_daemon_refuses_an_environment_that_does_not_check_out(tmp_path, failure):
     root, folder, artifact, expected, manifest, save = env_fixture(tmp_path)
     expected['runner_id'] = manifest['runner_id'] = 'lab pc 1'
     save(manifest)
     write_receipt(folder, request_id='other' if failure == 'other_request' else 'req', ok=failure != 'failed_run')
+    if failure == 'other_step_run':
+        # A successful run of some other step in the same workspace must not vouch for the environment step.
+        record = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))
+        record['runs']['env-task']['step_id'] = 'unrelated'
+        (folder / 'manifest.json').write_text(json.dumps(record), encoding='utf-8')
     if failure == 'no_receipt':
         (folder / 'manifest.json').unlink()
     elif failure == 'tampered':
