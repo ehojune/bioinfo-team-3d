@@ -1,0 +1,5 @@
+rows:
+- sha: 8c677ab
+  at: 2026-10-29 14:26
+  text: 제한 해제에 명령 ID·episode를 달아 gateway가 저장하고, runner ACK(released·stale)를 받을 때까지 같은 명령을 재전송한다 (#1008).
+  summary: 제한 해제 요청이 유실돼도 서버가 확인될 때까지 다시 보내고, 이미 지나간 제한을 잘못 풀지 않게 했습니다.
