@@ -1,7 +1,9 @@
 """Runaway breaker stages and enforcement (#59 ②): beat-paced escalation, engine support, hardStop, PI release."""
+import asyncio
 import functools
 import itertools
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -342,3 +344,221 @@ async def test_a_compaction_during_a_run_keeps_repeats_across_it_from_tripping_t
         assert any(e["type"] == "agent.compaction" for e in sent)
     finally:
         runner.store.close()
+
+
+# ---- constrain + CSO approval (#1008) ----
+def _constrained_file(tmp_path):
+    path = tmp_path / "control.json"
+    control_hook.update_state(path, lambda state: control_hook.apply_control(state, "constrain"), create="t1")
+    return path
+
+
+def test_a_restricted_call_goes_to_the_cso_and_only_a_clear_yes_lets_it_past_the_hook(tmp_path):
+    path = _constrained_file(tmp_path)
+    asked = []
+
+    def cso(approved, note=""):
+        def ask(tool, tool_input):
+            asked.append((tool, tool_input))
+            return {"approved": approved, "note": note}
+        return ask
+
+    assert control_hook.pre_tool_use(path, tool_name="Bash", tool_input={"command": "ls"}, ask=cso(True)) is None
+    denied = control_hook.pre_tool_use(path, tool_name="Bash", tool_input={"command": "rm x"},
+                                       ask=cso(False, "같은 호출을 이미 판정했습니다"))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "같은 호출을 이미 판정했습니다" in denied["hookSpecificOutput"]["permissionDecisionReason"]
+    assert asked == [("Bash", {"command": "ls"}), ("Bash", {"command": "rm x"})]
+    # read tools never ask, and a task that is not restricted never asks
+    asked.clear()
+    assert control_hook.pre_tool_use(path, tool_name="Read", tool_input={}, ask=cso(False)) is None
+    free = tmp_path / "free.json"
+    control_hook.update_state(free, lambda state: None, create="t2")
+    assert control_hook.pre_tool_use(free, tool_name="Bash", tool_input={}, ask=cso(False)) is None
+    assert asked == []
+    # no broker, or an answer that is not a plain True, is a no
+    assert control_hook.ask_restricted("Bash", {}, environ={})["approved"] is False
+    maybe = control_hook.pre_tool_use(path, tool_name="Bash", tool_input={}, ask=lambda *a: {"approved": "yes"})
+    assert maybe["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_the_hook_asks_the_brokers_restricted_endpoint_with_the_task_token():
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from threading import Thread
+
+    seen = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            seen.update(path=self.path, token=self.headers.get("X-Labhq-Token"),
+                        body=json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            reply = json.dumps({"approved": True, "note": "ok"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(reply)))
+            self.end_headers()
+            self.wfile.write(reply)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        answer = control_hook.ask_restricted("Bash", {"command": "ls"}, environ={
+            "LABHQ_BROKER_URL": f"http://127.0.0.1:{server.server_port}", "LABHQ_BROKER_TOKEN": "task-token"})
+    finally:
+        server.shutdown()
+    assert answer == {"approved": True, "note": "ok"}
+    assert seen == {"path": "/restricted", "token": "task-token",
+                    "body": {"tool_name": "Bash", "tool_input": {"command": "ls"}}}
+
+
+async def test_the_runner_forwards_a_restricted_call_and_waits_for_the_gateways_answer(tmp_path, monkeypatch):
+    runner, sent, _ = _runner(tmp_path, monkeypatch, Engine.claude_code, calls=0)
+    try:
+        ladder = runner.breakers["t1"] = Escalation(BreakerPolicy())
+        ladder.policy.stage, ladder.episode = "constrain", 2
+        call = {"task_id": "t1", "agent_id": "engineer", "tool_name": "Bash", "tool_input": {"command": "ls"}}
+        pending = asyncio.ensure_future(runner.broker.request_restricted(call))
+        for _ in range(100):
+            if any(e["type"] == "restricted.requested" for e in sent):
+                break
+            await asyncio.sleep(0.01)
+        [event] = [e for e in sent if e["type"] == "restricted.requested"]
+        data = event["data"]
+        assert data["tool_name"] == "Bash" and data["episode"] == ladder.episode_id
+        assert data["fingerprint"] == tool_input_fingerprint("Bash", {"command": "ls"})
+        assert "input" not in data and "ls" not in json.dumps(data), "the stored, replayed event carries no input"
+        await runner._on_message({"type": "restricted.resolved", "id": data["id"], "approved": True, "note": "ok"})
+        assert await pending == {"approved": True, "note": "ok"}
+        # a task the breaker has released is answered at once, without bothering the CSO
+        ladder.release()
+        sent.clear()
+        assert (await runner.broker.request_restricted(call))["approved"] is True
+        assert not any(e["type"] == "restricted.requested" for e in sent)
+    finally:
+        runner.store.close()
+
+
+async def test_the_broker_refuses_a_restricted_call_nobody_answers(tmp_path, monkeypatch):
+    runner, _sent, _ = _runner(tmp_path, monkeypatch, Engine.claude_code, calls=0)
+    try:
+        monkeypatch.setattr("labhq.runner.approvals.RESTRICTED_WAIT_S", 0.05)
+        ladder = runner.breakers["t1"] = Escalation(BreakerPolicy())
+        ladder.policy.stage = "constrain"
+        answer = await runner.broker.request_restricted({"task_id": "t1", "tool_name": "Bash", "tool_input": {}})
+        assert answer["approved"] is False and "제때" in answer["note"]
+        assert runner.broker.pending_restricted == {}
+    finally:
+        runner.store.close()
+
+
+def _restricted_hub(tmp_path, episode="run1:1"):
+    hub, sent = _gateway(tmp_path)
+    hub._note_breaker_event("t1", {"stage": "constrain", "episode": episode})
+    return hub, sent
+
+
+def test_the_cso_judges_each_restricted_call_once_and_a_limited_number_pass(tmp_path):
+    hub, _ = _restricted_hub(tmp_path)
+    judge = hub.orchestrator.decide_restricted_call
+
+    def call(n, **over):
+        return {"task_id": "t1", "episode": "run1:1", "fingerprint": f"fp{n}", "at": time.time(), **over}
+
+    assert judge(call(1))[0] is True
+    assert judge(call(1))[0] is False, "the same call again is refused, whatever the first answer was"
+    for n in range(2, 6):
+        assert judge(call(n))[0] is True
+    approved, why = judge(call(6))
+    assert approved is False and "5번" in why, "the sixth call is over the limit"
+    assert judge(call(7, episode="run1:2"))[0] is False, "an answer is only for the restriction the gateway knows"
+    assert judge({"task_id": "t1", "episode": "run1:1"})[0] is False, "no fingerprint, no answer"
+    approved, why = judge(call(8, at=time.time() - 3600))
+    assert approved is False and "판정하지 않습니다" in why, "a replayed old request is not judged"
+    assert judge(call(8))[0] is False, "...and it did not spend the budget or the fingerprint (limit already reached here)"
+    hub._note_breaker_event("t1", {"stage": "constrain", "episode": "run1:2"})  # a new restriction starts fresh
+    assert judge(call(1, episode="run1:2"))[0] is True
+
+
+def test_the_cso_refuses_a_restricted_call_of_a_task_that_has_ended(tmp_path):
+    hub, _ = _restricted_hub(tmp_path)
+    entry = hub.store.get("task", "t1")
+    hub.store.put("task", "t1", {**entry, "completed": True, "result": {"ok": True}})
+    approved, why = hub.orchestrator.decide_restricted_call(
+        {"task_id": "t1", "episode": "run1:1", "fingerprint": "fp", "at": time.time()})
+    assert approved is False and "끝났" in why
+
+
+async def test_the_gateway_answers_a_restricted_request_and_logs_the_decision_not_the_input(tmp_path):
+    hub, sent = _restricted_hub(tmp_path)
+    event = {"type": "restricted.requested", "task_id": "t1", "agent_id": "worker", "request_id": "r",
+             "data": {"id": "rcall1", "tool_name": "Bash", "input": "SECRET-COMMAND", "fingerprint": "fp",
+                      "episode": "run1:1", "at": time.time()}}
+    published = []
+
+    async def publish(ev, **kw):
+        published.append(ev)
+
+    hub.publish = publish
+    await hub.on_runner_message("pc-a", event)
+    [answer] = [m for m in sent if m["type"] == "restricted.resolved"]
+    assert answer == {"type": "restricted.resolved", "id": "rcall1", "approved": True,
+                      "note": answer["note"]} and answer["note"]
+    [log] = [e for e in published if e["type"] == "agent.log"]
+    assert "CSO가 허용" in log["data"]["text"] and "Bash" in log["data"]["text"]
+    assert "SECRET-COMMAND" not in json.dumps(published), "the call's input is not echoed to the feed"
+    assert not any(e["type"] == "restricted.requested" for e in published)
+
+
+def test_a_stale_request_does_not_spend_the_budget(tmp_path):
+    hub, _ = _restricted_hub(tmp_path)
+    judge = hub.orchestrator.decide_restricted_call
+    stale = {"task_id": "t1", "episode": "run1:1", "fingerprint": "fp", "at": time.time() - 3600}
+    assert judge(stale)[0] is False
+    assert judge({**stale, "at": time.time()})[0] is True, "the same call, fresh, is still judged on its merits"
+    assert judge({"task_id": "t1", "episode": "run1:1", "fingerprint": "fp2"})[0] is False, "no timestamp, no answer"
+
+
+def test_the_ledger_survives_a_gateway_restart_and_the_event_carries_no_input(tmp_path):
+    hub, _ = _restricted_hub(tmp_path)
+    call = {"task_id": "t1", "episode": "run1:1", "fingerprint": "fpA", "at": time.time()}
+    assert hub.orchestrator.decide_restricted_call(call)[0] is True
+    hub2, _ = _gateway(tmp_path)  # the gateway restarted: same state folder, fresh process memory
+    hub2._note_breaker_event("t1", {"stage": "stop", "episode": "run1:1"})
+    assert hub2.orchestrator.decide_restricted_call({**call, "at": time.time()})[0] is False,         "a call already judged is not judged again"
+    for n in range(4):
+        assert hub2.orchestrator.decide_restricted_call({**call, "fingerprint": f"n{n}", "at": time.time()})[0] is True
+    assert hub2.orchestrator.decide_restricted_call({**call, "fingerprint": "late", "at": time.time()})[0] is False,         "the budget is counted across the restart: 1 + 4 used, the sixth is refused"
+    hub2.store.delete("restricted_ledger", "t1")
+
+
+def test_a_halt_or_pause_given_while_the_cso_was_asked_still_stops_the_call(tmp_path):
+    for action, approved in (("halt", True), ("pause", True), ("halt", False), ("pause", False)):
+        path = tmp_path / f"{action}-{approved}.json"
+        control_hook.update_state(path, lambda state: control_hook.apply_control(state, "constrain"), create="t1")
+
+        def ask(tool, tool_input, action=action, path=path, approved=approved):
+            control_hook.update_state(path, lambda state: control_hook.apply_control(state, action))
+            return {"approved": approved, "note": "x"}
+
+        out = control_hook.pre_tool_use(path, tool_name="Bash", tool_input={}, ask=ask)
+        assert out is not None, f"a {action} during the wait must not let the call run"
+        if action == "halt":
+            # a refusal must not swallow it either: the halt is applied and recorded, not only this call denied
+            assert out == {"continue": False, "stopReason": control_hook.HALT_REASON}
+            assert control_hook.read_state(path)["halted_at"], "the halt is recorded"
+        else:
+            assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+            assert control_hook.PAUSE_REASON in out["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_the_gateway_knows_the_episode_again_after_a_restart(tmp_path):
+    hub, _ = _restricted_hub(tmp_path)
+    hub2, _ = _gateway(tmp_path)  # restarted: process memory is empty, the runner will not resend the event
+    assert hub2.task_breaker.get("t1") is None
+    call = {"task_id": "t1", "episode": "run1:1", "fingerprint": "fpR", "at": time.time()}
+    assert hub2.orchestrator.decide_restricted_call(call)[0] is True
+    hub2.store.delete("restricted_ledger", "t1")
+    hub2.store.delete("task_breaker", "t1")

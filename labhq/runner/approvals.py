@@ -18,7 +18,7 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, ValidationError
 
-from ..models import ASK_WAIT_SECONDS, ApprovalRequest, AskRequest, hard_stop_kind
+from ..models import ASK_WAIT_SECONDS, ApprovalRequest, AskRequest, hard_stop_kind, new_id
 from ..ask_results import ask_result, read_ask_results
 from ..security import token_matches
 
@@ -36,16 +36,21 @@ def _validated(model: type[BaseModel], data: dict) -> Any:
         raise HTTPException(400, f"invalid {model.__name__}, fix and call again: {problems}") from None
 
 
+RESTRICTED_WAIT_S = 30.0  # how long a call made while the task is restricted waits for the CSO before it is refused
+
+
 class Broker:
     def __init__(self, port: int, on_approval: Handler, on_event: Handler, on_submit: Submit,
                  on_ask: Handler | None = None, owns_job: Predicate | None = None,
                  on_approval_timeout: Handler | None = None, lookup_admission: Any = None,
-                 on_local_job: Any = None):
+                 on_local_job: Any = None, on_restricted: Handler | None = None):
         self.port = port
         self.lookup_admission = lookup_admission  # LookupAdmission when annot.request_lookup_limit is set (#858)
         self.pending: dict[str, asyncio.Future] = {}
         self.pending_requests: dict[str, ApprovalRequest] = {}
         self.pending_asks: dict[str, asyncio.Future] = {}
+        self.pending_restricted: dict[str, asyncio.Future] = {}
+        self._on_restricted = on_restricted
         self.hibernate_asks: dict[str, str] = {}
         self.task_ask_results: dict[str, list[dict]] = {}
         self.identities: dict[str, dict[str, str | bool | None]] = {}
@@ -89,6 +94,10 @@ class Broker:
         @app.post("/approval")
         async def approval(body: dict, x_labhq_token: str = Header(default="")) -> dict:
             return await self.request_approval(_validated(ApprovalRequest, self._identity(x_labhq_token, body)))
+
+        @app.post("/restricted")
+        async def restricted(body: dict, x_labhq_token: str = Header(default="")) -> dict:
+            return await self.request_restricted(self._identity(x_labhq_token, body))
 
         @app.post("/ask")
         async def ask(body: dict, x_labhq_token: str = Header(default="")) -> dict:
@@ -166,6 +175,32 @@ class Broker:
                 fut.set_result({'approved': False, 'note': 'approval ended'})
             self.pending.pop(req.id, None)
             self.pending_requests.pop(req.id, None)
+
+    async def request_restricted(self, call: dict) -> dict:
+        """A tool call made while the runaway breaker restricts the task (#1008). The PreToolUse hook asks here and the
+        CSO decides at the gateway, one call at a time. Anything but a timely yes is a no."""
+        deny = {"approved": False}
+        if self._on_restricted is None:
+            return {**deny, "note": "이 runner는 제한 중 호출을 판정할 수 없습니다"}
+        call_id = new_id("rcall")
+        fut = asyncio.get_running_loop().create_future()
+        self.pending_restricted[call_id] = fut
+        try:
+            await self._on_restricted({**call, "id": call_id})
+            return await asyncio.wait_for(asyncio.shield(fut), RESTRICTED_WAIT_S)
+        except asyncio.TimeoutError:
+            return {**deny, "note": "CSO가 제때 답하지 않아 거절했습니다"}
+        except Exception as exc:  # fail closed
+            return {**deny, "note": f"판정을 받지 못해 거절했습니다 ({type(exc).__name__})"}
+        finally:
+            self.pending_restricted.pop(call_id, None)
+
+    def resolve_restricted(self, call_id: str, answer: dict) -> bool:
+        fut = self.pending_restricted.get(call_id)
+        if fut and not fut.done():
+            fut.set_result({"approved": bool(answer.get("approved")), "note": str(answer.get("note") or "")})
+            return True
+        return False
 
     async def request_ask(self, req: AskRequest) -> dict:
         def terminal(answer: dict) -> dict:

@@ -2992,10 +2992,17 @@ def _session_cost_fields(hub: Any, req: dict) -> dict:
     return fields(req) if fields else {}
 
 
+RESTRICTED_APPROVAL_LIMIT = 5  # calls the CSO lets through while one restriction lasts (#1008)
+RESTRICTED_STALE_S = 90.0  # a request older than this was already refused at the hook (30 s wait): never judged
+
+
 class Orchestrator:
     def __init__(self, hub: "Hub"):
         self.hub = hub
         self.cfg = hub.s.orchestrator
+        # task id -> {episode, seen fingerprints, approved count} of the restriction the CSO is judging calls for; the
+        # store keeps it ("restricted_ledger") so a gateway restart does not hand the restriction a fresh budget
+        self.restricted_calls: dict[str, dict[str, Any]] = {}
         self.cost: dict[str, float] = {}
         # Task IDs whose cost is already in self.cost; durable totals can run ahead of run_step.
         self.cost_tasks: dict[str, set[str]] = {}
@@ -3393,6 +3400,48 @@ class Orchestrator:
         text = answer.get(field) or ""
         return {**answer, "requested_to": "facilities", "fallback_reason": "facilities_unavailable",
                 field: text if text.startswith(notice) else notice + "\n\n" + text}
+
+    def decide_restricted_call(self, call: dict) -> tuple[bool, str]:
+        """One tool call a restricted task wants to make (#1008): (approved, reason shown to the staff member).
+
+        Deterministic, no model call. It stops the task from reopening the loop the breaker closed: a call is judged
+        once per restriction (the same call again is refused whatever the first answer was), at most
+        ``RESTRICTED_APPROVAL_LIMIT`` calls pass, and an answer only exists for the restriction the runner named. A yes
+        does not lift the restriction and does not skip the normal permission gate; the PI lifts it.
+        """
+        tid, episode, fingerprint = call.get("task_id"), call.get("episode"), call.get("fingerprint")
+        known = self.hub.breaker_state(tid).get("episode") if tid else None
+        if not (tid and episode and fingerprint and episode == known):
+            return False, "제한 회차를 확인하지 못해 거절합니다"
+        at = call.get("at")
+        if not isinstance(at, (int, float)) or time.time() - at > RESTRICTED_STALE_S:
+            # A request the runner's outbox replayed after a disconnect: its hook has long been refused, and judging it
+            # now would spend this restriction's budget on a call that never ran. It is answered, not counted.
+            return False, "답을 기다리던 호출이 아니라서 판정하지 않습니다"
+        task = self.hub.store.get("task", tid) or {}
+        if (task.get("completed") and not task.get("abandoned")) or                 (self.hub.requests.get(task.get("request_id") or "") or {}).get("cancelling"):
+            return False, "이 작업은 이미 끝났거나 취소 중입니다"
+        entry = self.restricted_calls.get(tid)
+        if entry is None:
+            saved = self.hub.store.get("restricted_ledger", tid) or {}
+            entry = {"episode": saved.get("episode"), "seen": set(saved.get("seen") or []),
+                     "approved": int(saved.get("approved") or 0)}
+        if entry["episode"] != episode:
+            entry = {"episode": episode, "seen": set(), "approved": 0}
+        self.restricted_calls[tid] = entry
+
+        def judged(approved: bool, why: str) -> tuple[bool, str]:
+            self.hub.store.put("restricted_ledger", tid, {"episode": episode, "seen": sorted(entry["seen"]),
+                                                          "approved": entry["approved"]})
+            return approved, why
+
+        if fingerprint in entry["seen"]:
+            return False, "같은 호출을 이미 판정했습니다. 같은 일을 되풀이하지 말고 지금까지 한 것으로 마무리하거나 다른 방법을 쓰세요"
+        entry["seen"].add(fingerprint)
+        if entry["approved"] >= RESTRICTED_APPROVAL_LIMIT:
+            return judged(False, f"이번 제한에서 허용하는 호출 {RESTRICTED_APPROVAL_LIMIT}번을 이미 썼습니다. 지금까지 한 것으로 마무리하세요")
+        entry["approved"] += 1
+        return judged(True, "이 호출 한 번만 허용합니다. 제한은 PI가 풀 때까지 유지됩니다")
 
     async def answer_ask(self, ask: AskRequest, runner_id: str) -> None:
         """Route one bounded question. Hard stops are classified before any model runs."""
