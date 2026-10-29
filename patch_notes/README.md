@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:42 | [`fe65cd6`](https://github.com/ehojune/bioinfo-team-3d/pull/1006/commits/fe65cd6) | **출력 형식 오류를 다시 시도한 단계의 비용이 두 번 합산되지 않는다는 시험을 추가했습니다.**<br>형식 오류 repair가 있는 단계에서 요청 비용 합계가 dispatch별 비용의 합과 같고 합산된 repair 결과가 다시 더해지지 않음을 고정하는 회귀 test를 추가한다 (#673 후속). |
 | 09:29 | [`f24505b`](https://github.com/ehojune/bioinfo-team-3d/pull/1005/commits/f24505b) | **요청 묶음을 만드는 도중 폴더를 바꿔치기해도 엉뚱한 곳이 지워지지 않게 했습니다.**<br>요청 묶음을 만드는 동안 requests/ 폴더를 한 번 열어 붙잡고, 삭제와 교체 직전에 같은 폴더인지 확인해 symlink 바꿔치기가 삭제 대상을 옮기지 못하게 한다 (#405). |
 | 09:12 | [`cd02532`](https://github.com/ehojune/bioinfo-team-3d/pull/996/commits/cd02532) | **병렬 단계의 출력 형식 오류 재시도가 요청 예산 한도를 넘지 않게 했습니다.**<br>StructuredOutput 형식 오류 재시도를 runner 안의 반복에서 gateway의 새 dispatch로 옮겨 병렬 단계가 요청 예산을 승인 없이 넘지 못하게 한다 (#673). |
 | 08:53 | [`842e929`](https://github.com/ehojune/bioinfo-team-3d/pull/1004/commits/842e929) | **Codex 직원이 쓸 수 없는 긴 계산 도구로 안내받던 문제를 고쳐 쓸 수 있는 방법을 안내합니다.**<br>Codex 등 Claude 외 직원에게 labhq_job을 연결하거나 안내하지 않고 대안(labhq_hpc·조각 나누기·PI에게 묻기)을 안내한다 (#1003). |
