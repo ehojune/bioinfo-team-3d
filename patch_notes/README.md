@@ -14,7 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:36 | [`d954d76`](https://github.com/ehojune/bioinfo-team-3d/pull/1027/commits/d954d76) | **재계획 시험을 Windows 목록에 이미 있는 파일로 옮겼습니다.**<br>시험: 재계획 binding 시험을 test_cso.py로 옮김 (#1026) |
 | 17:27 | [`a81c53f`](https://github.com/ehojune/bioinfo-team-3d/pull/1017/commits/a81c53f) | **main과 병합하며 Windows 테스트 목록을 보존합니다.**<br>Merge main and preserve sandbox Windows tests |
+| 17:24 | [`a0f906b`](https://github.com/ehojune/bioinfo-team-3d/pull/1027/commits/a0f906b) | **환경이 묶인 계획은 재계획이 건드리지 않는다는 점을 시험으로 고정했습니다.**<br>시험: 환경 binding이 있는 계획은 재계획 병합에 들어가지 않음을 고정 (#1026) |
 | 17:11 | [`24f5191`](https://github.com/ehojune/bioinfo-team-3d/pull/1024/commits/24f5191) | **공용 폴더 도입으로 생길 권한 문제를 피하려고 기록 위치를 원래대로 되돌렸습니다.**<br>broker port 소유 기록을 PC 전체 폴더에서 계정별 state 폴더로 되돌린다. 다른 OS 계정 간 충돌은 후속으로 남긴다 (#1024 총괄 결정). |
 | 17:10 | [`b84b131`](https://github.com/ehojune/bioinfo-team-3d/pull/1021/commits/b84b131) | **같은 작업 폴더의 다른 단계 성공 기록이 환경 단계를 대신 증명하지 못합니다.**<br>환경 단계 성공 기록 검증이 선택된 run의 step_id가 binding의 step과 같은지도 대조한다 |
 | 17:09 | [`e2e01f6`](https://github.com/ehojune/bioinfo-team-3d/pull/1024/commits/e2e01f6) | **서로 다른 계정의 실행기도 같은 내부 포트 충돌을 알아보게 했고, 이미 돌고 있는 실행기의 기록을 덮어쓰지 않게 했습니다.**<br>broker port 소유 기록을 계정별 홈이 아닌 PC 전체 폴더로 옮기고, 같은 설정의 살아 있는 runner 기록은 덮어쓰지 않으며, 쓸 수 없는 폴더는 시작을 막지 않는다 (#1024 리뷰 P2). |
