@@ -205,6 +205,23 @@ class OutputTypeEntry(StrictModel):
         return {k: v for k, v in handler(self).items() if v is not None}
 
 
+class EnvironmentBinding(StrictModel):
+    version: Literal[1]
+    logical_step_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+    step_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+    runner_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+    runtime: Literal["windows", "linux", "wsl"]
+    venv_path: Literal[".venv"]
+    python_path: Literal[".venv/Scripts/python.exe", ".venv/bin/python"]
+
+    @model_validator(mode="after")
+    def interpreter_matches_runtime(self) -> "EnvironmentBinding":
+        expected = ".venv/Scripts/python.exe" if self.runtime == "windows" else ".venv/bin/python"
+        if self.python_path != expected:
+            raise ValueError("environment interpreter does not match runtime")
+        return self
+
+
 class ResearchStep(StrictModel):
     id: str = Field(min_length=1)
     agent_id: str = Field(min_length=1)
@@ -223,6 +240,8 @@ class ResearchStep(StrictModel):
     branch: str | None = Field(default=None, min_length=1)
     # Pack rules and contract checks never read this; pack fields never fill it (no_type_inheritance).
     output_types: list[OutputTypeEntry] = Field(default_factory=list, max_length=MAX_ENTRIES)
+    environment_binding: EnvironmentBinding | None = None
+    environment_bindings: list[EnvironmentBinding] = Field(default_factory=list)
 
     @model_serializer(mode="wrap")
     def _drop_empty_declarations(self, handler: Any) -> dict[str, Any]:
@@ -236,6 +255,10 @@ class ResearchStep(StrictModel):
             data.pop("optional_outputs", None)
         if data.get("branch") is None:
             data.pop("branch", None)
+        if data.get("environment_binding") is None:
+            data.pop("environment_binding", None)
+        if not data.get("environment_bindings"):
+            data.pop("environment_bindings", None)
         return data
 
     @model_validator(mode="after")
