@@ -1192,7 +1192,7 @@ CP2 카드는 claim 근거를 갈래별로 묶어 단계·상태·근거 종류�
 보고하지 않은 산출 목록에서 `__pycache__` 아래 파일은 뺍니다(관찰 기록에는 남음). 직원 실행 환경에는 `PYTHONDONTWRITEBYTECODE=1`을 넣어 처음부터 만들지 않습니다(설정이나 runner 환경에 값이 있으면 그 값을 씁니다).
 단계가 결정이 필요해 멈추면(`blocking_decision`) 산출·원장 검사 전에 CSO가 먼저 답하고, hard-stop 질문만 PI에게 올립니다. 질문만 남긴 turn은 단계 완료로 알리지 않으며 답을 받으면 같은 단계에서 계속합니다.
 연구 요청은 일반 재계획·리뷰·합성에 들어가지 않습니다.
-직원의 StructuredOutput JSON 파싱 오류는 같은 세션에서 자동 재시도합니다(`runner.structured_output_retries`, 기본 2회, 0이면 끔). 오류 원문은 작업 폴더의 `.tmp/structured_output_failures/`에 저장합니다. 잘린 계획은 단계 설명·반복·큰 표를 줄여 다시 받고, 비ASCII 문자는 `\u` escape로 늘리지 않습니다.
+직원의 StructuredOutput JSON 파싱 오류는 같은 세션에서 자동 재시도합니다(`runner.structured_output_retries`, 기본 2회, 0이면 끔). 재시도는 runner 안의 반복이 아니라 gateway가 같은 세션을 새 dispatch로 다시 보내는 것이어서 다른 턴과 같은 요청 예산 확인을 거칩니다(#673). 요청의 남은 예산이 없거나 병렬 단계가 아직 쓸 수 있는 몫을 빼면 남지 않을 때는 PI에게 예산을 더 묻지 않고 형식 오류로 멈춥니다. 이 흐름은 단계 turn(`run_step`)에만 적용되고 계획·상담 등 다른 호출은 이전처럼 runner 안에서 재시도합니다. 오류 원문은 작업 폴더의 `.tmp/structured_output_failures/`에 저장합니다. 잘린 계획은 단계 설명·반복·큰 표를 줄여 다시 받고, 비ASCII 문자는 `\u` escape로 늘리지 않습니다.
 유효한 계획이 `orchestrator.plan_max_chars`(기본 50,000자)를 넘으면 실제 크기와 상한을 경고로 기록하되 자르지 않습니다. 재시도는 task 한도와 요청 잔여 한도 중 작은 금액 안에서만 하며, 비용·사용량을 앞선 호출까지 합산합니다.
 
 단계의 결과 원장이 교정(`research.result_corrections`, 기본 2회) 뒤에도 계약을 어기면, 잘못된 행(링크·evidence·claim)만 거부하고 나머지로 진행합니다.

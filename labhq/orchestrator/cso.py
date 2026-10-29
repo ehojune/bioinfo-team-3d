@@ -33,6 +33,7 @@ from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, 
                                      failed_lookups, claim_evidence_rows, claim_evidence_section)
 from ..evidence.verify import LiveSourceResolver, verification_lines, verify_sources
 from ..runner.lookup_admission import admission_for
+from ..runner.structured_output import GATEWAY_RETRY, GATEWAY_RETRY_META, repair_prompt
 from ..facilities import signatures as env_signatures
 from ..facilities import fixes as facility_fixes
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure,
@@ -1431,6 +1432,19 @@ def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
         "workdir": later.workdir or first.workdir,
         "workdir_id": later.workdir_id or first.workdir_id,
     })
+
+
+def _sum_repair_turns(first: TaskResult, later: TaskResult) -> TaskResult:
+    """A StructuredOutput repair dispatched after ``first``: the step's result carries both turns' cost and usage, as
+    when the runner repaired inside one turn. Each dispatch was already counted on its own, never from this sum."""
+    known = (first.cost_known is not False and first.cost_usd is not None
+             and later.cost_known is not False and later.cost_usd is not None)
+    usage = dict(first.usage)
+    for key, value in later.usage.items():
+        usage[key] = usage.get(key, 0) + value
+    return later.model_copy(update={
+        "cost_usd": first.cost_usd + later.cost_usd if known else None, "cost_known": known,
+        "usage": usage, "usage_known": first.usage_known and later.usage_known})
 
 
 def merged_workspace_rerun(first: TaskResult | None, later: TaskResult) -> TaskResult:
@@ -2864,6 +2878,10 @@ class Orchestrator:
         self.paper_budget_holds: dict[str, dict[str, float]] = {}
         # #862: attempts this process reserved and is dispatching now; a restart prune never touches them.
         self.dispatch_inflight: dict[str, set[str]] = {}
+        # request -> task id -> the most that dispatch may still spend, for every turn in flight (#673). Costs only
+        # appear in the request record when a turn ends, so a StructuredOutput repair reads this to avoid spending
+        # what a parallel sibling may yet use.
+        self.inflight_caps: dict[str, dict[str, float]] = {}
         self.paper_task_ids: dict[str, dict[str, str]] = {}
         self.consult_locks: dict[tuple[str | None, str], tuple[asyncio.Lock, int]] = {}
 
@@ -3749,7 +3767,10 @@ class Orchestrator:
                                                   "request_budget_remaining_usd": (
                                                       current.request_budget_remaining_usd if optional_support else
                                                       self._request_budget_remaining(rid)),
+                                                  # The runner makes one attempt and reports a StructuredOutput format
+                                                  # error; dispatch_turn sends the repair as its own dispatch (#673).
                                                   "meta": {**current.meta, "attempt": attempt,
+                                                           GATEWAY_RETRY_META: GATEWAY_RETRY,
                                                            **({"workdir": previous_workdir} if previous_workdir else {})}})
                 if attempt > 1:
                     can_resume = bool(previous_session and self.hub.supports_resume(current.agent_id))
@@ -3816,6 +3837,7 @@ class Orchestrator:
                     await persist_request(self.hub, rid)
                 # Last await before the send: hold this attempt's whole cap now (#862, opt-in).
                 attempt_task = await self._reserve_dispatch(rid, attempt_task, optional=optional_support)
+                self._note_inflight_cap(rid, attempt_task)
                 try:
                     dispatched = (attempt_task if current.meta.get("facilities_diagnosis") else
                                   with_pi_notes(attempt_task, self.hub.requests.get(rid) or {}))
@@ -3870,6 +3892,7 @@ class Orchestrator:
                         res = res.model_copy(update={"environment": environment_problem(res, engine)})
                 finally:
                     self.dispatch_inflight.get(rid, set()).discard(attempt_task.id)  # #862: this send is over here
+                    (self.inflight_caps.get(rid) or {}).pop(attempt_task.id, None)
                 evidence = res.shutdown_evidence or {"exit_code": res.exit_code, "error": res.error,
                     "stopping": bool(getattr(self.hub, "stopping", False)) or stopping_marker(
                         self.hub.s, getattr(self.hub, "session_started_at", time.time())), "source": "gateway"}
@@ -3927,7 +3950,41 @@ class Orchestrator:
             if optional_support:
                 return res  # diagnosis itself never parks on login/quota or invokes another recovery
             tool_errors = list(res.tool_errors)
+            format_tries = 0
             while True:
+                if (res.error_kind == "structured_output_format" and res.format_retry
+                        and format_tries < self.hub.s.runner.structured_output_retries and res.session_id):
+                    # #673: the repair is a new dispatch of the same session, so it passes the request budget gate (and
+                    # its reservation) with every other turn instead of being decided inside one runner turn. res holds
+                    # the cost of every attempt so far (see _sum_repair_turns).
+                    format_tries += 1
+                    known = res.cost_known is not False and res.cost_usd is not None
+                    cap = next((float(v) for v in (turn.budget_usd,
+                                                   (self.hub.agents.get(turn.agent_id) or {}).get("max_budget_usd"),
+                                                   self.hub.s.policy.budget.per_task_usd) if _usd_amount(v)), None)
+                    left = None if cap is None or not known else cap - res.cost_usd
+                    request_left = self._request_budget_remaining(rid)
+                    if request_left is not None:
+                        request_left -= self._inflight_unheld(rid)  # what parallel siblings may still spend
+                    if (not known or (left is not None and left <= 0)
+                            or (request_left is not None and request_left <= 0) or rid in self.budget_denials):
+                        return res  # an automatic repair never asks the PI for more budget: stop with the failure
+                    current = current.model_copy(update={
+                        "id": new_id("task"), "prompt": repair_prompt(res.format_retry), "context": "",
+                        "resume_session_id": res.session_id,
+                        **({"budget_usd": left} if left is not None else {}),
+                        "meta": {**current.meta, "kind": current.meta.get("kind", "step"), "parent_task": res.task_id,
+                                 **({"workdir": res.workdir} if res.workdir else {})},
+                    })
+                    earlier = res
+                    try:
+                        res = _sum_repair_turns(earlier, merged_turn(earlier, await dispatch_with_retry(
+                            current, max_attempts)))
+                    except BudgetExceeded:
+                        return earlier  # denied before the repair was sent; the failed turn keeps its recorded cost
+                    tool_errors.extend(res.tool_errors)
+                    res = res.model_copy(update={"tool_errors": list(dict.fromkeys(tool_errors))})
+                    continue
                 if res.error_kind == "halted":  # #59 ①: parked until the PI resumes, then the same session goes on
                     wait_halted = getattr(self.hub, "wait_halted", None)
                     if wait_halted is None or not await wait_halted(rid, turn_key(current), res):
@@ -4300,6 +4357,18 @@ class Orchestrator:
                     state["outcome"] = "budget_timed_out"
                 if block:
                     raise BudgetExceeded(reason)
+
+    def _note_inflight_cap(self, rid: str, task: Task) -> None:
+        """Remember the most this dispatch may spend while it runs (#673). Nothing is recorded for a task without a cap."""
+        remaining = self._request_budget_remaining(rid)
+        cap = self._turn_cap(task, remaining if remaining is not None else 0.0)
+        if cap is not None and cap > 0:
+            self.inflight_caps.setdefault(rid, {})[task.id] = cap
+
+    def _inflight_unheld(self, rid: str) -> float:
+        """The caps of turns in flight that hold nothing in the request's budget_holds (reservations count already)."""
+        held = set((self.hub.requests.get(rid) or {}).get("budget_holds") or {})
+        return sum(cap for tid, cap in (self.inflight_caps.get(rid) or {}).items() if tid not in held)
 
     def _request_budget_remaining(self, rid: str) -> float | None:
         """Request allowance still available to a runner call after recorded and reserved costs."""

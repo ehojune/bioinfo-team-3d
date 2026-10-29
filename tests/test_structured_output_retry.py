@@ -206,7 +206,8 @@ async def test_retry_limit_yields_only_format_error_card(tmp_path, monkeypatch):
     hub = FakeHub(runner.run_task)
     result = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="original",
                                                   output_schema={"type": "object"}, meta={"kind": "plan"}))
-    assert len(calls) == 3 and len(hub.calls) == 1
+    # #673: each repair is its own dispatch (so it passes the request budget gate), not a loop inside one turn.
+    assert len(calls) == 3 and len(hub.calls) == 3
     assert not result.ok and result.error_kind == "structured_output_format"
     assert result.structured is None and "안전 검사" not in result.text
     assert len(hub.approvals) == 1
