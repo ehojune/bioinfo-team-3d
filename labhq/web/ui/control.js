@@ -5,7 +5,7 @@
 const RUNNING = new Set(['queued', 'working', 'waiting']);
 // A plan step's turn or a direct request's turn; consults, follow-ups, reviews and the rest take no control.
 const CONTROLLABLE = new Set(['step', 'direct']);
-export const CONTROL_LABELS = { steer: '방향 보내기', pause: '일시 정지', resume: '재개', halt: '멈추기' };
+export const CONTROL_LABELS = { steer: '방향 보내기', pause: '일시 정지', resume: '재개', halt: '멈추기', release_breaker: '제한 해제' };
 
 // task: {taskId, state, title}; control: that task's agent.control state.
 export function staffControl(task, control = {}) {
@@ -14,7 +14,9 @@ export function staffControl(task, control = {}) {
   if (!taskId || (task.kind && !CONTROLLABLE.has(task.kind))) return none;
   if (control.halted) return { taskId, title, status: '멈춤 · 재개 가능', actions: ['resume'] };
   const status = control.paused ? '일시 정지됨' : '', toggle = control.paused ? 'resume' : 'pause';
-  if (RUNNING.has(task.state)) return { taskId, title, status, actions: ['steer', toggle, 'halt'] };
+  // The runaway breaker (#59 ②) limited this task to read-only tools; only the PI lifts it.
+  const lifted = control.constrained ? ['release_breaker'] : [], limited = control.constrained ? [status, '도구 제한 중'].filter(Boolean).join(' · ') : status;
+  if (RUNNING.has(task.state)) return { taskId, title, status: limited, actions: ['steer', toggle, 'halt', ...lifted] };
   if (task.state === 'hibernating' || control.paused) return { taskId, title, status, actions: ['steer', toggle] };
   return none;
 }

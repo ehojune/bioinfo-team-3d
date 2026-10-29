@@ -2729,6 +2729,25 @@ class Hub:
                     return await self._control_task(tid, action, text)
             return await self._control_task(tid, action, text)
 
+    async def _note_runner_halt(self, tid: str) -> None:
+        """The runner halted the task itself (breaker stop, #59). Record it as a PI halt, so a reconnecting runner is
+        sent the halt again and a result that ends without finishing is parked as halted (#1008)."""
+        entry = self.store.get("task", tid)
+        if not entry or not self._step_alive(entry):
+            return
+        try:
+            entry, cancelled = await self._publication_write(self.store.aupdate_task_control(tid, "halt"))
+        except (KeyError, ValueError):
+            return  # the task ended meanwhile
+
+        def halt(state):
+            state["ops"] = int(state.get("ops") or 0) + 1
+            state["halt_op"] = state["ops"]
+
+        _, interrupted = await self._update_step(self._entry_step(tid, entry), halt)
+        if cancelled or interrupted:
+            raise asyncio.CancelledError
+
     async def release_breaker(self, tid: str) -> dict:
         """The PI lifts a runaway-breaker restriction (#59). Sent to the runner holding the task; an unreachable runner
         keeps the restriction, so ``sent`` says whether it was delivered."""
@@ -2737,7 +2756,13 @@ class Hub:
             raise KeyError(tid)
         if entry.get("completed") and not entry.get("abandoned"):
             raise ValueError("이 작업은 이미 끝났어요")
-        return {"task_id": tid, "action": "release_breaker", "sent": await self._push(tid, {"action": "release_constraint"})}
+        pending = self.__dict__.setdefault("_breaker_release_pending", set())
+        sent = await self._push(tid, {"action": "release_constraint"})
+        if sent:
+            pending.discard(tid)
+        else:
+            pending.add(tid)  # sent again when the task's runner reconnects (``_push_task_state``); lost on a gateway restart
+        return {"task_id": tid, "action": "release_breaker", "sent": sent}
 
     async def _control_task(self, tid: str, action: str, text: str | None = None) -> dict:
         """Steer, pause, resume or halt through task ``tid`` (#59 ①). The step it belongs to owns the request: steers wait
@@ -2863,6 +2888,9 @@ class Hub:
             return
         if entry.get("halt_requested"):
             await self._push(tid, {"action": "halt"})
+        pending = self.__dict__.get("_breaker_release_pending")
+        if pending and tid in pending and await self._push(tid, {"action": "release_constraint"}):
+            pending.discard(tid)
         key = self._entry_step(tid, entry)
         state = self._step(key)
         # Send both values: a resume sent while disconnected must clear the runner's old pause on reconnect.
@@ -3510,6 +3538,8 @@ class Hub:
                 _, cancelled = await self._update_step(key, nack)
                 if cancelled:
                     raise asyncio.CancelledError
+        if typ == "agent.breaker" and msg.get("task_id") and (msg.get("data") or {}).get("enforcement") == "halt":
+            await self._note_runner_halt(msg["task_id"])
         if typ == "agent.control" and msg.get("task_id"):  # the staff sheet's paused/halted line survives a reload
             await self._control_state(msg["task_id"], msg.get("data") or {}, event=msg,
                                       runner_id=runner_id, runner_seq=runner_seq)

@@ -5,6 +5,55 @@
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
 ## 단계
+#809 2차: research_protocol·pi-qa·vocabulary 영문판.
+
+## 한 일
+1. `docs/research_protocol.en.md`, `docs/pi-qa.en.md`, `docs/vocabulary.en.md`를 추가했습니다. 장·절 순서와 표 구조는 한국어판과 같고 코드·키·설정 이름은 원문 그대로입니다.
+2. `vocabulary.md`는 `scripts/vocab_tables.py`가 만드는 생성 파일입니다. 영문판은 생성기 출력이 아니라 한국어 점검표 250칸을 손으로 옮긴 사본이며 파일 머리에 그렇게 적었습니다. `labhq/vocab/`이 바뀌면 손으로 갱신해야 합니다.
+3. `README.en.md`의 Further reading 표와 29번째 줄, `docs/manual.en.md`의 해당 링크(research_protocol·pi-qa·vocabulary)를 영문판과 영문 anchor로 바꿨습니다.
+4. `AGENTS.md`의 영문판 동시 갱신 안내에 세 문서를 더했습니다.
+
+## 테스트 결과
+- 새 문서의 내부 anchor 대조: 깨진 anchor 0. `test_vocab_tables.py`·`test_integrations.py`·`test_variant_effect_topic.py`·`test_ci_skip_policy.py` 226 passed. `check_public.sh` 통과.
+- 미검증: 원어민 검수, 한국어판과의 문장 단위 전수 대조(vocabulary는 250칸 순서 대응과 표본 확인만 했음).
+
+## 바꾼 파일
+docs/research_protocol.en.md, docs/pi-qa.en.md, docs/vocabulary.en.md(신규), README.en.md, docs/manual.en.md, AGENTS.md, patch_notes/entries/claude-worker3--docs-en-2.yaml, 이 파일.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## 단계
+#809 1차: 영문 매뉴얼.
+
+## 한 일
+1. `docs/manual.en.md`를 추가했습니다. `docs/manual.md`와 장·절 순서가 같고(1586줄/1589줄), 코드·명령·설정 키·경로는 원문 그대로입니다. 다른 문서(pi-qa, research_protocol, reference/ 등)로 가는 링크는 그대로 두고 한국어 문서임을 표시했습니다.
+2. `README.en.md`의 manual 링크(Further reading 표, 본문 6곳)를 영문판과 영문 anchor로 바꾸고 29번째 줄 문구를 고쳤습니다. 맨 위 배지는 `scripts/integrations.py`가 만들어 `docs/manual.md#연결된-도구` 등을 가리키므로 건드리지 않았습니다.
+3. `AGENTS.md`에 "한국어 manual을 고치면 영문판도 같은 PR에서 고친다"를 적었습니다.
+4. 영문판의 "연결된 도구" 표는 생성 표(`<!-- integrations -->` 표식)가 아니라 손으로 옮긴 사본입니다. 생성기는 한국어 manual만 갱신하므로 도구가 바뀌면 영문 표도 따로 고쳐야 합니다. 영문판 본문에 그 사실을 적었습니다.
+
+## 테스트 결과
+- 영문판 내부 anchor 링크를 제목 slug와 대조: 깨진 anchor 0.
+- `python scripts/patch_notes.py check`, `scripts/check_public.sh`는 PR 전에 실행합니다(결과는 PR 본문).
+- 미검증: 번역 품질의 원어민 검수, 한국어 manual과 문장 단위 대조(구조·핵심 수치는 대조했으나 전수 대조는 하지 않음).
+
+## 바꾼 파일
+docs/manual.en.md(신규), README.en.md, AGENTS.md, patch_notes/entries/claude-worker3--manual-en.yaml, 이 파일.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+# 폭주 차단기 후속 (#1008)
+
+| 항목 | 내용 |
+|---|---|
+| P2 1 | runner의 breaker halt를 `agent.control`로 알리고, gateway가 `agent.breaker(enforcement=halt)`를 받으면 `halt_requested`·step `halt_op`을 기록(`Hub._note_runner_halt`) |
+| P2 3 | constrain·stop 단계에서는 `Breaker.repeating`만 신호로 쓴다. 거부된 호출의 오류 연속은 승격하지 않음(manual 명시) |
+| P2 2 | 끊긴 runner에 보낸 해제는 `_breaker_release_pending`에 두고 `_push_task_state`가 재연결 때 한 번 재전송. gateway 재시작 시 사라짐 |
+| P2 4 | `_run_guarded` 주석 분리 |
+| 작업판 | `control.constrained`면 "제한 해제" 버튼(`POST /api/tasks/{id}/breaker/release`) |
+| 시험 | `test_breaker_enforcement.py`(+2), `web_staff_control.cjs`. 관련 staff_control py 72 passed(timing flake 1건은 단독 재실행 통과) |
+| 범위 밖 | constrain 때 CSO 승인, compaction 예외(범위·크기는 PR 본문), 실제 network E2E |
+
+## 단계
 #1001·#1004 리뷰의 비차단 지적 2건 정리.
 
 ## 한 일

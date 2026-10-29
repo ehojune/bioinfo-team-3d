@@ -5,7 +5,7 @@
 역할 복귀·중단·위임·병합 책임은 [현재 운영 기준](docs/reference/lead-operations.md#현재-역할과-중단)을 먼저 따른다. 과거 보고 주기·고정 모델/worker 수를 자동 복원하지 않는다.
 
 - 개발 담당과 위임 범위는 최신 PI 인계를 따른다. 제품 안의 연구 CSO·직원 설정과 구분한다. 현재 우선순위는 HANDOFF, 점검 주기·동시 투입·한도·P2 선별은 [운영 기준](docs/reference/lead-operations.md)을 따른다.
-- 문서는 README 한영판(처음 쓰는 사람), `docs/manual.md`(상세), `docs/pi-qa.md`(PI), AGENTS·HANDOFF(개발)로 나눈다. 동작 변경은 manual에 반영하고 **큰 변경·매 PI 보고 전** 코드·직원 YAML·PR과 대조한다. 병합 전 PR의 동작은 manual·README에 출시된 것으로 쓰지 않는다. 상세 근거·옛 결정은 `docs/reference/`에 두고 링크한다.
+- 문서는 README 한영판(처음 쓰는 사람), `docs/manual.md`(상세), `docs/pi-qa.md`(PI), AGENTS·HANDOFF(개발)로 나눈다. 동작 변경은 manual에 반영하고(영문판 `docs/manual.en.md`·`research_protocol.en.md`·`pi-qa.en.md`·`vocabulary.en.md`는 한국어 문서의 번역이므로 같은 PR에서 같은 절을 고친다. `vocabulary.en.md`는 생성 파일이 아니라 손으로 옮긴 사본이다) **큰 변경·매 PI 보고 전** 코드·직원 YAML·PR과 대조한다. 병합 전 PR의 동작은 manual·README에 출시된 것으로 쓰지 않는다. 상세 근거·옛 결정은 `docs/reference/`에 두고 링크한다.
 - 브랜치에서 작업하고 PR을 연다. main 직접 push 금지. 병합 판단은 최신 PI 인계를 따르며 CI 통과가 조건이다. 자동 병합 workflow는 꺼져 있다.
 - 관련 test만 로컬에서 돌리고 전체 suite는 CI(3.10·3.12·Windows)에 맡긴다. test를 삭제·약화하지 않는다. `tests/conftest.py`의 홈·캐시·state 격리를 지키고 사용자 `.labhq` 접근 guard를 우회하지 않는다.
 - CI의 Linux 전수/Windows 경계·nightly full profile과 worker HOME/port 격리는 [CI 정책](docs/reference/ci-reuse.md)을 따릅니다. 로컬 worker/process 실행은 별도 허가 없이 하지 않습니다.
