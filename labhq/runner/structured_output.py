@@ -8,6 +8,11 @@ from ..models import TaskResult
 
 PARSE_ERROR = "could not be parsed as JSON"
 FORMAT_ERROR = "structured_output_format"
+# Task.meta marker the orchestrator sets on every dispatch it sends (#673): this runner then makes one attempt and
+# returns a retryable format error, and the orchestrator sends the repair as a new dispatch, so it passes the request
+# budget gate with the other turns. A task without the marker keeps the in-runner retries (direct runner use, tests).
+GATEWAY_RETRY_META = "format_retry"
+GATEWAY_RETRY = "gateway"
 RETRY_PROMPT = (
     "StructuredOutput 형식 오류입니다. 내용(경로·명령·정규식 포함)은 한 글자도 바꾸지 말고, "
     "JSON 문자열 규칙에 맞게 역슬래시를 \\\\로, 따옴표를 \\\"로 escape해서 같은 내용을 다시 "
@@ -22,6 +27,11 @@ COMPACT_PLAN_RETRY_PROMPT = (
     "\\u escape로 바꾸지 말고 원래 "
     "글자로 쓰세요. JSON schema는 지키고 작업을 다시 실행하거나 PI에게 묻지 마세요."
 )
+
+
+def repair_prompt(kind: str | None) -> str:
+    """The resumed turn's instruction for a result's ``format_retry`` hint."""
+    return COMPACT_PLAN_RETRY_PROMPT if kind == "compact" else RETRY_PROMPT
 
 
 def _retry_budget(ctx: RunContext) -> float | None:
@@ -64,6 +74,8 @@ async def run_with_json_retries(adapter, ctx: RunContext) -> TaskResult:
     usage_known = True
     errors: list[str] = []
     retry_budget = _retry_budget(ctx)
+    gateway_retry = ctx.task.meta.get(GATEWAY_RETRY_META) == GATEWAY_RETRY
+    max_retries = 0 if gateway_retry else ctx.settings.runner.structured_output_retries
 
     async def observe(kind: str, data: dict) -> None:
         nonlocal parse_error, truncation_suspected
@@ -82,7 +94,7 @@ async def run_with_json_retries(adapter, ctx: RunContext) -> TaskResult:
 
     ctx.emit, ctx.record_run = observe, account
     try:
-        for attempt in range(ctx.settings.runner.structured_output_retries + 1):
+        for attempt in range(max_retries + 1):
             parse_error = None
             truncation_suspected = False
             result = await adapter.run(ctx)
@@ -103,16 +115,17 @@ async def run_with_json_retries(adapter, ctx: RunContext) -> TaskResult:
             if retry_budget is not None:
                 remaining = (retry_budget - sum(value for value in costs if value is not None)
                              if all(value is not None for value in costs) else 0.0)
-            if (attempt == ctx.settings.runner.structured_output_retries or not result.session_id
+            if (attempt == max_retries or not result.session_id
                     or (remaining is not None and remaining <= 0)):
-                result = result.model_copy(update={
-                    "ok": False, "structured": None, "text": "", "blocking_decision": None,
-                    "error_kind": FORMAT_ERROR,
-                    "error": "StructuredOutput 형식 오류: " + parse_error,
-                })
+                failed = {"ok": False, "structured": None, "text": "", "blocking_decision": None,
+                          "error_kind": FORMAT_ERROR, "error": "StructuredOutput 형식 오류: " + parse_error}
+                if gateway_retry and result.session_id:  # the orchestrator may send the repair as a new dispatch
+                    failed["format_retry"] = ("compact" if truncation_suspected
+                                              and ctx.task.meta.get("kind") in {"plan", "replan"} else "plain")
+                result = result.model_copy(update=failed)
                 break
             await emit("agent.log", {"level": "info", "text": (
-                f"StructuredOutput 형식 오류 자동 재시도 {attempt + 1}/{ctx.settings.runner.structured_output_retries}")})
+                f"StructuredOutput 형식 오류 자동 재시도 {attempt + 1}/{max_retries}")})
             compact = truncation_suspected and ctx.task.meta.get("kind") in {"plan", "replan"}
             retry_prompt = COMPACT_PLAN_RETRY_PROMPT if compact else RETRY_PROMPT
             ctx.task = ctx.task.model_copy(update={"resume_session_id": result.session_id,
