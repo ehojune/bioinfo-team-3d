@@ -1,5 +1,9 @@
 pr: 1046
 rows:
+- sha: 'd95f816'
+  at: 2026-10-30 08:07
+  text: MCP server env·headers의 ${NAME} placeholder를 쓴 값은 확장된 형태까지 비밀값으로 모아 종료 증거에서 가린다
+  summary: placeholder로 주입된 MCP 비밀값도 CLI 종료 기록에 실리지 않습니다.
 - sha: '4f055af'
   at: 2026-10-30 07:57
   text: stderr 꼬리 전체를 한 문자열로 가려 여러 줄 비밀값(PEM 등)이 줄 단위로 빠져나가지 않게 한다
