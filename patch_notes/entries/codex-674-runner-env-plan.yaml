@@ -1,6 +1,6 @@
 pr: null
 rows:
-- sha: 042921d
+- sha: ac441fa
   at: 2026-10-29 14:07
   text: 같은 runner의 기존 환경 담당자를 유지하고 runner별 환경 계약을 manual에 반영한다.
   summary: 환경 담당자 선택과 사용 안내를 바로잡습니다.
