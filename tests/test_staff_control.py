@@ -443,3 +443,56 @@ def test_cli_task_control_posts_the_staff_sheet_call(monkeypatch):
     assert calls == [("POST", "/api/tasks/t%2F1/steer", {"json": {"text": "chr1만"}})]
     with pytest.raises(SystemExit):
         cli.task_control(settings, "steer", "t1", "  ")
+
+
+# ---------------- hook command string (#1030) ----------------
+def _bash():
+    """A real bash: Git Bash on Windows (never the WSL launcher in System32), any bash elsewhere."""
+    import shutil
+
+    if os.name != "nt":
+        return shutil.which("bash")
+    git = shutil.which("git")
+    if not git:
+        return None
+    for root in Path(git).resolve().parents:  # ...\Git\cmd\git.exe or ...\Git\mingw64in\git.exe
+        for candidate in (root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"):
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
+
+def test_hook_commands_quote_the_executable_with_forward_slashes_for_bash_on_windows():
+    from labhq.hooks.control import hook_command
+
+    backslash = chr(92)
+    exe = "D:" + backslash + "a b" + backslash + "python.exe"
+    command = hook_command([exe, "-m", "labhq.hooks.control", "pre"], windows=True)
+    assert command == '"D:/a b/python.exe" -m labhq.hooks.control pre'
+    assert backslash not in command, "bash eats backslashes: the command would not be found"
+    assert hook_command(["/opt/py thon/python", "-m", "m"], windows=False) == "'/opt/py thon/python' -m m"
+
+
+def test_the_hook_commands_labhq_builds_run_under_a_real_bash(tmp_path):
+    # The unit tests call the hook functions directly and never saw Claude Code's shell: on Windows the old command
+    # (list2cmdline, bare backslashes) was "command not found" there, so no hook ever ran (#1030).
+    bash = _bash()
+    if bash is None:
+        pytest.skip("no bash on this machine")
+    from labhq.hooks.control import hook_commands
+    from labhq.hooks.tool_use import add_claude_hook
+
+    path = _control(tmp_path, constrained=True)
+    env = {**os.environ, hook.CONTROL_ENV: str(path), "PYTHONPATH": str(REPO), "PYTHONIOENCODING": "utf-8"}
+    env.pop("LABHQ_BROKER_URL", None)
+    env.pop("LABHQ_BROKER_TOKEN", None)
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}).encode()
+    done = subprocess.run([bash, "-c", hook_commands()["pre"]], input=payload, capture_output=True, env=env,
+                          cwd=str(tmp_path), timeout=60)
+    assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
+    out = json.loads(done.stdout.decode("utf-8"))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"  # restricted, and no broker to ask: a no
+    [recorder] = [h for h in add_claude_hook({})["hooks"]["PostToolUse"]]
+    done = subprocess.run([bash, "-c", recorder["hooks"][0]["command"]], input=b"{}", capture_output=True,
+                          env={**env, hook.CONTROL_ENV: ""}, cwd=str(tmp_path), timeout=60)
+    assert done.returncode == 0, done.stderr.decode("utf-8", "replace")

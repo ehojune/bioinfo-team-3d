@@ -308,9 +308,27 @@ def post_tool_use(path: str | Path, event: str = "PostToolUse") -> dict[str, Any
 EVENTS = {"pre": "PreToolUse", "post": "PostToolUse", "failure": "PostToolUseFailure"}
 
 
-def hook_commands() -> dict[str, str]:
+def hook_command(argv: list[str], *, windows: bool | None = None) -> str:
+    """One command string for a Claude Code hook (#1030).
+
+    Claude Code hands it to bash, Git Bash on Windows. ``subprocess.list2cmdline`` leaves a space-free Windows path
+    bare, and bash eats its backslashes (the path collapses into one word and the command is not found), so every hook
+    labhq made never ran there. The executable is double-quoted with forward slashes, which Git Bash and cmd both
+    take; the arguments are plain words.
+    """
+    import shlex
     import subprocess
-    return {name: subprocess.list2cmdline([sys.executable, "-m", "labhq.hooks.control", name]) for name in EVENTS}
+
+    windows = os.name == "nt" if windows is None else windows
+    executable, *rest = argv
+    if windows:
+        return " ".join(['"' + str(executable).replace("\\", "/").replace('"', "") + '"',
+                         *([subprocess.list2cmdline(rest)] if rest else [])])
+    return shlex.join([str(executable), *rest])
+
+
+def hook_commands() -> dict[str, str]:
+    return {name: hook_command([sys.executable, "-m", "labhq.hooks.control", name]) for name in EVENTS}
 
 
 def add_control_hooks(settings: dict[str, Any]) -> dict[str, Any]:
