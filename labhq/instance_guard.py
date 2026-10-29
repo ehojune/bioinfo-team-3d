@@ -35,7 +35,7 @@ from .util import atomic_write_text
 LAST_FILE = "labhq-last-config.json"
 PRIMARY_FILE = "labhq-primary-config.json"
 OWNER_FILE = {"gateway": "labhq-gateway-owner.json", "runner": "labhq-runner-owner.json"}
-BROKER_FILE = "labhq-broker-port-{port}.json"  # one per runner.broker_port, in the PC's default state folder (#618)
+BROKER_FILE = "labhq-broker-port-{port}.json"  # one per runner.broker_port, in the machine-wide folder (#618)
 
 
 @dataclass(frozen=True)
@@ -217,8 +217,22 @@ def write_owner(settings: Settings, role: str, *, required: bool = False) -> Non
         _write_json(_owner_path(settings, role), record)
 
 
+def machine_dir() -> Path:
+    """Where records that every OS account on this PC must see live: a port belongs to the machine, not to one
+    account's home (runners may run under other accounts, ``runner.os_account``). ``LABHQ_MACHINE_STATE_DIR`` overrides."""
+    override = os.environ.get("LABHQ_MACHINE_STATE_DIR")
+    path = Path(override) if override else (
+        Path(os.environ.get("PROGRAMDATA") or "C:/ProgramData") / "labhq" if os.name == "nt" else Path("/tmp/labhq"))
+    guard_test_path(path)
+    return path
+
+
 def _broker_path(settings: Settings) -> Path:
-    return default_state_dir() / BROKER_FILE.format(port=settings.runner.broker_port)
+    return machine_dir() / BROKER_FILE.format(port=settings.runner.broker_port)
+
+
+class _LockBusy(OSError):
+    """Another process holds the lock right now (as opposed to a file this account cannot open at all)."""
 
 
 @contextmanager
@@ -231,23 +245,39 @@ def _runner_claim_lock(settings: Settings):
         yield
 
 
+def _share(path: Path, mode: int) -> None:
+    """Let other OS accounts use a machine-wide file or folder where the OS allows it; otherwise leave it."""
+    if os.name != "nt":
+        try:
+            os.chmod(path, mode)
+        except OSError:
+            pass
+
+
 @contextmanager
-def _file_lock(path: Path):
+def _file_lock(path: Path, *, shared: bool = False):
     path.parent.mkdir(parents=True, exist_ok=True)
+    if shared:
+        _share(path.parent, 0o1777)
     with open(path, "a+b") as handle:
+        if shared:
+            _share(path, 0o666)
         handle.seek(0, os.SEEK_END)
         if handle.tell() == 0:
             handle.write(b"\0")
             handle.flush()
         handle.seek(0)
-        if os.name == "nt":
-            import msvcrt
+        try:
+            if os.name == "nt":
+                import msvcrt
 
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
 
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise _LockBusy(*exc.args) from exc
         try:
             yield
         finally:
@@ -261,12 +291,6 @@ def _file_lock(path: Path):
 def _live_owner(settings: Settings, role: str) -> Identity | None:
     """The live process that holds this role's state folder: from its owner record."""
     record = _read_json(_owner_path(settings, role))
-    return _record_identity(record) if record and _alive(record) else None
-
-
-def _live_broker_owner(settings: Settings) -> Identity | None:
-    """The live runner that holds this config's broker port, from the PC-wide record for that port."""
-    record = _read_json(_broker_path(settings))
     return _record_identity(record) if record and _alive(record) else None
 
 
@@ -417,6 +441,33 @@ def _port_notice(settings: Settings, port: int, other: str | None, show: Callabl
         True)
 
 
+def _claim_broker(settings: Settings, mine: Identity) -> Notice | None:
+    """The runner's broker port belongs to one config on the whole machine (#618). A live runner of another config
+    there stops this start. The same config's live runner keeps its record (this process would fail to bind anyway).
+    A machine-wide folder this OS account cannot use is no reason to refuse a start, so only a busy lock is."""
+    try:
+        path = _broker_path(settings)
+        with _file_lock(path.with_suffix(".lock"), shared=True):
+            held = _read_json(path)
+            if held and _alive(held):
+                owner = _record_identity(held)
+                if owner is not None and not same_identity(owner, mine):
+                    return _broker_notice(settings, owner, str)
+                if held.get("pid") != os.getpid():
+                    return None
+            from . import cli
+
+            _write_json(path, {"pid": os.getpid(), "created": cli._process_created(os.getpid()), "role": "runner",
+                               "config": settings.config_path, "config_id": mine.config_id,
+                               "fingerprint": mine.fingerprint, "port": settings.runner.broker_port})
+            _share(path, 0o666)
+    except _LockBusy:
+        raise
+    except OSError:
+        return None
+    return None
+
+
 def check(settings: Settings, *, show: Callable[[str], str] = str, token_mismatch: bool = False) -> list[Notice]:
     """Every difference worth a warning, read-only. `show` formats a config path inside the sentence (doctor masks
     home folders); the fix command always carries the real path. `token_mismatch`: a gateway on this config's port
@@ -512,19 +563,13 @@ def claim(settings: Settings, role: str) -> Notice | None:
                 return _state_notice(settings, role, owner, mine, str)
     else:
         try:
-            with _runner_claim_lock(settings), _file_lock(_broker_path(settings).with_suffix(".lock")):
+            with _runner_claim_lock(settings):
                 owner = _live_owner(settings, "runner")
                 if owner is not None and not same_identity(owner, mine):
                     return _runner_notice(settings, owner, mine, str)
-                broker = _live_broker_owner(settings)
-                if broker is not None and not same_identity(broker, mine):
-                    return _broker_notice(settings, broker, str)
+                if (notice := _claim_broker(settings, mine)) is not None:
+                    return notice
                 write_owner(settings, role, required=True)
-                record = _read_json(_owner_path(settings, "runner"))
-                if record is None:
-                    raise RuntimeError("Cannot record the broker port owner")
-                atomic_write_text(_broker_path(settings),
-                                  json.dumps({**record, "port": settings.runner.broker_port}, ensure_ascii=False) + "\n")
         except (OSError, RuntimeError) as exc:
             return Notice("runner_state", "runner state 소유권을 획득하지 못했습니다.",
                           f"다른 runner의 시작이 끝난 뒤 다시 시도하세요 ({type(exc).__name__}).", True)
