@@ -532,3 +532,30 @@ def test_the_ledger_survives_a_gateway_restart_and_the_event_carries_no_input(tm
         assert hub2.orchestrator.decide_restricted_call({**call, "fingerprint": f"n{n}", "at": time.time()})[0] is True
     assert hub2.orchestrator.decide_restricted_call({**call, "fingerprint": "late", "at": time.time()})[0] is False,         "the budget is counted across the restart: 1 + 4 used, the sixth is refused"
     hub2.store.delete("restricted_ledger", "t1")
+
+
+def test_a_halt_or_pause_given_while_the_cso_was_asked_still_stops_the_call(tmp_path):
+    for action, expect in (("halt", None), ("pause", "deny")):
+        path = tmp_path / f"{action}.json"
+        control_hook.update_state(path, lambda state: control_hook.apply_control(state, "constrain"), create="t1")
+
+        def ask(tool, tool_input, action=action, path=path):
+            control_hook.update_state(path, lambda state: control_hook.apply_control(state, action))
+            return {"approved": True, "note": "ok"}
+
+        out = control_hook.pre_tool_use(path, tool_name="Bash", tool_input={}, ask=ask)
+        assert out is not None, f"a {action} during the wait must not let the call run"
+        if action == "halt":
+            assert out == {"continue": False, "stopReason": control_hook.HALT_REASON}
+        else:
+            assert out["hookSpecificOutput"]["permissionDecision"] == expect
+
+
+def test_the_gateway_knows_the_episode_again_after_a_restart(tmp_path):
+    hub, _ = _restricted_hub(tmp_path)
+    hub2, _ = _gateway(tmp_path)  # restarted: process memory is empty, the runner will not resend the event
+    assert hub2.task_breaker.get("t1") is None
+    call = {"task_id": "t1", "episode": "run1:1", "fingerprint": "fpR", "at": time.time()}
+    assert hub2.orchestrator.decide_restricted_call(call)[0] is True
+    hub2.store.delete("restricted_ledger", "t1")
+    hub2.store.delete("task_breaker", "t1")

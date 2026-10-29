@@ -280,6 +280,13 @@ def pre_tool_use(path: str | Path, *, tool_name: str = "", tool_input: Any = Non
             return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                            "permissionDecisionReason":
                                                f"폭주 제한 중이라 읽기 도구만 쓸 수 있습니다. {note}"}}
+        # The wait can take up to the CSO's whole answer time: a halt or pause the PI gave meanwhile still wins.
+        state = read_state(path) or state
+        if state["halt"]:
+            return _halt(path, state)
+        if state["paused"]:
+            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                           "permissionDecisionReason": PAUSE_REASON}}
     return None
 
 

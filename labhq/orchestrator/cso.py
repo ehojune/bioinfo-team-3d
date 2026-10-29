@@ -3410,7 +3410,7 @@ class Orchestrator:
         does not lift the restriction and does not skip the normal permission gate; the PI lifts it.
         """
         tid, episode, fingerprint = call.get("task_id"), call.get("episode"), call.get("fingerprint")
-        known = (getattr(self.hub, "task_breaker", {}).get(tid) or {}).get("episode") if tid else None
+        known = self.hub.breaker_state(tid).get("episode") if tid else None
         if not (tid and episode and fingerprint and episode == known):
             return False, "제한 회차를 확인하지 못해 거절합니다"
         at = call.get("at")

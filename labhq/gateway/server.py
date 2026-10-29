@@ -2763,7 +2763,7 @@ class Hub:
         # The command is stored before it is sent and stays until the runner acknowledges it (``agent.breaker`` with its
         # ``command_id``), so a send that did not arrive, an acknowledgement that got lost, or a gateway restart all
         # resend the same command (#1008). ``sent`` only says the frame went out; "applied" is the runner's word.
-        command = {"command_id": new_id("brel"), "episode": (self.task_breaker.get(tid) or {}).get("episode"),
+        command = {"command_id": new_id("brel"), "episode": self.breaker_state(tid).get("episode"),
                    "at": time.time()}
         self.store.put("breaker_release", tid, command)
         sent = await self._push(tid, self._release_message(command))
@@ -2778,10 +2778,15 @@ class Hub:
         return {"action": "release_constraint", "command_id": command["command_id"],
                 **({"episode": episode} if episode is not None else {})}
 
+    def breaker_state(self, tid: str) -> dict:
+        """The restriction (episode, stage) this task's runner last reported, also after a gateway restart."""
+        return self.task_breaker.get(tid) or self.store.get("task_breaker", tid) or {}
+
     def _note_breaker_event(self, tid: str, data: dict) -> None:
         """Remember which restriction the task is in, and settle the release command its acknowledgement names."""
         if isinstance(data.get("episode"), str):
             self.task_breaker[tid] = {"episode": data["episode"], "stage": data.get("stage")}
+            self.store.put("task_breaker", tid, self.task_breaker[tid])  # the runner does not resend an acknowledged event
         command = self.store.get("breaker_release", tid)
         if command and data.get("command_id") == command.get("command_id"):
             self.store.delete("breaker_release", tid)
@@ -3618,6 +3623,7 @@ class Hub:
                 await self._settle_steers(tid, task, result.control)
             if tid:
                 self.task_breaker.pop(tid, None)
+                self.store.delete("task_breaker", tid)
                 self.orchestrator.restricted_calls.pop(tid, None)
                 self.store.delete("restricted_ledger", tid)
                 self.store.delete("breaker_release", tid)  # the task ended: nothing is left to release
