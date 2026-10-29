@@ -1,5 +1,9 @@
 pr: 1013
 rows:
+  - sha: "a704d73"
+    at: "2026-10-29 15:12"
+    text: "runner 환경 입력 검사도 runner ID를 설정이 허용하는 값 그대로 받는다."
+    summary: "공백이 든 runner ID에서도 환경 입력이 검사를 통과합니다."
   - sha: d9b7698
     at: "2026-10-29 14:08"
     text: "비활성 채용 runner 시험 fixture를 바로잡는다."
