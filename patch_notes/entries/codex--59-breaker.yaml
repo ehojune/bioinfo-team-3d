@@ -1,0 +1,18 @@
+pr: 995
+rows:
+- sha: 9bbbde3
+  at: 2026-10-29 05:21
+  text: 폭주 차단기 단계 정책(BreakerPolicy)과 hook의 constrain 상태 초안을 보존한다 (#59, Codex 인계분).
+  summary: 폭주 차단기가 경고에서 제한, 정지로 올라가는 규칙의 초안을 보존했습니다.
+- sha: 96d79d3
+  at: 2026-10-29 05:27
+  text: 폭주 차단기 단계 집행 — beat 승격, hook 엔진만 constrain, 미지원 엔진 unsupported 표시, hardStop일 때만 halt, PI 해제 API (#59).
+  summary: 같은 일을 반복하는 직원을 단계적으로 제한하고, 지원하지 않는 엔진은 제한하지 못했다고 정직하게 표시하며, PI가 해제할 수 있게 했습니다.
+- sha: 9a75fed
+  at: 2026-10-29 05:42
+  text: 차단기 테스트를 Windows inventory에 등록하고, 해제 때 ladder를 먼저 초기화하며 비정상 종료에서도 breaker 상태를 지운다 (#995 리뷰 P2).
+  summary: 새 차단기 테스트를 자동 검사 목록에 올리고, 해제 직후 잘못 멈추는 경우와 상태가 남는 경우를 고쳤습니다.
+- sha: d3488e3
+  at: 2026-10-29 05:58
+  text: 차단기 beat 테스트에 가짜 시계를 주입하고(Windows 시계 해상도), recruit 정적 테스트의 가짜 runner에 breakers를 추가한다.
+  summary: Windows에서 흔들리던 차단기 테스트와 가짜 실행기 설정을 고쳤습니다.

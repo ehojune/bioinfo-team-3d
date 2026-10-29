@@ -5,6 +5,149 @@
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
 ## 단계
+Codex 직원이 쓸 수 없는 `labhq_job`을 안내받던 문제 — Closes #1003 (Refs #681 #675).
+
+## 확인한 것 (main `ac8d9e08`, 코드)
+- `labhq_job`은 직원 YAML의 `builtin_mcp: [job]`로 연결됩니다. 기본 직원 중 `job`을 가진 것은 analyst·bioinfo-agent(둘 다 Claude)뿐이고 Codex 직원(engineer·editor·facilities·lit_scout·sci_reviewer)에는 없습니다.
+- 그런데 `WORKSPACE_WRITE_RULES`(쓰기 직원 공통 프롬프트)는 엔진과 무관하게 "10분 넘는 계산은 `labhq_job`…, nohup·&는 거절된다"고 말했습니다. Codex 직원은 도구가 없어 따를 수 없습니다.
+- "거절된다"는 Claude만 사실입니다. 떼어 내는 명령을 카드 없이 거절하는 승인 gate(`approval_prompt`)는 Claude의 `--permission-prompt-tool`이고, Codex는 `approval_policy="never"`로 OS sandbox 안에서 실행돼 이 gate를 거치지 않습니다(`adapters/claude_code.py:392`, `adapters/codex.py` 264·302). 그래서 이 이슈의 전제 "Codex가 nohup을 쓰면 거절 문구로 `labhq_job`을 안내받는다"는 틀렸고, 실제 결함은 프롬프트의 안내였습니다.
+- `job`을 가진 Codex 직원을 따로 만들면 도구가 연결되지만(`_mcp_servers`는 엔진을 보지 않음) 호출은 런타임에서 "local jobs are for Claude staff…"로 늘 실패했습니다.
+
+## 선택과 이유
+- **Codex에 `labhq_job`을 주지 않습니다.** runner가 시작하는 job은 Codex가 명령을 가두는 OS sandbox 밖에서 돌아 sandbox를 우회합니다. 이미 `_submit_local_job`이 같은 이유로 거절하고 시험(`test_codex_staff_cannot_submit…`)이 그것을 고정합니다. 안전하게 줄 수 있는 방법이 없어 issue의 두 번째 선택지(엔진별 안내)로 갑니다.
+
+## 한 일
+- `adapters/base.py`: 긴 계산 규칙을 엔진별로 나눕니다. Claude는 기존 문구 그대로(`WORKSPACE_WRITE_RULES`가 바이트 단위로 같음), 그 외 엔진은 `WORKSPACE_WRITE_RULES_NO_JOB`: `labhq_job`은 쓸 수 없고, `labhq_hpc`가 있으면 그것, 아니면 끝까지 끝나는 조각으로 나눠 산출을 파일로 남기거나 PI에게 묻고, 떼어 둔 프로세스는 턴이 끝나면 멈춘다고 안내(거절된다는 주장은 뺌). `role_footer`가 `ctx.agent.engine`으로 고릅니다.
+- `runner/daemon.py`: `labhq_job` MCP를 Claude 직원에게만 연결하고, 거절 메시지에 대안을 덧붙입니다.
+- `gateway/server.py`: 직원 MCP 목록 표시에서도 같은 조건.
+- `docs/manual.md`: 로컬 job 절에 반영.
+
+## 테스트 결과
+- 새 `tests/test_job_tool_engines_1003.py` 9건: Claude 프롬프트 불변, 다른 엔진 4종의 프롬프트(`job_submit`·"refused" 없음, 대안 있음), 두 문구의 차이가 해당 bullet뿐, 엔진별 MCP 연결(runner·gateway), Codex 기본 직원 YAML에 `job` 없음, Codex 제출 거절 메시지의 대안.
+- `test_role_footer`·`test_private_paths`는 Codex도 Claude 상수와 같다고 고정하고 있어 엔진별 기대로 고쳤습니다(약화 아님: Claude 쪽은 같은 문자열 단언을 유지).
+- `-k "mcp or job or prompt or footer or write_rules or workspace or agent_spec or adapter"` 878 passed, 40 skipped (진짜 node를 PATH 앞에 둔 상태). 이 머신의 기본 `node`는 Codex 런타임 shim이라 `test_web_3d`의 node 시험은 그 상태에서만 통과합니다(환경 문제).
+- 미검증: 실제 Codex 실행에서 새 문구가 직원 행동을 바꾸는지(실모델 실행은 범위 밖), Windows CI.
+
+## 바꾼 파일
+labhq/adapters/base.py, labhq/runner/daemon.py, labhq/gateway/server.py, docs/manual.md, tests/test_job_tool_engines_1003.py, tests/test_role_footer.py, tests/test_private_paths.py, config/ci/windows-boundary-v1.json(새 시험 등록)과 변경 기록.
+
+## 막힌 점
+없음. Gemini·Antigravity·cli 엔진도 같은 이유로 `labhq_job`을 받지 않는 쪽으로 맞췄습니다.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## 단계
+Windows CI 실제 R parse 시험의 시간 초과 — Refs #898 (닫지 않음).
+
+## 근거 (실제 로그)
+- run 40022968041(main `481221f8`) job 120652090937: `test_real_r_parse_without_running_the_script[stop('not evaluated')\n-pass]` 실패, `assert 'timeout' == 'pass'`.
+- 단계 기록: `[{"phase":"version","timeout_s":10,"returncode":0,"elapsed_s":7.704},{"phase":"syntax","timeout_s":10,"timeout":true,"elapsed_s":10.0}]`, 전체 call 17.72초. version이 7.704초 걸려 성공한 뒤 syntax가 10초 한도를 넘겼습니다. 10-26 #987 조사(run 40305182030)도 version 성공 뒤 syntax 초과로 같은 형태입니다.
+- 이 두 시험이 확인하는 것은 실제 R이 script를 실행하지 않고 parse하는지입니다. Rscript 시작이 늦은 것은 판정 대상이 아닙니다. R 시작이 느린 이유는 확인하지 못했습니다.
+
+## 한 일 (`tests/test_reproduction_receipt.py`만)
+- 실제 Rscript를 띄우는 `test_real_r_parse_without_running_the_script` 2건에만 `build_receipt(timeout=60)`(호출당)을 넘깁니다. 제품 기본값 10초와, 이를 `assert kwargs["timeout"] == 10`으로 확인하는 mock timeout 귀속 시험은 그대로입니다.
+- `r_parser_trace` fixture가 version·syntax 소요 시간을 통과할 때도 `UserWarning`으로 남깁니다. CI 로그는 통과한 시험의 출력과 병렬 worker의 출력을 보여 주지 않지만 warnings summary는 출력하므로, 이 줄로 R 시작 시간 분포를 모을 수 있습니다. 기존 `print`·`record_property`는 유지합니다.
+
+## 테스트 결과
+- 로컬에는 `Rscript`가 없어 실제 R 시험 2건은 skip됩니다. 같은 파일 107 passed, 3 skipped. mock 시험으로 경고 출력은 확인했습니다.
+- 미검증: Windows CI에서 실제 R 시험 2건이 skip이 아니라 실행돼 통과하는지, 60초가 충분한지. 이 PR의 Windows job 로그로만 확인할 수 있습니다.
+
+## 남은 것
+- 제품 기본값 10초가 실제 Windows 사용자 PC에서 모자랄 수 있는지는 이 PR이 답하지 않습니다. 모은 단계 시간으로 따로 판단합니다.
+- SIGTERM ACK는 #900 이후 관측이 없지만 해결로 선언하지 않습니다. #898은 열어 둡니다.
+
+## 바꾼 파일
+tests/test_reproduction_receipt.py와 변경 기록.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## 단계
+Windows CI `test_office_in_node[web_office_browser.cjs]` 150초 멈춤 추적 — Closes #1000.
+
+## 원인 (실제 로그)
+- run 40780405903(main `82125d74`), job 123140494538. 출력에 두 화면(1440×900, 390×844) 측정 JSON(`console.log`)이 모두 있고, 그 뒤 subtest가 `testTimeoutFailure`(150006ms)로 끝났습니다.
+- 그 JSON을 출력하는 줄 다음에 남는 단계는 `await cdp('Browser.close')`와 finally 정리(최대 2초)뿐입니다. 정리는 150초를 쓸 수 없으므로 멈춘 곳은 `Browser.close`의 답을 기다리는 줄입니다. Chrome이 답을 보내기 전에 소켓을 닫거나 종료하면 그 Promise는 영영 끝나지 않았습니다(`ws.onclose`가 대기 중인 호출을 거부하지 않음, 호출에 상한 없음).
+- 이 결론은 로그 구조에서 추론한 것입니다. 실제 CI에서 Chrome이 답을 안 한 사실을 직접 본 것은 아닙니다.
+
+## 한 일 (`tests/web_office_browser.cjs`만)
+- `Browser.close`는 5초만 기다리고, 답이 없거나 소켓이 닫히면 단계 이름과 함께 기록한 뒤 finally가 Chrome을 끝냅니다. 모든 단언은 그 전에 끝나 있습니다.
+- 모든 DevTools 호출에 30초 상한과 이름 있는 오류, `ws.onclose`에서 대기 호출 거부를 넣었습니다.
+- 단계 이름·시각(`office phase +Nms: …`)을 stderr에 남깁니다. `test_office_in_node`가 timeout 때 stderr를 그대로 출력하므로 다음 멈춤은 마지막 단계로 바로 보입니다.
+
+## 테스트 결과
+- 로컬 Chrome에서 통과(약 19.6초), 단계 기록 정상. pytest `test_web_3d.py -k web_office_browser`는 실제 `C:\Program Files
+odejs`를 PATH 앞에 둔 상태에서 통과(21초)합니다. 이 머신의 기본 `node`는 Codex 런타임을 부르는 `~/bin/node.CMD` shim이라 test의 임시 HOME에서 `node.exe not found under ...cua_node`로 실패하며, 이 변경과 무관한 환경 문제입니다(수정 전 파일도 같은 shim을 씁니다).
+- 재현 실험(임시 사본, 커밋 안 함): `Browser.close` 요청을 보내지 않아 답이 없게 하면 수정 전 파일은 150초 timeout까지 멈추고(약 3분), 수정 후는 5초 뒤 `Browser.close: CDP Browser.close had no reply within 5000ms`를 남기고 통과합니다.
+- 미검증: 실제 Windows CI에서 원인이 이것이라는 직접 증거와, 이 수정 뒤 CI 재발 여부. 한 번 green은 해결 근거가 아니므로 #1000은 열어 둡니다.
+
+## 바꾼 파일
+tests/web_office_browser.cjs와 변경 기록. 제품 웹 코드는 바꾸지 않았고 결함 근거도 없습니다.
+
+## 막힌 점
+없음. #844·#898 범위와 섞지 않았습니다.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## 단계
+CI 간헐 실패 추적 — Closes #998.
+
+## 원인 (실제 로그)
+- 실패 run 40776469480, `pytest (3.12)`, job 123127070462. traceback 끝: `scripts/ci_suite.py` `pytest_runtest_logreport` → `StageDiagnostics.record` → `flush` → `Path.write_text` → `Path.open` → `tests/test_request_input_proof_959.py:105`의 `lambda: pytest.fail('guarded input opened')` → `Failed`.
+- `test_restricted_and_private_inputs_not_opened`가 프로세스 전체의 `Path.open`을 `pytest.fail`로 바꿔 둔 call 단계가 끝날 때, 진단 flush(5초 간격)가 우연히 겹치면 `Failed`(OSError가 아니라 `except (OSError, ValueError)`에 안 잡힘)가 hook 밖으로 나가 xdist가 INTERNALERROR로 worker를 죽입니다. 테스트 소요가 5초 간격 경계에 걸릴 때만 나타나 재실행하면 통과했습니다.
+- 제품 코드 결함이 아닙니다. 테스트 guard와 CI 진단 도구의 상호작용입니다.
+
+## 한 일
+- `scripts/ci_suite.py`: 진단 flush가 import 시점에 묶어 둔 `io.open`으로 씁니다(`Path.write_text`/`Path.open`을 쓰지 않음). `Path.open`·`builtins.open`을 패치하는 다른 test(web_shutdown_process, windows_encoding_contract 등)가 진단 기록을 조용히 끊는 경로도 함께 닫힙니다.
+- `tests/test_request_input_proof_959.py`: guard를 보호 폴더 경로에만 `pytest.fail`로 걸고 나머지는 원래 `Path.open`으로 넘깁니다. 검사 의도는 그대로입니다.
+- 회귀 test `test_the_diagnostic_write_survives_a_test_that_patches_path_open_to_fail`(interval=0, 시계 고정): 수정 전 코드에서 `Failed: Path.write_text used`로 실패, 수정 후 통과를 로컬에서 확인했습니다.
+
+## 테스트 결과
+- `tests/test_ci_*.py` 5개 파일과 `test_request_input_proof_959.py` 통과, `ci_selection.validate_profile()` 통과.
+- 미검증: 실제 CI의 xdist 환경에서 간격 경계를 다시 만들지는 않았습니다. 같은 부류(전역 `Path.open` 패치)의 다른 test가 `pytest.fail`을 쓰는지 grep했고 `Path.open`을 `pytest.fail`로 막는 곳은 이 한 곳뿐입니다. `Path.read_text`를 `pytest.fail`로 막는 test(knowledge_recall, step_memory_limit)는 flush가 `read_text`를 쓰지 않아 영향이 없습니다.
+
+## 바꾼 파일
+scripts/ci_suite.py, tests/test_request_input_proof_959.py, tests/test_ci_windows_phases.py와 변경 기록.
+
+## 막힌 점
+없음. #898·#844 범위는 건드리지 않았습니다.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## 단계
+Paper2Agent 설치본 Windows 경로 패치 — Closes #662.
+
+## 한 일
+- `labhq setup-paper2agent`(와 `doctor --fix`)가 설치본 `paper2skill/scripts/reading_package.py`의 `str(...relative_to(...))` 네 곳을 `.as_posix()`로 고칩니다. 두 엔진 사본을 교체하기 전에 staging 복사본에서 적용합니다.
+- 결과를 `.labhq-source.json`의 `patches`에 남깁니다(patch id, 파일, 고정 upstream commit `8c2d0591…`, `applied`/`already_patched`/`file_absent`).
+- 이미 고쳐진 사본은 그대로 둡니다. 문구가 맞지 않거나 일부만 고쳐진 사본은 `RuntimeError`로 설치를 멈추고 기존 설치를 보존합니다.
+- `labhq doctor`는 패치되지 않은 옛 설치본을 준비 안 됨으로 보고하고 `--fix`가 다시 설치합니다.
+- 매뉴얼 해당 절을 고쳤습니다.
+
+## 테스트 결과
+- `tests/test_paper2agent_winpath_662.py` 6건: 네 곳 적용·provenance, Windows 경로(PureWindowsPath)에서 패치 전 키 불일치→패치 뒤 일치, 재적용 무변화, 불일치 upstream 실패와 기존 설치 보존, 반만 고쳐진 사본 실패, 스크립트 없음 기록·옛 설치본 감지.
+- 관련 test 126건 통과(`test_contract_provenance`의 marker 동등 비교 2곳은 `patches` 키를 제외하도록 고침).
+- 미검증: 실제 upstream 설치본 위 적용, 실제 논문 스킬 빌드(범위 밖). `tests/test_doctor.py::test_doctor_warns_about_parent_session_markers_and_pi_skills`는 변경 없이도 이 세션에서 실패합니다(세션 환경 변수).
+
+## 바꾼 파일
+labhq/recruit/paper2agent.py, labhq/doctor.py, docs/manual.md, tests/test_paper2agent_winpath_662.py, tests/test_contract_provenance.py와 변경 기록.
+
+## 막힌 점
+없음. upstream PR은 선택 범위라 내지 않았습니다.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+# 폭주 차단기 단계 집행 (#59 ②)
+
+| 항목 | 내용 |
+|---|---|
+| 담당 | claude-worker2 (Codex W1 초안 `9bbbde3`를 이어받음) |
+| 정책 | #59 확정 댓글 6479569164: 미지원 엔진 `unsupported`, hardStop 기본 끔, beat 10초·새 관측 때만 한 단계, compaction 보류 |
+| 바뀐 곳 | `runner/breaker.py`(Escalation·stage_record), `runner/daemon.py`(단계 집행·release), `gateway/server.py`(`POST /api/tasks/{id}/breaker/release`), `settings.py`(`breaker_hard_stop`·`breaker_beat_s`), manual |
+| 시험 | `tests/test_breaker.py`, `tests/test_breaker_enforcement.py` |
+| 미확인 | 실제 네트워크 E2E, 작업판 해제 버튼, constrain 때 CSO 승인, compaction 예외 |
+| #673 겹침 | `daemon.py` `emit()` 안의 breaker 호출부는 #673 retry loop와 별개. `gateway/server.py`는 새 함수 `release_breaker`만 추가 |
+
+## 단계
 문서 정비 — Refs #992.
 
 ## 한 일

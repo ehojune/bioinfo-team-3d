@@ -1,0 +1,22 @@
+pr: 997
+rows:
+- sha: d2d5d6f
+  at: 2026-10-29 06:33
+  text: setup-paper2agent가 reading_package.py의 Windows 경로 결함(str(relative_to) 네 곳)을 설치본에 패치하고 고정 upstream commit·적용 결과를 provenance에 남긴다.
+  summary: 논문 스킬 설치 때 Windows 경로 버그를 자동으로 고치고 그 기록을 남깁니다.
+- sha: 38af359
+  at: 2026-10-29 06:44
+  text: 새 회귀 test를 Windows 경계 test 목록에 등록해 CI 선택 검사를 맞춘다.
+  summary: 새 회귀 테스트를 Windows 검사 목록에 등록했습니다.
+- sha: 2ef0c6b
+  at: 2026-10-29 06:59
+  text: 패치된 표현식을 한 namespace에서 평가해 Python 3.10에서도 comprehension이 변수를 찾게 한다.
+  summary: 새 회귀 테스트가 Python 3.10에서도 통과하도록 고쳤습니다.
+- sha: 9ac6743
+  at: 2026-10-29 07:16
+  text: 일부만 패치된 Paper2Agent 설치본도 doctor가 준비 안 됨으로 보고해 --fix가 다시 설치하거나 불일치를 알리게 한다.
+  summary: 일부만 고쳐진 논문 스킬 설치본도 점검에서 걸러냅니다.
+- sha: 03c04af
+  at: 2026-10-29 07:16
+  text: 일부만 패치된 설치본이 준비 안 됨으로 판정되는 회귀 test를 추가한다.
+  summary: 일부만 고쳐진 설치본 판정을 테스트로 고정했습니다.

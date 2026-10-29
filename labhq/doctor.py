@@ -601,6 +601,8 @@ def _paper2agent_row(settings: Settings, agents: list[AgentSpec], fix: bool = Fa
             if (settings.recruit.skill_commit is not None
                     and paper2agent.installed_commit(engine, settings) != settings.recruit.skill_commit):
                 return False
+            if not paper2agent.skill_patched(path):
+                return False  # an older install still carries a known upstream defect; setup patches it
             if engine == "claude_code":
                 from .adapters.claude_code import read_plugin_manifest
                 return (read_plugin_manifest(path.parent.parent) or {}).get("name") == "labhq-paper2agent"
