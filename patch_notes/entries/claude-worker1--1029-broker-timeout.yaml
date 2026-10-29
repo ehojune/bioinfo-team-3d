@@ -12,3 +12,7 @@ rows:
     at: "2026-10-29 21:54"
     summary: "대기 시간을 바꿔도 다른 시험이 옛 값에 묶여 깨지지 않게 상수를 참조하도록 고쳤습니다."
     text: "test: broker 시험이 provider 상한을 PROVIDER_TIMEOUT으로 참조 (#1029)"
+  - sha: "bc66106"
+    at: "2026-10-29 22:04"
+    summary: "항상 WMI를 거치는 시험에서도 준비 단계별 시간을 기록하게 했습니다."
+    text: "test: WMI를 항상 거치는 nested 양성 시험도 단계 시간을 출력 (#1029)"
