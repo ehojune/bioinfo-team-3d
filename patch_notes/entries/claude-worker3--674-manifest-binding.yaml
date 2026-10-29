@@ -1,5 +1,9 @@
 pr: 1025
 rows:
+- sha: 'a34579b'
+  at: 2026-10-29 17:45
+  text: manifest·binding 대조 test를 Windows inventory에 등록된 기존 test_runner_env_inputs_674.py로 옮긴다
+  summary: 새 시험이 기존 시험 파일에 들어가 CI 목록을 늘리지 않고 같은 검사를 합니다.
 - sha: 'a1ce63f'
   at: 2026-10-29 17:20
   text: 환경 단계가 끝날 때 runner가 수집된 runner-manifest.json의 hash와 내용을 승인 계획의 binding과 대조하고 interpreter 존재까지 확인해 어긋나면 그 단계를 실패 처리한다
