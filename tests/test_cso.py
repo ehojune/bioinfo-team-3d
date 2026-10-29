@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import os
 import re
@@ -10,7 +11,7 @@ import pytest
 
 from labhq.gateway.server import Hub
 from labhq.models import RunnerUnavailable, Task, TaskResult
-from labhq.orchestrator.cso import (FINISH_PROMPT, BudgetExceeded, Orchestrator, failure_kind,
+from labhq.orchestrator.cso import (ENV_LOCK_OUTPUT, FINISH_PROMPT, split_runner_environments, BudgetExceeded, Orchestrator, failure_kind,
                                     general_report_warnings, valid_review, format_roster, validate_steps)
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
@@ -3351,3 +3352,46 @@ async def test_gateway_names_the_task_it_adopts_and_records_a_failed_send_as_unk
     again = Task(agent_id="worker", request_id="q", prompt="work", meta={"kind": "step", "step_id": "s1"})
     assert hub.recovery_task_id(again) == "prior"
     assert (await hub.dispatch(again)).task_id == "prior"
+
+
+# #1026: a stored runner environment binding is never re-planned or rebound.
+def bound_runner_plan():
+    steps = [
+        {"id": "env", "agent_id": "worker", "instruction": "Install approved packages",
+         "outputs": [ENV_LOCK_OUTPUT], "depends_on": []},
+        {"id": "run", "agent_id": "worker", "instruction": "analyze", "outputs": [], "depends_on": ["env"]},
+    ]
+    return split_runner_environments(steps, {"worker": "r1"}, {"r1": "linux"}, lambda _: True)
+
+
+@pytest.mark.asyncio
+async def test_failure_with_bound_environment_does_not_replan_or_touch_bindings():
+    stored = bound_runner_plan()
+    before = copy.deepcopy(stored)
+    assert any("environment_binding" in s for s in stored)
+    assert any("environment_bindings" in s for s in stored)
+
+    async def dispatch(task):
+        kind = task.meta["kind"]
+        assert kind != "replan", "a bound plan must not reach the CSO re-plan"
+        if kind == "step":
+            if task.meta["step_id"] == "run":
+                return result(task, ok=False, error="analysis failed")
+            return result(task, text="env ready", outputs=task.meta["outputs"])
+        assert kind == "synthesis", kind
+        return result(task, text="final")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.max_replans = 1
+    hub.s.orchestrator.max_failure_replans = 1
+    hub.s.orchestrator.reviewer_agent = None
+    hub.requests["r"]["plan"] = {"steps": copy.deepcopy(stored)}
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    req = hub.requests["r"]
+    assert not [t for t in hub.calls if t.meta["kind"] == "replan"]
+    assert "replan_history" not in req
+    for kept, old in zip(req["plan"]["steps"], before):
+        for key in ("id", "agent_id", "environment_binding", "environment_bindings"):
+            assert kept.get(key) == old.get(key), key
+    assert [s["id"] for s in req["plan"]["steps"]] == [s["id"] for s in before]
