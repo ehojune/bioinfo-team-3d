@@ -109,6 +109,9 @@ async def test_a_hooked_engine_is_restricted_to_read_tools_and_the_pi_can_releas
     try:
         await runner.run_task(Task(agent_id="engineer", prompt="loop", meta={"kind": "step"}))
         assert seen["constrained"] is True
+        # The staff sheet only learns of the restriction (and shows its release button) through agent.control.
+        controls = [e["data"] for e in sent if e["type"] == "agent.control"]
+        assert controls and controls[0]["constrained"] is True and controls[0]["source"] == "breaker"
         assert seen["bash"]["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert seen["after"] is False
         assert _stages(sent) == [("constrain", "applied"), ("normal", "released")]
@@ -163,3 +166,111 @@ async def test_gateway_release_reaches_the_runner_and_refuses_finished_tasks(tmp
         await hub.release_breaker("done")
     with pytest.raises(KeyError):
         await hub.release_breaker("nope")
+
+
+async def test_denied_calls_after_constrain_do_not_push_the_task_to_stop(tmp_path, monkeypatch):
+    # #1008: once restricted, a failing call may be the restriction's own denial; only a repeat keeps climbing.
+    runner, sent, _ = _runner(tmp_path, monkeypatch, Engine.claude_code, calls=0)
+
+    class Denied:
+        async def run(self, ctx):
+            same = {"name": "shell", "input": "x", "input_fingerprint": tool_input_fingerprint("shell", "x")}
+            for _ in range(8):
+                await ctx.emit("agent.tool", same)  # repeat signal: warn
+            for i in range(30):
+                await ctx.emit("agent.tool", {"name": "Bash", "input": f"c{i}",
+                                             "input_fingerprint": tool_input_fingerprint("Bash", f"c{i}")})
+                await ctx.emit("agent.tool_error", {"text": "Runaway restriction: read-only tools only"})
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="done")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Denied())
+    try:
+        await runner.run_task(Task(agent_id="engineer", prompt="loop", meta={"kind": "step"}))
+        stages = [stage for stage, _ in _stages(sent)]
+        assert "constrain" in stages and "stop" not in stages, "error streaks alone never reach stop"
+    finally:
+        runner.store.close()
+
+
+async def test_a_breaker_halt_reaches_the_gateway_as_a_pi_halt_and_a_release_waits_for_the_runner(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    hub.requests["r"] = {"id": "r", "text": "work", "mode": "team", "status": "running"}
+    hub.store.put("task", "t1", {"request_id": "r", "runner_id": "pc-a", "payload": {"agent_id": "worker"},
+                                 "accepted": True, "step_id": "s1", "kind": "step", "dispatched_at": 1.0})
+    sent, online = [], {"pc-a": False}
+
+    async def send_runner(runner_id, message):
+        if not online[runner_id]:
+            from labhq.models import RunnerUnavailable
+            raise RunnerUnavailable("offline")
+        sent.append(message)
+
+    hub.send_runner = send_runner
+    await hub._note_runner_halt("t1")
+    assert hub.store.get("task", "t1")["halt_requested"] is True  # a reconnecting runner is told to halt again
+    assert (await hub.release_breaker("t1"))["sent"] is False
+    online["pc-a"] = True
+    await hub._push_task_state("t1")
+    assert [m["action"] for m in sent if m["action"] != "halt"] == ["release_constraint"]
+    sent.clear()
+    await hub._push_task_state("t1")  # no acknowledgement yet: the same command goes again
+    assert [m["action"] for m in sent if m["action"] != "halt"] == ["release_constraint"]
+
+
+def _gateway(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    hub.store.put("task", "t1", {"request_id": "r", "runner_id": "pc-a", "payload": {"agent_id": "worker"},
+                                 "accepted": True, "step_id": "s1", "kind": "step", "dispatched_at": 1.0})
+    sent = []
+
+    async def send_runner(runner_id, message):
+        sent.append(message)
+
+    hub.send_runner = send_runner
+    return hub, sent
+
+
+async def test_a_release_command_survives_a_restart_and_is_settled_by_the_runners_ack(tmp_path):
+    hub, sent = _gateway(tmp_path)
+    hub._note_breaker_event("t1", {"stage": "constrain", "episode": 2})
+    out = await hub.release_breaker("t1")
+    command = sent[0]
+    assert out["sent"] and out["command_id"] == command["command_id"] and command["episode"] == 2
+    hub2, sent2 = _gateway(tmp_path)  # a gateway restart: the unacknowledged command is still there
+    await hub2._push_task_state("t1")
+    assert [m.get("command_id") for m in sent2 if m["action"] == "release_constraint"] == [command["command_id"]]
+    hub2._note_breaker_event("t1", {"enforcement": "released", "command_id": "someone-else"})
+    assert hub2.store.get("breaker_release", "t1"), "another command's ack settles nothing"
+    hub2._note_breaker_event("t1", {"enforcement": "released", "command_id": command["command_id"]})
+    assert hub2.store.get("breaker_release", "t1") is None
+    sent2.clear()
+    await hub2._push_task_state("t1")
+    assert all(m["action"] != "release_constraint" for m in sent2), "settled: never sent again"
+
+
+async def test_the_runner_acks_a_release_once_applied_and_never_applies_a_resend_or_a_stale_one(tmp_path, monkeypatch):
+    async def between(runner, ctx, i, seen):
+        if i == 8:  # the task is constrained
+            seen["episode"] = runner.breakers[ctx.task.id].episode
+            for command, episode in (("c1", seen["episode"]), ("c1", seen["episode"]), ("c0", seen["episode"] + 1)):
+                await runner._on_control({"type": "task.control", "task_id": ctx.task.id,
+                                          "action": "release_constraint", "command_id": command, "episode": episode})
+                acks = [e["data"] for e in runner.sent if e["type"] == "agent.breaker" and e["data"].get("command_id")]
+                seen.setdefault("acks", []).append(acks[-1])
+
+    runner, sent, seen = _runner(tmp_path, monkeypatch, Engine.claude_code, calls=9, between=between)
+    runner.sent = sent
+    try:
+        await runner.run_task(Task(agent_id="engineer", prompt="loop", meta={"kind": "step"}))
+        first, resend, stale = seen["acks"]
+        assert (first["command_id"], first["enforcement"]) == ("c1", "released") and first["episode"] == seen["episode"]
+        assert (resend["command_id"], resend["enforcement"]) == ("c1", "released")
+        assert (stale["command_id"], stale["enforcement"]) == ("c0", "stale")
+        logs = [e["data"]["text"] for e in sent if e["type"] == "agent.log" and "차단기를 풀었어요" in e["data"].get("text", "")]
+        assert len(logs) == 1, "the resend and the stale command say nothing more"
+    finally:
+        runner.store.close()

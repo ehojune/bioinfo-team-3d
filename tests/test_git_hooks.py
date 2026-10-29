@@ -312,3 +312,126 @@ def test_replay_preserves_author_and_message(history, tmp_path, operation, linke
         git("rebase", *flags, "--onto", "main", base, cwd=worktree)
     assert git("log", "-1", "--format=%ae", cwd=worktree).stdout.strip() == "original@example.com"
     assert git("log", "-1", "--format=%B", cwd=worktree).stdout == message
+
+
+# ---- #808: only a real trailer counts, and a model is filled in only when the session names it ----
+OLD_CODEX = "<noreply@openai.com>"
+CODEX_BOT = "<199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>"
+
+
+def run_commit_msg(history, message, **env):
+    """Run the repository commit-msg hook on a temporary message file, exactly as git would."""
+    repo, _home, _git = history
+    path = repo / "MSG.txt"
+    path.write_text(message, encoding="utf-8", newline="\n")
+    child = {k: v for k, v in os.environ.items() if not k.startswith(("LABHQ_COMMIT_", "CODEX_", "CLAUDECODE", "GEMINI_"))}
+    child.update({"LABHQ_COMMIT_AGENT": "codex"} if "LABHQ_COMMIT_AGENT" not in env else {})
+    child.update({k: v for k, v in env.items() if v is not None})
+    done = subprocess.run(["sh", str(repo / ".githooks" / "commit-msg"), str(path)], cwd=repo, env=child,
+                          capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert done.returncode == 0, done.stderr  # the hook never blocks a commit
+    return path.read_text(encoding="utf-8")
+
+
+def trailers(text):
+    return subprocess.run(["git", "interpret-trailers", "--parse"], input=text, capture_output=True, text=True,
+                          encoding="utf-8", timeout=30).stdout.splitlines()
+
+
+def test_a_trailer_example_in_the_body_is_text_and_a_real_trailer_is_still_added(history):
+    # The example names this very agent's address: the old whole-message grep took it for the real attribution.
+    body = f"Add the hook\n\nExample of the format:\n\nCo-authored-by: Codex (gpt-6) {CODEX_BOT}\n\nMore prose here.\n"
+    out = run_commit_msg(history, body, LABHQ_COMMIT_MODEL="gpt-6")
+    assert out.startswith(body)  # the example and every other body line survive untouched
+    assert trailers(out) == ["Co-authored-by: Codex (gpt-6) " + CODEX_BOT]
+
+
+def test_the_old_codex_address_is_replaced_only_in_the_trailer_block(history):
+    message = (f"Explain the old address\n\nSet Co-authored-by lines like this:\n\n"
+               f"Co-authored-by: Codex {OLD_CODEX}\n\nafter prose\n\nCo-Authored-By: Codex (gpt-6) {OLD_CODEX}\n")
+    out = run_commit_msg(history, message)
+    assert f"\nCo-authored-by: Codex {OLD_CODEX}\n" in out  # the body example keeps the address it showed
+    assert trailers(out) == ["Co-Authored-By: Codex (gpt-6) " + CODEX_BOT]  # the real trailer got the bot address
+    assert out.count(CODEX_BOT) == 1
+
+
+@pytest.mark.parametrize("model", [None, "gpt-6"])
+def test_a_normal_trailer_is_left_alone_and_a_second_run_changes_nothing(history, model):
+    once = run_commit_msg(history, f"Subject\n\nbody\n\nCo-Authored-By: Codex (gpt-6) {CODEX_BOT}\n", LABHQ_COMMIT_MODEL=model)
+    assert once == f"Subject\n\nbody\n\nCo-Authored-By: Codex (gpt-6) {CODEX_BOT}\n"
+    assert run_commit_msg(history, once, LABHQ_COMMIT_MODEL=model) == once  # an amend reruns the hook: idempotent
+
+
+def test_a_missing_trailer_is_added_once_and_an_amend_does_not_add_it_again(history):
+    once = run_commit_msg(history, "Subject\n\nbody\n", LABHQ_COMMIT_MODEL="gpt-6")
+    assert trailers(once) == ["Co-authored-by: Codex (gpt-6) " + CODEX_BOT]
+    assert run_commit_msg(history, once, LABHQ_COMMIT_MODEL="gpt-6") == once
+
+
+def test_a_bare_agent_trailer_gets_the_model_only_when_the_session_names_it(history):
+    bare = "Subject\n\nbody\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n"
+    env = {"LABHQ_COMMIT_AGENT": "claude"}
+    assert run_commit_msg(history, bare, **env) == bare  # no model in the environment: nothing is guessed
+    filled = run_commit_msg(history, bare, LABHQ_COMMIT_MODEL="Fable 5.1", **env)
+    assert trailers(filled) == ["Co-Authored-By: Claude (Fable 5.1) <noreply@anthropic.com>"]
+    assert filled.startswith("Subject\n\nbody\n\n")
+    assert run_commit_msg(history, filled, LABHQ_COMMIT_MODEL="Fable 5.1", **env) == filled  # idempotent
+    named = "Subject\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>\n"
+    assert run_commit_msg(history, named, LABHQ_COMMIT_MODEL="Fable 5.1", **env) == named  # another model name stays
+
+
+def test_an_unknown_environment_never_blocks_and_leaves_the_message(history):
+    message = "Subject\n\nCo-authored-by: Someone <someone@example.com>\n"
+    assert run_commit_msg(history, message, LABHQ_COMMIT_AGENT=None) == message
+    assert run_commit_msg(history, message, LABHQ_COMMIT_AGENT="unknown-agent") == message
+
+
+def test_trailing_comment_lines_do_not_hide_the_trailer_block(history):
+    message = f"Subject\n\nbody\n\nCo-Authored-By: Codex {OLD_CODEX}\n\n# Please enter the commit message\n# Lines starting with '#' are ignored\n"
+    out = run_commit_msg(history, message)
+    assert f"Co-Authored-By: Codex {CODEX_BOT}\n" in out and OLD_CODEX not in out
+    assert out.endswith("# Lines starting with '#' are ignored\n")
+
+
+@pytest.mark.parametrize("comment_char,comments", [(";", "; Please enter the commit message\n; Lines starting with ';' are ignored\n"),
+                                                    ("auto", "@ Please enter the commit message\n")])
+def test_the_configured_comment_character_does_not_hide_the_trailer_block(history, comment_char, comments):
+    _repo, _home, git = history
+    git("config", "core.commentChar", comment_char)
+    out = run_commit_msg(history, f"Subject\n\nbody\n\nCo-Authored-By: Codex {OLD_CODEX}\n\n{comments}")
+    assert f"Co-Authored-By: Codex {CODEX_BOT}\n" in out and OLD_CODEX not in out
+    assert out.endswith(comments)
+
+
+def test_a_scissors_divider_keeps_the_diff_below_it_out_of_the_message(history):
+    """`git commit -v` appends `# ---- >8 ----` and the diff; only the message above is read or rewritten."""
+    scissors = "# ------------------------ >8 ------------------------\n"
+    diff = (f"diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+Co-Authored-By: Codex {OLD_CODEX}\n\n"
+            f"+Co-authored-by: Example <example@example.com>\n")
+    out = run_commit_msg(history, f"Subject\n\nbody\n\nCo-Authored-By: Codex {OLD_CODEX}\n\n{scissors}{diff}")
+    assert f"Co-Authored-By: Codex {CODEX_BOT}\n\n{scissors}" in out  # the real trailer above the divider was rewritten
+    assert out.endswith(scissors + diff)  # the diff below it, with its trailer-like lines, is byte for byte the same
+    added = run_commit_msg(history, f"Subject\n\nbody\n\n{scissors}{diff}", LABHQ_COMMIT_MODEL="gpt-6")
+    assert added.endswith(scissors + diff) and any(line.startswith("Co-authored-by: Codex (gpt-6)") for line in added.splitlines()[:6])
+
+
+def test_with_auto_only_the_character_the_template_names_is_a_comment(history):
+    _repo, _home, git = history
+    git("config", "core.commentChar", "auto")
+    # No template line (git commit -m): an ordinary paragraph starting with a candidate character is message text.
+    prose = "@ordinary final paragraph\n"
+    out = run_commit_msg(history, f"Subject\n\nCo-Authored-By: Codex {OLD_CODEX}\n\n{prose}")
+    assert f"Co-Authored-By: Codex {OLD_CODEX}\n" in out and prose in out  # not mistaken for a trailer block
+    assert trailers(out)[-1].startswith("Co-authored-by: Codex")  # the real trailer is added after the text
+    # With a template, its first line names the comment character; other characters stay text.
+    template = "# Please enter the commit message for your changes.\n"
+    out = run_commit_msg(history, f"Subject\n\nCo-Authored-By: Codex {OLD_CODEX}\n\n{template}")
+    assert f"Co-Authored-By: Codex {CODEX_BOT}\n" in out and out.endswith(template)
+
+
+@pytest.mark.parametrize("gap", ["   ", "\t", " \t "])
+def test_a_bare_trailer_with_irregular_spacing_still_gets_the_model(history, gap):
+    bare = f"Subject\n\nbody\n\nCo-Authored-By: Claude{gap}<noreply@anthropic.com>\n"
+    out = run_commit_msg(history, bare, LABHQ_COMMIT_AGENT="claude", LABHQ_COMMIT_MODEL="Fable 5.1")
+    assert trailers(out) == ["Co-Authored-By: Claude (Fable 5.1) <noreply@anthropic.com>"]
+    assert run_commit_msg(history, out, LABHQ_COMMIT_AGENT="claude", LABHQ_COMMIT_MODEL="Fable 5.1") == out

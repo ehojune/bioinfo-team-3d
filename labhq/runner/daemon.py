@@ -793,31 +793,43 @@ class Runner:
         """Enforce one stage of the runaway breaker and say what really happened (#59). Never fails the run."""
         hard_stop = self.s.runner.breaker_hard_stop
         how = "applied"
+        halted = None
         try:
             if stage == "constrain":
                 if hooked:
-                    await self.controls.apply({"task_id": task_id, "action": "constrain"})
+                    halted = await self.controls.apply({"task_id": task_id, "action": "constrain"})
                 else:
                     how = "unsupported"  # no hook on this engine: nothing was restricted, so never report it as done
             elif stage == "stop":
                 if hard_stop:
-                    how = "halt" if await self.controls.apply({"task_id": task_id, "action": "halt"}) else "failed"
+                    halted = await self.controls.apply({"task_id": task_id, "action": "halt"})
+                    how = "halt" if halted else "failed"
                 else:
                     how = "off"
         except Exception:
             log.warning("task %s breaker stage %s not applied", task_id, stage, exc_info=True)
             how = "failed"
-        record = breaker.stage_record(stage, how, hard_stop=hard_stop)
+        ladder = self.breakers.get(task_id)
+        record = breaker.stage_record(stage, how, hard_stop=hard_stop, episode=ladder.episode if ladder else None)
         base = dict(task_id=task_id, agent_id=agent_id, request_id=request_id)
         await self.emit(Event(type="agent.breaker", data=record, **base))
         await self.emit(Event(type="agent.log", data={"level": "alert", "text": stage_text(record)}, **base))
+        if halted:  # the staff sheet reads the restriction and a breaker halt from agent.control, like the PI's own
+            await self.emit(Event(type="agent.control", data={**halted, "source": "breaker"}, **base))
 
-    async def _announce_breaker_release(self, task_id: str) -> None:
-        """Say the PI lifted the restriction (the ladder was already reset by ``_on_control``)."""
-        record = {"stage": "normal", "enforcement": "released", "mode": "enforce", "signal": None}
+    async def _announce_breaker_release(self, task_id: str, command_id: str = "", *, changed: bool = True,
+                                        enforcement: str = "released") -> None:
+        """Say the PI lifted the restriction (the ladder was already reset by ``_on_control``). With a ``command_id``
+        this is also the acknowledgement the gateway waits for: ``released`` (applied now or by an earlier send of the
+        same command) or ``stale`` (the command named an earlier restriction and was not applied)."""
+        ladder = self.breakers.get(task_id)
+        record = {"stage": ladder.policy.stage if ladder else "normal", "enforcement": enforcement, "mode": "enforce",
+                  "signal": None, **({"command_id": command_id} if command_id else {}),
+                  **({"episode": ladder.episode} if ladder else {})}
         base = dict(task_id=task_id, agent_id=self.controls.agent_of(task_id), request_id=self.task_req.get(task_id))
         await self.emit(Event(type="agent.breaker", data=record, **base))
-        await self.emit(Event(type="agent.log", data={"level": "info", "text": stage_text(record)}, **base))
+        if changed and enforcement == "released":
+            await self.emit(Event(type="agent.log", data={"level": "info", "text": stage_text(record)}, **base))
 
     CONTROL_RETRY_S = (0.2, 1.0)  # waits before the second and third attempt; then the gateway's resend takes over
 
@@ -832,6 +844,15 @@ class Runner:
         # Reset the ladder before the hook is released: a tool event arriving meanwhile must not climb from constrain to
         # stop and halt the task the PI is freeing (PR #995 review).
         ladder = self.breakers.get(tid) if msg.get("action") == "release_constraint" else None
+        command = str(msg.get("command_id") or "")
+        if ladder is not None and command:
+            if command == ladder.last_command:  # a resend of a command already applied: nothing changes, only re-ack
+                await self._announce_breaker_release(tid, command, changed=False)
+                return
+            episode = msg.get("episode")
+            if isinstance(episode, int) and episode != ladder.episode:  # meant for an earlier restriction
+                await self._announce_breaker_release(tid, command, changed=False, enforcement="stale")
+                return
         released = bool(ladder and ladder.release())
         for wait in (0.0, *self.CONTROL_RETRY_S):
             if wait:
@@ -854,7 +875,10 @@ class Runner:
             return
         base["agent_id"] = self.controls.agent_of(tid) or base["agent_id"]
         await self.emit(Event(type="agent.control", data=summary, **base))
-        if released:
+        if ladder is not None and command:
+            ladder.last_command = command
+            await self._announce_breaker_release(tid, command, changed=released)
+        elif released:
             await self._announce_breaker_release(tid)
         note = self._control_note(summary)
         if note:
@@ -1025,7 +1049,8 @@ class Runner:
         try:
             await self.run_task(task)
         except BaseException as e:
-            self.breakers.pop(task.id, None)  # a crash or cancel skips emit_final  # cancelled or crashed: the gateway must still get a result
+            self.breakers.pop(task.id, None)  # a crash or cancel skips emit_final
+            # cancelled or crashed: the gateway must still get a result
             self.event_buffers.pop(task.id, None)
             cancelled = isinstance(e, asyncio.CancelledError)
             if not cancelled:
@@ -1776,7 +1801,9 @@ class Runner:
             if typ == "task.result":
                 self.breakers.pop(task.id, None)
             trip = breaker.observe(typ, data)
-            stage = escalation.observe(breaker.active) if typ in ("agent.tool", "agent.tool_error") else None
+            # Once restricted, a failing call may be the restriction's own denial, so only a repeat keeps climbing (#1008).
+            signalled = breaker.repeating if escalation.policy.stage in ("constrain", "stop") else breaker.active
+            stage = escalation.observe(signalled) if typ in ("agent.tool", "agent.tool_error") else None
             if trip:  # the first crossing of a signal is the warn stage: tell the PI once, keep the agent running
                 for kind, body in (("agent.breaker", trip), ("agent.log", {"level": "alert", "text": trip_text(trip)})):
                     await self.emit(Event(type=kind, task_id=task.id, agent_id=agent.id, request_id=task.request_id,

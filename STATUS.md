@@ -4,6 +4,95 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 해제 ACK·durable 재전송 (#1008)
+
+| 항목 | 내용 |
+|---|---|
+| 명령 | `Hub.release_breaker`가 `command_id`·`episode`를 만들어 `store`(`breaker_release`)에 저장한 뒤 보낸다. `sent`는 전송 사실일 뿐 |
+| 재전송 | `_push_task_state`(연결·배정·gateway 재시작)가 ACK 전까지 같은 명령을 다시 보낸다. task 종료 때 만료 |
+| ACK | runner가 `agent.breaker`에 `command_id`와 `released`/`stale`을 담아 답한다. gateway `_note_breaker_event`가 같은 ID일 때만 명령을 지운다 |
+| runner | `Escalation.episode`(constrain 진입마다 +1), `last_command`. 재전송은 재적용하지 않고 다시 ACK, 다른 episode는 `stale` |
+| 시험 | `tests/test_breaker_enforcement.py`(+2, 1 수정) |
+| 미확인 | 실제 network E2E, runner 재시작 뒤 복구(runner 메모리의 episode·last_command는 재시작 시 초기화), CSO 승인, compaction |
+
+## 단계
+#809 2차: research_protocol·pi-qa·vocabulary 영문판.
+
+## 한 일
+1. `docs/research_protocol.en.md`, `docs/pi-qa.en.md`, `docs/vocabulary.en.md`를 추가했습니다. 장·절 순서와 표 구조는 한국어판과 같고 코드·키·설정 이름은 원문 그대로입니다.
+2. `vocabulary.md`는 `scripts/vocab_tables.py`가 만드는 생성 파일입니다. 영문판은 생성기 출력이 아니라 한국어 점검표 250칸을 손으로 옮긴 사본이며 파일 머리에 그렇게 적었습니다. `labhq/vocab/`이 바뀌면 손으로 갱신해야 합니다.
+3. `README.en.md`의 Further reading 표와 29번째 줄, `docs/manual.en.md`의 해당 링크(research_protocol·pi-qa·vocabulary)를 영문판과 영문 anchor로 바꿨습니다.
+4. `AGENTS.md`의 영문판 동시 갱신 안내에 세 문서를 더했습니다.
+
+## 테스트 결과
+- 새 문서의 내부 anchor 대조: 깨진 anchor 0. `test_vocab_tables.py`·`test_integrations.py`·`test_variant_effect_topic.py`·`test_ci_skip_policy.py` 226 passed. `check_public.sh` 통과.
+- 미검증: 원어민 검수, 한국어판과의 문장 단위 전수 대조(vocabulary는 250칸 순서 대응과 표본 확인만 했음).
+
+## 바꾼 파일
+docs/research_protocol.en.md, docs/pi-qa.en.md, docs/vocabulary.en.md(신규), README.en.md, docs/manual.en.md, AGENTS.md, patch_notes/entries/claude-worker3--docs-en-2.yaml, 이 파일.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## 단계
+#809 1차: 영문 매뉴얼.
+
+## 한 일
+1. `docs/manual.en.md`를 추가했습니다. `docs/manual.md`와 장·절 순서가 같고(1586줄/1589줄), 코드·명령·설정 키·경로는 원문 그대로입니다. 다른 문서(pi-qa, research_protocol, reference/ 등)로 가는 링크는 그대로 두고 한국어 문서임을 표시했습니다.
+2. `README.en.md`의 manual 링크(Further reading 표, 본문 6곳)를 영문판과 영문 anchor로 바꾸고 29번째 줄 문구를 고쳤습니다. 맨 위 배지는 `scripts/integrations.py`가 만들어 `docs/manual.md#연결된-도구` 등을 가리키므로 건드리지 않았습니다.
+3. `AGENTS.md`에 "한국어 manual을 고치면 영문판도 같은 PR에서 고친다"를 적었습니다.
+4. 영문판의 "연결된 도구" 표는 생성 표(`<!-- integrations -->` 표식)가 아니라 손으로 옮긴 사본입니다. 생성기는 한국어 manual만 갱신하므로 도구가 바뀌면 영문 표도 따로 고쳐야 합니다. 영문판 본문에 그 사실을 적었습니다.
+
+## 테스트 결과
+- 영문판 내부 anchor 링크를 제목 slug와 대조: 깨진 anchor 0.
+- `python scripts/patch_notes.py check`, `scripts/check_public.sh`는 PR 전에 실행합니다(결과는 PR 본문).
+- 미검증: 번역 품질의 원어민 검수, 한국어 manual과 문장 단위 대조(구조·핵심 수치는 대조했으나 전수 대조는 하지 않음).
+
+## 바꾼 파일
+docs/manual.en.md(신규), README.en.md, AGENTS.md, patch_notes/entries/claude-worker3--manual-en.yaml, 이 파일.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## 단계
+공동 작성자 훅의 본문·trailer 구분과 모델명 — Closes #808.
+
+## fe745fac 누락 사례를 먼저 가른 결과 (이 훅의 범위 아님)
+- `fe745fac`("Merge main with reviewed Windows ACK diagnostics from PR873")은 부모 2개의 **merge commit**이고 author·committer가 모두 사용자(`ehojune <ehojune@gmail.com>`)이며 trailer가 없습니다. 에이전트 환경(`LABHQ_COMMIT_AGENT`·`CLAUDECODE`·`CODEX_*`·`GEMINI_CLI`)이 없는 셸에서 만든 커밋이라, 훅이 "알 수 없는 환경은 막지 않고 그대로 둔다"(`[ -z "$AGENT" ] && exit 0`)는 설계대로 동작한 것입니다. 이 훅의 결함이 아니라 에이전트 표식이 없는 환경에서 만든 통합 commit입니다. 이번 PR은 그 경로를 바꾸지 않습니다(알 수 없는 환경에서 커밋을 막지 않는 동작은 유지).
+
+## 한 일 (`.githooks/commit-msg`)
+- trailer 판정을 메시지 전체 grep에서 `git interpret-trailers --parse`(git이 마지막 문단에서 인식하는 trailer)로 바꿨습니다. 본문에 적은 `Co-authored-by:` 예시가 실제 작성자 표시로 오인돼 작성자가 빠지던 경로를 닫습니다.
+- Codex 옛 주소(`noreply@openai.com`) 치환도 마지막 문단의 줄에만 적용합니다. 이전 `sed`는 본문 예시의 주소까지 바꿨습니다.
+- 모델명: `LABHQ_COMMIT_MODEL`이 있을 때만 이름에 붙이는 규칙은 그대로고, 이미 이름만 있는 에이전트 trailer(`Claude <주소>`)는 환경에 모델이 있을 때만 그 이름에 채웁니다. 이미 괄호나 다른 이름(예: `Claude Sonnet 5.5`)이 있으면 그대로 두고, 환경에 모델이 없으면 아무것도 추정해 넣지 않습니다. 같은 메시지로 다시 돌려도 결과가 같습니다(amend 멱등).
+- `AGENTS.md`·`CLAUDE.md`의 해당 줄에 위 규칙을 한 문장 추가했습니다.
+
+## wrapper의 모델명 전달 확인 (저장소 밖 파일, 읽기만 함)
+- `~/bin/agyq`(Gemini)는 `LABHQ_COMMIT_AGENT=gemini LABHQ_COMMIT_MODEL="$M"`을 export합니다. `~/bin/gh-agent-env`·`gh-agent-exec.py`(PR·댓글)도 같은 변수를 읽습니다.
+- Claude Code 세션은 `CLAUDECODE=1`만 있고 `LABHQ_COMMIT_MODEL`은 export되지 않으며, Codex 쪽 wrapper도 이 저장소에서는 확인되지 않습니다. 그래서 Claude·Codex 커밋은 모델이 trailer에 자동으로 들어가지 않고, 모델이 직접 적은 trailer(이름에 모델 포함)에 의존합니다. 이 변수를 Claude·Codex 실행 경로에서 export하는 일은 저장소 밖(사용자 wrapper) 변경이라 여기서 하지 않았습니다.
+
+## 테스트 결과
+- `tests/test_git_hooks.py`: 기존 46건 그대로 + 새 8건 = 54건 통과. 새 시험은 임시 메시지 파일에 훅을 직접 돌립니다: 본문 예시(에이전트 자신의 주소 포함)가 있어도 실제 trailer가 추가되고 본문은 그대로, 옛 Codex 주소는 trailer 문단에서만 치환, 정상 trailer·누락 trailer 추가의 amend 멱등, 이름만 있는 trailer는 모델이 있을 때만 채움(다른 모델명은 유지), 알 수 없는 환경·미지의 에이전트는 막지 않고 그대로, 끝의 `#` 주석 줄이 있어도 trailer 인식.
+- 수정 전 훅으로 같은 시험을 돌리면 본문 예시·옛 주소·모델 채움 3건이 실패합니다(나머지는 회귀 방지용으로 양쪽 통과).
+- 미검증: 전역 훅(`~/.git-template/hooks`)과 합쳐진 실제 커밋 흐름의 새 시나리오, Windows가 아닌 환경의 `awk` 구현 차이(CI ubuntu·macOS가 확인).
+
+## 바꾼 파일
+.githooks/commit-msg, tests/test_git_hooks.py, AGENTS.md, CLAUDE.md와 변경 기록.
+
+## 막힌 점
+없음.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+# 폭주 차단기 후속 (#1008)
+
+| 항목 | 내용 |
+|---|---|
+| P2 1 | runner의 breaker halt를 `agent.control`로 알리고, gateway가 `agent.breaker(enforcement=halt)`를 받으면 `halt_requested`·step `halt_op`을 기록(`Hub._note_runner_halt`) |
+| P2 3 | constrain·stop 단계에서는 `Breaker.repeating`만 신호로 쓴다. 거부된 호출의 오류 연속은 승격하지 않음(manual 명시) |
+| P2 2 | 끊긴 runner에 보낸 해제는 `_breaker_release_pending`에 두고 `_push_task_state`가 재연결 때 한 번 재전송. gateway 재시작 시 사라짐 |
+| P2 4 | `_run_guarded` 주석 분리 |
+| 작업판 | `control.constrained`면 "제한 해제" 버튼(`POST /api/tasks/{id}/breaker/release`) |
+| 시험 | `test_breaker_enforcement.py`(+2), `web_staff_control.cjs`. 관련 staff_control py 72 passed(timing flake 1건은 단독 재실행 통과) |
+| 범위 밖 | constrain 때 CSO 승인, compaction 예외(범위·크기는 PR 본문), 실제 network E2E |
+
 ## 단계
 #1001·#1004 리뷰의 비차단 지적 2건 정리.
 
