@@ -1614,7 +1614,7 @@ class Runner:
             sid = binding["step_id"]
             try:
                 validate_runner_env(root, steps[sid], artifacts[sid], binding, request_id=task.request_id)
-            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
                 return prefix + "environment validation failed"
         if not ENVIRONMENT_ALIAS_AVAILABLE:
             # The validated .venv is not exposed to the consumer (no protected alias or read grant exists yet), so
@@ -2449,6 +2449,15 @@ class Runner:
                 warning = "선택 산출 누락: " + ", ".join(result.missing_optional_outputs)
                 result.step_warnings = list(dict.fromkeys([*result.step_warnings, warning]))
                 await emit("agent.log", {"level": "warn", "text": warning})
+        binding = task.meta.get("environment_binding")
+        # Only the final turn: a step paused on a job or a question has not written its environment yet.
+        if _should_check_declared_outputs(result) and isinstance(binding, dict):
+            from .step_inputs import producer_environment_problem
+            problem = await asyncio.to_thread(producer_environment_problem, self.ws_root, ws.dir,
+                                              result.outputs, result.output_sha256, binding)
+            if problem:
+                result.ok = False
+                result.error = "incomplete: runner environment does not match the pinned binding: " + problem
         # Bytecode caches are the interpreter's, not the employee's: 21 unreported files of the v0.5 trial included
         # outputs/lib/__pycache__ (#485). They stay in the observed records.
         result.unreported_outputs = sorted(row["path"] for row in observed_outputs
