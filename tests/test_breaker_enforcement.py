@@ -535,20 +535,23 @@ def test_the_ledger_survives_a_gateway_restart_and_the_event_carries_no_input(tm
 
 
 def test_a_halt_or_pause_given_while_the_cso_was_asked_still_stops_the_call(tmp_path):
-    for action, expect in (("halt", None), ("pause", "deny")):
-        path = tmp_path / f"{action}.json"
+    for action, approved in (("halt", True), ("pause", True), ("halt", False), ("pause", False)):
+        path = tmp_path / f"{action}-{approved}.json"
         control_hook.update_state(path, lambda state: control_hook.apply_control(state, "constrain"), create="t1")
 
-        def ask(tool, tool_input, action=action, path=path):
+        def ask(tool, tool_input, action=action, path=path, approved=approved):
             control_hook.update_state(path, lambda state: control_hook.apply_control(state, action))
-            return {"approved": True, "note": "ok"}
+            return {"approved": approved, "note": "x"}
 
         out = control_hook.pre_tool_use(path, tool_name="Bash", tool_input={}, ask=ask)
         assert out is not None, f"a {action} during the wait must not let the call run"
         if action == "halt":
+            # a refusal must not swallow it either: the halt is applied and recorded, not only this call denied
             assert out == {"continue": False, "stopReason": control_hook.HALT_REASON}
+            assert control_hook.read_state(path)["halted_at"], "the halt is recorded"
         else:
-            assert out["hookSpecificOutput"]["permissionDecision"] == expect
+            assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+            assert control_hook.PAUSE_REASON in out["hookSpecificOutput"]["permissionDecisionReason"]
 
 
 def test_the_gateway_knows_the_episode_again_after_a_restart(tmp_path):

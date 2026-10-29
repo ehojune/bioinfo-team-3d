@@ -275,18 +275,19 @@ def pre_tool_use(path: str | Path, *, tool_name: str = "", tool_input: Any = Non
         # Restricted to read tools, but the CSO may let one call through. A yes only stops objecting here: the normal
         # permission gate still judges the call, and the restriction stays until the PI lifts it.
         answer = ask(tool_name, tool_input)
-        if answer.get("approved") is not True:
-            note = answer.get("note") or "CSO가 허용하지 않았습니다"
-            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                           "permissionDecisionReason":
-                                               f"폭주 제한 중이라 읽기 도구만 쓸 수 있습니다. {note}"}}
-        # The wait can take up to the CSO's whole answer time: a halt or pause the PI gave meanwhile still wins.
+        # The wait can take up to the CSO's whole answer time. A halt or pause the PI gave meanwhile wins over the
+        # answer, a refusal included: the halt must still be applied and recorded, not just this one call denied.
         state = read_state(path) or state
         if state["halt"]:
             return _halt(path, state)
         if state["paused"]:
             return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                            "permissionDecisionReason": PAUSE_REASON}}
+        if answer.get("approved") is not True:
+            note = answer.get("note") or "CSO가 허용하지 않았습니다"
+            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                           "permissionDecisionReason":
+                                               f"폭주 제한 중이라 읽기 도구만 쓸 수 있습니다. {note}"}}
     return None
 
 
