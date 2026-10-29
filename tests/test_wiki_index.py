@@ -241,3 +241,28 @@ def test_a_changed_root_starts_a_new_index(tmp_path):
     assert index.search(settings, "KRAS G12C") == [] and index.search(settings, "zebra")
     with sqlite3.connect(index.index_path(settings)) as db:
         assert db.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 1
+
+
+def test_an_index_of_another_folder_is_not_reported_as_usable(tmp_path):
+    settings, root = make_settings(tmp_path)
+    index.reindex(settings)
+    other = tmp_path / "refs" / "other"
+    shutil.copytree(FIXTURE, other)
+    settings.wiki = WikiSettings(enabled=True, root=str(other))
+    info = index.status(settings)
+    assert info["available"] is False and info["docs"] == 0 and info.get("stale_root") is True
+    assert _wiki_row(settings)["status"] == "warn"
+    index.reindex(settings)
+    assert index.status(settings)["available"] is True and _wiki_row(settings)["status"] == "ok"
+
+
+@posix_only
+def test_a_link_in_the_middle_of_the_path_cannot_leave_the_allowed_roots(tmp_path):
+    settings, root = make_settings(tmp_path)
+    outside = tmp_path / "outside"
+    shutil.copytree(FIXTURE, outside / "wiki")
+    (tmp_path / "refs" / "alias").symlink_to(outside, target_is_directory=True)
+    settings.wiki = WikiSettings(enabled=True, root=str(tmp_path / "refs" / "alias" / "wiki"))
+    assert "outside runner.reference_roots" in walker.root_problem(settings)
+    with pytest.raises(ValueError):
+        index.reindex(settings)

@@ -311,6 +311,13 @@ def status(settings: Any) -> dict:
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)) as db:
             meta = dict(db.execute("SELECT key, value FROM meta"))
             cutoff = (time.time() - wiki.stale_days * 86400) * 1e9
+            try:
+                current = str(root_path(settings).resolve())
+            except (OSError, ValueError):
+                current = None
+            if meta.get("root") != current:
+                result["stale_root"] = True  # the index belongs to another folder: not usable until `reindex`
+                return result
             result.update(available=True, docs=db.execute("SELECT COUNT(*) FROM docs").fetchone()[0],
                           chunks=db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0],
                           origins=db.execute("SELECT COUNT(*) FROM origins").fetchone()[0],

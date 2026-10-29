@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ..intake import _is_link, check_reference_path, scan_reference_dir
+from ..intake import _is_link, check_reference_path, reference_roots, scan_reference_dir
 from ..policy import restricted_paths
 from ..private_paths import configured_private_paths, credential_path, inside_any
 
@@ -45,6 +45,10 @@ def root_problem(settings: Any, root: Path | None = None) -> str | None:
     except (OSError, ValueError) as error:
         return str(error)
     real = root.resolve()
+    # A link in the middle of the path must not carry the folder out of the allowed roots (checked on real paths).
+    if not any(real == allowed or real.is_relative_to(allowed) for allowed in
+               (Path(r).resolve() for r in reference_roots(settings))):
+        return "the wiki root resolves outside runner.reference_roots"
     for private, _label in configured_private_paths(settings):
         if inside_any(str(real), [private]) or inside_any(private, [str(real)]):
             return "the wiki root overlaps a private path"
