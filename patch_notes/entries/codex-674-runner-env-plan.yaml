@@ -1,5 +1,9 @@
 pr: null
 rows:
+- sha: f64d742
+  at: 2026-10-29 14:02
+  text: 미구현 환경 경로 지시를 빼고 계획 범위와 검증 한계를 README에 적는다.
+  summary: 아직 사용할 수 없는 환경 경로 지시를 보류합니다.
 - sha: 4a3d972
   at: 2026-10-29 13:57
   text: 환경 계획을 소비 runner별로 나누고 승인·복원·dispatch에 binding을 보존한다.
