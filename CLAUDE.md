@@ -10,7 +10,7 @@
 - 바꾼 곳의 관련 test만 로컬에서 돌리고 전체 suite는 CI에 맡긴다. test를 지우거나 약하게 만들지 않는다.
 - 단계를 끝내면 PR 본문과 `docs/status/<YYYY-MM-DD>-<HHMM>-<branch>.md`에 같은 보고를 남긴다. `STATUS.md`는 main에서 자동 생성되므로 직접 고치지 않는다.
 - 커밋마다 `patch_notes/entries/<branch>.yaml`에 한 줄을 남긴다(기록만 고친 커밋은 제외, branch의 `/`는 `--`). `patch_notes/README.md`는 main에서 자동 생성되므로 직접 고치지 않는다. main 커밋 3개 안에 README나 `docs/manual.md`를 한 번은 갱신한다. 행 초안은 `python scripts/patch_notes.py rows --pr N`, 검사는 `python scripts/patch_notes.py check`(CI의 `patch-notes` job).
-- 공동 작성자 trailer는 `.githooks/commit-msg`가 GitHub이 인식하는 봇 주소로 맞춘다(Codex 이메일 치환, Gemini 추가). 새 clone은 `git config core.hooksPath .githooks` 한 번.
+- 공동 작성자 trailer는 `.githooks/commit-msg`가 GitHub이 인식하는 봇 주소로 맞춘다(Codex 이메일 치환, Gemini 추가). git이 마지막 문단에서 trailer로 인식하는 줄만 보며(본문의 예시는 글로 두고), 모델명은 환경변수 `LABHQ_COMMIT_MODEL`이 있을 때만 이름에 채운다(없으면 추정하지 않는다). 새 clone은 `git config core.hooksPath .githooks` 한 번.
   머신 전역 훅(`~/.git-template/hooks`)이 있으면 새 커밋·revert를 넘겨 author를 에이전트의 GitHub App 봇으로 맞춘다. rebase·cherry-pick·amend와 명시한 다른 author는 보존한다. merge 커밋·reflog를 끈 저장소는 자체 trailer 규칙만 쓴다.
 - 이 저장소는 public이다. 커밋 전에 `scripts/check_public.sh`를 돌리고, 비밀값은 환경변수로만 다루며, `config/labhq.yaml`은 커밋하지 않는다.
 - 통제접근(DUA) 데이터의 원본은 클러스터 밖이나 LLM 대화·프롬프트·로그로 가져오지 않는다. 경로 가드는 sandbox가 아니므로 코드 가드만 믿지 않는다.

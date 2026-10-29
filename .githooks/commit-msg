@@ -36,9 +36,52 @@ CODEX_MAIL='199175422+chatgpt-codex-connector[bot]@users.noreply.github.com'
 GEMINI_MAIL='176961590+gemini-code-assist[bot]@users.noreply.github.com'
 CLAUDE_MAIL='noreply@anthropic.com'
 
+# 본문에 적은 "Co-authored-by:" 예시는 글이지 작성자 표시가 아니다. trailer는 git이 마지막 문단에서 인식하는
+# 것만 본다(`git interpret-trailers --parse`). 바꾸는 것도 그 마지막 문단의 줄뿐이고 본문은 건드리지 않는다 (#808).
+# git이 주석으로 보는 줄의 첫 글자(core.commentChar, 기본 #). auto 는 아래처럼 템플릿 첫 줄에서 실제 글자를 읽는다.
+COMMENT_CHARS=$(git config --get core.commentChar 2>/dev/null)
+case "$COMMENT_CHARS" in
+  "") COMMENT_CHARS='#' ;;
+  # auto: git picked one character that no message line starts with, and only a commit template carries comment
+  # lines at all; its first line names the character. No template line means no comment lines to skip.
+  auto) COMMENT_CHARS=$(awk '/^. Please enter the commit message/ { print substr($0, 1, 1); exit }' "$MSG") ;;
+esac
+
+# 주석 줄을 뺀 사본에서 trailer를 읽는다: interpret-trailers 는 auto 가 고른 글자를 알지 못한다.
+parse_trailers() {
+  awk -v cc="$COMMENT_CHARS" '{ c = substr($0, 1, 1); if (c != "" && index(cc, c) && $0 ~ /^. -+ >8 -+$/) exit
+                              if (!(cc != "" && c != "" && index(cc, c))) print }' "$MSG"     | git interpret-trailers --parse 2>/dev/null
+}
+TRAILERS=$(parse_trailers)
+
+# 마지막 문단(끝의 빈 줄·# 주석 줄은 건너뜀)에서 줄이 $1 패턴(소문자로 비교)이면 $2 로 바꾼다. 마지막 문단 밖은 그대로.
+# $2 의 &, \ 는 쓰지 않는다(고정 문자열이 아니라 awk 치환이다).
+rewrite_last_paragraph() {
+  awk -v pattern="$1" -v from="$2" -v to="$3" -v cc="$COMMENT_CHARS" '
+    { line[NR] = $0 }
+    END {
+      total = NR; msgend = NR
+      for (i = 1; i <= total; i++) {
+        c = substr(line[i], 1, 1)
+        if (c != "" && index(cc, c) && line[i] ~ /^. -+ >8 -+$/) { msgend = i - 1; break }
+      }
+      last = msgend
+      while (last > 0 && (line[last] ~ /^[ 	]*$/ || (cc != "" && substr(line[last], 1, 1) != "" && index(cc, substr(line[last], 1, 1))))) last--
+      first = last
+      while (first > 1 && line[first - 1] !~ /^[ 	]*$/) first--
+      for (i = 1; i <= total; i++) {
+        l = line[i]
+        if (i >= first && i <= last && tolower(l) ~ pattern) { idx = index(l, from); if (idx) l = substr(l, 1, idx - 1) to substr(l, idx + length(from)) }
+        print l
+      }
+    }' "$MSG" > "$MSG.tmp" && cat "$MSG.tmp" > "$MSG"; rm -f "$MSG.tmp"
+}
+
 # 1. Codex가 붙인 trailer의 이메일만 치환한다. 이름(모델 포함)은 그대로.
-if grep -qi 'co-authored-by:.*<noreply@openai\.com>' "$MSG"; then
-  sed -i.bak -E "/^[Cc]o-[Aa]uthored-[Bb]y:/ s#<noreply@openai\.com>#<$CODEX_MAIL>#" "$MSG" && rm -f "$MSG.bak"
+if printf '%s
+' "$TRAILERS" | grep -qi '^co-authored-by:.*<noreply@openai\.com>'; then
+  rewrite_last_paragraph '^co-authored-by:.*<noreply@openai\.com>' '<noreply@openai.com>' "<$CODEX_MAIL>"
+  TRAILERS=$(parse_trailers)
 fi
 
 # 2. 세션의 에이전트를 정한다.
@@ -57,10 +100,26 @@ case "$AGENT" in
   gemini) NAME=Gemini; MAIL="$GEMINI_MAIL"; MARK='gemini-code-assist' ;;
   *) exit 0 ;;
 esac
+BASE="$NAME"
 [ -n "$LABHQ_COMMIT_MODEL" ] && NAME="$NAME ($LABHQ_COMMIT_MODEL)"
 
-# 3. 그 에이전트의 trailer가 이미 있으면(모델이 직접 붙인 경우) 손대지 않는다.
-grep -qi "co-authored-by:.*$MARK" "$MSG" && exit 0
+# 3. 그 에이전트의 trailer가 이미 있으면(모델이 직접 붙인 경우) 새로 붙이지 않는다. 모델이 이름만 적은 trailer
+#    ("Claude <주소>")는 세션이 실제 모델명(LABHQ_COMMIT_MODEL)을 알 때만 그 이름에 모델을 채운다. 이미 괄호나
+#    다른 이름이 있으면 그대로 두고, 환경에 모델이 없으면 어떤 모델도 추정해 넣지 않는다 (#808).
+if printf '%s
+' "$TRAILERS" | grep -qi "^co-authored-by:.*$MARK"; then
+  if [ -n "$LABHQ_COMMIT_MODEL" ]; then
+    MODEL_TRAILER=$(printf '%s
+' "$TRAILERS" | grep -i "^co-authored-by:[[:space:]]*$BASE[[:space:]]*<[^>]*$MARK" | head -n 1)
+    if [ -n "$MODEL_TRAILER" ]; then
+      # 이름과 `<` 사이의 공백(여러 칸·탭)도 줄에 적힌 그대로 찾아 바꾼다.
+      OLD_SPAN=$(printf '%s' "$MODEL_TRAILER" | sed -E 's/^[^:]*:[[:space:]]*//; s/<.*$//')
+      OLD_NAME=$(printf '%s' "$OLD_SPAN" | sed -E 's/[[:space:]]*$//')
+      rewrite_last_paragraph "^co-authored-by:[[:space:]]*$(printf '%s' "$OLD_NAME" | tr 'A-Z' 'a-z')[[:space:]]*<[^>]*$MARK" "${OLD_SPAN}<" "$NAME <"
+    fi
+  fi
+  exit 0
+fi
 
 git interpret-trailers --in-place --if-exists addIfDifferent \
   --trailer "Co-authored-by: $NAME <$MAIL>" "$MSG" 2>/dev/null
