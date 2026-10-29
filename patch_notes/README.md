@@ -14,7 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:10 | [`f405b2f`](https://github.com/ehojune/bioinfo-team-3d/pull/1019/commits/f405b2f) | **이전 버전이 저장해 둔 해제 요청이 새 제한을 잘못 풀지 않게 했습니다.**<br>숫자 episode로 저장된 옛 해제 명령을 episode 없이 다시 보내지 않고 legacy 값으로 보내 stale로 처리한다 (#1019 리뷰 P1). |
 | 14:55 | [`2d14347`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/2d14347) | **계획만 요청할 때는 실행 담당 runner가 꺼져 있어도 계획이 나옵니다.**<br>plan_only 요청은 실행하지 않으므로 소비 runner 연결을 요구하는 환경 binding을 건너뛴다. |
+| 14:53 | [`5c732ab`](https://github.com/ehojune/bioinfo-team-3d/pull/1019/commits/5c732ab) | **서버를 다시 켠 뒤 예전 해제 요청이 새로 걸린 제한을 풀어 버리지 않게 했습니다.**<br>해제 episode ID에 task 실행별 값을 넣어, runner 재시작·task 재전송 뒤 이전 실행의 해제 명령이 새 제한에 적용되지 않게 한다 (#1008). |
 | 14:40 | [`ed7bc66`](https://github.com/ehojune/bioinfo-team-3d/pull/1016/commits/ed7bc66) | **영문 매뉴얼의 폭주 차단기 설명을 한국어 매뉴얼과 같은 내용으로 고쳤습니다.**<br>영문 매뉴얼의 폭주 차단기 절을 한국어와 맞춘다 (#1016 리뷰 P2). |
 | 14:39 | [`3f9e9a7`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/3f9e9a7) | **영어 문서에도 runner별 환경 계획을 같은 내용으로 적었습니다.**<br>영어 매뉴얼의 환경 절·로드맵 행과 영어 README에 runner별 환경 계획 설명을 한국어판과 맞춘다 (#674, 봇 P1). |
 | 14:31 | [`09816c0`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/09816c0) | **공백이 든 runner ID도 환경 계획에 쓸 수 있습니다.**<br>환경 binding의 runner ID를 설정이 허용하는 값 그대로 받고 연구 계획 schema hash 고정값을 갱신한다. |
