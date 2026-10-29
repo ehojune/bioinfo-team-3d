@@ -1,6 +1,7 @@
 """Real owned Job/process integration: GitHub Windows CI ONLY. Never execute locally."""
 import ctypes as C
 from contextlib import contextmanager
+import functools
 import json
 import math
 import os
@@ -283,8 +284,37 @@ def _trace_call(trace, phase, function, *args, role=None, wait_ms=None, **kwargs
     return result
 
 
+@functools.lru_cache(maxsize=None)
+def _warm_wmi_provider():
+    """#1029: the broker gives its PowerShell WMI provider a fixed 10 s. On a cold runner PowerShell start-up, JSON cmdlet
+    and WMI class loads alone took >4 s of it (10-29 #1028: header_read at 4 s, then provider_timeout). Load the same
+    pieces once, outside any launch, so a slow cold start cannot decide a Job-survival verdict. The cost is printed."""
+    started = time.monotonic()
+    script = ("$null = '{}' | ConvertFrom-Json | ConvertTo-Json -Compress; "
+              r"$null = ([wmiclass]'\\.\root\cimv2:Win32_ProcessStartup').CreateInstance(); "
+              r"$null = [wmiclass]'\\.\root\cimv2:Win32_Process'")
+    try:
+        code = subprocess.run([str(broker._powershell()), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120, check=False).returncode
+    except (OSError, subprocess.SubprocessError) as exc:
+        code = type(exc).__name__
+    print(f"WIN1029 wmi warm-up: rc={code} elapsed_ms={round((time.monotonic() - started) * 1000)}", file=sys.stderr)
+
+
+def _provider_summary(events):
+    """Where the launch stopped, for a failed verdict: the direct attempt, then the provider phases and deadline."""
+    parts = []
+    for event in events:
+        provider = event.get("provider") or {}
+        phases = ",".join(f"{p['phase']}@{p['elapsed_ms']:.0f}" for p in provider.get("phases", []))
+        parts.append(f"{event['status']}" + (f"[{event.get('phase')}/{event.get('reason')}: {phases}; total_ms={provider.get('elapsed_ms')}]"
+                                              if event["status"] == "wmi_failed" else ""))
+    return " -> ".join(parts)
+
+
 @contextmanager
 def owned_launch(tmp_path, *, allow_breakaway, nested=False):
+    _warm_wmi_provider()
     dll = kernel()
     job = dll.CreateJobObjectW(None, None)  # Unnamed, non-inheritable; only this test owns its lifetime.
     assert job, C.get_last_error()
@@ -381,7 +411,8 @@ def close_parent_job(case):
 def test_allowed_breakaway_child_survives_parent_job_close(tmp_path, capsys):
     with owned_launch(tmp_path, allow_breakaway=True) as case:
         # Denial/unknown is NOT evidence for survival. An incompatible outer host fails this positive test.
-        assert case.result["success"], "UNVERIFIED positive survival: " + json.dumps(case.events)
+        assert case.result["success"], ("UNVERIFIED positive survival: " + _provider_summary(case.events) + " :: "
+                                        + json.dumps(case.events))
         assert case.pid_file.is_file() and (tmp_path / "ready").is_file()
         case.child_handle = hold_recorded_child(case.dll, json.loads(case.pid_file.read_text()))
         assert case.child_handle, C.get_last_error()
