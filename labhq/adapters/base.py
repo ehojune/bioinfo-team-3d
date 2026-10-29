@@ -812,6 +812,9 @@ def wrap_cwd(spec: McpServerSpec) -> tuple[str, list[str]]:
     return "bash", ["-lc", inner]
 
 
+MIN_SECRET_CHARS = 3  # shortest environment secret value this module masks in CLI failure evidence
+
+
 def expand_env(env: dict[str, str], source: dict[str, str] | None = None) -> dict[str, str]:
     if source is None:
         return {k: os.path.expandvars(v) for k, v in env.items()}
@@ -1323,7 +1326,7 @@ class AgentAdapter(ABC):
                     continue
                 for form in [{key: original}, *({key: view.get(key)} for view in expanded)]:
                     value = form.get(key)
-                    if isinstance(value, str) and len(value) >= 8:
+                    if isinstance(value, str) and len(value) >= MIN_SECRET_CHARS:
                         values.add(value)
 
         collect(child_env, [])
@@ -1333,7 +1336,7 @@ class AgentAdapter(ABC):
                 if table:
                     collect(table, [expand_env(table), expand_env(table, child_env)])
         # A multi-line value (a PEM key) is also masked line by line, in case stderr shows only part of it.
-        values.update(line.strip() for value in list(values) for line in value.splitlines() if len(line.strip()) >= 8)
+        values.update(line.strip() for value in list(values) for line in value.splitlines() if len(line.strip()) >= MIN_SECRET_CHARS)
         return sorted(values, key=len, reverse=True)
 
     def _clean_stderr_lines(self, stderr_tail: deque[str], count: int, secrets: list[str] = ()) -> list[str]:
@@ -1343,6 +1346,8 @@ class AgentAdapter(ABC):
 
         # The whole tail is masked as one text before lines are picked, so a secret spanning lines cannot slip through.
         text = sanitize(chr(10).join(stderr_tail), self.settings.policy, secrets, limit=None)
+        for secret in secrets:  # sanitize() skips values under 8 characters; a short real password is still one
+            text = text.replace(secret, "<redacted-secret>")
         lines = [line for line in text.split(chr(10)) if line.strip() and not line.strip().startswith(JOB_ACTIVE)]
         return [short(line, 300) for line in lines[-count:]]
 

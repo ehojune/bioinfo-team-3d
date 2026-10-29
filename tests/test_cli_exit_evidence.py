@@ -102,3 +102,9 @@ async def test_a_placeholder_mcp_secret_is_masked_in_its_expanded_form(tmp_path)
         tmp_path, [], [f"mcp dump {real}"], 0, env={"MCP_VALUE": real}, mcp_env={"SERVICE_LOGIN": "${MCP_VALUE}"})
     text = res.error + (workdir / ".labhq" / "exit_evidence.json").read_text(encoding="utf-8") + str(events)
     assert real not in text
+
+
+async def test_a_short_secret_value_is_masked_too(tmp_path):
+    res, events, workdir = await run_fake(tmp_path, [], ["login failed for pw9x7"], 0, env={"DB_PASSWORD": "pw9x7"})
+    text = res.error + (workdir / ".labhq" / "exit_evidence.json").read_text(encoding="utf-8") + str(events)
+    assert "pw9x7" not in text and "login failed for" in text
