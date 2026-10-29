@@ -2769,8 +2769,11 @@ class Hub:
 
     @staticmethod
     def _release_message(command: dict) -> dict:
+        episode = command.get("episode")
+        if episode is not None and not isinstance(episode, str):
+            episode = "legacy"  # saved by an earlier release as a bare number: it can match nothing, so it is answered stale
         return {"action": "release_constraint", "command_id": command["command_id"],
-                **({"episode": command["episode"]} if isinstance(command.get("episode"), str) else {})}
+                **({"episode": episode} if episode is not None else {})}
 
     def _note_breaker_event(self, tid: str, data: dict) -> None:
         """Remember which restriction the task is in, and settle the release command its acknowledgement names."""

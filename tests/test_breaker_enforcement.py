@@ -283,3 +283,13 @@ def test_an_episode_id_never_repeats_across_runs():
     first.episode = second.episode = 1
     assert first.episode_id != second.episode_id
     assert first.episode_id.endswith(":1") and second.episode_id.endswith(":1")
+
+
+async def test_a_release_saved_with_a_numeric_episode_is_sent_so_it_matches_nothing(tmp_path):
+    # A row stored before episode IDs were strings must not be resent unscoped: it could free a newer restriction.
+    hub, sent = _gateway(tmp_path)
+    hub.store.put("breaker_release", "t1", {"command_id": "old", "episode": 3, "at": 1.0})
+    await hub._push_task_state("t1")
+    [message] = [m for m in sent if m["action"] == "release_constraint"]
+    assert message["command_id"] == "old" and message["episode"] == "legacy"
+    assert Escalation(BreakerPolicy()).episode_id != message["episode"]
