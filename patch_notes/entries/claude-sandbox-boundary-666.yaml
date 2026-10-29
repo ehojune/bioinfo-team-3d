@@ -1,5 +1,9 @@
 pr: 1018
 rows:
+  - sha: "3795509"
+    at: "2026-10-29 15:25"
+    summary: "관측된 경계 위반은 제어 시험이 없거나 시간 초과여도 실패로 기록합니다."
+    text: "test: fail observed sandbox violations despite missing controls"
   - sha: 2eb9b56
     at: "2026-10-29 15:00"
     summary: "Windows 시험 목록과 기록 형식을 바로잡습니다."
