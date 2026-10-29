@@ -145,7 +145,7 @@ class AgentSpec(BaseModel):
     tools: list[str] = []  # pre-approved tools (Claude Code --allowedTools rule syntax)
     disallowed_tools: list[str] = []
     builtin_tools: str | None = None  # Claude Code --tools (restrict the built-in tool set)
-    builtin_mcp: list[str] = ["approval"]  # labhq-provided MCP servers: approval, hpc
+    builtin_mcp: list[str] = ["approval"]  # labhq-provided MCP servers: approval, hpc, job, annot, wiki
     mcp: list[McpServerSpec] = []
     project_dirs: list[str] = []
     plugin_dirs: list[str] = []  # Claude Code --plugin-dir; ${VAR} expands at run time

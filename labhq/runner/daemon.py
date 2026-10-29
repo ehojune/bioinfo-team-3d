@@ -641,8 +641,14 @@ class Runner:
             summary = agent.summary()
             agents.append({**summary, "hpc_tools": ("hpc" in summary.get("builtin_mcp", []) and
                                                       self.s.hpc.scheduler != "none") or
-                                                     "labhq_hpc" in summary.get("mcp", [])})
+                                                     "labhq_hpc" in summary.get("mcp", []),
+                           "wiki_tools": "wiki" in summary.get("builtin_mcp", []) and self._wiki_tool_ready()})
         return agents
+
+    def _wiki_tool_ready(self) -> bool:
+        """The LLM-wiki tool hands note text to a staff model, so it needs the PI's explicit opt-in (#827)."""
+        wiki = self.s.wiki
+        return bool(wiki.enabled and wiki.root and wiki.external_model_allowed)
 
     def _refresh_wsl_readiness(self) -> None:
         if self.s.runner.environment != "wsl":
@@ -1139,6 +1145,11 @@ class Runner:
             servers.append(McpServerSpec(name="labhq_annot", command=sys.executable,
                                          args=["-m", "labhq.tools.annot_mcp"], env=env,
                                          auto_approve=True, timeout_s=literature_mcp_timeout_s(self.s)))
+        if "wiki" in agent.builtin_mcp and self._wiki_tool_ready():
+            # Read-only search over the PI's own notes; every call is logged to outputs/wiki_queries.jsonl.
+            servers.append(McpServerSpec(name="labhq_wiki", command=sys.executable,
+                                         args=["-m", "labhq.tools.wiki_mcp"], env=env,
+                                         auto_approve=True, timeout_s=timeout_s))
         if allow_ask and agent.engine != Engine.antigravity:
             servers.append(McpServerSpec(name="labhq_ask", command=sys.executable,
                                          args=["-m", "labhq.tools.ask_mcp"], env=env,

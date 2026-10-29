@@ -1351,7 +1351,7 @@ report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니�
 
 ### 내 LLM-wiki 연결 (#827)
 
-내가 모아 둔 LLM-wiki 폴더(노트 모음)를 읽기 전용 참고자료로 이어 붙입니다. 기본은 꺼짐입니다. 폴더를 프롬프트에 통째로 넣지 않고 노트 조각을 검색하며, 원본은 수정하지 않습니다. **이 단계는 색인과 검색 명령까지입니다.** 직원이 쓰는 도구, 근거·보고 반영은 아직 없고 실제 사용자 wiki로는 검증하지 않았습니다.
+내가 모아 둔 LLM-wiki 폴더(노트 모음)를 읽기 전용 참고자료로 이어 붙입니다. 기본은 꺼짐입니다. 폴더를 프롬프트에 통째로 넣지 않고 노트 조각을 검색하며, 원본은 수정하지 않습니다. **지금은 색인·검색 명령과 직원용 도구(`labhq_wiki`)까지입니다.** 근거 규칙·공개 보고 마스크는 아직 없고 실제 사용자 wiki로는 검증하지 않았습니다.
 
 | 명령 | 하는 일 |
 |---|---|
@@ -1366,7 +1366,7 @@ report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니�
 | 키 | 기본 | 뜻 |
 |---|---|---|
 | `root` | — | wiki 폴더. **실제 경로가 `runner.reference_roots` 안**이어야 합니다. 폴더 자신이 링크이거나, 중간 경로의 링크가 실제 경로를 허용 루트 밖으로 옮기거나(허용 루트 안에 머무는 별칭은 받습니다), 허용 루트와 폴더 사이에 mount 지점이 있거나, 통제 구역·비공개 경로·작업 폴더·state 폴더와 겹치면 연결을 거부합니다. 폴더 아래의 링크·mount·숨김 폴더·credential 이름의 파일은 읽지 않습니다 |
-| `external_model_allowed` | `false` | 노트 내용을 직원 모델에 넘기는 기능을 위한 값입니다. 이 단계에서는 쓰이는 곳이 없습니다 |
+| `external_model_allowed` | `false` | 노트 내용을 직원 모델에 넘기는 도구(`labhq_wiki`)를 붙일지 정합니다. `true`로 바꿔야 붙습니다 |
 | `extensions` | `.md`, `.txt` | v1은 이 두 형식만 읽습니다(이미지·PDF 제외) |
 | `stale_days` | 365 | 마지막 수정이 이보다 오래된 노트는 `stale`로 표시 |
 | `max_files`, `max_file_bytes` | 5,000개 · 2 MiB | 이를 넘는 파일은 색인에서 건너뜁니다 |
@@ -1374,6 +1374,8 @@ report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니�
 Windows에서는 노트를 같은 크기로 제자리에서 다시 쓰고 수정 시각을 되돌리면 변경을 알아채지 못합니다(생성 시각·파일 ID가 같을 때, 입력 hash 캐시와 같은 한계). 그런 도구를 쓰면 `labhq wiki disconnect` 뒤 `reindex`로 처음부터 다시 만드세요.
 
 노트마다 남는 정보: 상대 경로, 제목 경로, 줄 범위, 파일 전체 sha256, 수정 시각, 노트가 가리키는 원문(DOI·PMID·URL 하나, frontmatter `source:`나 본문 링크에서 추출), `freshness`(`ok`·`stale`·`source_missing`·`disputed`; frontmatter `status: disputed|superseded`면 `disputed`). 검색 결과는 항상 `access_level: wiki_summary`, `verified_against_primary: false`로 표시하며, wiki 요약은 원논문을 읽은 것이 아닙니다. 노트 속 지시문은 데이터일 뿐 실행하지 않습니다.
+
+직원 도구 `labhq_wiki`(`search`·`read`·`status`)는 `wiki.enabled`와 `external_model_allowed: true`가 함께 켜진 runner에서, `builtin_mcp`에 `wiki`가 있는 직원(`lit_scout`·`biologist`·`sci_reviewer`)에게만 붙습니다. 읽기 전용 작업(후속 질의·상담)에는 붙지 않습니다. `search`는 최대 10건, `read`는 색인에 있는 노트의 줄 범위(한 번에 200줄까지)만 돌려주고, 절대 경로·`..`·색인에 없는 파일은 `not_found`입니다. 호출마다 `outputs/wiki_queries.jsonl`에 한 줄(v1)이 붙습니다. 검색어·본문 원문은 적지 않고 해시와 길이만 남으며, 모든 히트는 `source_level: tertiary`입니다. 도구 결과와 기록에는 wiki 루트 경로가 나오지 않습니다.
 
 `labhq doctor`의 `wiki` 행은 연결·문서 수·색인 유무·오래된 노트를 보여 주며 색인을 만들거나 갱신하지 않습니다. 색인은 runner 쪽 `runner.state_dir/wiki/`의 일회용 sqlite라 지워도 됩니다.
 

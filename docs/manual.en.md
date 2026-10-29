@@ -1346,7 +1346,7 @@ For cleaning up test requests, only list the candidates with `python scripts/pur
 
 ### Linking my LLM-wiki (#827)
 
-Attach your own LLM-wiki folder (a pile of notes) as a read-only reference. It is off by default. The folder is never pasted into a prompt whole; note pieces are searched, and the originals are never changed. **This phase covers the index and search commands only.** The staff tool and the evidence and report integration do not exist yet, and nothing was verified against a real user wiki.
+Attach your own LLM-wiki folder (a pile of notes) as a read-only reference. It is off by default. The folder is never pasted into a prompt whole; note pieces are searched, and the originals are never changed. **Now covered: the index and search commands and the staff tool (`labhq_wiki`).** The evidence rule and public-report masking do not exist yet, and nothing was verified against a real user wiki.
 
 | Command | What it does |
 |---|---|
@@ -1361,7 +1361,7 @@ Settings (`wiki:`, `enabled: false` by default):
 | Key | Default | Meaning |
 |---|---|---|
 | `root` | — | The wiki folder. Its **real path must be inside `runner.reference_roots`**. The connection is refused if the folder itself is a link, a link in its path moves the real path outside the allowed root (an alias that stays inside the allowed root is accepted), a mount point lies between the allowed root and the folder, or it overlaps a controlled zone, a private path, the work folder or the state folder. Below the folder, links, mounts, hidden folders and files with credential-like names are never read |
-| `external_model_allowed` | `false` | Reserved for the feature that hands note text to a staff model. Nothing uses it in this phase |
+| `external_model_allowed` | `false` | Decides whether the tool that hands note text to a staff model (`labhq_wiki`) is attached. It must be `true` |
 | `extensions` | `.md`, `.txt` | v1 reads only these two (no images or PDFs) |
 | `stale_days` | 365 | A note last modified longer ago than this is marked `stale` |
 | `max_files`, `max_file_bytes` | 5,000 files · 2 MiB | Larger ones are skipped when indexing |
@@ -1369,6 +1369,8 @@ Settings (`wiki:`, `enabled: false` by default):
 On Windows, a note rewritten in place with the same size and its modification time restored goes unnoticed (when creation time and file ID are unchanged, the same limit as the input-hash cache). If a tool does that, run `labhq wiki disconnect` and then `reindex` to rebuild from scratch.
 
 Each note keeps: relative path, heading path, line range, whole-file sha256, modification time, the one source it points to (a DOI, PMID or URL taken from frontmatter `source:` or a body link) and `freshness` (`ok`, `stale`, `source_missing`, `disputed`; frontmatter `status: disputed|superseded` gives `disputed`). Search results are always marked `access_level: wiki_summary` and `verified_against_primary: false`: a wiki summary is not a reading of the original paper. Instructions inside a note are data and are never executed.
+
+The staff tool `labhq_wiki` (`search`, `read`, `status`) is attached only on a runner with `wiki.enabled` and `external_model_allowed: true`, and only to staff whose `builtin_mcp` lists `wiki` (`lit_scout`, `biologist`, `sci_reviewer`). Read-only runs (follow-ups, consultations) do not get it. `search` returns up to 10 hits; `read` returns a line range (up to 200 lines per call) of an indexed note only, so an absolute path, `..` or an unindexed file is `not_found`. Every call appends one v1 line to `outputs/wiki_queries.jsonl`: hashes and lengths only, never the query or note text, and every hit is `source_level: tertiary`. Neither the tool result nor the log shows the wiki root path.
 
 The `wiki` row of `labhq doctor` shows the link, document count, whether an index exists and stale notes; it never builds or refreshes the index. The index is a disposable sqlite under `runner.state_dir/wiki/` on the runner side and can be deleted.
 

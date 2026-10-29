@@ -301,6 +301,41 @@ def search(settings: Any, query: str, limit: int = 10) -> list[dict]:
     return hits
 
 
+READ_MAX_LINES = 200
+READ_MAX_CHARS = 20000
+
+
+def read(settings: Any, rel_path: str, line_start: int = 1, line_end: int | None = None) -> dict:
+    """Lines of one indexed note (at most READ_MAX_LINES), with the hash of the whole file as read now.
+
+    Only a path the index knows is opened, so an absolute path, `..` or a note outside the walker's rules is
+    `not_found`. A bad range is `range_invalid`; a file that changed since the last refresh is indexed again first."""
+    reindex(settings)
+    rel = str(rel_path).strip()
+    with closing(_connect(index_path(settings))) as db:
+        row = db.execute("SELECT id, mtime_ns, title, status FROM docs WHERE rel_path=?", (rel,)).fetchone()
+        if row is None:
+            raise LookupError("not_found")
+        doc_id, mtime_ns, title, status = row
+        origins = db.execute("SELECT kind, value FROM origins WHERE doc_id=? ORDER BY rowid", (doc_id,)).fetchall()
+    try:
+        raw = _read(root_path(settings) / rel, settings.wiki.max_file_bytes)
+    except (OSError, ValueError):
+        raise LookupError("not_found") from None
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    first = int(line_start)
+    last = int(line_end) if line_end is not None else min(len(lines), first + READ_MAX_LINES - 1)
+    if first < 1 or last < first or first > len(lines) or last - first + 1 > READ_MAX_LINES:
+        raise ValueError("range_invalid")
+    last = min(last, len(lines))
+    text = chr(10).join(lines[first - 1:last])[:READ_MAX_CHARS]
+    return dict(rel_path=rel, title=title, heading="", line_start=first, line_end=last,
+                sha256=hashlib.sha256(raw).hexdigest(), mtime=_iso(mtime_ns), snippet=text,
+                origin={origins[0][0]: origins[0][1]} if origins else None,
+                access_level="wiki_summary", verified_against_primary=False,
+                freshness=_freshness(settings, mtime_ns, status, origins))
+
+
 def status(settings: Any) -> dict:
     """Read-only view for `labhq wiki status` and doctor; never creates the index."""
     wiki = settings.wiki
