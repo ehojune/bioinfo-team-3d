@@ -122,3 +122,26 @@ async def test_a_repair_never_asks_the_pi_for_more_budget(tmp_path, monkeypatch)
     assert len(calls) == 1 and len(hub.calls) == 1
     assert not result.ok and result.error_kind == "structured_output_format"
     assert [row["kind"] for row in hub.approvals] == ["clarify"]  # only the format-error card, no budget card
+
+
+@pytest.mark.asyncio
+async def test_the_request_cost_is_the_sum_of_each_dispatch_and_a_merged_repair_result_is_not_added_again(
+        tmp_path, monkeypatch):
+    """#673 review note: the step result of a repaired turn carries every attempt's cost (_sum_repair_turns), but the
+    request total counts each dispatch once, by task id, so the merged result must never add that cost a second time."""
+    runner, calls = make_runner(tmp_path, monkeypatch, 2)  # two format errors, then success: three dispatches
+    hub = FakeHub(runner.run_task)
+    hub.requests["r"]["budget_usd"] = 5.0
+    orch = Orchestrator(hub)
+    result = await orch.run_step(Task(agent_id="worker", request_id="r", prompt="original", budget_usd=1.0,
+                                      output_schema={"type": "object"}, meta={"kind": "step"}))
+    assert len(calls) == 3 and len(hub.calls) == 3 and result.ok
+    per_dispatch = 0.1 * 3
+    assert result.cost_usd == pytest.approx(per_dispatch)  # the step result reports every attempt
+    assert orch.cost["r"] == pytest.approx(per_dispatch)  # the request total counts each dispatch once
+    # Counting the merged result again (what a later caller adding step costs would do) changes nothing: its task id,
+    # the last repair's, was already counted.
+    orch._count_cost("r", result.task_id, result)
+    orch._count_recorded_costs("r")
+    assert orch.cost["r"] == pytest.approx(per_dispatch)
+    assert {call.id for call in hub.calls} >= {result.task_id}
