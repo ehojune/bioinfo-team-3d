@@ -17,9 +17,8 @@ PORT = 18911
 
 
 @pytest.fixture(autouse=True)
-def fake_processes(monkeypatch, tmp_path):
+def fake_processes(monkeypatch):
     monkeypatch.delenv("LABHQ_LAUNCHER", raising=False)
-    monkeypatch.setenv("LABHQ_MACHINE_STATE_DIR", str(tmp_path / "machine"))  # the machine-wide folder (#618)
     # A record whose `created` is "gen-<pid>" is a live process; any other value is a dead one.
     monkeypatch.setattr(cli, "_process_created", lambda pid: f"gen-{pid}")
     monkeypatch.setattr(cli, "_start_background", lambda *a, **k: pytest.fail("must not start a process"))
@@ -602,17 +601,3 @@ def test_the_same_configs_other_live_runner_keeps_its_broker_record(tmp_path):
     before = path.read_bytes()
     assert instance_guard.claim(config, "runner") is None
     assert path.read_bytes() == before
-
-
-def test_broker_ownership_lives_in_the_machine_wide_folder_and_an_unusable_one_is_no_reason_to_refuse(
-        tmp_path, monkeypatch):
-    first = make_config(tmp_path / "first.yaml", tmp_path / "s1", runner_state=tmp_path / "r1", broker_port=PORT + 61)
-    assert instance_guard.claim(first, "runner") is None
-    assert instance_guard._broker_path(first).parent == tmp_path / "machine"
-    assert not (Path.home() / ".labhq" / "state" / f"labhq-broker-port-{PORT + 61}.json").exists(),         "not under one account's home"
-    blocker = tmp_path / "not-a-folder"
-    blocker.write_text("x", encoding="utf-8")
-    monkeypatch.setenv("LABHQ_MACHINE_STATE_DIR", str(blocker))  # this account cannot use the machine-wide folder
-    second = make_config(tmp_path / "second.yaml", tmp_path / "s2", port=PORT + 1, runner_state=tmp_path / "r2",
-                         broker_port=PORT + 61)
-    assert instance_guard.claim(second, "runner") is None

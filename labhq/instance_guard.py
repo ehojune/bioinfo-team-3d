@@ -35,7 +35,7 @@ from .util import atomic_write_text
 LAST_FILE = "labhq-last-config.json"
 PRIMARY_FILE = "labhq-primary-config.json"
 OWNER_FILE = {"gateway": "labhq-gateway-owner.json", "runner": "labhq-runner-owner.json"}
-BROKER_FILE = "labhq-broker-port-{port}.json"  # one per runner.broker_port, in the machine-wide folder (#618)
+BROKER_FILE = "labhq-broker-port-{port}.json"  # one per runner.broker_port, in the default state folder (#618)
 
 
 @dataclass(frozen=True)
@@ -217,22 +217,8 @@ def write_owner(settings: Settings, role: str, *, required: bool = False) -> Non
         _write_json(_owner_path(settings, role), record)
 
 
-def machine_dir() -> Path:
-    """Where records that every OS account on this PC must see live: a port belongs to the machine, not to one
-    account's home (runners may run under other accounts, ``runner.os_account``). ``LABHQ_MACHINE_STATE_DIR`` overrides."""
-    override = os.environ.get("LABHQ_MACHINE_STATE_DIR")
-    path = Path(override) if override else (
-        Path(os.environ.get("PROGRAMDATA") or "C:/ProgramData") / "labhq" if os.name == "nt" else Path("/tmp/labhq"))
-    guard_test_path(path)
-    return path
-
-
 def _broker_path(settings: Settings) -> Path:
-    return machine_dir() / BROKER_FILE.format(port=settings.runner.broker_port)
-
-
-class _LockBusy(OSError):
-    """Another process holds the lock right now (as opposed to a file this account cannot open at all)."""
+    return default_state_dir() / BROKER_FILE.format(port=settings.runner.broker_port)
 
 
 @contextmanager
@@ -245,39 +231,23 @@ def _runner_claim_lock(settings: Settings):
         yield
 
 
-def _share(path: Path, mode: int) -> None:
-    """Let other OS accounts use a machine-wide file or folder where the OS allows it; otherwise leave it."""
-    if os.name != "nt":
-        try:
-            os.chmod(path, mode)
-        except OSError:
-            pass
-
-
 @contextmanager
-def _file_lock(path: Path, *, shared: bool = False):
+def _file_lock(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
-    if shared:
-        _share(path.parent, 0o1777)
     with open(path, "a+b") as handle:
-        if shared:
-            _share(path, 0o666)
         handle.seek(0, os.SEEK_END)
         if handle.tell() == 0:
             handle.write(b"\0")
             handle.flush()
         handle.seek(0)
-        try:
-            if os.name == "nt":
-                import msvcrt
+        if os.name == "nt":
+            import msvcrt
 
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
 
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            raise _LockBusy(*exc.args) from exc
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
             yield
         finally:
@@ -442,29 +412,24 @@ def _port_notice(settings: Settings, port: int, other: str | None, show: Callabl
 
 
 def _claim_broker(settings: Settings, mine: Identity) -> Notice | None:
-    """The runner's broker port belongs to one config on the whole machine (#618). A live runner of another config
-    there stops this start. The same config's live runner keeps its record (this process would fail to bind anyway).
-    A machine-wide folder this OS account cannot use is no reason to refuse a start, so only a busy lock is."""
-    try:
-        path = _broker_path(settings)
-        with _file_lock(path.with_suffix(".lock"), shared=True):
-            held = _read_json(path)
-            if held and _alive(held):
-                owner = _record_identity(held)
-                if owner is not None and not same_identity(owner, mine):
-                    return _broker_notice(settings, owner, str)
-                if held.get("pid") != os.getpid():
-                    return None
-            from . import cli
+    """The runner's broker port belongs to one config on this PC (#618). A live runner of another config there stops
+    this start. The same config's live runner keeps its record (this process would fail to bind anyway). An error
+    opening, locking or writing the record is the caller's "could not acquire" notice, as for the runner state."""
+    from . import cli
 
-            _write_json(path, {"pid": os.getpid(), "created": cli._process_created(os.getpid()), "role": "runner",
-                               "config": settings.config_path, "config_id": mine.config_id,
-                               "fingerprint": mine.fingerprint, "port": settings.runner.broker_port})
-            _share(path, 0o666)
-    except _LockBusy:
-        raise
-    except OSError:
-        return None
+    path = _broker_path(settings)
+    with _file_lock(path.with_suffix(".lock")):
+        held = _read_json(path)
+        if held and _alive(held):
+            owner = _record_identity(held)
+            if owner is not None and not same_identity(owner, mine):
+                return _broker_notice(settings, owner, str)
+            if held.get("pid") != os.getpid():
+                return None
+        atomic_write_text(path, json.dumps({
+            "pid": os.getpid(), "created": cli._process_created(os.getpid()), "role": "runner",
+            "config": settings.config_path, "config_id": mine.config_id, "fingerprint": mine.fingerprint,
+            "port": settings.runner.broker_port}, ensure_ascii=False) + chr(10))
     return None
 
 
