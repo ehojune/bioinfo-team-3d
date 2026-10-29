@@ -1,0 +1,5 @@
+rows:
+- sha: eefb7fe
+  at: 2026-10-29 16:25
+  text: runner별로 늘어난 환경 clone 단계는 max_steps에 세지 않고, dispatch 직전에 runner가 지금 알리는 runtime이 저장된 binding과 다르거나 알리지 않으면 보내기 전에 거부한다 (#674 후속 3·4).
+  summary: 환경 단계가 늘어도 단계 수 한도에 걸려 실패하지 않고, 실행기 종류가 바뀐 상태로는 환경이 쓰이지 않게 막습니다.
