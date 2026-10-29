@@ -359,6 +359,9 @@ class TaskResult(BaseModel):
     structured: Any = None
     blocking_decision: str | None = None
     session_id: str | None = None
+    # "plain" or "compact" when the turn ended with a StructuredOutput format error that a resumed turn may repair; the
+    # orchestrator sends that repair as a new dispatch (#673). None: no repair is offered.
+    format_retry: str | None = None
     cost_usd: float | None = None
     cost_known: bool | None = None
     usage: dict[str, int] = {}
