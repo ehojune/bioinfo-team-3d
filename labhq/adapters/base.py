@@ -635,6 +635,7 @@ class RunState:
     # events enabled, keep the transport fragments until its tool_result says whether the call failed.
     structured_output_streams: dict[int, dict[str, Any]] = field(default_factory=dict)
     structured_output_raw: dict[str, str] = field(default_factory=dict)
+    mcp_status: list[dict[str, str]] = field(default_factory=list)  # {name, status} the CLI reported at start
 
 
 @dataclass
@@ -809,6 +810,9 @@ def wrap_cwd(spec: McpServerSpec) -> tuple[str, list[str]]:
         return spec.command or "", list(spec.args)
     inner = f"cd {shlex.quote(spec.cwd)} && exec {shlex.join([spec.command or '', *spec.args])}"
     return "bash", ["-lc", inner]
+
+
+MIN_SECRET_CHARS = 3  # shortest environment secret value this module masks in CLI failure evidence
 
 
 def expand_env(env: dict[str, str], source: dict[str, str] | None = None) -> dict[str, str]:
@@ -1044,6 +1048,7 @@ class AgentAdapter(ABC):
                                   error=f"runner could not record the CLI start: {type(exc).__name__}: {exc}",
                                   cleanup_evidence=self._cleanup_evidence(cleanup, proc))
         st = RunState()
+        started_at = time.monotonic()
         tool_activity = _ToolActivity(self.engine)
         stderr_tail: deque[str] = deque(maxlen=60)
         result_arrived = asyncio.Event()
@@ -1293,14 +1298,81 @@ class AgentAdapter(ABC):
         res.exit_code = returncode
         res.cleanup_evidence = self._cleanup_evidence(cleanup, proc)
         ctx.commands_ran = st.commands_ran
+        secrets = self._secret_values(ctx, env)
         if res.error and stderr and ("empty CLI stream" in res.error or "IneligibleTierError" in stderr):
-            res.error = f"{res.error}: {short(stderr, 500)}"
+            res.error = f"{res.error}: {short(self._clean_stderr(stderr_tail, 5, secrets), 500)}"
         if returncode not in (0, None) and not res.error:
-            res.error = f"exit {returncode}: " + " | ".join(list(stderr_tail)[-5:])
+            res.error = f"exit {returncode}: " + self._clean_stderr(stderr_tail, 5, secrets)
+        if not res.ok and not st.result_seen and (res.error or "").startswith(("empty CLI stream", "exit ")):
+            await self._record_exit_evidence(ctx, res, st, returncode, stderr_tail, time.monotonic() - started_at,
+                                             secrets)
         # The CLI's own stderr counts only when the run failed; a failed command's output counts either way, because
         # an agent that gave up after "No module named x" can still exit 0 with its outputs missing (#35).
         res.environment = env_signatures.scan_run(self.engine, stderr_tail if not res.ok else (), st.failed_outputs)
         return res
+
+    _SECRET_KEY = re.compile(r"token|secret|passw|credential|api[_-]?key|auth|private|session|cookie", re.IGNORECASE)
+
+    @classmethod
+    def _secret_values(cls, ctx: RunContext, child_env: dict[str, str]) -> list[str]:
+        """Values this run really handed to the CLI and its MCP servers under secret-looking names, or injected through
+        a `${NAME}` placeholder, in every form the CLI sees: as written and expanded against the child environment."""
+        values: set[str] = set()
+
+        def collect(raw: dict[str, str] | None, expanded: list[dict[str, str]]) -> None:
+            for key, original in (raw or {}).items():
+                placeholder = isinstance(original, str) and "$" in original
+                if not (placeholder or cls._SECRET_KEY.search(key)):
+                    continue
+                for form in [{key: original}, *({key: view.get(key)} for view in expanded)]:
+                    value = form.get(key)
+                    if isinstance(value, str) and len(value) >= MIN_SECRET_CHARS:
+                        values.add(value)
+
+        collect(child_env, [])
+        collect(ctx.env, [])
+        for server in ctx.mcp_servers:
+            for table in (server.env, getattr(server, "headers", None)):
+                if table:
+                    collect(table, [expand_env(table), expand_env(table, child_env)])
+        # A multi-line value (a PEM key) is also masked line by line, in case stderr shows only part of it.
+        values.update(line.strip() for value in list(values) for line in value.splitlines() if len(line.strip()) >= MIN_SECRET_CHARS)
+        return sorted(values, key=len, reverse=True)
+
+    def _clean_stderr_lines(self, stderr_tail: deque[str], count: int, secrets: list[str] = ()) -> list[str]:
+        """The last non-empty stderr lines minus labhq's own Job announcement, with secrets and zones masked."""
+        from ..integrations.github import sanitize
+        from ..runner.memory_limit import JOB_ACTIVE
+
+        # The whole tail is masked as one text before lines are picked, so a secret spanning lines cannot slip through.
+        text = sanitize(chr(10).join(stderr_tail), self.settings.policy, secrets, limit=None)
+        for secret in secrets:  # sanitize() skips values under 8 characters; a short real password is still one
+            text = text.replace(secret, "<redacted-secret>")
+        lines = [line for line in text.split(chr(10)) if line.strip() and not line.strip().startswith(JOB_ACTIVE)]
+        return [short(line, 300) for line in lines[-count:]]
+
+    def _clean_stderr(self, stderr_tail: deque[str], count: int, secrets: list[str] = ()) -> str:
+        return " | ".join(self._clean_stderr_lines(stderr_tail, count, secrets))
+
+    async def _record_exit_evidence(self, ctx: RunContext, res: TaskResult, st: RunState, returncode: int | None,
+                                    stderr_tail: deque[str], elapsed_s: float, secrets: list[str] = ()) -> None:
+        """A CLI that ended without any result says why in the result, an event and `.labhq/exit_evidence.json` (#1045).
+
+        The exit code, the end of stderr without labhq's own Job announcement, the run time and the MCP servers'
+        start status; secrets and restricted paths are masked. A CLI that gave a result is not touched."""
+        masked = self._clean_stderr_lines(stderr_tail, 8, secrets)
+        evidence = {"exit_code": returncode, "elapsed_s": round(elapsed_s, 1), "stderr_tail": masked,
+                    "mcp": st.mcp_status or None}
+        summary = (f"CLI 종료 증거: exit {returncode}, {elapsed_s:.1f}s, stderr "
+                   + (" | ".join(masked[-3:]) if masked else "(출력 없음)")
+                   + (", MCP " + ", ".join(f"{m['name']}={m['status']}" for m in st.mcp_status)
+                      if st.mcp_status else ", MCP 시작 정보 없음"))
+        res.error = f"{res.error or 'CLI가 결과 없이 끝남'} [{short(summary, 600)}]"
+        await ctx.emit("agent.log", {"level": "warn", "text": short(summary, 800)})
+        try:
+            await ctx.awrite_meta("exit_evidence.json", json.dumps(evidence, ensure_ascii=False, indent=1))
+        except OwnedPathError:
+            pass  # the .labhq link case is already reported with stderr_tail.txt
 
     @staticmethod
     async def _kill(proc: asyncio.subprocess.Process) -> dict[str, Any]:
