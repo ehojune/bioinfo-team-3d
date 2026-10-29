@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:10 | [`06b647a`](https://github.com/ehojune/bioinfo-team-3d/pull/1009/commits/06b647a) | **브라우저 시험의 닫힌 소켓 처리와 엔진 정보가 없는 직원 기록의 도구 목록을 다듬었습니다.**<br>office browser 시험의 DevTools 호출이 ws.send 예외 때 timer를 지우고 즉시 reject하며, gateway 직원 MCP 목록이 engine 키가 없는 직원 기록을 claude_code로 보아 labhq_job을 표시한다 (#1001·#1004 비차단 지적). |
 | 09:56 | [`611b67c`](https://github.com/ehojune/bioinfo-team-3d/pull/1007/commits/611b67c) | **디스크 여유가 시작 기준보다 적으면 점검 명령이 실패로 알려 줍니다.**<br>doctor가 작업 폴더·gateway 상태 드라이브의 여유가 task 시작 기준(runner.disk_fail_free_gb, 기본 2 GiB) 미만이면 warn이 아니라 fail로 보고한다 (#678). |
 | 09:54 | [`9ea950d`](https://github.com/ehojune/bioinfo-team-3d/pull/994/commits/9ea950d) | **main의 새 테스트 목록과 이 PR의 목록 충돌을 합쳤습니다.**<br>main 병합: Windows inventory 충돌 해소 (#59) |
 | 09:54 | [`f1ca881`](https://github.com/ehojune/bioinfo-team-3d/pull/994/commits/f1ca881) | **중단 뒤 재개 시험의 범위와 실제 network는 검증하지 않았다는 한계를 매뉴얼에 적었습니다.**<br>문서: halt→resume 시험 범위와 한계를 manual에 적는다 (#59) |
