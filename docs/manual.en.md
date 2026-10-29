@@ -944,6 +944,8 @@ The flow of hiring a separate staff member is as follows.
   redone, and the runner also refuses the same work before launching the engine. A question (`colleague:<id>` ask) is the same. The runner sends the asking task's
   judgment in the ask token, and if that task or request touches restricted, it does not open a consultation with external-transmission contract staff (before copying refs).
   An undeclared external transmission cannot be stopped.
+- In a consultation's reference files (refs), an entry that does not exist, is a folder or is a sentence instead of a path is left out alone and the consultation goes on; the
+  prompt records the entry and the reason as `참고 파일 제외` (#1043). A ref that points outside the work folder, passes through a link or is a restricted-zone file still refuses the whole consultation.
 - Passing probation means "the selected tools start and respond", not a guarantee of the scientific correctness of the whole repository.
   Before important analysis, we recommend having the QC owner reproduce the paper's example (the formal probation evaluation on the roadmap).
 

@@ -400,7 +400,7 @@ async def test_runner_skips_ref_when_parent_becomes_a_link_after_validation(tmp_
         runner.store.close()
 
 
-@pytest.mark.parametrize("raw_ref", ["../outside.tsv", "folder"])
+@pytest.mark.parametrize("raw_ref", ["../outside.tsv"])
 async def test_runner_rejects_non_file_consult_refs(tmp_path, monkeypatch, raw_ref):
     settings = Settings()
     settings.runner.state_dir = str(tmp_path / "state")

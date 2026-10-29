@@ -75,6 +75,7 @@
     "tests/test_coarse_plan_799.py",
     "tests/test_codex_deny_read.py",
     "tests/test_codex_sandbox_version.py",
+    "tests/test_consult_refs_1041.py",
     "tests/test_consult_restart.py",
     "tests/test_continuation_797.py",
     "tests/test_continuation_paper_inputs_807.py",

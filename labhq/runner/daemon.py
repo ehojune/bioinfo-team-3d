@@ -1210,8 +1210,13 @@ class Runner:
 
     def _consult_workspace_input(
         self, task: Task,
-    ) -> tuple[tuple[Path, tuple[str, ...], list[tuple[str, tuple[str, ...]]]] | None, str | None]:
-        """Validate declared runner-local refs; staging reopens every component through held folders (#86)."""
+    ) -> tuple[tuple[Path, tuple[str, ...], list[tuple[str, tuple[str, ...]]], list[tuple[str, str]]] | None,
+               str | None]:
+        """Validate declared runner-local refs; staging reopens every component through held folders (#86).
+
+        A ref that escapes the folder, goes through a link or is a restricted file refuses the consultation. A ref
+        that merely names nothing usable (no such file, a folder, a sentence instead of a path) is left out with its
+        reason, so one wrong entry does not end the whole request (#1043)."""
         raw_source = task.meta.get("source_workdir")
         refs = task.meta.get("consult_refs") or []
         if task.meta.get("kind") != "consult" or not refs:
@@ -1226,25 +1231,35 @@ class Runner:
                 raise ValueError
             source_parts = resolved_source.relative_to(workspace_root).parts
             resolved: list[tuple[str, tuple[str, ...]]] = []
+            left_out: list[tuple[str, str]] = []
             for raw_ref in refs:
                 normalized = str(raw_ref).replace("\\", "/")
                 if (not normalized or normalized.startswith(("/", "../")) or "/../" in normalized
                         or normalized.endswith("/..") or re.match(r"^[A-Za-z]:", normalized)):
                     raise ValueError
                 current = source
+                missing = False
                 for part in Path(normalized).parts:
                     current /= part
-                    if not os.path.lexists(current) or is_link(current):
+                    if not os.path.lexists(current):
+                        missing = True
+                        break
+                    if is_link(current):
                         raise ValueError
-                if (not current.resolve(strict=True).is_relative_to(resolved_source)
-                        or not current.is_file()):
+                if missing:
+                    left_out.append((str(raw_ref), "원래 작업 폴더에 그런 파일이 없음"))
+                    continue
+                if not current.resolve(strict=True).is_relative_to(resolved_source):
                     raise ValueError
+                if not current.is_file():
+                    left_out.append((str(raw_ref), "일반 파일이 아님"))
+                    continue
                 if task.agent_id == "facilities" and overlaps_zone(current.resolve(strict=True), self._zones()):
                     raise ValueError
                 resolved.append((normalized, tuple(Path(normalized).parts)))
         except (OSError, RuntimeError, ValueError):
             return None, "consult refs는 이 runner의 원래 작업 폴더 안에 있는 링크 아닌 파일이어야 합니다"
-        return (workspace_root, source_parts, resolved), None
+        return (workspace_root, source_parts, resolved, left_out), None
 
     @staticmethod
     def _open_consult_ref(root: Path, source_parts: tuple[str, ...], ref_parts: tuple[str, ...]) -> int:
@@ -1288,7 +1303,7 @@ class Runner:
             }})
         if error or inputs is None:
             return task, error
-        workspace_root, source_parts, sources = inputs
+        workspace_root, source_parts, sources, left_out = inputs
         safe_id = "consult-" + re.sub(r"[^A-Za-z0-9_.-]", "_", task.id)[:80]
         relative_root = Path("refs") / safe_id
         staged_root = plain_directory(ws.dir, relative_root)
@@ -1302,7 +1317,7 @@ class Runner:
 
         total = 0
         copied: dict[str, str] = {}
-        skipped: list[tuple[str, str]] = []
+        skipped: list[tuple[str, str]] = list(left_out)
         for number, (raw_ref, ref_parts) in enumerate(sources, 1):
             fd = -1
             try:
