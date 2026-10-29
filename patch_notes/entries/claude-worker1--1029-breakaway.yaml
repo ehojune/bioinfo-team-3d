@@ -1,0 +1,5 @@
+rows:
+  - sha: "4e7538d"
+    at: "2026-10-29 20:04"
+    summary: "Windows 검사에서 가끔 실패하던 Job 탈출 시험이 느린 PowerShell 첫 기동 때문에 실패하지 않도록 예열하고, 실패하면 어느 단계에서 멈췄는지 적게 했습니다."
+    text: "시험: Windows breakaway 시험 전에 WMI provider를 예열하고 실패 시 단계 요약을 남김 (#1029)"
