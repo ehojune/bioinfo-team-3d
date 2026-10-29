@@ -14,14 +14,22 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:55 | [`2d14347`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/2d14347) | **계획만 요청할 때는 실행 담당 runner가 꺼져 있어도 계획이 나옵니다.**<br>plan_only 요청은 실행하지 않으므로 소비 runner 연결을 요구하는 환경 binding을 건너뛴다. |
 | 14:40 | [`ed7bc66`](https://github.com/ehojune/bioinfo-team-3d/pull/1016/commits/ed7bc66) | **영문 매뉴얼의 폭주 차단기 설명을 한국어 매뉴얼과 같은 내용으로 고쳤습니다.**<br>영문 매뉴얼의 폭주 차단기 절을 한국어와 맞춘다 (#1016 리뷰 P2). |
+| 14:39 | [`3f9e9a7`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/3f9e9a7) | **영어 문서에도 runner별 환경 계획을 같은 내용으로 적었습니다.**<br>영어 매뉴얼의 환경 절·로드맵 행과 영어 README에 runner별 환경 계획 설명을 한국어판과 맞춘다 (#674, 봇 P1). |
+| 14:31 | [`09816c0`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/09816c0) | **공백이 든 runner ID도 환경 계획에 쓸 수 있습니다.**<br>환경 binding의 runner ID를 설정이 허용하는 값 그대로 받고 연구 계획 schema hash 고정값을 갱신한다. |
 | 14:26 | [`bc20dee`](https://github.com/ehojune/bioinfo-team-3d/pull/1011/commits/bc20dee) | **공동 작성자 줄의 공백이 불규칙해도 모델명을 채웁니다.**<br>이름만 있는 에이전트 trailer에 모델을 채울 때 이름과 주소 사이의 공백(여러 칸·탭)을 줄에 적힌 그대로 찾아 바꾼다 (#808 봇 지적). |
 | 14:26 | [`8c677ab`](https://github.com/ehojune/bioinfo-team-3d/pull/1016/commits/8c677ab) | **제한 해제 요청이 유실돼도 서버가 확인될 때까지 다시 보내고, 이미 지나간 제한을 잘못 풀지 않게 했습니다.**<br>제한 해제에 명령 ID·episode를 달아 gateway가 저장하고, runner ACK(released·stale)를 받을 때까지 같은 명령을 재전송한다 (#1008). |
+| 14:18 | [`4635ea9`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/4635ea9) | **승인 게이트를 거치는 환경 담당자도 선택합니다.**<br>사전 승인 목록과 Claude Bash 실행 가능성을 구분해 환경 담당자를 고른다. |
+| 14:15 | [`da063bd`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/da063bd) | **재개한 계획에도 환경 runner를 고정합니다.**<br>scope 승인 대기 중 재시작한 계획에도 실행 전 runner별 환경 binding을 적용한다. |
 | 14:13 | [`572d795`](https://github.com/ehojune/bioinfo-team-3d/pull/1011/commits/572d795) | **주석 글자를 자동으로 고르는 설정에서 일반 문단을 주석으로 잘못 지우지 않게 했습니다.**<br>core.commentChar=auto 에서 공동 작성자 훅이 후보 글자 전부가 아니라 커밋 템플릿 첫 줄이 알려 주는 글자만 주석으로 본다 (#808 봇 지적). |
 | 14:11 | [`2fd8feb`](https://github.com/ehojune/bioinfo-team-3d/pull/1014/commits/2fd8feb) | **영문 매뉴얼 첫머리가 현재 영문판이 있는 문서를 정확히 알려 줍니다.**<br>영문 매뉴얼 머리말의 언어 안내를 영문판 현황에 맞게 고침 |
+| 14:07 | [`ac441fa`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/ac441fa) | **환경 담당자 선택과 사용 안내를 바로잡습니다.**<br>같은 runner의 기존 환경 담당자를 유지하고 runner별 환경 계약을 manual에 반영한다. |
 | 14:04 | [`2057b77`](https://github.com/ehojune/bioinfo-team-3d/pull/1011/commits/2057b77) | **커밋 편집 화면에 diff가 붙는 설정에서도 공동 작성자 표시를 바르게 읽고 diff는 건드리지 않습니다.**<br>공동 작성자 훅이 git commit -v가 붙이는 scissors 구분선 아래의 diff를 메시지로 읽지 않고 그대로 보존한다 (#808 봇 지적). |
 | 14:04 | [`93396a7`](https://github.com/ehojune/bioinfo-team-3d/pull/1011/commits/93396a7) | **공동 작성자 표시를 읽는 규칙을 매뉴얼에 적었습니다.**<br>매뉴얼에 공동 작성자 훅이 trailer·주석·scissors·모델명을 읽는 규칙을 적는다 (#808). |
+| 14:02 | [`c157461`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/c157461) | **아직 사용할 수 없는 환경 경로 지시를 보류합니다.**<br>미구현 환경 경로 지시를 빼고 계획 범위와 검증 한계를 README에 적는다. |
 | 13:58 | [`0063375`](https://github.com/ehojune/bioinfo-team-3d/pull/1014/commits/0063375) | **한국어 매뉴얼 맨 위에서 영문판 문서로 바로 갈 수 있습니다.**<br>한국어 매뉴얼 머리에 영문판 안내 추가 |
+| 13:57 | [`4a3d972`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/4a3d972) | **실행기마다 환경 계획을 나누고 승인과 재개 때 연결 정보를 유지합니다.**<br>환경 계획을 소비 runner별로 나누고 승인·복원·dispatch에 binding을 보존한다. |
 | 13:56 | [`14ebe15`](https://github.com/ehojune/bioinfo-team-3d/pull/1014/commits/14ebe15) | **연구 수행 규약·PI Q&amp;A·어휘 표의 영문판을 추가하고 영문 README와 영문 매뉴얼이 이를 가리킵니다.**<br>영문 문서 3종 추가(docs/research_protocol.en.md, pi-qa.en.md, vocabulary.en.md), README.en과 manual.en의 해당 링크를 영문판으로, AGENTS.md에 영문판 동시 갱신 안내 |
 | 13:48 | [`7eae1ae`](https://github.com/ehojune/bioinfo-team-3d/pull/1011/commits/7eae1ae) | **커밋 메시지 주석 글자를 바꿔 쓰는 환경에서도 공동 작성자 표시를 바르게 읽습니다.**<br>공동 작성자 훅이 core.commentChar(auto 포함)가 정한 주석 줄을 제외하고 trailer를 읽는다 (#808 봇 지적). |
 | 13:41 | [`90381b2`](https://github.com/ehojune/bioinfo-team-3d/pull/1010/commits/90381b2) | **도구 제한이 걸려도 작업판에 해제 버튼이 안 뜨던 문제를 고쳤습니다.**<br>constrain 단계도 agent.control summary를 보내 작업판이 제한 상태와 해제 버튼을 보이게 한다 (#1010 리뷰 P1). |
