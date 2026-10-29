@@ -1,0 +1,5 @@
+rows:
+- sha: dc344b2
+  at: 2026-10-29 16:53
+  text: runner.broker_port를 PC 기본 state 폴더의 소유 기록과 OS lock으로 잡아, 설정이 모두 달라도 같은 broker port를 쓰는 두 번째 runner를 시작 전에 막는다 (#618 P2).
+  summary: 설정이 서로 달라도 같은 내부 포트를 쓰는 두 번째 실행기를 포트 오류 대신 이해하기 쉬운 안내와 함께 시작 전에 막습니다.
