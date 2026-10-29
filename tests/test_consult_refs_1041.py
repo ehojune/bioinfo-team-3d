@@ -38,9 +38,9 @@ async def consult(runner, source, refs):
         "kind": "consult", "source_workdir": str(source), "consult_refs": refs}))
 
 
-@pytest.mark.parametrize("bad", ["outputs/not-yet-written.tsv", "folder", "표 (아직 없는 파일, 설명 문구)",
+@pytest.mark.parametrize("bad", ["outputs/not-yet-written.tsv", "표 (아직 없는 파일, 설명 문구)",
                                  "missing-dir/missing.txt"])
-async def test_a_missing_or_non_file_ref_is_left_out_with_its_reason(tmp_path, monkeypatch, bad):
+async def test_a_missing_ref_is_left_out_with_its_reason(tmp_path, monkeypatch, bad):
     runner, source, calls = make_runner(tmp_path, monkeypatch)
     try:
         result = await consult(runner, source, ["good.txt", bad])
@@ -62,7 +62,7 @@ async def test_every_ref_left_out_still_runs_the_consultation(tmp_path, monkeypa
         runner.store.close()
 
 
-@pytest.mark.parametrize("unsafe", ["../outside.txt", "/etc/passwd", "C:/x.txt", "a/../../b.txt"])
+@pytest.mark.parametrize("unsafe", ["folder", "../outside.txt", "/etc/passwd", "C:/x.txt", "a/../../b.txt"])
 async def test_an_unsafe_ref_still_refuses_even_beside_a_good_one(tmp_path, monkeypatch, unsafe):
     runner, source, calls = make_runner(tmp_path, monkeypatch)
     try:

@@ -1215,7 +1215,7 @@ class Runner:
         """Validate declared runner-local refs; staging reopens every component through held folders (#86).
 
         A ref that escapes the folder, goes through a link or is a restricted file refuses the consultation. A ref
-        that merely names nothing usable (no such file, a folder, a sentence instead of a path) is left out with its
+        that merely names nothing usable (no such file, a sentence instead of a path) is left out with its
         reason, so one wrong entry does not end the whole request (#1043)."""
         raw_source = task.meta.get("source_workdir")
         refs = task.meta.get("consult_refs") or []
@@ -1252,8 +1252,7 @@ class Runner:
                 if not current.resolve(strict=True).is_relative_to(resolved_source):
                     raise ValueError
                 if not current.is_file():
-                    left_out.append((str(raw_ref), "일반 파일이 아님"))
-                    continue
+                    raise ValueError
                 if task.agent_id == "facilities" and overlaps_zone(current.resolve(strict=True), self._zones()):
                     raise ValueError
                 resolved.append((normalized, tuple(Path(normalized).parts)))
