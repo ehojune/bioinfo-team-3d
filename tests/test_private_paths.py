@@ -12,7 +12,7 @@ import pytest
 
 import labhq.private_paths as private_paths
 from labhq import doctor
-from labhq.adapters.base import ROLE_FOOTER, WORKSPACE_WRITE_RULES, RunContext
+from labhq.adapters.base import ROLE_FOOTER, RunContext, workspace_write_rules
 from labhq.adapters.claude_code import ClaudeCodeAdapter
 from labhq.adapters.codex import CodexAdapter
 from labhq.models import AgentSpec, Engine, Task, TaskResult
@@ -247,7 +247,7 @@ def test_every_staff_instruction_lists_private_paths_as_tilde_labels(tmp_path, e
     assert home not in text and Path.home().as_posix() not in text
     plain = _ctx(tmp_path / "plain", engine, [])
     adapter(Settings()).prepare(plain)
-    assert read(plain.workdir).endswith(ROLE_FOOTER + WORKSPACE_WRITE_RULES)  # nothing configured: no private section
+    assert read(plain.workdir).endswith(ROLE_FOOTER + workspace_write_rules(engine))  # nothing configured: no private section
 
 
 # ---------------- runner ----------------

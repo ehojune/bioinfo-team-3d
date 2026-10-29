@@ -1096,7 +1096,9 @@ class Runner:
             servers.append(McpServerSpec(name="labhq_hpc", command=sys.executable,
                                          args=["-m", "labhq.tools.hpc_mcp"], env=env,
                                          timeout_s=timeout_s))
-        if "job" in agent.builtin_mcp:  # local jobs the runner owns (#675); no scheduler needed
+        # Local jobs the runner owns (#675); no scheduler needed. Claude staff only: the runner refuses the call for any
+        # other engine, so mounting it there would offer a tool that always fails (#1003).
+        if "job" in agent.builtin_mcp and agent.engine == Engine.claude_code:
             servers.append(McpServerSpec(name="labhq_job", command=sys.executable,
                                          args=["-m", "labhq.tools.local_job_mcp"], env=env, timeout_s=timeout_s))
         if "annot" in agent.builtin_mcp:
@@ -2659,7 +2661,8 @@ class Runner:
         if ctx is not None and ctx.agent.engine != Engine.claude_code:
             # A Codex run is held inside the engine's OS sandbox; a job the runner starts would run outside it.
             return {"error": "local jobs are for Claude staff: a job started by the runner runs outside the "
-                             f"sandbox the {ctx.agent.engine.value} engine keeps its commands in"}
+                             f"sandbox the {ctx.agent.engine.value} engine keeps its commands in. For a long computation "
+                             "use the labhq_hpc tools if you have them, split it into parts that each finish, or ask the PI"}
         command = identity.get("command")
         if not isinstance(command, str) or not command.strip() or len(command) > 20000:
             return {"error": "command must be a shell command of at most 20000 characters"}
