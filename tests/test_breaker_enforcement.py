@@ -3,6 +3,7 @@ import asyncio
 import functools
 import itertools
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -463,7 +464,7 @@ def test_the_cso_judges_each_restricted_call_once_and_a_limited_number_pass(tmp_
     judge = hub.orchestrator.decide_restricted_call
 
     def call(n, **over):
-        return {"task_id": "t1", "episode": "run1:1", "fingerprint": f"fp{n}", **over}
+        return {"task_id": "t1", "episode": "run1:1", "fingerprint": f"fp{n}", "at": time.time(), **over}
 
     assert judge(call(1))[0] is True
     assert judge(call(1))[0] is False, "the same call again is refused, whatever the first answer was"
@@ -473,6 +474,9 @@ def test_the_cso_judges_each_restricted_call_once_and_a_limited_number_pass(tmp_
     assert approved is False and "5번" in why, "the sixth call is over the limit"
     assert judge(call(7, episode="run1:2"))[0] is False, "an answer is only for the restriction the gateway knows"
     assert judge({"task_id": "t1", "episode": "run1:1"})[0] is False, "no fingerprint, no answer"
+    approved, why = judge(call(8, at=time.time() - 3600))
+    assert approved is False and "판정하지 않습니다" in why, "a replayed old request is not judged"
+    assert judge(call(8))[0] is False, "...and it did not spend the budget or the fingerprint (limit already reached here)"
     hub._note_breaker_event("t1", {"stage": "constrain", "episode": "run1:2"})  # a new restriction starts fresh
     assert judge(call(1, episode="run1:2"))[0] is True
 
@@ -482,7 +486,7 @@ def test_the_cso_refuses_a_restricted_call_of_a_task_that_has_ended(tmp_path):
     entry = hub.store.get("task", "t1")
     hub.store.put("task", "t1", {**entry, "completed": True, "result": {"ok": True}})
     approved, why = hub.orchestrator.decide_restricted_call(
-        {"task_id": "t1", "episode": "run1:1", "fingerprint": "fp"})
+        {"task_id": "t1", "episode": "run1:1", "fingerprint": "fp", "at": time.time()})
     assert approved is False and "끝났" in why
 
 
@@ -490,7 +494,7 @@ async def test_the_gateway_answers_a_restricted_request_and_logs_the_decision_no
     hub, sent = _restricted_hub(tmp_path)
     event = {"type": "restricted.requested", "task_id": "t1", "agent_id": "worker", "request_id": "r",
              "data": {"id": "rcall1", "tool_name": "Bash", "input": "SECRET-COMMAND", "fingerprint": "fp",
-                      "episode": "run1:1"}}
+                      "episode": "run1:1", "at": time.time()}}
     published = []
 
     async def publish(ev, **kw):
@@ -505,3 +509,12 @@ async def test_the_gateway_answers_a_restricted_request_and_logs_the_decision_no
     assert "CSO가 허용" in log["data"]["text"] and "Bash" in log["data"]["text"]
     assert "SECRET-COMMAND" not in json.dumps(published), "the call's input is not echoed to the feed"
     assert not any(e["type"] == "restricted.requested" for e in published)
+
+
+def test_a_stale_request_does_not_spend_the_budget(tmp_path):
+    hub, _ = _restricted_hub(tmp_path)
+    judge = hub.orchestrator.decide_restricted_call
+    stale = {"task_id": "t1", "episode": "run1:1", "fingerprint": "fp", "at": time.time() - 3600}
+    assert judge(stale)[0] is False
+    assert judge({**stale, "at": time.time()})[0] is True, "the same call, fresh, is still judged on its merits"
+    assert judge({"task_id": "t1", "episode": "run1:1", "fingerprint": "fp2"})[0] is False, "no timestamp, no answer"

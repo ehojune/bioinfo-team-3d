@@ -2669,7 +2669,7 @@ class Runner:
                               request_id=self.task_req.get(tid) or call.get("request_id"),
                               data={"id": call["id"], "tool_name": name, "input": short(tool_input, 600),
                                     "fingerprint": tool_input_fingerprint(name, tool_input),
-                                    "episode": ladder.episode_id}))
+                                    "episode": ladder.episode_id, "at": time.time()}))
 
     async def _on_tool_event(self, body: dict) -> None:
         tid = body.get("task_id")

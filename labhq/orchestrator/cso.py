@@ -2993,6 +2993,7 @@ def _session_cost_fields(hub: Any, req: dict) -> dict:
 
 
 RESTRICTED_APPROVAL_LIMIT = 5  # calls the CSO lets through while one restriction lasts (#1008)
+RESTRICTED_STALE_S = 90.0  # a request older than this was already refused at the hook (30 s wait): never judged
 
 
 class Orchestrator:
@@ -3411,6 +3412,11 @@ class Orchestrator:
         known = (getattr(self.hub, "task_breaker", {}).get(tid) or {}).get("episode") if tid else None
         if not (tid and episode and fingerprint and episode == known):
             return False, "제한 회차를 확인하지 못해 거절합니다"
+        at = call.get("at")
+        if not isinstance(at, (int, float)) or time.time() - at > RESTRICTED_STALE_S:
+            # A request the runner's outbox replayed after a disconnect: its hook has long been refused, and judging it
+            # now would spend this restriction's budget on a call that never ran. It is answered, not counted.
+            return False, "답을 기다리던 호출이 아니라서 판정하지 않습니다"
         task = self.hub.store.get("task", tid) or {}
         if (task.get("completed") and not task.get("abandoned")) or                 (self.hub.requests.get(task.get("request_id") or "") or {}).get("cancelling"):
             return False, "이 작업은 이미 끝났거나 취소 중입니다"
