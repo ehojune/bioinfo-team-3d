@@ -1237,6 +1237,8 @@ class Runner:
                 if (not normalized or normalized.startswith(("/", "../")) or "/../" in normalized
                         or normalized.endswith("/..") or re.match(r"^[A-Za-z]:", normalized)):
                     raise ValueError
+                if any(re.match(r"^[A-Za-z]:", part) for part in Path(normalized).parts):
+                    raise ValueError  # a drive-qualified part anywhere, also behind a missing folder
                 current = source
                 missing = False
                 for part in Path(normalized).parts:

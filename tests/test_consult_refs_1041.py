@@ -62,7 +62,7 @@ async def test_every_ref_left_out_still_runs_the_consultation(tmp_path, monkeypa
         runner.store.close()
 
 
-@pytest.mark.parametrize("unsafe", ["folder", "../outside.txt", "/etc/passwd", "C:/x.txt", "a/../../b.txt"])
+@pytest.mark.parametrize("unsafe", ["folder", "missing/D:/secret.txt", "../outside.txt", "/etc/passwd", "C:/x.txt", "a/../../b.txt"])
 async def test_an_unsafe_ref_still_refuses_even_beside_a_good_one(tmp_path, monkeypatch, unsafe):
     runner, source, calls = make_runner(tmp_path, monkeypatch)
     try:
