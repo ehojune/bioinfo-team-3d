@@ -1,0 +1,5 @@
+rows:
+- sha: e8cfb61
+  at: 2026-10-30 05:24
+  text: 'labhq_wiki MCP: search/read/status와 outputs/wiki_queries.jsonl 기록(계약 v1), lit_scout·biologist·sci_reviewer에 부착 (#827 2단계)'
+  summary: 직원이 내 wiki 노트를 검색·읽을 수 있고(opt-in 필요), 호출마다 해시만 담은 기록이 남습니다.
