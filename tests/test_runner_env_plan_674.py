@@ -352,3 +352,29 @@ async def test_hub_dispatch_refuses_before_sending_when_the_runner_runtime_chang
     hub.runner_capabilities["wsl"] = {"runtime_env": "windows"}  # same ID, now a Windows host
     result = await hub.dispatch(task)
     assert not result.ok and result.cost_usd == 0.0 and "expects runtime wsl" in result.error
+
+
+@pytest.mark.asyncio
+async def test_a_runner_that_changes_runtime_while_steers_attach_is_not_sent_the_stale_binding(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    task, _ = _bound_task(runner="wsl", runtime="wsl")
+    hub.agent_runner["b"] = "wsl"
+    hub.runner_capabilities["wsl"] = {"runtime_env": "wsl"}  # the first check passes
+    sent = []
+
+    async def attach(candidate):
+        hub.runner_capabilities["wsl"] = {"runtime_env": "windows"}  # the same ID re-registers while awaiting
+        return candidate
+
+    async def send(rid, frame):
+        sent.append(frame)
+
+    hub._attach_steers = attach
+    hub.send_runner = send
+    import asyncio
+
+    result = await asyncio.wait_for(hub.dispatch(task), 5)  # without the recheck the task is sent and awaits a reply
+    assert not result.ok and result.cost_usd == 0.0 and "expects runtime wsl" in result.error
+    assert sent == [] and task.id not in hub.futures and task.id not in hub.task_runner

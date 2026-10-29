@@ -3867,6 +3867,14 @@ class Hub:
                 await self._release_unpublished_attachment(key, task.id)
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0,
                                   cost_known=True, error="step ended before dispatch")
+        # The awaits above (steer attachment) can let the runner re-register with another runtime: ask again just
+        # before the task is recorded and sent, so the binding judged is the one that would be delivered (#674).
+        refused = self._session_pin_refusal(task, rid, self.runner_capabilities.get(rid, {}).get("runtime_env"))
+        if refused:
+            if self.controllable(task.meta.get("kind"), task.meta.get("step_id"), task.request_id):
+                await self._release_unpublished_attachment(
+                    self.step_key(task.request_id, task.meta.get("step_id"), task.meta.get("kind"), task.id), task.id)
+            return refused
         fut = asyncio.get_running_loop().create_future()
         self.futures[task.id] = fut
         self.task_runner[task.id] = rid
