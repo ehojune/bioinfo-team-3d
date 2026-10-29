@@ -6959,6 +6959,11 @@ class Orchestrator:
                     return
                 if not req.get("research_contract") and not req.get("results"):
                     await prepare_recruits()
+                    saved_steps = req["plan"]["steps"]
+                    if (any(ENV_LOCK_OUTPUT in s.get("outputs", []) for s in saved_steps)
+                            and not any("environment_binding" in s or "environment_bindings" in s
+                                        for s in saved_steps)):
+                        req["plan"]["steps"] = self._prepare_runner_environments(saved_steps)
                 if research_lane:
                     # A frozen contract resumes by its CP1 snapshot, never by a fresh applicability decision: the
                     # snapshot holds the applied packs, and a pack answered not_applicable (pre-topic, or a sentence-
