@@ -536,7 +536,7 @@ async def test_a_deeply_nested_manifest_fails_the_step_instead_of_aborting_the_r
                                                               "python_path": ".venv/bin/python" if PRODUCER_WINDOWS
                                                               else ".venv/Scripts/python.exe"}, "runtime mismatch"),
     ({"venv_path": "../x"}, "invalid binding contract"), ({"step_id": "bad/step"}, "invalid binding contract"),
-    ({"step_id": "other"}, "step mismatch")])
+    ({"step_id": "other"}, "step mismatch"), ({"__drop_step__": True}, "step mismatch")])
 def test_producer_binding_is_checked_before_the_step_runs(change, reason):
     from types import SimpleNamespace
     from labhq.models import Task
@@ -544,9 +544,12 @@ def test_producer_binding_is_checked_before_the_step_runs(change, reason):
 
     runner = Runner.__new__(Runner)
     runner.s = SimpleNamespace(runner=SimpleNamespace(id="lab pc 1", environment="native"))
+    drop = change.pop("__drop_step__", False)
     binding = {**PRODUCER_BINDING, **change}
-    task = Task(id="producer", agent_id="worker", prompt="run",
-                meta={"kind": "step", "step_id": "env", "session_runner": "lab pc 1", "environment_binding": binding})
+    meta = {"kind": "step", "step_id": "env", "session_runner": "lab pc 1", "environment_binding": binding}
+    if drop:
+        del meta["step_id"]
+    task = Task(id="producer", agent_id="worker", prompt="run", meta=meta)
     got = runner._environment_refusal_reason(task)
     assert (got is None) if reason is None else (got is not None and reason in got)
 

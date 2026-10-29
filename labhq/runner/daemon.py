@@ -1590,8 +1590,7 @@ class Runner:
             return prefix + "runner mismatch"
         if binding["runtime"] != runtime:
             return prefix + "runtime mismatch"
-        step_id = task.meta.get("step_id")
-        if step_id is not None and step_id != binding["step_id"]:
+        if task.meta.get("step_id") != binding["step_id"]:  # a valid producer dispatch always names its step
             return prefix + "step mismatch"
         return None
 
