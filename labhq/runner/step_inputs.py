@@ -42,10 +42,13 @@ def validate_runner_env(root, source, artifact, expected):
     if (type(expected.get('version')) is not int or expected['version'] != 1 or
             expected.get('venv_path') != '.venv' or expected.get('python_path') != python):
         raise ValueError('invalid pinned environment contract')
-    for key in ('logical_step_id', 'step_id', 'runner_id'):
+    for key in ('logical_step_id', 'step_id'):
         value = expected.get(key)
         if not isinstance(value, str) or not INPUT_STEP_ID.fullmatch(value) or value != value.rstrip(' .'):
             raise ValueError('invalid pinned environment identity')
+    runner = expected.get('runner_id')  # compared, never a path: any runner.id the settings accept
+    if not isinstance(runner, str) or not 0 < len(runner) <= 256:
+        raise ValueError('invalid pinned environment identity')
     path = 'outputs/env/runner-manifest.json'
     if path not in artifact.get('outputs', []):
         raise ValueError('collected environment manifest is missing')

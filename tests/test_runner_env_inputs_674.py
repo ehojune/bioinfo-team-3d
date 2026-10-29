@@ -269,3 +269,13 @@ async def test_actual_runtime_mismatch_is_refused_before_execution():
                 upstream_artifacts={'env_win': {'task_id': 'producer', 'workdir': 'local'}})
     result = await runner.run_task(Task(id='t', agent_id='worker', prompt='run', meta=meta))
     assert not result.ok and 'runtime mismatch' in result.error
+
+
+def test_runner_id_may_be_any_configured_value(tmp_path):
+    root, folder, artifact, expected, manifest, save = env_fixture(tmp_path)
+    expected['runner_id'] = manifest['runner_id'] = 'lab pc 1'
+    save(manifest)
+    assert validate_runner_env(root, folder, artifact, expected) == folder / '.venv'
+    expected['runner_id'] = ''
+    with pytest.raises(ValueError):
+        validate_runner_env(root, folder, artifact, expected)

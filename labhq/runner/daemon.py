@@ -1582,12 +1582,13 @@ class Runner:
                 return prefix + "invalid binding"
             python = {"windows": ".venv/Scripts/python.exe", "linux": ".venv/bin/python",
                       "wsl": ".venv/bin/python"}.get(binding.get("runtime") if isinstance(binding.get("runtime"), str) else None)
-            identities = (binding.get("logical_step_id"), binding.get("step_id"), binding.get("runner_id"))
+            identities = (binding.get("logical_step_id"), binding.get("step_id"))
+            runner_id = binding.get("runner_id")
             if (type(binding.get("version")) is not int or binding["version"] != 1 or
                     python is None or binding.get("venv_path") != ".venv" or
                     binding.get("python_path") != python or
                     any(not isinstance(x, str) or not INPUT_STEP_ID.fullmatch(x) or x != x.rstrip(" .")
-                        for x in identities)):
+                        for x in identities) or not isinstance(runner_id, str) or not 0 < len(runner_id) <= 256):
                 return prefix + "invalid binding contract"
             if binding["runner_id"] != self.s.runner.id or task.meta.get("session_runner") != self.s.runner.id:
                 return prefix + "runner mismatch"
