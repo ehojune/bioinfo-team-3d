@@ -1614,7 +1614,7 @@ class Runner:
             sid = binding["step_id"]
             try:
                 validate_runner_env(root, steps[sid], artifacts[sid], binding, request_id=task.request_id)
-            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
                 return prefix + "environment validation failed"
         if not ENVIRONMENT_ALIAS_AVAILABLE:
             # The validated .venv is not exposed to the consumer (no protected alias or read grant exists yet), so

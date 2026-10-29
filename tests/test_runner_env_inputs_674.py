@@ -513,3 +513,16 @@ async def test_a_paused_environment_step_is_not_held_to_its_binding_yet(tmp_path
     result = await runner.run_task(_task(outputs=[PRODUCER_LOCK, PRODUCER_MANIFEST],
                                          environment_binding=PRODUCER_BINDING))
     assert result.ok, result.error
+
+
+@pytest.mark.asyncio
+async def test_a_deeply_nested_manifest_fails_the_step_instead_of_aborting_the_runner(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, PRODUCER_LOCK, b"pandas==2.2")
+        _write(workdir, PRODUCER_MANIFEST, b"[" * 200_000)
+        _write(workdir, PRODUCER_PYTHON, b"python")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=[PRODUCER_LOCK, PRODUCER_MANIFEST],
+                                         environment_binding=PRODUCER_BINDING))
+    assert not result.ok and "pinned binding" in result.error

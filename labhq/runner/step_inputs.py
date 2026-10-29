@@ -108,7 +108,7 @@ def producer_environment_problem(root, workdir, outputs, hashes, binding):
         validate_runner_env(root, workdir, {'outputs': list(outputs), 'output_sha256': dict(hashes)}, binding)
     except ValueError as exc:
         return str(exc)
-    except (OSError, TypeError, KeyError, AttributeError) as exc:
+    except (OSError, TypeError, KeyError, AttributeError, RecursionError) as exc:  # a manifest nested too deeply
         return type(exc).__name__
     return None
 
