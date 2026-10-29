@@ -412,7 +412,8 @@ def close_parent_job(case):
     _trace_call(trace, "parent_wait", case.parent.wait, timeout=10, role="parent", wait_ms=10000)
 
 
-def test_allowed_breakaway_child_survives_parent_job_close(tmp_path, capsys, wmi_warm):
+@pytest.mark.usefixtures("wmi_warm")
+def test_allowed_breakaway_child_survives_parent_job_close(tmp_path, capsys):
     with owned_launch(tmp_path, allow_breakaway=True) as case:
         # Denial/unknown is NOT evidence for survival. An incompatible outer host fails this positive test.
         assert case.result["success"], ("UNVERIFIED positive survival: " + _provider_summary(case.events) + " :: "
@@ -442,7 +443,8 @@ def test_denied_direct_and_mock_denied_provider_record_no_pid_or_readiness(tmp_p
             print("WIN795 DENIED: real direct WinError 5 + mocked provider denial, no PID/readiness; not survival proof")
 
 
-def test_wmi_escapes_owned_outer_nonbreakaway_inner_silent_job(tmp_path, capsys, wmi_warm):
+@pytest.mark.usefixtures("wmi_warm")
+def test_wmi_escapes_owned_outer_nonbreakaway_inner_silent_job(tmp_path, capsys):
     with owned_launch(tmp_path, allow_breakaway=False, nested=True) as case:
         assert case.result["success"], "UNVERIFIED nested WMI survival: " + json.dumps(case.events)
         statuses = [event["status"] for event in case.events]
