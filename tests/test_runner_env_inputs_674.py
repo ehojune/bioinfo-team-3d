@@ -3,7 +3,9 @@ import pytest
 import os
 import hashlib
 import json
+import shutil
 
+from labhq.runner import step_inputs
 from labhq.runner.step_inputs import stage_inputs, validate_runner_env
 from tests.test_step_inputs_665 import _staging, source
 
@@ -277,5 +279,75 @@ def test_runner_id_may_be_any_configured_value(tmp_path):
     save(manifest)
     assert validate_runner_env(root, folder, artifact, expected) == folder / '.venv'
     expected['runner_id'] = ''
+    with pytest.raises(ValueError):
+        validate_runner_env(root, folder, artifact, expected)
+
+
+posix_only = pytest.mark.skipif(os.name == 'nt', reason='interpreter links are a POSIX venv layout')
+
+
+def linux_env(tmp_path, monkeypatch):
+    """A Linux-style venv whose interpreter is a link, plus a stand-in system runtime folder."""
+    root, folder, artifact, expected, manifest, save = env_fixture(tmp_path)
+    expected.update(runtime='linux', python_path='.venv/bin/python')
+    manifest.update(runtime='linux', python_path='.venv/bin/python')
+    save(manifest)
+    shutil.rmtree(folder / '.venv')
+    (folder / '.venv/bin').mkdir(parents=True)
+    system = tmp_path / 'system'
+    system.mkdir()
+    system.chmod(0o755)
+    monkeypatch.setattr(step_inputs, 'SYSTEM_RUNTIME_ROOTS', (str(system),))
+    monkeypatch.setattr(step_inputs, '_TRUSTED_OWNER', os.getuid())
+    real = system / 'python3.10'
+    real.write_bytes(b'python')
+    real.chmod(0o755)
+    return root, folder, artifact, expected, system, real
+
+
+@posix_only
+def test_standard_venv_link_chain_to_a_system_runtime_is_accepted(tmp_path, monkeypatch):
+    root, folder, artifact, expected, system, real = linux_env(tmp_path, monkeypatch)
+    (system / 'python3').symlink_to('python3.10')
+    (folder / '.venv/bin/python3').symlink_to(system / 'python3')
+    (folder / '.venv/bin/python').symlink_to('python3')
+    assert validate_runner_env(root, folder, artifact, expected) == folder / '.venv'
+
+
+@posix_only
+def test_link_to_an_executable_inside_the_venv_is_accepted(tmp_path, monkeypatch):
+    root, folder, artifact, expected, _, _ = linux_env(tmp_path, monkeypatch)
+    inner = folder / '.venv/bin/python3.10'
+    inner.write_bytes(b'python')
+    inner.chmod(0o755)
+    (folder / '.venv/bin/python').symlink_to('python3.10')
+    assert validate_runner_env(root, folder, artifact, expected) == folder / '.venv'
+
+
+@posix_only
+@pytest.mark.parametrize('case', ['outside', 'writable', 'not_executable', 'loop', 'escape', 'writable_folder'])
+def test_other_interpreter_links_stay_refused(tmp_path, monkeypatch, case):
+    root, folder, artifact, expected, system, real = linux_env(tmp_path, monkeypatch)
+    link = folder / '.venv/bin/python'
+    if case == 'outside':
+        other = tmp_path / 'elsewhere'
+        other.write_bytes(b'python')
+        other.chmod(0o755)
+        link.symlink_to(other)
+    elif case == 'writable':
+        real.chmod(0o775)
+        link.symlink_to(real)
+    elif case == 'not_executable':
+        real.chmod(0o644)
+        link.symlink_to(real)
+    elif case == 'loop':
+        link.symlink_to('python')
+    elif case == 'escape':
+        link.symlink_to('../../../../system/python3.10')
+        (tmp_path / 'system').joinpath('python3.10').chmod(0o755)
+        monkeypatch.setattr(step_inputs, 'SYSTEM_RUNTIME_ROOTS', (str(tmp_path / 'nowhere'),))
+    else:
+        system.chmod(0o777)
+        link.symlink_to(real)
     with pytest.raises(ValueError):
         validate_runner_env(root, folder, artifact, expected)

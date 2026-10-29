@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import uuid
 from pathlib import Path
 
@@ -70,10 +71,60 @@ def validate_runner_env(root, source, artifact, expected):
             any(manifest.get(key) != value for key, value in contract.items())):
         raise ValueError('environment manifest differs from pinned plan')
     with _folder(root, (*parts, *python.split('/')[:-1])) as held:
-        with os.fdopen(held.open_read_file(python.split('/')[-1]), 'rb') as opened:
-            if os.fstat(opened.fileno()).st_nlink != 1:
-                raise ValueError('environment interpreter is hard-linked')
+        name = python.split('/')[-1]
+        try:
+            opened = os.fdopen(held.open_read_file(name), 'rb')
+        except OSError:
+            if runtime == 'windows' or os.name == 'nt':
+                raise
+            # A standard `python -m venv` interpreter is a link; only a verified target is accepted.
+            _link_target(source / '.venv', held.readlink(name))
+        else:
+            with opened:
+                if os.fstat(opened.fileno()).st_nlink != 1:
+                    raise ValueError('environment interpreter is hard-linked')
     return source / '.venv'
+
+
+# System runtimes an interpreter link may point to; the venv itself is always allowed.
+SYSTEM_RUNTIME_ROOTS = ('/usr/bin', '/usr/local/bin', '/usr/lib', '/bin')
+_TRUSTED_OWNER = 0
+
+
+def _link_target(venv, target):
+    """Follow a venv interpreter link by hand and accept only a plain executable inside the venv, or a
+    root-owned, not group/world-writable executable under a system runtime root."""
+    venv = os.path.realpath(venv)
+    here = os.path.join(venv, 'bin')
+    for _ in range(8):
+        current = os.path.normpath(os.path.join(here, target))
+        if current.startswith(venv + os.sep):
+            info = os.lstat(current)
+            if stat.S_ISLNK(info.st_mode):
+                here, target = os.path.dirname(current), os.readlink(current)
+                continue
+            if not stat.S_ISREG(info.st_mode) or not info.st_mode & 0o111 or info.st_nlink != 1:
+                raise ValueError('environment interpreter target is not a plain executable')
+            return current
+        real = os.path.realpath(current)
+        root = next((r for r in map(os.path.realpath, SYSTEM_RUNTIME_ROOTS)
+                     if real.startswith(r + os.sep)), None)
+        if root is None:
+            raise ValueError('environment interpreter target is outside the allowed runtime')
+        info = os.lstat(real)
+        if (not stat.S_ISREG(info.st_mode) or not info.st_mode & 0o111 or info.st_uid != _TRUSTED_OWNER
+                or info.st_mode & 0o022):
+            raise ValueError('environment interpreter target is not a trusted executable')
+        folder = os.path.dirname(real)
+        while True:
+            info = os.lstat(folder)
+            if info.st_uid != _TRUSTED_OWNER or info.st_mode & 0o022:
+                raise ValueError('environment interpreter runtime folder is not trusted')
+            if folder == root:
+                break
+            folder = os.path.dirname(folder)
+        return real
+    raise ValueError('environment interpreter link chain is too long')
 
 
 def _parts(name):
