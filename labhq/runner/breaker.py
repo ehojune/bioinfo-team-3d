@@ -149,9 +149,10 @@ class Breaker:
 
     def stage_record(self, stage: str, enforcement: str, *, hard_stop: bool = False,
                      episode: str | None = None) -> dict[str, Any]:
-        """The ``agent.breaker`` body for a stage change. ``enforcement`` says what really happened: ``applied``,
-        ``unsupported`` (the engine has no hook, so nothing was restricted), ``off`` (stop with hardStop off),
-        ``halt`` or ``released``."""
+        """The ``agent.breaker`` body for a stage change. ``enforcement`` says what really happened: ``notice`` (a warn:
+        the PI was told, nothing was restricted), ``applied`` (constrain on a hook engine), ``unsupported`` (the engine
+        has no hook, so nothing was restricted), ``off`` (stop with hardStop off), ``halt``, ``released`` (a warn that
+        cleared on its own, or the PI's release) or ``failed``."""
         repeat = self._repeats >= self.repeat_limit
         return {"signal": "repeat" if repeat else "tool_errors", "count": self._repeats if repeat else self._errors,
                 "tool": self._last_tool, "mode": "enforce", "stage": stage, "enforcement": enforcement,

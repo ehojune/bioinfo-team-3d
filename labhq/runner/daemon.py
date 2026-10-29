@@ -798,7 +798,9 @@ class Runner:
                              hooked: bool) -> None:
         """Enforce one stage of the runaway breaker and say what really happened (#59). Never fails the run."""
         hard_stop = self.s.runner.breaker_hard_stop
-        how = "applied"
+        # What really happened, per stage: a warn only tells the PI and a quiet warn that cleared is a release; only
+        # constrain and stop enforce anything, and they overwrite this below (#1030).
+        how = {"warn": "notice", "normal": "released"}.get(stage, "applied")
         halted = None
         try:
             if stage == "constrain":
