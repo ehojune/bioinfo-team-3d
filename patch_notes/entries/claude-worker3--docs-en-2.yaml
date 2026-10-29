@@ -1,0 +1,5 @@
+rows:
+- sha: 14ebe15
+  at: 2026-10-29 13:56
+  text: '영문 문서 3종 추가(docs/research_protocol.en.md, pi-qa.en.md, vocabulary.en.md), README.en과 manual.en의 해당 링크를 영문판으로, AGENTS.md에 영문판 동시 갱신 안내'
+  summary: 연구 수행 규약·PI Q&A·어휘 표의 영문판을 추가하고 영문 README와 영문 매뉴얼이 이를 가리킵니다.
