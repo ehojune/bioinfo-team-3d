@@ -43,6 +43,7 @@ def test_conflicting_sources_are_rejected(source, setting):
     (("sandbox", "enableWeakerNetworkIsolation"), True),
     (("sandbox", "filesystem", "disabled"), True),
     (("sandbox", "network", "allowAllUnixSockets"), True),
+    (("sandbox", "network", "strictAllowlist"), False),
     (("sandbox", "network", "allowLocalBinding"), True),
     (("sandbox", "enabled"), 1),
 ])

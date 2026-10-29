@@ -27,7 +27,7 @@ _POLICY: dict[str, Any] = {
         "enableWeakerNestedSandbox": False,
         "enableWeakerNetworkIsolation": False,
         "filesystem": {"disabled": False},
-        "network": {"allowedDomains": [], "allowUnixSockets": [],
+        "network": {"allowedDomains": [], "strictAllowlist": True, "allowUnixSockets": [],
                     "allowAllUnixSockets": False, "allowLocalBinding": False},
     },
     "permissions": {"blockReadsOutsideWorkingDirectories": True},
