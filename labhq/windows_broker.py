@@ -22,6 +22,13 @@ if __name__ == "__main__":
 from labhq.windows_launch import BREAKAWAY, DETACHED, LaunchError, job_membership, outcome
 
 TIMEOUT = 20
+# The request expires TIMEOUT s after it is written (the bootstrap checks it), and the PowerShell provider that starts the
+# bootstrap runs inside that window. The provider therefore needs a budget of its own that leaves the bootstrap
+# BOOTSTRAP_MARGIN s to start. It was a fixed 10 s: a cold GitHub runner spent 4 s before the request header was read and
+# then did not finish create within the rest (#1029, provider_timeout at 10 234 ms). 15 s is +50% over that observation,
+# not a measured bound; the CI positive test prints the real phase times so the next change has data.
+BOOTSTRAP_MARGIN = 5
+PROVIDER_TIMEOUT = TIMEOUT - BOOTSTRAP_MARGIN
 # Independent request budget, not the 8192-byte stdout bound or a Windows OS limit.
 # Necessary raw-character preflight also bounds temporary JSON escaping allocations.
 MAX_REQUEST_BYTES = 1024 * 1024
@@ -324,7 +331,7 @@ def _create(command, cwd, environment, *, diagnostics=None):
         try:
             result = subprocess.run([str(shell), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
                                     input=_request_frame(data), stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, timeout=10, creationflags=0x08000000, check=False)
+                                    stderr=subprocess.DEVNULL, timeout=PROVIDER_TIMEOUT, creationflags=0x08000000, check=False)
         except subprocess.TimeoutExpired as exc:
             _provider_output(exc.output, diagnostics, complete=False)
             raise  # Create may have succeeded. Never retry or use a partial returned PID.
