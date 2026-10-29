@@ -429,6 +429,7 @@ async def test_the_runner_forwards_a_restricted_call_and_waits_for_the_gateways_
         data = event["data"]
         assert data["tool_name"] == "Bash" and data["episode"] == ladder.episode_id
         assert data["fingerprint"] == tool_input_fingerprint("Bash", {"command": "ls"})
+        assert "input" not in data and "ls" not in json.dumps(data), "the stored, replayed event carries no input"
         await runner._on_message({"type": "restricted.resolved", "id": data["id"], "approved": True, "note": "ok"})
         assert await pending == {"approved": True, "note": "ok"}
         # a task the breaker has released is answered at once, without bothering the CSO
@@ -518,3 +519,16 @@ def test_a_stale_request_does_not_spend_the_budget(tmp_path):
     assert judge(stale)[0] is False
     assert judge({**stale, "at": time.time()})[0] is True, "the same call, fresh, is still judged on its merits"
     assert judge({"task_id": "t1", "episode": "run1:1", "fingerprint": "fp2"})[0] is False, "no timestamp, no answer"
+
+
+def test_the_ledger_survives_a_gateway_restart_and_the_event_carries_no_input(tmp_path):
+    hub, _ = _restricted_hub(tmp_path)
+    call = {"task_id": "t1", "episode": "run1:1", "fingerprint": "fpA", "at": time.time()}
+    assert hub.orchestrator.decide_restricted_call(call)[0] is True
+    hub2, _ = _gateway(tmp_path)  # the gateway restarted: same state folder, fresh process memory
+    hub2._note_breaker_event("t1", {"stage": "stop", "episode": "run1:1"})
+    assert hub2.orchestrator.decide_restricted_call({**call, "at": time.time()})[0] is False,         "a call already judged is not judged again"
+    for n in range(4):
+        assert hub2.orchestrator.decide_restricted_call({**call, "fingerprint": f"n{n}", "at": time.time()})[0] is True
+    assert hub2.orchestrator.decide_restricted_call({**call, "fingerprint": "late", "at": time.time()})[0] is False,         "the budget is counted across the restart: 1 + 4 used, the sixth is refused"
+    hub2.store.delete("restricted_ledger", "t1")

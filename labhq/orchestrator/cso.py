@@ -3000,7 +3000,8 @@ class Orchestrator:
     def __init__(self, hub: "Hub"):
         self.hub = hub
         self.cfg = hub.s.orchestrator
-        # task id -> {episode, seen fingerprints, approved count} of the restriction the CSO is judging calls for
+        # task id -> {episode, seen fingerprints, approved count} of the restriction the CSO is judging calls for; the
+        # store keeps it ("restricted_ledger") so a gateway restart does not hand the restriction a fresh budget
         self.restricted_calls: dict[str, dict[str, Any]] = {}
         self.cost: dict[str, float] = {}
         # Task IDs whose cost is already in self.cost; durable totals can run ahead of run_step.
@@ -3421,15 +3422,26 @@ class Orchestrator:
         if (task.get("completed") and not task.get("abandoned")) or                 (self.hub.requests.get(task.get("request_id") or "") or {}).get("cancelling"):
             return False, "이 작업은 이미 끝났거나 취소 중입니다"
         entry = self.restricted_calls.get(tid)
-        if entry is None or entry["episode"] != episode:
-            entry = self.restricted_calls[tid] = {"episode": episode, "seen": set(), "approved": 0}
+        if entry is None:
+            saved = self.hub.store.get("restricted_ledger", tid) or {}
+            entry = {"episode": saved.get("episode"), "seen": set(saved.get("seen") or []),
+                     "approved": int(saved.get("approved") or 0)}
+        if entry["episode"] != episode:
+            entry = {"episode": episode, "seen": set(), "approved": 0}
+        self.restricted_calls[tid] = entry
+
+        def judged(approved: bool, why: str) -> tuple[bool, str]:
+            self.hub.store.put("restricted_ledger", tid, {"episode": episode, "seen": sorted(entry["seen"]),
+                                                          "approved": entry["approved"]})
+            return approved, why
+
         if fingerprint in entry["seen"]:
             return False, "같은 호출을 이미 판정했습니다. 같은 일을 되풀이하지 말고 지금까지 한 것으로 마무리하거나 다른 방법을 쓰세요"
         entry["seen"].add(fingerprint)
         if entry["approved"] >= RESTRICTED_APPROVAL_LIMIT:
-            return False, f"이번 제한에서 허용하는 호출 {RESTRICTED_APPROVAL_LIMIT}번을 이미 썼습니다. 지금까지 한 것으로 마무리하세요"
+            return judged(False, f"이번 제한에서 허용하는 호출 {RESTRICTED_APPROVAL_LIMIT}번을 이미 썼습니다. 지금까지 한 것으로 마무리하세요")
         entry["approved"] += 1
-        return True, "이 호출 한 번만 허용합니다. 제한은 PI가 풀 때까지 유지됩니다"
+        return judged(True, "이 호출 한 번만 허용합니다. 제한은 PI가 풀 때까지 유지됩니다")
 
     async def answer_ask(self, ask: AskRequest, runner_id: str) -> None:
         """Route one bounded question. Hard stops are classified before any model runs."""

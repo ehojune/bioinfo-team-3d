@@ -3619,6 +3619,7 @@ class Hub:
             if tid:
                 self.task_breaker.pop(tid, None)
                 self.orchestrator.restricted_calls.pop(tid, None)
+                self.store.delete("restricted_ledger", tid)
                 self.store.delete("breaker_release", tid)  # the task ended: nothing is left to release
                 if result.error_kind == "halted":
                     await self._control_state(tid, {"paused": False, "halt": True, "halted": True}, replace=True)

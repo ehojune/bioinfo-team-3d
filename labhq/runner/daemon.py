@@ -2667,7 +2667,7 @@ class Runner:
         tool_input = call.get("tool_input") if isinstance(call.get("tool_input"), dict) else {}
         await self.emit(Event(type="restricted.requested", task_id=tid, agent_id=call.get("agent_id"),
                               request_id=self.task_req.get(tid) or call.get("request_id"),
-                              data={"id": call["id"], "tool_name": name, "input": short(tool_input, 600),
+                              data={"id": call["id"], "tool_name": name,  # no input: this event is stored and replayed
                                     "fingerprint": tool_input_fingerprint(name, tool_input),
                                     "episode": ladder.episode_id, "at": time.time()}))
 
