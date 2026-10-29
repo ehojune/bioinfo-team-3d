@@ -391,3 +391,13 @@ def test_trailing_comment_lines_do_not_hide_the_trailer_block(history):
     out = run_commit_msg(history, message)
     assert f"Co-Authored-By: Codex {CODEX_BOT}\n" in out and OLD_CODEX not in out
     assert out.endswith("# Lines starting with '#' are ignored\n")
+
+
+@pytest.mark.parametrize("comment_char,comments", [(";", "; Please enter the commit message\n; Lines starting with ';' are ignored\n"),
+                                                    ("auto", "@ Please enter the commit message\n")])
+def test_the_configured_comment_character_does_not_hide_the_trailer_block(history, comment_char, comments):
+    _repo, _home, git = history
+    git("config", "core.commentChar", comment_char)
+    out = run_commit_msg(history, f"Subject\n\nbody\n\nCo-Authored-By: Codex {OLD_CODEX}\n\n{comments}")
+    assert f"Co-Authored-By: Codex {CODEX_BOT}\n" in out and OLD_CODEX not in out
+    assert out.endswith(comments)
