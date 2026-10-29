@@ -1,0 +1,10 @@
+pr: 1020
+rows:
+- sha: '2ed48eb'
+  at: 2026-10-29 16:25
+  text: venv 밖 링크 체인을 합쳐서 보지 않고 hop마다 링크·폴더 소유와 쓰기 권한을 확인해 중간의 변조 가능한 링크를 거부한다
+  summary: 시스템 python으로 가는 중간 경로가 아무나 바꿀 수 있는 링크이면 거부합니다.
+- sha: '5d05847'
+  at: 2026-10-29 16:05
+  text: 'runner 환경 입력 검증이 Linux·WSL venv의 interpreter 링크를 따라가 venv 안의 일반 실행 파일이나 root 소유의 시스템 runtime 실행 파일일 때만 받아들인다. 통합 fixture 추가, manual 영·한 반영'
+  summary: 보통 방식으로 만든 Linux·WSL venv의 환경 입력이 검증을 통과하고 그 밖의 링크는 계속 거부됩니다.
