@@ -1,6 +1,8 @@
 """Runaway breaker stages and enforcement (#59 ②): beat-paced escalation, engine support, hardStop, PI release."""
 import functools
 import itertools
+import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -293,3 +295,50 @@ async def test_a_release_saved_with_a_numeric_episode_is_sent_so_it_matches_noth
     [message] = [m for m in sent if m["action"] == "release_constraint"]
     assert message["command_id"] == "old" and message["episode"] == "legacy"
     assert Escalation(BreakerPolicy()).episode_id != message["episode"]
+
+
+def test_a_compaction_restarts_the_count_so_redoing_old_work_is_not_a_loop():
+    breaker = Breaker()
+    same = ("agent.tool", {"name": "shell", "input_fingerprint": tool_input_fingerprint("shell", "x")})
+    assert [breaker.observe(*same) for _ in range(7)] == [None] * 7
+    breaker.reset_window()
+    assert [breaker.observe(*same) for _ in range(7)] == [None] * 7, "seven more after compaction is still under the limit"
+    assert breaker.observe(*same) is not None, "an eighth in the new window is a real repeat"
+
+
+async def test_claude_code_reports_its_compact_boundary_frame():
+    # Claude Code 2.1.310's stream-json: {"type":"system","subtype":"compact_boundary","compact_metadata":{...}}.
+    from labhq.adapters import get_adapter
+    from labhq.adapters.base import RunState
+
+    events = []
+
+    async def emit(kind, data):
+        events.append((kind, data))
+
+    frame = {"type": "system", "subtype": "compact_boundary", "uuid": "u", "session_id": "s",
+             "compact_metadata": {"trigger": "auto", "pre_tokens": 170000, "post_tokens": 12000}}
+    await get_adapter("claude_code", Settings()).handle_line(json.dumps(frame), RunState(), SimpleNamespace(emit=emit))
+    assert events == [("agent.compaction", {"trigger": "auto", "pre_tokens": 170000, "post_tokens": 12000})]
+
+
+async def test_a_compaction_during_a_run_keeps_repeats_across_it_from_tripping_the_breaker(tmp_path, monkeypatch):
+    runner, sent, _ = _runner(tmp_path, monkeypatch, Engine.mock, calls=0)
+
+    class Redoing:
+        async def run(self, ctx):
+            same = {"name": "shell", "input": "x", "input_fingerprint": tool_input_fingerprint("shell", "x")}
+            for _ in range(7):
+                await ctx.emit("agent.tool", same)
+            await ctx.emit("agent.compaction", {"trigger": "auto", "pre_tokens": 1, "post_tokens": 1})
+            for _ in range(7):
+                await ctx.emit("agent.tool", same)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="done")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Redoing())
+    try:
+        await runner.run_task(Task(agent_id="engineer", prompt="redo", meta={"kind": "step"}))
+        assert [e for e in sent if e["type"] == "agent.breaker"] == []
+        assert any(e["type"] == "agent.compaction" for e in sent)
+    finally:
+        runner.store.close()

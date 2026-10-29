@@ -14,12 +14,22 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:10 | [`b84b131`](https://github.com/ehojune/bioinfo-team-3d/pull/1021/commits/b84b131) | **같은 작업 폴더의 다른 단계 성공 기록이 환경 단계를 대신 증명하지 못합니다.**<br>환경 단계 성공 기록 검증이 선택된 run의 step_id가 binding의 step과 같은지도 대조한다 |
+| 16:50 | [`c042fc0`](https://github.com/ehojune/bioinfo-team-3d/pull/1021/commits/c042fc0) | **검증된 환경도 소비 단계에 전달할 수 있게 되기 전까지는 계속 막습니다.**<br>검증이 모두 통과해도 보호된 interpreter 별칭이 없으면 소비 단계를 계속 거부하고(ENVIRONMENT_ALIAS_AVAILABLE=False) 사유로 구분한다 |
+| 16:33 | [`fe1c35c`](https://github.com/ehojune/bioinfo-team-3d/pull/1022/commits/fe1c35c) | **압축 신호를 실제로 받아 본 것처럼 보이던 매뉴얼 문구를 사실대로 고쳤습니다.**<br>manual의 compaction 신호 설명을 "실행 파일의 프레임 정의에서 확인, 실제 세션은 미관측"으로 바로잡는다 (#1022 리뷰 P2). |
+| 16:30 | [`495a3b0`](https://github.com/ehojune/bioinfo-team-3d/pull/1021/commits/495a3b0) | **환경 단계가 실제로 성공했는지 먼저 확인하고, 보호된 별칭이 생기기 전까지는 소비 단계를 계속 막되 이유를 구분해 알려 줍니다.**<br>runner가 환경 binding이 붙은 소비 단계를 시작하기 전에 자기 run 기록의 성공 여부, 수집된 runner-manifest.json의 hash·내용과 binding 일치, interpreter 존재를 검증하고 통과해도 보호된 별칭이 없어 계속 거부하며 사유로 구분한다. manual 영·한 반영 |
 | 16:25 | [`2ed48eb`](https://github.com/ehojune/bioinfo-team-3d/pull/1020/commits/2ed48eb) | **시스템 python으로 가는 중간 경로가 아무나 바꿀 수 있는 링크이면 거부합니다.**<br>venv 밖 링크 체인을 합쳐서 보지 않고 hop마다 링크·폴더 소유와 쓰기 권한을 확인해 중간의 변조 가능한 링크를 거부한다 |
+| 16:21 | [`552e23c`](https://github.com/ehojune/bioinfo-team-3d/pull/1018/commits/552e23c) | **경계 시험용 loopback listener와 positive control을 준비합니다.**<br>test: prepare loopback witness for sandbox probes |
+| 16:20 | [`86188b8`](https://github.com/ehojune/bioinfo-team-3d/pull/1022/commits/86188b8) | **Claude Code가 대화를 압축한 직후 같은 일을 다시 하는 것을 폭주로 보고 멈추지 않게 했습니다.**<br>Claude Code의 compact_boundary 프레임을 agent.compaction으로 받아 반복·오류 집계를 다시 세고 경고 단계를 푼다. 다른 엔진은 신호가 없어 해당 없음 (#1008). |
 | 16:05 | [`5d05847`](https://github.com/ehojune/bioinfo-team-3d/pull/1020/commits/5d05847) | **보통 방식으로 만든 Linux·WSL venv의 환경 입력이 검증을 통과하고 그 밖의 링크는 계속 거부됩니다.**<br>runner 환경 입력 검증이 Linux·WSL venv의 interpreter 링크를 따라가 venv 안의 일반 실행 파일이나 root 소유의 시스템 runtime 실행 파일일 때만 받아들인다. 통합 fixture 추가, manual 영·한 반영 |
+| 15:25 | [`3795509`](https://github.com/ehojune/bioinfo-team-3d/pull/1018/commits/3795509) | **관측된 경계 위반은 제어 시험이 없거나 시간 초과여도 실패로 기록합니다.**<br>test: fail observed sandbox violations despite missing controls |
 | 15:12 | [`a704d73`](https://github.com/ehojune/bioinfo-team-3d/pull/1013/commits/a704d73) | **공백이 든 runner ID에서도 환경 입력이 검사를 통과합니다.**<br>runner 환경 입력 검사도 runner ID를 설정이 허용하는 값 그대로 받는다. |
 | 15:10 | [`f405b2f`](https://github.com/ehojune/bioinfo-team-3d/pull/1019/commits/f405b2f) | **이전 버전이 저장해 둔 해제 요청이 새 제한을 잘못 풀지 않게 했습니다.**<br>숫자 episode로 저장된 옛 해제 명령을 episode 없이 다시 보내지 않고 legacy 값으로 보내 stale로 처리한다 (#1019 리뷰 P1). |
+| 15:00 | [`2eb9b56`](https://github.com/ehojune/bioinfo-team-3d/pull/1018/commits/2eb9b56) | **Windows 시험 목록과 기록 형식을 바로잡습니다.**<br>fix: register boundary tests in Windows inventory |
 | 14:55 | [`2d14347`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/2d14347) | **계획만 요청할 때는 실행 담당 runner가 꺼져 있어도 계획이 나옵니다.**<br>plan_only 요청은 실행하지 않으므로 소비 runner 연결을 요구하는 환경 binding을 건너뛴다. |
+| 14:53 | [`0851aad`](https://github.com/ehojune/bioinfo-team-3d/pull/1018/commits/0851aad) | **실제 launcher 재현의 선행 조건을 명확히 합니다.**<br>docs: clarify launcher reproduction prerequisite |
 | 14:53 | [`5c732ab`](https://github.com/ehojune/bioinfo-team-3d/pull/1019/commits/5c732ab) | **서버를 다시 켠 뒤 예전 해제 요청이 새로 걸린 제한을 풀어 버리지 않게 했습니다.**<br>해제 episode ID에 task 실행별 값을 넣어, runner 재시작·task 재전송 뒤 이전 실행의 해제 명령이 새 제한에 적용되지 않게 한다 (#1008). |
+| 14:51 | [`08de79a`](https://github.com/ehojune/bioinfo-team-3d/pull/1018/commits/08de79a) | **Claude sandbox 경계 시험에서 실행 거부와 미검증을 구분합니다.**<br>test: classify Claude sandbox boundary evidence (#666) |
 | 14:40 | [`ed7bc66`](https://github.com/ehojune/bioinfo-team-3d/pull/1016/commits/ed7bc66) | **영문 매뉴얼의 폭주 차단기 설명을 한국어 매뉴얼과 같은 내용으로 고쳤습니다.**<br>영문 매뉴얼의 폭주 차단기 절을 한국어와 맞춘다 (#1016 리뷰 P2). |
 | 14:39 | [`3f9e9a7`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/3f9e9a7) | **영어 문서에도 runner별 환경 계획을 같은 내용으로 적었습니다.**<br>영어 매뉴얼의 환경 절·로드맵 행과 영어 README에 runner별 환경 계획 설명을 한국어판과 맞춘다 (#674, 봇 P1). |
 | 14:31 | [`09816c0`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/09816c0) | **공백이 든 runner ID도 환경 계획에 쓸 수 있습니다.**<br>환경 binding의 runner ID를 설정이 허용하는 값 그대로 받고 연구 계획 schema hash 고정값을 갱신한다. |

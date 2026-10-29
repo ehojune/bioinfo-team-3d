@@ -1,0 +1,22 @@
+pr: 1018
+rows:
+  - sha: "552e23c"
+    at: "2026-10-29 16:21"
+    summary: "경계 시험용 loopback listener와 positive control을 준비합니다."
+    text: "test: prepare loopback witness for sandbox probes"
+  - sha: "3795509"
+    at: "2026-10-29 15:25"
+    summary: "관측된 경계 위반은 제어 시험이 없거나 시간 초과여도 실패로 기록합니다."
+    text: "test: fail observed sandbox violations despite missing controls"
+  - sha: 2eb9b56
+    at: "2026-10-29 15:00"
+    summary: "Windows 시험 목록과 기록 형식을 바로잡습니다."
+    text: "fix: register boundary tests in Windows inventory"
+  - sha: 0851aad
+    at: "2026-10-29 14:53"
+    summary: "실제 launcher 재현의 선행 조건을 명확히 합니다."
+    text: "docs: clarify launcher reproduction prerequisite"
+  - sha: 08de79a
+    at: "2026-10-29 14:51"
+    summary: "Claude sandbox 경계 시험에서 실행 거부와 미검증을 구분합니다."
+    text: "test: classify Claude sandbox boundary evidence (#666)"

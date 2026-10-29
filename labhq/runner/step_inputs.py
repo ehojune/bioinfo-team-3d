@@ -22,7 +22,7 @@ INVENTORY = '.labhq-inputs.json'
 MAX_FILES = 200
 
 
-def validate_runner_env(root, source, artifact, expected):
+def validate_runner_env(root, source, artifact, expected, request_id=None):
     """Validate a collected runner manifest and its local venv; do not expose an alias.
 
     ``expected`` must come from the pinned plan, never from the manifest itself. This is
@@ -50,6 +50,19 @@ def validate_runner_env(root, source, artifact, expected):
     runner = expected.get('runner_id')  # compared, never a path: any runner.id the settings accept
     if not isinstance(runner, str) or not 0 < len(runner) <= 256:
         raise ValueError('invalid pinned environment identity')
+    if request_id is not None:
+        # The runner's own run record, not task metadata, must show a successful env step of this request.
+        with _folder(root, parts) as held:
+            record = _json(held, 'manifest.json')
+        task = record.get('task') or {}
+        source_task = artifact.get('task_id')
+        run = (record.get('runs') or {}).get(source_task) if isinstance(source_task, str) else None
+        run = run or {}
+        if (not request_id or task.get('request_id') != request_id or
+                (task.get('meta') or {}).get('step_id') != expected.get('step_id') or run.get('ok') is not True or
+                run.get('request_id', task.get('request_id')) != request_id or
+                run.get('step_id', (task.get('meta') or {}).get('step_id')) != expected.get('step_id')):
+            raise ValueError('environment step is not a successful step of this request')
     path = 'outputs/env/runner-manifest.json'
     if path not in artifact.get('outputs', []):
         raise ValueError('collected environment manifest is missing')

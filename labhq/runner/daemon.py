@@ -275,6 +275,9 @@ def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
 _EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_emit_unit", default=None)
 
 
+# Flip only when a protected alias or read grant hands the validated runner-local interpreter to consumers.
+ENVIRONMENT_ALIAS_AVAILABLE = False
+
 class Runner:
     def __init__(self, settings: Settings):
         settings.runner.validate_wsl()
@@ -1600,13 +1603,27 @@ class Runner:
                     not isinstance(artifact, dict) or not isinstance(artifact.get("task_id"), str) or
                     not artifact["task_id"] or artifact.get("workdir") != steps[sid]):
                 return prefix + "ancestor mapping mismatch"
-        # Neither task metadata nor accepted_task's finished marker establishes success.
-        # Do not call validate_runner_env on untrusted paths or create an alias until a
-        # runner-verifiable success receipt and protected lifetime are implemented.
-        return prefix + "successful ancestor receipt and protected alias capability are unverified"
+        # Metadata alone never establishes success: the runner's own run record, the hashed manifest and the
+        # interpreter in the producer's workdir must all check out. No alias to the interpreter is created, so
+        # the result only tells why a consumer is (still) refused (#674).
+        root = getattr(self, "ws_root", None)
+        if root is None or not task.request_id:
+            return prefix + "workspace or request identity unavailable"
+        from .step_inputs import validate_runner_env
+        for binding in bindings:
+            sid = binding["step_id"]
+            try:
+                validate_runner_env(root, steps[sid], artifacts[sid], binding, request_id=task.request_id)
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                return prefix + "environment validation failed"
+        if not ENVIRONMENT_ALIAS_AVAILABLE:
+            # The validated .venv is not exposed to the consumer (no protected alias or read grant exists yet), so
+            # starting it would run without the packages the plan asked for: stay closed (#674).
+            return prefix + "environment verified but protected interpreter alias is not implemented"
+        return None
 
     async def _refuse_unprotected_environment(self, task: Task) -> TaskResult | None:
-        error = self._environment_refusal_reason(task)
+        error = await asyncio.to_thread(self._environment_refusal_reason, task)
         if error is None:
             return None
         result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=error,
@@ -1801,6 +1818,12 @@ class Runner:
             await self.emit(Event(type=typ, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
             if typ == "task.result":
                 self.breakers.pop(task.id, None)
+            if typ == "agent.compaction":
+                breaker.reset_window()
+                if escalation.compacted():
+                    await self._announce_breaker_release(task.id)
+                await self.emit(Event(type="agent.log", task_id=task.id, agent_id=agent.id, request_id=task.request_id,
+                                      data={"level": "info", "text": "컨텍스트가 압축돼 폭주 감지를 처음부터 다시 셉니다"}))
             trip = breaker.observe(typ, data)
             # Once restricted, a failing call may be the restriction's own denial, so only a repeat keeps climbing (#1008).
             signalled = breaker.repeating if escalation.policy.stage in ("constrain", "stop") else breaker.active
