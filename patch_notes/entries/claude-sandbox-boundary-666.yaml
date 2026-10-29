@@ -1,6 +1,6 @@
 pr: 1018
 rows:
-  - sha: "8d924109"
+  - sha: "552e23c5"
     at: "2026-10-29 16:21"
     summary: "경계 시험용 loopback listener와 positive control을 준비합니다."
     text: "test: prepare loopback witness for sandbox probes"
