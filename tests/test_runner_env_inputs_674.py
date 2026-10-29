@@ -125,7 +125,7 @@ async def test_other_runner_environment_ancestor_cannot_reach_staging():
         'upstream_artifacts': {'env_wsl': {'task_id': 'producer', 'workdir': 'local'}, 'env_windows': {'workdir': 'other'}}})
     # An uninitialized runner would fail if either workspace creation or staging were reached.
     result = await runner.run_task(task)
-    assert not result.ok and 'unverified' in result.error
+    assert not result.ok and 'runner environment inputs unavailable' in result.error
 
 
 @pytest.mark.parametrize('case', ['missing_artifact', 'workdir_mismatch', 'runner_mismatch',
@@ -158,7 +158,7 @@ async def test_bound_task_fails_closed_before_untrusted_inputs_are_used(case):
     result = await runner.run_task(Task(id='t', agent_id='worker', prompt='run', meta=meta))
     expected = {'missing_artifact': 'ancestor mapping mismatch', 'workdir_mismatch': 'ancestor mapping mismatch',
                 'runner_mismatch': 'runner mismatch', 'runtime_mismatch': 'invalid binding contract',
-                'forged_capability': 'receipt and protected alias capability are unverified'}
+                'forged_capability': 'workspace or request identity unavailable'}
     assert not result.ok and expected[case] in result.error
 
 
@@ -226,7 +226,7 @@ async def test_unverified_environment_is_refused_before_execution(entry, runtime
         'upstream_steps': {'env': 'local'},
         'upstream_artifacts': {'env': {'task_id': 'producer', 'workdir': 'local'}}})
     result = await getattr(runner, entry)(task)
-    assert not result.ok and 'receipt and protected alias capability are unverified' in result.error
+    assert not result.ok and 'workspace or request identity unavailable' in result.error
     assert result.cost_known and result.cost_usd == 0
     assert [event.type for event in events] == ['agent.status', 'task.result']
 
@@ -356,3 +356,77 @@ def test_other_interpreter_links_stay_refused(tmp_path, monkeypatch, case):
         link.symlink_to(real)
     with pytest.raises(ValueError):
         validate_runner_env(root, folder, artifact, expected)
+
+
+def daemon_runner(root, runner_id='lab pc 1', runtime='windows'):
+    from types import SimpleNamespace
+    from labhq.runner.daemon import Runner
+    runner = Runner.__new__(Runner)
+    runner.s = SimpleNamespace(runner=SimpleNamespace(id=runner_id, environment='wsl' if runtime == 'wsl' else 'native'))
+    runner.ws_root = root
+    return runner
+
+
+def bound_task(folder, artifact, expected, runner_id='lab pc 1', request_id='req'):
+    from labhq.models import Task
+    return Task(id='consumer', agent_id='worker', request_id=request_id, prompt='run', meta={
+        'kind': 'step', 'session_runner': runner_id, 'environment_bindings': [expected],
+        'upstream_steps': {expected['step_id']: str(folder)},
+        'upstream_artifacts': {expected['step_id']: {**artifact, 'task_id': 'env-task', 'workdir': str(folder)}}})
+
+
+def write_receipt(folder, request_id='req', ok=True):
+    (folder / 'manifest.json').write_text(json.dumps({
+        'task': {'id': 'env-task', 'request_id': request_id, 'meta': {'step_id': 'env_win'}},
+        'runs': {'env-task': {'ok': ok}}}), encoding='utf-8')
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='windows runtime binding')
+async def test_daemon_accepts_a_genuine_runner_local_environment(tmp_path, monkeypatch):
+    root, folder, artifact, expected, manifest, save = env_fixture(tmp_path)
+    expected['runner_id'] = manifest['runner_id'] = 'lab pc 1'
+    save(manifest)
+    write_receipt(folder)
+    runner = daemon_runner(root)
+    assert runner._environment_refusal_reason(bound_task(folder, artifact, expected)) is None
+    assert await runner._refuse_unprotected_environment(bound_task(folder, artifact, expected)) is None
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='windows runtime binding')
+@pytest.mark.parametrize('failure', ['no_receipt', 'failed_run', 'other_request', 'tampered', 'no_interpreter'])
+async def test_daemon_refuses_an_environment_that_does_not_check_out(tmp_path, failure):
+    root, folder, artifact, expected, manifest, save = env_fixture(tmp_path)
+    expected['runner_id'] = manifest['runner_id'] = 'lab pc 1'
+    save(manifest)
+    write_receipt(folder, request_id='other' if failure == 'other_request' else 'req', ok=failure != 'failed_run')
+    if failure == 'no_receipt':
+        (folder / 'manifest.json').unlink()
+    elif failure == 'tampered':
+        artifact['output_sha256']['outputs/env/runner-manifest.json'] = '0' * 64
+    elif failure == 'no_interpreter':
+        (folder / '.venv/Scripts/python.exe').unlink()
+    runner = daemon_runner(root)
+
+    async def emit_all(_events):
+        pass
+    runner.emit_all = emit_all
+    result = await runner._refuse_unprotected_environment(bound_task(folder, artifact, expected))
+    assert result is not None and not result.ok and 'environment validation failed' in result.error
+
+
+@posix_only
+async def test_daemon_accepts_a_standard_venv_link_and_refuses_an_untrusted_one(tmp_path, monkeypatch):
+    root, folder, artifact, expected, system, real = linux_env(tmp_path, monkeypatch)
+    write_receipt(folder)
+    (system / 'python3').symlink_to('python3.10')
+    link = folder / '.venv/bin/python'
+    link.symlink_to(system / 'python3')
+    runner = daemon_runner(root, 'runner1', 'linux')
+    task = bound_task(folder, artifact, expected, 'runner1')
+    assert runner._environment_refusal_reason(task) is None
+    link.unlink()
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.write_bytes(b'python')
+    elsewhere.chmod(0o755)
+    link.symlink_to(elsewhere)
+    assert 'environment validation failed' in runner._environment_refusal_reason(task)
