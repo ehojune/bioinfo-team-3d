@@ -1,0 +1,5 @@
+rows:
+- sha: '495a3b0'
+  at: 2026-10-29 16:30
+  text: 'runner가 환경 binding이 붙은 소비 단계를 시작하기 전에 자기 run 기록의 성공 여부, 수집된 runner-manifest.json의 hash·내용과 binding 일치, interpreter 존재를 검증하고 통과하면 시작한다(interpreter 경로 별칭은 계속 비활성). manual 영·한 반영'
+  summary: 환경 단계가 이 요청에서 실제로 성공했고 승인 계획과 같은 환경일 때만 소비 단계가 시작됩니다.
