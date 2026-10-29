@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:25 | [`2ed48eb`](https://github.com/ehojune/bioinfo-team-3d/pull/1020/commits/2ed48eb) | **시스템 python으로 가는 중간 경로가 아무나 바꿀 수 있는 링크이면 거부합니다.**<br>venv 밖 링크 체인을 합쳐서 보지 않고 hop마다 링크·폴더 소유와 쓰기 권한을 확인해 중간의 변조 가능한 링크를 거부한다 |
+| 16:05 | [`5d05847`](https://github.com/ehojune/bioinfo-team-3d/pull/1020/commits/5d05847) | **보통 방식으로 만든 Linux·WSL venv의 환경 입력이 검증을 통과하고 그 밖의 링크는 계속 거부됩니다.**<br>runner 환경 입력 검증이 Linux·WSL venv의 interpreter 링크를 따라가 venv 안의 일반 실행 파일이나 root 소유의 시스템 runtime 실행 파일일 때만 받아들인다. 통합 fixture 추가, manual 영·한 반영 |
 | 15:12 | [`a704d73`](https://github.com/ehojune/bioinfo-team-3d/pull/1013/commits/a704d73) | **공백이 든 runner ID에서도 환경 입력이 검사를 통과합니다.**<br>runner 환경 입력 검사도 runner ID를 설정이 허용하는 값 그대로 받는다. |
 | 15:10 | [`f405b2f`](https://github.com/ehojune/bioinfo-team-3d/pull/1019/commits/f405b2f) | **이전 버전이 저장해 둔 해제 요청이 새 제한을 잘못 풀지 않게 했습니다.**<br>숫자 episode로 저장된 옛 해제 명령을 episode 없이 다시 보내지 않고 legacy 값으로 보내 stale로 처리한다 (#1019 리뷰 P1). |
 | 14:55 | [`2d14347`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/2d14347) | **계획만 요청할 때는 실행 담당 runner가 꺼져 있어도 계획이 나옵니다.**<br>plan_only 요청은 실행하지 않으므로 소비 runner 연결을 요구하는 환경 binding을 건너뛴다. |
