@@ -3297,6 +3297,14 @@ class Hub:
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                           error_kind="wsl_not_ready", error=note)
 
+    def _native_hosts(self, agent_id: str) -> bool:
+        """Some runner other than the WSL one has this agent on its roster, now or last time it connected."""
+        wsl_id = self.s.runner.wsl.id
+        rosters = {rid: entry.get("agents", []) for rid, entry in getattr(self, "last_runner_rosters", {}).items()}
+        rosters.update(getattr(self, "runner_agents", {}))
+        return any(rid != wsl_id and any(agent.get("id") == agent_id for agent in staff)
+                   for rid, staff in rosters.items())
+
     async def offer_wsl_setup(self, task: Task) -> TaskResult | None:
         """The agent runs only in the local WSL runner and that runner is not ready (#612): ask the PI once per request
         whether to set it up. None: nothing to say, carry on as before. A result: the task stops here, without waiting
@@ -3307,6 +3315,8 @@ class Hub:
         rid = task.request_id or ""
         if task.agent_id not in WSL_BOUND_AGENTS or rid not in self.requests or not wsl_setup.configured(self.s):
             return None
+        if self._native_hosts(task.agent_id):
+            return None  # a native runner hosts it and is only away: the normal wait for it applies, not a WSL setup
         async with self._approval_lock(f"wslsetup:{rid}"):
             state = self.requests[rid].setdefault("wsl_setup", {})
             if state.get("status") in {"declined", "timed_out", "failed", "blocked"}:
@@ -3344,12 +3354,24 @@ class Hub:
                     "WSL 셋업 승인이 없어 bioinfo-agent를 쓸 수 없습니다. 직접 준비하려면 `labhq setup-wsl`을 실행하세요."))
                 await self.asave_request(rid)
                 return self._wsl_not_ready(task, state["note"])
+            if getattr(self, "_wsl_setup_running", False):
+                state.update(status="failed", note="다른 WSL 셋업이 아직 진행 중입니다. 끝난 뒤 `labhq setup-wsl --check`로 확인하세요.")
+                await self.asave_request(rid)
+                return self._wsl_not_ready(task, state["note"])
+            self._wsl_setup_running = True
+            work = asyncio.ensure_future(asyncio.to_thread(wsl_setup.setup, self.s))
+            # A running thread cannot be stopped: the flag stays up until it ends, whatever the wait below does.
+            work.add_done_callback(lambda done: (setattr(self, "_wsl_setup_running", False),
+                                                 done.cancelled() or done.exception()))  # a late failure is read, not lost
             try:
-                rows = await asyncio.wait_for(asyncio.to_thread(wsl_setup.setup, self.s), wsl_setup.SETUP_LIMIT_S)
+                rows = await asyncio.wait_for(asyncio.shield(work), wsl_setup.SETUP_LIMIT_S)
             except Exception as exc:  # the exception text can carry installer output: only its type is kept
                 log.warning("WSL setup from card failed: %s", type(exc).__name__)
-                state.update(status="failed", note=f"WSL 셋업을 마치지 못했습니다({type(exc).__name__}). "
-                                                   "`labhq setup-wsl`로 직접 확인하세요.")
+                still = isinstance(exc, asyncio.TimeoutError)
+                state.update(status="failed", note=(
+                    "WSL 셋업이 15분 안에 끝나지 않았습니다. 준비가 백그라운드에서 계속될 수 있으니 끝난 뒤 "
+                    "`labhq setup-wsl --check`로 확인하세요." if still else
+                    f"WSL 셋업을 마치지 못했습니다({type(exc).__name__}). `labhq setup-wsl`로 직접 확인하세요."))
                 await self.asave_request(rid)
                 return self._wsl_not_ready(task, state["note"])
             left = wsl_setup.card_detail(rows)

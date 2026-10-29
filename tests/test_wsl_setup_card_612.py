@@ -14,9 +14,10 @@ from labhq.pi_text import approval_copy
 from labhq.settings import Settings
 
 ADMIN = wsl_setup.ADMIN_HINTS["java"]
-MISSING = [{"group": "WSL", "name": "Java 실행", "status": "warn", "detail": "없음", "hint": ADMIN},
-           {"group": "WSL", "name": "Nextflow 실행", "status": "warn", "detail": "없음", "hint": "labhq setup-wsl을 실행하세요."},
-           {"group": "WSL", "name": "WSL 배포판", "status": "ok", "detail": "ok", "hint": ""}]
+MISSING = [{"group": "WSL", "key": "java", "name": "Java 실행", "status": "warn", "detail": "없음", "hint": ADMIN},
+           {"group": "WSL", "key": "nextflow", "name": "Nextflow 실행", "status": "warn", "detail": "없음",
+            "hint": "labhq setup-wsl을 실행하세요."},
+           {"group": "WSL", "key": "distro", "name": "WSL 배포판", "status": "ok", "detail": "ok", "hint": ""}]
 READY = [{**row, "status": "ok", "detail": "ok"} for row in MISSING]
 
 
@@ -158,3 +159,62 @@ async def test_dispatch_asks_before_it_waits_for_a_runner_that_is_not_coming(hub
     await hub.resolve_approval((await card_of(hub))["id"], False, "")
     result = await asyncio.wait_for(pending, 10)
     assert result.error_kind == "wsl_not_ready" and result.ok is False
+
+
+def test_a_hint_built_from_this_installs_paths_is_still_an_administrator_command():
+    # The Claude login hint names this install's folder, so it is never equal to the fixed hint text.
+    login = {"group": "WSL", "key": "claude_login", "name": "WSL Claude 로그인", "status": "warn", "detail": "없음",
+             "hint": "WSL runner 경로 /home/x/.labhq/claude-staff를 CLAUDE_CONFIG_DIR로 지정한 뒤 claude auth login을 실행하세요."}
+    assert wsl_setup.card_detail([login]) == {"missing": ["WSL Claude 로그인"], "admin_commands": [login["hint"]]}
+
+
+@pytest.mark.parametrize("roster", [{"runner_agents": {"lab-native": [{"id": "bioinfo-agent"}]}},
+                                    {"last_runner_rosters": {"lab-native": {"agents": [{"id": "bioinfo-agent"}]}}}])
+async def test_an_agent_a_native_runner_hosts_keeps_the_normal_wait_when_that_runner_is_away(hub, monkeypatch, roster):
+    # A native runner that hosts the agent and drops for a moment is not a WSL problem: no card, no early stop.
+    for name, value in roster.items():
+        setattr(hub, name, value)
+    monkeypatch.setattr(wsl_setup, "check", lambda s: pytest.fail("the WSL must not even be probed"))
+    assert await hub.offer_wsl_setup(task()) is None
+    assert not [e for e in hub.published if e["type"] == "approval.requested"]
+
+
+async def test_a_setup_that_outlives_its_limit_is_not_started_a_second_time(hub, monkeypatch):
+    import threading
+
+    release = threading.Event()
+    started = []
+    monkeypatch.setattr(wsl_setup, "SETUP_LIMIT_S", 0.05)
+    monkeypatch.setattr(wsl_setup, "check", lambda s: MISSING)
+
+    def slow(s):
+        started.append(1)
+        release.wait(10)
+        return READY
+
+    monkeypatch.setattr(wsl_setup, "setup", slow)
+    pending = asyncio.ensure_future(hub.offer_wsl_setup(task()))
+    await hub.resolve_approval((await card_of(hub))["id"], True, "")
+    stopped = await pending
+    assert stopped.error_kind == "wsl_not_ready" and "15분" in stopped.error and "백그라운드" in stopped.error
+    # another request asks while the first thread still runs: no second thread
+    hub.requests["r2"] = {"id": "r2", "text": "분석", "mode": "direct", "status": "running"}
+    hub.save_request("r2")
+    second = asyncio.ensure_future(hub.offer_wsl_setup(task(request="r2")))
+    card = None
+    for _ in range(200):
+        cards = [e["approval"] for e in hub.approvals.values()
+                 if e["approval"]["kind"] == "wsl_setup" and e["approval"]["request_id"] == "r2"]
+        if cards:
+            card = cards[0]
+            break
+        await asyncio.sleep(0.01)
+    await hub.resolve_approval(card["id"], True, "")
+    refused = await second
+    assert "진행 중" in refused.error and started == [1]
+    release.set()
+    for _ in range(200):
+        if not hub._wsl_setup_running:
+            break
+        await asyncio.sleep(0.01)
+    assert not hub._wsl_setup_running
