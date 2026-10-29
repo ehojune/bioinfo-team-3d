@@ -1,5 +1,9 @@
 pr: 1032
 rows:
+- sha: 'ec88526'
+  at: 2026-10-29 21:20
+  text: 환경 단계 dispatch에 session_runner가 없거나 다르면 거부한다
+  summary: runner가 지정되지 않은 환경 작업은 시작되지 않습니다.
 - sha: 'c5c59b3'
   at: 2026-10-29 21:05
   text: 환경 단계 dispatch의 session_runner가 배열·객체 같은 값이어도 해시하지 않고 비교해 runner 불일치 거부로 끝낸다
