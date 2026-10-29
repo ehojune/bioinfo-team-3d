@@ -14,9 +14,9 @@ sandbox denial. Run the classification tests in a checkout with pytest:
 python -m pytest -q -rs tests/test_claude_sandbox_boundary.py
 ```
 
-To reproduce the current launch refusal, use the W1 branch containing its
-launcher and run the same command. The final test reports a skip with the
-refusal reason. The real disposable WSL command cannot be specified until W1
+To reproduce the current launch refusal, combine this test with the W1 branch
+containing its launcher and run the same command. The final test reports a skip
+with the refusal reason. The real disposable WSL command cannot be specified until W1
 publishes an executable contract and the fixture is identified. Do not replace
 it with a mock or execute an arbitrary command outside that contract.
 
