@@ -1349,6 +1349,34 @@ report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니�
 
 - **의미 장치 상태**: 웹은 event가 오래돼도 snapshot에서 요청별 중단·경고를 복원합니다. 계획에 영향을 준 장치 load 오류는 뒤 점검이 성공해도 CP1과 실행 기록에 남습니다. 오류 로그는 고정 code와 예외 class만 남기고 본문·traceback은 버립니다.
 
+### 내 LLM-wiki 연결 (#827)
+
+내가 모아 둔 LLM-wiki 폴더(노트 모음)를 읽기 전용 참고자료로 이어 붙입니다. 기본은 꺼짐입니다. 폴더를 프롬프트에 통째로 넣지 않고 노트 조각을 검색하며, 원본은 수정하지 않습니다. **이 단계는 색인과 검색 명령까지입니다.** 직원이 쓰는 도구, 근거·보고 반영은 아직 없고 실제 사용자 wiki로는 검증하지 않았습니다.
+
+| 명령 | 하는 일 |
+|---|---|
+| `labhq wiki connect <폴더>` | 폴더를 확인하고(색인 대상 수·건너뛴 항목) 설정에 넣을 `wiki:` 줄을 출력합니다. 설정은 직접 넣습니다 |
+| `labhq wiki reindex` | 바뀐 노트만 다시 색인합니다(크기·수정 시각·파일 ID가 바뀐 것만 hash). 사라진 노트는 색인에서 지웁니다 |
+| `labhq wiki status` | 연결 여부, 문서·조각·출처 수, 오래된 노트 수, 마지막 갱신, 연결 문제. 저장된 색인이 다른 폴더의 것이면 사용 가능으로 표시하지 않습니다 |
+| `labhq wiki search "<검색어>"` | 노트 경로·줄·freshness·내용 해시 앞 12자와 snippet을 보여 줍니다 |
+| `labhq wiki disconnect` | 색인만 지웁니다. wiki 폴더는 건드리지 않습니다 |
+
+설정(`wiki:`, 기본 `enabled: false`):
+
+| 키 | 기본 | 뜻 |
+|---|---|---|
+| `root` | — | wiki 폴더. **실제 경로가 `runner.reference_roots` 안**이어야 합니다. 폴더 자신이 링크이거나, 중간 경로의 링크가 실제 경로를 허용 루트 밖으로 옮기거나(허용 루트 안에 머무는 별칭은 받습니다), 허용 루트와 폴더 사이에 mount 지점이 있거나, 통제 구역·비공개 경로·작업 폴더·state 폴더와 겹치면 연결을 거부합니다. 폴더 아래의 링크·mount·숨김 폴더·credential 이름의 파일은 읽지 않습니다 |
+| `external_model_allowed` | `false` | 노트 내용을 직원 모델에 넘기는 기능을 위한 값입니다. 이 단계에서는 쓰이는 곳이 없습니다 |
+| `extensions` | `.md`, `.txt` | v1은 이 두 형식만 읽습니다(이미지·PDF 제외) |
+| `stale_days` | 365 | 마지막 수정이 이보다 오래된 노트는 `stale`로 표시 |
+| `max_files`, `max_file_bytes` | 5,000개 · 2 MiB | 이를 넘는 파일은 색인에서 건너뜁니다 |
+
+Windows에서는 노트를 같은 크기로 제자리에서 다시 쓰고 수정 시각을 되돌리면 변경을 알아채지 못합니다(생성 시각·파일 ID가 같을 때, 입력 hash 캐시와 같은 한계). 그런 도구를 쓰면 `labhq wiki disconnect` 뒤 `reindex`로 처음부터 다시 만드세요.
+
+노트마다 남는 정보: 상대 경로, 제목 경로, 줄 범위, 파일 전체 sha256, 수정 시각, 노트가 가리키는 원문(DOI·PMID·URL 하나, frontmatter `source:`나 본문 링크에서 추출), `freshness`(`ok`·`stale`·`source_missing`·`disputed`; frontmatter `status: disputed|superseded`면 `disputed`). 검색 결과는 항상 `access_level: wiki_summary`, `verified_against_primary: false`로 표시하며, wiki 요약은 원논문을 읽은 것이 아닙니다. 노트 속 지시문은 데이터일 뿐 실행하지 않습니다.
+
+`labhq doctor`의 `wiki` 행은 연결·문서 수·색인 유무·오래된 노트를 보여 주며 색인을 만들거나 갱신하지 않습니다. 색인은 runner 쪽 `runner.state_dir/wiki/`의 일회용 sqlite라 지워도 됩니다.
+
 ## 비교 bench
 
 PI 결정(2026-10-01, #40)에 따른 기본 비교군입니다. 실제 실행은 PI 머신의 구독을 씁니다.

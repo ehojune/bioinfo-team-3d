@@ -1841,6 +1841,9 @@ def main(argv: list[str] | None = None) -> None:
     sw.add_argument("--check", action="store_true", help="설치하지 않고 준비 상태만 확인")
     wr = sub.add_parser("wsl-runner", help="이 설정의 WSL runner 시작·종료")
     wr.add_argument("action", choices=("start", "stop"))
+    wiki = sub.add_parser("wiki", help="link a local LLM-wiki folder as a read-only, provenance-tracked reference (#827)")
+    wiki.add_argument("action", choices=("connect", "status", "reindex", "search", "disconnect"))
+    wiki.add_argument("target", nargs="?", help="connect: the wiki folder; search: the query")
     sub.add_parser("agents")
     storage = sub.add_parser("storage", help="open the storage choice card for a finished request, or redraft, republish or rebuild its edition")
     storage.add_argument("id")
@@ -2071,6 +2074,10 @@ def main(argv: list[str] | None = None) -> None:
                     raise SystemExit(1)
         except WslError as exc:
             p.exit(2, f"WSL: {exc}\n")
+    elif args.cmd == "wiki":
+        from .wiki import cli_main as wiki_cli
+
+        raise SystemExit(wiki_cli(s, args.action, args.target, p))
     elif args.cmd == "doctor":
         from .doctor import collect, render, save
 
