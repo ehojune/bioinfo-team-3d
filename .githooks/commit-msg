@@ -38,11 +38,13 @@ CLAUDE_MAIL='noreply@anthropic.com'
 
 # 본문에 적은 "Co-authored-by:" 예시는 글이지 작성자 표시가 아니다. trailer는 git이 마지막 문단에서 인식하는
 # 것만 본다(`git interpret-trailers --parse`). 바꾸는 것도 그 마지막 문단의 줄뿐이고 본문은 건드리지 않는다 (#808).
-# git이 주석으로 보는 줄의 첫 글자(core.commentChar, 기본 #). auto 면 git이 고를 수 있는 후보 전부를 주석으로 본다.
+# git이 주석으로 보는 줄의 첫 글자(core.commentChar, 기본 #). auto 는 아래처럼 템플릿 첫 줄에서 실제 글자를 읽는다.
 COMMENT_CHARS=$(git config --get core.commentChar 2>/dev/null)
 case "$COMMENT_CHARS" in
   "") COMMENT_CHARS='#' ;;
-  auto) COMMENT_CHARS='#;@!$%^&|:' ;;
+  # auto: git picked one character that no message line starts with, and only a commit template carries comment
+  # lines at all; its first line names the character. No template line means no comment lines to skip.
+  auto) COMMENT_CHARS=$(awk '/^. Please enter the commit message/ { print substr($0, 1, 1); exit }' "$MSG") ;;
 esac
 
 # 주석 줄을 뺀 사본에서 trailer를 읽는다: interpret-trailers 는 auto 가 고른 글자를 알지 못한다.

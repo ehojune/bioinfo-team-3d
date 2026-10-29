@@ -413,3 +413,17 @@ def test_a_scissors_divider_keeps_the_diff_below_it_out_of_the_message(history):
     assert out.endswith(scissors + diff)  # the diff below it, with its trailer-like lines, is byte for byte the same
     added = run_commit_msg(history, f"Subject\n\nbody\n\n{scissors}{diff}", LABHQ_COMMIT_MODEL="gpt-6")
     assert added.endswith(scissors + diff) and any(line.startswith("Co-authored-by: Codex (gpt-6)") for line in added.splitlines()[:6])
+
+
+def test_with_auto_only_the_character_the_template_names_is_a_comment(history):
+    _repo, _home, git = history
+    git("config", "core.commentChar", "auto")
+    # No template line (git commit -m): an ordinary paragraph starting with a candidate character is message text.
+    prose = "@ordinary final paragraph\n"
+    out = run_commit_msg(history, f"Subject\n\nCo-Authored-By: Codex {OLD_CODEX}\n\n{prose}")
+    assert f"Co-Authored-By: Codex {OLD_CODEX}\n" in out and prose in out  # not mistaken for a trailer block
+    assert trailers(out)[-1].startswith("Co-authored-by: Codex")  # the real trailer is added after the text
+    # With a template, its first line names the comment character; other characters stay text.
+    template = "# Please enter the commit message for your changes.\n"
+    out = run_commit_msg(history, f"Subject\n\nCo-Authored-By: Codex {OLD_CODEX}\n\n{template}")
+    assert f"Co-Authored-By: Codex {CODEX_BOT}\n" in out and out.endswith(template)
