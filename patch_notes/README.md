@@ -14,8 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:36 | [`ed17ce4`](https://github.com/ehojune/bioinfo-team-3d/pull/1031/commits/ed17ce4) | **예열은 실제 첫 실행 조건을 가리므로 빼고, 실패 때 멈춘 단계를 적는 요약만 남겼습니다.**<br>시험: provider 예열을 뺌 — production cold-start 경계를 가리므로 단계 요약만 둔다 (#1029) |
 | 20:30 | [`0f0d409`](https://github.com/ehojune/bioinfo-team-3d/pull/1034/commits/0f0d409) | **폴더 이름에 특수문자가 있어도 hook 명령이 실행되게 했고, 기록의 경로 표기를 바로잡았습니다.**<br>hook 명령의 Windows 경로에 든 달러·백틱·따옴표를 bash 큰따옴표 안에서 이스케이프하고, status의 깨진 로그 경로와 시험 주석을 고친다 (#1034 리뷰 P2·P3). |
+| 20:25 | [`1788e18`](https://github.com/ehojune/bioinfo-team-3d/pull/1031/commits/1788e18) | **다른 시험이 직접 호출하는 시험 함수의 인자를 바꾸지 않도록 예열을 usefixtures로 걸었습니다.**<br>시험: 예열 fixture를 인자가 아니라 usefixtures로 걸어 직접 호출을 깨지 않음 (#1029) |
+| 20:15 | [`1b23b23`](https://github.com/ehojune/bioinfo-team-3d/pull/1031/commits/1b23b23) | **예열을 실제 WMI를 쓰는 두 시험에만 걸어 fake로 도는 진단 시험이 깨지지 않게 했습니다.**<br>시험: 예열을 owned_launch가 아니라 실제 WMI 시험 fixture로 옮김 (#1029) |
 | 20:14 | [`6b5346a`](https://github.com/ehojune/bioinfo-team-3d/pull/1034/commits/6b5346a) | **Windows에서 직원 제어(멈춤·방향 전달)와 폭주 차단기의 hook이 실제로 동작하지 않던 문제를 고쳤습니다.**<br>Claude hook 명령을 슬래시 경로를 따옴표로 감싼 형태로 만들어 Windows Git Bash에서 실행되게 한다. 만든 명령을 실제 bash로 돌리는 시험을 넣는다 (#1030). |
+| 20:04 | [`4e7538d`](https://github.com/ehojune/bioinfo-team-3d/pull/1031/commits/4e7538d) | **Windows 검사에서 가끔 실패하던 Job 탈출 시험이 느린 PowerShell 첫 기동 때문에 실패하지 않도록 예열하고, 실패하면 어느 단계에서 멈췄는지 적게 했습니다.**<br>시험: Windows breakaway 시험 전에 WMI provider를 예열하고 실패 시 단계 요약을 남김 (#1029) |
 | 19:34 | [`e788037`](https://github.com/ehojune/bioinfo-team-3d/pull/1028/commits/e788037) | **승인을 기다리는 사이 멈춤을 눌렀을 때 거절 응답이 와도 멈춤이 빠지지 않게 했습니다.**<br>CSO 응답이 거절이어도 대기 중에 받은 halt·pause를 먼저 적용하고 halt를 기록한다 (#1028 리뷰 P1). |
 | 19:24 | [`8aaf6fe`](https://github.com/ehojune/bioinfo-team-3d/pull/1028/commits/8aaf6fe) | **승인을 기다리는 사이 멈춤을 눌러도 호출이 실행되지 않게 했고, 서버를 다시 켠 뒤에도 제한 중 호출을 판정할 수 있게 했습니다.**<br>CSO 응답을 기다린 뒤 control 파일을 다시 읽어 그사이의 halt·pause가 허용보다 먼저 적용되게 하고(P1), 제한 회차를 gateway state에 저장해 재시작 뒤에도 판정하게 한다 (#1028 리뷰). |
 | 19:12 | [`958470b`](https://github.com/ehojune/bioinfo-team-3d/pull/1028/commits/958470b) | **제한 중 도구 호출의 내용이 기록에 남지 않게 했고, 서버를 다시 켜도 허용 횟수가 초기화되지 않게 했습니다.**<br>restricted.requested 이벤트에서 호출 입력을 빼 runner 기록·재전송 대기열에 남기지 않고(P1), 판정한 호출·허용 횟수를 gateway state에 저장해 재시작 뒤에도 잇는다 (#1028 리뷰). |
