@@ -5,6 +5,7 @@ import hashlib
 import json
 import shutil
 
+from labhq.models import TaskResult
 from labhq.runner import step_inputs
 from labhq.runner.step_inputs import stage_inputs, validate_runner_env
 from tests.test_observed_outputs import _runner, _task, _write
@@ -495,3 +496,20 @@ async def test_steps_without_a_binding_are_not_checked(tmp_path, monkeypatch):
 
     result = await _runner(tmp_path, monkeypatch, write).run_task(_task(outputs=["outputs/table.tsv"]))
     assert result.ok
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pause", ["job", "blocking_decision"])
+async def test_a_paused_environment_step_is_not_held_to_its_binding_yet(tmp_path, monkeypatch, pause):
+    holder = {}
+
+    def reply(ctx):
+        if pause == "job":
+            holder["runner"].jobs["job-1"] = {"task_id": ctx.task.id}
+        return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="waiting",
+                          structured={"blocking_decision": "Which index?"} if pause == "blocking_decision" else None)
+
+    runner = holder["runner"] = _runner(tmp_path, monkeypatch, lambda _workdir: None, reply=reply)
+    result = await runner.run_task(_task(outputs=[PRODUCER_LOCK, PRODUCER_MANIFEST],
+                                         environment_binding=PRODUCER_BINDING))
+    assert result.ok, result.error

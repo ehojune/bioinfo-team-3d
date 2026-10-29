@@ -2450,7 +2450,8 @@ class Runner:
                 result.step_warnings = list(dict.fromkeys([*result.step_warnings, warning]))
                 await emit("agent.log", {"level": "warn", "text": warning})
         binding = task.meta.get("environment_binding")
-        if result.ok and isinstance(binding, dict):
+        # Only the final turn: a step paused on a job or a question has not written its environment yet.
+        if _should_check_declared_outputs(result) and isinstance(binding, dict):
             from .step_inputs import producer_environment_problem
             problem = await asyncio.to_thread(producer_environment_problem, self.ws_root, ws.dir,
                                               result.outputs, result.output_sha256, binding)
