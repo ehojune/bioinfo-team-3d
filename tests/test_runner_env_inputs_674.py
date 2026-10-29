@@ -462,7 +462,9 @@ async def run_env_producer(tmp_path, monkeypatch, manifest, *, interpreter=True,
             _write(workdir, PRODUCER_PYTHON, b"python")
 
     runner = _runner(tmp_path, monkeypatch, write)
-    task = _task(outputs=[PRODUCER_LOCK, PRODUCER_MANIFEST], environment_binding=PRODUCER_BINDING if binding is None else binding)
+    runner.s.runner.id = PRODUCER_BINDING['runner_id']
+    task = _task(outputs=[PRODUCER_LOCK, PRODUCER_MANIFEST], step_id="env", session_runner=PRODUCER_BINDING["runner_id"],
+                 environment_binding=PRODUCER_BINDING if binding is None else binding)
     return await runner.run_task(task)
 
 
@@ -510,8 +512,10 @@ async def test_a_paused_environment_step_is_not_held_to_its_binding_yet(tmp_path
                           structured={"blocking_decision": "Which index?"} if pause == "blocking_decision" else None)
 
     runner = holder["runner"] = _runner(tmp_path, monkeypatch, lambda _workdir: None, reply=reply)
+    runner.s.runner.id = PRODUCER_BINDING['runner_id']
     result = await runner.run_task(_task(outputs=[PRODUCER_LOCK, PRODUCER_MANIFEST],
-                                         environment_binding=PRODUCER_BINDING))
+                                         environment_binding=PRODUCER_BINDING, step_id="env",
+                                         session_runner=PRODUCER_BINDING["runner_id"]))
     assert result.ok, result.error
 
 
@@ -523,6 +527,57 @@ async def test_a_deeply_nested_manifest_fails_the_step_instead_of_aborting_the_r
         _write(workdir, PRODUCER_PYTHON, b"python")
 
     runner = _runner(tmp_path, monkeypatch, write)
+    runner.s.runner.id = PRODUCER_BINDING['runner_id']
     result = await runner.run_task(_task(outputs=[PRODUCER_LOCK, PRODUCER_MANIFEST],
-                                         environment_binding=PRODUCER_BINDING))
+                                         environment_binding=PRODUCER_BINDING, step_id="env",
+                                         session_runner=PRODUCER_BINDING["runner_id"]))
     assert not result.ok and "pinned binding" in result.error
+
+
+@pytest.mark.parametrize("change,reason", [
+    ({}, None), ({"runner_id": "other"}, "runner mismatch"), ({"runtime": "wsl" if PRODUCER_WINDOWS else "windows",
+                                                              "python_path": ".venv/bin/python" if PRODUCER_WINDOWS
+                                                              else ".venv/Scripts/python.exe"}, "runtime mismatch"),
+    ({"venv_path": "../x"}, "invalid binding contract"), ({"step_id": "bad/step"}, "invalid binding contract"),
+    ({"step_id": "other"}, "step mismatch"), ({"__drop_step__": True}, "step mismatch"),
+    ({"__session__": ["lab pc 1"]}, "runner mismatch"), ({"__session__": {"a": 1}}, "runner mismatch"),
+    ({"__session__": None}, "runner mismatch")])
+def test_producer_binding_is_checked_before_the_step_runs(change, reason):
+    from types import SimpleNamespace
+    from labhq.models import Task
+    from labhq.runner.daemon import Runner
+
+    runner = Runner.__new__(Runner)
+    runner.s = SimpleNamespace(runner=SimpleNamespace(id="lab pc 1", environment="native"))
+    drop = change.pop("__drop_step__", False)
+    session = change.pop("__session__", "lab pc 1")
+    binding = {**PRODUCER_BINDING, **change}
+    meta = {"kind": "step", "step_id": "env", "session_runner": session, "environment_binding": binding}
+    if drop:
+        del meta["step_id"]
+    task = Task(id="producer", agent_id="worker", prompt="run", meta=meta)
+    got = runner._environment_refusal_reason(task)
+    assert (got is None) if reason is None else (got is not None and reason in got)
+
+
+def test_a_producer_binding_that_is_not_an_object_is_refused():
+    from types import SimpleNamespace
+    from labhq.models import Task
+    from labhq.runner.daemon import Runner
+
+    runner = Runner.__new__(Runner)
+    runner.s = SimpleNamespace(runner=SimpleNamespace(id="lab pc 1", environment="native"))
+    got = runner._environment_refusal_reason(
+        Task(id="p", agent_id="worker", prompt="run", meta={"environment_binding": "env"}))
+    assert got is not None and "invalid binding" in got
+
+
+@pytest.mark.asyncio
+async def test_a_producer_bound_to_another_runner_is_refused_before_the_engine_starts(tmp_path, monkeypatch):
+    started = []
+    runner = _runner(tmp_path, monkeypatch, lambda workdir: started.append(workdir))
+    runner.s.runner.id = "someone else"
+    result = await runner.run_task(_task(outputs=[PRODUCER_LOCK, PRODUCER_MANIFEST], step_id="env",
+                                         environment_binding=PRODUCER_BINDING))
+    assert not result.ok and "runner mismatch" in result.error
+    assert not started

@@ -1570,7 +1570,36 @@ class Runner:
         drop()
         return False
 
+    def _producer_binding_refusal(self, task: Task, binding: Any) -> str | None:
+        """An environment step carries its own single binding: it must be this runner's, before anything runs."""
+        prefix = "runner environment producer refused: "
+        runtime = ("wsl" if self.s.runner.environment == "wsl" else
+                   "windows" if sys.platform == "win32" else "linux")
+        if not isinstance(binding, dict):
+            return prefix + "invalid binding"
+        python = {"windows": ".venv/Scripts/python.exe", "linux": ".venv/bin/python",
+                  "wsl": ".venv/bin/python"}.get(binding.get("runtime") if isinstance(binding.get("runtime"), str) else None)
+        runner_id = binding.get("runner_id")
+        if (type(binding.get("version")) is not int or binding["version"] != 1 or python is None or
+                binding.get("venv_path") != ".venv" or binding.get("python_path") != python or
+                any(not isinstance(binding.get(key), str) or not INPUT_STEP_ID.fullmatch(binding[key])
+                    or binding[key] != binding[key].rstrip(" .") for key in ("logical_step_id", "step_id")) or
+                not isinstance(runner_id, str) or not 0 < len(runner_id) <= 256):
+            return prefix + "invalid binding contract"
+        session = task.meta.get("session_runner")  # compared, never hashed: it may be any JSON value
+        if runner_id != self.s.runner.id or session != self.s.runner.id:  # a valid dispatch always names the runner
+            return prefix + "runner mismatch"
+        if binding["runtime"] != runtime:
+            return prefix + "runtime mismatch"
+        if task.meta.get("step_id") != binding["step_id"]:  # a valid producer dispatch always names its step
+            return prefix + "step mismatch"
+        return None
+
     def _environment_refusal_reason(self, task: Task) -> str | None:
+        if "environment_binding" in task.meta:
+            producer = self._producer_binding_refusal(task, task.meta["environment_binding"])
+            if producer is not None:
+                return producer
         bindings = task.meta.get("environment_bindings", [])
         if isinstance(bindings, list) and not bindings:
             return None
