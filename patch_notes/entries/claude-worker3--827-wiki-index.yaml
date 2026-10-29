@@ -1,0 +1,5 @@
+rows:
+- sha: '0b520c1'
+  at: 2026-10-30 05:30
+  text: 'LLM-wiki 1단계: wiki 설정(기본 꺼짐), 링크·mount를 따르지 않는 walker, 변경된 문서만 갱신하는 runner 쪽 FTS5 인덱스(상대 경로·줄·hash·수정 시각·원문 DOI/PMID/URL·오래됨 표시), labhq wiki connect|status|reindex|search|disconnect, doctor wiki 행, README 한·영'
+  summary: 내 LLM-wiki 폴더를 읽기 전용으로 연결해 색인하고 노트마다 출처를 달아 검색하는 명령이 생겼습니다(직원용 도구는 다음 단계).
