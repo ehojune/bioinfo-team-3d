@@ -352,6 +352,7 @@
     "tests/test_web_shutdown.py",
     "tests/test_web_shutdown_process.py",
     "tests/test_wiki_index.py",
+    "tests/test_wiki_mcp.py",
     "tests/test_windows_broker.py",
     "tests/test_windows_broker_frames.py",
     "tests/test_windows_broker_phases.py",

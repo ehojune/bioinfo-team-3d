@@ -6,7 +6,7 @@ engine: codex
 model: gpt-6-luna
 model_tier: fast
 tools: [WebSearch]  # Codex: live web search
-builtin_mcp: [annot]
+builtin_mcp: [annot, wiki]
 mcp:
   - name: pubmed
     type: http

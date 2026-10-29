@@ -7,7 +7,7 @@ model: opus
 model_tier: reasoning
 permission_mode: default
 tools: [WebSearch, WebFetch, Read]
-builtin_mcp: [approval, annot]
+builtin_mcp: [approval, annot, wiki]
 allow_skills: true
 required_skills: [humanizer]
 mcp:  # same public hosted MCPs Claude Science uses (no login); queries leave the PC, so never put restricted data in them (#274)

@@ -1,0 +1,14 @@
+pr: 1040
+rows:
+- sha: 846005d
+  at: 2026-10-30 05:50
+  text: wiki read가 실제 돌려준 줄 범위만 기록하고, 읽기 전용이라 도구가 떼이는 sci_reviewer에서 wiki 부착을 뺀다
+  summary: 긴 노트를 읽어도 받지 못한 줄을 인용하지 않고, 실제로 못 받는 직원에게 도구를 광고하지 않습니다.
+- sha: 68c7ac8
+  at: 2026-10-30 05:39
+  text: wiki 도구가 root 문제의 경로를 모델에 주지 않고 고정 코드만 돌려주며, status는 기록하지 않는다고 문서·지시문을 맞춘다
+  summary: wiki 도구 오류에 로컬 경로가 실리지 않고, 기록 대상이 search·read로 분명해집니다.
+- sha: e8cfb61
+  at: 2026-10-30 05:24
+  text: 'labhq_wiki MCP: search/read/status와 outputs/wiki_queries.jsonl 기록(계약 v1), lit_scout·biologist·sci_reviewer에 부착 (#827 2단계)'
+  summary: 직원이 내 wiki 노트를 검색·읽을 수 있고(opt-in 필요), 호출마다 해시만 담은 기록이 남습니다.
