@@ -228,7 +228,34 @@ def _halt(path: str | Path, state: dict[str, Any]) -> dict[str, Any]:
     return {"continue": False, "stopReason": HALT_REASON}
 
 
-def pre_tool_use(path: str | Path, *, tool_name: str = "", hold_s: float = PAUSE_HOLD_S, poll_s: float = PAUSE_POLL_S,
+RESTRICTED_HTTP_S = 40.0  # a little over the broker's own wait for the CSO (``runner.approvals.RESTRICTED_WAIT_S``)
+READ_TOOLS = frozenset({"Read", "Glob", "Grep"})
+
+
+def ask_restricted(tool_name: str, tool_input: Any, *, environ: dict[str, str] | None = None) -> dict[str, Any]:
+    """Ask the CSO, through the runner's broker, whether this one call may run while the task is restricted (#1008).
+    Anything but a clear yes is a no: no broker, a bad answer, a timeout. Standard library only."""
+    import urllib.request
+
+    env = os.environ if environ is None else environ
+    url, token = env.get("LABHQ_BROKER_URL"), env.get("LABHQ_BROKER_TOKEN")
+    if not url or not token:
+        return {"approved": False, "note": "CSO에 물어볼 수 없어 제한 중에는 허용하지 않습니다"}
+    try:
+        body = json.dumps({"tool_name": tool_name, "tool_input": tool_input if isinstance(tool_input, dict) else {}})
+        request = urllib.request.Request(url.rstrip("/") + "/restricted", data=body.encode("utf-8"), method="POST",
+                                         headers={"Content-Type": "application/json", "X-Labhq-Token": token})
+        with urllib.request.urlopen(request, timeout=RESTRICTED_HTTP_S) as reply:
+            answer = json.loads(reply.read().decode("utf-8"))
+        if isinstance(answer, dict):
+            return {"approved": answer.get("approved") is True, "note": str(answer.get("note") or "")}
+    except Exception:
+        pass
+    return {"approved": False, "note": "CSO의 답을 받지 못해 제한 중에는 허용하지 않습니다"}
+
+
+def pre_tool_use(path: str | Path, *, tool_name: str = "", tool_input: Any = None,
+                 ask: Callable[[str, Any], dict[str, Any]] = ask_restricted, hold_s: float = PAUSE_HOLD_S, poll_s: float = PAUSE_POLL_S,
                  sleep: Callable[[float], Any] = time.sleep,
                  clock: Callable[[], float] = time.monotonic) -> dict[str, Any] | None:
     """Halt stops Claude before the tool runs; pause holds the call, then denies it if the PI has not resumed."""
@@ -244,9 +271,15 @@ def pre_tool_use(path: str | Path, *, tool_name: str = "", hold_s: float = PAUSE
     if state["paused"]:
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                        "permissionDecisionReason": PAUSE_REASON}}
-    if state["constrained"] and tool_name not in {"Read", "Glob", "Grep"}:
-        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                       "permissionDecisionReason": "Runaway restriction: read-only tools only until released."}}
+    if state["constrained"] and tool_name not in READ_TOOLS:
+        # Restricted to read tools, but the CSO may let one call through. A yes only stops objecting here: the normal
+        # permission gate still judges the call, and the restriction stays until the PI lifts it.
+        answer = ask(tool_name, tool_input)
+        if answer.get("approved") is not True:
+            note = answer.get("note") or "CSO가 허용하지 않았습니다"
+            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                           "permissionDecisionReason":
+                                               f"폭주 제한 중이라 읽기 도구만 쓸 수 있습니다. {note}"}}
     return None
 
 
@@ -287,16 +320,16 @@ def main(argv: list[str] | None = None) -> int:
     """Fail open: a broken control file must not stop the staff run. JSON goes out as ASCII, whatever the console."""
     args = sys.argv[1:] if argv is None else argv
     event = EVENTS.get(args[0] if args else "post", "PostToolUse")
-    tool_name = ""
+    tool_name, tool_input = "", None
     with contextlib.suppress(Exception):
         payload = json.load(sys.stdin.buffer)
         if isinstance(payload, dict) and isinstance(payload.get("tool_name"), str):
-            tool_name = payload["tool_name"]
+            tool_name, tool_input = payload["tool_name"], payload.get("tool_input")
     path = os.environ.get(CONTROL_ENV)
     if not path:
         return 0
     try:
-        out = pre_tool_use(path, tool_name=tool_name) if event == "PreToolUse" else post_tool_use(path, event)
+        out = pre_tool_use(path, tool_name=tool_name, tool_input=tool_input) if event == "PreToolUse" else post_tool_use(path, event)
     except Exception:
         return 0
     if out:

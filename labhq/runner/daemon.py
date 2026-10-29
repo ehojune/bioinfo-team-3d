@@ -63,7 +63,7 @@ from ..staff_skills import install_required_skills
 from ..store import StateStore
 from ..tools.scheduler import (MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, command_env, job_in_family,
                                sanitize_job_name)
-from ..util import INPUT_STEP_ID, output_relpath, short
+from ..util import INPUT_STEP_ID, output_relpath, short, tool_input_fingerprint
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
 from .approvals import Broker
@@ -335,6 +335,7 @@ class Runner:
         self.broker = Broker(settings.runner.broker_port, self._on_approval, self._on_tool_event,
                              self._on_submit, self._on_ask, self._owns_job,
                              on_approval_timeout=self._on_approval_timeout, on_local_job=self._on_local_job,
+                             on_restricted=self._on_restricted,
                              lookup_admission=None if limit is None else LookupAdmission(
                                  settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit))
         self.scheduler = Scheduler(settings.hpc)
@@ -744,6 +745,8 @@ class Runner:
                     await self.emit(Event(type="agent.status", task_id=task_id, agent_id=agent_id,
                                           request_id=self.task_req.get(task_id), data={"state": "working"}))
             await self.asend({"type": "approval.ack", "id": msg["id"]})
+        elif typ == "restricted.resolved":
+            self.broker.resolve_restricted(str(msg.get("id") or ""), msg)
         elif typ == "ask.resolved":
             self.broker.resolve_ask(msg["id"], msg.get("answer") or {})
             await self.asend({"type": "ask.ack", "id": msg["id"]})
@@ -2650,6 +2653,23 @@ class Runner:
         await self.emit_all([
             Event(type="ask.requested", data=req.model_dump(mode="json"), **base),
             *([Event(type="agent.status", data={"state": "waiting", "ask": req.id}, **base)] if req.task_id else [])])
+
+    async def _on_restricted(self, call: dict) -> None:
+        """A restricted task wants to call a tool (#1008): the CSO decides at the gateway. A task the breaker has
+        already released is answered at once; otherwise the call goes up with this restriction's episode, so an answer
+        meant for an earlier one is never taken for this one."""
+        tid = str(call.get("task_id") or "")
+        ladder = self.breakers.get(tid)
+        if ladder is None or ladder.policy.stage not in ("constrain", "stop"):
+            self.broker.resolve_restricted(call["id"], {"approved": True, "note": "제한이 풀려 있습니다"})
+            return
+        name = str(call.get("tool_name") or "")
+        tool_input = call.get("tool_input") if isinstance(call.get("tool_input"), dict) else {}
+        await self.emit(Event(type="restricted.requested", task_id=tid, agent_id=call.get("agent_id"),
+                              request_id=self.task_req.get(tid) or call.get("request_id"),
+                              data={"id": call["id"], "tool_name": name, "input": short(tool_input, 600),
+                                    "fingerprint": tool_input_fingerprint(name, tool_input),
+                                    "episode": ladder.episode_id}))
 
     async def _on_tool_event(self, body: dict) -> None:
         tid = body.get("task_id")

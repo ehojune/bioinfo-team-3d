@@ -3618,6 +3618,7 @@ class Hub:
                 await self._settle_steers(tid, task, result.control)
             if tid:
                 self.task_breaker.pop(tid, None)
+                self.orchestrator.restricted_calls.pop(tid, None)
                 self.store.delete("breaker_release", tid)  # the task ended: nothing is left to release
                 if result.error_kind == "halted":
                     await self._control_state(tid, {"paused": False, "halt": True, "halted": True}, replace=True)
@@ -3718,6 +3719,18 @@ class Hub:
                 return
             msg = {**msg, "type": "approval.resolved", "data": {"id": aid,
                 **{k: decision[k] for k in ("approved", "note", "state")}}}
+        elif typ == "restricted.requested":
+            data = msg.get("data") or {}
+            approved, note = self.orchestrator.decide_restricted_call({**data, "task_id": msg.get("task_id")})
+            with contextlib.suppress(RunnerUnavailable):  # an unreachable runner's call has already timed out: a no
+                await self.send_runner(runner_id, {"type": "restricted.resolved", "id": data.get("id"),
+                                                   "approved": approved, "note": note})
+            # What the staff sheet and the log show is the decision, not the call's input.
+            msg = {"type": "agent.log", "ts": time.time(), "task_id": msg.get("task_id"),
+                   "agent_id": msg.get("agent_id"), "request_id": msg.get("request_id"),
+                   "data": {"level": "info" if approved else "warn",
+                            "text": f"제한 중 {data.get('tool_name') or '도구'} 호출을 CSO가 "
+                                    f"{'허용' if approved else '거절'}했어요: {note}"}}
         elif typ == "ask.requested":
             ask = AskRequest.model_validate(msg["data"])
             existing = self.store.get("ask", ask.id)

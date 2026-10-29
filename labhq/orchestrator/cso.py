@@ -2992,10 +2992,15 @@ def _session_cost_fields(hub: Any, req: dict) -> dict:
     return fields(req) if fields else {}
 
 
+RESTRICTED_APPROVAL_LIMIT = 5  # calls the CSO lets through while one restriction lasts (#1008)
+
+
 class Orchestrator:
     def __init__(self, hub: "Hub"):
         self.hub = hub
         self.cfg = hub.s.orchestrator
+        # task id -> {episode, seen fingerprints, approved count} of the restriction the CSO is judging calls for
+        self.restricted_calls: dict[str, dict[str, Any]] = {}
         self.cost: dict[str, float] = {}
         # Task IDs whose cost is already in self.cost; durable totals can run ahead of run_step.
         self.cost_tasks: dict[str, set[str]] = {}
@@ -3393,6 +3398,32 @@ class Orchestrator:
         text = answer.get(field) or ""
         return {**answer, "requested_to": "facilities", "fallback_reason": "facilities_unavailable",
                 field: text if text.startswith(notice) else notice + "\n\n" + text}
+
+    def decide_restricted_call(self, call: dict) -> tuple[bool, str]:
+        """One tool call a restricted task wants to make (#1008): (approved, reason shown to the staff member).
+
+        Deterministic, no model call. It stops the task from reopening the loop the breaker closed: a call is judged
+        once per restriction (the same call again is refused whatever the first answer was), at most
+        ``RESTRICTED_APPROVAL_LIMIT`` calls pass, and an answer only exists for the restriction the runner named. A yes
+        does not lift the restriction and does not skip the normal permission gate; the PI lifts it.
+        """
+        tid, episode, fingerprint = call.get("task_id"), call.get("episode"), call.get("fingerprint")
+        known = (getattr(self.hub, "task_breaker", {}).get(tid) or {}).get("episode") if tid else None
+        if not (tid and episode and fingerprint and episode == known):
+            return False, "제한 회차를 확인하지 못해 거절합니다"
+        task = self.hub.store.get("task", tid) or {}
+        if (task.get("completed") and not task.get("abandoned")) or                 (self.hub.requests.get(task.get("request_id") or "") or {}).get("cancelling"):
+            return False, "이 작업은 이미 끝났거나 취소 중입니다"
+        entry = self.restricted_calls.get(tid)
+        if entry is None or entry["episode"] != episode:
+            entry = self.restricted_calls[tid] = {"episode": episode, "seen": set(), "approved": 0}
+        if fingerprint in entry["seen"]:
+            return False, "같은 호출을 이미 판정했습니다. 같은 일을 되풀이하지 말고 지금까지 한 것으로 마무리하거나 다른 방법을 쓰세요"
+        entry["seen"].add(fingerprint)
+        if entry["approved"] >= RESTRICTED_APPROVAL_LIMIT:
+            return False, f"이번 제한에서 허용하는 호출 {RESTRICTED_APPROVAL_LIMIT}번을 이미 썼습니다. 지금까지 한 것으로 마무리하세요"
+        entry["approved"] += 1
+        return True, "이 호출 한 번만 허용합니다. 제한은 PI가 풀 때까지 유지됩니다"
 
     async def answer_ask(self, ask: AskRequest, runner_id: str) -> None:
         """Route one bounded question. Hard stops are classified before any model runs."""
