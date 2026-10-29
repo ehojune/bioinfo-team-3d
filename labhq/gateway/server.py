@@ -318,6 +318,9 @@ class SavedResults(dict):
         await self.apop(key)
 
 
+# "the caller did not say what the runner reports": only the runner ID is compared (Hub._session_pin_refusal).
+_RUNTIME_UNCHECKED = object()
+
 class Hub:
     result_review_required = True
 
@@ -3764,15 +3767,30 @@ class Hub:
 
     # ----- tasks -----
     @staticmethod
-    def _session_pin_refusal(task: Task, target: str) -> TaskResult | None:
+    def _session_pin_refusal(task: Task, target: str, runtime: Any = _RUNTIME_UNCHECKED) -> TaskResult | None:
         """A resumed session and its absolute workdir live on the runner that made them (task meta
         ``session_runner``). Every place that picks a send target asks this, the first send and the re-send after a
-        lost runner alike, so no target chosen later can receive them (PR #393 review). Nothing is sent: a real $0."""
+        lost runner alike, so no target chosen later can receive them (PR #393 review). Nothing is sent: a real $0.
+
+        With ``runtime`` (what the target runner reports now, ``runtime_env``), a runner-local environment binding must
+        still match it: the same runner ID reconfigured native <-> WSL, or registered from another OS host, would
+        otherwise receive a binding whose interpreter path belongs to the old runtime (#674). A runner that reports
+        no runtime cannot prove the match and is refused. Without ``runtime`` only the runner ID is compared."""
         pinned = task.meta.get("session_runner")
-        if not pinned or pinned == target:
-            return None
-        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
-                          error=f"session belongs to runner {pinned}; {task.agent_id!r} is now on runner {target}")
+        if pinned and pinned != target:
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
+                              error=f"session belongs to runner {pinned}; {task.agent_id!r} is now on runner {target}")
+        if runtime is not _RUNTIME_UNCHECKED:
+            single = task.meta.get("environment_binding")
+            bindings = [*(task.meta.get("environment_bindings") or []), *([single] if single else [])]
+            stale = next((b for b in bindings if isinstance(b, dict) and b.get("runner_id") == target
+                          and b.get("runtime") != runtime), None)
+            if stale is not None:
+                return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
+                                  error=(f"environment binding {stale.get('step_id')} expects runtime "
+                                         f"{stale.get('runtime')} on runner {target}; the runner now reports "
+                                         f"{runtime or 'no runtime'}"))
+        return None
 
     async def dispatch_with_identity(self, task: Task, bind_identity) -> TaskResult:
         """Bind an internal caller's reservation/cancel handle before awaiting recovered work."""
@@ -3835,7 +3853,7 @@ class Hub:
             # Nothing was sent, so nothing was spent: a real $0, not an unaccounted cost (#270).
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                               error=self._no_runner_hosts(task.agent_id))
-        refused = self._session_pin_refusal(task, rid)
+        refused = self._session_pin_refusal(task, rid, self.runner_capabilities.get(rid, {}).get("runtime_env"))
         if refused:
             return refused
         if task.agent_id in PIPELINE_AUTHORS and self.s.policy.bioinfo_agent.pipeline_pr:
@@ -3849,6 +3867,14 @@ class Hub:
                 await self._release_unpublished_attachment(key, task.id)
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0,
                                   cost_known=True, error="step ended before dispatch")
+        # The awaits above (steer attachment) can let the runner re-register with another runtime: ask again just
+        # before the task is recorded and sent, so the binding judged is the one that would be delivered (#674).
+        refused = self._session_pin_refusal(task, rid, self.runner_capabilities.get(rid, {}).get("runtime_env"))
+        if refused:
+            if self.controllable(task.meta.get("kind"), task.meta.get("step_id"), task.request_id):
+                await self._release_unpublished_attachment(
+                    self.step_key(task.request_id, task.meta.get("step_id"), task.meta.get("kind"), task.id), task.id)
+            return refused
         fut = asyncio.get_running_loop().create_future()
         self.futures[task.id] = fut
         self.task_runner[task.id] = rid
@@ -3894,7 +3920,8 @@ class Hub:
                 if fut.done():
                     break
                 target = self.agent_runner[task.agent_id]
-                refused = self._session_pin_refusal(task, target)
+                refused = self._session_pin_refusal(task, target,
+                                                    self.runner_capabilities.get(target, {}).get("runtime_env"))
                 if (refused or target != rid or
                         self.runner_incarnations.get(target) != original_incarnation):
                     # The first frame may have reached the pinned runner, so this is the uncertain-delivery outcome,
