@@ -1,5 +1,9 @@
 pr: 1025
 rows:
+- sha: '7b41aaf'
+  at: 2026-10-29 18:05
+  text: 환경 단계의 manifest·binding 검증을 선언 산출 검사와 같은 최종 턴 조건에서만 한다
+  summary: job이나 질문을 기다리는 환경 단계가 아직 manifest를 쓰기 전에 실패 처리되지 않습니다.
 - sha: 'a34579b'
   at: 2026-10-29 17:45
   text: manifest·binding 대조 test를 Windows inventory에 등록된 기존 test_runner_env_inputs_674.py로 옮긴다
