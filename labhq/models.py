@@ -533,7 +533,7 @@ class ApprovalRequest(BaseModel):
     task_id: str | None = None
     agent_id: str | None = None
     request_id: str | None = None
-    kind: str  # hpc_submit | tool_permission | budget | recruit | download | facilities_fix
+    kind: str  # hpc_submit | tool_permission | budget | recruit | download | facilities_fix | wsl_setup
     summary: str
     detail: dict[str, Any] = {}
     created_at: float = Field(default_factory=time.time)

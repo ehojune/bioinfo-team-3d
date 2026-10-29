@@ -110,6 +110,22 @@ ADMIN_HINTS = {"distro": "Windows 관리자 터미널: wsl --install -d Ubuntu-2
                          "  Docker 사용 권한: sudo usermod -aG docker $USER (다시 로그인)"}
 
 
+SETUP_LIMIT_S = 900.0  # one setup run started from a PI card (#612); installers can take minutes
+
+
+def pending_rows(rows: list[dict]) -> list[dict]:
+    return [row for row in rows if row.get("status") != "ok"]
+
+
+def card_detail(rows: list[dict]) -> dict:
+    """What a PI card shows about WSL: names of what is missing and the commands only an administrator can run. Names
+    and fixed hints only, never subprocess output (it can carry config content)."""
+    pending = pending_rows(rows)
+    # By the item's key, not by the hint's text: some hints are made from this install's paths (the Claude login).
+    return {"missing": [str(row["name"]) for row in pending],
+            "admin_commands": [str(row["hint"]) for row in pending if row.get("key") in ADMIN_HINTS and row.get("hint")]}
+
+
 def check(s: Settings) -> list[dict]:
     present = s.runner.wsl.distro in distributions()
     facts = {}
@@ -130,7 +146,7 @@ def check(s: Settings) -> list[dict]:
     hints = {**ADMIN_HINTS, "claude_login":
              f"WSL runner 경로 {_root(s).rstrip('/')}/claude-staff를 CLAUDE_CONFIG_DIR로 지정한 뒤 "
              "claude auth login을 실행하세요."}
-    return [{"group": "WSL", "name": name, "status": "ok" if values.get(key) is True else "warn",
+    return [{"group": "WSL", "key": key, "name": name, "status": "ok" if values.get(key) is True else "warn",
              "detail": "ok" if values.get(key) is True else "없음",
              "hint": hints.get(key, "labhq setup-wsl을 실행하세요.")}
             for key, name in LABELS.items()]
