@@ -12,3 +12,7 @@ rows:
     at: "2026-10-29 14:54"
     summary: "sandbox 정책 단위시험을 Windows inventory에 등록합니다."
     text: "Register sandbox policy tests in Windows inventory (#666)"
+  - sha: 887ceed
+    at: "2026-10-29 16:30"
+    summary: "Claude sandbox의 실제 보호가 미검증임을 manual에 명시합니다."
+    text: "Document unverified Claude sandbox protection"
