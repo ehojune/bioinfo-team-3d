@@ -14,7 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:41 | [`90381b2`](https://github.com/ehojune/bioinfo-team-3d/pull/1010/commits/90381b2) | **도구 제한이 걸려도 작업판에 해제 버튼이 안 뜨던 문제를 고쳤습니다.**<br>constrain 단계도 agent.control summary를 보내 작업판이 제한 상태와 해제 버튼을 보이게 한다 (#1010 리뷰 P1). |
 | 13:35 | [`2632ab6`](https://github.com/ehojune/bioinfo-team-3d/pull/1012/commits/2632ab6) | **영어 독자가 읽을 수 있는 영문 매뉴얼을 추가하고 영문 README가 영문 매뉴얼로 연결됩니다.**<br>영문 매뉴얼 docs/manual.en.md 추가(한국어 manual과 같은 절 구조, 코드·명령·설정 키는 원문), README.en의 Further reading·본문 링크를 영문판으로, AGENTS.md에 한국어 manual을 고칠 때 영문판도 같은 PR에서 고친다는 안내 |
+| 13:29 | [`8ac9307`](https://github.com/ehojune/bioinfo-team-3d/pull/1010/commits/8ac9307) | **제한 해제 요청이 아직 전달되지 않았다면 연결 뒤에 전달된다고 알립니다.**<br>제한 해제 버튼이 runner에 닿지 않았을 때 "러너가 연결되면 전달해요"로 안내한다 (#1008). |
+| 13:26 | [`0683b3a`](https://github.com/ehojune/bioinfo-team-3d/pull/1010/commits/0683b3a) | **폭주 차단기가 직접 멈춘 작업을 서버가 알아보게 하고, 제한 뒤 거부된 호출 때문에 멈추지 않게 했으며, 작업판에서 제한을 풀 수 있게 했습니다.**<br>차단기 후속 — runner halt를 gateway halt_requested에 기록, constrain 뒤 오류 연속은 승격 제외, 끊긴 runner에 보낸 해제를 재연결 때 재전송, 작업판 제한 해제 버튼 (#1008). |
 | 10:10 | [`06b647a`](https://github.com/ehojune/bioinfo-team-3d/pull/1009/commits/06b647a) | **브라우저 시험의 닫힌 소켓 처리와 엔진 정보가 없는 직원 기록의 도구 목록을 다듬었습니다.**<br>office browser 시험의 DevTools 호출이 ws.send 예외 때 timer를 지우고 즉시 reject하며, gateway 직원 MCP 목록이 engine 키가 없는 직원 기록을 claude_code로 보아 labhq_job을 표시한다 (#1001·#1004 비차단 지적). |
 | 09:56 | [`611b67c`](https://github.com/ehojune/bioinfo-team-3d/pull/1007/commits/611b67c) | **디스크 여유가 시작 기준보다 적으면 점검 명령이 실패로 알려 줍니다.**<br>doctor가 작업 폴더·gateway 상태 드라이브의 여유가 task 시작 기준(runner.disk_fail_free_gb, 기본 2 GiB) 미만이면 warn이 아니라 fail로 보고한다 (#678). |
 | 09:54 | [`9ea950d`](https://github.com/ehojune/bioinfo-team-3d/pull/994/commits/9ea950d) | **main의 새 테스트 목록과 이 PR의 목록 충돌을 합쳤습니다.**<br>main 병합: Windows inventory 충돌 해소 (#59) |
