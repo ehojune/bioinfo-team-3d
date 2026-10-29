@@ -4,6 +4,15 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# runner broker port 사전 충돌 검사 (#618 P2)
+
+| 항목 | 내용 |
+|---|---|
+| 문제 | 설정 파일·state 폴더·runner id가 모두 달라도 `runner.broker_port`가 같으면 두 번째 runner가 bind에 실패했다(원인 불명 포트 오류) |
+| 방식 | `instance_guard.claim(…, "runner")`가 runner state lock에 이어 broker port별 lock(`labhq-broker-port-<port>.lock`)을 잡고, PC 기본 state 폴더의 `labhq-broker-port-<port>.json`에서 살아 있는 다른 설정의 owner를 확인한다. 다르면 `broker_port` notice로 시작 전에 막고 아무것도 쓰지 않는다. 같은 설정이면 통과, 끝난 owner는 교체 |
+| 시험 | `tests/test_instance_guard.py` +3: 거부(문구·고치는 명령·claim 없음), 다른 포트는 충돌 없음, 죽은 owner 복구와 거부된 claim이 기록을 바꾸지 않음 |
+| 범위 밖 | `doctor`의 읽기 전용 점검에는 넣지 않았다(시작 시 claim만). 실제 두 프로세스 동시 시작·운영 인스턴스는 검증하지 않음 |
+
 ## 단계
 #674 후속 6·2: daemon 입력 연결과 manifest 내용·binding 대조.
 
@@ -20,6 +29,29 @@
 
 ## 바꾼 파일
 labhq/runner/step_inputs.py, labhq/runner/daemon.py, tests/test_runner_env_inputs_674.py, docs/manual.md, docs/manual.en.md, 패치노트·이 파일.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## 단계
+#674 후속 3·4(orchestrator·gateway 쪽) — Refs #674 (닫지 않음).
+
+## 한 일
+- **3. `max_steps`에 닿은 계획의 clone 확장:** 환경 단계를 runner별 clone으로 나누면 계획이 `max_steps`를 넘어 확장 뒤 검증이 거부하던 것을, scheduler가 만든 clone을 한도에서 빼도록 바꿨습니다. `scheduler_clone_extra(steps)`는 논리 환경 단계마다 `clone 수 − 1`을 셉니다. 일반 계획은 `validate_steps(…, stored_environment=True)`, 연구 계획은 `validate_research_plan(…, scheduler_steps=…)`(총 단계·가지당·합성 단계·가지 합계 한도 모두)가 그만큼 더 허용합니다. 확장 직후 검증과 저장된 계획 재개 검증 모두에 적용됩니다. 계획자 자신의 단계는 여전히 `max_steps`로 제한되고(초과하면 "maximum is 3 plus 1 runner environment steps"), binding이 없는 계획은 이전과 똑같이 판정합니다.
+- **4. dispatch 직전 runtime 재대조:** `Hub._session_pin_refusal(task, target, runtime)`가 대상 runner의 현재 `runtime_env`를 받아 같은 runner의 환경 binding(`environment_binding`·`environment_bindings`)과 비교하고, 다르거나 runtime을 알리지 않으면 보내기 전에 $0으로 거부합니다. 같은 runner ID가 native↔WSL로 재설정되거나 다른 OS 호스트에서 재등록돼도 옛 interpreter 경로가 전달되지 않습니다. 첫 전송과 runner 상실 뒤 재전송 두 호출 지점이 모두 `runner_capabilities[target]["runtime_env"]`를 넘깁니다. 인수를 주지 않는 기존 호출(시험)은 runner ID만 비교합니다.
+- 매뉴얼(한·영)에 두 동작을 적었습니다.
+
+## 테스트 결과
+- `tests/test_runner_env_plan_674.py` 22건 통과(새 5건: clone이 한도에서 제외되고 계획자 단계 초과는 여전히 거부, 연구 한도(`scheduler_steps`), runtime 재대조(일치·불일치·미보고·인수 없음·producer·다른 runner binding), `Hub.dispatch`가 runtime 불일치를 전송 전에 거부). 코드를 되돌리면 새 시험이 실패합니다.
+- cso·orchestrator·hub·dispatch·research·plan·resume·environment·runner·gateway·session 키워드 3354건 통과, 1건 실패는 이 세션 환경 때문에 깨지는 `test_doctor...parent_session_markers`(변경과 무관).
+- 미검증: 실제 gateway·runner 두 대에서의 dispatch 경로 실측, 실제 WSL.
+
+## 한계·남은 것
+- 연구 계획의 가지당·합성 한도 완화(`scheduler_steps`)는 clone이 어느 가지에 속하든 같은 값만큼 허용하는 단순한 방식입니다. 가지별로 정확히 세지는 않습니다.
+- 재계획(re-plan) 병합(`kept + raw`)의 한도는 건드리지 않았습니다. 그 경로는 `validate_steps`를 `stored_environment` 없이 불러 binding을 지우므로 별도 점검이 필요합니다(관찰만, 이 PR 범위 밖).
+- 계획 수정 후속: manifest 내용·binding 대조(W3), 실제 엔진 쓰기 보호·OS identity(#666).
+
+## 바꾼 파일
+labhq/orchestrator/cso.py, labhq/research/contract.py, labhq/gateway/server.py, docs/manual.md, docs/manual.en.md, tests/test_runner_env_plan_674.py와 변경 기록.
 
 🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 
@@ -69,6 +101,13 @@ labhq/runner/step_inputs.py, labhq/adapters/held_dir.py, tests/test_runner_env_i
 - Adds mock-only verdict regression and a fail-closed launcher check for #666.
 - Real WSL probes, executable harness integration and effective policy evidence remain UNVERIFIED: the W1 launch contract always refuses execution.
 - Existing gates remain in place. Hold until the executable contract and disposable fixture are available and the real probes are reviewed.
+
+# Claude sandbox 정책 계약 (#666)
+
+- 설정 source와 약화 설정을 거부하는 offline 계약을 추가했습니다. 기존 gate는 유지합니다.
+- `python -m pytest tests/test_claude_sandbox.py -q`: 37 passed. 빈 domain 목록에 strict allowlist를 적용합니다.
+- 실제 effective settings, WSL 보호, launcher 실행은 미검증입니다. 실행은 항상 거부합니다.
+- 후속: 신뢰된 설정 source와 실행 중 설정 변경 차단, 실제 엔진 정책 확인 및 W3 경계 시험이 필요합니다.
 
 # 해제 ACK·durable 재전송 (#1008)
 

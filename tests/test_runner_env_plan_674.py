@@ -267,3 +267,117 @@ async def test_plan_only_request_does_not_bind_runners(tmp_path, monkeypatch):
     await Orchestrator(hub).run_request("r")
     assert hub.requests["r"]["status"] != "failed", hub.requests["r"].get("report")
     assert "environment_binding" not in json.dumps(hub.requests["r"]["plan"])
+
+
+def test_runner_environment_clones_do_not_count_toward_max_steps():
+    """#674 follow-up: a plan that fills max_steps with its own steps still gets its runner-local environments."""
+    from labhq.orchestrator.cso import scheduler_clone_extra
+
+    logical = plan()  # env + two consumers: exactly 3 steps
+    expanded = split_runner_environments(logical, {"a": "win", "b": "wsl"}, {"win": "windows", "wsl": "wsl"}, lambda _: True)
+    assert len(logical) == 3 and len(expanded) == 4 and scheduler_clone_extra(expanded) == 1
+    assert scheduler_clone_extra(logical) == 0 and scheduler_clone_extra(None) == 0
+    restored = json.loads(json.dumps(expanded))
+    steps, _ = validate_steps(restored, {"a", "b", "old"}, 3, excluded=set(), reject_excess=True, stored_environment=True)
+    assert len(steps) == 4  # the clone is not cut and not rejected
+    # The planner's own steps are still limited: one more ordinary step is over, with or without clones.
+    extra_step = {"id": "z", "agent_id": "a", "instruction": "more", "outputs": [], "depends_on": []}
+    with pytest.raises(ValueError, match="maximum is 3 plus 1 runner environment steps"):
+        validate_steps([*restored, extra_step], {"a", "b", "old"}, 3, excluded=set(), reject_excess=True,
+                       stored_environment=True)
+    with pytest.raises(ValueError, match="maximum is 3"):
+        validate_steps(logical + [extra_step], {"a", "b", "old"}, 3, excluded=set(), reject_excess=True)
+    # A plan without bindings is judged exactly as before.
+    with pytest.raises(ValueError, match="maximum is 3"):
+        validate_steps(restored, {"a", "b", "old"}, 3, excluded=set(), reject_excess=True)
+
+
+def test_research_step_limits_leave_room_for_scheduler_clones_in_their_own_branch_only():
+    from labhq.research.contract import research_plan_errors
+
+    def clone(branch=None):
+        return {"environment_binding": {"logical_step_id": "env"}, **({"branch": branch} if branch else {})}
+
+    def limit_errors(raw, **kw):
+        return [e for e in research_plan_errors(raw, active_packs={}, max_steps=2, **kw) if "maximum is" in e]
+
+    assert limit_errors({"steps": [{}, {}, {}], "branches": []})  # three plain steps are over a limit of two
+    # Two clones of one logical environment add one step beyond the planner's own two.
+    assert not limit_errors({"steps": [clone(), clone(), {}], "branches": []})
+    assert limit_errors({"steps": [clone(), clone(), {}, {}], "branches": []})
+    # Branched: the allowance grows only for the branch that holds the clones.
+    steps = [{"branch": "a"}, {"branch": "a"}, clone("a"), clone("a"), *[{"branch": "b"} for _ in range(4)]]
+    errors = limit_errors({"steps": steps, "branches": [{"id": "a"}, {"id": "b"}]}, max_branches=5, max_branch_steps=3)
+    assert any("branch b has 4 steps" in e for e in errors) and not any("branch a has" in e for e in errors)
+    steps = [{"branch": "a"}, {"branch": "a"}, clone("a"), clone("a"), *[{"branch": "b"} for _ in range(3)]]
+    assert not limit_errors({"steps": steps, "branches": [{"id": "a"}, {"id": "b"}]}, max_branches=5, max_branch_steps=3)
+
+
+def _bound_task(runner="wsl", runtime="wsl", **meta):
+    planned = split_runner_environments(plan(), {"a": "win", "b": "wsl"}, {"win": "windows", "wsl": "wsl"}, lambda _: True)
+    consumer = next(s for s in planned if s["id"] == "b")
+    producer = next(s for s in planned if s.get("environment_binding", {}).get("runner_id") == runner)
+    binding = {**consumer["environment_bindings"][0], "runtime": runtime}
+    return Task(agent_id="b", prompt="", meta={"session_runner": runner, "environment_bindings": [binding], **meta}), producer
+
+
+def test_dispatch_rechecks_the_runner_runtime_against_the_stored_binding():
+    """#674 follow-up: the same runner ID reconfigured native <-> WSL must not receive a stale interpreter path."""
+    task, _ = _bound_task()
+    assert Hub._session_pin_refusal(task, "wsl", "wsl") is None  # still the runtime the plan was bound to
+    stale = Hub._session_pin_refusal(task, "wsl", "linux")
+    assert stale is not None and not stale.ok and stale.cost_usd == 0.0
+    assert "expects runtime wsl" in stale.error and "reports linux" in stale.error
+    unknown = Hub._session_pin_refusal(task, "wsl", None)  # a runner that reports no runtime proves nothing
+    assert unknown is not None and "no runtime" in unknown.error
+    assert Hub._session_pin_refusal(task, "wsl") is None  # callers that pass no runtime keep the runner-ID check only
+    assert Hub._session_pin_refusal(task, "win", "windows") is not None  # the runner pin itself still refuses
+
+
+def test_the_producer_binding_is_rechecked_too_and_other_runners_bindings_are_ignored():
+    _, producer = _bound_task()
+    task = Task(agent_id="b", prompt="", meta={"session_runner": "wsl",
+                                               "environment_binding": producer["environment_binding"]})
+    assert Hub._session_pin_refusal(task, "wsl", "wsl") is None
+    assert Hub._session_pin_refusal(task, "wsl", "windows") is not None
+    other = Task(agent_id="b", prompt="", meta={"environment_bindings": [
+        {**producer["environment_binding"], "runner_id": "win", "runtime": "windows"}]})
+    assert Hub._session_pin_refusal(other, "wsl", "wsl") is None  # that binding belongs to another runner
+
+
+@pytest.mark.asyncio
+async def test_hub_dispatch_refuses_before_sending_when_the_runner_runtime_changed(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    task, _ = _bound_task(runner="wsl", runtime="wsl")
+    hub.agent_runner["b"] = "wsl"
+    hub.runner_capabilities["wsl"] = {"runtime_env": "windows"}  # same ID, now a Windows host
+    result = await hub.dispatch(task)
+    assert not result.ok and result.cost_usd == 0.0 and "expects runtime wsl" in result.error
+
+
+@pytest.mark.asyncio
+async def test_a_runner_that_changes_runtime_while_steers_attach_is_not_sent_the_stale_binding(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    task, _ = _bound_task(runner="wsl", runtime="wsl")
+    hub.agent_runner["b"] = "wsl"
+    hub.runner_capabilities["wsl"] = {"runtime_env": "wsl"}  # the first check passes
+    sent = []
+
+    async def attach(candidate):
+        hub.runner_capabilities["wsl"] = {"runtime_env": "windows"}  # the same ID re-registers while awaiting
+        return candidate
+
+    async def send(rid, frame):
+        sent.append(frame)
+
+    hub._attach_steers = attach
+    hub.send_runner = send
+    import asyncio
+
+    result = await asyncio.wait_for(hub.dispatch(task), 5)  # without the recheck the task is sent and awaits a reply
+    assert not result.ok and result.cost_usd == 0.0 and "expects runtime wsl" in result.error
+    assert sent == [] and task.id not in hub.futures and task.id not in hub.task_runner

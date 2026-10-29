@@ -14,10 +14,21 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:27 | [`a81c53f`](https://github.com/ehojune/bioinfo-team-3d/pull/1017/commits/a81c53f) | **main과 병합하며 Windows 테스트 목록을 보존합니다.**<br>Merge main and preserve sandbox Windows tests |
+| 17:11 | [`24f5191`](https://github.com/ehojune/bioinfo-team-3d/pull/1024/commits/24f5191) | **공용 폴더 도입으로 생길 권한 문제를 피하려고 기록 위치를 원래대로 되돌렸습니다.**<br>broker port 소유 기록을 PC 전체 폴더에서 계정별 state 폴더로 되돌린다. 다른 OS 계정 간 충돌은 후속으로 남긴다 (#1024 총괄 결정). |
 | 17:10 | [`b84b131`](https://github.com/ehojune/bioinfo-team-3d/pull/1021/commits/b84b131) | **같은 작업 폴더의 다른 단계 성공 기록이 환경 단계를 대신 증명하지 못합니다.**<br>환경 단계 성공 기록 검증이 선택된 run의 step_id가 binding의 step과 같은지도 대조한다 |
+| 17:09 | [`e2e01f6`](https://github.com/ehojune/bioinfo-team-3d/pull/1024/commits/e2e01f6) | **서로 다른 계정의 실행기도 같은 내부 포트 충돌을 알아보게 했고, 이미 돌고 있는 실행기의 기록을 덮어쓰지 않게 했습니다.**<br>broker port 소유 기록을 계정별 홈이 아닌 PC 전체 폴더로 옮기고, 같은 설정의 살아 있는 runner 기록은 덮어쓰지 않으며, 쓸 수 없는 폴더는 시작을 막지 않는다 (#1024 리뷰 P2). |
+| 17:06 | [`2abf8d7`](https://github.com/ehojune/bioinfo-team-3d/pull/1023/commits/2abf8d7) | **최신 main과 합치면서 매뉴얼의 환경 설명 충돌을 정리했습니다.**<br>main(#1021)을 병합하고 매뉴얼 환경 절의 충돌을 두 쪽 내용을 모두 살려 해소한다. |
+| 17:05 | [`bcdf030`](https://github.com/ehojune/bioinfo-team-3d/pull/1017/commits/bcdf030) | **sandbox 정책의 전체 CI를 다시 실행합니다.**<br>Trigger fresh full CI for sandbox policy |
+| 16:55 | [`ea22033`](https://github.com/ehojune/bioinfo-team-3d/pull/1023/commits/ea22033) | **분기 연구 계획의 단계 수 한도 완화를 환경 단계가 있는 가지에만 적용합니다.**<br>분기 연구 계획에서 runner 환경 clone 여유분을 clone이 속한 가지에만 더하고 전체 clone 수를 모든 가지에 더하지 않는다 (#674 후속 3, 봇 P2). |
+| 16:53 | [`dc344b2`](https://github.com/ehojune/bioinfo-team-3d/pull/1024/commits/dc344b2) | **설정이 서로 달라도 같은 내부 포트를 쓰는 두 번째 실행기를 포트 오류 대신 이해하기 쉬운 안내와 함께 시작 전에 막습니다.**<br>runner.broker_port를 PC 기본 state 폴더의 소유 기록과 OS lock으로 잡아, 설정이 모두 달라도 같은 broker port를 쓰는 두 번째 runner를 시작 전에 막는다 (#618 P2). |
 | 16:50 | [`c042fc0`](https://github.com/ehojune/bioinfo-team-3d/pull/1021/commits/c042fc0) | **검증된 환경도 소비 단계에 전달할 수 있게 되기 전까지는 계속 막습니다.**<br>검증이 모두 통과해도 보호된 interpreter 별칭이 없으면 소비 단계를 계속 거부하고(ENVIRONMENT_ALIAS_AVAILABLE=False) 사유로 구분한다 |
+| 16:44 | [`017cb56`](https://github.com/ehojune/bioinfo-team-3d/pull/1023/commits/017cb56) | **전송 직전에 실행기 종류를 한 번 더 확인해 그 사이에 바뀐 실행기에 옛 환경이 가지 않게 했습니다.**<br>runner runtime 재대조를 steer 첨부 await 뒤, 작업을 기록·전송하기 직전에 한 번 더 한다 (#674 후속 4, 봇 P2). |
 | 16:33 | [`fe1c35c`](https://github.com/ehojune/bioinfo-team-3d/pull/1022/commits/fe1c35c) | **압축 신호를 실제로 받아 본 것처럼 보이던 매뉴얼 문구를 사실대로 고쳤습니다.**<br>manual의 compaction 신호 설명을 "실행 파일의 프레임 정의에서 확인, 실제 세션은 미관측"으로 바로잡는다 (#1022 리뷰 P2). |
+| 16:33 | [`e6c9354`](https://github.com/ehojune/bioinfo-team-3d/pull/1017/commits/e6c9354) | **영문 manual에도 sandbox 상태를 적습니다.**<br>Document sandbox status in English manual |
 | 16:30 | [`495a3b0`](https://github.com/ehojune/bioinfo-team-3d/pull/1021/commits/495a3b0) | **환경 단계가 실제로 성공했는지 먼저 확인하고, 보호된 별칭이 생기기 전까지는 소비 단계를 계속 막되 이유를 구분해 알려 줍니다.**<br>runner가 환경 binding이 붙은 소비 단계를 시작하기 전에 자기 run 기록의 성공 여부, 수집된 runner-manifest.json의 hash·내용과 binding 일치, interpreter 존재를 검증하고 통과해도 보호된 별칭이 없어 계속 거부하며 사유로 구분한다. manual 영·한 반영 |
+| 16:30 | [`887ceed`](https://github.com/ehojune/bioinfo-team-3d/pull/1017/commits/887ceed) | **Claude sandbox의 실제 보호가 미검증임을 manual에 명시합니다.**<br>Document unverified Claude sandbox protection |
+| 16:25 | [`eefb7fe`](https://github.com/ehojune/bioinfo-team-3d/pull/1023/commits/eefb7fe) | **환경 단계가 늘어도 단계 수 한도에 걸려 실패하지 않고, 실행기 종류가 바뀐 상태로는 환경이 쓰이지 않게 막습니다.**<br>runner별로 늘어난 환경 clone 단계는 max_steps에 세지 않고, dispatch 직전에 runner가 지금 알리는 runtime이 저장된 binding과 다르거나 알리지 않으면 보내기 전에 거부한다 (#674 후속 3·4). |
 | 16:25 | [`2ed48eb`](https://github.com/ehojune/bioinfo-team-3d/pull/1020/commits/2ed48eb) | **시스템 python으로 가는 중간 경로가 아무나 바꿀 수 있는 링크이면 거부합니다.**<br>venv 밖 링크 체인을 합쳐서 보지 않고 hop마다 링크·폴더 소유와 쓰기 권한을 확인해 중간의 변조 가능한 링크를 거부한다 |
 | 16:21 | [`552e23c`](https://github.com/ehojune/bioinfo-team-3d/pull/1018/commits/552e23c) | **경계 시험용 loopback listener와 positive control을 준비합니다.**<br>test: prepare loopback witness for sandbox probes |
 | 16:20 | [`86188b8`](https://github.com/ehojune/bioinfo-team-3d/pull/1022/commits/86188b8) | **Claude Code가 대화를 압축한 직후 같은 일을 다시 하는 것을 폭주로 보고 멈추지 않게 했습니다.**<br>Claude Code의 compact_boundary 프레임을 agent.compaction으로 받아 반복·오류 집계를 다시 세고 경고 단계를 푼다. 다른 엔진은 신호가 없어 해당 없음 (#1008). |
@@ -27,9 +38,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 15:10 | [`f405b2f`](https://github.com/ehojune/bioinfo-team-3d/pull/1019/commits/f405b2f) | **이전 버전이 저장해 둔 해제 요청이 새 제한을 잘못 풀지 않게 했습니다.**<br>숫자 episode로 저장된 옛 해제 명령을 episode 없이 다시 보내지 않고 legacy 값으로 보내 stale로 처리한다 (#1019 리뷰 P1). |
 | 15:00 | [`2eb9b56`](https://github.com/ehojune/bioinfo-team-3d/pull/1018/commits/2eb9b56) | **Windows 시험 목록과 기록 형식을 바로잡습니다.**<br>fix: register boundary tests in Windows inventory |
 | 14:55 | [`2d14347`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/2d14347) | **계획만 요청할 때는 실행 담당 runner가 꺼져 있어도 계획이 나옵니다.**<br>plan_only 요청은 실행하지 않으므로 소비 runner 연결을 요구하는 환경 binding을 건너뛴다. |
+| 14:54 | [`6f348f9`](https://github.com/ehojune/bioinfo-team-3d/pull/1017/commits/6f348f9) | **sandbox 정책 단위시험을 Windows inventory에 등록합니다.**<br>Register sandbox policy tests in Windows inventory (#666) |
 | 14:53 | [`0851aad`](https://github.com/ehojune/bioinfo-team-3d/pull/1018/commits/0851aad) | **실제 launcher 재현의 선행 조건을 명확히 합니다.**<br>docs: clarify launcher reproduction prerequisite |
 | 14:53 | [`5c732ab`](https://github.com/ehojune/bioinfo-team-3d/pull/1019/commits/5c732ab) | **서버를 다시 켠 뒤 예전 해제 요청이 새로 걸린 제한을 풀어 버리지 않게 했습니다.**<br>해제 episode ID에 task 실행별 값을 넣어, runner 재시작·task 재전송 뒤 이전 실행의 해제 명령이 새 제한에 적용되지 않게 한다 (#1008). |
 | 14:51 | [`08de79a`](https://github.com/ehojune/bioinfo-team-3d/pull/1018/commits/08de79a) | **Claude sandbox 경계 시험에서 실행 거부와 미검증을 구분합니다.**<br>test: classify Claude sandbox boundary evidence (#666) |
+| 14:51 | [`bd7e910`](https://github.com/ehojune/bioinfo-team-3d/pull/1017/commits/bd7e910) | **빈 domain 목록을 strict allowlist로 잠급니다.**<br>Require strict sandbox domain allowlist (#666) |
+| 14:46 | [`8773fba`](https://github.com/ehojune/bioinfo-team-3d/pull/1017/commits/8773fba) | **Claude sandbox 정책을 검증하고 미검증 실행을 거부합니다.**<br>Add fail-closed Claude sandbox policy contract (#666) |
 | 14:40 | [`ed7bc66`](https://github.com/ehojune/bioinfo-team-3d/pull/1016/commits/ed7bc66) | **영문 매뉴얼의 폭주 차단기 설명을 한국어 매뉴얼과 같은 내용으로 고쳤습니다.**<br>영문 매뉴얼의 폭주 차단기 절을 한국어와 맞춘다 (#1016 리뷰 P2). |
 | 14:39 | [`3f9e9a7`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/3f9e9a7) | **영어 문서에도 runner별 환경 계획을 같은 내용으로 적었습니다.**<br>영어 매뉴얼의 환경 절·로드맵 행과 영어 README에 runner별 환경 계획 설명을 한국어판과 맞춘다 (#674, 봇 P1). |
 | 14:31 | [`09816c0`](https://github.com/ehojune/bioinfo-team-3d/pull/1015/commits/09816c0) | **공백이 든 runner ID도 환경 계획에 쓸 수 있습니다.**<br>환경 binding의 runner ID를 설정이 허용하는 값 그대로 받고 연구 계획 schema hash 고정값을 갱신한다. |
