@@ -1,5 +1,9 @@
 pr: null
 rows:
+- sha: 4635ea9
+  at: 2026-10-29 14:18
+  text: 사전 승인 목록과 Claude Bash 실행 가능성을 구분해 환경 담당자를 고른다.
+  summary: 승인 게이트를 거치는 환경 담당자도 선택합니다.
 - sha: da063bd
   at: 2026-10-29 14:15
   text: scope 승인 대기 중 재시작한 계획에도 실행 전 runner별 환경 binding을 적용한다.
