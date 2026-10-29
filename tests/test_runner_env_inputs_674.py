@@ -325,7 +325,7 @@ def test_link_to_an_executable_inside_the_venv_is_accepted(tmp_path, monkeypatch
 
 
 @posix_only
-@pytest.mark.parametrize('case', ['outside', 'writable', 'not_executable', 'loop', 'escape', 'writable_folder'])
+@pytest.mark.parametrize('case', ['outside', 'writable', 'not_executable', 'loop', 'escape', 'writable_folder', 'mutable_hop'])
 def test_other_interpreter_links_stay_refused(tmp_path, monkeypatch, case):
     root, folder, artifact, expected, system, real = linux_env(tmp_path, monkeypatch)
     link = folder / '.venv/bin/python'
@@ -334,6 +334,11 @@ def test_other_interpreter_links_stay_refused(tmp_path, monkeypatch, case):
         other.write_bytes(b'python')
         other.chmod(0o755)
         link.symlink_to(other)
+    elif case == 'mutable_hop':
+        # An untrusted link that itself points at an allowed system binary must not flatten into a pass.
+        hop = tmp_path / 'mutable-link'
+        hop.symlink_to(real)
+        link.symlink_to(hop)
     elif case == 'writable':
         real.chmod(0o775)
         link.symlink_to(real)

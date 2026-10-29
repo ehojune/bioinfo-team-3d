@@ -106,23 +106,30 @@ def _link_target(venv, target):
             if not stat.S_ISREG(info.st_mode) or not info.st_mode & 0o111 or info.st_nlink != 1:
                 raise ValueError('environment interpreter target is not a plain executable')
             return current
-        real = os.path.realpath(current)
+        # Every hop outside the venv is checked on its own: the folder holding it and the link itself must be
+        # trusted, so a mutable link cannot sit in the middle of a chain that ends in a system binary.
+        folder = os.path.realpath(os.path.dirname(current))
+        real = os.path.join(folder, os.path.basename(current))
         root = next((r for r in map(os.path.realpath, SYSTEM_RUNTIME_ROOTS)
-                     if real.startswith(r + os.sep)), None)
+                     if folder == r or folder.startswith(r + os.sep)), None)
         if root is None:
             raise ValueError('environment interpreter target is outside the allowed runtime')
-        info = os.lstat(real)
-        if (not stat.S_ISREG(info.st_mode) or not info.st_mode & 0o111 or info.st_uid != _TRUSTED_OWNER
-                or info.st_mode & 0o022):
-            raise ValueError('environment interpreter target is not a trusted executable')
-        folder = os.path.dirname(real)
+        probe = folder
         while True:
-            info = os.lstat(folder)
+            info = os.lstat(probe)
             if info.st_uid != _TRUSTED_OWNER or info.st_mode & 0o022:
                 raise ValueError('environment interpreter runtime folder is not trusted')
-            if folder == root:
+            if probe == root:
                 break
-            folder = os.path.dirname(folder)
+            probe = os.path.dirname(probe)
+        info = os.lstat(real)
+        if info.st_uid != _TRUSTED_OWNER:
+            raise ValueError('environment interpreter target is not a trusted executable')
+        if stat.S_ISLNK(info.st_mode):
+            here, target = folder, os.readlink(real)
+            continue
+        if not stat.S_ISREG(info.st_mode) or not info.st_mode & 0o111 or info.st_mode & 0o022:
+            raise ValueError('environment interpreter target is not a trusted executable')
         return real
     raise ValueError('environment interpreter link chain is too long')
 
