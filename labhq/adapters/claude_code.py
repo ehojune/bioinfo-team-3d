@@ -437,6 +437,10 @@ class ClaudeCodeAdapter(AgentAdapter):
             record_model_id(st, ctx, ev.get("model"))
             await ctx.emit("agent.status", {"state": "working", "model": ev.get("model"),
                                             "mcp": [m.get("name") for m in ev.get("mcp_servers", []) if isinstance(m, dict)]})
+        elif typ == "system" and ev.get("subtype") == "compact_boundary":
+            # The session was just compacted (#1008): what it did before is gone from its context, so it may repeat itself.
+            meta = ev.get("compact_metadata") if isinstance(ev.get("compact_metadata"), dict) else {}
+            await ctx.emit("agent.compaction", {key: meta.get(key) for key in ("trigger", "pre_tokens", "post_tokens")})
         elif typ == "assistant":
             for block in (ev.get("message") or {}).get("content") or []:
                 if block.get("type") == "text" and block.get("text"):

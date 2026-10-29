@@ -35,11 +35,12 @@ from .util import atomic_write_text
 LAST_FILE = "labhq-last-config.json"
 PRIMARY_FILE = "labhq-primary-config.json"
 OWNER_FILE = {"gateway": "labhq-gateway-owner.json", "runner": "labhq-runner-owner.json"}
+BROKER_FILE = "labhq-broker-port-{port}.json"  # one per runner.broker_port, in the default state folder (#618)
 
 
 @dataclass(frozen=True)
 class Notice:
-    key: str        # state_alive | runner_state | port | port_unverified | state_last | primary
+    key: str        # state_alive | runner_state | broker_port | port | port_unverified | state_last | primary
     text: str       # what differs, in plain Korean
     fix: str        # what to run or change
     blocking: bool  # `up` stops: starting would claim a config that is not the one running
@@ -216,13 +217,22 @@ def write_owner(settings: Settings, role: str, *, required: bool = False) -> Non
         _write_json(_owner_path(settings, role), record)
 
 
+def _broker_path(settings: Settings) -> Path:
+    return default_state_dir() / BROKER_FILE.format(port=settings.runner.broker_port)
+
+
 @contextmanager
 def _runner_claim_lock(settings: Settings):
     """Serialize owner inspection/publication; the stable lock file is never removed.
 
     OS locks disappear on exit, so a crashed claimant cannot strand a lock.
     """
-    path = _owner_path(settings, "runner").with_suffix(".lock")
+    with _file_lock(_owner_path(settings, "runner").with_suffix(".lock")):
+        yield
+
+
+@contextmanager
+def _file_lock(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a+b") as handle:
         handle.seek(0, os.SEEK_END)
@@ -370,6 +380,17 @@ def _runner_notice(settings: Settings, owner: Identity, mine: Identity, show: Ca
         True)
 
 
+def _broker_notice(settings: Settings, owner: Identity, show: Callable[[str], str]) -> Notice:
+    port = settings.runner.broker_port
+    return Notice(
+        "broker_port",
+        f"runner.broker_port {port}를 이미 다른 설정 파일({_shown(owner, show)})의 runner가 쓰고 있습니다. "
+        "두 번째 runner는 이 포트를 열지 못해 시작에 실패합니다.",
+        (f"`{_open_command(owner.config, 'down')}`으로 그 runner를 끄거나, " if owner.config else "")
+        + "한쪽의 runner.broker_port를 다르게 하세요.",
+        True)
+
+
 def _port_notice(settings: Settings, port: int, other: str | None, show: Callable[[str], str], *,
                  token_mismatch: bool = False) -> Notice:
     if other is None:
@@ -388,6 +409,28 @@ def _port_notice(settings: Settings, port: int, other: str | None, show: Callabl
         f"그 사무실은 `{_open_command(other, 'open')}`으로 엽니다. 이 설정으로 쓰려면 먼저 "
         f"`{_open_command(other, 'down')}`으로 끄거나, 이 설정의 gateway.port·runner.broker_port를 바꾸세요.",
         True)
+
+
+def _claim_broker(settings: Settings, mine: Identity) -> Notice | None:
+    """The runner's broker port belongs to one config on this PC (#618). A live runner of another config there stops
+    this start. The same config's live runner keeps its record (this process would fail to bind anyway). An error
+    opening, locking or writing the record is the caller's "could not acquire" notice, as for the runner state."""
+    from . import cli
+
+    path = _broker_path(settings)
+    with _file_lock(path.with_suffix(".lock")):
+        held = _read_json(path)
+        if held and _alive(held):
+            owner = _record_identity(held)
+            if owner is not None and not same_identity(owner, mine):
+                return _broker_notice(settings, owner, str)
+            if held.get("pid") != os.getpid():
+                return None
+        atomic_write_text(path, json.dumps({
+            "pid": os.getpid(), "created": cli._process_created(os.getpid()), "role": "runner",
+            "config": settings.config_path, "config_id": mine.config_id, "fingerprint": mine.fingerprint,
+            "port": settings.runner.broker_port}, ensure_ascii=False) + chr(10))
+    return None
 
 
 def check(settings: Settings, *, show: Callable[[str], str] = str, token_mismatch: bool = False) -> list[Notice]:
@@ -489,6 +532,8 @@ def claim(settings: Settings, role: str) -> Notice | None:
                 owner = _live_owner(settings, "runner")
                 if owner is not None and not same_identity(owner, mine):
                     return _runner_notice(settings, owner, mine, str)
+                if (notice := _claim_broker(settings, mine)) is not None:
+                    return notice
                 write_owner(settings, role, required=True)
         except (OSError, RuntimeError) as exc:
             return Notice("runner_state", "runner state 소유권을 획득하지 못했습니다.",
@@ -500,4 +545,5 @@ def claim(settings: Settings, role: str) -> Notice | None:
 
 DOCTOR_NAME = {"state_alive": "other config: state", "state_last": "other config: state",
                "runner_state": "other config: runner", "port": "other config: port",
+               "broker_port": "other config: broker port",
                "port_unverified": "other config: port", "primary": "primary config"}

@@ -4,6 +4,104 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# runner broker port 사전 충돌 검사 (#618 P2)
+
+| 항목 | 내용 |
+|---|---|
+| 문제 | 설정 파일·state 폴더·runner id가 모두 달라도 `runner.broker_port`가 같으면 두 번째 runner가 bind에 실패했다(원인 불명 포트 오류) |
+| 방식 | `instance_guard.claim(…, "runner")`가 runner state lock에 이어 broker port별 lock(`labhq-broker-port-<port>.lock`)을 잡고, PC 기본 state 폴더의 `labhq-broker-port-<port>.json`에서 살아 있는 다른 설정의 owner를 확인한다. 다르면 `broker_port` notice로 시작 전에 막고 아무것도 쓰지 않는다. 같은 설정이면 통과, 끝난 owner는 교체 |
+| 시험 | `tests/test_instance_guard.py` +3: 거부(문구·고치는 명령·claim 없음), 다른 포트는 충돌 없음, 죽은 owner 복구와 거부된 claim이 기록을 바꾸지 않음 |
+| 범위 밖 | `doctor`의 읽기 전용 점검에는 넣지 않았다(시작 시 claim만). 실제 두 프로세스 동시 시작·운영 인스턴스는 검증하지 않음 |
+
+## 단계
+#674 후속 6·2: daemon 입력 연결과 manifest 내용·binding 대조.
+
+## 한 일
+1. `validate_runner_env(..., request_id)`: runner 자신의 `manifest.json` run 기록(요청·step·ok)을 확인한다.
+2. daemon `_environment_refusal_reason`: 구조 검사 뒤 binding마다 위 검증을 호출하고(thread), 하나라도 어긋나면 엔진 시작 전 거부한다. 모두 통과해도 보호된 별칭이 없어 `ENVIRONMENT_ALIAS_AVAILABLE=False`로 계속 거부하고 사유(`environment verified but protected interpreter alias is not implemented`)로 구분한다(봇 P1 반영: 검증된 venv를 소비 단계에 노출하기 전에는 열지 않음).
+3. manifest 내용과 binding 대조(후속 2): 같은 검증이 수집된 `runner-manifest.json`의 내용을 승인 계획의 binding과 정확히 대조한다.
+4. manual 영·한 반영.
+
+## 테스트 결과
+- Windows: `test_runner_env_inputs_674.py` 등 89 passed, POSIX 전용 skipped. WSL Ubuntu-22.04: 같은 파일 60 passed.
+- WSL 실측(daemon 경로, 표준 venv): 정상 환경은 '검증됐으나 별칭 미구현'으로만 거부, 실패한 producer 기록은 `environment validation failed`로 거부, 임시 폴더 삭제 확인(`wsl_smoke3.py`).
+- 미검증: 게이트웨이를 거친 전체 dispatch와 저장소 재시작 end-to-end(별도 단계), 실제 엔진 쓰기 보호, 환경 단계 완료 시점의 검증(지금은 소비 단계 시작 시점).
+
+## 바꾼 파일
+labhq/runner/step_inputs.py, labhq/runner/daemon.py, tests/test_runner_env_inputs_674.py, docs/manual.md, docs/manual.en.md, 패치노트·이 파일.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## 단계
+#674 후속 3·4(orchestrator·gateway 쪽) — Refs #674 (닫지 않음).
+
+## 한 일
+- **3. `max_steps`에 닿은 계획의 clone 확장:** 환경 단계를 runner별 clone으로 나누면 계획이 `max_steps`를 넘어 확장 뒤 검증이 거부하던 것을, scheduler가 만든 clone을 한도에서 빼도록 바꿨습니다. `scheduler_clone_extra(steps)`는 논리 환경 단계마다 `clone 수 − 1`을 셉니다. 일반 계획은 `validate_steps(…, stored_environment=True)`, 연구 계획은 `validate_research_plan(…, scheduler_steps=…)`(총 단계·가지당·합성 단계·가지 합계 한도 모두)가 그만큼 더 허용합니다. 확장 직후 검증과 저장된 계획 재개 검증 모두에 적용됩니다. 계획자 자신의 단계는 여전히 `max_steps`로 제한되고(초과하면 "maximum is 3 plus 1 runner environment steps"), binding이 없는 계획은 이전과 똑같이 판정합니다.
+- **4. dispatch 직전 runtime 재대조:** `Hub._session_pin_refusal(task, target, runtime)`가 대상 runner의 현재 `runtime_env`를 받아 같은 runner의 환경 binding(`environment_binding`·`environment_bindings`)과 비교하고, 다르거나 runtime을 알리지 않으면 보내기 전에 $0으로 거부합니다. 같은 runner ID가 native↔WSL로 재설정되거나 다른 OS 호스트에서 재등록돼도 옛 interpreter 경로가 전달되지 않습니다. 첫 전송과 runner 상실 뒤 재전송 두 호출 지점이 모두 `runner_capabilities[target]["runtime_env"]`를 넘깁니다. 인수를 주지 않는 기존 호출(시험)은 runner ID만 비교합니다.
+- 매뉴얼(한·영)에 두 동작을 적었습니다.
+
+## 테스트 결과
+- `tests/test_runner_env_plan_674.py` 22건 통과(새 5건: clone이 한도에서 제외되고 계획자 단계 초과는 여전히 거부, 연구 한도(`scheduler_steps`), runtime 재대조(일치·불일치·미보고·인수 없음·producer·다른 runner binding), `Hub.dispatch`가 runtime 불일치를 전송 전에 거부). 코드를 되돌리면 새 시험이 실패합니다.
+- cso·orchestrator·hub·dispatch·research·plan·resume·environment·runner·gateway·session 키워드 3354건 통과, 1건 실패는 이 세션 환경 때문에 깨지는 `test_doctor...parent_session_markers`(변경과 무관).
+- 미검증: 실제 gateway·runner 두 대에서의 dispatch 경로 실측, 실제 WSL.
+
+## 한계·남은 것
+- 연구 계획의 가지당·합성 한도 완화(`scheduler_steps`)는 clone이 어느 가지에 속하든 같은 값만큼 허용하는 단순한 방식입니다. 가지별로 정확히 세지는 않습니다.
+- 재계획(re-plan) 병합(`kept + raw`)의 한도는 건드리지 않았습니다. 그 경로는 `validate_steps`를 `stored_environment` 없이 불러 binding을 지우므로 별도 점검이 필요합니다(관찰만, 이 PR 범위 밖).
+- 계획 수정 후속: manifest 내용·binding 대조(W3), 실제 엔진 쓰기 보호·OS identity(#666).
+
+## 바꾼 파일
+labhq/orchestrator/cso.py, labhq/research/contract.py, labhq/gateway/server.py, docs/manual.md, docs/manual.en.md, tests/test_runner_env_plan_674.py와 변경 기록.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+# compaction 구간 예외 (#1008)
+
+| 엔진 | 압축 신호 | 근거 |
+|---|---|---|
+| Claude Code 2.1.310 | 있음. stream-json `system`/`compact_boundary`, `compact_metadata{trigger,pre_tokens,post_tokens}` | `claude.exe`에서 frame schema 문자열 확인(실제 압축을 일으켜 본 것은 아님) |
+| Codex 0.165 (`exec --json`) | 없음. `exec`의 item 종류는 agent_message·reasoning·command_execution·file_change·mcp_tool_call·collab_tool_call·web_search·todo_list. `thread/compacted`·`contextCompaction`은 app-server 쪽 | `codex.exe` 문자열 확인 |
+| Gemini·Antigravity | 확인하지 않음(어댑터에 신호 처리 없음) | 코드 |
+
+- 구현: `adapters/claude_code.py`가 `agent.compaction`을 내고, runner가 `Breaker.reset_window()`로 집계를 다시 세며 경고 단계는 푼다. 제한(constrain·stop)은 PI 해제 전까지 유지.
+- 시험: `tests/test_breaker_enforcement.py`(+3).
+- 미확인: 실제 Claude 세션에서 압축을 일으켜 프레임을 받아 본 것, `status: compacting` 프레임(문자열만 확인, 처리 안 함).
+
+## 단계
+#674 후속 1: venv interpreter symlink 정책과 통합 fixture.
+
+## 한 일
+1. `validate_runner_env`: Linux·WSL에서 `.venv/bin/python`이 링크이면 직접 따라가(최대 8단계) ① venv 안의 일반 실행 파일(hard link 아님), ② `/usr/bin`·`/usr/local/bin`·`/usr/lib`·`/bin` 아래의 root 소유·group/other 쓰기 불가 실행 파일(그 루트까지의 폴더도 같은 조건)일 때만 받는다. 그 밖(루트 밖 대상, 쓰기 가능, 비실행, 순환, 체인 초과)은 거부한다. Windows 런타임은 이전처럼 링크를 거부한다. `HeldDir.readlink` 추가.
+2. 통합 fixture `tests/test_runner_env_integration_674.py` 추가(codex-worker3 작성분).
+3. manual 한·영에 허용 규칙을 적었다.
+
+## 테스트 결과
+- Windows: `test_runner_env_inputs_674.py` 50 passed, POSIX 전용 8 skipped. 통합 fixture 통과.
+- WSL Ubuntu-22.04(Python 3.10, 임시 venv): 같은 test 파일 58 passed(링크 test 8개 포함).
+- 실측 smoke(기존 smoke 재실행): 표준 `python3 -m venv` 결과(`python → python3 → /usr/bin/python3.10`)가 **통과**, 사용자 쓰기 가능 대상 링크는 거부, 임시 폴더 삭제 확인. 스크립트: `D:\.labhq\dev\tmp\claude-worker3\wsl_smoke2.py`.
+- 미검증: 다른 배포판·conda·pyenv(거부됨), 실행 중 링크 교체(TOCTOU: 검증 primitive는 호출자가 보호를 유지해야 함), 실제 엔진 쓰기 보호, daemon 입력 연결.
+
+## 바꾼 파일
+labhq/runner/step_inputs.py, labhq/adapters/held_dir.py, tests/test_runner_env_inputs_674.py, tests/test_runner_env_integration_674.py, docs/manual.md, docs/manual.en.md, 패치노트·이 파일.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+# 해제 episode의 실행별 ID (#1008)
+
+| 항목 | 내용 |
+|---|---|
+| 문제 | runner 메모리의 episode 카운터는 재시작·task 재전송 때 0부터 다시 센다. 이전 실행의 해제 명령(episode N)이 새 실행의 N번째 제한에 맞으면 잘못 풀린다 |
+| 방식 | 저장하지 않고 ID를 바꾼다. `Escalation.run`(실행마다 새 값) + 카운터 = `episode_id`(문자열). 이전 실행의 명령은 어떤 새 제한과도 맞지 않아 `stale` |
+| 바뀐 곳 | `runner/breaker.py`, `runner/daemon.py`, `gateway/server.py`(episode를 문자열로), manual 한·영 |
+| 시험 | `tests/test_breaker_enforcement.py` 갱신·추가 |
+| 미확인 | 실제 runner 재시작·network E2E |
+
+# Claude sandbox boundary evidence
+
+- Adds mock-only verdict regression and a fail-closed launcher check for #666.
+- Real WSL probes, executable harness integration and effective policy evidence remain UNVERIFIED: the W1 launch contract always refuses execution.
+- Existing gates remain in place. Hold until the executable contract and disposable fixture are available and the real probes are reviewed.
+
 # 해제 ACK·durable 재전송 (#1008)
 
 | 항목 | 내용 |
@@ -32,6 +130,12 @@
 docs/research_protocol.en.md, docs/pi-qa.en.md, docs/vocabulary.en.md(신규), README.en.md, docs/manual.en.md, AGENTS.md, patch_notes/entries/claude-worker3--docs-en-2.yaml, 이 파일.
 
 🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+# #674 runner 환경 입력
+
+- Runner ID, runtime과 ancestor mapping을 확인하고 receipt 또는 보호가 없으면 실행 전에 거부한다.
+- Windows 관련 회귀 87 passed. manifest helper는 독립 시험이며 daemon 연결, 실제 WSL 및 엔진 보호는 미검증이다.
+- PR #1013은 W1 선행 계약과 통합 검증을 기다리며 hold 상태다.
 
 ## 단계
 #809 1차: 영문 매뉴얼.

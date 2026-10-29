@@ -275,6 +275,9 @@ def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
 _EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_emit_unit", default=None)
 
 
+# Flip only when a protected alias or read grant hands the validated runner-local interpreter to consumers.
+ENVIRONMENT_ALIAS_AVAILABLE = False
+
 class Runner:
     def __init__(self, settings: Settings):
         settings.runner.validate_wsl()
@@ -810,7 +813,7 @@ class Runner:
             log.warning("task %s breaker stage %s not applied", task_id, stage, exc_info=True)
             how = "failed"
         ladder = self.breakers.get(task_id)
-        record = breaker.stage_record(stage, how, hard_stop=hard_stop, episode=ladder.episode if ladder else None)
+        record = breaker.stage_record(stage, how, hard_stop=hard_stop, episode=ladder.episode_id if ladder else None)
         base = dict(task_id=task_id, agent_id=agent_id, request_id=request_id)
         await self.emit(Event(type="agent.breaker", data=record, **base))
         await self.emit(Event(type="agent.log", data={"level": "alert", "text": stage_text(record)}, **base))
@@ -825,7 +828,7 @@ class Runner:
         ladder = self.breakers.get(task_id)
         record = {"stage": ladder.policy.stage if ladder else "normal", "enforcement": enforcement, "mode": "enforce",
                   "signal": None, **({"command_id": command_id} if command_id else {}),
-                  **({"episode": ladder.episode} if ladder else {})}
+                  **({"episode": ladder.episode_id} if ladder else {})}
         base = dict(task_id=task_id, agent_id=self.controls.agent_of(task_id), request_id=self.task_req.get(task_id))
         await self.emit(Event(type="agent.breaker", data=record, **base))
         if changed and enforcement == "released":
@@ -850,7 +853,7 @@ class Runner:
                 await self._announce_breaker_release(tid, command, changed=False)
                 return
             episode = msg.get("episode")
-            if isinstance(episode, int) and episode != ladder.episode:  # meant for an earlier restriction
+            if isinstance(episode, str) and episode != ladder.episode_id:  # meant for an earlier restriction or run
                 await self._announce_breaker_release(tid, command, changed=False, enforcement="stale")
                 return
         released = bool(ladder and ladder.release())
@@ -1564,7 +1567,77 @@ class Runner:
         drop()
         return False
 
+    def _environment_refusal_reason(self, task: Task) -> str | None:
+        bindings = task.meta.get("environment_bindings", [])
+        if isinstance(bindings, list) and not bindings:
+            return None
+        prefix = "runner environment inputs unavailable: "
+        if not isinstance(bindings, list):
+            return prefix + "invalid bindings"
+        steps = task.meta.get("upstream_steps")
+        artifacts = task.meta.get("upstream_artifacts")
+        if not isinstance(steps, dict) or not isinstance(artifacts, dict):
+            return prefix + "ancestor mapping missing"
+        runtime = ("wsl" if self.s.runner.environment == "wsl" else
+                   "windows" if sys.platform == "win32" else "linux")
+        for binding in bindings:
+            if not isinstance(binding, dict):
+                return prefix + "invalid binding"
+            python = {"windows": ".venv/Scripts/python.exe", "linux": ".venv/bin/python",
+                      "wsl": ".venv/bin/python"}.get(binding.get("runtime") if isinstance(binding.get("runtime"), str) else None)
+            identities = (binding.get("logical_step_id"), binding.get("step_id"))
+            runner_id = binding.get("runner_id")
+            if (type(binding.get("version")) is not int or binding["version"] != 1 or
+                    python is None or binding.get("venv_path") != ".venv" or
+                    binding.get("python_path") != python or
+                    any(not isinstance(x, str) or not INPUT_STEP_ID.fullmatch(x) or x != x.rstrip(" .")
+                        for x in identities) or not isinstance(runner_id, str) or not 0 < len(runner_id) <= 256):
+                return prefix + "invalid binding contract"
+            if binding["runner_id"] != self.s.runner.id or task.meta.get("session_runner") != self.s.runner.id:
+                return prefix + "runner mismatch"
+            if binding["runtime"] != runtime:
+                return prefix + "runtime mismatch"
+            sid = binding["step_id"]
+            artifact = artifacts.get(sid)
+            if (not isinstance(steps.get(sid), str) or not steps[sid] or
+                    not isinstance(artifact, dict) or not isinstance(artifact.get("task_id"), str) or
+                    not artifact["task_id"] or artifact.get("workdir") != steps[sid]):
+                return prefix + "ancestor mapping mismatch"
+        # Metadata alone never establishes success: the runner's own run record, the hashed manifest and the
+        # interpreter in the producer's workdir must all check out. No alias to the interpreter is created, so
+        # the result only tells why a consumer is (still) refused (#674).
+        root = getattr(self, "ws_root", None)
+        if root is None or not task.request_id:
+            return prefix + "workspace or request identity unavailable"
+        from .step_inputs import validate_runner_env
+        for binding in bindings:
+            sid = binding["step_id"]
+            try:
+                validate_runner_env(root, steps[sid], artifacts[sid], binding, request_id=task.request_id)
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                return prefix + "environment validation failed"
+        if not ENVIRONMENT_ALIAS_AVAILABLE:
+            # The validated .venv is not exposed to the consumer (no protected alias or read grant exists yet), so
+            # starting it would run without the packages the plan asked for: stay closed (#674).
+            return prefix + "environment verified but protected interpreter alias is not implemented"
+        return None
+
+    async def _refuse_unprotected_environment(self, task: Task) -> TaskResult | None:
+        error = await asyncio.to_thread(self._environment_refusal_reason, task)
+        if error is None:
+            return None
+        result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=error,
+                            cost_usd=0.0, cost_known=True)
+        base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
+        await self.emit_all([
+            Event(type="agent.status", data={"state": "error", "error": error}, **base),
+            Event(type="task.result", data=result.model_dump(mode="json"), **base)])
+        return result
+
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
+        refusal = await self._refuse_unprotected_environment(task)
+        if refusal is not None:
+            return refusal
         if paper2agent.disabled_task(self.s, task):
             result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                                 error="recruitment and Paper2Agent are disabled (recruit.enabled=false)")
@@ -1673,6 +1746,9 @@ class Runner:
                 "작업 폴더 밖이라 쓰기는 평소처럼 승인을 거칠 수 있습니다.")
 
     async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
+        refusal = await self._refuse_unprotected_environment(task)
+        if refusal is not None:
+            return refusal
         # Recheck after asynchronous preparation, and protect internal/direct callers too.
         if paper2agent.disabled_task(self.s, task):
             result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
@@ -1742,6 +1818,12 @@ class Runner:
             await self.emit(Event(type=typ, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
             if typ == "task.result":
                 self.breakers.pop(task.id, None)
+            if typ == "agent.compaction":
+                breaker.reset_window()
+                if escalation.compacted():
+                    await self._announce_breaker_release(task.id)
+                await self.emit(Event(type="agent.log", task_id=task.id, agent_id=agent.id, request_id=task.request_id,
+                                      data={"level": "info", "text": "컨텍스트가 압축돼 폭주 감지를 처음부터 다시 셉니다"}))
             trip = breaker.observe(typ, data)
             # Once restricted, a failing call may be the restriction's own denial, so only a repeat keeps climbing (#1008).
             signalled = breaker.repeating if escalation.policy.stage in ("constrain", "stop") else breaker.active

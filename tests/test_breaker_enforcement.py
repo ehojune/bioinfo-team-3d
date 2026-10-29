@@ -1,6 +1,8 @@
 """Runaway breaker stages and enforcement (#59 ②): beat-paced escalation, engine support, hardStop, PI release."""
 import functools
 import itertools
+import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -236,10 +238,10 @@ def _gateway(tmp_path):
 
 async def test_a_release_command_survives_a_restart_and_is_settled_by_the_runners_ack(tmp_path):
     hub, sent = _gateway(tmp_path)
-    hub._note_breaker_event("t1", {"stage": "constrain", "episode": 2})
+    hub._note_breaker_event("t1", {"stage": "constrain", "episode": "run1:2"})
     out = await hub.release_breaker("t1")
     command = sent[0]
-    assert out["sent"] and out["command_id"] == command["command_id"] and command["episode"] == 2
+    assert out["sent"] and out["command_id"] == command["command_id"] and command["episode"] == "run1:2"
     hub2, sent2 = _gateway(tmp_path)  # a gateway restart: the unacknowledged command is still there
     await hub2._push_task_state("t1")
     assert [m.get("command_id") for m in sent2 if m["action"] == "release_constraint"] == [command["command_id"]]
@@ -255,8 +257,9 @@ async def test_a_release_command_survives_a_restart_and_is_settled_by_the_runner
 async def test_the_runner_acks_a_release_once_applied_and_never_applies_a_resend_or_a_stale_one(tmp_path, monkeypatch):
     async def between(runner, ctx, i, seen):
         if i == 8:  # the task is constrained
-            seen["episode"] = runner.breakers[ctx.task.id].episode
-            for command, episode in (("c1", seen["episode"]), ("c1", seen["episode"]), ("c0", seen["episode"] + 1)):
+            seen["episode"] = runner.breakers[ctx.task.id].episode_id
+            for command, episode in (("c1", seen["episode"]), ("c1", seen["episode"]),
+                                     ("c0", seen["episode"].split(":")[0] + ":99")):
                 await runner._on_control({"type": "task.control", "task_id": ctx.task.id,
                                           "action": "release_constraint", "command_id": command, "episode": episode})
                 acks = [e["data"] for e in runner.sent if e["type"] == "agent.breaker" and e["data"].get("command_id")]
@@ -272,5 +275,70 @@ async def test_the_runner_acks_a_release_once_applied_and_never_applies_a_resend
         assert (stale["command_id"], stale["enforcement"]) == ("c0", "stale")
         logs = [e["data"]["text"] for e in sent if e["type"] == "agent.log" and "차단기를 풀었어요" in e["data"].get("text", "")]
         assert len(logs) == 1, "the resend and the stale command say nothing more"
+    finally:
+        runner.store.close()
+
+
+def test_an_episode_id_never_repeats_across_runs():
+    # A runner restart (or a task sent again) starts a new ladder; a release saved for the old run must not match it.
+    first, second = Escalation(BreakerPolicy()), Escalation(BreakerPolicy())
+    first.episode = second.episode = 1
+    assert first.episode_id != second.episode_id
+    assert first.episode_id.endswith(":1") and second.episode_id.endswith(":1")
+
+
+async def test_a_release_saved_with_a_numeric_episode_is_sent_so_it_matches_nothing(tmp_path):
+    # A row stored before episode IDs were strings must not be resent unscoped: it could free a newer restriction.
+    hub, sent = _gateway(tmp_path)
+    hub.store.put("breaker_release", "t1", {"command_id": "old", "episode": 3, "at": 1.0})
+    await hub._push_task_state("t1")
+    [message] = [m for m in sent if m["action"] == "release_constraint"]
+    assert message["command_id"] == "old" and message["episode"] == "legacy"
+    assert Escalation(BreakerPolicy()).episode_id != message["episode"]
+
+
+def test_a_compaction_restarts_the_count_so_redoing_old_work_is_not_a_loop():
+    breaker = Breaker()
+    same = ("agent.tool", {"name": "shell", "input_fingerprint": tool_input_fingerprint("shell", "x")})
+    assert [breaker.observe(*same) for _ in range(7)] == [None] * 7
+    breaker.reset_window()
+    assert [breaker.observe(*same) for _ in range(7)] == [None] * 7, "seven more after compaction is still under the limit"
+    assert breaker.observe(*same) is not None, "an eighth in the new window is a real repeat"
+
+
+async def test_claude_code_reports_its_compact_boundary_frame():
+    # Claude Code 2.1.310's stream-json: {"type":"system","subtype":"compact_boundary","compact_metadata":{...}}.
+    from labhq.adapters import get_adapter
+    from labhq.adapters.base import RunState
+
+    events = []
+
+    async def emit(kind, data):
+        events.append((kind, data))
+
+    frame = {"type": "system", "subtype": "compact_boundary", "uuid": "u", "session_id": "s",
+             "compact_metadata": {"trigger": "auto", "pre_tokens": 170000, "post_tokens": 12000}}
+    await get_adapter("claude_code", Settings()).handle_line(json.dumps(frame), RunState(), SimpleNamespace(emit=emit))
+    assert events == [("agent.compaction", {"trigger": "auto", "pre_tokens": 170000, "post_tokens": 12000})]
+
+
+async def test_a_compaction_during_a_run_keeps_repeats_across_it_from_tripping_the_breaker(tmp_path, monkeypatch):
+    runner, sent, _ = _runner(tmp_path, monkeypatch, Engine.mock, calls=0)
+
+    class Redoing:
+        async def run(self, ctx):
+            same = {"name": "shell", "input": "x", "input_fingerprint": tool_input_fingerprint("shell", "x")}
+            for _ in range(7):
+                await ctx.emit("agent.tool", same)
+            await ctx.emit("agent.compaction", {"trigger": "auto", "pre_tokens": 1, "post_tokens": 1})
+            for _ in range(7):
+                await ctx.emit("agent.tool", same)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="done")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Redoing())
+    try:
+        await runner.run_task(Task(agent_id="engineer", prompt="redo", meta={"kind": "step"}))
+        assert [e for e in sent if e["type"] == "agent.breaker"] == []
+        assert any(e["type"] == "agent.compaction" for e in sent)
     finally:
         runner.store.close()

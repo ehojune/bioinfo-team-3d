@@ -20,3 +20,7 @@ rows:
     at: "2026-10-29 16:33"
     summary: "영문 manual에도 sandbox 상태를 적습니다."
     text: "Document sandbox status in English manual"
+  - sha: bcdf030
+    at: "2026-10-29 17:05"
+    summary: "sandbox 정책의 전체 CI를 다시 실행합니다."
+    text: "Trigger fresh full CI for sandbox policy"
