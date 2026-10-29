@@ -490,7 +490,7 @@ def test_core_staff_with_annot_and_roster_line(tmp_path):
     registry = Registry(REPO / "agents", tmp_path / "talent")
     registry.load()
     with_annot = {a.id for a in registry.agents.values() if "annot" in a.builtin_mcp}
-    assert with_annot == {"analyst", "bioinfo-agent", "biologist", "lit_scout"}
+    assert with_annot == {"analyst", "bioinfo-agent", "biologist", "chief_of_staff", "lit_scout"}  # briefing: literature tools only (#1041)
     analyst = registry.get("analyst").summary()
     assert "labhq_annot" in Hub._agent_mcp(analyst)
     assert "labhq_annot=yes" in format_roster([analyst])
