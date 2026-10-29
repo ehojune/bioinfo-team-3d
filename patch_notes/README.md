@@ -14,6 +14,15 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:50 | [`3281663`](https://github.com/ehojune/bioinfo-team-3d/pull/1039/commits/3281663) | **매뉴얼이 연결 거부 조건과 Windows 변경 감지 한계를 실제 동작대로 설명합니다.**<br>manual 한·영이 허용 루트 안에 머무는 중간 경로 별칭을 받는다고 정확히 적고, Windows에서 같은 크기·복원된 수정 시각의 제자리 재작성은 감지하지 못하는 한계를 적는다 |
+| 09:20 | [`3f93302`](https://github.com/ehojune/bioinfo-team-3d/pull/1039/commits/3f93302) | **프로젝트 폴더는 wiki로 연결되지 않고, SQLite 환경이 바뀌어도 검색이 비지 않습니다.**<br>wiki 루트를 runner.reference_roots로만 허용하고(프로젝트 local_dir 제외), trigram 없이 만든 색인에 trigram이 생기면 FTS를 다시 채운다 |
+| 08:50 | [`d2ed7ca`](https://github.com/ehojune/bioinfo-team-3d/pull/1039/commits/d2ed7ca) | **권한이 회수된 노트가 검색에 남지 않고 disconnect가 평문 조각을 남기지 않습니다.**<br>읽기 권한이 사라진 노트는 색인에서도 지우고, wiki disconnect가 rollback journal도 지우며, 중첩된 허용 root가 있으면 mount를 건너지 않는 root를 인정한다 |
+| 08:15 | [`c444414`](https://github.com/ehojune/bioinfo-team-3d/pull/1039/commits/c444414) | **링크로 이름 붙인 비공개 경로와 겹치는 폴더는 연결되지 않고, 특수문자가 든 경로도 설정에 그대로 옮겨집니다.**<br>policy.private_paths가 별칭이어도 실제 경로와 양방향으로 비교하고, wiki connect가 출력하는 설정 줄을 YAML serializer로 인코딩한다 |
+| 07:45 | [`fb14ded`](https://github.com/ehojune/bioinfo-team-3d/pull/1039/commits/fb14ded) | **매뉴얼에서 wiki 연결·색인·검색 명령과 안전 경계를 볼 수 있습니다.**<br>manual 한·영에 내 LLM-wiki 연결(labhq wiki 명령 5개, wiki 설정 표, 노트별 보존 정보, 연결 거부 조건) 절을 더한다 |
+| 07:10 | [`e97d220`](https://github.com/ehojune/bioinfo-team-3d/pull/1039/commits/e97d220) | **링크로 이름 붙인 통제 구역이나 별도 파일 시스템 안의 폴더는 wiki로 연결되지 않습니다.**<br>wiki 루트를 runner와 같은 실제 경로의 통제 구역과 비교해 겹치면 거부하고, 허용 루트와 wiki 사이에 mount 지점이 있으면 거부한다 |
+| 06:40 | [`05524f3`](https://github.com/ehojune/bioinfo-team-3d/pull/1039/commits/05524f3) | **링크로 허용 폴더 밖을 가리키는 wiki 경로가 거부되고, 폴더를 바꾸면 이전 색인을 쓰지 않습니다.**<br>wiki 루트를 해석된 경로로 reference_roots와 비교하고(중간 링크 우회 차단), 저장된 색인의 루트가 현재 루트와 다르면 사용 가능으로 표시하지 않는다 |
+| 06:10 | [`e9b12e2`](https://github.com/ehojune/bioinfo-team-3d/pull/1039/commits/e9b12e2) | **wiki 시험이 Windows CI 목록에 들어가 CI가 통과합니다.**<br>새 시험 tests/test_wiki_index.py를 Windows inventory(config/ci)의 검토된 목록에 등록한다 |
+| 05:30 | [`0b520c1`](https://github.com/ehojune/bioinfo-team-3d/pull/1039/commits/0b520c1) | **내 LLM-wiki 폴더를 읽기 전용으로 연결해 색인하고 노트마다 출처를 달아 검색하는 명령이 생겼습니다(직원용 도구는 다음 단계).**<br>LLM-wiki 1단계: wiki 설정(기본 꺼짐), 링크·mount를 따르지 않는 walker, 변경된 문서만 갱신하는 runner 쪽 FTS5 인덱스(상대 경로·줄·hash·수정 시각·원문 DOI/PMID/URL·오래됨 표시), labhq wiki connect|status|reindex|search|disconnect, doctor wiki 행, README 한·영 |
 | 03:20 | [`3cf96bc`](https://github.com/ehojune/bioinfo-team-3d/pull/1038/commits/3cf96bc) | **잠시 끊긴 일반 실행기를 WSL 문제로 오해하지 않게 하고, 셋업이 겹쳐 돌지 않게 했습니다.**<br>WSL 셋업 카드를 native runner가 맡은 직원에는 띄우지 않고, 시간 초과 뒤에도 도는 셋업이 끝날 때까지 새 셋업을 막으며, 관리자 명령을 항목 key로 가려 동적 안내도 담는다 (#1038 리뷰 P1·P2). |
 | 03:06 | [`a865763`](https://github.com/ehojune/bioinfo-team-3d/pull/1038/commits/a865763) | **분석 전용 WSL이 준비되지 않았을 때 오래 기다리는 대신 "셋업할까요?"를 한 번 묻고, 승인하면 준비를 해 줍니다.**<br>bioinfo-agent 작업이 갈 곳이 없고 runner.wsl이 설정돼 있으면 요청마다 한 번 WSL 셋업 카드를 띄워, 승인하면 gateway가 setup을 thread에서 돌리고 남은 관리자 명령은 보여 준 뒤 요청은 기다리지 않고 멈춘다 (#612 2단계). |
 
