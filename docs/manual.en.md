@@ -1,6 +1,6 @@
 # labhq manual
 
-> English edition of [manual.md](manual.md) (Korean, the source of truth). When the Korean manual changes, update this file in the same PR. Linked documents other than the README are still in Korean.
+> English edition of [manual.md](manual.md) (Korean, the source of truth). When the Korean manual changes, update this file in the same PR. The README, PI Q&A, research protocol and vocabulary tables also have English editions; other linked documents (HANDOFF, `reference/` and so on) are still in Korean.
 
 If you are new, start with "Getting started on the web" in the [README](../README.en.md). This document comes after that: command line, configuration, safety measures, the research lane, known limits.
 The PI's questions and decisions are in [PI Q&A](pi-qa.en.md); development rules and the work queue are in [AGENTS.md](../AGENTS.md) and [HANDOFF.md](../HANDOFF.md) (Korean).
