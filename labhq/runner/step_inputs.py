@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import uuid
 from pathlib import Path
 
@@ -19,6 +20,118 @@ from ..util import INPUT_STEP_ID, output_relpath
 
 INVENTORY = '.labhq-inputs.json'
 MAX_FILES = 200
+
+
+def validate_runner_env(root, source, artifact, expected):
+    """Validate a collected runner manifest and its local venv; do not expose an alias.
+
+    ``expected`` must come from the pinned plan, never from the manifest itself. This is
+    a validation primitive: the caller must keep the source protected for its lifetime.
+    """
+    root = Path(root).resolve(strict=True)
+    source = Path(source).absolute()
+    parts = source.relative_to(root).parts
+    if not parts or source != source.resolve(strict=True):
+        raise ValueError('environment source is not a plain workspace')
+    if not isinstance(expected, dict):
+        raise ValueError('pinned environment mapping is missing')
+    runtime = expected.get('runtime')
+    python = {'windows': '.venv/Scripts/python.exe', 'linux': '.venv/bin/python',
+              'wsl': '.venv/bin/python'}.get(runtime if isinstance(runtime, str) else None)
+    if python is None:
+        raise ValueError('invalid pinned runtime')
+    if (type(expected.get('version')) is not int or expected['version'] != 1 or
+            expected.get('venv_path') != '.venv' or expected.get('python_path') != python):
+        raise ValueError('invalid pinned environment contract')
+    for key in ('logical_step_id', 'step_id'):
+        value = expected.get(key)
+        if not isinstance(value, str) or not INPUT_STEP_ID.fullmatch(value) or value != value.rstrip(' .'):
+            raise ValueError('invalid pinned environment identity')
+    runner = expected.get('runner_id')  # compared, never a path: any runner.id the settings accept
+    if not isinstance(runner, str) or not 0 < len(runner) <= 256:
+        raise ValueError('invalid pinned environment identity')
+    path = 'outputs/env/runner-manifest.json'
+    if path not in artifact.get('outputs', []):
+        raise ValueError('collected environment manifest is missing')
+    digest = artifact.get('output_sha256', {}).get(path)
+    if not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest):
+        raise ValueError('environment manifest hash is missing')
+    with _folder(root, (*parts, 'outputs', 'env')) as held:
+        with os.fdopen(held.open_read_file('runner-manifest.json'), 'rb') as opened:
+            if os.fstat(opened.fileno()).st_nlink != 1:
+                raise ValueError('environment manifest is hard-linked')
+            data = opened.read(1024 * 1024 + 1)
+    if len(data) > 1024 * 1024 or hashlib.sha256(data).hexdigest() != digest:
+        raise ValueError('environment manifest hash differs')
+    manifest = json.loads(data)
+    contract = {'version': 1, 'logical_step_id': expected['logical_step_id'],
+                'step_id': expected['step_id'], 'runner_id': expected['runner_id'],
+                'runtime': runtime, 'venv_path': '.venv', 'python_path': python}
+    if (not isinstance(manifest, dict) or type(manifest.get('version')) is not int or
+            any(manifest.get(key) != value for key, value in contract.items())):
+        raise ValueError('environment manifest differs from pinned plan')
+    with _folder(root, (*parts, *python.split('/')[:-1])) as held:
+        name = python.split('/')[-1]
+        try:
+            opened = os.fdopen(held.open_read_file(name), 'rb')
+        except OSError:
+            if runtime == 'windows' or os.name == 'nt':
+                raise
+            # A standard `python -m venv` interpreter is a link; only a verified target is accepted.
+            _link_target(source / '.venv', held.readlink(name))
+        else:
+            with opened:
+                if os.fstat(opened.fileno()).st_nlink != 1:
+                    raise ValueError('environment interpreter is hard-linked')
+    return source / '.venv'
+
+
+# System runtimes an interpreter link may point to; the venv itself is always allowed.
+SYSTEM_RUNTIME_ROOTS = ('/usr/bin', '/usr/local/bin', '/usr/lib', '/bin')
+_TRUSTED_OWNER = 0
+
+
+def _link_target(venv, target):
+    """Follow a venv interpreter link by hand and accept only a plain executable inside the venv, or a
+    root-owned, not group/world-writable executable under a system runtime root."""
+    venv = os.path.realpath(venv)
+    here = os.path.join(venv, 'bin')
+    for _ in range(8):
+        current = os.path.normpath(os.path.join(here, target))
+        if current.startswith(venv + os.sep):
+            info = os.lstat(current)
+            if stat.S_ISLNK(info.st_mode):
+                here, target = os.path.dirname(current), os.readlink(current)
+                continue
+            if not stat.S_ISREG(info.st_mode) or not info.st_mode & 0o111 or info.st_nlink != 1:
+                raise ValueError('environment interpreter target is not a plain executable')
+            return current
+        # Every hop outside the venv is checked on its own: the folder holding it and the link itself must be
+        # trusted, so a mutable link cannot sit in the middle of a chain that ends in a system binary.
+        folder = os.path.realpath(os.path.dirname(current))
+        real = os.path.join(folder, os.path.basename(current))
+        root = next((r for r in map(os.path.realpath, SYSTEM_RUNTIME_ROOTS)
+                     if folder == r or folder.startswith(r + os.sep)), None)
+        if root is None:
+            raise ValueError('environment interpreter target is outside the allowed runtime')
+        probe = folder
+        while True:
+            info = os.lstat(probe)
+            if info.st_uid != _TRUSTED_OWNER or info.st_mode & 0o022:
+                raise ValueError('environment interpreter runtime folder is not trusted')
+            if probe == root:
+                break
+            probe = os.path.dirname(probe)
+        info = os.lstat(real)
+        if info.st_uid != _TRUSTED_OWNER:
+            raise ValueError('environment interpreter target is not a trusted executable')
+        if stat.S_ISLNK(info.st_mode):
+            here, target = folder, os.readlink(real)
+            continue
+        if not stat.S_ISREG(info.st_mode) or not info.st_mode & 0o111 or info.st_mode & 0o022:
+            raise ValueError('environment interpreter target is not a trusted executable')
+        return real
+    raise ValueError('environment interpreter link chain is too long')
 
 
 def _parts(name):

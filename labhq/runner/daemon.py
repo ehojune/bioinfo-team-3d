@@ -809,19 +809,27 @@ class Runner:
         except Exception:
             log.warning("task %s breaker stage %s not applied", task_id, stage, exc_info=True)
             how = "failed"
-        record = breaker.stage_record(stage, how, hard_stop=hard_stop)
+        ladder = self.breakers.get(task_id)
+        record = breaker.stage_record(stage, how, hard_stop=hard_stop, episode=ladder.episode_id if ladder else None)
         base = dict(task_id=task_id, agent_id=agent_id, request_id=request_id)
         await self.emit(Event(type="agent.breaker", data=record, **base))
         await self.emit(Event(type="agent.log", data={"level": "alert", "text": stage_text(record)}, **base))
         if halted:  # the staff sheet reads the restriction and a breaker halt from agent.control, like the PI's own
             await self.emit(Event(type="agent.control", data={**halted, "source": "breaker"}, **base))
 
-    async def _announce_breaker_release(self, task_id: str) -> None:
-        """Say the PI lifted the restriction (the ladder was already reset by ``_on_control``)."""
-        record = {"stage": "normal", "enforcement": "released", "mode": "enforce", "signal": None}
+    async def _announce_breaker_release(self, task_id: str, command_id: str = "", *, changed: bool = True,
+                                        enforcement: str = "released") -> None:
+        """Say the PI lifted the restriction (the ladder was already reset by ``_on_control``). With a ``command_id``
+        this is also the acknowledgement the gateway waits for: ``released`` (applied now or by an earlier send of the
+        same command) or ``stale`` (the command named an earlier restriction and was not applied)."""
+        ladder = self.breakers.get(task_id)
+        record = {"stage": ladder.policy.stage if ladder else "normal", "enforcement": enforcement, "mode": "enforce",
+                  "signal": None, **({"command_id": command_id} if command_id else {}),
+                  **({"episode": ladder.episode_id} if ladder else {})}
         base = dict(task_id=task_id, agent_id=self.controls.agent_of(task_id), request_id=self.task_req.get(task_id))
         await self.emit(Event(type="agent.breaker", data=record, **base))
-        await self.emit(Event(type="agent.log", data={"level": "info", "text": stage_text(record)}, **base))
+        if changed and enforcement == "released":
+            await self.emit(Event(type="agent.log", data={"level": "info", "text": stage_text(record)}, **base))
 
     CONTROL_RETRY_S = (0.2, 1.0)  # waits before the second and third attempt; then the gateway's resend takes over
 
@@ -836,6 +844,15 @@ class Runner:
         # Reset the ladder before the hook is released: a tool event arriving meanwhile must not climb from constrain to
         # stop and halt the task the PI is freeing (PR #995 review).
         ladder = self.breakers.get(tid) if msg.get("action") == "release_constraint" else None
+        command = str(msg.get("command_id") or "")
+        if ladder is not None and command:
+            if command == ladder.last_command:  # a resend of a command already applied: nothing changes, only re-ack
+                await self._announce_breaker_release(tid, command, changed=False)
+                return
+            episode = msg.get("episode")
+            if isinstance(episode, str) and episode != ladder.episode_id:  # meant for an earlier restriction or run
+                await self._announce_breaker_release(tid, command, changed=False, enforcement="stale")
+                return
         released = bool(ladder and ladder.release())
         for wait in (0.0, *self.CONTROL_RETRY_S):
             if wait:
@@ -858,7 +875,10 @@ class Runner:
             return
         base["agent_id"] = self.controls.agent_of(tid) or base["agent_id"]
         await self.emit(Event(type="agent.control", data=summary, **base))
-        if released:
+        if ladder is not None and command:
+            ladder.last_command = command
+            await self._announce_breaker_release(tid, command, changed=released)
+        elif released:
             await self._announce_breaker_release(tid)
         note = self._control_note(summary)
         if note:
@@ -1544,7 +1564,63 @@ class Runner:
         drop()
         return False
 
+    def _environment_refusal_reason(self, task: Task) -> str | None:
+        bindings = task.meta.get("environment_bindings", [])
+        if isinstance(bindings, list) and not bindings:
+            return None
+        prefix = "runner environment inputs unavailable: "
+        if not isinstance(bindings, list):
+            return prefix + "invalid bindings"
+        steps = task.meta.get("upstream_steps")
+        artifacts = task.meta.get("upstream_artifacts")
+        if not isinstance(steps, dict) or not isinstance(artifacts, dict):
+            return prefix + "ancestor mapping missing"
+        runtime = ("wsl" if self.s.runner.environment == "wsl" else
+                   "windows" if sys.platform == "win32" else "linux")
+        for binding in bindings:
+            if not isinstance(binding, dict):
+                return prefix + "invalid binding"
+            python = {"windows": ".venv/Scripts/python.exe", "linux": ".venv/bin/python",
+                      "wsl": ".venv/bin/python"}.get(binding.get("runtime") if isinstance(binding.get("runtime"), str) else None)
+            identities = (binding.get("logical_step_id"), binding.get("step_id"))
+            runner_id = binding.get("runner_id")
+            if (type(binding.get("version")) is not int or binding["version"] != 1 or
+                    python is None or binding.get("venv_path") != ".venv" or
+                    binding.get("python_path") != python or
+                    any(not isinstance(x, str) or not INPUT_STEP_ID.fullmatch(x) or x != x.rstrip(" .")
+                        for x in identities) or not isinstance(runner_id, str) or not 0 < len(runner_id) <= 256):
+                return prefix + "invalid binding contract"
+            if binding["runner_id"] != self.s.runner.id or task.meta.get("session_runner") != self.s.runner.id:
+                return prefix + "runner mismatch"
+            if binding["runtime"] != runtime:
+                return prefix + "runtime mismatch"
+            sid = binding["step_id"]
+            artifact = artifacts.get(sid)
+            if (not isinstance(steps.get(sid), str) or not steps[sid] or
+                    not isinstance(artifact, dict) or not isinstance(artifact.get("task_id"), str) or
+                    not artifact["task_id"] or artifact.get("workdir") != steps[sid]):
+                return prefix + "ancestor mapping mismatch"
+        # Neither task metadata nor accepted_task's finished marker establishes success.
+        # Do not call validate_runner_env on untrusted paths or create an alias until a
+        # runner-verifiable success receipt and protected lifetime are implemented.
+        return prefix + "successful ancestor receipt and protected alias capability are unverified"
+
+    async def _refuse_unprotected_environment(self, task: Task) -> TaskResult | None:
+        error = self._environment_refusal_reason(task)
+        if error is None:
+            return None
+        result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=error,
+                            cost_usd=0.0, cost_known=True)
+        base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
+        await self.emit_all([
+            Event(type="agent.status", data={"state": "error", "error": error}, **base),
+            Event(type="task.result", data=result.model_dump(mode="json"), **base)])
+        return result
+
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
+        refusal = await self._refuse_unprotected_environment(task)
+        if refusal is not None:
+            return refusal
         if paper2agent.disabled_task(self.s, task):
             result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                                 error="recruitment and Paper2Agent are disabled (recruit.enabled=false)")
@@ -1653,6 +1729,9 @@ class Runner:
                 "작업 폴더 밖이라 쓰기는 평소처럼 승인을 거칠 수 있습니다.")
 
     async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
+        refusal = await self._refuse_unprotected_environment(task)
+        if refusal is not None:
+            return refusal
         # Recheck after asynchronous preparation, and protect internal/direct callers too.
         if paper2agent.disabled_task(self.s, task):
             result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,

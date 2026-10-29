@@ -86,6 +86,12 @@ class HeldDir:
         with other:
             return other.ident == self.ident
 
+    def readlink(self, name: str) -> str:
+        """The target text of the link `name` in this held folder (POSIX only; OSError when it is not a link)."""
+        if os.name == "nt":
+            raise OSError(errno.ENOSYS, "links are not read on Windows")
+        return os.readlink(name, dir_fd=self._handle)
+
     def open_read_file(self, name: str) -> int:
         """Open a regular child file for reading relative to this held folder, without following a link."""
         if os.name == "nt":

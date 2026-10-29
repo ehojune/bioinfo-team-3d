@@ -68,7 +68,7 @@ from ..recruit.provenance import (consult_refusal, external_contract_conflicts, 
 from ..research.packs import (assess_pack_applicability, configured_packs, normalize_pack_keys, pack_refs,
                               pack_snapshot, packs_for_snapshot, render_pack_catalog, render_pack_review,
                               select_applied_packs, select_legacy_applied_packs)
-from ..util import clip, extract_json, input_relpath, output_relpath, short
+from ..util import INPUT_STEP_ID, clip, extract_json, input_relpath, output_relpath, short
 from .. import vocab as output_vocab
 from ..recruit import paper_skills, planning as recruit_planning
 from ..bioinfo_policy import BIOINFO_ASSIGNMENT_RULE
@@ -457,6 +457,110 @@ PI_CARD_QUESTION_RULE = "Each question must fit the PI's phone card: at most 700
 # One environment per request (2nd mock trial 2026-10-03): steps that each built a venv duplicated installs, and
 # a later step could not add a package to another step's environment.
 ENV_LOCK_OUTPUT = OUTPUT_ENV_DIR + "requirements.lock.txt"
+ENV_MANIFEST_OUTPUT = OUTPUT_ENV_DIR + "runner-manifest.json"
+
+
+def split_runner_environments(steps: list[dict], agent_runner: dict[str, str],
+                              runner_runtime: dict[str, str], can_create: Callable[[str], bool]) -> list[dict]:
+    """Prepare runner-local environment steps; never mutate the source plan.
+
+    This helper requires already validated dependencies and explicit capability evidence.
+    Its caller must persist the returned bindings and pin every bound dispatch.
+    """
+    planned = copy.deepcopy(steps)
+    used = {s["id"] for s in planned}
+    envs = [s for s in planned if ENV_LOCK_OUTPUT in s.get("outputs", [])]
+    if len(envs) > 1:
+        raise ValueError("multiple logical environment steps need an explicit replan")
+    for env in envs:
+        logical = env["id"]
+        if not INPUT_STEP_ID.fullmatch(logical):
+            raise ValueError(f"environment {logical}: invalid step ID")
+        consumers = [s for s in planned if s is not env and _reaches(planned, s["id"], logical)]
+        if not consumers:
+            raise ValueError(f"environment {logical}: no direct consumers")
+        groups: dict[str, list[dict]] = {}
+        for step in consumers:
+            runner = agent_runner.get(step["agent_id"])
+            if (not isinstance(runner, str) or not 0 < len(runner) <= 256
+                    or runner_runtime.get(runner) not in {"windows", "linux", "wsl"}):
+                raise ValueError(f"step {step['id']}: runner or runtime unknown")
+            groups.setdefault(runner, []).append(step)
+        clones = []
+        for index, (runner, members) in enumerate(groups.items()):
+            candidates = [env["agent_id"], *(s["agent_id"] for s in members)]
+            eligible = next((agent for agent in candidates
+                             if agent_runner.get(agent) == runner and can_create(agent)), None)
+            if eligible is None:
+                raise ValueError(f"environment {logical}: no authorized creator on runner {runner}")
+            clone_id = logical if index == 0 else f"env_{hashlib.sha256((logical + chr(0) + runner).encode()).hexdigest()[:24]}"
+            if index and clone_id in used:
+                raise ValueError(f"environment clone ID collision: {clone_id}")
+            used.add(clone_id)
+            runtime = runner_runtime[runner]
+            python_path = ".venv/Scripts/python.exe" if runtime == "windows" else ".venv/bin/python"
+            binding = {"version": 1, "logical_step_id": logical, "step_id": clone_id,
+                       "runner_id": runner, "runtime": runtime, "venv_path": ".venv", "python_path": python_path}
+            clone = copy.deepcopy(env)
+            clone.update(id=clone_id, agent_id=eligible, environment_binding=binding)
+            clone["outputs"] = list(dict.fromkeys([*clone["outputs"], ENV_MANIFEST_OUTPUT]))
+            clone["instruction"] += ("\nCreate the runner-local environment and write this exact JSON object to "
+                                     f"{ENV_MANIFEST_OUTPUT}: {json.dumps(binding, ensure_ascii=True)}")
+            clones.append(clone)
+            for step in members:
+                step["depends_on"] = [clone_id if d == logical else d for d in step["depends_on"]]
+                if clone_id not in step["depends_on"]:
+                    step["depends_on"].append(clone_id)
+                step.setdefault("environment_bindings", []).append(copy.deepcopy(binding))
+        position = planned.index(env)
+        planned[position:position + 1] = clones
+    return planned
+
+
+def environment_runner_pin(step: dict) -> str | None:
+    """Fail closed on malformed or conflicting persisted environment bindings."""
+    bindings = step.get("environment_bindings", [])
+    if "environment_binding" in step:
+        bindings = [*bindings, step["environment_binding"]] if isinstance(bindings, list) else None
+    if not isinstance(bindings, list):
+        raise ValueError("invalid environment bindings")
+    runners = set()
+    for item in bindings:
+        if not isinstance(item, dict):
+            raise ValueError("invalid environment binding")
+        runtime = item.get("runtime")
+        runner = item.get("runner_id")
+        expected_python = ".venv/Scripts/python.exe" if runtime == "windows" else ".venv/bin/python"
+        if (type(item.get("version")) is not int or item["version"] != 1
+                or not isinstance(runtime, str) or runtime not in {"windows", "linux", "wsl"}
+                or any(not isinstance(item.get(key), str) or not INPUT_STEP_ID.fullmatch(item[key])
+                       for key in ("logical_step_id", "step_id"))
+                or not isinstance(runner, str) or not 0 < len(runner) <= 256
+                or item.get("venv_path") != ".venv" or item.get("python_path") != expected_python):
+            raise ValueError("invalid environment binding")
+        runners.add(runner)
+    if len(runners) > 1:
+        raise ValueError("conflicting environment runners")
+    return next(iter(runners), None)
+
+
+def validate_environment_bindings(steps: list[dict]) -> None:
+    """Check saved assignments without consulting today's possibly changed roster."""
+    by_id = {s["id"]: s for s in steps}
+    for step in steps:
+        environment_runner_pin(step)
+        binding = step.get("environment_binding")
+        if binding is not None:
+            if (binding["step_id"] != step["id"] or ENV_LOCK_OUTPUT not in step.get("outputs", [])
+                    or ENV_MANIFEST_OUTPUT not in step.get("outputs", [])):
+                raise ValueError(f"step {step['id']}: invalid environment producer")
+        for item in step.get("environment_bindings", []):
+            producer = by_id.get(item["step_id"])
+            if (not producer or producer.get("environment_binding") != item
+                    or item["step_id"] not in step.get("depends_on", [])):
+                raise ValueError(f"step {step['id']}: environment producer mismatch")
+
+
 ENV_STEP_RULE = ("If the work needs packages the runner does not have, plan one environment step first: it creates a "
                  "virtual environment in its own workspace, installs only packages the PI approved with "
                  "`.venv/bin/python -m pip install --only-binary=:all:` (Windows: "
@@ -2137,6 +2241,7 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                    excluded: frozenset[str] | set[str] = ORCHESTRATION_ROLES, *,
                    vocab: output_vocab.Vocab | None = None, stats: dict | None = None,
                    reject_excess: bool = False,
+                   stored_environment: bool = False,
                    guard: Callable[[list[dict]], list[str]] | None = None) -> tuple[list[dict], list[str]]:
     """Steps ready to dispatch, plus warnings. With ``vocab`` (plan.declare_output_types on), each step's
     ``output_types`` is normalized against its final outputs and per-request counts go into ``stats``; without it,
@@ -2165,7 +2270,9 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                       **({"optional_outputs": [str(o) for o in s.get("optional_outputs") or []]}
                          if "optional_outputs" in s else {}),
                       **({"key_figures": [str(o) for o in s.get("key_figures") or []]}
-                         if "key_figures" in s else {})})
+                         if "key_figures" in s else {}),
+                      **({key: copy.deepcopy(s[key]) for key in ("environment_binding", "environment_bindings")
+                          if key in s} if stored_environment else {})})
         raw_types[sid] = s.get("output_types")
     problems = []
     for s in steps:
@@ -2198,6 +2305,9 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
     for s in steps:
         for other in steps:
             if other["id"] == s["id"] or other["id"] in s["depends_on"]:
+                continue
+            if stored_environment and other.get("environment_binding"):
+                # Logical IDs in manifest instructions do not create cross-runner dependencies.
                 continue
             own = set(s["outputs"])
             output_names = [o for o in other["outputs"] if producers.get(o) == [other["id"]] and o not in own]
@@ -2240,6 +2350,8 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                 queue.append(c)
     if visited != len(steps):
         raise ValueError("plan has a dependency cycle")
+    if stored_environment:
+        validate_environment_bindings(steps)
     conflicts = guard(steps) if guard else []
     if conflicts:
         raise PlanAgentError(EXTERNAL_CONTRACT_RULE + f": {conflicts}")
@@ -3137,6 +3249,31 @@ class Orchestrator:
         if kept:
             meta["output_types"] = output_types.meta_declarations(kept)
         return meta
+
+    def _prepare_runner_environments(self, steps: list[dict]) -> list[dict]:
+        agents = self.hub.agents
+
+        def can_create(agent_id: str) -> bool:
+            agent = agents.get(agent_id) or {}
+            if agent.get("engine") == "codex":
+                return agent.get("sandbox") == "workspace-write"
+            if agent.get("engine") == "claude_code":
+                builtin = agent.get("builtin_tools")
+                denied = agent.get("disallowed_tools") or []
+                return (agent.get("permission_mode") != "plan"
+                        and (builtin is None or "Bash" in builtin.split(","))
+                        and not any(x.startswith("Bash") for x in denied))
+            return False
+
+        runners = getattr(self.hub, "agent_runner", {})
+        online = getattr(self.hub, "runners", {})
+        capabilities = getattr(self.hub, "runner_capabilities", {})
+        live = {agent: runner for agent, runner in runners.items() if runner in online}
+        runtimes = {runner: caps.get("runtime_env") for runner, caps in capabilities.items()
+                    if isinstance(caps, dict)}
+        result = split_runner_environments(steps, live, runtimes, can_create)
+        validate_environment_bindings(result)
+        return result
 
     def _last_agent_session(self, request_id: str | None, agent_id: str) -> tuple[str | None, str | None]:
         candidates = []
@@ -4896,7 +5033,13 @@ class Orchestrator:
             (2026-10-08). Every ancestor's outputs are linked; only direct dependencies get their full result text.
             """
             direct = list(step["depends_on"])
-            return direct + [s["id"] for s in steps if s["id"] in ancestors[step["id"]] and s["id"] not in direct]
+            pin = environment_runner_pin(step)
+            def local_environment(s: dict) -> bool:
+                binding = s.get("environment_binding")
+                return not binding or not pin or environment_runner_pin(s) == pin
+
+            return direct + [s["id"] for s in steps if s["id"] in ancestors[step["id"]]
+                             and s["id"] not in direct and local_environment(s)]
 
         def upstream(step: dict) -> str:
             parts = []
@@ -5011,6 +5154,12 @@ class Orchestrator:
                              if d in results and results[d].ok and results[d].workdir and results[d].outputs]
             upstream_steps = {d: results[d].workdir for d in linked
                               if d in results and results[d].ok and results[d].workdir and results[d].outputs}
+            pin = environment_runner_pin(step)
+            if pin and (session_id or workdir):
+                origin = self._session_origin(rid, step["agent_id"], session_id)
+                if origin != pin:
+                    return TaskResult(task_id="", agent_id=step["agent_id"], ok=False,
+                                      error="environment runner differs from or cannot verify resumed workspace runner")
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
                         output_schema=RESEARCH_STEP_SCHEMA if research_plan else None,
                         resume_session_id=session_id if can_resume else None,
@@ -5035,6 +5184,11 @@ class Orchestrator:
                               "optional_outputs": step.get("optional_outputs", []),
                               "environment_step": ENV_LOCK_OUTPUT in [*step.get("outputs", []),
                                                                         *step.get("optional_outputs", [])],
+                              **({"session_runner": pin} if pin else {}),
+                              **({"environment_binding": step["environment_binding"]}
+                                 if "environment_binding" in step else {}),
+                              **({"environment_bindings": step["environment_bindings"]}
+                                 if "environment_bindings" in step else {}),
                               "shared_environment_protected": shared_environment_protected,
                                **({"restricted_inputs": True} if step["id"] in restricted else {}),
                                **({"general_result_contract": True} if not research_plan else {}),
@@ -6805,6 +6959,11 @@ class Orchestrator:
                     return
                 if not req.get("research_contract") and not req.get("results"):
                     await prepare_recruits()
+                    saved_steps = req["plan"]["steps"]
+                    if (any(ENV_LOCK_OUTPUT in s.get("outputs", []) for s in saved_steps)
+                            and not any("environment_binding" in s or "environment_bindings" in s
+                                        for s in saved_steps)):
+                        req["plan"]["steps"] = self._prepare_runner_environments(saved_steps)
                 if research_lane:
                     # A frozen contract resumes by its CP1 snapshot, never by a fresh applicability decision: the
                     # snapshot holds the applied packs, and a pack answered not_applicable (pre-topic, or a sentence-
@@ -6859,7 +7018,10 @@ class Orchestrator:
                     vocab = self._output_vocab()
                     steps, warnings = validate_steps(req["plan"]["steps"], known, self.cfg.max_steps,
                                                      orchestration, vocab=vocab, stats=type_stats,
-                                                     reject_excess=True)
+                                                     reject_excess=True,
+                                                     stored_environment=any(
+                                                         "environment_binding" in s or "environment_bindings" in s
+                                                         for s in req["plan"]["steps"]))
                     req["plan"] = {**req["plan"], "steps": steps,
                                    "warnings": [*(req["plan"].get("warnings") or []), *warnings]}
                     if vocab is not None:
@@ -7199,6 +7361,11 @@ class Orchestrator:
 
                     semantic_checks: list[dict[str, Any]] = []
                     for attempt in range(1, PLAN_CORRECTIONS + 2):
+                        # These are scheduler-owned fields, never model-provided runner assignments.
+                        if isinstance(plan, dict) and isinstance(plan.get("steps"), list):
+                            plan = {**plan, "steps": [
+                                {k: v for k, v in step.items() if k not in {"environment_binding", "environment_bindings"}}
+                                if isinstance(step, dict) else step for step in plan["steps"]]}
                         type_stats = {}
                         selection_problems = []
                         assessed = None
@@ -7401,6 +7568,21 @@ class Orchestrator:
                         return
                 await prepare_recruits()
                 steps = req["plan"]["steps"]
+                # A plan-only request never executes, so it must not wait for a consumer runner (#674).
+                if req["mode"] != "plan_only" and any(ENV_LOCK_OUTPUT in step.get("outputs", []) for step in steps):
+                    steps = self._prepare_runner_environments(steps)
+                    req["plan"] = {**req["plan"], "steps": steps}
+                    if research_lane:
+                        req["plan"] = validate_research_plan(
+                            req["plan"], max_steps=self.cfg.max_steps, max_branches=self.cfg.max_branches,
+                            max_branch_steps=self.cfg.max_branch_steps, active_packs=active_pack_hashes,
+                            expected_intake=intake, pack_definitions=packs).model_dump(mode="json")
+                        steps = req["plan"]["steps"]
+                    else:
+                        steps, _ = validate_steps(steps, known, self.cfg.max_steps, orchestration,
+                                                  vocab=self._output_vocab(), reject_excess=True,
+                                                  stored_environment=True, guard=self._external_guard(rid))
+                        req["plan"]["steps"] = steps
                 req["plan"] = await paper_skills.prepare_plan(
                     req["plan"], req.get("analysis_precedents") or {}, roster, rid, self.hub.s,
                     lambda task: self._step_task(rid, self.run_step(task)))
@@ -7442,6 +7624,9 @@ class Orchestrator:
                 """
                 nonlocal steps, text
                 trigger = "step_failure" if review is None else "review_revise"
+                if any("environment_binding" in s or "environment_bindings" in s for s in steps):
+                    # Completed environments cannot be silently rebound by the generic replan path.
+                    return "disabled"
                 limit = (self.cfg.max_failure_replans if trigger == "step_failure"
                          else self.cfg.max_replans)
                 # An approved research plan changes only through a new CP1 approval of its hash, never here.

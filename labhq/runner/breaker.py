@@ -8,6 +8,7 @@ tool errors in a row. Nothing here has side effects; the runner turns a trip int
 from __future__ import annotations
 
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -53,6 +54,15 @@ class Escalation:
     beat_s: float = 10.0
     clock: Callable[[], float] = time.monotonic
     _last: float | None = None
+    episode: int = 0  # counts the restrictions this task entered: a release names the one it was meant for (#1008)
+    run: str = field(default_factory=lambda: uuid.uuid4().hex[:8])  # one per task run, so a restart never reuses an id
+    last_command: str | None = None  # the release command applied last, so a resend changes nothing
+
+    @property
+    def episode_id(self) -> str:
+        """What a release command carries. A runner that restarted (or a task sent again) has a new ``run``, so a command
+        saved for the earlier run can never match a restriction of the new one."""
+        return f"{self.run}:{self.episode}"
 
     def observe(self, active: bool) -> str | None:
         if not active:
@@ -63,6 +73,8 @@ class Escalation:
         stage = self.policy.observe(signalled=True)
         if stage:
             self._last = now
+            if stage == "constrain":
+                self.episode += 1
         return stage
 
     def release(self) -> str | None:
@@ -123,14 +135,15 @@ class Breaker:
         """A signal is over its limit right now (``observe`` reports each signal's first crossing only)."""
         return self._repeats >= self.repeat_limit or self._errors >= self.error_limit
 
-    def stage_record(self, stage: str, enforcement: str, *, hard_stop: bool = False) -> dict[str, Any]:
+    def stage_record(self, stage: str, enforcement: str, *, hard_stop: bool = False,
+                     episode: str | None = None) -> dict[str, Any]:
         """The ``agent.breaker`` body for a stage change. ``enforcement`` says what really happened: ``applied``,
         ``unsupported`` (the engine has no hook, so nothing was restricted), ``off`` (stop with hardStop off),
         ``halt`` or ``released``."""
         repeat = self._repeats >= self.repeat_limit
         return {"signal": "repeat" if repeat else "tool_errors", "count": self._repeats if repeat else self._errors,
                 "tool": self._last_tool, "mode": "enforce", "stage": stage, "enforcement": enforcement,
-                "hard_stop": hard_stop}
+                "hard_stop": hard_stop, **({"episode": episode} if episode is not None else {})}
 
     def _trip(self, signal: str, count: int) -> dict[str, Any] | None:
         if signal in self._tripped:

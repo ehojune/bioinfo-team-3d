@@ -215,5 +215,81 @@ async def test_a_breaker_halt_reaches_the_gateway_as_a_pi_halt_and_a_release_wai
     await hub._push_task_state("t1")
     assert [m["action"] for m in sent if m["action"] != "halt"] == ["release_constraint"]
     sent.clear()
+    await hub._push_task_state("t1")  # no acknowledgement yet: the same command goes again
+    assert [m["action"] for m in sent if m["action"] != "halt"] == ["release_constraint"]
+
+
+def _gateway(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    hub.store.put("task", "t1", {"request_id": "r", "runner_id": "pc-a", "payload": {"agent_id": "worker"},
+                                 "accepted": True, "step_id": "s1", "kind": "step", "dispatched_at": 1.0})
+    sent = []
+
+    async def send_runner(runner_id, message):
+        sent.append(message)
+
+    hub.send_runner = send_runner
+    return hub, sent
+
+
+async def test_a_release_command_survives_a_restart_and_is_settled_by_the_runners_ack(tmp_path):
+    hub, sent = _gateway(tmp_path)
+    hub._note_breaker_event("t1", {"stage": "constrain", "episode": "run1:2"})
+    out = await hub.release_breaker("t1")
+    command = sent[0]
+    assert out["sent"] and out["command_id"] == command["command_id"] and command["episode"] == "run1:2"
+    hub2, sent2 = _gateway(tmp_path)  # a gateway restart: the unacknowledged command is still there
+    await hub2._push_task_state("t1")
+    assert [m.get("command_id") for m in sent2 if m["action"] == "release_constraint"] == [command["command_id"]]
+    hub2._note_breaker_event("t1", {"enforcement": "released", "command_id": "someone-else"})
+    assert hub2.store.get("breaker_release", "t1"), "another command's ack settles nothing"
+    hub2._note_breaker_event("t1", {"enforcement": "released", "command_id": command["command_id"]})
+    assert hub2.store.get("breaker_release", "t1") is None
+    sent2.clear()
+    await hub2._push_task_state("t1")
+    assert all(m["action"] != "release_constraint" for m in sent2), "settled: never sent again"
+
+
+async def test_the_runner_acks_a_release_once_applied_and_never_applies_a_resend_or_a_stale_one(tmp_path, monkeypatch):
+    async def between(runner, ctx, i, seen):
+        if i == 8:  # the task is constrained
+            seen["episode"] = runner.breakers[ctx.task.id].episode_id
+            for command, episode in (("c1", seen["episode"]), ("c1", seen["episode"]),
+                                     ("c0", seen["episode"].split(":")[0] + ":99")):
+                await runner._on_control({"type": "task.control", "task_id": ctx.task.id,
+                                          "action": "release_constraint", "command_id": command, "episode": episode})
+                acks = [e["data"] for e in runner.sent if e["type"] == "agent.breaker" and e["data"].get("command_id")]
+                seen.setdefault("acks", []).append(acks[-1])
+
+    runner, sent, seen = _runner(tmp_path, monkeypatch, Engine.claude_code, calls=9, between=between)
+    runner.sent = sent
+    try:
+        await runner.run_task(Task(agent_id="engineer", prompt="loop", meta={"kind": "step"}))
+        first, resend, stale = seen["acks"]
+        assert (first["command_id"], first["enforcement"]) == ("c1", "released") and first["episode"] == seen["episode"]
+        assert (resend["command_id"], resend["enforcement"]) == ("c1", "released")
+        assert (stale["command_id"], stale["enforcement"]) == ("c0", "stale")
+        logs = [e["data"]["text"] for e in sent if e["type"] == "agent.log" and "차단기를 풀었어요" in e["data"].get("text", "")]
+        assert len(logs) == 1, "the resend and the stale command say nothing more"
+    finally:
+        runner.store.close()
+
+
+def test_an_episode_id_never_repeats_across_runs():
+    # A runner restart (or a task sent again) starts a new ladder; a release saved for the old run must not match it.
+    first, second = Escalation(BreakerPolicy()), Escalation(BreakerPolicy())
+    first.episode = second.episode = 1
+    assert first.episode_id != second.episode_id
+    assert first.episode_id.endswith(":1") and second.episode_id.endswith(":1")
+
+
+async def test_a_release_saved_with_a_numeric_episode_is_sent_so_it_matches_nothing(tmp_path):
+    # A row stored before episode IDs were strings must not be resent unscoped: it could free a newer restriction.
+    hub, sent = _gateway(tmp_path)
+    hub.store.put("breaker_release", "t1", {"command_id": "old", "episode": 3, "at": 1.0})
     await hub._push_task_state("t1")
-    assert all(m["action"] != "release_constraint" for m in sent), "delivered once"
+    [message] = [m for m in sent if m["action"] == "release_constraint"]
+    assert message["command_id"] == "old" and message["episode"] == "legacy"
+    assert Escalation(BreakerPolicy()).episode_id != message["episode"]

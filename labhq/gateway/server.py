@@ -344,6 +344,7 @@ class Hub:
         self.session_revision = 0
         self.session_changed = asyncio.Event()
         self.task_runner: dict[str, str] = {}
+        self.task_breaker: dict[str, dict] = {}  # the restriction (episode, stage) each task's runner last reported
         self.clients: set[WebSocket] = set()
         self.futures: dict[str, asyncio.Future] = {}
         self.attachment_waiters: dict[str, tuple[str, int, str, asyncio.Future]] = {}
@@ -2756,13 +2757,31 @@ class Hub:
             raise KeyError(tid)
         if entry.get("completed") and not entry.get("abandoned"):
             raise ValueError("이 작업은 이미 끝났어요")
-        pending = self.__dict__.setdefault("_breaker_release_pending", set())
-        sent = await self._push(tid, {"action": "release_constraint"})
-        if sent:
-            pending.discard(tid)
-        else:
-            pending.add(tid)  # sent again when the task's runner reconnects (``_push_task_state``); lost on a gateway restart
-        return {"task_id": tid, "action": "release_breaker", "sent": sent}
+        # The command is stored before it is sent and stays until the runner acknowledges it (``agent.breaker`` with its
+        # ``command_id``), so a send that did not arrive, an acknowledgement that got lost, or a gateway restart all
+        # resend the same command (#1008). ``sent`` only says the frame went out; "applied" is the runner's word.
+        command = {"command_id": new_id("brel"), "episode": (self.task_breaker.get(tid) or {}).get("episode"),
+                   "at": time.time()}
+        self.store.put("breaker_release", tid, command)
+        sent = await self._push(tid, self._release_message(command))
+        return {"task_id": tid, "action": "release_breaker", "sent": sent, "queued": not sent,
+                "command_id": command["command_id"]}
+
+    @staticmethod
+    def _release_message(command: dict) -> dict:
+        episode = command.get("episode")
+        if episode is not None and not isinstance(episode, str):
+            episode = "legacy"  # saved by an earlier release as a bare number: it can match nothing, so it is answered stale
+        return {"action": "release_constraint", "command_id": command["command_id"],
+                **({"episode": episode} if episode is not None else {})}
+
+    def _note_breaker_event(self, tid: str, data: dict) -> None:
+        """Remember which restriction the task is in, and settle the release command its acknowledgement names."""
+        if isinstance(data.get("episode"), str):
+            self.task_breaker[tid] = {"episode": data["episode"], "stage": data.get("stage")}
+        command = self.store.get("breaker_release", tid)
+        if command and data.get("command_id") == command.get("command_id"):
+            self.store.delete("breaker_release", tid)
 
     async def _control_task(self, tid: str, action: str, text: str | None = None) -> dict:
         """Steer, pause, resume or halt through task ``tid`` (#59 ①). The step it belongs to owns the request: steers wait
@@ -2888,9 +2907,9 @@ class Hub:
             return
         if entry.get("halt_requested"):
             await self._push(tid, {"action": "halt"})
-        pending = self.__dict__.get("_breaker_release_pending")
-        if pending and tid in pending and await self._push(tid, {"action": "release_constraint"}):
-            pending.discard(tid)
+        command = self.store.get("breaker_release", tid)
+        if command:
+            await self._push(tid, self._release_message(command))  # kept until the runner acknowledges it
         key = self._entry_step(tid, entry)
         state = self._step(key)
         # Send both values: a resume sent while disconnected must clear the runner's old pause on reconnect.
@@ -3538,8 +3557,10 @@ class Hub:
                 _, cancelled = await self._update_step(key, nack)
                 if cancelled:
                     raise asyncio.CancelledError
-        if typ == "agent.breaker" and msg.get("task_id") and (msg.get("data") or {}).get("enforcement") == "halt":
-            await self._note_runner_halt(msg["task_id"])
+        if typ == "agent.breaker" and msg.get("task_id"):
+            self._note_breaker_event(msg["task_id"], msg.get("data") or {})
+            if (msg.get("data") or {}).get("enforcement") == "halt":
+                await self._note_runner_halt(msg["task_id"])
         if typ == "agent.control" and msg.get("task_id"):  # the staff sheet's paused/halted line survives a reload
             await self._control_state(msg["task_id"], msg.get("data") or {}, event=msg,
                                       runner_id=runner_id, runner_seq=runner_seq)
@@ -3593,6 +3614,8 @@ class Hub:
             if task:  # steers this turn did not deliver go back to its step (#59 ①)
                 await self._settle_steers(tid, task, result.control)
             if tid:
+                self.task_breaker.pop(tid, None)
+                self.store.delete("breaker_release", tid)  # the task ended: nothing is left to release
                 if result.error_kind == "halted":
                     await self._control_state(tid, {"paused": False, "halt": True, "halted": True}, replace=True)
                 elif waiting(result):

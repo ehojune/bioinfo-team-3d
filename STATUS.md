@@ -5,6 +5,46 @@
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
 ## 단계
+#674 후속 1: venv interpreter symlink 정책과 통합 fixture.
+
+## 한 일
+1. `validate_runner_env`: Linux·WSL에서 `.venv/bin/python`이 링크이면 직접 따라가(최대 8단계) ① venv 안의 일반 실행 파일(hard link 아님), ② `/usr/bin`·`/usr/local/bin`·`/usr/lib`·`/bin` 아래의 root 소유·group/other 쓰기 불가 실행 파일(그 루트까지의 폴더도 같은 조건)일 때만 받는다. 그 밖(루트 밖 대상, 쓰기 가능, 비실행, 순환, 체인 초과)은 거부한다. Windows 런타임은 이전처럼 링크를 거부한다. `HeldDir.readlink` 추가.
+2. 통합 fixture `tests/test_runner_env_integration_674.py` 추가(codex-worker3 작성분).
+3. manual 한·영에 허용 규칙을 적었다.
+
+## 테스트 결과
+- Windows: `test_runner_env_inputs_674.py` 50 passed, POSIX 전용 8 skipped. 통합 fixture 통과.
+- WSL Ubuntu-22.04(Python 3.10, 임시 venv): 같은 test 파일 58 passed(링크 test 8개 포함).
+- 실측 smoke(기존 smoke 재실행): 표준 `python3 -m venv` 결과(`python → python3 → /usr/bin/python3.10`)가 **통과**, 사용자 쓰기 가능 대상 링크는 거부, 임시 폴더 삭제 확인. 스크립트: `D:\.labhq\dev\tmp\claude-worker3\wsl_smoke2.py`.
+- 미검증: 다른 배포판·conda·pyenv(거부됨), 실행 중 링크 교체(TOCTOU: 검증 primitive는 호출자가 보호를 유지해야 함), 실제 엔진 쓰기 보호, daemon 입력 연결.
+
+## 바꾼 파일
+labhq/runner/step_inputs.py, labhq/adapters/held_dir.py, tests/test_runner_env_inputs_674.py, tests/test_runner_env_integration_674.py, docs/manual.md, docs/manual.en.md, 패치노트·이 파일.
+
+🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+# 해제 episode의 실행별 ID (#1008)
+
+| 항목 | 내용 |
+|---|---|
+| 문제 | runner 메모리의 episode 카운터는 재시작·task 재전송 때 0부터 다시 센다. 이전 실행의 해제 명령(episode N)이 새 실행의 N번째 제한에 맞으면 잘못 풀린다 |
+| 방식 | 저장하지 않고 ID를 바꾼다. `Escalation.run`(실행마다 새 값) + 카운터 = `episode_id`(문자열). 이전 실행의 명령은 어떤 새 제한과도 맞지 않아 `stale` |
+| 바뀐 곳 | `runner/breaker.py`, `runner/daemon.py`, `gateway/server.py`(episode를 문자열로), manual 한·영 |
+| 시험 | `tests/test_breaker_enforcement.py` 갱신·추가 |
+| 미확인 | 실제 runner 재시작·network E2E |
+
+# 해제 ACK·durable 재전송 (#1008)
+
+| 항목 | 내용 |
+|---|---|
+| 명령 | `Hub.release_breaker`가 `command_id`·`episode`를 만들어 `store`(`breaker_release`)에 저장한 뒤 보낸다. `sent`는 전송 사실일 뿐 |
+| 재전송 | `_push_task_state`(연결·배정·gateway 재시작)가 ACK 전까지 같은 명령을 다시 보낸다. task 종료 때 만료 |
+| ACK | runner가 `agent.breaker`에 `command_id`와 `released`/`stale`을 담아 답한다. gateway `_note_breaker_event`가 같은 ID일 때만 명령을 지운다 |
+| runner | `Escalation.episode`(constrain 진입마다 +1), `last_command`. 재전송은 재적용하지 않고 다시 ACK, 다른 episode는 `stale` |
+| 시험 | `tests/test_breaker_enforcement.py`(+2, 1 수정) |
+| 미확인 | 실제 network E2E, runner 재시작 뒤 복구(runner 메모리의 episode·last_command는 재시작 시 초기화), CSO 승인, compaction |
+
+## 단계
 #809 2차: research_protocol·pi-qa·vocabulary 영문판.
 
 ## 한 일
@@ -21,6 +61,12 @@
 docs/research_protocol.en.md, docs/pi-qa.en.md, docs/vocabulary.en.md(신규), README.en.md, docs/manual.en.md, AGENTS.md, patch_notes/entries/claude-worker3--docs-en-2.yaml, 이 파일.
 
 🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+# #674 runner 환경 입력
+
+- Runner ID, runtime과 ancestor mapping을 확인하고 receipt 또는 보호가 없으면 실행 전에 거부한다.
+- Windows 관련 회귀 87 passed. manifest helper는 독립 시험이며 daemon 연결, 실제 WSL 및 엔진 보호는 미검증이다.
+- PR #1013은 W1 선행 계약과 통합 검증을 기다리며 hold 상태다.
 
 ## 단계
 #809 1차: 영문 매뉴얼.
