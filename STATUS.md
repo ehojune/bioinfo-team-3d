@@ -33,6 +33,12 @@ labhq/runner/step_inputs.py, labhq/adapters/held_dir.py, tests/test_runner_env_i
 | 시험 | `tests/test_breaker_enforcement.py` 갱신·추가 |
 | 미확인 | 실제 runner 재시작·network E2E |
 
+# Claude sandbox boundary evidence
+
+- Adds mock-only verdict regression and a fail-closed launcher check for #666.
+- Real WSL probes, executable harness integration and effective policy evidence remain UNVERIFIED: the W1 launch contract always refuses execution.
+- Existing gates remain in place. Hold until the executable contract and disposable fixture are available and the real probes are reviewed.
+
 # 해제 ACK·durable 재전송 (#1008)
 
 | 항목 | 내용 |
