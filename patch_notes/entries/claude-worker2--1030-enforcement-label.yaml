@@ -1,0 +1,5 @@
+rows:
+- sha: df8a24d
+  at: 2026-10-29 21:43
+  text: agent.breaker의 enforcement를 단계별 실제 동작에 맞춘다 — 저절로 풀린 warn은 released, 경고·재감지는 notice (#1030 실제 세션 E2E에서 발견).
+  summary: 경고가 저절로 풀리거나 다시 감지될 때 제한을 걸었다는 뜻의 기록이 남던 문구를 바로잡았습니다.
