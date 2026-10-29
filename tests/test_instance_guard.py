@@ -26,11 +26,12 @@ def fake_processes(monkeypatch):
 
 def make_config(path: Path, state: Path, *, port: int = PORT, token: str = "unit-client", instance: str | None = None,
                 url_host: str = "127.0.0.1", runner_state: Path | None = None,
-                runner_id: str | None = None) -> Settings:
+                runner_id: str | None = None, broker_port: int | None = None) -> Settings:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {"gateway": {"client_token": token, "runner_token": "unit-runner", "port": port,
                         "url": f"ws://{url_host}:{port}", "state_dir": str(state)},
-            "runner": {"state_dir": str(runner_state or state), "id": runner_id or f"runner-{path.stem}"}}
+            "runner": {"state_dir": str(runner_state or state), "id": runner_id or f"runner-{path.stem}",
+                       **({"broker_port": broker_port} if broker_port else {})}}
     if instance:
         data["instance"] = instance
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
@@ -548,3 +549,55 @@ def test_a_candidate_whose_state_folder_another_config_holds_is_not_the_one_runn
     assert instance_guard.check(new) == []
     record(candidate, "gateway", 4402)  # now A's own process runs there
     assert [n.key for n in instance_guard.check(new)] == ["port"]
+
+
+def test_a_second_runner_on_the_same_broker_port_is_refused_before_it_starts(tmp_path, capsys):
+    # #618 P2: everything else differs (config, state folders, runner id, gateway port), only the broker port is shared.
+    first = make_config(tmp_path / "first.yaml", tmp_path / "s1", runner_state=tmp_path / "r1", broker_port=PORT + 50)
+    second = make_config(tmp_path / "second.yaml", tmp_path / "s2", port=PORT + 1, runner_state=tmp_path / "r2",
+                         broker_port=PORT + 50)
+    assert instance_guard.claim(first, "runner") is None
+    assert instance_guard.claim(first, "runner") is None  # the same config again is not a conflict
+    refused = instance_guard.claim(second, "runner")
+    assert refused is not None and refused.blocking and refused.key == "broker_port"
+    assert str(PORT + 50) in refused.text and f'labhq -c "{first.config_path}" down' in refused.fix
+    assert not instance_guard._owner_path(second, "runner").exists(), "the refused runner claims nothing"
+    with pytest.raises(SystemExit) as stopped:
+        cli._claim_or_exit(second, "runner")
+    assert stopped.value.code == 2 and "runner.broker_port" in capsys.readouterr().err
+
+
+def test_runners_on_different_broker_ports_do_not_conflict(tmp_path):
+    first = make_config(tmp_path / "first.yaml", tmp_path / "s1", runner_state=tmp_path / "r1", broker_port=PORT + 50)
+    second = make_config(tmp_path / "second.yaml", tmp_path / "s2", port=PORT + 1, runner_state=tmp_path / "r2",
+                         broker_port=PORT + 51)
+    assert instance_guard.claim(first, "runner") is None
+    assert instance_guard.claim(second, "runner") is None
+
+
+def test_a_dead_broker_port_owner_is_recovered_and_a_refused_claim_leaves_the_record_alone(tmp_path, monkeypatch):
+    first = make_config(tmp_path / "first.yaml", tmp_path / "s1", runner_state=tmp_path / "r1", broker_port=PORT + 50)
+    second = make_config(tmp_path / "second.yaml", tmp_path / "s2", port=PORT + 1, runner_state=tmp_path / "r2",
+                         broker_port=PORT + 50)
+    assert instance_guard.claim(first, "runner") is None
+    path = instance_guard._broker_path(first)
+    before = path.read_bytes()
+    assert instance_guard.claim(second, "runner").key == "broker_port"
+    assert path.read_bytes() == before and json.loads(before)["config"] == first.config_path
+    monkeypatch.setattr(cli, "_process_created", lambda pid: "a-later-process")  # the first runner has exited
+    assert instance_guard.claim(second, "runner") is None
+    assert json.loads(path.read_text(encoding="utf-8"))["config"] == second.config_path
+
+
+def test_the_same_configs_other_live_runner_keeps_its_broker_record(tmp_path):
+    # #618 review: a second launch of the same config must not take over the first runner's record.
+    config = make_config(tmp_path / "a.yaml", tmp_path / "s", runner_state=tmp_path / "r", broker_port=PORT + 60)
+    assert instance_guard.claim(config, "runner") is None
+    path = instance_guard._broker_path(config)
+    held = json.loads(path.read_text(encoding="utf-8"))
+    held["pid"] += 1  # another live process of this same config
+    held["created"] = f"gen-{held['pid']}"
+    path.write_text(json.dumps(held), encoding="utf-8")
+    before = path.read_bytes()
+    assert instance_guard.claim(config, "runner") is None
+    assert path.read_bytes() == before
