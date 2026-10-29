@@ -1586,7 +1586,8 @@ class Runner:
                     or binding[key] != binding[key].rstrip(" .") for key in ("logical_step_id", "step_id")) or
                 not isinstance(runner_id, str) or not 0 < len(runner_id) <= 256):
             return prefix + "invalid binding contract"
-        if runner_id != self.s.runner.id or task.meta.get("session_runner") not in {None, self.s.runner.id}:
+        session = task.meta.get("session_runner")  # compared, never hashed: it may be any JSON value
+        if runner_id != self.s.runner.id or (session is not None and session != self.s.runner.id):
             return prefix + "runner mismatch"
         if binding["runtime"] != runtime:
             return prefix + "runtime mismatch"
