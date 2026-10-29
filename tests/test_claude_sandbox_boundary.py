@@ -6,6 +6,7 @@ The real launcher remains fail-closed until its trusted contract is available.
 
 from dataclasses import dataclass
 from enum import Enum
+import socket
 
 import pytest
 
@@ -33,6 +34,39 @@ def verdict(e: Observation) -> Verdict:
     if e.timed_out or not all((e.launched, e.command_ran, e.positive_control, e.observed)):
         return Verdict.UNVERIFIED
     return Verdict.PASS if e.expected else Verdict.FAIL
+
+
+class LoopbackWitness:
+    """Disposable listener: silence is meaningful only after a control hit."""
+
+    def __enter__(self):
+        self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen(4)
+        return self
+
+    def __exit__(self, *_):
+        self.listener.close()
+
+    @property
+    def address(self):
+        return self.listener.getsockname()
+
+    def saw_connection(self, timeout):
+        self.listener.settimeout(timeout)
+        try:
+            connection, _ = self.listener.accept()
+        except socket.timeout:
+            return False
+        with connection:
+            return True
+
+
+def test_loopback_witness_distinguishes_control_from_no_connection():
+    with LoopbackWitness() as witness:
+        with socket.create_connection(witness.address, timeout=1):
+            assert witness.saw_connection(1)
+        assert not witness.saw_connection(0.05)
 
 
 @pytest.mark.parametrize("missing", ["launched", "command_ran", "positive_control", "observed"])

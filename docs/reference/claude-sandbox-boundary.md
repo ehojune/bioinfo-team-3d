@@ -10,6 +10,10 @@ interface. A successful return deliberately fails the test until real probe
 execution is implemented and reviewed. This is a launch blocker, not a
 sandbox denial. Run the classification tests in a checkout with pytest:
 
+The test also checks a local loopback listener with a control connection. It is
+only a harness component; it is not connected to a sandboxed engine. Listener
+silence alone does not prove denial or that a command ran.
+
 ```sh
 python -m pytest -q -rs tests/test_claude_sandbox_boundary.py
 ```
