@@ -1,5 +1,9 @@
 pr: 1018
 rows:
+  - sha: 0851aad
+    at: "2026-10-29 14:53"
+    summary: "실제 launcher 재현의 선행 조건을 명확히 합니다."
+    text: "docs: clarify launcher reproduction prerequisite"
   - sha: 08de79a
     at: "2026-10-29 14:51"
     summary: "Claude sandbox 경계 시험에서 실행 거부와 미검증을 구분합니다."
