@@ -26,7 +26,7 @@
 
 <p align="center"><a href="README.md">한국어</a> · <b>English</b></p>
 
-Detailed docs (manual, PI Q&A) and the web UI are in Korean.
+The [manual](docs/manual.en.md) is available in English; PI Q&A, other detailed docs and the web UI are in Korean.
 
 labhq is a bioinformatics **multi-agent orchestration platform** that runs Claude Code and Codex like **lab staff**.
 Write a request in the web office and the CSO plans it, staff split the execution, and science review leads to a report.
@@ -145,7 +145,7 @@ Records get meaning in three layers. The lower the layer, the firmer; the higher
 | Semantics | Agreements on what to judge with the tags | CP1 approved-plan hash, rule packs per topic, input-fit verdicts, report evidence anchors |
 | Ontology | Relations between tags | A few parent-child relations and an object view of provenance, owner and approval state. Computed as a shadow for now |
 
-The shadow only records. `semantics: ab` (the `labhq init` preset) gives reuse candidates to half of research requests as a reference, so the effect can be compared; the effect has not yet been evaluated. [Semantic model](docs/manual.md#%EC%9D%98%EB%AF%B8-%EB%AA%A8%EB%8D%B8%EA%B3%BC-%EC%98%A8%ED%86%A8%EB%A1%9C%EC%A7%80) · [Vocabulary, topics, checklists](docs/vocabulary.md) (Korean)
+The shadow only records. `semantics: ab` (the `labhq init` preset) gives reuse candidates to half of research requests as a reference, so the effect can be compared; the effect has not yet been evaluated. [Semantic model](docs/manual.en.md#semantic-model-and-ontology) · [Vocabulary, topics, checklists](docs/vocabulary.md) (Korean)
 
 ## Getting started on the web
 
@@ -178,7 +178,7 @@ To check a fresh install without logging in, use a new or empty folder:
 .\.venv\Scripts\python.exe scripts\clean_install_check.py --work-dir ..\labhq-clean-check
 ```
 
-That folder retains the installation, isolated state, separate stdout/stderr and `receipt.json`: each step is PASS/FAIL, while human authentication and real models are SKIP. [Commands and verdicts](docs/reference/clean-install-922.md) · [Configuration details](docs/manual.md)
+That folder retains the installation, isolated state, separate stdout/stderr and `receipt.json`: each step is PASS/FAIL, while human authentication and real models are SKIP. [Commands and verdicts](docs/reference/clean-install-922.md) · [Configuration details](docs/manual.en.md)
 
 ### 3. Start it
 
@@ -203,7 +203,7 @@ If the runner is off, a **러너 꺼짐** (Runner off) bar shows at the top of t
 4. **요청 취소** (Cancel request) stops running work and keeps a partial report of finished steps. While a request runs, **이 요청에 메모** (Note on this request) reaches the next plan or step.
 
 Pick a staff member or drag a yellow note onto a desk to give work directly. Attach GitHub URLs, DOIs, and paths with **참고** (Reference).
-[Phone access](docs/manual.md#%EB%9D%84%EC%9A%B0%EA%B8%B0%EC%99%80-%EC%A0%91%EC%86%8D) · [Screens and approvals](docs/manual.md#%EC%9B%B9-%EC%82%AC%EB%AC%B4%EC%8B%A4)
+[Phone access](docs/manual.en.md#starting-and-connecting) · [Screens and approvals](docs/manual.en.md#web-office)
 
 ## Using it safely
 
@@ -211,7 +211,7 @@ Pick a staff member or drag a yellow note onto a desk to give work directly. Att
 - Original controlled-access (DUA) data is never opened with file tools; it is handled only inside HPC jobs.
 - Staff run under the PI's account, but personal paths such as `~/.ssh` and browser profiles are hidden. Claude staff have three layers of path checks. Codex staff (5 of the default 13 roles) receive sandbox read denials and guidance on Windows elevated sandbox, and guidance alone elsewhere. The path guard is not a sandbox, so it cannot stop a staff member that is determined.
 
-Details are in [Safety measures](docs/manual.md#%EC%95%88%EC%A0%84-%EC%9E%A5%EC%B9%98).
+Details are in [Safety measures](docs/manual.en.md#safety-measures).
 
 ## Roadmap
 
@@ -225,7 +225,7 @@ Details are in [Safety measures](docs/manual.md#%EC%95%88%EC%A0%84-%EC%9E%A5%EC%
 | v1 | Another researcher solves up to two research problems on their own controlled data |
 | v1.25 | Goes beyond research to write papers |
 
-Each version has pass criteria, and meeting them moves it on to the next version. Features merged since the v0.5 declaration passed tests and CI; their behavior and scientific benefit on real research requests remain unverified. The criteria, current status, and remaining work are in the [manual's roadmap](docs/manual.md#%EB%A1%9C%EB%93%9C%EB%A7%B5).
+Each version has pass criteria, and meeting them moves it on to the next version. Features merged since the v0.5 declaration passed tests and CI; their behavior and scientific benefit on real research requests remain unverified. The criteria, current status, and remaining work are in the [manual's roadmap](docs/manual.en.md#roadmap).
 
 Facilities support requirements and readiness evidence are distinguished in the [support policy table](docs/reference/facilities-support-983.md) (Korean). A doctor readiness result does not prove that a support request or recovery succeeded.
 
@@ -233,7 +233,7 @@ Facilities support requirements and readiness evidence are distinguished in the 
 
 | Document | Who it is for |
 |---|---|
-| [Manual](docs/manual.md) | Readers who want depth: command line, config, safety measures, the research lane, known limits |
+| [Manual](docs/manual.en.md) | Readers who want depth: command line, config, safety measures, the research lane, known limits |
 | [PI Q&A](docs/pi-qa.md) | What the PI asked, the answers, and the decisions made |
 | [Research protocol](docs/research_protocol.md) | The research lane's contract and checkpoints |
 | [References](docs/references.en.md) | Literature and projects used for design, implementation, and tool connections |
@@ -242,4 +242,4 @@ Facilities support requirements and readiness evidence are distinguished in the 
 | [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | Developers changing labhq: rules, structure, and current queue (Korean) |
 | [Reference records](docs/reference/README.md) | Evidence and historical decisions, for lookup only |
 
-The code is [GPL-3.0-or-later](LICENSE); docs, figures, and data tables are [CC BY-SA 4.0](LICENSE-CC-BY-SA-4.0.txt). Exceptions are in the [manual's license section](docs/manual.md#%EB%9D%BC%EC%9D%B4%EC%84%A0%EC%8A%A4).
+The code is [GPL-3.0-or-later](LICENSE); docs, figures, and data tables are [CC BY-SA 4.0](LICENSE-CC-BY-SA-4.0.txt). Exceptions are in the [manual's license section](docs/manual.en.md#license).
