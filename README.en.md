@@ -100,6 +100,8 @@ Limits: 42 domains beyond the first three have not run on real requests. Reduced
 
 SQLite preserves requests, steps, and approvals for resume. A request bundle gathers hash-checked outputs and code.
 
+Environment plans are split per consuming runner, and the binding is stored in the approved plan and restored on resume. The environment path alias is not enabled yet, and daemon wiring plus real WSL and engine protection are unverified.
+
 Limits: the limit/login-wait fixes have only test evidence and re-login needs a person. Bundles gather outputs from the same PC runner; verified reruns need a separate receipt. [Evidence and limits](docs/reference/readme-evidence.md#card-4)
 
 </td>
