@@ -1,0 +1,5 @@
+rows:
+- sha: 6b5346a
+  at: 2026-10-29 20:14
+  text: Claude hook 명령을 슬래시 경로를 따옴표로 감싼 형태로 만들어 Windows Git Bash에서 실행되게 한다. 만든 명령을 실제 bash로 돌리는 시험을 넣는다 (#1030).
+  summary: Windows에서 직원 제어(멈춤·방향 전달)와 폭주 차단기의 hook이 실제로 동작하지 않던 문제를 고쳤습니다.
