@@ -1,0 +1,5 @@
+rows:
+- sha: '5d05847'
+  at: 2026-10-29 16:05
+  text: 'runner 환경 입력 검증이 Linux·WSL venv의 interpreter 링크를 따라가 venv 안의 일반 실행 파일이나 root 소유의 시스템 runtime 실행 파일일 때만 받아들인다. 통합 fixture 추가, manual 영·한 반영'
+  summary: 보통 방식으로 만든 Linux·WSL venv의 환경 입력이 검증을 통과하고 그 밖의 링크는 계속 거부됩니다.
