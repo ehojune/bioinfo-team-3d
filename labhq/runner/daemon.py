@@ -1801,6 +1801,12 @@ class Runner:
             await self.emit(Event(type=typ, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
             if typ == "task.result":
                 self.breakers.pop(task.id, None)
+            if typ == "agent.compaction":
+                breaker.reset_window()
+                if escalation.compacted():
+                    await self._announce_breaker_release(task.id)
+                await self.emit(Event(type="agent.log", task_id=task.id, agent_id=agent.id, request_id=task.request_id,
+                                      data={"level": "info", "text": "컨텍스트가 압축돼 폭주 감지를 처음부터 다시 셉니다"}))
             trip = breaker.observe(typ, data)
             # Once restricted, a failing call may be the restriction's own denial, so only a repeat keeps climbing (#1008).
             signalled = breaker.repeating if escalation.policy.stage in ("constrain", "stop") else breaker.active
