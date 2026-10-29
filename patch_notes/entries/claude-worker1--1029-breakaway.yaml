@@ -1,0 +1,18 @@
+pr: 1031
+rows:
+  - sha: "4e7538d"
+    at: "2026-10-29 20:04"
+    summary: "Windows 검사에서 가끔 실패하던 Job 탈출 시험이 느린 PowerShell 첫 기동 때문에 실패하지 않도록 예열하고, 실패하면 어느 단계에서 멈췄는지 적게 했습니다."
+    text: "시험: Windows breakaway 시험 전에 WMI provider를 예열하고 실패 시 단계 요약을 남김 (#1029)"
+  - sha: "1b23b23"
+    at: "2026-10-29 20:15"
+    summary: "예열을 실제 WMI를 쓰는 두 시험에만 걸어 fake로 도는 진단 시험이 깨지지 않게 했습니다."
+    text: "시험: 예열을 owned_launch가 아니라 실제 WMI 시험 fixture로 옮김 (#1029)"
+  - sha: "1788e18"
+    at: "2026-10-29 20:25"
+    summary: "다른 시험이 직접 호출하는 시험 함수의 인자를 바꾸지 않도록 예열을 usefixtures로 걸었습니다."
+    text: "시험: 예열 fixture를 인자가 아니라 usefixtures로 걸어 직접 호출을 깨지 않음 (#1029)"
+  - sha: "ed17ce4"
+    at: "2026-10-29 20:36"
+    summary: "예열은 실제 첫 실행 조건을 가리므로 빼고, 실패 때 멈춘 단계를 적는 요약만 남겼습니다."
+    text: "시험: provider 예열을 뺌 — production cold-start 경계를 가리므로 단계 요약만 둔다 (#1029)"

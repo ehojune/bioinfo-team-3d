@@ -283,6 +283,17 @@ def _trace_call(trace, phase, function, *args, role=None, wait_ms=None, **kwargs
     return result
 
 
+def _provider_summary(events):
+    """Where the launch stopped, for a failed verdict: the direct attempt, then the provider phases and deadline."""
+    parts = []
+    for event in events:
+        provider = event.get("provider") or {}
+        phases = ",".join(f"{p['phase']}@{p['elapsed_ms']:.0f}" for p in provider.get("phases", []))
+        parts.append(f"{event['status']}" + (f"[{event.get('phase')}/{event.get('reason')}: {phases}; total_ms={provider.get('elapsed_ms')}]"
+                                              if event["status"] == "wmi_failed" else ""))
+    return " -> ".join(parts)
+
+
 @contextmanager
 def owned_launch(tmp_path, *, allow_breakaway, nested=False):
     dll = kernel()
@@ -381,7 +392,8 @@ def close_parent_job(case):
 def test_allowed_breakaway_child_survives_parent_job_close(tmp_path, capsys):
     with owned_launch(tmp_path, allow_breakaway=True) as case:
         # Denial/unknown is NOT evidence for survival. An incompatible outer host fails this positive test.
-        assert case.result["success"], "UNVERIFIED positive survival: " + json.dumps(case.events)
+        assert case.result["success"], ("UNVERIFIED positive survival: " + _provider_summary(case.events) + " :: "
+                                        + json.dumps(case.events))
         assert case.pid_file.is_file() and (tmp_path / "ready").is_file()
         case.child_handle = hold_recorded_child(case.dll, json.loads(case.pid_file.read_text()))
         assert case.child_handle, C.get_last_error()
