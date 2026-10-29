@@ -52,11 +52,17 @@ def _connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=5)
     db.executescript(SCHEMA)
+    before = (db.execute("SELECT value FROM meta WHERE key='trigram'").fetchone() or [None])[0]
     try:
         db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, tokenize='trigram')")
+        if before == "0":  # built where trigram was missing: unchanged notes would never reach the new table
+            db.execute("DELETE FROM chunks_fts")
+            db.execute("INSERT INTO chunks_fts(rowid, text) SELECT id, text FROM chunks")
         db.execute("INSERT OR REPLACE INTO meta VALUES('trigram', '1')")
+        db.commit()
     except sqlite3.OperationalError:
         db.execute("INSERT OR REPLACE INTO meta VALUES('trigram', '0')")
+        db.commit()
     return db
 
 

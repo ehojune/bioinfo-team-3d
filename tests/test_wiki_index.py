@@ -363,3 +363,25 @@ def test_an_explicitly_allowed_nested_root_may_sit_on_another_filesystem(tmp_pat
     assert walker.root_problem(settings) is None
     settings.runner.reference_roots = [str(tmp_path / "refs")]
     assert "mount point" in walker.root_problem(settings)
+
+
+def test_a_project_local_dir_does_not_authorize_a_wiki(tmp_path):
+    from labhq.settings import ProjectSettings
+
+    settings, root = make_settings(tmp_path)
+    project = tmp_path / "project"
+    shutil.copytree(FIXTURE, project / "wiki")
+    settings.runner.reference_roots = []
+    settings.projects = [ProjectSettings(id="p", repo="o/r", local_dir=str(project))]
+    settings.wiki = WikiSettings(enabled=True, root=str(project / "wiki"))
+    assert walker.root_problem(settings)
+
+
+def test_an_index_built_without_trigram_is_backfilled_when_trigram_appears(tmp_path):
+    settings, _ = make_settings(tmp_path)
+    index.reindex(settings)
+    with sqlite3.connect(index.index_path(settings)) as db:  # what a build without the tokenizer leaves behind
+        db.execute("DROP TABLE chunks_fts")
+        db.execute("INSERT OR REPLACE INTO meta VALUES('trigram', '0')")
+    assert index.reindex(settings)["unchanged"] == 7
+    assert index.search(settings, "objective response rate")[0]["rel_path"] == "kras-g12c.md"

@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ..intake import _is_link, check_reference_path, overlaps_zone, reference_roots, scan_reference_dir
+from ..intake import _is_link, check_reference_path, overlaps_zone, scan_reference_dir
 from ..runner.workspace import restricted_zones
 from ..private_paths import configured_private_paths, credential_path, inside_any
 
@@ -46,7 +46,8 @@ def root_problem(settings: Any, root: Path | None = None) -> str | None:
         return str(error)
     real = root.resolve()
     # A link in the middle of the path must not carry the folder out of the allowed roots (checked on real paths).
-    allowed_roots = [Path(r).resolve() for r in reference_roots(settings)]
+    # Only runner.reference_roots authorize a wiki; a project's local_dir (writable) does not.
+    allowed_roots = [settings.path(r).resolve() for r in settings.runner.reference_roots if r]
     holders = [a for a in allowed_roots if real == a or real.is_relative_to(a)]
     if not holders:
         return "the wiki root resolves outside runner.reference_roots"
