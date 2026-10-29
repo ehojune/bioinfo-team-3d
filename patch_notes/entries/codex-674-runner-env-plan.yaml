@@ -1,5 +1,9 @@
 pr: null
 rows:
+- sha: da063bd
+  at: 2026-10-29 14:15
+  text: scope 승인 대기 중 재시작한 계획에도 실행 전 runner별 환경 binding을 적용한다.
+  summary: 재개한 계획에도 환경 runner를 고정합니다.
 - sha: ac441fa
   at: 2026-10-29 14:07
   text: 같은 runner의 기존 환경 담당자를 유지하고 runner별 환경 계약을 manual에 반영한다.
