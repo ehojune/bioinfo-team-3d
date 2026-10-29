@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:04 | [`bc66106`](https://github.com/ehojune/bioinfo-team-3d/pull/1035/commits/bc66106) | **항상 WMI를 거치는 시험에서도 준비 단계별 시간을 기록하게 했습니다.**<br>test: WMI를 항상 거치는 nested 양성 시험도 단계 시간을 출력 (#1029) |
+| 21:54 | [`c349f42`](https://github.com/ehojune/bioinfo-team-3d/pull/1035/commits/c349f42) | **대기 시간을 바꿔도 다른 시험이 옛 값에 묶여 깨지지 않게 상수를 참조하도록 고쳤습니다.**<br>test: broker 시험이 provider 상한을 PROVIDER_TIMEOUT으로 참조 (#1029) |
+| 21:43 | [`0fefa9f`](https://github.com/ehojune/bioinfo-team-3d/pull/1035/commits/0fefa9f) | **매뉴얼에 Windows 백그라운드 실행 준비 대기 시간이 15초라고 적었습니다.**<br>docs: manual 한·영에 WMI provider 대기 상한 15 s를 반영 (#1029) |
+| 21:41 | [`fd441a9`](https://github.com/ehojune/bioinfo-team-3d/pull/1035/commits/fd441a9) | **Windows에서 첫 실행이 느린 PC도 백그라운드 실행 준비 시간을 10초 대신 15초까지 기다립니다.**<br>fix: WMI provider 제한을 요청 만료(20 s)에서 bootstrap 여유 5 s를 뺀 15 s로 두고 양성 시험이 단계 시간을 출력 (#1029) |
 | 21:40 | [`cfa258a`](https://github.com/ehojune/bioinfo-team-3d/pull/1032/commits/cfa258a) | **매뉴얼이 환경 단계의 시작 전 검사를 설명합니다.**<br>manual 한·영에 환경 단계가 시작 전에 자기 binding(runner·runtime·step)을 확인하고 어긋나면 비용 없이 거부한다는 설명을 더한다 |
 | 21:20 | [`ec88526`](https://github.com/ehojune/bioinfo-team-3d/pull/1032/commits/ec88526) | **runner가 지정되지 않은 환경 작업은 시작되지 않습니다.**<br>환경 단계 dispatch에 session_runner가 없거나 다르면 거부한다 |
 | 21:05 | [`c5c59b3`](https://github.com/ehojune/bioinfo-team-3d/pull/1032/commits/c5c59b3) | **형식이 잘못된 환경 작업이 runner를 비정상 종료시키지 않고 비용 없이 거부됩니다.**<br>환경 단계 dispatch의 session_runner가 배열·객체 같은 값이어도 해시하지 않고 비교해 runner 불일치 거부로 끝낸다 |
