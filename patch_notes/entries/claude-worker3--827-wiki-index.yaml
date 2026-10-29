@@ -1,5 +1,9 @@
 pr: 1039
 rows:
+- sha: 'd2ed7ca'
+  at: 2026-10-30 08:50
+  text: 읽기 권한이 사라진 노트는 색인에서도 지우고, wiki disconnect가 rollback journal도 지우며, 중첩된 허용 root가 있으면 mount를 건너지 않는 root를 인정한다
+  summary: 권한이 회수된 노트가 검색에 남지 않고 disconnect가 평문 조각을 남기지 않습니다.
 - sha: 'c444414'
   at: 2026-10-30 08:15
   text: policy.private_paths가 별칭이어도 실제 경로와 양방향으로 비교하고, wiki connect가 출력하는 설정 줄을 YAML serializer로 인코딩한다
