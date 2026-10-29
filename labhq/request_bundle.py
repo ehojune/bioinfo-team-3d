@@ -130,12 +130,17 @@ def _safe_output_path(raw: str) -> PurePosixPath | None:
     return path
 
 
-def _clear_owned_dir(path: Path, parent: Path) -> None:
-    """Remove only the fixed plain directory directly below the resolved request-bundle parent."""
+def _clear_owned_dir(path: Path, parent: Path, held: HeldDir | None = None) -> None:
+    """Remove only the fixed plain directory directly below the resolved request-bundle parent.
+
+    With `held` (the parent, opened once without following a link), the parent must still be that folder: a swap for a
+    symlink between the check and the delete is refused instead of deleting below the new target (#405)."""
     from .adapters.owned import is_link
 
     if not path.exists() and not path.is_symlink():
         return
+    if held is not None and not held.same_as(parent):
+        raise OSError("request bundle parent changed while the bundle was being built")
     if is_link(path) or not path.is_dir() or path.resolve().parent != parent.resolve():
         raise OSError(f"request bundle target is not a plain child directory: {path}")
     shutil.rmtree(path)
@@ -512,7 +517,11 @@ def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: lis
 def build_request_bundle(req: Mapping[str, Any], settings: Any,
                          tasks: Mapping[str, Any] | None = None,
                          runner_capabilities: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Build ``<workspace_root>/requests/<request_id>`` from the request's final stored results."""
+    """Build ``<workspace_root>/requests/<request_id>`` from the request's final stored results.
+
+    ``requests/`` is opened once, without following a link, and stays held for the whole build (#405): on Windows the
+    open handle keeps that folder, and every folder above it, from being renamed or replaced; elsewhere each delete and
+    the final replace first check that the path still names the held folder."""
     rid = str(req.get("id") or "")
     if not _SAFE_ID.fullmatch(rid):
         raise ValueError("unsafe request id for bundle")
@@ -522,9 +531,18 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     from .adapters.owned import is_link
     if is_link(requests_root) or requests_root.resolve().parent != root:
         raise OSError("request bundle parent is not a plain workspace directory")
+    with HeldDir.hold(requests_root) as requests_held:
+        return _build_request_bundle(req, settings, tasks, runner_capabilities, requests_held)
+
+
+def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[str, Any] | None,
+                          runner_capabilities: Mapping[str, Any] | None, requests_held: HeldDir) -> dict[str, Any]:
+    rid = str(req.get("id") or "")
+    root = settings.path(settings.runner.workspace_root).resolve()
+    requests_root = root / "requests"
     target = requests_root / rid
     temp = requests_root / f".{rid}.tmp"
-    _clear_owned_dir(temp, requests_root)
+    _clear_owned_dir(temp, requests_root, requests_held)
     temp.mkdir()
     rows: list[dict[str, Any]] = []
     input_rows: list[dict[str, Any]] = []
@@ -951,7 +969,9 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             writer.writeheader()
             writer.writerows(rows)
 
-        _clear_owned_dir(target, requests_root)
+        _clear_owned_dir(target, requests_root, requests_held)
+        if not requests_held.same_as(requests_root):
+            raise OSError("request bundle parent changed while the bundle was being built")
         _replace_dir(temp, target)
         return {"path": str(target), "status": bundle_status, "grade": grade, "grade_reasons": grade_reasons,
                 "not_copied": not_copied,
@@ -963,7 +983,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     except Exception:
         if temp.exists():
             try:
-                _clear_owned_dir(temp, requests_root)
+                _clear_owned_dir(temp, requests_root, requests_held)
             except OSError:
                 pass
         raise

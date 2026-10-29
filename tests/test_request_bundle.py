@@ -1754,3 +1754,63 @@ def test_a_general_bundle_has_no_claims_file(tmp_path):
     settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
     bundle = Path(build_request_bundle(request, settings, tasks)["path"])
     assert not (bundle / "claims.json").exists() and "claims.json" not in manifest_rows(bundle)
+
+
+def test_requests_folder_is_held_during_the_build_and_released_after(tmp_path):
+    """#405: the build opens requests/ once; a rename of it is refused on Windows while it runs, and nothing stays held."""
+    settings, request, _task = pending_bundle_fixture(tmp_path, "held_parent")
+    requests_dir = Path(settings.runner.workspace_root) / "requests"
+    outcome = {}
+    real_replace = request_bundle_module._replace_dir
+
+    def probe(temp, target, **kwargs):
+        try:
+            requests_dir.rename(requests_dir.with_name("requests-moved"))
+            outcome["moved"] = True
+            requests_dir.with_name("requests-moved").rename(requests_dir)  # put it back so the build can finish
+        except OSError:
+            outcome["moved"] = False
+        return real_replace(temp, target, **kwargs)
+
+    request_bundle_module._replace_dir = probe
+    try:
+        built = build_request_bundle(request, settings)
+    except OSError:
+        built = None  # POSIX: the move succeeded and the replace check refused (covered by the next test)
+    finally:
+        request_bundle_module._replace_dir = real_replace
+    if os.name == "nt":
+        assert outcome["moved"] is False and built is not None
+    after = requests_dir.with_name("requests-after")
+    requests_dir.rename(after)  # nothing holds the folder once the build ended
+    after.rename(requests_dir)
+
+
+def test_a_swapped_requests_folder_is_refused_and_nothing_below_the_new_target_is_deleted(tmp_path, monkeypatch):
+    settings, request, _task = pending_bundle_fixture(tmp_path, "swapped_parent")
+    build_request_bundle(request, settings)  # an earlier bundle: its folder is what a rebuild deletes
+    requests_dir = Path(settings.runner.workspace_root) / "requests"
+    victim_parent = tmp_path / "victim"
+    victim = victim_parent / "swapped_parent"
+    write(victim / "precious.txt", "keep")
+    real_clear = request_bundle_module._clear_owned_dir
+    swapped = {}
+
+    def swapping(path, parent, held=None):
+        if path.name == "swapped_parent" and not swapped:
+            try:
+                requests_dir.rename(requests_dir.with_name("requests-moved"))
+                os.symlink(victim_parent, requests_dir, target_is_directory=True)
+                swapped["done"] = True
+            except OSError:
+                swapped["blocked"] = True  # Windows: the held handle refuses the rename
+        return real_clear(path, parent, held)
+
+    monkeypatch.setattr(request_bundle_module, "_clear_owned_dir", swapping)
+    if os.name == "nt":
+        build_request_bundle(request, settings)  # the swap is refused and the rebuild completes
+        assert swapped.get("blocked") and (victim / "precious.txt").read_text(encoding="utf-8") == "keep"
+    else:
+        with pytest.raises(OSError, match="parent changed|not a plain"):
+            build_request_bundle(request, settings)
+        assert swapped.get("done") and (victim / "precious.txt").read_text(encoding="utf-8") == "keep"
