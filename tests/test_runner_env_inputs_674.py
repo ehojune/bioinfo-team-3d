@@ -382,14 +382,17 @@ def write_receipt(folder, request_id='req', ok=True):
 
 
 @pytest.mark.skipif(os.name != 'nt', reason='windows runtime binding')
-async def test_daemon_accepts_a_genuine_runner_local_environment(tmp_path, monkeypatch):
+async def test_daemon_validates_a_genuine_environment_but_stays_closed_without_an_alias(tmp_path, monkeypatch):
+    import labhq.runner.daemon as daemon
     root, folder, artifact, expected, manifest, save = env_fixture(tmp_path)
     expected['runner_id'] = manifest['runner_id'] = 'lab pc 1'
     save(manifest)
     write_receipt(folder)
     runner = daemon_runner(root)
+    reason = runner._environment_refusal_reason(bound_task(folder, artifact, expected))
+    assert 'protected interpreter alias is not implemented' in reason
+    monkeypatch.setattr(daemon, 'ENVIRONMENT_ALIAS_AVAILABLE', True)
     assert runner._environment_refusal_reason(bound_task(folder, artifact, expected)) is None
-    assert await runner._refuse_unprotected_environment(bound_task(folder, artifact, expected)) is None
 
 
 @pytest.mark.skipif(os.name != 'nt', reason='windows runtime binding')
@@ -416,6 +419,7 @@ async def test_daemon_refuses_an_environment_that_does_not_check_out(tmp_path, f
 
 @posix_only
 async def test_daemon_accepts_a_standard_venv_link_and_refuses_an_untrusted_one(tmp_path, monkeypatch):
+    import labhq.runner.daemon as daemon
     root, folder, artifact, expected, system, real = linux_env(tmp_path, monkeypatch)
     write_receipt(folder)
     (system / 'python3').symlink_to('python3.10')
@@ -423,6 +427,7 @@ async def test_daemon_accepts_a_standard_venv_link_and_refuses_an_untrusted_one(
     link.symlink_to(system / 'python3')
     runner = daemon_runner(root, 'runner1', 'linux')
     task = bound_task(folder, artifact, expected, 'runner1')
+    monkeypatch.setattr(daemon, 'ENVIRONMENT_ALIAS_AVAILABLE', True)
     assert runner._environment_refusal_reason(task) is None
     link.unlink()
     elsewhere = tmp_path / 'elsewhere'

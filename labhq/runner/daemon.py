@@ -275,6 +275,9 @@ def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
 _EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_emit_unit", default=None)
 
 
+# Flip only when a protected alias or read grant hands the validated runner-local interpreter to consumers.
+ENVIRONMENT_ALIAS_AVAILABLE = False
+
 class Runner:
     def __init__(self, settings: Settings):
         settings.runner.validate_wsl()
@@ -1602,7 +1605,7 @@ class Runner:
                 return prefix + "ancestor mapping mismatch"
         # Metadata alone never establishes success: the runner's own run record, the hashed manifest and the
         # interpreter in the producer's workdir must all check out. No alias to the interpreter is created, so
-        # a consumer only learns that its runner-local environment is genuine (#674).
+        # the result only tells why a consumer is (still) refused (#674).
         root = getattr(self, "ws_root", None)
         if root is None or not task.request_id:
             return prefix + "workspace or request identity unavailable"
@@ -1613,6 +1616,10 @@ class Runner:
                 validate_runner_env(root, steps[sid], artifacts[sid], binding, request_id=task.request_id)
             except (OSError, ValueError, TypeError, KeyError, AttributeError):
                 return prefix + "environment validation failed"
+        if not ENVIRONMENT_ALIAS_AVAILABLE:
+            # The validated .venv is not exposed to the consumer (no protected alias or read grant exists yet), so
+            # starting it would run without the packages the plan asked for: stay closed (#674).
+            return prefix + "environment verified but protected interpreter alias is not implemented"
         return None
 
     async def _refuse_unprotected_environment(self, task: Task) -> TaskResult | None:
