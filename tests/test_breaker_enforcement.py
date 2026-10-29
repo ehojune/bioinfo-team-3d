@@ -109,6 +109,9 @@ async def test_a_hooked_engine_is_restricted_to_read_tools_and_the_pi_can_releas
     try:
         await runner.run_task(Task(agent_id="engineer", prompt="loop", meta={"kind": "step"}))
         assert seen["constrained"] is True
+        # The staff sheet only learns of the restriction (and shows its release button) through agent.control.
+        controls = [e["data"] for e in sent if e["type"] == "agent.control"]
+        assert controls and controls[0]["constrained"] is True and controls[0]["source"] == "breaker"
         assert seen["bash"]["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert seen["after"] is False
         assert _stages(sent) == [("constrain", "applied"), ("normal", "released")]

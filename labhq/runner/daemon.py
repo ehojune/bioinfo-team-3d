@@ -797,7 +797,7 @@ class Runner:
         try:
             if stage == "constrain":
                 if hooked:
-                    await self.controls.apply({"task_id": task_id, "action": "constrain"})
+                    halted = await self.controls.apply({"task_id": task_id, "action": "constrain"})
                 else:
                     how = "unsupported"  # no hook on this engine: nothing was restricted, so never report it as done
             elif stage == "stop":
@@ -813,7 +813,7 @@ class Runner:
         base = dict(task_id=task_id, agent_id=agent_id, request_id=request_id)
         await self.emit(Event(type="agent.breaker", data=record, **base))
         await self.emit(Event(type="agent.log", data={"level": "alert", "text": stage_text(record)}, **base))
-        if halted:  # the staff sheet shows a breaker halt like the PI's own
+        if halted:  # the staff sheet reads the restriction and a breaker halt from agent.control, like the PI's own
             await self.emit(Event(type="agent.control", data={**halted, "source": "breaker"}, **base))
 
     async def _announce_breaker_release(self, task_id: str) -> None:
