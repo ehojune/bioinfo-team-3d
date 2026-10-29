@@ -14,7 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:40 | [`ed7bc66`](https://github.com/ehojune/bioinfo-team-3d/pull/1016/commits/ed7bc66) | **영문 매뉴얼의 폭주 차단기 설명을 한국어 매뉴얼과 같은 내용으로 고쳤습니다.**<br>영문 매뉴얼의 폭주 차단기 절을 한국어와 맞춘다 (#1016 리뷰 P2). |
 | 14:26 | [`bc20dee`](https://github.com/ehojune/bioinfo-team-3d/pull/1011/commits/bc20dee) | **공동 작성자 줄의 공백이 불규칙해도 모델명을 채웁니다.**<br>이름만 있는 에이전트 trailer에 모델을 채울 때 이름과 주소 사이의 공백(여러 칸·탭)을 줄에 적힌 그대로 찾아 바꾼다 (#808 봇 지적). |
+| 14:26 | [`8c677ab`](https://github.com/ehojune/bioinfo-team-3d/pull/1016/commits/8c677ab) | **제한 해제 요청이 유실돼도 서버가 확인될 때까지 다시 보내고, 이미 지나간 제한을 잘못 풀지 않게 했습니다.**<br>제한 해제에 명령 ID·episode를 달아 gateway가 저장하고, runner ACK(released·stale)를 받을 때까지 같은 명령을 재전송한다 (#1008). |
 | 14:13 | [`572d795`](https://github.com/ehojune/bioinfo-team-3d/pull/1011/commits/572d795) | **주석 글자를 자동으로 고르는 설정에서 일반 문단을 주석으로 잘못 지우지 않게 했습니다.**<br>core.commentChar=auto 에서 공동 작성자 훅이 후보 글자 전부가 아니라 커밋 템플릿 첫 줄이 알려 주는 글자만 주석으로 본다 (#808 봇 지적). |
 | 14:11 | [`2fd8feb`](https://github.com/ehojune/bioinfo-team-3d/pull/1014/commits/2fd8feb) | **영문 매뉴얼 첫머리가 현재 영문판이 있는 문서를 정확히 알려 줍니다.**<br>영문 매뉴얼 머리말의 언어 안내를 영문판 현황에 맞게 고침 |
 | 14:04 | [`2057b77`](https://github.com/ehojune/bioinfo-team-3d/pull/1011/commits/2057b77) | **커밋 편집 화면에 diff가 붙는 설정에서도 공동 작성자 표시를 바르게 읽고 diff는 건드리지 않습니다.**<br>공동 작성자 훅이 git commit -v가 붙이는 scissors 구분선 아래의 diff를 메시지로 읽지 않고 그대로 보존한다 (#808 봇 지적). |
