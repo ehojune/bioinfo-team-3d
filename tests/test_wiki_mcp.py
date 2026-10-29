@@ -121,3 +121,36 @@ def test_the_three_staff_carry_the_tool():
     for name in ("lit_scout", "biologist", "sci_reviewer"):
         text = (Path(__file__).parent.parent / "agents" / "core" / f"{name}.yaml").read_text(encoding="utf-8")
         assert re.search(r"^builtin_mcp:.*\bwiki\b", text, re.M), name
+
+
+def test_a_bad_root_is_a_fixed_code_without_the_path(wiki_mcp, monkeypatch):
+    module, log = wiki_mcp
+    bad = module.S.model_copy(update={"wiki": module.S.wiki.model_copy(update={"root": str(log.parent.parent / "gone")})})
+    monkeypatch.setattr(module, "S", bad)
+    with pytest.raises(Exception, match="root_problem") as caught:
+        call(module.search, "KRAS")
+    assert str(log.parent.parent) not in str(caught.value)
+    assert lines(log)[-1]["error"] == "root_problem"
+
+
+def test_status_is_not_logged(wiki_mcp):
+    module, log = wiki_mcp
+    call(module.status)
+    assert not log.exists()
+
+
+def test_a_bad_root_is_a_fixed_code_without_the_path(wiki_mcp, monkeypatch):
+    module, log = wiki_mcp
+    gone = log.parent.parent / "gone"
+    bad = module.S.model_copy(update={"wiki": module.S.wiki.model_copy(update={"root": str(gone)})})
+    monkeypatch.setattr(module, "S", bad)
+    with pytest.raises(Exception, match="root_problem") as caught:
+        call(module.search, "KRAS")
+    assert str(gone) not in str(caught.value) and str(log.parent.parent) not in str(caught.value)
+    assert lines(log)[-1]["error"] == "root_problem"
+
+
+def test_status_is_not_logged(wiki_mcp):
+    module, log = wiki_mcp
+    call(module.status)
+    assert not log.exists()
