@@ -1344,6 +1344,32 @@ For cleaning up test requests, only list the candidates with `python scripts/pur
 
 - **Semantic-device status**: the web restores per-request stops and warnings from the snapshot even when the events are old. A device load error that affected the plan stays in CP1 and the execution record even if a later check succeeds. The error log leaves only a fixed code and the exception class and drops the body and traceback.
 
+### Linking my LLM-wiki (#827)
+
+Attach your own LLM-wiki folder (a pile of notes) as a read-only reference. It is off by default. The folder is never pasted into a prompt whole; note pieces are searched, and the originals are never changed. **This phase covers the index and search commands only.** The staff tool and the evidence and report integration do not exist yet, and nothing was verified against a real user wiki.
+
+| Command | What it does |
+|---|---|
+| `labhq wiki connect <folder>` | Checks the folder (files to index, skipped items) and prints the `wiki:` lines to add. You add the settings yourself |
+| `labhq wiki reindex` | Re-indexes only changed notes (hashes only when size, mtime or file ID changed). Notes that vanished leave the index |
+| `labhq wiki status` | Linked or not, documents, chunks, origins, stale notes, last refresh, any connection problem. An index that belongs to another folder is not shown as usable |
+| `labhq wiki search "<query>"` | Shows note path, lines, freshness, the first 12 characters of the content hash and a snippet |
+| `labhq wiki disconnect` | Deletes the index only. The wiki folder is not touched |
+
+Settings (`wiki:`, `enabled: false` by default):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `root` | — | The wiki folder. Its **real path must be inside `runner.reference_roots`**. The connection is refused if the folder or a part of its path is a link, a mount point lies between the allowed root and the folder, or it overlaps a controlled zone, a private path, the work folder or the state folder. Below the folder, links, mounts, hidden folders and files with credential-like names are never read |
+| `external_model_allowed` | `false` | Reserved for the feature that hands note text to a staff model. Nothing uses it in this phase |
+| `extensions` | `.md`, `.txt` | v1 reads only these two (no images or PDFs) |
+| `stale_days` | 365 | A note last modified longer ago than this is marked `stale` |
+| `max_files`, `max_file_bytes` | 5,000 files · 2 MiB | Larger ones are skipped when indexing |
+
+Each note keeps: relative path, heading path, line range, whole-file sha256, modification time, the one source it points to (a DOI, PMID or URL taken from frontmatter `source:` or a body link) and `freshness` (`ok`, `stale`, `source_missing`, `disputed`; frontmatter `status: disputed|superseded` gives `disputed`). Search results are always marked `access_level: wiki_summary` and `verified_against_primary: false`: a wiki summary is not a reading of the original paper. Instructions inside a note are data and are never executed.
+
+The `wiki` row of `labhq doctor` shows the link, document count, whether an index exists and stale notes; it never builds or refreshes the index. The index is a disposable sqlite under `runner.state_dir/wiki/` on the runner side and can be deleted.
+
 ## Comparison bench
 
 The default comparison arms per the PI decision (2026-10-01, #40). A real run uses the PI machine's subscriptions.

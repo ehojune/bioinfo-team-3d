@@ -10,9 +10,9 @@
 ## 테스트 결과
 - Windows `tests/test_wiki_index.py` 17 passed·2 skipped(POSIX 링크), WSL Ubuntu-22.04 19 passed. 관련 test(`test_init_defaults`·`test_doctor`·`test_init_wizard`·`test_cli_launch`·`test_integrations`) 중 `test_doctor_warns_about_parent_session_markers_and_pi_skills` 1건이 이 PC(Claude Code 환경변수)에서 실패했고 이 변경과 무관해 보이나 main에서 직접 대조하지는 않았다.
 - 미검증: 실제 사용자 wiki(내용·크기·형식), Windows ctime 한계(기존 입력 hash 캐시와 같음), 새 내장 MCP 부착(2단계).
-- 범위에서 뺀 것: `config/labhq.example.yaml` 주석 블록(저장소와 packaged 사본이 같아야 해서 `config/` claim 없이 못 고침), manual 한·영·Windows inventory 등록(별도 claim).
+- 범위에서 뺀 것: `config/labhq.example.yaml` 주석 블록(저장소와 packaged 사본이 같아야 해서 `config/` claim 없이 못 고침, PR 4). 이후 봇 지적에 따라 manual 한·영의 1단계 범위 절과 Windows inventory 등록(`config/ci`)을 이 PR에 넣었다.
 
 ## 바꾼 파일
-labhq/settings.py, labhq/cli.py, labhq/doctor.py, labhq/wiki/(신규 3개), tests/test_wiki_index.py, tests/fixtures/wiki/(공개 fixture), README.md, README.en.md, 패치노트·이 파일.
+labhq/settings.py, labhq/cli.py, labhq/doctor.py, labhq/wiki/(신규 3개), tests/test_wiki_index.py, tests/fixtures/wiki/(공개 fixture), README.md, README.en.md, docs/manual.md, docs/manual.en.md(`내 LLM-wiki 연결` 절), config/ci/windows-boundary-v1.json(시험 등록), 패치노트·이 파일.
 
 🤖 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
