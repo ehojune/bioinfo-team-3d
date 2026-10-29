@@ -8,3 +8,7 @@ rows:
     at: "2026-10-29 14:51"
     summary: "빈 domain 목록을 strict allowlist로 잠급니다."
     text: "Require strict sandbox domain allowlist (#666)"
+  - sha: 6f348f9
+    at: "2026-10-29 14:54"
+    summary: "sandbox 정책 단위시험을 Windows inventory에 등록합니다."
+    text: "Register sandbox policy tests in Windows inventory (#666)"
