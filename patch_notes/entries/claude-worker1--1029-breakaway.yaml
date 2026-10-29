@@ -12,3 +12,7 @@ rows:
     at: "2026-10-29 20:25"
     summary: "다른 시험이 직접 호출하는 시험 함수의 인자를 바꾸지 않도록 예열을 usefixtures로 걸었습니다."
     text: "시험: 예열 fixture를 인자가 아니라 usefixtures로 걸어 직접 호출을 깨지 않음 (#1029)"
+  - sha: "ed17ce4"
+    at: "2026-10-29 20:36"
+    summary: "예열은 실제 첫 실행 조건을 가리므로 빼고, 실패 때 멈춘 단계를 적는 요약만 남겼습니다."
+    text: "시험: provider 예열을 뺌 — production cold-start 경계를 가리므로 단계 요약만 둔다 (#1029)"
