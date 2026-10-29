@@ -810,7 +810,7 @@ class Runner:
             log.warning("task %s breaker stage %s not applied", task_id, stage, exc_info=True)
             how = "failed"
         ladder = self.breakers.get(task_id)
-        record = breaker.stage_record(stage, how, hard_stop=hard_stop, episode=ladder.episode if ladder else None)
+        record = breaker.stage_record(stage, how, hard_stop=hard_stop, episode=ladder.episode_id if ladder else None)
         base = dict(task_id=task_id, agent_id=agent_id, request_id=request_id)
         await self.emit(Event(type="agent.breaker", data=record, **base))
         await self.emit(Event(type="agent.log", data={"level": "alert", "text": stage_text(record)}, **base))
@@ -825,7 +825,7 @@ class Runner:
         ladder = self.breakers.get(task_id)
         record = {"stage": ladder.policy.stage if ladder else "normal", "enforcement": enforcement, "mode": "enforce",
                   "signal": None, **({"command_id": command_id} if command_id else {}),
-                  **({"episode": ladder.episode} if ladder else {})}
+                  **({"episode": ladder.episode_id} if ladder else {})}
         base = dict(task_id=task_id, agent_id=self.controls.agent_of(task_id), request_id=self.task_req.get(task_id))
         await self.emit(Event(type="agent.breaker", data=record, **base))
         if changed and enforcement == "released":
@@ -850,7 +850,7 @@ class Runner:
                 await self._announce_breaker_release(tid, command, changed=False)
                 return
             episode = msg.get("episode")
-            if isinstance(episode, int) and episode != ladder.episode:  # meant for an earlier restriction
+            if isinstance(episode, str) and episode != ladder.episode_id:  # meant for an earlier restriction or run
                 await self._announce_breaker_release(tid, command, changed=False, enforcement="stale")
                 return
         released = bool(ladder and ladder.release())

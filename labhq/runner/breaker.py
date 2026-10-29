@@ -8,6 +8,7 @@ tool errors in a row. Nothing here has side effects; the runner turns a trip int
 from __future__ import annotations
 
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -54,7 +55,14 @@ class Escalation:
     clock: Callable[[], float] = time.monotonic
     _last: float | None = None
     episode: int = 0  # counts the restrictions this task entered: a release names the one it was meant for (#1008)
+    run: str = field(default_factory=lambda: uuid.uuid4().hex[:8])  # one per task run, so a restart never reuses an id
     last_command: str | None = None  # the release command applied last, so a resend changes nothing
+
+    @property
+    def episode_id(self) -> str:
+        """What a release command carries. A runner that restarted (or a task sent again) has a new ``run``, so a command
+        saved for the earlier run can never match a restriction of the new one."""
+        return f"{self.run}:{self.episode}"
 
     def observe(self, active: bool) -> str | None:
         if not active:
@@ -128,7 +136,7 @@ class Breaker:
         return self._repeats >= self.repeat_limit or self._errors >= self.error_limit
 
     def stage_record(self, stage: str, enforcement: str, *, hard_stop: bool = False,
-                     episode: int | None = None) -> dict[str, Any]:
+                     episode: str | None = None) -> dict[str, Any]:
         """The ``agent.breaker`` body for a stage change. ``enforcement`` says what really happened: ``applied``,
         ``unsupported`` (the engine has no hook, so nothing was restricted), ``off`` (stop with hardStop off),
         ``halt`` or ``released``."""
