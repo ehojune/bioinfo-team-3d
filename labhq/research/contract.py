@@ -854,7 +854,7 @@ def _pack_value_errors(supplied_all: Any, plan: ResearchPlan | None, active_pack
 def _contract_errors(plan: ResearchPlan | None, value: Any, *, max_steps: int, max_branches: int,
                      max_branch_steps: int, active_packs: dict[str, str],
                      expected_intake: IntakeDecision | None,
-                     pack_definitions: dict[str, Any] | None) -> list[str]:
+                     pack_definitions: dict[str, Any] | None, scheduler_steps: int = 0) -> list[str]:
     """Every check after the schema. A draft that fails the schema still gets its pack checks."""
     raw = value if isinstance(value, dict) else {}
     errors: list[str] = []
@@ -871,19 +871,19 @@ def _contract_errors(plan: ResearchPlan | None, value: Any, *, max_steps: int, m
             for branch_id in branch_ids:
                 count = sum((step.branch if isinstance(step, ResearchStep) else step.get("branch")) == branch_id
                             for step in steps if isinstance(step, (ResearchStep, dict)))
-                if count > max_branch_steps:
+                if count > max_branch_steps + scheduler_steps:
                     errors.append(f"research branch {branch_id} has {count} steps; maximum is {max_branch_steps}; "
                                   "re-plan without truncation")
             synthesis = sum((step.branch if isinstance(step, ResearchStep) else step.get("branch")) == "synthesis"
                             for step in steps if isinstance(step, (ResearchStep, dict)))
-            if synthesis > 3:
+            if synthesis > 3 + scheduler_steps:
                 errors.append(f"research plan has {synthesis} synthesis steps; maximum is 3; "
                               "re-plan without truncation")
-            total_limit = len(branches) * max_branch_steps + 3
+            total_limit = len(branches) * max_branch_steps + 3 + scheduler_steps
             if len(steps) > total_limit:
                 errors.append(f"branched research plan has {len(steps)} steps; maximum is {total_limit}; "
                               "re-plan without truncation")
-    elif isinstance(steps, list) and len(steps) > max_steps:
+    elif isinstance(steps, list) and len(steps) > max_steps + scheduler_steps:
         errors.append(f"research plan has {len(steps)} steps; maximum is {max_steps}; re-plan without truncation")
     if plan is not None:
         selected = {ref.key: ref.sha256 for ref in plan.protocol.packs}
@@ -914,7 +914,7 @@ def schema_error_lines(error: ValidationError) -> list[str]:
 def research_plan_errors(value: Any, *, max_steps: int, max_branches: int = 5, max_branch_steps: int = 8,
                          active_packs: dict[str, str],
                          expected_intake: IntakeDecision | None = None,
-                         pack_definitions: dict[str, Any] | None = None) -> list[str]:
+                         pack_definitions: dict[str, Any] | None = None, scheduler_steps: int = 0) -> list[str]:
     """All problems of a PLAN at once, so one correction can fix them together (#222)."""
     try:
         plan: ResearchPlan | None = ResearchPlan.model_validate(value)
@@ -923,7 +923,8 @@ def research_plan_errors(value: Any, *, max_steps: int, max_branches: int = 5, m
         plan, errors = None, schema_error_lines(error)
     return errors + _contract_errors(plan, value, max_steps=max_steps, max_branches=max_branches,
                                      max_branch_steps=max_branch_steps, active_packs=active_packs,
-                                     expected_intake=expected_intake, pack_definitions=pack_definitions)
+                                     expected_intake=expected_intake, pack_definitions=pack_definitions,
+                                     scheduler_steps=scheduler_steps)
 
 
 def with_pack_refs(value: Any, refs: list[dict[str, str]]) -> Any:
@@ -936,11 +937,14 @@ def with_pack_refs(value: Any, refs: list[dict[str, str]]) -> Any:
 def validate_research_plan(value: Any, *, max_steps: int, max_branches: int = 5, max_branch_steps: int = 8,
                            active_packs: dict[str, str],
                            expected_intake: IntakeDecision | None = None,
-                           pack_definitions: dict[str, Any] | None = None) -> ResearchPlan:
+                           pack_definitions: dict[str, Any] | None = None, scheduler_steps: int = 0) -> ResearchPlan:
+    """``scheduler_steps``: steps the scheduler added (runner environment clones); they do not count toward the
+    step limits (#674)."""
     plan = ResearchPlan.model_validate(value)
     errors = _contract_errors(plan, value, max_steps=max_steps, max_branches=max_branches,
                               max_branch_steps=max_branch_steps, active_packs=active_packs,
-                              expected_intake=expected_intake, pack_definitions=pack_definitions)
+                              expected_intake=expected_intake, pack_definitions=pack_definitions,
+                              scheduler_steps=scheduler_steps)
     if errors:
         raise ValueError("; ".join(errors))
     return plan

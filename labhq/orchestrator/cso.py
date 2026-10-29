@@ -460,6 +460,22 @@ ENV_LOCK_OUTPUT = OUTPUT_ENV_DIR + "requirements.lock.txt"
 ENV_MANIFEST_OUTPUT = OUTPUT_ENV_DIR + "runner-manifest.json"
 
 
+def scheduler_clone_extra(steps: Any) -> int:
+    """Steps the scheduler added by splitting one environment step into a clone per consuming runner (#674).
+
+    They are not the planner's steps, so they never count toward ``max_steps``: a plan that fills the limit with its
+    own steps still gets its runner-local environments. Bounded by the number of runners."""
+    if not isinstance(steps, list):
+        return 0
+    clones: dict[str, int] = {}
+    for step in steps:
+        binding = step.get("environment_binding") if isinstance(step, dict) else getattr(step, "environment_binding", None)
+        logical = binding.get("logical_step_id") if isinstance(binding, dict) else getattr(binding, "logical_step_id", None)
+        if isinstance(logical, str):
+            clones[logical] = clones.get(logical, 0) + 1
+    return sum(count - 1 for count in clones.values())
+
+
 def split_runner_environments(steps: list[dict], agent_runner: dict[str, str],
                               runner_runtime: dict[str, str], can_create: Callable[[str], bool]) -> list[dict]:
     """Prepare runner-local environment steps; never mutate the source plan.
@@ -2250,9 +2266,13 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
     A fresh CSO plan is cut to ``max_steps``. A stored plan passes ``reject_excess``: cutting it would drop steps
     the request already promised, so a plan over the limit raises instead (#282). ``guard`` names steps the
     roster may not take as planned (contract staff that send data out on restricted inputs, #424)."""
-    if reject_excess and len(raw) > max_steps:
-        raise ValueError(f"stored plan has {len(raw)} steps; maximum is {max_steps}; "
-                         "raise orchestrator.max_steps to resume it")
+    # Scheduler-made runner environment clones are not counted against the limit (#674).
+    extra = scheduler_clone_extra(raw) if stored_environment else 0
+    if reject_excess and len(raw) > max_steps + extra:
+        raise ValueError(f"stored plan has {len(raw)} steps; maximum is {max_steps}"
+                         + (f" plus {extra} runner environment steps" if extra else "")
+                         + "; raise orchestrator.max_steps to resume it")
+    max_steps += extra
     bad_agents = unavailable_plan_agents(raw[:max_steps], known, excluded)
     if bad_agents:
         raise PlanAgentError(f"plan uses unavailable or orchestration agents: {bad_agents}; "
@@ -6978,7 +6998,8 @@ class Orchestrator:
                                                        max_branches=self.cfg.max_branches,
                                                        max_branch_steps=self.cfg.max_branch_steps,
                                                        active_packs=active_pack_hashes,
-                                                       expected_intake=intake, pack_definitions=packs)
+                                                       expected_intake=intake, pack_definitions=packs,
+                                                       scheduler_steps=scheduler_clone_extra(req["plan"].get("steps")))
                     req["plan"] = validated.model_dump(mode="json")
                     if req.get("checklist_contract"):
                         stored_problems = checklist_errors(req["plan"], checklist_catalog,
@@ -7576,7 +7597,8 @@ class Orchestrator:
                         req["plan"] = validate_research_plan(
                             req["plan"], max_steps=self.cfg.max_steps, max_branches=self.cfg.max_branches,
                             max_branch_steps=self.cfg.max_branch_steps, active_packs=active_pack_hashes,
-                            expected_intake=intake, pack_definitions=packs).model_dump(mode="json")
+                            expected_intake=intake, pack_definitions=packs,
+                            scheduler_steps=scheduler_clone_extra(steps)).model_dump(mode="json")
                         steps = req["plan"]["steps"]
                     else:
                         steps, _ = validate_steps(steps, known, self.cfg.max_steps, orchestration,
