@@ -1,5 +1,9 @@
 pr: 1039
 rows:
+- sha: 'e9b12e2'
+  at: 2026-10-30 06:10
+  text: 새 시험 tests/test_wiki_index.py를 Windows inventory(config/ci)의 검토된 목록에 등록한다
+  summary: wiki 시험이 Windows CI 목록에 들어가 CI가 통과합니다.
 - sha: '0b520c1'
   at: 2026-10-30 05:30
   text: 'LLM-wiki 1단계: wiki 설정(기본 꺼짐), 링크·mount를 따르지 않는 walker, 변경된 문서만 갱신하는 runner 쪽 FTS5 인덱스(상대 경로·줄·hash·수정 시각·원문 DOI/PMID/URL·오래됨 표시), labhq wiki connect|status|reindex|search|disconnect, doctor wiki 행, README 한·영'
