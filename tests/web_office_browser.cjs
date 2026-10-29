@@ -72,7 +72,8 @@ test('real phone layout shows CSO, analyst, engineer and QC above the composer; 
     const cdp=(method,params={},ms=CDP_MS)=>new Promise((resolve,reject)=>{const id=++serial;
       const timer=setTimeout(()=>{pending.delete(id);reject(Error(`CDP ${method} had no reply within ${ms}ms`));},ms);
       pending.set(id,{resolve:v=>{clearTimeout(timer);resolve(v);},reject:e=>{clearTimeout(timer);reject(e);}});
-      ws.send(JSON.stringify({id,method,params}));});
+      // A socket that closed already can throw here; settle at once so the 30 s timer does not outlive the call.
+      try{ws.send(JSON.stringify({id,method,params}));}catch(e){clearTimeout(timer);pending.delete(id);reject(e);}});
     const evaluate=async expression=>{const r=await cdp('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
     await cdp('Page.enable');await cdp('Network.enable');await cdp('Runtime.enable');
     await cdp('Page.addScriptToEvaluateOnNewDocument',{source:"localStorage.clear();const t=setTimeout;window.setTimeout=(f,ms,...a)=>ms===15000?0:t(f,ms,...a);"});
