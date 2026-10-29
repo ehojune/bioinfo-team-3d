@@ -14,9 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:11 | [`24f5191`](https://github.com/ehojune/bioinfo-team-3d/pull/1024/commits/24f5191) | **공용 폴더 도입으로 생길 권한 문제를 피하려고 기록 위치를 원래대로 되돌렸습니다.**<br>broker port 소유 기록을 PC 전체 폴더에서 계정별 state 폴더로 되돌린다. 다른 OS 계정 간 충돌은 후속으로 남긴다 (#1024 총괄 결정). |
 | 17:10 | [`b84b131`](https://github.com/ehojune/bioinfo-team-3d/pull/1021/commits/b84b131) | **같은 작업 폴더의 다른 단계 성공 기록이 환경 단계를 대신 증명하지 못합니다.**<br>환경 단계 성공 기록 검증이 선택된 run의 step_id가 binding의 step과 같은지도 대조한다 |
+| 17:09 | [`e2e01f6`](https://github.com/ehojune/bioinfo-team-3d/pull/1024/commits/e2e01f6) | **서로 다른 계정의 실행기도 같은 내부 포트 충돌을 알아보게 했고, 이미 돌고 있는 실행기의 기록을 덮어쓰지 않게 했습니다.**<br>broker port 소유 기록을 계정별 홈이 아닌 PC 전체 폴더로 옮기고, 같은 설정의 살아 있는 runner 기록은 덮어쓰지 않으며, 쓸 수 없는 폴더는 시작을 막지 않는다 (#1024 리뷰 P2). |
 | 17:06 | [`2abf8d7`](https://github.com/ehojune/bioinfo-team-3d/pull/1023/commits/2abf8d7) | **최신 main과 합치면서 매뉴얼의 환경 설명 충돌을 정리했습니다.**<br>main(#1021)을 병합하고 매뉴얼 환경 절의 충돌을 두 쪽 내용을 모두 살려 해소한다. |
 | 16:55 | [`ea22033`](https://github.com/ehojune/bioinfo-team-3d/pull/1023/commits/ea22033) | **분기 연구 계획의 단계 수 한도 완화를 환경 단계가 있는 가지에만 적용합니다.**<br>분기 연구 계획에서 runner 환경 clone 여유분을 clone이 속한 가지에만 더하고 전체 clone 수를 모든 가지에 더하지 않는다 (#674 후속 3, 봇 P2). |
+| 16:53 | [`dc344b2`](https://github.com/ehojune/bioinfo-team-3d/pull/1024/commits/dc344b2) | **설정이 서로 달라도 같은 내부 포트를 쓰는 두 번째 실행기를 포트 오류 대신 이해하기 쉬운 안내와 함께 시작 전에 막습니다.**<br>runner.broker_port를 PC 기본 state 폴더의 소유 기록과 OS lock으로 잡아, 설정이 모두 달라도 같은 broker port를 쓰는 두 번째 runner를 시작 전에 막는다 (#618 P2). |
 | 16:50 | [`c042fc0`](https://github.com/ehojune/bioinfo-team-3d/pull/1021/commits/c042fc0) | **검증된 환경도 소비 단계에 전달할 수 있게 되기 전까지는 계속 막습니다.**<br>검증이 모두 통과해도 보호된 interpreter 별칭이 없으면 소비 단계를 계속 거부하고(ENVIRONMENT_ALIAS_AVAILABLE=False) 사유로 구분한다 |
 | 16:44 | [`017cb56`](https://github.com/ehojune/bioinfo-team-3d/pull/1023/commits/017cb56) | **전송 직전에 실행기 종류를 한 번 더 확인해 그 사이에 바뀐 실행기에 옛 환경이 가지 않게 했습니다.**<br>runner runtime 재대조를 steer 첨부 await 뒤, 작업을 기록·전송하기 직전에 한 번 더 한다 (#674 후속 4, 봇 P2). |
 | 16:33 | [`fe1c35c`](https://github.com/ehojune/bioinfo-team-3d/pull/1022/commits/fe1c35c) | **압축 신호를 실제로 받아 본 것처럼 보이던 매뉴얼 문구를 사실대로 고쳤습니다.**<br>manual의 compaction 신호 설명을 "실행 파일의 프레임 정의에서 확인, 실제 세션은 미관측"으로 바로잡는다 (#1022 리뷰 P2). |
