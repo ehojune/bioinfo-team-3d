@@ -1,0 +1,5 @@
+rows:
+- sha: '489af2c'
+  at: 2026-10-29 20:25
+  text: runner가 환경 단계의 단수 environment_binding(계약 형식, runner ID, runtime, step ID)을 엔진 시작 전에 검사하고 어긋나면 비용 없이 거부한다
+  summary: 다른 runner나 다른 OS용으로 정해진 환경 단계가 이 runner에서 시작되지 않습니다.
