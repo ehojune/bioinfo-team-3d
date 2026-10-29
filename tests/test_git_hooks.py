@@ -427,3 +427,11 @@ def test_with_auto_only_the_character_the_template_names_is_a_comment(history):
     template = "# Please enter the commit message for your changes.\n"
     out = run_commit_msg(history, f"Subject\n\nCo-Authored-By: Codex {OLD_CODEX}\n\n{template}")
     assert f"Co-Authored-By: Codex {CODEX_BOT}\n" in out and out.endswith(template)
+
+
+@pytest.mark.parametrize("gap", ["   ", "\t", " \t "])
+def test_a_bare_trailer_with_irregular_spacing_still_gets_the_model(history, gap):
+    bare = f"Subject\n\nbody\n\nCo-Authored-By: Claude{gap}<noreply@anthropic.com>\n"
+    out = run_commit_msg(history, bare, LABHQ_COMMIT_AGENT="claude", LABHQ_COMMIT_MODEL="Fable 5.1")
+    assert trailers(out) == ["Co-Authored-By: Claude (Fable 5.1) <noreply@anthropic.com>"]
+    assert run_commit_msg(history, out, LABHQ_COMMIT_AGENT="claude", LABHQ_COMMIT_MODEL="Fable 5.1") == out

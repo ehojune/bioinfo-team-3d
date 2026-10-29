@@ -112,8 +112,10 @@ if printf '%s
     MODEL_TRAILER=$(printf '%s
 ' "$TRAILERS" | grep -i "^co-authored-by:[[:space:]]*$BASE[[:space:]]*<[^>]*$MARK" | head -n 1)
     if [ -n "$MODEL_TRAILER" ]; then
-      OLD_NAME=$(printf '%s' "$MODEL_TRAILER" | sed -E 's/^[^:]*:[[:space:]]*//; s/[[:space:]]*<.*$//')
-      rewrite_last_paragraph "^co-authored-by:[[:space:]]*$(printf '%s' "$OLD_NAME" | tr 'A-Z' 'a-z')[[:space:]]*<[^>]*$MARK" "$OLD_NAME <" "$NAME <"
+      # 이름과 `<` 사이의 공백(여러 칸·탭)도 줄에 적힌 그대로 찾아 바꾼다.
+      OLD_SPAN=$(printf '%s' "$MODEL_TRAILER" | sed -E 's/^[^:]*:[[:space:]]*//; s/<.*$//')
+      OLD_NAME=$(printf '%s' "$OLD_SPAN" | sed -E 's/[[:space:]]*$//')
+      rewrite_last_paragraph "^co-authored-by:[[:space:]]*$(printf '%s' "$OLD_NAME" | tr 'A-Z' 'a-z')[[:space:]]*<[^>]*$MARK" "${OLD_SPAN}<" "$NAME <"
     fi
   fi
   exit 0
