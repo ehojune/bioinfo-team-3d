@@ -1,5 +1,9 @@
 pr: 1039
 rows:
+- sha: '3281663'
+  at: 2026-10-30 09:50
+  text: manual 한·영이 허용 루트 안에 머무는 중간 경로 별칭을 받는다고 정확히 적고, Windows에서 같은 크기·복원된 수정 시각의 제자리 재작성은 감지하지 못하는 한계를 적는다
+  summary: 매뉴얼이 연결 거부 조건과 Windows 변경 감지 한계를 실제 동작대로 설명합니다.
 - sha: '3f93302'
   at: 2026-10-30 09:20
   text: wiki 루트를 runner.reference_roots로만 허용하고(프로젝트 local_dir 제외), trigram 없이 만든 색인에 trigram이 생기면 FTS를 다시 채운다
