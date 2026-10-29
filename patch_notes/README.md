@@ -14,8 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:33 | [`fe1c35c`](https://github.com/ehojune/bioinfo-team-3d/pull/1022/commits/fe1c35c) | **압축 신호를 실제로 받아 본 것처럼 보이던 매뉴얼 문구를 사실대로 고쳤습니다.**<br>manual의 compaction 신호 설명을 "실행 파일의 프레임 정의에서 확인, 실제 세션은 미관측"으로 바로잡는다 (#1022 리뷰 P2). |
 | 16:25 | [`2ed48eb`](https://github.com/ehojune/bioinfo-team-3d/pull/1020/commits/2ed48eb) | **시스템 python으로 가는 중간 경로가 아무나 바꿀 수 있는 링크이면 거부합니다.**<br>venv 밖 링크 체인을 합쳐서 보지 않고 hop마다 링크·폴더 소유와 쓰기 권한을 확인해 중간의 변조 가능한 링크를 거부한다 |
 | 16:21 | [`552e23c`](https://github.com/ehojune/bioinfo-team-3d/pull/1018/commits/552e23c) | **경계 시험용 loopback listener와 positive control을 준비합니다.**<br>test: prepare loopback witness for sandbox probes |
+| 16:20 | [`86188b8`](https://github.com/ehojune/bioinfo-team-3d/pull/1022/commits/86188b8) | **Claude Code가 대화를 압축한 직후 같은 일을 다시 하는 것을 폭주로 보고 멈추지 않게 했습니다.**<br>Claude Code의 compact_boundary 프레임을 agent.compaction으로 받아 반복·오류 집계를 다시 세고 경고 단계를 푼다. 다른 엔진은 신호가 없어 해당 없음 (#1008). |
 | 16:05 | [`5d05847`](https://github.com/ehojune/bioinfo-team-3d/pull/1020/commits/5d05847) | **보통 방식으로 만든 Linux·WSL venv의 환경 입력이 검증을 통과하고 그 밖의 링크는 계속 거부됩니다.**<br>runner 환경 입력 검증이 Linux·WSL venv의 interpreter 링크를 따라가 venv 안의 일반 실행 파일이나 root 소유의 시스템 runtime 실행 파일일 때만 받아들인다. 통합 fixture 추가, manual 영·한 반영 |
 | 15:25 | [`3795509`](https://github.com/ehojune/bioinfo-team-3d/pull/1018/commits/3795509) | **관측된 경계 위반은 제어 시험이 없거나 시간 초과여도 실패로 기록합니다.**<br>test: fail observed sandbox violations despite missing controls |
 | 15:12 | [`a704d73`](https://github.com/ehojune/bioinfo-team-3d/pull/1013/commits/a704d73) | **공백이 든 runner ID에서도 환경 입력이 검사를 통과합니다.**<br>runner 환경 입력 검사도 runner ID를 설정이 허용하는 값 그대로 받는다. |
