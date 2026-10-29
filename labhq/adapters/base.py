@@ -1299,7 +1299,7 @@ class AgentAdapter(ABC):
             res.error = f"{res.error}: {short(self._clean_stderr(stderr_tail, 5), 500)}"
         if returncode not in (0, None) and not res.error:
             res.error = f"exit {returncode}: " + self._clean_stderr(stderr_tail, 5)
-        if not res.ok and not st.result_seen and not ended_after_result:
+        if not res.ok and not st.result_seen and (res.error or "").startswith(("empty CLI stream", "exit ")):
             await self._record_exit_evidence(ctx, res, st, returncode, stderr_tail, time.monotonic() - started_at)
         # The CLI's own stderr counts only when the run failed; a failed command's output counts either way, because
         # an agent that gave up after "No module named x" can still exit 0 with its outputs missing (#35).
