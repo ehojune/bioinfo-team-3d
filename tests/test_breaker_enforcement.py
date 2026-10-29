@@ -562,3 +562,28 @@ def test_the_gateway_knows_the_episode_again_after_a_restart(tmp_path):
     assert hub2.orchestrator.decide_restricted_call(call)[0] is True
     hub2.store.delete("restricted_ledger", "t1")
     hub2.store.delete("task_breaker", "t1")
+
+
+async def test_a_warning_that_clears_and_a_warning_seen_again_say_what_really_happened(tmp_path, monkeypatch):
+    # #1030: a quiet release was recorded as "applied" and a warn after a release too, though nothing was enforced.
+    runner, sent, _ = _runner(tmp_path, monkeypatch, Engine.claude_code, calls=0)
+
+    class Wobbly:
+        async def run(self, ctx):
+            same = {"name": "shell", "input": "x", "input_fingerprint": tool_input_fingerprint("shell", "x")}
+            other = {"name": "shell", "input": "y", "input_fingerprint": tool_input_fingerprint("shell", "y")}
+            for _ in range(8):
+                await ctx.emit("agent.tool", same)  # warn (the trip itself)
+            await ctx.emit("agent.tool", other)  # the signal goes quiet: the warning clears
+            for _ in range(8):
+                await ctx.emit("agent.tool", same)  # and is seen again
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="done")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Wobbly())
+    try:
+        await runner.run_task(Task(agent_id="engineer", prompt="wobble", meta={"kind": "step"}))
+        assert _stages(sent) == [("normal", "released"), ("warn", "notice")]
+        [log] = [e["data"]["text"] for e in sent if e["type"] == "agent.log" and "다시 감지" in e["data"].get("text", "")]
+        assert "경고만" in log
+    finally:
+        runner.store.close()
