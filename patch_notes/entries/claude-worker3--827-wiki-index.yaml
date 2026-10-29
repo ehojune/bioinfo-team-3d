@@ -1,5 +1,9 @@
 pr: 1039
 rows:
+- sha: 'fb14ded'
+  at: 2026-10-30 07:45
+  text: manual 한·영에 내 LLM-wiki 연결(labhq wiki 명령 5개, wiki 설정 표, 노트별 보존 정보, 연결 거부 조건) 절을 더한다
+  summary: 매뉴얼에서 wiki 연결·색인·검색 명령과 안전 경계를 볼 수 있습니다.
 - sha: 'e97d220'
   at: 2026-10-30 07:10
   text: wiki 루트를 runner와 같은 실제 경로의 통제 구역과 비교해 겹치면 거부하고, 허용 루트와 wiki 사이에 mount 지점이 있으면 거부한다
