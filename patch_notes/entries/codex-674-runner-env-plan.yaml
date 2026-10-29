@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: 4a3d972
+  at: 2026-10-29 13:57
+  text: 환경 계획을 소비 runner별로 나누고 승인·복원·dispatch에 binding을 보존한다.
+  summary: 실행기마다 환경 계획을 나누고 승인과 재개 때 연결 정보를 유지합니다.
