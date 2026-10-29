@@ -1365,11 +1365,13 @@ report는 중첩 집계의 구조와 개수(0 이상의 정수)를 확인합니�
 
 | 키 | 기본 | 뜻 |
 |---|---|---|
-| `root` | — | wiki 폴더. **실제 경로가 `runner.reference_roots` 안**이어야 합니다. 폴더 자신이나 중간 경로가 링크이거나, 허용 루트와 폴더 사이에 mount 지점이 있거나, 통제 구역·비공개 경로·작업 폴더·state 폴더와 겹치면 연결을 거부합니다. 폴더 아래의 링크·mount·숨김 폴더·credential 이름의 파일은 읽지 않습니다 |
+| `root` | — | wiki 폴더. **실제 경로가 `runner.reference_roots` 안**이어야 합니다. 폴더 자신이 링크이거나, 중간 경로의 링크가 실제 경로를 허용 루트 밖으로 옮기거나(허용 루트 안에 머무는 별칭은 받습니다), 허용 루트와 폴더 사이에 mount 지점이 있거나, 통제 구역·비공개 경로·작업 폴더·state 폴더와 겹치면 연결을 거부합니다. 폴더 아래의 링크·mount·숨김 폴더·credential 이름의 파일은 읽지 않습니다 |
 | `external_model_allowed` | `false` | 노트 내용을 직원 모델에 넘기는 기능을 위한 값입니다. 이 단계에서는 쓰이는 곳이 없습니다 |
 | `extensions` | `.md`, `.txt` | v1은 이 두 형식만 읽습니다(이미지·PDF 제외) |
 | `stale_days` | 365 | 마지막 수정이 이보다 오래된 노트는 `stale`로 표시 |
 | `max_files`, `max_file_bytes` | 5,000개 · 2 MiB | 이를 넘는 파일은 색인에서 건너뜁니다 |
+
+Windows에서는 노트를 같은 크기로 제자리에서 다시 쓰고 수정 시각을 되돌리면 변경을 알아채지 못합니다(생성 시각·파일 ID가 같을 때, 입력 hash 캐시와 같은 한계). 그런 도구를 쓰면 `labhq wiki disconnect` 뒤 `reindex`로 처음부터 다시 만드세요.
 
 노트마다 남는 정보: 상대 경로, 제목 경로, 줄 범위, 파일 전체 sha256, 수정 시각, 노트가 가리키는 원문(DOI·PMID·URL 하나, frontmatter `source:`나 본문 링크에서 추출), `freshness`(`ok`·`stale`·`source_missing`·`disputed`; frontmatter `status: disputed|superseded`면 `disputed`). 검색 결과는 항상 `access_level: wiki_summary`, `verified_against_primary: false`로 표시하며, wiki 요약은 원논문을 읽은 것이 아닙니다. 노트 속 지시문은 데이터일 뿐 실행하지 않습니다.
 

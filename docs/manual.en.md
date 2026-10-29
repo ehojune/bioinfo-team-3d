@@ -1360,11 +1360,13 @@ Settings (`wiki:`, `enabled: false` by default):
 
 | Key | Default | Meaning |
 |---|---|---|
-| `root` | — | The wiki folder. Its **real path must be inside `runner.reference_roots`**. The connection is refused if the folder or a part of its path is a link, a mount point lies between the allowed root and the folder, or it overlaps a controlled zone, a private path, the work folder or the state folder. Below the folder, links, mounts, hidden folders and files with credential-like names are never read |
+| `root` | — | The wiki folder. Its **real path must be inside `runner.reference_roots`**. The connection is refused if the folder itself is a link, a link in its path moves the real path outside the allowed root (an alias that stays inside the allowed root is accepted), a mount point lies between the allowed root and the folder, or it overlaps a controlled zone, a private path, the work folder or the state folder. Below the folder, links, mounts, hidden folders and files with credential-like names are never read |
 | `external_model_allowed` | `false` | Reserved for the feature that hands note text to a staff model. Nothing uses it in this phase |
 | `extensions` | `.md`, `.txt` | v1 reads only these two (no images or PDFs) |
 | `stale_days` | 365 | A note last modified longer ago than this is marked `stale` |
 | `max_files`, `max_file_bytes` | 5,000 files · 2 MiB | Larger ones are skipped when indexing |
+
+On Windows, a note rewritten in place with the same size and its modification time restored goes unnoticed (when creation time and file ID are unchanged, the same limit as the input-hash cache). If a tool does that, run `labhq wiki disconnect` and then `reindex` to rebuild from scratch.
 
 Each note keeps: relative path, heading path, line range, whole-file sha256, modification time, the one source it points to (a DOI, PMID or URL taken from frontmatter `source:` or a body link) and `freshness` (`ok`, `stale`, `source_missing`, `disputed`; frontmatter `status: disputed|superseded` gives `disputed`). Search results are always marked `access_level: wiki_summary` and `verified_against_primary: false`: a wiki summary is not a reading of the original paper. Instructions inside a note are data and are never executed.
 
