@@ -1,7 +1,6 @@
 """Real owned Job/process integration: GitHub Windows CI ONLY. Never execute locally."""
 import ctypes as C
 from contextlib import contextmanager
-import functools
 import json
 import math
 import os
@@ -284,28 +283,6 @@ def _trace_call(trace, phase, function, *args, role=None, wait_ms=None, **kwargs
     return result
 
 
-@functools.lru_cache(maxsize=None)
-def _warm_wmi_provider():
-    """#1029: the broker gives its PowerShell WMI provider a fixed 10 s. On a cold runner PowerShell start-up, JSON cmdlet
-    and WMI class loads alone took >4 s of it (10-29 #1028: header_read at 4 s, then provider_timeout). Load the same
-    pieces once, outside any launch, so a slow cold start cannot decide a Job-survival verdict. The cost is printed."""
-    started = time.monotonic()
-    script = ("$null = '{}' | ConvertFrom-Json | ConvertTo-Json -Compress; "
-              r"$null = ([wmiclass]'\\.\root\cimv2:Win32_ProcessStartup').CreateInstance(); "
-              r"$null = [wmiclass]'\\.\root\cimv2:Win32_Process'")
-    try:
-        code = subprocess.run([str(broker._powershell()), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120, check=False).returncode
-    except (OSError, subprocess.SubprocessError) as exc:
-        code = type(exc).__name__
-    print(f"WIN1029 wmi warm-up: rc={code} elapsed_ms={round((time.monotonic() - started) * 1000)}", file=sys.stderr)
-
-
-@pytest.fixture
-def wmi_warm():
-    _warm_wmi_provider()
-
-
 def _provider_summary(events):
     """Where the launch stopped, for a failed verdict: the direct attempt, then the provider phases and deadline."""
     parts = []
@@ -412,7 +389,6 @@ def close_parent_job(case):
     _trace_call(trace, "parent_wait", case.parent.wait, timeout=10, role="parent", wait_ms=10000)
 
 
-@pytest.mark.usefixtures("wmi_warm")
 def test_allowed_breakaway_child_survives_parent_job_close(tmp_path, capsys):
     with owned_launch(tmp_path, allow_breakaway=True) as case:
         # Denial/unknown is NOT evidence for survival. An incompatible outer host fails this positive test.
@@ -443,7 +419,6 @@ def test_denied_direct_and_mock_denied_provider_record_no_pid_or_readiness(tmp_p
             print("WIN795 DENIED: real direct WinError 5 + mocked provider denial, no PID/readiness; not survival proof")
 
 
-@pytest.mark.usefixtures("wmi_warm")
 def test_wmi_escapes_owned_outer_nonbreakaway_inner_silent_job(tmp_path, capsys):
     with owned_launch(tmp_path, allow_breakaway=False, nested=True) as case:
         assert case.result["success"], "UNVERIFIED nested WMI survival: " + json.dumps(case.events)
