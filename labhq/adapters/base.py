@@ -1312,10 +1312,26 @@ class AgentAdapter(ABC):
 
     @classmethod
     def _secret_values(cls, ctx: RunContext, child_env: dict[str, str]) -> list[str]:
-        """Values this run really handed to the CLI and its MCP servers under secret-looking names."""
-        sources = [child_env, ctx.env, *(server.env for server in ctx.mcp_servers)]
-        values = {value for source in sources for key, value in (source or {}).items()
-                  if isinstance(value, str) and len(value) >= 8 and cls._SECRET_KEY.search(key)}
+        """Values this run really handed to the CLI and its MCP servers under secret-looking names, or injected through
+        a `${NAME}` placeholder, in every form the CLI sees: as written and expanded against the child environment."""
+        values: set[str] = set()
+
+        def collect(raw: dict[str, str] | None, expanded: list[dict[str, str]]) -> None:
+            for key, original in (raw or {}).items():
+                placeholder = isinstance(original, str) and "$" in original
+                if not (placeholder or cls._SECRET_KEY.search(key)):
+                    continue
+                for form in [{key: original}, *({key: view.get(key)} for view in expanded)]:
+                    value = form.get(key)
+                    if isinstance(value, str) and len(value) >= 8:
+                        values.add(value)
+
+        collect(child_env, [])
+        collect(ctx.env, [])
+        for server in ctx.mcp_servers:
+            for table in (server.env, getattr(server, "headers", None)):
+                if table:
+                    collect(table, [expand_env(table), expand_env(table, child_env)])
         # A multi-line value (a PEM key) is also masked line by line, in case stderr shows only part of it.
         values.update(line.strip() for value in list(values) for line in value.splitlines() if len(line.strip()) >= 8)
         return sorted(values, key=len, reverse=True)

@@ -19,7 +19,7 @@ RESULT = {"type": "result", "subtype": "success", "result": "끝", "session_id":
 
 
 async def run_fake(tmp: Path, stdout_events: list[dict], stderr_lines: list[str], exit_code: int,
-                   env: dict[str, str] | None = None):
+                   env: dict[str, str] | None = None, mcp_env: dict[str, str] | None = None):
     script = tmp / "fake_cli.py"
     script.write_text(
         "import sys\nsys.stdout.reconfigure(encoding='utf-8')\nsys.stderr.reconfigure(encoding='utf-8')\n"
@@ -39,7 +39,7 @@ async def run_fake(tmp: Path, stdout_events: list[dict], stderr_lines: list[str]
     workdir = tmp / "wd"
     workdir.mkdir()
     env = {"LABHQ_BROKER_URL": "http://127.0.0.1:9", "LABHQ_BROKER_TOKEN": "tok", "LABHQ_TASK_ID": "t1", **(env or {})}
-    mcp = [McpServerSpec(name="labhq_ask", command="python", args=["-m", "labhq.tools.ask_mcp"], env=dict(env))]
+    mcp = [McpServerSpec(name="labhq_ask", command="python", args=["-m", "labhq.tools.ask_mcp"], env={**env, **(mcp_env or {})})]
     ctx = RunContext(task=Task(agent_id="lit_scout", prompt="do it"), agent=agent, workdir=workdir, settings=settings,
                      mcp_servers=mcp, env=dict(env), emit=emit, prompt="do it")
     return await get_adapter(Engine.claude_code, settings).run(ctx), events, workdir
@@ -94,3 +94,11 @@ async def test_a_multi_line_secret_is_masked_across_lines(tmp_path):
     res, events, workdir = await run_fake(tmp_path, [], dump.splitlines(), 0, env={"MY_PRIVATE_KEY": pem})
     text = res.error + (workdir / ".labhq" / "exit_evidence.json").read_text(encoding="utf-8") + str(events)
     assert "bodybodybody0123456789" not in text and "morebodymorebody987654" not in text
+
+
+async def test_a_placeholder_mcp_secret_is_masked_in_its_expanded_form(tmp_path):
+    real = "real-mcp-value-abcdef123456"
+    res, events, workdir = await run_fake(
+        tmp_path, [], [f"mcp dump {real}"], 0, env={"MCP_VALUE": real}, mcp_env={"SERVICE_LOGIN": "${MCP_VALUE}"})
+    text = res.error + (workdir / ".labhq" / "exit_evidence.json").read_text(encoding="utf-8") + str(events)
+    assert real not in text
