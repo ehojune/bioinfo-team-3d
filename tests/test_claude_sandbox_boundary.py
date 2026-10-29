@@ -28,6 +28,8 @@ class Observation:
 
 def verdict(e: Observation) -> Verdict:
     """Classify one probe; expected denial is meaningful only with controls."""
+    if e.launched and e.command_ran and e.observed and not e.expected:
+        return Verdict.FAIL
     if e.timed_out or not all((e.launched, e.command_ran, e.positive_control, e.observed)):
         return Verdict.UNVERIFIED
     return Verdict.PASS if e.expected else Verdict.FAIL
@@ -46,6 +48,10 @@ def test_timeout_is_unverified_even_with_other_evidence():
 
 def test_observed_boundary_violation_fails():
     assert verdict(Observation(True, True, True, True, False)) is Verdict.FAIL
+
+
+def test_observed_violation_fails_without_positive_control_or_after_timeout():
+    assert verdict(Observation(True, True, False, True, False, True)) is Verdict.FAIL
 
 
 def test_observed_expected_result_with_control_passes():
