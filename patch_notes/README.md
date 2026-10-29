@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:29 | [`f24505b`](https://github.com/ehojune/bioinfo-team-3d/pull/1005/commits/f24505b) | **요청 묶음을 만드는 도중 폴더를 바꿔치기해도 엉뚱한 곳이 지워지지 않게 했습니다.**<br>요청 묶음을 만드는 동안 requests/ 폴더를 한 번 열어 붙잡고, 삭제와 교체 직전에 같은 폴더인지 확인해 symlink 바꿔치기가 삭제 대상을 옮기지 못하게 한다 (#405). |
 | 09:12 | [`cd02532`](https://github.com/ehojune/bioinfo-team-3d/pull/996/commits/cd02532) | **병렬 단계의 출력 형식 오류 재시도가 요청 예산 한도를 넘지 않게 했습니다.**<br>StructuredOutput 형식 오류 재시도를 runner 안의 반복에서 gateway의 새 dispatch로 옮겨 병렬 단계가 요청 예산을 승인 없이 넘지 못하게 한다 (#673). |
 | 08:53 | [`842e929`](https://github.com/ehojune/bioinfo-team-3d/pull/1004/commits/842e929) | **Codex 직원이 쓸 수 없는 긴 계산 도구로 안내받던 문제를 고쳐 쓸 수 있는 방법을 안내합니다.**<br>Codex 등 Claude 외 직원에게 labhq_job을 연결하거나 안내하지 않고 대안(labhq_hpc·조각 나누기·PI에게 묻기)을 안내한다 (#1003). |
 | 08:20 | [`591b9da`](https://github.com/ehojune/bioinfo-team-3d/pull/1002/commits/591b9da) | **Windows에서 R이 늦게 뜰 때 실제 R 문법 검사 시험이 시간 초과로 실패하던 것을 막고 단계 시간을 기록합니다.**<br>실제 Rscript를 띄우는 parse 시험 2건만 호출당 60초를 주고 version·syntax 단계 시간을 통과할 때도 경고 요약으로 남긴다 (#898). |
