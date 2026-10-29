@@ -1205,7 +1205,7 @@ $('#sheet').addEventListener('click', async e => {
       if (act === 'steer' && input) input.value = '';
       toast(out?.resumed_halted ? '멈췄던 작업을 재개해요' : { steer: '방향 수정을 보냈어요', pause: '일시 정지를 보냈어요',
         resume: '재개를 보냈어요', halt: '멈춤을 보냈어요', release_breaker: '도구 제한 해제를 보냈어요' }[act] + (out && out.sent === false
-          ? (act === 'halt' ? ' · 러너가 연결되면 전달해요' : ' · 같은 단계의 다음 turn에 적용해요') : ''));
+          ? (['halt', 'release_breaker'].includes(act) ? ' · 러너가 연결되면 전달해요' : ' · 같은 단계의 다음 turn에 적용해요') : ''));
     } catch (err) { toast(`보내지 못했어요: ${err.message}`); }
     return;
   }
