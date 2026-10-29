@@ -1,0 +1,6 @@
+pr: 0
+rows:
+  - sha: 688f7ac
+    at: "2026-10-29 14:46"
+    summary: "Claude sandbox 정책을 검증하고 미검증 실행을 거부합니다."
+    text: "Add fail-closed Claude sandbox policy contract (#666)"
