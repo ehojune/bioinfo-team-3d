@@ -1,5 +1,9 @@
 pr: 1025
 rows:
+- sha: '07858f2'
+  at: 2026-10-29 18:20
+  text: manual 한·영에 환경 단계가 끝날 때 manifest·binding·interpreter를 대조하고 어긋나면 실패 처리한다는 설명을 더한다
+  summary: 매뉴얼이 환경 단계 자체가 실패하는 경우를 설명합니다.
 - sha: '7b41aaf'
   at: 2026-10-29 18:05
   text: 환경 단계의 manifest·binding 검증을 선언 산출 검사와 같은 최종 턴 조건에서만 한다
