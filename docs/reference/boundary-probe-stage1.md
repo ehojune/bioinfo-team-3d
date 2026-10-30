@@ -16,6 +16,8 @@ On Windows, `--interop-distro labhq-666-fixture` opts into synthetic Windows-to-
 
 `python scripts/boundary_probe/integration_probe.py --boundary-module <path> --broker-module <path>` loads the two supplied modules directly. The unsealed diagnostic checks host-side broker readiness, run-ID match, allowed response, wrong run and extra destination rejection, literal synthetic-secret reflection rejection, and reconnect after cleanup. Namespace-child success and cleanup status are producer-reported, not independently authenticated. The modules must be trusted test code; the fake upstream and credential are fixture-only. A diagnostic pass establishes neither arbitrary request policy nor general secret non-disclosure. Source revisions may change while integration is under development; repeat against final heads.
 
+`--broker-kind process` selects the actual `ProcessBroker` with a fake upstream. Response checks compare the complete frame to the fixed public acknowledgement or rejection, including a fake-secret upstream result; this does not test the real transport or all log channels.
+
 The control and tool-use cases call real labhq functions with run-bound synthetic state and verify markers from the host. Their scope is `direct_function_only`: a pass does not establish Claude hook invocation or launcher integration. Missing imports or witnesses are inconclusive. An Ubuntu system Python without the package dependencies produced an inconclusive tool-use result.
 
 The built-in job MCP positive control starts the real server with disposable config and lists its tools over stdio, without invoking a tool or making a network request. This `stdio_list_only` result does not establish engine integration or functional broker access.

@@ -31,27 +31,34 @@ def request(path, obj):
             if not part:
                 raise ValueError("incomplete response")
             data.extend(part)
-        return json.loads(bytes(data).split(b"\n", 1)[0])
+        return bytes(data)
 
 
-def run(boundary_path: Path, broker_path: Path):
+def run(boundary_path: Path, broker_path: Path, broker_kind="synthetic"):
     result = {"scope": "synthetic_unsealed_diagnostic", "protection_verified": False,
               "status": "inconclusive"}
     witness = {}
     try:
         boundary = load(boundary_path, "boundary_probe_actual_boundary")
         broker = load(broker_path, "boundary_probe_actual_broker")
+        if broker_kind not in ("synthetic", "process"):
+            raise ValueError("unknown broker kind")
+        def upstream(body, secret):
+            return secret if body == b"reflect" else b"ok"
         def factory(directory, run_id):
-            return broker.SyntheticBroker(directory, run_id, b"fake-only-secret",
-                                          lambda body, secret: secret if body == b"reflect" else b"ok")
+            cls = broker.ProcessBroker if broker_kind == "process" else broker.SyntheticBroker
+            return cls(directory, run_id, b"fake-only-secret", upstream=upstream)
 
         def ready(run_id, path):
             witness.update(run_id=run_id, path=path)
             frame = lambda rid, body: {"run_id": rid, "body": base64.b64encode(body).decode("ascii")}
-            witness["allowed"] = request(path, frame(run_id, b"hello")) == {"body": "b2s="}
-            witness["wrong_run_rejected"] = "error" in request(path, frame("wrong-run", b"hello"))
-            witness["extra_destination_rejected"] = "error" in request(path, {**frame(run_id, b"hello"), "url": "https://invalid.example"})
-            witness["literal_reflection_rejected"] = "error" in request(path, frame(run_id, b"reflect"))
+            rejection = b'{"error":"request rejected"}\n'
+            acknowledgement = b'{"body":"YWNjZXB0ZWQ="}\n'
+            witness["allowed"] = request(path, frame(run_id, b"hello")) == (acknowledgement if broker_kind == "process" else b'{"body":"b2s="}\n')
+            witness["wrong_run_rejected"] = request(path, frame("wrong-run", b"hello")) == rejection
+            witness["extra_destination_rejected"] = request(path, {**frame(run_id, b"hello"), "url": "https://invalid.example"}) == rejection
+            expected = acknowledgement if broker_kind == "process" else rejection
+            witness["literal_reflection_control"] = request(path, frame(run_id, b"reflect")) == expected
 
         receipt = boundary.diagnostic_broker_probe(factory, on_ready=ready).to_dict()
         path = witness.pop("path", None)
@@ -65,8 +72,9 @@ def run(boundary_path: Path, broker_path: Path):
                 witness["reconnect_rejected"] = True
         result["witness"] = witness
         result["receipt"] = receipt
+        result["broker_kind"] = broker_kind
         checks = ("allowed", "wrong_run_rejected", "extra_destination_rejected",
-                  "literal_reflection_rejected", "reconnect_rejected")
+                  "literal_reflection_control", "reconnect_rejected")
         if (all(witness.get(key) is True for key in checks)
                 and witness.get("run_id") == receipt.get("run_id")
                 and receipt.get("preparation") == "diagnostic_ready"
@@ -83,8 +91,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--boundary-module", type=Path, required=True)
     parser.add_argument("--broker-module", type=Path, required=True)
+    parser.add_argument("--broker-kind", choices=("synthetic", "process"), default="synthetic")
     args = parser.parse_args()
-    print(json.dumps(run(args.boundary_module, args.broker_module), sort_keys=True))
+    print(json.dumps(run(args.boundary_module, args.broker_module, args.broker_kind), sort_keys=True))
 
 
 if __name__ == "__main__":
