@@ -202,6 +202,7 @@ orchestrator:
   max_revisions: 1
   max_replans: 0                     # 리뷰 revise 뒤 남은 DAG 재계획 상한
   max_failure_replans: 1             # 단계 실패 뒤 남은 DAG 재계획 상한; 0이면 바로 실패
+  # request_wall_clock_s: 5400        # 요청 하나의 전체 시간 상한(초, 0이면 끔, #877). 수락 때 고정하고 PI 카드 대기(waiting_pi)는 기한에 더하며 보고서 검토 이후는 끊지 않음
   max_steps: 12
   max_parallel_steps: 4
   plan_max_chars: 50000              # 넘으면 경고만 기록; 유효한 계획은 자르지 않음

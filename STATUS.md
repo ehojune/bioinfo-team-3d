@@ -5,6 +5,21 @@
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
 ## 단계
+#1088(② 6차 B1) 1단계: 요청 단위 조회 사용량을 사실값으로 내는 재료. 설계: [#1088 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1088#issuecomment-6521726606). prompt 연결과 manual은 `cso.py`·manual을 쥔 W1 #792(PR #1087) 병합 뒤 rev3에서 한다. 1단계는 별도 커밋이고 이 PR이 2단계까지 포함한다.
+
+## 한 일
+1. `labhq/runner/lookup_admission.py`: `LookupAdmission.usage(request_id)`는 읽기 전용으로 `used`·`limit`·`remaining`(음수 없음)·담당별·도구별 건수를 돌려준다. 요청 id가 비었거나 문자열이 아니면 0이 아니라 `None`.
+2. `usage_note(admission, request_id)`: prompt 한 문단. 값이 있으면 "이 요청 사용 N/M, 남음 K(재시도·redirect 포함, 담당별), 이 PC runner의 계수이며 요청문에 적힌 횟수와 별개"를 사실로 적는다. 상한이 꺼졌거나(`admission is None`)·요청 id가 없거나·파일을 읽지 못하면 `UNKNOWN`과 이유를 적고 "0이라 가정하지 말라"고 한다.
+3. 시험 7건을 `tests/test_live_source_limit_891.py`에 더했다(51/60 사용·담당별, 요청 간 분리, 신원 없음 `None`, 남은 값 0에서 멈춤, 문장 내용, unknown 세 경우, 읽기 오류 unknown, 설정 공장).
+
+## 2단계(rev3)에서 한 것
+`cso.py`의 `_lookup_usage_line(rid)`가 CSO 계획(연구·일반 두 lane)·재계획·선행 연구 검색·모든 단계(`run_one`) prompt 끝에 `usage_note_for`의 문단을 붙인다. 상한이 없으면 아무것도 붙이지 않고, 상한이 있는데 계수를 열지·읽지 못하면 UNKNOWN을 붙인다. manual 한·영(조회 상한 항목)에 적었다. 요청 사이 자동 이월은 하지 않는다(총괄 결정).
+
+## 테스트 결과
+Windows `tests/test_live_source_limit_891.py` 20 passed(1단계 7건 + prompt 연결 5건), `test_research_cp2`·`test_output_types_research`·`test_research_report`·`test_cso`·`test_external_wait` 포함 406 passed.
+- 미검증: 재계획 prompt는 같은 helper를 쓰지만 통합 시험은 없다(재계획을 일으키는 장면이 따로 필요). 다른 PC의 runner는 계수가 다르다(문구에 "이 PC runner"로 한정).
+
+## 단계
 #1076 rev5: `test_recovery_fake_check[gateway]`의 Windows `ReadTimeout` 3회. 원인 조사: [#1076 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6521284783).
 
 ## 한 일
@@ -18,11 +33,30 @@
 ## 테스트 결과
 Windows `test_recovery_fake_check`·`test_repeat_fake_check` 39 passed.
 
+# #792 결과 repo 감사 후속 (1·2·7)
+
+- 결론: 6차 결과 repo(`labhq-kras-5cf7f22a1b`)의 `run/reproduce.md`는 repo에 없는 `steps/s3·s4/.../*.py`와 `link_inputs.py`를 실행하라고 안내했다. 요청 묶음의 명령 목록은 보고하지 않은 스크립트까지 모두 올렸는데, 정리본은 선언된(보고된) 산출만 싣기 때문이다.
+- 바꾼 것(`labhq/portfolio.py`): 정리본에 싣지 않은 `steps/<단계>` 명령과 `link_inputs.py`를 재현 안내에서 뺀다. 대신 "공개본과 실행본의 차이" 절이 (1) 정리본에 싣지 않은 단계 스크립트와 비공개 요청 묶음에서만 실행된다는 점, (2) 공개한 스크립트 중 `manifest.json`·`inputs/<앞 단계>/…` 같은 작업공간 파일을 읽는 것을 적는다. "공개 자료로 다시 만들 수 있는 것"은 공개 스크립트가 있고 작업공간이 필요 없는 단계로 줄이고, 나머지는 "정리본만으로는 다시 만들 수 없는 것"에 둔다. 공개 code 목록과 재현 안내가 같은 사실을 쓰게 된다.
+- 바꾼 것(`labhq/orchestrator/cso.py`): 계획 prompt(일반·연구·재계획)에 `SCRIPT_OUTPUTS_PLAN_RULE`을 더해, 분석 단계만이 아니라 스크립트를 돌리는 모든 단계(QC 재계산·CI 확인·문헌 추출)가 스크립트를 `outputs/scripts/`에 선언 산출로 두게 한다. 선언하지 않은 스크립트는 게시되지 않는다.
+- 시험: `tests/test_portfolio_edition.py` 2건(빠진 것이 있을 때, 없을 때 변화 없음). 계획 prompt hash를 고정한 시험 2건은 새 규칙 한 줄을 빼고 비교하도록 맞춘다.
+- 이번에 하지 않은 것: #792 감사의 3·4·5·6·8번(고정 환경, 입력 변수·`<local-path>` 잔재, README 구성, 그림 source data, CITATION·커밋 메시지).
+- 미검증: 실제 6차 repo를 이 코드로 다시 만든 결과, 선언 규칙이 모델에게 실제로 지켜지는지.
+
 # #1077 후속: manual 저장 절
 
 - 결론: PR #1078이 `review_pending` 요청의 `--to github`를 거절하고 명령을 안내하도록 바꿨는데, 상세 manual 한·영 저장 절은 "검토 전이면 검토 완료를 기다린다"로만 적혀 있어 새 흐름과 어긋났다(#1078 리뷰의 남은 P2). 코드는 바꾸지 않았다.
 - 바꾼 것: `docs/manual.md`·`docs/manual.en.md`의 "로컬로 끝난 요청을 나중에 GitHub로(#688)" 문단. (1) CP4가 아닌 요청은 이전처럼 검토 완료를 기다림, (2) CP4 요청이 `review_pending`이면 거절하고 보고서 카드의 번호·hash로 `labhq review-done <id> --revision <번호> --sha256 <hash>`를 먼저 하거나 `--storage github [--name] [--visibility]`를 붙여 한 번에 하라고 안내함, (3) 토큰은 gateway 시작 때 읽으므로 새 토큰을 넣었으면 재시작 뒤 실행.
 - 실행한 것: `tests/test_integrations.py` 통과(문서만 변경).
+
+# #877 요청 전체 벽시계 상한 (gateway 집행)
+
+- 결론: ② 6차를 대조한 결과(#877 댓글) 평범한 `labhq up`에는 요청 전체 상한이 없었다. gateway가 요청 단위 상한을 고정하고 집행하도록 했다. 설정은 기본으로 꺼져 있다.
+- 바꾼 것: `orchestrator.request_wall_clock_s`(0이면 끔, 60초 미만은 거절). 요청을 받을 때 `wall_clock`(limit_s, held_s, deadline_at)을 요청 기록에 고정해 이후 설정 변경이 영향을 주지 않는다. gateway 감시 루프(15초)가 활성 요청이 `created_at + limit + held_s`를 넘기면 기존 `cancel_request(active_only=True)`로 취소하고 `cancel_reason=request_deadline`과 `deadline_receipt`를 남긴다.
+- 시계 규칙(총괄 결정): 요청 수락부터 `review_pending` 진입까지를 센다. 이 구간의 도구 카드 대기는 포함한다. `waiting_pi`에 머문 시간은 실제 상태 전환(`pi_since`)으로 정산해 `held_s`로 기한에 더하고, `review_pending` 이후와 `interrupted` 요청은 끊지 않는다. 재시작은 같은 `created_at`과 기록된 `held_s`를 유지하고 꺼져 있던 시간은 빼지 않는다.
+- 영수증: 취소한 task, 취소 뒤 결과를 보고하지 않은 task, 종료 판정(`confirmed`·`unconfirmed`·`no_running_tasks`). runner에 새 ack를 만들지 않고 기존 `_await_cancelled_results`가 결과를 못 받은 task를 "미확인"으로 적는 경로를 썼다.
+- 시험: `tests/test_active_request_cancel.py`에 8건(기한 취소·영수증·라벨, 설정이 아니라 요청 기록의 한도를 읽음, `waiting_pi` 가산, 검토 이후·중단 요청 비적용, 재시작 유지, 미확인 종료, 배경 감시 시작·정지, 설정 검증). 기존 취소 시험 포함 관련 시험 통과.
+- 미확인: 실제 모델 호출 중인 직원과 자식 프로세스를 기한에 끊는 동작(단위 시험은 task 상태만 본다, 별도 disposable instance 확인 필요), Windows Job 경계. 상한이 켜진 실제 요청은 아직 돌려 보지 않았다. 감시는 15초 간격이라 기한 판정에 최대 그만큼의 오차가 있다(대기 시간 정산은 전환 시각이라 오차가 없다). 재시작이 열어 둔 `waiting_pi` 구간은 더하지 않는다.
+- 근거: #877 댓글(6차 대조와 결정), `labhq/gateway/server.py`의 `enforce_request_deadlines`.
 
 ## 단계
 #1076 ① Windows pool 9분 초과: 끊긴 순간의 시험을 남기는 진단(상한은 바꾸지 않음). 진단안·승인: [#1076 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6520450345).

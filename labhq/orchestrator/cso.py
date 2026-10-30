@@ -32,7 +32,7 @@ from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups, claim_evidence_rows, claim_evidence_section)
 from ..evidence.verify import LiveSourceResolver, verification_lines, verify_sources
-from ..runner.lookup_admission import admission_for
+from ..runner.lookup_admission import admission_for, usage_note_for
 from ..runner.structured_output import GATEWAY_RETRY, GATEWAY_RETRY_META, repair_prompt
 from ..facilities import signatures as env_signatures
 from ..facilities import fixes as facility_fixes
@@ -667,6 +667,13 @@ ANALYSIS_REPRODUCIBILITY_PLAN_RULE = (
     f"{OUTPUT_SCRIPTS_DIR}analyze.py), as well as result-determining intermediate artifacts under "
     f"{OUTPUT_REFERENCE_DIR}. " + ANALYSIS_FIGURE_PLAN_RULE + " " + ABSTRACT_PLAN_RULE)
 
+# A script a step runs but does not declare is not published and cannot be re-run from the edition (#792): the
+# result repository of the sixth run listed commands for two scripts it did not contain.
+SCRIPT_OUTPUTS_PLAN_RULE = (
+    f"Any step that runs a script, whatever its kind (a QC re-computation, a table or confidence-interval check, a "
+    f"literature extraction), declares that script under {OUTPUT_SCRIPTS_DIR}. A script that is not a declared output "
+    f"is left out of the published edition, so nobody can re-run that step from it.")
+
 ROUTE_PLAN_RULE = ("Set route to solo only when one employee can finish the whole request in one turn of about "
                    "30 minutes or less: a lookup, a table, a single QC check or figure, a literature list. Use team "
                    "when the work needs analysis design choices that benefit from independent review, several "
@@ -713,6 +720,7 @@ Rules:
 - """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
 - """ + DETERMINISTIC_TRANSFORM_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
+- """ + SCRIPT_OUTPUTS_PLAN_RULE + """
 - Use HPC jobs only when the assigned agent has labhq_hpc tools and a scheduler is available.
   Local CLI is available for light work. If a step needs unavailable compute, ask the PI in
   clarifying_questions before planning execution. Put a QC step after any data generation.
@@ -801,6 +809,7 @@ Contract rules:
 - """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
 - """ + DETERMINISTIC_TRANSFORM_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
+- """ + SCRIPT_OUTPUTS_PLAN_RULE + """
 - Put QC after data generation. {question_rule} Record the scientific design choices you make in `protocol` rather
   than adding another top-level field. Each question is at most 500 characters (a longer one fails plan
   validation), the question itself first.
@@ -1042,6 +1051,7 @@ Rules:
 - """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
 - """ + DETERMINISTIC_TRANSFORM_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
+- """ + SCRIPT_OUTPUTS_PLAN_RULE + """
 - Stay within the request, permissions, data boundaries and PI approvals. If scope, cost, compute, data access or an
   approval must change, ask in clarifying_questions and do not plan the blocked work. """ + PI_CARD_QUESTION_RULE + """
 - {question_rule}
@@ -4732,6 +4742,14 @@ class Orchestrator:
                            **({"plan_warnings": req.get("plan_warnings") or [], "plan_validation": req["plan_validation"]}
                               if (req.get("plan_validation") or {}).get("semantic_checks") else {})}}
 
+    def _lookup_usage_line(self, rid: str) -> str:
+        """This request's public lookup usage as a fact for plan, re-plan, precedent and step prompts (#1088).
+
+        "" when no cap is configured; UNKNOWN (never zero) when a configured counter cannot be read. A new request
+        starts at zero: usage is not carried over from another request."""
+        note = usage_note_for(self.hub.s, rid)
+        return f"{chr(10)}{chr(10)}{note}" if note else ""
+
     def _spending_cap_line(self, rid: str) -> str:
         """The cap ``_check_budget`` enforces now, for research step and review prompts (#499): staff otherwise read
         only the free-text protocol.resource_limits, which may name another amount. "" without a cap."""
@@ -5227,6 +5245,7 @@ class Orchestrator:
                 if cp1.get("approved"):  # the receipt of the CP1 this plan's steps run under (PI 점검 R11)
                     prompt += approval_note_block("CP1", [("", cp1.get("note") or "")], CP1_NOTE_RULE)
                 prompt += self._spending_cap_line(rid)
+            prompt += self._lookup_usage_line(rid)  # at the start of this step: what is left to spend (#1088)
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             optional = [rel for rel in map(output_relpath, step.get("optional_outputs") or []) if rel]
             if declared or optional:
@@ -5264,6 +5283,9 @@ class Orchestrator:
                 # the revision round (12th mock trial). Always, not only when `feedback` names a dependency: after a
                 # restart mid-round a finished upstream revision is no longer in it (PR #368 review).
                 updates.append(f"[Current upstream results — they replace what you read before]\n{ctx}")
+            if updates and (usage := self._lookup_usage_line(rid).strip()):
+                # A resumed session gets only these updates, and its earlier turn holds an older count (#1088).
+                updates.append(usage)
             linked = input_steps(step)
             # The precedent search's stored texts reach every research step as read-only inputs (#951).
             stored_precedents = (precedent_texts.rows(self.hub.requests.get(rid, {}).get("analysis_precedents"))
@@ -7216,7 +7238,7 @@ class Orchestrator:
                     if precedent_agent in known:
                         precedent_task = Task(
                             agent_id=precedent_agent, request_id=rid, output_schema=PRECEDENT_SCHEMA,
-                            prompt=PRECEDENT_PROMPT.format(request=text),
+                            prompt=PRECEDENT_PROMPT.format(request=text) + self._lookup_usage_line(rid),
                             meta={**refs, "kind": "precedent", "request": text,
                                   "title": "선행 연구 분석 기준 조사", "max_attempts": 1})
                         precedent_job = self._step_task(rid, self.run_step(precedent_task))
@@ -7299,6 +7321,7 @@ class Orchestrator:
                             topics_rule=(topic_types.prompt_rule(topic_vocab, include_definitions=False)
                                          if topic_vocab else ""))
                         prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
+                        prompt += self._lookup_usage_line(rid)
                         prompt += reuse_advisory  # semantics-hook
                         prompt += continuation_note
                         schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
@@ -7317,6 +7340,7 @@ class Orchestrator:
                                                                                         include_definitions=False)
                                                     if topic_vocab else "")
                         prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
+                        prompt += self._lookup_usage_line(rid)
                         schema = plan_schema(vocab is not None)
                     planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
@@ -7855,7 +7879,8 @@ class Orchestrator:
                             empty_rule=empty_rule, question_rule=QUESTION_RULE, request=text,
                             plan=json.dumps(req.get("plan") or {"steps": steps}, ensure_ascii=False),
                             results=self.format_results(steps, results, n)) +
-                        planning_guidance(checklist_catalog, req.get("analysis_precedents")),
+                        planning_guidance(checklist_catalog, req.get("analysis_precedents")) +
+                        self._lookup_usage_line(rid),
                         # revision and parse_attempt keep each CSO call distinct for ledger recovery after a restart.
                         meta={**refs, "kind": "replan", "trigger": trigger, "revision": attempt,
                               "parse_attempt": parse_attempt, "request": text, "roster": roster,

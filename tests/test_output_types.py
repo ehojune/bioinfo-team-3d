@@ -118,6 +118,9 @@ def test_prompt_rule_lists_local_keys_only():
 def test_off_keeps_the_plan_schema_and_prompt_of_main():
     assert sha(cso.PLAN_SCHEMA) == PLAN_SCHEMA_SHA and cso.plan_schema(False) is cso.PLAN_SCHEMA
     prompt = cso.PLAN_PROMPT.format(**PROMPT_ARGS, output_types_rule="")
+    scripts = "- " + cso.SCRIPT_OUTPUTS_PLAN_RULE + "\n"
+    assert prompt.count(scripts) == 1 and "outputs/scripts/" in scripts  # the new rule is in the prompt and names the folder
+    prompt = prompt.replace(scripts, "")  # #792: only this rule is new; the rest is the previous prompt
     phase = ("labhq checks metadata before CP1 "
              "and prepares selected skills after approval alongside the approved steps. A late skill is omitted from that step.")
     previous = ("labhq checks metadata before CP1 "
