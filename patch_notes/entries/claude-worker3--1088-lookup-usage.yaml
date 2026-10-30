@@ -1,0 +1,5 @@
+rows:
+- sha: '53e7455'
+  at: 2026-10-30 20:40
+  text: LookupAdmission.usage(request_id)와 usage_note를 더해 요청의 공개 조회 사용량·남은 횟수·담당별 소진을 사실값으로 내고, 상한이 꺼졌거나 읽지 못하면 0 대신 UNKNOWN으로 표시한다
+  summary: CSO와 직원에게 요청의 조회 사용량을 보여 줄 재료가 생깁니다(prompt 연결은 다음 단계).
