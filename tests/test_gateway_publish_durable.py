@@ -279,12 +279,12 @@ async def test_cancel_backpressured_client_finishes_storage_and_releases_event_l
     await asyncio.wait_for(entered.wait(), 10)
     publication.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(publication, 10)
+        await asyncio.wait_for(publication, 1)
     await asyncio.wait_for(closed.wait(), 10)
     assert not hub.event_lock.locked() and stalled not in hub.clients
     assert hub.store.get("request", "r")["status"] == "running"
     assert hub.store.runner_seen("runner") == 1
-    await asyncio.wait_for(hub.publish(event("next"), "runner", 2), 10)
+    await asyncio.wait_for(hub.publish(event("next"), "runner", 2), 1)
     assert [e["seq"] for e in hub.events] == [1, 2]
     assert [e["seq"] for e in hub.store.events_since(0)] == [1, 2]
     assert not hub.pending_committed
@@ -314,10 +314,10 @@ async def test_asgi_cancel_scope_only_shields_storage(gateway):
     await asyncio.wait_for(entered.wait(), 10)
     scopes[0].cancel()
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(publication, 10)
+        await asyncio.wait_for(publication, 1)
     assert hub.store.get("request", "r")["status"] == "running"
     assert not hub.event_lock.locked() and client not in hub.clients
-    await asyncio.wait_for(hub.publish(event("next")), 10)
+    await asyncio.wait_for(hub.publish(event("next")), 1)
     assert [e["seq"] for e in hub.store.events_since(0)] == [1, 2]
 
 
@@ -346,7 +346,7 @@ async def test_cancelled_send_still_delivers_to_remaining_clients_without_next_e
     await asyncio.wait_for(blocked.wait(), 10)
     publication.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(publication, 10)
+        await asyncio.wait_for(publication, 1)
     await asyncio.wait_for(received.wait(), 10)
     await asyncio.wait_for(hub.committed_sender, 10)
     assert deliveries == [1] and not hub.pending_committed
@@ -395,7 +395,7 @@ async def test_anyio_cancel_during_commit_prevents_caller_continuation(gateway, 
     finally:
         release.set()
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(publication, 10)
+        await asyncio.wait_for(publication, 1)
     assert continued == []
     assert hub.store.get("request", "r")["status"] == "running"
     assert not hub.event_lock.locked()
