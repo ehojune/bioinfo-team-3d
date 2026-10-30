@@ -72,3 +72,55 @@ async def test_answering_a_stale_resume_card_never_revives_or_fails_a_finished_r
     assert card.id not in hub.approvals
     assert hub.requests["r"]["status"] == "done" and "resume declined" not in str(hub.requests["r"].get("error"))
     assert "r" not in hub.request_tasks
+
+
+def _step_task(rid, sid, revision):
+    from labhq.models import Task
+    return Task(agent_id="worker", request_id=rid, prompt="p",
+                meta={"kind": "step", "step_id": sid, "revision": revision})
+
+
+async def _closed_step_hub(tmp_path):
+    _, hub = lifecycle_hub(tmp_path, {"r": "running"})
+    await hub._close_step_controls("r", "s1")  # round 1 finished the step: request.step_done closes its controls
+    return hub, hub.step_key("r", "s1", "step", "t")
+
+
+async def test_a_continuation_round_at_revision_zero_stays_closed_out_of_the_gateway(tmp_path):
+    """#1053 repro: the same step id comes back at revision 0, so the closed-step check refuses it at dispatch."""
+    hub, key = await _closed_step_hub(tmp_path)
+    assert hub._closed_steps[key] == 0
+    await hub._attach_steers(_step_task("r", "s1", 0))
+    assert key in hub._closed_steps  # still closed: dispatch answers "step ended before dispatch"
+
+
+async def test_the_next_round_dispatches_one_revision_above_the_closed_one_and_stragglers_stay_out(tmp_path):
+    hub, key = await _closed_step_hub(tmp_path)
+    assert hub.step_revision_floor("r", "s1") == 1 and hub.step_revision_floor("r", "other") == 0
+    await hub._attach_steers(_step_task("r", "s1", hub.step_revision_floor("r", "s1")))
+    assert key not in hub._closed_steps  # reopened for the new round
+    assert hub._step(key)["revision"] == 1
+    assert int(_step_task("r", "s1", 0).meta["revision"]) < hub._step(key)["revision"]  # an old-round turn is refused
+
+
+async def test_a_reopened_step_keeps_its_raised_revision_for_a_question_rerun_in_the_same_round(tmp_path):
+    """Review P1: the step is open again at revision 1 after its first turn; the rerun after an answer must not drop to 0."""
+    hub, key = await _closed_step_hub(tmp_path)
+    await hub._attach_steers(_step_task("r", "s1", hub.step_revision_floor("r", "s1")))
+    assert key not in hub._closed_steps and hub._step(key)["revision"] == 1
+    assert hub.step_revision_floor("r", "s1") == 1  # open: the revision it was reopened at, not 0
+    await hub._attach_steers(_step_task("r", "s1", hub.step_revision_floor("r", "s1")))
+    assert hub._step(key)["revision"] == 1 and key not in hub._closed_steps
+    assert hub._step(key)["revision"] > int(_step_task("r", "s1", 0).meta["revision"])  # a stale turn is still refused
+
+async def test_the_orchestrator_asks_the_gateway_for_the_revision_a_reopened_step_needs(tmp_path):
+    from labhq.orchestrator.cso import Orchestrator
+    from tests.test_cso import FakeHub
+
+    hub, _ = await _closed_step_hub(tmp_path)
+    cso = Orchestrator(hub)
+    assert cso._step_revision("r", "s1") == 1  # closed at 0 in round 1
+    assert cso._step_revision("r", "s2") == 0  # never ran: unchanged
+    hub.requests["r"]["pending_revisions"] = {"s1": {"revision": 3}, "s2": {"revision": 2}}
+    assert cso._step_revision("r", "s1") == 3 and cso._step_revision("r", "s2") == 2  # a review revise keeps its own
+    assert Orchestrator(FakeHub(None))._step_revision("r", "s1") == 0  # a hub without the closed-step record

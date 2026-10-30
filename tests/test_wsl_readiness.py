@@ -201,3 +201,45 @@ def test_bootstrap_uses_same_probe_and_private_staff_home(tmp_path, monkeypatch)
     finally:
         os.umask(previous)
     assert wsl_readiness.wsl_readiness(facts)
+
+
+def test_setup_hands_the_model_tier_table_to_the_wsl_runner(settings, monkeypatch):
+    """#625: a model-less agent (bioinfo-agent) must run the tier's model on the WSL runner as on the Windows one."""
+    monkeypatch.setattr(wsl_setup, "_shared_settings", lambda s: {"workspace_root": "/mnt/c/Shared/Runs",
+                                                               "policy": s.policy.model_dump()})
+    monkeypatch.setattr(wsl_setup, "distributions", lambda: ["Ubuntu-22.04"])
+    monkeypatch.setattr(cli, "_health", lambda s: health(s))
+    settings.model_tiers.fast["claude_code"] = "haiku"
+    calls = []
+
+    def remote(s, action, **kwargs):
+        calls.append((action, kwargs))
+        return {"ok": True, **READY, "url": "ws://192.0.2.1:43123"}
+
+    monkeypatch.setattr(wsl_setup, "_remote", remote)
+    wsl_setup.setup(settings)
+    configure = [kwargs for action, kwargs in calls if action == "configure"]
+    assert len(configure) == 1 and configure[0]["model_tiers"]["fast"] == {"claude_code": "haiku"}
+
+
+def test_bootstrap_writes_the_model_tier_table_into_the_wsl_config(settings, tmp_path, monkeypatch):
+    from labhq import wsl_bootstrap
+    from labhq.settings import Settings
+
+    root, source = tmp_path / "wsl", tmp_path / "checkout"
+    root.mkdir()
+    (source / "agents/core").mkdir(parents=True)
+    (source / "agents/core/bioinfo-agent.yaml").write_text(
+        "id: bioinfo-agent" + chr(10) + "name: Bioinfo" + chr(10) + "role: pipeline" + chr(10) + "engine: mock" + chr(10))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(wsl_bootstrap.sys, "prefix", str(root / "venv"))
+    data = {"action": "configure", "root": str(root), "source": str(source), "id": "lab-wsl",
+            "url": "ws://192.0.2.1:43123", "token": settings.gateway.runner_token,
+            "bioinfo_agent": "/opt/bioinfo-agent", "supervisor": {"restart": True},
+            "workspace_root": "/mnt/c/Shared/Runs", "policy": settings.policy.model_dump(),
+            "model_tiers": {"fast": {"claude_code": "haiku"}, "balanced": {}, "reasoning": {}}}
+    assert wsl_bootstrap.main(data)["ok"]
+    assert Settings.load(str(root / "labhq.yaml")).model_tiers.model_for("fast", "claude_code") == "haiku"
+    older = {key: value for key, value in data.items() if key != "model_tiers"}  # a Windows side that sends none
+    assert wsl_bootstrap.main(older)["ok"]
+    assert Settings.load(str(root / "labhq.yaml")).model_tiers.model_for("fast", "claude_code") is None

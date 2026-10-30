@@ -10,23 +10,53 @@ class MiniWebSocket {
     this.buffer = Buffer.alloc(0);
     this.fragments = [];
     this.closed = false;
+    this.closeReported = false;
     const target = new URL(url);
     const key = crypto.randomBytes(16).toString('base64');
     const request = http.request({host: target.hostname, port: target.port, path: target.pathname + target.search,
       headers: {Connection: 'Upgrade', Upgrade: 'websocket', 'Sec-WebSocket-Key': key, 'Sec-WebSocket-Version': '13'}});
+    this.request = request;
     request.on('upgrade', (response, socket, head) => {
-      const accept = crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
-      if (response.headers['sec-websocket-accept'] !== accept) { socket.destroy(); this.onerror?.(new Error('bad WebSocket handshake')); return; }
+      // From here the upgraded socket owns the ending: its own 'close', never the request's earlier one, reports it
+      // (#1107), whatever else happens below (a close() that ran during the upgrade, or a wrong accept key).
       this.socket = socket;
+      socket.on('close', () => { this.closed = true; this.reportClosed(); });
+      socket.on('error', error => { if (!this.closed) this.onerror?.(error); });
+      if (this.closed) { socket.destroy(); return; }  // close() already ran while the upgrade was pending
+      const accept = crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+      if (response.headers['sec-websocket-accept'] !== accept) {
+        this.closed = true;
+        socket.destroy();
+        this.onerror?.(new Error('bad WebSocket handshake'));
+        return;
+      }
       socket.on('data', chunk => this.read(chunk));
-      socket.on('close', () => { this.closed = true; this.onclose?.(); });
-      socket.on('error', error => this.onerror?.(error));
       this.onopen?.();
       if (head.length) this.read(head);
     });
-    request.on('response', () => this.onerror?.(new Error('DevTools endpoint refused the WebSocket upgrade')));
-    request.on('error', error => this.onerror?.(error));
+    // A plain HTTP answer is a refusal: report it, drop the answer and end the request so 'close' reports it (#1107).
+    request.on('response', response => {
+      this.onerror?.(new Error('DevTools endpoint refused the WebSocket upgrade'));
+      this.closed = true;
+      response.resume();
+      request.destroy();
+    });
+    // A connection that fails before the upgrade never gets a socket 'close' handler, so it reports its end here.
+    request.on('error', error => {
+      if (this.closed) return;  // the error of the request close() itself destroyed
+      this.onerror?.(error);
+      if (!this.socket) this.closed = true;  // the request's own 'close' below reports it, once the transport has ended
+    });
+    // A connection that never upgrades ends with its request: only then is the transport really gone (#1107).
+    request.on('close', () => { if (!this.socket) { this.closed = true; this.reportClosed(); } });
     request.end();
+  }
+
+  // The browser class fires one close event per socket, whatever ended it (#1107).
+  reportClosed() {
+    if (this.closeReported) return;
+    this.closeReported = true;
+    this.onclose?.();
   }
 
   read(chunk) {
@@ -69,6 +99,12 @@ class MiniWebSocket {
 
   close() {
     if (this.closed) return;
+    if (!this.socket) {
+      // Still waiting for the upgrade: end the pending request. No socket 'close' will ever arrive, so report it now.
+      this.closed = true;
+      try { this.request.destroy(); } catch { this.reportClosed(); }  // normally reported by the request's 'close'
+      return;
+    }
     try { this.frame(0x8, Buffer.alloc(0)); this.socket.end(); } catch { /* socket already gone */ }
     this.closed = true;
   }

@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 from types import SimpleNamespace
 import pytest
@@ -6,6 +7,7 @@ from labhq import doctor
 from labhq.adapters import codex as codex_mod
 from labhq.settings import DataZone, Settings
 from labhq.registry import Registry
+from tests.support.time_proxy import RuntimeProxy
 
 
 @pytest.fixture(autouse=True)
@@ -81,9 +83,11 @@ def _write_roster_agent(folder, filename, agent_id, *, employment="contract", st
 
 @pytest.mark.parametrize("custom", [False, True])
 def test_doctor_roster_matches_registry_without_archiving(tmp_path, monkeypatch, custom):
+    import labhq.doctor as doctor_module
     import labhq.registry as registry_module
 
-    monkeypatch.setattr(registry_module.time, "time", lambda: 100)
+    for module in (doctor_module, registry_module):
+        monkeypatch.setattr(module, "time", RuntimeProxy(module.time, time=lambda: 100))
     settings = _settings(tmp_path)
     base = tmp_path / "agents"
     folder = tmp_path / "custom" if custom else base / "contract"
@@ -259,6 +263,8 @@ def test_doctor_compares_runner_with_config_owner(tmp_path, monkeypatch, same_ac
 
 def test_doctor_warns_about_parent_session_markers_and_pi_skills(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
+    for key in [k for k in os.environ if k.upper().startswith(("CLAUDE_", "CLAUDECODE"))]:
+        monkeypatch.delenv(key)  # an agent session already carries its own markers; count only the two below
     monkeypatch.setenv("CLAUDE_CODE_CHILD_SESSION", "1")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "not-reported")
     monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)

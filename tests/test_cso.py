@@ -3395,3 +3395,26 @@ async def test_failure_with_bound_environment_does_not_replan_or_touch_bindings(
         for key in ("id", "agent_id", "environment_binding", "environment_bindings"):
             assert kept.get(key) == old.get(key), key
     assert [s["id"] for s in req["plan"]["steps"]] == [s["id"] for s in before]
+
+
+def test_result_correction_pins_the_claims_to_the_steps_declared_ids():
+    """#1066: a correction that only said "record it as a claim" made a worker add c_mechanistic_hypotheses, a claim id
+    the plan never declared, and the step then failed on it."""
+    from labhq.orchestrator.cso import result_correction
+
+    problems = ["hypothesis row e1 is not evidence and cannot support a claim; link it as context"]
+    text = result_correction(problems, ["c_a", "c_b"])
+    assert '["c_a", "c_b"]' in text and "Never create a claim id outside that list" in text
+    assert "relation context" in text and "never a new claim" in text
+    assert problems[0] in text
+    assert "claim_ids" not in result_correction(problems)  # a caller without a plan step keeps the old wording
+    assert '[]' in result_correction(problems, [])  # a step that declared none may not add one either
+
+
+def test_plan_prompts_tell_the_cso_to_declare_each_claim_a_step_will_state():
+    from labhq.orchestrator import cso
+
+    for prompt in (cso.RESEARCH_PLAN_PROMPT,):
+        flat = " ".join(prompt.split())
+        assert "can state only the claims in that step's claim_ids" in flat
+        assert "declare a claim_id for each of them in the step that produces it" in flat

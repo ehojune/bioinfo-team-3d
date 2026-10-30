@@ -419,9 +419,10 @@ class GitHubClient:
             raise GitHubHTTPError("GET", endpoint, response)
         return False
 
-    async def put_image(self, repo: str, path: str, content: bytes, branch: str | None) -> dict:
+    async def put_image(self, repo: str, path: str, content: bytes, branch: str | None,
+                        message: str = "연구 결과 그림") -> dict:
         """An image from a reviewed result edition; text files use put_file's cleaner."""
-        return await self.put_binary(repo, path, content, branch, "연구 결과 그림")
+        return await self.put_binary(repo, path, content, branch, message)
 
     async def put_binary(self, repo: str, path: str, content: bytes, branch: str | None, message: str) -> dict:
         """Bytes of a reviewed result edition (an image, the report PDF): sent as they are, replacing an existing file.

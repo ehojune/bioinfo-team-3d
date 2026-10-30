@@ -74,7 +74,7 @@ from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .lookup_admission import ENV as LOOKUP_ADMISSION_ENV, FILE as LOOKUP_ADMISSION_FILE, LookupAdmission
 from .system_ca import CA_ENV, system_ca_pem
-from .step_inputs import stage_inputs, stage_precedent_texts
+from .step_inputs import folder_files, linked_files, stage_inputs, stage_precedent_texts, staging_problem
 from ..research.precedent_texts import step_note as precedent_step_note
 from .workspace import (InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, resolved_zones,
                         restricted_zones)
@@ -1121,6 +1121,19 @@ class Runner:
             agent = AgentSpec.model_validate({**agent.model_dump(), **identity, **limits})
         if self.s.runner.force_engine:
             agent = agent.model_copy(update={"engine": Engine(self.s.runner.force_engine)})
+        # Last, so the tier means a model on the engine the agent really runs on: an override, a request identity or
+        # a forced engine that moved it has already been applied, and any model they named is kept (#625).
+        # A plan step's own tier (#625, step 2) is a decision of the approved plan, already capped by the gateway at
+        # the staff member's declared tier, so it comes before the member's model: only a lower tier is ever sent.
+        step_tier = task.meta.get("model_tier")
+        if step_tier in ("fast", "balanced", "reasoning"):
+            step_model = self.s.model_tiers.model_for(step_tier, agent.engine.value)
+            if step_model:
+                agent = agent.model_copy(update={"model": step_model, "model_tier": step_tier})
+        if agent.model is None and agent.model_tier:
+            tier_model = self.s.model_tiers.model_for(agent.model_tier, agent.engine.value)
+            if tier_model:
+                agent = agent.model_copy(update={"model": tier_model})
         return agent
 
     def _mcp_servers(self, agent: AgentSpec, env: dict[str, str], allow_ask: bool = True) -> list[McpServerSpec]:
@@ -2471,13 +2484,14 @@ class Runner:
         required_declared = task.meta.get("required_outputs", declared)
         optional_declared = task.meta.get("optional_outputs", [])
         found = []
+        declared_dirs = []
         for name in declared:
             relative = output_relpath(name)
             if relative is None:
                 continue
             target = (ws.dir / relative).resolve()
             if target.exists() and target.is_relative_to((ws.dir / "outputs").resolve()):
-                found.append(relative)
+                (declared_dirs if target.is_dir() else found).append(relative)
         listed_outputs: list[str] | None = None
         output_scan_note: str | None = None
         if task.meta.get("kind") == "direct" or task.meta.get("collect_direct_outputs") is True:
@@ -2488,6 +2502,13 @@ class Runner:
             found += listed_outputs
             if output_scan_note:
                 await emit("agent.log", {"level": "warn", "text": output_scan_note})
+        # A declared folder is collected as its files, each with the hash recorded after the run (#1058): a folder entry
+        # has no hash, and a later step refuses an ancestor whose collected list holds one. A file that was not hashed
+        # (too large, a link) is not collected; it stays unreported.
+        for folder in declared_dirs:
+            prefix = folder.rstrip("/") + "/"
+            found += [row["path"] for row in output_records
+                      if row["path"].startswith(prefix) and isinstance(row.get("sha256"), str)]
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
         hashed = {row["path"]: row["sha256"] for row in output_records
                   if isinstance(row.get("sha256"), str) and row["path"] in result.outputs}
@@ -2496,14 +2517,60 @@ class Runner:
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
         if _should_check_declared_outputs(result):
+            def has_output(rel: str) -> bool:
+                # A declared folder is there when a file with a hash is under it: a later step stages only those.
+                return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in result.output_sha256)
+
             missing_required = [rel for name in required_declared
-                                if (rel := output_relpath(name)) and rel not in collected]
+                                if (rel := output_relpath(name)) and not has_output(rel)]
             missing_optional = [rel for name in optional_declared
-                                if (rel := output_relpath(name)) and rel not in collected]
+                                if (rel := output_relpath(name)) and not has_output(rel)]
             if missing_required:
                 result.ok = False
                 result.missing_outputs = list(dict.fromkeys([*result.missing_outputs, *missing_required]))
                 result.error = "incomplete: missing outputs: " + ", ".join(result.missing_outputs)
+            if declared_dirs and result.ok and output_scan_notes:
+                # The bounded walk of outputs/ skipped something (too deep, too many entries, unreadable). That only
+                # matters for a declared folder the walk did not see whole: each folder is walked on its own, and an
+                # unrelated subtree or a note from an earlier scan does not fail it (#1058, #1065).
+                seen = {row["path"] for row in output_records}
+                folder_problems = []
+                for folder in declared_dirs:
+                    paths, why = await asyncio.to_thread(
+                        folder_files, ws.dir, folder, self.s.runner.reference_scan_max_entries,
+                        self.s.runner.reference_scan_max_depth)
+                    if why:
+                        folder_problems.append(f"{folder}: {why}")
+                    elif unseen := [path for path in paths if path not in seen]:
+                        folder_problems.append(f"{folder}: the scan did not record {len(unseen)} file(s), "
+                                               f"for example {unseen[0]}")
+                if folder_problems:
+                    result.ok = False
+                    result.error = ("incomplete: the outputs scan is incomplete, so declared folder(s) "
+                                    f"{', '.join(declared_dirs)} cannot be collected whole: "
+                                    + "; ".join(folder_problems))
+            if declared_dirs and result.ok:
+                # A later step stages at most this many files and bytes of ONE ancestor, folder files and plain
+                # declared files together, and refuses the whole ancestor otherwise (#1058): the producer must not
+                # pass what no later step can take.
+                sizes = {row["path"]: int(row.get("size") or 0) for row in output_records}
+                linked = set(await asyncio.to_thread(linked_files, ws.dir, result.outputs))
+                problem = staging_problem(result.outputs, result.output_sha256, sizes,
+                                          self.s.runner.input_hash_max_file_bytes,
+                                          self.s.runner.input_hash_max_total_bytes, linked)
+                if problem:
+                    result.ok = False
+                    result.error = (f"incomplete: declared folder(s) {', '.join(declared_dirs)} make the step collect "
+                                    f"outputs a later step would refuse: {problem}")
+            if result.ok and not declared_dirs and task.meta.get("kind") != "direct":
+                # A hard-linked output is hashed like any other, but a later step refuses it and with it the
+                # whole ancestor; steps that declare a folder get the same check inside the staging check (#1065).
+                # Every collected path, optional and unreported ones too: a later step stages the whole list.
+                linked_declared = await asyncio.to_thread(linked_files, ws.dir, result.outputs)
+                if linked_declared:
+                    result.ok = False
+                    result.error = ("incomplete: a later step refuses a hard-linked output: "
+                                    + ", ".join(linked_declared))
             if missing_optional:
                 result.missing_optional_outputs = list(dict.fromkeys([
                     *result.missing_optional_outputs, *missing_optional]))

@@ -17,11 +17,25 @@ def _logical_path(path):
         return str(path).replace('\\', '/')
 
 
+IDENTIFIER_KINDS = ("doi", "pmid")  # name one work; github and url name a place whose content can change
+
+
+def _identifier(ref):
+    """`doi:10.x/y` or `pmid:123` for a reference that is only an identifier, else None."""
+    value = ref.get('value')
+    if ref.get('kind') not in IDENTIFIER_KINDS or not isinstance(value, str) or not value.strip():
+        return None
+    value = value.strip()
+    return f"{ref['kind']}:{value.casefold() if ref['kind'] == 'doi' else value}"
+
+
 def capture(request, settings, meta=None):
     """Return a content manifest, or None when any input cannot be proved on this host.
 
     Paths must already be within configured reference roots. Links, special files, private
     paths, controlled zones and incomplete scans are declined before reading file contents.
+    DOI and PMID references carry no content receipt: they are listed under `unreceipted`, so reuse needs the
+    same identifiers but is not proof that the cited work is unchanged (#1061). Other references decline.
     """
     from ..intake import reference_roots, overlaps_restricted, overlaps_zone
     from ..private_paths import resolve_private_paths, credential_path
@@ -29,10 +43,16 @@ def capture(request, settings, meta=None):
     try:
         refs = request.get('references') or []
         paths = []
+        unreceipted = []
         for ref in refs:
-            if not isinstance(ref, dict) or ref.get('kind') != 'path' or not ref.get('value'):
+            if not isinstance(ref, dict) or not ref.get('value'):
+                return None
+            if ref.get('kind') == 'path':
+                paths.append(ref['value'])
+            elif (identifier := _identifier(ref)) is not None:
+                unreceipted.append(identifier)
+            else:
                 return None  # URLs/repositories have no local content receipt.
-            paths.append(ref['value'])
         for source in (request, meta or {}):
             for key in ('reference_dirs', 'project_dirs'):
                 paths.extend(source.get(key) or [])
@@ -111,6 +131,8 @@ def capture(request, settings, meta=None):
         from ..wsl_paths import message_paths
         descriptor = message_paths(descriptor, 'windows')
         body = {'version': 1, 'descriptor': descriptor, 'files': rows}
+        if unreceipted:  # absent for path-only requests, so their recorded proofs keep the same hash
+            body['unreceipted'] = sorted(set(unreceipted))
         body['sha256'] = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         return body
     except (OSError, ValueError, TypeError, RuntimeError, AttributeError):

@@ -17,6 +17,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from .. import output_checks
@@ -32,7 +33,7 @@ from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups, claim_evidence_rows, claim_evidence_section)
 from ..evidence.verify import LiveSourceResolver, verification_lines, verify_sources
-from ..runner.lookup_admission import admission_for
+from ..runner.lookup_admission import admission_for, usage_note_for
 from ..runner.structured_output import GATEWAY_RETRY, GATEWAY_RETRY_META, repair_prompt
 from ..facilities import signatures as env_signatures
 from ..facilities import fixes as facility_fixes
@@ -667,6 +668,13 @@ ANALYSIS_REPRODUCIBILITY_PLAN_RULE = (
     f"{OUTPUT_SCRIPTS_DIR}analyze.py), as well as result-determining intermediate artifacts under "
     f"{OUTPUT_REFERENCE_DIR}. " + ANALYSIS_FIGURE_PLAN_RULE + " " + ABSTRACT_PLAN_RULE)
 
+# A script a step runs but does not declare is not published and cannot be re-run from the edition (#792): the
+# result repository of the sixth run listed commands for two scripts it did not contain.
+SCRIPT_OUTPUTS_PLAN_RULE = (
+    f"Any step that runs a script, whatever its kind (a QC re-computation, a table or confidence-interval check, a "
+    f"literature extraction), declares that script under {OUTPUT_SCRIPTS_DIR}. A script that is not a declared output "
+    f"is left out of the published edition, so nobody can re-run that step from it.")
+
 ROUTE_PLAN_RULE = ("Set route to solo only when one employee can finish the whole request in one turn of about "
                    "30 minutes or less: a lookup, a table, a single QC check or figure, a literature list. Use team "
                    "when the work needs analysis design choices that benefit from independent review, several "
@@ -686,6 +694,7 @@ Rules:
 - """ + FIGURE_OUTPUT_RULE + """
 - Save every deliverable under outputs/ using relative paths.
 - Save analysis code under """ + OUTPUT_SCRIPTS_DIR + """ and use only relative paths inside it.
+- """ + SCRIPT_OUTPUTS_PLAN_RULE + """
 - In the limitations, give one line for each thing you could not do and each assumption you had to make.
 - Follow every supplied topic or precedent checklist item. Add a short cited "선행 연구 기준" section when
   Analysis precedents are supplied, and put omitted recommendations under "다음에 할 수 있는 분석".
@@ -713,6 +722,7 @@ Rules:
 - """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
 - """ + DETERMINISTIC_TRANSFORM_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
+- """ + SCRIPT_OUTPUTS_PLAN_RULE + """
 - Use HPC jobs only when the assigned agent has labhq_hpc tools and a scheduler is available.
   Local CLI is available for light work. If a step needs unavailable compute, ask the PI in
   clarifying_questions before planning execution. Put a QC step after any data generation.
@@ -741,6 +751,11 @@ SELECTION_RECORD_RULE = (
     "actually weighed with `rejected_because`) and `change_signals` (observations that would change your judgment). "
     "Record only alternatives you really considered; leave the field out when you weighed none rather than "
     "inventing some.")
+# A step's result cannot add a claim the plan did not declare (#1066): ask the CSO to declare each one up front.
+CLAIM_IDS_PLAN_RULE = ("A step's result can state only the claims in that step's claim_ids; it cannot add one. When "
+                       "the request asks for hypotheses, mechanisms or a grade-by-grade summary as findings, declare a "
+                       "claim_id for each of them in the step that produces it.")
+
 RESEARCH_PLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + recruit_planning.PLAN_RULE + "\n\n" + paper_skills.PLAN_RULE + "\n\n" + """Create a frozen research contract for the PI's request. Do not execute or analyze.
 
 Team roster (use these agent ids exactly, never an orchestration role):
@@ -791,10 +806,12 @@ Contract rules:
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on. Every output is
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}{topics_rule}
+- """ + CLAIM_IDS_PLAN_RULE + """
 - """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
 - """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
 - """ + DETERMINISTIC_TRANSFORM_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
+- """ + SCRIPT_OUTPUTS_PLAN_RULE + """
 - Put QC after data generation. {question_rule} Record the scientific design choices you make in `protocol` rather
   than adding another top-level field. Each question is at most 500 characters (a longer one fails plan
   validation), the question itself first.
@@ -825,7 +842,8 @@ RESEARCH_CP1_ONLY_RULE = "PR 1 pilot stops after CP1 approval. Research steps wi
 RESEARCH_CP2_RULE = (
     "After CP1 approval labhq runs these steps exactly as frozen; nothing re-plans them. Each step returns a "
     "result v2 ledger bound to this plan's sha256, its step id, its claim_ids and its evidence_slots, with claims "
-    "and evidence kept apart. An artifact_refs path must be one of that step's declared outputs or an upstream "
+    "and evidence kept apart. An artifact_refs path must be one of that step's declared outputs (a file inside a declared folder, "
+    "not the folder) or an upstream "
     "step's collected artifact; evidence citing any other path is refused. The request then stops at CP2, where "
     "the PI approves, requests revision of, or denies the evidence. After approval one reviewer checks the claims "
     "against their ledgers and files, and the final report ties every conclusion to a ledger claim as "
@@ -944,8 +962,13 @@ def apply_declared_output_status(step: dict, result: TaskResult) -> TaskResult:
     collected = {rel for name in result.outputs if (rel := output_relpath(name))}
     required = [(str(name), rel) for name in step.get("outputs") or [] if (rel := output_relpath(name))]
     optional = [(str(name), rel) for name in step.get("optional_outputs") or [] if (rel := output_relpath(name))]
-    missing = [name for name, rel in required if rel not in collected]
-    missing_optional = [name for name, rel in optional if rel not in collected]
+    hashed = {rel for name in result.output_sha256 if (rel := output_relpath(name))}
+
+    def has_output(rel: str) -> bool:  # a declared folder is collected as its hashed files (#1058)
+        return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in hashed)
+
+    missing = [name for name, rel in required if not has_output(rel)]
+    missing_optional = [name for name, rel in optional if not has_output(rel)]
     warnings = list(result.step_warnings)
     if missing_optional:
         warnings.append("선택 산출 누락: " + ", ".join(missing_optional))
@@ -970,6 +993,9 @@ STEP_OUTPUTS_RULE = ("\n\nDeclared required outputs: save each at exactly this p
                      "present, but absence is only a warning: {optional}")
 
 RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_FIELD_RULES) + (
+    "\n- Evidence rows that cite the same source (the same DOI, PMID, accession or artifact path) must carry the "
+    "same independence_group: a source cited twice is one independent source, and with two groups the later row is "
+    "refused and its claim loses that evidence."
     "\n- For literature evidence, carry the fulltext tool's source_access_metadata into SourceRef "
     "(access_status, methods_locator, qc_locator, supplementary_status), with DOI/PMID and the exact "
     "source.locator you read. A stored receipt records access, not support: locate Methods/QC after reading, "
@@ -1030,6 +1056,7 @@ Rules:
 - """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
 - """ + DETERMINISTIC_TRANSFORM_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
+- """ + SCRIPT_OUTPUTS_PLAN_RULE + """
 - Stay within the request, permissions, data boundaries and PI approvals. If scope, cost, compute, data access or an
   approval must change, ask in clarifying_questions and do not plan the blocked work. """ + PI_CARD_QUESTION_RULE + """
 - {question_rule}
@@ -1384,6 +1411,20 @@ def _budget_line(budget: dict[str, Any]) -> str:
                 f"{_plan_cap_sum(budget)} = ${total:.2f}. 넘으면 예산 카드가 뜹니다.")
     return (f"집행 상한 ${cap:.2f}({origin.get(budget.get('source'), '요청 예산')} ${cap:.2f}에 맞춰 줄임: "
             f"{_plan_cap_sum(budget)} = ${total:.2f}).")
+
+
+def unreceipted_references(contract: dict, reused: list[str]) -> list[str]:
+    """DOI and PMID references that the reused steps ran under with only their identifier pinned (#1061).
+
+    The earlier round's input proof lists them under ``unreceipted``: reuse is allowed while the identifiers are the
+    same, but nothing checked what they point to, which the PI deciding on the reuse should be told."""
+    proofs = ((contract.get("rounds") or [{}])[-1].get("reuse_input_proof")) or {}
+    found: set[str] = set()
+    for sid in reused:
+        proof = proofs.get(sid)
+        if isinstance(proof, dict):
+            found.update(str(item) for item in proof.get("unreceipted") or [])
+    return sorted(found)
 
 
 def _cost_estimate_line(estimate: dict[str, Any]) -> str:
@@ -2253,19 +2294,52 @@ def _normalize_plan_outputs(plan: Any) -> tuple[Any, list[str]]:
     return normalized, warnings
 
 
+MODEL_TIER_ORDER = ("fast", "balanced", "reasoning")
+# A step that checks or reports never runs below this tier (#625): its output is what the PI reads and trusts.
+MODEL_TIER_FLOOR = {"validation": "balanced", "report": "balanced"}
+
+
+def clamp_step_tier(sid: str, requested: Any, declared: Any, phase: Any = None) -> tuple[str | None, str | None]:
+    """The tier a step really runs on, and a warning when the request was changed or dropped (#625).
+
+    A step may only be lowered from its staff member's declared tier, never raised. A phase with a floor
+    (validation, report) cannot go below it. A staff member with no declared tier takes no step tier, and a floor
+    above the declared tier leaves the step on its own. Returns (tier or None, warning or None); None means "run as
+    declared" and the field is left out."""
+    if requested not in MODEL_TIER_ORDER:
+        return None, f"step {sid}: model_tier {requested!r} is not fast, balanced or reasoning; ignored"
+    if declared not in MODEL_TIER_ORDER:
+        return None, f"step {sid}: model_tier {requested} ignored: its staff member declares no model tier"
+    ceiling = MODEL_TIER_ORDER.index(declared)
+    chosen = min(MODEL_TIER_ORDER.index(requested), ceiling)
+    floor = MODEL_TIER_ORDER.index(MODEL_TIER_FLOOR[phase]) if phase in MODEL_TIER_FLOOR else 0
+    if floor > ceiling:
+        return None, f"step {sid}: model_tier {requested} ignored: a {phase} step cannot go below {MODEL_TIER_FLOOR[phase]}, above its staff member's {declared}"
+    chosen = max(chosen, floor)
+    tier = MODEL_TIER_ORDER[chosen]
+    note = None if tier == requested else (
+        f"step {sid}: model_tier {requested} changed to {tier} (staff member declares {declared}"
+        + (f", {phase} steps stay at {MODEL_TIER_FLOOR[phase]} or above" if phase in MODEL_TIER_FLOOR else "") + ")")
+    return (None if tier == declared else tier), note
+
+
 def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                    excluded: frozenset[str] | set[str] = ORCHESTRATION_ROLES, *,
                    vocab: output_vocab.Vocab | None = None, stats: dict | None = None,
                    reject_excess: bool = False,
                    stored_environment: bool = False,
-                   guard: Callable[[list[dict]], list[str]] | None = None) -> tuple[list[dict], list[str]]:
+                   guard: Callable[[list[dict]], list[str]] | None = None,
+                   tier_rules: Mapping[str, Any] | None = None) -> tuple[list[dict], list[str]]:
     """Steps ready to dispatch, plus warnings. With ``vocab`` (plan.declare_output_types on), each step's
     ``output_types`` is normalized against its final outputs and per-request counts go into ``stats``; without it,
     any ``output_types`` the CSO sent is dropped and the steps are exactly what they were before #221.
 
     A fresh CSO plan is cut to ``max_steps``. A stored plan passes ``reject_excess``: cutting it would drop steps
     the request already promised, so a plan over the limit raises instead (#282). ``guard`` names steps the
-    roster may not take as planned (contract staff that send data out on restricted inputs, #424)."""
+    roster may not take as planned (contract staff that send data out on restricted inputs, #424).
+
+    ``tier_rules`` (#625, orchestrator.step_model_tiers on) is ``{"agents": {staff id: declared tier}}``: a step's
+    ``model_tier`` is kept only as clamp_step_tier allows. Without it the field is dropped, exactly as before."""
     # Scheduler-made runner environment clones are not counted against the limit (#674).
     extra = scheduler_clone_extra(raw) if stored_environment else 0
     if reject_excess and len(raw) > max_steps + extra:
@@ -2293,6 +2367,13 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                          if "key_figures" in s else {}),
                       **({key: copy.deepcopy(s[key]) for key in ("environment_binding", "environment_bindings")
                           if key in s} if stored_environment else {})})
+        if tier_rules is not None and s.get("model_tier") is not None:
+            tier, note = clamp_step_tier(sid, s.get("model_tier"), (tier_rules.get("agents") or {}).get(steps[-1]["agent_id"]),
+                                         s.get("phase"))
+            if tier:
+                steps[-1]["model_tier"] = tier
+            if note:
+                warnings.append(note)
         raw_types[sid] = s.get("output_types")
     problems = []
     for s in steps:
@@ -2433,12 +2514,22 @@ def report_correction(problems: list[str], citable: str, report: str) -> str:
         "Report to correct:", report])
 
 
-def result_correction(problems: list[str]) -> str:
-    """Ask for ledger JSON only: the completed analysis and its files must not run again."""
+def result_correction(problems: list[str], claim_ids: list[str] | None = None) -> str:
+    """Ask for ledger JSON only: the completed analysis and its files must not run again.
+
+    ``claim_ids`` are the claims the frozen plan declared for this step. A correction that said only "record it as a
+    claim" made a worker add a claim id the plan never declared, and the step then failed on that (#1066)."""
+    claims = [
+        "The claims you may return are exactly this step's claim_ids: " + json.dumps(list(claim_ids)) + ". Never "
+        "create a claim id outside that list. A row that is not evidence (a hypothesis, mechanism or background row) "
+        "is linked to one of these claims with relation context, or left out of the links; it is never a new claim. "
+        "Where a problem below says to record something as a claim, that applies only to a claim id on this list."
+    ] if claim_ids is not None else []
     return "\n".join([
         "The previous research result JSON failed contract validation. Fix every problem below and return only one "
         "complete corrected result JSON object.",
         "Do not recreate or modify output files, rerun the analysis, or change the method. Fix the result JSON only.",
+        *claims,
         *_problem_lines(problems, "1."),
     ])
 
@@ -3161,6 +3252,26 @@ class Orchestrator:
         req = self.hub.requests.get(rid) or {}
         return [str(req.get("text") or "")], [*(req.get("project_dirs") or []), *reference_dirs(req.get("references"))]
 
+    def _tier_rules(self) -> dict[str, Any] | None:
+        """What validate_steps needs to keep a step's model_tier (#625): None while orchestrator.step_model_tiers is off."""
+        if not getattr(self.cfg, "step_model_tiers", False):
+            return None
+        return {"agents": {agent_id: (info or {}).get("model_tier")
+                           for agent_id, info in (getattr(self.hub, "agents", None) or {}).items()}}
+
+    def _dispatch_step_tier(self, step: dict) -> str | None:
+        """The tier a step's task is sent with (#625): the one place that decides, whatever plan the step came from.
+
+        A stored research plan resumes with its own step dicts, not the ones validate_steps returned, so the tier is
+        checked again here: nothing while orchestrator.step_model_tiers is off, otherwise clamp_step_tier against the
+        staff member's declared tier and the phase floor."""
+        rules = self._tier_rules()
+        if rules is None or step.get("model_tier") is None:
+            return None
+        tier, _note = clamp_step_tier(str(step.get("id") or ""), step.get("model_tier"),
+                                      rules["agents"].get(step.get("agent_id")), step.get("phase"))
+        return tier
+
     def _external_guard(self, rid: str) -> Callable[[list[dict]], list[str]] | None:
         """validate_steps guard: contract staff that send data out stay off restricted-input steps (#424)."""
         settings = getattr(self.hub, "s", None)
@@ -3374,6 +3485,15 @@ class Orchestrator:
         store = getattr(self.hub, "store", None)
         return store is not None and any(holds_session(entry, agent_id, session_id, workdir)
                                          for entry in store.all("task").values())
+
+    def _step_revision(self, rid: str, step_id: str) -> int:
+        """The revision a step turn is dispatched at: a review revise's own, or the gateway's floor for the step.
+
+        A continuation round runs the same step ids again; the gateway keeps the first round's closed step at its
+        revision and refuses anything not above it ("step ended before dispatch", #1053)."""
+        pending = (self.hub.requests.get(rid, {}).get("pending_revisions", {}).get(step_id, {}).get("revision", 0))
+        floor = getattr(self.hub, "step_revision_floor", None)
+        return max(int(pending or 0), floor(rid, step_id) if floor else 0)
 
     async def _free_session(self, agent_id: str, session_id: str | None, workdir: str | None, *,
                             rid: str, step: str) -> tuple[str | None, str | None]:
@@ -4687,6 +4807,14 @@ class Orchestrator:
                            **({"plan_warnings": req.get("plan_warnings") or [], "plan_validation": req["plan_validation"]}
                               if (req.get("plan_validation") or {}).get("semantic_checks") else {})}}
 
+    def _lookup_usage_line(self, rid: str) -> str:
+        """This request's public lookup usage as a fact for plan, re-plan, precedent and step prompts (#1088).
+
+        "" when no cap is configured; UNKNOWN (never zero) when a configured counter cannot be read. A new request
+        starts at zero: usage is not carried over from another request."""
+        note = usage_note_for(self.hub.s, rid)
+        return f"{chr(10)}{chr(10)}{note}" if note else ""
+
     def _spending_cap_line(self, rid: str) -> str:
         """The cap ``_check_budget`` enforces now, for research step and review prompts (#499): staff otherwise read
         only the free-text protocol.resource_limits, which may name another amount. "" without a cap."""
@@ -5159,7 +5287,11 @@ class Orchestrator:
                            f"Copy plan_sha256={contract.get('plan_sha256')}, step_id={step['id']}, "
                            f"claim_ids={json.dumps(step.get('claim_ids') or [])}, and fill evidence_slots="
                            f"{json.dumps(step.get('evidence_slots') or [])}. Keep claims and evidence separate. "
-                           "Each artifact_refs path is one of your declared outputs (outputs/<name>) or an upstream "
+                           "Every claim you return must use one of those claim_ids; never add a claim id of your "
+                           "own. A hypothesis, mechanism or background row is not evidence: link it to one of "
+                           "those claims as context. "
+                           "Each artifact_refs path is one of your declared outputs (outputs/<name>; for a declared folder, "
+                           "a file inside it as outputs/<folder>/<file>, never the folder itself) or an upstream "
                            "artifact written as <workdir_id>/<path>; evidence citing any other path is refused at CP2. "
                            "If you cannot proceed without a blocking decision, return the same schema with every "
                            "list empty and the question with its choices in blocking_decision. The CSO answers first; "
@@ -5178,6 +5310,7 @@ class Orchestrator:
                 if cp1.get("approved"):  # the receipt of the CP1 this plan's steps run under (PI 점검 R11)
                     prompt += approval_note_block("CP1", [("", cp1.get("note") or "")], CP1_NOTE_RULE)
                 prompt += self._spending_cap_line(rid)
+            prompt += self._lookup_usage_line(rid)  # at the start of this step: what is left to spend (#1088)
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             optional = [rel for rel in map(output_relpath, step.get("optional_outputs") or []) if rel]
             if declared or optional:
@@ -5215,6 +5348,9 @@ class Orchestrator:
                 # the revision round (12th mock trial). Always, not only when `feedback` names a dependency: after a
                 # restart mid-round a finished upstream revision is no longer in it (PR #368 review).
                 updates.append(f"[Current upstream results — they replace what you read before]\n{ctx}")
+            if updates and (usage := self._lookup_usage_line(rid).strip()):
+                # A resumed session gets only these updates, and its earlier turn holds an older count (#1088).
+                updates.append(usage)
             linked = input_steps(step)
             # The precedent search's stored texts reach every research step as read-only inputs (#951).
             stored_precedents = (precedent_texts.rows(self.hub.requests.get(rid, {}).get("analysis_precedents"))
@@ -5234,11 +5370,11 @@ class Orchestrator:
                         resume_session_id=session_id if can_resume else None,
                         meta={**reference_meta(self.hub.requests.get(rid)),
                               "kind": "step", "step_id": step["id"], "request": request,
+                              **({"model_tier": tier} if (tier := self._dispatch_step_tier(step)) else {}),
                               "paper_skills": paper_skills.attachments(
                                   self.hub.requests.get(rid, {}).get("plan") or {}, step["id"], step["agent_id"], rid),
                               "instruction": step["instruction"],
-                              "revision": self.hub.requests.get(rid, {}).get("pending_revisions", {})
-                              .get(step["id"], {}).get("revision", 0),
+                              "revision": self._step_revision(rid, step["id"]),
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
                               "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
                               "upstream_dirs": upstream_dirs, "upstream_steps": upstream_steps,
@@ -5459,7 +5595,7 @@ class Orchestrator:
                     correction_task = Task(
                         agent_id=step["agent_id"], request_id=rid, output_schema=RESEARCH_STEP_SCHEMA,
                         resume_session_id=current.session_id if can_resume_correction else None,
-                        prompt=continuation_prompt(task, result_correction(problems),
+                        prompt=continuation_prompt(task, result_correction(problems, list(step.get("claim_ids") or [])),
                                                    resumable=can_resume_correction, previous_result=current,
                                                    context_chars=self.cfg.context_chars_per_step),
                         meta=auxiliary_turn_meta(
@@ -5761,13 +5897,14 @@ class Orchestrator:
                          "reason": "live source defect: " + reason}
                         for claim in checked.claims if evidence_id in claim.verified_evidence]
         def update_conclusion_depth() -> None:
+            stored = output_checks.stored_access(self.hub.requests.get(rid, {}).get("analysis_precedents"))
             warnings[:] = [line for line in warnings if not line.startswith(("결론 근거 논문 ", "문헌 접근 실패 원장("))]
             conclusion_depth = output_checks.conclusion_literature_line(
-                steps, results, ledgers, unsupported=unsupported, refused=refused)
+                steps, results, ledgers, unsupported=unsupported, refused=refused, stored=stored)
             if conclusion_depth:
                 warnings.append(conclusion_depth)
             access_ledger = output_checks.literature_ledger_line(
-                steps, results, ledgers, unsupported=unsupported, refused=refused)
+                steps, results, ledgers, unsupported=unsupported, refused=refused, stored=stored)
             if access_ledger:
                 warnings.append(access_ledger)
             contract["result_warnings"] = warnings
@@ -5824,6 +5961,11 @@ class Orchestrator:
                                f"{', '.join(carried.get('reuse') or []) or 'none'}.")
             reuse_lines += [f"- reuse refused, re-ran {row['step_id']}: {row['reason']}"
                             for row in carried.get("refused_reuse") or []]
+            pinned = unreceipted_references(contract, carried.get("reuse") or [])
+            if pinned:
+                reuse_lines.append(f"- {len(pinned)} DOI/PMID reference(s) of the reused steps are pinned by identifier "
+                                   f"only; their content was not checked ({', '.join(pinned[:5])}"
+                                   f"{', ...' if len(pinned) > 5 else ''}).")
         recorded = (contract.get("checkpoints") or {}).get("cp2") or {}
         source_changed = (live_resolver is not None and bool(recorded.get("decision"))
                           and recorded.get("plan_sha256") == contract["plan_sha256"]
@@ -6147,6 +6289,13 @@ class Orchestrator:
         body_reference = _review_reference(review)
         if body_reference and not REVIEW_REFERENCE_HEADING.search(body):
             body = _before_bench_block(body, body_reference)
+        carried = contract.get("continuation") or {}
+        pinned = (unreceipted_references(contract, carried.get("reuse") or [])
+                  if carried.get("plan_sha256") == contract["plan_sha256"] else [])
+        if pinned:  # the PI reads the report, not the audit: say it there too (#1061 review)
+            body = _before_bench_block(
+                body, f"참고: 재사용한 단계가 쓴 DOI·PMID 참조 {len(pinned)}건은 식별자만 고정했고 내용은 확인하지 "
+                      f"않았습니다({', '.join(pinned[:5])}{', ...' if len(pinned) > 5 else ''}).")
         req["execution_record"] = _appendix_sections("", [*claim_check, cp2_audit])
         report = body.rstrip() + ("\n\n" + model_appendix if model_appendix else "")
         (await end("report_incomplete" if check["problems"] else "research_reported", report,
@@ -6872,18 +7021,24 @@ class Orchestrator:
                         summary = "\n".join(hiring_warnings) + "\n" + summary
                     if paper_line:
                         summary = paper_line + "\n" + summary
+                    pinned_note = ""
                     if reuse_pending:
                         source = ("CP2 수정 요청 반영" if carried.get("trigger") == "cp2_revise"
                                   else "리뷰 P1 반영")
                         reasons = list(dict.fromkeys((carried.get('rerun') or {}).values()))
                         reason_line = ('재사용 거부 이유: ' + '; '.join(reasons)[:240] + '. ' if reasons else '')
+                        pinned = unreceipted_references(req["research_contract"], carried.get('reuse') or [])
+                        if pinned:  # kept whole beyond the cut below, like the budget line: the PI approves the reuse here
+                            pinned_note = (f"재사용한 단계가 쓴 DOI·PMID 참조 {len(pinned)}건은 식별자만 고정했고 "
+                                           "내용은 확인하지 않았습니다.")
                         summary = (f"이어 가기 {carried.get('round')}차 계획({source}). 재사용: "
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
                                    f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + reason_line + summary
                     budget, configured_source = self._research_budget(rid, req, plan)
                     # Kept whole beyond the 699-char cut: the web shows the summary, not detail.budget; the selection
                     # record line (#890) rides with it, so long paper-skill or continuation text cannot cut it off.
-                    budget_line = selection_record_line(plan) + " " + _budget_line(budget)
+                    budget_line = (selection_record_line(plan) + " " + _budget_line(budget)
+                                   + (" " + pinned_note if pinned_note else ""))
 
                     async def ask_cp1(prefix: str = "") -> dict:
                         card = prefix + summary
@@ -7020,7 +7175,7 @@ class Orchestrator:
                 research_limit = (len(req["plan"].get("branches") or []) * self.cfg.max_branch_steps + 3
                                   if req["plan"].get("branches") else self.cfg.max_steps)
                 validate_steps(req["plan"]["steps"], known, research_limit, orchestration,
-                               guard=self._external_guard(rid))
+                               guard=self._external_guard(rid), tier_rules=self._tier_rules())
                 await persist_request(self.hub, rid)
 
             if resume and not continuation and req.get("plan", {}).get("steps"):
@@ -7090,7 +7245,8 @@ class Orchestrator:
                                                      reject_excess=True,
                                                      stored_environment=any(
                                                          "environment_binding" in s or "environment_bindings" in s
-                                                         for s in req["plan"]["steps"]))
+                                                         for s in req["plan"]["steps"]),
+                                                     tier_rules=self._tier_rules())
                     req["plan"] = {**req["plan"], "steps": steps,
                                    "warnings": [*(req["plan"].get("warnings") or []), *warnings]}
                     if vocab is not None:
@@ -7150,7 +7306,7 @@ class Orchestrator:
                     if precedent_agent in known:
                         precedent_task = Task(
                             agent_id=precedent_agent, request_id=rid, output_schema=PRECEDENT_SCHEMA,
-                            prompt=PRECEDENT_PROMPT.format(request=text),
+                            prompt=PRECEDENT_PROMPT.format(request=text) + self._lookup_usage_line(rid),
                             meta={**refs, "kind": "precedent", "request": text,
                                   "title": "선행 연구 분석 기준 조사", "max_attempts": 1})
                         precedent_job = self._step_task(rid, self.run_step(precedent_task))
@@ -7233,6 +7389,7 @@ class Orchestrator:
                             topics_rule=(topic_types.prompt_rule(topic_vocab, include_definitions=False)
                                          if topic_vocab else ""))
                         prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
+                        prompt += self._lookup_usage_line(rid)
                         prompt += reuse_advisory  # semantics-hook
                         prompt += continuation_note
                         schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
@@ -7251,6 +7408,7 @@ class Orchestrator:
                                                                                         include_definitions=False)
                                                     if topic_vocab else "")
                         prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
+                        prompt += self._lookup_usage_line(rid)
                         schema = plan_schema(vocab is not None)
                     planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
@@ -7573,7 +7731,8 @@ class Orchestrator:
                                 raise PlanAgentError("; ".join(recruit_errors))
                             steps, step_warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
                                                                   orchestration, vocab=vocab, stats=type_stats,
-                                                                  guard=self._external_guard(rid))
+                                                                  guard=self._external_guard(rid),
+                                                                  tier_rules=self._tier_rules())
                             precedent_state = req.get("analysis_precedents") or {}
                             warnings = list(dict.fromkeys([
                                 *(plan.get("warnings") or []), *step_warnings,
@@ -7650,7 +7809,8 @@ class Orchestrator:
                     else:
                         steps, _ = validate_steps(steps, known, self.cfg.max_steps, orchestration,
                                                   vocab=self._output_vocab(), reject_excess=True,
-                                                  stored_environment=True, guard=self._external_guard(rid))
+                                                  stored_environment=True, guard=self._external_guard(rid),
+                                                  tier_rules=self._tier_rules())
                         req["plan"]["steps"] = steps
                 req["plan"] = await paper_skills.prepare_plan(
                     req["plan"], req.get("analysis_precedents") or {}, roster, rid, self.hub.s,
@@ -7789,7 +7949,8 @@ class Orchestrator:
                             empty_rule=empty_rule, question_rule=QUESTION_RULE, request=text,
                             plan=json.dumps(req.get("plan") or {"steps": steps}, ensure_ascii=False),
                             results=self.format_results(steps, results, n)) +
-                        planning_guidance(checklist_catalog, req.get("analysis_precedents")),
+                        planning_guidance(checklist_catalog, req.get("analysis_precedents")) +
+                        self._lookup_usage_line(rid),
                         # revision and parse_attempt keep each CSO call distinct for ledger recovery after a restart.
                         meta={**refs, "kind": "replan", "trigger": trigger, "revision": attempt,
                               "parse_attempt": parse_attempt, "request": text, "roster": roster,
@@ -7857,7 +8018,8 @@ class Orchestrator:
                                          f"maximum is {self.cfg.max_steps}")
                     type_stats: dict = {}
                     merged, warnings = validate_steps(kept + raw, known, self.cfg.max_steps, orchestration,
-                                                      vocab=vocab, stats=type_stats, guard=self._external_guard(rid))
+                                                      vocab=vocab, stats=type_stats, guard=self._external_guard(rid),
+                                                      tier_rules=self._tier_rules())
                     # A kept step already ran. A dependency inferred from its old instruction on a new step is not
                     # one it ran with, so it keeps the dependencies it had and the inference warning is dropped.
                     for step in merged:

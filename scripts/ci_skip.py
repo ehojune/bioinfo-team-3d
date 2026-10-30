@@ -18,6 +18,7 @@ import urllib.request
 import zipfile
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
+from time import sleep as _sleep
 from pathlib import Path
 
 import yaml
@@ -557,20 +558,56 @@ class NonReusablePartialRerun(ValueError):
     """Validated partial rerun, without a same-attempt reusable manifest."""
 
 
-def windows_artifact(run, head, repository_id, request=None):
+JOB_POLL_INTERVAL_S = 3
+JOB_POLL_ATTEMPTS = 40
+
+
+def windows_artifact(run, head, repository_id, request=None, sleep=None):
     """Bind the effective Windows execution to its original upload, not a copied job.
 
     GitHub copies successful jobs into later attempts with new IDs/created_at.
     Their execution times stay unchanged. Only an original job whose creation
     precedes execution and whose upload falls inside that execution is accepted.
+
+    The effective attempt's job list lags the events that make it true: a copy made for a rerun that only retries
+    another job appears seconds after the job that reads it starts, and a job that just finished can still read as
+    running. Only those two states, no `pytest-windows` row yet or the one row not completed, are waited out
+    (JOB_POLL_ATTEMPTS reads, JOB_POLL_INTERVAL_S apart); everything else, including a completed failure, two rows
+    and every binding check below, fails at once as before (#1127).
+
+    One endpoint can stay stale for minutes after the job ended (run 41119322931 read `pytest-windows` as not
+    completed for 40 reads). While the attempt's own list is unsettled the run-wide list of the latest attempt is read
+    too, and a `completed` row from either is taken: a stale answer cannot invent a completion, and the row still goes
+    through the same run, attempt and head binding below.
     """
     from datetime import datetime
     request = request or api
-    def jobs(attempt):
-        data = request(f"actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100")
-        if data['total_count'] != len(data['jobs']):
-            raise ValueError('incomplete producer jobs')
-        rows = [j for j in data['jobs'] if j['name'] == 'pytest-windows']
+    sleep = sleep or _sleep  # not `time.sleep`: this function has an inner `time` helper
+    def jobs(attempt, settle=False):
+        for read in range(JOB_POLL_ATTEMPTS if settle else 1):
+            data = request(f"actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100")
+            if data['total_count'] != len(data['jobs']):
+                raise ValueError('incomplete producer jobs')
+            rows = [j for j in data['jobs'] if j['name'] == 'pytest-windows']
+            unsettled = len(rows) == 0 or (len(rows) == 1 and rows[0]['status'] != 'completed')
+            if settle and unsettled:
+                latest = request(f"actions/runs/{run['id']}/jobs?filter=latest&per_page=100")
+                if latest['total_count'] != len(latest['jobs']):
+                    raise ValueError('incomplete producer jobs')
+                other = [j for j in latest['jobs'] if j['name'] == 'pytest-windows' and j['status'] == 'completed']
+                if len(other) == 1 and not rows:
+                    rows, unsettled = other, False
+                elif len(other) == 1 and len(rows) == 1 and other[0]['id'] == rows[0]['id']:
+                    rows, unsettled = other, False  # the same job, read from the endpoint that is not stale
+                seen = ', '.join(f"{j.get('status')}/{j.get('conclusion')}" for j in latest['jobs']
+                                 if j['name'] == 'pytest-windows') or 'no row'
+                print(f"ci_skip: attempt {attempt} read {read + 1}: run-wide list {seen}", file=sys.stderr)
+            if settle:  # public job fields only: what the list said on each read, so a lag can be measured (#1127)
+                seen = ', '.join(f"{j.get('status')}/{j.get('conclusion')}/{j.get('completed_at')}" for j in rows) or 'no row'
+                print(f"ci_skip: attempt {attempt} read {read + 1}: pytest-windows {seen}", file=sys.stderr)
+            if not (settle and unsettled) or read == JOB_POLL_ATTEMPTS - 1:
+                break
+            sleep(JOB_POLL_INTERVAL_S)
         if len(rows) != 1:
             raise ValueError('missing/ambiguous Windows producer')
         job = rows[0]
@@ -580,7 +617,7 @@ def windows_artifact(run, head, repository_id, request=None):
         return job
     def time(value):
         return datetime.fromisoformat(value.replace('Z', '+00:00'))
-    effective = jobs(run['run_attempt'])
+    effective = jobs(run['run_attempt'], settle=True)
     if effective['status'] != 'completed' or effective['conclusion'] != 'success':
         raise ValueError('failed/incomplete effective Windows producer')
     data = request(f"actions/runs/{run['id']}/artifacts?per_page=100")
@@ -645,8 +682,20 @@ def confirmed_base_drift(current: dict, snapshot: dict, parents: list[str], run:
                 and [p["sha"] for p in commit["parents"]] == parents[1:]
                 and pr_snapshot(pr) == snapshot and pr["merge_commit_sha"] == checkout
                 and main["ref"] == "refs/heads/main" and main["object"]["type"] == "commit"
-                and main["object"]["sha"] == base):
+                and SHA.fullmatch(main["object"]["sha"])):
             return False
+        if main["object"]["sha"] != base:
+            # main moved again while this job ran (the index commit lands during a run): the checkout parent must be a
+            # commit main already contains, and main may only be ahead of it. A diverged, behind or unrelated main
+            # stays an error, as does any partial answer.
+            moved = api(f"compare/{base}...{main['object']['sha']}")
+            total = moved["total_commits"]
+            if not (moved["status"] == "ahead" and type(moved["behind_by"]) is int and moved["behind_by"] == 0
+                    and type(total) is int and 0 < total <= 250
+                    and type(moved["ahead_by"]) is int and moved["ahead_by"] == total == len(moved["commits"])
+                    and moved["base_commit"]["sha"] == moved["merge_base_commit"]["sha"] == base
+                    and moved["commits"][-1]["sha"] == main["object"]["sha"]):
+                return False  # a complete forward answer ending at main, like the event-base compare below
         forward = api(f"compare/{snapshot['base_sha']}...{base}")
         count = forward["total_commits"]
         if not (forward["status"] == "ahead" and type(forward["behind_by"]) is int and forward["behind_by"] == 0

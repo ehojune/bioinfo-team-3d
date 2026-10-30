@@ -19,6 +19,7 @@ from labhq.research.packs import configured_packs, pack_snapshot, render_pack_ca
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 from labhq.util import free_port
+from tests.support.serve_task import serve_task, wait_started
 from tests.test_e2e_mock import _request_state, _until, _wait_for_request_terminal
 from tests.test_research_protocol import PACK, MiniHub, valid_pack_values, valid_plan
 
@@ -200,8 +201,8 @@ async def test_public_research_request_reaches_cp1_card_through_the_claude_schem
 
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=gport, log_level="warning"))
-    tasks = [asyncio.create_task(server.serve())]
-    await _until(lambda: server.started, 10, "gateway server startup", lambda: {"started": server.started})
+    tasks = [serve_task(server.serve())]
+    await wait_started(lambda: server.started, tasks[0], 10, "gateway server startup")
     runner = Runner(s)
     tasks.append(asyncio.create_task(runner.run_forever()))
     try:

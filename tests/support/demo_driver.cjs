@@ -13,6 +13,9 @@ const {MiniWebSocket} = require('./mini_ws.cjs');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const WEB_ROOT = process.env.LABHQ_WEB_TEST_ROOT || path.resolve(__dirname, '../../labhq/web');
 const FORBIDDEN_PORTS = [8787, 55921];
+// #1072: the OS picks the static server's port, and one in 16,384 draws is 55921. That draw is closed and made again
+// instead of failing the test; only this many reserved draws in a row are refused (see openDemo).
+const STATIC_SERVER_TRIES = 8;
 const START_MS = 60000;  // Chrome start budget; the node:test budget of each test covers it
 // #833: a navigation still waiting this long reports, once, whether the static server has seen and answered the page
 // request. Diagnostic only; it neither ends nor extends the wait.
@@ -231,13 +234,23 @@ function startStaticServer(rootDir, observe = null) {
       res.end(fs.readFileSync(filename));
     } catch { res.writeHead(404).end(); }
   });
-  return new Promise((resolve, reject) => {
+  const listen = () => new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => {
       server.removeListener('error', reject);
-      resolve(server);
+      resolve();
     });
   });
+  const close = () => new Promise(resolve => server.close(error => resolve(error || null)));
+  return (async () => {
+    for (let attempt = 1; ; attempt++) {
+      await listen();
+      // A reserved draw is closed and drawn again. On the last draw, or when the close itself fails, the server is
+      // handed over as it is: the caller refuses the port and its own close reports the failure (both errors kept).
+      if (!FORBIDDEN_PORTS.includes(server.address().port) || attempt === STATIC_SERVER_TRIES) return server;
+      if (await close()) return server;
+    }
+  })();
 }
 
 async function removeDir(dir) {
@@ -265,6 +278,8 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
     diagnostic = (stage, pending, extra = {}) => console.error('demo cleanup: ' + JSON.stringify({stage, pending, ...extra,
       active: typeof process.getActiveResourcesInfo === 'function' ? process.getActiveResourcesInfo().slice(0, 16) : null,
       chrome_exit_observed: chrome ? chrome.exitCode !== null || chrome.signalCode !== null : null,
+      // Which client closed the CDP socket and on which Node: a close that never reports differs by implementation (#1107).
+      node_version: process.version, ws_kind: ws ? (ws.constructor?.name === 'MiniWebSocket' ? 'mini' : 'global') : null,
       stderr_closed: typeof chrome?.stderr?.closed === 'boolean' ? chrome.stderr.closed : null}))} = {}) {
   const pending = new Set(), failures = [];
   let graceful = false, socketCloseRequested = false;
