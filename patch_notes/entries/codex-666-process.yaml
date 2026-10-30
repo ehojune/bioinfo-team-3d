@@ -1,6 +1,6 @@
 pr: 1050
 rows:
-  - sha: '881d0c24'
+  - sha: '351eb62a'
     at: "2026-10-31 04:55"
     summary: "Record a distinct broker diagnostic child timeout reason."
     text: "fix: distinguish broker diagnostic timeout"
