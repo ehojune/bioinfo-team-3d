@@ -8,3 +8,7 @@ rows:
   at: 2026-10-31 01:10
   text: gateway의 두 비용 기록 경로(동기·비동기)가 model_tiers 표를 request_cost_summary에 넘기고, 비용 줄(format_warnings)이 선언 등급과 다른 모델로 돈 직원을 보인다. 표가 없으면 이전과 같다
   summary: 선언한 등급과 다른 모델로 돈 직원이 요청의 비용 줄에 나옵니다.
+- sha: '15dcce7'
+  at: 2026-10-31 01:40
+  text: manual 한·영에 model_tiers 표의 우선순위(직원 model·agent_overrides·cso_model이 등급보다 앞섬), 빈 표의 의미, model_tier_mismatch 경고와 비용 줄, dry-run의 모델 미정을 적는다(리뷰 P1)
+  summary: 등급 표를 어떻게 채우고 무엇이 우선하며 어떤 경고가 나오는지 설명서에서 볼 수 있습니다.
