@@ -1,0 +1,5 @@
+rows:
+- sha: '6f2c757'
+  at: 2026-10-31 07:30
+  text: Hub.publish가 이벤트 append와 그 request 저장을 StateStore.aappend_event(request=...) 한 transaction으로 한다. 둘 다 되거나 둘 다 안 되므로 이전의 "이벤트는 됐는데 request 저장은 실패" 상태가 없다. lab 요청 1회의 SQLite commit이 844회에서 670회로 줄었다. "두 commit"을 가정한 시험은 새 보장(한 commit, 실패 시 둘 다 없음)을 단언하도록 고쳤다
+  summary: 요청 처리 중 commit(fsync) 수를 줄여 D: 드라이브에서 요청 시간을 단축합니다. 내구성 보장은 같거나 강해집니다.
