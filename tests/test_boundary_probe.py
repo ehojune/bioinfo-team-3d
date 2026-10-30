@@ -164,6 +164,17 @@ def test_integration_missing_modules_is_inconclusive(tmp_path):
     assert result["protection_verified"] is False
 
 
+def test_integration_invalid_module_is_inconclusive(tmp_path):
+    boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"
+    broker.write_text("pass\n")
+    for contents in ("invalid syntax !\n", "raise RuntimeError('fixture')\n"):
+        boundary.write_text(contents)
+        result = integration_probe.run(boundary, broker)
+        assert result["status"] == "inconclusive"
+        assert result["error_type"] in ("SyntaxError", "RuntimeError")
+        assert "fixture" not in str(result)
+
+
 def test_integration_receipt_without_ready_witness_is_inconclusive(monkeypatch, tmp_path):
     (tmp_path / "boundary.py").write_text("boundary")
     (tmp_path / "broker.py").write_text("broker")

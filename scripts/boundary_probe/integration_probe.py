@@ -131,7 +131,7 @@ def run(boundary_path: Path, broker_path: Path, broker_kind="synthetic", expecte
                 and receipt.get("cleanup") == "broker_closed_socket_absent; descendants_unverified"
                 and receipt.get("seal_status") == "unsealed"):
             result["status"] = "pass"
-    except (OSError, ValueError, AttributeError, ImportError, TypeError) as exc:
+    except Exception as exc:
         result["reason"] = "module, protocol or prerequisite unavailable"
         result["error_type"] = type(exc).__name__
     finally:
