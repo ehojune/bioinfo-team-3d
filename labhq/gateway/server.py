@@ -3650,21 +3650,27 @@ class Hub:
 
         Within one connection the messages are handled in order, but the old and the new connection of a runner can both
         be handling the same outbox row while it is still being committed: the resend passed the `runner_seen` check
-        before the first copy's commit, and both stored it. The row being handled is noted here before the first await, so
-        a second copy returns at once (the first one acks); the store refuses a seq it already holds as the last guard."""
+        before the first copy's commit, and both stored it. The row being handled is noted here before the first await.
+        A second copy WAITS for the first to finish (it must not return at once: the new connection would go on to the
+        next seq, commit its cursor first, and the first copy's event would then be dropped as "already seen"); when the
+        first is done the copy takes the ordinary path, which finds the seq stored, acks it and returns. If the first
+        one failed or was cancelled the copy processes the row itself. The store refuses a seq it already holds as the
+        last guard."""
         seq = msg.get("runner_seq") if isinstance(msg, dict) else None
         if seq is None:
             return await self._on_runner_message(runner_id, msg, ws, incarnation)
         if not hasattr(self, "runner_seq_inflight"):
-            self.runner_seq_inflight = set()
+            self.runner_seq_inflight = {}
         key = (runner_id, incarnation, seq)
-        if key in self.runner_seq_inflight:
-            return
-        self.runner_seq_inflight.add(key)
+        while key in self.runner_seq_inflight:
+            await asyncio.wait([self.runner_seq_inflight[key]])  # returns when it is done, whatever the outcome
+        done = asyncio.get_running_loop().create_future()
+        self.runner_seq_inflight[key] = done
         try:
             await self._on_runner_message(runner_id, msg, ws, incarnation)
         finally:
-            self.runner_seq_inflight.discard(key)
+            self.runner_seq_inflight.pop(key, None)
+            done.set_result(None)
 
     async def _on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                  incarnation: str | None = None) -> None:

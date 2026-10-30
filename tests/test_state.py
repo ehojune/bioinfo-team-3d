@@ -1902,11 +1902,49 @@ async def test_the_same_runner_seq_arriving_twice_at_once_is_stored_and_acked_on
         await asyncio.gather(gateway.on_runner_message("local", dict(message)), gateway.on_runner_message("local", dict(message)))
         assert [e["type"] for e in gateway.events if e["type"] == "test.note"] == ["test.note"]
         assert gateway.store.runner_seen("local") == 5
-        assert [m for m in socket.sent if m["type"] == "runner.ack"] == [{"type": "runner.ack", "runner_seq": 5}]
+        # The second copy waited for the first, found the seq stored and acked it: both copies are answered.
+        assert [m for m in socket.sent if m["type"] == "runner.ack"] == [{"type": "runner.ack", "runner_seq": 5}] * 2
         await gateway.on_runner_message("local", dict(message))  # a later resend is still answered, not stored again
         assert len([e for e in gateway.events if e["type"] == "test.note"]) == 1
-        assert [m["runner_seq"] for m in socket.sent if m["type"] == "runner.ack"] == [5, 5]
+        assert [m["runner_seq"] for m in socket.sent if m["type"] == "runner.ack"] == [5, 5, 5]
     finally:
+        gateway.store.close()
+
+
+async def test_a_resend_waits_for_the_first_copy_so_the_next_seq_cannot_overtake_it(tmp_path):
+    # #1143 review: a resend that returned at once let the new connection go on to seq N+1, whose cursor commit then made the
+    # first copy's event look "already seen" and dropped it. The resend must wait, and N+1 must follow N.
+    s = settings(tmp_path)
+    gateway = Hub(s)
+    gateway.register_runner("local", _AckSocket(), [])
+    first_msg = {"type": "test.note", "runner_seq": 5, "request_id": None, "data": {"n": 5}}
+    next_msg = {"type": "test.note", "runner_seq": 6, "request_id": None, "data": {"n": 6}}
+    release = asyncio.Event()
+    real = gateway.publish
+
+    async def slow_five(ev, runner_id=None, runner_seq=None):
+        if runner_seq == 5:
+            await release.wait()
+        return await real(ev, runner_id=runner_id, runner_seq=runner_seq)
+
+    gateway.publish = slow_five
+
+    async def new_connection():  # one receive loop: the resend of 5, then 6
+        await gateway.on_runner_message("local", dict(first_msg))
+        await gateway.on_runner_message("local", dict(next_msg))
+
+    try:
+        old = asyncio.create_task(gateway.on_runner_message("local", dict(first_msg)))
+        await asyncio.sleep(0.05)
+        new = asyncio.create_task(new_connection())
+        await asyncio.sleep(0.2)
+        assert gateway.store.runner_seen("local") == 0 and not new.done()  # 6 has not been processed ahead of 5
+        release.set()
+        await asyncio.wait_for(asyncio.gather(old, new), 10)
+        notes = [e["data"]["n"] for e in gateway.events if e["type"] == "test.note"]
+        assert notes == [5, 6] and gateway.store.runner_seen("local") == 6
+    finally:
+        release.set()
         gateway.store.close()
 
 
