@@ -1,0 +1,5 @@
+rows:
+- sha: '3249d98'
+  at: 2026-10-31 14:00
+  text: tests/test_state.py의 고정 횟수 대기(range 50~500 × sleep 0.01, 이론상 0.5~5초이고 Windows 타이머 해상도로는 더 김) 12곳을 시간 기준 helper(wait_until, wait_until_sync, 10초 한도, 조건이 서면 즉시 탈출)로 바꾼다. 단언과 시험 의도는 그대로이고, helper의 동작을 확인하는 시험 한 건을 더한다
+  summary: 느린 Windows 러너에서 재개 시험이 대기 한도 때문에 실패하던 간헐 실패(#1076, 5회)를 막습니다.
