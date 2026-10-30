@@ -1,4 +1,4 @@
-﻿"""Recovery boundaries using existing fake hubs; no real runner or installer."""
+"""Recovery boundaries using existing fake hubs; no real runner or installer."""
 import pytest
 
 from labhq.models import Task
