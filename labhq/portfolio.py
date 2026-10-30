@@ -252,16 +252,81 @@ def _step_execution_path(source: str, target: str) -> tuple[str, str, str] | Non
     return source_path.parts[1], cwd, "/".join(relative)
 
 
+# A published script that reads these still needs the request bundle's workspace: neither is part of the edition (#792).
+# The words `inputs` and `outputs` standing alone (not `inputs_dir` or `my.inputs`) and `manifest.json` mark a script that
+# works with the request workspace: its `inputs/<step>/` and the step's declared `outputs/` files, which the edition moves
+# to `tables/`, `figures/` and the like. Matching the word, not one path shape, covers `inputs/s1/x`, `inputs\s1\x`, `Path("inputs") / "s1"`,
+# `os.path.join("inputs", step)` and an unquoted shell path at once. It over-matches prose such as "validate inputs",
+# and that errs toward "needs the workspace", which the edition then says instead of promising a re-run (#792).
+_WORKSPACE_INPUT = re.compile(r"""(?<![\w.])(?:inputs|outputs)(?!\w)|""" + r"""\bmanifest""" + r"""\.json\b""")
+_BUNDLE_COMMAND = re.compile(r"^- `cd steps/([^ `]+) && [^`]*?([^/ `]+)`$")
+
+
+def _published_scope(text: str, folders: Mapping[str, str], needs_workspace: Mapping[str, list[str]]) -> str:
+    """Make REPRODUCE say only what the edition can do (#792).
+
+    The bundle's command list names every script it copied, reported or not, but the edition publishes the reported ones.
+    A command into `steps/<step>` has nothing to run here, and the bundle's `link_inputs.py` is not published either: both
+    leave the text, and a section names what is missing and where the step can still be re-run. The scope lists follow:
+    only a step with a published script that needs no workspace file counts as re-creatable from the edition."""
+    withheld: dict[str, list[str]] = {}
+    kept: list[str] = []
+    for line in text.split("\n"):
+        command = _BUNDLE_COMMAND.match(line)
+        if command:
+            withheld.setdefault(command.group(1), []).append(command.group(2))
+            continue
+        if line.startswith("- 먼저 `python link_inputs.py`"):
+            continue
+        kept.append(line)
+    text = "\n".join(kept)
+
+    listed = re.search(r"(?m)^### 공개 자료로 다시 만들 수 있는 것\n\n- (.*)$", text)
+    claimed = [name.strip() for name in listed.group(1).split(",")] if listed and listed.group(1) != "없음" else []
+    # A step with a script that was left out is only partly published: it cannot be re-created from the edition alone.
+    runnable = [step for step in claimed if step in folders and step not in needs_workspace and step not in withheld]
+    blocked = [step for step in claimed if step not in runnable]
+    if not (withheld or needs_workspace or blocked):
+        return text
+    notes = ["## 공개본과 실행본의 차이", ""]
+    if withheld:
+        notes += ["정리본에 싣지 않은 단계 스크립트가 있습니다. 선언된 산출이 아니거나 크기·형식 제한으로 빠졌을 수 있고, "
+                  "그 단계는 비공개 요청 묶음(`requests/<요청 id>/`)에서만 다시 실행할 수 있습니다.", "",
+                  *[f"- `{step}`: {', '.join(f'`{name}`' for name in dict.fromkeys(names))}"
+                    for step, names in sorted(withheld.items())], ""]
+    if needs_workspace:
+        notes += ["아래 스크립트는 작업공간 경로(`manifest.json`, `inputs/<앞 단계>/…`, 단계가 선언한 `outputs/…`)를 "
+                  "씁니다. 정리본에서는 이 파일들이 `tables/`·`figures/` 등으로 옮겨져 경로가 달라, 정리본만으로는 그대로 "
+                  "실행되지 않을 수 있습니다. 같은 값은 결과표에 있고, 작업공간이 있는 요청 묶음에서는 실행됩니다.", "",
+                  *[f"- `{step}`: {', '.join(f'`{name}`' for name in names)}" for step, names in sorted(needs_workspace.items())], ""]
+    section = "\n".join(notes)
+    marker = "## 재현 가능 범위"
+    text = text.replace(marker, section + "\n" + marker, 1) if marker in text else text.rstrip() + "\n\n" + section
+    if listed:
+        replacement = "### 공개 자료로 다시 만들 수 있는 것\n\n- " + (", ".join(runnable) if runnable else "없음")
+        text = re.sub(r"(?m)^### 공개 자료로 다시 만들 수 있는 것\n\n- .*$", lambda _match: replacement, text, count=1)
+        if blocked:
+            extra = ("### 정리본만으로는 다시 만들 수 없는 것 (비공개 요청 묶음의 작업공간이 필요)\n\n- "
+                     + ", ".join(blocked) + "\n\n")
+            tail = "원자료와 접근 자격은 정리본에 포함하지 않습니다."
+            text = text.replace(tail, extra + tail, 1) if tail in text else text.rstrip() + "\n\n" + extra.rstrip() + "\n"
+    return text
+
+
 def _rewrite_reproduce_commands(text: str, source_targets: Mapping[str, str],
                                 files: Mapping[str, str | bytes]) -> str:
     """Keep each recorded command in the published equivalent of its original step cwd."""
     folders: dict[str, str] = {}
+    needs_workspace: dict[str, list[str]] = {}
     for source, target in sorted(source_targets.items()):
         execution = _step_execution_path(source, target)
         if execution is None:
             continue
         step, cwd, within_step = execution
         folders.setdefault(step, cwd)
+        body = files.get(target)
+        if isinstance(body, str) and _WORKSPACE_INPUT.search(body):
+            needs_workspace.setdefault(step, []).append(within_step)
         path = PurePosixPath(source)
         command = {".py": "python", ".r": "Rscript", ".sh": "bash"}[path.suffix.lower()]
         executables = ("python", "python3", "py") if command == "python" else (command,)
@@ -280,6 +345,8 @@ def _rewrite_reproduce_commands(text: str, source_targets: Mapping[str, str],
         marker = "## 예상 출력"
         text = text.replace(marker, "\n".join(section) + "\n" + marker) if marker in text else (
             text.rstrip() + "\n\n" + "\n".join(section))
+
+    text = _published_scope(text, folders, needs_workspace)
 
     keys = sorted(set(re.findall(
         r"\bLABHQ_INPUT_[A-Z0-9_]+\b",
