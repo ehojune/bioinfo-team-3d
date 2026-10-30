@@ -105,6 +105,11 @@ async def test_new_repo_and_upload_only_after_review(tmp_path, monkeypatch, exis
     files = {path.split("/contents/")[1]: base64.b64decode(body["content"]).decode()
              for method, path, body in calls if method == "PUT"}
     assert any(path.endswith("README.md") for path in files)
+    assert not any(path.endswith("CITATION.cff") for path in files)  # the request names no author, and none is invented (#792)
+    assert "인용 정보 미정(저자 미입력)" in next(body for path, body in files.items() if path.endswith("README.md"))
+    messages = {path.split("/contents/")[1]: body["message"] for method, path, body in calls if method == "PUT"}
+    assert messages["README.md"].startswith("연구 결과 정리: README.md")
+    assert len(set(messages.values())) == len(messages)  # one message per file, not three fixed sentences
     assert hub.requests["req_test"]["result_storage"]["status"] == "published"
     await service.close()
 
@@ -392,3 +397,14 @@ def test_publish_preview_limits_do_not_limit_original_images(tmp_path):
     five = {f"f{i}.png": b"x" * PUBLISH_PREVIEW_FILE_MAX_BYTES for i in range(6)}
     previews, omitted = publish_image_previews(five, target)
     assert len(previews) == 5 and list(omitted) == ["f5.png"]
+
+
+def test_citation_cff_is_written_only_from_authors_the_request_gives():
+    from labhq.portfolio import _citation_cff
+
+    settings = Settings()
+    assert _citation_cff({"id": "r", "text": "질문이다."}, settings) == ""
+    assert _citation_cff({"id": "r", "text": "질문이다.", "authors": ["", {"name": " "}]}, settings) == ""
+    cff = _citation_cff({"id": "r", "text": "질문이다.", "authors": ["Kim A", {"name": "Lee B"}]}, settings)
+    assert cff.startswith("cff-version: 1.2.0") and '  - name: "Kim A"' in cff and '  - name: "Lee B"' in cff
+    assert "authors: []" not in cff and "doi" not in cff.lower()

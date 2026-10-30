@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 from types import SimpleNamespace
 import pytest
@@ -262,6 +263,8 @@ def test_doctor_compares_runner_with_config_owner(tmp_path, monkeypatch, same_ac
 
 def test_doctor_warns_about_parent_session_markers_and_pi_skills(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
+    for key in [k for k in os.environ if k.upper().startswith(("CLAUDE_", "CLAUDECODE"))]:
+        monkeypatch.delenv(key)  # an agent session already carries its own markers; count only the two below
     monkeypatch.setenv("CLAUDE_CODE_CHILD_SESSION", "1")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "not-reported")
     monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)

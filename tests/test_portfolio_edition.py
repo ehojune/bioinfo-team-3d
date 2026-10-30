@@ -635,8 +635,8 @@ def test_the_readme_states_real_limits_figures_files_runs_and_determinism(tmp_pa
     limits = _limit_sentences(report)
     assert not _limit_sentences("## 한계\n\n해석 범위와 남은 한계는 과학 보고서에 적었습니다.\n")
     assert len(limits) == 3 and "9회까지만" in limits[0] and any("UNVERIFIED" in sentence for sentence in limits)
-    assert _figure_lines(report, ["figures/orr.svg", "figures/qc.svg"]) == [
-        "- [orr.svg](figures/orr.svg): ORR와 신뢰구간", "- [qc.svg](figures/qc.svg): 보고서에 그림 설명이 없습니다"]
+    rows = _figure_lines(report, ["figures/orr.svg", "figures/qc.svg"])
+    assert rows[0].startswith("- [orr.svg](figures/orr.svg): ORR와 신뢰구간 (") and "보고서에 그림 설명이 없습니다" in rows[1]
     files = {"code/s1/outputs/scripts/a.py": "import numpy as np\nnp.random.seed(7)\n",
              "code/s2/outputs/scripts/b.py": "print(1)\n"}
     assert "고정 seed 값이 적힌 스크립트: `code/s1/outputs/scripts/a.py`" in _determinism_line(files)
@@ -648,3 +648,47 @@ def test_the_readme_states_real_limits_figures_files_runs_and_determinism(tmp_pa
     assert listing[0].startswith("- 코드 2개: ") and "tables/t.tsv" in listing[1] and "figures/orr.svg" in listing[2]
     run = _run_lines({"code/x.py": "os.environ['LABHQ_INPUT_DATA_AB12CD34']\n"}, {"run/reproduce.md": "x"})
     assert "`LABHQ_INPUT_DATA_AB12CD34`" in run[0] and "원자료가 없을 때" in run[1]
+
+
+def test_figures_with_one_basename_keep_their_own_captions_and_source_tables():
+    from labhq.portfolio import _figure_lines
+
+    report = "![첫째 그림](figures/plot.svg)\n![둘째 그림](figures/outputs-plot.svg)\n"
+    targets = {"wd1/outputs/plot.svg": "figures/plot.svg", "wd2/outputs/plot.svg": "figures/outputs-plot.svg",
+               "wd1/outputs/a.tsv": "tables/a.tsv", "wd2/outputs/b.tsv": "tables/b.tsv"}
+    files = {"code/s1/outputs/scripts/p1.py": "df = read('a.tsv'); save('plot.svg')\n",
+             "code/s2/outputs/scripts/p2.py": "df = read('b.tsv'); save('plot.svg')\n"}
+    rows = _figure_lines(report, ["figures/plot.svg", "figures/outputs-plot.svg"], targets, files, ["tables/a.tsv", "tables/b.tsv"])
+    assert "첫째 그림" in rows[0] and "둘째 그림" in rows[1]
+    assert "tables/" not in rows[0] and "tables/" not in rows[1] and "구분하지 못했습니다" in rows[0]  # one name, two steps
+    solo = _figure_lines("![표본](figures/orr.svg)\n", ["figures/orr.svg"], {}, {"code/x.py": "t = read('res.tsv'); save('orr.svg')\n"}, ["tables/res.tsv"])
+    assert "다루는 표(그림별로 가르지는 못함) [`tables/res.tsv`](tables/res.tsv)" in solo[0]
+    assert "연결을 스크립트에서 찾지 못했습니다" in _figure_lines("", ["figures/q.svg"], {}, {}, ["tables/res.tsv"])[0]
+    abstract = _figure_lines("", ["figures/graphical_abstract.svg"], {}, {}, ["tables/res.tsv"], True)[0]
+    assert "결과표에서 읽은 값이 아닙니다" in abstract
+    written = _figure_lines("", ["figures/graphical_abstract.svg"], {"outputs/graphical_abstract.svg": "figures/graphical_abstract.svg"},
+                            {"code/x.py": "t = read('res.tsv'); save('graphical_abstract.svg')\n"}, ["tables/res.tsv"], False)[0]
+    assert "자동으로 그렸고" not in written and "tables/res.tsv" in written
+    aliased = _figure_lines("![첫째](steps/s1/outputs/plot.svg)![둘째](steps/s2/outputs/plot.svg)", ["figures/plot.svg", "figures/outputs-plot.svg"],
+                            {"steps/s1/outputs/plot.svg": "figures/plot.svg", "wd1/outputs/plot.svg": "figures/plot.svg",
+                             "steps/s2/outputs/plot.svg": "figures/outputs-plot.svg", "wd2/outputs/plot.svg": "figures/outputs-plot.svg"}, {}, [])
+    assert "첫째" in aliased[0] and "둘째" in aliased[1]
+
+
+def test_the_environment_section_lists_pinned_versions_or_says_none():
+    from labhq.portfolio import _environment_lines
+
+    none = _environment_lines({"code/x.py": "print(1)\n"})
+    assert len(none) == 1 and "환경 기록이 없습니다" in none[0]
+    listed = _environment_lines({"run/environment/requirements.lock.txt": "pandas==2.2.2\nnumpy==1.26.4 ; python_version>'3'\n"})
+    assert "run/environment/requirements.lock.txt" in listed[0]
+    assert "`numpy 1.26.4`" in listed[1] and "`pandas 2.2.2`" in listed[1]
+    twice = _environment_lines({"run/environment/a-requirements.lock.txt": "pandas==1.0\n", "run/environment/b-requirements.lock.txt": "pandas==2.0\n"})
+    assert "`pandas 1.0 / 2.0`" in twice[1]
+    many = _environment_lines({f"run/environment/s{n}-requirements.lock.txt": "x==1\n" for n in range(6)})
+    assert "외 2개" in many[0]
+    poetry = _environment_lines({"run/environment/poetry.lock": '[[package]]\nname = "scipy"\nversion = "1.11.4"\n'})
+    conda = _environment_lines({"run/environment/environment.yml": "dependencies:\n  - numpy=1.26.4\n"})
+    assert "`scipy 1.11.4`" in poetry[1] and "`numpy 1.26.4`" in conda[1]
+    bare = _environment_lines({"run/environment/requirements.lock.txt": "# empty\n"})
+    assert "읽지 못했습니다" in bare[1]

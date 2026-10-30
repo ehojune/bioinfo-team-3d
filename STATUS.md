@@ -18,6 +18,14 @@
 ## 하지 않은 것
 - 실제 solo 요청에서 에이전트가 스크립트를 선언하는지는 보지 못했다.
 
+# #792 rev10 CITATION.cff와 커밋 메시지
+
+- 결론: 요청에 `authors`(이름 목록)가 있을 때만 결과 repo 루트에 유효한 `CITATION.cff`를 쓴다. 없으면 파일을 만들지 않고 README "파일 목록"에 "인용 정보 미정(저자 미입력)"을 적는다. 저자와 DOI는 만들지 않는다.
+- 커밋 메시지: 세 문장 고정(`연구 결과 정리/그림/PDF`)을 `종류: 경로 (단계 x) — 요청 요약(60자)`로 바꿨다. 단계별 진행 게시도 파일명을 넣는다.
+- 바꾼 것: `labhq/portfolio.py`, `labhq/result_storage.py`, `labhq/integrations/github.py`, 시험 `test_result_storage.py`·`test_publish_retry_607.py`(새 형식 고정).
+- 한계: 저자는 `name`(단체형) 항목으로만 쓴다. 사람의 성·이름 분리와 ORCID는 요청에 그 구조가 생긴 뒤에 다룬다. 요청에 `authors`를 넣는 입구는 이번에 만들지 않았다.
+- 미검증: 실제 GitHub 게시, CFF 검증기.
+
 ## 단계
 #625(Freda·Moore 조사) 1단계: 단계별 모델 등급. 설계: [#625 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/625#issuecomment-6524050761), 승인: 명시한 model 우선·기본 표 빈 값.
 
@@ -41,6 +49,14 @@
 
 ## 테스트
 `tests/test_send_dry_run.py`(등급 표 검증, 별칭 비교, dry-run, 러너 채움과 엔진 순서, 비용 항목), `tests/test_cost_accounting.py`(gateway 동기·비동기 연결, 비용 줄, outcome_unknown), `tests/test_wsl_readiness.py`(WSL 설정에 표 전달)에 시험을 더했다. 수정을 빼면 실패함을 각각 확인했다. 관련 시험 64 passed(`test_send_dry_run`·`test_plan_only_cso_model`·`test_wsl_readiness`), `-k "bench or settings or example or config or init"` 988 passed(이전 head).
+
+# #1076 환경·부하에 흔들리던 시험 세 건
+
+- 결론: 세 시험 모두 시험 쪽 문제였고 제품 코드는 바꾸지 않았다.
+- 바꾼 것: `tests/test_doctor.py`는 시작에서 `CLAUDE_*`·`CLAUDECODE*` 변수를 지우고 시험 마커 2개만 센다. `tests/test_staff_control_steps.py`의 `_alive()`는 `tasklist` 출력을 bytes로 읽는다(한국어 Windows에서 `PYTHONUTF8=1`이면 해독 실패). `tests/test_policy.py`의 `_cost`는 평균 대신 가장 빠른 호출을 쓰고 한 쪽당 최소 3회 잰다.
+- 검출력: 가짜 시계 시험 4건(느린 호출 1회는 통과, 모든 호출이 느리면 실패)과 실제 CPU로 제곱 비용을 내는 시험 1건을 더했다. 실제 제곱 시험은 `must stay linear`로 거부된다.
+- 실행한 것: 에이전트 세션 환경(`CLAUDE_*` 10개, `PYTHONUTF8=1`)에서 세 파일 345 passed. Linux 3.12 러너 지연은 재현하지 못했다.
+- 근거: #1076 댓글 6525988210.
 
 # #1076 시험의 전역 시계 patch를 모듈 proxy로
 
@@ -96,6 +112,16 @@ Windows `tests/test_output_checks.py`·`tests/test_research_report.py` 90 passed
 ## 테스트 결과
 Windows `tests/test_live_source_limit_891.py` 20 passed(1단계 7건 + prompt 연결 5건), `test_research_cp2`·`test_output_types_research`·`test_research_report`·`test_cso`·`test_external_wait` 포함 406 passed.
 - 미검증: 재계획 prompt는 같은 helper를 쓰지만 통합 시험은 없다(재계획을 일으키는 장면이 따로 필요). 다른 PC의 runner는 계수가 다르다(문구에 "이 PC runner"로 한정).
+
+# #792 rev7 그림별 원자료와 환경 절
+
+- 결론: 공개본 README의 "그림이 보여 주는 것"이 그림마다 원자료 표(스크립트가 이름을 쓰는 게시 표)를 적는다. 연결을 못 찾으면 못 찾았다고 쓴다. 그래픽 초록은 결과표 숫자를 담지 않는다고 적는다.
+- 환경: "## 환경" 절이 `run/environment/`의 잠금 파일과 `패키지==버전`을 싣는다(15개까지). 기록이 없으면 없다고, 파일만 있고 버전이 없으면 확인하지 못했다고 적는다.
+- P2(#1092): 캡션을 전체 경로로 먼저 맞추고 파일명이 하나뿐일 때만 파일명으로 맞춘다. 같은 이름의 그림끼리 덮어쓰지 않는다.
+- 프롬프트: analyst는 보고서의 그림마다 원자료 파일을 적고 그림 속 숫자를 결과표에서 읽는다. editor는 README에서 같게 한다.
+- 바꾼 것: `labhq/portfolio.py`, `agents/core/{analyst,editor}.yaml`, `tests/test_portfolio_edition.py`.
+- 한계: 원자료 연결은 스크립트 본문에 파일명이 나오는지로 판단하는 휴리스틱이다. 같은 이름의 스크립트·표가 여러 개면 서로 섞여 보일 수 있다. 보고서 본문에 원자료를 자동으로 덧붙이지는 않고 prompt로 요구한다. 환경은 Python 버전을 읽지 않는다.
+- 미검증: 새 실행으로 만든 README, Windows CI.
 
 ## 단계
 #1076 rev5: `test_recovery_fake_check[gateway]`의 Windows `ReadTimeout` 3회. 원인 조사: [#1076 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6521284783).
