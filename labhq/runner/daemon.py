@@ -74,7 +74,7 @@ from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .lookup_admission import ENV as LOOKUP_ADMISSION_ENV, FILE as LOOKUP_ADMISSION_FILE, LookupAdmission
 from .system_ca import CA_ENV, system_ca_pem
-from .step_inputs import MAX_FILES as STEP_INPUT_MAX_FILES, stage_inputs, stage_precedent_texts
+from .step_inputs import stage_inputs, stage_precedent_texts, staging_problem
 from ..research.precedent_texts import step_note as precedent_step_note
 from .workspace import (InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, resolved_zones,
                         restricted_zones)
@@ -2528,12 +2528,13 @@ class Runner:
                 # declared files together, and refuses the whole ancestor otherwise (#1058): the producer must not
                 # pass what no later step can take.
                 sizes = {row["path"]: int(row.get("size") or 0) for row in output_records}
-                total_bytes = sum(sizes.get(path, 0) for path in result.output_sha256)
-                if len(result.outputs) > STEP_INPUT_MAX_FILES or total_bytes > self.s.runner.input_hash_max_total_bytes:
+                problem = staging_problem(result.outputs, result.output_sha256, sizes,
+                                          self.s.runner.input_hash_max_file_bytes,
+                                          self.s.runner.input_hash_max_total_bytes)
+                if problem:
                     result.ok = False
                     result.error = (f"incomplete: declared folder(s) {', '.join(declared_dirs)} make the step collect "
-                                    f"{len(result.outputs)} files and {total_bytes} bytes; a later step can take at most "
-                                    f"{STEP_INPUT_MAX_FILES} files and {self.s.runner.input_hash_max_total_bytes} bytes")
+                                    f"outputs a later step would refuse: {problem}")
             if missing_optional:
                 result.missing_optional_outputs = list(dict.fromkeys([
                     *result.missing_optional_outputs, *missing_optional]))

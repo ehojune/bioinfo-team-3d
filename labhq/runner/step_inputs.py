@@ -169,6 +169,37 @@ def _parts(name):
     return parts
 
 
+def staging_problem(outputs, hashes, sizes, max_file, max_total):
+    """Why a later step could not stage this ancestor's collected outputs, or None (#1058).
+
+    The same rules stage_inputs applies to one ancestor, so a producer is not passed on files its consumer will
+    refuse as a whole: count, a hash for every path, a safe and case-distinct name, the per-file and the total bytes."""
+    if len(outputs) > MAX_FILES:
+        return f'{len(outputs)} files; a later step can take at most {MAX_FILES}'
+    seen, total = set(), 0
+    for raw in outputs:
+        relative = output_relpath(raw)
+        if not relative or not relative.startswith('outputs/'):
+            return f'{raw}: not a path under outputs/'
+        name = relative[len('outputs/'):]
+        try:
+            _parts(name)
+        except ValueError:
+            return f'{relative}: a file name a later step refuses ({name})'
+        if not isinstance(hashes.get(raw), str) or not re.fullmatch('[a-f0-9]{64}', hashes[raw]):
+            return f'{relative}: no hash'
+        if name.casefold() in seen:
+            return f'{relative}: collides by letter case with another collected file'
+        seen.add(name.casefold())
+        size = int(sizes.get(raw) or 0)
+        if size > max_file:
+            return f'{relative}: {size} bytes; a later step takes at most {max_file} per file'
+        total += size
+    if total > max_total:
+        return f'{total} bytes in all; a later step takes at most {max_total} bytes'
+    return None
+
+
 @contextlib.contextmanager
 def _folder(root, parts):
     with contextlib.ExitStack() as stack:

@@ -461,3 +461,21 @@ async def test_the_staging_byte_budget_counts_plain_declared_files_with_the_fold
     result = await runner.run_task(_task(outputs=["literature", "ledger.tsv"]))
 
     assert result.ok is False and "30 bytes" in result.error
+
+
+def test_staging_problem_mirrors_what_a_later_step_refuses():
+    """Review P1/P2 class: the producer is judged by the consumer's own rules, so none of these passes as complete."""
+    from labhq.runner.step_inputs import MAX_FILES, staging_problem
+
+    digest = "a" * 64
+    one = {"outputs/a.tsv": digest}
+    assert staging_problem(["outputs/a.tsv"], one, {"outputs/a.tsv": 5}, 10, 100) is None
+    assert "collides by letter case" in staging_problem(
+        ["outputs/f/A.tsv", "outputs/f/a.tsv"], {"outputs/f/A.tsv": digest, "outputs/f/a.tsv": digest}, {}, 10, 100)
+    assert "per file" in staging_problem(["outputs/a.tsv"], one, {"outputs/a.tsv": 11}, 10, 100)
+    assert "in all" in staging_problem(["outputs/a.tsv", "outputs/b.tsv"], {"outputs/a.tsv": digest, "outputs/b.tsv": digest},
+                                       {"outputs/a.tsv": 6, "outputs/b.tsv": 6}, 10, 11)
+    assert "no hash" in staging_problem(["outputs/a.tsv"], {}, {}, 10, 100)
+    assert "refuses" in staging_problem(["outputs/a$b.tsv"], {"outputs/a$b.tsv": digest}, {}, 10, 100)
+    many = [f"outputs/p{index}.md" for index in range(MAX_FILES + 1)]
+    assert str(MAX_FILES) in staging_problem(many, {path: digest for path in many}, {}, 10, 10**9)
