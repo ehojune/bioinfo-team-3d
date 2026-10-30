@@ -8,7 +8,7 @@ Lookup-only contract evidence for [#1063](https://github.com/ehojune/bioinfo-tea
 | `tests/fixtures/process_boundary_seal/validator.py` | Pure validator; no dependency on W1 producer or W3 harness |
 | `tests/test_process_boundary_seal_contract.py` | Corpus, identity mutations, missing phases, malformed observations and receipt non-authority |
 
-Required witness observations, in order: monitor start → sealed source/ancestor identities → execution start → normal exit → whole-tree descendant/socket cleanup → final identities → monitor stop. Start, exit and cleanup each bind the independently pinned child identity. Sequence and monotonic timestamps must be complete. Both monitor endpoints cover every pinned object with zero event loss. A mutation event rejects the run even when endpoint hashes match. Source/ancestor identities and link metadata must match caller-owned pins.
+Required witness observations, in order: monitor start → sealed source/ancestor identities → execution start → normal exit → whole-tree descendant/socket cleanup → final identities → monitor stop. Start, exit and cleanup each bind the independently pinned child identity. Sequence and monotonic timestamps must be complete. Both monitor endpoints cover every pinned object with zero event loss. A mutation event rejects the run even when endpoint hashes match. Source/ancestor identities must be distinct; their identities and link metadata must match caller-owned pins.
 
 | Evidence | Expected status / reason |
 |---|---|

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import importlib.util
+from itertools import combinations
 import json
 from pathlib import Path
 import sys
@@ -212,6 +213,18 @@ def test_supervisor_cannot_be_the_child_even_when_all_events_agree():
     for event in evidence["witness"]["events"]:
         if "child_id" in event:
             event["child_id"] = trusted["child_id"]
+    result = validator.validate(evidence, trusted)
+    assert result.contract == "rejected"
+    assert result.reasons == ("malformed_launch_expectations",)
+
+
+@pytest.mark.parametrize("first,second", list(combinations(CORPUS["trusted"]["objects"], 2)))
+def test_pinned_objects_cannot_alias_even_when_snapshots_agree(first, second):
+    trusted, evidence = deepcopy(CORPUS["trusted"]), deepcopy(CORPUS["positive"])
+    trusted["objects"][second]["object_id"] = trusted["objects"][first]["object_id"]
+    for event in evidence["witness"]["events"]:
+        if "objects" in event:
+            event["objects"] = deepcopy(trusted["objects"])
     result = validator.validate(evidence, trusted)
     assert result.contract == "rejected"
     assert result.reasons == ("malformed_launch_expectations",)

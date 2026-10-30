@@ -38,16 +38,17 @@ def _valid_expectations(trusted: dict[str, Any]) -> bool:
     objects = trusted.get("objects")
     if not isinstance(objects, dict) or not objects or not all(_text(name) for name in objects):
         return False
-    kinds = set()
+    kinds, identities = set(), set()
     for obj in objects.values():
         if (not isinstance(obj, dict) or not _text(obj.get("object_id"))
                 or obj.get("kind") not in ("file", "directory") or obj.get("symlink") is not False
                 or type(obj.get("nlink")) is not int or obj["nlink"] < 1):
             return False
         kinds.add(obj["kind"])
+        identities.add(obj["object_id"])
         if obj["kind"] == "file" and (obj["nlink"] != 1 or not _digest(obj.get("sha256"))):
             return False
-    return kinds == {"file", "directory"}
+    return kinds == {"file", "directory"} and len(identities) == len(objects)
 
 
 def validate(evidence: dict[str, Any], trusted: dict[str, Any]) -> Verdict:
