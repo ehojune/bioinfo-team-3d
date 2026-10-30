@@ -290,3 +290,47 @@ def test_a_directory_junction_is_seen_without_os_path_isjunction_as_on_python_31
     (outside / "paper.md").write_text("secret", encoding="utf-8")
     assert subprocess.run(["cmd", "/c", "mklink", "/J", str(inner), str(outside)], capture_output=True).returncode == 0
     assert skill_content(folder, "a" * 64) is None
+
+
+# ---- #660 review: a real request keeps its plan rows `deferred`; `ready` lives in the step results' provenance ----
+def _built_in_results(digest="a" * 64, status="ready", pid="PMID:12345678"):
+    return {"s1": {"provenance": {"runs": {"t1": {"paper_skills": [
+        {"paper_id": pid, "status": status, "skill_sha256": digest, "step_id": "s1"}]}}}}}
+
+
+def test_skill_origins_read_the_build_outcome_on_the_step_results_not_only_the_plan_rows():
+    from labhq.recruit.paper_skills import skill_origins
+
+    deferred = [{"paper_id": "PMID:12345678", "status": "deferred"}]
+    origins = skill_origins([
+        ("req_new", 300.0, deferred, _built_in_results()),                          # as a real request stores it
+        ("req_reuse", 100.0, deferred, _built_in_results(status="reused")),         # a reuse is not a build
+        ("req_plan_only", 400.0, [{"paper_id": "PMID:12345678", "status": "ready", "skill_sha256": "a" * 64}]),
+        ("req_odd", 50.0, deferred, {"s1": "x", "s2": {"provenance": []}, "s3": {"provenance": {"runs": {"t": 1}}},
+                                     "s4": {"provenance": {"runs": {"t": {"paper_skills": "no"}}}}}),
+        ("req_none", 60.0, None, None),
+    ])
+    assert origins == {("pmid:12345678", "a" * 64): {"request_id": "req_new", "created_at": 300.0}}
+
+
+def test_the_cli_finds_the_building_request_from_the_results_of_a_real_stored_request(tmp_path):
+    import json
+    import sqlite3
+
+    from labhq import cli
+
+    path = _gateway_store(tmp_path, {
+        "req_real": {"created_at": 200.0, "plan": {"paper_skill_results": [{"paper_id": "pmid:12345678",
+                                                                           "status": "deferred"}]},
+                     "results": _built_in_results()},
+        "req_reuse": {"created_at": 100.0, "plan": {}, "results": _built_in_results(status="reused")},
+    })
+    db = sqlite3.connect(path)
+    db.execute("INSERT INTO state VALUES ('request', 'req_damaged', ?)",
+               ('{"created_at": 50, "results": {"s1": {"provenance": {"runs": {"t": {"paper_skills": [1]}}}}}, "paper_skills": ' + "[",))
+    db.execute("INSERT INTO state VALUES ('request', 'req_text', ?)", (json.dumps({"created_at": 1, "note": "paper_skills"}),))
+    db.commit()
+    db.close()
+    origins, error = cli._paper_skill_origins(_settings(tmp_path))
+    # the damaged body and the one that only mentions the word are skipped; the real request is found
+    assert error is None and origins == {("pmid:12345678", "a" * 64): {"request_id": "req_real", "created_at": 200.0}}

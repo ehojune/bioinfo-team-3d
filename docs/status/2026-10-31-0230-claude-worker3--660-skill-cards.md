@@ -19,3 +19,6 @@
 
 ## 테스트
 `tests/test_paper_skill_670.py`에 시험 4건(내용 읽기, 링크·잘못된 hash·큰 파일, talent 줄 내용과 경로 비노출, 읽을 수 없을 때 이전 줄+날짜). 수정을 빼면 4건 모두 실패한다. `test_paper_skill_670`·`test_paper_skill_attach`·`test_contract_provenance` 112 passed.
+
+## 리뷰 반영 (rev6)
+- **만든 요청을 provenance에서도 찾는다**: 실제 요청은 계획의 `paper_skill_results` 행을 `deferred`로 두고 `ready`는 단계 결과의 provenance(`results.*.provenance.runs.*.paper_skills`)에만 남긴다(옛 요청은 계획 행에도 `ready`가 남아 있었다). `skill_origins`가 둘 다 읽고(`reused`는 세지 않음), `labhq talent`의 store 조회는 `results`도 가져온다. 손상된 요청 본문(`json_valid` 아님)은 건너뛰어 한 건이 전체를 막지 않는다. 이 PC의 실제 store에서도 이전과 같은 결과(스킬 2개가 `req_750b0e41fd`)를 확인했다.

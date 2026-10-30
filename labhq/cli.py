@@ -328,12 +328,19 @@ def _paper_skill_origins(s: Settings) -> tuple[dict | None, str | None]:
         conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=2)
         try:
             rows = conn.execute(
-                "SELECT key, json_extract(body, '$.created_at'), json_extract(body, '$.plan.paper_skill_results') "
-                "FROM state WHERE kind='request' AND json_extract(body, '$.plan.paper_skill_results') IS NOT NULL").fetchall()
+                "SELECT key, json_extract(body, '$.created_at'), json_extract(body, '$.plan.paper_skill_results'), "
+                "json_extract(body, '$.results') FROM state WHERE kind='request' AND json_valid(body) AND "
+                "(json_extract(body, '$.plan.paper_skill_results') IS NOT NULL OR body LIKE '%paper_skills%')").fetchall()
         finally:
             conn.close()
-        return skill_origins((key, created, json.loads(raw) if isinstance(raw, str) else None)
-                             for key, created, raw in rows), None
+        def parsed(raw):
+            try:
+                return json.loads(raw) if isinstance(raw, str) else None
+            except ValueError:
+                return None  # one damaged request is skipped, not the whole listing
+
+        return skill_origins((key, created, parsed(plan_rows), parsed(results))
+                             for key, created, plan_rows, results in rows), None
     except (sqlite3.Error, OSError, ValueError) as error:
         return None, f"요청 기록을 읽지 못했습니다({type(error).__name__})"
 

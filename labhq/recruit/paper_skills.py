@@ -171,16 +171,32 @@ def skill_content(folder: Path, digest: str) -> dict[str, Any] | None:
         return None
 
 
+def _usage_rows(results: Any) -> list[Any]:
+    """The paper-skill usage rows a request's step results carry (provenance runs' ``paper_skills``), as records() reads
+    them, from a stored or damaged request without assuming its shape."""
+    rows: list[Any] = []
+    for result in results.values() if isinstance(results, dict) else []:
+        provenance = result.get("provenance") if isinstance(result, dict) else None
+        runs = provenance.get("runs") if isinstance(provenance, dict) else None
+        for run in runs.values() if isinstance(runs, dict) else []:
+            used = run.get("paper_skills") if isinstance(run, dict) else None
+            rows.extend(used if isinstance(used, list) else [])
+    return rows
+
+
 def skill_origins(requests) -> dict[tuple[str, str], dict[str, Any]]:
     """Which request first built each skill (#660): {(paper_id, skill_sha256): {request_id, created_at}}.
 
-    `requests` is an iterable of (request id, created_at, that request's plan ``paper_skill_results`` list). A request
-    built a skill only where its row says ``ready``; ``reused`` means an earlier request built it. The earliest
-    created_at wins, and a malformed row or time is skipped, never guessed."""
+    `requests` is an iterable of (request id, created_at, that request's plan ``paper_skill_results`` list, and
+    optionally its ``results``). A request built a skill where a row says ``ready``; ``reused`` means an earlier request
+    built it. The build outcome is recorded on the step results (provenance runs' ``paper_skills``, as ``records()``
+    reads it): the plan rows of a request stay ``deferred`` and only older requests kept ``ready`` there, so both are
+    read. The earliest created_at wins, and a malformed row or time is skipped, never guessed."""
     found: dict[tuple[str, str], dict[str, Any]] = {}
-    for request_id, created_at, rows in requests:
-        if not isinstance(rows, list) or not isinstance(created_at, (int, float)) or isinstance(created_at, bool):
+    for request_id, created_at, plan_rows, *rest in requests:
+        if not isinstance(created_at, (int, float)) or isinstance(created_at, bool):
             continue
+        rows = [*(plan_rows if isinstance(plan_rows, list) else []), *_usage_rows(rest[0] if rest else None)]
         for row in rows:
             if not isinstance(row, dict) or row.get("status") != "ready":
                 continue
