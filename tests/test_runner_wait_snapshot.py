@@ -8,7 +8,7 @@ import pytest
 
 from labhq.gateway.server import create_app
 from labhq.settings import Settings
-from tests.support.node_binary import node_binary, node_env
+from tests.support.node_binary import node_binary
 
 
 @pytest.mark.parametrize("later_events", [199, 200, 201])
@@ -44,5 +44,4 @@ assert.equal(o.stateText(o.ag('engineer')), '차례 대기');
 assert.equal(o.stateText(o.ag('cso')), '차례 대기');
 """
     subprocess.run([node, "-e", script], input=json.dumps(snap), text=True,
-                   encoding="utf-8", cwd=Path(__file__).resolve().parents[1], check=True, timeout=15,
-                   env=node_env(node))
+                   encoding="utf-8", cwd=Path(__file__).resolve().parents[1], check=True, timeout=15)

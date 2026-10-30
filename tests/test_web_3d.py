@@ -18,7 +18,7 @@ from starlette.websockets import WebSocketDisconnect
 from labhq.gateway.server import WEB, create_app
 from labhq.settings import Settings
 from labhq.util import free_port
-from tests.support.node_binary import node_binary, node_env
+from tests.support.node_binary import node_binary
 
 
 @pytest.fixture
@@ -201,7 +201,7 @@ def test_office_in_node(filename, marker):
                'web_visual_tooling.cjs': 170, 'web_resizable_panels.cjs': 60}.get(filename, 30)
     # On Windows the demo driver starts Chrome inside the owned KILL_ON_CLOSE Job wrapper with this exact
     # interpreter (#842); it never falls back to a PATH or Store python.
-    base_env = node_env(node, {**os.environ, 'LABHQ_TEST_PYTHON': sys.executable})
+    base_env = {**os.environ, 'LABHQ_TEST_PYTHON': sys.executable}
     # #833: the resizable script runs once per viewport, in this order, each under its own watchdog and with that
     # watchdog's absolute end (epoch ms), so its browser work stops early enough to close what it owns before the kill
     # below would skip that close. Every invocation must pass; none may be skipped when the browser is required.
@@ -285,7 +285,6 @@ assert.deepEqual(profileActivity('mock', broken),
 assert.equal(closes, 2);
 console.log('bounded profile diagnostic: OK');
 """
-    result = subprocess.run([node, '-e', code, str(driver)], capture_output=True, text=True, timeout=5,
-                            env=node_env(node))
+    result = subprocess.run([node, '-e', code, str(driver)], capture_output=True, text=True, timeout=5)
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == 'bounded profile diagnostic: OK'
