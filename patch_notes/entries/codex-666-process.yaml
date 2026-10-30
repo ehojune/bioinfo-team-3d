@@ -20,3 +20,7 @@ rows:
     at: "2026-10-30 15:40"
     summary: "합성 staging의 binary mode를 명시해 인코딩 검사를 통과합니다."
     text: "fix: declare binary staging mode explicitly"
+  - sha: '88549ba'
+    at: "2026-10-30 15:49"
+    summary: "기준 브랜치 변경 뒤 CI checkout 검증을 다시 실행합니다."
+    text: "chore: refresh CI checkout identity"
