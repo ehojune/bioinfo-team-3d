@@ -944,8 +944,10 @@ def apply_declared_output_status(step: dict, result: TaskResult) -> TaskResult:
     collected = {rel for name in result.outputs if (rel := output_relpath(name))}
     required = [(str(name), rel) for name in step.get("outputs") or [] if (rel := output_relpath(name))]
     optional = [(str(name), rel) for name in step.get("optional_outputs") or [] if (rel := output_relpath(name))]
-    def has_output(rel: str) -> bool:  # a declared folder is collected as its files (#1058)
-        return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in collected)
+    hashed = {rel for name in result.output_sha256 if (rel := output_relpath(name))}
+
+    def has_output(rel: str) -> bool:  # a declared folder is collected as its hashed files (#1058)
+        return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in hashed)
 
     missing = [name for name, rel in required if not has_output(rel)]
     missing_optional = [name for name, rel in optional if not has_output(rel)]

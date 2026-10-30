@@ -74,7 +74,7 @@ from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .lookup_admission import ENV as LOOKUP_ADMISSION_ENV, FILE as LOOKUP_ADMISSION_FILE, LookupAdmission
 from .system_ca import CA_ENV, system_ca_pem
-from .step_inputs import stage_inputs, stage_precedent_texts
+from .step_inputs import MAX_FILES as STEP_INPUT_MAX_FILES, stage_inputs, stage_precedent_texts
 from ..research.precedent_texts import step_note as precedent_step_note
 from .workspace import (InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, resolved_zones,
                         restricted_zones)
@@ -2505,7 +2505,8 @@ class Runner:
         collected = set(result.outputs)
         if _should_check_declared_outputs(result):
             def has_output(rel: str) -> bool:
-                return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in collected)
+                # A declared folder is there when a file with a hash is under it: a later step stages only those.
+                return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in result.output_sha256)
 
             missing_required = [rel for name in required_declared
                                 if (rel := output_relpath(name)) and not has_output(rel)]
@@ -2515,6 +2516,11 @@ class Runner:
                 result.ok = False
                 result.missing_outputs = list(dict.fromkeys([*result.missing_outputs, *missing_required]))
                 result.error = "incomplete: missing outputs: " + ", ".join(result.missing_outputs)
+            if declared_dirs and result.ok and len(result.outputs) > STEP_INPUT_MAX_FILES:
+                # A later step stages at most this many collected files of one ancestor and refuses the rest (#1058).
+                result.ok = False
+                result.error = (f"incomplete: declared folder(s) {', '.join(declared_dirs)} expand to {len(result.outputs)} "
+                                f"collected files; a later step can take at most {STEP_INPUT_MAX_FILES}")
             if missing_optional:
                 result.missing_optional_outputs = list(dict.fromkeys([
                     *result.missing_optional_outputs, *missing_optional]))

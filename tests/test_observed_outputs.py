@@ -374,3 +374,44 @@ async def test_declared_directory_skips_a_link_or_unhashed_file_inside_it(tmp_pa
 
     assert "outputs/literature/big.bin" not in result.outputs  # too large to hash: never collected without one
     assert all(result.output_sha256.get(path) for path in result.outputs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count, ok", [(200, True), (201, False)])
+async def test_declared_directory_expanding_past_the_staging_limit_is_incomplete(tmp_path, monkeypatch, count, ok):
+    """Review P1: a later step stages at most MAX_FILES files of one ancestor, so a producer above it must not pass."""
+    def write(workdir):
+        for index in range(count):
+            _write(workdir, f"outputs/literature/p{index:03d}.md", b"x\n")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["literature"]))
+
+    assert result.ok is ok, result.error
+    if not ok:
+        assert "200" in result.error and "outputs/literature" in result.error
+
+
+@pytest.mark.asyncio
+async def test_a_declared_folder_needs_a_hashed_child_even_when_an_unhashed_child_is_also_declared(tmp_path, monkeypatch):
+    """Review P1: the unhashable child is collected as its own declared file, but it cannot satisfy the folder."""
+    def write(workdir):
+        _write(workdir, "outputs/literature/big.bin", b"x" * 64)
+
+    runner = _runner(tmp_path, monkeypatch, write, hash_max_bytes=16)
+    result = await runner.run_task(_task(outputs=["literature", "literature/big.bin"]))
+
+    assert result.ok is False
+    assert "outputs/literature" in result.missing_outputs
+    assert "outputs/literature/big.bin" not in result.output_sha256
+
+
+def test_the_orchestrator_applies_the_same_hashed_child_rule_to_a_declared_folder():
+    from labhq.orchestrator.cso import apply_declared_output_status
+
+    step = {"id": "s1", "outputs": ["outputs/literature"]}
+    unhashed = TaskResult(task_id="t", agent_id="a", ok=True, outputs=["outputs/literature/big.bin"])
+    assert apply_declared_output_status(step, unhashed).ok is False
+    hashed = unhashed.model_copy(update={"outputs": ["outputs/literature/p1.md"],
+                                         "output_sha256": {"outputs/literature/p1.md": "a" * 64}})
+    assert apply_declared_output_status(step, hashed).ok is True
