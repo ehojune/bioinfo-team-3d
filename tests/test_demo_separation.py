@@ -206,7 +206,7 @@ async def test_countdown_is_visible_in_reconnecting_snapshot(tmp_path, monkeypat
 
     async def sleep(_):
         snapshots.append(hub.snapshot()["data"]["demo_status"].copy())
-    monkeypatch.setattr(cli.asyncio, "sleep", sleep)
+    monkeypatch.setattr(cli, "asyncio", RuntimeProxy(cli.asyncio, sleep=sleep))
     try:
         await cli._demo_countdown(hub, 3)
         assert snapshots == [{"phase": "waiting", "remaining_s": n} for n in (3, 2, 1)]
