@@ -212,8 +212,36 @@ function engineCostLabel(summary) {
   if (!summary || !summary.by_engine) return '';
   const engines = Object.entries(summary.by_engine).map(([name, e]) => `${name} ${summaryParts(e)}`).join(' · ');
   const stale = (summary.prices || []).filter(p => p && p.stale).map(p => `${p.engine} ${p.model} (${p.checked_on} 확인)`);
+  // `model_tier_mismatch:<staff>:<tier>:<model that ran>` (#625); a model name may hold ':' itself.
+  const mismatched = (summary.warnings || []).filter(w => typeof w === 'string' && w.startsWith('model_tier_mismatch:')).map(w => {
+    const [agent, tier, ...model] = w.slice('model_tier_mismatch:'.length).split(':');
+    return `${agent}(${tier}) → ${model.join(':')}`;
+  });
   return [engines, Number(summary.estimated_usd) > 0 ? '추정은 API 가격표 환산이며 청구액이 아닙니다' : '',
-    stale.length ? `가격표 오래됨: ${stale.join(', ')}` : ''].filter(Boolean).join('; ');
+    stale.length ? `가격표 오래됨: ${stale.join(', ')}` : '',
+    mismatched.length ? `선언 등급과 다른 모델: ${mismatched.join(', ')}` : ''].filter(Boolean).join('; ');
+}
+// The request's time limit (#877), worded as `labhq status` words it. The gateway sends wall_clock with the snapshot and
+// request.created; this reads it with the clock and the status this page already derived. A snapshot cannot tell when a
+// PI wait that began after it started, so such a wait is not subtracted until the next snapshot: the time left reads
+// shorter than it is, never longer. A request whose limit is unknown (an older gateway) shows nothing, not "off".
+function applyWallClock(q, clock) {
+  q.wallClock = clock && typeof clock === 'object' && !Array.isArray(clock) ? { ...clock } : null;
+}
+const spanLabel = seconds => seconds < 120 ? `${Math.trunc(seconds)}초` : `${Math.round(seconds / 60)}분`;
+function deadlineLabel(q, nowSeconds) {
+  const clock = q && q.wallClock;
+  if (!clock || !isActiveRequest(q.status)) return '';
+  if (!Number(clock.limit_s)) return '시간 상한 꺼짐';
+  const waiting = q.status === 'waiting_pi';
+  const since = Number(clock.pi_since);
+  const open = waiting && Number.isFinite(since) && clock.pi_since !== null ? Math.max(0, nowSeconds - since) : 0;
+  const held = (Number(clock.held_s) || 0) + open;
+  const left = (Number(q.created_at) || nowSeconds) + Number(clock.limit_s) + held - nowSeconds;
+  let text = `시간 상한 켜짐 ${spanLabel(Number(clock.limit_s))} · ` + (left > 0 ? `남은 ${spanLabel(left)}` : '기한이 지났습니다(곧 취소)');
+  if (held > 0) text += ` · PI 대기 제외 ${spanLabel(held)}`;
+  if (waiting) text += ' · PI 결정 대기 중이라 시간이 가지 않습니다';
+  return text;
 }
 // Who spent it: the request's cost per staff member, when the gateway recorded agent ids (by_agent).
 function agentCostLabel(summary, name = id => id) {
@@ -552,6 +580,7 @@ function req(rid) {
     Object.defineProperty(q, 'assumptions', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'processing', { value: null, writable: true, enumerable: false });
     Object.defineProperty(q, 'costSummary', { value: null, writable: true, enumerable: false });  // #270
+    Object.defineProperty(q, 'wallClock', { value: null, writable: true, enumerable: false });  // #877
     Object.defineProperty(q, 'paperLiterature', { value: null, writable: true, enumerable: false });  // #660, from the detail GET
     Object.defineProperty(q, 'pipelinePr', { value: null, writable: true, enumerable: false });
     Object.defineProperty(q, 'bundlePath', { value: '', writable: true, enumerable: false });
@@ -733,6 +762,7 @@ function apply(ev, replay = false) {
         if (r.execution_record_truncated) Object.assign(q, { execution_record_truncated: true,
           execution_record_chars: r.execution_record_chars });
         q.costSummary = null; applyCostSummary(q, r.cost_summary);
+        applyWallClock(q, r.wall_clock);
         applySessionCost(q, r, S.sessionStartedAt);
         if (r.plan) setPlan(q, r.plan);
         q.references = r.references || [];
@@ -973,6 +1003,7 @@ function apply(ev, replay = false) {
       Object.assign(q, { text: d.text, mode: d.mode, project_id: d.project_id, status: d.status || 'running', phase: isTerminalRequest(d.status) ? 'done' : d.mode === 'direct' ? 'execute' : 'briefing', created_at: ts });
       q.agent_id = d.agent_id || '';
       q.references = d.references || [];
+      applyWallClock(q, d.wall_clock);
       if (!replay && !(preferred?.manual && S.requests.has(S.current) && isTerminalRequest(q.status))) selectRequest(rid, false);
       feed({ who: 'pi', text: `새 요청: ${short(d.text, 130)}`, fullText: `새 요청: ${d.text || ''}` }, ts, rid);
       break;
@@ -1263,7 +1294,7 @@ function toolLabel(name) {
 
 return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentTool, toolInputLine, toolActivitySummary, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES, phaseLabel };
 }
-root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
+root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel, deadlineLabel,
   isActiveRequest, isTerminalRequest, isPastRequest, officeRequests, sessionCostRequests, requestsCostTotal,
   REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
   needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, serviceWarning, demoBannerText,
