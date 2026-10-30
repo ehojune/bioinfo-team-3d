@@ -14,9 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:18 | [`e8ed8f2`](https://github.com/ehojune/bioinfo-team-3d/pull/1091/commits/e8ed8f2) | **재개된 단계도 지금 남은 조회 횟수를 봅니다.**<br>PI 답변·리뷰어 피드백으로 재개된 단계의 updates에 그 시점의 조회 사용량을 다시 넣어, 이어 받은 세션이 이전 turn의 낡은 값을 쓰지 않게 한다 |
+| 21:04 | [`28c3340`](https://github.com/ehojune/bioinfo-team-3d/pull/1091/commits/28c3340) | **CSO와 직원이 이 요청에서 조회를 몇 번 썼고 몇 번 남았는지 알고 계획·조회를 정하며, 모르면 0 대신 모른다고 보입니다.**<br>CSO 계획·재계획·선행 연구 검색·모든 단계 prompt에 요청의 공개 조회 사용량(N/M, 남음 K, 담당별)을 사실로 넣고 상한이 없으면 생략·계수를 못 읽으면 UNKNOWN으로 적으며 manual 한·영에 적는다 |
 | 20:51 | [`a3b1843`](https://github.com/ehojune/bioinfo-team-3d/pull/1087/commits/a3b1843) | **결과 폴더가 정리본에서 다른 위치로 옮겨지는 점까지 감안해 그런 스크립트를 그대로 실행되는 것으로 세지 않고, 스크립트가 빠진 이유를 한 가지로 단정하지 않게 했습니다.**<br>fix: 선언 outputs/ 경로를 쓰는 스크립트도 정리본만으로는 실행 불가로 분류하고 생략 사유를 단정하지 않음 (#792 리뷰) |
 | 20:44 | [`02fa9e6`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/02fa9e6) | **요청 전체 시간 상한 설정의 범위·고정 시점·PI 대기 처리·취소 기록을 한·영 조회 문서로 정리하고 README에서 링크했습니다.**<br>docs: 요청 전체 시간 상한 조회 문서(한·영)와 README 링크 (#877) |
 | 20:42 | [`c65931e`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/c65931e) | **PI 카드를 기다린 시간을 정확히 기한에 더하고, 시간 상한으로 취소한 요청의 보고서가 PI가 취소한 것처럼 적히던 것을 고쳤습니다. 취소 도중 gateway가 꺼져도 기한 기록이 남습니다.**<br>fix: waiting_pi를 전환 시각으로 정산하고 기한 취소 보고서·복구 영수증을 고친다 (#877) |
+| 20:40 | [`53e7455`](https://github.com/ehojune/bioinfo-team-3d/pull/1091/commits/53e7455) | **CSO와 직원에게 요청의 조회 사용량을 보여 줄 재료가 생깁니다(prompt 연결은 다음 단계).**<br>LookupAdmission.usage(request_id)와 usage_note를 더해 요청의 공개 조회 사용량·남은 횟수·담당별 소진을 사실값으로 내고, 상한이 꺼졌거나 읽지 못하면 0 대신 UNKNOWN으로 표시한다 |
 | 20:38 | [`4b5da2e`](https://github.com/ehojune/bioinfo-team-3d/pull/1087/commits/4b5da2e) | **스크립트가 입력 폴더를 읽는지 알아보는 방법을 경로 모양별이 아니라 입력 폴더 이름 하나를 찾는 방식으로 바꿔 윈도 경로도 놓치지 않게 했습니다.**<br>fix: 작업공간 입력 감지를 경로 모양이 아니라 단어 inputs 기준으로 일반화 (#792 리뷰 P1) |
 | 20:27 | [`e82ae82`](https://github.com/ehojune/bioinfo-team-3d/pull/1087/commits/e82ae82) | **매뉴얼에 결과 저장소의 재현 안내가 어떤 스크립트만 알려 주는지와 모든 스크립트 단계가 스크립트를 선언해야 한다는 규칙을 적었습니다.**<br>docs: manual 한·영에 정리본 재현 안내의 공개/실행 차이와 스크립트 선언 규칙을 적음 (#792) |
 | 20:25 | [`1effacd`](https://github.com/ehojune/bioinfo-team-3d/pull/1087/commits/1effacd) | **스크립트 일부만 공개된 단계는 정리본만으로 다시 만들 수 있다고 하지 않고, 입력 폴더 경로를 조립해 쓰는 코드도 작업공간이 필요하다고 판단하게 했습니다.**<br>fix: 일부만 공개된 단계를 재현 가능으로 세지 않고 합성 입력 경로도 감지 (#792 리뷰 P1) |
