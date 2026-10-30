@@ -6,6 +6,7 @@ from labhq import doctor
 from labhq.adapters import codex as codex_mod
 from labhq.settings import DataZone, Settings
 from labhq.registry import Registry
+from tests.support.time_proxy import RuntimeProxy
 
 
 @pytest.fixture(autouse=True)
@@ -81,9 +82,11 @@ def _write_roster_agent(folder, filename, agent_id, *, employment="contract", st
 
 @pytest.mark.parametrize("custom", [False, True])
 def test_doctor_roster_matches_registry_without_archiving(tmp_path, monkeypatch, custom):
+    import labhq.doctor as doctor_module
     import labhq.registry as registry_module
 
-    monkeypatch.setattr(registry_module.time, "time", lambda: 100)
+    for module in (doctor_module, registry_module):
+        monkeypatch.setattr(module, "time", RuntimeProxy(module.time, time=lambda: 100))
     settings = _settings(tmp_path)
     base = tmp_path / "agents"
     folder = tmp_path / "custom" if custom else base / "contract"

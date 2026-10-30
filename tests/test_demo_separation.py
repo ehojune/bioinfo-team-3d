@@ -21,6 +21,7 @@ from labhq.gateway.server import create_app
 from labhq.models import AgentSpec, ApprovalRequest, Engine, Task
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
+from tests.support.time_proxy import RuntimeProxy
 
 
 DEADLOCK_TIMEOUT = 120
@@ -189,7 +190,7 @@ async def test_only_web_demo_slows_mock_steps(tmp_path, monkeypatch, web, delay)
     assert cli._approval_delay(False, 120, web=web) == (1.0 if web else 0.3)
     assert cli._approval_delay(True, 120, web=web) == 120
     sleep = AsyncMock()
-    monkeypatch.setattr("labhq.adapters.mock.asyncio.sleep", sleep)
+    monkeypatch.setattr("labhq.adapters.mock.asyncio", RuntimeProxy(asyncio, sleep=sleep))
     agent = AgentSpec(id="analyst", name="A", role="test", engine=Engine.mock)
     task = Task(agent_id=agent.id, prompt="mock test", meta={"kind": "direct"})
     ctx = RunContext(task=task, agent=agent, workdir=tmp_path, settings=s,

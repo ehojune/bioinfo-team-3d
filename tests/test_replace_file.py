@@ -6,6 +6,7 @@ import os
 import pytest
 
 from labhq import util
+from tests.support.time_proxy import RuntimeProxy
 
 
 def _fail_then_replace(monkeypatch, failures):
@@ -18,7 +19,7 @@ def _fail_then_replace(monkeypatch, failures):
         real(source, target)
 
     monkeypatch.setattr(util.os, "replace", flaky)
-    monkeypatch.setattr(util.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(util, "time", RuntimeProxy(util.time, sleep=lambda _seconds: None))
     return calls
 
 
