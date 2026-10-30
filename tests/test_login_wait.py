@@ -367,7 +367,8 @@ async def test_login_retry_expiry_ends_notice_and_next_failure_notifies_again(tm
     # skewed clock: the 50 s window ends after a few retries however slow the host is.
     real_time, skew = time.time, [0.0]
     skewed = RuntimeProxy(time, time=lambda: real_time() + skew[0])
-    monkeypatch.setattr("labhq.orchestrator.cso.time", skewed)
+    for module in ("labhq.orchestrator.cso", "labhq.gateway.server"):  # the retry plan and Hub.wait_login read it
+        monkeypatch.setattr(f"{module}.time", skewed)
     hub = _hub(tmp_path, retry=0.05, maximum=50)
     calls = 0
 
