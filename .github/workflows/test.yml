@@ -189,6 +189,9 @@ jobs:
         run: Write-Output "::error title=Windows selection rejected::ci_selection refused this checkout. See selection-error.json in the Windows artifact."
       - name: Bind Windows execution identity
         run: python -m scripts.ci_skip windows-identity
+      - name: Warm Chrome (a cold start is timed here, not inside the 30 s browser test)
+        run: python scripts/ci_chrome_warmup.py
+        timeout-minutes: 2
       - name: Serial critical Windows contracts
         run: pytest -q --durations=15 -n 0 -p scripts.ci_suite --ci-profile ${{ env.CI_COVERAGE_PROFILE }} --ci-phase critical tests/test_windows_job_ci.py tests/test_web_shutdown_process.py "tests/test_web_3d.py::test_office_in_node[web_resizable_panels.cjs-fail 0]"
         timeout-minutes: 3
