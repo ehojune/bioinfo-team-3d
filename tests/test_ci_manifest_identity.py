@@ -137,7 +137,8 @@ def upload():
     original = dict(name='pytest-windows', run_id=42, run_attempt=1, head_sha='d' * 40,
         status='completed', conclusion='success', created_at='2026-10-25T01:00:00Z',
         started_at='2026-10-25T01:00:01Z', completed_at='2026-10-25T01:08:00Z')
-    copied = dict(original, run_attempt=3, created_at='2026-10-25T03:00:00Z')
+    copied = dict(original, id=3, run_attempt=3, created_at='2026-10-25T03:00:00Z')
+    original['id'] = 1
     artifact = dict(id=77, name='coverage-windows-42-1', expired=False,
         created_at='2026-10-25T01:07:55Z', updated_at='2026-10-25T01:07:55Z',
         workflow_run=dict(id=42, head_sha='d' * 40, repository_id=123, head_repository_id=123))
@@ -145,6 +146,8 @@ def upload():
     def request(path):
         if path.endswith('/artifacts?per_page=100'):
             return dict(total_count=len(data['artifacts']), artifacts=data['artifacts'])
+        if '/jobs?filter=latest' in path:  # the run-wide list shows the latest attempt, which is attempt 3 here
+            return dict(total_count=1, jobs=[data[3]])
         attempt = int(path.split('/attempts/')[1].split('/')[0])
         return dict(total_count=1, jobs=[data[attempt]])
     return data, request
@@ -273,12 +276,16 @@ def test_fresh_windows_retry_cannot_certify_copied_other_gates(producer, monkeyp
         cs.produce_manifest(current, needs, producer[2])
 
 
-def _lagging(upload, steps):
-    """A request whose attempt-3 job list answers each read from `steps` (a list of job lists; the last one repeats)."""
+def _lagging(upload, steps, latest=()):
+    """A request whose attempt-3 job list answers each read from `steps` (a list of job lists; the last one repeats).
+
+    The run-wide list answers `latest` (default: no job) so a test of the attempt list alone is not rescued by it."""
     data, request = upload
     reads = []
 
     def lagged(path):
+        if '/jobs?filter=latest' in path:
+            return dict(total_count=len(latest), jobs=list(latest))
         if '/attempts/3/jobs' in path:
             reads.append(path)
             jobs = steps[min(len(reads), len(steps)) - 1]
@@ -331,3 +338,35 @@ def test_two_producers_are_denied_at_once_without_waiting(upload):
     with pytest.raises(ValueError, match='missing/ambiguous Windows producer'):
         select(request, sleeps.append)
     assert len(reads) == 1 and sleeps == []
+
+
+def test_a_stale_attempt_list_is_rescued_only_by_the_same_job_read_from_the_run_wide_list(upload):
+    # #1127 review: the attempt list stayed `in_progress` for every read although the job had finished.
+    data, _ = upload
+    stale = dict(data[3], status='in_progress', conclusion=None)
+    _, request, reads = _lagging(upload, [[stale]], latest=[data[3]])
+    sleeps = []
+    assert select(request, sleeps.append) == (77, 1) and sleeps == []  # the first read already has the completed row
+    # a different job in the run-wide list is not the stale one: nothing is rescued and the wait ends in the same error
+    _, other, reads = _lagging(upload, [[stale]], latest=[dict(data[3], id=99)])
+    with pytest.raises(ValueError, match='failed/incomplete effective Windows producer'):
+        select(other, [].append)
+    assert len(reads) == cs.JOB_POLL_ATTEMPTS
+
+
+def test_a_job_taken_from_the_run_wide_list_still_has_to_be_bound_to_this_run_and_head(upload):
+    data, _ = upload
+    stale = dict(data[3], status='in_progress', conclusion=None)
+    for field, value in (('head_sha', 'e' * 40), ('run_attempt', 2), ('run_id', 7)):
+        _, request, _ = _lagging(upload, [[stale]], latest=[dict(data[3], **{field: value})])
+        with pytest.raises(ValueError, match='unbound Windows producer'):
+            select(request, [].append)
+
+
+def test_a_completed_failure_in_the_attempt_list_is_not_rescued_by_the_run_wide_list(upload):
+    data, _ = upload
+    failed = dict(data[3], conclusion='failure')
+    _, request, reads = _lagging(upload, [[failed]], latest=[data[3]])
+    with pytest.raises(ValueError, match='failed/incomplete effective Windows producer'):
+        select(request, [].append)
+    assert len(reads) == 1

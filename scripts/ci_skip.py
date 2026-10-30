@@ -574,6 +574,11 @@ def windows_artifact(run, head, repository_id, request=None, sleep=None):
     running. Only those two states, no `pytest-windows` row yet or the one row not completed, are waited out
     (JOB_POLL_ATTEMPTS reads, JOB_POLL_INTERVAL_S apart); everything else, including a completed failure, two rows
     and every binding check below, fails at once as before (#1127).
+
+    One endpoint can stay stale for minutes after the job ended (run 41119322931 read `pytest-windows` as not
+    completed for 40 reads). While the attempt's own list is unsettled the run-wide list of the latest attempt is read
+    too, and a `completed` row from either is taken: a stale answer cannot invent a completion, and the row still goes
+    through the same run, attempt and head binding below.
     """
     from datetime import datetime
     request = request or api
@@ -585,6 +590,18 @@ def windows_artifact(run, head, repository_id, request=None, sleep=None):
                 raise ValueError('incomplete producer jobs')
             rows = [j for j in data['jobs'] if j['name'] == 'pytest-windows']
             unsettled = len(rows) == 0 or (len(rows) == 1 and rows[0]['status'] != 'completed')
+            if settle and unsettled:
+                latest = request(f"actions/runs/{run['id']}/jobs?filter=latest&per_page=100")
+                if latest['total_count'] != len(latest['jobs']):
+                    raise ValueError('incomplete producer jobs')
+                other = [j for j in latest['jobs'] if j['name'] == 'pytest-windows' and j['status'] == 'completed']
+                if len(other) == 1 and not rows:
+                    rows, unsettled = other, False
+                elif len(other) == 1 and len(rows) == 1 and other[0]['id'] == rows[0]['id']:
+                    rows, unsettled = other, False  # the same job, read from the endpoint that is not stale
+                seen = ', '.join(f"{j.get('status')}/{j.get('conclusion')}" for j in latest['jobs']
+                                 if j['name'] == 'pytest-windows') or 'no row'
+                print(f"ci_skip: attempt {attempt} read {read + 1}: run-wide list {seen}", file=sys.stderr)
             if settle:  # public job fields only: what the list said on each read, so a lag can be measured (#1127)
                 seen = ', '.join(f"{j.get('status')}/{j.get('conclusion')}/{j.get('completed_at')}" for j in rows) or 'no row'
                 print(f"ci_skip: attempt {attempt} read {read + 1}: pytest-windows {seen}", file=sys.stderr)
