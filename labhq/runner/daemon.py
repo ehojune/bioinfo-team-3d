@@ -286,6 +286,8 @@ class Runner:
         # this loop to reload the outbox queue (#606).
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_thread: threading.Thread | None = None
+        self._batch_thread: threading.Thread | None = None  # the writer thread while `_send_batch_now` holds its batch
+        self._reload_after_batch = False
         # Tasks whose task.result is already queued in this run. A cancel that arrives while the result commits does
         # not stop the commit, so the cancel handler must not queue a second, "cancelled" one over it (#606).
         self._result_queued: set[str] = set()
@@ -466,6 +468,9 @@ class Runner:
     def _reload_outbox_after_commit(self) -> None:
         # On the loop's own thread this is the old straight call. On the durable writer thread (`_send_durably`) the
         # reload is queued for the loop, and runs before the awaiting caller resumes.
+        if self._batch_thread is threading.current_thread():
+            self._reload_after_batch = True  # its rows are not committed yet: once, after the batch's commit
+            return
         loop = self._loop
         if loop is not None and threading.current_thread() is not self._loop_thread:
             loop.call_soon_threadsafe(self.reload_outbox)
@@ -490,12 +495,22 @@ class Runner:
         await durable.run(self.store.lane, self._send_batch_now, items)
 
     def _send_batch_now(self, items: list[tuple[dict, list[tuple], list[tuple]]]) -> None:
-        for obj, befores, afters in items:
-            for row in befores:
-                self.store.put(*row)
-            self.send(obj)
-            for row in afters:
-                self.store.put(*row)
+        """The rows and messages of `items`, in order, in ONE transaction: one commit and fsync for the batch instead
+        of one per row and message (#1125). The outbox is reloaded once after that commit, because a reader sees only
+        committed rows."""
+        self._batch_thread, self._reload_after_batch = threading.current_thread(), False
+        try:
+            with self.store.batch():
+                for obj, befores, afters in items:
+                    for row in befores:
+                        self.store.put(*row)
+                    self.send(obj)
+                    for row in afters:
+                        self.store.put(*row)
+        finally:
+            self._batch_thread = None
+        if self._reload_after_batch:
+            self._reload_outbox_after_commit()
 
     async def asend(self, obj: dict) -> None:
         await self._send_durably(obj)

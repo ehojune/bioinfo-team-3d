@@ -58,6 +58,7 @@ class StateStore:
         self.lane = f"sqlite:{os.path.normcase(os.path.abspath(path))}"
         self._write_lock = threading.RLock()
         self._wdb: sqlite3.Connection | None = None
+        self._batch_conn: sqlite3.Connection | None = None  # set while `batch()` holds the open transaction
         self._closed = False
         self.db = sqlite3.connect(path, timeout=5, check_same_thread=False)
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
@@ -95,11 +96,42 @@ class StateStore:
 
     @contextmanager
     def _transaction(self):
-        """One write transaction on the write connection, committed (fsynced) on exit, rolled back on error."""
+        """One write transaction on the write connection, committed (fsynced) on exit, rolled back on error. Inside
+        `batch()` it is a savepoint of the batch's transaction instead: its own error undoes only its own rows, and
+        the commit is the batch's."""
         with self._write_lock:
             conn = self._write_connection()
+            if self._batch_conn is conn:
+                conn.execute("SAVEPOINT labhq_write")
+                try:
+                    yield conn
+                except BaseException:
+                    conn.execute("ROLLBACK TO labhq_write")
+                    conn.execute("RELEASE labhq_write")
+                    raise
+                conn.execute("RELEASE labhq_write")
+                return
             with conn:
                 yield conn
+
+    @contextmanager
+    def batch(self):
+        """Every write made inside, by this thread, is ONE transaction: one commit and one fsync when the block ends,
+        all of it or none of it (#1125). The writes keep their order and each is still whole before the block returns,
+        so a batch is as durable as the same writes made one by one, minus the fsyncs in between. Nothing is delayed:
+        the commit is at the end of the block, before the caller continues. A batch inside a batch joins the outer
+        one."""
+        with self._write_lock:
+            if self._batch_conn is not None:
+                yield
+                return
+            conn = self._write_connection()
+            self._batch_conn = conn
+            try:
+                with conn:
+                    yield
+            finally:
+                self._batch_conn = None
 
     def close(self) -> None:
         durable.lane(self.lane).drain()  # queued writes finish before their connection goes
