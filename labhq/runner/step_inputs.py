@@ -244,7 +244,7 @@ def folder_files(workdir, relative, max_entries, max_depth):
 
     try:
         with _folder(workdir, parts) as held:
-            walk(held, folder + '/', max(1, len(parts) - 1))
+            walk(held, folder + '/', len(parts) - 1)
     except (OSError, ValueError) as exc:
         return None, str(exc)
     return found, None

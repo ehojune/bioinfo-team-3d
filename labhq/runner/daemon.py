@@ -2549,6 +2549,15 @@ class Runner:
                     result.ok = False
                     result.error = (f"incomplete: declared folder(s) {', '.join(declared_dirs)} make the step collect "
                                     f"outputs a later step would refuse: {problem}")
+            if result.ok and not declared_dirs:
+                # A hard-linked declared file is hashed like any other, but a later step refuses it and with it the
+                # whole ancestor; steps that declare a folder get the same check inside the staging check (#1065).
+                declared_files = [rel for name in required_declared if (rel := output_relpath(name)) in collected]
+                linked_declared = await asyncio.to_thread(linked_files, ws.dir, declared_files)
+                if linked_declared:
+                    result.ok = False
+                    result.error = ("incomplete: a later step refuses a hard-linked output: "
+                                    + ", ".join(linked_declared))
             if missing_optional:
                 result.missing_optional_outputs = list(dict.fromkeys([
                     *result.missing_optional_outputs, *missing_optional]))

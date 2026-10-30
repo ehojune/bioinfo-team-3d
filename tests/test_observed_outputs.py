@@ -579,3 +579,30 @@ async def test_an_unrelated_subtree_past_the_scan_depth_does_not_fail_a_whole_de
     result = await runner.run_task(_task(outputs=["literature"]))
     assert result.ok is True, result.error
     assert "outputs/literature/p1.md" in result.outputs
+
+
+@pytest.mark.asyncio
+async def test_a_hard_linked_declared_file_stops_a_step_that_declares_no_folder(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/ledger.tsv", b"rows\n")
+        try:
+            os.link(workdir / "outputs/ledger.tsv", workdir / "outputs/ledger-copy.tsv")
+        except OSError as error:
+            pytest.skip(f"this account cannot create a hard link ({error})")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["ledger.tsv"]))
+    assert result.ok is False and "hard-linked" in result.error and "ledger.tsv" in result.error
+
+
+def test_a_declared_outputs_root_is_walked_from_depth_zero(tmp_path):
+    from labhq.runner.step_inputs import folder_files
+
+    _write(tmp_path, "outputs/sub/file.md", b"note" + bytes([10]))
+    paths, why = folder_files(tmp_path, "outputs", 100, 1)  # the scan counts the outputs/ root as depth 0
+    assert why is None and paths == ["outputs/sub/file.md"]
+    _write(tmp_path, "outputs/sub/deeper/x.md", b"deep" + bytes([10]))
+    paths, why = folder_files(tmp_path, "outputs", 100, 1)
+    assert paths is None and "deeper than 1" in why
+    paths, why = folder_files(tmp_path, "outputs/sub", 100, 1)  # a folder one level down starts at depth 1
+    assert paths is None and "deeper than 1" in why
