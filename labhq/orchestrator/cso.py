@@ -5283,6 +5283,9 @@ class Orchestrator:
                 # the revision round (12th mock trial). Always, not only when `feedback` names a dependency: after a
                 # restart mid-round a finished upstream revision is no longer in it (PR #368 review).
                 updates.append(f"[Current upstream results — they replace what you read before]\n{ctx}")
+            if updates and (usage := self._lookup_usage_line(rid).strip()):
+                # A resumed session gets only these updates, and its earlier turn holds an older count (#1088).
+                updates.append(usage)
             linked = input_steps(step)
             # The precedent search's stored texts reach every research step as read-only inputs (#951).
             stored_precedents = (precedent_texts.rows(self.hub.requests.get(rid, {}).get("analysis_precedents"))

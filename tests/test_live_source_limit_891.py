@@ -249,3 +249,48 @@ def test_the_note_helper_is_empty_without_a_cap_and_a_fact_with_one(tmp_path):
     settings.annot.request_lookup_limit = 3
     assert "0 of 3 used, 3 left" in usage_note_for(settings, "req_a", now=0)
     assert "UNKNOWN (the request has no identity)" in usage_note_for(settings, "")
+
+
+@pytest.mark.asyncio
+async def test_a_step_resumed_after_a_pi_answer_gets_the_current_usage_in_its_updates(tmp_path):
+    from labhq.models import TaskResult
+    from labhq.orchestrator.cso import Orchestrator
+    from tests.test_research_cp2 import CP1, MiniHub, _cp2_result, _settings
+    from tests.test_research_protocol import valid_plan
+
+    settings = _settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.annot.request_lookup_limit = 60
+    holder, seen = {}, []
+
+    async def reply(task):
+        hub = holder["hub"]
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        seen.append(task)
+        plan_hash = hub.requests["r"]["research_contract"]["plan_sha256"]
+        if len(seen) == 1:  # the first turn asks the PI and, meanwhile, the request spends lookups
+            admission = admission_for(settings)
+            for _ in range(7):
+                admission.admit("r", task.id, "lit_scout", "fulltext", "www.ebi.ac.uk")
+            asked = {"schema_version": 2, "plan_sha256": plan_hash, "step_id": "s1", "claims": [], "evidence": [],
+                     "links": [], "artifact_refs": [], "not_established": [], "failures": [], "method_changes": [],
+                     "blocking_decision": "Which donor group: (a) cases or (b) controls?"}
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=asked)
+        path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured={**_cp2_result(hub, task), "blocking_decision": ""}, outputs=[path])
+
+    hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    decisions = [CP1, {"approved": True, "note": "a"}, {"approved": True, "choice": "approve", "note": ""}]
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**decisions.pop(0), "approval_id": f"a{len(hub.approvals)}", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    assert len(seen) == 2
+    assert "0 of 60 used, 60 left" in seen[0].prompt  # the first turn started before any lookup
+    assert "7 of 60 used, 53 left" in seen[1].prompt.rsplit("Continuation updates:", 1)[-1]
