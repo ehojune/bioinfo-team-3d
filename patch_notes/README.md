@@ -20,8 +20,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:58 | [`0678ff1`](https://github.com/ehojune/bioinfo-team-3d/pull/1101/commits/0678ff1) | **로그인 대기 시험이 실제 20초씩 기다리지 않고 가짜 시계로 빨리 끝납니다.**<br>login wait 시험이 gateway의 Hub.wait_login도 같은 가짜 시계를 보게 했다 (#1076). |
 | 23:55 | [`74ec3b3`](https://github.com/ehojune/bioinfo-team-3d/pull/1096/commits/74ec3b3) | **규칙 문구를 실제 거부 동작과 맞췄습니다.**<br>prompt 규칙 문구를 뒤 행만 거부되고 그 claim이 근거를 잃는 실제 동작으로 맞추고, 패치노트 summary에서 미검증 예방 효과 단정을 뺀다(리뷰 P1·P2) |
 | 23:40 | [`d9e5396`](https://github.com/ehojune/bioinfo-team-3d/pull/1096/commits/d9e5396) | **근거 표를 만드는 단계 prompt에 같은 출처는 같은 independence group으로 적으라는 규칙이 더해집니다. 실제 run에서 직원이 따르는지는 아직 확인하지 않았습니다.**<br>연구 단계 결과 규칙에 같은 출처(DOI·PMID·accession·산출물 경로)를 인용한 근거 행은 같은 independence_group을 쓴다는 한 줄을 더하고, 규칙 존재 시험을 추가한다 |
+| 23:38 | [`0f9f0e1`](https://github.com/ehojune/bioinfo-team-3d/pull/1101/commits/0f9f0e1) | **시험이 가짜 시계를 쓸 때 다른 스레드와 이벤트 루프까지 가짜 시계를 보지 않게 했습니다.**<br>시험 16개 파일에서 X.time.f 전역 patch를 모듈 자신의 time(asyncio) 이름만 바꾸는 proxy로 교체 (#1076). |
+| 23:38 | [`404ac5e`](https://github.com/ehojune/bioinfo-team-3d/pull/1101/commits/404ac5e) | **시험이 가짜 시계를 쓸 때 다른 스레드와 이벤트 루프까지 가짜 시계를 보지 않게 했습니다.**<br>시험 helper tests/support/time_proxy.py의 RuntimeProxy와 15개 파일 변환 (#1076). |
 | 23:30 | [`d67ca61`](https://github.com/ehojune/bioinfo-team-3d/pull/1093/commits/d67ca61) | **labhq status가 요청마다 시간 상한을 조회할 때 gateway가 응답하지 않으면 첫 실패 뒤 나머지 조회를 건너뛰어 명령이 오래 멈추지 않습니다.**<br>fix: status가 침묵한 gateway에 요청마다 상세 조회를 되풀이하지 않게 한다 (#877) |
 | 23:10 | [`8317600`](https://github.com/ehojune/bioinfo-team-3d/pull/1094/commits/8317600) | **같은 본문이 DOI와 PMID로 따로 저장돼도 둘 중 어느 식별자로 인용해도 읽은 것으로 이어집니다.**<br>같은 sha256의 저장 기록은 한 논문으로 합치되 모든 행의 별칭을 보존(리뷰 P2) + 시험 |
 | 23:05 | [`bb618b7`](https://github.com/ehojune/bioinfo-team-3d/pull/1093/commits/bb618b7) | **시간 상한 시험이 같은 프로세스의 다른 시험이 보는 시계를 멈추지 않게 하고, 시험이 만든 Hub를 정리 때 닫도록 했습니다.**<br>test: 시간 상한 시험이 프로세스 전체의 시계를 바꾸지 않게 한다 (#877) |
