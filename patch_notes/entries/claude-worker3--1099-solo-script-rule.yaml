@@ -1,0 +1,5 @@
+rows:
+- sha: '3f97126'
+  at: 2026-10-31 02:00
+  text: route solo prompt(SOLO_PROMPT)에 SCRIPT_OUTPUTS_PLAN_RULE을 넣고, 규칙이 채운 prompt에도 남아 있는지 단언하는 시험을 더한다
+  summary: 혼자 처리하는 요청이 스크립트를 돌릴 때도 그 스크립트를 선언하도록 안내해 결과 repo의 재현 안내에서 빠지지 않게 합니다.
