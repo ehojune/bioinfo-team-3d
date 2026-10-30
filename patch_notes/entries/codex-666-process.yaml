@@ -4,7 +4,7 @@ rows:
     at: "2026-10-30 10:49"
     summary: "격리 준비가 검증되지 않은 실행을 거부하고 별도 진단 결과를 기록합니다."
     text: "add: fail-closed process boundary diagnostic (#1047)"
-  - sha: '6ab8479'
+  - sha: '6c9a207'
     at: "2026-10-30 11:00"
     summary: "프로세스 경계 테스트를 Windows 필수 검사에 등록합니다."
     text: "fix: register process boundary Windows tests (#1047)"
