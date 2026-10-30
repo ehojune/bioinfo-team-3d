@@ -208,6 +208,7 @@
     "tests/test_probe_inbound_mcp.py",
     "tests/test_probe_timeout.py",
     "tests/test_proc_tree.py",
+    "tests/test_process_boundary_seal_contract.py",
     "tests/test_process_diagnostics.py",
     "tests/test_process_stop_guard.py",
     "tests/test_process_stop_guard_actions.py",
@@ -371,6 +372,7 @@
     "tests/test_wsl_shared.py"
   ],
   "boundary_cohorts": {
+    "tests/test_process_boundary_seal_contract.py": "Synthetic supervisor/seal security acceptance contract; retain all cases on Windows.",
     "tests/test_pr990_stale_dispatch_repro.py": "Stale revision dispatch returns its own SQLite steer and drop-notice reservations; isolated in-process mocks.",
     "tests/test_step_state_async_606.py": "Step-control SQLite commit/rollback, heartbeat, latest-row races, cancellation and steer replay; isolated in-process mocks.",
     "tests/test_facilities_fallback_983.py": "Missing facilities fallback notices and bounded same-step reasks (#983).",
