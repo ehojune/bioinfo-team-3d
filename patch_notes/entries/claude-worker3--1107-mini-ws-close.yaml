@@ -12,3 +12,7 @@ rows:
   at: 2026-10-31 04:50
   text: 서버가 upgrade 대신 일반 HTTP 응답을 돌려주면 MiniWebSocket이 응답을 버리고 요청을 끝내 onerror 한 번, onclose 한 번을 내게 한다(리뷰 P2) + 시험
   summary: 업그레이드를 거절당한 연결도 실제로 끝나고 정리가 그것을 알 수 있습니다.
+- sha: 'eaca28f'
+  at: 2026-10-31 05:00
+  text: 업그레이드 전에 끝나는 네 경로(close, 연결 실패, 일반 HTTP 거절, 잘못된 accept 키)가 모두 onerror·onclose 한 번씩임을 시험으로 고정한다
+  summary: 업그레이드 전 종료 경로 전체를 시험이 지킵니다.
