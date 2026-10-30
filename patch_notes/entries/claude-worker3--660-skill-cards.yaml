@@ -12,3 +12,7 @@ rows:
   at: 2026-10-31 08:40
   text: skill_content가 talent 폴더 자신과 skill/<hash>·references·assets·SKILL.md·paper.md·보충 파일·asset 하위 폴더 모두에서 symlink와 Windows junction을 따라가지 않는다(리뷰 P2, junction으로 폴더 밖 파일 크기를 읽던 경로를 시험으로 확인)
   summary: 폴더가 링크로 바뀌어 있어도 labhq talent가 스킬 폴더 밖의 파일을 읽지 않습니다.
+- sha: 'f9a0c97'
+  at: 2026-10-31 09:30
+  text: manual 한·영의 labhq talent 절에 스킬 폴더에서 읽은 사실(이름·본문 파일 크기와 보관 위치·그림·표 수), 만든 요청과 날짜(읽기 전용 store, 못 읽으면 파일 시각과 이유), 링크 비추적, 빌드 미완료 줄을 적는다(리뷰 P1)
+  summary: 설명서가 labhq talent의 새 출력과 읽는 방법을 한국어와 영어로 설명합니다.
