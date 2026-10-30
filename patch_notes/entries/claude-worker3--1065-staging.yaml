@@ -1,5 +1,9 @@
 pr: 1068
 rows:
+- sha: '373f0f1'
+  at: 2026-10-30 18:26
+  text: 폴더를 선언하지 않은 단계의 hard link 검사에서 하류가 읽지 않는 direct 실행을 뺀다
+  summary: direct 실행의 산출에 hard link가 있어도 실패로 처리되지 않습니다.
 - sha: 'c71461a'
   at: 2026-10-30 17:36
   text: 폴더를 선언하지 않은 단계의 hard link 검사를 선택·미보고 산출까지 수집된 모든 산출에 적용한다
