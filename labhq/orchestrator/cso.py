@@ -693,6 +693,7 @@ Rules:
 - """ + FIGURE_OUTPUT_RULE + """
 - Save every deliverable under outputs/ using relative paths.
 - Save analysis code under """ + OUTPUT_SCRIPTS_DIR + """ and use only relative paths inside it.
+- """ + SCRIPT_OUTPUTS_PLAN_RULE + """
 - In the limitations, give one line for each thing you could not do and each assumption you had to make.
 - Follow every supplied topic or precedent checklist item. Add a short cited "선행 연구 기준" section when
   Analysis precedents are supplied, and put omitted recommendations under "다음에 할 수 있는 분석".
