@@ -539,3 +539,17 @@ def test_the_access_ledger_line_counts_stored_papers_as_acquired():
     assert "확보 0편" in base and "결론 근거 5편" in base
     assert "확보 4편(본문 3·초록 1·서지 0)" in line and "결론 근거 4편" in line
     assert "확보에는 저장된 선행 검색 기록 4편(CP1 전 기록)이 들어 있습니다." in line
+
+
+def test_stored_access_reads_the_citation_forms_the_precedent_prompt_allows():
+    """A bare DOI, a DOI URL, a PubMed URL and a PMC URL join the paper the receipt names by another identifier."""
+    def aliases(paper_id, citation):
+        record = {"status": "ok", "papers": [{"fulltext_receipt": {"paper_id": paper_id, "access_level": "full_text"},
+                                              "citations": [citation]}]}
+        return stored_access(record)[0][0]
+
+    assert {"PMID:123", "DOI:10.1000/x"} <= aliases("PMID:123", "10.1000/x")
+    assert {"PMID:123", "DOI:10.1000/x"} <= aliases("PMID:123", "https://doi.org/10.1000/x")
+    assert {"PMID:123", "PMCID:PMC9"} <= aliases("PMID:123", "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9/")
+    assert {"PMID:123"} <= aliases("DOI:10.1000/x", "https://pubmed.ncbi.nlm.nih.gov/123/")
+    assert {"PMID:123", "PMCID:PMC9"} <= aliases("PMID:123", "PMC9")

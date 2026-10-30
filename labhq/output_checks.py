@@ -479,6 +479,25 @@ def _conclusion_papers(ledgers: Mapping[str, Any], unsupported: Iterable[Any],
     return _paper_groups(cited_sources)
 
 
+_STORED_URL_IDS = (
+    (re.compile(r"https?://(?:dx\.)?doi\.org/(10\.\S+)", re.I), "doi"),
+    (re.compile(r"https?://pubmed\.ncbi\.nlm\.nih\.gov/(\d+)", re.I), "pmid"),
+    (re.compile(r"https?://(?:www\.)?ncbi\.nlm\.nih\.gov/pmc/articles/(PMC\d+)", re.I), "pmcid"),
+)
+
+
+def _stored_aliases(key: Any) -> set[str]:
+    """Identifiers of one precedent citation: a named id (``PMID:1``), a bare PMID, PMCID or DOI, or a DOI, PubMed or
+    PMC URL, which the precedent prompt allows."""
+    if isinstance(key, str):
+        for pattern, name in _STORED_URL_IDS:
+            if (found := pattern.match(key.strip())) and (normal := _normal_named_paper_id(name, found.group(1))):
+                return {normal}
+    if isinstance(key, (str, int)) and (normal := _normal_paper_input(key)):
+        return {normal}
+    return _access_paper_ids(key)
+
+
 def stored_access(analysis_precedents: Any) -> list[tuple[set[str], str, bool]]:
     """Papers whose text the precedent search stored before CP1, as (alias identifiers, access level, partial).
 
@@ -496,7 +515,7 @@ def stored_access(analysis_precedents: Any) -> list[tuple[set[str], str, bool]]:
         citations = paper.get("citations")
         aliases: set[str] = set()
         for key in [receipt.get("paper_id"), *(citations if isinstance(citations, list) else [])]:
-            aliases |= _access_paper_ids(key)
+            aliases |= _stored_aliases(key)
         if aliases:
             found.append((aliases, str(receipt["access_level"]), receipt.get("extraction") == "partial_text"))
     return found
