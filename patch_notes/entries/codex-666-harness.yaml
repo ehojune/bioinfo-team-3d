@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '6b16f3c0'
+    at: '2026-10-30 13:32'
+    summary: '자손 lifecycle이 보장되지 않으면 detached probe 실행을 차단합니다.'
+    text: 'Guard detached probe without lifecycle ownership'
   - sha: '74212ef'
     at: '2026-10-30 13:21'
     summary: 'timeout 뒤 synthetic writer를 종료합니다.'
