@@ -6925,22 +6925,24 @@ class Orchestrator:
                         summary = "\n".join(hiring_warnings) + "\n" + summary
                     if paper_line:
                         summary = paper_line + "\n" + summary
+                    pinned_note = ""
                     if reuse_pending:
                         source = ("CP2 수정 요청 반영" if carried.get("trigger") == "cp2_revise"
                                   else "리뷰 P1 반영")
                         reasons = list(dict.fromkeys((carried.get('rerun') or {}).values()))
                         reason_line = ('재사용 거부 이유: ' + '; '.join(reasons)[:240] + '. ' if reasons else '')
                         pinned = unreceipted_references(req["research_contract"], carried.get('reuse') or [])
-                        if pinned:
-                            reason_line += (f"재사용한 단계가 쓴 DOI·PMID 참조 {len(pinned)}건은 식별자만 고정했고 "
-                                            "내용은 확인하지 않았습니다. ")
+                        if pinned:  # kept whole beyond the cut below, like the budget line: the PI approves the reuse here
+                            pinned_note = (f"재사용한 단계가 쓴 DOI·PMID 참조 {len(pinned)}건은 식별자만 고정했고 "
+                                           "내용은 확인하지 않았습니다.")
                         summary = (f"이어 가기 {carried.get('round')}차 계획({source}). 재사용: "
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
                                    f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + reason_line + summary
                     budget, configured_source = self._research_budget(rid, req, plan)
                     # Kept whole beyond the 699-char cut: the web shows the summary, not detail.budget; the selection
                     # record line (#890) rides with it, so long paper-skill or continuation text cannot cut it off.
-                    budget_line = selection_record_line(plan) + " " + _budget_line(budget)
+                    budget_line = (selection_record_line(plan) + " " + _budget_line(budget)
+                                   + (" " + pinned_note if pinned_note else ""))
 
                     async def ask_cp1(prefix: str = "") -> dict:
                         card = prefix + summary

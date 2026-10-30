@@ -291,7 +291,8 @@ async def test_the_continuation_card_and_report_say_the_content_of_pinned_refere
 
     cp1 = hub.approvals[3]
     assert cp1['detail']['continuation']['reuse'] == ['s1']
-    assert '재사용한 단계가 쓴 DOI·PMID 참조 2건은 식별자만 고정했고 내용은 확인하지 않았습니다.' in cp1['summary']
+    note = '재사용한 단계가 쓴 DOI·PMID 참조 2건은 식별자만 고정했고 내용은 확인하지 않았습니다.'
+    assert cp1['summary'].endswith(note)  # after the 699-char cut with the budget line, so a long card cannot drop it
     assert 'pinned by identifier only; their content was not checked (doi:10.1/a, pmid:7)' in json.dumps(
         hub.requests['r'], ensure_ascii=False)
 
