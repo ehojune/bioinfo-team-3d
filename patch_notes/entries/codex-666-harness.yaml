@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '857204e'
+    at: '2026-10-30 12:20'
+    summary: 'WSL 진단에 Python 인수를 직접 전달해 실행 여부를 확인합니다.'
+    text: 'fix: pass WSL interop arguments directly (#1049)'
   - sha: 'c15b010'
     at: '2026-10-30 12:18'
     summary: '확인된 경계 위반은 응답이나 종료 관측이 없어도 실패로 남깁니다.'
