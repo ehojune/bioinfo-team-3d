@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '9489e84'
+    at: '2026-10-30 15:39'
+    summary: '자손 lifecycle을 소유하지 않는 launcher는 모든 probe에서 차단합니다.'
+    text: 'Block all probes through unowned launchers'
   - sha: '35694a3'
     at: '2026-10-30 15:37'
     summary: '소유권 없는 launcher의 mutation probe 실행을 차단합니다.'
