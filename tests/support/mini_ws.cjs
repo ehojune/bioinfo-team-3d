@@ -28,7 +28,13 @@ class MiniWebSocket {
       this.onopen?.();
       if (head.length) this.read(head);
     });
-    request.on('response', () => this.onerror?.(new Error('DevTools endpoint refused the WebSocket upgrade')));
+    // A plain HTTP answer is a refusal: report it, drop the answer and end the request so 'close' reports it (#1107).
+    request.on('response', response => {
+      this.onerror?.(new Error('DevTools endpoint refused the WebSocket upgrade'));
+      this.closed = true;
+      response.resume();
+      request.destroy();
+    });
     // A connection that fails before the upgrade never gets a socket 'close' handler, so it reports its end here.
     request.on('error', error => {
       if (this.closed) return;  // the error of the request close() itself destroyed

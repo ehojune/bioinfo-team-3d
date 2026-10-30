@@ -1028,6 +1028,24 @@ test('MiniWebSocket reports one close when close() runs while the upgrade is sti
   } finally { sockets.forEach(socket => socket.destroy()); server.close(); }
 });
 
+test('MiniWebSocket ends the request and reports one error and one close when the server answers with plain HTTP (#1107)', async () => {
+  const sockets = [];
+  const server = http.createServer((request, response) => {
+    sockets.push(request.socket);
+    response.writeHead(400, {Connection: 'keep-alive'});
+    response.write('no upgrade here');  // the answer stays open: only the client can end it
+  });
+  const port = await listen(server);
+  try {
+    const ws = new MiniWebSocket(`ws://127.0.0.1:${port}/devtools/page/x`), events = [];
+    ws.onerror = () => events.push('error'); ws.onclose = () => events.push('close');
+    await settle(500);
+    assert.deepEqual(events, ['error', 'close']);
+    assert.equal(ws.closed, true);
+    assert.equal(sockets.every(socket => socket.destroyed), true, 'the refused connection is really gone');
+  } finally { sockets.forEach(socket => socket.destroy()); server.close(); }
+});
+
 test('MiniWebSocket reports an error and one close when the connection fails before the upgrade (#1107)', async () => {
   const probe = net.createServer();
   const port = await listen(probe);
