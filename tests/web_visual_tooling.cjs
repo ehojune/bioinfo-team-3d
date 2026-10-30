@@ -1046,6 +1046,24 @@ test('MiniWebSocket ends the request and reports one error and one close when th
   } finally { sockets.forEach(socket => socket.destroy()); server.close(); }
 });
 
+test('MiniWebSocket reports one error and one close for an upgrade answer with a wrong accept key (#1107)', async () => {
+  const peers = [];
+  const server = http.createServer();
+  server.on('upgrade', (request, socket) => {
+    peers.push(socket); socket.on('error', () => {});
+    const crlf = String.fromCharCode(13, 10);
+    socket.write(['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade',
+      'Sec-WebSocket-Accept: wrong', '', ''].join(crlf));
+  });
+  const port = await listen(server);
+  try {
+    const ws = new MiniWebSocket(`ws://127.0.0.1:${port}/devtools/page/x`), events = [];
+    ws.onerror = error => events.push('error: ' + error.message); ws.onclose = () => events.push('close');
+    await settle(500);
+    assert.deepEqual(events, ['error: bad WebSocket handshake', 'close']);
+  } finally { peers.forEach(socket => socket.destroy()); server.close(); }
+});
+
 test('MiniWebSocket reports an error and one close when the connection fails before the upgrade (#1107)', async () => {
   const probe = net.createServer();
   const port = await listen(probe);
