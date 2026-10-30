@@ -14,7 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:34 | [`83d27ac`](https://github.com/ehojune/bioinfo-team-3d/pull/1092/commits/83d27ac) | **공개본 README에서 이름이 바뀐 그림도 원래 그림의 설명을 보여 줍니다.**<br>공개본 README: 이름이 바뀐 그림도 원래 그림의 설명을 쓴다 (#792) |
+| 21:34 | [`091659c`](https://github.com/ehojune/bioinfo-team-3d/pull/1092/commits/091659c) | **매뉴얼의 공개본 README 설명을 실행 방법·seed를 적는다는 내용으로 맞췄습니다.**<br>manual: 공개본 README에 실행 방법·seed를 적는다고 맞춤 (#792) |
+| 21:23 | [`003fec0`](https://github.com/ehojune/bioinfo-team-3d/pull/1092/commits/003fec0) | **공개본 README가 고정 seed 값을 확인한 스크립트만 seed가 있다고 쓰고, 공개 자료로 다시 돌릴 수 있는 단계는 재실행 불가라고 쓰지 않게 했습니다.**<br>공개본 README: seed는 고정값이 있을 때만 적고, 공개 자료 재실행 단계는 부정하지 않음 (#792) |
 | 21:18 | [`e8ed8f2`](https://github.com/ehojune/bioinfo-team-3d/pull/1091/commits/e8ed8f2) | **재개된 단계도 지금 남은 조회 횟수를 봅니다.**<br>PI 답변·리뷰어 피드백으로 재개된 단계의 updates에 그 시점의 조회 사용량을 다시 넣어, 이어 받은 세션이 이전 turn의 낡은 값을 쓰지 않게 한다 |
+| 21:08 | [`896ec97`](https://github.com/ehojune/bioinfo-team-3d/pull/1092/commits/896ec97) | **공개본 README에 실제 한계, 그림 설명, 파일 목록, 실행 방법, seed를 적고, 경로를 지운 흔적이 문서에 남지 않게 했습니다.**<br>공개본 README: 실제 한계·그림·파일·실행·seed, 경로 치환 흔적 제거 (#792 rev5) |
 | 21:04 | [`28c3340`](https://github.com/ehojune/bioinfo-team-3d/pull/1091/commits/28c3340) | **CSO와 직원이 이 요청에서 조회를 몇 번 썼고 몇 번 남았는지 알고 계획·조회를 정하며, 모르면 0 대신 모른다고 보입니다.**<br>CSO 계획·재계획·선행 연구 검색·모든 단계 prompt에 요청의 공개 조회 사용량(N/M, 남음 K, 담당별)을 사실로 넣고 상한이 없으면 생략·계수를 못 읽으면 UNKNOWN으로 적으며 manual 한·영에 적는다 |
 | 20:51 | [`a3b1843`](https://github.com/ehojune/bioinfo-team-3d/pull/1087/commits/a3b1843) | **결과 폴더가 정리본에서 다른 위치로 옮겨지는 점까지 감안해 그런 스크립트를 그대로 실행되는 것으로 세지 않고, 스크립트가 빠진 이유를 한 가지로 단정하지 않게 했습니다.**<br>fix: 선언 outputs/ 경로를 쓰는 스크립트도 정리본만으로는 실행 불가로 분류하고 생략 사유를 단정하지 않음 (#792 리뷰) |
 | 20:44 | [`02fa9e6`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/02fa9e6) | **요청 전체 시간 상한 설정의 범위·고정 시점·PI 대기 처리·취소 기록을 한·영 조회 문서로 정리하고 README에서 링크했습니다.**<br>docs: 요청 전체 시간 상한 조회 문서(한·영)와 README 링크 (#877) |

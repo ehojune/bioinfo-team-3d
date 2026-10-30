@@ -42,6 +42,16 @@ Windows `test_recovery_fake_check`·`test_repeat_fake_check` 39 passed.
 - 이번에 하지 않은 것: #792 감사의 3·4·5·6·8번(고정 환경, 입력 변수·`<local-path>` 잔재, README 구성, 그림 source data, CITATION·커밋 메시지).
 - 미검증: 실제 6차 repo를 이 코드로 다시 만든 결과, 선언 규칙이 모델에게 실제로 지켜지는지.
 
+# #792 rev5 공개본 README와 경로 치환
+
+- 결론: 공개본 README의 "한계"는 보고서가 밝힌 실제 한계(최대 3문장)를 싣고, 한 줄짜리 대체문은 없앴다. 그림 설명, 파일 목록, 데이터 유무별 실행 방법, seed 절을 추가했다.
+- 경로: `str(p).replace("\\\\", "/")` 같은 코드의 `"\\"`를 UNC 경로로 오인해 `<local-path>`로 바꾸던 정규식을 고쳤다(호스트와 구분자가 있어야 UNC). 실행 기록의 "남은 절대경로" 목록은 개수로 줄였다.
+- 끝 문장: 저장소 README는 `report/report.md` 링크가 앞에 있어 "이어지는 내용은 …" 문장을 flat 판본에만 붙인다.
+- P2: 작업공간 경로 감지(`inputs`·`outputs`·`manifest.json`)를 대소문자 무시로 바꿨다.
+- 바꾼 것: `labhq/portfolio.py`, `labhq/result_storage.py`, `agents/core/editor.yaml`, 시험 2개, README 한·영 각 한 줄.
+- 한계: 한계 문장 선택은 키워드 휴리스틱이라 보고서 표현에 따라 빠질 수 있다. 목록 항목의 앞 "- "가 남는 경우가 있다. `route: solo` prompt 연결은 W3의 #1088 뒤로 미뤘다.
+- 미검증: 실제 새 실행으로 만든 README, Windows CI.
+
 # #1077 후속: manual 저장 절
 
 - 결론: PR #1078이 `review_pending` 요청의 `--to github`를 거절하고 명령을 안내하도록 바꿨는데, 상세 manual 한·영 저장 절은 "검토 전이면 검토 완료를 기다린다"로만 적혀 있어 새 흐름과 어긋났다(#1078 리뷰의 남은 P2). 코드는 바꾸지 않았다.
