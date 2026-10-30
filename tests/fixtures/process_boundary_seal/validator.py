@@ -18,6 +18,39 @@ REQUIRED_OBJECTS = {
     "parent:source": "directory",
     "source:tool.py": "file",
 }
+PARENTS = {
+    "parent:root": None,
+    "parent:source": "parent:root",
+    "source:tool.py": "parent:source",
+}
+PHASES = ("monitor_start", "seal", "exec_start", "exec_end", "cleanup", "final_snapshot", "monitor_stop")
+
+
+def identity(obj: dict[str, Any]) -> dict[str, Any]:
+    """Complete object identity, excluding its separately validated graph edge."""
+    return {key: value for key, value in obj.items() if key not in {"parent_ref", "parent_identity"}}
+
+
+def _valid_ancestry(objects: dict[str, Any]) -> bool:
+    if set(objects) != set(PARENTS) or any(not isinstance(obj, dict) for obj in objects.values()):
+        return False
+    for role, obj in objects.items():
+        parent = PARENTS[role]
+        if not {"parent_ref", "parent_identity"} <= obj.keys() or obj["parent_ref"] != parent:
+            return False
+        if parent is None:
+            if obj["parent_identity"] is not None:
+                return False
+        else:
+            pinned = identity(objects[parent])
+            actual = obj["parent_identity"]
+            if (objects[parent].get("kind") != "directory" or not isinstance(actual, dict)
+                    or actual != pinned
+                    or any(type(actual[key]) is not type(value) for key, value in pinned.items())):
+                return False
+    # The exact edge map above makes every role reach the independently pinned
+    # root, excluding missing/extra edges, self/cycles and detached subtrees.
+    return True
 
 
 @dataclass(frozen=True)
@@ -49,14 +82,18 @@ def _valid_expectations(trusted: dict[str, Any]) -> bool:
         return False
     identities = set()
     for role, obj in objects.items():
+        fields = {"object_id", "kind", "symlink", "nlink", "parent_ref", "parent_identity"}
+        if REQUIRED_OBJECTS[role] == "file":
+            fields.add("sha256")
         if (not isinstance(obj, dict) or not _text(obj.get("object_id"))
+                or set(obj) != fields
                 or obj.get("kind") != REQUIRED_OBJECTS[role] or obj.get("symlink") is not False
                 or type(obj.get("nlink")) is not int or obj["nlink"] < 1):
             return False
         identities.add(obj["object_id"])
         if obj["kind"] == "file" and (obj["nlink"] != 1 or not _digest(obj.get("sha256"))):
             return False
-    return len(identities) == len(objects)
+    return len(identities) == len(objects) and _valid_ancestry(objects)
 
 
 def validate(evidence: dict[str, Any], trusted: dict[str, Any]) -> Verdict:
@@ -76,7 +113,7 @@ def validate(evidence: dict[str, Any], trusted: dict[str, Any]) -> Verdict:
         return Verdict("rejected", "unverified", ("malformed_evidence",))
     if not _valid_expectations(trusted):
         return Verdict("rejected", "unverified", ("malformed_launch_expectations",))
-    if evidence.get("adapter") != "synthetic-v1":
+    if evidence.get("adapter") != "synthetic-v2":
         return Verdict("rejected", "unsupported", ("producer_adapter_unavailable",))
     witness = evidence.get("witness")
     if not isinstance(witness, dict):
@@ -110,7 +147,7 @@ def validate(evidence: dict[str, Any], trusted: dict[str, Any]) -> Verdict:
             or any(type(t) is not int or t < 0 for t in times)
             or any(a >= b for a, b in zip(times, times[1:]) if type(a) is int and type(b) is int)):
         reject("observation_gap_or_order")
-    phases = ("monitor_start", "seal", "exec_start", "exec_end", "cleanup", "final_snapshot", "monitor_stop")
+    phases = PHASES
     positions: dict[str, int] = {}
     for phase in phases:
         matches = [i for i, event in enumerate(events) if event.get("type") == phase]
@@ -130,18 +167,20 @@ def validate(evidence: dict[str, Any], trusted: dict[str, Any]) -> Verdict:
             reject("mutation_observed" if kind == "mutation" else "unknown_observation")
         if kind in {"exec_start", "exec_end", "cleanup"} and event.get("child_id") != trusted["child_id"]:
             reject("child_identity_mismatch")
-        if kind in {"seal", "final_snapshot"}:
+        if kind in phases:
             objects = event.get("objects")
             if not isinstance(objects, dict) or set(objects) != set(expected):
                 reject("snapshot_scope_mismatch")
                 continue
+            if not _valid_ancestry(objects):
+                reject("parent_ancestry_mismatch")
             for name, pinned in expected.items():
                 actual = objects[name]
                 if not isinstance(actual, dict) or not isinstance(pinned, dict):
                     reject("malformed_object")
                     continue
                 # Identity binds the source AND each declared ancestor, not just bytes.
-                required = {"object_id", "kind", "symlink", "nlink"}
+                required = {"object_id", "kind", "symlink", "nlink", "parent_ref", "parent_identity"}
                 if pinned.get("kind") == "file":
                     required.add("sha256")
                 if not required <= pinned.keys() or not required <= actual.keys():

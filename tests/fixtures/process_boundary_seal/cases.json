@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "trusted": {
     "run_id": "fixture-run-a",
     "launch_nonce": "fixture-nonce-a",
@@ -14,25 +14,41 @@
         "object_id": "fixture-volume:10",
         "kind": "directory",
         "symlink": false,
-        "nlink": 2
+        "nlink": 2,
+        "parent_ref": null,
+        "parent_identity": null
       },
       "parent:source": {
         "object_id": "fixture-volume:11",
         "kind": "directory",
         "symlink": false,
-        "nlink": 2
+        "nlink": 2,
+        "parent_ref": "parent:root",
+        "parent_identity": {
+          "object_id": "fixture-volume:10",
+          "kind": "directory",
+          "symlink": false,
+          "nlink": 2
+        }
       },
       "source:tool.py": {
         "object_id": "fixture-volume:12",
         "kind": "file",
         "symlink": false,
         "nlink": 1,
-        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "parent_ref": "parent:source",
+        "parent_identity": {
+          "object_id": "fixture-volume:11",
+          "kind": "directory",
+          "symlink": false,
+          "nlink": 2
+        }
       }
     }
   },
   "positive": {
-    "adapter": "synthetic-v1",
+    "adapter": "synthetic-v2",
     "authority": "independent_witness",
     "child_receipt": {
       "status": "PASS",
@@ -58,7 +74,44 @@
             "source:tool.py"
           ],
           "mechanism": "synthetic-continuous-events",
-          "loss_count": 0
+          "loss_count": 0,
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          }
         },
         {
           "sequence": 1,
@@ -69,20 +122,36 @@
               "object_id": "fixture-volume:10",
               "kind": "directory",
               "symlink": false,
-              "nlink": 2
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
             },
             "parent:source": {
               "object_id": "fixture-volume:11",
               "kind": "directory",
               "symlink": false,
-              "nlink": 2
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
             },
             "source:tool.py": {
               "object_id": "fixture-volume:12",
               "kind": "file",
               "symlink": false,
               "nlink": 1,
-              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
             }
           }
         },
@@ -90,7 +159,44 @@
           "sequence": 2,
           "time_ns": 20,
           "type": "exec_start",
-          "child_id": "fixture-child"
+          "child_id": "fixture-child",
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          }
         },
         {
           "sequence": 3,
@@ -98,7 +204,44 @@
           "type": "exec_end",
           "reason": "normal",
           "returncode": 0,
-          "child_id": "fixture-child"
+          "child_id": "fixture-child",
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          }
         },
         {
           "sequence": 4,
@@ -107,7 +250,44 @@
           "scope": "whole_process_tree",
           "descendants": [],
           "sockets": [],
-          "child_id": "fixture-child"
+          "child_id": "fixture-child",
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          }
         },
         {
           "sequence": 5,
@@ -118,20 +298,36 @@
               "object_id": "fixture-volume:10",
               "kind": "directory",
               "symlink": false,
-              "nlink": 2
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
             },
             "parent:source": {
               "object_id": "fixture-volume:11",
               "kind": "directory",
               "symlink": false,
-              "nlink": 2
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
             },
             "source:tool.py": {
               "object_id": "fixture-volume:12",
               "kind": "file",
               "symlink": false,
               "nlink": 1,
-              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
             }
           }
         },
@@ -145,7 +341,44 @@
             "source:tool.py"
           ],
           "mechanism": "synthetic-continuous-events",
-          "loss_count": 0
+          "loss_count": 0,
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          }
         }
       ]
     }
@@ -528,6 +761,309 @@
         "contract": "rejected",
         "status": "unverified",
         "reason": "child_identity_mismatch"
+      }
+    },
+    {
+      "id": "wrong_parent_identity",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "source:tool.py",
+            "parent_identity"
+          ],
+          "value": {
+            "object_id": "fixture-volume:10",
+            "kind": "directory",
+            "symlink": false,
+            "nlink": 2
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "valid_identity_under_wrong_parent",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "source:tool.py",
+            "parent_ref"
+          ],
+          "value": "parent:root"
+        },
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "source:tool.py",
+            "parent_identity"
+          ],
+          "value": {
+            "object_id": "fixture-volume:10",
+            "kind": "directory",
+            "symlink": false,
+            "nlink": 2
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "missing_parent_edge",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "source:tool.py",
+            "parent_ref"
+          ],
+          "remove": true
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "self_parent_edge",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:source",
+            "parent_ref"
+          ],
+          "value": "parent:source"
+        },
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:source",
+            "parent_identity"
+          ],
+          "value": {
+            "object_id": "fixture-volume:11",
+            "kind": "directory",
+            "symlink": false,
+            "nlink": 2
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "cyclic_parent_graph",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:root",
+            "parent_ref"
+          ],
+          "value": "parent:source"
+        },
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:root",
+            "parent_identity"
+          ],
+          "value": {
+            "object_id": "fixture-volume:11",
+            "kind": "directory",
+            "symlink": false,
+            "nlink": 2
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "detached_subtree",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:source",
+            "parent_ref"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:source",
+            "parent_identity"
+          ],
+          "value": null
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "coherent_root_substitution",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects"
+          ],
+          "value": {
+            "parent:root": {
+              "object_id": "fixture-volume:10:replacement",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10:replacement",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "object_replaced"
+      }
+    },
+    {
+      "id": "transient_relationship_restored",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "source:tool.py",
+            "parent_ref"
+          ],
+          "value": "parent:root"
+        },
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "source:tool.py",
+            "parent_identity"
+          ],
+          "value": {
+            "object_id": "fixture-volume:10",
+            "kind": "directory",
+            "symlink": false,
+            "nlink": 2
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "extra_parent_edge",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:root",
+            "parent_ref"
+          ],
+          "value": "parent:source"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
       }
     }
   ]

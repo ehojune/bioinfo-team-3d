@@ -55,7 +55,7 @@ def test_acceptance_corpus(case):
 
 
 def test_corpus_is_unique_and_every_negative_changes_valid_observations():
-    assert CORPUS["version"] == 1
+    assert CORPUS["version"] == 2
     cases = CORPUS["cases"]
     assert len({case["id"] for case in cases}) == len(cases)
     positive = CORPUS["positive"]
@@ -75,7 +75,7 @@ def test_removing_any_required_observation_rejects(phase):
     assert f"missing_or_duplicate_{phase}" in result.reasons
 
 
-@pytest.mark.parametrize("phase", ["seal", "final_snapshot"])
+@pytest.mark.parametrize("phase", validator.PHASES)
 @pytest.mark.parametrize("resource", list(CORPUS["trusted"]["objects"]))
 def test_mutating_each_pinned_identity_at_either_endpoint_rejects(phase, resource):
     evidence = deepcopy(CORPUS["positive"])
@@ -184,6 +184,9 @@ def test_consistent_independent_rebinding_accepts_a_different_run():
         obj["object_id"] += ":new"
         if "sha256" in obj:
             obj["sha256"] = "e" * 64
+    for obj in trusted["objects"].values():
+        if obj["parent_ref"] is not None:
+            obj["parent_identity"] = validator.identity(trusted["objects"][obj["parent_ref"]])
     for event in witness["events"]:
         if "objects" in event:
             event["objects"] = deepcopy(trusted["objects"])
@@ -249,3 +252,86 @@ def test_required_source_and_ancestor_roles_cannot_be_weakened_coherently(role, 
         if event["type"] in {"monitor_start", "monitor_stop"}:
             event["scope"] = sorted(trusted["objects"])
     assert validator.validate(evidence, trusted).contract == "rejected"
+
+
+ANCESTRY_CASES = [case for case in CORPUS["cases"] if case["id"] in {
+    "wrong_parent_identity", "valid_identity_under_wrong_parent", "missing_parent_edge",
+    "self_parent_edge", "cyclic_parent_graph", "detached_subtree", "extra_parent_edge",
+    "coherent_root_substitution", "transient_relationship_restored",
+}]
+
+
+@pytest.mark.parametrize("phase", validator.PHASES)
+@pytest.mark.parametrize("case", ANCESTRY_CASES, ids=lambda case: case["id"])
+def test_ancestry_mutations_reject_at_every_phase(case, phase):
+    evidence = deepcopy(CORPUS["positive"])
+    mutated = materialize(case)["witness"]["events"][2]["objects"]
+    event = next(e for e in evidence["witness"]["events"] if e["type"] == phase)
+    event["objects"] = mutated
+    result = validator.validate(evidence, CORPUS["trusted"])
+    assert result.contract == "rejected"
+    assert case["expected"]["reason"] in result.reasons
+    if phase not in {"seal", "final_snapshot"}:
+        assert evidence["witness"]["events"][1]["objects"] == evidence["witness"]["events"][5]["objects"]
+
+
+@pytest.mark.parametrize("case", [c for c in ANCESTRY_CASES if c["id"] != "coherent_root_substitution"],
+                         ids=lambda case: case["id"])
+def test_agreement_with_malformed_trusted_graph_does_not_grant_acceptance(case):
+    trusted, evidence = deepcopy(CORPUS["trusted"]), materialize(case)
+    trusted["objects"] = deepcopy(evidence["witness"]["events"][2]["objects"])
+    for event in evidence["witness"]["events"]:
+        event["objects"] = deepcopy(trusted["objects"])
+    assert validator.validate(evidence, trusted).reasons == ("malformed_launch_expectations",)
+
+
+@pytest.mark.parametrize("phase", validator.PHASES)
+def test_every_phase_requires_ancestry_observation(phase):
+    evidence = deepcopy(CORPUS["positive"])
+    next(e for e in evidence["witness"]["events"] if e["type"] == phase).pop("objects")
+    assert "snapshot_scope_mismatch" in validator.validate(evidence, CORPUS["trusted"]).reasons
+
+
+@pytest.mark.parametrize("role", list(CORPUS["trusted"]["objects"]))
+@pytest.mark.parametrize("key", ["parent_ref", "parent_identity"])
+@pytest.mark.parametrize("value", [[], {}, True, 1, "unknown-role", None])
+def test_malformed_parent_fields_fail_closed(role, key, value):
+    trusted, evidence = deepcopy(CORPUS["trusted"]), deepcopy(CORPUS["positive"])
+    if trusted["objects"][role][key] == value:
+        return  # The root's two explicit nulls are the sole permitted null edges.
+    trusted["objects"][role][key] = value
+    for event in evidence["witness"]["events"]:
+        event["objects"] = deepcopy(trusted["objects"])
+    assert validator.validate(evidence, trusted).contract == "rejected"
+
+
+def test_v1_adapter_cannot_claim_v2_ancestry_contract():
+    evidence = deepcopy(CORPUS["positive"])
+    evidence["adapter"] = "synthetic-v1"
+    assert validator.validate(evidence, CORPUS["trusted"]).status == "unsupported"
+
+
+@pytest.mark.parametrize("phase", validator.PHASES)
+@pytest.mark.parametrize("role", list(CORPUS["trusted"]["objects"]))
+@pytest.mark.parametrize("key,value", [("symlink", True), ("nlink", 99), ("kind", "socket")])
+def test_leaf_and_ancestor_links_and_types_are_pinned_in_every_phase(phase, role, key, value):
+    evidence = deepcopy(CORPUS["positive"])
+    event = next(e for e in evidence["witness"]["events"] if e["type"] == phase)
+    event["objects"][role][key] = value
+    assert validator.validate(evidence, CORPUS["trusted"]).contract == "rejected"
+
+
+@pytest.mark.parametrize("role", ["parent:source", "source:tool.py"])
+@pytest.mark.parametrize("key", ["object_id", "kind", "symlink", "nlink"])
+def test_parent_identity_requires_every_pinned_field(role, key):
+    trusted = deepcopy(CORPUS["trusted"])
+    del trusted["objects"][role]["parent_identity"][key]
+    assert validator.validate(CORPUS["positive"], trusted).reasons == ("malformed_launch_expectations",)
+
+
+def test_parent_identity_equality_is_type_strict():
+    trusted, evidence = deepcopy(CORPUS["trusted"]), deepcopy(CORPUS["positive"])
+    trusted["objects"]["parent:source"]["parent_identity"]["symlink"] = 0
+    for event in evidence["witness"]["events"]:
+        event["objects"] = deepcopy(trusted["objects"])
+    assert validator.validate(evidence, trusted).reasons == ("malformed_launch_expectations",)

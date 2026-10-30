@@ -1,34 +1,36 @@
 # Supervisor/seal acceptance fixtures
 
-Lookup-only contract evidence for [#1063](https://github.com/ehojune/bioinfo-team-3d/issues/1063), parent #666. No processes, sockets, links or protected launch are created. Acceptance means **synthetic contract only**; every verdict keeps `protection=unverified`.
+Lookup-only evidence for [#1063](https://github.com/ehojune/bioinfo-team-3d/issues/1063), parent #666. Acceptance is **synthetic contract only**; every verdict keeps `protection=unverified`. No process, socket, link or protected launch is created.
 
 | Artifact | Purpose |
 |---|---|
-| `tests/fixtures/process_boundary_seal/cases.json` | Positive observations, independent launch expectations and negative mutations |
-| `tests/fixtures/process_boundary_seal/validator.py` | Pure validator; no dependency on W1 producer or W3 harness |
-| `tests/test_process_boundary_seal_contract.py` | Corpus, identity mutations, missing phases, malformed observations and receipt non-authority |
+| `tests/fixtures/process_boundary_seal/cases.json` | v2 positive control, independent pins and 28 rejected cases |
+| `tests/fixtures/process_boundary_seal/validator.py` | Pure validator, independent of W1 producer and W3 harness |
+| `tests/test_process_boundary_seal_contract.py` | Phase, ancestry, identity, malformed-input and receipt mutations |
 
-Required witness observations, in order: monitor start → sealed source/ancestor identities → execution start → normal exit → whole-tree descendant/socket cleanup → final identities → monitor stop. Start, exit and cleanup each bind the independently pinned child identity. Sequence and monotonic timestamps must be complete. Both monitor endpoints cover every pinned object with zero event loss. A mutation event rejects the run even when endpoint hashes match. Source/ancestor identities must be distinct; their identities and link metadata must match caller-owned pins.
+## v2 identity and ancestry
 
-This probe has a fixed topology: `parent:root` and `parent:source` are directories; `source:tool.py` is the file. All three roles are required even if expectations, snapshots and monitor scopes are weakened together. IDs/hashes may be independently rebound. Arbitrary source trees need a separately reviewed topology contract and adapter.
+- Fixed topology: `source:tool.py` (file) → `parent:source` (directory) → `parent:root` (directory, independently pinned trust anchor).
+- Every object carries `parent_ref` and `parent_identity`. Only the root has two explicit nulls. Missing fields fail closed.
+- `parent_identity` contains the complete referenced object's identity fields (`object_id`, `kind`, `symlink`, `nlink`); graph fields are separate, not recursively embedded. Equality includes value types. File identity also requires `sha256` and one link.
+- Pins and observations must satisfy the exact edge map, distinct identities and directory parents. Missing/extra edges, wrong parents, self-edges, cycles and detached subtrees reject, even if pins and observations agree on a malformed graph.
+- Every required phase supplies the full object graph and must equal the independent pins. A coherent replacement root and rewired children still fail against the original anchor.
+- IDs/hashes may be rebound independently for a new run. The finite synthetic root does not prove real filesystem ancestry.
 
-| Evidence | Expected status / reason |
+Required phases: monitor start → seal → execution start → normal exit → whole-tree cleanup → final snapshot → monitor stop. Sequence and monotonic timestamps must be complete. Execution/exit/cleanup bind the pinned child. Monitor endpoints cover all objects with zero event loss. A mutation event or changed identity/link/relationship at any observed phase rejects even when the final graph and hashes are restored.
+
+| Evidence | Outcome |
 |---|---|
-| Full positive control | `synthetic_only`, accepted contract |
-| Missing witness; child receipt as authority or witness | `unverified`, independent evidence missing/refused |
-| Run/nonce/child mismatch; source/parent replacement; symlink/hardlink | `unverified`, binding/identity failure |
-| Transient mutation restored before final hash | `unverified`, `mutation_observed` |
-| Unknown supervisor executable identity | `unsupported`, `untrusted_supervisor` |
-| Normal exit with remaining descendant/socket | `unverified`, cleanup incomplete |
-| Timeout/supervisor failure; monitor gap/loss; malformed observations | `unverified`, execution/coverage incomplete |
-| `protected_launch` receipt or any real producer | `unsupported`, `producer_adapter_unavailable` |
+| Full v2 positive control | Accepted, `synthetic_only` |
+| Missing witness, child authority, run/nonce/child mismatch | Rejected, `unverified` |
+| Source/ancestor replacement, symlink/hardlink, ancestry change | Rejected, `unverified` |
+| Timeout, supervisor failure, monitor gap/loss, descendant/socket remnant | Rejected, `unverified` |
+| Untrusted supervisor, old adapter or real producer | Rejected, `unsupported` |
 
 ## Future adapter boundary
 
-`validate(evidence, trusted)` assumes independent provenance **only within this synthetic fixture**. Observer names and `origin` fields do not authenticate a real witness. `adapt_producer(receipt)` always returns unsupported. No existing `protected_launch` capability changes.
+`validate(evidence, trusted)` assumes independent provenance only in this fixture. Labels do not authenticate a witness. `adapt_producer` remains unsupported; `protected_launch` is unchanged.
 
-A future adapter must authenticate an external witness outside both child and supervisor control; independently bind the launch run/nonce, supervisor executable and child creation identity (PID alone is insufficient); enumerate and pin every source ancestor; verify stable filesystem identities and link metadata; establish continuous observation before sealing through cleanup/final snapshot; detect gaps, overflow, transient changes and all descendant/listener remnants. It must fail closed when the platform cannot supply these observations. Endpoint hashing or a child-written receipt cannot supply that evidence. Real integration needs separate implementation, review and approved trials.
+A future producer must authenticate an authority-separated witness; independently bind run/nonce, supervisor executable and child creation identity; pin every ancestor to an independently trusted mount/root anchor; verify directory relationships, stable identity and links continuously through cleanup. Missing ancestry, authentication, event coverage or independent descendant/listener cleanup must fail unsupported. Child receipts and endpoint hashes cannot supply that proof. Real supervisor, seal, monitoring and cleanup remain **UNVERIFIED**.
 
-Validation: `python -m pytest tests/test_process_boundary_seal_contract.py -q`.
-
-Rev2 registers `tests/test_process_boundary_seal_contract.py` in sorted `known_tests` and `boundary_cohorts` in `config/ci/windows-boundary-v1.json`, retaining all cases on Windows. Inventory validation passes; final-head CI and review are tracked in PR #1064. Real protection remains unverified.
+Validation: `python -m pytest tests/test_process_boundary_seal_contract.py -q`. Windows inventory retains all cases. Final-head CI/review and draft/hold release are tracked in PR #1064; coordinated #666 approval remains required.

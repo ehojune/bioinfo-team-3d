@@ -1,17 +1,15 @@
 ## 단계
-#1063 · #666 독립 supervisor/seal synthetic acceptance fixture. Draft/hold이며 통합 검토 전에는 병합하지 않습니다.
+#1063 · #666 독립 supervisor/seal synthetic acceptance v2. Draft/hold 유지, 통합 승인 전 병합 금지.
 
 ## 한 일
-- 20개 corpus case와 pure validator: 독립 witness, run/nonce·supervisor/child identity, source/parent identity·link, 연속 관측, 정상 종료 후 descendant/socket 정리를 검사합니다.
-- endpoint hash가 같아도 실행 중 변경·원복을 거부합니다. 필수 관측 삭제·identity 변경·잘못된 입력 회귀를 추가했습니다.
-- future producer adapter는 명시적으로 unsupported입니다. 실제 보호 판정은 모든 결과에서 UNVERIFIED입니다.
-- rev2에서 Windows inventory에 전체 seal contract test를 등록하고 status 파일명에 HHMM을 추가했습니다.
+- 29개 corpus case와 독립 pure validator. source→parent→root의 `parent_ref`·전체 `parent_identity`를 독립 pin과 대조합니다.
+- 7개 관측 단계에서 잘못된 parent·누락 edge·cycle·self-edge·분리된 subtree·root 교체·변경 후 원복을 거부합니다.
+- run/nonce·supervisor/child identity·link·연속 관측·descendant/socket 정리 검사와 Windows inventory를 유지합니다.
 
 ## 테스트 결과
-- `python -m pytest tests/test_process_boundary_seal_contract.py -q`: 153 passed.
-- `tests/test_ci_windows10m.py`: 62 passed. inventory validation·status 형식·public check 통과.
-- 같은 head CI·실제 Codex review는 PR에서 추적합니다. 실행·보호 PASS를 뜻하지 않습니다.
+- seal contract 회귀 364 passed. inventory validation·notes/public 검사는 PR에 기록합니다.
+- 최종 head CI·실제 Codex review는 PR #1064에서 추적합니다.
 
 ## 막힌 점
-- 최종 head CI·실제 review 확인 뒤에도 #666 통합 판단 전에는 draft/hold를 유지합니다.
-- [관측 계약·adapter 전제](../reference/process-boundary-seal-fixtures.md). 실제 supervisor 인증·연속 관측·OS 보호·실행 trial은 미검증입니다.
+- 실제 witness 인증·supervisor·seal·연속 감시·독립 cleanup은 UNVERIFIED. `adapt_producer`와 `protected_launch`는 unsupported입니다.
+- [v2 계약·adapter 전제](../reference/process-boundary-seal-fixtures.md). 실제 root까지의 ancestry 증명은 후속 producer 범위입니다.
