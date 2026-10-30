@@ -3,7 +3,9 @@ reduces what the lab recorded to what must not change when the shadow is on."""
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
+import logging
 import re
 import shutil
 import time
@@ -47,6 +49,17 @@ async def _until(pred, timeout: float = 60.0) -> None:
         await asyncio.sleep(0.05)
 
 
+async def _serve(server: uvicorn.Server, log_tail: collections.deque) -> None:
+    """`server.serve()` for a lab. uvicorn ends a failed startup with `sys.exit`; as a task's SystemExit it escapes the
+    loop and takes the rest of the xdist worker with it (PR #1110, 146 tests after one startup failure, #1076). It is
+    a RuntimeError carrying uvicorn's own last log lines instead, so one test fails and says why."""
+    try:
+        await server.serve()
+    except SystemExit as exc:
+        tail = "\n".join(log_tail)
+        raise RuntimeError(f"the lab's gateway stopped (uvicorn exit {exc.code}); uvicorn log tail:\n{tail}") from None
+
+
 async def run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: str | None = None,
                   references: list[dict] | None = None, before=None, request: dict | None = None) -> dict:
     """Run each request to its end; return the hub and the shadow lines written."""
@@ -70,12 +83,19 @@ async def run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: st
 
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=s.gateway.port, log_level="warning"))
-    tasks = [asyncio.create_task(server.serve())]
-    await _until(lambda: server.started, 10)
+    log_tail: collections.deque = collections.deque(maxlen=40)
+    handler = logging.Handler()
+    handler.emit = lambda record: log_tail.append(logging.Formatter().format(record))
+    uvicorn_log = logging.getLogger("uvicorn.error")
+    uvicorn_log.addHandler(handler)
+    tasks = [asyncio.create_task(_serve(server, log_tail))]
     runner = Runner(s)
     tasks.append(asyncio.create_task(runner.run_forever()))
     rids = []
     try:
+        await _until(lambda: server.started or tasks[0].done(), 10)
+        if tasks[0].done():
+            tasks[0].result()  # a gateway that failed to start says so now, not after a timeout
         await _until(lambda: "cso" in hub.agents, 15)
         for text in texts:
             rid = hub.create_request(RequestIn(text=text, project_id=project_id, references=references or [],
@@ -94,6 +114,7 @@ async def run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: st
         for task in pending:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        uvicorn_log.removeHandler(handler)
     return {"hub": hub, "rids": rids, "settings": s, "lines": shadow_lines(tmp)}
 
 
