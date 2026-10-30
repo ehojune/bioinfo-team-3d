@@ -12,3 +12,7 @@ rows:
     at: "2026-10-30 19:25"
     summary: "안내하는 검토 명령에 보고서 카드에 적힌 번호와 확인값을 함께 넣어야 한다는 점까지 적었습니다."
     text: "fix: review-done 안내에 CP4가 요구하는 --revision과 --sha256을 함께 적음 (#1077 리뷰 P2)"
+  - sha: "12f24f0"
+    at: "2026-10-30 19:36"
+    summary: "안내서의 검토 명령에도 보고서 카드에 적힌 번호와 확인값을 넣어야 한다는 점을 적었습니다."
+    text: "docs: README·status의 review-done 명령에 CP4가 요구하는 revision·hash를 적음 (#1077 리뷰 P2)"
