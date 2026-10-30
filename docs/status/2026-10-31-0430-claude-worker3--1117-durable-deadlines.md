@@ -16,3 +16,7 @@
 ## 리뷰 후 수정 (rev6)
 - P1: `pytest.raises(CancelledError)` 아래의 `wait_for(publication)` 4곳과 `publish(event("next"))` 2곳은 lock이 빨리 풀린다는 단언이라 1초로 되돌렸다. 시작·도착 대기 12곳은 10초 그대로.
 - `test_gateway_publish_durable.py` 26 passed.
+
+## 리뷰 후 수정 (rev7)
+- P2: `CLIENT_SEND_TIMEOUT_S`를 0.01초로 둔 시험 두 건의 완료 대기 3곳을 1초로 되돌렸다. 규칙은 "설정한 timeout이 완료를 좌우하는 시험의 완료 대기는 짧게, 시작·도착 대기는 10초"이다.
+- main을 반영했다(#1123 병합 후). 두 파일 54 passed.

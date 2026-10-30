@@ -8,3 +8,7 @@ rows:
   at: 2026-10-31 05:40
   text: 취소 뒤 publication 완료와 다음 publish 대기 6곳을 다시 1초로 되돌린다. 이 대기는 취소된 publication이 event_lock을 빨리 놓는다는 동작 단언이라 네트워크 timeout(10초)보다 짧아야 한다. 시작·도착 대기 12곳은 10초로 둔다
   summary: 리뷰 P1 반영, 취소 전파 회귀를 가리지 않게 합니다.
+- sha: '4cbb947'
+  at: 2026-10-31 06:40
+  text: CLIENT_SEND_TIMEOUT_S를 0.01초로 둔 두 시험(네트워크 timeout이 느린 client를 끊는지, 끊긴 client를 재시도하지 않는지)의 완료 대기 3곳을 1초로 되돌린다. 설정한 timeout이 완료를 좌우하는 시험의 완료 대기는 짧게 둔다는 규칙으로 같은 부류를 닫는다
+  summary: 리뷰 P2 반영, 설정 timeout을 무시하는 회귀가 넓은 마감에 가려지지 않게 합니다.
