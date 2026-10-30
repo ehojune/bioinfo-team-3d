@@ -50,6 +50,14 @@
 ## 테스트
 `tests/test_send_dry_run.py`(등급 표 검증, 별칭 비교, dry-run, 러너 채움과 엔진 순서, 비용 항목), `tests/test_cost_accounting.py`(gateway 동기·비동기 연결, 비용 줄, outcome_unknown), `tests/test_wsl_readiness.py`(WSL 설정에 표 전달)에 시험을 더했다. 수정을 빼면 실패함을 각각 확인했다. 관련 시험 64 passed(`test_send_dry_run`·`test_plan_only_cso_model`·`test_wsl_readiness`), `-k "bench or settings or example or config or init"` 988 passed(이전 head).
 
+# #1076 환경·부하에 흔들리던 시험 세 건
+
+- 결론: 세 시험 모두 시험 쪽 문제였고 제품 코드는 바꾸지 않았다.
+- 바꾼 것: `tests/test_doctor.py`는 시작에서 `CLAUDE_*`·`CLAUDECODE*` 변수를 지우고 시험 마커 2개만 센다. `tests/test_staff_control_steps.py`의 `_alive()`는 `tasklist` 출력을 bytes로 읽는다(한국어 Windows에서 `PYTHONUTF8=1`이면 해독 실패). `tests/test_policy.py`의 `_cost`는 평균 대신 가장 빠른 호출을 쓰고 한 쪽당 최소 3회 잰다.
+- 검출력: 가짜 시계 시험 4건(느린 호출 1회는 통과, 모든 호출이 느리면 실패)과 실제 CPU로 제곱 비용을 내는 시험 1건을 더했다. 실제 제곱 시험은 `must stay linear`로 거부된다.
+- 실행한 것: 에이전트 세션 환경(`CLAUDE_*` 10개, `PYTHONUTF8=1`)에서 세 파일 345 passed. Linux 3.12 러너 지연은 재현하지 못했다.
+- 근거: #1076 댓글 6525988210.
+
 # #1076 시험의 전역 시계 patch를 모듈 proxy로
 
 - 결론: 시험 16개 파일이 `X.time.f`로 process 전체의 `time` 함수를 바꾸던 곳을 모두 모듈 자신의 `time`(또는 `asyncio`) 이름만 바꾸는 proxy로 고쳤다.
