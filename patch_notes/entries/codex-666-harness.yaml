@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '2f5887e'
+    at: '2026-10-30 15:44'
+    summary: 'receipt 회귀 테스트가 진단 경로를 실행했는지 확인합니다.'
+    text: 'Exercise receipt witness regression path'
   - sha: '9489e84'
     at: '2026-10-30 15:39'
     summary: '자손 lifecycle을 소유하지 않는 launcher는 모든 probe에서 차단합니다.'
