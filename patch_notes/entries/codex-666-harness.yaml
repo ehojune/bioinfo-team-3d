@@ -1,0 +1,6 @@
+pr: 1051
+rows:
+  - sha: '517cff0'
+    at: '2026-10-30 12:14'
+    summary: '격리 진단에 독립 fixture와 합성 broker 연결 검사를 추가합니다.'
+    text: 'test: add independent boundary diagnostic harness (#1049)'
