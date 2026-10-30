@@ -340,6 +340,42 @@ class RequestDeadline(unittest.IsolatedAsyncioTestCase):
                 OrchestratorSettings(request_wall_clock_s=bad)
 
 
+    def test_the_web_snapshot_carries_the_request_time_limit(self):
+        """#877: the web page reads the limit from the snapshot; `labhq status` reads the full record."""
+        hub = self.hub(5400)
+        req = self.open_request(hub)
+        req["wall_clock"]["held_s"] = 42.0
+        row = next(r for r in hub.snapshot()["data"]["requests"] if r["id"] == "r")
+        self.assertEqual(row["wall_clock"], {"enabled": True, "limit_s": 5400, "held_s": 42.0,
+                                             "deadline_at": self.CREATED + 5400})
+        off = self.hub(0)
+        self.open_request(off)
+        self.assertEqual(next(r for r in off.snapshot()["data"]["requests"] if r["id"] == "r")["wall_clock"]["enabled"], False)
+
+    async def test_request_created_tells_the_web_the_limit(self):
+        import asyncio
+
+        hub = self.hub(120)
+        self.open_request(hub)
+        events = []
+
+        async def publish(event, **kwargs):
+            events.append(event)
+
+        hub.publish = publish
+        task = asyncio.ensure_future(hub._start_request("r"))
+        for _ in range(50):
+            if events:
+                break
+            await asyncio.sleep(0)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        created = next(event for event in events if event["type"] == "request.created")
+        self.assertEqual(created["data"]["wall_clock"], {"enabled": True, "limit_s": 120, "held_s": 0.0,
+                                                         "deadline_at": self.CREATED + 120})
+
+
 # ---- #877: the user can see the limit in `labhq status` ----
 class RequestDeadlineVisible(unittest.TestCase):
     CREATED = 1000.0
