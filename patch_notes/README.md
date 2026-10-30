@@ -14,7 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:44 | [`02fa9e6`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/02fa9e6) | **요청 전체 시간 상한 설정의 범위·고정 시점·PI 대기 처리·취소 기록을 한·영 조회 문서로 정리하고 README에서 링크했습니다.**<br>docs: 요청 전체 시간 상한 조회 문서(한·영)와 README 링크 (#877) |
+| 20:42 | [`c65931e`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/c65931e) | **PI 카드를 기다린 시간을 정확히 기한에 더하고, 시간 상한으로 취소한 요청의 보고서가 PI가 취소한 것처럼 적히던 것을 고쳤습니다. 취소 도중 gateway가 꺼져도 기한 기록이 남습니다.**<br>fix: waiting_pi를 전환 시각으로 정산하고 기한 취소 보고서·복구 영수증을 고친다 (#877) |
 | 20:14 | [`1d5bd32`](https://github.com/ehojune/bioinfo-team-3d/pull/1086/commits/1d5bd32) | **재시작한 gateway가 바쁠 때 Windows CI가 ReadTimeout으로 간헐 실패하던 시험이 더 오래 기다리고, 그래도 실패하면 어느 호출인지 보입니다.**<br>recovery fake check의 두 POST(요청 생성·승인)의 읽기 상한을 10초로 올리고, 시간 초과 때 호출·경과 시간·오류 종류를 failure에 기록한다 |
+| 20:07 | [`a168e81`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/a168e81) | **요청 하나가 설정한 시간 상한을 넘으면 gateway가 그 요청을 취소하고 기록을 남깁니다. 설정은 기본으로 꺼져 있고, PI 카드를 기다린 시간은 기한에 더해지며 보고서 검토 단계부터는 끊지 않습니다.**<br>feat: 요청 전체 벽시계 상한을 gateway가 집행한다 (#877) |
+| 20:07 | [`65fce80`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/65fce80) | **패키지에 들어 있는 예시 설정 파일에도 새 설정 설명을 넣어 두 사본을 맞췄습니다.**<br>fix: 패키지 안 예시 설정에 같은 줄을 넣어 두 사본을 맞춘다 (#877) |
 | 19:55 | [`bce1707`](https://github.com/ehojune/bioinfo-team-3d/pull/1083/commits/bce1707) | **매뉴얼의 결과 저장 설명을, 보고서 검토를 기다리는 요청은 먼저 검토를 마쳐야 GitHub로 옮길 수 있다는 현재 동작에 맞췄습니다.**<br>docs: manual 한·영 저장 절을 검토 대기 요청의 --to github 거절 흐름에 맞춤 (#1077) |
 | 19:36 | [`12f24f0`](https://github.com/ehojune/bioinfo-team-3d/pull/1078/commits/12f24f0) | **안내서의 검토 명령에도 보고서 카드에 적힌 번호와 확인값을 넣어야 한다는 점을 적었습니다.**<br>docs: README·status의 review-done 명령에 CP4가 요구하는 revision·hash를 적음 (#1077 리뷰 P2) |
 | 19:26 | [`ae942ab`](https://github.com/ehojune/bioinfo-team-3d/pull/1082/commits/ae942ab) | **Windows 시험 단계가 시간 상한에 걸려 끊겨도 어느 시험이 돌고 있었는지 기록이 남습니다.**<br>Windows pool 단계에 --ci-stall을 켜고 stack snapshot 간격을 CI_STALL_INTERVAL_S(기본 300, Windows 150초)로 정해, 9분에 끊긴 순간의 worker별 시험을 artifact에 남긴다 |
