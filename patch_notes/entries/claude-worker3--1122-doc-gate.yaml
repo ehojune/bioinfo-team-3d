@@ -1,0 +1,5 @@
+rows:
+- sha: 'f3276b0'
+  at: 2026-10-31 05:00
+  text: 문서 주기 gate가 바뀐 파일이 전부 tests/, docs/status/, patch_notes/entries/, config/ci/, .github/, scripts/ci_* 안인 main 커밋을 세지 않는다. labhq/나 agents/를 바꾼 커밋은 그대로 센다. patch_notes.py 머리말과 CLAUDE.md, AGENTS.md의 규칙 문구도 맞췄고, 세지 않는 경우와 여전히 세는 경우를 각각 시험한다
+  summary: 시험만 바꾼 PR이 문서 주기 gate에 막혀 서로 순서를 기다리던 문제를 없앱니다.
