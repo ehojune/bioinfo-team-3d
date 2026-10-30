@@ -1,7 +1,7 @@
 pr: 1051
 rows:
-  - sha: '9202436'
-    at: '2026-10-30 16:30'
+  - sha: 'f4ff7d8'
+    at: '2026-10-30 16:10'
     summary: '진단 소스 해시와 잘못된 broker 프레임 거절을 검증합니다.'
     text: 'Verify diagnostic source hashes and broker frames'
   - sha: '2f5887e'
