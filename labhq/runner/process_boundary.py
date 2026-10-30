@@ -10,7 +10,7 @@ import stat
 import subprocess
 import tempfile
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 
@@ -29,6 +29,7 @@ class Receipt:
     cleanup: str
     seal_status: str
     unsupported_reasons: list[str]
+    ancestry_observations: list = field(default_factory=list)
 
     def to_dict(self):
         return asdict(self)
@@ -55,6 +56,8 @@ class DiagnosticStager:
             raise ValueError("invalid or duplicate diagnostic run")
         directory = Path(tempfile.mkdtemp(prefix="labhq-stage-"))
         self._runs[run_id] = directory
+        (directory / "source").mkdir()
+        (directory / "source" / "tool.py").write_bytes(b"synthetic tool")
         digests = {}
         for name, content in payloads.items():
             if not isinstance(content, bytes):
@@ -63,6 +66,27 @@ class DiagnosticStager:
                 output.write(content)
             digests[name] = hashlib.sha256((directory / name).read_bytes()).hexdigest()
         return digests
+
+    def observe_ancestry(self, run_id):
+        """Sample local lstat identities; these are unauthenticated observations."""
+        root = self._runs[run_id]
+        source = root / "source"
+        leaf = source / "tool.py"
+
+        def identity(path):
+            info = path.lstat()
+            result = {"object_id": f"{info.st_dev}:{info.st_ino}",
+                      "kind": "directory" if stat.S_ISDIR(info.st_mode) else
+                              "file" if stat.S_ISREG(info.st_mode) else "other",
+                      "symlink": stat.S_ISLNK(info.st_mode), "nlink": info.st_nlink}
+            if result["kind"] == "file":
+                result["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            return result
+
+        root_id, source_id, leaf_id = map(identity, (root, source, leaf))
+        return {"parent:root": {**root_id, "parent_ref": None, "parent_identity": None},
+                "parent:source": {**source_id, "parent_ref": "parent:root", "parent_identity": root_id},
+                "source:tool.py": {**leaf_id, "parent_ref": "parent:source", "parent_identity": source_id}}
 
     def cleanup(self, run_id):
         directory = self._runs.get(run_id)
@@ -91,8 +115,14 @@ def diagnostic_staging_probe(stager, *, on_staged=None):
         receipt.snapshot_digest = digests["snapshot"]
         receipt.runtime_digest = digests["runtime"]
         receipt.policy_digest = digests["policy"]
+        if hasattr(stager, "observe_ancestry"):
+            receipt.ancestry_observations.append({"phase": "staged", "provenance": "local_lstat_untrusted",
+                                                  "objects": stager.observe_ancestry(receipt.run_id)})
         if on_staged is not None:
             on_staged(receipt.run_id)
+        if hasattr(stager, "observe_ancestry"):
+            receipt.ancestry_observations.append({"phase": "after_callback", "provenance": "local_lstat_untrusted",
+                                                  "objects": stager.observe_ancestry(receipt.run_id)})
         receipt.preparation = "diagnostic_staged"
     except Exception:
         receipt.unsupported_reasons.append("diagnostic staging failed")
@@ -104,6 +134,46 @@ def diagnostic_staging_probe(stager, *, on_staged=None):
             receipt.cleanup = "failed; independent_cleanup_unverified"
             receipt.unsupported_reasons.append("diagnostic staging cleanup failed")
     return receipt
+
+
+def validate_synthetic_ancestry(pins, phases):
+    """Check the fixed v2 topology against separate pins; never grants protection."""
+    edges = {"parent:root": None, "parent:source": "parent:root",
+             "source:tool.py": "parent:source"}
+
+    def valid(objects):
+        if not isinstance(objects, dict) or set(objects) != set(edges):
+            return False
+        for role, parent in edges.items():
+            obj = objects[role]
+            if not isinstance(obj, dict) or obj.get("parent_ref", object()) != parent:
+                return False
+            identity = {k: v for k, v in obj.items() if k not in ("parent_ref", "parent_identity")}
+            required = {"object_id", "kind", "symlink", "nlink"}
+            if role == "source:tool.py":
+                required.add("sha256")
+            if set(identity) != required or not isinstance(identity["object_id"], str) or not identity["object_id"]:
+                return False
+            if identity["kind"] != ("file" if role == "source:tool.py" else "directory"):
+                return False
+            if identity["symlink"] is not False or type(identity["nlink"]) is not int or identity["nlink"] < 1:
+                return False
+            if role == "source:tool.py" and (identity["nlink"] != 1 or not isinstance(identity["sha256"], str)
+                                               or len(identity["sha256"]) != 64
+                                               or any(c not in "0123456789abcdef" for c in identity["sha256"])):
+                return False
+            expected = None if parent is None else {k: v for k, v in objects[parent].items()
+                                                   if k not in ("parent_ref", "parent_identity")}
+            if "parent_identity" not in obj or json.dumps(obj["parent_identity"], sort_keys=True) != json.dumps(expected, sort_keys=True):
+                return False
+        return len({objects[role]["object_id"] for role in edges}) == len(edges)
+
+    try:
+        return (valid(pins) and isinstance(phases, list) and bool(phases)
+                and all(valid(phase) and json.dumps(phase, sort_keys=True) == json.dumps(pins, sort_keys=True)
+                        for phase in phases))
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def diagnostic_probe(*, timeout=10):

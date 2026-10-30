@@ -1,4 +1,5 @@
 import subprocess
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -153,3 +154,51 @@ def test_digest_mismatch_and_cleanup_failure_are_reported():
     assert receipt.preparation == "unsupported" and receipt.launch == "not_started"
     assert receipt.cleanup.startswith("failed") and receipt.seal_status == "unsealed"
     assert "diagnostic staging cleanup failed" in receipt.unsupported_reasons
+
+
+def test_diagnostic_ancestry_samples_are_explicitly_untrusted():
+    receipt = boundary.diagnostic_staging_probe(boundary.DiagnosticStager())
+    observations = receipt.ancestry_observations
+    assert [o["phase"] for o in observations] == ["staged", "after_callback"]
+    assert all(o["provenance"] == "local_lstat_untrusted" for o in observations)
+    pins = observations[0]["objects"]
+    assert boundary.validate_synthetic_ancestry(pins, [o["objects"] for o in observations])
+    assert receipt.seal_status == "unsealed"
+
+
+def test_ancestry_rejects_changed_edges_identities_and_missing_phases():
+    observations = boundary.diagnostic_staging_probe(boundary.DiagnosticStager()).ancestry_observations
+    pins = observations[0]["objects"]
+    assert not boundary.validate_synthetic_ancestry(pins, [])
+    for role in pins:
+        changed = deepcopy(pins)
+        changed[role]["object_id"] += ":replacement"
+        assert not boundary.validate_synthetic_ancestry(pins, [pins, changed, pins])
+        changed = deepcopy(pins)
+        changed[role]["parent_ref"] = role
+        assert not boundary.validate_synthetic_ancestry(pins, [changed])
+        changed = deepcopy(pins)
+        del changed[role]
+        assert not boundary.validate_synthetic_ancestry(pins, [changed])
+    changed = deepcopy(pins)
+    changed["source:tool.py"]["parent_identity"]["object_id"] += ":replacement"
+    assert not boundary.validate_synthetic_ancestry(pins, [changed])
+    changed = deepcopy(pins)
+    changed["parent:source"]["parent_ref"] = "source:tool.py"
+    assert not boundary.validate_synthetic_ancestry(changed, [changed])
+    changed = deepcopy(pins)
+    changed["parent:source"]["kind"] = "file"
+    assert not boundary.validate_synthetic_ancestry(changed, [changed])
+    changed = deepcopy(pins)
+    changed["extra"] = deepcopy(pins["parent:root"])
+    assert not boundary.validate_synthetic_ancestry(pins, [changed])
+
+
+def test_deleted_leaf_is_not_recreated_by_observer():
+    stager = boundary.DiagnosticStager()
+    def remove_leaf(run_id):
+        (stager._runs[run_id] / "source" / "tool.py").unlink()
+    receipt = boundary.diagnostic_staging_probe(stager, on_staged=remove_leaf)
+    assert receipt.preparation == "unsupported"
+    assert len(receipt.ancestry_observations) == 1
+    assert receipt.seal_status == "unsealed"
