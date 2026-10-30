@@ -1,6 +1,6 @@
 pr: 1050
 rows:
-  - sha: '0c137911'
+  - sha: '0c13791'
     at: "2026-10-30 18:10"
     summary: "합성 진단에서 parent identity와 ancestry 변경을 검증합니다."
     text: "feat: validate synthetic parent ancestry"
