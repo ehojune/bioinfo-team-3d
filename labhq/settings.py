@@ -470,6 +470,17 @@ class OrchestratorSettings(BaseModel):
     quota_max_wait_s: float = Field(default=7 * 86400, ge=1)
     login_retry_s: float = Field(default=600, gt=0)
     login_wait_max_s: float = Field(default=86400, gt=0)
+    # Wall-clock limit for a whole request, fixed when the request is accepted (#877). 0 turns it off. The clock
+    # runs while staff work; time in waiting_pi (PI cards) is added to the deadline, and a request in review_pending
+    # or later is never cut. A value below one minute is a typo (minutes written as seconds), so it is refused.
+    request_wall_clock_s: int = Field(default=0, ge=0, le=7 * 86400)
+
+    @field_validator("request_wall_clock_s")
+    @classmethod
+    def wall_clock_is_off_or_a_real_limit(cls, value: int) -> int:
+        if 0 < value < 60:
+            raise ValueError("request_wall_clock_s is in seconds: use 0 (off) or at least 60")
+        return value
 
     @model_validator(mode="before")
     @classmethod
