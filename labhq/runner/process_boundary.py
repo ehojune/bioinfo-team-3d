@@ -115,14 +115,15 @@ def diagnostic_staging_probe(stager, *, on_staged=None):
         receipt.snapshot_digest = digests["snapshot"]
         receipt.runtime_digest = digests["runtime"]
         receipt.policy_digest = digests["policy"]
-        if hasattr(stager, "observe_ancestry"):
-            receipt.ancestry_observations.append({"phase": "staged", "provenance": "local_lstat_untrusted",
-                                                  "objects": stager.observe_ancestry(receipt.run_id)})
+        receipt.ancestry_observations.append({"phase": "staged", "provenance": "stager_untrusted",
+                                              "objects": stager.observe_ancestry(receipt.run_id)})
         if on_staged is not None:
             on_staged(receipt.run_id)
-        if hasattr(stager, "observe_ancestry"):
-            receipt.ancestry_observations.append({"phase": "after_callback", "provenance": "local_lstat_untrusted",
-                                                  "objects": stager.observe_ancestry(receipt.run_id)})
+        receipt.ancestry_observations.append({"phase": "after_callback", "provenance": "stager_untrusted",
+                                              "objects": stager.observe_ancestry(receipt.run_id)})
+        observations = [entry["objects"] for entry in receipt.ancestry_observations]
+        if not validate_synthetic_ancestry(observations[0], observations):
+            raise ValueError("invalid or changed diagnostic ancestry")
         receipt.preparation = "diagnostic_staged"
     except Exception:
         receipt.unsupported_reasons.append("diagnostic staging failed")

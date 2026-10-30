@@ -160,7 +160,7 @@ def test_diagnostic_ancestry_samples_are_explicitly_untrusted():
     receipt = boundary.diagnostic_staging_probe(boundary.DiagnosticStager())
     observations = receipt.ancestry_observations
     assert [o["phase"] for o in observations] == ["staged", "after_callback"]
-    assert all(o["provenance"] == "local_lstat_untrusted" for o in observations)
+    assert all(o["provenance"] == "stager_untrusted" for o in observations)
     pins = observations[0]["objects"]
     assert boundary.validate_synthetic_ancestry(pins, [o["objects"] for o in observations])
     assert receipt.seal_status == "unsealed"
@@ -202,3 +202,13 @@ def test_deleted_leaf_is_not_recreated_by_observer():
     assert receipt.preparation == "unsupported"
     assert len(receipt.ancestry_observations) == 1
     assert receipt.seal_status == "unsealed"
+
+
+def test_missing_ancestry_observer_fails_and_cleans_up():
+    actual = boundary.DiagnosticStager()
+    stager = SimpleNamespace(stage=actual.stage, cleanup=actual.cleanup)
+    receipt = boundary.diagnostic_staging_probe(stager)
+    assert receipt.preparation == "unsupported"
+    assert receipt.ancestry_observations == []
+    assert "diagnostic staging failed" in receipt.unsupported_reasons
+    assert not actual._runs
