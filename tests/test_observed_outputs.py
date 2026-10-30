@@ -447,3 +447,17 @@ async def test_declared_directory_over_the_staging_byte_budget_is_incomplete(tmp
     assert result.ok is ok, result.error
     if not ok:
         assert "25 bytes" in result.error
+
+
+@pytest.mark.asyncio
+async def test_the_staging_byte_budget_counts_plain_declared_files_with_the_folder(tmp_path, monkeypatch):
+    """Review P1: a later step's budget is per ancestor, so a declared file beside the folder counts too."""
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", b"0123456789")
+        _write(workdir, "outputs/ledger.tsv", b"0123456789" * 2)
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    runner.s.runner.input_hash_max_total_bytes = 25  # the folder alone is 10, with the ledger 30
+    result = await runner.run_task(_task(outputs=["literature", "ledger.tsv"]))
+
+    assert result.ok is False and "30 bytes" in result.error

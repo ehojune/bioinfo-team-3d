@@ -2492,12 +2492,10 @@ class Runner:
         # A declared folder is collected as its files, each with the hash recorded after the run (#1058): a folder entry
         # has no hash, and a later step refuses an ancestor whose collected list holds one. A file that was not hashed
         # (too large, a link) is not collected; it stays unreported.
-        folder_bytes = 0
         for folder in declared_dirs:
             prefix = folder.rstrip("/") + "/"
-            rows = [row for row in output_records if row["path"].startswith(prefix) and isinstance(row.get("sha256"), str)]
-            found += [row["path"] for row in rows]
-            folder_bytes += sum(int(row.get("size") or 0) for row in rows)
+            found += [row["path"] for row in output_records
+                      if row["path"].startswith(prefix) and isinstance(row.get("sha256"), str)]
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
         hashed = {row["path"]: row["sha256"] for row in output_records
                   if isinstance(row.get("sha256"), str) and row["path"] in result.outputs}
@@ -2525,14 +2523,17 @@ class Runner:
                 result.error = ("incomplete: the outputs scan is incomplete, so declared folder(s) "
                                 f"{', '.join(declared_dirs)} cannot be collected whole: "
                                 + "; ".join(dict.fromkeys(output_scan_notes)))
-            if declared_dirs and result.ok and (len(result.outputs) > STEP_INPUT_MAX_FILES
-                                                or folder_bytes > self.s.runner.input_hash_max_total_bytes):
-                # A later step stages at most this many files and bytes of one ancestor and refuses the whole
-                # ancestor otherwise (#1058): the producer must not pass what no later step can take.
-                result.ok = False
-                result.error = (f"incomplete: declared folder(s) {', '.join(declared_dirs)} expand to {len(result.outputs)} "
-                                f"collected files and {folder_bytes} bytes; a later step can take at most "
-                                f"{STEP_INPUT_MAX_FILES} files and {self.s.runner.input_hash_max_total_bytes} bytes")
+            if declared_dirs and result.ok:
+                # A later step stages at most this many files and bytes of ONE ancestor, folder files and plain
+                # declared files together, and refuses the whole ancestor otherwise (#1058): the producer must not
+                # pass what no later step can take.
+                sizes = {row["path"]: int(row.get("size") or 0) for row in output_records}
+                total_bytes = sum(sizes.get(path, 0) for path in result.output_sha256)
+                if len(result.outputs) > STEP_INPUT_MAX_FILES or total_bytes > self.s.runner.input_hash_max_total_bytes:
+                    result.ok = False
+                    result.error = (f"incomplete: declared folder(s) {', '.join(declared_dirs)} make the step collect "
+                                    f"{len(result.outputs)} files and {total_bytes} bytes; a later step can take at most "
+                                    f"{STEP_INPUT_MAX_FILES} files and {self.s.runner.input_hash_max_total_bytes} bytes")
             if missing_optional:
                 result.missing_optional_outputs = list(dict.fromkeys([
                     *result.missing_optional_outputs, *missing_optional]))
