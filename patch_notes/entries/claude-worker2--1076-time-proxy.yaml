@@ -1,0 +1,9 @@
+rows:
+- sha: '0f9f0e1'
+  at: 2026-10-30 23:38
+  text: 시험 16개 파일에서 X.time.f 전역 patch를 모듈 자신의 time(asyncio) 이름만 바꾸는 proxy로 교체 (#1076).
+  summary: 시험이 가짜 시계를 쓸 때 다른 스레드와 이벤트 루프까지 가짜 시계를 보지 않게 했습니다.
+- sha: '404ac5e'
+  at: 2026-10-30 23:38
+  text: 시험 helper tests/support/time_proxy.py의 RuntimeProxy와 15개 파일 변환 (#1076).
+  summary: 시험이 가짜 시계를 쓸 때 다른 스레드와 이벤트 루프까지 가짜 시계를 보지 않게 했습니다.
