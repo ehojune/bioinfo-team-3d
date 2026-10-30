@@ -36,7 +36,7 @@ from .run_report import nextflow_kind
 from .report_figures import (ABSTRACT_FILE, classify, figure_owners, has_abstract_link, image_links, is_abstract_target,
                              link_workdir_figures, output_exists)
 from .report_pdf import NO_BROWSER, ReportRefused, build_report_file, pdf_cap_bytes, size_notes
-from .report_contract import reader_markdown
+from .report_contract import reader_markdown, research_question
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 from .reproduction_receipt import (LANGUAGES, RECEIPT_PATH, build_receipt, expected_outputs, is_lock_file, receipt_json,
                                    receipt_note, receipt_summary)
@@ -95,6 +95,19 @@ def _denial(exc: Exception) -> GitHubHTTPError | None:
     if isinstance(exc, GitHubHTTPError) and exc.status_code in {403, 404} and not exc.rate_limited:
         return exc
     return None
+
+
+_COMMIT_STEP = re.compile(r"^(?:studies|code)/([^/]+)/")
+
+
+def commit_message(kind: str, name: str, summary: str = "") -> str:
+    """One commit message per published file: what kind, which step, which file, and what the request asked.
+
+    GitHub shows this beside every file, so three fixed sentences would say nothing about the result (#792)."""
+    step = _COMMIT_STEP.match(name)
+    head = f"{kind}: {name}" + (f" (단계 {step.group(1)})" if step else "")
+    one_line = " ".join(summary.split())[:60]
+    return f"{head} — {one_line}" if one_line else head
 
 
 def _retry_command(rid: str) -> str:
@@ -1121,9 +1134,9 @@ class ResultStorage:
             payload, omitted, internal_steps, published = self._progress_payload(req, step_id, result)
             for name, body in payload.items():
                 if isinstance(body, bytes):
-                    await gh.put_binary(saved["repo"], name, body, branch, f"labhq 진행: {step_id}")
+                    await gh.put_binary(saved["repo"], name, body, branch, commit_message(f"labhq 진행 {step_id}", name))
                 else:
-                    await gh.put_file(saved["repo"], name, body, f"labhq 진행: {step_id}", branch)
+                    await gh.put_file(saved["repo"], name, body, commit_message(f"labhq 진행 {step_id}", name), branch)
             saved.update(progress_status="pushed", progress_last_step=step_id,
                          progress_files=published, progress_omitted=omitted)
             saved.pop("progress_warning", None)
@@ -1823,6 +1836,7 @@ class ResultStorage:
                     return name in internal_files
                 return internal
 
+            summary = clean_publication_text("commit.txt", research_question(str(request.get("text") or "")), self.s, request)
             aggregate_tables = declared_aggregate_tables(self.hub.requests[rid])
             aggregate_tables.update(saved.get("internal_allowed_files") or [])
             aggregate_bodies = {
@@ -1851,16 +1865,16 @@ class ResultStorage:
                                  (_PDF_NAME, _PORTFOLIO_PDF_NAME) if pdf else ()))
             for base, payload_docs, payload_images, pdf_names in payloads:
                 for name, body in payload_docs.items():
-                    await gh.put_file(repo, base + name, body, "연구 결과 정리", write_branch)
+                    await gh.put_file(repo, base + name, body, commit_message("연구 결과 정리", base + name, summary), write_branch)
                     write_branch = branch
                 for name, body in payload_images.items():
                     payload = (clean_svg_for_publish(body, self.s, self.hub.requests[rid])
                                if Path(name).suffix.lower() == ".svg" else body)
-                    await gh.put_image(repo, base + name, payload, write_branch)
+                    await gh.put_image(repo, base + name, payload, write_branch, commit_message("연구 결과 그림", base + name, summary))
                     write_branch = branch
                 if pdf:
                     for name in pdf_names:
-                        await gh.put_binary(repo, base + name, pdf, write_branch, "연구 결과 PDF")
+                        await gh.put_binary(repo, base + name, pdf, write_branch, commit_message("연구 결과 PDF", base + name, summary))
                         write_branch = branch
         except (GitHubHTTPError, httpx.HTTPStatusError) as exc:
             denied(exc, write_denied_text(repo, rid))

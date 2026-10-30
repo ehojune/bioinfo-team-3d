@@ -110,7 +110,7 @@ _MARKDOWN_REFERENCE_DEFINITION = re.compile(
     r"(?P<title>[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$")
 _MARKDOWN_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
 _REMOTE_LINK = re.compile(r"(?i)^(?:https?://|data:|mailto:)")
-_PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md"}
+_PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md", "CITATION.cff"}
 _PORTFOLIO_FOLDERS = ("report/", "run/", "code/", "docs/", "figures/", "tables/", "studies/")
 _LICENSE_PLACEHOLDER = re.compile(
     r"<reference-path>|확인 필요|필수 문구 자리|원 출처의 필수 문구를 넣으세요", re.I
@@ -1370,6 +1370,31 @@ def _costs_document(req: dict, tasks: Iterable[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _request_authors(req: dict) -> list[str]:
+    """Author names the request itself gives (``authors``: names or ``{"name": ...}``); nothing is guessed."""
+    raw = req.get("authors")
+    items = raw if isinstance(raw, (list, tuple)) else []
+    names = [str(item.get("name") if isinstance(item, Mapping) else item or "").strip() for item in items]
+    return [name for name in names if name]
+
+
+def _citation_authors(req: dict, settings) -> list[str]:
+    return [cleaned for cleaned in (_clean(name, settings, req).strip()[:120] for name in _request_authors(req)) if cleaned]
+
+
+def _citation_cff(req: dict, settings) -> str:
+    """A valid CITATION.cff, or "" when the request names no author: CFF requires one and none is invented (#792)."""
+    authors = _citation_authors(req, settings)
+    if not authors:
+        return ""
+    title = _clean(research_question(str(req.get("text") or "")) or "연구 결과", settings, req).strip().splitlines()[0][:200]
+    return ("cff-version: 1.2.0\n"
+            f"message: {json.dumps('이 연구 결과를 인용할 때는 아래 정보를 쓰세요.', ensure_ascii=False)}\n"
+            f"title: {json.dumps(title, ensure_ascii=False)}\n"
+            "type: dataset\nauthors:\n"
+            + "".join(f"  - name: {json.dumps(author, ensure_ascii=False)}\n" for author in authors))
+
+
 def _references(req: dict, report: str, assets: Mapping[str, str]) -> str:
     text = "\n".join([report, *assets.values(), *[str(ref.get("value") or "") for ref in req.get("references") or []]])
     pmids = {match.group(1) for match in _PMID.finditer(text)}
@@ -1814,6 +1839,8 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     published = files or {}
     lines += ["", "## 그림이 보여 주는 것", "", *_figure_lines(report, figure_names, source_targets, published, table_names, generated_abstract),
               "", "## 파일 목록", "", *_file_list_lines(published, table_names, figure_names),
+              ("- 인용: [CITATION.cff](CITATION.cff)" if _request_authors(req)
+               else "- 인용 정보 미정(저자 미입력): 요청에 저자가 없어 CITATION.cff를 만들지 않았습니다."),
               "", "## 환경", "", *_environment_lines(published),
               "", "## 실행 방법", "", *_run_lines(published, run_documents),
               "", "## 결정성", "", _determinism_line(published)]
@@ -1832,7 +1859,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
               "8. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
               "## 저장소 지도", "", "```text", "README.md", "report/", "run/", "code/", "figures/", "tables/",
               *(["studies/               갈래별 코드·그림·표·단계 보고서"] if branch_rows else []),
-              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", "```", "",
+              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", *(["CITATION.cff"] if _request_authors(req) else []), "```", "",
               "## Summary (English)", "",
               f"This repository is the publication edition of labhq request {req.get('id')}. "
               "It keeps the scientific report, aggregate results, code, figures, decisions, and execution record together.", "",
@@ -2144,6 +2171,9 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         "REFERENCES.md": _clean(_references(req, report, assets), settings, req),
         "DATA_AND_LICENSES.md": _clean(_data_licenses(req, settings, input_readmes), settings, req),
     })
+    citation = _citation_cff(req, settings)
+    if citation:
+        files["CITATION.cff"] = citation
     if revision_history:
         files["run/revision_history.md"] = revision_history
     run_summary, run_files = run_report.build(
