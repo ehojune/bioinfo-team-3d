@@ -8,7 +8,7 @@ rows:
     at: "2026-10-30 11:00"
     summary: "프로세스 경계 테스트를 Windows 필수 검사에 등록합니다."
     text: "fix: register process boundary Windows tests (#1047)"
-  - sha: '6cc323f'
+  - sha: 'e20d94a'
     at: "2026-10-30 12:09"
     summary: "합성 broker 연결과 종료를 격리 진단에서 확인합니다."
     text: "feat: add synthetic broker namespace diagnostic (#1047)"
