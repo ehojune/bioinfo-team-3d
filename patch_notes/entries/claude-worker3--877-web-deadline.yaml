@@ -8,3 +8,7 @@ rows:
   at: 2026-10-31 06:30
   text: 남은 시간 문구를 요청 render cache key에 넣어 15초 타이머가 카운트다운을 다시 그리게 한다(리뷰 P2) + 시험
   summary: 시간 상한 줄의 남은 시간이 처음 값에 멈추지 않고 줄어듭니다.
+- sha: 'fe8cdc8'
+  at: 2026-10-31 06:10
+  text: render key 식을 잘라 평가하는 web_local_jobs_675의 context에 deadlineText를 더해 ReferenceError 회귀를 고치고 문구가 바뀌면 key가 바뀜을 단언한다. manual 한·영에 웹 작업판의 시간 상한 줄, snapshot 뒤 PI 대기 오차, 선언 등급과 다른 모델 비용 줄을 적는다(리뷰 P1)
+  summary: 웹 작업판의 시간 상한과 모델 불일치 표시가 설명서에 적히고, 카운트다운 수정으로 깨졌던 시험이 다시 통과합니다.
