@@ -11,6 +11,7 @@
 | 세는 구간 | 요청 수락부터 `review_pending` 진입까지입니다. 이 구간의 도구 카드 대기는 직원이 살아 있으므로 포함합니다. |
 | 빼는 구간 | `waiting_pi`(PI 결정 카드 대기)에 머문 시간은 `held_s`로 기한에 더합니다. 상태 전환 시각으로 정산하므로 감시 간격(15초)과 무관합니다. `review_pending` 이후의 검토·게시와 `interrupted` 요청은 끊지 않습니다. |
 | 취소 | 기한(`created_at + limit_s + held_s`)이 지난 활성 요청을 기존 `cancel_request`로 취소하고 `cancel_reason: request_deadline`을 남깁니다. 표시는 "시간 상한으로 취소됨", 보고서는 "요청 전체 시간 상한에 닿아 labhq가 취소했습니다"로 적힙니다. |
+| 표시 | `labhq status`가 진행 중인 요청마다 `시간 상한: 꺼짐` 또는 `켜짐 N분 · 남은 N분 · PI 대기 제외 N분`을 한 줄로 보입니다. `waiting_pi` 중에는 시간이 가지 않는다는 말을 덧붙입니다. 상한이 없던 때 받은 요청도 `꺼짐`으로 보입니다. |
 | 영수증 | `deadline_receipt`에 `limit_s`·`held_s`·`deadline_at`·`fired_at`·취소한 task·결과를 보고하지 않은 task·종료 판정이 들어갑니다. |
 
 ## 종료 판정
@@ -25,6 +26,7 @@
 - 취소 도중 gateway가 꺼져도 다음 시작의 `finish_interrupted_cancels`가 취소를 끝내며 영수증을 만듭니다.
 
 ## 한계와 미확인
+- `deadline_receipt`는 상태가 `cancelled`로 바뀐 뒤 2~10초 늦게 붙습니다(취소한 task의 결과를 기다리는 동안이며 보고서도 같은 시점에 씁니다). 취소 직후 영수증을 읽는 자동화는 `status`가 아니라 영수증이나 `request.completed`를 기다려야 합니다.
 - 감시는 15초 간격이라 기한 판정에 최대 그만큼의 오차가 있습니다.
 - 실제 모델 호출 중인 직원과 자식 프로세스를 기한에 끊는 동작은 단위 시험(task 상태)으로만 확인했습니다. 별도 격리 instance 확인이 필요합니다.
 - 외부 Windows Job 소유자(proof c2) 경로는 이 설정과 별개의 바깥 상한입니다. 이 설정이 대신하지 않습니다.

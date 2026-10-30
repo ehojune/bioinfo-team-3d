@@ -23,6 +23,29 @@ def request_display_label(request: dict) -> str:
     return request_status_label(request.get("status"))
 
 
+def _span(seconds: float) -> str:
+    return f"{int(seconds)}초" if seconds < 120 else f"{round(seconds / 60)}분"
+
+
+def request_deadline_text(request: dict, now: float) -> str:
+    """What `labhq status` says about a request's wall-clock limit (#877): off, or on with the time left and the PI
+    waiting time that is not counted. A request accepted before the limit existed has none, so it reads "꺼짐"."""
+    clock = request.get("wall_clock")
+    if not isinstance(clock, dict) or not clock.get("limit_s"):
+        return "꺼짐"
+    waiting = request.get("status") == "waiting_pi"
+    since = clock.get("pi_since")
+    open_wait = max(0.0, now - float(since)) if waiting and since is not None else 0.0
+    held = float(clock.get("held_s") or 0.0) + open_wait
+    left = float(request.get("created_at") or now) + float(clock["limit_s"]) + held - now
+    text = f"켜짐 {_span(float(clock['limit_s']))} · " + (f"남은 {_span(left)}" if left > 0 else "기한이 지났습니다(곧 취소)")
+    if held > 0:
+        text += f" · PI 대기 제외 {_span(held)}"
+    if waiting:
+        text += " · PI 결정 대기 중이라 시간이 가지 않습니다"
+    return text
+
+
 def is_active_request(status: object) -> bool:
     return status in ACTIVE_REQUEST_STATES
 

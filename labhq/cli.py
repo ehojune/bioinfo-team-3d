@@ -26,7 +26,7 @@ from . import instance_guard, proc_tree
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
 from .process_diagnostics import SUPERVISOR_SUFFIX
-from .request_status import is_terminal_request, request_display_label, request_status_label
+from .request_status import is_terminal_request, request_deadline_text, request_display_label, request_status_label
 from .settings import Settings
 from .test_guard import guard_test_path
 from .util import atomic_write_text, free_port, short, without_windows_app_aliases
@@ -254,6 +254,28 @@ def task_control(s: Settings, action: str, task_id: str, text: str | None = None
     where = ("" if out.get("sent", True) else " · 러너가 꺼져 있어 다시 연결되면 전달합니다" if action == "halt"
              else " · 같은 단계의 다음 turn에 적용합니다")
     return f"{task_id}: {TASK_CONTROL_DONE[action]}{where}"
+
+
+def _request_deadline_line(s, rid: str, state: dict | None = None) -> str | None:
+    """`시간 상한: …` for one running request (#877), from the request record. None when the record cannot be read:
+    saying nothing is better than saying the limit is off. A request the gateway no longer knows (an HTTP error) is
+    skipped alone; after a connection or timeout failure ``state["down"]`` is set and the other requests of the same
+    `labhq status` are not asked, so a gateway that went silent costs one wait, not one per request."""
+    import httpx
+
+    if state is not None and state.get("down"):
+        return None
+    try:
+        detail = _api(s, "GET", f"/api/requests/{rid}", raw_errors=True)
+    except httpx.HTTPStatusError:
+        return None
+    except (Exception, SystemExit):  # transport failure, or a stand-in that ends the command
+        if state is not None:
+            state["down"] = True
+        return None
+    if not isinstance(detail, dict):
+        return None
+    return "시간 상한: " + request_deadline_text(detail, time.time())
 
 
 def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, **kw):
@@ -2169,10 +2191,13 @@ def main(argv: list[str] | None = None) -> None:
                          f"없음 — `{_config_command(s, 'up')}`로 켜야 요청이 진행됩니다"))
         running = _api(s, "GET", "/api/requests?status=running&limit=200")
         print(f"진행 중 요청: {len(running)}")
+        deadline_state: dict = {}
         for req in running:
             progress = req["step_progress"]
             held = "" if req.get("status") == "running" else f" [{request_display_label(req)}]"
             print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}{held}")
+            if deadline := _request_deadline_line(s, req["id"], deadline_state):
+                print(f"    {deadline}")
             environment = req.get("step_environment") or {}
             waits = req.get("step_waits") or {}
             for sid, state in progress["steps"].items():
