@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:55 | [`74ec3b3`](https://github.com/ehojune/bioinfo-team-3d/pull/1096/commits/74ec3b3) | **규칙 문구를 실제 거부 동작과 맞췄습니다.**<br>prompt 규칙 문구를 뒤 행만 거부되고 그 claim이 근거를 잃는 실제 동작으로 맞추고, 패치노트 summary에서 미검증 예방 효과 단정을 뺀다(리뷰 P1·P2) |
+| 23:40 | [`d9e5396`](https://github.com/ehojune/bioinfo-team-3d/pull/1096/commits/d9e5396) | **근거 표를 만드는 단계 prompt에 같은 출처는 같은 independence group으로 적으라는 규칙이 더해집니다. 실제 run에서 직원이 따르는지는 아직 확인하지 않았습니다.**<br>연구 단계 결과 규칙에 같은 출처(DOI·PMID·accession·산출물 경로)를 인용한 근거 행은 같은 independence_group을 쓴다는 한 줄을 더하고, 규칙 존재 시험을 추가한다 |
 | 23:10 | [`8317600`](https://github.com/ehojune/bioinfo-team-3d/pull/1094/commits/8317600) | **같은 본문이 DOI와 PMID로 따로 저장돼도 둘 중 어느 식별자로 인용해도 읽은 것으로 이어집니다.**<br>같은 sha256의 저장 기록은 한 논문으로 합치되 모든 행의 별칭을 보존(리뷰 P2) + 시험 |
 | 22:45 | [`9f68262`](https://github.com/ehojune/bioinfo-team-3d/pull/1094/commits/9f68262) | **선언만 있는 영수증이 읽은 것으로 세어지지 않고, 같은 논문이 두 번 들어와도 편수가 맞습니다.**<br>stored_access는 저장 파일과 sha256이 있는 영수증만 인정하고 같은 hash는 한 번만 센다. 접근 원장 줄의 저장 편수는 별칭을 합친 값(리뷰 P2 두 건) + 시험 |
 | 22:20 | [`0b22a95`](https://github.com/ehojune/bioinfo-team-3d/pull/1094/commits/0b22a95) | **선행 검색 프롬프트가 허용하는 인용 형식이 어떤 것이든 저장된 본문이 결론 근거와 이어집니다.**<br>저장된 선행 인용의 bare DOI·PMCID와 DOI·PubMed·PMC URL을 별칭으로 정규화(리뷰 P2) + 시험 |
