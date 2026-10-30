@@ -20,3 +20,7 @@ rows:
   at: 2026-10-31 11:20
   text: SKILL.md 읽기를 builtin open(path, 'rb')로 바꿔 인코딩 검사(test_text_encoding)를 통과시키고, 링크 검사를 os.lstat의 reparse point 속성으로 바꿔 os.path.isjunction이 없는 Python 3.10·3.11 Windows에서도 junction을 따라가지 않게 한다(리뷰 P2) + 시험
   summary: Windows의 어느 Python 버전에서도 링크로 바뀐 스킬 폴더 밖의 파일을 읽지 않습니다.
+- sha: '28eb8df'
+  at: 2026-10-31 13:00
+  text: 스킬을 처음 만든 요청을 계획의 paper_skill_results 행뿐 아니라 단계 결과의 provenance(runs.paper_skills의 ready 사용 행)에서도 찾는다. 실제 요청은 계획 행을 deferred로 두기 때문이다(리뷰 P2). 손상된 요청 본문은 건너뛴다
+  summary: 새 요청에서도 labhq talent가 스킬을 만든 요청을 보입니다.
