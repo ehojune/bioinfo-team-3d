@@ -100,7 +100,11 @@ def warm(chrome: str, *, limit_s: float = START_LIMIT_S, environ: Mapping[str, s
             if clock() - started >= limit_s:
                 raise WarmupError(f'no page target within {limit_s:g} s (DevToolsActivePort took {port_s:.2f} s)')
             sleep(POLL_S)
-        return {'port_s': round(port_s, 2), 'target_s': round(clock() - started, 2)}
+        target_s = clock() - started
+        if target_s > limit_s:  # a page found after the limit is a late start, however it was found
+            raise WarmupError(f'first page target after {target_s:.1f} s, over the {limit_s:g} s limit '
+                              f'(DevToolsActivePort took {port_s:.2f} s)')
+        return {'port_s': round(port_s, 2), 'target_s': round(target_s, 2)}
     finally:
         stop(process)
         shutil.rmtree(profile, ignore_errors=True)

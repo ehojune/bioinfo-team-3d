@@ -80,6 +80,30 @@ def test_a_page_that_never_appears_is_a_different_named_error(tmp_path):
         run(tmp_path, page=False, limit_s=3)
 
 
+def test_a_page_target_that_arrives_after_the_limit_is_a_failure_not_a_pass(tmp_path):
+    # The /json answer came back late (inside its own 5 s read) but after the 60 s limit: the start was still too slow.
+    clock = Clock()
+
+    def slow_targets(port):
+        clock.now += 61
+        return [{'type': 'page'}]
+
+    made = []
+
+    def make_profile(prefix):
+        path = tmp_path / 'p'
+        path.mkdir()
+        made.append(path)
+        return str(path)
+
+    def popen(args, **kwargs):
+        return FakeProcess(made[0], port_after=1)
+
+    with pytest.raises(w.WarmupError, match=r'first page target after 61\.\d s, over the 60 s limit'):
+        w.warm('chrome.exe', limit_s=60, environ={}, popen=popen, clock=clock, sleep=clock.sleep,
+               targets=slow_targets, stop=lambda process: None, make_profile=make_profile)
+
+
 def test_a_chrome_that_exits_early_names_its_exit_code(tmp_path):
     with pytest.raises(w.WarmupError, match='Chrome exited with code 7 before it opened its DevTools port'):
         run(tmp_path, port_after=10 ** 9, dies_at=3)
