@@ -169,11 +169,12 @@ def _parts(name):
     return parts
 
 
-def staging_problem(outputs, hashes, sizes, max_file, max_total):
+def staging_problem(outputs, hashes, sizes, max_file, max_total, linked=()):
     """Why a later step could not stage this ancestor's collected outputs, or None (#1058).
 
     The same rules stage_inputs applies to one ancestor, so a producer is not passed on files its consumer will
-    refuse as a whole: count, a hash for every path, a safe and case-distinct name, the per-file and the total bytes."""
+    refuse as a whole: count, a hash for every path, a safe and case-distinct name, a file that is not hard-linked
+    (``linked`` holds the collected paths with more than one link, #1065), the per-file and the total bytes."""
     if len(outputs) > MAX_FILES:
         return f'{len(outputs)} files; a later step can take at most {MAX_FILES}'
     seen, total = set(), 0
@@ -188,6 +189,8 @@ def staging_problem(outputs, hashes, sizes, max_file, max_total):
             return f'{relative}: a file name a later step refuses ({name})'
         if not isinstance(hashes.get(raw), str) or not re.fullmatch('[a-f0-9]{64}', hashes[raw]):
             return f'{relative}: no hash'
+        if raw in linked:
+            return f'{relative}: a hard-linked file; a later step refuses it'
         if name.casefold() in seen:
             return f'{relative}: collides by letter case with another collected file'
         seen.add(name.casefold())
@@ -198,6 +201,53 @@ def staging_problem(outputs, hashes, sizes, max_file, max_total):
     if total > max_total:
         return f'{total} bytes in all; a later step takes at most {max_total} bytes'
     return None
+
+
+def linked_files(workdir, paths):
+    """The given workspace-relative paths that are regular files with more than one link (never follows a link)."""
+    found = []
+    for relative in paths:
+        try:
+            info = os.lstat(Path(workdir) / relative)
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode) and info.st_nlink > 1:
+            found.append(relative)
+    return found
+
+
+def folder_files(workdir, relative, max_entries, max_depth):
+    """The regular files of one declared output folder from a bounded, no-follow walk of that folder alone.
+
+    Returns (paths, None), or (None, why) when the walk cannot finish inside the limits. The step's whole-outputs scan
+    can be cut short by an unrelated subtree; whether the declared folder itself was seen whole is judged here (#1065).
+    Depth counts levels below ``outputs/``, as the scan does."""
+    found, budget = [], [max_entries]
+    folder = relative.rstrip('/')
+    parts = Path(folder).parts
+
+    def walk(held, prefix, depth):
+        if depth > max_depth:
+            raise ValueError(f'deeper than {max_depth} levels')
+        entries = held.entries(budget[0] + 1)
+        budget[0] -= len(entries)
+        if budget[0] < 0:
+            raise ValueError(f'more than {max_entries} entries')
+        for entry in entries:
+            if entry.kind == 'dir':
+                with held.child(entry.name, expect=entry.ident) as child:
+                    if held.dev is not None and child.dev != held.dev:
+                        raise OSError('crosses a mount')
+                    walk(child, prefix + entry.name + '/', depth + 1)
+            elif entry.kind == 'file':
+                found.append(prefix + entry.name)
+
+    try:
+        with _folder(workdir, parts) as held:
+            walk(held, folder + '/', max(1, len(parts) - 1))
+    except (OSError, ValueError) as exc:
+        return None, str(exc)
+    return found, None
 
 
 @contextlib.contextmanager
@@ -307,8 +357,13 @@ def _copy(source, source_parts, workdir, destination, expected, limit, remaining
         try:
             with os.fdopen(src.open_read_file(source_parts[-1]), 'rb') as opened:
                 info = os.fstat(opened.fileno())
-                if info.st_nlink != 1 or info.st_size > min(limit, remaining[0]):
-                    raise ValueError('input file size/link limit')
+                if info.st_nlink != 1:
+                    raise ValueError('input file is hard-linked')
+                if info.st_size > limit:
+                    raise ValueError(f'input file is {info.st_size} bytes; the per-file limit is {limit}')
+                if info.st_size > remaining[0]:
+                    raise ValueError(f'input file is {info.st_size} bytes; {remaining[0]} bytes are left of the '
+                                     'step total after earlier inputs')
                 flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_BINARY', 0)
                 with os.fdopen(dst.open_file(temporary, flags), 'wb') as copied:
                     digest, size = hashlib.sha256(), 0
@@ -338,6 +393,7 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
     root = Path(workspace_root).resolve(strict=True)
     for step, artifact in artifacts.items():
         owned = False
+        budget_before = remaining[0]
         try:
             if (not isinstance(step, str) or not INPUT_STEP_ID.fullmatch(step) or step != step.rstrip(' .') or
                     sum(str(s).casefold() == step.casefold() for s in artifacts) != 1):
@@ -381,13 +437,22 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
                 files.append((relative, name, expected))
             if len({name.casefold() for _, name, _ in files}) != len(files):
                 raise ValueError('collected input names collide')
-            _room(ws.dir, sum(_size(root, (*source_parts, *_parts(relative))) for relative, _, _ in files))
+            needed = sum(_size(root, (*source_parts, *_parts(relative))) for relative, _, _ in files)
+            if needed > remaining[0]:
+                # Named before any byte is copied: the ancestor fits alone, but earlier ancestors used the step's
+                # one shared total (#1065).
+                raise ValueError(f'cumulative input budget: this ancestor needs {needed} bytes, {remaining[0]} bytes '
+                                 f'are left of the {max_total} bytes a step takes in all after earlier inputs')
+            _room(ws.dir, needed)
             _reset(ws.dir, step, [name for _, name, _ in files])
             for relative, name, expected in files:
                 _copy(root, (*source_parts, *_parts(relative)), ws.dir,
                       f'inputs/{step}/{name}', expected, max_file, remaining)
             staged.append(str(ws.dir / 'inputs' / step))
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            # The refused ancestor's copies are removed below, so the bytes they used are not spent: a later
+            # ancestor that fits must not be refused for them (#1065).
+            remaining[0] = budget_before
             if owned:
                 try:
                     _reset(ws.dir, step, [])

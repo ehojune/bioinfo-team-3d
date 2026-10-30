@@ -479,3 +479,103 @@ def test_staging_problem_mirrors_what_a_later_step_refuses():
     assert "refuses" in staging_problem(["outputs/a$b.tsv"], {"outputs/a$b.tsv": digest}, {}, 10, 100)
     many = [f"outputs/p{index}.md" for index in range(MAX_FILES + 1)]
     assert str(MAX_FILES) in staging_problem(many, {path: digest for path in many}, {}, 10, 10**9)
+
+
+# ---------- #1065: what the producer cannot know about its consumer ----------
+
+def _ancestor(root: Path, step: str, files: dict[str, bytes]):
+    from tests.test_step_inputs_665 import source
+
+    folder, artifact = source(root, step)
+    for name, body in files.items():
+        _write(folder, f"outputs/{name}", body)
+    artifact = {**artifact, "outputs": [f"outputs/{name}" for name in files],
+                "output_sha256": {f"outputs/{name}": _sha(body) for name, body in files.items()}}
+    return artifact
+
+
+def _consumer(tmp_path: Path):
+    from labhq.runner.workspace import TaskWorkspace
+
+    root = tmp_path / "runs"
+    root.mkdir()
+    task = Task(id="down", agent_id="worker", request_id="r", prompt="fixture")
+    return root, TaskWorkspace(root, task, AgentSpec(id="worker", name="Worker", role="test"))
+
+
+def test_a_later_ancestor_that_fits_alone_is_refused_by_name_when_earlier_ones_used_the_total(tmp_path):
+    from labhq.runner.step_inputs import stage_inputs
+
+    root, ws = _consumer(tmp_path)
+    artifacts = {"first": _ancestor(root, "first", {"a.tsv": b"x" * 12}),
+                 "second": _ancestor(root, "second", {"b.tsv": b"y" * 12})}
+    remaining = [20]
+    staged, refused = stage_inputs(ws, artifacts, root, [], [], 100, 20, remaining)
+    assert [Path(path).name for path in staged] == ["first"]
+    assert "cumulative input budget" in refused["second"] and "12 bytes" in refused["second"]
+    assert "8 bytes" in refused["second"] and "20 bytes" in refused["second"]
+    assert remaining == [8]
+
+
+def test_a_refused_ancestor_gives_its_copied_bytes_back_to_the_shared_total(tmp_path):
+    from labhq.runner.step_inputs import stage_inputs
+
+    root, ws = _consumer(tmp_path)
+    artifacts = {"first": _ancestor(root, "first", {"a.tsv": b"x" * 5, "b.tsv": b"y" * 30}),
+                 "second": _ancestor(root, "second", {"c.tsv": b"z" * 6})}
+    remaining = [60]
+    staged, refused = stage_inputs(ws, artifacts, root, [], [], 10, 60, remaining)  # b.tsv is over the 10-byte file limit
+    assert "first" in refused and "per-file limit" in refused["first"]
+    assert [Path(path).name for path in staged] == ["second"]
+    assert remaining == [54]  # only the ancestor that was kept spent bytes
+    assert not (ws.dir / "inputs" / "first" / "a.tsv").exists()
+
+
+def test_a_hard_linked_ancestor_file_is_refused_with_its_own_reason(tmp_path):
+    from labhq.runner.step_inputs import stage_inputs
+
+    root, ws = _consumer(tmp_path)
+    artifact = _ancestor(root, "first", {"a.tsv": b"x" * 5})
+    try:
+        os.link(Path(artifact["workdir"]) / "outputs" / "a.tsv", tmp_path / "other-name")
+    except OSError as error:
+        pytest.skip(f"this account cannot create a hard link ({error})")
+    staged, refused = stage_inputs(ws, {"first": artifact}, root, [], [], 100, 100)
+    assert not staged and "hard-linked" in refused["first"]
+
+
+def test_staging_problem_names_a_hard_linked_file():
+    from labhq.runner.step_inputs import staging_problem
+
+    digest = "a" * 64
+    paths = ["outputs/a.tsv", "outputs/b.tsv"]
+    hashes = {path: digest for path in paths}
+    assert staging_problem(paths, hashes, {}, 10, 100) is None
+    assert "hard-linked" in staging_problem(paths, hashes, {}, 10, 100, {"outputs/b.tsv"})
+
+
+@pytest.mark.asyncio
+async def test_a_hard_linked_file_in_a_declared_folder_stops_the_producer(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", b"note\n")
+        try:
+            os.link(workdir / "outputs/literature/p1.md", workdir / "outputs/literature/p1-copy.md")
+        except OSError as error:
+            pytest.skip(f"this account cannot create a hard link ({error})")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["literature"]))
+    assert result.ok is False and "hard-linked" in result.error
+
+
+@pytest.mark.asyncio
+async def test_an_unrelated_subtree_past_the_scan_depth_does_not_fail_a_whole_declared_folder(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", b"note\n")
+        _write(workdir, "outputs/scratch/a/b/c/deep.md", b"deep\n")  # not declared, deeper than the limit
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    runner.s.runner.reference_scan_max_depth = 2
+    result = await runner.run_task(_task(outputs=["literature"]))
+    assert result.ok is True, result.error
+    assert "outputs/literature/p1.md" in result.outputs
