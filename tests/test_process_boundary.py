@@ -112,3 +112,44 @@ def test_broker_close_failure_is_reported():
         receipt = boundary.diagnostic_broker_probe(lambda directory, run_id: broker)
     assert receipt.cleanup.startswith("failed")
     assert "broker cleanup failed" in receipt.unsupported_reasons
+
+
+def test_synthetic_staging_cleans_up_and_never_launches():
+    stager = boundary.DiagnosticStager()
+    seen = []
+    def observe(run_id):
+        directory = stager._runs[run_id]
+        assert (directory / "snapshot").read_bytes() == b"synthetic input"
+        seen.append(directory)
+    with patch.object(boundary.subprocess, "run", side_effect=AssertionError("spawned")):
+        receipt = boundary.diagnostic_staging_probe(stager, on_staged=observe)
+    assert receipt.preparation == "diagnostic_staged"
+    assert receipt.launch == "not_started" and receipt.seal_status == "unsealed"
+    assert seen and not seen[0].exists() and not stager._runs
+
+
+def test_partial_stage_and_callback_failure_cleanup():
+    for fail_at in ("stage", "callback"):
+        stager = boundary.DiagnosticStager()
+        original = stager.stage
+        def stage(run_id, payloads):
+            result = original(run_id, payloads)
+            if fail_at == "stage":
+                raise OSError("partial failure")
+            return result
+        def callback(run_id):
+            if fail_at == "callback":
+                raise ValueError("observer failed")
+        stager.stage = stage
+        receipt = boundary.diagnostic_staging_probe(stager, on_staged=callback)
+        assert receipt.preparation == "unsupported" and not stager._runs
+        assert "diagnostic staging failed" in receipt.unsupported_reasons
+
+
+def test_digest_mismatch_and_cleanup_failure_are_reported():
+    stager = SimpleNamespace(stage=lambda run_id, payloads: {},
+                             cleanup=lambda run_id: (_ for _ in ()).throw(OSError()))
+    receipt = boundary.diagnostic_staging_probe(stager)
+    assert receipt.preparation == "unsupported" and receipt.launch == "not_started"
+    assert receipt.cleanup.startswith("failed") and receipt.seal_status == "unsealed"
+    assert "diagnostic staging cleanup failed" in receipt.unsupported_reasons

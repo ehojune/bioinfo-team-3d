@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import json
+import hashlib
 import shutil
 import stat
 import subprocess
@@ -41,6 +42,68 @@ def protected_launch(*, supervisor=None, snapshot=None):
     return Receipt(1, str(uuid.uuid4()), None, None, None, None, None, {},
                    "unsupported", "not_started", "not_needed", "unsupported",
                    ["trusted supervisor and sealed storage verification unavailable"])
+
+
+class DiagnosticStager:
+    """Temporary synthetic staging; no protection against local writers."""
+
+    def __init__(self):
+        self._runs = {}
+
+    def stage(self, run_id, payloads):
+        if run_id in self._runs or set(payloads) != {"snapshot", "runtime", "policy"}:
+            raise ValueError("invalid or duplicate diagnostic run")
+        directory = Path(tempfile.mkdtemp(prefix="labhq-stage-"))
+        self._runs[run_id] = directory
+        digests = {}
+        for name, content in payloads.items():
+            if not isinstance(content, bytes):
+                raise ValueError("diagnostic payload must be bytes")
+            with (directory / name).open("xb") as output:
+                output.write(content)
+            digests[name] = hashlib.sha256((directory / name).read_bytes()).hexdigest()
+        return digests
+
+    def cleanup(self, run_id):
+        directory = self._runs.get(run_id)
+        if directory is not None:
+            shutil.rmtree(directory)
+            del self._runs[run_id]
+
+
+def diagnostic_staging_probe(stager, *, on_staged=None):
+    """Exercise staging and cleanup with fixed synthetic bytes, never a seal.
+
+    The injected stager is diagnostic code, not an authority. Its interface is
+    stage(run_id, payloads) and cleanup(run_id); stage returns three byte digests.
+    Cleanup is attempted even when staging partially fails. No child is launched.
+    """
+    receipt = Receipt(1, str(uuid.uuid4()), None, None, None, None, None, {},
+                      "unsupported", "not_started", "not_needed", "unsealed",
+                      ["diagnostic staging only; no trusted seal or child launch"])
+    payloads = {"snapshot": b"synthetic input", "runtime": b"synthetic runtime",
+                "policy": b"synthetic policy"}
+    try:
+        digests = stager.stage(receipt.run_id, payloads.copy())
+        expected = {key: hashlib.sha256(value).hexdigest() for key, value in payloads.items()}
+        if digests != expected:
+            raise ValueError("staging digest mismatch")
+        receipt.snapshot_digest = digests["snapshot"]
+        receipt.runtime_digest = digests["runtime"]
+        receipt.policy_digest = digests["policy"]
+        if on_staged is not None:
+            on_staged(receipt.run_id)
+        receipt.preparation = "diagnostic_staged"
+    except Exception:
+        receipt.unsupported_reasons.append("diagnostic staging failed")
+    finally:
+        try:
+            stager.cleanup(receipt.run_id)
+            receipt.cleanup = "stager_cleanup_returned; independent_cleanup_unverified"
+        except Exception:
+            receipt.cleanup = "failed; independent_cleanup_unverified"
+            receipt.unsupported_reasons.append("diagnostic staging cleanup failed")
+    return receipt
 
 
 def diagnostic_probe(*, timeout=10):
