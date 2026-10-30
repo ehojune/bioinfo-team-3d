@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:16 | [`4e03bdb`](https://github.com/ehojune/bioinfo-team-3d/pull/1067/commits/4e03bdb) | **안내문의 이전 판본과 비교하는 시험이 이번에 더한 규칙 한 줄을 제외하고 비교하도록 고쳤습니다.**<br>test: 고정 hash 시험이 계획 prompt의 새 claim_ids 규칙을 빼고 비교 (#1066) |
+| 17:15 | [`daa8332`](https://github.com/ehojune/bioinfo-team-3d/pull/1067/commits/daa8332) | **연구 계획 안내문의 새 규칙을 이름 있는 상수로 분리했습니다(고정 hash 시험이 추가분을 따로 뺄 수 있게).**<br>refactor: 계획 prompt의 claim_ids 규칙을 이름 있는 상수로 둠 (#1066) |
+| 16:59 | [`7ca2761`](https://github.com/ehojune/bioinfo-team-3d/pull/1067/commits/7ca2761) | **연구 단계가 계획에 없던 주장을 새로 만들어 실패하던 문제를, 결과 교정·단계·계획 안내문에 허용된 주장 목록을 밝혀 막았습니다.**<br>fix: 결과 교정·단계 prompt·계획 prompt가 단계 claim_ids 밖 claim을 만들지 말라고 명시 (#1066) |
 | 16:45 | [`374a41f`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/374a41f) | **폴더 산출이 있는 단계는 다음 단계가 거절할 파일(많음·큼·이름 충돌·위험한 이름)을 미리 미완료로 처리하도록 한 규칙으로 묶었습니다.**<br>fix: 선언 폴더 단계는 다음 단계의 입력 규칙(수·크기·이름·대소문자)으로 같이 검사해 부류를 닫음 (#1058 리뷰 P1) |
 | 16:34 | [`4f8e188`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/4f8e188) | **다음 단계가 받을 수 있는 파일 수·크기 한도를 폴더만이 아니라 그 단계가 모은 산출 전체로 확인하게 하고 매뉴얼에 적었습니다.**<br>fix: 다음 단계의 파일 수·바이트 상한을 한 상류의 수집 산출 전체로 검사하고 manual에 적음 (#1058 리뷰 P1) |
 | 16:21 | [`a61b537`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/a61b537) | **폴더 산출의 크기 합이 다음 단계가 받을 수 있는 한도를 넘으면 미완료로 처리해, 통과한 뒤 거절되는 일이 없게 했습니다.**<br>fix: 선언 폴더 확장이 다음 단계의 바이트 상한을 넘으면 미완료 (#1058 리뷰 P1) |
