@@ -1,6 +1,6 @@
 pr: 1052
 rows:
-  - sha: e6b047b
+  - sha: 41e1d99
     at: "2026-10-30 12:22"
     summary: "합성 인증 broker와 격리 socket 시험을 추가합니다."
     text: "Add synthetic authentication broker prototype"
