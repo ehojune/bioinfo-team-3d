@@ -1,0 +1,5 @@
+rows:
+  - sha: "75e285a"
+    at: "2026-10-30 16:38"
+    summary: "독립 supervisor/seal의 synthetic 관측 계약과 변경·잔류 거부 시험을 추가합니다."
+    text: "test: define independent supervisor seal acceptance fixtures (#1063)"
