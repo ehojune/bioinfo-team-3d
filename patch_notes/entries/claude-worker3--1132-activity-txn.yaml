@@ -8,3 +8,7 @@ rows:
   at: 2026-10-31 08:10
   text: test_state_activity_durable의 publish stub을 실제 publish로 바꾸고 활동 저장이 이벤트 transaction에 실렸을 때의 의미(취소가 commit 중이면 이벤트와 activity가 함께 남고 cursor가 중복을 거름)를 시험에 명시한다. 한 publish는 한 commit이고 실패하면 이벤트·activity가 모두 없음, agent.tool 폭주에서 메시지당 한 commit과 순서 유지, 느린 client가 이벤트 락을 잡아도 timeout 안에 activity가 저장됨을 시험한다. manual 한영에 보장을 적는다
   summary: 활동 저장 경로가 바뀌어 옛 구조에 묶여 있던 시험을 새 구조에 맞게 고치고 새 보장을 시험으로 고정합니다.
+- sha: '57e0fb7'
+  at: 2026-10-31 09:10
+  text: test_state_control_durable의 halt 시험이 publish를 빈 stub으로 바꿔 둬서 activity가 저장되지 않아 실패했다. stub이 aappend_event를 실제로 불러 activity를 이벤트와 함께 저장하게 하고 단언은 그대로 둔다. halt와 activity는 같은 writer lane의 최신 행 병합이라 committed tool이 사라지지 않는 제품 순서는 그대로다
+  summary: PR 리뷰·CI 실패(3.10·3.12·Windows)의 원인인 옛 구조에 묶인 시험 stub을 고칩니다.
