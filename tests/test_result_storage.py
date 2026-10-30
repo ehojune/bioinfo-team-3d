@@ -105,6 +105,11 @@ async def test_new_repo_and_upload_only_after_review(tmp_path, monkeypatch, exis
     files = {path.split("/contents/")[1]: base64.b64decode(body["content"]).decode()
              for method, path, body in calls if method == "PUT"}
     assert any(path.endswith("README.md") for path in files)
+    citation = next(body for path, body in files.items() if path.endswith("CITATION.cff"))  # no author or DOI is invented (#792)
+    assert citation.startswith("cff-version: 1.2.0") and "authors: []" in citation and "10." not in citation and "orcid" not in citation.lower()
+    messages = {path.split("/contents/")[1]: body["message"] for method, path, body in calls if method == "PUT"}
+    assert messages["README.md"].startswith("연구 결과 정리: README.md")
+    assert len(set(messages.values())) == len(messages)  # one message per file, not three fixed sentences
     assert hub.requests["req_test"]["result_storage"]["status"] == "published"
     await service.close()
 

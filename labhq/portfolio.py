@@ -110,7 +110,7 @@ _MARKDOWN_REFERENCE_DEFINITION = re.compile(
     r"(?P<title>[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$")
 _MARKDOWN_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
 _REMOTE_LINK = re.compile(r"(?i)^(?:https?://|data:|mailto:)")
-_PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md"}
+_PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md", "CITATION.cff"}
 _PORTFOLIO_FOLDERS = ("report/", "run/", "code/", "docs/", "figures/", "tables/", "studies/")
 _LICENSE_PLACEHOLDER = re.compile(
     r"<reference-path>|확인 필요|필수 문구 자리|원 출처의 필수 문구를 넣으세요", re.I
@@ -1370,6 +1370,19 @@ def _costs_document(req: dict, tasks: Iterable[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _citation_cff(req: dict, settings) -> str:
+    """CITATION.cff from what the request records. The request carries no author or DOI, so none is written (#792)."""
+    title = _clean(research_question(str(req.get("text") or "")) or "연구 결과", settings, req).strip().splitlines()[0][:200]
+    return ("cff-version: 1.2.0\n"
+            "# 저자와 DOI는 요청에 없어 적지 않았습니다. 아는 값을 채운 뒤 인용에 쓰세요.\n"
+            f"message: {json.dumps('이 연구 결과를 인용할 때는 아래 정보를 쓰세요.', ensure_ascii=False)}\n"
+            f"title: {json.dumps(title, ensure_ascii=False)}\n"
+            "type: dataset\n"
+            "authors: []\n"
+            f"identifiers:\n  - type: other\n    value: {json.dumps('labhq-request-' + str(req.get('id') or 'unknown'))}\n"
+            f"    description: {json.dumps('labhq 요청 id', ensure_ascii=False)}\n")
+
+
 def _references(req: dict, report: str, assets: Mapping[str, str]) -> str:
     text = "\n".join([report, *assets.values(), *[str(ref.get("value") or "") for ref in req.get("references") or []]])
     pmids = {match.group(1) for match in _PMID.finditer(text)}
@@ -1832,7 +1845,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
               "8. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
               "## 저장소 지도", "", "```text", "README.md", "report/", "run/", "code/", "figures/", "tables/",
               *(["studies/               갈래별 코드·그림·표·단계 보고서"] if branch_rows else []),
-              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", "```", "",
+              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", "CITATION.cff", "```", "",
               "## Summary (English)", "",
               f"This repository is the publication edition of labhq request {req.get('id')}. "
               "It keeps the scientific report, aggregate results, code, figures, decisions, and execution record together.", "",
@@ -2143,6 +2156,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         "run/costs.md": _costs_document(req, tasks),
         "REFERENCES.md": _clean(_references(req, report, assets), settings, req),
         "DATA_AND_LICENSES.md": _clean(_data_licenses(req, settings, input_readmes), settings, req),
+        "CITATION.cff": _citation_cff(req, settings),
     })
     if revision_history:
         files["run/revision_history.md"] = revision_history
