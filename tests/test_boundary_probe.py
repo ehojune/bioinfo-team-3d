@@ -226,27 +226,30 @@ def test_marker_observation_waits_and_ignores_partial_content(tmp_path):
     assert probe.observe_marker(marker, "other-run", 0) is False
 
 
-@pytest.mark.skipif(os.name != "nt", reason="the interop probes exist only on Windows")
-def test_a_marker_published_after_launcher_timeout_is_a_failure(monkeypatch):
-    import threading
+def test_interop_never_launches_without_lifecycle(monkeypatch, tmp_path):
+    original = probe.subprocess.run
+    calls = []
 
-    started = []
+    def guarded_run(argv, **kwargs):
+        calls.append(argv)
+        assert "interop" not in argv and "reverse_interop" not in argv
+        return original(argv, **kwargs)
 
-    def fake_run(argv, **kwargs):
-        case, root = argv[-2], Path(argv[-1])
-        if case == "interop":
-            def late():
-                time.sleep(0.4)
-                probe.publish_signal(root / "work" / "interop.marker", (root / "run-id").read_text(encoding="ascii"))
-            thread = threading.Thread(target=late)
-            thread.start()
-            started.append(thread)
-            raise subprocess.TimeoutExpired(argv, 1)
-        return subprocess.CompletedProcess(argv, 0 if case == "allowed" else 20, stdout=b"boundary-probe-child\n")
-
-    monkeypatch.setattr(probe.subprocess, "run", fake_run)
-    result = probe.run([], interop_distro="disposable", timeout=2)
-    for thread in started:
-        thread.join()
-    assert result["cases"]["interop"] == {"status": "fail", "host_witness": True}
-    assert result["cases"]["reverse_interop"] == {"status": "inconclusive", "host_witness": False}
+    monkeypatch.setattr(probe.subprocess, "run", guarded_run)
+    launcher = tmp_path / "delayed.py"
+    marker = tmp_path / "started"
+    launcher.write_text(
+        "import pathlib, subprocess, sys, time\n"
+        "marker, *command = sys.argv[1:]\n"
+        "if 'interop' in command or 'reverse_interop' in command:\n"
+        "    time.sleep(1); pathlib.Path(marker).write_text('started')\n"
+        "sys.exit(subprocess.call(command))\n", encoding="utf-8")
+    for prefix in ([], [os.sys.executable, str(launcher), str(marker)]):
+        result = probe.run(prefix, interop_distro="disposable", timeout=2)
+        for case in ("interop", "reverse_interop"):
+            assert result["cases"][case] == {
+                "status": "unsupported",
+                "reason": "trusted descendant lifecycle ownership unavailable",
+            }
+        assert result["protection_verified"] is False
+    assert calls and not marker.exists()

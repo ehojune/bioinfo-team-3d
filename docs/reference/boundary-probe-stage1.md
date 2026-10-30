@@ -10,7 +10,7 @@ Parent replacement and external-writer fixtures use a run-ID-bound child ready/c
 
 The detached-child case is unsupported before launch for every current launcher, including direct execution: none provides trusted descendant lifecycle ownership. A future authenticated lifecycle backend is required before enabling it; no flag or receipt alone establishes that ownership or protection.
 
-On Windows, `--interop-distro labhq-666-fixture` opts into synthetic Windows-to-WSL and WSL-to-Windows execution probes. The reverse probe asks WSL Python to execute the Windows Python fixture, which writes a run-bound host marker. A matching marker is a failure even if the child response is lost; absent markers and launch errors are inconclusive. Neither direction exercises a real sandbox. The current fixture has automount and interop disabled; failures in it do not prove protection.
+Both Windows-to-WSL and WSL-to-Windows interop cases are unsupported before launch, even when `--interop-distro` is supplied. No current launcher owns and joins WSL descendants after timeout. Enabling these probes requires a trusted lifecycle backend and positive controls in a suitable disposable environment.
 
 `receipt_diagnostic(receipt, run_id)` checks receipt v1 shape and matching run ID; unsealed and claimed sealed receipts remain unsupported. It does not authenticate a supervisor.
 
@@ -22,6 +22,6 @@ The control and tool-use cases call real labhq functions with run-bound syntheti
 
 The built-in job MCP positive control starts the real server with disposable config and lists its tools over stdio, without invoking a tool or making a network request. This `stdio_list_only` result does not establish engine integration or functional broker access.
 
-A fixture file the child cannot read (for example the socket port or the descriptor number) is a setup failure: the child exits 20 and the case is `inconclusive`, never a denial `pass`. After the launcher returns or times out, the interop cases wait up to `INTEROP_GRACE_S` (3 s) for the run-bound marker, which the WSL side publishes through a temporary name and a rename, so a delayed host write is still a `fail` and a partial run ID is never read.
+A fixture file the child cannot read (for example the socket port or the descriptor number) is a setup failure: the child exits 20 and the case is `inconclusive`, never a denial `pass`.
 
 Pending: positive interop controls in a suitable disposable environment, authenticated proof of detached-child cleanup, actual hook invocation, MCP operation inside the namespace and launcher-driven adversarial probes. Engine compatibility and protection are UNVERIFIED. Do not use this harness to enable the capability or claim protection.

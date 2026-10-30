@@ -20,9 +20,6 @@ CASES = ("allowed", "read", "write", "symlink", "hardlink", "parent_replace",
          "control_hook", "tool_use_hook", "builtin_mcp")
 
 
-INTEROP_GRACE_S = 3  # how long after the launcher returns or times out a spawned WSL descendant may still publish
-
-
 class FixtureError(Exception):
     """The host-made fixture could not be read: the probe never ran, so it says nothing about the boundary."""
 
@@ -364,17 +361,9 @@ def run(prefix: list[str], python: str = sys.executable, timeout: float = 10,
                                      "scope": "stdio_list_only" if case == "builtin_mcp" else "direct_function_only"}
                 continue
             if case in ("interop", "reverse_interop"):
-                if not interop_distro or os.name != "nt":
-                    results[case] = {"status": "unsupported"}
-                    continue
-                try:
-                    subprocess.run([*prefix, python, script, "--child", case, str(root)],
-                                   cwd=work, env=env, capture_output=True, timeout=timeout)
-                except (OSError, subprocess.TimeoutExpired):
-                    pass  # a launch error or timeout says nothing; only the marker does
-                # A WSL descendant can publish after the launcher has returned or timed out.
-                witnessed = observe_marker(work / (case + ".marker"), run_id, INTEROP_GRACE_S)
-                results[case] = {"status": "fail" if witnessed else "inconclusive", "host_witness": witnessed}
+                # No current launcher owns and joins WSL descendants on timeout.
+                results[case] = {"status": "unsupported",
+                                 "reason": "trusted descendant lifecycle ownership unavailable"}
                 continue
             if case == "detached_child":
                 # No current launcher provides trusted descendant lifecycle ownership.
