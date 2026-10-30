@@ -513,10 +513,23 @@ class Observation:
             json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+STALL_INTERVAL_S = 300  # default seconds between snapshots; CI_STALL_INTERVAL_S tunes it (#1076)
+
+
+def stall_interval():
+    """Seconds between WorkerStall snapshots: CI_STALL_INTERVAL_S when it is a number of at least 1, else the default."""
+    try:
+        value = float(os.environ.get("CI_STALL_INTERVAL_S", STALL_INTERVAL_S))
+    except ValueError:
+        return STALL_INTERVAL_S
+    return value if value >= 1 else STALL_INTERVAL_S
+
+
 class WorkerStall:
     def __init__(self, path, context):
         self.stream = path.open("w", encoding="utf-8", buffering=1)
         self.context = context
+        self.interval = stall_interval()
         self.stop = threading.Event()
         self.worker = threading.Thread(target=self.watch, name="ci-stall-diagnostics", daemon=True)
 
@@ -532,7 +545,7 @@ class WorkerStall:
 
     def watch(self):
         import asyncio
-        while not self.stop.wait(300):
+        while not self.stop.wait(self.interval):
             try:
                 print(f"\nCI snapshot: {self.context()}", file=self.stream, flush=True)
                 faulthandler.dump_traceback(file=self.stream, all_threads=True)
