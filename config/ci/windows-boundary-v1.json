@@ -46,6 +46,7 @@
     "tests/test_checklist_review.py",
     "tests/test_ci807_research_regression.py",
     "tests/test_ci_boundary_preview.py",
+    "tests/test_ci_chrome_warmup.py",
     "tests/test_ci_cohort823.py",
     "tests/test_ci_empty_association.py",
     "tests/test_ci_followup_contract.py",
