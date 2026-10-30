@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '6d4bc37'
+    at: '2026-10-30 13:47'
+    summary: 'fixture를 읽지 못한 경우를 보호 pass로 세지 않고, 늦게 나온 interop marker도 기다려 관측합니다.'
+    text: 'Classify unreadable fixtures as inconclusive and wait for delayed atomic interop markers'
   - sha: '6b16f3c'
     at: '2026-10-30 13:32'
     summary: '자손 lifecycle이 보장되지 않으면 detached probe 실행을 차단합니다.'
