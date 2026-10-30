@@ -8,7 +8,7 @@ Implemented fixtures: allowed work, external read/write, symlink/hardlink, envir
 
 Parent replacement and external-writer fixtures use a run-ID-bound child ready/continue barrier and a host mutation witness. The child must read the original bytes after the host sees changed bytes; a denial, missing response, timeout or failed host mutation is inconclusive. This tests a synthetic arrangement, not sealed storage. Symlink creation may be unavailable on Windows.
 
-The detached-child fixture starts a finite synthetic descendant, waits for its ready marker, then signals it after the launcher exits. A matching host-observed marker is a failure. An observed PID exit before the earliest natural timeout is reported separately, but is inconclusive: it does not authenticate the cause or a supervisor cleanup receipt. A missing marker or PID observation is never proof of cleanup.
+The detached-child case is unsupported before launch for every current launcher, including direct execution: none provides trusted descendant lifecycle ownership. A future authenticated lifecycle backend is required before enabling it; no flag or receipt alone establishes that ownership or protection.
 
 On Windows, `--interop-distro labhq-666-fixture` opts into synthetic Windows-to-WSL and WSL-to-Windows execution probes. The reverse probe asks WSL Python to execute the Windows Python fixture, which writes a run-bound host marker. A matching marker is a failure even if the child response is lost; absent markers and launch errors are inconclusive. Neither direction exercises a real sandbox. The current fixture has automount and interop disabled; failures in it do not prove protection.
 

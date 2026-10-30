@@ -16,8 +16,7 @@ def test_unisolated_process_exposes_fixtures():
     assert result["run_id"]
     assert result["cases"]["external_writer"] == {"status": "fail", "host_witness": True}
     assert result["cases"]["parent_replace"]["status"] in ("fail", "inconclusive")
-    assert result["cases"]["detached_child"] == {"status": "fail", "host_witness": True,
-                                                   "early_exit_observed": False}
+    assert result["cases"]["detached_child"]["status"] == "unsupported"
     for case in ("control_hook", "tool_use_hook"):
         assert result["cases"][case] == {"status": "pass", "host_witness": True,
                                           "scope": "direct_function_only"}
@@ -106,74 +105,42 @@ def test_missing_process_observation_is_unknown(tmp_path):
     assert probe.synthetic_writer_alive(tmp_path) is None
 
 
-def test_witnessed_detached_violation_survives_unknown_cleanup(monkeypatch):
-    wait = probe.wait_synthetic_writer
-    def unknown_after_reaping(work):
-        wait(work)
-        return False
-    monkeypatch.setattr(probe, "wait_synthetic_writer", unknown_after_reaping)
-    result = probe.run([])
-    assert result["cases"]["detached_child"]["status"] == "fail"
-    assert result["cases"]["detached_child"]["host_witness"] is True
-
-
-def test_detached_witness_after_slow_launcher(monkeypatch):
-    import time
+def test_detached_probe_never_launches_without_lifecycle(monkeypatch, tmp_path):
     run = probe.subprocess.run
-    def delayed(argv, **kwargs):
-        if "detached_child" in argv:
-            time.sleep(3.2)
+    popen = probe.subprocess.Popen
+    calls = []
+
+    def guarded_run(argv, **kwargs):
+        calls.append(argv)
+        assert "detached_child" not in argv
+        assert "--detached-writer" not in argv
         return run(argv, **kwargs)
-    monkeypatch.setattr(probe.subprocess, "run", delayed)
-    result = probe.run([])
-    assert result["cases"]["detached_child"]["status"] == "fail"
-    assert result["cases"]["detached_child"]["host_witness"] is True
 
+    def guarded_popen(argv, **kwargs):
+        calls.append(argv)
+        assert "detached_child" not in argv
+        assert "--detached-writer" not in argv
+        return popen(argv, **kwargs)
 
-def test_detached_witness_after_slow_launcher_return(monkeypatch):
-    import time
-    run = probe.subprocess.run
-    def delayed(argv, **kwargs):
-        result = run(argv, **kwargs)
-        if "detached_child" in argv:
-            time.sleep(4.5)
-        return result
-    monkeypatch.setattr(probe.subprocess, "run", delayed)
-    assert probe.run([])["cases"]["detached_child"]["host_witness"] is True
-
-
-def test_timeout_cancels_real_detached_writer_with_long_lifetime(monkeypatch):
-    import threading
-    import time
-    run = probe.subprocess.run
-    writers = []
-
-    def timeout_after_writer_ready(argv, **kwargs):
-        if "detached_child" not in argv:
-            return run(argv, **kwargs)
-        root = argv[-1]
-        writer = subprocess.Popen([os.sys.executable, probe.__file__, "--detached-writer", root],
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        writers.append(writer)
-        # Reap the direct test child on POSIX, where a zombie still has a PID.
-        threading.Thread(target=writer.wait, daemon=True).start()
-        ready = probe.Path(root) / "work" / "detached.ready"
-        deadline = time.monotonic() + 5
-        while not ready.exists() and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert ready.exists()
-        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
-
-    monkeypatch.setattr(probe.subprocess, "run", timeout_after_writer_ready)
-    try:
-        result = probe.run([], timeout=60)
-        assert result["cases"]["detached_child"]["status"] == "inconclusive"
-        assert len(writers) == 1 and writers[0].poll() is not None
-    finally:
-        for writer in writers:
-            if writer.poll() is None:
-                writer.kill()
-                writer.wait()
+    monkeypatch.setattr(probe.subprocess, "run", guarded_run)
+    monkeypatch.setattr(probe.subprocess, "Popen", guarded_popen)
+    launcher = tmp_path / "launcher.py"
+    marker = tmp_path / "delayed-started"
+    launcher.write_text(
+        "import pathlib, subprocess, sys, time\n"
+        "marker, *command = sys.argv[1:]\n"
+        "if 'detached_child' in command:\n"
+        "    pathlib.Path(marker).write_text('started')\n"
+        "    time.sleep(1)\n"
+        "sys.exit(subprocess.call(command))\n", encoding="utf-8")
+    for prefix in ([], [os.sys.executable, str(launcher), str(marker)]):
+        result = probe.run(prefix, timeout=2)
+        assert result["cases"]["detached_child"] == {
+            "status": "unsupported",
+            "reason": "trusted descendant lifecycle ownership unavailable",
+        }
+        assert result["protection_verified"] is False
+    assert calls and not marker.exists()
 
 
 def test_launcher_environment_excludes_host_secret(monkeypatch):

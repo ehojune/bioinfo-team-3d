@@ -351,36 +351,9 @@ def run(prefix: list[str], python: str = sys.executable, timeout: float = 10,
                     results[case] = {"status": "fail" if witnessed else "inconclusive", "host_witness": witnessed}
                 continue
             if case == "detached_child":
-                try:
-                    proc = subprocess.run([*prefix, python, script, "--child", case, str(root)],
-                                          cwd=work, env=env, capture_output=True, timeout=timeout)
-                    valid = (proc.returncode == 0 and proc.stdout in
-                             (b"boundary-probe-child\n", b"boundary-probe-child\r\n"))
-                    ready = work / "detached.ready"
-                    valid = valid and ready.exists() and ready.read_text(encoding="ascii") == run_id
-                    if valid:
-                        publish_signal(work / "detached.trigger", run_id)
-                        deadline = time.monotonic() + 2
-                        marker = work / "detached.marker"
-                        early_exit = False
-                        while not marker.exists() and time.monotonic() < deadline:
-                            if synthetic_writer_alive(work) is False:
-                                early_exit = True
-                                break
-                            time.sleep(0.01)
-                        witnessed = marker.exists() and marker.read_text(encoding="ascii") == run_id
-                        results[case] = {"status": "fail" if witnessed else "inconclusive", "host_witness": witnessed,
-                                         "early_exit_observed": early_exit}
-                    else:
-                        results[case] = {"status": "inconclusive", "host_witness": False}
-                except (OSError, subprocess.TimeoutExpired):
-                    results[case] = {"status": "inconclusive", "host_witness": False}
-                # Wake the synthetic writer even when the launcher timed out before
-                # the normal trigger. Its lifetime may exceed the cleanup wait.
-                publish_signal(work / "detached.cancel", run_id)
-                if ((work / "detached.ready").exists() and not wait_synthetic_writer(work)
-                        and not results[case].get("host_witness")):
-                    results[case] = {"status": "inconclusive", "host_witness": False}
+                # No current launcher provides trusted descendant lifecycle ownership.
+                results[case] = {"status": "unsupported",
+                                 "reason": "trusted descendant lifecycle ownership unavailable"}
                 continue
             if case in ("parent_replace", "external_writer"):
                 results[case] = mutation_probe(case, prefix, python, script, root, work,
