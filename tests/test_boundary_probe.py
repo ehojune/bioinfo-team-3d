@@ -164,7 +164,8 @@ def test_integration_missing_modules_is_inconclusive(tmp_path):
     assert result["protection_verified"] is False
 
 
-def test_integration_receipt_without_ready_witness_is_inconclusive(monkeypatch):
+def test_integration_receipt_without_ready_witness_is_inconclusive(monkeypatch, tmp_path):
+    called = []
     class Receipt:
         def to_dict(self):
             return {"run_id": "synthetic", "preparation": "diagnostic_ready",
@@ -174,10 +175,13 @@ def test_integration_receipt_without_ready_witness_is_inconclusive(monkeypatch):
     class Boundary:
         @staticmethod
         def diagnostic_broker_probe(factory, on_ready):
+            called.append(True)
             return Receipt()  # A receipt alone is not a socket witness.
 
     monkeypatch.setattr(integration_probe, "load", lambda path, name: Boundary())
-    result = integration_probe.run(None, None)
+    result = integration_probe.run(tmp_path / "boundary.py", tmp_path / "broker.py")
+    assert called == [True]
+    assert result["receipt"]["run_id"] == "synthetic"
     assert result["status"] == "inconclusive"
     assert result["protection_verified"] is False
 
