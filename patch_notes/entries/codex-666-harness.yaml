@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '1de9508'
+    at: '2026-10-30 16:17'
+    summary: '해시한 소스 바이트를 실행하고 broker bytecode cache를 검사합니다.'
+    text: 'Bind diagnostics to compiled source bytes'
   - sha: 'f4ff7d8'
     at: '2026-10-30 16:10'
     summary: '진단 소스 해시와 잘못된 broker 프레임 거절을 검증합니다.'
