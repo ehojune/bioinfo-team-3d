@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: 'd9e499a'
+    at: '2026-10-30 12:40'
+    summary: '경계 진단 테스트를 Windows 검증 대상에 등록합니다.'
+    text: 'Register boundary probe Windows tests'
   - sha: 'a54ea98'
     at: '2026-10-30 12:24'
     summary: '합성 upstream으로 process broker의 고정 응답을 검사합니다.'
