@@ -108,14 +108,15 @@ def _engine_model(data: dict, agent: dict | None) -> tuple[str | None, str | Non
             run.get("model_id") or run.get("model") or provenance.get("model") or agent.get("model"))
 
 
-def task_cost_item(result: Any, agent: dict | None = None, *, as_of: date | None = None) -> dict:
+def task_cost_item(result: Any, agent: dict | None = None, *, as_of: date | None = None,
+                   model_tier: str | None = None) -> dict:
     """Classify a TaskResult (or its dump) with the engine and model the runner recorded for it."""
     data = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result or {})
     engine, model = _engine_model(data, agent)
     item = classify_cost(engine=engine, model=model, usage=data.get("usage") or {},
                          usage_known=data.get("usage_known", True) is not False, cost_usd=data.get("cost_usd"),
                          cost_known=data.get("cost_known"), task_id=str(data.get("task_id") or ""), as_of=as_of)
-    return _with_agent(item, data, agent)
+    return _with_agent(item, data, agent, model_tier)
 
 
 def outcome_unknown_item(result: Any, agent: dict | None = None) -> dict:
@@ -126,11 +127,12 @@ def outcome_unknown_item(result: Any, agent: dict | None = None) -> dict:
                         "status": "unknown", "usd": None, "reason": "outcome_unknown"}, data, agent)
 
 
-def _with_agent(item: dict, data: dict, agent: dict | None) -> dict:
+def _with_agent(item: dict, data: dict, agent: dict | None, model_tier: str | None = None) -> dict:
     """Name the staff member, so a request's cost can be read per agent (#57 ⑦ follow-up)."""
     agent_id = data.get("agent_id") or (agent or {}).get("id")
     item = {**item, "agent_id": str(agent_id)} if agent_id else item
-    tier = (agent or {}).get("model_tier")
+    # A step run on its own tier (#625, step 2) is recorded at that tier, so a deliberate lowering is not a mismatch.
+    tier = model_tier or (agent or {}).get("model_tier")
     return {**item, "model_tier": tier} if tier else item
 
 

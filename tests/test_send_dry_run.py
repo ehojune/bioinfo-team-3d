@@ -206,3 +206,17 @@ def test_dry_run_previews_the_model_of_the_engine_the_runner_will_force():
     assert estimate_call(Settings.model_validate({"model_tiers": table}), agent, stage="조사")["model"] == "haiku"
     forced = Settings.model_validate({"model_tiers": table, "runner": {"force_engine": "codex"}})
     assert estimate_call(forced, agent, stage="조사")["model"] == "gpt-6-luna"
+
+
+def test_a_step_tier_names_the_model_before_the_staff_members_own_and_only_for_the_engine_it_runs_on():
+    """#625 step 2: the gateway sends a step's tier already capped at the staff member's declared tier."""
+    tiered = _tiers(fast={"claude_code": "haiku"}, balanced={"claude_code": "sonnet"})
+    declared = AgentSpec(id="analyst", name="A", role="r", model="opus", model_tier="reasoning")
+    assert _runner_agent(tiered, declared).model == "opus"                                   # no step tier: as before
+    lowered = _runner_agent(tiered, declared, model_tier="fast")
+    assert lowered.model == "haiku" and lowered.model_tier == "fast"                        # the step's decision wins
+    assert _runner_agent(tiered, declared, model_tier="reasoning").model == "opus"          # no entry in the table
+    assert _runner_agent(Settings(), declared, model_tier="fast").model == "opus"           # an empty table changes nothing
+    assert _runner_agent(tiered, declared, model_tier="turbo").model == "opus"              # not a tier
+    other = AgentSpec(id="analyst", name="A", role="r", engine="codex", model="gpt-6.1-sol", model_tier="reasoning")
+    assert _runner_agent(tiered, other, model_tier="fast").model == "gpt-6.1-sol"           # no codex entry: untouched

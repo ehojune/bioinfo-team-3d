@@ -471,3 +471,77 @@ def test_the_solo_prompt_carries_the_script_declaration_rule():
     assert "- " + cso.SCRIPT_OUTPUTS_PLAN_RULE + "\n" in cso.SOLO_PROMPT
     rendered = cso.SOLO_PROMPT.format(request="표 하나 만들어 줘", assumptions="없음")
     assert cso.SCRIPT_OUTPUTS_PLAN_RULE in rendered  # still there once the request and assumptions are filled in
+
+
+# ---------------------------------------------------------------- #625 step 2: a step's own model_tier (PR A)
+
+@pytest.mark.parametrize("requested, declared, phase, tier, warned", [
+    ("fast", "reasoning", "analysis", "fast", False),            # lowered: kept
+    ("balanced", "reasoning", None, "balanced", False),          # a general plan step has no phase
+    ("reasoning", "reasoning", "analysis", None, False),         # the same as declared: nothing to carry
+    ("reasoning", "balanced", None, None, True),                 # never raised above the staff member's tier
+    ("fast", "reasoning", "validation", "balanced", True),       # a validation step stays at balanced or above
+    ("fast", "reasoning", "report", "balanced", True),
+    ("fast", "balanced", "validation", None, True),              # raised to the floor, which is the declared tier: nothing to carry
+    ("fast", "fast", "validation", None, True),                  # the floor is above what the member may run: dropped
+    ("fast", None, "analysis", None, True),                      # a member that declares no tier takes none
+    ("turbo", "reasoning", "analysis", None, True),              # not a tier
+])
+def test_clamp_step_tier_only_lowers_and_keeps_the_floor(requested, declared, phase, tier, warned):
+    got_tier, note = cso.clamp_step_tier("s1", requested, declared, phase)
+    assert got_tier == tier and bool(note) is warned
+
+
+def _tiered(raw_tier, agent="analyst", phase=None):
+    return [{"id": "a", "agent_id": agent, "instruction": "x", "depends_on": [], "outputs": ["outputs/t.tsv"],
+             "model_tier": raw_tier, **({"phase": phase} if phase else {})}]
+
+
+def test_validate_steps_drops_the_step_tier_unless_the_rules_are_on_and_clamps_it_when_they_are():
+    steps, warnings = validate_steps(_tiered("fast"), {"analyst"}, 10)
+    assert "model_tier" not in steps[0] and warnings == []             # off: exactly the steps of before
+    rules = {"agents": {"analyst": "reasoning"}}
+    steps, warnings = validate_steps(_tiered("fast"), {"analyst"}, 10, tier_rules=rules)
+    assert steps[0]["model_tier"] == "fast" and warnings == []
+    steps, warnings = validate_steps(_tiered("fast", phase="validation"), {"analyst"}, 10, tier_rules=rules)
+    assert steps[0]["model_tier"] == "balanced" and "changed to balanced" in warnings[0]
+    steps, warnings = validate_steps(_tiered("reasoning"), {"analyst"}, 10, tier_rules={"agents": {"analyst": "fast"}})
+    assert "model_tier" not in steps[0] and "changed to fast" in warnings[0]
+    steps, warnings = validate_steps(_tiered("fast"), {"analyst"}, 10, tier_rules={"agents": {}})
+    assert "model_tier" not in steps[0] and "declares no model tier" in warnings[0]
+
+
+def _penguin_plan_with_tiers(**tiers):
+    plan = json.loads(PENGUINS_PLAN.read_text(encoding="utf-8"))["plan"]
+    for step in plan["steps"]:
+        if step["id"] in tiers:
+            step["model_tier"] = tiers[step["id"]]
+    return plan
+
+
+@pytest.mark.asyncio
+async def test_cso_off_ignores_a_step_tier_and_dispatches_none():
+    hub = penguins_hub([_penguin_plan_with_tiers(compute_qc_metrics="fast")])
+    hub.agents["analyst"]["model_tier"] = "reasoning"
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert all("model_tier" not in s for s in req["plan"]["steps"])
+    assert all("model_tier" not in t.meta for t in hub.calls)
+
+
+@pytest.mark.asyncio
+async def test_cso_on_caps_the_step_tier_and_hands_it_to_the_task():
+    hub = penguins_hub([_penguin_plan_with_tiers(compute_qc_metrics="fast", materialize_data="reasoning")])
+    hub.s.orchestrator.step_model_tiers = True
+    hub.agents["analyst"]["model_tier"] = "reasoning"          # may be lowered to fast
+    hub.agents["data_steward"]["model_tier"] = "balanced"      # asked for reasoning: capped, so run as declared
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    by_step = {s["id"]: s for s in req["plan"]["steps"]}
+    assert by_step["compute_qc_metrics"]["model_tier"] == "fast" and "model_tier" not in by_step["materialize_data"]
+    assert any("step materialize_data: model_tier reasoning changed to balanced" in w for w in req["plan"]["warnings"])
+    tasks = {t.meta.get("step_id"): t for t in hub.calls if t.meta["kind"] == "step"}
+    assert tasks["compute_qc_metrics"].meta["model_tier"] == "fast"
+    assert "model_tier" not in tasks["materialize_data"].meta and "model_tier" not in tasks["qc_review"].meta

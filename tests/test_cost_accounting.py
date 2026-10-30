@@ -241,3 +241,19 @@ def test_an_unobserved_task_never_produces_a_tier_mismatch_warning():
     lost = {**ran, "task_id": "b", "status": "unknown", "usd": None, "reason": "outcome_unknown"}
     assert aggregate_costs({"b": lost}, tiers)["warnings"] == []
     assert aggregate_costs({"a": ran}, tiers)["warnings"] == ["model_tier_mismatch:lit_scout:fast:claude-opus-5-5"]
+
+
+def test_a_step_run_on_its_own_tier_is_recorded_at_that_tier_so_a_deliberate_lowering_is_not_a_mismatch():
+    from labhq.costs import task_cost_item
+    from labhq.settings import Settings
+
+    tiers = Settings.model_validate({"model_tiers": {"fast": {"claude_code": "haiku"},
+                                                     "reasoning": {"claude_code": "opus"}}}).model_tiers
+    agent = {"id": "analyst", "engine": "claude_code", "model": "claude-haiku-5-5", "model_tier": "reasoning"}
+    result = {"task_id": "t1", "agent_id": "analyst", "usage": {}, "cost_usd": 1.0, "cost_known": True}
+    plain = task_cost_item(result, agent)
+    assert plain["model_tier"] == "reasoning"                                        # as declared
+    lowered = task_cost_item(result, agent, model_tier="fast")
+    assert lowered["model_tier"] == "fast"
+    assert aggregate_costs({"a": plain}, tiers)["warnings"] == ["model_tier_mismatch:analyst:reasoning:claude-haiku-5-5"]
+    assert aggregate_costs({"a": lowered}, tiers)["warnings"] == []                   # the plan asked for it
