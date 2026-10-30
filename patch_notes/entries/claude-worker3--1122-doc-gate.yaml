@@ -8,3 +8,7 @@ rows:
   at: 2026-10-31 05:30
   text: 현재 PR도 커밋들이 바꾼 파일이 전부 보이지 않는 경로(tests, status, entries, ci)이면 문서 주기 검사에서 뺀다. 순 diff가 아니라 커밋별 파일의 합집합으로 판정해 README를 고쳤다 되돌린 PR은 계속 막는다. 판정을 invisible() 하나로 묶어 main 커밋과 현재 PR이 같이 쓴다
   summary: 시험 전용 PR이 main에 쌓인 보이는 커밋 때문에 막히던 문제를 없앱니다.
+- sha: '844fdcc'
+  at: 2026-10-31 06:10
+  text: changed_files와 changed_from_parent에 --no-renames를 줘 labhq/a.py를 tests/a.py로 옮긴 커밋의 원본 경로도 보게 한다. 옛 스크립트에서는 실패하고 새 스크립트에서는 통과하는 시험 하나를 더한다
+  summary: 제품 파일을 tests로 옮겨 문서 주기 gate를 빠져나가는 길을 막습니다.

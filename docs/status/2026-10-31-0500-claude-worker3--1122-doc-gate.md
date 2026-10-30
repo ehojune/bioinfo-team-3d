@@ -16,3 +16,7 @@
 ## 리뷰 후 추가 (rev2)
 - P1: `check()`가 현재 PR도 세던 문제. 커밋들이 바꾼 파일의 합집합이 전부 invisible이면 refresh 한도에 더하지 않는다. 순 diff가 아닌 합집합이라 README를 고쳤다 되돌린 PR은 계속 막힌다. 판정은 `invisible()` 하나로 main 커밋과 PR이 같이 쓴다.
 - 시험 2건 추가(시험 전용 PR 통과, 제품 코드 혼합 PR 차단). `tests/test_patch_notes.py` 21 passed.
+
+## 리뷰 후 추가 (rev3)
+- P2: rename 감지가 켜져 있으면 `git diff --name-only`가 목적지만 돌려줘 `labhq/` 파일을 `tests/`로 옮긴 커밋이 invisible로 면제됐다. 두 diff 호출에 `--no-renames`를 줬다.
+- 시험 1건(rename 커밋이 센다). 옛 스크립트로 실패, 새 스크립트로 통과를 확인했다. `tests/test_patch_notes.py` 22 passed.
