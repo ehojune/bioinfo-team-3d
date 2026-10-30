@@ -660,12 +660,12 @@ def test_figures_with_one_basename_keep_their_own_captions_and_source_tables():
              "code/s2/outputs/scripts/p2.py": "df = read('b.tsv'); save('plot.svg')\n"}
     rows = _figure_lines(report, ["figures/plot.svg", "figures/outputs-plot.svg"], targets, files, ["tables/a.tsv", "tables/b.tsv"])
     assert "첫째 그림" in rows[0] and "둘째 그림" in rows[1]
-    assert "tables/a.tsv" in rows[0] and "tables/b.tsv" in rows[0]  # same basename, so a shared script name cannot tell them apart
+    assert "tables/" not in rows[0] and "tables/" not in rows[1] and "구분하지 못했습니다" in rows[0]  # one name, two steps
     solo = _figure_lines("![표본](figures/orr.svg)\n", ["figures/orr.svg"], {}, {"code/x.py": "t = read('res.tsv'); save('orr.svg')\n"}, ["tables/res.tsv"])
     assert "원자료 [`tables/res.tsv`](tables/res.tsv)" in solo[0]
     assert "연결을 스크립트에서 찾지 못했습니다" in _figure_lines("", ["figures/q.svg"], {}, {}, ["tables/res.tsv"])[0]
     abstract = _figure_lines("", ["figures/graphical_abstract.svg"], {}, {}, ["tables/res.tsv"], True)[0]
-    assert "결과표의 숫자는 담지 않습니다" in abstract
+    assert "결과표에서 읽은 값이 아닙니다" in abstract
     written = _figure_lines("", ["figures/graphical_abstract.svg"], {"outputs/graphical_abstract.svg": "figures/graphical_abstract.svg"},
                             {"code/x.py": "t = read('res.tsv'); save('graphical_abstract.svg')\n"}, ["tables/res.tsv"], False)[0]
     assert "자동으로 그렸고" not in written and "tables/res.tsv" in written
@@ -682,6 +682,9 @@ def test_the_environment_section_lists_pinned_versions_or_says_none():
     assert len(none) == 1 and "환경 기록이 없습니다" in none[0]
     listed = _environment_lines({"run/environment/requirements.lock.txt": "pandas==2.2.2\nnumpy==1.26.4 ; python_version>'3'\n"})
     assert "run/environment/requirements.lock.txt" in listed[0]
-    assert "`numpy==1.26.4`" in listed[1] and "`pandas==2.2.2`" in listed[1]
+    assert "`numpy 1.26.4`" in listed[1] and "`pandas 2.2.2`" in listed[1]
+    poetry = _environment_lines({"run/environment/poetry.lock": '[[package]]\nname = "scipy"\nversion = "1.11.4"\n'})
+    conda = _environment_lines({"run/environment/environment.yml": "dependencies:\n  - numpy=1.26.4\n"})
+    assert "`scipy 1.11.4`" in poetry[1] and "`numpy 1.26.4`" in conda[1]
     bare = _environment_lines({"run/environment/requirements.lock.txt": "# empty\n"})
-    assert "버전은 확인하지 못했습니다" in bare[1]
+    assert "읽지 못했습니다" in bare[1]

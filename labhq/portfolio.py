@@ -1652,6 +1652,9 @@ def _figure_sources(figure_names: list[str], files: Mapping[str, str | bytes], t
     result: dict[str, list[str]] = {}
     for figure in figure_names:
         bases = {PurePosixPath(source).name for source in origin.get(figure, [figure])}
+        if sum(1 for other in figure_names if bases & {PurePosixPath(s).name for s in origin.get(other, [other])}) > 1:
+            result[figure] = []  # scripts cannot tell same-named figures apart, so no table is claimed for either
+            continue
         used = [body for body in scripts.values() if any(base in body for base in bases)]
         result[figure] = [table for table in table_names
                           if any(PurePosixPath(source).name in body for source in origin.get(table, [table]) for body in used)]
@@ -1666,22 +1669,32 @@ def _figure_lines(report: str, figure_names: list[str], source_targets: Mapping[
     for source, target in targets.items():
         origin.setdefault(target, []).append(source)
     data = _figure_sources(figure_names, files or {}, table_names or [], targets)
+
+    def duplicated(figure: str) -> bool:
+        def bases(item: str) -> set[str]:
+            return {PurePosixPath(source).name for source in origin.get(item, [item])}
+        return sum(1 for other in figure_names if bases(figure) & bases(other)) > 1
     rows = []
     for name in figure_names:  # a renamed duplicate (plot.svg -> outputs-plot.svg) keeps its own source's caption
         alt = _figure_caption(report, origin.get(name, []), name)
         shown = alt if alt and alt != PurePosixPath(name).name else "보고서에 그림 설명이 없습니다"
         tables = data.get(name) or []
         if generated_abstract and name == "figures/graphical_abstract.svg":
-            source = "보고서 본문의 요청·계획·결론 문장에서 자동으로 그렸고 결과표의 숫자는 담지 않습니다"
+            source = "요청·계획·결론 문장에서 자동으로 그렸습니다. 결론에 적힌 숫자는 문장에서 옮긴 것이고 결과표에서 읽은 값이 아닙니다"
         elif tables:
             source = "원자료 " + ", ".join(f"[`{table}`]({quote(table, safe='/')})" for table in tables[:4])
         else:
-            source = "원자료 표와의 연결을 스크립트에서 찾지 못했습니다"
+            source = ("같은 이름의 그림이 여러 개라 원자료를 구분하지 못했습니다" if duplicated(name)
+                      else "원자료 표와의 연결을 스크립트에서 찾지 못했습니다")
         rows.append(f"- [{PurePosixPath(name).name}]({quote(name, safe='/')}): {shown} ({source})")
     return rows or ["- 게시한 그림이 없습니다."]
 
 
-_PINNED = re.compile(r"^([A-Za-z0-9_.-]+)==([^;\s#]+)", re.M)
+_PINNED = (re.compile(r"^([A-Za-z0-9_.-]+)==([^;\s#]+)", re.M),  # requirements, pip freeze
+           re.compile(r"^\s*-\s+([A-Za-z0-9_.-]+)=([0-9][^=\s#]*)", re.M),  # conda environment.yml
+           re.compile(r'^name = "([^"]+)"\s*\nversion = "([^"]+)"', re.M),  # poetry.lock, uv.lock
+           re.compile(r'"([A-Za-z0-9_.-]+)":\s*{[^{}]*?"version":\s*"==([^"]+)"', re.S),  # Pipfile.lock
+           re.compile(r'"Package":\s*"([^"]+)",\s*"Version":\s*"([^"]+)"'))  # renv.lock
 
 
 def _environment_lines(files: Mapping[str, str | bytes]) -> list[str]:
@@ -1689,17 +1702,19 @@ def _environment_lines(files: Mapping[str, str | bytes]) -> list[str]:
     packages = {}
     for name in locks:
         body = files[name]
-        for pkg, version in _PINNED.findall(body if isinstance(body, str) else body.decode("utf-8", "replace")):
-            packages.setdefault(pkg, version)
+        text = body if isinstance(body, str) else body.decode("utf-8", "replace")
+        for pattern in _PINNED:
+            for pkg, version in pattern.findall(text):
+                packages.setdefault(pkg, version)
     if not locks:
         return ["- 환경 기록이 없습니다. 패키지와 언어 버전이 남지 않아, 같은 환경을 다시 만든다고 보장할 수 없습니다."]
     lines = [f"- 기록 파일: " + ", ".join(f"[`{name}`]({quote(name, safe='/')})" for name in locks[:4])]
     if packages:
         shown = sorted(packages.items())
-        lines.append("- 고정 버전: " + ", ".join(f"`{pkg}=={version}`" for pkg, version in shown[:15])
+        lines.append("- 기록된 버전: " + ", ".join(f"`{pkg} {version}`" for pkg, version in shown[:15])
                      + (f" 외 {len(shown) - 15}개" if len(shown) > 15 else ""))
     else:
-        lines.append("- 기록 파일에 `패키지==버전` 줄이 없어 버전은 확인하지 못했습니다.")
+        lines.append("- 기록 파일에서 패키지와 버전 쌍을 읽지 못했습니다. 파일을 직접 확인하세요.")
     return lines
 
 
