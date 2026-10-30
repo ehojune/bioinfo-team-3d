@@ -278,7 +278,19 @@ _EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_
 # Flip only when a protected alias or read grant hands the validated runner-local interpreter to consumers.
 ENVIRONMENT_ALIAS_AVAILABLE = False
 
+ACK_DRAIN_S = 5.0  # how long a reconnect waits for the acks it already received to commit (#1125)
+
+
 class Runner:
+    # Defaults for a Runner built without __init__ (tests do): no batch open, no ack in flight.
+    _batch_thread: threading.Thread | None = None
+    _reload_after_batch = False
+    _ack_high = 0
+    _ack_done = 0
+    _ack_task: asyncio.Task | None = None
+    _ack_error: BaseException | None = None
+    _shutdown_deadline: float | None = None  # time.monotonic() when `shutdown()` must be done
+
     def __init__(self, settings: Settings):
         settings.runner.validate_wsl()
         self.s = settings
@@ -288,6 +300,13 @@ class Runner:
         self._loop_thread: threading.Thread | None = None
         self._batch_thread: threading.Thread | None = None  # the writer thread while `_send_batch_now` holds its batch
         self._reload_after_batch = False
+        # The gateway acks every outbox row. The acks are cumulative, so those that arrive while one is committing
+        # share the next commit (#1125): `_ack_high` is the highest seq the gateway has stored, `_ack_done` the highest
+        # one whose rows are deleted.
+        self._ack_high = 0
+        self._ack_done = 0
+        self._ack_task: asyncio.Task | None = None
+        self._ack_error: BaseException | None = None
         # Tasks whose task.result is already queued in this run. A cancel that arrives while the result commits does
         # not stop the commit, so the cancel handler must not queue a second, "cancelled" one over it (#606).
         self._result_queued: set[str] = set()
@@ -424,6 +443,9 @@ class Runner:
                 self._ensure_local_watch()
             await asyncio.gather(*loops)
         finally:
+            # Acks already received are not left in memory. After a signal the wait is what is left of the shutdown's
+            # own deadline, so the whole exit stays inside it.
+            await self._ack_drain(raise_error=False, timeout=self._ack_wait_s(durable.EXIT_DRAIN_S))
             # Writes queued by the tasks that were just cancelled still finish (#606).
             await durable.adrain(durable.EXIT_DRAIN_S)
 
@@ -453,10 +475,56 @@ class Runner:
                     return
                 await asyncio.sleep(.05)
 
+        deadline = self._shutdown_deadline = time.monotonic() + timeout_s
         try:
             await asyncio.wait_for(finish(), timeout_s)
         except asyncio.TimeoutError:
             pass  # Durable outbox replay remains the fallback when the gateway cannot acknowledge in time.
+        # Every ack received so far is committed before this returns, inside the same deadline: an ack that does not
+        # finish in time leaves its rows in the outbox for replay.
+        await self._ack_drain(raise_error=False, timeout=max(0.0, deadline - time.monotonic()))
+
+    def _ack_nowait(self, seq: int) -> None:
+        """The gateway has stored every outbox row up to `seq`: start deleting them. Nothing waits: the first ack
+        commits at once, and the acks that arrive while it commits are merged into the next commit (cumulative, so
+        only the highest matters). A commit that failed is raised here, on the next ack, as it was when the ack was
+        committed inline."""
+        if self._ack_error is not None:
+            error, self._ack_error = self._ack_error, None
+            raise error
+        self._ack_high = max(self._ack_high, seq)
+        if self._ack_task is None or self._ack_task.done():
+            self._ack_task = asyncio.get_running_loop().create_task(self._ack_flush())
+
+    async def _ack_flush(self) -> None:
+        try:
+            while self._ack_done < self._ack_high:
+                high = self._ack_high
+                await self.store.aack(high)
+                self._ack_done = max(self._ack_done, high)
+        except Exception as exc:  # noqa: BLE001 - raised to the next caller, where the inline commit raised it
+            self._ack_error = exc
+
+    def _ack_wait_s(self, normal: float) -> float:
+        """How long a closing-down path may wait for the acks: `normal`, or what is left of an open shutdown deadline."""
+        if self._shutdown_deadline is None:
+            return normal
+        return max(0.0, min(normal, self._shutdown_deadline - time.monotonic()))
+
+    async def _ack_drain(self, *, raise_error: bool = True, timeout: float | None = None) -> None:
+        """Every ack noted so far is committed. Errors are raised unless the caller is closing down anyway. With a
+        `timeout` an unfinished commit is left to finish on its own: its rows stay in the durable outbox, are resent,
+        and the gateway dedups them."""
+        task = self._ack_task
+        if task is not None and not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout)
+            except asyncio.TimeoutError:
+                log.warning("runner %s: an ack commit is still running; its rows stay in the outbox", self.s.runner.id)
+                return
+        if raise_error and self._ack_error is not None:
+            error, self._ack_error = self._ack_error, None
+            raise error
 
     def send(self, obj: dict) -> None:
         if obj.get("type") not in {"runner.roster"}:
@@ -617,10 +685,19 @@ class Runner:
                     sender = asyncio.create_task(self._sender(ws))
                     try:
                         async for raw in ws:
-                            await self._on_message(json.loads(raw))
+                            msg = json.loads(raw)
+                            if msg.get("type") == "runner.ack":
+                                # Not waited for: the next messages are read while it commits, and the acks among them
+                                # share the next commit instead of one fsync each (#1125).
+                                self._ack_nowait(int(msg["runner_seq"]))
+                                continue
+                            await self._on_message(msg)
                     finally:
                         sender.cancel()
                         self.connected.clear()
+                        # A reconnect reloads the outbox from the store: commit the acks first, but a stuck commit must
+                        # not hold the reconnect (its rows are resent and deduped).
+                        await self._ack_drain(raise_error=False, timeout=self._ack_wait_s(ACK_DRAIN_S))
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -776,7 +853,8 @@ class Runner:
             self.broker.resolve_ask(msg["id"], msg.get("answer") or {})
             await self.asend({"type": "ask.ack", "id": msg["id"]})
         elif typ == "runner.ack":
-            await self.store.aack(int(msg["runner_seq"]))
+            self._ack_nowait(int(msg["runner_seq"]))
+            await self._ack_drain()  # a caller that waits for the ack gets it durable, as before
         elif typ == "registry.reload":
             self.registry.load()
             await asyncio.to_thread(self._refresh_wsl_readiness)

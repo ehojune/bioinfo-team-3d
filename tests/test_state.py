@@ -1746,3 +1746,137 @@ def test_a_failing_runner_batch_leaves_nothing_and_reloads_nothing(tmp_path, mon
     assert runner.store.pending() == [] and runner.store.get("accepted_task", "t1") is None
     assert reloads == []
     runner.store.close()
+
+
+# ---- #1125: acks that arrive while one commits share the next commit ---------------------------------------------
+def _runner_with_outbox(tmp_path, count):
+    runner = Runner(settings(tmp_path))
+    for n in range(count):
+        runner.send({"type": "agent.log", "data": {"n": n}})
+    return runner, [row["runner_seq"] for row in runner.store.pending()]
+
+
+@pytest.mark.asyncio
+async def test_acks_that_arrive_during_a_commit_share_the_next_one(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 8)
+    committed = []
+    real_aack = runner.store.aack
+
+    async def slow_aack(seq):
+        await asyncio.sleep(0.05)  # a commit waiting for a slow fsync
+        committed.append(seq)
+        await real_aack(seq)
+
+    runner.store.aack = slow_aack
+    runner._ack_nowait(seqs[0])  # the first ack starts its commit at once: nothing waits for company
+    await asyncio.sleep(0.01)
+    for seq in seqs[1:]:  # the rest arrive while it commits
+        runner._ack_nowait(seq)
+    await runner._ack_drain()
+    assert committed == [seqs[0], seqs[-1]]  # two commits for eight acks, the second one cumulative
+    assert runner.store.pending() == []
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_an_ack_goes_to_the_store_without_a_delay_when_nothing_else_is_waiting(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 3)
+    runner._ack_nowait(seqs[1])
+    await asyncio.wait_for(runner._ack_drain(), 5)  # no timer: it is committed as soon as the loop runs it
+    assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[2]]
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_runner_ack_message_returns_once_its_rows_are_deleted(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 4)
+    await runner._on_message({"type": "runner.ack", "runner_seq": seqs[2]})  # as before: awaited means durable
+    assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[3]]
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_ack_commit_reaches_the_next_ack_and_a_waiting_caller(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 4)
+
+    async def failing_aack(seq):
+        raise OSError("the disk is full")
+
+    runner.store.aack = failing_aack
+    runner._ack_nowait(seqs[0])
+    await asyncio.sleep(0.01)
+    with pytest.raises(OSError, match="disk is full"):
+        runner._ack_nowait(seqs[1])  # as when the ack was committed inline: the connection sees the failure
+    with pytest.raises(OSError, match="disk is full"):
+        await runner._on_message({"type": "runner.ack", "runner_seq": seqs[2]})
+    assert len(runner.store.pending()) == 4  # nothing was deleted: the rows are resent, and the gateway dedups
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_commits_the_acks_it_already_received(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 5)
+    runner._ack_nowait(seqs[3])
+    await runner.shutdown(timeout_s=0.05)
+    assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[4]]
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stays_inside_its_deadline_when_an_ack_commit_hangs(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 3)
+    hung = asyncio.Event()
+
+    async def hanging_aack(seq):
+        await hung.wait()  # a commit stuck behind a stalled disk
+
+    runner.store.aack = hanging_aack
+    runner._ack_nowait(seqs[1])
+    started = time.monotonic()
+    await asyncio.wait_for(runner.shutdown(timeout_s=0.2), 3)  # returns, as the documented bounded shutdown does
+    assert time.monotonic() - started < 1.5
+    assert len(runner.store.pending()) == 3  # nothing was deleted: the rows stay in the outbox for replay
+    hung.set()
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_drain_with_a_timeout_leaves_the_commit_to_finish_on_its_own(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 3)
+    real_aack = runner.store.aack
+
+    async def slow_aack(seq):
+        await asyncio.sleep(0.3)
+        await real_aack(seq)
+
+    runner.store.aack = slow_aack
+    runner._ack_nowait(seqs[1])
+    started = time.monotonic()
+    await runner._ack_drain(timeout=0.05)
+    assert time.monotonic() - started < 0.25  # gave up waiting, did not cancel the commit
+    await runner._ack_drain()  # the commit is still running and finishes
+    assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[2]]
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_the_exit_after_a_shutdown_shares_the_shutdowns_deadline(tmp_path):
+    """After a signal `shutdown()` runs, then the entry point cancels `run_forever`, whose exit also drains the acks:
+    that wait is what is left of the shutdown's deadline, not a second 30 s."""
+    runner, seqs = _runner_with_outbox(tmp_path, 3)
+    assert runner._ack_wait_s(30.0) == 30.0  # no shutdown yet: the normal wait
+    hung = asyncio.Event()
+
+    async def hanging_aack(seq):
+        await hung.wait()
+
+    runner.store.aack = hanging_aack
+    runner._ack_nowait(seqs[1])
+    await runner.shutdown(timeout_s=0.2)
+    assert runner._ack_wait_s(30.0) < 0.1  # the deadline is used up (within a coarse Windows clock tick), not 30 s
+    started = time.monotonic()
+    await runner._ack_drain(raise_error=False, timeout=runner._ack_wait_s(30.0))  # what the exit path runs
+    assert time.monotonic() - started < 0.2
+    assert len(runner.store.pending()) == 3
+    hung.set()
+    runner.store.close()
