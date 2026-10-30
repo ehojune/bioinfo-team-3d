@@ -74,7 +74,7 @@ from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .lookup_admission import ENV as LOOKUP_ADMISSION_ENV, FILE as LOOKUP_ADMISSION_FILE, LookupAdmission
 from .system_ca import CA_ENV, system_ca_pem
-from .step_inputs import stage_inputs, stage_precedent_texts, staging_problem
+from .step_inputs import folder_files, linked_files, stage_inputs, stage_precedent_texts, staging_problem
 from ..research.precedent_texts import step_note as precedent_step_note
 from .workspace import (InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, resolved_zones,
                         restricted_zones)
@@ -2517,24 +2517,47 @@ class Runner:
                 result.missing_outputs = list(dict.fromkeys([*result.missing_outputs, *missing_required]))
                 result.error = "incomplete: missing outputs: " + ", ".join(result.missing_outputs)
             if declared_dirs and result.ok and output_scan_notes:
-                # The bounded walk skipped part of outputs/ (too deep, too many entries, unreadable): a declared folder
-                # would hand a later step only the files it did see, with nothing saying the rest is missing (#1058).
-                result.ok = False
-                result.error = ("incomplete: the outputs scan is incomplete, so declared folder(s) "
-                                f"{', '.join(declared_dirs)} cannot be collected whole: "
-                                + "; ".join(dict.fromkeys(output_scan_notes)))
+                # The bounded walk of outputs/ skipped something (too deep, too many entries, unreadable). That only
+                # matters for a declared folder the walk did not see whole: each folder is walked on its own, and an
+                # unrelated subtree or a note from an earlier scan does not fail it (#1058, #1065).
+                seen = {row["path"] for row in output_records}
+                folder_problems = []
+                for folder in declared_dirs:
+                    paths, why = await asyncio.to_thread(
+                        folder_files, ws.dir, folder, self.s.runner.reference_scan_max_entries,
+                        self.s.runner.reference_scan_max_depth)
+                    if why:
+                        folder_problems.append(f"{folder}: {why}")
+                    elif unseen := [path for path in paths if path not in seen]:
+                        folder_problems.append(f"{folder}: the scan did not record {len(unseen)} file(s), "
+                                               f"for example {unseen[0]}")
+                if folder_problems:
+                    result.ok = False
+                    result.error = ("incomplete: the outputs scan is incomplete, so declared folder(s) "
+                                    f"{', '.join(declared_dirs)} cannot be collected whole: "
+                                    + "; ".join(folder_problems))
             if declared_dirs and result.ok:
                 # A later step stages at most this many files and bytes of ONE ancestor, folder files and plain
                 # declared files together, and refuses the whole ancestor otherwise (#1058): the producer must not
                 # pass what no later step can take.
                 sizes = {row["path"]: int(row.get("size") or 0) for row in output_records}
+                linked = set(await asyncio.to_thread(linked_files, ws.dir, result.outputs))
                 problem = staging_problem(result.outputs, result.output_sha256, sizes,
                                           self.s.runner.input_hash_max_file_bytes,
-                                          self.s.runner.input_hash_max_total_bytes)
+                                          self.s.runner.input_hash_max_total_bytes, linked)
                 if problem:
                     result.ok = False
                     result.error = (f"incomplete: declared folder(s) {', '.join(declared_dirs)} make the step collect "
                                     f"outputs a later step would refuse: {problem}")
+            if result.ok and not declared_dirs and task.meta.get("kind") != "direct":
+                # A hard-linked output is hashed like any other, but a later step refuses it and with it the
+                # whole ancestor; steps that declare a folder get the same check inside the staging check (#1065).
+                # Every collected path, optional and unreported ones too: a later step stages the whole list.
+                linked_declared = await asyncio.to_thread(linked_files, ws.dir, result.outputs)
+                if linked_declared:
+                    result.ok = False
+                    result.error = ("incomplete: a later step refuses a hard-linked output: "
+                                    + ", ".join(linked_declared))
             if missing_optional:
                 result.missing_optional_outputs = list(dict.fromkeys([
                     *result.missing_optional_outputs, *missing_optional]))
