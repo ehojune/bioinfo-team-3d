@@ -1,5 +1,9 @@
 pr: 1064
 rows:
+  - sha: "a279b62"
+    at: "2026-10-30 16:52"
+    summary: "source와 ancestor의 중복 object identity를 거부합니다."
+    text: "test: reject duplicate pinned source and ancestor identities"
   - sha: "d7d2dd4"
     at: "2026-10-30 16:48"
     summary: "supervisor와 child가 같은 identity인 관측 계약을 거부합니다."
