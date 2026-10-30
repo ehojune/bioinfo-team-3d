@@ -1166,6 +1166,24 @@ def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], 
         refused_index[key] = len(refused)
         refused.append({"row_type": row_type, "row_id": row_id, "reason": reason})
 
+    # A claim the step never declared is not this step's answer. Refusing it (and its links) keeps the rest of the
+    # result, which the ledger checks below still judge; leaving it failed the whole step when it came with an
+    # otherwise salvageable row defect (#1054). When every claim is outside the step, nothing is left to keep.
+    step = next(step for step in parsed_plan.steps if step.id == expected_step_id)
+    declared = set(step.claim_ids)
+    claim_rows = candidate.get("claims") or []
+    outside = [str(row["id"]) for row in claim_rows
+               if isinstance(row, dict) and row.get("id") and str(row["id"]) not in declared]
+    if outside and len(outside) < len(claim_rows):
+        reason = f"claim is outside the claim_ids {step.claim_ids} that step {step.id} declared"
+        for claim_id in outside:
+            refuse("claim", claim_id, reason)
+            unsupported.append({"claim_id": claim_id, "reason": reason})
+        candidate["claims"] = [row for row in claim_rows
+                               if not (isinstance(row, dict) and str(row.get("id")) in outside)]
+        candidate["links"] = [row for row in candidate.get("links") or []
+                              if not (isinstance(row, dict) and str(row.get("claim_id")) in outside)]
+
     limit = sum(len(candidate.get(name) or []) for name in ("claims", "evidence", "links")) + 1
     for _ in range(limit):
         try:

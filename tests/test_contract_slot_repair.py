@@ -326,3 +326,92 @@ async def test_configured_dev_log_keeps_report_and_local_fallback_deduplicates(t
         assert record['result']['dev_reports'][-1]['step_id'] == 's4'
     finally:
         hub.store.close()
+
+
+# ---------- #1054: one wrong group beside an out-of-step claim must not fail the whole step ----------
+
+def _recited_result(extra_claim=False):
+    import copy
+
+    from tests.test_research_cp2 import _extra_observation, _standalone_result
+
+    plan, result = _standalone_result()
+    result = copy.deepcopy(result)
+    recited = _extra_observation("e_recited")
+    recited["source"] = copy.deepcopy(result["evidence"][0]["source"])
+    recited["independence_group"] = "other_group"  # the same source declared in a second group
+    result["evidence"].append(recited)
+    if extra_claim:
+        extra = copy.deepcopy(result["claims"][0])
+        extra["id"] = "c_extra"
+        result["claims"].append(extra)
+        result["links"].append({"claim_id": "c_extra", "claim_revision": 1, "evidence_id": "e1",
+                                "relation": "supports", "rationale": "same table"})
+    return plan, result
+
+
+def test_recited_source_alone_refuses_only_the_second_row():
+    from labhq.research.contract import salvage_research_result
+
+    plan, result = _recited_result()
+    salvaged, refused, unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+    assert problems == [] and salvaged is not None and unsupported == []
+    assert [row.id for row in salvaged.evidence] == ["e1"]
+    assert [(row["row_type"], row["row_id"]) for row in refused] == [("evidence", "e_recited")]
+
+
+def test_a_claim_outside_the_step_no_longer_fails_a_result_with_a_recited_source():
+    from labhq.research.contract import salvage_research_result
+
+    plan, result = _recited_result(extra_claim=True)
+    salvaged, refused, unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+    assert problems == [] and salvaged is not None
+    assert [claim.id for claim in salvaged.claims] == ["c1"]
+    assert [row.id for row in salvaged.evidence] == ["e1"]
+    assert all(link.claim_id == "c1" for link in salvaged.links)
+    assert {(row["row_type"], row["row_id"]) for row in refused} == {("evidence", "e_recited"), ("claim", "c_extra")}
+    assert [row["claim_id"] for row in unsupported] == ["c_extra"]
+    assert "outside the claim_ids" in unsupported[0]["reason"]
+
+
+def test_an_out_of_step_claim_alone_is_refused_and_the_result_is_kept():
+    import copy
+
+    from labhq.research.contract import salvage_research_result
+    from tests.test_research_cp2 import _standalone_result
+
+    plan, result = _standalone_result()
+    result = copy.deepcopy(result)
+    extra = copy.deepcopy(result["claims"][0])
+    extra["id"] = "c_extra"
+    result["claims"].append(extra)
+    salvaged, refused, unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+    assert problems == [] and salvaged is not None and [claim.id for claim in salvaged.claims] == ["c1"]
+    assert [row["claim_id"] for row in unsupported] == ["c_extra"]
+
+
+def test_a_result_with_no_claim_of_the_step_still_fails():
+    import copy
+
+    from labhq.research.contract import salvage_research_result
+    from tests.test_research_cp2 import _standalone_result
+
+    plan, result = _standalone_result()
+    result = copy.deepcopy(result)
+    result["claims"][0]["id"] = "c_other"
+    result["links"] = [{**link, "claim_id": "c_other"} for link in result["links"]]
+    salvaged, _refused, _unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+    assert salvaged is None and any("outside the claim_ids" in problem for problem in problems)
+
+
+def test_an_undeclared_evidence_slot_is_still_not_salvaged():
+    import copy
+
+    from labhq.research.contract import salvage_research_result
+    from tests.test_research_cp2 import _standalone_result
+
+    plan, result = _standalone_result()
+    result = copy.deepcopy(result)
+    result["evidence"][0]["slots"] = ["not_a_declared_slot"]
+    salvaged, _refused, _unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+    assert salvaged is None and problems
