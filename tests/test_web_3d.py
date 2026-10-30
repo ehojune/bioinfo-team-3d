@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -19,6 +18,7 @@ from starlette.websockets import WebSocketDisconnect
 from labhq.gateway.server import WEB, create_app
 from labhq.settings import Settings
 from labhq.util import free_port
+from tests.support.node_binary import node_binary, node_env
 
 
 @pytest.fixture
@@ -190,7 +190,7 @@ NODE_WEB_TESTS = [
 
 @pytest.mark.parametrize('filename,marker', NODE_WEB_TESTS)
 def test_office_in_node(filename, marker):
-    node = shutil.which('node')
+    node = node_binary()
     if not node:
         pytest.skip('Node is optional')
     script = Path(__file__).with_name(filename)
@@ -201,7 +201,7 @@ def test_office_in_node(filename, marker):
                'web_visual_tooling.cjs': 170, 'web_resizable_panels.cjs': 60}.get(filename, 30)
     # On Windows the demo driver starts Chrome inside the owned KILL_ON_CLOSE Job wrapper with this exact
     # interpreter (#842); it never falls back to a PATH or Store python.
-    base_env = {**os.environ, 'LABHQ_TEST_PYTHON': sys.executable}
+    base_env = node_env(node, {**os.environ, 'LABHQ_TEST_PYTHON': sys.executable})
     # #833: the resizable script runs once per viewport, in this order, each under its own watchdog and with that
     # watchdog's absolute end (epoch ms), so its browser work stops early enough to close what it owns before the kill
     # below would skip that close. Every invocation must pass; none may be skipped when the browser is required.
@@ -262,7 +262,7 @@ def test_every_node_web_test_runs_in_ci():
 
 def test_browser_failure_profile_diagnostic_is_bounded_without_browser():
     """#833: a fake directory stream proves the failure receipt is bounded and closes its handle."""
-    node = shutil.which('node')
+    node = node_binary()
     if not node:
         pytest.skip('Node is optional')
     driver = Path(__file__).parent / 'support' / 'demo_driver.cjs'
@@ -285,6 +285,7 @@ assert.deepEqual(profileActivity('mock', broken),
 assert.equal(closes, 2);
 console.log('bounded profile diagnostic: OK');
 """
-    result = subprocess.run([node, '-e', code, str(driver)], capture_output=True, text=True, timeout=5)
+    result = subprocess.run([node, '-e', code, str(driver)], capture_output=True, text=True, timeout=5,
+                            env=node_env(node))
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == 'bounded profile diagnostic: OK'

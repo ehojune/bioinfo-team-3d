@@ -2,18 +2,18 @@
 
 import json
 from pathlib import Path
-import shutil
 import subprocess
 
 import pytest
 
 from labhq.gateway.server import create_app
 from labhq.settings import Settings
+from tests.support.node_binary import node_binary, node_env
 
 
 @pytest.mark.parametrize("later_events", [199, 200, 201])
 def test_runner_wait_snapshot_survives_replay_boundary(tmp_path, later_events):
-    node = shutil.which("node")
+    node = node_binary()
     if not node:
         pytest.skip("Node is optional")
     settings = Settings()
@@ -44,4 +44,5 @@ assert.equal(o.stateText(o.ag('engineer')), '차례 대기');
 assert.equal(o.stateText(o.ag('cso')), '차례 대기');
 """
     subprocess.run([node, "-e", script], input=json.dumps(snap), text=True,
-                   encoding="utf-8", cwd=Path(__file__).resolve().parents[1], check=True, timeout=15)
+                   encoding="utf-8", cwd=Path(__file__).resolve().parents[1], check=True, timeout=15,
+                   env=node_env(node))
