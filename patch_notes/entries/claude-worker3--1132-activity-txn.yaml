@@ -1,0 +1,9 @@
+rows:
+- sha: '37fe32f'
+  at: 2026-10-31 07:40
+  text: runner 메시지의 task activity를 따로 commit하지 않고 같은 메시지의 이벤트 publish에 실어 이벤트, request 저장본, activity, runner cursor를 한 transaction으로 저장한다. StateStore.aappend_event에 activity=(key, reducer)를 더하고 reducer는 writer thread에서 최신 task 행에 적용된다
+  summary: 요청 처리 중 commit(fsync)을 더 줄입니다. 이벤트와 activity가 함께 확정되므로 내구성 보장은 같거나 강해집니다.
+- sha: 'd23b0ee'
+  at: 2026-10-31 08:10
+  text: test_state_activity_durable의 publish stub을 실제 publish로 바꾸고 활동 저장이 이벤트 transaction에 실렸을 때의 의미(취소가 commit 중이면 이벤트와 activity가 함께 남고 cursor가 중복을 거름)를 시험에 명시한다. 한 publish는 한 commit이고 실패하면 이벤트·activity가 모두 없음, agent.tool 폭주에서 메시지당 한 commit과 순서 유지, 느린 client가 이벤트 락을 잡아도 timeout 안에 activity가 저장됨을 시험한다. manual 한영에 보장을 적는다
+  summary: 활동 저장 경로가 바뀌어 옛 구조에 묶여 있던 시험을 새 구조에 맞게 고치고 새 보장을 시험으로 고정합니다.
