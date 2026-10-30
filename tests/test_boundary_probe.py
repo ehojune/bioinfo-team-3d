@@ -30,7 +30,7 @@ def test_unisolated_process_exposes_fixtures():
 
 def test_missing_launcher_is_never_protection_pass():
     result = probe.run(["nonexistent-boundary-probe-launcher"])
-    assert result["cases"]["allowed"]["status"] == "launch_error"
+    assert result["cases"]["allowed"]["status"] == "unsupported"
     assert all(v["status"] != "pass" for v in result["cases"].values())
 
 

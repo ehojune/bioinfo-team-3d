@@ -349,6 +349,10 @@ def run(prefix: list[str], python: str = sys.executable, timeout: float = 10,
         env["BOUNDARY_PROBE_CANARY"] = "fixture-only"
         implemented = {"allowed", "read", "write", "symlink", "hardlink", "env", "socket", "fd"}
         for case in CASES:
+            if prefix or python != sys.executable:
+                results[case] = {"status": "unsupported",
+                                 "reason": "trusted descendant lifecycle ownership unavailable"}
+                continue
             if case in ("control_hook", "tool_use_hook", "builtin_mcp"):
                 try:
                     proc = subprocess.run([*prefix, python, script, "--child", case, str(root)],

@@ -2,6 +2,8 @@
 
 Run `python scripts/boundary_probe/probe.py --launcher-json '[...]'`. The JSON array is a launcher argv prefix; Python and the child command follow it. Use only a disposable test launcher. An empty array is an unisolated negative control, never evidence of protection.
 
+All nonempty launcher prefixes and alternate Python executables are unsupported before any case launches: no current launcher provides trusted descendant lifecycle ownership. Direct execution remains a synthetic negative control, not launcher validation.
+
 Results use `pass`, `fail`, `inconclusive`, `unsupported`, or `launch_error`. A protection pass requires a successful allowed-work control and a child response proving that the test ran. Unexpected errors, missing prerequisites and launch failures are not passes. The JSON excludes subprocess output and fixture contents. `protection_verified` remains false: individual fixture results do not establish real isolation.
 
 Implemented fixtures: allowed work, external read/write, symlink/hardlink, environment canary, loopback socket and inherited descriptor (POSIX only). The listener and files contain synthetic data. The socket case counts only an explicit permission denial as a pass; connection errors are inconclusive.
