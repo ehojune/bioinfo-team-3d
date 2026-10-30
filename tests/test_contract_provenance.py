@@ -955,6 +955,9 @@ def test_skill_history_lists_the_requests_that_selected_each_built_skill_newest_
     assert fit[0]["attached_steps"] == ["s1", "s2"] and fit[0]["reference"] == "unverified"  # a reference is not proof of a call
     assert fit[1]["reference"] == "referenced" and fit[1]["agents"] == ["analyst"]
     assert [use["request_id"] for use in history[("doi:10.1000/fit", "b" * 64)]] == ["mid"]
+    many = skill_history([(f"r{n}", float(n), requests["old"]["plan"]["paper_skill_results"], requests["old"]["results"])
+                          for n in range(1, 61)])
+    assert len(many[("doi:10.1000/fit", "a" * 64)]) == 60  # the count is never cut to a display length
     assert "bad" not in {use["request_id"] for uses in history.values() for use in uses}  # a damaged record is skipped, not guessed
 
 
@@ -996,6 +999,7 @@ async def test_the_paper_skills_api_and_request_detail_carry_the_history(tmp_pat
         assert body["basis"] == {"limit": 500, "scanned": 2, "truncated": False}
         skill, = body["skills"]
         assert skill["paper_id"] == "doi:10.1000/fit" and [use["request_id"] for use in skill["uses"]] == ["r", "r_old"]
+        assert skill["use_count"] == 2
         assert skill["first_built"] == {"request_id": "r_old", "created_at": 100.0}
         card = detail.json()["paper_literature"]["papers"][0]["skill"]
         assert [use["request_id"] for use in card["previous_uses"]] == ["r_old"]  # the request is left out of its own list

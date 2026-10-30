@@ -5994,11 +5994,12 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/api/paper-skills", dependencies=[Depends(auth)])
     async def paper_skills_history() -> dict:
         """Built paper skills with the requests that selected them (#660): read-only, from the newest stored requests."""
-        from ..recruit.paper_skills import HISTORY_REQUEST_LIMIT, history_rows, skill_history, skill_origins
+        from ..recruit.paper_skills import (API_USES_PER_SKILL, HISTORY_REQUEST_LIMIT, history_rows, skill_history,
+                                            skill_origins)
 
         rows, truncated = history_rows(hub.requests)
         origins = skill_origins(rows)
-        skills = [{"paper_id": pid, "skill_sha256": digest, "uses": uses,
+        skills = [{"paper_id": pid, "skill_sha256": digest, "use_count": len(uses), "uses": uses[:API_USES_PER_SKILL],
                    "first_built": origins.get((pid, digest))}
                   for (pid, digest), uses in sorted(skill_history(rows).items())]
         return {"basis": {"limit": HISTORY_REQUEST_LIMIT, "scanned": len(rows), "truncated": truncated},

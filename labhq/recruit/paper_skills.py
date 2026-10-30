@@ -210,7 +210,7 @@ def skill_origins(requests) -> dict[tuple[str, str], dict[str, Any]]:
 
 
 HISTORY_REQUEST_LIMIT = 500  # the most recent requests the use history reads: a page or a command never scans them all
-HISTORY_USES_PER_SKILL = 20
+API_USES_PER_SKILL = 50  # the API lists this many uses of a skill and states the full count beside them
 
 
 def history_rows(requests: Any) -> tuple[list[tuple[Any, ...]], bool]:
@@ -254,8 +254,7 @@ def skill_history(rows) -> dict[tuple[str, str], list[dict[str, Any]]]:
                 "attached_steps": _ids(record.get("attached_steps")), "agents": _ids(record.get("agent_ids"), 4),
                 "reference": _member(record.get("call_status"), _REFERENCES) or "unverified"})
     for uses in history.values():
-        uses.sort(key=lambda use: use["created_at"], reverse=True)
-        del uses[HISTORY_USES_PER_SKILL:]
+        uses.sort(key=lambda use: use["created_at"], reverse=True)  # never cut: one use per request, so at most HISTORY_REQUEST_LIMIT
     return history
 
 
