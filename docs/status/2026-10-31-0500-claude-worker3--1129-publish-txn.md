@@ -20,3 +20,9 @@
 ## 하지 않은 것
 - 전체 suite와 Windows CI는 돌리지 않았다(CI에 맡김). #1125의 C안(runner 배치)은 W2의 별도 PR이라 이 측정에 들어 있지 않다.
 - E안(task activity 등을 이 transaction에 싣기)은 이번 범위가 아니다.
+
+## 리뷰·CI 후 수정 (rev2)
+- P1 롤백: joint commit 실패 시 request revision이 그대로면 live request를 저장본으로 되돌리거나 지운다.
+- P1 manual: 한·영에 발행의 한 transaction 보장과 실패 시 복원을 적었다.
+- CI 실패 두 건의 원인은 commit이 줄어 이벤트 루프 턴 수가 달라진 것이다. `test_quota_wait`는 시험이 단계 A의 대기 진입 순서에 기대고 있었고, `test_pi_language`는 제품의 경합(예산 확인과 reservation 저장 사이에 await가 있어 번역 두 건이 모두 확인을 통과)이 이전 timing에 가려져 있었다. 후자는 `pi_language.py`에서 request별 lock으로 고쳤다(실제 서비스에서도 예산을 넘겨 예약할 수 있었다). `test_pi_language.py`는 그대로다.
+- 관련 시험 438 passed, 1 skipped.
