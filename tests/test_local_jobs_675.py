@@ -501,6 +501,64 @@ async def test_a_poll_that_read_the_status_before_a_cancel_that_could_not_end_th
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kill_works", [True, False])
+async def test_a_poll_that_read_the_status_while_a_cancel_is_still_killing_does_not_end_the_job(
+        board, monkeypatch, kill_works):
+    """#1144 review: the cancel has started but its kill has not returned when the poll's read comes back. The job is
+    already being ended: the read is stale whether the kill then works or fails."""
+    out = {}
+
+    async def body(identity):
+        out.update(await board.submit(SLEEP)(identity))
+
+    task, _result = await board.run(body)
+    job_id = out["job_id"]
+    row = board.runner.jobs[job_id]
+    proc = board.runner._local_procs[job_id]
+    real_status, real_kill = local_jobs.status, local_jobs.kill
+    gate = {"block": True}
+    status_in, status_go = threading.Event(), threading.Event()
+    kill_in, kill_go = threading.Event(), threading.Event()
+
+    def status(*args, **kwargs):
+        if gate["block"]:
+            status_in.set()
+            assert status_go.wait(20)
+            return "completed", 0
+        return real_status(*args, **kwargs)
+
+    def kill(*args, **kwargs):
+        kill_in.set()
+        assert kill_go.wait(20)
+        return real_kill(*args, **kwargs) if kill_works else False
+
+    monkeypatch.setattr("labhq.runner.daemon.local_jobs.status", status)
+    monkeypatch.setattr("labhq.runner.daemon.local_jobs.kill", kill)
+    poller = asyncio.create_task(board.runner._poll_local_jobs())
+    assert await asyncio.to_thread(status_in.wait, 20)  # the poll is reading
+    canceller = asyncio.create_task(board.runner._on_message({"type": "task.jobs_cancel", "task_id": task.id}))
+    assert await asyncio.to_thread(kill_in.wait, 20)  # the cancel is killing, and has recorded nothing yet
+    assert not row["terminal"] and not row.get("cancel_requested")
+    status_go.set()
+    await asyncio.wait_for(poller, 20)  # the read comes back in the middle of the kill
+    assert not row["terminal"] and row["state"] != "completed"
+    kill_go.set()
+    await asyncio.wait_for(canceller, 20)
+    gate["block"] = False
+    if kill_works:
+        assert row["state"] == "cancelled" and row["terminal"]
+        states = [e.data["state"] for e in board.events if e.type == "job.state" and e.data.get("job_id") == job_id]
+        assert states == ["cancelled"], states
+        assert "jobs.finished" not in board.kinds()
+    else:
+        assert not row["terminal"] and row["cancel_requested"]  # left for the watcher, which still sees it
+        monkeypatch.setattr("labhq.runner.daemon.local_jobs.kill", real_kill)
+        await board.runner._poll_local_jobs()
+        assert row["state"] == "cancelled" and row["terminal"]
+    assert real_status(row["local"], proc)[0] != "running"  # either way nothing of the job is left
+
+
+@pytest.mark.asyncio
 async def test_cancelling_a_job_that_already_ended_keeps_how_it_ended(board):
     out = {}
 

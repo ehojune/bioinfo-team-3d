@@ -3119,7 +3119,17 @@ class Runner:
 
     async def _end_local_job(self, jid: str, j: dict, state: str, *, wake: bool = True) -> bool:
         """Kill a local job's process tree. Only when nothing of it is left is it recorded as ended (`wake` False keeps
-        its step from being woken); a tree that survives leaves the job running and the watcher keeps checking it."""
+        its step from being woken); a tree that survives leaves the job running and the watcher keeps checking it.
+        The job counts as being ended from the first line to the last, so a status the watcher read meanwhile cannot
+        write over it (#1144)."""
+        ending = self.__dict__.setdefault("_ending_local_jobs", set())
+        ending.add(jid)
+        try:
+            return await self._end_local_job_now(jid, j, state, wake=wake)
+        finally:
+            ending.discard(jid)
+
+    async def _end_local_job_now(self, jid: str, j: dict, state: str, *, wake: bool) -> bool:
         tid = j.get("task_id")
         if not await asyncio.to_thread(local_jobs.kill, j.get("local") or {}, self._local_procs.get(jid)):
             # Remembered with the row (so it survives a restart): the watcher ends it again until nothing is left.
@@ -3155,17 +3165,19 @@ class Runner:
     async def _poll_local_jobs(self) -> None:
         if not any(local_jobs.is_local(jid) for jid in self.jobs):
             return
+        ending = self.__dict__.setdefault("_ending_local_jobs", set())
         for jid, j in list(self.jobs.items()):
-            if j["terminal"] or not local_jobs.is_local(jid):
+            if j["terminal"] or not local_jobs.is_local(jid) or jid in ending:
                 continue
             if j.get("cancel_requested"):  # an earlier cancel could not end the whole tree: try again
                 await self._end_local_job(jid, j, "cancelled", wake=bool(j.get("cancel_wake", True)))
                 continue
             state, exit_status = await asyncio.to_thread(local_jobs.status, j.get("local") or {},
                                                          self._local_procs.get(jid))
-            if j["terminal"] or j.get("cancel_requested"):
-                # A cancel came in while the status was read: it ended the job, or could not end the whole tree and
-                # left the job for the next poll to end again (the branch above). What was read is stale (#1144).
+            if j["terminal"] or j.get("cancel_requested") or jid in ending:
+                # A cancel came in while the status was read: it is still ending the job, ended it, or could not end the
+                # whole tree and left the job for the next poll to end again (the branch above). What was read is stale
+                # (#1144).
                 continue
             if state == j["state"]:
                 continue
