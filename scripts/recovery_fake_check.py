@@ -340,6 +340,23 @@ def validate(receipt):
     return errors
 
 
+POST_TIMEOUT_S = 10  # read limit of the two POSTs; the client's 2 s stays for the health polling (#1076)
+
+
+async def timed_post(client, path, label=None, **kwargs):
+    """POST with POST_TIMEOUT_S, naming the call and its elapsed time when it times out.
+
+    A restarted gateway can be busy for a while after it answers its first health check (about 0.5 s on a fast
+    machine); a bare ReadTimeout said only that one of two POSTs timed out on Windows CI (3 runs)."""
+    import httpx
+    started = time.monotonic()
+    try:
+        return await client.post(path, timeout=POST_TIMEOUT_S, **kwargs)
+    except httpx.TimeoutException as exc:
+        raise TimeoutError(f"POST {label or path} timed out after {time.monotonic() - started:.1f}s "
+                           f"({type(exc).__name__}, limit {POST_TIMEOUT_S}s)") from exc
+
+
 async def run_case(source, root, target, timeout_s=90):
     source = source_checkout(source)
     import httpx
@@ -381,7 +398,7 @@ async def run_case(source, root, target, timeout_s=90):
                                 "default_references": False, "budget_usd": 1.0}
                 receipt["repeat_fixture_integrated"] = False
             receipt["request_body"] = REQUEST_BODY
-            response = await client.post("/api/requests", json=REQUEST_BODY)
+            response = await timed_post(client, "/api/requests", json=REQUEST_BODY)
             response.raise_for_status()
             rid = response.json()["request_id"]
             await wait(lambda: (root / "barrier.json").exists())
@@ -415,7 +432,8 @@ async def run_case(source, root, target, timeout_s=90):
                 raise TimeoutError("restarted gateway did not become ready")
             # Interrupted work may retry with a new task id; a completed step may never run again.
             (root / "release").touch()
-            response = await client.post(f"/api/approvals/{cards[0]['id']}", json={"approved": True})
+            response = await timed_post(client, f"/api/approvals/{cards[0]['id']}", "/api/approvals/<id>",
+                                        json={"approved": True})
             response.raise_for_status()
             def finished():
                 req = rows(gateway_db, "request").get(rid, {})

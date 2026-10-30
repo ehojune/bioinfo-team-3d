@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.recovery_fake_check import main, run_case, validate
+from scripts.recovery_fake_check import POST_TIMEOUT_S, main, run_case, timed_post, validate
 
 
 async def test_foreign_source_is_refused_before_any_output_or_process(tmp_path, monkeypatch):
@@ -75,3 +75,42 @@ async def test_owned_process_death_recovers_once(tmp_path, target):
         ({"before_completed_tasks": {}}, "completed phase baseline missing"),
     ):
         assert expected in validate({**receipt, **changed})
+
+
+class _Client:
+    """A stand-in for httpx.AsyncClient that records the per-call timeout and can time out."""
+
+    def __init__(self, error=None):
+        self.error, self.calls = error, []
+
+    async def post(self, path, timeout=None, **kwargs):
+        self.calls.append((path, timeout, kwargs))
+        if self.error:
+            raise self.error
+        return "response"
+
+
+async def test_the_two_posts_get_a_longer_read_limit_than_the_health_polling():
+    client = _Client()
+    assert await timed_post(client, "/api/requests", json={"a": 1}) == "response"
+    assert client.calls == [("/api/requests", POST_TIMEOUT_S, {"json": {"a": 1}})]
+    assert POST_TIMEOUT_S > 2  # the client's own 2 s stays for /api/health
+
+
+@pytest.mark.parametrize("name", ["ReadTimeout", "ConnectTimeout", "WriteTimeout", "PoolTimeout"])
+async def test_a_timed_out_post_names_the_call_its_elapsed_time_and_the_error(name):
+    import httpx
+
+    client = _Client(getattr(httpx, name)(""))
+    with pytest.raises(TimeoutError) as caught:
+        await timed_post(client, "/api/approvals/appr_secret", "/api/approvals/<id>", json={})
+    message = str(caught.value)
+    assert message.startswith("POST /api/approvals/<id> timed out after ")
+    assert name in message and f"limit {POST_TIMEOUT_S}s" in message
+    assert "appr_secret" not in message  # the label stands in for the id
+
+
+async def test_a_post_that_is_not_a_timeout_is_not_reworded():
+    client = _Client(ValueError("bad"))
+    with pytest.raises(ValueError, match="bad"):
+        await timed_post(client, "/api/requests")
