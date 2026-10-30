@@ -262,6 +262,8 @@ def child(case: str, root: Path) -> int:
 
 def mutation_probe(case, prefix, python, script, root, work, outside, env, run_id, timeout):
     """Host mutation occurs only after this run's child has reached its barrier."""
+    if prefix or python != sys.executable:
+        return {"status": "unsupported", "reason": "trusted descendant lifecycle ownership unavailable"}
     mutable = work / "mutable"
     mutable.mkdir()
     (mutable / "target").write_text("original", encoding="ascii")

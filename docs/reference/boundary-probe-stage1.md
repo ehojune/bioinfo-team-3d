@@ -8,6 +8,8 @@ Implemented fixtures: allowed work, external read/write, symlink/hardlink, envir
 
 Parent replacement and external-writer fixtures use a run-ID-bound child ready/continue barrier and a host mutation witness. The child must read the original bytes after the host sees changed bytes; a denial, missing response, timeout or failed host mutation is inconclusive. This tests a synthetic arrangement, not sealed storage. Symlink creation may be unavailable on Windows.
 
+Mutation fixtures run only with the current Python interpreter and no launcher prefix. Other configurations are unsupported before launch until a trusted descendant lifecycle backend can clean up and join the process tree.
+
 The detached-child case is unsupported before launch for every current launcher, including direct execution: none provides trusted descendant lifecycle ownership. A future authenticated lifecycle backend is required before enabling it; no flag or receipt alone establishes that ownership or protection.
 
 Both Windows-to-WSL and WSL-to-Windows interop cases are unsupported before launch, even when `--interop-distro` is supplied. No current launcher owns and joins WSL descendants after timeout. Enabling these probes requires a trusted lifecycle backend and positive controls in a suitable disposable environment.

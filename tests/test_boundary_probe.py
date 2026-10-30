@@ -253,3 +253,15 @@ def test_interop_never_launches_without_lifecycle(monkeypatch, tmp_path):
             }
         assert result["protection_verified"] is False
     assert calls and not marker.exists()
+
+
+def test_mutation_probe_rejects_unowned_launcher_before_spawn(monkeypatch, tmp_path):
+    def forbidden(*args, **kwargs):
+        pytest.fail("unowned launcher was invoked")
+    monkeypatch.setattr(probe.subprocess, "Popen", forbidden)
+    for prefix, python in ((["delayed-launcher"], os.sys.executable), ([], "other-python")):
+        for case in ("parent_replace", "external_writer"):
+            result = probe.mutation_probe(case, prefix, python, probe.__file__, tmp_path,
+                                          tmp_path, tmp_path, {}, "run-a", 0.01)
+            assert result == {"status": "unsupported",
+                              "reason": "trusted descendant lifecycle ownership unavailable"}
