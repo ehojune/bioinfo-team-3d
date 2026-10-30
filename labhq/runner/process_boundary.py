@@ -59,7 +59,7 @@ class DiagnosticStager:
         for name, content in payloads.items():
             if not isinstance(content, bytes):
                 raise ValueError("diagnostic payload must be bytes")
-            with (directory / name).open("xb") as output:
+            with (directory / name).open(mode="xb") as output:
                 output.write(content)
             digests[name] = hashlib.sha256((directory / name).read_bytes()).hexdigest()
         return digests
