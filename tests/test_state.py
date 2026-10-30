@@ -1880,3 +1880,93 @@ async def test_the_exit_after_a_shutdown_shares_the_shutdowns_deadline(tmp_path)
     assert len(runner.store.pending()) == 3
     hung.set()
     runner.store.close()
+
+
+class _AckSocket:
+    def __init__(self):
+        self.sent = []
+
+    async def send_text(self, body):
+        self.sent.append(json.loads(body))
+
+
+async def test_the_same_runner_seq_arriving_twice_at_once_is_stored_and_acked_once(tmp_path):
+    # #1143: runner_seen was read outside the transaction and the cursor upsert always overwrote, so a resend that arrived
+    # while the first copy was still being committed (an old and a new connection of one runner) was stored a second time.
+    s = settings(tmp_path)
+    gateway = Hub(s)
+    socket = _AckSocket()
+    gateway.register_runner("local", socket, [])
+    message = {"type": "test.note", "runner_seq": 5, "request_id": None, "data": {"n": 1}}
+    try:
+        await asyncio.gather(gateway.on_runner_message("local", dict(message)), gateway.on_runner_message("local", dict(message)))
+        assert [e["type"] for e in gateway.events if e["type"] == "test.note"] == ["test.note"]
+        assert gateway.store.runner_seen("local") == 5
+        assert [m for m in socket.sent if m["type"] == "runner.ack"] == [{"type": "runner.ack", "runner_seq": 5}]
+        await gateway.on_runner_message("local", dict(message))  # a later resend is still answered, not stored again
+        assert len([e for e in gateway.events if e["type"] == "test.note"]) == 1
+        assert [m["runner_seq"] for m in socket.sent if m["type"] == "runner.ack"] == [5, 5]
+    finally:
+        gateway.store.close()
+
+
+async def test_a_cancelled_first_copy_does_not_block_the_resend(tmp_path):
+    s = settings(tmp_path)
+    gateway = Hub(s)
+    gateway.register_runner("local", _AckSocket(), [])
+    message = {"type": "test.note", "runner_seq": 9, "request_id": None, "data": {}}
+    release = asyncio.Event()
+    real = gateway.publish
+
+    async def stuck(*args, **kwargs):
+        await release.wait()
+        return await real(*args, **kwargs)
+
+    gateway.publish = stuck
+    try:
+        first = asyncio.create_task(gateway.on_runner_message("local", dict(message)))
+        await asyncio.sleep(0.05)
+        first.cancel()
+        await asyncio.gather(first, return_exceptions=True)
+        gateway.publish = real
+        await gateway.on_runner_message("local", dict(message))  # the runner resends what was never acked
+        assert len([e for e in gateway.events if e["type"] == "test.note"]) == 1
+        assert gateway.store.runner_seen("local") == 9
+    finally:
+        gateway.store.close()
+
+
+def test_the_runner_cursor_never_moves_back_and_a_seen_seq_adds_no_event(tmp_path):
+    store = StateStore(tmp_path / "state.sqlite3")
+    try:
+        first = store.append_event({"type": "x"}, 100, "r", 7)
+        assert first["seq"] and store.runner_seen("r") == 7
+        assert store.append_event({"type": "y"}, 100, "r", 5) is None  # older than the cursor: already stored
+        assert store.append_event({"type": "z"}, 100, "r", 7) is None  # the same seq again
+        store.mark_runner("r", 3)
+        assert store.runner_seen("r") == 7                                  # a late, lower mark does not lower it
+        assert store.append_event({"type": "w"}, 100, "r", 8)["type"] == "w" and store.runner_seen("r") == 8
+        assert store.append_event({"type": "plain"}, 100) is not None        # no runner cursor: always stored
+        types = [json.loads(row[0])["type"] for row in store.db.execute("SELECT body FROM events ORDER BY seq")]
+        assert types == ["x", "w", "plain"]
+    finally:
+        store.close()
+
+
+async def test_a_task_result_sent_twice_under_two_seqs_records_its_cost_once(tmp_path):
+    # #1143: a runner can enqueue the same task.result again (a new outbox row), which the cursor does not recognise.
+    # The cost record is keyed by task id, so it is counted once.
+    s = settings(tmp_path)
+    gateway = Hub(s)
+    gateway.register_runner("local", _AckSocket(), [])
+    gateway.requests["r1"] = {"id": "r1", "status": "running", "created_at": time.time(), "text": "t", "usage": {}}
+    result = TaskResult(task_id="t1", agent_id="a", ok=True, text="done", cost_usd=0.5, cost_known=True)
+    body = {"type": "task.result", "task_id": "t1", "agent_id": "a", "request_id": "r1",
+            "data": result.model_dump(mode="json")}
+    try:
+        await gateway.on_runner_message("local", {**body, "runner_seq": 1})
+        await gateway.on_runner_message("local", {**body, "runner_seq": 2})
+        request = gateway.requests["r1"]
+        assert request["cost_by_task"] == {"t1": 0.5} and request["cost_usd"] == 0.5
+    finally:
+        gateway.store.close()
