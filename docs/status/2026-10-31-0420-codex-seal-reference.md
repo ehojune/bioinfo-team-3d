@@ -7,7 +7,8 @@
 - reference·전용 patch note·이 status만 바꿉니다. 실제 adapter와 보호는 UNVERIFIED입니다.
 
 ## 테스트 결과
-- 문서/public/diff 검사와 최종 head CI·실제 리뷰 결과는 PR에 기록합니다.
+- notes_index·patch_notes·public·diff 검사 PASS. 최종 head CI·실제 리뷰 결과는 PR에 기록합니다.
+- reference 3,638→5,134자. 새 lifecycle 조건은 lookup-only 표에 모았습니다.
 - corpus·validator 변경이 없어 로컬 pytest는 재실행하지 않습니다.
 
 ## 막힌 점
