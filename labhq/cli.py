@@ -312,14 +312,12 @@ def _talent_text(value, n: int = 120) -> str:
     return short("".join(c if c.isprintable() else " " for c in str(value)), n)
 
 
-def _paper_skill_origins(s: Settings) -> tuple[dict | None, str | None]:
-    """Which request first built each paper skill, read from the local gateway store without writing to it (#660).
+def _paper_skill_store_rows(s: Settings) -> tuple[list | None, str | None]:
+    """The stored requests that carry paper-skill records, as (key, created_at, plan rows, results), read-only (#660).
 
-    Returns (origins, None) or (None, why it could not be read): a missing store, a locked or foreign one. The store
-    is opened read-only, so a running gateway is never disturbed and nothing is created."""
+    Returns (rows, None) or (None, why it could not be read): a missing store, a locked or foreign one. The store is
+    opened read-only, so a running gateway is never disturbed and nothing is created."""
     import sqlite3
-
-    from .recruit.paper_skills import skill_origins
 
     path = s.path(s.gateway.state_dir) / "gateway.sqlite3"
     if not path.is_file():
@@ -339,10 +337,45 @@ def _paper_skill_origins(s: Settings) -> tuple[dict | None, str | None]:
             except ValueError:
                 return None  # one damaged request is skipped, not the whole listing
 
-        return skill_origins((key, created, parsed(plan_rows), parsed(results))
-                             for key, created, plan_rows, results in rows), None
+        return [(key, created, parsed(plan_rows), parsed(results)) for key, created, plan_rows, results in rows], None
     except (sqlite3.Error, OSError, ValueError) as error:
         return None, f"요청 기록을 읽지 못했습니다({type(error).__name__})"
+
+
+def _paper_skill_origins(s: Settings) -> tuple[dict | None, str | None]:
+    """Which request first built each paper skill, read from the local gateway store without writing to it (#660)."""
+    from .recruit.paper_skills import skill_origins
+
+    rows, error = _paper_skill_store_rows(s)
+    return (skill_origins(rows), None) if rows is not None else (None, error)
+
+
+def talent_history_lines(rows: list | None, error: str | None = None) -> list[str]:
+    """`labhq talent --history`: which requests selected each built skill, from the newest stored requests (#660).
+
+    Read from the local store, so it works with the gateway off. A result reference is a reference in a result, never
+    proof that a tool ran or that the skill helped. The line says how many recent requests were read."""
+    from .recruit.paper_skills import HISTORY_REQUEST_LIMIT, skill_history
+
+    if rows is None:
+        return [f"📜 요청 사이 사용 이력을 읽지 못했습니다: {_talent_text(error or '원인 미상', 80)}"]
+    recent = sorted((row for row in rows if isinstance(row[1], (int, float)) and not isinstance(row[1], bool)),
+                    key=lambda row: row[1], reverse=True)
+    basis = f"최근 요청 {min(len(recent), HISTORY_REQUEST_LIMIT)}건 기준" + (
+        f"(그보다 오래된 {len(recent) - HISTORY_REQUEST_LIMIT}건은 세지 않음)" if len(recent) > HISTORY_REQUEST_LIMIT else "")
+    history = skill_history(recent[:HISTORY_REQUEST_LIMIT])
+    if not history:
+        return [f"📜 요청 사이 사용 이력: 논문 스킬을 고른 요청이 없습니다({basis})"]
+    lines = [f"📜 요청 사이 사용 이력 — {basis}. 결과 참조는 호출·효용의 증거가 아닙니다"]
+    for (pid, digest), uses in sorted(history.items()):
+        lines.append(f"   paper={_talent_text(pid)}  skill={digest[:12]}  고른 요청 {len(uses)}건")
+        for use in uses[:5]:
+            lines.append(f"     · {_talent_text(use['request_id'], 40)} "
+                         + time.strftime("%Y-%m-%d", time.localtime(use["created_at"]))
+                         + f"  붙은 단계={','.join(use['attached_steps']) or '-'}  결과 참조={use['reference']}")
+        if len(uses) > 5:
+            lines.append(f"     · 외 {len(uses) - 5}건")
+    return lines
 
 
 def talent_lines(registry, origins: dict | None = None, origin_error: str | None = None) -> list[str]:
@@ -2052,7 +2085,9 @@ def main(argv: list[str] | None = None) -> None:
     cp.add_argument("action", choices=["extend", "release", "activate", "rehire"])
     cp.add_argument("target", help="agent id (or talent slug for rehire)")
     cp.add_argument("--days", type=float)
-    sub.add_parser("talent", help="list the talent pool (past contract agents)")
+    talent_parser = sub.add_parser("talent", help="list the talent pool (past contract agents)")
+    talent_parser.add_argument("--history", action="store_true",
+                               help="also list which recent requests selected each paper skill (reads the local store)")
     sp2a = sub.add_parser("setup-paper2agent", help="install the paper2agent skill for Claude Code and Codex")
     sp2a.add_argument("--commit", help="install exactly this 40-hex Paper2Agent commit (default: recruit.skill_commit, "
                                        "else the latest HEAD)")
@@ -2515,9 +2550,15 @@ def main(argv: list[str] | None = None) -> None:
 
         reg = Registry(s.path(s.runner.agents_dir), s.path(s.runner.talent_dir),
                        s.path(s.runner.contract_dir) if s.runner.contract_dir else None)
-        origins, origin_error = _paper_skill_origins(s)
+        from .recruit.paper_skills import skill_origins
+
+        store_rows, origin_error = _paper_skill_store_rows(s)
+        origins = skill_origins(store_rows) if store_rows is not None else None
         for line in talent_lines(reg, origins, origin_error):
             print(line)
+        if args.history:
+            for line in talent_history_lines(store_rows, origin_error):
+                print(line)
     elif args.cmd == "setup-paper2agent":
         from .recruit.paper2agent import setup_paper2agent, SOURCE_MARKER
 

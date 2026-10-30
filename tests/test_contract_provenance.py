@@ -929,3 +929,115 @@ async def test_request_detail_carries_the_paper_list_without_changing_the_record
         assert json.dumps(hub.requests["bad"], sort_keys=True) == stored  # the detail never rewrites a damaged record
     finally:
         hub.store.close()
+
+
+def _history_request(created_at, *, steps=("s1",), digest="a" * 64, referenced=True):
+    req = _literature_request(referenced=referenced)
+    req["created_at"] = created_at
+    req["plan"]["paper_skill_results"][0]["step_ids"] = list(steps)
+    req["results"] = {step: {"ok": True, "provenance": {"runs": {"t": {"paper_skills": [
+        {**req["results"]["s1"]["provenance"]["runs"]["t1"]["paper_skills"][0], "step_id": step, "skill_sha256": digest}]}}}}
+        for step in steps}
+    return req
+
+
+def test_skill_history_lists_the_requests_that_selected_each_built_skill_newest_first():
+    from labhq.recruit.paper_skills import history_rows, skill_history
+
+    requests = {"old": _history_request(100.0), "new": _history_request(300.0, steps=("s1", "s2"), referenced=False),
+                "mid": _history_request(200.0, digest="b" * 64), "no_time": {**_history_request(1.0), "created_at": None},
+                "bad": {"created_at": 50.0, "plan": {"paper_skill_results": ["x", 5]}, "results": "oops"}}
+    rows, truncated = history_rows(requests)
+    assert truncated is False and [row[0] for row in rows] == ["new", "mid", "old", "bad"]  # no_time is not ordered, so skipped
+    history = skill_history(rows)
+    fit = history[("doi:10.1000/fit", "a" * 64)]
+    assert [use["request_id"] for use in fit] == ["new", "old"] and fit[0]["created_at"] == 300.0
+    assert fit[0]["attached_steps"] == ["s1", "s2"] and fit[0]["reference"] == "unverified"  # a reference is not proof of a call
+    assert fit[1]["reference"] == "referenced" and fit[1]["agents"] == ["analyst"]
+    assert [use["request_id"] for use in history[("doi:10.1000/fit", "b" * 64)]] == ["mid"]
+    many = skill_history([(f"r{n}", float(n), requests["old"]["plan"]["paper_skill_results"], requests["old"]["results"])
+                          for n in range(1, 61)])
+    assert len(many[("doi:10.1000/fit", "a" * 64)]) == 60  # the count is never cut to a display length
+    assert "bad" not in {use["request_id"] for uses in history.values() for use in uses}  # a damaged record is skipped, not guessed
+
+
+def test_history_reads_only_the_newest_requests_and_says_when_older_ones_were_left_out(monkeypatch):
+    from labhq.recruit import paper_skills
+
+    monkeypatch.setattr(paper_skills, "HISTORY_REQUEST_LIMIT", 3)
+    requests = {f"r{n}": _history_request(float(n)) for n in range(1, 6)}
+    rows, truncated = paper_skills.history_rows(requests)
+    assert truncated is True and [row[0] for row in rows] == ["r5", "r4", "r3"]
+    view = paper_skills.literature_view(_literature_request())
+    shown = paper_skills.with_previous_uses(view, paper_skills.skill_history(rows), "r5", len(rows), truncated)
+    assert shown["history"] == {"limit": 3, "scanned": 3, "truncated": True}
+    skill = shown["papers"][0]["skill"]
+    assert [use["request_id"] for use in skill["previous_uses"]] == ["r4", "r3"] and skill["previous_use_count"] == 2
+    assert shown["papers"][2]["skill"] is None  # a paper without a skill gets no history
+
+
+@pytest.mark.asyncio
+async def test_the_paper_skills_api_and_request_detail_carry_the_history(tmp_path, monkeypatch):
+    import httpx
+
+    from labhq.recruit import paper_skills
+
+    from labhq.gateway.server import create_app
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.requests["r_old"] = {**_history_request(100.0), "id": "r_old"}
+    hub.requests["r"] = {**_history_request(200.0), "id": "r"}
+    headers = {"Authorization": f"Bearer {settings.gateway.client_token}"}
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as client:
+            listing = await client.get("/api/paper-skills", headers=headers)
+            anonymous = await client.get("/api/paper-skills")
+            detail = await client.get("/api/requests/r", headers=headers)
+        assert anonymous.status_code == 401 and listing.status_code == 200
+        body = listing.json()
+        assert body["basis"] == {"limit": 500, "scanned": 2, "truncated": False}
+        skill, = body["skills"]
+        assert skill["paper_id"] == "doi:10.1000/fit" and [use["request_id"] for use in skill["uses"]] == ["r", "r_old"]
+        assert skill["use_count"] == 2
+        assert skill["first_built"] == {"request_id": "r_old", "created_at": 100.0}
+        monkeypatch.setattr(paper_skills, "HISTORY_REQUEST_LIMIT", 1)  # r_old is now outside the history, but still the origin
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as again:
+            cut = (await again.get("/api/paper-skills", headers=headers)).json()
+        assert cut["basis"]["truncated"] is True and cut["skills"][0]["first_built"]["request_id"] == "r_old"
+        card = detail.json()["paper_literature"]["papers"][0]["skill"]
+        assert [use["request_id"] for use in card["previous_uses"]] == ["r_old"]  # the request is left out of its own list
+        assert detail.json()["paper_literature"]["history"]["scanned"] == 2
+        assert "previous_uses" not in json.dumps(hub.requests["r"])  # the stored record is unchanged
+    finally:
+        hub.store.close()
+
+
+def test_talent_history_reads_the_store_read_only_and_works_without_a_gateway(tmp_path):
+    import sqlite3
+
+    from labhq import cli
+
+    state = tmp_path / "state"
+    state.mkdir()
+    path = state / "gateway.sqlite3"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE state (kind TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(kind, key))")
+    for rid, body in {"req_a": _history_request(100.0), "req_b": _history_request(200.0, steps=("s1", "s2"))}.items():
+        db.execute("INSERT INTO state VALUES ('request', ?, ?)", (rid, json.dumps(body)))
+    db.commit()
+    db.close()
+    before = (path.stat().st_mtime_ns, path.stat().st_size)
+    settings = Settings.model_validate({"gateway": {"state_dir": str(state)}})
+    rows, error = cli._paper_skill_store_rows(settings)
+    assert error is None and (path.stat().st_mtime_ns, path.stat().st_size) == before  # nothing was written
+    lines = cli.talent_history_lines(rows)
+    assert "최근 요청 2건 기준" in lines[0] and "증거가 아닙니다" in lines[0]
+    assert any("doi:10.1000/fit" in line and "고른 요청 2건" in line for line in lines)
+    assert any("req_b" in line and "붙은 단계=s1,s2" in line and "결과 참조=referenced" in line for line in lines)
+    none = cli.talent_history_lines([("r", 1.0, None, None)])
+    assert "논문 스킬을 고른 요청이 없습니다(최근 요청 1건 기준)" in none[0]
+    unread = cli.talent_history_lines(None, "gateway 기록 파일(gateway.sqlite3)이 없습니다")
+    assert "읽지 못했습니다" in unread[0] and "gateway.sqlite3" in unread[0]
