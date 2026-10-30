@@ -1,5 +1,9 @@
 pr: 1064
 rows:
+  - sha: "34ba8d5"
+    at: "2026-10-30 17:17"
+    summary: "seal fixture를 Windows inventory에 등록하고 status 파일명에 HHMM을 넣습니다."
+    text: "fix: register seal fixtures in Windows inventory and timestamp status"
   - sha: "b65d1a8"
     at: "2026-10-30 16:57"
     summary: "seal probe의 source·중간 ancestor·root 역할을 필수로 고정합니다."

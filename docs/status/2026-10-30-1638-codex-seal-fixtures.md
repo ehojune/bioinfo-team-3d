@@ -9,7 +9,7 @@
 
 ## 테스트 결과
 - `python -m pytest tests/test_process_boundary_seal_contract.py -q`: 153 passed.
-- Python 3.10 syntax, public check, patch-note 검사는 PR 근거에 기록합니다.
+- `tests/test_ci_windows10m.py`: 62 passed. inventory validation·status 형식·public check 통과.
 - 같은 head CI·실제 Codex review는 PR에서 추적합니다. 실행·보호 PASS를 뜻하지 않습니다.
 
 ## 막힌 점
