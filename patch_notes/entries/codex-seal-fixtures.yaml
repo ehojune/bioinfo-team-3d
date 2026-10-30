@@ -1,5 +1,9 @@
 pr: 1064
 rows:
+  - sha: "b65d1a8"
+    at: "2026-10-30 16:57"
+    summary: "seal probe의 source·중간 ancestor·root 역할을 필수로 고정합니다."
+    text: "test: require every source and ancestor role in seal probe"
   - sha: "a279b62"
     at: "2026-10-30 16:52"
     summary: "source와 ancestor의 중복 object identity를 거부합니다."
