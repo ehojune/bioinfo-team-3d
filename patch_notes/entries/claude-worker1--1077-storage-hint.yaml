@@ -3,3 +3,7 @@ rows:
     at: "2026-10-30 19:14"
     summary: "보고서 검토를 기다리는 요청을 GitHub로 옮기려 할 때, 먼저 검토를 마치라는 명령을 알려 주도록 했습니다."
     text: "fix: review_pending 요청의 --to github 거절 문구에 review-done 안내를 붙이고 CP4→게시 연결 시험을 더함 (#1077)"
+  - sha: "f5482b6"
+    at: "2026-10-30 19:15"
+    summary: "안내서에 검토를 기다리는 요청을 GitHub로 옮길 때의 순서를 적었습니다."
+    text: "docs: README 한·영에 검토 대기 요청의 GitHub 이동 안내를 적음 (#1077)"
