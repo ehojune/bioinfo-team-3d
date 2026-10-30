@@ -3,6 +3,8 @@ from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from labhq.runner import process_boundary as boundary
 
 
@@ -216,3 +218,79 @@ def test_missing_ancestry_observer_fails_and_cleans_up():
     assert receipt.ancestry_observations == []
     assert "diagnostic staging failed" in receipt.unsupported_reasons
     assert not actual._runs
+
+
+@pytest.mark.parametrize("supervisor,snapshot", [
+    (None, None),
+    (SimpleNamespace(identity="trusted", verified=True), {"sealed": True, "digest": "forged"}),
+])
+def test_missing_or_forged_authority_refused_without_spawn(supervisor, snapshot):
+    with patch.object(boundary.subprocess, "run", side_effect=AssertionError("spawned")) as run:
+        receipt = boundary.protected_launch(supervisor=supervisor, snapshot=snapshot)
+    run.assert_not_called()
+    assert (receipt.preparation, receipt.launch, receipt.seal_status) == (
+        "unsupported", "not_started", "unsupported")
+    assert receipt.unsupported_reasons == ["trusted supervisor and sealed storage verification unavailable"]
+
+
+@pytest.mark.parametrize("failure", ["start", "timeout", "child_failure", "close"])
+def test_broker_failure_paths_report_and_do_not_claim_cleanup(failure):
+    events = []
+    def start():
+        events.append("start")
+        if failure == "start":
+            raise OSError("synthetic start failure")
+    def close():
+        events.append("close")
+        if failure == "close":
+            raise OSError("synthetic close failure")
+    def run(command, **kwargs):
+        events.append("run")
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(command, 1)
+        return subprocess.CompletedProcess(command, 1 if failure == "child_failure" else 0)
+    with patch.object(boundary, "_broker_prerequisites", return_value=True), \
+         patch.object(boundary.shutil, "which", return_value="bwrap"), \
+         patch.object(boundary.Path, "lstat", return_value=SimpleNamespace(st_mode=0o140000)), \
+         patch.object(boundary.subprocess, "run", side_effect=run):
+        receipt = boundary.diagnostic_broker_probe(
+            lambda directory, run_id: SimpleNamespace(start=start, close=close), timeout=1)
+    assert events[-1] == "close"
+    assert receipt.seal_status == "unsealed"
+    assert "descendants_unverified" in receipt.cleanup
+    if failure == "start":
+        assert "run" not in events and receipt.launch == "not_started"
+        assert "broker diagnostic preparation or launch failed" in receipt.unsupported_reasons
+    elif failure == "timeout":
+        assert receipt.launch == "failed"
+        assert "broker diagnostic preparation or launch failed" in receipt.unsupported_reasons
+    elif failure == "child_failure":
+        assert receipt.launch == "failed"
+        assert "broker namespace diagnostic failed" in receipt.unsupported_reasons
+    else:
+        assert receipt.cleanup.startswith("failed")
+        assert "broker cleanup failed" in receipt.unsupported_reasons
+
+
+@pytest.mark.xfail(strict=True, reason="no authenticated ancestry witness or reason-code interface")
+def test_forged_ancestry_witness_requires_reason_coded_refusal():
+    actual = boundary.DiagnosticStager()
+    stager = SimpleNamespace(stage=actual.stage, cleanup=actual.cleanup,
+                             observe_ancestry=lambda run_id: {
+                                 **actual.observe_ancestry(run_id),
+                             })
+    receipt = boundary.diagnostic_staging_probe(stager)
+    assert receipt.preparation == "unsupported"
+    assert "ANCESTRY_WITNESS_UNAUTHENTICATED" in receipt.unsupported_reasons
+
+
+@pytest.mark.xfail(strict=True, reason="timeout has only a generic diagnostic failure reason")
+def test_broker_timeout_requires_distinct_reason_code():
+    broker = SimpleNamespace(start=lambda: None, close=lambda: None)
+    with patch.object(boundary, "_broker_prerequisites", return_value=True), \
+         patch.object(boundary.shutil, "which", return_value="bwrap"), \
+         patch.object(boundary.Path, "lstat", return_value=SimpleNamespace(st_mode=0o140000)), \
+         patch.object(boundary.subprocess, "run", side_effect=subprocess.TimeoutExpired("bwrap", 1)):
+        receipt = boundary.diagnostic_broker_probe(lambda directory, run_id: broker, timeout=1)
+    assert receipt.launch == "failed"
+    assert "BROKER_TIMEOUT" in receipt.unsupported_reasons
