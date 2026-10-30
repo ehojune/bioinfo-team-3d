@@ -1370,16 +1370,21 @@ def _costs_document(req: dict, tasks: Iterable[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _request_authors(req: dict) -> list[str]:
-    """Author names the request itself gives (``authors``: names or ``{"name": ...}``); nothing is guessed."""
+def _request_authors(req: dict, settings=None) -> list[str]:
+    """Author names for CITATION.cff: the request's own ``authors`` (names or ``{"name": ...}``), else the configured
+    ``result_storage.authors``. Nothing is guessed, so no names means no file (#792, #1104)."""
     raw = req.get("authors")
     items = raw if isinstance(raw, (list, tuple)) else []
     names = [str(item.get("name") if isinstance(item, Mapping) else item or "").strip() for item in items]
-    return [name for name in names if name]
+    names = [name for name in names if name]
+    if not names:
+        configured = getattr(getattr(settings, "result_storage", None), "authors", None) or []
+        names = [str(name).strip() for name in configured if str(name).strip()]
+    return names
 
 
 def _citation_authors(req: dict, settings) -> list[str]:
-    return [cleaned for cleaned in (_clean(name, settings, req).strip()[:120] for name in _request_authors(req)) if cleaned]
+    return [cleaned for cleaned in (_clean(name, settings, req).strip()[:120] for name in _request_authors(req, settings)) if cleaned]
 
 
 def _citation_cff(req: dict, settings) -> str:
@@ -1775,7 +1780,8 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
             run_documents: Mapping[str, str], branch_rows: list[dict[str, str]] | None = None,
             source_targets: Mapping[str, str] | None = None,
             run: run_report.RunSummary | None = None,
-            files: Mapping[str, str | bytes] | None = None, generated_abstract: bool = False) -> str:
+            files: Mapping[str, str | bytes] | None = None, generated_abstract: bool = False,
+            citation: bool = False) -> str:
     title = report.splitlines()[0].lstrip("#").strip() or "연구 결과"
     abstract = "figures/graphical_abstract.svg" if "figures/graphical_abstract.svg" in figure_names else None
     key = next((name for name in figure_names if name != abstract), None)
@@ -1839,8 +1845,8 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     published = files or {}
     lines += ["", "## 그림이 보여 주는 것", "", *_figure_lines(report, figure_names, source_targets, published, table_names, generated_abstract),
               "", "## 파일 목록", "", *_file_list_lines(published, table_names, figure_names),
-              ("- 인용: [CITATION.cff](CITATION.cff)" if _request_authors(req)
-               else "- 인용 정보 미정(저자 미입력): 요청에 저자가 없어 CITATION.cff를 만들지 않았습니다."),
+              ("- 인용: [CITATION.cff](CITATION.cff)" if citation
+               else "- 인용 정보 미정(저자 미입력): 요청과 설정에 저자가 없어 CITATION.cff를 만들지 않았습니다."),
               "", "## 환경", "", *_environment_lines(published),
               "", "## 실행 방법", "", *_run_lines(published, run_documents),
               "", "## 결정성", "", _determinism_line(published)]
@@ -1859,7 +1865,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
               "8. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
               "## 저장소 지도", "", "```text", "README.md", "report/", "run/", "code/", "figures/", "tables/",
               *(["studies/               갈래별 코드·그림·표·단계 보고서"] if branch_rows else []),
-              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", *(["CITATION.cff"] if _request_authors(req) else []), "```", "",
+              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", *(["CITATION.cff"] if citation else []), "```", "",
               "## Summary (English)", "",
               f"This repository is the publication edition of labhq request {req.get('id')}. "
               "It keeps the scientific report, aggregate results, code, figures, decisions, and execution record together.", "",
@@ -2233,7 +2239,8 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         "<reference-path>", "참고 자료")
     readme = _plain_korean(_readme(
         readme_req, report, _step_rows(req, assets), figure_names, table_names, omitted_tables,
-        run_documents, branch_rows, source_targets, run_summary, files, abstract_source is None))
+        run_documents, branch_rows, source_targets, run_summary, files, abstract_source is None,
+        bool(_citation_authors(req, settings))))
     if check_document(readme)["status"] != "PASS":
         raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)

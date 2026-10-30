@@ -152,6 +152,9 @@ recruit:
   contract_model: sonnet
   contract_model_tier: balanced
 
+result_storage:
+  authors: []                    # 예: ["Kim Gildong"]. 값이 있을 때만 결과 repo에 CITATION.cff를 씀. 비우면 만들지 않음
+
 github:
   token_env: GITHUB_TOKEN        # 게이트웨이 환경변수. fine-grained PAT: Issues·Contents·Pull requests RW
   token_file: ~/.labhq/secrets-github/github_token  # 환경변수가 없을 때 gateway가 읽는 파일. labhq init이 이 계정만 읽게 씀
