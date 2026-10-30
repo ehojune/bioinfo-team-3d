@@ -115,6 +115,11 @@ def entry_shas(rev: str, cwd: Path | None = None) -> tuple[set[str], list[str]]:
     return shas, problems
 
 
+def invisible(files: set[str]) -> bool:
+    """True when every changed file is one a user never sees (tests, records, CI) or a generated index (#1122)."""
+    return bool(files) and all(name in GENERATED or name.startswith(INVISIBLE) for name in files)
+
+
 def counted_main_commits(last_readme: str, base: str, cwd: Path | None = None) -> int:
     if not last_readme:
         return README_EVERY
@@ -122,7 +127,7 @@ def counted_main_commits(last_readme: str, base: str, cwd: Path | None = None) -
     count = 0
     for sha in out.splitlines():
         files = changed_from_parent(sha, cwd)
-        if files and all(name in GENERATED or name.startswith(INVISIBLE) for name in files):
+        if invisible(files):
             continue
         count += 1
     return count
@@ -145,9 +150,11 @@ def check(base: str, head: str, cwd: Path | None = None) -> list[str]:
         names = ", ".join(sorted(touched & GENERATED))
         problems.append(f"생성 파일({names})을 직접 바꾸지 말고 entries·docs/status에 쓰세요.")
 
+    # every file any PR commit touched, not the net diff: a README edit reverted later is still a README edit
+    committed = set().union(*(changed_from_parent(sha, cwd) for sha in commits)) if commits else set()
     last = git("log", "-1", "--format=%H", base, "--", *DOCS, cwd=cwd)
     behind = counted_main_commits(last, base, cwd)
-    if commits and not touched & set(DOCS) and behind + 1 >= README_EVERY:
+    if commits and not touched & set(DOCS) and not invisible(committed) and behind + 1 >= README_EVERY:
         problems.append(f"main에 문서({'·'.join(DOCS)})를 안 고친 커밋이 {behind}개 쌓였습니다. "
                         f"이 PR에서 README나 매뉴얼을 갱신해 주세요 (커밋 {README_EVERY}개마다 한 번).")
     return problems

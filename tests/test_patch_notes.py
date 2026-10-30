@@ -200,6 +200,24 @@ def test_commits_that_only_touch_invisible_paths_do_not_count_toward_readme_limi
     assert pn.counted_main_commits(last, "main", repo) == 0
 
 
+def test_a_pr_that_only_changes_invisible_paths_passes_the_readme_limit(repo):
+    commit(repo, {"labhq/a.py": "1\n"}, "main product 1")
+    commit(repo, {"labhq/a.py": "2\n"}, "main product 2")
+    run(repo, "checkout", "-q", "-b", "feature")
+    change = commit(repo, {"tests/test_a.py": "1\n"}, "test only")
+    commit(repo, {"patch_notes/entries/feature.yaml": entry(change), "docs/status/s.md": "s\n"}, "패치노트")
+    assert pn.check("main", "HEAD", repo) == []
+
+
+def test_a_pr_that_changes_product_code_is_still_held_by_the_readme_limit(repo):
+    commit(repo, {"labhq/a.py": "1\n"}, "main product 1")
+    commit(repo, {"labhq/a.py": "2\n"}, "main product 2")
+    run(repo, "checkout", "-q", "-b", "feature")
+    change = commit(repo, {"labhq/b.py": "1\n", "tests/test_b.py": "1\n"}, "product and test")
+    commit(repo, {"patch_notes/entries/feature.yaml": entry(change)}, "패치노트")
+    assert any("를 안 고친 커밋이 2개" in problem for problem in pn.check("main", "HEAD", repo))
+
+
 def test_a_commit_mixing_product_code_with_tests_still_counts(repo):
     last = run(repo, "log", "-1", "--format=%H", "--", "README.md")
     commit(repo, {"labhq/a.py": "1\n", "tests/test_a.py": "1\n"}, "product and test")
