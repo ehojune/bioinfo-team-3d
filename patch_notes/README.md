@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:57 | [`e69f3c0`](https://github.com/ehojune/bioinfo-team-3d/pull/1075/commits/e69f3c0) | **기준 브랜치가 앞서 간 것을 인정할 때도 비교 결과가 빠짐없이 끝까지 온 경우만 받아들이도록 확인을 엄격하게 했습니다.**<br>fix: 앞서 간 main의 compare 응답도 완전한 forward 답(수·꼬리 일치)만 인정 (#1073 리뷰 P1) |
+| 18:46 | [`2d05d63`](https://github.com/ehojune/bioinfo-team-3d/pull/1075/commits/2d05d63) | **자동 검사가 실행되는 사이 기준 브랜치에 새 변경이 한 번 더 들어와도, 앞으로만 움직였다면 같은 경우로 보고 오류로 끝내지 않게 했습니다.**<br>fix: validation-manifest base drift 인정이 main이 더 앞서 간 경우도 받아들임 (#1073) |
 | 18:45 | [`0485b0a`](https://github.com/ehojune/bioinfo-team-3d/pull/1074/commits/0485b0a) | **Windows 브라우저 시험이 1/16,384 확률의 포트 우연으로 간헐 실패하던 문제를 없앱니다.**<br>브라우저 시험의 정적 서버가 OS에게 예약 포트(8787·55921)를 받으면 닫고 최대 8번까지 다시 listen하고, 8번 모두 예약 포트일 때만 같은 메시지로 거절한다 |
 | 18:26 | [`373f0f1`](https://github.com/ehojune/bioinfo-team-3d/pull/1068/commits/373f0f1) | **direct 실행의 산출에 hard link가 있어도 실패로 처리되지 않습니다.**<br>폴더를 선언하지 않은 단계의 hard link 검사에서 하류가 읽지 않는 direct 실행을 뺀다 |
 | 18:06 | [`bbdadad`](https://github.com/ehojune/bioinfo-team-3d/pull/1071/commits/bbdadad) | **매뉴얼에 연구 단계가 계획에 선언된 주장 목록 밖의 주장을 새로 만들 수 없다는 규칙을 적었습니다.**<br>docs: manual 한·영에 단계 claim_ids 밖 claim을 만들지 않는 규칙을 적음 (#1066) |
