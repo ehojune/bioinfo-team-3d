@@ -1015,9 +1015,12 @@ test('MiniWebSocket reports one close when close() runs while the upgrade is sti
   const port = await listen(server);
   try {
     const ws = new MiniWebSocket(`ws://127.0.0.1:${port}/devtools/page/x`), events = [];
-    ws.onerror = () => events.push('error'); ws.onclose = () => events.push('close');
+    ws.onerror = () => events.push('error');
+    // onclose follows the end of the transport, not the call that ended it: never inside close() itself (review).
+    let inside = false;
+    ws.onclose = () => events.push(inside ? 'close-inside-close()' : 'close');
     await settle(100);
-    ws.close(); ws.close();
+    inside = true; ws.close(); inside = false; ws.close();
     sockets.forEach(socket => socket.destroy());  // the peer then vanishes, as a killed Chrome does
     await settle(200);
     assert.deepEqual(events, ['close'], 'one close, and no error for the request close() itself ended');

@@ -33,8 +33,10 @@ class MiniWebSocket {
     request.on('error', error => {
       if (this.closed) return;  // the error of the request close() itself destroyed
       this.onerror?.(error);
-      if (!this.socket) { this.closed = true; this.reportClosed(); }
+      if (!this.socket) this.closed = true;  // the request's own 'close' below reports it, once the transport has ended
     });
+    // A connection that never upgrades ends with its request: only then is the transport really gone (#1107).
+    request.on('close', () => { if (!this.socket) { this.closed = true; this.reportClosed(); } });
     request.end();
   }
 
@@ -88,8 +90,7 @@ class MiniWebSocket {
     if (!this.socket) {
       // Still waiting for the upgrade: end the pending request. No socket 'close' will ever arrive, so report it now.
       this.closed = true;
-      try { this.request.destroy(); } catch { /* request already gone */ }
-      this.reportClosed();
+      try { this.request.destroy(); } catch { this.reportClosed(); }  // normally reported by the request's 'close'
       return;
     }
     try { this.frame(0x8, Buffer.alloc(0)); this.socket.end(); } catch { /* socket already gone */ }
