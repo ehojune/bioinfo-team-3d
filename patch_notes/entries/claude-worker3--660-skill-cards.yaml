@@ -8,3 +8,7 @@ rows:
   at: 2026-10-31 08:00
   text: labhq talent가 로컬 gateway store를 읽기 전용으로 열어 각 논문 스킬을 처음 ready로 만든 요청 id와 created_at을 보인다(읽지 못하면 기록 시각(파일)과 그 이유). build/만 있는 끝나지 않은 폴더 수를 마지막 한 줄로 알린다
   summary: `labhq talent`에서 각 논문 스킬이 어느 요청에서 만들어졌는지와 끝나지 않은 빌드가 몇 개인지 볼 수 있습니다.
+- sha: '72b5d5e'
+  at: 2026-10-31 08:40
+  text: skill_content가 talent 폴더 자신과 skill/<hash>·references·assets·SKILL.md·paper.md·보충 파일·asset 하위 폴더 모두에서 symlink와 Windows junction을 따라가지 않는다(리뷰 P2, junction으로 폴더 밖 파일 크기를 읽던 경로를 시험으로 확인)
+  summary: 폴더가 링크로 바뀌어 있어도 labhq talent가 스킬 폴더 밖의 파일을 읽지 않습니다.
