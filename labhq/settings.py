@@ -550,6 +550,47 @@ class ModelTierPrices(BaseModel):
         return self
 
 
+class ModelTierModels(BaseModel):
+    """Which model each tier means on each engine (#625). Empty by default: a tier then names no model, nothing is
+    invented, and every agent runs the model its own YAML gives. An agent's explicit ``model`` always wins."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fast: dict[str, str] = Field(default_factory=dict)
+    balanced: dict[str, str] = Field(default_factory=dict)
+    reasoning: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def valid_engines_and_models(self) -> "ModelTierModels":
+        engines = {"claude_code", "codex", "gemini", "antigravity"}
+        for tier in ("fast", "balanced", "reasoning"):
+            for engine, model in getattr(self, tier).items():
+                if engine not in engines:
+                    raise ValueError(f"model_tiers.{tier}: unknown engine {engine!r}; allowed: {', '.join(sorted(engines))}")
+                if not re.fullmatch(MODEL_NAME_PATTERN, model):
+                    raise ValueError(f"model_tiers.{tier}.{engine}: {model!r} is not a valid model name")
+        return self
+
+    def model_for(self, tier: str | None, engine: str | None) -> str | None:
+        """The configured model of `tier` on `engine`, or None when the table does not say."""
+        row = getattr(self, tier, None) if tier in ("fast", "balanced", "reasoning") else None
+        return row.get(engine) if row and engine else None
+
+
+def models_match(declared: str | None, actual: str | None) -> bool:
+    """One model, named by an alias or a full name: ``opus`` is ``claude-opus-5-5``, ``gpt-6-luna`` is not ``gpt-6``.
+
+    Compared case-insensitively without a leading ``claude-``; a name also matches the same name plus a version
+    suffix (``-5-5``, ``-4.1``). Anything else, including a prefix that is another model, does not match."""
+    if not declared or not actual:
+        return False
+    one, other = (re.sub(r"^claude-", "", value.strip().casefold()) for value in (declared, actual))
+    if one == other:
+        return True
+    short, long = sorted((one, other), key=len)
+    return bool(re.fullmatch(re.escape(short) + r"(?:-\d+(?:\.\d+)?)+", long))
+
+
 class PiProfileSettings(BaseModel):
     """The PI's default reference pointers, added to every request unless the request turns them off.
 
@@ -737,6 +778,7 @@ class Settings(BaseModel):
     pi_language: PiLanguageSettings = Field(default_factory=PiLanguageSettings)
     plan: PlanSettings = PlanSettings()
     model_tier_prices: ModelTierPrices = Field(default_factory=ModelTierPrices)
+    model_tiers: ModelTierModels = Field(default_factory=ModelTierModels)
     lab: LabSettings = LabSettings()
     research: ResearchSettings = ResearchSettings()
     literature: LiteratureSettings = LiteratureSettings()

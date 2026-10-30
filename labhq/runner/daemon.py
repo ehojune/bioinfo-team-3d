@@ -1108,6 +1108,11 @@ class Runner:
 
     def _resolve_agent(self, task: Task) -> AgentSpec:
         agent = self.registry.get(task.agent_id)
+        # A tier names a model only for an agent whose YAML gives none, and only when model_tiers says so (#625).
+        if agent.model is None and agent.model_tier:
+            tier_model = self.s.model_tiers.model_for(agent.model_tier, agent.engine.value)
+            if tier_model:
+                agent = agent.model_copy(update={"model": tier_model})
         # A read-only task takes nothing from the sender: run_task rebuilds it as read_only_profile.
         if task.meta.get("agent_overrides") and not is_read_only_task(task.meta):
             agent = AgentSpec.model_validate({**agent.model_dump(), **task.meta["agent_overrides"]})

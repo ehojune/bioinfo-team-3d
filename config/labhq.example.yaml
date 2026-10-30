@@ -54,6 +54,14 @@ model_tier_prices:
   balanced: {min_usd: null, max_usd: null}
   reasoning: {min_usd: null, max_usd: null}
 
+# 등급(fast·balanced·reasoning)이 엔진마다 어떤 모델을 뜻하는지(#625). 비워 두면 등급은 모델을 고르지 않고 직원 YAML의
+# `model`이 그대로 쓰입니다. 직원 YAML에 `model`이 있으면 항상 그것이 이기고, 등급은 `model`이 없는 직원에게만 씁니다.
+# 값을 적으면 요청 비용 요약이 선언 등급과 다른 모델로 돈 직원을 `model_tier_mismatch`로 알립니다. 모델명은 공식 목록에서 확인해 적습니다.
+model_tiers:
+  fast: {}        # 예: {claude_code: haiku, codex: gpt-6-luna}
+  balanced: {}
+  reasoning: {}
+
 engines:
 # bioinfo-agent plugin 경로는 러너 환경변수 BIOINFO_AGENT_DIR로 지정 (agents/core/bioinfo-agent.yaml).
 # labhq init이 BIOINFO_AGENT_DIR, D:/bioinfo-agent·~/bioinfo-agent, WSL의 /mnt/d/bioinfo-agent 순으로 찾아 아래 env에

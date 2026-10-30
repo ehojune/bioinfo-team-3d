@@ -12,11 +12,13 @@ def estimate_call(settings: Settings, agent: AgentSpec, *, stage: str, model: st
     tier = agent.model_tier
     rate = getattr(settings.model_tier_prices, tier, None) if tier else None
     known = rate is not None and rate.min_usd is not None and rate.max_usd is not None
+    # The model this call would run: a request's own, the agent's, else what its tier means on its engine (#625).
+    run_model = model or agent.model or settings.model_tiers.model_for(tier, agent.engine.value)
     return {
         "stage": stage,
         "agent_id": agent.id,
         "agent_name": agent.name,
-        "model": model or agent.model,
+        "model": run_model,
         "model_tier": tier,
         "calls": 1,
         "cost_status": "known" if known else "unknown",
@@ -77,7 +79,8 @@ def render_preview(preview: dict[str, Any]) -> str:
     for index, call in enumerate(preview["calls"], 1):
         price = (_range_text(*call["cost_range_usd"]) if call["cost_range_usd"] is not None else "비용 모름")
         tier = call.get("model_tier") or "등급 미지정"
-        lines.append(f"{index}. {call['stage']} — {call['agent_id']} ({tier}) — 1회 — {price}")
+        model = call.get("model") or "모델 미정"
+        lines.append(f"{index}. {call['stage']} — {call['agent_id']} ({tier}·{model}) — 1회 — {price}")
     lines += [f"{len(preview['calls']) + 1}. {preview['future_label']} — {preview['future']}",
               "", "직원별 예상 호출"]
     grouped: dict[str, int] = {}
