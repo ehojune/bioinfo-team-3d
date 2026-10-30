@@ -2516,6 +2516,13 @@ class Runner:
                 result.ok = False
                 result.missing_outputs = list(dict.fromkeys([*result.missing_outputs, *missing_required]))
                 result.error = "incomplete: missing outputs: " + ", ".join(result.missing_outputs)
+            if declared_dirs and result.ok and output_scan_notes:
+                # The bounded walk skipped part of outputs/ (too deep, too many entries, unreadable): a declared folder
+                # would hand a later step only the files it did see, with nothing saying the rest is missing (#1058).
+                result.ok = False
+                result.error = ("incomplete: the outputs scan is incomplete, so declared folder(s) "
+                                f"{', '.join(declared_dirs)} cannot be collected whole: "
+                                + "; ".join(dict.fromkeys(output_scan_notes)))
             if declared_dirs and result.ok and len(result.outputs) > STEP_INPUT_MAX_FILES:
                 # A later step stages at most this many collected files of one ancestor and refuses the rest (#1058).
                 result.ok = False

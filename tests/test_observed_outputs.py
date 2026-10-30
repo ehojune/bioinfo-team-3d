@@ -415,3 +415,18 @@ def test_the_orchestrator_applies_the_same_hashed_child_rule_to_a_declared_folde
     hashed = unhashed.model_copy(update={"outputs": ["outputs/literature/p1.md"],
                                          "output_sha256": {"outputs/literature/p1.md": "a" * 64}})
     assert apply_declared_output_status(step, hashed).ok is True
+
+
+@pytest.mark.asyncio
+async def test_declared_directory_with_an_incomplete_scan_is_not_collected_as_if_whole(tmp_path, monkeypatch):
+    """Review P1: files below the scan depth are skipped with a note; the folder must not pass on what was seen."""
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", b"note\n")
+        _write(workdir, "outputs/literature/a/b/c/deep.md", b"deep\n")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    runner.s.runner.reference_scan_max_depth = 1
+    result = await runner.run_task(_task(outputs=["literature"]))
+
+    assert result.ok is False
+    assert "scan is incomplete" in result.error and "outputs/literature" in result.error
