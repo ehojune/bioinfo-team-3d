@@ -1081,7 +1081,7 @@ The beaver editor (`editor`) polishes the README with the `humanizer` and `graph
 
 | Path | Contents |
 |---|---|
-| `README.md` | In order: question → answer and limits → graphical abstract → representative figure → report, result table and reproduction links → short table of branches, showing only the research question. How to run and seeds are stated; no local paths |
+| `README.md` | In order: question → answer and limits → graphical abstract → representative figure → report, result table and reproduction links → short table of branches, showing only the research question. How to run and seeds are stated; no local paths. Beside each figure it lists the tables the same script handles (it cannot tell which table belongs to which figure, and says so for same-named figures). The environment section lists the files under `run/environment/` with pinned versions (requirements, conda, poetry, uv, Pipfile, renv), or says there is no record. An automatic graphical abstract is labeled as carrying numbers copied from the conclusion sentences |
 | `report/` | Paper-format science report md and PDF. Claim footnotes in the PDF are shown as `[Evidence n]` and a list at the end |
 | `run/` | A short reproduction guide, work instructions, request, decision, execution, cost and revision history. Earlier rounds, review notes and unapplied corrections go here. Execution report, diagram, timeline and `nextflow/` |
 | `code/<step>/outputs/`, `figures/`, `tables/` | Scripts that preserve the original run folder, SVG, and publishable aggregate tables. A table the report links is checked for existence, columns and row shape |
