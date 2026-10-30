@@ -28,6 +28,14 @@ READ_ONLY_DISABLED_FEATURES = ("hooks", "computer_use", "browser_use")
 # outside labhq's step accounting or configured MCP/tool boundary. Names checked with `codex features list` on
 # codex-cli 0.160.1 (2026-10-12). Unknown names are CLI errors, so an older CLI fails closed.
 STAFF_DISABLED_FEATURES = ("multi_agent", "memories", "apps", "plugins")
+# The Windows elevated sandbox lets a shell command reach the network whatever the profile or network_access says
+# (#1055: a read-only reviewer's urllib calls to Europe PMC, RCSB and ChEMBL went through and were not counted by
+# lookup admission). A closed local proxy makes the default HTTP clients of a shell command fail, which stops lookups
+# made by accident; code that ignores the proxy variables still connects. The process boundary is #666.
+_CLOSED_PROXY = "http://127.0.0.1:9"
+SHELL_NO_PROXY_ENV = {**{name: _CLOSED_PROXY for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy",
+                                                           "https_proxy", "all_proxy")},
+                      "NO_PROXY": "", "no_proxy": ""}
 ELEVATED_SETUP_ERROR = (
     "Codex elevated sandbox setup is required for the staff CODEX_HOME. An unattended run cannot safely "
     "launch its administrator setup helper. Initialize that CODEX_HOME interactively before unattended work; "
@@ -293,6 +301,9 @@ class CodexAdapter(AgentAdapter):
             flags += ["-c", f'model_reasoning_effort="{a.effort}"']
         web_search = "live" if any(t.split("(")[0] in WEB_TOOLS for t in a.tools) else "disabled"
         flags += ["-c", f'web_search="{web_search}"']
+        if web_search == "disabled" and (ctx.read_only or ctx.read_only_inputs or a.sandbox == "read-only"):
+            # Only the shell sees these, not Codex's own connection. A mistake guard, not a boundary (#1055).
+            flags += ["-c", f"shell_environment_policy.set={_toml(SHELL_NO_PROXY_ENV)}"]
         for d in ([] if ctx.read_only or ctx.read_only_inputs or a.sandbox == "read-only" else ctx.extra_dirs):
             flags += ["--add-dir", d]
         if t.output_schema:
