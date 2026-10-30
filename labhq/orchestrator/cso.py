@@ -5831,13 +5831,14 @@ class Orchestrator:
                          "reason": "live source defect: " + reason}
                         for claim in checked.claims if evidence_id in claim.verified_evidence]
         def update_conclusion_depth() -> None:
+            stored = output_checks.stored_access(self.hub.requests.get(rid, {}).get("analysis_precedents"))
             warnings[:] = [line for line in warnings if not line.startswith(("결론 근거 논문 ", "문헌 접근 실패 원장("))]
             conclusion_depth = output_checks.conclusion_literature_line(
-                steps, results, ledgers, unsupported=unsupported, refused=refused)
+                steps, results, ledgers, unsupported=unsupported, refused=refused, stored=stored)
             if conclusion_depth:
                 warnings.append(conclusion_depth)
             access_ledger = output_checks.literature_ledger_line(
-                steps, results, ledgers, unsupported=unsupported, refused=refused)
+                steps, results, ledgers, unsupported=unsupported, refused=refused, stored=stored)
             if access_ledger:
                 warnings.append(access_ledger)
             contract["result_warnings"] = warnings
