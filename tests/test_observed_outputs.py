@@ -623,3 +623,19 @@ async def test_a_hard_linked_optional_output_stops_the_step_too(tmp_path, monkey
         outputs=["outputs/ledger.tsv", "outputs/preview.png"], required_outputs=["outputs/ledger.tsv"],
         optional_outputs=["outputs/preview.png"]))
     assert result.ok is False and "hard-linked" in result.error and "preview.png" in result.error
+
+
+@pytest.mark.asyncio
+async def test_a_direct_run_is_not_failed_for_hard_links_nobody_stages(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/a.tsv", b"rows" + bytes([10]))
+        try:
+            os.link(workdir / "outputs/a.tsv", workdir / "outputs/a-copy.tsv")
+        except OSError as error:
+            pytest.skip(f"this account cannot create a hard link ({error})")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    task = _task(outputs=[])
+    task.meta["kind"] = "direct"
+    result = await runner.run_task(task)
+    assert "hard-linked" not in (result.error or "")

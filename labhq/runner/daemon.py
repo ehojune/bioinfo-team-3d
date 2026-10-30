@@ -2549,7 +2549,7 @@ class Runner:
                     result.ok = False
                     result.error = (f"incomplete: declared folder(s) {', '.join(declared_dirs)} make the step collect "
                                     f"outputs a later step would refuse: {problem}")
-            if result.ok and not declared_dirs:
+            if result.ok and not declared_dirs and task.meta.get("kind") != "direct":
                 # A hard-linked output is hashed like any other, but a later step refuses it and with it the
                 # whole ancestor; steps that declare a folder get the same check inside the staging check (#1065).
                 # Every collected path, optional and unreported ones too: a later step stages the whole list.
