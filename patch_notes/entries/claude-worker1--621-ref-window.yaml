@@ -4,3 +4,7 @@ rows:
     at: "2026-10-31 07:00"
     summary: "여러 염기 REF(결실 등)의 AlphaGenome 점수 창을 첫 염기가 아니라 REF 구간의 가운데에 맞춥니다. 한 염기 변이는 그대로입니다."
     text: "annot: 여러 염기 REF의 AlphaGenome 창을 REF 구간 중앙에 맞춘다 (#621)"
+  - sha: "32709d1"
+    at: "2026-10-31 07:02"
+    summary: "매뉴얼에 AlphaGenome 변이 점수 창이 REF 구간의 가운데에 맞춰진다고 적었습니다."
+    text: "manual: AlphaGenome 변이 창이 REF 구간 가운데에 맞춰진다고 적음 (#621)"
