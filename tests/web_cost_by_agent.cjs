@@ -40,5 +40,7 @@ assert.equal(engineCostLabel({by_engine: engines, warnings: ['price_stale:codex:
 assert.equal(engineCostLabel({by_engine: engines}), 'claude_code 확인 $1.00', 'an older summary without warnings adds nothing');
 const page = fs.readFileSync(path.join(root, 'labhq/web/index.html'), 'utf8');
 assert.match(page, /LabHQState\.deadlineLabel\(q, Date\.now\(\) \/ 1000\)/, 'the request panel shows the time limit');
+assert.match(page, /JSON\.stringify\(\[S\.requests\.size, staffNames, statusText, deadlineText,/, 'the countdown is in the render key, so the 15 s timer redraws it');
+assert.match(page, /\$\{deadlineText \? `<span>\$\{esc\(deadlineText\)\}<\/span>` : ''\}/, 'the panel prints the text the key was built from');
 
 console.log('cost by agent web tests passed');
