@@ -4,7 +4,8 @@ The first Chrome of a fresh Windows runner can need far longer than the 30 s the
 start (DevToolsActivePort after ~10 s, then 20 s for the first page target; or no port at all in 30 s). That cold cost
 is a property of the runner, not of the product, so it is not counted against the test: this step starts Chrome with the
 test's own flags on an empty profile, waits for the DevTools port and a page target, prints how long each took, and
-stops it. The test keeps its 30 s start limit; this step has its own, longer one, and a failure here names itself.
+stops it. The test keeps its 30 s start limit for a warmed Chrome; the cold start is checked here against 60 s (the
+driver's default START_MS), and a failure here names itself (docs/reference/ci-reuse.md).
 
     python scripts/ci_chrome_warmup.py          # exit 0 when warm or when no Chrome is installed, 1 on a failed start
 """
@@ -21,7 +22,7 @@ import time
 import urllib.request
 from collections.abc import Callable, Mapping
 
-START_LIMIT_S = 90  # this step's own limit; the browser test's start limit (30 s) is not changed
+START_LIMIT_S = 60  # this step's own limit: the driver's default START_MS, so a first Chrome slower than that fails here
 POLL_S = 0.05
 CANDIDATES = ('C:/Program Files/Google/Chrome/Application/chrome.exe',
               'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',

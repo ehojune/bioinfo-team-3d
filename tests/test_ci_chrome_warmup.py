@@ -104,6 +104,18 @@ def test_main_does_not_fail_where_there_is_no_chrome_and_fails_loudly_on_a_faile
     assert re.search(r'DevToolsActivePort 11.2 s, first page target 31.0 s', capsys.readouterr().out)
 
 
+def test_the_cold_start_limit_is_the_drivers_default_start_budget_and_names_itself_when_missed():
+    driver = (ROOT / 'tests/support/demo_driver.cjs').read_text(encoding='utf-8')
+    assert f'const START_MS = {w.START_LIMIT_S * 1000};' in driver  # one number for "Chrome must start within"
+    assert w.START_LIMIT_S == 60 and w.START_LIMIT_S > 30  # longer than the warmed test's 30 s, never shorter
+
+
+def test_the_policy_document_says_where_the_cold_start_is_checked():
+    text = (ROOT / 'docs/reference/ci-reuse.md').read_text(encoding='utf-8')
+    assert 'Warm Chrome' in text and 'cold start 검증은 이 step이 맡고' in text and '데워진 Chrome의' in text
+    assert '사전 기동 없이' not in text and '재시도·사전 기동' not in text  # the old no-pre-start rule is gone
+
+
 def test_the_windows_job_warms_chrome_before_the_critical_browser_test_without_touching_its_limits():
     steps = yaml.safe_load((ROOT / '.github/workflows/test.yml').read_text(encoding='utf-8'))['jobs']['pytest-windows']['steps']
     warm_step = next(step for step in steps if step.get('run') == 'python scripts/ci_chrome_warmup.py')
