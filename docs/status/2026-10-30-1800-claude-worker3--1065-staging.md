@@ -10,3 +10,6 @@
 ## 테스트 결과
 - Windows `test_observed_outputs`·`test_step_inputs_665`·`test_step_inputs_review_791`·`test_labhq_verify` 91 passed·3 skipped(POSIX 전용).
 - 미검증: 실제 연구 요청의 다중 상류 staging, POSIX(WSL)에서의 hard link 시험(Windows NTFS에서만 돌림), 스캔 기록에 없는 파일을 판정하는 `folder_files` 깊이 의미가 스캐너와 정확히 같은지(같은 상한을 쓰나 깊이를 `outputs/` 아래 단계 수로 환산한 근사).
+
+## CI 메모
+- clean-install 한 건이 Windows 임시 폴더 정리의 WinError 32(VSApplicationInsights 파일 잠김)로 실패했다. 같은 run에서 doctor는 통과했고 코드와 무관한 기반 시설 flake라 기록 커밋으로 CI를 다시 돌린다.
