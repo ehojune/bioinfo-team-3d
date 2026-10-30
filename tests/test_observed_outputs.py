@@ -430,3 +430,20 @@ async def test_declared_directory_with_an_incomplete_scan_is_not_collected_as_if
 
     assert result.ok is False
     assert "scan is incomplete" in result.error and "outputs/literature" in result.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("files, ok", [(2, True), (3, False)])
+async def test_declared_directory_over_the_staging_byte_budget_is_incomplete(tmp_path, monkeypatch, files, ok):
+    """Review P1: a later step stages at most input_hash_max_total_bytes of one ancestor; a bigger folder must not pass."""
+    def write(workdir):
+        for index in range(files):
+            _write(workdir, f"outputs/literature/p{index}.md", b"0123456789")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    runner.s.runner.input_hash_max_total_bytes = 25
+    result = await runner.run_task(_task(outputs=["literature"]))
+
+    assert result.ok is ok, result.error
+    if not ok:
+        assert "25 bytes" in result.error
