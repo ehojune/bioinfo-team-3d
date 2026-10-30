@@ -369,8 +369,8 @@ async def test_network_timeout_closes_client_without_holding_publication(gateway
 
     slow = Slow()
     gateway.clients.add(slow)
-    await asyncio.wait_for(gateway.publish(event()), 10)
-    await asyncio.wait_for(closed.wait(), 10)
+    await asyncio.wait_for(gateway.publish(event()), 1)
+    await asyncio.wait_for(closed.wait(), 1)
     assert slow not in gateway.clients and not gateway.event_lock.locked()
     assert gateway.store.get("request", "r")["status"] == "running"
 
@@ -421,7 +421,7 @@ async def test_disconnected_client_is_not_retried_for_later_pending_events(gatew
     for label in ("first", "second", "third"):
         saved = gateway.store.append_event(event(label), 100)
         gateway.pending_committed.append((saved, (slow, healthy)))
-    await asyncio.wait_for(gateway._send_committed_event(), 10)
+    await asyncio.wait_for(gateway._send_committed_event(), 1)
     assert attempts == [1]
     assert delivered == [1, 2, 3]
     assert not gateway.pending_committed
