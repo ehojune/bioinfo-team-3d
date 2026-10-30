@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: 'b49b57b'
+    at: '2026-10-30 12:56'
+    summary: '분리된 자식의 marker를 완성한 뒤 게시합니다.'
+    text: 'Publish detached witness atomically'
   - sha: '91e0a30'
     at: '2026-10-30 12:49'
     summary: '진단 환경의 비밀값 상속을 막고 writer 대기 시간을 조정합니다.'
