@@ -11,6 +11,15 @@ import re
 from typing import Any
 
 
+# Fixed probe topology; an adapter maps actual pinned paths to these roles.
+# Arbitrary source trees require a separately reviewed topology contract.
+REQUIRED_OBJECTS = {
+    "parent:root": "directory",
+    "parent:source": "directory",
+    "source:tool.py": "file",
+}
+
+
 @dataclass(frozen=True)
 class Verdict:
     contract: str
@@ -36,19 +45,18 @@ def _valid_expectations(trusted: dict[str, Any]) -> bool:
             or supervisor["subject_id"] == trusted["child_id"]):
         return False
     objects = trusted.get("objects")
-    if not isinstance(objects, dict) or not objects or not all(_text(name) for name in objects):
+    if not isinstance(objects, dict) or set(objects) != set(REQUIRED_OBJECTS):
         return False
-    kinds, identities = set(), set()
-    for obj in objects.values():
+    identities = set()
+    for role, obj in objects.items():
         if (not isinstance(obj, dict) or not _text(obj.get("object_id"))
-                or obj.get("kind") not in ("file", "directory") or obj.get("symlink") is not False
+                or obj.get("kind") != REQUIRED_OBJECTS[role] or obj.get("symlink") is not False
                 or type(obj.get("nlink")) is not int or obj["nlink"] < 1):
             return False
-        kinds.add(obj["kind"])
         identities.add(obj["object_id"])
         if obj["kind"] == "file" and (obj["nlink"] != 1 or not _digest(obj.get("sha256"))):
             return False
-    return kinds == {"file", "directory"} and len(identities) == len(objects)
+    return len(identities) == len(objects)
 
 
 def validate(evidence: dict[str, Any], trusted: dict[str, Any]) -> Verdict:

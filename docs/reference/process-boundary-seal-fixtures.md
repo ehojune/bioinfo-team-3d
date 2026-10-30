@@ -10,6 +10,8 @@ Lookup-only contract evidence for [#1063](https://github.com/ehojune/bioinfo-tea
 
 Required witness observations, in order: monitor start → sealed source/ancestor identities → execution start → normal exit → whole-tree descendant/socket cleanup → final identities → monitor stop. Start, exit and cleanup each bind the independently pinned child identity. Sequence and monotonic timestamps must be complete. Both monitor endpoints cover every pinned object with zero event loss. A mutation event rejects the run even when endpoint hashes match. Source/ancestor identities must be distinct; their identities and link metadata must match caller-owned pins.
 
+This probe has a fixed topology: `parent:root` and `parent:source` are directories; `source:tool.py` is the file. All three roles are required even if expectations, snapshots and monitor scopes are weakened together. IDs/hashes may be independently rebound. Arbitrary source trees need a separately reviewed topology contract and adapter.
+
 | Evidence | Expected status / reason |
 |---|---|
 | Full positive control | `synthetic_only`, accepted contract |

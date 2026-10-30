@@ -228,3 +228,24 @@ def test_pinned_objects_cannot_alias_even_when_snapshots_agree(first, second):
     result = validator.validate(evidence, trusted)
     assert result.contract == "rejected"
     assert result.reasons == ("malformed_launch_expectations",)
+
+
+@pytest.mark.parametrize("role", list(CORPUS["trusted"]["objects"]))
+@pytest.mark.parametrize("mutation", ["remove", "wrong_kind"])
+def test_required_source_and_ancestor_roles_cannot_be_weakened_coherently(role, mutation):
+    trusted, evidence = deepcopy(CORPUS["trusted"]), deepcopy(CORPUS["positive"])
+    if mutation == "remove":
+        del trusted["objects"][role]
+    else:
+        obj = trusted["objects"][role]
+        if obj["kind"] == "file":
+            obj.update(kind="directory", nlink=2)
+            del obj["sha256"]
+        else:
+            obj.update(kind="file", nlink=1, sha256="f" * 64)
+    for event in evidence["witness"]["events"]:
+        if "objects" in event:
+            event["objects"] = deepcopy(trusted["objects"])
+        if event["type"] in {"monitor_start", "monitor_stop"}:
+            event["scope"] = sorted(trusted["objects"])
+    assert validator.validate(evidence, trusted).contract == "rejected"
