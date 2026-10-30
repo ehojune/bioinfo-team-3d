@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:30 | [`5736370`](https://github.com/ehojune/bioinfo-team-3d/pull/1103/commits/5736370) | **시간 상한 줄의 남은 시간이 처음 값에 멈추지 않고 줄어듭니다.**<br>남은 시간 문구를 요청 render cache key에 넣어 15초 타이머가 카운트다운을 다시 그리게 한다(리뷰 P2) + 시험 |
+| 06:10 | [`fe8cdc8`](https://github.com/ehojune/bioinfo-team-3d/pull/1103/commits/fe8cdc8) | **웹 작업판의 시간 상한과 모델 불일치 표시가 설명서에 적히고, 카운트다운 수정으로 깨졌던 시험이 다시 통과합니다.**<br>render key 식을 잘라 평가하는 web_local_jobs_675의 context에 deadlineText를 더해 ReferenceError 회귀를 고치고 문구가 바뀌면 key가 바뀜을 단언한다. manual 한·영에 웹 작업판의 시간 상한 줄, snapshot 뒤 PI 대기 오차, 선언 등급과 다른 모델 비용 줄을 적는다(리뷰 P1) |
+| 05:30 | [`769c1fd`](https://github.com/ehojune/bioinfo-team-3d/pull/1103/commits/769c1fd) | **웹 작업판에서도 요청의 시간 상한과 남은 시간, 선언 등급과 다른 모델 경고를 볼 수 있습니다.**<br>웹 snapshot과 request.created가 요청의 wall_clock을 싣고, state.js의 deadlineLabel이 labhq status와 같은 문구(켜짐·꺼짐·남은 시간·PI 대기 제외·대기 중 정지)를 만들어 작업판 요청 패널에 보인다. 비용 줄은 model_tier_mismatch 경고를 선언 등급과 다른 모델로 보인다. 시간 상한 정보를 보내지 않는 옛 gateway는 아무것도 보이지 않는다 |
 | 04:20 | [`761db6e`](https://github.com/ehojune/bioinfo-team-3d/pull/1097/commits/761db6e) | **dry-run이 보이는 모델이 러너가 실제로 쓰는 모델과 같아집니다.**<br>send --dry-run이 러너와 같이 runner.force_engine을 적용한 엔진으로 등급 모델을 보이고, status 문서를 gateway·WSL·manual까지 끝난 실제 변경에 맞춘다(리뷰 P1·P2) + 시험 |
 | 03:50 | [`b15daf6`](https://github.com/ehojune/bioinfo-team-3d/pull/1097/commits/b15daf6) | **러너가 엔진을 바꿔 돌릴 때도 등급 모델이 원래 엔진의 모델로 잘못 채워지지 않습니다.**<br>러너가 등급으로 모델을 채우는 때를 agent_overrides·agent_identity·force_engine을 적용한 뒤로 옮겨, 등급이 직원이 실제로 도는 엔진의 모델을 뜻하게 한다(리뷰 P1) + 시험 |
 | 03:20 | [`e829467`](https://github.com/ehojune/bioinfo-team-3d/pull/1097/commits/e829467) | **WSL에서 도는 직원도 Windows와 같은 등급 모델을 씁니다(model이 없는 bioinfo-agent 포함).**<br>setup-wsl이 model_tiers 표를 WSL runner 설정에 보내고 wsl_bootstrap이 설정에 쓴다. 보내지 않은 옛 설정은 빈 표(리뷰 P1) + 시험 2건 |
