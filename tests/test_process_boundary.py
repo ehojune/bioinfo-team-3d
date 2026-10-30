@@ -164,6 +164,10 @@ def test_diagnostic_ancestry_samples_are_explicitly_untrusted():
     pins = observations[0]["objects"]
     assert boundary.validate_synthetic_ancestry(pins, [o["objects"] for o in observations])
     assert receipt.seal_status == "unsealed"
+    assert receipt.to_dict()["version"] == 2
+    assert receipt.to_dict()["ancestry_observations"] == observations
+    assert "ancestry_observations" not in boundary.protected_launch().to_dict()
+    assert "ancestry_observations" not in boundary.diagnostic_probe().to_dict()
 
 
 def test_ancestry_rejects_changed_edges_identities_and_missing_phases():

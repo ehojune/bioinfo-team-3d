@@ -32,7 +32,10 @@ class Receipt:
     ancestry_observations: list = field(default_factory=list)
 
     def to_dict(self):
-        return asdict(self)
+        result = asdict(self)
+        if self.version == 1:
+            del result["ancestry_observations"]
+        return result
 
 
 def protected_launch(*, supervisor=None, snapshot=None):
@@ -102,7 +105,7 @@ def diagnostic_staging_probe(stager, *, on_staged=None):
     stage(run_id, payloads) and cleanup(run_id); stage returns three byte digests.
     Cleanup is attempted even when staging partially fails. No child is launched.
     """
-    receipt = Receipt(1, str(uuid.uuid4()), None, None, None, None, None, {},
+    receipt = Receipt(2, str(uuid.uuid4()), None, None, None, None, None, {},
                       "unsupported", "not_started", "not_needed", "unsealed",
                       ["diagnostic staging only; no trusted seal or child launch"])
     payloads = {"snapshot": b"synthetic input", "runtime": b"synthetic runtime",
