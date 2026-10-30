@@ -180,3 +180,18 @@ def test_cost_summary_warns_when_a_declared_tier_ran_another_model():
     assert aggregate_costs(items, _tiers().model_tiers)["warnings"] == []        # an empty table says nothing
     matching = {"x": _item("lit_scout", "fast", "claude-haiku-5-5")}
     assert aggregate_costs(matching, tiers)["warnings"] == []                    # alias and full name agree
+
+
+def test_a_tier_model_follows_the_engine_the_agent_really_runs_on():
+    """#625 review: the tier is read after an override, a request identity or runner.force_engine has moved the agent."""
+    tiered = _tiers(fast={"claude_code": "haiku", "codex": "gpt-6-luna"})
+    bare = AgentSpec(id="scout", name="Scout", role="r", model_tier="fast")           # claude_code in the YAML
+    assert _runner_agent(tiered, bare).model == "haiku"
+    assert _runner_agent(tiered, bare, agent_overrides={"engine": "codex"}).model == "gpt-6-luna"
+    assert _runner_agent(tiered, bare, agent_overrides={"engine": "codex", "model": "gpt-6-sol"}).model == "gpt-6-sol"
+    forced = Settings.model_validate({"runner": {"force_engine": "codex"},
+                                      "model_tiers": {"fast": {"claude_code": "haiku", "codex": "gpt-6-luna"}}})
+    assert _runner_agent(forced, bare).model == "gpt-6-luna"                           # the forced engine, not the YAML's
+    only_claude = Settings.model_validate({"runner": {"force_engine": "codex"},
+                                           "model_tiers": {"fast": {"claude_code": "haiku"}}})
+    assert _runner_agent(only_claude, bare).model is None                              # no codex entry: nothing carried over
