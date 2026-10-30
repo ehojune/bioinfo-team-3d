@@ -12,3 +12,7 @@
 ## 하지 않은 것
 - 느린 Windows 러너에서의 재현은 CI에서 확인한다.
 - 후보 ④(`test_approval_durable_606`)는 마감이 단언이라 이번 범위가 아니다.
+
+## 리뷰 후 수정 (rev6)
+- P1: `pytest.raises(CancelledError)` 아래의 `wait_for(publication)` 4곳과 `publish(event("next"))` 2곳은 lock이 빨리 풀린다는 단언이라 1초로 되돌렸다. 시작·도착 대기 12곳은 10초 그대로.
+- `test_gateway_publish_durable.py` 26 passed.
