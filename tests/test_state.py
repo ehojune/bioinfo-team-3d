@@ -1287,7 +1287,13 @@ async def test_completed_direct_result_finishes_without_original_agent(tmp_path,
         if restored.requests["r"]["status"] == "done":
             break
         await asyncio.sleep(0.01)
-    assert restored.requests["r"]["status"] == "done"
+    # #1076: a failure here said only 'running' == 'done' on Windows CI (4 runs); name what the restored hub held.
+    state = restored.requests["r"]
+    assert state["status"] == "done", (
+        f"request stayed {state['status']!r}; error={state.get('error')!r}; "
+        f"events={[event['type'] for event in restored.events][-12:]}; "
+        f"approvals={[(entry['approval']['kind'], entry.get('status')) for entry in restored.approvals.values()]}; "
+        f"keys={sorted(state)}")
     assert restored.requests["r"]["report"] == "finished"
     assert restored.requests["r"]["cost_usd"] == 0.3
     assert not any(event["type"] == "request.resume_waiting" for event in restored.events)
