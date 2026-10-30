@@ -13,6 +13,10 @@ rows:
     summary: "합성 broker 연결과 종료를 격리 진단에서 확인합니다."
     text: "feat: add synthetic broker namespace diagnostic (#1047)"
   - sha: 'ca4fe3a'
-    at: "2026-10-30 16:00"
+    at: "2026-10-30 15:35"
     summary: "합성 staging 정리 경로와 별도 fixture 검토안을 추가합니다."
     text: "feat: exercise synthetic staging lifecycle"
+  - sha: '1419605'
+    at: "2026-10-30 15:40"
+    summary: "합성 staging의 binary mode를 명시해 인코딩 검사를 통과합니다."
+    text: "fix: declare binary staging mode explicitly"
