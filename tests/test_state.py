@@ -1873,7 +1873,7 @@ async def test_the_exit_after_a_shutdown_shares_the_shutdowns_deadline(tmp_path)
     runner.store.aack = hanging_aack
     runner._ack_nowait(seqs[1])
     await runner.shutdown(timeout_s=0.2)
-    assert runner._ack_wait_s(30.0) == 0.0  # the deadline has passed: nothing more to wait
+    assert runner._ack_wait_s(30.0) < 0.1  # the deadline is used up (within a coarse Windows clock tick), not 30 s
     started = time.monotonic()
     await runner._ack_drain(raise_error=False, timeout=runner._ack_wait_s(30.0))  # what the exit path runs
     assert time.monotonic() - started < 0.2
