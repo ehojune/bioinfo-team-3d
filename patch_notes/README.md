@@ -14,7 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:29 | [`327c866`](https://github.com/ehojune/bioinfo-team-3d/pull/1057/commits/327c866) | **단계가 실패하는 조건에 대한 설명이 실제 동작과 같아집니다.**<br>manual 한·영의 빈 claim 원장 설명을 실제 동작에 맞춘다 |
+| 15:18 | [`d80c5e1`](https://github.com/ehojune/bioinfo-team-3d/pull/1057/commits/d80c5e1) | **거부 기록에 제거된 링크가 빠지지 않고, 비어 버린 결과가 통과하지 않습니다.**<br>범위 밖 claim의 제거된 링크도 거부 행에 남기고, 정리 뒤 단계 자신의 claim이 하나도 안 남으면 실패를 유지한다 |
 | 15:15 | [`db97ddc`](https://github.com/ehojune/bioinfo-team-3d/pull/1056/commits/db97ddc) | **다시 열린 단계가 같은 라운드에서 질문 답을 받고 재실행될 때도 거절되지 않게 했습니다.**<br>fix: 다시 열린 단계는 열린 revision을 유지해 같은 라운드의 질문 재실행이 거절되지 않게 함 (#1053) |
+| 15:06 | [`837e6fe`](https://github.com/ehojune/bioinfo-team-3d/pull/1057/commits/837e6fe) | **단계가 선언하지 않은 claim이 한 개 섞여도 단계가 통째로 실패하지 않고 그 claim만 CP2에 거부로 남습니다.**<br>단계가 선언하지 않은 claim은 그것과 링크만 거부하고 나머지를 지켜, 같은 출처를 다른 independence group으로 적은 행처럼 살릴 수 있는 결함과 함께 와도 단계 전체가 실패하지 않게 한다 |
 | 15:04 | [`bef1afb`](https://github.com/ehojune/bioinfo-team-3d/pull/1056/commits/bef1afb) | **연구 요청을 수정 요청(CP2)으로 이어 갈 때, 앞 라운드에서 끝난 단계를 다시 실행하려다 거절되던 문제를 고쳤습니다.**<br>fix: CP2 revise 이어 가기가 같은 단계를 한 revision 높여 dispatch하게 함 (#1053) |
 | 09:50 | [`3281663`](https://github.com/ehojune/bioinfo-team-3d/pull/1039/commits/3281663) | **매뉴얼이 연결 거부 조건과 Windows 변경 감지 한계를 실제 동작대로 설명합니다.**<br>manual 한·영이 허용 루트 안에 머무는 중간 경로 별칭을 받는다고 정확히 적고, Windows에서 같은 크기·복원된 수정 시각의 제자리 재작성은 감지하지 못하는 한계를 적는다 |
 | 09:20 | [`3f93302`](https://github.com/ehojune/bioinfo-team-3d/pull/1039/commits/3f93302) | **프로젝트 폴더는 wiki로 연결되지 않고, SQLite 환경이 바뀌어도 검색이 비지 않습니다.**<br>wiki 루트를 runner.reference_roots로만 허용하고(프로젝트 local_dir 제외), trigram 없이 만든 색인에 trigram이 생기면 FTS를 다시 채운다 |
