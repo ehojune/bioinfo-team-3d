@@ -434,7 +434,9 @@ def main() -> int:
         while not trigger.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
         if trigger.exists() and trigger.read_text(encoding="ascii") == run_id:
-            (work / "detached.marker").write_text(run_id, encoding="ascii")
+            marker_tmp = work / "detached.marker.tmp"
+            marker_tmp.write_text(run_id, encoding="ascii")
+            marker_tmp.replace(work / "detached.marker")
         return 0
     if args.child:
         result = child(args.child, Path(args.case_root))
