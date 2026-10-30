@@ -51,7 +51,7 @@ Still frames: [2.5D](docs/media/office-25d.png) · [3D](docs/media/office-3d.png
 - The CSO asks only about permissions, cost, data access, choices only the PI knows (disease, cohort), and analysis depth. It decides the rest of the design itself and records it as **assumptions** in the plan and report.
 - A research step's result can hold only the claims in the `claim_ids` the plan declared for it, and a result-correction request states that list.
 - When a continuation reuses steps of a request that cites DOI or PMID references, only the identifiers were pinned, so the card and the report say "content not checked" in one line.
-- If a research request still waiting in the report review is moved to GitHub (`labhq storage <id> --to github`), the refusal now says to run `labhq review-done <id>` first; `review-done --storage github` does the review and the storage choice in one step.
+- If a research request still waiting in the report review is moved to GitHub (`labhq storage <id> --to github`), the refusal now says to run `labhq review-done <id> --revision <number> --sha256 <hash>` first, with the numbers on the report card; adding `--storage github` to that command does the review and the storage choice in one step.
 - Each step leaves a record in its work folder: instructions, outputs, engine, and cost. A declared output folder is collected as its files, each with a hash; a folder with no hashed file, or with more than 200 files, ends the step incomplete.
 
 ## Four things labhq works hard on
