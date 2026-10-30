@@ -225,3 +225,56 @@ def test_consumer_runs_full_without_reusable_producer_evidence(evidence, kind):
         return api(path, binary)
     from datetime import datetime, timezone
     assert not cs.reuse_main(api.identity, request, now=datetime(2026, 10, 20, 1, tzinfo=timezone.utc))
+
+
+MAIN_NOW = "e" * 40
+
+
+def main_moved_ahead(data, status="ahead", behind_by=0, base=TESTED_BASE, merge_base=TESTED_BASE):
+    """main moved on after the checkout parent was taken: the extra index commit that lands during a run."""
+    data["git/ref/heads/main"]["object"]["sha"] = MAIN_NOW
+    data[f"compare/{TESTED_BASE}...{MAIN_NOW}"] = {
+        "status": status, "ahead_by": 1, "behind_by": behind_by, "total_commits": 1,
+        "base_commit": {"sha": base}, "merge_base_commit": {"sha": merge_base}, "commits": [{"sha": MAIN_NOW}]}
+
+
+def test_main_moving_ahead_of_the_checkout_parent_is_still_recognised_as_base_drift(drift):
+    """#1073: a main that is the parent plus later commits is the same forward drift, not an unbound checkout."""
+    *_, data, calls, output = drift
+    main_moved_ahead(data)
+    cs.main()
+    assert output.read_text(encoding="utf-8") == "reusable=false\nreason=base-drift\n"
+    assert not Path("ci-result.json").exists()
+    assert f"compare/{TESTED_BASE}...{MAIN_NOW}" in calls and len(calls) == 8
+
+
+@pytest.mark.parametrize("case", ["diverged", "behind", "behind-by", "base-mismatch", "merge-base-mismatch", "unrelated",
+                                  "partial-count", "partial-tail", "missing-commits", "empty-commits", "boolean-count"])
+def test_a_main_that_is_not_ahead_of_the_checkout_parent_stays_an_error(drift, case):
+    *_, data, _, output = drift
+    if case == "unrelated":
+        data["git/ref/heads/main"]["object"]["sha"] = MAIN_NOW  # no compare answer: it cannot be proved ahead
+    elif case == "diverged": main_moved_ahead(data, status="diverged")
+    elif case == "behind": main_moved_ahead(data, status="behind")
+    elif case == "behind-by": main_moved_ahead(data, behind_by=1)
+    elif case == "base-mismatch": main_moved_ahead(data, base=EVENT_BASE)
+    elif case == "merge-base-mismatch": main_moved_ahead(data, merge_base=EVENT_BASE)
+    else:
+        main_moved_ahead(data)
+        moved = data[f"compare/{TESTED_BASE}...{MAIN_NOW}"]
+        if case == "partial-count": moved["total_commits"] = 2  # more commits exist than were returned
+        elif case == "partial-tail": moved["commits"][-1]["sha"] = "f" * 40  # the answer does not end at main
+        elif case == "missing-commits": del moved["commits"]
+        elif case == "empty-commits": moved.update(total_commits=0, ahead_by=0, commits=[])
+        else: moved["total_commits"] = True
+    with pytest.raises(ValueError, match="checkout-parents"):
+        cs.main()
+    assert not output.exists() and not Path("ci-result.json").exists()
+
+
+def test_a_main_that_is_not_a_commit_sha_is_refused_without_asking_the_api_about_it(drift):
+    *_, data, calls, output = drift
+    data["git/ref/heads/main"]["object"]["sha"] = "main"
+    with pytest.raises(ValueError, match="checkout-parents"):
+        cs.main()
+    assert not any(path.startswith(f"compare/{TESTED_BASE}...") for path in calls)

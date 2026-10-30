@@ -645,8 +645,20 @@ def confirmed_base_drift(current: dict, snapshot: dict, parents: list[str], run:
                 and [p["sha"] for p in commit["parents"]] == parents[1:]
                 and pr_snapshot(pr) == snapshot and pr["merge_commit_sha"] == checkout
                 and main["ref"] == "refs/heads/main" and main["object"]["type"] == "commit"
-                and main["object"]["sha"] == base):
+                and SHA.fullmatch(main["object"]["sha"])):
             return False
+        if main["object"]["sha"] != base:
+            # main moved again while this job ran (the index commit lands during a run): the checkout parent must be a
+            # commit main already contains, and main may only be ahead of it. A diverged, behind or unrelated main
+            # stays an error, as does any partial answer.
+            moved = api(f"compare/{base}...{main['object']['sha']}")
+            total = moved["total_commits"]
+            if not (moved["status"] == "ahead" and type(moved["behind_by"]) is int and moved["behind_by"] == 0
+                    and type(total) is int and 0 < total <= 250
+                    and type(moved["ahead_by"]) is int and moved["ahead_by"] == total == len(moved["commits"])
+                    and moved["base_commit"]["sha"] == moved["merge_base_commit"]["sha"] == base
+                    and moved["commits"][-1]["sha"] == main["object"]["sha"]):
+                return False  # a complete forward answer ending at main, like the event-base compare below
         forward = api(f"compare/{snapshot['base_sha']}...{base}")
         count = forward["total_commits"]
         if not (forward["status"] == "ahead" and type(forward["behind_by"]) is int and forward["behind_by"] == 0
