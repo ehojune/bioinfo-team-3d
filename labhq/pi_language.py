@@ -67,6 +67,7 @@ class PiInterpreter:
     def __init__(self, hub):
         self.hub = hub
         self.tasks: dict[asyncio.Task, str | None] = {}
+        self._budget_locks: dict[str, asyncio.Lock] = {}
         for key, entry in hub.store.all("pi_translation").items():
             if entry.get("status") == "pending":
                 failed = {"status": "failed", "label": "번역 못 함", "by": "chief_of_staff"}
@@ -82,6 +83,9 @@ class PiInterpreter:
                         if followup.get("id") == entry["followup_id"]:
                             followup["pi_display"] = failed
                     hub.save_request(rid)
+
+    def _budget_lock(self, rid: str) -> asyncio.Lock:
+        return self._budget_locks.setdefault(rid, asyncio.Lock())
 
     def schedule(self, event: dict) -> None:
         source = message_source(event)
@@ -117,41 +121,44 @@ class PiInterpreter:
             source_task = hub.store.get("task", event.get("task_id")) if event.get("task_id") else {}
             restricted = ((source_task or {}).get("payload", {}).get("meta", {}).get("restricted_inputs")
                           or (event.get("data") or {}).get("source_restricted"))
-            budget = hub.store.get("pi_translation_budget", str(rid)) or {"reserved": 0.0}
-            reservations = hub.store.get("pi_translation_reservations", str(rid)) or {}
-            # The first new reservation atomically carries the opaque legacy total.
-            # A crash before the aggregate update must not lose either prefix.
-            legacy_values = [r["legacy_reserved_usd"] for r in reservations.values()] or [budget["reserved"]]
-            if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in legacy_values):
-                return
-            legacy = max(legacy_values)
-            reserved = max(budget["reserved"], legacy + sum(r["ceiling_usd"] for r in reservations.values()))
-            limit = float(req.get("budget_usd") or hub.s.policy.budget.per_request_usd)
-            hub.orchestrator._restore_cost_cache(rid)
-            _, _, bound = hub.orchestrator._budget_bound(rid, limit)
-            if not math.isfinite(reserved) or not math.isfinite(bound):
-                return
-            remaining = min(cfg.per_request_usd - reserved,
-                            limit - max(bound, float(req.get("cost_usd") or 0)))
-            if (restricted or not cfg.enabled or not cfg.model or not req or not runner or runner not in hub.runners
-                    or agent.get("engine") != "claude_code" or len(source) > 12000
-                    or not hub.orchestrator._diagnosis_budget_available(rid)
-                    or remaining < cfg.per_message_usd):
-                return
-            # Reserve the entire call ceiling, including failed/unknown calls, across restarts.
-            # Establish an explicit empty research-hold ledger for translation-only requests.
-            req.setdefault("budget_holds", {})
-            await persist_request(hub, rid)
-            reservation_id = f"pi_text_{key}"
-            reservations[reservation_id] = {
-                "reservation_id": reservation_id, "task_id": reservation_id,
-                "request_id": rid, "agent_id": aid, "attempt": 1,
-                "ceiling_usd": cfg.per_message_usd, "state": "reserved",
-                "legacy_reserved_usd": legacy,
-                "source": "pi_translation", "created_at": time.time()}
-            hub.store.put("pi_translation_reservations", str(rid), reservations)
-            hub.store.put("pi_translation_budget", str(rid),
-                          {"reserved": reserved + cfg.per_message_usd})
+            # Check and reserve without an await between them: two messages that arrive together must not both
+            # pass the budget check before either has reserved (#1129). The model call stays outside the lock.
+            async with self._budget_lock(str(rid)):
+                budget = hub.store.get("pi_translation_budget", str(rid)) or {"reserved": 0.0}
+                reservations = hub.store.get("pi_translation_reservations", str(rid)) or {}
+                # The first new reservation atomically carries the opaque legacy total.
+                # A crash before the aggregate update must not lose either prefix.
+                legacy_values = [r["legacy_reserved_usd"] for r in reservations.values()] or [budget["reserved"]]
+                if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in legacy_values):
+                    return
+                legacy = max(legacy_values)
+                reserved = max(budget["reserved"], legacy + sum(r["ceiling_usd"] for r in reservations.values()))
+                limit = float(req.get("budget_usd") or hub.s.policy.budget.per_request_usd)
+                hub.orchestrator._restore_cost_cache(rid)
+                _, _, bound = hub.orchestrator._budget_bound(rid, limit)
+                if not math.isfinite(reserved) or not math.isfinite(bound):
+                    return
+                remaining = min(cfg.per_request_usd - reserved,
+                                limit - max(bound, float(req.get("cost_usd") or 0)))
+                if (restricted or not cfg.enabled or not cfg.model or not req or not runner or runner not in hub.runners
+                        or agent.get("engine") != "claude_code" or len(source) > 12000
+                        or not hub.orchestrator._diagnosis_budget_available(rid)
+                        or remaining < cfg.per_message_usd):
+                    return
+                # Reserve the entire call ceiling, including failed/unknown calls, across restarts.
+                # Establish an explicit empty research-hold ledger for translation-only requests.
+                req.setdefault("budget_holds", {})
+                await persist_request(hub, rid)
+                reservation_id = f"pi_text_{key}"
+                reservations[reservation_id] = {
+                    "reservation_id": reservation_id, "task_id": reservation_id,
+                    "request_id": rid, "agent_id": aid, "attempt": 1,
+                    "ceiling_usd": cfg.per_message_usd, "state": "reserved",
+                    "legacy_reserved_usd": legacy,
+                    "source": "pi_translation", "created_at": time.time()}
+                hub.store.put("pi_translation_reservations", str(rid), reservations)
+                hub.store.put("pi_translation_budget", str(rid),
+                              {"reserved": reserved + cfg.per_message_usd})
             instruction = ("비서실장으로서 아래 원문을 PI에게 설명하세요. 무엇을·왜·영향을 두 문장 이내의 "
                            "쉬운 한국어로 쓰세요. 영어 대화는 뜻을 보존해 번역하세요. "
                            "다시 쓰는 단계 없이 쉼표와 번역투를 줄이세요. 되어진다·가지고 있다·에 있어서·"

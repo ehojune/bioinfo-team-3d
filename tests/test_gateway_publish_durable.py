@@ -208,6 +208,7 @@ async def test_event_and_request_commit_in_one_transaction(gateway, monkeypatch)
     assert len(hub.store.events_since(0)) == 1
     assert hub.store.get("request", "r")["status"] == "before"
     assert hub.store.runner_seen("runner") == 3
+    assert hub.requests["r"]["status"] == "before"  # the live request goes back to what is stored (a restart would show it)
 
 
 async def test_publication_without_request(gateway):

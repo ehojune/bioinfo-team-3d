@@ -3597,13 +3597,24 @@ class Hub:
         rid = ev.get("request_id")
         if rid not in self.requests:
             return await self._publication_write(append())
-        self._request_changed(rid)
+        revision = self._request_changed(rid)
         async with self._request_lock(rid):
             before = copy.deepcopy(self.requests[rid])
+            previous = self.store.get("request", rid)
             updated = copy.deepcopy(before)
             cp4.reconcile(updated)
             updated["updated_at"] = time.time()
-            saved, cancelled = await self._publication_write(append((rid, updated)))
+            try:
+                saved, cancelled = await self._publication_write(append((rid, updated)))
+            except Exception:
+                # Nothing was stored: put the live request back to what is stored, as `_asave_request` does, so a
+                # later handler does not act on state that a restart would lose.
+                if self.request_versions.get(rid) == revision:
+                    if previous is not None:
+                        apply_changes(self.requests[rid], before, previous)
+                    elif self.requests[rid] == before:
+                        self.requests.pop(rid, None)
+                raise
             apply_changes(self.requests[rid], before, updated)
         return saved, cancelled
 
