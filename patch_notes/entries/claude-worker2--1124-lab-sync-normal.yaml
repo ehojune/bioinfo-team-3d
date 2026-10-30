@@ -1,6 +1,6 @@
 pr: 1126
 rows:
-- sha: '7fd3fe6'
+- sha: '78cd229'
   at: 2026-10-31 05:10
   text: semantics lab 시험이 이 실행의 상태 저장소를 WAL synchronous=NORMAL로 열어 commit마다 fsync를 기다리지 않게 했다. 제품 코드는 그대로다 (#1124).
   summary: 느린 디스크의 Windows에서 40~100초 걸리던 semantics lab 시험이 3배 가까이 빨라집니다.
