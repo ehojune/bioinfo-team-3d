@@ -4,3 +4,7 @@ rows:
   at: 2026-10-31 09:10
   text: runner가 gateway의 ack를 기다리지 않고 받아, 진행 중인 commit 동안 온 ack를 다음 commit 하나로 합친다. 첫 ack는 바로 commit하고 지연은 없으며, 종료·재연결·직접 ack 호출은 durable이 된 뒤에 돌아온다 (#1125 안 D).
   summary: 느린 디스크에서 runner가 ack마다 저장 확정을 기다리던 횟수가 약 30% 줄고, 이어서 오는 메시지를 읽는 것이 ack 저장에 막히지 않습니다.
+- sha: 'd268f29'
+  at: 2026-10-31 09:50
+  text: ack를 commit하는 대기를 shutdown 기한, 재연결(5초), run_forever 종료(30초) 안으로 묶어, commit이 멈춰도 shutdown이 기한을 넘기지 않고 행은 outbox에 남아 재전송된다 (#1125 안 D, 리뷰 P1).
+  summary: 저장소가 멈춘 상태에서도 runner 종료가 정해진 시간 안에 끝납니다.
