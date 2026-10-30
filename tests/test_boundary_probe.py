@@ -165,6 +165,8 @@ def test_integration_missing_modules_is_inconclusive(tmp_path):
 
 
 def test_integration_receipt_without_ready_witness_is_inconclusive(monkeypatch, tmp_path):
+    (tmp_path / "boundary.py").write_text("boundary")
+    (tmp_path / "broker.py").write_text("broker")
     called = []
     class Receipt:
         def to_dict(self):
@@ -181,9 +183,57 @@ def test_integration_receipt_without_ready_witness_is_inconclusive(monkeypatch, 
     monkeypatch.setattr(integration_probe, "load", lambda path, name: Boundary())
     result = integration_probe.run(tmp_path / "boundary.py", tmp_path / "broker.py")
     assert called == [True]
-    assert result["receipt"]["run_id"] == "synthetic"
+    assert result["run_id_matches"] is False
     assert result["status"] == "inconclusive"
     assert result["protection_verified"] is False
+
+
+def test_integration_source_mismatch_and_mutation(monkeypatch, tmp_path):
+    boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"
+    boundary.write_text("before")
+    broker.write_text("broker")
+    assert integration_probe.run(boundary, broker, expected_boundary="0" * 64)["reason"] == "expected source hash mismatch"
+
+    class Boundary:
+        @staticmethod
+        def diagnostic_broker_probe(factory, on_ready):
+            boundary.write_text("after")
+            raise ValueError("fixture")
+    monkeypatch.setattr(integration_probe, "load", lambda *args: Boundary())
+    result = integration_probe.run(boundary, broker)
+    assert result["status"] == "inconclusive"
+    assert result["reason"] == "source changed during diagnostic"
+    assert result["sources"]["boundary"]["before"] != result["sources"]["boundary"]["after"]
+
+
+def test_malformed_frames_require_rejection_and_live_listener(monkeypatch, tmp_path):
+    boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"
+    boundary.write_text("boundary")
+    broker.write_text("broker")
+    class Receipt:
+        def to_dict(self):
+            return {"run_id": "r", "preparation": "diagnostic_ready", "launch": "exited_0",
+                    "cleanup": "broker_closed_socket_absent; descendants_unverified", "seal_status": "unsealed"}
+    class Boundary:
+        @staticmethod
+        def diagnostic_broker_probe(factory, on_ready):
+            on_ready("r", "absent-fixture.sock")
+            return Receipt()
+    monkeypatch.setattr(integration_probe, "load", lambda *args: Boundary())
+    monkeypatch.setattr(integration_probe, "request", lambda path, obj: b'{"error":"request rejected"}\n' if obj.get("run_id") != "r" or "url" in obj or obj.get("body") == "cmVmbGVjdA==" else b'{"body":"b2s="}\n')
+    monkeypatch.setattr(integration_probe, "request_raw", lambda path, data: b'{"error":"request rejected"}\n')
+    class ClosedSocket:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def settimeout(self, value): pass
+        def connect(self, path): raise OSError("closed")
+    monkeypatch.setattr(integration_probe.socket, "socket", lambda *args: ClosedSocket())
+    monkeypatch.setattr(integration_probe.socket, "AF_UNIX", 1, raising=False)
+    result = integration_probe.run(boundary, broker)
+    assert result["status"] == "pass", result
+    assert len(result["witness"]["malformed"]) == 5
+    monkeypatch.setattr(integration_probe, "request_raw", lambda path, data: b'{"body":"b2s="}\n')
+    assert integration_probe.run(boundary, broker)["status"] == "inconclusive"
 
 
 def test_unreadable_fixture_metadata_is_not_a_denial(tmp_path):
