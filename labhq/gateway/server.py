@@ -5484,7 +5484,7 @@ class Hub:
         r = self.requests[rid]
         await self.publish({"type": "request.created", "ts": time.time(), "request_id": rid,
                             "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id", "references",
-                                                           "route")}})
+                                                           "route", "wall_clock")}})
         # The plan reads the roster before its first dispatch, so wait for the first agent's runner here (R15).
         first = r.get("agent_id") if r.get("mode") == "direct" else self.s.orchestrator.cso_agent
         probe = Task(agent_id=str(first or ""), request_id=rid, prompt="")
@@ -5550,7 +5550,8 @@ class Hub:
                                                                   "cost_summary", "usage", "usage_known", "agent_id",
                                                                   "references", "pi_notes", "route", "route_decision",
                                                                   "bundle_path", "bundle_status", "bundle_grade",
-                                                                  "bundle_grade_reasons", "bundle_warning", "result_storage")},
+                                                                  "bundle_grade_reasons", "bundle_warning", "result_storage",
+                                                                  "wall_clock")},
                           "runner_waits": r.get("runner_waits") or {},
                           **({"semantic_devices": r["semantic_devices"]} if r.get("semantic_devices") else {}),
                           # the full list and full answers stay on the request (GET /api/requests/{id})

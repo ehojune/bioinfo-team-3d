@@ -1023,7 +1023,7 @@ Claude Bash sandbox 정책 계약(#666)은 capability가 꺼져 있고 launcher�
 
 | 경계 | 전역 기본값과 실제 동작 |
 |---|---|
-| 작업 시간 | `runner.task_timeout_s`: CLI 호출당 6시간. 요청 전체 시간 상한은 `orchestrator.request_wall_clock_s`(초, 기본 0=끔, 켜려면 60 이상)로 켭니다. 요청을 받을 때 고정하고, 기한이 지난 진행 중 요청을 gateway가 취소하며 `waiting_pi`(PI 결정 대기) 시간은 기한에 더하고 보고서 검토 이후는 끊지 않습니다. 켜면 `labhq status`가 진행 중인 요청마다 `시간 상한: 꺼짐` 또는 `시간 상한: 켜짐 90분 · 남은 N분 · PI 대기 제외 N분`을 한 줄로 보이고, 대기 중에는 시계가 가지 않는다고 덧붙입니다. 세부는 [요청 전체 시간 상한](reference/request-deadline.md)입니다. 재개한 새 호출의 시간 제한과 요청의 원래 기한을 구분합니다. |
+| 작업 시간 | `runner.task_timeout_s`: CLI 호출당 6시간. 요청 전체 시간 상한은 `orchestrator.request_wall_clock_s`(초, 기본 0=끔, 켜려면 60 이상)로 켭니다. 요청을 받을 때 고정하고, 기한이 지난 진행 중 요청을 gateway가 취소하며 `waiting_pi`(PI 결정 대기) 시간은 기한에 더하고 보고서 검토 이후는 끊지 않습니다. 켜면 `labhq status`가 진행 중인 요청마다 `시간 상한: 꺼짐` 또는 `시간 상한: 켜짐 90분 · 남은 N분 · PI 대기 제외 N분`을 한 줄로 보이고, 대기 중에는 시계가 가지 않는다고 덧붙입니다. 웹 작업판의 요청 패널도 활성 요청에만 같은 줄(`시간 상한 켜짐 90분 · 남은 N분 …`, 꺼져 있으면 `시간 상한 꺼짐`)을 보이고 15초마다 다시 계산합니다. 웹은 gateway가 snapshot과 요청 생성 때 보낸 값에 자기 시계를 더해 계산하므로, snapshot 뒤에 시작한 PI 대기는 다음 snapshot(재연결)까지 빼지 못해 남은 시간이 실제보다 짧게 보일 수 있습니다(일찍 경고하는 쪽). 상한 정보를 보내지 않는 옛 gateway에서는 줄을 숨기고 `꺼짐`이라 하지 않습니다. 요청의 비용 줄은 선언한 등급과 다른 모델로 돈 직원도 `선언 등급과 다른 모델: …`로 보입니다(`model_tiers` 표를 채웠을 때, 위 설명). 세부는 [요청 전체 시간 상한](reference/request-deadline.md)입니다. 재개한 새 호출의 시간 제한과 요청의 원래 기한을 구분합니다. |
 | 비용 | `policy.budget.per_task_usd=5`, `per_request_usd=30`. 요청의 `budget_usd`가 있으면 그 값을 씁니다. 사전 예약은 `reserve_before_dispatch=false`가 기본이며, 비용 모름을 무료로 보지 않습니다. |
 | HTTP 조회 | `annot.request_lookup_limit=null`: 기본 횟수 제한 없음. 설정하면 내장 annot·live 출처 검사가 같은 요청 원장을 쓰고 runner 재시작 뒤에도 이어 셉니다. 직원 직접 HTTP·타사 MCP 전체의 상한은 아닙니다. |
 | 실패 | 일시적 실패는 `orchestrator.step_max_attempts=2`까지 시도합니다. 요청 전체가 실패 2회에 중단되는 전역 규칙은 없습니다. |
