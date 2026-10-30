@@ -1398,6 +1398,20 @@ def _budget_line(budget: dict[str, Any]) -> str:
             f"{_plan_cap_sum(budget)} = ${total:.2f}).")
 
 
+def unreceipted_references(contract: dict, reused: list[str]) -> list[str]:
+    """DOI and PMID references that the reused steps ran under with only their identifier pinned (#1061).
+
+    The earlier round's input proof lists them under ``unreceipted``: reuse is allowed while the identifiers are the
+    same, but nothing checked what they point to, which the PI deciding on the reuse should be told."""
+    proofs = ((contract.get("rounds") or [{}])[-1].get("reuse_input_proof")) or {}
+    found: set[str] = set()
+    for sid in reused:
+        proof = proofs.get(sid)
+        if isinstance(proof, dict):
+            found.update(str(item) for item in proof.get("unreceipted") or [])
+    return sorted(found)
+
+
 def _cost_estimate_line(estimate: dict[str, Any]) -> str:
     """Short CP1 evidence for the request estimate; the enforced cap remains the separate budget line."""
     amount = estimate.get("estimate_usd")
@@ -5858,6 +5872,11 @@ class Orchestrator:
                                f"{', '.join(carried.get('reuse') or []) or 'none'}.")
             reuse_lines += [f"- reuse refused, re-ran {row['step_id']}: {row['reason']}"
                             for row in carried.get("refused_reuse") or []]
+            pinned = unreceipted_references(contract, carried.get("reuse") or [])
+            if pinned:
+                reuse_lines.append(f"- {len(pinned)} DOI/PMID reference(s) of the reused steps are pinned by identifier "
+                                   f"only; their content was not checked ({', '.join(pinned[:5])}"
+                                   f"{', ...' if len(pinned) > 5 else ''}).")
         recorded = (contract.get("checkpoints") or {}).get("cp2") or {}
         source_changed = (live_resolver is not None and bool(recorded.get("decision"))
                           and recorded.get("plan_sha256") == contract["plan_sha256"]
@@ -6181,6 +6200,13 @@ class Orchestrator:
         body_reference = _review_reference(review)
         if body_reference and not REVIEW_REFERENCE_HEADING.search(body):
             body = _before_bench_block(body, body_reference)
+        carried = contract.get("continuation") or {}
+        pinned = (unreceipted_references(contract, carried.get("reuse") or [])
+                  if carried.get("plan_sha256") == contract["plan_sha256"] else [])
+        if pinned:  # the PI reads the report, not the audit: say it there too (#1061 review)
+            body = _before_bench_block(
+                body, f"참고: 재사용한 단계가 쓴 DOI·PMID 참조 {len(pinned)}건은 식별자만 고정했고 내용은 확인하지 "
+                      f"않았습니다({', '.join(pinned[:5])}{', ...' if len(pinned) > 5 else ''}).")
         req["execution_record"] = _appendix_sections("", [*claim_check, cp2_audit])
         report = body.rstrip() + ("\n\n" + model_appendix if model_appendix else "")
         (await end("report_incomplete" if check["problems"] else "research_reported", report,
@@ -6906,18 +6932,24 @@ class Orchestrator:
                         summary = "\n".join(hiring_warnings) + "\n" + summary
                     if paper_line:
                         summary = paper_line + "\n" + summary
+                    pinned_note = ""
                     if reuse_pending:
                         source = ("CP2 수정 요청 반영" if carried.get("trigger") == "cp2_revise"
                                   else "리뷰 P1 반영")
                         reasons = list(dict.fromkeys((carried.get('rerun') or {}).values()))
                         reason_line = ('재사용 거부 이유: ' + '; '.join(reasons)[:240] + '. ' if reasons else '')
+                        pinned = unreceipted_references(req["research_contract"], carried.get('reuse') or [])
+                        if pinned:  # kept whole beyond the cut below, like the budget line: the PI approves the reuse here
+                            pinned_note = (f"재사용한 단계가 쓴 DOI·PMID 참조 {len(pinned)}건은 식별자만 고정했고 "
+                                           "내용은 확인하지 않았습니다.")
                         summary = (f"이어 가기 {carried.get('round')}차 계획({source}). 재사용: "
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
                                    f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + reason_line + summary
                     budget, configured_source = self._research_budget(rid, req, plan)
                     # Kept whole beyond the 699-char cut: the web shows the summary, not detail.budget; the selection
                     # record line (#890) rides with it, so long paper-skill or continuation text cannot cut it off.
-                    budget_line = selection_record_line(plan) + " " + _budget_line(budget)
+                    budget_line = (selection_record_line(plan) + " " + _budget_line(budget)
+                                   + (" " + pinned_note if pinned_note else ""))
 
                     async def ask_cp1(prefix: str = "") -> dict:
                         card = prefix + summary
