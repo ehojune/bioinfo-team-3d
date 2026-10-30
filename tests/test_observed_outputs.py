@@ -323,3 +323,159 @@ async def test_output_growing_while_hashed_gets_no_hash(tmp_path, monkeypatch, c
     manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
     row = manifest["runs"][result.task_id]["observed_outputs"][0]
     assert row["sha256"] is None and reason in row["reason"]
+
+
+@pytest.mark.asyncio
+async def test_declared_directory_is_collected_as_its_hashed_files(tmp_path, monkeypatch):
+    """#1058: a declared folder used to be listed as one output without a hash; a downstream step then refused the whole
+    upstream ("collected artifact hash is missing") and its numbers stayed UNVERIFIED."""
+    note, deep, table = b"note\n", b"deep\n", b"a\tb\n"
+
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", note)
+        _write(workdir, "outputs/literature/sub/p2.md", deep)
+        _write(workdir, "outputs/ledger.tsv", table)
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["ledger.tsv", "literature"]))
+
+    assert result.ok, result.error
+    assert "outputs/literature" not in result.outputs  # no bare folder entry without a hash
+    assert set(result.outputs) == {"outputs/ledger.tsv", "outputs/literature/p1.md", "outputs/literature/sub/p2.md"}
+    assert all(result.output_sha256.get(path) for path in result.outputs)  # every collected path carries a hash
+    assert result.output_sha256["outputs/literature/sub/p2.md"] == _sha(deep)
+    assert result.unreported_outputs == []  # the folder's files are reported, not stray
+
+
+@pytest.mark.asyncio
+async def test_declared_directory_without_a_hashed_file_is_missing(tmp_path, monkeypatch):
+    """An empty declared folder collects nothing a later step could read, so the step is incomplete (it used to pass
+    and then fail downstream)."""
+    def write(workdir):
+        (workdir / "outputs" / "literature").mkdir(parents=True)
+        _write(workdir, "outputs/ledger.tsv", b"x\n")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["ledger.tsv", "literature"]))
+
+    assert result.ok is False
+    assert result.missing_outputs == ["outputs/literature"]
+    assert "outputs/literature" in result.error
+
+
+@pytest.mark.asyncio
+async def test_declared_directory_skips_a_link_or_unhashed_file_inside_it(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", b"note\n")
+        _write(workdir, "outputs/literature/big.bin", b"x" * 64)
+
+    runner = _runner(tmp_path, monkeypatch, write, hash_max_bytes=16)
+    result = await runner.run_task(_task(outputs=["literature"]))
+
+    assert "outputs/literature/big.bin" not in result.outputs  # too large to hash: never collected without one
+    assert all(result.output_sha256.get(path) for path in result.outputs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count, ok", [(200, True), (201, False)])
+async def test_declared_directory_expanding_past_the_staging_limit_is_incomplete(tmp_path, monkeypatch, count, ok):
+    """Review P1: a later step stages at most MAX_FILES files of one ancestor, so a producer above it must not pass."""
+    def write(workdir):
+        for index in range(count):
+            _write(workdir, f"outputs/literature/p{index:03d}.md", b"x\n")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["literature"]))
+
+    assert result.ok is ok, result.error
+    if not ok:
+        assert "200" in result.error and "outputs/literature" in result.error
+
+
+@pytest.mark.asyncio
+async def test_a_declared_folder_needs_a_hashed_child_even_when_an_unhashed_child_is_also_declared(tmp_path, monkeypatch):
+    """Review P1: the unhashable child is collected as its own declared file, but it cannot satisfy the folder."""
+    def write(workdir):
+        _write(workdir, "outputs/literature/big.bin", b"x" * 64)
+
+    runner = _runner(tmp_path, monkeypatch, write, hash_max_bytes=16)
+    result = await runner.run_task(_task(outputs=["literature", "literature/big.bin"]))
+
+    assert result.ok is False
+    assert "outputs/literature" in result.missing_outputs
+    assert "outputs/literature/big.bin" not in result.output_sha256
+
+
+def test_the_orchestrator_applies_the_same_hashed_child_rule_to_a_declared_folder():
+    from labhq.orchestrator.cso import apply_declared_output_status
+
+    step = {"id": "s1", "outputs": ["outputs/literature"]}
+    unhashed = TaskResult(task_id="t", agent_id="a", ok=True, outputs=["outputs/literature/big.bin"])
+    assert apply_declared_output_status(step, unhashed).ok is False
+    hashed = unhashed.model_copy(update={"outputs": ["outputs/literature/p1.md"],
+                                         "output_sha256": {"outputs/literature/p1.md": "a" * 64}})
+    assert apply_declared_output_status(step, hashed).ok is True
+
+
+@pytest.mark.asyncio
+async def test_declared_directory_with_an_incomplete_scan_is_not_collected_as_if_whole(tmp_path, monkeypatch):
+    """Review P1: files below the scan depth are skipped with a note; the folder must not pass on what was seen."""
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", b"note\n")
+        _write(workdir, "outputs/literature/a/b/c/deep.md", b"deep\n")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    runner.s.runner.reference_scan_max_depth = 1
+    result = await runner.run_task(_task(outputs=["literature"]))
+
+    assert result.ok is False
+    assert "scan is incomplete" in result.error and "outputs/literature" in result.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("files, ok", [(2, True), (3, False)])
+async def test_declared_directory_over_the_staging_byte_budget_is_incomplete(tmp_path, monkeypatch, files, ok):
+    """Review P1: a later step stages at most input_hash_max_total_bytes of one ancestor; a bigger folder must not pass."""
+    def write(workdir):
+        for index in range(files):
+            _write(workdir, f"outputs/literature/p{index}.md", b"0123456789")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    runner.s.runner.input_hash_max_total_bytes = 25
+    result = await runner.run_task(_task(outputs=["literature"]))
+
+    assert result.ok is ok, result.error
+    if not ok:
+        assert "25 bytes" in result.error
+
+
+@pytest.mark.asyncio
+async def test_the_staging_byte_budget_counts_plain_declared_files_with_the_folder(tmp_path, monkeypatch):
+    """Review P1: a later step's budget is per ancestor, so a declared file beside the folder counts too."""
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", b"0123456789")
+        _write(workdir, "outputs/ledger.tsv", b"0123456789" * 2)
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    runner.s.runner.input_hash_max_total_bytes = 25  # the folder alone is 10, with the ledger 30
+    result = await runner.run_task(_task(outputs=["literature", "ledger.tsv"]))
+
+    assert result.ok is False and "30 bytes" in result.error
+
+
+def test_staging_problem_mirrors_what_a_later_step_refuses():
+    """Review P1/P2 class: the producer is judged by the consumer's own rules, so none of these passes as complete."""
+    from labhq.runner.step_inputs import MAX_FILES, staging_problem
+
+    digest = "a" * 64
+    one = {"outputs/a.tsv": digest}
+    assert staging_problem(["outputs/a.tsv"], one, {"outputs/a.tsv": 5}, 10, 100) is None
+    assert "collides by letter case" in staging_problem(
+        ["outputs/f/A.tsv", "outputs/f/a.tsv"], {"outputs/f/A.tsv": digest, "outputs/f/a.tsv": digest}, {}, 10, 100)
+    assert "per file" in staging_problem(["outputs/a.tsv"], one, {"outputs/a.tsv": 11}, 10, 100)
+    assert "in all" in staging_problem(["outputs/a.tsv", "outputs/b.tsv"], {"outputs/a.tsv": digest, "outputs/b.tsv": digest},
+                                       {"outputs/a.tsv": 6, "outputs/b.tsv": 6}, 10, 11)
+    assert "no hash" in staging_problem(["outputs/a.tsv"], {}, {}, 10, 100)
+    assert "refuses" in staging_problem(["outputs/a$b.tsv"], {"outputs/a$b.tsv": digest}, {}, 10, 100)
+    many = [f"outputs/p{index}.md" for index in range(MAX_FILES + 1)]
+    assert str(MAX_FILES) in staging_problem(many, {path: digest for path in many}, {}, 10, 10**9)

@@ -825,7 +825,8 @@ RESEARCH_CP1_ONLY_RULE = "PR 1 pilot stops after CP1 approval. Research steps wi
 RESEARCH_CP2_RULE = (
     "After CP1 approval labhq runs these steps exactly as frozen; nothing re-plans them. Each step returns a "
     "result v2 ledger bound to this plan's sha256, its step id, its claim_ids and its evidence_slots, with claims "
-    "and evidence kept apart. An artifact_refs path must be one of that step's declared outputs or an upstream "
+    "and evidence kept apart. An artifact_refs path must be one of that step's declared outputs (a file inside a declared folder, "
+    "not the folder) or an upstream "
     "step's collected artifact; evidence citing any other path is refused. The request then stops at CP2, where "
     "the PI approves, requests revision of, or denies the evidence. After approval one reviewer checks the claims "
     "against their ledgers and files, and the final report ties every conclusion to a ledger claim as "
@@ -944,8 +945,13 @@ def apply_declared_output_status(step: dict, result: TaskResult) -> TaskResult:
     collected = {rel for name in result.outputs if (rel := output_relpath(name))}
     required = [(str(name), rel) for name in step.get("outputs") or [] if (rel := output_relpath(name))]
     optional = [(str(name), rel) for name in step.get("optional_outputs") or [] if (rel := output_relpath(name))]
-    missing = [name for name, rel in required if rel not in collected]
-    missing_optional = [name for name, rel in optional if rel not in collected]
+    hashed = {rel for name in result.output_sha256 if (rel := output_relpath(name))}
+
+    def has_output(rel: str) -> bool:  # a declared folder is collected as its hashed files (#1058)
+        return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in hashed)
+
+    missing = [name for name, rel in required if not has_output(rel)]
+    missing_optional = [name for name, rel in optional if not has_output(rel)]
     warnings = list(result.step_warnings)
     if missing_optional:
         warnings.append("선택 산출 누락: " + ", ".join(missing_optional))
@@ -5168,7 +5174,8 @@ class Orchestrator:
                            f"Copy plan_sha256={contract.get('plan_sha256')}, step_id={step['id']}, "
                            f"claim_ids={json.dumps(step.get('claim_ids') or [])}, and fill evidence_slots="
                            f"{json.dumps(step.get('evidence_slots') or [])}. Keep claims and evidence separate. "
-                           "Each artifact_refs path is one of your declared outputs (outputs/<name>) or an upstream "
+                           "Each artifact_refs path is one of your declared outputs (outputs/<name>; for a declared folder, "
+                           "a file inside it as outputs/<folder>/<file>, never the folder itself) or an upstream "
                            "artifact written as <workdir_id>/<path>; evidence citing any other path is refused at CP2. "
                            "If you cannot proceed without a blocking decision, return the same schema with every "
                            "list empty and the question with its choices in blocking_decision. The CSO answers first; "

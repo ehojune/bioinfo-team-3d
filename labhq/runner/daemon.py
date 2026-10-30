@@ -74,7 +74,7 @@ from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .lookup_admission import ENV as LOOKUP_ADMISSION_ENV, FILE as LOOKUP_ADMISSION_FILE, LookupAdmission
 from .system_ca import CA_ENV, system_ca_pem
-from .step_inputs import stage_inputs, stage_precedent_texts
+from .step_inputs import stage_inputs, stage_precedent_texts, staging_problem
 from ..research.precedent_texts import step_note as precedent_step_note
 from .workspace import (InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, resolved_zones,
                         restricted_zones)
@@ -2471,13 +2471,14 @@ class Runner:
         required_declared = task.meta.get("required_outputs", declared)
         optional_declared = task.meta.get("optional_outputs", [])
         found = []
+        declared_dirs = []
         for name in declared:
             relative = output_relpath(name)
             if relative is None:
                 continue
             target = (ws.dir / relative).resolve()
             if target.exists() and target.is_relative_to((ws.dir / "outputs").resolve()):
-                found.append(relative)
+                (declared_dirs if target.is_dir() else found).append(relative)
         listed_outputs: list[str] | None = None
         output_scan_note: str | None = None
         if task.meta.get("kind") == "direct" or task.meta.get("collect_direct_outputs") is True:
@@ -2488,6 +2489,13 @@ class Runner:
             found += listed_outputs
             if output_scan_note:
                 await emit("agent.log", {"level": "warn", "text": output_scan_note})
+        # A declared folder is collected as its files, each with the hash recorded after the run (#1058): a folder entry
+        # has no hash, and a later step refuses an ancestor whose collected list holds one. A file that was not hashed
+        # (too large, a link) is not collected; it stays unreported.
+        for folder in declared_dirs:
+            prefix = folder.rstrip("/") + "/"
+            found += [row["path"] for row in output_records
+                      if row["path"].startswith(prefix) and isinstance(row.get("sha256"), str)]
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
         hashed = {row["path"]: row["sha256"] for row in output_records
                   if isinstance(row.get("sha256"), str) and row["path"] in result.outputs}
@@ -2496,14 +2504,37 @@ class Runner:
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
         if _should_check_declared_outputs(result):
+            def has_output(rel: str) -> bool:
+                # A declared folder is there when a file with a hash is under it: a later step stages only those.
+                return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in result.output_sha256)
+
             missing_required = [rel for name in required_declared
-                                if (rel := output_relpath(name)) and rel not in collected]
+                                if (rel := output_relpath(name)) and not has_output(rel)]
             missing_optional = [rel for name in optional_declared
-                                if (rel := output_relpath(name)) and rel not in collected]
+                                if (rel := output_relpath(name)) and not has_output(rel)]
             if missing_required:
                 result.ok = False
                 result.missing_outputs = list(dict.fromkeys([*result.missing_outputs, *missing_required]))
                 result.error = "incomplete: missing outputs: " + ", ".join(result.missing_outputs)
+            if declared_dirs and result.ok and output_scan_notes:
+                # The bounded walk skipped part of outputs/ (too deep, too many entries, unreadable): a declared folder
+                # would hand a later step only the files it did see, with nothing saying the rest is missing (#1058).
+                result.ok = False
+                result.error = ("incomplete: the outputs scan is incomplete, so declared folder(s) "
+                                f"{', '.join(declared_dirs)} cannot be collected whole: "
+                                + "; ".join(dict.fromkeys(output_scan_notes)))
+            if declared_dirs and result.ok:
+                # A later step stages at most this many files and bytes of ONE ancestor, folder files and plain
+                # declared files together, and refuses the whole ancestor otherwise (#1058): the producer must not
+                # pass what no later step can take.
+                sizes = {row["path"]: int(row.get("size") or 0) for row in output_records}
+                problem = staging_problem(result.outputs, result.output_sha256, sizes,
+                                          self.s.runner.input_hash_max_file_bytes,
+                                          self.s.runner.input_hash_max_total_bytes)
+                if problem:
+                    result.ok = False
+                    result.error = (f"incomplete: declared folder(s) {', '.join(declared_dirs)} make the step collect "
+                                    f"outputs a later step would refuse: {problem}")
             if missing_optional:
                 result.missing_optional_outputs = list(dict.fromkeys([
                     *result.missing_optional_outputs, *missing_optional]))
