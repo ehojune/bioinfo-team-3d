@@ -458,6 +458,49 @@ async def test_a_poll_that_read_the_status_before_a_cancel_does_not_overwrite_th
 
 
 @pytest.mark.asyncio
+async def test_a_poll_that_read_the_status_before_a_cancel_that_could_not_end_the_tree_does_not_end_the_job(
+        board, monkeypatch):
+    """#1144 review: a cancel whose kill fails does not end the job, it asks the next poll to end it again. A status read
+    from before it must not end the job as "completed" and drop the processes that are still running."""
+    out = {}
+
+    async def body(identity):
+        out.update(await board.submit(SLEEP)(identity))
+
+    task, _result = await board.run(body)
+    job_id = out["job_id"]
+    row = board.runner.jobs[job_id]
+    proc = board.runner._local_procs[job_id]
+    real_status, real_kill = local_jobs.status, local_jobs.kill
+    gate = {"block": True, "kill_works": False}
+    entered, release = threading.Event(), threading.Event()
+
+    def status(*args, **kwargs):
+        if gate["block"]:
+            entered.set()
+            assert release.wait(20)
+            return "completed", 0  # the job looked finished when the read began
+        return real_status(*args, **kwargs)
+
+    def kill(*args, **kwargs):
+        return real_kill(*args, **kwargs) if gate["kill_works"] else False
+
+    monkeypatch.setattr("labhq.runner.daemon.local_jobs.status", status)
+    monkeypatch.setattr("labhq.runner.daemon.local_jobs.kill", kill)
+    poller = asyncio.create_task(board.runner._poll_local_jobs())
+    assert await asyncio.to_thread(entered.wait, 20)
+    await board.runner._on_message({"type": "task.jobs_cancel", "task_id": task.id})  # the kill fails
+    assert not row["terminal"] and row["cancel_requested"]
+    release.set()
+    await asyncio.wait_for(poller, 20)
+    assert not row["terminal"] and row["state"] != "completed"  # the stale "completed" did not end it
+    gate.update(block=False, kill_works=True)
+    await board.runner._poll_local_jobs()  # the next poll ends it, as the cancel asked
+    assert row["state"] == "cancelled" and row["terminal"]
+    assert real_status(row["local"], proc)[0] != "running"  # nothing of it is left
+
+
+@pytest.mark.asyncio
 async def test_cancelling_a_job_that_already_ended_keeps_how_it_ended(board):
     out = {}
 

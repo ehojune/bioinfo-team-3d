@@ -3163,7 +3163,9 @@ class Runner:
                 continue
             state, exit_status = await asyncio.to_thread(local_jobs.status, j.get("local") or {},
                                                          self._local_procs.get(jid))
-            if j["terminal"]:  # a cancel ended it while the status was read: what was read is stale (#1144)
+            if j["terminal"] or j.get("cancel_requested"):
+                # A cancel came in while the status was read: it ended the job, or could not end the whole tree and
+                # left the job for the next poll to end again (the branch above). What was read is stale (#1144).
                 continue
             if state == j["state"]:
                 continue
