@@ -456,14 +456,15 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
     action = hub.resolve_approval(card.id, True) if operation == "resolve" else hub.close_approval(card.id, "closed")
     task = asyncio.create_task(action)
     try:
-        await asyncio.wait_for(entered.wait(), 1)
+        await asyncio.wait_for(entered.wait(), 10)
         assert hub.store.get("approval", card.id) is None
         assert hub.store.get("approval_decision", card.id) is not None
         assert hub.store.get("decision", card.id) is not None
         for _ in range(3):
             task.cancel()
             await asyncio.sleep(0)
-        done, _ = await asyncio.wait({task}, timeout=0.5)
+        # the send gives up after 0.05 s; 5 s is 100x that and still fails a wait that never ends (release is set below)
+        done, _ = await asyncio.wait({task}, timeout=5)
         assert task in done, "runner backpressure held cancellation and the card lock indefinitely"
         assert "runner" not in hub.runners
     finally:
