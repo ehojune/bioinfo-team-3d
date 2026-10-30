@@ -216,14 +216,17 @@ class StateStore:
 
     def _update_task_activity_now(self, key: str, update: Callable[[dict], dict]) -> None:
         with self._transaction() as conn:
-            task = self._get_on(conn, "task", key)
-            if not task or task.get("completed"):
-                return
-            previous = task.get("activity") or {}
-            activity = update(dict(previous))
-            if activity != previous:
-                conn.execute("UPDATE state SET body=? WHERE kind='task' AND key=?",
-                             (_dumps({**task, "activity": activity}), key))
+            self._apply_activity(conn, key, update)
+
+    def _apply_activity(self, conn: sqlite3.Connection, key: str, update: Callable[[dict], dict]) -> None:
+        task = self._get_on(conn, "task", key)
+        if not task or task.get("completed"):
+            return
+        previous = task.get("activity") or {}
+        activity = update(dict(previous))
+        if activity != previous:
+            conn.execute("UPDATE state SET body=? WHERE kind='task' AND key=?",
+                         (_dumps({**task, "activity": activity}), key))
 
     async def aupdate_task_control(self, key: str, action: str) -> dict:
         """Set only a halt/resume intent on the current eligible row, in writer order."""
@@ -312,25 +315,31 @@ class StateStore:
     # ----- events (the gateway's sequence) -----
     def append_event(self, body: dict, limit: int, runner_id: str | None = None,
                      runner_seq: int | None = None, reporter_delivery: bool = False,
-                     request: tuple[str, dict] | None = None) -> dict:
+                     request: tuple[str, dict] | None = None,
+                     activity: tuple[str, Callable[[dict], dict]] | None = None) -> dict:
         return durable.call(self.lane, self._append_event_now, body, limit, runner_id, runner_seq, reporter_delivery,
-                            request)
+                            request, activity)
 
     async def aappend_event(self, body: dict, limit: int, runner_id: str | None = None,
                             runner_seq: int | None = None, reporter_delivery: bool = False,
-                            request: tuple[str, dict] | None = None) -> dict:
+                            request: tuple[str, dict] | None = None,
+                            activity: tuple[str, Callable[[dict], dict]] | None = None) -> dict:
         # Serialize before yielding: the writer must never inspect mutable gateway state.
         snapshot = json.loads(_dumps(body))
         request = None if request is None else (request[0], json.loads(_dumps(request[1])))
         return await durable.run(self.lane, self._append_event_now, snapshot, limit,
-                                 runner_id, runner_seq, reporter_delivery, request)
+                                 runner_id, runner_seq, reporter_delivery, request, activity)
 
     def _append_event_now(self, body: dict, limit: int, runner_id: str | None, runner_seq: int | None,
-                          reporter_delivery: bool, request: tuple[str, dict] | None = None) -> dict:
-        """The event, the request snapshot it belongs to and the runner cursor commit together (#1129): all or none."""
+                          reporter_delivery: bool, request: tuple[str, dict] | None = None,
+                          activity: tuple[str, Callable[[dict], dict]] | None = None) -> dict:
+        """The event, the request snapshot and the task activity it belongs to, and the runner cursor commit together
+        (#1129, #1132): all or none. The activity reducer runs here, on the writer thread, against the latest task row."""
         with self._transaction() as conn:
             if request is not None:
                 conn.execute("INSERT OR REPLACE INTO state VALUES ('request', ?, ?)", (request[0], _dumps(request[1])))
+            if activity is not None:
+                self._apply_activity(conn, activity[0], activity[1])
             body = self._insert_event(conn, body, limit)
             if reporter_delivery:
                 conn.execute("INSERT OR REPLACE INTO state VALUES ('reporter_delivery', ?, ?)",

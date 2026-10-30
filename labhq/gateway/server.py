@@ -3554,7 +3554,8 @@ class Hub:
         self.events.clear()
         self.events.extend(ordered)
 
-    async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
+    async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None,
+                      activity: tuple[str, Callable[[dict], dict]] | None = None) -> None:
         ev = copy.deepcopy(ev)
         internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
         if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
@@ -3568,7 +3569,8 @@ class Hub:
                 await self._flush_committed_events()
                 durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
                                   ev.get("type") in ProjectReporter.HANDLED)
-                ev, cancelled = await self._append_event_with_request(ev, runner_id, runner_seq, durable_report)
+                ev, cancelled = await self._append_event_with_request(ev, runner_id, runner_seq, durable_report,
+                                                                      activity)
                 self._record_published_event(ev)
                 self._queue_committed_event(ev)
                 try:
@@ -3589,11 +3591,11 @@ class Hub:
             await self._close_step_controls(ev["request_id"], (ev.get("data") or {}).get("step_id"))
 
     async def _append_event_with_request(self, ev: dict, runner_id: str | None, runner_seq: int | None,
-                                         durable_report: bool):
+                                         durable_report: bool, activity=None):
         """Append the event and save its request in one transaction (#1129): both land or neither does."""
         def append(request=None):
             return self.store.aappend_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
-                                            reporter_delivery=durable_report, request=request)
+                                            reporter_delivery=durable_report, request=request, activity=activity)
         rid = ev.get("request_id")
         if rid not in self.requests:
             return await self._publication_write(append())
@@ -3652,6 +3654,7 @@ class Hub:
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
             return
         typ = msg.get("type")
+        activity_update = None
         # Keep current staff activity in the task ledger: the 200-event snapshot window
         # can evict a tool start while a quiet command is still running.
         if typ in {"agent.status", "agent.tool", "agent.tool_result", "agent.log"}:
@@ -3700,7 +3703,8 @@ class Hub:
                             activity.pop("external_wait", None)
                     return activity
 
-                await self.store.aupdate_task_activity(tid, update_activity)
+                # The activity is saved with this message's event in one transaction (#1132): the final publish below.
+                activity_update = (tid, update_activity)
         if typ == "runner.roster":
             self.set_roster(runner_id, msg.get("agents", []), msg.get("capabilities"))
             await self.publish({"type": "roster.updated", "ts": time.time(), "data": {"agents": list(self.agents.values())}})
@@ -3952,7 +3956,7 @@ class Hub:
         if entry and entry.get("count"):
             entry["count"] -= 1
         if typ != "agent.control" or not msg.get("task_id"):
-            await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
+            await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq, activity=activity_update)
         if pipeline_event is not None:
             await self.publish(pipeline_event)
         if runner_seq is not None:
