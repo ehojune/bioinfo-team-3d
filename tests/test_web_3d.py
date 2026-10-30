@@ -18,6 +18,7 @@ from starlette.websockets import WebSocketDisconnect
 from labhq.gateway.server import WEB, create_app
 from labhq.settings import Settings
 from labhq.util import free_port
+from tests.support.serve_task import serve_task, wait_started
 from tests.support.node_binary import node_binary
 
 
@@ -70,12 +71,9 @@ async def test_wrong_client_token_reaches_a_real_websocket_as_1008(tmp_path):
     port = free_port()
     server = uvicorn.Server(uvicorn.Config(create_app(settings), host='127.0.0.1', port=port,
                                            log_level='warning'))
-    serving = asyncio.create_task(server.serve())
+    serving = serve_task(server.serve())
     try:
-        for _ in range(200):
-            if server.started:
-                break
-            await asyncio.sleep(0.01)
+        await wait_started(lambda: server.started, serving, 10, "gateway")
         assert server.started
         async with websockets.connect(f'ws://127.0.0.1:{port}/ws/client?token=wrong') as ws:
             with pytest.raises(websockets.exceptions.ConnectionClosedError) as error:

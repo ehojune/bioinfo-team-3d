@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from labhq.settings import Settings, ProjectSettings
+from tests.support.serve_task import serve_task, wait_started
 from labhq.result_storage import ResultStorage, clean_document, draft_documents
 
 
@@ -290,10 +291,10 @@ async def test_mock_request_reaches_editor_and_fake_github(tmp_path, monkeypatch
             asyncio.create_task(hub.resolve_approval(card["id"], True, "ok", storage=storage))
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=s.gateway.port, log_level="warning"))
-    jobs = [asyncio.create_task(server.serve())]
+    jobs = [serve_task(server.serve())]
     runner = Runner(s)
     try:
-        await _until(lambda: server.started, 10)
+        await wait_started(lambda: server.started, jobs[0], 10, "gateway")
         jobs.append(asyncio.create_task(runner.run_forever()))
         await _until(lambda: "editor" in hub.agents, 15)
         rid = hub.create_request(RequestIn(text="Compare public studies"))

@@ -27,6 +27,25 @@
 - CSO prompt·CP1 표시·비용 예상(PR B)과 bench 측정(PI 승인 뒤).
 - 실제 연구 계획 재개 전체 흐름(모델 호출이 필요한 CP2까지)은 돌리지 않았고, 재개가 지나는 지점의 결정을 단위 시험으로 확인했다.
 
+# #1113 uvicorn 시작 실패가 worker를 죽이지 않게
+
+- 결론: 새 helper `tests/support/serve_task.py`(`serve_task`·`wait_started`)가 `server.serve()`·`broker.serve()`의 `SystemExit`를 uvicorn 로그 꼬리가 담긴 `RuntimeError`로 바꾼다. 시작이 실패하면 그 시험만 원인과 함께 실패하고, 시간 초과까지 기다리지 않는다.
+- 바꾼 곳: 시험 10개 파일의 서버 시작 12곳(`test_ask`는 gateway 1·broker 2). 줄 수 변화는 호출 줄뿐이고 단언은 그대로다. 기다림 한도는 원래 값을 유지했다(`test_web_3d`는 2초에서 10초로 늘렸다).
+- 새 시험: `tests/test_serve_task.py` 5건(점유된 포트, 정상 시작·종료, 로그 없는 종료, 시간 초과, handler 정리).
+- inventory: `known_tests`에 `tests/test_serve_task.py` 한 줄, `mixed_nodes["tests/test_web_3d.py"].sha256`만 새 해시. `validate_profile()` 통과.
+- 확인: 바꾼 시험 파일 213건과 `test_web_3d` 서버 시험 2건, `test_ci_boundary_preview` 통과.
+- 제외: `tests/semantics_shadow_lab.py`는 #1111 범위라 병합 뒤 이 helper로 모은다.
+- 미검증: Windows CI. 포트 경합이 실제 CI 연쇄의 원인인지.
+
+# #1076 Windows pool 단계 상한 재계산
+
+- 결론: #931의 규칙(성공한 pool 단계의 최악값 × 1.5)을 최신 근거로 다시 적용해 pool 단계 상한을 9분에서 13분(780초)으로, job 상한을 14분에서 18분으로 올렸다. 시험 선택과 gate는 바꾸지 않았다.
+- 근거: 최근 성공한 pool 단계의 최악값은 499초(#1106 run, 이 PC의 비교 artifact), main Windows는 363~383초다. 9분(540초) 상한을 넘긴 것은 #1097에서 1회, #1111에서 3회(548초 포함)다. #1111은 `tests/semantics_shadow_lab.py` 변경으로 Windows 선택에 semantics 시험 파일 9개가 더해져 수집 시험이 17,256개에서 18,092개로, 풀 시간이 늘었다. 499 × 1.5 = 748.5초를 올림해 13분이다.
+- 바꾼 것: `.github/workflows/test.yml`의 pool 단계 `timeout-minutes`(9→13), job `timeout-minutes`(14→18, setup + critical 3 + pool 13 + 보고 여유), 단계 요약 문구의 "540 s"를 "780 s"로, 스택 스냅샷 주석. `tests/test_ci_windows10m.py`의 고정값을 같은 값으로 맞췄다.
+- 실행한 것: `tests/test_ci_windows10m.py` 69 passed.
+- 미확인: Windows CI가 새 상한 안에서 도는지는 PR의 CI로 본다. 새 상한도 넘으면 근거를 다시 본다.
+- 근거: #1076 결정 댓글 6529993804.
+
 # #1108 .env.example
 
 - 결론: 새 결과 repo의 정리본 스크립트가 읽는 `LABHQ_INPUT_*` 변수를 모아 루트에 `.env.example`(값은 비움, 설명 주석 두 줄)을 만든다. 변수가 없으면 파일을 만들지 않는다. README 실행 절이 이 파일을 복사해 채우라고 안내하고 저장소 지도에도 올린다.
