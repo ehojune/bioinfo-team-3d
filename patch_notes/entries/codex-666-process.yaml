@@ -1,6 +1,6 @@
 pr: 1050
 rows:
-  - sha: ebe3ae11
+  - sha: 49414597
     at: "2026-10-30 10:49"
     summary: "격리 준비가 검증되지 않은 실행을 거부하고 별도 진단 결과를 기록합니다."
     text: "add: fail-closed process boundary diagnostic (#1047)"
