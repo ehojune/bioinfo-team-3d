@@ -14,9 +14,15 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:51 | [`a3b1843`](https://github.com/ehojune/bioinfo-team-3d/pull/1087/commits/a3b1843) | **결과 폴더가 정리본에서 다른 위치로 옮겨지는 점까지 감안해 그런 스크립트를 그대로 실행되는 것으로 세지 않고, 스크립트가 빠진 이유를 한 가지로 단정하지 않게 했습니다.**<br>fix: 선언 outputs/ 경로를 쓰는 스크립트도 정리본만으로는 실행 불가로 분류하고 생략 사유를 단정하지 않음 (#792 리뷰) |
 | 20:44 | [`02fa9e6`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/02fa9e6) | **요청 전체 시간 상한 설정의 범위·고정 시점·PI 대기 처리·취소 기록을 한·영 조회 문서로 정리하고 README에서 링크했습니다.**<br>docs: 요청 전체 시간 상한 조회 문서(한·영)와 README 링크 (#877) |
 | 20:42 | [`c65931e`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/c65931e) | **PI 카드를 기다린 시간을 정확히 기한에 더하고, 시간 상한으로 취소한 요청의 보고서가 PI가 취소한 것처럼 적히던 것을 고쳤습니다. 취소 도중 gateway가 꺼져도 기한 기록이 남습니다.**<br>fix: waiting_pi를 전환 시각으로 정산하고 기한 취소 보고서·복구 영수증을 고친다 (#877) |
+| 20:38 | [`4b5da2e`](https://github.com/ehojune/bioinfo-team-3d/pull/1087/commits/4b5da2e) | **스크립트가 입력 폴더를 읽는지 알아보는 방법을 경로 모양별이 아니라 입력 폴더 이름 하나를 찾는 방식으로 바꿔 윈도 경로도 놓치지 않게 했습니다.**<br>fix: 작업공간 입력 감지를 경로 모양이 아니라 단어 inputs 기준으로 일반화 (#792 리뷰 P1) |
+| 20:27 | [`e82ae82`](https://github.com/ehojune/bioinfo-team-3d/pull/1087/commits/e82ae82) | **매뉴얼에 결과 저장소의 재현 안내가 어떤 스크립트만 알려 주는지와 모든 스크립트 단계가 스크립트를 선언해야 한다는 규칙을 적었습니다.**<br>docs: manual 한·영에 정리본 재현 안내의 공개/실행 차이와 스크립트 선언 규칙을 적음 (#792) |
+| 20:25 | [`1effacd`](https://github.com/ehojune/bioinfo-team-3d/pull/1087/commits/1effacd) | **스크립트 일부만 공개된 단계는 정리본만으로 다시 만들 수 있다고 하지 않고, 입력 폴더 경로를 조립해 쓰는 코드도 작업공간이 필요하다고 판단하게 했습니다.**<br>fix: 일부만 공개된 단계를 재현 가능으로 세지 않고 합성 입력 경로도 감지 (#792 리뷰 P1) |
+| 20:14 | [`1ac494a`](https://github.com/ehojune/bioinfo-team-3d/pull/1087/commits/1ac494a) | **안내문의 이전 판본과 비교하는 시험이 이번에 더한 스크립트 선언 규칙이 들어 있는지 확인한 뒤 그 한 줄을 빼고 비교하게 했습니다.**<br>test: 계획 prompt 고정 hash 시험이 새 스크립트 선언 규칙을 확인한 뒤 빼고 비교 (#792) |
 | 20:14 | [`1d5bd32`](https://github.com/ehojune/bioinfo-team-3d/pull/1086/commits/1d5bd32) | **재시작한 gateway가 바쁠 때 Windows CI가 ReadTimeout으로 간헐 실패하던 시험이 더 오래 기다리고, 그래도 실패하면 어느 호출인지 보입니다.**<br>recovery fake check의 두 POST(요청 생성·승인)의 읽기 상한을 10초로 올리고, 시간 초과 때 호출·경과 시간·오류 종류를 failure에 기록한다 |
+| 20:13 | [`6291e99`](https://github.com/ehojune/bioinfo-team-3d/pull/1087/commits/6291e99) | **결과 저장소의 재현 안내가 실제로 들어 있는 스크립트만 알려 주고, 빠진 스크립트와 작업공간이 필요한 단계는 따로 적도록 했습니다.**<br>fix: 정리본 재현 안내가 공개한 스크립트만 싣고 빠진 것은 차이 절에 적음 (#792) |
 | 20:07 | [`a168e81`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/a168e81) | **요청 하나가 설정한 시간 상한을 넘으면 gateway가 그 요청을 취소하고 기록을 남깁니다. 설정은 기본으로 꺼져 있고, PI 카드를 기다린 시간은 기한에 더해지며 보고서 검토 단계부터는 끊지 않습니다.**<br>feat: 요청 전체 벽시계 상한을 gateway가 집행한다 (#877) |
 | 20:07 | [`65fce80`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/65fce80) | **패키지에 들어 있는 예시 설정 파일에도 새 설정 설명을 넣어 두 사본을 맞췄습니다.**<br>fix: 패키지 안 예시 설정에 같은 줄을 넣어 두 사본을 맞춘다 (#877) |
 | 19:55 | [`bce1707`](https://github.com/ehojune/bioinfo-team-3d/pull/1083/commits/bce1707) | **매뉴얼의 결과 저장 설명을, 보고서 검토를 기다리는 요청은 먼저 검토를 마쳐야 GitHub로 옮길 수 있다는 현재 동작에 맞췄습니다.**<br>docs: manual 한·영 저장 절을 검토 대기 요청의 --to github 거절 흐름에 맞춤 (#1077) |

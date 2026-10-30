@@ -18,6 +18,15 @@
 ## 테스트 결과
 Windows `test_recovery_fake_check`·`test_repeat_fake_check` 39 passed.
 
+# #792 결과 repo 감사 후속 (1·2·7)
+
+- 결론: 6차 결과 repo(`labhq-kras-5cf7f22a1b`)의 `run/reproduce.md`는 repo에 없는 `steps/s3·s4/.../*.py`와 `link_inputs.py`를 실행하라고 안내했다. 요청 묶음의 명령 목록은 보고하지 않은 스크립트까지 모두 올렸는데, 정리본은 선언된(보고된) 산출만 싣기 때문이다.
+- 바꾼 것(`labhq/portfolio.py`): 정리본에 싣지 않은 `steps/<단계>` 명령과 `link_inputs.py`를 재현 안내에서 뺀다. 대신 "공개본과 실행본의 차이" 절이 (1) 정리본에 싣지 않은 단계 스크립트와 비공개 요청 묶음에서만 실행된다는 점, (2) 공개한 스크립트 중 `manifest.json`·`inputs/<앞 단계>/…` 같은 작업공간 파일을 읽는 것을 적는다. "공개 자료로 다시 만들 수 있는 것"은 공개 스크립트가 있고 작업공간이 필요 없는 단계로 줄이고, 나머지는 "정리본만으로는 다시 만들 수 없는 것"에 둔다. 공개 code 목록과 재현 안내가 같은 사실을 쓰게 된다.
+- 바꾼 것(`labhq/orchestrator/cso.py`): 계획 prompt(일반·연구·재계획)에 `SCRIPT_OUTPUTS_PLAN_RULE`을 더해, 분석 단계만이 아니라 스크립트를 돌리는 모든 단계(QC 재계산·CI 확인·문헌 추출)가 스크립트를 `outputs/scripts/`에 선언 산출로 두게 한다. 선언하지 않은 스크립트는 게시되지 않는다.
+- 시험: `tests/test_portfolio_edition.py` 2건(빠진 것이 있을 때, 없을 때 변화 없음). 계획 prompt hash를 고정한 시험 2건은 새 규칙 한 줄을 빼고 비교하도록 맞춘다.
+- 이번에 하지 않은 것: #792 감사의 3·4·5·6·8번(고정 환경, 입력 변수·`<local-path>` 잔재, README 구성, 그림 source data, CITATION·커밋 메시지).
+- 미검증: 실제 6차 repo를 이 코드로 다시 만든 결과, 선언 규칙이 모델에게 실제로 지켜지는지.
+
 # #1077 후속: manual 저장 절
 
 - 결론: PR #1078이 `review_pending` 요청의 `--to github`를 거절하고 명령을 안내하도록 바꿨는데, 상세 manual 한·영 저장 절은 "검토 전이면 검토 완료를 기다린다"로만 적혀 있어 새 흐름과 어긋났다(#1078 리뷰의 남은 P2). 코드는 바꾸지 않았다.
