@@ -137,12 +137,15 @@ def _with_agent(item: dict, data: dict, agent: dict | None) -> dict:
 def tier_mismatch_warnings(items: dict[str, dict], tiers: Any) -> list[str]:
     """One ``model_tier_mismatch:<agent>:<tier>:<model that ran>`` per agent whose declared tier names another model.
 
-    Only when ``model_tiers`` says what the tier means on the engine that ran; an empty table, an unknown model or an
+    Only when ``model_tiers`` says what the tier means on the engine that ran; an empty table, an unknown model, a task
+    whose outcome the gateway never observed (``outcome_unknown``) or an
     item recorded before tiers were kept says nothing (#625)."""
     from .settings import models_match
 
     found: dict[tuple[str, str, str], None] = {}
     for item in items.values():
+        if item.get("reason") == "outcome_unknown":  # nobody observed this task run: its model is only the dispatched one
+            continue
         tier, model, agent = item.get("model_tier"), item.get("model"), item.get("agent_id")
         expected = tiers.model_for(tier, item.get("engine")) if tiers is not None else None
         if expected and model and agent and not models_match(expected, model):

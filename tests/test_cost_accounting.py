@@ -229,3 +229,15 @@ async def test_the_async_recorder_hands_over_the_same_table(tmp_path, monkeypatc
         assert MISMATCH in hub.requests["r"]["cost_summary"]["warnings"]
     finally:
         hub.store.close()
+
+
+def test_an_unobserved_task_never_produces_a_tier_mismatch_warning():
+    """#625 review: an outcome-unknown item carries only the model that was dispatched, not one that was seen."""
+    from labhq.settings import Settings
+
+    tiers = Settings.model_validate({"model_tiers": {"fast": {"claude_code": "haiku"}}}).model_tiers
+    ran = {"task_id": "a", "engine": "claude_code", "model": "claude-opus-5-5", "status": "actual", "usd": 1.0,
+           "agent_id": "lit_scout", "model_tier": "fast"}
+    lost = {**ran, "task_id": "b", "status": "unknown", "usd": None, "reason": "outcome_unknown"}
+    assert aggregate_costs({"b": lost}, tiers)["warnings"] == []
+    assert aggregate_costs({"a": ran}, tiers)["warnings"] == ["model_tier_mismatch:lit_scout:fast:claude-opus-5-5"]
