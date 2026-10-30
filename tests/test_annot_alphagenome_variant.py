@@ -216,3 +216,36 @@ def test_doctor_without_optional_sdk(tmp_path, monkeypatch):
     monkeypatch.setattr(reg, "alphagenome_client_available", lambda: False)
     result = doctor._alphagenome_row(Settings())
     assert result["status"] == "warn" and "labhq[alphagenome]" in str(result)
+
+
+async def test_scores_cached_with_the_old_window_are_not_reused(tmp_path, monkeypatch):
+    # #621 review: a many-base REF cached under the lopsided window must be scored again under the new one.
+    from labhq.tools import annot_alphagenome as ag
+
+    a, _, calls, _ = setup(tmp_path)
+    await a.alphagenome_variant(["chr1:1000000:AC>A"])
+    await a.alphagenome_variant(["chr1:1000000:AC>A"])
+    assert len(calls) == 1                                    # same schema: served from the cache
+    assert ag.SCORE_SCHEMA >= 2
+    monkeypatch.setattr(ag, "SCORE_SCHEMA", 1)                # what an older install wrote under
+    await a.alphagenome_variant(["chr1:1000000:AC>A"])
+    assert len(calls) == 2                                    # a different schema is a different cache entry
+
+
+async def test_the_window_is_centered_on_the_ref_span_and_a_one_base_ref_is_unchanged(tmp_path):
+    # #621: a many-base REF (a deletion) is centered in its window; a one-base REF keeps the old start.
+    a, _, calls, _ = setup(tmp_path)
+    width = reg.AG_LENGTHS["16KB"]
+    ref = "A" * 1000
+    await a.alphagenome_variant([f"chr1:1000000:{ref}>A"], sequence_length="16KB")
+    deletion = calls[-1]["interval"]
+    ref_start0, ref_end = 999999, 999999 + 1000
+    assert deletion.end - deletion.start == width
+    assert (deletion.start + deletion.end) // 2 == (ref_start0 + ref_end) // 2  # the REF's middle is the window's middle
+    assert deletion.start <= ref_start0 and ref_end <= deletion.end            # the whole REF is inside, evenly
+    assert (ref_start0 - deletion.start) - (deletion.end - ref_end) in (0, 1)   # the same room on both sides
+    await a.alphagenome_variant(["chr1:1000000:A>G"], sequence_length="16KB")
+    snv = calls[-1]["interval"]
+    assert snv.start == 999999 - width // 2 and snv.end == snv.start + width    # unchanged for a one-base REF
+    await a.alphagenome_variant(["chr1:3:AC>A"], sequence_length="16KB")        # two bases near the chromosome start
+    assert calls[-1]["interval"].start == 0                                    # still clamped at 0
