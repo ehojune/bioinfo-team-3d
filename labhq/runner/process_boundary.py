@@ -271,12 +271,17 @@ def diagnostic_broker_probe(broker_factory, *, timeout=10, on_ready=None):
                             "--bind", str(path), "/run/labhq/provider.sock",
                             "/usr/bin/python3", "-c", _BROKER_CLIENT, receipt.run_id])
             receipt.preparation = "diagnostic_ready"
-            result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, close_fds=True, timeout=timeout,
-                                    check=False)
-            receipt.launch = "exited_0" if result.returncode == 0 else "failed"
-            if result.returncode:
-                receipt.unsupported_reasons.append("broker namespace diagnostic failed")
+            try:
+                result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, close_fds=True, timeout=timeout,
+                                        check=False)
+            except subprocess.TimeoutExpired:
+                receipt.launch = "failed"
+                receipt.unsupported_reasons.append("BROKER_TIMEOUT")
+            else:
+                receipt.launch = "exited_0" if result.returncode == 0 else "failed"
+                if result.returncode:
+                    receipt.unsupported_reasons.append("broker namespace diagnostic failed")
         except Exception:
             receipt.unsupported_reasons.append("broker diagnostic preparation or launch failed")
             if receipt.preparation == "diagnostic_ready":

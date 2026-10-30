@@ -263,7 +263,7 @@ def test_broker_failure_paths_report_and_do_not_claim_cleanup(failure):
         assert "broker diagnostic preparation or launch failed" in receipt.unsupported_reasons
     elif failure == "timeout":
         assert receipt.launch == "failed"
-        assert "broker diagnostic preparation or launch failed" in receipt.unsupported_reasons
+        assert "BROKER_TIMEOUT" in receipt.unsupported_reasons
     elif failure == "child_failure":
         assert receipt.launch == "failed"
         assert "broker namespace diagnostic failed" in receipt.unsupported_reasons
@@ -284,7 +284,6 @@ def test_forged_ancestry_witness_requires_reason_coded_refusal():
     assert "ANCESTRY_WITNESS_UNAUTHENTICATED" in receipt.unsupported_reasons
 
 
-@pytest.mark.xfail(strict=True, reason="timeout has only a generic diagnostic failure reason")
 def test_broker_timeout_requires_distinct_reason_code():
     broker = SimpleNamespace(start=lambda: None, close=lambda: None)
     with patch.object(boundary, "_broker_prerequisites", return_value=True), \
@@ -294,3 +293,5 @@ def test_broker_timeout_requires_distinct_reason_code():
         receipt = boundary.diagnostic_broker_probe(lambda directory, run_id: broker, timeout=1)
     assert receipt.launch == "failed"
     assert "BROKER_TIMEOUT" in receipt.unsupported_reasons
+    assert "broker diagnostic preparation or launch failed" not in receipt.unsupported_reasons
+    assert receipt.cleanup == "broker_closed_socket_absent; descendants_unverified"

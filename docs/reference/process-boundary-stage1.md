@@ -58,3 +58,5 @@ A real supervisor must pin every ancestor to an independently trusted mount/root
 ## Synthetic broker probe
 
 `diagnostic_broker_probe(factory, timeout=10, on_ready=None)` makes a private temporary directory and passes it with the receipt run ID to a trusted synthetic broker factory. Its `start()` must create `provider.sock`; the callback observes the run ID and socket before the fixed child starts. Callback failure aborts launch. Only that socket is mounted at `/run/labhq/provider.sock`; the child sends the fixed newline JSON request `{"run_id": ..., "body": "cHJvYmU="}`. The factory must use fake credentials and a fake upstream. The supervisor calls `close()` on failure and exit, recording whether the socket disappeared. The callback and receipt do not substitute for independent witnesses or verify descendant cleanup. Real engine compatibility and protected launch remain unsupported.
+
+The child subprocess timeout records `BROKER_TIMEOUT` in `unsupported_reasons` and marks launch failed. This timeout does not bound broker startup or cleanup.
