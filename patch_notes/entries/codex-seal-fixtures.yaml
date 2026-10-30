@@ -1,5 +1,9 @@
 pr: 1064
 rows:
+  - sha: "a9eb186"
+    at: "2026-10-30 17:25"
+    summary: "reference 문서의 Windows 등록 전 안내를 등록 완료 상태로 고칩니다."
+    text: "docs: update seal reference after Windows inventory registration"
   - sha: "de6b4a9"
     at: "2026-10-30 17:17"
     summary: "seal fixture를 Windows inventory에 등록하고 status 파일명에 HHMM을 넣습니다."
