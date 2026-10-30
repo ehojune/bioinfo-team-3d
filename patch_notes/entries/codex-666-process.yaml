@@ -1,5 +1,9 @@
 pr: 1050
 rows:
+  - sha: '4a1b96d'
+    at: "2026-10-31 05:30"
+    summary: "합성 producer 거절 및 broker 실패 경로를 검증하고 미구현 인증·사유 코드를 기록합니다."
+    text: "test: cover producer diagnostic negative controls"
   - sha: 'a59f17c'
     at: "2026-10-30 18:20"
     summary: "ancestry 진단 receipt를 v2로 구분하고 기존 v1 출력을 보존합니다."
