@@ -89,14 +89,16 @@
         {
           "sequence": 2,
           "time_ns": 20,
-          "type": "exec_start"
+          "type": "exec_start",
+          "child_id": "fixture-child"
         },
         {
           "sequence": 3,
           "time_ns": 30,
           "type": "exec_end",
           "reason": "normal",
-          "returncode": 0
+          "returncode": 0,
+          "child_id": "fixture-child"
         },
         {
           "sequence": 4,
@@ -104,7 +106,8 @@
           "type": "cleanup",
           "scope": "whole_process_tree",
           "descendants": [],
-          "sockets": []
+          "sockets": [],
+          "child_id": "fixture-child"
         },
         {
           "sequence": 5,
@@ -506,6 +509,25 @@
         "contract": "rejected",
         "status": "unsupported",
         "reason": "producer_adapter_unavailable"
+      }
+    },
+    {
+      "id": "child_substitution",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "child_id"
+          ],
+          "value": "fixture-other-child"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "child_identity_mismatch"
       }
     }
   ]

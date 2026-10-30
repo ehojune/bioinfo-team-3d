@@ -140,6 +140,8 @@ def test_caller_launch_expectations_are_independent_of_receipt():
     ["witness", "events", 0, "scope"], ["witness", "events", 0, "loss_count"],
     ["witness", "events", 1, "objects"], ["witness", "events", 3, "returncode"],
     ["witness", "events", 4, "descendants"], ["witness", "events", 4, "sockets"],
+    ["witness", "events", 2, "child_id"], ["witness", "events", 3, "child_id"],
+    ["witness", "events", 4, "child_id"],
 ])
 def test_malformed_required_observations_fail_closed(path, value):
     evidence = deepcopy(CORPUS["positive"])
@@ -173,6 +175,7 @@ def test_consistent_independent_rebinding_accepts_a_different_run():
     for key in ("run_id", "launch_nonce"):
         trusted[key] = witness[key] = "different-" + trusted[key]
     trusted["witness_id"] = witness["observer_id"] = "different-external-observer"
+    trusted["child_id"] = "different-child"
     trusted["supervisor"]["subject_id"] = "different-supervisor"
     trusted["supervisor"]["executable_sha256"] = "d" * 64
     witness["supervisor"] = deepcopy(trusted["supervisor"])
@@ -183,6 +186,21 @@ def test_consistent_independent_rebinding_accepts_a_different_run():
     for event in witness["events"]:
         if "objects" in event:
             event["objects"] = deepcopy(trusted["objects"])
+        if "child_id" in event:
+            event["child_id"] = trusted["child_id"]
     assert validator.validate(evidence, trusted).contract == "accepted"
     # A receipt cannot replay against independently pinned expectations for another run.
     assert validator.validate(evidence, CORPUS["trusted"]).contract == "rejected"
+
+
+@pytest.mark.parametrize("phase", ["exec_start", "exec_end", "cleanup", "trusted"])
+def test_child_substitution_rejects_even_with_matching_run_and_nonce(phase):
+    trusted, evidence = deepcopy(CORPUS["trusted"]), deepcopy(CORPUS["positive"])
+    if phase == "trusted":
+        trusted["child_id"] = "substituted-child"
+    else:
+        event = next(e for e in evidence["witness"]["events"] if e["type"] == phase)
+        event["child_id"] = "substituted-child"
+    result = validator.validate(evidence, trusted)
+    assert result.contract == "rejected"
+    assert "child_identity_mismatch" in result.reasons

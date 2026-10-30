@@ -8,13 +8,13 @@ Lookup-only contract evidence for [#1063](https://github.com/ehojune/bioinfo-tea
 | `tests/fixtures/process_boundary_seal/validator.py` | Pure validator; no dependency on W1 producer or W3 harness |
 | `tests/test_process_boundary_seal_contract.py` | Corpus, identity mutations, missing phases, malformed observations and receipt non-authority |
 
-Required witness observations, in order: monitor start → sealed source/ancestor identities → execution start → normal exit → whole-tree descendant/socket cleanup → final identities → monitor stop. Sequence and monotonic timestamps must be complete. Both monitor endpoints cover every pinned object with zero event loss. A mutation event rejects the run even when endpoint hashes match. Source/ancestor identities and link metadata must match caller-owned pins.
+Required witness observations, in order: monitor start → sealed source/ancestor identities → execution start → normal exit → whole-tree descendant/socket cleanup → final identities → monitor stop. Start, exit and cleanup each bind the independently pinned child identity. Sequence and monotonic timestamps must be complete. Both monitor endpoints cover every pinned object with zero event loss. A mutation event rejects the run even when endpoint hashes match. Source/ancestor identities and link metadata must match caller-owned pins.
 
 | Evidence | Expected status / reason |
 |---|---|
 | Full positive control | `synthetic_only`, accepted contract |
 | Missing witness; child receipt as authority or witness | `unverified`, independent evidence missing/refused |
-| Run/nonce mismatch; source/parent replacement; symlink/hardlink | `unverified`, binding/identity failure |
+| Run/nonce/child mismatch; source/parent replacement; symlink/hardlink | `unverified`, binding/identity failure |
 | Transient mutation restored before final hash | `unverified`, `mutation_observed` |
 | Unknown supervisor executable identity | `unsupported`, `untrusted_supervisor` |
 | Normal exit with remaining descendant/socket | `unverified`, cleanup incomplete |
@@ -25,7 +25,7 @@ Required witness observations, in order: monitor start → sealed source/ancesto
 
 `validate(evidence, trusted)` assumes independent provenance **only within this synthetic fixture**. Observer names and `origin` fields do not authenticate a real witness. `adapt_producer(receipt)` always returns unsupported. No existing `protected_launch` capability changes.
 
-A future adapter must authenticate an external witness outside both child and supervisor control; independently bind the launch run/nonce and pinned supervisor executable; enumerate and pin every source ancestor; verify stable filesystem identities and link metadata; establish continuous observation before sealing through cleanup/final snapshot; detect gaps, overflow, transient changes and all descendant/listener remnants. It must fail closed when the platform cannot supply these observations. Endpoint hashing or a child-written receipt cannot supply that evidence. Real integration needs separate implementation, review and approved trials.
+A future adapter must authenticate an external witness outside both child and supervisor control; independently bind the launch run/nonce, supervisor executable and child creation identity (PID alone is insufficient); enumerate and pin every source ancestor; verify stable filesystem identities and link metadata; establish continuous observation before sealing through cleanup/final snapshot; detect gaps, overflow, transient changes and all descendant/listener remnants. It must fail closed when the platform cannot supply these observations. Endpoint hashing or a child-written receipt cannot supply that evidence. Real integration needs separate implementation, review and approved trials.
 
 Validation: `python -m pytest tests/test_process_boundary_seal_contract.py -q`.
 

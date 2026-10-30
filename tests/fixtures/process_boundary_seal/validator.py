@@ -118,6 +118,8 @@ def validate(evidence: dict[str, Any], trusted: dict[str, Any]) -> Verdict:
             continue
         if kind not in phases:
             reject("mutation_observed" if kind == "mutation" else "unknown_observation")
+        if kind in {"exec_start", "exec_end", "cleanup"} and event.get("child_id") != trusted["child_id"]:
+            reject("child_identity_mismatch")
         if kind in {"seal", "final_snapshot"}:
             objects = event.get("objects")
             if not isinstance(objects, dict) or set(objects) != set(expected):
