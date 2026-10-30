@@ -3,6 +3,10 @@ pr: 1064
 # Final-head CI, manifest execution and actual review stay tracked in PR #1064.
 # Keep draft/hold; real protection remains UNVERIFIED.
 rows:
+  - sha: "7656c93"
+    at: "2026-10-31 03:56"
+    summary: "독립 관측·쓰기 차단·기한·잔류 증거가 빠지거나 잘못된 모의 실행을 거부합니다."
+    text: "test: enforce independent synthetic seal lifecycle controls"
   - sha: "da94188"
     at: "2026-10-30 19:26"
     summary: "모의 검증만으로 실제 보호 실행을 허용하지 않는다는 한계를 매뉴얼 한영판에 명시합니다."
