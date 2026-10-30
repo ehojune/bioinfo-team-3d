@@ -1,5 +1,9 @@
 pr: 1050
 rows:
+  - sha: '0c137911'
+    at: "2026-10-30 18:10"
+    summary: "합성 진단에서 parent identity와 ancestry 변경을 검증합니다."
+    text: "feat: validate synthetic parent ancestry"
   - sha: '4941459'
     at: "2026-10-30 10:49"
     summary: "격리 준비가 검증되지 않은 실행을 거부하고 별도 진단 결과를 기록합니다."
