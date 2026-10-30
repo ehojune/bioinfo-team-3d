@@ -117,8 +117,21 @@ class RequestDeadline(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         from unittest import mock
 
+        import time as real_time
+
         self.now = [self.CREATED]
-        patcher = mock.patch("labhq.gateway.server.time.time", side_effect=lambda: self.now[0])
+        now = self.now
+
+        class FrozenTime:
+            """The clock the gateway module sees. Only its own `time` name is replaced: patching `time.time` itself
+            would change the clock of every other thread and test in the process while this test runs."""
+            def time(self):
+                return now[0]
+
+            def __getattr__(self, name):
+                return getattr(real_time, name)
+
+        patcher = mock.patch("labhq.gateway.server.time", FrozenTime())
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -141,6 +154,7 @@ class RequestDeadline(unittest.IsolatedAsyncioTestCase):
             pass
 
         hub.publish = publish
+        self.addCleanup(hub.store.close)  # a Hub that is not closed leaves its writer thread running
         return hub
 
     def open_request(self, hub, status="running", **extra):
