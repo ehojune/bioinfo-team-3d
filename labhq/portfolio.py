@@ -1370,17 +1370,29 @@ def _costs_document(req: dict, tasks: Iterable[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _request_authors(req: dict) -> list[str]:
+    """Author names the request itself gives (``authors``: names or ``{"name": ...}``); nothing is guessed."""
+    raw = req.get("authors")
+    items = raw if isinstance(raw, (list, tuple)) else []
+    names = [str(item.get("name") if isinstance(item, Mapping) else item or "").strip() for item in items]
+    return [name for name in names if name]
+
+
+def _citation_authors(req: dict, settings) -> list[str]:
+    return [cleaned for cleaned in (_clean(name, settings, req).strip()[:120] for name in _request_authors(req)) if cleaned]
+
+
 def _citation_cff(req: dict, settings) -> str:
-    """CITATION.cff from what the request records. The request carries no author or DOI, so none is written (#792)."""
+    """A valid CITATION.cff, or "" when the request names no author: CFF requires one and none is invented (#792)."""
+    authors = _citation_authors(req, settings)
+    if not authors:
+        return ""
     title = _clean(research_question(str(req.get("text") or "")) or "연구 결과", settings, req).strip().splitlines()[0][:200]
     return ("cff-version: 1.2.0\n"
-            "# 저자와 DOI는 요청에 없어 적지 않았습니다. 아는 값을 채운 뒤 인용에 쓰세요.\n"
             f"message: {json.dumps('이 연구 결과를 인용할 때는 아래 정보를 쓰세요.', ensure_ascii=False)}\n"
             f"title: {json.dumps(title, ensure_ascii=False)}\n"
-            "type: dataset\n"
-            "authors: []\n"
-            f"identifiers:\n  - type: other\n    value: {json.dumps('labhq-request-' + str(req.get('id') or 'unknown'))}\n"
-            f"    description: {json.dumps('labhq 요청 id', ensure_ascii=False)}\n")
+            "type: dataset\nauthors:\n"
+            + "".join(f"  - name: {json.dumps(author, ensure_ascii=False)}\n" for author in authors))
 
 
 def _references(req: dict, report: str, assets: Mapping[str, str]) -> str:
@@ -1827,8 +1839,9 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     published = files or {}
     lines += ["", "## 그림이 보여 주는 것", "", *_figure_lines(report, figure_names, source_targets, published, table_names, generated_abstract),
               "", "## 파일 목록", "", *_file_list_lines(published, table_names, figure_names),
+              ("- 인용: [CITATION.cff](CITATION.cff)" if _request_authors(req)
+               else "- 인용 정보 미정(저자 미입력): 요청에 저자가 없어 CITATION.cff를 만들지 않았습니다."),
               "", "## 환경", "", *_environment_lines(published),
-              "", "## 실행 방법", "", *_run_lines(published, run_documents),
               "", "## 결정성", "", _determinism_line(published)]
     lines += ["", "## 읽는 순서", "",
               "1. [과학 보고서](report/report.md) — 논문 형식 보고서와 claim 근거 각주"]
@@ -1845,7 +1858,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
               "8. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
               "## 저장소 지도", "", "```text", "README.md", "report/", "run/", "code/", "figures/", "tables/",
               *(["studies/               갈래별 코드·그림·표·단계 보고서"] if branch_rows else []),
-              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", "CITATION.cff", "```", "",
+              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", *(["CITATION.cff"] if _request_authors(req) else []), "```", "",
               "## Summary (English)", "",
               f"This repository is the publication edition of labhq request {req.get('id')}. "
               "It keeps the scientific report, aggregate results, code, figures, decisions, and execution record together.", "",
@@ -2156,8 +2169,10 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         "run/costs.md": _costs_document(req, tasks),
         "REFERENCES.md": _clean(_references(req, report, assets), settings, req),
         "DATA_AND_LICENSES.md": _clean(_data_licenses(req, settings, input_readmes), settings, req),
-        "CITATION.cff": _citation_cff(req, settings),
     })
+    citation = _citation_cff(req, settings)
+    if citation:
+        files["CITATION.cff"] = citation
     if revision_history:
         files["run/revision_history.md"] = revision_history
     run_summary, run_files = run_report.build(
