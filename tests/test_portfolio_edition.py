@@ -639,7 +639,9 @@ def test_the_readme_states_real_limits_figures_files_runs_and_determinism(tmp_pa
         "- [orr.svg](figures/orr.svg): ORR와 신뢰구간", "- [qc.svg](figures/qc.svg): 보고서에 그림 설명이 없습니다"]
     files = {"code/s1/outputs/scripts/a.py": "import numpy as np\nnp.random.seed(7)\n",
              "code/s2/outputs/scripts/b.py": "print(1)\n"}
-    assert "`code/s1/outputs/scripts/a.py`" in _determinism_line(files)
+    assert "고정 seed 값이 적힌 스크립트: `code/s1/outputs/scripts/a.py`" in _determinism_line(files)
+    loose = _determinism_line({"code/s1/outputs/scripts/c.py": "import random\nx = random.choice([1, 2])\n"})
+    assert "고정 seed 값을 확인하지 못한" in loose and "고정 seed 값이 적힌" not in loose
     assert "난수·seed 호출을 찾지 못했습니다" in _determinism_line({"code/s2/outputs/scripts/b.py": "print(1)\n"})
     assert "스크립트가 없어" in _determinism_line({})
     listing = _file_list_lines(files, ["tables/t.tsv"], ["figures/orr.svg"])

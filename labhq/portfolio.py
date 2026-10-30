@@ -1605,15 +1605,25 @@ def _first_limit(report: str) -> str:
 _RANDOM_USE = re.compile(r"\b(?:random_state|set_seed|manual_seed)\b|\b(?:np|numpy)\.random\b|\brandom\.(?:seed|random|choice|shuffle|sample)\b|\bseed\b")
 
 
+_FIXED_SEED = re.compile(r"\b(?:seed|random_state|set_seed|manual_seed)\s*[=(]\s*\d+")
+
+
 def _determinism_line(files: Mapping[str, str | bytes]) -> str:
     code = {name: body for name, body in files.items()
             if isinstance(body, str) and PurePosixPath(name).suffix.lower() in _CODE_SUFFIXES}
     if not code:
         return "공개한 스크립트가 없어 결정성은 확인할 수 없습니다."
     using = sorted(name for name, body in code.items() if _RANDOM_USE.search(body))
+    fixed = [name for name in using if _FIXED_SEED.search(code[name])]
+    loose = [name for name in using if name not in fixed]
     if using:
-        return ("난수나 seed를 쓰는 스크립트: " + ", ".join(f"`{name}`" for name in using[:6])
-                + ". seed 값은 각 스크립트에 적혀 있습니다.")
+        parts = []
+        if fixed:
+            parts.append("고정 seed 값이 적힌 스크립트: " + ", ".join(f"`{name}`" for name in fixed[:6]) + ".")
+        if loose:
+            parts.append("난수를 쓰지만 고정 seed 값을 확인하지 못한 스크립트: "
+                         + ", ".join(f"`{name}`" for name in loose[:6]) + ". 결과가 실행마다 다를 수 있습니다.")
+        return " ".join(parts)
     return (f"공개한 스크립트 {len(code)}개에서 난수·seed 호출을 찾지 못했습니다. 난수를 쓰지 않는 것으로 보이며, "
             "실행해서 확인한 것은 아닙니다.")
 
@@ -1649,9 +1659,9 @@ def _run_lines(files: Mapping[str, str | bytes], run_documents: Mapping[str, str
                  if keys else "없음")
     return [f"- 원자료가 있을 때: {reproduce}의 순서와 명령을 따릅니다. 입력 경로 환경 변수: {variables}. "
             "경로 값은 정리본에 적지 않았으니 자신의 경로를 넣습니다.",
-            "- 원자료가 없을 때: 정리본에는 원자료가 없어 스크립트를 처음부터 다시 돌릴 수 없습니다. `tables/`의 결과표와 "
-            "`report/`의 보고서로 결과와 근거를 확인합니다. 재현 방법이 정리본만으로는 다시 만들 수 없다고 적은 단계는 "
-            "비공개 요청 묶음이 있어야 다시 실행됩니다."]
+            "- 원자료가 없을 때: 재현 방법이 \"공개 자료로 다시 만들 수 있는 것\"으로 적은 단계만 정리본으로 다시 돌립니다. "
+            "나머지 스크립트는 원자료가 없어 처음부터 돌릴 수 없으니 `tables/`의 결과표와 `report/`의 보고서로 결과와 근거를 "
+            "확인합니다."]
 
 
 def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_names: list[str],
