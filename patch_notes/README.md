@@ -22,6 +22,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 01:40 | [`15dcce7`](https://github.com/ehojune/bioinfo-team-3d/pull/1097/commits/15dcce7) | **등급 표를 어떻게 채우고 무엇이 우선하며 어떤 경고가 나오는지 설명서에서 볼 수 있습니다.**<br>manual 한·영에 model_tiers 표의 우선순위(직원 model·agent_overrides·cso_model이 등급보다 앞섬), 빈 표의 의미, model_tier_mismatch 경고와 비용 줄, dry-run의 모델 미정을 적는다(리뷰 P1) |
 | 01:10 | [`d67aeaf`](https://github.com/ehojune/bioinfo-team-3d/pull/1097/commits/d67aeaf) | **선언한 등급과 다른 모델로 돈 직원이 요청의 비용 줄에 나옵니다.**<br>gateway의 두 비용 기록 경로(동기·비동기)가 model_tiers 표를 request_cost_summary에 넘기고, 비용 줄(format_warnings)이 선언 등급과 다른 모델로 돈 직원을 보인다. 표가 없으면 이전과 같다 |
 | 00:40 | [`3aa5a1f`](https://github.com/ehojune/bioinfo-team-3d/pull/1097/commits/3aa5a1f) | **6차처럼 fast·balanced 직원이 알리지 않고 opus로 도는 일을 비용 요약이 알 수 있게 됩니다. 표를 채우지 않으면 지금과 똑같이 동작합니다.**<br>model_tiers 표(등급이 엔진마다 뜻하는 모델, 기본 빈 값)를 더하고, 직원 YAML에 model이 없을 때만 러너가 등급으로 모델을 채운다. dry-run에 등급→모델(없으면 모델 미정)을 보이고, 비용 요약은 선언 등급과 실제 모델이 어긋난 직원을 model_tier_mismatch 경고로 남긴다(별칭·정식명 비교 포함) |
+| 00:35 | [`8d6a45b`](https://github.com/ehojune/bioinfo-team-3d/pull/1098/commits/8d6a45b) | **PDF 커밋 메시지 시험이 새 형식을 고정합니다.**<br>시험: PDF 커밋 메시지를 새 형식으로 고정 (#792 rev11) |
+| 00:35 | [`ab546c2`](https://github.com/ehojune/bioinfo-team-3d/pull/1098/commits/ab546c2) | **매뉴얼에 CITATION.cff 동작과 파일별 커밋 메시지 형식을 적었습니다.**<br>manual: CITATION.cff와 커밋 메시지 형식 설명, 환경·실행 절 순서 복원 (#792 rev11) |
 
 ## 2026-10-30
 
@@ -34,6 +36,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 23:38 | [`0f9f0e1`](https://github.com/ehojune/bioinfo-team-3d/pull/1101/commits/0f9f0e1) | **시험이 가짜 시계를 쓸 때 다른 스레드와 이벤트 루프까지 가짜 시계를 보지 않게 했습니다.**<br>시험 16개 파일에서 X.time.f 전역 patch를 모듈 자신의 time(asyncio) 이름만 바꾸는 proxy로 교체 (#1076). |
 | 23:38 | [`404ac5e`](https://github.com/ehojune/bioinfo-team-3d/pull/1101/commits/404ac5e) | **시험이 가짜 시계를 쓸 때 다른 스레드와 이벤트 루프까지 가짜 시계를 보지 않게 했습니다.**<br>시험 helper tests/support/time_proxy.py의 RuntimeProxy와 15개 파일 변환 (#1076). |
 | 23:30 | [`d67ca61`](https://github.com/ehojune/bioinfo-team-3d/pull/1093/commits/d67ca61) | **labhq status가 요청마다 시간 상한을 조회할 때 gateway가 응답하지 않으면 첫 실패 뒤 나머지 조회를 건너뛰어 명령이 오래 멈추지 않습니다.**<br>fix: status가 침묵한 gateway에 요청마다 상세 조회를 되풀이하지 않게 한다 (#877) |
+| 23:23 | [`f0f1427`](https://github.com/ehojune/bioinfo-team-3d/pull/1098/commits/f0f1427) | **결과 repo에 CITATION.cff를 넣고(저자와 DOI는 요청에 없어 비워 둠), 커밋 메시지에 파일·단계·요청 요약이 들어가게 했습니다.**<br>결과 repo: CITATION.cff와 파일별 커밋 메시지 (#792 rev9) |
+| 23:23 | [`6316da5`](https://github.com/ehojune/bioinfo-team-3d/pull/1098/commits/6316da5) | **요청에 저자가 있을 때만 유효한 CITATION.cff를 만들고, 없으면 README에 인용 정보 미정이라고 적습니다.**<br>결과 repo: 저자가 있을 때만 CITATION.cff, 파일별 커밋 메시지 (#792 rev10) |
 | 23:10 | [`8317600`](https://github.com/ehojune/bioinfo-team-3d/pull/1094/commits/8317600) | **같은 본문이 DOI와 PMID로 따로 저장돼도 둘 중 어느 식별자로 인용해도 읽은 것으로 이어집니다.**<br>같은 sha256의 저장 기록은 한 논문으로 합치되 모든 행의 별칭을 보존(리뷰 P2) + 시험 |
 | 23:05 | [`bb618b7`](https://github.com/ehojune/bioinfo-team-3d/pull/1093/commits/bb618b7) | **시간 상한 시험이 같은 프로세스의 다른 시험이 보는 시계를 멈추지 않게 하고, 시험이 만든 Hub를 정리 때 닫도록 했습니다.**<br>test: 시간 상한 시험이 프로세스 전체의 시계를 바꾸지 않게 한다 (#877) |
 | 22:46 | [`ad0c6a0`](https://github.com/ehojune/bioinfo-team-3d/pull/1095/commits/ad0c6a0) | **환경 기록 개수 시험이 깨진 문자열 때문에 돌지 못하던 것을 고쳤습니다.**<br>시험: 환경 기록 개수 시험의 문자열 리터럴 수정 (#792) |
