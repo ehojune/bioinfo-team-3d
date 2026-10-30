@@ -463,3 +463,11 @@ async def test_declaring_types_changes_no_dispatch_approval_or_result():
     assert dispatched(runs[0]) == dispatched(runs[1]) == dispatched(runs[2])
     assert outcome(runs[0]) == outcome(runs[1]) == outcome(runs[2])
     assert any("output_types" in t.meta for t in runs[2].calls)  # the declarations did travel
+
+
+def test_the_solo_prompt_carries_the_script_declaration_rule():
+    """#1099: a `route: solo` request that ran a script left it out of the published edition, because only the
+    plan, research and re-plan prompts told the agent to declare it (#792, #1087 review)."""
+    assert "- " + cso.SCRIPT_OUTPUTS_PLAN_RULE + "\n" in cso.SOLO_PROMPT
+    rendered = cso.SOLO_PROMPT.format(request="표 하나 만들어 줘", assumptions="없음")
+    assert cso.SCRIPT_OUTPUTS_PLAN_RULE in rendered  # still there once the request and assumptions are filled in
