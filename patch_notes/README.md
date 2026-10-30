@@ -14,6 +14,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:45 | [`374a41f`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/374a41f) | **폴더 산출이 있는 단계는 다음 단계가 거절할 파일(많음·큼·이름 충돌·위험한 이름)을 미리 미완료로 처리하도록 한 규칙으로 묶었습니다.**<br>fix: 선언 폴더 단계는 다음 단계의 입력 규칙(수·크기·이름·대소문자)으로 같이 검사해 부류를 닫음 (#1058 리뷰 P1) |
+| 16:34 | [`4f8e188`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/4f8e188) | **다음 단계가 받을 수 있는 파일 수·크기 한도를 폴더만이 아니라 그 단계가 모은 산출 전체로 확인하게 하고 매뉴얼에 적었습니다.**<br>fix: 다음 단계의 파일 수·바이트 상한을 한 상류의 수집 산출 전체로 검사하고 manual에 적음 (#1058 리뷰 P1) |
+| 16:21 | [`a61b537`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/a61b537) | **폴더 산출의 크기 합이 다음 단계가 받을 수 있는 한도를 넘으면 미완료로 처리해, 통과한 뒤 거절되는 일이 없게 했습니다.**<br>fix: 선언 폴더 확장이 다음 단계의 바이트 상한을 넘으면 미완료 (#1058 리뷰 P1) |
+| 16:11 | [`48dd86f`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/48dd86f) | **폴더 산출의 파일 목록을 끝까지 읽지 못했으면 미완료로 처리하고, 연구 단계에는 폴더 안 파일을 근거로 인용하라고 안내했습니다.**<br>fix: 폴더 산출 스캔이 불완전하면 미완료로 하고 연구 단계 지침에 폴더 안 파일을 인용하라고 적음 (#1058 리뷰 P1) |
+| 15:58 | [`bfd0aeb`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/bfd0aeb) | **매뉴얼의 단계 산출 설명에 폴더 산출을 파일별로 모으는 규칙과 미완료 조건을 적었습니다.**<br>docs: manual 한·영 출력 계약에 폴더 산출 규칙을 적음 (#1058) |
+| 15:56 | [`646c270`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/646c270) | **폴더 산출은 확인값이 있는 파일이 있어야 충족되고, 파일이 200개를 넘으면 미완료로 처리해 다음 단계가 거절하는 일이 없게 했습니다.**<br>fix: 폴더 산출은 hash 있는 파일이 있어야 충족되고 200개를 넘으면 미완료 (#1058 리뷰 P1) |
+| 15:45 | [`6fbebd3`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/6fbebd3) | **폴더 산출을 파일별로 모으는 새 방식에 맞춰, 결과 검사 시험의 옛 기대값을 바꿨습니다.**<br>test: 폴더 산출은 hash가 있는 파일로 모인다는 새 동작에 맞춰 verify 시험 기대값을 바꿈 (#1058) |
+| 15:35 | [`5e577a3`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/5e577a3) | **단계가 폴더를 산출로 선언하면 안의 파일을 하나씩 확인값과 함께 모아, 다음 단계가 앞 단계 결과를 받을 수 있게 했습니다.**<br>fix: 선언한 폴더 산출을 hash가 있는 파일별로 모아 하류 단계가 상류 산출을 받게 함 (#1058) |
 | 15:29 | [`327c866`](https://github.com/ehojune/bioinfo-team-3d/pull/1057/commits/327c866) | **단계가 실패하는 조건에 대한 설명이 실제 동작과 같아집니다.**<br>manual 한·영의 빈 claim 원장 설명을 실제 동작에 맞춘다 |
 | 15:18 | [`d80c5e1`](https://github.com/ehojune/bioinfo-team-3d/pull/1057/commits/d80c5e1) | **거부 기록에 제거된 링크가 빠지지 않고, 비어 버린 결과가 통과하지 않습니다.**<br>범위 밖 claim의 제거된 링크도 거부 행에 남기고, 정리 뒤 단계 자신의 claim이 하나도 안 남으면 실패를 유지한다 |
 | 15:15 | [`db97ddc`](https://github.com/ehojune/bioinfo-team-3d/pull/1056/commits/db97ddc) | **다시 열린 단계가 같은 라운드에서 질문 답을 받고 재실행될 때도 거절되지 않게 했습니다.**<br>fix: 다시 열린 단계는 열린 revision을 유지해 같은 라운드의 질문 재실행이 거절되지 않게 함 (#1053) |
