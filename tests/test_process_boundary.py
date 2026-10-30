@@ -1,4 +1,5 @@
 import subprocess
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from labhq.runner import process_boundary as boundary
@@ -48,3 +49,66 @@ def test_diagnostic_timeout_never_claims_success():
         receipt = boundary.diagnostic_probe(timeout=1)
     assert receipt.launch == "failed"
     assert receipt.seal_status == "unsealed"
+
+
+def test_broker_ready_before_child_and_closed_after():
+    events = []
+
+    class Broker:
+        def start(self):
+            events.append("start")
+
+        def close(self):
+            events.append("close")
+
+    def factory(directory, run_id):
+        events.append(("factory", run_id))
+        return Broker()
+
+    def ready(run_id, path):
+        events.append(("ready", run_id, path.name))
+
+    def run(command, **kwargs):
+        events.append(("child", command))
+        return subprocess.CompletedProcess(command, 0)
+
+    with patch.object(boundary, "_broker_prerequisites", return_value=True), \
+         patch.object(boundary.shutil, "which", return_value="bwrap"), \
+         patch.object(boundary.Path, "lstat", return_value=SimpleNamespace(st_mode=0o140000)), \
+         patch.object(boundary.subprocess, "run", side_effect=run):
+        receipt = boundary.diagnostic_broker_probe(factory, on_ready=ready)
+    assert [event if isinstance(event, str) else event[0] for event in events] == [
+        "factory", "start", "ready", "child", "close"]
+    assert events[0][1] == events[2][1] == receipt.run_id
+    assert "/run/labhq/provider.sock" in events[3][1]
+    assert receipt.launch == "exited_0" and receipt.seal_status == "unsealed"
+    assert receipt.cleanup == "broker_closed_socket_absent; descendants_unverified"
+
+
+def test_broker_ready_failure_prevents_child_and_closes():
+    broker = SimpleNamespace(start=lambda: None, close=lambda: closed.append(True))
+    closed = []
+    with patch.object(boundary, "_broker_prerequisites", return_value=True), \
+         patch.object(boundary.shutil, "which", return_value="bwrap"), \
+         patch.object(boundary.Path, "lstat", return_value=SimpleNamespace(st_mode=0o140000)), \
+         patch.object(boundary.subprocess, "run", side_effect=AssertionError("spawned")):
+        receipt = boundary.diagnostic_broker_probe(
+            lambda directory, run_id: broker,
+            on_ready=lambda run_id, path: (_ for _ in ()).throw(ValueError()))
+    assert closed == [True]
+    assert receipt.launch == "not_started"
+    assert receipt.unsupported_reasons
+
+
+def test_broker_close_failure_is_reported():
+    def fail_close():
+        raise RuntimeError("close failed")
+
+    broker = SimpleNamespace(start=lambda: None, close=fail_close)
+    with patch.object(boundary, "_broker_prerequisites", return_value=True), \
+         patch.object(boundary.shutil, "which", return_value="bwrap"), \
+         patch.object(boundary.Path, "lstat", return_value=SimpleNamespace(st_mode=0o140000)), \
+         patch.object(boundary.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)):
+        receipt = boundary.diagnostic_broker_probe(lambda directory, run_id: broker)
+    assert receipt.cleanup.startswith("failed")
+    assert "broker cleanup failed" in receipt.unsupported_reasons
