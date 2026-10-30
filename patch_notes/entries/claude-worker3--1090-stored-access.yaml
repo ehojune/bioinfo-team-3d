@@ -12,3 +12,7 @@ rows:
   at: 2026-10-30 21:50
   text: 시험 추가 — CP2 결론 근거 줄·접근 원장 줄 호출이 요청의 analysis_precedents에서 구한 stored_access를 받는지(연결을 빼면 실패)
   summary: 선행 검색 기록 합산이 실제 요청 흐름에서 빠지지 않도록 막는 시험입니다.
+- sha: '0b22a957'
+  at: 2026-10-30 22:20
+  text: 저장된 선행 인용의 bare DOI·PMCID와 DOI·PubMed·PMC URL을 별칭으로 정규화(리뷰 P2) + 시험
+  summary: 선행 검색 프롬프트가 허용하는 인용 형식이 어떤 것이든 저장된 본문이 결론 근거와 이어집니다.
