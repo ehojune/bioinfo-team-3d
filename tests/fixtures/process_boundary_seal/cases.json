@@ -1,0 +1,512 @@
+{
+  "version": 1,
+  "trusted": {
+    "run_id": "fixture-run-a",
+    "launch_nonce": "fixture-nonce-a",
+    "child_id": "fixture-child",
+    "witness_id": "fixture-external-witness",
+    "supervisor": {
+      "subject_id": "fixture-supervisor",
+      "executable_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "objects": {
+      "parent:root": {
+        "object_id": "fixture-volume:10",
+        "kind": "directory",
+        "symlink": false,
+        "nlink": 2
+      },
+      "parent:source": {
+        "object_id": "fixture-volume:11",
+        "kind": "directory",
+        "symlink": false,
+        "nlink": 2
+      },
+      "source:tool.py": {
+        "object_id": "fixture-volume:12",
+        "kind": "file",
+        "symlink": false,
+        "nlink": 1,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  },
+  "positive": {
+    "adapter": "synthetic-v1",
+    "authority": "independent_witness",
+    "child_receipt": {
+      "status": "PASS",
+      "run_id": "fixture-run-a"
+    },
+    "witness": {
+      "observer_id": "fixture-external-witness",
+      "origin": "independent",
+      "run_id": "fixture-run-a",
+      "launch_nonce": "fixture-nonce-a",
+      "supervisor": {
+        "subject_id": "fixture-supervisor",
+        "executable_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "events": [
+        {
+          "sequence": 0,
+          "time_ns": 0,
+          "type": "monitor_start",
+          "scope": [
+            "parent:root",
+            "parent:source",
+            "source:tool.py"
+          ],
+          "mechanism": "synthetic-continuous-events",
+          "loss_count": 0
+        },
+        {
+          "sequence": 1,
+          "time_ns": 10,
+          "type": "seal",
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          }
+        },
+        {
+          "sequence": 2,
+          "time_ns": 20,
+          "type": "exec_start"
+        },
+        {
+          "sequence": 3,
+          "time_ns": 30,
+          "type": "exec_end",
+          "reason": "normal",
+          "returncode": 0
+        },
+        {
+          "sequence": 4,
+          "time_ns": 40,
+          "type": "cleanup",
+          "scope": "whole_process_tree",
+          "descendants": [],
+          "sockets": []
+        },
+        {
+          "sequence": 5,
+          "time_ns": 50,
+          "type": "final_snapshot",
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          }
+        },
+        {
+          "sequence": 6,
+          "time_ns": 60,
+          "type": "monitor_stop",
+          "scope": [
+            "parent:root",
+            "parent:source",
+            "source:tool.py"
+          ],
+          "mechanism": "synthetic-continuous-events",
+          "loss_count": 0
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "positive_control",
+      "changes": [],
+      "expected": {
+        "contract": "accepted",
+        "status": "synthetic_only",
+        "reason": null
+      }
+    },
+    {
+      "id": "missing_witness",
+      "changes": [
+        {
+          "path": [
+            "witness"
+          ],
+          "remove": true
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "missing_independent_witness"
+      }
+    },
+    {
+      "id": "child_receipt_authority",
+      "changes": [
+        {
+          "path": [
+            "authority"
+          ],
+          "value": "child_receipt"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "child_receipt_is_not_authority"
+      }
+    },
+    {
+      "id": "child_as_witness",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "observer_id"
+          ],
+          "value": "fixture-child"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "witness_not_independent"
+      }
+    },
+    {
+      "id": "run_id_mismatch",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "run_id"
+          ],
+          "value": "fixture-run-b"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "run_id_mismatch"
+      }
+    },
+    {
+      "id": "nonce_replay",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "launch_nonce"
+          ],
+          "value": "fixture-old-nonce"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "launch_nonce_mismatch"
+      }
+    },
+    {
+      "id": "source_replaced_same_bytes",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            5,
+            "objects",
+            "source:tool.py",
+            "object_id"
+          ],
+          "value": "fixture-volume:99"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "object_replaced"
+      }
+    },
+    {
+      "id": "parent_replaced_same_bytes",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            5,
+            "objects",
+            "parent:source",
+            "object_id"
+          ],
+          "value": "fixture-volume:99"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "object_replaced"
+      }
+    },
+    {
+      "id": "symlink_substitution",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            5,
+            "objects",
+            "source:tool.py",
+            "symlink"
+          ],
+          "value": true
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "symlink_substitution"
+      }
+    },
+    {
+      "id": "hardlink_substitution",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            5,
+            "objects",
+            "source:tool.py",
+            "nlink"
+          ],
+          "value": 2
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "hardlink_substitution"
+      }
+    },
+    {
+      "id": "transient_mutation_restored",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3
+          ],
+          "insert": {
+            "time_ns": 25,
+            "type": "mutation",
+            "resource": "source:tool.py",
+            "operation": "write_then_restore"
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "mutation_observed"
+      }
+    },
+    {
+      "id": "untrusted_supervisor",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "supervisor",
+            "executable_sha256"
+          ],
+          "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unsupported",
+        "reason": "untrusted_supervisor"
+      }
+    },
+    {
+      "id": "leftover_descendant",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            4,
+            "descendants"
+          ],
+          "value": [
+            "fixture-grandchild"
+          ]
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "descendants_not_cleared"
+      }
+    },
+    {
+      "id": "leftover_socket",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            4,
+            "sockets"
+          ],
+          "value": [
+            "fixture-listener"
+          ]
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "sockets_not_cleared"
+      }
+    },
+    {
+      "id": "timeout",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3,
+            "reason"
+          ],
+          "value": "timeout"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "execution_incomplete"
+      }
+    },
+    {
+      "id": "supervisor_failure",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3,
+            "reason"
+          ],
+          "value": "supervisor_failed"
+        },
+        {
+          "path": [
+            "witness",
+            "events",
+            3,
+            "returncode"
+          ],
+          "value": 7
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "execution_incomplete"
+      }
+    },
+    {
+      "id": "endpoint_hashes_only",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            0,
+            "mechanism"
+          ],
+          "value": "endpoint_hashes"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "continuous_monitor_unverified"
+      }
+    },
+    {
+      "id": "monitor_overflow",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            6,
+            "loss_count"
+          ],
+          "value": 1
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "monitor_lost_events"
+      }
+    },
+    {
+      "id": "production_adapter_missing",
+      "changes": [
+        {
+          "path": [
+            "adapter"
+          ],
+          "value": "protected_launch"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unsupported",
+        "reason": "producer_adapter_unavailable"
+      }
+    }
+  ]
+}
