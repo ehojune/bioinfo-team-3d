@@ -119,19 +119,28 @@ SKILL_FILE_MAX_BYTES = 8192  # SKILL.md is read only up to its front matter
 _SKILL_PARTS = (("figures", "figure"), ("tables", "table"), ("supp_figures", "supp_figs"), ("supp_tables", "supp_table"))
 
 
+def _linked(path: Path) -> bool:
+    """A symlink, or on Windows a directory junction: neither is followed when a skill folder is read."""
+    return os.path.islink(path) or (hasattr(os.path, "isjunction") and os.path.isjunction(path))
+
+
 def skill_content(folder: Path, digest: str) -> dict[str, Any] | None:
     """What one built paper-skill folder holds (#660), read from the files and never summarised.
 
     Returns the SKILL.md name and one-line description, whether the paper's full text is in the folder (its size),
     and how many figure / table / supplement files it carries. None when the folder is not a plain skill folder of
-    this receipt (missing, a link anywhere on the way, or the hash does not name it). Bounded: one small read and
-    one directory listing per part, nothing followed."""
+    this receipt (missing, a link or junction anywhere on the way from the talent folder down, or the hash does not
+    name it). Bounded: one small read and one directory listing per part, nothing followed."""
     try:
         root = Path(folder) / "skill" / digest
-        if not re.fullmatch(r"[0-9a-f]{64}", str(digest)) or any(p.is_symlink() for p in (Path(folder) / "skill", root)):
+        if not re.fullmatch(r"[0-9a-f]{64}", str(digest)):
+            return None
+        # Every directory on the way is checked without following it, the talent folder itself included: a replaced
+        # or tampered entry must never make this read a file or a listing outside the recorded skill.
+        if any(_linked(p) for p in (Path(folder), Path(folder) / "skill", root, root / "references", root / "assets")):
             return None
         skill_md = root / "SKILL.md"
-        if not root.is_dir() or not skill_md.is_file() or skill_md.is_symlink():
+        if not root.is_dir() or not skill_md.is_file() or _linked(skill_md):
             return None
         with skill_md.open("rb") as handle:
             head = handle.read(SKILL_FILE_MAX_BYTES).decode("utf-8", errors="replace")
@@ -139,11 +148,12 @@ def skill_content(folder: Path, digest: str) -> dict[str, Any] | None:
         fields = {m.group(1): m.group(2).strip().strip("\"'") for m in re.finditer(r"(?m)^(name|description):\s*(.+)$", front)}
         content: dict[str, Any] = {"name": _plain(fields.get("name"), 80), "description": _plain(fields.get("description"), 160)}
         paper = root / "references" / "paper.md"
-        content["fulltext_bytes"] = paper.stat().st_size if paper.is_file() and not paper.is_symlink() else None
-        content["supplement"] = (root / "references" / "supplement.md").is_file()
+        supplement = root / "references" / "supplement.md"
+        content["fulltext_bytes"] = paper.stat().st_size if paper.is_file() and not _linked(paper) else None
+        content["supplement"] = supplement.is_file() and not _linked(supplement)
         for key, folder_name in _SKILL_PARTS:
             part = root / "assets" / folder_name
-            if part.is_dir() and not part.is_symlink():
+            if part.is_dir() and not _linked(part):
                 with os.scandir(part) as entries:
                     content[key] = sum(1 for e in entries if e.is_file(follow_symlinks=False))
             else:

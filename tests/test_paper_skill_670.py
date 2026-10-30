@@ -228,3 +228,38 @@ def test_the_talent_line_names_the_building_request_or_why_it_falls_back_to_the_
     assert "(gateway 기록 파일(gateway.sqlite3)이 없습니다)" in line and "만든 요청" not in line
     line, = talent_lines(reg)                                                 # no origin lookup at all
     assert "기록 시각(파일) " in line and "요청 기록을 읽지 않음" in line
+
+
+def test_skill_content_never_follows_a_linked_talent_folder_or_inner_directory(tmp_path):
+    import os
+    import shutil
+
+    from labhq.recruit.paper_skills import skill_content
+
+    digest = "a" * 64
+
+    def linked(src, dst):
+        try:
+            os.symlink(src, dst, target_is_directory=True)
+            return True
+        except (OSError, NotImplementedError):
+            pass
+        if os.name != "nt":
+            return False
+        import subprocess  # a directory junction needs no privilege and is a link the reader must not follow either
+
+        return subprocess.run(["cmd", "/c", "mklink", "/J", str(dst), str(src)], capture_output=True).returncode == 0
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "paper.md").write_text("secret", encoding="utf-8")
+    for inner in ("references", "assets"):
+        folder = _skill_folder(tmp_path / inner)
+        target = folder / "skill" / digest / inner
+        shutil.rmtree(target)
+        if not linked(outside, target):
+            return  # no symlink right on this machine
+        assert skill_content(folder, digest) is None, inner
+    real = _skill_folder(tmp_path / "real", pid="pmid:9")
+    if linked(real, tmp_path / "paper-skill-link"):
+        assert skill_content(tmp_path / "paper-skill-link", digest) is None, "the talent folder itself is a link"
