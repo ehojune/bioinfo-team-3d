@@ -21,6 +21,7 @@ from labhq.gateway.server import create_app
 from labhq.models import AgentSpec, ApprovalRequest, Engine, Task
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
+from tests.support.serve_task import serve_task, wait_started
 from tests.support.time_proxy import RuntimeProxy
 
 
@@ -163,7 +164,7 @@ async def test_runner_dials_the_demo_server_when_live_port_is_busy(tmp_path, hos
         app = create_app(s, demo=True)
         server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="error"))
         runner = Runner(s)
-        serving = asyncio.create_task(server.serve())
+        serving = serve_task(server.serve())
         running = None
         try:
             await asyncio.wait_for(demo_signals.started.wait(), DEADLOCK_TIMEOUT)
