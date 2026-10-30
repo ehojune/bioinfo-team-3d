@@ -4,3 +4,7 @@ rows:
   at: 2026-10-31 05:30
   text: 웹 snapshot과 request.created가 요청의 wall_clock을 싣고, state.js의 deadlineLabel이 labhq status와 같은 문구(켜짐·꺼짐·남은 시간·PI 대기 제외·대기 중 정지)를 만들어 작업판 요청 패널에 보인다. 비용 줄은 model_tier_mismatch 경고를 선언 등급과 다른 모델로 보인다. 시간 상한 정보를 보내지 않는 옛 gateway는 아무것도 보이지 않는다
   summary: 웹 작업판에서도 요청의 시간 상한과 남은 시간, 선언 등급과 다른 모델 경고를 볼 수 있습니다.
+- sha: '5736370'
+  at: 2026-10-31 06:30
+  text: 남은 시간 문구를 요청 render cache key에 넣어 15초 타이머가 카운트다운을 다시 그리게 한다(리뷰 P2) + 시험
+  summary: 시간 상한 줄의 남은 시간이 처음 값에 멈추지 않고 줄어듭니다.
