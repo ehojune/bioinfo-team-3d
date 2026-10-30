@@ -5,8 +5,10 @@ import asyncio
 import copy
 import hashlib
 import json
+import os
 import re
 import shutil
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -112,6 +114,99 @@ def verified_text(receipt: dict, root: Path, pid: str) -> bytes:
                 line.strip() for line in lines[span["start_line"] - 1:span["end_line"]]):
             raise ValueError("방법/QC 근거 범위 없음; 자료 요청 필요")
     return data
+
+
+SKILL_FILE_MAX_BYTES = 8192  # SKILL.md is read only up to its front matter
+_SKILL_PARTS = (("figures", "figure"), ("tables", "table"), ("supp_figures", "supp_figs"), ("supp_tables", "supp_table"))
+
+
+def _linked(path: Path) -> bool:
+    """A symlink, or on Windows any reparse point such as a directory junction: none is followed when a skill folder is
+    read. Read from the entry itself (never through it), so it works on Python 3.10 and 3.11, which have no
+    ``os.path.isjunction``; a reparse point of another kind (a cloud placeholder) is refused too, which is the safe side."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
+def skill_content(folder: Path, digest: str) -> dict[str, Any] | None:
+    """What one built paper-skill folder holds (#660), read from the files and never summarised.
+
+    Returns the SKILL.md name and one-line description, whether the paper's full text is in the folder (its size),
+    and how many figure / table / supplement files it carries. None when the folder is not a plain skill folder of
+    this receipt (missing, a link or junction anywhere on the way from the talent folder down, or the hash does not
+    name it). Bounded: one small read and one directory listing per part, nothing followed."""
+    try:
+        root = Path(folder) / "skill" / digest
+        if not re.fullmatch(r"[0-9a-f]{64}", str(digest)):
+            return None
+        # Every directory on the way is checked without following it, the talent folder itself included: a replaced
+        # or tampered entry must never make this read a file or a listing outside the recorded skill.
+        if any(_linked(p) for p in (Path(folder), Path(folder) / "skill", root, root / "references", root / "assets")):
+            return None
+        skill_md = root / "SKILL.md"
+        if not root.is_dir() or not skill_md.is_file() or _linked(skill_md):
+            return None
+        with open(skill_md, "rb") as handle:
+            head = handle.read(SKILL_FILE_MAX_BYTES).decode("utf-8", errors="replace")
+        front = head.split("---", 2)[1] if head.startswith("---") and head.count("---") >= 2 else ""
+        fields = {m.group(1): m.group(2).strip().strip("\"'") for m in re.finditer(r"(?m)^(name|description):\s*(.+)$", front)}
+        content: dict[str, Any] = {"name": _plain(fields.get("name"), 80), "description": _plain(fields.get("description"), 160)}
+        paper = root / "references" / "paper.md"
+        supplement = root / "references" / "supplement.md"
+        content["fulltext_bytes"] = paper.stat().st_size if paper.is_file() and not _linked(paper) else None
+        content["supplement"] = supplement.is_file() and not _linked(supplement)
+        for key, folder_name in _SKILL_PARTS:
+            part = root / "assets" / folder_name
+            if part.is_dir() and not _linked(part):
+                with os.scandir(part) as entries:
+                    content[key] = sum(1 for e in entries if e.is_file(follow_symlinks=False))
+            else:
+                content[key] = 0
+        return content
+    except (OSError, UnicodeError, ValueError):
+        return None
+
+
+def _usage_rows(results: Any) -> list[Any]:
+    """The paper-skill usage rows a request's step results carry (provenance runs' ``paper_skills``), as records() reads
+    them, from a stored or damaged request without assuming its shape."""
+    rows: list[Any] = []
+    for result in results.values() if isinstance(results, dict) else []:
+        provenance = result.get("provenance") if isinstance(result, dict) else None
+        runs = provenance.get("runs") if isinstance(provenance, dict) else None
+        for run in runs.values() if isinstance(runs, dict) else []:
+            used = run.get("paper_skills") if isinstance(run, dict) else None
+            rows.extend(used if isinstance(used, list) else [])
+    return rows
+
+
+def skill_origins(requests) -> dict[tuple[str, str], dict[str, Any]]:
+    """Which request first built each skill (#660): {(paper_id, skill_sha256): {request_id, created_at}}.
+
+    `requests` is an iterable of (request id, created_at, that request's plan ``paper_skill_results`` list, and
+    optionally its ``results``). A request built a skill where a row says ``ready``; ``reused`` means an earlier request
+    built it. The build outcome is recorded on the step results (provenance runs' ``paper_skills``, as ``records()``
+    reads it): the plan rows of a request stay ``deferred`` and only older requests kept ``ready`` there, so both are
+    read. The earliest created_at wins, and a malformed row or time is skipped, never guessed."""
+    found: dict[tuple[str, str], dict[str, Any]] = {}
+    for request_id, created_at, plan_rows, *rest in requests:
+        if not isinstance(created_at, (int, float)) or isinstance(created_at, bool):
+            continue
+        rows = [*(plan_rows if isinstance(plan_rows, list) else []), *_usage_rows(rest[0] if rest else None)]
+        for row in rows:
+            if not isinstance(row, dict) or row.get("status") != "ready":
+                continue
+            pid, digest = paper_id(row.get("paper_id")), row.get("skill_sha256")
+            if not pid or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                continue
+            known = found.get((pid, digest))
+            if known is None or created_at < known["created_at"]:
+                found[(pid, digest)] = {"request_id": str(request_id)[:60], "created_at": float(created_at)}
+    return found
 
 
 def cited_access(citations: list[str]) -> str | None:
