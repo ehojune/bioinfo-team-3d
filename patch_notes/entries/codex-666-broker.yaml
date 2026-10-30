@@ -1,0 +1,14 @@
+pr: 1052
+rows:
+  - sha: b235548
+    at: "2026-10-30 16:11"
+    summary: "합성 broker가 별도 프로세스를 안전한 시작 방식으로 실행합니다."
+    text: "Use spawn and reject non-finite deadlines; verify start failure, abrupt exit and timeout cleanup with synthetic tests"
+  - sha: 7ccce33
+    at: "2026-10-30 13:20"
+    summary: "Windows test inventory에 broker 시험을 등록합니다."
+    text: "Register broker test in Windows inventory"
+  - sha: 41e1d99
+    at: "2026-10-30 12:22"
+    summary: "합성 인증 broker와 격리 socket 시험을 추가합니다."
+    text: "Add synthetic authentication broker prototype"
