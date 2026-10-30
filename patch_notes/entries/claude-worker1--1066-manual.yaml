@@ -1,0 +1,5 @@
+rows:
+  - sha: "bbdadad"
+    at: "2026-10-30 18:06"
+    summary: "매뉴얼에 연구 단계가 계획에 선언된 주장 목록 밖의 주장을 새로 만들 수 없다는 규칙을 적었습니다."
+    text: "docs: manual 한·영에 단계 claim_ids 밖 claim을 만들지 않는 규칙을 적음 (#1066)"
