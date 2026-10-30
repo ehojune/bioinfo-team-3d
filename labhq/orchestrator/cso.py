@@ -741,6 +741,11 @@ SELECTION_RECORD_RULE = (
     "actually weighed with `rejected_because`) and `change_signals` (observations that would change your judgment). "
     "Record only alternatives you really considered; leave the field out when you weighed none rather than "
     "inventing some.")
+# A step's result cannot add a claim the plan did not declare (#1066): ask the CSO to declare each one up front.
+CLAIM_IDS_PLAN_RULE = ("A step's result can state only the claims in that step's claim_ids; it cannot add one. When "
+                       "the request asks for hypotheses, mechanisms or a grade-by-grade summary as findings, declare a "
+                       "claim_id for each of them in the step that produces it.")
+
 RESEARCH_PLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + recruit_planning.PLAN_RULE + "\n\n" + paper_skills.PLAN_RULE + "\n\n" + """Create a frozen research contract for the PI's request. Do not execute or analyze.
 
 Team roster (use these agent ids exactly, never an orchestration role):
@@ -791,9 +796,7 @@ Contract rules:
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on. Every output is
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}{topics_rule}
-- A step's result can state only the claims in that step's claim_ids; it cannot add one. When the request asks for
-  hypotheses, mechanisms or a grade-by-grade summary as findings, declare a claim_id for each of them in the step
-  that produces it.
+- """ + CLAIM_IDS_PLAN_RULE + """
 - """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
 - """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
 - """ + DETERMINISTIC_TRANSFORM_RULE + """
