@@ -4,3 +4,7 @@ rows:
     at: "2026-10-31 04:55"
     summary: "Windows만 다시 돌린 뒤 validation-manifest가 방금 끝난 Windows job을 못 찾아 실패하던 것을, 아직 안 보이거나 진행 중일 때만 최대 2분 기다리게 했습니다. 완료된 실패와 묶기 검증은 그대로 즉시 실패합니다."
     text: "ci: windows_artifact가 아직 안 보이거나 진행 중인 pytest-windows만 최대 2분 기다린다 (#1127)"
+  - sha: "35a0e3b"
+    at: "2026-10-31 05:18"
+    summary: "validation-manifest가 기다리는 동안 pytest-windows가 어떻게 보였는지 로그에 남겨, 실패하면 원인을 측정할 수 있게 했습니다."
+    text: "ci: 기다리는 동안 pytest-windows 조회 결과를 한 줄씩 로그에 남긴다 (#1127)"
