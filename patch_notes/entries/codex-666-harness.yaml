@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: 'a54ea98'
+    at: '2026-10-30 12:24'
+    summary: '합성 upstream으로 process broker의 고정 응답을 검사합니다.'
+    text: 'test: exercise constant-response process broker (#1049)'
   - sha: '857204e'
     at: '2026-10-30 12:20'
     summary: 'WSL 진단에 Python 인수를 직접 전달해 실행 여부를 확인합니다.'
