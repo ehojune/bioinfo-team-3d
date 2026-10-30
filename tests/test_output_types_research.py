@@ -257,7 +257,7 @@ def test_staff_type_fields_are_optional_and_a_bad_value_drops_only_the_field():
 
 
 def test_the_research_step_rules_tell_the_engine_that_one_source_is_one_independence_group():
-    """#1089: two groups for one source made the whole step result refused at CP2 (② 5th and 6th runs, s3). The rule
+    """#1089: two groups for one source got the later evidence row refused and its claim lost it (② 5th and 6th runs, s3). The rule
     is in the text every research step prompt carries, beside the other cross-field rules."""
     rules = cso.RESEARCH_RESULT_FIELD_RULES
     assert "cite the same source" in rules and "same independence_group" in rules
