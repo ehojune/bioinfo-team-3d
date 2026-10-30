@@ -142,6 +142,40 @@ def test_detached_witness_after_slow_launcher_return(monkeypatch):
     assert probe.run([])["cases"]["detached_child"]["host_witness"] is True
 
 
+def test_timeout_cancels_real_detached_writer_with_long_lifetime(monkeypatch):
+    import threading
+    import time
+    run = probe.subprocess.run
+    writers = []
+
+    def timeout_after_writer_ready(argv, **kwargs):
+        if "detached_child" not in argv:
+            return run(argv, **kwargs)
+        root = argv[-1]
+        writer = subprocess.Popen([os.sys.executable, probe.__file__, "--detached-writer", root],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        writers.append(writer)
+        # Reap the direct test child on POSIX, where a zombie still has a PID.
+        threading.Thread(target=writer.wait, daemon=True).start()
+        ready = probe.Path(root) / "work" / "detached.ready"
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists()
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    monkeypatch.setattr(probe.subprocess, "run", timeout_after_writer_ready)
+    try:
+        result = probe.run([], timeout=60)
+        assert result["cases"]["detached_child"]["status"] == "inconclusive"
+        assert len(writers) == 1 and writers[0].poll() is not None
+    finally:
+        for writer in writers:
+            if writer.poll() is None:
+                writer.kill()
+                writer.wait()
+
+
 def test_launcher_environment_excludes_host_secret(monkeypatch):
     monkeypatch.setenv("BOUNDARY_TEST_SECRET", "private-fixture")
     seen = []

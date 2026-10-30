@@ -375,6 +375,9 @@ def run(prefix: list[str], python: str = sys.executable, timeout: float = 10,
                         results[case] = {"status": "inconclusive", "host_witness": False}
                 except (OSError, subprocess.TimeoutExpired):
                     results[case] = {"status": "inconclusive", "host_witness": False}
+                # Wake the synthetic writer even when the launcher timed out before
+                # the normal trigger. Its lifetime may exceed the cleanup wait.
+                publish_signal(work / "detached.cancel", run_id)
                 if ((work / "detached.ready").exists() and not wait_synthetic_writer(work)
                         and not results[case].get("host_witness")):
                     results[case] = {"status": "inconclusive", "host_witness": False}
@@ -437,9 +440,11 @@ def main() -> int:
         publish_signal(work / "detached.ready", run_id)
         deadline = time.monotonic() + float((root / "writer-timeout").read_text(encoding="ascii"))
         trigger = work / "detached.trigger"
-        while not trigger.exists() and time.monotonic() < deadline:
+        cancel = work / "detached.cancel"
+        while not trigger.exists() and not cancel.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
-        if trigger.exists() and trigger.read_text(encoding="ascii") == run_id:
+        if (not cancel.exists() and trigger.exists()
+                and trigger.read_text(encoding="ascii") == run_id):
             publish_signal(work / "detached.marker", run_id)
         return 0
     if args.child:
