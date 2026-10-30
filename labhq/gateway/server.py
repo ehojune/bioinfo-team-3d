@@ -5380,12 +5380,26 @@ class Hub:
             asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
         return new_rid
 
+    def _revise_lock(self, rid: str) -> asyncio.Lock:
+        if not hasattr(self, "revise_locks"):
+            self.revise_locks = {}
+        return self.revise_locks.setdefault(rid, asyncio.Lock())
+
     async def acreate_revised_request(self, rid: str, note: str) -> str:
         """CP1 수정 요청: a new research request with the PI's note, the previous plan to revise (``revision_of``), the
         answers and PI notes already given, the same references, project, requested budget and CSO model. It plans again
         from the note and asks a new CP1; the old request ends (no step ran). Everything the new request reads is in
         its first save, and a request already opened for ``rid`` is returned, so a restart never opens a second one.
-        Raises what create_request raises (a removed project or CSO model, a reference no longer allowed)."""
+        Raises what create_request raises (a removed project or CSO model, a reference no longer allowed).
+
+        One call at a time per request (#1140): the check for an already opened request is made here, but the new request
+        is registered by a task the write wrapper starts, so two calls ready in the same loop turn used to both pass the
+        check and open a revised request each (double cost). The second now waits and returns the first's request."""
+        async with self._revise_lock(rid):
+            return await self._acreate_revised_request(rid, note)
+
+    async def _acreate_revised_request(self, rid: str, note: str) -> str:
+        """The body of acreate_revised_request, run under its per-request lock."""
         old = self.requests[rid]
         existing = self.revised_request_of(rid)
         if existing:
