@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '91e0a30'
+    at: '2026-10-30 12:49'
+    summary: '진단 환경의 비밀값 상속을 막고 writer 대기 시간을 조정합니다.'
+    text: 'Restrict probe environment and bound writer lifetime'
   - sha: '9bb491a'
     at: '2026-10-30 12:43'
     summary: '느린 launcher에서도 분리된 자식의 증거를 기다립니다.'
