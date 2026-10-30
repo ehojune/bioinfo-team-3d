@@ -1,0 +1,5 @@
+rows:
+- sha: '9df03b4'
+  at: 2026-10-31 06:10
+  text: runner가 메시지와 앞뒤 상태 행을 보내는 배치를 한 SQLite transaction으로 묶어 배치당 commit과 fsync를 한 번으로 줄였다. outbox 재적재는 commit 뒤 한 번 한다 (#1125 안 C).
+  summary: 느린 디스크에서 runner가 결과·진행 메시지를 저장하며 기다리는 fsync 횟수가 줄었습니다. 저장 순서와 보장은 그대로입니다.
