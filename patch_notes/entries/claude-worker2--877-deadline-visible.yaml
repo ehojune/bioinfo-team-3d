@@ -1,10 +1,14 @@
 pr: 1093
 rows:
-  - sha: "c47571b"
+  - sha: "8b89e07"
     at: "2026-10-30 21:17"
     summary: "labhq status가 진행 중인 요청마다 시간 상한이 켜져 있는지, 남은 시간과 PI 대기로 제외한 시간이 얼마인지 한 줄로 보여 줍니다."
     text: "feat: labhq status가 진행 중인 요청의 시간 상한을 보인다 (#877)"
-  - sha: "be8be78"
+  - sha: "90b1dfb"
     at: "2026-10-30 22:05"
     summary: "labhq status의 시간 상한 줄을 읽다가 한 요청의 조회가 실패하거나 응답이 목록이어도 status 전체가 멈추지 않게 했습니다."
     text: "fix: status의 시간 상한 줄이 상세 조회 실패·목록 응답에 멈추지 않게 한다 (#877)"
+  - sha: "f4dba18"
+    at: "2026-10-30 22:20"
+    summary: "요청 전체 시간 상한 설정과 status의 시간 상한 표시를 한·영 manual에도 적었습니다."
+    text: "docs: manual 한·영에 요청 전체 시간 상한과 status 표시를 적는다 (#877)"
