@@ -4,7 +4,9 @@
 - 커밋마다 patch_notes/entries/<branch>.yaml에 한 줄. 기록만 고친 커밋은 제외한다.
 - STATUS는 docs/status/<시각>-<branch>.md에 쓴다.
 - 생성 파일 STATUS.md와 patch_notes/README.md는 PR에서 직접 고치지 않는다.
-- main 커밋 3개 안에 README.md나 docs/manual.md를 한 번은 갱신한다. 생성 목차만 갱신한 main 커밋은 세지 않는다.
+- main 커밋 3개 안에 README.md나 docs/manual.md를 한 번은 갱신한다. 생성 목차만 갱신한 main 커밋과, 사용자에게 보이지 않는
+  커밋(바뀐 파일이 전부 tests/·docs/status/·patch_notes/entries/·config/ci/·.github/·scripts/ci_* 안)은 세지 않는다.
+  labhq/나 agents/를 바꾼 커밋은 센다(#1122).
   README는 처음 써 보는 사람용이고 기능 설명은 매뉴얼에 있어서, 둘 중 어느 쪽을 고쳐도 센다(#298).
 
   python scripts/patch_notes.py check --base origin/main [--head HEAD]
@@ -23,6 +25,8 @@ import yaml
 ENTRIES = "patch_notes/entries"
 GENERATED = {"STATUS.md", "patch_notes/README.md"}
 README_EVERY = 3
+# Commits whose files all live here change nothing a user sees, so they do not count toward the refresh limit (#1122).
+INVISIBLE = ("tests/", "docs/status/", "patch_notes/entries/", "config/ci/", ".github/", "scripts/ci_")
 DOCS = ("README.md", "docs/manual.md")  # either one counts as the periodic documentation refresh
 KST = timezone(timedelta(hours=9))
 
@@ -118,7 +122,7 @@ def counted_main_commits(last_readme: str, base: str, cwd: Path | None = None) -
     count = 0
     for sha in out.splitlines():
         files = changed_from_parent(sha, cwd)
-        if files and files <= GENERATED:
+        if files and all(name in GENERATED or name.startswith(INVISIBLE) for name in files):
             continue
         count += 1
     return count

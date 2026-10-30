@@ -192,6 +192,22 @@ def test_generated_only_main_commits_do_not_count_toward_readme_limit(repo):
     assert pn.counted_main_commits(last, "main", repo) == 0
 
 
+def test_commits_that_only_touch_invisible_paths_do_not_count_toward_readme_limit(repo):
+    last = run(repo, "log", "-1", "--format=%H", "--", "README.md")
+    commit(repo, {"tests/test_x.py": "1\n", "docs/status/s.md": "s\n", "patch_notes/entries/e.yaml": "rows: []\n"}, "tests")
+    commit(repo, {"config/ci/a.json": "{}\n", ".github/workflows/w.yml": "x: 1\n", "scripts/ci_x.py": "1\n"}, "ci")
+    commit(repo, {"STATUS.md": "generated\n", "tests/test_y.py": "2\n"}, "tests and generated index")
+    assert pn.counted_main_commits(last, "main", repo) == 0
+
+
+def test_a_commit_mixing_product_code_with_tests_still_counts(repo):
+    last = run(repo, "log", "-1", "--format=%H", "--", "README.md")
+    commit(repo, {"labhq/a.py": "1\n", "tests/test_a.py": "1\n"}, "product and test")
+    commit(repo, {"agents/x.yaml": "a: 1\n"}, "agent definition")
+    commit(repo, {"scripts/other.py": "1\n"}, "other script")  # only scripts/ci_* is invisible
+    assert pn.counted_main_commits(last, "main", repo) == 3
+
+
 def test_an_all_digit_sha_read_as_a_yaml_integer_is_named(repo):
     # PR #410: a hand-written row `sha: 7999708` loads as an int; the check names that, not a missing commit.
     run(repo, "checkout", "-q", "-b", "feature")
