@@ -181,3 +181,71 @@ def test_the_factory_gives_no_counter_so_the_note_is_unknown_when_the_limit_is_o
     assert "UNKNOWN" in usage_note(admission_for(settings), "req_a")
     settings.annot.request_lookup_limit = 60
     assert "0 of 60 used, 60 left" in usage_note(admission_for(settings), "req_a")
+
+
+# ---------- #1088: plan, step and re-plan prompts carry the request's usage ----------
+
+def _usage_hub(tmp_path, limit):
+    from tests.test_research_cp2 import CP1, _research_hub, _settings
+
+    settings = _settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.annot.request_lookup_limit = limit
+    hub = _research_hub(settings, [CP1, {"approved": True, "choice": "approve", "note": ""}])
+    return hub, settings
+
+
+async def _run_prompts(hub):
+    from labhq.orchestrator.cso import Orchestrator
+
+    await Orchestrator(hub).run_request("r")
+    return {task.meta["kind"]: task.prompt for task in hub.calls if task.meta["kind"] in ("plan", "step")}
+
+
+@pytest.mark.asyncio
+async def test_the_plan_and_step_prompts_carry_this_requests_usage(tmp_path):
+    hub, settings = _usage_hub(tmp_path, 60)
+    admission = admission_for(settings)
+    for _ in range(51):
+        assert admission.admit("r", "task", "lit_scout", "fulltext", "www.ebi.ac.uk")["admitted"]
+    prompts = await _run_prompts(hub)
+    for kind in ("plan", "step"):
+        assert "51 of 60 used, 9 left" in prompts[kind], kind
+        assert "this PC's runner" in prompts[kind] and "does not enforce" in prompts[kind]
+
+
+@pytest.mark.asyncio
+async def test_a_request_that_has_not_looked_anything_up_says_zero_of_the_limit(tmp_path):
+    hub, _settings = _usage_hub(tmp_path, 60)
+    prompts = await _run_prompts(hub)
+    assert "0 of 60 used, 60 left" in prompts["plan"] and "0 of 60 used, 60 left" in prompts["step"]
+
+
+@pytest.mark.asyncio
+async def test_without_a_configured_cap_the_prompts_say_nothing_about_usage(tmp_path):
+    hub, _settings = _usage_hub(tmp_path, None)
+    prompts = await _run_prompts(hub)
+    assert all("Public lookup usage" not in prompt for prompt in prompts.values())
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_counter_is_unknown_in_the_prompts_never_zero(tmp_path, monkeypatch):
+    import sqlite3
+
+    hub, _settings = _usage_hub(tmp_path, 60)
+    monkeypatch.setattr("labhq.runner.lookup_admission.admission_for",
+                        lambda settings: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
+    prompts = await _run_prompts(hub)
+    assert "UNKNOWN (the lookup counter could not be opened)" in prompts["plan"]
+    assert "UNKNOWN" in prompts["step"] and " 0 of " not in prompts["step"]
+
+
+def test_the_note_helper_is_empty_without_a_cap_and_a_fact_with_one(tmp_path):
+    from labhq.runner.lookup_admission import usage_note_for
+
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path)
+    assert usage_note_for(settings, "req_a") == ""
+    settings.annot.request_lookup_limit = 3
+    assert "0 of 3 used, 3 left" in usage_note_for(settings, "req_a", now=0)
+    assert "UNKNOWN (the request has no identity)" in usage_note_for(settings, "")

@@ -37,7 +37,19 @@ def admission_for(settings) -> "LookupAdmission | None":
     return LookupAdmission(settings.path(settings.runner.state_dir) / FILE, limit)
 
 
-def usage_note(admission: "LookupAdmission | None", request_id: object, *, now=None) -> str:
+def usage_note_for(settings, request_id: object, *, now=None) -> str:
+    """The prompt paragraph for a request, or "" when no cap is configured (nothing is counted, so there is nothing to
+    plan around). A configured cap whose counter cannot be opened or read is UNKNOWN, never zero."""
+    if settings.annot.request_lookup_limit is None:
+        return ""
+    try:
+        admission = admission_for(settings)
+    except (sqlite3.Error, OSError):
+        return usage_note(None, request_id, now=now, why="the lookup counter could not be opened")
+    return usage_note(admission, request_id, now=now)
+
+
+def usage_note(admission: "LookupAdmission | None", request_id: object, *, now=None, why: str | None = None) -> str:
     """One prompt paragraph with this request's public lookup usage as a fact, or an explicit "unknown" (#1088).
 
     A counter that is off, a request id that is missing or a file that cannot be read is unknown, never zero: a
@@ -46,7 +58,7 @@ def usage_note(admission: "LookupAdmission | None", request_id: object, *, now=N
     unknown = ("Public lookup usage of this request: UNKNOWN ({why}). Do not assume it is zero; "
                "if the number matters, say that it could not be read.")
     if admission is None:
-        return unknown.format(why="annot.request_lookup_limit is not set, so labhq does not count")
+        return unknown.format(why=why or "annot.request_lookup_limit is not set, so labhq does not count")
     try:
         usage = admission.usage(request_id)
     except (sqlite3.Error, OSError):
