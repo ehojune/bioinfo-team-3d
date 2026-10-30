@@ -39,7 +39,7 @@ _MAX_BLOCK_CALLS = {"quarter": 16, "full": 4}  # bounds the work of one block: a
 _CLOCK_TICK_S = 0.0157  # the coarsest thread_time tick in use (Windows 15.6 ms): one tick of slack per average
 
 
-def _costs(call, texts):
+def _costs(call, texts, vary=True):
     """Calling-thread CPU per call for each input, and every result. A sample is a block of calls, which keeps a coarse
     clock from reading 0 for a cheap call; the fastest block counts, since a stall on a loaded CI runner only adds time
     (run 41078175471 read 15.5x from one slow call, where this input costs about 4x) while a quadratic scan is slow in
@@ -52,18 +52,22 @@ def _costs(call, texts):
                 continue
             spent, calls = 0.0, 0
             while calls < _MAX_BLOCK_CALLS[name] and spent < _BLOCK_S:
+                # A fresh text of the same size each call, so a scan that is slow only the first time it sees a text
+                # (a cache, a warm-up) is measured at its cold cost every time.
+                fresh = f"{text} {'a' * (len(results[name]) + 1)}" if vary else text
                 started = time.thread_time()  # this thread only: other threads in a test worker do not count
-                results[name].append(call(text))
+                results[name].append(call(fresh))
                 spent += time.thread_time() - started
                 calls += 1
             samples[name].append(spent / calls)
     return {name: min(values) for name, values in samples.items()}, results
 
 
-def _assert_linear(call, build=_long_separator_runs, expected=None):
-    cost, results = _costs(call, {"quarter": build(0.25), "full": build(1)})
+def _assert_linear(call, build=_long_separator_runs, expected=None, vary=True):
+    cost, results = _costs(call, {"quarter": build(0.25), "full": build(1)}, vary)
     quarter_cost, full_cost = cost["quarter"], cost["full"]
-    assert all(result == expected for values in results.values() for result in values),         "the scan must keep its result"
+    assert all(result == expected for values in results.values() for result in values), \
+        "the scan must keep its result"
     assert full_cost <= _MAX_SCALE * quarter_cost + _CLOCK_TICK_S, (
         f"path scanning must stay linear in the text length: a 4x input cost {full_cost / max(quarter_cost, 1e-9):.1f}x"
         f" ({quarter_cost:.4f} s -> {full_cost:.4f} s per call)")
@@ -88,8 +92,8 @@ def test_linear_scan_budget_uses_cpu_and_preserves_result_and_strict_limit(
     assert len(full_text) == 731_072 and len(quarter_text) * 4 == len(full_text)  # the full CI input is kept
 
     def scan(text):
-        size = "full" if text == full_text else "quarter"
-        assert text in (full_text, quarter_text)
+        size = "full" if len(text) > len(full_text) // 2 else "quarter"
+        assert text.startswith((full_text, quarter_text))
         calls[size] += 1
         clock[0] += full_s if size == "full" else quarter_s
         return result
@@ -115,7 +119,7 @@ def test_linear_scan_budget_ignores_one_stalled_call_but_not_a_slow_scan(
     full_text, quarter_text = _long_separator_runs(), _long_separator_runs(0.25)
 
     def scan(text):
-        clock[0] += queue["full" if text == full_text else "quarter"].pop(0)
+        clock[0] += queue["full" if len(text) > len(full_text) // 2 else "quarter"].pop(0)
         return None
 
     if reject:
@@ -133,6 +137,21 @@ def test_linear_scan_budget_still_rejects_a_really_quadratic_scan():
 
     with pytest.raises(AssertionError, match="must stay linear"):
         _assert_linear(quadratic)
+
+
+def test_linear_scan_budget_still_rejects_a_scan_that_is_slow_only_the_first_time():
+    """A cache or warm-up must not hide a cold quadratic cost behind a fast repeat of the same input."""
+    seen = set()
+
+    def quadratic_once(text):
+        if text in seen:
+            return None
+        seen.add(text)
+        n = len(text) // 150
+        return sum(sum(range(n)) for _ in range(n)) and None
+
+    with pytest.raises(AssertionError, match="must stay linear"):
+        _assert_linear(quadratic_once)
 
 
 @pytest.mark.parametrize("tail,found", [
@@ -177,7 +196,7 @@ def test_windows_normpath_stays_linear_on_every_host(build):
     # The pure-Python stdlib normpath is quadratic on all of these; the native Windows one is not. The expected value
     # comes from the stdlib rules on a short input of the same shape, which normalizes to the same string.
     expected = _stdlib_pure_ntpath_normpath()(build(1 / 4096))
-    _assert_linear(policy_module._windows_normpath, build, expected)
+    _assert_linear(policy_module._windows_normpath, build, expected, vary=False)  # its result is the exact text
 
 
 def test_mentions_zone_stays_linear_on_long_separator_runs():
