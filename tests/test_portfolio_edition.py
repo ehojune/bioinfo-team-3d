@@ -706,7 +706,8 @@ def test_env_example_lists_only_the_variables_the_published_scripts_read(tmp_pat
     example = files[".env.example"]
     assert [line for line in example.splitlines() if not line.startswith("#")] == [f"{key}=" for key in keys]
     assert "/home/a" not in example and "/srv/b" not in example  # no personal path is written
-    assert "set -a; . ./.env; set +a" in files["README.md"] and "set -a; . ./.env; set +a" in example
+    assert "set -a; . ../inputs.env; set +a" in files["README.md"] and "set -a; . ../inputs.env; set +a" in example
+    assert "R은 빈 문자열로 계속" in example and "저장소 밖에 복사" in example  # the file says where it must not live and what R does
     # An unset variable stops the script with the variable's name, so the reader knows what to export.
     with pytest.raises(KeyError) as stopped:
         exec(compile(code, "read_inputs.py", "exec"), {})
