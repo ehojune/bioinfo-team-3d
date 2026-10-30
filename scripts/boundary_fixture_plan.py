@@ -62,7 +62,7 @@ def validate(plan, now=None):
     names = [principals.get(k) for k in ('supervisor', 'engine', 'writer')]
     for key, name in zip(('supervisor', 'engine', 'writer'), names):
         string(name, f'$.principals.{key}')
-    if all(isinstance(x, str) and x.strip() for x in names) and len(set(names)) != 3:
+    if all(isinstance(x, str) and x.strip() for x in names) and len({x.strip() for x in names}) != 3:
         errors.append('$.principals: supervisor, engine and writer must be distinct')
     isolation = obj(p.get('isolation'), '$.isolation', {'storage', 'shared_paths', 'interop', 'network'})
     exact(isolation.get('storage'), '$.isolation.storage', 'supervisor_controlled_linux')

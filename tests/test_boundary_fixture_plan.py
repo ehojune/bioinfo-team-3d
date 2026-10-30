@@ -56,6 +56,12 @@ def test_date_only_expiry_is_reported():
     assert any('expected UTC' in x for x in result['issues'])
 
 
+def test_principal_whitespace_does_not_hide_conflict():
+    p = plan()
+    p['principals']['writer'] = ' supervisor '
+    assert any('must be distinct' in x for x in validate(p)['issues'])
+
+
 def test_cli_never_executes_command_string(tmp_path):
     marker = tmp_path / 'executed'
     p = plan()
