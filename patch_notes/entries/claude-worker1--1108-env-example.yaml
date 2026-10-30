@@ -1,0 +1,5 @@
+rows:
+  - sha: "83057a9"
+    at: "2026-10-31 01:46"
+    summary: "결과 repo에 스크립트가 실제로 읽는 입력 경로 변수만 값을 비워 담은 .env.example을 넣었습니다. 개인 경로는 들어가지 않습니다."
+    text: "결과 repo: 스크립트가 읽는 LABHQ_INPUT_* 변수만 담은 .env.example (#1108)"
