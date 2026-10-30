@@ -1,6 +1,6 @@
 pr: 1052
 rows:
-  - sha: 0030555
+  - sha: 7ccce33
     at: "2026-10-30 13:20"
     summary: "Windows test inventory에 broker 시험을 등록합니다."
     text: "Register broker test in Windows inventory"
