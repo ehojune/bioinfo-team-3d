@@ -1628,12 +1628,13 @@ def _determinism_line(files: Mapping[str, str | bytes]) -> str:
             "실행해서 확인한 것은 아닙니다.")
 
 
-def _figure_lines(report: str, figure_names: list[str]) -> list[str]:
+def _figure_lines(report: str, figure_names: list[str], source_targets: Mapping[str, str] | None = None) -> list[str]:
     captions = {PurePosixPath(unquote(target.split("#")[0])).name: alt.strip()
                 for alt, target in re.findall(r"!\[([^\]]*)\]\(([^)]+)\)", report)}
+    original = {target: PurePosixPath(str(source).replace("\\", "/")).name for source, target in (source_targets or {}).items()}
     rows = []
-    for name in figure_names:
-        alt = captions.get(PurePosixPath(name).name, "")
+    for name in figure_names:  # a renamed duplicate (plot.svg -> outputs-plot.svg) keeps its source's caption
+        alt = captions.get(original.get(name, PurePosixPath(name).name), "")
         rows.append(f"- [{PurePosixPath(name).name}]({quote(name, safe='/')}): "
                     f"{alt if alt and alt != PurePosixPath(name).name else '보고서에 그림 설명이 없습니다'}")
     return rows or ["- 게시한 그림이 없습니다."]
@@ -1731,7 +1732,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     if omitted_figures:
         lines += ["", "## 생략한 그림", "", *[f"- *(그림 생략: {label})*" for label in omitted_figures]]
     published = files or {}
-    lines += ["", "## 그림이 보여 주는 것", "", *_figure_lines(report, figure_names),
+    lines += ["", "## 그림이 보여 주는 것", "", *_figure_lines(report, figure_names, source_targets),
               "", "## 파일 목록", "", *_file_list_lines(published, table_names, figure_names),
               "", "## 실행 방법", "", *_run_lines(published, run_documents),
               "", "## 결정성", "", _determinism_line(published)]
