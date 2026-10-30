@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1108 .env.example
+
+- 결론: 새 결과 repo의 정리본 스크립트가 읽는 `LABHQ_INPUT_*` 변수를 모아 루트에 `.env.example`(값은 비움, 설명 주석 두 줄)을 만든다. 변수가 없으면 파일을 만들지 않는다. README 실행 절이 이 파일을 복사해 채우라고 안내하고 저장소 지도에도 올린다.
+- 확인: 변수를 비운 채 재작성된 스크립트를 실행하면 `KeyError`에 변수 이름이 담긴다(시험으로 고정). 개인 경로는 파일에 들어가지 않는다.
+- 바꾼 것: `labhq/portfolio.py`, `tests/test_portfolio_edition.py`.
+- 한계: `.env` 읽기 코드는 넣지 않았다. 사용자가 셸에서 변수를 내보내거나 자신의 도구로 `.env`를 읽어야 한다. `.env.example`은 코드 파일(`.py` 등)에서 찾은 변수만 담고 셸 스크립트의 변수는 코드 확장자에 든 경우만 본다.
+- 미검증: 실제 GitHub 게시.
+
 ## 단계
 #1107 rev2: 데모 정리가 `pending:[websocket]`로 끝나던 결함. 원인: [#1107 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1107#issuecomment-6527858912).
 
