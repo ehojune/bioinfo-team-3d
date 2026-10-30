@@ -253,9 +253,11 @@ def _step_execution_path(source: str, target: str) -> tuple[str, str, str] | Non
 
 
 # A published script that reads these still needs the request bundle's workspace: neither is part of the edition (#792).
-# `Path("inputs") / "s1"`, `os.path.join("inputs", step)` and a shell path `inputs/s1/x` all count; so does the bare
-# word in quotes, which can over-match and then errs toward "needs the workspace".
-_WORKSPACE_INPUT = re.compile(r"""["']inputs["'/]|(?<![\w.])inputs/|""" + r"""\bmanifest""" + r"""\.json\b""")
+# The word `inputs` standing alone (not `inputs_dir` or `my.inputs`) and `manifest.json` mark a script that reads the request
+# workspace. Matching the word, not one path shape, covers `inputs/s1/x`, `inputs\s1\x`, `Path("inputs") / "s1"`,
+# `os.path.join("inputs", step)` and an unquoted shell path at once. It over-matches prose such as "validate inputs",
+# and that errs toward "needs the workspace", which the edition then says instead of promising a re-run (#792).
+_WORKSPACE_INPUT = re.compile(r"""(?<![\w.])inputs(?!\w)|""" + r"""\bmanifest""" + r"""\.json\b""")
 _BUNDLE_COMMAND = re.compile(r"^- `cd steps/([^ `]+) && [^`]*?([^/ `]+)`$")
 
 

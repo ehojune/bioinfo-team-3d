@@ -582,6 +582,10 @@ def test_a_step_with_a_script_left_out_is_not_listed_as_re_creatable():
     'path = "inputs/s1/table.tsv"\n',
     "# shell: cat inputs/s1/table.tsv\n",
     "meta = json.load(open('manifest.json'))\n",
+    'frame = pd.read_csv(r"inputs\s1\table.tsv")' + "\n",
+    'open("inputs\\s1\\table.tsv")' + "\n",
+    "Path('inputs').joinpath('s1', 'table.tsv')\n",
+    "subprocess.run(['cat', 'inputs/s1/table.tsv'])\n",
 ])
 def test_composed_workspace_input_paths_are_detected(code):
     from labhq.portfolio import _WORKSPACE_INPUT
