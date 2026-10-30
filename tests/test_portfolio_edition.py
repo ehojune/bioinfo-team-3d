@@ -692,3 +692,29 @@ def test_the_environment_section_lists_pinned_versions_or_says_none():
     assert "`scipy 1.11.4`" in poetry[1] and "`numpy 1.26.4`" in conda[1]
     bare = _environment_lines({"run/environment/requirements.lock.txt": "# empty\n"})
     assert "읽지 못했습니다" in bare[1]
+
+
+def test_env_example_lists_only_the_variables_the_published_scripts_read(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    assets["steps/analysis/outputs/scripts/read_inputs.py"] = (
+        "from pathlib import Path\nleft = Path('/home/a/data.csv')\nright = Path('/srv/b/other.csv')\n")
+    files = build_portfolio_files(request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+
+    code = next(body for name, body in files.items() if name.endswith("read_inputs.py"))
+    keys = sorted(set(re.findall(r"LABHQ_INPUT_[A-Z0-9_]+", code)))
+    assert len(keys) == 2
+    example = files[".env.example"]
+    assert [line for line in example.splitlines() if not line.startswith("#")] == [f"{key}=" for key in keys]
+    assert "/home/a" not in example and "/srv/b" not in example  # no personal path is written
+    assert "set -a; . ../inputs.env; set +a" in files["README.md"] and "set -a; . ../inputs.env; set +a" in example
+    assert "R은 빈 문자열로 계속" in example and "저장소 밖에 복사" in example  # the file says where it must not live and what R does
+    # An unset variable stops the script with the variable's name, so the reader knows what to export.
+    with pytest.raises(KeyError) as stopped:
+        exec(compile(code, "read_inputs.py", "exec"), {})
+    assert stopped.value.args[0] in keys
+
+
+def test_no_env_example_without_input_variables(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    files = build_portfolio_files(request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+    assert ".env.example" not in files

@@ -110,7 +110,7 @@ _MARKDOWN_REFERENCE_DEFINITION = re.compile(
     r"(?P<title>[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$")
 _MARKDOWN_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
 _REMOTE_LINK = re.compile(r"(?i)^(?:https?://|data:|mailto:)")
-_PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md", "CITATION.cff"}
+_PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md", "CITATION.cff", ".env.example"}
 _PORTFOLIO_FOLDERS = ("report/", "run/", "code/", "docs/", "figures/", "tables/", "studies/")
 _LICENSE_PLACEHOLDER = re.compile(
     r"<reference-path>|확인 필요|필수 문구 자리|원 출처의 필수 문구를 넣으세요", re.I
@@ -1762,14 +1762,32 @@ def _file_list_lines(files: Mapping[str, str | bytes], table_names: list[str], f
             f"- 그림 {len(figure_names)}개: " + (joined(figure_names) if figure_names else "없음")]
 
 
+def _input_keys(files: Mapping[str, str | bytes]) -> list[str]:
+    """The ``LABHQ_INPUT_*`` variables the published scripts read: the only names ``.env.example`` lists."""
+    code = "\n".join(body for name, body in files.items()
+                     if isinstance(body, str) and PurePosixPath(name).suffix.lower() in _CODE_SUFFIXES)
+    return sorted(set(re.findall(r"\bLABHQ_INPUT_[A-Z0-9_]+\b", code)))
+
+
+def _env_example(keys: list[str]) -> str:
+    """Empty values for each input variable. A script stops with the variable's name only while the variable is unset."""
+    return ("# 정리본 스크립트가 읽는 입력 경로입니다. 값은 자신의 PC 경로로 채우세요.\n"
+            "# 저장소 밖에 복사해 채웁니다(예: cp .env.example ../inputs.env). 경로가 공개 저장소에 커밋되지 않게 하기 위해서입니다.\n"
+            "# 셸에서 `set -a; . ../inputs.env; set +a`로 내보낸 뒤 실행합니다. 값을 채우지 않고 내보내면 빈 경로가 됩니다.\n"
+            "# 내보내지 않으면 Python은 변수 이름이 담긴 KeyError로, 셸 스크립트는 변수 이름이 담긴 오류로 멈춥니다.\n"
+            "# R은 빈 문자열로 계속하니 먼저 내보냈는지 확인하세요.\n"
+            + "".join(f"{key}=\n" for key in keys))
+
+
 def _run_lines(files: Mapping[str, str | bytes], run_documents: Mapping[str, str]) -> list[str]:
-    keys = sorted(set(re.findall(r"\bLABHQ_INPUT_[A-Z0-9_]+\b",
-                                 "\n".join(body for body in files.values() if isinstance(body, str)))))
+    keys = _input_keys(files)
     reproduce = "[재현 방법](run/reproduce.md)" if "run/reproduce.md" in run_documents else "재현 방법"
     variables = (", ".join(f"`{key}`" for key in keys[:8]) + (f" 외 {len(keys) - 8}개" if len(keys) > 8 else "")
                  if keys else "없음")
     return [f"- 원자료가 있을 때: {reproduce}의 순서와 명령을 따릅니다. 입력 경로 환경 변수: {variables}. "
-            "경로 값은 정리본에 적지 않았으니 자신의 경로를 넣습니다.",
+            "경로 값은 정리본에 적지 않았으니 " + ("`.env.example`을 저장소 밖(예: `../inputs.env`)에 복사해 경로를 채운 뒤 `set -a; . ../inputs.env; set +a`로 내보냅니다."
+               if keys
+               else "자신의 경로를 넣습니다."),
             "- 원자료가 없을 때: 재현 방법이 \"공개 자료로 다시 만들 수 있는 것\"으로 적은 단계만 정리본으로 다시 돌립니다. "
             "나머지 스크립트는 원자료가 없어 처음부터 돌릴 수 없으니 `tables/`의 결과표와 `report/`의 보고서로 결과와 근거를 "
             "확인합니다."]
@@ -1865,7 +1883,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
               "8. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
               "## 저장소 지도", "", "```text", "README.md", "report/", "run/", "code/", "figures/", "tables/",
               *(["studies/               갈래별 코드·그림·표·단계 보고서"] if branch_rows else []),
-              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", *(["CITATION.cff"] if citation else []), "```", "",
+              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", *(["CITATION.cff"] if citation else []), *([".env.example"] if _input_keys(published) else []), "```", "",
               "## Summary (English)", "",
               f"This repository is the publication edition of labhq request {req.get('id')}. "
               "It keeps the scientific report, aggregate results, code, figures, decisions, and execution record together.", "",
@@ -2180,6 +2198,9 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     citation = _citation_cff(req, settings)
     if citation:
         files["CITATION.cff"] = citation
+    input_keys = _input_keys(files)
+    if input_keys:
+        files[".env.example"] = _env_example(input_keys)
     if revision_history:
         files["run/revision_history.md"] = revision_history
     run_summary, run_files = run_report.build(
