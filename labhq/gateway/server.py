@@ -2523,6 +2523,15 @@ class Hub:
         """The step a turn belongs to: its wake, retry, finish and halt-resume turns share it."""
         return json.dumps([request_id or "", step_id or kind or task_id], ensure_ascii=False)
 
+    def closed_step_revision(self, request_id: str | None, step_id: str | None) -> int:
+        """The revision a step's ended turns reached, or -1 when it is open (#1053).
+
+        A step id that comes back in a later round (a continuation re-runs it) must dispatch above this, or the
+        closed-step check refuses it; a turn of the earlier round, still at a lower revision, stays refused."""
+        closed = getattr(self, "_closed_steps", None)
+        key = self.step_key(request_id, step_id, None, "")
+        return int(closed.get(key, -1)) if isinstance(closed, dict) else -1
+
     def _entry_step(self, tid: str, entry: dict) -> str:
         return self.step_key(entry.get("request_id"), entry.get("step_id"), entry.get("kind"), tid)
 
