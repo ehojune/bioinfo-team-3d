@@ -253,11 +253,12 @@ def _step_execution_path(source: str, target: str) -> tuple[str, str, str] | Non
 
 
 # A published script that reads these still needs the request bundle's workspace: neither is part of the edition (#792).
-# The word `inputs` standing alone (not `inputs_dir` or `my.inputs`) and `manifest.json` mark a script that reads the request
-# workspace. Matching the word, not one path shape, covers `inputs/s1/x`, `inputs\s1\x`, `Path("inputs") / "s1"`,
+# The words `inputs` and `outputs` standing alone (not `inputs_dir` or `my.inputs`) and `manifest.json` mark a script that
+# works with the request workspace: its `inputs/<step>/` and the step's declared `outputs/` files, which the edition moves
+# to `tables/`, `figures/` and the like. Matching the word, not one path shape, covers `inputs/s1/x`, `inputs\s1\x`, `Path("inputs") / "s1"`,
 # `os.path.join("inputs", step)` and an unquoted shell path at once. It over-matches prose such as "validate inputs",
 # and that errs toward "needs the workspace", which the edition then says instead of promising a re-run (#792).
-_WORKSPACE_INPUT = re.compile(r"""(?<![\w.])inputs(?!\w)|""" + r"""\bmanifest""" + r"""\.json\b""")
+_WORKSPACE_INPUT = re.compile(r"""(?<![\w.])(?:inputs|outputs)(?!\w)|""" + r"""\bmanifest""" + r"""\.json\b""")
 _BUNDLE_COMMAND = re.compile(r"^- `cd steps/([^ `]+) && [^`]*?([^/ `]+)`$")
 
 
@@ -289,14 +290,14 @@ def _published_scope(text: str, folders: Mapping[str, str], needs_workspace: Map
         return text
     notes = ["## 공개본과 실행본의 차이", ""]
     if withheld:
-        notes += ["정리본에 싣지 않은 단계 스크립트가 있습니다. 선언된 산출이 아니라서 게시하지 않았고, 이 단계는 비공개 "
-                  "요청 묶음(`requests/<요청 id>/`)에서만 다시 실행할 수 있습니다.", "",
+        notes += ["정리본에 싣지 않은 단계 스크립트가 있습니다. 선언된 산출이 아니거나 크기·형식 제한으로 빠졌을 수 있고, "
+                  "그 단계는 비공개 요청 묶음(`requests/<요청 id>/`)에서만 다시 실행할 수 있습니다.", "",
                   *[f"- `{step}`: {', '.join(f'`{name}`' for name in dict.fromkeys(names))}"
                     for step, names in sorted(withheld.items())], ""]
     if needs_workspace:
-        notes += ["아래 스크립트는 작업공간 파일(`manifest.json`, `inputs/<앞 단계>/…`)을 읽습니다. 이 파일은 정리본에 "
-                  "없으므로, 정리본만으로는 그대로 실행되지 않습니다. 같은 값은 결과표(`tables/`)에 있고, 작업공간이 "
-                  "있는 요청 묶음에서는 실행됩니다.", "",
+        notes += ["아래 스크립트는 작업공간 경로(`manifest.json`, `inputs/<앞 단계>/…`, 단계가 선언한 `outputs/…`)를 "
+                  "씁니다. 정리본에서는 이 파일들이 `tables/`·`figures/` 등으로 옮겨져 경로가 달라, 정리본만으로는 그대로 "
+                  "실행되지 않을 수 있습니다. 같은 값은 결과표에 있고, 작업공간이 있는 요청 묶음에서는 실행됩니다.", "",
                   *[f"- `{step}`: {', '.join(f'`{name}`' for name in names)}" for step, names in sorted(needs_workspace.items())], ""]
     section = "\n".join(notes)
     marker = "## 재현 가능 범위"

@@ -540,7 +540,7 @@ def test_reproduce_lists_only_what_the_edition_publishes_and_says_what_is_missin
     assert "cd steps/" not in text and "link_inputs.py" not in text  # nothing to run there, no linker in the edition
     assert "## 공개본과 실행본의 차이" in text
     assert "정리본에 싣지 않은 단계 스크립트" in text and "- `s3`: `qc_recheck.py`" in text
-    assert "작업공간 파일(`manifest.json`, `inputs/<앞 단계>/…`)을 읽습니다" in text
+    assert "작업공간 경로(`manifest.json`, `inputs/<앞 단계>/…`, 단계가 선언한 `outputs/…`)를 씁니다" in text
     assert "- `s2`: `outputs/scripts/plot.py`" in text
     assert "### 공개 자료로 다시 만들 수 있는 것\n\n- s1\n" in text  # only the self-contained published step
     assert "### 정리본만으로는 다시 만들 수 없는 것 (비공개 요청 묶음의 작업공간이 필요)\n\n- s2, s3\n" in text
@@ -586,6 +586,7 @@ def test_a_step_with_a_script_left_out_is_not_listed_as_re_creatable():
     'open("inputs\\s1\\table.tsv")' + "\n",
     "Path('inputs').joinpath('s1', 'table.tsv')\n",
     "subprocess.run(['cat', 'inputs/s1/table.tsv'])\n",
+    "rows = open('outputs/reference/map.tsv')\n",
 ])
 def test_composed_workspace_input_paths_are_detected(code):
     from labhq.portfolio import _WORKSPACE_INPUT
