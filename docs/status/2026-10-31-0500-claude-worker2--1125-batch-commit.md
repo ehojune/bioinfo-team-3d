@@ -9,5 +9,6 @@
   - 요청 처리 시간은 25.8~26.5 s에서 23.7~25.2 s로 측정 잡음(±1 s)과 겹친다. runner lane은 요청의 임계 경로가 아니라 시간 이득은 이 안 하나로는 측정되지 않는다. 임계 경로는 gateway lane(533회)이라 안 A가 필요하다.
   - 시험: `tests/test_state.py`에 6건(배치는 commit 한 번·순서 유지, 오류 시 전부 취소, 안쪽 쓰기 오류는 savepoint로 자기 행만 취소, 중첩 batch 합류, runner 배치의 commit 한 번과 outbox 재적재 한 번, 실패한 배치는 아무것도 안 남기고 재적재도 안 함)을 더했고 main의 store·daemon에서는 6건 모두 실패한다. 관련 시험 2,177 passed, 30 skipped, #606 시험(`test_durable_writer`·`test_approval_durable_606`·`test_gateway_publish_durable`·`test_runner_shutdown_signals`·`test_loop_liveness_606`) 116 passed.
 - 중간에 잡은 결함: 처음 구현은 배치 안의 첫 SAVEPOINT가 명시적 BEGIN 없이 transaction을 열어 그 RELEASE가 곧 COMMIT이었고(실제 commit이 줄지 않음), 시험 `test_store_batch_is_one_commit…`이 잡았다. `batch()`가 `BEGIN IMMEDIATE`를 명시하고, 종료는 연결의 컨텍스트 매니저(`with conn:`)를 그대로 써서 #606 시험이 commit 지연을 거는 지점을 지난다.
+- 리뷰 P2(교착)로 고친 것: `batch()`를 호출 thread에서 쓰면 살아 있는 writer thread가 `_write_lock`을 기다리는 동안 안의 `put()`이 그 뒤에 줄을 서 교착한다(이전 구현에서 재현됨). 이제 `batch()`는 store의 durable lane 안에서만 허용하고(아니면 `RuntimeError`), `run_batch`·`arun_batch`가 lane에서 실행한다. 안의 쓰기는 항상 인라인이고 앞서 큐에 든 쓰기 뒤에 순서대로 간다. 시험 2건(lane 밖 사용 거절, 비동기 쓰기 뒤 배치가 교착 없이 순서를 지킴)을 더했다.
 - 미확인: CI Windows 전후 시간, 배치가 큰 경우의 효과.
 - 근거: #1125 설계 댓글 6531718393, 결정 댓글 6531725554.

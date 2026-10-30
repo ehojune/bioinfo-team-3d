@@ -8,3 +8,7 @@ rows:
   at: 2026-10-31 07:10
   text: 배치가 BEGIN을 명시해 commit이 실제로 한 번이 되게 고치고 tests/test_state.py에 batch 시험 6건을 더했다 (#1125 안 C).
   summary: runner 배치가 실제로 commit 한 번으로 저장되는지 시험으로 고정했습니다.
+- sha: 'd4b001f'
+  at: 2026-10-31 08:20
+  text: StateStore.batch()를 store의 durable lane 안에서만 쓰게 하고 lane에서 실행하는 run_batch·arun_batch를 더해, 살아 있는 writer thread와 만나 교착하는 사용 경로를 닫았다 (#1125 안 C, 리뷰 P2).
+  summary: runner가 배치로 저장할 때 다른 비동기 저장과 겹쳐 멈추는 경우가 없도록 했습니다.
