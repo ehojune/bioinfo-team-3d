@@ -1,5 +1,9 @@
 pr: 1064
 rows:
+  - sha: "4cda35e8"
+    at: "2026-10-30 18:16"
+    summary: "모든 seal 관측 단계에서 독립 pin과 parent ancestry를 대조하고 변경 후 원복도 거부합니다."
+    text: "test: validate pinned parent ancestry at every seal phase"
   - sha: "a9eb186"
     at: "2026-10-30 17:25"
     summary: "reference 문서의 Windows 등록 전 안내를 등록 완료 상태로 고칩니다."
