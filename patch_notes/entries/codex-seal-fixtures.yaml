@@ -1,5 +1,9 @@
 pr: 1064
 rows:
+  - sha: "866b2a7"
+    at: "2026-10-30 16:44"
+    summary: "실행·종료·정리 관측을 독립적으로 고정한 child identity에 묶습니다."
+    text: "test: bind seal execution and cleanup to pinned child identity"
   - sha: "75e285a"
     at: "2026-10-30 16:38"
     summary: "독립 supervisor/seal의 synthetic 관측 계약과 변경·잔류 거부 시험을 추가합니다."
