@@ -14,7 +14,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:20 | [`761db6e`](https://github.com/ehojune/bioinfo-team-3d/pull/1097/commits/761db6e) | **dry-run이 보이는 모델이 러너가 실제로 쓰는 모델과 같아집니다.**<br>send --dry-run이 러너와 같이 runner.force_engine을 적용한 엔진으로 등급 모델을 보이고, status 문서를 gateway·WSL·manual까지 끝난 실제 변경에 맞춘다(리뷰 P1·P2) + 시험 |
+| 03:50 | [`b15daf6`](https://github.com/ehojune/bioinfo-team-3d/pull/1097/commits/b15daf6) | **러너가 엔진을 바꿔 돌릴 때도 등급 모델이 원래 엔진의 모델로 잘못 채워지지 않습니다.**<br>러너가 등급으로 모델을 채우는 때를 agent_overrides·agent_identity·force_engine을 적용한 뒤로 옮겨, 등급이 직원이 실제로 도는 엔진의 모델을 뜻하게 한다(리뷰 P1) + 시험 |
+| 03:20 | [`e829467`](https://github.com/ehojune/bioinfo-team-3d/pull/1097/commits/e829467) | **WSL에서 도는 직원도 Windows와 같은 등급 모델을 씁니다(model이 없는 bioinfo-agent 포함).**<br>setup-wsl이 model_tiers 표를 WSL runner 설정에 보내고 wsl_bootstrap이 설정에 쓴다. 보내지 않은 옛 설정은 빈 표(리뷰 P1) + 시험 2건 |
+| 03:10 | [`5092bf7`](https://github.com/ehojune/bioinfo-team-3d/pull/1097/commits/5092bf7) | **실제로 돌았는지 알 수 없는 task 때문에 직원이 다른 모델로 돌았다는 잘못된 경고가 나오지 않습니다.**<br>관측하지 못한 결과(outcome_unknown)는 선언 등급과 다른 모델 경고에서 뺀다(리뷰 P2) + 시험 |
 | 02:00 | [`3f97126`](https://github.com/ehojune/bioinfo-team-3d/pull/1100/commits/3f97126) | **혼자 처리하는 요청이 스크립트를 돌릴 때도 그 스크립트를 선언하도록 안내해 결과 repo의 재현 안내에서 빠지지 않게 합니다.**<br>route solo prompt(SOLO_PROMPT)에 SCRIPT_OUTPUTS_PLAN_RULE을 넣고, 규칙이 채운 prompt에도 남아 있는지 단언하는 시험을 더한다 |
+| 01:40 | [`15dcce7`](https://github.com/ehojune/bioinfo-team-3d/pull/1097/commits/15dcce7) | **등급 표를 어떻게 채우고 무엇이 우선하며 어떤 경고가 나오는지 설명서에서 볼 수 있습니다.**<br>manual 한·영에 model_tiers 표의 우선순위(직원 model·agent_overrides·cso_model이 등급보다 앞섬), 빈 표의 의미, model_tier_mismatch 경고와 비용 줄, dry-run의 모델 미정을 적는다(리뷰 P1) |
+| 01:10 | [`d67aeaf`](https://github.com/ehojune/bioinfo-team-3d/pull/1097/commits/d67aeaf) | **선언한 등급과 다른 모델로 돈 직원이 요청의 비용 줄에 나옵니다.**<br>gateway의 두 비용 기록 경로(동기·비동기)가 model_tiers 표를 request_cost_summary에 넘기고, 비용 줄(format_warnings)이 선언 등급과 다른 모델로 돈 직원을 보인다. 표가 없으면 이전과 같다 |
+| 00:40 | [`3aa5a1f`](https://github.com/ehojune/bioinfo-team-3d/pull/1097/commits/3aa5a1f) | **6차처럼 fast·balanced 직원이 알리지 않고 opus로 도는 일을 비용 요약이 알 수 있게 됩니다. 표를 채우지 않으면 지금과 똑같이 동작합니다.**<br>model_tiers 표(등급이 엔진마다 뜻하는 모델, 기본 빈 값)를 더하고, 직원 YAML에 model이 없을 때만 러너가 등급으로 모델을 채운다. dry-run에 등급→모델(없으면 모델 미정)을 보이고, 비용 요약은 선언 등급과 실제 모델이 어긋난 직원을 model_tier_mismatch 경고로 남긴다(별칭·정식명 비교 포함) |
 
 ## 2026-10-30
 
