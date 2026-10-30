@@ -11,7 +11,7 @@
 - CI의 Linux 전수/Windows 경계·nightly full profile과 worker HOME/port 격리는 [CI 정책](docs/reference/ci-reuse.md)을 따릅니다. 로컬 worker/process 실행은 별도 허가 없이 하지 않습니다.
 - CI 축소는 예제·보호 markup이 그대로인 prose와 정해진 기록, main 재사용은 같은 tree·workflow/policy·전체 gate 증거에 한정한다([정책](docs/reference/ci-reuse.md)). 불명확하면 full이며 assertions·안전·설치·validator·MCP gate를 줄이지 않는다.
 - 단계 끝에는 PR 본문과 `docs/status/<YYYY-MM-DD>-<HHMM>-<branch>.md`에 같은 보고를 쓴다. `STATUS.md`는 main 자동 생성이므로 직접 고치지 않는다.
-- 기록만 바꾼 커밋을 빼고 커밋마다 `patch_notes/entries/<branch>.yaml`에 한 줄(branch의 `/`는 `--`). 생성 `patch_notes/README.md`는 직접 고치지 않는다. main 3커밋 안에 README나 manual을 갱신한다. 초안은 `python scripts/patch_notes.py rows --pr N`, 검사는 `python scripts/patch_notes.py check`.
+- 기록만 바꾼 커밋을 빼고 커밋마다 `patch_notes/entries/<branch>.yaml`에 한 줄(branch의 `/`는 `--`). 생성 `patch_notes/README.md`는 직접 고치지 않는다. main 3커밋 안에 README나 manual을 갱신한다(바뀐 파일이 전부 tests/·docs/status/·patch_notes/entries/·config/ci/·.github/·scripts/ci_* 안인 커밋은 세지 않는다). 초안은 `python scripts/patch_notes.py rows --pr N`, 검사는 `python scripts/patch_notes.py check`.
 - 패치노트는 `summary`에 처음 읽는 사람을 위한 쉬운 한 문장, `text`에 구체적인 변경을 쓴다. 약어·파일명은 두 번째 설명에 두고 실제 실행·성능을 확인한 범위를 넘겨 말하지 않는다. 예시는 [작성 기준](patch_notes/STYLE.md)을 따른다.
 - 공동 작성자 trailer는 `.githooks/commit-msg`가 GitHub이 인식하는 봇 주소로 맞춘다(Codex 이메일 치환, Gemini 추가). git이 마지막 문단에서 trailer로 인식하는 줄만 보며(본문의 예시는 글로 두고), 모델명은 환경변수 `LABHQ_COMMIT_MODEL`이 있을 때만 이름에 채운다(없으면 추정하지 않는다). 새 clone은 `git config core.hooksPath .githooks` 한 번.
   머신 전역 훅(`~/.git-template/hooks`)이 있으면 새 커밋·revert를 넘겨 author를 에이전트의 GitHub App 봇으로 맞춘다. rebase·cherry-pick·amend와 명시한 다른 author는 보존한다. merge 커밋·reflog를 끈 저장소는 자체 trailer 규칙만 쓴다.
