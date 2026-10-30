@@ -7,7 +7,8 @@ import pytest
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator, general_report_warnings
 from labhq.output_checks import (conclusion_literature_line, literature_access, literature_ledger,
-                                 literature_ledger_line, markdown_warnings, quality_lines, table_problem, table_warnings)
+                                 literature_ledger_line, markdown_warnings, quality_lines, stored_access, table_problem,
+                                 table_warnings)
 from tests.test_research_report import _hub
 
 
@@ -449,3 +450,92 @@ async def test_research_cp2_card_and_report_limits_carry_the_checks():
     assert ledger in card and "PMID:2(구독 필요)" in card and "DOI:10.1000/missing(조회 기록 없음)" in card
     limits = req["report"].split("## 한계", 1)[1]
     assert "outputs/lit.tsv" in limits and "fulltext로 조회한 3편" in limits and depth in limits and ledger in limits
+
+
+# ---------- #1090: papers the precedent search stored before CP1 count as read ----------
+
+def _precedents():
+    """The four stored papers of ② 6th (receipts and alias lists as the precedent search wrote them)."""
+    def paper(paper_id, level, extraction, citations):
+        return {"title": paper_id, "citations": citations, "fulltext_receipt": {
+            "paper_id": paper_id, "access_level": level, "extraction": extraction, "text_sha256": "a" * 64}}
+
+    return {"status": "ok", "papers": [
+        paper("doi:10.1056/nejmoa2103695", "full_text", "unknown",
+              ["PMID:34096690", "PMCID:PMC9116274", "DOI:10.1056/NEJMoa2103695"]),
+        paper("doi:10.1200/jco.21.02752", "full_text", "partial_text",
+              ["PMID:35167329", "PMCID:PMC9362872", "DOI:10.1200/JCO.21.02752"]),
+        paper("doi:10.1038/s41467-026-69943-7", "full_text", "partial_text",
+              ["PMID:41820335", "PMCID:PMC13121619", "DOI:10.1038/s41467-026-69943-7"]),
+        paper("doi:10.1016/j.annonc.2025.01.020", "abstract", "unknown",
+              ["PMID:39914665", "PMCID:PMC12097956", "DOI:10.1016/j.annonc.2025.01.020"])]}
+
+
+def _sixth_ledgers():
+    # The conclusion cites NEJM twice (by DOI and by PMID) and no step looked anything up.
+    sources = {"jco": {"id_scheme": "doi", "id_value": "10.1200/JCO.21.02752"},
+               "nejm_pmid": {"id_scheme": "pmid", "id_value": "34096690"},
+               "olo": {"id_scheme": "doi", "id_value": "10.1038/s41467-026-69943-7"},
+               "nejm_doi": {"id_scheme": "doi", "id_value": "10.1056/NEJMoa2103695"},
+               "annals": {"id_scheme": "doi", "id_value": "10.1016/j.annonc.2025.01.020"}}
+    return {"s2": {
+        "claims": [{"id": "c1", "status": "supported"}],
+        "evidence": [{"id": key, "source": source} for key, source in sources.items()],
+        "links": [{"claim_id": "c1", "evidence_id": key, "relation": "supports"} for key in sources]}}
+
+
+NO_LOOKUPS = "결론 claim에 연결된 논문만 센 값이며, 'fulltext로 조회한 논문 전체'와 분모가 다르다"
+
+
+def test_the_sixth_run_without_the_stored_papers_still_reads_zero_of_five():
+    steps, results = [{"id": "s2"}], {"s2": {"literature_access": {}}}
+    ledgers = _sixth_ledgers()
+    before = conclusion_literature_line(steps, results, ledgers)
+    assert before == f"결론 근거 논문 5편: 본문 0편·초록 0편·서지만 0편·조회 기록 없음 5편. {NO_LOOKUPS}"
+    assert conclusion_literature_line(steps, results, ledgers, stored=()) == before  # an empty argument changes nothing
+
+
+def test_stored_papers_are_counted_with_their_origin_and_aliases_join_the_two_nejm_citations():
+    steps, results = [{"id": "s2"}], {"s2": {"literature_access": {}}}
+    line = conclusion_literature_line(steps, results, _sixth_ledgers(), stored=stored_access(_precedents()))
+    assert line == ("결론 근거 논문 4편: 본문 3편·초록 1편·서지만 0편·조회 기록 없음 0편"
+                    f"(저장된 선행 검색 기록 4편 포함·CP1 전 기록, 그중 부분 추출 2편). {NO_LOOKUPS}")
+
+
+def test_a_stored_paper_the_conclusion_does_not_cite_is_not_added():
+    ledgers = _sixth_ledgers()
+    for key in ("jco", "nejm_pmid", "olo", "annals"):  # only NEJM (by DOI) stays cited
+        ledgers["s2"]["links"] = [link for link in ledgers["s2"]["links"] if link["evidence_id"] != key]
+    line = conclusion_literature_line([{"id": "s2"}], {}, ledgers, stored=stored_access(_precedents()))
+    assert line is None  # one paper, full text: nothing to warn about, and the three uncited ones add no row
+
+
+def test_a_step_record_and_a_stored_record_of_one_paper_take_the_better_level():
+    results = {"s2": {"literature_access": {"DOI:10.1016/j.annonc.2025.01.020": "full_text"}}}
+    stored = stored_access(_precedents())
+    # The step read the Annals paper in full: all four papers are then full text, so there is nothing to warn about.
+    assert conclusion_literature_line([{"id": "s2"}], results, _sixth_ledgers(), stored=stored) is None
+    # A step that only reached the NEJM abstract does not lower the stored full text.
+    weaker = {"s2": {"literature_access": {"DOI:10.1056/nejmoa2103695": "abstract"}}}
+    line = conclusion_literature_line([{"id": "s2"}], weaker, _sixth_ledgers(), stored=stored)
+    assert "본문 3편·초록 1편" in line and "조회 기록 없음 0편" in line
+
+
+@pytest.mark.parametrize("record", [
+    None, "ok", {"status": "failed", "papers": [{"fulltext_receipt": {"paper_id": "doi:10.1/x", "access_level": "full_text"}}]},
+    {"status": "ok", "papers": [{"fulltext_receipt": {"paper_id": "doi:10.1/x", "access_level": "everything"}}]},
+    {"status": "ok", "papers": [{"fulltext_receipt": "text"}, "paper", {"title": "no receipt"}]},
+    {"status": "ok", "papers": [{"fulltext_receipt": {"paper_id": "", "access_level": "full_text"}}]},
+])
+def test_unusable_precedent_records_store_nothing(record):
+    assert stored_access(record) == []
+
+
+def test_the_access_ledger_line_counts_stored_papers_as_acquired():
+    ledger = {"candidate_ids": ["DOI:10.1056/nejmoa2103695"], "selected_ids": ["DOI:10.1056/nejmoa2103695"]}
+    results = {"s2": {"literature_ledger": ledger}}
+    base = literature_ledger_line([{"id": "s2"}], results, _sixth_ledgers())
+    line = literature_ledger_line([{"id": "s2"}], results, _sixth_ledgers(), stored=stored_access(_precedents()))
+    assert "확보 0편" in base and "결론 근거 5편" in base
+    assert "확보 4편(본문 3·초록 1·서지 0)" in line and "결론 근거 4편" in line
+    assert "확보에는 저장된 선행 검색 기록 4편(CP1 전 기록)이 들어 있습니다." in line

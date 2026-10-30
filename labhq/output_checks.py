@@ -479,11 +479,45 @@ def _conclusion_papers(ledgers: Mapping[str, Any], unsupported: Iterable[Any],
     return _paper_groups(cited_sources)
 
 
+def stored_access(analysis_precedents: Any) -> list[tuple[set[str], str, bool]]:
+    """Papers whose text the precedent search stored before CP1, as (alias identifiers, access level, partial).
+
+    The step ``literature_access`` records only what a step's own lookups wrote; the precedent search's receipts
+    (``fulltext_receipt``) live on the request and reach a step as ``inputs/precedent/`` (#951). Reading them here
+    lets the report count what was really read (#1090). Only a record with status ok and an access level labhq
+    knows counts; the aliases are the receipt's paper id and the paper's ``citations`` (PMID, PMCID, DOI)."""
+    if not isinstance(analysis_precedents, Mapping) or analysis_precedents.get("status") != "ok":
+        return []
+    found: list[tuple[set[str], str, bool]] = []
+    for paper in analysis_precedents.get("papers") or []:
+        receipt = paper.get("fulltext_receipt") if isinstance(paper, Mapping) else None
+        if not isinstance(receipt, Mapping) or receipt.get("access_level") not in LEVELS:
+            continue
+        citations = paper.get("citations")
+        aliases: set[str] = set()
+        for key in [receipt.get("paper_id"), *(citations if isinstance(citations, list) else [])]:
+            aliases |= _access_paper_ids(key)
+        if aliases:
+            found.append((aliases, str(receipt["access_level"]), receipt.get("extraction") == "partial_text"))
+    return found
+
+
+def _merge_stored(papers: list[set[str]], stored: Iterable[tuple[set[str], str, bool]]) -> list[set[str]]:
+    """Join conclusion papers that one stored paper names with two identifiers (PMID and DOI). Papers the report does
+    not cite are never added."""
+    cited_aliases = [aliases for aliases, _level, _partial in stored if any(aliases & paper for paper in papers)]
+    return _paper_groups([*papers, *cited_aliases]) if cited_aliases else papers
+
+
 def conclusion_literature_line(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any],
                                ledgers: Mapping[str, Any], *, unsupported: Iterable[Any] = (),
-                               refused: Iterable[Any] = ()) -> str | None:
-    """Read-depth warning for papers that actually ground CP2-citable conclusion claims."""
-    papers = _conclusion_papers(ledgers, unsupported, refused)
+                               refused: Iterable[Any] = (),
+                               stored: Iterable[tuple[set[str], str, bool]] = ()) -> str | None:
+    """Read-depth warning for papers that actually ground CP2-citable conclusion claims.
+
+    ``stored`` is ``stored_access(analysis_precedents)``; without it the line is what the steps' own records say."""
+    stored = list(stored)
+    papers = _merge_stored(_conclusion_papers(ledgers, unsupported, refused), stored)
     if not papers:
         return None
 
@@ -496,25 +530,34 @@ def conclusion_literature_line(steps: Iterable[Mapping[str, Any]], results: Mapp
             identifiers = _access_paper_ids(key)
             if identifiers and level in LEVELS:
                 _merge_access_group(access, identifiers, level)
+    for aliases, level, _partial in stored:
+        _merge_access_group(access, set(aliases), level)
 
     counts = {level: 0 for level in LEVELS}
-    missing = 0
+    missing = from_stored = partial = 0
     for paper in papers:
         found = [level for aliases, level in access if aliases & paper]
         if not found:
             missing += 1
             continue
         counts[min(found, key=LEVELS.index)] += 1
+        matched = [partial_text for aliases, _level, partial_text in stored if aliases & paper]
+        from_stored += bool(matched)
+        partial += any(matched)
     if not (counts["abstract"] or counts["metadata"] or missing):
         return None
+    origin = ""
+    if from_stored:  # where the read came from and when stays visible: a receipt of the precedent search before CP1
+        origin = f"(저장된 선행 검색 기록 {from_stored}편 포함·CP1 전 기록" + (f", 그중 부분 추출 {partial}편)" if partial else ")")
     return (f"결론 근거 논문 {len(papers)}편: 본문 {counts['full_text']}편·초록 {counts['abstract']}편·"
-            f"서지만 {counts['metadata']}편·조회 기록 없음 {missing}편. 결론 claim에 연결된 논문만 센 값이며, "
+            f"서지만 {counts['metadata']}편·조회 기록 없음 {missing}편{origin}. 결론 claim에 연결된 논문만 센 값이며, "
             "'fulltext로 조회한 논문 전체'와 분모가 다르다")
 
 
 def literature_ledger_line(steps: Iterable[Mapping[str, Any]], results: Mapping[str, Any],
                            ledgers: Mapping[str, Any], *, unsupported: Iterable[Any] = (),
-                           refused: Iterable[Any] = ()) -> str | None:
+                           refused: Iterable[Any] = (),
+                           stored: Iterable[tuple[set[str], str, bool]] = ()) -> str | None:
     """One CP2/report line with four deliberately separate denominators and unread key-paper reasons."""
     candidate_sets: list[set[str]] = []
     selected_sets: list[set[str]] = []
@@ -537,9 +580,12 @@ def literature_ledger_line(steps: Iterable[Mapping[str, Any]], results: Mapping[
                 _merge_access_group(access, identifiers, level)
     if not candidate_sets and not selected_sets:
         return None
+    stored = list(stored)
+    for aliases, level, _partial in stored:
+        _merge_access_group(access, set(aliases), level)
     candidates = _paper_groups(candidate_sets, limit=None)
     selected = _paper_groups(selected_sets)
-    papers = _conclusion_papers(ledgers, unsupported, refused)
+    papers = _merge_stored(_conclusion_papers(ledgers, unsupported, refused), stored)
     counts = {level: sum(level == found for _aliases, found in access) for level in LEVELS}
     missed = []
     for paper in papers:
@@ -553,6 +599,8 @@ def literature_ledger_line(steps: Iterable[Mapping[str, Any]], results: Mapping[
     line = (f"문헌 접근 실패 원장(서로 다른 분모): 후보 {len(candidates)}편·선정 {len(selected)}편·"
             f"확보 {acquired}편(본문 {counts['full_text']}·초록 {counts['abstract']}·서지 {counts['metadata']})·"
             f"결론 근거 {len(papers)}편.")
+    if stored:
+        line += f" 확보에는 저장된 선행 검색 기록 {len(stored)}편(CP1 전 기록)이 들어 있습니다."
     if missed:
         shown = ", ".join(missed[:5]) + (f" 외 {len(missed) - 5}편" if len(missed) > 5 else "")
         line += f" 못 읽은 핵심 논문: {shown}."
