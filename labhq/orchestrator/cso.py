@@ -741,6 +741,11 @@ SELECTION_RECORD_RULE = (
     "actually weighed with `rejected_because`) and `change_signals` (observations that would change your judgment). "
     "Record only alternatives you really considered; leave the field out when you weighed none rather than "
     "inventing some.")
+# A step's result cannot add a claim the plan did not declare (#1066): ask the CSO to declare each one up front.
+CLAIM_IDS_PLAN_RULE = ("A step's result can state only the claims in that step's claim_ids; it cannot add one. When "
+                       "the request asks for hypotheses, mechanisms or a grade-by-grade summary as findings, declare a "
+                       "claim_id for each of them in the step that produces it.")
+
 RESEARCH_PLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + recruit_planning.PLAN_RULE + "\n\n" + paper_skills.PLAN_RULE + "\n\n" + """Create a frozen research contract for the PI's request. Do not execute or analyze.
 
 Team roster (use these agent ids exactly, never an orchestration role):
@@ -791,6 +796,7 @@ Contract rules:
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on. Every output is
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}{topics_rule}
+- """ + CLAIM_IDS_PLAN_RULE + """
 - """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
 - """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
 - """ + DETERMINISTIC_TRANSFORM_RULE + """
@@ -2439,12 +2445,22 @@ def report_correction(problems: list[str], citable: str, report: str) -> str:
         "Report to correct:", report])
 
 
-def result_correction(problems: list[str]) -> str:
-    """Ask for ledger JSON only: the completed analysis and its files must not run again."""
+def result_correction(problems: list[str], claim_ids: list[str] | None = None) -> str:
+    """Ask for ledger JSON only: the completed analysis and its files must not run again.
+
+    ``claim_ids`` are the claims the frozen plan declared for this step. A correction that said only "record it as a
+    claim" made a worker add a claim id the plan never declared, and the step then failed on that (#1066)."""
+    claims = [
+        "The claims you may return are exactly this step's claim_ids: " + json.dumps(list(claim_ids)) + ". Never "
+        "create a claim id outside that list. A row that is not evidence (a hypothesis, mechanism or background row) "
+        "is linked to one of these claims with relation context, or left out of the links; it is never a new claim. "
+        "Where a problem below says to record something as a claim, that applies only to a claim id on this list."
+    ] if claim_ids is not None else []
     return "\n".join([
         "The previous research result JSON failed contract validation. Fix every problem below and return only one "
         "complete corrected result JSON object.",
         "Do not recreate or modify output files, rerun the analysis, or change the method. Fix the result JSON only.",
+        *claims,
         *_problem_lines(problems, "1."),
     ])
 
@@ -5174,6 +5190,9 @@ class Orchestrator:
                            f"Copy plan_sha256={contract.get('plan_sha256')}, step_id={step['id']}, "
                            f"claim_ids={json.dumps(step.get('claim_ids') or [])}, and fill evidence_slots="
                            f"{json.dumps(step.get('evidence_slots') or [])}. Keep claims and evidence separate. "
+                           "Every claim you return must use one of those claim_ids; never add a claim id of your "
+                           "own. A hypothesis, mechanism or background row is not evidence: link it to one of "
+                           "those claims as context. "
                            "Each artifact_refs path is one of your declared outputs (outputs/<name>; for a declared folder, "
                            "a file inside it as outputs/<folder>/<file>, never the folder itself) or an upstream "
                            "artifact written as <workdir_id>/<path>; evidence citing any other path is refused at CP2. "
@@ -5474,7 +5493,7 @@ class Orchestrator:
                     correction_task = Task(
                         agent_id=step["agent_id"], request_id=rid, output_schema=RESEARCH_STEP_SCHEMA,
                         resume_session_id=current.session_id if can_resume_correction else None,
-                        prompt=continuation_prompt(task, result_correction(problems),
+                        prompt=continuation_prompt(task, result_correction(problems, list(step.get("claim_ids") or [])),
                                                    resumable=can_resume_correction, previous_result=current,
                                                    context_chars=self.cfg.context_chars_per_step),
                         meta=auxiliary_turn_meta(
