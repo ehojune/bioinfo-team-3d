@@ -34,18 +34,22 @@ def _long_separator_runs(fraction=1):
 # run long before failing.
 _MAX_SCALE = 8
 _MEASURE_FLOOR_S = 0.2  # each side runs until this much CPU, so a 15.6 ms Windows clock tick stays below 8 %
+_MIN_SAMPLES = 3  # a single slow call cannot decide a side
 _MAX_REPEATS = {"quarter": 16, "full": 4}  # bounds the work: at most 8 full-input equivalents per scan
 _CLOCK_TICK_S = 0.0157  # the coarsest thread_time tick in use (Windows 15.6 ms): one tick of slack per average
 
 
 def _cost(call, text, repeats):
-    """Average calling-thread CPU per call, repeating only until the floor or the bound; every result kept."""
-    spent, results = 0.0, []
-    while len(results) < repeats and spent < _MEASURE_FLOOR_S:
+    """Fastest calling-thread CPU of one call, over at least _MIN_SAMPLES calls and until the floor or the bound; every
+    result kept. The fastest call, not the mean: a stall on a loaded CI runner only ever adds time (run 41073769229
+    read 15.5x from one slow call, where this input costs about 4x), while a quadratic scan is slow on every call."""
+    spent, samples, results = 0.0, [], []
+    while len(results) < repeats and (len(results) < _MIN_SAMPLES or spent < _MEASURE_FLOOR_S):
         started = time.thread_time()  # this thread only: other threads in a test worker do not count
         results.append(call(text))
-        spent += time.thread_time() - started
-    return spent / len(results), results
+        samples.append(time.thread_time() - started)
+        spent += samples[-1]
+    return min(samples), results
 
 
 def _assert_linear(call, build=_long_separator_runs, expected=None):
@@ -58,12 +62,12 @@ def _assert_linear(call, build=_long_separator_runs, expected=None):
 
 
 @pytest.mark.parametrize("quarter_s,full_s,result,reject,expected_calls", [
-    (0.125, 0.5, None, False, {"quarter": 2, "full": 1}),      # linear: 4x
-    (0.125, 1.0, None, False, {"quarter": 2, "full": 1}),      # the bound itself
-    (0.125, 2.0, None, True, {"quarter": 2, "full": 1}),       # quadratic: 16x
-    (0.125, 1.0625, None, True, {"quarter": 2, "full": 1}),
-    (0.125, 0.5, False, True, {"quarter": 2, "full": 1}),      # wrong result: separator runs name no path
-    (0.0078125, 0.03125, None, False, {"quarter": 16, "full": 4}),  # fast machine: bounded repeats, then averages
+    (0.125, 0.5, None, False, {"quarter": 3, "full": 3}),      # linear: 4x
+    (0.125, 1.0, None, False, {"quarter": 3, "full": 3}),      # the bound itself
+    (0.125, 2.0, None, True, {"quarter": 3, "full": 3}),       # quadratic: 16x
+    (0.125, 1.0625, None, True, {"quarter": 3, "full": 3}),
+    (0.125, 0.5, False, True, {"quarter": 3, "full": 3}),      # wrong result: separator runs name no path
+    (0.0078125, 0.03125, None, False, {"quarter": 16, "full": 4}),  # fast machine: bounded repeats, then the fastest
     (0.0, 0.0078125, None, False, {"quarter": 16, "full": 4}),  # quarter below one clock tick: one tick of slack
     (0.0, 0.03125, None, True, {"quarter": 16, "full": 4}),     # but not more than one tick
 ])
@@ -88,6 +92,39 @@ def test_linear_scan_budget_uses_cpu_and_preserves_result_and_strict_limit(
     else:
         _assert_linear(scan)
     assert calls == expected_calls  # the full input is always scanned, and never more than the bound
+
+
+@pytest.mark.parametrize("quarter_costs,full_costs,reject", [
+    ([0.125] * 3, [3.0, 0.5, 0.5], False),             # one stalled full call (the CI failure): the fastest decides
+    ([0.5, 0.125, 0.125], [0.5, 0.5, 0.5], False),     # one stalled quarter call
+    ([0.125] * 3, [2.0, 2.5, 2.0], True),              # quadratic: every full call is about 16x
+    ([0.125] * 3, [1.4, 2.0, 1.5], True),              # all full calls are over the bound
+])
+def test_linear_scan_budget_ignores_one_stalled_call_but_not_a_slow_scan(
+        monkeypatch, quarter_costs, full_costs, reject):
+    clock, queue = [0.0], {"quarter": list(quarter_costs), "full": list(full_costs)}
+    monkeypatch.setitem(globals(), "time", SimpleNamespace(thread_time=lambda: clock[0]))
+    full_text, quarter_text = _long_separator_runs(), _long_separator_runs(0.25)
+
+    def scan(text):
+        clock[0] += queue["full" if text == full_text else "quarter"].pop(0)
+        return None
+
+    if reject:
+        with pytest.raises(AssertionError):
+            _assert_linear(scan)
+    else:
+        _assert_linear(scan)
+
+
+def test_linear_scan_budget_still_rejects_a_really_quadratic_scan():
+    """The fastest-call estimate must keep its power: real CPU, work growing with the square of the text length."""
+    def quadratic(text):
+        n = len(text) // 150
+        return sum(sum(range(n)) for _ in range(n)) and None
+
+    with pytest.raises(AssertionError, match="must stay linear"):
+        _assert_linear(quadratic)
 
 
 @pytest.mark.parametrize("tail,found", [
