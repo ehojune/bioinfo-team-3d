@@ -12,3 +12,7 @@ rows:
     at: "2026-10-30 12:09"
     summary: "합성 broker 연결과 종료를 격리 진단에서 확인합니다."
     text: "feat: add synthetic broker namespace diagnostic (#1047)"
+  - sha: 'a08b35d'
+    at: "2026-10-30 16:00"
+    summary: "합성 staging 정리 경로와 별도 fixture 검토안을 추가합니다."
+    text: "feat: exercise synthetic staging lifecycle"
