@@ -580,3 +580,11 @@ def test_duplicate_stored_papers_are_counted_once_in_the_access_ledger():
     line = literature_ledger_line([{"id": "s1"}], {"s1": {"literature_ledger": {"candidate_ids": ["PMID:1"], "selected_ids": ["PMID:1"]}}}, ledgers,
                                  stored=stored)
     assert line is not None and "확보 1편" in line and "저장된 선행 검색 기록 1편" in line
+
+
+def test_rows_of_one_stored_text_join_their_identifiers_into_one_paper():
+    receipt = lambda paper_id: {"paper_id": paper_id, "access_level": "full_text", "text_file": "a.md",
+                                "text_sha256": "e" * 64}
+    stored = stored_access({"status": "ok", "papers": [{"fulltext_receipt": receipt("DOI:10.1000/x")},
+                                                       {"fulltext_receipt": receipt("PMID:7")}]})
+    assert len(stored) == 1 and {"DOI:10.1000/x", "PMID:7"} <= stored[0][0]

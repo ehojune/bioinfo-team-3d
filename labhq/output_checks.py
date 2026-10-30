@@ -508,23 +508,27 @@ def stored_access(analysis_precedents: Any) -> list[tuple[set[str], str, bool]]:
     if not isinstance(analysis_precedents, Mapping) or analysis_precedents.get("status") != "ok":
         return []
     found: list[tuple[set[str], str, bool]] = []
-    seen_hashes: set[str] = set()
+    by_hash: dict[str, int] = {}
     for paper in analysis_precedents.get("papers") or []:
         receipt = paper.get("fulltext_receipt") if isinstance(paper, Mapping) else None
         if not isinstance(receipt, Mapping) or receipt.get("access_level") not in LEVELS:
             continue
-        # Only a receipt a step could be handed counts: a stored file and its sha256, once per hash (precedent_texts.rows).
+        # Only a receipt a step could be handed counts: a stored file and its sha256; rows with one hash are one paper, whose aliases are joined.
         digest = receipt.get("text_sha256")
         if (not isinstance(receipt.get("text_file"), str) or not receipt["text_file"]
-                or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest) or digest in seen_hashes):
+                or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest)):
             continue
-        seen_hashes.add(digest)
         citations = paper.get("citations")
         aliases: set[str] = set()
         for key in [receipt.get("paper_id"), *(citations if isinstance(citations, list) else [])]:
             aliases |= _stored_aliases(key)
-        if aliases:
-            found.append((aliases, str(receipt["access_level"]), receipt.get("extraction") == "partial_text"))
+        if not aliases:
+            continue
+        if digest in by_hash:  # the same text under another identifier: one paper with all of its names
+            found[by_hash[digest]][0].update(aliases)
+            continue
+        by_hash[digest] = len(found)
+        found.append((aliases, str(receipt["access_level"]), receipt.get("extraction") == "partial_text"))
     return found
 
 
