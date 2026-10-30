@@ -351,3 +351,81 @@ def test_mutation_probe_rejects_unowned_launcher_before_spawn(monkeypatch, tmp_p
                                           tmp_path, tmp_path, {}, "run-a", 0.01)
             assert result == {"status": "unsupported",
                               "reason": "trusted descendant lifecycle ownership unavailable"}
+
+
+@pytest.fixture
+def mock_diagnostic(monkeypatch, tmp_path):
+    """Only protocol responses are simulated; no process or socket is launched."""
+    boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"
+    boundary.write_text("boundary", encoding="ascii")
+    broker.write_text("broker", encoding="ascii")
+    state = {"receipt_run": "run-a", "ready_run": "run-a", "cleanup":
+             "broker_closed_socket_absent; descendants_unverified", "fault": None}
+
+    class Receipt:
+        def to_dict(self):
+            return {"run_id": state["receipt_run"], "preparation": "diagnostic_ready",
+                    "launch": "exited_0", "cleanup": state["cleanup"], "seal_status": "unsealed"}
+
+    class Boundary:
+        @staticmethod
+        def diagnostic_broker_probe(factory, on_ready):
+            if state["fault"] == "observer_death":
+                raise RuntimeError("observer unavailable")
+            if state["fault"] != "missing_ready":
+                on_ready(state["ready_run"], "mock.sock")
+            return Receipt()
+
+    def request(path, obj):
+        if state["fault"] == "broker_death":
+            raise ConnectionError("broker unavailable")
+        if state["fault"] == "timeout":
+            raise TimeoutError("broker timed out")
+        if obj.get("run_id") != state["ready_run"] or "url" in obj or obj.get("body") == "cmVmbGVjdA==":
+            return b'{"error":"request rejected"}\n'
+        return b'{"body":"b2s="}\n'
+
+    class ClosedSocket:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def settimeout(self, value): pass
+        def connect(self, path): raise OSError("closed")
+
+    monkeypatch.setattr(integration_probe, "load", lambda *args: Boundary())
+    monkeypatch.setattr(integration_probe, "request", request)
+    monkeypatch.setattr(integration_probe, "request_raw", lambda *args: b'{"error":"request rejected"}\n')
+    monkeypatch.setattr(integration_probe.socket, "socket", lambda *args: ClosedSocket())
+    monkeypatch.setattr(integration_probe.socket, "AF_UNIX", 1, raising=False)
+    return state, lambda: integration_probe.run(boundary, broker)
+
+
+def test_mock_diagnostic_positive_is_unsealed_only(mock_diagnostic):
+    _, run = mock_diagnostic
+    result = run()
+    assert result["status"] == "pass"
+    assert result["scope"] == "synthetic_unsealed_diagnostic"
+    assert result["protection_verified"] is False
+    assert result["receipt"]["cleanup"] is True  # explicitly descendants_unverified
+
+
+@pytest.mark.parametrize("change", [
+    {"receipt_run": "other-run"}, {"ready_run": "replayed-run"},
+    {"fault": "missing_ready"}, {"fault": "observer_death"},
+    {"fault": "broker_death"}, {"fault": "timeout"},
+    {"cleanup": "residual_descendant"}, {"cleanup": "residual_socket"},
+    {"cleanup": "cleanup_failed"},
+])
+def test_mock_failures_never_establish_protection_or_diagnostic_pass(mock_diagnostic, change):
+    state, run = mock_diagnostic
+    state.update(change)
+    result = run()
+    assert result["status"] == "inconclusive"
+    assert result["protection_verified"] is False
+
+
+@pytest.mark.xfail(strict=True, reason="no authenticated observer evidence input or verifier exists")
+def test_forged_observer_evidence_requires_future_verifier(mock_diagnostic):
+    state, run = mock_diagnostic
+    state["observer_evidence"] = {"run_id": "run-a", "signature": "forged"}
+    # The current diagnostic never consumes this evidence; it cannot reject the forgery.
+    assert run()["status"] == "inconclusive"
