@@ -1,0 +1,5 @@
+rows:
+- sha: '38158a1'
+  at: 2026-10-31 09:10
+  text: runner가 gateway의 ack를 기다리지 않고 받아, 진행 중인 commit 동안 온 ack를 다음 commit 하나로 합친다. 첫 ack는 바로 commit하고 지연은 없으며, 종료·재연결·직접 ack 호출은 durable이 된 뒤에 돌아온다 (#1125 안 D).
+  summary: 느린 디스크에서 runner가 ack마다 저장 확정을 기다리던 횟수가 약 30% 줄고, 이어서 오는 메시지를 읽는 것이 ack 저장에 막히지 않습니다.
