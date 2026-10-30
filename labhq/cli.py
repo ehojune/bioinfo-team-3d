@@ -26,7 +26,7 @@ from . import instance_guard, proc_tree
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
 from .process_diagnostics import SUPERVISOR_SUFFIX
-from .request_status import is_terminal_request, request_display_label, request_status_label
+from .request_status import is_terminal_request, request_deadline_text, request_display_label, request_status_label
 from .settings import Settings
 from .test_guard import guard_test_path
 from .util import atomic_write_text, free_port, short, without_windows_app_aliases
@@ -254,6 +254,16 @@ def task_control(s: Settings, action: str, task_id: str, text: str | None = None
     where = ("" if out.get("sent", True) else " · 러너가 꺼져 있어 다시 연결되면 전달합니다" if action == "halt"
              else " · 같은 단계의 다음 turn에 적용합니다")
     return f"{task_id}: {TASK_CONTROL_DONE[action]}{where}"
+
+
+def _request_deadline_line(s, rid: str) -> str | None:
+    """`시간 상한: …` for one running request (#877), from the request record. None when the record cannot be read:
+    saying nothing is better than saying the limit is off."""
+    try:
+        detail = _api(s, "GET", f"/api/requests/{rid}")
+    except Exception:
+        return None
+    return "시간 상한: " + request_deadline_text(detail, time.time())
 
 
 def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, **kw):
@@ -2173,6 +2183,8 @@ def main(argv: list[str] | None = None) -> None:
             progress = req["step_progress"]
             held = "" if req.get("status") == "running" else f" [{request_display_label(req)}]"
             print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}{held}")
+            if deadline := _request_deadline_line(s, req["id"]):
+                print(f"    {deadline}")
             environment = req.get("step_environment") or {}
             waits = req.get("step_waits") or {}
             for sid, state in progress["steps"].items():

@@ -11,6 +11,7 @@ With `orchestrator.request_wall_clock_s` (seconds) set, the gateway counts the w
 | Counted | From acceptance until the request enters `review_pending`. Tool-card waits in that span count: staff are alive. |
 | Not counted | Time in `waiting_pi` (a PI decision card) is added to the deadline as `held_s`, settled from the real status transitions, so the 15 s watch interval does not decide the amount. Review and publishing after `review_pending`, and `interrupted` requests, are never cut. |
 | Cancel | An active request past `created_at + limit_s + held_s` is cancelled through the existing `cancel_request` with `cancel_reason: request_deadline`. It shows as "cancelled by time limit", and the report says labhq cancelled it at the request time limit, not the PI. |
+| Display | `labhq status` shows one line per running request: `시간 상한: 꺼짐` (off) or `켜짐 N분 · 남은 N분 · PI 대기 제외 N분` (on, time left, PI waiting time not counted). While the request waits for the PI it adds that the clock is stopped. A request accepted before the limit existed also reads off. |
 | Receipt | `deadline_receipt` holds `limit_s`, `held_s`, `deadline_at`, `fired_at`, the tasks cancelled, the tasks that did not report a result, and the termination verdict. |
 
 ## Termination verdict
@@ -25,6 +26,7 @@ With `orchestrator.request_wall_clock_s` (seconds) set, the gateway counts the w
 - If the gateway stops in the middle of a cancel, the next start finishes it in `finish_interrupted_cancels` and writes the receipt.
 
 ## Limits and what is unchecked
+- `deadline_receipt` is attached 2 to 10 s after the status turns `cancelled` (while the cancelled tasks' results are awaited; the report is written at the same point). Automation that reads the receipt right after a cancel must wait for the receipt or `request.completed`, not for `status`.
 - The watch looks every 15 s, so a deadline can be judged up to that late.
 - Cutting a live model call and its child processes at the deadline is checked only by unit tests of task state. It needs a separate isolated-instance check.
 - The external Windows Job owner path (proof c2) is an outer limit apart from this setting; this setting does not replace it.
