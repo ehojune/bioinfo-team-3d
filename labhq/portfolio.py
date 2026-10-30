@@ -1842,6 +1842,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
               ("- 인용: [CITATION.cff](CITATION.cff)" if _request_authors(req)
                else "- 인용 정보 미정(저자 미입력): 요청에 저자가 없어 CITATION.cff를 만들지 않았습니다."),
               "", "## 환경", "", *_environment_lines(published),
+              "", "## 실행 방법", "", *_run_lines(published, run_documents),
               "", "## 결정성", "", _determinism_line(published)]
     lines += ["", "## 읽는 순서", "",
               "1. [과학 보고서](report/report.md) — 논문 형식 보고서와 claim 근거 각주"]
