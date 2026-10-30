@@ -130,6 +130,29 @@ def test_detached_witness_after_slow_launcher(monkeypatch):
     assert result["cases"]["detached_child"]["host_witness"] is True
 
 
+def test_detached_witness_after_slow_launcher_return(monkeypatch):
+    import time
+    run = probe.subprocess.run
+    def delayed(argv, **kwargs):
+        result = run(argv, **kwargs)
+        if "detached_child" in argv:
+            time.sleep(4.5)
+        return result
+    monkeypatch.setattr(probe.subprocess, "run", delayed)
+    assert probe.run([])["cases"]["detached_child"]["host_witness"] is True
+
+
+def test_launcher_environment_excludes_host_secret(monkeypatch):
+    monkeypatch.setenv("BOUNDARY_TEST_SECRET", "private-fixture")
+    seen = []
+    def capture(argv, **kwargs):
+        seen.append(kwargs.get("env", {}))
+        return subprocess.CompletedProcess(argv, 20, stdout=b"")
+    monkeypatch.setattr(probe.subprocess, "run", capture)
+    probe.run([])
+    assert seen and all("BOUNDARY_TEST_SECRET" not in env for env in seen)
+
+
 def test_integration_missing_modules_is_inconclusive(tmp_path):
     result = integration_probe.run(tmp_path / "missing-a.py", tmp_path / "missing-b.py")
     assert result["status"] == "inconclusive"

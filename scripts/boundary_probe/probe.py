@@ -281,6 +281,7 @@ def run(prefix: list[str], python: str = sys.executable, timeout: float = 10,
         work.mkdir()
         outside.mkdir()
         (root / "run-id").write_text(run_id, encoding="ascii")
+        (root / "writer-timeout").write_text(str(max(0, timeout) + 3), encoding="ascii")
         if interop_distro and os.name == "nt":
             (work / "interop.distro").write_text(interop_distro, encoding="utf-8")
         (outside / "secret.txt").write_text("fixture-only", encoding="utf-8")
@@ -307,7 +308,8 @@ def run(prefix: list[str], python: str = sys.executable, timeout: float = 10,
             except OSError:
                 prerequisites[name] = False
         script = str(Path(__file__).resolve())
-        env = os.environ.copy()
+        env = {key: os.environ[key] for key in ("PATH", "SYSTEMROOT", "WINDIR") if key in os.environ}
+        env.update(HOME=str(work), USERPROFILE=str(work), TEMP=str(work), TMP=str(work))
         env["BOUNDARY_PROBE_CANARY"] = "fixture-only"
         implemented = {"allowed", "read", "write", "symlink", "hardlink", "env", "socket", "fd"}
         for case in CASES:
@@ -427,7 +429,7 @@ def main() -> int:
         run_id = (root / "run-id").read_text(encoding="ascii")
         (work / "detached.pid").write_text(str(os.getpid()), encoding="ascii")
         (work / "detached.ready").write_text(run_id, encoding="ascii")
-        deadline = time.monotonic() + 4
+        deadline = time.monotonic() + float((root / "writer-timeout").read_text(encoding="ascii"))
         trigger = work / "detached.trigger"
         while not trigger.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
