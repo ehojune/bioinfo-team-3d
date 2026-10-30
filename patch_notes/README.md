@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:55 | [`0df266b`](https://github.com/ehojune/bioinfo-team-3d/pull/1069/commits/0df266b) | **논문 번호만 고정하고 재사용한 단계가 있으면, 사용자가 읽는 최종 보고서 본문에도 내용은 확인하지 않았다는 한 줄을 남깁니다.**<br>fix: 최종 보고서 본문에도 "내용 미확인" 한 줄을 남김 (#1061 후속 리뷰 P1) |
+| 17:45 | [`3a744f6`](https://github.com/ehojune/bioinfo-team-3d/pull/1069/commits/3a744f6) | **매뉴얼의 이어 가기 설명이 카드와 보고서에 내용 미확인 안내가 나온다는 현재 동작과 맞도록 고쳤습니다.**<br>docs: manual 한·영의 이어 가기 절을 카드·보고서 "내용 미확인" 표시에 맞춤 (#1061) |
+| 17:43 | [`ff736ba`](https://github.com/ehojune/bioinfo-team-3d/pull/1069/commits/ff736ba) | **카드 요약이 길어져도 내용을 확인하지 않았다는 안내가 잘리지 않게 예산 줄처럼 끝에 붙여 두었습니다.**<br>fix: 내용 미확인 표시를 카드 절단 밖에 보존 (#1061 후속 리뷰 P2) |
+| 17:32 | [`69b466d`](https://github.com/ehojune/bioinfo-team-3d/pull/1069/commits/69b466d) | **논문 번호(DOI·PMID)만 고정하고 재사용한 단계가 있으면, 이어 가기 카드와 보고서에 내용은 확인하지 않았다고 한 줄 알려 줍니다.**<br>feat: 식별자만 고정한 DOI·PMID 참조로 단계를 재사용할 때 이어 가기 카드와 보고서에 "내용 미확인"을 표시 (#1061) |
 | 17:16 | [`4e03bdb`](https://github.com/ehojune/bioinfo-team-3d/pull/1067/commits/4e03bdb) | **안내문의 이전 판본과 비교하는 시험이 이번에 더한 규칙 한 줄을 제외하고 비교하도록 고쳤습니다.**<br>test: 고정 hash 시험이 계획 prompt의 새 claim_ids 규칙을 빼고 비교 (#1066) |
 | 17:15 | [`daa8332`](https://github.com/ehojune/bioinfo-team-3d/pull/1067/commits/daa8332) | **연구 계획 안내문의 새 규칙을 이름 있는 상수로 분리했습니다(고정 hash 시험이 추가분을 따로 뺄 수 있게).**<br>refactor: 계획 prompt의 claim_ids 규칙을 이름 있는 상수로 둠 (#1066) |
 | 16:59 | [`7ca2761`](https://github.com/ehojune/bioinfo-team-3d/pull/1067/commits/7ca2761) | **연구 단계가 계획에 없던 주장을 새로 만들어 실패하던 문제를, 결과 교정·단계·계획 안내문에 허용된 주장 목록을 밝혀 막았습니다.**<br>fix: 결과 교정·단계 prompt·계획 prompt가 단계 claim_ids 밖 claim을 만들지 말라고 명시 (#1066) |
