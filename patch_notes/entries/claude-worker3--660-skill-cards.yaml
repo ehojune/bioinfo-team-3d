@@ -16,3 +16,7 @@ rows:
   at: 2026-10-31 09:30
   text: manual 한·영의 labhq talent 절에 스킬 폴더에서 읽은 사실(이름·본문 파일 크기와 보관 위치·그림·표 수), 만든 요청과 날짜(읽기 전용 store, 못 읽으면 파일 시각과 이유), 링크 비추적, 빌드 미완료 줄을 적는다(리뷰 P1)
   summary: 설명서가 labhq talent의 새 출력과 읽는 방법을 한국어와 영어로 설명합니다.
+- sha: '03bc4f2'
+  at: 2026-10-31 11:20
+  text: SKILL.md 읽기를 builtin open(path, 'rb')로 바꿔 인코딩 검사(test_text_encoding)를 통과시키고, 링크 검사를 os.lstat의 reparse point 속성으로 바꿔 os.path.isjunction이 없는 Python 3.10·3.11 Windows에서도 junction을 따라가지 않게 한다(리뷰 P2) + 시험
+  summary: Windows의 어느 Python 버전에서도 링크로 바뀐 스킬 폴더 밖의 파일을 읽지 않습니다.
