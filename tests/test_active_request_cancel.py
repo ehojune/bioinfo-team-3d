@@ -117,8 +117,21 @@ class RequestDeadline(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         from unittest import mock
 
+        import time as real_time
+
         self.now = [self.CREATED]
-        patcher = mock.patch("labhq.gateway.server.time.time", side_effect=lambda: self.now[0])
+        now = self.now
+
+        class FrozenTime:
+            """The clock the gateway module sees. Only its own `time` name is replaced: patching `time.time` itself
+            would change the clock of every other thread and test in the process while this test runs."""
+            def time(self):
+                return now[0]
+
+            def __getattr__(self, name):
+                return getattr(real_time, name)
+
+        patcher = mock.patch("labhq.gateway.server.time", FrozenTime())
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -141,6 +154,7 @@ class RequestDeadline(unittest.IsolatedAsyncioTestCase):
             pass
 
         hub.publish = publish
+        self.addCleanup(hub.store.close)  # a Hub that is not closed leaves its writer thread running
         return hub
 
     def open_request(self, hub, status="running", **extra):
@@ -324,6 +338,92 @@ class RequestDeadline(unittest.IsolatedAsyncioTestCase):
         for bad in (30, -1, 8 * 86400):
             with self.assertRaises(ValidationError):
                 OrchestratorSettings(request_wall_clock_s=bad)
+
+
+# ---- #877: the user can see the limit in `labhq status` ----
+class RequestDeadlineVisible(unittest.TestCase):
+    CREATED = 1000.0
+
+    def request(self, status="running", **clock):
+        return {"id": "r", "status": status, "created_at": self.CREATED,
+                "wall_clock": {"enabled": True, "limit_s": 5400, "held_s": 0.0, **clock}}
+
+    def test_a_request_without_a_limit_reads_off(self):
+        from labhq.request_status import request_deadline_text
+
+        self.assertEqual(request_deadline_text({"id": "r", "created_at": self.CREATED}, self.CREATED + 10), "꺼짐")
+        self.assertEqual(request_deadline_text({"wall_clock": {"enabled": False, "limit_s": 0}}, 5.0), "꺼짐")
+        self.assertEqual(request_deadline_text({"wall_clock": "x"}, 5.0), "꺼짐")
+
+    def test_a_limit_shows_the_minutes_left(self):
+        from labhq.request_status import request_deadline_text
+
+        text = request_deadline_text(self.request(), self.CREATED + 1800)
+        self.assertEqual(text, "켜짐 90분 · 남은 60분")
+        self.assertNotIn("PI 대기", text)
+        self.assertEqual(request_deadline_text(self.request(limit_s=100), self.CREATED + 40), "켜짐 100초 · 남은 60초")
+
+    def test_the_pi_waiting_time_that_is_not_counted_is_shown_and_extends_the_time_left(self):
+        from labhq.request_status import request_deadline_text
+
+        text = request_deadline_text(self.request(held_s=600.0), self.CREATED + 1800)
+        self.assertEqual(text, "켜짐 90분 · 남은 70분 · PI 대기 제외 10분")
+
+    def test_a_request_waiting_for_the_pi_has_a_stopped_clock(self):
+        from labhq.request_status import request_deadline_text
+
+        waiting = self.request(status="waiting_pi", held_s=60.0, pi_since=self.CREATED + 1000)
+        earlier = request_deadline_text(waiting, self.CREATED + 1300)
+        later = request_deadline_text(waiting, self.CREATED + 2500)
+        self.assertIn("남은 74분", earlier)  # 5400 s + 60 s held + the open wait, minus the time passed
+        self.assertIn("남은 74분", later)  # still the same however long the PI takes
+        self.assertIn("PI 대기 제외", later)
+        self.assertIn("시간이 가지 않습니다", later)
+
+    def test_a_past_deadline_says_so(self):
+        from labhq.request_status import request_deadline_text
+
+        self.assertIn("기한이 지났습니다", request_deadline_text(self.request(), self.CREATED + 5401))
+
+    def test_status_prints_the_line_from_the_request_record_and_stays_silent_when_it_cannot_read_it(self):
+        from unittest import mock
+
+        from labhq import cli
+
+        detail = self.request(held_s=0.0)
+        with mock.patch.object(cli, "_api", return_value=detail) as api, \
+                mock.patch.object(cli.time, "time", return_value=self.CREATED + 60):
+            self.assertEqual(cli._request_deadline_line(object(), "r"), "시간 상한: 켜짐 90분 · 남은 89분")
+        self.assertEqual(api.call_args.args[1:], ("GET", "/api/requests/r"))
+        with mock.patch.object(cli, "_api", side_effect=RuntimeError("down")):
+            self.assertIsNone(cli._request_deadline_line(object(), "r"))
+        # `_api` ends the whole command with SystemExit on an HTTP or connection error, and a gateway or a test
+        # double may answer with a list: neither may stop `labhq status`.
+        with mock.patch.object(cli, "_api", side_effect=SystemExit(2)):
+            self.assertIsNone(cli._request_deadline_line(object(), "r"))
+        with mock.patch.object(cli, "_api", return_value=[]):
+            self.assertIsNone(cli._request_deadline_line(object(), "r"))
+
+    def test_one_unknown_request_is_skipped_but_a_silent_gateway_is_asked_only_once(self):
+        from unittest import mock
+
+        import httpx
+
+        from labhq import cli
+
+        gone = httpx.HTTPStatusError("gone", request=httpx.Request("GET", "http://x"), response=httpx.Response(404))
+        with mock.patch.object(cli, "_api", side_effect=[gone, self.request(), self.request()]) as api:
+            state = {}
+            self.assertIsNone(cli._request_deadline_line(object(), "a", state))
+            self.assertIn("시간 상한:", cli._request_deadline_line(object(), "b", state))
+            self.assertFalse(state.get("down"))
+            self.assertEqual(api.call_count, 2, "an HTTP error is that request's own: the next one is still asked")
+        with mock.patch.object(cli, "_api", side_effect=httpx.ConnectTimeout("silent")) as api:
+            state = {}
+            for rid in ("a", "b", "c"):
+                self.assertIsNone(cli._request_deadline_line(object(), rid, state))
+            self.assertTrue(state["down"])
+            self.assertEqual(api.call_count, 1, "after a connection failure the other requests are not asked")
 
 
 if __name__ == "__main__":

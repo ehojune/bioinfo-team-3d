@@ -1021,7 +1021,7 @@ Claude Bash sandbox 정책 계약(#666)은 capability가 꺼져 있고 launcher�
 
 | 경계 | 전역 기본값과 실제 동작 |
 |---|---|
-| 작업 시간 | `runner.task_timeout_s`: CLI 호출당 6시간. 요청 전체 wall time 상한은 별도 실행 계약이 필요합니다. 재개한 새 호출의 시간 제한과 요청의 원래 기한을 구분합니다. |
+| 작업 시간 | `runner.task_timeout_s`: CLI 호출당 6시간. 요청 전체 시간 상한은 `orchestrator.request_wall_clock_s`(초, 기본 0=끔, 켜려면 60 이상)로 켭니다. 요청을 받을 때 고정하고, 기한이 지난 진행 중 요청을 gateway가 취소하며 `waiting_pi`(PI 결정 대기) 시간은 기한에 더하고 보고서 검토 이후는 끊지 않습니다. 켜면 `labhq status`가 진행 중인 요청마다 `시간 상한: 꺼짐` 또는 `시간 상한: 켜짐 90분 · 남은 N분 · PI 대기 제외 N분`을 한 줄로 보이고, 대기 중에는 시계가 가지 않는다고 덧붙입니다. 세부는 [요청 전체 시간 상한](reference/request-deadline.md)입니다. 재개한 새 호출의 시간 제한과 요청의 원래 기한을 구분합니다. |
 | 비용 | `policy.budget.per_task_usd=5`, `per_request_usd=30`. 요청의 `budget_usd`가 있으면 그 값을 씁니다. 사전 예약은 `reserve_before_dispatch=false`가 기본이며, 비용 모름을 무료로 보지 않습니다. |
 | HTTP 조회 | `annot.request_lookup_limit=null`: 기본 횟수 제한 없음. 설정하면 내장 annot·live 출처 검사가 같은 요청 원장을 쓰고 runner 재시작 뒤에도 이어 셉니다. 직원 직접 HTTP·타사 MCP 전체의 상한은 아닙니다. |
 | 실패 | 일시적 실패는 `orchestrator.step_max_attempts=2`까지 시도합니다. 요청 전체가 실패 2회에 중단되는 전역 규칙은 없습니다. |
