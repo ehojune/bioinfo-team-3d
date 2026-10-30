@@ -559,3 +559,37 @@ def test_reproduce_without_missing_scripts_is_left_as_it_was():
 
     assert "공개본과 실행본의 차이" not in rewritten and "정리본만으로는" not in rewritten
     assert "### 공개 자료로 다시 만들 수 있는 것\n\n- s1\n" in rewritten
+
+
+def test_a_step_with_a_script_left_out_is_not_listed_as_re_creatable():
+    """Review P1: one published and one withheld script make the step partly published."""
+    from labhq.portfolio import _rewrite_reproduce_commands
+
+    text = REPRODUCE_TEXT.replace(
+        "- `cd steps/s3 && python outputs/scripts/qc_recheck.py`",
+        "- `cd steps/s1 && python outputs/scripts/extra_check.py`")
+    source_targets = {"steps/s1/outputs/scripts/count.py": "code/s1/outputs/scripts/count.py"}
+    files = {"code/s1/outputs/scripts/count.py": "print('self contained')\n"}
+    rewritten = _rewrite_reproduce_commands(text, source_targets, files)
+    assert "- `s1`: `extra_check.py`" in rewritten
+    assert "### 공개 자료로 다시 만들 수 있는 것\n\n- 없음\n" in rewritten
+    assert "s1" in rewritten.split("### 정리본만으로는")[1]
+
+
+@pytest.mark.parametrize("code", [
+    "rows = Path('inputs') / 's1' / 'table.tsv'\n",
+    "rows = os.path.join('inputs', step, 'table.tsv')\n",
+    'path = "inputs/s1/table.tsv"\n',
+    "# shell: cat inputs/s1/table.tsv\n",
+    "meta = json.load(open('manifest.json'))\n",
+])
+def test_composed_workspace_input_paths_are_detected(code):
+    from labhq.portfolio import _WORKSPACE_INPUT
+
+    assert _WORKSPACE_INPUT.search(code)
+
+
+def test_a_script_without_workspace_paths_is_not_flagged():
+    from labhq.portfolio import _WORKSPACE_INPUT
+
+    assert not _WORKSPACE_INPUT.search("import pandas as pd\nframe = pd.read_csv(sys.argv[1])\nprint(len(frame))\n")

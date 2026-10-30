@@ -253,7 +253,9 @@ def _step_execution_path(source: str, target: str) -> tuple[str, str, str] | Non
 
 
 # A published script that reads these still needs the request bundle's workspace: neither is part of the edition (#792).
-_WORKSPACE_INPUT = re.compile(r"""["']inputs/[A-Za-z0-9_.-]+/|""" + r"""\bmanifest""" + r"""\.json\b""")
+# `Path("inputs") / "s1"`, `os.path.join("inputs", step)` and a shell path `inputs/s1/x` all count; so does the bare
+# word in quotes, which can over-match and then errs toward "needs the workspace".
+_WORKSPACE_INPUT = re.compile(r"""["']inputs["'/]|(?<![\w.])inputs/|""" + r"""\bmanifest""" + r"""\.json\b""")
 _BUNDLE_COMMAND = re.compile(r"^- `cd steps/([^ `]+) && [^`]*?([^/ `]+)`$")
 
 
@@ -278,7 +280,8 @@ def _published_scope(text: str, folders: Mapping[str, str], needs_workspace: Map
 
     listed = re.search(r"(?m)^### 공개 자료로 다시 만들 수 있는 것\n\n- (.*)$", text)
     claimed = [name.strip() for name in listed.group(1).split(",")] if listed and listed.group(1) != "없음" else []
-    runnable = [step for step in claimed if step in folders and step not in needs_workspace]
+    # A step with a script that was left out is only partly published: it cannot be re-created from the edition alone.
+    runnable = [step for step in claimed if step in folders and step not in needs_workspace and step not in withheld]
     blocked = [step for step in claimed if step not in runnable]
     if not (withheld or needs_workspace or blocked):
         return text
