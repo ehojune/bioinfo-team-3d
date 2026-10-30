@@ -19,6 +19,9 @@ from . import annot_regulatory as reg
 MAX_SAVED_ROWS = 1000
 MAX_TOP = 100
 MAX_ALLELE = 1000
+# Part of the cache key. 2: the window is centered on the REF span (#621); scores cached with the older, lopsided window
+# of a many-base REF are not reused.
+SCORE_SCHEMA = 2
 MAX_SCORERS = 20
 LARGE_QUANTILE = 0.99  # display convention, not a clinical or significance cutoff
 SOURCE = {
@@ -183,7 +186,7 @@ async def score_variants(annotator: reg.RegulatoryAnnotator, variants: object, *
     release = f"AlphaGenome v1 / ALL_FOLDS / SDK {source['sdk_version']}"
     options = {"assembly": assembly, "sequence_length": sequence_length, "ontology_terms": terms,
                "tissues": tissue_names, "provenance": source, "saved_rows_limit": MAX_SAVED_ROWS,
-               "score_schema": 1}
+               "score_schema": SCORE_SCHEMA}
     annotator._from_cache("alphagenome_variant", release, options, items)
     done: dict[str, Any] = {}
     stopped = False

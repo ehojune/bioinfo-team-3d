@@ -218,6 +218,20 @@ def test_doctor_without_optional_sdk(tmp_path, monkeypatch):
     assert result["status"] == "warn" and "labhq[alphagenome]" in str(result)
 
 
+async def test_scores_cached_with_the_old_window_are_not_reused(tmp_path, monkeypatch):
+    # #621 review: a many-base REF cached under the lopsided window must be scored again under the new one.
+    from labhq.tools import annot_alphagenome as ag
+
+    a, _, calls, _ = setup(tmp_path)
+    await a.alphagenome_variant(["chr1:1000000:AC>A"])
+    await a.alphagenome_variant(["chr1:1000000:AC>A"])
+    assert len(calls) == 1                                    # same schema: served from the cache
+    assert ag.SCORE_SCHEMA >= 2
+    monkeypatch.setattr(ag, "SCORE_SCHEMA", 1)                # what an older install wrote under
+    await a.alphagenome_variant(["chr1:1000000:AC>A"])
+    assert len(calls) == 2                                    # a different schema is a different cache entry
+
+
 async def test_the_window_is_centered_on_the_ref_span_and_a_one_base_ref_is_unchanged(tmp_path):
     # #621: a many-base REF (a deletion) is centered in its window; a one-base REF keeps the old start.
     a, _, calls, _ = setup(tmp_path)
