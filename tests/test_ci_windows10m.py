@@ -246,6 +246,7 @@ def node_wrapper(run, *, required_browser=False, clock=lambda: 1000.0, monotonic
     namespace = dict(Path=Path, __file__=str(s.ROOT/'tests/test_web_3d.py'), pytest=pytest,
                      re=__import__('re'), os=SimpleNamespace(environ={'LABHQ_REQUIRE_RESIZABLE_BROWSER': '1'} if required_browser else {}),
                      shutil=SimpleNamespace(which=lambda name: 'fake-node'), sys=SimpleNamespace(executable='fake-python'),
+                     node_binary=lambda: 'fake-node', node_env=lambda node, env=None: dict(env or {}),
                      time=SimpleNamespace(time=clock, monotonic=monotonic), json=json,
                      subprocess=SimpleNamespace(run=run, TimeoutExpired=subprocess.TimeoutExpired))
     exec(compile(ast.Module(body=[function], type_ignores=[]), '<fake-node-wrapper>', 'exec'), namespace)
