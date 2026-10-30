@@ -241,3 +241,56 @@ def test_an_unobserved_task_never_produces_a_tier_mismatch_warning():
     lost = {**ran, "task_id": "b", "status": "unknown", "usd": None, "reason": "outcome_unknown"}
     assert aggregate_costs({"b": lost}, tiers)["warnings"] == []
     assert aggregate_costs({"a": ran}, tiers)["warnings"] == ["model_tier_mismatch:lit_scout:fast:claude-opus-5-5"]
+
+
+def test_a_step_run_on_its_own_tier_is_recorded_at_that_tier_so_a_deliberate_lowering_is_not_a_mismatch():
+    from labhq.costs import task_cost_item
+    from labhq.settings import Settings
+
+    tiers = Settings.model_validate({"model_tiers": {"fast": {"claude_code": "haiku"},
+                                                     "reasoning": {"claude_code": "opus"}}}).model_tiers
+    agent = {"id": "analyst", "engine": "claude_code", "model": "claude-haiku-5-5", "model_tier": "reasoning"}
+    result = {"task_id": "t1", "agent_id": "analyst", "usage": {}, "cost_usd": 1.0, "cost_known": True}
+    plain = task_cost_item(result, agent)
+    assert plain["model_tier"] == "reasoning"                                        # as declared
+    lowered = task_cost_item(result, agent, model_tier="fast")
+    assert lowered["model_tier"] == "fast"
+    assert aggregate_costs({"a": plain}, tiers)["warnings"] == ["model_tier_mismatch:analyst:reasoning:claude-haiku-5-5"]
+    assert aggregate_costs({"a": lowered}, tiers)["warnings"] == []                   # the plan asked for it
+
+
+def _tiered_task(hub, tid, tier):
+    hub.store.put("task", tid, {"request_id": "r", "step_id": "s1", "payload": {"meta": {
+        "kind": "step", **({"model_tier": tier} if tier else {})}}})
+
+
+def test_gateway_records_the_dispatched_step_tier_so_a_lowered_step_is_not_a_mismatch(tmp_path, monkeypatch):
+    hub = _tier_hub(tmp_path, monkeypatch, {"fast": {"claude_code": "haiku"}, "reasoning": {"claude_code": "opus"}})
+    try:
+        hub.agents["lit_scout"]["model_tier"] = "reasoning"          # declared reasoning, ran the opus-class model
+        hub.agents["lit_scout"]["model"] = "claude-haiku-5-5"
+        _tiered_task(hub, "lowered", "fast")
+        _tiered_task(hub, "plain", None)
+        hub._record_task_cost("r", "lowered", _scout_result("lowered"))
+        assert hub.requests["r"]["cost_items"]["lowered"]["model_tier"] == "fast"
+        assert hub.requests["r"]["cost_summary"]["warnings"] == []             # the plan asked for it
+        hub._record_task_cost("r", "plain", _scout_result("plain"))
+        assert hub.requests["r"]["cost_items"]["plain"]["model_tier"] == "reasoning"
+        assert hub.requests["r"]["cost_summary"]["warnings"] == [
+            "model_tier_mismatch:lit_scout:reasoning:claude-haiku-5-5"]       # a lowering nobody asked for still shows
+        _tiered_task(hub, "odd", "turbo")                                      # a value that is not a tier is ignored
+        hub._record_task_cost("r", "odd", _scout_result("odd"))
+        assert hub.requests["r"]["cost_items"]["odd"]["model_tier"] == "reasoning"
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_the_async_recorder_keeps_the_dispatched_step_tier_too(tmp_path, monkeypatch):
+    hub = _tier_hub(tmp_path, monkeypatch, {"fast": {"claude_code": "haiku"}})
+    try:
+        _tiered_task(hub, "t3", "fast")
+        await hub._arecord_task_cost("r", "t3", _scout_result("t3"))
+        assert hub.requests["r"]["cost_items"]["t3"]["model_tier"] == "fast"
+    finally:
+        hub.store.close()

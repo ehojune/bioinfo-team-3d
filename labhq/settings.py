@@ -474,6 +474,10 @@ class OrchestratorSettings(BaseModel):
     # runs while staff work; time in waiting_pi (PI cards) is added to the deadline, and a request in review_pending
     # or later is never cut. A value below one minute is a typo (minutes written as seconds), so it is refused.
     request_wall_clock_s: int = Field(default=0, ge=0, le=7 * 86400)
+    # A plan step may carry its own ``model_tier`` (#625, step 2): carried, capped by the staff member's declared tier
+    # and run on that tier's model. Off by default; off drops the field everywhere and changes nothing, so plan
+    # hashes and prompts stay what they were. The CSO is not yet told it may choose one (that is a later step).
+    step_model_tiers: bool = False
 
     @field_validator("request_wall_clock_s")
     @classmethod

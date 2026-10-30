@@ -17,6 +17,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from .. import output_checks
@@ -2293,19 +2294,52 @@ def _normalize_plan_outputs(plan: Any) -> tuple[Any, list[str]]:
     return normalized, warnings
 
 
+MODEL_TIER_ORDER = ("fast", "balanced", "reasoning")
+# A step that checks or reports never runs below this tier (#625): its output is what the PI reads and trusts.
+MODEL_TIER_FLOOR = {"validation": "balanced", "report": "balanced"}
+
+
+def clamp_step_tier(sid: str, requested: Any, declared: Any, phase: Any = None) -> tuple[str | None, str | None]:
+    """The tier a step really runs on, and a warning when the request was changed or dropped (#625).
+
+    A step may only be lowered from its staff member's declared tier, never raised. A phase with a floor
+    (validation, report) cannot go below it. A staff member with no declared tier takes no step tier, and a floor
+    above the declared tier leaves the step on its own. Returns (tier or None, warning or None); None means "run as
+    declared" and the field is left out."""
+    if requested not in MODEL_TIER_ORDER:
+        return None, f"step {sid}: model_tier {requested!r} is not fast, balanced or reasoning; ignored"
+    if declared not in MODEL_TIER_ORDER:
+        return None, f"step {sid}: model_tier {requested} ignored: its staff member declares no model tier"
+    ceiling = MODEL_TIER_ORDER.index(declared)
+    chosen = min(MODEL_TIER_ORDER.index(requested), ceiling)
+    floor = MODEL_TIER_ORDER.index(MODEL_TIER_FLOOR[phase]) if phase in MODEL_TIER_FLOOR else 0
+    if floor > ceiling:
+        return None, f"step {sid}: model_tier {requested} ignored: a {phase} step cannot go below {MODEL_TIER_FLOOR[phase]}, above its staff member's {declared}"
+    chosen = max(chosen, floor)
+    tier = MODEL_TIER_ORDER[chosen]
+    note = None if tier == requested else (
+        f"step {sid}: model_tier {requested} changed to {tier} (staff member declares {declared}"
+        + (f", {phase} steps stay at {MODEL_TIER_FLOOR[phase]} or above" if phase in MODEL_TIER_FLOOR else "") + ")")
+    return (None if tier == declared else tier), note
+
+
 def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                    excluded: frozenset[str] | set[str] = ORCHESTRATION_ROLES, *,
                    vocab: output_vocab.Vocab | None = None, stats: dict | None = None,
                    reject_excess: bool = False,
                    stored_environment: bool = False,
-                   guard: Callable[[list[dict]], list[str]] | None = None) -> tuple[list[dict], list[str]]:
+                   guard: Callable[[list[dict]], list[str]] | None = None,
+                   tier_rules: Mapping[str, Any] | None = None) -> tuple[list[dict], list[str]]:
     """Steps ready to dispatch, plus warnings. With ``vocab`` (plan.declare_output_types on), each step's
     ``output_types`` is normalized against its final outputs and per-request counts go into ``stats``; without it,
     any ``output_types`` the CSO sent is dropped and the steps are exactly what they were before #221.
 
     A fresh CSO plan is cut to ``max_steps``. A stored plan passes ``reject_excess``: cutting it would drop steps
     the request already promised, so a plan over the limit raises instead (#282). ``guard`` names steps the
-    roster may not take as planned (contract staff that send data out on restricted inputs, #424)."""
+    roster may not take as planned (contract staff that send data out on restricted inputs, #424).
+
+    ``tier_rules`` (#625, orchestrator.step_model_tiers on) is ``{"agents": {staff id: declared tier}}``: a step's
+    ``model_tier`` is kept only as clamp_step_tier allows. Without it the field is dropped, exactly as before."""
     # Scheduler-made runner environment clones are not counted against the limit (#674).
     extra = scheduler_clone_extra(raw) if stored_environment else 0
     if reject_excess and len(raw) > max_steps + extra:
@@ -2333,6 +2367,13 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                          if "key_figures" in s else {}),
                       **({key: copy.deepcopy(s[key]) for key in ("environment_binding", "environment_bindings")
                           if key in s} if stored_environment else {})})
+        if tier_rules is not None and s.get("model_tier") is not None:
+            tier, note = clamp_step_tier(sid, s.get("model_tier"), (tier_rules.get("agents") or {}).get(steps[-1]["agent_id"]),
+                                         s.get("phase"))
+            if tier:
+                steps[-1]["model_tier"] = tier
+            if note:
+                warnings.append(note)
         raw_types[sid] = s.get("output_types")
     problems = []
     for s in steps:
@@ -3210,6 +3251,26 @@ class Orchestrator:
         """The request text and folders every step of it reads, for the restricted-input rule (#424)."""
         req = self.hub.requests.get(rid) or {}
         return [str(req.get("text") or "")], [*(req.get("project_dirs") or []), *reference_dirs(req.get("references"))]
+
+    def _tier_rules(self) -> dict[str, Any] | None:
+        """What validate_steps needs to keep a step's model_tier (#625): None while orchestrator.step_model_tiers is off."""
+        if not getattr(self.cfg, "step_model_tiers", False):
+            return None
+        return {"agents": {agent_id: (info or {}).get("model_tier")
+                           for agent_id, info in (getattr(self.hub, "agents", None) or {}).items()}}
+
+    def _dispatch_step_tier(self, step: dict) -> str | None:
+        """The tier a step's task is sent with (#625): the one place that decides, whatever plan the step came from.
+
+        A stored research plan resumes with its own step dicts, not the ones validate_steps returned, so the tier is
+        checked again here: nothing while orchestrator.step_model_tiers is off, otherwise clamp_step_tier against the
+        staff member's declared tier and the phase floor."""
+        rules = self._tier_rules()
+        if rules is None or step.get("model_tier") is None:
+            return None
+        tier, _note = clamp_step_tier(str(step.get("id") or ""), step.get("model_tier"),
+                                      rules["agents"].get(step.get("agent_id")), step.get("phase"))
+        return tier
 
     def _external_guard(self, rid: str) -> Callable[[list[dict]], list[str]] | None:
         """validate_steps guard: contract staff that send data out stay off restricted-input steps (#424)."""
@@ -5309,6 +5370,7 @@ class Orchestrator:
                         resume_session_id=session_id if can_resume else None,
                         meta={**reference_meta(self.hub.requests.get(rid)),
                               "kind": "step", "step_id": step["id"], "request": request,
+                              **({"model_tier": tier} if (tier := self._dispatch_step_tier(step)) else {}),
                               "paper_skills": paper_skills.attachments(
                                   self.hub.requests.get(rid, {}).get("plan") or {}, step["id"], step["agent_id"], rid),
                               "instruction": step["instruction"],
@@ -7113,7 +7175,7 @@ class Orchestrator:
                 research_limit = (len(req["plan"].get("branches") or []) * self.cfg.max_branch_steps + 3
                                   if req["plan"].get("branches") else self.cfg.max_steps)
                 validate_steps(req["plan"]["steps"], known, research_limit, orchestration,
-                               guard=self._external_guard(rid))
+                               guard=self._external_guard(rid), tier_rules=self._tier_rules())
                 await persist_request(self.hub, rid)
 
             if resume and not continuation and req.get("plan", {}).get("steps"):
@@ -7183,7 +7245,8 @@ class Orchestrator:
                                                      reject_excess=True,
                                                      stored_environment=any(
                                                          "environment_binding" in s or "environment_bindings" in s
-                                                         for s in req["plan"]["steps"]))
+                                                         for s in req["plan"]["steps"]),
+                                                     tier_rules=self._tier_rules())
                     req["plan"] = {**req["plan"], "steps": steps,
                                    "warnings": [*(req["plan"].get("warnings") or []), *warnings]}
                     if vocab is not None:
@@ -7668,7 +7731,8 @@ class Orchestrator:
                                 raise PlanAgentError("; ".join(recruit_errors))
                             steps, step_warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
                                                                   orchestration, vocab=vocab, stats=type_stats,
-                                                                  guard=self._external_guard(rid))
+                                                                  guard=self._external_guard(rid),
+                                                                  tier_rules=self._tier_rules())
                             precedent_state = req.get("analysis_precedents") or {}
                             warnings = list(dict.fromkeys([
                                 *(plan.get("warnings") or []), *step_warnings,
@@ -7745,7 +7809,8 @@ class Orchestrator:
                     else:
                         steps, _ = validate_steps(steps, known, self.cfg.max_steps, orchestration,
                                                   vocab=self._output_vocab(), reject_excess=True,
-                                                  stored_environment=True, guard=self._external_guard(rid))
+                                                  stored_environment=True, guard=self._external_guard(rid),
+                                                  tier_rules=self._tier_rules())
                         req["plan"]["steps"] = steps
                 req["plan"] = await paper_skills.prepare_plan(
                     req["plan"], req.get("analysis_precedents") or {}, roster, rid, self.hub.s,
@@ -7953,7 +8018,8 @@ class Orchestrator:
                                          f"maximum is {self.cfg.max_steps}")
                     type_stats: dict = {}
                     merged, warnings = validate_steps(kept + raw, known, self.cfg.max_steps, orchestration,
-                                                      vocab=vocab, stats=type_stats, guard=self._external_guard(rid))
+                                                      vocab=vocab, stats=type_stats, guard=self._external_guard(rid),
+                                                      tier_rules=self._tier_rules())
                     # A kept step already ran. A dependency inferred from its old instruction on a new step is not
                     # one it ran with, so it keeps the dependencies it had and the inference warning is dropped.
                     for step in merged:

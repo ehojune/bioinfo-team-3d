@@ -2318,6 +2318,10 @@ class Hub:
         task_entry = task_entry or {}
         if task_entry.get("step_id"):
             item["step_id"] = str(task_entry["step_id"])
+        # A step run on its own tier (#625) is recorded at that tier, so a deliberate lowering is not a mismatch.
+        step_tier = ((task_entry.get("payload") or {}).get("meta") or {}).get("model_tier")
+        if step_tier in ("fast", "balanced", "reasoning"):
+            item["model_tier"] = step_tier
         if outcome_unknown:
             # A call the gateway gave up on has no runner provenance: name the engine/model it was dispatched with
             # (a task's own agent_overrides), not the staff member's default (#942).
@@ -2362,6 +2366,9 @@ class Hub:
             task_entry = task_entry or {}
             if task_entry.get("step_id"):
                 item["step_id"] = str(task_entry["step_id"])
+            step_tier = ((task_entry.get("payload") or {}).get("meta") or {}).get("model_tier")  # #625, as above
+            if step_tier in ("fast", "balanced", "reasoning"):
+                item["model_tier"] = step_tier
             if outcome_unknown:
                 # A call the gateway gave up on has no runner provenance: name the engine/model it was dispatched with
                 # (a task's own agent_overrides), not the staff member's default (#942).
