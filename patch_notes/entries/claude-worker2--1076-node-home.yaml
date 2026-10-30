@@ -1,0 +1,9 @@
+rows:
+- sha: 'dfeaf8e'
+  at: 2026-10-31 02:40
+  text: node 시험이 실제 node.exe를 먼저 쓰고 shim뿐일 때만 그 하위 프로세스에 운영자의 LOCALAPPDATA를 돌려주게 했다 (#1076).
+  summary: 에이전트 PC에서 시험 73건이 node를 못 찾아 실패하던 것을 고쳤습니다.
+- sha: '70a71c2'
+  at: 2026-10-31 02:55
+  text: Windows 계약 시험의 node_wrapper 이름공간에 새 helper 이름의 stub을 더했다 (#1076).
+  summary: 새 helper를 쓰는 시험 함수가 계약 시험의 가짜 이름공간에서도 실행되게 했습니다.
