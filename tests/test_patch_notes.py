@@ -218,6 +218,15 @@ def test_a_pr_that_changes_product_code_is_still_held_by_the_readme_limit(repo):
     assert any("를 안 고친 커밋이 2개" in problem for problem in pn.check("main", "HEAD", repo))
 
 
+def test_moving_a_product_file_into_an_invisible_path_still_counts(repo):
+    commit(repo, {"labhq/a.py": "product code that a rename keeps byte for byte\n" * 5}, "add product file")
+    last = run(repo, "log", "-1", "--format=%H", "--", "README.md")
+    (repo / "tests").mkdir(exist_ok=True)
+    run(repo, "mv", "labhq/a.py", "tests/a.py")  # git detects this as a rename: only the destination is "tests/"
+    run(repo, "commit", "-q", "-m", "move product file into tests")
+    assert pn.counted_main_commits(last, "main", repo) == 2  # the add and the move both change what a user sees
+
+
 def test_a_commit_mixing_product_code_with_tests_still_counts(repo):
     last = run(repo, "log", "-1", "--format=%H", "--", "README.md")
     commit(repo, {"labhq/a.py": "1\n", "tests/test_a.py": "1\n"}, "product and test")

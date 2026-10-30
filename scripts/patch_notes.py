@@ -69,7 +69,7 @@ def merge_own_changes(sha: str, parents: list[str], cwd: Path | None = None) -> 
 
 
 def changed_files(sha: str, cwd: Path | None = None) -> set[str]:
-    out = git("diff-tree", "--cc", "--no-commit-id", "--name-only", "-r", "--root", sha, cwd=cwd)
+    out = git("diff-tree", "--cc", "--no-renames", "--no-commit-id", "--name-only", "-r", "--root", sha, cwd=cwd)
     return set(out.splitlines()) if out else set()
 
 
@@ -77,7 +77,7 @@ def changed_from_parent(sha: str, cwd: Path | None = None) -> set[str]:
     parents = git("rev-list", "--parents", "-n", "1", sha, cwd=cwd).split()[1:]
     if not parents:
         return changed_files(sha, cwd)
-    out = git("diff", "--name-only", parents[0], sha, cwd=cwd)
+    out = git("diff", "--no-renames", "--name-only", parents[0], sha, cwd=cwd)
     return set(out.splitlines()) if out else set()
 
 
