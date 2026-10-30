@@ -12,6 +12,7 @@ import contextlib
 import contextvars
 import copy
 from dataclasses import replace
+import inspect
 import json
 import logging
 import os
@@ -257,6 +258,12 @@ def _should_check_declared_outputs(result: TaskResult) -> bool:
 
 
 ENVIRONMENT_LOCK = "outputs/env/requirements.lock.txt"
+
+
+async def _maybe_await(value: Any) -> None:
+    """`await` for the result of `stage_run` (None) or `aupdate_run` (a coroutine) alike."""
+    if inspect.isawaitable(value):
+        await value
 
 
 def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1853,6 +1860,9 @@ class Runner:
             ws = self.workspaces.get(task.id)
             if ws is not None and task.meta.get("paper_skills"):
                 ws.clear_paper_skills()
+            if ws is not None:  # a step cut short after it staged its record: the record is still written (#1137)
+                with contextlib.suppress(Exception):
+                    await ws.aflush_run(task.id)
 
     async def _disk_gate(self, task: Task, agent: AgentSpec, workspace_dir: Path) -> str | None:
         """Free space of the drive this run's folder is on, when a task starts (#678): None to go on, else why not.
@@ -2359,14 +2369,16 @@ class Runner:
                     output_scan_notes.append(note)
                 return refused
 
-            async def collect_observed_outputs() -> None:
-                """Hash the post-run view off the event loop, before labhq writes RESULT files."""
+            async def collect_observed_outputs(*, stage: bool = True) -> None:
+                """Hash the post-run view off the event loop, before labhq writes RESULT files. The record rides in the
+                step's final write (`stage_run`, #1137); a step that is being cut short writes it now."""
                 nonlocal output_records, observed_outputs
+                record = ws.stage_run if stage else ws.aupdate_run
                 if output_before is None:
                     records, _note = await asyncio.to_thread(
                         ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
                         self.s.runner.reference_scan_max_depth, artifact_hash_limit)
-                    await ws.aupdate_run(task.id, environment_record=environment_record(records))
+                    await _maybe_await(record(task.id, environment_record=environment_record(records)))
                     return
                 output_records, note = await asyncio.to_thread(
                     ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
@@ -2383,9 +2395,9 @@ class Runner:
                     if output_before.get(row["path"]) != output_identity(row)
                 ]
                 incomplete = "; ".join(dict.fromkeys(output_scan_notes)) or None
-                await ws.aupdate_run(task.id, observed_outputs=observed_outputs,
-                                     environment_record=environment_record(output_records),
-                                     **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
+                await _maybe_await(record(task.id, observed_outputs=observed_outputs,
+                                          environment_record=environment_record(output_records),
+                                          **({"observed_outputs_incomplete": incomplete} if incomplete else {})))
 
             engine_settings = claude_deny_private(claude_ask_internal_links(claude_deny_links(claude_read_only(
                 claude_settings(self.s.policy), [d for d in [*read_dirs, *(extra_dirs if read_only else [])]
@@ -2515,7 +2527,7 @@ class Runner:
                         await ws.aupdate_run(task.id, input_files=input_files,
                                              **({"input_files_incomplete": "; ".join(input_notes)}
                                                 if input_notes else {}))
-                        await collect_observed_outputs()
+                        await collect_observed_outputs(stage=False)
                         if watch and watch.baseline is not None:
                             await self._read_only_verdict(TaskResult(task_id=task.id, agent_id=agent.id, ok=False),
                                                           watch, emit, ws, task.id)
@@ -2573,8 +2585,9 @@ class Runner:
         if changed:
             input_notes.append(f"입력 파일 {changed}개가 단계 실행 중에 바뀌었습니다(기록된 hash는 실행 전 내용)")
         input_notes = list(dict.fromkeys([*input_notes, *after_notes]))
-        await ws.aupdate_run(task.id, input_files=input_files,
-                             **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
+        # Staged: the step's final write, right before its result is sent, carries it (#1137).
+        ws.stage_run(task.id, input_files=input_files,
+                     **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
         for note in input_notes:
             await emit("agent.log", {"level": "warn", "text": note})
         declared = task.meta.get("outputs", [])
