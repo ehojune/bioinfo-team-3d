@@ -4,3 +4,7 @@ rows:
   at: 2026-10-31 00:40
   text: model_tiers 표(등급이 엔진마다 뜻하는 모델, 기본 빈 값)를 더하고, 직원 YAML에 model이 없을 때만 러너가 등급으로 모델을 채운다. dry-run에 등급→모델(없으면 모델 미정)을 보이고, 비용 요약은 선언 등급과 실제 모델이 어긋난 직원을 model_tier_mismatch 경고로 남긴다(별칭·정식명 비교 포함)
   summary: 6차처럼 fast·balanced 직원이 알리지 않고 opus로 도는 일을 비용 요약이 알 수 있게 됩니다. 표를 채우지 않으면 지금과 똑같이 동작합니다.
+- sha: 'd67aeaf'
+  at: 2026-10-31 01:10
+  text: gateway의 두 비용 기록 경로(동기·비동기)가 model_tiers 표를 request_cost_summary에 넘기고, 비용 줄(format_warnings)이 선언 등급과 다른 모델로 돈 직원을 보인다. 표가 없으면 이전과 같다
+  summary: 선언한 등급과 다른 모델로 돈 직원이 요청의 비용 줄에 나옵니다.
