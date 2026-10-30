@@ -117,6 +117,19 @@ def test_witnessed_detached_violation_survives_unknown_cleanup(monkeypatch):
     assert result["cases"]["detached_child"]["host_witness"] is True
 
 
+def test_detached_witness_after_slow_launcher(monkeypatch):
+    import time
+    run = probe.subprocess.run
+    def delayed(argv, **kwargs):
+        if "detached_child" in argv:
+            time.sleep(3.2)
+        return run(argv, **kwargs)
+    monkeypatch.setattr(probe.subprocess, "run", delayed)
+    result = probe.run([])
+    assert result["cases"]["detached_child"]["status"] == "fail"
+    assert result["cases"]["detached_child"]["host_witness"] is True
+
+
 def test_integration_missing_modules_is_inconclusive(tmp_path):
     result = integration_probe.run(tmp_path / "missing-a.py", tmp_path / "missing-b.py")
     assert result["status"] == "inconclusive"

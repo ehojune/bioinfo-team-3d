@@ -344,7 +344,6 @@ def run(prefix: list[str], python: str = sys.executable, timeout: float = 10,
                 continue
             if case == "detached_child":
                 try:
-                    started = time.monotonic()
                     proc = subprocess.run([*prefix, python, script, "--child", case, str(root)],
                                           cwd=work, env=env, capture_output=True, timeout=timeout)
                     valid = (proc.returncode == 0 and proc.stdout in
@@ -353,7 +352,7 @@ def run(prefix: list[str], python: str = sys.executable, timeout: float = 10,
                     valid = valid and ready.exists() and ready.read_text(encoding="ascii") == run_id
                     if valid:
                         (work / "detached.trigger").write_text(run_id, encoding="ascii")
-                        deadline = min(time.monotonic() + 2, started + 3)
+                        deadline = time.monotonic() + 2
                         marker = work / "detached.marker"
                         early_exit = False
                         while not marker.exists() and time.monotonic() < deadline:
