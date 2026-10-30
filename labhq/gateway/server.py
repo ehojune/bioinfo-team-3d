@@ -2331,7 +2331,9 @@ class Hub:
         req.setdefault("cost_items", {})[tid] = item
         req["cost_usd"] = float(req.get("cost_usd") or 0) + amount
         req["cost_known"] = req.get("cost_known", True) and item["status"] != "unknown"
-        summary = request_cost_summary(req)
+        # The summary names an agent that ran another model than its declared tier (#625).
+        tiers = getattr(getattr(self, "s", None), "model_tiers", None)
+        summary = request_cost_summary(req, tiers) if tiers is not None else request_cost_summary(req)
         if summary is None:
             req.pop("cost_summary", None)
         else:
@@ -2373,7 +2375,8 @@ class Hub:
             req.setdefault("cost_items", {})[tid] = item
             req["cost_usd"] = float(req.get("cost_usd") or 0) + amount
             req["cost_known"] = req.get("cost_known", True) and item["status"] != "unknown"
-            summary = request_cost_summary(req)
+            tiers = getattr(getattr(self, "s", None), "model_tiers", None)
+            summary = request_cost_summary(req, tiers) if tiers is not None else request_cost_summary(req)
             if summary is None:
                 req.pop("cost_summary", None)
             else:

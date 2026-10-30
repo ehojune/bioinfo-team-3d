@@ -381,11 +381,16 @@ def format_engines(summary: dict, digits: int = 2) -> str:
 
 def format_warnings(summary: dict) -> str:
     """`가격표 오래됨: codex gpt-6.1-sol (2026-10-02 확인)`, or empty."""
+    parts = []
     stale = [p for p in summary.get("prices") or [] if p.get("stale")]
-    if not stale:
-        return ""
-    return "가격표 오래됨: " + ", ".join(f"{p.get('engine')} {p.get('model')} ({p.get('checked_on')} 확인)"
-                                     for p in stale)
+    if stale:
+        parts.append("가격표 오래됨: " + ", ".join(f"{p.get('engine')} {p.get('model')} ({p.get('checked_on')} 확인)"
+                                              for p in stale))
+    mismatched = [w.split(":", 3)[1:] for w in summary.get("warnings") or [] if w.startswith("model_tier_mismatch:")]
+    if mismatched:
+        parts.append("선언 등급과 다른 모델: " + ", ".join(f"{agent}({tier}) → {model}"
+                                                      for agent, tier, model in mismatched))
+    return "; ".join(parts)
 
 
 def cost_detail(summary: dict, digits: int = 2) -> str:
