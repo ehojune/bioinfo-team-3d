@@ -278,6 +278,9 @@ _EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_
 # Flip only when a protected alias or read grant hands the validated runner-local interpreter to consumers.
 ENVIRONMENT_ALIAS_AVAILABLE = False
 
+ACK_DRAIN_S = 5.0  # how long a reconnect waits for the acks it already received to commit (#1125)
+
+
 class Runner:
     # Defaults for a Runner built without __init__ (tests do): no batch open, no ack in flight.
     _batch_thread: threading.Thread | None = None
@@ -439,7 +442,7 @@ class Runner:
                 self._ensure_local_watch()
             await asyncio.gather(*loops)
         finally:
-            await self._ack_drain(raise_error=False)  # acks the gateway already sent are not left in memory
+            await self._ack_drain(raise_error=False, timeout=durable.EXIT_DRAIN_S)  # acks already received are not left
             # Writes queued by the tasks that were just cancelled still finish (#606).
             await durable.adrain(durable.EXIT_DRAIN_S)
 
@@ -469,11 +472,14 @@ class Runner:
                     return
                 await asyncio.sleep(.05)
 
+        deadline = time.monotonic() + timeout_s
         try:
             await asyncio.wait_for(finish(), timeout_s)
         except asyncio.TimeoutError:
             pass  # Durable outbox replay remains the fallback when the gateway cannot acknowledge in time.
-        await self._ack_drain(raise_error=False)  # every ack received so far is committed before this returns
+        # Every ack received so far is committed before this returns, inside the same deadline: an ack that does not
+        # finish in time leaves its rows in the outbox for replay.
+        await self._ack_drain(raise_error=False, timeout=max(0.0, deadline - time.monotonic()))
 
     def _ack_nowait(self, seq: int) -> None:
         """The gateway has stored every outbox row up to `seq`: start deleting them. Nothing waits: the first ack
@@ -496,11 +502,17 @@ class Runner:
         except Exception as exc:  # noqa: BLE001 - raised to the next caller, where the inline commit raised it
             self._ack_error = exc
 
-    async def _ack_drain(self, *, raise_error: bool = True) -> None:
-        """Every ack noted so far is committed. Errors are raised unless the caller is closing down anyway."""
+    async def _ack_drain(self, *, raise_error: bool = True, timeout: float | None = None) -> None:
+        """Every ack noted so far is committed. Errors are raised unless the caller is closing down anyway. With a
+        `timeout` an unfinished commit is left to finish on its own: its rows stay in the durable outbox, are resent,
+        and the gateway dedups them."""
         task = self._ack_task
         if task is not None and not task.done():
-            await asyncio.shield(task)
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout)
+            except asyncio.TimeoutError:
+                log.warning("runner %s: an ack commit is still running; its rows stay in the outbox", self.s.runner.id)
+                return
         if raise_error and self._ack_error is not None:
             error, self._ack_error = self._ack_error, None
             raise error
@@ -674,7 +686,9 @@ class Runner:
                     finally:
                         sender.cancel()
                         self.connected.clear()
-                        await self._ack_drain(raise_error=False)  # a reconnect reloads the outbox from the store
+                        # A reconnect reloads the outbox from the store: commit the acks first, but a stuck commit must
+                        # not hold the reconnect (its rows are resent and deduped).
+                        await self._ack_drain(raise_error=False, timeout=ACK_DRAIN_S)
             except asyncio.CancelledError:
                 raise
             except Exception as e:

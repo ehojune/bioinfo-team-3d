@@ -1820,3 +1820,40 @@ async def test_shutdown_commits_the_acks_it_already_received(tmp_path):
     await runner.shutdown(timeout_s=0.05)
     assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[4]]
     runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stays_inside_its_deadline_when_an_ack_commit_hangs(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 3)
+    hung = asyncio.Event()
+
+    async def hanging_aack(seq):
+        await hung.wait()  # a commit stuck behind a stalled disk
+
+    runner.store.aack = hanging_aack
+    runner._ack_nowait(seqs[1])
+    started = time.monotonic()
+    await asyncio.wait_for(runner.shutdown(timeout_s=0.2), 3)  # returns, as the documented bounded shutdown does
+    assert time.monotonic() - started < 1.5
+    assert len(runner.store.pending()) == 3  # nothing was deleted: the rows stay in the outbox for replay
+    hung.set()
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_drain_with_a_timeout_leaves_the_commit_to_finish_on_its_own(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 3)
+    real_aack = runner.store.aack
+
+    async def slow_aack(seq):
+        await asyncio.sleep(0.3)
+        await real_aack(seq)
+
+    runner.store.aack = slow_aack
+    runner._ack_nowait(seqs[1])
+    started = time.monotonic()
+    await runner._ack_drain(timeout=0.05)
+    assert time.monotonic() - started < 0.25  # gave up waiting, did not cancel the commit
+    await runner._ack_drain()  # the commit is still running and finishes
+    assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[2]]
+    runner.store.close()
