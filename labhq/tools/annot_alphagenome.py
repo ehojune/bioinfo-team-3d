@@ -74,7 +74,9 @@ def _score(backend: reg.AlphaGenomeBackend, query: reg.Query, width: int, module
             raise reg.AlphaGenomeUnavailable("AlphaGenome 연결 실패(키·연결 상태 확인)") from None
         backend._score_model = model
     variant = query.variant
-    start = max(0, variant.pos - 1 - width // 2)
+    # Centered on the middle of the REF span, as AlphaGenome's `reference_interval.resize(width)` is (#621): a deletion of
+    # many bases is not left lopsided in its window. For a one-base REF the middle is the variant's own base, as before.
+    start = max(0, (query.start0 + query.end) // 2 - width // 2)
     interval = genome.Interval(chromosome=query.chrom, start=start, end=start + width)
     allele = genome.Variant(chromosome=query.chrom, position=variant.pos,
                             reference_bases=variant.ref, alternate_bases=variant.alt)
