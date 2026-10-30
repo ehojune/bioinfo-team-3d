@@ -6200,6 +6200,13 @@ class Orchestrator:
         body_reference = _review_reference(review)
         if body_reference and not REVIEW_REFERENCE_HEADING.search(body):
             body = _before_bench_block(body, body_reference)
+        carried = contract.get("continuation") or {}
+        pinned = (unreceipted_references(contract, carried.get("reuse") or [])
+                  if carried.get("plan_sha256") == contract["plan_sha256"] else [])
+        if pinned:  # the PI reads the report, not the audit: say it there too (#1061 review)
+            body = _before_bench_block(
+                body, f"참고: 재사용한 단계가 쓴 DOI·PMID 참조 {len(pinned)}건은 식별자만 고정했고 내용은 확인하지 "
+                      f"않았습니다({', '.join(pinned[:5])}{', ...' if len(pinned) > 5 else ''}).")
         req["execution_record"] = _appendix_sections("", [*claim_check, cp2_audit])
         report = body.rstrip() + ("\n\n" + model_appendix if model_appendix else "")
         (await end("report_incomplete" if check["problems"] else "research_reported", report,

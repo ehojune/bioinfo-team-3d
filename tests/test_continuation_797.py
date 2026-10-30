@@ -295,6 +295,8 @@ async def test_the_continuation_card_and_report_say_the_content_of_pinned_refere
     assert cp1['summary'].endswith(note)  # after the 699-char cut with the budget line, so a long card cannot drop it
     assert 'pinned by identifier only; their content was not checked (doi:10.1/a, pmid:7)' in json.dumps(
         hub.requests['r'], ensure_ascii=False)
+    assert '참고: 재사용한 단계가 쓴 DOI·PMID 참조 2건은 식별자만 고정했고 내용은 확인하지 않았습니다(doi:10.1/a, pmid:7).' in (
+        hub.requests['r']['report'])  # the report the PI reads, not only the execution record
 
 
 @pytest.mark.asyncio
@@ -302,3 +304,4 @@ async def test_without_pinned_references_the_card_text_is_unchanged(tmp_path):
     hub = _hub(tmp_path, [CP1, APPROVE, CONTINUE, CP1, APPROVE])
     await Orchestrator(hub).run_request('r')
     assert '식별자만 고정' not in hub.approvals[3]['summary']
+    assert '식별자만 고정' not in hub.requests['r']['report']
