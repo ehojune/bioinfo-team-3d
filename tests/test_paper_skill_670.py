@@ -263,3 +263,30 @@ def test_skill_content_never_follows_a_linked_talent_folder_or_inner_directory(t
     real = _skill_folder(tmp_path / "real", pid="pmid:9")
     if linked(real, tmp_path / "paper-skill-link"):
         assert skill_content(tmp_path / "paper-skill-link", digest) is None, "the talent folder itself is a link"
+
+
+def test_a_directory_junction_is_seen_without_os_path_isjunction_as_on_python_310_and_311(tmp_path, monkeypatch):
+    """Review: those versions have no os.path.isjunction, so a link check built on it never saw a junction."""
+    import os
+    import subprocess
+
+    from labhq.recruit.paper_skills import _linked, skill_content
+
+    if os.name != "nt":
+        return  # a junction is a Windows reparse point
+    monkeypatch.delattr(os.path, "isjunction", raising=False)
+    target, link = tmp_path / "target", tmp_path / "link"
+    target.mkdir()
+    if subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True).returncode != 0:
+        return  # no junction right on this machine
+    assert _linked(link) is True and _linked(target) is False and _linked(tmp_path / "missing") is False
+    folder = _skill_folder(tmp_path / "real")
+    inner = folder / "skill" / ("a" * 64) / "references"
+    import shutil
+
+    shutil.rmtree(inner)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "paper.md").write_text("secret", encoding="utf-8")
+    assert subprocess.run(["cmd", "/c", "mklink", "/J", str(inner), str(outside)], capture_output=True).returncode == 0
+    assert skill_content(folder, "a" * 64) is None

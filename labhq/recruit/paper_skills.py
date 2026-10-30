@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -120,8 +121,15 @@ _SKILL_PARTS = (("figures", "figure"), ("tables", "table"), ("supp_figures", "su
 
 
 def _linked(path: Path) -> bool:
-    """A symlink, or on Windows a directory junction: neither is followed when a skill folder is read."""
-    return os.path.islink(path) or (hasattr(os.path, "isjunction") and os.path.isjunction(path))
+    """A symlink, or on Windows any reparse point such as a directory junction: none is followed when a skill folder is
+    read. Read from the entry itself (never through it), so it works on Python 3.10 and 3.11, which have no
+    ``os.path.isjunction``; a reparse point of another kind (a cloud placeholder) is refused too, which is the safe side."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
 def skill_content(folder: Path, digest: str) -> dict[str, Any] | None:
@@ -142,7 +150,7 @@ def skill_content(folder: Path, digest: str) -> dict[str, Any] | None:
         skill_md = root / "SKILL.md"
         if not root.is_dir() or not skill_md.is_file() or _linked(skill_md):
             return None
-        with skill_md.open("rb") as handle:
+        with open(skill_md, "rb") as handle:
             head = handle.read(SKILL_FILE_MAX_BYTES).decode("utf-8", errors="replace")
         front = head.split("---", 2)[1] if head.startswith("---") and head.count("---") >= 2 else ""
         fields = {m.group(1): m.group(2).strip().strip("\"'") for m in re.finditer(r"(?m)^(name|description):\s*(.+)$", front)}
