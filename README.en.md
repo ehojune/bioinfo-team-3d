@@ -49,6 +49,7 @@ Still frames: [2.5D](docs/media/office-25d.png) · [3D](docs/media/office-3d.png
 - If the team lacks a method, a paper or its code is turned into an agent with [Paper2Agent](https://github.com/jmiao24/Paper2Agent) and hired as a **contractor**.
 - When a job is submitted to HPC (SGE, PBS, Slurm), the staff session rests until the job ends, then resumes the same session.
 - The CSO asks only about permissions, cost, data access, choices only the PI knows (disease, cohort), and analysis depth. It decides the rest of the design itself and records it as **assumptions** in the plan and report.
+- A research step's result can hold only the claims in the `claim_ids` the plan declared for it, and a result-correction request states that list.
 - Each step leaves a record in its work folder: instructions, outputs, engine, and cost. A declared output folder is collected as its files, each with a hash; a folder with no hashed file, or with more than 200 files, ends the step incomplete.
 
 ## Four things labhq works hard on
