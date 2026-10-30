@@ -106,3 +106,78 @@ def test_the_factory_opens_the_runners_file_with_the_configured_limit(tmp_path):
     settings.annot.request_lookup_limit = 9
     admission = admission_for(settings)
     assert admission.limit == 9 and admission.path == Path(settings.path(settings.runner.state_dir)) / FILE
+
+
+# ---------- #1088: the request's usage as a fact, or "unknown" ----------
+
+def _spend(admission, rid, agent, tool, count):
+    for _ in range(count):
+        assert admission.admit(rid, f"task-{agent}", agent, tool, "www.ebi.ac.uk")["admitted"]
+
+
+def test_usage_reports_used_remaining_and_who_spent_it(tmp_path):
+    admission = LookupAdmission(tmp_path / FILE, 60)
+    assert admission.usage("req_a") == {"used": 0, "limit": 60, "remaining": 60, "by_agent": {}, "by_tool": {}}
+    _spend(admission, "req_a", "chief_of_staff", "fulltext", 26)
+    _spend(admission, "req_a", "lit_scout", "fulltext", 20)
+    _spend(admission, "req_a", "lit_scout", "crossref_doi", 5)
+    _spend(admission, "req_other", "analyst", "annot", 4)
+    assert admission.usage("req_a") == {
+        "used": 51, "limit": 60, "remaining": 9, "by_agent": {"chief_of_staff": 26, "lit_scout": 25},
+        "by_tool": {"crossref_doi": 5, "fulltext": 46}}
+    assert admission.usage("req_other")["used"] == 4  # another request keeps its own count
+
+
+def test_usage_never_reads_a_missing_identity_as_zero(tmp_path):
+    admission = LookupAdmission(tmp_path / FILE, 5)
+    assert admission.usage("") is None and admission.usage(None) is None and admission.usage(7) is None
+
+
+def test_the_remaining_count_stops_at_zero(tmp_path):
+    admission = LookupAdmission(tmp_path / FILE, 2)
+    _spend(admission, "req_a", "bio", "annot", 2)
+    assert admission.admit("req_a", "t", "bio", "annot", "x.org")["admitted"] is False
+    assert admission.usage("req_a")["remaining"] == 0 and admission.usage("req_a")["used"] == 2
+
+
+def test_the_note_states_the_count_and_what_it_is_not(tmp_path):
+    from labhq.runner.lookup_admission import usage_note
+
+    admission = LookupAdmission(tmp_path / FILE, 60)
+    _spend(admission, "req_a", "chief_of_staff", "fulltext", 26)
+    _spend(admission, "req_a", "lit_scout", "fulltext", 25)
+    note = usage_note(admission, "req_a", now=0)
+    assert "51 of 60 used, 9 left" in note and "chief_of_staff 26, lit_scout 25" in note
+    assert "this PC's runner" in note and "does not enforce" in note and "retry and redirect" in note
+    assert "UNKNOWN" not in note
+
+
+@pytest.mark.parametrize("admission_on, request_id, why", [
+    (False, "req_a", "not set"), (True, "", "no identity"), (True, None, "no identity")])
+def test_the_note_says_unknown_instead_of_zero(tmp_path, admission_on, request_id, why):
+    from labhq.runner.lookup_admission import usage_note
+
+    note = usage_note(LookupAdmission(tmp_path / FILE, 5) if admission_on else None, request_id)
+    assert note.startswith("Public lookup usage of this request: UNKNOWN") and why in note
+    assert "Do not assume it is zero" in note and " 0 of " not in note
+
+
+def test_an_unreadable_counter_is_unknown_not_zero(tmp_path, monkeypatch):
+    import sqlite3
+
+    from labhq.runner.lookup_admission import usage_note
+
+    admission = LookupAdmission(tmp_path / FILE, 5)
+    monkeypatch.setattr(admission, "usage", lambda request_id: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
+    assert "UNKNOWN (the lookup counter could not be read)" in usage_note(admission, "req_a")
+
+
+def test_the_factory_gives_no_counter_so_the_note_is_unknown_when_the_limit_is_off(tmp_path):
+    from labhq.runner.lookup_admission import usage_note
+
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path)
+    assert admission_for(settings) is None
+    assert "UNKNOWN" in usage_note(admission_for(settings), "req_a")
+    settings.annot.request_lookup_limit = 60
+    assert "0 of 60 used, 60 left" in usage_note(admission_for(settings), "req_a")
