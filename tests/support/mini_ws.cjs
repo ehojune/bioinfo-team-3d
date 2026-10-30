@@ -17,14 +17,20 @@ class MiniWebSocket {
       headers: {Connection: 'Upgrade', Upgrade: 'websocket', 'Sec-WebSocket-Key': key, 'Sec-WebSocket-Version': '13'}});
     this.request = request;
     request.on('upgrade', (response, socket, head) => {
-      // close() already ran while the upgrade was pending (#1107): nothing is left to own, and onclose was reported.
-      if (this.closed) { socket.destroy(); return; }
-      const accept = crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
-      if (response.headers['sec-websocket-accept'] !== accept) { socket.destroy(); this.onerror?.(new Error('bad WebSocket handshake')); return; }
+      // From here the upgraded socket owns the ending: its own 'close', never the request's earlier one, reports it
+      // (#1107), whatever else happens below (a close() that ran during the upgrade, or a wrong accept key).
       this.socket = socket;
-      socket.on('data', chunk => this.read(chunk));
       socket.on('close', () => { this.closed = true; this.reportClosed(); });
-      socket.on('error', error => this.onerror?.(error));
+      socket.on('error', error => { if (!this.closed) this.onerror?.(error); });
+      if (this.closed) { socket.destroy(); return; }  // close() already ran while the upgrade was pending
+      const accept = crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+      if (response.headers['sec-websocket-accept'] !== accept) {
+        this.closed = true;
+        socket.destroy();
+        this.onerror?.(new Error('bad WebSocket handshake'));
+        return;
+      }
+      socket.on('data', chunk => this.read(chunk));
       this.onopen?.();
       if (head.length) this.read(head);
     });

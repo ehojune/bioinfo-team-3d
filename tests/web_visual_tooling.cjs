@@ -1058,7 +1058,9 @@ test('MiniWebSocket reports one error and one close for an upgrade answer with a
   const port = await listen(server);
   try {
     const ws = new MiniWebSocket(`ws://127.0.0.1:${port}/devtools/page/x`), events = [];
-    ws.onerror = error => events.push('error: ' + error.message); ws.onclose = () => events.push('close');
+    ws.onerror = error => events.push('error: ' + error.message);
+    // The upgraded socket's own close reports it, not the request's earlier one (review): that socket has closed by now.
+    ws.onclose = () => events.push(ws.socket && ws.socket.closed ? 'close' : 'close-before-socket-close');
     await settle(500);
     assert.deepEqual(events, ['error: bad WebSocket handshake', 'close']);
   } finally { peers.forEach(socket => socket.destroy()); server.close(); }
