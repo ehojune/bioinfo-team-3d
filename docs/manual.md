@@ -378,6 +378,8 @@ labhq contract extend c_scanpy --days 14    # extend | release | activate | rehi
 
 `send --dry-run`은 로컬 설정과 직원 YAML만 읽습니다. 브리핑·선행 연구 조사·첫 CSO 계획까지의 호출과 직원별 수를 보여 주고, 모델이 계획을 만들어야 알 수 있는 뒤 단계는 **미정**으로 남깁니다. `agents/core/*.yaml`의 `model_tier`와 파견직의 `recruit.contract_model_tier`는 `fast`·`balanced`·`reasoning` 중 하나입니다. 호출당 범위는 `model_tier_prices` 한 곳에서 읽으며, 공식 출처와 확인일을 적지 않았거나 값이 비어 있으면 **비용 모름**입니다.
 
+`model_tiers`(`config/labhq.yaml`)는 등급(`fast`·`balanced`·`reasoning`)이 엔진마다 어떤 모델을 뜻하는지 적는 표입니다. 기본은 비어 있고, 비어 있으면 등급은 모델을 고르지 않아 모든 직원이 자기 YAML의 `model`로 돕니다(모델명과 가격을 지어내지 않습니다). 값을 적으면 두 가지가 생깁니다. ① 직원 YAML에 `model`이 **없는** 직원은 러너가 그 엔진의 등급 모델로 돌립니다. 직원 YAML에 `model`을 명시했으면 항상 그것이 이기고, task의 `agent_overrides`와 CSO 모델 선택(`cso_model`)도 등급보다 앞섭니다. ② 요청이 끝난 뒤 비용 요약은 **선언한 등급이 뜻하는 모델과 실제로 돈 모델이 다른** 직원을 `model_tier_mismatch:<직원>:<등급>:<실제 모델>`로 알리고, 비용 줄에는 `선언 등급과 다른 모델: lit_scout(fast) → claude-opus-5-5`처럼 나옵니다. 모델명은 별칭과 정식명을 같게 봅니다(`opus`는 `claude-opus-5-5`와 같고, `gpt-6`과 `gpt-6-luna`는 다릅니다). 표에 그 엔진 항목이 없거나 표가 비어 있으면 경고하지 않습니다. 등급은 effort를 바꾸지 않고, `send --dry-run`은 행마다 `(등급·모델)`을 보이며 모델을 정할 수 없으면 **모델 미정**이라고 적습니다. 단계마다 CSO가 등급을 고르는 기능은 아직 없습니다(#625).
+
 `labhq codex-review`는 [프로젝트별 GitHub 보고](#프로젝트별-github-보고)에, bench·semantics 명령은 [비교 bench](#비교-bench)와 [의미 모델과 온톨로지](#의미-모델과-온톨로지)에 있습니다.
 
 ### 과거 요청 검색

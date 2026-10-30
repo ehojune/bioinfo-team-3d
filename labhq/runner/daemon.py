@@ -1121,6 +1121,12 @@ class Runner:
             agent = AgentSpec.model_validate({**agent.model_dump(), **identity, **limits})
         if self.s.runner.force_engine:
             agent = agent.model_copy(update={"engine": Engine(self.s.runner.force_engine)})
+        # Last, so the tier means a model on the engine the agent really runs on: an override, a request identity or
+        # a forced engine that moved it has already been applied, and any model they named is kept (#625).
+        if agent.model is None and agent.model_tier:
+            tier_model = self.s.model_tiers.model_for(agent.model_tier, agent.engine.value)
+            if tier_model:
+                agent = agent.model_copy(update={"model": tier_model})
         return agent
 
     def _mcp_servers(self, agent: AgentSpec, env: dict[str, str], allow_ask: bool = True) -> list[McpServerSpec]:

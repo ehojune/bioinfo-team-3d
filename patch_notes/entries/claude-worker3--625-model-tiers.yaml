@@ -1,0 +1,30 @@
+pr: 1097
+rows:
+- sha: '3aa5a1f'
+  at: 2026-10-31 00:40
+  text: model_tiers 표(등급이 엔진마다 뜻하는 모델, 기본 빈 값)를 더하고, 직원 YAML에 model이 없을 때만 러너가 등급으로 모델을 채운다. dry-run에 등급→모델(없으면 모델 미정)을 보이고, 비용 요약은 선언 등급과 실제 모델이 어긋난 직원을 model_tier_mismatch 경고로 남긴다(별칭·정식명 비교 포함)
+  summary: 6차처럼 fast·balanced 직원이 알리지 않고 opus로 도는 일을 비용 요약이 알 수 있게 됩니다. 표를 채우지 않으면 지금과 똑같이 동작합니다.
+- sha: 'd67aeaf'
+  at: 2026-10-31 01:10
+  text: gateway의 두 비용 기록 경로(동기·비동기)가 model_tiers 표를 request_cost_summary에 넘기고, 비용 줄(format_warnings)이 선언 등급과 다른 모델로 돈 직원을 보인다. 표가 없으면 이전과 같다
+  summary: 선언한 등급과 다른 모델로 돈 직원이 요청의 비용 줄에 나옵니다.
+- sha: '15dcce7'
+  at: 2026-10-31 01:40
+  text: manual 한·영에 model_tiers 표의 우선순위(직원 model·agent_overrides·cso_model이 등급보다 앞섬), 빈 표의 의미, model_tier_mismatch 경고와 비용 줄, dry-run의 모델 미정을 적는다(리뷰 P1)
+  summary: 등급 표를 어떻게 채우고 무엇이 우선하며 어떤 경고가 나오는지 설명서에서 볼 수 있습니다.
+- sha: '5092bf7'
+  at: 2026-10-31 03:10
+  text: 관측하지 못한 결과(outcome_unknown)는 선언 등급과 다른 모델 경고에서 뺀다(리뷰 P2) + 시험
+  summary: 실제로 돌았는지 알 수 없는 task 때문에 직원이 다른 모델로 돌았다는 잘못된 경고가 나오지 않습니다.
+- sha: 'e829467'
+  at: 2026-10-31 03:20
+  text: setup-wsl이 model_tiers 표를 WSL runner 설정에 보내고 wsl_bootstrap이 설정에 쓴다. 보내지 않은 옛 설정은 빈 표(리뷰 P1) + 시험 2건
+  summary: WSL에서 도는 직원도 Windows와 같은 등급 모델을 씁니다(model이 없는 bioinfo-agent 포함).
+- sha: 'b15daf6'
+  at: 2026-10-31 03:50
+  text: 러너가 등급으로 모델을 채우는 때를 agent_overrides·agent_identity·force_engine을 적용한 뒤로 옮겨, 등급이 직원이 실제로 도는 엔진의 모델을 뜻하게 한다(리뷰 P1) + 시험
+  summary: 러너가 엔진을 바꿔 돌릴 때도 등급 모델이 원래 엔진의 모델로 잘못 채워지지 않습니다.
+- sha: '761db6e'
+  at: 2026-10-31 04:20
+  text: send --dry-run이 러너와 같이 runner.force_engine을 적용한 엔진으로 등급 모델을 보이고, status 문서를 gateway·WSL·manual까지 끝난 실제 변경에 맞춘다(리뷰 P1·P2) + 시험
+  summary: dry-run이 보이는 모델이 러너가 실제로 쓰는 모델과 같아집니다.

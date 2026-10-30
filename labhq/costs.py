@@ -129,10 +129,31 @@ def outcome_unknown_item(result: Any, agent: dict | None = None) -> dict:
 def _with_agent(item: dict, data: dict, agent: dict | None) -> dict:
     """Name the staff member, so a request's cost can be read per agent (#57 ⑦ follow-up)."""
     agent_id = data.get("agent_id") or (agent or {}).get("id")
-    return {**item, "agent_id": str(agent_id)} if agent_id else item
+    item = {**item, "agent_id": str(agent_id)} if agent_id else item
+    tier = (agent or {}).get("model_tier")
+    return {**item, "model_tier": tier} if tier else item
 
 
-def aggregate_costs(items: dict[str, dict]) -> dict:
+def tier_mismatch_warnings(items: dict[str, dict], tiers: Any) -> list[str]:
+    """One ``model_tier_mismatch:<agent>:<tier>:<model that ran>`` per agent whose declared tier names another model.
+
+    Only when ``model_tiers`` says what the tier means on the engine that ran; an empty table, an unknown model, a task
+    whose outcome the gateway never observed (``outcome_unknown``) or an
+    item recorded before tiers were kept says nothing (#625)."""
+    from .settings import models_match
+
+    found: dict[tuple[str, str, str], None] = {}
+    for item in items.values():
+        if item.get("reason") == "outcome_unknown":  # nobody observed this task run: its model is only the dispatched one
+            continue
+        tier, model, agent = item.get("model_tier"), item.get("model"), item.get("agent_id")
+        expected = tiers.model_for(tier, item.get("engine")) if tiers is not None else None
+        if expected and model and agent and not models_match(expected, model):
+            found[(str(agent), str(tier), str(model))] = None
+    return [f"model_tier_mismatch:{agent}:{tier}:{model}" for agent, tier, model in found]
+
+
+def aggregate_costs(items: dict[str, dict], tiers: Any = None) -> dict:
     """Request totals: reported and estimated dollars apart, unknown tasks counted, never added as $0."""
     actual = estimated = 0.0
     unknown: list[str] = []
@@ -167,6 +188,7 @@ def aggregate_costs(items: dict[str, dict]) -> dict:
     for (engine_name, model), price in sorted(prices.items(), key=lambda pair: tuple(map(str, pair[0]))):
         if price.get("stale"):
             warnings.append(f"price_stale:{engine_name}:{model}")
+    warnings.extend(tier_mismatch_warnings(items, tiers))
     for row in (*by_engine.values(), *by_agent.values()):
         row["actual_usd"] = round(row["actual_usd"], 6)
         row["estimated_usd"] = round(row["estimated_usd"], 6)
@@ -180,7 +202,7 @@ def aggregate_costs(items: dict[str, dict]) -> dict:
     return summary
 
 
-def request_cost_summary(req: dict) -> dict:
+def request_cost_summary(req: dict, tiers: Any = None) -> dict:
     """The request's summary, reading legacy numeric rows and new unknown ``None`` rows together."""
     items = dict(req.get("cost_items") or {})
     for tid, value in (req.get("cost_by_task") or {}).items():
@@ -192,7 +214,7 @@ def request_cost_summary(req: dict) -> dict:
                       if amount is not None else
                       {"task_id": tid, "engine": "unknown", "model": None,
                        "status": "unknown", "usd": None, "reason": "unreported"})
-    return aggregate_costs(items)
+    return aggregate_costs(items, tiers)
 
 
 def historical_plan_cost_estimate(requests: Any, plan: dict, agents: dict[str, dict], *,
@@ -362,11 +384,16 @@ def format_engines(summary: dict, digits: int = 2) -> str:
 
 def format_warnings(summary: dict) -> str:
     """`가격표 오래됨: codex gpt-6.1-sol (2026-10-02 확인)`, or empty."""
+    parts = []
     stale = [p for p in summary.get("prices") or [] if p.get("stale")]
-    if not stale:
-        return ""
-    return "가격표 오래됨: " + ", ".join(f"{p.get('engine')} {p.get('model')} ({p.get('checked_on')} 확인)"
-                                     for p in stale)
+    if stale:
+        parts.append("가격표 오래됨: " + ", ".join(f"{p.get('engine')} {p.get('model')} ({p.get('checked_on')} 확인)"
+                                              for p in stale))
+    mismatched = [w.split(":", 3)[1:] for w in summary.get("warnings") or [] if w.startswith("model_tier_mismatch:")]
+    if mismatched:
+        parts.append("선언 등급과 다른 모델: " + ", ".join(f"{agent}({tier}) → {model}"
+                                                      for agent, tier, model in mismatched))
+    return "; ".join(parts)
 
 
 def cost_detail(summary: dict, digits: int = 2) -> str:

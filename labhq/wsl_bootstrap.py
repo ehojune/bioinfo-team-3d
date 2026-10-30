@@ -167,7 +167,9 @@ def main(data):
                                "talent_dir": str(root / "talent"), "contract_dir": str(root / "contracts"),
                                "broker_port": port, "force_engine": data.get("force_engine")},
                     "hpc": {"scheduler": "none"}, "supervisor": data["supervisor"],
-                    "policy": copy.deepcopy(data["policy"])}
+                    "policy": copy.deepcopy(data["policy"]),
+                    # The tier -> model table decides a model-less agent's model here too (#625).
+                    "model_tiers": data.get("model_tiers") or {}}
         settings["engines"] = {"claude_code": {"bin": "claude", "env": {
             "CLAUDE_CONFIG_DIR": str(root / "claude-staff")}},
             "codex": {"bin": "codex", "env": {"CODEX_HOME": str(root / "codex-staff")}}}

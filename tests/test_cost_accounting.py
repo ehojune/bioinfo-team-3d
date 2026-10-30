@@ -173,3 +173,71 @@ def test_request_cost_is_split_by_staff_member_when_items_name_them():
         "cso": {"actual_usd": 0.4, "estimated_usd": 0.0, "unknown_count": 0}}
     legacy = {tid: {k: v for k, v in item.items() if k != "agent_id"} for tid, item in {"t1": cso}.items()}
     assert "by_agent" not in aggregate_costs(legacy)
+
+
+# --- #625: the gateway hands its model_tiers table to both cost recorders ---
+
+def _tier_hub(tmp_path, monkeypatch, tiers):
+    from labhq.gateway.server import Hub
+    from labhq.settings import Settings
+
+    monkeypatch.setattr("labhq.integrations.rounds._git_commit", lambda: "test-commit")
+    cfg = Settings.model_validate({"model_tiers": tiers})
+    cfg.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(cfg)
+    hub.requests["r"] = {"id": "r", "status": "running", "budget_usd": 50}
+    hub.agents["lit_scout"] = {"id": "lit_scout", "engine": "claude_code", "model": "claude-opus-5-5",
+                               "model_tier": "fast"}
+    return hub
+
+
+def _scout_result(task_id):
+    return TaskResult(task_id=task_id, agent_id="lit_scout", ok=True, cost_usd=1.0, cost_known=True)
+
+
+MISMATCH = "model_tier_mismatch:lit_scout:fast:claude-opus-5-5"
+
+
+def test_gateway_summary_warns_when_a_fast_agent_ran_opus(tmp_path, monkeypatch):
+    hub = _tier_hub(tmp_path, monkeypatch, {"fast": {"claude_code": "haiku"}})
+    try:
+        hub._record_task_cost("r", "t1", _scout_result("t1"))
+        summary = hub.requests["r"]["cost_summary"]
+        assert MISMATCH in summary["warnings"]
+        assert hub.requests["r"]["cost_items"]["t1"]["model_tier"] == "fast"
+        assert "선언 등급과 다른 모델: lit_scout(fast) → claude-opus-5-5" in format_warnings(summary)
+    finally:
+        hub.store.close()
+
+
+def test_gateway_summary_is_silent_without_a_table_or_when_the_model_matches(tmp_path, monkeypatch):
+    for tiers in ({}, {"fast": {"claude_code": "opus"}}):  # nothing configured; alias of the model that ran
+        hub = _tier_hub(tmp_path / str(len(tiers)), monkeypatch, tiers)
+        try:
+            hub._record_task_cost("r", "t1", _scout_result("t1"))
+            assert hub.requests["r"]["cost_summary"]["warnings"] == []
+            assert format_warnings(hub.requests["r"]["cost_summary"]) == ""
+        finally:
+            hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_the_async_recorder_hands_over_the_same_table(tmp_path, monkeypatch):
+    hub = _tier_hub(tmp_path, monkeypatch, {"fast": {"claude_code": "haiku"}})
+    try:
+        await hub._arecord_task_cost("r", "t2", _scout_result("t2"))
+        assert MISMATCH in hub.requests["r"]["cost_summary"]["warnings"]
+    finally:
+        hub.store.close()
+
+
+def test_an_unobserved_task_never_produces_a_tier_mismatch_warning():
+    """#625 review: an outcome-unknown item carries only the model that was dispatched, not one that was seen."""
+    from labhq.settings import Settings
+
+    tiers = Settings.model_validate({"model_tiers": {"fast": {"claude_code": "haiku"}}}).model_tiers
+    ran = {"task_id": "a", "engine": "claude_code", "model": "claude-opus-5-5", "status": "actual", "usd": 1.0,
+           "agent_id": "lit_scout", "model_tier": "fast"}
+    lost = {**ran, "task_id": "b", "status": "unknown", "usd": None, "reason": "outcome_unknown"}
+    assert aggregate_costs({"b": lost}, tiers)["warnings"] == []
+    assert aggregate_costs({"a": ran}, tiers)["warnings"] == ["model_tier_mismatch:lit_scout:fast:claude-opus-5-5"]
