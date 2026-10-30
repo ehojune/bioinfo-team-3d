@@ -1,0 +1,5 @@
+rows:
+- sha: '98102fc'
+  at: 2026-10-31 03:40
+  text: test_gateway_publish_durable.py의 asyncio.wait_for 마감 18곳(1~2초)을 10초로 올리고, test_durable_writer.py의 읽기 지연 임계를 0.1초에서 0.3초로 올린다. 모두 완료를 기다리는 곳이라 마감이 단언이 아니고, 정지한 commit은 합계 1.2초라 읽기가 commit을 기다렸다면 여전히 실패한다
+  summary: 느린 러너에서 짧은 마감(1초)과 0.1초 임계(0.1049 관측)로 실패하던 간헐 실패를 막습니다.
