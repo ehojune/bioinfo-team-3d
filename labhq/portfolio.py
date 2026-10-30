@@ -1628,45 +1628,50 @@ def _determinism_line(files: Mapping[str, str | bytes]) -> str:
             "실행해서 확인한 것은 아닙니다.")
 
 
-def _figure_caption(report: str, source: str, target: str) -> str:
+def _figure_caption(report: str, sources: list[str], target: str) -> str:
     """The alt text of the report image that points at this figure; full paths first, a shared basename only when unique."""
     images = [(PurePosixPath(unquote(path.split("#")[0]).replace("\\", "/")).as_posix().lstrip("./"), alt.strip())
               for alt, path in re.findall(r"!\[([^\]]*)\]\(([^)]+)\)", report)]
-    source = source.replace("\\", "/")
-    exact = [alt for path, alt in images if path and (target.endswith(path) or source.endswith(path))]
+    sources = [source.replace("\\", "/") for source in sources] or [target]
+    exact = [alt for path, alt in images if path and (target.endswith(path) or any(s.endswith(path) for s in sources))]
     if exact:
         return exact[0]
-    base = PurePosixPath(source).name
-    same = [alt for path, alt in images if PurePosixPath(path).name == base]
+    bases = {PurePosixPath(source).name for source in sources}
+    same = [alt for path, alt in images if PurePosixPath(path).name in bases]
     return same[0] if len(same) == 1 else ""
 
 
 def _figure_sources(figure_names: list[str], files: Mapping[str, str | bytes], table_names: list[str],
                     source_targets: Mapping[str, str]) -> dict[str, list[str]]:
     """Per published figure, the published tables its script names: the source data behind the picture."""
-    origin = {target: source.replace("\\", "/") for source, target in source_targets.items()}
+    origin: dict[str, list[str]] = {}
+    for source, target in source_targets.items():  # a target can have several aliases (the step path and the workdir path)
+        origin.setdefault(target, []).append(source.replace("\\", "/"))
     scripts = {name: body for name, body in files.items()
                if isinstance(body, str) and PurePosixPath(name).suffix.lower() in _CODE_SUFFIXES}
     result: dict[str, list[str]] = {}
     for figure in figure_names:
-        base = PurePosixPath(origin.get(figure, figure)).name
-        used = [body for body in scripts.values() if base in body]
+        bases = {PurePosixPath(source).name for source in origin.get(figure, [figure])}
+        used = [body for body in scripts.values() if any(base in body for base in bases)]
         result[figure] = [table for table in table_names
-                          if any(PurePosixPath(origin.get(table, table)).name in body for body in used)]
+                          if any(PurePosixPath(source).name in body for source in origin.get(table, [table]) for body in used)]
     return result
 
 
 def _figure_lines(report: str, figure_names: list[str], source_targets: Mapping[str, str] | None = None,
-                  files: Mapping[str, str | bytes] | None = None, table_names: list[str] | None = None) -> list[str]:
+                  files: Mapping[str, str | bytes] | None = None, table_names: list[str] | None = None,
+                  generated_abstract: bool = False) -> list[str]:
     targets = source_targets or {}
-    origin = {target: source for source, target in targets.items()}
+    origin: dict[str, list[str]] = {}
+    for source, target in targets.items():
+        origin.setdefault(target, []).append(source)
     data = _figure_sources(figure_names, files or {}, table_names or [], targets)
     rows = []
     for name in figure_names:  # a renamed duplicate (plot.svg -> outputs-plot.svg) keeps its own source's caption
-        alt = _figure_caption(report, origin.get(name, name), name)
+        alt = _figure_caption(report, origin.get(name, []), name)
         shown = alt if alt and alt != PurePosixPath(name).name else "보고서에 그림 설명이 없습니다"
         tables = data.get(name) or []
-        if name.endswith("graphical_abstract.svg"):
+        if generated_abstract and name == "figures/graphical_abstract.svg":
             source = "보고서 본문의 요청·계획·결론 문장에서 자동으로 그렸고 결과표의 숫자는 담지 않습니다"
         elif tables:
             source = "원자료 " + ", ".join(f"[`{table}`]({quote(table, safe='/')})" for table in tables[:4])
@@ -1728,7 +1733,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
             run_documents: Mapping[str, str], branch_rows: list[dict[str, str]] | None = None,
             source_targets: Mapping[str, str] | None = None,
             run: run_report.RunSummary | None = None,
-            files: Mapping[str, str | bytes] | None = None) -> str:
+            files: Mapping[str, str | bytes] | None = None, generated_abstract: bool = False) -> str:
     title = report.splitlines()[0].lstrip("#").strip() or "연구 결과"
     abstract = "figures/graphical_abstract.svg" if "figures/graphical_abstract.svg" in figure_names else None
     key = next((name for name in figure_names if name != abstract), None)
@@ -1790,7 +1795,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     if omitted_figures:
         lines += ["", "## 생략한 그림", "", *[f"- *(그림 생략: {label})*" for label in omitted_figures]]
     published = files or {}
-    lines += ["", "## 그림이 보여 주는 것", "", *_figure_lines(report, figure_names, source_targets, published, table_names),
+    lines += ["", "## 그림이 보여 주는 것", "", *_figure_lines(report, figure_names, source_targets, published, table_names, generated_abstract),
               "", "## 파일 목록", "", *_file_list_lines(published, table_names, figure_names),
               "", "## 환경", "", *_environment_lines(published),
               "", "## 실행 방법", "", *_run_lines(published, run_documents),
@@ -2181,7 +2186,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         "<reference-path>", "참고 자료")
     readme = _plain_korean(_readme(
         readme_req, report, _step_rows(req, assets), figure_names, table_names, omitted_tables,
-        run_documents, branch_rows, source_targets, run_summary, files))
+        run_documents, branch_rows, source_targets, run_summary, files, abstract_source is None))
     if check_document(readme)["status"] != "PASS":
         raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)
