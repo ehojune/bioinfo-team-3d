@@ -101,3 +101,52 @@ def test_mcp_env_names_stay_bare_keys():
 def test_new_default_private_entries():
     from labhq.private_paths import DEFAULT_HOME_ENTRIES
     assert {".gemini", ".env"} <= set(DEFAULT_HOME_ENTRIES)
+
+
+# ---- #1055: a read-only reviewer's shell reached public sites through the elevated sandbox, uncounted ----
+def _shell_policy(tmp_path, *, tools=(), sandbox="read-only", read_only=False):
+    settings = Settings()
+    agent = AgentSpec(id="w", name="W", role="test", engine=Engine.codex, builtin_mcp=[], sandbox=sandbox,
+                      tools=list(tools))
+    workdir = tmp_path / "wd"
+    workdir.mkdir(exist_ok=True)
+
+    async def emit(kind, data):
+        pass
+
+    ctx = RunContext(task=Task(agent_id="w", prompt="x"), agent=agent, workdir=workdir, settings=settings,
+                     mcp_servers=[], env={}, emit=emit, prompt="x", read_only=read_only)
+    cmd = get_adapter(Engine.codex, settings).build_command(ctx)
+    return [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-c" and cmd[i + 1].startswith("shell_environment_policy.")]
+
+
+def test_a_read_only_shell_gets_a_closed_proxy_so_default_http_clients_fail(tmp_path):
+    [setting] = _shell_policy(tmp_path)
+    value = setting.split("=", 1)[1]
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        assert f'{name} = "http://127.0.0.1:9"' in value
+    assert 'NO_PROXY = ""' in value and 'no_proxy = ""' in value, "no host may be exempted from the closed proxy"
+    if sys.version_info >= (3, 11):
+        import tomllib
+        assert tomllib.loads("p = " + value)["p"]["HTTPS_PROXY"] == "http://127.0.0.1:9"
+
+
+def test_the_proxy_is_set_for_the_shell_only_not_for_the_codex_process(tmp_path):
+    settings = Settings()
+    agent = AgentSpec(id="w", name="W", role="test", engine=Engine.codex, builtin_mcp=[], sandbox="read-only")
+
+    async def emit(kind, data):
+        pass
+
+    ctx = RunContext(task=Task(agent_id="w", prompt="x"), agent=agent, workdir=tmp_path, settings=settings,
+                     mcp_servers=[], env={}, emit=emit, prompt="x", read_only=True)
+    env = get_adapter(Engine.codex, settings).staff_env(ctx)
+    assert not any("PROXY" in name.upper() for name in env), "the model connection must not go through the closed proxy"
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"sandbox": "workspace-write"},                   # engineers install packages and pull references
+    {"tools": ["WebSearch"]},                         # the agent was given the web on purpose
+])
+def test_agents_that_may_use_the_network_keep_it(tmp_path, kwargs):
+    assert _shell_policy(tmp_path, **kwargs) == []
