@@ -1,5 +1,5 @@
 pr: 1064
-# Rev7: require observer ledger, seal, broker, deadline and cleanup controls.
+# Rev8: align the reference with synthetic-v3; legacy v2 is unsupported.
 # Final-head CI, manifest execution and actual review stay tracked in PR #1064.
 # Keep draft/hold; real protection remains UNVERIFIED.
 rows:
