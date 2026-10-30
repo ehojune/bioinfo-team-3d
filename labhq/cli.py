@@ -355,8 +355,37 @@ def talent_lines(registry) -> list[str]:
         commit = row.get("paper2agent_commit")
         commit = commit[:7] if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit) else "-"
         lines.append(f"📄 {name:<24} 논문 자문 스킬 생성됨  paper={_talent_text(pid)}  skill={digest[:12]}"
-                     f"  commit={commit}  사용·효용=요청별 기록 참조")
+                     f"  commit={commit}  사용·효용=요청별 기록 참조" + _talent_skill_facts(folder, receipt, digest))
     return lines
+
+
+def _talent_skill_facts(folder: Path, receipt: Path, digest: str) -> str:
+    """What the built skill folder holds and when its receipt was written (#660), as one suffix; empty when unreadable.
+
+    Read from the files only: the SKILL.md name and one-line description, the size of the paper text file, how many
+    figure, table and supplement files there are. It is not a summary of the paper, and the date is the receipt
+    file's own time, not a request's."""
+    from .recruit.paper_skills import skill_content
+
+    facts = []
+    content = skill_content(folder, digest)
+    if content:
+        if content.get("name"):
+            facts.append(f"이름={_talent_text(content['name'], 60)}")
+        size = content.get("fulltext_bytes")
+        # The paper text sits in this folder only: the request bundle carries the paper_skills.json record, not the folder.
+        facts.append(f"논문 본문 파일 {max(1, round(size / 1024))} KB(이 PC의 이 폴더에만 있고 요청 묶음에는 들어가지 않음)"
+                     if size else "논문 본문 파일 없음")
+        parts = [f"{label} {content[key]}" for key, label in (("figures", "그림"), ("tables", "표"),
+                 ("supp_figures", "보충 그림"), ("supp_tables", "보충 표")) if content.get(key)]
+        facts.append("·".join(parts) if parts else "그림·표 파일 없음")
+        if content.get("supplement"):
+            facts.append("보충자료 있음")
+    try:
+        facts.append("기록 시각(파일) " + time.strftime("%Y-%m-%d", time.localtime(receipt.stat().st_mtime)))
+    except (OSError, ValueError, OverflowError):
+        pass
+    return ("  " + " · ".join(facts)) if facts else ""
 
 
 def _run_websocket(s: Settings, command) -> None:
