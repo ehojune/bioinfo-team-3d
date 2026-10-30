@@ -1267,6 +1267,11 @@ class ResultStorage:
                 raise ValueError(f"로컬에 남긴 정리본만 GitHub로 옮깁니다(저장 위치 {saved.get('mode')}, 상태 {saved.get('status')}). "
                                  f"게시에 실패했으면 `labhq storage {rid} --republish`, 정리본을 다시 만들려면 `--redraft`, "
                                  "게시한 정리본을 지금 편집기로 다시 만들려면 `--rebuild`를 쓰세요.")
+            if req.get("status") == "review_pending":
+                # CP4: the final draft waits in the report review. Say what to run, so a retry is not spent on this.
+                raise ValueError(f"보고서 검토 대기(review_pending) 중인 요청은 아직 옮길 수 없습니다. 먼저 보고서 카드에 적힌 "
+                                 f"번호와 hash로 `labhq review-done {rid} --revision <번호> --sha256 <hash>`를 실행해 검토를 마치거나, "
+                                 "같은 명령에 `--storage github`를 붙여 검토와 저장 선택을 한 번에 하세요.")
             if req.get("status") not in {"done", "completed", "failed", "cancelled"} or req.get("cancelling"):
                 raise ValueError("끝난 요청만 GitHub로 옮길 수 있습니다.")
             if controlled_request(req, self.s):

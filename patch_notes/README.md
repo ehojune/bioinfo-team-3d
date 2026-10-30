@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:36 | [`12f24f0`](https://github.com/ehojune/bioinfo-team-3d/pull/1078/commits/12f24f0) | **안내서의 검토 명령에도 보고서 카드에 적힌 번호와 확인값을 넣어야 한다는 점을 적었습니다.**<br>docs: README·status의 review-done 명령에 CP4가 요구하는 revision·hash를 적음 (#1077 리뷰 P2) |
+| 19:25 | [`d91565c`](https://github.com/ehojune/bioinfo-team-3d/pull/1078/commits/d91565c) | **안내하는 검토 명령에 보고서 카드에 적힌 번호와 확인값을 함께 넣어야 한다는 점까지 적었습니다.**<br>fix: review-done 안내에 CP4가 요구하는 --revision과 --sha256을 함께 적음 (#1077 리뷰 P2) |
+| 19:15 | [`f5482b6`](https://github.com/ehojune/bioinfo-team-3d/pull/1078/commits/f5482b6) | **안내서에 검토를 기다리는 요청을 GitHub로 옮길 때의 순서를 적었습니다.**<br>docs: README 한·영에 검토 대기 요청의 GitHub 이동 안내를 적음 (#1077) |
+| 19:14 | [`0e0f0d2`](https://github.com/ehojune/bioinfo-team-3d/pull/1078/commits/0e0f0d2) | **보고서 검토를 기다리는 요청을 GitHub로 옮기려 할 때, 먼저 검토를 마치라는 명령을 알려 주도록 했습니다.**<br>fix: review_pending 요청의 --to github 거절 문구에 review-done 안내를 붙이고 CP4→게시 연결 시험을 더함 (#1077) |
 | 18:57 | [`e69f3c0`](https://github.com/ehojune/bioinfo-team-3d/pull/1075/commits/e69f3c0) | **기준 브랜치가 앞서 간 것을 인정할 때도 비교 결과가 빠짐없이 끝까지 온 경우만 받아들이도록 확인을 엄격하게 했습니다.**<br>fix: 앞서 간 main의 compare 응답도 완전한 forward 답(수·꼬리 일치)만 인정 (#1073 리뷰 P1) |
 | 18:46 | [`2d05d63`](https://github.com/ehojune/bioinfo-team-3d/pull/1075/commits/2d05d63) | **자동 검사가 실행되는 사이 기준 브랜치에 새 변경이 한 번 더 들어와도, 앞으로만 움직였다면 같은 경우로 보고 오류로 끝내지 않게 했습니다.**<br>fix: validation-manifest base drift 인정이 main이 더 앞서 간 경우도 받아들임 (#1073) |
 | 18:45 | [`0485b0a`](https://github.com/ehojune/bioinfo-team-3d/pull/1074/commits/0485b0a) | **Windows 브라우저 시험이 1/16,384 확률의 포트 우연으로 간헐 실패하던 문제를 없앱니다.**<br>브라우저 시험의 정적 서버가 OS에게 예약 포트(8787·55921)를 받으면 닫고 최대 8번까지 다시 listen하고, 8번 모두 예약 포트일 때만 같은 메시지로 거절한다 |
