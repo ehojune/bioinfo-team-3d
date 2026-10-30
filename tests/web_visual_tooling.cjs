@@ -279,20 +279,22 @@ test('one startup and load fit the trace bound while an incomplete startup inven
 
 // Evaluate the actual driver in an isolated VM with only owned synthetic
 // resources. These async contracts run in CI; they launch no browser/service.
-function startupFixture({port = 55921, listenError = null, closeError = null, platform, env = {}, existing = [],
+function startupFixture({port = 55921, ports = null, listenError = null, closeError = null, platform, env = {}, existing = [],
   wrapperPresent = false, spawned = null, globals = {}} = {}) {
   const events = [], profile = path.join('owned-root', 'owned-profile');
-  let onError;
+  let onError, listens = 0;
+  const drawn = ports || [port];  // #1072: the port each successive listen(0) is given; the last one repeats
   const server = {
     once(name, fn) { assert.equal(name, 'error'); onError = fn; },
     removeListener(name, fn) { assert.equal(name, 'error'); assert.equal(fn, onError); onError = null; },
     listen(port, host, ready) {
       assert.equal(port, 0); assert.equal(host, '127.0.0.1');
       events.push('listen');
+      listens += 1;
       if (listenError) { const fail = onError; onError = null; fail(listenError); }
       else ready();
     },
-    address: () => ({port}),
+    address: () => ({port: drawn[Math.min(listens, drawn.length) - 1]}),
     close(done) { events.push('server-close'); done(closeError); }
   };
   const fakeFs = {
@@ -321,11 +323,28 @@ function startupFixture({port = 55921, listenError = null, closeError = null, pl
     hasListenErrorHandler:() => Boolean(onError)};
 }
 
+// #1072: a reserved draw is closed and drawn again; only this many in a row are refused.
+const RESERVED_DRAWS = 8;
+const reservedDraws = (extra = []) => ['profile-create', ...Array(RESERVED_DRAWS - 1).fill(['listen', 'server-close']).flat(), 'listen',
+  ...extra];
+
 test('reserved-port startup failure closes its acquired server before removing the profile', async () => {
-  const f = startupFixture();
+  const f = startupFixture();  // every draw is 55921
   await assert.rejects(f.open(), /static server landed on a reserved port 55921/);
-  assert.deepEqual(f.events, ['profile-create','listen','timer-set','server-close','timer-clear','profile-remove']);
+  assert.deepEqual(f.events, reservedDraws(['timer-set','server-close','timer-clear','profile-remove']));
   assert.equal(f.hasListenErrorHandler(), false);
+});
+
+test('a reserved port drawn by the OS is closed and drawn again instead of failing the startup', async () => {
+  const spawned = [];
+  const f = startupFixture({ports:[55921, 8787, 40000], platform:'win32', env:{LABHQ_TEST_PYTHON:PYTHON}, existing:[PYTHON],
+    wrapperPresent:true, spawned});
+  await assert.rejects(f.open(), /stop after spawn/);  // startup went on to launch the browser on the third draw
+  assert.equal(spawned.length, 1);
+  assert.deepEqual(f.events.slice(0, 7), ['profile-create','listen','server-close','listen','server-close','listen','timer-set']);
+  assert.equal(f.events.filter(event => event === 'listen').length, 3);
+  assert.equal(f.events.filter(event => event === 'server-close').length, 3);  // two redraws, then the cleanup of the owned one
+  assert.deepEqual(f.events.slice(-2), ['timer-clear','profile-remove']);
 });
 
 test('listen failure rejects startup and removes the profile without pretending a server was acquired', async () => {
@@ -341,7 +360,9 @@ test('startup cleanup failure retains both errors and does not remove an unclose
   const f = startupFixture({closeError:failure});
   await assert.rejects(f.open(), error => error.message === 'demo startup and cleanup failed' &&
     error.errors[0].message.includes('reserved port 55921') && error.errors[1].errors.includes(failure));
-  assert.equal(f.events.filter(event => event === 'server-close').length, 1);
+  // The redraw's close already failed, so the server is handed over unchanged and its own close fails again.
+  assert.equal(f.events.filter(event => event === 'server-close').length, 2);
+  assert.equal(f.events.filter(event => event === 'listen').length, 1);
   assert.equal(f.events.includes('profile-remove'), false);
 });
 
