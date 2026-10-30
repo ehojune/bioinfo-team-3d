@@ -86,6 +86,22 @@ def test_reverse_interop_writer_is_run_bound(tmp_path):
     assert (work / "reverse_interop.marker").read_text(encoding="ascii") == "run-a"
 
 
+def test_interop_passes_python_code_as_argv_not_shell_literal(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "interop.distro").write_text("disposable", encoding="ascii")
+    (tmp_path / "run-id").write_text("run-a", encoding="ascii")
+    calls = []
+    def capture(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0)
+    monkeypatch.setattr(probe.subprocess, "run", capture)
+    assert probe.child("interop", tmp_path) == 0
+    assert calls[0][5] == "-c"
+    assert calls[0][6].startswith("import pathlib,")
+    assert calls[0][-1] == "run-a"
+
+
 def test_missing_process_observation_is_unknown(tmp_path):
     assert probe.synthetic_writer_alive(tmp_path) is None
 

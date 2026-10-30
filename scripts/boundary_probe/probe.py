@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 import socket
 import shutil
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -214,8 +213,7 @@ def child(case: str, root: Path) -> int:
                            "p=subprocess.check_output(['wslpath','-u',sys.argv[1]],text=True).strip(); "
                            "sys.exit(subprocess.call([p,sys.argv[2],'--interop-writer',sys.argv[3]]))")
                 arguments = [sys.executable, str(Path(__file__).resolve()), str(root)]
-            proc = subprocess.run(["wsl.exe", "-d", distro, "--", "python3", "-c", shlex.quote(program),
-                                   *(shlex.quote(arg) for arg in arguments)],
+            proc = subprocess.run(["wsl.exe", "-d", distro, "--", "python3", "-c", program, *arguments],
                                   capture_output=True, timeout=5)
             if proc.returncode:
                 return 20
