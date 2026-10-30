@@ -10,7 +10,7 @@ Parent replacement and external-writer fixtures use a run-ID-bound child ready/c
 
 The detached-child fixture starts a finite synthetic descendant, waits for its ready marker, then signals it after the launcher exits. A matching host-observed marker is a failure. An observed PID exit before the earliest natural timeout is reported separately, but is inconclusive: it does not authenticate the cause or a supervisor cleanup receipt. A missing marker or PID observation is never proof of cleanup.
 
-On Windows, `--interop-distro labhq-666-fixture` opts into synthetic Windows-to-WSL and WSL-to-Windows execution probes. The reverse probe asks WSL Python to execute the Windows Python fixture, which writes a run-bound host marker. Only a matching marker plus a successful child response is a failure; launch, conversion and access errors are inconclusive. Neither direction exercises a real sandbox. The current fixture has automount and interop disabled; failures in it do not prove protection.
+On Windows, `--interop-distro labhq-666-fixture` opts into synthetic Windows-to-WSL and WSL-to-Windows execution probes. The reverse probe asks WSL Python to execute the Windows Python fixture, which writes a run-bound host marker. A matching marker is a failure even if the child response is lost; absent markers and launch errors are inconclusive. Neither direction exercises a real sandbox. The current fixture has automount and interop disabled; failures in it do not prove protection.
 
 `receipt_diagnostic(receipt, run_id)` checks receipt v1 shape and matching run ID; unsealed and claimed sealed receipts remain unsupported. It does not authenticate a supervisor.
 

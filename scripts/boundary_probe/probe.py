@@ -335,10 +335,14 @@ def run(prefix: list[str], python: str = sys.executable, timeout: float = 10,
                                           cwd=work, env=env, capture_output=True, timeout=timeout)
                     marker = work / (case + ".marker")
                     witnessed = marker.exists() and marker.read_text(encoding="ascii") == run_id
-                    valid = proc.returncode == 0 and proc.stdout in (b"boundary-probe-child\n", b"boundary-probe-child\r\n")
-                    results[case] = {"status": "fail" if valid and witnessed else "inconclusive", "host_witness": witnessed}
+                    results[case] = {"status": "fail" if witnessed else "inconclusive", "host_witness": witnessed}
                 except (OSError, subprocess.TimeoutExpired):
-                    results[case] = {"status": "inconclusive", "host_witness": False}
+                    marker = work / (case + ".marker")
+                    try:
+                        witnessed = marker.exists() and marker.read_text(encoding="ascii") == run_id
+                    except OSError:
+                        witnessed = False
+                    results[case] = {"status": "fail" if witnessed else "inconclusive", "host_witness": witnessed}
                 continue
             if case == "detached_child":
                 try:
@@ -366,7 +370,8 @@ def run(prefix: list[str], python: str = sys.executable, timeout: float = 10,
                         results[case] = {"status": "inconclusive", "host_witness": False}
                 except (OSError, subprocess.TimeoutExpired):
                     results[case] = {"status": "inconclusive", "host_witness": False}
-                if (work / "detached.ready").exists() and not wait_synthetic_writer(work):
+                if ((work / "detached.ready").exists() and not wait_synthetic_writer(work)
+                        and not results[case].get("host_witness")):
                     results[case] = {"status": "inconclusive", "host_witness": False}
                 continue
             if case in ("parent_replace", "external_writer"):

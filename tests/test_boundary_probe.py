@@ -90,6 +90,17 @@ def test_missing_process_observation_is_unknown(tmp_path):
     assert probe.synthetic_writer_alive(tmp_path) is None
 
 
+def test_witnessed_detached_violation_survives_unknown_cleanup(monkeypatch):
+    wait = probe.wait_synthetic_writer
+    def unknown_after_reaping(work):
+        wait(work)
+        return False
+    monkeypatch.setattr(probe, "wait_synthetic_writer", unknown_after_reaping)
+    result = probe.run([])
+    assert result["cases"]["detached_child"]["status"] == "fail"
+    assert result["cases"]["detached_child"]["host_witness"] is True
+
+
 def test_integration_missing_modules_is_inconclusive(tmp_path):
     result = integration_probe.run(tmp_path / "missing-a.py", tmp_path / "missing-b.py")
     assert result["status"] == "inconclusive"
