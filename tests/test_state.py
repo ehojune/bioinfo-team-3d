@@ -1617,10 +1617,12 @@ def test_store_batch_is_one_commit_in_order_where_separate_writes_are_one_each(t
     store.put("k", "b", {"n": 3})
     assert commits() == 3  # without a batch each write waits for its own fsync
 
-    with store.batch():
+    def writes():
         store.put("k", "c", {"n": 4})
         store.enqueue({"type": "agent.log", "data": {"n": 5}}, 10)
         store.put("k", "d", {"n": 6})
+
+    store.run_batch(writes)
     assert commits() == 4  # the batch added exactly one
     assert [e["data"]["n"] for e in store.pending()] == [2, 5]
     assert {key: body["n"] for key, body in store.all("k").items()} == {"a": 1, "b": 3, "c": 4, "d": 6}
@@ -1629,11 +1631,14 @@ def test_store_batch_is_one_commit_in_order_where_separate_writes_are_one_each(t
 
 def test_store_batch_is_all_or_nothing(tmp_path):
     store = StateStore(tmp_path / "state.sqlite3")
-    with pytest.raises(RuntimeError):
-        with store.batch():
-            store.put("k", "a", {"n": 1})
-            store.enqueue({"type": "agent.log", "data": {"n": 2}}, 10)
-            raise RuntimeError("the third write fails")
+
+    def writes():
+        store.put("k", "a", {"n": 1})
+        store.enqueue({"type": "agent.log", "data": {"n": 2}}, 10)
+        raise RuntimeError("the third write fails")
+
+    with pytest.raises(RuntimeError, match="third write"):
+        store.run_batch(writes)
     assert store.all("k") == {} and store.pending() == []
     store.close()
 
@@ -1641,13 +1646,16 @@ def test_store_batch_is_all_or_nothing(tmp_path):
 def test_a_failed_write_inside_a_batch_undoes_only_its_own_rows(tmp_path):
     store = StateStore(tmp_path / "state.sqlite3")
     commits = _commit_log(store)
-    with store.batch():
+
+    def writes():
         store.put("k", "a", {"n": 1})
         with pytest.raises(ValueError):
             with store._transaction() as conn:
                 conn.execute("INSERT OR REPLACE INTO state VALUES ('k', 'half', '{}')")
                 raise ValueError("this write fails and its caller carries on")
         store.put("k", "b", {"n": 2})
+
+    store.run_batch(writes)
     assert set(store.all("k")) == {"a", "b"}  # 'half' was undone, the others committed
     assert commits() == 1
     store.close()
@@ -1656,12 +1664,42 @@ def test_a_failed_write_inside_a_batch_undoes_only_its_own_rows(tmp_path):
 def test_a_batch_inside_a_batch_joins_the_outer_one(tmp_path):
     store = StateStore(tmp_path / "state.sqlite3")
     commits = _commit_log(store)
-    with store.batch():
+
+    def writes():
         store.put("k", "a", {"n": 1})
         with store.batch():
             store.put("k", "b", {"n": 2})
         store.put("k", "c", {"n": 3})
+
+    store.run_batch(writes)
     assert commits() == 1 and set(store.all("k")) == {"a", "b", "c"}
+    store.close()
+
+
+def test_a_batch_outside_the_stores_lane_is_refused(tmp_path):
+    store = StateStore(tmp_path / "state.sqlite3")
+    with pytest.raises(RuntimeError, match="run_batch"):
+        with store.batch():
+            store.put("k", "a", {"n": 1})  # would queue behind a live writer thread that waits for this lock
+    assert store.all("k") == {}
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_batch_after_an_async_write_does_not_deadlock_and_stays_in_order(tmp_path):
+    """The writer thread of an `aenqueue` is still alive when the batch is asked for: the batch goes through the lane,
+    behind the earlier write, and the next async write lands behind the batch."""
+    store = StateStore(tmp_path / "state.sqlite3")
+    await store.aenqueue({"type": "agent.log", "data": {"n": 1}}, 10)
+
+    def writes():
+        store.enqueue({"type": "agent.log", "data": {"n": 2}}, 10)
+        store.enqueue({"type": "agent.log", "data": {"n": 3}}, 10)
+
+    await asyncio.wait_for(asyncio.to_thread(store.run_batch, writes), 10)
+    await asyncio.wait_for(store.arun_batch(lambda: store.enqueue({"type": "agent.log", "data": {"n": 4}}, 10)), 10)
+    await store.aenqueue({"type": "agent.log", "data": {"n": 5}}, 10)
+    assert [e["data"]["n"] for e in store.pending()] == [1, 2, 3, 4, 5]
     store.close()
 
 

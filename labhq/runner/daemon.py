@@ -498,17 +498,21 @@ class Runner:
         """The rows and messages of `items`, in order, in ONE transaction: one commit and fsync for the batch instead
         of one per row and message (#1125). The outbox is reloaded once after that commit, because a reader sees only
         committed rows."""
-        self._batch_thread, self._reload_after_batch = threading.current_thread(), False
-        try:
-            with self.store.batch():
+        def write() -> None:
+            # Runs on the store's lane thread, whichever thread asked: `send` defers its reload while this is set.
+            self._batch_thread, self._reload_after_batch = threading.current_thread(), False
+            try:
                 for obj, befores, afters in items:
                     for row in befores:
                         self.store.put(*row)
                     self.send(obj)
                     for row in afters:
                         self.store.put(*row)
-        finally:
-            self._batch_thread = None
+            finally:
+                self._batch_thread = None
+
+        self._reload_after_batch = False
+        self.store.run_batch(write)  # from the lane's own job this is a plain inline call
         if self._reload_after_batch:
             self._reload_outbox_after_commit()
 

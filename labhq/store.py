@@ -10,9 +10,12 @@ import time
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TypeVar
 
 from . import durable
 from .test_guard import guard_test_path
+
+T = TypeVar("T")
 
 
 SCHEMA_VERSION = 1
@@ -59,6 +62,7 @@ class StateStore:
         self._write_lock = threading.RLock()
         self._wdb: sqlite3.Connection | None = None
         self._batch_conn: sqlite3.Connection | None = None  # set while `batch()` holds the open transaction
+        self._lane_owner: threading.Thread | None = None  # the thread running `_batch_now` for this store
         self._closed = False
         self.db = sqlite3.connect(path, timeout=5, check_same_thread=False)
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
@@ -116,11 +120,16 @@ class StateStore:
 
     @contextmanager
     def batch(self):
-        """Every write made inside, by this thread, is ONE transaction: one commit and one fsync when the block ends,
-        all of it or none of it (#1125). The writes keep their order and each is still whole before the block returns,
-        so a batch is as durable as the same writes made one by one, minus the fsyncs in between. Nothing is delayed:
-        the commit is at the end of the block, before the caller continues. A batch inside a batch joins the outer
-        one."""
+        """Every write made inside is ONE transaction: one commit and one fsync when the block ends, all of it or none
+        of it (#1125). The writes keep their order and each is still whole before the block returns, so a batch is as
+        durable as the same writes made one by one, minus the fsyncs in between. Nothing is delayed: the commit is at
+        the end of the block, before the caller continues. A batch inside a batch joins the outer one.
+
+        Only inside this store's durable lane (a `durable.run` job, or `run_batch`): its writes then run inline, in
+        order behind every earlier one. On any other thread the block would hold the write lock while its own `put()`
+        queued behind a live writer thread that waits for that lock."""
+        if not (durable.lane(self.lane).in_writer() or self._lane_owner is threading.current_thread()):
+            raise RuntimeError("StateStore.batch() runs inside the store's durable lane: use run_batch()")
         with self._write_lock:
             if self._batch_conn is not None:
                 yield
@@ -135,6 +144,23 @@ class StateStore:
                     yield
             finally:
                 self._batch_conn = None
+
+    def run_batch(self, fn: Callable[[], T]) -> T:
+        """`fn()` on this store's lane with its writes as one transaction (`batch()`): in order behind the writes
+        already queued, and its result is returned once the commit is on disk."""
+        return durable.call(self.lane, self._batch_now, fn)
+
+    async def arun_batch(self, fn: Callable[[], T]) -> T:
+        """`run_batch` for a coroutine: the loop keeps serving while the batch commits."""
+        return await durable.run(self.lane, self._batch_now, fn)
+
+    def _batch_now(self, fn: Callable[[], T]) -> T:
+        previous, self._lane_owner = self._lane_owner, threading.current_thread()
+        try:
+            with self.batch():
+                return fn()
+        finally:
+            self._lane_owner = previous
 
     def close(self) -> None:
         durable.lane(self.lane).drain()  # queued writes finish before their connection goes
