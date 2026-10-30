@@ -1,0 +1,5 @@
+rows:
+- sha: '402d718'
+  at: 2026-10-31 03:20
+  text: 시험용 MiniWebSocket이 업그레이드 전에 close()하거나 연결에 실패해도 onclose를 정확히 한 번 내게 하고(요청을 destroy), 데모 정리 진단(demo cleanup:)에 node_version과 ws_kind를 더한다. 시험 4건 추가
+  summary: Windows CI의 데모 정리가 websocket 닫힘을 영원히 기다리다 5초를 채우던 결함을 막고, 다음 사례에서 어느 WebSocket 구현인지 로그로 알 수 있습니다.
