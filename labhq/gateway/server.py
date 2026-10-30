@@ -2523,14 +2523,18 @@ class Hub:
         """The step a turn belongs to: its wake, retry, finish and halt-resume turns share it."""
         return json.dumps([request_id or "", step_id or kind or task_id], ensure_ascii=False)
 
-    def closed_step_revision(self, request_id: str | None, step_id: str | None) -> int:
-        """The revision a step's ended turns reached, or -1 when it is open (#1053).
+    def step_revision_floor(self, request_id: str | None, step_id: str | None) -> int:
+        """The lowest revision the step's next turn can be dispatched at (#1053).
 
-        A step id that comes back in a later round (a continuation re-runs it) must dispatch above this, or the
-        closed-step check refuses it; a turn of the earlier round, still at a lower revision, stays refused."""
-        closed = getattr(self, "_closed_steps", None)
+        A closed step (a continuation re-runs a step id its earlier round ended) needs one above the revision its ended
+        turns reached, or the closed-step check refuses it. A step already reopened keeps the revision it was reopened
+        at, so a question rerun or a retry in the same round is not refused as older. A turn of an earlier round, still
+        at a lower revision, stays refused either way."""
         key = self.step_key(request_id, step_id, None, "")
-        return int(closed.get(key, -1)) if isinstance(closed, dict) else -1
+        closed = getattr(self, "_closed_steps", None)
+        if isinstance(closed, dict) and key in closed:
+            return int(closed[key]) + 1
+        return self._step(key)["revision"]
 
     def _entry_step(self, tid: str, entry: dict) -> str:
         return self.step_key(entry.get("request_id"), entry.get("step_id"), entry.get("kind"), tid)

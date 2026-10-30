@@ -96,12 +96,22 @@ async def test_a_continuation_round_at_revision_zero_stays_closed_out_of_the_gat
 
 async def test_the_next_round_dispatches_one_revision_above_the_closed_one_and_stragglers_stay_out(tmp_path):
     hub, key = await _closed_step_hub(tmp_path)
-    assert hub.closed_step_revision("r", "s1") == 0 and hub.closed_step_revision("r", "other") == -1
-    await hub._attach_steers(_step_task("r", "s1", hub.closed_step_revision("r", "s1") + 1))
+    assert hub.step_revision_floor("r", "s1") == 1 and hub.step_revision_floor("r", "other") == 0
+    await hub._attach_steers(_step_task("r", "s1", hub.step_revision_floor("r", "s1")))
     assert key not in hub._closed_steps  # reopened for the new round
     assert hub._step(key)["revision"] == 1
     assert int(_step_task("r", "s1", 0).meta["revision"]) < hub._step(key)["revision"]  # an old-round turn is refused
 
+
+async def test_a_reopened_step_keeps_its_raised_revision_for_a_question_rerun_in_the_same_round(tmp_path):
+    """Review P1: the step is open again at revision 1 after its first turn; the rerun after an answer must not drop to 0."""
+    hub, key = await _closed_step_hub(tmp_path)
+    await hub._attach_steers(_step_task("r", "s1", hub.step_revision_floor("r", "s1")))
+    assert key not in hub._closed_steps and hub._step(key)["revision"] == 1
+    assert hub.step_revision_floor("r", "s1") == 1  # open: the revision it was reopened at, not 0
+    await hub._attach_steers(_step_task("r", "s1", hub.step_revision_floor("r", "s1")))
+    assert hub._step(key)["revision"] == 1 and key not in hub._closed_steps
+    assert hub._step(key)["revision"] > int(_step_task("r", "s1", 0).meta["revision"])  # a stale turn is still refused
 
 async def test_the_orchestrator_asks_the_gateway_for_the_revision_a_reopened_step_needs(tmp_path):
     from labhq.orchestrator.cso import Orchestrator

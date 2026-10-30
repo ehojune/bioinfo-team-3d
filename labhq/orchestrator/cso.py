@@ -3376,13 +3376,13 @@ class Orchestrator:
                                          for entry in store.all("task").values())
 
     def _step_revision(self, rid: str, step_id: str) -> int:
-        """The revision a step turn is dispatched at: a review revise's own, or one above an earlier round's ended turn.
+        """The revision a step turn is dispatched at: a review revise's own, or the gateway's floor for the step.
 
         A continuation round runs the same step ids again; the gateway keeps the first round's closed step at its
         revision and refuses anything not above it ("step ended before dispatch", #1053)."""
         pending = (self.hub.requests.get(rid, {}).get("pending_revisions", {}).get(step_id, {}).get("revision", 0))
-        closed = getattr(self.hub, "closed_step_revision", None)
-        return max(int(pending or 0), closed(rid, step_id) + 1 if closed else 0)
+        floor = getattr(self.hub, "step_revision_floor", None)
+        return max(int(pending or 0), floor(rid, step_id) if floor else 0)
 
     async def _free_session(self, agent_id: str, session_id: str | None, workdir: str | None, *,
                             rid: str, step: str) -> tuple[str | None, str | None]:
