@@ -4,11 +4,11 @@ rows:
     at: "2026-10-30 19:49"
     summary: "실제 VM을 만들기 전 fixture 계획의 누락과 충돌을 검사합니다."
     text: "Add offline fixture plan preflight (#1079)"
-  - sha: bb04cc82
+  - sha: bb04cc8
     at: "2026-10-30 19:54"
     summary: "날짜만 적힌 만료 시각을 검토 오류로 반환합니다."
     text: "Reject date-only fixture expiry (#1079)"
-  - sha: 1d25e0c6
+  - sha: 1d25e0c
     at: "2026-10-30 19:57"
     summary: "principal 이름의 공백 차이로 역할 중복을 놓치지 않습니다."
     text: "Normalize fixture principals for separation (#1079)"
