@@ -991,6 +991,9 @@ STEP_OUTPUTS_RULE = ("\n\nDeclared required outputs: save each at exactly this p
                      "present, but absence is only a warning: {optional}")
 
 RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_FIELD_RULES) + (
+    "\n- Evidence rows that cite the same source (the same DOI, PMID, accession or artifact path) must carry the "
+    "same independence_group: a source cited twice is one independent source, and two groups for it make the "
+    "whole result refused."
     "\n- For literature evidence, carry the fulltext tool's source_access_metadata into SourceRef "
     "(access_status, methods_locator, qc_locator, supplementary_status), with DOI/PMID and the exact "
     "source.locator you read. A stored receipt records access, not support: locate Methods/QC after reading, "
