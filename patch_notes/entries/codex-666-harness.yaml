@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '9bb491a'
+    at: '2026-10-30 12:43'
+    summary: '느린 launcher에서도 분리된 자식의 증거를 기다립니다.'
+    text: 'Fix detached witness after slow launch'
   - sha: 'd9e499a'
     at: '2026-10-30 12:40'
     summary: '경계 진단 테스트를 Windows 검증 대상에 등록합니다.'
