@@ -5,11 +5,12 @@
 - 29개 corpus case와 독립 pure validator. source→parent→root의 `parent_ref`·전체 `parent_identity`를 독립 pin과 대조합니다.
 - 7개 관측 단계에서 잘못된 parent·누락 edge·cycle·self-edge·분리된 subtree·root 교체·변경 후 원복을 거부합니다.
 - run/nonce·supervisor/child identity·link·연속 관측·descendant/socket 정리 검사와 Windows inventory를 유지합니다.
+- manual 한영판에 synthetic 검증 범위와 실제 보호 UNVERIFIED를 명시했습니다.
 
 ## 테스트 결과
-- seal contract 회귀 364 passed. inventory validation·notes/public 검사는 PR에 기록합니다.
-- rev4 CI 41033951645는 9개 PASS·manifest FAIL(`checkout-parents`). 같은 head의 실제 Codex review는 새 지적 없이 완료됐습니다.
-- rev5는 #1075(`e932acee`) 병합 뒤 기록만 갱신해 synchronize를 재검증합니다. 최종 head CI·실제 review, event/base/merge parent와 CI helper 수정 포함 여부는 PR #1064에 기록합니다. 같은 실패면 반복 push 없이 보고합니다.
+- 기존 seal contract 회귀 364 passed. rev6는 문서만 수정하며 로컬 pytest를 다시 실행하지 않습니다.
+- rev5 CI 41039167818은 patch-notes FAIL·manifest SKIPPED였습니다. rev6는 manual 갱신으로 문서 gate를 복구합니다.
+- 최종 head 문서/public 검사·전체 CI·manifest 실행·실제 review 결과와 identity는 [PR #1064](https://github.com/ehojune/bioinfo-team-3d/pull/1064)에 기록합니다.
 
 ## 막힌 점
 - 실제 witness 인증·supervisor·seal·연속 감시·독립 cleanup은 UNVERIFIED. `adapt_producer`와 `protected_launch`는 unsupported입니다.
