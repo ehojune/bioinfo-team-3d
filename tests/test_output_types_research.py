@@ -254,3 +254,11 @@ def test_staff_type_fields_are_optional_and_a_bad_value_drops_only_the_field():
     assert typed.artifact_refs[0].data_type == "de_table" and typed.artifact_refs[0].format is None
     assert typed.model_dump(mode="json")["artifact_refs"][0] == {"artifact_id": "a", "path": "outputs/x.tsv",
                                                                   "data_type": "de_table"}
+
+
+def test_the_research_step_rules_tell_the_engine_that_one_source_is_one_independence_group():
+    """#1089: two groups for one source got the later evidence row refused and its claim lost it (② 5th and 6th runs, s3). The rule
+    is in the text every research step prompt carries, beside the other cross-field rules."""
+    rules = cso.RESEARCH_RESULT_FIELD_RULES
+    assert "cite the same source" in rules and "same independence_group" in rules
+    assert rules.index("same independence_group") < rules.index("source_access_metadata")  # a rule, not a literature aside
