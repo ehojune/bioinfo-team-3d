@@ -195,3 +195,66 @@ def test_cli_to_github(monkeypatch, capsys):
     with pytest.raises(SystemExit):  # one action at a time
         cli.main(["storage", "req_x", "--to", "github", "--republish"])
     assert len(calls) == 1
+
+
+async def test_a_request_waiting_in_the_report_review_is_told_to_run_review_done_first(tmp_path, monkeypatch):
+    """#1077: CP4 requests sit in review_pending; the refusal names the command instead of a bare "finished only"."""
+    app, hub, calls, *_ = make(tmp_path, monkeypatch)
+    hub.requests["r"]["status"] = "review_pending"
+    with pytest.raises(ValueError) as caught:
+        await hub.result_storage.to_github("r")
+    assert "labhq review-done r" in str(caught.value) and "--storage github" in str(caught.value)
+    assert not calls  # refused before GitHub is asked anything
+    await hub.result_storage.close()
+
+
+async def test_a_cp4_request_goes_from_review_done_to_a_published_new_repository(tmp_path, monkeypatch):
+    """#1077: the whole last step of a research request, with a fake GitHub API and no mocked upload: the report review
+    (`review-done --storage github`), the editor, the publish card, then the repository and its files."""
+    import base64
+    from tests.test_research_cp4 import draft_hub, target
+    from tests.test_result_storage import fake_github
+
+    monkeypatch.setenv("GITHUB_TOKEN", "fake-token-for-tests")
+    finished = await draft_hub()  # a research request waiting in the final-draft review (status review_pending)
+    assert finished.requests["r"]["status"] == "review_pending"
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    settings.gateway.client_token = "test-token"
+    calls = []
+    app = create_app(settings, github_transport=fake_github(calls))
+    hub = app.state.hub
+    hub.requests["r"] = finished.requests["r"]
+    await hub.result_storage.select("r", {"mode": "local"})  # the start card was answered local (no token then)
+    hub.agents["editor"] = {}
+    editor = AsyncMock(return_value=SimpleNamespace(ok=True, structured={"readme": "# Edited summary"}))
+    monkeypatch.setattr(hub.orchestrator, "run_step", editor)
+    monkeypatch.setattr(hub, "_has_bundle_workdir", lambda _rid: True)
+    monkeypatch.setattr(hub, "_bundle_outcome", lambda *_args: {"warning": "test bundle refreshed"})
+    body = {**target(hub.requests["r"]), "storage": "github", "name": "study", "visibility": "private"}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test",
+                                 headers={"Authorization": "Bearer test-token"}) as client:
+        reply = await client.post("/api/requests/r/review-done", json=body)
+    assert reply.status_code == 200, reply.text
+    for _ in range(100):
+        if not hub.requests["r"].get("bundle_pending"):
+            break
+        await asyncio.sleep(0.01)
+
+    card = await publish_card(hub)
+    assert card["detail"]["repo"] == "owner/study" and editor.await_count == 1
+    assert not any(method in {"PUT"} for method, _, _ in calls)  # nothing is uploaded before the PI answers the card
+    assert ("POST", "/user/repos", {}) in calls  # the token was probed without creating anything
+    await hub.resolve_approval(card["id"], True)
+    await hub.result_storage.tasks["r"]
+
+    saved = hub.requests["r"]["result_storage"]
+    assert (saved["mode"], saved["repo"], saved["status"]) == ("new", "owner/study", "published")
+    # (the fake answers "repository exists" after the empty probe POST, so creation itself is test_result_storage's)
+    files = {path.split("/contents/")[1]: base64.b64decode(body["content"]).decode()
+             for method, path, body in calls if method == "PUT" and "/contents/" in path}
+    assert any(name.endswith("README.md") for name in files)
+    assert all(path.startswith("/repos/owner/study/contents/") for method, path, _ in calls if method == "PUT")
+    await hub.result_storage.close()
