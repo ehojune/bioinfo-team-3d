@@ -1,5 +1,9 @@
 pr: 1064
 rows:
+  - sha: "d7d2dd4"
+    at: "2026-10-30 16:48"
+    summary: "supervisor와 child가 같은 identity인 관측 계약을 거부합니다."
+    text: "test: reject aliased supervisor and child identities"
   - sha: "866b2a7"
     at: "2026-10-30 16:44"
     summary: "실행·종료·정리 관측을 독립적으로 고정한 child identity에 묶습니다."
