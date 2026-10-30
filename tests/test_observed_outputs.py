@@ -606,3 +606,20 @@ def test_a_declared_outputs_root_is_walked_from_depth_zero(tmp_path):
     assert paths is None and "deeper than 1" in why
     paths, why = folder_files(tmp_path, "outputs/sub", 100, 1)  # a folder one level down starts at depth 1
     assert paths is None and "deeper than 1" in why
+
+
+@pytest.mark.asyncio
+async def test_a_hard_linked_optional_output_stops_the_step_too(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/ledger.tsv", b"rows" + bytes([10]))
+        _write(workdir, "outputs/preview.png", b"png" + bytes([10]))
+        try:
+            os.link(workdir / "outputs/preview.png", workdir / "outputs/preview-copy.png")
+        except OSError as error:
+            pytest.skip(f"this account cannot create a hard link ({error})")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(
+        outputs=["outputs/ledger.tsv", "outputs/preview.png"], required_outputs=["outputs/ledger.tsv"],
+        optional_outputs=["outputs/preview.png"]))
+    assert result.ok is False and "hard-linked" in result.error and "preview.png" in result.error
