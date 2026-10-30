@@ -161,8 +161,9 @@ async def test_new_portfolio_long_report_points_to_nested_report(tmp_path, monke
     await service.finish("req_test")
     draft = Path(hub.requests["req_test"]["result_storage"]["draft_path"])
     readme = (draft / "README.md").read_text(encoding="utf-8")
-    assert "이어지는 내용은 report/report.md에 있습니다." in readme
-    assert "이어지는 내용은 report.md에 있습니다." not in readme
+    # The repository README opens with a link to the full report; a trailing "continues in ..." note would dangle (#792).
+    assert "](report/report.md)" in readme
+    assert "이어지는 내용은" not in readme
     await service.close()
 
 

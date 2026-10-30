@@ -42,7 +42,7 @@ _PRIVATE_PATH = re.compile(
 )
 # String fragments in f-strings may end at the private root (for example ``f"/home/{user}"``).
 _PRIVATE_LITERAL_PATH = re.compile(
-    r"(?<![\w.-])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\]})]*"
+    r"(?<![\w.-])(?:[A-Za-z]:[/\\]|\\\\[^\s<>\"'`\]})/\\]+[/\\]|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\]})]*"
 )
 PRIVATE_PATH_PATTERN = _PRIVATE_PATH
 _MANUAL_PATH_REVIEW = "# LABHQ 수동 확인 필요: 개인 경로를 안전하게 자동 변환하지 못했습니다."
@@ -237,6 +237,16 @@ def _rewrite_markdown_links(files: Mapping[str, str | bytes],
     return rewritten
 
 
+_REMOVED_PATH_LIST = re.compile(r"(?m)^(- 남은 절대경로: )((?:<(?:local|reference)-path>(?:,\s*|\s+)?)+)$")
+
+
+def _collapse_removed_paths(text: str) -> str:
+    """The bundle lists the absolute paths it kept; the edition cleaned each into a placeholder. Say how many, not which."""
+    def count(match: re.Match[str]) -> str:
+        return f"{match.group(1)}{len(re.findall(r'<(?:local|reference)-path>', match.group(2)))}개(게시본에는 경로를 적지 않음)"
+    return _REMOVED_PATH_LIST.sub(count, text)
+
+
 def _step_execution_path(source: str, target: str) -> tuple[str, str, str] | None:
     source_path = PurePosixPath(source)
     if (len(source_path.parts) < 5 or source_path.parts[0] != "steps"
@@ -258,7 +268,7 @@ def _step_execution_path(source: str, target: str) -> tuple[str, str, str] | Non
 # to `tables/`, `figures/` and the like. Matching the word, not one path shape, covers `inputs/s1/x`, `inputs\s1\x`, `Path("inputs") / "s1"`,
 # `os.path.join("inputs", step)` and an unquoted shell path at once. It over-matches prose such as "validate inputs",
 # and that errs toward "needs the workspace", which the edition then says instead of promising a re-run (#792).
-_WORKSPACE_INPUT = re.compile(r"""(?<![\w.])(?:inputs|outputs)(?!\w)|""" + r"""\bmanifest""" + r"""\.json\b""")
+_WORKSPACE_INPUT = re.compile(r"""(?<![\w.])(?:inputs|outputs)(?!\w)|""" + r"""\bmanifest""" + r"""\.json\b""", re.I)
 _BUNDLE_COMMAND = re.compile(r"^- `cd steps/([^ `]+) && [^`]*?([^/ `]+)`$")
 
 
@@ -1550,7 +1560,7 @@ def _data_licenses(req: dict, settings, input_readmes: Mapping[str, str] | None 
     return "\n".join(lines) + "\n"
 
 
-def _first_limit(report: str) -> str:
+def _limit_sentences(report: str, count: int = 3) -> list[str]:
     scope = ""
     candidates: dict[str, list[str]] = collections.defaultdict(list)
     for block in report.split("\n\n"):
@@ -1571,20 +1581,85 @@ def _first_limit(report: str) -> str:
         plain = " ".join(_ANCHOR.sub("", value).split())
         candidates[scope].extend(_SENTENCE_END.split(plain))
     constraint = re.compile(
-        r"한계|제한|제약|limitation|검정력|일반화|편향|교란|설계상|방법상|"
+        r"한계|제한|제약|limitation|검정력|일반화|편향|교란|설계상|방법상|UNVERIFIED|미확인|확인하지 못|읽지 못|상한|"
         r"표본\s*(?:수|크기)?\S{0,12}(?:작|적|부족)|(?:자료|데이터)\S{0,12}부족",
         re.I,
     )
-    limited = next((sentence.strip() for name in ("limit", "discussion", "summary")
-                    for sentence in candidates[name] if constraint.search(sentence)), "")
-    return limited or "해석 범위와 남은 한계는 과학 보고서에 적었습니다."
+    # Under a limitations heading every sentence is a limit; elsewhere only those that sound like one.
+    found = [sentence.strip() for sentence in candidates["limit"] if len(sentence.strip()) >= 8]
+    found += [sentence.strip() for name in ("discussion", "summary")
+              for sentence in candidates[name] if constraint.search(sentence)]
+    return [sentence for sentence in dict.fromkeys(found) if "과학 보고서에 적었습니다" not in sentence][:count]
+
+
+_NO_LIMIT_FOUND = ("보고서에서 한계를 밝힌 문장을 찾지 못했습니다. 인용하기 전에 "
+                   "[과학 보고서](report/report.md)의 논의를 읽어 주세요.")
+
+
+def _first_limit(report: str) -> str:
+    """The limits the report itself states (up to three sentences), not a pointer that says nothing."""
+    found = _limit_sentences(report)
+    return " ".join(found) if found else _NO_LIMIT_FOUND
+
+
+_RANDOM_USE = re.compile(r"\b(?:random_state|set_seed|manual_seed)\b|\b(?:np|numpy)\.random\b|\brandom\.(?:seed|random|choice|shuffle|sample)\b|\bseed\b")
+
+
+def _determinism_line(files: Mapping[str, str | bytes]) -> str:
+    code = {name: body for name, body in files.items()
+            if isinstance(body, str) and PurePosixPath(name).suffix.lower() in _CODE_SUFFIXES}
+    if not code:
+        return "공개한 스크립트가 없어 결정성은 확인할 수 없습니다."
+    using = sorted(name for name, body in code.items() if _RANDOM_USE.search(body))
+    if using:
+        return ("난수나 seed를 쓰는 스크립트: " + ", ".join(f"`{name}`" for name in using[:6])
+                + ". seed 값은 각 스크립트에 적혀 있습니다.")
+    return (f"공개한 스크립트 {len(code)}개에서 난수·seed 호출을 찾지 못했습니다. 난수를 쓰지 않는 것으로 보이며, "
+            "실행해서 확인한 것은 아닙니다.")
+
+
+def _figure_lines(report: str, figure_names: list[str]) -> list[str]:
+    captions = {PurePosixPath(unquote(target.split("#")[0])).name: alt.strip()
+                for alt, target in re.findall(r"!\[([^\]]*)\]\(([^)]+)\)", report)}
+    rows = []
+    for name in figure_names:
+        alt = captions.get(PurePosixPath(name).name, "")
+        rows.append(f"- [{PurePosixPath(name).name}]({quote(name, safe='/')}): "
+                    f"{alt if alt and alt != PurePosixPath(name).name else '보고서에 그림 설명이 없습니다'}")
+    return rows or ["- 게시한 그림이 없습니다."]
+
+
+def _file_list_lines(files: Mapping[str, str | bytes], table_names: list[str], figure_names: list[str]) -> list[str]:
+    code = sorted(name for name, body in files.items()
+                  if PurePosixPath(name).suffix.lower() in _CODE_SUFFIXES and "code/" in name)
+
+    def joined(names: list[str], limit: int = 12) -> str:
+        shown = ", ".join(f"`{name}`" for name in names[:limit])
+        return shown + (f" 외 {len(names) - limit}개" if len(names) > limit else "")
+    return [f"- 코드 {len(code)}개: " + (joined(code) if code else "없음"),
+            f"- 결과표 {len(table_names)}개: " + (joined(table_names) if table_names else "없음"),
+            f"- 그림 {len(figure_names)}개: " + (joined(figure_names) if figure_names else "없음")]
+
+
+def _run_lines(files: Mapping[str, str | bytes], run_documents: Mapping[str, str]) -> list[str]:
+    keys = sorted(set(re.findall(r"\bLABHQ_INPUT_[A-Z0-9_]+\b",
+                                 "\n".join(body for body in files.values() if isinstance(body, str)))))
+    reproduce = "[재현 방법](run/reproduce.md)" if "run/reproduce.md" in run_documents else "재현 방법"
+    variables = (", ".join(f"`{key}`" for key in keys[:8]) + (f" 외 {len(keys) - 8}개" if len(keys) > 8 else "")
+                 if keys else "없음")
+    return [f"- 원자료가 있을 때: {reproduce}의 순서와 명령을 따릅니다. 입력 경로 환경 변수: {variables}. "
+            "경로 값은 정리본에 적지 않았으니 자신의 경로를 넣습니다.",
+            "- 원자료가 없을 때: 정리본에는 원자료가 없어 스크립트를 처음부터 다시 돌릴 수 없습니다. `tables/`의 결과표와 "
+            "`report/`의 보고서로 결과와 근거를 확인합니다. 재현 방법이 정리본만으로는 다시 만들 수 없다고 적은 단계는 "
+            "비공개 요청 묶음이 있어야 다시 실행됩니다."]
 
 
 def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_names: list[str],
             table_names: list[str], omitted_tables: list[Mapping[str, Any]],
             run_documents: Mapping[str, str], branch_rows: list[dict[str, str]] | None = None,
             source_targets: Mapping[str, str] | None = None,
-            run: run_report.RunSummary | None = None) -> str:
+            run: run_report.RunSummary | None = None,
+            files: Mapping[str, str | bytes] | None = None) -> str:
     title = report.splitlines()[0].lstrip("#").strip() or "연구 결과"
     abstract = "figures/graphical_abstract.svg" if "figures/graphical_abstract.svg" in figure_names else None
     key = next((name for name in figure_names if name != abstract), None)
@@ -1645,6 +1720,11 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     omitted_figures = list(dict.fromkeys(re.findall(r"\*\(그림 생략: ([^)\n]+)\)\*", report)))
     if omitted_figures:
         lines += ["", "## 생략한 그림", "", *[f"- *(그림 생략: {label})*" for label in omitted_figures]]
+    published = files or {}
+    lines += ["", "## 그림이 보여 주는 것", "", *_figure_lines(report, figure_names),
+              "", "## 파일 목록", "", *_file_list_lines(published, table_names, figure_names),
+              "", "## 실행 방법", "", *_run_lines(published, run_documents),
+              "", "## 결정성", "", _determinism_line(published)]
     lines += ["", "## 읽는 순서", "",
               "1. [과학 보고서](report/report.md) — 논문 형식 보고서와 claim 근거 각주"]
     if "run/progress.md" in run_documents:
@@ -1962,7 +2042,8 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     execution = ""
     if bundle is not None and (bundle / "execution_record.md").is_file():
         execution = (bundle / "execution_record.md").read_text(encoding="utf-8", errors="replace")
-    execution = _clean(execution or str(req.get("execution_record") or "# 실행 기록\n\n기록 없음\n"), settings, req)
+    execution = _collapse_removed_paths(
+        _clean(execution or str(req.get("execution_record") or "# 실행 기록\n\n기록 없음\n"), settings, req))
     files.update({
         "run/requests.md": f"# 요청 원문\n\n```text\n{request_text.strip()}\n```\n",
         "run/decisions.md": _clean(_decisions_document(req, decisions), settings, req),
@@ -2030,7 +2111,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         "<reference-path>", "참고 자료")
     readme = _plain_korean(_readme(
         readme_req, report, _step_rows(req, assets), figure_names, table_names, omitted_tables,
-        run_documents, branch_rows, source_targets, run_summary))
+        run_documents, branch_rows, source_targets, run_summary, files))
     if check_document(readme)["status"] != "PASS":
         raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)

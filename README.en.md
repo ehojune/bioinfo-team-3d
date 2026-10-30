@@ -126,7 +126,7 @@ Limits: the limit/login-wait fixes have only test evidence and re-login needs a 
 \* The default reviewer is Codex/GPT-6-Astra: another vendor for Claude analysis and the same vendor for Codex analysis. Workbench features came from documentation; the app was not run.
 
 **Fits**: handing over evidence and reproduction materials, or approving long analyses from the web or phone.
-**Remaining gaps**: standalone Astra led on total score and speed in the earlier blind bench. Reproduction materials and report length have since changed; a new comparison is pending. The optional solo route skips review by default. [Conditions, scores, and limits](docs/reference/readme-evidence.md#comparison-evidence)
+**Remaining gaps**: standalone Astra led on total score and speed in the earlier blind bench. Reproduction materials and report length have since changed, and the published README now states real limits, what each figure shows, how to run, and seeds; a new comparison is pending. The optional solo route skips review by default. [Conditions, scores, and limits](docs/reference/readme-evidence.md#comparison-evidence)
 
 ## Example: analyzing public lung adenocarcinoma data
 
