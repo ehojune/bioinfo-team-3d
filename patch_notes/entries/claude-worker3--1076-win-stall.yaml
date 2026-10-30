@@ -1,0 +1,5 @@
+rows:
+- sha: 'ae942ab'
+  at: 2026-10-30 19:26
+  text: Windows pool 단계에 --ci-stall을 켜고 stack snapshot 간격을 CI_STALL_INTERVAL_S(기본 300, Windows 150초)로 정해, 9분에 끊긴 순간의 worker별 시험을 artifact에 남긴다
+  summary: Windows 시험 단계가 시간 상한에 걸려 끊겨도 어느 시험이 돌고 있었는지 기록이 남습니다.
