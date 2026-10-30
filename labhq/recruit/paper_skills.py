@@ -209,6 +209,76 @@ def skill_origins(requests) -> dict[tuple[str, str], dict[str, Any]]:
     return found
 
 
+HISTORY_REQUEST_LIMIT = 500  # the most recent requests the use history reads: a page or a command never scans them all
+HISTORY_USES_PER_SKILL = 20
+
+
+def history_rows(requests: Any) -> tuple[list[tuple[Any, ...]], bool]:
+    """The newest HISTORY_REQUEST_LIMIT stored requests as skill_history rows, and whether older ones were left out.
+
+    `requests` is the gateway's id -> request mapping. A request without a numeric created_at is not ordered, so it is
+    skipped; a damaged request never stops the listing."""
+    found = []
+    for key, req in (requests.items() if isinstance(requests, dict) else []):
+        created = req.get("created_at") if isinstance(req, dict) else None
+        if isinstance(created, (int, float)) and not isinstance(created, bool):
+            plan = req.get("plan") if isinstance(req.get("plan"), dict) else {}
+            found.append((key, created, plan.get("paper_skill_results"), req.get("results")))
+    found.sort(key=lambda row: row[1], reverse=True)
+    return found[:HISTORY_REQUEST_LIMIT], len(found) > HISTORY_REQUEST_LIMIT
+
+
+def skill_history(rows) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """Where each built paper skill was selected across requests (#660): {(paper_id, skill_sha256): [use, ...]}, newest first.
+
+    `rows` are (request id, created_at, plan ``paper_skill_results``, ``results``) like skill_origins reads. A use is one
+    request's record of the skill: the steps it was attached to, the agents, and the result reference as records() states
+    it (a reference in a result, never proof of a tool call or a benefit). A row without a valid skill hash or a request
+    without a time is skipped, never guessed; a request whose records cannot be read is skipped."""
+    history: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for request_id, created_at, plan_rows, *rest in rows:
+        if not isinstance(created_at, (int, float)) or isinstance(created_at, bool) or not isinstance(plan_rows, list):
+            continue
+        results = rest[0] if rest and isinstance(rest[0], dict) else {}
+        try:
+            recorded = records({"paper_skill_results": [r for r in plan_rows if isinstance(r, dict)]},
+                               {k: v for k, v in results.items() if isinstance(v, dict)})
+        except (AttributeError, TypeError, KeyError, ValueError):
+            continue
+        for record in recorded:
+            pid, digest = paper_id(record.get("paper_id")), _hex([record, *record.get("usage", [])], "skill_sha256", 64)
+            if not pid or not digest:
+                continue
+            history.setdefault((pid, digest), []).append({
+                "request_id": str(request_id)[:60], "created_at": float(created_at),
+                "attached_steps": _ids(record.get("attached_steps")), "agents": _ids(record.get("agent_ids"), 4),
+                "reference": _member(record.get("call_status"), _REFERENCES) or "unverified"})
+    for uses in history.values():
+        uses.sort(key=lambda use: use["created_at"], reverse=True)
+        del uses[HISTORY_USES_PER_SKILL:]
+    return history
+
+
+def with_previous_uses(view: dict, history: dict, current_id: Any, scanned: int, truncated: bool) -> dict:
+    """`literature_view` rows with the other requests' uses of each skill, and the basis of the count (#660).
+
+    The current request is left out of its own list. The basis says how many recent requests were read and whether older
+    ones exist, so "no earlier use" is never read as "never used"."""
+    view["history"] = {"limit": HISTORY_REQUEST_LIMIT, "scanned": scanned, "truncated": truncated}
+    for row in view.get("papers") or []:
+        skill = row.get("skill") if isinstance(row, dict) else None
+        if not isinstance(skill, dict) or not skill.get("skill_sha256"):
+            continue
+        uses = []
+        for pid in row.get("ids") or []:
+            uses = [use for use in history.get((pid, skill["skill_sha256"]), []) if use["request_id"] != str(current_id)[:60]]
+            if uses:
+                break
+        skill["previous_uses"] = uses[:5]
+        skill["previous_use_count"] = len(uses)
+    return view
+
+
 def cited_access(citations: list[str]) -> str | None:
     """The best `access_level=` a precedent's citations state, e.g. abstract or full_text; None when none says."""
     rank = {"full_text": 3, "abstract": 2, "abstract_only": 2, "metadata": 1}

@@ -5991,6 +5991,19 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         except ValueError as e:  # a reference outside the runner's roots or in a restricted zone
             raise HTTPException(422, str(e))
 
+    @app.get("/api/paper-skills", dependencies=[Depends(auth)])
+    async def paper_skills_history() -> dict:
+        """Built paper skills with the requests that selected them (#660): read-only, from the newest stored requests."""
+        from ..recruit.paper_skills import HISTORY_REQUEST_LIMIT, history_rows, skill_history, skill_origins
+
+        rows, truncated = history_rows(hub.requests)
+        origins = skill_origins(rows)
+        skills = [{"paper_id": pid, "skill_sha256": digest, "uses": uses,
+                   "first_built": origins.get((pid, digest))}
+                  for (pid, digest), uses in sorted(skill_history(rows).items())]
+        return {"basis": {"limit": HISTORY_REQUEST_LIMIT, "scanned": len(rows), "truncated": truncated},
+                "skills": skills}
+
     @app.get("/api/requests", dependencies=[Depends(auth)])
     async def list_requests(status: str = "running", limit: int = 20) -> list[dict]:
         if status not in {"running", "done", "failed", "all"}:
@@ -6152,10 +6165,13 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     async def get_request(rid: str) -> dict:
         if rid not in hub.requests:
             raise HTTPException(404)
-        from ..recruit.paper_skills import literature_view
+        from ..recruit.paper_skills import history_rows, literature_view, skill_history, with_previous_uses
 
-        # The fox's paper list (#660) is derived from this stored record only; the record itself is unchanged.
-        return {**hub.requests[rid], "paper_literature": literature_view(hub.requests[rid])}
+        # The fox's paper list (#660) is derived from stored records only; the record itself is unchanged. The other
+        # requests' uses of each skill come from the most recent requests, and the view says how many were read.
+        rows, truncated = history_rows(hub.requests)
+        view = with_previous_uses(literature_view(hub.requests[rid]), skill_history(rows), rid, len(rows), truncated)
+        return {**hub.requests[rid], "paper_literature": view}
 
     @app.get("/api/requests/{rid}/audit-bundle", dependencies=[Depends(auth)])
     async def audit_bundle(rid: str) -> Response:
