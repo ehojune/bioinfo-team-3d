@@ -1,0 +1,15 @@
+pr: 1119
+rows:
+  - sha: "5339d26"
+    at: "2026-10-31 04:20"
+    summary: "논문 스킬이 다른 요청에서 어디에 쓰였는지 labhq talent --history와 웹 여우 패널 카드의 이전 사용 칸, GET /api/paper-skills로 볼 수 있습니다(최근 요청 500건 기준)."
+    text: "논문 스킬 2단계: 요청 사이 사용 이력, GET /api/paper-skills, 카드 이전 사용 (#660)"
+  - sha: "593e952"
+    at: "2026-10-31 03:48"
+    summary: "논문 스킬을 고른 요청이 20건을 넘어도 사용 횟수를 잘라 보고하지 않습니다."
+    text: "논문 스킬 사용 이력: 사용 횟수를 표시용 길이로 자르지 않는다 (#660)"
+  - sha: "9cd8746"
+    at: "2026-10-31 03:59"
+    summary: "논문 스킬을 처음 만든 요청이 최근 500건 밖이어도 /api/paper-skills가 그 요청을 보입니다."
+    text: "논문 스킬 API: first_built는 500건 밖의 요청까지 포함해 찾는다 (#660)"
+# CI 기록: run 41111652681의 validation-manifest가 attempt 2는 failed/incomplete effective Windows producer, attempt 3는 missing/ambiguous Windows producer로 실패해 새 head로 다시 돌립니다.

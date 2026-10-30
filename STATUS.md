@@ -5,6 +5,37 @@
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
 ## 단계
+#1122: 문서 주기 gate(main 커밋 3개마다 README·manual 갱신)가 시험만 바꾼 PR까지 막는 문제.
+
+## 한 일
+- `scripts/patch_notes.py`: `INVISIBLE` 접두사(`tests/`, `docs/status/`, `patch_notes/entries/`, `config/ci/`, `.github/`, `scripts/ci_`)를 두고, 바뀐 파일이 전부 그 안이거나 생성 파일인 커밋은 `counted_main_commits`에서 뺀다. `labhq/`·`agents/`나 다른 `scripts/`를 하나라도 바꾼 커밋은 그대로 센다.
+- 규칙 문구: `patch_notes.py` 머리말, `CLAUDE.md`, `AGENTS.md`.
+- 시험 두 건: 세지 않는 경우(tests+status+entries, ci 경로, 생성 목차 섞임), 여전히 세는 경우(제품 코드 혼합, agents, 그 밖의 scripts).
+
+## 확인
+- `tests/test_patch_notes.py` 19 passed.
+- Windows inventory: `tests/test_patch_notes.py`는 `known_tests` 목록에만 있다.
+
+## 하지 않은 것
+- 이미 병합된 main 커밋의 재분류는 하지 않았다(규칙이 병합 뒤부터 새 계산으로 적용된다).
+
+## 리뷰 후 추가 (rev2)
+- P1: `check()`가 현재 PR도 세던 문제. 커밋들이 바꾼 파일의 합집합이 전부 invisible이면 refresh 한도에 더하지 않는다. 순 diff가 아닌 합집합이라 README를 고쳤다 되돌린 PR은 계속 막힌다. 판정은 `invisible()` 하나로 main 커밋과 PR이 같이 쓴다.
+- 시험 2건 추가(시험 전용 PR 통과, 제품 코드 혼합 PR 차단). `tests/test_patch_notes.py` 21 passed.
+
+## 리뷰 후 추가 (rev3)
+- P2: rename 감지가 켜져 있으면 `git diff --name-only`가 목적지만 돌려줘 `labhq/` 파일을 `tests/`로 옮긴 커밋이 invisible로 면제됐다. 두 diff 호출에 `--no-renames`를 줬다.
+- 시험 1건(rename 커밋이 센다). 옛 스크립트로 실패, 새 스크립트로 통과를 확인했다. `tests/test_patch_notes.py` 22 passed.
+
+# #660 2단계: 요청 사이 사용 이력
+
+- 결론: 논문 스킬이 다른 요청에서 선택된 기록을 세 곳에서 본다. `labhq talent --history`(gateway 없이 store를 읽기 전용으로), `GET /api/paper-skills`(인증), 웹 여우 패널 카드의 `이전 사용` 칸. 모두 최근 요청 500건 기준이며 그보다 오래된 요청이 있으면 그렇게 밝힌다.
+- 바꾼 것: `labhq/recruit/paper_skills.py`(`history_rows`·`skill_history`·`with_previous_uses`), `labhq/gateway/server.py`(API, 요청 상세의 `previous_uses`와 `history`), `labhq/cli.py`(`--history`, store 읽기를 `_paper_skill_store_rows`로 분리), `labhq/web/ui/literature.js`, 시험 `tests/test_contract_provenance.py`·`tests/web_contract_provenance.cjs`, manual 한·영.
+- 사용 이력의 뜻: 그 요청이 스킬을 골랐고 어느 단계에 붙었는지, 결과가 참조했는지다. 결과 참조는 도구 호출이나 효용의 증거가 아니다.
+- 한계: store에 남은 요청만 센다(삭제 정책 미확인). 요청 상세를 열 때마다 최근 500건을 훑는다. 웹 렌더는 시험에서 가짜 DOM으로만 확인했다.
+- 미검증: 실제 gateway와 브라우저에서의 카드, 많은 요청이 쌓인 store의 응답 시간.
+
+## 단계
 #625 2단계 PR A: 계획 단계의 `model_tier` 데이터 경로. 설계: [#625 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/625#issuecomment-6529059780), 승인 조건은 같은 이슈의 총괄 댓글.
 
 ## 한 일
@@ -26,6 +57,27 @@
 ## 하지 않은 것
 - CSO prompt·CP1 표시·비용 예상(PR B)과 bench 측정(PI 승인 뒤).
 - 실제 연구 계획 재개 전체 흐름(모델 호출이 필요한 CP2까지)은 돌리지 않았고, 재개가 지나는 지점의 결정을 단위 시험으로 확인했다.
+
+## 단계
+#1117: `tests/test_state.py`의 고정 횟수 대기를 시간 기준 대기로. 근거: [#1076 계측 실측](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6530142714).
+
+## 한 일
+- `wait_until(predicate, timeout=10)`(async)와 `wait_until_sync`(TestClient 시험용)를 더하고, 이 파일의 `for _ in range(N): ... sleep(0.01)` 대기 12곳을 모두 바꿨다(async 9, sync 2, resume 한 곳은 두 조건). 조건이 서면 바로 나오고 한도를 넘으면 False를 돌려주므로 뒤의 단언이 그대로 실패를 알린다.
+- 대상 시험 `test_completed_direct_result_finishes_without_original_agent`는 `[False]`·`[True]` 모두 같은 대기를 쓴다. 단언은 하나도 바꾸지 않았다.
+- helper 시험 한 건(조건이 늦게 서도 기다림, 한도 초과는 False, 이미 참이면 즉시).
+
+## 확인
+- `tests/test_state.py` 61 passed.
+- Windows inventory: `config/ci/windows-boundary-v1.json`에 `tests/test_state.py`는 `known_tests` 목록에만 있고 sha256 고정(`mixed_nodes`)이 없어 수정하지 않았다.
+
+## 하지 않은 것
+- 실제 느린 Windows 러너에서의 재현은 하지 못했다(CI에서 확인). 이 PC에서는 시험이 통과하는 것과 helper의 동작만 확인했다.
+- 같은 부류의 다른 시험 파일(`test_state_*.py` 등)의 고정 횟수 대기는 이번 범위가 아니다.
+
+## 리뷰 후 추가 (rev3)
+- P2: helper 시험의 `< 4.0` 실시간 상한 단언을 뺐다(하한 `> 0.3`과 False/True 단언은 유지).
+- 같은 파일의 `asyncio.wait_for(x, 1~2)` 13곳을 10초로 올렸다. 모두 결과가 오기를 기다리는 곳이라 마감이 곧 단언인 곳은 없다. 실패하면 TimeoutError로 보인다. (#1117 조사 후보 ①)
+- `tests/test_state.py` 61 passed.
 
 # #1113 uvicorn 시작 실패가 worker를 죽이지 않게
 

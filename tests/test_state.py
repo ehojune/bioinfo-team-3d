@@ -15,6 +15,30 @@ from labhq.settings import ProjectSettings, Settings
 from labhq.store import StateStore
 
 
+async def wait_until(predicate, *, timeout: float = 10.0, interval: float = 0.01) -> bool:
+    """Poll `predicate` until it holds or `timeout` seconds pass (#1117).
+
+    A fixed ``for _ in range(100): ... await asyncio.sleep(0.01)`` bounds the wait at about 1 s of timer ticks, which is
+    about 1.6 s on Windows, and a slow runner needs longer (this file's resume test stayed 'running' on one). The caller
+    asserts the outcome, so a timeout still fails with the caller's own message."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(interval)
+    return True
+
+
+def wait_until_sync(predicate, *, timeout: float = 10.0, interval: float = 0.01) -> bool:
+    """wait_until for a test that waits on threads with a TestClient and has no event loop of its own."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(interval)
+    return True
+
+
 def settings(tmp_path):
     s = Settings()
     s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
@@ -29,7 +53,7 @@ async def wait_for_dispatch(socket, task_id):
     async def ready():
         while not any(m.get("type") == "task.dispatch" and m["task"]["id"] == task_id for m in socket.sent):
             await asyncio.sleep(0)
-    await asyncio.wait_for(ready(), 1)
+    await asyncio.wait_for(ready(), 10)
 
 
 @pytest.mark.asyncio
@@ -157,10 +181,7 @@ async def test_runner_job_recovery_outbox_and_gateway_dedup(tmp_path):
     outbound = OutboundSocket()
     restored.reload_outbox()
     sender = asyncio.create_task(restored._sender(outbound))
-    for _ in range(100):
-        if len(outbound.sent) == len(restored.store.pending()):
-            break
-        await asyncio.sleep(0.01)
+    await wait_until(lambda: len(outbound.sent) == len(restored.store.pending()))
     sender.cancel()
     assert [e["runner_seq"] for e in outbound.sent] == [e["runner_seq"] for e in restored.store.pending()]
 
@@ -350,7 +371,7 @@ async def test_hpc_completion_survives_crash_between_wait_and_wake(tmp_path):
 
     restored.dispatch = dispatch
     result = await asyncio.wait_for(restored.orchestrator.run_step(Task(
-        agent_id="a", request_id="r", prompt="analyze", meta={"kind": "step", "step_id": "s"})), 1)
+        agent_id="a", request_id="r", prompt="analyze", meta={"kind": "step", "step_id": "s"})), 10)
     assert result.text == "wake complete" and calls == [None, "submitted"]
     assert restored.store.get("jobs_done", "submitted") == completion
     restored.result_map("r")["s"] = result
@@ -382,10 +403,7 @@ def test_terminal_checkpoint_replays_once_to_reporter_after_restart(tmp_path):
 
     restored.reporter.handle = handle
     with TestClient(app):
-        for _ in range(100):
-            if received:
-                break
-            time.sleep(0.01)
+        wait_until_sync(lambda: bool(received))
     assert [e["type"] for e in received] == ["request.created", "request.completed"]
     assert restored.store.all("terminal_delivery") == {}
     assert [e["type"] for e in restored.store.events_since(0)] == ["request.completed"]
@@ -425,10 +443,7 @@ def test_restart_creates_missing_issue_before_terminal_report(tmp_path):
     hub = app.state.hub
     hub.reporter.client = lambda: GitHub()
     with TestClient(app):
-        for _ in range(100):
-            if "close" in calls:
-                break
-            time.sleep(0.01)
+        wait_until_sync(lambda: "close" in calls)
     assert calls == ["create", "comment", "close"]
     assert hub.store.get("github_issue", "r") == {"number": 7}
     assert hub.store.all("terminal_delivery") == {}
@@ -453,7 +468,7 @@ async def test_terminal_event_is_not_sent_twice_to_client_joining_after_commit(t
     hub.clients.add(existing)
     hub.commit_terminal("r", "request.completed", {"ok": True})
     hub.clients.add(joining)  # its WebSocket handshake replays from the event store
-    await asyncio.wait_for(flushed.wait(), 1)
+    await asyncio.wait_for(flushed.wait(), 10)
     assert [message["seq"] for message in existing.sent] == [1]
     assert joining.sent == []
     assert [event["seq"] for event in hub.store.events_since(0)] == [1]
@@ -532,7 +547,7 @@ async def test_accepted_recovery_can_finish_after_runner_connection_timeout(tmp_
     await hub.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
                                           "task_id": original.id, "request_id": "r",
                                           "data": result.model_dump(mode="json")})
-    assert (await asyncio.wait_for(pending, 1)).text == "finished"
+    assert (await asyncio.wait_for(pending, 10)).text == "finished"
 
 
 @pytest.mark.asyncio
@@ -554,7 +569,7 @@ async def test_recovery_timeout_leaves_the_prior_task_cost_unaccounted(tmp_path)
     hub.register_runner("local", CaptureSocket(), [{"id": "a"}], "inc")
     hub.recovery_steps.add("r")
     result = await asyncio.wait_for(hub.dispatch(Task(agent_id="a", request_id="r", prompt="resume",
-                                                      meta={"kind": "step", "step_id": "s"})), 2)
+                                                      meta={"kind": "step", "step_id": "s"})), 10)
 
     assert result.task_id == original.id and "recovery runner unavailable" in result.error
     req = hub.requests["r"]
@@ -593,7 +608,7 @@ async def test_new_runner_generation_ends_recovered_accepted_task_without_retry(
     restored.register_runner("local", newer, [{"id": "a"}], replacement.incarnation)
     restored.recovery_steps.add("r")
     result = await asyncio.wait_for(restored.dispatch(Task(agent_id="a", request_id="r", prompt="resume",
-                                                           meta={"kind": "step", "step_id": "s"})), 1)
+                                                           meta={"kind": "step", "step_id": "s"})), 10)
     assert result.task_id == task.id and not result.ok
     assert "generation changed" in result.error and failure_kind(result) == "terminal"
     assert restored.store.get("task", task.id)["completed"] is True
@@ -613,7 +628,7 @@ async def test_new_runner_generation_ends_live_accepted_future(tmp_path):
                                           "task_id": task.id, "request_id": "r"})
     newer = CaptureSocket()
     hub.register_runner("local", newer, [{"id": "a"}], "new-incarnation")
-    result = await asyncio.wait_for(waiting, 1)
+    result = await asyncio.wait_for(waiting, 10)
     assert not result.ok and failure_kind(result) == "terminal"
     assert hub.store.get("task", task.id)["completed"] is True
     assert [msg["task"]["id"] for msg in old.sent if msg.get("type") == "task.dispatch"] == [task.id]
@@ -788,7 +803,7 @@ async def test_control_phase_recovers_exact_task_identity(tmp_path, meta, comple
         await hub.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
                                               "request_id": "r", "task_id": original.id,
                                               "data": result.model_dump(mode="json")})
-    recovered = await asyncio.wait_for(recovering, 1)
+    recovered = await asyncio.wait_for(recovering, 10)
     assert recovered.task_id == original.id and recovered.text == "saved"
     if completed:
         assert recovered.cost_usd == 0 and hub.requests["r"]["cost_usd"] == 0.2
@@ -811,11 +826,11 @@ async def test_resumed_request_does_not_replay_its_own_earlier_call(tmp_path):
     texts = []
 
     async def answer(seq):
-        for _ in range(100):
-            sends = [m for m in socket.sent if m.get("type") == "task.dispatch"]
-            if len(sends) >= seq:
-                break
-            await asyncio.sleep(0.01)
+        def dispatched():
+            return [m for m in socket.sent if m.get("type") == "task.dispatch"]
+
+        await wait_until(lambda: len(dispatched()) >= seq)
+        sends = dispatched()
         assert len(sends) >= seq, "the second plan call never reached the runner"
         tid = sends[seq - 1]["task"]["id"]
         result = TaskResult(task_id=tid, agent_id="cso", ok=True, text=f"plan {seq}")
@@ -827,7 +842,7 @@ async def test_resumed_request_does_not_replay_its_own_earlier_call(tmp_path):
             call = asyncio.create_task(hub.dispatch(Task(agent_id="cso", request_id=rid, prompt=f"plan {seq}",
                                                          meta={"kind": "plan", "attempt": 2})))
             await answer(seq)
-            texts.append((await asyncio.wait_for(call, 1)).text)
+            texts.append((await asyncio.wait_for(call, 10)).text)
 
     hub.orchestrator.run_request = resumed
     await hub.resume_when_ready("r")
@@ -1011,10 +1026,7 @@ async def test_unaccepted_dispatch_is_resent_with_original_task_id(tmp_path):
     hub.recovery_steps.add("r")
     recovering = asyncio.create_task(hub.dispatch(Task(agent_id="a", request_id="r", prompt="new",
                                                        meta={"kind": "step", "step_id": "s", "attempt": 1})))
-    for _ in range(50):
-        if any(m.get("type") == "task.dispatch" for m in socket.sent):
-            break
-        await asyncio.sleep(0.01)
+    await wait_until(lambda: any(m.get("type") == "task.dispatch" for m in socket.sent))
     sends = [m for m in socket.sent if m.get("type") == "task.dispatch"]
     assert len(sends) == 1 and sends[0]["task"]["id"] == "original-id"
     await hub.on_runner_message("local", {"type": "task.accepted", "runner_seq": 1,
@@ -1084,7 +1096,7 @@ async def test_runner_restart_finishes_accepted_task_for_live_gateway(tmp_path):
     await restored._on_message({"type": "task.dispatch", "task": task.model_dump(mode="json")})
     assert len([e for e in restored.store.pending() if e["type"] == "task.result"]) == 1
     await hub.on_runner_message("local", results[0])
-    assert (await asyncio.wait_for(waiting, 1)).task_id == task.id
+    assert (await asyncio.wait_for(waiting, 10)).task_id == task.id
 
 
 @pytest.mark.asyncio
@@ -1136,11 +1148,8 @@ async def test_runner_restart_with_tracked_hpc_job_wakes_without_resubmitting(tm
         if event["runner_seq"] > delivered:
             await hub.on_runner_message("local", event)
             delivered = event["runner_seq"]
-    for _ in range(100):
-        dispatches = [m for m in socket.sent if m.get("type") == "task.dispatch"]
-        if len(dispatches) == 2:
-            break
-        await asyncio.sleep(0.01)
+    await wait_until(lambda: len([m for m in socket.sent if m.get("type") == "task.dispatch"]) == 2)
+    dispatches = [m for m in socket.sent if m.get("type") == "task.dispatch"]
     assert len(dispatches) == 2
     wake = dispatches[1]["task"]
     assert wake["meta"]["parent_task"] == task.id and wake["meta"]["workdir"] == str(Workspace.dir)
@@ -1150,7 +1159,7 @@ async def test_runner_restart_with_tracked_hpc_job_wakes_without_resubmitting(tm
                                           "task_id": wake["id"], "request_id": "r",
                                           "data": TaskResult(task_id=wake["id"], agent_id="a", ok=True,
                                                              text="existing HPC result checked").model_dump(mode="json")})
-    assert (await asyncio.wait_for(running, 1)).text == "existing HPC result checked"
+    assert (await asyncio.wait_for(running, 10)).text == "existing HPC result checked"
 
 
 @pytest.mark.asyncio
@@ -1173,27 +1182,21 @@ async def test_uncertain_send_reconnects_with_same_task_id(tmp_path):
     task = Task(id="original-id", agent_id="a", request_id="r", prompt="work",
                 meta={"kind": "step", "step_id": "s"})
     pending = asyncio.create_task(hub.orchestrator.run_step(task))
-    for _ in range(50):
-        if any(m.get("type") == "task.dispatch" for m in old.sent):
-            break
-        await asyncio.sleep(0.01)
+    await wait_until(lambda: any(m.get("type") == "task.dispatch" for m in old.sent))
     assert not pending.done()
     assert hub.store.get("task", task.id)["accepted"] is False
     assert list(hub.store.all("task")) == [task.id]
 
     new = CaptureSocket()
     hub.register_runner("local", new, [{"id": "a"}], "inc")
-    for _ in range(50):
-        if any(m.get("type") == "task.dispatch" for m in new.sent):
-            break
-        await asyncio.sleep(0.01)
+    await wait_until(lambda: any(m.get("type") == "task.dispatch" for m in new.sent))
     resent = [m for m in new.sent if m.get("type") == "task.dispatch"]
     assert len(resent) == 1 and resent[0]["task"]["id"] == task.id
     await hub.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
                                           "task_id": task.id, "request_id": "r",
                                           "data": TaskResult(task_id=task.id, agent_id="a", ok=True,
                                                              text="done").model_dump(mode="json")})
-    assert (await asyncio.wait_for(pending, 1)).text == "done"
+    assert (await asyncio.wait_for(pending, 10)).text == "done"
     assert list(hub.store.all("task")) == [task.id]
 
 
@@ -1216,15 +1219,12 @@ async def test_uncertain_send_to_new_incarnation_requires_manual_recovery(tmp_pa
     task = Task(id="uncertain-id", agent_id="a", request_id="r", prompt="work",
                 meta={"kind": "step", "step_id": "s"})
     running = asyncio.create_task(hub.orchestrator.run_step(task))
-    for _ in range(50):
-        if any(msg.get("type") == "task.dispatch" for msg in old.sent):
-            break
-        await asyncio.sleep(0.01)
+    await wait_until(lambda: any(msg.get("type") == "task.dispatch" for msg in old.sent))
     entry = hub.store.get("task", task.id)
     assert not entry["accepted"] and entry["runner_incarnation"] == "old-incarnation"
     replacement = CaptureSocket()
     hub.register_runner("local", replacement, [{"id": "a"}], "new-incarnation")
-    result = await asyncio.wait_for(running, 1)
+    result = await asyncio.wait_for(running, 10)
     assert not result.ok and failure_kind(result) == "terminal"
     assert hub.store.get("task", task.id)["completed"] is True
     assert [msg["task"]["id"] for msg in old.sent if msg.get("type") == "task.dispatch"] == [task.id]
@@ -1283,10 +1283,7 @@ async def test_completed_direct_result_finishes_without_original_agent(tmp_path,
     approval = next(aid for aid, entry in restored.approvals.items()
                     if entry["approval"]["kind"] == "resume")
     await restored.resolve_approval(approval, True)
-    for _ in range(100):
-        if restored.requests["r"]["status"] == "done":
-            break
-        await asyncio.sleep(0.01)
+    await wait_until(lambda: restored.requests["r"]["status"] == "done")
     # #1076: a failure here said only 'running' == 'done' on Windows CI (4 runs); name what the restored hub held.
     state = restored.requests["r"]
     assert state["status"] == "done", (
@@ -1517,11 +1514,9 @@ async def test_resume_waits_for_runner_and_reoffers_after_timeout(tmp_path):
 
     hub.orchestrator.run_step = fake_step
     await hub.resolve_approval(aid, True)
-    for _ in range(200):  # the status flips first, then the waiting event goes out
-        if (hub.requests["r1"]["status"] == "waiting_for_runner"
-                and any(e["type"] == "request.resume_waiting" for e in hub.events)):
-            break
-        await asyncio.sleep(0.01)
+    # the status flips first, then the waiting event goes out
+    await wait_until(lambda: hub.requests["r1"]["status"] == "waiting_for_runner"
+                     and any(e["type"] == "request.resume_waiting" for e in hub.events))
     assert hub.requests["r1"]["status"] == "waiting_for_runner" and calls == []
     assert any(e["type"] == "request.resume_waiting" for e in hub.events)
     socket = CaptureSocket()
@@ -1538,10 +1533,7 @@ async def test_resume_waits_for_runner_and_reoffers_after_timeout(tmp_path):
     timeout_aid = next(aid for aid, e in timeout_hub.approvals.items()
                        if e["approval"].get("request_id") == "r2")
     await timeout_hub.resolve_approval(timeout_aid, True)
-    for _ in range(500):
-        if any(e["type"] == "request.resume_timeout" for e in timeout_hub.events):
-            break
-        await asyncio.sleep(0.01)
+    await wait_until(lambda: any(e["type"] == "request.resume_timeout" for e in timeout_hub.events))
     assert timeout_hub.requests["r2"]["status"] == "interrupted"
     assert any(e["approval"].get("request_id") == "r2" and e["approval"]["kind"] == "resume"
                for e in timeout_hub.approvals.values())
@@ -1594,3 +1586,16 @@ async def test_github_issue_number_restored_for_final_report(tmp_path):
                                    "data": {"ok": True, "report": "finished"}})
     assert ("close", 7) in gh.calls
     assert any(c[0] == "comment" and c[1] == 7 for c in gh.calls if isinstance(c, tuple))
+
+
+@pytest.mark.asyncio
+async def test_wait_until_follows_the_clock_not_a_tick_count():
+    """#1117: the wait ends when the condition holds, however late (inside the limit), and reports a timeout honestly."""
+    started = time.monotonic()
+    assert await wait_until(lambda: time.monotonic() - started > 0.3, timeout=5.0) is True
+    assert time.monotonic() - started > 0.3                    # not cut at a fixed number of 10 ms ticks
+    assert await wait_until(lambda: False, timeout=0.1) is False
+    assert await wait_until(lambda: True, timeout=0.0) is True  # an already true condition never waits
+    late = time.monotonic()
+    assert wait_until_sync(lambda: time.monotonic() - late > 0.2, timeout=5.0) is True
+    assert wait_until_sync(lambda: False, timeout=0.1) is False
