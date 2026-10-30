@@ -58,6 +58,27 @@
 - CSO prompt·CP1 표시·비용 예상(PR B)과 bench 측정(PI 승인 뒤).
 - 실제 연구 계획 재개 전체 흐름(모델 호출이 필요한 CP2까지)은 돌리지 않았고, 재개가 지나는 지점의 결정을 단위 시험으로 확인했다.
 
+## 단계
+#1117: `tests/test_state.py`의 고정 횟수 대기를 시간 기준 대기로. 근거: [#1076 계측 실측](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6530142714).
+
+## 한 일
+- `wait_until(predicate, timeout=10)`(async)와 `wait_until_sync`(TestClient 시험용)를 더하고, 이 파일의 `for _ in range(N): ... sleep(0.01)` 대기 12곳을 모두 바꿨다(async 9, sync 2, resume 한 곳은 두 조건). 조건이 서면 바로 나오고 한도를 넘으면 False를 돌려주므로 뒤의 단언이 그대로 실패를 알린다.
+- 대상 시험 `test_completed_direct_result_finishes_without_original_agent`는 `[False]`·`[True]` 모두 같은 대기를 쓴다. 단언은 하나도 바꾸지 않았다.
+- helper 시험 한 건(조건이 늦게 서도 기다림, 한도 초과는 False, 이미 참이면 즉시).
+
+## 확인
+- `tests/test_state.py` 61 passed.
+- Windows inventory: `config/ci/windows-boundary-v1.json`에 `tests/test_state.py`는 `known_tests` 목록에만 있고 sha256 고정(`mixed_nodes`)이 없어 수정하지 않았다.
+
+## 하지 않은 것
+- 실제 느린 Windows 러너에서의 재현은 하지 못했다(CI에서 확인). 이 PC에서는 시험이 통과하는 것과 helper의 동작만 확인했다.
+- 같은 부류의 다른 시험 파일(`test_state_*.py` 등)의 고정 횟수 대기는 이번 범위가 아니다.
+
+## 리뷰 후 추가 (rev3)
+- P2: helper 시험의 `< 4.0` 실시간 상한 단언을 뺐다(하한 `> 0.3`과 False/True 단언은 유지).
+- 같은 파일의 `asyncio.wait_for(x, 1~2)` 13곳을 10초로 올렸다. 모두 결과가 오기를 기다리는 곳이라 마감이 곧 단언인 곳은 없다. 실패하면 TimeoutError로 보인다. (#1117 조사 후보 ①)
+- `tests/test_state.py` 61 passed.
+
 # #1113 uvicorn 시작 실패가 worker를 죽이지 않게
 
 - 결론: 새 helper `tests/support/serve_task.py`(`serve_task`·`wait_started`)가 `server.serve()`·`broker.serve()`의 `SystemExit`를 uvicorn 로그 꼬리가 담긴 `RuntimeError`로 바꾼다. 시작이 실패하면 그 시험만 원인과 함께 실패하고, 시간 초과까지 기다리지 않는다.
