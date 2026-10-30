@@ -4,6 +4,27 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1066 manual 후속
+
+- 결론: #1067 리뷰가 지적한 manual 한·영 설명을 더했다. 코드는 바꾸지 않았다.
+- 바꾼 것: `docs/manual.md`·`docs/manual.en.md`의 연구 단계 결과 교정 문단에 (1) 결과와 교정 요청은 계획이 선언한 단계 `claim_ids` 안의 주장만 허용, (2) 목록 밖 claim id를 만들지 않고 hypothesis row는 claim이 아니라 context로 연결하거나 링크에서 뺌, (3) 가설·기전·등급별 정리를 결과로 요구하면 계획이 그 몫의 claim을 `claim_ids`에 미리 선언.
+- 실행한 것: `tests/test_integrations.py` 통과.
+- 미검증: 실제 모델이 이 규칙을 따르는지는 ② 6차 이후 결과로 확인한다.
+
+# #1061 후속: 식별자만 고정한 참조의 "내용 미확인" 표시
+
+- 결론: W3의 PR #1062가 DOI·PMID 참조를 식별자 영수증(`unreceipted`)으로 고정해 이어 가기 재사용을 허용했다. 그 재사용을 PI가 알고 고르도록 두 곳에 표시를 더했다.
+- 바꾼 것(`labhq/orchestrator/cso.py`): `unreceipted_references(contract, reused)`가 이전 라운드의 단계별 입력 영수증에서 재사용한 단계들의 `unreceipted` 식별자를 모은다. (1) 이어 가기 CP1 카드(재사용: … 줄 뒤)에 "재사용한 단계가 쓴 DOI·PMID 참조 N건은 식별자만 고정했고 내용은 확인하지 않았습니다." (2) CP2 보고의 이어 가기 줄에 "N DOI/PMID reference(s) of the reused steps are pinned by identifier only; their content was not checked (…)". 표시할 참조가 없으면 카드 문구는 전과 같다(기존 시험의 접두 단정 유지).
+- 시험: `tests/test_continuation_797.py` 3건(재사용한 단계 증명만 모음, 카드·보고에 한 줄, 참조가 없으면 변화 없음). 관련 시험 310여 건 통과.
+- 미검증: 실제 DOI 참조 요청의 CP2 revise 이어 가기에서 카드 문구가 PI에게 어떻게 보이는지(웹 화면). 카드 요약은 길이 상한이 있어 참조가 많은 요청에서 뒷부분이 잘릴 수 있다.
+
+# #1066 결과 교정이 단계 claim_ids 밖 claim을 만들게 유도함
+
+- 결론: 효과 큰 순서대로 1~4를 모두 반영했다. #910 5차 s3는 교정 문구 `link it as context or record it as a claim`을 보고 계획에 없던 `c_mechanistic_hypotheses`를 새 claim으로 만들어 binding 오류가 났다(교정 두 번에 $3.65, W3 조사 #1054).
+- 바꾼 것: (1) `result_correction`이 단계 `claim_ids`를 받아 "이 목록 밖 claim id를 만들지 말고 hypothesis 행은 context로 연결하거나 링크에서 뺀다"를 항상 덧붙인다(호출처는 단계의 `claim_ids`를 넘김, 인자 없이 부르면 옛 문구). (2) 연구 단계 prompt에 같은 규칙. (3) `evidence/claims.py`의 오류 문구는 "계획이 이 단계에 선언한 claim id일 때만 claim으로 기록"으로 범위를 밝힘. (4) 연구 계획 prompt에 "가설·기전·등급별 정리를 결과로 요구하면 그 몫의 claim을 `claim_ids`에 선언"을 추가.
+- 시험: `tests/test_cso.py`에 2건(교정 문구에 허용 목록·context 규칙·빈 목록, 계획 prompt 규칙). 관련 시험 860여 건 로컬 통과.
+- 미검증: 실제 모델이 새 문구를 따르는지(② 6차에서 확인). 단계의 `claim_ids`가 비어 있는 계획에서 교정이 어떻게 풀리는지는 시험하지 않았다.
+
 ## 단계
 #1061: DOI·URL 참조 요청의 이어 가기 재사용 거부(input proof). 설계안과 B안 결정은 [#1061 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1061#issuecomment-6516819730).
 
