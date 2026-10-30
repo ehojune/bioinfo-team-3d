@@ -31,4 +31,4 @@ A future adapter must authenticate an external witness outside both child and su
 
 Validation: `python -m pytest tests/test_process_boundary_seal_contract.py -q`.
 
-Windows inventory is outside this claim: add `tests/test_process_boundary_seal_contract.py` to sorted `known_tests` and add the same exact key to `boundary_cohorts` in `config/ci/windows-boundary-v1.json` (reason: synthetic supervisor/seal security contract). This retains all cases on Windows. Until a scoped owner registers it, discovery/CI is blocked; no CI PASS is implied.
+Rev2 registers `tests/test_process_boundary_seal_contract.py` in sorted `known_tests` and `boundary_cohorts` in `config/ci/windows-boundary-v1.json`, retaining all cases on Windows. Inventory validation passes; final-head CI and review are tracked in PR #1064. Real protection remains unverified.
