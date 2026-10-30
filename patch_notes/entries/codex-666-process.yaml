@@ -1,5 +1,9 @@
 pr: 1050
 rows:
+  - sha: 'a59f17c'
+    at: "2026-10-30 18:20"
+    summary: "ancestry 진단 receipt를 v2로 구분하고 기존 v1 출력을 보존합니다."
+    text: "fix: version ancestry staging receipt"
   - sha: '8c9f77c'
     at: "2026-10-30 18:16"
     summary: "ancestry 관측이 없거나 바뀌면 합성 진단을 실패 처리합니다."
