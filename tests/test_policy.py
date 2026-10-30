@@ -33,29 +33,37 @@ def _long_separator_runs(fraction=1):
 # only; it is not a proof of linearity for every input, and a quadratic regression of the full input would still
 # run long before failing.
 _MAX_SCALE = 8
-_MEASURE_FLOOR_S = 0.2  # each side runs until this much CPU, so a 15.6 ms Windows clock tick stays below 8 %
-_MIN_SAMPLES = 3  # a single slow call cannot decide a side
-_MAX_REPEATS = {"quarter": 16, "full": 4}  # bounds the work: at most 8 full-input equivalents per scan
+_BLOCK_S = 0.1  # a sample is a block of calls of at least this much CPU, so a 15.6 ms Windows clock tick stays below 16 %
+_MIN_SAMPLES = 3  # a single slow block cannot decide a side
+_MAX_BLOCK_CALLS = {"quarter": 16, "full": 4}  # bounds the work of one block: at most 12 full-input calls per scan
 _CLOCK_TICK_S = 0.0157  # the coarsest thread_time tick in use (Windows 15.6 ms): one tick of slack per average
 
 
-def _cost(call, text, repeats):
-    """Fastest calling-thread CPU of one call, over at least _MIN_SAMPLES calls and until the floor or the bound; every
-    result kept. The fastest call, not the mean: a stall on a loaded CI runner only ever adds time (run 41073769229
-    read 15.5x from one slow call, where this input costs about 4x), while a quadratic scan is slow on every call."""
-    spent, samples, results = 0.0, [], []
-    while len(results) < repeats and (len(results) < _MIN_SAMPLES or spent < _MEASURE_FLOOR_S):
-        started = time.thread_time()  # this thread only: other threads in a test worker do not count
-        results.append(call(text))
-        samples.append(time.thread_time() - started)
-        spent += samples[-1]
-    return min(samples), results
+def _costs(call, texts):
+    """Calling-thread CPU per call for each input, and every result. A sample is a block of calls, which keeps a coarse
+    clock from reading 0 for a cheap call; the fastest block counts, since a stall on a loaded CI runner only adds time
+    (run 41078175471 read 15.5x from one slow call, where this input costs about 4x) while a quadratic scan is slow in
+    every block. Blocks alternate between the sizes so one stall cannot hit one side only (run 41079954051: 9.1x)."""
+    samples = {name: [] for name in texts}
+    results = {name: [] for name in texts}
+    while any(len(values) < _MIN_SAMPLES for values in samples.values()):
+        for name, text in texts.items():
+            if len(samples[name]) >= _MIN_SAMPLES:
+                continue
+            spent, calls = 0.0, 0
+            while calls < _MAX_BLOCK_CALLS[name] and spent < _BLOCK_S:
+                started = time.thread_time()  # this thread only: other threads in a test worker do not count
+                results[name].append(call(text))
+                spent += time.thread_time() - started
+                calls += 1
+            samples[name].append(spent / calls)
+    return {name: min(values) for name, values in samples.items()}, results
 
 
 def _assert_linear(call, build=_long_separator_runs, expected=None):
-    quarter_cost, quarter_results = _cost(call, build(0.25), _MAX_REPEATS["quarter"])
-    full_cost, full_results = _cost(call, build(1), _MAX_REPEATS["full"])
-    assert all(result == expected for result in quarter_results + full_results), "the scan must keep its result"
+    cost, results = _costs(call, {"quarter": build(0.25), "full": build(1)})
+    quarter_cost, full_cost = cost["quarter"], cost["full"]
+    assert all(result == expected for values in results.values() for result in values),         "the scan must keep its result"
     assert full_cost <= _MAX_SCALE * quarter_cost + _CLOCK_TICK_S, (
         f"path scanning must stay linear in the text length: a 4x input cost {full_cost / max(quarter_cost, 1e-9):.1f}x"
         f" ({quarter_cost:.4f} s -> {full_cost:.4f} s per call)")
@@ -67,9 +75,9 @@ def _assert_linear(call, build=_long_separator_runs, expected=None):
     (0.125, 2.0, None, True, {"quarter": 3, "full": 3}),       # quadratic: 16x
     (0.125, 1.0625, None, True, {"quarter": 3, "full": 3}),
     (0.125, 0.5, False, True, {"quarter": 3, "full": 3}),      # wrong result: separator runs name no path
-    (0.0078125, 0.03125, None, False, {"quarter": 16, "full": 4}),  # fast machine: bounded repeats, then the fastest
-    (0.0, 0.0078125, None, False, {"quarter": 16, "full": 4}),  # quarter below one clock tick: one tick of slack
-    (0.0, 0.03125, None, True, {"quarter": 16, "full": 4}),     # but not more than one tick
+    (0.0078125, 0.03125, None, False, {"quarter": 39, "full": 12}),  # fast machine: blocks of calls, then the fastest
+    (0.0, 0.0078125, None, False, {"quarter": 48, "full": 12}),  # quarter below one clock tick: one tick of slack
+    (0.0, 0.03125, None, True, {"quarter": 48, "full": 12}),     # but not more than one tick
 ])
 def test_linear_scan_budget_uses_cpu_and_preserves_result_and_strict_limit(
         monkeypatch, quarter_s, full_s, result, reject, expected_calls):
