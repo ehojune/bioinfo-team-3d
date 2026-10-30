@@ -261,7 +261,9 @@ def _request_deadline_line(s, rid: str) -> str | None:
     saying nothing is better than saying the limit is off."""
     try:
         detail = _api(s, "GET", f"/api/requests/{rid}")
-    except Exception:
+    except (Exception, SystemExit):  # _api ends the command on an HTTP or connection error; one request must not
+        return None
+    if not isinstance(detail, dict):
         return None
     return "시간 상한: " + request_deadline_text(detail, time.time())
 

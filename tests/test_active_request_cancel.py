@@ -383,6 +383,12 @@ class RequestDeadlineVisible(unittest.TestCase):
         self.assertEqual(api.call_args.args[1:], ("GET", "/api/requests/r"))
         with mock.patch.object(cli, "_api", side_effect=RuntimeError("down")):
             self.assertIsNone(cli._request_deadline_line(object(), "r"))
+        # `_api` ends the whole command with SystemExit on an HTTP or connection error, and a gateway or a test
+        # double may answer with a list: neither may stop `labhq status`.
+        with mock.patch.object(cli, "_api", side_effect=SystemExit(2)):
+            self.assertIsNone(cli._request_deadline_line(object(), "r"))
+        with mock.patch.object(cli, "_api", return_value=[]):
+            self.assertIsNone(cli._request_deadline_line(object(), "r"))
 
 
 if __name__ == "__main__":
