@@ -1,0 +1,885 @@
+{
+  "cases": [
+    {
+      "id": "forged_observer_id",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "observer_id"
+          ],
+          "value": "fixture-writer"
+        }
+      ],
+      "reason": "observer_provenance_unverified"
+    },
+    {
+      "id": "forged_sequence_source",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "sequence_source"
+          ],
+          "value": "engine"
+        }
+      ],
+      "reason": "observer_provenance_unverified"
+    },
+    {
+      "id": "forged_time_source",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "time_source"
+          ],
+          "value": "engine"
+        }
+      ],
+      "reason": "observer_provenance_unverified"
+    },
+    {
+      "id": "store_location",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "store",
+            "location"
+          ],
+          "value": "run"
+        }
+      ],
+      "reason": "external_append_only_unverified"
+    },
+    {
+      "id": "store_mode",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "store",
+            "mode"
+          ],
+          "value": "replaceable"
+        }
+      ],
+      "reason": "external_append_only_unverified"
+    },
+    {
+      "id": "store_appenders",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "store",
+            "appenders"
+          ],
+          "value": [
+            "fixture-writer"
+          ]
+        }
+      ],
+      "reason": "external_append_only_unverified"
+    },
+    {
+      "id": "store_rewriters",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "store",
+            "rewriters"
+          ],
+          "value": [
+            "fixture-child"
+          ]
+        }
+      ],
+      "reason": "external_append_only_unverified"
+    },
+    {
+      "id": "store_deleters",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "store",
+            "deleters"
+          ],
+          "value": [
+            "fixture-writer"
+          ]
+        }
+      ],
+      "reason": "external_append_only_unverified"
+    },
+    {
+      "id": "seal_enforcement",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            1,
+            "seal",
+            "enforcement"
+          ],
+          "value": "hashes_only"
+        }
+      ],
+      "reason": "write_authority_not_revoked"
+    },
+    {
+      "id": "seal_handle_inventory",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            1,
+            "seal",
+            "handle_inventory"
+          ],
+          "value": "partial"
+        }
+      ],
+      "reason": "write_authority_not_revoked"
+    },
+    {
+      "id": "seal_retained_writable_handles",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            1,
+            "seal",
+            "retained_writable_handles"
+          ],
+          "value": [
+            "inherited-writer-fd"
+          ]
+        }
+      ],
+      "reason": "write_authority_not_revoked"
+    },
+    {
+      "id": "allowed_write",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            1,
+            "seal",
+            "attempts",
+            "write"
+          ],
+          "value": "allowed"
+        }
+      ],
+      "reason": "write_attempt_not_denied"
+    },
+    {
+      "id": "allowed_rename",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            1,
+            "seal",
+            "attempts",
+            "rename"
+          ],
+          "value": "allowed"
+        }
+      ],
+      "reason": "write_attempt_not_denied"
+    },
+    {
+      "id": "allowed_link",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            1,
+            "seal",
+            "attempts",
+            "link"
+          ],
+          "value": "allowed"
+        }
+      ],
+      "reason": "write_attempt_not_denied"
+    },
+    {
+      "id": "allowed_inherited_fd",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            1,
+            "seal",
+            "attempts",
+            "inherited_fd"
+          ],
+          "value": "allowed"
+        }
+      ],
+      "reason": "write_attempt_not_denied"
+    },
+    {
+      "id": "deadline_request_id",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "deadline",
+            "request_id"
+          ],
+          "value": "other-request"
+        }
+      ],
+      "reason": "supervisor_deadline_unverified"
+    },
+    {
+      "id": "deadline_supervisor_id",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "deadline",
+            "supervisor_id"
+          ],
+          "value": "fixture-child"
+        }
+      ],
+      "reason": "supervisor_deadline_unverified"
+    },
+    {
+      "id": "deadline_clock",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "deadline",
+            "clock"
+          ],
+          "value": "engine"
+        }
+      ],
+      "reason": "supervisor_deadline_unverified"
+    },
+    {
+      "id": "deadline_expires_ns",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "deadline",
+            "expires_ns"
+          ],
+          "value": 1000
+        }
+      ],
+      "reason": "supervisor_deadline_unverified"
+    },
+    {
+      "id": "broker_id",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "broker",
+            "id"
+          ],
+          "value": "other-broker"
+        }
+      ],
+      "reason": "broker_boundary_unverified"
+    },
+    {
+      "id": "broker_state",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "broker",
+            "state"
+          ],
+          "value": "dead"
+        }
+      ],
+      "reason": "broker_boundary_unverified"
+    },
+    {
+      "id": "broker_credential_holders",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "broker",
+            "credential_holders"
+          ],
+          "value": [
+            "fixture-child"
+          ]
+        }
+      ],
+      "reason": "broker_boundary_unverified"
+    },
+    {
+      "id": "broker_network_route",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "broker",
+            "network_route"
+          ],
+          "value": "direct"
+        }
+      ],
+      "reason": "broker_boundary_unverified"
+    },
+    {
+      "id": "broker_direct_auth",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "broker",
+            "direct_auth"
+          ],
+          "value": true
+        }
+      ],
+      "reason": "broker_boundary_unverified"
+    },
+    {
+      "id": "token_id_other-token",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "broker",
+            "token",
+            "id"
+          ],
+          "value": "other-token"
+        }
+      ],
+      "reason": "broker_token_invalid"
+    },
+    {
+      "id": "token_run_id_old-run",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "broker",
+            "token",
+            "run_id"
+          ],
+          "value": "old-run"
+        }
+      ],
+      "reason": "broker_token_invalid"
+    },
+    {
+      "id": "token_audience_other-child",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "broker",
+            "token",
+            "audience"
+          ],
+          "value": "other-child"
+        }
+      ],
+      "reason": "broker_token_invalid"
+    },
+    {
+      "id": "token_scopes_['*']",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "broker",
+            "token",
+            "scopes"
+          ],
+          "value": [
+            "*"
+          ]
+        }
+      ],
+      "reason": "broker_token_invalid"
+    },
+    {
+      "id": "token_expires_ns_20",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "broker",
+            "token",
+            "expires_ns"
+          ],
+          "value": 20
+        }
+      ],
+      "reason": "broker_token_invalid"
+    },
+    {
+      "id": "token_expires_ns_999",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "broker",
+            "token",
+            "expires_ns"
+          ],
+          "value": 999
+        }
+      ],
+      "reason": "broker_token_invalid"
+    },
+    {
+      "id": "allowed_work_read_object_id",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3,
+            "allowed_work",
+            "read_object_id"
+          ],
+          "value": "unknown-source"
+        }
+      ],
+      "reason": "positive_work_unverified"
+    },
+    {
+      "id": "allowed_work_output_sha256",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3,
+            "allowed_work",
+            "output_sha256"
+          ],
+          "value": ""
+        }
+      ],
+      "reason": "positive_work_unverified"
+    },
+    {
+      "id": "allowed_work_output_scope",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3,
+            "allowed_work",
+            "output_scope"
+          ],
+          "value": "host"
+        }
+      ],
+      "reason": "positive_work_unverified"
+    },
+    {
+      "id": "allowed_work_completed",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3,
+            "allowed_work",
+            "completed"
+          ],
+          "value": false
+        }
+      ],
+      "reason": "positive_work_unverified"
+    },
+    {
+      "id": "residual_descendants",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            4,
+            "descendants"
+          ],
+          "value": [
+            "residual"
+          ]
+        }
+      ],
+      "reason": "cleanup_resources_not_cleared"
+    },
+    {
+      "id": "residual_sockets",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            4,
+            "sockets"
+          ],
+          "value": [
+            "residual"
+          ]
+        }
+      ],
+      "reason": "cleanup_resources_not_cleared"
+    },
+    {
+      "id": "residual_mounts",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            4,
+            "mounts"
+          ],
+          "value": [
+            "residual"
+          ]
+        }
+      ],
+      "reason": "cleanup_resources_not_cleared"
+    },
+    {
+      "id": "residual_handles",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            4,
+            "handles"
+          ],
+          "value": [
+            "residual"
+          ]
+        }
+      ],
+      "reason": "cleanup_resources_not_cleared"
+    },
+    {
+      "id": "residual_broker_endpoints",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            4,
+            "broker_endpoints"
+          ],
+          "value": [
+            "residual"
+          ]
+        }
+      ],
+      "reason": "cleanup_resources_not_cleared"
+    },
+    {
+      "id": "residual_active_tokens",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            4,
+            "active_tokens"
+          ],
+          "value": [
+            "residual"
+          ]
+        }
+      ],
+      "reason": "cleanup_resources_not_cleared"
+    },
+    {
+      "id": "partial_cleanup_inventory",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            4,
+            "inventory_scope"
+          ],
+          "value": "direct_child"
+        }
+      ],
+      "reason": "cleanup_inventory_unverified"
+    },
+    {
+      "id": "child_cleanup_inventory",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            4,
+            "inventory_source"
+          ],
+          "value": "child"
+        }
+      ],
+      "reason": "cleanup_inventory_unverified"
+    },
+    {
+      "id": "missing_seal",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            1,
+            "seal"
+          ],
+          "remove": true
+        }
+      ],
+      "reason": "write_authority_not_revoked"
+    },
+    {
+      "id": "missing_deadline",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "deadline"
+          ],
+          "remove": true
+        }
+      ],
+      "reason": "supervisor_deadline_unverified"
+    },
+    {
+      "id": "missing_broker",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "broker"
+          ],
+          "remove": true
+        }
+      ],
+      "reason": "broker_boundary_unverified"
+    },
+    {
+      "id": "missing_allowed_work",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3,
+            "allowed_work"
+          ],
+          "remove": true
+        }
+      ],
+      "reason": "positive_work_unverified"
+    },
+    {
+      "id": "event_clock_domain",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "clock_id"
+          ],
+          "value": "engine-epoch"
+        }
+      ],
+      "reason": "observer_provenance_unverified"
+    },
+    {
+      "id": "deadline_clock_domain",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "deadline",
+            "clock_id"
+          ],
+          "value": "engine-epoch"
+        }
+      ],
+      "reason": "supervisor_deadline_unverified"
+    },
+    {
+      "id": "broker_death",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3
+          ],
+          "insert": {
+            "type": "broker_death",
+            "time_ns": 25,
+            "observer_id": "fixture-external-witness",
+            "sequence_source": "observer",
+            "time_source": "observer_wall",
+            "clock_id": "fixture-shared-wall-epoch"
+          }
+        }
+      ],
+      "reason": "broker_death_observed"
+    },
+    {
+      "id": "broker_timeout",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3
+          ],
+          "insert": {
+            "type": "broker_timeout",
+            "time_ns": 25,
+            "observer_id": "fixture-external-witness",
+            "sequence_source": "observer",
+            "time_source": "observer_wall",
+            "clock_id": "fixture-shared-wall-epoch"
+          }
+        }
+      ],
+      "reason": "broker_timeout_observed"
+    },
+    {
+      "id": "broker_transport_failure",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3
+          ],
+          "insert": {
+            "type": "broker_transport_failure",
+            "time_ns": 25,
+            "observer_id": "fixture-external-witness",
+            "sequence_source": "observer",
+            "time_source": "observer_wall",
+            "clock_id": "fixture-shared-wall-epoch"
+          }
+        }
+      ],
+      "reason": "broker_transport_failure_observed"
+    },
+    {
+      "id": "observer_death",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3
+          ],
+          "insert": {
+            "type": "observer_death",
+            "time_ns": 25,
+            "observer_id": "fixture-external-witness",
+            "sequence_source": "observer",
+            "time_source": "observer_wall",
+            "clock_id": "fixture-shared-wall-epoch"
+          }
+        }
+      ],
+      "reason": "observer_death_observed"
+    },
+    {
+      "id": "supervisor_interrupted",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3
+          ],
+          "insert": {
+            "type": "supervisor_interrupted",
+            "time_ns": 25,
+            "observer_id": "fixture-external-witness",
+            "sequence_source": "observer",
+            "time_source": "observer_wall",
+            "clock_id": "fixture-shared-wall-epoch"
+          }
+        }
+      ],
+      "reason": "supervisor_interrupted_observed"
+    }
+  ]
+}
