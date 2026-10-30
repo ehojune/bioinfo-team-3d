@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #621 P2: 여러 염기 REF의 창 중앙
+
+- 결론: `alphagenome_variant`의 점수 창이 변이의 첫 염기가 아니라 REF 구간(`Query.start0`~`end`)의 가운데를 중심으로 잡힌다. 1,000 bp 결실이면 REF 전체가 창 안에 양쪽 같은 여유로 들어간다(예전에는 중심이 500 bp 왼쪽).
+- 한 염기 REF는 `(pos-1 + pos) // 2 = pos-1`이라 창이 그대로다. 염색체 시작 근처는 여전히 0으로 잘린다.
+- 바꾼 것: `labhq/tools/annot_alphagenome.py`(한 줄과 주석), `tests/test_annot_alphagenome_variant.py`(시험 하나: 결실 중앙, 한 염기 불변, 시작 근처 0). 새 시험은 옛 코드에서 실패함을 확인했다.
+- 알려진 것: 같은 시험 묶음의 `tests/test_annot_regulatory.py::test_with_a_key_the_server_offers_alphagenome…`가 이 PC에서 `CallToolResult.is_error` 속성 오류로 실패한다(설치된 mcp SDK와 시험 코드의 속성 이름 차이, 이 변경과 무관).
+- 한계: 염색체 끝을 넘는 창은 바꾸지 않았다. D(Atlas)는 PI 결정 대기(#621 댓글).
+
 # #1107 Chrome 예열 step
 
 - 결론: Windows job이 critical 단계(첫 브라우저 시험) 앞에서 `scripts/ci_chrome_warmup.py`로 Chrome을 시험과 같은 플래그·빈 프로필로 한 번 띄워, DevTools 포트와 첫 페이지 target까지 걸린 시간을 로그에 한 줄로 남기고 끝낸다. cold start 검증을 이 step이 맡는다. 상한은 드라이버 기본 `START_MS`와 같은 60초(step은 2분)이고 실패하면 "Chrome warm-up failed"로 이름 붙어 끝난다. Chrome이 없는 곳에서는 알림만 내고 통과한다.
