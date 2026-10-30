@@ -37,6 +37,42 @@ def admission_for(settings) -> "LookupAdmission | None":
     return LookupAdmission(settings.path(settings.runner.state_dir) / FILE, limit)
 
 
+def usage_note_for(settings, request_id: object, *, now=None) -> str:
+    """The prompt paragraph for a request, or "" when no cap is configured (nothing is counted, so there is nothing to
+    plan around). A configured cap whose counter cannot be opened or read is UNKNOWN, never zero."""
+    if settings.annot.request_lookup_limit is None:
+        return ""
+    try:
+        admission = admission_for(settings)
+    except (sqlite3.Error, OSError):
+        return usage_note(None, request_id, now=now, why="the lookup counter could not be opened")
+    return usage_note(admission, request_id, now=now)
+
+
+def usage_note(admission: "LookupAdmission | None", request_id: object, *, now=None, why: str | None = None) -> str:
+    """One prompt paragraph with this request's public lookup usage as a fact, or an explicit "unknown" (#1088).
+
+    A counter that is off, a request id that is missing or a file that cannot be read is unknown, never zero: a
+    reader must not plan as if nothing had been spent. The count is this PC's runner count; a runner on another PC
+    keeps its own, and the request text may state a different number, which labhq does not enforce."""
+    unknown = ("Public lookup usage of this request: UNKNOWN ({why}). Do not assume it is zero; "
+               "if the number matters, say that it could not be read.")
+    if admission is None:
+        return unknown.format(why=why or "annot.request_lookup_limit is not set, so labhq does not count")
+    try:
+        usage = admission.usage(request_id)
+    except (sqlite3.Error, OSError):
+        return unknown.format(why="the lookup counter could not be read")
+    if usage is None:
+        return unknown.format(why="the request has no identity")
+    stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(now if now is not None else time.time()))
+    who = ", ".join(f"{agent} {count}" for agent, count in usage["by_agent"].items()) or "none yet"
+    return (f"Public lookup usage of this request (labhq_annot and source-check HTTP requests; every retry and "
+            f"redirect counts): {usage['used']} of {usage['limit']} used, {usage['remaining']} left at {stamp} "
+            f"(by agent: {who}). This is the count of this PC's runner; a number written in the request text is a "
+            f"separate statement that labhq does not enforce.")
+
+
 class LookupAdmission:
     def __init__(self, path: str | Path, limit: int, *, clock=time.time):
         self.path, self.limit, self.clock = Path(path), limit, clock
@@ -106,6 +142,27 @@ class LookupAdmission:
         finally:
             db.close()
         return changed
+
+    def usage(self, request_id: object) -> dict | None:
+        """What this request has used: ``used``, ``limit``, ``remaining`` and the counts per agent and per tool.
+
+        Read only. None for a request id that is not a non-empty string, so a caller never reads "no identity" as zero."""
+        if not isinstance(request_id, str) or not request_id:
+            return None
+        db = self._connect()
+        try:
+            rows = db.execute("SELECT agent_id, tool, COUNT(*) FROM sends WHERE request_id = ? "
+                              "GROUP BY agent_id, tool", (request_id,)).fetchall()
+        finally:
+            db.close()
+        by_agent: dict[str, int] = {}
+        by_tool: dict[str, int] = {}
+        for agent, tool, count in rows:
+            by_agent[agent or "?"] = by_agent.get(agent or "?", 0) + count
+            by_tool[tool] = by_tool.get(tool, 0) + count
+        used = sum(by_tool.values())
+        return {"used": used, "limit": self.limit, "remaining": max(0, self.limit - used),
+                "by_agent": dict(sorted(by_agent.items())), "by_tool": dict(sorted(by_tool.items()))}
 
     def sends(self, request_id: str) -> list[dict]:
         db = self._connect()
