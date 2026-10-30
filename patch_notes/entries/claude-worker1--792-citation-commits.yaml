@@ -1,5 +1,9 @@
 rows:
   - sha: "0d6cdbc"
-    at: "2026-10-30 23:20"
+    at: "2026-10-30 23:23"
     summary: "결과 repo에 CITATION.cff를 넣고(저자와 DOI는 요청에 없어 비워 둠), 커밋 메시지에 파일·단계·요청 요약이 들어가게 했습니다."
     text: "결과 repo: CITATION.cff와 파일별 커밋 메시지 (#792 rev9)"
+  - sha: "1bf15c7"
+    at: "2026-10-30 23:23"
+    summary: "요청에 저자가 있을 때만 유효한 CITATION.cff를 만들고, 없으면 README에 인용 정보 미정이라고 적습니다."
+    text: "결과 repo: 저자가 있을 때만 CITATION.cff, 파일별 커밋 메시지 (#792 rev10)"
