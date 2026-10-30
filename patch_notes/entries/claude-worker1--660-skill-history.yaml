@@ -12,3 +12,4 @@ rows:
     at: "2026-10-31 03:59"
     summary: "논문 스킬을 처음 만든 요청이 최근 500건 밖이어도 /api/paper-skills가 그 요청을 보입니다."
     text: "논문 스킬 API: first_built는 500건 밖의 요청까지 포함해 찾는다 (#660)"
+# CI 기록: run 41111652681의 validation-manifest가 attempt 2는 failed/incomplete effective Windows producer, attempt 3는 missing/ambiguous Windows producer로 실패해 새 head로 다시 돌립니다.
