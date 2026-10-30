@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: 'd907b67'
+    at: '2026-10-30 13:02'
+    summary: '진단 barrier 신호를 완성한 뒤 게시합니다.'
+    text: 'Publish probe barriers atomically'
   - sha: 'b49b57b'
     at: '2026-10-30 12:56'
     summary: '분리된 자식의 marker를 완성한 뒤 게시합니다.'
