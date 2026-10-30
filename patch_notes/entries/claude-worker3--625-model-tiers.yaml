@@ -24,3 +24,7 @@ rows:
   at: 2026-10-31 03:50
   text: 러너가 등급으로 모델을 채우는 때를 agent_overrides·agent_identity·force_engine을 적용한 뒤로 옮겨, 등급이 직원이 실제로 도는 엔진의 모델을 뜻하게 한다(리뷰 P1) + 시험
   summary: 러너가 엔진을 바꿔 돌릴 때도 등급 모델이 원래 엔진의 모델로 잘못 채워지지 않습니다.
+- sha: '761db6e'
+  at: 2026-10-31 04:20
+  text: send --dry-run이 러너와 같이 runner.force_engine을 적용한 엔진으로 등급 모델을 보이고, status 문서를 gateway·WSL·manual까지 끝난 실제 변경에 맞춘다(리뷰 P1·P2) + 시험
+  summary: dry-run이 보이는 모델이 러너가 실제로 쓰는 모델과 같아집니다.
