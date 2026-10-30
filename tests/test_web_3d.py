@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -19,6 +18,7 @@ from starlette.websockets import WebSocketDisconnect
 from labhq.gateway.server import WEB, create_app
 from labhq.settings import Settings
 from labhq.util import free_port
+from tests.support.node_binary import node_binary
 
 
 @pytest.fixture
@@ -190,7 +190,7 @@ NODE_WEB_TESTS = [
 
 @pytest.mark.parametrize('filename,marker', NODE_WEB_TESTS)
 def test_office_in_node(filename, marker):
-    node = shutil.which('node')
+    node = node_binary()
     if not node:
         pytest.skip('Node is optional')
     script = Path(__file__).with_name(filename)
@@ -262,7 +262,7 @@ def test_every_node_web_test_runs_in_ci():
 
 def test_browser_failure_profile_diagnostic_is_bounded_without_browser():
     """#833: a fake directory stream proves the failure receipt is bounded and closes its handle."""
-    node = shutil.which('node')
+    node = node_binary()
     if not node:
         pytest.skip('Node is optional')
     driver = Path(__file__).parent / 'support' / 'demo_driver.cjs'
