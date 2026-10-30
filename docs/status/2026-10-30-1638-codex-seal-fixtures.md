@@ -8,8 +8,8 @@
 
 ## 테스트 결과
 - seal contract 회귀 364 passed. inventory validation·notes/public 검사는 PR에 기록합니다.
-- rev3 CI 41031837609는 9개 PASS·validation-manifest FAIL. event base `dec0cf30`과 merge parent `7fa222b5` 불일치가 원인입니다. 같은 head의 실제 Codex review는 새 지적 없이 완료됐습니다.
-- rev4는 이 기록과 patch note만 갱신해 새 synchronize 이벤트를 만듭니다. 새 head의 전체 CI·실제 review와 base/head/merge parent는 PR #1064에서 확인합니다. 불일치 재발 시 반복 push 없이 보고합니다.
+- rev4 CI 41033951645는 9개 PASS·manifest FAIL(`checkout-parents`). 같은 head의 실제 Codex review는 새 지적 없이 완료됐습니다.
+- rev5는 #1075(`e932acee`) 병합 뒤 기록만 갱신해 synchronize를 재검증합니다. 최종 head CI·실제 review, event/base/merge parent와 CI helper 수정 포함 여부는 PR #1064에 기록합니다. 같은 실패면 반복 push 없이 보고합니다.
 
 ## 막힌 점
 - 실제 witness 인증·supervisor·seal·연속 감시·독립 cleanup은 UNVERIFIED. `adapt_producer`와 `protected_launch`는 unsupported입니다.

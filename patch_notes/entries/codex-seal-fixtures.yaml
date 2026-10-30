@@ -1,7 +1,7 @@
 pr: 1064
-# Rev4: CI 41031837609 failed checkout binding (event base dec0cf30,
-# merge parent 7fa222b5). Refresh notes for a new synchronize event;
-# track final-head CI/review in PR #1064. Keep draft/hold; no policy changes.
+# Rev5: PR #1075 merged (e932acee) after rev4 CI 41033951645 failed binding.
+# Refresh notes for synchronize; verify helper inclusion, event/base/parents,
+# final-head CI and actual review in PR #1064. Keep draft/hold; no policy changes.
 rows:
   - sha: "4cda35e"
     at: "2026-10-30 18:08"
