@@ -1,0 +1,5 @@
+rows:
+  - sha: "5289424"
+    at: "2026-10-31 02:10"
+    summary: "설정 result_storage.authors에 저자 이름을 넣으면 결과 repo에 CITATION.cff를 씁니다. 비어 있으면 만들지 않고, 매뉴얼의 커밋 메시지 설명을 실제와 맞췄습니다."
+    text: "결과 repo 저자 설정 result_storage.authors와 manual 문구 정정 (#1104)"
