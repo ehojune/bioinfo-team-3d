@@ -5,7 +5,7 @@ import socket
 import pytest
 import uvicorn
 
-from tests.support.serve_task import serve_task, wait_started
+from tests.support.serve_task import serve_task, wait_event, wait_started
 
 
 async def _app(scope, receive, send):
@@ -82,3 +82,27 @@ async def test_the_log_handler_is_removed_when_the_task_ends():
     await task
     await asyncio.sleep(0)
     assert logger.handlers == before
+
+
+async def test_wait_event_raises_the_serving_error_instead_of_waiting_for_an_event_that_never_comes(taken_port):
+    server = _server(taken_port)
+    task = serve_task(server.serve())
+    with pytest.raises(RuntimeError, match="exit code 3"):
+        await wait_event(asyncio.Event(), task, 30, "demo gateway")
+
+
+async def test_wait_event_returns_when_the_event_is_set():
+    event = asyncio.Event()
+
+    async def runs():
+        await asyncio.sleep(30)
+
+    task = serve_task(runs())
+    asyncio.get_running_loop().call_later(0.05, event.set)
+    try:
+        await wait_event(event, task, 5)
+        with pytest.raises(asyncio.TimeoutError):
+            await wait_event(asyncio.Event(), task, 0.05)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

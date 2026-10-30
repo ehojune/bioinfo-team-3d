@@ -59,3 +59,19 @@ async def wait_started(is_started: Callable[[], bool], task: asyncio.Task, timeo
         if time.monotonic() >= deadline:
             raise asyncio.TimeoutError(f"{what} did not start within {timeout} s")
         await asyncio.sleep(0.02)
+
+
+async def wait_event(event: asyncio.Event, task: asyncio.Task, timeout: float, what: str = "server") -> None:
+    """Wait for `event`, but raise the serving task's error as soon as it dies (the event would never be set)."""
+    waiting = asyncio.ensure_future(event.wait())
+    try:
+        done, _ = await asyncio.wait({waiting, task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        if not waiting.done():
+            waiting.cancel()
+    if waiting in done:
+        return
+    if task in done:
+        task.result()
+        raise RuntimeError(f"{what} stopped before the event was set")
+    raise asyncio.TimeoutError(f"{what}: the event was not set within {timeout} s")
