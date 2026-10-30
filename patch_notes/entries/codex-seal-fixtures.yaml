@@ -3,6 +3,10 @@ pr: 1064
 # Final-head CI, manifest execution and actual review stay tracked in PR #1064.
 # Keep draft/hold; real protection remains UNVERIFIED.
 rows:
+  - sha: "da94188"
+    at: "2026-10-30 19:26"
+    summary: "모의 검증만으로 실제 보호 실행을 허용하지 않는다는 한계를 매뉴얼 한영판에 명시합니다."
+    text: "docs: clarify synthetic seal validation limits in manuals"
   - sha: "4cda35e"
     at: "2026-10-30 18:08"
     summary: "모든 seal 관측 단계에서 독립 pin과 parent ancestry를 대조하고 변경 후 원복도 거부합니다."
