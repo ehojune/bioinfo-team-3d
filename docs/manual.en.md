@@ -1089,6 +1089,7 @@ The beaver editor (`editor`) polishes the README with the `humanizer` and `graph
 | `docs/reference/` | Lookup-only step reports and review notes. Linked from the branch README |
 | `REFERENCES.md`, `DATA_AND_LICENSES.md` | PMID, DOI, GEO and per-material source, access, redistribution and required citation. If there is no structured reference, it restores the complete terms-of-use table of the input README |
 | `CITATION.cff` | Written only when the setting `result_storage.authors` (a list of names, empty by default) or the request's `authors` has a name; the request's value wins. Otherwise no file is made and the README says the citation is undecided (no author entered). No author or DOI is invented |
+| `.env.example` | Lists only the `LABHQ_INPUT_*` variables the published scripts read, with empty values. Written only when a script reads such a variable, and holds no personal path. Copy it to `.env`, fill in the paths, export it in the shell with `set -a; . ./.env; set +a`, then run. If the variable is not exported the script stops with a `KeyError` naming it; if it is exported empty the path is empty. labhq adds no code that reads `.env` |
 
 Each GitHub commit message is `kind: path (step x) — request summary` per file (summary up to 60 characters, cleaned for publication). The per-step progress commits (`labhq 진행 <step>: path`) carry no request summary.
 
