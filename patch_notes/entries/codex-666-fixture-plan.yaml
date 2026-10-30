@@ -1,6 +1,6 @@
 pr: 1080
 rows:
-  - sha: ae0fcd8
+  - sha: 0d2f46d
     at: "2026-10-30 20:43"
     summary: "fixture 계획 검사를 Windows CI inventory에 등록합니다."
     text: "Register fixture plan test in Windows inventory"
