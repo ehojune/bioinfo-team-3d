@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:06 | [`bbdadad`](https://github.com/ehojune/bioinfo-team-3d/pull/1071/commits/bbdadad) | **매뉴얼에 연구 단계가 계획에 선언된 주장 목록 밖의 주장을 새로 만들 수 없다는 규칙을 적었습니다.**<br>docs: manual 한·영에 단계 claim_ids 밖 claim을 만들지 않는 규칙을 적음 (#1066) |
 | 17:55 | [`0df266b`](https://github.com/ehojune/bioinfo-team-3d/pull/1069/commits/0df266b) | **논문 번호만 고정하고 재사용한 단계가 있으면, 사용자가 읽는 최종 보고서 본문에도 내용은 확인하지 않았다는 한 줄을 남깁니다.**<br>fix: 최종 보고서 본문에도 "내용 미확인" 한 줄을 남김 (#1061 후속 리뷰 P1) |
 | 17:45 | [`3a744f6`](https://github.com/ehojune/bioinfo-team-3d/pull/1069/commits/3a744f6) | **매뉴얼의 이어 가기 설명이 카드와 보고서에 내용 미확인 안내가 나온다는 현재 동작과 맞도록 고쳤습니다.**<br>docs: manual 한·영의 이어 가기 절을 카드·보고서 "내용 미확인" 표시에 맞춤 (#1061) |
 | 17:43 | [`ff736ba`](https://github.com/ehojune/bioinfo-team-3d/pull/1069/commits/ff736ba) | **카드 요약이 길어져도 내용을 확인하지 않았다는 안내가 잘리지 않게 예산 줄처럼 끝에 붙여 두었습니다.**<br>fix: 내용 미확인 표시를 카드 절단 밖에 보존 (#1061 후속 리뷰 P2) |

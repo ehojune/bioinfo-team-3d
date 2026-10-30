@@ -4,6 +4,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1066 manual 후속
+
+- 결론: #1067 리뷰가 지적한 manual 한·영 설명을 더했다. 코드는 바꾸지 않았다.
+- 바꾼 것: `docs/manual.md`·`docs/manual.en.md`의 연구 단계 결과 교정 문단에 (1) 결과와 교정 요청은 계획이 선언한 단계 `claim_ids` 안의 주장만 허용, (2) 목록 밖 claim id를 만들지 않고 hypothesis row는 claim이 아니라 context로 연결하거나 링크에서 뺌, (3) 가설·기전·등급별 정리를 결과로 요구하면 계획이 그 몫의 claim을 `claim_ids`에 미리 선언.
+- 실행한 것: `tests/test_integrations.py` 통과.
+- 미검증: 실제 모델이 이 규칙을 따르는지는 ② 6차 이후 결과로 확인한다.
+
 # #1061 후속: 식별자만 고정한 참조의 "내용 미확인" 표시
 
 - 결론: W3의 PR #1062가 DOI·PMID 참조를 식별자 영수증(`unreceipted`)으로 고정해 이어 가기 재사용을 허용했다. 그 재사용을 PI가 알고 고르도록 두 곳에 표시를 더했다.
