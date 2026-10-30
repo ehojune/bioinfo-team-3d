@@ -1,0 +1,5 @@
+rows:
+- sha: '9fbe031'
+  at: 2026-10-31 10:30
+  text: 계획 단계가 model_tier를 지닐 수 있는 길을 연다(orchestrator.step_model_tiers, 기본 꺼짐). 켜면 단계 등급은 직원이 선언한 등급 이하로만 낮출 수 있고(넘으면 서버가 되돌리고 계획 경고), validation·report 단계는 balanced 아래로 내리지 못하며, 선언 등급이 없는 직원은 무시한다. 러너는 단계 task의 등급을 그 엔진의 model_tiers 모델로 바꾸고(직원의 명시 model보다 앞섬, 표에 항목이 없으면 그대로), task_cost_item은 단계 등급을 기록할 수 있다. 꺼져 있으면 연구 계획의 schema·hash와 일반 계획의 prompt·schema가 그대로다. CSO가 등급을 고르는 기능은 아직 없다
+  summary: 꺼져 있는 동안 아무것도 달라지지 않고, 켠 환경에서도 저장된 계획의 단계 등급만 안전한 범위(직원 선언 이하, 검증·보고 단계 하한)에서 따릅니다.
