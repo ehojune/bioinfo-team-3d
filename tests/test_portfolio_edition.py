@@ -488,3 +488,233 @@ def test_duplicate_nextflow_outputs_keep_each_steps_provenance(tmp_path):
     assert set(reports.values()) == {
         "<html>Nextflow report</html>", "<html>pipeline A</html>", "<html>pipeline B</html>",
     }
+
+
+REPRODUCE_TEXT = """# 재현 방법
+
+## 입력 설정
+
+- 별도 로컬 입력 경로 설정 없음
+
+## 실행 순서와 명령
+
+- `s1` (의존: 없음)
+- `s2` (의존: s1)
+- `s3` (의존: s2)
+
+- 먼저 `python link_inputs.py`: 단계 폴더의 `inputs/<앞 단계>`를 `steps/<앞 단계>/outputs`로 잇습니다
+- `cd steps/s1 && python outputs/scripts/count.py`
+- `cd steps/s2 && python outputs/scripts/plot.py`
+- `cd steps/s3 && python outputs/scripts/qc_recheck.py`
+
+## 예상 출력
+
+| 단계 | 출력 |
+|---|---|
+
+## 재현 가능 범위
+
+### 공개 자료로 다시 만들 수 있는 것
+
+- s1, s2, s3
+
+### 접근 제한 자료가 필요한 것
+
+- 없음
+
+원자료와 접근 자격은 정리본에 포함하지 않습니다.
+"""
+
+
+def test_reproduce_lists_only_what_the_edition_publishes_and_says_what_is_missing():
+    """#792: the bundle's command list named every copied script, the edition publishes the reported ones."""
+    from labhq.portfolio import _rewrite_reproduce_commands
+
+    source_targets = {"steps/s1/outputs/scripts/count.py": "code/s1/outputs/scripts/count.py",
+                      "steps/s2/outputs/scripts/plot.py": "code/s2/outputs/scripts/plot.py"}
+    files = {"code/s1/outputs/scripts/count.py": "print('self contained')\n",
+             "code/s2/outputs/scripts/plot.py": "from pathlib import Path\nrows = Path('inputs/s1/counts.tsv').read_text()\n"}
+    text = _rewrite_reproduce_commands(REPRODUCE_TEXT, source_targets, files)
+
+    assert "cd code/s1 && python outputs/scripts/count.py" in text  # published: kept in its published folder
+    assert "cd steps/" not in text and "link_inputs.py" not in text  # nothing to run there, no linker in the edition
+    assert "## 공개본과 실행본의 차이" in text
+    assert "정리본에 싣지 않은 단계 스크립트" in text and "- `s3`: `qc_recheck.py`" in text
+    assert "작업공간 경로(`manifest.json`, `inputs/<앞 단계>/…`, 단계가 선언한 `outputs/…`)를 씁니다" in text
+    assert "- `s2`: `outputs/scripts/plot.py`" in text
+    assert "### 공개 자료로 다시 만들 수 있는 것\n\n- s1\n" in text  # only the self-contained published step
+    assert "### 정리본만으로는 다시 만들 수 없는 것 (비공개 요청 묶음의 작업공간이 필요)\n\n- s2, s3\n" in text
+
+
+def test_reproduce_without_missing_scripts_is_left_as_it_was():
+    from labhq.portfolio import _rewrite_reproduce_commands
+
+    text = REPRODUCE_TEXT.replace("- s1, s2, s3", "- s1").replace(
+        "- `cd steps/s2 && python outputs/scripts/plot.py`\n", "").replace(
+        "- `cd steps/s3 && python outputs/scripts/qc_recheck.py`\n", "").replace(
+        "- 먼저 `python link_inputs.py`: 단계 폴더의 `inputs/<앞 단계>`를 `steps/<앞 단계>/outputs`로 잇습니다\n", "")
+    source_targets = {"steps/s1/outputs/scripts/count.py": "code/s1/outputs/scripts/count.py"}
+    files = {"code/s1/outputs/scripts/count.py": "print('self contained')\n"}
+    rewritten = _rewrite_reproduce_commands(text, source_targets, files)
+
+    assert "공개본과 실행본의 차이" not in rewritten and "정리본만으로는" not in rewritten
+    assert "### 공개 자료로 다시 만들 수 있는 것\n\n- s1\n" in rewritten
+
+
+def test_a_step_with_a_script_left_out_is_not_listed_as_re_creatable():
+    """Review P1: one published and one withheld script make the step partly published."""
+    from labhq.portfolio import _rewrite_reproduce_commands
+
+    text = REPRODUCE_TEXT.replace(
+        "- `cd steps/s3 && python outputs/scripts/qc_recheck.py`",
+        "- `cd steps/s1 && python outputs/scripts/extra_check.py`")
+    source_targets = {"steps/s1/outputs/scripts/count.py": "code/s1/outputs/scripts/count.py"}
+    files = {"code/s1/outputs/scripts/count.py": "print('self contained')\n"}
+    rewritten = _rewrite_reproduce_commands(text, source_targets, files)
+    assert "- `s1`: `extra_check.py`" in rewritten
+    assert "### 공개 자료로 다시 만들 수 있는 것\n\n- 없음\n" in rewritten
+    assert "s1" in rewritten.split("### 정리본만으로는")[1]
+
+
+@pytest.mark.parametrize("code", [
+    "rows = Path('inputs') / 's1' / 'table.tsv'\n",
+    "rows = os.path.join('inputs', step, 'table.tsv')\n",
+    'path = "inputs/s1/table.tsv"\n',
+    "# shell: cat inputs/s1/table.tsv\n",
+    "meta = json.load(open('manifest.json'))\n",
+    'frame = pd.read_csv(r"inputs\s1\table.tsv")' + "\n",
+    'open("inputs\\s1\\table.tsv")' + "\n",
+    "Path('inputs').joinpath('s1', 'table.tsv')\n",
+    "subprocess.run(['cat', 'inputs/s1/table.tsv'])\n",
+    "rows = open('outputs/reference/map.tsv')\n",
+])
+def test_composed_workspace_input_paths_are_detected(code):
+    from labhq.portfolio import _WORKSPACE_INPUT
+
+    assert _WORKSPACE_INPUT.search(code)
+
+
+def test_a_script_without_workspace_paths_is_not_flagged():
+    from labhq.portfolio import _WORKSPACE_INPUT
+
+    assert not _WORKSPACE_INPUT.search("import pandas as pd\nframe = pd.read_csv(sys.argv[1])\nprint(len(frame))\n")
+
+
+def test_a_windows_separator_literal_is_not_taken_for_a_private_path(tmp_path):
+    """#792: str(p).replace("\\", "/") is code, not a UNC path; it used to be commented and turned into <local-path>."""
+    from labhq.portfolio import clean_publication_text
+
+    code = 'name = str(path).replace("\\\\", "/")\n'
+    cleaned = clean_publication_text("steps/s1/outputs/scripts/h.py", code, Settings(), {"id": "r", "text": ""})
+    assert cleaned == code and "<local-path>" not in cleaned and "수동 확인 필요" not in cleaned
+    unc = 'share = r"\\\\fileserver\\data\\x.tsv"\n'
+    assert "fileserver" not in clean_publication_text("steps/s1/outputs/scripts/u.py", unc, Settings(), {"id": "r", "text": ""})
+
+
+def test_removed_absolute_paths_in_the_execution_record_become_a_count():
+    from labhq.portfolio import _collapse_removed_paths
+
+    text = "# 실행 기록\n\n- 남은 절대경로: <local-path> <local-path> <reference-path>, <local-path>\n- 다음 줄\n"
+    assert _collapse_removed_paths(text) == (
+        "# 실행 기록\n\n- 남은 절대경로: 4개(게시본에는 경로를 적지 않음)\n- 다음 줄\n")
+    assert _collapse_removed_paths("- 남은 절대경로: 없음\n") == "- 남은 절대경로: 없음\n"
+
+
+@pytest.mark.parametrize("code", ["rows = open('Inputs\\s1\\t.tsv')\n", "meta = open('MANIFEST.JSON')\n"])
+def test_workspace_paths_are_detected_whatever_the_letter_case(code):
+    from labhq.portfolio import _WORKSPACE_INPUT
+
+    assert _WORKSPACE_INPUT.search(code)
+
+
+def test_the_readme_states_real_limits_figures_files_runs_and_determinism(tmp_path):
+    from labhq.portfolio import _determinism_line, _figure_lines, _file_list_lines, _limit_sentences, _run_lines
+
+    report = ("# 보고서\n\n## 한계\n\n공개 조회는 9회까지만 허용돼 새 조회를 하지 않았다. 무작위 3상 수치는 UNVERIFIED로 남았다. "
+              "표본이 작아 일반화할 수 없다. 네 번째 한계도 있다.\n\n![ORR와 신뢰구간](figures/orr.svg)\n")
+    limits = _limit_sentences(report)
+    assert not _limit_sentences("## 한계\n\n해석 범위와 남은 한계는 과학 보고서에 적었습니다.\n")
+    assert len(limits) == 3 and "9회까지만" in limits[0] and any("UNVERIFIED" in sentence for sentence in limits)
+    rows = _figure_lines(report, ["figures/orr.svg", "figures/qc.svg"])
+    assert rows[0].startswith("- [orr.svg](figures/orr.svg): ORR와 신뢰구간 (") and "보고서에 그림 설명이 없습니다" in rows[1]
+    files = {"code/s1/outputs/scripts/a.py": "import numpy as np\nnp.random.seed(7)\n",
+             "code/s2/outputs/scripts/b.py": "print(1)\n"}
+    assert "고정 seed 값이 적힌 스크립트: `code/s1/outputs/scripts/a.py`" in _determinism_line(files)
+    loose = _determinism_line({"code/s1/outputs/scripts/c.py": "import random\nx = random.choice([1, 2])\n"})
+    assert "고정 seed 값을 확인하지 못한" in loose and "고정 seed 값이 적힌" not in loose
+    assert "난수·seed 호출을 찾지 못했습니다" in _determinism_line({"code/s2/outputs/scripts/b.py": "print(1)\n"})
+    assert "스크립트가 없어" in _determinism_line({})
+    listing = _file_list_lines(files, ["tables/t.tsv"], ["figures/orr.svg"])
+    assert listing[0].startswith("- 코드 2개: ") and "tables/t.tsv" in listing[1] and "figures/orr.svg" in listing[2]
+    run = _run_lines({"code/x.py": "os.environ['LABHQ_INPUT_DATA_AB12CD34']\n"}, {"run/reproduce.md": "x"})
+    assert "`LABHQ_INPUT_DATA_AB12CD34`" in run[0] and "원자료가 없을 때" in run[1]
+
+
+def test_figures_with_one_basename_keep_their_own_captions_and_source_tables():
+    from labhq.portfolio import _figure_lines
+
+    report = "![첫째 그림](figures/plot.svg)\n![둘째 그림](figures/outputs-plot.svg)\n"
+    targets = {"wd1/outputs/plot.svg": "figures/plot.svg", "wd2/outputs/plot.svg": "figures/outputs-plot.svg",
+               "wd1/outputs/a.tsv": "tables/a.tsv", "wd2/outputs/b.tsv": "tables/b.tsv"}
+    files = {"code/s1/outputs/scripts/p1.py": "df = read('a.tsv'); save('plot.svg')\n",
+             "code/s2/outputs/scripts/p2.py": "df = read('b.tsv'); save('plot.svg')\n"}
+    rows = _figure_lines(report, ["figures/plot.svg", "figures/outputs-plot.svg"], targets, files, ["tables/a.tsv", "tables/b.tsv"])
+    assert "첫째 그림" in rows[0] and "둘째 그림" in rows[1]
+    assert "tables/" not in rows[0] and "tables/" not in rows[1] and "구분하지 못했습니다" in rows[0]  # one name, two steps
+    solo = _figure_lines("![표본](figures/orr.svg)\n", ["figures/orr.svg"], {}, {"code/x.py": "t = read('res.tsv'); save('orr.svg')\n"}, ["tables/res.tsv"])
+    assert "다루는 표(그림별로 가르지는 못함) [`tables/res.tsv`](tables/res.tsv)" in solo[0]
+    assert "연결을 스크립트에서 찾지 못했습니다" in _figure_lines("", ["figures/q.svg"], {}, {}, ["tables/res.tsv"])[0]
+    abstract = _figure_lines("", ["figures/graphical_abstract.svg"], {}, {}, ["tables/res.tsv"], True)[0]
+    assert "결과표에서 읽은 값이 아닙니다" in abstract
+    written = _figure_lines("", ["figures/graphical_abstract.svg"], {"outputs/graphical_abstract.svg": "figures/graphical_abstract.svg"},
+                            {"code/x.py": "t = read('res.tsv'); save('graphical_abstract.svg')\n"}, ["tables/res.tsv"], False)[0]
+    assert "자동으로 그렸고" not in written and "tables/res.tsv" in written
+    aliased = _figure_lines("![첫째](steps/s1/outputs/plot.svg)![둘째](steps/s2/outputs/plot.svg)", ["figures/plot.svg", "figures/outputs-plot.svg"],
+                            {"steps/s1/outputs/plot.svg": "figures/plot.svg", "wd1/outputs/plot.svg": "figures/plot.svg",
+                             "steps/s2/outputs/plot.svg": "figures/outputs-plot.svg", "wd2/outputs/plot.svg": "figures/outputs-plot.svg"}, {}, [])
+    assert "첫째" in aliased[0] and "둘째" in aliased[1]
+
+
+def test_the_environment_section_lists_pinned_versions_or_says_none():
+    from labhq.portfolio import _environment_lines
+
+    none = _environment_lines({"code/x.py": "print(1)\n"})
+    assert len(none) == 1 and "환경 기록이 없습니다" in none[0]
+    listed = _environment_lines({"run/environment/requirements.lock.txt": "pandas==2.2.2\nnumpy==1.26.4 ; python_version>'3'\n"})
+    assert "run/environment/requirements.lock.txt" in listed[0]
+    assert "`numpy 1.26.4`" in listed[1] and "`pandas 2.2.2`" in listed[1]
+    twice = _environment_lines({"run/environment/a-requirements.lock.txt": "pandas==1.0\n", "run/environment/b-requirements.lock.txt": "pandas==2.0\n"})
+    assert "`pandas 1.0 / 2.0`" in twice[1]
+    many = _environment_lines({f"run/environment/s{n}-requirements.lock.txt": "x==1\n" for n in range(6)})
+    assert "외 2개" in many[0]
+    poetry = _environment_lines({"run/environment/poetry.lock": '[[package]]\nname = "scipy"\nversion = "1.11.4"\n'})
+    conda = _environment_lines({"run/environment/environment.yml": "dependencies:\n  - numpy=1.26.4\n"})
+    assert "`scipy 1.11.4`" in poetry[1] and "`numpy 1.26.4`" in conda[1]
+    bare = _environment_lines({"run/environment/requirements.lock.txt": "# empty\n"})
+    assert "읽지 못했습니다" in bare[1]
+
+
+def test_env_example_lists_only_the_variables_the_published_scripts_read(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    assets["steps/analysis/outputs/scripts/read_inputs.py"] = (
+        "from pathlib import Path\nleft = Path('/home/a/data.csv')\nright = Path('/srv/b/other.csv')\n")
+    files = build_portfolio_files(request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+
+    code = next(body for name, body in files.items() if name.endswith("read_inputs.py"))
+    keys = sorted(set(re.findall(r"LABHQ_INPUT_[A-Z0-9_]+", code)))
+    assert len(keys) == 2
+    example = files[".env.example"]
+    assert [line for line in example.splitlines() if not line.startswith("#")] == [f"{key}=" for key in keys]
+    assert "/home/a" not in example and "/srv/b" not in example  # no personal path is written
+    assert "set -a; . ../inputs.env; set +a" in files["README.md"] and "set -a; . ../inputs.env; set +a" in example
+    assert "R은 빈 문자열로 계속" in example and "저장소 밖에 복사" in example  # the file says where it must not live and what R does
+    # An unset variable stops the script with the variable's name, so the reader knows what to export.
+    with pytest.raises(KeyError) as stopped:
+        exec(compile(code, "read_inputs.py", "exec"), {})
+    assert stopped.value.args[0] in keys
+
+
+def test_no_env_example_without_input_variables(tmp_path):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    files = build_portfolio_files(request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
+    assert ".env.example" not in files

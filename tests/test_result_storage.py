@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from labhq.settings import Settings, ProjectSettings
+from tests.support.serve_task import serve_task, wait_started
 from labhq.result_storage import ResultStorage, clean_document, draft_documents
 
 
@@ -105,6 +106,11 @@ async def test_new_repo_and_upload_only_after_review(tmp_path, monkeypatch, exis
     files = {path.split("/contents/")[1]: base64.b64decode(body["content"]).decode()
              for method, path, body in calls if method == "PUT"}
     assert any(path.endswith("README.md") for path in files)
+    assert not any(path.endswith("CITATION.cff") for path in files)  # the request names no author, and none is invented (#792)
+    assert "인용 정보 미정(저자 미입력)" in next(body for path, body in files.items() if path.endswith("README.md"))
+    messages = {path.split("/contents/")[1]: body["message"] for method, path, body in calls if method == "PUT"}
+    assert messages["README.md"].startswith("연구 결과 정리: README.md")
+    assert len(set(messages.values())) == len(messages)  # one message per file, not three fixed sentences
     assert hub.requests["req_test"]["result_storage"]["status"] == "published"
     await service.close()
 
@@ -161,8 +167,9 @@ async def test_new_portfolio_long_report_points_to_nested_report(tmp_path, monke
     await service.finish("req_test")
     draft = Path(hub.requests["req_test"]["result_storage"]["draft_path"])
     readme = (draft / "README.md").read_text(encoding="utf-8")
-    assert "이어지는 내용은 report/report.md에 있습니다." in readme
-    assert "이어지는 내용은 report.md에 있습니다." not in readme
+    # The repository README opens with a link to the full report; a trailing "continues in ..." note would dangle (#792).
+    assert "](report/report.md)" in readme
+    assert "이어지는 내용은" not in readme
     await service.close()
 
 
@@ -284,10 +291,10 @@ async def test_mock_request_reaches_editor_and_fake_github(tmp_path, monkeypatch
             asyncio.create_task(hub.resolve_approval(card["id"], True, "ok", storage=storage))
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=s.gateway.port, log_level="warning"))
-    jobs = [asyncio.create_task(server.serve())]
+    jobs = [serve_task(server.serve())]
     runner = Runner(s)
     try:
-        await _until(lambda: server.started, 10)
+        await wait_started(lambda: server.started, jobs[0], 10, "gateway")
         jobs.append(asyncio.create_task(runner.run_forever()))
         await _until(lambda: "editor" in hub.agents, 15)
         rid = hub.create_request(RequestIn(text="Compare public studies"))
@@ -391,3 +398,29 @@ def test_publish_preview_limits_do_not_limit_original_images(tmp_path):
     five = {f"f{i}.png": b"x" * PUBLISH_PREVIEW_FILE_MAX_BYTES for i in range(6)}
     previews, omitted = publish_image_previews(five, target)
     assert len(previews) == 5 and list(omitted) == ["f5.png"]
+
+
+def test_citation_cff_is_written_only_from_authors_the_request_gives():
+    from labhq.portfolio import _citation_cff
+
+    settings = Settings()
+    assert _citation_cff({"id": "r", "text": "질문이다."}, settings) == ""
+    assert _citation_cff({"id": "r", "text": "질문이다.", "authors": ["", {"name": " "}]}, settings) == ""
+    cff = _citation_cff({"id": "r", "text": "질문이다.", "authors": ["Kim A", {"name": "Lee B"}]}, settings)
+    assert cff.startswith("cff-version: 1.2.0") and '  - name: "Kim A"' in cff and '  - name: "Lee B"' in cff
+    assert "authors: []" not in cff and "doi" not in cff.lower()
+
+
+def test_citation_authors_come_from_the_setting_when_the_request_names_none():
+    from labhq.portfolio import _citation_cff, _request_authors
+
+    settings = Settings()
+    assert Settings().result_storage.authors == []  # empty by default: nothing is invented
+    settings.result_storage.authors = ["Kim A", " ", "Lee B"]
+    req = {"id": "r", "text": "질문이다."}
+    assert _request_authors(req, settings) == ["Kim A", "Lee B"]
+    cff = _citation_cff(req, settings)
+    assert '  - name: "Kim A"' in cff and '  - name: "Lee B"' in cff and cff.startswith("cff-version: 1.2.0")
+    own = _citation_cff({**req, "authors": ["Park C"]}, settings)  # the request's own names win
+    assert '"Park C"' in own and "Kim A" not in own
+    assert _citation_cff(req, Settings()) == ""

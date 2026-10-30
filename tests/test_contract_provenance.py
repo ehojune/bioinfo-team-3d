@@ -805,9 +805,11 @@ def test_talent_marks_broken_or_foreign_paper_skill_receipts_without_echoing_the
                                                           "skill_sha256": "e" * 64}), encoding="utf-8")
     huge = _paper_skill_receipt(talent, "PMID:5")
     (huge / "paper-skill.json").write_text(" " * (256 * 1024 + 1), encoding="utf-8")
-    (talent / "paper-skill-unfinished").mkdir()  # a failed build writes no receipt: not listed
+    (talent / "paper-skill-unfinished").mkdir()  # a failed build writes no receipt: counted, not listed as a skill
     lines = talent_lines(SimpleNamespace(talent_pool=lambda: [], talent_dir=talent))
-    assert len(lines) == 5 and all(line.startswith("📄") and "표시 생략" in line for line in lines)
+    assert len(lines) == 6 and all(line.startswith("📄") for line in lines)
+    assert all("표시 생략" in line for line in lines[:5])
+    assert lines[5].startswith("📄 빌드 미완료 폴더 1개") and "표시 생략" not in lines[5]
     assert sum("다른 논문" in line for line in lines) == 1
     assert not any(token in "".join(lines) for token in ("\x1b", "pmid:99", "not-a-hash", "failed", "e" * 12))
 

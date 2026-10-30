@@ -79,6 +79,9 @@ def test_engine_schemas_and_prompt_off_are_those_of_main():
     claims = "- " + cso.CLAIM_IDS_PLAN_RULE + "\n"
     assert prompt.count(claims) == 1
     prompt = prompt.replace(claims, "")  # #1066: a step's result cannot add a claim; only this rule is new
+    scripts = "- " + cso.SCRIPT_OUTPUTS_PLAN_RULE + "\n"
+    assert prompt.count(scripts) == 1 and "outputs/scripts/" in scripts  # the new rule is in the prompt and names the folder
+    prompt = prompt.replace(scripts, "")  # #792: only this rule is new; the rest is the previous prompt
     budget_now = ("lab's policy cap; when the PI wrote a budget on the request,\n"
                   "  that budget is the cap and this amount is only the estimate on the CP1 card. Exceeding the cap waits for a PI\n"
                   "  budget card.")
@@ -251,3 +254,30 @@ def test_staff_type_fields_are_optional_and_a_bad_value_drops_only_the_field():
     assert typed.artifact_refs[0].data_type == "de_table" and typed.artifact_refs[0].format is None
     assert typed.model_dump(mode="json")["artifact_refs"][0] == {"artifact_id": "a", "path": "outputs/x.tsv",
                                                                   "data_type": "de_table"}
+
+
+def test_the_research_step_rules_tell_the_engine_that_one_source_is_one_independence_group():
+    """#1089: two groups for one source got the later evidence row refused and its claim lost it (② 5th and 6th runs, s3). The rule
+    is in the text every research step prompt carries, beside the other cross-field rules."""
+    rules = cso.RESEARCH_RESULT_FIELD_RULES
+    assert "cite the same source" in rules and "same independence_group" in rules
+    assert rules.index("same independence_group") < rules.index("source_access_metadata")  # a rule, not a literature aside
+
+
+def test_a_research_step_tier_is_optional_and_never_reaches_a_plan_hash_while_unset():
+    """#625 step 2: the field exists for a stored plan, but a plan without it keeps its canonical JSON and hash, and the
+    engine is not offered it."""
+    plan = valid_plan()
+    for field in ("topics", "checklist", "suggested_next"):  # as a plan frozen before #221 had them
+        plan.pop(field)
+    assert rc.plan_sha256(plan) == VALID_PLAN_SHA
+    assert "model_tier" not in json.loads(rc.canonical_plan_json(plan))["steps"][0]
+    assert "model_tier" not in rc.RESEARCH_PLAN_SCHEMA["$defs"]["ResearchStep"]["properties"]
+    assert "model_tier" not in rc.research_plan_schema(True, {"type": "object"})["$defs"]["ResearchStep"]["properties"]
+    lowered = copy.deepcopy(plan)
+    lowered["steps"][0]["model_tier"] = "balanced"
+    assert rc.plan_sha256(lowered) != VALID_PLAN_SHA        # a chosen tier is part of what the PI approves
+    assert json.loads(rc.canonical_plan_json(lowered))["steps"][0]["model_tier"] == "balanced"
+    lowered["steps"][0]["model_tier"] = "turbo"
+    with pytest.raises(ValidationError):
+        rc.ResearchPlan.model_validate(lowered)

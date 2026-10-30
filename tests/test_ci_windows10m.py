@@ -25,12 +25,12 @@ def test_routine_job_is_bounded_and_has_one_bounded_suite_with_diagnostic_tail()
     jobs = yaml.safe_load((s.ROOT / cs.WORKFLOW).read_text(encoding='utf-8'))['jobs']
     job = jobs['pytest-windows']
     bound = job['timeout-minutes']
-    assert 'schedule' in bound and 'workflow_dispatch' in bound and '|| 14' in bound
+    assert 'schedule' in bound and 'workflow_dispatch' in bound and '|| 18' in bound
     assert '360' in bound  # Preserve GitHub's previous default for full nightly/manual.
     tests = [x for x in job['steps'] if x.get('run', '').startswith('pytest ')]
     # Two mandatory cold-browser viewports each have a 60 s hard cap; leave native tests and collection room.
     assert len(tests) == 2 and tests[0]['timeout-minutes'] == 3
-    assert '|| 9' in tests[1]['timeout-minutes']  # 1.5x the measured worst successful pool step (#931)
+    assert '|| 13' in tests[1]['timeout-minutes']  # 1.5x the measured worst successful pool step, 499 s (#931, #1076)
     assert '--ci-phase critical' in tests[0]['run'] and '--ci-phase parallel' in tests[1]['run']
     assert all('continue-on-error' not in step for step in tests)
     assert not any('preview' in str(x).lower() for x in job['steps'])
@@ -246,6 +246,7 @@ def node_wrapper(run, *, required_browser=False, clock=lambda: 1000.0, monotonic
     namespace = dict(Path=Path, __file__=str(s.ROOT/'tests/test_web_3d.py'), pytest=pytest,
                      re=__import__('re'), os=SimpleNamespace(environ={'LABHQ_REQUIRE_RESIZABLE_BROWSER': '1'} if required_browser else {}),
                      shutil=SimpleNamespace(which=lambda name: 'fake-node'), sys=SimpleNamespace(executable='fake-python'),
+                     node_binary=lambda: 'fake-node',
                      time=SimpleNamespace(time=clock, monotonic=monotonic), json=json,
                      subprocess=SimpleNamespace(run=run, TimeoutExpired=subprocess.TimeoutExpired))
     exec(compile(ast.Module(body=[function], type_ignores=[]), '<fake-node-wrapper>', 'exec'), namespace)
@@ -503,3 +504,42 @@ def test_changed_native_test_helper_adds_its_direct_consumer_only(tmp_path):
     helper.write_text('def read(): return 2', encoding='utf-8')
     assert not s.include_windows('tests/test_math.py', source, data, root=tmp_path,
                                  changed={'tests/helper.py'}, node='test_math')[0]
+
+
+def test_windows_pool_step_records_worker_stacks_before_its_time_limit():
+    # #1076: a pool step cut at its 13 minute cap left no trace of the test it was in.
+    jobs = yaml.safe_load((s.ROOT / cs.WORKFLOW).read_text(encoding='utf-8'))['jobs']
+    job = jobs['pytest-windows']
+    pool = next(x for x in job['steps'] if '--ci-phase parallel' in x.get('run', ''))
+    assert '--ci-stall' in pool['run']
+    assert '--ci-stall' not in next(x for x in job['steps'] if '--ci-phase critical' in x.get('run', ''))['run']
+    interval = float(job['env']['CI_STALL_INTERVAL_S'])
+    assert 1 <= interval and interval * 3 < 13 * 60  # three snapshots fit before the step is cut
+    assert any(x.get('if') == 'always()' and x.get('uses', '').startswith('actions/upload-artifact')
+               for x in job['steps'])  # the stack logs survive a cut step
+
+
+@pytest.mark.parametrize('value, expected', [(None, 300), ('150', 150.0), ('0.5', 300), ('x', 300), ('-5', 300)])
+def test_stall_interval_reads_the_environment_and_falls_back_when_unusable(monkeypatch, value, expected):
+    if value is None:
+        monkeypatch.delenv('CI_STALL_INTERVAL_S', raising=False)
+    else:
+        monkeypatch.setenv('CI_STALL_INTERVAL_S', value)
+    assert suite.stall_interval() == expected
+
+
+def test_a_stall_snapshot_names_the_running_test_and_lands_in_a_log_the_phase_checks_ignore(tmp_path, monkeypatch):
+    import time
+
+    monkeypatch.setenv('CI_STALL_INTERVAL_S', '1')
+    log = tmp_path / 'stacks-gw0.log'
+    stall = suite.WorkerStall(log, lambda: 'tests/test_x.py::test_y [call]')
+    stall.start()
+    for _ in range(40):
+        if log.exists() and 'CI snapshot: tests/test_x.py::test_y [call]' in log.read_text(encoding='utf-8'):
+            break
+        time.sleep(0.1)
+    stall.close()
+    assert 'CI snapshot: tests/test_x.py::test_y [call]' in log.read_text(encoding='utf-8')
+    # windows.combine globs collection-*.json, metrics-*.json and *error*.json only; a .log is not one of them.
+    assert not any(log.match(pattern) for pattern in ('collection-*.json', 'metrics-*.json', '*error*.json'))

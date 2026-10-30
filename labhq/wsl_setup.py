@@ -215,7 +215,8 @@ def setup(s: Settings) -> list[dict]:
         raise WslError("WSL에서 이 gateway에 닿지 못했습니다. 먼저 up을 실행하세요. "
                        "NAT 방식이면 gateway.host와 방화벽을 확인하고 runner.wsl.gateway_url에 Windows 주소를 넣으세요.")
     _remote(s, "configure", url=network["url"], token=s.gateway.runner_token,
-            supervisor=s.supervisor.model_dump(), force_engine=s.runner.force_engine, **shared)
+            supervisor=s.supervisor.model_dump(), force_engine=s.runner.force_engine,
+            model_tiers=s.model_tiers.model_dump(), **shared)
     control(s, "start")
     if not wsl_readiness.wsl_readiness(_remote(s, "probe")):
         return check(s)
