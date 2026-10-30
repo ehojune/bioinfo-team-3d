@@ -213,8 +213,9 @@ HISTORY_REQUEST_LIMIT = 500  # the most recent requests the use history reads: a
 API_USES_PER_SKILL = 50  # the API lists this many uses of a skill and states the full count beside them
 
 
-def history_rows(requests: Any) -> tuple[list[tuple[Any, ...]], bool]:
-    """The newest HISTORY_REQUEST_LIMIT stored requests as skill_history rows, and whether older ones were left out.
+def history_rows(requests: Any, *, everything: bool = False) -> tuple[list[tuple[Any, ...]], bool]:
+    """The newest HISTORY_REQUEST_LIMIT stored requests (all of them with `everything`) as skill_history rows, and
+    whether older ones were left out.
 
     `requests` is the gateway's id -> request mapping. A request without a numeric created_at is not ordered, so it is
     skipped; a damaged request never stops the listing."""
@@ -225,6 +226,8 @@ def history_rows(requests: Any) -> tuple[list[tuple[Any, ...]], bool]:
             plan = req.get("plan") if isinstance(req.get("plan"), dict) else {}
             found.append((key, created, plan.get("paper_skill_results"), req.get("results")))
     found.sort(key=lambda row: row[1], reverse=True)
+    if everything:
+        return found, False
     return found[:HISTORY_REQUEST_LIMIT], len(found) > HISTORY_REQUEST_LIMIT
 
 

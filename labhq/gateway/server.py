@@ -5998,7 +5998,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                                             skill_origins)
 
         rows, truncated = history_rows(hub.requests)
-        origins = skill_origins(rows)
+        # The first build may be older than the newest requests the history reads, so it is looked up in all of them.
+        origins = skill_origins(history_rows(hub.requests, everything=True)[0])
         skills = [{"paper_id": pid, "skill_sha256": digest, "use_count": len(uses), "uses": uses[:API_USES_PER_SKILL],
                    "first_built": origins.get((pid, digest))}
                   for (pid, digest), uses in sorted(skill_history(rows).items())]

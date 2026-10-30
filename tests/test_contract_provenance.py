@@ -977,8 +977,10 @@ def test_history_reads_only_the_newest_requests_and_says_when_older_ones_were_le
 
 
 @pytest.mark.asyncio
-async def test_the_paper_skills_api_and_request_detail_carry_the_history(tmp_path):
+async def test_the_paper_skills_api_and_request_detail_carry_the_history(tmp_path, monkeypatch):
     import httpx
+
+    from labhq.recruit import paper_skills
 
     from labhq.gateway.server import create_app
 
@@ -1001,6 +1003,10 @@ async def test_the_paper_skills_api_and_request_detail_carry_the_history(tmp_pat
         assert skill["paper_id"] == "doi:10.1000/fit" and [use["request_id"] for use in skill["uses"]] == ["r", "r_old"]
         assert skill["use_count"] == 2
         assert skill["first_built"] == {"request_id": "r_old", "created_at": 100.0}
+        monkeypatch.setattr(paper_skills, "HISTORY_REQUEST_LIMIT", 1)  # r_old is now outside the history, but still the origin
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as again:
+            cut = (await again.get("/api/paper-skills", headers=headers)).json()
+        assert cut["basis"]["truncated"] is True and cut["skills"][0]["first_built"]["request_id"] == "r_old"
         card = detail.json()["paper_literature"]["papers"][0]["skill"]
         assert [use["request_id"] for use in card["previous_uses"]] == ["r_old"]  # the request is left out of its own list
         assert detail.json()["paper_literature"]["history"]["scanned"] == 2
