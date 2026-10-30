@@ -408,3 +408,18 @@ def test_citation_cff_is_written_only_from_authors_the_request_gives():
     cff = _citation_cff({"id": "r", "text": "질문이다.", "authors": ["Kim A", {"name": "Lee B"}]}, settings)
     assert cff.startswith("cff-version: 1.2.0") and '  - name: "Kim A"' in cff and '  - name: "Lee B"' in cff
     assert "authors: []" not in cff and "doi" not in cff.lower()
+
+
+def test_citation_authors_come_from_the_setting_when_the_request_names_none():
+    from labhq.portfolio import _citation_cff, _request_authors
+
+    settings = Settings()
+    assert Settings().result_storage.authors == []  # empty by default: nothing is invented
+    settings.result_storage.authors = ["Kim A", " ", "Lee B"]
+    req = {"id": "r", "text": "질문이다."}
+    assert _request_authors(req, settings) == ["Kim A", "Lee B"]
+    cff = _citation_cff(req, settings)
+    assert '  - name: "Kim A"' in cff and '  - name: "Lee B"' in cff and cff.startswith("cff-version: 1.2.0")
+    own = _citation_cff({**req, "authors": ["Park C"]}, settings)  # the request's own names win
+    assert '"Park C"' in own and "Kim A" not in own
+    assert _citation_cff(req, Settings()) == ""
