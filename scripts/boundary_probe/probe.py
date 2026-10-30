@@ -20,6 +20,12 @@ CASES = ("allowed", "read", "write", "symlink", "hardlink", "parent_replace",
          "control_hook", "tool_use_hook", "builtin_mcp")
 
 
+def publish_signal(path: Path, run_id: str) -> None:
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(run_id, encoding="ascii")
+    temporary.replace(path)
+
+
 def receipt_diagnostic(receipt: dict, run_id: str) -> dict:
     """Validate only the published receipt shape, not its authority or seal."""
     fields = ("snapshot_digest", "runtime_digest", "policy_digest", "supervisor_identity",
@@ -175,7 +181,7 @@ def child(case: str, root: Path) -> int:
             (work / (case + ".marker")).write_text(run_id, encoding="ascii")
         elif case in ("parent_replace", "external_writer"):
             run_id = (root / "run-id").read_text(encoding="ascii")
-            (work / (case + ".ready")).write_text(run_id, encoding="ascii")
+            publish_signal(work / (case + ".ready"), run_id)
             deadline = time.monotonic() + 5
             while not (work / (case + ".continue")).exists():
                 if time.monotonic() >= deadline:
@@ -252,7 +258,7 @@ def mutation_probe(case, prefix, python, script, root, work, outside, env, run_i
         else:
             (mutable / "target").write_text("changed", encoding="ascii")
             witness = (mutable / "target").read_text(encoding="ascii") == "changed"
-        (work / (case + ".continue")).write_text(run_id, encoding="ascii")
+        publish_signal(work / (case + ".continue"), run_id)
         stdout, _ = proc.communicate(timeout=max(0.1, deadline - time.monotonic()))
         valid = stdout in (b"boundary-probe-child\n", b"boundary-probe-child\r\n")
         status = ("fail" if proc.returncode == 0 else "pass" if proc.returncode == 11 else "inconclusive") if valid and witness else "inconclusive"
@@ -353,7 +359,7 @@ def run(prefix: list[str], python: str = sys.executable, timeout: float = 10,
                     ready = work / "detached.ready"
                     valid = valid and ready.exists() and ready.read_text(encoding="ascii") == run_id
                     if valid:
-                        (work / "detached.trigger").write_text(run_id, encoding="ascii")
+                        publish_signal(work / "detached.trigger", run_id)
                         deadline = time.monotonic() + 2
                         marker = work / "detached.marker"
                         early_exit = False
@@ -428,15 +434,13 @@ def main() -> int:
         work = root / "work"
         run_id = (root / "run-id").read_text(encoding="ascii")
         (work / "detached.pid").write_text(str(os.getpid()), encoding="ascii")
-        (work / "detached.ready").write_text(run_id, encoding="ascii")
+        publish_signal(work / "detached.ready", run_id)
         deadline = time.monotonic() + float((root / "writer-timeout").read_text(encoding="ascii"))
         trigger = work / "detached.trigger"
         while not trigger.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
         if trigger.exists() and trigger.read_text(encoding="ascii") == run_id:
-            marker_tmp = work / "detached.marker.tmp"
-            marker_tmp.write_text(run_id, encoding="ascii")
-            marker_tmp.replace(work / "detached.marker")
+            publish_signal(work / "detached.marker", run_id)
         return 0
     if args.child:
         result = child(args.child, Path(args.case_root))
