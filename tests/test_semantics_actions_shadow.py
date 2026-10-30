@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from labhq.settings import DataZone, Settings
 from tests.semantics_shadow_lab import lab_record, run_lab, task_row
+from tests.support.time_proxy import RuntimeProxy
 
 ROOT = Path(__file__).resolve().parents[1]
 ON = {"mode": "shadow", "actions": "shadow"}
@@ -104,8 +105,8 @@ def test_actions_off_never_loads_the_module_and_writes_the_b1_line_only(tmp_path
 
 def _fixed_clock(monkeypatch):
     from labhq.research import semantics_shadow as shadow
-    monkeypatch.setattr(shadow.time, "time", lambda: 1790000500.0)
-    monkeypatch.setattr(shadow.time, "perf_counter", lambda: 42.0)
+    monkeypatch.setattr(shadow, "time", RuntimeProxy(shadow.time, time=lambda: 1790000500.0,
+                                                     perf_counter=lambda: 42.0))
 
 
 def _line(hub, cfg):

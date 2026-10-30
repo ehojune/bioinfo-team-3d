@@ -12,6 +12,7 @@ from labhq.gateway.server import RequestIn, create_app
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 from labhq.util import free_port
+from tests.support.serve_task import serve_task, wait_started
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -161,8 +162,8 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
 
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=gport, log_level="warning"))
-    tasks = [asyncio.create_task(server.serve())]
-    await _until(lambda: server.started, HANG_S, "gateway server startup", lambda: {"started": server.started})
+    tasks = [serve_task(server.serve())]
+    await wait_started(lambda: server.started, tasks[0], HANG_S, "gateway server startup")
     runner = Runner(s)
     tasks.append(asyncio.create_task(runner.run_forever()))
     try:

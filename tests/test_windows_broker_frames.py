@@ -8,6 +8,7 @@ import pytest
 from labhq import windows_broker as broker
 from tests.test_windows_broker import world
 from tests.test_windows_broker_phases import CREATE, FIRST_PHASE, shell, frames, PHASES
+from tests.support.time_proxy import RuntimeProxy
 
 LIMIT = 1024 * 1024
 FLAGS = 0x01000608
@@ -141,7 +142,7 @@ def test_create_sends_only_framed_stdin_and_rejects_oversize_before_any_spawn(sh
     assert kw['timeout']==broker.PROVIDER_TIMEOUT and kw['stderr'] is broker.subprocess.DEVNULL
     run.reset_mock()
     ticks = iter([70.0, 80.0])
-    monkeypatch.setattr(broker.time, 'monotonic', lambda: next(ticks))
+    monkeypatch.setattr(broker, 'time', RuntimeProxy(broker.time, monotonic=lambda: next(ticks)))
     with pytest.raises(broker.BrokerFailure,match='request_too_large') as caught:
         broker._create(['C:\\python.exe','C:\\script.py'],tmp_path,{'FAKE':'PRIVATE'*(LIMIT//7+1)})
     run.assert_not_called()

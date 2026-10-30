@@ -42,7 +42,7 @@ _PRIVATE_PATH = re.compile(
 )
 # String fragments in f-strings may end at the private root (for example ``f"/home/{user}"``).
 _PRIVATE_LITERAL_PATH = re.compile(
-    r"(?<![\w.-])(?:[A-Za-z]:[/\\]|\\\\|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\]})]*"
+    r"(?<![\w.-])(?:[A-Za-z]:[/\\]|\\\\[^\s<>\"'`\]})/\\]+[/\\]|/(?:home|Users|mnt|srv|data|tmp|var|opt)/|~/)[^\s<>\"'`\]})]*"
 )
 PRIVATE_PATH_PATTERN = _PRIVATE_PATH
 _MANUAL_PATH_REVIEW = "# LABHQ 수동 확인 필요: 개인 경로를 안전하게 자동 변환하지 못했습니다."
@@ -110,7 +110,7 @@ _MARKDOWN_REFERENCE_DEFINITION = re.compile(
     r"(?P<title>[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$")
 _MARKDOWN_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
 _REMOTE_LINK = re.compile(r"(?i)^(?:https?://|data:|mailto:)")
-_PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md"}
+_PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md", "CITATION.cff", ".env.example"}
 _PORTFOLIO_FOLDERS = ("report/", "run/", "code/", "docs/", "figures/", "tables/", "studies/")
 _LICENSE_PLACEHOLDER = re.compile(
     r"<reference-path>|확인 필요|필수 문구 자리|원 출처의 필수 문구를 넣으세요", re.I
@@ -237,6 +237,16 @@ def _rewrite_markdown_links(files: Mapping[str, str | bytes],
     return rewritten
 
 
+_REMOVED_PATH_LIST = re.compile(r"(?m)^(- 남은 절대경로: )((?:<(?:local|reference)-path>(?:,\s*|\s+)?)+)$")
+
+
+def _collapse_removed_paths(text: str) -> str:
+    """The bundle lists the absolute paths it kept; the edition cleaned each into a placeholder. Say how many, not which."""
+    def count(match: re.Match[str]) -> str:
+        return f"{match.group(1)}{len(re.findall(r'<(?:local|reference)-path>', match.group(2)))}개(게시본에는 경로를 적지 않음)"
+    return _REMOVED_PATH_LIST.sub(count, text)
+
+
 def _step_execution_path(source: str, target: str) -> tuple[str, str, str] | None:
     source_path = PurePosixPath(source)
     if (len(source_path.parts) < 5 or source_path.parts[0] != "steps"
@@ -252,16 +262,81 @@ def _step_execution_path(source: str, target: str) -> tuple[str, str, str] | Non
     return source_path.parts[1], cwd, "/".join(relative)
 
 
+# A published script that reads these still needs the request bundle's workspace: neither is part of the edition (#792).
+# The words `inputs` and `outputs` standing alone (not `inputs_dir` or `my.inputs`) and `manifest.json` mark a script that
+# works with the request workspace: its `inputs/<step>/` and the step's declared `outputs/` files, which the edition moves
+# to `tables/`, `figures/` and the like. Matching the word, not one path shape, covers `inputs/s1/x`, `inputs\s1\x`, `Path("inputs") / "s1"`,
+# `os.path.join("inputs", step)` and an unquoted shell path at once. It over-matches prose such as "validate inputs",
+# and that errs toward "needs the workspace", which the edition then says instead of promising a re-run (#792).
+_WORKSPACE_INPUT = re.compile(r"""(?<![\w.])(?:inputs|outputs)(?!\w)|""" + r"""\bmanifest""" + r"""\.json\b""", re.I)
+_BUNDLE_COMMAND = re.compile(r"^- `cd steps/([^ `]+) && [^`]*?([^/ `]+)`$")
+
+
+def _published_scope(text: str, folders: Mapping[str, str], needs_workspace: Mapping[str, list[str]]) -> str:
+    """Make REPRODUCE say only what the edition can do (#792).
+
+    The bundle's command list names every script it copied, reported or not, but the edition publishes the reported ones.
+    A command into `steps/<step>` has nothing to run here, and the bundle's `link_inputs.py` is not published either: both
+    leave the text, and a section names what is missing and where the step can still be re-run. The scope lists follow:
+    only a step with a published script that needs no workspace file counts as re-creatable from the edition."""
+    withheld: dict[str, list[str]] = {}
+    kept: list[str] = []
+    for line in text.split("\n"):
+        command = _BUNDLE_COMMAND.match(line)
+        if command:
+            withheld.setdefault(command.group(1), []).append(command.group(2))
+            continue
+        if line.startswith("- 먼저 `python link_inputs.py`"):
+            continue
+        kept.append(line)
+    text = "\n".join(kept)
+
+    listed = re.search(r"(?m)^### 공개 자료로 다시 만들 수 있는 것\n\n- (.*)$", text)
+    claimed = [name.strip() for name in listed.group(1).split(",")] if listed and listed.group(1) != "없음" else []
+    # A step with a script that was left out is only partly published: it cannot be re-created from the edition alone.
+    runnable = [step for step in claimed if step in folders and step not in needs_workspace and step not in withheld]
+    blocked = [step for step in claimed if step not in runnable]
+    if not (withheld or needs_workspace or blocked):
+        return text
+    notes = ["## 공개본과 실행본의 차이", ""]
+    if withheld:
+        notes += ["정리본에 싣지 않은 단계 스크립트가 있습니다. 선언된 산출이 아니거나 크기·형식 제한으로 빠졌을 수 있고, "
+                  "그 단계는 비공개 요청 묶음(`requests/<요청 id>/`)에서만 다시 실행할 수 있습니다.", "",
+                  *[f"- `{step}`: {', '.join(f'`{name}`' for name in dict.fromkeys(names))}"
+                    for step, names in sorted(withheld.items())], ""]
+    if needs_workspace:
+        notes += ["아래 스크립트는 작업공간 경로(`manifest.json`, `inputs/<앞 단계>/…`, 단계가 선언한 `outputs/…`)를 "
+                  "씁니다. 정리본에서는 이 파일들이 `tables/`·`figures/` 등으로 옮겨져 경로가 달라, 정리본만으로는 그대로 "
+                  "실행되지 않을 수 있습니다. 같은 값은 결과표에 있고, 작업공간이 있는 요청 묶음에서는 실행됩니다.", "",
+                  *[f"- `{step}`: {', '.join(f'`{name}`' for name in names)}" for step, names in sorted(needs_workspace.items())], ""]
+    section = "\n".join(notes)
+    marker = "## 재현 가능 범위"
+    text = text.replace(marker, section + "\n" + marker, 1) if marker in text else text.rstrip() + "\n\n" + section
+    if listed:
+        replacement = "### 공개 자료로 다시 만들 수 있는 것\n\n- " + (", ".join(runnable) if runnable else "없음")
+        text = re.sub(r"(?m)^### 공개 자료로 다시 만들 수 있는 것\n\n- .*$", lambda _match: replacement, text, count=1)
+        if blocked:
+            extra = ("### 정리본만으로는 다시 만들 수 없는 것 (비공개 요청 묶음의 작업공간이 필요)\n\n- "
+                     + ", ".join(blocked) + "\n\n")
+            tail = "원자료와 접근 자격은 정리본에 포함하지 않습니다."
+            text = text.replace(tail, extra + tail, 1) if tail in text else text.rstrip() + "\n\n" + extra.rstrip() + "\n"
+    return text
+
+
 def _rewrite_reproduce_commands(text: str, source_targets: Mapping[str, str],
                                 files: Mapping[str, str | bytes]) -> str:
     """Keep each recorded command in the published equivalent of its original step cwd."""
     folders: dict[str, str] = {}
+    needs_workspace: dict[str, list[str]] = {}
     for source, target in sorted(source_targets.items()):
         execution = _step_execution_path(source, target)
         if execution is None:
             continue
         step, cwd, within_step = execution
         folders.setdefault(step, cwd)
+        body = files.get(target)
+        if isinstance(body, str) and _WORKSPACE_INPUT.search(body):
+            needs_workspace.setdefault(step, []).append(within_step)
         path = PurePosixPath(source)
         command = {".py": "python", ".r": "Rscript", ".sh": "bash"}[path.suffix.lower()]
         executables = ("python", "python3", "py") if command == "python" else (command,)
@@ -280,6 +355,8 @@ def _rewrite_reproduce_commands(text: str, source_targets: Mapping[str, str],
         marker = "## 예상 출력"
         text = text.replace(marker, "\n".join(section) + "\n" + marker) if marker in text else (
             text.rstrip() + "\n\n" + "\n".join(section))
+
+    text = _published_scope(text, folders, needs_workspace)
 
     keys = sorted(set(re.findall(
         r"\bLABHQ_INPUT_[A-Z0-9_]+\b",
@@ -1293,6 +1370,36 @@ def _costs_document(req: dict, tasks: Iterable[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _request_authors(req: dict, settings=None) -> list[str]:
+    """Author names for CITATION.cff: the request's own ``authors`` (names or ``{"name": ...}``), else the configured
+    ``result_storage.authors``. Nothing is guessed, so no names means no file (#792, #1104)."""
+    raw = req.get("authors")
+    items = raw if isinstance(raw, (list, tuple)) else []
+    names = [str(item.get("name") if isinstance(item, Mapping) else item or "").strip() for item in items]
+    names = [name for name in names if name]
+    if not names:
+        configured = getattr(getattr(settings, "result_storage", None), "authors", None) or []
+        names = [str(name).strip() for name in configured if str(name).strip()]
+    return names
+
+
+def _citation_authors(req: dict, settings) -> list[str]:
+    return [cleaned for cleaned in (_clean(name, settings, req).strip()[:120] for name in _request_authors(req, settings)) if cleaned]
+
+
+def _citation_cff(req: dict, settings) -> str:
+    """A valid CITATION.cff, or "" when the request names no author: CFF requires one and none is invented (#792)."""
+    authors = _citation_authors(req, settings)
+    if not authors:
+        return ""
+    title = _clean(research_question(str(req.get("text") or "")) or "연구 결과", settings, req).strip().splitlines()[0][:200]
+    return ("cff-version: 1.2.0\n"
+            f"message: {json.dumps('이 연구 결과를 인용할 때는 아래 정보를 쓰세요.', ensure_ascii=False)}\n"
+            f"title: {json.dumps(title, ensure_ascii=False)}\n"
+            "type: dataset\nauthors:\n"
+            + "".join(f"  - name: {json.dumps(author, ensure_ascii=False)}\n" for author in authors))
+
+
 def _references(req: dict, report: str, assets: Mapping[str, str]) -> str:
     text = "\n".join([report, *assets.values(), *[str(ref.get("value") or "") for ref in req.get("references") or []]])
     pmids = {match.group(1) for match in _PMID.finditer(text)}
@@ -1483,7 +1590,7 @@ def _data_licenses(req: dict, settings, input_readmes: Mapping[str, str] | None 
     return "\n".join(lines) + "\n"
 
 
-def _first_limit(report: str) -> str:
+def _limit_sentences(report: str, count: int = 3) -> list[str]:
     scope = ""
     candidates: dict[str, list[str]] = collections.defaultdict(list)
     for block in report.split("\n\n"):
@@ -1504,20 +1611,195 @@ def _first_limit(report: str) -> str:
         plain = " ".join(_ANCHOR.sub("", value).split())
         candidates[scope].extend(_SENTENCE_END.split(plain))
     constraint = re.compile(
-        r"한계|제한|제약|limitation|검정력|일반화|편향|교란|설계상|방법상|"
+        r"한계|제한|제약|limitation|검정력|일반화|편향|교란|설계상|방법상|UNVERIFIED|미확인|확인하지 못|읽지 못|상한|"
         r"표본\s*(?:수|크기)?\S{0,12}(?:작|적|부족)|(?:자료|데이터)\S{0,12}부족",
         re.I,
     )
-    limited = next((sentence.strip() for name in ("limit", "discussion", "summary")
-                    for sentence in candidates[name] if constraint.search(sentence)), "")
-    return limited or "해석 범위와 남은 한계는 과학 보고서에 적었습니다."
+    # Under a limitations heading every sentence is a limit; elsewhere only those that sound like one.
+    found = [sentence.strip() for sentence in candidates["limit"] if len(sentence.strip()) >= 8]
+    found += [sentence.strip() for name in ("discussion", "summary")
+              for sentence in candidates[name] if constraint.search(sentence)]
+    return [sentence for sentence in dict.fromkeys(found) if "과학 보고서에 적었습니다" not in sentence][:count]
+
+
+_NO_LIMIT_FOUND = ("보고서에서 한계를 밝힌 문장을 찾지 못했습니다. 인용하기 전에 "
+                   "[과학 보고서](report/report.md)의 논의를 읽어 주세요.")
+
+
+def _first_limit(report: str) -> str:
+    """The limits the report itself states (up to three sentences), not a pointer that says nothing."""
+    found = _limit_sentences(report)
+    return " ".join(found) if found else _NO_LIMIT_FOUND
+
+
+_RANDOM_USE = re.compile(r"\b(?:random_state|set_seed|manual_seed)\b|\b(?:np|numpy)\.random\b|\brandom\.(?:seed|random|choice|shuffle|sample)\b|\bseed\b")
+
+
+_FIXED_SEED = re.compile(r"\b(?:seed|random_state|set_seed|manual_seed)\s*[=(]\s*\d+")
+
+
+def _determinism_line(files: Mapping[str, str | bytes]) -> str:
+    code = {name: body for name, body in files.items()
+            if isinstance(body, str) and PurePosixPath(name).suffix.lower() in _CODE_SUFFIXES}
+    if not code:
+        return "공개한 스크립트가 없어 결정성은 확인할 수 없습니다."
+    using = sorted(name for name, body in code.items() if _RANDOM_USE.search(body))
+    fixed = [name for name in using if _FIXED_SEED.search(code[name])]
+    loose = [name for name in using if name not in fixed]
+    if using:
+        parts = []
+        if fixed:
+            parts.append("고정 seed 값이 적힌 스크립트: " + ", ".join(f"`{name}`" for name in fixed[:6]) + ".")
+        if loose:
+            parts.append("난수를 쓰지만 고정 seed 값을 확인하지 못한 스크립트: "
+                         + ", ".join(f"`{name}`" for name in loose[:6]) + ". 결과가 실행마다 다를 수 있습니다.")
+        return " ".join(parts)
+    return (f"공개한 스크립트 {len(code)}개에서 난수·seed 호출을 찾지 못했습니다. 난수를 쓰지 않는 것으로 보이며, "
+            "실행해서 확인한 것은 아닙니다.")
+
+
+def _figure_caption(report: str, sources: list[str], target: str) -> str:
+    """The alt text of the report image that points at this figure; full paths first, a shared basename only when unique."""
+    images = [(PurePosixPath(unquote(path.split("#")[0]).replace("\\", "/")).as_posix().lstrip("./"), alt.strip())
+              for alt, path in re.findall(r"!\[([^\]]*)\]\(([^)]+)\)", report)]
+    sources = [source.replace("\\", "/") for source in sources] or [target]
+    exact = [alt for path, alt in images if path and (target.endswith(path) or any(s.endswith(path) for s in sources))]
+    if exact:
+        return exact[0]
+    bases = {PurePosixPath(source).name for source in sources}
+    same = [alt for path, alt in images if PurePosixPath(path).name in bases]
+    return same[0] if len(same) == 1 else ""
+
+
+def _figure_sources(figure_names: list[str], files: Mapping[str, str | bytes], table_names: list[str],
+                    source_targets: Mapping[str, str]) -> dict[str, list[str]]:
+    """Per published figure, the published tables its script names: the source data behind the picture."""
+    origin: dict[str, list[str]] = {}
+    for source, target in source_targets.items():  # a target can have several aliases (the step path and the workdir path)
+        origin.setdefault(target, []).append(source.replace("\\", "/"))
+    scripts = {name: body for name, body in files.items()
+               if isinstance(body, str) and PurePosixPath(name).suffix.lower() in _CODE_SUFFIXES}
+    result: dict[str, list[str]] = {}
+    for figure in figure_names:
+        bases = {PurePosixPath(source).name for source in origin.get(figure, [figure])}
+        if sum(1 for other in figure_names if bases & {PurePosixPath(s).name for s in origin.get(other, [other])}) > 1:
+            result[figure] = []  # scripts cannot tell same-named figures apart, so no table is claimed for either
+            continue
+        used = [body for body in scripts.values() if any(base in body for base in bases)]
+        result[figure] = [table for table in table_names
+                          if any(PurePosixPath(source).name in body for source in origin.get(table, [table]) for body in used)]
+    return result
+
+
+def _figure_lines(report: str, figure_names: list[str], source_targets: Mapping[str, str] | None = None,
+                  files: Mapping[str, str | bytes] | None = None, table_names: list[str] | None = None,
+                  generated_abstract: bool = False) -> list[str]:
+    targets = source_targets or {}
+    origin: dict[str, list[str]] = {}
+    for source, target in targets.items():
+        origin.setdefault(target, []).append(source)
+    data = _figure_sources(figure_names, files or {}, table_names or [], targets)
+
+    def duplicated(figure: str) -> bool:
+        def bases(item: str) -> set[str]:
+            return {PurePosixPath(source).name for source in origin.get(item, [item])}
+        return sum(1 for other in figure_names if bases(figure) & bases(other)) > 1
+    rows = []
+    for name in figure_names:  # a renamed duplicate (plot.svg -> outputs-plot.svg) keeps its own source's caption
+        alt = _figure_caption(report, origin.get(name, []), name)
+        shown = alt if alt and alt != PurePosixPath(name).name else "보고서에 그림 설명이 없습니다"
+        tables = data.get(name) or []
+        if generated_abstract and name == "figures/graphical_abstract.svg":
+            source = "요청·계획·결론 문장에서 자동으로 그렸습니다. 결론에 적힌 숫자는 문장에서 옮긴 것이고 결과표에서 읽은 값이 아닙니다"
+        elif tables:
+            source = "같은 스크립트가 다루는 표(그림별로 가르지는 못함) " + ", ".join(f"[`{table}`]({quote(table, safe='/')})" for table in tables[:4])
+        else:
+            source = ("같은 이름의 그림이 여러 개라 원자료를 구분하지 못했습니다" if duplicated(name)
+                      else "원자료 표와의 연결을 스크립트에서 찾지 못했습니다")
+        rows.append(f"- [{PurePosixPath(name).name}]({quote(name, safe='/')}): {shown} ({source})")
+    return rows or ["- 게시한 그림이 없습니다."]
+
+
+_PINNED = (re.compile(r"^([A-Za-z0-9_.-]+)==([^;\s#]+)", re.M),  # requirements, pip freeze
+           re.compile(r"^\s*-\s+([A-Za-z0-9_.-]+)=([0-9][^=\s#]*)", re.M),  # conda environment.yml
+           re.compile(r'^name = "([^"]+)"\s*\nversion = "([^"]+)"', re.M),  # poetry.lock, uv.lock
+           re.compile(r'"([A-Za-z0-9_.-]+)":\s*{[^{}]*?"version":\s*"==([^"]+)"', re.S),  # Pipfile.lock
+           re.compile(r'"Package":\s*"([^"]+)",\s*"Version":\s*"([^"]+)"'))  # renv.lock
+
+
+def _environment_lines(files: Mapping[str, str | bytes]) -> list[str]:
+    locks = sorted(name for name in files if name.startswith("run/environment/") or "/run/environment/" in name)
+    packages: dict[str, list[str]] = {}
+    for name in locks:
+        body = files[name]
+        text = body if isinstance(body, str) else body.decode("utf-8", "replace")
+        for pattern in _PINNED:
+            for pkg, version in pattern.findall(text):
+                if version not in packages.setdefault(pkg, []):
+                    packages[pkg].append(version)
+    if not locks:
+        return ["- 환경 기록이 없습니다. 패키지와 언어 버전이 남지 않아, 같은 환경을 다시 만든다고 보장할 수 없습니다."]
+    lines = [f"- 기록 파일: " + ", ".join(f"[`{name}`]({quote(name, safe='/')})" for name in locks[:4])
+             + (f" 외 {len(locks) - 4}개" if len(locks) > 4 else "")]
+    if packages:
+        shown = sorted(packages.items())
+        lines.append("- 기록된 버전: " + ", ".join(f"`{pkg} {' / '.join(versions)}`" for pkg, versions in shown[:15])
+                     + (f" 외 {len(shown) - 15}개" if len(shown) > 15 else ""))
+    else:
+        lines.append("- 기록 파일에서 패키지와 버전 쌍을 읽지 못했습니다. 파일을 직접 확인하세요.")
+    return lines
+
+
+def _file_list_lines(files: Mapping[str, str | bytes], table_names: list[str], figure_names: list[str]) -> list[str]:
+    code = sorted(name for name, body in files.items()
+                  if PurePosixPath(name).suffix.lower() in _CODE_SUFFIXES and "code/" in name)
+
+    def joined(names: list[str], limit: int = 12) -> str:
+        shown = ", ".join(f"`{name}`" for name in names[:limit])
+        return shown + (f" 외 {len(names) - limit}개" if len(names) > limit else "")
+    return [f"- 코드 {len(code)}개: " + (joined(code) if code else "없음"),
+            f"- 결과표 {len(table_names)}개: " + (joined(table_names) if table_names else "없음"),
+            f"- 그림 {len(figure_names)}개: " + (joined(figure_names) if figure_names else "없음")]
+
+
+def _input_keys(files: Mapping[str, str | bytes]) -> list[str]:
+    """The ``LABHQ_INPUT_*`` variables the published scripts read: the only names ``.env.example`` lists."""
+    code = "\n".join(body for name, body in files.items()
+                     if isinstance(body, str) and PurePosixPath(name).suffix.lower() in _CODE_SUFFIXES)
+    return sorted(set(re.findall(r"\bLABHQ_INPUT_[A-Z0-9_]+\b", code)))
+
+
+def _env_example(keys: list[str]) -> str:
+    """Empty values for each input variable. A script stops with the variable's name only while the variable is unset."""
+    return ("# 정리본 스크립트가 읽는 입력 경로입니다. 값은 자신의 PC 경로로 채우세요.\n"
+            "# 저장소 밖에 복사해 채웁니다(예: cp .env.example ../inputs.env). 경로가 공개 저장소에 커밋되지 않게 하기 위해서입니다.\n"
+            "# 셸에서 `set -a; . ../inputs.env; set +a`로 내보낸 뒤 실행합니다. 값을 채우지 않고 내보내면 빈 경로가 됩니다.\n"
+            "# 내보내지 않으면 Python은 변수 이름이 담긴 KeyError로, 셸 스크립트는 변수 이름이 담긴 오류로 멈춥니다.\n"
+            "# R은 빈 문자열로 계속하니 먼저 내보냈는지 확인하세요.\n"
+            + "".join(f"{key}=\n" for key in keys))
+
+
+def _run_lines(files: Mapping[str, str | bytes], run_documents: Mapping[str, str]) -> list[str]:
+    keys = _input_keys(files)
+    reproduce = "[재현 방법](run/reproduce.md)" if "run/reproduce.md" in run_documents else "재현 방법"
+    variables = (", ".join(f"`{key}`" for key in keys[:8]) + (f" 외 {len(keys) - 8}개" if len(keys) > 8 else "")
+                 if keys else "없음")
+    return [f"- 원자료가 있을 때: {reproduce}의 순서와 명령을 따릅니다. 입력 경로 환경 변수: {variables}. "
+            "경로 값은 정리본에 적지 않았으니 " + ("`.env.example`을 저장소 밖(예: `../inputs.env`)에 복사해 경로를 채운 뒤 `set -a; . ../inputs.env; set +a`로 내보냅니다."
+               if keys
+               else "자신의 경로를 넣습니다."),
+            "- 원자료가 없을 때: 재현 방법이 \"공개 자료로 다시 만들 수 있는 것\"으로 적은 단계만 정리본으로 다시 돌립니다. "
+            "나머지 스크립트는 원자료가 없어 처음부터 돌릴 수 없으니 `tables/`의 결과표와 `report/`의 보고서로 결과와 근거를 "
+            "확인합니다."]
 
 
 def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_names: list[str],
             table_names: list[str], omitted_tables: list[Mapping[str, Any]],
             run_documents: Mapping[str, str], branch_rows: list[dict[str, str]] | None = None,
             source_targets: Mapping[str, str] | None = None,
-            run: run_report.RunSummary | None = None) -> str:
+            run: run_report.RunSummary | None = None,
+            files: Mapping[str, str | bytes] | None = None, generated_abstract: bool = False,
+            citation: bool = False) -> str:
     title = report.splitlines()[0].lstrip("#").strip() or "연구 결과"
     abstract = "figures/graphical_abstract.svg" if "figures/graphical_abstract.svg" in figure_names else None
     key = next((name for name in figure_names if name != abstract), None)
@@ -1578,6 +1860,14 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     omitted_figures = list(dict.fromkeys(re.findall(r"\*\(그림 생략: ([^)\n]+)\)\*", report)))
     if omitted_figures:
         lines += ["", "## 생략한 그림", "", *[f"- *(그림 생략: {label})*" for label in omitted_figures]]
+    published = files or {}
+    lines += ["", "## 그림이 보여 주는 것", "", *_figure_lines(report, figure_names, source_targets, published, table_names, generated_abstract),
+              "", "## 파일 목록", "", *_file_list_lines(published, table_names, figure_names),
+              ("- 인용: [CITATION.cff](CITATION.cff)" if citation
+               else "- 인용 정보 미정(저자 미입력): 요청과 설정에 저자가 없어 CITATION.cff를 만들지 않았습니다."),
+              "", "## 환경", "", *_environment_lines(published),
+              "", "## 실행 방법", "", *_run_lines(published, run_documents),
+              "", "## 결정성", "", _determinism_line(published)]
     lines += ["", "## 읽는 순서", "",
               "1. [과학 보고서](report/report.md) — 논문 형식 보고서와 claim 근거 각주"]
     if "run/progress.md" in run_documents:
@@ -1593,7 +1883,7 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
               "8. `code/`, `figures/`, `tables/` — 게시 가능한 코드·SVG·집계표", "",
               "## 저장소 지도", "", "```text", "README.md", "report/", "run/", "code/", "figures/", "tables/",
               *(["studies/               갈래별 코드·그림·표·단계 보고서"] if branch_rows else []),
-              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", "```", "",
+              "docs/reference/", "REFERENCES.md", "DATA_AND_LICENSES.md", *(["CITATION.cff"] if citation else []), *([".env.example"] if _input_keys(published) else []), "```", "",
               "## Summary (English)", "",
               f"This repository is the publication edition of labhq request {req.get('id')}. "
               "It keeps the scientific report, aggregate results, code, figures, decisions, and execution record together.", "",
@@ -1895,7 +2185,8 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
     execution = ""
     if bundle is not None and (bundle / "execution_record.md").is_file():
         execution = (bundle / "execution_record.md").read_text(encoding="utf-8", errors="replace")
-    execution = _clean(execution or str(req.get("execution_record") or "# 실행 기록\n\n기록 없음\n"), settings, req)
+    execution = _collapse_removed_paths(
+        _clean(execution or str(req.get("execution_record") or "# 실행 기록\n\n기록 없음\n"), settings, req))
     files.update({
         "run/requests.md": f"# 요청 원문\n\n```text\n{request_text.strip()}\n```\n",
         "run/decisions.md": _clean(_decisions_document(req, decisions), settings, req),
@@ -1904,6 +2195,12 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         "REFERENCES.md": _clean(_references(req, report, assets), settings, req),
         "DATA_AND_LICENSES.md": _clean(_data_licenses(req, settings, input_readmes), settings, req),
     })
+    citation = _citation_cff(req, settings)
+    if citation:
+        files["CITATION.cff"] = citation
+    input_keys = _input_keys(files)
+    if input_keys:
+        files[".env.example"] = _env_example(input_keys)
     if revision_history:
         files["run/revision_history.md"] = revision_history
     run_summary, run_files = run_report.build(
@@ -1963,7 +2260,8 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         "<reference-path>", "참고 자료")
     readme = _plain_korean(_readme(
         readme_req, report, _step_rows(req, assets), figure_names, table_names, omitted_tables,
-        run_documents, branch_rows, source_targets, run_summary))
+        run_documents, branch_rows, source_targets, run_summary, files, abstract_source is None,
+        bool(_citation_authors(req, settings))))
     if check_document(readme)["status"] != "PASS":
         raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)

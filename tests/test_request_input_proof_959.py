@@ -180,3 +180,78 @@ async def test_approved_reference_reuse_stops_when_content_changes(tmp_path, mon
     (folder / 'a.txt').write_text('changed')
     assert not await orch._verify_research_reuse('r', req['plan'])
     assert not hub.calls
+
+
+# ---------- #1061: DOI and PMID references carry an identifier-only receipt ----------
+
+def ids(*values):
+    return {'references': [{'kind': kind, 'value': value} for kind, value in values]}
+
+
+def test_identifier_references_get_an_unreceipted_manifest(tmp_path):
+    settings, _request, _folder = fixture(tmp_path)
+    proof = capture(ids(('doi', '10.1000/ABC'), ('pmid', '41820335')), settings)
+    assert proof is not None and proof['files'] == []
+    assert proof['unreceipted'] == ['doi:10.1000/abc', 'pmid:41820335']
+    assert capture(ids(('doi', '10.1000/ABC'), ('pmid', '41820335')), settings) == proof
+    assert capture(ids(('pmid', '41820335'), ('doi', '10.1000/ABC')), settings)['unreceipted'] == proof['unreceipted']
+    assert capture(ids(('doi', '10.1000/ABC')), settings)['sha256'] != proof['sha256']
+    assert capture(ids(('doi', '10.1000/other'), ('pmid', '41820335')), settings)['sha256'] != proof['sha256']
+
+
+@pytest.mark.parametrize('refs', [
+    [('url', 'https://example.org/data')], [('github', 'octo/repo')],
+    [('doi', '10.1000/abc'), ('url', 'https://example.org/data')], [('doi', '10.1000/abc'), ('github', 'octo/repo')],
+])
+def test_places_that_can_change_still_decline(tmp_path, refs):
+    settings, _request, _folder = fixture(tmp_path)
+    assert capture(ids(*refs), settings) is None
+
+
+def test_a_path_reference_keeps_its_content_proof_beside_identifiers(tmp_path):
+    settings, request, folder = fixture(tmp_path)
+    mixed = {'references': [*request['references'], {'kind': 'doi', 'value': '10.1000/abc'}]}
+    proof = capture(mixed, settings)
+    assert proof['unreceipted'] == ['doi:10.1000/abc'] and any(row[1].endswith('a.txt') for row in proof['files'])
+    (folder / 'a.txt').write_text('changed')
+    assert capture(mixed, settings)['sha256'] != proof['sha256']
+
+
+def test_path_only_proofs_keep_their_shape(tmp_path):
+    settings, request, _folder = fixture(tmp_path)
+    assert 'unreceipted' not in capture(request, settings)
+
+
+def test_identifier_proof_allows_reuse_until_the_identifiers_change(tmp_path):
+    settings, _request, _folder = fixture(tmp_path)
+    request = ids(('doi', '10.1000/abc'), ('pmid', '41820335'))
+    old = archive()
+    old.update(request)
+    proof = capture(request, settings)
+    old['reuse_input_proof'] = {sid: proof for sid in old['results']}
+    carry = c.carry_over(old, old['plan'], {}, [])
+    tools = c.tool_signatures(old['plan'], AGENTS)
+    assert not c.proof_problems(old, old['plan'], carry, tools, request, proof)
+    changed = ids(('doi', '10.1000/abc'), ('pmid', '11111111'))
+    problems = c.proof_problems(old, old['plan'], carry, tools, changed, capture(changed, settings))
+    assert set(problems) == set(carry.reuse)
+    old['reuse_input_proof'] = {sid: None for sid in old['results']}  # a legacy record without a receipt
+    assert set(c.proof_problems(old, old['plan'], carry, tools, request, proof)) == set(carry.reuse)
+
+
+@pytest.mark.asyncio
+async def test_approved_identifier_reference_reuse_runs_and_stops_when_identifiers_change(tmp_path, monkeypatch):
+    hub, orch = partial_hub(monkeypatch)
+    request = ids(('doi', '10.1000/abc'))
+    req = hub.requests['r']
+    req.update(request)
+    old = req['research_contract']['rounds'][-1]
+    old.update(request)
+    old['reuse_input_proof'] = {sid: capture(request, hub.s) for sid in old['results']}
+    await orch._prepare_research_reuse('r', req['plan'])
+    assert req['research_contract']['continuation']['reuse'] == ['s1']
+    approve(req)
+    assert await orch._verify_research_reuse('r', req['plan'])
+    req['references'] = [{'kind': 'doi', 'value': '10.1000/other'}]
+    assert not await orch._verify_research_reuse('r', req['plan'])
+    assert not hub.calls

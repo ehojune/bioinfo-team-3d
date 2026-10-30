@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from scripts import clean_install_check
+from tests.support.time_proxy import RuntimeProxy
 
 
 def test_failure_is_one_utf8_line_when_windows_starts_with_cp1252(tmp_path):
@@ -489,7 +490,7 @@ def test_receipt_waits_out_a_transient_windows_lock(tmp_path, monkeypatch):
         original_replace(source, target)
     monkeypatch.setattr(clean_install_check, "_RECEIPT_REPLACE_RETRY", True, raising=False)
     monkeypatch.setattr(clean_install_check.os, "replace", locked)
-    monkeypatch.setattr(clean_install_check.time, "sleep", delays.append)
+    monkeypatch.setattr(clean_install_check, "time", RuntimeProxy(clean_install_check.time, sleep=delays.append))
     receipt.data["status"] = "PASS"
     receipt.write()
     assert len(calls) == 3 and delays == [0.05, 0.05]
@@ -509,7 +510,7 @@ def test_receipt_replace_retry_is_bounded_and_specific(tmp_path, monkeypatch, wi
         raise failure("persistent fixture")
     monkeypatch.setattr(clean_install_check, "_RECEIPT_REPLACE_RETRY", windows, raising=False)
     monkeypatch.setattr(clean_install_check.os, "replace", denied)
-    monkeypatch.setattr(clean_install_check.time, "sleep", delays.append)
+    monkeypatch.setattr(clean_install_check, "time", RuntimeProxy(clean_install_check.time, sleep=delays.append))
     with pytest.raises(failure):
         receipt.write()
     assert len(calls) == attempts and len(delays) == attempts - 1

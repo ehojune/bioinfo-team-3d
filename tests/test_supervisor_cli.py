@@ -17,6 +17,7 @@ from labhq import cli, doctor, proc_tree
 from labhq.gateway.shutdown import WebShutdown
 from labhq.process_diagnostics import latest_child_exit
 from labhq.settings import Settings
+from tests.support.time_proxy import RuntimeProxy
 
 SUP, CHILD = 940_000_001, 940_000_002
 ROLE = "gateway"
@@ -58,7 +59,7 @@ def safety(monkeypatch):
     monkeypatch.setattr(os, "killpg", forbidden("os.killpg"), raising=False)
     monkeypatch.setattr(subprocess, "Popen", forbidden("subprocess.Popen"))
     monkeypatch.setattr(cli, "_process_created", lambda pid: f"created:{pid}")
-    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(cli, "time", RuntimeProxy(cli.time, sleep=lambda seconds: None))
 
 
 # --- `up` starts a supervisor and waits for its record ----------------------------------------------------------

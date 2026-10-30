@@ -21,6 +21,7 @@ from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 from labhq.store import StateStore
 from labhq.util import aatomic_write_text, atomic_write_text
+from tests.support.serve_task import serve_task, wait_started
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -272,11 +273,8 @@ async def test_gateway_shutdown_waits_for_queued_writes(tmp_path, monkeypatch, f
     s.gateway.port = port
     app = create_app(s)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    serve = asyncio.create_task(server.serve())
-    for _ in range(300):
-        if server.started:
-            break
-        await asyncio.sleep(0.05)
+    serve = serve_task(server.serve())
+    await wait_started(lambda: server.started, serve, 15, "gateway")
     assert server.started
     SlowFsync(monkeypatch, 0.05)
     futures = [durable.submit(durable.FILES, owned._write_owned_now, tmp_path, f"f{i}.txt", str(i)) for i in range(20)]

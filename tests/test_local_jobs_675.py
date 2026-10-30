@@ -13,6 +13,7 @@ from labhq.policy import evaluate_tool
 from labhq.runner import local_jobs
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
+from tests.support.time_proxy import RuntimeProxy
 
 # The tests run Python code through the job machinery with a shell-free stand-in for the OS shell: a cold PowerShell
 # takes seconds on a loaded Windows runner (#886), which the job logic under test does not need.
@@ -72,8 +73,8 @@ def test_pid_readiness_waits_for_missing_then_empty_then_valid(monkeypatch):
             raise value
         return value
 
-    monkeypatch.setattr(time, "monotonic", lambda: next(clock))
-    monkeypatch.setattr(time, "sleep", sleeps.append)
+    monkeypatch.setattr(sys.modules[__name__], "time",
+                        RuntimeProxy(time, monotonic=lambda: next(clock), sleep=sleeps.append))
     assert _wait_for_pid(SimpleNamespace(read_text=read_text)) == 123
     assert not reads  # the valid PID is retained without a second file read
     assert sleeps == [0.1, 0.1]
@@ -90,8 +91,8 @@ def test_pid_readiness_without_a_positive_pid_keeps_the_40_second_deadline(monke
             raise value
         return value
 
-    monkeypatch.setattr(time, "monotonic", lambda: next(clock))
-    monkeypatch.setattr(time, "sleep", sleeps.append)
+    monkeypatch.setattr(sys.modules[__name__], "time",
+                        RuntimeProxy(time, monotonic=lambda: next(clock), sleep=sleeps.append))
     with pytest.raises(AssertionError, match="condition not reached in time"):
         _wait_for_pid(SimpleNamespace(read_text=read_text))
     assert len(reads) == 2

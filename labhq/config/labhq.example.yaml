@@ -54,6 +54,14 @@ model_tier_prices:
   balanced: {min_usd: null, max_usd: null}
   reasoning: {min_usd: null, max_usd: null}
 
+# 등급(fast·balanced·reasoning)이 엔진마다 어떤 모델을 뜻하는지(#625). 비워 두면 등급은 모델을 고르지 않고 직원 YAML의
+# `model`이 그대로 쓰입니다. 직원 YAML에 `model`이 있으면 항상 그것이 이기고, 등급은 `model`이 없는 직원에게만 씁니다.
+# 값을 적으면 요청 비용 요약이 선언 등급과 다른 모델로 돈 직원을 `model_tier_mismatch`로 알립니다. 모델명은 공식 목록에서 확인해 적습니다.
+model_tiers:
+  fast: {}        # 예: {claude_code: haiku, codex: gpt-6-luna}
+  balanced: {}
+  reasoning: {}
+
 engines:
 # bioinfo-agent plugin 경로는 러너 환경변수 BIOINFO_AGENT_DIR로 지정 (agents/core/bioinfo-agent.yaml).
 # labhq init이 BIOINFO_AGENT_DIR, D:/bioinfo-agent·~/bioinfo-agent, WSL의 /mnt/d/bioinfo-agent 순으로 찾아 아래 env에
@@ -144,6 +152,9 @@ recruit:
   contract_model: sonnet
   contract_model_tier: balanced
 
+result_storage:
+  authors: []                    # 예: ["Kim Gildong"]. 값이 있을 때만 결과 repo에 CITATION.cff를 씀. 비우면 만들지 않음
+
 github:
   token_env: GITHUB_TOKEN        # 게이트웨이 환경변수. fine-grained PAT: Issues·Contents·Pull requests RW
   token_file: ~/.labhq/secrets-github/github_token  # 환경변수가 없을 때 gateway가 읽는 파일. labhq init이 이 계정만 읽게 씀
@@ -202,6 +213,9 @@ orchestrator:
   max_revisions: 1
   max_replans: 0                     # 리뷰 revise 뒤 남은 DAG 재계획 상한
   max_failure_replans: 1             # 단계 실패 뒤 남은 DAG 재계획 상한; 0이면 바로 실패
+  # request_wall_clock_s: 5400        # 요청 하나의 전체 시간 상한(초, 0이면 끔, #877). 수락 때 고정하고 PI 카드 대기(waiting_pi)는 기한에 더하며 보고서 검토 이후는 끊지 않음
+  # step_model_tiers: false           # 계획 단계의 model_tier를 받아 그 등급의 모델로 돌립니다(#625 2단계, 기본 꺼짐). 직원이 선언한 등급 이하로만 낮출 수 있고
+                                      # validation·report 단계는 balanced 아래로 내리지 못합니다. CSO가 등급을 고르게 하는 기능은 아직 없습니다(저장된 계획의 값만 따름).
   max_steps: 12
   max_parallel_steps: 4
   plan_max_chars: 50000              # 넘으면 경고만 기록; 유효한 계획은 자르지 않음

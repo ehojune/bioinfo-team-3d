@@ -148,11 +148,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.skip != 'true'
     runs-on: windows-latest
-    # 14 min: setup + critical (3) + pool (9) + report/upload, with margin over the measured worst success (#931).
-    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 14 }}
+    # 18 min: setup + critical (3) + pool (13) + report/upload, with margin over the measured worst success (#931, #1076).
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 18 }}
     env:
       CI_JOB_LABEL: pytest-windows
       PYTHONHASHSEED: '0'
+      CI_STALL_INTERVAL_S: '150'  # stack snapshots every 150 s of the 780 s pool step (#1076)
       CI_COVERAGE_PROFILE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'windows-full-v1' || 'windows-boundary-v6' }}
     outputs:
       tree: ${{ steps.identity.outputs.tree }}
@@ -198,13 +199,13 @@ jobs:
       - name: Note pool start
         run: python -c "import os,time; print('CI_POOL_STARTED='+str(time.time()), file=open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8'))"
       - name: Remaining Windows contracts in four-worker pool
-        run: pytest -q --durations=15 -n 4 --dist loadfile -p scripts.ci_suite --ci-profile ${{ env.CI_COVERAGE_PROFILE }} --ci-phase parallel tests
-        # 9 min = 1.5x the measured worst successful pool step (350 s of 99 recent runs; 8 runs hit the old 6 min) (#931).
-        timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 9 }}
+        run: pytest -q --durations=15 -n 4 --dist loadfile -p scripts.ci_suite --ci-profile ${{ env.CI_COVERAGE_PROFILE }} --ci-phase parallel --ci-stall tests
+        # 13 min = 1.5x the measured worst successful pool step (499 s; was 350 s of 99 runs at the 9 min cap; #1097 once and #1111 three times hit 540 s) (#931, #1076).
+        timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 13 }}
 
       - name: Report pool step duration
         if: always()
-        run: python -c "import os,time; s=float(os.environ.get('CI_POOL_STARTED', 0)); d=round(time.time()-s) if s else -1; print('### Windows pool step\n'+str(d)+' s of the 540 s limit; retune from this line (#931).', file=open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8'))"
+        run: python -c "import os,time; s=float(os.environ.get('CI_POOL_STARTED', 0)); d=round(time.time()-s) if s else -1; print('### Windows pool step\n'+str(d)+' s of the 780 s limit; retune from this line (#931).', file=open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8'))"
 
       - name: Record measured coverage and timing
         id: coverage

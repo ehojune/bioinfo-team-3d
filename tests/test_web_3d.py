@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -19,6 +18,8 @@ from starlette.websockets import WebSocketDisconnect
 from labhq.gateway.server import WEB, create_app
 from labhq.settings import Settings
 from labhq.util import free_port
+from tests.support.serve_task import serve_task, wait_started
+from tests.support.node_binary import node_binary
 
 
 @pytest.fixture
@@ -70,12 +71,9 @@ async def test_wrong_client_token_reaches_a_real_websocket_as_1008(tmp_path):
     port = free_port()
     server = uvicorn.Server(uvicorn.Config(create_app(settings), host='127.0.0.1', port=port,
                                            log_level='warning'))
-    serving = asyncio.create_task(server.serve())
+    serving = serve_task(server.serve())
     try:
-        for _ in range(200):
-            if server.started:
-                break
-            await asyncio.sleep(0.01)
+        await wait_started(lambda: server.started, serving, 10, "gateway")
         assert server.started
         async with websockets.connect(f'ws://127.0.0.1:{port}/ws/client?token=wrong') as ws:
             with pytest.raises(websockets.exceptions.ConnectionClosedError) as error:
@@ -190,7 +188,7 @@ NODE_WEB_TESTS = [
 
 @pytest.mark.parametrize('filename,marker', NODE_WEB_TESTS)
 def test_office_in_node(filename, marker):
-    node = shutil.which('node')
+    node = node_binary()
     if not node:
         pytest.skip('Node is optional')
     script = Path(__file__).with_name(filename)
@@ -262,7 +260,7 @@ def test_every_node_web_test_runs_in_ci():
 
 def test_browser_failure_profile_diagnostic_is_bounded_without_browser():
     """#833: a fake directory stream proves the failure receipt is bounded and closes its handle."""
-    node = shutil.which('node')
+    node = node_binary()
     if not node:
         pytest.skip('Node is optional')
     driver = Path(__file__).parent / 'support' / 'demo_driver.cjs'

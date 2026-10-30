@@ -323,3 +323,319 @@ async def test_output_growing_while_hashed_gets_no_hash(tmp_path, monkeypatch, c
     manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
     row = manifest["runs"][result.task_id]["observed_outputs"][0]
     assert row["sha256"] is None and reason in row["reason"]
+
+
+@pytest.mark.asyncio
+async def test_declared_directory_is_collected_as_its_hashed_files(tmp_path, monkeypatch):
+    """#1058: a declared folder used to be listed as one output without a hash; a downstream step then refused the whole
+    upstream ("collected artifact hash is missing") and its numbers stayed UNVERIFIED."""
+    note, deep, table = b"note\n", b"deep\n", b"a\tb\n"
+
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", note)
+        _write(workdir, "outputs/literature/sub/p2.md", deep)
+        _write(workdir, "outputs/ledger.tsv", table)
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["ledger.tsv", "literature"]))
+
+    assert result.ok, result.error
+    assert "outputs/literature" not in result.outputs  # no bare folder entry without a hash
+    assert set(result.outputs) == {"outputs/ledger.tsv", "outputs/literature/p1.md", "outputs/literature/sub/p2.md"}
+    assert all(result.output_sha256.get(path) for path in result.outputs)  # every collected path carries a hash
+    assert result.output_sha256["outputs/literature/sub/p2.md"] == _sha(deep)
+    assert result.unreported_outputs == []  # the folder's files are reported, not stray
+
+
+@pytest.mark.asyncio
+async def test_declared_directory_without_a_hashed_file_is_missing(tmp_path, monkeypatch):
+    """An empty declared folder collects nothing a later step could read, so the step is incomplete (it used to pass
+    and then fail downstream)."""
+    def write(workdir):
+        (workdir / "outputs" / "literature").mkdir(parents=True)
+        _write(workdir, "outputs/ledger.tsv", b"x\n")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["ledger.tsv", "literature"]))
+
+    assert result.ok is False
+    assert result.missing_outputs == ["outputs/literature"]
+    assert "outputs/literature" in result.error
+
+
+@pytest.mark.asyncio
+async def test_declared_directory_skips_a_link_or_unhashed_file_inside_it(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", b"note\n")
+        _write(workdir, "outputs/literature/big.bin", b"x" * 64)
+
+    runner = _runner(tmp_path, monkeypatch, write, hash_max_bytes=16)
+    result = await runner.run_task(_task(outputs=["literature"]))
+
+    assert "outputs/literature/big.bin" not in result.outputs  # too large to hash: never collected without one
+    assert all(result.output_sha256.get(path) for path in result.outputs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count, ok", [(200, True), (201, False)])
+async def test_declared_directory_expanding_past_the_staging_limit_is_incomplete(tmp_path, monkeypatch, count, ok):
+    """Review P1: a later step stages at most MAX_FILES files of one ancestor, so a producer above it must not pass."""
+    def write(workdir):
+        for index in range(count):
+            _write(workdir, f"outputs/literature/p{index:03d}.md", b"x\n")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["literature"]))
+
+    assert result.ok is ok, result.error
+    if not ok:
+        assert "200" in result.error and "outputs/literature" in result.error
+
+
+@pytest.mark.asyncio
+async def test_a_declared_folder_needs_a_hashed_child_even_when_an_unhashed_child_is_also_declared(tmp_path, monkeypatch):
+    """Review P1: the unhashable child is collected as its own declared file, but it cannot satisfy the folder."""
+    def write(workdir):
+        _write(workdir, "outputs/literature/big.bin", b"x" * 64)
+
+    runner = _runner(tmp_path, monkeypatch, write, hash_max_bytes=16)
+    result = await runner.run_task(_task(outputs=["literature", "literature/big.bin"]))
+
+    assert result.ok is False
+    assert "outputs/literature" in result.missing_outputs
+    assert "outputs/literature/big.bin" not in result.output_sha256
+
+
+def test_the_orchestrator_applies_the_same_hashed_child_rule_to_a_declared_folder():
+    from labhq.orchestrator.cso import apply_declared_output_status
+
+    step = {"id": "s1", "outputs": ["outputs/literature"]}
+    unhashed = TaskResult(task_id="t", agent_id="a", ok=True, outputs=["outputs/literature/big.bin"])
+    assert apply_declared_output_status(step, unhashed).ok is False
+    hashed = unhashed.model_copy(update={"outputs": ["outputs/literature/p1.md"],
+                                         "output_sha256": {"outputs/literature/p1.md": "a" * 64}})
+    assert apply_declared_output_status(step, hashed).ok is True
+
+
+@pytest.mark.asyncio
+async def test_declared_directory_with_an_incomplete_scan_is_not_collected_as_if_whole(tmp_path, monkeypatch):
+    """Review P1: files below the scan depth are skipped with a note; the folder must not pass on what was seen."""
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", b"note\n")
+        _write(workdir, "outputs/literature/a/b/c/deep.md", b"deep\n")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    runner.s.runner.reference_scan_max_depth = 1
+    result = await runner.run_task(_task(outputs=["literature"]))
+
+    assert result.ok is False
+    assert "scan is incomplete" in result.error and "outputs/literature" in result.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("files, ok", [(2, True), (3, False)])
+async def test_declared_directory_over_the_staging_byte_budget_is_incomplete(tmp_path, monkeypatch, files, ok):
+    """Review P1: a later step stages at most input_hash_max_total_bytes of one ancestor; a bigger folder must not pass."""
+    def write(workdir):
+        for index in range(files):
+            _write(workdir, f"outputs/literature/p{index}.md", b"0123456789")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    runner.s.runner.input_hash_max_total_bytes = 25
+    result = await runner.run_task(_task(outputs=["literature"]))
+
+    assert result.ok is ok, result.error
+    if not ok:
+        assert "25 bytes" in result.error
+
+
+@pytest.mark.asyncio
+async def test_the_staging_byte_budget_counts_plain_declared_files_with_the_folder(tmp_path, monkeypatch):
+    """Review P1: a later step's budget is per ancestor, so a declared file beside the folder counts too."""
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", b"0123456789")
+        _write(workdir, "outputs/ledger.tsv", b"0123456789" * 2)
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    runner.s.runner.input_hash_max_total_bytes = 25  # the folder alone is 10, with the ledger 30
+    result = await runner.run_task(_task(outputs=["literature", "ledger.tsv"]))
+
+    assert result.ok is False and "30 bytes" in result.error
+
+
+def test_staging_problem_mirrors_what_a_later_step_refuses():
+    """Review P1/P2 class: the producer is judged by the consumer's own rules, so none of these passes as complete."""
+    from labhq.runner.step_inputs import MAX_FILES, staging_problem
+
+    digest = "a" * 64
+    one = {"outputs/a.tsv": digest}
+    assert staging_problem(["outputs/a.tsv"], one, {"outputs/a.tsv": 5}, 10, 100) is None
+    assert "collides by letter case" in staging_problem(
+        ["outputs/f/A.tsv", "outputs/f/a.tsv"], {"outputs/f/A.tsv": digest, "outputs/f/a.tsv": digest}, {}, 10, 100)
+    assert "per file" in staging_problem(["outputs/a.tsv"], one, {"outputs/a.tsv": 11}, 10, 100)
+    assert "in all" in staging_problem(["outputs/a.tsv", "outputs/b.tsv"], {"outputs/a.tsv": digest, "outputs/b.tsv": digest},
+                                       {"outputs/a.tsv": 6, "outputs/b.tsv": 6}, 10, 11)
+    assert "no hash" in staging_problem(["outputs/a.tsv"], {}, {}, 10, 100)
+    assert "refuses" in staging_problem(["outputs/a$b.tsv"], {"outputs/a$b.tsv": digest}, {}, 10, 100)
+    many = [f"outputs/p{index}.md" for index in range(MAX_FILES + 1)]
+    assert str(MAX_FILES) in staging_problem(many, {path: digest for path in many}, {}, 10, 10**9)
+
+
+# ---------- #1065: what the producer cannot know about its consumer ----------
+
+def _ancestor(root: Path, step: str, files: dict[str, bytes]):
+    from tests.test_step_inputs_665 import source
+
+    folder, artifact = source(root, step)
+    for name, body in files.items():
+        _write(folder, f"outputs/{name}", body)
+    artifact = {**artifact, "outputs": [f"outputs/{name}" for name in files],
+                "output_sha256": {f"outputs/{name}": _sha(body) for name, body in files.items()}}
+    return artifact
+
+
+def _consumer(tmp_path: Path):
+    from labhq.runner.workspace import TaskWorkspace
+
+    root = tmp_path / "runs"
+    root.mkdir()
+    task = Task(id="down", agent_id="worker", request_id="r", prompt="fixture")
+    return root, TaskWorkspace(root, task, AgentSpec(id="worker", name="Worker", role="test"))
+
+
+def test_a_later_ancestor_that_fits_alone_is_refused_by_name_when_earlier_ones_used_the_total(tmp_path):
+    from labhq.runner.step_inputs import stage_inputs
+
+    root, ws = _consumer(tmp_path)
+    artifacts = {"first": _ancestor(root, "first", {"a.tsv": b"x" * 12}),
+                 "second": _ancestor(root, "second", {"b.tsv": b"y" * 12})}
+    remaining = [20]
+    staged, refused = stage_inputs(ws, artifacts, root, [], [], 100, 20, remaining)
+    assert [Path(path).name for path in staged] == ["first"]
+    assert "cumulative input budget" in refused["second"] and "12 bytes" in refused["second"]
+    assert "8 bytes" in refused["second"] and "20 bytes" in refused["second"]
+    assert remaining == [8]
+
+
+def test_a_refused_ancestor_gives_its_copied_bytes_back_to_the_shared_total(tmp_path):
+    from labhq.runner.step_inputs import stage_inputs
+
+    root, ws = _consumer(tmp_path)
+    artifacts = {"first": _ancestor(root, "first", {"a.tsv": b"x" * 5, "b.tsv": b"y" * 30}),
+                 "second": _ancestor(root, "second", {"c.tsv": b"z" * 6})}
+    remaining = [60]
+    staged, refused = stage_inputs(ws, artifacts, root, [], [], 10, 60, remaining)  # b.tsv is over the 10-byte file limit
+    assert "first" in refused and "per-file limit" in refused["first"]
+    assert [Path(path).name for path in staged] == ["second"]
+    assert remaining == [54]  # only the ancestor that was kept spent bytes
+    assert not (ws.dir / "inputs" / "first" / "a.tsv").exists()
+
+
+def test_a_hard_linked_ancestor_file_is_refused_with_its_own_reason(tmp_path):
+    from labhq.runner.step_inputs import stage_inputs
+
+    root, ws = _consumer(tmp_path)
+    artifact = _ancestor(root, "first", {"a.tsv": b"x" * 5})
+    try:
+        os.link(Path(artifact["workdir"]) / "outputs" / "a.tsv", tmp_path / "other-name")
+    except OSError as error:
+        pytest.skip(f"this account cannot create a hard link ({error})")
+    staged, refused = stage_inputs(ws, {"first": artifact}, root, [], [], 100, 100)
+    assert not staged and "hard-linked" in refused["first"]
+
+
+def test_staging_problem_names_a_hard_linked_file():
+    from labhq.runner.step_inputs import staging_problem
+
+    digest = "a" * 64
+    paths = ["outputs/a.tsv", "outputs/b.tsv"]
+    hashes = {path: digest for path in paths}
+    assert staging_problem(paths, hashes, {}, 10, 100) is None
+    assert "hard-linked" in staging_problem(paths, hashes, {}, 10, 100, {"outputs/b.tsv"})
+
+
+@pytest.mark.asyncio
+async def test_a_hard_linked_file_in_a_declared_folder_stops_the_producer(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", b"note\n")
+        try:
+            os.link(workdir / "outputs/literature/p1.md", workdir / "outputs/literature/p1-copy.md")
+        except OSError as error:
+            pytest.skip(f"this account cannot create a hard link ({error})")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["literature"]))
+    assert result.ok is False and "hard-linked" in result.error
+
+
+@pytest.mark.asyncio
+async def test_an_unrelated_subtree_past_the_scan_depth_does_not_fail_a_whole_declared_folder(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", b"note\n")
+        _write(workdir, "outputs/scratch/a/b/c/deep.md", b"deep\n")  # not declared, deeper than the limit
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    runner.s.runner.reference_scan_max_depth = 2
+    result = await runner.run_task(_task(outputs=["literature"]))
+    assert result.ok is True, result.error
+    assert "outputs/literature/p1.md" in result.outputs
+
+
+@pytest.mark.asyncio
+async def test_a_hard_linked_declared_file_stops_a_step_that_declares_no_folder(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/ledger.tsv", b"rows\n")
+        try:
+            os.link(workdir / "outputs/ledger.tsv", workdir / "outputs/ledger-copy.tsv")
+        except OSError as error:
+            pytest.skip(f"this account cannot create a hard link ({error})")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["ledger.tsv"]))
+    assert result.ok is False and "hard-linked" in result.error and "ledger.tsv" in result.error
+
+
+def test_a_declared_outputs_root_is_walked_from_depth_zero(tmp_path):
+    from labhq.runner.step_inputs import folder_files
+
+    _write(tmp_path, "outputs/sub/file.md", b"note" + bytes([10]))
+    paths, why = folder_files(tmp_path, "outputs", 100, 1)  # the scan counts the outputs/ root as depth 0
+    assert why is None and paths == ["outputs/sub/file.md"]
+    _write(tmp_path, "outputs/sub/deeper/x.md", b"deep" + bytes([10]))
+    paths, why = folder_files(tmp_path, "outputs", 100, 1)
+    assert paths is None and "deeper than 1" in why
+    paths, why = folder_files(tmp_path, "outputs/sub", 100, 1)  # a folder one level down starts at depth 1
+    assert paths is None and "deeper than 1" in why
+
+
+@pytest.mark.asyncio
+async def test_a_hard_linked_optional_output_stops_the_step_too(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/ledger.tsv", b"rows" + bytes([10]))
+        _write(workdir, "outputs/preview.png", b"png" + bytes([10]))
+        try:
+            os.link(workdir / "outputs/preview.png", workdir / "outputs/preview-copy.png")
+        except OSError as error:
+            pytest.skip(f"this account cannot create a hard link ({error})")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(
+        outputs=["outputs/ledger.tsv", "outputs/preview.png"], required_outputs=["outputs/ledger.tsv"],
+        optional_outputs=["outputs/preview.png"]))
+    assert result.ok is False and "hard-linked" in result.error and "preview.png" in result.error
+
+
+@pytest.mark.asyncio
+async def test_a_direct_run_is_not_failed_for_hard_links_nobody_stages(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/a.tsv", b"rows" + bytes([10]))
+        try:
+            os.link(workdir / "outputs/a.tsv", workdir / "outputs/a-copy.tsv")
+        except OSError as error:
+            pytest.skip(f"this account cannot create a hard link ({error})")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    task = _task(outputs=[])
+    task.meta["kind"] = "direct"
+    result = await runner.run_task(task)
+    assert "hard-linked" not in (result.error or "")
