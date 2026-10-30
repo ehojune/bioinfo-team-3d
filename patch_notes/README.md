@@ -14,13 +14,17 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:26 | [`373f0f1`](https://github.com/ehojune/bioinfo-team-3d/pull/1068/commits/373f0f1) | **direct 실행의 산출에 hard link가 있어도 실패로 처리되지 않습니다.**<br>폴더를 선언하지 않은 단계의 hard link 검사에서 하류가 읽지 않는 direct 실행을 뺀다 |
 | 18:06 | [`bbdadad`](https://github.com/ehojune/bioinfo-team-3d/pull/1071/commits/bbdadad) | **매뉴얼에 연구 단계가 계획에 선언된 주장 목록 밖의 주장을 새로 만들 수 없다는 규칙을 적었습니다.**<br>docs: manual 한·영에 단계 claim_ids 밖 claim을 만들지 않는 규칙을 적음 (#1066) |
 | 17:55 | [`0df266b`](https://github.com/ehojune/bioinfo-team-3d/pull/1069/commits/0df266b) | **논문 번호만 고정하고 재사용한 단계가 있으면, 사용자가 읽는 최종 보고서 본문에도 내용은 확인하지 않았다는 한 줄을 남깁니다.**<br>fix: 최종 보고서 본문에도 "내용 미확인" 한 줄을 남김 (#1061 후속 리뷰 P1) |
 | 17:45 | [`3a744f6`](https://github.com/ehojune/bioinfo-team-3d/pull/1069/commits/3a744f6) | **매뉴얼의 이어 가기 설명이 카드와 보고서에 내용 미확인 안내가 나온다는 현재 동작과 맞도록 고쳤습니다.**<br>docs: manual 한·영의 이어 가기 절을 카드·보고서 "내용 미확인" 표시에 맞춤 (#1061) |
 | 17:43 | [`ff736ba`](https://github.com/ehojune/bioinfo-team-3d/pull/1069/commits/ff736ba) | **카드 요약이 길어져도 내용을 확인하지 않았다는 안내가 잘리지 않게 예산 줄처럼 끝에 붙여 두었습니다.**<br>fix: 내용 미확인 표시를 카드 절단 밖에 보존 (#1061 후속 리뷰 P2) |
+| 17:36 | [`c71461a`](https://github.com/ehojune/bioinfo-team-3d/pull/1068/commits/c71461a) | **선택 산출에 hard link가 있어도 성공으로 통과해 하류가 상류 전체를 잃는 일이 없습니다.**<br>폴더를 선언하지 않은 단계의 hard link 검사를 선택·미보고 산출까지 수집된 모든 산출에 적용한다 |
 | 17:32 | [`69b466d`](https://github.com/ehojune/bioinfo-team-3d/pull/1069/commits/69b466d) | **논문 번호(DOI·PMID)만 고정하고 재사용한 단계가 있으면, 이어 가기 카드와 보고서에 내용은 확인하지 않았다고 한 줄 알려 줍니다.**<br>feat: 식별자만 고정한 DOI·PMID 참조로 단계를 재사용할 때 이어 가기 카드와 보고서에 "내용 미확인"을 표시 (#1061) |
+| 17:25 | [`dfdf942`](https://github.com/ehojune/bioinfo-team-3d/pull/1068/commits/dfdf942) | **hard link 거절이 폴더를 선언하지 않은 단계에도 적용되고 루트 폴더가 잘못 불완전으로 판정되지 않습니다.**<br>폴더 없이 파일만 선언한 단계의 hard link도 producer가 거절하고, 선언한 outputs 루트의 재스캔을 깊이 0에서 시작한다 |
 | 17:16 | [`4e03bdb`](https://github.com/ehojune/bioinfo-team-3d/pull/1067/commits/4e03bdb) | **안내문의 이전 판본과 비교하는 시험이 이번에 더한 규칙 한 줄을 제외하고 비교하도록 고쳤습니다.**<br>test: 고정 hash 시험이 계획 prompt의 새 claim_ids 규칙을 빼고 비교 (#1066) |
 | 17:15 | [`daa8332`](https://github.com/ehojune/bioinfo-team-3d/pull/1067/commits/daa8332) | **연구 계획 안내문의 새 규칙을 이름 있는 상수로 분리했습니다(고정 hash 시험이 추가분을 따로 뺄 수 있게).**<br>refactor: 계획 prompt의 claim_ids 규칙을 이름 있는 상수로 둠 (#1066) |
+| 17:14 | [`2846339`](https://github.com/ehojune/bioinfo-team-3d/pull/1068/commits/2846339) | **여러 상류의 입력 합이 넘어도 앞 상류가 뒤 상류를 가리지 않고, hard link와 무관한 하위 폴더 때문에 단계가 실패하지 않습니다.**<br>하류 staging이 누적 입력 예산 부족을 이름으로 밝혀 그 상류만 거절하고 거절한 상류가 쓴 byte를 돌려주며, 선언 폴더의 hard link를 producer가 거절하고, 선언 폴더의 스캔 완전성을 그 폴더만 따로 판정한다 |
 | 16:59 | [`7ca2761`](https://github.com/ehojune/bioinfo-team-3d/pull/1067/commits/7ca2761) | **연구 단계가 계획에 없던 주장을 새로 만들어 실패하던 문제를, 결과 교정·단계·계획 안내문에 허용된 주장 목록을 밝혀 막았습니다.**<br>fix: 결과 교정·단계 prompt·계획 prompt가 단계 claim_ids 밖 claim을 만들지 말라고 명시 (#1066) |
 | 16:45 | [`374a41f`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/374a41f) | **폴더 산출이 있는 단계는 다음 단계가 거절할 파일(많음·큼·이름 충돌·위험한 이름)을 미리 미완료로 처리하도록 한 규칙으로 묶었습니다.**<br>fix: 선언 폴더 단계는 다음 단계의 입력 규칙(수·크기·이름·대소문자)으로 같이 검사해 부류를 닫음 (#1058 리뷰 P1) |
 | 16:34 | [`4f8e188`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/4f8e188) | **다음 단계가 받을 수 있는 파일 수·크기 한도를 폴더만이 아니라 그 단계가 모은 산출 전체로 확인하게 하고 매뉴얼에 적었습니다.**<br>fix: 다음 단계의 파일 수·바이트 상한을 한 상류의 수집 산출 전체로 검사하고 manual에 적음 (#1058 리뷰 P1) |
