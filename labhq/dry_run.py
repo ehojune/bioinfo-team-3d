@@ -13,7 +13,8 @@ def estimate_call(settings: Settings, agent: AgentSpec, *, stage: str, model: st
     rate = getattr(settings.model_tier_prices, tier, None) if tier else None
     known = rate is not None and rate.min_usd is not None and rate.max_usd is not None
     # The model this call would run: a request's own, the agent's, else what its tier means on its engine (#625).
-    run_model = model or agent.model or settings.model_tiers.model_for(tier, agent.engine.value)
+    engine = settings.runner.force_engine or agent.engine.value  # the runner applies force_engine before it reads the tier
+    run_model = model or agent.model or settings.model_tiers.model_for(tier, engine)
     return {
         "stage": stage,
         "agent_id": agent.id,

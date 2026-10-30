@@ -195,3 +195,14 @@ def test_a_tier_model_follows_the_engine_the_agent_really_runs_on():
     only_claude = Settings.model_validate({"runner": {"force_engine": "codex"},
                                            "model_tiers": {"fast": {"claude_code": "haiku"}}})
     assert _runner_agent(only_claude, bare).model is None                              # no codex entry: nothing carried over
+
+
+def test_dry_run_previews_the_model_of_the_engine_the_runner_will_force():
+    """#625 review: the runner reads the tier after runner.force_engine, so the preview must too."""
+    from labhq.dry_run import estimate_call
+
+    agent = AgentSpec(id="scout", name="Scout", role="r", model_tier="fast")
+    table = {"fast": {"claude_code": "haiku", "codex": "gpt-6-luna"}}
+    assert estimate_call(Settings.model_validate({"model_tiers": table}), agent, stage="조사")["model"] == "haiku"
+    forced = Settings.model_validate({"model_tiers": table, "runner": {"force_engine": "codex"}})
+    assert estimate_call(forced, agent, stage="조사")["model"] == "gpt-6-luna"
