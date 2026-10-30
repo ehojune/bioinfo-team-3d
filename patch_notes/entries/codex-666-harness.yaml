@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '2ba02be'
+    at: '2026-10-30 16:21'
+    summary: 'producer 실행 오류를 inconclusive로 보고합니다.'
+    text: 'Report producer execution errors as inconclusive'
   - sha: '1de9508'
     at: '2026-10-30 16:17'
     summary: '해시한 소스 바이트를 실행하고 broker bytecode cache를 검사합니다.'
