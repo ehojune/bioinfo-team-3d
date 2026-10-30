@@ -457,8 +457,10 @@ async def test_research_cp2_card_and_report_limits_carry_the_checks():
 def _precedents():
     """The four stored papers of ② 6th (receipts and alias lists as the precedent search wrote them)."""
     def paper(paper_id, level, extraction, citations):
+        digest = f"{abs(hash(paper_id)) % 10**12:012d}".encode().hex()[:64].ljust(64, "a")  # one hash per paper
         return {"title": paper_id, "citations": citations, "fulltext_receipt": {
-            "paper_id": paper_id, "access_level": level, "extraction": extraction, "text_sha256": "a" * 64}}
+            "paper_id": paper_id, "access_level": level, "extraction": extraction,
+            "text_file": f"precedent/{digest[:8]}.md", "text_sha256": digest}}
 
     return {"status": "ok", "papers": [
         paper("doi:10.1056/nejmoa2103695", "full_text", "unknown",
@@ -544,7 +546,8 @@ def test_the_access_ledger_line_counts_stored_papers_as_acquired():
 def test_stored_access_reads_the_citation_forms_the_precedent_prompt_allows():
     """A bare DOI, a DOI URL, a PubMed URL and a PMC URL join the paper the receipt names by another identifier."""
     def aliases(paper_id, citation):
-        record = {"status": "ok", "papers": [{"fulltext_receipt": {"paper_id": paper_id, "access_level": "full_text"},
+        record = {"status": "ok", "papers": [{"fulltext_receipt": {"paper_id": paper_id, "access_level": "full_text",
+                                                                   "text_file": "p.md", "text_sha256": "b" * 64},
                                               "citations": [citation]}]}
         return stored_access(record)[0][0]
 
@@ -553,3 +556,27 @@ def test_stored_access_reads_the_citation_forms_the_precedent_prompt_allows():
     assert {"PMID:123", "PMCID:PMC9"} <= aliases("PMID:123", "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9/")
     assert {"PMID:123"} <= aliases("DOI:10.1000/x", "https://pubmed.ncbi.nlm.nih.gov/123/")
     assert {"PMID:123", "PMCID:PMC9"} <= aliases("PMID:123", "PMC9")
+
+
+@pytest.mark.parametrize("receipt", [
+    {"access_level": "full_text", "text_sha256": "a" * 64},                      # no stored file
+    {"access_level": "full_text", "text_file": "p.md"},                           # no hash
+    {"access_level": "full_text", "text_file": "p.md", "text_sha256": "short"},   # not a sha256
+])
+def test_a_receipt_without_a_stored_file_and_hash_is_not_counted(receipt):
+    record = {"status": "ok", "papers": [{"fulltext_receipt": {"paper_id": "PMID:1", **receipt}}]}
+    assert stored_access(record) == []
+
+
+def test_duplicate_stored_papers_are_counted_once_in_the_access_ledger():
+    one = {"fulltext_receipt": {"paper_id": "PMID:1", "access_level": "full_text", "text_file": "a.md",
+                                "text_sha256": "c" * 64}, "citations": ["DOI:10.1000/x"]}
+    twin = {"fulltext_receipt": {"paper_id": "DOI:10.1000/x", "access_level": "full_text", "text_file": "b.md",
+                                 "text_sha256": "d" * 64}, "citations": ["PMID:1"]}
+    stored = stored_access({"status": "ok", "papers": [one, twin]})
+    ledgers = {"s1": {"claims": [{"id": "c1", "status": "supported"}],
+                      "evidence": [{"id": "e", "source": {"id_scheme": "pmid", "id_value": "1"}}],
+                      "links": [{"claim_id": "c1", "evidence_id": "e", "relation": "supports"}]}}
+    line = literature_ledger_line([{"id": "s1"}], {"s1": {"literature_ledger": {"candidate_ids": ["PMID:1"], "selected_ids": ["PMID:1"]}}}, ledgers,
+                                 stored=stored)
+    assert line is not None and "확보 1편" in line and "저장된 선행 검색 기록 1편" in line

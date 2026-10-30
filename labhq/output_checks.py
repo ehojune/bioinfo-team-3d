@@ -508,10 +508,17 @@ def stored_access(analysis_precedents: Any) -> list[tuple[set[str], str, bool]]:
     if not isinstance(analysis_precedents, Mapping) or analysis_precedents.get("status") != "ok":
         return []
     found: list[tuple[set[str], str, bool]] = []
+    seen_hashes: set[str] = set()
     for paper in analysis_precedents.get("papers") or []:
         receipt = paper.get("fulltext_receipt") if isinstance(paper, Mapping) else None
         if not isinstance(receipt, Mapping) or receipt.get("access_level") not in LEVELS:
             continue
+        # Only a receipt a step could be handed counts: a stored file and its sha256, once per hash (precedent_texts.rows).
+        digest = receipt.get("text_sha256")
+        if (not isinstance(receipt.get("text_file"), str) or not receipt["text_file"]
+                or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest) or digest in seen_hashes):
+            continue
+        seen_hashes.add(digest)
         citations = paper.get("citations")
         aliases: set[str] = set()
         for key in [receipt.get("paper_id"), *(citations if isinstance(citations, list) else [])]:
@@ -619,7 +626,7 @@ def literature_ledger_line(steps: Iterable[Mapping[str, Any]], results: Mapping[
             f"확보 {acquired}편(본문 {counts['full_text']}·초록 {counts['abstract']}·서지 {counts['metadata']})·"
             f"결론 근거 {len(papers)}편.")
     if stored:
-        line += f" 확보에는 저장된 선행 검색 기록 {len(stored)}편(CP1 전 기록)이 들어 있습니다."
+        line += f" 확보에는 저장된 선행 검색 기록 {len(_paper_groups([set(aliases) for aliases, _l, _p in stored], limit=None))}편(CP1 전 기록)이 들어 있습니다."
     if missed:
         shown = ", ".join(missed[:5]) + (f" 외 {len(missed) - 5}편" if len(missed) > 5 else "")
         line += f" 못 읽은 핵심 논문: {shown}."

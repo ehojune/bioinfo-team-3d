@@ -1322,7 +1322,8 @@ async def test_cp2_literature_lines_are_given_the_stored_precedent_access(monkey
         monkeypatch.setattr(output_checks, name, lambda *a, _n=name, **k: seen.setdefault(_n, k.get("stored")) and None)
     hub = _research_hub(_settings(), [CP1, {"approved": False, "choice": "deny", "note": "stop"}])
     hub.requests["r"]["analysis_precedents"] = {"status": "ok", "papers": [{
-        "fulltext_receipt": {"paper_id": "PMID:1", "access_level": "full_text"}, "citations": []}]}
+        "fulltext_receipt": {"paper_id": "PMID:1", "access_level": "full_text", "text_file": "p.md",
+                             "text_sha256": "a" * 64}, "citations": []}]}
     expected = output_checks.stored_access(hub.requests["r"]["analysis_precedents"])
     assert expected, "the fixture must be a record stored_access accepts"
     await Orchestrator(hub).run_request("r")
