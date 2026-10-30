@@ -15,7 +15,7 @@
 
 ## 하지 않은 것
 - 요청 사이 사용 이력(쓴 요청·단계·직원 누적)과 웹 카드(2단계, gateway API).
-- manual 한·영(W1의 #1108 뒤).
+- (manual 한·영은 rev4에서 `labhq talent` 절에 새 출력 항목을 적었다.)
 
 ## 테스트
 `tests/test_paper_skill_670.py`에 시험 4건(내용 읽기, 링크·잘못된 hash·큰 파일, talent 줄 내용과 경로 비노출, 읽을 수 없을 때 이전 줄+날짜). 수정을 빼면 4건 모두 실패한다. `test_paper_skill_670`·`test_paper_skill_attach`·`test_contract_provenance` 112 passed.
