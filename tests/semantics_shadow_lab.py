@@ -3,6 +3,7 @@ reduces what the lab recorded to what must not change when the shadow is on."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import shutil
@@ -17,6 +18,7 @@ from labhq.integrations.rounds import build_record, record_sources
 from labhq.request_status import is_terminal_request
 from labhq.runner.daemon import Runner
 from labhq.settings import DataZone, ProjectSettings, Settings
+from labhq.store import StateStore
 from labhq.util import free_port
 
 REPO = Path(__file__).resolve().parents[1]
@@ -47,9 +49,38 @@ async def _until(pred, timeout: float = 60.0) -> None:
         await asyncio.sleep(0.05)
 
 
+@contextlib.contextmanager
+def _unsynced_commits():
+    """A lab run commits about 840 times (about 6 per event) and each commit waits for an fsync. On a disk with a slow
+    fsync that is the whole run: 25-60 s here and in CI against 4-9 s on a fast one (#1124). These tests compare what
+    the lab recorded, not whether a commit survives power loss, so the state stores of the run use WAL with
+    `synchronous=NORMAL`. Only this run: the patch is undone when it ends, and the product code is not changed."""
+    original = StateStore._write_connection
+
+    def write_connection(self):
+        fresh = self._wdb is None
+        conn = original(self)
+        if fresh:
+            conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
+    StateStore._write_connection = write_connection
+    try:
+        yield
+    finally:
+        StateStore._write_connection = original
+
+
 async def run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: str | None = None,
                   references: list[dict] | None = None, before=None, request: dict | None = None) -> dict:
     """Run each request to its end; return the hub and the shadow lines written."""
+    with _unsynced_commits():
+        return await _run_lab(tmp, semantics, texts, project_id=project_id, references=references, before=before,
+                              request=request)
+
+
+async def _run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: str | None = None,
+                   references: list[dict] | None = None, before=None, request: dict | None = None) -> dict:
     shutil.copytree(REPO / "agents", tmp / "agents")
     s = lab_settings(tmp, semantics)
     app = create_app(s)

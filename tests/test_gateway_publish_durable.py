@@ -65,7 +65,7 @@ def event(label="first", request=True):
 
 
 @pytest.mark.parametrize("active_lane", [False, True])
-@pytest.mark.parametrize("commit", [1, 2])
+@pytest.mark.parametrize("commit", [1])  # event and request share one transaction (#1129): no second commit to stall
 async def test_heartbeat_during_event_and_request_commit(gateway, monkeypatch, active_lane, commit):
     hub = gateway
     assert durable.lane(hub.store.lane).shutdown(5)
@@ -112,7 +112,7 @@ async def test_fifo_snapshot_and_restart(gateway, monkeypatch):
         reopened.close()
 
 
-@pytest.mark.parametrize("commit", [1, 2])
+@pytest.mark.parametrize("commit", [1])  # event and request share one transaction (#1129): no second commit to stall
 @pytest.mark.parametrize("fail", [False, True])
 @pytest.mark.parametrize("cancel", [False, True])
 async def test_repeated_cancel_waits_for_commit_outcome(gateway, monkeypatch, commit, fail, cancel):
@@ -161,7 +161,7 @@ async def test_repeated_cancel_waits_for_commit_outcome(gateway, monkeypatch, co
 
 async def test_request_snapshot_does_not_replace_a_later_save(gateway, monkeypatch):
     hub = gateway
-    entered, release = stall_commit(hub, monkeypatch, 2)
+    entered, release = stall_commit(hub, monkeypatch, 1)
     first = asyncio.create_task(hub.publish(event()))
     try:
         await until_entered(entered)
@@ -174,6 +174,41 @@ async def test_request_snapshot_does_not_replace_a_later_save(gateway, monkeypat
         await first
     await later
     assert hub.store.get("request", "r")["status"] == "completed"
+    assert hub.requests["r"]["status"] == "completed"  # the first snapshot's write did not revert the live request
+
+
+async def test_event_and_request_commit_in_one_transaction(gateway, monkeypatch):
+    """#1129: one publication is one commit, and a failed commit leaves neither the event nor the request."""
+    hub = gateway
+    transaction = hub.store._transaction
+    commits = []
+
+    @contextmanager
+    def counted():
+        with transaction() as conn:
+            yield conn
+        commits.append(1)
+
+    monkeypatch.setattr(hub.store, "_transaction", counted)
+    await hub.publish(event(), "runner", 3)
+    assert len(commits) == 1
+    assert len(hub.store.events_since(0)) == 1 and hub.store.get("request", "r")["status"] == "running"
+    assert hub.store.runner_seen("runner") == 3
+
+    @contextmanager
+    def failing():
+        with transaction() as conn:
+            yield conn
+            raise OSError("commit failed")
+
+    hub.store.put("request", "r", {"id": "r", "status": "before"})
+    monkeypatch.setattr(hub.store, "_transaction", failing)
+    with pytest.raises(OSError):
+        await hub.publish(event("second"), "runner", 4)
+    assert len(hub.store.events_since(0)) == 1
+    assert hub.store.get("request", "r")["status"] == "before"
+    assert hub.store.runner_seen("runner") == 3
+    assert hub.requests["r"]["status"] == "before"  # the live request goes back to what is stored (a restart would show it)
 
 
 async def test_publication_without_request(gateway):

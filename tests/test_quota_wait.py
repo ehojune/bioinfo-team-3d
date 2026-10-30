@@ -388,6 +388,11 @@ async def test_restart_recovery_holds_only_the_step_on_the_limited_engine(tmp_pa
     recovery = asyncio.create_task(restored.resume_quota_request("r"))
     await asyncio.wait_for(independent_done.wait(), 60)
     assert outcome["B"].ok and calls == ["B"]
+    # The held step parks on its own schedule: wait for the request to reach the state rather than assume the
+    # event-loop turn on which it does (#1129 changed how many turns a publication takes).
+    deadline = time.monotonic() + 10
+    while restored.requests["r"]["status"] != "waiting_quota" and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
     assert restored.requests["r"]["status"] == "waiting_quota"
     assert restored.request_summary(restored.requests["r"])["step_progress"]["steps"]["A"] == "waiting_quota"
     await restored.force_quota_resume("r", "A")

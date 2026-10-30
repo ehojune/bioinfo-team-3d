@@ -3568,8 +3568,7 @@ class Hub:
                 await self._flush_committed_events()
                 durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
                                   ev.get("type") in ProjectReporter.HANDLED)
-                ev, cancelled = await self._publication_write(self.store.aappend_event(
-                    ev, self.s.gateway.event_buffer, runner_id, runner_seq, reporter_delivery=durable_report))
+                ev, cancelled = await self._append_event_with_request(ev, runner_id, runner_seq, durable_report)
                 self._record_published_event(ev)
                 self._queue_committed_event(ev)
                 try:
@@ -3577,12 +3576,6 @@ class Hub:
                         await self._flush_committed_events(delivered)
                 except asyncio.CancelledError:
                     cancelled = True
-                rid = ev.get("request_id")
-                if rid in self.requests:
-                    try:
-                        await self.asave_request(rid)
-                    except asyncio.CancelledError:
-                        cancelled = True
         finally:
             if self.pending_committed:
                 self._schedule_committed_events()
@@ -3594,6 +3587,36 @@ class Hub:
             raise asyncio.CancelledError
         if ev.get("type") in ("request.step_done", "request.step_skipped") and ev.get("request_id"):
             await self._close_step_controls(ev["request_id"], (ev.get("data") or {}).get("step_id"))
+
+    async def _append_event_with_request(self, ev: dict, runner_id: str | None, runner_seq: int | None,
+                                         durable_report: bool):
+        """Append the event and save its request in one transaction (#1129): both land or neither does."""
+        def append(request=None):
+            return self.store.aappend_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
+                                            reporter_delivery=durable_report, request=request)
+        rid = ev.get("request_id")
+        if rid not in self.requests:
+            return await self._publication_write(append())
+        revision = self._request_changed(rid)
+        async with self._request_lock(rid):
+            before = copy.deepcopy(self.requests[rid])
+            previous = self.store.get("request", rid)
+            updated = copy.deepcopy(before)
+            cp4.reconcile(updated)
+            updated["updated_at"] = time.time()
+            try:
+                saved, cancelled = await self._publication_write(append((rid, updated)))
+            except Exception:
+                # Nothing was stored: put the live request back to what is stored, as `_asave_request` does, so a
+                # later handler does not act on state that a restart would lose.
+                if self.request_versions.get(rid) == revision:
+                    if previous is not None:
+                        apply_changes(self.requests[rid], before, previous)
+                    elif self.requests[rid] == before:
+                        self.requests.pop(rid, None)
+                raise
+            apply_changes(self.requests[rid], before, updated)
+        return saved, cancelled
 
     @staticmethod
     async def _publication_write(write):

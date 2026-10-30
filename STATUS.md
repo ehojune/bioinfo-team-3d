@@ -4,6 +4,43 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1127 validation-manifest가 방금 끝난 Windows job을 못 찾는 문제
+
+- 결론: `scripts/ci_skip.py`의 `windows_artifact`가 effective attempt의 `pytest-windows`가 **아직 목록에 없거나 완료되지 않은** 동안만 3초 간격으로 최대 40번(약 2분) 다시 읽는다. 완료된 뒤의 검증(`conclusion`, run·attempt·head 묶기, artifact 시각 포함)은 그대로이고, 완료된 실패·2개 이상 겹침·묶기 실패는 기다리지 않고 즉시 실패한다. 상한을 넘으면 같은 `missing/ambiguous Windows producer` 오류가 난다.
+- 원인(정황): run 41111652681에서 attempt 2는 Windows 완료 3초 뒤에, attempt 3은 성공 job의 복사본이 만들어지기 7초 전에 manifest가 목록을 읽었다. 실패 순간의 API 응답은 보지 못했다.
+- 시험: `tests/test_ci_manifest_identity.py`에 다섯 경우(늦게 나타난 복사본, 진행 중이던 job, 상한 끝의 같은 오류, 완료된 실패 즉시 거부, 2개 즉시 거부). 기존 `select` 도우미는 sleep을 stub해 시험이 실제로 기다리지 않는다.
+- 바꾼 것: `scripts/ci_skip.py`, `tests/test_ci_manifest_identity.py`. `validate_profile()` 통과, `config/ci/windows-boundary-v1.json`은 건드리지 않았다(이 시험 파일은 sha 고정 대상이 아니다).
+- 미검증: 실제 GitHub 재실행에서 2분이 충분한지, 재시도가 API 호출 한도에 걸리는지.
+
+## 단계
+#1129(#1125 A안): `publish`의 이벤트 append와 request 저장을 한 transaction으로.
+
+## 한 일
+- `labhq/store.py`: `append_event`/`aappend_event`/`_append_event_now`에 `request=(rid, snapshot)`을 더했다. 같은 transaction에서 request를 먼저 쓰고 이벤트와 runner cursor를 쓴다.
+- `labhq/gateway/server.py`: `publish`가 `_append_event_with_request`로 이벤트와 request를 한 번에 저장한다. 기존 request 저장의 순서 규칙(request lock, `_request_changed`, `apply_changes`)은 그대로다. 별도 `asave_request` 호출은 없앴다.
+- 보장: 이전에는 이벤트 commit 뒤 request 저장이 실패하면 이벤트만 남았다. 이제 둘 다 되거나 둘 다 안 된다.
+- 시험(`tests/test_gateway_publish_durable.py`): "두 commit"을 가정한 매개변수(`commit=2`) 둘을 없애고(둘째 commit이 없다), 새 보장을 단언하는 시험을 더했다(한 publish는 한 commit, commit 실패 시 이벤트·request·runner cursor 모두 그대로). `request_snapshot_does_not_replace_a_later_save`는 첫 commit을 멈추는 방식으로 바꾸고 live request가 되돌려지지 않음을 더 단언한다. 지운 단언은 없다.
+
+## 실측 (D: 드라이브, lab 요청 1회, 같은 스크립트로 main과 이 브랜치 각 1회)
+| | 실제 transaction(commit) | commit 시간 합 | 요청 시간 |
+|---|---|---|---|
+| main | 844 | 32.9 s | 29.4 s |
+| 이 브랜치 | 670 | 23.9 s | 24.0 s |
+- commit −174(−21%), 요청 −5.4 s(−18%). 1회씩이라 요청 시간의 오차는 확인하지 못했다. 스크립트: `D:/.labhq/dev/tmp/claude-worker3/measure1129.py`.
+
+## 확인
+- `tests/test_gateway_publish_durable.py`, `test_state.py`, `test_approval_durable_606.py`, `test_durable_writer.py`, `test_state_control_async_606.py`, `test_step_state_async_606.py`, `test_request_lifecycle.py` 293 passed.
+
+## 하지 않은 것
+- 전체 suite와 Windows CI는 돌리지 않았다(CI에 맡김). #1125의 C안(runner 배치)은 W2의 별도 PR이라 이 측정에 들어 있지 않다.
+- E안(task activity 등을 이 transaction에 싣기)은 이번 범위가 아니다.
+
+## 리뷰·CI 후 수정 (rev2)
+- P1 롤백: joint commit 실패 시 request revision이 그대로면 live request를 저장본으로 되돌리거나 지운다.
+- P1 manual: 한·영에 발행의 한 transaction 보장과 실패 시 복원을 적었다.
+- CI 실패 두 건의 원인은 commit이 줄어 이벤트 루프 턴 수가 달라진 것이다. `test_quota_wait`는 시험이 단계 A의 대기 진입 순서에 기대고 있었고, `test_pi_language`는 제품의 경합(예산 확인과 reservation 저장 사이에 await가 있어 번역 두 건이 모두 확인을 통과)이 이전 timing에 가려져 있었다. 후자는 `pi_language.py`에서 request별 lock으로 고쳤다(실제 서비스에서도 예산을 넘겨 예약할 수 있었다). `test_pi_language.py`는 그대로다.
+- 관련 시험 438 passed, 1 skipped.
+
 ## 단계
 #1122: 문서 주기 gate(main 커밋 3개마다 README·manual 갱신)가 시험만 바꾼 PR까지 막는 문제.
 
@@ -34,6 +71,24 @@
 - 사용 이력의 뜻: 그 요청이 스킬을 골랐고 어느 단계에 붙었는지, 결과가 참조했는지다. 결과 참조는 도구 호출이나 효용의 증거가 아니다.
 - 한계: store에 남은 요청만 센다(삭제 정책 미확인). 요청 상세를 열 때마다 최근 500건을 훑는다. 웹 렌더는 시험에서 가짜 DOM으로만 확인했다.
 - 미검증: 실제 gateway와 브라우저에서의 카드, 많은 요청이 쌓인 store의 응답 시간.
+
+# #1124 semantics lab 시험의 commit fsync 대기 줄이기
+
+- 결론: lab 한 번의 실행은 SQLite commit을 약 840번(이벤트당 약 6번) 하고 매번 `synchronous=FULL`로 fsync를 기다린다. fsync가 느린 디스크에서는 이것이 시험 시간의 대부분이다. lab이 이 실행의 상태 저장소만 WAL `synchronous=NORMAL`로 열게 했다. 제품 코드와 #606의 durable 보장은 건드리지 않았다.
+- 바꾼 것: `tests/semantics_shadow_lab.py`의 `run_lab`이 `_unsynced_commits()` 안에서 돈다. `StateStore._write_connection`이 새 쓰기 연결을 열 때 `PRAGMA synchronous=NORMAL`을 더하고, 실행이 끝나면(예외 포함) 원래 함수로 되돌린다. durable 순서·완결을 보는 시험은 이 lab을 쓰지 않는다.
+- 전후(이 PC, pytest 임시 폴더를 D:에 둔 경우, 시험 한 건은 off·on 두 번 실행):
+
+  | 시험 | 전 | 후 |
+  |---|---|---|
+  | `test_the_lab_records_the_same_with_actions_on[shadow]` | 58.8 s | 21.2 s |
+  | `…[confirm]` | 59.5 s | 20.2 s |
+  | `test_shadow_writes_one_line_per_finished_request` | 48.2 s | 14.8 s |
+
+  기본 임시 폴더(C:)에서는 9.0/8.5/6.3 s에서 8.6/8.2/5.9 s로 거의 같다(fsync가 원래 빠르다). lab 1회 단계 측정: commit fsync 합 31.5 s → 0.4 s, 요청 처리 25 s → 7.3 s.
+- 실행한 것: lab을 쓰는 9개 시험 파일 226 passed, 1 skipped(전과 같음). 패치가 실행 뒤 원래대로 복원되는 것을 확인했다.
+- 남은 지연: 요청 처리의 나머지 큰 부분은 `owned.py`의 파일 쓰기가 부르는 `os.fsync` 86회(약 3.8 s/회 실행)다. 제품 동작이라 이번에 건드리지 않았다.
+- CI Windows 전후: 전은 #1111 run 41107759746(pool 단계 780초 초과로 중단). 후는 이 PR의 두 head에서 통과했다 — pool 단계 516 s(run 41113395726)와 647 s(run 41119265658, main 위로 rebase한 head). 같은 변경인데 두 값이 126초 다른 것은 러너 편차이고 둘 다 780초 상한 안이다.
+- 근거: #1124 댓글 6531184747.
 
 ## 단계
 #625 2단계 PR A: 계획 단계의 `model_tier` 데이터 경로. 설계: [#625 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/625#issuecomment-6529059780), 승인 조건은 같은 이슈의 총괄 댓글.
@@ -400,6 +455,18 @@ Windows `test_ci_windows10m`·`test_ci_windows_phases`·`test_ci_boundary_previe
 - 시험: 안내 문구 1건 + 연결 1건. 관련 저장 시험 51건 통과.
 - 한계: 가짜 GitHub는 빈 probe POST 뒤 repo를 "있음"으로 답해, 이 연결 시험은 repo 생성 자체를 보지 못한다(생성은 `test_result_storage.py`가 별도 확인).
 - 미검증: 실제 토큰·repo 생성 권한, 실제 gateway 재시작 뒤의 흐름(W2 실행 단계).
+
+﻿# #983 시설팀 복구 상태 계약
+
+기준 `da3eff9f`; [계약·근거](../reference/facilities-recovery-contract-983.md). 요청 대상, 실제 담당, 답변·거부, 승인, fix 실행과 원 단계 결과를 분리했다. CSO fallback과 자동 진단 offline 처리도 다르다. package `applied`는 지시이며 성공 증거가 아니다. 기존 기록을 조합하는 projection과 불명 상태 보존을 후속으로 제안한다.
+
+격리 fake hub에서 진단 답변 후 원 단계 실패 유지, 승인 거절·timeout 시 재개 없음, 승인 뒤 성공·실패 재개를 확인했다. 기존 fallback·doctor·fix·진단 회귀를 함께 실행했다.
+
+- `pytest tests/test_facilities_recovery_contract_983.py tests/test_facilities_fallback_983.py tests/test_doctor_facilities_support_983.py tests/test_facilities_diagnosis.py tests/test_facilities_fixes.py -q`: **151 passed**.
+- `pytest tests/test_doctor.py tests/test_ask_review6.py -q`: **86 passed**. 기존 정책 거부 및 roster 회귀 포함.
+- 기존 가상환경 사용, fake dispatch와 임시 store만 사용. 실제 시설팀·엔진·로그인·설치·운영·HPC·배포는 실행하지 않았다.
+
+제품 수정은 없다. #983은 OPEN, 실제 설치판 복구는 **UNVERIFIED**다. CI와 동일 head 리뷰 결과는 PR에서 확인한다.
 
 # #1073 validation-manifest base drift가 main 추가 이동에 실패
 
