@@ -97,6 +97,16 @@ Windows `tests/test_output_checks.py`·`tests/test_research_report.py` 90 passed
 Windows `tests/test_live_source_limit_891.py` 20 passed(1단계 7건 + prompt 연결 5건), `test_research_cp2`·`test_output_types_research`·`test_research_report`·`test_cso`·`test_external_wait` 포함 406 passed.
 - 미검증: 재계획 prompt는 같은 helper를 쓰지만 통합 시험은 없다(재계획을 일으키는 장면이 따로 필요). 다른 PC의 runner는 계수가 다르다(문구에 "이 PC runner"로 한정).
 
+# #792 rev7 그림별 원자료와 환경 절
+
+- 결론: 공개본 README의 "그림이 보여 주는 것"이 그림마다 원자료 표(스크립트가 이름을 쓰는 게시 표)를 적는다. 연결을 못 찾으면 못 찾았다고 쓴다. 그래픽 초록은 결과표 숫자를 담지 않는다고 적는다.
+- 환경: "## 환경" 절이 `run/environment/`의 잠금 파일과 `패키지==버전`을 싣는다(15개까지). 기록이 없으면 없다고, 파일만 있고 버전이 없으면 확인하지 못했다고 적는다.
+- P2(#1092): 캡션을 전체 경로로 먼저 맞추고 파일명이 하나뿐일 때만 파일명으로 맞춘다. 같은 이름의 그림끼리 덮어쓰지 않는다.
+- 프롬프트: analyst는 보고서의 그림마다 원자료 파일을 적고 그림 속 숫자를 결과표에서 읽는다. editor는 README에서 같게 한다.
+- 바꾼 것: `labhq/portfolio.py`, `agents/core/{analyst,editor}.yaml`, `tests/test_portfolio_edition.py`.
+- 한계: 원자료 연결은 스크립트 본문에 파일명이 나오는지로 판단하는 휴리스틱이다. 같은 이름의 스크립트·표가 여러 개면 서로 섞여 보일 수 있다. 보고서 본문에 원자료를 자동으로 덧붙이지는 않고 prompt로 요구한다. 환경은 Python 버전을 읽지 않는다.
+- 미검증: 새 실행으로 만든 README, Windows CI.
+
 ## 단계
 #1076 rev5: `test_recovery_fake_check[gateway]`의 Windows `ReadTimeout` 3회. 원인 조사: [#1076 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6521284783).
 
