@@ -150,8 +150,9 @@ def upload():
     return data, request
 
 
-def select(request):
-    return cs.windows_artifact(dict(id=42, run_attempt=3), 'd' * 40, 123, request)
+def select(request, sleep=lambda seconds: None):
+    # A test never really waits: the poll is bounded by a count, so a stubbed sleep keeps its meaning (#1127).
+    return cs.windows_artifact(dict(id=42, run_attempt=3), 'd' * 40, 123, request, sleep)
 
 
 def test_copied_success_resolves_original_upload(upload):
@@ -270,3 +271,63 @@ def test_fresh_windows_retry_cannot_certify_copied_other_gates(producer, monkeyp
     # Other gate outputs still carry their original success and tree.
     with pytest.raises(cs.NonReusablePartialRerun):
         cs.produce_manifest(current, needs, producer[2])
+
+
+def _lagging(upload, steps):
+    """A request whose attempt-3 job list answers each read from `steps` (a list of job lists; the last one repeats)."""
+    data, request = upload
+    reads = []
+
+    def lagged(path):
+        if '/attempts/3/jobs' in path:
+            reads.append(path)
+            jobs = steps[min(len(reads), len(steps)) - 1]
+            return dict(total_count=len(jobs), jobs=jobs)
+        return request(path)
+    return data, lagged, reads
+
+
+def test_a_copy_that_appears_late_is_waited_for_and_then_checked_as_before(upload):
+    # #1127: the copied pytest-windows job was created seconds after the manifest job asked for it.
+    data, _ = upload
+    _, request, reads = _lagging(upload, [[], [], [data[3]]])
+    sleeps = []
+    assert select(request, sleeps.append) == (77, 1)
+    assert len(reads) == 3 and sleeps == [cs.JOB_POLL_INTERVAL_S] * 2
+
+
+def test_a_job_that_still_reads_as_running_is_waited_for_until_it_completes(upload):
+    data, _ = upload
+    running = dict(data[3], status='in_progress', conclusion=None)
+    _, request, reads = _lagging(upload, [[running], [running], [data[3]]])
+    sleeps = []
+    assert select(request, sleeps.append) == (77, 1)
+    assert len(reads) == 3 and len(sleeps) == 2
+
+
+def test_the_wait_is_bounded_and_ends_in_the_same_missing_producer_error(upload):
+    _, request, reads = _lagging(upload, [[]])
+    sleeps = []
+    with pytest.raises(ValueError, match='missing/ambiguous Windows producer'):
+        select(request, sleeps.append)
+    assert len(reads) == cs.JOB_POLL_ATTEMPTS == 40 and len(sleeps) == cs.JOB_POLL_ATTEMPTS - 1
+    assert set(sleeps) == {cs.JOB_POLL_INTERVAL_S} and cs.JOB_POLL_INTERVAL_S == 3  # 40 reads, 3 s apart, about two minutes
+
+
+def test_a_completed_failure_is_denied_at_once_without_waiting(upload):
+    data, _ = upload
+    failed = dict(data[3], conclusion='failure')
+    _, request, reads = _lagging(upload, [[failed], [data[3]]])
+    sleeps = []
+    with pytest.raises(ValueError, match='failed/incomplete effective Windows producer'):
+        select(request, sleeps.append)
+    assert len(reads) == 1 and sleeps == []  # a later success never rescues a completed failure
+
+
+def test_two_producers_are_denied_at_once_without_waiting(upload):
+    data, _ = upload
+    _, request, reads = _lagging(upload, [[data[3], dict(data[3], id=2)]])
+    sleeps = []
+    with pytest.raises(ValueError, match='missing/ambiguous Windows producer'):
+        select(request, sleeps.append)
+    assert len(reads) == 1 and sleeps == []

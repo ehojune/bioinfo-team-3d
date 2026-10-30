@@ -18,6 +18,7 @@ import urllib.request
 import zipfile
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
+from time import sleep as _sleep
 from pathlib import Path
 
 import yaml
@@ -557,20 +558,36 @@ class NonReusablePartialRerun(ValueError):
     """Validated partial rerun, without a same-attempt reusable manifest."""
 
 
-def windows_artifact(run, head, repository_id, request=None):
+JOB_POLL_INTERVAL_S = 3
+JOB_POLL_ATTEMPTS = 40
+
+
+def windows_artifact(run, head, repository_id, request=None, sleep=None):
     """Bind the effective Windows execution to its original upload, not a copied job.
 
     GitHub copies successful jobs into later attempts with new IDs/created_at.
     Their execution times stay unchanged. Only an original job whose creation
     precedes execution and whose upload falls inside that execution is accepted.
+
+    The effective attempt's job list lags the events that make it true: a copy made for a rerun that only retries
+    another job appears seconds after the job that reads it starts, and a job that just finished can still read as
+    running. Only those two states, no `pytest-windows` row yet or the one row not completed, are waited out
+    (JOB_POLL_ATTEMPTS reads, JOB_POLL_INTERVAL_S apart); everything else, including a completed failure, two rows
+    and every binding check below, fails at once as before (#1127).
     """
     from datetime import datetime
     request = request or api
-    def jobs(attempt):
-        data = request(f"actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100")
-        if data['total_count'] != len(data['jobs']):
-            raise ValueError('incomplete producer jobs')
-        rows = [j for j in data['jobs'] if j['name'] == 'pytest-windows']
+    sleep = sleep or _sleep  # not `time.sleep`: this function has an inner `time` helper
+    def jobs(attempt, settle=False):
+        for read in range(JOB_POLL_ATTEMPTS if settle else 1):
+            data = request(f"actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100")
+            if data['total_count'] != len(data['jobs']):
+                raise ValueError('incomplete producer jobs')
+            rows = [j for j in data['jobs'] if j['name'] == 'pytest-windows']
+            unsettled = len(rows) == 0 or (len(rows) == 1 and rows[0]['status'] != 'completed')
+            if not (settle and unsettled) or read == JOB_POLL_ATTEMPTS - 1:
+                break
+            sleep(JOB_POLL_INTERVAL_S)
         if len(rows) != 1:
             raise ValueError('missing/ambiguous Windows producer')
         job = rows[0]
@@ -580,7 +597,7 @@ def windows_artifact(run, head, repository_id, request=None):
         return job
     def time(value):
         return datetime.fromisoformat(value.replace('Z', '+00:00'))
-    effective = jobs(run['run_attempt'])
+    effective = jobs(run['run_attempt'], settle=True)
     if effective['status'] != 'completed' or effective['conclusion'] != 'success':
         raise ValueError('failed/incomplete effective Windows producer')
     data = request(f"actions/runs/{run['id']}/artifacts?per_page=100")
