@@ -1002,3 +1002,83 @@ test('cleanup forces an owned Chrome whose graceful close never takes effect, wi
     await d.close();
     assert.deepEqual(stages, ['forced', 'closed']);
   });
+
+// #1107: the cleanup waits for ws.onclose, so a client that never reports one (a close during the upgrade) stalls it.
+const net = require('node:net'), http = require('node:http'), crypto = require('node:crypto');
+const {MiniWebSocket} = require('./support/mini_ws.cjs');
+const settle = ms => new Promise(resolve => setTimeout(resolve, ms));
+const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+
+test('MiniWebSocket reports one close when close() runs while the upgrade is still pending (#1107)', async () => {
+  const sockets = [];
+  const server = net.createServer(socket => { sockets.push(socket); socket.on('error', () => {}); });  // never answers
+  const port = await listen(server);
+  try {
+    const ws = new MiniWebSocket(`ws://127.0.0.1:${port}/devtools/page/x`), events = [];
+    ws.onerror = () => events.push('error'); ws.onclose = () => events.push('close');
+    await settle(100);
+    ws.close(); ws.close();
+    sockets.forEach(socket => socket.destroy());  // the peer then vanishes, as a killed Chrome does
+    await settle(200);
+    assert.deepEqual(events, ['close'], 'one close, and no error for the request close() itself ended');
+    assert.equal(ws.closed, true);
+  } finally { sockets.forEach(socket => socket.destroy()); server.close(); }
+});
+
+test('MiniWebSocket reports an error and one close when the connection fails before the upgrade (#1107)', async () => {
+  const probe = net.createServer();
+  const port = await listen(probe);
+  await new Promise(resolve => probe.close(resolve));  // nothing listens on this port now
+  const ws = new MiniWebSocket(`ws://127.0.0.1:${port}/devtools/page/x`), events = [];
+  ws.onerror = () => events.push('error'); ws.onclose = () => events.push('close');
+  await settle(500);
+  assert.deepEqual(events, ['error', 'close']);
+});
+
+test('MiniWebSocket still reports exactly one close for an upgraded socket, however it ends (#1107)', async () => {
+  const peers = [];
+  const server = http.createServer();
+  server.on('upgrade', (request, socket) => {
+    peers.push(socket);
+    socket.on('end', () => socket.end());  // a real DevTools endpoint answers the client's close
+    socket.on('error', () => {});
+    socket.resume();  // an upgraded socket is paused until read; the end of the client's stream needs it flowing
+    const accept = crypto.createHash('sha1').update(request.headers['sec-websocket-key'] +
+      '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+    const eol = String.fromCharCode(13, 10);
+    socket.write(['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade',
+      'Sec-WebSocket-Accept: ' + accept, '', ''].join(eol));
+  });
+  const port = await listen(server);
+  try {
+    for (const end of ['client', 'peer']) {
+      const ws = new MiniWebSocket(`ws://127.0.0.1:${port}/devtools/page/x`), events = [];
+      ws.onclose = () => events.push('close');
+      await new Promise(resolve => { ws.onopen = resolve; });
+      if (end === 'client') ws.close(); else peers[peers.length - 1].destroy();
+      await settle(200);
+      ws.close();
+      assert.deepEqual(events, ['close'], `${end} ended it`);
+    }
+  } finally { peers.forEach(socket => socket.destroy()); server.close(); }
+});
+
+test('the cleanup diagnostic names the Node version and which WebSocket client closes the CDP socket (#1107)', async () => {
+  const lines = [], original = console.error;
+  console.error = line => lines.push(String(line));
+  try {
+    for (const ws of [new MiniWebSocket('ws://127.0.0.1:9/x'), {close() {}, constructor: {name: 'WebSocket'}}]) {
+      const f = lateFixture();
+      const {diagnostic, ...options} = f.options;  // the default diagnostic prints to stderr
+      ws.onerror = () => {};
+      const closing = closeDemoResources({...f.resources, ws, wsClosed: new Promise(() => {})}, options);
+      await f.tick(); f.serverAck(); await f.tick(); f.timeout();
+      await assert.rejects(closing);
+      ws.close?.();
+    }
+  } finally { console.error = original; }
+  const rows = lines.filter(line => line.startsWith('demo cleanup: ')).map(line => JSON.parse(line.slice('demo cleanup: '.length)));
+  assert.ok(rows.length >= 2);
+  assert.ok(rows.every(row => row.node_version === process.version));
+  assert.deepEqual([...new Set(rows.map(row => row.ws_kind))].sort(), ['global', 'mini']);
+});

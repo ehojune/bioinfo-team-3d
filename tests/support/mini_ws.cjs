@@ -10,23 +10,39 @@ class MiniWebSocket {
     this.buffer = Buffer.alloc(0);
     this.fragments = [];
     this.closed = false;
+    this.closeReported = false;
     const target = new URL(url);
     const key = crypto.randomBytes(16).toString('base64');
     const request = http.request({host: target.hostname, port: target.port, path: target.pathname + target.search,
       headers: {Connection: 'Upgrade', Upgrade: 'websocket', 'Sec-WebSocket-Key': key, 'Sec-WebSocket-Version': '13'}});
+    this.request = request;
     request.on('upgrade', (response, socket, head) => {
+      // close() already ran while the upgrade was pending (#1107): nothing is left to own, and onclose was reported.
+      if (this.closed) { socket.destroy(); return; }
       const accept = crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
       if (response.headers['sec-websocket-accept'] !== accept) { socket.destroy(); this.onerror?.(new Error('bad WebSocket handshake')); return; }
       this.socket = socket;
       socket.on('data', chunk => this.read(chunk));
-      socket.on('close', () => { this.closed = true; this.onclose?.(); });
+      socket.on('close', () => { this.closed = true; this.reportClosed(); });
       socket.on('error', error => this.onerror?.(error));
       this.onopen?.();
       if (head.length) this.read(head);
     });
     request.on('response', () => this.onerror?.(new Error('DevTools endpoint refused the WebSocket upgrade')));
-    request.on('error', error => this.onerror?.(error));
+    // A connection that fails before the upgrade never gets a socket 'close' handler, so it reports its end here.
+    request.on('error', error => {
+      if (this.closed) return;  // the error of the request close() itself destroyed
+      this.onerror?.(error);
+      if (!this.socket) { this.closed = true; this.reportClosed(); }
+    });
     request.end();
+  }
+
+  // The browser class fires one close event per socket, whatever ended it (#1107).
+  reportClosed() {
+    if (this.closeReported) return;
+    this.closeReported = true;
+    this.onclose?.();
   }
 
   read(chunk) {
@@ -69,6 +85,13 @@ class MiniWebSocket {
 
   close() {
     if (this.closed) return;
+    if (!this.socket) {
+      // Still waiting for the upgrade: end the pending request. No socket 'close' will ever arrive, so report it now.
+      this.closed = true;
+      try { this.request.destroy(); } catch { /* request already gone */ }
+      this.reportClosed();
+      return;
+    }
     try { this.frame(0x8, Buffer.alloc(0)); this.socket.end(); } catch { /* socket already gone */ }
     this.closed = true;
   }
