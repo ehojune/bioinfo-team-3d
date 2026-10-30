@@ -34,20 +34,25 @@ def request(path, obj):
         return bytes(data)
 
 
+def fake_upstream(body, secret):
+    return secret if body == b"reflect" else b"ok"
+
+
 def run(boundary_path: Path, broker_path: Path, broker_kind="synthetic"):
     result = {"scope": "synthetic_unsealed_diagnostic", "protection_verified": False,
               "status": "inconclusive"}
     witness = {}
     try:
         boundary = load(boundary_path, "boundary_probe_actual_boundary")
-        broker = load(broker_path, "boundary_probe_actual_broker")
+        # Spawned upstream processes must be able to import the broker by name.
+        broker_path = broker_path.resolve()
+        sys.path.insert(0, str(broker_path.parent))
+        broker = load(broker_path, broker_path.stem)
         if broker_kind not in ("synthetic", "process"):
             raise ValueError("unknown broker kind")
-        def upstream(body, secret):
-            return secret if body == b"reflect" else b"ok"
         def factory(directory, run_id):
             cls = broker.ProcessBroker if broker_kind == "process" else broker.SyntheticBroker
-            return cls(directory, run_id, b"fake-only-secret", upstream=upstream)
+            return cls(directory, run_id, b"fake-only-secret", upstream=fake_upstream)
 
         def ready(run_id, path):
             witness.update(run_id=run_id, path=path)
