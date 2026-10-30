@@ -1857,3 +1857,26 @@ async def test_a_drain_with_a_timeout_leaves_the_commit_to_finish_on_its_own(tmp
     await runner._ack_drain()  # the commit is still running and finishes
     assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[2]]
     runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_the_exit_after_a_shutdown_shares_the_shutdowns_deadline(tmp_path):
+    """After a signal `shutdown()` runs, then the entry point cancels `run_forever`, whose exit also drains the acks:
+    that wait is what is left of the shutdown's deadline, not a second 30 s."""
+    runner, seqs = _runner_with_outbox(tmp_path, 3)
+    assert runner._ack_wait_s(30.0) == 30.0  # no shutdown yet: the normal wait
+    hung = asyncio.Event()
+
+    async def hanging_aack(seq):
+        await hung.wait()
+
+    runner.store.aack = hanging_aack
+    runner._ack_nowait(seqs[1])
+    await runner.shutdown(timeout_s=0.2)
+    assert runner._ack_wait_s(30.0) == 0.0  # the deadline has passed: nothing more to wait
+    started = time.monotonic()
+    await runner._ack_drain(raise_error=False, timeout=runner._ack_wait_s(30.0))  # what the exit path runs
+    assert time.monotonic() - started < 0.2
+    assert len(runner.store.pending()) == 3
+    hung.set()
+    runner.store.close()

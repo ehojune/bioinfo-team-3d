@@ -289,6 +289,7 @@ class Runner:
     _ack_done = 0
     _ack_task: asyncio.Task | None = None
     _ack_error: BaseException | None = None
+    _shutdown_deadline: float | None = None  # time.monotonic() when `shutdown()` must be done
 
     def __init__(self, settings: Settings):
         settings.runner.validate_wsl()
@@ -442,7 +443,9 @@ class Runner:
                 self._ensure_local_watch()
             await asyncio.gather(*loops)
         finally:
-            await self._ack_drain(raise_error=False, timeout=durable.EXIT_DRAIN_S)  # acks already received are not left
+            # Acks already received are not left in memory. After a signal the wait is what is left of the shutdown's
+            # own deadline, so the whole exit stays inside it.
+            await self._ack_drain(raise_error=False, timeout=self._ack_wait_s(durable.EXIT_DRAIN_S))
             # Writes queued by the tasks that were just cancelled still finish (#606).
             await durable.adrain(durable.EXIT_DRAIN_S)
 
@@ -472,7 +475,7 @@ class Runner:
                     return
                 await asyncio.sleep(.05)
 
-        deadline = time.monotonic() + timeout_s
+        deadline = self._shutdown_deadline = time.monotonic() + timeout_s
         try:
             await asyncio.wait_for(finish(), timeout_s)
         except asyncio.TimeoutError:
@@ -501,6 +504,12 @@ class Runner:
                 self._ack_done = max(self._ack_done, high)
         except Exception as exc:  # noqa: BLE001 - raised to the next caller, where the inline commit raised it
             self._ack_error = exc
+
+    def _ack_wait_s(self, normal: float) -> float:
+        """How long a closing-down path may wait for the acks: `normal`, or what is left of an open shutdown deadline."""
+        if self._shutdown_deadline is None:
+            return normal
+        return max(0.0, min(normal, self._shutdown_deadline - time.monotonic()))
 
     async def _ack_drain(self, *, raise_error: bool = True, timeout: float | None = None) -> None:
         """Every ack noted so far is committed. Errors are raised unless the caller is closing down anyway. With a
@@ -688,7 +697,7 @@ class Runner:
                         self.connected.clear()
                         # A reconnect reloads the outbox from the store: commit the acks first, but a stuck commit must
                         # not hold the reconnect (its rows are resent and deduped).
-                        await self._ack_drain(raise_error=False, timeout=ACK_DRAIN_S)
+                        await self._ack_drain(raise_error=False, timeout=self._ack_wait_s(ACK_DRAIN_S))
             except asyncio.CancelledError:
                 raise
             except Exception as e:
