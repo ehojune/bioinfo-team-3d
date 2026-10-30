@@ -503,3 +503,42 @@ def test_changed_native_test_helper_adds_its_direct_consumer_only(tmp_path):
     helper.write_text('def read(): return 2', encoding='utf-8')
     assert not s.include_windows('tests/test_math.py', source, data, root=tmp_path,
                                  changed={'tests/helper.py'}, node='test_math')[0]
+
+
+def test_windows_pool_step_records_worker_stacks_before_its_time_limit():
+    # #1076: a pool step cut at its 9 minute cap left no trace of the test it was in.
+    jobs = yaml.safe_load((s.ROOT / cs.WORKFLOW).read_text(encoding='utf-8'))['jobs']
+    job = jobs['pytest-windows']
+    pool = next(x for x in job['steps'] if '--ci-phase parallel' in x.get('run', ''))
+    assert '--ci-stall' in pool['run']
+    assert '--ci-stall' not in next(x for x in job['steps'] if '--ci-phase critical' in x.get('run', ''))['run']
+    interval = float(job['env']['CI_STALL_INTERVAL_S'])
+    assert 1 <= interval and interval * 3 < 9 * 60  # three snapshots fit before the step is cut
+    assert any(x.get('if') == 'always()' and x.get('uses', '').startswith('actions/upload-artifact')
+               for x in job['steps'])  # the stack logs survive a cut step
+
+
+@pytest.mark.parametrize('value, expected', [(None, 300), ('150', 150.0), ('0.5', 300), ('x', 300), ('-5', 300)])
+def test_stall_interval_reads_the_environment_and_falls_back_when_unusable(monkeypatch, value, expected):
+    if value is None:
+        monkeypatch.delenv('CI_STALL_INTERVAL_S', raising=False)
+    else:
+        monkeypatch.setenv('CI_STALL_INTERVAL_S', value)
+    assert suite.stall_interval() == expected
+
+
+def test_a_stall_snapshot_names_the_running_test_and_lands_in_a_log_the_phase_checks_ignore(tmp_path, monkeypatch):
+    import time
+
+    monkeypatch.setenv('CI_STALL_INTERVAL_S', '1')
+    log = tmp_path / 'stacks-gw0.log'
+    stall = suite.WorkerStall(log, lambda: 'tests/test_x.py::test_y [call]')
+    stall.start()
+    for _ in range(40):
+        if log.exists() and 'CI snapshot: tests/test_x.py::test_y [call]' in log.read_text(encoding='utf-8'):
+            break
+        time.sleep(0.1)
+    stall.close()
+    assert 'CI snapshot: tests/test_x.py::test_y [call]' in log.read_text(encoding='utf-8')
+    # windows.combine globs collection-*.json, metrics-*.json and *error*.json only; a .log is not one of them.
+    assert not any(log.match(pattern) for pattern in ('collection-*.json', 'metrics-*.json', '*error*.json'))
