@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:45 | [`0485b0a`](https://github.com/ehojune/bioinfo-team-3d/pull/1074/commits/0485b0a) | **Windows 브라우저 시험이 1/16,384 확률의 포트 우연으로 간헐 실패하던 문제를 없앱니다.**<br>브라우저 시험의 정적 서버가 OS에게 예약 포트(8787·55921)를 받으면 닫고 최대 8번까지 다시 listen하고, 8번 모두 예약 포트일 때만 같은 메시지로 거절한다 |
 | 18:26 | [`373f0f1`](https://github.com/ehojune/bioinfo-team-3d/pull/1068/commits/373f0f1) | **direct 실행의 산출에 hard link가 있어도 실패로 처리되지 않습니다.**<br>폴더를 선언하지 않은 단계의 hard link 검사에서 하류가 읽지 않는 direct 실행을 뺀다 |
 | 18:06 | [`bbdadad`](https://github.com/ehojune/bioinfo-team-3d/pull/1071/commits/bbdadad) | **매뉴얼에 연구 단계가 계획에 선언된 주장 목록 밖의 주장을 새로 만들 수 없다는 규칙을 적었습니다.**<br>docs: manual 한·영에 단계 claim_ids 밖 claim을 만들지 않는 규칙을 적음 (#1066) |
 | 17:55 | [`0df266b`](https://github.com/ehojune/bioinfo-team-3d/pull/1069/commits/0df266b) | **논문 번호만 고정하고 재사용한 단계가 있으면, 사용자가 읽는 최종 보고서 본문에도 내용은 확인하지 않았다는 한 줄을 남깁니다.**<br>fix: 최종 보고서 본문에도 "내용 미확인" 한 줄을 남김 (#1061 후속 리뷰 P1) |
