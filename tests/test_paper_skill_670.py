@@ -156,3 +156,75 @@ def test_talent_line_without_a_readable_skill_folder_is_the_old_line_plus_the_da
     line, = talent_lines(SimpleNamespace(talent_pool=lambda: [], talent_dir=tmp_path))
     assert "논문 자문 스킬 생성됨" in line and "이름=" not in line and "논문 본문 파일" not in line
     assert line.rstrip().endswith(line.split("기록 시각(파일) ")[1]) and "기록 시각(파일) " in line
+
+
+# ---- #660: which request first built a skill, from the request records ----
+def test_skill_origins_take_the_earliest_request_that_built_it_and_never_a_reuse():
+    from labhq.recruit.paper_skills import skill_origins
+
+    ready = lambda **extra: {"paper_id": "PMID:12345678", "status": "ready", "skill_sha256": "a" * 64, **extra}
+    origins = skill_origins([
+        ("req_late", 200.0, [ready()]),
+        ("req_first", 100.0, [ready()]),
+        ("req_reuse", 50.0, [ready(status="reused")]),          # a reuse says an earlier request built it
+        ("req_other_hash", 10.0, [ready(skill_sha256="b" * 64)]),
+        ("req_bad", "soon", [ready()]), ("req_none", 5.0, None), ("req_row", 6.0, ["x", {"status": "ready"}]),
+        ("req_flag", True, [ready()]),
+    ])
+    assert origins[("pmid:12345678", "a" * 64)] == {"request_id": "req_first", "created_at": 100.0}
+    assert origins[("pmid:12345678", "b" * 64)]["request_id"] == "req_other_hash"
+    assert len(origins) == 2
+
+
+def _gateway_store(tmp_path, requests):
+    import json
+    import sqlite3
+
+    path = tmp_path / "state" / "gateway.sqlite3"
+    path.parent.mkdir(parents=True)
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE state (kind TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(kind, key))")
+    for rid, body in requests.items():
+        db.execute("INSERT INTO state VALUES ('request', ?, ?)", (rid, json.dumps(body)))
+    db.commit()
+    db.close()
+    return path
+
+
+def _settings(tmp_path):
+    return Settings.model_validate({"gateway": {"state_dir": str(tmp_path / "state")}})
+
+
+def test_the_cli_reads_origins_from_the_local_store_read_only_and_says_why_when_it_cannot(tmp_path):
+    from labhq import cli
+
+    rows = [{"paper_id": "pmid:12345678", "status": "ready", "skill_sha256": "a" * 64}]
+    path = _gateway_store(tmp_path, {"req_one": {"created_at": 123.0, "plan": {"paper_skill_results": rows}},
+                                     "req_none": {"created_at": 5.0, "plan": {}}})
+    before = (path.stat().st_mtime_ns, path.stat().st_size)
+    origins, error = cli._paper_skill_origins(_settings(tmp_path))
+    assert error is None and origins == {("pmid:12345678", "a" * 64): {"request_id": "req_one", "created_at": 123.0}}
+    assert (path.stat().st_mtime_ns, path.stat().st_size) == before          # nothing was written
+    origins, error = cli._paper_skill_origins(_settings(tmp_path / "elsewhere"))
+    assert origins is None and "gateway.sqlite3" in error                    # a missing store is not created
+    assert not (tmp_path / "elsewhere").exists()
+    path.write_bytes(b"not a database" * 100)
+    origins, error = cli._paper_skill_origins(_settings(tmp_path))
+    assert origins is None and "읽지 못했습니다" in error
+
+
+def test_the_talent_line_names_the_building_request_or_why_it_falls_back_to_the_file_time(tmp_path):
+    from types import SimpleNamespace
+
+    from labhq.cli import talent_lines
+
+    _skill_folder(tmp_path)
+    reg = SimpleNamespace(talent_pool=lambda: [], talent_dir=tmp_path)
+    built = {("pmid:12345678", "a" * 64): {"request_id": "req_one", "created_at": 86400.0 * 400}}
+    assert "만든 요청 req_one · " in talent_lines(reg, built, None)[0] and "(요청 기록)" in talent_lines(reg, built, None)[0]
+    line, = talent_lines(reg, {}, None)                                       # the store was read; nothing built it
+    assert "기록 시각(파일) " in line and "(요청 기록에 없음)" in line and "만든 요청" not in line
+    line, = talent_lines(reg, None, "gateway 기록 파일(gateway.sqlite3)이 없습니다")
+    assert "(gateway 기록 파일(gateway.sqlite3)이 없습니다)" in line and "만든 요청" not in line
+    line, = talent_lines(reg)                                                 # no origin lookup at all
+    assert "기록 시각(파일) " in line and "요청 기록을 읽지 않음" in line

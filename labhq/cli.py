@@ -312,13 +312,42 @@ def _talent_text(value, n: int = 120) -> str:
     return short("".join(c if c.isprintable() else " " for c in str(value)), n)
 
 
-def talent_lines(registry) -> list[str]:
+def _paper_skill_origins(s: Settings) -> tuple[dict | None, str | None]:
+    """Which request first built each paper skill, read from the local gateway store without writing to it (#660).
+
+    Returns (origins, None) or (None, why it could not be read): a missing store, a locked or foreign one. The store
+    is opened read-only, so a running gateway is never disturbed and nothing is created."""
+    import sqlite3
+
+    from .recruit.paper_skills import skill_origins
+
+    path = s.path(s.gateway.state_dir) / "gateway.sqlite3"
+    if not path.is_file():
+        return None, "gateway 기록 파일(gateway.sqlite3)이 없습니다"
+    try:
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=2)
+        try:
+            rows = conn.execute(
+                "SELECT key, json_extract(body, '$.created_at'), json_extract(body, '$.plan.paper_skill_results') "
+                "FROM state WHERE kind='request' AND json_extract(body, '$.plan.paper_skill_results') IS NOT NULL").fetchall()
+        finally:
+            conn.close()
+        return skill_origins((key, created, json.loads(raw) if isinstance(raw, str) else None)
+                             for key, created, raw in rows), None
+    except (sqlite3.Error, OSError, ValueError) as error:
+        return None, f"요청 기록을 읽지 못했습니다({type(error).__name__})"
+
+
+def talent_lines(registry, origins: dict | None = None, origin_error: str | None = None) -> list[str]:
     """`labhq talent`: past contracts, then paper skills built by Paper2Skill (#660).
 
     A built paper skill leaves only talent/paper-skill-<key>/paper-skill.json, no contract.yaml, so the contract
     pool alone never listed it. A line says the skill was built; whether a step used it or it helped is recorded per
     request (run record/appendix), not here. A receipt that does not belong to its folder or lacks a field gets one
-    line saying so; its values are not echoed."""
+    line saying so; its values are not echoed.
+
+    `origins` (from _paper_skill_origins) names the request that first built each skill; without it the line says why
+    and falls back to the receipt file's time. Folders with only a build/ folder are counted on one last line."""
     from .recruit.paper_skills import paper_id
 
     lines, contract_skills = [], set()
@@ -330,10 +359,14 @@ def talent_lines(registry) -> list[str]:
                      f"{c.kind if c else ''}  paper={c.paper if c else ''}"
                      f"  commit={(c.source_commit or '-')[:7] if c else '-'}"
                      f"  external={','.join(x.host for x in c.external_services) if c and c.external_services else '-'}")
+    unfinished = 0
     for folder in sorted(registry.talent_dir.glob("paper-skill-*")):
         receipt = folder / "paper-skill.json"
-        if not folder.is_dir() or (folder / "contract.yaml").exists() or not receipt.is_file():
-            continue  # listed above as a contract, or no build finished here (failures write no receipt)
+        if not folder.is_dir() or (folder / "contract.yaml").exists():
+            continue  # listed above as a contract
+        if not receipt.is_file():
+            unfinished += 1  # no build finished here (failures write no receipt): counted on the last line
+            continue
         name = _talent_text(folder.name, 40)
         try:
             if receipt.is_symlink() or receipt.stat().st_size > PAPER_SKILL_RECEIPT_MAX_BYTES:
@@ -355,16 +388,23 @@ def talent_lines(registry) -> list[str]:
         commit = row.get("paper2agent_commit")
         commit = commit[:7] if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit) else "-"
         lines.append(f"📄 {name:<24} 논문 자문 스킬 생성됨  paper={_talent_text(pid)}  skill={digest[:12]}"
-                     f"  commit={commit}  사용·효용=요청별 기록 참조" + _talent_skill_facts(folder, receipt, digest))
+                     f"  commit={commit}  사용·효용=요청별 기록 참조"
+                     + _talent_skill_facts(folder, receipt, digest, origins.get((pid, digest)) if origins else None,
+                                           origins is not None, origin_error))
+    if unfinished:
+        lines.append(f"📄 빌드 미완료 폴더 {unfinished}개  receipt가 없어 논문 스킬로 쓰이지 않습니다(talent 폴더의 paper-skill-* 중 "
+                     "build/만 있는 것)")
     return lines
 
 
-def _talent_skill_facts(folder: Path, receipt: Path, digest: str) -> str:
+def _talent_skill_facts(folder: Path, receipt: Path, digest: str, origin: dict | None = None,
+                        origins_read: bool = False, origin_error: str | None = None) -> str:
     """What the built skill folder holds and when its receipt was written (#660), as one suffix; empty when unreadable.
 
     Read from the files only: the SKILL.md name and one-line description, the size of the paper text file, how many
-    figure, table and supplement files there are. It is not a summary of the paper, and the date is the receipt
-    file's own time, not a request's."""
+    figure, table and supplement files there are. It is not a summary of the paper. The request and date come from
+    the request that first built the skill when the store could be read; otherwise the date is the receipt file's own
+    time and the suffix says why (never presented as a request's date)."""
     from .recruit.paper_skills import skill_content
 
     facts = []
@@ -382,7 +422,13 @@ def _talent_skill_facts(folder: Path, receipt: Path, digest: str) -> str:
         if content.get("supplement"):
             facts.append("보충자료 있음")
     try:
-        facts.append("기록 시각(파일) " + time.strftime("%Y-%m-%d", time.localtime(receipt.stat().st_mtime)))
+        if origin:
+            facts.append(f"만든 요청 {_talent_text(origin['request_id'], 40)} · "
+                         + time.strftime("%Y-%m-%d", time.localtime(origin["created_at"])) + "(요청 기록)")
+        else:
+            why = "요청 기록에 없음" if origins_read else _talent_text(origin_error or "요청 기록을 읽지 않음", 60)
+            facts.append("기록 시각(파일) " + time.strftime("%Y-%m-%d", time.localtime(receipt.stat().st_mtime))
+                         + f"({why})")
     except (OSError, ValueError, OverflowError):
         pass
     return ("  " + " · ".join(facts)) if facts else ""
@@ -2462,7 +2508,8 @@ def main(argv: list[str] | None = None) -> None:
 
         reg = Registry(s.path(s.runner.agents_dir), s.path(s.runner.talent_dir),
                        s.path(s.runner.contract_dir) if s.runner.contract_dir else None)
-        for line in talent_lines(reg):
+        origins, origin_error = _paper_skill_origins(s)
+        for line in talent_lines(reg, origins, origin_error):
             print(line)
     elif args.cmd == "setup-paper2agent":
         from .recruit.paper2agent import setup_paper2agent, SOURCE_MARKER

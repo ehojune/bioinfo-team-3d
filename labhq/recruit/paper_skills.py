@@ -153,6 +153,28 @@ def skill_content(folder: Path, digest: str) -> dict[str, Any] | None:
         return None
 
 
+def skill_origins(requests) -> dict[tuple[str, str], dict[str, Any]]:
+    """Which request first built each skill (#660): {(paper_id, skill_sha256): {request_id, created_at}}.
+
+    `requests` is an iterable of (request id, created_at, that request's plan ``paper_skill_results`` list). A request
+    built a skill only where its row says ``ready``; ``reused`` means an earlier request built it. The earliest
+    created_at wins, and a malformed row or time is skipped, never guessed."""
+    found: dict[tuple[str, str], dict[str, Any]] = {}
+    for request_id, created_at, rows in requests:
+        if not isinstance(rows, list) or not isinstance(created_at, (int, float)) or isinstance(created_at, bool):
+            continue
+        for row in rows:
+            if not isinstance(row, dict) or row.get("status") != "ready":
+                continue
+            pid, digest = paper_id(row.get("paper_id")), row.get("skill_sha256")
+            if not pid or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                continue
+            known = found.get((pid, digest))
+            if known is None or created_at < known["created_at"]:
+                found[(pid, digest)] = {"request_id": str(request_id)[:60], "created_at": float(created_at)}
+    return found
+
+
 def cited_access(citations: list[str]) -> str | None:
     """The best `access_level=` a precedent's citations state, e.g. abstract or full_text; None when none says."""
     rank = {"full_text": 3, "abstract": 2, "abstract_only": 2, "metadata": 1}
