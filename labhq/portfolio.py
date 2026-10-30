@@ -1709,7 +1709,8 @@ def _environment_lines(files: Mapping[str, str | bytes]) -> list[str]:
                     packages[pkg].append(version)
     if not locks:
         return ["- 환경 기록이 없습니다. 패키지와 언어 버전이 남지 않아, 같은 환경을 다시 만든다고 보장할 수 없습니다."]
-    lines = [f"- 기록 파일: " + ", ".join(f"[`{name}`]({quote(name, safe='/')})" for name in locks[:4])]
+    lines = [f"- 기록 파일: " + ", ".join(f"[`{name}`]({quote(name, safe='/')})" for name in locks[:4])
+             + (f" 외 {len(locks) - 4}개" if len(locks) > 4 else "")]
     if packages:
         shown = sorted(packages.items())
         lines.append("- 기록된 버전: " + ", ".join(f"`{pkg} {' / '.join(versions)}`" for pkg, versions in shown[:15])

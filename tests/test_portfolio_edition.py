@@ -685,6 +685,9 @@ def test_the_environment_section_lists_pinned_versions_or_says_none():
     assert "`numpy 1.26.4`" in listed[1] and "`pandas 2.2.2`" in listed[1]
     twice = _environment_lines({"run/environment/a-requirements.lock.txt": "pandas==1.0\n", "run/environment/b-requirements.lock.txt": "pandas==2.0\n"})
     assert "`pandas 1.0 / 2.0`" in twice[1]
+    many = _environment_lines({f"run/environment/s{n}-requirements.lock.txt": "x==1
+" for n in range(6)})
+    assert "외 2개" in many[0]
     poetry = _environment_lines({"run/environment/poetry.lock": '[[package]]\nname = "scipy"\nversion = "1.11.4"\n'})
     conda = _environment_lines({"run/environment/environment.yml": "dependencies:\n  - numpy=1.26.4\n"})
     assert "`scipy 1.11.4`" in poetry[1] and "`numpy 1.26.4`" in conda[1]
