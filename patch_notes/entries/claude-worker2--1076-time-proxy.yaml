@@ -8,3 +8,7 @@ rows:
   at: 2026-10-30 23:38
   text: 시험 helper tests/support/time_proxy.py의 RuntimeProxy와 15개 파일 변환 (#1076).
   summary: 시험이 가짜 시계를 쓸 때 다른 스레드와 이벤트 루프까지 가짜 시계를 보지 않게 했습니다.
+- sha: '0678ff1'
+  at: 2026-10-30 23:58
+  text: login wait 시험이 gateway의 Hub.wait_login도 같은 가짜 시계를 보게 했다 (#1076).
+  summary: 로그인 대기 시험이 실제 20초씩 기다리지 않고 가짜 시계로 빨리 끝납니다.
