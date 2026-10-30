@@ -706,8 +706,8 @@ def test_env_example_lists_only_the_variables_the_published_scripts_read(tmp_pat
     example = files[".env.example"]
     assert [line for line in example.splitlines() if not line.startswith("#")] == [f"{key}=" for key in keys]
     assert "/home/a" not in example and "/srv/b" not in example  # no personal path is written
-    assert "`.env.example`" in files["README.md"] and ".env.example" in files["README.md"]
-    # An empty variable stops the script with the variable's name, so the reader knows what to fill in.
+    assert "set -a; . ./.env; set +a" in files["README.md"] and "set -a; . ./.env; set +a" in example
+    # An unset variable stops the script with the variable's name, so the reader knows what to export.
     with pytest.raises(KeyError) as stopped:
         exec(compile(code, "read_inputs.py", "exec"), {})
     assert stopped.value.args[0] in keys

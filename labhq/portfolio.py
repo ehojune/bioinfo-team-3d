@@ -1770,9 +1770,10 @@ def _input_keys(files: Mapping[str, str | bytes]) -> list[str]:
 
 
 def _env_example(keys: list[str]) -> str:
-    """Empty values for each input variable; a script that reads one left empty stops with that name in its error."""
+    """Empty values for each input variable. A script stops with the variable's name only while the variable is unset."""
     return ("# 정리본 스크립트가 읽는 입력 경로입니다. 값은 자신의 PC 경로로 채우세요.\n"
-            "# 비워 두면 해당 스크립트가 변수 이름이 담긴 KeyError로 멈춥니다.\n"
+            "# 셸에서 `set -a; . ./.env; set +a`로 내보낸 뒤 실행합니다. 값을 채우지 않고 내보내면 빈 경로가 됩니다.\n"
+            "# 변수를 내보내지 않으면 해당 스크립트가 변수 이름이 담긴 KeyError로 멈춥니다.\n"
             + "".join(f"{key}=\n" for key in keys))
 
 
@@ -1782,7 +1783,8 @@ def _run_lines(files: Mapping[str, str | bytes], run_documents: Mapping[str, str
     variables = (", ".join(f"`{key}`" for key in keys[:8]) + (f" 외 {len(keys) - 8}개" if len(keys) > 8 else "")
                  if keys else "없음")
     return [f"- 원자료가 있을 때: {reproduce}의 순서와 명령을 따릅니다. 입력 경로 환경 변수: {variables}. "
-            "경로 값은 정리본에 적지 않았으니 " + ("`.env.example`을 복사해 자신의 경로를 채웁니다." if keys else "자신의 경로를 넣습니다."),
+            "경로 값은 정리본에 적지 않았으니 " + ("`.env.example`을 `.env`로 복사해 경로를 채운 뒤 `set -a; . ./.env; set +a`로 내보냅니다." if keys
+               else "자신의 경로를 넣습니다."),
             "- 원자료가 없을 때: 재현 방법이 \"공개 자료로 다시 만들 수 있는 것\"으로 적은 단계만 정리본으로 다시 돌립니다. "
             "나머지 스크립트는 원자료가 없어 처음부터 돌릴 수 없으니 `tables/`의 결과표와 `report/`의 보고서로 결과와 근거를 "
             "확인합니다."]
