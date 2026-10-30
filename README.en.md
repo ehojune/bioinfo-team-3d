@@ -233,6 +233,8 @@ Details are in [Safety measures](docs/manual.en.md#safety-measures).
 
 Each version has pass criteria, and meeting them moves it on to the next version. Features merged since the v0.5 declaration passed tests and CI; their behavior and scientific benefit on real research requests remain unverified. The criteria, current status, and remaining work are in the [manual's roadmap](docs/manual.en.md#roadmap).
 
+The wall-clock limit for a whole request (`orchestrator.request_wall_clock_s`, off by default) is described in [Request wall-clock limit](docs/reference/request-deadline.en.md). No real request with the limit on has been run yet.
+
 Facilities support requirements and readiness evidence are distinguished in the [support policy table](docs/reference/facilities-support-983.md) (Korean). A doctor readiness result does not prove that a support request or recovery succeeded.
 
 ## Further reading

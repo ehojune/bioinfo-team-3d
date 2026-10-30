@@ -16,6 +16,8 @@ def request_status_label(status: object) -> str:
 
 
 def request_display_label(request: dict) -> str:
+    if request.get("status") == "cancelled" and request.get("cancel_reason") == "request_deadline":
+        return "시간 상한으로 취소됨"  # the request's wall-clock limit (#877), not a PI decision
     if request.get("pi_review_pending"):
         return "보고서 검토 대기" if request.get("status") in {"done", "review_pending"} else "결과 확인 대기"
     return request_status_label(request.get("status"))

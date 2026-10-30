@@ -488,3 +488,113 @@ def test_duplicate_nextflow_outputs_keep_each_steps_provenance(tmp_path):
     assert set(reports.values()) == {
         "<html>Nextflow report</html>", "<html>pipeline A</html>", "<html>pipeline B</html>",
     }
+
+
+REPRODUCE_TEXT = """# 재현 방법
+
+## 입력 설정
+
+- 별도 로컬 입력 경로 설정 없음
+
+## 실행 순서와 명령
+
+- `s1` (의존: 없음)
+- `s2` (의존: s1)
+- `s3` (의존: s2)
+
+- 먼저 `python link_inputs.py`: 단계 폴더의 `inputs/<앞 단계>`를 `steps/<앞 단계>/outputs`로 잇습니다
+- `cd steps/s1 && python outputs/scripts/count.py`
+- `cd steps/s2 && python outputs/scripts/plot.py`
+- `cd steps/s3 && python outputs/scripts/qc_recheck.py`
+
+## 예상 출력
+
+| 단계 | 출력 |
+|---|---|
+
+## 재현 가능 범위
+
+### 공개 자료로 다시 만들 수 있는 것
+
+- s1, s2, s3
+
+### 접근 제한 자료가 필요한 것
+
+- 없음
+
+원자료와 접근 자격은 정리본에 포함하지 않습니다.
+"""
+
+
+def test_reproduce_lists_only_what_the_edition_publishes_and_says_what_is_missing():
+    """#792: the bundle's command list named every copied script, the edition publishes the reported ones."""
+    from labhq.portfolio import _rewrite_reproduce_commands
+
+    source_targets = {"steps/s1/outputs/scripts/count.py": "code/s1/outputs/scripts/count.py",
+                      "steps/s2/outputs/scripts/plot.py": "code/s2/outputs/scripts/plot.py"}
+    files = {"code/s1/outputs/scripts/count.py": "print('self contained')\n",
+             "code/s2/outputs/scripts/plot.py": "from pathlib import Path\nrows = Path('inputs/s1/counts.tsv').read_text()\n"}
+    text = _rewrite_reproduce_commands(REPRODUCE_TEXT, source_targets, files)
+
+    assert "cd code/s1 && python outputs/scripts/count.py" in text  # published: kept in its published folder
+    assert "cd steps/" not in text and "link_inputs.py" not in text  # nothing to run there, no linker in the edition
+    assert "## 공개본과 실행본의 차이" in text
+    assert "정리본에 싣지 않은 단계 스크립트" in text and "- `s3`: `qc_recheck.py`" in text
+    assert "작업공간 경로(`manifest.json`, `inputs/<앞 단계>/…`, 단계가 선언한 `outputs/…`)를 씁니다" in text
+    assert "- `s2`: `outputs/scripts/plot.py`" in text
+    assert "### 공개 자료로 다시 만들 수 있는 것\n\n- s1\n" in text  # only the self-contained published step
+    assert "### 정리본만으로는 다시 만들 수 없는 것 (비공개 요청 묶음의 작업공간이 필요)\n\n- s2, s3\n" in text
+
+
+def test_reproduce_without_missing_scripts_is_left_as_it_was():
+    from labhq.portfolio import _rewrite_reproduce_commands
+
+    text = REPRODUCE_TEXT.replace("- s1, s2, s3", "- s1").replace(
+        "- `cd steps/s2 && python outputs/scripts/plot.py`\n", "").replace(
+        "- `cd steps/s3 && python outputs/scripts/qc_recheck.py`\n", "").replace(
+        "- 먼저 `python link_inputs.py`: 단계 폴더의 `inputs/<앞 단계>`를 `steps/<앞 단계>/outputs`로 잇습니다\n", "")
+    source_targets = {"steps/s1/outputs/scripts/count.py": "code/s1/outputs/scripts/count.py"}
+    files = {"code/s1/outputs/scripts/count.py": "print('self contained')\n"}
+    rewritten = _rewrite_reproduce_commands(text, source_targets, files)
+
+    assert "공개본과 실행본의 차이" not in rewritten and "정리본만으로는" not in rewritten
+    assert "### 공개 자료로 다시 만들 수 있는 것\n\n- s1\n" in rewritten
+
+
+def test_a_step_with_a_script_left_out_is_not_listed_as_re_creatable():
+    """Review P1: one published and one withheld script make the step partly published."""
+    from labhq.portfolio import _rewrite_reproduce_commands
+
+    text = REPRODUCE_TEXT.replace(
+        "- `cd steps/s3 && python outputs/scripts/qc_recheck.py`",
+        "- `cd steps/s1 && python outputs/scripts/extra_check.py`")
+    source_targets = {"steps/s1/outputs/scripts/count.py": "code/s1/outputs/scripts/count.py"}
+    files = {"code/s1/outputs/scripts/count.py": "print('self contained')\n"}
+    rewritten = _rewrite_reproduce_commands(text, source_targets, files)
+    assert "- `s1`: `extra_check.py`" in rewritten
+    assert "### 공개 자료로 다시 만들 수 있는 것\n\n- 없음\n" in rewritten
+    assert "s1" in rewritten.split("### 정리본만으로는")[1]
+
+
+@pytest.mark.parametrize("code", [
+    "rows = Path('inputs') / 's1' / 'table.tsv'\n",
+    "rows = os.path.join('inputs', step, 'table.tsv')\n",
+    'path = "inputs/s1/table.tsv"\n',
+    "# shell: cat inputs/s1/table.tsv\n",
+    "meta = json.load(open('manifest.json'))\n",
+    'frame = pd.read_csv(r"inputs\s1\table.tsv")' + "\n",
+    'open("inputs\\s1\\table.tsv")' + "\n",
+    "Path('inputs').joinpath('s1', 'table.tsv')\n",
+    "subprocess.run(['cat', 'inputs/s1/table.tsv'])\n",
+    "rows = open('outputs/reference/map.tsv')\n",
+])
+def test_composed_workspace_input_paths_are_detected(code):
+    from labhq.portfolio import _WORKSPACE_INPUT
+
+    assert _WORKSPACE_INPUT.search(code)
+
+
+def test_a_script_without_workspace_paths_is_not_flagged():
+    from labhq.portfolio import _WORKSPACE_INPUT
+
+    assert not _WORKSPACE_INPUT.search("import pandas as pd\nframe = pd.read_csv(sys.argv[1])\nprint(len(frame))\n")

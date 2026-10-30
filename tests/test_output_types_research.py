@@ -79,6 +79,9 @@ def test_engine_schemas_and_prompt_off_are_those_of_main():
     claims = "- " + cso.CLAIM_IDS_PLAN_RULE + "\n"
     assert prompt.count(claims) == 1
     prompt = prompt.replace(claims, "")  # #1066: a step's result cannot add a claim; only this rule is new
+    scripts = "- " + cso.SCRIPT_OUTPUTS_PLAN_RULE + "\n"
+    assert prompt.count(scripts) == 1 and "outputs/scripts/" in scripts  # the new rule is in the prompt and names the folder
+    prompt = prompt.replace(scripts, "")  # #792: only this rule is new; the rest is the previous prompt
     budget_now = ("lab's policy cap; when the PI wrote a budget on the request,\n"
                   "  that budget is the cap and this amount is only the estimate on the CP1 card. Exceeding the cap waits for a PI\n"
                   "  budget card.")
