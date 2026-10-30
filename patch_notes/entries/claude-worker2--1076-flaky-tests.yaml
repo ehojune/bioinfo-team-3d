@@ -8,3 +8,7 @@ rows:
   at: 2026-10-31 00:45
   text: manual에 doctor claude_parent_session_env 행이 남은 CLAUDE_* 변수 개수를 보인다는 설명을 더했다 (#1076).
   summary: 에이전트 세션 안에서 부모 세션 마커가 여러 개 보이는 것이 정상임을 매뉴얼에 적었습니다.
+- sha: '1eb65a1'
+  at: 2026-10-31 01:10
+  text: Windows 경계 계약의 tests/test_policy.py 해시를 고친 시험 내용에 맞췄다 (#1076).
+  summary: 고친 정책 시험이 Windows 선택 단계에서 오래된 계약으로 거부되지 않게 했습니다.
