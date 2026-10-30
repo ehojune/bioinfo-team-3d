@@ -25,12 +25,12 @@ def test_routine_job_is_bounded_and_has_one_bounded_suite_with_diagnostic_tail()
     jobs = yaml.safe_load((s.ROOT / cs.WORKFLOW).read_text(encoding='utf-8'))['jobs']
     job = jobs['pytest-windows']
     bound = job['timeout-minutes']
-    assert 'schedule' in bound and 'workflow_dispatch' in bound and '|| 14' in bound
+    assert 'schedule' in bound and 'workflow_dispatch' in bound and '|| 18' in bound
     assert '360' in bound  # Preserve GitHub's previous default for full nightly/manual.
     tests = [x for x in job['steps'] if x.get('run', '').startswith('pytest ')]
     # Two mandatory cold-browser viewports each have a 60 s hard cap; leave native tests and collection room.
     assert len(tests) == 2 and tests[0]['timeout-minutes'] == 3
-    assert '|| 9' in tests[1]['timeout-minutes']  # 1.5x the measured worst successful pool step (#931)
+    assert '|| 13' in tests[1]['timeout-minutes']  # 1.5x the measured worst successful pool step, 499 s (#931, #1076)
     assert '--ci-phase critical' in tests[0]['run'] and '--ci-phase parallel' in tests[1]['run']
     assert all('continue-on-error' not in step for step in tests)
     assert not any('preview' in str(x).lower() for x in job['steps'])
@@ -507,14 +507,14 @@ def test_changed_native_test_helper_adds_its_direct_consumer_only(tmp_path):
 
 
 def test_windows_pool_step_records_worker_stacks_before_its_time_limit():
-    # #1076: a pool step cut at its 9 minute cap left no trace of the test it was in.
+    # #1076: a pool step cut at its 13 minute cap left no trace of the test it was in.
     jobs = yaml.safe_load((s.ROOT / cs.WORKFLOW).read_text(encoding='utf-8'))['jobs']
     job = jobs['pytest-windows']
     pool = next(x for x in job['steps'] if '--ci-phase parallel' in x.get('run', ''))
     assert '--ci-stall' in pool['run']
     assert '--ci-stall' not in next(x for x in job['steps'] if '--ci-phase critical' in x.get('run', ''))['run']
     interval = float(job['env']['CI_STALL_INTERVAL_S'])
-    assert 1 <= interval and interval * 3 < 9 * 60  # three snapshots fit before the step is cut
+    assert 1 <= interval and interval * 3 < 13 * 60  # three snapshots fit before the step is cut
     assert any(x.get('if') == 'always()' and x.get('uses', '').startswith('actions/upload-artifact')
                for x in job['steps'])  # the stack logs survive a cut step
 
