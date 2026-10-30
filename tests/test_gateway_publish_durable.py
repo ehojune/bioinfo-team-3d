@@ -56,7 +56,7 @@ async def until_entered(entered):
     async def wait():
         while not entered.is_set():
             await asyncio.sleep(0.001)
-    await asyncio.wait_for(wait(), 2)
+    await asyncio.wait_for(wait(), 10)
 
 
 def event(label="first", request=True):
@@ -144,7 +144,7 @@ async def test_repeated_cancel_waits_for_commit_outcome(gateway, monkeypatch, co
         await task
     sender = getattr(hub, "committed_sender", None)
     if sender is not None:
-        await asyncio.wait_for(sender, 1)
+        await asyncio.wait_for(sender, 10)
     assert not hub.event_lock.locked()
     persisted = hub.store.events_since(0)
     assert len(persisted) == (0 if fail and commit == 1 else 1)
@@ -279,7 +279,7 @@ async def test_rest_history_waits_for_complete_ordered_publication(tmp_path, mon
     publication = asyncio.create_task(hub.publish(event(request=False)))
     read = None
     try:
-        await asyncio.wait_for(committed.wait(), 1)
+        await asyncio.wait_for(committed.wait(), 10)
         hub.review_done("r")
         read = asyncio.create_task(endpoint(since=since))
         await asyncio.sleep(0)
@@ -311,11 +311,11 @@ async def test_cancel_backpressured_client_finishes_storage_and_releases_event_l
     stalled = StalledClient()
     hub.clients.add(stalled)
     publication = asyncio.create_task(hub.publish(event(), "runner", 1))
-    await asyncio.wait_for(entered.wait(), 1)
+    await asyncio.wait_for(entered.wait(), 10)
     publication.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(publication, 1)
-    await asyncio.wait_for(closed.wait(), 1)
+    await asyncio.wait_for(closed.wait(), 10)
     assert not hub.event_lock.locked() and stalled not in hub.clients
     assert hub.store.get("request", "r")["status"] == "running"
     assert hub.store.runner_seen("runner") == 1
@@ -346,7 +346,7 @@ async def test_asgi_cancel_scope_only_shields_storage(gateway):
             await hub.publish(event())
 
     publication = asyncio.create_task(publish_in_scope())
-    await asyncio.wait_for(entered.wait(), 1)
+    await asyncio.wait_for(entered.wait(), 10)
     scopes[0].cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(publication, 1)
@@ -378,12 +378,12 @@ async def test_cancelled_send_still_delivers_to_remaining_clients_without_next_e
 
     hub.clients = OrderedClients([Slow(), Healthy()])
     publication = asyncio.create_task(hub.publish(event()))
-    await asyncio.wait_for(blocked.wait(), 1)
+    await asyncio.wait_for(blocked.wait(), 10)
     publication.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(publication, 1)
-    await asyncio.wait_for(received.wait(), 1)
-    await asyncio.wait_for(hub.committed_sender, 1)
+    await asyncio.wait_for(received.wait(), 10)
+    await asyncio.wait_for(hub.committed_sender, 10)
     assert deliveries == [1] and not hub.pending_committed
     assert not hub.event_lock.locked()
 

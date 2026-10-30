@@ -244,7 +244,7 @@ async def test_store_reads_do_not_wait_for_a_stalled_commit(tmp_path, fresh_writ
         store.all("task")
         reads.append(time.perf_counter() - started)
         await asyncio.sleep(0.02)
-    assert len(reads) >= 20 and max(reads) < 0.1  # the commits took 1.2 s in all
+    assert len(reads) >= 20 and max(reads) < 0.3  # the commits took 1.2 s in all; a read that waited on one would take about that
     assert store.get("task", "n2") == {"i": 2}
     SlowCommit.stall = 0.0
 

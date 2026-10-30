@@ -64,6 +64,67 @@
 - P2: rename 감지가 켜져 있으면 `git diff --name-only`가 목적지만 돌려줘 `labhq/` 파일을 `tests/`로 옮긴 커밋이 invisible로 면제됐다. 두 diff 호출에 `--no-renames`를 줬다.
 - 시험 1건(rename 커밋이 센다). 옛 스크립트로 실패, 새 스크립트로 통과를 확인했다. `tests/test_patch_notes.py` 22 passed.
 
+# #1125 안 C — runner outbox 배치를 한 transaction으로
+
+- 결론: runner의 `_send_batch_now`가 배치 안의 모든 행·메시지를 한 SQLite transaction으로 쓴다. 배치마다 commit·fsync가 한 번이다. 보장은 같거나 강하다(배치는 전부 되거나 전부 안 된다).
+- 바꾼 것:
+  - `labhq/store.py`: `StateStore.batch()`를 더했다. 안에서 이 thread가 하는 쓰기는 한 transaction이고 commit은 블록 끝에서 한 번이다. 안의 `_transaction`은 savepoint라 자기 오류는 자기 행만 되돌리고, 바깥 오류는 배치 전체를 되돌린다. 중첩 batch는 바깥에 합류한다.
+  - `labhq/runner/daemon.py`: `_send_batch_now`가 `store.batch()` 안에서 돈다. 읽는 쪽은 commit된 행만 보므로 outbox 재적재는 batch 안에서 미루고 commit 뒤에 한 번 한다(`_batch_thread`, `_reload_after_batch`).
+- 실행한 것(이 PC, 상태 폴더를 D:에 둔 lab 요청 1회, 5단계·이벤트 141건, SQLite가 실제로 실행한 `COMMIT` 문 수):
+  - main(#1126 반영): runner 298~311 + gateway 533 = **831~844회**. 이 안: runner 251~255 + gateway 533 = **784~788회**(runner lane −17~−18%, 전체 −5~−7%). #1126 이전 main(849~854회)과 비교하면 runner −21%, 전체 −8%였다.
+  - 요청 처리 시간은 25.8~26.5 s에서 23.7~25.2 s로 측정 잡음(±1 s)과 겹친다. runner lane은 요청의 임계 경로가 아니라 시간 이득은 이 안 하나로는 측정되지 않는다. 임계 경로는 gateway lane(533회)이라 안 A가 필요하다.
+  - 시험: `tests/test_state.py`에 6건(배치는 commit 한 번·순서 유지, 오류 시 전부 취소, 안쪽 쓰기 오류는 savepoint로 자기 행만 취소, 중첩 batch 합류, runner 배치의 commit 한 번과 outbox 재적재 한 번, 실패한 배치는 아무것도 안 남기고 재적재도 안 함)을 더했고 main의 store·daemon에서는 6건 모두 실패한다. 관련 시험 2,177 passed, 30 skipped, #606 시험(`test_durable_writer`·`test_approval_durable_606`·`test_gateway_publish_durable`·`test_runner_shutdown_signals`·`test_loop_liveness_606`) 116 passed.
+- 중간에 잡은 결함: 처음 구현은 배치 안의 첫 SAVEPOINT가 명시적 BEGIN 없이 transaction을 열어 그 RELEASE가 곧 COMMIT이었고(실제 commit이 줄지 않음), 시험 `test_store_batch_is_one_commit…`이 잡았다. `batch()`가 `BEGIN IMMEDIATE`를 명시하고, 종료는 연결의 컨텍스트 매니저(`with conn:`)를 그대로 써서 #606 시험이 commit 지연을 거는 지점을 지난다.
+- 리뷰 P2(교착)로 고친 것: `batch()`를 호출 thread에서 쓰면 살아 있는 writer thread가 `_write_lock`을 기다리는 동안 안의 `put()`이 그 뒤에 줄을 서 교착한다(이전 구현에서 재현됨). 이제 `batch()`는 store의 durable lane 안에서만 허용하고(아니면 `RuntimeError`), `run_batch`·`arun_batch`가 lane에서 실행한다. 안의 쓰기는 항상 인라인이고 앞서 큐에 든 쓰기 뒤에 순서대로 간다. 시험 2건(lane 밖 사용 거절, 비동기 쓰기 뒤 배치가 교착 없이 순서를 지킴)을 더했다.
+- 미확인: CI Windows 전후 시간, 배치가 큰 경우의 효과.
+- 근거: #1125 설계 댓글 6531718393, 결정 댓글 6531725554.
+
+## 단계
+#1117 rev5: 후보 ④. 근거: [#1117 조사 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1117#issuecomment-6530661340).
+
+## 판단
+`test_backpressured_runner_delivery_has_a_bound_even_after_cancel`의 의도는 "취소 뒤에도 backpressure 대기가 영원하지 않다"이다. 시험은 전송 상한(`CLIENT_SEND_TIMEOUT_S`)을 0.05초로 줄이고 소켓을 `release` 전까지 막으므로, 마감 0.5초는 상한의 10배일 뿐 의미 있는 경계가 아니었다. 끝나지 않는 구현은 마감이 몇 초든 실패한다. 그래서 의도를 지킨 채 마감만 올릴 수 있다.
+
+## 한 일
+- 종료 마감 `wait({task}, timeout=0.5)`를 5초로, 진입 대기 `wait_for(entered.wait(), 1)`을 10초로. 단언 문구·`release` 구조는 그대로.
+
+## 확인
+- `-k backpressured` 2 passed(resolve, close).
+- 변이 확인: 전송 상한을 100초로 바꾸면 두 건 모두 원래 메시지("held cancellation ... indefinitely")로 실패한다(약 11초).
+- Windows inventory: `known_tests` 목록에만 있고 sha256 고정 없음.
+
+## 하지 않은 것
+- 느린 Windows 러너 재현은 CI에서 확인한다. 구현이 0.05초보다 오래 막히는 문제가 있는지는 이 변경으로 알 수 없다(5초 안에 끝나는 것만 확인).
+
+## 리뷰 후 수정 (rev6)
+- P1: 5초는 설정 상한(0.05초)의 100배라 1~4.9초 붙잡는 회귀를 가렸다. 상한을 0.25초로 두고 마감은 그 4배(1초)로 좁혔다. 마감이 같은 비율이라 러너 지터의 절대 여유(0.75초)는 이전 0.45초보다 크다.
+- 소켓이 `release`가 아니라 timer 취소로 끝났는지(`send_timed_out`)를 단언한다.
+- 변이 확인: 상한을 2초로 바꾸면 두 건 모두 실패한다. `-k backpressured` 2 passed.
+- 한계: 마감은 여전히 실시간이라 매우 느린 러너에서는 1초를 넘길 수 있다. 가짜 clock은 쓰지 않았다.
+
+## 단계
+#1117 rev4: 후보 ②·③. 근거: [#1117 조사 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1117#issuecomment-6530661340).
+
+## 한 일
+- `tests/test_gateway_publish_durable.py`: `asyncio.wait_for(x, 1~2)` 18곳을 10초로. 모두 완료·이벤트 도착을 기다리는 곳이고 마감이 곧 단언인 곳은 없다. 실패하면 `TimeoutError`로 보인다.
+- `tests/test_durable_writer.py`: `max(reads) < 0.1`을 `< 0.3`으로. 정지한 commit은 합계 1.2초라 읽기가 commit을 기다렸다면 그 이상이 되어 여전히 실패한다(관측 0.1049로 실패한 적 있음).
+
+## 확인
+- 두 파일 54 passed.
+- Windows inventory: 두 파일 모두 `known_tests` 목록에만 있고 sha256 고정이 없어 수정하지 않았다.
+
+## 하지 않은 것
+- 느린 Windows 러너에서의 재현은 CI에서 확인한다.
+- 후보 ④(`test_approval_durable_606`)는 마감이 단언이라 이번 범위가 아니다.
+
+## 리뷰 후 수정 (rev6)
+- P1: `pytest.raises(CancelledError)` 아래의 `wait_for(publication)` 4곳과 `publish(event("next"))` 2곳은 lock이 빨리 풀린다는 단언이라 1초로 되돌렸다. 시작·도착 대기 12곳은 10초 그대로.
+- `test_gateway_publish_durable.py` 26 passed.
+
+## 리뷰 후 수정 (rev7)
+- P2: `CLIENT_SEND_TIMEOUT_S`를 0.01초로 둔 시험 두 건의 완료 대기 3곳을 1초로 되돌렸다. 규칙은 "설정한 timeout이 완료를 좌우하는 시험의 완료 대기는 짧게, 시작·도착 대기는 10초"이다.
+- main을 반영했다(#1123 병합 후). 두 파일 54 passed.
+
 # #660 2단계: 요청 사이 사용 이력
 
 - 결론: 논문 스킬이 다른 요청에서 선택된 기록을 세 곳에서 본다. `labhq talent --history`(gateway 없이 store를 읽기 전용으로), `GET /api/paper-skills`(인증), 웹 여우 패널 카드의 `이전 사용` 칸. 모두 최근 요청 500건 기준이며 그보다 오래된 요청이 있으면 그렇게 밝힌다.
