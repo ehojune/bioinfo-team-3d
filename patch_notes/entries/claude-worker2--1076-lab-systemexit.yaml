@@ -1,0 +1,5 @@
+rows:
+- sha: '58a0b41'
+  at: 2026-10-31 03:40
+  text: semantics shadow lab이 uvicorn startup 실패의 SystemExit를 uvicorn 로그 꼬리가 담긴 RuntimeError로 바꿔 한 시험만 실패하게 했다 (#1076).
+  summary: 시험용 gateway가 시작에 실패해도 같은 worker의 나머지 시험이 연쇄로 실패하지 않고 원인이 로그에 남습니다.
