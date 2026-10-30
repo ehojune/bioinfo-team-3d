@@ -1,5 +1,9 @@
 import os
+from pathlib import Path
 import subprocess
+import time
+
+import pytest
 
 from scripts.boundary_probe import probe
 from scripts.boundary_probe import integration_probe
@@ -97,7 +101,7 @@ def test_interop_passes_python_code_as_argv_not_shell_literal(tmp_path, monkeypa
     monkeypatch.setattr(probe.subprocess, "run", capture)
     assert probe.child("interop", tmp_path) == 0
     assert calls[0][5] == "-c"
-    assert calls[0][6].startswith("import pathlib,")
+    assert calls[0][6].startswith("import os,pathlib,") and "os.replace(" in calls[0][6]
     assert calls[0][-1] == "run-a"
 
 
@@ -176,3 +180,73 @@ def test_integration_receipt_without_ready_witness_is_inconclusive(monkeypatch):
     result = integration_probe.run(None, None)
     assert result["status"] == "inconclusive"
     assert result["protection_verified"] is False
+
+
+def test_unreadable_fixture_metadata_is_not_a_denial(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "port.txt").mkdir()  # reading it fails with an OS error, as a launcher denying host-made files would
+    (work / "fd.txt").mkdir()
+    assert probe.child("socket", tmp_path) == 20
+    assert probe.child("fd", tmp_path) == 20
+
+
+def test_run_reports_unreadable_fixture_as_inconclusive(monkeypatch):
+    def fake_run(argv, **kwargs):
+        # allowed passes; every other child could not read its fixture, so it exits 20 and never attempted anything
+        case = argv[-2]
+        return subprocess.CompletedProcess(argv, 0 if case == "allowed" else 20, stdout=b"boundary-probe-child\n")
+
+    monkeypatch.setattr(probe.subprocess, "run", fake_run)
+    result = probe.run([])
+    assert result["cases"]["allowed"]["status"] == "pass"
+    assert result["cases"]["socket"]["status"] == "inconclusive"
+    assert result["cases"]["fd"]["status"] in ("inconclusive", "unsupported")
+
+
+def test_marker_observation_waits_and_ignores_partial_content(tmp_path):
+    import threading
+
+    marker = tmp_path / "m.marker"
+
+    def late():
+        time.sleep(0.2)
+        marker.write_text("run-", encoding="ascii")  # a partial run id is not this run's marker
+        time.sleep(0.2)
+        probe.publish_signal(marker, "run-a")
+
+    worker = threading.Thread(target=late)
+    worker.start()
+    try:
+        assert probe.observe_marker(marker, "run-a", 0) is False
+        assert probe.observe_marker(marker, "run-a", 3) is True
+    finally:
+        worker.join()
+    assert probe.observe_marker(tmp_path / "never", "run-a", 0.1) is False
+    assert probe.observe_marker(marker, "other-run", 0) is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the interop probes exist only on Windows")
+def test_a_marker_published_after_launcher_timeout_is_a_failure(monkeypatch):
+    import threading
+
+    started = []
+
+    def fake_run(argv, **kwargs):
+        case, root = argv[-2], Path(argv[-1])
+        if case == "interop":
+            def late():
+                time.sleep(0.4)
+                probe.publish_signal(root / "work" / "interop.marker", (root / "run-id").read_text(encoding="ascii"))
+            thread = threading.Thread(target=late)
+            thread.start()
+            started.append(thread)
+            raise subprocess.TimeoutExpired(argv, 1)
+        return subprocess.CompletedProcess(argv, 0 if case == "allowed" else 20, stdout=b"boundary-probe-child\n")
+
+    monkeypatch.setattr(probe.subprocess, "run", fake_run)
+    result = probe.run([], interop_distro="disposable", timeout=2)
+    for thread in started:
+        thread.join()
+    assert result["cases"]["interop"] == {"status": "fail", "host_witness": True}
+    assert result["cases"]["reverse_interop"] == {"status": "inconclusive", "host_witness": False}

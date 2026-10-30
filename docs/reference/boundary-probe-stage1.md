@@ -22,4 +22,6 @@ The control and tool-use cases call real labhq functions with run-bound syntheti
 
 The built-in job MCP positive control starts the real server with disposable config and lists its tools over stdio, without invoking a tool or making a network request. This `stdio_list_only` result does not establish engine integration or functional broker access.
 
+A fixture file the child cannot read (for example the socket port or the descriptor number) is a setup failure: the child exits 20 and the case is `inconclusive`, never a denial `pass`. After the launcher returns or times out, the interop cases wait up to `INTEROP_GRACE_S` (3 s) for the run-bound marker, which the WSL side publishes through a temporary name and a rename, so a delayed host write is still a `fail` and a partial run ID is never read.
+
 Pending: positive interop controls in a suitable disposable environment, authenticated proof of detached-child cleanup, actual hook invocation, MCP operation inside the namespace and launcher-driven adversarial probes. Engine compatibility and protection are UNVERIFIED. Do not use this harness to enable the capability or claim protection.

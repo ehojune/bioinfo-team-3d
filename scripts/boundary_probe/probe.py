@@ -20,6 +20,34 @@ CASES = ("allowed", "read", "write", "symlink", "hardlink", "parent_replace",
          "control_hook", "tool_use_hook", "builtin_mcp")
 
 
+INTEROP_GRACE_S = 3  # how long after the launcher returns or times out a spawned WSL descendant may still publish
+
+
+class FixtureError(Exception):
+    """The host-made fixture could not be read: the probe never ran, so it says nothing about the boundary."""
+
+
+def read_fixture(path: Path, encoding: str = "ascii") -> str:
+    try:
+        return path.read_text(encoding=encoding)
+    except (OSError, ValueError) as exc:
+        raise FixtureError(path.name) from exc
+
+
+def observe_marker(marker: Path, run_id: str, wait_s: float = 0.0) -> bool:
+    """Whether this run's complete marker exists, polling up to `wait_s`; a missing or partial file is "not yet"."""
+    deadline = time.monotonic() + max(0.0, wait_s)
+    while True:
+        try:
+            if marker.read_text(encoding="ascii") == run_id:
+                return True
+        except (OSError, ValueError):
+            pass
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
 def publish_signal(path: Path, run_id: str) -> None:
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(run_id, encoding="ascii")
@@ -124,12 +152,12 @@ def child(case: str, root: Path) -> int:
             if os.environ.get("BOUNDARY_PROBE_CANARY") != "fixture-only":
                 return 10
         elif case == "socket":
-            port = int((work / "port.txt").read_text(encoding="ascii"))
+            port = int(read_fixture(work / "port.txt"))
             with socket.socket() as client:
                 client.settimeout(2)
                 client.connect(("127.0.0.1", port))
         elif case == "fd":
-            fd = int((work / "fd.txt").read_text(encoding="ascii"))
+            fd = int(read_fixture(work / "fd.txt"))
             try:
                 if os.read(fd, 1) != b"f":
                     return 20
@@ -207,12 +235,13 @@ def child(case: str, root: Path) -> int:
             if not (work / "detached.ready").exists() or (work / "detached.ready").read_text(encoding="ascii") != run_id:
                 return 20
         elif case in ("interop", "reverse_interop"):
-            distro = (work / "interop.distro").read_text(encoding="utf-8")
-            run_id = (root / "run-id").read_text(encoding="ascii")
+            distro = read_fixture(work / "interop.distro", "utf-8")
+            run_id = read_fixture(root / "run-id")
             if case == "interop":
-                program = ("import pathlib,subprocess,sys; "
+                # Written to a temporary name and renamed, so the host never sees a partial run id.
+                program = ("import os,pathlib,subprocess,sys; "
                            "p=subprocess.check_output(['wslpath','-u',sys.argv[1]],text=True).strip(); "
-                           "pathlib.Path(p).write_text(sys.argv[2],encoding='ascii')")
+                           "t=p+'.tmp'; pathlib.Path(t).write_text(sys.argv[2],encoding='ascii'); os.replace(t,p)")
                 arguments = [(work / "interop.marker").as_posix(), run_id]
             else:
                 program = ("import subprocess,sys; "
@@ -225,6 +254,8 @@ def child(case: str, root: Path) -> int:
                 return 20
         else:
             return 20
+    except FixtureError:
+        return 20  # a fixture that cannot be read is a setup failure, never a denial
     except PermissionError:
         return 10
     except (OSError, AssertionError, ImportError, KeyError, ValueError, TimeoutError):
@@ -337,18 +368,13 @@ def run(prefix: list[str], python: str = sys.executable, timeout: float = 10,
                     results[case] = {"status": "unsupported"}
                     continue
                 try:
-                    proc = subprocess.run([*prefix, python, script, "--child", case, str(root)],
-                                          cwd=work, env=env, capture_output=True, timeout=timeout)
-                    marker = work / (case + ".marker")
-                    witnessed = marker.exists() and marker.read_text(encoding="ascii") == run_id
-                    results[case] = {"status": "fail" if witnessed else "inconclusive", "host_witness": witnessed}
+                    subprocess.run([*prefix, python, script, "--child", case, str(root)],
+                                   cwd=work, env=env, capture_output=True, timeout=timeout)
                 except (OSError, subprocess.TimeoutExpired):
-                    marker = work / (case + ".marker")
-                    try:
-                        witnessed = marker.exists() and marker.read_text(encoding="ascii") == run_id
-                    except OSError:
-                        witnessed = False
-                    results[case] = {"status": "fail" if witnessed else "inconclusive", "host_witness": witnessed}
+                    pass  # a launch error or timeout says nothing; only the marker does
+                # A WSL descendant can publish after the launcher has returned or timed out.
+                witnessed = observe_marker(work / (case + ".marker"), run_id, INTEROP_GRACE_S)
+                results[case] = {"status": "fail" if witnessed else "inconclusive", "host_witness": witnessed}
                 continue
             if case == "detached_child":
                 # No current launcher provides trusted descendant lifecycle ownership.
@@ -403,7 +429,7 @@ def main() -> int:
     if args.interop_writer:
         root = Path(args.case_root)
         run_id = (root / "run-id").read_text(encoding="ascii")
-        (root / "work" / "reverse_interop.marker").write_text(run_id, encoding="ascii")
+        publish_signal(root / "work" / "reverse_interop.marker", run_id)
         return 0
     if args.detached_writer:
         root = Path(args.case_root)
