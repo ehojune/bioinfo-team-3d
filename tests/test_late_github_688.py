@@ -203,7 +203,9 @@ async def test_a_request_waiting_in_the_report_review_is_told_to_run_review_done
     hub.requests["r"]["status"] = "review_pending"
     with pytest.raises(ValueError) as caught:
         await hub.result_storage.to_github("r")
-    assert "labhq review-done r" in str(caught.value) and "--storage github" in str(caught.value)
+    text = str(caught.value)
+    # CP4's review needs the draft revision and its hash, so the hint carries both (review of PR #1078).
+    assert "labhq review-done r --revision <번호> --sha256 <hash>" in text and "--storage github" in text
     assert not calls  # refused before GitHub is asked anything
     await hub.result_storage.close()
 
