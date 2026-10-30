@@ -198,8 +198,8 @@ async def test_a_control_through_an_ended_turn_reaches_the_steps_live_turn(tmp_p
 def _alive(pid: int) -> bool:
     if os.name == "nt":
         out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"], capture_output=True,
-                             text=True, timeout=15).stdout
-        return f'"{pid}"' in out
+                             timeout=15).stdout  # bytes: the console code page is not the Python text encoding
+        return f'"{pid}"'.encode() in out
     try:
         os.kill(pid, 0)
         return True
