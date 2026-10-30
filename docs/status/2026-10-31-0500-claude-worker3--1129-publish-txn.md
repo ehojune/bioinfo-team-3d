@@ -12,7 +12,7 @@
 |---|---|---|---|
 | main | 844 | 32.9 s | 29.4 s |
 | 이 브랜치 | 670 | 23.9 s | 24.0 s |
-- commit −174(−21%), 요청 −5.4 s(−18%). 1회씩이라 요청 시간의 오차는 확인하지 못했다. 스크립트: `D:\.labhq\dev	mp\claude-worker3\measure1129.py`.
+- commit −174(−21%), 요청 −5.4 s(−18%). 1회씩이라 요청 시간의 오차는 확인하지 못했다. 스크립트: `D:/.labhq/dev/tmp/claude-worker3/measure1129.py`.
 
 ## 확인
 - `tests/test_gateway_publish_durable.py`, `test_state.py`, `test_approval_durable_606.py`, `test_durable_writer.py`, `test_state_control_async_606.py`, `test_step_state_async_606.py`, `test_request_lifecycle.py` 293 passed.
