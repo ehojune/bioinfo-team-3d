@@ -126,9 +126,12 @@ class StateStore:
                 yield
                 return
             conn = self._write_connection()
+            # An explicit BEGIN: the first SAVEPOINT of a write inside would otherwise start the transaction itself,
+            # and its RELEASE would commit it.
+            conn.execute("BEGIN IMMEDIATE")
             self._batch_conn = conn
             try:
-                with conn:
+                with conn:  # commits on exit, rolls back on error: the same exit a single write has
                     yield
             finally:
                 self._batch_conn = None
