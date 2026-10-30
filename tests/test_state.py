@@ -1599,3 +1599,150 @@ async def test_wait_until_follows_the_clock_not_a_tick_count():
     late = time.monotonic()
     assert wait_until_sync(lambda: time.monotonic() - late > 0.2, timeout=5.0) is True
     assert wait_until_sync(lambda: False, timeout=0.1) is False
+
+
+# ---- #1125: a batch of writes is one commit ----------------------------------------------------------------------
+def _commit_log(store):
+    """The COMMIT statements the write connection runs: each one is an fsync."""
+    log = []
+    store._write_connection().set_trace_callback(log.append)
+    return lambda: sum(1 for line in log if line.strip().upper() == "COMMIT")
+
+
+def test_store_batch_is_one_commit_in_order_where_separate_writes_are_one_each(tmp_path):
+    store = StateStore(tmp_path / "state.sqlite3")
+    commits = _commit_log(store)
+    store.put("k", "a", {"n": 1})
+    store.enqueue({"type": "agent.log", "data": {"n": 2}}, 10)
+    store.put("k", "b", {"n": 3})
+    assert commits() == 3  # without a batch each write waits for its own fsync
+
+    def writes():
+        store.put("k", "c", {"n": 4})
+        store.enqueue({"type": "agent.log", "data": {"n": 5}}, 10)
+        store.put("k", "d", {"n": 6})
+
+    store.run_batch(writes)
+    assert commits() == 4  # the batch added exactly one
+    assert [e["data"]["n"] for e in store.pending()] == [2, 5]
+    assert {key: body["n"] for key, body in store.all("k").items()} == {"a": 1, "b": 3, "c": 4, "d": 6}
+    store.close()
+
+
+def test_store_batch_is_all_or_nothing(tmp_path):
+    store = StateStore(tmp_path / "state.sqlite3")
+
+    def writes():
+        store.put("k", "a", {"n": 1})
+        store.enqueue({"type": "agent.log", "data": {"n": 2}}, 10)
+        raise RuntimeError("the third write fails")
+
+    with pytest.raises(RuntimeError, match="third write"):
+        store.run_batch(writes)
+    assert store.all("k") == {} and store.pending() == []
+    store.close()
+
+
+def test_a_failed_write_inside_a_batch_undoes_only_its_own_rows(tmp_path):
+    store = StateStore(tmp_path / "state.sqlite3")
+    commits = _commit_log(store)
+
+    def writes():
+        store.put("k", "a", {"n": 1})
+        with pytest.raises(ValueError):
+            with store._transaction() as conn:
+                conn.execute("INSERT OR REPLACE INTO state VALUES ('k', 'half', '{}')")
+                raise ValueError("this write fails and its caller carries on")
+        store.put("k", "b", {"n": 2})
+
+    store.run_batch(writes)
+    assert set(store.all("k")) == {"a", "b"}  # 'half' was undone, the others committed
+    assert commits() == 1
+    store.close()
+
+
+def test_a_batch_inside_a_batch_joins_the_outer_one(tmp_path):
+    store = StateStore(tmp_path / "state.sqlite3")
+    commits = _commit_log(store)
+
+    def writes():
+        store.put("k", "a", {"n": 1})
+        with store.batch():
+            store.put("k", "b", {"n": 2})
+        store.put("k", "c", {"n": 3})
+
+    store.run_batch(writes)
+    assert commits() == 1 and set(store.all("k")) == {"a", "b", "c"}
+    store.close()
+
+
+def test_a_batch_outside_the_stores_lane_is_refused(tmp_path):
+    store = StateStore(tmp_path / "state.sqlite3")
+    with pytest.raises(RuntimeError, match="run_batch"):
+        with store.batch():
+            store.put("k", "a", {"n": 1})  # would queue behind a live writer thread that waits for this lock
+    assert store.all("k") == {}
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_batch_after_an_async_write_does_not_deadlock_and_stays_in_order(tmp_path):
+    """The writer thread of an `aenqueue` is still alive when the batch is asked for: the batch goes through the lane,
+    behind the earlier write, and the next async write lands behind the batch."""
+    store = StateStore(tmp_path / "state.sqlite3")
+    await store.aenqueue({"type": "agent.log", "data": {"n": 1}}, 10)
+
+    def writes():
+        store.enqueue({"type": "agent.log", "data": {"n": 2}}, 10)
+        store.enqueue({"type": "agent.log", "data": {"n": 3}}, 10)
+
+    await asyncio.wait_for(asyncio.to_thread(store.run_batch, writes), 10)
+    await asyncio.wait_for(store.arun_batch(lambda: store.enqueue({"type": "agent.log", "data": {"n": 4}}, 10)), 10)
+    await store.aenqueue({"type": "agent.log", "data": {"n": 5}}, 10)
+    assert [e["data"]["n"] for e in store.pending()] == [1, 2, 3, 4, 5]
+    store.close()
+
+
+def test_runner_batch_is_one_commit_and_reloads_the_outbox_once_after_it(tmp_path, monkeypatch):
+    runner = Runner(settings(tmp_path))
+    commits = _commit_log(runner.store)
+    seen = []
+    real_reload = runner.reload_outbox
+
+    def reload_outbox(*args, **kwargs):
+        seen.append([e["type"] for e in runner.store.pending()])  # a reader sees only what is committed
+        return real_reload(*args, **kwargs)
+
+    monkeypatch.setattr(runner, "reload_outbox", reload_outbox)
+    runner._send_batch_now([
+        ({"type": "agent.status", "data": {"n": 1}}, [("accepted_task", "t1", {"id": "t1"})], []),
+        ({"type": "task.result", "task_id": "t1", "data": {"ok": True}}, [], [("accepted_task", "t1", {"id": "t1", "done": True})]),
+    ])
+    assert commits() == 1
+    assert seen == [["agent.status", "task.result"]]  # once, with both messages already committed
+    assert [json.loads(runner.outbox.get_nowait())["type"] for _ in range(runner.outbox.qsize())] == [
+        "agent.status", "task.result"]
+    assert runner.store.get("accepted_task", "t1") == {"id": "t1", "done": True}
+    runner.store.close()
+
+
+def test_a_failing_runner_batch_leaves_nothing_and_reloads_nothing(tmp_path, monkeypatch):
+    runner = Runner(settings(tmp_path))
+    reloads = []
+    monkeypatch.setattr(runner, "reload_outbox", lambda *a, **k: reloads.append(1))
+    real_enqueue = runner.store.enqueue
+
+    def enqueue(body, limit):
+        if body.get("type") == "task.result":
+            raise OSError("the disk is full")
+        return real_enqueue(body, limit)
+
+    monkeypatch.setattr(runner.store, "enqueue", enqueue)
+    with pytest.raises(OSError):
+        runner._send_batch_now([
+            ({"type": "agent.status", "data": {"n": 1}}, [("accepted_task", "t1", {"id": "t1"})], []),
+            ({"type": "task.result", "task_id": "t1", "data": {}}, [], []),
+        ])
+    assert runner.store.pending() == [] and runner.store.get("accepted_task", "t1") is None
+    assert reloads == []
+    runner.store.close()
