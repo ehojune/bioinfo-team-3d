@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '74212ef'
+    at: '2026-10-30 13:21'
+    summary: 'timeout 뒤 synthetic writer를 종료합니다.'
+    text: 'Cancel detached probe writer on timeout'
   - sha: 'd907b67'
     at: '2026-10-30 13:02'
     summary: '진단 barrier 신호를 완성한 뒤 게시합니다.'
