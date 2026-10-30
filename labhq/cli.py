@@ -256,12 +256,22 @@ def task_control(s: Settings, action: str, task_id: str, text: str | None = None
     return f"{task_id}: {TASK_CONTROL_DONE[action]}{where}"
 
 
-def _request_deadline_line(s, rid: str) -> str | None:
+def _request_deadline_line(s, rid: str, state: dict | None = None) -> str | None:
     """`시간 상한: …` for one running request (#877), from the request record. None when the record cannot be read:
-    saying nothing is better than saying the limit is off."""
+    saying nothing is better than saying the limit is off. A request the gateway no longer knows (an HTTP error) is
+    skipped alone; after a connection or timeout failure ``state["down"]`` is set and the other requests of the same
+    `labhq status` are not asked, so a gateway that went silent costs one wait, not one per request."""
+    import httpx
+
+    if state is not None and state.get("down"):
+        return None
     try:
-        detail = _api(s, "GET", f"/api/requests/{rid}")
-    except (Exception, SystemExit):  # _api ends the command on an HTTP or connection error; one request must not
+        detail = _api(s, "GET", f"/api/requests/{rid}", raw_errors=True)
+    except httpx.HTTPStatusError:
+        return None
+    except (Exception, SystemExit):  # transport failure, or a stand-in that ends the command
+        if state is not None:
+            state["down"] = True
         return None
     if not isinstance(detail, dict):
         return None
@@ -2181,11 +2191,12 @@ def main(argv: list[str] | None = None) -> None:
                          f"없음 — `{_config_command(s, 'up')}`로 켜야 요청이 진행됩니다"))
         running = _api(s, "GET", "/api/requests?status=running&limit=200")
         print(f"진행 중 요청: {len(running)}")
+        deadline_state: dict = {}
         for req in running:
             progress = req["step_progress"]
             held = "" if req.get("status") == "running" else f" [{request_display_label(req)}]"
             print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}{held}")
-            if deadline := _request_deadline_line(s, req["id"]):
+            if deadline := _request_deadline_line(s, req["id"], deadline_state):
                 print(f"    {deadline}")
             environment = req.get("step_environment") or {}
             waits = req.get("step_waits") or {}

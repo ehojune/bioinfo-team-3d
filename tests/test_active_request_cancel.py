@@ -404,6 +404,27 @@ class RequestDeadlineVisible(unittest.TestCase):
         with mock.patch.object(cli, "_api", return_value=[]):
             self.assertIsNone(cli._request_deadline_line(object(), "r"))
 
+    def test_one_unknown_request_is_skipped_but_a_silent_gateway_is_asked_only_once(self):
+        from unittest import mock
+
+        import httpx
+
+        from labhq import cli
+
+        gone = httpx.HTTPStatusError("gone", request=httpx.Request("GET", "http://x"), response=httpx.Response(404))
+        with mock.patch.object(cli, "_api", side_effect=[gone, self.request(), self.request()]) as api:
+            state = {}
+            self.assertIsNone(cli._request_deadline_line(object(), "a", state))
+            self.assertIn("시간 상한:", cli._request_deadline_line(object(), "b", state))
+            self.assertFalse(state.get("down"))
+            self.assertEqual(api.call_count, 2, "an HTTP error is that request's own: the next one is still asked")
+        with mock.patch.object(cli, "_api", side_effect=httpx.ConnectTimeout("silent")) as api:
+            state = {}
+            for rid in ("a", "b", "c"):
+                self.assertIsNone(cli._request_deadline_line(object(), rid, state))
+            self.assertTrue(state["down"])
+            self.assertEqual(api.call_count, 1, "after a connection failure the other requests are not asked")
+
 
 if __name__ == "__main__":
     unittest.main()
