@@ -11,3 +11,6 @@
 
 ## 테스트 결과
 Windows `tests/test_output_checks.py`·`tests/test_research_report.py` 90 passed.
+
+## 2단계(rev3) — 연결
+`cso.py` `update_conclusion_depth`의 두 호출에 `stored=output_checks.stored_access(요청의 analysis_precedents)`를 넘기고 manual 한·영 세는 규칙 문단에 한 문장을 더했다. 연결 시험은 `tests/test_research_cp2.py`가 claim 범위 밖이라 PR에 넣지 못했다. 로컬에서는 통과(main의 cso.py로 되돌리면 실패)를 확인했고 패치는 `D:\.labhq\dev\tmp\claude-worker3\1090_wiring_test.patch`에 있다. 실행: `tests/test_output_checks.py` 46 passed.
