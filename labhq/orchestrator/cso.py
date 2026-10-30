@@ -3259,6 +3259,19 @@ class Orchestrator:
         return {"agents": {agent_id: (info or {}).get("model_tier")
                            for agent_id, info in (getattr(self.hub, "agents", None) or {}).items()}}
 
+    def _dispatch_step_tier(self, step: dict) -> str | None:
+        """The tier a step's task is sent with (#625): the one place that decides, whatever plan the step came from.
+
+        A stored research plan resumes with its own step dicts, not the ones validate_steps returned, so the tier is
+        checked again here: nothing while orchestrator.step_model_tiers is off, otherwise clamp_step_tier against the
+        staff member's declared tier and the phase floor."""
+        rules = self._tier_rules()
+        if rules is None or step.get("model_tier") is None:
+            return None
+        tier, _note = clamp_step_tier(str(step.get("id") or ""), step.get("model_tier"),
+                                      rules["agents"].get(step.get("agent_id")), step.get("phase"))
+        return tier
+
     def _external_guard(self, rid: str) -> Callable[[list[dict]], list[str]] | None:
         """validate_steps guard: contract staff that send data out stay off restricted-input steps (#424)."""
         settings = getattr(self.hub, "s", None)
@@ -5357,7 +5370,7 @@ class Orchestrator:
                         resume_session_id=session_id if can_resume else None,
                         meta={**reference_meta(self.hub.requests.get(rid)),
                               "kind": "step", "step_id": step["id"], "request": request,
-                              **({"model_tier": step["model_tier"]} if step.get("model_tier") else {}),
+                              **({"model_tier": tier} if (tier := self._dispatch_step_tier(step)) else {}),
                               "paper_skills": paper_skills.attachments(
                                   self.hub.requests.get(rid, {}).get("plan") or {}, step["id"], step["agent_id"], rid),
                               "instruction": step["instruction"],

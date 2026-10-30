@@ -545,3 +545,23 @@ async def test_cso_on_caps_the_step_tier_and_hands_it_to_the_task():
     tasks = {t.meta.get("step_id"): t for t in hub.calls if t.meta["kind"] == "step"}
     assert tasks["compute_qc_metrics"].meta["model_tier"] == "fast"
     assert "model_tier" not in tasks["materialize_data"].meta and "model_tier" not in tasks["qc_review"].meta
+
+
+@pytest.mark.parametrize("enabled, step, agents, expected", [
+    # a stored research plan resumes with its own step dicts: the tier is decided where the task is made
+    (False, {"id": "s1", "agent_id": "analyst", "model_tier": "fast"}, {"analyst": "reasoning"}, None),
+    (True, {"id": "s1", "agent_id": "analyst", "model_tier": "fast"}, {"analyst": "reasoning"}, "fast"),
+    (True, {"id": "s1", "agent_id": "analyst", "model_tier": "reasoning"}, {"analyst": "fast"}, None),      # capped
+    (True, {"id": "s1", "agent_id": "analyst", "model_tier": "fast", "phase": "validation"},
+     {"analyst": "reasoning"}, "balanced"),                                                                  # the floor
+    (True, {"id": "s1", "agent_id": "analyst", "model_tier": "fast"}, {}, None),                            # no declared tier
+    (True, {"id": "s1", "agent_id": "analyst"}, {"analyst": "reasoning"}, None),                            # no step tier
+    (True, {"id": "s1", "agent_id": "analyst", "model_tier": "turbo"}, {"analyst": "reasoning"}, None),
+])
+def test_the_dispatch_decides_the_step_tier_again_whatever_plan_the_step_came_from(enabled, step, agents, expected):
+    hub = penguins_hub(["fixture"])
+    hub.s.orchestrator.step_model_tiers = enabled
+    for agent_id, declared in agents.items():
+        hub.agents.setdefault(agent_id, {"id": agent_id, "name": agent_id, "role": "test", "engine": "mock"})
+        hub.agents[agent_id]["model_tier"] = declared
+    assert Orchestrator(hub)._dispatch_step_tier(step) == expected
