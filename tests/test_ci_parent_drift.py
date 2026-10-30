@@ -248,7 +248,8 @@ def test_main_moving_ahead_of_the_checkout_parent_is_still_recognised_as_base_dr
     assert f"compare/{TESTED_BASE}...{MAIN_NOW}" in calls and len(calls) == 8
 
 
-@pytest.mark.parametrize("case", ["diverged", "behind", "behind-by", "base-mismatch", "merge-base-mismatch", "unrelated"])
+@pytest.mark.parametrize("case", ["diverged", "behind", "behind-by", "base-mismatch", "merge-base-mismatch", "unrelated",
+                                  "partial-count", "partial-tail", "missing-commits", "empty-commits", "boolean-count"])
 def test_a_main_that_is_not_ahead_of_the_checkout_parent_stays_an_error(drift, case):
     *_, data, _, output = drift
     if case == "unrelated":
@@ -257,7 +258,15 @@ def test_a_main_that_is_not_ahead_of_the_checkout_parent_stays_an_error(drift, c
     elif case == "behind": main_moved_ahead(data, status="behind")
     elif case == "behind-by": main_moved_ahead(data, behind_by=1)
     elif case == "base-mismatch": main_moved_ahead(data, base=EVENT_BASE)
-    else: main_moved_ahead(data, merge_base=EVENT_BASE)
+    elif case == "merge-base-mismatch": main_moved_ahead(data, merge_base=EVENT_BASE)
+    else:
+        main_moved_ahead(data)
+        moved = data[f"compare/{TESTED_BASE}...{MAIN_NOW}"]
+        if case == "partial-count": moved["total_commits"] = 2  # more commits exist than were returned
+        elif case == "partial-tail": moved["commits"][-1]["sha"] = "f" * 40  # the answer does not end at main
+        elif case == "missing-commits": del moved["commits"]
+        elif case == "empty-commits": moved.update(total_commits=0, ahead_by=0, commits=[])
+        else: moved["total_commits"] = True
     with pytest.raises(ValueError, match="checkout-parents"):
         cs.main()
     assert not output.exists() and not Path("ci-result.json").exists()

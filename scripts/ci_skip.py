@@ -652,9 +652,13 @@ def confirmed_base_drift(current: dict, snapshot: dict, parents: list[str], run:
             # commit main already contains, and main may only be ahead of it. A diverged, behind or unrelated main
             # stays an error, as does any partial answer.
             moved = api(f"compare/{base}...{main['object']['sha']}")
+            total = moved["total_commits"]
             if not (moved["status"] == "ahead" and type(moved["behind_by"]) is int and moved["behind_by"] == 0
-                    and moved["base_commit"]["sha"] == moved["merge_base_commit"]["sha"] == base):
-                return False
+                    and type(total) is int and 0 < total <= 250
+                    and type(moved["ahead_by"]) is int and moved["ahead_by"] == total == len(moved["commits"])
+                    and moved["base_commit"]["sha"] == moved["merge_base_commit"]["sha"] == base
+                    and moved["commits"][-1]["sha"] == main["object"]["sha"]):
+                return False  # a complete forward answer ending at main, like the event-base compare below
         forward = api(f"compare/{snapshot['base_sha']}...{base}")
         count = forward["total_commits"]
         if not (forward["status"] == "ahead" and type(forward["behind_by"]) is int and forward["behind_by"] == 0
