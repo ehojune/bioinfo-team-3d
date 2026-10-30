@@ -14,7 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:55 | [`bce1707`](https://github.com/ehojune/bioinfo-team-3d/pull/1083/commits/bce1707) | **매뉴얼의 결과 저장 설명을, 보고서 검토를 기다리는 요청은 먼저 검토를 마쳐야 GitHub로 옮길 수 있다는 현재 동작에 맞췄습니다.**<br>docs: manual 한·영 저장 절을 검토 대기 요청의 --to github 거절 흐름에 맞춤 (#1077) |
 | 19:36 | [`12f24f0`](https://github.com/ehojune/bioinfo-team-3d/pull/1078/commits/12f24f0) | **안내서의 검토 명령에도 보고서 카드에 적힌 번호와 확인값을 넣어야 한다는 점을 적었습니다.**<br>docs: README·status의 review-done 명령에 CP4가 요구하는 revision·hash를 적음 (#1077 리뷰 P2) |
+| 19:26 | [`ae942ab`](https://github.com/ehojune/bioinfo-team-3d/pull/1082/commits/ae942ab) | **Windows 시험 단계가 시간 상한에 걸려 끊겨도 어느 시험이 돌고 있었는지 기록이 남습니다.**<br>Windows pool 단계에 --ci-stall을 켜고 stack snapshot 간격을 CI_STALL_INTERVAL_S(기본 300, Windows 150초)로 정해, 9분에 끊긴 순간의 worker별 시험을 artifact에 남긴다 |
 | 19:25 | [`d91565c`](https://github.com/ehojune/bioinfo-team-3d/pull/1078/commits/d91565c) | **안내하는 검토 명령에 보고서 카드에 적힌 번호와 확인값을 함께 넣어야 한다는 점까지 적었습니다.**<br>fix: review-done 안내에 CP4가 요구하는 --revision과 --sha256을 함께 적음 (#1077 리뷰 P2) |
 | 19:15 | [`f5482b6`](https://github.com/ehojune/bioinfo-team-3d/pull/1078/commits/f5482b6) | **안내서에 검토를 기다리는 요청을 GitHub로 옮길 때의 순서를 적었습니다.**<br>docs: README 한·영에 검토 대기 요청의 GitHub 이동 안내를 적음 (#1077) |
 | 19:14 | [`0e0f0d2`](https://github.com/ehojune/bioinfo-team-3d/pull/1078/commits/0e0f0d2) | **보고서 검토를 기다리는 요청을 GitHub로 옮기려 할 때, 먼저 검토를 마치라는 명령을 알려 주도록 했습니다.**<br>fix: review_pending 요청의 --to github 거절 문구에 review-done 안내를 붙이고 CP4→게시 연결 시험을 더함 (#1077) |

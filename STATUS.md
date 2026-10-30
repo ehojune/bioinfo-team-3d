@@ -4,6 +4,30 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1077 후속: manual 저장 절
+
+- 결론: PR #1078이 `review_pending` 요청의 `--to github`를 거절하고 명령을 안내하도록 바꿨는데, 상세 manual 한·영 저장 절은 "검토 전이면 검토 완료를 기다린다"로만 적혀 있어 새 흐름과 어긋났다(#1078 리뷰의 남은 P2). 코드는 바꾸지 않았다.
+- 바꾼 것: `docs/manual.md`·`docs/manual.en.md`의 "로컬로 끝난 요청을 나중에 GitHub로(#688)" 문단. (1) CP4가 아닌 요청은 이전처럼 검토 완료를 기다림, (2) CP4 요청이 `review_pending`이면 거절하고 보고서 카드의 번호·hash로 `labhq review-done <id> --revision <번호> --sha256 <hash>`를 먼저 하거나 `--storage github [--name] [--visibility]`를 붙여 한 번에 하라고 안내함, (3) 토큰은 gateway 시작 때 읽으므로 새 토큰을 넣었으면 재시작 뒤 실행.
+- 실행한 것: `tests/test_integrations.py` 통과(문서만 변경).
+
+## 단계
+#1076 ① Windows pool 9분 초과: 끊긴 순간의 시험을 남기는 진단(상한은 바꾸지 않음). 진단안·승인: [#1076 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6520450345).
+
+## 한 일
+1. `.github/workflows/test.yml`: pool 단계 명령에 `--ci-stall`을 더하고 `pytest-windows` job env에 `CI_STALL_INTERVAL_S: '150'`을 둔다. 150·300·450초에 worker마다 `parallel/stacks-gwN.log`에 현재 시험 nodeid와 모든 스레드 stack, 끝나지 않은 asyncio task stack이 남고, 마지막 snapshot이 상한 540초의 90초 전이다. 산출물은 기존 `if: always()` upload로 끊겨도 7일 보관된다.
+2. `scripts/ci_suite.py`: `stall_interval()`이 `CI_STALL_INTERVAL_S`(1 이상 숫자)를 읽고 아니면 300으로 돌아간다. `WorkerStall`이 이 간격을 쓴다. Linux 3.10 단계는 환경변수가 없어 기존 300초 그대로다.
+3. `tests/test_ci_windows10m.py`: workflow 계약(pool만 `--ci-stall`, 간격 × 3 < 540초, always upload), 간격 해석, snapshot이 현재 시험을 적고 `.log`가 phase 검사 glob(`collection-*.json`·`metrics-*.json`·`*error*.json`)에 걸리지 않는다는 것을 시험으로 더했다.
+
+## 확인한 것 (PR 본문 미확인 3가지 중)
+- `windows.combine`·`check`는 `collection-*.json`·`metrics-*.json`·`*error*.json`만 읽는다(`scripts/ci_windows_phases.py` 99~105·232행). `stacks-gwN.log`는 걸리지 않는다. 첫 CI에서 한 번 더 확인한다.
+
+## 아직 확인하지 못한 것
+- 450초 snapshot이 실제로 상한 전에 artifact에 남는지(상한에 닿는 run이 나와야 확인).
+- Windows에서 `gc.get_objects()` 순회와 스레드의 비용(첫 CI의 pool 단계 소요를 기존 중앙 6.8분과 비교).
+
+## 테스트 결과
+Windows `test_ci_windows10m`·`test_ci_windows_phases`·`test_ci_boundary_preview`·`test_ci_skip_policy`·`test_ci_cohort823` 569 passed.
+
 # #1077 후속: 검토 대기 요청의 `--to github` 안내와 연결 시험
 
 - 결론: 점검(#1077 댓글)에서 나온 두 가지를 반영했다.
