@@ -1,0 +1,5 @@
+rows:
+  - sha: "5cacb92"
+    at: "2026-10-31 02:28"
+    summary: "시험에서 서버 포트를 못 잡아 uvicorn이 끝나도 같은 worker의 다른 시험이 연쇄로 실패하지 않고, 그 시험 하나만 원인과 함께 실패합니다."
+    text: "시험: uvicorn 시작 실패의 SystemExit가 worker를 죽이지 않게 serve_task로 감쌈 (#1113)"
