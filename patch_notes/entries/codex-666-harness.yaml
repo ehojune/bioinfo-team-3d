@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '30e1b0f'
+    at: '2026-10-30 15:33'
+    summary: 'spawn 방식의 합성 broker 통합 진단을 지원합니다.'
+    text: 'Support spawned synthetic broker integration'
   - sha: '64d45cf'
     at: '2026-10-30 15:30'
     summary: '자손 lifecycle이 보장되지 않으면 interop probe 실행을 차단합니다.'
