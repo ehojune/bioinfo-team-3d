@@ -16,3 +16,7 @@ rows:
   at: 2026-10-31 05:00
   text: 업그레이드 전에 끝나는 네 경로(close, 연결 실패, 일반 HTTP 거절, 잘못된 accept 키)가 모두 onerror·onclose 한 번씩임을 시험으로 고정한다
   summary: 업그레이드 전 종료 경로 전체를 시험이 지킵니다.
+- sha: 'e214121'
+  at: 2026-10-31 05:30
+  text: 업그레이드 응답이 온 뒤에는 모든 끝(잘못된 accept 키, 업그레이드 중 close 포함)을 업그레이드된 socket의 close가 onclose로 보고하게 구조를 바로잡는다(리뷰 P2) + 시험이 socket close 뒤임을 확인
+  summary: 업그레이드 뒤 어떤 경로로 끝나도 정리가 실제 socket 종료 뒤에 알게 됩니다.
