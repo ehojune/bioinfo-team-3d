@@ -50,7 +50,8 @@ def validate(plan, now=None):
         errors.append('$.image_digest: expected lowercase sha256 digest')
     expiry = p.get('expires_at')
     try:
-        if not isinstance(expiry, str) or not expiry.endswith('Z'):
+        if not isinstance(expiry, str) or not re.fullmatch(
+                r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z', expiry):
             raise ValueError
         expires = dt.datetime.fromisoformat(expiry[:-1] + '+00:00')
         if expires <= (now or dt.datetime.now(dt.timezone.utc)):

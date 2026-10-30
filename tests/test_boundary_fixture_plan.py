@@ -48,6 +48,14 @@ def test_expired_and_bad_digest():
     assert any('digest' in x for x in result['issues'])
 
 
+def test_date_only_expiry_is_reported():
+    p = plan()
+    p['expires_at'] = '2027-01-01Z'
+    result = validate(p)
+    assert not result['plan_valid']
+    assert any('expected UTC' in x for x in result['issues'])
+
+
 def test_cli_never_executes_command_string(tmp_path):
     marker = tmp_path / 'executed'
     p = plan()
