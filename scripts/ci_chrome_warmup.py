@@ -72,8 +72,8 @@ def warm(chrome: str, *, limit_s: float = START_LIMIT_S, environ: Mapping[str, s
     profile are removed either way."""
     profile = make_profile(prefix='labhq-warmup-')
     args = [chrome, *FLAGS, f'--user-data-dir={profile}', *(['--no-sandbox'] if environ.get('CI') else []), 'about:blank']
+    started = clock()  # before CreateProcess: a slow launch (a virus scan, loading the executable) is part of the start
     process = popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    started = clock()
     port = None
     try:
         while port is None:

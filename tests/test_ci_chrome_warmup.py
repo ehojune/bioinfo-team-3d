@@ -104,6 +104,25 @@ def test_a_page_target_that_arrives_after_the_limit_is_a_failure_not_a_pass(tmp_
                targets=slow_targets, stop=lambda process: None, make_profile=make_profile)
 
 
+def test_a_slow_process_creation_counts_toward_the_cold_start(tmp_path):
+    clock = Clock()
+    made = []
+
+    def make_profile(prefix):
+        path = tmp_path / 'p'
+        path.mkdir()
+        made.append(path)
+        return str(path)
+
+    def slow_popen(args, **kwargs):
+        clock.now += 70  # CreateProcess itself took 70 s
+        return FakeProcess(made[0], port_after=1)
+
+    with pytest.raises(w.WarmupError, match=r'first page target after 70\.\d s, over the 60 s limit'):
+        w.warm('chrome.exe', limit_s=60, environ={}, popen=slow_popen, clock=clock, sleep=clock.sleep,
+               targets=lambda port: [{'type': 'page'}], stop=lambda process: None, make_profile=make_profile)
+
+
 def test_a_chrome_that_exits_early_names_its_exit_code(tmp_path):
     with pytest.raises(w.WarmupError, match='Chrome exited with code 7 before it opened its DevTools port'):
         run(tmp_path, port_after=10 ** 9, dies_at=3)
