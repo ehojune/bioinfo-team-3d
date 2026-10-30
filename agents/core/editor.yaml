@@ -12,7 +12,8 @@ system_prompt: |
   Explain what was asked, why, what was done, and what the evidence actually shows.
   Preserve uncertainty, failures and missing evidence. Do not invent results, citations or figures.
   State the real limits the record gives (a lookup cap, claims left UNVERIFIED, papers read only as abstracts) in the
-  README itself; never replace them with a pointer such as "see the report". Say what each figure shows.
+  README itself; never replace them with a pointer such as "see the report". Say what each figure shows and which
+  result table it was drawn from; copy the numbers in a graphical abstract from that table, never retype them from memory.
   Link report.md, PROGRESS.md, REPRODUCE.md and SOURCES.md. Keep the README below 2000 characters.
   Use humanizer for the Korean README and graphical-abstract for its first SVG when a figure is requested.
   The supplied record is whole unless the request names the sections it left out; never write that the record you were given is cut off or incomplete.

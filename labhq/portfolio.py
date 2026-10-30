@@ -1628,16 +1628,74 @@ def _determinism_line(files: Mapping[str, str | bytes]) -> str:
             "실행해서 확인한 것은 아닙니다.")
 
 
-def _figure_lines(report: str, figure_names: list[str], source_targets: Mapping[str, str] | None = None) -> list[str]:
-    captions = {PurePosixPath(unquote(target.split("#")[0])).name: alt.strip()
-                for alt, target in re.findall(r"!\[([^\]]*)\]\(([^)]+)\)", report)}
-    original = {target: PurePosixPath(str(source).replace("\\", "/")).name for source, target in (source_targets or {}).items()}
+def _figure_caption(report: str, source: str, target: str) -> str:
+    """The alt text of the report image that points at this figure; full paths first, a shared basename only when unique."""
+    images = [(PurePosixPath(unquote(path.split("#")[0]).replace("\\", "/")).as_posix().lstrip("./"), alt.strip())
+              for alt, path in re.findall(r"!\[([^\]]*)\]\(([^)]+)\)", report)]
+    source = source.replace("\\", "/")
+    exact = [alt for path, alt in images if path and (target.endswith(path) or source.endswith(path))]
+    if exact:
+        return exact[0]
+    base = PurePosixPath(source).name
+    same = [alt for path, alt in images if PurePosixPath(path).name == base]
+    return same[0] if len(same) == 1 else ""
+
+
+def _figure_sources(figure_names: list[str], files: Mapping[str, str | bytes], table_names: list[str],
+                    source_targets: Mapping[str, str]) -> dict[str, list[str]]:
+    """Per published figure, the published tables its script names: the source data behind the picture."""
+    origin = {target: source.replace("\\", "/") for source, target in source_targets.items()}
+    scripts = {name: body for name, body in files.items()
+               if isinstance(body, str) and PurePosixPath(name).suffix.lower() in _CODE_SUFFIXES}
+    result: dict[str, list[str]] = {}
+    for figure in figure_names:
+        base = PurePosixPath(origin.get(figure, figure)).name
+        used = [body for body in scripts.values() if base in body]
+        result[figure] = [table for table in table_names
+                          if any(PurePosixPath(origin.get(table, table)).name in body for body in used)]
+    return result
+
+
+def _figure_lines(report: str, figure_names: list[str], source_targets: Mapping[str, str] | None = None,
+                  files: Mapping[str, str | bytes] | None = None, table_names: list[str] | None = None) -> list[str]:
+    targets = source_targets or {}
+    origin = {target: source for source, target in targets.items()}
+    data = _figure_sources(figure_names, files or {}, table_names or [], targets)
     rows = []
-    for name in figure_names:  # a renamed duplicate (plot.svg -> outputs-plot.svg) keeps its source's caption
-        alt = captions.get(original.get(name, PurePosixPath(name).name), "")
-        rows.append(f"- [{PurePosixPath(name).name}]({quote(name, safe='/')}): "
-                    f"{alt if alt and alt != PurePosixPath(name).name else '보고서에 그림 설명이 없습니다'}")
+    for name in figure_names:  # a renamed duplicate (plot.svg -> outputs-plot.svg) keeps its own source's caption
+        alt = _figure_caption(report, origin.get(name, name), name)
+        shown = alt if alt and alt != PurePosixPath(name).name else "보고서에 그림 설명이 없습니다"
+        tables = data.get(name) or []
+        if name.endswith("graphical_abstract.svg"):
+            source = "보고서 본문의 요청·계획·결론 문장에서 자동으로 그렸고 결과표의 숫자는 담지 않습니다"
+        elif tables:
+            source = "원자료 " + ", ".join(f"[`{table}`]({quote(table, safe='/')})" for table in tables[:4])
+        else:
+            source = "원자료 표와의 연결을 스크립트에서 찾지 못했습니다"
+        rows.append(f"- [{PurePosixPath(name).name}]({quote(name, safe='/')}): {shown} ({source})")
     return rows or ["- 게시한 그림이 없습니다."]
+
+
+_PINNED = re.compile(r"^([A-Za-z0-9_.-]+)==([^;\s#]+)", re.M)
+
+
+def _environment_lines(files: Mapping[str, str | bytes]) -> list[str]:
+    locks = sorted(name for name in files if name.startswith("run/environment/") or "/run/environment/" in name)
+    packages = {}
+    for name in locks:
+        body = files[name]
+        for pkg, version in _PINNED.findall(body if isinstance(body, str) else body.decode("utf-8", "replace")):
+            packages.setdefault(pkg, version)
+    if not locks:
+        return ["- 환경 기록이 없습니다. 패키지와 언어 버전이 남지 않아, 같은 환경을 다시 만든다고 보장할 수 없습니다."]
+    lines = [f"- 기록 파일: " + ", ".join(f"[`{name}`]({quote(name, safe='/')})" for name in locks[:4])]
+    if packages:
+        shown = sorted(packages.items())
+        lines.append("- 고정 버전: " + ", ".join(f"`{pkg}=={version}`" for pkg, version in shown[:15])
+                     + (f" 외 {len(shown) - 15}개" if len(shown) > 15 else ""))
+    else:
+        lines.append("- 기록 파일에 `패키지==버전` 줄이 없어 버전은 확인하지 못했습니다.")
+    return lines
 
 
 def _file_list_lines(files: Mapping[str, str | bytes], table_names: list[str], figure_names: list[str]) -> list[str]:
@@ -1732,8 +1790,9 @@ def _readme(req: dict, report: str, rows: list[tuple[str, str, str]], figure_nam
     if omitted_figures:
         lines += ["", "## 생략한 그림", "", *[f"- *(그림 생략: {label})*" for label in omitted_figures]]
     published = files or {}
-    lines += ["", "## 그림이 보여 주는 것", "", *_figure_lines(report, figure_names, source_targets),
+    lines += ["", "## 그림이 보여 주는 것", "", *_figure_lines(report, figure_names, source_targets, published, table_names),
               "", "## 파일 목록", "", *_file_list_lines(published, table_names, figure_names),
+              "", "## 환경", "", *_environment_lines(published),
               "", "## 실행 방법", "", *_run_lines(published, run_documents),
               "", "## 결정성", "", _determinism_line(published)]
     lines += ["", "## 읽는 순서", "",
