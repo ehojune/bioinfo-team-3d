@@ -3163,6 +3163,8 @@ class Runner:
                 continue
             state, exit_status = await asyncio.to_thread(local_jobs.status, j.get("local") or {},
                                                          self._local_procs.get(jid))
+            if j["terminal"]:  # a cancel ended it while the status was read: what was read is stale (#1144)
+                continue
             if state == j["state"]:
                 continue
             j.update(state=state, exit_status=exit_status, terminal=state in TERMINAL)

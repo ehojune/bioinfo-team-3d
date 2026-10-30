@@ -3,6 +3,7 @@ restart adoption, and the detach refusal at submit."""
 import asyncio
 import os
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -422,6 +423,38 @@ async def test_two_simultaneous_submits_cannot_both_take_the_last_slot(board):
     refused = [reply for reply in out["both"] if "error" in reply]
     assert len(started) == 1 and len(refused) == 1 and "already running" in refused[0]["error"]
     assert len([j for j in board.runner.jobs if local_jobs.is_local(j)]) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_poll_that_read_the_status_before_a_cancel_does_not_overwrite_the_cancelled_job(board, monkeypatch):
+    """#1144: the poll reads a job's status off the loop. A cancel that ends the job while it reads must stay the end:
+    the poll wakes up holding "completed" and used to write it over "cancelled" and send a second job.state."""
+    out = {}
+
+    async def body(identity):
+        out.update(await board.submit(SLEEP)(identity))
+
+    task, _result = await board.run(body)
+    job_id = out["job_id"]
+    row = board.runner.jobs[job_id]
+    entered, release = threading.Event(), threading.Event()
+
+    def blocked_status(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(20)
+        return "completed", 0  # what the job looked like when the read began
+
+    monkeypatch.setattr("labhq.runner.daemon.local_jobs.status", blocked_status)
+    poller = asyncio.create_task(board.runner._poll_local_jobs())
+    assert await asyncio.to_thread(entered.wait, 20)  # the poll is inside its status read
+    await board.runner._on_message({"type": "task.jobs_cancel", "task_id": task.id})  # the cancel ends the job
+    assert row["state"] == "cancelled" and row["terminal"]
+    release.set()
+    await asyncio.wait_for(poller, 20)
+    assert row["state"] == "cancelled" and row["terminal"]  # the late "completed" was not written over it
+    states = [e.data["state"] for e in board.events if e.type == "job.state" and e.data.get("job_id") == job_id]
+    assert states == ["cancelled"], states  # one end, and it is the cancel
+    assert "jobs.finished" not in board.kinds()  # a cancelled step is not woken
 
 
 @pytest.mark.asyncio
