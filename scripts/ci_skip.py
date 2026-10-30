@@ -585,6 +585,9 @@ def windows_artifact(run, head, repository_id, request=None, sleep=None):
                 raise ValueError('incomplete producer jobs')
             rows = [j for j in data['jobs'] if j['name'] == 'pytest-windows']
             unsettled = len(rows) == 0 or (len(rows) == 1 and rows[0]['status'] != 'completed')
+            if settle:  # public job fields only: what the list said on each read, so a lag can be measured (#1127)
+                seen = ', '.join(f"{j.get('status')}/{j.get('conclusion')}/{j.get('completed_at')}" for j in rows) or 'no row'
+                print(f"ci_skip: attempt {attempt} read {read + 1}: pytest-windows {seen}", file=sys.stderr)
             if not (settle and unsettled) or read == JOB_POLL_ATTEMPTS - 1:
                 break
             sleep(JOB_POLL_INTERVAL_S)
