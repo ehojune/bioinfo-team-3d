@@ -20,3 +20,7 @@ rows:
   at: 2026-10-31 03:20
   text: setup-wsl이 model_tiers 표를 WSL runner 설정에 보내고 wsl_bootstrap이 설정에 쓴다. 보내지 않은 옛 설정은 빈 표(리뷰 P1) + 시험 2건
   summary: WSL에서 도는 직원도 Windows와 같은 등급 모델을 씁니다(model이 없는 bioinfo-agent 포함).
+- sha: 'b15daf6'
+  at: 2026-10-31 03:50
+  text: 러너가 등급으로 모델을 채우는 때를 agent_overrides·agent_identity·force_engine을 적용한 뒤로 옮겨, 등급이 직원이 실제로 도는 엔진의 모델을 뜻하게 한다(리뷰 P1) + 시험
+  summary: 러너가 엔진을 바꿔 돌릴 때도 등급 모델이 원래 엔진의 모델로 잘못 채워지지 않습니다.
