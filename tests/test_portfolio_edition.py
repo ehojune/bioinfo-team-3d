@@ -598,3 +598,53 @@ def test_a_script_without_workspace_paths_is_not_flagged():
     from labhq.portfolio import _WORKSPACE_INPUT
 
     assert not _WORKSPACE_INPUT.search("import pandas as pd\nframe = pd.read_csv(sys.argv[1])\nprint(len(frame))\n")
+
+
+def test_a_windows_separator_literal_is_not_taken_for_a_private_path(tmp_path):
+    """#792: str(p).replace("\\", "/") is code, not a UNC path; it used to be commented and turned into <local-path>."""
+    from labhq.portfolio import clean_publication_text
+
+    code = 'name = str(path).replace("\\\\", "/")\n'
+    cleaned = clean_publication_text("steps/s1/outputs/scripts/h.py", code, Settings(), {"id": "r", "text": ""})
+    assert cleaned == code and "<local-path>" not in cleaned and "수동 확인 필요" not in cleaned
+    unc = 'share = r"\\\\fileserver\\data\\x.tsv"\n'
+    assert "fileserver" not in clean_publication_text("steps/s1/outputs/scripts/u.py", unc, Settings(), {"id": "r", "text": ""})
+
+
+def test_removed_absolute_paths_in_the_execution_record_become_a_count():
+    from labhq.portfolio import _collapse_removed_paths
+
+    text = "# 실행 기록\n\n- 남은 절대경로: <local-path> <local-path> <reference-path>, <local-path>\n- 다음 줄\n"
+    assert _collapse_removed_paths(text) == (
+        "# 실행 기록\n\n- 남은 절대경로: 4개(게시본에는 경로를 적지 않음)\n- 다음 줄\n")
+    assert _collapse_removed_paths("- 남은 절대경로: 없음\n") == "- 남은 절대경로: 없음\n"
+
+
+@pytest.mark.parametrize("code", ["rows = open('Inputs\\s1\\t.tsv')\n", "meta = open('MANIFEST.JSON')\n"])
+def test_workspace_paths_are_detected_whatever_the_letter_case(code):
+    from labhq.portfolio import _WORKSPACE_INPUT
+
+    assert _WORKSPACE_INPUT.search(code)
+
+
+def test_the_readme_states_real_limits_figures_files_runs_and_determinism(tmp_path):
+    from labhq.portfolio import _determinism_line, _figure_lines, _file_list_lines, _limit_sentences, _run_lines
+
+    report = ("# 보고서\n\n## 한계\n\n공개 조회는 9회까지만 허용돼 새 조회를 하지 않았다. 무작위 3상 수치는 UNVERIFIED로 남았다. "
+              "표본이 작아 일반화할 수 없다. 네 번째 한계도 있다.\n\n![ORR와 신뢰구간](figures/orr.svg)\n")
+    limits = _limit_sentences(report)
+    assert not _limit_sentences("## 한계\n\n해석 범위와 남은 한계는 과학 보고서에 적었습니다.\n")
+    assert len(limits) == 3 and "9회까지만" in limits[0] and any("UNVERIFIED" in sentence for sentence in limits)
+    assert _figure_lines(report, ["figures/orr.svg", "figures/qc.svg"]) == [
+        "- [orr.svg](figures/orr.svg): ORR와 신뢰구간", "- [qc.svg](figures/qc.svg): 보고서에 그림 설명이 없습니다"]
+    files = {"code/s1/outputs/scripts/a.py": "import numpy as np\nnp.random.seed(7)\n",
+             "code/s2/outputs/scripts/b.py": "print(1)\n"}
+    assert "고정 seed 값이 적힌 스크립트: `code/s1/outputs/scripts/a.py`" in _determinism_line(files)
+    loose = _determinism_line({"code/s1/outputs/scripts/c.py": "import random\nx = random.choice([1, 2])\n"})
+    assert "고정 seed 값을 확인하지 못한" in loose and "고정 seed 값이 적힌" not in loose
+    assert "난수·seed 호출을 찾지 못했습니다" in _determinism_line({"code/s2/outputs/scripts/b.py": "print(1)\n"})
+    assert "스크립트가 없어" in _determinism_line({})
+    listing = _file_list_lines(files, ["tables/t.tsv"], ["figures/orr.svg"])
+    assert listing[0].startswith("- 코드 2개: ") and "tables/t.tsv" in listing[1] and "figures/orr.svg" in listing[2]
+    run = _run_lines({"code/x.py": "os.environ['LABHQ_INPUT_DATA_AB12CD34']\n"}, {"run/reproduce.md": "x"})
+    assert "`LABHQ_INPUT_DATA_AB12CD34`" in run[0] and "원자료가 없을 때" in run[1]

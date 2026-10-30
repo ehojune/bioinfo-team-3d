@@ -1560,9 +1560,9 @@ class ResultStorage:
                         docs[name] = body
                 if saved.get("mode") != "new" and (missing := document_links(docs["README.md"])):
                     docs["README.md"] += "\n\n" + missing + "\n"
-                if len(str(req.get("report") or "")) > README_EXCERPT_CHARS:
-                    report_path = "report/report.md" if saved.get("mode") == "new" else "report.md"
-                    docs["README.md"] += f"\n이어지는 내용은 {report_path}에 있습니다.\n"
+                if len(str(req.get("report") or "")) > README_EXCERPT_CHARS and saved.get("mode") != "new":
+                    # The repository README links the full report in its first lines; only the flat edition needs the pointer.
+                    docs["README.md"] += "\n이어지는 내용은 report.md에 있습니다.\n"
                 links = "\n".join(f"- [{name}]({quote(name, safe='/')})" for name in [*assets, *images])
                 if links:
                     if saved.get("mode") != "new":
