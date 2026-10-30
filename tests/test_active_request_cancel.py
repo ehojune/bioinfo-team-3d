@@ -114,6 +114,18 @@ class ActiveCancel(unittest.IsolatedAsyncioTestCase):
 class RequestDeadline(unittest.IsolatedAsyncioTestCase):
     CREATED = 1000.0
 
+    def setUp(self):
+        from unittest import mock
+
+        self.now = [self.CREATED]
+        patcher = mock.patch("labhq.gateway.server.time.time", side_effect=lambda: self.now[0])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def at(self, seconds):
+        self.now[0] = self.CREATED + seconds
+        return self.now[0]
+
     def hub(self, limit=120, state=None):
         import tempfile
 
@@ -137,6 +149,18 @@ class RequestDeadline(unittest.IsolatedAsyncioTestCase):
         hub.save_request("r")
         return hub.requests["r"]
 
+    def wait_for_pi(self, hub, req, seconds):
+        self.at(seconds)
+        req["pi_waits"] = {"card": {"kind": "approval", "since": self.now[0]}}
+        hub._sync_hold_status(req)
+        self.assertEqual(req["status"], "waiting_pi")
+
+    def answered(self, hub, req, seconds):
+        self.at(seconds)
+        req.pop("pi_waits")
+        hub._sync_hold_status(req)
+        self.assertEqual(req["status"], "running")
+
     async def test_a_request_past_its_limit_is_cancelled_with_a_receipt_and_its_own_label(self):
         from labhq.request_status import request_display_label
 
@@ -144,8 +168,8 @@ class RequestDeadline(unittest.IsolatedAsyncioTestCase):
         req = self.open_request(hub)
         self.assertEqual(req["wall_clock"], {"enabled": True, "limit_s": 120, "held_s": 0.0,
                                              "deadline_at": self.CREATED + 120})
-        self.assertEqual(await hub.enforce_request_deadlines(now=self.CREATED + 119), [])
-        self.assertEqual(await hub.enforce_request_deadlines(now=self.CREATED + 121), ["r"])
+        self.assertEqual(await hub.enforce_request_deadlines(now=self.at(119)), [])
+        self.assertEqual(await hub.enforce_request_deadlines(now=self.at(121)), ["r"])
         self.assertEqual((req["status"], req["cancel_reason"]), ("cancelled", "request_deadline"))
         self.assertIn("시간 상한", req["error"])
         receipt = req["deadline_receipt"]
@@ -154,58 +178,100 @@ class RequestDeadline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request_display_label(req), "시간 상한으로 취소됨")
         self.assertEqual(request_display_label({"status": "cancelled"}), "취소됨")
 
+    async def test_the_report_of_a_deadline_cancel_does_not_say_the_pi_cancelled(self):
+        from labhq.gateway.server import Hub
+
+        by_pi, _ = Hub._cancel_report({"cancelled_at": self.CREATED}, [], {})
+        by_limit, _ = Hub._cancel_report({"cancelled_at": self.CREATED, "cancel_reason": "request_deadline",
+                                          "wall_clock": {"limit_s": 5400}}, [], {})
+        self.assertIn("PI가", by_pi)
+        self.assertIn("요청 전체 시간 상한(90분)에 닿아 labhq가", by_limit)
+        self.assertNotIn("PI가", by_limit)
+
     async def test_the_limit_is_read_from_the_request_not_from_the_config_that_is_now_set(self):
         hub = self.hub(120)
         self.open_request(hub)
         hub.s.orchestrator.request_wall_clock_s = 0
-        self.assertEqual(await hub.enforce_request_deadlines(now=self.CREATED + 130), ["r"])
+        self.assertEqual(await hub.enforce_request_deadlines(now=self.at(130)), ["r"])
         off = self.hub(0)
         self.assertEqual(off._new_wall_clock(5.0), {"enabled": False, "limit_s": 0, "held_s": 0.0, "deadline_at": None})
         self.open_request(off)
-        self.assertEqual(await off.enforce_request_deadlines(now=self.CREATED + 10**6), [])
+        self.assertEqual(await off.enforce_request_deadlines(now=self.at(10 ** 6)), [])
 
-    async def test_time_waiting_for_the_pi_moves_the_deadline_and_is_recorded(self):
+    async def test_time_waiting_for_the_pi_moves_the_deadline_from_the_real_transitions(self):
         hub = self.hub(120)
         req = self.open_request(hub)
-        await hub.enforce_request_deadlines(now=self.CREATED + 10)
-        req["status"] = "waiting_pi"
-        # The wait is counted from the watch's previous look: 10 -> 11 and 11 -> 101 are both spent waiting.
-        await hub.enforce_request_deadlines(now=self.CREATED + 11)
-        await hub.enforce_request_deadlines(now=self.CREATED + 101)
-        self.assertEqual(req["wall_clock"]["held_s"], 91.0)
-        self.assertEqual(req["wall_clock"]["deadline_at"], self.CREATED + 211)
-        req["status"] = "running"  # the PI answered at about 101
-        self.assertEqual(await hub.enforce_request_deadlines(now=self.CREATED + 205), [], "past 120 s, inside 120+91")
-        self.assertEqual(await hub.enforce_request_deadlines(now=self.CREATED + 212), ["r"])
-        self.assertEqual(req["deadline_receipt"]["held_s"], 91.0)
+        self.wait_for_pi(hub, req, 11)
+        # Still waiting: the open interval keeps the deadline ahead of the clock however long it lasts.
+        self.assertEqual(await hub.enforce_request_deadlines(now=self.at(150)), [])
+        self.answered(hub, req, 101)  # 90 s waiting, entered between two looks of the watch
+        self.assertEqual(req["wall_clock"]["held_s"], 90.0)
+        self.assertEqual(req["wall_clock"]["deadline_at"], self.CREATED + 210)
+        self.assertNotIn("pi_since", req["wall_clock"])
+        self.assertEqual(await hub.enforce_request_deadlines(now=self.at(209)), [], "past 120 s, inside 120+90")
+        self.assertEqual(await hub.enforce_request_deadlines(now=self.at(211)), ["r"])
+        self.assertEqual(req["deadline_receipt"]["held_s"], 90.0)
+
+    async def test_a_wait_that_starts_and_ends_between_two_looks_is_still_counted_in_full(self):
+        hub = self.hub(120)
+        req = self.open_request(hub)
+        await hub.enforce_request_deadlines(now=self.at(10))
+        self.wait_for_pi(hub, req, 30)
+        self.answered(hub, req, 80)
+        await hub.enforce_request_deadlines(now=self.at(90))
+        self.assertEqual(req["wall_clock"]["held_s"], 50.0)
+        # Cards that repeat add up exactly: a look right before one starts does not charge its running time.
+        self.wait_for_pi(hub, req, 100)
+        self.answered(hub, req, 130)
+        self.assertEqual(req["wall_clock"]["held_s"], 80.0)
+        self.assertEqual(await hub.enforce_request_deadlines(now=self.at(199)), [])
+        self.assertEqual(await hub.enforce_request_deadlines(now=self.at(201)), ["r"])
 
     async def test_review_and_later_states_and_interrupted_requests_are_never_cut(self):
         for status in ("review_pending", "done", "failed", "interrupted"):
             hub = self.hub(120)
             req = self.open_request(hub, status=status)
-            self.assertEqual(await hub.enforce_request_deadlines(now=self.CREATED + 10**5), [], status)
+            self.assertEqual(await hub.enforce_request_deadlines(now=self.at(10 ** 5)), [], status)
             self.assertEqual(req["status"], status)
         resumed = self.hub(120)
         req = self.open_request(resumed, status="interrupted")
-        await resumed.enforce_request_deadlines(now=self.CREATED + 500)
+        await resumed.enforce_request_deadlines(now=self.at(500))
         req["status"] = "running"  # the PI resumed it after the deadline: the same deadline applies at once
-        self.assertEqual(await resumed.enforce_request_deadlines(now=self.CREATED + 501), ["r"])
+        self.assertEqual(await resumed.enforce_request_deadlines(now=self.at(501)), ["r"])
 
     async def test_a_restart_keeps_the_deadline_and_the_held_time_and_does_not_subtract_the_downtime(self):
         import tempfile
 
         state = tempfile.mkdtemp()
         first = self.hub(120, state)
-        req = self.open_request(first, status="waiting_pi")
-        await first.enforce_request_deadlines(now=self.CREATED + 10)
-        await first.enforce_request_deadlines(now=self.CREATED + 40)  # 30 s held
+        req = self.open_request(first)
+        self.wait_for_pi(first, req, 10)
+        self.answered(first, req, 40)
+        first.save_request("r")
         self.assertEqual(req["wall_clock"]["held_s"], 30.0)
         second = self.hub(120, state)  # the process came back much later
         again = second.requests["r"]
         self.assertEqual((again["created_at"], again["wall_clock"]["held_s"]), (self.CREATED, 30.0))
-        again["status"] = "running"
-        self.assertEqual(await second.enforce_request_deadlines(now=self.CREATED + 149), [])
-        self.assertEqual(await second.enforce_request_deadlines(now=self.CREATED + 151), ["r"])
+        self.assertEqual(again["status"], "interrupted", "the restart interrupted it; the watch leaves it alone")
+        self.assertEqual(await second.enforce_request_deadlines(now=self.at(500)), [])
+        again["status"] = "running"  # the PI resumed it
+        self.assertEqual(await second.enforce_request_deadlines(now=self.at(149)), [])
+        self.assertEqual(await second.enforce_request_deadlines(now=self.at(151)), ["r"])
+
+    async def test_a_waiting_pi_interval_that_a_restart_left_open_is_not_added(self):
+        import tempfile
+
+        state = tempfile.mkdtemp()
+        first = self.hub(120, state)
+        req = self.open_request(first)
+        self.wait_for_pi(first, req, 10)
+        first.save_request("r")
+        second = self.hub(120, state)
+        again = second.requests["r"]
+        self.assertEqual(again["wall_clock"]["pi_since"], self.CREATED + 10)
+        again["status"] = "running"  # the gateway interrupted it and the PI resumed it
+        self.assertEqual(await second.enforce_request_deadlines(now=self.at(121)), ["r"])
+        self.assertEqual(again["deadline_receipt"]["held_s"], 0.0)
 
     async def test_a_turn_that_never_reports_after_the_cancel_is_recorded_unconfirmed(self):
         hub = self.hub(120)
@@ -217,25 +283,34 @@ class RequestDeadline(unittest.IsolatedAsyncioTestCase):
             return True
 
         hub.cancel_task = cancel_task
-        self.assertEqual(await hub.enforce_request_deadlines(now=self.CREATED + 200), ["r"])
+        self.assertEqual(await hub.enforce_request_deadlines(now=self.at(200)), ["r"])
         receipt = hub.requests["r"]["deadline_receipt"]
         self.assertEqual((receipt["termination"], receipt["cancelled_tasks"], receipt["unconfirmed_tasks"]),
                          ("unconfirmed", ["t1"], ["t1"]))
+
+    async def test_a_deadline_cancel_that_a_restart_finishes_still_gets_its_receipt(self):
+        hub = self.hub(120)
+        req = self.open_request(hub, status="cancelled", cancel_reason="request_deadline", cancelled_at=self.at(130),
+                                cancelled_tasks=["t1"], cancelling={"quota_steps": []}, error="x")
+        hub.store.put("task", "t1", {"request_id": "r", "completed": False, "payload": {"agent_id": "analyst"}})
+        self.assertEqual(await hub.finish_interrupted_cancels(), ["r"])
+        receipt = req["deadline_receipt"]
+        self.assertEqual((receipt["termination"], receipt["cancelled_tasks"], receipt["unconfirmed_tasks"],
+                          receipt["fired_at"]), ("unconfirmed", ["t1"], ["t1"], self.CREATED + 130))
 
     async def test_the_watch_runs_in_the_background_and_stops_with_the_gateway(self):
         import asyncio
 
         hub = self.hub(120)
         hub.request_deadline_tick_s = 0.01
-        self.open_request(hub)
-        hub.requests["r"]["created_at"] = 1.0  # long past
-        hub.requests["r"]["wall_clock"]["deadline_at"] = 121.0
+        req = self.open_request(hub)
+        req["created_at"] = 1.0  # long past
         hub.start_deadline_watch()
         for _ in range(200):
-            if hub.requests["r"]["status"] == "cancelled":
+            if req["status"] == "cancelled":
                 break
             await asyncio.sleep(0.01)
-        self.assertEqual(hub.requests["r"]["cancel_reason"], "request_deadline")
+        self.assertEqual(req["cancel_reason"], "request_deadline")
         hub.stopping = True
         await asyncio.wait_for(hub._deadline_task, 2)
 

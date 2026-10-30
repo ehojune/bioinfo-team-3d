@@ -384,7 +384,6 @@ class Hub:
         self.recruits_running: dict[str, dict[str, Any]] = {}
         self.cancel_result_wait_s = CANCEL_RESULT_WAIT_S
         self.request_deadline_tick_s = REQUEST_DEADLINE_TICK_S
-        self._deadline_seen: dict[str, float] = {}  # when the watch last looked at a request; not kept over a restart
         self._deadline_task: asyncio.Task | None = None
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
@@ -742,6 +741,27 @@ class Hub:
     def _sync_hold_status(self, req: dict) -> None:
         if not is_active_request(req.get("status")):
             return
+        before = req.get("status")
+        self._set_hold_status(req)
+        self._count_pi_wait(req, before, req.get("status"))
+
+    @staticmethod
+    def _count_pi_wait(req: dict, before: object, after: object) -> None:
+        """Time in waiting_pi moves the request's wall-clock deadline (#877), counted from the real transitions:
+        ``pi_since`` opens when the request starts waiting for the PI and ``held_s`` takes it when it stops."""
+        clock = req.get("wall_clock")
+        if not isinstance(clock, dict) or not clock.get("limit_s") or (before == "waiting_pi") == (after == "waiting_pi"):
+            return
+        now = time.time()
+        if after == "waiting_pi":
+            clock["pi_since"] = now
+            return
+        since = clock.pop("pi_since", None)
+        if since is not None:
+            clock["held_s"] = round(float(clock.get("held_s") or 0.0) + max(0.0, now - float(since)), 3)
+            clock["deadline_at"] = float(req.get("created_at") or now) + float(clock["limit_s"]) + clock["held_s"]
+
+    def _set_hold_status(self, req: dict) -> None:
         if req.get("login_waits"):
             req["status"] = "waiting_login"
         elif req.get("quota_waits"):
@@ -4979,9 +4999,10 @@ class Hub:
         """Cancel the open requests whose wall-clock limit has passed and return their ids (#877).
 
         Only an active request is cut: review_pending and later never are (the PI is reviewing, no staff runs), an
-        interrupted one is looked at again once it resumes. Time in waiting_pi is added to the deadline as the watch
-        sees it. A restart keeps the same ``created_at`` and the held time already recorded; the time the gateway was
-        down is not subtracted."""
+        interrupted one is looked at again once it resumes. Time in waiting_pi is added to the deadline from the
+        moment the request entered it (``pi_since``), so the 15 s look interval does not decide the amount. A restart
+        keeps the same ``created_at`` and the held time already recorded; the time the gateway was down is not
+        subtracted, and a waiting_pi interval a restart left open is not added."""
         now = time.time() if now is None else now
         fired: list[str] = []
         for rid, req in list(self.requests.items()):
@@ -4989,16 +5010,18 @@ class Hub:
             if not isinstance(clock, dict) or not clock.get("limit_s"):
                 continue
             if not is_active_request(req.get("status")):
-                self._deadline_seen.pop(rid, None)
                 continue
-            last = self._deadline_seen.get(rid)
-            self._deadline_seen[rid] = now
             created_at = float(req.get("created_at") or now)
-            if req.get("status") == "waiting_pi" and last is not None and now > last:
-                clock["held_s"] = round(float(clock.get("held_s") or 0.0) + (now - last), 3)
-                clock["deadline_at"] = created_at + float(clock["limit_s"]) + clock["held_s"]
-                self.save_request(rid)
-            if now < created_at + float(clock["limit_s"]) + float(clock.get("held_s") or 0.0):
+            if req.get("status") == "waiting_pi":
+                if clock.get("pi_since") is None:  # entered without going through the hold bookkeeping
+                    clock["pi_since"] = now
+                    self.save_request(rid)
+                open_wait = max(0.0, now - float(clock["pi_since"]))
+            else:
+                open_wait = 0.0
+                if clock.pop("pi_since", None) is not None:
+                    self.save_request(rid)  # an interval a restart left open is not added
+            if now < created_at + float(clock["limit_s"]) + float(clock.get("held_s") or 0.0) + open_wait:
                 continue
             try:
                 await self.cancel_request(rid, active_only=True, expected_created_at=req.get("created_at"),
@@ -5008,7 +5031,6 @@ class Hub:
             except Exception:
                 log.exception("request deadline cancel failed for %s", rid)
                 continue
-            self._deadline_seen.pop(rid, None)
             fired.append(rid)
         return fired
 
@@ -5110,7 +5132,11 @@ class Hub:
         finished = []
         for rid, req in list(self.requests.items()):
             if req.get("status") == "cancelled" and req.get("cancelling") is not None:
-                await self._await_cancelled_results(rid, list(req.get("cancelled_tasks") or []), wait_s=0)
+                cancelled = list(req.get("cancelled_tasks") or [])
+                unreported = await self._await_cancelled_results(rid, cancelled, wait_s=0)
+                if req.get("cancel_reason") == "request_deadline" and "deadline_receipt" not in req:
+                    req["deadline_receipt"] = self._deadline_receipt(
+                        req, float(req.get("cancelled_at") or time.time()), cancelled, unreported)
                 await self._afinish_cancel(rid)
                 finished.append(rid)
         return finished
@@ -5158,9 +5184,14 @@ class Hub:
                 rows.append(f"- {sid}{who}: 실패 — {short(str(outcome.get('error') or '원인 미기록'), 200)}")
         done = sum(1 for outcome in results.values() if isinstance(outcome, dict) and outcome.get("ok"))
         total = len(steps) or len(results)
+        if req.get("cancel_reason") == "request_deadline":  # the wall-clock limit (#877), not a decision of the PI
+            minutes = round(float((req.get("wall_clock") or {}).get("limit_s") or 0) / 60, 1)
+            who = f"요청 전체 시간 상한({minutes:g}분)에 닿아 labhq가"
+        else:
+            who = "PI가"
         report = "\n".join([
             "## 결론과 권고",
-            f"PI가 {when}에 이 요청을 취소했습니다. 진행 중이던 작업 {len(cancelled)}개에 중단을 보냈고 남은 단계는 "
+            f"{who} {when}에 이 요청을 취소했습니다. 진행 중이던 작업 {len(cancelled)}개에 중단을 보냈고 남은 단계는 "
             "실행하지 않았습니다. 이어서 하려면 새 요청을 보내세요.", "",
             "## 결과",
             f"끝난 단계 {done}개 / 전체 {total}개" if total else "끝난 단계가 없습니다.",
