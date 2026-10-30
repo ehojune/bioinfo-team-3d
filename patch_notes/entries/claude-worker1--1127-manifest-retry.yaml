@@ -8,3 +8,7 @@ rows:
     at: "2026-10-31 05:18"
     summary: "validation-manifest가 기다리는 동안 pytest-windows가 어떻게 보였는지 로그에 남겨, 실패하면 원인을 측정할 수 있게 했습니다."
     text: "ci: 기다리는 동안 pytest-windows 조회 결과를 한 줄씩 로그에 남긴다 (#1127)"
+  - sha: "85fb22b"
+    at: "2026-10-31 05:36"
+    summary: "validation-manifest가 시도별 job 목록이 오래 낡아 있어도 run 전체 목록에서 같은 Windows job의 완료를 확인하게 했습니다. 묶기 검증은 그대로입니다."
+    text: "ci: 시도별 목록이 낡으면 run 전체 목록의 같은 job으로 완료를 확인한다 (#1127)"
