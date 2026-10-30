@@ -8,3 +8,7 @@ rows:
     at: "2026-10-31 07:02"
     summary: "매뉴얼에 AlphaGenome 변이 점수 창이 REF 구간의 가운데에 맞춰진다고 적었습니다."
     text: "manual: AlphaGenome 변이 창이 REF 구간 가운데에 맞춰진다고 적음 (#621)"
+  - sha: "e3a395f"
+    at: "2026-10-31 07:17"
+    summary: "이미 조회해 저장된 여러 염기 REF의 AlphaGenome 점수는 옛 창으로 계산된 것이라 다시 계산하도록 점수 저장 형식 번호를 올렸습니다."
+    text: "annot: 창을 바꾼 만큼 AlphaGenome 점수 cache schema를 올려 옛 창의 점수를 쓰지 않는다 (#621)"
