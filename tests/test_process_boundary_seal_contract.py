@@ -204,3 +204,14 @@ def test_child_substitution_rejects_even_with_matching_run_and_nonce(phase):
     result = validator.validate(evidence, trusted)
     assert result.contract == "rejected"
     assert "child_identity_mismatch" in result.reasons
+
+
+def test_supervisor_cannot_be_the_child_even_when_all_events_agree():
+    trusted, evidence = deepcopy(CORPUS["trusted"]), deepcopy(CORPUS["positive"])
+    trusted["child_id"] = trusted["supervisor"]["subject_id"]
+    for event in evidence["witness"]["events"]:
+        if "child_id" in event:
+            event["child_id"] = trusted["child_id"]
+    result = validator.validate(evidence, trusted)
+    assert result.contract == "rejected"
+    assert result.reasons == ("malformed_launch_expectations",)

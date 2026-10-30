@@ -32,7 +32,8 @@ def _valid_expectations(trusted: dict[str, Any]) -> bool:
         return False
     supervisor = trusted.get("supervisor")
     if (not isinstance(supervisor, dict) or not _text(supervisor.get("subject_id"))
-            or not _digest(supervisor.get("executable_sha256"))):
+            or not _digest(supervisor.get("executable_sha256"))
+            or supervisor["subject_id"] == trusted["child_id"]):
         return False
     objects = trusted.get("objects")
     if not isinstance(objects, dict) or not objects or not all(_text(name) for name in objects):
