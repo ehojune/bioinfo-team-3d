@@ -1,5 +1,5 @@
 pr: 1064
-# Rev6: clarify synthetic-only validation in both manuals to repair docs cadence.
+# Rev7: require observer ledger, seal, broker, deadline and cleanup controls.
 # Final-head CI, manifest execution and actual review stay tracked in PR #1064.
 # Keep draft/hold; real protection remains UNVERIFIED.
 rows:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 import importlib.util
 from itertools import combinations
 import json
@@ -18,6 +19,21 @@ validator = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = validator
 SPEC.loader.exec_module(validator)
 CORPUS = json.loads((ROOT / "cases.json").read_text(encoding="utf-8"))
+CONTROLS = json.loads((ROOT / "controls.json").read_text(encoding="utf-8"))["cases"]
+
+
+def record_external_ledger(evidence, trusted):
+    """Test-only observer recording, never called by validate or a child adapter."""
+    witness = evidence["witness"]
+    previous, hashes = "0" * 64, []
+    for event in witness["events"]:
+        payload = [witness["run_id"], witness["launch_nonce"], previous, event]
+        previous = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        hashes.append(previous)
+    trusted["ledger"] = {
+        "store_id": trusted["store_id"], "observer_id": witness["observer_id"],
+        "run_id": witness["run_id"], "launch_nonce": witness["launch_nonce"], "hashes": hashes,
+    }
 
 
 def materialize(case):
@@ -55,7 +71,7 @@ def test_acceptance_corpus(case):
 
 
 def test_corpus_is_unique_and_every_negative_changes_valid_observations():
-    assert CORPUS["version"] == 2
+    assert CORPUS["version"] == 3
     cases = CORPUS["cases"]
     assert len({case["id"] for case in cases}) == len(cases)
     positive = CORPUS["positive"]
@@ -188,10 +204,16 @@ def test_consistent_independent_rebinding_accepts_a_different_run():
         if obj["parent_ref"] is not None:
             obj["parent_identity"] = validator.identity(trusted["objects"][obj["parent_ref"]])
     for event in witness["events"]:
+        event["observer_id"] = trusted["witness_id"]
         if "objects" in event:
             event["objects"] = deepcopy(trusted["objects"])
         if "child_id" in event:
             event["child_id"] = trusted["child_id"]
+    witness["store"]["appenders"] = [trusted["witness_id"]]
+    witness["events"][2]["deadline"]["supervisor_id"] = trusted["supervisor"]["subject_id"]
+    witness["events"][2]["broker"]["token"].update(run_id=trusted["run_id"], audience=trusted["child_id"])
+    witness["events"][3]["allowed_work"]["read_object_id"] = trusted["objects"]["source:tool.py"]["object_id"]
+    record_external_ledger(evidence, trusted)
     assert validator.validate(evidence, trusted).contract == "accepted"
     # A receipt cannot replay against independently pinned expectations for another run.
     assert validator.validate(evidence, CORPUS["trusted"]).contract == "rejected"
@@ -335,3 +357,131 @@ def test_parent_identity_equality_is_type_strict():
     for event in evidence["witness"]["events"]:
         event["objects"] = deepcopy(trusted["objects"])
     assert validator.validate(evidence, trusted).reasons == ("malformed_launch_expectations",)
+
+
+@pytest.mark.parametrize("case", CONTROLS, ids=lambda case: case["id"])
+@pytest.mark.parametrize("recorded_by_observer", [False, True])
+def test_v3_controls_reject_even_when_independently_recorded(case, recorded_by_observer):
+    evidence, trusted = materialize(case), deepcopy(CORPUS["trusted"])
+    if recorded_by_observer:
+        record_external_ledger(evidence, trusted)
+    before = deepcopy((evidence, trusted))
+    result = validator.validate(evidence, trusted)
+    assert result.contract == "rejected"
+    assert case["reason"] in result.reasons
+    assert result.protection == "unverified"
+    assert (evidence, trusted) == before
+    assert validator.validate(CORPUS["positive"], CORPUS["trusted"]).contract == "accepted"
+
+
+@pytest.mark.parametrize("field", ["observer_id", "run_id", "launch_nonce", "store_id", "hashes"])
+def test_external_ledger_is_required_and_cannot_be_replaced_by_child(field):
+    evidence, trusted = deepcopy(CORPUS["positive"]), deepcopy(CORPUS["trusted"])
+    evidence["child_receipt"]["ledger"] = deepcopy(trusted["ledger"])
+    del trusted["ledger"][field]
+    assert "external_evidence_mismatch" in validator.validate(evidence, trusted).reasons
+
+
+def test_replayed_or_rewritten_events_cannot_replace_external_commitments():
+    trusted, evidence = deepcopy(CORPUS["trusted"]), deepcopy(CORPUS["positive"])
+    evidence["witness"]["events"][3]["allowed_work"]["output_sha256"] = "d" * 64
+    assert "external_evidence_mismatch" in validator.validate(evidence, trusted).reasons
+    # Independent re-recording of valid different output passes; a child cannot do this.
+    record_external_ledger(evidence, trusted)
+    assert validator.validate(evidence, trusted).contract == "accepted"
+    trusted["run_id"] = evidence["witness"]["run_id"] = "fresh-run"
+    assert "external_evidence_mismatch" in validator.validate(evidence, trusted).reasons
+
+
+@pytest.mark.parametrize("failure", ["broker_death", "broker_timeout", "broker_transport_failure",
+                                     "observer_death", "supervisor_interrupted", "deadline_expired", "mutation"])
+@pytest.mark.parametrize("with_stop", [False, True])
+def test_post_launch_failures_require_reasoned_stop_and_independent_cleanup(failure, with_stop):
+    evidence, trusted = deepcopy(CORPUS["positive"]), deepcopy(CORPUS["trusted"])
+    events = evidence["witness"]["events"]
+    fault_time = trusted["deadline_ns"] if failure == "deadline_expired" else 25
+    fault = {"type": failure, "time_ns": fault_time, "observer_id": trusted["witness_id"],
+             "sequence_source": "observer", "time_source": "observer_wall", "clock_id": trusted["clock_id"]}
+    events.insert(3, fault)
+    if with_stop:
+        events.insert(4, {**fault, "type": "stop", "reason": failure, "time_ns": fault_time + 1,
+                          "child_id": trusted["child_id"], "supervisor_id": trusted["supervisor"]["subject_id"]})
+    for index, event in enumerate(events):
+        event["sequence"] = index
+        if failure == "deadline_expired" and event["type"] in ("exec_end", "cleanup", "final_snapshot", "monitor_stop"):
+            event["time_ns"] += 10
+    record_external_ledger(evidence, trusted)
+    result = validator.validate(evidence, trusted)
+    assert failure + "_observed" in result.reasons
+    assert ("reasoned_stop_unverified" in result.reasons) is not with_stop
+    assert result.contract == "rejected" and result.protection == "unverified"
+    if with_stop:
+        events[6]["handles"] = ["retained-fd"]
+        record_external_ledger(evidence, trusted)
+        assert "cleanup_resources_not_cleared" in validator.validate(evidence, trusted).reasons
+
+
+def test_deadline_expiry_is_detected_without_self_reported_timeout():
+    evidence, trusted = deepcopy(CORPUS["positive"]), deepcopy(CORPUS["trusted"])
+    for event in evidence["witness"]["events"][3:]:
+        event["time_ns"] += 10
+    record_external_ledger(evidence, trusted)
+    result = validator.validate(evidence, trusted)
+    assert "deadline_exceeded" in result.reasons
+    assert "reasoned_stop_unverified" in result.reasons
+
+
+@pytest.mark.parametrize("actor", ["child_id", "writer_id", "broker_id"])
+def test_observer_cannot_share_an_actor_identity_even_when_ledger_agrees(actor):
+    evidence, trusted = deepcopy(CORPUS["positive"]), deepcopy(CORPUS["trusted"])
+    trusted["witness_id"] = evidence["witness"]["observer_id"] = trusted[actor]
+    evidence["witness"]["store"]["appenders"] = [trusted[actor]]
+    for event in evidence["witness"]["events"]:
+        event["observer_id"] = trusted[actor]
+    record_external_ledger(evidence, trusted)
+    assert validator.validate(evidence, trusted).contract == "rejected"
+
+
+def test_labels_cannot_turn_missing_control_into_acceptance():
+    evidence = deepcopy(CORPUS["positive"])
+    evidence.update(expected={"contract": "rejected"}, status="FAIL", protection="PASS")
+    assert validator.validate(evidence, CORPUS["trusted"]).contract == "accepted"
+    del evidence["witness"]["events"][1]["seal"]
+    evidence["expected"] = {"contract": "accepted"}
+    assert "write_authority_not_revoked" in validator.validate(evidence, CORPUS["trusted"]).reasons
+
+
+@pytest.mark.parametrize("value", [None, [], {}, True, 0, "bad"])
+@pytest.mark.parametrize("path", [
+    ["witness", "store"], ["witness", "events", 1, "seal"],
+    ["witness", "events", 2, "deadline"], ["witness", "events", 2, "broker"],
+    ["witness", "events", 2, "broker", "token"], ["witness", "events", 3, "allowed_work"],
+    ["witness", "events", 4, "mounts"], ["witness", "events", 4, "handles"],
+    ["witness", "events", 4, "broker_endpoints"], ["witness", "events", 4, "active_tokens"],
+])
+def test_malformed_v3_controls_fail_closed(path, value):
+    case = {"changes": [{"path": path, "value": value}]}
+    evidence, trusted = materialize(case), deepcopy(CORPUS["trusted"])
+    record_external_ledger(evidence, trusted)
+    result = validator.validate(evidence, trusted)
+    # Empty inventories are valid observations; all other malformed inputs reject.
+    if path[-1] in {"mounts", "handles", "broker_endpoints", "active_tokens"} and value == []:
+        assert result.contract == "accepted"
+    else:
+        assert result.contract == "rejected" and result.reasons
+
+
+@pytest.mark.parametrize("key", ["writer_id", "broker_id", "request_id", "token_id", "store_id", "clock_id", "deadline_ns", "ledger"])
+@pytest.mark.parametrize("value", [None, [], {}, True, ""])
+def test_v3_trusted_fields_cannot_be_missing_or_malformed(key, value):
+    trusted = deepcopy(CORPUS["trusted"])
+    trusted[key] = value
+    result = validator.validate(CORPUS["positive"], trusted)
+    assert result.contract == "rejected" and result.reasons
+
+
+@pytest.mark.parametrize("adapter", ["synthetic-v1", "synthetic-v2", "producer-v3"])
+def test_legacy_or_real_adapter_cannot_bypass_v3_controls(adapter):
+    evidence = deepcopy(CORPUS["positive"])
+    evidence["adapter"] = adapter
+    assert validator.validate(evidence, CORPUS["trusted"]).status == "unsupported"

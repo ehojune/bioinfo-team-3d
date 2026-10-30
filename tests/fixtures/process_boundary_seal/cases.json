@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "trusted": {
     "run_id": "fixture-run-a",
     "launch_nonce": "fixture-nonce-a",
@@ -45,10 +45,32 @@
           "nlink": 2
         }
       }
-    }
+    },
+    "writer_id": "fixture-writer",
+    "broker_id": "fixture-broker",
+    "request_id": "fixture-request",
+    "deadline_ns": 35,
+    "token_id": "fixture-scoped-token",
+    "store_id": "fixture-external-ledger",
+    "ledger": {
+      "store_id": "fixture-external-ledger",
+      "observer_id": "fixture-external-witness",
+      "run_id": "fixture-run-a",
+      "launch_nonce": "fixture-nonce-a",
+      "hashes": [
+        "72ffb7c9c9cbc44197b2b09020ed124865c171b67843369e4d36e82d67f8c7cb",
+        "000a23787c5a07dbbc52ae7d80b87ce8bcc8553a2d60e23308d4dad89b01efa4",
+        "5cbce1a245dcf2b27bc3b034c6a746087dcf72fbc17d056b952f28799651b5b6",
+        "bcf550eceab2e077466f5388f5c1bc2ba2d0a287a1f54865e1b9a6ebfb876147",
+        "829696af566366d50f5757a3db78066aa67bb9b0c40295077fcad3316488d44b",
+        "f335891a26f02fd590f2fbce5f203d811230f1b50f267bb43df319c470223312",
+        "24beb44c595342728cad16287645c37d0c4e3d18aa040602dd23b4fb113c8387"
+      ]
+    },
+    "clock_id": "fixture-shared-wall-epoch"
   },
   "positive": {
-    "adapter": "synthetic-v2",
+    "adapter": "synthetic-v3",
     "authority": "independent_witness",
     "child_receipt": {
       "status": "PASS",
@@ -111,7 +133,11 @@
                 "nlink": 2
               }
             }
-          }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "clock_id": "fixture-shared-wall-epoch"
         },
         {
           "sequence": 1,
@@ -153,7 +179,23 @@
                 "nlink": 2
               }
             }
-          }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "seal": {
+            "writer_id": "fixture-writer",
+            "enforcement": "synthetic_readonly_mount",
+            "handle_inventory": "complete",
+            "retained_writable_handles": [],
+            "attempts": {
+              "write": "denied",
+              "rename": "denied",
+              "link": "denied",
+              "inherited_fd": "denied"
+            }
+          },
+          "clock_id": "fixture-shared-wall-epoch"
         },
         {
           "sequence": 2,
@@ -196,7 +238,36 @@
                 "nlink": 2
               }
             }
-          }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "deadline": {
+            "request_id": "fixture-request",
+            "supervisor_id": "fixture-supervisor",
+            "clock": "independent_wall",
+            "clock_id": "fixture-shared-wall-epoch",
+            "expires_ns": 35
+          },
+          "broker": {
+            "id": "fixture-broker",
+            "state": "ready",
+            "credential_holders": [
+              "fixture-broker"
+            ],
+            "network_route": "broker_only",
+            "direct_auth": false,
+            "token": {
+              "id": "fixture-scoped-token",
+              "run_id": "fixture-run-a",
+              "audience": "fixture-child",
+              "scopes": [
+                "model:synthetic"
+              ],
+              "expires_ns": 35
+            }
+          },
+          "clock_id": "fixture-shared-wall-epoch"
         },
         {
           "sequence": 3,
@@ -241,7 +312,17 @@
                 "nlink": 2
               }
             }
-          }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "allowed_work": {
+            "read_object_id": "fixture-volume:12",
+            "output_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "output_scope": "run",
+            "completed": true
+          },
+          "clock_id": "fixture-shared-wall-epoch"
         },
         {
           "sequence": 4,
@@ -287,7 +368,17 @@
                 "nlink": 2
               }
             }
-          }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "mounts": [],
+          "handles": [],
+          "broker_endpoints": [],
+          "active_tokens": [],
+          "inventory_source": "independent_observer",
+          "inventory_scope": "all_owned_resources",
+          "clock_id": "fixture-shared-wall-epoch"
         },
         {
           "sequence": 5,
@@ -329,7 +420,11 @@
                 "nlink": 2
               }
             }
-          }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "clock_id": "fixture-shared-wall-epoch"
         },
         {
           "sequence": 6,
@@ -378,9 +473,23 @@
                 "nlink": 2
               }
             }
-          }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "clock_id": "fixture-shared-wall-epoch"
         }
-      ]
+      ],
+      "store": {
+        "id": "fixture-external-ledger",
+        "location": "outside_run",
+        "mode": "append_only",
+        "appenders": [
+          "fixture-external-witness"
+        ],
+        "rewriters": [],
+        "deleters": []
+      }
     }
   },
   "cases": [

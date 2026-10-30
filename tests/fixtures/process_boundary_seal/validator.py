@@ -7,6 +7,8 @@ No paths are opened, processes launched, or host protection claims made here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 import re
 from typing import Any
 
@@ -113,7 +115,7 @@ def validate(evidence: dict[str, Any], trusted: dict[str, Any]) -> Verdict:
         return Verdict("rejected", "unverified", ("malformed_evidence",))
     if not _valid_expectations(trusted):
         return Verdict("rejected", "unverified", ("malformed_launch_expectations",))
-    if evidence.get("adapter") != "synthetic-v2":
+    if evidence.get("adapter") != "synthetic-v3":
         return Verdict("rejected", "unsupported", ("producer_adapter_unavailable",))
     witness = evidence.get("witness")
     if not isinstance(witness, dict):
@@ -141,6 +143,7 @@ def validate(evidence: dict[str, Any], trusted: dict[str, Any]) -> Verdict:
     events = witness.get("events")
     if not isinstance(events, list) or not events or any(not isinstance(e, dict) for e in events):
         return Verdict("rejected", "unverified", tuple(reasons + ["missing_observations"]))
+    _validate_controls(witness, trusted, reject)
     times = [e.get("time_ns") for e in events]
     if (any(type(e.get("sequence")) is not int for e in events)
             or [e.get("sequence") for e in events] != list(range(len(events)))
@@ -220,3 +223,120 @@ def validate(evidence: dict[str, Any], trusted: dict[str, Any]) -> Verdict:
 def adapt_producer(_receipt: object) -> Verdict:
     """Reserved integration point: protected_launch has no trusted producer yet."""
     return Verdict("rejected", "unsupported", ("producer_adapter_unavailable",))
+
+
+def _validate_controls(witness, trusted, reject):
+    """Model external observer evidence; this is not an OS/authentication adapter.
+
+    Ledger commitments come from the caller's independent synthetic observer,
+    never from the child envelope. Hashes model tamper/replay detection only:
+    authenticated transport and protected storage still need production seams.
+    """
+    events = witness["events"]
+    actors = [trusted.get(key) for key in ("child_id", "writer_id", "broker_id", "witness_id")]
+    actors.append(trusted["supervisor"]["subject_id"])
+    if not all(_text(actor) for actor in actors) or len(set(a for a in actors if _text(a))) != len(actors):
+        reject("control_identities_not_independent")
+    if any(not _text(trusted.get(key)) for key in ("request_id", "token_id", "store_id", "clock_id")):
+        reject("control_expectations_missing")
+    deadline = trusted.get("deadline_ns")
+    if type(deadline) is not int or deadline <= 0:
+        reject("supervisor_deadline_unverified")
+        deadline = -1
+
+    expected_store = {
+        "id": trusted.get("store_id"), "location": "outside_run", "mode": "append_only",
+        "appenders": [trusted["witness_id"]], "rewriters": [], "deleters": [],
+    }
+    if witness.get("store") != expected_store:
+        reject("external_append_only_unverified")
+    for event in events:
+        if (event.get("observer_id") != trusted["witness_id"]
+                or event.get("sequence_source") != "observer"
+                or event.get("time_source") != "observer_wall"
+                or event.get("clock_id") != trusted.get("clock_id")):
+            reject("observer_provenance_unverified")
+    previous, hashes = "0" * 64, []
+    try:
+        for event in events:
+            payload = [witness.get("run_id"), witness.get("launch_nonce"), previous, event]
+            previous = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                                                 allow_nan=False).encode()).hexdigest()
+            hashes.append(previous)
+    except (TypeError, ValueError):
+        reject("external_evidence_mismatch")
+    expected_ledger = {
+        "store_id": trusted.get("store_id"), "observer_id": trusted["witness_id"],
+        "run_id": trusted["run_id"], "launch_nonce": trusted["launch_nonce"], "hashes": hashes,
+    }
+    if trusted.get("ledger") != expected_ledger:
+        reject("external_evidence_mismatch")
+
+    def phase(name):
+        return next((event for event in events if event.get("type") == name), {})
+
+    def mapping(value):
+        return value if isinstance(value, dict) else {}
+
+    seal = mapping(phase("seal").get("seal"))
+    if (seal.get("writer_id") != trusted.get("writer_id")
+            or seal.get("enforcement") != "synthetic_readonly_mount"
+            or seal.get("handle_inventory") != "complete"
+            or seal.get("retained_writable_handles") != []):
+        reject("write_authority_not_revoked")
+    if seal.get("attempts") != {kind: "denied" for kind in ("write", "rename", "link", "inherited_fd")}:
+        reject("write_attempt_not_denied")
+    start, end, cleanup = phase("exec_start"), phase("exec_end"), phase("cleanup")
+    expected_deadline = {
+        "request_id": trusted.get("request_id"), "supervisor_id": trusted["supervisor"]["subject_id"],
+        "clock": "independent_wall", "clock_id": trusted.get("clock_id"), "expires_ns": deadline,
+    }
+    observed_deadline = mapping(start.get("deadline"))
+    if observed_deadline != expected_deadline or type(observed_deadline.get("expires_ns")) is not int:
+        reject("supervisor_deadline_unverified")
+    broker = mapping(start.get("broker"))
+    if (broker.get("id") != trusted.get("broker_id") or broker.get("state") != "ready"
+            or broker.get("credential_holders") != [trusted.get("broker_id")]
+            or broker.get("network_route") != "broker_only" or broker.get("direct_auth") is not False):
+        reject("broker_boundary_unverified")
+    token = mapping(broker.get("token"))
+    expiry = token.get("expires_ns")
+    start_time, end_time = start.get("time_ns"), end.get("time_ns")
+    if (token.get("id") != trusted.get("token_id") or token.get("run_id") != trusted["run_id"]
+            or token.get("audience") != trusted["child_id"] or token.get("scopes") != ["model:synthetic"]
+            or type(expiry) is not int or type(start_time) is not int or type(end_time) is not int
+            or not start_time < expiry <= deadline or end_time >= expiry):
+        reject("broker_token_invalid")
+    work = mapping(end.get("allowed_work"))
+    if (work.get("read_object_id") != trusted["objects"]["source:tool.py"]["object_id"]
+            or not _digest(work.get("output_sha256")) or work.get("output_scope") != "run"
+            or work.get("completed") is not True):
+        reject("positive_work_unverified")
+    if (cleanup.get("inventory_source") != "independent_observer"
+            or cleanup.get("inventory_scope") != "all_owned_resources"):
+        reject("cleanup_inventory_unverified")
+    if any(cleanup.get(resource) != [] for resource in
+           ("descendants", "sockets", "mounts", "handles", "broker_endpoints", "active_tokens")):
+        reject("cleanup_resources_not_cleared")
+
+    failures = {"broker_death", "broker_timeout", "broker_transport_failure", "observer_death",
+                "supervisor_interrupted", "deadline_expired", "mutation"}
+    faults = [event for event in events if isinstance(event.get("type"), str) and event["type"] in failures]
+    for fault in faults:
+        reject(fault["type"] + "_observed")
+    if type(end_time) is int and end_time >= deadline:
+        reject("deadline_exceeded")
+        if not any(fault["type"] == "deadline_expired" for fault in faults):
+            faults.append({"type": "deadline_expired", "time_ns": deadline})
+    # A reason-coded stop cannot substitute for independent cleanup evidence.
+    for fault in faults:
+        stops = [event for event in events if event.get("type") == "stop" and event.get("reason") == fault["type"]]
+        if len(stops) != 1:
+            reject("reasoned_stop_unverified")
+            continue
+        stop = stops[0]
+        timing = [fault.get("time_ns"), stop.get("time_ns"), end_time, cleanup.get("time_ns")]
+        if (not all(type(t) is int for t in timing) or not timing[0] <= timing[1] <= timing[2] < timing[3]
+                or stop.get("child_id") != trusted["child_id"]
+                or stop.get("supervisor_id") != trusted["supervisor"]["subject_id"]):
+            reject("reasoned_stop_unverified")
