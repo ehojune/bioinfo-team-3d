@@ -2471,13 +2471,14 @@ class Runner:
         required_declared = task.meta.get("required_outputs", declared)
         optional_declared = task.meta.get("optional_outputs", [])
         found = []
+        declared_dirs = []
         for name in declared:
             relative = output_relpath(name)
             if relative is None:
                 continue
             target = (ws.dir / relative).resolve()
             if target.exists() and target.is_relative_to((ws.dir / "outputs").resolve()):
-                found.append(relative)
+                (declared_dirs if target.is_dir() else found).append(relative)
         listed_outputs: list[str] | None = None
         output_scan_note: str | None = None
         if task.meta.get("kind") == "direct" or task.meta.get("collect_direct_outputs") is True:
@@ -2488,6 +2489,13 @@ class Runner:
             found += listed_outputs
             if output_scan_note:
                 await emit("agent.log", {"level": "warn", "text": output_scan_note})
+        # A declared folder is collected as its files, each with the hash recorded after the run (#1058): a folder entry
+        # has no hash, and a later step refuses an ancestor whose collected list holds one. A file that was not hashed
+        # (too large, a link) is not collected; it stays unreported.
+        for folder in declared_dirs:
+            prefix = folder.rstrip("/") + "/"
+            found += [row["path"] for row in output_records
+                      if row["path"].startswith(prefix) and isinstance(row.get("sha256"), str)]
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
         hashed = {row["path"]: row["sha256"] for row in output_records
                   if isinstance(row.get("sha256"), str) and row["path"] in result.outputs}
@@ -2496,10 +2504,13 @@ class Runner:
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
         if _should_check_declared_outputs(result):
+            def has_output(rel: str) -> bool:
+                return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in collected)
+
             missing_required = [rel for name in required_declared
-                                if (rel := output_relpath(name)) and rel not in collected]
+                                if (rel := output_relpath(name)) and not has_output(rel)]
             missing_optional = [rel for name in optional_declared
-                                if (rel := output_relpath(name)) and rel not in collected]
+                                if (rel := output_relpath(name)) and not has_output(rel)]
             if missing_required:
                 result.ok = False
                 result.missing_outputs = list(dict.fromkeys([*result.missing_outputs, *missing_required]))

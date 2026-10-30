@@ -944,8 +944,11 @@ def apply_declared_output_status(step: dict, result: TaskResult) -> TaskResult:
     collected = {rel for name in result.outputs if (rel := output_relpath(name))}
     required = [(str(name), rel) for name in step.get("outputs") or [] if (rel := output_relpath(name))]
     optional = [(str(name), rel) for name in step.get("optional_outputs") or [] if (rel := output_relpath(name))]
-    missing = [name for name, rel in required if rel not in collected]
-    missing_optional = [name for name, rel in optional if rel not in collected]
+    def has_output(rel: str) -> bool:  # a declared folder is collected as its files (#1058)
+        return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in collected)
+
+    missing = [name for name, rel in required if not has_output(rel)]
+    missing_optional = [name for name, rel in optional if not has_output(rel)]
     warnings = list(result.step_warnings)
     if missing_optional:
         warnings.append("선택 산출 누락: " + ", ".join(missing_optional))

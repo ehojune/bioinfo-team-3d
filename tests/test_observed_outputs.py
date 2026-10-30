@@ -323,3 +323,54 @@ async def test_output_growing_while_hashed_gets_no_hash(tmp_path, monkeypatch, c
     manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
     row = manifest["runs"][result.task_id]["observed_outputs"][0]
     assert row["sha256"] is None and reason in row["reason"]
+
+
+@pytest.mark.asyncio
+async def test_declared_directory_is_collected_as_its_hashed_files(tmp_path, monkeypatch):
+    """#1058: a declared folder used to be listed as one output without a hash; a downstream step then refused the whole
+    upstream ("collected artifact hash is missing") and its numbers stayed UNVERIFIED."""
+    note, deep, table = b"note\n", b"deep\n", b"a\tb\n"
+
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", note)
+        _write(workdir, "outputs/literature/sub/p2.md", deep)
+        _write(workdir, "outputs/ledger.tsv", table)
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["ledger.tsv", "literature"]))
+
+    assert result.ok, result.error
+    assert "outputs/literature" not in result.outputs  # no bare folder entry without a hash
+    assert set(result.outputs) == {"outputs/ledger.tsv", "outputs/literature/p1.md", "outputs/literature/sub/p2.md"}
+    assert all(result.output_sha256.get(path) for path in result.outputs)  # every collected path carries a hash
+    assert result.output_sha256["outputs/literature/sub/p2.md"] == _sha(deep)
+    assert result.unreported_outputs == []  # the folder's files are reported, not stray
+
+
+@pytest.mark.asyncio
+async def test_declared_directory_without_a_hashed_file_is_missing(tmp_path, monkeypatch):
+    """An empty declared folder collects nothing a later step could read, so the step is incomplete (it used to pass
+    and then fail downstream)."""
+    def write(workdir):
+        (workdir / "outputs" / "literature").mkdir(parents=True)
+        _write(workdir, "outputs/ledger.tsv", b"x\n")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["ledger.tsv", "literature"]))
+
+    assert result.ok is False
+    assert result.missing_outputs == ["outputs/literature"]
+    assert "outputs/literature" in result.error
+
+
+@pytest.mark.asyncio
+async def test_declared_directory_skips_a_link_or_unhashed_file_inside_it(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/literature/p1.md", b"note\n")
+        _write(workdir, "outputs/literature/big.bin", b"x" * 64)
+
+    runner = _runner(tmp_path, monkeypatch, write, hash_max_bytes=16)
+    result = await runner.run_task(_task(outputs=["literature"]))
+
+    assert "outputs/literature/big.bin" not in result.outputs  # too large to hash: never collected without one
+    assert all(result.output_sha256.get(path) for path in result.outputs)
