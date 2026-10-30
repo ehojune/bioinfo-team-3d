@@ -703,6 +703,12 @@ class AnnotSettings(BaseModel):
     request_lookup_limit: int | None = Field(default=None, ge=0, le=10000)
 
 
+class ResultStorageSettings(BaseModel):
+    """What the published result repository records about its authors (#1104)."""
+    # Names for CITATION.cff. Empty by default: no author is invented, and without a name no CITATION.cff is written.
+    authors: list[str] = []
+
+
 class GitHubSettings(BaseModel):
     ask_storage: bool = False  # general requests opt in; research requests always ask
     auto_publish_results: bool = False  # otherwise review the editor draft in the web office
@@ -785,6 +791,7 @@ class Settings(BaseModel):
     wiki: WikiSettings = WikiSettings()
     pi_profile: PiProfileSettings = PiProfileSettings()
     github: GitHubSettings = GitHubSettings()
+    result_storage: ResultStorageSettings = Field(default_factory=ResultStorageSettings)
     annot: AnnotSettings = AnnotSettings()
     dev_log: DevLogSettings = DevLogSettings()
     projects: list[ProjectSettings] = []
