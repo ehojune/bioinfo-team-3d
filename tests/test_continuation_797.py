@@ -2,6 +2,7 @@
 import asyncio
 import copy
 import hashlib
+import json
 import threading
 
 import pytest
@@ -265,3 +266,38 @@ async def test_resume_revalidates_even_previously_verified_snapshot(monkeypatch,
     assert req['outcome'] == 'reuse_approval_required'
     assert not req['research_contract']['approval']['approved'] and not hub.calls
     assert orch._continuation_unstarted(req) is (not dispatched)  # never roll back a dispatched round
+
+
+def test_unreceipted_references_come_from_the_reused_steps_proofs_only():
+    """#1061: the reuse card and report name DOI/PMID references pinned by identifier, for the steps actually reused."""
+    from labhq.orchestrator.cso import unreceipted_references
+
+    contract = {'rounds': [{'reuse_input_proof': {'s1': {'unreceipted': ['pmid:2', 'doi:10.1/a']}, 's2': None,
+                                                    's3': {'unreceipted': ['doi:10.1/a', 'doi:10.1/z']}}}]}
+    assert unreceipted_references(contract, ['s1', 's2']) == ['doi:10.1/a', 'pmid:2']
+    assert unreceipted_references(contract, ['s3', 's1']) == ['doi:10.1/a', 'doi:10.1/z', 'pmid:2']
+    assert unreceipted_references(contract, []) == [] and unreceipted_references({}, ['s1']) == []
+
+
+@pytest.mark.asyncio
+async def test_the_continuation_card_and_report_say_the_content_of_pinned_references_was_not_checked(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, 'proof_problems', lambda *args, **kwargs: {})  # the identifier receipt itself is #1061's PR 1
+    hub = _hub(tmp_path, [CP1, APPROVE, CONTINUE, CP1, APPROVE])
+
+    def pin_references():
+        hub.requests['r'].setdefault('reuse_input_proof', {})['s1'] = {'unreceipted': ['doi:10.1/a', 'pmid:7']}
+    hub.hooks[3] = pin_references  # the continue card is open: s1's proof is archived with the round that follows
+    await Orchestrator(hub).run_request('r')
+
+    cp1 = hub.approvals[3]
+    assert cp1['detail']['continuation']['reuse'] == ['s1']
+    assert '재사용한 단계가 쓴 DOI·PMID 참조 2건은 식별자만 고정했고 내용은 확인하지 않았습니다.' in cp1['summary']
+    assert 'pinned by identifier only; their content was not checked (doi:10.1/a, pmid:7)' in json.dumps(
+        hub.requests['r'], ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_without_pinned_references_the_card_text_is_unchanged(tmp_path):
+    hub = _hub(tmp_path, [CP1, APPROVE, CONTINUE, CP1, APPROVE])
+    await Orchestrator(hub).run_request('r')
+    assert '식별자만 고정' not in hub.approvals[3]['summary']
