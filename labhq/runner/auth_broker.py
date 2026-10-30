@@ -9,6 +9,7 @@ import base64
 import json
 import http.client
 import ipaddress
+import math
 import multiprocessing
 import os
 import socket
@@ -234,7 +235,7 @@ class ProcessBroker(ConstantResponseBroker):
     def __init__(self, directory, run_id, credential, upstream=fixed_provider_transport,
                  deadline=TIMEOUT):
         super().__init__(directory, run_id, credential, upstream)
-        if deadline <= 0:
+        if not math.isfinite(deadline) or deadline <= 0:
             raise ValueError("invalid deadline")
         self.deadline = deadline
         self._process = None
@@ -251,7 +252,7 @@ class ProcessBroker(ConstantResponseBroker):
             body = base64.b64decode(obj["body"], validate=True)
             if len(body) > MAX_FRAME // 2 or self._stop.is_set():
                 raise ValueError
-            context = multiprocessing.get_context("fork")
+            context = multiprocessing.get_context("spawn")
             receiver, sender = context.Pipe(duplex=False)
             process = context.Process(target=_run_upstream, args=(sender, self._upstream, body, self._credential))
             with self._lock:

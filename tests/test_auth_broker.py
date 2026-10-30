@@ -17,6 +17,25 @@ SECRET = b"synthetic-secret-123"
 pytestmark = pytest.mark.skipif(os.name == "nt" or not hasattr(socket, "AF_UNIX"), reason="Linux AF_UNIX required")
 
 
+def process_fake(body, credential):
+    os.write(1, credential)
+    os.write(2, credential)
+    if body:
+        raise RuntimeError(credential.decode())
+    return credential
+
+
+def process_hang(body, credential):
+    from pathlib import Path
+    Path(body.decode()).write_text(str(os.getpid()))
+    while True:
+        time.sleep(1)
+
+
+def process_hard_exit(body, credential):
+    os._exit(7)
+
+
 def request(path, value):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(4)
@@ -179,13 +198,7 @@ def test_bubblewrap_network_namespace_can_reach_socket(broker):
 
 def test_process_broker_ack_and_exception_are_constant(tmp_path, capfd):
     tmp_path.chmod(0o700)
-    def fake(body, credential):
-        os.write(1, credential)
-        os.write(2, credential)
-        if body:
-            raise RuntimeError(credential.decode())
-        return credential
-    instance = ProcessBroker(tmp_path, "run-1", SECRET, fake)
+    instance = ProcessBroker(tmp_path, "run-1", SECRET, process_fake)
     instance.start()
     try:
         assert request(instance.path, {"run_id": "run-1", "body": ""}) == {"body": "YWNjZXB0ZWQ="}
@@ -195,20 +208,38 @@ def test_process_broker_ack_and_exception_are_constant(tmp_path, capfd):
     assert capfd.readouterr() == ("", "")
 
 
+@pytest.mark.parametrize("deadline", [0, -1, float("nan"), float("inf"), -float("inf")])
+def test_process_broker_requires_finite_positive_deadline(tmp_path, deadline):
+    with pytest.raises(ValueError, match="invalid deadline"):
+        ProcessBroker(tmp_path, "run-1", SECRET, process_fake, deadline=deadline)
+    assert not (tmp_path / "provider.sock").exists()
+
+
+@pytest.mark.parametrize("upstream", [process_hard_exit, lambda body, credential: credential])
+def test_process_start_or_exit_failure_rejects_without_output(tmp_path, capfd, upstream):
+    # A lambda cannot be pickled by spawn; abrupt exit cannot send a status.
+    tmp_path.chmod(0o700)
+    instance = ProcessBroker(tmp_path, "run-1", SECRET, upstream)
+    instance.start()
+    try:
+        assert request(instance.path, {"run_id": "run-1", "body": ""}) == {"error": "request rejected"}
+    finally:
+        instance.close()
+    assert not instance.path.exists()
+    assert not instance._thread.is_alive()
+    assert capfd.readouterr() == ("", "")
+
+
 @pytest.mark.parametrize("cancel", [False, True])
 def test_process_timeout_or_close_kills_upstream(tmp_path, cancel):
     tmp_path.chmod(0o700)
     marker = tmp_path / "pid"
-    def hang(body, credential):
-        marker.write_text(str(os.getpid()))
-        while True:
-            time.sleep(1)
-    instance = ProcessBroker(tmp_path, "run-1", SECRET, hang, deadline=0.5)
+    instance = ProcessBroker(tmp_path, "run-1", SECRET, process_hang, deadline=1.5)
     instance.start()
     responses = []
     def client():
         try:
-            responses.append(request(instance.path, {"run_id": "run-1", "body": ""}))
+            responses.append(request(instance.path, {"run_id": "run-1", "body": base64.b64encode(str(marker).encode()).decode()}))
         except (OSError, ValueError):
             pass
     thread = threading.Thread(target=client)
