@@ -8,3 +8,7 @@ rows:
   at: 2026-10-30 21:30
   text: CSO의 결론 근거 줄·접근 원장 줄 두 호출에 요청의 analysis_precedents에서 구한 stored_access를 넘기고 manual 한·영에 적는다
   summary: ② 6차처럼 선행 검색에서 본문을 읽은 논문이 CP2 카드에서 "조회 기록 없음"으로 나오던 문제가 실제 요청에서 해소됩니다.
+- sha: '4b2dbd8d'
+  at: 2026-10-30 21:50
+  text: 시험 추가 — CP2 결론 근거 줄·접근 원장 줄 호출이 요청의 analysis_precedents에서 구한 stored_access를 받는지(연결을 빼면 실패)
+  summary: 선행 검색 기록 합산이 실제 요청 흐름에서 빠지지 않도록 막는 시험입니다.
