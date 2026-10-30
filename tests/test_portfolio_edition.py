@@ -662,7 +662,7 @@ def test_figures_with_one_basename_keep_their_own_captions_and_source_tables():
     assert "첫째 그림" in rows[0] and "둘째 그림" in rows[1]
     assert "tables/" not in rows[0] and "tables/" not in rows[1] and "구분하지 못했습니다" in rows[0]  # one name, two steps
     solo = _figure_lines("![표본](figures/orr.svg)\n", ["figures/orr.svg"], {}, {"code/x.py": "t = read('res.tsv'); save('orr.svg')\n"}, ["tables/res.tsv"])
-    assert "원자료 [`tables/res.tsv`](tables/res.tsv)" in solo[0]
+    assert "다루는 표(그림별로 가르지는 못함) [`tables/res.tsv`](tables/res.tsv)" in solo[0]
     assert "연결을 스크립트에서 찾지 못했습니다" in _figure_lines("", ["figures/q.svg"], {}, {}, ["tables/res.tsv"])[0]
     abstract = _figure_lines("", ["figures/graphical_abstract.svg"], {}, {}, ["tables/res.tsv"], True)[0]
     assert "결과표에서 읽은 값이 아닙니다" in abstract
@@ -683,6 +683,8 @@ def test_the_environment_section_lists_pinned_versions_or_says_none():
     listed = _environment_lines({"run/environment/requirements.lock.txt": "pandas==2.2.2\nnumpy==1.26.4 ; python_version>'3'\n"})
     assert "run/environment/requirements.lock.txt" in listed[0]
     assert "`numpy 1.26.4`" in listed[1] and "`pandas 2.2.2`" in listed[1]
+    twice = _environment_lines({"run/environment/a-requirements.lock.txt": "pandas==1.0\n", "run/environment/b-requirements.lock.txt": "pandas==2.0\n"})
+    assert "`pandas 1.0 / 2.0`" in twice[1]
     poetry = _environment_lines({"run/environment/poetry.lock": '[[package]]\nname = "scipy"\nversion = "1.11.4"\n'})
     conda = _environment_lines({"run/environment/environment.yml": "dependencies:\n  - numpy=1.26.4\n"})
     assert "`scipy 1.11.4`" in poetry[1] and "`numpy 1.26.4`" in conda[1]

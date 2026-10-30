@@ -1682,7 +1682,7 @@ def _figure_lines(report: str, figure_names: list[str], source_targets: Mapping[
         if generated_abstract and name == "figures/graphical_abstract.svg":
             source = "요청·계획·결론 문장에서 자동으로 그렸습니다. 결론에 적힌 숫자는 문장에서 옮긴 것이고 결과표에서 읽은 값이 아닙니다"
         elif tables:
-            source = "원자료 " + ", ".join(f"[`{table}`]({quote(table, safe='/')})" for table in tables[:4])
+            source = "같은 스크립트가 다루는 표(그림별로 가르지는 못함) " + ", ".join(f"[`{table}`]({quote(table, safe='/')})" for table in tables[:4])
         else:
             source = ("같은 이름의 그림이 여러 개라 원자료를 구분하지 못했습니다" if duplicated(name)
                       else "원자료 표와의 연결을 스크립트에서 찾지 못했습니다")
@@ -1699,19 +1699,20 @@ _PINNED = (re.compile(r"^([A-Za-z0-9_.-]+)==([^;\s#]+)", re.M),  # requirements,
 
 def _environment_lines(files: Mapping[str, str | bytes]) -> list[str]:
     locks = sorted(name for name in files if name.startswith("run/environment/") or "/run/environment/" in name)
-    packages = {}
+    packages: dict[str, list[str]] = {}
     for name in locks:
         body = files[name]
         text = body if isinstance(body, str) else body.decode("utf-8", "replace")
         for pattern in _PINNED:
             for pkg, version in pattern.findall(text):
-                packages.setdefault(pkg, version)
+                if version not in packages.setdefault(pkg, []):
+                    packages[pkg].append(version)
     if not locks:
         return ["- 환경 기록이 없습니다. 패키지와 언어 버전이 남지 않아, 같은 환경을 다시 만든다고 보장할 수 없습니다."]
     lines = [f"- 기록 파일: " + ", ".join(f"[`{name}`]({quote(name, safe='/')})" for name in locks[:4])]
     if packages:
         shown = sorted(packages.items())
-        lines.append("- 기록된 버전: " + ", ".join(f"`{pkg} {version}`" for pkg, version in shown[:15])
+        lines.append("- 기록된 버전: " + ", ".join(f"`{pkg} {' / '.join(versions)}`" for pkg, versions in shown[:15])
                      + (f" 외 {len(shown) - 15}개" if len(shown) > 15 else ""))
     else:
         lines.append("- 기록 파일에서 패키지와 버전 쌍을 읽지 못했습니다. 파일을 직접 확인하세요.")
