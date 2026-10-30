@@ -105,6 +105,8 @@ NOT_CONTROLLABLE = "이 작업({kind})은 실행 중 제어를 받지 않습니�
 HALT_WHILE_WAITING = "HPC 잡·질문 대기 중에는 멈출 수 없습니다 — 일시 정지를 쓰세요"
 # How long request cancel waits for the cancelled turns to report, so their cost is counted (R13).
 CANCEL_RESULT_WAIT_S = 10.0
+# How often the request wall-clock watch looks at the open requests (#877).
+REQUEST_DEADLINE_TICK_S = 15.0
 # A PDF upload succeeds only after the runner confirms its workspace write.
 ATTACHMENT_ACK_TIMEOUT_S = 30.0
 # Statuses a hold sets and _sync_hold_status may lift again.
@@ -381,6 +383,9 @@ class Hub:
         # (#515). The incarnation survives a restart, so the process id decides when the runner sends one (#521).
         self.recruits_running: dict[str, dict[str, Any]] = {}
         self.cancel_result_wait_s = CANCEL_RESULT_WAIT_S
+        self.request_deadline_tick_s = REQUEST_DEADLINE_TICK_S
+        self._deadline_seen: dict[str, float] = {}  # when the watch last looked at a request; not kept over a restart
+        self._deadline_task: asyncio.Task | None = None
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
         from ..pi_language import PiInterpreter
@@ -4854,7 +4859,7 @@ class Hub:
         return True
 
     async def cancel_request(self, rid: str, *, active_only: bool = False,
-                             expected_created_at: float | None = None) -> dict:
+                             expected_created_at: float | None = None, reason: str | None = None) -> dict:
         """Stop a request for good (R13) and report what it finished.
 
         Its orchestration stops (no retry, re-plan or card after this), every live task gets a cancel on its
@@ -4879,8 +4884,12 @@ class Hub:
             raise ValueError(f"이미 끝난 요청입니다({status})")
         self._restore_unstarted_continuation(rid, req)
         now = time.time()
-        req.update(status="cancelled", outcome="cancelled", error="PI가 요청을 취소했습니다", cancelled_at=now,
-                   finished_at=now)
+        req.update(status="cancelled", outcome="cancelled",
+                   error=("요청 전체 시간 상한에 닿아 취소했습니다" if reason == "request_deadline"
+                          else "PI가 요청을 취소했습니다"),
+                   cancelled_at=now, finished_at=now)
+        if reason:
+            req["cancel_reason"] = reason
         req.pop("pi_waits", None)
         req.pop("runner_waits", None)
         quota = req.pop("quota_waits", None) or {}
@@ -4933,7 +4942,9 @@ class Hub:
                 await self.login_recovered(engine, reason="request cancelled")
             if unwinding:
                 await asyncio.wait(unwinding, timeout=5)  # let them unwind before the terminal record
-            await self._await_cancelled_results(rid, cancelled)
+            silent = await self._await_cancelled_results(rid, cancelled)
+            if reason == "request_deadline":
+                req["deadline_receipt"] = self._deadline_receipt(req, now, cancelled, silent)
             await self._afinish_cancel(rid)
             return {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": cancelled}
 
@@ -4941,6 +4952,79 @@ class Hub:
         if cancelled:
             raise asyncio.CancelledError
         return result
+
+    def _new_wall_clock(self, created_at: float) -> dict[str, Any]:
+        """The request's time limit as it was when the request was accepted (#877): a later config edit does not
+        change it. ``limit_s`` 0 means off; ``held_s`` is the time spent in waiting_pi, which moves the deadline."""
+        limit = int(self.s.orchestrator.request_wall_clock_s or 0)
+        return {"enabled": bool(limit), "limit_s": limit, "held_s": 0.0,
+                "deadline_at": created_at + limit if limit else None}
+
+    @staticmethod
+    def _deadline_receipt(req: dict, fired_at: float, cancelled: list[str], unreported: list[str]) -> dict[str, Any]:
+        """What the deadline did. A turn that reported its result after the cancel has ended (the runner ends the
+        process tree before it reports); one that did not report is "unconfirmed", never assumed stopped."""
+        clock = req.get("wall_clock") or {}
+        if not cancelled:
+            termination = "no_running_tasks"
+        elif unreported:
+            termination = "unconfirmed"
+        else:
+            termination = "confirmed"
+        return {"limit_s": clock.get("limit_s"), "held_s": clock.get("held_s"), "deadline_at": clock.get("deadline_at"),
+                "fired_at": fired_at, "cancelled_tasks": list(cancelled), "unconfirmed_tasks": list(unreported),
+                "termination": termination}
+
+    async def enforce_request_deadlines(self, now: float | None = None) -> list[str]:
+        """Cancel the open requests whose wall-clock limit has passed and return their ids (#877).
+
+        Only an active request is cut: review_pending and later never are (the PI is reviewing, no staff runs), an
+        interrupted one is looked at again once it resumes. Time in waiting_pi is added to the deadline as the watch
+        sees it. A restart keeps the same ``created_at`` and the held time already recorded; the time the gateway was
+        down is not subtracted."""
+        now = time.time() if now is None else now
+        fired: list[str] = []
+        for rid, req in list(self.requests.items()):
+            clock = req.get("wall_clock")
+            if not isinstance(clock, dict) or not clock.get("limit_s"):
+                continue
+            if not is_active_request(req.get("status")):
+                self._deadline_seen.pop(rid, None)
+                continue
+            last = self._deadline_seen.get(rid)
+            self._deadline_seen[rid] = now
+            created_at = float(req.get("created_at") or now)
+            if req.get("status") == "waiting_pi" and last is not None and now > last:
+                clock["held_s"] = round(float(clock.get("held_s") or 0.0) + (now - last), 3)
+                clock["deadline_at"] = created_at + float(clock["limit_s"]) + clock["held_s"]
+                self.save_request(rid)
+            if now < created_at + float(clock["limit_s"]) + float(clock.get("held_s") or 0.0):
+                continue
+            try:
+                await self.cancel_request(rid, active_only=True, expected_created_at=req.get("created_at"),
+                                          reason="request_deadline")
+            except ValueError:
+                continue  # it ended or changed under the watch
+            except Exception:
+                log.exception("request deadline cancel failed for %s", rid)
+                continue
+            self._deadline_seen.pop(rid, None)
+            fired.append(rid)
+        return fired
+
+    def start_deadline_watch(self) -> None:
+        if self._deadline_task is None or self._deadline_task.done():
+            self._deadline_task = asyncio.get_running_loop().create_task(self._deadline_loop())
+
+    async def _deadline_loop(self) -> None:
+        while not self.stopping:
+            try:
+                await self.enforce_request_deadlines()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("request deadline watch failed")
+            await asyncio.sleep(self.request_deadline_tick_s)
 
     def _finish_cancel(self, rid: str) -> None:
         """Write a cancelled request's report and terminal record. ``cancelling`` leaves in that same commit."""
@@ -5031,9 +5115,9 @@ class Hub:
                 finished.append(rid)
         return finished
 
-    async def _await_cancelled_results(self, rid: str, cancelled: list[str], wait_s: float | None = None) -> None:
+    async def _await_cancelled_results(self, rid: str, cancelled: list[str], wait_s: float | None = None) -> list[str]:
         """Give each cancelled turn a short time to report, so its cost is counted; a turn that does not report is
-        counted as unaccounted, never as $0 (#270)."""
+        counted as unaccounted, never as $0 (#270). Returns the turns that did not report."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + (self.cancel_result_wait_s if wait_s is None else wait_s)
         def silent() -> list[str]:
@@ -5042,12 +5126,14 @@ class Hub:
                             not (self.store.get("task", tid) or {}).get("abandoned"))]
         while silent() and loop.time() < deadline:
             await asyncio.sleep(0.05)
-        for tid in silent():
+        unreported = silent()
+        for tid in unreported:
             entry = self.store.get("task", tid) or {}
             agent_id = (entry.get("payload") or {}).get("agent_id") or "unknown"
             (await self._arecord_task_cost(rid, tid, TaskResult(task_id=tid, agent_id=agent_id, ok=False,
                                                         error="request cancelled before the turn reported"),
                                    outcome_unknown=True))
+        return unreported
 
     @staticmethod
     def _cancel_report(req: dict, cancelled: list[str], quota: dict) -> tuple[str, str]:
@@ -5096,7 +5182,9 @@ class Hub:
             allowed = ", ".join(self.s.orchestrator.cso_models) or "(none)"
             raise ValueError(f"cso_model {body.cso_model!r} is not allowed; allowed models: {allowed}")
         rid = new_id("req")
-        req = {"id": rid, "status": "running", "created_at": time.time(),
+        created_at = time.time()
+        req = {"id": rid, "status": "running", "created_at": created_at,
+               "wall_clock": self._new_wall_clock(created_at),
                "cost_known": True, "usage": {}, **body.model_dump(),
                # The budget the PI asked for; budget_usd may later rise on a budget card (a CP1 수정 요청 carries this).
                "requested_budget_usd": body.budget_usd, **(extra or {})}
@@ -5141,7 +5229,9 @@ class Hub:
             allowed = ", ".join(self.s.orchestrator.cso_models) or "(none)"
             raise ValueError(f"cso_model {body.cso_model!r} is not allowed; allowed models: {allowed}")
         rid = new_id("req")
-        req = {"id": rid, "status": "running", "created_at": time.time(),
+        created_at = time.time()
+        req = {"id": rid, "status": "running", "created_at": created_at,
+               "wall_clock": self._new_wall_clock(created_at),
                "cost_known": True, "usage": {}, **body.model_dump(),
                # The budget the PI asked for; budget_usd may later rise on a budget card (a CP1 수정 요청 carries this).
                "requested_budget_usd": body.budget_usd, **(extra or {})}
@@ -5710,6 +5800,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         hub.knowledge.start()
         hub.recover_terminal_deliveries()
         await hub.finish_interrupted_cancels()
+        hub.start_deadline_watch()
         for rid, req in hub.requests.items():
             if (req.get("status") == "interrupted" or req.get("revised_to")
                     or (req.get("status") == "failed" and not req.get("pi_reviewed_at"))):
@@ -5728,6 +5819,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
         hub.stopping = True
+        if hub._deadline_task is not None:
+            hub._deadline_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await hub._deadline_task
         await hub.pi_interpreter.close()
         for timer in hub.final_review_timers.values():
             timer.cancel()
