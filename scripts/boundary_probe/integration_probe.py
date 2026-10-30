@@ -6,19 +6,20 @@ import base64
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import socket
 import sys
 from pathlib import Path
 
 
-def load(path: Path, name: str):
+def load(path: Path, name: str, source: bytes):
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise ValueError("module unavailable")
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    exec(compile(source, str(path), "exec"), module.__dict__)
     return module
 
 
@@ -51,21 +52,29 @@ def run(boundary_path: Path, broker_path: Path, broker_kind="synthetic", expecte
     paths = {"boundary": boundary_path, "broker": broker_path}
     expected = {"boundary": expected_boundary, "broker": expected_broker}
     before = {}
+    old_dont_write = os.environ.get("PYTHONDONTWRITEBYTECODE")
+    cache = Path(importlib.util.cache_from_source(str(broker_path.resolve())))
     try:
         if any(value is not None and not re.fullmatch(r"[0-9a-fA-F]{64}", value) for value in expected.values()):
             result["reason"] = "invalid expected source hash"
             return result
-        before = {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in paths.items()}
+        source_bytes = {name: path.read_bytes() for name, path in paths.items()}
+        before = {name: hashlib.sha256(data).hexdigest() for name, data in source_bytes.items()}
         result["sources"] = {name: {"before": digest, "expected": expected[name]} for name, digest in before.items()}
         result["source_mode"] = "pinned" if all(expected.values()) else "provisional"
         if any(value is not None and value.lower() != before[name] for name, value in expected.items()):
             result["reason"] = "expected source hash mismatch"
             return result
-        boundary = load(boundary_path, "boundary_probe_actual_boundary")
+        if broker_kind == "process":
+            if cache.exists():
+                result["reason"] = "broker bytecode cache present"
+                return result
+            os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+        boundary = load(boundary_path, "boundary_probe_actual_boundary", source_bytes["boundary"])
         # Spawned upstream processes must be able to import the broker by name.
         broker_path = broker_path.resolve()
         sys.path.insert(0, str(broker_path.parent))
-        broker = load(broker_path, broker_path.stem)
+        broker = load(broker_path, broker_path.stem, source_bytes["broker"])
         if broker_kind not in ("synthetic", "process"):
             raise ValueError("unknown broker kind")
         def factory(directory, run_id):
@@ -126,6 +135,13 @@ def run(boundary_path: Path, broker_path: Path, broker_kind="synthetic", expecte
         result["reason"] = "module, protocol or prerequisite unavailable"
         result["error_type"] = type(exc).__name__
     finally:
+        if old_dont_write is None:
+            os.environ.pop("PYTHONDONTWRITEBYTECODE", None)
+        else:
+            os.environ["PYTHONDONTWRITEBYTECODE"] = old_dont_write
+        if broker_kind == "process" and cache.exists():
+            result["status"] = "inconclusive"
+            result["reason"] = "broker bytecode cache present"
         if before:
             for name, path in paths.items():
                 try:

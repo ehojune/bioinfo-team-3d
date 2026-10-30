@@ -180,7 +180,7 @@ def test_integration_receipt_without_ready_witness_is_inconclusive(monkeypatch, 
             called.append(True)
             return Receipt()  # A receipt alone is not a socket witness.
 
-    monkeypatch.setattr(integration_probe, "load", lambda path, name: Boundary())
+    monkeypatch.setattr(integration_probe, "load", lambda *args: Boundary())
     result = integration_probe.run(tmp_path / "boundary.py", tmp_path / "broker.py")
     assert called == [True]
     assert result["run_id_matches"] is False
@@ -204,6 +204,27 @@ def test_integration_source_mismatch_and_mutation(monkeypatch, tmp_path):
     assert result["status"] == "inconclusive"
     assert result["reason"] == "source changed during diagnostic"
     assert result["sources"]["boundary"]["before"] != result["sources"]["boundary"]["after"]
+
+
+def test_load_executes_supplied_bytes_not_stale_bytecode(tmp_path):
+    import py_compile
+    source = tmp_path / "fixture.py"
+    source.write_text("value = 1\n")
+    py_compile.compile(str(source), doraise=True)
+    source.write_text("value = 2\n")
+    module = integration_probe.load(source, "source_bytes_fixture", source.read_bytes())
+    assert module.value == 2
+
+
+def test_process_broker_cache_prevents_pass(tmp_path):
+    import py_compile
+    boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"
+    boundary.write_text("value = 1\n")
+    broker.write_text("value = 1\n")
+    py_compile.compile(str(broker), doraise=True)
+    result = integration_probe.run(boundary, broker, "process")
+    assert result["status"] == "inconclusive"
+    assert result["reason"] == "broker bytecode cache present"
 
 
 def test_malformed_frames_require_rejection_and_live_listener(monkeypatch, tmp_path):
