@@ -39,6 +39,20 @@
 - P2(올림): `round(remaining, 6)`이 실제 $0.0199996을 $0.02로 올렸다. `Decimal(repr(remaining)) + 1e-9`를 센트로 내림으로 바꿨다(오차 허용은 `_FLOAT_NOISE`로 명시). `2.0 - 1.98`(0.020000000000000018)은 $0.02, `5.0 - 4.99`(0.00999999999999979)는 1센트, $0.0199996은 $0.01. 쓰지 않게 된 `_MIN_HOLD_USD`를 지웠다.
 - 시험 먼저: 경계값 8건(`0.0199996`, `0.019999`, 1e-10 아래의 오차, 뺄셈 오차 둘, `1.239`, `1.9800004`)과 1센트 미만·cap 통과 시험. `0.0199996`이 수정 전에 실패함을 확인. `test_reserve_default_on.py` 33건, 관련 `test_cso.py`·`test_budget_headroom_940.py`·연구·진단 포함 459 passed.
 
+# #1207 rev6: mock으로 갈래·단계 실패 경로를 확인한다
+
+- 결론: `[branch-fail]`(분기 계획의 둘째 갈래 s2 실패)와 `[step-fail]`(다단계 계획의 s2 실패) 토큰을 더했다. 기본 init 설정 e2e로 실패 경로가 설계대로 도는지 단언했다. 제품 결함은 찾지 못했다.
+- 확인된 동작(설계대로):
+  - 분기: s1(b1)은 성공, s2(b2)는 실패(`mock step failure`), 종합 단계 s3은 그대로 실행됐다. s3 context에 `실패한 갈래: b2 — 이유: s2: mock step failure; 마지막으로 끝난 단계: none`이 들어간다.
+  - 보고서는 s1·s3의 claim만 인용하고 s2의 claim은 인용하지 않는다. 실패는 보고서 한계에 `s2: 단계 실패 또는 의존 단계 건너뜀 — mock step failure`로, CP2 카드에 `경고 1건: 누락 칸·실패 단계는 한계로 남습니다`로 남는다.
+  - 다단계: s1 성공 뒤 s2가 실패해도 같은 방식으로 CP2·리뷰·보고서까지 간다.
+- 관찰(결함으로 단정하지 않음): 두 경우 모두 요청 상태는 `done`, outcome은 `research_reported`이고 요청 단위의 "일부 실패" 표지는 없다. 실패는 보고서 한계와 CP2 경고로만 보인다. 보고서의 labhq 한계 줄은 단계 id(s2)만 말하고 갈래(b2)는 말하지 않는다(갈래 이름은 종합 단계 context의 memo에 있다).
+- 바뀐 것: `labhq/adapters/mock.py`(토큰·실패 반환), `tests/test_e2e_mock.py`(helper가 `hub`를 함께 돌려줌, 실패 시험 2건).
+- 실행한 것: `test_e2e_mock`(11)·`test_demo_separation`·`test_research_cp2` 로컬 통과. 새 시험 2건은 옛 mock에서 실패함을 확인.
+- 문서: manual 한·영의 mock 엔진 단락에 `[step-fail]`·`[branch-fail]`을 적었다(rev7).
+- 일부 실패 요청이 `done`으로만 보이는 문제는 #1220으로 따로 다룬다.
+- 미해결/미검증: 모든 갈래가 실패하는 경우, 갈래 안 여러 단계, 재시도는 확인하지 않았다.
+
 # #1208 — WSL fallback 요청의 계획 prompt
 
 - 결론: `format_capabilities`에 `run_where`를 `wsl_pinned`일 때만 넘기고, fallback이면 `run_where_note`(이유, 300자 이내)를 "WSL 없이 실행한다" 한 줄로 붙인다. 호출부 한 곳(`cso.py`).
@@ -62,6 +76,15 @@
 - 바뀐 것: `labhq/adapters/mock.py`(synthesis 보고서), `tests/test_e2e_mock.py`(`_every_claim_is_cited`: 계획의 모든 단계·claim_id의 anchor가 보고서에 있는지 단언, `or` 제거, 분기 시험에도 적용).
 - 실행한 것: `test_e2e_mock`·`test_demo_separation`·`test_research_cp2` 101 passed. 다단계·분기 시험 2건은 옛 mock에서 실패함을 확인.
 - 미해결/미검증: pack이 적용되는 주제, 단계마다 다른 작업자, 분기 중 실패한 갈래는 mock이 내지 않는다.
+
+# #1216 — Git Bash에서 clean_install_check이 새 clone에서 죽는 문제
+
+- 결론: 원인은 `git` 경로가 아니라 환경 변수였다. Git Bash가 내보내는 `MSYSTEM=MINGW64`가 점검 환경에 그대로 넘어가고 PATH는 System32로 좁혀지면, PATH 맨 앞의 `mingw64\bin\git.exe`가 시작하다 죽는다(exit 3221225477, 0xC0000005). `Git\cmd\git.exe`는 같은 환경에서도 통과해서 CI는 영향이 없다.
+- 재현: Git Bash에서 `_isolated_env`로 만든 환경으로 `clone --local`을 돌렸다. `mingw64\bin\git.exe`는 3221225477, `cmd\git.exe`는 0. 변수를 하나씩 빼 보니 `MSYSTEM`만 빼면 통과했다.
+- 고침: `_isolated_env`가 `MSYS*`·`MINGW*`·`EXEPATH`·`ORIGINAL_*` 변수를 뺀다. 점검은 어차피 셸과 격리하는 것이라 git 경로를 고르는 것보다 원인을 없애는 쪽이다. 어느 셸에서든 같다.
+- 시험(`tests/test_clean_install_check.py`, 2건): Git Bash 변수가 환경에 없다(모든 OS) · Windows에서 `MSYSTEM`이 설정된 채 PATH의 모든 `git.exe`(`cmd`와 `mingw64\bin`)가 격리 환경으로 실제 clone을 한다. 옛 코드에서는 둘 다 실패하고(실제 clone은 3221225477) 지금 통과한다.
+- 실행: `test_clean_install_check.py`·`test_clean_install_diagnostics.py` 85건 통과.
+- 미검증: 전체 `clean_install_check.py` 실행(설치·mock 요청까지). 새 clone 단계만 재현·확인했다.
 
 # #1207 rev3: mock이 다단계·분기 연구 계획을 낸다
 

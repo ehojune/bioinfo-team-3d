@@ -3,7 +3,8 @@ planning (DAG), reviewer revise loop, approvals, HPC hibernate/wake, and contrac
 
 Tokens in the request text steer it: [needs-approval], [hpc], [revise], [recruit], [question], [block],
 [revision-fail], [max-turns], [artifact]. In a research plan, [multistep] gives two dependent steps and
-[branched] two branches plus a synthesis step (#1207); without either the plan has one step.
+[branched] two branches plus a synthesis step; [step-fail] and [branch-fail] fail step s2 of those plans (#1207).
+Without a token the plan has one step.
 """
 
 from __future__ import annotations
@@ -70,17 +71,24 @@ def _research_step(sid: str, worker: str, depends_on: list[str], branch: str | N
 
 def _research_shape(worker: str, request: str) -> dict:
     """Steps (and branches) of the mock research plan: one step, or `[multistep]` (s2 reads s1), or `[branched]`
-    (two independent branches and a synthesis step that reads both)."""
-    if "[branched]" in request:
-        return {"branches": [{"id": "b1", "question": "First mock question", "evidence_type": "mock_table",
-                              "data_boundary": "mock data only"},
-                             {"id": "b2", "question": "Second mock question", "evidence_type": "mock_table",
-                              "data_boundary": "mock data only"}],
-                "steps": [_research_step("s1", worker, [], "b1"), _research_step("s2", worker, [], "b2"),
-                          _research_step("s3", worker, ["s1", "s2"], "synthesis")]}
-    if "[multistep]" in request:
-        return {"steps": [_research_step("s1", worker, []), _research_step("s2", worker, ["s1"])]}
-    return {"steps": [_research_step("s1", worker, [])]}
+    (two independent branches and a synthesis step that reads both). `[step-fail]` makes s2 of a multistep plan
+    fail, `[branch-fail]` makes the second branch of a branched plan fail (each implies its plan shape)."""
+    if "[branched]" in request or "[branch-fail]" in request:
+        shape = {"branches": [{"id": "b1", "question": "First mock question", "evidence_type": "mock_table",
+                               "data_boundary": "mock data only"},
+                              {"id": "b2", "question": "Second mock question", "evidence_type": "mock_table",
+                               "data_boundary": "mock data only"}],
+                 "steps": [_research_step("s1", worker, [], "b1"), _research_step("s2", worker, [], "b2"),
+                           _research_step("s3", worker, ["s1", "s2"], "synthesis")]}
+        failing = "[branch-fail]" in request
+    elif "[multistep]" in request or "[step-fail]" in request:
+        shape = {"steps": [_research_step("s1", worker, []), _research_step("s2", worker, ["s1"])]}
+        failing = "[step-fail]" in request
+    else:
+        return {"steps": [_research_step("s1", worker, [])]}
+    if failing:
+        shape["steps"][1]["instruction"] += " [step-fail]"
+    return shape
 
 
 _RESULT_COPY = re.compile(r"plan_sha256=([0-9a-f]{64}), step_id=(\S+?), claim_ids=(\[.*?\]), and fill evidence_slots="
@@ -250,6 +258,9 @@ class MockAdapter(AgentAdapter):
             (ctx.workdir / "outputs" / "artifact.txt").write_text("mock artifact\n", encoding="utf-8")
         if kind == "step" and "[revision-fail]" in own and t.meta.get("revision", 0):
             return TaskResult(task_id=t.id, agent_id=a.id, ok=False, error="revision failed",
+                              session_id=f"mock-session-{t.id[-4:]}", cost_usd=0.0)
+        if kind == "step" and "[step-fail]" in own:
+            return TaskResult(task_id=t.id, agent_id=a.id, ok=False, error="mock step failure",
                               session_id=f"mock-session-{t.id[-4:]}", cost_usd=0.0)
         if kind == "step" and "[max-turns]" in own:
             return TaskResult(task_id=t.id, agent_id=a.id, ok=False, error="error_max_turns",
