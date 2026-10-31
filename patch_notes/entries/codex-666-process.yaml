@@ -1,0 +1,62 @@
+pr: 1050
+rows:
+  - sha: 'db6b53f'
+    at: "2026-10-31 20:20"
+    summary: "비봉인 프로세스 진단의 사용법과 한계를 한영 매뉴얼에 안내합니다."
+    text: "docs: describe unsealed process diagnostic"
+  - sha: '2b50368'
+    at: "2026-10-31 12:40"
+    summary: "경계 진단 실패와 지원하지 않는 실행을 CLI 종료 코드에 반영합니다."
+    text: "JSON receipt를 유지하고 성공한 비봉인 진단만 0으로 종료합니다."
+  - sha: '63b6090'
+    at: "2026-10-31 12:30"
+    summary: "합성 staging callback 뒤 세 payload의 digest를 다시 확인합니다."
+    text: "fix: recheck diagnostic staged payload digests"
+  - sha: '12bbd84'
+    at: "2026-10-31 12:20"
+    summary: "합성 broker 진단에서 호출자가 지정한 실행 ID를 일관되게 전달합니다."
+    text: "진단 전 UUID를 검증하며 생략하면 새 ID를 생성합니다."
+  - sha: '351eb62'
+    at: "2026-10-31 04:55"
+    summary: "Record a distinct broker diagnostic child timeout reason."
+    text: "fix: distinguish broker diagnostic timeout"
+  - sha: '4a1b96d'
+    at: "2026-10-31 05:30"
+    summary: "합성 producer 거절 및 broker 실패 경로를 검증하고 미구현 인증·사유 코드를 기록합니다."
+    text: "test: cover producer diagnostic negative controls"
+  - sha: 'a59f17c'
+    at: "2026-10-30 18:20"
+    summary: "ancestry 진단 receipt를 v2로 구분하고 기존 v1 출력을 보존합니다."
+    text: "fix: version ancestry staging receipt"
+  - sha: '8c9f77c'
+    at: "2026-10-30 18:16"
+    summary: "ancestry 관측이 없거나 바뀌면 합성 진단을 실패 처리합니다."
+    text: "fix: require diagnostic ancestry observations"
+  - sha: '0c13791'
+    at: "2026-10-30 18:10"
+    summary: "합성 진단에서 parent identity와 ancestry 변경을 검증합니다."
+    text: "feat: validate synthetic parent ancestry"
+  - sha: '4941459'
+    at: "2026-10-30 10:49"
+    summary: "격리 준비가 검증되지 않은 실행을 거부하고 별도 진단 결과를 기록합니다."
+    text: "add: fail-closed process boundary diagnostic (#1047)"
+  - sha: '6c9a207'
+    at: "2026-10-30 11:00"
+    summary: "프로세스 경계 테스트를 Windows 필수 검사에 등록합니다."
+    text: "fix: register process boundary Windows tests (#1047)"
+  - sha: 'e20d94a'
+    at: "2026-10-30 12:09"
+    summary: "합성 broker 연결과 종료를 격리 진단에서 확인합니다."
+    text: "feat: add synthetic broker namespace diagnostic (#1047)"
+  - sha: 'ca4fe3a'
+    at: "2026-10-30 15:35"
+    summary: "합성 staging 정리 경로와 별도 fixture 검토안을 추가합니다."
+    text: "feat: exercise synthetic staging lifecycle"
+  - sha: '1419605'
+    at: "2026-10-30 15:40"
+    summary: "합성 staging의 binary mode를 명시해 인코딩 검사를 통과합니다."
+    text: "fix: declare binary staging mode explicitly"
+  - sha: '88549ba'
+    at: "2026-10-30 15:49"
+    summary: "기준 브랜치 변경 뒤 CI checkout 검증을 다시 실행합니다."
+    text: "chore: refresh CI checkout identity"
