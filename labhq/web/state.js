@@ -169,6 +169,14 @@ const REQUEST_STATUS_KO = { running: '진행 중', waiting_for_runner: '러너 �
   waiting_login: '로그인 대기', waiting_facilities_fix: '환경 수정 승인 대기', waiting_pi: 'PI 결정 대기',
   interrupted: '중단됨', done: '완료', failed: '실패', cancelled: '취소됨', rejected: '거부됨', review_pending: '보고서 검토 대기' };
 const requestStatusLabel = status => REQUEST_STATUS_KO[status] || String(status || '상태 모름');
+// A request that finished `done` with failed, skipped or never-run steps (#1220). The snapshot lists them
+// (failed_steps); a request followed live has only its step states, which say the same for the steps that ran.
+const FAILED_STEP_STATES = ['failed', 'error', 'skipped'];
+const partialFailureSteps = q => {
+  if (!q || !['done', 'review_pending'].includes(q.status)) return [];
+  if (Array.isArray(q.failed_steps)) return q.failed_steps.map(String);
+  return Object.entries(q.steps || {}).filter(([, state]) => FAILED_STEP_STATES.includes(state)).map(([id]) => id);
+};
 const needsPiReview = q => !!q && isTerminalRequest(q.status) && q.pi_review_pending === true && !q.pi_reviewed_at;
 const needsStorage = q => !!q && ['done', 'failed', 'cancelled', 'review_pending'].includes(q.status)
   && (q.status !== 'cancelled' || !!String(q.report || '').trim()) && !Object.keys(q.resultStorage || {}).length;
@@ -193,7 +201,10 @@ function processingLabel(q) {
 // The status with what the PI can do about it: resume an interrupted request, or which runner is still missing.
 function requestStatusText(q, approvals) {
   if (!q) return '';
-  if (needsPiReview(q)) return `${reviewLabel(q)} 대기`;
+  const failed = partialFailureSteps(q);
+  const partial = failed.length ? ` · 일부 실패 ${failed.length}` : '';
+  if (needsPiReview(q)) return `${reviewLabel(q)} 대기${partial}`;
+  if (failed.length) return `${requestStatusLabel('done')}${partial}`;
   const label = requestStatusLabel(q.status);
   if (q.status === 'interrupted') {
     const card = [...(approvals ? approvals.values() : [])].some(a => a && a.kind === 'resume' && a.request_id === q.id);
@@ -811,6 +822,7 @@ function apply(ev, replay = false) {
         q.followups = (r.followups || []).map(f => ({ ...f }));
         q.piNotes = (r.pi_notes || []).map(note => ({ ...note }));
         Object.assign(q.steps, r.step_status || {});
+        q.failed_steps = Array.isArray(r.failed_steps) ? r.failed_steps : undefined;
         for (const [sid, detail] of Object.entries(r.step_details || {})) Object.assign(stepDetail(r.id, sid), detail);
         if (r.review) q.review = r.review;
         // recent_events may no longer hold a long request's plan event: a planned active request is past briefing.
@@ -1194,6 +1206,7 @@ function apply(ev, replay = false) {
       for (const a of S.agents.values()) for (const [tid, row] of [...a.tasks]) if (row.rid === rid) { a.tasks.delete(tid); S.taskControl.delete(tid); }
       q.status = isTerminalRequest(d.status) ? d.status : t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
       q.final_checkpoint = d.final_checkpoint || null;
+      q.failed_steps = Array.isArray(d.failed_steps) ? d.failed_steps : undefined;
       q.pi_review_pending = d.pi_review_pending === true; q.pi_reviewed_at = d.pi_reviewed_at || null;
       if (!replay && needsPiReview(q) && !wasPending) effects.push({type:'toast', text:`${q.status === 'done' ? '보고서가 준비됐어요' : '요청이 끝났어요'} · ${reviewLabel(q)} 대기`});
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) {
@@ -1338,7 +1351,7 @@ return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentToo
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel, deadlineLabel,
   isActiveRequest, isTerminalRequest, isPastRequest, officeRequests, sessionCostRequests, requestsCostTotal,
-  REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
+  REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, partialFailureSteps, processingLabel,
   needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, serviceWarning, demoBannerText,
   safeReportHref, safeReportImageHref, reportMarkdownHTML, reportWithPackage };
 })(globalThis);

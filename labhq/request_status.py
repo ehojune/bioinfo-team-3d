@@ -15,11 +15,37 @@ def request_status_label(status: object) -> str:
     return REQUEST_STATUS_KO.get(str(status), str(status or "상태 모름"))
 
 
+def failed_step_ids(request: dict) -> list[str]:
+    """The steps of a request that finished `done` but left a failed or skipped result (#1220).
+
+    Derived from the results the request already holds and never stored: a summary that lists them (`failed_steps`) is
+    used as it is. Only a step that recorded a result can be counted. The plan minus the results is not read as "never
+    ran": plan-only, a solo route that keeps the team plan and a plan approved without the evidence checkpoint all end
+    `done` with plan steps that were never meant to run. Any other status has none, since `failed` and `cancelled` already
+    say that something did not complete."""
+    if request.get("status") not in {"done", "review_pending"}:
+        return []
+    listed = request.get("failed_steps")
+    if isinstance(listed, list):
+        return [str(step) for step in listed]
+    results = request.get("results") if isinstance(request.get("results"), dict) else {}
+    planned = [str(step["id"]) for step in (request.get("plan") or {}).get("steps") or []
+               if isinstance(step, dict) and step.get("id")]
+    ordered = [step for step in planned if step in results] + [str(step) for step in results if str(step) not in planned]
+    return [step for step in ordered
+            if not isinstance(results.get(step), dict) or results[step].get("ok") is not True
+            or results[step].get("status") == "skipped"]
+
+
 def request_display_label(request: dict) -> str:
     if request.get("status") == "cancelled" and request.get("cancel_reason") == "request_deadline":
         return "시간 상한으로 취소됨"  # the request's wall-clock limit (#877), not a PI decision
+    failed = failed_step_ids(request)
+    suffix = f" · 일부 실패 {len(failed)}" if failed else ""  # done, but not everything finished (#1220)
     if request.get("pi_review_pending"):
-        return "보고서 검토 대기" if request.get("status") in {"done", "review_pending"} else "결과 확인 대기"
+        return ("보고서 검토 대기" if request.get("status") in {"done", "review_pending"} else "결과 확인 대기") + suffix
+    if failed:
+        return f"{request_status_label('done')}{suffix}"
     return request_status_label(request.get("status"))
 
 
