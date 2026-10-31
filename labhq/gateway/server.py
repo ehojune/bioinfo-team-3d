@@ -1402,7 +1402,9 @@ class Hub:
         """Build against a terminal snapshot; safe to call in a worker thread.
 
         No work folder is the normal result of a cancel that came before the first step made one, not a bundle failure
-        (#1212): that case alone is quiet. Every other failure, and a missing folder on any other ending, warns."""
+        (#1212): that case alone is quiet, meaning the request was cancelled and no work folder was ever recorded for it
+        (in its results or in its tasks). A recorded folder that is gone is lost data and warns, like every other failure
+        and like a missing folder on any other ending."""
         try:
             from ..request_bundle import NoStepWorkdirs, RemoteRunnerBundle, build_request_bundle
 
@@ -1416,11 +1418,23 @@ class Hub:
         except RemoteRunnerBundle:
             return {"warning": "runner가 다른 PC라 묶음을 만들지 않음", "appendix": True}
         except NoStepWorkdirs as exc:
-            if _ended_by_cancel(self.requests[rid] if request is None else request):
+            req = self.requests[rid] if request is None else request
+            if _ended_by_cancel(req) and not self._recorded_workdir(
+                    rid, req, self.store.all("task") if tasks is None else tasks):
                 return {"quiet": True}
             return {"warning": f"요청 묶음을 만들지 못했습니다: {exc}"}
         except Exception as exc:
             return {"warning": f"요청 묶음을 만들지 못했습니다: {exc}"}
+
+    @staticmethod
+    def _recorded_workdir(rid: str, request: dict, tasks: dict) -> bool:
+        """A work folder was recorded for this request, in its results or in the result of one of its tasks."""
+        def named(result: Any) -> bool:
+            return isinstance(result, Mapping) and bool(result.get("workdir_id"))
+
+        return (any(named(r) for r in (request.get("results") or {}).values()) or
+                any(isinstance(t, Mapping) and t.get("request_id") == rid and named(t.get("result"))
+                    for t in tasks.values()))
 
     def _apply_bundle_outcome(self, rid: str, data: dict, outcome: dict) -> None:
         self._apply_bundle_to_request(self.requests[rid], data, outcome)

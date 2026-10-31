@@ -1842,6 +1842,35 @@ async def test_a_request_cancelled_before_any_work_folder_exists_is_not_warned_a
 
 
 @pytest.mark.asyncio
+async def test_a_cancelled_request_whose_recorded_work_folder_is_gone_still_warns(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "c3", "cancelled")
+    hub.requests["c3"]["results"] = {"s1": {"task_id": "t-c3", "agent_id": "analyst", "ok": True,
+                                            "workdir": str(tmp_path / "runs" / "gone"), "workdir_id": "gone",
+                                            "outputs": []}}
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c3", "request.completed", data)
+
+    assert "단계 작업 폴더를 하나도 찾지 못했습니다" in data["bundle_warning"], "lost data is not a normal cancel"
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_work_folder_recorded_only_on_a_task_result_also_keeps_the_warning(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "c4", "cancelled")
+    hub.store.put("task", "t-c4", {"request_id": "c4", "kind": "step", "step_id": "s1", "completed": True,
+                                   "result": {"task_id": "t-c4", "workdir_id": "gone-too"}})
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c4", "request.completed", data)
+
+    assert "bundle_warning" in data
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
 async def test_a_failed_request_without_any_work_folder_still_warns(tmp_path):
     hub = _sent_step_without_workdir(tmp_path, "f1", "failed")
     data = {"ok": False, "report": "body"}
