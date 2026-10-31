@@ -1077,7 +1077,8 @@ async def test_atlas_probe_timeout_retains_partial_output_and_redacts():
     assert not proc.cancelled and proc.exited.is_set()
 
 
-async def test_real_mcp_process_calls_runner_without_key(service, monkeypatch):
+@pytest.mark.parametrize("trace", [False, True], ids=["original", "phase-trace"])
+async def test_real_mcp_process_calls_runner_without_key(service, monkeypatch, trace):
     ctx, broker, service, token, key, seen = service
     monkeypatch.setenv(atlas.KEY_ENV, key)
     started = time.monotonic()
@@ -1111,12 +1112,14 @@ async def test_real_mcp_process_calls_runner_without_key(service, monkeypatch):
         finally:
             mark("query_exit")
 
-    monkeypatch.setattr(service, "_query", traced_query)
+    if trace:
+        monkeypatch.setattr(service, "_query", traced_query)
     # Hold a bound socket until uvicorn owns it; no free-port probe race.
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(traced_app, log_level="error", lifespan="off"))
+    server = uvicorn.Server(uvicorn.Config(traced_app if trace else broker.app,
+                                         log_level="error", lifespan="off"))
     server.install_signal_handlers = lambda: None
     serving = asyncio.create_task(server.serve(sockets=[sock]))
     proc = None
@@ -1145,6 +1148,9 @@ from labhq.tools import annot_mcp as m
 mark('import_done')
 assert 'ALPHAGENOME_API_KEY' not in os.environ
 assert m.ATLAS_ENABLED
+"""
+        if trace:
+            script += """
 slot = m._step_slot
 admitted = m._admitted
 @asynccontextmanager
@@ -1175,6 +1181,8 @@ class TracedClient(Client):
         mark('http_response')
         return result
 m.httpx.AsyncClient = TracedClient
+"""
+        script += """
 async def call():
     mark('call_start')
     result = await m.alphagenome_atlas(['chr1:100:A:G'])
