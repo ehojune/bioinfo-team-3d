@@ -703,7 +703,7 @@ def test_chief_of_staff_gets_only_the_literature_tools_of_annot():
     spec, text = _prompt("chief_of_staff")
     assert "annot" in spec.builtin_mcp
     variant_and_region = {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex",
-                          "alphagenome", "alphagenome_variant"}
+                          "alphagenome", "alphagenome_variant", "alphagenome_atlas"}
     assert set(spec.disallowed_tools) == {f"mcp__labhq_annot__{name}" for name in variant_and_region}
     literature = {"fulltext", "key_fulltext", "citation_chase", "preprints", "openalex_works", "crossref_doi", "unpaywall"}
     assert not {f"mcp__labhq_annot__{name}" for name in literature} & set(spec.disallowed_tools)
