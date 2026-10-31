@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '6f1cf2d'
+    at: '2026-10-31 12:20'
+    summary: '합성 진단의 재생 응답과 무한 대기를 차단합니다.'
+    text: 'Bound synthetic diagnostics and reject replayed run IDs'
   - sha: '775cf9e'
     at: '2026-10-31 03:51'
     summary: '합성 harness 실패 조건을 검증합니다.'
