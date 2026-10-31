@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "9bcf5c9"
+    at: "2026-10-31 22:49"
+    summary: "환경변수 참조가 풀리지 않은 Atlas 키는 doctor가 준비된 키로 표시하지 않습니다."
+    text: "fix: reject unresolved Atlas key references in doctor"
   - sha: "45e1845"
     at: "2026-10-31 22:45"
     summary: "충돌을 풀어 설치된 MCP 버전과 Atlas 준비 상태를 함께 검사합니다."
