@@ -89,11 +89,14 @@ class AnnotBroker:
                 raise HTTPException(409, "an Atlas query is already running for this task")
             operation = asyncio.create_task(self._query(grant, args))
             grant.pending = operation
+            stopped = False
 
             async def disconnected():
-                while not await request.is_disconnected():
+                while not stopped:
+                    if await request.is_disconnected():
+                        operation.cancel()
+                        return
                     await asyncio.sleep(0.1)
-                operation.cancel()
 
             watch = asyncio.create_task(disconnected())
             try:
@@ -107,6 +110,9 @@ class AnnotBroker:
             except Exception:
                 raise HTTPException(502, "Atlas lookup unavailable") from None
             finally:
+                # The receive cancellation scope may consume watch.cancel().
+                # Publish the stop condition before waiting for the poller.
+                stopped = True
                 watch.cancel()
                 operation.cancel()
                 await asyncio.gather(watch, operation, return_exceptions=True)
