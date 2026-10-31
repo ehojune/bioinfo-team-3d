@@ -1,0 +1,5 @@
+rows:
+- sha: 'e6b884c'
+  at: 2026-11-01 13:10
+  text: '두 가지 어긋남을 더 일찍 잡는다. (1) 재개할 때 runner별 환경 clone이 든 저장 계획을 검사하면서 stored_environment를 넘기지 않아 마지막 clone 단계가 에이전트 가용성·외부 데이터 guard 검사에서 빠졌다. (2) task.dispatched를 publish하는 동안 runner가 다른 runtime으로 다시 등록해도 gateway가 그대로 보내던 것을, 보내기 직전에 한 번 더 확인해 /usr/bin/bash로 거절한다. runner 쪽 판정은 그대로라 이전에도 잘못된 runtime에서 실행되지는 않았다 (#674)'
+  summary: 환경 단계가 든 계획을 다시 시작할 때와 runner가 중간에 바뀌었을 때 어긋남을 더 일찍 잡습니다.
