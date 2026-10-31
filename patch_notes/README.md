@@ -14,6 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:50 | [`1a6301f`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/1a6301f) | **읽기 전용 task는 쓰지 못하는 project 폴더의 드라이브 때문에 멈추지 않습니다.**<br>디스크 감시: 읽기 전용 task는 project 폴더를 감시하지 않는다 (#678 리뷰 P2) |
+| 20:30 | [`df1d8f9`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/df1d8f9) | **manual의 디스크 감시 설명에 쓸 수 있는 project 폴더도 감시한다는 내용을 더했습니다.**<br>문서: 감시 대상에 project 폴더 (#678) |
+| 20:20 | [`b7ad386`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/b7ad386) | **디스크 감시가 직원이 쓸 수 있는 project 폴더가 다른 드라이브에 있어도 그 드라이브의 여유를 함께 봅니다.**<br>디스크 감시: 쓸 수 있는 project 폴더의 드라이브도 본다 (#678 리뷰 P1) |
+| 19:50 | [`5fac414`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/5fac414) | **manual에 작업 도중 디스크 감시의 확인 간격, 멈추는 기준, 재개 방법, 끄는 설정과 한계를 적었습니다.**<br>문서: 작업 도중 디스크 감시 (#678) |
+| 19:10 | [`ecd403d`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/ecd403d) | **디스크 감시가 멈추기에 실패하면 감시를 끝내지 않고 30초 뒤에 다시 시도합니다.**<br>디스크 감시: halt가 실패하면 감시를 끝내지 않고 다음 회차에 다시 시도한다 (#678 리뷰 P1) |
+| 18:30 | [`fd660bd`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/fd660bd) | **task가 도는 동안 runner가 30초마다 작업 폴더·상태 폴더·큰 원자료 폴더의 드라이브 여유를 읽어, 기준(기본 2 GiB) 아래면 세션을 보존한 채 멈추고 재개 카드를 엽니다.**<br>task가 도는 동안 드라이브 여유를 읽어 기준 아래면 세션을 보존한 채 멈춘다 (#678) |
 | 17:20 | [`7ab2df4`](https://github.com/ehojune/bioinfo-team-3d/pull/1160/commits/7ab2df4) | **디스크 확인이 URL의 #fragment 뒤에 오는 출력 옵션도 읽습니다.**<br>셸 줄을 읽을 때 #를 주석으로 보지 않는다 (#678 리뷰 P1) |
 | 16:50 | [`9ad8613`](https://github.com/ehojune/bioinfo-team-3d/pull/1160/commits/9ad8613) | **디스크 확인이 따옴표 안의 세미콜론이 든 URL도 한 명령으로 읽습니다.**<br>셸 줄을 따옴표를 아는 방식으로 나눈다 (#678 리뷰 P2) |
 | 16:40 | [`358b265`](https://github.com/ehojune/bioinfo-team-3d/pull/1151/commits/358b265) | **시설 수리 카드가 저장되는 도중에 취소했을 때의 동작을 매뉴얼에 적었습니다.**<br>manual 한·영의 facilities_fix 절에 카드 저장 중 요청이 취소되면 요청은 취소로 남고 카드는 닫혀 다시 게시되지 않는다는 설명을 더했다 (#1148). |
