@@ -196,3 +196,66 @@ def test_a_cap_below_the_remaining_amount_and_a_missing_cap_pass_through():
     from labhq.orchestrator.cso import _clip_to_remaining
     assert _clip_to_remaining(0.015, 1.0) == 0.015 and _clip_to_remaining(None, 1.0) is None
 
+
+# ----- a call cap that is not whole cents is floored too (PR #1210 remaining note) -----
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("per_task,held", [(0.015, 0.01), (1.239, 1.23), (2.675, 2.67), (0.10, 0.10), (1.5, 1.5), (2.5, 2.5)])
+async def test_a_per_task_cap_is_floored_to_whole_cents_so_the_cli_cannot_round_it_up(per_task, held):
+    """Claude's --max-budget-usd is written in cents: a hold of $0.015 sent as $0.02 would spend more than was held."""
+    hub = await _one_step(100.0, per_task=per_task, cost=0.0)
+    assert hub.calls[0].budget_usd == pytest.approx(held)
+    assert hub.calls[0].budget_usd * 100 == pytest.approx(round(hub.calls[0].budget_usd * 100))
+    assert hub.calls[0].budget_usd <= per_task + 1e-9
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_cap,held", [(0.019, 0.01), (3.456, 3.45)])
+async def test_a_task_or_agent_cap_that_is_not_whole_cents_is_floored_as_well(task_cap, held):
+    hub = await _one_step(100.0, cost=0.0, budget_usd=task_cap)
+    assert hub.calls[0].budget_usd == pytest.approx(held)
+
+
+@pytest.mark.asyncio
+async def test_an_agents_own_cap_is_floored_too():
+    async def dispatch(t):
+        return result(t, text="done", cost_usd=0.0)
+
+    hub = FakeHub(dispatch)
+    hub.s.policy.budget.reserve_before_dispatch = True
+    hub.requests["r"]["budget_usd"] = 100.0
+    hub.agents["worker"] = {"id": "worker", "engine": "mock", "max_budget_usd": 0.0149}
+    hub.s.policy.budget.per_task_usd = 5.0
+    await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+    assert hub.calls[0].budget_usd == pytest.approx(0.01)
+
+
+@pytest.mark.asyncio
+async def test_a_call_cap_under_one_cent_is_refused_before_anything_is_sent():
+    async def dispatch(t):
+        return result(t, text="done", cost_usd=0.0)
+
+    hub = FakeHub(dispatch)
+    hub.s.policy.budget.reserve_before_dispatch = True
+    hub.requests["r"]["budget_usd"] = 100.0
+    with pytest.raises(BudgetExceeded, match="1센트|one cent"):
+        await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work", budget_usd=0.004))
+    assert hub.calls == [] and hub.approvals == []
+
+
+def test_the_settings_refuse_a_per_task_cap_under_one_cent_while_reservation_is_on():
+    for value in (0.005, 0.0099):
+        with pytest.raises(ValueError, match="per_task_usd"):
+            BudgetSettings(per_task_usd=value)
+    assert BudgetSettings(per_task_usd=0.01).per_task_usd == 0.01
+    assert BudgetSettings(per_task_usd=0).per_task_usd == 0  # 0 means no per-task cap
+    assert BudgetSettings(per_task_usd=0.005, reserve_before_dispatch=False).per_task_usd == 0.005  # the old check keeps it
+
+
+def test_a_very_large_amount_is_not_floored_through_a_28_digit_decimal():
+    """PR #1210 review P2: 1e26 overflowed Decimal's default precision. Cents mean nothing at that size."""
+    from labhq.orchestrator.cso import _clip_to_remaining, _floor_cents
+    assert _floor_cents(1e26) == 1e26
+    assert _clip_to_remaining(2e26, 1e26) == 1e26
+    assert _floor_cents(0.015) == 0.01 and _floor_cents(1.239) == 1.23 and _floor_cents(2.0 - 1.98) == 0.02
+
