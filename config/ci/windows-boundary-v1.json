@@ -97,6 +97,7 @@
     "tests/test_dev_log_visibility.py",
     "tests/test_direct_outputs.py",
     "tests/test_disk_preflight.py",
+    "tests/test_disk_shell_check_678.py",
     "tests/test_disk_start_678.py",
     "tests/test_doctor.py",
     "tests/test_durable_writer.py",

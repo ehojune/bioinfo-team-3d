@@ -15,7 +15,8 @@ from typing import Any
 
 import httpx
 
-from ..policy import WRITE_LIKE, evaluate_tool
+from .. import disk_space
+from ..policy import Decision, WRITE_LIKE, evaluate_tool
 from ..environment_install import shared_environment_install_denial
 from ..private_paths import gate_private_paths, resolve_private_paths
 from ..settings import Settings
@@ -58,6 +59,32 @@ def _text_only_tool():
         return server.tool()
 
 
+async def _disk_decision(d: Decision, command: str) -> Decision:
+    """A download or unpack aimed at a drive that is short on space asks the PI instead of running (#678). Only
+    allow becomes ask; an unknown size is never blocked, and a short drive with no known size only logs a warning."""
+    try:
+        check = disk_space.shell_check(
+            command, WORKDIR, fail_gb=S.runner.disk_fail_free_gb, warn_gb=S.runner.disk_warning_free_gb,
+            warn_percent=S.runner.disk_warning_free_percent)
+    except Exception:  # noqa: BLE001 - a probe bug must not stop a command the policy already allowed
+        return d
+    if check is None:
+        return d
+    if check.action == "ask":
+        return Decision("ask", check.reason, updated_input=d.updated_input)
+    if TOKEN:
+        try:
+            async with httpx.AsyncClient(timeout=5) as c:
+                r = await c.post(f"{BROKER}/event", headers={"X-Labhq-Token": TOKEN}, json={
+                    "task_id": TASK, "agent_id": AGENT, "type": "agent.log",
+                    "data": {"level": "warn", "text": check.reason, "tool_name": "Bash", "policy_action": "allow",
+                             "policy_rule": "disk_space"}})
+                r.raise_for_status()
+        except httpx.HTTPError:
+            pass  # a lost warning does not stop the command
+    return d
+
+
 @_text_only_tool()
 async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
                           tool_use_id: str | None = None) -> str:
@@ -73,6 +100,8 @@ async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
                       private_open_reads=PRIVATE.open_reads, read_only=READ_ONLY)
     # A respelled write path (#219) is what was judged and what the PI sees, so Claude must write that one.
     tool_input = d.updated_input or input or {}
+    if d.action == "allow" and tool_name == "Bash":
+        d = await _disk_decision(d, str(tool_input.get("command") or ""))
     if d.action == "allow":
         if d.reason.startswith('문법 안:') and TOKEN:
             # A task-scoped log, never an approval card. The broker authenticates the task identity.
