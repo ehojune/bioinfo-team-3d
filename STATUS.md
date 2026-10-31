@@ -11,6 +11,16 @@
 - 실행한 것: `test_runner_shutdown_signals`·`test_shutdown_recovery` 로컬 통과. Windows 느린 러너 재현은 하지 못했다.
 - 미해결/미검증: 30초가 CI 지연을 넘는지는 이 PR 이후 CI로 본다. 가설(시험의 시간 가정과 제품 5초 한도의 어긋남)은 로그 메시지와 코드를 읽어 세웠다.
 
+# #1238 rev3 — ci-reuse.md의 진단 설명을 맞춤
+
+| 항목 | 내용 |
+|---|---|
+| 결론 | `docs/reference/ci-reuse.md` 57행에서 task stack을 빼고 faulthandler 스레드 stack만 남는다고 적었다 |
+| 바뀐 것 | 문서 한 줄, patch note. 코드는 그대로 |
+| 실행한 것 | `patch_notes.py check`, `check_public.sh` |
+| 미해결 | 없음 |
+| 근거 | https://github.com/ehojune/bioinfo-team-3d/pull/1240 |
+
 # #1076 rev27: 열린 Windows CI 간헐 실패 이슈 네 건 점검
 
 - 결론: #1029·#844·#1107은 수정 뒤 재발이 없어 닫았고, #898은 R parse 쪽만 재발이 없고 SIGTERM·SIGHUP ACK 쪽에서 새 시험이 재발해 열어 두었다. 코드는 바꾸지 않았다.
