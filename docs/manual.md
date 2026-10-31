@@ -796,6 +796,8 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 
 직원 파일의 `annot_tools`로 그 직원이 받는 도구를 좁힐 수 있습니다(#1200). 없으면 서버의 도구를 전부 줍니다. `annot_tools: [fulltext, unpaywall]`처럼 이름을 적으면 그 도구만 주고, 빈 목록 `[]`은 하나도 주지 않습니다. 서버가 모르는 이름이 있으면 `labhq_annot`이 시작하지 않아 오타가 도구를 조용히 열거나 닫지 못합니다. 엔진과 관계없이 서버가 적용하고, 직원 명단(CSO가 계획에 쓰는 글)에도 실제로 받는 도구만 나옵니다. `sci_reviewer`(과학 리뷰어)는 `pdb`와 `chembl`만 받습니다(#1055). 구조·화합물 주장을 확인할 때 셸에서 RCSB·ChEMBL을 직접 부르지 않고 이 도구로 조회해야 요청 조회 한도에 세어지고 원본 응답이 남습니다. 도구를 주는 것이 셸 HTTP를 막는 것은 아닙니다(그 차단은 별도 작업). 기본 `chief_of_staff`는 문헌 도구 7개(`fulltext`, `key_fulltext`, `citation_chase`, `preprints`, `openalex_works`, `crossref_doi`, `unpaywall`)만 받으며, 새 조회 도구가 생겨도 목록에 넣기 전에는 닫혀 있습니다. 읽기 전용 실행(리뷰·이어 묻기·상담)은 기본으로 `labhq_annot`을 받지 않습니다. 예외는 하나입니다. 직원 파일이 `builtin_mcp`에 `annot`을 적고 `annot_tools`에 이름을 명시했을 때, 그중 읽기 전용에 허용된 도구(`pdb`, `chembl`)만 남습니다(`READ_ONLY_ANNOT_TOOLS`, #1055). 직원 파일의 목록은 이 허용 목록을 좁히기만 하고 넓히지 못하며, 보내는 쪽의 override로도 바뀌지 않습니다. 허용 목록을 넓히는 것은 코드에서 따로 정하는 일입니다. runner가 서버에 넘기는 환경 변수 `LABHQ_ANNOT_TOOLS`(`*`은 제한 없음)는 직접 설정하지 않습니다.
 
+읽기 전용 실행(검토·블라인드 초안·상담·이어 묻기·슬롯 보정)은 직원 프롬프트가 쓰라고 한 도구 중 일부를 쓸 수 없습니다. 그래서 읽기 전용 프로필이 프롬프트 끝에 `## Tools in this read-only run`과 이번 실행에서 실제로 쓸 수 있는 도구(파일 도구, codex 직원이 유지한 웹 도구, 허용 목록에 든 `labhq_annot` 도구)를 한 번 붙이고, 그 밖의 도구는 부르지 말고 확인하지 못한 것을 말하라고 알립니다(#1224). 직원 파일이 `disallowed_tools`로 통째로 막은 도구(`Write` 등)는 목록에서 빠지고, 일부만 막은 도구(`Read(./data/**)`)는 남습니다. 직원마다 프롬프트를 따로 고치지 않아도 됩니다.
+
 | 도구 | DB | 받는 것 | 판본 기록 |
 |---|---|---|---|
 | `vep(variants, assembly, species)` | Ensembl REST VEP (사람 GRCh38은 AlphaMissense 플러그인 포함) | `chr:pos:ref:alt`·HGVS·rsID | `/info/data`의 Ensembl release (GRCh37은 grch37 서버). AlphaMissense는 `source.additional_sources`에 라이선스와 인용 |

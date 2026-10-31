@@ -530,7 +530,8 @@ def test_every_staff_prompt_ends_with_the_tools_its_read_only_run_really_has(age
     profile = read_only_profile(agent)
     assert profile.system_prompt.startswith(agent.system_prompt.rstrip())
     assert profile.system_prompt.count(TOOL_NOTICE_HEAD) == 1
-    expected = [name for name in profile.builtin_tools.split(",") if name] + list(profile.tools)
+    denied = {name for name in profile.disallowed_tools if "(" not in name}
+    expected = [name for name in [*profile.builtin_tools.split(","), *profile.tools] if name and name not in denied]
     if "annot" in profile.builtin_mcp and profile.annot_tools:
         expected.append("labhq_annot (" + ", ".join(profile.annot_tools) + ")")
     assert _noticed_tools(profile.system_prompt) == expected
@@ -622,3 +623,12 @@ def test_a_sender_cannot_widen_the_annot_tools_of_a_read_only_run(tmp_path, monk
     task = Task(agent_id="reviewer", request_id="r", prompt="q", meta={"kind": "review", "agent_overrides": sender})
     resolved = runner._resolve_agent(task)
     assert read_only_profile(resolved).annot_tools == ["pdb", "chembl"], "the registry spec decides, not the sender"
+
+
+def test_a_tool_the_staff_file_denies_outright_is_not_in_the_notice_but_a_partial_denial_leaves_it():
+    from labhq.adapters.read_only import read_only_profile
+    agent = AgentSpec(id="w", name="W", role="r", engine=Engine.claude_code, system_prompt="Work.",
+                      disallowed_tools=["Write", "Read(./private/**)"])
+    profile = read_only_profile(agent)
+    assert profile.disallowed_tools == ["Write", "Read(./private/**)"]
+    assert _noticed_tools(profile.system_prompt) == ["Read", "Glob", "Grep", "Edit"]
