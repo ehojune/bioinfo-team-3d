@@ -3379,17 +3379,18 @@ class Hub:
         return any(rid != wsl_id and any(agent.get("id") == agent_id for agent in staff)
                    for rid, staff in rosters.items())
 
-    async def offer_wsl_setup(self, task: Task) -> TaskResult | None:
+    async def offer_wsl_setup(self, task: Task, *, explicit: bool = False) -> TaskResult | None:
         """The agent runs only in the local WSL runner and that runner is not ready (#612): ask the PI once per request
         whether to set it up. None: nothing to say, carry on as before. A result: the task stops here, without waiting
-        for a runner that will not come on its own."""
+        for a runner that will not come on its own. ``explicit``: the PI chose WSL for this request, so a native runner
+        that also hosts the agent is no reason to carry on without it."""
         from .. import wsl_setup
         from ..cli import _gateway_is_local
 
         rid = task.request_id or ""
         if task.agent_id not in WSL_BOUND_AGENTS or rid not in self.requests or not wsl_setup.configured(self.s):
             return None
-        if self._native_hosts(task.agent_id):
+        if not explicit and self._native_hosts(task.agent_id):
             return None  # a native runner hosts it and is only away: the normal wait for it applies, not a WSL setup
         async with self._approval_lock(f"wslsetup:{rid}"):
             state = self.requests[rid].setdefault("wsl_setup", {})
@@ -3468,22 +3469,46 @@ class Hub:
     async def prepare_wsl_request(self, rid: str) -> None:
         """The PI asked for this PC's WSL (``run_where == "wsl"``, #612): make it ready before the plan is made.
 
-        The same check and card as a task that needs bioinfo-agent (``offer_wsl_setup``), asked once per request. A yes
-        runs the setup and the request then waits for the runner as usual; a no, a failed setup or another PC leaves a
-        note on the request and the request carries on without WSL, never blocked on a runner that will not come."""
+        The same check and card as a task that needs bioinfo-agent (``offer_wsl_setup``, asked even when a native runner
+        also hosts the agent), once per request. A yes runs the setup and the request then waits until the WSL runner
+        itself owns the agent; from then on the request's bioinfo-agent tasks are pinned to it (``_pin_wsl_request``), so a
+        native runner never takes them. A no, a failed setup, another PC or a WSL runner that does not connect in time
+        leaves a note on the request and the request carries on without WSL, never blocked on a runner that will not come."""
         req = self.requests.get(rid)
         if not req or req.get("run_where") != "wsl":
             return
         agent = next(iter(WSL_BOUND_AGENTS))
         probe = Task(agent_id=agent, request_id=rid, prompt="")
-        stopped = await self.offer_wsl_setup(probe)
+        stopped = await self.offer_wsl_setup(probe, explicit=True)
+        note = None
         if stopped is not None:
-            req["run_where_note"] = ((req.get("wsl_setup") or {}).get("note") or stopped.error
-                                     or "이 PC의 WSL을 준비하지 못해 WSL 없이 진행합니다")
-            await self.asave_request(rid)
-            return
-        if self.agent_runner.get(agent) not in self.runners and self._waits_for_runner(probe, first=True):
-            await self.wait_for_runner(probe, first=True)
+            note = ((req.get("wsl_setup") or {}).get("note") or stopped.error
+                    or "이 PC의 WSL을 준비하지 못해 WSL 없이 진행합니다")
+        elif not await self._wait_for_wsl_owner(rid, agent):
+            note = "이 PC의 WSL runner가 시간 안에 연결되지 않아 WSL 없이 진행합니다"
+        if note:
+            req["run_where_note"] = note
+        else:
+            req["wsl_pinned"] = True  # the WSL runner owns the agent: the request stays there
+        await self.asave_request(rid)
+
+    async def _wait_for_wsl_owner(self, rid: str, agent: str) -> bool:
+        """Until the WSL runner is the one that owns ``agent`` (a ready, connected WSL runner always does, see
+        ``effective_roster``), at most ``gateway.runner_wait_s``. False on timeout or when the request is cancelled."""
+        wsl_id = self.s.runner.wsl.id
+        deadline = time.monotonic() + float(self.s.gateway.runner_wait_s)
+        while self.agent_runner.get(agent) != wsl_id or wsl_id not in self.runners:
+            if (self.requests.get(rid) or {}).get("status") == "cancelled" or time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(0.2)
+        return True
+
+    def _pin_wsl_request(self, task: Task) -> None:
+        """A request that chose WSL and got it keeps its bioinfo-agent tasks on the WSL runner: pinned like a session, so
+        a native runner that also hosts the agent is refused at $0 instead of taking the work (#612)."""
+        req = self.requests.get(task.request_id or "") or {}
+        if req.get("wsl_pinned") and task.agent_id in WSL_BOUND_AGENTS:
+            task.meta.setdefault("session_runner", self.s.runner.wsl.id)
 
     async def wait_for_runner(self, task: Task, *, first: bool = False) -> bool:
         """Park the task's request as waiting_for_runner until a runner hosting the agent connects, at most
@@ -4087,6 +4112,7 @@ class Hub:
         if paper2agent.disabled_task(self.s, task):
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                               error="recruitment and Paper2Agent are disabled (recruit.enabled=false)")
+        self._pin_wsl_request(task)
         # Roster/lifecycle changes refresh agent_runner; dispatch consumes that resolved
         # owner without replacing it before checking the session's runner pin.
         if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":

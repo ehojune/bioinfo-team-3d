@@ -37,6 +37,7 @@ def hub(tmp_path, monkeypatch):
     hub.published = published
     monkeypatch.setattr(wsl_setup, "configured", lambda s: True)
     monkeypatch.setattr(cli, "_gateway_is_local", lambda s: True)
+    hub.s.gateway.runner_wait_s = 5
     return hub
 
 
@@ -238,56 +239,97 @@ async def test_a_request_that_did_not_ask_for_wsl_gets_no_check_and_no_card(hub,
     assert not hub.approvals
 
 
-async def test_a_wsl_request_opens_the_card_runs_the_setup_after_a_yes_and_then_waits_for_the_runner(hub, monkeypatch):
-    calls, waited = [], []
+def wsl_owns_the_agent(hub):
+    """What the roster looks like once the WSL runner is ready and connected."""
+    wsl_id = hub.s.runner.wsl.id
+    hub.runners[wsl_id] = object()
+    hub.agent_runner["bioinfo-agent"] = wsl_id
+    return wsl_id
+
+
+async def test_a_wsl_request_opens_the_card_runs_the_setup_after_a_yes_and_pins_the_agent_to_the_wsl_runner(hub, monkeypatch):
+    calls = []
     monkeypatch.setattr(wsl_setup, "check", lambda s: MISSING)
-    monkeypatch.setattr(wsl_setup, "setup", lambda s: calls.append("setup") or READY)
 
-    async def wait_for_runner(probe, first=False):
-        waited.append((probe.agent_id, first))
-        return True
+    def setup(s):
+        calls.append("setup")
+        return READY
 
-    hub.wait_for_runner = wait_for_runner
+    monkeypatch.setattr(wsl_setup, "setup", setup)
     hub.requests["r"]["run_where"] = "wsl"
     pending = asyncio.ensure_future(hub.prepare_wsl_request("r"))
     card = await card_of(hub)
     assert calls == [], "nothing runs before the PI answers"
     await hub.resolve_approval(card["id"], True, "")
-    await pending
-    assert calls == ["setup"] and waited == [("bioinfo-agent", True)]
-    assert "run_where_note" not in hub.requests["r"]
+    await asyncio.sleep(0.05)
+    assert calls == ["setup"] and not pending.done(), "after the setup the request waits for the WSL runner itself"
+    wsl_id = wsl_owns_the_agent(hub)  # the runner connects
+    await asyncio.wait_for(pending, 5)
+    assert hub.requests["r"]["wsl_pinned"] is True and "run_where_note" not in hub.requests["r"]
+    probe = Task(agent_id="bioinfo-agent", request_id="r", prompt="p", meta={})
+    hub._pin_wsl_request(probe)
+    assert probe.meta["session_runner"] == wsl_id
 
 
 @pytest.mark.parametrize("answer", ["no", "failed"])
 async def test_a_wsl_request_that_cannot_get_wsl_carries_on_without_it_and_says_why(hub, monkeypatch, answer):
     monkeypatch.setattr(wsl_setup, "check", lambda s: MISSING)
     monkeypatch.setattr(wsl_setup, "setup", lambda s: MISSING)  # a yes that leaves it unready
-    waited = []
-
-    async def wait_for_runner(probe, first=False):
-        waited.append(1)
-        return False
-
-    hub.wait_for_runner = wait_for_runner
     hub.requests["r"]["run_where"] = "wsl"
     pending = asyncio.ensure_future(hub.prepare_wsl_request("r"))
     await hub.resolve_approval((await card_of(hub))["id"], answer == "failed", "")
     await asyncio.wait_for(pending, 5)  # never raises and never blocks the request
-    assert waited == [], "no runner will come on its own: the request does not wait for it"
-    note = hub.requests["r"]["run_where_note"]
-    assert "WSL" in note and hub.requests["r"]["status"] == "running"
+    request = hub.requests["r"]
+    assert "WSL" in request["run_where_note"] and request["status"] == "running"
+    assert not request.get("wsl_pinned"), "without WSL there is nothing to pin the request to"
+    probe = Task(agent_id="bioinfo-agent", request_id="r", prompt="p", meta={})
+    hub._pin_wsl_request(probe)
+    assert "session_runner" not in probe.meta
 
 
-async def test_a_wsl_request_with_a_ready_wsl_opens_no_card(hub, monkeypatch):
+async def test_a_wsl_request_with_a_ready_wsl_opens_no_card_and_is_pinned(hub, monkeypatch):
     monkeypatch.setattr(wsl_setup, "check", lambda s: READY)
-
-    async def wait_for_runner(probe, first=False):
-        return True
-
-    hub.wait_for_runner = wait_for_runner
+    wsl_owns_the_agent(hub)
     hub.requests["r"]["run_where"] = "wsl"
     assert await hub.prepare_wsl_request("r") is None
-    assert not hub.approvals
+    assert not hub.approvals and hub.requests["r"]["wsl_pinned"] is True
+
+
+async def test_a_wsl_runner_that_does_not_connect_in_time_leaves_a_note_and_no_pin(hub, monkeypatch):
+    monkeypatch.setattr(wsl_setup, "check", lambda s: READY)
+    hub.s.gateway.runner_wait_s = 0.3
+    hub.requests["r"]["run_where"] = "wsl"
+    await asyncio.wait_for(hub.prepare_wsl_request("r"), 5)
+    assert "시간 안에" in hub.requests["r"]["run_where_note"] and not hub.requests["r"].get("wsl_pinned")
+
+
+async def test_a_native_runner_that_also_hosts_the_agent_does_not_skip_the_card_for_an_explicit_wsl_request(hub, monkeypatch):
+    monkeypatch.setattr(wsl_setup, "check", lambda s: MISSING)
+    monkeypatch.setattr(wsl_setup, "setup", lambda s: READY)
+    monkeypatch.setattr(hub, "_native_hosts", lambda agent: True)  # a Windows runner lists bioinfo-agent too
+    assert await hub.offer_wsl_setup(task()) is None and not hub.approvals, "without the choice it carries on natively"
+    hub.requests["r"]["run_where"] = "wsl"
+    pending = asyncio.ensure_future(hub.prepare_wsl_request("r"))
+    card = await card_of(hub)  # the explicit choice is asked about even though a native runner could take the work
+    assert card["kind"] == "wsl_setup"
+    await hub.resolve_approval(card["id"], False, "")
+    await asyncio.wait_for(pending, 5)
+
+
+def test_a_pinned_request_refuses_a_native_target_at_zero_cost_and_takes_the_wsl_runner(hub):
+    wsl_id = hub.s.runner.wsl.id
+    hub.requests["r"]["wsl_pinned"] = True
+    pinned = Task(agent_id="bioinfo-agent", request_id="r", prompt="p", meta={})
+    hub._pin_wsl_request(pinned)
+    refused = Hub._session_pin_refusal(pinned, "windows-native")
+    assert refused is not None and refused.cost_usd == 0.0 and wsl_id in refused.error
+    assert Hub._session_pin_refusal(pinned, wsl_id) is None
+    other = Task(agent_id="analyst", request_id="r", prompt="p", meta={})
+    hub._pin_wsl_request(other)
+    assert "session_runner" not in other.meta, "only the WSL-bound agent is pinned"
+    plain = Task(agent_id="bioinfo-agent", request_id="r2", prompt="p", meta={})
+    hub._pin_wsl_request(plain)
+    assert "session_runner" not in plain.meta, "a request that did not choose WSL is left alone"
 
 
 def test_the_planner_is_told_when_the_pi_chose_wsl_and_only_then():
