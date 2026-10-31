@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "501a3d7"
+    at: "2026-10-31 19:07"
+    summary: "Codex 직원의 Atlas 조회에 환경변수 이름을 전달하고 키 값은 명령과 설정에 추가하지 않습니다."
+    text: "fix: forward Atlas key name to built-in Codex MCP"
   - sha: "9ca68aa"
     at: "2026-10-31 18:49"
     summary: "Atlas의 gene·track metadata를 나눠 strand·측정 이름·junction 좌표를 보존하고 Python 3.10의 SDK timeout도 분류합니다."
