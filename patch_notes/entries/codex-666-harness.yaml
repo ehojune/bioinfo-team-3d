@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: 'e5733e4'
+    at: '2026-11-01 04:47'
+    summary: 'Freeze synthetic observer inputs during collection.'
+    text: 'Freeze observer fixture inputs'
   - sha: '9e0d67c'
     at: '2026-11-01 05:00'
     summary: 'Check offline observer inventory assertions.'
