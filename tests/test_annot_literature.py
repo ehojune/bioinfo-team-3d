@@ -945,3 +945,34 @@ def test_the_roster_shows_the_tools_an_agent_really_has():
     assert "VEP with AlphaMissense" in everything and "GTEx" in everything  # an unrestricted agent is listed as before
     nothing = format_roster([AgentSpec(id="c", name="C", role="r", builtin_mcp=["annot"], annot_tools=[]).summary()])
     assert "labhq_annot=no" in nothing or "labhq_annot" not in nothing
+
+
+def test_a_restricted_roster_lists_alphagenome_only_when_it_can_be_used():
+    """#1201 review P2: an agent allowed `alphagenome` is listed with it only where the key and client exist; otherwise the
+    CSO would plan around a tool the server does not register."""
+    from labhq.orchestrator.cso import format_roster
+    agent = AgentSpec(id="a", name="A", role="r", builtin_mcp=["annot"],
+                      annot_tools=["fulltext", "alphagenome", "alphagenome_variant"]).summary()
+    ready = format_roster([agent], alphagenome=True)
+    assert "tools: fulltext, alphagenome, alphagenome_variant" in ready
+    missing = format_roster([agent], alphagenome=False)
+    assert "tools: fulltext)" in missing and "alphagenome" not in missing
+    only = AgentSpec(id="b", name="B", role="r", builtin_mcp=["annot"], annot_tools=["alphagenome"]).summary()
+    assert "labhq_annot" not in format_roster([only], alphagenome=False)  # nothing usable is left to list
+    assert "labhq_annot=yes (tools: alphagenome)" in format_roster([only], alphagenome=True)
+    # the default roster (no allowlist) already says "when its key is set": unchanged either way
+    plain = AgentSpec(id="c", name="C", role="r", builtin_mcp=["annot"]).summary()
+    assert format_roster([plain], alphagenome=False) == format_roster([plain], alphagenome=True)
+
+
+@pytest.mark.parametrize("key,client,expected", [(True, True, True), (True, False, False), (False, True, False),
+                                                  (False, False, False)])
+def test_the_orchestrator_knows_alphagenome_is_usable_only_with_key_and_client(monkeypatch, key, client, expected):
+    from types import SimpleNamespace
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.tools import annot_keys, annot_regulatory
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: "AIza-fake" if key else None)
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: client)
+    fake = SimpleNamespace(hub=SimpleNamespace(s=Settings()))
+    assert Orchestrator._alphagenome_ready(fake) is expected
+

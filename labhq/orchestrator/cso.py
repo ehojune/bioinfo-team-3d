@@ -1645,18 +1645,24 @@ def reference_meta(request: dict | None) -> dict[str, list[str]]:
     return {"reference_dirs": dirs} if dirs else {}
 
 
-def _annot_roster(a: dict) -> str:
-    """The labhq_annot part of a roster line: everything the server has, or only the tools this agent was given (#1200)."""
+_ALPHAGENOME_TOOLS = frozenset({"alphagenome", "alphagenome_variant"})  # registered only with a key file and the client
+
+
+def _annot_roster(a: dict, alphagenome: bool = True) -> str:
+    """The labhq_annot part of a roster line: everything the server has, or only the tools this agent was given (#1200).
+    An allowed AlphaGenome tool is listed only where it can be used, since the server registers it only then."""
     if "annot" not in (a.get("builtin_mcp") or []):
         return ""
     tools = a.get("annot_tools")
+    if tools is not None and not alphagenome:
+        tools = [tool for tool in tools if tool not in _ALPHAGENOME_TOOLS]
     if tools is None:
         return ("labhq_annot=yes (VEP with AlphaMissense for human GRCh38, gnomAD, ClinVar, ChIP-Atlas, ENCODE cCRE, "
                 "GTEx, RCSB PDB structure and ChEMBL compound lookups; AlphaGenome when its key is set); ")
     return f"labhq_annot=yes (tools: {', '.join(tools)}); " if tools else ""
 
 
-def format_roster(agents: list[dict]) -> str:
+def format_roster(agents: list[dict], *, alphagenome: bool = True) -> str:
     lines = []
     for a in agents:
         tag = " [파견직]" if a.get("employment") == "contract" else ""
@@ -1677,7 +1683,7 @@ def format_roster(agents: list[dict]) -> str:
                      f"{'own outputs/ and .tmp/ writable; ' if access == 'read-only' else ''}"
                      f"tools={allowed or builtin or 'default'}; denied={a.get('disallowed_tools') or []}; "
                      f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}; "
-                     f"{_annot_roster(a)}"
+                     f"{_annot_roster(a, alphagenome)}"
                      f"max_turns={a.get('max_turns') or 'unlimited'}{tools}")
     return "\n".join(lines)
 
@@ -4775,6 +4781,15 @@ class Orchestrator:
                 if block:
                     raise BudgetExceeded(reason)
 
+    def _alphagenome_ready(self) -> bool:
+        """Whether the AlphaGenome tools exist for the staff: the key file is there and the client is installed. The server
+        registers them only then, so the roster the CSO plans from must not list them otherwise (#1200)."""
+        try:
+            from ..tools import annot_keys, annot_regulatory
+            return bool(annot_keys.read_key(self.hub.s)) and annot_regulatory.alphagenome_client_available()
+        except Exception:
+            return False
+
     def _note_inflight_cap(self, rid: str, task: Task) -> None:
         """Remember the most this dispatch may spend while it runs (#673). Nothing is recorded for a task without a cap."""
         remaining = self._request_budget_remaining(rid)
@@ -7473,7 +7488,7 @@ class Orchestrator:
                         topic_vocab = output_vocab.current()
                         template = RESEARCH_CP2_PLAN_PROMPT if research_execution else RESEARCH_PLAN_PROMPT
                         prompt = template.format(
-                            request=plan_request, roster=format_roster(roster),
+                            request=plan_request, roster=format_roster(roster, alphagenome=self._alphagenome_ready()),
                             capabilities=capabilities or "No workers available",
                             briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
                             max_branches=self.cfg.max_branches,
@@ -7492,7 +7507,8 @@ class Orchestrator:
                     else:
                         vocab = self._output_vocab()
                         topic_vocab = output_vocab.current()
-                        prompt = PLAN_PROMPT.format(request=plan_request, roster=format_roster(roster),
+                        prompt = PLAN_PROMPT.format(request=plan_request,
+                                                    roster=format_roster(roster, alphagenome=self._alphagenome_ready()),
                                                     capabilities=capabilities or "No workers available",
                                                     briefing=clip(briefing, 4000) or "(none)",
                                                     max_steps=self.cfg.max_steps, question_rule=QUESTION_RULE,
@@ -8036,7 +8052,8 @@ class Orchestrator:
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=replan_schema(vocab is not None),
                         resume_session_id=session_id,
                         prompt=REPLAN_PROMPT.format(
-                            roster=format_roster(roster), capabilities=capabilities or "No workers available",
+                            roster=format_roster(roster, alphagenome=self._alphagenome_ready()),
+                            capabilities=capabilities or "No workers available",
                             trigger=why, retired=", ".join(unfinished) or "none", drop_rule=drop_rule,
                             used=", ".join(sorted(used)), max_steps=self.cfg.max_steps,
                             output_types_rule=output_types.prompt_rule(vocab) if vocab else "",
