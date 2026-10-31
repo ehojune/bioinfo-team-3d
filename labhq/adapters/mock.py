@@ -142,8 +142,9 @@ class MockAdapter(AgentAdapter):
         anchors = re.findall(r"\[\[claim:[^\]\s]+\]\]", t.prompt.split("Citable claims:", 1)[-1].split("Claims that cannot", 1)[0]) \
             if kind == "synthesis" and "Citable claims:" in t.prompt else []
         if anchors:  # the research report: every conclusion carries the anchor of the claim it rests on
+            anchors = list(dict.fromkeys(anchors))  # one sentence per claim, so no step or branch is left out
             text = ("## 요약\n\n모의 결과 표가 작성되었습니다 " + anchors[0] + ".\n\n## 결론\n\n"
-                    "모의 단계가 계획한 결과 표를 만들었습니다 " + anchors[0] + ".\n")
+                    + "".join(f"모의 단계의 결과 표가 작성되었습니다 {anchor}.\n\n" for anchor in anchors).rstrip("\n") + "\n")
 
         if kind == "plan" and _is_schema(t, "pack_values", "protocol"):
             structured = _research_plan(t, a)

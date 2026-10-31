@@ -362,13 +362,19 @@ async def _run_default_init_request(tmp_path, text):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+def _every_claim_is_cited(request):
+    """Each claim of each planned step is anchored in the report: the synthesis leaves no step or branch out."""
+    anchors = [f"[[claim:{step['id']}/{claim}]]" for step in request["plan"]["steps"] for claim in step["claim_ids"]]
+    assert anchors and all(anchor in request["report"] for anchor in anchors), (anchors, request["report"])
+
+
 async def test_default_init_config_runs_a_research_request_to_the_end_with_mock_agents(tmp_path):
     request, order = await _run_default_init_request(tmp_path, "공개 데이터 예시 3개에서 행 수를 세고 보고해 줘")
     # Planned once; the storage card comes with the plan, before the CP1 card; steps run only after CP1.
     assert order == ["briefing", "precedent", "plan", "result_storage", "research_plan", "step", "research_evidence",
                      "review", "synthesis"], order
     assert request["plan"]["steps"] and request["results"]
-    assert "[[claim:s1/c1]]" in request["report"], request["report"]
+    _every_claim_is_cited(request)
 
 
 async def test_default_init_config_runs_a_multistep_research_plan_with_a_dependency(tmp_path):
@@ -377,7 +383,7 @@ async def test_default_init_config_runs_a_multistep_research_plan_with_a_depende
     assert [(step["id"], step["depends_on"]) for step in steps] == [("s1", []), ("s2", ["s1"])]
     assert order.count("step") == 2 and order.index("research_plan") < order.index("step"), order
     assert set(request["results"]) == {"s1", "s2"}
-    assert "[[claim:s1/c1]]" in request["report"] or "[[claim:s2/c2]]" in request["report"], request["report"]
+    _every_claim_is_cited(request)
 
 
 async def test_default_init_config_runs_a_branched_research_plan_to_the_end(tmp_path):
@@ -387,6 +393,7 @@ async def test_default_init_config_runs_a_branched_research_plan_to_the_end(tmp_
     assert {step["id"]: step["branch"] for step in plan["steps"]} == {"s1": "b1", "s2": "b2", "s3": "synthesis"}
     assert order.count("step") == 3 and set(request["results"]) == {"s1", "s2", "s3"}, order
     assert order[-2:] == ["review", "synthesis"], order
+    _every_claim_is_cited(request)
 
 
 async def test_a_mock_step_whose_read_only_baseline_is_refused_fails_before_it_runs(tmp_path):
