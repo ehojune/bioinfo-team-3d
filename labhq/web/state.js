@@ -150,7 +150,7 @@ const POST_END_TASK_KINDS = new Set(['followup']);
 // a finished request (a follow-up turn, usage, cards, review, storage) and everything else still applies (#1170).
 const PIPELINE_STARTS = new Set(['request.review', 'request.plan', 'request.route', 'request.questions', 'request.step_attempt',
   'request.step_paused', 'request.step_halted', 'request.step_quota_wait', 'request.step_login_wait', 'request.resume_waiting',
-  'request.resumed', 'request.runner_wait']);
+  'request.resumed', 'request.runner_wait', 'request.step_resumed', 'request.step_quota_resumed', 'request.step_login_resumed']);
 const STATUS_THAT_STARTS_WORK = new Set(['working', 'queued', 'waiting', 'hibernating']);
 const hasActiveFollowup = q => (q?.followups || []).some(f => !TERMINAL_FOLLOWUP_STATES.has(f.status));
 const isPastRequest = q => !!q && isTerminalRequest(q.status) && !!q.pi_reviewed_at && !hasActiveFollowup(q);
