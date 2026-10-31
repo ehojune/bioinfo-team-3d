@@ -823,28 +823,43 @@ def expand_env(env: dict[str, str], source: dict[str, str] | None = None) -> dic
                       lambda m: source.get(m.group(1), m.group(0)), v) for k, v in env.items()}
 
 
+def _anchored_path(text: str) -> bool:
+    """A path that names a place on its own: it has a separator and is absolute (POSIX, drive letter or UNC) or starts
+    with ``~``. A bare file name is not one, so it can never stand for the file wherever its letters appear (#1225)."""
+    return ("/" in text or "\\" in text) and (os.path.isabs(text) or text.startswith("~")
+                                              or bool(re.match(r"[A-Za-z]:[\\/]|\\\\", text)))
+
+
 def atlas_key_file_forms(settings: Settings) -> list[str]:
-    """Every spelling of the one configured key file location, longest first: as written, with ``~`` expanded, resolved
-    against the settings, and with either slash. These exact paths, and nothing else, are not read as the key (#1225)."""
+    """Every anchored spelling of the one configured key file location, longest first: ``~`` kept or expanded, resolved
+    against the settings, with either slash, and the Claude rules labhq writes for that absolute path. A bare file
+    name, a relative path and anything else that is not an anchored path are left out, so they cannot hide the
+    variable's name elsewhere. Only these exact strings are not read as the key (#1225)."""
     raw = settings.annot.alphagenome_key_file
-    forms = {raw, os.path.expanduser(raw)}
+    absolute = [os.path.expanduser(raw)]
     try:
-        forms.add(str(settings.path(raw)))
+        absolute.append(str(settings.path(raw)))
     except (OSError, ValueError):
         pass
+    forms = {raw, *absolute}
     forms |= {form.replace("\\", "/") for form in forms} | {form.replace("/", "\\") for form in forms}
+    forms = {form for form in forms if _anchored_path(form)}
     # The rules labhq itself writes for that file (Claude's deny and ask rules spell the path their own way, such as
     # `Read(//c/Users/x/.labhq/secrets/alphagenome_api_key)`): taken from the one function that writes them, so a rule
-    # syntax added later is allowed with it and nothing here guesses at a spelling.
-    try:
-        from ..policy import claude_deny_private
+    # syntax added later is allowed with it and nothing here guesses at a spelling. A failure to write them (the test
+    # guard refuses an operator path) only leaves them out, which refuses more, never less.
+    anchored = [path for path in absolute if _anchored_path(path)]
+    if anchored:
+        try:
+            from ..policy import claude_deny_private
 
-        rules = claude_deny_private({}, [os.path.expanduser(raw)]).get("permissions") or {}
-        forms |= {rule for group in rules.values() if isinstance(group, list) for rule in group
-                  if isinstance(rule, str) and os.path.basename(raw).casefold() in rule.casefold()}
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    return sorted((form for form in forms if form), key=len, reverse=True)
+            rules = claude_deny_private({}, [anchored[-1]]).get("permissions") or {}
+            name = os.path.basename(anchored[-1]).casefold()
+            forms |= {rule for group in rules.values() if isinstance(group, list) for rule in group
+                      if isinstance(rule, str) and name in rule.casefold() and ("/" in rule or "\\" in rule)}
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+            pass
+    return sorted(forms, key=len, reverse=True)
 
 
 def names_atlas_key(value: Any, allowed: Iterable[str] = ()) -> bool:

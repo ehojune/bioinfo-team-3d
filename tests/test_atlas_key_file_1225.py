@@ -115,3 +115,31 @@ async def test_a_launch_that_carries_the_key_value_is_still_refused(tmp_path, mo
     ctx.mcp_servers[0].env["LEAK"] = "value-of-the-key-0123456789"
     result = await run_until_preflight(monkeypatch, ctx)
     assert not result.ok and "Atlas" in result.error and "value-of-the-key" not in result.error
+
+
+@pytest.mark.parametrize("configured", ["alphagenome_api_key", "secrets/alphagenome_api_key", "ALPHAGENOME_API_KEY"])
+def test_a_relative_or_bare_key_file_setting_never_hides_the_variable_name(configured):
+    """#1228 review: `annot.alphagenome_key_file: alphagenome_api_key` once put the bare file name among the allowed
+    strings, and removing it from the launch erased the real variable `ALPHAGENOME_API_KEY` with it."""
+    settings = Settings()
+    settings.annot.alphagenome_key_file = configured
+    forms = adapters_base.atlas_key_file_forms(settings)
+    assert forms and all(adapters_base._anchored_path(form) or "(" in form for form in forms), forms
+    assert configured not in forms and configured.lower() not in forms
+    assert adapters_base.names_atlas_key({"env": {"ALPHAGENOME_API_KEY": "x"}}, forms)
+    assert adapters_base.names_atlas_key(["-c", 'mcp_servers.o.env_vars=["ALPHAGENOME_API_KEY"]'], forms)
+
+
+def test_a_failing_rule_generator_leaves_the_rules_out_and_refuses_more(monkeypatch):
+    """The test guard refuses an operator `.labhq` path (RuntimeError) in CI: the rules are then simply not allowed."""
+    from labhq import policy
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("pytest refused operator .labhq path")
+
+    monkeypatch.setattr(policy, "claude_deny_private", refuse)
+    settings = Settings()
+    settings.annot.alphagenome_key_file = KEY_FILE
+    forms = adapters_base.atlas_key_file_forms(settings)
+    assert KEY_FILE in forms and not [form for form in forms if form.startswith(("Read(", "Bash("))]
+    assert adapters_base.names_atlas_key(f"Read(//c/Users/someone/.labhq/secrets/alphagenome_api_key)", forms)
