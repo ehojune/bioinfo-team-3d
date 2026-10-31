@@ -383,6 +383,7 @@ class Hub:
         # ended by recruit.done/failed or by a different runner process; a reconnect of the same process keeps them
         # (#515). The incarnation survives a restart, so the process id decides when the runner sends one (#521).
         self.recruits_running: dict[str, dict[str, Any]] = {}
+        self._pipeline_submitting: set[str] = set()  # tasks whose submission row is being committed (#606)
         self.idempotency = Idempotency(refusals=(RunnerNotSent,))  # a repeated POST with the same Idempotency-Key is applied once (#1164)
         self.cancel_result_wait_s = CANCEL_RESULT_WAIT_S
         self.request_deadline_tick_s = REQUEST_DEADLINE_TICK_S
@@ -3836,10 +3837,10 @@ class Hub:
                 await self._settle_steers(tid, task, result.control)
             if tid:
                 self.task_breaker.pop(tid, None)
-                self.store.delete("task_breaker", tid)
+                await self.store.adelete("task_breaker", tid)
                 self.orchestrator.restricted_calls.pop(tid, None)
-                self.store.delete("restricted_ledger", tid)
-                self.store.delete("breaker_release", tid)  # the task ended: nothing is left to release
+                await self.store.adelete("restricted_ledger", tid)
+                await self.store.adelete("breaker_release", tid)  # the task ended: nothing is left to release
                 if result.error_kind == "halted":
                     await self._control_state(tid, {"paused": False, "halt": True, "halted": True}, replace=True)
                 elif waiting(result):
@@ -3849,12 +3850,17 @@ class Hub:
             if (result.pipeline_submission is not None and result.agent_id in PIPELINE_AUTHORS
                     and self.s.policy.bioinfo_agent.pipeline_pr
                     and result.ok and not waiting(result)):
-                if self.store.get("pipeline_submission", tid) is None:
-                    # A replayed result cannot replace the candidate or erase its PI decision.
-                    self.store.put("pipeline_submission", tid, {
-                        "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
-                        "state": "ready", "submission": result.pipeline_submission,
-                    })
+                if self.store.get("pipeline_submission", tid) is None and tid not in self._pipeline_submitting:
+                    # A replayed result cannot replace the candidate or erase its PI decision, also not while the
+                    # first one is committing off the event loop.
+                    self._pipeline_submitting.add(tid)
+                    try:
+                        await self.store.aput("pipeline_submission", tid, {
+                            "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
+                            "state": "ready", "submission": result.pipeline_submission,
+                        })
+                    finally:
+                        self._pipeline_submitting.discard(tid)
                 pipeline_event = {"type": "pipeline.ready", "ts": time.time(), "task_id": tid,
                                   "agent_id": result.agent_id, "request_id": rid,
                                   "data": {"name": result.pipeline_submission.get("name")}}
@@ -3875,7 +3881,7 @@ class Hub:
             if task and task.get("request_id") in self.requests and (task.get("step_id") or task.get("kind") == "direct"):
                 rid = task["request_id"]
                 sid = task.get("step_id") or "direct"
-                self.store.put("step_checkpoint", f"{rid}:{sid}",
+                await self.store.aput("step_checkpoint", f"{rid}:{sid}",
                                {"task_id": tid, "attempt": task.get("attempt", 1),
                                 "revision": task.get("revision", 0),
                                 "result": result.model_dump(mode="json")})
@@ -3883,14 +3889,14 @@ class Hub:
             if task:
                 # Cancel waits on completed: publish it only after the cost snapshot commits.
                 # A reported result also supersedes an abandonment (#112).
-                self.store.put("task", tid, {**{k: v for k, v in task.items() if k != "abandoned"},
+                await self.store.aput("task", tid, {**{k: v for k, v in task.items() if k != "abandoned"},
                                               "completed": True, "result": result.model_dump(mode="json")})
                 self._refresh_roster()
                 self._session_state_changed()
             self._finishing_step_tasks.discard(tid)
             if tid:
                 # Completion must be visible before cleanup so a queued cancel cannot recreate the intent.
-                self.store.delete("task_cancel", tid)
+                await self.store.adelete("task_cancel", tid)
             fut = self.futures.pop(msg.get("task_id") or "", None)
             if fut and not fut.done():
                 fut.set_result(result)
@@ -3977,7 +3983,7 @@ class Hub:
             tid = msg.get("task_id") or ""
             task = self.store.get("task", tid)
             if task:
-                self.store.put("task", tid, {**task, "accepted": True, "runner_id": runner_id,
+                await self.store.aput("task", tid, {**task, "accepted": True, "runner_id": runner_id,
                                                "runner_incarnation": self.runner_incarnations.get(runner_id)})
                 self._session_state_changed()
                 if self.controllable(task.get("kind"), task.get("step_id"), task.get("request_id")):
