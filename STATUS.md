@@ -4,6 +4,16 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1168 rev8 — 병합한 PR의 남은 지적 두 건을 manual에 반영
+
+| 항목 | 내용 |
+|---|---|
+| 결론 | PR #1231·#1236이 "남은 지적"으로 남긴 manual 두 건을 한·영에 넣었다 |
+| 바뀐 것 | `docs/manual.md`·`docs/manual.en.md`(ask 조기 답 즉시 반환 한 문장, dash 입력 예시의 `trap`), patch note. 코드는 그대로 |
+| 실행한 것 | `patch_notes.py check`, `check_public.sh`, `test_text_encoding.py` |
+| 미해결 | `trap` 예시는 dash에서 실제로 돌려 보지 않았다 |
+| 근거 | https://github.com/ehojune/bioinfo-team-3d/pull/1231, https://github.com/ehojune/bioinfo-team-3d/pull/1236 |
+
 # #1246 결함 1: 웹 남은 시간을 서버 기한으로 계산한다
 
 - 결론: 웹의 "남은 N분"이 서버가 실제로 취소하는 시각과 어긋나던 것을 고쳤다. `request.created` 이벤트로 만든 요청은 `created_at`이 이벤트 `ts`(요청을 시작한 시각)라, 수락과 시작 사이가 늦으면 남은 시간이 서버 기한보다 길게 보였다.
