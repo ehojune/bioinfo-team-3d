@@ -19,4 +19,4 @@ rows:
 - sha: '6df56b8'
   at: 2026-10-31 10:04
   text: on_runner_message가 activity 인자를 activity가 있는 메시지에만 publish에 넘긴다. 옛 시그니처로 publish를 감싼 시험 double(#1143의 test_state 시험)과 다른 메시지가 계속 동작한다
-  summary: #1143과 합친 뒤 실패한 시험 한 건을 제품 쪽 호출 방식으로 해결합니다.
+  summary: 1143 병합본과 합친 뒤 실패한 시험 한 건을 제품 쪽 호출 방식으로 해결합니다.
