@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "pending"
+    at: "2026-10-31 22:14"
+    summary: "main 충돌을 풀어 Atlas SDK 하한과 시험당 300초 제한을 함께 보존합니다."
+    text: "merge: preserve Atlas SDK minimum and main test timeout"
   - sha: "3a6ed6d"
     at: "2026-10-31 21:55"
     summary: "같은 엔진·작업 환경 안에서 이어지는 Atlas 키 별칭도 직원 환경과 실행 설정에서 차단합니다."

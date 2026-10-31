@@ -2,7 +2,7 @@
 
 Lookup-only implementation evidence, checked 2026-10-31. Live Atlas access is **UNVERIFIED** pending PI's key-location answer.
 
-Integration hold: final-head CI/review remain pending; bilingual manuals and installed package CLI/MCP mocks are recorded. The installed Codex sandbox shell and live Atlas access remain unverified. Alias filtering shares one collector across daemon and adapter. The fixed `/annot/atlas` operation accepts query parameters, never caller URLs, commands or output roots.
+Merge approved; hold remains until refreshed-head CI/review pass. Rev15 resolves the main dependency conflict by preserving both `alphagenome>=0.10.0` and `pytest-timeout==2.4.0` with the 300-second per-test limit. The installed Codex sandbox shell and live Atlas access remain unverified, pending PI's key-location answer. Alias filtering shares one collector across daemon and adapter. The fixed `/annot/atlas` operation accepts query parameters, never caller URLs, commands or output roots.
 
 | Contract | Implementation |
 |---|---|

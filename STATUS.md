@@ -4,6 +4,51 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1193 후속: 정리본 링크 검사가 길이가 다른 코드 펜스를 알아본다
+
+- 결론: `portfolio._markdown_targets`가 코드 펜스를 가리는 방식을 정규식(`` ```.*?``` `` 고정 3개)에서 `_mask_code` 스캔으로 바꿨다. 펜스는 백틱 또는 물결표 3개 이상으로 열고 같은 문자로 같거나 긴 run이 닫는다. PR #1194의 `_json_block`이 본문의 백틱 연속보다 긴 펜스를 쓰기 때문에 필요했다(Codex P2).
+- 바뀐 것: `labhq/portfolio.py`(`_mask_code`·`_closing_fence`, `_MARKDOWN_CODE` 제거), `tests/test_result_storage.py`(6개).
+- 의미 보존: 무작위 입력 60만 건(백틱·물결표·링크 문자·줄바꿈 혼합)을 옛 정규식과 비교해 달라진 입력은 모두 4개 이상 run이 든 것뿐이다(설명되지 않는 차이 0). 4개 미만만 있는 입력의 결과는 같다.
+- 정규식 하나로 고치면 안 됐던 이유: `(?P<fence>`{3,}).*?(?P=fence)`*` 형태는 백틱 2만 개 연속에서 **49초**(옛 정규식 0.4 ms)가 걸렸다. 저장 때마다 모든 문서에 도는 검사라 선형 스캔으로 바꿨다.
+- 성능(실제 함수): 일반 1 MB 6 ms, 닫히지 않은 펜스+1 MB 22 ms, 백틱 2만 개 연속 92 ms, 20만 개 연속 3.3 s. 마지막 두 경우는 병적 입력이고 선형은 아니다(코드 주석에 적음). 정상 문서에는 해당 없다.
+- 시험: 4개 이상 백틱·물결표 펜스가 안의 짧은 펜스와 링크를 가리고, 3개 펜스·펜스 밖 링크·닫히지 않은 펜스·더 긴 닫는 펜스의 기존 동작은 유지된다(수정 전 앞의 둘이 실패). 정리본·저장 계열 298 passed.
+- 미해결/미검증: `labhq/report_contract.py:50`에 같은 정규식의 복사본이 있다(보고서 계약 검사의 별개 용도, 이 claim 밖이라 두었다). 같은 길이 펜스 문제가 있을 수 있으나 확인하지 않았다. 닫는 펜스가 같은 줄 앞쪽 공백이나 문장 중간에 있는 경우는 옛 정규식과 같게(줄 시작 조건 없이) 처리한다.
+
+# #1076 halt 시험의 실제 프로세스 제거
+
+- 결론: #1189 CI의 3.10 job이 25분 상한에 끊겼고 stall 덤프 로그에서 시작만 하고 끝나지 않은 시험이 둘이었다. 하나가 `tests/test_halt_watch_1174.py::test_a_completed_turn_whose_handler_is_still_awaiting_is_not_halted`였다. 그 시험은 가짜 Gemini CLI 스크립트를 실제 프로세스로 띄워 결과 뒤 4초를 살려 둔다. 이 경로가 정리되지 않을 때 `asyncio.wait_for`로 끊지 못하고 멈출 수 있다. Gemini 경우와 Claude "결과 뒤 halt" 경우를 `FakeProc`(OS 프로세스 없음, 스트림 두 개, 끝나는 시각을 시험이 정함)로 바꾸고 시험 안에 5초 상한(`LIMIT_S`)을 뒀다.
+- 확인: 제품 코드를 바꾸지 않았고 두 시험 모두 `halt_watch`의 `st.result_seen` 확인을 빼면 실패한다(이전 변이 확인과 같음). 로컬에서 6회 반복해 모두 통과.
+- 남은 것: `test_a_halt_that_finds_the_cli_still_running_still_stops_it`는 실제 프로세스를 죽이는 것이 시험 대상이라 그대로 둔다(상한 30초, 별도 관찰 대상). 같은 job의 다른 미종료 시험 `test_paper_skill_recovery_identity...[cancel]`은 이 claim 밖이다.
+- 미검증: 이 변경이 3.10·Windows 정지를 실제로 없애는지(CI 재실행으로 확인). 정지의 원인이 이 시험이었다는 증거는 "시작만 하고 끝나지 않은 시험 둘 중 하나"까지다.
+
+# #1198: 시험마다 300초 상한으로 CI 정지를 한 시험의 실패로 바꾼다
+
+- 결론: `pytest-timeout==2.4.0`과 `timeout = 300`을 넣었다. Linux 3.10/3.12는 `timeout_method=signal`(멈춘 시험만 실패, 나머지 계속), Windows는 `thread`(worker 덤프 후 종료, xdist가 그 시험만 crash 보고). job `timeout-minutes`는 그대로다.
+- 원인 분석(#1198 댓글): PR #1192 3.10 job 덤프에서 두 worker 모두 main thread가 async 시험의 `run_until_complete → select()`에서 이벤트를 기다렸고 남은 thread·subprocess는 없었다. 진단은 controller의 "마지막 보고 시험"만 보여 멈춘 시험을 가리키지 못했다. 어느 시험인지는 로그만으로 특정하지 못했다.
+- 바뀐 것: `pyproject.toml`, `.github/workflows/test.yml`(Linux 둘 signal, Windows 둘 thread), `scripts/ci_suite.py`(상한 5초 전에 시험 이름과 전 thread 스택을 stderr에 출력, 프로토콜 wrapper를 `tryfirst`로 두어 host-resource lock 대기는 상한에 안 든다), `docs/reference/ci-reuse.md`, `config/ci/windows-boundary-v1.json`(새 시험 inventory), `tests/test_ci_suite.py`(신규).
+- 실행한 것: `test_ci_suite`·`test_ci_parallel_policy`·`test_ci_windows10m`·`test_ci_windows_phases`·`test_ci_normative_prose`·`test_ci_boundary_preview`·`test_ci_manifest_identity` 570 passed, 1 skipped(Windows에서 signal 시험).
+- 미해결/미검증: Linux signal 경로(신규 시험의 실제 실행은 Linux CI에서 처음), thread 방식의 xdist crash 보고, 멈춘 시험의 원인 자체는 상한이 이름을 알려준 뒤 별도로 고친다. 느린 시험은 `@pytest.mark.timeout(n)`으로 연장한다.
+
+# #1193 정리본 진행 기록의 리뷰 인용문 링크가 저장을 막지 않게
+
+- 결론: `draft_documents`가 `PROGRESS.md`의 세 JSON 블록(확인 질문·수정 회차·검토)을 ```` ```json ```` 코드 블록으로 싣는다. 리뷰어가 보고서의 그림 링크를 `evidence_quote`로 인용해도 `run/progress.md`의 링크가 되지 않는다.
+- 원인: 링크 검사의 상대 경로 해석 결함이 아니다. `run/` 기준 `../graphical_abstract.svg`는 루트 `graphical_abstract.svg`로 정확히 풀렸고 정리본에 그 이름의 파일이 없었을 뿐이다(실제 위치는 `figures/graphical_abstract.svg`). 링크를 만든 것은 편집자도 아닌, 리뷰 JSON을 평문으로 싣던 `result_storage.py`의 `PROGRESS.md` 생성이다.
+- 같은 부류의 불일치: `portfolio.py:1336`·`1353`은 같은 JSON을 이미 코드 블록으로 싣는다. `PROGRESS.md`만 평문이었다. 링크 검사(`_markdown_targets`)는 코드를 마스킹한 뒤 링크를 찾는 설계라 코드 블록 안의 인용은 링크가 아니다.
+- 바뀐 것: `labhq/result_storage.py`(`_json_block` 헬퍼, 호출 3곳. 펜스는 본문 안 백틱 연속보다 길게), `tests/test_result_storage.py`(2개).
+- 시험: 리뷰 인용문에 이미지·일반 링크가 든 요청의 `PROGRESS.md`가 링크 검사를 통과한다(수정 전 `../graphical_abstract.svg`·`../tables/missing.tsv` 2건 검출로 실패). 진짜 깨진 링크는 계속 검출된다. 정리본·저장 계열 292 passed.
+- 실제 데이터 확인: 7차 `req_3643a6a43e`의 요청 상세로 `draft_documents`를 돌려 `run/progress.md`의 깨진 링크가 0건이 되는 것을 확인했다(읽기 전용, 모델 호출·저장 없음).
+- 미검증: 정리본 전체의 링크 검사는 재현하지 못했다(bundle·assets·images 입력 필요). 다른 문서에 같은 문제가 더 있는지는 이 요청의 실제 재저장으로만 확인된다. 6차가 통과한 이유는 6차 리뷰 인용문에 링크 문법이 없었기 때문으로 보지만 6차 리뷰 원문은 다시 열지 않았다.
+- 재저장: 병합 뒤 `labhq storage req_3643a6a43e --redraft`(또는 `--republish`)로 7차 결과를 다시 저장한다. 편집자 재실행이 필요한지는 이 수정으로 정리본이 만들어지는지를 보고 정한다.
+
+# #1190 pause/resume 송신 순서의 전제를 시험으로 고정
+
+- 결론: 낡은 pause/resume 프레임이 새 제어를 덮는 경우는 재현되지 않았다([점검](https://github.com/ehojune/bioinfo-team-3d/issues/1190#issuecomment-6542061968)). `control_seq`는 넣지 않고, 순서가 지켜지는 두 전제를 `tests/test_control_order_1190.py`로 고정했다. 제품 코드는 바꾸지 않았다.
+- 전제 1: `send_runner`가 `runner_locks[runner_id]`(FIFO)를 잡고 보낸다 — 첫 송신이 멈춰 있어도 둘째는 앞지르지 못한다.
+- 전제 2: `_push_task_state`가 step 상태를 읽은 뒤 `await` 없이 `send_runner`에 들어간다 — 이벤트 루프 턴 수(ticker)가 읽을 때와 들어갈 때 같다.
+- 시험(27건): 전제 1·전제 2 각 1건, pause·resume·스냅샷 재전송을 섞어 무작위 양보를 준 수렴 시험 25건(마지막 프레임이 gateway 최종 상태와 일치).
+- 변이 확인: 잠금을 빼면 전제 1 시험이, 상태 읽기 뒤에 `await asyncio.sleep(0)`을 넣으면 전제 2 시험이 실패한다(둘 다 직접 확인하고 되돌림).
+- 한계: FakeWs 기반이라 실제 WebSocket 지연과 재연결 중 연결이 둘 걸치는 순간은 모사하지 못했다.
+
 # #678 셸 확인의 명령 읽기 보정(Argon P1 두 건)
 
 - 결론: `disk_space._segments`를 shlex 대신 직접 읽는 tokenizer로 바꿨다. 명령은 따옴표 밖의 `;` `&&` `||` `|` `&` `(` `)` 개행에서 끝나고, `#`은 단어 시작에서만 주석이며(`url#frag`은 한 단어), `>` `>>` `&>` `2>`는 명령을 쪼개지 않고 그 대상 파일을 쓰기 경로로 돌려주며 `<`는 읽기라 버린다. 따옴표가 닫히지 않으면 읽지 않는다.
@@ -12,6 +57,19 @@
 - 시험: `tests/test_disk_shell_check_678.py`에 주석·리다이렉션·`-x`·묶음 플래그 5건 추가, 파일 전체와 관련 기존 시험 119건 통과.
 - 미검증: heredoc 본문 줄이 명령으로 읽히는 경우(초과 질문만 생김), 중첩 `$(…)`·백틱 안의 명령, Windows CI.
 
+# #606 단계 시작의 파일 시스템 작업을 event loop 밖으로
+
+- 결론: `Runner._run_task`가 단계를 시작할 때 loop thread에서 하던 파일 시스템 작업을 `asyncio.to_thread`로 옮겼다. 대상은 `TaskWorkspace`(작업 폴더 만들기)·`os.path.lexists`·`install_required_skills`(기본 skill 복사)·`resolve_private_paths` 3곳(`stage_inputs` 인자로 미리 평가되던 1곳 포함)·`_system_ca_env`(OS 인증서 저장소 읽기)와 채용 `Recruitment.run`의 build 폴더 만들기다. 호출 자리의 동작·순서는 그대로다.
+- 측정(mock lab 요청 1건, D:·`synchronous=FULL`, 3회): #1179 병합 직후 → 이번
+  - p99 loop 늦음 33–34 ms → 17–21 ms, 50 ms 넘은 횟수 13–15 → 5–8, 그 정지의 합 1.09–1.68 s → 0.38–0.98 s.
+  - 최대 정지 148–158 ms(이상치 417 ms) → 132 · 187 ms(이상치 417 ms). **최대 100 ms 밑 목표는 이번에도 못 맞췄다.** `install_skill`·`private_paths`·`mkdir`는 상위 정지 목록에서 사라졌다.
+- 남은 큰 정지: `server.py dispatch`의 `store.put`(#674 보장 때문에 의도적으로 그대로), `knowledge/recall.py`의 `_write`·`store.delete`(이 claim 밖), `rounds._git_commit`(자식 프로세스 대기, create_request).
+- 시험: `test_gateway_loop_lag_606.py`에 러너 단계 시작 시험 1개를 더했다(세 함수를 0.2 s씩 늦추고 loop 늦음 0.1 s 밑을 확인, 수정 전 0.632 s로 실패). 정적 시험 `test_recruit_inherited_budget_static`이 `build.mkdir(` 모양을 찾아서 `to_thread(lambda: build.mkdir(...))` 모양으로 유지했다. 관련 계열 1119 passed, 38 skipped.
+- 전체 시험: 13,065 passed, 3 failed. 그중 `test_annot`·`test_annot_regulatory` 2개는 main에서도 같은 실패(이 PR 무관), 나머지 1개(위 정적 시험)는 고쳤다.
+- manual: 한·영의 "result 수신의 나머지 저장·dispatch…sync 경계는 남습니다"를 실제에 맞췄다(#1179 P2).
+- 미검증: 실제 느린 디스크, runner·gateway loop를 나눈 측정, 이 PC D:가 빠른 디스크라는 점.
+- 리뷰 P1(Codex, head 0414915a): 느린 skill 복사 중 `task.cancel`이 오면 `to_thread` worker는 중단되지 않아, 취소 결과를 보낸 뒤에도 `install_required_skills`가 skill 폴더를 교체하고 같은 폴더를 쓰는 retry와 경합한다. 고침: `_settled_thread`가 취소를 받아도 worker가 끝날 때까지 기다린 뒤 전파한다(두 번째 취소가 와도 계속 기다림). 작업 폴더를 바꾸는 `TaskWorkspace` 2곳·`install_required_skills`·파일을 쓰는 `_system_ca_env`에 쓰고, 읽기만 하는 `lexists`·`resolve_private_paths`와 멱등한 채용 build `mkdir`는 plain `to_thread`로 둔다. 시험 2개(`test_a_cancel_waits_for_the_file_system_work_that_changes_the_workspace`)는 수정 전 실패.
+
 # #1076 종료 ack 시험의 shutdown 한도 5초
 
 - 결론: `test_shutdown_commits_the_acks_it_already_received`의 `shutdown(timeout_s=...)`를 0.05초(#1181 전) → 0.5초(#1181) → 5.0초(제품 기본값)로 올렸다. 단언(이미 받은 ack를 종료 전에 commit한다)과 제품 코드는 그대로다.
@@ -19,6 +77,18 @@
 - 원인: **첫 commit이 한 번 느렸던 것으로 추정하며 재지 않았다.** 이 시험은 task가 없어 `finish()`가 마감을 먼저 쓰는 경로가 아니다(`finish()`가 바로 반환하고 drain이 거의 전체 한도를 받는다). `_ack_flush`의 대기(`ACK_MERGE_S`)는 drain이 `hurry`를 세워 건너뛰므로 원인이 아니라고 코드로 확인했으나 실행으로 확인하지는 않았다.
 - 시험: `-k shutdown` 3건 통과.
 - 미검증: Windows CI에서의 안정성(이 PR이 첫 확인), 첫 commit 지연의 실제 시간. 다시 실패하면 `_ack_flush` 첫 commit 시간을 러너에서 재는 진단이 필요하다.
+
+# #910 ② 7차: 새 설치판 KRAS 연구 1건 (`req_3643a6a43e`)
+
+- 결론: 요청은 `done`(약 70분, $15.24, 상한 $40). 결과 저장(#792)은 `failed`였고 원인은 #1193에서 가렸다. 상세 보고는 [#910 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/910#issuecomment-6542562637).
+- 설치판·설정: labhq `0e513be1883e`(오늘 main, #1185까지), 설정 sha256 `acd3035e741279d820c4362e04826e838f6db3fa760c8c3fbc94739efd1ce825`. 6차 대비 차이 7줄: 조회 상한 60→9, `request_wall_clock_s` 5400, `model_tiers` 4줄, 빈 `result_storage.authors`.
+- 계획: 5단계(S1 data_steward → S2 analyst → S3 biologist → S4 qc_reviewer → S5 analyst), 새 조회 0회·논문 스킬 0편. 조회 9회는 CP1 전 사전 단계에서 소진됐다.
+- 확인표: 확인 — #1088 사용량 사실, #1089, #1090, #625 불일치 경고 5건, #877의 `wall_clock` 기록. 미확인 — #877의 "한도에 닿으면 취소+영수증", P2A 논문 스킬, 새 공개 조회 계수. 해당 없음 — #1099(solo 요청 아님).
+- 카드: 도구 카드 약 20건 모두 허용(거절 0, 규칙 밖 0). clarify에는 "추가 9회"가 요청문 상한을 넘어 b)로 답했다. CP1 승인, CP2 `approve`, CP4 `review-done --storage github`.
+- 리뷰: Sol `accept`, P2 6건·P3 1건(P1 0).
+- 실수: 감시기에 시한을 절대 epoch가 아닌 "90"으로 넘겨 첫 요청 `req_7ef10da703`을 6초 만에 취소했다(비용 0). 같은 설정·문안으로 다시 보낸 것이 7차다. 첫 요청은 `review-done`으로 닫았다.
+- 저장 실패 원인(#1193): `PROGRESS.md`가 리뷰 JSON을 평문으로 실어, Sol 리뷰어의 `evidence_quote`에 든 `![그래픽 초록](../graphical_abstract.svg)`가 `run/progress.md`의 실제 링크로 읽혔고 정리본 링크 검사가 저장 전체를 거부했다. 편집자(LLM) 출력이 아니라 결정적 코드(`draft_documents`)가 만든 문서다.
+- 미해결: 이 수정을 병합한 뒤 7차 결과를 다시 저장한다(재편집 여부는 원인상 불필요로 보지만 병합 뒤 정한다). 8차 여부는 PI에게 묻는다. 증거는 `D:\.labhq\dev\tmp\claude-worker2\step2\attempt7-preserved\`.
 
 # #678 디스크 감시·halt 안내 P2 두 건
 

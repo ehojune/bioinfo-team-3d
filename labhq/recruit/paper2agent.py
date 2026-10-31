@@ -511,7 +511,7 @@ class Recruitment:
         conversion_budget(self.s, self.plan_task_id, self.parent_budget, self.parent_remaining)
         talent = self.r.registry.talent_dir / self.slug
         build = talent / "build"
-        build.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(lambda: build.mkdir(parents=True, exist_ok=True))  # off the event loop (#606)
         recruiter = self.r.registry.agents.get(self.s.recruit.agent_id)
         engine = recruiter_engine(self.s, recruiter)
         real = engine != "mock"
