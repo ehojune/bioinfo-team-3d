@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "9ca68aa"
+    at: "2026-10-31 18:49"
+    summary: "Atlas의 gene·track metadata를 나눠 strand·측정 이름·junction 좌표를 보존하고 Python 3.10의 SDK timeout도 분류합니다."
+    text: "fix: preserve Atlas track identity and SDK timeout classification"
   - sha: "271980d"
     at: "2026-10-31 18:44"
     summary: "환경변수 키로 AlphaGenome Atlas 사전 계산 SNV 점수를 조회하고 출처·필터·사용 조건과 실패 기록을 남깁니다. 실제 키 접근과 runner 연결은 후속 검증입니다."
