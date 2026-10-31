@@ -126,6 +126,7 @@
     "tests/test_facilities_staff.py",
     "tests/test_followup.py",
     "tests/test_fulltext_receipt.py",
+    "tests/test_gateway_idempotency.py",
     "tests/test_gateway_publish_durable.py",
     "tests/test_general_evidence.py",
     "tests/test_gif_encode.py",
