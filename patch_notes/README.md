@@ -16,13 +16,22 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 |---|---|---|
 | 23:50 | [`6b36821`](https://github.com/ehojune/bioinfo-team-3d/pull/1175/commits/6b36821) | **결과 이벤트를 처리하는 중에 멈춤 요청이 겹친 Codex·Gemini 실행도 완료로 남고 halted로 바뀌지 않습니다.**<br>halt: 완료 flag(result_seen)가 선 실행도 halted로 덮지 않는다 (#1174 리뷰 P1) |
 | 23:10 | [`ca61824`](https://github.com/ehojune/bioinfo-team-3d/pull/1175/commits/ca61824) | **멈춤을 요청한 순간 직원 CLI가 스스로 끝났다면, 이미 받은 결과를 실패(halted)로 바꾸지 않고 그대로 완료로 처리합니다.**<br>halt: 멈춤 안내를 쓰는 사이 끝난 실행은 halted가 아니라 결과로 둔다 (#1174) |
+| 23:00 | [`d73edc2`](https://github.com/ehojune/bioinfo-team-3d/pull/1196/commits/d73edc2) | **멈춤 시험의 5초 상한이 멈춘 실행의 정리를 다시 기다리지 않고 바로 실패하도록 고쳤습니다.**<br>시험: 5초 상한을 cleanup을 다시 기다리지 않는 hard timeout으로 만든다 (#1076 리뷰 P1) |
 | 22:40 | [`1aba36a`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/1aba36a) | **셸 확인이 줄 끝 백슬래시로 이어 쓴 명령과 1&gt;&amp;3- 같은 출력 이동도 bash처럼 읽습니다.**<br>셸 확인: 줄 끝 백슬래시 이어쓰기와 1>&3- 이동을 bash처럼 읽는다 (#678 리뷰) |
+| 22:30 | [`88cc02b`](https://github.com/ehojune/bioinfo-team-3d/pull/1196/commits/88cc02b) | **멈춤과 완료가 겹치는 경우의 시험이 실제 프로세스를 4초씩 살려 두지 않고 가짜 프로세스로 돌며, 5초 안에 끝나지 않으면 실패합니다.**<br>시험: halt 뒤늦은 도착 시험을 실제 프로세스 없이 fake proc으로 바꾸고 5초 상한을 둔다 (#1076) |
 | 22:10 | [`feec236`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/feec236) | **manual에 셸 확인이 리다이렉션 대상·cd 위치·주석·묶음 옵션을 어떻게 읽는지 적었습니다.**<br>문서: 셸 확인의 명령 읽기 규칙 (#678) |
+| 22:00 | [`b0682dd`](https://github.com/ehojune/bioinfo-team-3d/pull/1199/commits/b0682dd) | CI: Windows 명령의 -o 제거, Linux 시험 문구를 실제 메시지에 맞춤 (Refs #1198) |
 | 21:40 | [`d2c95fd`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/d2c95fd) | **셸 확인이 2&gt;&amp;1 같은 출력 복제를 파일 이름으로 읽지 않습니다.**<br>셸 확인: 2>&1 같은 descriptor 복제는 파일로 보지 않는다 (#678 리뷰 P2) |
+| 21:30 | [`48d6264`](https://github.com/ehojune/bioinfo-team-3d/pull/1199/commits/48d6264) | README: CI 시간 상한 문서 링크 (Refs #1198) |
+| 21:13 | [`48a2d47`](https://github.com/ehojune/bioinfo-team-3d/pull/1199/commits/48a2d47) | CI: 새 시험 파일을 Windows inventory에 등록 (Refs #1198) |
+| 21:12 | [`3deb1fb`](https://github.com/ehojune/bioinfo-team-3d/pull/1199/commits/3deb1fb) | **CI에서 시험 하나가 멈추면 그 시험만 실패하고, 이름이 로그에 남습니다.**<br>CI: 시험마다 300초 상한(pytest-timeout)과 상한 직전 시험 이름 덤프 (Refs #1198) |
+| 21:10 | [`2103272`](https://github.com/ehojune/bioinfo-team-3d/pull/1191/commits/2103272) | **멈춤·재개 명령이 보낸 순서대로 runner에 닿는다는 가정을 시험으로 고정해, 이 순서를 깨는 변경이 들어오면 시험이 실패합니다.**<br>시험: pause/resume 프레임의 송신 순서가 보존된다는 전제를 고정한다 (#1190) |
 | 21:00 | [`f78e755`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/f78e755) | **셸 다운로드·압축 해제 확인이 명령을 bash처럼 읽어, 단어 앞의 #만 주석으로 보고 리다이렉션 대상 파일의 드라이브도 함께 봅니다.**<br>셸 줄을 bash처럼 읽는다: 단어 앞의 #만 주석이고 리다이렉션은 구분자가 아니다 (#678 Argon P1) |
 | 20:50 | [`1a6301f`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/1a6301f) | **읽기 전용 task는 쓰지 못하는 project 폴더의 드라이브 때문에 멈추지 않습니다.**<br>디스크 감시: 읽기 전용 task는 project 폴더를 감시하지 않는다 (#678 리뷰 P2) |
+| 20:49 | [`f628168`](https://github.com/ehojune/bioinfo-team-3d/pull/1197/commits/f628168) | **정리본에서 코드 상자 안에 든 링크 문법이 깨진 링크로 오인되지 않도록 검사를 보완했습니다.**<br>정리본 링크 검사가 백틱·물결표 3개 이상의 길이가 다른 코드 펜스를 알아보게 한다 (#1193 후속). |
 | 20:30 | [`df1d8f9`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/df1d8f9) | **manual의 디스크 감시 설명에 쓸 수 있는 project 폴더도 감시한다는 내용을 더했습니다.**<br>문서: 감시 대상에 project 폴더 (#678) |
 | 20:20 | [`b7ad386`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/b7ad386) | **디스크 감시가 직원이 쓸 수 있는 project 폴더가 다른 드라이브에 있어도 그 드라이브의 여유를 함께 봅니다.**<br>디스크 감시: 쓸 수 있는 project 폴더의 드라이브도 본다 (#678 리뷰 P1) |
+| 20:08 | [`04087c1`](https://github.com/ehojune/bioinfo-team-3d/pull/1194/commits/04087c1) | **결과를 GitHub 저장소로 정리할 때 리뷰 인용문 속 그림 링크 때문에 저장이 실패하던 문제를 고쳤습니다.**<br>정리본 진행 기록(PROGRESS.md)의 JSON 블록을 코드 블록으로 실어, 리뷰어 인용문의 링크가 정리본 링크 검사에서 저장 전체를 막지 않게 한다 (#1193). |
 | 20:00 | [`b6c9fe6`](https://github.com/ehojune/bioinfo-team-3d/pull/1183/commits/b6c9fe6) | **종료 ack 시험이 Windows 러너에서 간헐적으로 실패하는 것이 관측돼 대기 한도를 제품 기본값 5초로 올렸습니다.**<br>시험: 종료 ack 시험의 shutdown 한도를 제품 기본값 5초로 올린다 (#1076) |
 | 19:50 | [`5fac414`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/5fac414) | **manual에 작업 도중 디스크 감시의 확인 간격, 멈추는 기준, 재개 방법, 끄는 설정과 한계를 적었습니다.**<br>문서: 작업 도중 디스크 감시 (#678) |
 | 19:30 | [`7855fb6`](https://github.com/ehojune/bioinfo-team-3d/pull/1182/commits/7855fb6) | **읽기 전용 task는 쓰지 못하는 큰 원자료 드라이브 때문에 멈추지 않고, 멈춤 안내는 프로세스를 실제로 끝낸 뒤에만 남습니다.**<br>디스크 감시 P2 둘: 읽기 전용 task는 bulk 폴더를 감시하지 않고, halt 안내는 실제로 끝낸 뒤에만 쓴다 (#678) |
