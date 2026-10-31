@@ -714,6 +714,17 @@ def test_chief_of_staff_gets_only_the_literature_tools_of_annot():
     assert "labhq_annot fulltext" in text and "crossref_doi" in text and "not an ad-hoc script" in text
 
 
+def test_the_science_reviewer_gets_only_the_pdb_and_chembl_lookups_of_annot():
+    """#1055: the reviewer's structure and compound checks go through the counted tool, not a shell script. It is given
+    those two tools only, so AlphaGenome and every literature tool stay closed to it."""
+    spec, text = _prompt("sci_reviewer")
+    assert "annot" in spec.builtin_mcp
+    assert spec.annot_tools == ["pdb", "chembl"]
+    assert {"pdb", "chembl"} <= _server_tool_names(), "the names must be tools the server really registers"
+    assert not [t for t in spec.disallowed_tools if t.startswith("mcp__labhq_annot__")]
+    assert "labhq_annot pdb or chembl" in text and "never by calling RCSB or ChEMBL from a shell" in text
+
+
 @pytest.mark.parametrize("agent_id", ["lit_scout", "biologist"])
 def test_literature_staff_chase_citations_and_search_preprints(agent_id):
     _spec, text = _prompt(agent_id)

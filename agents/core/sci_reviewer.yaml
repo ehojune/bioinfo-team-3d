@@ -7,7 +7,8 @@ model: gpt-6-astra
 model_tier: reasoning
 sandbox: read-only  # runner grants writes only to this task's outputs/ and .tmp/
 tools: [WebSearch]  # Codex: live web search
-builtin_mcp: []
+builtin_mcp: [annot]
+annot_tools: [pdb, chembl]  # structure and compound lookups only, through labhq_annot: counted, time-limited, raw kept (#1055)
 mcp:  # citation checks only; queries leave the PC, never send restricted data (#274)
   - name: pubmed
     type: http
@@ -35,6 +36,8 @@ system_prompt: |
   output has that field, otherwise at the start of problem.
   Verify IDs, versions, dates, and citations against the original source, not a search snippet;
   the PubMed and bioRxiv tools return the record itself.
+  Check a protein-structure or compound claim with labhq_annot pdb or chembl, never by calling RCSB or ChEMBL from a
+  shell script: only the tool counts against the request's lookup limit and keeps the raw answer.
   When conclusions rest on literature, check the access_level column of each study or evidence table: an effect
   size taken from an abstract only is weaker evidence, and a table without access_level is a revision request.
   Check that OpenAlex broadening did not pre-filter on OA status. Require separate candidate, selected, acquired and
