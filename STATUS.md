@@ -50,6 +50,14 @@
 - 계획 프롬프트에 "이 이름을 쓰지 마라"는 문구를 넣지 않았다. `test_off_keeps_the_plan_schema_and_prompt_of_main`과 `test_engine_schemas_and_prompt_off_are_those_of_main`이 프롬프트 해시를 고정하고, 둘째는 이 claim 밖이다. 검사가 거절하면 계획 재시도 경로로 간다. 프롬프트에 넣는 것은 해시 시험을 같이 고쳐야 하는 별도 일이다.
 - CSO가 이 이름을 어디서 배웠는지(상류 단계 지시를 베낀 것으로 보임)는 확인하지 않았다.
 
+# #1154 RESULT.md 별칭 fsync 생략
+
+- 결론: `RESULT.md`(최신 별칭)만 fsync를 생략, `RESULT_<task>.md`는 유지. 결과 본문은 outbox(`task.result`)에도 있어 정전 시 별칭만 옛 것·빈 파일·없음일 수 있고 `RESULT_<task>.md`·outbox에서 복구한다.
+- 바뀐 것: `labhq/adapters/owned.py`(`sync` 플래그), `labhq/runner/daemon.py`(별칭만 `False`), `tests/test_durable_writer.py`(3개).
+- 실측(D:, lab 1요청): 파일 `os.fsync` 70→58, 파일 쓰기 3.1–3.9 s→2.7–3.0 s.
+- 실행: 관련 test 2,988 passed·49 skipped. 새 test 3개는 main 코드에서 실패.
+- 미검증: 정전 실험, CI 전체.
+
 # #1125 rev7 runner `_ack_now` commit 합치기
 
 - 결론: ack commit이 한 요청에 81회였던 이유는, gateway가 메시지마다 ack를 보내고 각 ack가 앞 commit이 끝난 뒤 도착해 겹치는 일이 없었기 때문이다(#1135의 합치기는 commit 중 도착한 ack만 합친다). `_ack_flush`가 직전 commit 뒤 `ACK_MERGE_S`(0.5초)가 지나기 전에는 다음 commit을 미루고, 그 사이 ack는 누적값 하나로 합친다. 한가한 runner의 첫 ack는 그대로 즉시 commit한다.
