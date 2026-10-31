@@ -517,19 +517,26 @@ def test_doctor_atlas_rejects_unexpanded_key_references(monkeypatch, placeholder
         assert doctor._alphagenome_atlas_row()["status"] == "skip"
 
 
-def test_chief_of_staff_denies_atlas_in_claude_command(tmp_path):
-    from labhq.adapters.claude_code import ClaudeCodeAdapter
-
+def test_chief_of_staff_denies_atlas_at_broker_boundary(tmp_path):
+    from labhq.runner.annot_broker import atlas_allowed
     path = Path(__file__).resolve().parents[1] / "agents/core/chief_of_staff.yaml"
     agent = AgentSpec.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
     ctx = context(tmp_path)
     ctx.agent = agent
     ctx.task = Task(agent_id=agent.id, prompt="brief")
-    argv = ClaudeCodeAdapter(ctx.settings).build_command(ctx)
-    denied = argv[argv.index("--disallowedTools") + 1:]
-    assert "mcp__labhq_annot__alphagenome_atlas" in denied
-    assert "mcp__labhq_annot__alphagenome_variant" in denied
-    assert "mcp__labhq_annot__fulltext" not in denied
+    assert "fulltext" in agent.annot_tools
+    assert "alphagenome_atlas" not in agent.annot_tools
+    assert not atlas_allowed(agent, read_only=False)
+
+
+@pytest.mark.parametrize("tools,allowed", [(None, True), ([], False), (["fulltext"], False),
+                                          (["alphagenome_atlas"], True)])
+async def test_broker_grant_respects_atlas_allowlist(service, tools, allowed):
+    ctx, broker, service, token, key, seen = service
+    await service.finish(ctx.task.id)
+    ctx.agent.annot_tools = tools
+    service.register(ctx, key)
+    assert (ctx.task.id in service.grants) is allowed
 
 
 def test_doctor_reports_presence_without_reading_key_file(monkeypatch):

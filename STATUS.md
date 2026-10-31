@@ -20,6 +20,46 @@
 - 실행한 것: 1.28.1 환경과 2.0.0 새 venv 둘 다 `tests/test_doctor.py` 71 passed. 2.0.0 venv에서 `tests/test_annot.py`·`tests/test_external_wait_board_676.py` 30 passed.
 - 미해결/미검증: 설치판이 고정한 mcp 버전은 확인하지 못했다(이 repo에는 고정 파일이 없음). 2.0.0 밖 판본(2.1~2.3)에서 전체 suite는 CI에 맡긴다. 하한 위쪽 상한(`<3`)은 두지 않았다.
 
+## 단계
+#1200: 비서실장(CoS)의 annot 도구를 이름 차단 목록이 아니라 허용 목록으로. 설계는 [#1200 설계 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1200)의 승인안이다.
+
+## 바뀐 것
+- `AgentSpec.annot_tools: list[str] | None = None`(`models.py`). `None`은 전부(기존 동작), 목록이면 그것만. 이름은 소문자 도구 이름이고 `builtin_mcp`에 `annot`이 있어야 한다.
+- `runner/daemon.py`: `annot_tools`가 있으면 `labhq_annot` 서버 env에 `LABHQ_ANNOT_TOOLS=<쉼표 목록>`(빈 목록은 빈 값). 비밀이 아니다.
+- `annot_mcp.py`: 모든 도구를 `@offered()`로 등록한다. 허용 목록 밖이면 등록하지 않는다. 목록에 서버가 정의하지 않은 이름(오타·빈 이름)이 있으면 시작 전에 `SystemExit`(실패 시 닫힘). `alphagenome` 두 도구는 키 파일이 있을 때만 정의되므로 이름은 허용한다.
+- `agents/core/chief_of_staff.yaml`: annot 이름 차단 줄을 지우고 `annot_tools`에 문헌 7개를 적었다.
+
+## 왜 서버에서
+Claude의 `--disallowedTools`만 이름 목록을 지키고 Codex·Gemini 어댑터는 이 목록을 읽지 않는다. Claude에는 MCP 도구 허용 목록 플래그가 없다. 서버가 거르면 모든 엔진이 같은 `list_tools`를 본다.
+
+## 실행한 것
+- 시험을 먼저 추가해 수정 전 실패를 확인했다. `tests/test_annot_literature.py`(52건): stdio 서버가 허용된 도구만 내는지, 환경 변수가 없으면 전부, 모르는 이름이면 시작 거부, 러너 env 전달, 직원 yaml의 목록이 서버 도구의 부분집합, 이름 형식 거부.
+- 관련 `test_annot.py`·`test_annot_regulatory.py`·`test_agent_prompts.py`·`test_agent_capabilities.py`·`test_external_wait.py`·`test_registry.py`: 107 passed. 로컬에서 `CallToolResult.is_error` 속성 오류로 2건이 실패하나 설치된 mcp 버전 차이이며 이 변경 전에도 같다(#1195 상태 문서 참고).
+
+## 하지 않은 것
+- Codex·Gemini 도구 필터 기능은 쓰지 않았다(버전 지원 미확인).
+- Windows inventory는 새 시험 파일이 없어 건드리지 않았다.
+- 신규 직원의 기본을 "문헌만"으로 바꾸는 것은 이번 범위가 아니다.
+- #1195(`pdb`·`chembl`)와 `chief_of_staff.yaml`·`test_annot_literature.py`에서 겹친다. 이 PR을 따르면 #1195의 deny 목록 수정은 필요 없어지고, #1195의 정적 시험(`@server.tool` 장식자를 찾는 시험)은 `offered`를 찾도록 고쳐야 한다.
+
+## rev3
+- `tests/test_external_wait_board_676.py`: 도구를 `@server.tool()`만이 아니라 `@offered()`로도 찾는다. 도구 수 하한(15)과 "모든 도구가 실행기를 부른다"는 확인은 그대로다. 이 시험이 바뀌지 않으면 #1200이 CI에서 실패한다.
+
+## rev4
+- `labhq/adapters/read_only.py`: 읽기 전용 프로필이 `AgentSpec`의 모든 필드를 분류해야 해서 `annot_tools`가 없으면 `RuntimeError`로 읽기 전용 실행(검토·후속)이 시작하지 못했다(CI의 `test_e2e_mock`·`test_followup`·`test_workspace_boundary` 실패). `READ_ONLY_FIELDS`에 `"annot_tools": None`을 넣었다. 설계 때 "확인만"으로 적은 파일이 실제로는 수정 대상이었다.
+- 시험: `test_a_read_only_run_offers_no_annot_tools_whatever_the_staff_spec_allows`. 위 세 시험과 `test_github_reporter.py`는 로컬에서 통과(206 passed, 18 skipped).
+
+## rev5: 리뷰 P1 하나와 P2 둘
+- manual P1: `docs/manual.md`·`docs/manual.en.md`의 공개 자원 조회 도구 절에 `annot_tools`의 세 경우(없음=전부, 목록=그것만, 빈 목록=없음), 모르는 이름이면 서버가 시작하지 않는 것, 읽기 전용 실행은 받지 않는 것을 적었다.
+- roster P2: `AgentSpec.summary()`가 `annot_tools`를 싣고, `format_roster`가 `_annot_roster`로 제한이 있으면 `labhq_annot=yes (tools: ...)`만 적는다(전부면 이전 문장 그대로). CSO가 비서실장에게 못 하는 변이·영역 조회를 배정하지 않게 한다.
+- env P2: `annot_tools`가 없는 직원에게도 runner가 `LABHQ_ANNOT_TOOLS=*`를 서버 env에 명시한다. 서버는 `*`를 제한 없음으로 읽는다(`*,fulltext`는 모르는 이름이라 시작 거부).
+- 시험: `tests/test_annot_literature.py` 56건. 관련 `test_annot.py`·`test_agent_prompts.py`·`test_registry.py`·`test_external_wait_board_676.py`·`test_workspace_boundary.py` 포함 114 passed, 18 skipped. 로컬에서 `test_annot.py::test_stdio_server_lists_tools…`가 `is_error` 속성 오류로 실패(mcp 버전 차이, 이 변경 전부터).
+
+## rev6: override가 만든 스펙
+- 리뷰 P1: `pi_language.py`의 통역 task가 비서실장의 `builtin_mcp`를 `[]`로 덮는데 내가 넣은 검증("annot_tools needs builtin_mcp: annot")이 그 병합 결과를 거부해 통역이 모델 실행 전에 실패했다. 맞는 지적이고 내 결함이다.
+- 고침: 검증에서 `builtin_mcp` 결합을 뺐다(이름 형식만 검증). annot 서버가 없으면 `annot_tools`는 쓰이지 않을 뿐이다. `builtin_mcp`를 덮는 부류(통역·읽기 전용·기타 override) 전체가 닫힌다.
+- 시험 먼저: 덮어쓴 비서실장 스펙이 유효한 것, `builtin_mcp=[]`일 때 러너가 `labhq_annot`을 붙이지 않는 것. 수정 전 둘 다 실패. `test_annot_literature.py`·`test_followup.py`·`test_pi_language.py`·`test_workspace_boundary.py` 등 259 passed, 18 skipped.
+
 # #1193 후속: 정리본 링크 검사가 길이가 다른 코드 펜스를 알아본다
 
 - 결론: `portfolio._markdown_targets`가 코드 펜스를 가리는 방식을 정규식(`` ```.*?``` `` 고정 3개)에서 `_mask_code` 스캔으로 바꿨다. 펜스는 백틱 또는 물결표 3개 이상으로 열고 같은 문자로 같거나 긴 run이 닫는다. PR #1194의 `_json_block`이 본문의 백틱 연속보다 긴 펜스를 쓰기 때문에 필요했다(Codex P2).
@@ -113,6 +153,30 @@
 - 바꾼 것: `labhq/runner/daemon.py`, `labhq/adapters/base.py`, `tests/test_disk_watch_678.py`(+1: 읽기 전용은 bulk 제외), `tests/test_halt_watch_1174.py`(경합 시험 교체, 결과 뒤 halt 시험 2건·halt가 실행 중이면 여전히 멈춤).
 - 시험: 감시·halt·어댑터 fake CLI·halt 재개 e2e 27건 통과.
 - 미검증: Windows CI, 실제 엔진.
+
+# #612 2단계 — 요청에 "이 PC의 WSL" 선택(#578 없이)
+
+- 결론: `RequestIn.run_where: Literal["auto","wsl"] = "auto"`를 더했다. `labhq send --wsl`과 웹 요청 폼의 "WSL에서" 체크가 채우고, 요청 기록·재개·후속·CP1 수정 요청에 이어진다. `wsl`이면 `_start_request`가 계획이 roster를 읽기 전에 `prepare_wsl_request`를 부른다. 이것은 `offer_wsl_setup`(#1038)과 같은 점검·카드를 요청 단위로 한 번 열고, 승인되면 셋업 뒤 runner가 붙기를 기다린다. 거절·시간 초과·실패·다른 PC(`blocked`)면 요청을 막지 않고 WSL 없이 진행하며 `requests[rid]["run_where_note"]`에 이유를 남긴다. CSO 계획 입력(`format_capabilities`)에는 `wsl`일 때만 "PI가 이 PC의 WSL에서 실행하라고 골랐다" 한 줄이 붙는다.
+- 배경: [#612 점검](https://github.com/ehojune/bioinfo-team-3d/issues/612#issuecomment-6541542363) — 자동 계획은 준비 전 WSL runner의 bioinfo-agent가 roster에 없어 셋업 카드에 닿지 못한다. #578은 draft에 856커밋 뒤라 의존하지 않는다.
+- 바꾼 것: `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `labhq/cli.py`, `labhq/web/index.html`, `tests/test_wsl_setup_card_612.py`(+8건). 웹 코드는 `#wsl-only`가 없는 DOM(다른 node 시험의 stub)에서도 `auto`로 읽는다. `pi_text.py`는 기존 `wsl_setup` 문구를 그대로 써서 바꾸지 않았다.
+- 시험: 신규 8건은 구현 전 전부 실패했고 지금 통과. WSL 관련·CLI·e2e·idempotency 시험 포함 110건과 웹 node 5건 통과.
+- 미검증: 셋업 뒤 WSL runner가 붙기까지의 실제 시간, 실제 WSL에서 gateway가 `setup`을 도는 시험, 웹 폼의 실제 모양(브라우저), manual 한·영(차례를 기다림).
+
+## rev9 — 요청별 runner 선택 (#1204 설계를 이 PR 안에서)
+
+- 결론: native에 끝나지 않은 `bioinfo-agent` 작업이 있어도 WSL을 고른 요청이 WSL runner를 바로 얻는다. 핀은 `meta.wsl_pin`으로 표시하고, 핀이 걸린 task는 `dispatch`·재전송·복구(`_await_prior_task`)·기다림(`wait_agent_online`)에서 `agent_runner` 대신 핀이 가리키는 runner(연결·WSL ready·roster에 직원 있음)로만 간다. 그 runner가 끊기면 native로 가지 않고 기다린다. `effective_roster`는 핀 행을 owner 결정에 쓰지 않는다.
+- 바꾼 것: `labhq/gateway/server.py`(모듈 함수 `_wsl_pin`·`_target_runner`·`_runner_ready_for`·`_wsl_runner_ready`·`_pin_kwargs`, `effective_roster(hosts=True)`, `register_runner`의 이전 generation 정리, `wait_session_free`·`adopt_consult`의 holder runner), `tests/test_runner_pin_1204.py`(9건), `tests/test_wsl_setup_card_612.py`(runner 등록 대역), 인벤토리, manual 한·영.
+- 시험: 새 9건 중 8건은 옛 코드에서 실패(자동 요청 1건은 회귀 확인용), 지금 전부 통과. dispatch·roster·세션·WSL 관련 시험 47개 파일 1746건과 CI 인벤토리 시험 통과.
+- 미검증: 실제 WSL runner 두 개 이상 환경, 같은 직원을 두 runner가 동시에 돌릴 때의 workdir 충돌(핀 task의 workdir는 runner 로컬이라 시험으로 고정하지 않음).
+
+## rev10 — 핀을 요청 단위 helper 하나로 (sweep)
+
+- 결론: 리뷰 P1 두 건(계획 capability, 첫 runner 대기)은 같은 부류라 하나씩 막지 않고, 요청에 대해 runner·roster·capability를 고르는 곳을 모두 찾아 `request_runner`·`request_agents`·`_request_ready`(server)와 `hub_runner`·`hub_agents`(cso) 한 갈래로 모았다. sweep 목록과 시험은 PR 본문.
+- 미검증: 실제 WSL runner 둘 이상 환경.
+
+## rev11 — 핀은 요청이 고른 것
+
+- 결론: 계획 view와 runner 선택이 WSL runner의 현재 연결에 기대던 조건을 뺐다. 핀은 연결 여부와 무관하게 요청이 고른 WSL runner이고, 연결은 보낼 수 있는지(_runner_ready_for)만 정한다. 정의는 server.py 해당 helper 블록 맨 앞 주석, 시험 test_a_pin_is_what_the_request_chose_*.
 
 # #1076 종료 ack 시험의 shutdown 한도
 

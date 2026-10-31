@@ -23,6 +23,8 @@ _FIELDS = {"variants", "requested_scorers", "ontology_terms", "gene_ids", "top",
 
 def atlas_allowed(agent, *, read_only: bool) -> bool:
     """Enforce role policy at the credential boundary, including direct HTTP callers."""
+    if agent.annot_tools is not None and "alphagenome_atlas" not in agent.annot_tools:
+        return False
     return not read_only and "annot" in agent.builtin_mcp and not any(
         rule == "mcp__labhq_annot" or fnmatchcase("mcp__labhq_annot__alphagenome_atlas", rule)
         for rule in agent.disallowed_tools)
