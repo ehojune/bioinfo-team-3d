@@ -52,7 +52,7 @@ def alive(pid: int) -> bool:
 
 def kill(pid: int) -> None:
     if os.name == "nt":
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
     else:
         try:
             os.kill(pid, 9)
