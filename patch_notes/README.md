@@ -20,7 +20,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 22:40 | [`1aba36a`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/1aba36a) | **셸 확인이 줄 끝 백슬래시로 이어 쓴 명령과 1&gt;&amp;3- 같은 출력 이동도 bash처럼 읽습니다.**<br>셸 확인: 줄 끝 백슬래시 이어쓰기와 1>&3- 이동을 bash처럼 읽는다 (#678 리뷰) |
 | 22:30 | [`88cc02b`](https://github.com/ehojune/bioinfo-team-3d/pull/1196/commits/88cc02b) | **멈춤과 완료가 겹치는 경우의 시험이 실제 프로세스를 4초씩 살려 두지 않고 가짜 프로세스로 돌며, 5초 안에 끝나지 않으면 실패합니다.**<br>시험: halt 뒤늦은 도착 시험을 실제 프로세스 없이 fake proc으로 바꾸고 5초 상한을 둔다 (#1076) |
 | 22:10 | [`feec236`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/feec236) | **manual에 셸 확인이 리다이렉션 대상·cd 위치·주석·묶음 옵션을 어떻게 읽는지 적었습니다.**<br>문서: 셸 확인의 명령 읽기 규칙 (#678) |
+| 22:00 | [`b0682dd`](https://github.com/ehojune/bioinfo-team-3d/pull/1199/commits/b0682dd) | CI: Windows 명령의 -o 제거, Linux 시험 문구를 실제 메시지에 맞춤 (Refs #1198) |
 | 21:40 | [`d2c95fd`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/d2c95fd) | **셸 확인이 2&gt;&amp;1 같은 출력 복제를 파일 이름으로 읽지 않습니다.**<br>셸 확인: 2>&1 같은 descriptor 복제는 파일로 보지 않는다 (#678 리뷰 P2) |
+| 21:30 | [`48d6264`](https://github.com/ehojune/bioinfo-team-3d/pull/1199/commits/48d6264) | README: CI 시간 상한 문서 링크 (Refs #1198) |
+| 21:13 | [`48a2d47`](https://github.com/ehojune/bioinfo-team-3d/pull/1199/commits/48a2d47) | CI: 새 시험 파일을 Windows inventory에 등록 (Refs #1198) |
+| 21:12 | [`3deb1fb`](https://github.com/ehojune/bioinfo-team-3d/pull/1199/commits/3deb1fb) | **CI에서 시험 하나가 멈추면 그 시험만 실패하고, 이름이 로그에 남습니다.**<br>CI: 시험마다 300초 상한(pytest-timeout)과 상한 직전 시험 이름 덤프 (Refs #1198) |
 | 21:10 | [`2103272`](https://github.com/ehojune/bioinfo-team-3d/pull/1191/commits/2103272) | **멈춤·재개 명령이 보낸 순서대로 runner에 닿는다는 가정을 시험으로 고정해, 이 순서를 깨는 변경이 들어오면 시험이 실패합니다.**<br>시험: pause/resume 프레임의 송신 순서가 보존된다는 전제를 고정한다 (#1190) |
 | 21:00 | [`f78e755`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/f78e755) | **셸 다운로드·압축 해제 확인이 명령을 bash처럼 읽어, 단어 앞의 #만 주석으로 보고 리다이렉션 대상 파일의 드라이브도 함께 봅니다.**<br>셸 줄을 bash처럼 읽는다: 단어 앞의 #만 주석이고 리다이렉션은 구분자가 아니다 (#678 Argon P1) |
 | 20:50 | [`1a6301f`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/1a6301f) | **읽기 전용 task는 쓰지 못하는 project 폴더의 드라이브 때문에 멈추지 않습니다.**<br>디스크 감시: 읽기 전용 task는 project 폴더를 감시하지 않는다 (#678 리뷰 P2) |

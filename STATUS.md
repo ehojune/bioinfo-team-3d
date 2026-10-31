@@ -21,6 +21,14 @@
 - 남은 것: `test_a_halt_that_finds_the_cli_still_running_still_stops_it`는 실제 프로세스를 죽이는 것이 시험 대상이라 그대로 둔다(상한 30초, 별도 관찰 대상). 같은 job의 다른 미종료 시험 `test_paper_skill_recovery_identity...[cancel]`은 이 claim 밖이다.
 - 미검증: 이 변경이 3.10·Windows 정지를 실제로 없애는지(CI 재실행으로 확인). 정지의 원인이 이 시험이었다는 증거는 "시작만 하고 끝나지 않은 시험 둘 중 하나"까지다.
 
+# #1198: 시험마다 300초 상한으로 CI 정지를 한 시험의 실패로 바꾼다
+
+- 결론: `pytest-timeout==2.4.0`과 `timeout = 300`을 넣었다. Linux 3.10/3.12는 `timeout_method=signal`(멈춘 시험만 실패, 나머지 계속), Windows는 `thread`(worker 덤프 후 종료, xdist가 그 시험만 crash 보고). job `timeout-minutes`는 그대로다.
+- 원인 분석(#1198 댓글): PR #1192 3.10 job 덤프에서 두 worker 모두 main thread가 async 시험의 `run_until_complete → select()`에서 이벤트를 기다렸고 남은 thread·subprocess는 없었다. 진단은 controller의 "마지막 보고 시험"만 보여 멈춘 시험을 가리키지 못했다. 어느 시험인지는 로그만으로 특정하지 못했다.
+- 바뀐 것: `pyproject.toml`, `.github/workflows/test.yml`(Linux 둘 signal, Windows 둘 thread), `scripts/ci_suite.py`(상한 5초 전에 시험 이름과 전 thread 스택을 stderr에 출력, 프로토콜 wrapper를 `tryfirst`로 두어 host-resource lock 대기는 상한에 안 든다), `docs/reference/ci-reuse.md`, `config/ci/windows-boundary-v1.json`(새 시험 inventory), `tests/test_ci_suite.py`(신규).
+- 실행한 것: `test_ci_suite`·`test_ci_parallel_policy`·`test_ci_windows10m`·`test_ci_windows_phases`·`test_ci_normative_prose`·`test_ci_boundary_preview`·`test_ci_manifest_identity` 570 passed, 1 skipped(Windows에서 signal 시험).
+- 미해결/미검증: Linux signal 경로(신규 시험의 실제 실행은 Linux CI에서 처음), thread 방식의 xdist crash 보고, 멈춘 시험의 원인 자체는 상한이 이름을 알려준 뒤 별도로 고친다. 느린 시험은 `@pytest.mark.timeout(n)`으로 연장한다.
+
 # #1193 정리본 진행 기록의 리뷰 인용문 링크가 저장을 막지 않게
 
 - 결론: `draft_documents`가 `PROGRESS.md`의 세 JSON 블록(확인 질문·수정 회차·검토)을 ```` ```json ```` 코드 블록으로 싣는다. 리뷰어가 보고서의 그림 링크를 `evidence_quote`로 인용해도 `run/progress.md`의 링크가 되지 않는다.
