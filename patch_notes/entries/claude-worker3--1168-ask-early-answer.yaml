@@ -1,0 +1,5 @@
+rows:
+- sha: '3e40f9a'
+  at: 2026-11-01 05:50
+  text: 'runner가 ask를 게이트웨이에 넘기는 동안 답이 먼저 오면, hibernate 경로가 이미 답이 담긴 future를 버려 답이 소비되지 않고 ask가 pending으로 남았다. 넘긴 직후 future가 끝났으면 그 답으로 바로 마치고, 넘기기에 실패하면 pending future를 지운다 (#1168)'
+  summary: 질문을 넘기는 중에 답이 도착해도 답을 잃지 않고, 넘기기에 실패하면 대기 상태가 남지 않습니다.
