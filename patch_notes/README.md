@@ -24,6 +24,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 20:30 | [`df1d8f9`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/df1d8f9) | **manual의 디스크 감시 설명에 쓸 수 있는 project 폴더도 감시한다는 내용을 더했습니다.**<br>문서: 감시 대상에 project 폴더 (#678) |
 | 20:20 | [`b7ad386`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/b7ad386) | **디스크 감시가 직원이 쓸 수 있는 project 폴더가 다른 드라이브에 있어도 그 드라이브의 여유를 함께 봅니다.**<br>디스크 감시: 쓸 수 있는 project 폴더의 드라이브도 본다 (#678 리뷰 P1) |
 | 19:50 | [`5fac414`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/5fac414) | **manual에 작업 도중 디스크 감시의 확인 간격, 멈추는 기준, 재개 방법, 끄는 설정과 한계를 적었습니다.**<br>문서: 작업 도중 디스크 감시 (#678) |
+| 19:30 | [`7855fb6`](https://github.com/ehojune/bioinfo-team-3d/pull/1182/commits/7855fb6) | **읽기 전용 task는 쓰지 못하는 큰 원자료 드라이브 때문에 멈추지 않고, 멈춤 안내는 프로세스를 실제로 끝낸 뒤에만 남습니다.**<br>디스크 감시 P2 둘: 읽기 전용 task는 bulk 폴더를 감시하지 않고, halt 안내는 실제로 끝낸 뒤에만 쓴다 (#678) |
 | 19:10 | [`3c215eb`](https://github.com/ehojune/bioinfo-team-3d/pull/1180/commits/3c215eb) | **manual에 Codex와 Gemini 소비 단계가 환경 경로를 받는 방식과 아직 거부되는 엔진을 적었습니다.**<br>문서: Codex·Gemini 소비 단계의 환경 전달 (#674) |
 | 19:10 | [`ecd403d`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/ecd403d) | **디스크 감시가 멈추기에 실패하면 감시를 끝내지 않고 30초 뒤에 다시 시도합니다.**<br>디스크 감시: halt가 실패하면 감시를 끝내지 않고 다음 회차에 다시 시도한다 (#678 리뷰 P1) |
 | 19:00 | [`21124d8`](https://github.com/ehojune/bioinfo-team-3d/pull/1181/commits/21124d8) | **종료 때 이미 받은 ack를 commit한다는 시험의 대기 한도를 Windows 러너의 fsync 시간에 맞게 넓혔습니다.**<br>시험: 종료 ack 시험의 shutdown 한도를 0.05초에서 0.5초로 올린다 (#1076) |

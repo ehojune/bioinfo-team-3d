@@ -12,6 +12,14 @@
 - 시험: `tests/test_disk_shell_check_678.py`에 주석·리다이렉션·`-x`·묶음 플래그 5건 추가, 파일 전체와 관련 기존 시험 119건 통과.
 - 미검증: heredoc 본문 줄이 명령으로 읽히는 경우(초과 질문만 생김), 중첩 `$(…)`·백틱 안의 명령, Windows CI.
 
+# #678 디스크 감시·halt 안내 P2 두 건
+
+- 결론: (1) #1169의 P2 — 읽기 전용 task도 `runner.bulk_data_root`를 감시해, 쓸 수 없는 드라이브가 기준 아래면 불필요하게 halt될 수 있었다. `_start_disk_watch(..., read_only=)`가 읽기 전용이면 bulk 폴더를 빼고(작업 폴더·state 폴더는 계속 본다) 호출부가 `read_only`를 넘긴다. (2) #1175의 P2 — `halt_watch`가 "프로세스 트리를 끝냈습니다" 안내를 먼저 쓴 뒤 결과 확인을 다시 해서, 완료가 이기면 안내와 최종 상태가 어긋났다. 안내를 `await` 앞이 아니라 kill 뒤로 옮기고, 확인과 표시(`halted`)와 kill 사이에 `await`가 없게 했다. 완료가 먼저면 halt하지도 안내하지도 않는다.
+- 부수 효과: #1174 H1의 경합 창(안내 emit)이 구조적으로 사라졌다. 그 경합 시험(안내 emit 중 결과 도착)은 상황 자체가 없어져 "결과 이벤트를 처리하는 중이거나 이미 처리한 뒤의 halt는 결과를 유지하고 kill을 주장하지 않는다" 시험(Claude·Gemini)으로 바꿨다.
+- 바꾼 것: `labhq/runner/daemon.py`, `labhq/adapters/base.py`, `tests/test_disk_watch_678.py`(+1: 읽기 전용은 bulk 제외), `tests/test_halt_watch_1174.py`(경합 시험 교체, 결과 뒤 halt 시험 2건·halt가 실행 중이면 여전히 멈춤).
+- 시험: 감시·halt·어댑터 fake CLI·halt 재개 e2e 27건 통과.
+- 미검증: Windows CI, 실제 엔진.
+
 # #1076 종료 ack 시험의 shutdown 한도
 
 - 결론: `tests/test_state.py::test_shutdown_commits_the_acks_it_already_received`가 `shutdown(timeout_s=0.05)` 안에 ack commit(fsync 포함)이 끝나야 해서, Windows 러너에서 commit이 36~67 ms 걸리면 한도에 닿아 `[1,2,3,4,5] == [5]`로 실패했다(#1180 attempt 2). 한도를 0.5 s로 올렸다. 단언(이미 받은 ack를 종료 전에 commit한다)은 그대로다. 제품 코드는 바꾸지 않았다.
