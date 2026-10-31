@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Iterable
 
 from .. import durable, proc_tree
 from ..runner import memory_limit
@@ -823,21 +823,51 @@ def expand_env(env: dict[str, str], source: dict[str, str] | None = None) -> dic
                       lambda m: source.get(m.group(1), m.group(0)), v) for k, v in env.items()}
 
 
-def names_atlas_key(value: Any) -> bool:
-    """Does a launch setting name the key's environment variable as a variable (#1225)?
+def atlas_key_file_forms(settings: Settings) -> list[str]:
+    """Every spelling of the one configured key file location, longest first: as written, with ``~`` expanded, resolved
+    against the settings, and with either slash. These exact paths, and nothing else, are not read as the key (#1225)."""
+    raw = settings.annot.alphagenome_key_file
+    forms = {raw, os.path.expanduser(raw)}
+    try:
+        forms.add(str(settings.path(raw)))
+    except (OSError, ValueError):
+        pass
+    forms |= {form.replace("\\", "/") for form in forms} | {form.replace("/", "\\") for form in forms}
+    # The rules labhq itself writes for that file (Claude's deny and ask rules spell the path their own way, such as
+    # `Read(//c/Users/x/.labhq/secrets/alphagenome_api_key)`): taken from the one function that writes them, so a rule
+    # syntax added later is allowed with it and nothing here guesses at a spelling.
+    try:
+        from ..policy import claude_deny_private
 
-    The variable ``ALPHAGENOME_API_KEY`` set in, listed by or referenced from a launch setting is refused. The same
-    letters inside a file path are not: the documented key file ``~/.labhq/secrets/alphagenome_api_key`` is named
-    like the variable, and listing it among the private paths must not read as an override. A path component is told
-    by a separator or a word character in front of the name."""
+        rules = claude_deny_private({}, [os.path.expanduser(raw)]).get("permissions") or {}
+        forms |= {rule for group in rules.values() if isinstance(group, list) for rule in group
+                  if isinstance(rule, str) and os.path.basename(raw).casefold() in rule.casefold()}
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return sorted((form for form in forms if form), key=len, reverse=True)
+
+
+def names_atlas_key(value: Any, allowed: Iterable[str] = ()) -> bool:
+    """Does a launch setting still carry the key's environment variable name once the configured key file path is taken out?
+
+    The documented key file ``~/.labhq/secrets/alphagenome_api_key`` is named like the variable, and its path is among the
+    private paths handed to ``labhq_annot`` and to Claude's deny list. Those exact paths (``allowed``) are the one
+    exception. The name anywhere else is refused, whatever it looks like: set, listed, referenced, ``Env:\\NAME`` or part
+    of some other path. No shape of text decides what is a path (#1225)."""
     from ..tools.annot_alphagenome_atlas import KEY_ENV
 
-    pattern = re.compile(rf"(?<![\\/\w]){re.escape(KEY_ENV)}(?!\w)", re.IGNORECASE)
+    forms = [re.compile(re.escape(form), re.IGNORECASE) for form in allowed]
+
+    def named(text: str) -> bool:
+        for form in forms:
+            text = form.sub("", text)
+        return KEY_ENV.casefold() in text.casefold()
+
     if isinstance(value, dict):
-        return any(names_atlas_key(str(key)) or names_atlas_key(item) for key, item in value.items())
+        return any(named(str(key)) or names_atlas_key(item, allowed) for key, item in value.items())
     if isinstance(value, (list, tuple, set)):
-        return any(names_atlas_key(item) for item in value)
-    return bool(pattern.search(str(value)))
+        return any(names_atlas_key(item, allowed) for item in value)
+    return named(str(value))
 
 
 def atlas_credentials(settings: Settings, task_env: dict[str, str]) -> set[str]:
@@ -978,7 +1008,8 @@ class AgentAdapter(ABC):
                   "settings": ctx.claude_settings, "prefix": prefix}
         launch_config = os.path.expandvars(json.dumps(launch, ensure_ascii=False, default=str))
         # By the variable and by the value, not by the letters: a path that is named like the variable is no override.
-        if names_atlas_key(launch) or any(key in launch_config for key in atlas_secrets):
+        if names_atlas_key(launch, atlas_key_file_forms(self.settings)) or any(
+                key in launch_config for key in atlas_secrets):
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error="Atlas credentials/config overrides are not allowed in staff launch settings")
         refused = ((read_only_mismatch(ctx.agent, ctx.mcp_servers) or read_only_launch_error(self.engine, prefix)
