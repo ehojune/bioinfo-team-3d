@@ -18,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -278,12 +279,13 @@ def _request_deadline_line(s, rid: str, state: dict | None = None) -> str | None
     return "시간 상한: " + request_deadline_text(detail, time.time())
 
 
-def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, **kw):
+def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, headers: dict | None = None, **kw):
     import httpx
 
     try:
         r = httpx.request(method, _http_base(s) + path,
-                          headers={"Authorization": f"Bearer {s.gateway.client_token}"}, timeout=30, **kw)
+                          headers={"Authorization": f"Bearer {s.gateway.client_token}", **(headers or {})},
+                          timeout=30, **kw)
         r.raise_for_status()
         return r.json()
     except httpx.HTTPError as exc:
@@ -2484,7 +2486,8 @@ def main(argv: list[str] | None = None) -> None:
             print(f"{pr['id']:<16} {pr.get('repo') or '-':<32} {pr['visibility']:<8} "
                   f"issues={pr['issues']} reports={pr['commit_reports']}")
     elif args.cmd == "codex-review":
-        print(_api(s, "POST", f"/api/projects/{args.project}/prs/{args.pr}/codex-review", json={"note": args.note}))
+        print(_api(s, "POST", f"/api/projects/{args.project}/prs/{args.pr}/codex-review", json={"note": args.note},
+                   headers={"Idempotency-Key": uuid.uuid4().hex}))
     elif args.cmd == "approvals":
         from .pi_text import with_approval_copy
         for a in _api(s, "GET", "/api/approvals"):
@@ -2541,10 +2544,11 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(_report(s, args.request_id, pdf=args.pdf, out=args.out))
     elif args.cmd == "recruit":
         print(_api(s, "POST", "/api/recruit", json={"paper": args.paper, "repo": args.repo, "focus": args.focus,
-                                                    "ttl_days": args.ttl, "name": args.name}))
+                                                    "ttl_days": args.ttl, "name": args.name},
+                   headers={"Idempotency-Key": uuid.uuid4().hex}))
     elif args.cmd == "contract":
         body = {"action": args.action, "days": args.days, "slug": args.target if args.action == "rehire" else None}
-        print(_api(s, "POST", f"/api/contracts/{args.target}", json=body))
+        print(_api(s, "POST", f"/api/contracts/{args.target}", json=body, headers={"Idempotency-Key": uuid.uuid4().hex}))
     elif args.cmd == "talent":
         from .registry import Registry
 

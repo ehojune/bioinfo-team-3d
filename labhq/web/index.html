@@ -987,7 +987,10 @@ async function send() {
     route: $('#team-only').checked ? 'team' : 'auto', work_kind: workKind,
     references: refs.items.map(({kind, value}) => ({kind, value})), default_references: refs.useDefaults };
   try {
-    await api.request(body);
+    // Kept on `send` until the request is accepted: a retry of the same text is the same request (#1164).
+    send.key = send.key || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    await api.request(body, send.key);
+    send.key = null;
     input.value = ''; refs.items = []; $('#team-only').checked = false; $('#work-kind').value = 'auto'; showRefs(false); renderRefs();
     toast(target ? `${nick(target)}에게 맡겼어요` : 'CSO에게 요청을 보냈어요');
   } catch (e) { toast(`보내지 못했어요: ${e.message}`); }
@@ -1022,7 +1025,7 @@ $('#approvals').addEventListener('click', async e => {
     else {
       const s = S.suggestions.find(x => x.id === li.dataset.sug);
       S.suggestions = S.suggestions.filter(x => x.id !== li.dataset.sug); schedule();
-      if (s && act === 'hire') { await api.recruit(s); toast('인사팀에 채용을 맡겼어요'); }
+      if (s && act === 'hire') { await api.recruit(s, `hire-${s.id}`); toast('인사팀에 채용을 맡겼어요'); }
     }
   } catch (err) { btn.disabled = false; toast(`처리하지 못했어요: ${err.message}`); }
 });
@@ -1188,7 +1191,9 @@ function renderSheetLiterature() {
     if (current && S.current === rid) syncPaperLiterature(current, S.requests.get(rid)?.paperLiterature);
   });
 }
-function closeSheet() { const d = $('#sheet'); if (typeof d.close === 'function' && d.open) d.close(); else d.removeAttribute('open'); }
+const sheetKeys = new Map();  // one Idempotency-Key per action while a sheet stays open: a double click applies once (#1164)
+const newKey = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+function closeSheet() { sheetKeys.clear(); const d = $('#sheet'); if (typeof d.close === 'function' && d.open) d.close(); else d.removeAttribute('open'); }
 $('#sheet').addEventListener('click', async e => {
   const d = $('#sheet');
   if (e.target === d) { closeSheet(); return; }
@@ -1211,7 +1216,8 @@ $('#sheet').addEventListener('click', async e => {
     } catch (err) { toast(`보내지 못했어요: ${err.message}`); }
     return;
   }
-  try { await api.contract(id, act, 14); toast(act === 'extend' ? '계약을 14일 연장했어요' : '계약을 종료했어요'); closeSheet(); }
+  if (!sheetKeys.has(act)) sheetKeys.set(act, newKey());
+  try { await api.contract(id, act, 14, sheetKeys.get(act)); toast(act === 'extend' ? '계약을 14일 연장했어요' : '계약을 종료했어요'); closeSheet(); }
   catch (err) { toast(`처리하지 못했어요: ${err.message}`); }
 });
 
@@ -1254,8 +1260,8 @@ function startLive() {
   const link = (rel, href) => { const l = document.createElement('link'); l.rel = rel; l.href = href; document.head.appendChild(l); };
   link('manifest', '/manifest.webmanifest'); link('icon', '/icon.svg'); link('apple-touch-icon', '/icon.svg');
   const bar = $('#tokenbar');
-  const post = async (path, body) => {
-    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+  const post = async (path, body, key) => {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(key ? { 'Idempotency-Key': key } : {}) }, body: JSON.stringify(body) });
     if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 120)}`);
     return r.json();
   };
@@ -1272,7 +1278,7 @@ function startLive() {
   let ws = null, backoff = 1000;
   api = {
     messenger: before => get(`/api/messenger?limit=40${before == null ? '' : `&before=${before}`}`),
-    request: body => post('/api/requests', body),
+    request: (body, key) => post('/api/requests', body, key),
     note: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/notes`, { text }),
     followup: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/followup`, { text }),
     requestDetail: rid => get(`/api/requests/${encodeURIComponent(rid)}`),
@@ -1302,8 +1308,8 @@ function startLive() {
       }
       return response.json();
     },
-    recruit: s => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }),
-    contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
+    recruit: (s, key) => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }, key),
+    contract: (id, action, days, key) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }, key),
     cancel: id => post(`/api/tasks/${encodeURIComponent(id)}/cancel`, {}),
     control: (id, action, text) => post(`/api/tasks/${encodeURIComponent(id)}/${action === 'release_breaker' ? 'breaker/release' : action}`, action === 'steer' ? { text } : {}),
     storage: rid => post(`/api/requests/${encodeURIComponent(rid)}/storage`, {}),
