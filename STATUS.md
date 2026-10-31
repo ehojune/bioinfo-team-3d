@@ -4,6 +4,12 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1208 — WSL fallback 요청의 계획 prompt
+
+- 결론: `format_capabilities`에 `run_where`를 `wsl_pinned`일 때만 넘기고, fallback이면 `run_where_note`(이유, 300자 이내)를 "WSL 없이 실행한다" 한 줄로 붙인다. 호출부 한 곳(`cso.py`).
+- 시험: `tests/test_runner_pin_1204.py::test_the_plan_prompt_names_wsl_only_for_a_request_that_got_it_and_gives_the_reason_when_it_did_not`. 관련 298건 통과.
+- 미검증: 실제 요청 흐름 전체(함수 단위 시험).
+
 # #1193 후속: 보고서 각주 처리가 길이가 다른 코드 펜스를 알아본다
 
 - 결론: 결함이 있었다. `reader_markdown(footnotes=True)`의 코드 보호 정규식(`` ```.*?``` ``)이 4개 이상 백틱·물결표 펜스를 통째로 보호하지 못해, 그 안의 `[^1]`이 "근거" 번호로 바뀌었다(재현: 4백틱 펜스 안에 3백틱 펜스가 든 문서의 `open[^1]`이 `open[근거 1]`로 바뀜).
