@@ -2048,9 +2048,33 @@ class Unresolved(str):
     path_field: bool = False
 
 
+def _collapse_separators(p: str, *, nt: bool | None = None) -> str:
+    """`p` with every run of `/` after its first one or two made a single `/`, on a POSIX host (#1158).
+
+    CPython's POSIX `os.path.realpath` copies the rest of the path at every separator, so a run of 65,536 of them costs
+    the square of its length (0.03 s, then 0.12, 0.44, 1.75 s for each doubling; 3.10 and 3.12 alike). A run means what
+    one separator means to `realpath`. A leading pair is kept, the one place a pair differs from a single separator
+    (`//host` is implementation-defined); three or more leading separators are one, as `normpath` reads them. A Windows
+    path is returned as written: its realpath has no such cost, and a UNC prefix with a missing share reads differently
+    when its separators are merged. `nt` is the host's own unless a test names one."""
+    if os.name == "nt" if nt is None else nt:
+        return p
+    lead = len(p) - len(p.lstrip("/"))
+    head = p[:lead] if lead == 2 else p[:1] if lead else ""
+    return head + _SEPARATOR_RUN.sub("/", p[lead:])
+
+
+_SEPARATOR_RUN = re.compile(r"/{2,}")
+
+
+def _realpath(p: str) -> str:
+    """`os.path.realpath` of `p` with its separator runs merged first: the same path, in time linear in its length."""
+    return os.path.realpath(_collapse_separators(p))
+
+
 def _real(p: str) -> str | None:
     try:
-        return _norm(os.path.realpath(os.path.expandvars(os.path.expanduser(p))))
+        return _norm(_realpath(os.path.expandvars(os.path.expanduser(p))))
     except (OSError, ValueError):
         return None
 
@@ -2231,7 +2255,7 @@ def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None =
     # real root while the task's folder keeps the alias spelling, and neither alone lies under the other.
     write_roots = list(dict.fromkeys(
         spelling for w in write_roots if w
-        for spelling in (str(w), os.path.abspath(str(w)), os.path.realpath(str(w)))))
+        for spelling in (str(w), os.path.abspath(str(w)), _realpath(str(w)))))
     holders = [p for p in ruled if holds_open_read(p, [*open_reads, *write_roots])]
     merged = claude_deny_links(settings, [p for p in ruled if p not in holders])
     if holders:
@@ -2277,7 +2301,7 @@ def rule_tool(rule: str) -> str:
 def _root_rules(tool: str, roots: Iterable[str | os.PathLike]) -> list[str]:
     rules = []
     for root in roots:
-        for resolve in (os.path.abspath, os.path.realpath):
+        for resolve in (os.path.abspath, _realpath):
             try:
                 rules.append(f"{tool}(/{claude_rule_path(resolve(root))}/**)")
             except (OSError, ValueError):
@@ -2337,7 +2361,7 @@ def _git_bash_tmp(environ: Mapping[str, str]) -> str | None:
             return None
         if os.name == "nt":  # 8.3 names and junctions, as the workdir was resolved
             try:
-                value = os.path.realpath(value)
+                value = _realpath(value)
             except (OSError, ValueError):
                 return None
         found.add(ntpath.normpath(value))
@@ -2564,7 +2588,7 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
             spellings = {spelled}
             if os.path.isabs(spelled):  # a link in the workspace can lead to a personal folder
                 try:
-                    spellings.add(os.path.realpath(spelled))
+                    spellings.add(_realpath(spelled))
                     raw = value if os.path.isabs(value) else os.path.join(base or '', value)
                     spellings.add(resolved_read_path(raw))
                 except (OSError, ValueError):
