@@ -258,3 +258,64 @@ def test_current_plain_language_patch_summary_is_metadata_only(summary, expected
     value = {"pr": 793, "rows": [{"sha": "abcdef0", "at": "2026-10-21 00:40", "text": "Technical detail.",
                                    "summary": summary}]}
     assert cs.record(yaml.safe_dump(value)) is expected
+
+
+# ---- #1242: a changed fixture reaches the tests that name it, and when none does, every routine Windows test ----
+
+def _fixture_root(tmp_path, sources):
+    from tests.test_ci_cohort823 import review
+
+    (tmp_path / 'tests').mkdir(exist_ok=True)
+    for name, text in sources.items():
+        (tmp_path / 'tests' / name).write_text(text, encoding='utf-8')
+    return review(sources['test_math.py'])
+
+
+FIXTURE = 'tests/fixtures/fake_deadline_cli.py'
+
+
+def test_a_changed_fixture_selects_the_test_that_runs_it_by_path_name_or_module(tmp_path):
+    source = 'FAKE = ROOT / "tests" / "fixtures" / "fake_deadline_cli.py"\ndef test_logic(): assert 1\n'
+    data = _fixture_root(tmp_path, {'test_math.py': source})
+    args = dict(root=tmp_path, node='test_logic')
+    assert not selection.include_windows('tests/test_math.py', source, data, changed=set(), **args)[0]
+    included, reason = selection.include_windows('tests/test_math.py', source, data, changed={FIXTURE}, **args)
+    assert included and 'refers to' in reason
+    by_module = 'from tests.fixtures import fake_deadline_cli\ndef test_logic(): assert 1\n'
+    data = _fixture_root(tmp_path, {'test_math.py': by_module})
+    assert selection.include_windows('tests/test_math.py', by_module, data, changed={FIXTURE}, **args)[0]
+
+
+def test_a_test_that_does_not_name_the_changed_fixture_stays_out_while_another_does(tmp_path):
+    source = 'def test_logic(): assert 1\n'
+    data = _fixture_root(tmp_path, {'test_math.py': source, 'test_other.py': 'RUN = "fake_deadline_cli.py"\n'})
+    included, reason = selection.include_windows('tests/test_math.py', source, data, changed={FIXTURE},
+                                                 root=tmp_path, node='test_logic')
+    assert not included, "another test names the fixture, so no guess is needed"
+
+
+def test_a_changed_fixture_that_no_test_names_runs_every_routine_windows_test(tmp_path):
+    source = 'def test_logic(): assert 1\n'
+    data = _fixture_root(tmp_path, {'test_math.py': source})
+    included, reason = selection.include_windows('tests/test_math.py', source, data,
+                                                 changed={'tests/fixtures/orphan_table.json'}, root=tmp_path,
+                                                 node='test_logic')
+    assert included and 'no collected test names' in reason
+
+
+def test_a_changed_file_outside_the_fixtures_is_not_read_as_one(tmp_path):
+    source = 'def test_logic(): assert 1\n'
+    data = _fixture_root(tmp_path, {'test_math.py': source})
+    assert not selection.include_windows('tests/test_math.py', source, data, changed={'tests/support/helper.txt'},
+                                         root=tmp_path, node='test_logic')[0]
+
+
+def test_the_real_fixture_only_change_of_pr_1235_now_reaches_its_windows_test():
+    """The hole: only tests/fixtures/fake_deadline_cli.py changed, and the test that runs it as a subprocess was not
+    chosen because nothing imports it."""
+    path = 'tests/test_request_deadline_descendants_1232.py'
+    text = (selection.ROOT / path).read_text(encoding='utf-8')
+    assert selection.references_fixture(text, FIXTURE)
+    included, reason = selection.include_windows(path, text, selection.policy(), root=selection.ROOT,
+                                                 changed={FIXTURE})
+    assert included, reason
