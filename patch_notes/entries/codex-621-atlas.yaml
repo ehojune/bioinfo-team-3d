@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "728fde6"
+    at: "2026-10-31 21:41"
+    summary: "미병합 Atlas 조회의 사용법과 권한 회수, 설치 검증의 한계를 한영 매뉴얼에 명시합니다."
+    text: "docs: describe pending Atlas access and verification boundaries"
   - sha: "04c3477"
     at: "2026-10-31 21:22"
     summary: "격리 설치한 labhq CLI와 Atlas MCP의 가짜 응답 왕복을 확인하고 실제 서비스·Codex shell 미검증 경계를 기록합니다."
