@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "25313b6"
+    at: "2026-10-31 22:31"
+    summary: "Atlas 시간 초과 진단과 로컬 검증 범위, 남은 CI 확인을 기록합니다."
+    text: "docs: record bounded Atlas timeout diagnostics"
   - sha: "3e06beb"
     at: "2026-10-31 22:31"
     summary: "Atlas 시험이 시간 초과 전에 남긴 출력을 보존해 지연 단계를 확인합니다."
