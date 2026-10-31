@@ -4,6 +4,17 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1193 정리본 진행 기록의 리뷰 인용문 링크가 저장을 막지 않게
+
+- 결론: `draft_documents`가 `PROGRESS.md`의 세 JSON 블록(확인 질문·수정 회차·검토)을 ```` ```json ```` 코드 블록으로 싣는다. 리뷰어가 보고서의 그림 링크를 `evidence_quote`로 인용해도 `run/progress.md`의 링크가 되지 않는다.
+- 원인: 링크 검사의 상대 경로 해석 결함이 아니다. `run/` 기준 `../graphical_abstract.svg`는 루트 `graphical_abstract.svg`로 정확히 풀렸고 정리본에 그 이름의 파일이 없었을 뿐이다(실제 위치는 `figures/graphical_abstract.svg`). 링크를 만든 것은 편집자도 아닌, 리뷰 JSON을 평문으로 싣던 `result_storage.py`의 `PROGRESS.md` 생성이다.
+- 같은 부류의 불일치: `portfolio.py:1336`·`1353`은 같은 JSON을 이미 코드 블록으로 싣는다. `PROGRESS.md`만 평문이었다. 링크 검사(`_markdown_targets`)는 코드를 마스킹한 뒤 링크를 찾는 설계라 코드 블록 안의 인용은 링크가 아니다.
+- 바뀐 것: `labhq/result_storage.py`(`_json_block` 헬퍼, 호출 3곳. 펜스는 본문 안 백틱 연속보다 길게), `tests/test_result_storage.py`(2개).
+- 시험: 리뷰 인용문에 이미지·일반 링크가 든 요청의 `PROGRESS.md`가 링크 검사를 통과한다(수정 전 `../graphical_abstract.svg`·`../tables/missing.tsv` 2건 검출로 실패). 진짜 깨진 링크는 계속 검출된다. 정리본·저장 계열 292 passed.
+- 실제 데이터 확인: 7차 `req_3643a6a43e`의 요청 상세로 `draft_documents`를 돌려 `run/progress.md`의 깨진 링크가 0건이 되는 것을 확인했다(읽기 전용, 모델 호출·저장 없음).
+- 미검증: 정리본 전체의 링크 검사는 재현하지 못했다(bundle·assets·images 입력 필요). 다른 문서에 같은 문제가 더 있는지는 이 요청의 실제 재저장으로만 확인된다. 6차가 통과한 이유는 6차 리뷰 인용문에 링크 문법이 없었기 때문으로 보지만 6차 리뷰 원문은 다시 열지 않았다.
+- 재저장: 병합 뒤 `labhq storage req_3643a6a43e --redraft`(또는 `--republish`)로 7차 결과를 다시 저장한다. 편집자 재실행이 필요한지는 이 수정으로 정리본이 만들어지는지를 보고 정한다.
+
 # #1190 pause/resume 송신 순서의 전제를 시험으로 고정
 
 - 결론: 낡은 pause/resume 프레임이 새 제어를 덮는 경우는 재현되지 않았다([점검](https://github.com/ehojune/bioinfo-team-3d/issues/1190#issuecomment-6542061968)). `control_seq`는 넣지 않고, 순서가 지켜지는 두 전제를 `tests/test_control_order_1190.py`로 고정했다. 제품 코드는 바꾸지 않았다.
@@ -41,6 +52,18 @@
 - 원인: **첫 commit이 한 번 느렸던 것으로 추정하며 재지 않았다.** 이 시험은 task가 없어 `finish()`가 마감을 먼저 쓰는 경로가 아니다(`finish()`가 바로 반환하고 drain이 거의 전체 한도를 받는다). `_ack_flush`의 대기(`ACK_MERGE_S`)는 drain이 `hurry`를 세워 건너뛰므로 원인이 아니라고 코드로 확인했으나 실행으로 확인하지는 않았다.
 - 시험: `-k shutdown` 3건 통과.
 - 미검증: Windows CI에서의 안정성(이 PR이 첫 확인), 첫 commit 지연의 실제 시간. 다시 실패하면 `_ack_flush` 첫 commit 시간을 러너에서 재는 진단이 필요하다.
+
+# #910 ② 7차: 새 설치판 KRAS 연구 1건 (`req_3643a6a43e`)
+
+- 결론: 요청은 `done`(약 70분, $15.24, 상한 $40). 결과 저장(#792)은 `failed`였고 원인은 #1193에서 가렸다. 상세 보고는 [#910 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/910#issuecomment-6542562637).
+- 설치판·설정: labhq `0e513be1883e`(오늘 main, #1185까지), 설정 sha256 `acd3035e741279d820c4362e04826e838f6db3fa760c8c3fbc94739efd1ce825`. 6차 대비 차이 7줄: 조회 상한 60→9, `request_wall_clock_s` 5400, `model_tiers` 4줄, 빈 `result_storage.authors`.
+- 계획: 5단계(S1 data_steward → S2 analyst → S3 biologist → S4 qc_reviewer → S5 analyst), 새 조회 0회·논문 스킬 0편. 조회 9회는 CP1 전 사전 단계에서 소진됐다.
+- 확인표: 확인 — #1088 사용량 사실, #1089, #1090, #625 불일치 경고 5건, #877의 `wall_clock` 기록. 미확인 — #877의 "한도에 닿으면 취소+영수증", P2A 논문 스킬, 새 공개 조회 계수. 해당 없음 — #1099(solo 요청 아님).
+- 카드: 도구 카드 약 20건 모두 허용(거절 0, 규칙 밖 0). clarify에는 "추가 9회"가 요청문 상한을 넘어 b)로 답했다. CP1 승인, CP2 `approve`, CP4 `review-done --storage github`.
+- 리뷰: Sol `accept`, P2 6건·P3 1건(P1 0).
+- 실수: 감시기에 시한을 절대 epoch가 아닌 "90"으로 넘겨 첫 요청 `req_7ef10da703`을 6초 만에 취소했다(비용 0). 같은 설정·문안으로 다시 보낸 것이 7차다. 첫 요청은 `review-done`으로 닫았다.
+- 저장 실패 원인(#1193): `PROGRESS.md`가 리뷰 JSON을 평문으로 실어, Sol 리뷰어의 `evidence_quote`에 든 `![그래픽 초록](../graphical_abstract.svg)`가 `run/progress.md`의 실제 링크로 읽혔고 정리본 링크 검사가 저장 전체를 거부했다. 편집자(LLM) 출력이 아니라 결정적 코드(`draft_documents`)가 만든 문서다.
+- 미해결: 이 수정을 병합한 뒤 7차 결과를 다시 저장한다(재편집 여부는 원인상 불필요로 보지만 병합 뒤 정한다). 8차 여부는 PI에게 묻는다. 증거는 `D:\.labhq\dev\tmp\claude-worker2\step2\attempt7-preserved\`.
 
 # #678 디스크 감시·halt 안내 P2 두 건
 
