@@ -17,5 +17,8 @@
 - RCSB·ChEMBL의 공식 호출 한도와 이용 조건: 공식 페이지를 열지 못했고 제3자 목록은 "수치 상한 비공개"라고만 했다. 간격은 보수적으로 잡았고 코드에 미확인이라고 적었다. 라이선스 이름은 총괄이 준 문구와 알려진 정책이며 RCSB 정책 페이지는 직접 읽지 못했다.
 - 실제 서비스 호출: 하지 않았다. API 응답 모양은 공개 문서 기준 fixture다.
 - 로컬에서 `test_annot.py::test_stdio_server_lists_tools…`와 `test_annot_regulatory.py::test_with_a_key…`가 `CallToolResult.is_error` 속성 오류로 실패한다(설치된 mcp 버전 차이, 이 변경과 무관). 도구 목록 비교 줄은 그 앞에서 통과했다. CI의 고정 버전에서 확인한다.
-- `chief_of_staff`의 `disallowed_tools`에 두 도구를 올리는 일은 claim 밖이라 하지 않았다(PR 본문의 남은 지적).
 - manual 한·영은 총괄이 따로 잡는다.
+
+## rev4: chief_of_staff
+- `agents/core/chief_of_staff.yaml`의 `disallowed_tools`에 `mcp__labhq_annot__pdb`·`mcp__labhq_annot__chembl`을 더했고, 그 집합을 고정한 `tests/test_annot_literature.py::test_chief_of_staff_gets_only_the_literature_tools_of_annot`도 같이 고쳤다. 시험을 먼저 고쳐 수정 전 실패를 확인했다.
+- 후속(구조): 새 도구가 생길 때마다 같은 일이 반복되므로 CoS를 deny 목록이 아니라 allow 목록(문헌 도구만)으로 바꾸는 수정이 필요하다.
