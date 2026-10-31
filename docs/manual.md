@@ -1417,6 +1417,21 @@ Windows에서는 노트를 같은 크기로 제자리에서 다시 쓰고 수정
 
 ## 비교 bench
 
+고정 단계 등급 비교 fixture는 Python에서 아래처럼 호출합니다. `settings`는 LabHQ `Settings`이며 출력 경로는 없어야 합니다. `engines="mock"`만 허용하고 live 실행은 차단합니다.
+
+```python
+import time
+from labhq.bench import MockTierCostControl, run_fixed_tier_pair
+
+control = MockTierCostControl(10, valid_until=time.monotonic() + 300, verified=True)
+result = await run_fixed_tier_pair(
+    output_path, settings, {"reasoning": "model-a", "balanced": "model-b"},
+    cost_control=control, worst_case_units={"reasoning": 4, "balanced": 6},
+)
+```
+
+모델 ID와 정수 비용 단위는 가상 값입니다. 각 상한은 재시도를 포함한 arm 전체를 덮어야 하며 여러 pair·재시도에는 같은 control 인스턴스를 재사용합니다. 이 mock admission은 실제 provider 비용 상한을 보장하지 않고 mock 점수는 모델 품질·비용 측정값이 아닙니다. 상세: [등급 비교 fixture](reference/model-tier-bench-625/README.md).
+
 PI 결정(2026-10-01, #40)에 따른 기본 비교군입니다. 실제 실행은 PI 머신의 구독을 씁니다.
 
 | arm | model · effort |

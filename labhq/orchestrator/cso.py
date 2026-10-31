@@ -3162,17 +3162,26 @@ _CENT = Decimal("0.01")
 _FLOAT_NOISE = Decimal("1e-9")  # what a subtraction of two amounts (2.0 - 1.98, 5.0 - 4.99) can be off by
 
 
+_CENTS_MATTER_BELOW = 1e12  # above this a float has no cents left to round, and Decimal's 28 digits would overflow
+
+
+def _floor_cents(amount: float) -> float:
+    """An amount rounded down to whole cents, as the Claude adapter writes a call cap in cents (a $0.015 hold sent as $0.02
+    would spend more than was held). Decimal arithmetic with an explicit float-noise tolerance: $0.0199996 is $0.01, while
+    2.0 - 1.98 (0.020000000000000018) is $0.02 and 5.0 - 4.99 is a cent. A huge amount is returned as it is."""
+    if not math.isfinite(amount) or amount >= _CENTS_MATTER_BELOW:
+        return amount
+    return float((Decimal(repr(float(amount))) + _FLOAT_NOISE).quantize(_CENT, rounding=ROUND_FLOOR))
+
+
 def _clip_to_remaining(cap: float | None, remaining: float) -> float | None:
     """The hold for one turn: its cap, cut to what the request still has when that is enough to hold at all. A cut hold is
-    rounded down to whole cents, as the Claude adapter renders the cap in cents (a $0.019 hold sent as $0.02 would spend
-    more than was held and more than the request has left); under one cent it is not cut. Decimal arithmetic with an explicit
-    float-noise tolerance: $0.0199996 is $0.01, while 2.0 - 1.98 (0.020000000000000018) is $0.02 and 5.0 - 4.99 is a cent."""
+    rounded down to whole cents (`_floor_cents`); under one cent it is not cut."""
     if cap is None or not math.isfinite(remaining) or cap <= remaining:
         return cap
-    left = Decimal(repr(float(remaining))) + _FLOAT_NOISE
-    if left < _CENT:
+    if _floor_cents(remaining) < float(_CENT):
         return cap
-    return float(left.quantize(_CENT, rounding=ROUND_FLOOR))
+    return _floor_cents(remaining)
 
 
 class Orchestrator:
@@ -5078,6 +5087,13 @@ class Orchestrator:
                 limit = float(limit)
                 _spent, _unknown, bound = self._budget_bound(rid, limit)
                 full = self._turn_cap(task, limit - bound)
+                if full is not None:
+                    # Whole cents, whatever set the cap (task, agent or per_task_usd); a cap that floors to nothing is not
+                    # a call that can be held.
+                    full = _floor_cents(full)
+                    if full < float(_CENT):
+                        raise BudgetExceeded(f"호출 상한이 1센트보다 작아 보내지 않았습니다(one cent: ${full:.4f}); "
+                                             "nothing was dispatched")
                 # #1139: a turn holds no more than the request still has, so a request budget smaller than the per-turn
                 # cap (the default $5) is not asked about at its first turn; what it may spend is still the hold.
                 cap = _clip_to_remaining(full, limit - bound)
