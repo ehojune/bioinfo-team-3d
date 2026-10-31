@@ -1,5 +1,9 @@
-pr: null
+pr: 1257
 rows:
+  - sha: 4b852e5
+    at: "2026-11-01 08:14"
+    summary: "기존 runner 검증에서도 격리 기능의 기본 꺼짐 동작을 유지합니다."
+    text: "Preserve legacy runner doubles at both task gates and cover the existing recruitment refusal regression."
   - sha: 89649f5
     at: "2026-11-01 08:01"
     summary: "격리 연결을 요청하면 준비되지 않은 실행을 시작 전에 거부합니다."
