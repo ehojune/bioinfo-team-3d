@@ -15,6 +15,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 11:00 | [`abe1eff`](https://github.com/ehojune/bioinfo-team-3d/pull/1223/commits/abe1eff) | **설명서의 직원 도구 표와 조회 도구 소개가 과학 리뷰어의 PDB·ChEMBL 조회와 읽기 전용 예외를 같은 말로 설명합니다.**<br>문서: 직원 표와 labhq_annot 소개문을 리뷰어의 읽기 전용 예외에 맞춘다 (#1055 리뷰 P1) |
+| 10:30 | [`1ccb1af`](https://github.com/ehojune/bioinfo-team-3d/pull/1230/commits/1ccb1af) | manual: 로컬 job 디스크 확인의 크기 모름 동작을 실제대로 적는다 (Refs #1167) |
+| 10:00 | [`9e2bf53`](https://github.com/ehojune/bioinfo-team-3d/pull/1230/commits/9e2bf53) | **매뉴얼에 모든 호출 상한이 센트로 내려간다는 점과 로컬 작업에도 디스크 확인이 붙는다는 점을 적었습니다.**<br>manual 한·영에 호출 상한 센트 내림과 로컬 job 디스크 확인을 적는다 (Refs #1139 #1167) |
 | 09:40 | [`69d9242`](https://github.com/ehojune/bioinfo-team-3d/pull/1223/commits/69d9242) | **리뷰·이어 묻기 같은 읽기 전용 작업도, 직원 파일이 명시한 PDB·ChEMBL 조회에 한해 도구를 받습니다. 그 밖의 읽기 전용 제한은 그대로입니다.**<br>읽기 전용 실행도 허용된 annot 도구(pdb·chembl)는 명시한 직원에게 남긴다 (#1055) |
 | 09:30 | [`b0312b7`](https://github.com/ehojune/bioinfo-team-3d/pull/1223/commits/b0312b7) | **과학 리뷰어가 구조·화합물 근거를 확인할 때 쓸 PDB·ChEMBL 조회 도구가 직원 파일에 지정됩니다.**<br>과학 리뷰어가 labhq_annot의 pdb·chembl 조회만 받는다 (#1055) |
 | 09:30 | [`52d3851`](https://github.com/ehojune/bioinfo-team-3d/pull/1226/commits/52d3851) | 읽기 전용 노티스를 엔진별로 만든다: Codex는 셸을 가진다 (Refs #1224) |
