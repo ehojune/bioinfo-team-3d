@@ -266,6 +266,27 @@ async def _maybe_await(value: Any) -> None:
         await value
 
 
+async def _settled_thread(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """`asyncio.to_thread` that a cancel cannot leave running (#606).
+
+    The loop is free while `fn` runs, but a thread cannot be interrupted: after a plain cancelled `to_thread` the
+    step is reported cancelled while `fn` still changes the workspace, and a retry in the same folder races it. So the
+    cancel waits for `fn` to finish, then goes on. Used for what writes in the workspace; a read may stay unawaited.
+    """
+    work = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+    try:
+        return await asyncio.shield(work)
+    except asyncio.CancelledError:
+        while not work.done():
+            try:
+                await asyncio.wait([work])
+            except asyncio.CancelledError:
+                pass  # a second cancel still waits for the worker
+        if not work.cancelled():
+            work.exception()  # retrieved: the cancel, not the worker's error, is what propagates
+        raise
+
+
 def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize the runner-observed environment lock without opening it a second time."""
     row = next((item for item in rows if item.get("path") == ENVIRONMENT_LOCK), None)
@@ -2136,10 +2157,10 @@ class Runner:
                 Event(type="task.result", data={**result.model_dump(mode="json"),
                                                 "control": self.controls.finish(task.id)}, **base)])
             return result
-        reused = os.path.lexists(workspace_dir)
+        reused = await asyncio.to_thread(os.path.lexists, workspace_dir)  # file system work stays off the loop (#606)
         # Do not let TaskWorkspace create files through links left by an earlier run. Fresh workspaces keep
         # the old event ordering; reused ones are registered only after their preflight succeeds (#191).
-        ws = None if reused else TaskWorkspace(self.ws_root, task, agent, workspace_dir)
+        ws = None if reused else await _settled_thread(TaskWorkspace, self.ws_root, task, agent, workspace_dir)
         if reused:
             self.workspaces.pop(task.id, None)  # emit() must not append through the previous workspace yet
             self.event_buffers[task.id] = []  # ...but queued/working still belong in its log once it is safe
@@ -2250,7 +2271,7 @@ class Runner:
                     # memory, clear the allowlisted cache first, then create/register TaskWorkspace and flush them.
                     preclean_started = time.time()
                     preclean_record = await facility_fixes.execute(proposal, workspace_dir)
-                ws = TaskWorkspace(self.ws_root, task, agent, workspace_dir)
+                ws = await _settled_thread(TaskWorkspace, self.ws_root, task, agent, workspace_dir)
                 for event in self.event_buffers.pop(task.id, []):  # before any later event (#193)
                     ws.append_event(event)
                 self.workspaces[task.id] = ws
@@ -2323,9 +2344,10 @@ class Runner:
                 accepted = {sid: row for sid, row in artifacts.items()
                             if isinstance(row, dict) and row.get("workdir") == steps.get(sid)}
                 input_budget = [self.s.runner.input_hash_max_total_bytes]  # one cumulative limit for every input copy
+                private_now = (await asyncio.to_thread(resolve_private_paths, self.s, [], cwd=ws.dir)).paths
                 staged_inputs, unavailable = await asyncio.to_thread(
                     stage_inputs, ws, accepted, root, [*zones, *internal_zones],
-                    list(resolve_private_paths(self.s, [], cwd=ws.dir).paths),
+                    list(private_now),
                     self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes, input_budget)
                 unavailable.update({str(sid): f"inputs/{sid} unavailable (ancestor mapping mismatch)"
                                     for sid in artifacts if sid not in accepted})
@@ -2414,7 +2436,7 @@ class Runner:
                     ws.paper_skill_instructions()
                     if plugin else "논문 스킬 장착 불가; 제공된 선행 연구 요약으로 계속하세요.")})
             prompt = await ws.awrite_task_md()
-            if skill_error := install_required_skills(ws, agent):
+            if skill_error := await _settled_thread(install_required_skills, ws, agent):
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=skill_error)
                 await emit_final({"state": "error", "error": skill_error}, result.model_dump(mode="json"))
                 return result
@@ -2462,7 +2484,7 @@ class Runner:
             # A Claude task reads back the long tool output Claude saved in the staff config folder (#298 ⑤).
             if agent.engine == Engine.claude_code:
                 open_reads.extend(staff_claude_project_dirs(self.s, ws.dir))
-            private = resolve_private_paths(self.s, keep, open_reads=open_reads, cwd=ws.dir)
+            private = await asyncio.to_thread(resolve_private_paths, self.s, keep, open_reads=open_reads, cwd=ws.dir)
             if artifact_contract:
                 # Reuse the existing private/read-root machinery; inputs never become write roots.
                 private = replace(private, paths=tuple(dict.fromkeys([
@@ -2517,7 +2539,7 @@ class Runner:
                 env[LOOKUP_ADMISSION_ENV] = "1"
             if hooked:
                 env[CONTROL_ENV] = str(self.controls.path(task.id))
-            env.update(self._system_ca_env(agent))
+            env.update(await _settled_thread(self._system_ca_env, agent))  # reads the OS certificate store, writes its copy (#606)
             output_before: dict[str, tuple] | None = None
             output_records: list[dict[str, Any]] = []
             observed_outputs: list[dict[str, Any]] = []
@@ -2641,7 +2663,7 @@ class Runner:
                     continue
                 upstream = upstream_roots.get(os.path.normcase(str(path)))
                 input_roots.append(upstream or (path, portable_input_path(path)))
-            hash_private = resolve_private_paths(self.s, [], cwd=ws.dir)
+            hash_private = await asyncio.to_thread(resolve_private_paths, self.s, [], cwd=ws.dir)
 
             async def scan_inputs() -> tuple[list[dict[str, Any]], list[str]]:
                 return await asyncio.to_thread(
