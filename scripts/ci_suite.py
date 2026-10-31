@@ -529,10 +529,38 @@ def test_limit(config):
         return 0.0
 
 
+def _seconds(value):
+    try:
+        return max(float(value), 0.0)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def item_limit(item):
+    """The limit pytest-timeout applies to this test, in its own order: the closest `@pytest.mark.timeout(n)`, then
+    `--timeout`, then the `PYTEST_TIMEOUT` environment variable, then the ini. 0 means no limit (a marker may lift it)."""
+    marker = item.get_closest_marker("timeout") if hasattr(item, "get_closest_marker") else None
+    if marker is not None:
+        value = marker.args[0] if marker.args else marker.kwargs.get("timeout")
+        if value is not None:
+            return _seconds(value)
+    config = getattr(item, "config", None)
+    try:
+        option = config.getoption("timeout", None)
+    except (ValueError, AttributeError):
+        option = None
+    if option not in (None, ""):
+        return _seconds(option)
+    environment = os.environ.get("PYTEST_TIMEOUT")
+    if environment not in (None, ""):
+        return _seconds(environment)
+    return test_limit(config)
+
+
 @contextlib.contextmanager
 def limit_notice(item):
     """Name the test shortly before the per-test limit fires; cancelled when the test ends first."""
-    limit = test_limit(getattr(item, "config", None))
+    limit = item_limit(item)
     if not limit:
         yield
         return

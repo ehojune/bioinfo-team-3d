@@ -4,6 +4,22 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1198 시험 상한 P2 두 건(#1199 리뷰)
+
+- 결론: (1) 예고 타이머가 전역 ini(300초)만 보던 것을 `item_limit`로 바꿨다. pytest-timeout의 순서(가까운 `@pytest.mark.timeout(n)` → `--timeout` → `PYTEST_TIMEOUT` 환경 변수 → ini)를 그대로 따르고, marker가 0이면 상한이 없는 것으로 본다. 잘못된 값은 0(타이머 없음). (2) Windows critical 단계(step 상한 3분)에 `PYTEST_TIMEOUT: '100'` 환경 변수를 줘 시험 상한이 단계보다 먼저 오게 했다(시험이 차례로 돌아 전체 약 45초라, 끝쪽 시험이 멈춰도 앞선 시간과 합쳐 180초 안에 끊긴다). phase 수집 필터가 거부하는 `-o`를 쓰지 않는다.
+- 확인: 임시 시험(8초 잠)에 `PYTEST_TIMEOUT=2`를 주면 3초 안에 `Timeout`으로 끝나고 스택이 찍힌다(환경 변수가 실제로 적용됨). `tests/test_ci_suite.py` 신규 5건(수정 전 전부 실패)과 기존 포함 16건 통과.
+- 바꾼 것: `scripts/ci_suite.py`, `.github/workflows/test.yml`, `tests/test_ci_suite.py`, `docs/reference/ci-reuse.md`.
+- 한계: critical 단계의 100초는 그 단계 시험 하나의 측정 최악값(약 10~40초)보다 크게, 전체 합(약 43초)과 더해 180초 안에 들게 잡았지만 새로 재지는 않았다. pool 단계(13분)는 기존 300초 그대로다.
+- 미검증: Windows CI에서 critical 단계가 실제로 이 상한으로 이름과 함께 끊기는지(멈춘 시험이 있을 때만 드러남).
+
+# #1202: mcp 하한을 코드가 쓰는 2.0으로 올리고 doctor가 경고한다
+
+- 결론: `pyproject.toml`의 `mcp>=1.2`를 `mcp>=2.0`으로 올렸고, `labhq doctor`에 `mcp` 행(`config`)을 더했다. 설치된 mcp가 2.0보다 낮거나 없으면 warn과 `pip install -U "mcp>=2.0"` 안내를 낸다.
+- 근거: mcp 1.x는 `CallToolResult.isError`, 2.x는 `is_error`(실측: 1.28.1 필드 `isError`, 2.0.0 필드 `is_error`). 시험(`tests/test_annot.py`)이 2.x 이름을 쓴다. `labhq/tools/_mcpcompat.py`는 제품 코드가 두 판본을 모두 받게 하지만 시험·claim 기준은 2.x다.
+- 바뀐 것: `pyproject.toml`, `labhq/doctor.py`(`MCP_FLOOR`, `_mcp_row`), `tests/test_doctor.py`(경계 5건·없음·pyproject와 하한 일치·collect 행 1개).
+- 실행한 것: 1.28.1 환경과 2.0.0 새 venv 둘 다 `tests/test_doctor.py` 71 passed. 2.0.0 venv에서 `tests/test_annot.py`·`tests/test_external_wait_board_676.py` 30 passed.
+- 미해결/미검증: 설치판이 고정한 mcp 버전은 확인하지 못했다(이 repo에는 고정 파일이 없음). 2.0.0 밖 판본(2.1~2.3)에서 전체 suite는 CI에 맡긴다. 하한 위쪽 상한(`<3`)은 두지 않았다.
+
 # #1193 후속: 정리본 링크 검사가 길이가 다른 코드 펜스를 알아본다
 
 - 결론: `portfolio._markdown_targets`가 코드 펜스를 가리는 방식을 정규식(`` ```.*?``` `` 고정 3개)에서 `_mask_code` 스캔으로 바꿨다. 펜스는 백틱 또는 물결표 3개 이상으로 열고 같은 문자로 같거나 긴 run이 닫는다. PR #1194의 `_json_block`이 본문의 백틱 연속보다 긴 펜스를 쓰기 때문에 필요했다(Codex P2).

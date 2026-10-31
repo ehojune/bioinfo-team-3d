@@ -54,3 +54,9 @@ The proposed wording was replaced by bilingual manual updates in rev13. Manual o
 - Shield the pipe readers from deadline cancellation, kill the child and drain for at most five seconds. Preserve partial stdout/stderr and exit status while masking the fake credential/token. A deterministic timeout regression proves consumed output survives; the prior cancellation pattern loses it.
 - The real child emits flushed monotonic import/call/loop-close/interpreter-exit markers. Response and credential-absence assertions remain; stdin is closed and parent cleanup is bounded. No timeout increase or new skip.
 - Local Windows: Atlas **135 passed, 1 skipped**; focused child import 0.609s, call completion 0.937s, interpreter exit 0.937s. Final-head CI/review remain required; this is diagnostic repair, not proof of the original CI cause.
+
+## Doctor merge recovery (rev17)
+
+- Preserve both the Atlas and MCP rows when merging main. The collect regression requires each row exactly once; dependency floors remain `mcp>=2.0` and `alphagenome>=0.10.0`.
+- Local Windows: `python -m pytest tests/test_doctor.py tests/test_annot_alphagenome_atlas.py -q`: **206 passed, 1 skipped**. Final-head CI and actual review remain merge gates.
+- Review [r4431872382](https://github.com/ehojune/bioinfo-team-3d/pull/1186#discussion_r4431872382) reports nullable ontology metadata handling (P2). Product repair needs ownership of `annot_alphagenome_atlas.py`, outside rev17. No live query or installed Codex sandbox proof was added.

@@ -10,6 +10,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-01
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 01:40 | [`3b22fe0`](https://github.com/ehojune/bioinfo-team-3d/pull/1205/commits/3b22fe0) | **Windows 핵심 단계의 시험별 상한을 100초로 줄여, 앞선 시험이 돈 시간과 합쳐도 단계 상한 안에서 멈춘 시험이 이름과 함께 실패합니다.**<br>CI: Windows critical 단계의 시험 상한을 100초로 줄여 앞선 시험 시간과 합쳐도 단계 안에 든다 (#1198 리뷰 P2) |
+| 01:10 | [`8d1a238`](https://github.com/ehojune/bioinfo-team-3d/pull/1205/commits/8d1a238) | **CI에서 멈춘 시험의 이름을 미리 알리는 타이머가 시험에 붙은 timeout 표시와 환경 변수를 따르고, Windows critical 단계에서는 시험 상한이 단계 상한보다 먼저 와 멈춘 시험이 이름과 함께 실패합니다.**<br>CI: stall 예고가 시험의 실제 상한(marker·--timeout·환경 변수·ini)을 따르고, Windows critical 단계의 시험 상한을 단계보다 짧게 둔다 (#1198) |
+| 00:00 | [`f85fbb6`](https://github.com/ehojune/bioinfo-team-3d/pull/1203/commits/f85fbb6) | **mcp 패키지 하한을 2.0으로 올리고, 더 낮은 버전이 깔려 있으면 doctor가 경고합니다.**<br>mcp 하한을 2.0으로 올리고 doctor가 낮은 mcp를 경고 (Refs #1202) |
+
 ## 2026-10-31
 
 | 시간 | 커밋 | 주요 변경사항 |

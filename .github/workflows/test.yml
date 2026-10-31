@@ -197,6 +197,7 @@ jobs:
         timeout-minutes: 3
         env:
           LABHQ_REQUIRE_RESIZABLE_BROWSER: '1'
+          PYTEST_TIMEOUT: '100'  # the tests run one after another (about 45 s in all): a test that hangs near the end still hits this before the 180 s step ends (#1198)
       - name: Require every critical lifecycle PASS before opening pool
         run: python -m scripts.ci_suite critical-ready
       - name: Note pool start
