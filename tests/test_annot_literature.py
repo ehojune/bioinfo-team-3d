@@ -881,6 +881,14 @@ def test_every_agent_allowlist_names_tools_the_server_has():
             assert set(spec.annot_tools) <= known, (path.name, set(spec.annot_tools) - known)
 
 
+def test_a_read_only_run_offers_no_annot_tools_whatever_the_staff_spec_allows():
+    """Reviews and follow-ups switch every MCP server off (`builtin_mcp`); the allowlist goes with it (#1200)."""
+    from labhq.adapters.read_only import read_only_profile
+    spec = AgentSpec(id="a", name="A", role="r", builtin_mcp=["approval", "annot"], annot_tools=["fulltext"])
+    profile = read_only_profile(spec)
+    assert "annot" not in profile.builtin_mcp and profile.annot_tools is None
+
+
 @pytest.mark.parametrize("bad", ["Fulltext", "full text", "../x", ""])
 def test_an_agent_allowlist_holds_plain_tool_names(bad):
     with pytest.raises(ValueError):

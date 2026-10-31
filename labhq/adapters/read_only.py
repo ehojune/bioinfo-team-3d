@@ -16,7 +16,7 @@ from .owned import case_sensitive_directory, is_link as _is_link
 # templates all run outside the engine's sandbox or plan mode, and a field added to AgentSpec later would be a new
 # channel nobody removed (#36). `read_only_profile` keeps who the staff member is and switches everything else off.
 READ_ONLY_FIELDS = {"sandbox": "workspace-write", "permission_mode": "default", "builtin_tools": "Read,Glob,Grep,Write,Edit",
-                    "tools": [], "builtin_mcp": [], "mcp": [], "plugin_dirs": [],
+                    "tools": [], "builtin_mcp": [], "annot_tools": None, "mcp": [], "plugin_dirs": [],
                     "allow_skills": False, "required_skills": [], "cli": None, "can_orchestrate": False}
 # Identity, persona, limits and denials: none of these lets the CLI run anything. project_dirs stay readable;
 # disallowed_tools (e.g. a Read deny on a data folder) only take away, so a read-only run keeps them.
