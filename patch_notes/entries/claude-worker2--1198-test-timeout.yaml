@@ -6,3 +6,6 @@ rows:
   - sha: "48a2d47"
     at: "2026-10-31 21:13"
     text: "CI: 새 시험 파일을 Windows inventory에 등록 (Refs #1198)"
+  - sha: "48d62646"
+    at: "2026-10-31 21:30"
+    text: "README: CI 시간 상한 문서 링크 (Refs #1198)"
