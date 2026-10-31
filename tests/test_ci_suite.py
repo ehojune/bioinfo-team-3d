@@ -130,3 +130,29 @@ def test_the_windows_critical_step_limit_is_shorter_than_the_step():
     step = critical["timeout-minutes"] * 60
     serial_run_s = 60  # the tests before a stuck one run first (31 tests took 43 s, #1198): the limit starts after them
     assert 0 < limit and serial_run_s + limit < step
+
+
+def test_the_stall_snapshot_does_not_walk_gc_from_its_thread(tmp_path, monkeypatch):
+    """gc.get_objects() in another thread raised the refcount of tuples a running thread was building, and
+    `f(*generator)` failed with SystemError in CI Python 3.10 (#1238). The snapshot keeps the traceback dump only."""
+    import gc
+    import time
+
+    def refuse():
+        raise AssertionError("the stall snapshot walked gc")
+
+    monkeypatch.setattr(gc, "get_objects", refuse)
+    monkeypatch.setenv("CI_STALL_INTERVAL_S", "1")
+    log = tmp_path / "stall.log"
+    stall = suite.WorkerStall(log, lambda: "tests/test_x.py::test_y [call]")
+    stall.start()
+    for _ in range(50):
+        if log.exists() and "Thread" in log.read_text(encoding="utf-8"):
+            break
+        time.sleep(0.1)
+    stall.close()
+    text = log.read_text(encoding="utf-8")
+    assert "CI snapshot: tests/test_x.py::test_y [call]" in text and "CI snapshot failed" not in text
+    for path in (".github/workflows/test.yml", "scripts/ci_suite.py"):
+        assert "gc.get_objects" not in "".join(
+            line for line in (ROOT / path).read_text(encoding="utf-8").splitlines(True) if not line.lstrip().startswith("#"))

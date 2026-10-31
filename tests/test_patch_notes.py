@@ -247,3 +247,40 @@ def test_an_all_digit_sha_read_as_a_yaml_integer_is_named(repo):
                         f"감싸세요 (sha: '{sha}')" for sha in ("7999708", "0123456")]
     # The rows command quotes such a sha itself, so it round-trips as text.
     assert yaml.safe_load(yaml.safe_dump([{"sha": "7999708"}])) == [{"sha": "7999708"}]
+
+
+def test_check_survives_another_thread_holding_gc_objects_while_commits_are_read(repo, monkeypatch):
+    """`set().union(*generator)` built its argument tuple while one git call per commit ran. A thread that held
+    `gc.get_objects()` then raised that tuple's refcount and `check` failed with SystemError (the CI stall snapshot,
+    #1238). The list in `check` finishes before the tuple is made."""
+    import gc
+    import threading
+    import time
+
+    run(repo, "checkout", "-q", "-b", "feature")
+    shas = [commit(repo, {f"a{i}.py": "x\n"}, f"fix {i}") for i in range(3)]
+    commit(repo, {"patch_notes/entries/feature.yaml": entry(*shas)}, "패치노트")
+    real = pn.changed_from_parent
+
+    def slow(sha, cwd):
+        time.sleep(0.05)
+        return real(sha, cwd)
+
+    monkeypatch.setattr(pn, "changed_from_parent", slow)
+    stop = threading.Event()
+
+    def walk():
+        while not stop.is_set():
+            held = gc.get_objects()
+            time.sleep(0.03)
+            del held
+            time.sleep(0.001)
+
+    worker = threading.Thread(target=walk, daemon=True)
+    worker.start()
+    try:
+        for _ in range(3):
+            assert pn.check("main", "HEAD", repo) == []
+    finally:
+        stop.set()
+        worker.join(timeout=5)
