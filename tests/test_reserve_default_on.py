@@ -47,6 +47,8 @@ async def _two_parallel_steps(configure=None):
         return result(task, text="done", cost_usd=1.0)
 
     hub = FakeHub(dispatch)
+    # FakeHub pins the older check for the tests that are about it; this file is about what the product ships.
+    hub.s.policy.budget.reserve_before_dispatch = BudgetSettings().reserve_before_dispatch
     hub.s.policy.budget.per_task_usd = 1.5
     hub.requests["r"]["budget_usd"] = 2.0
     if configure:

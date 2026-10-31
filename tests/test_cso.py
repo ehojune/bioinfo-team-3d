@@ -21,6 +21,9 @@ from labhq.tools.scheduler import Scheduler
 class FakeHub:
     def __init__(self, dispatch):
         self.s = Settings()
+        # Reservation is on by default (#1139). The tests that use this hub are about the older check, which looks only
+        # at what is already spent; reservation has its own hub (`_reserving_hub`) and tests/test_reserve_default_on.py.
+        self.s.policy.budget.reserve_before_dispatch = False
         self.s.orchestrator.chief_of_staff_agent = None
         self.s.orchestrator.step_retry_backoff_s = 0
         self.requests = {"r": {"text": "question", "mode": "team", "budget_usd": 10}}
@@ -3106,12 +3109,12 @@ def _reserving_hub(dispatch, *, limit=2.0, per_task=1.5):
 
 
 @pytest.mark.asyncio
-async def test_reservation_is_off_by_default_and_leaves_the_task_unchanged():
+async def test_with_reservation_off_the_task_is_left_unchanged():
     async def dispatch(task):
         return result(task, text="done", cost_usd=0.4)
 
     hub = FakeHub(dispatch)
-    assert hub.s.policy.budget.reserve_before_dispatch is False
+    hub.s.policy.budget.reserve_before_dispatch = False  # the option is on by default since #1139
     await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work"))
     assert hub.calls[0].budget_usd is None and "budget_holds" not in hub.requests["r"]
 
@@ -3177,7 +3180,7 @@ async def test_an_invalid_request_budget_dispatches_nothing(limit):
                                          ("per_request_usd", float("inf"))])
 def test_reservation_refuses_non_amount_settings(field, value):
     from labhq.settings import BudgetSettings
-    BudgetSettings(**{field: value})  # unchanged when the option is off
+    BudgetSettings(reserve_before_dispatch=False, **{field: value})  # unchanged when the option is off
     with pytest.raises(ValueError):
         BudgetSettings(reserve_before_dispatch=True, **{field: value})
 

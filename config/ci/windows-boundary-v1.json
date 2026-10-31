@@ -270,6 +270,7 @@
     "tests/test_research_protocol.py",
     "tests/test_research_report.py",
     "tests/test_research_review.py",
+    "tests/test_reserve_default_on.py",
     "tests/test_reserved_outputs.py",
     "tests/test_result_storage.py",
     "tests/test_result_storage_end_ask.py",
