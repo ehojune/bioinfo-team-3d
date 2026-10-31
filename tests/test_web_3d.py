@@ -198,9 +198,11 @@ def test_office_in_node(filename, marker):
     # #1076: web_office_focus_layout.cjs opens a real Chrome too. Its five checks take about 3 s in total, but on the CI
     # Windows runner the same script spent 28 s outside them (Chrome waited 11.6 s before its first request to the
     # page's own server, then 6.5 s to boot the page; the server answered in 7 ms), and it failed this cap three times.
-    # It gets the resizable case's 60 s; the checks themselves are unchanged.
+    # The script opens two Chrome sessions one after the other (two top-level tests, 120 s each in node:test), so a slow
+    # runner can need that twice; it gets 120 s here. The checks themselves are unchanged, and the demo driver now
+    # starts Chrome with --no-proxy-server, the likely cause of the 11.6 s wait.
     timeout = {'web_office_browser.cjs': 170, 'web_visual_demo.cjs': 260, 'web_visual_tooling.cjs': 170,
-               'web_resizable_panels.cjs': 60, 'web_office_focus_layout.cjs': 60}.get(filename, 30)
+               'web_resizable_panels.cjs': 60, 'web_office_focus_layout.cjs': 120}.get(filename, 30)
     # On Windows the demo driver starts Chrome inside the owned KILL_ON_CLOSE Job wrapper with this exact
     # interpreter (#842); it never falls back to a PATH or Store python.
     base_env = {**os.environ, 'LABHQ_TEST_PYTHON': sys.executable}
