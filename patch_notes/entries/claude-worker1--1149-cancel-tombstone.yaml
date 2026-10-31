@@ -1,0 +1,9 @@
+rows:
+  - sha: "90f6759"
+    at: "2026-10-31 09:07"
+    summary: "runner가 task보다 취소를 먼저 받아도 그 취소를 기억해, 뒤따라 온 dispatch를 시작하지 않고 취소 결과로 답합니다."
+    text: "runner: 먼저 도착한 task.cancel을 tombstone으로 남겨 뒤따른 dispatch를 시작하지 않는다 (#1149)"
+  - sha: "8c3c662"
+    at: "2026-10-31 09:07"
+    summary: "manual에 먼저 온 취소의 처리를 한 줄 적었습니다."
+    text: "문서: 먼저 온 취소의 tombstone (#1149)"
