@@ -26,7 +26,7 @@ from ..settings import Settings
 from . import annot, annot_keys, annot_literature, annot_regulatory
 from ..runner.annot_broker import ENABLED_ENV as ATLAS_ENABLED_ENV
 from ._mcpcompat import make_server, tool_failure
-from .external_wait import LookupTimeout, exclude_human_wait, run_lookup
+from .external_wait import LookupTimeout, _step_slot, exclude_human_wait, run_lookup
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
 WORKDIR = Path(os.environ["LABHQ_WORKDIR"]).resolve() if os.environ.get("LABHQ_WORKDIR") else None
@@ -403,7 +403,9 @@ async def alphagenome_atlas(variants: list[str], requested_scorers: list[str] | 
     Requires runner ALPHAGENOME_API_KEY (no key file) and alphagenome>=0.10.0. Reports missing/unsupported access.
     Non-commercial research only, no clinical decisions or training other ML models. Does not infer absent scores.
     Request-wide lookup limits refuse this SDK transport, as for other AlphaGenome tools."""
-    async with _admitted("alphagenome_atlas"):
+    # Retain this MCP loop's ordering with other lookups and human PDF waits; only the runner
+    # records the Atlas deadline/status, so a broker call does not duplicate those records.
+    async with _step_slot(WORKDIR), _admitted("alphagenome_atlas"):
         if not BROKER_TOKEN:
             raise tool_failure("Atlas runner broker is unavailable")
         try:

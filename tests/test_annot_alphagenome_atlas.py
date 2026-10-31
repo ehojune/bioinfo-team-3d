@@ -415,6 +415,39 @@ async def test_mcp_all_error_status_is_failed(monkeypatch, tmp_path):
         await mcp.alphagenome_atlas(["chr1:100:A:G"])
 
 
+async def test_broker_proxy_keeps_mcp_human_wait_order(monkeypatch, tmp_path):
+    from labhq.tools import annot_mcp as mcp
+    from labhq.tools.external_wait import exclude_human_wait
+    monkeypatch.setattr(mcp, "WORKDIR", tmp_path)
+    monkeypatch.setattr(mcp, "LOOKUP_LIMITED", False)
+    monkeypatch.setattr(mcp, "BROKER_TOKEN", "test-broker")
+    entered, release = asyncio.Event(), asyncio.Event()
+    sent = []
+    async def decision():
+        entered.set()
+        await release.wait()
+    async def post(self, url, **kwargs):
+        sent.append(url)
+        return httpx.Response(200, json={"mock": True}, request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    waiting = asyncio.create_task(exclude_human_wait(decision, workdir=tmp_path))
+    await entered.wait()
+    query = asyncio.create_task(mcp.alphagenome_atlas(["chr1:100:A:G"]))
+    try:
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not sent and not query.done()
+        release.set()
+        await waiting
+        assert json.loads(await query) == {"mock": True}
+        assert len(sent) == 1
+    finally:
+        release.set()
+        waiting.cancel()
+        query.cancel()
+        await asyncio.gather(waiting, query, return_exceptions=True)
+
+
 async def test_installed_sdk_proto_roundtrip_without_network(factory):
     """Optional dependency compatibility, run locally with the actual released wheel."""
     sdk = pytest.importorskip("alphagenome.atlas.atlas")

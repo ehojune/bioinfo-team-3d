@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "0000000"
+    at: "2026-10-31 20:06"
+    summary: "Atlas 조회가 PDF 승인 대기와 겹쳐 조회 시간 계산을 바꾸지 않도록 실행 순서를 유지합니다."
+    text: "fix: preserve MCP lookup ordering across the Atlas broker proxy"
   - sha: "d6c7b6f"
     at: "2026-10-31 20:02"
     summary: "키 보호 회귀를 기존 Atlas 시험 모듈에 모아 Windows 검사 범위에 포함합니다."
