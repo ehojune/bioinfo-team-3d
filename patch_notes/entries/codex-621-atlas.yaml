@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "d9a513b"
+    at: "2026-10-31 23:49"
+    summary: "CoS 문헌 allowlist를 보존하고 Atlas MCP 등록과 broker 권한에도 적용합니다."
+    text: "merge: preserve CoS allowlist across Atlas integration"
   - sha: "be8a1b9"
     at: "2026-10-31 23:20"
     summary: "진단 계측이 없는 Atlas 호출도 별도 실행해 두 경로의 응답과 키 비노출을 확인합니다."
