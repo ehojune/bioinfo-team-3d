@@ -1,6 +1,6 @@
 pr: null
 rows:
-  - sha: "488ef67f"
+  - sha: "488ef67"
     at: "2026-11-01 05:25"
     summary: "Atlas가 다른 키의 이전 결과를 돌려주거나 누락된 조직 정보 때문에 실패하던 문제를 고쳤습니다."
     text: "영속 캐시 읽기·쓰기를 끄고 nullable ontology를 정규화했다. doctor도 broker의 annot_tools·deny 판정을 쓴다. 관련 시험 260 passed, 1 skipped이며 실제 Atlas 조회는 미검증이다."
