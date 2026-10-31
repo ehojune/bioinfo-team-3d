@@ -1410,6 +1410,21 @@ The `wiki` row of `labhq doctor` shows the link, document count, whether an inde
 
 ## Comparison bench
 
+Call the fixed-step tier comparison fixture from Python as follows. `settings` is a LabHQ `Settings` instance and the output path must not exist. Only `engines="mock"` is accepted; live execution is disabled.
+
+```python
+import time
+from labhq.bench import MockTierCostControl, run_fixed_tier_pair
+
+control = MockTierCostControl(10, valid_until=time.monotonic() + 300, verified=True)
+result = await run_fixed_tier_pair(
+    output_path, settings, {"reasoning": "model-a", "balanced": "model-b"},
+    cost_control=control, worst_case_units={"reasoning": 4, "balanced": 6},
+)
+```
+
+Model IDs and integer cost units are synthetic. Each bound must cover the entire arm, including retries; reuse the same control instance across pairs and retries. This mock admission does not establish a real provider spending cap, and mock scores are not measurements of model quality or cost. See the [tier comparison fixture](reference/model-tier-bench-625/README.md).
+
 The default comparison arms per the PI decision (2026-10-01, #40). A real run uses the PI machine's subscriptions.
 
 | arm | model · effort |

@@ -3235,6 +3235,28 @@ class Runner:
             return self._local_view(jid, j, logs=op == "status")
         return await self._submit_local_job(identity)
 
+    async def _local_job_disk_decision(self, decision, command: str, workdir: Path, task_id: str, agent_id: str | None,
+                                       request_id: str | None):
+        """The shell command's disk check for a job the runner starts (#1167): a download or unpack aimed at a drive that is
+        short on space asks the PI instead of starting. Only allow becomes ask; an unknown size is never blocked, and a short
+        drive with no known size only logs a warning. A probe bug never stops a command the policy already allowed."""
+        runner = self.s.runner
+        try:
+            check = disk_space.shell_check(
+                command, str(workdir), fail_gb=runner.disk_fail_free_gb, warn_gb=runner.disk_warning_free_gb,
+                warn_percent=runner.disk_warning_free_percent)
+        except Exception:  # noqa: BLE001
+            return decision
+        if check is None:
+            return decision
+        if check.action == "ask":
+            from ..policy import Decision
+            return Decision("ask", check.reason, updated_input=decision.updated_input)
+        await self.emit(Event(type="agent.log", task_id=task_id, agent_id=agent_id, request_id=request_id,
+                              data={"level": "warn", "text": check.reason, "tool_name": local_jobs.shell_tool(),
+                                    "policy_action": "allow", "policy_rule": "disk_space"}))
+        return decision
+
     async def _submit_local_job(self, identity: dict) -> dict:
         """Start one command as a job this runner owns: submitted, a PI or policy refusal, or an error.
 
@@ -3276,6 +3298,8 @@ class Runner:
             private_open_reads=ctx.private_open_reads if ctx else [], read_only=False)
         if decision.action == "deny":
             return {"submitted": False, "reason": decision.reason}
+        if decision.action == "allow":
+            decision = await self._local_job_disk_decision(decision, command, ws.dir, tid, aid, identity.get("request_id"))
         if decision.action == "ask":
             answer = await self.broker.request_approval(ApprovalRequest(
                 task_id=tid, agent_id=aid, request_id=identity.get("request_id"), kind="tool_permission",
