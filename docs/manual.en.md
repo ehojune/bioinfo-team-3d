@@ -90,6 +90,8 @@ To see only the UI without a gateway, run `python -m http.server --directory lab
 
 **Process boundary diagnostic:** `python -m labhq.runner.process_boundary --unsealed-diagnostic` runs only a fixed, unsealed diagnostic. The default refuses protected launch (fail-closed). It prints a JSON receipt and exits nonzero on failure or unsupported outcomes. Diagnostic success does not verify protection. [Limits and requirements](reference/process-boundary-stage1.md).
 
+**Experimental wiring (#666):** The process boundary is off by default and can only be requested through the embedding Python API. Requests still refuse execution as unsupported; offline observer results remain synthetic evidence. Actual protection and authenticated cleanup are unverified. [Wiring scope](reference/sandbox-666-phase2.md).
+
 Prerequisites: Python ≥ 3.10, Git, and the staff CLIs you configure installed and logged in. CLIs installed through npm also need Node.js.
 
 ```bash
