@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "5f23921f"
+    at: "2026-10-31 19:27"
+    summary: "Atlas 키 확인에 Codex 엔진 환경의 우선순위를 반영합니다. 직원 shell 격리는 아직 미해결입니다."
+    text: "fix: detect Atlas key in Codex engine environment"
   - sha: "501a3d7"
     at: "2026-10-31 19:07"
     summary: "Codex 직원의 Atlas 조회에 환경변수 이름을 전달하고 키 값은 명령과 설정에 추가하지 않습니다."
