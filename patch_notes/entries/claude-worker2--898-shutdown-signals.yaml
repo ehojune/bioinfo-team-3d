@@ -1,0 +1,6 @@
+pr: 1243
+rows:
+  - sha: "2bb749d"
+    at: "2026-11-01 09:50"
+    summary: "느린 Windows 러너에서 종료 신호 시험이 시간 때문에 실패하던 것을 안정화했습니다(검사 내용은 그대로)."
+    text: "shutdown 신호 시험의 fixture 단계와 shutdown 대기를 30초로 늘린다 (Refs #898)"
