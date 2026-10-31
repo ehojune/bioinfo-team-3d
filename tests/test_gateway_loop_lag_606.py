@@ -148,3 +148,45 @@ async def test_a_runner_task_start_does_not_hold_the_loop_for_its_file_system_wo
     assert {"TaskWorkspace", "install_required_skills"} <= set(slowed), slowed
     assert lag.worst < LIMIT_S, (f"the loop was late by {lag.worst:.3f}s while each of {sorted(set(slowed))} "
                                  f"took {DELAY_S}s")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["install_required_skills", "TaskWorkspace"])
+async def test_a_cancel_waits_for_the_file_system_work_that_changes_the_workspace(tmp_path, monkeypatch, name):
+    """A cancelled step's worker thread cannot be interrupted: the cancel must not be reported before it has finished,
+    or a retry in the same folder races a skill copy that is still replacing folders."""
+    from labhq.models import AgentSpec, Engine
+    from labhq.runner import daemon
+    from labhq.runner.daemon import Runner
+    from labhq.settings import Settings
+
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    agent = AgentSpec(id="cso", name="CSO", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda task: agent)
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *a: object())
+    original = getattr(daemon, name)
+    entered, finished = asyncio.Event(), []
+    loop = asyncio.get_running_loop()
+
+    def slow(*args, **kwargs):
+        loop.call_soon_threadsafe(entered.set)
+        time.sleep(0.4)
+        result = original(*args, **kwargs)
+        finished.append(name)
+        return result
+
+    monkeypatch.setattr(daemon, name, slow)
+    running = asyncio.create_task(runner.run_task(Task(agent_id="cso", prompt="hello", meta={})))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        running.cancel()
+        try:
+            await running
+        except asyncio.CancelledError:
+            pass
+        assert finished == [name], "the cancel was reported while the worker was still changing the workspace"
+    finally:
+        runner.store.close()
