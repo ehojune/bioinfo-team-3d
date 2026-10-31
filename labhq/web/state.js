@@ -142,6 +142,16 @@ const TERMINAL_FOLLOWUP_STATES = new Set(['done', 'failed', 'interrupted']);
 const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue', 'result_storage', 'result_publish', 'recruit_plan', 'literature_pdf', 'disk_space']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
+// The one kind of task that may start after its request is over: the PI's follow-up turn (#1170). A list of what may
+// start, not of what may not, so a kind added later is refused until it is named here.
+const POST_END_TASK_KINDS = new Set(['followup']);
+// Events that start or hold pipeline work. A request that is over (isTerminalRequest, review_pending included: no staff
+// runs while the PI reviews) takes none of them; what ends work (step_done, a done/idle status, a result), what follows
+// a finished request (a follow-up turn, usage, cards, review, storage) and everything else still applies (#1170).
+const PIPELINE_STARTS = new Set(['request.review', 'request.plan', 'request.route', 'request.questions', 'request.step_attempt',
+  'request.step_paused', 'request.step_halted', 'request.step_quota_wait', 'request.step_login_wait', 'request.resume_waiting',
+  'request.resumed', 'request.runner_wait']);
+const STATUS_THAT_STARTS_WORK = new Set(['working', 'queued', 'waiting', 'hibernating']);
 const hasActiveFollowup = q => (q?.followups || []).some(f => !TERMINAL_FOLLOWUP_STATES.has(f.status));
 const isPastRequest = q => !!q && isTerminalRequest(q.status) && !!q.pi_reviewed_at && !hasActiveFollowup(q);
 const officeRequests = requests => [...requests].filter(q => !isPastRequest(q));
@@ -292,6 +302,9 @@ const S = {
   jobs: new Map(), feed: [], cost: 0, conn: mode === 'demo' ? 'demo' : 'connecting', projects: [],
   lastSay: {}, taskStep: new Map(), seq: 0, doorUntil: 0,
 };
+// The newest gateway event seq applied: a repeated or older event is ignored here, so no page needs a copy of this
+// guard, and the pages resume a reconnect from it (#1170). Not enumerable: the legacy state digests are unchanged.
+Object.defineProperty(S, 'lastSeq', { value: 0, writable: true, enumerable: false });
 // Task detail is derived from events and may be rebuilt from a snapshot.
 // Keep it out of legacy state serialization while exposing it to both UIs.
 Object.defineProperty(S, 'stepDetails', { value: new Map(), enumerable: false });
@@ -705,8 +718,33 @@ function setPipelinePr(q, d) {
   if (d.status === 'open' && d.url && !q.github.some(g => g.kind === 'pipeline_pr' && g.url === d.url))
     q.github.push({ kind: 'pipeline_pr', url: d.url, number: d.number });
 }
+// True when `ev` would start or hold pipeline work for a request that is over.
+function endedRequestRefuses(ev) {
+  const q = ev.request_id && S.requests.get(ev.request_id);
+  if (!q || !isTerminalRequest(q.status)) return false;
+  if (PIPELINE_STARTS.has(ev.type)) return true;
+  // A task of unknown kind (its dispatch is older than the replay window) is refused like any other.
+  if (ev.type === 'task.dispatched') return !POST_END_TASK_KINDS.has(ev.data?.kind);
+  if (ev.type === 'agent.status') return STATUS_THAT_STARTS_WORK.has(ev.data?.state) && !POST_END_TASK_KINDS.has(S.taskKind.get(ev.task_id));
+  return false;
+}
+// A snapshot's running task of a request that is over is not restored either, unless it is a follow-up turn.
+// The gateway sends a follow-up turn of staff_tasks as step_id 'followup' with no kind.
+const snapshotTaskKind = task => task.kind || (task.step_id === 'followup' ? 'followup' : undefined);
+const staleTask = task => { const q = S.requests.get(task.request_id); return !!q && isTerminalRequest(q.status) && !POST_END_TASK_KINDS.has(snapshotTaskKind(task)); };
 function apply(ev, replay = false) {
   const effects = [];
+  // A snapshot sets the point itself, and the events it replays carry seqs it already covers. An event with no seq
+  // (the demo, a local notice) is always applied.
+  if (!replay && ev.type !== 'snapshot' && Number.isFinite(ev.seq) && ev.seq > 0) {
+    if (ev.seq <= S.lastSeq) return effects;
+    S.lastSeq = ev.seq;
+  }
+  if (ev.type !== 'snapshot' && endedRequestRefuses(ev)) {  // one rule, live and replayed alike (#1170)
+    // Only the task's kind is kept, so the statuses that follow a refused dispatch are recognised as its own.
+    if (ev.type === 'task.dispatched' && ev.task_id) S.taskKind.set(ev.task_id, ev.data?.kind);
+    return effects;
+  }
   const t = ev.type, d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, ts = ev.ts || now();
   trackActivity(ev);
   switch (t) {
@@ -722,10 +760,14 @@ function apply(ev, replay = false) {
       // Reconnection keeps a view selected even by older UI consumers that assign S.current directly.
       if (S.current && S.current !== preferred?.id) preferred = {id:S.current, manual:true};
       resetSnapshotState();
+      S.lastSeq = Number(ev.seq) || 0;
       S.sessionStartedAt = Number(d.session_started_at) || 0;
       (d.agents || []).forEach(upsertAgent);
       S.projects = d.projects || [];
       S.defaultRefs = d.default_references || [];
+      // The gateway's current status of each request is known before its events replay, so a completion older than the
+      // 200-event window still makes a later pipeline event stale (#1170).
+      for (const r of d.requests || []) req(r.id).status = r.status;
       (d.recent_events || []).forEach(e => apply(e, true));
       S.demoStatus = d.demo_status || null;
       (d.engine_holds || []).forEach(hold => S.engineHolds.set(hold.engine, {...hold}));
@@ -784,13 +826,13 @@ function apply(ev, replay = false) {
       const staffTasks = d.staff_tasks || d.running_tasks;
       if (Array.isArray(staffTasks)) {
         S.activeTasks.clear();
-        for (const task of staffTasks) S.activeTasks.set(task.id, {...task,
-          activity: {...(task.activity || {}), tools: {...(task.activity?.tools || {})}}});
+        for (const task of staffTasks.filter(task => !staleTask(task))) { if (snapshotTaskKind(task)) S.taskKind.set(task.id, snapshotTaskKind(task)); S.activeTasks.set(task.id, {...task,
+          activity: {...(task.activity || {}), tools: {...(task.activity?.tools || {})}}}); }
         for (const [jid, context] of S.jobContext)
           if (context.task_id && !S.activeTasks.has(context.task_id)) S.jobContext.delete(jid);
       }
       for (const task of d.running_tasks || []) {
-        if (!task.request_id || !task.step_id) continue;
+        if (!task.request_id || !task.step_id || staleTask(task)) continue;
         const key = `${task.request_id}:${task.step_id}`, previous = restored.get(key);
         const rank = [task.state === 'running' ? 1 : 0, Number(task.dispatched_at) || 0];
         if (previous && (previous.rank[0] > rank[0] ||
