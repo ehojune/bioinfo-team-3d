@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:00 | [`aaf17a8`](https://github.com/ehojune/bioinfo-team-3d/pull/1233/commits/aaf17a8) | **설명서에 AlphaGenome 키를 설정한 PC에서도 조회 도구를 쓰는 직원이 정상으로 실행되고, 키를 덮어쓰는 설정만 막힌다는 점을 적었습니다.**<br>문서: Atlas 시작 점검의 최종 정의와 키 파일이 있는 PC의 동작을 적는다 (#1225) |
 | 16:00 | [`fa5b247`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/fa5b247) | **키 파일이 링크된 폴더 아래에 있어도 키를 설정한 PC에서 조회 도구를 쓰는 직원의 실행이 막히지 않습니다.**<br>Atlas 점검 예외를 labhq가 키 파일 경로를 쓰는 두 곳(비공개 경로 목록·Claude 규칙)에서 가져온다 (#1225 리뷰) |
 | 15:00 | [`c266979`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/c266979) | **키 파일 위치를 확인하는 단계가 테스트 환경의 보호 때문에 멈추지 않고, 확인하지 못한 형태만 예외에서 빠집니다.**<br>Atlas 점검: 테스트 가드가 settings.path를 거절해도 그 형태만 예외에서 뺀다 (#1225 CI) |
 | 14:00 | [`d9546e8`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/d9546e8) | **키 파일 위치를 파일 이름만으로 적어 두어도 키를 덮어쓰는 설정은 그대로 막힙니다.**<br>Atlas 점검 예외: 구분자 있는 절대 경로와 ~ 형태만 두고 규칙 생성 실패는 규칙을 빼 더 엄격하게 한다 (#1225 리뷰) |
