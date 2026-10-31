@@ -1843,6 +1843,10 @@ class Runner:
         except Exception:  # noqa: BLE001 - an unknown agent is refused later; here it simply gets no grant
             engine = None
         if engine in ENVIRONMENT_GRANT_ENGINES:
+            for grant in verified:
+                problem = self._environment_grant_problem(Path(grant["venv"]))
+                if problem:  # Claude would follow a link out of the venv: fail closed, no grant
+                    return prefix + f"environment folder cannot be shared read-only: {problem}"
             grants[task.id] = verified  # the consumer reads the verified .venv through read_dirs (#674)
             return None
         if not ENVIRONMENT_ALIAS_AVAILABLE:
@@ -1850,6 +1854,23 @@ class Runner:
             # so starting it would run without the packages the plan asked for: stay closed (#674).
             return prefix + "environment verified but protected interpreter alias is not implemented"
         return None
+
+    def _environment_grant_problem(self, venv: Path) -> str | None:
+        """Why a verified .venv must not be opened to Claude, or None. A package may leave a link below it that leads
+        into a controlled data zone, and `--add-dir` follows links; a listing that cannot finish is refused too (a venv
+        may link out to its base interpreter, so only zones are judged, as for a project clone)."""
+        try:
+            directory = Path(venv).resolve()
+            zones = self._zones()
+            if overlaps_restricted(str(directory), self.s) or overlaps_zone(directory, zones):
+                return "it lies in a controlled data zone"
+            links, incomplete = zone_links(directory, zones, self.s.runner.reference_scan_max_entries * 10,
+                                           self.s.runner.reference_scan_max_depth)
+        except Exception:  # noqa: BLE001 - not scanned means not shared
+            return "it could not be scanned"
+        if links:
+            return "a link below it leads into a controlled data zone"
+        return f"its listing was incomplete ({incomplete})" if incomplete else None
 
     def _apply_environment_grants(self, task: Task, read_dirs: list[str], *,
                                   read_only: bool) -> tuple[list[str], dict[str, str], str]:

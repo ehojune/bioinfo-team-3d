@@ -28,9 +28,13 @@ def fixture(tmp_path):
     return root, folder, artifact, expected
 
 
-def runner_for(root, engine):
+def runner_for(root, engine, zones=(), entries=2000):
     runner = daemon_runner(root)
+    runner.s.policy = SimpleNamespace(data_zones=[])
     runner._resolve_agent = lambda task: SimpleNamespace(engine=engine)
+    runner._zones = lambda: list(zones)
+    runner.s.runner.reference_scan_max_entries = entries
+    runner.s.runner.reference_scan_max_depth = 16
     return runner
 
 
@@ -102,3 +106,33 @@ def test_the_flag_still_gates_every_other_engine(tmp_path, monkeypatch):
     task = bound_task(folder, artifact, expected)
     monkeypatch.setattr(daemon, "ENVIRONMENT_ALIAS_AVAILABLE", True)
     assert runner._environment_refusal_reason(task) is None  # a future alias would open it for any engine
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a symlink needs no privilege on POSIX")
+def test_a_link_inside_the_venv_that_leads_into_a_zone_is_not_shared(tmp_path):
+    root, folder, artifact, expected = fixture(tmp_path)
+    zone = tmp_path / "dua"
+    zone.mkdir()
+    (zone / "raw.tsv").write_text("controlled")
+    (folder / ".venv" / "lib").mkdir(exist_ok=True)
+    (folder / ".venv" / "lib" / "data").symlink_to(zone, target_is_directory=True)
+    runner = runner_for(root, Engine.claude_code, zones=[zone])
+    task = bound_task(folder, artifact, expected)
+    reason = runner._environment_refusal_reason(task)
+    assert "cannot be shared read-only" in reason and "controlled data zone" in reason
+    assert task.id not in runner._env_grants
+
+
+def test_a_listing_that_cannot_finish_is_refused_not_trusted(tmp_path):
+    root, folder, artifact, expected = fixture(tmp_path)
+    for index in range(30):
+        (folder / ".venv" / f"file{index}").write_text("x")
+    runner = runner_for(root, Engine.claude_code, entries=2)  # the scan allows 2 x 10 entries
+    reason = runner._environment_refusal_reason(bound_task(folder, artifact, expected))
+    assert "listing was incomplete" in reason
+
+
+def test_a_plain_verified_venv_has_no_grant_problem(tmp_path):
+    root, folder, artifact, expected = fixture(tmp_path)
+    runner = runner_for(root, Engine.claude_code)
+    assert runner._environment_grant_problem(folder / ".venv") is None
