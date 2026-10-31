@@ -266,5 +266,16 @@ assert.equal(failedCosts.req('failed').costKnown,false);
     wall_clock:{enabled:true, limit_s:3600, held_s:0, deadline_at:5600}}});
   assert.equal(deadlineLabel(view.req('new'), 2000), '시간 상한 켜짐 60분 · 남은 60분');
   assert.ok(!Object.keys(view.req('new')).includes('wallClock'), 'state snapshots stay comparable');
+  // #1103 P2 (#1246): the gateway cancels at deadline_at, counted from when it accepted the request. A request.created
+  // whose ts is later (the start lagged the acceptance) must not push the shown time past that deadline.
+  view.apply({type:'request.created', request_id:'lagged', ts:2300, data:{text:'x', mode:'orchestrate',
+    wall_clock:{enabled:true, limit_s:3600, held_s:0, deadline_at:5600}}});
+  assert.equal(deadlineLabel(view.req('lagged'), 2400), '시간 상한 켜짐 60분 · 남은 53분', 'the server deadline, not ts + limit');
+  // A PI wait still open is added to the server deadline, which only counts closed waits.
+  view.apply({type:'snapshot', data:{agents:[], approvals:[], requests:[
+    {id:'open', status:'waiting_pi', created_at:1000, wall_clock:{enabled:true, limit_s:3600, held_s:0, pi_since:2000, deadline_at:4600}},
+  ]}});
+  assert.equal(deadlineLabel(view.req('open'), 2600),
+    '시간 상한 켜짐 60분 · 남은 43분 · PI 대기 제외 10분 · PI 결정 대기 중이라 시간이 가지 않습니다');
 }
 console.log(`${events.length} legacy event states, replay reset, effects, isolation and bounds: OK`);
