@@ -2817,8 +2817,10 @@ class Runner:
         })
         try:
             # Never through a link the agent made (#165). Both files are one job: a cancel cannot write only one.
-            await awrite_owned_many(ws.dir, [(f"outputs/{name}", result.text or "")
-                                             for name in (f"RESULT_{task.id}.md", "RESULT.md")])
+            # RESULT.md is the latest alias of RESULT_<task>.md, the same text: only the per-task file is fsynced. The
+            # text is in task.result (the outbox) too, so a power cut can leave the alias old, empty or missing (#1154).
+            await awrite_owned_many(ws.dir, [(f"outputs/RESULT_{task.id}.md", result.text or ""),
+                                             ("outputs/RESULT.md", result.text or "", False)])
         except OwnedPathError:
             error = "작업 폴더의 outputs가 실행 중에 링크로 바뀌어 결과 파일을 쓰지 않았습니다"
             await emit("agent.log", {"level": "alert", "text": error})

@@ -4,6 +4,60 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 단계
+#1158: `os.path.realpath`가 구분자 run에서 제곱이라 정책 검사가 길어지는 결함. 근거: [#1152 댓글](https://github.com/ehojune/bioinfo-team-3d/pull/1152#issuecomment-6537401540), [두 번째](https://github.com/ehojune/bioinfo-team-3d/pull/1152#issuecomment-6537446112).
+
+## 한 일
+- `labhq/policy.py`: `_collapse_separators`(POSIX 호스트에서 `/` run을 하나로, 앞머리 정확히 둘은 보존, 셋 이상은 하나, Windows 경로는 그대로)와 `_realpath`를 두고 `os.path.realpath`를 부르던 다섯 곳(`_real`, 쓰기 루트 두 철자, `_root_rules`, Windows 8.3 해석, 읽기 철자)이 모두 이것을 쓴다.
+- 시험(`tests/test_policy.py`): 병합 규칙, Windows 경로는 건드리지 않음, 병합이 `posixpath.realpath`의 답을 바꾸지 않음(길이 6까지 모든 조합), 정책 `_real`의 선형성(Linux에서 실패하던 시험), 병합 유무에 판정이 같음(5개 철자). `mixed_nodes` sha256을 맞췄다.
+
+## 실측
+| (WSL Python 3.10, `touches_resolved`, 이 시험의 입력) | 1/8→1/4 | 1/4→1/2 | 1/2→전체 | 1/4→전체 | 전체 1회 |
+|---|---|---|---|---|---|
+| 수정 전 | 2.30~2.41 | 2.63~2.65 | 2.67~2.72 | 7.04~7.20 | 0.151 s |
+| 수정 후 | 1.92~2.02 | 1.93~2.04 | 2.00~2.04 | 3.92~4.09 | 0.065 s |
+- 수정 후 증가마다 2.0배, 전체 4.0배로 선형이고, 전체 비용도 0.151 → 0.065초다.
+- 판정은 Windows와 Linux(WSL) 모두 병합 유무에 같다(8개 철자 확인).
+
+## 확인
+- Windows: `test_policy.py`·`test_ci_boundary_preview.py`·`test_policy_scan_cost.py` 377 passed, 6 skipped. `validate_profile` 통과.
+- Linux(WSL 3.10, httpx 없음): `test_policy.py` 291 passed, 1 failed(`test_single_recursive_delete_below_step_tmp_is_allowed[rm -rf .tmp]`). 실패는 `httpx` 모듈이 이 환경에 없어서이고 이 변경과 무관해 보이나, 같은 환경의 main에서는 확인하지 않았다.
+
+## 하지 않은 것
+- Python 3.12의 Linux 구현은 못 재고 `posixpath.realpath`를 Windows에서 돌려 같은 제곱임을 확인했다.
+- Windows 경로는 realpath에 제곱이 없어 건드리지 않았다.
+- #1152(3점 비교)는 이 결과를 보고 닫거나 줄인다.
+
+## 리뷰·CI 후 수정 (rev2)
+- P1(`policy.py:2304`): `_root_rules`가 `Path` 루트를 `_realpath`에 넘기는데 `_collapse_separators`가 `p.lstrip`을 불러 Linux(3.10·3.12)에서 `AttributeError`가 났다. `_realpath`가 `os.fspath`로 문자열로 바꾼 뒤 합치게 했다. `bytes`는 합치지 않고 `os.path.realpath`에 그대로 넘긴다.
+- 시험 둘: `_realpath`가 `Path`·`str`·`bytes`에서 `os.path.realpath`와 같은 답, `_root_rules`가 `Path`와 같은 루트의 문자열에 같은 규칙. 둘 다 `posix_merge` fixture로 Windows 호스트에서도 POSIX 병합 경로를 타서 옛 코드에서 실패함을 확인했다(옛 코드는 Windows에서는 합치기를 건너뛰어 이 시험이 통과했을 것이다).
+- Windows 288 passed, 6 skipped. Linux(WSL 3.10, httpx 설치) `test_policy.py` 294 passed. 이전 보고의 1건 실패는 `httpx` 모듈이 없던 환경 문제였다.
+
+## 단계
+#676 B4: CSO 계획이 직원에게 labhq 소유 파일 `outputs/external_lookup_status.jsonl`에 쓰라고 지시해, 직원이 쓴 줄 8개가 CP2 경고 "읽지 않은 잘못된 기록 8줄"로 나온 문제.
+
+## 한 일
+- `labhq/output_checks.py`: `RESERVED_OUTPUTS`에 labhq가 직접 쓰고 읽는 기록 이름 세 개(`external_lookup_status.jsonl`, `annotation_queries.jsonl`, `literature_access.jsonl`)를 한 곳에 모았다.
+- `labhq/orchestrator/cso.py`: `_reserved_names`가 계획의 단계가 이 이름을 `outputs`·`optional_outputs`로 선언하거나 instruction에서 단계 자신의 파일로 쓰게 하면 `PlanOutputsError`로 거절한다. 앞선 단계의 `inputs/<단계>/outputs/<이름>`은 그 단계 기록을 읽는 것이라 허용한다.
+- `output_checks.external_lookups`: `tool` 키가 없는 JSON 객체 줄은 직원이 쓴 줄로 보고 읽지도 세지도 않는다. 객체가 아닌 줄, JSON이 아닌 줄, `tool`을 쓰는데 labhq 규칙에 어긋난 줄은 이전처럼 잘못된 기록으로 센다(`test_external_lookup_record_676.py`는 그대로 통과).
+- 시험 `tests/test_reserved_outputs.py`(Windows inventory `known_tests`에 추가): 세 이름 × 네 가지 표기 × 두 필드 거절, instruction의 쓰기 지시 거절, 읽기·일반 출력 허용, 직원이 쓴 줄 8개가 경고에 안 섞임, labhq 형식이 어긋난 줄은 계속 셈.
+
+## 확인
+- `test_reserved_outputs`·`test_output_types*`·`test_external_lookup_record_676`·`test_output_checks` 198 passed, 1 skipped. cso·plan·output·lookup 계열 918 passed(프롬프트 해시 시험 둘은 아래 이유로 프롬프트를 바꾸지 않았다).
+- `validate_profile` 통과(known_tests 한 줄).
+
+## 하지 않은 것
+- 계획 프롬프트에 "이 이름을 쓰지 마라"는 문구를 넣지 않았다. `test_off_keeps_the_plan_schema_and_prompt_of_main`과 `test_engine_schemas_and_prompt_off_are_those_of_main`이 프롬프트 해시를 고정하고, 둘째는 이 claim 밖이다. 검사가 거절하면 계획 재시도 경로로 간다. 프롬프트에 넣는 것은 해시 시험을 같이 고쳐야 하는 별도 일이다.
+- CSO가 이 이름을 어디서 배웠는지(상류 단계 지시를 베낀 것으로 보임)는 확인하지 않았다.
+
+# #1154 RESULT.md 별칭 fsync 생략
+
+- 결론: `RESULT.md`(최신 별칭)만 fsync를 생략, `RESULT_<task>.md`는 유지. 결과 본문은 outbox(`task.result`)에도 있어 정전 시 별칭만 옛 것·빈 파일·없음일 수 있고 `RESULT_<task>.md`·outbox에서 복구한다.
+- 바뀐 것: `labhq/adapters/owned.py`(`sync` 플래그), `labhq/runner/daemon.py`(별칭만 `False`), `tests/test_durable_writer.py`(3개).
+- 실측(D:, lab 1요청): 파일 `os.fsync` 70→58, 파일 쓰기 3.1–3.9 s→2.7–3.0 s.
+- 실행: 관련 test 2,988 passed·49 skipped. 새 test 3개는 main 코드에서 실패.
+- 미검증: 정전 실험, CI 전체.
+
 # #1125 rev7 runner `_ack_now` commit 합치기
 
 - 결론: ack commit이 한 요청에 81회였던 이유는, gateway가 메시지마다 ack를 보내고 각 ack가 앞 commit이 끝난 뒤 도착해 겹치는 일이 없었기 때문이다(#1135의 합치기는 commit 중 도착한 ack만 합친다). `_ack_flush`가 직전 commit 뒤 `ACK_MERGE_S`(0.5초)가 지나기 전에는 다음 commit을 미루고, 그 사이 ack는 누적값 하나로 합친다. 한가한 runner의 첫 ack는 그대로 즉시 commit한다.
