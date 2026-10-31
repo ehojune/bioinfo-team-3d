@@ -1,5 +1,9 @@
 pr: 1050
 rows:
+  - sha: '30c7e13'
+    at: "2026-11-01 04:40"
+    summary: "합성 broker 진단에 실행별 launch·termination 인증 이벤트를 선택해 붙입니다."
+    text: "feat: emit optional synthetic broker lifecycle events"
   - sha: 'db6b53f'
     at: "2026-10-31 20:20"
     summary: "비봉인 프로세스 진단의 사용법과 한계를 한영 매뉴얼에 안내합니다."
