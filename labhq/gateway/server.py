@@ -51,7 +51,7 @@ from ..research import continuation as research_continuation
 from ..research import final_checkpoint as cp4
 from ..research.contract import classify_intake, plan_sha256
 from ..research.packs import check_configured_packs
-from ..request_status import (has_active_followup, is_active_followup, is_active_request,
+from ..request_status import (failed_step_ids, has_active_followup, is_active_followup, is_active_request,
                               is_office_request, is_terminal_request)
 from ..request_persistence import apply_changes
 from ..settings import Settings
@@ -59,6 +59,7 @@ from ..security import token_matches
 from .. import durable
 from ..store import StateStore
 from ..util import short
+from .idempotency import Idempotency, idempotent_routes
 from .shutdown import ShutdownIn, WebShutdown
 
 log = logging.getLogger(__name__)
@@ -111,6 +112,7 @@ REQUEST_DEADLINE_TICK_S = 15.0
 ATTACHMENT_ACK_TIMEOUT_S = 30.0
 # Statuses a hold sets and _sync_hold_status may lift again.
 WSL_BOUND_AGENTS = frozenset({"bioinfo-agent"})  # staff that only run in the local WSL runner (#612)
+WSL_RUNNER_WAIT_S = 300.0  # a request that chose WSL waits at most this long for a ready WSL runner to connect (#612)
 HOLD_STATES = frozenset({"waiting_login", "waiting_quota", "waiting_facilities_fix", "waiting_pi"})
 
 
@@ -178,6 +180,9 @@ class RequestIn(BaseModel):
     mode: Literal["orchestrate", "direct", "plan_only"] = "orchestrate"
     agent_id: str | None = None
     work_kind: Literal["auto", "simple", "research"] = "auto"
+    # Where the PI wants the analysis to run. "wsl": this PC's WSL runner; if it is not ready the request opens the
+    # setup card first (#612). Only auto and wsl exist yet: hpc and local can join the same field later.
+    run_where: Literal["auto", "wsl"] = "auto"
     scope_status: Literal["in_scope", "needs_pi_confirmation"] = "in_scope"
     project_dirs: list[str] = []
     references: list[Reference] = Field(default_factory=list, max_length=MAX_REFERENCES)  # pointers only (#36)
@@ -324,6 +329,74 @@ class SavedResults(dict):
 # "the caller did not say what the runner reports": only the runner ID is compared (Hub._session_pin_refusal).
 _RUNTIME_UNCHECKED = object()
 
+
+def _ended_by_cancel(req: dict) -> bool:
+    """The request was cancelled, or its cancel is still committing (`cancelling` stays until the terminal record is out)."""
+    return req.get("status") == "cancelled" or req.get("cancelling") is not None
+
+# THE DEFINITION: a pin is what this request chose, not what is connected right now. A request that chose WSL (and got
+# it) is pinned to the WSL runner whether that runner is up, away or back: its plan, login advice, environment bindings
+# and tasks all name it. Connection only decides whether work can be sent now (``_runner_ready_for``), and a pinned task
+# then waits for that runner; it never falls back to the owner. (#1204)
+# Routing of a task pinned to WSL. Module functions, so a Hub test double that borrows ``dispatch`` needs
+# nothing more than it had.
+def _wsl_runner_ready(hub: "Hub", runner_id: str, agent_id: str) -> bool:
+    """The WSL runner itself is connected, reports a ready WSL and hosts ``agent_id``. Not about who owns the agent in
+    ``agent_runner``: another request's unfinished work can keep a native runner the owner."""
+    from ..wsl_readiness import wsl_readiness
+
+    caps = hub.runner_capabilities.get(runner_id, {})
+    return bool(runner_id in hub.runners and caps.get("runtime_env") == "wsl" and
+                wsl_readiness(caps.get("wsl_readiness", {})) and
+                runner_id in hub.effective_roster(hosts=True).get(agent_id, ()))
+
+
+def _wsl_pin(meta: dict | None) -> str | None:
+    """The WSL runner a request's task is pinned to (``Hub._pin_wsl_request``), or None. A resumed session's pin is not
+    this one: it keeps its old rule (the owner must match, or the task is refused at $0)."""
+    meta = meta or {}
+    return str(meta["session_runner"]) if meta.get("wsl_pin") and meta.get("session_runner") else None
+
+
+def _target_runner(hub: "Hub", agent_id: str, meta: dict | None = None) -> str | None:
+    """Where a task goes: the WSL runner it is pinned to while that one is ready, else the agent's owner."""
+    pin = _wsl_pin(meta)
+    if pin and _wsl_runner_ready(hub, pin, agent_id):
+        return pin
+    return hub.agent_runner.get(agent_id)
+
+
+def _runner_ready_for(hub: "Hub", agent_id: str, meta: dict | None = None) -> bool:
+    """Is the runner this task must use connected (a pinned task waits for its WSL runner, not for the owner)."""
+    pin = _wsl_pin(meta)
+    if pin:
+        return _wsl_runner_ready(hub, pin, agent_id)
+    return hub.agent_runner.get(agent_id) in hub.runners
+
+
+def _request_pin_meta(hub: "Hub", agent_id: str, request_id: str | None) -> dict | None:
+    """The pin of ``agent_id`` in this request as task meta (what ``Hub._pin_wsl_request`` puts on its tasks), or None.
+    The one place that turns "this request chose WSL" into a pin; every request-scoped choice goes through it."""
+    if (hub.requests.get(request_id or "") or {}).get("wsl_pinned") and agent_id in WSL_BOUND_AGENTS:
+        return {"session_runner": hub.s.runner.wsl.id, "wsl_pin": True}
+    return None
+
+
+def _request_runner(hub: "Hub", agent_id: str, request_id: str | None) -> str | None:
+    """The runner ``agent_id`` works on for this request: its pinned WSL runner, connected or not, else the owner."""
+    pin = _request_pin_meta(hub, agent_id, request_id)
+    return pin["session_runner"] if pin else hub.agent_runner.get(agent_id)
+
+
+def _request_ready(hub: "Hub", agent_id: str, request_id: str | None) -> bool:
+    return _runner_ready_for(hub, agent_id, _request_pin_meta(hub, agent_id, request_id))
+
+
+def _pin_kwargs(meta: dict | None) -> dict:
+    """What ``wait_agent_online`` is told about a WSL-pinned task; nothing for any other task."""
+    return {"meta": meta} if _wsl_pin(meta) else {}
+
+
 class Hub:
     result_review_required = True
 
@@ -382,6 +455,8 @@ class Hub:
         # ended by recruit.done/failed or by a different runner process; a reconnect of the same process keeps them
         # (#515). The incarnation survives a restart, so the process id decides when the runner sends one (#521).
         self.recruits_running: dict[str, dict[str, Any]] = {}
+        self._pipeline_submitting: set[str] = set()  # tasks whose submission row is being committed (#606)
+        self.idempotency = Idempotency(refusals=(RunnerNotSent,))  # a repeated POST with the same Idempotency-Key is applied once (#1164)
         self.cancel_result_wait_s = CANCEL_RESULT_WAIT_S
         self.request_deadline_tick_s = REQUEST_DEADLINE_TICK_S
         self._deadline_task: asyncio.Task | None = None
@@ -816,19 +891,26 @@ class Hub:
             self.events.append(event)
             self.pending_committed.append((event, tuple(self.clients)))
 
-    async def _set_status(self, rid: str, status: str, *, evidence: dict | None = None) -> None:
-        """A status the gateway sets itself (resume, restart), told to open pages as request.status."""
+    async def _set_status(self, rid: str, status: str, *, evidence: dict | None = None) -> bool | None:
+        """A status the gateway sets itself (resume, restart), told to open pages as request.status.
+
+        False when the write was skipped because the request was cancelled meanwhile: the caller must not go on as if
+        it had resumed it (#1168). Anything else returns None or True."""
         if status == "interrupted":
             self.interrupt_request(rid, evidence=evidence)
             await self._send_committed_event()
             await self.close_publish_cards(rid)
             return
         req = self.requests[rid]
+        if is_active_request(status) and _ended_by_cancel(req):
+            return False  # a cancel that landed while the caller waited is not undone by a late resume (#1168)
         before = req.get("status")
         req["status"] = status
         if status == "failed":
             await self.close_publish_cards(rid)
         await self.asave_request(rid)
+        if is_active_request(status) and _ended_by_cancel(req):
+            return False  # the cancel landed during the save: no `request.status` for a state it already replaced (#1168)
         if before != status:
             await self.publish({"type": "request.status", "ts": time.time(), "request_id": rid,
                                 "data": {"status": status, "previous": before}})
@@ -969,7 +1051,7 @@ class Hub:
         """Park until the PI logs in, the retry clock fires, or the bounded wait expires."""
         req = self.requests[rid]
         started = (((req.get("login_windows") or {}).get(engine) or {}).get("started_at") or time.time())
-        runner_id = self.agent_runner.get(agent_id or "")
+        runner_id = _request_runner(self, agent_id or "", rid)
         entry = {"engine": engine, "resume_at": resume_at, "deadline_at": deadline_at,
                  "reason": short(reason, 500), "waiting_since": started,
                  **({"runner_id": runner_id} if runner_id else {})}
@@ -1264,7 +1346,9 @@ class Hub:
                    "usage_known": req.get("usage_known", True), "bundle_path": req.get("bundle_path"),
                    "bundle_status": req.get("bundle_status"), "bundle_grade": req.get("bundle_grade"),
                    "bundle_grade_reasons": req.get("bundle_grade_reasons") or [],
-                   "bundle_warning": req.get("bundle_warning")}
+                   "bundle_warning": req.get("bundle_warning"),
+                   # A request can finish `done` with steps that failed, were skipped or never ran: derived, not stored (#1220).
+                   "failed_steps": failed_step_ids(req)}
         waits = {task["step_id"]: wait for task in (self.running_tasks() if running is None else running)
                  if task.get("request_id") == rid and task.get("step_id")
                  and (wait := external_wait_view((task.get("activity") or {}).get("external_wait")))}
@@ -1317,9 +1401,15 @@ class Hub:
 
     def _bundle_outcome(self, rid: str, request: dict | None = None, tasks: dict | None = None,
                         runner_capabilities: dict | None = None) -> dict:
-        """Build against a terminal snapshot; safe to call in a worker thread."""
+        """Build against a terminal snapshot; safe to call in a worker thread.
+
+        THE DEFINITION (#1212): no work folder is the normal result of a cancel that came before any analysis step made
+        one, not a bundle failure. That case alone is quiet: the request was cancelled and no step or direct task of it
+        ever reported a work folder (a cancelled run reports the folder it made too). A folder that was reported and is
+        gone is lost data and warns, like every other failure and like a missing folder on any other ending. The
+        briefing, plan and review tasks do not count: they make folders that are never bundled."""
         try:
-            from ..request_bundle import RemoteRunnerBundle, build_request_bundle
+            from ..request_bundle import NoStepWorkdirs, RemoteRunnerBundle, build_request_bundle
 
             bundled = build_request_bundle(
                 copy.deepcopy(self.requests[rid]) if request is None else request,
@@ -1330,8 +1420,24 @@ class Hub:
             return {"bundle": bundled}
         except RemoteRunnerBundle:
             return {"warning": "runner가 다른 PC라 묶음을 만들지 않음", "appendix": True}
+        except NoStepWorkdirs as exc:
+            req = self.requests[rid] if request is None else request
+            if _ended_by_cancel(req) and not self._recorded_workdir(
+                    rid, req, self.store.all("task") if tasks is None else tasks):
+                return {"quiet": True}
+            return {"warning": f"요청 묶음을 만들지 못했습니다: {exc}"}
         except Exception as exc:
             return {"warning": f"요청 묶음을 만들지 못했습니다: {exc}"}
+
+    @staticmethod
+    def _recorded_workdir(rid: str, request: dict, tasks: dict) -> bool:
+        """An analysis step (a step or direct task) of this request reported a work folder."""
+        def named(result: Any) -> bool:
+            return isinstance(result, Mapping) and bool(result.get("workdir_id"))
+
+        return (any(named(r) for r in (request.get("results") or {}).values()) or
+                any(isinstance(t, Mapping) and t.get("request_id") == rid and t.get("kind") in ("step", "direct")
+                    and named(t.get("result")) for t in tasks.values()))
 
     def _apply_bundle_outcome(self, rid: str, data: dict, outcome: dict) -> None:
         self._apply_bundle_to_request(self.requests[rid], data, outcome)
@@ -1352,6 +1458,11 @@ class Hub:
             else:
                 request.pop("bundle_warning", None)
                 data.pop("bundle_warning", None)
+            return
+        if outcome.get("quiet"):  # nothing to bundle and nothing to warn about: clear what an older attempt left
+            for key in ("bundle_path", "bundle_status", "bundle_grade", "bundle_grade_reasons", "bundle_warning"):
+                request.pop(key, None)
+                data.pop(key, None)
             return
         warning = str(outcome["warning"])
         if outcome.get("appendix"):
@@ -2103,10 +2214,11 @@ class Hub:
         deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
         previous: set[str] | None = None
         while True:
-            if req.get("status") == "cancelled":
+            if _ended_by_cancel(req):
                 return
-            missing = {aid for aid in (await self.aresume_agents(rid))
-                       if self.agent_runner.get(aid) not in self.runners}
+            missing = {aid for aid in (await self.aresume_agents(rid)) if not _request_ready(self, aid, rid)}
+            if _ended_by_cancel(req):  # a cancel can land while the agents are looked up (#1168)
+                return
             if req.get("recruit_contract_failure"):
                 error = "계획에 배정된 파견직 계약이 종료되었습니다: " + ", ".join(req["recruit_contract_failure"])
                 req.update(status="failed", outcome="recruit_contract_ended", error=error, finished_at=time.time())
@@ -2131,9 +2243,15 @@ class Hub:
                         await self.asave_request(rid)
                         (await self.aschedule_terminal(rid, "request.failed", {"error": req["error"]}))
                         return
-                await self._set_status(rid, "running")
+                if await self._set_status(rid, "running") is False:  # skipped: a cancel landed (#1168)
+                    return
+                agents = sorted(await self.aresume_agents(rid))
+                if _ended_by_cancel(req):
+                    return
                 await self.publish({"type": "request.resumed", "ts": time.time(), "request_id": rid,
-                                    "data": {"agents": sorted((await self.aresume_agents(rid)))}})
+                                    "data": {"agents": agents}})
+                if _ended_by_cancel(req):  # nothing is dispatched for a request that was cancelled while this was told
+                    return
                 self.recovery_started[rid] = time.time()
                 self.recovery_steps.add(rid)
                 try:
@@ -2256,7 +2374,8 @@ class Hub:
         hosted_agents = {aid for aid, a in self.effective_roster().items() if a["runner_id"] == runner_id}
         for tid, entry in self.store.all("task").items():
             if (not entry.get("completed") and
-                    (entry.get("payload") or {}).get("agent_id") in hosted_agents and
+                    ((entry.get("payload") or {}).get("agent_id") in hosted_agents or
+                     entry.get("runner_id") == runner_id) and
                     not self._same_runner_generation(entry, runner_id, incarnation)):
                 self._abandon_previous_generation(tid, entry)
         self._session_state_changed()
@@ -2290,7 +2409,8 @@ class Hub:
         hosted_agents = {aid for aid, a in self.effective_roster().items() if a["runner_id"] == runner_id}
         for tid, entry in self.store.all("task").items():
             if (not entry.get("completed") and
-                    (entry.get("payload") or {}).get("agent_id") in hosted_agents and
+                    ((entry.get("payload") or {}).get("agent_id") in hosted_agents or
+                     entry.get("runner_id") == runner_id) and
                     not self._same_runner_generation(entry, runner_id, incarnation)):
                 (await self._aabandon_previous_generation(tid, entry))
         self._session_state_changed()
@@ -3226,11 +3346,14 @@ class Hub:
             if (entry.get("ask") or {}).get("request_id") == rid and entry.get("state") in {"pending", "working"}:
                 self._start_ask(AskRequest.model_validate(entry["ask"]), entry.get("origin"))
 
-    def effective_roster(self, *, include_history: bool = False) -> dict[str, dict]:
+    def effective_roster(self, *, include_history: bool = False, hosts: bool = False) -> dict[str, Any]:
         """Resolve one owner per agent. Unfinished deliveries pin ownership even while offline.
 
         Advertised rosters are input only here; routing, recovery and registration use this view.
         History is for discovery/waiting, never for dispatch to a disconnected runner.
+        ``hosts=True`` gives instead, per agent, ``{runner_id: roster entry}`` of every runner that may host it (a WSL
+        runner that is not ready left out): the owner is one of them, and a request pinned to a WSL runner uses that
+        one's entry whatever the owner is (#1204).
         """
         from ..wsl_readiness import wsl_readiness
 
@@ -3247,6 +3370,8 @@ class Hub:
                         not wsl_readiness(caps.get("wsl_readiness", {}))):
                     continue
                 candidates.setdefault(aid, {})[rid] = agent
+        if hosts:
+            return {aid: dict(runners) for aid, runners in candidates.items()}
         owners = {}
         for aid, hosts in candidates.items():
             online = [rid for rid in hosts if rid in self.runners]
@@ -3261,6 +3386,8 @@ class Hub:
                 aid = (entry.get("payload") or {}).get("agent_id")
                 rid = entry.get("runner_id")
                 if aid and rid and not entry.get("completed"):
+                    if _wsl_pin((entry.get("payload") or {}).get("meta")):
+                        continue  # a request's WSL pin goes to that runner by itself; it never makes it the owner (#1204)
                     owners[aid] = rid
                     prior = next((a for a in self.last_runner_rosters.get(rid, {}).get("agents", [])
                                   if a.get("id") == aid), {"id": aid})
@@ -3276,18 +3403,35 @@ class Hub:
             else:
                 signal.clear()
         self.agent_runner = {aid: a["runner_id"] for aid, a in roster.items()}
-        self.agents = {}
-        for aid, a in roster.items():
-            caps = self.runner_capabilities.get(a["runner_id"], {})
-            hpc_tools = bool(a.get("hpc_tools", caps.get("hpc_tools") and
-                                                 "hpc" in a.get("builtin_mcp", [])))
-            self.agents[aid] = {**a, "scheduler": caps.get("scheduler", "none"),
-                                "task_timeout_s": a.get("task_timeout_s", self.s.runner.task_timeout_s),
-                                "compute_backends": (["local CLI"] +
-                                                     [b for b in caps.get("compute_backends", [])
-                                                      if b != "local CLI" and hpc_tools]),
-                                "hpc_tools": hpc_tools}
-            self.agents[aid]["capabilities"] = self._agent_capabilities(self.agents[aid])
+        self.agents = {aid: self._agent_entry(a) for aid, a in roster.items()}
+
+    def _agent_entry(self, a: dict) -> dict:
+        """The staff sheet entry of one roster row (it carries its ``runner_id``)."""
+        caps = self.runner_capabilities.get(a["runner_id"], {})
+        hpc_tools = bool(a.get("hpc_tools", caps.get("hpc_tools") and "hpc" in a.get("builtin_mcp", [])))
+        entry = {**a, "scheduler": caps.get("scheduler", "none"),
+                 "task_timeout_s": a.get("task_timeout_s", self.s.runner.task_timeout_s),
+                 "compute_backends": (["local CLI"] + [b for b in caps.get("compute_backends", [])
+                                                       if b != "local CLI" and hpc_tools]),
+                 "hpc_tools": hpc_tools}
+        entry["capabilities"] = self._agent_capabilities(entry)
+        return entry
+
+    def request_agents(self, request_id: str | None) -> dict[str, dict]:
+        """The staff this request plans and runs with: ``agents``, but a request that is pinned to WSL sees the WSL
+        runner's entry for its WSL-bound agents (scheduler, compute backends, capabilities), not the owner's, also while
+        that runner is away: the roster outlives the connection and the task will go there when it is back (#1204)."""
+        view = dict(self.agents)
+        for aid in WSL_BOUND_AGENTS:
+            pin = _request_pin_meta(self, aid, request_id)
+            if pin:
+                row = self.effective_roster(hosts=True).get(aid, {}).get(pin["session_runner"])
+                if row is not None:
+                    view[aid] = self._agent_entry({**row, "runner_id": pin["session_runner"]})
+        return view
+
+    def request_runner(self, agent_id: str, request_id: str | None) -> str | None:
+        return _request_runner(self, agent_id, request_id)
 
     def set_roster(self, runner_id: str, agents: list[dict], capabilities: dict | None = None) -> None:
         roster = {"agents": agents, "updated_at": time.time()}
@@ -3323,7 +3467,7 @@ class Hub:
         req = self.requests.get(task.request_id or "")
         if req is None or not is_active_request(req.get("status")):
             return False
-        if (first and not self.runners) or task.agent_id in self.agent_runner:
+        if (first and not self.runners) or task.agent_id in self.agent_runner or _wsl_pin(task.meta):
             return True
         # Known from the roster of a runner that is away; a connected runner that dropped the agent does not count.
         owner = self.effective_roster(include_history=True).get(task.agent_id)
@@ -3353,17 +3497,18 @@ class Hub:
         return any(rid != wsl_id and any(agent.get("id") == agent_id for agent in staff)
                    for rid, staff in rosters.items())
 
-    async def offer_wsl_setup(self, task: Task) -> TaskResult | None:
+    async def offer_wsl_setup(self, task: Task, *, explicit: bool = False) -> TaskResult | None:
         """The agent runs only in the local WSL runner and that runner is not ready (#612): ask the PI once per request
         whether to set it up. None: nothing to say, carry on as before. A result: the task stops here, without waiting
-        for a runner that will not come on its own."""
+        for a runner that will not come on its own. ``explicit``: the PI chose WSL for this request, so a native runner
+        that also hosts the agent is no reason to carry on without it."""
         from .. import wsl_setup
         from ..cli import _gateway_is_local
 
         rid = task.request_id or ""
         if task.agent_id not in WSL_BOUND_AGENTS or rid not in self.requests or not wsl_setup.configured(self.s):
             return None
-        if self._native_hosts(task.agent_id):
+        if not explicit and self._native_hosts(task.agent_id):
             return None  # a native runner hosts it and is only away: the normal wait for it applies, not a WSL setup
         async with self._approval_lock(f"wslsetup:{rid}"):
             state = self.requests[rid].setdefault("wsl_setup", {})
@@ -3373,8 +3518,13 @@ class Hub:
                 return None
             try:
                 rows = await asyncio.wait_for(asyncio.to_thread(wsl_setup.check, self.s), 60)
-            except Exception:  # a check that cannot run says nothing about readiness: keep the old behaviour
-                return None
+            except Exception as exc:  # a check that cannot run says nothing about readiness...
+                if not explicit:
+                    return None  # ...so a task that merely needs the agent keeps the old behaviour
+                state.update(status="failed", note=f"WSL 점검을 하지 못했습니다({type(exc).__name__}). "
+                                                   "`labhq setup-wsl --check`로 확인하세요.")
+                await self.asave_request(rid)
+                return self._wsl_not_ready(task, state["note"])  # the PI chose WSL: that is an answer, not silence
             if not wsl_setup.pending_rows(rows):
                 return None
             detail = wsl_setup.card_detail(rows)
@@ -3439,6 +3589,71 @@ class Hub:
                                 "data": {"level": "info", "text": "WSL 셋업을 마쳤어요. runner가 연결되면 이어 갑니다"}})
             return None
 
+    async def prepare_wsl_request(self, rid: str) -> None:
+        """The PI asked for this PC's WSL (``run_where == "wsl"``, #612): make it ready before the plan is made.
+
+        One question with two answers: is a WSL runner ready and connected now (``_wsl_unavailable_reason`` is None), or
+        why not. Ready: the request's bioinfo-agent tasks are pinned to it (``_pin_wsl_request``), so a native runner
+        never takes them. Not ready, whatever the reason (no config, a check or setup that raised, a no, another PC, a
+        runner that does not connect in time): the reason is a note on the request and it carries on without WSL, never
+        blocked on a runner that will not come."""
+        req = self.requests.get(rid)
+        if not req or req.get("run_where") != "wsl":
+            return
+        try:
+            reason = await self._wsl_unavailable_reason(rid)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # the text can carry installer output: only its kind is kept
+            log.warning("WSL preparation for %s failed: %s", rid, type(exc).__name__)
+            reason = f"WSL 준비를 확인하지 못해({type(exc).__name__}) WSL 없이 진행합니다"
+        if reason:
+            req["run_where_note"] = reason
+        else:
+            req["wsl_pinned"] = True  # the WSL runner owns the agent: the request stays there
+        await self.asave_request(rid)
+        if reason:  # the PI chose WSL and does not get it: say so in the feed and the CLI, not only in the record
+            await self.publish({"type": "agent.log", "ts": time.time(), "request_id": rid,
+                                "data": {"level": "warn", "text": reason}})
+
+    async def _wsl_unavailable_reason(self, rid: str) -> str | None:
+        """None when the WSL runner is ready and owns bioinfo-agent; else why not, in one sentence for the PI."""
+        from .. import wsl_setup
+
+        if not wsl_setup.configured(self.s):  # no runner.wsl block: no WSL runner will ever connect
+            return ("이 설치에는 WSL runner 설정이 없어 WSL 없이 진행합니다. 이 PC에서 "
+                    "`labhq setup-wsl`로 먼저 준비하세요")
+        agent = next(iter(WSL_BOUND_AGENTS))
+        stopped = await self.offer_wsl_setup(Task(agent_id=agent, request_id=rid, prompt=""), explicit=True)
+        if stopped is not None:
+            return ((self.requests[rid].get("wsl_setup") or {}).get("note") or stopped.error
+                    or "이 PC의 WSL을 준비하지 못해 WSL 없이 진행합니다")
+        if not await self._wait_for_wsl_runner(rid, agent):
+            return "이 PC의 WSL runner가 시간 안에 연결되지 않아 WSL 없이 진행합니다"
+        return None
+
+    def _holder_runner(self, agent_id: str, entry: dict) -> str | None:
+        """The runner an earlier task of the ledger lives on: its WSL pin, else the agent's owner."""
+        return _wsl_pin((entry.get("payload") or {}).get("meta")) or self.agent_runner.get(agent_id)
+
+    async def _wait_for_wsl_runner(self, rid: str, agent: str) -> bool:
+        """The one wait left: until the ready, connected WSL runner hosts ``agent``, at most ``WSL_RUNNER_WAIT_S``.
+        False on timeout or request cancel."""
+        wsl_id = self.s.runner.wsl.id
+        deadline = time.monotonic() + min(float(self.s.gateway.runner_wait_s), WSL_RUNNER_WAIT_S)
+        while not _wsl_runner_ready(self, wsl_id, agent):
+            if (self.requests.get(rid) or {}).get("status") == "cancelled" or time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(0.2)
+        return True
+
+    def _pin_wsl_request(self, task: Task) -> None:
+        """A request that chose WSL and got it keeps its bioinfo-agent tasks on the WSL runner: pinned like a session, so
+        a native runner that also hosts the agent is refused at $0 instead of taking the work (#612)."""
+        pin = _request_pin_meta(self, task.agent_id, task.request_id)
+        if pin and task.meta.setdefault("session_runner", pin["session_runner"]) == pin["session_runner"]:
+            task.meta["wsl_pin"] = True  # this request chose the pin; a resumed session of another runner did not
+
     async def wait_for_runner(self, task: Task, *, first: bool = False) -> bool:
         """Park the task's request as waiting_for_runner until a runner hosting the agent connects, at most
         gateway.runner_wait_s. Nothing was sent yet, so nothing is uncertain or spent. False also when a roster
@@ -3457,7 +3672,8 @@ class Hub:
                                                 f"{task.agent_id} 작업부터 이어 갑니다."}})
         try:
             return await self.wait_agent_online(task.agent_id, bound,
-                                                still_waiting=lambda: self._waits_for_runner(task, first=first))
+                                                still_waiting=lambda: self._waits_for_runner(task, first=first),
+                                                **_pin_kwargs(task.meta))
         finally:
             before = req.get("status")
             waits = req.get("runner_waits") or {}
@@ -3469,11 +3685,14 @@ class Hub:
             await self._publish_hold_status(rid, before)  # open pages see the request move on
 
     async def wait_agent_online(self, agent_id: str, timeout_s: float,
-                                still_waiting: Callable[[], bool] | None = None) -> bool:
+                                still_waiting: Callable[[], bool] | None = None,
+                                meta: dict | None = None) -> bool:
+        """Until the runner the task needs is up: the agent's owner, or for a task pinned to WSL that runner (#1204)."""
         signal = self.agent_online.setdefault(agent_id, asyncio.Event())
         deadline = asyncio.get_running_loop().time() + timeout_s
+        pinned = _wsl_pin(meta) is not None
         while True:
-            if self.agent_runner.get(agent_id) in self.runners:
+            if _runner_ready_for(self, agent_id, meta):
                 return True
             if still_waiting is not None and not still_waiting():
                 return False
@@ -3481,10 +3700,11 @@ class Hub:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 return False
-            try:
-                await asyncio.wait_for(signal.wait(), remaining)
+            try:  # a pinned runner can connect without the agent's owner changing: look again every second
+                await asyncio.wait_for(signal.wait(), min(remaining, 1.0) if pinned else remaining)
             except asyncio.TimeoutError:
-                return False
+                if not pinned:
+                    return False
 
     async def send_runner(self, runner_id: str, msg: dict) -> None:
         ws = self.runners.get(runner_id)
@@ -3834,10 +4054,10 @@ class Hub:
                 await self._settle_steers(tid, task, result.control)
             if tid:
                 self.task_breaker.pop(tid, None)
-                self.store.delete("task_breaker", tid)
+                await self.store.adelete("task_breaker", tid)
                 self.orchestrator.restricted_calls.pop(tid, None)
-                self.store.delete("restricted_ledger", tid)
-                self.store.delete("breaker_release", tid)  # the task ended: nothing is left to release
+                await self.store.adelete("restricted_ledger", tid)
+                await self.store.adelete("breaker_release", tid)  # the task ended: nothing is left to release
                 if result.error_kind == "halted":
                     await self._control_state(tid, {"paused": False, "halt": True, "halted": True}, replace=True)
                 elif waiting(result):
@@ -3847,12 +4067,17 @@ class Hub:
             if (result.pipeline_submission is not None and result.agent_id in PIPELINE_AUTHORS
                     and self.s.policy.bioinfo_agent.pipeline_pr
                     and result.ok and not waiting(result)):
-                if self.store.get("pipeline_submission", tid) is None:
-                    # A replayed result cannot replace the candidate or erase its PI decision.
-                    self.store.put("pipeline_submission", tid, {
-                        "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
-                        "state": "ready", "submission": result.pipeline_submission,
-                    })
+                if self.store.get("pipeline_submission", tid) is None and tid not in self._pipeline_submitting:
+                    # A replayed result cannot replace the candidate or erase its PI decision, also not while the
+                    # first one is committing off the event loop.
+                    self._pipeline_submitting.add(tid)
+                    try:
+                        await self.store.aput("pipeline_submission", tid, {
+                            "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
+                            "state": "ready", "submission": result.pipeline_submission,
+                        })
+                    finally:
+                        self._pipeline_submitting.discard(tid)
                 pipeline_event = {"type": "pipeline.ready", "ts": time.time(), "task_id": tid,
                                   "agent_id": result.agent_id, "request_id": rid,
                                   "data": {"name": result.pipeline_submission.get("name")}}
@@ -3873,7 +4098,7 @@ class Hub:
             if task and task.get("request_id") in self.requests and (task.get("step_id") or task.get("kind") == "direct"):
                 rid = task["request_id"]
                 sid = task.get("step_id") or "direct"
-                self.store.put("step_checkpoint", f"{rid}:{sid}",
+                await self.store.aput("step_checkpoint", f"{rid}:{sid}",
                                {"task_id": tid, "attempt": task.get("attempt", 1),
                                 "revision": task.get("revision", 0),
                                 "result": result.model_dump(mode="json")})
@@ -3881,14 +4106,14 @@ class Hub:
             if task:
                 # Cancel waits on completed: publish it only after the cost snapshot commits.
                 # A reported result also supersedes an abandonment (#112).
-                self.store.put("task", tid, {**{k: v for k, v in task.items() if k != "abandoned"},
+                await self.store.aput("task", tid, {**{k: v for k, v in task.items() if k != "abandoned"},
                                               "completed": True, "result": result.model_dump(mode="json")})
                 self._refresh_roster()
                 self._session_state_changed()
             self._finishing_step_tasks.discard(tid)
             if tid:
                 # Completion must be visible before cleanup so a queued cancel cannot recreate the intent.
-                self.store.delete("task_cancel", tid)
+                await self.store.adelete("task_cancel", tid)
             fut = self.futures.pop(msg.get("task_id") or "", None)
             if fut and not fut.done():
                 fut.set_result(result)
@@ -3975,7 +4200,7 @@ class Hub:
             tid = msg.get("task_id") or ""
             task = self.store.get("task", tid)
             if task:
-                self.store.put("task", tid, {**task, "accepted": True, "runner_id": runner_id,
+                await self.store.aput("task", tid, {**task, "accepted": True, "runner_id": runner_id,
                                                "runner_incarnation": self.runner_incarnations.get(runner_id)})
                 self._session_state_changed()
                 if self.controllable(task.get("kind"), task.get("step_id"), task.get("request_id")):
@@ -4036,6 +4261,7 @@ class Hub:
         if paper2agent.disabled_task(self.s, task):
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                               error="recruitment and Paper2Agent are disabled (recruit.enabled=false)")
+        self._pin_wsl_request(task)
         # Roster/lifecycle changes refresh agent_runner; dispatch consumes that resolved
         # owner without replacing it before checking the session's runner pin.
         if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":
@@ -4061,7 +4287,7 @@ class Hub:
                 if checkpoint and checkpoint.get("task_id") == tid:
                     self.recovered_tasks.add(tid)
                     return TaskResult.model_validate(checkpoint["result"]).model_copy(update={"cost_usd": 0.0})
-                current_runner = self.agent_runner.get(task.agent_id)
+                current_runner = _target_runner(self, task.agent_id, task.meta)
                 if not self._same_runner_generation(entry, current_runner,
                                                     self.runner_incarnations.get(current_runner)):
                     self.recovered_tasks.add(tid)
@@ -4073,11 +4299,11 @@ class Hub:
         if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                               error="request cancelled")
-        if self.agent_runner.get(task.agent_id) not in self.runners:
+        if not _runner_ready_for(self, task.agent_id, task.meta):
             stopped = await self.offer_wsl_setup(task)  # the local WSL runner is not ready: one PI card, not a wait
             if stopped is not None:
                 return stopped
-        if self.agent_runner.get(task.agent_id) not in self.runners and self._waits_for_runner(task):
+        if not _runner_ready_for(self, task.agent_id, task.meta) and self._waits_for_runner(task):
             arrived = await self.wait_for_runner(task)
             if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
@@ -4086,7 +4312,7 @@ class Hub:
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                                   error_kind="runner_offline", error=self._runner_wait_failure(task.agent_id))
             # Not arrived and nothing left to wait for: a runner came back without the agent (#521), below.
-        rid = self.agent_runner.get(task.agent_id)
+        rid = _target_runner(self, task.agent_id, task.meta)
         if not rid:
             # Nothing was sent, so nothing was spent: a real $0, not an unaccounted cost (#270).
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
@@ -4145,7 +4371,8 @@ class Hub:
             deadline = asyncio.get_running_loop().time() + self.s.orchestrator.runner_reconnect_timeout_s
             while not fut.done():
                 remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0 or not await self.wait_agent_online(task.agent_id, remaining):
+                if remaining <= 0 or not await self.wait_agent_online(task.agent_id, remaining,
+                                                                      **_pin_kwargs(task.meta)):
                     if fut.done():
                         break
                     self.futures.pop(task.id, None)
@@ -4157,7 +4384,7 @@ class Hub:
                     return result
                 if fut.done():
                     break
-                target = self.agent_runner[task.agent_id]
+                target = _target_runner(self, task.agent_id, task.meta)
                 refused = self._session_pin_refusal(task, target,
                                                     self.runner_capabilities.get(target, {}).get("runtime_env"))
                 if (refused or target != rid or
@@ -4201,9 +4428,9 @@ class Hub:
                             "data": {"step_id": sid, "reason": reason}})
         try:
             if not entry.get("accepted") and entry.get("payload"):
-                runner_id = self.agent_runner.get(agent_id)
-                pinned = ((entry["payload"].get("meta") or {}).get("session_runner")
-                          if isinstance(entry["payload"], dict) else None)
+                prior_meta = entry["payload"].get("meta") if isinstance(entry["payload"], dict) else None
+                runner_id = _target_runner(self, agent_id, prior_meta)
+                pinned = (prior_meta or {}).get("session_runner")
                 if runner_id and (not pinned or pinned == runner_id):  # a pinned session never goes elsewhere
                     try:
                         await self.send_runner(runner_id, {"type": "task.dispatch", "task": entry["payload"]})
@@ -4215,7 +4442,7 @@ class Hub:
             deadline = None
             while not future.done():
                 accepted = bool((self.store.get("task", tid) or {}).get("accepted"))
-                online = self.agent_runner.get(agent_id) in self.runners
+                online = _runner_ready_for(self, agent_id, (entry.get("payload") or {}).get("meta"))
                 if accepted and online:
                     deadline = None
                 elif deadline is None:
@@ -4265,12 +4492,13 @@ class Hub:
         tid, entry = max(prior, key=lambda pair: (pair[1].get("dispatched_at", 0),
                                                   int(pair[1].get("attempt") or 1)))
         attempt = int(entry.get("attempt") or 1)
-        if not entry.get("completed") and self.agent_runner.get(agent_id) not in self.runners:
+        prior_meta = (entry.get("payload") or {}).get("meta")
+        if not entry.get("completed") and not _runner_ready_for(self, agent_id, prior_meta):
             # Resume approval can precede the runner's reconnect; its generation decides adoption.
-            await self.wait_agent_online(agent_id, self.s.gateway.resume_wait_s)
+            await self.wait_agent_online(agent_id, self.s.gateway.resume_wait_s, **_pin_kwargs(prior_meta))
             entry = self.store.get("task", tid) or entry
         if not entry.get("completed"):
-            runner = self.agent_runner.get(agent_id)
+            runner = self._holder_runner(agent_id, entry)
             if not self._same_runner_generation(entry, runner, self.runner_incarnations.get(runner)):
                 return attempt, None
             await self._await_prior_task(tid, entry, agent_id, entry.get("request_id"), "consult",
@@ -4338,13 +4566,14 @@ class Hub:
                     # The known holders finished, but a continuation (ask, job, retry) may already hold
                     # the session under a new task id: rescan the ledger once before releasing it.
                     break
-                runner = self.agent_runner.get(agent_id)
-                online = runner in self.runners
+                runner_of = {tid: self._holder_runner(agent_id, entry) for tid, entry in holders}
+                online = all(r in self.runners for r in runner_of.values())
                 if online:
                     offline_deadline = None
                 elif offline_deadline is None:
                     offline_deadline = loop.time() + self.s.gateway.resume_wait_s
                 for tid, entry in holders:
+                    runner = runner_of[tid]
                     running = (online and bool(entry.get("accepted")) and
                                self._same_runner_generation(entry, runner, self.runner_incarnations.get(runner)))
                     if entry.get("abandoned"):
@@ -4750,7 +4979,7 @@ class Hub:
         if found:
             return found
         fields = {key: old[key] for key in ("mode", "work_kind", "scope_status", "project_dirs",
-                                          "project_id", "route") if key in old}
+                                          "project_id", "route", "run_where") if key in old}
         # Stored provenance is not input: revalidate only the public Reference fields.
         fields["references"] = [{key: ref[key] for key in ("kind", "value", "note") if key in ref}
                                 for ref in old.get("references") or []]
@@ -4806,7 +5035,7 @@ class Hub:
         if found:
             return found
         fields = {key: old[key] for key in ("mode", "work_kind", "scope_status", "project_dirs",
-                                          "project_id", "route") if key in old}
+                                          "project_id", "route", "run_where") if key in old}
         # Stored provenance is not input: revalidate only the public Reference fields.
         fields["references"] = [{key: ref[key] for key in ("kind", "value", "note") if key in ref}
                                 for ref in old.get("references") or []]
@@ -5290,8 +5519,17 @@ class Hub:
         return report, appendix
 
     # ----- requests -----
+    @staticmethod
+    def _check_run_where(body: RequestIn) -> None:
+        """``run_where="wsl"`` places only the WSL-bound staff (bioinfo-agent) in the WSL runner: a direct request to anyone
+        else would wait for WSL and then run natively, against what the PI picked (#612)."""
+        if body.run_where == "wsl" and body.mode == "direct" and body.agent_id not in WSL_BOUND_AGENTS:
+            raise ValueError("run_where=wsl는 bioinfo-agent를 직접 고르거나 팀에 보내는 요청에만 쓸 수 있습니다. "
+                             "다른 직원은 WSL runner에서 일하지 않습니다")
+
     def create_request(self, body: RequestIn, extra: dict[str, Any] | None = None) -> str:
         """``extra``: request fields saved in the same first write (a CP1 수정 요청's links, plan and answers)."""
+        self._check_run_where(body)
         if body.mode == "direct" and body.route == "team":
             raise ValueError("route=team cannot be used with direct mode")
         if body.mode == "direct" and body.cso_model:
@@ -5339,6 +5577,7 @@ class Hub:
 
     async def _acreate_request(self, body: RequestIn, extra: dict[str, Any] | None = None) -> str:
         """``extra``: request fields saved in the same first write (a CP1 수정 요청's links, plan and answers)."""
+        self._check_run_where(body)
         if body.mode == "direct" and body.route == "team":
             raise ValueError("route=team cannot be used with direct mode")
         if body.mode == "direct" and body.cso_model:
@@ -5426,6 +5665,7 @@ class Hub:
                          default_references=bool(old.get("default_references", True)),
                          budget_usd=old.get("requested_budget_usd", old.get("budget_usd")),
                          project_id=old.get("project_id"), cso_model=old.get("cso_model"),
+                         run_where=old.get("run_where", "auto"),
                          route=old.get("route", "auto"), meta={**(old.get("meta") or {}), "revised_from": rid})
         new_rid = self.create_request(body, extra=extra)
         old["revised_to"] = new_rid
@@ -5489,6 +5729,7 @@ class Hub:
                          default_references=bool(old.get("default_references", True)),
                          budget_usd=old.get("requested_budget_usd", old.get("budget_usd")),
                          project_id=old.get("project_id"), cso_model=old.get("cso_model"),
+                         run_where=old.get("run_where", "auto"),
                          route=old.get("route", "auto"), meta={**(old.get("meta") or {}), "revised_from": rid})
         new_rid = (await self.acreate_request(body, extra=extra))
         old["revised_to"] = new_rid
@@ -5583,10 +5824,13 @@ class Hub:
         await self.publish({"type": "request.created", "ts": time.time(), "request_id": rid,
                             "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id", "references",
                                                            "route", "wall_clock")}})
+        if r.get("run_where") == "wsl":
+            await self.prepare_wsl_request(rid)  # before the plan reads the roster: a ready WSL puts bioinfo-agent in it
         # The plan reads the roster before its first dispatch, so wait for the first agent's runner here (R15).
         first = r.get("agent_id") if r.get("mode") == "direct" else self.s.orchestrator.cso_agent
         probe = Task(agent_id=str(first or ""), request_id=rid, prompt="")
-        if (first and self.agent_runner.get(first) not in self.runners and
+        self._pin_wsl_request(probe)  # a pinned first agent waits for its WSL runner, not for the owner (#1204)
+        if (first and not _runner_ready_for(self, first, probe.meta) and
                 self._waits_for_runner(probe, first=True)):
             if not await self.wait_for_runner(probe, first=True):
                 if self.requests[rid].get("status") != "cancelled":
@@ -5655,6 +5899,7 @@ class Hub:
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r, running)["step_progress"]["steps"],
+                          "failed_steps": failed_step_ids(r),
                           **self.request_session_cost_fields(r),
                           "office_current": is_office_request(r),
                           "session_current": (is_office_request(r)
@@ -5907,6 +6152,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         hub.demo_status = {"phase": "starting", "remaining_s": 0}
     app = FastAPI(title="labhq gateway", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.hub = hub
+    idempotent = idempotent_routes(hub.idempotency)
     shutdown = WebShutdown(settings, hub)
     app.state.shutdown = shutdown
 
@@ -6070,11 +6316,16 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return list(hub.agents.values())
 
     @app.post("/api/requests", dependencies=[Depends(auth)])
+    @idempotent
     async def create_request(body: RequestIn) -> dict:
         if body.mode == "direct" and not hub.knows_agent(body.agent_id):
             raise HTTPException(404, f"unknown agent {body.agent_id!r}")
         if body.mode == "direct" and not_yet_active(hub.agents.get(body.agent_id or "") or {}):
             raise HTTPException(409, probation_refusal(str(body.agent_id)))  # still on probation (#424)
+        try:
+            hub._check_run_where(body)
+        except ValueError as e:  # a combination no request can ever satisfy: 400, not the 422 of a bad reference
+            raise HTTPException(400, str(e))
         try:
             return {"request_id": (await hub.acreate_request(body))}
         except KeyError as e:
@@ -6124,6 +6375,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return [p.model_dump(exclude={"local_dir"}) for p in settings.projects]
 
     @app.post("/api/projects/{pid}/prs/{number}/codex-review", dependencies=[Depends(auth)])
+    @idempotent
     async def codex_review(pid: str, number: int, body: CodexReviewIn) -> dict:
         proj = settings.project(pid)
         gh = hub.reporter.client()
@@ -6445,6 +6697,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                                            for request_id, sid in released]}
 
     @app.post("/api/recruit", dependencies=[Depends(auth)])
+    @idempotent
     async def recruit(body: RecruitIn) -> dict:
         if not paper2agent.enabled(settings):
             raise HTTPException(403, "recruitment is disabled (recruit.enabled=false)")
@@ -6469,6 +6722,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return {"ok": True, "runner_id": rid}
 
     @app.post("/api/contracts/{agent_id}", dependencies=[Depends(auth)])
+    @idempotent
     async def contract(agent_id: str, body: ContractIn) -> dict:
         if body.action != "release" and not paper2agent.enabled(settings):
             raise HTTPException(403, "recruitment is disabled (recruit.enabled=false)")

@@ -65,6 +65,11 @@ class RunnerSettings(BaseModel):
     # Below this much free space on the work drive the runner starts no task until the PI answers a card (#678);
     # 0 turns the card off (the warning above stays).
     disk_fail_free_gb: float = Field(default=2, ge=0, allow_inf_nan=False)
+    # While a task runs the runner reads the free space of its drives every this many seconds and halts the task when one
+    # falls below disk_fail_free_gb, keeping its session for the PI to resume (#678). 0 turns the watch off.
+    disk_watch_s: float = Field(default=30, ge=0, allow_inf_nan=False)
+    # Off: the watch only writes a warning to the task log and never halts.
+    disk_watch_halt: bool = True
     # Optional folder for multi-GB raw data, outside every step folder: the task briefing names it (#678).
     bulk_data_root: str | None = None
     bundle_max_file_mb: float = Field(default=50, gt=0)
@@ -357,9 +362,11 @@ _BACKGROUND_SHELL_TOOLS = ("BashOutput", "KillShell", "TaskOutput", "TaskStop")
 class BudgetSettings(BaseModel):
     per_task_usd: float = 5.0
     per_request_usd: float = 30.0
-    # Opt-in (#862): hold each charged turn's whole cap before it is sent, so in-flight turns and the last turn
-    # cannot pass the request cap on the product's own cost accounting. Not a provider billing guarantee.
-    reserve_before_dispatch: bool = False
+    # On by default since #1139 (#862): hold each charged turn's cap before it is sent, so in-flight turns and the
+    # last turn cannot pass the request cap on the product's own cost accounting. The hold is cut to what the request
+    # still has, so a request budget below per_task_usd is not asked about at its first turn. Not a provider billing
+    # guarantee. `false` restores the older check, which only looks at what is already spent.
+    reserve_before_dispatch: bool = True
 
     @model_validator(mode="after")
     def reserved_budgets_are_amounts(self) -> "BudgetSettings":
@@ -368,6 +375,9 @@ class BudgetSettings(BaseModel):
                 value = getattr(self, name)
                 if not math.isfinite(value) or value < 0:
                     raise ValueError(f"policy.budget.{name} must be a finite amount >= 0 with reserve_before_dispatch")
+            if 0 < self.per_task_usd < 0.01:
+                # The Claude CLI writes a call cap in cents: a positive cap below one cent cannot be held (0 is no cap).
+                raise ValueError("policy.budget.per_task_usd must be 0 or at least $0.01 with reserve_before_dispatch")
         return self
 
 

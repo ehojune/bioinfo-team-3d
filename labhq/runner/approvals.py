@@ -213,7 +213,14 @@ class Broker:
             return terminal(ask_result(reason="ask routing is unavailable"))
         fut = asyncio.get_running_loop().create_future()
         self.pending_asks[req.id] = fut
-        await self._on_ask(req)
+        try:
+            await self._on_ask(req)
+            if fut.done():  # answered while the ask was still being handed over (#1168)
+                self.pending_asks.pop(req.id, None)
+                return terminal(fut.result())
+        except BaseException:
+            self.pending_asks.pop(req.id, None)
+            raise
         target = "colleague" if req.to.startswith("colleague:") else req.to
         if target == "pi" and hard_stop_kind(req) is None:
             target = "cso"

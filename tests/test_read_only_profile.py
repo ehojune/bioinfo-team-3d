@@ -108,7 +108,8 @@ async def test_claude_read_only_command_loads_no_plugin_and_no_hook(tmp_path, mo
     assert set(servers["mcpServers"]) == {"labhq_approval"}
     assert servers["mcpServers"]["labhq_approval"]["env"]["LABHQ_READ_ONLY"] == "1"
     assert ctx.read_only and ctx.agent.plugin_dirs == [] and not ctx.agent.allow_skills
-    assert ctx.agent.system_prompt == "You are the worker.", "the staff member's persona is kept"
+    assert ctx.agent.system_prompt.startswith("You are the worker."), "the staff member's persona is kept"
+    assert "## Tools in this read-only run" in ctx.agent.system_prompt
 
 
 @pytest.mark.asyncio
@@ -498,3 +499,150 @@ async def test_an_option_in_prefix_args_refuses_a_read_only_run(tmp_path, monkey
     assert len(spawned) == 2
     pair = tuple(spawned[1][i:i + 2] for i in range(len(spawned[1]) - 1))
     assert ("cli.js", flag) in pair, "an ordinary step keeps the PI's launcher"
+
+
+def _core_staff():
+    import yaml
+    return [AgentSpec(**yaml.safe_load(path.read_text(encoding="utf-8")))
+            for path in sorted((REPO / "agents" / "core").glob("*.yaml"))]
+
+
+def _noticed_tools(prompt: str) -> list[str]:
+    """The tool list the notice at the end of a read-only prompt names, split at its top-level commas."""
+    line = next(row for row in prompt.splitlines() if row.startswith("Available now: "))
+    text = line.removeprefix("Available now: ").rstrip(".")
+    names, depth, current = [], 0, ""
+    for char in text:
+        depth += (char == "(") - (char == ")")
+        if char == "," and depth == 0:
+            names.append(current.strip())
+            current = ""
+        else:
+            current += char
+    return [name for name in [*names, current.strip()] if name and name != "none"]
+
+
+@pytest.mark.parametrize("agent", _core_staff(), ids=lambda agent: agent.id)
+def test_every_staff_prompt_ends_with_the_tools_its_read_only_run_really_has(agent):
+    """#1224: a role prompt is written for the ordinary run. The read-only profile says which tools it kept, so the
+    instructions about PubMed, labhq_annot or the web do not send the model to what this run lacks."""
+    from labhq.adapters.read_only import TOOL_NOTICE_HEAD, read_only_profile
+    profile = read_only_profile(agent)
+    assert profile.system_prompt.startswith(agent.system_prompt.rstrip())
+    assert profile.system_prompt.count(TOOL_NOTICE_HEAD) == 1
+    denied = {name for name in profile.disallowed_tools if "(" not in name}
+    from labhq.adapters.read_only import SHELL_TOOL
+    shell = profile.engine == Engine.codex and profile.id != "facilities"  # Codex has its read-only shell, no named file tools
+    base = [SHELL_TOOL] if shell else profile.builtin_tools.split(",")
+    expected = [name for name in [*base, *profile.tools] if name and name not in denied]
+    if "annot" in profile.builtin_mcp and profile.annot_tools:
+        expected.append("labhq_annot (" + ", ".join(profile.annot_tools) + ")")
+    assert _noticed_tools(profile.system_prompt) == expected
+    assert read_only_profile(profile) == profile, "a profile of a profile keeps one notice"
+
+
+def test_a_read_only_claude_staff_member_is_told_it_has_no_web_and_no_annot():
+    from labhq.adapters.read_only import read_only_profile
+    agent = AgentSpec(id="w", name="W", role="r", engine=Engine.claude_code, system_prompt="Use PubMed and labhq_annot.",
+                      tools=["WebSearch", "WebFetch"], builtin_mcp=["approval", "annot"])
+    profile = read_only_profile(agent)
+    assert _noticed_tools(profile.system_prompt) == ["Read", "Glob", "Grep", "Write", "Edit"]
+    assert profile.system_prompt.startswith("Use PubMed and labhq_annot.")
+    assert "is not available in this run" in profile.system_prompt
+
+
+def test_a_codex_staff_member_keeps_only_the_web_tools_it_had_in_the_notice():
+    from labhq.adapters.read_only import read_only_profile
+    agent = AgentSpec(id="w", name="W", role="r", engine=Engine.codex, system_prompt="Search.", tools=["WebSearch", "Bash"])
+    from labhq.adapters.read_only import SHELL_TOOL
+    prompt = read_only_profile(agent).system_prompt
+    assert _noticed_tools(prompt) == [SHELL_TOOL, "WebSearch"]  # its shell stays; Codex has no named file tools
+    assert "shell commands) is not available" not in prompt and "(for example PubMed or bioRxiv tools, other labhq_annot tools)" in prompt
+
+
+def test_codex_facilities_runs_without_a_shell_and_the_notice_says_so():
+    from labhq.adapters.read_only import read_only_profile
+    agent = AgentSpec(id="facilities", name="F", role="r", engine=Engine.codex, system_prompt="Diagnose.")
+    prompt = read_only_profile(agent).system_prompt
+    assert _noticed_tools(prompt) == [] and "Available now: none." in prompt
+    assert "shell commands) is not available" in prompt
+
+
+# ---- #1055: a read-only run keeps labhq_annot for an explicit, narrow list of tools ----
+
+def _annot_staff(engine=Engine.codex, **fields):
+    base = dict(id="reviewer", name="Reviewer", role="r", engine=engine, builtin_mcp=["annot"],
+                annot_tools=["pdb", "chembl"])
+    return AgentSpec(**{**base, **fields})
+
+
+@pytest.mark.parametrize("engine, servers", [(Engine.codex, ["annot"]), (Engine.claude_code, ["approval", "annot"])])
+def test_a_read_only_run_keeps_only_the_annot_tools_that_are_named_and_allowed(engine, servers):
+    from labhq.adapters import read_only_profile
+
+    profile = read_only_profile(_annot_staff(engine, annot_tools=["pdb", "fulltext", "chembl", "alphagenome"]))
+    assert profile.builtin_mcp == servers and profile.annot_tools == ["pdb", "chembl"]
+    assert profile.mcp == [] and profile.plugin_dirs == [] and not profile.allow_skills, "no other channel opens"
+
+
+@pytest.mark.parametrize("fields", [
+    {"annot_tools": None}, {"annot_tools": []}, {"annot_tools": ["fulltext", "alphagenome"]}, {"builtin_mcp": []},
+    {"builtin_mcp": ["approval"]},
+])
+def test_a_read_only_run_without_an_allowed_explicit_list_gets_no_annot_server(fields):
+    from labhq.adapters import read_only_profile
+
+    profile = read_only_profile(_annot_staff(**fields))
+    assert "annot" not in profile.builtin_mcp and profile.annot_tools is None
+
+
+def test_the_science_reviewer_keeps_pdb_and_chembl_in_a_read_only_run():
+    """The reason for #1055: its yaml named the tools, and the read-only profile used to erase them."""
+    import yaml
+
+    from labhq.adapters import read_only_profile
+
+    spec = AgentSpec.model_validate(yaml.safe_load((Path(__file__).resolve().parents[1] / "agents/core/sci_reviewer.yaml")
+                                                   .read_text(encoding="utf-8")))
+    profile = read_only_profile(spec)
+    assert "annot" in profile.builtin_mcp and profile.annot_tools == ["pdb", "chembl"]
+
+
+def test_the_runner_mounts_annot_in_a_read_only_run_and_the_mismatch_check_accepts_exactly_that(tmp_path):
+    from labhq.adapters import read_only_profile
+    from labhq.adapters.read_only import read_only_mismatch
+
+    runner = _runner(tmp_path)
+    profile = read_only_profile(_annot_staff())
+    servers = runner._mcp_servers(profile, {}, allow_ask=False)
+    assert [s.name for s in servers] == ["labhq_annot"] and servers[0].env["LABHQ_ANNOT_TOOLS"] == "pdb,chembl"
+    assert read_only_mismatch(profile, servers) is None
+    widened = servers[0].model_copy(update={"env": {**servers[0].env, "LABHQ_ANNOT_TOOLS": "*"}})
+    assert read_only_mismatch(profile, [widened]) is not None, "an unrestricted server never runs read-only"
+    other = servers[0].model_copy(update={"name": "labhq_hpc", "args": ["-m", "labhq.tools.hpc_mcp"]})
+    assert read_only_mismatch(profile, [*servers, other]) is not None
+    bare = read_only_profile(_annot_staff(annot_tools=None))
+    assert read_only_mismatch(bare, servers) is not None, "a file without the list may not run the annot server"
+
+
+def test_a_sender_cannot_widen_the_annot_tools_of_a_read_only_run(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from labhq.adapters import read_only_profile
+
+    runner = _runner(tmp_path)
+    staff = _annot_staff()
+    runner.registry = SimpleNamespace(get=lambda agent_id: staff)
+    sender = {"builtin_mcp": ["annot", "approval", "hpc"], "annot_tools": ["fulltext", "pdb", "alphagenome"]}
+    task = Task(agent_id="reviewer", request_id="r", prompt="q", meta={"kind": "review", "agent_overrides": sender})
+    resolved = runner._resolve_agent(task)
+    assert read_only_profile(resolved).annot_tools == ["pdb", "chembl"], "the registry spec decides, not the sender"
+
+
+def test_a_tool_the_staff_file_denies_outright_is_not_in_the_notice_but_a_partial_denial_leaves_it():
+    from labhq.adapters.read_only import read_only_profile
+    agent = AgentSpec(id="w", name="W", role="r", engine=Engine.claude_code, system_prompt="Work.",
+                      disallowed_tools=["Write", "Read(./private/**)"])
+    profile = read_only_profile(agent)
+    assert profile.disallowed_tools == ["Write", "Read(./private/**)"]
+    assert _noticed_tools(profile.system_prompt) == ["Read", "Glob", "Grep", "Edit"]

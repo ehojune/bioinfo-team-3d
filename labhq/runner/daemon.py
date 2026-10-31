@@ -32,7 +32,7 @@ import yaml
 from .. import disk_space, durable
 from ..adapters import (adapter_preflight_error, get_adapter, is_read_only_task, read_only_profile,
                         read_only_refusal)
-from ..adapters.base import RunContext
+from ..adapters.base import RunContext, atlas_credentials, expand_env
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
                               awrite_owned_bytes, awrite_owned_many, remove_entry, write_owned)
@@ -68,6 +68,8 @@ from ..util import INPUT_STEP_ID, output_relpath, short, tool_input_fingerprint
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
 from .approvals import Broker
+from .annot_broker import AnnotBroker, ENABLED_ENV as ATLAS_ENABLED_ENV, atlas_allowed, refuse_credential_copy
+from ..tools.annot_alphagenome_atlas import credential, without_credentials
 from .codex_sandbox import SandboxWatch
 from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
 from . import local_jobs
@@ -266,6 +268,27 @@ async def _maybe_await(value: Any) -> None:
         await value
 
 
+async def _settled_thread(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """`asyncio.to_thread` that a cancel cannot leave running (#606).
+
+    The loop is free while `fn` runs, but a thread cannot be interrupted: after a plain cancelled `to_thread` the
+    step is reported cancelled while `fn` still changes the workspace, and a retry in the same folder races it. So the
+    cancel waits for `fn` to finish, then goes on. Used for what writes in the workspace; a read may stay unawaited.
+    """
+    work = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+    try:
+        return await asyncio.shield(work)
+    except asyncio.CancelledError:
+        while not work.done():
+            try:
+                await asyncio.wait([work])
+            except asyncio.CancelledError:
+                pass  # a second cancel still waits for the worker
+        if not work.cancelled():
+            work.exception()  # retrieved: the cancel, not the worker's error, is what propagates
+        raise
+
+
 def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize the runner-observed environment lock without opening it a second time."""
     row = next((item for item in rows if item.get("path") == ENVIRONMENT_LOCK), None)
@@ -282,8 +305,13 @@ def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
 _EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_emit_unit", default=None)
 
 
-# Flip only when a protected alias or read grant hands the validated runner-local interpreter to consumers.
+# Flip only when a protected alias hands the validated runner-local interpreter to consumers of every engine.
 ENVIRONMENT_ALIAS_AVAILABLE = False
+# Engines that receive a verified environment (#674): its interpreter path in `LABHQ_ENV_PYTHON` and a briefing line.
+# Claude also gets the folder as a read-only root (`read_dirs`, Edit/Write denied); Codex's sandbox already reads outside
+# the work folder and Gemini has no read-only grant to give, so they get the path only. Other engines stay refused.
+ENVIRONMENT_ENGINES = frozenset({Engine.claude_code, Engine.codex, Engine.gemini})
+ENVIRONMENT_GRANT_ENGINES = frozenset({Engine.claude_code})
 
 ACK_DRAIN_S = 5.0  # how long a reconnect waits for the acks it already received to commit (#1125)
 ACK_MERGE_S = 0.5  # at most one ack commit per this long: acks arriving between two commits share the second (#1125)
@@ -369,6 +397,7 @@ class Runner:
                              lookup_admission=None if limit is None else LookupAdmission(
                                  settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit))
         self.scheduler = Scheduler(settings.hpc)
+        self.annot_broker = AnnotBroker(self.broker, settings)
         self._local_procs: dict = {}  # job id -> the child this runner started (reaped when polled), #675
         self._local_watch: asyncio.Task | None = None  # the local job poller, started with the first job
         self.connected = asyncio.Event()
@@ -379,6 +408,7 @@ class Runner:
         self.codex_sandbox = SandboxWatch()  # elevated setup still fits this Codex (#328)
         # Steer, pause and halt files (#59 ①): runner state, outside every staff write root.
         self.breakers: dict[str, Escalation] = {}  # #59: running tasks' breaker stage
+        self._disk_watchers: dict[str, asyncio.Task] = {}  # #678: one per running task
         self.controls = Controls(settings.path(settings.runner.state_dir) / "control")
         self._finish_interrupted_tasks()
 
@@ -1223,9 +1253,13 @@ class Runner:
                 # A second cancel can interrupt the receipt read. Still send conservative UNKNOWN, then preserve
                 # cancellation; the queued barrier never mutates the binding or manufactures a finished receipt.
                 costs, interrupted = {"cost_usd": None, "cost_known": False}, again
+            # A run cancelled after its work folder was made still reports the folder: the gateway tells "cancelled
+            # before any folder existed" (nothing to bundle) from a folder whose record was lost (#1212).
+            made = self.__dict__.get("workspaces", {}).get(task.id)
+            folder = {"workdir": str(made.dir), "workdir_id": made.dir.name} if made is not None else {}
             res = self._shutdown_result(
                 TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err, cleanup_evidence=cleanup,
-                           **costs),
+                           **folder, **costs),
                 cancelled=cancelled)
             base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
             # One unit: a second cancel arriving while this commits cannot leave the status without the result.
@@ -1238,6 +1272,10 @@ class Runner:
             if cancelled:
                 raise
         finally:
+            self.__dict__.get("_env_grants", {}).pop(task.id, None)  # the run is over: its grant goes with it
+            watcher = self.__dict__.get("_disk_watchers", {}).pop(task.id, None)
+            if watcher is not None:
+                watcher.cancel()
             self._recruitment_conversions.pop(task.id, None)
             self._result_queued.discard(task.id)  # the run is over: nothing left to guard
             self._cleanup_reports.pop(task.id, None)
@@ -1291,8 +1329,10 @@ class Runner:
                                          args=["-m", "labhq.tools.local_job_mcp"], env=env, timeout_s=timeout_s))
         if "annot" in agent.builtin_mcp:
             # Read-only public lookups: no per-call approval, also for variants from restricted zones (PI 2026-10-06).
+            # annot_tools limits which of its tools the server offers (#1200): the server, not each engine, enforces it.
+            annot_env = {**env, "LABHQ_ANNOT_TOOLS": "*" if agent.annot_tools is None else ",".join(agent.annot_tools)}
             servers.append(McpServerSpec(name="labhq_annot", command=sys.executable,
-                                         args=["-m", "labhq.tools.annot_mcp"], env=env,
+                                         args=["-m", "labhq.tools.annot_mcp"], env=annot_env,
                                          auto_approve=True, timeout_s=literature_mcp_timeout_s(self.s)))
         if "wiki" in agent.builtin_mcp and self._wiki_tool_ready():
             # Read-only search over the PI's own notes; every call is logged to outputs/wiki_queries.jsonl.
@@ -1774,6 +1814,8 @@ class Runner:
         return None
 
     def _environment_refusal_reason(self, task: Task) -> str | None:
+        grants = self.__dict__.setdefault("_env_grants", {})
+        grants.pop(task.id, None)  # whatever happens below, an earlier run of this id leaves no grant behind
         if "environment_binding" in task.meta:
             producer = self._producer_binding_refusal(task, task.meta["environment_binding"])
             if producer is not None:
@@ -1820,17 +1862,74 @@ class Runner:
         if root is None or not task.request_id:
             return prefix + "workspace or request identity unavailable"
         from .step_inputs import validate_runner_env
+        verified: list[dict[str, str]] = []
         for binding in bindings:
             sid = binding["step_id"]
             try:
-                validate_runner_env(root, steps[sid], artifacts[sid], binding, request_id=task.request_id)
+                venv = validate_runner_env(root, steps[sid], artifacts[sid], binding, request_id=task.request_id)
             except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
                 return prefix + "environment validation failed"
+            verified.append({"step_id": sid, "venv": str(venv),
+                             "python": str(Path(steps[sid]) / binding["python_path"])})
+        read_only = False
+        try:
+            agent = self._resolve_agent(task)
+            engine = agent.engine
+            read_only = is_read_only_task(task.meta, agent)
+        except Exception:  # noqa: BLE001 - an unknown agent is refused later; here it simply gets no grant
+            engine = None
+        if engine in ENVIRONMENT_ENGINES:
+            if read_only:  # a read-only run takes no grant, and running it on the system Python would be another result
+                return prefix + "a read-only step cannot be given the planned environment"
+            for grant in verified:
+                problem = self._environment_grant_problem(Path(grant["venv"]))
+                if problem:  # Claude would follow a link out of the venv: fail closed, no grant
+                    return prefix + f"environment folder cannot be shared read-only: {problem}"
+            for grant in verified:
+                grant["read_dir"] = engine in ENVIRONMENT_GRANT_ENGINES  # Claude opens the folder; the rest get the path
+            grants[task.id] = verified
+            return None
         if not ENVIRONMENT_ALIAS_AVAILABLE:
-            # The validated .venv is not exposed to the consumer (no protected alias or read grant exists yet), so
-            # starting it would run without the packages the plan asked for: stay closed (#674).
+            # The validated .venv is not exposed to the consumer (no protected alias or read grant for this engine),
+            # so starting it would run without the packages the plan asked for: stay closed (#674).
             return prefix + "environment verified but protected interpreter alias is not implemented"
         return None
+
+    def _environment_grant_problem(self, venv: Path) -> str | None:
+        """Why a verified .venv must not be opened to Claude, or None. A package may leave a link below it that leads
+        into a controlled data zone, and `--add-dir` follows links; a listing that cannot finish is refused too (a venv
+        may link out to its base interpreter, so only zones are judged, as for a project clone)."""
+        try:
+            directory = Path(venv).resolve()
+            if not claude_rule_ready(str(directory)):  # no Edit/Write deny rule can be made (a UNC path): not read-only
+                return "no Claude write-deny rule can be made for it (a network path)"
+            zones = self._zones()
+            if overlaps_restricted(str(directory), self.s) or overlaps_zone(directory, zones):
+                return "it lies in a controlled data zone"
+            links, incomplete = zone_links(directory, zones, self.s.runner.reference_scan_max_entries * 10,
+                                           self.s.runner.reference_scan_max_depth)
+        except Exception:  # noqa: BLE001 - not scanned means not shared
+            return "it could not be scanned"
+        if links:
+            return "a link below it leads into a controlled data zone"
+        return f"its listing was incomplete ({incomplete})" if incomplete else None
+
+    def _apply_environment_grants(self, task: Task, read_dirs: list[str], *,
+                                  read_only: bool) -> tuple[list[str], dict[str, str], str]:
+        """(read dirs with the verified environments added, extra env, briefing line) for a consumer step (#674).
+
+        The grant is the folder the runner just verified, opened read-only like a reference folder (Claude denies
+        Edit/Write there); a read-only run takes none. `PYTHONDONTWRITEBYTECODE` keeps Python from writing into it.
+        Engines other than Claude get the env and the briefing line without the extra read root."""
+        grants = self.__dict__.get("_env_grants", {}).get(task.id) or []
+        if read_only or not grants:
+            return read_dirs, {}, ""
+        dirs = list(dict.fromkeys([*read_dirs, *(grant["venv"] for grant in grants if grant.get("read_dir"))]))
+        python = grants[0]["python"]
+        note = ("[Runner environment]\n" + "\n".join(
+            f"- Python with the packages the plan asked for ({grant['step_id']}): {grant['python']}" for grant in grants)
+            + "\nRun scripts with that interpreter. The folder is read-only: do not install into it.")
+        return dirs, {"LABHQ_ENV_PYTHON": python, "PYTHONDONTWRITEBYTECODE": "1"}, note
 
     async def _refuse_unprotected_environment(self, task: Task) -> TaskResult | None:
         error = await asyncio.to_thread(self._environment_refusal_reason, task)
@@ -1934,6 +2033,69 @@ class Runner:
                 f"작업 폴더 드라이브 여유가 적습니다: {free_gib:.1f} GiB. 큰 다운로드 전에 확인하세요")})
         return None
 
+    def _start_disk_watch(self, task: Task, agent: AgentSpec, workspace_dir: Path, extra_dirs=(), *,
+                          read_only: bool = False) -> None:
+        """Watch the drives this running task fills (#678): the work folder, the runner state folder,
+        ``runner.bulk_data_root`` and its writable project folders (``extra_dirs``). A read-only run writes only its own
+        workspace, so a full bulk or project drive is no reason to halt it. A facilities fix runs regardless: clearing a
+        full workspace is what it is for."""
+        runner = self.s.runner
+        if not runner.disk_watch_s or not runner.disk_fail_free_gb or task.meta.get("kind") == "facilities_fix":
+            return
+        watchers = self.__dict__.setdefault("_disk_watchers", {})
+        if task.id in watchers:
+            return
+        folders = [workspace_dir, self.s.path(runner.state_dir)]
+        if runner.bulk_data_root and not read_only:
+            folders.append(Path(os.path.expandvars(os.path.expanduser(str(self.s.path(runner.bulk_data_root))))))
+        folders.extend(Path(d) for d in extra_dirs)
+        watcher = asyncio.get_running_loop().create_task(self._disk_watch(task, agent, list(dict.fromkeys(folders))))
+        watchers[task.id] = watcher
+        watcher.add_done_callback(lambda done, tid=task.id: watchers.pop(tid, None) if watchers.get(tid) is done else None)
+
+    async def _disk_watch(self, task: Task, agent: AgentSpec, folders: list[Path]) -> None:
+        """Read the free space of ``folders`` every ``runner.disk_watch_s`` while the task is held; below
+        ``runner.disk_fail_free_gb`` halt it once, session kept, for the PI to resume. The resume starts a new turn that
+        meets ``_disk_gate`` again. An unreadable drive is skipped. Ends with the task."""
+        runner = self.s.runner
+        base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
+        while self.controls.holds(task.id):
+            await asyncio.sleep(runner.disk_watch_s)
+            if not self.controls.holds(task.id):
+                return
+            low = None
+            for folder in folders:
+                try:
+                    space = await asyncio.to_thread(disk_space.usage, folder)
+                except (OSError, ValueError):
+                    continue
+                if space.total > 0 and space.free < runner.disk_fail_free_gb * disk_space.GIB:
+                    low = (folder, space.free / disk_space.GIB)
+                    break
+            if low is None:
+                continue
+            folder, free_gib = low
+            text = (f"디스크 여유가 {free_gib:.1f} GiB로 기준 {runner.disk_fail_free_gb:g} GiB보다 적습니다"
+                    f"({Path(folder).as_posix()})")
+            halted = None
+            if runner.disk_watch_halt:
+                try:
+                    halted = await self.controls.apply({"task_id": task.id, "action": "halt"})
+                except Exception:  # noqa: BLE001 - the watch never fails the run; it tries again at the next beat
+                    log.warning("task %s disk halt not applied; trying again", task.id, exc_info=True)
+                    continue
+                if halted is None:  # the controls no longer hold the task: it ended meanwhile
+                    return
+            record = {"signal": "disk", "mode": "enforce", "stage": "stop",
+                      "enforcement": "halt" if halted else "off",
+                      "free_gib": round(free_gib, 2), "floor_gib": runner.disk_fail_free_gb,
+                      "path": Path(folder).as_posix()}
+            await self.emit(Event(type="agent.log", data={"level": "alert", "text": text}, **base))
+            if halted:
+                await self.emit(Event(type="agent.control", data={**halted, "source": "disk"}, **base))
+            await self.emit(Event(type="agent.breaker", data=record, **base))
+            return  # once per turn: a resumed turn is a new task and is checked again at its start
+
     async def _bulk_data_hint(self, emit, zones: list) -> str:
         """The briefing line for ``runner.bulk_data_root``, or "" when unset or the folder is not one staff may use.
 
@@ -2004,10 +2166,10 @@ class Runner:
                 Event(type="task.result", data={**result.model_dump(mode="json"),
                                                 "control": self.controls.finish(task.id)}, **base)])
             return result
-        reused = os.path.lexists(workspace_dir)
+        reused = await asyncio.to_thread(os.path.lexists, workspace_dir)  # file system work stays off the loop (#606)
         # Do not let TaskWorkspace create files through links left by an earlier run. Fresh workspaces keep
         # the old event ordering; reused ones are registered only after their preflight succeeds (#191).
-        ws = None if reused else TaskWorkspace(self.ws_root, task, agent, workspace_dir)
+        ws = None if reused else await _settled_thread(TaskWorkspace, self.ws_root, task, agent, workspace_dir)
         if reused:
             self.workspaces.pop(task.id, None)  # emit() must not append through the previous workspace yet
             self.event_buffers[task.id] = []  # ...but queued/working still belong in its log once it is safe
@@ -2118,7 +2280,7 @@ class Runner:
                     # memory, clear the allowlisted cache first, then create/register TaskWorkspace and flush them.
                     preclean_started = time.time()
                     preclean_record = await facility_fixes.execute(proposal, workspace_dir)
-                ws = TaskWorkspace(self.ws_root, task, agent, workspace_dir)
+                ws = await _settled_thread(TaskWorkspace, self.ws_root, task, agent, workspace_dir)
                 for event in self.event_buffers.pop(task.id, []):  # before any later event (#193)
                     ws.append_event(event)
                 self.workspaces[task.id] = ws
@@ -2191,9 +2353,10 @@ class Runner:
                 accepted = {sid: row for sid, row in artifacts.items()
                             if isinstance(row, dict) and row.get("workdir") == steps.get(sid)}
                 input_budget = [self.s.runner.input_hash_max_total_bytes]  # one cumulative limit for every input copy
+                private_now = (await asyncio.to_thread(resolve_private_paths, self.s, [], cwd=ws.dir)).paths
                 staged_inputs, unavailable = await asyncio.to_thread(
                     stage_inputs, ws, accepted, root, [*zones, *internal_zones],
-                    list(resolve_private_paths(self.s, [], cwd=ws.dir).paths),
+                    list(private_now),
                     self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes, input_budget)
                 unavailable.update({str(sid): f"inputs/{sid} unavailable (ancestor mapping mismatch)"
                                     for sid in artifacts if sid not in accepted})
@@ -2246,8 +2409,14 @@ class Runner:
                     task = ws.task = task.model_copy(update={"context": (
                         f"{task.context}\n\n[Upstream inputs not linked]\n{note}")})
             # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
+            # Every folder this run may write: a read-only run writes only its own workspace.
+            self._start_disk_watch(task, agent, workspace_dir, () if read_only else extra_dirs, read_only=read_only)
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs],
                                                                needs_rules=agent.engine == Engine.claude_code)
+            read_dirs, environment_env, environment_note = self._apply_environment_grants(
+                task, read_dirs, read_only=read_only)
+            if environment_note:
+                task = ws.task = task.model_copy(update={"context": f"{task.context}\n\n{environment_note}".strip()})
             asked_links, _internal_incomplete = await self._project_links(
                 [str(ws.dir), *extra_dirs, *read_dirs], internal_zones, emit, ask=True)
             asked_links = [link for link in asked_links if claude_rule_ready(link)]
@@ -2276,7 +2445,7 @@ class Runner:
                     ws.paper_skill_instructions()
                     if plugin else "논문 스킬 장착 불가; 제공된 선행 연구 요약으로 계속하세요.")})
             prompt = await ws.awrite_task_md()
-            if skill_error := install_required_skills(ws, agent):
+            if skill_error := await _settled_thread(install_required_skills, ws, agent):
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=skill_error)
                 await emit_final({"state": "error", "error": skill_error}, result.model_dump(mode="json"))
                 return result
@@ -2298,6 +2467,11 @@ class Runner:
             for note in notes:
                 await emit("agent.log", {"level": "warn", "text": f"읽기 전용 쓰기 확인에서 제외: {note}"})
             try:  # staff read a copy without the gateway tokens, never the PI's file (#149 결정 16)
+                engine_config = getattr(self.s.engines, agent.engine.value, None)
+                atlas_engine_env = expand_env(engine_config.env) if engine_config is not None else {}
+                atlas_key = credential(dict(os.environ), atlas_engine_env, environment_env)
+                atlas_secrets = atlas_credentials(self.s, environment_env)
+                refuse_credential_copy(self.s, atlas_secrets)
                 staff_config = write_staff_config(self.s, self.s.path(self.s.runner.state_dir) / "staff")
             except (OSError, ValueError, yaml.YAMLError) as exc:
                 error = f"직원용 설정 사본을 만들 수 없어 실행을 거부합니다 ({type(exc).__name__})"
@@ -2324,7 +2498,7 @@ class Runner:
             # A Claude task reads back the long tool output Claude saved in the staff config folder (#298 ⑤).
             if agent.engine == Engine.claude_code:
                 open_reads.extend(staff_claude_project_dirs(self.s, ws.dir))
-            private = resolve_private_paths(self.s, keep, open_reads=open_reads, cwd=ws.dir)
+            private = await asyncio.to_thread(resolve_private_paths, self.s, keep, open_reads=open_reads, cwd=ws.dir)
             if artifact_contract:
                 # Reuse the existing private/read-root machinery; inputs never become write roots.
                 private = replace(private, paths=tuple(dict.fromkeys([
@@ -2371,6 +2545,9 @@ class Runner:
                 PRIVATE_ENABLED_ENV: "1" if private.enabled else "0",
                 PRIVATE_OPEN_READS_ENV: os.pathsep.join(private.open_reads),
             }
+            env.update(environment_env)
+            env = without_credentials(env, atlas_secrets)
+            env[ATLAS_ENABLED_ENV] = "1" if atlas_key and atlas_allowed(agent, read_only=read_only) else "0"
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
             if self.broker.lookup_admission is not None:
@@ -2378,7 +2555,7 @@ class Runner:
                 env[LOOKUP_ADMISSION_ENV] = "1"
             if hooked:
                 env[CONTROL_ENV] = str(self.controls.path(task.id))
-            env.update(self._system_ca_env(agent))
+            env.update(await _settled_thread(self._system_ca_env, agent))  # reads the OS certificate store, writes its copy (#606)
             output_before: dict[str, tuple] | None = None
             output_records: list[dict[str, Any]] = []
             observed_outputs: list[dict[str, Any]] = []
@@ -2502,7 +2679,7 @@ class Runner:
                     continue
                 upstream = upstream_roots.get(os.path.normcase(str(path)))
                 input_roots.append(upstream or (path, portable_input_path(path)))
-            hash_private = resolve_private_paths(self.s, [], cwd=ws.dir)
+            hash_private = await asyncio.to_thread(resolve_private_paths, self.s, [], cwd=ws.dir)
 
             async def scan_inputs() -> tuple[list[dict[str, Any]], list[str]]:
                 return await asyncio.to_thread(
@@ -2546,6 +2723,7 @@ class Runner:
             self.active_roots[task.id] = (read_only, [ws.dir.resolve(), *(Path(d).resolve() for d in extra_dirs)])
             self.tool_contexts[task.id] = ctx
             try:
+                self.annot_broker.register(ctx, atlas_key)
                 refused = watch.take_baseline() if watch else None
                 if refused:  # fail closed: a run whose writes cannot be checked does not start
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refused)
@@ -2579,21 +2757,24 @@ class Runner:
                 if outcome["status"] == "rejected":
                     result = rejected_step(result, outcome["reason"])
             finally:
-                self.tool_contexts.pop(task.id, None)
-                ended = self.active_roots.pop(task.id, None)
-                # A submit command already running for this run lands in pending_jobs below; later ones are refused.
-                if in_flight := list(self.submitting.pop(task.id, ())):
-                    await asyncio.gather(*in_flight)
-                now = time.time()
-                if ended is not None:
-                    self.ended_roots.append((now, task.id, *ended))
-                horizon = now - self.s.runner.task_timeout_s - 60  # no read-only run is older than this
-                self.ended_roots = [entry for entry in self.ended_roots if entry[0] >= horizon]
                 self.broker.revoke_task_token(broker_token)
-                self.broker.finish_task(task.id)
-                if staff_config:  # this task's own copy; the next task gets a fresh one
-                    with contextlib.suppress(OSError):
-                        os.unlink(staff_config)
+                try:
+                    await self.annot_broker.finish(task.id)
+                finally:
+                    self.tool_contexts.pop(task.id, None)
+                    ended = self.active_roots.pop(task.id, None)
+                    # A submit already running lands in pending_jobs below; later ones are refused.
+                    if in_flight := list(self.submitting.pop(task.id, ())):
+                        await asyncio.gather(*in_flight)
+                    now = time.time()
+                    if ended is not None:
+                        self.ended_roots.append((now, task.id, *ended))
+                    horizon = now - self.s.runner.task_timeout_s - 60
+                    self.ended_roots = [entry for entry in self.ended_roots if entry[0] >= horizon]
+                    self.broker.finish_task(task.id)
+                    if staff_config:  # this task's own copy; the next task gets a fresh one
+                        with contextlib.suppress(OSError):
+                            os.unlink(staff_config)
 
         # Every job this run submitted, finished or not: _poll_jobs sends jobs.finished for them only after the run
         # ends, and a job the watcher saw finish while the agent still talked would otherwise never wake it (#281).
@@ -3054,6 +3235,28 @@ class Runner:
             return self._local_view(jid, j, logs=op == "status")
         return await self._submit_local_job(identity)
 
+    async def _local_job_disk_decision(self, decision, command: str, workdir: Path, task_id: str, agent_id: str | None,
+                                       request_id: str | None):
+        """The shell command's disk check for a job the runner starts (#1167): a download or unpack aimed at a drive that is
+        short on space asks the PI instead of starting. Only allow becomes ask; an unknown size is never blocked, and a short
+        drive with no known size only logs a warning. A probe bug never stops a command the policy already allowed."""
+        runner = self.s.runner
+        try:
+            check = disk_space.shell_check(
+                command, str(workdir), fail_gb=runner.disk_fail_free_gb, warn_gb=runner.disk_warning_free_gb,
+                warn_percent=runner.disk_warning_free_percent)
+        except Exception:  # noqa: BLE001
+            return decision
+        if check is None:
+            return decision
+        if check.action == "ask":
+            from ..policy import Decision
+            return Decision("ask", check.reason, updated_input=decision.updated_input)
+        await self.emit(Event(type="agent.log", task_id=task_id, agent_id=agent_id, request_id=request_id,
+                              data={"level": "warn", "text": check.reason, "tool_name": local_jobs.shell_tool(),
+                                    "policy_action": "allow", "policy_rule": "disk_space"}))
+        return decision
+
     async def _submit_local_job(self, identity: dict) -> dict:
         """Start one command as a job this runner owns: submitted, a PI or policy refusal, or an error.
 
@@ -3095,6 +3298,8 @@ class Runner:
             private_open_reads=ctx.private_open_reads if ctx else [], read_only=False)
         if decision.action == "deny":
             return {"submitted": False, "reason": decision.reason}
+        if decision.action == "allow":
+            decision = await self._local_job_disk_decision(decision, command, ws.dir, tid, aid, identity.get("request_id"))
         if decision.action == "ask":
             answer = await self.broker.request_approval(ApprovalRequest(
                 task_id=tid, agent_id=aid, request_id=identity.get("request_id"), kind="tool_permission",

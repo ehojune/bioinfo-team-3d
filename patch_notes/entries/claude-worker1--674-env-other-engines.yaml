@@ -1,0 +1,10 @@
+pr: 1180
+rows:
+  - sha: "10806e0"
+    at: "2026-10-31 18:30"
+    summary: "검증된 runner 환경을 Codex와 Gemini 직원의 소비 단계도 쓸 수 있습니다. 읽기 폴더는 Claude만 더 열고, 두 엔진에는 interpreter 경로와 안내만 줍니다."
+    text: "검증된 환경을 Codex·Gemini 소비 단계에도 interpreter 경로로 준다 (#674)"
+  - sha: "3c215eb"
+    at: "2026-10-31 19:10"
+    summary: "manual에 Codex와 Gemini 소비 단계가 환경 경로를 받는 방식과 아직 거부되는 엔진을 적었습니다."
+    text: "문서: Codex·Gemini 소비 단계의 환경 전달 (#674)"

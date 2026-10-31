@@ -1259,3 +1259,193 @@ async def test_a_first_agent_wait_on_a_fresh_gateway_ends_when_a_runner_without_
     await _until(lambda: hub.requests[rid]["status"] == "failed", timeout=2)
     text = hub.requests[rid].get("report", "") + hub.requests[rid].get("error", "")
     assert "curator 직원을 맡은 곳이 없습니다" in text and "연결되지 않아" not in text
+
+
+# ----- #1168: a status write that comes after an await must not bring an ended request back -----
+
+def _guard_hub(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    return Hub(settings)
+
+
+@pytest.mark.parametrize("revival", ["running", "waiting_for_runner"])
+@pytest.mark.asyncio
+async def test_set_status_does_not_bring_a_cancelled_request_back(tmp_path, revival):
+    hub = _guard_hub(tmp_path)
+    try:
+        _request(hub, "r", "cancelled")
+        await hub._set_status("r", revival)
+        assert hub.requests["r"]["status"] == "cancelled"
+        assert not [e for e in hub.events if e.get("type") == "request.status"]
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_set_status_still_resumes_a_failed_request_on_the_same_id(tmp_path):
+    """A model refusal is retried on the request's own id: `failed` is not a cancel, and its resume goes through."""
+    hub = _guard_hub(tmp_path)
+    try:
+        _request(hub, "r", "failed")
+        await hub._set_status("r", "waiting_for_runner")
+        assert hub.requests["r"]["status"] == "waiting_for_runner"
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_set_status_does_not_revive_a_request_whose_cancel_is_still_committing(tmp_path):
+    hub = _guard_hub(tmp_path)
+    try:
+        _request(hub, "r", "running", cancelling={"quota_steps": []})  # cancel is under way: the terminal record is not out
+        await hub._set_status("r", "waiting_for_runner")
+        assert hub.requests["r"]["status"] == "running"
+        assert not [e for e in hub.events if e.get("type") == "request.status"]
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize("status", ["failed", "interrupted"])
+@pytest.mark.asyncio
+async def test_set_status_still_ends_a_request_as_failed_or_interrupted(tmp_path, status):
+    hub = _guard_hub(tmp_path)
+    try:
+        _request(hub, "r", "running")
+        await hub._set_status("r", status)
+        assert hub.requests["r"]["status"] == status
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_set_status_still_moves_a_live_request_between_live_states(tmp_path):
+    hub = _guard_hub(tmp_path)
+    try:
+        _request(hub, "r", "interrupted")
+        await hub._set_status("r", "waiting_for_runner")
+        await hub._set_status("r", "running")
+        assert hub.requests["r"]["status"] == "running"
+        assert [e["data"]["status"] for e in hub.events if e.get("type") == "request.status"] == [
+            "waiting_for_runner", "running"]
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_resume_that_untracked_code_runs_does_not_revive_a_request_cancelled_while_it_waited(tmp_path):
+    """`resume_when_ready` reads the request, then waits for the agents; a caller that is not the request's tracked task
+    (an expiring restored card) is not stopped by the cancel, so the resume itself checks again before it goes on."""
+    hub = _guard_hub(tmp_path)
+    try:
+        _request(hub, "r", "interrupted")
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def agents(rid):
+            entered.set()
+            await release.wait()
+            return set()
+
+        hub.aresume_agents = agents
+        started = []
+
+        class Orchestration:
+            async def run_request(self, *args, **kwargs):
+                started.append(args)
+
+        hub.orchestrator = Orchestration()
+        resume = asyncio.create_task(hub.resume_when_ready("r"))  # not through track_request
+        await asyncio.wait_for(entered.wait(), 2)
+        hub.requests["r"].update(status="cancelled", cancelling={"quota_steps": []})  # the cancel lands while it waits
+        release.set()
+        await asyncio.wait_for(resume, 2)
+        assert hub.requests["r"]["status"] == "cancelled"
+        assert not started and not [e for e in hub.events if e.get("type") == "request.resumed"]
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_an_error_that_arrives_after_the_cancel_does_not_turn_the_request_into_failed(tmp_path):
+    """A step that raises something other than CancelledError while a cancel is committing must not write `failed`
+    over `cancelled`, nor send a `request.failed` the cancel's own terminal record then contradicts."""
+    hub = _guard_hub(tmp_path)
+    try:
+        hub.agents["worker"] = {"id": "worker", "name": "worker", "role": "test", "engine": "mock"}
+        _request(hub, "r", "running", mode="direct", agent_id="worker")
+
+        async def broken(task):
+            hub.requests["r"].update(status="cancelled", cancelling={"quota_steps": []})
+            raise RuntimeError("the runner went away")
+
+        hub.orchestrator.run_step = broken
+        await hub.orchestrator.run_request("r")
+        assert hub.requests["r"]["status"] == "cancelled"
+        assert not [e for e in hub.events if e.get("type") == "request.failed"]
+    finally:
+        hub.store.close()
+
+
+async def _resume_with_a_cancel_at(tmp_path, point):
+    """`resume_when_ready` as untracked code runs it, with the cancel landing at one await; returns (hub, started)."""
+    hub = _guard_hub(tmp_path)
+    _request(hub, "r", "interrupted")
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = {"agents": 0}
+    started = []
+
+    async def agents(rid):
+        calls["agents"] += 1
+        if point == "second_agents_lookup" and calls["agents"] == 2:
+            entered.set()
+            await release.wait()
+        return set()
+
+    hub.aresume_agents = agents
+    publish = hub.publish
+
+    async def gated_publish(event):
+        if point == "resumed_event" and event.get("type") == "request.resumed":
+            entered.set()
+            await release.wait()
+        await publish(event)
+
+    hub.publish = gated_publish
+    save = hub.asave_request
+
+    async def gated_save(rid):
+        if point == "status_save" and hub.requests[rid].get("status") == "running" and not entered.is_set():
+            entered.set()
+            await release.wait()
+        await save(rid)
+
+    hub.asave_request = gated_save
+
+    class Orchestration:
+        async def run_request(self, *args, **kwargs):
+            started.append(args)
+
+    hub.orchestrator = Orchestration()
+    resume = asyncio.create_task(hub.resume_when_ready("r"))
+    await asyncio.wait_for(entered.wait(), 2)
+    hub.requests["r"].update(status="cancelled", cancelling={"quota_steps": []})  # the cancel lands at that await
+    release.set()
+    await asyncio.wait_for(resume, 2)
+    return hub, started
+
+
+@pytest.mark.parametrize("point", ["status_save", "second_agents_lookup", "resumed_event"])
+@pytest.mark.asyncio
+async def test_a_cancel_at_any_await_of_the_resume_stops_it_before_the_orchestration_starts(tmp_path, point):
+    """#1172 review: the guard after the first lookup was not enough; the status save, the second lookup and the
+    `request.resumed` event each await too, and nothing after them looked again."""
+    hub, started = await _resume_with_a_cancel_at(tmp_path, point)
+    try:
+        assert hub.requests["r"]["status"] == "cancelled"
+        assert not started
+        if point != "resumed_event":  # that event is already on its way when the cancel lands
+            assert not [e for e in hub.events if e.get("type") == "request.resumed"]
+        if point == "status_save":  # the cancel replaced the state that this save was about: nothing says it was entered
+            assert not [e for e in hub.events if e.get("type") == "request.status" and e["data"]["status"] == "running"]
+    finally:
+        hub.store.close()

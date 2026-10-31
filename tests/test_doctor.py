@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+from pathlib import Path
 from types import SimpleNamespace
 import pytest
 from labhq import doctor
@@ -754,3 +755,30 @@ def test_a_misspelled_research_key_is_an_error_not_a_silent_default():
 
     with pytest.raises(ValidationError, match="evidence_checkpiont"):
         Settings.model_validate({"research": {"enabled": True, "evidence_checkpiont": True}})
+
+
+@pytest.mark.parametrize("found,status", [("2.0.0", "ok"), ("2.3.1", "ok"), ("1.30.0", "warn"), ("1.28.1", "warn"),
+                                          ("0.9.1", "warn")])
+def test_doctor_warns_when_mcp_is_below_the_floor(monkeypatch, found, status):
+    monkeypatch.setattr(doctor.importlib.metadata, "version", lambda name: found)
+    row = doctor._mcp_row()
+    assert row["name"] == "mcp" and row["status"] == status
+    assert (found in row["detail"]) and ("pip install" in row["hint"] if status == "warn" else row["hint"] == "")
+
+
+def test_doctor_warns_when_mcp_is_missing(monkeypatch):
+    def missing(name):
+        raise doctor.importlib.metadata.PackageNotFoundError(name)
+    monkeypatch.setattr(doctor.importlib.metadata, "version", missing)
+    assert doctor._mcp_row()["status"] == "warn"
+
+
+def test_the_mcp_floor_matches_pyproject():
+    project = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    assert f'"mcp>={doctor.MCP_FLOOR[0]}.{doctor.MCP_FLOOR[1]}"' in project
+
+
+def test_collect_reports_mcp_and_alphagenome_atlas_rows(tmp_path):
+    names = [row["name"] for row in doctor.collect(_settings(tmp_path), dry_run=True)["checks"]]
+    assert names.count("mcp") == 1
+    assert names.count("AlphaGenome Atlas") == 1

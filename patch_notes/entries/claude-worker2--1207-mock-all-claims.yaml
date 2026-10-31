@@ -1,0 +1,6 @@
+pr: 1218
+rows:
+  - sha: "c1c563c"
+    at: "2026-11-01 04:00"
+    summary: "mock 연구 보고서가 모든 단계·갈래의 근거를 담고, 시험이 그 전부를 확인합니다."
+    text: "mock synthesis가 모든 단계의 claim을 보고서에 싣고 e2e가 모두 단언한다 (Refs #1207)"

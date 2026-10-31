@@ -1,0 +1,15 @@
+pr: 1199
+rows:
+  - sha: "3deb1fb"
+    at: "2026-10-31 21:12"
+    summary: "CI에서 시험 하나가 멈추면 그 시험만 실패하고, 이름이 로그에 남습니다."
+    text: "CI: 시험마다 300초 상한(pytest-timeout)과 상한 직전 시험 이름 덤프 (Refs #1198)"
+  - sha: "48a2d47"
+    at: "2026-10-31 21:13"
+    text: "CI: 새 시험 파일을 Windows inventory에 등록 (Refs #1198)"
+  - sha: "48d6264"
+    at: "2026-10-31 21:30"
+    text: "README: CI 시간 상한 문서 링크 (Refs #1198)"
+  - sha: "b0682dd"
+    at: "2026-10-31 22:00"
+    text: "CI: Windows 명령의 -o 제거, Linux 시험 문구를 실제 메시지에 맞춤 (Refs #1198)"

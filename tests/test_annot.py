@@ -490,7 +490,7 @@ def test_core_staff_with_annot_and_roster_line(tmp_path):
     registry = Registry(REPO / "agents", tmp_path / "talent")
     registry.load()
     with_annot = {a.id for a in registry.agents.values() if "annot" in a.builtin_mcp}
-    assert with_annot == {"analyst", "bioinfo-agent", "biologist", "chief_of_staff", "lit_scout"}  # briefing: literature tools only (#1041)
+    assert with_annot == {"analyst", "bioinfo-agent", "biologist", "chief_of_staff", "lit_scout", "sci_reviewer"}  # briefing: literature tools only (#1041)
     analyst = registry.get("analyst").summary()
     assert "labhq_annot" in Hub._agent_mcp(analyst)
     assert "labhq_annot=yes" in format_roster([analyst])
@@ -515,7 +515,7 @@ async def test_stdio_server_lists_tools_and_answers_malformed_items_offline(tmp_
     # not registered.
     assert set(tools) == {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex",
                           "fulltext", "key_fulltext", "citation_chase", "preprints", "openalex_works",
-                          "crossref_doi", "unpaywall"}
+                          "crossref_doi", "unpaywall", "pdb", "chembl"}
     params = StdioServerParameters(command=sys.executable, args=["-m", "labhq.tools.annot_mcp"],
                                    env={**os.environ, **env})
     async with stdio_client(params) as streams:

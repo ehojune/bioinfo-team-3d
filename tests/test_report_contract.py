@@ -327,3 +327,23 @@ def test_request_kind_required_matrix_distinguishes_not_applicable() -> None:
     assert general.required["evidence_notes"] == "optional"
     assert failure.required["figures"] == "not_applicable"
     assert failure.required["execution_record"] == "required"
+
+
+@pytest.mark.parametrize("name,text", [
+    ("a longer backtick fence holds a shorter one", "````md\n```\nopen[^1] y\n```\nx\n```\nz\n```\n````\n\nbody[^1]\n\n[^1]: note\n"),
+    ("a longer tilde fence holds a shorter one", "~~~~\n~~~\nopen[^1] y\n~~~\nx\n~~~\nz\n~~~\n~~~~\n\nbody[^1]\n\n[^1]: note\n"),
+])
+def test_footnote_syntax_inside_a_longer_code_fence_is_left_alone(name, text):
+    """#1193: the footnote pass stashes code first; a fence of four or more characters must be stashed whole."""
+    rendered = reader_markdown(text, footnotes=True)
+    assert "open[^1] y" in rendered, name
+    assert "body[근거 1]" in rendered and "1. note" in rendered, name
+
+
+def test_code_spans_are_the_one_scanner_for_links_and_footnotes():
+    from labhq import portfolio, report_contract
+    text = "a `b` ````x\n```\ny\n```\n```` c"
+    spans = report_contract.code_spans(text)
+    assert [text[start:end] for start, end in spans] == ["`b`", "````x\n```\ny\n```\n````"]
+    assert portfolio._mask_code(text) == report_contract.mask_code(text)
+    assert len(report_contract.mask_code(text)) == len(text)

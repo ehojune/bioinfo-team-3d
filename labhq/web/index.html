@@ -434,6 +434,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
     <label class="sr" for="target">받는 사람</label>
     <select id="target"></select>
     <label class="team-toggle" id="team-only-label"><input id="team-only" type="checkbox">팀으로</label>
+    <label class="team-toggle" id="wsl-only-label" title="이 PC의 WSL에서 분석합니다. 준비가 덜 됐으면 셋업 카드가 먼저 뜹니다"><input id="wsl-only" type="checkbox">WSL에서</label>
     <label class="sr" for="work-kind">작업 종류</label>
     <select id="work-kind" title="연구 lane이 켜져 있을 때: 간단은 CP1·CP2 없이, 연구는 계획 승인(CP1)과 근거 승인(CP2)을 거쳐요">
       <option value="auto">자동 판단</option><option value="simple">간단한 일</option><option value="research">연구</option>
@@ -789,7 +790,7 @@ function renderRequest() {
   if (key === reqKey) return;
   reqKey = key;
   const current = all.filter(r => !LabHQState.isPastRequest(r)), past = all.filter(LabHQState.isPastRequest);
-  const choice = r => `<button type="button" class="request-choice" data-request-id="${esc(r.id)}" value="${esc(r.id)}" aria-current="${r.id === q?.id}"><span class="request-title">${esc(r.text || r.id)}</span><span class="status-label ${LabHQState.needsPiReview(r) ? 'status-decision' : 'status-neutral'}"><span class="status-dot" aria-hidden="true"></span>${esc(LabHQState.requestStatusText(r, S.approvals))}</span></button>`;
+  const choice = r => `<button type="button" class="request-choice" data-request-id="${esc(r.id)}" value="${esc(r.id)}" aria-current="${r.id === q?.id}"><span class="request-title">${esc(r.text || r.id)}</span><span class="status-label ${LabHQState.needsPiReview(r) ? 'status-decision' : LabHQState.partialFailureSteps(r).length ? 'status-partial status-halted' : 'status-neutral'}"><span class="status-dot" aria-hidden="true"></span>${esc(LabHQState.requestStatusText(r, S.approvals))}</span></button>`;
   const cumulative = LabHQState.totalCostLabel(all, LabHQState.requestsCostTotal(all)).replace(/^사용 비용 /, '');
   const pick = all.length ? `<nav class="request-list" aria-label="요청 목록"><h3>요청</h3>${current.map(choice).join('')}${past.length ? `<details class="past-requests"><summary>지난 요청 ${past.length}건 · 누적 비용 ${esc(cumulative)}</summary>${past.map(choice).join('')}</details>` : ''}</nav>` : '';
   // Before the first snapshot no request is known yet, which is not the same as none (#521).
@@ -863,6 +864,7 @@ function renderComposerMode() {
   $('.composer-options').hidden = noteMode;
   $('#target').hidden = noteMode;
   $('#team-only-label').hidden = noteMode;
+  if ($('#wsl-only-label')) $('#wsl-only-label').hidden = noteMode;
   $('#work-kind').hidden = noteMode;
   $('#project').hidden = noteMode || !S.projects.length;
   $('#ref-toggle').hidden = noteMode;
@@ -980,15 +982,19 @@ async function send() {
     return;
   }
   if (target && $('#team-only').checked) { toast('직원에게 직접 맡기기와 팀으로 보내기를 함께 고를 수 없어요'); return; }
+  if (target && target !== 'bioinfo-agent' && ($('#wsl-only') || {}).checked) { toast('WSL에서는 bioinfo-agent만 일해요. 받는 사람을 bioinfo-agent나 팀으로 바꿔 주세요'); return; }
   const workKind = $('#work-kind').value;
   // A research request goes through the CSO's frozen plan (CP1); one staff member cannot take it directly (R16).
   if (target && workKind === 'research') { toast('연구는 팀(CSO)에게 보내야 해요. 받는 사람을 CSO로 바꿔 주세요'); return; }
   const body = { text, mode: target ? 'direct' : 'orchestrate', agent_id: target || null, project_id: project || null,
-    route: $('#team-only').checked ? 'team' : 'auto', work_kind: workKind,
+    route: $('#team-only').checked ? 'team' : 'auto', work_kind: workKind, run_where: ($('#wsl-only') || {}).checked ? 'wsl' : 'auto',
     references: refs.items.map(({kind, value}) => ({kind, value})), default_references: refs.useDefaults };
   try {
-    await api.request(body);
-    input.value = ''; refs.items = []; $('#team-only').checked = false; $('#work-kind').value = 'auto'; showRefs(false); renderRefs();
+    // Kept on `send` until the request is accepted: a retry of the same text is the same request (#1164).
+    send.key = send.key || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    await api.request(body, send.key);
+    send.key = null;
+    input.value = ''; refs.items = []; $('#team-only').checked = false; if ($('#wsl-only')) $('#wsl-only').checked = false; $('#work-kind').value = 'auto'; showRefs(false); renderRefs();
     toast(target ? `${nick(target)}에게 맡겼어요` : 'CSO에게 요청을 보냈어요');
   } catch (e) { toast(`보내지 못했어요: ${e.message}`); }
 }
@@ -1022,7 +1028,7 @@ $('#approvals').addEventListener('click', async e => {
     else {
       const s = S.suggestions.find(x => x.id === li.dataset.sug);
       S.suggestions = S.suggestions.filter(x => x.id !== li.dataset.sug); schedule();
-      if (s && act === 'hire') { await api.recruit(s); toast('인사팀에 채용을 맡겼어요'); }
+      if (s && act === 'hire') { await api.recruit(s, `hire-${s.id}`); toast('인사팀에 채용을 맡겼어요'); }
     }
   } catch (err) { btn.disabled = false; toast(`처리하지 못했어요: ${err.message}`); }
 });
@@ -1188,7 +1194,9 @@ function renderSheetLiterature() {
     if (current && S.current === rid) syncPaperLiterature(current, S.requests.get(rid)?.paperLiterature);
   });
 }
-function closeSheet() { const d = $('#sheet'); if (typeof d.close === 'function' && d.open) d.close(); else d.removeAttribute('open'); }
+const sheetKeys = new Map();  // one Idempotency-Key per action while a sheet stays open: a double click applies once (#1164)
+const newKey = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+function closeSheet() { sheetKeys.clear(); const d = $('#sheet'); if (typeof d.close === 'function' && d.open) d.close(); else d.removeAttribute('open'); }
 $('#sheet').addEventListener('click', async e => {
   const d = $('#sheet');
   if (e.target === d) { closeSheet(); return; }
@@ -1211,7 +1219,8 @@ $('#sheet').addEventListener('click', async e => {
     } catch (err) { toast(`보내지 못했어요: ${err.message}`); }
     return;
   }
-  try { await api.contract(id, act, 14); toast(act === 'extend' ? '계약을 14일 연장했어요' : '계약을 종료했어요'); closeSheet(); }
+  if (!sheetKeys.has(act)) sheetKeys.set(act, newKey());
+  try { await api.contract(id, act, 14, sheetKeys.get(act)); toast(act === 'extend' ? '계약을 14일 연장했어요' : '계약을 종료했어요'); closeSheet(); }
   catch (err) { toast(`처리하지 못했어요: ${err.message}`); }
 });
 
@@ -1254,8 +1263,8 @@ function startLive() {
   const link = (rel, href) => { const l = document.createElement('link'); l.rel = rel; l.href = href; document.head.appendChild(l); };
   link('manifest', '/manifest.webmanifest'); link('icon', '/icon.svg'); link('apple-touch-icon', '/icon.svg');
   const bar = $('#tokenbar');
-  const post = async (path, body) => {
-    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+  const post = async (path, body, key) => {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(key ? { 'Idempotency-Key': key } : {}) }, body: JSON.stringify(body) });
     if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 120)}`);
     return r.json();
   };
@@ -1272,7 +1281,7 @@ function startLive() {
   let ws = null, backoff = 1000;
   api = {
     messenger: before => get(`/api/messenger?limit=40${before == null ? '' : `&before=${before}`}`),
-    request: body => post('/api/requests', body),
+    request: (body, key) => post('/api/requests', body, key),
     note: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/notes`, { text }),
     followup: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/followup`, { text }),
     requestDetail: rid => get(`/api/requests/${encodeURIComponent(rid)}`),
@@ -1302,8 +1311,8 @@ function startLive() {
       }
       return response.json();
     },
-    recruit: s => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }),
-    contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
+    recruit: (s, key) => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }, key),
+    contract: (id, action, days, key) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }, key),
     cancel: id => post(`/api/tasks/${encodeURIComponent(id)}/cancel`, {}),
     control: (id, action, text) => post(`/api/tasks/${encodeURIComponent(id)}/${action === 'release_breaker' ? 'breaker/release' : action}`, action === 'steer' ? { text } : {}),
     storage: rid => post(`/api/requests/${encodeURIComponent(rid)}/storage`, {}),
@@ -1315,6 +1324,7 @@ function startLive() {
   const open = () => {
     if (!token) { S.conn = 'auth'; bar.classList.add('show'); schedule(); return; }
     bar.classList.remove('show');
+    if (ws) { ws.onclose = null; ws.onmessage = null; ws.close(); }  // one socket at a time (#1170)
     ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}${lastSeq ? `&since=${lastSeq}` : ''}`);
     ws.onopen = () => { S.conn = 'live'; backoff = 1000; refreshHistory(); schedule(); };
     ws.onmessage = e => { try {
