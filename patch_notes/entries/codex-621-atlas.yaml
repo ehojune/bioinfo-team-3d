@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "c48dbda"
+    at: "2026-10-31 20:32"
+    summary: "비서실장의 Atlas 조회를 막고 실제 조회 직원의 엔진 환경에서 키를 확인합니다."
+    text: "fix: respect Atlas staff roles and engine credential precedence"
   - sha: "9f2d53a"
     at: "2026-10-31 20:14"
     summary: "취소된 Atlas 응답의 계산을 멈추고 잘못된 API 키를 변이 미수록과 구분합니다."
