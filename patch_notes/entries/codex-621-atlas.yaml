@@ -1,0 +1,5 @@
+rows:
+  - sha: "271980d"
+    at: "2026-10-31 18:44"
+    summary: "환경변수 키로 AlphaGenome Atlas 사전 계산 SNV 점수를 조회하고 출처·필터·사용 조건과 실패 기록을 남깁니다. 실제 키 접근과 runner 연결은 후속 검증입니다."
+    text: "feat: add bounded precomputed AlphaGenome Atlas lookups (#621)"
