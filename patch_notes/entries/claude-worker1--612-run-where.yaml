@@ -28,3 +28,7 @@ rows:
     at: "2026-11-01 00:10"
     summary: "WSL에서 실행하도록 골랐는데 WSL을 얻지 못하면 그 이유가 요청 기록뿐 아니라 화면 피드와 CLI에도 경고로 나타납니다."
     text: "WSL를 못 얻은 이유를 feed에 경고로 발행한다 (#612 리뷰 P1)"
+  - sha: "d3defd2"
+    at: "2026-11-01 00:40"
+    summary: "WSL 선택 때문에 dispatch에 넣은 호출을 paper skill 복구 시험의 gateway 대역이 몰라 시험이 멈추던 것을 고쳤습니다."
+    text: "시험: paper skill 복구 시험의 Hub 대역에 _pin_wsl_request를 넣는다 (#612)"
