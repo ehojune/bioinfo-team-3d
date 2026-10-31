@@ -8,3 +8,7 @@ rows:
     at: "2026-10-31 22:00"
     summary: "WSL에서 실행하도록 고른 요청은 같은 직원을 가진 Windows runner가 있어도 WSL 셋업 카드를 열고, WSL runner가 직원을 맡으면 그 요청의 분석을 WSL runner에 고정합니다."
     text: "run_where=wsl: native runner가 같이 호스트해도 카드를 열고, WSL runner가 직원을 맡으면 요청의 bioinfo-agent를 WSL runner에 고정한다 (#612 리뷰 P1)"
+  - sha: "25acb01"
+    at: "2026-10-31 22:30"
+    summary: "웹에서 WSL에서 체크는 요청을 보낸 뒤 풀리고, 메모를 보내는 중에는 보이지 않아 다음 요청이 WSL로 가는 일이 없습니다."
+    text: "웹: 요청을 보낸 뒤 WSL에서 체크를 풀고 메모 모드에서는 숨긴다 (#612 리뷰 P1)"
