@@ -12,3 +12,7 @@ rows:
     at: "2026-10-31 14:20"
     summary: "Claude 직원에게 미리 허용돼 있던 git clone·unzip·curl 같은 규칙도 이제 gate를 거쳐 디스크 여유 확인을 받습니다."
     text: "사전 승인된 다운로드·압축 해제 규칙을 allowedTools에서 빼 gate의 디스크 확인을 받게 한다 (#678 리뷰 P1)"
+  - sha: "a8f48f3"
+    at: "2026-10-31 14:50"
+    summary: "디스크 확인이 curl --output-dir, tar의 붙여 쓴 값, 모르는 옵션이 붙은 git clone의 대상 폴더도 읽고, 승인 gate가 없는 직원의 규칙은 그대로 둡니다."
+    text: "curl --output-dir·tar 붙은 값·git clone 모르는 옵션을 읽고, 규칙 제외는 gate가 있을 때만 한다 (#678 리뷰)"
