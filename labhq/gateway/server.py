@@ -4604,6 +4604,12 @@ class Hub:
                 nonlocal saved
                 await self._add_approval(approval.id, {"approval": approval.model_dump(mode="json"),
                                                       "origin": None, "future": fut})
+                if not is_active_request(req_state.get("status")) or req_state.get("cancelling"):
+                    # The request was cancelled or ended while the card was being stored (a slow write): it must not
+                    # come back to life as waiting, nor keep a card for a request that is over (#1148).
+                    saved = {"status": "cancelled", "approval_id": approval.id}  # kept in this call only
+                    await self.close_approval(approval.id, "request cancelled")
+                    return
                 saved = {"status": "waiting", "approval_id": approval.id,
                          "proposal": {key: proposal[key] for key in
                                       ("fix_id", "signature_id", "action", "execution", "import_name", "package",

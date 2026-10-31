@@ -385,3 +385,37 @@ async def test_disk_full_cache_is_cleared_before_any_reused_workspace_write(tmp_
     with pytest.raises(OSError, match="No space left"):
         await runner.run_task(task)
     assert not cache.exists()
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_while_the_fix_card_is_being_stored_is_not_undone_and_leaves_no_card(tmp_path):
+    """#1148: the card write is slow and the request is cancelled meanwhile. When the write returns the request is
+    still cancelled, no waiting entry or card is left for it, and the caller is not told to wait."""
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.policy.approvals.timeout_s = 60
+    hub = create_app(settings).state.hub
+    hub.requests["r"] = {"id": "r", "status": "running", "mode": "team", "text": "x", "results": {}}
+    entered, go = asyncio.Event(), asyncio.Event()
+    real_add = hub._add_approval
+
+    async def slow_add(*args, **kwargs):
+        entered.set()
+        await go.wait()  # a slow fsync while the card is stored
+        return await real_add(*args, **kwargs)
+
+    hub._add_approval = slow_add
+    proposal = {"fix_id": "clear_workspace_cache", "signature_id": "disk_full",
+                "action": "작업 폴더 캐시 비우기", "execution": "workspace_cache",
+                "reason": "디스크 공간 부족", "command": "작업 폴더 안 cache 비우기"}
+    fix = asyncio.create_task(hub.request_facilities_fix("r", "s1", proposal))
+    await asyncio.wait_for(entered.wait(), 5)
+    await hub.cancel_request("r")
+    assert hub.requests["r"]["status"] == "cancelled"
+    go.set()
+    outcome = await asyncio.wait_for(asyncio.gather(fix, return_exceptions=True), 5)
+    assert hub.requests["r"]["status"] == "cancelled"  # the late card write did not bring it back
+    assert "s1" not in (hub.requests["r"].get("facilities_fixes") or {})  # no waiting entry for the ended request
+    assert not [card for card in hub.approvals.values() if card["approval"].get("kind") == "facilities_fix"]
+    assert not [event for event in hub.events if event.get("type") == "approval.requested"]  # no card was announced
+    assert not (isinstance(outcome[0], dict) and outcome[0].get("approved"))
