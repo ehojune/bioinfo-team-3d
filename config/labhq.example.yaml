@@ -28,6 +28,8 @@ runner:
   consult_parallel: 2             # 막힌 직원의 질의 답변 전용 슬롯(일반 task와 분리)
   workspace_root: ~/.labhq/runs     # 태스크별 실험노트 폴더
   # disk_fail_free_gb: 2            # 작업 드라이브 여유가 이보다 적으면 PI가 답하기 전엔 task를 시작하지 않음(0이면 끔)
+  # disk_watch_s: 30               # task가 도는 동안 드라이브 여유를 이 초마다 읽어 disk_fail_free_gb 아래면 세션을 보존한 채 멈춤(0이면 끔)
+  # disk_watch_halt: true         # false면 멈추지 않고 작업 기록에 경고만 남김
   # bulk_data_root: D:/labhq-data   # 수 GB 이상 원자료를 받을 폴더(작업 폴더 밖). 직원 브리핑에 한 줄로 알림
   bundle_max_file_mb: 50            # 요청 묶음에 복사할 파일 하나의 최대 크기
   bundle_max_total_mb: 2048         # 요청 묶음 전체에서 복사할 최대 크기
