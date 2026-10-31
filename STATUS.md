@@ -5,6 +5,23 @@
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
 ## 단계
+#1167 rev8: 로컬 job 제출 경로에도 셸 명령과 같은 디스크 확인을 붙인다. [PR #1184](https://github.com/ehojune/bioinfo-team-3d/pull/1184)(PowerShell 도구)와 다른 브랜치다.
+
+## 바뀐 것
+- `labhq/runner/daemon.py`: `_submit_local_job`이 정책 판정이 `allow`일 때 `_local_job_disk_decision`을 거친다. `disk_space.shell_check`가 `ask`면 판정을 `ask`로 바꿔 기존 PI 카드 경로(`tool_permission`)로 보낸다. 여유는 있으나 낮고 크기를 모르면 `agent.log` 경고만 남긴다. `shell_check`가 예외를 내면 판정을 그대로 둔다. `deny`와 이미 `ask`인 판정은 건드리지 않는다.
+- 같은 규칙: 승인 게이트(`approval_mcp._disk_decision`)가 Bash 명령에 하던 것을 runner가 시작하는 job에도 적용한다(runner가 게이트를 거치지 않고 직접 시작하기 때문에 따로 필요했다).
+
+## 시험
+- `tests/test_disk_watch_678.py`에 7건(기존 파일): 가득 찬 드라이브로의 unzip이 시작 전에 묻고 거절하면 시작하지 않음, 승인하면 시작, 여유가 넉넉하면 카드 없음, 다운로드·압축 해제가 아닌 명령은 묻지 않음, 크기를 모르고 여유가 낮으면 경고만 하고 시작, 정책이 이미 묻는 명령은 카드 한 장, 확인 오류가 와도 시작. 먼저 써서 수정 전 3건 실패를 확인했다.
+- 관련 `test_local_jobs_675.py`·`test_disk_shell_check_678.py`·`test_runner_env_integration_674.py` 포함 159 passed, 2 skipped.
+
+## 하지 않은 것
+- `disk_space.py`는 바꾸지 않았다(기존 `shell_check` 재사용).
+- manual의 디스크 확인 설명에 "로컬 job 제출도 같은 확인을 받는다"는 문장은 범위 밖이라 manual 차례에 더한다.
+- 인벤토리는 새 시험 파일이 없어 건드리지 않았다.
+- 실제 Windows·Claude 로컬 job으로 끝까지 돌려 보지는 않았다. 시작 함수(`local_jobs.start`)는 시험에서 대체했다.
+
+## 단계
 #1139 rev12: [PR #1210](https://github.com/ehojune/bioinfo-team-3d/pull/1210)의 남은 지적. 센트로 내리는 것이 잘라낸 보류액에만 적용되어, 호출 상한이 센트 단위가 아니면(`per_task_usd = 0.015`) 같은 틈이 남았다.
 
 ## 바뀐 것
@@ -444,6 +461,15 @@ Claude의 `--disallowedTools`만 이름 목록을 지키고 Codex·Gemini 어댑
 - 같은 부류로 확인한 것: `test_shutdown_stays_inside_its_deadline_when_an_ack_commit_hangs`는 0.2 s 한도와 `<1.5 s`로 상한을 보는 시험이라 더 느린 commit에 영향이 없다.
 - 시험: `-k shutdown` 통과.
 - 미검증: Windows CI에서의 안정성(이 PR의 CI가 첫 확인).
+
+# #625 fixed-step fixture and mock cost admission
+
+- Two isolated mock arms resume the same saved analyst plan and use identical public input/rubric.
+- New required control reserves both whole-arm bounds before dispatch. Integer settled plus outstanding amounts cannot exceed the limit under the tested interleavings. Unknown/stale/unverified inputs reject; timeout/cancel retains reservations; final receipts settle once. Conflicting receipts block dispatch.
+- Validation: missing control previously reached forbidden dispatch; 25 initial new tests failed before implementation. Final `python -m pytest tests/test_bench.py -q`: 110 passed (33 new cases). Final-head CI/review evidence belongs in PR #1188.
+- [Invocation and limitations](../reference/model-tier-bench-625/README.md): single in-memory mock instance only; no provider cap, restart recovery, paid calls or measured model comparison. Live disabled; draft/hold; no merge.
+- Revision 16: both manuals construct the mock control and pass `cost_control`/`worst_case_units`; they require one shared instance across pairs/retries and distinguish mock admission from provider enforcement.
+- Manual validation: 3 offline checks passed (both extracted Python examples completed both arms; blocks equal the reference). Each retained 10 outstanding units and settled 0. Public and diff checks passed. LF-normalized characters: Korean 217,292 → 217,699; English 384,495 → 385,004. Final-head CI/review tracking remains in PR #1188.
 
 # #621 Atlas 조회와 runner credential 경계
 
