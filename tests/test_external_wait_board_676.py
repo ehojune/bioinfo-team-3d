@@ -72,8 +72,11 @@ def test_every_labhq_annot_tool_goes_through_the_20_minute_executor():
     def calls(node):
         return {n.func.id for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
 
+    # A tool is registered with `@server.tool()` or, since #1200, `@offered()` (which does the same unless the agent's
+    # annot_tools leaves it out).
     tools = [node for node in functions.values() if any(
-        isinstance(d, ast.Call) and getattr(d.func, "attr", "") == "tool" for d in node.decorator_list)]
+        isinstance(d, ast.Call) and (getattr(d.func, "attr", "") == "tool" or getattr(d.func, "id", "") == "offered")
+        for d in node.decorator_list)]
     assert len(tools) >= 15
     unbounded = [node.name for node in tools if not calls(node) & runners]
     assert unbounded == []  # a new tool must call one of the runners below, not reach the network itself

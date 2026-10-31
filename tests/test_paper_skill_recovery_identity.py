@@ -18,6 +18,7 @@ class RecoveredHub(Hub):
     _recovery_matches = GatewayHub._recovery_matches
     _matches_recovery = staticmethod(GatewayHub._matches_recovery)
     _same_runner_generation = staticmethod(GatewayHub._same_runner_generation)
+    _pin_wsl_request = GatewayHub._pin_wsl_request  # dispatch pins a request that chose WSL before it picks a runner (#612)
 
     def __init__(self, tmp_path):
         selected = row()

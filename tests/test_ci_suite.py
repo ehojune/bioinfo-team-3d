@@ -75,3 +75,58 @@ def test_ci_pins_the_limit_per_platform_and_keeps_the_job_limits():
     # The Windows phase filter rejects `-o` overrides; pytest-timeout picks `thread` there on its own (no SIGALRM).
     assert len(windows) == 2 and all("timeout_method" not in r and " -o " not in r for r in windows)
     assert any(s.get("timeout-minutes") == 25 for s in jobs["pytest"]["steps"])
+
+
+# ---- #1198 P2: the notice follows the limit the test really has (marker, command line, environment, then the ini) ----
+
+def item_with(ini=300, marker=None, option=None):
+    """A test item as pytest-timeout sees it: its closest `timeout` marker, the `--timeout` option and the ini."""
+    options = {"timeout": option}
+    return SimpleNamespace(
+        nodeid="tests/test_x.py::test_y",
+        get_closest_marker=lambda name: marker if name == "timeout" else None,
+        config=SimpleNamespace(getini=lambda name: ini, getoption=lambda name, default=None: options.get(name, default)))
+
+
+def test_a_timeout_marker_sets_the_limit_the_notice_follows(monkeypatch):
+    monkeypatch.delenv("PYTEST_TIMEOUT", raising=False)
+    assert suite.item_limit(item_with(marker=SimpleNamespace(args=(45,), kwargs={}))) == 45.0
+    assert suite.item_limit(item_with(marker=SimpleNamespace(args=(), kwargs={"timeout": "12.5"}))) == 12.5
+    assert suite.item_limit(item_with(marker=SimpleNamespace(args=(0,), kwargs={}))) == 0.0  # a marker can lift the limit
+
+
+def test_without_a_marker_the_command_line_then_the_environment_then_the_ini_decide(monkeypatch):
+    monkeypatch.delenv("PYTEST_TIMEOUT", raising=False)
+    assert suite.item_limit(item_with(ini=300)) == 300.0
+    monkeypatch.setenv("PYTEST_TIMEOUT", "150")
+    assert suite.item_limit(item_with(ini=300)) == 150.0
+    assert suite.item_limit(item_with(ini=300, option="90")) == 90.0  # --timeout wins over the environment
+    assert suite.item_limit(item_with(ini=300, marker=SimpleNamespace(args=(20,), kwargs={}), option="90")) == 20.0
+
+
+def test_a_bad_value_never_starts_a_timer(monkeypatch):
+    monkeypatch.setenv("PYTEST_TIMEOUT", "soon")
+    assert suite.item_limit(item_with(ini="x")) == 0.0
+
+
+def test_the_notice_timer_uses_the_item_limit_not_the_ini(monkeypatch):
+    named = []
+    monkeypatch.setattr(suite, "announce_limit", named.append)
+    monkeypatch.setattr(suite, "TEST_LIMIT_NOTICE_S", 0)
+    monkeypatch.delenv("PYTEST_TIMEOUT", raising=False)
+    with suite.limit_notice(item_with(ini=300, marker=SimpleNamespace(args=(0.2,), kwargs={}))):
+        deadline = suite.time.monotonic() + 5
+        while not named and suite.time.monotonic() < deadline:
+            suite.time.sleep(0.05)
+    assert named == ["tests/test_x.py::test_y"], "the marker's 0.2 s must fire it, not the ini's 300 s"
+
+
+def test_the_windows_critical_step_limit_is_shorter_than_the_step():
+    """A stuck test must be named and failed by its own limit before the 3-minute step is cut (#1198 review)."""
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["pytest-windows"]["steps"]
+    critical = next(step for step in steps if step.get("name") == "Serial critical Windows contracts")
+    limit = float(critical["env"]["PYTEST_TIMEOUT"])
+    step = critical["timeout-minutes"] * 60
+    serial_run_s = 60  # the tests before a stuck one run first (31 tests took 43 s, #1198): the limit starts after them
+    assert 0 < limit and serial_run_s + limit < step
