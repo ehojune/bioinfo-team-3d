@@ -319,6 +319,33 @@ async def test_cancel_during_metadata_never_starts_variant_rpc(factory):
     assert not calls and not list(a.workdir.rglob("*.json*"))
 
 
+@pytest.mark.parametrize("parent,engine,present", [
+    (None, "fake-engine-key", True),
+    (None, None, False),
+    ("fake-parent-key", "", False),
+    ("fake-parent-key", "   ", False),
+    ("", "fake-engine-key", True),
+    ("fake-parent-key", None, True),
+    (None, "${ATLAS_TEST_KEY}", True),
+])
+def test_doctor_atlas_uses_codex_environment(monkeypatch, parent, engine, present):
+    from labhq import doctor
+    from labhq.settings import Settings
+
+    monkeypatch.delenv(atlas.KEY_ENV, raising=False)
+    monkeypatch.setenv("ATLAS_TEST_KEY", "fake-expanded-key")
+    if parent is not None:
+        monkeypatch.setenv(atlas.KEY_ENV, parent)
+    settings = Settings()
+    if engine is not None:
+        settings.engines.codex.env[atlas.KEY_ENV] = engine
+    monkeypatch.setattr(atlas, "sdk_available", lambda: True)
+    row = doctor._alphagenome_atlas_row(settings)
+    assert row["status"] == ("ok" if present else "skip")
+    for value in ("fake-engine-key", "fake-parent-key", "fake-expanded-key"):
+        assert value not in json.dumps(row)
+
+
 def test_doctor_reports_presence_without_reading_key_file(monkeypatch):
     from labhq import doctor
     monkeypatch.delenv(atlas.KEY_ENV, raising=False)

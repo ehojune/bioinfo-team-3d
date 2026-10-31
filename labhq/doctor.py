@@ -433,10 +433,13 @@ def _alphagenome_row(settings: Settings) -> dict:
     return _row("annot", "AlphaGenome", "ok", "키 있음", "")
 
 
-def _alphagenome_atlas_row() -> dict:
+def _alphagenome_atlas_row(settings: Settings | None = None) -> dict:
     from .tools.annot_alphagenome_atlas import KEY_ENV, sdk_available
+    from .util import merge_staff_env
 
-    if not os.environ.get(KEY_ENV, "").strip():
+    engine_env = expand_env(settings.engines.codex.env) if settings is not None else {}
+    env = merge_staff_env(dict(os.environ), engine_env)
+    if not env.get(KEY_ENV, "").strip():
         return _row("annot", "AlphaGenome Atlas", "skip", "환경변수 키 없음", f"runner 환경에 {KEY_ENV}를 설정하세요.")
     if not sdk_available():
         return _row("annot", "AlphaGenome Atlas", "warn", "환경변수 키 있음, Atlas SDK 없음",
@@ -942,7 +945,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     private = _doctor_private(settings, agents, forced)
     rows.append(_private_paths_row(private))
     rows.append(_alphagenome_row(settings))
-    rows.append(_alphagenome_atlas_row())
+    rows.append(_alphagenome_atlas_row(settings))
     from .knowledge.recall import health as recall_health
     recall = recall_health(settings)
     rows.append(_row("knowledge", "local recall", "ok" if recall["available"] else "warn",
