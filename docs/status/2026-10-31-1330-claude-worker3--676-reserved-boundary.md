@@ -12,3 +12,9 @@
 ## 하지 않은 것
 - manual 한·영(#1157 P2 3번)은 이 claim 범위에 없어 쓰지 않았다. 별도 claim으로 넣는다.
 - 판정은 문장 단위의 휴리스틱이라 영어·한국어 쓰기 표현을 다 덮지는 못한다(쓰기 동사 목록에 없는 표현은 허용 쪽으로 샌다). 선언된 출력은 항상 거절되므로 labhq 파일에 직원 산출물이 겹치는 일은 막힌다.
+
+## 리뷰 후 수정 (rev3)
+- P1(`cso.py:2257`): "Write records from inputs/table.tsv to outputs/external_lookup_status.jsonl"처럼 쓰기 동사와 목적지 사이에 출처 파일이 끼면 `_OTHER_PATH` 규칙이 다른 파일의 동사로 읽어 통과시켰다. 같은 부류의 변형이 한 번 더 나와, 사례를 막지 않고 구조로 닫았다.
+- 구조: 지금 단계 instruction에 예약 이름이 나오면 모두 거절한다. 허용은 앞 단계 산출물 경로뿐이다. 읽기·보고 허용 휴리스틱(`_WRITE_SIGNAL`, `_OTHER_PATH`, `_CLAUSE_END`, `_tells_staff_to_write`)을 뺐다. 정상 계획이 거절되면 계획을 다시 받는 비용으로 본다(CSO 재시도 경로). 파일명 경계 수정은 유지한다.
+- 시험: 읽기·보고·쓰기 6건이 모두 거절되고, 출처가 낀 쓰기·`as`·`into` 변형이 거절된다. `test_reserved_outputs.py` 50 passed, cso·plan·output·reserved·lookup 계열 1711 passed, 9 skipped, `validate_profile` 통과.
+- P1(`cso.py:2272`, manual 한·영): 이 PR 범위에 manual이 없어 쓰지 않았다. 총괄이 W2의 #1155 뒤 rev4에서 넣는다.
