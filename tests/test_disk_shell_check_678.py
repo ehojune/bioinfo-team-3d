@@ -2,6 +2,7 @@
 import json
 import zipfile
 from collections import namedtuple
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -478,3 +479,79 @@ async def test_the_gate_leaves_a_powershell_download_alone_when_there_is_room(ga
     ("PowerShell()", False)])
 def test_which_powershell_rules_preapprove_a_bulk_write(rule, expected):
     assert disk_space.preapproves_bulk_write(rule) is expected
+
+
+# ----- PowerShell arguments are bound from each cmdlet's parameter table (#1167 review) -----
+
+def ps_folders(command, workdir):
+    """The folders a PowerShell command makes the check look at."""
+    seen = []
+
+    def probe(folder):
+        seen.append(folder)
+        return Space(100 * GIB, 0, 50 * GIB)
+
+    disk_space.powershell_check(command, str(workdir), probe=probe, **CHECK)
+    return seen
+
+
+@pytest.mark.parametrize("move", ["Set-Location -Path big", "Set-Location -LiteralPath big", "sl -Path:big",
+                                  "Push-Location -Path big -PassThru", "cd big", "Set-Location big -PassThru"])
+def test_a_named_set_location_moves_where_the_next_command_runs(tmp_path, move):
+    assert ps_folders(move + "; iwr https://x.org/a.zip -OutFile a.zip", tmp_path) == [(tmp_path / "big").resolve()]
+
+
+@pytest.mark.parametrize("move", ["Set-Location", "Set-Location -", "Pop-Location", "Set-Location -Bogus x",
+                                  "Set-Location $env:TEMP"])
+def test_a_location_change_that_cannot_be_read_leaves_the_later_commands_alone(tmp_path, move):
+    assert ps_check(move + "; iwr https://x.org/a.zip -OutFile a.zip", tmp_path, 0.5) is None
+
+
+@pytest.mark.parametrize("command", [
+    "Start-BitsTransfer https://x.org/a.zip -Priority High",             # an option's value is not the destination
+    "Start-BitsTransfer -Source https://x.org/a.zip -DisplayName job",
+    "Start-BitsTransfer https://x.org/a.zip -Bogus out\a.zip",          # an unknown option: its value cannot be told
+    "Start-BitsTransfer -Priority High https://x.org/a.zip -RetryInterval 60",
+])
+def test_bits_option_values_are_never_read_as_the_destination(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5) is None
+
+
+@pytest.mark.parametrize("command", [
+    "Start-BitsTransfer -Priority High https://x.org/a.zip out\a.zip",
+    "Start-BitsTransfer https://x.org/a.zip out\a.zip -DisplayName job -Asynchronous",
+    "Start-BitsTransfer -Source https://x.org/a.zip -Dest out\a.zip -Priority High",
+])
+def test_bits_positional_source_and_destination_still_count_with_options_around_them(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5).action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "Microsoft.PowerShell.Utility\Invoke-WebRequest https://x.org/a.zip -OutFile a.zip",
+    "microsoft.powershell.archive\Expand-Archive raw.zip out",
+    "Microsoft.BackgroundIntelligentTransfer.Management\Start-BitsTransfer https://x.org/a.zip out\a.zip",
+])
+def test_a_module_qualified_cmdlet_name_is_read_like_the_bare_one(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5).action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "Expand-Archive raw.zip -ErrorAction Stop", "Expand-Archive raw.zip -ea Stop -Force",
+    "Expand-Archive raw.zip -InformationVariable iv -Verbose", "Expand-Archive raw.zip -WarningAction SilentlyContinue",
+])
+def test_common_parameter_values_are_not_the_destination(tmp_path, command):
+    assert ps_folders(command, tmp_path) == [Path(tmp_path)]  # no destination named: the current folder
+
+
+def test_a_common_parameter_value_does_not_hide_the_real_destination(tmp_path):
+    assert ps_folders("Expand-Archive -ErrorAction Stop raw.zip out", tmp_path) == [(tmp_path / "out").resolve()]
+    assert ps_folders("Expand-Archive raw.zip -ev e -DestinationPath out", tmp_path) == [(tmp_path / "out").resolve()]
+
+
+def test_literalpath_leaves_the_second_positional_word_to_the_destination(tmp_path):
+    assert ps_folders("Expand-Archive -LiteralPath raw.zip out", tmp_path) == [(tmp_path / "out").resolve()]
+
+
+def test_an_ambiguous_or_unknown_parameter_name_is_not_guessed(tmp_path):
+    assert ps_check("iwr https://x.org/a.zip -Out a.zip", tmp_path, 0.5) is None  # -Out: OutFile, OutVariable, OutBuffer
+    assert ps_check("Expand-Archive raw.zip out -Bogus 1", tmp_path, 0.5) is None  # 'out' may be -Bogus's value

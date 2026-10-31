@@ -480,37 +480,94 @@ def _ps_commands(command: str) -> list[list[str]]:
     return commands
 
 
-def _ps_param(words: list[str], full: str, minimum: int) -> str | None:
-    """The value of a named parameter: `-OutFile x`, `-OutFile:x`, or any unambiguous prefix of its name of at least
-    `minimum` letters (PowerShell accepts `-OutF`). The last occurrence wins."""
-    found = None
-    for index, word in enumerate(words[1:], start=1):
-        if not word.startswith("-") or len(word) < 2:
+# Which words are parameters and which are their values is decided from each cmdlet's own parameter table, never from
+# a guess: a name (or unambiguous prefix) that is not in the table makes the command's positional words unreadable.
+# value=True takes the next word; False is a switch. The common parameters are the same for every cmdlet.
+_PS_COMMON = {"verbose": False, "debug": False, "whatif": False, "confirm": False, "erroraction": True,
+              "warningaction": True, "informationaction": True, "progressaction": True, "errorvariable": True,
+              "warningvariable": True, "informationvariable": True, "outvariable": True, "outbuffer": True,
+              "pipelinevariable": True}
+_PS_COMMON_ALIASES = {"vb": "verbose", "db": "debug", "wi": "whatif", "cf": "confirm", "ea": "erroraction",
+                      "wa": "warningaction", "infa": "informationaction", "pa": "progressaction",
+                      "ev": "errorvariable", "wv": "warningvariable", "iv": "informationvariable",
+                      "ov": "outvariable", "ob": "outbuffer", "pv": "pipelinevariable"}
+_PS_WEB = {"uri": True, "outfile": True, "method": True, "body": True, "contenttype": True, "headers": True,
+           "useragent": True, "credential": True, "usedefaultcredentials": False, "usebasicparsing": False,
+           "websession": True, "sessionvariable": True, "timeoutsec": True, "maximumredirection": True,
+           "maximumretrycount": True, "retryintervalsec": True, "proxy": True, "proxycredential": True,
+           "proxyusedefaultcredentials": False, "skipcertificatecheck": False, "skiphttperrorcheck": False,
+           "skipheadervalidation": False, "allowunencryptedauthentication": False, "authentication": True,
+           "token": True, "certificate": True, "certificatethumbprint": True, "infile": True, "passthru": False,
+           "resume": False, "transferencoding": True, "form": True, "noproxy": False, "disablekeepalive": False,
+           "httpversion": True, "sslprotocol": True, "custommethod": True, "preserveauthorizationonredirect": False,
+           "preservehttpmethodonredirect": False}
+_PS_ARCHIVE = {"path": True, "literalpath": True, "destinationpath": True, "force": False}
+_PS_BITS = {"source": True, "destination": True, "displayname": True, "description": True, "priority": True,
+            "transfertype": True, "retryinterval": True, "retrytimeout": True, "credential": True,
+            "authentication": True, "proxyusage": True, "proxylist": True, "proxybypass": True,
+            "proxycredential": True, "proxyauthentication": True, "notifyflags": True, "notifycmdline": True,
+            "customheaders": True, "securityflags": True, "httpmethod": True, "transferpolicy": True,
+            "asynchronous": False, "suspended": False, "dynamic": False, "usestoredcredential": True,
+            "acls": False, "monitor": False, "cleanuponcompletion": False}
+_PS_LOCATION = {"path": True, "literalpath": True, "passthru": False, "stackname": True}
+_PS_LOCATION_NAMES = frozenset({"cd", "chdir", "set-location", "sl", "push-location", "pushd"})
+_PS_LOCATION_LOST = frozenset({"pop-location", "popd"})
+
+
+def _ps_name(word: str) -> str:
+    """A command name as PowerShell resolves it: lower case, with a module qualifier (`Module.Name\\Cmdlet`) dropped."""
+    name = word.casefold()
+    head, slash, tail = name.rpartition("\\")
+    return tail if slash and re.fullmatch(r"[\w.]+", head) else name
+
+
+def _ps_match(name: str, table: dict[str, bool]) -> str | None:
+    """The parameter a `-name` means: exact, a common alias, or the one parameter it is an unambiguous prefix of."""
+    name = name.casefold()
+    if name in table:
+        return name
+    if name in _PS_COMMON_ALIASES:
+        return _PS_COMMON_ALIASES[name]
+    found = [key for key in table if name and key.startswith(name)]
+    return found[0] if len(found) == 1 else None
+
+
+def _ps_bind(words: list[str], spec: dict[str, bool], order: tuple[str, ...]) -> tuple[dict[str, str | bool], bool]:
+    """The parameter values of one command: named ones, then the positional words in `order`. The flag says whether
+    every word was understood; if not, only the named values are returned (a word that may be an unknown parameter's
+    value is never taken for a positional argument)."""
+    table = {**_PS_COMMON, **spec}
+    named: dict[str, str | bool] = {}
+    positional: list[str] = []
+    clean = True
+    index = 1
+    while index < len(words):
+        word = words[index]
+        index += 1
+        if word == "--":
+            positional.extend(words[index:])
+            break
+        if not (word.startswith("-") and len(word) > 1 and not word[1].isdigit()):
+            positional.append(word)
             continue
         name, colon, value = word[1:].partition(":")
-        if len(name) < minimum or not full.startswith(name.casefold()):
-            continue
-        if colon:
-            found = value
-        elif index + 1 < len(words) and not words[index + 1].startswith("-"):
-            found = words[index + 1]
-    return found
-
-
-def _ps_positional(words: list[str]) -> list[str]:
-    """Words that are neither a parameter nor, as far as can be told, a parameter's value."""
-    out = []
-    skip = False
-    for word in words[1:]:
-        if skip:
-            skip = False
-            continue
-        if word.startswith("-") and len(word) > 1:
-            skip = ":" not in word and word[1:].casefold() in {
-                "path", "literalpath", "destinationpath", "destination", "source", "outfile", "uri"}
-            continue
-        out.append(word)
-    return out
+        key = _ps_match(name, table)
+        if key is None:
+            clean = False  # an unknown parameter: whether the next word is its value cannot be told
+        elif not table[key]:
+            named[key] = True  # a switch (`-Force:$false` still names it; the value is not a path)
+        elif colon and value:
+            named[key] = value
+        elif not colon and index < len(words) and not (words[index].startswith("-") and len(words[index]) > 1):
+            named[key] = words[index]
+            index += 1
+        else:
+            clean = False
+    if clean:
+        left = [key for key in order if key not in named
+                and not (key == "path" and "literalpath" in named)]
+        named.update(zip(left, positional))
+    return named, clean
 
 
 def _unwritten(path: str) -> bool:
@@ -520,52 +577,61 @@ def _unwritten(path: str) -> bool:
 
 def _ps_write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | None:
     """(what, folder it writes into, estimated bytes or None) for one PowerShell command, or None when it is none."""
-    name = words[0].casefold()
+    name = _ps_name(words[0])
     if name in _PS_DOWNLOADS:
-        out = _ps_param(words, "outfile", 4)
-        if not out or _unwritten(out):
+        out = _ps_bind(words, _PS_WEB, ("uri",))[0].get("outfile")
+        if not isinstance(out, str) or _unwritten(out):
             return None  # the result goes to the pipeline, or the path is not written out
-        target = _resolve(out, workdir)
-        return "다운로드", target.parent, None
+        return "다운로드", _resolve(out, workdir).parent, None
     if name in _PS_UNPACK:
-        destination = _ps_param(words, "destinationpath", 1)
-        archive = _ps_param(words, "path", 1) or _ps_param(words, "literalpath", 1)
-        positional = _ps_positional(words)
-        if archive is None and positional:
-            archive = positional[0]
-        if destination is None and len(positional) >= 2:
-            destination = positional[1]
-        if destination is not None and _unwritten(destination):
+        bound, clean = _ps_bind(words, _PS_ARCHIVE, ("path", "destinationpath"))
+        destination = bound.get("destinationpath")
+        archive = bound.get("path") or bound.get("literalpath")
+        if not clean and destination is None:
+            return None  # a destination that may sit behind an unknown parameter is not guessed
+        if isinstance(destination, str) and _unwritten(destination):
             return None
         # No destination named: it unpacks into the current folder, which is still a drive that can be short.
-        folder = _resolve(destination, workdir) if destination else Path(workdir)
-        known = _zip_size(_resolve(archive, workdir)) if archive and not _unwritten(archive) else None
+        folder = _resolve(destination, workdir) if isinstance(destination, str) else Path(workdir)
+        known = (_zip_size(_resolve(archive, workdir)) if isinstance(archive, str) and not _unwritten(archive)
+                 else None)
         return "압축 해제", folder, known
     if name in _PS_TRANSFER:
-        destination = _ps_param(words, "destination", 4)
-        positional = _ps_positional(words)
-        if destination is None and len(positional) >= 2:
-            destination = positional[1]
-        transfer = (_ps_param(words, "transfertype", 4) or "").casefold()
-        if not destination or _unwritten(destination) or transfer == "upload" or "://" in destination:
+        bound = _ps_bind(words, _PS_BITS, ("source", "destination"))[0]
+        destination = bound.get("destination")
+        transfer = str(bound.get("transfertype") or "").casefold()
+        if (not isinstance(destination, str) or _unwritten(destination) or transfer.startswith("upload")
+                or "://" in destination):
             return None  # an upload, or a remote destination, writes no local folder
         target = _resolve(destination, workdir)
         return "다운로드", (target.parent if target.suffix else target), None
     return None
 
 
+def _ps_location(words: list[str], cwd: str | None) -> str | None:
+    """Where the commands after a `Set-Location`/`Push-Location` run; None when that cannot be read."""
+    bound = _ps_bind(words, _PS_LOCATION, ("path",))[0]
+    target = bound.get("literalpath") or bound.get("path")
+    if cwd is None or not isinstance(target, str) or _unwritten(target) or target == "-":
+        return None
+    return str(_resolve(target, cwd))
+
+
 def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, warn_percent: float,
                      probe=None) -> ShellCheck | None:
     """`shell_check` for the PowerShell tool: `Invoke-WebRequest -OutFile`, `Invoke-RestMethod -OutFile`,
     `Expand-Archive` and `Start-BitsTransfer`. Same rule: only a certain shortfall asks, an unknown size never blocks,
-    a command that uses a variable or a subexpression for the path is left alone."""
+    a command that uses a variable or a subexpression for the path is left alone. Once the folder the commands run in
+    can no longer be read (a `Set-Location` it cannot parse, `Pop-Location`) the later ones are left alone too."""
     probe = probe or usage
     worst: ShellCheck | None = None
-    cwd = workdir
+    cwd: str | None = workdir
     for words in _ps_commands(command):
-        name = words[0].casefold()
-        if name in {"cd", "set-location", "sl", "push-location", "pushd"} and len(words) == 2 and "$" not in words[1]:
-            cwd = str(_resolve(words[1], cwd))
+        name = _ps_name(words[0])
+        if name in _PS_LOCATION_NAMES or name in _PS_LOCATION_LOST:
+            cwd = _ps_location(words, cwd) if name in _PS_LOCATION_NAMES else None
+            continue
+        if cwd is None:
             continue
         try:
             found = _ps_write(words, cwd)
@@ -590,7 +656,7 @@ def preapproves_bulk_write(rule: str) -> bool:
     if not words:
         return False
     if match.group(1) == "PowerShell":
-        return words[0].casefold() in _PS_DOWNLOADS | _PS_UNPACK | _PS_TRANSFER
+        return _ps_name(words[0]) in _PS_DOWNLOADS | _PS_UNPACK | _PS_TRANSFER
     name = Path(words[0]).name.casefold().removesuffix(".exe")
     if name == "git":
         return words[1:2] == ["clone"]
