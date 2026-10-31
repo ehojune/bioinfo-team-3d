@@ -643,3 +643,67 @@ async def test_a_cancel_between_two_result_files_cannot_write_only_one(tmp_path,
         await task
     assert await durable.adrain(10)
     assert read_owned(tmp_path, "outputs/RESULT_t.md") == "done" and read_owned(tmp_path, "outputs/RESULT.md") == "done"
+
+
+# ----- #1154: an alias of a file that is fsynced itself is not fsynced again -----
+
+class FsyncedFiles:
+    """Which files os.fsync was asked to flush: the temporary file being written is the one named `.<name>.labhq-*.tmp`,
+    and it is the only such file in its folder while it is written."""
+
+    def __init__(self, monkeypatch, root):
+        self.real, self.root, self.names = os.fsync, Path(root), []
+        monkeypatch.setattr(os, "fsync", self)
+
+    def __call__(self, fd):
+        self.names.extend(tmp.name.split(".labhq-")[0].lstrip(".") for tmp in self.root.rglob(".*.labhq-*.tmp"))
+        return self.real(fd)
+
+
+def test_a_file_write_fsyncs_by_default_and_an_alias_write_does_not(tmp_path, monkeypatch):
+    spy = FsyncedFiles(monkeypatch, tmp_path)
+    owned._write_owned_now(tmp_path, "a.txt", "kept")
+    assert spy.names.count("a.txt") >= 1  # the default is unchanged: the file is flushed
+    before = len(spy.names)
+    owned._write_owned_now(tmp_path, "b.txt", "alias", False)
+    assert len(spy.names) == before  # no fsync for the alias...
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "kept"
+    assert (tmp_path / "b.txt").read_text(encoding="utf-8") == "alias"  # ...but it is written, and by rename:
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["a.txt", "b.txt"]  # no temporary file is left
+
+
+def test_one_job_fsyncs_only_the_files_that_ask_and_writes_them_all(tmp_path, monkeypatch):
+    (tmp_path / "outputs").mkdir()
+    spy = FsyncedFiles(monkeypatch, tmp_path)
+    paths = owned._write_owned_many_now(tmp_path, [("outputs/RESULT_t1.md", "text"), ("outputs/RESULT.md", "text", False)])
+    assert [path.name for path in paths] == ["RESULT_t1.md", "RESULT.md"]
+    assert "RESULT_t1.md" in spy.names and "RESULT.md" not in spy.names  # the per-task file is flushed, the alias not
+    assert (tmp_path / "outputs" / "RESULT_t1.md").read_text(encoding="utf-8") == "text"
+    assert (tmp_path / "outputs" / "RESULT.md").read_text(encoding="utf-8") == "text"
+
+
+@pytest.mark.asyncio
+async def test_a_finished_step_fsyncs_its_per_task_result_and_not_the_alias(tmp_path, monkeypatch):
+    from labhq.models import AgentSpec, Engine, Task, TaskResult
+
+    s = Settings()
+    s.runner.state_dir = s.gateway.state_dir = str(tmp_path / "state")
+    s.runner.workspace_root, s.runner.talent_dir, s.runner.agents_dir = (
+        str(tmp_path / "runs"), str(tmp_path / "talent"), str(tmp_path / "agents"))
+    s.hpc.scheduler = "none"
+    runner = Runner(s)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+
+    class Adapter:
+        async def run(self, ctx):
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, cost_usd=0, text="the answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    spy = FsyncedFiles(monkeypatch, tmp_path / "runs")
+    task = Task(id="t1", agent_id="worker", prompt="x")
+    await runner.run_task(task)
+    assert "RESULT_t1.md" in spy.names and "RESULT.md" not in spy.names
+    outputs = runner.workspaces[task.id].dir / "outputs"
+    assert (outputs / "RESULT_t1.md").read_text(encoding="utf-8") == "the answer"
+    assert (outputs / "RESULT.md").read_text(encoding="utf-8") == "the answer"
