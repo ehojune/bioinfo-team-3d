@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:00 | [`09770de`](https://github.com/ehojune/bioinfo-team-3d/pull/1217/commits/09770de) | **설치 점검 설명서의 Git Bash 확인 범위를 실제로 확인한 새 설치 단계까지로 좁혔습니다.**<br>문서: Git Bash 확인 범위를 새 clone 단계까지로 좁힌다 (#1216 리뷰 P1) |
+| 08:00 | [`534ef9c`](https://github.com/ehojune/bioinfo-team-3d/pull/1217/commits/534ef9c) | **설치 점검 설명서에 Git Bash가 내보내는 셸 변수를 점검에 넘기지 않는다는 점을 적었습니다.**<br>문서: 설치 점검이 Git Bash 셸 변수를 넘기지 않는다 (#1216 리뷰 P1) |
+| 07:00 | [`e717a8c`](https://github.com/ehojune/bioinfo-team-3d/pull/1217/commits/e717a8c) | **Git Bash에서 설치 점검을 돌려도 새 설치를 받는 단계에서 죽지 않습니다. 그 뒤 단계까지의 전체 점검은 이번에 확인하지 않았습니다.**<br>clean_install_check: Git Bash의 MSYSTEM 등 셸 변수를 설치 점검에 넘기지 않는다 (#1216) |
 | 06:40 | [`331a036`](https://github.com/ehojune/bioinfo-team-3d/pull/1215/commits/331a036) | **키가 없으면 비서실장 같은 직원의 명단에 AlphaGenome이 올라가지 않아 CSO가 쓸 수 없는 도구를 전제로 하지 않습니다.**<br>허용 목록에 AlphaGenome 도구를 넣은 직원도 키 파일이나 클라이언트가 없으면 서버가 그 도구를 등록하지 않는데, 직원 명단은 늘 그 도구를 가진 것으로 적어 CSO가 쓸 수 없는 도구를 전제로 계획할 수 있었다. 명단 함수가 AlphaGenome 사용 가능 여부를 받아, 불가능하면 허용 목록에서 두 도구를 빼고 남는 것이 없으면 조회 도구 항목 자체를 적지 않는다. 가능 여부는 오케스트레이터가 키 파일과 클라이언트 설치로 판단하고 계획 prompt 세 곳에 넘긴다 |
 | 06:10 | [`d8a5ec9`](https://github.com/ehojune/bioinfo-team-3d/pull/1195/commits/d8a5ec9) | **의심되거나 중복 인용된 ChEMBL 측정값이 요약에서 보통 측정값처럼 보이지 않습니다.**<br>ChEMBL activity 요약 행이 ChEMBL 자신의 유효성 표지를 버리던 것을 고친다. data_validity_comment와 potential_duplicate를 요약 행에 싣고, 표지가 붙은 행이 있으면 개수와 함께 의심 측정과 중복 인용이라는 경고를 요약에 적는다. 표지가 없으면 경고를 붙이지 않는다. 원본 응답은 전과 같이 결과 파일에 그대로 있다 |
 | 06:00 | [`1050adf`](https://github.com/ehojune/bioinfo-team-3d/pull/1213/commits/1050adf) | **취소된 작업도 만든 작업 폴더를 보고하고, 분석 단계 폴더가 한 번도 보고되지 않은 취소만 묶음 경고를 내지 않습니다.**<br>취소 묶음 경고의 기준을 분석 단계 폴더 보고 여부로 바꾸고 취소된 run도 폴더를 보고한다 (#1212 리뷰 P1) |
