@@ -319,3 +319,24 @@ def test_the_real_fixture_only_change_of_pr_1235_now_reaches_its_windows_test():
     included, reason = selection.include_windows(path, text, selection.policy(), root=selection.ROOT,
                                                  changed={FIXTURE})
     assert included, reason
+
+
+def test_a_common_file_name_is_matched_by_path_not_by_the_bare_name():
+    """#1245 review: `tests/fixtures/wiki/README.md` changed, and every test that mentions README.md was chosen while the
+    one that copies the wiki folder was not."""
+    readme = 'tests/fixtures/wiki/README.md'
+    assert not selection.references_fixture('the README.md of the repo explains this', readme)
+    assert not selection.references_fixture('conftest.py and __init__.py are not fixtures', 'tests/fixtures/conftest.py')
+    assert selection.references_fixture('shutil.copytree(ROOT / "tests/fixtures/wiki", dest)', readme)
+    assert selection.references_fixture('FIXTURE = Path(__file__).parent / "fixtures" / "wiki"', readme)
+    assert not selection.references_fixture('Path(__file__).parent / "fixtures" / "other"', readme)
+
+
+def test_the_real_wiki_readme_change_selects_the_test_that_takes_the_folder_and_not_the_readme_mentions():
+    from pathlib import Path
+
+    readme = 'tests/fixtures/wiki/README.md'
+    named = [p.as_posix() for p in sorted((selection.ROOT / 'tests').glob('test_*.py'))
+             if p.name != Path(__file__).name  # this file spells the fixture's name to test it
+             and selection.references_fixture(p.read_text(encoding='utf-8', errors='replace'), readme)]
+    assert [Path(p).name for p in named] == ['test_wiki_index.py'], named

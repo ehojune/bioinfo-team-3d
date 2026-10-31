@@ -295,13 +295,27 @@ def references_fixture(text, fixture):
 
     A fixture is often run as a subprocess (`FAKE_CLI = ROOT / "tests/fixtures/x.py"`) or read from disk, so no import
     leads to it. Matching the strings the source spells is wide on purpose: a test that merely mentions the name is
-    selected too, never the other way round."""
+    selected too, never the other way round. A fixture that is a common file name (`README.md`) is matched by its path
+    only, since its bare name appears in tests that have nothing to do with it. A test that takes a whole folder
+    (`copytree("tests/fixtures/wiki")`) names the folders above the fixture, so those count too."""
     name = fixture.rsplit("/", 1)[-1]
     stem = name.rsplit(".", 1)[0] if "." in name else name
-    names = {fixture, fixture[len("tests/"):] if fixture.startswith("tests/") else fixture, name}
-    if len(stem) >= 4 and stem not in _GENERIC_FIXTURE_NAMES:
-        names.add(stem)
-    return any(candidate and candidate in text for candidate in names)
+    short = fixture[len("tests/"):] if fixture.startswith("tests/") else fixture
+    names = {fixture, short}
+    if stem not in _GENERIC_FIXTURE_NAMES:
+        names.add(name)
+        if len(stem) >= 4:
+            names.add(stem)
+    parent = fixture.rsplit("/", 1)[0]
+    while parent.count("/") >= 2:  # tests/fixtures/<folder>[/...]: every folder below tests/fixtures
+        names |= {parent, parent[len("tests/"):]}
+        parent = parent.rsplit("/", 1)[0]
+    if any(candidate and candidate in text for candidate in names):
+        return True
+    # pathlib joins spell the folders one by one: `Path(__file__).parent / "fixtures" / "wiki"`
+    folders = fixture.split("/")[2:-1]
+    quoted = lambda part: ('"' + part + '"') in text or ("'" + part + "'") in text
+    return bool(folders) and quoted("fixtures") and all(quoted(folder) for folder in folders)
 
 
 @functools.lru_cache(maxsize=64)
