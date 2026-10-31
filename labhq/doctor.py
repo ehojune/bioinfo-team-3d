@@ -452,7 +452,7 @@ def _alphagenome_row(settings: Settings) -> dict:
 
 
 def _alphagenome_atlas_row(settings: Settings | None = None, agents: list[AgentSpec] | None = None) -> dict:
-    from fnmatch import fnmatchcase
+    from .runner.annot_broker import atlas_allowed
     from .tools.annot_alphagenome_atlas import KEY_ENV, credential, sdk_available
 
     def has_key(*environments: dict[str, str]) -> bool:
@@ -465,9 +465,7 @@ def _alphagenome_atlas_row(settings: Settings | None = None, agents: list[AgentS
     if settings is not None:
         agents = _roster(settings) if agents is None else agents
         names = {settings.runner.force_engine or agent.engine.value for agent in agents
-                 if "annot" in agent.builtin_mcp and not any(
-                     rule == "mcp__labhq_annot" or fnmatchcase("mcp__labhq_annot__alphagenome_atlas", rule)
-                     for rule in agent.disallowed_tools)}
+                 if atlas_allowed(agent, read_only=False)}
         if not names:
             return _row("annot", "AlphaGenome Atlas", "skip", "Atlas 사용 직원 없음", "")
         present = {}
