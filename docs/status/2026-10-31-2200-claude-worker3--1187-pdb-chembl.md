@@ -22,3 +22,8 @@
 ## rev4: chief_of_staff
 - `agents/core/chief_of_staff.yaml`의 `disallowed_tools`에 `mcp__labhq_annot__pdb`·`mcp__labhq_annot__chembl`을 더했고, 그 집합을 고정한 `tests/test_annot_literature.py::test_chief_of_staff_gets_only_the_literature_tools_of_annot`도 같이 고쳤다. 시험을 먼저 고쳐 수정 전 실패를 확인했다.
 - 후속(구조): 새 도구가 생길 때마다 같은 일이 반복되므로 CoS를 deny 목록이 아니라 allow 목록(문헌 도구만)으로 바꾸는 수정이 필요하다.
+
+## rev5: CI와 P2
+- CI 실패 둘은 제 결함: (1) 시험이 `mcp.server.fastmcp`(mcp 2.x에 없음)에서 `ToolError`를 import → `labhq.tools._mcpcompat`. (2) staff 쪽 파일에 `/api/`가 있으면 안 되는 시험(`test_semantics_actions_run.py`)에 ChEMBL 주소가 걸림 → 문자열을 부분으로 이어 쓰고, 그 이유와 이름이 시험 문자열에 걸리지 않게 주석을 고침.
+- 리뷰 P2: ChEMBL 원본 응답이 요약 허용 목록에서 버려지던 것을 `answer.raw`로 보존(PDB와 같은 방식). 모든 입력이 잘못되면 `status.json`도 부르지 않는다.
+- 실행: `test_annot_structure.py`(31건)·`test_semantics_actions_run.py`·`test_semantics_shadow_remove.py`·`test_external_wait.py` 143 passed.

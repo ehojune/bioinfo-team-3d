@@ -12,3 +12,7 @@ rows:
   at: 2026-10-31 21:10
   text: chief_of_staff는 문헌 도구만 받도록 다른 조회 도구를 이름으로 막아 두었으므로 새 pdb와 chembl도 그 목록에 넣는다. 그 목록을 고정한 시험의 집합도 같이 고친다. 시험을 먼저 고쳐 수정 전 실패를 확인했다
   summary: 새 구조·화합물 조회 도구가 비서 직원에게 열리지 않게 합니다.
+- sha: 'ca08ab6'
+  at: 2026-10-31 22:10
+  text: CI 실패 둘과 리뷰 P2 둘을 고친다. 시험이 mcp 2.x에 없는 모듈에서 ToolError를 가져오던 것을 labhq.tools._mcpcompat에서 가져오게 하고, staff 쪽 파일에 REST 접두어를 쓰지 못하게 하는 시험에 걸린 ChEMBL 주소를 GTEx처럼 부분으로 이어 쓴다. ChEMBL target과 molecule과 activity의 API 원본 응답을 결과 파일에 보존하고 도구 응답은 요약만 준다. 모든 입력이 잘못되었으면 release 확인을 포함해 요청을 보내지 않고 오류만 기록한다
+  summary: ChEMBL 결과 파일에 API 원본이 남고, 잘못된 입력만으로는 외부 요청이 나가지 않습니다.
