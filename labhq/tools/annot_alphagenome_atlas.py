@@ -102,9 +102,15 @@ class AtlasBackend:
                         continue
                     if genes and obs.get("gene_id") not in genes:
                         continue
-                    row = {k: _scalar(v, self) for k, v in {**obs, **meta}.items()
-                           if k in {"gene_id", "gene_name", "strand", "ontology_curie", "biosample_name",
-                                    "gtex_tissue", "interval", "junction_Start", "junction_end"}}
+                    # Gene and track metadata have different meanings for fields such as strand.
+                    # Preserve both namespaces, including SDK-specific junction_Start/junction_End spelling.
+                    row = {"gene_metadata": {self.redact(str(k)): _scalar(v, self) for k, v in obs.items()
+                                              if k != "variant"},
+                           "track_metadata": {self.redact(str(k)): _scalar(v, self) for k, v in meta.items()},
+                           "track_index": j}
+                    row.update({k: _scalar(obs[k], self) for k in ("gene_id", "gene_name") if k in obs})
+                    row.update({k: _scalar(meta[k], self) for k in ("ontology_curie", "biosample_name", "gtex_tissue")
+                                if k in meta})
                     row.update(scorer=name, is_signed=signed, raw_score=_scalar(data.X[i, j], self),
                                quantile_score=_scalar(quantiles[i, j], self) if quantiles is not None else None)
                     entry = (_rank(row), -count, row)
@@ -184,7 +190,7 @@ async def query_variants(annotator: reg.RegulatoryAnnotator, variants: object, *
     source = {**SOURCE, "sdk_version": version, "cache_epoch_utc": datetime.now(timezone.utc).date().isoformat()}
     release = f"AlphaGenome Atlas / SDK {version} / {source['cache_epoch_utc']}"
     options = {"assembly": assembly, "requested_scorers": scorers, "ontology_terms": terms,
-               "gene_ids": genes, "schema": 1, "saved_rows_limit": MAX_ROWS}
+               "gene_ids": genes, "schema": 2, "saved_rows_limit": MAX_ROWS}
     annotator._from_cache("alphagenome_atlas", release, options, items)
     done: dict[str, Any] = {}
     stopped = False
@@ -202,7 +208,7 @@ async def query_variants(annotator: reg.RegulatoryAnnotator, variants: object, *
                 except PermissionError:
                     stopped = True
                     done[key] = "Atlas 인증·접근 권한 없음. 키의 Atlas 권한을 확인하세요"
-                except (asyncio.TimeoutError, reg.AlphaGenomeUnavailable):
+                except (asyncio.TimeoutError, TimeoutError, reg.AlphaGenomeUnavailable):
                     backend.cancelled.set()
                     stopped = True
                     done[key] = "Atlas 연결 실패 또는 시간 초과"

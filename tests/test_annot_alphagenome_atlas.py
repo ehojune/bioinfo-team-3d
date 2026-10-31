@@ -208,6 +208,24 @@ async def test_truncation_nonfinite_and_row_redaction(factory, tmp_path):
     assert secret not in json.dumps(full) + json.dumps(result)
 
 
+async def test_track_measurement_and_gene_junction_identity_survive(factory):
+    data = scores()
+    data.obs = Frame([{"gene_id": "ENSG00000000001", "strand": "-",
+                       "junction_Start": 100, "junction_End": 200}])
+    data.var = Frame([{"name": "delta_psi5", "strand": "+"},
+                      {"name": "delta_psi3", "strand": "+"}])
+    a, *_ = factory(data={"RNA_SEQ": data})
+    result = await a.alphagenome_atlas(["chr1:100:A:G"])
+    rows = result["results"][0]["top"]
+    assert {row["track_metadata"]["name"] for row in rows} == {"delta_psi5", "delta_psi3"}
+    assert {row["track_index"] for row in rows} == {0, 1}
+    for row in rows:
+        assert row["gene_metadata"]["strand"] == "-"
+        assert row["track_metadata"]["strand"] == "+"
+        assert row["gene_metadata"]["junction_Start"] == 100
+        assert row["gene_metadata"]["junction_End"] == 200
+
+
 async def test_wait_timeout_stops_batch_without_late_records(factory, monkeypatch):
     a, backend, calls, _ = factory()
     release = threading.Event()
@@ -341,5 +359,6 @@ async def test_installed_sdk_proto_roundtrip_without_network(factory):
     calls.clear()
     result = await a.alphagenome_atlas(["chr1:100:A:G"])
     assert result["n_ok"] == 1 and result["results"][0]["top"][0]["raw_score"] == -2
+    assert result["results"][0]["top"][0]["track_metadata"]["name"] == "test track"
     assert len(calls) == 1 and calls[0].variant.position == 100
     assert 'scores.variant_scorer.name = "RNA_SEQ"' in calls[0].filter
