@@ -1814,3 +1814,57 @@ def test_a_swapped_requests_folder_is_refused_and_nothing_below_the_new_target_i
         with pytest.raises(OSError, match="parent changed|not a plain"):
             build_request_bundle(request, settings)
         assert swapped.get("done") and (victim / "precious.txt").read_text(encoding="utf-8") == "keep"
+
+
+# ---- #1212: a cancel before the first step made a work folder is not a bundle failure ----
+
+def _sent_step_without_workdir(tmp_path, rid, status):
+    hub = Hub(configured(tmp_path))
+    hub.requests[rid] = {"id": rid, "text": "request", "mode": "orchestrate", "status": status, "report": "body",
+                         "results": {}, "plan": {"steps": [{"id": "s1", "depends_on": []}]}}
+    hub.store.put("task", f"t-{rid}", {"request_id": rid, "kind": "step", "step_id": "s1", "accepted": True})
+    return hub
+
+
+@pytest.mark.asyncio
+async def test_a_request_cancelled_before_any_work_folder_exists_is_not_warned_about(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "c1", "cancelled")  # the real build runs and finds no folder
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c1", "request.completed", data)
+
+    assert "bundle_warning" not in data and "bundle_warning" not in hub.requests["c1"]
+    assert "bundle_path" not in hub.requests["c1"]
+    assert not any(event["data"].get("bundle_warning") for event in hub.store.events_since(0)
+                   if event["type"] == "request.bundle")
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_request_without_any_work_folder_still_warns(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "f1", "failed")
+    data = {"ok": False, "report": "body"}
+
+    hub.commit_terminal("f1", "request.failed", data)
+
+    assert "단계 작업 폴더를 하나도 찾지 못했습니다" in data["bundle_warning"]
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_request_whose_bundle_fails_for_another_reason_still_warns(tmp_path, monkeypatch):
+    hub = _sent_step_without_workdir(tmp_path, "c2", "cancelled")
+
+    def fail(*_args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("labhq.request_bundle.build_request_bundle", fail)
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c2", "request.completed", data)
+
+    assert "disk full" in data["bundle_warning"]
+    await asyncio_sleep()
+    hub.store.close()

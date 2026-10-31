@@ -1399,9 +1399,12 @@ class Hub:
 
     def _bundle_outcome(self, rid: str, request: dict | None = None, tasks: dict | None = None,
                         runner_capabilities: dict | None = None) -> dict:
-        """Build against a terminal snapshot; safe to call in a worker thread."""
+        """Build against a terminal snapshot; safe to call in a worker thread.
+
+        No work folder is the normal result of a cancel that came before the first step made one, not a bundle failure
+        (#1212): that case alone is quiet. Every other failure, and a missing folder on any other ending, warns."""
         try:
-            from ..request_bundle import RemoteRunnerBundle, build_request_bundle
+            from ..request_bundle import NoStepWorkdirs, RemoteRunnerBundle, build_request_bundle
 
             bundled = build_request_bundle(
                 copy.deepcopy(self.requests[rid]) if request is None else request,
@@ -1412,6 +1415,10 @@ class Hub:
             return {"bundle": bundled}
         except RemoteRunnerBundle:
             return {"warning": "runner가 다른 PC라 묶음을 만들지 않음", "appendix": True}
+        except NoStepWorkdirs as exc:
+            if _ended_by_cancel(self.requests[rid] if request is None else request):
+                return {"quiet": True}
+            return {"warning": f"요청 묶음을 만들지 못했습니다: {exc}"}
         except Exception as exc:
             return {"warning": f"요청 묶음을 만들지 못했습니다: {exc}"}
 
@@ -1434,6 +1441,11 @@ class Hub:
             else:
                 request.pop("bundle_warning", None)
                 data.pop("bundle_warning", None)
+            return
+        if outcome.get("quiet"):  # nothing to bundle and nothing to warn about: clear what an older attempt left
+            for key in ("bundle_path", "bundle_status", "bundle_grade", "bundle_grade_reasons", "bundle_warning"):
+                request.pop(key, None)
+                data.pop(key, None)
             return
         warning = str(outcome["warning"])
         if outcome.get("appendix"):
