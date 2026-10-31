@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: 'f54642c'
+    at: '2026-11-01 04:37'
+    summary: '?? lifecycle ??? ??? fixture? ?????.'
+    text: 'Define synthetic lifecycle event contract'
   - sha: 'b0c480b'
     at: '2026-11-01 03:09'
     summary: '잘못된 합성 응답도 인증 뒤 재사용을 차단합니다.'
