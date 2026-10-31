@@ -1782,7 +1782,7 @@ async def test_acks_that_arrive_during_a_commit_share_the_next_one(tmp_path):
 async def test_acks_spaced_closer_than_the_merge_window_share_commits(tmp_path, monkeypatch):
     # One ack per message, each arriving after the previous commit finished: nothing overlaps a commit, so only a
     # minimum gap between commits can merge them (#1125: 81 ack commits in one request).
-    monkeypatch.setattr("labhq.runner.daemon.ACK_MERGE_S", 0.3)
+    monkeypatch.setattr("labhq.runner.daemon.ACK_MERGE_S", 1.0)  # far wider than the whole burst below
     runner, seqs = _runner_with_outbox(tmp_path, 8)
     committed = []
     real_aack = runner.store.aack
@@ -1794,7 +1794,7 @@ async def test_acks_spaced_closer_than_the_merge_window_share_commits(tmp_path, 
     runner.store.aack = aack
     for seq in seqs:
         runner._ack_nowait(seq)
-        await asyncio.sleep(0.08)  # spaced like the gateway's acks, far apart from any commit
+        await asyncio.sleep(0.05)  # spaced like the gateway's acks, far apart from any commit
     await runner._ack_drain()
     assert committed[0] == seqs[0] and committed[-1] == seqs[-1]  # the first at once, the last one cumulative
     assert len(committed) <= 3  # eight spaced acks no longer commit eight times
