@@ -27,3 +27,10 @@
 - CI 실패 둘은 제 결함: (1) 시험이 `mcp.server.fastmcp`(mcp 2.x에 없음)에서 `ToolError`를 import → `labhq.tools._mcpcompat`. (2) staff 쪽 파일에 `/api/`가 있으면 안 되는 시험(`test_semantics_actions_run.py`)에 ChEMBL 주소가 걸림 → 문자열을 부분으로 이어 쓰고, 그 이유와 이름이 시험 문자열에 걸리지 않게 주석을 고침.
 - 리뷰 P2: ChEMBL 원본 응답이 요약 허용 목록에서 버려지던 것을 `answer.raw`로 보존(PDB와 같은 방식). 모든 입력이 잘못되면 `status.json`도 부르지 않는다.
 - 실행: `test_annot_structure.py`(31건)·`test_semantics_actions_run.py`·`test_semantics_shadow_remove.py`·`test_external_wait.py` 143 passed.
+
+## rev6: main 반영(#1201 이후)
+- #1201(annot_tools 허용 목록)이 먼저 병합되어 `annot_mcp.py`·`chief_of_staff.yaml`·`test_annot_literature.py`·`cso.py`가 충돌했다. 충돌은 main 쪽을 기준으로 풀었다.
+- `pdb`·`chembl`을 `@offered()`로 등록. `chief_of_staff.yaml`의 deny 목록 추가(rev4)는 허용 목록이 대신하므로 뺐다(CoS는 문헌 7개만 받는다).
+- 정적 시험 둘(`test_annot_structure.py`의 모든 도구가 실행기를 거치는지, `test_external_wait_board_676.py`의 20분 실행기 확인)이 `offered` 장식자와 `_run_structure`를 인식한다.
+- `cso.py`: 이 PR의 직원 명단 문장("RCSB PDB structure and ChEMBL compound lookups")은 main에서 `_annot_roster`로 옮겨져 충돌 해결에서 빠졌다. `cso.py`가 rev6 범위 밖이라 되살리지 않았다(남은 일).
+- 시험: 관련 `test_annot*.py`·`test_external_wait_board_676.py`·`test_agent_prompts.py`·`test_semantics_actions_run.py` 212 passed. 로컬 mcp 1.x에서 `is_error` 속성 오류 2건은 이 변경과 무관(CI는 mcp 2.x).

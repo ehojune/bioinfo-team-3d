@@ -16,3 +16,7 @@ rows:
   at: 2026-10-31 22:10
   text: CI 실패 둘과 리뷰 P2 둘을 고친다. 시험이 mcp 2.x에 없는 모듈에서 ToolError를 가져오던 것을 labhq.tools._mcpcompat에서 가져오게 하고, staff 쪽 파일에 REST 접두어를 쓰지 못하게 하는 시험에 걸린 ChEMBL 주소를 GTEx처럼 부분으로 이어 쓴다. ChEMBL target과 molecule과 activity의 API 원본 응답을 결과 파일에 보존하고 도구 응답은 요약만 준다. 모든 입력이 잘못되었으면 release 확인을 포함해 요청을 보내지 않고 오류만 기록한다
   summary: ChEMBL 결과 파일에 API 원본이 남고, 잘못된 입력만으로는 외부 요청이 나가지 않습니다.
+- sha: 'f1c34cc'
+  at: 2026-11-01 03:30
+  text: main의 도구 허용 목록 변경을 받아 pdb와 chembl도 offered 장식자로 등록한다. 비서실장은 허용 목록이라 이름 차단 목록에 두 도구를 더하던 변경은 뺀다. 도구 등록을 세는 정적 시험 둘이 offered 장식자와 구조 조회 실행기를 인식하게 한다
+  summary: 새 PDB·ChEMBL 도구가 허용 목록 방식에 맞게 등록되고, 비서실장에게는 열리지 않습니다.
