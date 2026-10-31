@@ -13,3 +13,7 @@
 ## 하지 않은 것
 - `daemon.py`(runner) 쪽의 같은 부류와 helper 밖의 직접 쓰기는 보지 않았다.
 - 복구된 facilities 타이머가 취소 때 이미 멈추는지는 확인하지 않았다. 이번 수정은 그 경우에도 안전하다.
+
+## 후속 (같은 PR)
+- `_ended_by_cancel`을 메서드로 두었더니 `test_resume_receipt_clock`(가짜 hub에 `Hub.resume_when_ready`만 붙임) 3건이 `AttributeError`로 죽었다(main에서는 통과). 모듈 함수로 옮겼다.
+- 취소·재개·모델 거절·quota·재시작·facilities·interrupt 계열 1549 passed, 18 skipped(0 failed). `test_request_lifecycle.py` 65 passed 포함.
