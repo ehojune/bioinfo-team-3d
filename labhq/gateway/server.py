@@ -1399,9 +1399,15 @@ class Hub:
 
     def _bundle_outcome(self, rid: str, request: dict | None = None, tasks: dict | None = None,
                         runner_capabilities: dict | None = None) -> dict:
-        """Build against a terminal snapshot; safe to call in a worker thread."""
+        """Build against a terminal snapshot; safe to call in a worker thread.
+
+        THE DEFINITION (#1212): no work folder is the normal result of a cancel that came before any analysis step made
+        one, not a bundle failure. That case alone is quiet: the request was cancelled and no step or direct task of it
+        ever reported a work folder (a cancelled run reports the folder it made too). A folder that was reported and is
+        gone is lost data and warns, like every other failure and like a missing folder on any other ending. The
+        briefing, plan and review tasks do not count: they make folders that are never bundled."""
         try:
-            from ..request_bundle import RemoteRunnerBundle, build_request_bundle
+            from ..request_bundle import NoStepWorkdirs, RemoteRunnerBundle, build_request_bundle
 
             bundled = build_request_bundle(
                 copy.deepcopy(self.requests[rid]) if request is None else request,
@@ -1412,8 +1418,24 @@ class Hub:
             return {"bundle": bundled}
         except RemoteRunnerBundle:
             return {"warning": "runner가 다른 PC라 묶음을 만들지 않음", "appendix": True}
+        except NoStepWorkdirs as exc:
+            req = self.requests[rid] if request is None else request
+            if _ended_by_cancel(req) and not self._recorded_workdir(
+                    rid, req, self.store.all("task") if tasks is None else tasks):
+                return {"quiet": True}
+            return {"warning": f"요청 묶음을 만들지 못했습니다: {exc}"}
         except Exception as exc:
             return {"warning": f"요청 묶음을 만들지 못했습니다: {exc}"}
+
+    @staticmethod
+    def _recorded_workdir(rid: str, request: dict, tasks: dict) -> bool:
+        """An analysis step (a step or direct task) of this request reported a work folder."""
+        def named(result: Any) -> bool:
+            return isinstance(result, Mapping) and bool(result.get("workdir_id"))
+
+        return (any(named(r) for r in (request.get("results") or {}).values()) or
+                any(isinstance(t, Mapping) and t.get("request_id") == rid and t.get("kind") in ("step", "direct")
+                    and named(t.get("result")) for t in tasks.values()))
 
     def _apply_bundle_outcome(self, rid: str, data: dict, outcome: dict) -> None:
         self._apply_bundle_to_request(self.requests[rid], data, outcome)
@@ -1434,6 +1456,11 @@ class Hub:
             else:
                 request.pop("bundle_warning", None)
                 data.pop("bundle_warning", None)
+            return
+        if outcome.get("quiet"):  # nothing to bundle and nothing to warn about: clear what an older attempt left
+            for key in ("bundle_path", "bundle_status", "bundle_grade", "bundle_grade_reasons", "bundle_warning"):
+                request.pop(key, None)
+                data.pop(key, None)
             return
         warning = str(outcome["warning"])
         if outcome.get("appendix"):

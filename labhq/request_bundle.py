@@ -81,6 +81,10 @@ for step, upstream_ids in LINKS.items():
 UNREPORTED_TAG = " (unreported)"
 
 
+class NoStepWorkdirs(OSError):
+    """No step of the request left a work folder to bundle (a request cancelled before its first folder existed)."""
+
+
 class RemoteRunnerBundle(OSError):
     """The terminal result names a runner workspace that is not on the gateway host."""
 
@@ -783,7 +787,7 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             for step_id, outputs, workdir, path, python_command in unreported:
                 rows.append(copy_output(step_id, outputs, workdir, path, None, python_command))
         if not found_workdirs:
-            raise OSError("단계 작업 폴더를 하나도 찾지 못했습니다")
+            raise NoStepWorkdirs("단계 작업 폴더를 하나도 찾지 못했습니다")
 
         with (temp / "INPUTS.tsv").open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=INPUT_FIELDS, delimiter="\t", lineterminator="\n")

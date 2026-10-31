@@ -1253,9 +1253,13 @@ class Runner:
                 # A second cancel can interrupt the receipt read. Still send conservative UNKNOWN, then preserve
                 # cancellation; the queued barrier never mutates the binding or manufactures a finished receipt.
                 costs, interrupted = {"cost_usd": None, "cost_known": False}, again
+            # A run cancelled after its work folder was made still reports the folder: the gateway tells "cancelled
+            # before any folder existed" (nothing to bundle) from a folder whose record was lost (#1212).
+            made = self.__dict__.get("workspaces", {}).get(task.id)
+            folder = {"workdir": str(made.dir), "workdir_id": made.dir.name} if made is not None else {}
             res = self._shutdown_result(
                 TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err, cleanup_evidence=cleanup,
-                           **costs),
+                           **folder, **costs),
                 cancelled=cancelled)
             base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
             # One unit: a second cancel arriving while this commits cannot leave the status without the result.
