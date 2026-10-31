@@ -2227,20 +2227,25 @@ def _rewrite_output_references(instruction: str, inner: str, rel: str) -> tuple[
     return pattern.sub(replace, instruction), rewritten, ambiguous
 
 
-_RESERVED_WRITE = re.compile("|".join(re.escape(name) for name in sorted(output_checks.RESERVED_OUTPUTS)))
+# A reserved name as a whole file name: not the start of a longer one (`external_lookup_status.jsonl.md`, `-x`) and not the
+# tail of another folder's name (`my_outputs/...`). A full stop that ends a sentence still ends the name, and so does a
+# Korean particle (`...jsonl에`): only ASCII name characters continue it.
+_RESERVED_WRITE = re.compile(
+    r"(?<![A-Za-z0-9_-])(?:" + "|".join(re.escape(name) for name in sorted(output_checks.RESERVED_OUTPUTS)) + r")(?![A-Za-z0-9_-])(?!\.[A-Za-z0-9_])")
 
 
 def _reserved_names(step: dict) -> list[str]:
-    """Names labhq writes itself that this step declares as its own output or tells its staff to write (#676).
+    """Names labhq writes itself that this step declares as an output or names in its instruction (#676).
 
-    A declared output or a bare `outputs/<name>` in the instruction is the step's own file. A name reached through an
-    upstream step's folder (`inputs/<step>/outputs/<name>`) is a read of that step's record and is allowed."""
+    The instruction may not name one at all: whether a sentence tells the staff to write it, read it or report it is
+    a reading of wording that has variants without end, so a plan that names it is sent back and the planner words the
+    step without it. The one name that stays is an upstream step's record reached through that step's folder
+    (`inputs/<step>/outputs/<name>`), which the step reads and cannot write."""
     found = [rel for field in ("outputs", "optional_outputs") for name in step.get(field) or []
              if (rel := output_relpath(str(name))) in output_checks.RESERVED_OUTPUTS]
     text = step.get("instruction") or ""
-    for match in _RESERVED_WRITE.finditer(text):
-        if not re.search(r"inputs/[^/\s]+/$", text[:match.start()]):
-            found.append(match.group(0))
+    found += [match.group(0) for match in _RESERVED_WRITE.finditer(text)
+              if not re.search(r"inputs/[^/\s]+/$", text[:match.start()])]
     return list(dict.fromkeys(found))
 
 
