@@ -496,6 +496,27 @@ def test_doctor_atlas_checks_only_effective_eligible_engines(
         assert "codex" in row["detail"]
 
 
+@pytest.mark.parametrize("placeholder", ["${MISSING_ATLAS_KEY}", "$MISSING_ATLAS_KEY", "%MISSING_ATLAS_KEY%"])
+@pytest.mark.parametrize("source", ["runner", "engine"])
+def test_doctor_atlas_rejects_unexpanded_key_references(monkeypatch, placeholder, source):
+    from labhq import doctor
+
+    monkeypatch.delenv("MISSING_ATLAS_KEY", raising=False)
+    monkeypatch.setenv(atlas.KEY_ENV, placeholder if source == "runner" else "fake-parent-key")
+    settings = Settings()
+    if source == "engine":
+        settings.engines.codex.env[atlas.KEY_ENV] = placeholder
+    agents = [AgentSpec(id="worker", name="Worker", role="test", engine=Engine.codex,
+                        builtin_mcp=["annot"])]
+    monkeypatch.setattr(atlas, "sdk_available", lambda: True)
+    row = doctor._alphagenome_atlas_row(settings, agents)
+    assert row["status"] == "skip"
+    assert "MISSING_ATLAS_KEY" not in json.dumps(row)
+    assert "fake-parent-key" not in json.dumps(row)
+    if source == "runner":
+        assert doctor._alphagenome_atlas_row()["status"] == "skip"
+
+
 def test_chief_of_staff_denies_atlas_in_claude_command(tmp_path):
     from labhq.adapters.claude_code import ClaudeCodeAdapter
 

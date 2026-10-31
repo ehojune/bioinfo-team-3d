@@ -455,8 +455,13 @@ def _alphagenome_atlas_row(settings: Settings | None = None, agents: list[AgentS
     from fnmatch import fnmatchcase
     from .tools.annot_alphagenome_atlas import KEY_ENV, credential, sdk_available
 
+    def has_key(*environments: dict[str, str]) -> bool:
+        value = credential(*environments)
+        # Expansion leaves unknown references intact; those are not credentials.
+        return bool(value) and re.search(r"\$(?:\{[^}]+\}|[A-Za-z_]\w*)|%[^%]+%", value) is None
+
     parent = dict(os.environ)
-    present = {"runner": bool(credential(parent))}
+    present = {"runner": has_key(parent)}
     if settings is not None:
         agents = _roster(settings) if agents is None else agents
         names = {settings.runner.force_engine or agent.engine.value for agent in agents
@@ -470,7 +475,7 @@ def _alphagenome_atlas_row(settings: Settings | None = None, agents: list[AgentS
             config = getattr(settings.engines, name, None)
             engine_env = expand_env(config.env) if config is not None else {}
             # Same resolver as the runner; task-specific overrides do not exist during doctor.
-            present[name] = bool(credential(parent, engine_env))
+            present[name] = has_key(parent, engine_env)
     if not any(present.values()):
         return _row("annot", "AlphaGenome Atlas", "skip", "환경변수 키 없음", f"runner 환경에 {KEY_ENV}를 설정하세요.")
     if not sdk_available():
