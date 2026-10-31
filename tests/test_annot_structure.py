@@ -194,7 +194,10 @@ def chembl_handler(version="ChEMBL_35"):
             rows = [{"activity_id": n, "molecule_chembl_id": f"CHEMBL{n}", "target_chembl_id": query["target_chembl_id"],
                      "assay_chembl_id": "CHEMBL1", "assay_type": "B", "standard_type": "IC50", "standard_relation": "=",
                      "standard_value": "5.0", "standard_units": "nM", "pchembl_value": "8.3",
-                     "document_chembl_id": "CHEMBL2", "ignored": "x"}
+                     "document_chembl_id": "CHEMBL2", "ignored": "x",
+                     # ChEMBL's own validity flags: a comment on a doubtful value, and 1 for a repeated citation
+                     "data_validity_comment": "Outside typical range" if n % 50 == 7 else None,
+                     "potential_duplicate": 1 if n % 40 == 3 else 0}
                     for n in range(offset, min(offset + limit, total))]
             return httpx.Response(200, json={"activities": rows, "page_meta": {
                 "total_count": total, "next": "more" if offset + limit < total else None}})
@@ -382,3 +385,33 @@ def test_the_manual_describes_both_tools_in_korean_and_english():
         text = (REPO / "docs" / name).read_text(encoding="utf-8")
         assert all(needle in text for needle in needles), (name, [n for n in needles if n not in text])
 
+
+@pytest.mark.asyncio
+async def test_activity_rows_keep_chembls_validity_flags_and_the_summary_says_how_many_are_flagged(tmp_path):
+    """A value ChEMBL marks as doubtful or as a repeated citation must not look like an ordinary measurement in the
+    summary a report quotes from (PR #1195 review)."""
+    annotator, _, _ = make(chembl_handler(), tmp_path)
+    row = (await annotator.chembl(["CHEMBL203"], kind="activity", limit=100))["results"][0]
+    rows = row["rows"]
+    assert all({"data_validity_comment", "potential_duplicate"} <= set(r) for r in rows)
+    doubtful = [r for r in rows if r["data_validity_comment"]]
+    repeated = [r for r in rows if r["potential_duplicate"]]
+    assert doubtful and repeated and doubtful[0]["data_validity_comment"] == "Outside typical range"
+    flagged = [r for r in rows if r["data_validity_comment"] or r["potential_duplicate"]]
+    assert row["flagged_rows"] == len(flagged) > 0
+    assert "의심" in row["validity_note"] and "중복" in row["validity_note"]
+
+
+@pytest.mark.asyncio
+async def test_no_validity_note_when_no_row_is_flagged(tmp_path):
+    def handler(request):
+        if request.url.path.endswith("/status.json"):
+            return httpx.Response(200, json={"chembl_db_version": "ChEMBL_35"})
+        return httpx.Response(200, json={"activities": [{"activity_id": 1, "standard_type": "IC50", "standard_value": "1",
+                                                         "standard_units": "nM", "data_validity_comment": None,
+                                                         "potential_duplicate": 0}],
+                                         "page_meta": {"total_count": 1, "next": None}})
+
+    annotator, _, _ = make(handler, tmp_path)
+    row = (await annotator.chembl(["CHEMBL203"], kind="activity", limit=10))["results"][0]
+    assert row["flagged_rows"] == 0 and "validity_note" not in row

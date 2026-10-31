@@ -131,7 +131,10 @@ _TARGET_KEEP = ("target_chembl_id", "pref_name", "target_type", "organism", "tax
 _MOLECULE_KEEP = ("molecule_chembl_id", "pref_name", "molecule_type", "max_phase", "first_approval")
 _ACTIVITY_KEEP = ("activity_id", "molecule_chembl_id", "target_chembl_id", "assay_chembl_id", "assay_type",
                   "standard_type", "standard_relation", "standard_value", "standard_units", "pchembl_value",
-                  "document_chembl_id")
+                  "document_chembl_id",
+                  # ChEMBL's own validity flags travel with the number: a comment on a doubtful value, and 1 when the
+                  # measurement repeats another record's citation (not an independent one).
+                  "data_validity_comment", "potential_duplicate")
 
 
 def _pick(row: dict, keys: tuple[str, ...]) -> dict:
@@ -165,6 +168,14 @@ def _chembl_summary(item: Item) -> dict:
     if answer.get("truncated"):
         out["truncated"] = (f"ChEMBL 응답 {answer.get('total')}개 중 {len(out['rows'])}개만 받았습니다. "
                             "잘린 목록을 전체처럼 인용하면 안 됩니다")
+    if answer.get("kind") == "activity":
+        flagged = [r for r in out["rows"] if isinstance(r, dict) and (r.get("data_validity_comment")
+                                                                      or r.get("potential_duplicate"))]
+        out["flagged_rows"] = len(flagged)
+        if flagged:
+            out["validity_note"] = (f"{len(flagged)}행에 ChEMBL 유효성 표지가 있습니다. data_validity_comment가 있는 값은 "
+                                    "의심스러운 측정이고 potential_duplicate=1은 독립 측정이 아닌 중복 인용입니다. "
+                                    "이 행을 근거로 쓰기 전에 표지를 확인하고, 그대로 인용하지 마세요")
     return out
 
 
