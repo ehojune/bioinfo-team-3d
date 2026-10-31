@@ -12,3 +12,7 @@ rows:
     at: "2026-10-31 16:50"
     summary: "환경 grant가 task가 끝나면 사라지고, 같은 id의 다음 작업이 이전 환경을 받지 않습니다."
     text: "환경 grant를 task가 끝나면 지우고 binding 없는 같은 id에도 남기지 않는다 (#674 리뷰 P2)"
+  - sha: "ae3e711"
+    at: "2026-10-31 17:20"
+    summary: "manual에 검증된 runner 환경을 Claude 소비 단계에 읽기 전용으로 여는 방법, 링크 검사, 다른 엔진이 거부되는 이유를 적었습니다."
+    text: "문서: 검증된 runner 환경의 읽기 grant (#674)"
