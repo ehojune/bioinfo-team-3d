@@ -12,3 +12,7 @@ rows:
   at: 2026-10-31 11:11
   text: manual 한·영에 RESULT.md가 비거나 없을 수 있고 RESULT_<task>.md에서 복구한다고 적었다 (#1154).
   summary: 사용 설명서에 결과 사본 RESULT.md가 비거나 없을 수 있으며 RESULT_<task>.md로 복구한다고 적었습니다.
+- sha: "54eb5d4"
+  at: 2026-10-31 11:20
+  text: RESULT.md 별칭 주석과 status를 비거나 없을 수 있다는 실제 보장에 맞췄다 (#1154).
+  summary: 결과 사본 RESULT.md가 정전 시 비거나 없을 수 있다는 점을 코드 주석과 기록에 맞게 고쳤습니다.
