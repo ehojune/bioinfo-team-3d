@@ -60,16 +60,78 @@ async def _two_parallel_steps(configure=None):
 
 
 @pytest.mark.asyncio
-async def test_with_the_default_two_parallel_steps_cannot_pass_the_request_cap():
-    """Each turn may cost up to 1.5 and the request has 2.0: the second must not start while the first holds its 1.5."""
+async def test_with_the_default_parallel_steps_share_the_request_cap_and_a_third_is_refused():
+    """Each turn may cost up to 1.5 and the request has 2.0. The second holds only the 0.5 that is left (the hold is cut to
+    what the request still has, #1139), so the holds never pass the request cap; nothing is left for a third."""
     hub, orchestrator, first, release = await _two_parallel_steps()
     try:
+        second = asyncio.create_task(orchestrator.run_step(Task(agent_id="worker", request_id="r", prompt="second")))
+        await asyncio.sleep(0.05)
+        assert len(hub.calls) == 2 and hub.approvals == []  # both are sent, without a card
+        assert sorted(task.budget_usd for task in hub.calls) == [0.5, 1.5]  # what each is capped at
+        assert sum(hub.requests["r"]["budget_holds"].values()) == pytest.approx(2.0)
         with pytest.raises(BudgetExceeded, match="budget reservation"):
-            await orchestrator.run_step(Task(agent_id="worker", request_id="r", prompt="second"))
-        assert len(hub.calls) == 1  # the second turn was never sent
+            await orchestrator.run_step(Task(agent_id="worker", request_id="r", prompt="third"))
+        assert len(hub.calls) == 2  # the third turn was never sent
     finally:
         release.set()
-        await first
+        await asyncio.gather(first, second)
+
+
+async def _one_step(budget, per_task=5.0, **task):
+    async def dispatch(t):
+        return result(t, text="done", cost_usd=0.1)
+
+    hub = FakeHub(dispatch)
+    hub.s.policy.budget.reserve_before_dispatch = BudgetSettings().reserve_before_dispatch
+    hub.s.policy.budget.per_task_usd = per_task
+    hub.requests["r"]["budget_usd"] = budget
+    await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work", **task))
+    return hub
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget", [0.5, 1.0, 4.99])
+async def test_a_request_budget_below_the_per_turn_cap_is_not_asked_about_at_its_first_turn(budget):
+    hub = await _one_step(budget)
+    assert hub.approvals == [] and len(hub.calls) == 1
+    assert hub.calls[0].budget_usd == pytest.approx(budget)  # the turn is capped at the whole request budget
+
+
+@pytest.mark.asyncio
+async def test_a_turn_cap_below_the_request_budget_is_held_as_it_is():
+    hub = await _one_step(10.0, per_task=2.0)
+    assert hub.calls[0].budget_usd == 2.0 and hub.approvals == []
+
+
+@pytest.mark.asyncio
+async def test_less_than_a_cent_left_is_not_clipped_to_a_hold_nothing_can_enforce():
+    """A hold below one cent cannot be enforced (the CLI renders cents), so such a request asks like any other."""
+    async def dispatch(t):
+        return result(t, text="done", cost_usd=0.0)
+
+    hub = FakeHub(dispatch)
+    hub.s.policy.budget.reserve_before_dispatch = True
+    hub.s.policy.budget.per_task_usd = 5.0
+    hub.requests["r"]["budget_usd"] = 0.005
+    with pytest.raises(BudgetExceeded):
+        await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+    assert [card["kind"] for card in hub.approvals] == ["budget"] and hub.calls == []
+
+
+@pytest.mark.asyncio
+async def test_the_card_for_an_exhausted_request_still_asks_for_the_whole_turn_cap():
+    """Clipping only applies while something is left: once the holds use it all, a raise must make room for a full turn."""
+    hub, orchestrator, first, release = await _two_parallel_steps()
+    try:
+        second = asyncio.create_task(orchestrator.run_step(Task(agent_id="worker", request_id="r", prompt="second")))
+        await asyncio.sleep(0.05)
+        with pytest.raises(BudgetExceeded):
+            await orchestrator.run_step(Task(agent_id="worker", request_id="r", prompt="third"))
+        assert hub.approvals[-1]["detail"]["reserve_usd"] == 1.5  # the turn cap, not the zero that was left
+    finally:
+        release.set()
+        await asyncio.gather(first, second)
 
 
 @pytest.mark.asyncio

@@ -41,6 +41,8 @@ def waiting_calls(monkeypatch):
 @pytest.mark.parametrize("failure", ["offline", "cli", "empty"])
 async def test_failed_consult_is_rejected_with_reason(tmp_path, target, failure):
     hub = Hub(settings(tmp_path))
+    # A consult is asked in the name of a request: with the pre-dispatch hold (#1139) the request has to exist.
+    hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
     routed = target.removeprefix("colleague:")
     hub.agents = {routed: {"engine": "mock"}}
     ask = AskRequest(task_id="blocked", agent_id="worker", request_id="r", to=target,
