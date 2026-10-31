@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: 'ef4e70e'
+    at: '2026-11-01 05:00'
+    summary: 'Check offline observer inventory assertions.'
+    text: 'Strengthen offline observer inventory checks'
   - sha: '0626a84'
     at: '2026-11-01 04:40'
     summary: 'Add an offline observer prototype.'
