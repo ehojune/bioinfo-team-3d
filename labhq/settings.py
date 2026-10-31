@@ -362,9 +362,10 @@ _BACKGROUND_SHELL_TOOLS = ("BashOutput", "KillShell", "TaskOutput", "TaskStop")
 class BudgetSettings(BaseModel):
     per_task_usd: float = 5.0
     per_request_usd: float = 30.0
-    # Opt-in (#862): hold each charged turn's whole cap before it is sent, so in-flight turns and the last turn
-    # cannot pass the request cap on the product's own cost accounting. Not a provider billing guarantee.
-    reserve_before_dispatch: bool = False
+    # On by default since #1139 (#862): hold each charged turn's whole cap before it is sent, so in-flight turns and the
+    # last turn cannot pass the request cap on the product's own cost accounting. Not a provider billing guarantee.
+    # `false` restores the older check, which only looks at what is already spent.
+    reserve_before_dispatch: bool = True
 
     @model_validator(mode="after")
     def reserved_budgets_are_amounts(self) -> "BudgetSettings":
