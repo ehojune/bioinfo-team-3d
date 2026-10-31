@@ -381,3 +381,60 @@ async def test_a_runner_that_changes_runtime_while_steers_attach_is_not_sent_the
     result = await asyncio.wait_for(hub.dispatch(task), 5)  # without the recheck the task is sent and awaits a reply
     assert not result.ok and result.cost_usd == 0.0 and "expects runtime wsl" in result.error
     assert sent == [] and task.id not in hub.futures and task.id not in hub.task_runner
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_bound_plan_is_checked_with_its_scheduler_made_environment_steps(tmp_path, monkeypatch):
+    """`prepare_recruits` judged a stored plan without `stored_environment`: the last clone steps were cut from the
+    check, so they skipped the agent and external-data guards (#674 rev13)."""
+    import labhq.orchestrator.cso as cso_module
+
+    planned = split_runner_environments(plan(), {"a": "win", "b": "wsl"}, {"win": "windows", "wsl": "wsl"}, lambda _: True)
+    seen = []
+
+    class Stop(Exception):
+        pass
+
+    def spy(raw, *args, **kwargs):
+        seen.append((len(raw), kwargs.get("stored_environment", False)))
+        raise Stop
+
+    monkeypatch.setattr(cso_module, "validate_steps", spy)
+
+    async def dispatch(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="ok")
+
+    hub = FakeHub(dispatch)
+    hub.requests["r"] = {"id": "r", "text": "t", "mode": "team", "budget_usd": 10, "status": "running",
+                         "plan": {"steps": planned}}
+    await Orchestrator(hub).run_request("r", resume=True)  # the request ends as failed at the spy; only the call matters
+    assert seen[:1] == [(len(planned), True)]
+
+
+@pytest.mark.asyncio
+async def test_a_runner_that_changes_runtime_while_task_dispatched_is_published_is_not_sent_the_stale_binding(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    task, _ = _bound_task(runner="wsl", runtime="wsl")
+    hub.agent_runner["b"] = "wsl"
+    hub.runner_capabilities["wsl"] = {"runtime_env": "wsl"}  # both checks before the publish pass
+    sent = []
+    publish = hub.publish
+
+    async def publish_and_reregister(event):
+        await publish(event)
+        if event.get("type") == "task.dispatched":
+            hub.runner_capabilities["wsl"] = {"runtime_env": "windows"}  # the same ID re-registers while awaiting
+
+    async def send(rid, frame):
+        sent.append(frame)
+
+    hub.publish = publish_and_reregister
+    hub.send_runner = send
+    import asyncio
+
+    result = await asyncio.wait_for(hub.dispatch(task), 5)  # without the recheck the frame is sent and awaits a reply
+    assert not result.ok and result.cost_usd == 0.0 and "expects runtime wsl" in result.error
+    assert sent == [] and task.id not in hub.futures and task.id not in hub.task_runner
+    assert hub.store.get("task", task.id) is None

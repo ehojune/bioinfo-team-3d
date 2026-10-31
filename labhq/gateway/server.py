@@ -4359,6 +4359,15 @@ class Hub:
                             "data": {"kind": task.meta.get("kind"), "step_id": task.meta.get("step_id"),
                                      "attempt": task.meta.get("attempt", 1), "outputs": task.meta.get("outputs", []),
                                      "title": task.meta.get("title"), "prompt": task.prompt[:300]}})
+        # The publish above yields, and the runner can re-register with another runtime meanwhile: judge the binding
+        # once more right before the frame goes out. Nothing was sent yet, so the refusal is a real $0 (#674).
+        refused = self._session_pin_refusal(task, rid, self.runner_capabilities.get(rid, {}).get("runtime_env"))
+        if refused:
+            self.futures.pop(task.id, None)
+            self.task_runner.pop(task.id, None)
+            self.store.delete("task", task.id)
+            await self._release_steers(task)
+            return refused
         try:
             await self.send_runner(rid, {"type": "task.dispatch", "task": task.model_dump(mode="json")})
             await self._push_task_state(task.id)  # includes steers sent after payload attachment, before the frame

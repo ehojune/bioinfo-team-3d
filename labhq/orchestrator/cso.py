@@ -7322,6 +7322,8 @@ class Orchestrator:
                 research_limit = (len(req["plan"].get("branches") or []) * self.cfg.max_branch_steps + 3
                                   if req["plan"].get("branches") else self.cfg.max_steps)
                 validate_steps(req["plan"]["steps"], known, research_limit, orchestration,
+                               stored_environment=any("environment_binding" in s or "environment_bindings" in s
+                                                      for s in req["plan"]["steps"]),
                                guard=self._external_guard(rid), tier_rules=self._tier_rules())
                 await persist_request(self.hub, rid)
 
