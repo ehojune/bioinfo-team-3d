@@ -1,6 +1,6 @@
 pr: 1188
 rows:
-  - sha: pending
+  - sha: 6bd3dc9
     at: "2026-11-01 00:30"
     summary: "모델 등급 비교의 한영 호출 예제에 필요한 비용 예약 인자를 보완합니다."
     text: "docs: mock control 구성과 arm별 상한, 같은 인스턴스 재사용 및 실제 비용 보장과의 차이를 안내 (#625)"
