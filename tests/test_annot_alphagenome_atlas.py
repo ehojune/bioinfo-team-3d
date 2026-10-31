@@ -645,6 +645,25 @@ def context(tmp_path, settings=None):
         workdir=tmp_path, settings=settings, mcp_servers=[], env={}, emit=noop, prompt="go")
 
 
+@pytest.mark.parametrize("other_engine", ["claude_code", "gemini", "antigravity"])
+async def test_other_engine_alias_is_removed_and_launch_override_refused(tmp_path, other_engine):
+    from unittest.mock import patch
+    ctx = context(tmp_path)
+    getattr(ctx.settings.engines, other_engine).env = {atlas.KEY_ENV: "${ATLAS_ALIAS}"}
+    ctx.settings.engines.codex.env = {atlas.KEY_ENV: "selected-fixture-key"}
+    ctx.env[atlas.KEY_ENV] = "task-fixture-key"
+    adapter = CodexAdapter(ctx.settings)
+    with patch.dict(os.environ, {"ATLAS_ALIAS": "other-fixture-key", "SAFE": "keep"}, clear=True):
+        env = adapter.staff_env(ctx)
+        assert "ATLAS_ALIAS" not in env
+        assert env["SAFE"] == "keep"
+        assert atlas.credential(dict(os.environ), adapter.engine_env(), ctx.env) == "task-fixture-key"
+        ctx.settings.engines.codex.prefix_args = ["${ATLAS_ALIAS}"]
+        result = await adapter.run(ctx)
+        assert not result.ok and "overrides" in result.error
+        assert not ctx.commands_ran
+
+
 @pytest.fixture
 def service(tmp_path, monkeypatch):
     ctx = context(tmp_path)

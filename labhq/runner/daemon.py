@@ -32,7 +32,7 @@ import yaml
 from .. import disk_space, durable
 from ..adapters import (adapter_preflight_error, get_adapter, is_read_only_task, read_only_profile,
                         read_only_refusal)
-from ..adapters.base import RunContext, expand_env
+from ..adapters.base import RunContext, atlas_credentials, expand_env
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
                               awrite_owned_bytes, awrite_owned_many, remove_entry, write_owned)
@@ -69,7 +69,7 @@ from .. import vocab as output_vocab
 from ..vocab import declare as output_types
 from .approvals import Broker
 from .annot_broker import AnnotBroker, ENABLED_ENV as ATLAS_ENABLED_ENV, atlas_allowed, refuse_credential_copy
-from ..tools.annot_alphagenome_atlas import credential, credentials, without_credentials
+from ..tools.annot_alphagenome_atlas import credential, without_credentials
 from .codex_sandbox import SandboxWatch
 from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
 from . import local_jobs
@@ -2442,7 +2442,7 @@ class Runner:
                 engine_config = getattr(self.s.engines, agent.engine.value, None)
                 atlas_engine_env = expand_env(engine_config.env) if engine_config is not None else {}
                 atlas_key = credential(dict(os.environ), atlas_engine_env, environment_env)
-                atlas_secrets = credentials(dict(os.environ), atlas_engine_env, environment_env)
+                atlas_secrets = atlas_credentials(self.s, environment_env)
                 refuse_credential_copy(self.s, atlas_secrets)
                 staff_config = write_staff_config(self.s, self.s.path(self.s.runner.state_dir) / "staff")
             except (OSError, ValueError, yaml.YAMLError) as exc:

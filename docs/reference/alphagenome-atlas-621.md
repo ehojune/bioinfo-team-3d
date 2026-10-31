@@ -2,7 +2,7 @@
 
 Lookup-only implementation evidence, checked 2026-10-31. Live Atlas access is **UNVERIFIED** pending PI's key-location answer.
 
-Integration hold: cross-engine key aliases still reach staff environments (P1); `labhq/adapters/base.py` needs ownership before repair. Manuals remain separately owned. The fixed `/annot/atlas` operation accepts query parameters, never caller URLs, commands or output roots.
+Integration hold: final-head CI/review and installed CLI verification remain pending. Cross-engine alias filtering now shares one collector across daemon and adapter. Manuals remain separately owned. The fixed `/annot/atlas` operation accepts query parameters, never caller URLs, commands or output roots.
 
 | Contract | Implementation |
 |---|---|
@@ -23,7 +23,7 @@ Integration hold: cross-engine key aliases still reach staff environments (P1); 
 
 ## Credential boundary verification (rev7)
 
-Rev10: deny regression was 5 failed/3 passed before repair; Atlas/literature/doctor/adapter/runner-env tests now pass (306 passed, 12 skipped). Fake-only P1 reproduction confirms that collecting every engine key in daemon alone does not stop `Adapter.staff_env()` from restoring a different engine's inherited alias. Resolve all engine environments in both adapter credential checks and daemon before claiming this boundary is complete.
+Rev11: cross-engine alias regression was 3 failed before repair; Atlas/adapter/runner-env tests pass (207 passed, 12 skipped). A shared collector expands every configured engine environment for removal and launch/config checks, while selected-engine credential precedence stays unchanged. Fake-only cases cover Claude, Gemini and Antigravity aliases inherited by Codex, launch restoration refusal and task precedence.
 
 - `tests/test_annot_alphagenome_atlas.py`: real MCP Python child → loopback HTTP → runner SDK fixture receives the fake key. Child environments, argv, responses and generated files contain no key. Direct PowerShell child tests cover parent/engine/task sources, case variants, aliases and empty overrides. Broker regressions share this inventoried module; no Windows coverage inventory change is needed.
 - `shell_environment_policy.set`, engine `extra_args`, MCP env and expanded prefix restoration are refused before generated files or process launch. Identity spoofing, arbitrary operation fields, admission, busy requests, disconnect, deadline and runner success/error/cancel cleanup have regressions.
