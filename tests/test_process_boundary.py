@@ -79,13 +79,32 @@ def test_broker_ready_before_child_and_closed_after():
          patch.object(boundary.shutil, "which", return_value="bwrap"), \
          patch.object(boundary.Path, "lstat", return_value=SimpleNamespace(st_mode=0o140000)), \
          patch.object(boundary.subprocess, "run", side_effect=run):
-        receipt = boundary.diagnostic_broker_probe(factory, on_ready=ready)
+        receipt = boundary.diagnostic_broker_probe(factory, on_ready=ready,
+            run_id="12345678-1234-4234-8234-123456789abc")
     assert [event if isinstance(event, str) else event[0] for event in events] == [
         "factory", "start", "ready", "child", "close"]
     assert events[0][1] == events[2][1] == receipt.run_id
+    assert receipt.run_id == "12345678-1234-4234-8234-123456789abc"
+    assert events[3][1][-1] == receipt.run_id
     assert "/run/labhq/provider.sock" in events[3][1]
     assert receipt.launch == "exited_0" and receipt.seal_status == "unsealed"
     assert receipt.cleanup == "broker_closed_socket_absent; descendants_unverified"
+
+
+@pytest.mark.parametrize("run_id", ["", "not-a-uuid", "12345678123442348234123456789abc",
+                                    "12345678-1234-4234-8234-123456789ABC", 42, True])
+def test_broker_rejects_invalid_run_id_before_start(run_id):
+    with patch.object(boundary.shutil, "which", side_effect=AssertionError("started")):
+        with pytest.raises(ValueError, match="canonical UUID"):
+            boundary.diagnostic_broker_probe(lambda *_: None, run_id=run_id)
+
+
+def test_broker_generates_uuid_when_run_id_omitted():
+    with patch.object(boundary.shutil, "which", return_value=None):
+        first = boundary.diagnostic_broker_probe(lambda *_: None)
+        second = boundary.diagnostic_broker_probe(lambda *_: None)
+    assert str(boundary.uuid.UUID(first.run_id)) == first.run_id
+    assert first.run_id != second.run_id
 
 
 def test_broker_ready_failure_prevents_child_and_closes():

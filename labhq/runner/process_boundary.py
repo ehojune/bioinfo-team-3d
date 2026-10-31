@@ -238,13 +238,21 @@ def _broker_prerequisites():
     return os.name == "posix" and bool(shutil.which("bwrap")) and os.path.isfile("/usr/bin/python3")
 
 
-def diagnostic_broker_probe(broker_factory, *, timeout=10, on_ready=None):
+def diagnostic_broker_probe(broker_factory, *, timeout=10, on_ready=None, run_id=None):
     """Exercise a synthetic broker in an unsealed non-model namespace.
 
     The trusted factory must create only a synthetic broker; it receives a
     private directory and the receipt run ID. This is not a protected launch.
     """
-    receipt = Receipt(1, str(uuid.uuid4()), None, None, None, None, None, {},
+    if run_id is None:
+        run_id = str(uuid.uuid4())
+    else:
+        try:
+            if not isinstance(run_id, str) or str(uuid.UUID(run_id)) != run_id:
+                raise ValueError
+        except (ValueError, AttributeError) as exc:
+            raise ValueError("run_id must be a canonical UUID string") from exc
+    receipt = Receipt(1, run_id, None, None, None, None, None, {},
                       "unsupported", "not_started", "not_needed", "unsealed",
                       ["diagnostic only; runtime and storage are unsealed"])
     bwrap = shutil.which("bwrap")
