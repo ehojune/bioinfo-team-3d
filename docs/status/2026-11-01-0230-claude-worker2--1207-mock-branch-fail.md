@@ -8,4 +8,6 @@
 - 관찰(결함으로 단정하지 않음): 두 경우 모두 요청 상태는 `done`, outcome은 `research_reported`이고 요청 단위의 "일부 실패" 표지는 없다. 실패는 보고서 한계와 CP2 경고로만 보인다. 보고서의 labhq 한계 줄은 단계 id(s2)만 말하고 갈래(b2)는 말하지 않는다(갈래 이름은 종합 단계 context의 memo에 있다).
 - 바뀐 것: `labhq/adapters/mock.py`(토큰·실패 반환), `tests/test_e2e_mock.py`(helper가 `hub`를 함께 돌려줌, 실패 시험 2건).
 - 실행한 것: `test_e2e_mock`(11)·`test_demo_separation`·`test_research_cp2` 로컬 통과. 새 시험 2건은 옛 mock에서 실패함을 확인.
-- 미해결/미검증: manual의 mock 토큰 단락에 두 토큰은 아직 없다(claim 밖). 모든 갈래가 실패하는 경우, 갈래 안 여러 단계, 재시도는 확인하지 않았다.
+- 문서: manual 한·영의 mock 엔진 단락에 `[step-fail]`·`[branch-fail]`을 적었다(rev7).
+- 일부 실패 요청이 `done`으로만 보이는 문제는 #1220으로 따로 다룬다.
+- 미해결/미검증: 모든 갈래가 실패하는 경우, 갈래 안 여러 단계, 재시도는 확인하지 않았다.
