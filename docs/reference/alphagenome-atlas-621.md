@@ -50,6 +50,8 @@ The proposed wording was replaced by bilingual manual updates in rev13. Manual o
 
 ## Windows child timeout diagnostics (rev16)
 
+- rev18 adds phase-only child slot/admission/HTTP and parent ASGI/query timing, with no request data, headers or environment values. Local Windows Atlas: 141 passed, 1 skipped; child response 1.109s. The original CI stall remains unproven; the existing 20s deadline is unchanged.
+
 - [CI run 41204799221](https://github.com/ehojune/bioinfo-team-3d/actions/runs/41204799221) exceeded the existing 20-second child deadline. Its log cannot distinguish import, broker call or interpreter shutdown; the original delay remains unexplained.
 - Shield the pipe readers from deadline cancellation, kill the child and drain for at most five seconds. Preserve partial stdout/stderr and exit status while masking the fake credential/token. A deterministic timeout regression proves consumed output survives; the prior cancellation pattern loses it.
 - The real child emits flushed monotonic import/call/loop-close/interpreter-exit markers. Response and credential-absence assertions remain; stdin is closed and parent cleanup is bounded. No timeout increase or new skip.
