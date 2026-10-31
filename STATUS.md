@@ -12,6 +12,14 @@
 - 시험: `tests/test_disk_shell_check_678.py`에 주석·리다이렉션·`-x`·묶음 플래그 5건 추가, 파일 전체와 관련 기존 시험 119건 통과.
 - 미검증: heredoc 본문 줄이 명령으로 읽히는 경우(초과 질문만 생김), 중첩 `$(…)`·백틱 안의 명령, Windows CI.
 
+# #1076 종료 ack 시험의 shutdown 한도 5초
+
+- 결론: `test_shutdown_commits_the_acks_it_already_received`의 `shutdown(timeout_s=...)`를 0.05초(#1181 전) → 0.5초(#1181) → 5.0초(제품 기본값)로 올렸다. 단언(이미 받은 ack를 종료 전에 commit한다)과 제품 코드는 그대로다.
+- 관측: 0.05초와 0.5초 모두 Windows 러너에서 `[1,2,3,4,5] == [5]`로 실패했다(#1180 attempt 2, #1182 attempt 1). 두 번 다 로그에 `runner local: an ack commit is still running; its rows stay in the outbox`가 있어, ack commit 하나가 shutdown의 drain 한도 안에 끝나지 않았다. 재실행에서는 통과했다.
+- 원인: **첫 commit이 한 번 느렸던 것으로 추정하며 재지 않았다.** 이 시험은 task가 없어 `finish()`가 마감을 먼저 쓰는 경로가 아니다(`finish()`가 바로 반환하고 drain이 거의 전체 한도를 받는다). `_ack_flush`의 대기(`ACK_MERGE_S`)는 drain이 `hurry`를 세워 건너뛰므로 원인이 아니라고 코드로 확인했으나 실행으로 확인하지는 않았다.
+- 시험: `-k shutdown` 3건 통과.
+- 미검증: Windows CI에서의 안정성(이 PR이 첫 확인), 첫 commit 지연의 실제 시간. 다시 실패하면 `_ack_flush` 첫 commit 시간을 러너에서 재는 진단이 필요하다.
+
 # #678 디스크 감시·halt 안내 P2 두 건
 
 - 결론: (1) #1169의 P2 — 읽기 전용 task도 `runner.bulk_data_root`를 감시해, 쓸 수 없는 드라이브가 기준 아래면 불필요하게 halt될 수 있었다. `_start_disk_watch(..., read_only=)`가 읽기 전용이면 bulk 폴더를 빼고(작업 폴더·state 폴더는 계속 본다) 호출부가 `read_only`를 넘긴다. (2) #1175의 P2 — `halt_watch`가 "프로세스 트리를 끝냈습니다" 안내를 먼저 쓴 뒤 결과 확인을 다시 해서, 완료가 이기면 안내와 최종 상태가 어긋났다. 안내를 `await` 앞이 아니라 kill 뒤로 옮기고, 확인과 표시(`halted`)와 kill 사이에 `await`가 없게 했다. 완료가 먼저면 halt하지도 안내하지도 않는다.

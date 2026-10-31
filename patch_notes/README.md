@@ -23,6 +23,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 20:50 | [`1a6301f`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/1a6301f) | **읽기 전용 task는 쓰지 못하는 project 폴더의 드라이브 때문에 멈추지 않습니다.**<br>디스크 감시: 읽기 전용 task는 project 폴더를 감시하지 않는다 (#678 리뷰 P2) |
 | 20:30 | [`df1d8f9`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/df1d8f9) | **manual의 디스크 감시 설명에 쓸 수 있는 project 폴더도 감시한다는 내용을 더했습니다.**<br>문서: 감시 대상에 project 폴더 (#678) |
 | 20:20 | [`b7ad386`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/b7ad386) | **디스크 감시가 직원이 쓸 수 있는 project 폴더가 다른 드라이브에 있어도 그 드라이브의 여유를 함께 봅니다.**<br>디스크 감시: 쓸 수 있는 project 폴더의 드라이브도 본다 (#678 리뷰 P1) |
+| 20:00 | [`b6c9fe6`](https://github.com/ehojune/bioinfo-team-3d/pull/1183/commits/b6c9fe6) | **종료 ack 시험이 Windows 러너에서 간헐적으로 실패하는 것이 관측돼 대기 한도를 제품 기본값 5초로 올렸습니다.**<br>시험: 종료 ack 시험의 shutdown 한도를 제품 기본값 5초로 올린다 (#1076) |
 | 19:50 | [`5fac414`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/5fac414) | **manual에 작업 도중 디스크 감시의 확인 간격, 멈추는 기준, 재개 방법, 끄는 설정과 한계를 적었습니다.**<br>문서: 작업 도중 디스크 감시 (#678) |
 | 19:30 | [`7855fb6`](https://github.com/ehojune/bioinfo-team-3d/pull/1182/commits/7855fb6) | **읽기 전용 task는 쓰지 못하는 큰 원자료 드라이브 때문에 멈추지 않고, 멈춤 안내는 프로세스를 실제로 끝낸 뒤에만 남습니다.**<br>디스크 감시 P2 둘: 읽기 전용 task는 bulk 폴더를 감시하지 않고, halt 안내는 실제로 끝낸 뒤에만 쓴다 (#678) |
 | 19:10 | [`3c215eb`](https://github.com/ehojune/bioinfo-team-3d/pull/1180/commits/3c215eb) | **manual에 Codex와 Gemini 소비 단계가 환경 경로를 받는 방식과 아직 거부되는 엔진을 적었습니다.**<br>문서: Codex·Gemini 소비 단계의 환경 전달 (#674) |
