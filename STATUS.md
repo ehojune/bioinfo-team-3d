@@ -4,6 +4,15 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1125 rev7 runner `_ack_now` commit 합치기
+
+- 결론: ack commit이 한 요청에 81회였던 이유는, gateway가 메시지마다 ack를 보내고 각 ack가 앞 commit이 끝난 뒤 도착해 겹치는 일이 없었기 때문이다(#1135의 합치기는 commit 중 도착한 ack만 합친다). `_ack_flush`가 직전 commit 뒤 `ACK_MERGE_S`(0.5초)가 지나기 전에는 다음 commit을 미루고, 그 사이 ack는 누적값 하나로 합친다. 한가한 runner의 첫 ack는 그대로 즉시 commit한다.
+- 지킨 것: `_ack_drain`(종료·재연결·대기 호출)이 대기 신호를 세워 0.5초를 기다리지 않고 바로 commit한다. 늦은 delete는 크래시 시 몇 행의 재전송이고 gateway `runner_cursor`가 거른다. outbox 행은 ack 전까지 남으므로 #606 보장은 같다.
+- 측정(D:, `synchronous=FULL`, lab 요청 1건, 같은 세션 2회씩): commit 542 → 493~495(실제 COMMIT 538 → 489~491), `_ack_now` 81 → 32~34(합 3.6~4.3 s → 1.3~1.4 s), 요청 wall 19.3~20.1 s → 18.8 s. wall은 runner 쪽 commit이 gateway 경로와 병렬이라 commit 수만큼 줄지 않는다.
+- 시험: `tests/test_state.py` 신규 2건(간격이 벌어진 ack 8개가 3회 이하로 합쳐짐, drain은 창을 기다리지 않음), 기존 ack·종료·durable·loop-liveness 62건 통과. 신규 두 건은 수정 전 `ACK_MERGE_S`가 없어 실패한다.
+- 바꾼 것: `labhq/runner/daemon.py`, `tests/test_state.py`.
+- 미검증: Windows CI 전체, 실제 ws 재연결 중 크래시 재전송 양.
+
 # #1148 취소가 시설 수리 카드 저장 중에 들어오면 요청이 되살아나는 결함
 
 - 결론: `Hub._request_facilities_fix`의 `open_fix`가 카드를 저장하는 `await self._add_approval(...)` 뒤에 `req_state["status"] = "waiting_facilities_fix"`를 썼다. 그 사이에 취소가 들어오면(저장이 느린 디스크에서는 수십 ms) 취소된 요청이 "시설 수리 승인 대기"로 되돌아가고 그 상태가 저장되며 카드가 남았다. 함수 맨 앞의 `cancelled` 검사는 이 `await` 뒤에는 없었다. #1148 조사(#1139 후속)에서 재현했다.
@@ -108,6 +117,39 @@ lab 요청에는 번역이 나오지 않아(번역은 기술적인 영문 메시
 - 실측(이 PC, 상태 폴더 D:, lab 요청 1회, main에는 안 A가 반영됨): 실제 `COMMIT` 문 main 613~624회 → 548회(runner 221~227 → 151, −31%). 요청 처리는 main 20.9~35.5 s(중앙값 약 22 s)에서 19.9~21.6 s(중앙값 약 20.6 s)로, D: 디스크 편차가 커서 3~7%대 감소와 편차 축소 정도로만 본다.
 - 미확인: CI Windows 전후 시간, ack가 더 크게 몰리는 느린 디스크에서의 효과.
 - 근거: #1125 설계 댓글 6531718393.
+
+## 단계
+#1132(#1125 E1): task activity를 이벤트 transaction에.
+
+## 한 일
+- `labhq/store.py`: `aappend_event`/`append_event`/`_append_event_now`에 `activity=(key, reducer)`를 더했다. reducer는 writer thread에서 같은 transaction 안의 최신 task 행에 적용된다(`_apply_activity`로 분리).
+- `labhq/gateway/server.py`: `on_runner_message`가 activity를 따로 commit하지 않고 마지막 `publish(..., activity=...)`에 실어 보낸다. 이벤트, request 저장본, activity, runner cursor가 한 transaction이다.
+- 시험: `test_state_activity_durable.py`의 publish stub을 실제 publish로 바꿨다. 단언은 약하게 하지 않았고 의미가 바뀐 한 곳만 새 시험으로 명시했다. 취소가 commit 중이면 이전에는 activity만 남고 이벤트·cursor는 없었다. 이제 commit이 끝나면 이벤트·activity·cursor가 함께 남고 재전송은 중복으로 걸러진다(ack만 보냄). commit이 실패하면 모두 없고 재전송은 다시 적용된다. `test_gateway_publish_durable.py`에 세 시험을 더했다(한 publish는 한 commit·실패 시 모두 없음, `agent.tool` 40건 폭주에서 메시지당 한 commit·순서·전 tool 보존, 느린 client가 락을 잡아도 timeout 안에 activity 저장).
+- manual 한영의 발행 보장 문장에 activity를 더했다.
+
+## 실측 (D: 드라이브, lab 요청 1회, main과 이 브랜치 각 2회)
+| | transaction | commit 시간 합 | 요청 시간 |
+|---|---|---|---|
+| main | 635, 641 | 0.7 s, 0.5 s | 16.2 s, 15.8 s |
+| 이 브랜치 | 587, 586 | 0.6 s, 0.6 s | 14.1 s, 16.3 s |
+- transaction −48~−55(약 −8%). lab은 #1126 이후 `synchronous=NORMAL`이라 commit 시간 합이 0.5~0.7 s로 줄어 fsync 비용이 보이지 않고, 요청 시간 차이(−2.1 s, +0.5 s)는 오차 안이다. 기본 `synchronous=FULL`에서 건당 약 37 ms로 계산하면 −48건은 약 −1.8 s로 **추정**한다(측정 아님).
+
+## 확인
+- 관련 시험 13개 파일 503 passed, 1 skipped.
+
+## 하지 않은 것
+- 기본 FULL 모드의 요청 시간은 측정하지 않았다(lab이 NORMAL).
+- 전체 suite와 Windows CI는 CI에 맡긴다.
+
+## CI 후 수정 (rev6)
+- `test_state_control_durable::test_halt_after_activity_read_keeps_committed_tool`이 3.10·3.12·Windows에서 실패했다. 원인은 시험이 `hub.publish`를 빈 `AsyncMock`으로 바꿔 activity가 publish 안으로 옮겨진 뒤 저장되지 않은 것이다. 제품 순서는 안전하다(halt는 `aupdate_task_control`, activity는 이벤트 transaction의 reducer로 같은 writer lane에서 최신 행에 병합).
+- stub이 `store.aappend_event(..., activity=activity)`를 실제로 부르게 했고 단언은 그대로다. 같은 부류를 찾으려고 publish를 stub한 시험 14개 파일을 훑었고 activity에 기대는 파일은 `test_state_activity_durable`(이미 수정)과 이 파일뿐이었다.
+- 관련 4개 파일 72 passed.
+
+## main 반영 (rev8)
+- #1151 병합 뒤 `server.py`·`store.py`·`test_gateway_publish_durable.py`의 충돌을 풀었다. #1143의 중복 runner 메시지 건너뛰기는 cursor 검사에서 먼저 `None`을 돌려주므로 activity는 중복 복사본에 다시 적용되지 않는다.
+- 합친 뒤 `test_state::test_a_resend_waits_for_the_first_copy_...`가 `publish(ev, runner_id, runner_seq)` 시그니처로 감싼 double에 `activity=`가 넘어가 실패했다. `activity` 인자를 activity가 있는 메시지에만 넘기게 해 시험을 고치지 않고 풀었다.
+- 관련 시험 174 passed.
 
 # #1107 Chrome 예열 step
 

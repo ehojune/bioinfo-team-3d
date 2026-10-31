@@ -211,6 +211,96 @@ async def test_event_and_request_commit_in_one_transaction(gateway, monkeypatch)
     assert hub.requests["r"]["status"] == "before"  # the live request goes back to what is stored (a restart would show it)
 
 
+def tool_activity(name):
+    def update(activity):
+        tools = dict(activity.get("tools") or {})
+        tools[name] = {"name": name}
+        return {**activity, "state": "working", "tools": tools}
+    return update
+
+
+async def test_activity_commits_with_its_event_or_not_at_all(gateway, monkeypatch):
+    """#1132: a publication that carries task activity is one commit; a failed commit leaves neither."""
+    hub = gateway
+    hub.store.put("task", "t", {"completed": False, "activity": {"state": "queued"}})
+    transaction = hub.store._transaction
+    commits = []
+
+    @contextmanager
+    def counted():
+        with transaction() as conn:
+            yield conn
+        commits.append(1)
+
+    monkeypatch.setattr(hub.store, "_transaction", counted)
+    await hub.publish(event(request=False), "runner", 1, activity=("t", tool_activity("one")))
+    assert len(commits) == 1
+    assert set(hub.store.get("task", "t")["activity"]["tools"]) == {"one"}
+    assert len(hub.store.events_since(0)) == 1 and hub.store.runner_seen("runner") == 1
+
+    @contextmanager
+    def failing():
+        with transaction() as conn:
+            yield conn
+            raise OSError("commit failed")
+
+    monkeypatch.setattr(hub.store, "_transaction", failing)
+    with pytest.raises(OSError):
+        await hub.publish(event(request=False), "runner", 2, activity=("t", tool_activity("two")))
+    assert set(hub.store.get("task", "t")["activity"]["tools"]) == {"one"}
+    assert len(hub.store.events_since(0)) == 1 and hub.store.runner_seen("runner") == 1
+
+
+async def test_tool_activity_burst_costs_one_commit_per_message_and_keeps_every_tool(gateway, monkeypatch):
+    """#1132: activity now waits for the event lock with its event. A burst of agent.tool messages must still land in
+    order, one commit each, with no tool lost and no message waiting on an unrelated one beyond its turn."""
+    hub = gateway
+    hub.store.put("task", "t", {"completed": False, "activity": {"state": "queued"}})
+    transaction = hub.store._transaction
+    commits = []
+
+    @contextmanager
+    def counted():
+        with transaction() as conn:
+            yield conn
+        commits.append(1)
+
+    monkeypatch.setattr(hub.store, "_transaction", counted)
+    count = 40
+    publications = [asyncio.create_task(hub.publish(event(request=False), "runner", n + 1,
+                                                    activity=("t", tool_activity(f"tool{n}"))))
+                    for n in range(count)]
+    await asyncio.wait_for(asyncio.gather(*publications), 10)
+    assert len(commits) == count  # it was 2 per message: the event, then the activity
+    assert set(hub.store.get("task", "t")["activity"]["tools"]) == {f"tool{n}" for n in range(count)}
+    assert [e["seq"] for e in hub.store.events_since(0)] == list(range(1, count + 1))
+    assert hub.store.runner_seen("runner") == count
+
+
+async def test_activity_waits_for_a_slow_client_only_as_long_as_its_event_does(gateway, monkeypatch):
+    """#1132: the activity rides the event lock, so a client that stalls the previous event holds it for at most the
+    network timeout (set short here); the activity is then saved and the slow client is dropped, as for any event."""
+    import labhq.gateway.server as server
+
+    hub = gateway
+    hub.store.put("task", "t", {"completed": False, "activity": {"state": "queued"}})
+    monkeypatch.setattr(server, "CLIENT_SEND_TIMEOUT_S", 0.05)
+
+    class Slow:
+        async def send_text(self, text):
+            await asyncio.Event().wait()
+
+        async def close(self, code):
+            pass
+
+    slow = Slow()
+    hub.clients.add(slow)
+    await hub.publish(event(request=False), "runner", 1)  # the slow client stalls this one until its timeout
+    assert slow not in hub.clients
+    await asyncio.wait_for(hub.publish(event(request=False), "runner", 2, activity=("t", tool_activity("late"))), 1)
+    assert set(hub.store.get("task", "t")["activity"]["tools"]) == {"late"}
+
+
 def translation_hub(tmp_path):
     from labhq.settings import Settings
 

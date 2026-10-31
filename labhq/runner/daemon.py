@@ -286,6 +286,7 @@ _EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_
 ENVIRONMENT_ALIAS_AVAILABLE = False
 
 ACK_DRAIN_S = 5.0  # how long a reconnect waits for the acks it already received to commit (#1125)
+ACK_MERGE_S = 0.5  # at most one ack commit per this long: acks arriving between two commits share the second (#1125)
 
 
 class Runner:
@@ -296,6 +297,7 @@ class Runner:
     _ack_done = 0
     _ack_task: asyncio.Task | None = None
     _ack_error: BaseException | None = None
+    _ack_last = 0.0  # monotonic time the last ack commit finished
     _shutdown_deadline: float | None = None  # time.monotonic() when `shutdown()` must be done
 
     def __init__(self, settings: Settings):
@@ -504,13 +506,25 @@ class Runner:
             self._ack_task = asyncio.get_running_loop().create_task(self._ack_flush())
 
     async def _ack_flush(self) -> None:
+        """Commit the highest ack. An idle runner commits at once; after a commit the next one waits until
+        `ACK_MERGE_S` have passed (the acks that arrive meanwhile are cumulative and share it), unless a caller is
+        waiting in `_ack_drain`. A late delete only means a few rows are resent after a crash and deduped by the
+        gateway's cursor."""
+        hurry = self.__dict__.setdefault("_ack_hurry", asyncio.Event())
         try:
             while self._ack_done < self._ack_high:
+                wait = self._ack_last + ACK_MERGE_S - time.monotonic()
+                if wait > 0 and not hurry.is_set():
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(hurry.wait(), wait)
                 high = self._ack_high
                 await self.store.aack(high)
                 self._ack_done = max(self._ack_done, high)
+                self._ack_last = time.monotonic()
         except Exception as exc:  # noqa: BLE001 - raised to the next caller, where the inline commit raised it
             self._ack_error = exc
+        finally:
+            hurry.clear()
 
     def _ack_wait_s(self, normal: float) -> float:
         """How long a closing-down path may wait for the acks: `normal`, or what is left of an open shutdown deadline."""
@@ -524,6 +538,7 @@ class Runner:
         and the gateway dedups them."""
         task = self._ack_task
         if task is not None and not task.done():
+            self.__dict__.setdefault("_ack_hurry", asyncio.Event()).set()  # someone waits: do not hold the commit back
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout)
             except asyncio.TimeoutError:

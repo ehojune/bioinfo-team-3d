@@ -456,13 +456,13 @@ labhq는 상태를 쓸 때마다 디스크에 확실히 내려갈 때까지(fsyn
 - 부른 쪽이 취소돼도 이미 넣은 쓰기는 끝까지 갑니다. 함께 가야 하는 쓰기(보낸 메시지와 "보냈다"는 표시, 작업을 닫는 상태와 결과)는 한 묶음으로 갑니다. 결과가 이미 나간 task에는 취소 결과를 따로 보내지 않습니다. runner가 아직 받지 않은 task의 취소를 먼저 받으면 그 id를 기록해 두고, 뒤따라 온 dispatch는 시작하지 않고 취소 결과로만 답합니다(#1149).
 - 종료할 때(gateway 종료 hook, runner 종료, 프로세스 종료)는 대기 중인 쓰기를 모두 끝낸 뒤 나갑니다.
 - 갑자기 죽어도 파일은 옛것이나 새것 한쪽입니다(임시 파일, fsync, 교체 순서 그대로). SQLite는 커밋된 데까지입니다. 아직 시작하지 않은 쓰기만 사라지는데, 그 쓰기를 기다리던 단계는 어차피 다음으로 가지 못했습니다.
-- fsync를 모아서 한꺼번에 하거나 미루지 않습니다. 쓰기마다 디스크에 내려간 뒤에 돌아옵니다.
+- fsync를 모아서 한꺼번에 하거나 미루지 않습니다. 쓰기마다 디스크에 내려간 뒤에 돌아옵니다. 하나만 예외입니다. runner가 gateway의 ack를 받아 outbox 행을 지우는 commit은 직전 commit 뒤 0.5초 안에는 미루고 그 사이 ack를 하나로 합칩니다(#1125). 행은 ack 전까지 outbox에 남고 gateway가 이미 저장한 번호는 `runner_cursor`가 걸러서, 지우기가 늦어져 죽어도 재전송은 한 번 더 도착해 무시될 뿐 결과가 같습니다. 종료·재연결은 이 0.5초를 기다리지 않고 바로 commit합니다.
 
 SQLite는 읽기 연결과 쓰기 연결을 나눠(WAL) 읽기가 커밋을 기다리지 않습니다.
 
 Gateway의 event·request·결과 추가/삭제·보고서 검토 저장은 같은 DB writer에서 await합니다. 같은 request의 저장은 직렬화하며 commit 뒤 상태와 전송을 반영합니다. 취소돼도 commit 결과를 확인하며, 보고된 task 비용 저장 뒤 완료를 기록합니다. quota 대기 취소는 저장 대기 전에 전달합니다. 요청 취소 호출자가 끊겨도 runner 취소·카드 정리·terminal 기록을 마친 뒤 취소를 전달합니다. WebSocket 전송은 client마다 최대 10초이며 취소·시간 초과 때 연결을 닫아 재연결 replay를 유도합니다.
 
-일반 승인 생성·결정·timeout·close·runner 전달/ACK도 DB writer에서 await합니다. 카드 삭제·결정·전달 행은 한 transaction으로 저장하며 같은 카드의 경쟁을 직렬화합니다. commit 결과를 확인한 뒤 카드 제거·future 완료·전달을 진행하고, 재접속 전달은 ACK·timeout 뒤 최신 행을 다시 읽습니다. runner 승인 전달은 최대 10초이며 시간 초과 때 연결 등록을 해제하고 전달 행을 보존합니다. 저장 중 취소돼도 시작한 commit의 성공·오류를 확인합니다. storage 선택 중 취소는 저장된 선택으로 재시도하는 기존 계약을 유지합니다. 이벤트 발행은 이벤트, 그 request 저장본, runner 처리 위치(cursor)를 한 transaction으로 저장합니다(#1129). 둘 다 저장되거나 둘 다 저장되지 않으며, 저장이 실패하면 메모리의 request도 저장된 값으로 되돌립니다. 이전에는 이벤트만 남고 request 저장이 실패하는 경우가 있었습니다.
+일반 승인 생성·결정·timeout·close·runner 전달/ACK도 DB writer에서 await합니다. 카드 삭제·결정·전달 행은 한 transaction으로 저장하며 같은 카드의 경쟁을 직렬화합니다. commit 결과를 확인한 뒤 카드 제거·future 완료·전달을 진행하고, 재접속 전달은 ACK·timeout 뒤 최신 행을 다시 읽습니다. runner 승인 전달은 최대 10초이며 시간 초과 때 연결 등록을 해제하고 전달 행을 보존합니다. 저장 중 취소돼도 시작한 commit의 성공·오류를 확인합니다. storage 선택 중 취소는 저장된 선택으로 재시도하는 기존 계약을 유지합니다. 이벤트 발행은 이벤트, 그 request 저장본, runner 메시지가 가져온 task 활동, runner 처리 위치(cursor)를 한 transaction으로 저장합니다(#1129, #1132). 둘 다 저장되거나 둘 다 저장되지 않으며, 저장이 실패하면 메모리의 request도 저장된 값으로 되돌립니다. 이전에는 이벤트만 남고 request 저장이 실패하는 경우가 있었습니다.
 
 Runner의 작업 폴더 쓰기(`manifest.json`, `TASK*.md`, `RESULT*.md`, 직원 CLI 설정 파일, 파견직 계약 파일)와 outbox·ack도 writer로 옮겼습니다. Gateway 일반 승인(#976)·task 취소 intent(#979)와 plan-rehire 계약 저장(#980)도 async입니다. runner activity·halt/resume task intent(#982)는 같은 SQLite writer에서 await하며 transaction 안의 최신 row에 해당 필드만 병합합니다. PI·runner의 control-state 저장과 result/만료에 따른 해당 row 삭제도 task별로 직렬화해 commit 뒤 memory·알림을 반영합니다. 삭제 표식은 늦은 runner 메시지의 부활을 막고 새 PI 제어는 살아 있는 step을 다시 제어합니다. step 제어도 최신 row를 직렬 갱신하고 commit 뒤 wake·전송을 처리합니다. result 수신의 나머지 저장·dispatch와 전용 복구·초기화/CLI의 sync 경계는 남습니다(#606). 채용 preflight 읽기는 #984에서 async로 전환했습니다. 단계의 기록(`manifest.json`의 `runs.<task_id>`)은 시작할 때 한 번 쓰고, 단계가 끝난 뒤의 산출 환경·입력 hash는 종료 기록에 합쳐 `task.result`를 보내기 전에 한 번의 fsync로 확정합니다(#1137). 지연 fsync가 아니고, 실행 중 accounting은 즉시 쓰며, 중간에 끊긴 단계도 모은 기록을 씁니다. 이전 조사 목록은 [쓰기 지점 지도](status/2026-10-15-1125-store-writes-off-loop.md)를 봅니다.
 
