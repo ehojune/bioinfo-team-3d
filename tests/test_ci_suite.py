@@ -127,4 +127,6 @@ def test_the_windows_critical_step_limit_is_shorter_than_the_step():
     steps = workflow["jobs"]["pytest-windows"]["steps"]
     critical = next(step for step in steps if step.get("name") == "Serial critical Windows contracts")
     limit = float(critical["env"]["PYTEST_TIMEOUT"])
-    assert 0 < limit < critical["timeout-minutes"] * 60
+    step = critical["timeout-minutes"] * 60
+    serial_run_s = 60  # the tests before a stuck one run first (31 tests took 43 s, #1198): the limit starts after them
+    assert 0 < limit and serial_run_s + limit < step
