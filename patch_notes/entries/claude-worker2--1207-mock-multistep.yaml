@@ -1,0 +1,5 @@
+rows:
+  - sha: "5758c02"
+    at: "2026-11-01 03:00"
+    summary: "mock 엔진도 의존이 있는 다단계 연구 계획과 갈래(branch) 연구 계획을 끝까지 돕니다."
+    text: "mock이 다단계·분기 research 계획을 내고 before_spawn 거부를 따른다 (Refs #1207)"
