@@ -1779,6 +1779,44 @@ async def test_acks_that_arrive_during_a_commit_share_the_next_one(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_acks_spaced_closer_than_the_merge_window_share_commits(tmp_path, monkeypatch):
+    # One ack per message, each arriving after the previous commit finished: nothing overlaps a commit, so only a
+    # minimum gap between commits can merge them (#1125: 81 ack commits in one request).
+    monkeypatch.setattr("labhq.runner.daemon.ACK_MERGE_S", 0.3)
+    runner, seqs = _runner_with_outbox(tmp_path, 8)
+    committed = []
+    real_aack = runner.store.aack
+
+    async def aack(seq):
+        committed.append(seq)
+        await real_aack(seq)
+
+    runner.store.aack = aack
+    for seq in seqs:
+        runner._ack_nowait(seq)
+        await asyncio.sleep(0.08)  # spaced like the gateway's acks, far apart from any commit
+    await runner._ack_drain()
+    assert committed[0] == seqs[0] and committed[-1] == seqs[-1]  # the first at once, the last one cumulative
+    assert len(committed) <= 3  # eight spaced acks no longer commit eight times
+    assert runner.store.pending() == []
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_drain_does_not_wait_for_the_merge_window(tmp_path, monkeypatch):
+    monkeypatch.setattr("labhq.runner.daemon.ACK_MERGE_S", 30.0)
+    runner, seqs = _runner_with_outbox(tmp_path, 4)
+    runner._ack_nowait(seqs[0])
+    await asyncio.wait_for(runner._ack_drain(), 5)  # the first ack commits at once
+    runner._ack_nowait(seqs[2])  # inside the window: held back, as nothing waits for it
+    await asyncio.sleep(0.05)
+    assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[1], seqs[2], seqs[3]]
+    await asyncio.wait_for(runner._ack_drain(), 5)  # a reconnect or shutdown commits it now, not after 30 s
+    assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[3]]
+    runner.store.close()
+
+
+@pytest.mark.asyncio
 async def test_an_ack_goes_to_the_store_without_a_delay_when_nothing_else_is_waiting(tmp_path):
     runner, seqs = _runner_with_outbox(tmp_path, 3)
     runner._ack_nowait(seqs[1])
