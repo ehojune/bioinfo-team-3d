@@ -70,7 +70,7 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev]"
       - if: matrix.python-version != '3.10'
-        run: pytest -q --durations=15 -n auto --dist loadfile -p scripts.ci_suite --ci-profile linux-full-v1
+        run: pytest -q --durations=15 -n auto --dist loadfile -o timeout_method=signal -p scripts.ci_suite --ci-profile linux-full-v1
       - name: Pytest 3.10 with bounded stall diagnostics
         if: matrix.python-version == '3.10'
         timeout-minutes: 25  # Normal rerun: 13m47s; allow 11m13s headroom (Refs #786).
@@ -126,7 +126,7 @@ jobs:
               # Duplicate stderr before pytest redirects fd 2: snapshots must survive a hung captured test.
               stream = os.fdopen(os.dup(2), "w", buffering=1)
               raise SystemExit(pytest.main(
-                  ["-vv", "--durations=15", "-o", "faulthandler_timeout=300",
+                  ["-vv", "--durations=15", "-o", "faulthandler_timeout=300", "-o", "timeout_method=signal",
                    "-n", "auto", "--dist", "loadfile", "-p", "scripts.ci_suite",
                    "--ci-profile", "linux-full-v1", "--ci-stall"],
                   plugins=[StallDiagnostics(stream)]))
