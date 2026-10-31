@@ -32,3 +32,7 @@ rows:
     at: "2026-11-01 00:40"
     summary: "WSL 선택 때문에 dispatch에 넣은 호출을 paper skill 복구 시험의 gateway 대역이 몰라 시험이 멈추던 것을 고쳤습니다."
     text: "시험: paper skill 복구 시험의 Hub 대역에 _pin_wsl_request를 넣는다 (#612)"
+  - sha: "0a6c561"
+    at: "2026-11-01 01:10"
+    summary: "WSL을 고른 요청이 다른 요청의 native 작업이 끝나지 않았어도 5분 기다리거나 native로 가지 않고 바로 WSL runner를 얻습니다. 보내기·다시 보내기·재시작 뒤 이어받기도 그 runner로만 갑니다."
+    text: "요청의 WSL 고정을 직원 owner가 아니라 WSL runner 자체로 따른다 (#1204, #612 리뷰 P1)"
