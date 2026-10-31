@@ -21,6 +21,42 @@
 - 미해결/미검증: 갈래 안 여러 단계, 재시도, replan이 성공하는 경우는 확인하지 않았다.
 
 ## 단계
+#1220: 단계·갈래 일부가 실패해도 목록에 `done`으로만 보이는 문제. 설계는 [#1220 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1220#issuecomment-6546115060)이고 총괄이 파생 표지 안으로 정했다.
+
+## 바뀐 것
+- `request_status.py`: `failed_step_ids(request)`(`done` 요청에서 실패·건너뜀·한 번도 돌지 않은 단계, 이미 `failed_steps`가 있는 요약은 그대로 씀)와 `request_display_label`의 `완료 · 일부 실패 N`. 저장 필드·새 상태·새 outcome 값 없음.
+- `gateway/server.py`: `request_summary.failed_steps`, 스냅샷의 요청별 `failed_steps`.
+- `cli.py`: `labhq watch` 완료 줄에 `일부 실패 B1, B2`, `labhq status` 최근 완료 요청에 `완료 · 일부 실패 N`과 `일부 실패한 단계: …`(`_finished_request_lines`; 묶음이 없어도 실패 단계가 있으면 나온다).
+- `orchestrator/cso.py`: `request.completed` 이벤트 데이터에 `failed_steps`(있을 때만, 이벤트에만 있고 요청에는 저장하지 않음), 연구 보고서 한계 줄에 `B1 (갈래 B): 단계 실패 …`.
+- 웹(`state.js`·`index.html`): `partialFailureSteps`와 상태 문구 `완료 · 일부 실패 N`, 요청 목록의 경고색(`status-halted`의 기존 색 재사용). 스냅샷의 `failed_steps`를 쓰고 라이브 요청은 단계 상태로 같은 판정을 한다.
+- PDF 머리말과 캐시 키는 `request_display_label`을 이미 써서 코드 변경 없이 같은 표지를 쓴다(캐시 키가 라벨을 포함해 표지가 바뀌면 다시 만든다).
+- manual 한·영의 "요청 수명과 PI 검토" 절에 표지를 적었다. Windows inventory에 새 시험 추가.
+
+## 시험
+- `tests/test_partial_failure_1220.py` 13건: 도우미(완료만, 직접 요청, 요약 그대로), 라벨, 요약이 단계 진행을 바꾸지 않고 요청에 쓰지 않음, watch·status, 갈래를 잃은 연구 요청의 한계 줄과 완료 이벤트(깨끗한 요청은 표지 없음), 웹 문구와 경고 판정(node), PDF 머리말과 캐시 키.
+- 관련 688 passed, 2 skipped(`test_request_status.py`·CLI·follow-up·github reporter·web·PDF 포함).
+
+## 하지 않은 것(총괄 지시)
+- 결과 저장 README에 같은 줄을 넣는 것, 비연구 모드에서 단계가 실패해도 `done`이 되는 경로 확인.
+- 알림 팝업.
+- 웹 화면의 실제 렌더링(브라우저 확인)은 하지 않았다. 문구 계산만 node로 확인했다.
+
+## rev3: CI와 리뷰 P1
+- Codex P1(plan_only): 계획만 하는 요청은 계획을 남기고 결과 없이 `done`으로 끝나 모든 단계가 "한 번도 안 돎"으로 셌다. `failed_step_ids`가 요청 자신의 `mode == plan_only` 또는 `outcome == plan_only`를 보고 빈 목록을 돌려준다. 총괄 지시대로 "결과가 없으면 붙이지 않는다"로 판정하지 않았다. 결과를 하나도 남기지 못한 일반 실패 요청은 계속 표시된다(시험으로 고정).
+- CI(`test_e2e_mock.py`, #1219의 시험): 한계 줄이 `s2 (갈래 b2): …`로 바뀌어 기대값을 갈래 id까지 단언하도록 고쳤다(약하게 만들지 않음). 같은 시험에 부분 실패 판정과 라벨 단언을 더했다. 갈래가 없는 다단계 시험은 `s2: …` 그대로.
+- 시험에서 드러난 것: CP4 검토 대기 요청은 라벨이 `보고서 검토 대기`라 표지가 가려졌다. 라벨을 `보고서 검토 대기 · 일부 실패 N`으로 잇고(파이썬·웹), `review_pending` 상태도 같은 판정을 쓴다.
+- 시험: `test_partial_failure_1220.py` 16건과 `test_e2e_mock.py` 등 관련 215 passed, 1 skipped.
+
+## rev5: 구조 수정 — "한 번도 안 돎" 추론을 없앤다
+- Codex P1 셋은 같은 부류였다: plan_only, 단독 경로(팀 계획을 남기고 `direct` 결과만 성공), 증거 체크포인트를 끈 `plan_approved`. 모두 `done`으로 끝나면서 계획 단계 일부를 일부러 돌리지 않았고, 계획 − 결과로 "안 돎"을 세던 추론이 이를 실패로 셌다.
+- `failed_step_ids`는 이제 결과가 실패(`ok`가 참이 아님)나 건너뜀(`status == skipped`)으로 **기록된** 단계만 센다. 이전 rev3의 `plan_only` 특례는 필요 없어져 뺐다. 결과를 남긴 실패는 어떤 경우에도 표시되므로 총괄이 걱정한 "결과를 남기지 못한 다른 실패"는 가려지지 않는다(그런 요청은 `failed`로 끝난다).
+- 갈래 B1이 실패하고 B2가 `skipped: upstream B1` 결과를 남기는 연구 요청은 `[B1, B2]`로 표시된다(시험 유지).
+- P2: `labhq status`의 `일부 실패한 단계` 줄이 `review_pending` 요청에도 나온다.
+- CI(Windows): node 시험이 기본 인코딩(cp1252)으로 한글을 읽다 `stdout=None`이 됐다. `encoding="utf-8"`.
+- manual 한·영의 "한 번도 돌지 않은 단계" 문구를 "결과가 실패·건너뜀으로 기록된 단계"로 고치고 계획을 일부러 돌리지 않은 요청에는 붙지 않는다고 적었다.
+- 시험: `test_partial_failure_1220.py` 18건(의도적으로 안 돌린 계획 네 경우는 표시되지 않는 것 포함)과 관련 247 passed, 1 skipped.
+
+## 단계
 #1200 후속: [PR #1201](https://github.com/ehojune/bioinfo-team-3d/pull/1201) 리뷰 P2(AlphaGenome 표시).
 
 ## 바뀐 것
@@ -33,6 +69,15 @@
 ## 하지 않은 것
 - 게이트웨이와 runner가 다른 컴퓨터일 때 게이트웨이의 키 파일 유무가 runner와 다를 수 있다. 이 판단은 게이트웨이의 설정 기준이다.
 - Atlas 도구(`alphagenome_atlas`)는 허용 목록 이름이 아니라 이번 범위가 아니다.
+
+# #1055 — 과학 리뷰어가 PDB·ChEMBL을 집계되는 도구로만 조회
+
+- 결론: `sci_reviewer`에 `labhq_annot`의 `pdb`·`chembl`을 준다. 그런데 직원 파일만 고치면 효과가 없었다. 리뷰는 읽기 전용 task이고 `read_only_profile`이 `builtin_mcp`·`annot_tools`·`mcp`를 모두 지우기 때문이다(실제 프로필을 돌려 확인). 그래서 **읽기 전용 허용 목록을 바꿨다**.
+- 읽기 전용 허용 목록 변경(`labhq/adapters/read_only.py`): 직원 파일이 `builtin_mcp`에 `annot`을 적고 `annot_tools`에 이름을 명시했을 때, 그중 `READ_ONLY_ANNOT_TOOLS`(`pdb`, `chembl`)에 있는 것만 읽기 전용 프로필에 남긴다. 직원 파일의 목록은 허용 집합을 좁히기만 하고 넓히지 못한다. 목록이 없거나 허용 도구가 하나도 없으면 지금처럼 꺼진다. `read_only_mismatch`는 그 서버가 정확히 그 도구만 내놓을 때만 받아들인다. 보내는 쪽의 override는 읽기 전용 task에 적용되지 않는다.
+- 영향 범위: 이 목록에 있는 도구를 명시한 직원은 `sci_reviewer`뿐이다. `chief_of_staff`의 문헌 도구 목록은 허용 집합과 겹치지 않아 읽기 전용에서 그대로 꺼진다.
+- 바꾼 것: `agents/core/sci_reviewer.yaml`(`builtin_mcp: [annot]`, `annot_tools: [pdb, chembl]`, 셸 대신 도구를 쓰라는 프롬프트 한 문장), `labhq/adapters/read_only.py`, manual 한·영, 시험(`test_read_only_profile.py` +8건, `test_annot_literature.py` +1건, `test_annot.py` 집합 갱신).
+- 시험: 허용 목록으로 좁혀지는지, 목록이 없거나 비면 꺼지는지, 다른 채널(`mcp`·`plugin_dirs` 등)은 여전히 꺼지는지, 실제 `sci_reviewer.yaml`이 프로필에서 살아남는지, 러너가 서버를 달고 mismatch 검사가 정확히 그것만 받아들이는지, 보내는 쪽이 목록을 넓히지 못하는지. 이 변경을 빼면 5건이 실패한다. 관련 시험 253개 파일 중 2건(`test_stdio_server_*`, `test_with_a_key_*`)이 로컬에서 실패하지만 origin/main에서도 같게 실패한다(이 PC의 mcp 1.x).
+- 미검증: Codex 엔진의 `sandbox: read-only` 안에서 `labhq_annot` 호출이 실제로 통하는지(`codex exec` 필요). 셸 HTTP 차단은 이 PR이 아니라 #1060이다. PubMed·bioRxiv 원격 MCP도 읽기 전용 프로필이 지운다는 점은 따로 다룬다.
 
 ## 단계
 #1139 후속: [PR #1192](https://github.com/ehojune/bioinfo-team-3d/pull/1192) 리뷰 P2(보류액 내림).

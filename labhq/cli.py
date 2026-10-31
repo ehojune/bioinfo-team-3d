@@ -27,7 +27,8 @@ from . import instance_guard, proc_tree
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
 from .process_diagnostics import SUPERVISOR_SUFFIX
-from .request_status import is_terminal_request, request_deadline_text, request_display_label, request_status_label
+from .request_status import (failed_step_ids, is_terminal_request, request_deadline_text, request_display_label,
+                             request_status_label)
 from .settings import Settings
 from .test_guard import guard_test_path
 from .util import atomic_write_text, free_port, short, without_windows_app_aliases
@@ -165,6 +166,8 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
     elif t == "request.completed":
         summary = d.get("cost_summary")
         label = "보고서 검토 대기 (CP4)" if d.get("status") == "review_pending" else "요청 완료"
+        if d.get("failed_steps"):  # done, but not every step finished (#1220)
+            label += f" · 일부 실패 {', '.join(map(str, d['failed_steps']))}"
         line = f"🏁 {label} (ok={d.get('ok')}, cost={cost_text(d.get('cost_usd'), d.get('cost_known'), summary)})"
         if d.get("status") == "review_pending" and (final := d.get("final_checkpoint")):
             line += (f"\n   검토 후: labhq review-done {ev.get('request_id')} --revision {final['revision']}"
@@ -1205,6 +1208,26 @@ def _stop_background(s: Settings, role: str) -> int | None:
         raise SystemExit(2) from None
     _pid_file(s, role).unlink(missing_ok=True)
     return pid
+
+
+def _finished_request_lines(req: dict) -> list[str]:
+    """What `labhq status` prints for a finished request: its bundle and, for one that finished `done` with failed,
+    skipped or never-run steps, which steps (#1220). Empty when there is nothing to say."""
+    failed = failed_step_ids(req)
+    if req.get("status") not in {"done", "failed", "review_pending"} or not (
+            req.get("bundle_path") or req.get("bundle_warning") or failed):
+        return []
+    lines = [f"  {req['id']} {request_display_label(req)}"]
+    if failed:
+        lines.append(f"    일부 실패한 단계: {', '.join(failed)}")
+    if req.get("bundle_path"):
+        lines.append(f"    요청 묶음: {req['bundle_path']}")
+    if req.get("bundle_grade"):
+        reasons = "; ".join(map(str, req.get("bundle_grade_reasons") or []))
+        lines.append(f"    재현 등급: {req['bundle_grade']}" + (f" ({reasons})" if reasons else ""))
+    if req.get("bundle_warning"):
+        lines.append(f"    경고: {req['bundle_warning']}")
+    return lines
 
 
 def _active_request_line(request: dict) -> str:
@@ -2358,20 +2381,11 @@ def main(argv: list[str] | None = None) -> None:
             print(f"환경 문제로 멈춘 단계: {len(problems)}")
             for rid, sid, problem in problems:
                 print(f"  {rid} {sid}: {problem}")
-        finished = [req for req in recent
-                    if req.get("status") in {"done", "failed"} and
-                    (req.get("bundle_path") or req.get("bundle_warning"))]
+        finished = [lines for req in recent if (lines := _finished_request_lines(req))]
         if finished:
             print(f"최근 완료 요청: {len(finished)}")
-            for req in finished:
-                print(f"  {req['id']} {req.get('status')}")
-                if req.get("bundle_path"):
-                    print(f"    요청 묶음: {req['bundle_path']}")
-                if req.get("bundle_grade"):
-                    reasons = "; ".join(map(str, req.get("bundle_grade_reasons") or []))
-                    print(f"    재현 등급: {req['bundle_grade']}" + (f" ({reasons})" if reasons else ""))
-                if req.get("bundle_warning"):
-                    print(f"    경고: {req['bundle_warning']}")
+            for lines in finished:
+                print("\n".join(lines))
         approvals = _api(s, "GET", "/api/approvals")
         print(f"승인 대기: {len(approvals)}")
         for approval in approvals:

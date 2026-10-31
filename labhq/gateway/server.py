@@ -51,7 +51,7 @@ from ..research import continuation as research_continuation
 from ..research import final_checkpoint as cp4
 from ..research.contract import classify_intake, plan_sha256
 from ..research.packs import check_configured_packs
-from ..request_status import (has_active_followup, is_active_followup, is_active_request,
+from ..request_status import (failed_step_ids, has_active_followup, is_active_followup, is_active_request,
                               is_office_request, is_terminal_request)
 from ..request_persistence import apply_changes
 from ..settings import Settings
@@ -1346,7 +1346,9 @@ class Hub:
                    "usage_known": req.get("usage_known", True), "bundle_path": req.get("bundle_path"),
                    "bundle_status": req.get("bundle_status"), "bundle_grade": req.get("bundle_grade"),
                    "bundle_grade_reasons": req.get("bundle_grade_reasons") or [],
-                   "bundle_warning": req.get("bundle_warning")}
+                   "bundle_warning": req.get("bundle_warning"),
+                   # A request can finish `done` with steps that failed, were skipped or never ran: derived, not stored (#1220).
+                   "failed_steps": failed_step_ids(req)}
         waits = {task["step_id"]: wait for task in (self.running_tasks() if running is None else running)
                  if task.get("request_id") == rid and task.get("step_id")
                  and (wait := external_wait_view((task.get("activity") or {}).get("external_wait")))}
@@ -5897,6 +5899,7 @@ class Hub:
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r, running)["step_progress"]["steps"],
+                          "failed_steps": failed_step_ids(r),
                           **self.request_session_cost_fields(r),
                           "office_current": is_office_request(r),
                           "session_current": (is_office_request(r)
