@@ -765,6 +765,9 @@ function apply(ev, replay = false) {
       (d.agents || []).forEach(upsertAgent);
       S.projects = d.projects || [];
       S.defaultRefs = d.default_references || [];
+      // The gateway's current status of each request is known before its events replay, so a completion older than the
+      // 200-event window still makes a later pipeline event stale (#1170).
+      for (const r of d.requests || []) req(r.id).status = r.status;
       (d.recent_events || []).forEach(e => apply(e, true));
       S.demoStatus = d.demo_status || null;
       (d.engine_holds || []).forEach(hold => S.engineHolds.set(hold.engine, {...hold}));

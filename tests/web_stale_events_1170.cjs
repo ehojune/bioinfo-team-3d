@@ -197,6 +197,18 @@ test('a snapshot keeps a follow-up turn in the shape the gateway sends it: step_
   assert.equal(office.ag('analyst').tasks.has('f1'), true, 'its later status is recognised as a follow-up turn');
 });
 
+test("a snapshot's request status is known before its events replay: a completion older than the window still counts", () => {
+  const office = L.createOfficeState({now: () => 100});
+  office.apply(snapshot(60, {requests: [{id: 'r1', text: 'x', status: 'done', mode: 'orchestrate'}],
+    recent_events: [  // request.created and request.completed are older than the 200-event window
+      {type: 'task.dispatched', seq: 58, request_id: 'r1', agent_id: 'analyst', task_id: 't9', data: {kind: 'step', step_id: 's2', title: 'late'}},
+      {type: 'agent.status', seq: 59, request_id: 'r1', agent_id: 'analyst', task_id: 't9', data: {state: 'working', task: 'late'}}]}));
+  assert.notEqual(office.ag('analyst').state, 'working');
+  assert.equal(office.ag('analyst').tasks.size, 0);
+  assert.equal(office.S.activeTasks.size, 0);
+  assert.equal(office.S.requests.get('r1').status, 'done');
+});
+
 test('the 2.5D page closes its previous socket before opening a new one, as the 3D page does', () => {
   const page = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const open = /const open = \(\) => \{[\s\S]*?new WebSocket/.exec(page);
