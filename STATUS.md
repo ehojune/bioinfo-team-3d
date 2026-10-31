@@ -4,6 +4,27 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 단계
+#1139 후속: [PR #1192](https://github.com/ehojune/bioinfo-team-3d/pull/1192) 리뷰 P2(보류액 내림).
+
+## 바뀐 것
+- `labhq/orchestrator/cso.py`의 `_clip_to_remaining`: 남은 예산으로 잘라낸 보류액을 `Decimal`로 센트 단위 내림한다. 먼저 `round(remaining, 6)`으로 부동소수점 오차(예: `2.0 - 1.98`)가 한 센트를 잃게 하지 않는다. 1센트 미만이면 자르지 않고 카드로 묻는다(이미 그랬다).
+- 잘라내지 않은 호출 상한(task·직원·`per_task_usd`)은 그대로 둔다. 이 범위는 클리핑한 값뿐이다.
+- 이유: Claude 어댑터가 `--max-budget-usd`를 센트로 적어 $0.019를 $0.02로 보내면 보류액과 요청 상한을 넘겨 쓸 수 있었다.
+
+## 시험
+- `tests/test_reserve_default_on.py`에 6+1건: $0.019→0.01, $0.0199→0.01, $1.239→1.23, $0.01→0.01, `2.0-1.98`→0.02, `3.0-2.98`→0.02, 잘리지 않은 호출 상한은 그대로.
+- 먼저 추가해 내림이 없을 때 3건이 실패함을 확인(센트가 아닌 경우), 구현 뒤 20건 통과. 관련 `test_cso.py`·`test_budget_headroom_940.py`·연구·진단 등 455 passed.
+
+## 하지 않은 것
+- 잘라내지 않은 호출 상한이 센트 단위가 아닌 경우(예: `per_task_usd = 0.015`)의 내림. 같은 틈이지만 이번 범위가 아니다.
+- 실제 Claude CLI 호출 확인.
+
+## rev11: 리뷰 P1·P2
+- P1(manual): 센트 내림을 manual 한·영의 보내기 전 예약 단락에 적었다.
+- P2(올림): `round(remaining, 6)`이 실제 $0.0199996을 $0.02로 올렸다. `Decimal(repr(remaining)) + 1e-9`를 센트로 내림으로 바꿨다(오차 허용은 `_FLOAT_NOISE`로 명시). `2.0 - 1.98`(0.020000000000000018)은 $0.02, `5.0 - 4.99`(0.00999999999999979)는 1센트, $0.0199996은 $0.01. 쓰지 않게 된 `_MIN_HOLD_USD`를 지웠다.
+- 시험 먼저: 경계값 8건(`0.0199996`, `0.019999`, 1e-10 아래의 오차, 뺄셈 오차 둘, `1.239`, `1.9800004`)과 1센트 미만·cap 통과 시험. `0.0199996`이 수정 전에 실패함을 확인. `test_reserve_default_on.py` 33건, 관련 `test_cso.py`·`test_budget_headroom_940.py`·연구·진단 포함 459 passed.
+
 # #1208 — WSL fallback 요청의 계획 prompt
 
 - 결론: `format_capabilities`에 `run_where`를 `wsl_pinned`일 때만 넘기고, fallback이면 `run_where_note`(이유, 300자 이내)를 "WSL 없이 실행한다" 한 줄로 붙인다. 호출부 한 곳(`cso.py`).
