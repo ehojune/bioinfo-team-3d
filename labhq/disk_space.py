@@ -72,7 +72,8 @@ def _segments(command: str) -> list[tuple[list[str], list[str]]]:
         word = "".join(current)
         current = None
         if pending == "out":
-            redirects.append(word)
+            if not (word.isdigit() or word == "-"):  # `2>&1` duplicates a descriptor, it names no file
+                redirects.append(word)
         elif pending is None:
             words.append(word)
         pending = None

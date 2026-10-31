@@ -299,3 +299,8 @@ def test_curl_short_option_clusters_name_their_output(tmp_path):
     big = (tmp_path / "big").as_posix()
     assert any(f.startswith(big) for f in folders(f"curl -Lo {big}/a.zip https://example.org/a.zip", tmp_path))
     assert any(f.startswith(big) for f in folders(f"curl -fsSLo {big}/a.zip https://example.org/a.zip", tmp_path))
+
+
+def test_descriptor_duplication_names_no_file(tmp_path):
+    assert folders("curl -s https://example.org/a 2>&1", tmp_path) == [tmp_path.as_posix()]
+    assert folders("curl -s https://example.org/a >&2", tmp_path) == [tmp_path.as_posix()]
