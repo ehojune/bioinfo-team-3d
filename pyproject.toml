@@ -19,7 +19,7 @@ dependencies = [
 Repository = "https://github.com/ehojune/bioinfo-team-3d"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-xdist==3.8.0", "filelock>=3.16,<4"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-xdist==3.8.0", "pytest-timeout==2.4.0", "filelock>=3.16,<4"]
 alphagenome = ["alphagenome"]
 
 [project.scripts]
@@ -44,5 +44,6 @@ labhq = ["config/*.yaml", "web/*", "web/ui/*", "web/lab3d/*", "web/lab3d/src/*",
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+timeout = 300   # seconds per test (#1198); CI sets timeout_method: signal on Linux, thread on Windows
 testpaths = ["tests"]
 pythonpath = ["."]   # tests import scripts/* (redact_stream) the same way under `pytest` and `python -m pytest`
