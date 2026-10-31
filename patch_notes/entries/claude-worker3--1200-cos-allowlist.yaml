@@ -16,3 +16,7 @@ rows:
   at: 2026-11-01 01:20
   text: 리뷰 지적 셋을 고친다. 직원 명단이 annot_tools가 있는 직원도 전체 조회 도구를 가진 것처럼 적던 것을 실제로 받는 도구만 적게 한다. annot_tools가 없는 직원에게는 제한 없음을 뜻하는 표지값을 runner가 서버에 분명히 넘겨 runner가 물려받은 환경 변수가 그 직원을 좁히지 못하게 한다. manual 한영의 공개 자원 조회 도구 절에 annot_tools의 계약을 적는다
   summary: 직원 명단이 실제 조회 도구를 알려 주고, 제한 없는 직원이 환경 변수에 좁혀지지 않으며, annot_tools 사용법이 문서에 있습니다.
+- sha: 'e82f31f'
+  at: 2026-11-01 01:50
+  text: 직원 파일에 annot_tools가 있는데 PI 통역처럼 builtin_mcp를 빈 목록으로 덮어쓰면 검증이 annot_tools needs builtin_mcp를 이유로 병합된 스펙을 거부해 통역 호출이 전부 실패했다. 검증에서 builtin_mcp와의 결합을 빼고 이름 형식만 본다. annot 서버가 없으면 annot_tools는 쓰이지 않을 뿐이다. 덮어쓴 스펙이 유효하고 annot 서버를 붙이지 않는 것을 시험으로 고정한다
+  summary: PI 통역 같은 override가 비서실장 설정과 합쳐져도 직원 스펙이 유효합니다.

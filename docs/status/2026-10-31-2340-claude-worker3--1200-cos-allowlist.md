@@ -32,3 +32,8 @@ Claude의 `--disallowedTools`만 이름 목록을 지키고 Codex·Gemini 어댑
 - roster P2: `AgentSpec.summary()`가 `annot_tools`를 싣고, `format_roster`가 `_annot_roster`로 제한이 있으면 `labhq_annot=yes (tools: ...)`만 적는다(전부면 이전 문장 그대로). CSO가 비서실장에게 못 하는 변이·영역 조회를 배정하지 않게 한다.
 - env P2: `annot_tools`가 없는 직원에게도 runner가 `LABHQ_ANNOT_TOOLS=*`를 서버 env에 명시한다. 서버는 `*`를 제한 없음으로 읽는다(`*,fulltext`는 모르는 이름이라 시작 거부).
 - 시험: `tests/test_annot_literature.py` 56건. 관련 `test_annot.py`·`test_agent_prompts.py`·`test_registry.py`·`test_external_wait_board_676.py`·`test_workspace_boundary.py` 포함 114 passed, 18 skipped. 로컬에서 `test_annot.py::test_stdio_server_lists_tools…`가 `is_error` 속성 오류로 실패(mcp 버전 차이, 이 변경 전부터).
+
+## rev6: override가 만든 스펙
+- 리뷰 P1: `pi_language.py`의 통역 task가 비서실장의 `builtin_mcp`를 `[]`로 덮는데 내가 넣은 검증("annot_tools needs builtin_mcp: annot")이 그 병합 결과를 거부해 통역이 모델 실행 전에 실패했다. 맞는 지적이고 내 결함이다.
+- 고침: 검증에서 `builtin_mcp` 결합을 뺐다(이름 형식만 검증). annot 서버가 없으면 `annot_tools`는 쓰이지 않을 뿐이다. `builtin_mcp`를 덮는 부류(통역·읽기 전용·기타 override) 전체가 닫힌다.
+- 시험 먼저: 덮어쓴 비서실장 스펙이 유효한 것, `builtin_mcp=[]`일 때 러너가 `labhq_annot`을 붙이지 않는 것. 수정 전 둘 다 실패. `test_annot_literature.py`·`test_followup.py`·`test_pi_language.py`·`test_workspace_boundary.py` 등 259 passed, 18 skipped.
