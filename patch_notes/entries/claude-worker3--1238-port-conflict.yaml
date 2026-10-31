@@ -1,0 +1,5 @@
+rows:
+- sha: '5942841'
+  at: 2026-11-01 10:30
+  text: 'runner broker 포트를 다른 프로세스가 잡고 있으면 uvicorn이 sys.exit(3)을 내고, 그 SystemExit가 run_forever task에서 올라와 xdist worker 하나의 남은 시험 54건을 연달아 실패시키고 INTERNALERROR로 끝낸 적이 있다(PR 1236의 3.10 job). run_forever가 이를 포트를 알려 주는 RuntimeError로 바꿔 시험 하나만 실패하게 했다. 시험이 gateway와 broker 포트를 free_port로 따로 두 번 뽑던 곳은 서로 다른 포트를 한 번에 뽑는 free_ports로 바꿨다 (#1238)'
+  summary: 포트가 겹쳐도 CI 시험 한 건만 실패하고 나머지 시험이 이어서 돌아갑니다.
