@@ -807,6 +807,20 @@ class Runner:
             try:
                 task = Task.model_validate(msg["task"])
                 prior = self.store.get("accepted_task", task.id)
+                if prior is None and self.store.get("cancelled_task", task.id) is not None:
+                    # Its cancel arrived first (reconnect flush overtook this dispatch): never start it, answer it.
+                    result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="cancelled",
+                                        error_kind="cancelled", cost_usd=0.0, cost_known=True,
+                                        cleanup_evidence={
+                                            "status": "not_started", "reason": "cancelled_before_dispatch",
+                                            "active_processes_measured": False})
+                    await self._send_batch([
+                        ({"type": "task.accepted", "task_id": task.id, "request_id": task.request_id},
+                         [("accepted_task", task.id, {"state": "finished"})], []),
+                        ({"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
+                          "request_id": task.request_id, "data": result.model_dump(mode="json")}, [], [])])
+                    await self.store.adelete("cancelled_task", task.id)
+                    return
                 await self._send_durably(
                     {"type": "task.accepted", "task_id": task.id, "request_id": task.request_id},
                     before=(("accepted_task", task.id, {"state": "running", "task": task.model_dump(mode="json")})
@@ -830,10 +844,13 @@ class Runner:
                 self._dispatches.discard(done)
                 done.set_result(None)
         elif typ == "task.cancel":
-            t = self.tasks.get(msg.get("task_id", ""))
+            cancel_id = str(msg.get("task_id") or "")
+            t = self.tasks.get(cancel_id)
             if t:
                 t.cancel()
-            await self._cancel_local_jobs(str(msg.get("task_id") or ""))
+            elif cancel_id and self.store.get("accepted_task", cancel_id) is None:
+                await self._remember_cancel(cancel_id)  # not held, not seen: its dispatch may still arrive
+            await self._cancel_local_jobs(cancel_id)
         elif typ == "task.jobs_cancel":  # the step is parked on its jobs and its request was cancelled (#675)
             tid = str(msg.get("task_id") or "")
             if await self._cancel_local_jobs(tid):
@@ -3190,6 +3207,16 @@ class Runner:
                                              "exit_status": exit_status})],
                                 after=[("job", jid, j)])
         await self._wake_finished_jobs()
+
+    CANCEL_TOMBSTONE_KEEP_S = 2 * 86400  # the gateway keeps a cancel for as long (TASK_CANCEL_KEEP_S)
+
+    async def _remember_cancel(self, task_id: str) -> None:
+        """A cancel for a task this runner has not seen: keep it so the dispatch that follows is not started."""
+        now = time.time()
+        for tid, row in list(self.store.all("cancelled_task").items()):
+            if now - float(row.get("at") or 0) > self.CANCEL_TOMBSTONE_KEEP_S:
+                await self.store.adelete("cancelled_task", tid)
+        await self.store.aput("cancelled_task", task_id, {"at": now})
 
     async def _cancel_local_jobs(self, task_id: str) -> bool:
         """The step was cancelled: end its running local jobs so no process outlives it, and do not wake the step.

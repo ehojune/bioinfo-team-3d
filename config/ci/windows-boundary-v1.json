@@ -276,6 +276,7 @@
     "tests/test_round_records.py",
     "tests/test_run_report.py",
     "tests/test_runner_boundary.py",
+    "tests/test_runner_cancel_tombstone.py",
     "tests/test_runner_dispatch_shutdown.py",
     "tests/test_runner_path_boundary.py",
     "tests/test_runner_safety.py",
