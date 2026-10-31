@@ -1,0 +1,5 @@
+rows:
+  - sha: "21124d8"
+    at: "2026-10-31 19:00"
+    summary: "종료 때 이미 받은 ack를 commit한다는 시험의 대기 한도를 Windows 러너의 fsync 시간에 맞게 넓혔습니다."
+    text: "시험: 종료 ack 시험의 shutdown 한도를 0.05초에서 0.5초로 올린다 (#1076)"
