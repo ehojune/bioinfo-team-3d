@@ -31,7 +31,7 @@ from .request_status import (failed_step_ids, is_terminal_request, request_deadl
                              request_status_label)
 from .settings import Settings
 from .test_guard import guard_test_path
-from .util import atomic_write_text, free_port, short, without_windows_app_aliases
+from .util import atomic_write_text, free_port, free_ports, short, without_windows_app_aliases
 
 REPO = Path(__file__).resolve().parents[1]
 ICON = {"cso": "🦉", "chief_of_staff": "🐧", "biologist": "🐻", "data_steward": "🐿️", "lit_scout": "🦊",
@@ -1889,7 +1889,8 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
     s.gateway.runner_token = _demo_token(exposed, s.gateway.runner_token)
     # The mock team's approvals expire after this; in phone mode it must outlast the tap fallback.
     s.policy.approvals.timeout_s = math.ceil(approve_timeout) + 30 if phone else 60
-    s.runner.broker_port = free_port()
+    # Two different ports drawn together: the one that is not the gateway's (#1238).
+    s.runner.broker_port = next(candidate for candidate in free_ports(2) if candidate != gport)
 
     app = create_app(s, demo=True)
     hub = app.state.hub
