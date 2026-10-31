@@ -1,6 +1,6 @@
 pr: 1051
 rows:
-  - sha: '6f1cf2d'
+  - sha: '0a5d6d7'
     at: '2026-10-31 12:20'
     summary: '합성 진단의 재생 응답과 무한 대기를 차단합니다.'
     text: 'Bound synthetic diagnostics and reject replayed run IDs'
