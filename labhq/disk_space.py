@@ -411,8 +411,13 @@ _PS_TRANSFER = frozenset({"start-bitstransfer"})
 _PS_SEPARATORS = ";|&\n\r"
 
 
+# PowerShell treats these typographic quotes as the ASCII ones (about_Quoting_Rules).
+_PS_SMART_QUOTES = {0x2018: "'", 0x2019: "'", 0x201A: "'", 0x201B: "'", 0x201C: '"', 0x201D: '"', 0x201E: '"'}
+
+
 def _ps_commands(command: str) -> list[list[str]]:
     """The commands of a PowerShell line as word lists. A line whose quotes do not close is not read at all."""
+    command = command.translate(_PS_SMART_QUOTES)
     commands: list[list[str]] = []
     words: list[str] = []
     current: list[str] | None = None
@@ -458,14 +463,22 @@ def _ps_commands(command: str) -> list[list[str]]:
         elif c in "'\"":
             quote = c
             current = [] if current is None else current
+        elif c == "`" and command[i + 1:i + 2] in ("\n", "\r"):
+            end_word()  # a backtick right before a line break continues the command on the next line
+            i += 2 if command[i + 1:i + 3] == "\r\n" else 1
         elif c == "`" and i + 1 < n:
             current = [] if current is None else current
             current.append(command[i + 1])
             i += 1
         elif c in _PS_SEPARATORS:
             end_command()
+        elif c == "," and current is None and words:
+            current = [words.pop(), ","]  # `a ,b`: the comma belongs to the array that began with the word before it
         elif c.isspace():
-            end_word()
+            if current is not None and current[-1] == ",":
+                pass  # `a, b`: whitespace after a comma does not end the array
+            else:
+                end_word()
         elif c == "#" and current is None:
             while i < n and command[i] not in "\r\n":
                 i += 1
@@ -603,19 +616,32 @@ def _unwritten(path: str) -> bool:
     return "$" in path or "`" in path
 
 
+def _unknown_folders(text: str, workdir: str) -> list[Path]:
+    """A target that cannot be read for sure (a variable, a subexpression) is unknown: the current folder is the guess,
+    and a drive the text itself names is another candidate."""
+    folders = [Path(workdir)]
+    match = re.match(r"^([A-Za-z]):", text.strip())
+    if match:
+        folders.append(Path(f"{match.group(1).upper()}:/"))
+    return folders
+
+
 def _ps_folders(destination: object, workdir: str, *, file_like: bool) -> list[Path] | None:
-    """The local folders a `-Destination`-style value writes into: a comma list names one target per element. None
-    when any element is not written out."""
+    """The local folders a `-Destination`-style value writes into: a comma list names one target per element, and an
+    element that is not written out is unknown (`_unknown_folders`). A remote element writes no local folder."""
     if not isinstance(destination, str):
         return None
-    folders = []
+    folders: list[Path] = []
     for part in destination.split(","):
         part = part.strip()
-        if not part or _unwritten(part) or "://" in part:
-            return None
+        if not part or "://" in part:
+            continue
+        if _unwritten(part):
+            folders.extend(_unknown_folders(part, workdir))
+            continue
         target = _resolve(part, workdir)
         folders.append(target.parent if file_like and target.suffix else target)
-    return folders or None
+    return list(dict.fromkeys(folders)) or None
 
 
 def _ps_write(words: list[str], workdir: str) -> list[tuple[str, list[Path], int | None]]:
@@ -626,21 +652,20 @@ def _ps_write(words: list[str], workdir: str) -> list[tuple[str, list[Path], int
     if name in _PS_DOWNLOADS:
         for bound in _ps_bind(words, _PS_WEB, ("uri",)):
             out = bound.get("outfile")
-            if isinstance(out, str) and not _unwritten(out):  # no -OutFile: the result goes to the pipeline
-                found.append(("다운로드", [_resolve(out, workdir).parent], None))
+            if isinstance(out, str):  # no -OutFile: the result goes to the pipeline
+                found.append(("다운로드", _ps_folders(out, workdir, file_like=True) or [Path(workdir)], None))
     elif name in _PS_UNPACK:
         for bound in _ps_bind(words, _PS_ARCHIVE, ("path", "destinationpath")):
             destination = bound.get("destinationpath")
             if destination is None and bound.get("partial"):
                 continue  # a destination that may sit behind a word that was not understood is not guessed
-            if isinstance(destination, str) and _unwritten(destination):
-                continue
             archive = bound.get("path") or bound.get("literalpath")
             # No destination named: it unpacks into the current folder, which is still a drive that can be short.
-            folder = _resolve(destination, workdir) if isinstance(destination, str) else Path(workdir)
+            folders = (_ps_folders(destination, workdir, file_like=False) if isinstance(destination, str)
+                       else None) or [Path(workdir)]
             known = (_zip_size(_resolve(archive, workdir)) if isinstance(archive, str) and not _unwritten(archive)
                      else None)
-            found.append(("압축 해제", [folder], known))
+            found.append(("압축 해제", folders, known))
     elif name in _PS_TRANSFER:
         for bound in _ps_bind(words, _PS_BITS, ("source", "destination")):
             if str(bound.get("transfertype") or "").casefold().startswith("upload"):
@@ -651,45 +676,62 @@ def _ps_write(words: list[str], workdir: str) -> list[tuple[str, list[Path], int
     return found
 
 
-def _ps_location(words: list[str], cwd: str | None) -> str | None:
-    """Where the commands after a `Set-Location`/`Push-Location` run; None when that cannot be read (or the readings
-    of its words disagree)."""
-    if cwd is None:
-        return None
+def _ps_location(words: list[str], cwds: list[str], workdir: str) -> list[str]:
+    """Where the commands after a `Set-Location`/`Push-Location` run. A target that cannot be read leaves the folder
+    unknown: the folders known so far (and the one the line started in) stay candidates, plus a drive the text names."""
     targets = set()
+    unknown = False
     for bound in _ps_bind(words, _PS_LOCATION, ("path",)):
         target = bound.get("literalpath") or bound.get("path")
         if not isinstance(target, str) or _unwritten(target) or target == "-":
-            return None
-        targets.add(str(_resolve(target, cwd)))
-    return targets.pop() if len(targets) == 1 else None
+            unknown = True
+            if isinstance(target, str):
+                targets.update(str(f) for f in _unknown_folders(target, workdir)[1:])
+        else:
+            targets.add(target)
+    if unknown or len(targets) != 1:
+        return list(dict.fromkeys([*cwds, workdir, *targets]))
+    (target,) = targets
+    return list(dict.fromkeys(str(_resolve(target, cwd)) for cwd in cwds))
+
+
+_PS_DRIVE_FUNCTION = re.compile(r"^[A-Za-z]:$")
 
 
 def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, warn_percent: float,
                      probe=None) -> ShellCheck | None:
     """`shell_check` for the PowerShell tool: `Invoke-WebRequest -OutFile`, `Invoke-RestMethod -OutFile`,
-    `Expand-Archive` and `Start-BitsTransfer`. Same rule: only a certain shortfall asks, an unknown size never blocks,
-    a command that uses a variable or a subexpression for the path is left alone. A word the parameter tables do not
-    explain is read both ways and the worst reading counts: if either could be a certain shortfall it asks, which is
-    only ever when the drive really is short. Once the folder the commands run in can no longer be read (a
-    `Set-Location` it cannot parse, `Pop-Location`) the later ones are left alone."""
+    `Expand-Archive` and `Start-BitsTransfer`. Same rule: only a certain shortfall asks and an unknown size never
+    blocks. What cannot be read for sure is unknown, never skipped: a target that is a variable, or a folder no
+    `Set-Location` can name (`Pop-Location`, `D:`), is checked against the current folder and any drive the command
+    names. A word the parameter tables do not explain is read both ways, and the worst reading counts."""
     probe = probe or usage
     worst: ShellCheck | None = None
-    cwd: str | None = workdir
+    cwds = [workdir]
     for words in _ps_commands(command):
         name = _ps_name(words[0])
-        if name in _PS_LOCATION_NAMES or name in _PS_LOCATION_LOST:
-            cwd = _ps_location(words, cwd) if name in _PS_LOCATION_NAMES else None
+        if name in _PS_LOCATION_NAMES:
+            cwds = _ps_location(words, cwds, workdir)
             continue
-        if cwd is None:
+        if name in _PS_LOCATION_LOST:
+            cwds = list(dict.fromkeys([*cwds, workdir]))
             continue
-        try:
-            writes = _ps_write(words, cwd)
-        except (OSError, ValueError):
+        if len(words) == 1 and _PS_DRIVE_FUNCTION.match(words[0]):
+            cwds = list(dict.fromkeys([f"{words[0].upper()}/", *cwds]))  # `D:` switches to that drive's folder
             continue
-        for what, folders, estimate in writes:
-            worst = _worse(worst, _assess(what, folders[0], estimate, folders[1:], probe=probe, fail_gb=fail_gb,
-                                          warn_gb=warn_gb, warn_percent=warn_percent))
+        seen = set()
+        for cwd in cwds:
+            try:
+                writes = _ps_write(words, cwd)
+            except (OSError, ValueError):
+                continue
+            for what, folders, estimate in writes:
+                key = (what, tuple(folders), estimate)
+                if key in seen:
+                    continue
+                seen.add(key)
+                worst = _worse(worst, _assess(what, folders[0], estimate, folders[1:], probe=probe, fail_gb=fail_gb,
+                                              warn_gb=warn_gb, warn_percent=warn_percent))
     return worst
 
 
