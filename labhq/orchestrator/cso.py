@@ -2227,6 +2227,23 @@ def _rewrite_output_references(instruction: str, inner: str, rel: str) -> tuple[
     return pattern.sub(replace, instruction), rewritten, ambiguous
 
 
+_RESERVED_WRITE = re.compile("|".join(re.escape(name) for name in sorted(output_checks.RESERVED_OUTPUTS)))
+
+
+def _reserved_names(step: dict) -> list[str]:
+    """Names labhq writes itself that this step declares as its own output or tells its staff to write (#676).
+
+    A declared output or a bare `outputs/<name>` in the instruction is the step's own file. A name reached through an
+    upstream step's folder (`inputs/<step>/outputs/<name>`) is a read of that step's record and is allowed."""
+    found = [rel for field in ("outputs", "optional_outputs") for name in step.get(field) or []
+             if (rel := output_relpath(str(name))) in output_checks.RESERVED_OUTPUTS]
+    text = step.get("instruction") or ""
+    for match in _RESERVED_WRITE.finditer(text):
+        if not re.search(r"inputs/[^/\s]+/$", text[:match.start()]):
+            found.append(match.group(0))
+    return list(dict.fromkeys(found))
+
+
 def _contain_outputs(step: dict) -> tuple[list[str], str | None]:
     """Keep every declared output under outputs/ before dispatch (#220).
 
@@ -2237,6 +2254,9 @@ def _contain_outputs(step: dict) -> tuple[list[str], str | None]:
     it comes back as a problem for the caller to reject.
     """
     warnings, ambiguous, problems = [], [], []
+    if reserved := _reserved_names(step):
+        problems.append(f"step {step['id']}: {reserved} is a record labhq writes itself; name the staff's own file "
+                        "differently (for example outputs/lookup_ledger.jsonl) and do not tell the staff to write it")
     all_seen: dict[str, str] = {}
     for field in ("outputs", "optional_outputs"):
         if field not in step:

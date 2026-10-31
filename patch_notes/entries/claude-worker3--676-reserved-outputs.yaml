@@ -1,0 +1,6 @@
+pr: 1157
+rows:
+- sha: 'f7309e1'
+  at: 2026-10-31 12:00
+  text: labhq가 step workspace의 outputs/에 직접 쓰고 읽는 기록 이름(external_lookup_status.jsonl, annotation_queries.jsonl, literature_access.jsonl)을 output_checks.RESERVED_OUTPUTS 한 곳에 모은다. CSO 계획 검사가 이 이름을 직원 산출물로 선언하거나 직원에게 쓰라고 지시하는 계획을 거절한다(앞선 단계의 inputs/<단계>/outputs/ 읽기는 허용). CP2의 조회 기록 읽기는 tool 키가 없는 JSON 객체 줄(직원이 쓴 줄)을 읽지도 세지도 않고, labhq 형식인데 어긋난 줄과 JSON이 아닌 줄만 잘못된 기록으로 센다
+  summary: 직원이 쓴 줄이 CP2의 잘못된 기록 경고에 섞이던 것과 계획이 labhq 소유 파일을 직원에게 쓰게 하던 것을 막습니다.

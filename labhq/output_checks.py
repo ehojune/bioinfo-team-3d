@@ -637,6 +637,11 @@ def literature_ledger_line(steps: Iterable[Mapping[str, Any]], results: Mapping[
     return line
 
 
+# Records labhq writes itself into a step's outputs/ and reads back (#676). A plan must not declare one as a staff
+# output or tell the staff to write it: what the staff write there is not labhq's record, and a staff line in the
+# file must not be counted against labhq. Keep every such name here, in one place.
+RESERVED_OUTPUTS = frozenset({QUERY_LOG, LITERATURE_ACCESS_LOG, LOOKUP_STATUS_LOG})
+
 MAX_LOOKUP_STATUS_BYTES = 1_000_000  # ~4,000 records; the tail keeps the latest outcomes
 MAX_LOOKUP_STATUS_ROWS = 5000
 MAX_LOOKUP_STATUS_LINE = 4096
@@ -691,6 +696,19 @@ def _seconds(value: Any, *, positive: bool) -> float | None:
     return value
 
 
+def _staff_line(line: str) -> bool:
+    """A JSON object with no ``tool`` key: not a record of labhq's lookup writer, so a line the staff wrote into the
+    file (#676). It is neither read nor counted as a malformed record. A line that is not an object, or one that names
+    a tool and fails the writer's rules, is still counted."""
+    if len(line) > MAX_LOOKUP_STATUS_LINE:
+        return False
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return False
+    return isinstance(row, dict) and "tool" not in row
+
+
 def _lookup_row(line: str) -> tuple[str, str | None, str, float, float] | None:
     if len(line) > MAX_LOOKUP_STATUS_LINE:
         return None
@@ -737,7 +755,8 @@ def external_lookups(root: Path) -> ExternalLookupRecord | None:
     for line in lines:
         row = _lookup_row(line)
         if row is None:
-            invalid += 1
+            if not _staff_line(line):
+                invalid += 1
             continue
         if row in seen:  # the same record twice (a repeated append), counted once
             duplicate += 1
