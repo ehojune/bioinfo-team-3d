@@ -230,14 +230,13 @@ def adapt_producer(receipt: object, *, evidence=None, trusted=None, tags=None,
     those fixture keys, not process identity, isolation, or OS cleanup.
     """
     unsupported = Verdict("rejected", "unsupported", ("producer_adapter_unavailable",))
-    if any(value is None for value in (evidence, trusted, tags, producer_key, observer_key, consumed)):
+    if any(value is None for value in (trusted, tags, producer_key, observer_key, consumed)):
         return unsupported
     rejected = Verdict("rejected", "unverified", ("authentication_or_receipt_invalid",))
     fields = {"version", "run_id", "snapshot_digest", "runtime_digest", "policy_digest",
               "supervisor_identity", "child_identity", "namespace_identities", "preparation",
               "launch", "cleanup", "seal_status", "unsupported_reasons"}
-    if (not isinstance(receipt, dict) or set(receipt) != fields or type(receipt["version"]) is not int
-            or receipt["version"] != 1 or not isinstance(trusted, dict) or not isinstance(evidence, dict)
+    if (not isinstance(trusted, dict)
             or not isinstance(tags, dict) or set(tags) != {"producer", "observer"}
             or not isinstance(consumed, set) or not isinstance(producer_key, bytes)
             or not isinstance(observer_key, bytes) or len(producer_key) < 32
@@ -261,6 +260,9 @@ def adapt_producer(receipt: object, *, evidence=None, trusted=None, tags=None,
     # Consume even rejected observations so a signed failure cannot be retried
     # with different evidence under the same independently issued nonce.
     consumed.add((run_id, nonce))
+    if (not isinstance(receipt, dict) or set(receipt) != fields or type(receipt["version"]) is not int
+            or receipt["version"] != 1 or not isinstance(evidence, dict)):
+        return rejected
     if (receipt["run_id"] != run_id or receipt["seal_status"] != "unsealed"
             or receipt["preparation"] != "diagnostic_ready" or receipt["launch"] != "exited_0"
             or receipt["cleanup"] != "broker_closed_socket_absent; descendants_unverified"

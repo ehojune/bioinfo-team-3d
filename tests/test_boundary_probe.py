@@ -528,6 +528,9 @@ def test_synthetic_seal_adapter_contract():
         assert run(r=failed_receipt, seen=retry).contract == "rejected"
         assert retry == {(trusted["run_id"], trusted["launch_nonce"])}
         assert run(seen=retry).contract == "rejected"
+        malformed_seen = set()
+        assert run(r={}, seen=malformed_seen).contract == "rejected"
+        assert malformed_seen == {(trusted["run_id"], trusted["launch_nonce"])}
         forged = deepcopy(evidence)
         forged["witness"]["observer_id"] = "producer"
         assert run(e=forged, tags=tags_for(receipt, evidence)).contract == "rejected"
@@ -671,6 +674,17 @@ def test_offline_collector_and_producer_lifecycle_contract():
             del observed["witness"]
             return observed, sign("observer", observed, observer_key)
     assert run(observer=LostProvenance(), consumed=set())["contract"] == "rejected"
+    def duplicate_ready(fn, factory, **kwargs):
+        receipt = fn(factory, **kwargs)
+        try:
+            kwargs["on_ready"](run_id, "duplicate")
+        except ValueError:
+            pass
+        return receipt, sign("producer", receipt, producer_key)
+    invalid_seen = set()
+    assert run(duplicate_ready, Collector(), invalid_seen)["status"] == "inconclusive"
+    assert invalid_seen == {(run_id, nonce)}
+    assert run(transport, Collector(), invalid_seen)["contract"] == "rejected"
 
 
 def test_imported_seal_negative_corpora():

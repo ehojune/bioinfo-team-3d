@@ -74,13 +74,15 @@ def collect_offline_contract(producer, factory, transport, collector, validator,
                 evidence, observer_tag = collector.finish(run_id, nonce, outcome)
             except Exception:
                 outcome = "failed"
-    if outcome != "returned" or ready_count != 1 or ready_invalid:
+    if outcome != "returned":
         return result
     try:
         verdict = validator.adapt_producer(
             receipt, evidence=evidence, trusted=trusted,
             tags={"producer": tag, "observer": observer_tag},
             producer_key=producer_key, observer_key=observer_key, consumed=consumed)
+        if ready_count != 1 or ready_invalid:
+            return result
         result.update(status=verdict.status, contract=verdict.contract,
                       reasons=list(verdict.reasons))
     except Exception:
