@@ -261,6 +261,7 @@
     "tests/test_report_pdf.py",
     "tests/test_reproduction_receipt.py",
     "tests/test_request_bundle.py",
+    "tests/test_request_deadline_descendants_1232.py",
     "tests/test_request_input_proof_959.py",
     "tests/test_request_lifecycle.py",
     "tests/test_request_persistence_965.py",
