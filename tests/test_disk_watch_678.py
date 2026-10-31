@@ -119,16 +119,34 @@ async def test_with_halting_off_it_only_warns(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_failed_halt_is_reported_and_does_not_crash_the_watch(tmp_path, monkeypatch):
+async def test_a_failed_halt_is_retried_at_the_next_beat(tmp_path, monkeypatch):
     runner, events, applied, live = runner_with(tmp_path)
+    real_apply, failures = runner.controls.apply, []
 
-    async def broken(message, **kw):
-        raise OSError("control file locked")
+    async def flaky(message, **kw):
+        if len(failures) < 2:
+            failures.append(message)
+            raise OSError("control file locked")
+        return await real_apply(message, **kw)
 
-    runner.controls.apply = broken
+    runner.controls.apply = flaky
     monkeypatch.setattr(disk_space, "usage", free_gib(1.0))
     await settle(asyncio.ensure_future(runner._disk_watch(task(), AGENT, [tmp_path])))
-    assert events[-1].data["enforcement"] == "failed"
+    assert len(failures) == 2 and applied == [{"task_id": "t1", "action": "halt"}]  # the third try went through
+    assert events[-1].data["enforcement"] == "halt"  # reported once, when it worked
+
+
+@pytest.mark.asyncio
+async def test_a_task_that_ended_during_the_halt_stops_the_watch_quietly(tmp_path, monkeypatch):
+    runner, events, applied, live = runner_with(tmp_path)
+
+    async def gone(message, **kw):
+        return None  # the controls let go of the task meanwhile
+
+    runner.controls.apply = gone
+    monkeypatch.setattr(disk_space, "usage", free_gib(1.0))
+    await settle(asyncio.ensure_future(runner._disk_watch(task(), AGENT, [tmp_path])))
+    assert events == []
 
 
 @pytest.mark.asyncio

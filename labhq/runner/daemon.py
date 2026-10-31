@@ -1982,10 +1982,13 @@ class Runner:
             if runner.disk_watch_halt:
                 try:
                     halted = await self.controls.apply({"task_id": task.id, "action": "halt"})
-                except Exception:  # noqa: BLE001 - the watch never fails the run
-                    log.warning("task %s disk halt not applied", task.id, exc_info=True)
+                except Exception:  # noqa: BLE001 - the watch never fails the run; it tries again at the next beat
+                    log.warning("task %s disk halt not applied; trying again", task.id, exc_info=True)
+                    continue
+                if halted is None:  # the controls no longer hold the task: it ended meanwhile
+                    return
             record = {"signal": "disk", "mode": "enforce", "stage": "stop",
-                      "enforcement": "halt" if halted else ("failed" if runner.disk_watch_halt else "off"),
+                      "enforcement": "halt" if halted else "off",
                       "free_gib": round(free_gib, 2), "floor_gib": runner.disk_fail_free_gb,
                       "path": Path(folder).as_posix()}
             await self.emit(Event(type="agent.log", data={"level": "alert", "text": text}, **base))
