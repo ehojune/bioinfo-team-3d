@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from types import SimpleNamespace as NS
 import uuid
 
@@ -992,6 +993,69 @@ def test_staff_config_refuses_literal_but_preserves_env_reference(tmp_path, monk
     assert key not in Path(name).read_text(encoding="utf-8")
 
 
+async def _communicate_atlas_probe(proc, secrets, timeout=20):
+    """Keep pipe readers alive on timeout so already-read diagnostics survive."""
+    started = time.monotonic()
+    communication = asyncio.create_task(proc.communicate())
+    try:
+        return await asyncio.wait_for(asyncio.shield(communication), timeout)
+    except asyncio.TimeoutError:
+        before_kill = proc.returncode
+        if before_kill is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        try:
+            stdout, stderr = await asyncio.wait_for(asyncio.shield(communication), 5)
+            output = (stdout + b"\n" + stderr).decode(errors="replace")
+        except asyncio.TimeoutError:
+            output = "pipe drain timed out after kill"
+        for secret in secrets:
+            output = output.replace(secret, "[REDACTED]")
+        raise AssertionError(
+            f"Atlas child exceeded {timeout}s; elapsed={time.monotonic() - started:.3f}s; "
+            f"returncode_before_kill={before_kill}; returncode={proc.returncode}\n{output}"
+        ) from None
+    finally:
+        if not communication.done():
+            communication.cancel()
+        await asyncio.gather(communication, return_exceptions=True)
+
+
+async def test_atlas_probe_timeout_retains_partial_output_and_redacts():
+    class Process:
+        returncode = None
+
+        def __init__(self):
+            self.exited = asyncio.Event()
+            self.cancelled = False
+
+        async def communicate(self):
+            # Model StreamReader.read consuming bytes before waiting for EOF.
+            stdout = b'partial response fixture-secret'
+            stderr = b'ATLAS_PROBE call_start 0.001 fixture-token'
+            try:
+                await self.exited.wait()
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+            return stdout, stderr
+
+        def kill(self):
+            self.returncode = -9
+            self.exited.set()
+
+    proc = Process()
+    with pytest.raises(AssertionError) as error:
+        await _communicate_atlas_probe(proc, ("fixture-secret", "fixture-token"), timeout=0.01)
+    message = str(error.value)
+    assert "partial response" in message and "ATLAS_PROBE call_start" in message
+    assert "fixture-secret" not in message and "fixture-token" not in message
+    assert "returncode_before_kill=None; returncode=-9" in message
+    assert not proc.cancelled and proc.exited.is_set()
+
+
 async def test_real_mcp_process_calls_runner_without_key(service, monkeypatch):
     ctx, broker, service, token, key, seen = service
     monkeypatch.setenv(atlas.KEY_ENV, key)
@@ -1015,19 +1079,40 @@ async def test_real_mcp_process_calls_runner_without_key(service, monkeypatch):
                    "LABHQ_TASK_ID": ctx.task.id, "LABHQ_AGENT_ID": ctx.agent.id,
                    "LABHQ_WORKDIR": str(ctx.workdir), ENABLED_ENV: "1"}
         env = CodexAdapter(ctx.settings).staff_env(ctx)
-        script = ("import asyncio,os; from labhq.tools import annot_mcp as m; "
-                  "assert 'ALPHAGENOME_API_KEY' not in os.environ; "
-                  "assert m.ATLAS_ENABLED; print(asyncio.run(m.alphagenome_atlas(['chr1:100:A:G'])))")
-        proc = await asyncio.create_subprocess_exec(sys.executable, "-X", "utf8", "-c", script, env=env,
+        script = """
+import atexit, sys, time
+started = time.monotonic()
+def mark(phase):
+    print(f'ATLAS_PROBE {phase} {time.monotonic() - started:.3f}', file=sys.stderr, flush=True)
+mark('import_start')
+atexit.register(mark, 'interpreter_exit')
+import asyncio, os
+from labhq.tools import annot_mcp as m
+mark('import_done')
+assert 'ALPHAGENOME_API_KEY' not in os.environ
+assert m.ATLAS_ENABLED
+async def call():
+    mark('call_start')
+    result = await m.alphagenome_atlas(['chr1:100:A:G'])
+    mark('call_done')
+    print(result, flush=True)
+asyncio.run(call())
+mark('loop_closed')
+"""
+        proc = await asyncio.create_subprocess_exec(sys.executable, "-u", "-X", "utf8", "-c", script, env=env,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), 20)
+        stdout, stderr = await _communicate_atlas_probe(proc, (key, token))
+        assert key.encode() not in stdout + stderr
+        assert token.encode() not in stdout + stderr
+        print(stderr.decode(errors="replace"))
         assert proc.returncode == 0, stderr.decode(errors="replace")
         assert json.loads(stdout)["n_ok"] == 1 and seen == [key]
-        assert key.encode() not in stdout + stderr
+        assert b'ATLAS_PROBE interpreter_exit' in stderr
     finally:
         if proc is not None and proc.returncode is None:
             proc.kill()
-            await proc.wait()
+            await asyncio.wait_for(proc.wait(), 5)
         await service.finish(ctx.task.id)
         server.should_exit = True
         await asyncio.wait_for(serving, 10)
