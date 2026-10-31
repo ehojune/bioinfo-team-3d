@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:50 | [`6b36821`](https://github.com/ehojune/bioinfo-team-3d/pull/1175/commits/6b36821) | **결과 이벤트를 처리하는 중에 멈춤 요청이 겹친 Codex·Gemini 실행도 완료로 남고 halted로 바뀌지 않습니다.**<br>halt: 완료 flag(result_seen)가 선 실행도 halted로 덮지 않는다 (#1174 리뷰 P1) |
+| 23:10 | [`ca61824`](https://github.com/ehojune/bioinfo-team-3d/pull/1175/commits/ca61824) | **멈춤을 요청한 순간 직원 CLI가 스스로 끝났다면, 이미 받은 결과를 실패(halted)로 바꾸지 않고 그대로 완료로 처리합니다.**<br>halt: 멈춤 안내를 쓰는 사이 끝난 실행은 halted가 아니라 결과로 둔다 (#1174) |
 | 22:40 | [`1aba36a`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/1aba36a) | **셸 확인이 줄 끝 백슬래시로 이어 쓴 명령과 1&gt;&amp;3- 같은 출력 이동도 bash처럼 읽습니다.**<br>셸 확인: 줄 끝 백슬래시 이어쓰기와 1>&3- 이동을 bash처럼 읽는다 (#678 리뷰) |
 | 22:10 | [`feec236`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/feec236) | **manual에 셸 확인이 리다이렉션 대상·cd 위치·주석·묶음 옵션을 어떻게 읽는지 적었습니다.**<br>문서: 셸 확인의 명령 읽기 규칙 (#678) |
 | 21:40 | [`d2c95fd`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/d2c95fd) | **셸 확인이 2&gt;&amp;1 같은 출력 복제를 파일 이름으로 읽지 않습니다.**<br>셸 확인: 2>&1 같은 descriptor 복제는 파일로 보지 않는다 (#678 리뷰 P2) |
