@@ -823,6 +823,23 @@ def expand_env(env: dict[str, str], source: dict[str, str] | None = None) -> dic
                       lambda m: source.get(m.group(1), m.group(0)), v) for k, v in env.items()}
 
 
+def names_atlas_key(value: Any) -> bool:
+    """Does a launch setting name the key's environment variable as a variable (#1225)?
+
+    The variable ``ALPHAGENOME_API_KEY`` set in, listed by or referenced from a launch setting is refused. The same
+    letters inside a file path are not: the documented key file ``~/.labhq/secrets/alphagenome_api_key`` is named
+    like the variable, and listing it among the private paths must not read as an override. A path component is told
+    by a separator or a word character in front of the name."""
+    from ..tools.annot_alphagenome_atlas import KEY_ENV
+
+    pattern = re.compile(rf"(?<![\\/\w]){re.escape(KEY_ENV)}(?!\w)", re.IGNORECASE)
+    if isinstance(value, dict):
+        return any(names_atlas_key(str(key)) or names_atlas_key(item) for key, item in value.items())
+    if isinstance(value, (list, tuple, set)):
+        return any(names_atlas_key(item) for item in value)
+    return bool(pattern.search(str(value)))
+
+
 def atlas_credentials(settings: Settings, task_env: dict[str, str]) -> set[str]:
     """Collect secrets for removal, independently of the selected engine's key precedence."""
     from ..tools.annot_alphagenome_atlas import KEY_ENV, credentials
@@ -956,12 +973,12 @@ class AgentAdapter(ABC):
         atlas_secrets = atlas_credentials(self.settings, ctx.env)
         # Refuse before prepare writes engine settings. A shell policy `set`/MCP env override must not
         # restore the key after staff_env stripped it, including overrides supplied through extra_args.
-        launch_config = json.dumps({"engine": engine_bin.model_dump(exclude={"env"}) if engine_bin else {},
-                                    "mcp": [s.model_dump() for s in ctx.mcp_servers],
-                                    "settings": ctx.claude_settings, "prefix": prefix},
-                                   ensure_ascii=False, default=str)
-        launch_config = os.path.expandvars(launch_config)
-        if KEY_ENV.casefold() in launch_config.casefold() or any(key in launch_config for key in atlas_secrets):
+        launch = {"engine": engine_bin.model_dump(exclude={"env"}) if engine_bin else {},
+                  "mcp": [s.model_dump() for s in ctx.mcp_servers],
+                  "settings": ctx.claude_settings, "prefix": prefix}
+        launch_config = os.path.expandvars(json.dumps(launch, ensure_ascii=False, default=str))
+        # By the variable and by the value, not by the letters: a path that is named like the variable is no override.
+        if names_atlas_key(launch) or any(key in launch_config for key in atlas_secrets):
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error="Atlas credentials/config overrides are not allowed in staff launch settings")
         refused = ((read_only_mismatch(ctx.agent, ctx.mcp_servers) or read_only_launch_error(self.engine, prefix)
