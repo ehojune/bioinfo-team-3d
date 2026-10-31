@@ -15,5 +15,5 @@
 
 ## rev10 — 핀을 요청 단위 helper 하나로 (sweep)
 
-- 결론: 리뷰 P1 두 건(계획 capability, 첫 runner 대기)은 같은 부류라 하나씩 막지 않고, 요청에 대해 runner·roster·capability를 고르는 곳을 모두 찾아 ··(server)와 ·(cso) 한 갈래로 모았다. sweep 목록과 시험은 PR 본문.
+- 결론: 리뷰 P1 두 건(계획 capability, 첫 runner 대기)은 같은 부류라 하나씩 막지 않고, 요청에 대해 runner·roster·capability를 고르는 곳을 모두 찾아 `request_runner`·`request_agents`·`_request_ready`(server)와 `hub_runner`·`hub_agents`(cso) 한 갈래로 모았다. sweep 목록과 시험은 PR 본문.
 - 미검증: 실제 WSL runner 둘 이상 환경.
