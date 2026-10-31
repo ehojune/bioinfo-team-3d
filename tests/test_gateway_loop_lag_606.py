@@ -102,3 +102,49 @@ async def test_a_translation_is_reserved_without_holding_the_loop_and_only_once(
     assert lag.worst < LIMIT_S, f"the loop was late by {lag.worst:.3f}s while a commit took {DELAY_S}s"
     assert len(calls) == 1, "one reservation, one paid call"
     assert hub.store.get("pi_translation", "1")["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_a_runner_task_start_does_not_hold_the_loop_for_its_file_system_work(tmp_path, monkeypatch):
+    """The workspace folder, the staff skills copy and the private-path resolution used to run on the loop thread."""
+    from labhq.models import AgentSpec, Engine
+    from labhq.runner import daemon
+    from labhq.runner.daemon import Runner
+    from labhq.settings import Settings
+
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    agent = AgentSpec(id="cso", name="CSO", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda task: agent)
+
+    class Adapter:
+        async def run(self, ctx):
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Adapter())
+    slowed = []
+
+    def slow(name):
+        original = getattr(daemon, name)
+
+        def wrapper(*args, **kwargs):
+            slowed.append(name)
+            time.sleep(DELAY_S)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(daemon, name, wrapper)
+
+    for name in ("TaskWorkspace", "install_required_skills", "resolve_private_paths"):
+        slow(name)
+    task = Task(agent_id="cso", prompt="hello", meta={})
+    try:
+        async with LoopLag() as lag:
+            result = await runner.run_task(task)
+    finally:
+        runner.store.close()
+    assert result.ok
+    assert {"TaskWorkspace", "install_required_skills"} <= set(slowed), slowed
+    assert lag.worst < LIMIT_S, (f"the loop was late by {lag.worst:.3f}s while each of {sorted(set(slowed))} "
+                                 f"took {DELAY_S}s")
