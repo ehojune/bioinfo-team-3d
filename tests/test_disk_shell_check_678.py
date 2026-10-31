@@ -64,7 +64,7 @@ def folders(command, workdir):
 
 def test_the_target_folder_decides_the_drive(tmp_path):
     other = (tmp_path / "elsewhere").as_posix()
-    assert folders(f"tar -xf a.tar -C {other}", tmp_path) == [other]
+    assert other in folders(f"tar -xf a.tar -C {other}", tmp_path)
     assert folders("unzip a.zip -d sub", tmp_path)[0].endswith("/sub")
     assert folders("curl -o dl/a.zip https://example.org/a.zip", tmp_path)[0].endswith("/dl")
 
@@ -75,7 +75,7 @@ def test_the_target_folder_decides_the_drive(tmp_path):
 def test_every_tar_extract_spelling_is_read(tmp_path, command):
     out = (tmp_path / "out").as_posix()
     (tmp_path / "a.tgz").write_bytes(b"x")
-    assert folders(command.format(out=out), tmp_path) == [out]
+    assert out in folders(command.format(out=out), tmp_path)
 
 
 def test_tar_listing_and_creating_are_not_extraction(tmp_path):
@@ -85,17 +85,17 @@ def test_tar_listing_and_creating_are_not_extraction(tmp_path):
 
 def test_git_clone_probes_its_destination(tmp_path):
     other = (tmp_path / "bigdisk" / "repo").as_posix()
-    assert folders(f"git clone https://example.org/r.git {other}", tmp_path) == [other]
-    assert folders(f"git clone --depth 1 -b main https://example.org/r.git {other}", tmp_path) == [other]
-    assert folders("git clone https://example.org/r.git", tmp_path) == [tmp_path.as_posix()]
+    assert other in folders(f"git clone https://example.org/r.git {other}", tmp_path)
+    assert other in folders(f"git clone --depth 1 -b main https://example.org/r.git {other}", tmp_path)
+    assert tmp_path.as_posix() in folders("git clone https://example.org/r.git", tmp_path)
 
 
 def test_bulk_tools_probe_their_named_output(tmp_path):
     out = (tmp_path / "sra").as_posix()
-    assert folders(f"fasterq-dump SRR1 -O {out}", tmp_path) == [out]
-    assert folders(f"aws s3 sync s3://bucket/x {out}", tmp_path) == [out]
-    assert folders("aws s3 cp local.txt s3://bucket/x", tmp_path) == [tmp_path.as_posix()]
-    assert folders(f"rsync -a host:/data {out}", tmp_path) == [out]
+    assert out in folders(f"fasterq-dump SRR1 -O {out}", tmp_path)
+    assert out in folders(f"aws s3 sync s3://bucket/x {out}", tmp_path)
+    assert tmp_path.as_posix() in folders("aws s3 cp local.txt s3://bucket/x", tmp_path)
+    assert out in folders(f"rsync -a host:/data {out}", tmp_path)
 
 
 @pytest.mark.parametrize("command", ["ls -la", "cat notes.txt", "python run.py", "tar tf a.tar",
@@ -211,18 +211,46 @@ def test_which_rules_preapprove_a_bulk_write(rule, expected):
 
 def test_curl_output_dir_decides_the_drive(tmp_path):
     other = (tmp_path / "big").as_posix()
-    assert folders(f"curl --output-dir {other} -O https://example.org/a.zip", tmp_path) == [other]
-    assert folders(f"curl --output-dir {other} -o a.zip https://example.org/a.zip", tmp_path) == [other]
+    assert other in folders(f"curl --output-dir {other} -O https://example.org/a.zip", tmp_path)
+    assert other in folders(f"curl --output-dir {other} -o a.zip https://example.org/a.zip", tmp_path)
 
 
 def test_attached_tar_option_values_are_read(tmp_path):
     out = (tmp_path / "out").as_posix()
     (tmp_path / "a.tgz").write_bytes(b"x")
     arch = (tmp_path / "a.tgz").as_posix()
-    assert folders(f"tar -C{out} -xf{arch}", tmp_path) == [out]
+    assert out in folders(f"tar -C{out} -xf{arch}", tmp_path)
 
 
 def test_git_clone_skips_the_value_of_options_it_does_not_know(tmp_path):
     other = (tmp_path / "dest").as_posix()
-    assert folders(f"git clone --reference-if-able /cache https://example.org/r.git {other}", tmp_path) == [other]
-    assert folders(f"git clone --depth=1 --single-branch https://example.org/r.git {other}", tmp_path) == [other]
+    assert other in folders(f"git clone --reference-if-able /cache https://example.org/r.git {other}", tmp_path)
+    assert other in folders(f"git clone --depth=1 --single-branch https://example.org/r.git {other}", tmp_path)
+
+
+def test_every_output_of_one_curl_call_is_probed(tmp_path):
+    big = (tmp_path / "big").as_posix()
+    seen = folders(f"curl -o work/a https://example.org/1 -o {big}/b https://example.org/2", tmp_path)
+    assert any(f.startswith(big) for f in seen) and any("/work" in f for f in seen)
+
+
+def test_a_leading_cd_moves_where_the_next_command_runs(tmp_path):
+    big = (tmp_path / "big").as_posix()
+    assert tmp_path.as_posix() + "/big" in folders(f"cd {big} && curl -O https://example.org/a.zip", tmp_path)[0]
+    assert folders(f"cd {big} && curl -O https://example.org/a.zip", tmp_path)[0].startswith(big)
+
+
+def test_git_clone_switches_and_double_dash_do_not_hide_the_destination(tmp_path):
+    other = (tmp_path / "dest").as_posix()
+    assert other in folders(f"git clone --checkout https://example.org/r.git {other}", tmp_path)
+    assert other in folders(f"git clone -- https://example.org/r.git {other}", tmp_path)
+
+
+def test_unzip_skips_option_values_and_ignores_listing_modes(tmp_path):
+    with zipfile.ZipFile(tmp_path / "raw.zip", "w") as z:
+        z.writestr("big.bin", b"\0" * 1024)
+    tight = lambda f: Space(10 * GIB, 0, int(2 * GIB + 10))  # 1 KiB listed leaves only 10 bytes over the floor
+    asked = shell_check("unzip -P secret raw.zip -d out", str(tmp_path), probe=tight, **CHECK)
+    assert asked is not None and asked.action == "ask"
+    for listing in ("unzip -l raw.zip", "unzip -t raw.zip", "unzip -p raw.zip"):
+        assert shell_check(listing, str(tmp_path), probe=drive(0.5), **CHECK) is None

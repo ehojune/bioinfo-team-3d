@@ -143,12 +143,15 @@ def _clone_folder(words: list[str], workdir: str) -> Path:
                 "--recursive", "--recurse-submodules", "--shallow-submodules", "--no-shallow-submodules",
                 "--single-branch", "--no-single-branch", "--no-tags", "--tags", "-l", "--local", "-s", "--shared",
                 "--no-hardlinks", "--dissociate", "--sparse", "--also-filter-submodules", "--reject-shallow",
-                "--no-reject-shallow", "--remote-submodules", "--no-remote-submodules", "-4", "--ipv4", "-6",
+                "--no-reject-shallow", "--checkout", "--remote-submodules", "--no-remote-submodules", "-4", "--ipv4", "-6",
                 "--ipv6", "--no-local", "--no-shared", "--hardlinks"}
     short_values = {"-b", "-o", "-c", "-j", "-u"}
     positional, i = [], words.index("clone") + 1
     while i < len(words):
         word = words[i]
+        if word == "--":  # everything after is an operand
+            positional.extend(words[i + 1:])
+            break
         if word.startswith("--"):
             i += 1 if "=" in word or word in switches else 2
             continue
@@ -158,6 +161,53 @@ def _clone_folder(words: list[str], workdir: str) -> Path:
         positional.append(word)
         i += 1
     return _resolve(positional[1], workdir) if len(positional) > 1 else Path(workdir)
+
+
+def _unzip_options(words: list[str]) -> tuple[str | None, str | None, bool]:
+    """(archive, folder, extracts?) of an unzip call: `-P pw` and `-d dir` take a value, `-l -t -p -z -v` only read."""
+    archive, folder, extracts, i = None, None, True, 1
+    while i < len(words):
+        word = words[i]
+        if word in {"-d", "-P"} and i + 1 < len(words):
+            if word == "-d":
+                folder = words[i + 1]
+            i += 2
+            continue
+        if word in {"-x", "-i"}:  # the rest are file patterns
+            break
+        if word.startswith("-d") and len(word) > 2:
+            folder = word[2:]
+        elif word.startswith("-") and len(word) > 1:
+            if set(word[1:]) & set("ltpzv") and not word.startswith(("-P", "-d")):
+                extracts = False
+        elif archive is None:
+            archive = word
+        i += 1
+    return archive, folder, extracts
+
+
+_PATHLIKE = re.compile(r"^(?:[A-Za-z]:[\\/]|[/\\~]|\.{1,2}[/\\])|[/\\]")
+
+
+def _operand_folders(words: list[str], cwd: str) -> list[Path]:
+    """Every path-looking operand of a command, whatever option it follows (`-o a -o /full/b`, `-C/out`, `--dir=/x`).
+
+    The drive of any of them may be the one filled, so the floor check reads them all; an operand that is only read
+    costs a harmless question when that drive really is below the floor. URLs are not paths."""
+    found: list[Path] = []
+    for word in words[1:]:
+        text = word
+        if text.startswith("-"):
+            if "=" in text:
+                text = text.partition("=")[2]
+            elif len(text) > 2 and not text.startswith("--"):
+                text = text[2:]
+            else:
+                continue
+        if "://" in text or not _PATHLIKE.search(text):
+            continue
+        found.append(_resolve(text, cwd))
+    return found
 
 
 def _write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | None:
@@ -171,8 +221,9 @@ def _write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | Non
         target = (_resolve(out, str(base)) if out else base)
         return "다운로드", (target.parent if out and target.suffix else target), None
     if name == "unzip":
-        archive = next((w for w in words[1:] if not w.startswith("-")), None)
-        folder = _option(words, "-d")
+        archive, folder, extracts = _unzip_options(words)
+        if not extracts:
+            return None
         return ("압축 해제", _resolve(folder, workdir) if folder else Path(workdir),
                 _zip_size(_resolve(archive, workdir)) if archive else None)
     if name in {"tar", "bsdtar"}:
@@ -207,31 +258,48 @@ def shell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, w
     warns; pipes, variables and anything unparsed are left alone, as is an unreadable drive. Never denies."""
     probe = probe or usage
     worst: ShellCheck | None = None
+    cwd = workdir
     for segment in _SEGMENT.split(command):
         words = _words(segment)
         if not words:
             continue
+        if Path(words[0]).name in {"cd", "pushd"} and len(words) == 2 and "$" not in words[1] and "`" not in words[1]:
+            cwd = str(_resolve(words[1], cwd))  # the commands that follow run there
+            continue
         try:
-            found = _write(words, workdir)
+            found = _write(words, cwd)
             if found is None:
                 continue
             what, folder, estimate = found
-            space = probe(folder)
+            folders = [folder, *_operand_folders(words, cwd)]
+            spaces = []
+            for candidate in dict.fromkeys(folders):
+                try:
+                    spaces.append((candidate, probe(candidate)))
+                except (OSError, ValueError):
+                    continue  # an unreadable drive is never a reason to ask
         except (OSError, ValueError):
             continue
-        if space.total <= 0:
+        spaces = [(f, sp) for f, sp in spaces if sp.total > 0]
+        if not spaces:
             continue
-        free = space.free / GIB
-        if fail_gb and space.free < fail_gb * GIB:
-            verdict = ShellCheck("ask", f"{what} 대상 드라이브({folder.as_posix()}) 여유가 {free:.1f} GiB로 "
-                                        f"기준 {fail_gb:g} GiB보다 적습니다")
-        elif estimate is not None and fail_gb and space.free - estimate < fail_gb * GIB:
-            verdict = ShellCheck("ask", f"{what}에 약 {estimate / GIB:.1f} GiB가 필요한데 대상 드라이브"
-                                        f"({folder.as_posix()}) 여유는 {free:.1f} GiB뿐입니다(기준 {fail_gb:g} GiB 남겨야 함)")
-        elif estimate is None and low(space, warn_gb, warn_percent):
-            verdict = ShellCheck("warn", f"{what}: 대상 드라이브({folder.as_posix()}) 여유가 적습니다({free:.1f} GiB). "
-                                         "크기를 알 수 없어 막지 않습니다")
-        else:
+        verdict = None
+        for candidate, space in spaces:
+            if fail_gb and space.free < fail_gb * GIB:
+                verdict = ShellCheck("ask", f"{what} 대상 드라이브({candidate.as_posix()}) 여유가 "
+                                            f"{space.free / GIB:.1f} GiB로 기준 {fail_gb:g} GiB보다 적습니다")
+                break
+        main = spaces[0][1] if spaces[0][0] == folder else None
+        if verdict is None and main is not None:
+            free = main.free / GIB
+            if estimate is not None and fail_gb and main.free - estimate < fail_gb * GIB:
+                verdict = ShellCheck("ask", f"{what}에 약 {estimate / GIB:.1f} GiB가 필요한데 대상 드라이브"
+                                            f"({folder.as_posix()}) 여유는 {free:.1f} GiB뿐입니다"
+                                            f"(기준 {fail_gb:g} GiB 남겨야 함)")
+            elif estimate is None and low(main, warn_gb, warn_percent):
+                verdict = ShellCheck("warn", f"{what}: 대상 드라이브({folder.as_posix()}) 여유가 적습니다({free:.1f} GiB). "
+                                             "크기를 알 수 없어 막지 않습니다")
+        if verdict is None:
             continue
         if worst is None or (verdict.action == "ask" and worst.action != "ask"):
             worst = verdict
