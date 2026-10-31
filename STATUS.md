@@ -4,6 +4,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1246: 10-31 이후 병합 PR의 남은 지적 점검
+
+- 결론: 병합 PR 96건의 "남은 지적"과 마지막 head의 Codex P2 65건(41개 PR)을 main과 대조했다. 대부분은 뒤 PR에서 이미 고쳐졌고, 아직 열린 결함 후보는 셋이다. 표와 수정안은 [#1246 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1246#issuecomment-6548521580)에 있다. 코드는 바꾸지 않았다.
+- 결함 상위 3개: (1) #1103 웹 남은 시간이 `created_at`+상한으로 계산돼 서버 기한보다 길게 보임(`labhq/web/state.js:261`, 확인), (2) #1215 AlphaGenome 준비 상태를 gateway가 판단해 별도 runner 계정 구성에서 어긋남(PR 본문 기준), (3) #1186 Atlas 나머지 P2(취소 뒤 thread, 캐시 credential 범위 등, Codex #621 소유, 미확인).
+- 이미 고쳐진 것: #1131·#1150·#1157·#1186(deny)·#1189·#1165·#1169·#1160·#1097 등. 근거 줄은 댓글에 적었다.
+- 한계: "고쳐짐"은 직접 읽어 확인한 것만 표시했고 나머지는 "미확인"이다. 사람이 남긴 지적은 집계하지 않았다.
+
 # #898: 종료 신호 시험의 시간 가정을 고친다
 
 - 결론: `test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resume[SIGTERM|SIGHUP]`이 main Windows에서 세 번 실패했다(10-30 16:31 SIGHUP `shutdown returned before durable ACK`, 10-30 18:30·10-31 15:57 SIGTERM `gateway_resume timed out`). 시험의 fixture 단계 5초와 `Runner.shutdown`의 기본 5초가 gateway 쪽 fsync가 느린 러너에서 모자랐다.
