@@ -20,9 +20,12 @@ def failed_step_ids(request: dict) -> list[str]:
 
     Derived from what the request already holds and never stored: a summary that lists them (`failed_steps`) is used as it
     is, else the plan's steps and the results are read. Any other status has none, since `failed` and `cancelled` already
-    say that something did not complete."""
+    say that something did not complete. A plan-only request is read from its own mode, not from its missing results: a
+    run in which no step left a result must still be marked."""
     if request.get("status") != "done":
         return []
+    if request.get("mode") == "plan_only" or request.get("outcome") == "plan_only":
+        return []  # it ends `done` on purpose with the plan and no results: nothing was meant to run
     listed = request.get("failed_steps")
     if isinstance(listed, list):
         return [str(step) for step in listed]

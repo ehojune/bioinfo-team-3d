@@ -47,6 +47,24 @@ def test_a_clean_done_request_and_a_direct_one_have_no_marker_unless_they_failed
     assert failed_step_ids({"status": "done", "mode": "direct", "results": {"direct": {"ok": False}}}) == ["direct"]
 
 
+def test_a_plan_only_request_keeps_its_plan_and_has_no_results_and_is_not_partially_failed():
+    """#1222 review P1: a plan-only request ends `done` on purpose with the plan and no results."""
+    plan = {"steps": [{"id": "s1"}, {"id": "s2"}]}
+    by_mode = {"status": "done", "mode": "plan_only", "plan": plan, "results": {}}
+    by_outcome = {"status": "done", "mode": "team", "outcome": "plan_only", "plan": plan, "results": {}}
+    for planned in (by_mode, by_outcome):
+        assert failed_step_ids(planned) == []
+        assert request_display_label(planned) == "완료"
+
+
+def test_a_done_request_whose_steps_all_left_no_result_is_still_marked():
+    """The plan-only rule is read from the request's own mode, not from the missing results: a run in which no step left a
+    result is exactly what the marker must not hide."""
+    ran_nothing = {"status": "done", "mode": "team", "plan": {"steps": [{"id": "s1"}, {"id": "s2"}]}, "results": {}}
+    assert failed_step_ids(ran_nothing) == ["s1", "s2"]
+    assert request_display_label(ran_nothing) == "완료 · 일부 실패 2"
+
+
 def test_a_summary_that_already_lists_the_failed_steps_is_used_as_it_is():
     assert failed_step_ids({"status": "done", "failed_steps": ["a", "b"]}) == ["a", "b"]
     assert failed_step_ids({"status": "done", "failed_steps": []}) == []
