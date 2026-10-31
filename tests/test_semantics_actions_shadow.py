@@ -192,6 +192,9 @@ def test_an_asked_and_ended_followup_is_observed_once_each_and_changes_nothing(t
             assert response.status_code == 200
             _wait(lambda: hub.requests["req_f1"]["followups"][0]["status"] != "running")
             if hub.semantics_shadow is not None:
+                # `ended` is queued after the status flips, so a drain right after the status change can run first
+                # (seen on CI, 3.12). Wait for both lines before draining; the asserts below still require exactly two (#1076).
+                _wait(lambda: len([x for x in _lines(base) if x["type"] == "followup"]) >= 2)
                 assert hub.semantics_shadow.drain(10)
         entry = dict(hub.requests["req_f1"]["followups"][0])
         return {k: v for k, v in entry.items() if k not in ("id", "asked_at", "answered_at", "task_id")}, hub
