@@ -133,6 +133,27 @@
 | 미해결 | 실제 WSL runner 요청은 하지 않았다. runner 쪽 판정은 그대로다 |
 | 근거 | https://github.com/ehojune/bioinfo-team-3d/issues/674#issuecomment-6549409609 |
 
+## 단계
+
+#666 rev4 · [PR #1257](https://github.com/ehojune/bioinfo-team-3d/pull/1257). Draft/hold 유지, 병합은 총괄 판단.
+
+## 변경
+
+- Runner·adapter의 기본 off 연결은 요청 시 unsupported로 거부합니다. 기존 승인 gate를 유지합니다.
+- offline producer/observer 결과는 `synthetic_only`이며 보호 capability를 부여하지 않습니다.
+- 새 회귀를 Windows inventory와 필수 boundary cohort에 등록하고 manual 한영판에 사용 한계를 명시했습니다.
+- status 파일명을 HHMM 형식으로 고쳤습니다. [연결 계약](../reference/sandbox-666-phase2.md).
+
+## 검증
+
+- 관련 7개 파일 회귀: 275 passed, 10 skipped, 1 xfailed, 7 subtests passed.
+- `scripts.ci_selection.validate_profile()` 통과. 최종 head CI·실제 리뷰·기록 검사는 PR 댓글에서 추적합니다.
+
+## 남은 조건
+
+- 최종 head CI·실제 리뷰와 P1 해결 뒤에도 draft/hold를 유지합니다.
+- 실제 보호·인증 cleanup은 **UNVERIFIED**. 실제 engine/provider·credential·provisioning·연구/HPC·배포는 범위 밖입니다.
+
 # #1076 rev26: 시간 경쟁 시험 네 개를 안정화한다
 
 - 결론: rev25 집계에서 PR과 무관하게 반복 실패한 시험 중 시험 파일만으로 고칠 수 있는 네 개를 고쳤다. 시험이 잡으려던 결함(loop를 막는 commit·fsync)은 그대로 잡는다. 제품 코드는 바꾸지 않았다.
