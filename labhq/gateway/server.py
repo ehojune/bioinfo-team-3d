@@ -370,6 +370,23 @@ def _runner_ready_for(hub: "Hub", agent_id: str, meta: dict | None = None) -> bo
     return hub.agent_runner.get(agent_id) in hub.runners
 
 
+def _request_pin_meta(hub: "Hub", agent_id: str, request_id: str | None) -> dict | None:
+    """The pin of ``agent_id`` in this request as task meta (what ``Hub._pin_wsl_request`` puts on its tasks), or None.
+    The one place that turns "this request chose WSL" into a pin; every request-scoped choice goes through it."""
+    if (hub.requests.get(request_id or "") or {}).get("wsl_pinned") and agent_id in WSL_BOUND_AGENTS:
+        return {"session_runner": hub.s.runner.wsl.id, "wsl_pin": True}
+    return None
+
+
+def _request_runner(hub: "Hub", agent_id: str, request_id: str | None) -> str | None:
+    """The runner ``agent_id`` works on for this request: the pinned WSL runner while it is ready, else the owner."""
+    return _target_runner(hub, agent_id, _request_pin_meta(hub, agent_id, request_id))
+
+
+def _request_ready(hub: "Hub", agent_id: str, request_id: str | None) -> bool:
+    return _runner_ready_for(hub, agent_id, _request_pin_meta(hub, agent_id, request_id))
+
+
 def _pin_kwargs(meta: dict | None) -> dict:
     """What ``wait_agent_online`` is told about a WSL-pinned task; nothing for any other task."""
     return {"meta": meta} if _wsl_pin(meta) else {}
@@ -1029,7 +1046,7 @@ class Hub:
         """Park until the PI logs in, the retry clock fires, or the bounded wait expires."""
         req = self.requests[rid]
         started = (((req.get("login_windows") or {}).get(engine) or {}).get("started_at") or time.time())
-        runner_id = self.agent_runner.get(agent_id or "")
+        runner_id = _request_runner(self, agent_id or "", rid)
         entry = {"engine": engine, "resume_at": resume_at, "deadline_at": deadline_at,
                  "reason": short(reason, 500), "waiting_since": started,
                  **({"runner_id": runner_id} if runner_id else {})}
@@ -2165,8 +2182,7 @@ class Hub:
         while True:
             if _ended_by_cancel(req):
                 return
-            missing = {aid for aid in (await self.aresume_agents(rid))
-                       if self.agent_runner.get(aid) not in self.runners}
+            missing = {aid for aid in (await self.aresume_agents(rid)) if not _request_ready(self, aid, rid)}
             if _ended_by_cancel(req):  # a cancel can land while the agents are looked up (#1168)
                 return
             if req.get("recruit_contract_failure"):
@@ -3301,8 +3317,9 @@ class Hub:
 
         Advertised rosters are input only here; routing, recovery and registration use this view.
         History is for discovery/waiting, never for dispatch to a disconnected runner.
-        ``hosts=True`` gives instead, per agent, every runner that may host it (a WSL runner that is not ready left
-        out): the owner is one of them, and a task pinned to a WSL runner goes there whatever the owner is (#1204).
+        ``hosts=True`` gives instead, per agent, ``{runner_id: roster entry}`` of every runner that may host it (a WSL
+        runner that is not ready left out): the owner is one of them, and a request pinned to a WSL runner uses that
+        one's entry whatever the owner is (#1204).
         """
         from ..wsl_readiness import wsl_readiness
 
@@ -3320,7 +3337,7 @@ class Hub:
                     continue
                 candidates.setdefault(aid, {})[rid] = agent
         if hosts:
-            return {aid: set(runners) for aid, runners in candidates.items()}
+            return {aid: dict(runners) for aid, runners in candidates.items()}
         owners = {}
         for aid, hosts in candidates.items():
             online = [rid for rid in hosts if rid in self.runners]
@@ -3352,18 +3369,34 @@ class Hub:
             else:
                 signal.clear()
         self.agent_runner = {aid: a["runner_id"] for aid, a in roster.items()}
-        self.agents = {}
-        for aid, a in roster.items():
-            caps = self.runner_capabilities.get(a["runner_id"], {})
-            hpc_tools = bool(a.get("hpc_tools", caps.get("hpc_tools") and
-                                                 "hpc" in a.get("builtin_mcp", [])))
-            self.agents[aid] = {**a, "scheduler": caps.get("scheduler", "none"),
-                                "task_timeout_s": a.get("task_timeout_s", self.s.runner.task_timeout_s),
-                                "compute_backends": (["local CLI"] +
-                                                     [b for b in caps.get("compute_backends", [])
-                                                      if b != "local CLI" and hpc_tools]),
-                                "hpc_tools": hpc_tools}
-            self.agents[aid]["capabilities"] = self._agent_capabilities(self.agents[aid])
+        self.agents = {aid: self._agent_entry(a) for aid, a in roster.items()}
+
+    def _agent_entry(self, a: dict) -> dict:
+        """The staff sheet entry of one roster row (it carries its ``runner_id``)."""
+        caps = self.runner_capabilities.get(a["runner_id"], {})
+        hpc_tools = bool(a.get("hpc_tools", caps.get("hpc_tools") and "hpc" in a.get("builtin_mcp", [])))
+        entry = {**a, "scheduler": caps.get("scheduler", "none"),
+                 "task_timeout_s": a.get("task_timeout_s", self.s.runner.task_timeout_s),
+                 "compute_backends": (["local CLI"] + [b for b in caps.get("compute_backends", [])
+                                                       if b != "local CLI" and hpc_tools]),
+                 "hpc_tools": hpc_tools}
+        entry["capabilities"] = self._agent_capabilities(entry)
+        return entry
+
+    def request_agents(self, request_id: str | None) -> dict[str, dict]:
+        """The staff this request plans and runs with: ``agents``, but a request that is pinned to WSL sees the WSL
+        runner's entry for its WSL-bound agents (scheduler, compute backends, capabilities), not the owner's (#1204)."""
+        view = dict(self.agents)
+        for aid in WSL_BOUND_AGENTS:
+            pin = _request_pin_meta(self, aid, request_id)
+            if pin and _runner_ready_for(self, aid, pin):
+                row = self.effective_roster(hosts=True).get(aid, {}).get(pin["session_runner"])
+                if row is not None:
+                    view[aid] = self._agent_entry({**row, "runner_id": pin["session_runner"]})
+        return view
+
+    def request_runner(self, agent_id: str, request_id: str | None) -> str | None:
+        return _request_runner(self, agent_id, request_id)
 
     def set_roster(self, runner_id: str, agents: list[dict], capabilities: dict | None = None) -> None:
         roster = {"agents": agents, "updated_at": time.time()}
@@ -3582,11 +3615,9 @@ class Hub:
     def _pin_wsl_request(self, task: Task) -> None:
         """A request that chose WSL and got it keeps its bioinfo-agent tasks on the WSL runner: pinned like a session, so
         a native runner that also hosts the agent is refused at $0 instead of taking the work (#612)."""
-        req = self.requests.get(task.request_id or "") or {}
-        if req.get("wsl_pinned") and task.agent_id in WSL_BOUND_AGENTS:
-            wsl_id = self.s.runner.wsl.id
-            if task.meta.setdefault("session_runner", wsl_id) == wsl_id:
-                task.meta["wsl_pin"] = True  # this request chose the pin; a resumed session of another runner did not
+        pin = _request_pin_meta(self, task.agent_id, task.request_id)
+        if pin and task.meta.setdefault("session_runner", pin["session_runner"]) == pin["session_runner"]:
+            task.meta["wsl_pin"] = True  # this request chose the pin; a resumed session of another runner did not
 
     async def wait_for_runner(self, task: Task, *, first: bool = False) -> bool:
         """Park the task's request as waiting_for_runner until a runner hosting the agent connects, at most
@@ -4426,9 +4457,10 @@ class Hub:
         tid, entry = max(prior, key=lambda pair: (pair[1].get("dispatched_at", 0),
                                                   int(pair[1].get("attempt") or 1)))
         attempt = int(entry.get("attempt") or 1)
-        if not entry.get("completed") and self.agent_runner.get(agent_id) not in self.runners:
+        prior_meta = (entry.get("payload") or {}).get("meta")
+        if not entry.get("completed") and not _runner_ready_for(self, agent_id, prior_meta):
             # Resume approval can precede the runner's reconnect; its generation decides adoption.
-            await self.wait_agent_online(agent_id, self.s.gateway.resume_wait_s)
+            await self.wait_agent_online(agent_id, self.s.gateway.resume_wait_s, **_pin_kwargs(prior_meta))
             entry = self.store.get("task", tid) or entry
         if not entry.get("completed"):
             runner = self._holder_runner(agent_id, entry)
@@ -5762,7 +5794,8 @@ class Hub:
         # The plan reads the roster before its first dispatch, so wait for the first agent's runner here (R15).
         first = r.get("agent_id") if r.get("mode") == "direct" else self.s.orchestrator.cso_agent
         probe = Task(agent_id=str(first or ""), request_id=rid, prompt="")
-        if (first and self.agent_runner.get(first) not in self.runners and
+        self._pin_wsl_request(probe)  # a pinned first agent waits for its WSL runner, not for the owner (#1204)
+        if (first and not _runner_ready_for(self, first, probe.meta) and
                 self._waits_for_runner(probe, first=True)):
             if not await self.wait_for_runner(probe, first=True):
                 if self.requests[rid].get("status") != "cancelled":

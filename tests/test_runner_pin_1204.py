@@ -4,10 +4,14 @@ runner as the agent's owner (#1204, follow-up of #612).
 ``agent_runner`` still holds one owner per agent. What changes is that a task pinned to WSL (`meta.wsl_pin`) is sent
 to, resent to, recovered on and waited for at the WSL runner itself, and that its pin never decides the owner."""
 import asyncio
+import time
+from types import SimpleNamespace
 
 import pytest
 
-from labhq.gateway.server import Hub, _wsl_pin
+from labhq.gateway.server import Hub, _request_ready, _wsl_pin
+from labhq.orchestrator import cso
+from labhq.orchestrator.cso import Orchestrator, format_capabilities, hub_agents, hub_runner
 from labhq.models import Task, TaskResult
 from labhq.settings import Settings
 from labhq.wsl_readiness import REQUIRED
@@ -16,7 +20,7 @@ from test_staff_control_steps import FakeWs
 
 AGENT = "bioinfo-agent"
 ROSTER = [{"id": AGENT, "engine": "claude_code"}]
-WSL_CAPS = {"runtime_env": "wsl", "wsl_readiness": {key: True for key in REQUIRED}}
+WSL_CAPS = {"runtime_env": "wsl", "wsl_readiness": {key: True for key in REQUIRED}, "scheduler": "sge"}
 
 
 @pytest.fixture
@@ -204,3 +208,101 @@ async def test_the_session_of_a_pinned_task_is_waited_for_on_its_own_runner(hub)
     hub.store.put("task", "held", {**held, "completed": True, "result": {"session_id": "s2"}})
     hub._session_state_changed()
     assert (await asyncio.wait_for(waiter, 3))[0] == "s2"
+
+
+# ---- the sweep: every place that picks a runner, staff entry or capability for a request goes through one helper ----
+# (Hub.request_runner / request_agents / _request_ready, cso.hub_runner / hub_agents). One test per place found.
+
+def pinned_request_with_native_owner(hub):
+    both(hub)
+    hub.requests["r"]["wsl_pinned"] = True  # "other" is the request that did not choose WSL
+
+
+async def test_sweep_plan_roster_and_capabilities_show_the_wsl_runner_to_a_pinned_request(hub):
+    pinned_request_with_native_owner(hub)
+    assert hub.agents[AGENT]["runner_id"] == "win" and hub.agents[AGENT]["scheduler"] == "none"
+    mine, other = hub_agents(hub, "r"), hub_agents(hub, "other")
+    assert mine[AGENT]["runner_id"] == "lab-wsl" and mine[AGENT]["scheduler"] == "sge"
+    assert other[AGENT]["runner_id"] == "win", "a request that did not choose WSL keeps the owner's entry"
+    text = format_capabilities(list(mine.values()), hub.runner_capabilities, run_where="wsl")
+    assert "runner lab-wsl" in text and "로컬 WSL" in text and "runner win" not in text
+
+
+async def test_sweep_first_runner_gate_does_not_wait_for_an_owner_that_is_away(hub, monkeypatch):
+    from labhq import wsl_setup
+
+    monkeypatch.setattr(wsl_setup, "configured", lambda s: True)
+    monkeypatch.setattr(wsl_setup, "check", lambda s: [])
+    win, wsl = both(hub)
+    hub.unregister_runner("win", win)  # the owner is pinned to the native runner by its unfinished task, and it is away
+    assert hub.agent_runner[AGENT] == "win" and "win" not in hub.runners
+    started = []
+
+    async def run_request(rid):
+        started.append(rid)
+
+    hub.orchestrator = SimpleNamespace(run_request=run_request, _finish=None)
+    hub.requests["r"].update(agent_id=AGENT, run_where="wsl")
+    hub.s.gateway.runner_wait_s = 86400
+    await asyncio.wait_for(hub._start_request("r"), 3)
+    assert started == ["r"] and hub.requests["r"]["wsl_pinned"] is True, "planning started on the WSL runner"
+
+
+async def test_sweep_login_wait_names_the_runner_the_request_uses(hub):
+    pinned_request_with_native_owner(hub)
+    now = time.time()
+    parked = asyncio.ensure_future(hub.wait_login("r", "s1", "claude", resume_at=now + 0.3, deadline_at=now + 0.6,
+                                                  reason="login", agent_id=AGENT))
+    await asyncio.sleep(0.1)
+    assert hub.requests["r"]["login_waits"]["s1"]["runner_id"] == "lab-wsl"
+    parked.cancel()
+    await asyncio.gather(parked, return_exceptions=True)
+
+
+async def test_sweep_resume_counts_a_pinned_agent_as_missing_while_its_wsl_runner_is_away(hub):
+    win, wsl = both(hub)
+    hub.requests["r"]["wsl_pinned"] = True
+    assert _request_ready(hub, AGENT, "r") and _request_ready(hub, AGENT, "other")
+    hub.unregister_runner("lab-wsl", wsl)
+    assert _request_ready(hub, AGENT, "other"), "the native owner is up for a request that did not choose WSL"
+    assert not _request_ready(hub, AGENT, "r"), "the pinned request waits for WSL, the owner does not stand in"
+
+
+async def test_sweep_environment_binding_sees_the_wsl_runner_for_a_pinned_request(hub, monkeypatch):
+    pinned_request_with_native_owner(hub)
+    seen = {}
+    monkeypatch.setattr(cso, "split_runner_environments", lambda steps, live, runtimes, can_create:
+                        seen.update(live=dict(live), runtimes=dict(runtimes)) or steps)
+    monkeypatch.setattr(cso, "validate_environment_bindings", lambda result: None)
+    fake = SimpleNamespace(hub=hub, _environment_rid="r")
+    Orchestrator._prepare_runner_environments(fake, [])
+    assert seen["live"][AGENT] == "lab-wsl" and seen["runtimes"]["lab-wsl"] == "wsl"
+    fake._environment_rid = "other"
+    Orchestrator._prepare_runner_environments(fake, [])
+    assert seen["live"][AGENT] == "win"
+
+
+async def test_sweep_ask_origin_and_consult_runner_follow_the_request(hub):
+    pinned_request_with_native_owner(hub)
+    assert hub_runner(hub, AGENT, "r") == "lab-wsl", "the ask origin and the consult same-runner check read this"
+    assert hub_runner(hub, AGENT, "other") == "win"
+    assert hub_runner(hub, "analyst", "r") is None, "only the WSL-bound agent is pinned"
+
+
+async def test_sweep_helpers_fall_back_for_a_hub_that_has_no_request_view():
+    plain = SimpleNamespace(agents={AGENT: {"id": AGENT}}, agent_runner={AGENT: "x"})
+    assert hub_agents(plain, "r") is plain.agents and hub_runner(plain, AGENT, "r") == "x"
+
+
+async def test_sweep_adopting_a_pinned_consult_waits_for_its_own_runner_not_the_owner(hub):
+    win, wsl = both(hub)
+    hub.unregister_runner("win", win)
+    held = {"request_id": "r", "runner_id": "lab-wsl", "runner_incarnation": "inc-lab-wsl", "accepted": True,
+            "kind": "consult", "dispatched_at": 3.0,
+            "payload": {"agent_id": AGENT, "meta": {"ask_id": "a1", "session_runner": "lab-wsl", "wsl_pin": True}}}
+    hub.store.put("task", "held", held)
+    hub.s.gateway.resume_wait_s = 30
+    adopting = asyncio.ensure_future(hub.adopt_consult("a1", AGENT))
+    await until(lambda: "held" in hub.futures)  # past the guard: it did not sit out resume_wait_s for the away owner
+    hub.futures["held"].set_result(TaskResult(task_id="held", agent_id=AGENT, ok=True))
+    await asyncio.wait_for(adopting, 3)

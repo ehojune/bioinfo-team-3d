@@ -11,6 +11,7 @@ from ..request_persistence import create_revised_request, persist_request, remov
 import asyncio
 import copy
 import hashlib
+import inspect
 import json
 import math
 import re
@@ -615,6 +616,21 @@ def _format_local_software(summary: object) -> str:
     run_as = f" run as `{command}`" if command in ("python3", "python", "py") else ""
     return (f"R={r_label}; Python={_capability_version(python.get('version'))}{run_as}; packages[{packages}]; "
             f"tools[{tools}]")
+
+
+def _hub_has(hub: Any, name: str) -> bool:
+    """A real Hub method, not an attribute a test double or mock happens to answer."""
+    return inspect.isfunction(getattr(type(hub), name, None))
+
+
+def hub_agents(hub: Any, request_id: str | None) -> dict[str, dict]:
+    """The staff of this request (a request pinned to WSL sees the WSL runner's entry for bioinfo-agent, #1204)."""
+    return hub.request_agents(request_id) if _hub_has(hub, "request_agents") else hub.agents
+
+
+def hub_runner(hub: Any, agent_id: str, request_id: str | None) -> str | None:
+    """The runner this request uses for ``agent_id``."""
+    return hub.request_runner(agent_id, request_id) if _hub_has(hub, "request_runner") else hub.agent_runner.get(agent_id)
 
 
 def format_capabilities(roster: list[dict], runner_capabilities: dict | None = None,
@@ -3417,8 +3433,17 @@ class Orchestrator:
             meta["output_types"] = output_types.meta_declarations(kept)
         return meta
 
+    def _bind_request_environments(self, rid: str, steps: list[dict]) -> list[dict]:
+        """``_prepare_runner_environments`` for one request: the runners and staff it sees are the request's (#1204)."""
+        self._environment_rid = rid
+        try:
+            return self._prepare_runner_environments(steps)
+        finally:
+            self._environment_rid = None
+
     def _prepare_runner_environments(self, steps: list[dict]) -> list[dict]:
-        agents = self.hub.agents
+        rid = getattr(self, "_environment_rid", None)
+        agents = hub_agents(self.hub, rid)
 
         def can_create(agent_id: str) -> bool:
             agent = agents.get(agent_id) or {}
@@ -3435,7 +3460,7 @@ class Orchestrator:
         runners = getattr(self.hub, "agent_runner", {})
         online = getattr(self.hub, "runners", {})
         capabilities = getattr(self.hub, "runner_capabilities", {})
-        live = {agent: runner for agent, runner in runners.items() if runner in online}
+        live = {agent: runner for agent in runners if (runner := hub_runner(self.hub, agent, rid)) in online}
         runtimes = {runner: caps.get("runtime_env") for runner, caps in capabilities.items()
                     if isinstance(caps, dict)}
         result = split_runner_environments(steps, live, runtimes, can_create)
@@ -3725,7 +3750,7 @@ class Orchestrator:
 
         # A task workdir belongs to its runner's filesystem. The gateway only forwards it when the
         # consult will run on that same runner; the runner validates the path and refs before launch.
-        same_runner = self.hub.agent_runner.get(routed) == runner_id
+        same_runner = hub_runner(self.hub, routed, ask.request_id) == runner_id
         refs = normalized_refs if same_runner else []
         source_workdir = ask.source_workdir if refs and ask.source_workdir else None
         reference_note = ("참고 파일은 다른 runner에 있어 읽을 수 없다"
@@ -3995,7 +4020,7 @@ class Orchestrator:
         task = self._with_research_round(self._with_request_identity(task))
         rid = task.request_id or ""
         initial_attempt = first_attempt
-        engine = str((self.hub.agents.get(task.agent_id) or {}).get("engine") or "")
+        engine = str((hub_agents(self.hub, rid).get(task.agent_id) or {}).get("engine") or "")
         final_step = bool(task.meta.get("final_budget_turn"))  # nothing runs after this step but its own turns
         optional_support = bool(task.meta.get("facilities_diagnosis") or task.meta.get("kind") in
                                 {"paper_skill", "recruit_check", "plan_recruit"})
@@ -4315,7 +4340,7 @@ class Orchestrator:
                     format_tries += 1
                     known = res.cost_known is not False and res.cost_usd is not None
                     cap = next((float(v) for v in (turn.budget_usd,
-                                                   (self.hub.agents.get(turn.agent_id) or {}).get("max_budget_usd"),
+                                                   (hub_agents(self.hub, turn.request_id).get(turn.agent_id) or {}).get("max_budget_usd"),
                                                    self.hub.s.policy.budget.per_task_usd) if _usd_amount(v)), None)
                     left = None if cap is None or not known else cap - res.cost_usd
                     request_left = self._request_budget_remaining(rid)
@@ -4529,7 +4554,7 @@ class Orchestrator:
             await diagnose(task, res, turn_key(task))
         overrides = task.meta.get("agent_overrides") or {}
         # A read-only task (consult, follow-up) has nothing to save, and a wrap-up must never lift its limits.
-        turn_limit = int(overrides.get("max_turns") or (self.hub.agents.get(task.agent_id) or {}).get("max_turns") or 0)
+        turn_limit = int(overrides.get("max_turns") or (hub_agents(self.hub, task.request_id).get(task.agent_id) or {}).get("max_turns") or 0)
         # A research step cannot be re-planned, so one that hits its turn limit first finishes in the same session
         # under a smaller limit (7th mock trial: QC had reproduced every number when its 40 turns ran out). Jobs and
         # questions belong to the turn that made them, so a turn still waiting on them keeps the old path
@@ -4736,7 +4761,7 @@ class Orchestrator:
 
     def _apply_plan_cost_estimate(self, rid: str, plan: dict) -> dict:
         """Use completed request costs for the total estimate; preserve the plan estimate when none qualify (#708)."""
-        estimate = historical_plan_cost_estimate(self.hub.requests, plan, self.hub.agents,
+        estimate = historical_plan_cost_estimate(self.hub.requests, plan, hub_agents(self.hub, rid),
                                                  exclude_request_id=rid)
         if estimate.get("basis") == "historical" and estimate.get("estimate_usd") is not None:
             # budget_usd is post-CP1 spending. The historical estimate is the whole request, so subtract the planning
@@ -5776,7 +5801,7 @@ class Orchestrator:
                             ask = AskRequest(task_id=res.task_id, agent_id=res.agent_id, request_id=rid,
                                              to="cso", question=question.strip(),
                                              why_blocked=f"step {sid}의 묻고 멈추는 게이트", wait="hibernate")
-                            origin = self.hub.agent_runner.get(res.agent_id, "")
+                            origin = hub_runner(self.hub, res.agent_id, rid) or ""
                             self.hub.store.put("ask", ask.id, {"state": "working", "origin": origin,
                                                                "ask": ask.model_dump(mode="json")})
                             await self.hub.publish({"type": "agent.ask", "ts": time.time(),
@@ -6463,7 +6488,7 @@ class Orchestrator:
 
     def _research_reuse_tools(self, rid: str, plan: dict) -> dict[str, str]:
         """Declared execution configuration, including the request's pinned agent identity."""
-        agents = dict(self.hub.agents)
+        agents = dict(hub_agents(self.hub, rid))
         for step in plan.get('steps') or []:
             aid = step['agent_id']
             identity = self._request_identity(rid, aid)
@@ -6903,7 +6928,7 @@ class Orchestrator:
                 return
 
             # A contract hire on probation stays on the web roster as 수습 but is not offered to the CSO (#424).
-            all_agents = [a for a in self.hub.agents.values() if not not_yet_active(a)]
+            all_agents = [a for a in hub_agents(self.hub, rid).values() if not not_yet_active(a)]
             known = {a["id"] for a in all_agents}
             # The configured orchestration agents, not only the default ids, stay out of the worker roster.
             orchestration = set(ORCHESTRATION_ROLES) | {
@@ -7217,7 +7242,7 @@ class Orchestrator:
                     if (any(ENV_LOCK_OUTPUT in s.get("outputs", []) for s in saved_steps)
                             and not any("environment_binding" in s or "environment_bindings" in s
                                         for s in saved_steps)):
-                        req["plan"]["steps"] = self._prepare_runner_environments(saved_steps)
+                        req["plan"]["steps"] = self._bind_request_environments(rid, saved_steps)
                 if research_lane:
                     # A frozen contract resumes by its CP1 snapshot, never by a fresh applicability decision: the
                     # snapshot holds the applied packs, and a pack answered not_applicable (pre-topic, or a sentence-
@@ -7828,7 +7853,7 @@ class Orchestrator:
                 steps = req["plan"]["steps"]
                 # A plan-only request never executes, so it must not wait for a consumer runner (#674).
                 if req["mode"] != "plan_only" and any(ENV_LOCK_OUTPUT in step.get("outputs", []) for step in steps):
-                    steps = self._prepare_runner_environments(steps)
+                    steps = self._bind_request_environments(rid, steps)
                     req["plan"] = {**req["plan"], "steps": steps}
                     if research_lane:
                         req["plan"] = validate_research_plan(
