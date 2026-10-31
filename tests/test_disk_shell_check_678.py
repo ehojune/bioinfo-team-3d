@@ -171,29 +171,35 @@ async def test_a_low_drive_with_unknown_size_logs_a_warning_and_allows(gate, mon
     assert len(sent) == 1 and sent[0][0].endswith("/event") and sent[0][1]["data"]["level"] == "warn"
 
 
-def _allowed_tools(tmp_path, tools):
+def _allowed_tools(tmp_path, tools, *, gate=True):
     from labhq.adapters import get_adapter
     from labhq.adapters.base import RunContext
-    from labhq.models import AgentSpec, Engine, Task
+    from labhq.models import AgentSpec, Engine, McpServerSpec, Task
     from labhq.settings import Settings
     agent = AgentSpec(id="analyst", name="A", role="test", engine=Engine.claude_code, tools=list(tools),
                       builtin_mcp=["approval"])
     (tmp_path / "ws" / ".labhq").mkdir(parents=True, exist_ok=True)
+    servers = [McpServerSpec(name="labhq_approval", command="python", args=["-m", "x"])] if gate else []
     ctx = RunContext(task=Task(agent_id=agent.id, prompt="x"), agent=agent, workdir=tmp_path / "ws",
-                     settings=Settings(), mcp_servers=[], env={}, emit=None, prompt="x", extra_dirs=[],
-                     claude_settings={})
+                     settings=Settings(), mcp_servers=servers, env={}, emit=None, prompt="x", extra_dirs=[],
+                     claude_settings={}, use_permission_tool=gate)
     cmd = get_adapter(agent.engine, Settings()).build_command(ctx)
     i = cmd.index("--allowedTools")
     end = cmd.index("--disallowedTools") if "--disallowedTools" in cmd else len(cmd)
     return cmd[i + 1:end]
 
 
+RULES = ["Read", "Bash(git clone *)", "Bash(unzip *)", "Bash(curl:*)", "Bash(tar xzf *)", "Bash(uv *)", "Bash(ls *)"]
+
+
 def test_preapproved_download_and_unpack_rules_are_left_for_the_gate(tmp_path):
-    allowed = _allowed_tools(tmp_path, ["Read", "Bash(git clone *)", "Bash(unzip *)", "Bash(curl:*)", "Bash(tar xzf *)",
-                                        "Bash(uv *)", "Bash(ls *)", "Bash(mkdir *)"])
-    assert "Bash(git clone *)" not in allowed and "Bash(unzip *)" not in allowed
-    assert "Bash(curl:*)" not in allowed and "Bash(tar xzf *)" not in allowed
-    assert {"Read", "Bash(uv *)", "Bash(ls *)", "Bash(mkdir *)"} <= set(allowed)  # other rules are untouched
+    allowed = _allowed_tools(tmp_path, RULES)
+    assert not {"Bash(git clone *)", "Bash(unzip *)", "Bash(curl:*)", "Bash(tar xzf *)"} & set(allowed)
+    assert {"Read", "Bash(uv *)", "Bash(ls *)"} <= set(allowed)  # other rules are untouched
+
+
+def test_without_the_gate_the_rules_stay_because_nothing_else_would_run_the_command(tmp_path):
+    assert set(RULES) <= set(_allowed_tools(tmp_path, RULES, gate=False))
 
 
 @pytest.mark.parametrize("rule,expected", [
@@ -201,3 +207,22 @@ def test_preapproved_download_and_unpack_rules_are_left_for_the_gate(tmp_path):
     ("Bash(rsync -a *)", True), ("Bash(python *)", False), ("Bash", False), ("Read", False), ("Bash()", False)])
 def test_which_rules_preapprove_a_bulk_write(rule, expected):
     assert disk_space.preapproves_bulk_write(rule) is expected
+
+
+def test_curl_output_dir_decides_the_drive(tmp_path):
+    other = (tmp_path / "big").as_posix()
+    assert folders(f"curl --output-dir {other} -O https://example.org/a.zip", tmp_path) == [other]
+    assert folders(f"curl --output-dir {other} -o a.zip https://example.org/a.zip", tmp_path) == [other]
+
+
+def test_attached_tar_option_values_are_read(tmp_path):
+    out = (tmp_path / "out").as_posix()
+    (tmp_path / "a.tgz").write_bytes(b"x")
+    arch = (tmp_path / "a.tgz").as_posix()
+    assert folders(f"tar -C{out} -xf{arch}", tmp_path) == [out]
+
+
+def test_git_clone_skips_the_value_of_options_it_does_not_know(tmp_path):
+    other = (tmp_path / "dest").as_posix()
+    assert folders(f"git clone --reference-if-able /cache https://example.org/r.git {other}", tmp_path) == [other]
+    assert folders(f"git clone --depth=1 --single-branch https://example.org/r.git {other}", tmp_path) == [other]

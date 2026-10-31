@@ -74,9 +74,9 @@ def _option(words: list[str], short: str, long: str | None = None) -> str | None
             return words[i + 1]
         if long and word.startswith(long + "="):
             return word[len(long) + 1:]
-        if word == short and i + 1 < len(words):
+        if short and word == short and i + 1 < len(words):
             return words[i + 1]
-        if word.startswith(short) and len(word) > len(short) and not word.startswith("--"):
+        if short and word.startswith(short) and len(word) > len(short) and not word.startswith("--"):
             return word[len(short):]
     return None
 
@@ -112,33 +112,50 @@ def _tar_options(words: list[str]) -> tuple[bool, str | None, str | None]:
             elif flag == "--directory":
                 folder, i = (attached, i) if equal else (nxt, i + 1)
         elif (word.startswith("-") and len(word) > 1) or (i == 0 and re.match(r"^[A-Za-z]+$", word)):
-            for letter in word.lstrip("-"):
+            letters = word.lstrip("-")
+            for j, letter in enumerate(letters):
                 if letter == "x":
                     extract = True
                 elif letter in "fC":
-                    value = nxt if i + 1 < len(rest) else None
+                    attached = letters[j + 1:]
+                    if attached:  # `-C/out`, `-xf/archive.tar`
+                        value = attached
+                    elif i + 1 < len(rest):
+                        value, i = rest[i + 1], i + 1
+                    else:
+                        value = None
                     if letter == "f":
                         archive = value
                     else:
                         folder = value
-                    i += 1 if value is not None else 0
-                    nxt = rest[i + 1] if i + 1 < len(rest) else None
+                    if attached:
+                        break
         i += 1
     return extract, archive, folder
 
 
 def _clone_folder(words: list[str], workdir: str) -> Path:
-    """Where `git clone [options] <repo> [<dir>]` writes: the named folder, else a new one inside the work folder."""
-    skip = {"-b", "--branch", "--depth", "-o", "--origin", "-c", "--config", "--reference", "-j", "--jobs",
-            "--template", "--separate-git-dir", "--filter", "-u", "--upload-pack"}
+    """Where `git clone [options] <repo> [<dir>]` writes: the named folder, else a new one inside the work folder.
+
+    Every option takes a value unless it is one of the switches below (`--opt=value` carries its own), so an option
+    this does not know never turns its value into the repository."""
+    switches = {"--bare", "--mirror", "-n", "--no-checkout", "-q", "--quiet", "-v", "--verbose", "--progress",
+                "--recursive", "--recurse-submodules", "--shallow-submodules", "--no-shallow-submodules",
+                "--single-branch", "--no-single-branch", "--no-tags", "--tags", "-l", "--local", "-s", "--shared",
+                "--no-hardlinks", "--dissociate", "--sparse", "--also-filter-submodules", "--reject-shallow",
+                "--no-reject-shallow", "--remote-submodules", "--no-remote-submodules", "-4", "--ipv4", "-6",
+                "--ipv6", "--no-local", "--no-shared", "--hardlinks"}
+    short_values = {"-b", "-o", "-c", "-j", "-u"}
     positional, i = [], words.index("clone") + 1
     while i < len(words):
         word = words[i]
-        if word in skip:
-            i += 2
+        if word.startswith("--"):
+            i += 1 if "=" in word or word in switches else 2
             continue
-        if not word.startswith("-"):
-            positional.append(word)
+        if word.startswith("-") and len(word) > 1:
+            i += 2 if word in short_values else 1
+            continue
+        positional.append(word)
         i += 1
     return _resolve(positional[1], workdir) if len(positional) > 1 else Path(workdir)
 
@@ -149,8 +166,10 @@ def _write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | Non
     if name in {"curl", "wget"}:
         out = _option(words, "-o", "--output") if name == "curl" else (_option(words, "-O", "--output-document")
                                                                       or _option(words, "-P", "--directory-prefix"))
-        target = _resolve(out, workdir) if out else Path(workdir)
-        return "다운로드", (target.parent if target.suffix else target), None
+        outdir = _option(words, "", "--output-dir") if name == "curl" else None
+        base = _resolve(outdir, workdir) if outdir else Path(workdir)
+        target = (_resolve(out, str(base)) if out else base)
+        return "다운로드", (target.parent if out and target.suffix else target), None
     if name == "unzip":
         archive = next((w for w in words[1:] if not w.startswith("-")), None)
         folder = _option(words, "-d")

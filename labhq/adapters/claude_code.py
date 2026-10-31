@@ -415,11 +415,14 @@ class ClaudeCodeAdapter(AgentAdapter):
                     and isinstance(meta.get("upstream_artifacts"), dict))
         write_roots = ([Path(ctx.workdir) / "outputs", Path(ctx.workdir) / ".tmp"] if contract
                        else [ctx.workdir])
-        # A pre-approved download or unpack (`Bash(unzip *)`) never reaches the gate, so it would skip the disk check (#678).
-        allowed = [*(rule for rule in claude_allowed_tools(
-                       a.tools, [*write_roots, *ctx.extra_dirs], read_roots,
-                       shared_environment_gate=(ctx.shared_environment_protected or ctx.gate_non_public_data))
-                     if not disk_space.preapproves_bulk_write(rule)),
+        rules = claude_allowed_tools(
+            a.tools, [*write_roots, *ctx.extra_dirs], read_roots,
+            shared_environment_gate=(ctx.shared_environment_protected or ctx.gate_non_public_data))
+        if ctx.use_permission_tool and any(s.name == "labhq_approval" for s in ctx.mcp_servers):
+            # A pre-approved download or unpack (`Bash(unzip *)`) never reaches the gate, so it would skip the disk check
+            # (#678). Only with the gate installed: without it the rule is the only thing letting the command run.
+            rules = [rule for rule in rules if not disk_space.preapproves_bulk_write(rule)]
+        allowed = [*rules,
                    *(f"mcp__{s.name}" for s in ctx.mcp_servers if s.auto_approve)]
         if allowed:
             cmd += ["--allowedTools", *allowed]
