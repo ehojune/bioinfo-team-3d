@@ -314,9 +314,10 @@ def references_fixture(text, fixture):
     if any(candidate and candidate in text for candidate in names):
         return True
     # pathlib joins spell the folders one by one: `Path(__file__).parent / "fixtures" / "wiki"`
+    # A test that names a folder reads what is below it, so the first folder under fixtures is enough.
     folders = fixture.split("/")[2:-1]
     quoted = lambda part: ('"' + part + '"') in text or ("'" + part + "'") in text
-    return bool(folders) and quoted("fixtures") and all(quoted(folder) for folder in folders)
+    return bool(folders) and quoted("fixtures") and quoted(folders[0])
 
 
 @functools.lru_cache(maxsize=None)  # one entry per changed fixture: a bound below that count would rescan per test

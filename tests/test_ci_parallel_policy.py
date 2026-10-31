@@ -371,3 +371,12 @@ def test_a_data_fixture_is_not_matched_by_its_bare_stem_but_a_program_fixture_by
     assert selection.references_fixture('shutil.copy("tests/fixtures/npm/codex.cmd", dest)', 'tests/fixtures/npm/codex.cmd')
     assert selection.references_fixture('FIXTURES / "codex.cmd"', 'tests/fixtures/npm/codex.cmd')
     assert selection.references_fixture('from tests.fixtures import repeat_fake_fixture', 'tests/fixtures/repeat_fake_fixture.py')
+
+
+def test_a_deeply_nested_fixture_reaches_the_test_that_reads_a_folder_above_it():
+    """#1245 review: `tests/fixtures/semantics/records/agents/contract/ag_seqtool.yaml` changed, and the test that reads
+    `fixtures/semantics/records` recursively was not chosen because it does not spell `agents` and `contract`."""
+    deep = 'tests/fixtures/semantics/records/agents/contract/ag_seqtool.yaml'
+    assert selection.references_fixture('RECORDS = Path(__file__).parent / "fixtures" / "semantics" / "records"', deep)
+    assert selection.references_fixture('for path in (ROOT / "tests/fixtures/semantics/records").rglob("*.yaml")', deep)
+    assert not selection.references_fixture('Path(__file__).parent / "fixtures" / "other" / "records"', deep)
