@@ -36,7 +36,7 @@ def test_failed_step_ids_are_the_failed_skipped_and_never_run_steps_of_a_done_re
 
 
 def test_a_request_that_is_not_done_has_no_partial_failure_marker():
-    for status in ("running", "failed", "cancelled", "interrupted", "waiting_pi"):
+    for status in ("running", "failed", "cancelled", "interrupted", "waiting_pi", "rejected"):
         assert failed_step_ids(request(status)) == []
 
 
@@ -74,7 +74,12 @@ def test_the_label_says_partial_failure_only_for_a_done_request_with_failed_step
     assert request_display_label(request()) == "완료 · 일부 실패 3"
     assert request_display_label({**request(), "results": {"s1": {"ok": True}}, "plan": {"steps": [{"id": "s1"}]}}) == "완료"
     assert request_display_label(request("failed")) == "실패"  # a failed request keeps its own word
-    assert request_display_label(request(pi_review_pending=True)) == "보고서 검토 대기"  # a review wait comes first
+    # a review wait keeps its own word first and still says what did not finish (the PI reads that label)
+    assert request_display_label(request(pi_review_pending=True)) == "보고서 검토 대기 · 일부 실패 3"
+    assert request_display_label(request("review_pending", pi_review_pending=True)) == "보고서 검토 대기 · 일부 실패 3"
+    clean_review = {"status": "done", "pi_review_pending": True, "plan": {"steps": [{"id": "s1"}]},
+                    "results": {"s1": {"ok": True}}}
+    assert request_display_label(clean_review) == "보고서 검토 대기"
 
 
 # ----- the gateway summary -----
@@ -217,6 +222,11 @@ def test_the_web_status_text_says_partial_failure_for_a_done_request():
         "완료 · 일부 실패 2"
     assert node_state("S.requestStatusText({status:'done', steps:{s1:'done'}}, null)") == "완료"
     assert node_state("S.requestStatusText({status:'failed', failed_steps:['s2']}, null)") == "실패"
+
+
+def test_the_web_keeps_the_review_wait_word_and_adds_the_partial_failure():
+    assert node_state("S.requestStatusText({status:'done', pi_review_pending:true, failed_steps:['s2']}, null)") ==         "보고서 검토 대기 · 일부 실패 1"
+    assert node_state("S.requestStatusText({status:'review_pending', pi_review_pending:true, failed_steps:['s2']}, null)") ==         "보고서 검토 대기 · 일부 실패 1"
 
 
 def test_the_web_marks_a_partially_failed_request_with_a_warning_class():

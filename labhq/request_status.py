@@ -22,7 +22,7 @@ def failed_step_ids(request: dict) -> list[str]:
     is, else the plan's steps and the results are read. Any other status has none, since `failed` and `cancelled` already
     say that something did not complete. A plan-only request is read from its own mode, not from its missing results: a
     run in which no step left a result must still be marked."""
-    if request.get("status") != "done":
+    if request.get("status") not in {"done", "review_pending"}:
         return []
     if request.get("mode") == "plan_only" or request.get("outcome") == "plan_only":
         return []  # it ends `done` on purpose with the plan and no results: nothing was meant to run
@@ -42,10 +42,12 @@ def failed_step_ids(request: dict) -> list[str]:
 def request_display_label(request: dict) -> str:
     if request.get("status") == "cancelled" and request.get("cancel_reason") == "request_deadline":
         return "시간 상한으로 취소됨"  # the request's wall-clock limit (#877), not a PI decision
+    failed = failed_step_ids(request)
+    suffix = f" · 일부 실패 {len(failed)}" if failed else ""  # done, but not everything finished (#1220)
     if request.get("pi_review_pending"):
-        return "보고서 검토 대기" if request.get("status") in {"done", "review_pending"} else "결과 확인 대기"
-    if failed := failed_step_ids(request):
-        return f"{request_status_label('done')} · 일부 실패 {len(failed)}"  # done, but not everything finished (#1220)
+        return ("보고서 검토 대기" if request.get("status") in {"done", "review_pending"} else "결과 확인 대기") + suffix
+    if failed:
+        return f"{request_status_label('done')}{suffix}"
     return request_status_label(request.get("status"))
 
 

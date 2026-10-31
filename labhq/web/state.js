@@ -173,7 +173,7 @@ const requestStatusLabel = status => REQUEST_STATUS_KO[status] || String(status 
 // (failed_steps); a request followed live has only its step states, which say the same for the steps that ran.
 const FAILED_STEP_STATES = ['failed', 'error', 'skipped'];
 const partialFailureSteps = q => {
-  if (!q || q.status !== 'done') return [];
+  if (!q || !['done', 'review_pending'].includes(q.status)) return [];
   if (Array.isArray(q.failed_steps)) return q.failed_steps.map(String);
   return Object.entries(q.steps || {}).filter(([, state]) => FAILED_STEP_STATES.includes(state)).map(([id]) => id);
 };
@@ -201,9 +201,10 @@ function processingLabel(q) {
 // The status with what the PI can do about it: resume an interrupted request, or which runner is still missing.
 function requestStatusText(q, approvals) {
   if (!q) return '';
-  if (needsPiReview(q)) return `${reviewLabel(q)} 대기`;
   const failed = partialFailureSteps(q);
-  if (failed.length) return `${requestStatusLabel(q.status)} · 일부 실패 ${failed.length}`;
+  const partial = failed.length ? ` · 일부 실패 ${failed.length}` : '';
+  if (needsPiReview(q)) return `${reviewLabel(q)} 대기${partial}`;
+  if (failed.length) return `${requestStatusLabel('done')}${partial}`;
   const label = requestStatusLabel(q.status);
   if (q.status === 'interrupted') {
     const card = [...(approvals ? approvals.values() : [])].some(a => a && a.kind === 'resume' && a.request_id === q.id);

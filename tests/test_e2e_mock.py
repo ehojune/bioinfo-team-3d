@@ -412,8 +412,11 @@ async def test_a_failing_branch_is_reported_and_the_other_branch_and_synthesis_a
     report = request["report"]
     assert "[[claim:s1/c1]]" in report and "[[claim:s3/c3]]" in report, report
     assert "[[claim:s2/c2]]" not in report, report  # nothing is concluded from the failed branch
-    assert "s2: 단계 실패 또는 의존 단계 건너뜀 — mock step failure" in report, report  # the failure is not silent
+    # the failure is not silent, and it names the branch beside the step (#1220)
+    assert "s2 (갈래 b2): 단계 실패 또는 의존 단계 건너뜀 — mock step failure" in report, report
     assert any("경고" in summary and "실패 단계" in summary for summary in _cp2_warnings(seen)), _cp2_warnings(seen)
+    from labhq.request_status import failed_step_ids, request_display_label
+    assert failed_step_ids(request) == ["s2"] and request_display_label(request) == "보고서 검토 대기 · 일부 실패 1"
     synthesis_step = next(v for v in hub.store.all("task").values()
                           if (v.get("payload") or {}).get("meta", {}).get("step_id") == "s3")
     memo = json.dumps(synthesis_step["payload"].get("context"), ensure_ascii=False)
@@ -428,6 +431,8 @@ async def test_a_failing_step_is_reported_and_the_steps_before_it_are_kept(tmp_p
     assert "[[claim:s1/c1]]" in report and "[[claim:s2/c2]]" not in report, report
     assert "s2: 단계 실패 또는 의존 단계 건너뜀 — mock step failure" in report, report
     assert any("경고" in summary and "실패 단계" in summary for summary in _cp2_warnings(seen)), _cp2_warnings(seen)
+    from labhq.request_status import failed_step_ids
+    assert failed_step_ids(request) == ["s2"]  # a plan without branches names the step alone
 
 
 async def test_a_mock_step_whose_read_only_baseline_is_refused_fails_before_it_runs(tmp_path):
