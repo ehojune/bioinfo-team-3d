@@ -34,7 +34,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 17:00 | [`aaf17a8`](https://github.com/ehojune/bioinfo-team-3d/pull/1233/commits/aaf17a8) | **설명서에 AlphaGenome 키를 설정한 PC에서도 조회 도구를 쓰는 직원이 정상으로 실행되고, 키를 덮어쓰는 설정만 막힌다는 점을 적었습니다.**<br>문서: Atlas 시작 점검의 최종 정의와 키 파일이 있는 PC의 동작을 적는다 (#1225) |
 | 16:00 | [`fa5b247`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/fa5b247) | **키 파일이 링크된 폴더 아래에 있어도 키를 설정한 PC에서 조회 도구를 쓰는 직원의 실행이 막히지 않습니다.**<br>Atlas 점검 예외를 labhq가 키 파일 경로를 쓰는 두 곳(비공개 경로 목록·Claude 규칙)에서 가져온다 (#1225 리뷰) |
 | 15:00 | [`c266979`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/c266979) | **키 파일 위치를 확인하는 단계가 테스트 환경의 보호 때문에 멈추지 않고, 확인하지 못한 형태만 예외에서 빠집니다.**<br>Atlas 점검: 테스트 가드가 settings.path를 거절해도 그 형태만 예외에서 뺀다 (#1225 CI) |
+| 14:30 | [`ecaa1b6`](https://github.com/ehojune/bioinfo-team-3d/pull/1251/commits/ecaa1b6) | focus_layout 바깥 상한을 Chrome 세션 둘에 맞춰 120초로, status 문구를 적용 상태에 맞춘다 (Refs #1076) |
 | 14:00 | [`d9546e8`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/d9546e8) | **키 파일 위치를 파일 이름만으로 적어 두어도 키를 덮어쓰는 설정은 그대로 막힙니다.**<br>Atlas 점검 예외: 구분자 있는 절대 경로와 ~ 형태만 두고 규칙 생성 실패는 규칙을 빼 더 엄격하게 한다 (#1225 리뷰) |
+| 14:00 | [`bd47d7a`](https://github.com/ehojune/bioinfo-team-3d/pull/1251/commits/bd47d7a) | 데모 Chrome에 --no-proxy-server를 주고 test_web_3d digest를 갱신한다 (Refs #1076) |
+| 13:20 | [`105864c`](https://github.com/ehojune/bioinfo-team-3d/pull/1251/commits/105864c) | **느린 Windows 러너에서 브라우저 시험 하나가 30초 상한에 걸리던 것을 60초로 늘렸습니다(검사 내용은 그대로).**<br>web_office_focus_layout의 바깥 시간 상한을 60초로 둔다 (Refs #1076) |
 | 13:00 | [`8405949`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/8405949) | **키를 덮어쓰는 설정은 어떤 모양이든 막고, 키 파일의 설정된 위치만 예외로 둡니다. PowerShell 방식으로 키를 덮어쓰려는 설정도 막힙니다.**<br>Atlas 점검의 예외를 설정된 키 파일 경로와 labhq가 그 경로로 만든 규칙으로 좁힌다 (#1225 리뷰 P1) |
 | 12:30 | [`47c7f1b`](https://github.com/ehojune/bioinfo-team-3d/pull/1249/commits/47c7f1b) | manual 한·영: 웹 남은 시간이 서버 deadline_at 기준임을 적는다 (Refs #1246) |
 | 12:30 | [`2d60b04`](https://github.com/ehojune/bioinfo-team-3d/pull/1253/commits/2d60b04) | **키 입력을 중간에 끊어도 빈 키가 환경에 남지 않게 예시를 고쳤습니다.**<br>dash용 키 입력 예시에서 입력 중 Ctrl-C로 끊기면 명령이 이어져 빈 값을 내보내던 것을 마지막에 값이 있을 때만 내보내도록 고쳤다 (#1168) |
