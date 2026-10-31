@@ -5,6 +5,20 @@
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
 ## 단계
+#1200 후속: [PR #1201](https://github.com/ehojune/bioinfo-team-3d/pull/1201) 리뷰 P2(AlphaGenome 표시).
+
+## 바뀐 것
+- `labhq/orchestrator/cso.py`: `format_roster(agents, *, alphagenome=True)`와 `_annot_roster(a, alphagenome)`. 허용 목록이 있는 직원에서 AlphaGenome을 쓸 수 없으면 `alphagenome`·`alphagenome_variant`를 목록에서 빼고, 남는 도구가 없으면 `labhq_annot` 항목을 적지 않는다. 허용 목록이 없는 직원은 이미 "AlphaGenome when its key is set"이라고 적으므로 그대로.
+- `Orchestrator._alphagenome_ready()`: 키 파일(`annot_keys.read_key`)과 클라이언트 설치(`alphagenome_client_available`)가 모두 있을 때만 참. 계획·재계획 prompt를 만드는 세 곳(연구 계획, 일반 계획, 재계획)이 이 값을 넘긴다.
+
+## 시험
+- `tests/test_annot_literature.py`에 4건 추가: 사용할 수 있을 때와 없을 때의 명단, 남는 도구가 없을 때 항목 생략, 허용 목록이 없는 직원 그대로, `_alphagenome_ready`의 키·클라이언트 조합 4가지. 먼저 추가해 수정 전 실패를 확인했다. 관련 `test_annot_literature.py`·`test_cso.py`·`test_ask_policy.py`·`test_branched_research.py`·`test_research_protocol.py` 406 passed.
+
+## 하지 않은 것
+- 게이트웨이와 runner가 다른 컴퓨터일 때 게이트웨이의 키 파일 유무가 runner와 다를 수 있다. 이 판단은 게이트웨이의 설정 기준이다.
+- Atlas 도구(`alphagenome_atlas`)는 허용 목록 이름이 아니라 이번 범위가 아니다.
+
+## 단계
 #1139 후속: [PR #1192](https://github.com/ehojune/bioinfo-team-3d/pull/1192) 리뷰 P2(보류액 내림).
 
 ## 바뀐 것
@@ -41,6 +55,22 @@
   - 계획 3번 재실행은 **mock 탓**이다. 옛 mock 계획이 research 계약 검사에 32건 걸려 CSO 보정이 두 번 더 돈 것이다. 유효한 계획에서는 한 번만 돈다(새 시험이 순서로 고정).
 - 실행한 것: `test_e2e_mock`(6, 새 시험 포함)·`test_demo_separation`·`test_research_cp2`·`test_intake_questions`·`test_clean_install_check` 160 passed. 새 시험은 옛 mock에서 계획 검증 실패로 실패함을 확인.
 - 미해결/미검증: 시험은 Windows runner에서 restricted 데이터 구역을 뺀 설정으로 돈다(init도 Windows에서 그렇게 둔다). 다단계·branch·pack 적용 research 계획은 mock이 내지 않는다.
+
+# #1207 rev5: mock 보고서가 모든 단계의 claim을 싣는다
+
+- 결론: PR #1214 리뷰 P2를 고쳤다. mock synthesis가 `anchors[0]`만 쓰던 것을 모든 claim anchor(중복 제거)마다 한 문장으로 바꿨다. 다단계·분기 계획에서 둘째 이후 단계와 갈래, 종합 단계의 claim이 보고서에 빠지지 않는다.
+- 바뀐 것: `labhq/adapters/mock.py`(synthesis 보고서), `tests/test_e2e_mock.py`(`_every_claim_is_cited`: 계획의 모든 단계·claim_id의 anchor가 보고서에 있는지 단언, `or` 제거, 분기 시험에도 적용).
+- 실행한 것: `test_e2e_mock`·`test_demo_separation`·`test_research_cp2` 101 passed. 다단계·분기 시험 2건은 옛 mock에서 실패함을 확인.
+- 미해결/미검증: pack이 적용되는 주제, 단계마다 다른 작업자, 분기 중 실패한 갈래는 mock이 내지 않는다.
+
+# #1207 rev3: mock이 다단계·분기 연구 계획을 낸다
+
+- 결론: 요청 문안에 `[multistep]`을 넣으면 s2가 s1에 의존하는 2단계, `[branched]`를 넣으면 두 갈래(b1·b2)와 둘을 읽는 synthesis 단계(s3)를 가진 research 계획을 낸다. 둘 다 `labhq init` 예시 설정에서 CP1 → 단계 → CP2 → 리뷰 → 보고서까지 `done`으로 끝난다. 문안에 토큰이 없으면 이전처럼 1단계다.
+- 바뀐 것: `labhq/adapters/mock.py`(`_research_shape`·`_research_step`, `before_spawn`의 거부 사유를 `TaskResult(ok=False)`로 돌려줌), `tests/test_e2e_mock.py`(기본 init 설정 e2e를 공용 helper로 묶고 다단계·분기 시험 추가, 거부 시험 추가).
+- 문서: manual 한·영 "mock 엔진으로 연구 모드 끝까지 돌려 보기" 단락과 `mock.py` docstring에 `[multistep]`·`[branched]`를 적었다(PR #1214 리뷰 P1).
+- 이전 PR #1211의 P2: mock이 `before_spawn()`의 거부 사유를 버리던 것을 고쳤다. 거부되면 실행·산출 쓰기 전에 실패한다.
+- 실행한 것: `test_e2e_mock`·`test_demo_separation`·`test_demo_phone`·`test_research_cp2` 123 passed. 새 시험 3건은 옛 mock에서 실패함을 확인.
+- 미해결/미검증: 단계는 모두 한 작업자·한 산출 파일이다. pack이 적용되는 주제, 단계마다 다른 작업자, 분기 중 실패한 갈래는 mock이 내지 않는다.
 
 # #1212 — 정상 취소의 묶음 경고
 
