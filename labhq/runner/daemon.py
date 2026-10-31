@@ -32,7 +32,7 @@ import yaml
 from .. import disk_space, durable
 from ..adapters import (adapter_preflight_error, get_adapter, is_read_only_task, read_only_profile,
                         read_only_refusal)
-from ..adapters.base import RunContext, atlas_credentials, expand_env
+from ..adapters.base import ProcessBoundaryGate, RunContext, atlas_credentials, expand_env
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
                               awrite_owned_bytes, awrite_owned_many, remove_entry, write_owned)
@@ -328,7 +328,10 @@ class Runner:
     _ack_last = 0.0  # monotonic time the last ack commit finished
     _shutdown_deadline: float | None = None  # time.monotonic() when `shutdown()` must be done
 
-    def __init__(self, settings: Settings):
+    process_boundary = ProcessBoundaryGate()  # default also covers lightweight test runners
+
+    def __init__(self, settings: Settings, *, process_boundary: bool = False):
+        self.process_boundary = ProcessBoundaryGate(process_boundary)
         settings.runner.validate_wsl()
         self.s = settings
         # The loop and its thread, noted by `_send_durably`: a message committed on the durable writer thread asks
@@ -1959,7 +1962,20 @@ class Runner:
             Event(type="task.result", data=result.model_dump(mode="json"), **base)])
         return result
 
+    async def _refuse_process_boundary(self, task: Task) -> TaskResult | None:
+        result = self.process_boundary.refusal(task)
+        if result is not None:
+            base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
+            await self.emit_all([
+                Event(type="agent.status", data={"state": "error", "error": result.error}, **base),
+                Event(type="task.result", data=result.model_dump(mode="json"), **base)])
+        return result
+
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
+        if getattr(self, "process_boundary", None) is not None:
+            refusal = await self._refuse_process_boundary(task)
+            if refusal is not None:
+                return refusal
         refusal = await self._refuse_unprotected_environment(task)
         if refusal is not None:
             return refusal
@@ -2137,6 +2153,10 @@ class Runner:
                 "작업 폴더 밖이라 쓰기는 평소처럼 승인을 거칠 수 있습니다.")
 
     async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
+        if getattr(self, "process_boundary", None) is not None:
+            refusal = await self._refuse_process_boundary(task)
+            if refusal is not None:
+                return refusal
         refusal = await self._refuse_unprotected_environment(task)
         if refusal is not None:
             return refusal
@@ -2666,6 +2686,7 @@ class Runner:
                 on_started=lambda: self.controls.started(task.id),
                 on_cleanup=lambda evidence: self._cleanup_reports.__setitem__(task.id, evidence),
                 bench_observer=getattr(self, "_bench_observer", None),
+                process_boundary=self.process_boundary,
             )
             # External folders exposed to this step are its reproducibility inputs. Upstream outputs use the same
             # inputs/<step> spelling the bundle restores; other runner paths use ~/... under the runner account.
