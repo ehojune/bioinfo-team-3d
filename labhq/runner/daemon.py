@@ -1242,6 +1242,7 @@ class Runner:
             if cancelled:
                 raise
         finally:
+            self.__dict__.get("_env_grants", {}).pop(task.id, None)  # the run is over: its grant goes with it
             watcher = self.__dict__.get("_disk_watchers", {}).pop(task.id, None)
             if watcher is not None:
                 watcher.cancel()
@@ -1781,6 +1782,8 @@ class Runner:
         return None
 
     def _environment_refusal_reason(self, task: Task) -> str | None:
+        grants = self.__dict__.setdefault("_env_grants", {})
+        grants.pop(task.id, None)  # whatever happens below, an earlier run of this id leaves no grant behind
         if "environment_binding" in task.meta:
             producer = self._producer_binding_refusal(task, task.meta["environment_binding"])
             if producer is not None:
@@ -1824,8 +1827,6 @@ class Runner:
         # interpreter in the producer's workdir must all check out. No alias to the interpreter is created, so
         # the result only tells why a consumer is (still) refused (#674).
         root = getattr(self, "ws_root", None)
-        grants = self.__dict__.setdefault("_env_grants", {})
-        grants.pop(task.id, None)  # a refusal never leaves the grant of an earlier, better check behind
         if root is None or not task.request_id:
             return prefix + "workspace or request identity unavailable"
         from .step_inputs import validate_runner_env

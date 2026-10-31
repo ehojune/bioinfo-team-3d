@@ -136,3 +136,14 @@ def test_a_plain_verified_venv_has_no_grant_problem(tmp_path):
     root, folder, artifact, expected = fixture(tmp_path)
     runner = runner_for(root, Engine.claude_code)
     assert runner._environment_grant_problem(folder / ".venv") is None
+
+
+def test_a_grant_does_not_outlive_its_task_or_pass_to_a_reused_id(tmp_path):
+    root, folder, artifact, expected = fixture(tmp_path)
+    runner = runner_for(root, Engine.claude_code)
+    task = bound_task(folder, artifact, expected)
+    assert runner._environment_refusal_reason(task) is None and task.id in runner._env_grants
+    plain = task.model_copy(update={"meta": {"kind": "step", "environment_bindings": []}})
+    assert runner._environment_refusal_reason(plain) is None  # the same id again, now without a binding
+    assert task.id not in runner._env_grants  # the early return cleared the old grant too
+    assert runner._apply_environment_grants(plain, ["x"], read_only=False) == (["x"], {}, "")
