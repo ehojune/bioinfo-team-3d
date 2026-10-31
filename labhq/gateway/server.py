@@ -3990,7 +3990,10 @@ class Hub:
         if entry and entry.get("count"):
             entry["count"] -= 1
         if typ != "agent.control" or not msg.get("task_id"):
-            await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq, activity=activity_update)
+            # Only a message that carries task activity passes the argument: a publish that wraps this one with the
+            # older signature (a test double, a decorator) keeps working for every other message.
+            carried = {} if activity_update is None else {"activity": activity_update}
+            await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq, **carried)
         if pipeline_event is not None:
             await self.publish(pipeline_event)
         if runner_seq is not None:
