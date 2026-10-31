@@ -220,3 +220,110 @@ async def test_a_read_only_run_does_not_watch_the_bulk_data_root(tmp_path):
     await asyncio.sleep(0.05)
     assert (tmp_path / "ws").as_posix() in seen  # its own workspace is still watched
     assert (tmp_path / "bulk").as_posix() not in seen  # a drive it cannot write is no reason to halt it
+
+
+# ----- a local job gets the same disk check as a shell command (#1167) -----
+
+def job_runner(tmp_path, monkeypatch, *, approve=True, free_gib=0.5):
+    """A runner with just what `_submit_local_job` reads, a fake broker and a fake process start."""
+    runner = Runner.__new__(Runner)
+    s = Settings()
+    s.runner.state_dir = str(tmp_path / "state")
+    s.runner.disk_fail_free_gb = 2.0
+    runner.s = s
+    work = tmp_path / "ws"
+    work.mkdir()
+    runner.workspaces = {"t1": SimpleNamespace(dir=work)}
+    runner.active_roots = {"t1": (False, [])}
+    runner.tool_contexts = {}
+    runner.submitting, runner.jobs, runner._local_procs = {}, {}, {}
+    cards, events, started = [], [], []
+
+    async def request_approval(request):
+        cards.append(request)
+        return {"approved": approve, "note": "no" if not approve else ""}
+
+    async def emit(event):
+        events.append(event)
+
+    async def track(*args, **kwargs):
+        return None
+
+    def start(state_dir, job_id, command, cwd, env):
+        started.append(command)
+        return {"pid": 1}, object()
+
+    runner.broker = SimpleNamespace(request_approval=request_approval)
+    runner.emit, runner._track_job, runner._ensure_local_watch = emit, track, lambda: None
+    monkeypatch.setattr(daemon.local_jobs, "start", start)
+    monkeypatch.setattr(disk_space, "usage", lambda path: Space(100 * GIB, 0, int(free_gib * GIB)))
+    return runner, cards, events, started
+
+
+def submit(runner, command):
+    return runner._submit_local_job({"task_id": "t1", "agent_id": "a", "request_id": "r", "command": command, "name": "j"})
+
+
+@pytest.mark.asyncio
+async def test_a_local_job_that_unpacks_onto_a_full_drive_asks_before_it_starts(tmp_path, monkeypatch):
+    runner, cards, events, started = job_runner(tmp_path, monkeypatch, approve=False)
+    answer = await submit(runner, "unzip raw.zip -d out")
+    assert answer["submitted"] is False and "no" in answer["reason"] and started == []
+    assert len(cards) == 1 and "여유" in cards[0].summary and cards[0].kind == "tool_permission"
+
+
+@pytest.mark.asyncio
+async def test_a_pi_approval_starts_the_local_job_that_the_disk_check_asked_about(tmp_path, monkeypatch):
+    runner, cards, events, started = job_runner(tmp_path, monkeypatch, approve=True)
+    answer = await submit(runner, "unzip raw.zip -d out")
+    assert answer["submitted"] is True and started == ["unzip raw.zip -d out"] and len(cards) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_local_job_on_a_roomy_drive_starts_without_a_card(tmp_path, monkeypatch):
+    runner, cards, events, started = job_runner(tmp_path, monkeypatch, free_gib=500)
+    answer = await submit(runner, "unzip raw.zip -d out")
+    assert answer["submitted"] is True and cards == [] and started
+
+
+@pytest.mark.asyncio
+async def test_a_local_job_with_no_download_or_unpack_is_never_asked_about(tmp_path, monkeypatch):
+    runner, cards, events, started = job_runner(tmp_path, monkeypatch, free_gib=0.5)
+    answer = await submit(runner, "python -c 'print(1)'")
+    assert answer["submitted"] is True and cards == []
+
+
+@pytest.mark.asyncio
+async def test_a_low_drive_with_an_unknown_size_only_warns_and_the_job_starts(tmp_path, monkeypatch):
+    runner, cards, events, started = job_runner(tmp_path, monkeypatch, free_gib=6)  # under the warning level, over the floor
+    answer = await submit(runner, "curl -O https://example.org/big.bin")
+    assert answer["submitted"] is True and cards == [] and started
+    assert any(getattr(e, "data", {}).get("policy_rule") == "disk_space" for e in events), events
+
+
+@pytest.mark.asyncio
+async def test_a_command_the_policy_already_asks_about_gets_one_card_not_two(tmp_path, monkeypatch):
+    """The disk check only turns an allow into an ask: a command the gate already asks about is not asked about twice."""
+    from labhq.policy import evaluate_tool
+    runner, cards, events, started = job_runner(tmp_path, monkeypatch, approve=False)
+    command = f'unzip raw.zip -d "{tmp_path / "elsewhere" / "out"}"'  # outside the workspace and onto a full drive
+    probe = evaluate_tool("Bash", {"command": command}, runner.s.policy, allowed_roots=[str(tmp_path / "ws")],
+                          workdir=str(tmp_path / "ws"))
+    if probe.action == "allow":
+        pytest.skip("this platform's gate does not ask about a write outside the workspace")
+    answer = await submit(runner, command)
+    assert len(cards) == 1 and started == []
+    assert answer["submitted"] is False or probe.action == "deny"
+
+
+@pytest.mark.asyncio
+async def test_a_probe_failure_never_stops_a_local_job_the_policy_allowed(tmp_path, monkeypatch):
+    runner, cards, events, started = job_runner(tmp_path, monkeypatch)
+
+    def broken(command, workdir, **kwargs):
+        raise RuntimeError("probe bug")
+
+    monkeypatch.setattr(disk_space, "shell_check", broken)
+    answer = await submit(runner, "unzip raw.zip -d out")
+    assert answer["submitted"] is True and cards == []
+
