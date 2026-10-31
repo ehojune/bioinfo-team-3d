@@ -109,6 +109,7 @@
     "tests/test_edition_quality_607.py",
     "tests/test_edition_readme_718.py",
     "tests/test_editor_v2_fixes_755.py",
+    "tests/test_environment_grant_674.py",
     "tests/test_environment_install.py",
     "tests/test_environment_signatures.py",
     "tests/test_event_preview.py",

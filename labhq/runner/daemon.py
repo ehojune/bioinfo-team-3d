@@ -282,8 +282,11 @@ def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
 _EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_emit_unit", default=None)
 
 
-# Flip only when a protected alias or read grant hands the validated runner-local interpreter to consumers.
+# Flip only when a protected alias hands the validated runner-local interpreter to consumers of every engine.
 ENVIRONMENT_ALIAS_AVAILABLE = False
+# Engines that receive a verified environment as a read-only grant instead (`read_dirs`, Edit/Write denied): only
+# Claude gets `read_dirs`, so every other engine stays refused until it can be given the same grant (#674).
+ENVIRONMENT_GRANT_ENGINES = frozenset({Engine.claude_code})
 
 ACK_DRAIN_S = 5.0  # how long a reconnect waits for the acks it already received to commit (#1125)
 ACK_MERGE_S = 0.5  # at most one ack commit per this long: acks arriving between two commits share the second (#1125)
@@ -1821,20 +1824,48 @@ class Runner:
         # interpreter in the producer's workdir must all check out. No alias to the interpreter is created, so
         # the result only tells why a consumer is (still) refused (#674).
         root = getattr(self, "ws_root", None)
+        grants = self.__dict__.setdefault("_env_grants", {})
+        grants.pop(task.id, None)  # a refusal never leaves the grant of an earlier, better check behind
         if root is None or not task.request_id:
             return prefix + "workspace or request identity unavailable"
         from .step_inputs import validate_runner_env
+        verified: list[dict[str, str]] = []
         for binding in bindings:
             sid = binding["step_id"]
             try:
-                validate_runner_env(root, steps[sid], artifacts[sid], binding, request_id=task.request_id)
+                venv = validate_runner_env(root, steps[sid], artifacts[sid], binding, request_id=task.request_id)
             except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
                 return prefix + "environment validation failed"
+            verified.append({"step_id": sid, "venv": str(venv),
+                             "python": str(Path(steps[sid]) / binding["python_path"])})
+        try:
+            engine = self._resolve_agent(task).engine
+        except Exception:  # noqa: BLE001 - an unknown agent is refused later; here it simply gets no grant
+            engine = None
+        if engine in ENVIRONMENT_GRANT_ENGINES:
+            grants[task.id] = verified  # the consumer reads the verified .venv through read_dirs (#674)
+            return None
         if not ENVIRONMENT_ALIAS_AVAILABLE:
-            # The validated .venv is not exposed to the consumer (no protected alias or read grant exists yet), so
-            # starting it would run without the packages the plan asked for: stay closed (#674).
+            # The validated .venv is not exposed to the consumer (no protected alias or read grant for this engine),
+            # so starting it would run without the packages the plan asked for: stay closed (#674).
             return prefix + "environment verified but protected interpreter alias is not implemented"
         return None
+
+    def _apply_environment_grants(self, task: Task, read_dirs: list[str], *,
+                                  read_only: bool) -> tuple[list[str], dict[str, str], str]:
+        """(read dirs with the verified environments added, extra env, briefing line) for a consumer step (#674).
+
+        The grant is the folder the runner just verified, opened read-only like a reference folder (Claude denies
+        Edit/Write there); a read-only run takes none. `PYTHONDONTWRITEBYTECODE` keeps Python from writing into it."""
+        grants = self.__dict__.get("_env_grants", {}).get(task.id) or []
+        if read_only or not grants:
+            return read_dirs, {}, ""
+        dirs = list(dict.fromkeys([*read_dirs, *(grant["venv"] for grant in grants)]))
+        python = grants[0]["python"]
+        note = ("[Runner environment]\n" + "\n".join(
+            f"- Python with the packages the plan asked for ({grant['step_id']}): {grant['python']}" for grant in grants)
+            + "\nRun scripts with that interpreter. The folder is read-only: do not install into it.")
+        return dirs, {"LABHQ_ENV_PYTHON": python, "PYTHONDONTWRITEBYTECODE": "1"}, note
 
     async def _refuse_unprotected_environment(self, task: Task) -> TaskResult | None:
         error = await asyncio.to_thread(self._environment_refusal_reason, task)
@@ -2314,6 +2345,10 @@ class Runner:
             self._start_disk_watch(task, agent, workspace_dir, () if read_only else extra_dirs)
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs],
                                                                needs_rules=agent.engine == Engine.claude_code)
+            read_dirs, environment_env, environment_note = self._apply_environment_grants(
+                task, read_dirs, read_only=read_only)
+            if environment_note:
+                task = ws.task = task.model_copy(update={"context": f"{task.context}\n\n{environment_note}".strip()})
             asked_links, _internal_incomplete = await self._project_links(
                 [str(ws.dir), *extra_dirs, *read_dirs], internal_zones, emit, ask=True)
             asked_links = [link for link in asked_links if claude_rule_ready(link)]
@@ -2437,6 +2472,7 @@ class Runner:
                 PRIVATE_ENABLED_ENV: "1" if private.enabled else "0",
                 PRIVATE_OPEN_READS_ENV: os.pathsep.join(private.open_reads),
             }
+            env.update(environment_env)
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
             if self.broker.lookup_admission is not None:
