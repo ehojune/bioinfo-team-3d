@@ -220,6 +220,14 @@ Protected launch remains unsupported. Standalone unsealed namespace, staging and
 
 🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
+# Observer contract checkpoint
+
+- Lifecycle event v1 and vector: commit f54642c3. Synthetic HMAC keys are public fixtures.
+- Offline observer prototype checks event shape, order and MAC, consumes a SQLite replay key and signs separately supplied snapshots. The caller must protect the database and keys.
+- The injected collector is a fixture, not an independently authenticated OS collector. A streaming source can interleave collection with events, but source and collector provenance and actual cleanup are not established. No process tree or resource backend exists. Actual protection remains UNVERIFIED.
+- Rev22 registers the observer test in the Windows inventory. Offline snapshots require matching source labels, ordered sequence, an asserted complete inventory and the launch identity. These are untrusted assertions, not collector authentication or proof of completeness.
+- Bounded execution needs an owned process supervisor; synchronous injected collectors may hang. Protected keys, replay storage and actual cleanup remain UNVERIFIED.
+
 ## 단계
 #1167 rev8: 로컬 job 제출 경로에도 셸 명령과 같은 디스크 확인을 붙인다. [PR #1184](https://github.com/ehojune/bioinfo-team-3d/pull/1184)(PowerShell 도구)와 다른 브랜치다.
 
@@ -359,6 +367,15 @@ Protected launch remains unsupported. Standalone unsealed namespace, staging and
 - 바꾼 것: `agents/core/sci_reviewer.yaml`(`builtin_mcp: [annot]`, `annot_tools: [pdb, chembl]`, 셸 대신 도구를 쓰라는 프롬프트 한 문장), `labhq/adapters/read_only.py`, manual 한·영, 시험(`test_read_only_profile.py` +8건, `test_annot_literature.py` +1건, `test_annot.py` 집합 갱신).
 - 시험: 허용 목록으로 좁혀지는지, 목록이 없거나 비면 꺼지는지, 다른 채널(`mcp`·`plugin_dirs` 등)은 여전히 꺼지는지, 실제 `sci_reviewer.yaml`이 프로필에서 살아남는지, 러너가 서버를 달고 mismatch 검사가 정확히 그것만 받아들이는지, 보내는 쪽이 목록을 넓히지 못하는지. 이 변경을 빼면 5건이 실패한다. 관련 시험 253개 파일 중 2건(`test_stdio_server_*`, `test_with_a_key_*`)이 로컬에서 실패하지만 origin/main에서도 같게 실패한다(이 PC의 mcp 1.x).
 - 미검증: Codex 엔진의 `sandbox: read-only` 안에서 `labhq_annot` 호출이 실제로 통하는지(`codex exec` 필요). 셸 HTTP 차단은 이 PR이 아니라 #1060이다. PubMed·bioRxiv 원격 MCP도 읽기 전용 프로필이 지운다는 점은 따로 다룬다.
+
+# #1049 offline adapter and collector contract
+
+- Inputs: producer PR #1050 `0f5ff8023964bf1a02b5c0badc38bd8fbbf8b334`; seal fixture PR #1064 `5637273226ea571cc680ce25384d596b76ec94af`.
+- Separate fixture MACs bind receipt and synthetic observer evidence to run and nonce; malformed, forged, replayed and wrong-run inputs fail closed. Observer-ledger and resource checks remain synthetic.
+- The producer has no authenticated witness, sealed receipt or independent cleanup inventory. Fixture keys and in-memory replay state cannot establish those properties. Real protection and cleanup remain UNVERIFIED; draft/hold remains.
+- The offline adapter invokes the producer lifecycle through an injected transport and collects separate observer evidence through `arm`, `ready`, and `finish`; missing evidence, bad tags, wrong run and replay fail closed. Caller-owned deadlines and replay state are fixture-only.
+- Windows harness: 40 passed, 1 xfailed; imported negative corpora are checked. Failed unauthenticated attempts may retry; authenticated evidence consumes the fixture nonce. The pinned producer API was exercised with a mocked broker, mocked child launch, separate fixture collector and stub validator: plumbing only, no actual subprocess boundary or authentication.
+- Next producer patch: `labhq/runner/process_boundary.py` needs authenticated run-bound child/lifecycle identities and events. A separately owned trusted supervisor/observer needs independent ordered resource and descendant inventory, protected evidence and durable replay prevention. The producer's current `on_ready` socket callback and self-reported cleanup cannot provide these; owner and component placement remain open.
 
 ## 단계
 #1139 후속: [PR #1192](https://github.com/ehojune/bioinfo-team-3d/pull/1192) 리뷰 P2(보류액 내림).
@@ -923,6 +940,13 @@ Claude의 `--disallowedTools`만 이름 목록을 지키고 Codex·Gemini 어댑
 - Windows mock tests: 29 passed, 1 xfailed. Actual protection, authenticated ancestry and independent cleanup remain UNVERIFIED.
 - PR #1050 remains draft/hold. Manual review P1 awaits a separate ownership claim; final-head CI and review are pending.
 
+# Boundary harness review fixes
+
+- Synthetic diagnostic supplies a fresh UUID and requires both ready and receipt to match it.
+- The entire diagnostic runs in a bounded subprocess. Deadline expiry reports inconclusive and direct worker termination; descendant termination remains unverified.
+- Worker environment excludes host secrets and uses a temporary home. Windows targeted test: 37 passed, 1 xfailed. The xfail records missing authenticated observer evidence.
+- Producer integration on the updated API, actual protection and cleanup remain unverified. PR #1051 remains draft/hold.
+
 ## 단계
 #676 B4: CSO 계획이 직원에게 labhq 소유 파일 `outputs/external_lookup_status.jsonl`에 쓰라고 지시해, 직원이 쓴 줄 8개가 CP2 경고 "읽지 않은 잘못된 기록 8줄"로 나온 문제.
 
@@ -1282,6 +1306,13 @@ lab 요청에는 번역이 나오지 않아(번역은 기술적인 영문 메시
 - The broker child timeout records `BROKER_TIMEOUT` and still closes the broker. The remaining strict xfail exposes missing authenticated ancestry; neither mock test proves protection.
 - Follow-up needs an authenticated run-bound observer verifier and broader structured failure codes. Diagnostic ancestry is untrusted; cleanup and descendant termination remain independently unverified.
 - PR #1050 remains draft/hold. No provisioning, live boundary experiment or engine/provider/model execution was performed.
+
+# Harness synthetic controls
+
+- Mock protocol positive: unsealed diagnostic only; protection remains unverified.
+- Wrong run, missing callback, simulated failures, timeout and residual cleanup report inconclusive.
+- Observer authentication and independent descendant/resource inventory have no harness API. The strict xfail records the missing verifier; it does not establish rejection. Follow-up needs a run-bound authenticated evidence input and independently verified cleanup before any protection or cleanup PASS.
+- No live boundary, engine or provider execution.
 
 ## 단계
 #1117: `tests/test_state.py`의 고정 횟수 대기를 시간 기준 대기로. 근거: [#1076 계측 실측](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6530142714).
