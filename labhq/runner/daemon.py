@@ -379,6 +379,7 @@ class Runner:
         self.codex_sandbox = SandboxWatch()  # elevated setup still fits this Codex (#328)
         # Steer, pause and halt files (#59 ①): runner state, outside every staff write root.
         self.breakers: dict[str, Escalation] = {}  # #59: running tasks' breaker stage
+        self._disk_watchers: dict[str, asyncio.Task] = {}  # #678: one per running task
         self.controls = Controls(settings.path(settings.runner.state_dir) / "control")
         self._finish_interrupted_tasks()
 
@@ -1238,6 +1239,9 @@ class Runner:
             if cancelled:
                 raise
         finally:
+            watcher = self.__dict__.get("_disk_watchers", {}).pop(task.id, None)
+            if watcher is not None:
+                watcher.cancel()
             self._recruitment_conversions.pop(task.id, None)
             self._result_queued.discard(task.id)  # the run is over: nothing left to guard
             self._cleanup_reports.pop(task.id, None)
@@ -1934,6 +1938,62 @@ class Runner:
                 f"작업 폴더 드라이브 여유가 적습니다: {free_gib:.1f} GiB. 큰 다운로드 전에 확인하세요")})
         return None
 
+    def _start_disk_watch(self, task: Task, agent: AgentSpec, workspace_dir: Path) -> None:
+        """Watch the drives this running task fills (#678): the work folder, the runner state folder and
+        ``runner.bulk_data_root``. A facilities fix runs regardless: clearing a full workspace is what it is for."""
+        runner = self.s.runner
+        if not runner.disk_watch_s or not runner.disk_fail_free_gb or task.meta.get("kind") == "facilities_fix":
+            return
+        watchers = self.__dict__.setdefault("_disk_watchers", {})
+        if task.id in watchers:
+            return
+        folders = [workspace_dir, self.s.path(runner.state_dir)]
+        if runner.bulk_data_root:
+            folders.append(Path(os.path.expandvars(os.path.expanduser(str(self.s.path(runner.bulk_data_root))))))
+        watcher = asyncio.get_running_loop().create_task(self._disk_watch(task, agent, folders))
+        watchers[task.id] = watcher
+        watcher.add_done_callback(lambda done, tid=task.id: watchers.pop(tid, None) if watchers.get(tid) is done else None)
+
+    async def _disk_watch(self, task: Task, agent: AgentSpec, folders: list[Path]) -> None:
+        """Read the free space of ``folders`` every ``runner.disk_watch_s`` while the task is held; below
+        ``runner.disk_fail_free_gb`` halt it once, session kept, for the PI to resume. The resume starts a new turn that
+        meets ``_disk_gate`` again. An unreadable drive is skipped. Ends with the task."""
+        runner = self.s.runner
+        base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
+        while self.controls.holds(task.id):
+            await asyncio.sleep(runner.disk_watch_s)
+            if not self.controls.holds(task.id):
+                return
+            low = None
+            for folder in folders:
+                try:
+                    space = await asyncio.to_thread(disk_space.usage, folder)
+                except (OSError, ValueError):
+                    continue
+                if space.total > 0 and space.free < runner.disk_fail_free_gb * disk_space.GIB:
+                    low = (folder, space.free / disk_space.GIB)
+                    break
+            if low is None:
+                continue
+            folder, free_gib = low
+            text = (f"디스크 여유가 {free_gib:.1f} GiB로 기준 {runner.disk_fail_free_gb:g} GiB보다 적습니다"
+                    f"({Path(folder).as_posix()})")
+            halted = None
+            if runner.disk_watch_halt:
+                try:
+                    halted = await self.controls.apply({"task_id": task.id, "action": "halt"})
+                except Exception:  # noqa: BLE001 - the watch never fails the run
+                    log.warning("task %s disk halt not applied", task.id, exc_info=True)
+            record = {"signal": "disk", "mode": "enforce", "stage": "stop",
+                      "enforcement": "halt" if halted else ("failed" if runner.disk_watch_halt else "off"),
+                      "free_gib": round(free_gib, 2), "floor_gib": runner.disk_fail_free_gb,
+                      "path": Path(folder).as_posix()}
+            await self.emit(Event(type="agent.log", data={"level": "alert", "text": text}, **base))
+            if halted:
+                await self.emit(Event(type="agent.control", data={**halted, "source": "disk"}, **base))
+            await self.emit(Event(type="agent.breaker", data=record, **base))
+            return  # once per turn: a resumed turn is a new task and is checked again at its start
+
     async def _bulk_data_hint(self, emit, zones: list) -> str:
         """The briefing line for ``runner.bulk_data_root``, or "" when unset or the folder is not one staff may use.
 
@@ -2089,6 +2149,7 @@ class Runner:
                 if ws:
                     ws.task = task
             await emit("agent.status", {"state": "working", "task": task.meta.get("title") or short(task.prompt, 120)})
+            self._start_disk_watch(task, agent, workspace_dir)
             zones = self._zones()
             internal_zones = self._internal_zones()
             preclean_started: float | None = None

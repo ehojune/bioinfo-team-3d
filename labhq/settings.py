@@ -65,6 +65,11 @@ class RunnerSettings(BaseModel):
     # Below this much free space on the work drive the runner starts no task until the PI answers a card (#678);
     # 0 turns the card off (the warning above stays).
     disk_fail_free_gb: float = Field(default=2, ge=0, allow_inf_nan=False)
+    # While a task runs the runner reads the free space of its drives every this many seconds and halts the task when one
+    # falls below disk_fail_free_gb, keeping its session for the PI to resume (#678). 0 turns the watch off.
+    disk_watch_s: float = Field(default=30, ge=0, allow_inf_nan=False)
+    # Off: the watch only writes a warning to the task log and never halts.
+    disk_watch_halt: bool = True
     # Optional folder for multi-GB raw data, outside every step folder: the task briefing names it (#678).
     bulk_data_root: str | None = None
     bundle_max_file_mb: float = Field(default=50, gt=0)
