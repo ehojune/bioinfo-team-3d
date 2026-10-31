@@ -59,7 +59,7 @@ from ..security import token_matches
 from .. import durable
 from ..store import StateStore
 from ..util import short
-from .idempotency import Idempotency
+from .idempotency import Idempotency, idempotent_routes
 from .shutdown import ShutdownIn, WebShutdown
 
 log = logging.getLogger(__name__)
@@ -5909,6 +5909,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         hub.demo_status = {"phase": "starting", "remaining_s": 0}
     app = FastAPI(title="labhq gateway", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.hub = hub
+    idempotent = idempotent_routes(hub.idempotency)
     shutdown = WebShutdown(settings, hub)
     app.state.shutdown = shutdown
 
@@ -6072,20 +6073,18 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return list(hub.agents.values())
 
     @app.post("/api/requests", dependencies=[Depends(auth)])
-    async def create_request(body: RequestIn, idempotency_key: str | None = Header(default=None)) -> dict:
-        async def create() -> dict:
-            if body.mode == "direct" and not hub.knows_agent(body.agent_id):
-                raise HTTPException(404, f"unknown agent {body.agent_id!r}")
-            if body.mode == "direct" and not_yet_active(hub.agents.get(body.agent_id or "") or {}):
-                raise HTTPException(409, probation_refusal(str(body.agent_id)))  # still on probation (#424)
-            try:
-                return {"request_id": (await hub.acreate_request(body))}
-            except KeyError as e:
-                raise HTTPException(404, str(e))
-            except ValueError as e:  # a reference outside the runner's roots or in a restricted zone
-                raise HTTPException(422, str(e))
-
-        return await hub.idempotency.run("request", idempotency_key, body.model_dump(), create)
+    @idempotent
+    async def create_request(body: RequestIn) -> dict:
+        if body.mode == "direct" and not hub.knows_agent(body.agent_id):
+            raise HTTPException(404, f"unknown agent {body.agent_id!r}")
+        if body.mode == "direct" and not_yet_active(hub.agents.get(body.agent_id or "") or {}):
+            raise HTTPException(409, probation_refusal(str(body.agent_id)))  # still on probation (#424)
+        try:
+            return {"request_id": (await hub.acreate_request(body))}
+        except KeyError as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:  # a reference outside the runner's roots or in a restricted zone
+            raise HTTPException(422, str(e))
 
     @app.get("/api/paper-skills", dependencies=[Depends(auth)])
     async def paper_skills_history() -> dict:
@@ -6129,17 +6128,14 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return [p.model_dump(exclude={"local_dir"}) for p in settings.projects]
 
     @app.post("/api/projects/{pid}/prs/{number}/codex-review", dependencies=[Depends(auth)])
-    async def codex_review(pid: str, number: int, body: CodexReviewIn,
-                           idempotency_key: str | None = Header(default=None)) -> dict:
-        async def post_comment() -> dict:
-            proj = settings.project(pid)
-            gh = hub.reporter.client()
-            if not proj or not proj.repo or gh is None:
-                raise HTTPException(409, "project has no repo or GitHub token is not set")
-            c = await gh.request_codex_review(proj.repo, number, body.note, settings.github.codex_mention)
-            return {"ok": True, "url": c.get("html_url")}
-
-        return await hub.idempotency.run(f"codex-review:{pid}:{number}", idempotency_key, body.model_dump(), post_comment)
+    @idempotent
+    async def codex_review(pid: str, number: int, body: CodexReviewIn) -> dict:
+        proj = settings.project(pid)
+        gh = hub.reporter.client()
+        if not proj or not proj.repo or gh is None:
+            raise HTTPException(409, "project has no repo or GitHub token is not set")
+        c = await gh.request_codex_review(proj.repo, number, body.note, settings.github.codex_mention)
+        return {"ok": True, "url": c.get("html_url")}
 
     @app.post("/api/requests/{rid}/storage", dependencies=[Depends(auth)])
     async def storage_card(rid: str) -> dict:
@@ -6454,10 +6450,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                                            for request_id, sid in released]}
 
     @app.post("/api/recruit", dependencies=[Depends(auth)])
-    async def recruit(body: RecruitIn, idempotency_key: str | None = Header(default=None)) -> dict:
-        return await hub.idempotency.run("recruit", idempotency_key, body.model_dump(), lambda: start_recruit(body))
-
-    async def start_recruit(body: RecruitIn) -> dict:
+    @idempotent
+    async def recruit(body: RecruitIn) -> dict:
         if not paper2agent.enabled(settings):
             raise HTTPException(403, "recruitment is disabled (recruit.enabled=false)")
         if not (body.paper or body.repo):
@@ -6481,17 +6475,15 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return {"ok": True, "runner_id": rid}
 
     @app.post("/api/contracts/{agent_id}", dependencies=[Depends(auth)])
-    async def contract(agent_id: str, body: ContractIn, idempotency_key: str | None = Header(default=None)) -> dict:
-        async def update() -> dict:
-            if body.action != "release" and not paper2agent.enabled(settings):
-                raise HTTPException(403, "recruitment is disabled (recruit.enabled=false)")
-            rid = hub.agent_runner.get(agent_id) or hub.agent_runner.get(settings.recruit.agent_id)
-            if not rid:
-                raise HTTPException(404)
-            await hub.send_runner(rid, {"type": "contract.update", "agent_id": agent_id, **body.model_dump()})
-            return {"ok": True}
-
-        return await hub.idempotency.run(f"contract:{agent_id}", idempotency_key, body.model_dump(), update)
+    @idempotent
+    async def contract(agent_id: str, body: ContractIn) -> dict:
+        if body.action != "release" and not paper2agent.enabled(settings):
+            raise HTTPException(403, "recruitment is disabled (recruit.enabled=false)")
+        rid = hub.agent_runner.get(agent_id) or hub.agent_runner.get(settings.recruit.agent_id)
+        if not rid:
+            raise HTTPException(404)
+        await hub.send_runner(rid, {"type": "contract.update", "agent_id": agent_id, **body.model_dump()})
+        return {"ok": True}
 
     @app.get("/api/messenger", dependencies=[Depends(auth)])
     async def messenger(before: int | None = Query(default=None, ge=1, le=9223372036854775807),
