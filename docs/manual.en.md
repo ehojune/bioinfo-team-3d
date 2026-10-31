@@ -1393,6 +1393,8 @@ The `wiki` row of `labhq doctor` shows the link, document count, whether an inde
 
 ## Comparison bench
 
+Call the fixed-step tier comparison fixture from Python with `await labhq.bench.run_fixed_tier_pair(output_path, settings, {"reasoning": "model-a", "balanced": "model-b"})`. The output path must not exist and both model IDs must be nonempty. Only `engines="mock"` is accepted; live execution is disabled. Mock scores are not measurements of model quality or cost. See the [tier comparison fixture](reference/model-tier-bench-625/README.md).
+
 The default comparison arms per the PI decision (2026-10-01, #40). A real run uses the PI machine's subscriptions.
 
 | arm | model · effort |
