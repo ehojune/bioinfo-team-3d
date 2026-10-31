@@ -433,6 +433,17 @@ def _alphagenome_row(settings: Settings) -> dict:
     return _row("annot", "AlphaGenome", "ok", "키 있음", "")
 
 
+def _alphagenome_atlas_row() -> dict:
+    from .tools.annot_alphagenome_atlas import KEY_ENV, sdk_available
+
+    if not os.environ.get(KEY_ENV, "").strip():
+        return _row("annot", "AlphaGenome Atlas", "skip", "환경변수 키 없음", f"runner 환경에 {KEY_ENV}를 설정하세요.")
+    if not sdk_available():
+        return _row("annot", "AlphaGenome Atlas", "warn", "환경변수 키 있음, Atlas SDK 없음",
+                    "runner의 Python에 pip install 'labhq[alphagenome]' (alphagenome>=0.10.0)")
+    return _row("annot", "AlphaGenome Atlas", "ok", "환경변수 키·SDK 있음, 실제 접근 미검증", "")
+
+
 def claude_login_command(windows: bool) -> str:
     """What the PI runs once to sign the staff Claude in to ~/.labhq/claude-staff. Home variables only, so no
     user name or path is printed."""
@@ -931,6 +942,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     private = _doctor_private(settings, agents, forced)
     rows.append(_private_paths_row(private))
     rows.append(_alphagenome_row(settings))
+    rows.append(_alphagenome_atlas_row())
     from .knowledge.recall import health as recall_health
     recall = recall_health(settings)
     rows.append(_row("knowledge", "local recall", "ok" if recall["available"] else "warn",
