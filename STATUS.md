@@ -12,6 +12,22 @@
 - 시험: `tests/test_disk_shell_check_678.py`에 주석·리다이렉션·`-x`·묶음 플래그 5건 추가, 파일 전체와 관련 기존 시험 119건 통과.
 - 미검증: heredoc 본문 줄이 명령으로 읽히는 경우(초과 질문만 생김), 중첩 `$(…)`·백틱 안의 명령, Windows CI.
 
+# #1076 종료 ack 시험의 shutdown 한도
+
+- 결론: `tests/test_state.py::test_shutdown_commits_the_acks_it_already_received`가 `shutdown(timeout_s=0.05)` 안에 ack commit(fsync 포함)이 끝나야 해서, Windows 러너에서 commit이 36~67 ms 걸리면 한도에 닿아 `[1,2,3,4,5] == [5]`로 실패했다(#1180 attempt 2). 한도를 0.5 s로 올렸다. 단언(이미 받은 ack를 종료 전에 commit한다)은 그대로다. 제품 코드는 바꾸지 않았다.
+- 같은 부류로 확인한 것: `test_shutdown_stays_inside_its_deadline_when_an_ack_commit_hangs`는 0.2 s 한도와 `<1.5 s`로 상한을 보는 시험이라 더 느린 commit에 영향이 없다.
+- 시험: `-k shutdown` 통과.
+- 미검증: Windows CI에서의 안정성(이 PR의 CI가 첫 확인).
+
+# #674 Codex·Gemini 소비 단계에도 검증된 환경 전달
+
+- 결론: 검증을 통과한 환경(`validate_runner_env`)을 `ENVIRONMENT_ENGINES = {claude_code, codex, gemini}` 소비 단계가 받는다. 세 엔진 모두 env `LABHQ_ENV_PYTHON`(검증된 interpreter 절대 경로)·`PYTHONDONTWRITEBYTECODE=1`과 브리핑 `[Runner environment]` 단락을 받고, 읽기 전용 root(`read_dirs`)는 기존대로 Claude만 더 연다(`ENVIRONMENT_GRANT_ENGINES`). antigravity·cli·mock·알 수 없는 agent는 기존 거부를 유지한다.
+- 근거: [#1178 결과](https://github.com/ehojune/bioinfo-team-3d/issues/1178#issuecomment-6540356076) — Windows `codex sandbox`는 작업 폴더 밖 읽기를 허용하고 쓰기만 막는다(grant 불필요). Gemini는 읽기 전용 grant를 표현할 수 없다. [총괄 결정](https://github.com/ehojune/bioinfo-team-3d/issues/674#issuecomment-6540361713).
+- 그대로인 것: `.venv` 아래 통제 구역 링크 검사·목록 미완료 거부·UNC(쓰기 거부 규칙을 못 만드는 경로) 거부·읽기 전용 소비 단계 거부·검증 실패 시 grant 제거는 세 엔진에 똑같이 적용된다.
+- 바꾼 것: `labhq/runner/daemon.py`, `tests/test_environment_grant_674.py`(+4건: Codex·Gemini가 경로만 받음, 두 엔진에도 fail-closed 검사 적용, cli는 거부). `step_inputs.py`는 바꾸지 않았다.
+- 시험: 신규 4건 포함 환경·입력·e2e 관련 101건 통과.
+- 미검증: WSL·Linux의 Codex sandbox가 작업 폴더 밖 읽기를 허용하는지(#1178은 Windows만 실측), Codex·Gemini가 실제로 그 interpreter를 실행하는지, manual 한·영(차례를 기다림).
+
 # #1174 H1 멈춤 요청과 정상 종료가 겹칠 때
 
 - 결론: `adapters/base.py::halt_watch`가 결과를 `halted`로 표시한 뒤 `agent.log` emit(durable commit이라 양보함)을 기다렸다. 그 사이 CLI가 스스로 끝나 결과가 도착하면 완료된 실행이 `ok=False`·`error="halted by the PI"`로 보고됐다. 표시를 emit 뒤로 옮기고, 표시 직전 `proc.returncode`·`result_arrived`를 다시 본다(그 확인과 `_kill` 사이에 `await`가 없다). 디스크 감시(#1169)가 아무 때나 halt를 걸어 노출이 커졌다.
@@ -39,6 +55,15 @@
 - 실행: 새 시험은 수정 전 7개 실패, 수정 후 통과. `test_web_3d`·`test_web` 107 passed, 1 skipped.
 - 미해결/미검증: 두 페이지의 `lastSeq` 복사본은 `test_web.py`·`web_cards_status.cjs`가 문구를 고정해 그대로 둠(reducer 가드가 있어 동작은 안전). 실제 브라우저 재연결, 3D 렌더러의 표시는 못 봄. 서버가 종료 뒤 늦은 이벤트를 실제로 내보내는 빈도는 못 쟀음(#1148·#1168 범위).
 - CI 기록: 첫 head(01de761)에서 `pytest (3.10)`이 `test_patch_notes::test_merge_resolution_requires_note_only_for_own_code_change`의 CPython 내부 `SystemError: tupleobject.c:964` 한 건으로 실패했다(이 PR은 Python 코드를 바꾸지 않음). 재실행 권한이 없어(사용자·봇 신원 모두 거절) 기록 커밋으로 CI를 다시 돌렸다.
+
+# #674 검증된 runner 환경의 읽기 grant(B안, Claude 한정)
+
+- 결론: 환경 단계가 만든 `.venv`가 `validate_runner_env` 검증(runner 기록·manifest hash·pinned binding·interpreter 링크 대상)을 통과하면, 소비 단계의 agent가 Claude일 때 `_environment_refusal_reason`이 거부하지 않고 검증된 (venv, python) 경로를 `self._env_grants[task.id]`에 남긴다. `_run_task`가 이를 `_apply_environment_grants`로 `read_dirs`(읽기 전용, Claude가 Edit/Write 거부 규칙을 붙임)에 더하고 env `LABHQ_ENV_PYTHON`·`PYTHONDONTWRITEBYTECODE=1`, 브리핑 `[Runner environment]` 한 단락을 더한다. 검증이 한 번이라도 실패하면 이전 grant도 지운다. 읽기 전용 task는 grant를 받지 않는다.
+- 그 밖의 엔진(Codex·Gemini·cli·알 수 없는 agent)은 `read_dirs`를 받지 않아 기존 "protected interpreter alias is not implemented" 거부를 유지한다. `ENVIRONMENT_ALIAS_AVAILABLE`은 False 그대로다(미래의 별칭이 모든 엔진을 여는 용도). 새 상수 `ENVIRONMENT_GRANT_ENGINES = {claude_code}`.
+- 결정: [#674 결정 메모](https://github.com/ehojune/bioinfo-team-3d/issues/674#issuecomment-6539968861)와 총괄 결정(B안, Claude 한정).
+- 바꾼 것: `labhq/runner/daemon.py`, `tests/test_environment_grant_674.py`(7건), `config/ci/windows-boundary-v1.json`. `step_inputs.py`는 `validate_runner_env`가 이미 venv 경로를 돌려줘 바꾸지 않았다.
+- 시험: 신규 7건(Claude 허용, 타 엔진 거부, 검증 실패 시 grant 제거, binding 없음, read_dirs·env·브리핑, 읽기 전용 제외, 플래그 동작)은 구현 전 4건이 실패했고 지금 통과. 환경·입력·예약 기록 관련 기존 시험 포함 314건 통과.
+- 미검증: 실제 Windows·WSL에서 Claude가 grant된 venv의 interpreter를 실행하는지와 승인 카드가 뜨는지(mock만), 실제 ② 시운전, Codex 소비 단계, manual 한·영(차례를 기다림).
 
 # #678 task 도중 디스크 감시
 

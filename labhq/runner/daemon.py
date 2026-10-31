@@ -282,8 +282,13 @@ def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
 _EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_emit_unit", default=None)
 
 
-# Flip only when a protected alias or read grant hands the validated runner-local interpreter to consumers.
+# Flip only when a protected alias hands the validated runner-local interpreter to consumers of every engine.
 ENVIRONMENT_ALIAS_AVAILABLE = False
+# Engines that receive a verified environment (#674): its interpreter path in `LABHQ_ENV_PYTHON` and a briefing line.
+# Claude also gets the folder as a read-only root (`read_dirs`, Edit/Write denied); Codex's sandbox already reads outside
+# the work folder and Gemini has no read-only grant to give, so they get the path only. Other engines stay refused.
+ENVIRONMENT_ENGINES = frozenset({Engine.claude_code, Engine.codex, Engine.gemini})
+ENVIRONMENT_GRANT_ENGINES = frozenset({Engine.claude_code})
 
 ACK_DRAIN_S = 5.0  # how long a reconnect waits for the acks it already received to commit (#1125)
 ACK_MERGE_S = 0.5  # at most one ack commit per this long: acks arriving between two commits share the second (#1125)
@@ -1239,6 +1244,7 @@ class Runner:
             if cancelled:
                 raise
         finally:
+            self.__dict__.get("_env_grants", {}).pop(task.id, None)  # the run is over: its grant goes with it
             watcher = self.__dict__.get("_disk_watchers", {}).pop(task.id, None)
             if watcher is not None:
                 watcher.cancel()
@@ -1778,6 +1784,8 @@ class Runner:
         return None
 
     def _environment_refusal_reason(self, task: Task) -> str | None:
+        grants = self.__dict__.setdefault("_env_grants", {})
+        grants.pop(task.id, None)  # whatever happens below, an earlier run of this id leaves no grant behind
         if "environment_binding" in task.meta:
             producer = self._producer_binding_refusal(task, task.meta["environment_binding"])
             if producer is not None:
@@ -1824,17 +1832,74 @@ class Runner:
         if root is None or not task.request_id:
             return prefix + "workspace or request identity unavailable"
         from .step_inputs import validate_runner_env
+        verified: list[dict[str, str]] = []
         for binding in bindings:
             sid = binding["step_id"]
             try:
-                validate_runner_env(root, steps[sid], artifacts[sid], binding, request_id=task.request_id)
+                venv = validate_runner_env(root, steps[sid], artifacts[sid], binding, request_id=task.request_id)
             except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
                 return prefix + "environment validation failed"
+            verified.append({"step_id": sid, "venv": str(venv),
+                             "python": str(Path(steps[sid]) / binding["python_path"])})
+        read_only = False
+        try:
+            agent = self._resolve_agent(task)
+            engine = agent.engine
+            read_only = is_read_only_task(task.meta, agent)
+        except Exception:  # noqa: BLE001 - an unknown agent is refused later; here it simply gets no grant
+            engine = None
+        if engine in ENVIRONMENT_ENGINES:
+            if read_only:  # a read-only run takes no grant, and running it on the system Python would be another result
+                return prefix + "a read-only step cannot be given the planned environment"
+            for grant in verified:
+                problem = self._environment_grant_problem(Path(grant["venv"]))
+                if problem:  # Claude would follow a link out of the venv: fail closed, no grant
+                    return prefix + f"environment folder cannot be shared read-only: {problem}"
+            for grant in verified:
+                grant["read_dir"] = engine in ENVIRONMENT_GRANT_ENGINES  # Claude opens the folder; the rest get the path
+            grants[task.id] = verified
+            return None
         if not ENVIRONMENT_ALIAS_AVAILABLE:
-            # The validated .venv is not exposed to the consumer (no protected alias or read grant exists yet), so
-            # starting it would run without the packages the plan asked for: stay closed (#674).
+            # The validated .venv is not exposed to the consumer (no protected alias or read grant for this engine),
+            # so starting it would run without the packages the plan asked for: stay closed (#674).
             return prefix + "environment verified but protected interpreter alias is not implemented"
         return None
+
+    def _environment_grant_problem(self, venv: Path) -> str | None:
+        """Why a verified .venv must not be opened to Claude, or None. A package may leave a link below it that leads
+        into a controlled data zone, and `--add-dir` follows links; a listing that cannot finish is refused too (a venv
+        may link out to its base interpreter, so only zones are judged, as for a project clone)."""
+        try:
+            directory = Path(venv).resolve()
+            if not claude_rule_ready(str(directory)):  # no Edit/Write deny rule can be made (a UNC path): not read-only
+                return "no Claude write-deny rule can be made for it (a network path)"
+            zones = self._zones()
+            if overlaps_restricted(str(directory), self.s) or overlaps_zone(directory, zones):
+                return "it lies in a controlled data zone"
+            links, incomplete = zone_links(directory, zones, self.s.runner.reference_scan_max_entries * 10,
+                                           self.s.runner.reference_scan_max_depth)
+        except Exception:  # noqa: BLE001 - not scanned means not shared
+            return "it could not be scanned"
+        if links:
+            return "a link below it leads into a controlled data zone"
+        return f"its listing was incomplete ({incomplete})" if incomplete else None
+
+    def _apply_environment_grants(self, task: Task, read_dirs: list[str], *,
+                                  read_only: bool) -> tuple[list[str], dict[str, str], str]:
+        """(read dirs with the verified environments added, extra env, briefing line) for a consumer step (#674).
+
+        The grant is the folder the runner just verified, opened read-only like a reference folder (Claude denies
+        Edit/Write there); a read-only run takes none. `PYTHONDONTWRITEBYTECODE` keeps Python from writing into it.
+        Engines other than Claude get the env and the briefing line without the extra read root."""
+        grants = self.__dict__.get("_env_grants", {}).get(task.id) or []
+        if read_only or not grants:
+            return read_dirs, {}, ""
+        dirs = list(dict.fromkeys([*read_dirs, *(grant["venv"] for grant in grants if grant.get("read_dir"))]))
+        python = grants[0]["python"]
+        note = ("[Runner environment]\n" + "\n".join(
+            f"- Python with the packages the plan asked for ({grant['step_id']}): {grant['python']}" for grant in grants)
+            + "\nRun scripts with that interpreter. The folder is read-only: do not install into it.")
+        return dirs, {"LABHQ_ENV_PYTHON": python, "PYTHONDONTWRITEBYTECODE": "1"}, note
 
     async def _refuse_unprotected_environment(self, task: Task) -> TaskResult | None:
         error = await asyncio.to_thread(self._environment_refusal_reason, task)
@@ -2314,6 +2379,10 @@ class Runner:
             self._start_disk_watch(task, agent, workspace_dir, () if read_only else extra_dirs)
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs],
                                                                needs_rules=agent.engine == Engine.claude_code)
+            read_dirs, environment_env, environment_note = self._apply_environment_grants(
+                task, read_dirs, read_only=read_only)
+            if environment_note:
+                task = ws.task = task.model_copy(update={"context": f"{task.context}\n\n{environment_note}".strip()})
             asked_links, _internal_incomplete = await self._project_links(
                 [str(ws.dir), *extra_dirs, *read_dirs], internal_zones, emit, ask=True)
             asked_links = [link for link in asked_links if claude_rule_ready(link)]
@@ -2437,6 +2506,7 @@ class Runner:
                 PRIVATE_ENABLED_ENV: "1" if private.enabled else "0",
                 PRIVATE_OPEN_READS_ENV: os.pathsep.join(private.open_reads),
             }
+            env.update(environment_env)
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
             if self.broker.lookup_admission is not None:
