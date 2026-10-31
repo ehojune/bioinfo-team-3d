@@ -1,0 +1,8 @@
+rows:
+  - sha: "3deb1fb"
+    at: "2026-10-31 21:12"
+    summary: "CI에서 시험 하나가 멈추면 그 시험만 실패하고, 이름이 로그에 남습니다."
+    text: "CI: 시험마다 300초 상한(pytest-timeout)과 상한 직전 시험 이름 덤프 (Refs #1198)"
+  - sha: "48a2d47"
+    at: "2026-10-31 21:13"
+    text: "CI: 새 시험 파일을 Windows inventory에 등록 (Refs #1198)"
