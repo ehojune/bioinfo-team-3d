@@ -4791,8 +4791,16 @@ class Orchestrator:
                     raise BudgetExceeded(reason)
 
     def _alphagenome_ready(self) -> bool:
-        """Whether the AlphaGenome tools exist for the staff: the key file is there and the client is installed. The server
-        registers them only then, so the roster the CSO plans from must not list them otherwise (#1200)."""
+        """Whether the AlphaGenome tools exist for the staff, as the runners say at registration (``alphagenome_ready`` in
+        their capabilities): a runner registers them only with the key file and the client, and it may run on another
+        account or PC than the gateway, so the gateway's own look would drop tools a runner has. Any runner that
+        reports ready is enough. With no runner report at all (an older runner) the gateway looks for itself, as
+        before: the roster the CSO plans from must not list the tools when nothing can serve them (#1200)."""
+        capabilities = getattr(self.hub, "runner_capabilities", None) or {}
+        reports = [caps["alphagenome_ready"] for caps in capabilities.values()
+                   if isinstance(caps, dict) and "alphagenome_ready" in caps]
+        if reports:
+            return any(report is True for report in reports)
         try:
             from ..tools import annot_keys, annot_regulatory
             return bool(annot_keys.read_key(self.hub.s)) and annot_regulatory.alphagenome_client_available()
