@@ -9,7 +9,8 @@
 ## 테스트 결과
 - `python -m pytest tests/test_boundary_wiring_666.py tests/test_boundary_observer.py tests/test_process_boundary.py tests/test_cli_exit_evidence.py tests/test_runner_env_inputs_674.py -q`: 199 passed, 10 skipped, 1 xfailed.
 - `scripts.ci_selection.validate_profile()`: 새 테스트 inventory 미등록으로 실패.
-- public/notes 검사와 최종 head CI·리뷰는 PR 댓글에서 추적합니다.
+- `scripts/check_public.sh` 통과. `test_ci_boundary_preview.py`: 59 passed, 1 failed(같은 inventory 미등록).
+- `notes_index.py --validate`: 배정된 status 파일명에 HHMM이 없어 실패. 최종 head CI·리뷰는 PR 댓글에서 추적합니다.
 
 ## 바꾼 파일
 - `labhq/adapters/base.py`, `labhq/runner/daemon.py`, `tests/test_boundary_wiring_666.py`
@@ -18,7 +19,8 @@
 ## 막힌 점
 - `config/ci/windows-boundary-v1.json`: 새 테스트 등록. 현재 claim 밖입니다.
 - `docs/manual.md`, `docs/manual.en.md`: 기본 off/unsupported 상태와 embedding 연결 한계 반영. main에서 README/manual 변경 뒤 코드 커밋 2개가 쌓여 갱신 gate가 적용됩니다. 두 경로도 claim 밖입니다.
-- 세 경로의 소유권 조정 후 최종 CI를 완료해야 합니다. 실제 보호·인증 cleanup은 별도 검증 대상입니다.
+- status를 `docs/status/2026-11-01-0801-codex-boundary-wiring.md`로 옮길 새 경로도 필요합니다. 배정 경로에는 필수 HHMM이 없습니다.
+- 위 경로의 claim 조정 후 최종 CI를 완료해야 합니다. 실제 보호·인증 cleanup은 별도 검증 대상입니다.
 
 ## 확인
 - 실제 engine/provider·credential·provisioning·연구/HPC·배포 없음.
