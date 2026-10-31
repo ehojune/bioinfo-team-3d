@@ -22,3 +22,7 @@ Claude의 `--disallowedTools`만 이름 목록을 지키고 Codex·Gemini 어댑
 
 ## rev3
 - `tests/test_external_wait_board_676.py`: 도구를 `@server.tool()`만이 아니라 `@offered()`로도 찾는다. 도구 수 하한(15)과 "모든 도구가 실행기를 부른다"는 확인은 그대로다. 이 시험이 바뀌지 않으면 #1200이 CI에서 실패한다.
+
+## rev4
+- `labhq/adapters/read_only.py`: 읽기 전용 프로필이 `AgentSpec`의 모든 필드를 분류해야 해서 `annot_tools`가 없으면 `RuntimeError`로 읽기 전용 실행(검토·후속)이 시작하지 못했다(CI의 `test_e2e_mock`·`test_followup`·`test_workspace_boundary` 실패). `READ_ONLY_FIELDS`에 `"annot_tools": None`을 넣었다. 설계 때 "확인만"으로 적은 파일이 실제로는 수정 대상이었다.
+- 시험: `test_a_read_only_run_offers_no_annot_tools_whatever_the_staff_spec_allows`. 위 세 시험과 `test_github_reporter.py`는 로컬에서 통과(206 passed, 18 skipped).
