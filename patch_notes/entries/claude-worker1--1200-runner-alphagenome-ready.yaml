@@ -8,3 +8,7 @@ rows:
     at: "2026-11-02 01:10"
     summary: "작업 프로그램이 보고하는 능력 목록의 시험이 이 PC에 AlphaGenome 키가 있는지에 따라 달라지지 않습니다."
     text: "시험: runner 보고 capabilities 비교가 이 PC의 AlphaGenome 키와 무관하게 한다 (#1200)"
+  - sha: "38efd2f"
+    at: "2026-11-02 02:00"
+    summary: "작업 프로그램이 여럿일 때, 직원 명단의 AlphaGenome 조회 도구 표시가 그 직원을 맡은 작업 프로그램의 상태를 따릅니다."
+    text: "AlphaGenome 명단 표시는 직원을 맡은 runner의 보고로 정한다 (#1252 리뷰 P1)"
