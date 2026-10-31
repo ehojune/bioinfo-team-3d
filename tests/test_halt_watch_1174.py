@@ -122,8 +122,16 @@ async def run_fake(tmp_path, monkeypatch, engine, lines, *, linger_s=0.4, halt_o
     ctx = RunContext(task=Task(agent_id="a1", prompt="x"), agent=agent, workdir=workdir, settings=settings,
                      mcp_servers=[], env={}, emit=emit, prompt="x", extra_dirs=[], claude_settings={}, halt=halt,
                      halt_grace_s=0.0)
-    result = await asyncio.wait_for(get_adapter(engine, settings).run(ctx), LIMIT_S)
-    return result, events, procs[0]
+    # A hard cap: `wait_for` would wait again for the run's cleanup after cancelling it, which is the very wait that hangs.
+    # `asyncio.wait` returns at the limit; the run is cancelled, its fake process ended, and the test fails without awaiting it.
+    run = asyncio.ensure_future(get_adapter(engine, settings).run(ctx))
+    finished, _pending = await asyncio.wait({run}, timeout=LIMIT_S)
+    if not finished:
+        for proc in procs:
+            proc.kill()
+        run.cancel()
+        pytest.fail(f"the run had not ended after {LIMIT_S} s: {[kind for kind, _ in events]}")
+    return run.result(), events, procs[0]
 
 
 @pytest.mark.asyncio
