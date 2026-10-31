@@ -822,6 +822,7 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 **AlphaGenome Atlas — [PR #1186](https://github.com/ehojune/bioinfo-team-3d/pull/1186), 2026-10-31 병합**
 
 - 직원은 `labhq_annot`의 `alphagenome_atlas(variants, requested_scorers, ontology_terms, gene_ids, top, assembly)`로 사전 계산 점수를 조회합니다. 별도 CLI 하위 명령은 없습니다. 입력은 GRCh38 SNV `chr:pos:ref>alt` 1–10개이며 scorer 기본값은 `RNA_SEQ`입니다. scorer·ontology·gene 필터를 지원하고 raw/quantile 점수·metadata·출처·사용 조건을 반환합니다. 미수록·빈 결과를 무효과로 해석하거나 자동 inference로 넘기지 않습니다.
+- Atlas는 호출마다 현재 키로 조회하며 기존 디스크 캐시를 읽거나 새 캐시를 쓰지 않습니다. 한 호출 안의 중복 변이만 합치며 ontology 누락값은 필터에서 제외하지 않습니다.
 - runner의 `ALPHAGENOME_API_KEY`와 `alphagenome>=0.10.0`이 필요하며 기존 키 파일은 쓰지 않습니다. 키·별칭은 직원 환경에서 제거합니다. 기존 요청 승인 범위 안에서 `annot` 허용 역할에만 task 조회 권한을 주며 읽기 전용 task·Atlas deny는 거부합니다. task 종료·오류·취소 때 권한을 회수하고 이후 호출은 거부합니다. 진행 중 SDK 호출의 즉시 종료를 보장하지는 않습니다. 요청 전체 조회 상한이 켜져 있으면 Atlas도 거부합니다.
 - 켜는 법: Atlas는 runner 프로세스의 환경 변수 `ALPHAGENOME_API_KEY`만 키로 씁니다. `labhq init`이 저장하는 키 파일(추론 도구용)과는 별개이고 설정 파일에 적지 않습니다. 키가 화면과 명령 기록에 남지 않게 Windows 사용자 환경 변수로 넣으려면 PowerShell에서 한 번만 이렇게 합니다(입력은 가려지고 값은 어디에도 출력되지 않습니다).
 
