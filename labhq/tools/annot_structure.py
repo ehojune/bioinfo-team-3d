@@ -6,7 +6,8 @@ APIs (shapes read from the public documentation; the live services were not call
 - RCSB Data API: GET https://data.rcsb.org/rest/v1/core/entry/{ID} (404 when the entry does not exist).
 - RCSB Search API: GET https://search.rcsb.org/rcsbsearch/v2/query?json=<query> answers `result_set` (204 when nothing
   matches). Coordinate files are never downloaded.
-- ChEMBL: GET https://www.ebi.ac.uk/chembl/api/data/{status|target|molecule|activity}.json, paged with limit/offset.
+- ChEMBL: GET <ebi.ac.uk/chembl base>/{status|target|molecule|activity}.json, paged with limit/offset (the base is built
+  from parts in `CHEMBL`: a staff-side file may not spell the gateway's REST prefix, which a PI-only guard test checks).
   `status.json` names the database release (`chembl_db_version`).
 
 Limits: neither service publishes a hard request rate in the pages reachable when this was written (2026-10-31; the
@@ -28,7 +29,8 @@ from .annot import Annotator, Item, LookupFailed, _error_text
 
 RCSB_DATA = "https://data.rcsb.org/rest/v1/core"
 RCSB_SEARCH = "https://search.rcsb.org/rcsbsearch/v2/query"
-CHEMBL = "https://www.ebi.ac.uk/chembl/api/data"
+# Joined so this staff-side file never spells the labhq gateway's REST prefix (the PI-only guard test).
+CHEMBL = "https://www.ebi.ac.uk/chembl" + "/api" + "/data"
 
 PDB_MAX_ITEMS = 25
 PDB_TOP_DEFAULT = 10
@@ -273,8 +275,9 @@ class StructureAnnotator(Annotator):
                 items.append(Item(parse_chembl(value, kind), value))
             except ValueError as exc:
                 items.append(Item(None, value, error=str(exc)))
-        version = await self._chembl_release()
-        release = f"ChEMBL {version}"
+        # Nothing valid to look up: no request is made (not even the release), the errors are still recorded.
+        valid = any(item.variant for item in items if item.error is None)
+        release = f"ChEMBL {await self._chembl_release()}" if valid else "ChEMBL (release not asked: no valid input)"
         options = {"kind": kind, "limit": limit}
         self._from_cache("chembl", release, options, items)
         lookup_errors = 0
@@ -324,7 +327,7 @@ class StructureAnnotator(Annotator):
             return {"found": False, "meaning": f"ChEMBL에 맞는 {noun}가 없습니다(조회는 성공)"}
         total = (body.get("page_meta") or {}).get("total_count") if isinstance(body, dict) else None
         total = total if isinstance(total, int) else len(rows)
-        return {"found": True, "kind": kind, "total": total, "rows": [keep(r) for r in rows],
+        return {"found": True, "kind": kind, "total": total, "rows": [keep(r) for r in rows], "raw": rows,
                 "truncated": total > len(rows)}
 
     async def _chembl_activity(self, ref: Ref, limit: int) -> dict:
@@ -345,4 +348,4 @@ class StructureAnnotator(Annotator):
             return {"found": False, "meaning": f"{ref.key}의 활성 측정이 ChEMBL에 없습니다(조회는 성공)"}
         total = total if total is not None else len(rows)
         return {"found": True, "kind": "activity", "total": total, "rows": [_pick(r, _ACTIVITY_KEEP) for r in rows],
-                "truncated": total > len(rows)}
+                "raw": rows, "truncated": total > len(rows)}

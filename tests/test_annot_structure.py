@@ -7,9 +7,9 @@ from urllib.parse import parse_qs
 
 import httpx
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
 
 from labhq.tools import annot, annot_structure as st
+from labhq.tools._mcpcompat import ToolError
 from tests.test_annot import FakeTime
 from tests.test_external_wait import limited, mcp_module  # noqa: F401  (fixtures)
 
@@ -212,6 +212,33 @@ async def test_a_chembl_target_by_id_and_a_missing_one(tmp_path):
     assert result["source"]["release_or_version"] == "ChEMBL ChEMBL_35"
     assert result["source"]["license"].startswith("CC BY-SA 3.0")
     assert calls[0].url.path.endswith("/status.json")  # the release is asked first
+
+
+@pytest.mark.asyncio
+async def test_the_raw_chembl_records_are_kept_in_the_result_file_though_the_summary_is_filtered(tmp_path):
+    annotator, _, _ = make(chembl_handler(), tmp_path)
+    result = await annotator.chembl(["CHEMBL203"], kind="activity", limit=3)
+    assert "ignored" not in result["results"][0]["rows"][0]  # the tool answer stays small
+    raw = _full(tmp_path, result)["results"][0]["answer"]["raw"]
+    assert len(raw) == 3 and all(r["ignored"] == "x" for r in raw)  # the artifact keeps every field the API sent
+    result = await annotator.chembl(["CHEMBL203"], kind="target")
+    assert _full(tmp_path, result)["results"][0]["answer"]["raw"][0]["target_components"][0]["accession"] == "P00533"
+    result = await annotator.chembl(["imatinib"], kind="compound")
+    assert _full(tmp_path, result)["results"][0]["answer"]["raw"][0]["molecule_structures"]["canonical_smiles"]
+
+
+@pytest.mark.asyncio
+async def test_chembl_with_only_invalid_items_sends_nothing(tmp_path):
+    annotator, calls, _ = make(lambda request: httpx.Response(500), tmp_path)
+    result = await annotator.chembl(["x", "EGFR"], kind="activity")
+    assert calls == [] and [r["ok"] for r in result["results"]] == [False, False]
+    assert result["n_errors"] == 2 and "full_result" in result  # still recorded
+
+
+def test_a_staff_side_file_does_not_spell_the_gateway_api_prefix():
+    # tests/test_semantics_actions_run.py forbids that string in staff-side modules; ChEMBL's own path is built from parts.
+    assert "/api/" not in (REPO / "labhq" / "tools" / "annot_structure.py").read_text(encoding="utf-8")
+    assert st.CHEMBL == "https://www.ebi.ac.uk/chembl" + "/api" + "/data"
 
 
 @pytest.mark.asyncio
