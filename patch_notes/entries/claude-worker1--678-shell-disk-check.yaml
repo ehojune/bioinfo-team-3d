@@ -4,3 +4,7 @@ rows:
     at: "2026-10-31 13:10"
     summary: "Claude 직원이 curl·wget·unzip·tar 등으로 내려받거나 풀기 전에 대상 드라이브 여유가 기준(기본 2 GiB)보다 적거나 풀 크기가 안 들어가면 승인 카드로 묻고, 크기를 모를 때는 막지 않고 경고만 남깁니다."
     text: "셸 다운로드·압축 해제 직전 대상 드라이브 여유를 확인해 부족하면 PI에게 묻는다 (#678)"
+  - sha: "c74af4e"
+    at: "2026-10-31 13:50"
+    summary: "디스크 확인이 tar의 모든 추출 표기와 git clone·fasterq-dump·aws·rsync가 쓰는 폴더도 읽습니다."
+    text: "tar의 모든 추출 표기와 git clone·bulk 도구의 대상 폴더를 읽는다 (#678 리뷰 P1)"
