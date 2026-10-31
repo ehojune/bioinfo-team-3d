@@ -49,7 +49,7 @@ from ..login import is_login_error
 from ..report_format import (PAPER_RULE, ABSTRACT_PLAN_RULE, split_appendix, scientific_appendix, add_references)
 from ..report_contract import (available_result_files, build_report_package, reader_markdown,
                                validate_report_package, with_report_front)
-from ..request_status import is_terminal_request
+from ..request_status import failed_step_ids, is_terminal_request
 from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARCH_STEP_SCHEMA, ResearchPlan,
                                  bind_result_artifacts, branch_plan_topology,
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
@@ -5899,7 +5899,8 @@ class Orchestrator:
         contract = req["research_contract"]
         failed = [s["id"] for s in steps if s["id"] not in results or not results[s["id"]].ok]
         successful = [s for s in steps if s["id"] not in failed]
-        warnings = [f"{sid}: 단계 실패 또는 의존 단계 건너뜀 — " +
+        branch_of = {s["id"]: s.get("branch") for s in steps}
+        warnings = [f"{sid}{f' (갈래 {branch_of[sid]})' if branch_of.get(sid) else ''}: 단계 실패 또는 의존 단계 건너뜀 — " +
                     safe_failure_cause(results[sid].error if sid in results else "not run") for sid in failed]
         warnings += [f"{step['id']}: {warning}" for step in successful
                      for warning in results[step["id"]].step_warnings]
@@ -8689,6 +8690,7 @@ class Orchestrator:
                 ok = False
         data = {"ok": ok, "report_package": req["report_package"],
                 **_terminal_reports(rid, report, report_appendix, req.get("execution_record") or ""), "cost_usd": req["cost_usd"],
+                **({"failed_steps": failed} if (failed := failed_step_ids(req)) else {}),
                 "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary"),
                 "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}

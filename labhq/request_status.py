@@ -15,11 +15,34 @@ def request_status_label(status: object) -> str:
     return REQUEST_STATUS_KO.get(str(status), str(status or "상태 모름"))
 
 
+def failed_step_ids(request: dict) -> list[str]:
+    """The steps of a request that finished `done` without completing: failed, skipped, or never run (#1220).
+
+    Derived from what the request already holds and never stored: a summary that lists them (`failed_steps`) is used as it
+    is, else the plan's steps and the results are read. Any other status has none, since `failed` and `cancelled` already
+    say that something did not complete."""
+    if request.get("status") != "done":
+        return []
+    listed = request.get("failed_steps")
+    if isinstance(listed, list):
+        return [str(step) for step in listed]
+    results = request.get("results") if isinstance(request.get("results"), dict) else {}
+    planned = [str(step["id"]) for step in (request.get("plan") or {}).get("steps") or []
+               if isinstance(step, dict) and step.get("id")]
+    never_ran = [step for step in planned if step not in results]
+    others = [str(step) for step in results if str(step) not in planned]
+    return [step for step in [*planned, *others]
+            if step in never_ran or not isinstance(results.get(step), dict) or results[step].get("ok") is not True
+            or results[step].get("status") == "skipped"]
+
+
 def request_display_label(request: dict) -> str:
     if request.get("status") == "cancelled" and request.get("cancel_reason") == "request_deadline":
         return "시간 상한으로 취소됨"  # the request's wall-clock limit (#877), not a PI decision
     if request.get("pi_review_pending"):
         return "보고서 검토 대기" if request.get("status") in {"done", "review_pending"} else "결과 확인 대기"
+    if failed := failed_step_ids(request):
+        return f"{request_status_label('done')} · 일부 실패 {len(failed)}"  # done, but not everything finished (#1220)
     return request_status_label(request.get("status"))
 
 

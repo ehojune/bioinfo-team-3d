@@ -198,6 +198,7 @@
     "tests/test_paper_skill_recovery_identity.py",
     "tests/test_paper_skill_waiting.py",
     "tests/test_paper_skill_waiting_static.py",
+    "tests/test_partial_failure_1220.py",
     "tests/test_patch_notes.py",
     "tests/test_pdf_figure_policy.py",
     "tests/test_pdf_figure_review_fixes.py",

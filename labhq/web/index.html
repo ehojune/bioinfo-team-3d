@@ -790,7 +790,7 @@ function renderRequest() {
   if (key === reqKey) return;
   reqKey = key;
   const current = all.filter(r => !LabHQState.isPastRequest(r)), past = all.filter(LabHQState.isPastRequest);
-  const choice = r => `<button type="button" class="request-choice" data-request-id="${esc(r.id)}" value="${esc(r.id)}" aria-current="${r.id === q?.id}"><span class="request-title">${esc(r.text || r.id)}</span><span class="status-label ${LabHQState.needsPiReview(r) ? 'status-decision' : 'status-neutral'}"><span class="status-dot" aria-hidden="true"></span>${esc(LabHQState.requestStatusText(r, S.approvals))}</span></button>`;
+  const choice = r => `<button type="button" class="request-choice" data-request-id="${esc(r.id)}" value="${esc(r.id)}" aria-current="${r.id === q?.id}"><span class="request-title">${esc(r.text || r.id)}</span><span class="status-label ${LabHQState.needsPiReview(r) ? 'status-decision' : LabHQState.partialFailureSteps(r).length ? 'status-partial status-halted' : 'status-neutral'}"><span class="status-dot" aria-hidden="true"></span>${esc(LabHQState.requestStatusText(r, S.approvals))}</span></button>`;
   const cumulative = LabHQState.totalCostLabel(all, LabHQState.requestsCostTotal(all)).replace(/^사용 비용 /, '');
   const pick = all.length ? `<nav class="request-list" aria-label="요청 목록"><h3>요청</h3>${current.map(choice).join('')}${past.length ? `<details class="past-requests"><summary>지난 요청 ${past.length}건 · 누적 비용 ${esc(cumulative)}</summary>${past.map(choice).join('')}</details>` : ''}</nav>` : '';
   // Before the first snapshot no request is known yet, which is not the same as none (#521).
