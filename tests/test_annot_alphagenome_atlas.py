@@ -902,22 +902,94 @@ async def test_all_errors_fail_status_without_raw_exception(service, monkeypatch
     assert '"status": "failed"' in status and '"status": "ok"' not in status and key not in status
 
 
-async def test_deadline_stops_backend_and_records_timeout(service, monkeypatch):
+@pytest.mark.parametrize("expired_before_query", [False, True], ids=["running", "before-query"])
+async def test_deadline_stops_backend_and_records_timeout(service, monkeypatch, expired_before_query):
     from labhq.tools.external_wait import run_lookup
     ctx, broker, _, token, _, _ = service
     backends = []
+    entered, stopped, recorded = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    now = [time.time()]
+    backend_class = atlas.AtlasBackend
+
+    def backend(*args, **kwargs):
+        result = backend_class(*args, **kwargs)
+        backends.append(result)
+        return result
+
+    async def emit(event, data):
+        status = data["external_lookup"]["status"]
+        if status == "waiting" and expired_before_query:
+            now[0] += 1
+        if status == "timeout":
+            recorded.set()
+
     async def blocked(annotator, **kwargs):
-        backends.append(annotator.atlas_backend)
-        await asyncio.Event().wait()
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
     async def short_deadline(*args, **kwargs):
-        return await run_lookup(*args, **kwargs, timeout_s=0.05)
+        # Keep filesystem/notify latency out of the running-operation case.
+        # asyncio.wait_for still cancels the real coroutine after 50ms. The
+        # second case explicitly exhausts the budget before operation entry.
+        return await run_lookup(*args, **kwargs, timeout_s=0.05, clock=lambda: now[0])
+
+    monkeypatch.setattr("labhq.runner.annot_broker.AtlasBackend", backend)
+    monkeypatch.setattr(ctx, "emit", emit)
     monkeypatch.setattr("labhq.runner.annot_broker.RegulatoryAnnotator.alphagenome_atlas", blocked)
     monkeypatch.setattr("labhq.runner.annot_broker.run_lookup", short_deadline)
     async with client(broker) as c:
-        response = await c.post("/annot/atlas", headers={"X-Labhq-Token": token},
-                                json={"variants": ["chr1:100:A:G"]})
-    assert response.status_code == 502 and backends[0].cancelled.is_set()
+        pending = asyncio.create_task(c.post("/annot/atlas", headers={"X-Labhq-Token": token},
+                                            json={"variants": ["chr1:100:A:G"]}))
+        try:
+            await asyncio.wait_for(recorded.wait(), 5)
+            response = await asyncio.wait_for(asyncio.shield(pending), 5)
+        finally:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+    assert response.status_code == 502
+    assert len(backends) == 1 and backends[0].cancelled.is_set()
+    assert entered.is_set() is not expired_before_query
+    assert stopped.is_set() is not expired_before_query
     assert '"status": "timeout"' in (ctx.workdir / "outputs/external_lookup_status.jsonl").read_text(encoding="utf-8")
+
+
+async def test_completed_query_stops_watcher_if_disconnect_check_swallows_cancel(service, monkeypatch):
+    from starlette.requests import Request
+
+    _, broker, service, token, _, _ = service
+    checking, swallowed, disconnect = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    query = service._query
+
+    async def gated_query(*args):
+        await checking.wait()
+        return await query(*args)
+
+    async def is_disconnected(request):
+        # Model a receive cancellation scope consuming the teardown cancellation.
+        # A single cancel() is not an end condition for a polling loop.
+        checking.set()
+        try:
+            await disconnect.wait()
+        except asyncio.CancelledError:
+            swallowed.set()
+            return False
+        return True
+
+    monkeypatch.setattr(service, "_query", gated_query)
+    monkeypatch.setattr(Request, "is_disconnected", is_disconnected)
+    async with client(broker) as c:
+        pending = asyncio.create_task(c.post("/annot/atlas", headers={"X-Labhq-Token": token},
+                                            json={"variants": ["chr1:100:A:G"]}))
+        try:
+            await asyncio.wait_for(swallowed.wait(), 5)
+            response = await asyncio.wait_for(asyncio.shield(pending), 1)
+            assert response.status_code == 200 and response.json()["n_ok"] == 1
+        finally:
+            disconnect.set()
+            await asyncio.wait_for(pending, 5)
 
 
 async def test_disconnected_mcp_cancels_backend(service, monkeypatch):
