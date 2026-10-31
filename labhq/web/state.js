@@ -722,8 +722,11 @@ function endedRequestRefuses(ev) {
   const q = ev.request_id && S.requests.get(ev.request_id);
   if (!q || !isTerminalRequest(q.status)) return false;
   if (PIPELINE_STARTS.has(ev.type)) return true;
-  if (ev.type === 'task.dispatched') return PIPELINE_TASK_KINDS.has(ev.data?.kind);
-  if (ev.type === 'agent.status') return STATUS_THAT_STARTS_WORK.has(ev.data?.state) && PIPELINE_TASK_KINDS.has(S.taskKind.get(ev.task_id));
+  // Only a task known not to be the pipeline's (a follow-up turn) may start after the end; one whose kind is not known
+  // (its dispatch is older than the replay window) is refused too.
+  const followsTheEnd = kind => !!kind && !PIPELINE_TASK_KINDS.has(kind);
+  if (ev.type === 'task.dispatched') return !followsTheEnd(ev.data?.kind);
+  if (ev.type === 'agent.status') return STATUS_THAT_STARTS_WORK.has(ev.data?.state) && !followsTheEnd(S.taskKind.get(ev.task_id));
   return false;
 }
 function apply(ev, replay = false) {
@@ -734,7 +737,7 @@ function apply(ev, replay = false) {
     if (ev.seq <= S.lastSeq) return effects;
     S.lastSeq = ev.seq;
   }
-  if (!replay && ev.type !== 'snapshot' && endedRequestRefuses(ev)) {  // one rule for all of them (#1170)
+  if (ev.type !== 'snapshot' && endedRequestRefuses(ev)) {  // one rule, live and replayed alike (#1170)
     // Only the task's kind is kept, so the statuses that follow a refused dispatch are recognised as its own.
     if (ev.type === 'task.dispatched' && ev.task_id) S.taskKind.set(ev.task_id, ev.data?.kind);
     return effects;

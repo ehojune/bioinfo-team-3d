@@ -136,6 +136,31 @@ test('what settles or follows a finished request still applies: done/idle status
   assert.ok(office.S.approvals.has('a9'), 'a card of a finished request is shown');
 });
 
+test('a snapshot replay applies the same rule: a pipeline dispatch or status after the completion leaves no working staff', () => {
+  const office = L.createOfficeState({now: () => 100});
+  const ev = (seq, type, extra = {}) => ({type, seq, request_id: 'r1', ...extra});
+  office.apply(snapshot(30, {requests: [{id: 'r1', text: 'x', status: 'done', mode: 'orchestrate'}],
+    recent_events: [ev(2, 'request.created', {data: {text: 'x', mode: 'orchestrate', status: 'running'}}),
+      ev(3, 'task.dispatched', {agent_id: 'analyst', task_id: 't1', data: {kind: 'step', step_id: 's1', title: 't'}}),
+      ev(9, 'request.completed', {data: {status: 'done', ok: true}}),
+      ev(10, 'task.dispatched', {agent_id: 'analyst', task_id: 't9', data: {kind: 'step', step_id: 's2', title: 'late'}}),
+      ev(11, 'agent.status', {agent_id: 'analyst', task_id: 't9', data: {state: 'working', task: 'late'}})]}));
+  const analyst = office.ag('analyst');
+  assert.equal(analyst.tasks.size, 0, 'no staff row for the late task');
+  assert.notEqual(analyst.state, 'working');
+  assert.equal(office.S.activeTasks.size, 0);
+  assert.equal(office.S.requests.get('r1').phase, 'done');
+});
+
+test('a status of a task whose kind is unknown does not start work for a finished request', () => {
+  const office = settled('done');
+  office.apply({type: 'agent.status', seq: 10, agent_id: 'analyst', task_id: 'tz', request_id: 'r1', data: {state: 'working', task: 'who knows'}});
+  assert.equal(office.ag('analyst').tasks.has('tz'), false);
+  assert.notEqual(office.ag('analyst').state, 'working');
+  office.apply({type: 'agent.status', seq: 11, agent_id: 'analyst', task_id: 'tz', request_id: 'r1', data: {state: 'done'}});
+  assert.equal(office.ag('analyst').state, 'done', 'an ending status still applies');
+});
+
 test('the 2.5D page closes its previous socket before opening a new one, as the 3D page does', () => {
   const page = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const open = /const open = \(\) => \{[\s\S]*?new WebSocket/.exec(page);
