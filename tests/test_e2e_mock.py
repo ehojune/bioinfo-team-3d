@@ -2,6 +2,7 @@ import asyncio
 import re
 import shutil
 import time
+from importlib import resources
 from pathlib import Path
 
 import pytest
@@ -292,4 +293,73 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         _, pending = await asyncio.wait(tasks, timeout=10)
         for t in pending:
             t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _init_settings(tmp_path: Path) -> Settings:
+    """The example config `labhq init` copies (research on, CP1 and CP2), with this test's ports and folders."""
+    text = resources.files("labhq").joinpath("config").joinpath("labhq.example.yaml").read_text(encoding="utf-8")
+    s = Settings.model_validate(yaml.safe_load(text))
+    shutil.copytree(REPO / "agents", tmp_path / "agents")
+    s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
+    gport = free_port()
+    s.gateway.port, s.gateway.url = gport, f"ws://127.0.0.1:{gport}"
+    s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = free_port(), "mock", 0.05
+    s.runner.workspace_root = str(tmp_path / "runs")
+    s.runner.talent_dir = str(tmp_path / "talent")
+    s.runner.agents_dir = str(tmp_path / "agents")
+    s.hpc.scheduler = "mock"
+    # `labhq init` leaves restricted zones out on Windows, where the runner refuses to start with one.
+    s.policy.data_zones = [zone for zone in s.policy.data_zones if zone.level != "restricted"]
+    return s
+
+
+async def test_default_init_config_runs_a_research_request_to_the_end_with_mock_agents(tmp_path):
+    s = _init_settings(tmp_path)
+    assert s.research.enabled and s.research.evidence_checkpoint  # what init turns on
+    app = create_app(s)
+    hub = app.state.hub
+    seen: list[dict] = []
+    publish = hub.publish
+
+    async def tap(ev, **kwargs):
+        seen.append(ev)
+        await publish(ev, **kwargs)
+        if ev.get("type") == "approval.requested":
+            aid = ev["data"]["id"]
+
+            async def approve():
+                await _until(lambda: aid in hub.approvals, HANG_S, f"approval {aid} to be pending",
+                             lambda: {"pending": sorted(hub.approvals)})
+                # The evidence card (CP2) takes the PI's choice, not just a yes.
+                await hub.resolve_approval(aid, True, "ok", "approve" if ev["data"]["kind"] == "research_evidence" else None)
+
+            asyncio.get_running_loop().create_task(approve())
+
+    hub.publish = tap
+    gport = s.gateway.port
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=gport, log_level="warning"))
+    tasks = [serve_task(server.serve())]
+    await wait_started(lambda: server.started, tasks[0], HANG_S, "gateway server startup")
+    runner = Runner(s)
+    tasks.append(asyncio.create_task(runner.run_forever()))
+    try:
+        await _until(lambda: "cso" in hub.agents and "analyst" in hub.agents, HANG_S, "runner agent registration",
+                     lambda: {"agents": list(hub.agents)})
+        rid = hub.create_request(RequestIn(text="공개 데이터 예시 3개에서 행 수를 세고 보고해 줘"))
+        await _wait_for_request_terminal(hub, rid, seen)
+        request = hub.requests[rid]
+        state = _request_state(hub, rid, seen)
+        assert request["status"] == "done", (request.get("error"), state)
+        order = [(e.get("data") or {}).get("kind") for e in seen if e.get("request_id") == rid
+                 and e["type"] in ("task.dispatched", "approval.requested")]
+        # Planned once; the storage card comes with the plan, before the CP1 card; steps run only after CP1.
+        assert order == ["briefing", "precedent", "plan", "result_storage", "research_plan", "step", "research_evidence",
+                         "review", "synthesis"], order
+        assert request["plan"]["steps"] and request["results"], state
+        assert "[[claim:s1/c1]]" in request["report"], request["report"]
+    finally:
+        server.should_exit = True
+        for task in tasks:
+            task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
