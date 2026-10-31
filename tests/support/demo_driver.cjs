@@ -278,6 +278,8 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
     diagnostic = (stage, pending, extra = {}) => console.error('demo cleanup: ' + JSON.stringify({stage, pending, ...extra,
       active: typeof process.getActiveResourcesInfo === 'function' ? process.getActiveResourcesInfo().slice(0, 16) : null,
       chrome_exit_observed: chrome ? chrome.exitCode !== null || chrome.signalCode !== null : null,
+      // Which client closed the CDP socket and on which Node: a close that never reports differs by implementation (#1107).
+      node_version: process.version, ws_kind: ws ? (ws.constructor?.name === 'MiniWebSocket' ? 'mini' : 'global') : null,
       stderr_closed: typeof chrome?.stderr?.closed === 'boolean' ? chrome.stderr.closed : null}))} = {}) {
   const pending = new Set(), failures = [];
   let graceful = false, socketCloseRequested = false;

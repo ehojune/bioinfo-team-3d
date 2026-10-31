@@ -65,6 +65,11 @@ class RunnerSettings(BaseModel):
     # Below this much free space on the work drive the runner starts no task until the PI answers a card (#678);
     # 0 turns the card off (the warning above stays).
     disk_fail_free_gb: float = Field(default=2, ge=0, allow_inf_nan=False)
+    # While a task runs the runner reads the free space of its drives every this many seconds and halts the task when one
+    # falls below disk_fail_free_gb, keeping its session for the PI to resume (#678). 0 turns the watch off.
+    disk_watch_s: float = Field(default=30, ge=0, allow_inf_nan=False)
+    # Off: the watch only writes a warning to the task log and never halts.
+    disk_watch_halt: bool = True
     # Optional folder for multi-GB raw data, outside every step folder: the task briefing names it (#678).
     bulk_data_root: str | None = None
     bundle_max_file_mb: float = Field(default=50, gt=0)
@@ -470,6 +475,21 @@ class OrchestratorSettings(BaseModel):
     quota_max_wait_s: float = Field(default=7 * 86400, ge=1)
     login_retry_s: float = Field(default=600, gt=0)
     login_wait_max_s: float = Field(default=86400, gt=0)
+    # Wall-clock limit for a whole request, fixed when the request is accepted (#877). 0 turns it off. The clock
+    # runs while staff work; time in waiting_pi (PI cards) is added to the deadline, and a request in review_pending
+    # or later is never cut. A value below one minute is a typo (minutes written as seconds), so it is refused.
+    request_wall_clock_s: int = Field(default=0, ge=0, le=7 * 86400)
+    # A plan step may carry its own ``model_tier`` (#625, step 2): carried, capped by the staff member's declared tier
+    # and run on that tier's model. Off by default; off drops the field everywhere and changes nothing, so plan
+    # hashes and prompts stay what they were. The CSO is not yet told it may choose one (that is a later step).
+    step_model_tiers: bool = False
+
+    @field_validator("request_wall_clock_s")
+    @classmethod
+    def wall_clock_is_off_or_a_real_limit(cls, value: int) -> int:
+        if 0 < value < 60:
+            raise ValueError("request_wall_clock_s is in seconds: use 0 (off) or at least 60")
+        return value
 
     @model_validator(mode="before")
     @classmethod
@@ -537,6 +557,47 @@ class ModelTierPrices(BaseModel):
         if priced and (not self.source or self.checked_on is None):
             raise ValueError("priced model tiers require source and checked_on")
         return self
+
+
+class ModelTierModels(BaseModel):
+    """Which model each tier means on each engine (#625). Empty by default: a tier then names no model, nothing is
+    invented, and every agent runs the model its own YAML gives. An agent's explicit ``model`` always wins."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fast: dict[str, str] = Field(default_factory=dict)
+    balanced: dict[str, str] = Field(default_factory=dict)
+    reasoning: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def valid_engines_and_models(self) -> "ModelTierModels":
+        engines = {"claude_code", "codex", "gemini", "antigravity"}
+        for tier in ("fast", "balanced", "reasoning"):
+            for engine, model in getattr(self, tier).items():
+                if engine not in engines:
+                    raise ValueError(f"model_tiers.{tier}: unknown engine {engine!r}; allowed: {', '.join(sorted(engines))}")
+                if not re.fullmatch(MODEL_NAME_PATTERN, model):
+                    raise ValueError(f"model_tiers.{tier}.{engine}: {model!r} is not a valid model name")
+        return self
+
+    def model_for(self, tier: str | None, engine: str | None) -> str | None:
+        """The configured model of `tier` on `engine`, or None when the table does not say."""
+        row = getattr(self, tier, None) if tier in ("fast", "balanced", "reasoning") else None
+        return row.get(engine) if row and engine else None
+
+
+def models_match(declared: str | None, actual: str | None) -> bool:
+    """One model, named by an alias or a full name: ``opus`` is ``claude-opus-5-5``, ``gpt-6-luna`` is not ``gpt-6``.
+
+    Compared case-insensitively without a leading ``claude-``; a name also matches the same name plus a version
+    suffix (``-5-5``, ``-4.1``). Anything else, including a prefix that is another model, does not match."""
+    if not declared or not actual:
+        return False
+    one, other = (re.sub(r"^claude-", "", value.strip().casefold()) for value in (declared, actual))
+    if one == other:
+        return True
+    short, long = sorted((one, other), key=len)
+    return bool(re.fullmatch(re.escape(short) + r"(?:-\d+(?:\.\d+)?)+", long))
 
 
 class PiProfileSettings(BaseModel):
@@ -651,6 +712,12 @@ class AnnotSettings(BaseModel):
     request_lookup_limit: int | None = Field(default=None, ge=0, le=10000)
 
 
+class ResultStorageSettings(BaseModel):
+    """What the published result repository records about its authors (#1104)."""
+    # Names for CITATION.cff. Empty by default: no author is invented, and without a name no CITATION.cff is written.
+    authors: list[str] = []
+
+
 class GitHubSettings(BaseModel):
     ask_storage: bool = False  # general requests opt in; research requests always ask
     auto_publish_results: bool = False  # otherwise review the editor draft in the web office
@@ -726,12 +793,14 @@ class Settings(BaseModel):
     pi_language: PiLanguageSettings = Field(default_factory=PiLanguageSettings)
     plan: PlanSettings = PlanSettings()
     model_tier_prices: ModelTierPrices = Field(default_factory=ModelTierPrices)
+    model_tiers: ModelTierModels = Field(default_factory=ModelTierModels)
     lab: LabSettings = LabSettings()
     research: ResearchSettings = ResearchSettings()
     literature: LiteratureSettings = LiteratureSettings()
     wiki: WikiSettings = WikiSettings()
     pi_profile: PiProfileSettings = PiProfileSettings()
     github: GitHubSettings = GitHubSettings()
+    result_storage: ResultStorageSettings = Field(default_factory=ResultStorageSettings)
     annot: AnnotSettings = AnnotSettings()
     dev_log: DevLogSettings = DevLogSettings()
     projects: list[ProjectSettings] = []

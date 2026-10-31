@@ -18,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -26,7 +27,7 @@ from . import instance_guard, proc_tree
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
 from .process_diagnostics import SUPERVISOR_SUFFIX
-from .request_status import is_terminal_request, request_display_label, request_status_label
+from .request_status import is_terminal_request, request_deadline_text, request_display_label, request_status_label
 from .settings import Settings
 from .test_guard import guard_test_path
 from .util import atomic_write_text, free_port, short, without_windows_app_aliases
@@ -256,12 +257,35 @@ def task_control(s: Settings, action: str, task_id: str, text: str | None = None
     return f"{task_id}: {TASK_CONTROL_DONE[action]}{where}"
 
 
-def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, **kw):
+def _request_deadline_line(s, rid: str, state: dict | None = None) -> str | None:
+    """`시간 상한: …` for one running request (#877), from the request record. None when the record cannot be read:
+    saying nothing is better than saying the limit is off. A request the gateway no longer knows (an HTTP error) is
+    skipped alone; after a connection or timeout failure ``state["down"]`` is set and the other requests of the same
+    `labhq status` are not asked, so a gateway that went silent costs one wait, not one per request."""
+    import httpx
+
+    if state is not None and state.get("down"):
+        return None
+    try:
+        detail = _api(s, "GET", f"/api/requests/{rid}", raw_errors=True)
+    except httpx.HTTPStatusError:
+        return None
+    except (Exception, SystemExit):  # transport failure, or a stand-in that ends the command
+        if state is not None:
+            state["down"] = True
+        return None
+    if not isinstance(detail, dict):
+        return None
+    return "시간 상한: " + request_deadline_text(detail, time.time())
+
+
+def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, headers: dict | None = None, **kw):
     import httpx
 
     try:
         r = httpx.request(method, _http_base(s) + path,
-                          headers={"Authorization": f"Bearer {s.gateway.client_token}"}, timeout=30, **kw)
+                          headers={"Authorization": f"Bearer {s.gateway.client_token}", **(headers or {})},
+                          timeout=30, **kw)
         r.raise_for_status()
         return r.json()
     except httpx.HTTPError as exc:
@@ -290,13 +314,82 @@ def _talent_text(value, n: int = 120) -> str:
     return short("".join(c if c.isprintable() else " " for c in str(value)), n)
 
 
-def talent_lines(registry) -> list[str]:
+def _paper_skill_store_rows(s: Settings) -> tuple[list | None, str | None]:
+    """The stored requests that carry paper-skill records, as (key, created_at, plan rows, results), read-only (#660).
+
+    Returns (rows, None) or (None, why it could not be read): a missing store, a locked or foreign one. The store is
+    opened read-only, so a running gateway is never disturbed and nothing is created."""
+    import sqlite3
+
+    path = s.path(s.gateway.state_dir) / "gateway.sqlite3"
+    if not path.is_file():
+        return None, "gateway 기록 파일(gateway.sqlite3)이 없습니다"
+    try:
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=2)
+        try:
+            rows = conn.execute(
+                "SELECT key, json_extract(body, '$.created_at'), json_extract(body, '$.plan.paper_skill_results'), "
+                "json_extract(body, '$.results') FROM state WHERE kind='request' AND json_valid(body) AND "
+                "(json_extract(body, '$.plan.paper_skill_results') IS NOT NULL OR body LIKE '%paper_skills%')").fetchall()
+        finally:
+            conn.close()
+        def parsed(raw):
+            try:
+                return json.loads(raw) if isinstance(raw, str) else None
+            except ValueError:
+                return None  # one damaged request is skipped, not the whole listing
+
+        return [(key, created, parsed(plan_rows), parsed(results)) for key, created, plan_rows, results in rows], None
+    except (sqlite3.Error, OSError, ValueError) as error:
+        return None, f"요청 기록을 읽지 못했습니다({type(error).__name__})"
+
+
+def _paper_skill_origins(s: Settings) -> tuple[dict | None, str | None]:
+    """Which request first built each paper skill, read from the local gateway store without writing to it (#660)."""
+    from .recruit.paper_skills import skill_origins
+
+    rows, error = _paper_skill_store_rows(s)
+    return (skill_origins(rows), None) if rows is not None else (None, error)
+
+
+def talent_history_lines(rows: list | None, error: str | None = None) -> list[str]:
+    """`labhq talent --history`: which requests selected each built skill, from the newest stored requests (#660).
+
+    Read from the local store, so it works with the gateway off. A result reference is a reference in a result, never
+    proof that a tool ran or that the skill helped. The line says how many recent requests were read."""
+    from .recruit.paper_skills import HISTORY_REQUEST_LIMIT, skill_history
+
+    if rows is None:
+        return [f"📜 요청 사이 사용 이력을 읽지 못했습니다: {_talent_text(error or '원인 미상', 80)}"]
+    recent = sorted((row for row in rows if isinstance(row[1], (int, float)) and not isinstance(row[1], bool)),
+                    key=lambda row: row[1], reverse=True)
+    basis = f"최근 요청 {min(len(recent), HISTORY_REQUEST_LIMIT)}건 기준" + (
+        f"(그보다 오래된 {len(recent) - HISTORY_REQUEST_LIMIT}건은 세지 않음)" if len(recent) > HISTORY_REQUEST_LIMIT else "")
+    history = skill_history(recent[:HISTORY_REQUEST_LIMIT])
+    if not history:
+        return [f"📜 요청 사이 사용 이력: 논문 스킬을 고른 요청이 없습니다({basis})"]
+    lines = [f"📜 요청 사이 사용 이력 — {basis}. 결과 참조는 호출·효용의 증거가 아닙니다"]
+    for (pid, digest), uses in sorted(history.items()):
+        lines.append(f"   paper={_talent_text(pid)}  skill={digest[:12]}  고른 요청 {len(uses)}건")
+        for use in uses[:5]:
+            lines.append(f"     · {_talent_text(use['request_id'], 40)} "
+                         + time.strftime("%Y-%m-%d", time.localtime(use["created_at"]))
+                         + f"  붙은 단계={','.join(use['attached_steps']) or '-'}  결과 참조={use['reference']}")
+        if len(uses) > 5:
+            lines.append(f"     · 외 {len(uses) - 5}건")
+    return lines
+
+
+def talent_lines(registry, origins: dict | None = None, origin_error: str | None = None) -> list[str]:
     """`labhq talent`: past contracts, then paper skills built by Paper2Skill (#660).
 
     A built paper skill leaves only talent/paper-skill-<key>/paper-skill.json, no contract.yaml, so the contract
     pool alone never listed it. A line says the skill was built; whether a step used it or it helped is recorded per
     request (run record/appendix), not here. A receipt that does not belong to its folder or lacks a field gets one
-    line saying so; its values are not echoed."""
+    line saying so; its values are not echoed.
+
+    `origins` (from _paper_skill_origins) names the request that first built each skill; without it the line says why
+    and falls back to the receipt file's time. Folders with only a build/ folder are counted on one last line."""
     from .recruit.paper_skills import paper_id
 
     lines, contract_skills = [], set()
@@ -308,10 +401,14 @@ def talent_lines(registry) -> list[str]:
                      f"{c.kind if c else ''}  paper={c.paper if c else ''}"
                      f"  commit={(c.source_commit or '-')[:7] if c else '-'}"
                      f"  external={','.join(x.host for x in c.external_services) if c and c.external_services else '-'}")
+    unfinished = 0
     for folder in sorted(registry.talent_dir.glob("paper-skill-*")):
         receipt = folder / "paper-skill.json"
-        if not folder.is_dir() or (folder / "contract.yaml").exists() or not receipt.is_file():
-            continue  # listed above as a contract, or no build finished here (failures write no receipt)
+        if not folder.is_dir() or (folder / "contract.yaml").exists():
+            continue  # listed above as a contract
+        if not receipt.is_file():
+            unfinished += 1  # no build finished here (failures write no receipt): counted on the last line
+            continue
         name = _talent_text(folder.name, 40)
         try:
             if receipt.is_symlink() or receipt.stat().st_size > PAPER_SKILL_RECEIPT_MAX_BYTES:
@@ -333,8 +430,50 @@ def talent_lines(registry) -> list[str]:
         commit = row.get("paper2agent_commit")
         commit = commit[:7] if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit) else "-"
         lines.append(f"📄 {name:<24} 논문 자문 스킬 생성됨  paper={_talent_text(pid)}  skill={digest[:12]}"
-                     f"  commit={commit}  사용·효용=요청별 기록 참조")
+                     f"  commit={commit}  사용·효용=요청별 기록 참조"
+                     + _talent_skill_facts(folder, receipt, digest, origins.get((pid, digest)) if origins else None,
+                                           origins is not None, origin_error))
+    if unfinished:
+        lines.append(f"📄 빌드 미완료 폴더 {unfinished}개  receipt가 없어 논문 스킬로 쓰이지 않습니다(talent 폴더의 paper-skill-* 중 "
+                     "build/만 있는 것)")
     return lines
+
+
+def _talent_skill_facts(folder: Path, receipt: Path, digest: str, origin: dict | None = None,
+                        origins_read: bool = False, origin_error: str | None = None) -> str:
+    """What the built skill folder holds and when its receipt was written (#660), as one suffix; empty when unreadable.
+
+    Read from the files only: the SKILL.md name and one-line description, the size of the paper text file, how many
+    figure, table and supplement files there are. It is not a summary of the paper. The request and date come from
+    the request that first built the skill when the store could be read; otherwise the date is the receipt file's own
+    time and the suffix says why (never presented as a request's date)."""
+    from .recruit.paper_skills import skill_content
+
+    facts = []
+    content = skill_content(folder, digest)
+    if content:
+        if content.get("name"):
+            facts.append(f"이름={_talent_text(content['name'], 60)}")
+        size = content.get("fulltext_bytes")
+        # The paper text sits in this folder only: the request bundle carries the paper_skills.json record, not the folder.
+        facts.append(f"논문 본문 파일 {max(1, round(size / 1024))} KB(이 PC의 이 폴더에만 있고 요청 묶음에는 들어가지 않음)"
+                     if size else "논문 본문 파일 없음")
+        parts = [f"{label} {content[key]}" for key, label in (("figures", "그림"), ("tables", "표"),
+                 ("supp_figures", "보충 그림"), ("supp_tables", "보충 표")) if content.get(key)]
+        facts.append("·".join(parts) if parts else "그림·표 파일 없음")
+        if content.get("supplement"):
+            facts.append("보충자료 있음")
+    try:
+        if origin:
+            facts.append(f"만든 요청 {_talent_text(origin['request_id'], 40)} · "
+                         + time.strftime("%Y-%m-%d", time.localtime(origin["created_at"])) + "(요청 기록)")
+        else:
+            why = "요청 기록에 없음" if origins_read else _talent_text(origin_error or "요청 기록을 읽지 않음", 60)
+            facts.append("기록 시각(파일) " + time.strftime("%Y-%m-%d", time.localtime(receipt.stat().st_mtime))
+                         + f"({why})")
+    except (OSError, ValueError, OverflowError):
+        pass
+    return ("  " + " · ".join(facts)) if facts else ""
 
 
 def _run_websocket(s: Settings, command) -> None:
@@ -1423,7 +1562,7 @@ async def _send_and_wait(s: Settings, body: dict) -> None:
     login_holds: set[str] = set()
     async with websockets.connect(url, max_size=64 * 2**20) as ws:
         await ws.recv()  # snapshot
-        rid = _api(s, "POST", "/api/requests", json=body)["request_id"]
+        rid = _api(s, "POST", "/api/requests", json=body, headers={"Idempotency-Key": uuid.uuid4().hex})["request_id"]
         print(f"request {rid}")
         async for raw in ws:
             ev = json.loads(raw)
@@ -1948,7 +2087,9 @@ def main(argv: list[str] | None = None) -> None:
     cp.add_argument("action", choices=["extend", "release", "activate", "rehire"])
     cp.add_argument("target", help="agent id (or talent slug for rehire)")
     cp.add_argument("--days", type=float)
-    sub.add_parser("talent", help="list the talent pool (past contract agents)")
+    talent_parser = sub.add_parser("talent", help="list the talent pool (past contract agents)")
+    talent_parser.add_argument("--history", action="store_true",
+                               help="also list which recent requests selected each paper skill (reads the local store)")
     sp2a = sub.add_parser("setup-paper2agent", help="install the paper2agent skill for Claude Code and Codex")
     sp2a.add_argument("--commit", help="install exactly this 40-hex Paper2Agent commit (default: recruit.skill_commit, "
                                        "else the latest HEAD)")
@@ -2169,10 +2310,13 @@ def main(argv: list[str] | None = None) -> None:
                          f"없음 — `{_config_command(s, 'up')}`로 켜야 요청이 진행됩니다"))
         running = _api(s, "GET", "/api/requests?status=running&limit=200")
         print(f"진행 중 요청: {len(running)}")
+        deadline_state: dict = {}
         for req in running:
             progress = req["step_progress"]
             held = "" if req.get("status") == "running" else f" [{request_display_label(req)}]"
             print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}{held}")
+            if deadline := _request_deadline_line(s, req["id"], deadline_state):
+                print(f"    {deadline}")
             environment = req.get("step_environment") or {}
             waits = req.get("step_waits") or {}
             for sid, state in progress["steps"].items():
@@ -2308,7 +2452,7 @@ def main(argv: list[str] | None = None) -> None:
             except ValueError as exc:
                 p.error(str(exc))
         elif args.no_wait:
-            print(_api(s, "POST", "/api/requests", json=body))
+            print(_api(s, "POST", "/api/requests", json=body, headers={"Idempotency-Key": uuid.uuid4().hex}))
         else:
             _run_websocket(s, _send_and_wait(s, body))
     elif args.cmd == "note":
@@ -2342,7 +2486,8 @@ def main(argv: list[str] | None = None) -> None:
             print(f"{pr['id']:<16} {pr.get('repo') or '-':<32} {pr['visibility']:<8} "
                   f"issues={pr['issues']} reports={pr['commit_reports']}")
     elif args.cmd == "codex-review":
-        print(_api(s, "POST", f"/api/projects/{args.project}/prs/{args.pr}/codex-review", json={"note": args.note}))
+        print(_api(s, "POST", f"/api/projects/{args.project}/prs/{args.pr}/codex-review", json={"note": args.note},
+                   headers={"Idempotency-Key": uuid.uuid4().hex}))
     elif args.cmd == "approvals":
         from .pi_text import with_approval_copy
         for a in _api(s, "GET", "/api/approvals"):
@@ -2399,17 +2544,25 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(_report(s, args.request_id, pdf=args.pdf, out=args.out))
     elif args.cmd == "recruit":
         print(_api(s, "POST", "/api/recruit", json={"paper": args.paper, "repo": args.repo, "focus": args.focus,
-                                                    "ttl_days": args.ttl, "name": args.name}))
+                                                    "ttl_days": args.ttl, "name": args.name},
+                   headers={"Idempotency-Key": uuid.uuid4().hex}))
     elif args.cmd == "contract":
         body = {"action": args.action, "days": args.days, "slug": args.target if args.action == "rehire" else None}
-        print(_api(s, "POST", f"/api/contracts/{args.target}", json=body))
+        print(_api(s, "POST", f"/api/contracts/{args.target}", json=body, headers={"Idempotency-Key": uuid.uuid4().hex}))
     elif args.cmd == "talent":
         from .registry import Registry
 
         reg = Registry(s.path(s.runner.agents_dir), s.path(s.runner.talent_dir),
                        s.path(s.runner.contract_dir) if s.runner.contract_dir else None)
-        for line in talent_lines(reg):
+        from .recruit.paper_skills import skill_origins
+
+        store_rows, origin_error = _paper_skill_store_rows(s)
+        origins = skill_origins(store_rows) if store_rows is not None else None
+        for line in talent_lines(reg, origins, origin_error):
             print(line)
+        if args.history:
+            for line in talent_history_lines(store_rows, origin_error):
+                print(line)
     elif args.cmd == "setup-paper2agent":
         from .recruit.paper2agent import setup_paper2agent, SOURCE_MARKER
 

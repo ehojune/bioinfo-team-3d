@@ -67,7 +67,11 @@ async def test_activity_heartbeat_during_task_row_commit(tmp_path, monkeypatch, 
         finally:
             release.set()
 
+    real_publish = hub.publish
+
     async def publish(*args, **kwargs):
+        # The real publication: it now carries the task activity in the event's transaction (#1132).
+        await real_publish(*args, **kwargs)
         mark("publish")
 
     async def send(*args, **kwargs):
@@ -130,8 +134,12 @@ def activity_hub(tmp_path, monkeypatch):
     settings.gateway.state_dir = str(tmp_path / "state")
     hub = Hub(settings)
     trace = []
+    real_publish = hub.publish
 
     async def publish(*args, **kwargs):
+        # The real publication: it carries the task activity in the event's transaction (#1132). "publish" is traced
+        # when it returns, so a cancelled publication leaves no trace entry.
+        await real_publish(*args, **kwargs)
         trace.append("publish")
 
     async def send(*args, **kwargs):
@@ -143,8 +151,8 @@ def activity_hub(tmp_path, monkeypatch):
     hub.store.close()
 
 
-def activity_message(tool="one"):
-    return {"type": "agent.tool", "task_id": "t", "runner_seq": 1,
+def activity_message(tool="one", seq=1):  # a runner never reuses a seq for another message (#1143)
+    return {"type": "agent.tool", "task_id": "t", "runner_seq": seq,
             "data": {"id": tool, "name": "mock", "input": {"value": "original"}}, "ts": 1}
 
 
@@ -161,13 +169,13 @@ async def test_activity_reads_latest_row_after_queued_write(activity_hub, monkey
 
     blocker = asyncio.create_task(durable.run(hub.store.lane, block))
     queued = asyncio.Event()
-    original = hub.store.aupdate_task_activity
+    original = hub.store.aappend_event
 
-    async def observed(*args):
+    async def observed(*args, **kwargs):
         queued.set()
-        await original(*args)
+        return await original(*args, **kwargs)
 
-    monkeypatch.setattr(hub.store, "aupdate_task_activity", observed)
+    monkeypatch.setattr(hub.store, "aappend_event", observed)
     pending = []
     try:
         assert await asyncio.to_thread(entered.wait, 3)
@@ -218,23 +226,19 @@ async def test_concurrent_activity_merges_tools_and_owns_inputs(activity_hub, mo
 
     blocker = asyncio.create_task(durable.run(hub.store.lane, block))
     queued = asyncio.Event()
-    original = hub.store.aupdate_task_activity
-    count = 0
+    original = hub.store.aappend_event
 
-    async def observed(*args):
-        nonlocal count
-        count += 1
-        if count == 2:
-            queued.set()
-        await original(*args)
+    async def observed(*args, **kwargs):
+        queued.set()  # the first publication reached the writer; the second waits for it on the event lock
+        return await original(*args, **kwargs)
 
-    monkeypatch.setattr(hub.store, "aupdate_task_activity", observed)
+    monkeypatch.setattr(hub.store, "aappend_event", observed)
     pending = []
     try:
         assert await asyncio.to_thread(entered.wait, 3)
         first = activity_message("one")
         pending = [asyncio.create_task(hub.on_runner_message("r", first)),
-                   asyncio.create_task(hub.on_runner_message("r", activity_message("two")))]
+                   asyncio.create_task(hub.on_runner_message("r", activity_message("two", seq=2)))]
         await asyncio.wait_for(queued.wait(), 3)
         first["data"]["input"]["value"] = "mutated"
         release.set()
@@ -251,8 +255,13 @@ async def test_concurrent_activity_merges_tools_and_owns_inputs(activity_hub, mo
 
 @pytest.mark.parametrize("fail", [False, True], ids=["commit", "rollback"])
 @pytest.mark.parametrize("cancel_kind", ["asyncio", "anyio"])
-async def test_cancel_during_activity_commit_keeps_write_without_publish_or_ack(
+async def test_cancel_during_event_and_activity_commit_keeps_both_without_ack(
         activity_hub, monkeypatch, fail, cancel_kind):
+    """#1132: the activity is saved with its event, the runner cursor and nothing else, in one transaction.
+
+    A cancel during that commit leaves either everything (the commit finished) or nothing (it failed), and the runner
+    is not acknowledged. The cursor then tells a replay apart: a finished commit makes it a duplicate that is only
+    acknowledged, a rolled-back one is applied again."""
     import anyio
 
     hub, trace = activity_hub
@@ -272,38 +281,43 @@ async def test_cancel_during_activity_commit_keeps_write_without_publish_or_ack(
 
     monkeypatch.setattr(hub.store, "_transaction", blocked_commit)
     scope = anyio.CancelScope()
+    outcome = {}
 
     async def run():
         with scope:
-            await hub.on_runner_message("r", activity_message())
+            try:
+                await hub.on_runner_message("r", activity_message())
+            except BaseException as exc:  # the publication settles its commit first, then reports
+                outcome["error"] = exc
+                raise
 
     pending = asyncio.create_task(run())
     try:
         assert await asyncio.to_thread(entered.wait, 3)
-        assert hub.store.get("task", "t") == initial
+        assert hub.store.get("task", "t") == initial and hub.store.events_since(0) == []
         if cancel_kind == "asyncio":
             pending.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await pending
         else:
             scope.cancel()
-            await pending
-            assert scope.cancelled_caught
-        assert trace == []
-        assert hub.store.runner_seen("r") == 0
         release.set()
         assert await durable.lane(hub.store.lane).adrain(3)
+        await asyncio.gather(pending, return_exceptions=True)
+        assert "ack" not in trace and "publish" not in trace
         after = hub.store.get("task", "t")
         if fail:
-            assert after == initial
+            assert isinstance(outcome["error"], OSError)
+            assert after == initial and hub.store.events_since(0) == []
+            assert hub.store.runner_seen("r") == 0
         else:
             assert after["activity"]["tools"]["one"]["input"] == {"value": "original"}
-        assert trace == []
+            assert len(hub.store.events_since(0)) == 1  # the event stays with the activity it belongs to
+            assert hub.store.runner_seen("r") == 1
         monkeypatch.setattr(hub.store, "_transaction", original)
-        # Unacknowledged replay is safe after either completed or rolled back storage.
+        # The runner never got its ack, so it sends the message again.
         await hub.on_runner_message("r", activity_message())
         assert set(hub.store.get("task", "t")["activity"]["tools"]) == {"one"}
-        assert trace == ["publish", "ack"]
+        assert len(hub.store.events_since(0)) == 1
+        assert trace == (["publish", "ack"] if fail else ["ack"])  # a finished commit made the replay a duplicate
     finally:
         release.set()
         await asyncio.gather(pending, return_exceptions=True)

@@ -1,0 +1,10 @@
+pr: 1136
+rows:
+- sha: '1325f82'
+  at: 2026-10-31 09:30
+  text: PI 문장 번역의 결과 저장(pi_translation 행, 메시지 display, 승인 카드 복사본)을 arun_batch 한 transaction으로 묶고 별도 request 저장은 뒤따르는 messenger.translated 발행이 대신한다. 번역 1건의 commit이 4회에서 2회로 줄고 동기 put이 event loop를 막던 것이 없어진다. 승인 행은 loop thread에서 복사한 것만 writer thread가 쓴다
+  summary: 번역 결과의 세 저장이 함께 확정되어 재시작 뒤 어긋날 틈이 없고 commit이 줄어듭니다.
+- sha: 'baee873'
+  at: 2026-10-31 09:50
+  text: 번역 결과 묶음이 실제 COMMIT 2회(옛 구조 4회)임을 세는 시험과, 두 번째 쓰기가 실패해도 첫 쓰기가 남지 않는 전부-또는-없음 시험을 test_gateway_publish_durable에 더한다. 옛 코드에서는 둘 다 실패한다
+  summary: E3 보장을 시험으로 고정합니다.

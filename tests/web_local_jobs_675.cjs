@@ -108,12 +108,16 @@ test('2.5D task card cache changes on job-only updates and step flow switches re
   const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
   const render = html.slice(html.indexOf('function renderRequest()'));
   const cache = render.slice(render.indexOf('  const key ='), render.indexOf('  if (key === reqKey)')) + '\nkey;';
-  const cacheContext = vm.createContext({q, S:o.S, staffNames:[], statusText:'', requestDigest:[], details:[], snapshotLoaded:true});
+  // The free variables of renderRequest's cache key: a new one there must be given here too (#877 deadlineText).
+  const cacheContext = vm.createContext({q, S:o.S, staffNames:[], statusText:'', deadlineText:'', requestDigest:[], details:[], snapshotLoaded:true});
   emit('job.submitted', {job_id:'local-one', name:'GSEA'});
   const before = vm.runInContext(cache, vm.createContext({...cacheContext}));
   emit('job.state', {job_id:'local-one', state:'held'});
   const after = vm.runInContext(cache, vm.createContext({...cacheContext}));
   assert.notEqual(after, before, 'a job state change must invalidate the enclosing request card cache');
+  const ticking = text => vm.runInContext(cache, vm.createContext({...cacheContext, deadlineText:text}));
+  assert.notEqual(ticking('시간 상한 켜짐 90분 · 남은 80분'), ticking('시간 상한 켜짐 90분 · 남은 79분'),
+    'the time-limit countdown is part of the key, so the 15 s timer redraws it');
   emit('job.submitted', {job_id:'local-other', name:'Other'}, 'r2');
   const flow = new Element();
   ui.syncStepFlow(flow, q);

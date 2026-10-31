@@ -17,6 +17,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from .. import output_checks
@@ -32,7 +33,7 @@ from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups, claim_evidence_rows, claim_evidence_section)
 from ..evidence.verify import LiveSourceResolver, verification_lines, verify_sources
-from ..runner.lookup_admission import admission_for
+from ..runner.lookup_admission import admission_for, usage_note_for
 from ..runner.structured_output import GATEWAY_RETRY, GATEWAY_RETRY_META, repair_prompt
 from ..facilities import signatures as env_signatures
 from ..facilities import fixes as facility_fixes
@@ -667,6 +668,13 @@ ANALYSIS_REPRODUCIBILITY_PLAN_RULE = (
     f"{OUTPUT_SCRIPTS_DIR}analyze.py), as well as result-determining intermediate artifacts under "
     f"{OUTPUT_REFERENCE_DIR}. " + ANALYSIS_FIGURE_PLAN_RULE + " " + ABSTRACT_PLAN_RULE)
 
+# A script a step runs but does not declare is not published and cannot be re-run from the edition (#792): the
+# result repository of the sixth run listed commands for two scripts it did not contain.
+SCRIPT_OUTPUTS_PLAN_RULE = (
+    f"Any step that runs a script, whatever its kind (a QC re-computation, a table or confidence-interval check, a "
+    f"literature extraction), declares that script under {OUTPUT_SCRIPTS_DIR}. A script that is not a declared output "
+    f"is left out of the published edition, so nobody can re-run that step from it.")
+
 ROUTE_PLAN_RULE = ("Set route to solo only when one employee can finish the whole request in one turn of about "
                    "30 minutes or less: a lookup, a table, a single QC check or figure, a literature list. Use team "
                    "when the work needs analysis design choices that benefit from independent review, several "
@@ -686,6 +694,7 @@ Rules:
 - """ + FIGURE_OUTPUT_RULE + """
 - Save every deliverable under outputs/ using relative paths.
 - Save analysis code under """ + OUTPUT_SCRIPTS_DIR + """ and use only relative paths inside it.
+- """ + SCRIPT_OUTPUTS_PLAN_RULE + """
 - In the limitations, give one line for each thing you could not do and each assumption you had to make.
 - Follow every supplied topic or precedent checklist item. Add a short cited "선행 연구 기준" section when
   Analysis precedents are supplied, and put omitted recommendations under "다음에 할 수 있는 분석".
@@ -713,6 +722,7 @@ Rules:
 - """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
 - """ + DETERMINISTIC_TRANSFORM_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
+- """ + SCRIPT_OUTPUTS_PLAN_RULE + """
 - Use HPC jobs only when the assigned agent has labhq_hpc tools and a scheduler is available.
   Local CLI is available for light work. If a step needs unavailable compute, ask the PI in
   clarifying_questions before planning execution. Put a QC step after any data generation.
@@ -801,6 +811,7 @@ Contract rules:
 - """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
 - """ + DETERMINISTIC_TRANSFORM_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
+- """ + SCRIPT_OUTPUTS_PLAN_RULE + """
 - Put QC after data generation. {question_rule} Record the scientific design choices you make in `protocol` rather
   than adding another top-level field. Each question is at most 500 characters (a longer one fails plan
   validation), the question itself first.
@@ -982,6 +993,9 @@ STEP_OUTPUTS_RULE = ("\n\nDeclared required outputs: save each at exactly this p
                      "present, but absence is only a warning: {optional}")
 
 RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_FIELD_RULES) + (
+    "\n- Evidence rows that cite the same source (the same DOI, PMID, accession or artifact path) must carry the "
+    "same independence_group: a source cited twice is one independent source, and with two groups the later row is "
+    "refused and its claim loses that evidence."
     "\n- For literature evidence, carry the fulltext tool's source_access_metadata into SourceRef "
     "(access_status, methods_locator, qc_locator, supplementary_status), with DOI/PMID and the exact "
     "source.locator you read. A stored receipt records access, not support: locate Methods/QC after reading, "
@@ -1042,6 +1056,7 @@ Rules:
 - """ + OPTIONAL_OUTPUTS_PLAN_RULE + """
 - """ + DETERMINISTIC_TRANSFORM_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
+- """ + SCRIPT_OUTPUTS_PLAN_RULE + """
 - Stay within the request, permissions, data boundaries and PI approvals. If scope, cost, compute, data access or an
   approval must change, ask in clarifying_questions and do not plan the blocked work. """ + PI_CARD_QUESTION_RULE + """
 - {question_rule}
@@ -2212,6 +2227,28 @@ def _rewrite_output_references(instruction: str, inner: str, rel: str) -> tuple[
     return pattern.sub(replace, instruction), rewritten, ambiguous
 
 
+# A reserved name as a whole file name: not the start of a longer one (`external_lookup_status.jsonl.md`, `-x`) and not the
+# tail of another folder's name (`my_outputs/...`). A full stop that ends a sentence still ends the name, and so does a
+# Korean particle (`...jsonl에`): only ASCII name characters continue it.
+_RESERVED_WRITE = re.compile(
+    r"(?<![A-Za-z0-9_-])(?:" + "|".join(re.escape(name) for name in sorted(output_checks.RESERVED_OUTPUTS)) + r")(?![A-Za-z0-9_-])(?!\.[A-Za-z0-9_])")
+
+
+def _reserved_names(step: dict) -> list[str]:
+    """Names labhq writes itself that this step declares as an output or names in its instruction (#676).
+
+    The instruction may not name one at all: whether a sentence tells the staff to write it, read it or report it is
+    a reading of wording that has variants without end, so a plan that names it is sent back and the planner words the
+    step without it. The one name that stays is an upstream step's record reached through that step's folder
+    (`inputs/<step>/outputs/<name>`), which the step reads and cannot write."""
+    found = [rel for field in ("outputs", "optional_outputs") for name in step.get(field) or []
+             if (rel := output_relpath(str(name))) in output_checks.RESERVED_OUTPUTS]
+    text = step.get("instruction") or ""
+    found += [match.group(0) for match in _RESERVED_WRITE.finditer(text)
+              if not re.search(r"inputs/[^/\s]+/$", text[:match.start()])]
+    return list(dict.fromkeys(found))
+
+
 def _contain_outputs(step: dict) -> tuple[list[str], str | None]:
     """Keep every declared output under outputs/ before dispatch (#220).
 
@@ -2222,6 +2259,9 @@ def _contain_outputs(step: dict) -> tuple[list[str], str | None]:
     it comes back as a problem for the caller to reject.
     """
     warnings, ambiguous, problems = [], [], []
+    if reserved := _reserved_names(step):
+        problems.append(f"step {step['id']}: {reserved} is a record labhq writes itself; name the staff's own file "
+                        "differently (for example outputs/lookup_ledger.jsonl) and do not tell the staff to write it")
     all_seen: dict[str, str] = {}
     for field in ("outputs", "optional_outputs"):
         if field not in step:
@@ -2279,19 +2319,52 @@ def _normalize_plan_outputs(plan: Any) -> tuple[Any, list[str]]:
     return normalized, warnings
 
 
+MODEL_TIER_ORDER = ("fast", "balanced", "reasoning")
+# A step that checks or reports never runs below this tier (#625): its output is what the PI reads and trusts.
+MODEL_TIER_FLOOR = {"validation": "balanced", "report": "balanced"}
+
+
+def clamp_step_tier(sid: str, requested: Any, declared: Any, phase: Any = None) -> tuple[str | None, str | None]:
+    """The tier a step really runs on, and a warning when the request was changed or dropped (#625).
+
+    A step may only be lowered from its staff member's declared tier, never raised. A phase with a floor
+    (validation, report) cannot go below it. A staff member with no declared tier takes no step tier, and a floor
+    above the declared tier leaves the step on its own. Returns (tier or None, warning or None); None means "run as
+    declared" and the field is left out."""
+    if requested not in MODEL_TIER_ORDER:
+        return None, f"step {sid}: model_tier {requested!r} is not fast, balanced or reasoning; ignored"
+    if declared not in MODEL_TIER_ORDER:
+        return None, f"step {sid}: model_tier {requested} ignored: its staff member declares no model tier"
+    ceiling = MODEL_TIER_ORDER.index(declared)
+    chosen = min(MODEL_TIER_ORDER.index(requested), ceiling)
+    floor = MODEL_TIER_ORDER.index(MODEL_TIER_FLOOR[phase]) if phase in MODEL_TIER_FLOOR else 0
+    if floor > ceiling:
+        return None, f"step {sid}: model_tier {requested} ignored: a {phase} step cannot go below {MODEL_TIER_FLOOR[phase]}, above its staff member's {declared}"
+    chosen = max(chosen, floor)
+    tier = MODEL_TIER_ORDER[chosen]
+    note = None if tier == requested else (
+        f"step {sid}: model_tier {requested} changed to {tier} (staff member declares {declared}"
+        + (f", {phase} steps stay at {MODEL_TIER_FLOOR[phase]} or above" if phase in MODEL_TIER_FLOOR else "") + ")")
+    return (None if tier == declared else tier), note
+
+
 def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                    excluded: frozenset[str] | set[str] = ORCHESTRATION_ROLES, *,
                    vocab: output_vocab.Vocab | None = None, stats: dict | None = None,
                    reject_excess: bool = False,
                    stored_environment: bool = False,
-                   guard: Callable[[list[dict]], list[str]] | None = None) -> tuple[list[dict], list[str]]:
+                   guard: Callable[[list[dict]], list[str]] | None = None,
+                   tier_rules: Mapping[str, Any] | None = None) -> tuple[list[dict], list[str]]:
     """Steps ready to dispatch, plus warnings. With ``vocab`` (plan.declare_output_types on), each step's
     ``output_types`` is normalized against its final outputs and per-request counts go into ``stats``; without it,
     any ``output_types`` the CSO sent is dropped and the steps are exactly what they were before #221.
 
     A fresh CSO plan is cut to ``max_steps``. A stored plan passes ``reject_excess``: cutting it would drop steps
     the request already promised, so a plan over the limit raises instead (#282). ``guard`` names steps the
-    roster may not take as planned (contract staff that send data out on restricted inputs, #424)."""
+    roster may not take as planned (contract staff that send data out on restricted inputs, #424).
+
+    ``tier_rules`` (#625, orchestrator.step_model_tiers on) is ``{"agents": {staff id: declared tier}}``: a step's
+    ``model_tier`` is kept only as clamp_step_tier allows. Without it the field is dropped, exactly as before."""
     # Scheduler-made runner environment clones are not counted against the limit (#674).
     extra = scheduler_clone_extra(raw) if stored_environment else 0
     if reject_excess and len(raw) > max_steps + extra:
@@ -2319,6 +2392,13 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                          if "key_figures" in s else {}),
                       **({key: copy.deepcopy(s[key]) for key in ("environment_binding", "environment_bindings")
                           if key in s} if stored_environment else {})})
+        if tier_rules is not None and s.get("model_tier") is not None:
+            tier, note = clamp_step_tier(sid, s.get("model_tier"), (tier_rules.get("agents") or {}).get(steps[-1]["agent_id"]),
+                                         s.get("phase"))
+            if tier:
+                steps[-1]["model_tier"] = tier
+            if note:
+                warnings.append(note)
         raw_types[sid] = s.get("output_types")
     problems = []
     for s in steps:
@@ -3196,6 +3276,26 @@ class Orchestrator:
         """The request text and folders every step of it reads, for the restricted-input rule (#424)."""
         req = self.hub.requests.get(rid) or {}
         return [str(req.get("text") or "")], [*(req.get("project_dirs") or []), *reference_dirs(req.get("references"))]
+
+    def _tier_rules(self) -> dict[str, Any] | None:
+        """What validate_steps needs to keep a step's model_tier (#625): None while orchestrator.step_model_tiers is off."""
+        if not getattr(self.cfg, "step_model_tiers", False):
+            return None
+        return {"agents": {agent_id: (info or {}).get("model_tier")
+                           for agent_id, info in (getattr(self.hub, "agents", None) or {}).items()}}
+
+    def _dispatch_step_tier(self, step: dict) -> str | None:
+        """The tier a step's task is sent with (#625): the one place that decides, whatever plan the step came from.
+
+        A stored research plan resumes with its own step dicts, not the ones validate_steps returned, so the tier is
+        checked again here: nothing while orchestrator.step_model_tiers is off, otherwise clamp_step_tier against the
+        staff member's declared tier and the phase floor."""
+        rules = self._tier_rules()
+        if rules is None or step.get("model_tier") is None:
+            return None
+        tier, _note = clamp_step_tier(str(step.get("id") or ""), step.get("model_tier"),
+                                      rules["agents"].get(step.get("agent_id")), step.get("phase"))
+        return tier
 
     def _external_guard(self, rid: str) -> Callable[[list[dict]], list[str]] | None:
         """validate_steps guard: contract staff that send data out stay off restricted-input steps (#424)."""
@@ -4732,6 +4832,14 @@ class Orchestrator:
                            **({"plan_warnings": req.get("plan_warnings") or [], "plan_validation": req["plan_validation"]}
                               if (req.get("plan_validation") or {}).get("semantic_checks") else {})}}
 
+    def _lookup_usage_line(self, rid: str) -> str:
+        """This request's public lookup usage as a fact for plan, re-plan, precedent and step prompts (#1088).
+
+        "" when no cap is configured; UNKNOWN (never zero) when a configured counter cannot be read. A new request
+        starts at zero: usage is not carried over from another request."""
+        note = usage_note_for(self.hub.s, rid)
+        return f"{chr(10)}{chr(10)}{note}" if note else ""
+
     def _spending_cap_line(self, rid: str) -> str:
         """The cap ``_check_budget`` enforces now, for research step and review prompts (#499): staff otherwise read
         only the free-text protocol.resource_limits, which may name another amount. "" without a cap."""
@@ -5227,6 +5335,7 @@ class Orchestrator:
                 if cp1.get("approved"):  # the receipt of the CP1 this plan's steps run under (PI 점검 R11)
                     prompt += approval_note_block("CP1", [("", cp1.get("note") or "")], CP1_NOTE_RULE)
                 prompt += self._spending_cap_line(rid)
+            prompt += self._lookup_usage_line(rid)  # at the start of this step: what is left to spend (#1088)
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             optional = [rel for rel in map(output_relpath, step.get("optional_outputs") or []) if rel]
             if declared or optional:
@@ -5264,6 +5373,9 @@ class Orchestrator:
                 # the revision round (12th mock trial). Always, not only when `feedback` names a dependency: after a
                 # restart mid-round a finished upstream revision is no longer in it (PR #368 review).
                 updates.append(f"[Current upstream results — they replace what you read before]\n{ctx}")
+            if updates and (usage := self._lookup_usage_line(rid).strip()):
+                # A resumed session gets only these updates, and its earlier turn holds an older count (#1088).
+                updates.append(usage)
             linked = input_steps(step)
             # The precedent search's stored texts reach every research step as read-only inputs (#951).
             stored_precedents = (precedent_texts.rows(self.hub.requests.get(rid, {}).get("analysis_precedents"))
@@ -5283,6 +5395,7 @@ class Orchestrator:
                         resume_session_id=session_id if can_resume else None,
                         meta={**reference_meta(self.hub.requests.get(rid)),
                               "kind": "step", "step_id": step["id"], "request": request,
+                              **({"model_tier": tier} if (tier := self._dispatch_step_tier(step)) else {}),
                               "paper_skills": paper_skills.attachments(
                                   self.hub.requests.get(rid, {}).get("plan") or {}, step["id"], step["agent_id"], rid),
                               "instruction": step["instruction"],
@@ -5809,13 +5922,14 @@ class Orchestrator:
                          "reason": "live source defect: " + reason}
                         for claim in checked.claims if evidence_id in claim.verified_evidence]
         def update_conclusion_depth() -> None:
+            stored = output_checks.stored_access(self.hub.requests.get(rid, {}).get("analysis_precedents"))
             warnings[:] = [line for line in warnings if not line.startswith(("결론 근거 논문 ", "문헌 접근 실패 원장("))]
             conclusion_depth = output_checks.conclusion_literature_line(
-                steps, results, ledgers, unsupported=unsupported, refused=refused)
+                steps, results, ledgers, unsupported=unsupported, refused=refused, stored=stored)
             if conclusion_depth:
                 warnings.append(conclusion_depth)
             access_ledger = output_checks.literature_ledger_line(
-                steps, results, ledgers, unsupported=unsupported, refused=refused)
+                steps, results, ledgers, unsupported=unsupported, refused=refused, stored=stored)
             if access_ledger:
                 warnings.append(access_ledger)
             contract["result_warnings"] = warnings
@@ -7086,7 +7200,7 @@ class Orchestrator:
                 research_limit = (len(req["plan"].get("branches") or []) * self.cfg.max_branch_steps + 3
                                   if req["plan"].get("branches") else self.cfg.max_steps)
                 validate_steps(req["plan"]["steps"], known, research_limit, orchestration,
-                               guard=self._external_guard(rid))
+                               guard=self._external_guard(rid), tier_rules=self._tier_rules())
                 await persist_request(self.hub, rid)
 
             if resume and not continuation and req.get("plan", {}).get("steps"):
@@ -7156,7 +7270,8 @@ class Orchestrator:
                                                      reject_excess=True,
                                                      stored_environment=any(
                                                          "environment_binding" in s or "environment_bindings" in s
-                                                         for s in req["plan"]["steps"]))
+                                                         for s in req["plan"]["steps"]),
+                                                     tier_rules=self._tier_rules())
                     req["plan"] = {**req["plan"], "steps": steps,
                                    "warnings": [*(req["plan"].get("warnings") or []), *warnings]}
                     if vocab is not None:
@@ -7216,7 +7331,7 @@ class Orchestrator:
                     if precedent_agent in known:
                         precedent_task = Task(
                             agent_id=precedent_agent, request_id=rid, output_schema=PRECEDENT_SCHEMA,
-                            prompt=PRECEDENT_PROMPT.format(request=text),
+                            prompt=PRECEDENT_PROMPT.format(request=text) + self._lookup_usage_line(rid),
                             meta={**refs, "kind": "precedent", "request": text,
                                   "title": "선행 연구 분석 기준 조사", "max_attempts": 1})
                         precedent_job = self._step_task(rid, self.run_step(precedent_task))
@@ -7299,6 +7414,7 @@ class Orchestrator:
                             topics_rule=(topic_types.prompt_rule(topic_vocab, include_definitions=False)
                                          if topic_vocab else ""))
                         prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
+                        prompt += self._lookup_usage_line(rid)
                         prompt += reuse_advisory  # semantics-hook
                         prompt += continuation_note
                         schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
@@ -7317,6 +7433,7 @@ class Orchestrator:
                                                                                         include_definitions=False)
                                                     if topic_vocab else "")
                         prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
+                        prompt += self._lookup_usage_line(rid)
                         schema = plan_schema(vocab is not None)
                     planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
@@ -7639,7 +7756,8 @@ class Orchestrator:
                                 raise PlanAgentError("; ".join(recruit_errors))
                             steps, step_warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
                                                                   orchestration, vocab=vocab, stats=type_stats,
-                                                                  guard=self._external_guard(rid))
+                                                                  guard=self._external_guard(rid),
+                                                                  tier_rules=self._tier_rules())
                             precedent_state = req.get("analysis_precedents") or {}
                             warnings = list(dict.fromkeys([
                                 *(plan.get("warnings") or []), *step_warnings,
@@ -7716,7 +7834,8 @@ class Orchestrator:
                     else:
                         steps, _ = validate_steps(steps, known, self.cfg.max_steps, orchestration,
                                                   vocab=self._output_vocab(), reject_excess=True,
-                                                  stored_environment=True, guard=self._external_guard(rid))
+                                                  stored_environment=True, guard=self._external_guard(rid),
+                                                  tier_rules=self._tier_rules())
                         req["plan"]["steps"] = steps
                 req["plan"] = await paper_skills.prepare_plan(
                     req["plan"], req.get("analysis_precedents") or {}, roster, rid, self.hub.s,
@@ -7855,7 +7974,8 @@ class Orchestrator:
                             empty_rule=empty_rule, question_rule=QUESTION_RULE, request=text,
                             plan=json.dumps(req.get("plan") or {"steps": steps}, ensure_ascii=False),
                             results=self.format_results(steps, results, n)) +
-                        planning_guidance(checklist_catalog, req.get("analysis_precedents")),
+                        planning_guidance(checklist_catalog, req.get("analysis_precedents")) +
+                        self._lookup_usage_line(rid),
                         # revision and parse_attempt keep each CSO call distinct for ledger recovery after a restart.
                         meta={**refs, "kind": "replan", "trigger": trigger, "revision": attempt,
                               "parse_attempt": parse_attempt, "request": text, "roster": roster,
@@ -7923,7 +8043,8 @@ class Orchestrator:
                                          f"maximum is {self.cfg.max_steps}")
                     type_stats: dict = {}
                     merged, warnings = validate_steps(kept + raw, known, self.cfg.max_steps, orchestration,
-                                                      vocab=vocab, stats=type_stats, guard=self._external_guard(rid))
+                                                      vocab=vocab, stats=type_stats, guard=self._external_guard(rid),
+                                                      tier_rules=self._tier_rules())
                     # A kept step already ran. A dependency inferred from its old instruction on a new step is not
                     # one it ran with, so it keeps the dependencies it had and the inference warning is dropped.
                     for step in merged:

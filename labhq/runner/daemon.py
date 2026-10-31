@@ -12,6 +12,7 @@ import contextlib
 import contextvars
 import copy
 from dataclasses import replace
+import inspect
 import json
 import logging
 import os
@@ -259,6 +260,12 @@ def _should_check_declared_outputs(result: TaskResult) -> bool:
 ENVIRONMENT_LOCK = "outputs/env/requirements.lock.txt"
 
 
+async def _maybe_await(value: Any) -> None:
+    """`await` for the result of `stage_run` (None) or `aupdate_run` (a coroutine) alike."""
+    if inspect.isawaitable(value):
+        await value
+
+
 def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize the runner-observed environment lock without opening it a second time."""
     row = next((item for item in rows if item.get("path") == ENVIRONMENT_LOCK), None)
@@ -278,7 +285,21 @@ _EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_
 # Flip only when a protected alias or read grant hands the validated runner-local interpreter to consumers.
 ENVIRONMENT_ALIAS_AVAILABLE = False
 
+ACK_DRAIN_S = 5.0  # how long a reconnect waits for the acks it already received to commit (#1125)
+ACK_MERGE_S = 0.5  # at most one ack commit per this long: acks arriving between two commits share the second (#1125)
+
+
 class Runner:
+    # Defaults for a Runner built without __init__ (tests do): no batch open, no ack in flight.
+    _batch_thread: threading.Thread | None = None
+    _reload_after_batch = False
+    _ack_high = 0
+    _ack_done = 0
+    _ack_task: asyncio.Task | None = None
+    _ack_error: BaseException | None = None
+    _ack_last = 0.0  # monotonic time the last ack commit finished
+    _shutdown_deadline: float | None = None  # time.monotonic() when `shutdown()` must be done
+
     def __init__(self, settings: Settings):
         settings.runner.validate_wsl()
         self.s = settings
@@ -286,6 +307,15 @@ class Runner:
         # this loop to reload the outbox queue (#606).
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_thread: threading.Thread | None = None
+        self._batch_thread: threading.Thread | None = None  # the writer thread while `_send_batch_now` holds its batch
+        self._reload_after_batch = False
+        # The gateway acks every outbox row. The acks are cumulative, so those that arrive while one is committing
+        # share the next commit (#1125): `_ack_high` is the highest seq the gateway has stored, `_ack_done` the highest
+        # one whose rows are deleted.
+        self._ack_high = 0
+        self._ack_done = 0
+        self._ack_task: asyncio.Task | None = None
+        self._ack_error: BaseException | None = None
         # Tasks whose task.result is already queued in this run. A cancel that arrives while the result commits does
         # not stop the commit, so the cancel handler must not queue a second, "cancelled" one over it (#606).
         self._result_queued: set[str] = set()
@@ -349,6 +379,7 @@ class Runner:
         self.codex_sandbox = SandboxWatch()  # elevated setup still fits this Codex (#328)
         # Steer, pause and halt files (#59 ①): runner state, outside every staff write root.
         self.breakers: dict[str, Escalation] = {}  # #59: running tasks' breaker stage
+        self._disk_watchers: dict[str, asyncio.Task] = {}  # #678: one per running task
         self.controls = Controls(settings.path(settings.runner.state_dir) / "control")
         self._finish_interrupted_tasks()
 
@@ -422,6 +453,9 @@ class Runner:
                 self._ensure_local_watch()
             await asyncio.gather(*loops)
         finally:
+            # Acks already received are not left in memory. After a signal the wait is what is left of the shutdown's
+            # own deadline, so the whole exit stays inside it.
+            await self._ack_drain(raise_error=False, timeout=self._ack_wait_s(durable.EXIT_DRAIN_S))
             # Writes queued by the tasks that were just cancelled still finish (#606).
             await durable.adrain(durable.EXIT_DRAIN_S)
 
@@ -451,10 +485,69 @@ class Runner:
                     return
                 await asyncio.sleep(.05)
 
+        deadline = self._shutdown_deadline = time.monotonic() + timeout_s
         try:
             await asyncio.wait_for(finish(), timeout_s)
         except asyncio.TimeoutError:
             pass  # Durable outbox replay remains the fallback when the gateway cannot acknowledge in time.
+        # Every ack received so far is committed before this returns, inside the same deadline: an ack that does not
+        # finish in time leaves its rows in the outbox for replay.
+        await self._ack_drain(raise_error=False, timeout=max(0.0, deadline - time.monotonic()))
+
+    def _ack_nowait(self, seq: int) -> None:
+        """The gateway has stored every outbox row up to `seq`: start deleting them. Nothing waits: the first ack
+        commits at once, and the acks that arrive while it commits are merged into the next commit (cumulative, so
+        only the highest matters). A commit that failed is raised here, on the next ack, as it was when the ack was
+        committed inline."""
+        if self._ack_error is not None:
+            error, self._ack_error = self._ack_error, None
+            raise error
+        self._ack_high = max(self._ack_high, seq)
+        if self._ack_task is None or self._ack_task.done():
+            self._ack_task = asyncio.get_running_loop().create_task(self._ack_flush())
+
+    async def _ack_flush(self) -> None:
+        """Commit the highest ack. An idle runner commits at once; after a commit the next one waits until
+        `ACK_MERGE_S` have passed (the acks that arrive meanwhile are cumulative and share it), unless a caller is
+        waiting in `_ack_drain`. A late delete only means a few rows are resent after a crash and deduped by the
+        gateway's cursor."""
+        hurry = self.__dict__.setdefault("_ack_hurry", asyncio.Event())
+        try:
+            while self._ack_done < self._ack_high:
+                wait = self._ack_last + ACK_MERGE_S - time.monotonic()
+                if wait > 0 and not hurry.is_set():
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(hurry.wait(), wait)
+                high = self._ack_high
+                await self.store.aack(high)
+                self._ack_done = max(self._ack_done, high)
+                self._ack_last = time.monotonic()
+        except Exception as exc:  # noqa: BLE001 - raised to the next caller, where the inline commit raised it
+            self._ack_error = exc
+        finally:
+            hurry.clear()
+
+    def _ack_wait_s(self, normal: float) -> float:
+        """How long a closing-down path may wait for the acks: `normal`, or what is left of an open shutdown deadline."""
+        if self._shutdown_deadline is None:
+            return normal
+        return max(0.0, min(normal, self._shutdown_deadline - time.monotonic()))
+
+    async def _ack_drain(self, *, raise_error: bool = True, timeout: float | None = None) -> None:
+        """Every ack noted so far is committed. Errors are raised unless the caller is closing down anyway. With a
+        `timeout` an unfinished commit is left to finish on its own: its rows stay in the durable outbox, are resent,
+        and the gateway dedups them."""
+        task = self._ack_task
+        if task is not None and not task.done():
+            self.__dict__.setdefault("_ack_hurry", asyncio.Event()).set()  # someone waits: do not hold the commit back
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout)
+            except asyncio.TimeoutError:
+                log.warning("runner %s: an ack commit is still running; its rows stay in the outbox", self.s.runner.id)
+                return
+        if raise_error and self._ack_error is not None:
+            error, self._ack_error = self._ack_error, None
+            raise error
 
     def send(self, obj: dict) -> None:
         if obj.get("type") not in {"runner.roster"}:
@@ -466,6 +559,9 @@ class Runner:
     def _reload_outbox_after_commit(self) -> None:
         # On the loop's own thread this is the old straight call. On the durable writer thread (`_send_durably`) the
         # reload is queued for the loop, and runs before the awaiting caller resumes.
+        if self._batch_thread is threading.current_thread():
+            self._reload_after_batch = True  # its rows are not committed yet: once, after the batch's commit
+            return
         loop = self._loop
         if loop is not None and threading.current_thread() is not self._loop_thread:
             loop.call_soon_threadsafe(self.reload_outbox)
@@ -490,12 +586,26 @@ class Runner:
         await durable.run(self.store.lane, self._send_batch_now, items)
 
     def _send_batch_now(self, items: list[tuple[dict, list[tuple], list[tuple]]]) -> None:
-        for obj, befores, afters in items:
-            for row in befores:
-                self.store.put(*row)
-            self.send(obj)
-            for row in afters:
-                self.store.put(*row)
+        """The rows and messages of `items`, in order, in ONE transaction: one commit and fsync for the batch instead
+        of one per row and message (#1125). The outbox is reloaded once after that commit, because a reader sees only
+        committed rows."""
+        def write() -> None:
+            # Runs on the store's lane thread, whichever thread asked: `send` defers its reload while this is set.
+            self._batch_thread, self._reload_after_batch = threading.current_thread(), False
+            try:
+                for obj, befores, afters in items:
+                    for row in befores:
+                        self.store.put(*row)
+                    self.send(obj)
+                    for row in afters:
+                        self.store.put(*row)
+            finally:
+                self._batch_thread = None
+
+        self._reload_after_batch = False
+        self.store.run_batch(write)  # from the lane's own job this is a plain inline call
+        if self._reload_after_batch:
+            self._reload_outbox_after_commit()
 
     async def asend(self, obj: dict) -> None:
         await self._send_durably(obj)
@@ -598,10 +708,19 @@ class Runner:
                     sender = asyncio.create_task(self._sender(ws))
                     try:
                         async for raw in ws:
-                            await self._on_message(json.loads(raw))
+                            msg = json.loads(raw)
+                            if msg.get("type") == "runner.ack":
+                                # Not waited for: the next messages are read while it commits, and the acks among them
+                                # share the next commit instead of one fsync each (#1125).
+                                self._ack_nowait(int(msg["runner_seq"]))
+                                continue
+                            await self._on_message(msg)
                     finally:
                         sender.cancel()
                         self.connected.clear()
+                        # A reconnect reloads the outbox from the store: commit the acks first, but a stuck commit must
+                        # not hold the reconnect (its rows are resent and deduped).
+                        await self._ack_drain(raise_error=False, timeout=self._ack_wait_s(ACK_DRAIN_S))
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -704,6 +823,20 @@ class Runner:
             try:
                 task = Task.model_validate(msg["task"])
                 prior = self.store.get("accepted_task", task.id)
+                if prior is None and self.store.get("cancelled_task", task.id) is not None:
+                    # Its cancel arrived first (reconnect flush overtook this dispatch): never start it, answer it.
+                    result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="cancelled",
+                                        error_kind="cancelled", cost_usd=0.0, cost_known=True,
+                                        cleanup_evidence={
+                                            "status": "not_started", "reason": "cancelled_before_dispatch",
+                                            "active_processes_measured": False})
+                    await self._send_batch([
+                        ({"type": "task.accepted", "task_id": task.id, "request_id": task.request_id},
+                         [("accepted_task", task.id, {"state": "finished"})], []),
+                        ({"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
+                          "request_id": task.request_id, "data": result.model_dump(mode="json")}, [], [])])
+                    await self.store.adelete("cancelled_task", task.id)
+                    return
                 await self._send_durably(
                     {"type": "task.accepted", "task_id": task.id, "request_id": task.request_id},
                     before=(("accepted_task", task.id, {"state": "running", "task": task.model_dump(mode="json")})
@@ -727,10 +860,13 @@ class Runner:
                 self._dispatches.discard(done)
                 done.set_result(None)
         elif typ == "task.cancel":
-            t = self.tasks.get(msg.get("task_id", ""))
+            cancel_id = str(msg.get("task_id") or "")
+            t = self.tasks.get(cancel_id)
             if t:
                 t.cancel()
-            await self._cancel_local_jobs(str(msg.get("task_id") or ""))
+            elif cancel_id and self.store.get("accepted_task", cancel_id) is None:
+                await self._remember_cancel(cancel_id)  # not held, not seen: its dispatch may still arrive
+            await self._cancel_local_jobs(cancel_id)
         elif typ == "task.jobs_cancel":  # the step is parked on its jobs and its request was cancelled (#675)
             tid = str(msg.get("task_id") or "")
             if await self._cancel_local_jobs(tid):
@@ -757,7 +893,8 @@ class Runner:
             self.broker.resolve_ask(msg["id"], msg.get("answer") or {})
             await self.asend({"type": "ask.ack", "id": msg["id"]})
         elif typ == "runner.ack":
-            await self.store.aack(int(msg["runner_seq"]))
+            self._ack_nowait(int(msg["runner_seq"]))
+            await self._ack_drain()  # a caller that waits for the ack gets it durable, as before
         elif typ == "registry.reload":
             self.registry.load()
             await asyncio.to_thread(self._refresh_wsl_readiness)
@@ -1102,6 +1239,9 @@ class Runner:
             if cancelled:
                 raise
         finally:
+            watcher = self.__dict__.get("_disk_watchers", {}).pop(task.id, None)
+            if watcher is not None:
+                watcher.cancel()
             self._recruitment_conversions.pop(task.id, None)
             self._result_queued.discard(task.id)  # the run is over: nothing left to guard
             self._cleanup_reports.pop(task.id, None)
@@ -1121,6 +1261,19 @@ class Runner:
             agent = AgentSpec.model_validate({**agent.model_dump(), **identity, **limits})
         if self.s.runner.force_engine:
             agent = agent.model_copy(update={"engine": Engine(self.s.runner.force_engine)})
+        # Last, so the tier means a model on the engine the agent really runs on: an override, a request identity or
+        # a forced engine that moved it has already been applied, and any model they named is kept (#625).
+        # A plan step's own tier (#625, step 2) is a decision of the approved plan, already capped by the gateway at
+        # the staff member's declared tier, so it comes before the member's model: only a lower tier is ever sent.
+        step_tier = task.meta.get("model_tier")
+        if step_tier in ("fast", "balanced", "reasoning"):
+            step_model = self.s.model_tiers.model_for(step_tier, agent.engine.value)
+            if step_model:
+                agent = agent.model_copy(update={"model": step_model, "model_tier": step_tier})
+        if agent.model is None and agent.model_tier:
+            tier_model = self.s.model_tiers.model_for(agent.model_tier, agent.engine.value)
+            if tier_model:
+                agent = agent.model_copy(update={"model": tier_model})
         return agent
 
     def _mcp_servers(self, agent: AgentSpec, env: dict[str, str], allow_ask: bool = True) -> list[McpServerSpec]:
@@ -1743,6 +1896,9 @@ class Runner:
             ws = self.workspaces.get(task.id)
             if ws is not None and task.meta.get("paper_skills"):
                 ws.clear_paper_skills()
+            if ws is not None:  # a step cut short after it staged its record: the record is still written (#1137)
+                with contextlib.suppress(Exception):
+                    await ws.aflush_run(task.id)
 
     async def _disk_gate(self, task: Task, agent: AgentSpec, workspace_dir: Path) -> str | None:
         """Free space of the drive this run's folder is on, when a task starts (#678): None to go on, else why not.
@@ -1781,6 +1937,66 @@ class Runner:
             await emit("agent.log", {"level": "warn", "text": (
                 f"작업 폴더 드라이브 여유가 적습니다: {free_gib:.1f} GiB. 큰 다운로드 전에 확인하세요")})
         return None
+
+    def _start_disk_watch(self, task: Task, agent: AgentSpec, workspace_dir: Path, extra_dirs=()) -> None:
+        """Watch the drives this running task fills (#678): the work folder, the runner state folder,
+        ``runner.bulk_data_root`` and its writable project folders (``extra_dirs``). A facilities fix runs regardless: clearing a full workspace is what it is for."""
+        runner = self.s.runner
+        if not runner.disk_watch_s or not runner.disk_fail_free_gb or task.meta.get("kind") == "facilities_fix":
+            return
+        watchers = self.__dict__.setdefault("_disk_watchers", {})
+        if task.id in watchers:
+            return
+        folders = [workspace_dir, self.s.path(runner.state_dir)]
+        if runner.bulk_data_root:
+            folders.append(Path(os.path.expandvars(os.path.expanduser(str(self.s.path(runner.bulk_data_root))))))
+        folders.extend(Path(d) for d in extra_dirs)
+        watcher = asyncio.get_running_loop().create_task(self._disk_watch(task, agent, list(dict.fromkeys(folders))))
+        watchers[task.id] = watcher
+        watcher.add_done_callback(lambda done, tid=task.id: watchers.pop(tid, None) if watchers.get(tid) is done else None)
+
+    async def _disk_watch(self, task: Task, agent: AgentSpec, folders: list[Path]) -> None:
+        """Read the free space of ``folders`` every ``runner.disk_watch_s`` while the task is held; below
+        ``runner.disk_fail_free_gb`` halt it once, session kept, for the PI to resume. The resume starts a new turn that
+        meets ``_disk_gate`` again. An unreadable drive is skipped. Ends with the task."""
+        runner = self.s.runner
+        base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
+        while self.controls.holds(task.id):
+            await asyncio.sleep(runner.disk_watch_s)
+            if not self.controls.holds(task.id):
+                return
+            low = None
+            for folder in folders:
+                try:
+                    space = await asyncio.to_thread(disk_space.usage, folder)
+                except (OSError, ValueError):
+                    continue
+                if space.total > 0 and space.free < runner.disk_fail_free_gb * disk_space.GIB:
+                    low = (folder, space.free / disk_space.GIB)
+                    break
+            if low is None:
+                continue
+            folder, free_gib = low
+            text = (f"디스크 여유가 {free_gib:.1f} GiB로 기준 {runner.disk_fail_free_gb:g} GiB보다 적습니다"
+                    f"({Path(folder).as_posix()})")
+            halted = None
+            if runner.disk_watch_halt:
+                try:
+                    halted = await self.controls.apply({"task_id": task.id, "action": "halt"})
+                except Exception:  # noqa: BLE001 - the watch never fails the run; it tries again at the next beat
+                    log.warning("task %s disk halt not applied; trying again", task.id, exc_info=True)
+                    continue
+                if halted is None:  # the controls no longer hold the task: it ended meanwhile
+                    return
+            record = {"signal": "disk", "mode": "enforce", "stage": "stop",
+                      "enforcement": "halt" if halted else "off",
+                      "free_gib": round(free_gib, 2), "floor_gib": runner.disk_fail_free_gb,
+                      "path": Path(folder).as_posix()}
+            await self.emit(Event(type="agent.log", data={"level": "alert", "text": text}, **base))
+            if halted:
+                await self.emit(Event(type="agent.control", data={**halted, "source": "disk"}, **base))
+            await self.emit(Event(type="agent.breaker", data=record, **base))
+            return  # once per turn: a resumed turn is a new task and is checked again at its start
 
     async def _bulk_data_hint(self, emit, zones: list) -> str:
         """The briefing line for ``runner.bulk_data_root``, or "" when unset or the folder is not one staff may use.
@@ -2094,6 +2310,8 @@ class Runner:
                     task = ws.task = task.model_copy(update={"context": (
                         f"{task.context}\n\n[Upstream inputs not linked]\n{note}")})
             # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
+            # Every folder this run may write: a read-only run writes only its own workspace.
+            self._start_disk_watch(task, agent, workspace_dir, () if read_only else extra_dirs)
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs],
                                                                needs_rules=agent.engine == Engine.claude_code)
             asked_links, _internal_incomplete = await self._project_links(
@@ -2249,14 +2467,16 @@ class Runner:
                     output_scan_notes.append(note)
                 return refused
 
-            async def collect_observed_outputs() -> None:
-                """Hash the post-run view off the event loop, before labhq writes RESULT files."""
+            async def collect_observed_outputs(*, stage: bool = True) -> None:
+                """Hash the post-run view off the event loop, before labhq writes RESULT files. The record rides in the
+                step's final write (`stage_run`, #1137); a step that is being cut short writes it now."""
                 nonlocal output_records, observed_outputs
+                record = ws.stage_run if stage else ws.aupdate_run
                 if output_before is None:
                     records, _note = await asyncio.to_thread(
                         ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
                         self.s.runner.reference_scan_max_depth, artifact_hash_limit)
-                    await ws.aupdate_run(task.id, environment_record=environment_record(records))
+                    await _maybe_await(record(task.id, environment_record=environment_record(records)))
                     return
                 output_records, note = await asyncio.to_thread(
                     ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
@@ -2273,9 +2493,9 @@ class Runner:
                     if output_before.get(row["path"]) != output_identity(row)
                 ]
                 incomplete = "; ".join(dict.fromkeys(output_scan_notes)) or None
-                await ws.aupdate_run(task.id, observed_outputs=observed_outputs,
-                                     environment_record=environment_record(output_records),
-                                     **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
+                await _maybe_await(record(task.id, observed_outputs=observed_outputs,
+                                          environment_record=environment_record(output_records),
+                                          **({"observed_outputs_incomplete": incomplete} if incomplete else {})))
 
             engine_settings = claude_deny_private(claude_ask_internal_links(claude_deny_links(claude_read_only(
                 claude_settings(self.s.policy), [d for d in [*read_dirs, *(extra_dirs if read_only else [])]
@@ -2405,7 +2625,7 @@ class Runner:
                         await ws.aupdate_run(task.id, input_files=input_files,
                                              **({"input_files_incomplete": "; ".join(input_notes)}
                                                 if input_notes else {}))
-                        await collect_observed_outputs()
+                        await collect_observed_outputs(stage=False)
                         if watch and watch.baseline is not None:
                             await self._read_only_verdict(TaskResult(task_id=task.id, agent_id=agent.id, ok=False),
                                                           watch, emit, ws, task.id)
@@ -2463,8 +2683,9 @@ class Runner:
         if changed:
             input_notes.append(f"입력 파일 {changed}개가 단계 실행 중에 바뀌었습니다(기록된 hash는 실행 전 내용)")
         input_notes = list(dict.fromkeys([*input_notes, *after_notes]))
-        await ws.aupdate_run(task.id, input_files=input_files,
-                             **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
+        # Staged: the step's final write, right before its result is sent, carries it (#1137).
+        ws.stage_run(task.id, input_files=input_files,
+                     **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
         for note in input_notes:
             await emit("agent.log", {"level": "warn", "text": note})
         declared = task.meta.get("outputs", [])
@@ -2662,8 +2883,10 @@ class Runner:
         })
         try:
             # Never through a link the agent made (#165). Both files are one job: a cancel cannot write only one.
-            await awrite_owned_many(ws.dir, [(f"outputs/{name}", result.text or "")
-                                             for name in (f"RESULT_{task.id}.md", "RESULT.md")])
+            # RESULT.md is the latest alias of RESULT_<task>.md, the same text: only the per-task file is fsynced. The
+            # text is in task.result (the outbox) too, so a power cut can leave the alias old, empty or missing (#1154).
+            await awrite_owned_many(ws.dir, [(f"outputs/RESULT_{task.id}.md", result.text or ""),
+                                             ("outputs/RESULT.md", result.text or "", False)])
         except OwnedPathError:
             error = "작업 폴더의 outputs가 실행 중에 링크로 바뀌어 결과 파일을 쓰지 않았습니다"
             await emit("agent.log", {"level": "alert", "text": error})
@@ -2996,7 +3219,17 @@ class Runner:
 
     async def _end_local_job(self, jid: str, j: dict, state: str, *, wake: bool = True) -> bool:
         """Kill a local job's process tree. Only when nothing of it is left is it recorded as ended (`wake` False keeps
-        its step from being woken); a tree that survives leaves the job running and the watcher keeps checking it."""
+        its step from being woken); a tree that survives leaves the job running and the watcher keeps checking it.
+        The job counts as being ended from the first line to the last, so a status the watcher read meanwhile cannot
+        write over it (#1144)."""
+        ending = self.__dict__.setdefault("_ending_local_jobs", set())
+        ending.add(jid)
+        try:
+            return await self._end_local_job_now(jid, j, state, wake=wake)
+        finally:
+            ending.discard(jid)
+
+    async def _end_local_job_now(self, jid: str, j: dict, state: str, *, wake: bool) -> bool:
         tid = j.get("task_id")
         if not await asyncio.to_thread(local_jobs.kill, j.get("local") or {}, self._local_procs.get(jid)):
             # Remembered with the row (so it survives a restart): the watcher ends it again until nothing is left.
@@ -3032,14 +3265,20 @@ class Runner:
     async def _poll_local_jobs(self) -> None:
         if not any(local_jobs.is_local(jid) for jid in self.jobs):
             return
+        ending = self.__dict__.setdefault("_ending_local_jobs", set())
         for jid, j in list(self.jobs.items()):
-            if j["terminal"] or not local_jobs.is_local(jid):
+            if j["terminal"] or not local_jobs.is_local(jid) or jid in ending:
                 continue
             if j.get("cancel_requested"):  # an earlier cancel could not end the whole tree: try again
                 await self._end_local_job(jid, j, "cancelled", wake=bool(j.get("cancel_wake", True)))
                 continue
             state, exit_status = await asyncio.to_thread(local_jobs.status, j.get("local") or {},
                                                          self._local_procs.get(jid))
+            if j["terminal"] or j.get("cancel_requested") or jid in ending:
+                # A cancel came in while the status was read: it is still ending the job, ended it, or could not end the
+                # whole tree and left the job for the next poll to end again (the branch above). What was read is stale
+                # (#1144).
+                continue
             if state == j["state"]:
                 continue
             j.update(state=state, exit_status=exit_status, terminal=state in TERMINAL)
@@ -3051,6 +3290,16 @@ class Runner:
                                              "exit_status": exit_status})],
                                 after=[("job", jid, j)])
         await self._wake_finished_jobs()
+
+    CANCEL_TOMBSTONE_KEEP_S = 2 * 86400  # the gateway keeps a cancel for as long (TASK_CANCEL_KEEP_S)
+
+    async def _remember_cancel(self, task_id: str) -> None:
+        """A cancel for a task this runner has not seen: keep it so the dispatch that follows is not started."""
+        now = time.time()
+        for tid, row in list(self.store.all("cancelled_task").items()):
+            if now - float(row.get("at") or 0) > self.CANCEL_TOMBSTONE_KEEP_S:
+                await self.store.adelete("cancelled_task", tid)
+        await self.store.aput("cancelled_task", task_id, {"at": now})
 
     async def _cancel_local_jobs(self, task_id: str) -> bool:
         """The step was cancelled: end its running local jobs so no process outlives it, and do not wake the step.

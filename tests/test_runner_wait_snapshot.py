@@ -2,18 +2,18 @@
 
 import json
 from pathlib import Path
-import shutil
 import subprocess
 
 import pytest
 
 from labhq.gateway.server import create_app
 from labhq.settings import Settings
+from tests.support.node_binary import node_binary
 
 
 @pytest.mark.parametrize("later_events", [199, 200, 201])
 def test_runner_wait_snapshot_survives_replay_boundary(tmp_path, later_events):
-    node = shutil.which("node")
+    node = node_binary()
     if not node:
         pytest.skip("Node is optional")
     settings = Settings()

@@ -4,7 +4,9 @@
 - 커밋마다 patch_notes/entries/<branch>.yaml에 한 줄. 기록만 고친 커밋은 제외한다.
 - STATUS는 docs/status/<시각>-<branch>.md에 쓴다.
 - 생성 파일 STATUS.md와 patch_notes/README.md는 PR에서 직접 고치지 않는다.
-- main 커밋 3개 안에 README.md나 docs/manual.md를 한 번은 갱신한다. 생성 목차만 갱신한 main 커밋은 세지 않는다.
+- main 커밋 3개 안에 README.md나 docs/manual.md를 한 번은 갱신한다. 생성 목차만 갱신한 main 커밋과, 사용자에게 보이지 않는
+  커밋(바뀐 파일이 전부 tests/·docs/status/·patch_notes/entries/·config/ci/·.github/·scripts/ci_* 안)은 세지 않는다.
+  labhq/나 agents/를 바꾼 커밋은 센다(#1122).
   README는 처음 써 보는 사람용이고 기능 설명은 매뉴얼에 있어서, 둘 중 어느 쪽을 고쳐도 센다(#298).
 
   python scripts/patch_notes.py check --base origin/main [--head HEAD]
@@ -23,6 +25,8 @@ import yaml
 ENTRIES = "patch_notes/entries"
 GENERATED = {"STATUS.md", "patch_notes/README.md"}
 README_EVERY = 3
+# Commits whose files all live here change nothing a user sees, so they do not count toward the refresh limit (#1122).
+INVISIBLE = ("tests/", "docs/status/", "patch_notes/entries/", "config/ci/", ".github/", "scripts/ci_")
 DOCS = ("README.md", "docs/manual.md")  # either one counts as the periodic documentation refresh
 KST = timezone(timedelta(hours=9))
 
@@ -65,7 +69,7 @@ def merge_own_changes(sha: str, parents: list[str], cwd: Path | None = None) -> 
 
 
 def changed_files(sha: str, cwd: Path | None = None) -> set[str]:
-    out = git("diff-tree", "--cc", "--no-commit-id", "--name-only", "-r", "--root", sha, cwd=cwd)
+    out = git("diff-tree", "--cc", "--no-renames", "--no-commit-id", "--name-only", "-r", "--root", sha, cwd=cwd)
     return set(out.splitlines()) if out else set()
 
 
@@ -73,7 +77,7 @@ def changed_from_parent(sha: str, cwd: Path | None = None) -> set[str]:
     parents = git("rev-list", "--parents", "-n", "1", sha, cwd=cwd).split()[1:]
     if not parents:
         return changed_files(sha, cwd)
-    out = git("diff", "--name-only", parents[0], sha, cwd=cwd)
+    out = git("diff", "--no-renames", "--name-only", parents[0], sha, cwd=cwd)
     return set(out.splitlines()) if out else set()
 
 
@@ -111,6 +115,11 @@ def entry_shas(rev: str, cwd: Path | None = None) -> tuple[set[str], list[str]]:
     return shas, problems
 
 
+def invisible(files: set[str]) -> bool:
+    """True when every changed file is one a user never sees (tests, records, CI) or a generated index (#1122)."""
+    return bool(files) and all(name in GENERATED or name.startswith(INVISIBLE) for name in files)
+
+
 def counted_main_commits(last_readme: str, base: str, cwd: Path | None = None) -> int:
     if not last_readme:
         return README_EVERY
@@ -118,7 +127,7 @@ def counted_main_commits(last_readme: str, base: str, cwd: Path | None = None) -
     count = 0
     for sha in out.splitlines():
         files = changed_from_parent(sha, cwd)
-        if files and files <= GENERATED:
+        if invisible(files):
             continue
         count += 1
     return count
@@ -141,9 +150,11 @@ def check(base: str, head: str, cwd: Path | None = None) -> list[str]:
         names = ", ".join(sorted(touched & GENERATED))
         problems.append(f"생성 파일({names})을 직접 바꾸지 말고 entries·docs/status에 쓰세요.")
 
+    # every file any PR commit touched, not the net diff: a README edit reverted later is still a README edit
+    committed = set().union(*(changed_from_parent(sha, cwd) for sha in commits)) if commits else set()
     last = git("log", "-1", "--format=%H", base, "--", *DOCS, cwd=cwd)
     behind = counted_main_commits(last, base, cwd)
-    if commits and not touched & set(DOCS) and behind + 1 >= README_EVERY:
+    if commits and not touched & set(DOCS) and not invisible(committed) and behind + 1 >= README_EVERY:
         problems.append(f"main에 문서({'·'.join(DOCS)})를 안 고친 커밋이 {behind}개 쌓였습니다. "
                         f"이 PR에서 README나 매뉴얼을 갱신해 주세요 (커밋 {README_EVERY}개마다 한 번).")
     return problems

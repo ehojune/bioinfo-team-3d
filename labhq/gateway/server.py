@@ -59,6 +59,7 @@ from ..security import token_matches
 from .. import durable
 from ..store import StateStore
 from ..util import short
+from .idempotency import Idempotency, idempotent_routes
 from .shutdown import ShutdownIn, WebShutdown
 
 log = logging.getLogger(__name__)
@@ -105,6 +106,8 @@ NOT_CONTROLLABLE = "이 작업({kind})은 실행 중 제어를 받지 않습니�
 HALT_WHILE_WAITING = "HPC 잡·질문 대기 중에는 멈출 수 없습니다 — 일시 정지를 쓰세요"
 # How long request cancel waits for the cancelled turns to report, so their cost is counted (R13).
 CANCEL_RESULT_WAIT_S = 10.0
+# How often the request wall-clock watch looks at the open requests (#877).
+REQUEST_DEADLINE_TICK_S = 15.0
 # A PDF upload succeeds only after the runner confirms its workspace write.
 ATTACHMENT_ACK_TIMEOUT_S = 30.0
 # Statuses a hold sets and _sync_hold_status may lift again.
@@ -380,7 +383,10 @@ class Hub:
         # ended by recruit.done/failed or by a different runner process; a reconnect of the same process keeps them
         # (#515). The incarnation survives a restart, so the process id decides when the runner sends one (#521).
         self.recruits_running: dict[str, dict[str, Any]] = {}
+        self.idempotency = Idempotency(refusals=(RunnerNotSent,))  # a repeated POST with the same Idempotency-Key is applied once (#1164)
         self.cancel_result_wait_s = CANCEL_RESULT_WAIT_S
+        self.request_deadline_tick_s = REQUEST_DEADLINE_TICK_S
+        self._deadline_task: asyncio.Task | None = None
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
         from ..pi_language import PiInterpreter
@@ -737,6 +743,27 @@ class Hub:
     def _sync_hold_status(self, req: dict) -> None:
         if not is_active_request(req.get("status")):
             return
+        before = req.get("status")
+        self._set_hold_status(req)
+        self._count_pi_wait(req, before, req.get("status"))
+
+    @staticmethod
+    def _count_pi_wait(req: dict, before: object, after: object) -> None:
+        """Time in waiting_pi moves the request's wall-clock deadline (#877), counted from the real transitions:
+        ``pi_since`` opens when the request starts waiting for the PI and ``held_s`` takes it when it stops."""
+        clock = req.get("wall_clock")
+        if not isinstance(clock, dict) or not clock.get("limit_s") or (before == "waiting_pi") == (after == "waiting_pi"):
+            return
+        now = time.time()
+        if after == "waiting_pi":
+            clock["pi_since"] = now
+            return
+        since = clock.pop("pi_since", None)
+        if since is not None:
+            clock["held_s"] = round(float(clock.get("held_s") or 0.0) + max(0.0, now - float(since)), 3)
+            clock["deadline_at"] = float(req.get("created_at") or now) + float(clock["limit_s"]) + clock["held_s"]
+
+    def _set_hold_status(self, req: dict) -> None:
         if req.get("login_waits"):
             req["status"] = "waiting_login"
         elif req.get("quota_waits"):
@@ -2293,6 +2320,10 @@ class Hub:
         task_entry = task_entry or {}
         if task_entry.get("step_id"):
             item["step_id"] = str(task_entry["step_id"])
+        # A step run on its own tier (#625) is recorded at that tier, so a deliberate lowering is not a mismatch.
+        step_tier = ((task_entry.get("payload") or {}).get("meta") or {}).get("model_tier")
+        if step_tier in ("fast", "balanced", "reasoning"):
+            item["model_tier"] = step_tier
         if outcome_unknown:
             # A call the gateway gave up on has no runner provenance: name the engine/model it was dispatched with
             # (a task's own agent_overrides), not the staff member's default (#942).
@@ -2306,7 +2337,9 @@ class Hub:
         req.setdefault("cost_items", {})[tid] = item
         req["cost_usd"] = float(req.get("cost_usd") or 0) + amount
         req["cost_known"] = req.get("cost_known", True) and item["status"] != "unknown"
-        summary = request_cost_summary(req)
+        # The summary names an agent that ran another model than its declared tier (#625).
+        tiers = getattr(getattr(self, "s", None), "model_tiers", None)
+        summary = request_cost_summary(req, tiers) if tiers is not None else request_cost_summary(req)
         if summary is None:
             req.pop("cost_summary", None)
         else:
@@ -2335,6 +2368,9 @@ class Hub:
             task_entry = task_entry or {}
             if task_entry.get("step_id"):
                 item["step_id"] = str(task_entry["step_id"])
+            step_tier = ((task_entry.get("payload") or {}).get("meta") or {}).get("model_tier")  # #625, as above
+            if step_tier in ("fast", "balanced", "reasoning"):
+                item["model_tier"] = step_tier
             if outcome_unknown:
                 # A call the gateway gave up on has no runner provenance: name the engine/model it was dispatched with
                 # (a task's own agent_overrides), not the staff member's default (#942).
@@ -2348,7 +2384,8 @@ class Hub:
             req.setdefault("cost_items", {})[tid] = item
             req["cost_usd"] = float(req.get("cost_usd") or 0) + amount
             req["cost_known"] = req.get("cost_known", True) and item["status"] != "unknown"
-            summary = request_cost_summary(req)
+            tiers = getattr(getattr(self, "s", None), "model_tiers", None)
+            summary = request_cost_summary(req, tiers) if tiers is not None else request_cost_summary(req)
             if summary is None:
                 req.pop("cost_summary", None)
             else:
@@ -3519,7 +3556,8 @@ class Hub:
         self.events.clear()
         self.events.extend(ordered)
 
-    async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
+    async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None,
+                      activity: tuple[str, Callable[[dict], dict]] | None = None) -> None:
         ev = copy.deepcopy(ev)
         internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
         if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
@@ -3533,8 +3571,12 @@ class Hub:
                 await self._flush_committed_events()
                 durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
                                   ev.get("type") in ProjectReporter.HANDLED)
-                ev, cancelled = await self._publication_write(self.store.aappend_event(
-                    ev, self.s.gateway.event_buffer, runner_id, runner_seq, reporter_delivery=durable_report))
+                ev, cancelled = await self._append_event_with_request(ev, runner_id, runner_seq, durable_report,
+                                                                      activity)
+                if ev is None:  # a copy of a runner message that is already stored (#1143): nothing to publish again
+                    if cancelled:
+                        raise asyncio.CancelledError
+                    return
                 self._record_published_event(ev)
                 self._queue_committed_event(ev)
                 try:
@@ -3542,12 +3584,6 @@ class Hub:
                         await self._flush_committed_events(delivered)
                 except asyncio.CancelledError:
                     cancelled = True
-                rid = ev.get("request_id")
-                if rid in self.requests:
-                    try:
-                        await self.asave_request(rid)
-                    except asyncio.CancelledError:
-                        cancelled = True
         finally:
             if self.pending_committed:
                 self._schedule_committed_events()
@@ -3559,6 +3595,38 @@ class Hub:
             raise asyncio.CancelledError
         if ev.get("type") in ("request.step_done", "request.step_skipped") and ev.get("request_id"):
             await self._close_step_controls(ev["request_id"], (ev.get("data") or {}).get("step_id"))
+
+    async def _append_event_with_request(self, ev: dict, runner_id: str | None, runner_seq: int | None,
+                                         durable_report: bool, activity=None):
+        """Append the event and save its request in one transaction (#1129): both land or neither does."""
+        def append(request=None):
+            return self.store.aappend_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
+                                            reporter_delivery=durable_report, request=request, activity=activity)
+        rid = ev.get("request_id")
+        if rid not in self.requests:
+            return await self._publication_write(append())
+        revision = self._request_changed(rid)
+        async with self._request_lock(rid):
+            before = copy.deepcopy(self.requests[rid])
+            previous = self.store.get("request", rid)
+            updated = copy.deepcopy(before)
+            cp4.reconcile(updated)
+            updated["updated_at"] = time.time()
+            try:
+                saved, cancelled = await self._publication_write(append((rid, updated)))
+                if saved is None:  # already stored by another copy of the same runner message (#1143)
+                    return None, cancelled
+            except Exception:
+                # Nothing was stored: put the live request back to what is stored, as `_asave_request` does, so a
+                # later handler does not act on state that a restart would lose.
+                if self.request_versions.get(rid) == revision:
+                    if previous is not None:
+                        apply_changes(self.requests[rid], before, previous)
+                    elif self.requests[rid] == before:
+                        self.requests.pop(rid, None)
+                raise
+            apply_changes(self.requests[rid], before, updated)
+        return saved, cancelled
 
     @staticmethod
     async def _publication_write(write):
@@ -3582,6 +3650,34 @@ class Hub:
 
     async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                 incarnation: str | None = None) -> None:
+        """One runner message, once (#1143).
+
+        Within one connection the messages are handled in order, but the old and the new connection of a runner can both
+        be handling the same outbox row while it is still being committed: the resend passed the `runner_seen` check
+        before the first copy's commit, and both stored it. The row being handled is noted here before the first await.
+        A second copy WAITS for the first to finish (it must not return at once: the new connection would go on to the
+        next seq, commit its cursor first, and the first copy's event would then be dropped as "already seen"); when the
+        first is done the copy takes the ordinary path, which finds the seq stored, acks it and returns. If the first
+        one failed or was cancelled the copy processes the row itself. The store refuses a seq it already holds as the
+        last guard."""
+        seq = msg.get("runner_seq") if isinstance(msg, dict) else None
+        if seq is None:
+            return await self._on_runner_message(runner_id, msg, ws, incarnation)
+        if not hasattr(self, "runner_seq_inflight"):
+            self.runner_seq_inflight = {}
+        key = (runner_id, incarnation, seq)
+        while key in self.runner_seq_inflight:
+            await asyncio.wait([self.runner_seq_inflight[key]])  # returns when it is done, whatever the outcome
+        done = asyncio.get_running_loop().create_future()
+        self.runner_seq_inflight[key] = done
+        try:
+            await self._on_runner_message(runner_id, msg, ws, incarnation)
+        finally:
+            self.runner_seq_inflight.pop(key, None)
+            done.set_result(None)
+
+    async def _on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
+                                 incarnation: str | None = None) -> None:
         pipeline_event = None
         if ws is not None and (self.runners.get(runner_id) is not ws or
                                self.runner_incarnations.get(runner_id) != incarnation):
@@ -3594,6 +3690,7 @@ class Hub:
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
             return
         typ = msg.get("type")
+        activity_update = None
         # Keep current staff activity in the task ledger: the 200-event snapshot window
         # can evict a tool start while a quiet command is still running.
         if typ in {"agent.status", "agent.tool", "agent.tool_result", "agent.log"}:
@@ -3642,7 +3739,8 @@ class Hub:
                             activity.pop("external_wait", None)
                     return activity
 
-                await self.store.aupdate_task_activity(tid, update_activity)
+                # The activity is saved with this message's event in one transaction (#1132): the final publish below.
+                activity_update = (tid, update_activity)
         if typ == "runner.roster":
             self.set_roster(runner_id, msg.get("agents", []), msg.get("capabilities"))
             await self.publish({"type": "roster.updated", "ts": time.time(), "data": {"agents": list(self.agents.values())}})
@@ -3894,7 +3992,10 @@ class Hub:
         if entry and entry.get("count"):
             entry["count"] -= 1
         if typ != "agent.control" or not msg.get("task_id"):
-            await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
+            # Only a message that carries task activity passes the argument: a publish that wraps this one with the
+            # older signature (a test double, a decorator) keeps working for every other message.
+            carried = {} if activity_update is None else {"activity": activity_update}
+            await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq, **carried)
         if pipeline_event is not None:
             await self.publish(pipeline_event)
         if runner_seq is not None:
@@ -4512,6 +4613,12 @@ class Hub:
                 nonlocal saved
                 await self._add_approval(approval.id, {"approval": approval.model_dump(mode="json"),
                                                       "origin": None, "future": fut})
+                if not is_active_request(req_state.get("status")) or req_state.get("cancelling"):
+                    # The request was cancelled or ended while the card was being stored (a slow write): it must not
+                    # come back to life as waiting, nor keep a card for a request that is over (#1148).
+                    saved = {"status": "cancelled", "approval_id": approval.id}  # kept in this call only
+                    await self.close_approval(approval.id, "request cancelled")
+                    return
                 saved = {"status": "waiting", "approval_id": approval.id,
                          "proposal": {key: proposal[key] for key in
                                       ("fix_id", "signature_id", "action", "execution", "import_name", "package",
@@ -4520,6 +4627,13 @@ class Hub:
                 fixes[step_id] = saved
                 req_state["status"] = "waiting_facilities_fix"
                 await self.asave_request(rid)
+                if (approval.id not in self.approvals or not is_active_request(req_state.get("status"))
+                        or req_state.get("cancelling")):
+                    # A cancel closed the card (and published approval.expired) while the request was being saved:
+                    # announcing it now would put a card back in the page after it was withdrawn. Checked in the same
+                    # synchronous stretch as the publish call, so a cancel that comes later publishes expired after
+                    # this requested (#1148 review).
+                    return
                 await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
                                     "data": approval.model_dump(mode="json")})
             _, cancelled = await self._publication_write(open_fix())
@@ -4854,7 +4968,7 @@ class Hub:
         return True
 
     async def cancel_request(self, rid: str, *, active_only: bool = False,
-                             expected_created_at: float | None = None) -> dict:
+                             expected_created_at: float | None = None, reason: str | None = None) -> dict:
         """Stop a request for good (R13) and report what it finished.
 
         Its orchestration stops (no retry, re-plan or card after this), every live task gets a cancel on its
@@ -4879,8 +4993,12 @@ class Hub:
             raise ValueError(f"이미 끝난 요청입니다({status})")
         self._restore_unstarted_continuation(rid, req)
         now = time.time()
-        req.update(status="cancelled", outcome="cancelled", error="PI가 요청을 취소했습니다", cancelled_at=now,
-                   finished_at=now)
+        req.update(status="cancelled", outcome="cancelled",
+                   error=("요청 전체 시간 상한에 닿아 취소했습니다" if reason == "request_deadline"
+                          else "PI가 요청을 취소했습니다"),
+                   cancelled_at=now, finished_at=now)
+        if reason:
+            req["cancel_reason"] = reason
         req.pop("pi_waits", None)
         req.pop("runner_waits", None)
         quota = req.pop("quota_waits", None) or {}
@@ -4933,7 +5051,9 @@ class Hub:
                 await self.login_recovered(engine, reason="request cancelled")
             if unwinding:
                 await asyncio.wait(unwinding, timeout=5)  # let them unwind before the terminal record
-            await self._await_cancelled_results(rid, cancelled)
+            silent = await self._await_cancelled_results(rid, cancelled)
+            if reason == "request_deadline":
+                req["deadline_receipt"] = self._deadline_receipt(req, now, cancelled, silent)
             await self._afinish_cancel(rid)
             return {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": cancelled}
 
@@ -4941,6 +5061,81 @@ class Hub:
         if cancelled:
             raise asyncio.CancelledError
         return result
+
+    def _new_wall_clock(self, created_at: float) -> dict[str, Any]:
+        """The request's time limit as it was when the request was accepted (#877): a later config edit does not
+        change it. ``limit_s`` 0 means off; ``held_s`` is the time spent in waiting_pi, which moves the deadline."""
+        limit = int(self.s.orchestrator.request_wall_clock_s or 0)
+        return {"enabled": bool(limit), "limit_s": limit, "held_s": 0.0,
+                "deadline_at": created_at + limit if limit else None}
+
+    @staticmethod
+    def _deadline_receipt(req: dict, fired_at: float, cancelled: list[str], unreported: list[str]) -> dict[str, Any]:
+        """What the deadline did. A turn that reported its result after the cancel has ended (the runner ends the
+        process tree before it reports); one that did not report is "unconfirmed", never assumed stopped."""
+        clock = req.get("wall_clock") or {}
+        if not cancelled:
+            termination = "no_running_tasks"
+        elif unreported:
+            termination = "unconfirmed"
+        else:
+            termination = "confirmed"
+        return {"limit_s": clock.get("limit_s"), "held_s": clock.get("held_s"), "deadline_at": clock.get("deadline_at"),
+                "fired_at": fired_at, "cancelled_tasks": list(cancelled), "unconfirmed_tasks": list(unreported),
+                "termination": termination}
+
+    async def enforce_request_deadlines(self, now: float | None = None) -> list[str]:
+        """Cancel the open requests whose wall-clock limit has passed and return their ids (#877).
+
+        Only an active request is cut: review_pending and later never are (the PI is reviewing, no staff runs), an
+        interrupted one is looked at again once it resumes. Time in waiting_pi is added to the deadline from the
+        moment the request entered it (``pi_since``), so the 15 s look interval does not decide the amount. A restart
+        keeps the same ``created_at`` and the held time already recorded; the time the gateway was down is not
+        subtracted, and a waiting_pi interval a restart left open is not added."""
+        now = time.time() if now is None else now
+        fired: list[str] = []
+        for rid, req in list(self.requests.items()):
+            clock = req.get("wall_clock")
+            if not isinstance(clock, dict) or not clock.get("limit_s"):
+                continue
+            if not is_active_request(req.get("status")):
+                continue
+            created_at = float(req.get("created_at") or now)
+            if req.get("status") == "waiting_pi":
+                if clock.get("pi_since") is None:  # entered without going through the hold bookkeeping
+                    clock["pi_since"] = now
+                    self.save_request(rid)
+                open_wait = max(0.0, now - float(clock["pi_since"]))
+            else:
+                open_wait = 0.0
+                if clock.pop("pi_since", None) is not None:
+                    self.save_request(rid)  # an interval a restart left open is not added
+            if now < created_at + float(clock["limit_s"]) + float(clock.get("held_s") or 0.0) + open_wait:
+                continue
+            try:
+                await self.cancel_request(rid, active_only=True, expected_created_at=req.get("created_at"),
+                                          reason="request_deadline")
+            except ValueError:
+                continue  # it ended or changed under the watch
+            except Exception:
+                log.exception("request deadline cancel failed for %s", rid)
+                continue
+            fired.append(rid)
+        return fired
+
+    def start_deadline_watch(self) -> None:
+        if self._deadline_task is None or self._deadline_task.done():
+            self._deadline_task = asyncio.get_running_loop().create_task(self._deadline_loop())
+
+    async def _deadline_loop(self) -> None:
+        while not self.stopping:
+            try:
+                await self.enforce_request_deadlines()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("request deadline watch failed")
+            await asyncio.sleep(self.request_deadline_tick_s)
 
     def _finish_cancel(self, rid: str) -> None:
         """Write a cancelled request's report and terminal record. ``cancelling`` leaves in that same commit."""
@@ -5026,14 +5221,18 @@ class Hub:
         finished = []
         for rid, req in list(self.requests.items()):
             if req.get("status") == "cancelled" and req.get("cancelling") is not None:
-                await self._await_cancelled_results(rid, list(req.get("cancelled_tasks") or []), wait_s=0)
+                cancelled = list(req.get("cancelled_tasks") or [])
+                unreported = await self._await_cancelled_results(rid, cancelled, wait_s=0)
+                if req.get("cancel_reason") == "request_deadline" and "deadline_receipt" not in req:
+                    req["deadline_receipt"] = self._deadline_receipt(
+                        req, float(req.get("cancelled_at") or time.time()), cancelled, unreported)
                 await self._afinish_cancel(rid)
                 finished.append(rid)
         return finished
 
-    async def _await_cancelled_results(self, rid: str, cancelled: list[str], wait_s: float | None = None) -> None:
+    async def _await_cancelled_results(self, rid: str, cancelled: list[str], wait_s: float | None = None) -> list[str]:
         """Give each cancelled turn a short time to report, so its cost is counted; a turn that does not report is
-        counted as unaccounted, never as $0 (#270)."""
+        counted as unaccounted, never as $0 (#270). Returns the turns that did not report."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + (self.cancel_result_wait_s if wait_s is None else wait_s)
         def silent() -> list[str]:
@@ -5042,12 +5241,14 @@ class Hub:
                             not (self.store.get("task", tid) or {}).get("abandoned"))]
         while silent() and loop.time() < deadline:
             await asyncio.sleep(0.05)
-        for tid in silent():
+        unreported = silent()
+        for tid in unreported:
             entry = self.store.get("task", tid) or {}
             agent_id = (entry.get("payload") or {}).get("agent_id") or "unknown"
             (await self._arecord_task_cost(rid, tid, TaskResult(task_id=tid, agent_id=agent_id, ok=False,
                                                         error="request cancelled before the turn reported"),
                                    outcome_unknown=True))
+        return unreported
 
     @staticmethod
     def _cancel_report(req: dict, cancelled: list[str], quota: dict) -> tuple[str, str]:
@@ -5072,9 +5273,14 @@ class Hub:
                 rows.append(f"- {sid}{who}: 실패 — {short(str(outcome.get('error') or '원인 미기록'), 200)}")
         done = sum(1 for outcome in results.values() if isinstance(outcome, dict) and outcome.get("ok"))
         total = len(steps) or len(results)
+        if req.get("cancel_reason") == "request_deadline":  # the wall-clock limit (#877), not a decision of the PI
+            minutes = round(float((req.get("wall_clock") or {}).get("limit_s") or 0) / 60, 1)
+            who = f"요청 전체 시간 상한({minutes:g}분)에 닿아 labhq가"
+        else:
+            who = "PI가"
         report = "\n".join([
             "## 결론과 권고",
-            f"PI가 {when}에 이 요청을 취소했습니다. 진행 중이던 작업 {len(cancelled)}개에 중단을 보냈고 남은 단계는 "
+            f"{who} {when}에 이 요청을 취소했습니다. 진행 중이던 작업 {len(cancelled)}개에 중단을 보냈고 남은 단계는 "
             "실행하지 않았습니다. 이어서 하려면 새 요청을 보내세요.", "",
             "## 결과",
             f"끝난 단계 {done}개 / 전체 {total}개" if total else "끝난 단계가 없습니다.",
@@ -5096,7 +5302,9 @@ class Hub:
             allowed = ", ".join(self.s.orchestrator.cso_models) or "(none)"
             raise ValueError(f"cso_model {body.cso_model!r} is not allowed; allowed models: {allowed}")
         rid = new_id("req")
-        req = {"id": rid, "status": "running", "created_at": time.time(),
+        created_at = time.time()
+        req = {"id": rid, "status": "running", "created_at": created_at,
+               "wall_clock": self._new_wall_clock(created_at),
                "cost_known": True, "usage": {}, **body.model_dump(),
                # The budget the PI asked for; budget_usd may later rise on a budget card (a CP1 수정 요청 carries this).
                "requested_budget_usd": body.budget_usd, **(extra or {})}
@@ -5141,7 +5349,9 @@ class Hub:
             allowed = ", ".join(self.s.orchestrator.cso_models) or "(none)"
             raise ValueError(f"cso_model {body.cso_model!r} is not allowed; allowed models: {allowed}")
         rid = new_id("req")
-        req = {"id": rid, "status": "running", "created_at": time.time(),
+        created_at = time.time()
+        req = {"id": rid, "status": "running", "created_at": created_at,
+               "wall_clock": self._new_wall_clock(created_at),
                "cost_known": True, "usage": {}, **body.model_dump(),
                # The budget the PI asked for; budget_usd may later rise on a budget card (a CP1 수정 요청 carries this).
                "requested_budget_usd": body.budget_usd, **(extra or {})}
@@ -5226,12 +5436,26 @@ class Hub:
             asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
         return new_rid
 
+    def _revise_lock(self, rid: str) -> asyncio.Lock:
+        if not hasattr(self, "revise_locks"):
+            self.revise_locks = {}
+        return self.revise_locks.setdefault(rid, asyncio.Lock())
+
     async def acreate_revised_request(self, rid: str, note: str) -> str:
         """CP1 수정 요청: a new research request with the PI's note, the previous plan to revise (``revision_of``), the
         answers and PI notes already given, the same references, project, requested budget and CSO model. It plans again
         from the note and asks a new CP1; the old request ends (no step ran). Everything the new request reads is in
         its first save, and a request already opened for ``rid`` is returned, so a restart never opens a second one.
-        Raises what create_request raises (a removed project or CSO model, a reference no longer allowed)."""
+        Raises what create_request raises (a removed project or CSO model, a reference no longer allowed).
+
+        One call at a time per request (#1140): the check for an already opened request is made here, but the new request
+        is registered by a task the write wrapper starts, so two calls ready in the same loop turn used to both pass the
+        check and open a revised request each (double cost). The second now waits and returns the first's request."""
+        async with self._revise_lock(rid):
+            return await self._acreate_revised_request(rid, note)
+
+    async def _acreate_revised_request(self, rid: str, note: str) -> str:
+        """The body of acreate_revised_request, run under its per-request lock."""
         old = self.requests[rid]
         existing = self.revised_request_of(rid)
         if existing:
@@ -5360,7 +5584,7 @@ class Hub:
         r = self.requests[rid]
         await self.publish({"type": "request.created", "ts": time.time(), "request_id": rid,
                             "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id", "references",
-                                                           "route")}})
+                                                           "route", "wall_clock")}})
         # The plan reads the roster before its first dispatch, so wait for the first agent's runner here (R15).
         first = r.get("agent_id") if r.get("mode") == "direct" else self.s.orchestrator.cso_agent
         probe = Task(agent_id=str(first or ""), request_id=rid, prompt="")
@@ -5426,7 +5650,8 @@ class Hub:
                                                                   "cost_summary", "usage", "usage_known", "agent_id",
                                                                   "references", "pi_notes", "route", "route_decision",
                                                                   "bundle_path", "bundle_status", "bundle_grade",
-                                                                  "bundle_grade_reasons", "bundle_warning", "result_storage")},
+                                                                  "bundle_grade_reasons", "bundle_warning", "result_storage",
+                                                                  "wall_clock")},
                           "runner_waits": r.get("runner_waits") or {},
                           **({"semantic_devices": r["semantic_devices"]} if r.get("semantic_devices") else {}),
                           # the full list and full answers stay on the request (GET /api/requests/{id})
@@ -5684,6 +5909,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         hub.demo_status = {"phase": "starting", "remaining_s": 0}
     app = FastAPI(title="labhq gateway", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.hub = hub
+    idempotent = idempotent_routes(hub.idempotency)
     shutdown = WebShutdown(settings, hub)
     app.state.shutdown = shutdown
 
@@ -5710,6 +5936,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         hub.knowledge.start()
         hub.recover_terminal_deliveries()
         await hub.finish_interrupted_cancels()
+        hub.start_deadline_watch()
         for rid, req in hub.requests.items():
             if (req.get("status") == "interrupted" or req.get("revised_to")
                     or (req.get("status") == "failed" and not req.get("pi_reviewed_at"))):
@@ -5728,6 +5955,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
         hub.stopping = True
+        if hub._deadline_task is not None:
+            hub._deadline_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await hub._deadline_task
         await hub.pi_interpreter.close()
         for timer in hub.final_review_timers.values():
             timer.cancel()
@@ -5842,6 +6073,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return list(hub.agents.values())
 
     @app.post("/api/requests", dependencies=[Depends(auth)])
+    @idempotent
     async def create_request(body: RequestIn) -> dict:
         if body.mode == "direct" and not hub.knows_agent(body.agent_id):
             raise HTTPException(404, f"unknown agent {body.agent_id!r}")
@@ -5853,6 +6085,21 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(404, str(e))
         except ValueError as e:  # a reference outside the runner's roots or in a restricted zone
             raise HTTPException(422, str(e))
+
+    @app.get("/api/paper-skills", dependencies=[Depends(auth)])
+    async def paper_skills_history() -> dict:
+        """Built paper skills with the requests that selected them (#660): read-only, from the newest stored requests."""
+        from ..recruit.paper_skills import (API_USES_PER_SKILL, HISTORY_REQUEST_LIMIT, history_rows, skill_history,
+                                            skill_origins)
+
+        rows, truncated = history_rows(hub.requests)
+        # The first build may be older than the newest requests the history reads, so it is looked up in all of them.
+        origins = skill_origins(history_rows(hub.requests, everything=True)[0])
+        skills = [{"paper_id": pid, "skill_sha256": digest, "use_count": len(uses), "uses": uses[:API_USES_PER_SKILL],
+                   "first_built": origins.get((pid, digest))}
+                  for (pid, digest), uses in sorted(skill_history(rows).items())]
+        return {"basis": {"limit": HISTORY_REQUEST_LIMIT, "scanned": len(rows), "truncated": truncated},
+                "skills": skills}
 
     @app.get("/api/requests", dependencies=[Depends(auth)])
     async def list_requests(status: str = "running", limit: int = 20) -> list[dict]:
@@ -5881,6 +6128,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return [p.model_dump(exclude={"local_dir"}) for p in settings.projects]
 
     @app.post("/api/projects/{pid}/prs/{number}/codex-review", dependencies=[Depends(auth)])
+    @idempotent
     async def codex_review(pid: str, number: int, body: CodexReviewIn) -> dict:
         proj = settings.project(pid)
         gh = hub.reporter.client()
@@ -6015,10 +6263,13 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     async def get_request(rid: str) -> dict:
         if rid not in hub.requests:
             raise HTTPException(404)
-        from ..recruit.paper_skills import literature_view
+        from ..recruit.paper_skills import history_rows, literature_view, skill_history, with_previous_uses
 
-        # The fox's paper list (#660) is derived from this stored record only; the record itself is unchanged.
-        return {**hub.requests[rid], "paper_literature": literature_view(hub.requests[rid])}
+        # The fox's paper list (#660) is derived from stored records only; the record itself is unchanged. The other
+        # requests' uses of each skill come from the most recent requests, and the view says how many were read.
+        rows, truncated = history_rows(hub.requests)
+        view = with_previous_uses(literature_view(hub.requests[rid]), skill_history(rows), rid, len(rows), truncated)
+        return {**hub.requests[rid], "paper_literature": view}
 
     @app.get("/api/requests/{rid}/audit-bundle", dependencies=[Depends(auth)])
     async def audit_bundle(rid: str) -> Response:
@@ -6199,6 +6450,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                                            for request_id, sid in released]}
 
     @app.post("/api/recruit", dependencies=[Depends(auth)])
+    @idempotent
     async def recruit(body: RecruitIn) -> dict:
         if not paper2agent.enabled(settings):
             raise HTTPException(403, "recruitment is disabled (recruit.enabled=false)")
@@ -6223,6 +6475,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return {"ok": True, "runner_id": rid}
 
     @app.post("/api/contracts/{agent_id}", dependencies=[Depends(auth)])
+    @idempotent
     async def contract(agent_id: str, body: ContractIn) -> dict:
         if body.action != "release" and not paper2agent.enabled(settings):
             raise HTTPException(403, "recruitment is disabled (recruit.enabled=false)")

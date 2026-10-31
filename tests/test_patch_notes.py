@@ -192,6 +192,49 @@ def test_generated_only_main_commits_do_not_count_toward_readme_limit(repo):
     assert pn.counted_main_commits(last, "main", repo) == 0
 
 
+def test_commits_that_only_touch_invisible_paths_do_not_count_toward_readme_limit(repo):
+    last = run(repo, "log", "-1", "--format=%H", "--", "README.md")
+    commit(repo, {"tests/test_x.py": "1\n", "docs/status/s.md": "s\n", "patch_notes/entries/e.yaml": "rows: []\n"}, "tests")
+    commit(repo, {"config/ci/a.json": "{}\n", ".github/workflows/w.yml": "x: 1\n", "scripts/ci_x.py": "1\n"}, "ci")
+    commit(repo, {"STATUS.md": "generated\n", "tests/test_y.py": "2\n"}, "tests and generated index")
+    assert pn.counted_main_commits(last, "main", repo) == 0
+
+
+def test_a_pr_that_only_changes_invisible_paths_passes_the_readme_limit(repo):
+    commit(repo, {"labhq/a.py": "1\n"}, "main product 1")
+    commit(repo, {"labhq/a.py": "2\n"}, "main product 2")
+    run(repo, "checkout", "-q", "-b", "feature")
+    change = commit(repo, {"tests/test_a.py": "1\n"}, "test only")
+    commit(repo, {"patch_notes/entries/feature.yaml": entry(change), "docs/status/s.md": "s\n"}, "패치노트")
+    assert pn.check("main", "HEAD", repo) == []
+
+
+def test_a_pr_that_changes_product_code_is_still_held_by_the_readme_limit(repo):
+    commit(repo, {"labhq/a.py": "1\n"}, "main product 1")
+    commit(repo, {"labhq/a.py": "2\n"}, "main product 2")
+    run(repo, "checkout", "-q", "-b", "feature")
+    change = commit(repo, {"labhq/b.py": "1\n", "tests/test_b.py": "1\n"}, "product and test")
+    commit(repo, {"patch_notes/entries/feature.yaml": entry(change)}, "패치노트")
+    assert any("를 안 고친 커밋이 2개" in problem for problem in pn.check("main", "HEAD", repo))
+
+
+def test_moving_a_product_file_into_an_invisible_path_still_counts(repo):
+    commit(repo, {"labhq/a.py": "product code that a rename keeps byte for byte\n" * 5}, "add product file")
+    last = run(repo, "log", "-1", "--format=%H", "--", "README.md")
+    (repo / "tests").mkdir(exist_ok=True)
+    run(repo, "mv", "labhq/a.py", "tests/a.py")  # git detects this as a rename: only the destination is "tests/"
+    run(repo, "commit", "-q", "-m", "move product file into tests")
+    assert pn.counted_main_commits(last, "main", repo) == 2  # the add and the move both change what a user sees
+
+
+def test_a_commit_mixing_product_code_with_tests_still_counts(repo):
+    last = run(repo, "log", "-1", "--format=%H", "--", "README.md")
+    commit(repo, {"labhq/a.py": "1\n", "tests/test_a.py": "1\n"}, "product and test")
+    commit(repo, {"agents/x.yaml": "a: 1\n"}, "agent definition")
+    commit(repo, {"scripts/other.py": "1\n"}, "other script")  # only scripts/ci_* is invisible
+    assert pn.counted_main_commits(last, "main", repo) == 3
+
+
 def test_an_all_digit_sha_read_as_a_yaml_integer_is_named(repo):
     # PR #410: a hand-written row `sha: 7999708` loads as an int; the check names that, not a missing commit.
     run(repo, "checkout", "-q", "-b", "feature")
