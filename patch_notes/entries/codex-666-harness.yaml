@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '6bfb1b4'
+    at: '2026-11-01 02:52'
+    summary: '합성 진단의 실행 결과와 별도 관측을 연결해 검사합니다.'
+    text: 'Connect offline producer and observer fixture contracts'
   - sha: 'e6bb9d1'
     at: '2026-10-31 12:24'
     summary: '합성 진단 worker에서 host 환경을 분리합니다.'
