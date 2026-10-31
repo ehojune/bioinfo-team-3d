@@ -9,7 +9,10 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
+import signal
+import uuid
 from pathlib import Path
 
 
@@ -45,10 +48,11 @@ def fake_upstream(body, secret):
     return secret if body == b"reflect" else b"ok"
 
 
-def run(boundary_path: Path, broker_path: Path, broker_kind="synthetic", expected_boundary=None, expected_broker=None):
+def _run(boundary_path: Path, broker_path: Path, broker_kind="synthetic", expected_boundary=None, expected_broker=None):
     result = {"scope": "synthetic_unsealed_diagnostic", "protection_verified": False,
               "status": "inconclusive"}
     witness = {}
+    nonce = str(uuid.uuid4())
     paths = {"boundary": boundary_path, "broker": broker_path}
     expected = {"boundary": expected_boundary, "broker": expected_broker}
     before = {}
@@ -103,7 +107,7 @@ def run(boundary_path: Path, broker_path: Path, broker_kind="synthetic", expecte
             expected = acknowledgement if broker_kind == "process" else rejection
             witness["literal_reflection_control"] = request(path, frame(run_id, b"reflect")) == expected
 
-        receipt = boundary.diagnostic_broker_probe(factory, on_ready=ready).to_dict()
+        receipt = boundary.diagnostic_broker_probe(factory, on_ready=ready, run_id=nonce).to_dict()
         path = witness.pop("path", None)
         if path is not None:
             try:
@@ -118,7 +122,7 @@ def run(boundary_path: Path, broker_path: Path, broker_kind="synthetic", expecte
             "preparation": "diagnostic_ready", "launch": "exited_0",
             "cleanup": "broker_closed_socket_absent; descendants_unverified",
             "seal_status": "unsealed"}.items()}
-        result["run_id_matches"] = witness.get("run_id") == receipt.get("run_id") and bool(witness.get("run_id"))
+        result["run_id_matches"] = witness.get("run_id") == nonce == receipt.get("run_id")
         result["broker_kind"] = broker_kind
         checks = ("allowed", "wrong_run_rejected", "extra_destination_rejected",
                   "literal_reflection_control", "reconnect_rejected")
@@ -155,6 +159,46 @@ def run(boundary_path: Path, broker_path: Path, broker_kind="synthetic", expecte
     return result
 
 
+def run(boundary_path: Path, broker_path: Path, broker_kind="synthetic", expected_boundary=None, expected_broker=None, timeout=30):
+    """Bound the entire diagnostic, including imports, startup and cleanup."""
+    args = [sys.executable, str(Path(__file__).resolve()), "--worker",
+            "--boundary-module", str(boundary_path.resolve()), "--broker-module", str(broker_path.resolve()),
+            "--broker-kind", broker_kind]
+    for option, value in (("--expected-boundary-sha256", expected_boundary), ("--expected-broker-sha256", expected_broker)):
+        if value is not None:
+            args.extend((option, value))
+    options = {"start_new_session": True} if os.name != "nt" else {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **options)
+    try:
+        output, _ = process.communicate(timeout=timeout)
+        if process.returncode != 0:
+            raise ValueError("worker failed")
+        return json.loads(output)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            try:
+                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=5, check=False)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=5)
+        return {"scope": "synthetic_unsealed_diagnostic", "status": "inconclusive",
+                "protection_verified": False, "reason": "diagnostic deadline exceeded",
+                "worker_terminated": process.poll() is not None, "descendants_terminated": "unverified"}
+    except (ValueError, json.JSONDecodeError):
+        return {"scope": "synthetic_unsealed_diagnostic", "status": "inconclusive",
+                "protection_verified": False, "reason": "diagnostic worker failed"}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--boundary-module", type=Path, required=True)
@@ -162,8 +206,10 @@ def main():
     parser.add_argument("--broker-kind", choices=("synthetic", "process"), default="synthetic")
     parser.add_argument("--expected-boundary-sha256")
     parser.add_argument("--expected-broker-sha256")
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    print(json.dumps(run(args.boundary_module, args.broker_module, args.broker_kind,
+    execute = _run if args.worker else run
+    print(json.dumps(execute(args.boundary_module, args.broker_module, args.broker_kind,
                          args.expected_boundary_sha256, args.expected_broker_sha256), sort_keys=True))
 
 

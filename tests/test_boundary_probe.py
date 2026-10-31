@@ -187,12 +187,12 @@ def test_integration_receipt_without_ready_witness_is_inconclusive(monkeypatch, 
 
     class Boundary:
         @staticmethod
-        def diagnostic_broker_probe(factory, on_ready):
+        def diagnostic_broker_probe(factory, on_ready, run_id):
             called.append(True)
             return Receipt()  # A receipt alone is not a socket witness.
 
     monkeypatch.setattr(integration_probe, "load", lambda *args: Boundary())
-    result = integration_probe.run(tmp_path / "boundary.py", tmp_path / "broker.py")
+    result = integration_probe._run(tmp_path / "boundary.py", tmp_path / "broker.py")
     assert called == [True]
     assert result["run_id_matches"] is False
     assert result["status"] == "inconclusive"
@@ -207,11 +207,11 @@ def test_integration_source_mismatch_and_mutation(monkeypatch, tmp_path):
 
     class Boundary:
         @staticmethod
-        def diagnostic_broker_probe(factory, on_ready):
+        def diagnostic_broker_probe(factory, on_ready, run_id):
             boundary.write_text("after")
             raise ValueError("fixture")
     monkeypatch.setattr(integration_probe, "load", lambda *args: Boundary())
-    result = integration_probe.run(boundary, broker)
+    result = integration_probe._run(boundary, broker)
     assert result["status"] == "inconclusive"
     assert result["reason"] == "source changed during diagnostic"
     assert result["sources"]["boundary"]["before"] != result["sources"]["boundary"]["after"]
@@ -239,6 +239,7 @@ def test_process_broker_cache_prevents_pass(tmp_path):
 
 
 def test_malformed_frames_require_rejection_and_live_listener(monkeypatch, tmp_path):
+    monkeypatch.setattr(integration_probe.uuid, "uuid4", lambda: "r")
     boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"
     boundary.write_text("boundary")
     broker.write_text("broker")
@@ -248,7 +249,7 @@ def test_malformed_frames_require_rejection_and_live_listener(monkeypatch, tmp_p
                     "cleanup": "broker_closed_socket_absent; descendants_unverified", "seal_status": "unsealed"}
     class Boundary:
         @staticmethod
-        def diagnostic_broker_probe(factory, on_ready):
+        def diagnostic_broker_probe(factory, on_ready, run_id):
             on_ready("r", "absent-fixture.sock")
             return Receipt()
     monkeypatch.setattr(integration_probe, "load", lambda *args: Boundary())
@@ -261,11 +262,11 @@ def test_malformed_frames_require_rejection_and_live_listener(monkeypatch, tmp_p
         def connect(self, path): raise OSError("closed")
     monkeypatch.setattr(integration_probe.socket, "socket", lambda *args: ClosedSocket())
     monkeypatch.setattr(integration_probe.socket, "AF_UNIX", 1, raising=False)
-    result = integration_probe.run(boundary, broker)
+    result = integration_probe._run(boundary, broker)
     assert result["status"] == "pass", result
     assert len(result["witness"]["malformed"]) == 5
     monkeypatch.setattr(integration_probe, "request_raw", lambda path, data: b'{"body":"b2s="}\n')
-    assert integration_probe.run(boundary, broker)["status"] == "inconclusive"
+    assert integration_probe._run(boundary, broker)["status"] == "inconclusive"
 
 
 def test_unreadable_fixture_metadata_is_not_a_denial(tmp_path):
@@ -361,6 +362,7 @@ def mock_diagnostic(monkeypatch, tmp_path):
     broker.write_text("broker", encoding="ascii")
     state = {"receipt_run": "run-a", "ready_run": "run-a", "cleanup":
              "broker_closed_socket_absent; descendants_unverified", "fault": None}
+    monkeypatch.setattr(integration_probe.uuid, "uuid4", lambda: "run-a")
 
     class Receipt:
         def to_dict(self):
@@ -369,7 +371,8 @@ def mock_diagnostic(monkeypatch, tmp_path):
 
     class Boundary:
         @staticmethod
-        def diagnostic_broker_probe(factory, on_ready):
+        def diagnostic_broker_probe(factory, on_ready, run_id):
+            assert run_id == "run-a"
             if state["fault"] == "observer_death":
                 raise RuntimeError("observer unavailable")
             if state["fault"] != "missing_ready":
@@ -396,7 +399,7 @@ def mock_diagnostic(monkeypatch, tmp_path):
     monkeypatch.setattr(integration_probe, "request_raw", lambda *args: b'{"error":"request rejected"}\n')
     monkeypatch.setattr(integration_probe.socket, "socket", lambda *args: ClosedSocket())
     monkeypatch.setattr(integration_probe.socket, "AF_UNIX", 1, raising=False)
-    return state, lambda: integration_probe.run(boundary, broker)
+    return state, lambda: integration_probe._run(boundary, broker)
 
 
 def test_mock_diagnostic_positive_is_unsealed_only(mock_diagnostic):
@@ -406,6 +409,30 @@ def test_mock_diagnostic_positive_is_unsealed_only(mock_diagnostic):
     assert result["scope"] == "synthetic_unsealed_diagnostic"
     assert result["protection_verified"] is False
     assert result["receipt"]["cleanup"] is True  # explicitly descendants_unverified
+
+
+def test_matching_replayed_ready_and_receipt_rejected(mock_diagnostic):
+    state, run = mock_diagnostic
+    state.update(ready_run="old-run", receipt_run="old-run")
+    assert run()["status"] == "inconclusive"
+
+
+@pytest.mark.parametrize("phase", ["startup", "cleanup"])
+def test_entire_diagnostic_deadline_terminates_worker(tmp_path, phase):
+    boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"
+    broker.write_text("pass\n")
+    boundary.write_text(
+        "import time\n"
+        "def diagnostic_broker_probe(factory, on_ready, run_id):\n"
+        + ("    try: on_ready(run_id, 'missing.sock')\n    except Exception: pass\n" if phase == "cleanup" else "")
+        + "    time.sleep(60)\n")
+    started = time.monotonic()
+    result = integration_probe.run(boundary, broker, timeout=1)
+    assert time.monotonic() - started < 10
+    assert result["reason"] == "diagnostic deadline exceeded"
+    assert result["worker_terminated"] is True
+    assert result["descendants_terminated"] == "unverified"
+    assert result["status"] == "inconclusive"
 
 
 @pytest.mark.parametrize("change", [
