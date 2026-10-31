@@ -1,0 +1,1334 @@
+"""Atlas mocks need no SDK, key files, service calls or model inference."""
+
+import asyncio
+import importlib
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+import time
+from types import SimpleNamespace as NS
+import uuid
+
+import httpx
+import pytest
+import uvicorn
+import yaml
+
+from labhq.adapters.base import RunContext
+from labhq.adapters.codex import CodexAdapter
+from labhq.models import AgentSpec, Engine, McpServerSpec, Task
+from labhq.runner.annot_broker import AnnotBroker, ENABLED_ENV, refuse_credential_copy
+from labhq.runner.approvals import Broker
+from labhq.settings import Settings, write_staff_config
+from labhq.tools import annot_alphagenome_atlas as atlas
+from labhq.tools import annot_regulatory as reg
+from labhq.tools.annot import LookupFailed
+
+
+@pytest.mark.parametrize("source", ["parent", "engine", "task", "missing", "empty"])
+def test_codex_never_forwards_atlas_key(tmp_path, monkeypatch, source):
+    from labhq.adapters.base import RunContext
+    from labhq.adapters.codex import CodexAdapter
+    from labhq.models import AgentSpec, Engine, McpServerSpec, Task
+    from labhq.settings import Settings
+
+    secret = uuid.uuid4().hex
+    monkeypatch.delenv(atlas.KEY_ENV, raising=False)
+    settings = Settings()
+    task_env = {"LABHQ_TASK_ID": "atlas-mock"}
+    if source in ("parent", "empty"):
+        monkeypatch.setenv(atlas.KEY_ENV, secret if source == "parent" else "")
+    elif source == "engine":
+        settings.engines.codex.env[atlas.KEY_ENV] = secret
+    elif source == "task":
+        task_env[atlas.KEY_ENV] = secret
+    servers = [
+        McpServerSpec(name="labhq_annot", command="python",
+                      args=["-m", "labhq.tools.annot_mcp"],
+                      env={"LABHQ_TASK_ID": "atlas-mock"}, auto_approve=True),
+        McpServerSpec(name="other", command="python", env={"UNCHANGED": "literal"}),
+    ]
+    before = [s.model_dump() for s in servers]
+    ctx = RunContext(task=Task(agent_id="worker", prompt="go"),
+                     agent=AgentSpec(id="worker", name="Worker", role="test", engine=Engine.codex),
+                     workdir=tmp_path, settings=settings, mcp_servers=servers,
+                     env=task_env, emit=None, prompt="go")
+    adapter = CodexAdapter(settings)
+    adapter.prepare(ctx)
+    argv = adapter.build_command(ctx)
+    forwarded = next(v for v in argv if v.startswith("mcp_servers.labhq_annot.env_vars="))
+    names = json.loads(forwarded.split("=", 1)[1])
+    assert "LABHQ_TASK_ID" in names
+    assert atlas.KEY_ENV not in names
+    assert atlas.KEY_ENV not in adapter.staff_env(ctx)
+    assert secret not in json.dumps(adapter.staff_env(ctx))
+    assert all(atlas.KEY_ENV not in v for v in argv if v.startswith("mcp_servers.other."))
+    assert 'mcp_servers.other.env={UNCHANGED = "literal"}' in argv
+    assert [s.model_dump() for s in servers] == before
+    assert secret not in json.dumps(argv)
+    assert secret not in json.dumps([s.model_dump() for s in servers])
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            assert secret not in path.read_text(encoding="utf-8")
+
+
+class Frame:
+    def __init__(self, rows):
+        self.rows = rows
+        self.iloc = self
+
+    def __getitem__(self, index):
+        return NS(to_dict=lambda: self.rows[index])
+
+
+class Matrix:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def __getitem__(self, index):
+        i, j = index
+        return self.rows[i][j]
+
+
+def scores(raw=None, quantiles=None, gene="GENE1"):
+    raw = [[-2.0, 4.0]] if raw is None else raw
+    quantiles = [[-0.99, 0.7]] if quantiles is None else quantiles
+    return NS(n_obs=len(raw), n_vars=len(raw[0]), X=Matrix(raw),
+              layers={"quantiles": Matrix(quantiles)},
+              obs=Frame([{"gene_id": "ENSG00000000001", "gene_name": gene}] * len(raw)),
+              var=Frame([{"biosample_name": "liver", "ontology_curie": "UBERON:0002107"},
+                         {"biosample_name": "brain", "ontology_curie": "UBERON:0000955"}]))
+
+
+@pytest.fixture
+def factory(tmp_path, monkeypatch):
+    monkeypatch.delenv(atlas.KEY_ENV, raising=False)
+    clients = []
+
+    def create(data=None, error=None):
+        calls = []
+        secret = uuid.uuid4().hex
+
+        def metadata():
+            calls.append(("metadata",))
+            return {"RNA_SEQ": NS(is_signed=True), "AVI": NS(is_signed=False)}
+
+        def query(variant, **kwargs):
+            calls.append(("variant", variant, kwargs))
+            if error:
+                raise error(secret)
+            return {"RNA_SEQ": scores()} if data is None else data
+
+        client = NS(scorer_metadata=metadata, query_variant=query)
+
+        def connect(key, *, timeout):
+            assert key == secret and timeout == reg.AG_CONNECT_TIMEOUT_S
+            calls.append(("connect",))
+            return client
+
+        module = NS(create=connect, AtlasClient=NS(query_variant=query))
+        backend = atlas.AtlasBackend(secret, atlas=module, genome=NS(Variant=lambda **kw: NS(**kw)), version="0.10.0")
+        http = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail("unexpected HTTP")))
+        clients.append(http)
+        a = reg.RegulatoryAnnotator(http, tmp_path / "work", tmp_path / "cache", atlas=backend)
+        a.workdir.mkdir(exist_ok=True)
+        async def no_sleep(_):
+            pass
+        a.http.sleep = no_sleep
+        return a, backend, calls, secret
+
+    yield create
+    for client in clients:
+        asyncio.run(client.aclose())
+
+
+async def test_success_filters_summary_records_and_cache(factory, tmp_path):
+    a, backend, calls, secret = factory()
+    kwargs = dict(ontology_terms=["UBERON:0002107"], gene_ids=["ENSG00000000001"])
+    result = await a.alphagenome_atlas(["chr1:100:A>G", "1:100:A:G"], **kwargs)
+    assert result["n_ok"] == 2
+    hit = result["results"][0]
+    assert hit["n_rows"] == 1 and hit["top"][0]["raw_score"] == -2
+    assert "감소" in hit["summary_ko"] and "liver" in hit["summary_ko"]
+    assert result["source"]["kind"] == "precomputed_atlas"
+    assert result["source"]["dataset_release"] == "not exposed by Atlas SDK"
+    assert "Cheng" in result["source"]["citation"] and "비상업" in result["note"]
+    variants = [c for c in calls if c[0] == "variant"]
+    assert len(variants) == 1
+    assert variants[0][1].position == 100
+    assert variants[0][2] == dict(requested_scorers=["RNA_SEQ"], **kwargs)
+    second = await a.alphagenome_atlas(["chr1:100:A:G"], top=1, **kwargs)
+    assert second["n_cached"] == 1 and len(calls) == 3
+    assert (a.workdir / result["full_result"]).is_file()
+    ledger = (a.workdir / result["query_log"]).read_text(encoding="utf-8")
+    assert '"n_ok": 2' in ledger and "chr1" not in ledger
+    written = "".join(p.read_text(encoding="utf-8") for p in tmp_path.rglob("*.json*"))
+    assert secret not in written
+    backend.version = "0.10.1"
+    await a.alphagenome_atlas(["chr1:100:A:G"], **kwargs)
+    await a.alphagenome_atlas(["chr1:100:A:G"], ontology_terms=["UBERON:0000955"])
+    assert len([c for c in calls if c[0] == "variant"]) == 3
+
+
+async def test_env_only_missing_key_and_unsupported_sdk(factory, monkeypatch):
+    from labhq.tools import annot_keys
+    monkeypatch.setattr(annot_keys, "read_key", lambda *a: pytest.fail("key file read"))
+    a, _, calls, _ = factory()
+    a.atlas_backend = None
+    with pytest.raises(LookupFailed, match="키 없음"):
+        await a.alphagenome_atlas(["chr1:100:A:G"])
+    assert not calls
+    monkeypatch.setenv(atlas.KEY_ENV, uuid.uuid4().hex)
+    backend = atlas.AtlasBackend.from_env()
+    backend._atlas = NS(create=None)
+    a.atlas_backend = backend
+    with pytest.raises(LookupFailed, match="SDK 미지원"):
+        await a.alphagenome_atlas(["chr1:100:A:G"])
+    assert not calls
+
+
+@pytest.mark.parametrize("kwargs", [{"top": 101}, {"top": True}, {"assembly": "GRCh37"},
+    {"requested_scorers": []}, {"requested_scorers": ["RNA_SEQ"] * 11},
+    {"requested_scorers": ['RNA_SEQ" OR *']}, {"ontology_terms": ["bad"]},
+    {"ontology_terms": ["UBERON:1"] * 21}, {"gene_ids": ["BRCA1"]}])
+async def test_options_rejected_before_transport(factory, kwargs):
+    a, _, calls, _ = factory()
+    with pytest.raises(ValueError):
+        await a.alphagenome_atlas(["chr1:100:A:G"], **kwargs)
+    assert not calls
+
+
+@pytest.mark.parametrize("variants", [[], ["chr1:1:A:G"] * 11, {}, None])
+async def test_batch_bound_before_transport(factory, variants):
+    a, _, calls, _ = factory()
+    with pytest.raises(ValueError):
+        await a.alphagenome_atlas(variants)
+    assert not calls
+
+
+async def test_invalid_inputs_do_not_echo_secrets_or_call_inference(factory, tmp_path):
+    a, _, calls, secret = factory()
+    result = await a.alphagenome_atlas([secret, "chr1:2:AA:G", "chr1:2:A:A", "chr1:100:A:G"])
+    assert result["n_errors"] == 3 and result["n_ok"] == 1
+    assert len([c for c in calls if c[0] == "variant"]) == 1
+    assert secret not in json.dumps(result)
+    assert secret not in "".join(p.read_text(encoding="utf-8") for p in tmp_path.rglob("*.json*"))
+
+
+async def test_empty_is_not_no_effect_and_unsigned_has_no_direction(factory):
+    a, *_ = factory(data={})
+    result = await a.alphagenome_atlas(["chr1:100:A:G"])
+    assert result["n_ok"] == 1
+    assert not result["results"][0]["has_scores"]
+    assert "효과 없음" in result["results"][0]["summary_ko"]
+    a, *_ = factory(data={"AVI": scores()})
+    result = await a.alphagenome_atlas(["chr1:101:A:G"], requested_scorers=["AVI"])
+    assert "방향 미제공" in result["results"][0]["summary_ko"]
+
+
+@pytest.mark.parametrize("error,message,expected", [(PermissionError, "권한", 1),
+    (TimeoutError, "시간 초과", 1), (NotImplementedError, "지원", 1),
+    (RuntimeError, "조회 실패", 1), (ValueError, "미수록", 2), (IndexError, "미수록", 2)])
+async def test_errors_redacted_and_bounded(factory, error, message, expected, tmp_path, caplog, capsys):
+    a, _, calls, secret = factory(error=error)
+    result = await a.alphagenome_atlas(["chr1:100:A:G", "chr1:101:A:G"])
+    assert result["n_errors"] == 2 and message in result["results"][0]["error"]
+    assert len([c for c in calls if c[0] == "variant"]) == expected
+    captured = capsys.readouterr()
+    assert secret not in json.dumps(result) + caplog.text + captured.out + captured.err
+    assert secret not in "".join(p.read_text(encoding="utf-8") for p in tmp_path.rglob("*.json*"))
+
+
+@pytest.mark.parametrize("code,detail,expected", [
+    ("INVALID_ARGUMENT", "API key not valid. Please pass a valid API key.", 1),
+    ("INVALID_ARGUMENT", "API_KEY_INVALID", 1),
+    ("NOT_FOUND", "variant not found", 2),
+    ("INVALID_ARGUMENT", "unsupported scorer filter", 2),
+])
+async def test_sdk_value_error_distinguishes_key_failure(factory, tmp_path, code, detail, expected):
+    a, backend, calls, secret = factory()
+    class RpcError(Exception):
+        def code(self):
+            return NS(name=code)
+    def query(*args, **kwargs):
+        calls.append(("variant",))
+        raise ValueError(detail + " " + secret) from RpcError()
+    backend._client = NS(scorer_metadata=lambda: {"RNA_SEQ": NS(is_signed=True)}, query_variant=query)
+    result = await a.alphagenome_atlas(["chr1:100:A:G", "chr1:101:A:G"])
+    assert len(calls) == expected
+    assert ("권한" in result["results"][0]["error"]) == (expected == 1)
+    assert secret not in json.dumps(result)
+    assert secret not in "".join(p.read_text(encoding="utf-8") for p in tmp_path.rglob("*.json*"))
+
+
+async def test_cancelled_rpc_response_is_not_traversed(factory):
+    _, backend, _, _ = factory()
+    entered, release = threading.Event(), threading.Event()
+    traversed = []
+    class Response:
+        def items(self):
+            traversed.append(True)
+            return []
+    def rpc(*args, **kwargs):
+        entered.set()
+        release.wait(5)
+        return Response()
+    backend._metadata = {"RNA_SEQ": NS(is_signed=True)}
+    backend._client = NS(query_variant=rpc)
+    work = asyncio.create_task(asyncio.to_thread(backend.query,
+        reg._alphagenome_query("chr1:100:A:G", 1), ["RNA_SEQ"], [], []))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        backend.cancelled.set()
+        release.set()
+        with pytest.raises(reg.AlphaGenomeUnavailable):
+            await work
+        assert not traversed
+    finally:
+        release.set()
+        await asyncio.gather(work, return_exceptions=True)
+
+
+def test_cancellation_during_wide_response_stops_within_one_chunk(factory):
+    _, backend, _, _ = factory()
+    data = scores([[-1] * 1000], [[0.5] * 1000])
+    data.var = Frame([{"biosample_name": "fixture"}] * 1000)
+    visited = []
+    class CancellingMatrix:
+        def __getitem__(self, index):
+            visited.append(index)
+            backend.cancelled.set()
+            return -1
+    data.X = CancellingMatrix()
+    backend._metadata = {"RNA_SEQ": NS(is_signed=True)}
+    backend._client = NS(query_variant=lambda *a, **k: {"RNA_SEQ": data})
+    with pytest.raises(reg.AlphaGenomeUnavailable):
+        backend.query(reg._alphagenome_query("chr1:100:A:G", 1), ["RNA_SEQ"], [], [])
+    assert 1 <= len(visited) <= 128
+
+
+def test_installed_sdk_maps_invalid_key_to_value_error():
+    sdk = pytest.importorskip("alphagenome.atlas.atlas")
+    import grpc
+    class InvalidKey(grpc.RpcError, grpc.Call):
+        def code(self):
+            return grpc.StatusCode.INVALID_ARGUMENT
+        def details(self):
+            return "API key not valid. Please pass a valid API key."
+        def initial_metadata(self):
+            return ()
+        def trailing_metadata(self):
+            return ()
+        def is_active(self):
+            return False
+        def time_remaining(self):
+            return 0
+        def cancel(self):
+            return False
+        def add_callback(self, callback):
+            return False
+    with pytest.raises(ValueError) as caught:
+        with sdk.handle_rpc_error():
+            raise InvalidKey()
+    assert atlas._invalid_api_key(caught.value)
+
+
+async def test_unknown_scorer_and_response_bound(factory):
+    a, _, calls, _ = factory()
+    result = await a.alphagenome_atlas(["chr1:100:A:G"], requested_scorers=["NO_SUCH_SCORER"])
+    assert result["n_errors"] == 1 and not any(c[0] == "variant" for c in calls)
+    a, *_ = factory(data={"RNA_SEQ": NS(n_obs=1001, n_vars=1000)})
+    result = await a.alphagenome_atlas(["chr1:101:A:G"])
+    assert "상한" in result["results"][0]["error"]
+
+
+async def test_truncation_nonfinite_and_row_redaction(factory, tmp_path):
+    a, backend, calls, secret = factory()
+    data = scores([[-i, float("nan")] for i in range(600)],
+                  [[i / 600, float("inf")] for i in range(600)], gene=secret)
+    backend._atlas.create = lambda *a, **kw: NS(
+        scorer_metadata=lambda: {"RNA_SEQ": NS(is_signed=True)},
+        query_variant=lambda *a, **kw: {"RNA_SEQ": data})
+    result = await a.alphagenome_atlas(["chr1:100:A:G"], top=100)
+    hit = result["results"][0]
+    assert hit["n_rows"] == 1200 and hit["n_saved"] == 1000 and hit["truncated"]
+    assert len(hit["top"]) == 100 and hit["top"][0]["raw_score"] == -599
+    full = json.loads((a.workdir / result["full_result"]).read_text(encoding="utf-8"))
+    rows = full["results"][0]["answer"]["rows"]
+    assert rows[-1]["raw_score"] is None and rows[-1]["quantile_score"] is None
+    assert secret not in json.dumps(full) + json.dumps(result)
+
+
+async def test_track_measurement_and_gene_junction_identity_survive(factory):
+    data = scores()
+    data.obs = Frame([{"gene_id": "ENSG00000000001", "strand": "-",
+                       "junction_Start": 100, "junction_End": 200}])
+    data.var = Frame([{"name": "delta_psi5", "strand": "+"},
+                      {"name": "delta_psi3", "strand": "+"}])
+    a, *_ = factory(data={"RNA_SEQ": data})
+    result = await a.alphagenome_atlas(["chr1:100:A:G"])
+    rows = result["results"][0]["top"]
+    assert {row["track_metadata"]["name"] for row in rows} == {"delta_psi5", "delta_psi3"}
+    assert {row["track_index"] for row in rows} == {0, 1}
+    for row in rows:
+        assert row["gene_metadata"]["strand"] == "-"
+        assert row["track_metadata"]["strand"] == "+"
+        assert row["gene_metadata"]["junction_Start"] == 100
+        assert row["gene_metadata"]["junction_End"] == 200
+
+
+async def test_wait_timeout_stops_batch_without_late_records(factory, monkeypatch):
+    a, backend, calls, _ = factory()
+    release = threading.Event()
+    entered = threading.Event()
+    old_query = backend.query
+
+    def blocked(*args):
+        entered.set()
+        release.wait(2)
+        return old_query(*args)
+
+    monkeypatch.setattr(backend, "query", blocked)
+    monkeypatch.setattr(reg, "AG_TIMEOUT_S", 0.02)
+    try:
+        result = await a.alphagenome_atlas(["chr1:100:A:G", "chr1:101:A:G"])
+        assert entered.is_set() and result["n_errors"] == 2
+        before = sorted(a.workdir.rglob("*.json*"))
+    finally:
+        release.set()
+    await asyncio.sleep(0.05)
+    assert sorted(a.workdir.rglob("*.json*")) == before
+    assert not calls  # A timed-out worker must not start a new RPC after being released.
+
+
+async def test_cancel_during_metadata_never_starts_variant_rpc(factory):
+    a, backend, calls, _ = factory()
+    release, entered = threading.Event(), threading.Event()
+    def metadata():
+        entered.set()
+        release.wait(2)
+        return {"RNA_SEQ": NS(is_signed=True)}
+    backend._client = NS(scorer_metadata=metadata, query_variant=lambda *a, **kw: calls.append("unexpected"))
+    task = asyncio.create_task(a.alphagenome_atlas(["chr1:100:A:G"]))
+    try:
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert entered.is_set()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        release.set()
+    await asyncio.sleep(0.05)
+    assert not calls and not list(a.workdir.rglob("*.json*"))
+
+
+@pytest.mark.parametrize("parent,engine,present", [
+    (None, "fake-engine-key", True),
+    (None, None, False),
+    ("fake-parent-key", "", False),
+    ("fake-parent-key", "   ", False),
+    ("", "fake-engine-key", True),
+    ("fake-parent-key", None, True),
+    (None, "${ATLAS_TEST_KEY}", True),
+])
+@pytest.mark.parametrize("engine_name", ["codex", "claude_code"])
+def test_doctor_atlas_uses_agent_environment(monkeypatch, parent, engine, present, engine_name):
+    from labhq import doctor
+    from labhq.settings import Settings
+
+    monkeypatch.delenv(atlas.KEY_ENV, raising=False)
+    monkeypatch.setenv("ATLAS_TEST_KEY", "fake-expanded-key")
+    if parent is not None:
+        monkeypatch.setenv(atlas.KEY_ENV, parent)
+    settings = Settings()
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine(engine_name), builtin_mcp=["annot"])
+    monkeypatch.setattr(doctor, "_roster", lambda s: [agent])
+    if engine is not None:
+        getattr(settings.engines, engine_name).env[atlas.KEY_ENV] = engine
+    monkeypatch.setattr(atlas, "sdk_available", lambda: True)
+    row = doctor._alphagenome_atlas_row(settings)
+    assert row["status"] == ("ok" if present else "skip")
+    for value in ("fake-engine-key", "fake-parent-key", "fake-expanded-key"):
+        assert value not in json.dumps(row)
+
+
+@pytest.mark.parametrize("engines,claude_key,codex_key,force,blocked,status", [
+    (["claude_code"], None, "fake-unused-key", None, False, "skip"),
+    (["claude_code"], "fake-claude-key", "", None, False, "ok"),
+    (["claude_code", "codex"], "fake-claude-key", "", None, False, "warn"),
+    (["claude_code", "codex"], "fake-claude-key", "fake-codex-key", None, False, "ok"),
+    (["claude_code"], "fake-claude-key", "", "codex", False, "skip"),
+    (["codex"], "fake-claude-key", "", "claude_code", False, "ok"),
+    (["claude_code"], "fake-claude-key", None, None, True, "skip"),
+    ([], "fake-claude-key", "fake-codex-key", None, False, "skip"),
+])
+def test_doctor_atlas_checks_only_effective_eligible_engines(
+        monkeypatch, engines, claude_key, codex_key, force, blocked, status):
+    from labhq import doctor
+
+    monkeypatch.delenv(atlas.KEY_ENV, raising=False)
+    settings = Settings()
+    settings.runner.force_engine = force
+    for name, key in (("claude_code", claude_key), ("codex", codex_key)):
+        if key is not None:
+            getattr(settings.engines, name).env[atlas.KEY_ENV] = key
+    agents = [AgentSpec(id=f"worker-{i}", name="Worker", role="test", engine=Engine(name),
+                       builtin_mcp=["annot"],
+                       disallowed_tools=["mcp__labhq_annot__alphagenome_atlas"] if blocked else [])
+              for i, name in enumerate(engines)]
+    # A configured engine with a key must not count if its staff cannot use annot.
+    agents.append(AgentSpec(id="unrelated", name="Other", role="test", engine=Engine.claude_code,
+                            builtin_mcp=[]))
+    monkeypatch.setattr(doctor, "_roster", lambda s: agents)
+    monkeypatch.setattr(atlas, "sdk_available", lambda: True)
+    row = doctor._alphagenome_atlas_row(settings)
+    assert row["status"] == status
+    assert "fake-" not in json.dumps(row)
+    if status == "warn":
+        assert "codex" in row["detail"]
+
+
+@pytest.mark.parametrize("placeholder", ["${MISSING_ATLAS_KEY}", "$MISSING_ATLAS_KEY", "%MISSING_ATLAS_KEY%"])
+@pytest.mark.parametrize("source", ["runner", "engine"])
+def test_doctor_atlas_rejects_unexpanded_key_references(monkeypatch, placeholder, source):
+    from labhq import doctor
+
+    monkeypatch.delenv("MISSING_ATLAS_KEY", raising=False)
+    monkeypatch.setenv(atlas.KEY_ENV, placeholder if source == "runner" else "fake-parent-key")
+    settings = Settings()
+    if source == "engine":
+        settings.engines.codex.env[atlas.KEY_ENV] = placeholder
+    agents = [AgentSpec(id="worker", name="Worker", role="test", engine=Engine.codex,
+                        builtin_mcp=["annot"])]
+    monkeypatch.setattr(atlas, "sdk_available", lambda: True)
+    row = doctor._alphagenome_atlas_row(settings, agents)
+    assert row["status"] == "skip"
+    assert "MISSING_ATLAS_KEY" not in json.dumps(row)
+    assert "fake-parent-key" not in json.dumps(row)
+    if source == "runner":
+        assert doctor._alphagenome_atlas_row()["status"] == "skip"
+
+
+def test_chief_of_staff_denies_atlas_at_broker_boundary(tmp_path):
+    from labhq.runner.annot_broker import atlas_allowed
+    path = Path(__file__).resolve().parents[1] / "agents/core/chief_of_staff.yaml"
+    agent = AgentSpec.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    ctx = context(tmp_path)
+    ctx.agent = agent
+    ctx.task = Task(agent_id=agent.id, prompt="brief")
+    assert "fulltext" in agent.annot_tools
+    assert "alphagenome_atlas" not in agent.annot_tools
+    assert not atlas_allowed(agent, read_only=False)
+
+
+@pytest.mark.parametrize("tools,allowed", [(None, True), ([], False), (["fulltext"], False),
+                                          (["alphagenome_atlas"], True)])
+async def test_broker_grant_respects_atlas_allowlist(service, tools, allowed):
+    ctx, broker, service, token, key, seen = service
+    await service.finish(ctx.task.id)
+    ctx.agent.annot_tools = tools
+    service.register(ctx, key)
+    assert (ctx.task.id in service.grants) is allowed
+
+
+def test_doctor_reports_presence_without_reading_key_file(monkeypatch):
+    from labhq import doctor
+    monkeypatch.delenv(atlas.KEY_ENV, raising=False)
+    assert doctor._alphagenome_atlas_row()["status"] == "skip"
+    secret = uuid.uuid4().hex
+    monkeypatch.setenv(atlas.KEY_ENV, secret)
+    monkeypatch.setattr(atlas, "sdk_available", lambda: False)
+    assert doctor._alphagenome_atlas_row()["status"] == "warn"
+    monkeypatch.setattr(atlas, "sdk_available", lambda: True)
+    row = doctor._alphagenome_atlas_row()
+    assert "미검증" in row["detail"] and secret not in json.dumps(row)
+
+
+async def test_mcp_registration_deadline_and_lookup_admission(monkeypatch, tmp_path):
+    from labhq.tools import annot_keys
+    monkeypatch.setattr(annot_keys, "read_key", lambda *a: "")
+    monkeypatch.setenv("LABHQ_ATLAS_BROKER_ENABLED", "1")
+    from labhq.tools import annot_mcp
+    mcp = importlib.reload(annot_mcp)
+    monkeypatch.setattr(mcp, "WORKDIR", tmp_path)
+    monkeypatch.setattr(mcp, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(mcp, "LOOKUP_LIMITED", False)
+    called = []
+
+    monkeypatch.setattr(mcp, "BROKER_TOKEN", "test-broker")
+    async def post(self, url, **kwargs):
+        called.append((url, kwargs))
+        return httpx.Response(200, json={"mock": True}, request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    assert json.loads(await mcp.alphagenome_atlas(["chr1:100:A:G"])) == {"mock": True}
+    assert called[0][0].endswith("/annot/atlas")
+    assert called[0][1]["json"]["variants"] == ["chr1:100:A:G"]
+    monkeypatch.setattr(mcp, "LOOKUP_LIMITED", True)
+    monkeypatch.setattr(mcp, "BROKER_TOKEN", "test-broker")
+    with pytest.raises(Exception, match="상한"):
+        await mcp.alphagenome_atlas(["chr1:100:A:G"])
+    assert len(called) == 1
+
+
+async def test_mcp_all_error_status_is_failed(monkeypatch, tmp_path):
+    from labhq.tools import annot_mcp as mcp
+    monkeypatch.setattr(mcp, "WORKDIR", tmp_path)
+    monkeypatch.setattr(mcp, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(mcp, "LOOKUP_LIMITED", False)
+    monkeypatch.setattr(mcp, "BROKER_TOKEN", "test-broker")
+    async def post(self, url, **kwargs):
+        return httpx.Response(502, json={"detail": "untrusted upstream text"},
+                              request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    with pytest.raises(Exception, match="runner lookup failed"):
+        await mcp.alphagenome_atlas(["chr1:100:A:G"])
+
+
+async def test_broker_proxy_keeps_mcp_human_wait_order(monkeypatch, tmp_path):
+    from labhq.tools import annot_mcp as mcp
+    from labhq.tools.external_wait import exclude_human_wait
+    monkeypatch.setattr(mcp, "WORKDIR", tmp_path)
+    monkeypatch.setattr(mcp, "LOOKUP_LIMITED", False)
+    monkeypatch.setattr(mcp, "BROKER_TOKEN", "test-broker")
+    entered, release = asyncio.Event(), asyncio.Event()
+    sent = []
+    async def decision():
+        entered.set()
+        await release.wait()
+    async def post(self, url, **kwargs):
+        sent.append(url)
+        return httpx.Response(200, json={"mock": True}, request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    waiting = asyncio.create_task(exclude_human_wait(decision, workdir=tmp_path))
+    await entered.wait()
+    query = asyncio.create_task(mcp.alphagenome_atlas(["chr1:100:A:G"]))
+    try:
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not sent and not query.done()
+        release.set()
+        await waiting
+        assert json.loads(await query) == {"mock": True}
+        assert len(sent) == 1
+    finally:
+        release.set()
+        waiting.cancel()
+        query.cancel()
+        await asyncio.gather(waiting, query, return_exceptions=True)
+
+
+async def test_installed_sdk_proto_roundtrip_without_network(factory):
+    """Optional dependency compatibility, run locally with the actual released wheel."""
+    sdk = pytest.importorskip("alphagenome.atlas.atlas")
+    from alphagenome.data import genome
+    from alphagenome.protos import atlas_service_pb2 as proto
+    from alphagenome.protos.v1 import dna_model_pb2 as dna
+    import struct
+
+    calls = []
+
+    class Stub:
+        def ListVariantScoresMetadata(self, request, metadata):
+            return proto.ListVariantScoresMetadataResponse(variant_scorer_metadata=[
+                proto.VariantScorerMetadata(variant_scorer=proto.VariantScorerInfo(name="RNA_SEQ", is_signed=True))])
+
+        def GetDenseVariantScores(self, request, metadata):
+            calls.append(request)
+            return proto.DenseVariantScores(variant=request.variant, scores=[proto.DenseVariantScore(
+                variant_scorer=proto.VariantScorerInfo(name="RNA_SEQ", is_signed=True), shape=[1, 1],
+                scores=struct.pack("f", -2), calibrated_scores=struct.pack("f", -0.99),
+                metadata=[proto.Metadata(tracks=dna.TracksMetadata(metadata=[
+                    dna.TrackMetadata(name="test track", strand=dna.STRAND_POSITIVE)]))])])
+
+    a, backend, _, _ = factory()
+    backend._atlas = sdk
+    backend._genome = genome
+    backend._client = sdk.AtlasClient(Stub())
+    # Call through the real released SDK before the wrapper, so schema incompatibilities are visible here.
+    backend.query(reg._alphagenome_query("chr1:100:A:G", 1), ["RNA_SEQ"], [], [])
+    calls.clear()
+    result = await a.alphagenome_atlas(["chr1:100:A:G"])
+    assert result["n_ok"] == 1 and result["results"][0]["top"][0]["raw_score"] == -2
+    assert result["results"][0]["top"][0]["track_metadata"]["name"] == "test track"
+    assert len(calls) == 1 and calls[0].variant.position == 100
+    assert 'scores.variant_scorer.name = "RNA_SEQ"' in calls[0].filter
+
+
+async def noop(*args):
+    pass
+
+
+def context(tmp_path, settings=None):
+    settings = settings or Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    return RunContext(task=Task(id="task-atlas", agent_id="worker", request_id="request-atlas", prompt="go"),
+        agent=AgentSpec(id="worker", name="Worker", role="test", engine=Engine.codex, builtin_mcp=["annot"]),
+        workdir=tmp_path, settings=settings, mcp_servers=[], env={}, emit=noop, prompt="go")
+
+
+@pytest.mark.parametrize("other_engine", ["claude_code", "gemini", "antigravity"])
+async def test_other_engine_alias_is_removed_and_launch_override_refused(tmp_path, other_engine):
+    from unittest.mock import patch
+    ctx = context(tmp_path)
+    getattr(ctx.settings.engines, other_engine).env = {atlas.KEY_ENV: "${ATLAS_ALIAS}"}
+    ctx.settings.engines.codex.env = {atlas.KEY_ENV: "selected-fixture-key"}
+    ctx.env[atlas.KEY_ENV] = "task-fixture-key"
+    adapter = CodexAdapter(ctx.settings)
+    with patch.dict(os.environ, {"ATLAS_ALIAS": "other-fixture-key", "SAFE": "keep"}, clear=True):
+        env = adapter.staff_env(ctx)
+        assert "ATLAS_ALIAS" not in env
+        assert env["SAFE"] == "keep"
+        assert atlas.credential(dict(os.environ), adapter.engine_env(), ctx.env) == "task-fixture-key"
+        ctx.settings.engines.codex.prefix_args = ["${ATLAS_ALIAS}"]
+        result = await adapter.run(ctx)
+        assert not result.ok and "overrides" in result.error
+        assert not ctx.commands_ran
+
+
+@pytest.mark.parametrize("source", ["engine", "task"])
+@pytest.mark.parametrize("shape", ["direct", "chain", "cycle"])
+@pytest.mark.parametrize("syntax", ["braced", "bare", "percent"])
+async def test_mapping_atlas_aliases_protect_staff_config_and_launch(tmp_path, source, shape, syntax):
+    from unittest.mock import patch
+    from labhq.adapters.base import atlas_credentials
+
+    if syntax == "percent" and os.name != "nt":
+        pytest.skip("percent expansion is Windows-only")
+    def ref(name):
+        return {"braced": "${" + name + "}", "bare": "$" + name, "percent": "%" + name + "%"}[syntax]
+
+    ctx = context(tmp_path)
+    key = "same-mapping-fixture-secret"
+    mapping = {atlas.KEY_ENV: ref("ATLAS_ALIAS"), "ATLAS_ALIAS": key, "SAFE": "keep"}
+    if shape != "direct":
+        mapping["ATLAS_ALIAS"] = ref("ATLAS_NEXT")
+        mapping["ATLAS_NEXT"] = key if shape == "chain" else key + ref("ATLAS_ALIAS")
+    if source == "engine":
+        ctx.settings.engines.codex.env = mapping
+    else:
+        ctx.env = mapping
+    config = tmp_path / "source.yaml"
+    ctx.settings.config_path = str(config)
+    # Only the alias literal is in the copied document: detecting the named key is insufficient.
+    config.write_text(yaml.safe_dump({"env": {"ATLAS_ALIAS": mapping["ATLAS_ALIAS"],
+                                             "ATLAS_NEXT": mapping.get("ATLAS_NEXT", "")}}), encoding="utf-8")
+    adapter = CodexAdapter(ctx.settings)
+    with patch.dict(os.environ, {"PARENT_SAFE": "unchanged"}, clear=True):
+        secrets = atlas_credentials(ctx.settings, ctx.env)
+        env = adapter.staff_env(ctx)
+        assert not {atlas.KEY_ENV, "ATLAS_ALIAS", "ATLAS_NEXT"} & env.keys()
+        assert env["SAFE"] == "keep" and env["PARENT_SAFE"] == "unchanged"
+        assert key not in json.dumps(env)
+        with pytest.raises(ValueError, match="environment"):
+            refuse_credential_copy(ctx.settings, secrets)
+        assert not (tmp_path / "staff").exists()
+        ctx.settings.engines.codex.extra_args = ["-c", "restored=" + mapping.get("ATLAS_NEXT", key)]
+        result = await adapter.run(ctx)
+        assert not result.ok and "overrides" in result.error
+        assert key not in result.error and not ctx.commands_ran
+        assert list(tmp_path.iterdir()) == [config]
+
+
+def test_atlas_alias_graph_includes_shadowed_values_and_preserves_safe_references(tmp_path):
+    from unittest.mock import patch
+    from labhq.adapters.base import atlas_credentials
+
+    ctx = context(tmp_path)
+    ctx.settings.engines.codex.env = {atlas.KEY_ENV: "${ATLAS_ALIAS}", "SAFE": "${NORMAL}"}
+    ctx.settings.engines.gemini.env = {"ATLAS_ALIAS": "engine-fixture-secret"}
+    ctx.env = {"ATLAS_ALIAS": "task-fixture-secret"}
+    adapter = CodexAdapter(ctx.settings)
+    config = tmp_path / "source.yaml"
+    ctx.settings.config_path = str(config)
+    config.write_text(yaml.safe_dump({"engines": {"codex": {"env": ctx.settings.engines.codex.env}}}),
+                      encoding="utf-8")
+    with patch.dict(os.environ, {"ATLAS_ALIAS": "${ATLAS_LEAF}", "ATLAS_LEAF": "parent-fixture-secret",
+                                 "NORMAL": "normal-value"}, clear=True):
+        secrets = atlas_credentials(ctx.settings, ctx.env)
+        assert {"engine-fixture-secret", "task-fixture-secret", "parent-fixture-secret"} <= secrets
+        assert not {"ATLAS_ALIAS", "ATLAS_LEAF"} & adapter.staff_env(ctx).keys()
+        assert adapter.staff_env(ctx)["SAFE"] == "normal-value"
+        assert "normal-value" not in secrets
+    # A resolved parent reference remains valid for an ordinary config copy.
+    with patch.dict(os.environ, {"ATLAS_ALIAS": "parent-fixture-secret", "NORMAL": "normal-value"}, clear=True):
+        refuse_credential_copy(ctx.settings, atlas_credentials(ctx.settings, ctx.env))
+        name = write_staff_config(ctx.settings, tmp_path / "staff")
+        assert "parent-fixture-secret" not in Path(name).read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def service(tmp_path, monkeypatch):
+    ctx = context(tmp_path)
+    broker = Broker(0, noop, noop, noop)
+    token = broker.issue_task_token(ctx.task.id, ctx.agent.id, ctx.task.request_id, workdir=str(tmp_path))
+    service = AnnotBroker(broker, ctx.settings)
+    key = uuid.uuid4().hex
+    service.register(ctx, key)
+    seen = []
+
+    def setup(backend):
+        def create(received, **kwargs):
+            seen.append(received)
+            return NS(scorer_metadata=lambda: {"RNA_SEQ": NS(is_signed=True)},
+                      query_variant=lambda *a, **k: {})
+        backend._atlas = NS(create=create)
+        backend._genome = NS(Variant=lambda **kwargs: kwargs)
+        return "fixture-sdk"
+
+    monkeypatch.setattr(atlas.AtlasBackend, "setup", setup)
+    return ctx, broker, service, token, key, seen
+
+
+def client(broker):
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=broker.app), base_url="http://broker")
+
+
+async def test_lookup_receives_key_and_records_without_disclosing_it(service):
+    ctx, broker, service, token, key, seen = service
+    async with client(broker) as c:
+        response = await c.post("/annot/atlas", headers={"X-Labhq-Token": token},
+                                json={"variants": ["chr1:100:A:G"]})
+    assert response.status_code == 200 and response.json()["n_ok"] == 1
+    assert seen == [key]
+    assert key not in response.text + repr(service.grants[ctx.task.id])
+    files = list(ctx.workdir.rglob("*.json*"))
+    assert files and all(key not in p.read_text(encoding="utf-8") for p in files)
+    assert '"status": "ok"' in (ctx.workdir / "outputs/external_lookup_status.jsonl").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("body,status", [
+    ({"task_id": "other"}, 403), ({"agent_id": "other"}, 403), ({"request_id": "other"}, 403),
+    ({"url": "https://example.invalid"}, 400), ({"command": "anything"}, 400),
+    ({"workdir": "elsewhere"}, 400), ({"method": "alphagenome_variant"}, 400),
+])
+async def test_owner_and_allowlist_cannot_be_overridden(service, body, status):
+    _, broker, _, token, _, seen = service
+    async with client(broker) as c:
+        response = await c.post("/annot/atlas", headers={"X-Labhq-Token": token},
+                                json={"variants": ["chr1:100:A:G"], **body})
+    assert response.status_code == status and not seen
+
+
+@pytest.mark.parametrize("rule,allowed", [
+    ("mcp__labhq_annot__alphagenome_atlas", False),
+    ("mcp__labhq_annot", False),
+    ("mcp__labhq_annot__*", False),
+    ("mcp__*__alphagenome*", False),
+    ("*", False),
+    ("mcp__labhq_annot__alphagenome", True),
+    ("mcp__labhq_annot__alphagenome_variant", True),
+    ("mcp__labhq_annot__pubmed*", True),
+])
+async def test_broker_grant_respects_atlas_deny_rules(service, rule, allowed):
+    ctx, broker, service, token, key, seen = service
+    await service.finish(ctx.task.id)
+    ctx.agent.disallowed_tools = [rule]
+    service.register(ctx, key)
+    assert (ctx.task.id in service.grants) is allowed
+    async with client(broker) as c:
+        response = await c.post("/annot/atlas", headers={"X-Labhq-Token": token},
+                                json={"variants": ["chr1:100:A:G"]})
+    assert response.status_code == (200 if allowed else 403)
+    assert seen == ([key] if allowed else [])
+
+
+async def test_token_admission_and_finished_task_refuse_before_sdk(service):
+    ctx, broker, service, token, _, seen = service
+    async with client(broker) as c:
+        assert (await c.post("/annot/atlas", json={})).status_code == 401
+        broker.lookup_admission = object()
+        assert (await c.post("/annot/atlas", headers={"X-Labhq-Token": token},
+                            json={"variants": ["chr1:100:A:G"]})).status_code == 403
+        broker.lookup_admission = None
+        await service.finish(ctx.task.id)
+        assert (await c.post("/annot/atlas", headers={"X-Labhq-Token": token},
+                            json={"variants": ["chr1:100:A:G"]})).status_code == 403
+        broker.revoke_task_token(token)
+        assert (await c.post("/annot/atlas", headers={"X-Labhq-Token": token}, json={})).status_code == 401
+    assert not seen
+
+
+@pytest.mark.parametrize("payload,status", [(b"x" * 16385, 413), (b"[1]", 400), (b"{", 400)])
+async def test_bad_payload_is_bounded(service, payload, status):
+    _, broker, _, token, _, seen = service
+    async with client(broker) as c:
+        response = await c.post("/annot/atlas", headers={"X-Labhq-Token": token}, content=payload)
+    assert response.status_code == status and not seen
+
+
+async def test_finish_cancels_query_and_prevents_late_sdk_work(service, monkeypatch):
+    ctx, broker, service, token, _, _ = service
+    entered = asyncio.Event()
+    backends = []
+
+    async def blocked(annotator, **kwargs):
+        backends.append(annotator.atlas_backend)
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("labhq.runner.annot_broker.RegulatoryAnnotator.alphagenome_atlas", blocked)
+    async with client(broker) as c:
+        pending = asyncio.create_task(c.post("/annot/atlas", headers={"X-Labhq-Token": token},
+                                            json={"variants": ["chr1:100:A:G"]}))
+        await asyncio.wait_for(entered.wait(), 5)
+        busy = await c.post("/annot/atlas", headers={"X-Labhq-Token": token},
+                            json={"variants": ["chr1:100:A:G"]})
+        assert busy.status_code == 409
+        await service.finish(ctx.task.id)
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+    assert backends[0].cancelled.is_set() and not service.grants
+    assert '"status": "cancelled"' in (ctx.workdir / "outputs/external_lookup_status.jsonl").read_text(encoding="utf-8")
+
+
+async def test_all_errors_fail_status_without_raw_exception(service, monkeypatch):
+    ctx, broker, _, token, key, _ = service
+    async def failed(*a, **k):
+        return {"n_ok": 0, "results": [{"error": key}]}
+    monkeypatch.setattr("labhq.runner.annot_broker.RegulatoryAnnotator.alphagenome_atlas", failed)
+    async with client(broker) as c:
+        response = await c.post("/annot/atlas", headers={"X-Labhq-Token": token},
+                                json={"variants": ["chr1:100:A:G"]})
+    assert response.status_code == 502 and key not in response.text
+    status = (ctx.workdir / "outputs/external_lookup_status.jsonl").read_text(encoding="utf-8")
+    assert '"status": "failed"' in status and '"status": "ok"' not in status and key not in status
+
+
+async def test_deadline_stops_backend_and_records_timeout(service, monkeypatch):
+    from labhq.tools.external_wait import run_lookup
+    ctx, broker, _, token, _, _ = service
+    backends = []
+    async def blocked(annotator, **kwargs):
+        backends.append(annotator.atlas_backend)
+        await asyncio.Event().wait()
+    async def short_deadline(*args, **kwargs):
+        return await run_lookup(*args, **kwargs, timeout_s=0.05)
+    monkeypatch.setattr("labhq.runner.annot_broker.RegulatoryAnnotator.alphagenome_atlas", blocked)
+    monkeypatch.setattr("labhq.runner.annot_broker.run_lookup", short_deadline)
+    async with client(broker) as c:
+        response = await c.post("/annot/atlas", headers={"X-Labhq-Token": token},
+                                json={"variants": ["chr1:100:A:G"]})
+    assert response.status_code == 502 and backends[0].cancelled.is_set()
+    assert '"status": "timeout"' in (ctx.workdir / "outputs/external_lookup_status.jsonl").read_text(encoding="utf-8")
+
+
+async def test_disconnected_mcp_cancels_backend(service, monkeypatch):
+    from starlette.requests import Request
+    _, broker, service, token, _, _ = service
+    entered = asyncio.Event()
+    backends = []
+    async def blocked(annotator, **kwargs):
+        backends.append(annotator.atlas_backend)
+        entered.set()
+        await asyncio.Event().wait()
+    monkeypatch.setattr("labhq.runner.annot_broker.RegulatoryAnnotator.alphagenome_atlas", blocked)
+    sent = False
+    async def receive():
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {"type": "http.request", "body": b'{"variants":["chr1:100:A:G"]}', "more_body": False}
+        await entered.wait()
+        return {"type": "http.disconnect"}
+    request = Request({"type": "http", "method": "POST", "path": "/annot/atlas", "headers": []}, receive)
+    endpoint = next(route.endpoint for route in broker.app.routes if route.path == "/annot/atlas")
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(endpoint(request, token), 5)
+    assert backends[0].cancelled.is_set()
+    assert service.grants["task-atlas"].pending is None
+
+
+@pytest.mark.parametrize("read_only,builtin", [(True, ["annot"]), (False, [])])
+async def test_unavailable_staff_cannot_register(service, read_only, builtin):
+    ctx, broker, service, token, key, seen = service
+    await service.finish(ctx.task.id)
+    ctx.read_only, ctx.agent.builtin_mcp = read_only, builtin
+    service.register(ctx, key)
+    async with client(broker) as c:
+        response = await c.post("/annot/atlas", headers={"X-Labhq-Token": token},
+                                json={"variants": ["chr1:100:A:G"]})
+    assert response.status_code == 403 and not seen
+
+
+@pytest.mark.parametrize("source", ["parent", "engine", "task", "alias", "case", "empty_override"])
+def test_real_child_shell_has_no_key(tmp_path, monkeypatch, source):
+    ctx = context(tmp_path)
+    key = uuid.uuid4().hex
+    monkeypatch.delenv(atlas.KEY_ENV, raising=False)
+    if source in {"parent", "alias", "empty_override"}:
+        monkeypatch.setenv(atlas.KEY_ENV, key)
+    if source == "alias":
+        monkeypatch.setenv("ATLAS_TEST_ALIAS", key)
+    if source in {"engine", "case", "empty_override"}:
+        ctx.settings.engines.codex.env[atlas.KEY_ENV.lower() if source == "case" else atlas.KEY_ENV] = (
+            "" if source == "empty_override" else key)
+    if source == "task":
+        ctx.env[atlas.KEY_ENV] = key
+    env = CodexAdapter(ctx.settings).staff_env(ctx)
+    assert key not in json.dumps(env)
+    if os.name == "nt":
+        command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                   "if (Test-Path Env:ALPHAGENOME_API_KEY) {exit 7}; "
+                   "if (Test-Path Env:ATLAS_TEST_ALIAS) {exit 8}; Write-Output 'ATLAS_SHELL_CLEAR'"]
+    else:
+        command = ["/bin/sh", "-c", 'test -z "${ALPHAGENOME_API_KEY+x}" && '
+                   'test -z "${ATLAS_TEST_ALIAS+x}" && echo ATLAS_SHELL_CLEAR']
+    result = subprocess.run(command, env=env, capture_output=True, timeout=15, check=True)
+    assert key.encode() not in result.stdout + result.stderr
+    assert atlas.KEY_ENV.lower().encode() not in result.stdout.lower()
+
+
+@pytest.mark.parametrize("override", ["set", "mcp", "alias", "prefix"])
+async def test_cli_overrides_refused_before_generated_files(tmp_path, monkeypatch, override):
+    ctx = context(tmp_path)
+    key = uuid.uuid4().hex
+    monkeypatch.setenv(atlas.KEY_ENV, key)
+    monkeypatch.setenv("ATLAS_TEST_ALIAS", key)
+    engine = ctx.settings.engines.codex
+    if override == "set":
+        engine.extra_args = ["-c", f'shell_environment_policy.set.OTHER="{key}"']
+    elif override == "mcp":
+        engine.extra_args = ["-c", 'mcp_servers.other.env_vars=["ALPHAGENOME_API_KEY"]']
+    elif override == "alias":
+        engine.extra_args = ["-c", 'shell_environment_policy.set.OTHER="${ATLAS_TEST_ALIAS}"']
+    else:
+        engine.prefix_args = ["${ATLAS_TEST_ALIAS}"]
+    result = await CodexAdapter(ctx.settings).run(ctx)
+    assert not result.ok and "Atlas" in result.error and key not in result.error
+    assert not list(tmp_path.rglob("*"))
+
+
+def test_staff_config_refuses_literal_but_preserves_env_reference(tmp_path, monkeypatch):
+    key = uuid.uuid4().hex
+    config = tmp_path / "source.yaml"
+    settings = Settings(config_path=str(config))
+    config.write_text(yaml.safe_dump({"engines": {"codex": {"env": {atlas.KEY_ENV: key}}}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="environment"):
+        refuse_credential_copy(settings, {key})
+    assert not (tmp_path / "staff").exists()
+    config.write_text(yaml.safe_dump({"engines": {"codex": {"env": {atlas.KEY_ENV: "${ATLAS_TEST_ALIAS}"}}}}),
+                      encoding="utf-8")
+    refuse_credential_copy(settings, {key})
+    name = write_staff_config(settings, tmp_path / "staff")
+    assert key not in Path(name).read_text(encoding="utf-8")
+
+
+async def _communicate_atlas_probe(proc, secrets, timeout=20):
+    """Keep pipe readers alive on timeout so already-read diagnostics survive."""
+    started = time.monotonic()
+    communication = asyncio.create_task(proc.communicate())
+    try:
+        return await asyncio.wait_for(asyncio.shield(communication), timeout)
+    except asyncio.TimeoutError:
+        before_kill = proc.returncode
+        if before_kill is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        try:
+            stdout, stderr = await asyncio.wait_for(asyncio.shield(communication), 5)
+            output = (stdout + b"\n" + stderr).decode(errors="replace")
+        except asyncio.TimeoutError:
+            output = "pipe drain timed out after kill"
+        for secret in secrets:
+            output = output.replace(secret, "[REDACTED]")
+        raise AssertionError(
+            f"Atlas child exceeded {timeout}s; elapsed={time.monotonic() - started:.3f}s; "
+            f"returncode_before_kill={before_kill}; returncode={proc.returncode}\n{output}"
+        ) from None
+    finally:
+        if not communication.done():
+            communication.cancel()
+        await asyncio.gather(communication, return_exceptions=True)
+
+
+async def test_atlas_probe_timeout_retains_partial_output_and_redacts():
+    class Process:
+        returncode = None
+
+        def __init__(self):
+            self.exited = asyncio.Event()
+            self.cancelled = False
+
+        async def communicate(self):
+            # Model StreamReader.read consuming bytes before waiting for EOF.
+            stdout = b'partial response fixture-secret'
+            stderr = b'ATLAS_PROBE call_start 0.001 fixture-token'
+            try:
+                await self.exited.wait()
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+            return stdout, stderr
+
+        def kill(self):
+            self.returncode = -9
+            self.exited.set()
+
+    proc = Process()
+    with pytest.raises(AssertionError) as error:
+        await _communicate_atlas_probe(proc, ("fixture-secret", "fixture-token"), timeout=0.01)
+    message = str(error.value)
+    assert "partial response" in message and "ATLAS_PROBE call_start" in message
+    assert "fixture-secret" not in message and "fixture-token" not in message
+    assert "returncode_before_kill=None; returncode=-9" in message
+    assert not proc.cancelled and proc.exited.is_set()
+
+
+@pytest.mark.parametrize("trace", [False, True], ids=["original", "phase-trace"])
+async def test_real_mcp_process_calls_runner_without_key(service, monkeypatch, trace):
+    ctx, broker, service, token, key, seen = service
+    monkeypatch.setenv(atlas.KEY_ENV, key)
+    started = time.monotonic()
+
+    def mark(phase):
+        print(f"ATLAS_PARENT {phase} {time.monotonic() - started:.3f}", flush=True)
+
+    async def traced_app(scope, receive, send):
+        mark("asgi_enter")
+
+        async def traced_receive():
+            message = await receive()
+            mark("receive_" + message["type"])
+            return message
+
+        async def traced_send(message):
+            mark("send_" + message["type"])
+            await send(message)
+
+        try:
+            await broker.app(scope, traced_receive, traced_send)
+        finally:
+            mark("asgi_exit")
+
+    query = service._query
+
+    async def traced_query(*args):
+        mark("query_enter")
+        try:
+            return await query(*args)
+        finally:
+            mark("query_exit")
+
+    if trace:
+        monkeypatch.setattr(service, "_query", traced_query)
+    # Hold a bound socket until uvicorn owns it; no free-port probe race.
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(traced_app if trace else broker.app,
+                                         log_level="error", lifespan="off"))
+    server.install_signal_handlers = lambda: None
+    serving = asyncio.create_task(server.serve(sockets=[sock]))
+    proc = None
+    try:
+        for _ in range(500):
+            if server.started:
+                break
+            if serving.done():
+                await serving
+            await asyncio.sleep(0.01)
+        assert server.started
+        ctx.env = {"LABHQ_BROKER_URL": f"http://127.0.0.1:{port}", "LABHQ_BROKER_TOKEN": token,
+                   "LABHQ_TASK_ID": ctx.task.id, "LABHQ_AGENT_ID": ctx.agent.id,
+                   "LABHQ_WORKDIR": str(ctx.workdir), ENABLED_ENV: "1"}
+        env = CodexAdapter(ctx.settings).staff_env(ctx)
+        script = """
+import atexit, sys, time
+started = time.monotonic()
+def mark(phase):
+    print(f'ATLAS_PROBE {phase} {time.monotonic() - started:.3f}', file=sys.stderr, flush=True)
+mark('import_start')
+atexit.register(mark, 'interpreter_exit')
+import asyncio, os
+from contextlib import asynccontextmanager
+from labhq.tools import annot_mcp as m
+mark('import_done')
+assert 'ALPHAGENOME_API_KEY' not in os.environ
+assert m.ATLAS_ENABLED
+"""
+        if trace:
+            script += """
+slot = m._step_slot
+admitted = m._admitted
+@asynccontextmanager
+async def traced_slot(workdir):
+    mark('slot_wait')
+    async with slot(workdir):
+        mark('slot_enter')
+        yield
+    mark('slot_exit')
+@asynccontextmanager
+async def traced_admitted(tool):
+    mark('admission_wait')
+    async with admitted(tool) as hooks:
+        mark('admission_enter')
+        yield hooks
+    mark('admission_exit')
+m._step_slot = traced_slot
+m._admitted = traced_admitted
+Client = m.httpx.AsyncClient
+class TracedClient(Client):
+    def __init__(self, *args, **kwargs):
+        mark('http_init_start')
+        super().__init__(*args, **kwargs)
+        mark('http_init_done')
+    async def send(self, request, *args, **kwargs):
+        mark('http_send')
+        result = await super().send(request, *args, **kwargs)
+        mark('http_response')
+        return result
+m.httpx.AsyncClient = TracedClient
+"""
+        script += """
+async def call():
+    mark('call_start')
+    result = await m.alphagenome_atlas(['chr1:100:A:G'])
+    mark('call_done')
+    print(result, flush=True)
+asyncio.run(call())
+mark('loop_closed')
+"""
+        proc = await asyncio.create_subprocess_exec(sys.executable, "-u", "-X", "utf8", "-c", script, env=env,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await _communicate_atlas_probe(proc, (key, token))
+        assert key.encode() not in stdout + stderr
+        assert token.encode() not in stdout + stderr
+        print(stderr.decode(errors="replace"))
+        assert proc.returncode == 0, stderr.decode(errors="replace")
+        assert json.loads(stdout)["n_ok"] == 1 and seen == [key]
+        assert b'ATLAS_PROBE interpreter_exit' in stderr
+    finally:
+        if proc is not None and proc.returncode is None:
+            proc.kill()
+            await asyncio.wait_for(proc.wait(), 5)
+        await service.finish(ctx.task.id)
+        server.should_exit = True
+        await asyncio.wait_for(serving, 10)
+        sock.close()
+
+
+@pytest.mark.skipif(os.name != "nt" or os.environ.get("LABHQ_ATLAS_CODEX_SANDBOX_TEST") != "1",
+                    reason="explicit local installed-Codex sandbox probe; no model or service calls")
+def test_installed_codex_sandbox_shell_has_no_key(tmp_path, monkeypatch):
+    executable = os.environ.get("LABHQ_ATLAS_CODEX_BIN") or shutil.which("codex")
+    assert executable
+    ctx = context(tmp_path)
+    key = uuid.uuid4().hex
+    monkeypatch.setenv(atlas.KEY_ENV, key)
+    monkeypatch.setenv("ATLAS_TEST_ALIAS", key)
+    ctx.env["CODEX_HOME"] = str(tmp_path / "codex-home")
+    Path(ctx.env["CODEX_HOME"]).mkdir()
+    env = CodexAdapter(ctx.settings).staff_env(ctx)
+    # Isolated HOME and unelevated sandbox: no login, account setup or model turn.
+    command = [executable, "sandbox", "-C", str(tmp_path), "-P", ":workspace",
+        "-c", 'windows.sandbox="unelevated"', "-c", 'shell_environment_policy.inherit="all"',
+        "--", "cmd.exe", "/d", "/c",
+        "if defined ALPHAGENOME_API_KEY (exit /b 7) & "
+        "if defined ATLAS_TEST_ALIAS (exit /b 8) & echo ATLAS_SHELL_CLEAR"]
+    proc = subprocess.Popen(command, env=env, cwd=tmp_path, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        stdout, stderr = proc.communicate(timeout=30)
+        result = subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
+    finally:
+        if proc.poll() is None:
+            from labhq.proc_tree import kill_tree
+            kill_tree(proc.pid)
+            proc.communicate(timeout=10)
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    assert b"ATLAS_SHELL_CLEAR" in result.stdout
+    assert key.encode() not in result.stdout + result.stderr
+    assert key not in json.dumps(command)
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            assert key.encode() not in path.read_bytes()
+
+
+@pytest.mark.parametrize("denied", [False, True])
+async def test_runner_atlas_availability_and_direct_http_obey_deny(service, tmp_path, monkeypatch, denied):
+    from labhq.models import TaskResult
+    from tests.test_observed_outputs import _runner, _task
+    _, _, _, _, key, seen = service
+    monkeypatch.setenv(atlas.KEY_ENV, key)
+    runner = _runner(tmp_path / "runner", monkeypatch, lambda _: None, engine=Engine.codex)
+    task = _task()
+    agent = runner._resolve_agent(task)
+    agent.builtin_mcp = ["annot"]
+    agent.disallowed_tools = ["mcp__labhq_annot__alphagenome*"] if denied else []
+    contexts = []
+
+    class Staff:
+        async def run(self, ctx):
+            contexts.append(ctx)
+            assert ctx.env[ENABLED_ENV] == ("0" if denied else "1")
+            assert (ctx.task.id in runner.annot_broker.grants) is not denied
+            async with client(runner.broker) as c:
+                response = await c.post("/annot/atlas", headers={"X-Labhq-Token": ctx.env["LABHQ_BROKER_TOKEN"]},
+                                        json={"variants": ["chr1:100:A:G"]})
+            assert response.status_code == (403 if denied else 200)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="done")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *a: Staff())
+    result = await runner.run_task(task)
+    assert result.ok and contexts
+    assert seen == ([] if denied else [key])
+    assert not runner.annot_broker.grants and not runner.broker.identities
+
+
+@pytest.mark.parametrize("outcome", ["ok", "error", "cancelled", "cleanup_cancelled"])
+async def test_runner_wiring_and_grant_cleanup(service, tmp_path, monkeypatch, outcome):
+    from labhq.models import TaskResult
+    from tests.test_observed_outputs import _runner, _task
+    _, _, _, _, key, seen = service
+    monkeypatch.setenv(atlas.KEY_ENV, key)
+    runner = _runner(tmp_path / "runner", monkeypatch, lambda _: None, engine=Engine.codex)
+    task = _task()
+    runner._resolve_agent(task).builtin_mcp = ["annot"]
+    contexts = []
+
+    class Staff:
+        async def run(self, ctx):
+            contexts.append(ctx)
+            assert ctx.env[ENABLED_ENV] == "1"
+            assert atlas.KEY_ENV not in CodexAdapter(ctx.settings).staff_env(ctx)
+            assert key not in json.dumps([s.model_dump() for s in ctx.mcp_servers])
+            assert runner.annot_broker.grants[ctx.task.id].key == key
+            if outcome == "error":
+                raise RuntimeError("fixture failure")
+            if outcome == "cancelled":
+                raise asyncio.CancelledError
+            async with client(runner.broker) as c:
+                response = await c.post("/annot/atlas", headers={"X-Labhq-Token": ctx.env["LABHQ_BROKER_TOKEN"]},
+                                        json={"variants": ["chr1:100:A:G"]})
+            assert response.status_code == 200
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="done")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *a: Staff())
+    if outcome == "cleanup_cancelled":
+        finish = runner.annot_broker.finish
+        async def interrupted_finish(task_id):
+            await finish(task_id)
+            raise asyncio.CancelledError
+        monkeypatch.setattr(runner.annot_broker, "finish", interrupted_finish)
+    if outcome == "ok":
+        result = await runner.run_task(task)
+        assert result.ok and seen == [key]
+    else:
+        with pytest.raises(RuntimeError if outcome == "error" else asyncio.CancelledError):
+            await runner.run_task(task)
+    assert contexts and not runner.annot_broker.grants and not runner.broker.identities
+    assert not runner.tool_contexts and not runner.active_roots
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            assert key.encode() not in path.read_bytes()

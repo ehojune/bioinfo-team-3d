@@ -797,8 +797,12 @@ def _server_tool_names():
     """Every tool name annot_mcp.py registers through `offered()`, read from its source."""
     import ast
     tree = ast.parse((ROOT / "labhq" / "tools" / "annot_mcp.py").read_text(encoding="utf-8"))
-    return {n.name for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and any(
+    decorated = {n.name for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and any(
         isinstance(d, ast.Call) and getattr(d.func, "id", "") == "offered" for d in n.decorator_list)}
+    registered = {n.args[0].id for n in ast.walk(tree) if isinstance(n, ast.Call)
+                  and isinstance(n.func, ast.Call) and getattr(n.func.func, "id", "") == "offered"
+                  and len(n.args) == 1 and isinstance(n.args[0], ast.Name)}
+    return decorated | registered
 
 
 def _server_env(tmp_path, tools=None):
@@ -817,29 +821,36 @@ def _server_env(tmp_path, tools=None):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("atlas_enabled", [False, True])
 @pytest.mark.parametrize("allowed,expected", [
     ("fulltext,crossref_doi", {"fulltext", "crossref_doi"}),
     (",".join(LITERATURE_TOOLS), set(LITERATURE_TOOLS)),
     ("", set()),  # an empty allowlist offers nothing
 ])
-async def test_the_server_offers_only_the_tools_it_was_allowed(tmp_path, allowed, expected):
+async def test_the_server_offers_only_the_tools_it_was_allowed(tmp_path, allowed, expected, atlas_enabled):
     import sys
     from labhq.models import McpServerSpec
     from labhq.tools._mcpcompat import list_tools
+    env = {**_server_env(tmp_path, allowed), "LABHQ_ATLAS_BROKER_ENABLED": str(int(atlas_enabled))}
     tools = await list_tools(McpServerSpec(name="annot", command=sys.executable, args=["-m", "labhq.tools.annot_mcp"],
-                                           env=_server_env(tmp_path, allowed)))
+                                           env=env))
     assert set(tools) == expected
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("allowed", [None, "*"])
-async def test_without_an_allowlist_the_server_offers_everything_as_before(tmp_path, allowed):
+@pytest.mark.parametrize("atlas_enabled", [False, True])
+async def test_without_an_allowlist_the_server_offers_everything_as_before(tmp_path, allowed, atlas_enabled):
     import sys
     from labhq.models import McpServerSpec
     from labhq.tools._mcpcompat import list_tools
+    env = {**_server_env(tmp_path, allowed), "LABHQ_ATLAS_BROKER_ENABLED": str(int(atlas_enabled))}
     tools = await list_tools(McpServerSpec(name="annot", command=sys.executable, args=["-m", "labhq.tools.annot_mcp"],
-                                           env=_server_env(tmp_path, allowed)))
-    assert set(tools) == _server_tool_names() - {"alphagenome", "alphagenome_variant"}  # those need a key file
+                                           env=env))
+    unavailable = {"alphagenome", "alphagenome_variant"}  # those need a key file
+    if not atlas_enabled:
+        unavailable.add("alphagenome_atlas")
+    assert set(tools) == _server_tool_names() - unavailable
 
 
 @pytest.mark.parametrize("allowed", ["fulltext,fultext", "nonsense", "fulltext,,unpaywall", "*,fulltext"])

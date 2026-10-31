@@ -32,7 +32,7 @@ import yaml
 from .. import disk_space, durable
 from ..adapters import (adapter_preflight_error, get_adapter, is_read_only_task, read_only_profile,
                         read_only_refusal)
-from ..adapters.base import RunContext
+from ..adapters.base import RunContext, atlas_credentials, expand_env
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
                               awrite_owned_bytes, awrite_owned_many, remove_entry, write_owned)
@@ -68,6 +68,8 @@ from ..util import INPUT_STEP_ID, output_relpath, short, tool_input_fingerprint
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
 from .approvals import Broker
+from .annot_broker import AnnotBroker, ENABLED_ENV as ATLAS_ENABLED_ENV, atlas_allowed, refuse_credential_copy
+from ..tools.annot_alphagenome_atlas import credential, without_credentials
 from .codex_sandbox import SandboxWatch
 from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
 from . import local_jobs
@@ -395,6 +397,7 @@ class Runner:
                              lookup_admission=None if limit is None else LookupAdmission(
                                  settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit))
         self.scheduler = Scheduler(settings.hpc)
+        self.annot_broker = AnnotBroker(self.broker, settings)
         self._local_procs: dict = {}  # job id -> the child this runner started (reaped when polled), #675
         self._local_watch: asyncio.Task | None = None  # the local job poller, started with the first job
         self.connected = asyncio.Event()
@@ -2460,6 +2463,11 @@ class Runner:
             for note in notes:
                 await emit("agent.log", {"level": "warn", "text": f"읽기 전용 쓰기 확인에서 제외: {note}"})
             try:  # staff read a copy without the gateway tokens, never the PI's file (#149 결정 16)
+                engine_config = getattr(self.s.engines, agent.engine.value, None)
+                atlas_engine_env = expand_env(engine_config.env) if engine_config is not None else {}
+                atlas_key = credential(dict(os.environ), atlas_engine_env, environment_env)
+                atlas_secrets = atlas_credentials(self.s, environment_env)
+                refuse_credential_copy(self.s, atlas_secrets)
                 staff_config = write_staff_config(self.s, self.s.path(self.s.runner.state_dir) / "staff")
             except (OSError, ValueError, yaml.YAMLError) as exc:
                 error = f"직원용 설정 사본을 만들 수 없어 실행을 거부합니다 ({type(exc).__name__})"
@@ -2534,6 +2542,8 @@ class Runner:
                 PRIVATE_OPEN_READS_ENV: os.pathsep.join(private.open_reads),
             }
             env.update(environment_env)
+            env = without_credentials(env, atlas_secrets)
+            env[ATLAS_ENABLED_ENV] = "1" if atlas_key and atlas_allowed(agent, read_only=read_only) else "0"
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
             if self.broker.lookup_admission is not None:
@@ -2709,6 +2719,7 @@ class Runner:
             self.active_roots[task.id] = (read_only, [ws.dir.resolve(), *(Path(d).resolve() for d in extra_dirs)])
             self.tool_contexts[task.id] = ctx
             try:
+                self.annot_broker.register(ctx, atlas_key)
                 refused = watch.take_baseline() if watch else None
                 if refused:  # fail closed: a run whose writes cannot be checked does not start
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refused)
@@ -2742,21 +2753,24 @@ class Runner:
                 if outcome["status"] == "rejected":
                     result = rejected_step(result, outcome["reason"])
             finally:
-                self.tool_contexts.pop(task.id, None)
-                ended = self.active_roots.pop(task.id, None)
-                # A submit command already running for this run lands in pending_jobs below; later ones are refused.
-                if in_flight := list(self.submitting.pop(task.id, ())):
-                    await asyncio.gather(*in_flight)
-                now = time.time()
-                if ended is not None:
-                    self.ended_roots.append((now, task.id, *ended))
-                horizon = now - self.s.runner.task_timeout_s - 60  # no read-only run is older than this
-                self.ended_roots = [entry for entry in self.ended_roots if entry[0] >= horizon]
                 self.broker.revoke_task_token(broker_token)
-                self.broker.finish_task(task.id)
-                if staff_config:  # this task's own copy; the next task gets a fresh one
-                    with contextlib.suppress(OSError):
-                        os.unlink(staff_config)
+                try:
+                    await self.annot_broker.finish(task.id)
+                finally:
+                    self.tool_contexts.pop(task.id, None)
+                    ended = self.active_roots.pop(task.id, None)
+                    # A submit already running lands in pending_jobs below; later ones are refused.
+                    if in_flight := list(self.submitting.pop(task.id, ())):
+                        await asyncio.gather(*in_flight)
+                    now = time.time()
+                    if ended is not None:
+                        self.ended_roots.append((now, task.id, *ended))
+                    horizon = now - self.s.runner.task_timeout_s - 60
+                    self.ended_roots = [entry for entry in self.ended_roots if entry[0] >= horizon]
+                    self.broker.finish_task(task.id)
+                    if staff_config:  # this task's own copy; the next task gets a fresh one
+                        with contextlib.suppress(OSError):
+                            os.unlink(staff_config)
 
         # Every job this run submitted, finished or not: _poll_jobs sends jobs.finished for them only after the run
         # ends, and a job the watcher saw finish while the agent still talked would otherwise never wake it (#281).
