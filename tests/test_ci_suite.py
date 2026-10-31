@@ -60,7 +60,7 @@ def test_a_stuck_test_fails_alone_under_the_signal_method(tmp_path):
                           "-o", "timeout_method=signal", str(tmp_path)], cwd=tmp_path, capture_output=True, text=True,
                          timeout=60)
     assert "1 failed, 1 passed" in run.stdout, run.stdout
-    assert "Timeout >1.0s" in run.stdout and "test_stuck" in run.stdout
+    assert "Timeout (>1.0s)" in run.stdout and "test_stuck" in run.stdout
 
 
 def test_ci_pins_the_limit_per_platform_and_keeps_the_job_limits():
@@ -72,5 +72,6 @@ def test_ci_pins_the_limit_per_platform_and_keeps_the_job_limits():
     assert len(linux) == 2
     assert all("timeout_method=signal" in s["run"] for s in linux)
     windows = [s["run"] for s in jobs["pytest-windows"]["steps"] if "pytest -q" in (s.get("run") or "")]
-    assert len(windows) == 2 and all("timeout_method=thread" in r for r in windows)
+    # The Windows phase filter rejects `-o` overrides; pytest-timeout picks `thread` there on its own (no SIGALRM).
+    assert len(windows) == 2 and all("timeout_method" not in r and " -o " not in r for r in windows)
     assert any(s.get("timeout-minutes") == 25 for s in jobs["pytest"]["steps"])

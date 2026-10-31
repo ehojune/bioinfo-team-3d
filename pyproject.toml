@@ -44,6 +44,6 @@ labhq = ["config/*.yaml", "web/*", "web/ui/*", "web/lab3d/*", "web/lab3d/src/*",
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-timeout = 300   # seconds per test (#1198); CI sets timeout_method: signal on Linux, thread on Windows
+timeout = 300   # seconds per test (#1198); Linux CI sets timeout_method=signal; Windows falls back to thread
 testpaths = ["tests"]
 pythonpath = ["."]   # tests import scripts/* (redact_stream) the same way under `pytest` and `python -m pytest`
