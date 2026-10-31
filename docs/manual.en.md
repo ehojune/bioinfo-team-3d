@@ -451,7 +451,7 @@ Writes are now done by write-only threads (`labhq/durable.py`). There is one thr
 
 - Writes to the same file or the same DB finish in the order called, and a read after a write sees what was written.
 - If a write fails, the exception arrives at the place that `await`ed.
-- Even if the caller is cancelled, a write already queued runs to the end. Writes that must go together (a sent message and the "sent" mark, the state that closes a task and its result) go as one unit. For a task whose result has already gone out, a cancellation result is not sent separately.
+- Even if the caller is cancelled, a write already queued runs to the end. Writes that must go together (a sent message and the "sent" mark, the state that closes a task and its result) go as one unit. For a task whose result has already gone out, a cancellation result is not sent separately. If the runner receives the cancel of a task it has not yet received, it records that id, and a dispatch that follows is not started but answered with a cancelled result only (#1149).
 - On shutdown (gateway shutdown hook, runner shutdown, process exit), it finishes all pending writes before leaving.
 - If it dies suddenly, a file is either the old version or the new one (the temp-file, fsync and replace order as is). SQLite keeps what was committed. Only writes that had not started are lost, and a step waiting for such a write could not have moved on anyway.
 - fsyncs are not batched or deferred. Each write returns only after reaching the disk.
