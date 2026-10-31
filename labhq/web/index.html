@@ -864,6 +864,7 @@ function renderComposerMode() {
   $('.composer-options').hidden = noteMode;
   $('#target').hidden = noteMode;
   $('#team-only-label').hidden = noteMode;
+  if ($('#wsl-only-label')) $('#wsl-only-label').hidden = noteMode;
   $('#work-kind').hidden = noteMode;
   $('#project').hidden = noteMode || !S.projects.length;
   $('#ref-toggle').hidden = noteMode;
@@ -992,7 +993,7 @@ async function send() {
     send.key = send.key || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
     await api.request(body, send.key);
     send.key = null;
-    input.value = ''; refs.items = []; $('#team-only').checked = false; $('#work-kind').value = 'auto'; showRefs(false); renderRefs();
+    input.value = ''; refs.items = []; $('#team-only').checked = false; if ($('#wsl-only')) $('#wsl-only').checked = false; $('#work-kind').value = 'auto'; showRefs(false); renderRefs();
     toast(target ? `${nick(target)}에게 맡겼어요` : 'CSO에게 요청을 보냈어요');
   } catch (e) { toast(`보내지 못했어요: ${e.message}`); }
 }
