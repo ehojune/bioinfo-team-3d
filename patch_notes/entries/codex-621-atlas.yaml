@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "3a6ed6d"
+    at: "2026-10-31 21:55"
+    summary: "같은 엔진·작업 환경 안에서 이어지는 Atlas 키 별칭도 직원 환경과 실행 설정에서 차단합니다."
+    text: "fix: trace Atlas aliases within engine and task mappings"
   - sha: "728fde6"
     at: "2026-10-31 21:41"
     summary: "미병합 Atlas 조회의 사용법과 권한 회수, 설치 검증의 한계를 한영 매뉴얼에 명시합니다."
