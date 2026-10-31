@@ -187,3 +187,19 @@ async def test_the_bulk_data_root_is_watched_when_set(tmp_path):
     assert (tmp_path / "bulk").as_posix() in seen and (tmp_path / "ws").as_posix() in seen
     assert Path(runner.s.path(runner.s.runner.state_dir)).as_posix() in seen
     assert real is not None and daemon.Runner is Runner
+
+
+@pytest.mark.asyncio
+async def test_writable_project_folders_are_watched_too(tmp_path):
+    runner, events, applied, live = runner_with(tmp_path)
+    seen = []
+
+    async def spy(task_, agent, folders):
+        seen.extend(Path(f).as_posix() for f in folders)
+        live["held"] = False
+
+    runner._disk_watch = spy
+    project = tmp_path / "project"
+    runner._start_disk_watch(task(), AGENT, tmp_path / "ws", [str(project), str(project)])
+    await asyncio.sleep(0.05)
+    assert seen.count(project.as_posix()) == 1  # on another drive it is the one that fills

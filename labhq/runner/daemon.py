@@ -1938,9 +1938,9 @@ class Runner:
                 f"작업 폴더 드라이브 여유가 적습니다: {free_gib:.1f} GiB. 큰 다운로드 전에 확인하세요")})
         return None
 
-    def _start_disk_watch(self, task: Task, agent: AgentSpec, workspace_dir: Path) -> None:
-        """Watch the drives this running task fills (#678): the work folder, the runner state folder and
-        ``runner.bulk_data_root``. A facilities fix runs regardless: clearing a full workspace is what it is for."""
+    def _start_disk_watch(self, task: Task, agent: AgentSpec, workspace_dir: Path, extra_dirs=()) -> None:
+        """Watch the drives this running task fills (#678): the work folder, the runner state folder,
+        ``runner.bulk_data_root`` and its writable project folders (``extra_dirs``). A facilities fix runs regardless: clearing a full workspace is what it is for."""
         runner = self.s.runner
         if not runner.disk_watch_s or not runner.disk_fail_free_gb or task.meta.get("kind") == "facilities_fix":
             return
@@ -1950,7 +1950,8 @@ class Runner:
         folders = [workspace_dir, self.s.path(runner.state_dir)]
         if runner.bulk_data_root:
             folders.append(Path(os.path.expandvars(os.path.expanduser(str(self.s.path(runner.bulk_data_root))))))
-        watcher = asyncio.get_running_loop().create_task(self._disk_watch(task, agent, folders))
+        folders.extend(Path(d) for d in extra_dirs)
+        watcher = asyncio.get_running_loop().create_task(self._disk_watch(task, agent, list(dict.fromkeys(folders))))
         watchers[task.id] = watcher
         watcher.add_done_callback(lambda done, tid=task.id: watchers.pop(tid, None) if watchers.get(tid) is done else None)
 
@@ -2152,7 +2153,6 @@ class Runner:
                 if ws:
                     ws.task = task
             await emit("agent.status", {"state": "working", "task": task.meta.get("title") or short(task.prompt, 120)})
-            self._start_disk_watch(task, agent, workspace_dir)
             zones = self._zones()
             internal_zones = self._internal_zones()
             preclean_started: float | None = None
@@ -2310,6 +2310,7 @@ class Runner:
                     task = ws.task = task.model_copy(update={"context": (
                         f"{task.context}\n\n[Upstream inputs not linked]\n{note}")})
             # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
+            self._start_disk_watch(task, agent, workspace_dir, extra_dirs)  # every folder this run may write
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs],
                                                                needs_rules=agent.engine == Engine.claude_code)
             asked_links, _internal_incomplete = await self._project_links(
