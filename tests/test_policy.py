@@ -1,6 +1,7 @@
 import ast
 import itertools
 import ntpath
+import os
 import posixpath
 import time
 from pathlib import Path
@@ -243,6 +244,31 @@ def test_the_policy_realpath_stays_linear_on_long_separator_runs():
     """#1158: CPython's POSIX realpath is quadratic in a run of separators (0.03 s, 0.12, 0.44, 1.75 s per doubling).
     Windows' own is not, so this only shows on Linux and macOS, where it failed at 7-16x over four times the input."""
     _assert_linear(lambda text: policy_module._real(text) and None)
+
+
+@pytest.fixture
+def posix_merge(monkeypatch):
+    """The merge as a POSIX host runs it, on any host: the merge itself returns a Windows path as written."""
+    merge = policy_module._collapse_separators
+    monkeypatch.setattr(policy_module, "_collapse_separators", lambda p, *, nt=None: merge(p, nt=False))
+
+
+def test_the_policy_realpath_takes_what_os_path_realpath_takes(tmp_path, posix_merge):
+    """#1159: `_root_rules` hands it a `Path`, and a `Path` has no `lstrip`."""
+    root = tmp_path / "work" / "run"
+    spelled = f"{tmp_path}//work///run"
+    assert policy_module._realpath(root) == os.path.realpath(root)
+    assert policy_module._realpath(spelled) == os.path.realpath(spelled)
+    assert policy_module._realpath(os.fsencode(spelled)) == os.path.realpath(os.fsencode(spelled))  # bytes pass through
+
+
+def test_root_rules_accept_path_roots_and_name_each_root_alike(tmp_path, posix_merge):
+    """A `Path` root and the same root as text give the same rules, with a run of separators in the text too."""
+    (tmp_path / "work").mkdir()
+    as_path = policy_module._root_rules("Read", [tmp_path / "work"])
+    as_text = policy_module._root_rules("Read", [str(tmp_path / "work")])
+    assert as_path and as_path == as_text
+    assert policy_module._root_rules("Read", [f"{tmp_path}///work"]) == as_text
 
 
 def test_a_collapsed_candidate_gives_the_same_policy_decision(monkeypatch):

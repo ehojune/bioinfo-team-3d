@@ -2067,9 +2067,12 @@ def _collapse_separators(p: str, *, nt: bool | None = None) -> str:
 _SEPARATOR_RUN = re.compile(r"/{2,}")
 
 
-def _realpath(p: str) -> str:
-    """`os.path.realpath` of `p` with its separator runs merged first: the same path, in time linear in its length."""
-    return os.path.realpath(_collapse_separators(p))
+def _realpath(p: str | os.PathLike) -> str:
+    """`os.path.realpath` of `p` with its separator runs merged first: the same path, in time linear in its length.
+
+    Takes what `os.path.realpath` takes: a `str`, `bytes` or any path-like (a `Path` root reaches `_root_rules`)."""
+    text = os.fspath(p)
+    return os.path.realpath(text if isinstance(text, bytes) else _collapse_separators(text))
 
 
 def _real(p: str) -> str | None:
