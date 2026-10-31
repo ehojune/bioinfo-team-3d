@@ -20,6 +20,26 @@
 - 시험: 신규 2건과 어댑터·halt·staff control 관련 79건 통과.
 - 미검증: 실제 엔진에서의 발생 빈도, Windows CI. 낮음 2건(L1 `_wake_finished_jobs`, L2 tombstone 정리)은 범위 밖.
 
+# #1170 후속: 늦은 step 재개·해제 이벤트도 끝난 요청에서 거절
+
+- 결론: `request.step_resumed`·`request.step_quota_resumed`·`request.step_login_resumed`를 입구 규칙 목록(`PIPELINE_STARTS`)에 넣었다. 끝난 요청(review_pending 포함)의 완료된 step을 다시 working·pending으로 되돌리지 못한다. PR #1171 리뷰 P2.
+- 바뀐 것: `labhq/web/state.js`(목록 3개), `tests/web_stale_events_1170.cjs`(6개: 5개 종료 상태 + 진행 중 요청에서 정상 동작 유지).
+- 실행: 새 시험은 수정 전 5개 실패, 수정 후 통과. `web_stale_events_1170` 26개, `test_web_3d`·`test_web` 107 passed, 1 skipped.
+- 미해결/미검증: `request.step_halt_expired`는 같은 handler를 쓰지만 step을 working으로 만들지 않고(halted일 때만 error로) 이번 지시 범위 밖이라 그대로 둔다. Argon P2(a52bc03 기준)는 같은 건인지 확인하지 못했다. 실제 브라우저 재연결은 못 봄.
+- manual 한·영 웹 사무실 절에 "끝난 요청과 늦게 온 이벤트" 한 항목을 넣었다(문서 gate).
+- Argon P2(늦은 `request.review` revise가 `q.steps`를 `revise`로 바꿈, a52bc03 기준)는 #1171 병합본의 입구 규칙에 `request.review`가 이미 있어 막혀 있다. 코드 변경 없이 종료 상태 5개 × issues 있는 입력 시험을 더해 고정했다(수정 전 실패 확인은 불가: 이미 막힌 경로).
+- 시험: `web_stale_events_1170` 32개 통과, `test_web_3d`·`test_web` 107 passed.
+
+# #1170 웹 reducer: 중복·늦은 이벤트가 끝난 요청·카드를 되살리지 않게
+
+- 결론: reducer(`state.js apply`)가 `S.lastSeq`로 같은·옛 seq를 무시하고, 끝난 요청(done·failed·cancelled·rejected)은 늦은 `task.dispatched`·파이프라인 task의 `agent.status`·`request.review`로 phase·step·직원 행이 바뀌지 않는다. 2.5D `open()`은 이전 socket을 먼저 닫는다.
+- 바뀐 것: `labhq/web/state.js`(가드), `labhq/web/index.html`(socket 닫기 한 줄), 새 `tests/web_stale_events_1170.cjs`(20개), `tests/web_environment.cjs`(입력 seq만).
+- 설계: `apply()` 입구의 규칙 한 곳(`endedRequestRefuses`): 끝난 요청(`isTerminalRequest`, review_pending 포함: 그동안 직원이 돌지 않는다)은 일을 시작하거나 붙잡는 이벤트(pipeline task의 `task.dispatched`, 일을 시작하는 `agent.status`, `request.review`·`plan`·`route`·`questions`·`resumed`, step 시작·대기)를 받지 않는다. 일을 끝내는 이벤트(`step_done`, done/idle 상태), follow-up turn, usage, 카드, 종료·검토·저장 이벤트는 그대로 적용한다. 거절한 dispatch는 task 종류만 남겨 뒤따르는 status를 알아본다. 규칙은 스냅샷 재생에도 적용한다(재생 중에도 요청 상태가 순서대로 쌓인다). 끝난 요청 뒤에 시작할 수 있는 task kind는 명시한 `followup` 하나뿐이다(목록에 없는 kind와 종류를 모르는 task는 거절). 스냅샷의 `running_tasks`·`staff_tasks` 복원에도 같은 판정(`staleTask`)을 쓴다. gateway의 `staff_tasks` follow-up 행은 `step_id: 'followup'`에 kind가 없어 그 모양도 follow-up으로 알아보고 `taskKind`에 복원한다. 스냅샷은 replay 전에 `d.requests`의 상태를 요청 행에 먼저 심어, 재생 창보다 오래된 완료도 입구 규칙에 쓰인다. seq 없는 이벤트(demo)는 seq 가드를 우회한다.
+- `web_environment.cjs`: 입력 seq가 1,2,2,3으로 겹쳤고 서버는 이벤트마다 seq를 하나씩 붙이므로 시험 입력의 오류다. 입력 seq를 4~9로 바꿨고 단언은 그대로다.
+- 실행: 새 시험은 수정 전 7개 실패, 수정 후 통과. `test_web_3d`·`test_web` 107 passed, 1 skipped.
+- 미해결/미검증: 두 페이지의 `lastSeq` 복사본은 `test_web.py`·`web_cards_status.cjs`가 문구를 고정해 그대로 둠(reducer 가드가 있어 동작은 안전). 실제 브라우저 재연결, 3D 렌더러의 표시는 못 봄. 서버가 종료 뒤 늦은 이벤트를 실제로 내보내는 빈도는 못 쟀음(#1148·#1168 범위).
+- CI 기록: 첫 head(01de761)에서 `pytest (3.10)`이 `test_patch_notes::test_merge_resolution_requires_note_only_for_own_code_change`의 CPython 내부 `SystemError: tupleobject.c:964` 한 건으로 실패했다(이 PR은 Python 코드를 바꾸지 않음). 재실행 권한이 없어(사용자·봇 신원 모두 거절) 기록 커밋으로 CI를 다시 돌렸다.
+
 # #678 task 도중 디스크 감시
 
 - 결론: runner가 task를 실제로 돌리는 동안(`working` 이후) `runner.disk_watch_s`(기본 30 s, 0이면 끔)마다 작업 폴더·runner 상태 폴더·`runner.bulk_data_root`·직원이 쓸 수 있는 project 폴더의 드라이브 여유를 읽고, 하나라도 `runner.disk_fail_free_gb`(2 GiB) 미만이면 그 task를 한 번만 halt한다. 세션은 보존되고 gateway의 기존 `멈춤 · 재개 가능` 흐름이 PI에게 묻는다. 재개 turn은 새 task 시작이라 `_disk_gate`를 다시 거친다.
