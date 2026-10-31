@@ -2,8 +2,8 @@ pr: 1051
 rows:
   - sha: '19d10f6'
     at: '2026-11-01 07:34'
-    summary: 'Sync main and preserve Windows test inventory.'
-    text: 'Merge main into boundary observer branch'
+    summary: 'Windows 경계 검사에서 기존 진단과 새 프로세스 검사를 함께 유지합니다.'
+    text: 'Preserve observer, probe and process boundary Windows test registrations'
   - sha: '8f64b59'
     at: '2026-11-01 04:51'
     summary: 'Reject invalid producer key identifiers.'
