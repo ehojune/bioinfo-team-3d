@@ -107,6 +107,18 @@
 | 미해결 | 없음. 실제 gateway와의 경합은 가짜 `_on_ask`로만 재현했다 |
 | 근거 | https://github.com/ehojune/bioinfo-team-3d/issues/1168 |
 
+# Atlas 권한·누락값·doctor 수정
+
+Refs #621 rev24. Atlas 영속 캐시 재사용을 꺼 다른 키의 결과로 권한 오류가 가려지지 않게 했다. 같은 호출의 중복 변이는 한 번만 조회한다.
+
+- ontology 누락/None/NaN/pd.NA를 정규화해 필터 예외·오제외를 고쳤다.
+- doctor는 broker의 `atlas_allowed`로 annot_tools·deny·builtin MCP를 함께 판단한다.
+- 수정 전 관련 시험: 7 failed, 9 passed. 기존 unscoped cache를 넣은 뒤 다른 키의 권한 거부도 재현했다.
+- 수정 후 Atlas·키 파일·doctor 시험: 260 passed, 1 skipped. 취소 뒤 응답 순회 중단 회귀 포함.
+- 기존 캐시는 삭제하지 않으며 키·credential fingerprint를 기록하지 않는다. 실제 Atlas 조회·HPC·배포는 UNVERIFIED. #621 전체 종료는 주장하지 않는다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 # manual: 호출 상한 센트 내림(#1139)과 로컬 job 디스크 확인(#1167)
 
 - 결론: 이미 병합된 PR #1227·#1229의 동작을 manual 한·영에 적었다. 코드는 바꾸지 않았다.
