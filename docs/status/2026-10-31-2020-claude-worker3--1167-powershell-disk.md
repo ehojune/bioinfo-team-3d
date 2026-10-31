@@ -27,3 +27,10 @@
 - P2(`disk_space.py:538`): `Start-BitsTransfer`는 `-TransferType Upload`이거나 대상이 URL이면 로컬 폴더를 쓰지 않으므로 검사하지 않는다.
 - P1(patch note, manual): 지적은 manual을 더하기 전 head(`35b9ca9d`)에서 나온 것이고 이 head에는 한·영 manual에 PowerShell 설명이 들어 있다.
 - 시험 10건 추가(+기존 1건을 새 동작에 맞춤). `test_disk_shell_check_678.py` 99 passed, 옛 코드에서는 새 시험이 실패한다.
+
+## rev4: 인자 결합을 한 번에
+- 지적 네 건(Set-Location 이름 매개변수, BITS 옵션 값, module 한정 이름, 공통 매개변수 값)은 모두 "어느 단어가 매개변수 값인가"를 추측한 데서 나왔다.
+- cmdlet별 매개변수 표(`_PS_WEB`, `_PS_ARCHIVE`, `_PS_BITS`, `_PS_LOCATION`와 공통 매개변수·별칭)와 `_ps_bind`로 대체했다. 표에 없거나 모호한 이름이 끼면 위치 인자를 읽지 않고, 이름 붙은 값만 쓴다.
+- `Set-Location/Push-Location`은 `-Path`·`-LiteralPath`·위치 인자를 읽고, 읽을 수 없으면(Pop-Location, 변수, `-`, 모르는 옵션) 이후 명령을 건너뛴다.
+- 시험 23건을 먼저 추가해 수정 전 실패를 확인했다. `tests/test_disk_shell_check_678.py` 127 passed.
+- 확인하지 못한 것: PowerShell 실제 바인더와의 일치(표는 문서 기준 수작업이다), PowerShell 7 전용 매개변수 일부.
