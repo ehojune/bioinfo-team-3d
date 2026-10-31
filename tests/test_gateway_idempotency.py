@@ -106,6 +106,19 @@ async def test_a_caller_that_goes_away_does_not_cancel_the_work_a_retry_waits_fo
     assert len(calls) == 1
 
 
+async def test_a_key_longer_than_the_limit_is_refused_not_cut():
+    memory, calls = Idempotency(), []
+
+    async def work():
+        calls.append(1)
+
+    long_key = "k" * 64
+    await memory.run("s", long_key, {}, work)
+    with pytest.raises(HTTPException) as refused:
+        await memory.run("s", long_key + "a", {}, work)  # would be the same key if cut to 64
+    assert refused.value.status_code == 422 and len(calls) == 1
+
+
 async def test_the_memory_expires_and_is_bounded():
     now = [0.0]
     memory, calls = Idempotency(ttl_s=10, max_entries=2, clock=lambda: now[0]), []

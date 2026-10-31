@@ -36,9 +36,11 @@ class Idempotency:
         the runner or GitHub before the answer failed): it is remembered, and the same key gets a 409 instead of a
         second run. The work is not cancelled when the first caller goes away: a retry then waits for it.
         """
-        key = (key or "").strip()[:MAX_KEY_CHARS]
+        key = (key or "").strip()
         if not key:
             return await work()
+        if len(key) > MAX_KEY_CHARS:  # cutting it would make two different keys one
+            raise HTTPException(422, f"Idempotency-Key는 {MAX_KEY_CHARS}자까지입니다")
         ident = (scope, key, json.dumps(body, sort_keys=True, default=str))
         self._expire()
         if ident in self._done:
