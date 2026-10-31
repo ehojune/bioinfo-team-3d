@@ -891,6 +891,31 @@ def test_a_read_only_run_offers_no_annot_tools_whatever_the_staff_spec_allows():
     assert "annot" not in profile.builtin_mcp and profile.annot_tools is None
 
 
+def test_an_override_of_builtin_mcp_leaves_annot_tools_harmless_not_invalid():
+    """PI interpretation and other overrides replace `builtin_mcp` (here with []) on top of a staff file that has
+    `annot_tools`; the merged spec must still validate and simply carries no annot server (#1200 review)."""
+    spec, _ = _prompt("chief_of_staff")
+    merged = {**spec.model_dump(), "builtin_mcp": [], "mcp": [], "tools": [], "builtin_tools": ""}
+    overridden = AgentSpec.model_validate(merged)
+    assert overridden.builtin_mcp == [] and overridden.annot_tools == LITERATURE_TOOLS
+    assert AgentSpec(id="a", name="A", role="r", builtin_mcp=[], annot_tools=["fulltext"]).annot_tools == ["fulltext"]
+
+
+def test_the_runner_mounts_no_annot_server_for_an_override_that_removed_it(tmp_path):
+    from labhq.models import Engine
+    from labhq.runner.daemon import Runner
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    try:
+        agent = AgentSpec(id="a", name="A", role="r", engine=Engine.claude_code, builtin_mcp=[],
+                          annot_tools=["fulltext"])
+        assert "labhq_annot" not in [s.name for s in runner._mcp_servers(agent, {"LABHQ_WORKDIR": str(tmp_path)})]
+    finally:
+        runner.store.close()
+
+
 @pytest.mark.parametrize("bad", ["Fulltext", "full text", "../x", ""])
 def test_an_agent_allowlist_holds_plain_tool_names(bad):
     with pytest.raises(ValueError):

@@ -198,11 +198,10 @@ class AgentSpec(BaseModel):
             raise ValueError("required_skills needs plugin_dirs and allow_skills: true")
         if self.engine == Engine.antigravity and (self.builtin_mcp or self.mcp):
             raise ValueError("antigravity does not support builtin_mcp or MCP servers")
-        if self.annot_tools is not None:
-            if "annot" not in self.builtin_mcp:
-                raise ValueError("annot_tools needs builtin_mcp: annot")
-            if not all(re.fullmatch(r"[a-z][a-z_]*", tool) for tool in self.annot_tools):
-                raise ValueError("annot_tools holds plain tool names such as fulltext")
+        # annot_tools is not tied to builtin_mcp: an override that removes the annot server (PI interpretation sets
+        # builtin_mcp to []) leaves it unused, never invalid.
+        if self.annot_tools is not None and not all(re.fullmatch(r"[a-z][a-z_]*", tool) for tool in self.annot_tools):
+            raise ValueError("annot_tools holds plain tool names such as fulltext")
         return self
 
     def summary(self) -> dict[str, Any]:
