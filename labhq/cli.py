@@ -2439,6 +2439,8 @@ def main(argv: list[str] | None = None) -> None:
             references.append(reference)
         if args.agent and (args.plan_only or args.cso_model or args.team):
             p.error("--agent cannot be used with --plan-only, --cso-model or --team")
+        if args.wsl and args.agent and args.agent != "bioinfo-agent":
+            p.error("--wsl places only bioinfo-agent in WSL: use --agent bioinfo-agent, or drop --agent to send it to the team")
         if args.agent and args.work_kind == "research":
             p.error("--work-kind research needs the team (CSO) path: drop --agent")
         body = {"text": args.text, "mode": "direct" if args.agent else "plan_only" if args.plan_only else "orchestrate",

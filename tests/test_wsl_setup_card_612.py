@@ -351,3 +351,35 @@ def test_send_wsl_puts_run_where_in_the_request(monkeypatch, tmp_path):
     assert seen["body"]["run_where"] == "wsl"
     cli.main(["send", "분석", "--no-wait"])
     assert seen["body"]["run_where"] == "auto"
+
+
+async def test_an_installation_without_a_wsl_runner_does_not_wait_a_day_for_one(hub, monkeypatch):
+    monkeypatch.setattr(wsl_setup, "configured", lambda s: False)  # no runner.wsl block in the config
+    monkeypatch.setattr(wsl_setup, "check", lambda s: pytest.fail("nothing is configured to check"))
+    hub.s.gateway.runner_wait_s = 86400  # the default: a wait here would hang the request
+    hub.requests["r"]["run_where"] = "wsl"
+    await asyncio.wait_for(hub.prepare_wsl_request("r"), 2)
+    request = hub.requests["r"]
+    assert "labhq setup-wsl" in request["run_where_note"] and not request.get("wsl_pinned")
+    assert not hub.approvals and request["status"] == "running"
+
+
+def test_wsl_is_refused_for_a_direct_request_to_any_other_staff_member(hub):
+    from labhq.gateway.server import RequestIn
+    with pytest.raises(ValueError, match="bioinfo-agent"):
+        hub.create_request(RequestIn(text="x", mode="direct", agent_id="analyst", run_where="wsl"))
+    with pytest.raises(ValueError, match="bioinfo-agent"):
+        asyncio.run(hub.acreate_request(RequestIn(text="x", mode="direct", agent_id="analyst", run_where="wsl")))
+    for allowed in (RequestIn(text="x", mode="direct", agent_id="bioinfo-agent", run_where="wsl"),
+                    RequestIn(text="x", mode="orchestrate", run_where="wsl"),
+                    RequestIn(text="x", mode="direct", agent_id="analyst")):
+        assert hub._check_run_where(allowed) is None
+
+
+def test_send_wsl_with_another_agent_is_refused_by_the_cli(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "_api", lambda *a, **kw: pytest.fail("a refused request must not be sent"))
+    config = tmp_path / "labhq.yaml"
+    config.write_text("gateway: {}" + chr(10), encoding="utf-8")
+    monkeypatch.setenv("LABHQ_CONFIG", str(config))
+    with pytest.raises(SystemExit):
+        cli.main(["send", "분석", "--agent", "analyst", "--wsl", "--no-wait"])

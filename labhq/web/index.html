@@ -982,6 +982,7 @@ async function send() {
     return;
   }
   if (target && $('#team-only').checked) { toast('직원에게 직접 맡기기와 팀으로 보내기를 함께 고를 수 없어요'); return; }
+  if (target && target !== 'bioinfo-agent' && ($('#wsl-only') || {}).checked) { toast('WSL에서는 bioinfo-agent만 일해요. 받는 사람을 bioinfo-agent나 팀으로 바꿔 주세요'); return; }
   const workKind = $('#work-kind').value;
   // A research request goes through the CSO's frozen plan (CP1); one staff member cannot take it directly (R16).
   if (target && workKind === 'research') { toast('연구는 팀(CSO)에게 보내야 해요. 받는 사람을 CSO로 바꿔 주세요'); return; }

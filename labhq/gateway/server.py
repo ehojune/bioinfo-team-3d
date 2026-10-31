@@ -3477,6 +3477,13 @@ class Hub:
         req = self.requests.get(rid)
         if not req or req.get("run_where") != "wsl":
             return
+        from .. import wsl_setup
+
+        if not wsl_setup.configured(self.s):  # no runner.wsl block: no WSL runner will ever connect, so do not wait for one
+            req["run_where_note"] = ("이 설치에는 WSL runner 설정이 없어 WSL 없이 진행합니다. 이 PC에서 "
+                                     "`labhq setup-wsl`로 먼저 준비하세요")
+            await self.asave_request(rid)
+            return
         agent = next(iter(WSL_BOUND_AGENTS))
         probe = Task(agent_id=agent, request_id=rid, prompt="")
         stopped = await self.offer_wsl_setup(probe, explicit=True)
@@ -5367,8 +5374,17 @@ class Hub:
         return report, appendix
 
     # ----- requests -----
+    @staticmethod
+    def _check_run_where(body: RequestIn) -> None:
+        """``run_where="wsl"`` places only the WSL-bound staff (bioinfo-agent) in the WSL runner: a direct request to anyone
+        else would wait for WSL and then run natively, against what the PI picked (#612)."""
+        if body.run_where == "wsl" and body.mode == "direct" and body.agent_id not in WSL_BOUND_AGENTS:
+            raise ValueError("run_where=wsl는 bioinfo-agent를 직접 고르거나 팀에 보내는 요청에만 쓸 수 있습니다. "
+                             "다른 직원은 WSL runner에서 일하지 않습니다")
+
     def create_request(self, body: RequestIn, extra: dict[str, Any] | None = None) -> str:
         """``extra``: request fields saved in the same first write (a CP1 수정 요청's links, plan and answers)."""
+        self._check_run_where(body)
         if body.mode == "direct" and body.route == "team":
             raise ValueError("route=team cannot be used with direct mode")
         if body.mode == "direct" and body.cso_model:
@@ -5416,6 +5432,7 @@ class Hub:
 
     async def _acreate_request(self, body: RequestIn, extra: dict[str, Any] | None = None) -> str:
         """``extra``: request fields saved in the same first write (a CP1 수정 요청's links, plan and answers)."""
+        self._check_run_where(body)
         if body.mode == "direct" and body.route == "team":
             raise ValueError("route=team cannot be used with direct mode")
         if body.mode == "direct" and body.cso_model:
