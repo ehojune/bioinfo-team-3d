@@ -1,5 +1,9 @@
 pr: 1257
 rows:
+  - sha: c8c01f5
+    at: "2026-11-01 08:22"
+    summary: "격리 연결의 사용 한계를 안내하고 필수 검사를 복구합니다."
+    text: "Register wiring regression in Windows boundary inventory, update both manuals, and fix the status filename."
   - sha: 4b852e5
     at: "2026-11-01 08:14"
     summary: "기존 runner 검증에서도 격리 기능의 기본 꺼짐 동작을 유지합니다."
