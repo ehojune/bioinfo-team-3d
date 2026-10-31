@@ -1,4 +1,6 @@
+import json
 import subprocess
+import sys
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -6,6 +8,44 @@ from unittest.mock import patch
 import pytest
 
 from labhq.runner import process_boundary as boundary
+
+
+@pytest.mark.parametrize("case", ["missing", "timeout", "child_failure", "cleanup_failure", "success"])
+def test_cli_diagnostic_json_and_exit(case, capsys):
+    result = subprocess.CompletedProcess([], 1 if case == "child_failure" else 0)
+    if case == "timeout":
+        result = subprocess.TimeoutExpired("bwrap", 1)
+    with patch.object(boundary.os, "name", "posix"), \
+         patch.object(boundary.os.path, "isdir", return_value=True), \
+         patch.object(boundary.shutil, "which", return_value=None if case == "missing" else "bwrap"), \
+         patch.object(boundary.subprocess, "run", side_effect=result if case == "timeout" else None,
+                      return_value=result):
+        if case == "cleanup_failure":
+            actual_probe = boundary.diagnostic_probe
+            def failed_cleanup():
+                receipt = actual_probe()
+                receipt.cleanup = "failed; descendants_unverified"
+                return receipt
+            with patch.object(boundary, "diagnostic_probe", side_effect=failed_cleanup):
+                code = boundary.main(["--unsealed-diagnostic"])
+        else:
+            code = boundary.main(["--unsealed-diagnostic"])
+    receipt = json.loads(capsys.readouterr().out)
+    assert code == (0 if case == "success" else 1)
+    assert receipt["seal_status"] == "unsealed"
+    assert receipt["launch"] == ("not_started" if case == "missing" else
+                                 "failed" if case in ("timeout", "child_failure") else "exited_0")
+    if case == "cleanup_failure":
+        assert receipt["cleanup"].startswith("failed")
+
+
+def test_cli_default_refusal_exits_nonzero_and_prints_json():
+    result = subprocess.run([sys.executable, "-m", "labhq.runner.process_boundary"],
+                            capture_output=True, text=True, check=False)
+    receipt = json.loads(result.stdout)
+    assert result.returncode != 0
+    assert receipt["preparation"] == "unsupported"
+    assert receipt["launch"] == "not_started"
 
 
 def test_protected_launch_rejects_caller_attestations():

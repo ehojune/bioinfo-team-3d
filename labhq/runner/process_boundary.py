@@ -315,11 +315,20 @@ def diagnostic_broker_probe(broker_factory, *, timeout=10, on_ready=None, run_id
     return receipt
 
 
-if __name__ == "__main__":
+def main(argv=None):
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--unsealed-diagnostic", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     result = diagnostic_probe() if args.unsealed_diagnostic else protected_launch()
     print(json.dumps(result.to_dict(), sort_keys=True))
+    success = (args.unsealed_diagnostic and result.preparation == "diagnostic_ready"
+               and result.launch == "exited_0"
+               and result.cleanup == "direct_child_reaped; descendants_unverified"
+               and result.seal_status == "unsealed")
+    return 0 if success else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
