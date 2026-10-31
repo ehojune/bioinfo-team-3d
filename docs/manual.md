@@ -1398,6 +1398,8 @@ Windows에서는 노트를 같은 크기로 제자리에서 다시 쓰고 수정
 
 ## 비교 bench
 
+고정 단계 등급 비교 fixture는 Python에서 `await labhq.bench.run_fixed_tier_pair(output_path, settings, {"reasoning": "model-a", "balanced": "model-b"})`로 호출합니다. 출력 경로는 없어야 하며 두 모델 ID는 빈 문자열이 아니어야 합니다. `engines="mock"`만 허용하고 live 실행은 차단합니다. mock 점수는 실제 모델 품질이나 비용이 아닙니다. 상세: [등급 비교 fixture](reference/model-tier-bench-625/README.md).
+
 PI 결정(2026-10-01, #40)에 따른 기본 비교군입니다. 실제 실행은 PI 머신의 구독을 씁니다.
 
 | arm | model · effort |
