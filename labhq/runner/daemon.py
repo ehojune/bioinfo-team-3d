@@ -840,6 +840,13 @@ class Runner:
                         "engine_cli_versions": dict(self.engine_versions or {}),
                         "platform": sys.platform,
                         "environment": {key: os.environ[key] for key in LOGIN_PATH_ENV if os.environ.get(key)}}
+        # The runner registers the AlphaGenome tools, so it is the one that knows whether they exist: the key file on its
+        # account and the client in its Python. Only the fact travels; the gateway never looks for the key (#1200).
+        try:
+            from ..tools import annot_keys, annot_regulatory
+            capabilities["alphagenome_ready"] = bool(annot_keys.read_key(self.s)) and annot_regulatory.alphagenome_client_available()
+        except Exception:  # noqa: BLE001 - a probe that cannot run says "not ready", never blocks the registration
+            capabilities["alphagenome_ready"] = False
         local_software = getattr(self, "local_software", None)
         if local_software is not None:
             capabilities["local_software"] = local_software

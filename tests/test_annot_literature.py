@@ -987,3 +987,111 @@ def test_the_orchestrator_knows_alphagenome_is_usable_only_with_key_and_client(m
     fake = SimpleNamespace(hub=SimpleNamespace(s=Settings()))
     assert Orchestrator._alphagenome_ready(fake) is expected
 
+
+# ---- #1200 rev8 (#1246 defect 2): the runner says whether AlphaGenome is usable; the gateway does not look for itself ----
+
+def _runner_with(tmp_path, monkeypatch, *, key, client):
+    from labhq.runner.daemon import Runner
+    from labhq.tools import annot_keys, annot_regulatory
+
+    settings = Settings()
+    for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
+        setattr(settings.runner, name, str(tmp_path / name))
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: "AIza-fake-key-value" if key else None)
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: client)
+    return Runner(settings)
+
+
+@pytest.mark.parametrize("key,client,expected", [(True, True, True), (True, False, False), (False, True, False),
+                                                  (False, False, False)])
+def test_the_runner_reports_whether_alphagenome_is_usable_in_its_capabilities(tmp_path, monkeypatch, key, client,
+                                                                              expected):
+    runner = _runner_with(tmp_path, monkeypatch, key=key, client=client)
+    capabilities = runner.capabilities()
+    assert capabilities["alphagenome_ready"] is expected
+    assert "AIza-fake-key-value" not in repr(capabilities), "only the fact travels, never the key"
+
+
+def test_a_gateway_without_the_key_still_lists_alphagenome_when_its_runner_reports_it_ready(monkeypatch):
+    """The defect: the key lives with a runner on another account or PC, so the gateway's own look (its key file, its
+    packages) said no and the roster the CSO plans from dropped the tools."""
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.tools import annot_keys, annot_regulatory
+
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: None)  # nothing on the gateway's side
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: False)
+    hub = SimpleNamespace(s=Settings(), runner_capabilities={"pc-key": {"alphagenome_ready": True}}, runners={"pc-key": 1})
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=hub)) is True
+
+
+def test_a_runner_that_reports_not_ready_wins_over_a_gateway_that_happens_to_have_a_key(monkeypatch):
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.tools import annot_keys, annot_regulatory
+
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: "AIza-gateway-side-key")
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: True)
+    hub = SimpleNamespace(s=Settings(), runner_capabilities={"pc-a": {"alphagenome_ready": False}}, runners={"pc-a": 1})
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=hub)) is False, "the tools are registered by the runner"
+
+
+def test_any_ready_runner_is_enough_and_an_old_runner_that_reports_nothing_falls_back_to_the_local_look(monkeypatch):
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.tools import annot_keys, annot_regulatory
+
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: None)
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: False)
+    two = SimpleNamespace(s=Settings(), runners={"a": 1, "b": 1},
+                          runner_capabilities={"a": {"alphagenome_ready": False}, "b": {"alphagenome_ready": True}})
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=two)) is True
+    old = SimpleNamespace(s=Settings(), runners={"a": 1}, runner_capabilities={"a": {"scheduler": "none"}})
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=old)) is False  # no report, local look says no
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: "AIza-local")
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: True)
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=old)) is True   # same machine, runner not yet updated
+
+
+def test_the_roster_lists_alphagenome_by_the_runner_that_serves_each_agent(monkeypatch):
+    """#1252 review: runner A is ready but hosts nobody here, and runner B, which owns the agent, is not. The agent's line
+    must not promise a tool its runner never registers."""
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator, format_roster
+    from labhq.tools import annot_keys, annot_regulatory
+
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: None)
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: False)
+    hub = SimpleNamespace(s=Settings(), runners={"a": 1, "b": 1},
+                          runner_capabilities={"a": {"alphagenome_ready": True}, "b": {"alphagenome_ready": False}})
+    fake = SimpleNamespace(hub=hub)
+    ready = lambda agent: Orchestrator._alphagenome_ready(fake, agent)
+    on_a = {**AgentSpec(id="on-a", name="A", role="r", builtin_mcp=["annot"], annot_tools=["alphagenome"]).summary(),
+            "runner_id": "a"}
+    on_b = {**AgentSpec(id="on-b", name="B", role="r", builtin_mcp=["annot"], annot_tools=["alphagenome"]).summary(),
+            "runner_id": "b"}
+    assert ready(on_a) is True and ready(on_b) is False
+    text = format_roster([on_a, on_b], alphagenome=ready)
+    line_a = next(line for line in text.splitlines() if line.startswith("- on-a"))
+    line_b = next(line for line in text.splitlines() if line.startswith("- on-b"))
+    assert "labhq_annot=yes (tools: alphagenome)" in line_a
+    assert "alphagenome" not in line_b, "its own runner is not ready, whoever else is"
+
+
+def test_an_agent_whose_runner_has_not_reported_falls_back_to_the_local_look(monkeypatch):
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.tools import annot_keys, annot_regulatory
+
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: "AIza-local")
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: True)
+    hub = SimpleNamespace(s=Settings(), runners={"old": 1}, runner_capabilities={"old": {"scheduler": "none"},
+                                                                                   "a": {"alphagenome_ready": False}})
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=hub), {"runner_id": "old"}) is True
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: None)
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=hub), {"runner_id": "old"}) is False

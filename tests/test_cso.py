@@ -631,9 +631,15 @@ def test_resume_uses_adapter_flag(tmp_path):
     assert hub.supports_resume("cli_resumable")
 
 
-def test_runner_reports_effective_compute_capabilities():
+def test_runner_reports_effective_compute_capabilities(monkeypatch):
     from types import SimpleNamespace
     from labhq.models import AgentSpec
+    from labhq.tools import annot_keys, annot_regulatory
+
+    # The runner reports whether AlphaGenome is usable (#1200): fix both facts so the answer does not depend on whether
+    # this PC has a key file or the client installed.
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: None)
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: True)
 
     runner = object.__new__(Runner)
     runner.s = Settings()
@@ -653,6 +659,7 @@ def test_runner_reports_effective_compute_capabilities():
         "compute_backends": ["local CLI"], "hpc_tools": False,
         "engine_cli_versions": {"mock": "unreported"},
         "local_software": {"r": {"available": False, "version": None}},
+        "alphagenome_ready": False,  # no key, whatever the client
         "platform": sys.platform,
         "environment": {key: os.environ[key] for key in (
             "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "XDG_CONFIG_HOME") if os.environ.get(key)},
