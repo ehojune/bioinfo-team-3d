@@ -40,6 +40,15 @@
 - 미해결/미검증: 두 페이지의 `lastSeq` 복사본은 `test_web.py`·`web_cards_status.cjs`가 문구를 고정해 그대로 둠(reducer 가드가 있어 동작은 안전). 실제 브라우저 재연결, 3D 렌더러의 표시는 못 봄. 서버가 종료 뒤 늦은 이벤트를 실제로 내보내는 빈도는 못 쟀음(#1148·#1168 범위).
 - CI 기록: 첫 head(01de761)에서 `pytest (3.10)`이 `test_patch_notes::test_merge_resolution_requires_note_only_for_own_code_change`의 CPython 내부 `SystemError: tupleobject.c:964` 한 건으로 실패했다(이 PR은 Python 코드를 바꾸지 않음). 재실행 권한이 없어(사용자·봇 신원 모두 거절) 기록 커밋으로 CI를 다시 돌렸다.
 
+# #674 검증된 runner 환경의 읽기 grant(B안, Claude 한정)
+
+- 결론: 환경 단계가 만든 `.venv`가 `validate_runner_env` 검증(runner 기록·manifest hash·pinned binding·interpreter 링크 대상)을 통과하면, 소비 단계의 agent가 Claude일 때 `_environment_refusal_reason`이 거부하지 않고 검증된 (venv, python) 경로를 `self._env_grants[task.id]`에 남긴다. `_run_task`가 이를 `_apply_environment_grants`로 `read_dirs`(읽기 전용, Claude가 Edit/Write 거부 규칙을 붙임)에 더하고 env `LABHQ_ENV_PYTHON`·`PYTHONDONTWRITEBYTECODE=1`, 브리핑 `[Runner environment]` 한 단락을 더한다. 검증이 한 번이라도 실패하면 이전 grant도 지운다. 읽기 전용 task는 grant를 받지 않는다.
+- 그 밖의 엔진(Codex·Gemini·cli·알 수 없는 agent)은 `read_dirs`를 받지 않아 기존 "protected interpreter alias is not implemented" 거부를 유지한다. `ENVIRONMENT_ALIAS_AVAILABLE`은 False 그대로다(미래의 별칭이 모든 엔진을 여는 용도). 새 상수 `ENVIRONMENT_GRANT_ENGINES = {claude_code}`.
+- 결정: [#674 결정 메모](https://github.com/ehojune/bioinfo-team-3d/issues/674#issuecomment-6539968861)와 총괄 결정(B안, Claude 한정).
+- 바꾼 것: `labhq/runner/daemon.py`, `tests/test_environment_grant_674.py`(7건), `config/ci/windows-boundary-v1.json`. `step_inputs.py`는 `validate_runner_env`가 이미 venv 경로를 돌려줘 바꾸지 않았다.
+- 시험: 신규 7건(Claude 허용, 타 엔진 거부, 검증 실패 시 grant 제거, binding 없음, read_dirs·env·브리핑, 읽기 전용 제외, 플래그 동작)은 구현 전 4건이 실패했고 지금 통과. 환경·입력·예약 기록 관련 기존 시험 포함 314건 통과.
+- 미검증: 실제 Windows·WSL에서 Claude가 grant된 venv의 interpreter를 실행하는지와 승인 카드가 뜨는지(mock만), 실제 ② 시운전, Codex 소비 단계, manual 한·영(차례를 기다림).
+
 # #678 task 도중 디스크 감시
 
 - 결론: runner가 task를 실제로 돌리는 동안(`working` 이후) `runner.disk_watch_s`(기본 30 s, 0이면 끔)마다 작업 폴더·runner 상태 폴더·`runner.bulk_data_root`·직원이 쓸 수 있는 project 폴더의 드라이브 여유를 읽고, 하나라도 `runner.disk_fail_free_gb`(2 GiB) 미만이면 그 task를 한 번만 halt한다. 세션은 보존되고 gateway의 기존 `멈춤 · 재개 가능` 흐름이 PI에게 묻는다. 재개 turn은 새 task 시작이라 `_disk_gate`를 다시 거친다.
