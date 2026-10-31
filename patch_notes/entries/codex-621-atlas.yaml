@@ -1,6 +1,6 @@
 pr: 1186
 rows:
-  - sha: "0000000"
+  - sha: "1d7710c"
     at: "2026-10-31 19:58"
     summary: "Atlas API 키를 runner 조회 서비스에 보관하고 직원 환경·명령·설정으로 넘기지 않습니다."
     text: "fix: keep Atlas credentials in a task-bound runner lookup service"
