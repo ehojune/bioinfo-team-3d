@@ -647,6 +647,8 @@ REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`stat
 `GET|POST /api/approvals[/{id}]`, `POST /api/tasks/{id}/cancel`, `POST /api/tasks/{id}/steer|pause|resume|halt` ([직원 제어](#직원-제어)), `POST /api/requests/{id}/steps/{step}/resume-quota`, `POST /api/recruit`, `POST /api/contracts/{agent_id}`,
 `GET /api/projects`, `GET /api/approvals/history`, `POST /api/projects/{id}/prs/{n}/codex-review`, `GET /api/events`, `GET /api/health`. 폰은 `/ws/client`로 스냅샷+이벤트를 받고 `{"type":"approval.resolve",...}`로 바로 승인할 수 있습니다.
 
+두 번 눌러도 한 번만 적용돼야 하는 POST(`/api/requests`, `/api/recruit`, `/api/contracts/{agent_id}`, `/api/projects/{id}/prs/{n}/codex-review`)는 `Idempotency-Key` 헤더(최대 64자)를 받습니다. 같은 경로·키·본문의 요청은 한 번만 적용하고 첫 응답을 그대로 돌려주며, 첫 요청이 진행 중이면 그 결과를 기다립니다. 키나 본문이 다르면 새 요청이고, 키가 없으면 전처럼 매번 적용합니다. 적용 전에 거절된 요청(4xx)은 기억하지 않아 같은 키로 다시 보낼 수 있습니다. 그 밖의 실패는 runner나 GitHub에 닿았을 수 있어서 같은 키에 409로 답하니, 상태를 확인한 뒤 새 키로 보내세요. 기억은 gateway 프로세스 안에 10분·512개까지만 있어 재시작하면 사라집니다. 웹은 계약 시트를 열어 둔 동안과 전송이 성공할 때까지, CLI(`send`·`recruit`·`contract`·`codex-review`)는 실행마다 키를 하나 보냅니다.
+
 task 취소(`POST /api/tasks/{id}/cancel`)는 task 기록의 runner로 보냅니다(gateway를 다시 띄운 뒤에도). runner가 끊겨 있으면 취소를 보관했다가 그 runner가 다시 연결될 때 보내고, task가 끝나거나 버려지면 지웁니다. 일찍 끝나는 요청의 선행 연구 조사도 같은 경로로 멈춥니다.
 
 모든 게이트웨이 이벤트에는 `schema_version: 1`과 재시작 후에도 이어지는 `seq`가 붙습니다. `/ws/client?since=<seq>`와 `/api/events?since=<seq>`는 이후 이벤트를 재전송합니다. 보관 상한을 지난 `since`에는 `replay_gap` 스냅샷으로 화면 상태를 교체합니다.
