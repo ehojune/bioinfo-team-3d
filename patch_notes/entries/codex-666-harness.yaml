@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '4480fe5'
+    at: '2026-11-01 03:00'
+    summary: '합성 관측의 재시도와 실패 사례를 검사합니다.'
+    text: 'Check nonce consumption and imported negative corpora'
   - sha: '6bfb1b4'
     at: '2026-11-01 02:52'
     summary: '합성 진단의 실행 결과와 별도 관측을 연결해 검사합니다.'
