@@ -1,0 +1,10 @@
+pr: 1130
+rows:
+- sha: '6f2c757'
+  at: 2026-10-31 07:30
+  text: Hub.publish가 이벤트 append와 그 request 저장을 StateStore.aappend_event(request=...) 한 transaction으로 한다. 둘 다 되거나 둘 다 안 되므로 이전의 "이벤트는 됐는데 request 저장은 실패" 상태가 없다. lab 요청 1회의 SQLite commit이 844회에서 670회로 줄었다. "두 commit"을 가정한 시험은 새 보장(한 commit, 실패 시 둘 다 없음)을 단언하도록 고쳤다
+  summary: 요청 처리 중 commit(fsync) 수를 줄여 D 드라이브에서 요청 시간을 단축합니다. 내구성 보장은 같거나 강해집니다.
+- sha: '56af032'
+  at: 2026-10-31 08:30
+  text: joint commit이 실패하면 live request를 저장된 값으로 되돌린다(_asave_request와 같은 규칙). PI 문장 번역의 예산 확인부터 예약 저장까지를 request별 lock으로 직렬화해 번역 두 건이 거의 동시에 올 때 둘 다 예산 확인을 통과하던 경합을 막는다. test_quota_wait의 한 시험은 단계가 대기에 들어가기를 시간 기준으로 기다린다. manual 한영에 발행의 한 transaction 보장을 적는다
+  summary: PR #1130 리뷰 P1(롤백·manual)과 commit이 줄면서 드러난 두 시험 실패(이중 예약, 대기 순서)를 고칩니다.

@@ -3554,7 +3554,8 @@ class Hub:
         self.events.clear()
         self.events.extend(ordered)
 
-    async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
+    async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None,
+                      activity: tuple[str, Callable[[dict], dict]] | None = None) -> None:
         ev = copy.deepcopy(ev)
         internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
         if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
@@ -3568,8 +3569,12 @@ class Hub:
                 await self._flush_committed_events()
                 durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
                                   ev.get("type") in ProjectReporter.HANDLED)
-                ev, cancelled = await self._publication_write(self.store.aappend_event(
-                    ev, self.s.gateway.event_buffer, runner_id, runner_seq, reporter_delivery=durable_report))
+                ev, cancelled = await self._append_event_with_request(ev, runner_id, runner_seq, durable_report,
+                                                                      activity)
+                if ev is None:  # a copy of a runner message that is already stored (#1143): nothing to publish again
+                    if cancelled:
+                        raise asyncio.CancelledError
+                    return
                 self._record_published_event(ev)
                 self._queue_committed_event(ev)
                 try:
@@ -3577,12 +3582,6 @@ class Hub:
                         await self._flush_committed_events(delivered)
                 except asyncio.CancelledError:
                     cancelled = True
-                rid = ev.get("request_id")
-                if rid in self.requests:
-                    try:
-                        await self.asave_request(rid)
-                    except asyncio.CancelledError:
-                        cancelled = True
         finally:
             if self.pending_committed:
                 self._schedule_committed_events()
@@ -3594,6 +3593,38 @@ class Hub:
             raise asyncio.CancelledError
         if ev.get("type") in ("request.step_done", "request.step_skipped") and ev.get("request_id"):
             await self._close_step_controls(ev["request_id"], (ev.get("data") or {}).get("step_id"))
+
+    async def _append_event_with_request(self, ev: dict, runner_id: str | None, runner_seq: int | None,
+                                         durable_report: bool, activity=None):
+        """Append the event and save its request in one transaction (#1129): both land or neither does."""
+        def append(request=None):
+            return self.store.aappend_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
+                                            reporter_delivery=durable_report, request=request, activity=activity)
+        rid = ev.get("request_id")
+        if rid not in self.requests:
+            return await self._publication_write(append())
+        revision = self._request_changed(rid)
+        async with self._request_lock(rid):
+            before = copy.deepcopy(self.requests[rid])
+            previous = self.store.get("request", rid)
+            updated = copy.deepcopy(before)
+            cp4.reconcile(updated)
+            updated["updated_at"] = time.time()
+            try:
+                saved, cancelled = await self._publication_write(append((rid, updated)))
+                if saved is None:  # already stored by another copy of the same runner message (#1143)
+                    return None, cancelled
+            except Exception:
+                # Nothing was stored: put the live request back to what is stored, as `_asave_request` does, so a
+                # later handler does not act on state that a restart would lose.
+                if self.request_versions.get(rid) == revision:
+                    if previous is not None:
+                        apply_changes(self.requests[rid], before, previous)
+                    elif self.requests[rid] == before:
+                        self.requests.pop(rid, None)
+                raise
+            apply_changes(self.requests[rid], before, updated)
+        return saved, cancelled
 
     @staticmethod
     async def _publication_write(write):
@@ -3617,6 +3648,34 @@ class Hub:
 
     async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                 incarnation: str | None = None) -> None:
+        """One runner message, once (#1143).
+
+        Within one connection the messages are handled in order, but the old and the new connection of a runner can both
+        be handling the same outbox row while it is still being committed: the resend passed the `runner_seen` check
+        before the first copy's commit, and both stored it. The row being handled is noted here before the first await.
+        A second copy WAITS for the first to finish (it must not return at once: the new connection would go on to the
+        next seq, commit its cursor first, and the first copy's event would then be dropped as "already seen"); when the
+        first is done the copy takes the ordinary path, which finds the seq stored, acks it and returns. If the first
+        one failed or was cancelled the copy processes the row itself. The store refuses a seq it already holds as the
+        last guard."""
+        seq = msg.get("runner_seq") if isinstance(msg, dict) else None
+        if seq is None:
+            return await self._on_runner_message(runner_id, msg, ws, incarnation)
+        if not hasattr(self, "runner_seq_inflight"):
+            self.runner_seq_inflight = {}
+        key = (runner_id, incarnation, seq)
+        while key in self.runner_seq_inflight:
+            await asyncio.wait([self.runner_seq_inflight[key]])  # returns when it is done, whatever the outcome
+        done = asyncio.get_running_loop().create_future()
+        self.runner_seq_inflight[key] = done
+        try:
+            await self._on_runner_message(runner_id, msg, ws, incarnation)
+        finally:
+            self.runner_seq_inflight.pop(key, None)
+            done.set_result(None)
+
+    async def _on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
+                                 incarnation: str | None = None) -> None:
         pipeline_event = None
         if ws is not None and (self.runners.get(runner_id) is not ws or
                                self.runner_incarnations.get(runner_id) != incarnation):
@@ -3629,6 +3688,7 @@ class Hub:
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
             return
         typ = msg.get("type")
+        activity_update = None
         # Keep current staff activity in the task ledger: the 200-event snapshot window
         # can evict a tool start while a quiet command is still running.
         if typ in {"agent.status", "agent.tool", "agent.tool_result", "agent.log"}:
@@ -3677,7 +3737,8 @@ class Hub:
                             activity.pop("external_wait", None)
                     return activity
 
-                await self.store.aupdate_task_activity(tid, update_activity)
+                # The activity is saved with this message's event in one transaction (#1132): the final publish below.
+                activity_update = (tid, update_activity)
         if typ == "runner.roster":
             self.set_roster(runner_id, msg.get("agents", []), msg.get("capabilities"))
             await self.publish({"type": "roster.updated", "ts": time.time(), "data": {"agents": list(self.agents.values())}})
@@ -3929,7 +3990,10 @@ class Hub:
         if entry and entry.get("count"):
             entry["count"] -= 1
         if typ != "agent.control" or not msg.get("task_id"):
-            await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
+            # Only a message that carries task activity passes the argument: a publish that wraps this one with the
+            # older signature (a test double, a decorator) keeps working for every other message.
+            carried = {} if activity_update is None else {"activity": activity_update}
+            await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq, **carried)
         if pipeline_event is not None:
             await self.publish(pipeline_event)
         if runner_seq is not None:
@@ -4547,6 +4611,12 @@ class Hub:
                 nonlocal saved
                 await self._add_approval(approval.id, {"approval": approval.model_dump(mode="json"),
                                                       "origin": None, "future": fut})
+                if not is_active_request(req_state.get("status")) or req_state.get("cancelling"):
+                    # The request was cancelled or ended while the card was being stored (a slow write): it must not
+                    # come back to life as waiting, nor keep a card for a request that is over (#1148).
+                    saved = {"status": "cancelled", "approval_id": approval.id}  # kept in this call only
+                    await self.close_approval(approval.id, "request cancelled")
+                    return
                 saved = {"status": "waiting", "approval_id": approval.id,
                          "proposal": {key: proposal[key] for key in
                                       ("fix_id", "signature_id", "action", "execution", "import_name", "package",
@@ -4555,6 +4625,13 @@ class Hub:
                 fixes[step_id] = saved
                 req_state["status"] = "waiting_facilities_fix"
                 await self.asave_request(rid)
+                if (approval.id not in self.approvals or not is_active_request(req_state.get("status"))
+                        or req_state.get("cancelling")):
+                    # A cancel closed the card (and published approval.expired) while the request was being saved:
+                    # announcing it now would put a card back in the page after it was withdrawn. Checked in the same
+                    # synchronous stretch as the publish call, so a cancel that comes later publishes expired after
+                    # this requested (#1148 review).
+                    return
                 await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
                                     "data": approval.model_dump(mode="json")})
             _, cancelled = await self._publication_write(open_fix())
@@ -5357,12 +5434,26 @@ class Hub:
             asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
         return new_rid
 
+    def _revise_lock(self, rid: str) -> asyncio.Lock:
+        if not hasattr(self, "revise_locks"):
+            self.revise_locks = {}
+        return self.revise_locks.setdefault(rid, asyncio.Lock())
+
     async def acreate_revised_request(self, rid: str, note: str) -> str:
         """CP1 수정 요청: a new research request with the PI's note, the previous plan to revise (``revision_of``), the
         answers and PI notes already given, the same references, project, requested budget and CSO model. It plans again
         from the note and asks a new CP1; the old request ends (no step ran). Everything the new request reads is in
         its first save, and a request already opened for ``rid`` is returned, so a restart never opens a second one.
-        Raises what create_request raises (a removed project or CSO model, a reference no longer allowed)."""
+        Raises what create_request raises (a removed project or CSO model, a reference no longer allowed).
+
+        One call at a time per request (#1140): the check for an already opened request is made here, but the new request
+        is registered by a task the write wrapper starts, so two calls ready in the same loop turn used to both pass the
+        check and open a revised request each (double cost). The second now waits and returns the first's request."""
+        async with self._revise_lock(rid):
+            return await self._acreate_revised_request(rid, note)
+
+    async def _acreate_revised_request(self, rid: str, note: str) -> str:
+        """The body of acreate_revised_request, run under its per-request lock."""
         old = self.requests[rid]
         existing = self.revised_request_of(rid)
         if existing:

@@ -137,16 +137,21 @@ def write_owned_bytes(root: Path, relative: str, data: bytes) -> Path:
     return durable.call(durable.FILES, _write_owned_bytes_now, root, relative, data)
 
 
-async def awrite_owned_many(root: Path, writes: list[tuple[str, str]]) -> list[Path]:
-    """Several labhq files as ONE durable job, in order: a cancel cannot leave some of them written and the rest not."""
+async def awrite_owned_many(root: Path, writes: list[tuple]) -> list[Path]:
+    """Several labhq files as ONE durable job, in order: a cancel cannot leave some of them written and the rest not.
+    A write is `(relative, text)`, or `(relative, text, False)` for a copy that is not worth an fsync of its own (see
+    `_write_owned_now`)."""
     return await durable.run(durable.FILES, _write_owned_many_now, root, writes)
 
 
-def _write_owned_many_now(root: Path, writes: list[tuple[str, str]]) -> list[Path]:
-    return [_write_owned_now(root, relative, text) for relative, text in writes]
+def _write_owned_many_now(root: Path, writes: list[tuple]) -> list[Path]:
+    return [_write_owned_now(root, relative, text, *rest) for relative, text, *rest in writes]
 
 
-def _write_owned_now(root: Path, relative: str, text: str) -> Path:
+def _write_owned_now(root: Path, relative: str, text: str, sync: bool = True) -> Path:
+    """Replace one labhq file. `sync` False keeps the temporary file and the rename (the file is never half written)
+    but skips the fsync: for an alias of a file that is fsynced itself (#1154), so that a power cut can leave the alias
+    old or empty and never the only copy of anything."""
     rel = PurePath(relative)
     target = Path(root) / rel
     temporary = f".{rel.name}.labhq-{uuid.uuid4().hex}.tmp"
@@ -164,9 +169,11 @@ def _write_owned_now(root: Path, relative: str, text: str) -> Path:
                     fd = -1
                     out.write(text)
                     out.flush()
-                    os.fsync(out.fileno())
+                    if sync:
+                        os.fsync(out.fileno())
                 parent.replace(temporary, rel.name)
-                parent.fsync()
+                if sync:
+                    parent.fsync()
             finally:
                 if fd >= 0:
                     os.close(fd)

@@ -10,9 +10,12 @@ import time
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TypeVar
 
 from . import durable
 from .test_guard import guard_test_path
+
+T = TypeVar("T")
 
 
 SCHEMA_VERSION = 1
@@ -58,6 +61,8 @@ class StateStore:
         self.lane = f"sqlite:{os.path.normcase(os.path.abspath(path))}"
         self._write_lock = threading.RLock()
         self._wdb: sqlite3.Connection | None = None
+        self._batch_conn: sqlite3.Connection | None = None  # set while `batch()` holds the open transaction
+        self._lane_owner: threading.Thread | None = None  # the thread running `_batch_now` for this store
         self._closed = False
         self.db = sqlite3.connect(path, timeout=5, check_same_thread=False)
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
@@ -95,11 +100,67 @@ class StateStore:
 
     @contextmanager
     def _transaction(self):
-        """One write transaction on the write connection, committed (fsynced) on exit, rolled back on error."""
+        """One write transaction on the write connection, committed (fsynced) on exit, rolled back on error. Inside
+        `batch()` it is a savepoint of the batch's transaction instead: its own error undoes only its own rows, and
+        the commit is the batch's."""
         with self._write_lock:
             conn = self._write_connection()
+            if self._batch_conn is conn:
+                conn.execute("SAVEPOINT labhq_write")
+                try:
+                    yield conn
+                except BaseException:
+                    conn.execute("ROLLBACK TO labhq_write")
+                    conn.execute("RELEASE labhq_write")
+                    raise
+                conn.execute("RELEASE labhq_write")
+                return
             with conn:
                 yield conn
+
+    @contextmanager
+    def batch(self):
+        """Every write made inside is ONE transaction: one commit and one fsync when the block ends, all of it or none
+        of it (#1125). The writes keep their order and each is still whole before the block returns, so a batch is as
+        durable as the same writes made one by one, minus the fsyncs in between. Nothing is delayed: the commit is at
+        the end of the block, before the caller continues. A batch inside a batch joins the outer one.
+
+        Only inside this store's durable lane (a `durable.run` job, or `run_batch`): its writes then run inline, in
+        order behind every earlier one. On any other thread the block would hold the write lock while its own `put()`
+        queued behind a live writer thread that waits for that lock."""
+        if not (durable.lane(self.lane).in_writer() or self._lane_owner is threading.current_thread()):
+            raise RuntimeError("StateStore.batch() runs inside the store's durable lane: use run_batch()")
+        with self._write_lock:
+            if self._batch_conn is not None:
+                yield
+                return
+            conn = self._write_connection()
+            # An explicit BEGIN: the first SAVEPOINT of a write inside would otherwise start the transaction itself,
+            # and its RELEASE would commit it.
+            conn.execute("BEGIN IMMEDIATE")
+            self._batch_conn = conn
+            try:
+                with conn:  # commits on exit, rolls back on error: the same exit a single write has
+                    yield
+            finally:
+                self._batch_conn = None
+
+    def run_batch(self, fn: Callable[[], T]) -> T:
+        """`fn()` on this store's lane with its writes as one transaction (`batch()`): in order behind the writes
+        already queued, and its result is returned once the commit is on disk."""
+        return durable.call(self.lane, self._batch_now, fn)
+
+    async def arun_batch(self, fn: Callable[[], T]) -> T:
+        """`run_batch` for a coroutine: the loop keeps serving while the batch commits."""
+        return await durable.run(self.lane, self._batch_now, fn)
+
+    def _batch_now(self, fn: Callable[[], T]) -> T:
+        previous, self._lane_owner = self._lane_owner, threading.current_thread()
+        try:
+            with self.batch():
+                return fn()
+        finally:
+            self._lane_owner = previous
 
     def close(self) -> None:
         durable.lane(self.lane).drain()  # queued writes finish before their connection goes
@@ -155,14 +216,17 @@ class StateStore:
 
     def _update_task_activity_now(self, key: str, update: Callable[[dict], dict]) -> None:
         with self._transaction() as conn:
-            task = self._get_on(conn, "task", key)
-            if not task or task.get("completed"):
-                return
-            previous = task.get("activity") or {}
-            activity = update(dict(previous))
-            if activity != previous:
-                conn.execute("UPDATE state SET body=? WHERE kind='task' AND key=?",
-                             (_dumps({**task, "activity": activity}), key))
+            self._apply_activity(conn, key, update)
+
+    def _apply_activity(self, conn: sqlite3.Connection, key: str, update: Callable[[dict], dict]) -> None:
+        task = self._get_on(conn, "task", key)
+        if not task or task.get("completed"):
+            return
+        previous = task.get("activity") or {}
+        activity = update(dict(previous))
+        if activity != previous:
+            conn.execute("UPDATE state SET body=? WHERE kind='task' AND key=?",
+                         (_dumps({**task, "activity": activity}), key))
 
     async def aupdate_task_control(self, key: str, action: str) -> dict:
         """Set only a halt/resume intent on the current eligible row, in writer order."""
@@ -250,26 +314,47 @@ class StateStore:
 
     # ----- events (the gateway's sequence) -----
     def append_event(self, body: dict, limit: int, runner_id: str | None = None,
-                     runner_seq: int | None = None, reporter_delivery: bool = False) -> dict:
-        return durable.call(self.lane, self._append_event_now, body, limit, runner_id, runner_seq, reporter_delivery)
+                     runner_seq: int | None = None, reporter_delivery: bool = False,
+                     request: tuple[str, dict] | None = None,
+                     activity: tuple[str, Callable[[dict], dict]] | None = None) -> dict:
+        return durable.call(self.lane, self._append_event_now, body, limit, runner_id, runner_seq, reporter_delivery,
+                            request, activity)
 
     async def aappend_event(self, body: dict, limit: int, runner_id: str | None = None,
-                            runner_seq: int | None = None, reporter_delivery: bool = False) -> dict:
+                            runner_seq: int | None = None, reporter_delivery: bool = False,
+                            request: tuple[str, dict] | None = None,
+                            activity: tuple[str, Callable[[dict], dict]] | None = None) -> dict:
         # Serialize before yielding: the writer must never inspect mutable gateway state.
         snapshot = json.loads(_dumps(body))
+        request = None if request is None else (request[0], json.loads(_dumps(request[1])))
         return await durable.run(self.lane, self._append_event_now, snapshot, limit,
-                                 runner_id, runner_seq, reporter_delivery)
+                                 runner_id, runner_seq, reporter_delivery, request, activity)
 
     def _append_event_now(self, body: dict, limit: int, runner_id: str | None, runner_seq: int | None,
-                          reporter_delivery: bool) -> dict:
+                          reporter_delivery: bool, request: tuple[str, dict] | None = None,
+                          activity: tuple[str, Callable[[dict], dict]] | None = None) -> dict | None:
+        """The event, the request snapshot and the task activity it belongs to, and the runner cursor commit together
+        (#1129, #1132): all or none. The activity reducer runs here, on the writer thread, against the latest task row.
+
+        None when the runner's seq is already at or below the stored cursor: that message was stored by another copy of
+        itself that committed first (a resend racing its original), so nothing is added again, activity included
+        (#1143)."""
         with self._transaction() as conn:
+            if runner_id is not None and runner_seq is not None:
+                seen = conn.execute("SELECT seq FROM runner_cursor WHERE runner_id=?", (runner_id,)).fetchone()
+                if seen is not None and runner_seq <= seen[0]:
+                    return None
+            if request is not None:
+                conn.execute("INSERT OR REPLACE INTO state VALUES ('request', ?, ?)", (request[0], _dumps(request[1])))
+            if activity is not None:
+                self._apply_activity(conn, activity[0], activity[1])
             body = self._insert_event(conn, body, limit)
             if reporter_delivery:
                 conn.execute("INSERT OR REPLACE INTO state VALUES ('reporter_delivery', ?, ?)",
                              (str(body["seq"]), _dumps(body)))
             if runner_id is not None and runner_seq is not None:
-                conn.execute("INSERT INTO runner_cursor VALUES (?, ?) ON CONFLICT(runner_id) DO UPDATE SET seq=excluded.seq",
-                             (runner_id, runner_seq))
+                conn.execute("INSERT INTO runner_cursor VALUES (?, ?) ON CONFLICT(runner_id) DO UPDATE SET seq=excluded.seq "
+                             "WHERE excluded.seq > runner_cursor.seq", (runner_id, runner_seq))
         return body
 
     def _insert_event(self, conn: sqlite3.Connection, body: dict, limit: int) -> dict:
@@ -431,6 +516,6 @@ class StateStore:
         durable.call(self.lane, self._mark_runner_now, runner_id, seq)
 
     def _mark_runner_now(self, runner_id: str, seq: int) -> None:
-        with self._transaction() as conn:
-            conn.execute("INSERT INTO runner_cursor VALUES (?, ?) ON CONFLICT(runner_id) DO UPDATE SET seq=excluded.seq",
-                         (runner_id, seq))
+        with self._transaction() as conn:  # the cursor only moves forward (#1143)
+            conn.execute("INSERT INTO runner_cursor VALUES (?, ?) ON CONFLICT(runner_id) DO UPDATE SET seq=excluded.seq "
+                         "WHERE excluded.seq > runner_cursor.seq", (runner_id, seq))

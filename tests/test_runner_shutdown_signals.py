@@ -167,7 +167,7 @@ async def test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resum
 async def test_shutdown_keeps_unacknowledged_results_and_has_a_bounded_wait(connected):
     pending = [{"type": "task.result"}]
     runner = SimpleNamespace(tasks={}, _dispatches=set(), connected=SimpleNamespace(is_set=lambda: connected),
-                             store=SimpleNamespace(pending=lambda: pending), stop=Mock())
+                             store=SimpleNamespace(pending=lambda: pending), stop=Mock(), _ack_drain=AsyncMock())
     await asyncio.wait_for(Runner.shutdown(runner, timeout_s=.02), 1)
     runner.stop.assert_called_once_with()
     assert pending == [{"type": "task.result"}]

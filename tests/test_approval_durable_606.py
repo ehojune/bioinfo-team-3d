@@ -445,26 +445,32 @@ async def test_reconnect_flush_does_not_send_a_decision_superseded_while_waiting
 async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_hub, monkeypatch, operation):
     hub = live_hub
     card, _ = pending_card(hub, "runner")
-    entered, release = asyncio.Event(), asyncio.Event()
+    entered, release, send_timed_out = asyncio.Event(), asyncio.Event(), asyncio.Event()
     class Socket:
         async def send_text(self, payload):
             entered.set()
-            await release.wait()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                send_timed_out.set()  # the send ended because its timer fired, not because the test released it
+                raise
     hub.runners["runner"] = Socket()
     hub.runner_locks["runner"] = asyncio.Lock()
-    monkeypatch.setattr("labhq.gateway.server.CLIENT_SEND_TIMEOUT_S", 0.05)
+    send_bound = 0.25  # larger than a loaded runner's scheduling jitter, small against the wait below
+    monkeypatch.setattr("labhq.gateway.server.CLIENT_SEND_TIMEOUT_S", send_bound)
     action = hub.resolve_approval(card.id, True) if operation == "resolve" else hub.close_approval(card.id, "closed")
     task = asyncio.create_task(action)
     try:
-        await asyncio.wait_for(entered.wait(), 1)
+        await asyncio.wait_for(entered.wait(), 10)
         assert hub.store.get("approval", card.id) is None
         assert hub.store.get("approval_decision", card.id) is not None
         assert hub.store.get("decision", card.id) is not None
         for _ in range(3):
             task.cancel()
             await asyncio.sleep(0)
-        done, _ = await asyncio.wait({task}, timeout=0.5)
-        assert task in done, "runner backpressure held cancellation and the card lock indefinitely"
+        done, _ = await asyncio.wait({task}, timeout=4 * send_bound)  # the configured bound plus 3x slack, not a long wait
+        assert task in done, "runner backpressure held cancellation and the card lock past the configured send timeout"
+        assert send_timed_out.is_set()
         assert "runner" not in hub.runners
     finally:
         release.set()
