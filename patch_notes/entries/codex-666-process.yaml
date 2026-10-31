@@ -1,5 +1,9 @@
 pr: 1050
 rows:
+  - sha: 'c4576ea'
+    at: "2026-11-01 04:48"
+    summary: "이벤트 전달과 종료가 함께 실패해도 timeout 사유와 reap 시도를 보존합니다."
+    text: "fix: preserve concurrent lifecycle failure evidence"
   - sha: '30c7e13'
     at: "2026-11-01 04:40"
     summary: "합성 broker 진단에 실행별 launch·termination 인증 이벤트를 선택해 붙입니다."
