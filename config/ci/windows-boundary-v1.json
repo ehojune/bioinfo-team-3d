@@ -58,6 +58,7 @@
     "tests/test_ci_pr_policy_p1.py",
     "tests/test_ci_skip.py",
     "tests/test_ci_skip_policy.py",
+    "tests/test_ci_suite.py",
     "tests/test_ci_unlisted_commands.py",
     "tests/test_ci_windows10m.py",
     "tests/test_ci_windows_phases.py",
