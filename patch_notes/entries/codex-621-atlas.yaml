@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "ba822c4"
+    at: "2026-10-31 20:47"
+    summary: "비서실장의 차단 도구 시험에 Atlas 예상값을 추가하고 문헌 도구 허용 단언을 유지합니다."
+    text: "test: include Atlas in chief-of-staff deny expectations"
   - sha: "c48dbda"
     at: "2026-10-31 20:32"
     summary: "비서실장의 Atlas 조회를 막고 실제 조회 직원의 엔진 환경에서 키를 확인합니다."
