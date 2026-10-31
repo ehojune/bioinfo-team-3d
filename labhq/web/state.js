@@ -258,7 +258,13 @@ function deadlineLabel(q, nowSeconds) {
   const since = Number(clock.pi_since);
   const open = waiting && Number.isFinite(since) && clock.pi_since !== null ? Math.max(0, nowSeconds - since) : 0;
   const held = (Number(clock.held_s) || 0) + open;
-  const left = (Number(q.created_at) || nowSeconds) + Number(clock.limit_s) + held - nowSeconds;
+  // The gateway cancels at `deadline_at`, counted from when it accepted the request and moved by each closed PI wait.
+  // `created_at` of a request.created event is its ts, which lags the acceptance when the start is late, so it only
+  // stands in for an older gateway that sends no deadline (#1103). A PI wait still open is added here.
+  const deadline = Number(clock.deadline_at);
+  const base = clock.deadline_at !== null && clock.deadline_at !== undefined && Number.isFinite(deadline)
+    ? deadline : (Number(q.created_at) || nowSeconds) + Number(clock.limit_s) + (Number(clock.held_s) || 0);
+  const left = base + open - nowSeconds;
   let text = `시간 상한 켜짐 ${spanLabel(Number(clock.limit_s))} · ` + (left > 0 ? `남은 ${spanLabel(left)}` : '기한이 지났습니다(곧 취소)');
   if (held > 0) text += ` · PI 대기 제외 ${spanLabel(held)}`;
   if (waiting) text += ' · PI 결정 대기 중이라 시간이 가지 않습니다';

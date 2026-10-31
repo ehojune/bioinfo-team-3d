@@ -304,6 +304,29 @@ async def test_runner_shutdown_waits_for_queued_writes(tmp_path, monkeypatch, fr
     assert all(f.done() for f in futures)
 
 
+async def test_a_runner_whose_broker_port_is_taken_fails_with_an_error_not_a_system_exit(tmp_path, fresh_writer):
+    """uvicorn ends a failed start with sys.exit(3). As the SystemExit of the run_forever task it left the event loop and
+    ended the rest of an xdist worker's tests (PR #1236's run, #1238): now one test sees a RuntimeError."""
+    import socket
+
+    s = Settings()
+    s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
+    s.runner.workspace_root = str(tmp_path / "runs")
+    s.runner.talent_dir = str(tmp_path / "talent")
+    s.runner.agents_dir = str(tmp_path / "agents")
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        s.runner.broker_port = taken.getsockname()[1]
+        runner = Runner(s)
+        try:
+            with pytest.raises(RuntimeError, match="could not start") as raised:
+                await asyncio.wait_for(runner.run_forever(), 30)
+        finally:
+            runner.stop()
+    assert str(s.runner.broker_port) in str(raised.value)
+
+
 # ----- a crash in the middle of the queue -----
 
 def _run_crashing(script: str, *args) -> subprocess.CompletedProcess:

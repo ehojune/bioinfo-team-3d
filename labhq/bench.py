@@ -28,7 +28,7 @@ from .request_status import is_terminal_request
 from .reproduction_receipt import receipt_json, receipt_note, receipt_summary
 from .research import semantic_device_report
 from . import bench_metrics
-from .util import atomic_write_text, free_port, merge_staff_env, parent_claude_markers
+from .util import atomic_write_text, free_ports, merge_staff_env, parent_claude_markers
 
 REPO = Path(__file__).resolve().parents[1]
 BENCH_ROOT = Path(str(files("labhq").joinpath("bench_data")))
@@ -324,7 +324,7 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
     if settings.recruit.contract_engine == "claude_code":
         settings.recruit.contract_model = settings.bench.staff_model.get(
             settings.recruit.contract_model, settings.recruit.contract_model)
-    port = free_port()
+    port, broker_port = free_ports(2)
     settings.gateway.state_dir = str(state / "gateway")
     settings.gateway.port = port
     settings.gateway.url = f"ws://127.0.0.1:{port}"
@@ -332,7 +332,7 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
     settings.runner.workspace_root = str(state / "runs")
     settings.runner.talent_dir = str(state / "talent")
     settings.runner.agents_dir = str(state / "agents")
-    settings.runner.broker_port = free_port()
+    settings.runner.broker_port = broker_port
     settings.runner.job_poll_s = 1
     settings.hpc.scheduler = "mock"
     if engines == "mock":

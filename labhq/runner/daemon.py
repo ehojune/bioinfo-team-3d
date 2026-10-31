@@ -471,8 +471,17 @@ class Runner:
             os.umask(0o077)  # task inputs created by this runner and its agents stay private
         self.registry.load()
         log.info("runner %s: %d agents", self.s.runner.id, len(self.registry.agents))
+        async def serve_broker() -> None:
+            # uvicorn ends a failed start (a port another process took) with sys.exit(3). As the SystemExit of a task it
+            # leaves the event loop and takes the rest of a test worker down with it (#1238); a start failure is an error.
+            try:
+                await self.broker.serve()
+            except SystemExit as exit_:
+                raise RuntimeError(f"runner broker could not start on 127.0.0.1:{self.s.runner.broker_port} "
+                                   f"(uvicorn exit code {exit_.code}; is the port already in use?)") from None
+
         try:
-            loops = [self.broker.serve(), self._connection_loop()]
+            loops = [serve_broker(), self._connection_loop()]
             if self.s.hpc.scheduler != "none":
                 loops.append(self._job_watch_loop())
             else:
