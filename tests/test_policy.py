@@ -1,6 +1,8 @@
 import ast
 import itertools
 import ntpath
+import os
+import posixpath
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -209,6 +211,78 @@ def test_touches_stays_linear_on_long_separator_runs():
 
 def test_touches_resolved_stays_linear_on_long_separator_runs():
     _assert_linear(lambda text: touches_resolved({"command": text}, ["/restricted"]))
+
+
+@pytest.mark.parametrize("path,expected", [
+    ("/a/b", "/a/b"),                  # nothing to merge
+    ("a//b///c", "a/b/c"),
+    ("//a///b", "//a/b"),              # a leading pair is kept: `//host` is implementation-defined on POSIX
+    ("//", "//"),
+    ("///a", "/a"),                    # three or more leading separators are one
+    ("////", "/"),
+    ("/a\\\\b", "/a\\\\b"),            # a backslash is an ordinary character on POSIX
+    ("", ""),
+])
+def test_separator_runs_merge_but_a_leading_pair_stays(path, expected):
+    assert policy_module._collapse_separators(path, nt=False) == expected
+
+
+@pytest.mark.parametrize("path", ["C:\\a//b", "\\\\server\\share\\x", "//?/C:/x", "//a//", "///a"])
+def test_a_windows_path_is_returned_as_written(path):
+    """Merging the separators of `//a//` (a UNC prefix with no share) changes what ntpath.realpath returns."""
+    assert policy_module._collapse_separators(path, nt=True) == path
+
+
+def test_merging_separator_runs_never_changes_what_posix_realpath_returns():
+    """The merged path names the same place: realpath's answer for it is the one it gives the original."""
+    cases = ["".join(chars) for n in range(7) for chars in itertools.product("/.ab", repeat=n)]
+    cases += ["///a//..//b", "a//b/./c", "//host//share/../x", "/a/b//../c///d"]
+    assert [posixpath.realpath(policy_module._collapse_separators(case, nt=False)) for case in cases] ==         [posixpath.realpath(case) for case in cases]
+
+
+def test_the_policy_realpath_stays_linear_on_long_separator_runs():
+    """#1158: CPython's POSIX realpath is quadratic in a run of separators (0.03 s, 0.12, 0.44, 1.75 s per doubling).
+    Windows' own is not, so this only shows on Linux and macOS, where it failed at 7-16x over four times the input."""
+    _assert_linear(lambda text: policy_module._real(text) and None)
+
+
+@pytest.fixture
+def posix_merge(monkeypatch):
+    """The merge as a POSIX host runs it, on any host: the merge itself returns a Windows path as written."""
+    merge = policy_module._collapse_separators
+    monkeypatch.setattr(policy_module, "_collapse_separators", lambda p, *, nt=None: merge(p, nt=False))
+
+
+def test_the_policy_realpath_takes_what_os_path_realpath_takes(tmp_path, posix_merge):
+    """#1159: `_root_rules` hands it a `Path`, and a `Path` has no `lstrip`."""
+    root = tmp_path / "work" / "run"
+    spelled = f"{tmp_path}//work///run"
+    assert policy_module._realpath(root) == os.path.realpath(root)
+    assert policy_module._realpath(spelled) == os.path.realpath(spelled)
+    assert policy_module._realpath(os.fsencode(spelled)) == os.path.realpath(os.fsencode(spelled))  # bytes pass through
+
+
+def test_root_rules_accept_path_roots_and_name_each_root_alike(tmp_path, posix_merge):
+    """A `Path` root and the same root as text give the same rules, with a run of separators in the text too."""
+    (tmp_path / "work").mkdir()
+    as_path = policy_module._root_rules("Read", [tmp_path / "work"])
+    as_text = policy_module._root_rules("Read", [str(tmp_path / "work")])
+    assert as_path and as_path == as_text
+    assert policy_module._root_rules("Read", [f"{tmp_path}///work"]) == as_text
+
+
+def test_a_collapsed_candidate_gives_the_same_policy_decision(monkeypatch):
+    """The policy decides alike with and without the merge, so long separator runs change its time, not its answer."""
+    run = "/" * 5000
+    spellings = [f"/data{run}cohort/a.vcf", f"/data/{run}cohort//a.vcf", "/data//cohort/a.vcf",
+                 f"/home/u{run}proj/README.md", "/home/u/README.md"]
+
+    def decided():
+        return [evaluate_tool("Read", {"file_path": spelling}, _policy()).action for spelling in spellings]
+
+    merged = decided()
+    monkeypatch.setattr(policy_module, "_collapse_separators", lambda p, *, nt=None: p)
+    assert merged == decided() == ["deny", "deny", "deny", "allow", "allow"]
 
 
 def test_restricted_read_denied_and_bash_asks():
