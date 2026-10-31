@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '8f64b59'
+    at: '2026-11-01 04:51'
+    summary: 'Reject invalid producer key identifiers.'
+    text: 'Validate producer key identifier'
   - sha: 'e5733e4'
     at: '2026-11-01 04:47'
     summary: 'Freeze synthetic observer inputs during collection.'
