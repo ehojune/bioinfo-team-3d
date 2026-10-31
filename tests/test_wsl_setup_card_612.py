@@ -218,3 +218,94 @@ async def test_a_setup_that_outlives_its_limit_is_not_started_a_second_time(hub,
             break
         await asyncio.sleep(0.01)
     assert not hub._wsl_setup_running
+
+
+# ---- run_where: the PI picks "this PC's WSL" when sending the request (#612 stage 2, without #578) ----
+
+def test_run_where_defaults_to_auto_and_accepts_only_known_places():
+    from pydantic import ValidationError
+    from labhq.gateway.server import RequestIn
+    assert RequestIn(text="x").run_where == "auto"
+    assert RequestIn(text="x", run_where="wsl").run_where == "wsl"
+    with pytest.raises(ValidationError):
+        RequestIn(text="x", run_where="cloud")
+
+
+async def test_a_request_that_did_not_ask_for_wsl_gets_no_check_and_no_card(hub, monkeypatch):
+    monkeypatch.setattr(wsl_setup, "check", lambda s: pytest.fail("auto must not look at WSL"))
+    hub.requests["r"]["run_where"] = "auto"
+    assert await hub.prepare_wsl_request("r") is None
+    assert not hub.approvals
+
+
+async def test_a_wsl_request_opens_the_card_runs_the_setup_after_a_yes_and_then_waits_for_the_runner(hub, monkeypatch):
+    calls, waited = [], []
+    monkeypatch.setattr(wsl_setup, "check", lambda s: MISSING)
+    monkeypatch.setattr(wsl_setup, "setup", lambda s: calls.append("setup") or READY)
+
+    async def wait_for_runner(probe, first=False):
+        waited.append((probe.agent_id, first))
+        return True
+
+    hub.wait_for_runner = wait_for_runner
+    hub.requests["r"]["run_where"] = "wsl"
+    pending = asyncio.ensure_future(hub.prepare_wsl_request("r"))
+    card = await card_of(hub)
+    assert calls == [], "nothing runs before the PI answers"
+    await hub.resolve_approval(card["id"], True, "")
+    await pending
+    assert calls == ["setup"] and waited == [("bioinfo-agent", True)]
+    assert "run_where_note" not in hub.requests["r"]
+
+
+@pytest.mark.parametrize("answer", ["no", "failed"])
+async def test_a_wsl_request_that_cannot_get_wsl_carries_on_without_it_and_says_why(hub, monkeypatch, answer):
+    monkeypatch.setattr(wsl_setup, "check", lambda s: MISSING)
+    monkeypatch.setattr(wsl_setup, "setup", lambda s: MISSING)  # a yes that leaves it unready
+    waited = []
+
+    async def wait_for_runner(probe, first=False):
+        waited.append(1)
+        return False
+
+    hub.wait_for_runner = wait_for_runner
+    hub.requests["r"]["run_where"] = "wsl"
+    pending = asyncio.ensure_future(hub.prepare_wsl_request("r"))
+    await hub.resolve_approval((await card_of(hub))["id"], answer == "failed", "")
+    await asyncio.wait_for(pending, 5)  # never raises and never blocks the request
+    assert waited == [], "no runner will come on its own: the request does not wait for it"
+    note = hub.requests["r"]["run_where_note"]
+    assert "WSL" in note and hub.requests["r"]["status"] == "running"
+
+
+async def test_a_wsl_request_with_a_ready_wsl_opens_no_card(hub, monkeypatch):
+    monkeypatch.setattr(wsl_setup, "check", lambda s: READY)
+
+    async def wait_for_runner(probe, first=False):
+        return True
+
+    hub.wait_for_runner = wait_for_runner
+    hub.requests["r"]["run_where"] = "wsl"
+    assert await hub.prepare_wsl_request("r") is None
+    assert not hub.approvals
+
+
+def test_the_planner_is_told_when_the_pi_chose_wsl_and_only_then():
+    from labhq.orchestrator.cso import format_capabilities
+    roster = [{"id": "bioinfo-agent", "runner_id": "lab-wsl"}]
+    chosen = format_capabilities(roster, {}, run_where="wsl")
+    assert "이 PC의 WSL" in chosen and "bioinfo-agent" in chosen
+    assert "이 PC의 WSL" not in format_capabilities(roster, {}, run_where="auto")
+    assert "이 PC의 WSL" not in format_capabilities(roster, {})
+
+
+def test_send_wsl_puts_run_where_in_the_request(monkeypatch, tmp_path):
+    seen = {}
+    monkeypatch.setattr(cli, "_api", lambda s, method, path, **kw: seen.update(body=kw.get("json")) or "req_x")
+    config = tmp_path / "labhq.yaml"
+    config.write_text("gateway: {}" + chr(10), encoding="utf-8")
+    monkeypatch.setenv("LABHQ_CONFIG", str(config))
+    cli.main(["send", "분석", "--wsl", "--no-wait"])
+    assert seen["body"]["run_where"] == "wsl"
+    cli.main(["send", "분석", "--no-wait"])
+    assert seen["body"]["run_where"] == "auto"

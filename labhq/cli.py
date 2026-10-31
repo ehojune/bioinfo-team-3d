@@ -2033,6 +2033,8 @@ def main(argv: list[str] | None = None) -> None:
     sp.add_argument("--work-kind", choices=("auto", "simple", "research"), default="auto",
                     help="with research.enabled: simple skips the research lane (CP1/CP2), research forces it")
     sp.add_argument("--cso-model", help="request-local CSO model from orchestrator.cso_models")
+    sp.add_argument("--wsl", action="store_true",
+                    help="run the analysis in this PC's WSL; if it is not ready the request opens the WSL setup card first")
     sp.add_argument("--dry-run", action="store_true",
                     help="show pre-plan calls and cost ranges without calling models, tools or the network")
     sp.add_argument("--no-wait", action="store_true")
@@ -2443,7 +2445,7 @@ def main(argv: list[str] | None = None) -> None:
                 "agent_id": args.agent, "cso_model": args.cso_model, "route": "team" if args.team else "auto",
                 "project_dirs": args.project_dir, "budget_usd": args.budget, "project_id": args.project,
                 "references": references, "default_references": not args.no_default_refs,
-                "work_kind": args.work_kind}
+                "work_kind": args.work_kind, "run_where": "wsl" if args.wsl else "auto"}
         if args.dry_run:
             from .dry_run import build_preview, render_preview
 

@@ -434,6 +434,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
     <label class="sr" for="target">받는 사람</label>
     <select id="target"></select>
     <label class="team-toggle" id="team-only-label"><input id="team-only" type="checkbox">팀으로</label>
+    <label class="team-toggle" id="wsl-only-label" title="이 PC의 WSL에서 분석합니다. 준비가 덜 됐으면 셋업 카드가 먼저 뜹니다"><input id="wsl-only" type="checkbox">WSL에서</label>
     <label class="sr" for="work-kind">작업 종류</label>
     <select id="work-kind" title="연구 lane이 켜져 있을 때: 간단은 CP1·CP2 없이, 연구는 계획 승인(CP1)과 근거 승인(CP2)을 거쳐요">
       <option value="auto">자동 판단</option><option value="simple">간단한 일</option><option value="research">연구</option>
@@ -984,7 +985,7 @@ async function send() {
   // A research request goes through the CSO's frozen plan (CP1); one staff member cannot take it directly (R16).
   if (target && workKind === 'research') { toast('연구는 팀(CSO)에게 보내야 해요. 받는 사람을 CSO로 바꿔 주세요'); return; }
   const body = { text, mode: target ? 'direct' : 'orchestrate', agent_id: target || null, project_id: project || null,
-    route: $('#team-only').checked ? 'team' : 'auto', work_kind: workKind,
+    route: $('#team-only').checked ? 'team' : 'auto', work_kind: workKind, run_where: ($('#wsl-only') || {}).checked ? 'wsl' : 'auto',
     references: refs.items.map(({kind, value}) => ({kind, value})), default_references: refs.useDefaults };
   try {
     // Kept on `send` until the request is accepted: a retry of the same text is the same request (#1164).

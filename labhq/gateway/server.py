@@ -179,6 +179,9 @@ class RequestIn(BaseModel):
     mode: Literal["orchestrate", "direct", "plan_only"] = "orchestrate"
     agent_id: str | None = None
     work_kind: Literal["auto", "simple", "research"] = "auto"
+    # Where the PI wants the analysis to run. "wsl": this PC's WSL runner; if it is not ready the request opens the
+    # setup card first (#612). Only auto and wsl exist yet: hpc and local can join the same field later.
+    run_where: Literal["auto", "wsl"] = "auto"
     scope_status: Literal["in_scope", "needs_pi_confirmation"] = "in_scope"
     project_dirs: list[str] = []
     references: list[Reference] = Field(default_factory=list, max_length=MAX_REFERENCES)  # pointers only (#36)
@@ -3462,6 +3465,26 @@ class Hub:
                                 "data": {"level": "info", "text": "WSL 셋업을 마쳤어요. runner가 연결되면 이어 갑니다"}})
             return None
 
+    async def prepare_wsl_request(self, rid: str) -> None:
+        """The PI asked for this PC's WSL (``run_where == "wsl"``, #612): make it ready before the plan is made.
+
+        The same check and card as a task that needs bioinfo-agent (``offer_wsl_setup``), asked once per request. A yes
+        runs the setup and the request then waits for the runner as usual; a no, a failed setup or another PC leaves a
+        note on the request and the request carries on without WSL, never blocked on a runner that will not come."""
+        req = self.requests.get(rid)
+        if not req or req.get("run_where") != "wsl":
+            return
+        agent = next(iter(WSL_BOUND_AGENTS))
+        probe = Task(agent_id=agent, request_id=rid, prompt="")
+        stopped = await self.offer_wsl_setup(probe)
+        if stopped is not None:
+            req["run_where_note"] = ((req.get("wsl_setup") or {}).get("note") or stopped.error
+                                     or "이 PC의 WSL을 준비하지 못해 WSL 없이 진행합니다")
+            await self.asave_request(rid)
+            return
+        if self.agent_runner.get(agent) not in self.runners and self._waits_for_runner(probe, first=True):
+            await self.wait_for_runner(probe, first=True)
+
     async def wait_for_runner(self, task: Task, *, first: bool = False) -> bool:
         """Park the task's request as waiting_for_runner until a runner hosting the agent connects, at most
         gateway.runner_wait_s. Nothing was sent yet, so nothing is uncertain or spent. False also when a roster
@@ -4778,7 +4801,7 @@ class Hub:
         if found:
             return found
         fields = {key: old[key] for key in ("mode", "work_kind", "scope_status", "project_dirs",
-                                          "project_id", "route") if key in old}
+                                          "project_id", "route", "run_where") if key in old}
         # Stored provenance is not input: revalidate only the public Reference fields.
         fields["references"] = [{key: ref[key] for key in ("kind", "value", "note") if key in ref}
                                 for ref in old.get("references") or []]
@@ -4834,7 +4857,7 @@ class Hub:
         if found:
             return found
         fields = {key: old[key] for key in ("mode", "work_kind", "scope_status", "project_dirs",
-                                          "project_id", "route") if key in old}
+                                          "project_id", "route", "run_where") if key in old}
         # Stored provenance is not input: revalidate only the public Reference fields.
         fields["references"] = [{key: ref[key] for key in ("kind", "value", "note") if key in ref}
                                 for ref in old.get("references") or []]
@@ -5454,6 +5477,7 @@ class Hub:
                          default_references=bool(old.get("default_references", True)),
                          budget_usd=old.get("requested_budget_usd", old.get("budget_usd")),
                          project_id=old.get("project_id"), cso_model=old.get("cso_model"),
+                         run_where=old.get("run_where", "auto"),
                          route=old.get("route", "auto"), meta={**(old.get("meta") or {}), "revised_from": rid})
         new_rid = self.create_request(body, extra=extra)
         old["revised_to"] = new_rid
@@ -5611,6 +5635,8 @@ class Hub:
         await self.publish({"type": "request.created", "ts": time.time(), "request_id": rid,
                             "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id", "references",
                                                            "route", "wall_clock")}})
+        if r.get("run_where") == "wsl":
+            await self.prepare_wsl_request(rid)  # before the plan reads the roster: a ready WSL puts bioinfo-agent in it
         # The plan reads the roster before its first dispatch, so wait for the first agent's runner here (R15).
         first = r.get("agent_id") if r.get("mode") == "direct" else self.s.orchestrator.cso_agent
         probe = Task(agent_id=str(first or ""), request_id=rid, prompt="")
