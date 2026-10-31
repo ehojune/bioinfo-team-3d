@@ -531,7 +531,10 @@ def test_every_staff_prompt_ends_with_the_tools_its_read_only_run_really_has(age
     assert profile.system_prompt.startswith(agent.system_prompt.rstrip())
     assert profile.system_prompt.count(TOOL_NOTICE_HEAD) == 1
     denied = {name for name in profile.disallowed_tools if "(" not in name}
-    expected = [name for name in [*profile.builtin_tools.split(","), *profile.tools] if name and name not in denied]
+    from labhq.adapters.read_only import SHELL_TOOL
+    shell = profile.engine == Engine.codex and profile.id != "facilities"  # Codex has its read-only shell, no named file tools
+    base = [SHELL_TOOL] if shell else profile.builtin_tools.split(",")
+    expected = [name for name in [*base, *profile.tools] if name and name not in denied]
     if "annot" in profile.builtin_mcp and profile.annot_tools:
         expected.append("labhq_annot (" + ", ".join(profile.annot_tools) + ")")
     assert _noticed_tools(profile.system_prompt) == expected
@@ -551,7 +554,18 @@ def test_a_read_only_claude_staff_member_is_told_it_has_no_web_and_no_annot():
 def test_a_codex_staff_member_keeps_only_the_web_tools_it_had_in_the_notice():
     from labhq.adapters.read_only import read_only_profile
     agent = AgentSpec(id="w", name="W", role="r", engine=Engine.codex, system_prompt="Search.", tools=["WebSearch", "Bash"])
-    assert _noticed_tools(read_only_profile(agent).system_prompt) == ["Read", "Glob", "Grep", "Write", "Edit", "WebSearch"]
+    from labhq.adapters.read_only import SHELL_TOOL
+    prompt = read_only_profile(agent).system_prompt
+    assert _noticed_tools(prompt) == [SHELL_TOOL, "WebSearch"]  # its shell stays; Codex has no named file tools
+    assert "shell commands) is not available" not in prompt and "(for example PubMed or bioRxiv tools, other labhq_annot tools)" in prompt
+
+
+def test_codex_facilities_runs_without_a_shell_and_the_notice_says_so():
+    from labhq.adapters.read_only import read_only_profile
+    agent = AgentSpec(id="facilities", name="F", role="r", engine=Engine.codex, system_prompt="Diagnose.")
+    prompt = read_only_profile(agent).system_prompt
+    assert _noticed_tools(prompt) == [] and "Available now: none." in prompt
+    assert "shell commands) is not available" in prompt
 
 
 # ---- #1055: a read-only run keeps labhq_annot for an explicit, narrow list of tools ----
