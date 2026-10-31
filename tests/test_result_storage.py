@@ -445,3 +445,17 @@ def test_a_reviewers_quoted_image_link_is_not_a_link_of_the_progress_record(tmp_
 def test_a_real_broken_link_in_a_document_is_still_found():
     files = {"run/progress.md": "# 진행\n\n[없는 파일](../nowhere.svg)\n", "figures/a.svg": "<svg/>"}
     assert broken_markdown_links(files) == [{"document": "run/progress.md", "target": "../nowhere.svg"}]
+
+
+@pytest.mark.parametrize("name,text,expected", [
+    ("a longer backtick fence holds a shorter one", "````json\n\"q\": \"```\"\n![a](../x.svg)\n````\n", []),
+    ("a longer tilde fence holds a shorter one", "~~~~\n~~~\n![a](../x.svg)\n~~~~\n", []),
+    ("a three-backtick fence still hides its link", "```json\n![a](../x.svg)\n```\n", []),
+    ("a link after a closed fence is still read", "```\ncode\n```\n![a](../x.svg)\n", ["../x.svg"]),
+    ("a fence that never closes does not hide the link", "```json\n![a](../x.svg)\n", ["../x.svg"]),
+    ("a closing fence may be longer than the opening one", "```json\n![a](../x.svg)\n`````\n![b](../y.svg)\n", ["../y.svg"]),
+])
+def test_a_fence_hides_links_by_its_own_length(name, text, expected):
+    """#1193 (Codex P2): `_json_block` makes its fence longer than any backtick run inside the JSON, so the link check
+    has to know fences of any length. A fence is closed only by a run of the same character at least as long."""
+    assert [row["target"] for row in broken_markdown_links({"run/p.md": text})] == expected, name
