@@ -18,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -26,10 +27,11 @@ from . import instance_guard, proc_tree
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
 from .process_diagnostics import SUPERVISOR_SUFFIX
-from .request_status import is_terminal_request, request_deadline_text, request_display_label, request_status_label
+from .request_status import (failed_step_ids, is_terminal_request, request_deadline_text, request_display_label,
+                             request_status_label)
 from .settings import Settings
 from .test_guard import guard_test_path
-from .util import atomic_write_text, free_port, short, without_windows_app_aliases
+from .util import atomic_write_text, free_port, free_ports, short, without_windows_app_aliases
 
 REPO = Path(__file__).resolve().parents[1]
 ICON = {"cso": "🦉", "chief_of_staff": "🐧", "biologist": "🐻", "data_steward": "🐿️", "lit_scout": "🦊",
@@ -164,6 +166,8 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
     elif t == "request.completed":
         summary = d.get("cost_summary")
         label = "보고서 검토 대기 (CP4)" if d.get("status") == "review_pending" else "요청 완료"
+        if d.get("failed_steps"):  # done, but not every step finished (#1220)
+            label += f" · 일부 실패 {', '.join(map(str, d['failed_steps']))}"
         line = f"🏁 {label} (ok={d.get('ok')}, cost={cost_text(d.get('cost_usd'), d.get('cost_known'), summary)})"
         if d.get("status") == "review_pending" and (final := d.get("final_checkpoint")):
             line += (f"\n   검토 후: labhq review-done {ev.get('request_id')} --revision {final['revision']}"
@@ -278,12 +282,13 @@ def _request_deadline_line(s, rid: str, state: dict | None = None) -> str | None
     return "시간 상한: " + request_deadline_text(detail, time.time())
 
 
-def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, **kw):
+def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, headers: dict | None = None, **kw):
     import httpx
 
     try:
         r = httpx.request(method, _http_base(s) + path,
-                          headers={"Authorization": f"Bearer {s.gateway.client_token}"}, timeout=30, **kw)
+                          headers={"Authorization": f"Bearer {s.gateway.client_token}", **(headers or {})},
+                          timeout=30, **kw)
         r.raise_for_status()
         return r.json()
     except httpx.HTTPError as exc:
@@ -1205,6 +1210,26 @@ def _stop_background(s: Settings, role: str) -> int | None:
     return pid
 
 
+def _finished_request_lines(req: dict) -> list[str]:
+    """What `labhq status` prints for a finished request: its bundle and, for one that finished `done` with failed,
+    skipped or never-run steps, which steps (#1220). Empty when there is nothing to say."""
+    failed = failed_step_ids(req)
+    if req.get("status") not in {"done", "failed", "review_pending"} or not (
+            req.get("bundle_path") or req.get("bundle_warning") or failed):
+        return []
+    lines = [f"  {req['id']} {request_display_label(req)}"]
+    if failed:
+        lines.append(f"    일부 실패한 단계: {', '.join(failed)}")
+    if req.get("bundle_path"):
+        lines.append(f"    요청 묶음: {req['bundle_path']}")
+    if req.get("bundle_grade"):
+        reasons = "; ".join(map(str, req.get("bundle_grade_reasons") or []))
+        lines.append(f"    재현 등급: {req['bundle_grade']}" + (f" ({reasons})" if reasons else ""))
+    if req.get("bundle_warning"):
+        lines.append(f"    경고: {req['bundle_warning']}")
+    return lines
+
+
 def _active_request_line(request: dict) -> str:
     steps = (request.get("step_progress") or {}).get("steps") or {}
     active = [f"{step}={state}" for step, state in steps.items() if state in {"running", "hibernating"}]
@@ -1560,7 +1585,7 @@ async def _send_and_wait(s: Settings, body: dict) -> None:
     login_holds: set[str] = set()
     async with websockets.connect(url, max_size=64 * 2**20) as ws:
         await ws.recv()  # snapshot
-        rid = _api(s, "POST", "/api/requests", json=body)["request_id"]
+        rid = _api(s, "POST", "/api/requests", json=body, headers={"Idempotency-Key": uuid.uuid4().hex})["request_id"]
         print(f"request {rid}")
         async for raw in ws:
             ev = json.loads(raw)
@@ -1864,7 +1889,8 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
     s.gateway.runner_token = _demo_token(exposed, s.gateway.runner_token)
     # The mock team's approvals expire after this; in phone mode it must outlast the tap fallback.
     s.policy.approvals.timeout_s = math.ceil(approve_timeout) + 30 if phone else 60
-    s.runner.broker_port = free_port()
+    # Two different ports drawn together: the one that is not the gateway's (#1238).
+    s.runner.broker_port = next(candidate for candidate in free_ports(2) if candidate != gport)
 
     app = create_app(s, demo=True)
     hub = app.state.hub
@@ -2031,6 +2057,8 @@ def main(argv: list[str] | None = None) -> None:
     sp.add_argument("--work-kind", choices=("auto", "simple", "research"), default="auto",
                     help="with research.enabled: simple skips the research lane (CP1/CP2), research forces it")
     sp.add_argument("--cso-model", help="request-local CSO model from orchestrator.cso_models")
+    sp.add_argument("--wsl", action="store_true",
+                    help="run the analysis in this PC's WSL; if it is not ready the request opens the WSL setup card first")
     sp.add_argument("--dry-run", action="store_true",
                     help="show pre-plan calls and cost ranges without calling models, tools or the network")
     sp.add_argument("--no-wait", action="store_true")
@@ -2354,20 +2382,11 @@ def main(argv: list[str] | None = None) -> None:
             print(f"환경 문제로 멈춘 단계: {len(problems)}")
             for rid, sid, problem in problems:
                 print(f"  {rid} {sid}: {problem}")
-        finished = [req for req in recent
-                    if req.get("status") in {"done", "failed"} and
-                    (req.get("bundle_path") or req.get("bundle_warning"))]
+        finished = [lines for req in recent if (lines := _finished_request_lines(req))]
         if finished:
             print(f"최근 완료 요청: {len(finished)}")
-            for req in finished:
-                print(f"  {req['id']} {req.get('status')}")
-                if req.get("bundle_path"):
-                    print(f"    요청 묶음: {req['bundle_path']}")
-                if req.get("bundle_grade"):
-                    reasons = "; ".join(map(str, req.get("bundle_grade_reasons") or []))
-                    print(f"    재현 등급: {req['bundle_grade']}" + (f" ({reasons})" if reasons else ""))
-                if req.get("bundle_warning"):
-                    print(f"    경고: {req['bundle_warning']}")
+            for lines in finished:
+                print("\n".join(lines))
         approvals = _api(s, "GET", "/api/approvals")
         print(f"승인 대기: {len(approvals)}")
         for approval in approvals:
@@ -2435,13 +2454,15 @@ def main(argv: list[str] | None = None) -> None:
             references.append(reference)
         if args.agent and (args.plan_only or args.cso_model or args.team):
             p.error("--agent cannot be used with --plan-only, --cso-model or --team")
+        if args.wsl and args.agent and args.agent != "bioinfo-agent":
+            p.error("--wsl places only bioinfo-agent in WSL: use --agent bioinfo-agent, or drop --agent to send it to the team")
         if args.agent and args.work_kind == "research":
             p.error("--work-kind research needs the team (CSO) path: drop --agent")
         body = {"text": args.text, "mode": "direct" if args.agent else "plan_only" if args.plan_only else "orchestrate",
                 "agent_id": args.agent, "cso_model": args.cso_model, "route": "team" if args.team else "auto",
                 "project_dirs": args.project_dir, "budget_usd": args.budget, "project_id": args.project,
                 "references": references, "default_references": not args.no_default_refs,
-                "work_kind": args.work_kind}
+                "work_kind": args.work_kind, "run_where": "wsl" if args.wsl else "auto"}
         if args.dry_run:
             from .dry_run import build_preview, render_preview
 
@@ -2450,7 +2471,7 @@ def main(argv: list[str] | None = None) -> None:
             except ValueError as exc:
                 p.error(str(exc))
         elif args.no_wait:
-            print(_api(s, "POST", "/api/requests", json=body))
+            print(_api(s, "POST", "/api/requests", json=body, headers={"Idempotency-Key": uuid.uuid4().hex}))
         else:
             _run_websocket(s, _send_and_wait(s, body))
     elif args.cmd == "note":
@@ -2484,7 +2505,8 @@ def main(argv: list[str] | None = None) -> None:
             print(f"{pr['id']:<16} {pr.get('repo') or '-':<32} {pr['visibility']:<8} "
                   f"issues={pr['issues']} reports={pr['commit_reports']}")
     elif args.cmd == "codex-review":
-        print(_api(s, "POST", f"/api/projects/{args.project}/prs/{args.pr}/codex-review", json={"note": args.note}))
+        print(_api(s, "POST", f"/api/projects/{args.project}/prs/{args.pr}/codex-review", json={"note": args.note},
+                   headers={"Idempotency-Key": uuid.uuid4().hex}))
     elif args.cmd == "approvals":
         from .pi_text import with_approval_copy
         for a in _api(s, "GET", "/api/approvals"):
@@ -2541,10 +2563,11 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(_report(s, args.request_id, pdf=args.pdf, out=args.out))
     elif args.cmd == "recruit":
         print(_api(s, "POST", "/api/recruit", json={"paper": args.paper, "repo": args.repo, "focus": args.focus,
-                                                    "ttl_days": args.ttl, "name": args.name}))
+                                                    "ttl_days": args.ttl, "name": args.name},
+                   headers={"Idempotency-Key": uuid.uuid4().hex}))
     elif args.cmd == "contract":
         body = {"action": args.action, "days": args.days, "slug": args.target if args.action == "rehire" else None}
-        print(_api(s, "POST", f"/api/contracts/{args.target}", json=body))
+        print(_api(s, "POST", f"/api/contracts/{args.target}", json=body, headers={"Idempotency-Key": uuid.uuid4().hex}))
     elif args.cmd == "talent":
         from .registry import Registry
 

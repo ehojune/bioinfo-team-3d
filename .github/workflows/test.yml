@@ -70,15 +70,13 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev]"
       - if: matrix.python-version != '3.10'
-        run: pytest -q --durations=15 -n auto --dist loadfile -p scripts.ci_suite --ci-profile linux-full-v1
+        run: pytest -q --durations=15 -n auto --dist loadfile -o timeout_method=signal -p scripts.ci_suite --ci-profile linux-full-v1
       - name: Pytest 3.10 with bounded stall diagnostics
         if: matrix.python-version == '3.10'
         timeout-minutes: 25  # Normal rerun: 13m47s; allow 11m13s headroom (Refs #786).
         run: |
           python -u - <<'PY'
-          import asyncio
           import faulthandler
-          import gc
           import os
           import threading
           import pytest
@@ -109,16 +107,9 @@ jobs:
                   while not self.stop.wait(300):
                       try:
                           print(f"\nCI snapshot: {self.context}", file=self.stream, flush=True)
+                          # No gc.get_objects() from this thread: it raises the refcount of a tuple another thread is
+                          # building and `f(*generator)` fails with SystemError (#1238).
                           faulthandler.dump_traceback(file=self.stream, all_threads=True)
-                          shown = 0
-                          for value in gc.get_objects():
-                              if isinstance(value, asyncio.Task) and not value.done():
-                                  if shown == 50:
-                                      print("Further pending tasks omitted", file=self.stream)
-                                      break
-                                  value.print_stack(limit=20, file=self.stream)
-                                  shown += 1
-                          print(f"Pending task stacks shown: {shown}", file=self.stream, flush=True)
                       except Exception as error:
                           print(f"CI snapshot failed: {type(error).__name__}", file=self.stream, flush=True)
 
@@ -126,7 +117,7 @@ jobs:
               # Duplicate stderr before pytest redirects fd 2: snapshots must survive a hung captured test.
               stream = os.fdopen(os.dup(2), "w", buffering=1)
               raise SystemExit(pytest.main(
-                  ["-vv", "--durations=15", "-o", "faulthandler_timeout=300",
+                  ["-vv", "--durations=15", "-o", "faulthandler_timeout=300", "-o", "timeout_method=signal",
                    "-n", "auto", "--dist", "loadfile", "-p", "scripts.ci_suite",
                    "--ci-profile", "linux-full-v1", "--ci-stall"],
                   plugins=[StallDiagnostics(stream)]))
@@ -197,6 +188,7 @@ jobs:
         timeout-minutes: 3
         env:
           LABHQ_REQUIRE_RESIZABLE_BROWSER: '1'
+          PYTEST_TIMEOUT: '100'  # the tests run one after another (about 45 s in all): a test that hangs near the end still hits this before the 180 s step ends (#1198)
       - name: Require every critical lifecycle PASS before opening pool
         run: python -m scripts.ci_suite critical-ready
       - name: Note pool start

@@ -1855,7 +1855,7 @@ async def test_a_failed_ack_commit_reaches_the_next_ack_and_a_waiting_caller(tmp
 async def test_shutdown_commits_the_acks_it_already_received(tmp_path):
     runner, seqs = _runner_with_outbox(tmp_path, 5)
     runner._ack_nowait(seqs[3])
-    await runner.shutdown(timeout_s=0.05)
+    await runner.shutdown(timeout_s=5.0)  # the product default: a commit that stalls once on a slow runner must still land
     assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[4]]
     runner.store.close()
 

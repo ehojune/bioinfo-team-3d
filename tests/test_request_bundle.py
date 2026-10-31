@@ -1814,3 +1814,141 @@ def test_a_swapped_requests_folder_is_refused_and_nothing_below_the_new_target_i
         with pytest.raises(OSError, match="parent changed|not a plain"):
             build_request_bundle(request, settings)
         assert swapped.get("done") and (victim / "precious.txt").read_text(encoding="utf-8") == "keep"
+
+
+# ---- #1212: a cancel before the first step made a work folder is not a bundle failure ----
+
+def _sent_step_without_workdir(tmp_path, rid, status):
+    hub = Hub(configured(tmp_path))
+    hub.requests[rid] = {"id": rid, "text": "request", "mode": "orchestrate", "status": status, "report": "body",
+                         "results": {}, "plan": {"steps": [{"id": "s1", "depends_on": []}]}}
+    hub.store.put("task", f"t-{rid}", {"request_id": rid, "kind": "step", "step_id": "s1", "accepted": True})
+    return hub
+
+
+@pytest.mark.asyncio
+async def test_a_request_cancelled_before_any_work_folder_exists_is_not_warned_about(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "c1", "cancelled")  # the real build runs and finds no folder
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c1", "request.completed", data)
+
+    assert "bundle_warning" not in data and "bundle_warning" not in hub.requests["c1"]
+    assert "bundle_path" not in hub.requests["c1"]
+    assert not any(event["data"].get("bundle_warning") for event in hub.store.events_since(0)
+                   if event["type"] == "request.bundle")
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_request_whose_recorded_work_folder_is_gone_still_warns(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "c3", "cancelled")
+    hub.requests["c3"]["results"] = {"s1": {"task_id": "t-c3", "agent_id": "analyst", "ok": True,
+                                            "workdir": str(tmp_path / "runs" / "gone"), "workdir_id": "gone",
+                                            "outputs": []}}
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c3", "request.completed", data)
+
+    assert "단계 작업 폴더를 하나도 찾지 못했습니다" in data["bundle_warning"], "lost data is not a normal cancel"
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_work_folder_recorded_only_on_a_task_result_also_keeps_the_warning(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "c4", "cancelled")
+    hub.store.put("task", "t-c4", {"request_id": "c4", "kind": "step", "step_id": "s1", "completed": True,
+                                   "result": {"task_id": "t-c4", "workdir_id": "gone-too"}})
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c4", "request.completed", data)
+
+    assert "bundle_warning" in data
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_request_without_any_work_folder_still_warns(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "f1", "failed")
+    data = {"ok": False, "report": "body"}
+
+    hub.commit_terminal("f1", "request.failed", data)
+
+    assert "단계 작업 폴더를 하나도 찾지 못했습니다" in data["bundle_warning"]
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_request_whose_bundle_fails_for_another_reason_still_warns(tmp_path, monkeypatch):
+    hub = _sent_step_without_workdir(tmp_path, "c2", "cancelled")
+
+    def fail(*_args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("labhq.request_bundle.build_request_bundle", fail)
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c2", "request.completed", data)
+
+    assert "disk full" in data["bundle_warning"]
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_after_planning_but_before_any_step_is_quiet_even_though_the_plan_made_a_folder(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "c5", "cancelled")
+    hub.store.put("task", "t-plan", {"request_id": "c5", "kind": "plan", "completed": True,
+                                     "result": {"task_id": "t-plan", "workdir_id": "plan-folder"}})
+    hub.store.put("task", "t-brief", {"request_id": "c5", "kind": "briefing", "completed": True,
+                                      "result": {"task_id": "t-brief", "workdir_id": "brief-folder"}})
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c5", "request.completed", data)
+
+    assert "bundle_warning" not in data, "briefing and plan folders are never bundled"
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_run_cancelled_after_its_work_folder_was_made_reports_that_folder(tmp_path):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from labhq.models import Task
+    from labhq.runner.daemon import Runner
+
+    runner = Runner.__new__(Runner)
+    runner.breakers, runner.event_buffers, runner._result_queued, runner._cleanup_reports = {}, {}, set(), {}
+    runner._recruitment_conversions, runner._stopping = {}, False
+    runner.controls = SimpleNamespace(finish=lambda task_id: None)
+    sent = []
+
+    async def emit_all(events):
+        sent.extend(events)
+
+    async def run_task(task):
+        raise asyncio.CancelledError
+
+    runner.emit_all, runner.run_task = emit_all, run_task
+    runner._recruitment_cost_fields = AsyncMock(return_value={"cost_usd": None, "cost_known": False})
+    runner._shutdown_result = lambda result, cancelled=False: result
+    task = Task(id="t-run", agent_id="analyst", request_id="r", prompt="p")
+
+    runner.workspaces = {}
+    with pytest.raises(asyncio.CancelledError):
+        await runner._run_guarded(task)
+    before = next(e for e in sent if e.type == "task.result").data
+    assert not before.get("workdir_id"), "cancelled before any folder: nothing to report"
+
+    sent.clear()
+    runner.workspaces = {"t-run": SimpleNamespace(dir=tmp_path / "runs" / "2026-11-01" / "task_made")}
+    with pytest.raises(asyncio.CancelledError):
+        await runner._run_guarded(task)
+    after = next(e for e in sent if e.type == "task.result").data
+    assert after["workdir_id"] == "task_made" and after["workdir"].endswith("task_made")

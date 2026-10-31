@@ -24,7 +24,7 @@ from .models import RunnerPathFields
 from .policy import touches
 from .research.contract import branch_plan_topology
 from .report_abstract import build_graphical_abstract
-from .report_contract import (ReportAsset, ReportPackage, build_report_package, reader_markdown,
+from .report_contract import (ReportAsset, ReportPackage, build_report_package, mask_code as _mask_code, reader_markdown,
                               render_report_front, research_question, with_report_front)
 from .report_markdown import READER_FILENAMES, render_marker_message, rendered_markers
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
@@ -108,7 +108,6 @@ _MARKDOWN_LINK = re.compile(
 _MARKDOWN_REFERENCE_DEFINITION = re.compile(
     r"(?m)^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*(?P<target><[^>\n]*>|\S+)"
     r"(?P<title>[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$")
-_MARKDOWN_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
 _REMOTE_LINK = re.compile(r"(?i)^(?:https?://|data:|mailto:)")
 _PORTFOLIO_TOP = {"README.md", "REFERENCES.md", "DATA_AND_LICENSES.md", "CITATION.cff", ".env.example"}
 _PORTFOLIO_FOLDERS = ("report/", "run/", "code/", "docs/", "figures/", "tables/", "studies/")
@@ -183,7 +182,7 @@ def portfolio_root_file(name: str) -> bool:
 
 def _markdown_targets(text: str):
     """Yield inline and reference-definition targets through one parser."""
-    masked = _MARKDOWN_CODE.sub(lambda match: " " * len(match.group()), text)
+    masked = _mask_code(text)
     matches = [*_MARKDOWN_LINK.finditer(masked), *_MARKDOWN_REFERENCE_DEFINITION.finditer(masked)]
     return sorted(matches, key=lambda match: match.start("target"))
 

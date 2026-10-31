@@ -166,6 +166,12 @@ class Breaker:
 
 
 def stage_text(record: dict[str, Any]) -> str:
+    if record.get("signal") == "disk":  # the disk watch (#678), not the runaway breaker
+        free = record.get("free_gib")
+        left = f"{free:.1f} GiB" if isinstance(free, (int, float)) else "기준 아래"
+        if record.get("enforcement") == "halt":
+            return f"디스크 여유가 {left}로 기준 아래라 세션을 보존한 채 멈췄어요. 여유를 만든 뒤 재개하세요"
+        return f"디스크 여유가 {left}로 기준 아래입니다 (disk_watch_halt가 꺼져 있어 멈추지 않았어요)"
     tool = record.get("tool") or "도구"
     stage, how = record.get("stage"), record.get("enforcement")
     if stage == "normal":

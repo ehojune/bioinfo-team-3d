@@ -466,6 +466,21 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def free_ports(count: int) -> list[int]:
+    """`count` different free loopback ports. All are held until every one is drawn: two `free_port()` calls in a row
+    can return the same number once the first socket is closed (#1238)."""
+    held: list[socket.socket] = []
+    try:
+        for _ in range(count):
+            sock = socket.socket()
+            held.append(sock)
+            sock.bind(("127.0.0.1", 0))
+        return [sock.getsockname()[1] for sock in held]
+    finally:
+        for sock in held:
+            sock.close()
+
+
 def output_relpath(name: str) -> str | None:
     """A declared step output as `outputs/...` (POSIX, lexically normalized), or None if unsafe.
 

@@ -2331,8 +2331,10 @@ def claude_allowed_tools(tools: Iterable[str], write_roots: Iterable[str | os.Pa
     bare `Read` read a junction from the workdir into another folder, `Read(//workdir/**)` sent it to the
     permission prompt, and the same rule still pre-approved Grep and Glob inside the workdir.
 
-    Shared environments also leave every shell call to the gate: `Bash(ls *)` matches a following install
-    joined with `&&`, so narrowing only installer prefixes still skips the installation check.
+    Shared environments also leave every shell call to the gate: a command that a pre-approved prefix matches
+    (`Bash(python *)` for `python -m pip install`) never reaches the permission prompt, so the installation check
+    would not see it. Claude Code 2.1.310 splits an `&&` chain and checks each command against the rules (#1163), so
+    `Bash(ls *)` does not carry a following install through; the reason is the installer's own prefix.
     """
     tools = list(tools)
     if shared_environment_gate:

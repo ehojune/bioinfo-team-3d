@@ -1,0 +1,14 @@
+pr: 1179
+rows:
+- sha: "d5375d8"
+  at: 2026-10-31 16:16
+  text: runner 메시지(task 수락·결과) 처리의 동기 store 쓰기와 PI 번역 예약을 event loop 밖에서 commit한다 (#606).
+  summary: 직원 작업의 수락·결과를 기록하는 동안 서버가 디스크 쓰기를 기다리며 멈추던 시간을 줄였습니다.
+- sha: "0d44cf5"
+  at: 2026-10-31 16:18
+  text: 새 test_gateway_loop_lag_606을 Windows 경계 시험 목록에 등록한다 (#606).
+  summary: 새로 추가한 시험을 CI의 시험 목록에 올렸습니다.
+- sha: "803a7b0"
+  at: 2026-10-31 17:23
+  text: 취소 경합 시험이 task_cancel 쓰기만 지연하게 해 task.result의 aput이 멈추지 않게 한다 (#606).
+  summary: 시험이 완료 처리까지 붙잡아 CI가 멈추던 문제를 시험 쪽에서 바로잡았습니다.

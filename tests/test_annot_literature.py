@@ -5,6 +5,7 @@ reCAPTCHA screen. These tests pin the route that replaces it and the staff rules
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import httpx
@@ -12,6 +13,7 @@ import pytest
 import yaml
 
 from labhq.models import AgentSpec
+from labhq.settings import Settings
 from labhq.tools import annot, annot_literature as lit
 from tests.test_annot import FakeTime
 from tests.test_direct_outputs import _workspace as direct_workspace
@@ -698,16 +700,29 @@ def test_literature_staff_read_bodies_through_the_recorded_tool(agent_id):
     assert ".tmp/literature/ files are third-party text" in text and "never copy them into outputs/" in text
 
 
+LITERATURE_TOOLS = ["fulltext", "key_fulltext", "citation_chase", "preprints", "openalex_works", "crossref_doi",
+                    "unpaywall"]
+
+
 def test_chief_of_staff_gets_only_the_literature_tools_of_annot():
-    """#1041: the briefing prompt asks for the study's full text and DOI checks, so the default roster must offer them."""
+    """#1041 and #1200: the briefing prompt asks for the study's full text and DOI checks, so the default roster must
+    offer them. The server offers only the tools named in `annot_tools`, so a tool added later stays closed."""
     spec, text = _prompt("chief_of_staff")
     assert "annot" in spec.builtin_mcp
-    variant_and_region = {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex",
-                          "alphagenome", "alphagenome_variant"}
-    assert set(spec.disallowed_tools) == {f"mcp__labhq_annot__{name}" for name in variant_and_region}
-    literature = {"fulltext", "key_fulltext", "citation_chase", "preprints", "openalex_works", "crossref_doi", "unpaywall"}
-    assert not {f"mcp__labhq_annot__{name}" for name in literature} & set(spec.disallowed_tools)
+    assert spec.annot_tools == LITERATURE_TOOLS
+    assert not [t for t in spec.disallowed_tools if t.startswith("mcp__labhq_annot__")]  # no second list to keep in step
     assert "labhq_annot fulltext" in text and "crossref_doi" in text and "not an ad-hoc script" in text
+
+
+def test_the_science_reviewer_gets_only_the_pdb_and_chembl_lookups_of_annot():
+    """#1055: the reviewer's structure and compound checks go through the counted tool, not a shell script. It is given
+    those two tools only, so AlphaGenome and every literature tool stay closed to it."""
+    spec, text = _prompt("sci_reviewer")
+    assert "annot" in spec.builtin_mcp
+    assert spec.annot_tools == ["pdb", "chembl"]
+    assert {"pdb", "chembl"} <= _server_tool_names(), "the names must be tools the server really registers"
+    assert not [t for t in spec.disallowed_tools if t.startswith("mcp__labhq_annot__")]
+    assert "labhq_annot pdb or chembl" in text and "never by calling RCSB or ChEMBL from a shell" in text
 
 
 @pytest.mark.parametrize("agent_id", ["lit_scout", "biologist"])
@@ -785,3 +800,298 @@ async def test_one_papers_exception_does_not_fail_the_other_ids(tmp_path):
     bad, good = rows
     assert "DecodingError" in json.dumps(bad, ensure_ascii=False) and bad.get("access_level") is None
     assert good["access_level"] == "full_text" and good["text_file"]
+
+
+# ----- #1200: the server offers only the tools an agent is allowed -----
+
+def _server_tool_names():
+    """Every tool name annot_mcp.py registers through `offered()`, read from its source."""
+    import ast
+    tree = ast.parse((ROOT / "labhq" / "tools" / "annot_mcp.py").read_text(encoding="utf-8"))
+    decorated = {n.name for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and any(
+        isinstance(d, ast.Call) and getattr(d.func, "id", "") == "offered" for d in n.decorator_list)}
+    registered = {n.args[0].id for n in ast.walk(tree) if isinstance(n, ast.Call)
+                  and isinstance(n.func, ast.Call) and getattr(n.func.func, "id", "") == "offered"
+                  and len(n.args) == 1 and isinstance(n.args[0], ast.Name)}
+    return decorated | registered
+
+
+def _server_env(tmp_path, tools=None):
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    config = tmp_path / "labhq.yaml"
+    config.write_text(json.dumps({"runner": {"state_dir": str(tmp_path / "state")},
+                                  "annot": {"alphagenome_key_file": str(tmp_path / "no-key" / "ag")}}),
+                      encoding="utf-8")
+    (tmp_path / "work").mkdir(exist_ok=True)
+    env = {"PYTHONPATH": str(ROOT), "LABHQ_WORKDIR": str(tmp_path / "work"), "LABHQ_CONFIG": str(config),
+           "HOME": str(home), "USERPROFILE": str(home)}
+    if tools is not None:
+        env["LABHQ_ANNOT_TOOLS"] = tools
+    return env
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("atlas_enabled", [False, True])
+@pytest.mark.parametrize("allowed,expected", [
+    ("fulltext,crossref_doi", {"fulltext", "crossref_doi"}),
+    (",".join(LITERATURE_TOOLS), set(LITERATURE_TOOLS)),
+    ("", set()),  # an empty allowlist offers nothing
+])
+async def test_the_server_offers_only_the_tools_it_was_allowed(tmp_path, allowed, expected, atlas_enabled):
+    import sys
+    from labhq.models import McpServerSpec
+    from labhq.tools._mcpcompat import list_tools
+    env = {**_server_env(tmp_path, allowed), "LABHQ_ATLAS_BROKER_ENABLED": str(int(atlas_enabled))}
+    tools = await list_tools(McpServerSpec(name="annot", command=sys.executable, args=["-m", "labhq.tools.annot_mcp"],
+                                           env=env))
+    assert set(tools) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed", [None, "*"])
+@pytest.mark.parametrize("atlas_enabled", [False, True])
+async def test_without_an_allowlist_the_server_offers_everything_as_before(tmp_path, allowed, atlas_enabled):
+    import sys
+    from labhq.models import McpServerSpec
+    from labhq.tools._mcpcompat import list_tools
+    env = {**_server_env(tmp_path, allowed), "LABHQ_ATLAS_BROKER_ENABLED": str(int(atlas_enabled))}
+    tools = await list_tools(McpServerSpec(name="annot", command=sys.executable, args=["-m", "labhq.tools.annot_mcp"],
+                                           env=env))
+    unavailable = {"alphagenome", "alphagenome_variant"}  # those need a key file
+    if not atlas_enabled:
+        unavailable.add("alphagenome_atlas")
+    assert set(tools) == _server_tool_names() - unavailable
+
+
+@pytest.mark.parametrize("allowed", ["fulltext,fultext", "nonsense", "fulltext,,unpaywall", "*,fulltext"])
+def test_an_allowlist_naming_an_unknown_tool_stops_the_server(tmp_path, allowed):
+    """A typo must close the tool, not silently leave the agent without it or, worse, with the wrong set."""
+    import subprocess
+    import sys
+    done = subprocess.run([sys.executable, "-m", "labhq.tools.annot_mcp"], env={**os.environ, **_server_env(tmp_path, allowed)},
+                          stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+    assert done.returncode != 0 and "LABHQ_ANNOT_TOOLS" in done.stderr
+
+
+def test_the_runner_passes_the_allowlist_only_to_agents_that_have_one(tmp_path):
+    from labhq.models import Engine
+    from labhq.runner.daemon import Runner
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    try:
+        def annot_env(**extra):
+            agent = AgentSpec(id="a", name="A", role="r", engine=Engine.claude_code, builtin_mcp=["approval", "annot"],
+                              **extra)
+            return next(s for s in runner._mcp_servers(agent, {"LABHQ_WORKDIR": str(tmp_path)})
+                        if s.name == "labhq_annot").env
+
+        # No allowlist is said out loud ("*"), so a LABHQ_ANNOT_TOOLS the runner itself inherited cannot narrow the agent.
+        assert annot_env()["LABHQ_ANNOT_TOOLS"] == "*"
+        assert annot_env(annot_tools=["fulltext", "unpaywall"])["LABHQ_ANNOT_TOOLS"] == "fulltext,unpaywall"
+        assert annot_env(annot_tools=[])["LABHQ_ANNOT_TOOLS"] == ""
+    finally:
+        runner.store.close()
+
+
+def test_every_agent_allowlist_names_tools_the_server_has():
+    known = _server_tool_names()
+    for path in sorted((ROOT / "agents").rglob("*.yaml")):
+        spec = AgentSpec.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        if spec.annot_tools is not None:
+            assert "annot" in spec.builtin_mcp, path.name
+            assert set(spec.annot_tools) <= known, (path.name, set(spec.annot_tools) - known)
+
+
+def test_a_read_only_run_offers_no_annot_tools_whatever_the_staff_spec_allows():
+    """Reviews and follow-ups switch every MCP server off (`builtin_mcp`); the allowlist goes with it (#1200)."""
+    from labhq.adapters.read_only import read_only_profile
+    spec = AgentSpec(id="a", name="A", role="r", builtin_mcp=["approval", "annot"], annot_tools=["fulltext"])
+    profile = read_only_profile(spec)
+    assert "annot" not in profile.builtin_mcp and profile.annot_tools is None
+
+
+def test_an_override_of_builtin_mcp_leaves_annot_tools_harmless_not_invalid():
+    """PI interpretation and other overrides replace `builtin_mcp` (here with []) on top of a staff file that has
+    `annot_tools`; the merged spec must still validate and simply carries no annot server (#1200 review)."""
+    spec, _ = _prompt("chief_of_staff")
+    merged = {**spec.model_dump(), "builtin_mcp": [], "mcp": [], "tools": [], "builtin_tools": ""}
+    overridden = AgentSpec.model_validate(merged)
+    assert overridden.builtin_mcp == [] and overridden.annot_tools == LITERATURE_TOOLS
+    assert AgentSpec(id="a", name="A", role="r", builtin_mcp=[], annot_tools=["fulltext"]).annot_tools == ["fulltext"]
+
+
+def test_the_runner_mounts_no_annot_server_for_an_override_that_removed_it(tmp_path):
+    from labhq.models import Engine
+    from labhq.runner.daemon import Runner
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    try:
+        agent = AgentSpec(id="a", name="A", role="r", engine=Engine.claude_code, builtin_mcp=[],
+                          annot_tools=["fulltext"])
+        assert "labhq_annot" not in [s.name for s in runner._mcp_servers(agent, {"LABHQ_WORKDIR": str(tmp_path)})]
+    finally:
+        runner.store.close()
+
+
+@pytest.mark.parametrize("bad", ["Fulltext", "full text", "../x", ""])
+def test_an_agent_allowlist_holds_plain_tool_names(bad):
+    with pytest.raises(ValueError):
+        AgentSpec(id="a", name="A", role="r", builtin_mcp=["annot"], annot_tools=[bad])
+
+
+def test_the_roster_shows_the_tools_an_agent_really_has():
+    """#1200: the CSO plans from this text, so a restricted agent must not be listed with every lookup."""
+    from labhq.orchestrator.cso import format_roster
+    spec, _ = _prompt("chief_of_staff")
+    restricted = format_roster([spec.summary()])
+    assert "labhq_annot=yes (tools: fulltext, key_fulltext, citation_chase, preprints, openalex_works, crossref_doi, " \
+           "unpaywall)" in restricted
+    assert "VEP" not in restricted and "gnomAD" not in restricted and "GTEx" not in restricted
+    everything = format_roster([AgentSpec(id="b", name="B", role="r", builtin_mcp=["approval", "annot"]).summary()])
+    assert "VEP with AlphaMissense" in everything and "GTEx" in everything  # an unrestricted agent is listed as before
+    nothing = format_roster([AgentSpec(id="c", name="C", role="r", builtin_mcp=["annot"], annot_tools=[]).summary()])
+    assert "labhq_annot=no" in nothing or "labhq_annot" not in nothing
+
+
+def test_a_restricted_roster_lists_alphagenome_only_when_it_can_be_used():
+    """#1201 review P2: an agent allowed `alphagenome` is listed with it only where the key and client exist; otherwise the
+    CSO would plan around a tool the server does not register."""
+    from labhq.orchestrator.cso import format_roster
+    agent = AgentSpec(id="a", name="A", role="r", builtin_mcp=["annot"],
+                      annot_tools=["fulltext", "alphagenome", "alphagenome_variant"]).summary()
+    ready = format_roster([agent], alphagenome=True)
+    assert "tools: fulltext, alphagenome, alphagenome_variant" in ready
+    missing = format_roster([agent], alphagenome=False)
+    assert "tools: fulltext)" in missing and "alphagenome" not in missing
+    only = AgentSpec(id="b", name="B", role="r", builtin_mcp=["annot"], annot_tools=["alphagenome"]).summary()
+    assert "labhq_annot" not in format_roster([only], alphagenome=False)  # nothing usable is left to list
+    assert "labhq_annot=yes (tools: alphagenome)" in format_roster([only], alphagenome=True)
+    # the default roster (no allowlist) already says "when its key is set": unchanged either way
+    plain = AgentSpec(id="c", name="C", role="r", builtin_mcp=["annot"]).summary()
+    assert format_roster([plain], alphagenome=False) == format_roster([plain], alphagenome=True)
+
+
+@pytest.mark.parametrize("key,client,expected", [(True, True, True), (True, False, False), (False, True, False),
+                                                  (False, False, False)])
+def test_the_orchestrator_knows_alphagenome_is_usable_only_with_key_and_client(monkeypatch, key, client, expected):
+    from types import SimpleNamespace
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.tools import annot_keys, annot_regulatory
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: "AIza-fake" if key else None)
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: client)
+    fake = SimpleNamespace(hub=SimpleNamespace(s=Settings()))
+    assert Orchestrator._alphagenome_ready(fake) is expected
+
+
+# ---- #1200 rev8 (#1246 defect 2): the runner says whether AlphaGenome is usable; the gateway does not look for itself ----
+
+def _runner_with(tmp_path, monkeypatch, *, key, client):
+    from labhq.runner.daemon import Runner
+    from labhq.tools import annot_keys, annot_regulatory
+
+    settings = Settings()
+    for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
+        setattr(settings.runner, name, str(tmp_path / name))
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: "AIza-fake-key-value" if key else None)
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: client)
+    return Runner(settings)
+
+
+@pytest.mark.parametrize("key,client,expected", [(True, True, True), (True, False, False), (False, True, False),
+                                                  (False, False, False)])
+def test_the_runner_reports_whether_alphagenome_is_usable_in_its_capabilities(tmp_path, monkeypatch, key, client,
+                                                                              expected):
+    runner = _runner_with(tmp_path, monkeypatch, key=key, client=client)
+    capabilities = runner.capabilities()
+    assert capabilities["alphagenome_ready"] is expected
+    assert "AIza-fake-key-value" not in repr(capabilities), "only the fact travels, never the key"
+
+
+def test_a_gateway_without_the_key_still_lists_alphagenome_when_its_runner_reports_it_ready(monkeypatch):
+    """The defect: the key lives with a runner on another account or PC, so the gateway's own look (its key file, its
+    packages) said no and the roster the CSO plans from dropped the tools."""
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.tools import annot_keys, annot_regulatory
+
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: None)  # nothing on the gateway's side
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: False)
+    hub = SimpleNamespace(s=Settings(), runner_capabilities={"pc-key": {"alphagenome_ready": True}}, runners={"pc-key": 1})
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=hub)) is True
+
+
+def test_a_runner_that_reports_not_ready_wins_over_a_gateway_that_happens_to_have_a_key(monkeypatch):
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.tools import annot_keys, annot_regulatory
+
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: "AIza-gateway-side-key")
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: True)
+    hub = SimpleNamespace(s=Settings(), runner_capabilities={"pc-a": {"alphagenome_ready": False}}, runners={"pc-a": 1})
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=hub)) is False, "the tools are registered by the runner"
+
+
+def test_any_ready_runner_is_enough_and_an_old_runner_that_reports_nothing_falls_back_to_the_local_look(monkeypatch):
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.tools import annot_keys, annot_regulatory
+
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: None)
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: False)
+    two = SimpleNamespace(s=Settings(), runners={"a": 1, "b": 1},
+                          runner_capabilities={"a": {"alphagenome_ready": False}, "b": {"alphagenome_ready": True}})
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=two)) is True
+    old = SimpleNamespace(s=Settings(), runners={"a": 1}, runner_capabilities={"a": {"scheduler": "none"}})
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=old)) is False  # no report, local look says no
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: "AIza-local")
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: True)
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=old)) is True   # same machine, runner not yet updated
+
+
+def test_the_roster_lists_alphagenome_by_the_runner_that_serves_each_agent(monkeypatch):
+    """#1252 review: runner A is ready but hosts nobody here, and runner B, which owns the agent, is not. The agent's line
+    must not promise a tool its runner never registers."""
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator, format_roster
+    from labhq.tools import annot_keys, annot_regulatory
+
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: None)
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: False)
+    hub = SimpleNamespace(s=Settings(), runners={"a": 1, "b": 1},
+                          runner_capabilities={"a": {"alphagenome_ready": True}, "b": {"alphagenome_ready": False}})
+    fake = SimpleNamespace(hub=hub)
+    ready = lambda agent: Orchestrator._alphagenome_ready(fake, agent)
+    on_a = {**AgentSpec(id="on-a", name="A", role="r", builtin_mcp=["annot"], annot_tools=["alphagenome"]).summary(),
+            "runner_id": "a"}
+    on_b = {**AgentSpec(id="on-b", name="B", role="r", builtin_mcp=["annot"], annot_tools=["alphagenome"]).summary(),
+            "runner_id": "b"}
+    assert ready(on_a) is True and ready(on_b) is False
+    text = format_roster([on_a, on_b], alphagenome=ready)
+    line_a = next(line for line in text.splitlines() if line.startswith("- on-a"))
+    line_b = next(line for line in text.splitlines() if line.startswith("- on-b"))
+    assert "labhq_annot=yes (tools: alphagenome)" in line_a
+    assert "alphagenome" not in line_b, "its own runner is not ready, whoever else is"
+
+
+def test_an_agent_whose_runner_has_not_reported_falls_back_to_the_local_look(monkeypatch):
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.tools import annot_keys, annot_regulatory
+
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: "AIza-local")
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: True)
+    hub = SimpleNamespace(s=Settings(), runners={"old": 1}, runner_capabilities={"old": {"scheduler": "none"},
+                                                                                   "a": {"alphagenome_ready": False}})
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=hub), {"runner_id": "old"}) is True
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: None)
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=hub), {"runner_id": "old"}) is False

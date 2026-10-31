@@ -42,6 +42,46 @@ def test_a_plan_cannot_tell_the_staff_to_write_a_reserved_name(instruction):
         cso._normalize_plan_outputs(plan(instruction=instruction))
 
 
+@pytest.mark.parametrize("instruction", [
+    "Write outputs/external_lookup_status.jsonl.md with one line per lookup.",     # a longer file name, not the record
+    "Save the table to outputs/external_lookup_status.jsonl-notes.",
+    "Append to my_outputs/external_lookup_status.jsonl and outputs/annotation_queries.jsonl.bak.",
+])
+def test_a_longer_file_name_that_starts_with_a_reserved_name_is_not_the_record(instruction):
+    assert cso._reserved_names(plan(instruction=instruction)["steps"][0]) == []
+    cso._normalize_plan_outputs(plan(instruction=instruction))
+
+
+@pytest.mark.parametrize("instruction", [
+    "Name each missing lookup and outputs/external_lookup_status.jsonl (when present) in the final report.",
+    "Summarize outputs/external_lookup_status.jsonl into outputs/answer.md.",
+    "Write the final report to outputs/answer.md and mention outputs/external_lookup_status.jsonl in it.",
+    "Report outputs/external_lookup_status.jsonl.",
+    "outputs/external_lookup_status.jsonl 을 읽고 outputs/answer.md에 요약한다.",
+    "Read outputs/literature_access.jsonl, then write outputs/answer.md.",
+])
+def test_a_reserved_name_in_the_instruction_is_sent_back_whether_it_is_read_reported_or_written(instruction):
+    """Telling a read from a write is a reading of wording with variants without end (#1161 review, twice), so the name
+    may not appear at all: the planner words the step without it and the plan is not rejected for a verb it parsed."""
+    with pytest.raises(PlanOutputsError, match="labhq writes itself"):
+        cso._normalize_plan_outputs(plan(instruction=instruction))
+
+
+@pytest.mark.parametrize("instruction", [
+    "Write to outputs/external_lookup_status.jsonl.",
+    "echo '{}' > outputs/external_lookup_status.jsonl",
+    "Pipe the list through tee outputs/annotation_queries.jsonl.",
+    "Save one JSON line per lookup in a new file outputs/external_lookup_status.jsonl and report it.",
+    "이번 단계의 조회 상태는 새 파일 outputs/external_lookup_status.jsonl에 한 줄에 한 항목씩 쓴다.",   # the 6th run
+    "Read the input first. Then append each result to ./outputs/literature_access.jsonl.",
+    "Write records from inputs/table.tsv to outputs/external_lookup_status.jsonl",    # a source stands between verb and name
+    "Copy inputs/a.tsv into outputs/annotation_queries.jsonl as the staff's ledger.",
+])
+def test_telling_the_staff_to_write_a_reserved_name_is_rejected_however_it_is_worded(instruction):
+    with pytest.raises(PlanOutputsError, match="labhq writes itself"):
+        cso._normalize_plan_outputs(plan(instruction=instruction))
+
+
 def test_reading_an_upstream_steps_record_and_ordinary_outputs_stay_allowed():
     ordered = plan(outputs=["outputs/answer.md", "outputs/lookup_ledger.jsonl"],
                    instruction="Summarize inputs/lit_scout/outputs/external_lookup_status.jsonl into outputs/answer.md "

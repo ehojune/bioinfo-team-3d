@@ -27,7 +27,7 @@ def step():
                 meta={"kind": "step", "step_id": "s1"})
 
 
-def fake_dispatch(hub, *, error="Cannot connect to the Docker daemon", consult_error=None):
+def fake_dispatch(hub, *, error="Cannot connect to the Docker daemon", consult_error=None, step_cost=0):
     calls = []
 
     async def dispatch(task):
@@ -35,7 +35,8 @@ def fake_dispatch(hub, *, error="Cannot connect to the Docker daemon", consult_e
         consult = task.meta.get("kind") == "consult"
         failure = consult_error if consult else error
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=not failure,
-                          error=failure, text="Check Docker" if not failure else "", cost_usd=0)
+                          error=failure, text="Check Docker" if not failure else "",
+                          cost_usd=0 if consult else step_cost)
 
     hub.dispatch = dispatch
     return calls
@@ -101,20 +102,28 @@ async def test_other_outcomes_do_not_diagnose(tmp_path, error):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["missing", "offline", "budget", "durable_budget", "unknown_budget", "cancelled", "asks"])
+@pytest.mark.parametrize("mode", ["missing", "offline", "budget", "reserved_budget", "durable_budget", "unknown_budget",
+                                  "cancelled", "asks"])
 async def test_unavailable_diagnosis_keeps_original_error(tmp_path, mode):
     hub = make_hub(tmp_path)
-    calls = fake_dispatch(hub)
+    calls = fake_dispatch(hub, step_cost=1.0 if mode == "reserved_budget" else 0)
     if mode == "missing":
         hub.agents.pop("facilities")
     elif mode == "offline":
         hub.runners.clear()
     elif mode == "budget":
+        # The older check: a request that has already spent its budget still sends the step, and only the optional
+        # diagnosis is refused. With the hold on (#1139) such a step itself asks first, see "reserved_budget".
+        hub.s.policy.budget.reserve_before_dispatch = False
         hub.requests["r"]["budget_usd"] = 1
         hub.orchestrator.cost["r"] = 1
+    elif mode == "reserved_budget":
+        # With the hold on: the step holds the $1 the request has, spends it, and the optional diagnosis finds nothing left.
+        hub.requests["r"]["budget_usd"] = 1
     elif mode == "durable_budget":
         hub.requests["r"]["cost_usd"] = 10
     elif mode == "unknown_budget":
+        hub.s.policy.budget.reserve_before_dispatch = False  # the older check, as in "budget"
         hub.requests["r"]["cost_known"] = False
         hub.requests["r"]["budget_usd"] = 1
     elif mode == "cancelled":

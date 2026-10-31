@@ -11,11 +11,13 @@ from ..request_persistence import create_revised_request, persist_request, remov
 import asyncio
 import copy
 import hashlib
+import inspect
 import json
 import math
 import re
 import time
 from contextlib import asynccontextmanager
+from decimal import ROUND_FLOOR, Decimal
 from pathlib import Path, PurePosixPath
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, Literal
@@ -47,7 +49,7 @@ from ..login import is_login_error
 from ..report_format import (PAPER_RULE, ABSTRACT_PLAN_RULE, split_appendix, scientific_appendix, add_references)
 from ..report_contract import (available_result_files, build_report_package, reader_markdown,
                                validate_report_package, with_report_front)
-from ..request_status import is_terminal_request
+from ..request_status import failed_step_ids, is_terminal_request
 from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARCH_STEP_SCHEMA, ResearchPlan,
                                  bind_result_artifacts, branch_plan_topology,
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
@@ -617,7 +619,23 @@ def _format_local_software(summary: object) -> str:
             f"tools[{tools}]")
 
 
-def format_capabilities(roster: list[dict], runner_capabilities: dict | None = None) -> str:
+def _hub_has(hub: Any, name: str) -> bool:
+    """A real Hub method, not an attribute a test double or mock happens to answer."""
+    return inspect.isfunction(getattr(type(hub), name, None))
+
+
+def hub_agents(hub: Any, request_id: str | None) -> dict[str, dict]:
+    """The staff of this request (a request pinned to WSL sees the WSL runner's entry for bioinfo-agent, #1204)."""
+    return hub.request_agents(request_id) if _hub_has(hub, "request_agents") else hub.agents
+
+
+def hub_runner(hub: Any, agent_id: str, request_id: str | None) -> str | None:
+    """The runner this request uses for ``agent_id``."""
+    return hub.request_runner(agent_id, request_id) if _hub_has(hub, "request_runner") else hub.agent_runner.get(agent_id)
+
+
+def format_capabilities(roster: list[dict], runner_capabilities: dict | None = None,
+                        run_where: str | None = None, run_where_note: str | None = None) -> str:
     lines = [
         f"- {a['id']}: scheduler={a.get('scheduler', 'none')}, "
         f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}, "
@@ -633,6 +651,12 @@ def format_capabilities(roster: list[dict], runner_capabilities: dict | None = N
         if runner.get("runtime_env") == "wsl":
             lines.append(f"- runner {runner_id}: 로컬 WSL. bioinfo-agent 분석은 이 runner에서 실행한다. "
                          "위 tools의 nextflow/docker가 yes이면 로컬 Linux 파이프라인을 계획에 넣는다.")
+    if run_where != "wsl" and run_where_note:  # the PI chose WSL and did not get it: plan for what will run
+        lines.append("- PI가 WSL에서 실행하라고 골랐지만 WSL을 쓸 수 없어 WSL 없이 실행한다: "
+                     f"{' '.join(str(run_where_note).split())[:300]}")
+    if run_where == "wsl":
+        lines.append("- PI가 이 PC의 WSL에서 실행하라고 골랐다. bioinfo-agent가 roster에 있으면 분석 단계에 쓰고, "
+                     "없으면 그 이유를 계획에 적는다.")
     return "\n".join(lines)
 
 DECLARED_OUTPUTS_FALLBACK_RULE = (
@@ -1621,7 +1645,26 @@ def reference_meta(request: dict | None) -> dict[str, list[str]]:
     return {"reference_dirs": dirs} if dirs else {}
 
 
-def format_roster(agents: list[dict]) -> str:
+_ALPHAGENOME_TOOLS = frozenset({"alphagenome", "alphagenome_variant"})  # registered only with a key file and the client
+
+
+def _annot_roster(a: dict, alphagenome: bool = True) -> str:
+    """The labhq_annot part of a roster line: everything the server has, or only the tools this agent was given (#1200).
+    An allowed AlphaGenome tool is listed only where it can be used, since the server registers it only then."""
+    if "annot" not in (a.get("builtin_mcp") or []):
+        return ""
+    tools = a.get("annot_tools")
+    if tools is not None and not alphagenome:
+        tools = [tool for tool in tools if tool not in _ALPHAGENOME_TOOLS]
+    if tools is None:
+        return ("labhq_annot=yes (VEP with AlphaMissense for human GRCh38, gnomAD, ClinVar, ChIP-Atlas, ENCODE cCRE, "
+                "GTEx, RCSB PDB structure and ChEMBL compound lookups; AlphaGenome when its key is set); ")
+    return f"labhq_annot=yes (tools: {', '.join(tools)}); " if tools else ""
+
+
+def format_roster(agents: list[dict], *, alphagenome: bool | Callable[[dict], bool] = True) -> str:
+    """One line per agent. ``alphagenome`` is a flag for every agent or a function of the agent: AlphaGenome is usable on
+    the runner that serves the agent, not everywhere (#1200)."""
     lines = []
     for a in agents:
         tag = " [파견직]" if a.get("employment") == "contract" else ""
@@ -1642,7 +1685,7 @@ def format_roster(agents: list[dict]) -> str:
                      f"{'own outputs/ and .tmp/ writable; ' if access == 'read-only' else ''}"
                      f"tools={allowed or builtin or 'default'}; denied={a.get('disallowed_tools') or []}; "
                      f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}; "
-                     f"{'labhq_annot=yes (VEP with AlphaMissense for human GRCh38, gnomAD, ClinVar, ChIP-Atlas, ENCODE cCRE, GTEx lookups; AlphaGenome when its key is set); ' if 'annot' in (a.get('builtin_mcp') or []) else ''}"
+                     f"{_annot_roster(a, alphagenome(a) if callable(alphagenome) else alphagenome)}"
                      f"max_turns={a.get('max_turns') or 'unlimited'}{tools}")
     return "\n".join(lines)
 
@@ -2227,20 +2270,25 @@ def _rewrite_output_references(instruction: str, inner: str, rel: str) -> tuple[
     return pattern.sub(replace, instruction), rewritten, ambiguous
 
 
-_RESERVED_WRITE = re.compile("|".join(re.escape(name) for name in sorted(output_checks.RESERVED_OUTPUTS)))
+# A reserved name as a whole file name: not the start of a longer one (`external_lookup_status.jsonl.md`, `-x`) and not the
+# tail of another folder's name (`my_outputs/...`). A full stop that ends a sentence still ends the name, and so does a
+# Korean particle (`...jsonl에`): only ASCII name characters continue it.
+_RESERVED_WRITE = re.compile(
+    r"(?<![A-Za-z0-9_-])(?:" + "|".join(re.escape(name) for name in sorted(output_checks.RESERVED_OUTPUTS)) + r")(?![A-Za-z0-9_-])(?!\.[A-Za-z0-9_])")
 
 
 def _reserved_names(step: dict) -> list[str]:
-    """Names labhq writes itself that this step declares as its own output or tells its staff to write (#676).
+    """Names labhq writes itself that this step declares as an output or names in its instruction (#676).
 
-    A declared output or a bare `outputs/<name>` in the instruction is the step's own file. A name reached through an
-    upstream step's folder (`inputs/<step>/outputs/<name>`) is a read of that step's record and is allowed."""
+    The instruction may not name one at all: whether a sentence tells the staff to write it, read it or report it is
+    a reading of wording that has variants without end, so a plan that names it is sent back and the planner words the
+    step without it. The one name that stays is an upstream step's record reached through that step's folder
+    (`inputs/<step>/outputs/<name>`), which the step reads and cannot write."""
     found = [rel for field in ("outputs", "optional_outputs") for name in step.get(field) or []
              if (rel := output_relpath(str(name))) in output_checks.RESERVED_OUTPUTS]
     text = step.get("instruction") or ""
-    for match in _RESERVED_WRITE.finditer(text):
-        if not re.search(r"inputs/[^/\s]+/$", text[:match.start()]):
-            found.append(match.group(0))
+    found += [match.group(0) for match in _RESERVED_WRITE.finditer(text)
+              if not re.search(r"inputs/[^/\s]+/$", text[:match.start()])]
     return list(dict.fromkeys(found))
 
 
@@ -3107,6 +3155,37 @@ RESTRICTED_APPROVAL_LIMIT = 5  # calls the CSO lets through while one restrictio
 RESTRICTED_STALE_S = 90.0  # a request older than this was already refused at the hook (30 s wait): never judged
 
 
+# A hold below one cent cannot be enforced (Claude's CLI renders cents), so a request with less left than that is not clipped
+# to it: the turn asks like any other (#1139).
+_HOLD_EPSILON = 1e-9
+
+
+_CENT = Decimal("0.01")
+_FLOAT_NOISE = Decimal("1e-9")  # what a subtraction of two amounts (2.0 - 1.98, 5.0 - 4.99) can be off by
+
+
+_CENTS_MATTER_BELOW = 1e12  # above this a float has no cents left to round, and Decimal's 28 digits would overflow
+
+
+def _floor_cents(amount: float) -> float:
+    """An amount rounded down to whole cents, as the Claude adapter writes a call cap in cents (a $0.015 hold sent as $0.02
+    would spend more than was held). Decimal arithmetic with an explicit float-noise tolerance: $0.0199996 is $0.01, while
+    2.0 - 1.98 (0.020000000000000018) is $0.02 and 5.0 - 4.99 is a cent. A huge amount is returned as it is."""
+    if not math.isfinite(amount) or amount >= _CENTS_MATTER_BELOW:
+        return amount
+    return float((Decimal(repr(float(amount))) + _FLOAT_NOISE).quantize(_CENT, rounding=ROUND_FLOOR))
+
+
+def _clip_to_remaining(cap: float | None, remaining: float) -> float | None:
+    """The hold for one turn: its cap, cut to what the request still has when that is enough to hold at all. A cut hold is
+    rounded down to whole cents (`_floor_cents`); under one cent it is not cut."""
+    if cap is None or not math.isfinite(remaining) or cap <= remaining:
+        return cap
+    if _floor_cents(remaining) < float(_CENT):
+        return cap
+    return _floor_cents(remaining)
+
+
 class Orchestrator:
     def __init__(self, hub: "Hub"):
         self.hub = hub
@@ -3408,8 +3487,17 @@ class Orchestrator:
             meta["output_types"] = output_types.meta_declarations(kept)
         return meta
 
+    def _bind_request_environments(self, rid: str, steps: list[dict]) -> list[dict]:
+        """``_prepare_runner_environments`` for one request: the runners and staff it sees are the request's (#1204)."""
+        self._environment_rid = rid
+        try:
+            return self._prepare_runner_environments(steps)
+        finally:
+            self._environment_rid = None
+
     def _prepare_runner_environments(self, steps: list[dict]) -> list[dict]:
-        agents = self.hub.agents
+        rid = getattr(self, "_environment_rid", None)
+        agents = hub_agents(self.hub, rid)
 
         def can_create(agent_id: str) -> bool:
             agent = agents.get(agent_id) or {}
@@ -3426,7 +3514,7 @@ class Orchestrator:
         runners = getattr(self.hub, "agent_runner", {})
         online = getattr(self.hub, "runners", {})
         capabilities = getattr(self.hub, "runner_capabilities", {})
-        live = {agent: runner for agent, runner in runners.items() if runner in online}
+        live = {agent: runner for agent in runners if (runner := hub_runner(self.hub, agent, rid)) in online}
         runtimes = {runner: caps.get("runtime_env") for runner, caps in capabilities.items()
                     if isinstance(caps, dict)}
         result = split_runner_environments(steps, live, runtimes, can_create)
@@ -3716,7 +3804,7 @@ class Orchestrator:
 
         # A task workdir belongs to its runner's filesystem. The gateway only forwards it when the
         # consult will run on that same runner; the runner validates the path and refs before launch.
-        same_runner = self.hub.agent_runner.get(routed) == runner_id
+        same_runner = hub_runner(self.hub, routed, ask.request_id) == runner_id
         refs = normalized_refs if same_runner else []
         source_workdir = ask.source_workdir if refs and ask.source_workdir else None
         reference_note = ("참고 파일은 다른 runner에 있어 읽을 수 없다"
@@ -3986,7 +4074,7 @@ class Orchestrator:
         task = self._with_research_round(self._with_request_identity(task))
         rid = task.request_id or ""
         initial_attempt = first_attempt
-        engine = str((self.hub.agents.get(task.agent_id) or {}).get("engine") or "")
+        engine = str((hub_agents(self.hub, rid).get(task.agent_id) or {}).get("engine") or "")
         final_step = bool(task.meta.get("final_budget_turn"))  # nothing runs after this step but its own turns
         optional_support = bool(task.meta.get("facilities_diagnosis") or task.meta.get("kind") in
                                 {"paper_skill", "recruit_check", "plan_recruit"})
@@ -4306,7 +4394,7 @@ class Orchestrator:
                     format_tries += 1
                     known = res.cost_known is not False and res.cost_usd is not None
                     cap = next((float(v) for v in (turn.budget_usd,
-                                                   (self.hub.agents.get(turn.agent_id) or {}).get("max_budget_usd"),
+                                                   (hub_agents(self.hub, turn.request_id).get(turn.agent_id) or {}).get("max_budget_usd"),
                                                    self.hub.s.policy.budget.per_task_usd) if _usd_amount(v)), None)
                     left = None if cap is None or not known else cap - res.cost_usd
                     request_left = self._request_budget_remaining(rid)
@@ -4520,7 +4608,7 @@ class Orchestrator:
             await diagnose(task, res, turn_key(task))
         overrides = task.meta.get("agent_overrides") or {}
         # A read-only task (consult, follow-up) has nothing to save, and a wrap-up must never lift its limits.
-        turn_limit = int(overrides.get("max_turns") or (self.hub.agents.get(task.agent_id) or {}).get("max_turns") or 0)
+        turn_limit = int(overrides.get("max_turns") or (hub_agents(self.hub, task.request_id).get(task.agent_id) or {}).get("max_turns") or 0)
         # A research step cannot be re-planned, so one that hits its turn limit first finishes in the same session
         # under a smaller limit (7th mock trial: QC had reproduced every number when its 40 turns ran out). Jobs and
         # questions belong to the turn that made them, so a turn still waiting on them keeps the old path
@@ -4704,6 +4792,32 @@ class Orchestrator:
                 if block:
                     raise BudgetExceeded(reason)
 
+    def _alphagenome_ready(self, agent: dict | None = None) -> bool:
+        """Whether the AlphaGenome tools exist for the staff, as the runners say at registration (``alphagenome_ready`` in
+        their capabilities): a runner registers them only with the key file and the client, and it may run on another
+        account or PC than the gateway, so the gateway's own look would drop tools a runner has.
+
+        For one agent (a roster row, which carries the ``runner_id`` that serves it, a request's WSL pin included) it is
+        that runner's report: a runner that does not serve the agent says nothing about it. Without an agent, any runner
+        that reports ready is enough. A runner that has reported nothing (an older runner) leaves the gateway to look
+        for itself, as before: the roster the CSO plans from must not list the tools when nothing can serve them (#1200)."""
+        capabilities = getattr(self.hub, "runner_capabilities", None) or {}
+        runner = (agent or {}).get("runner_id")
+        if runner is not None:
+            caps = capabilities.get(runner)
+            if isinstance(caps, dict) and "alphagenome_ready" in caps:
+                return caps["alphagenome_ready"] is True
+        else:
+            reports = [caps["alphagenome_ready"] for caps in capabilities.values()
+                       if isinstance(caps, dict) and "alphagenome_ready" in caps]
+            if reports:
+                return any(report is True for report in reports)
+        try:
+            from ..tools import annot_keys, annot_regulatory
+            return bool(annot_keys.read_key(self.hub.s)) and annot_regulatory.alphagenome_client_available()
+        except Exception:
+            return False
+
     def _note_inflight_cap(self, rid: str, task: Task) -> None:
         """Remember the most this dispatch may spend while it runs (#673). Nothing is recorded for a task without a cap."""
         remaining = self._request_budget_remaining(rid)
@@ -4727,7 +4841,7 @@ class Orchestrator:
 
     def _apply_plan_cost_estimate(self, rid: str, plan: dict) -> dict:
         """Use completed request costs for the total estimate; preserve the plan estimate when none qualify (#708)."""
-        estimate = historical_plan_cost_estimate(self.hub.requests, plan, self.hub.agents,
+        estimate = historical_plan_cost_estimate(self.hub.requests, plan, hub_agents(self.hub, rid),
                                                  exclude_request_id=rid)
         if estimate.get("basis") == "historical" and estimate.get("estimate_usd") is not None:
             # budget_usd is post-CP1 spending. The historical estimate is the whole request, so subtract the planning
@@ -4991,7 +5105,17 @@ class Orchestrator:
                     raise BudgetExceeded(f"invalid request budget {limit!r}; nothing was dispatched")
                 limit = float(limit)
                 _spent, _unknown, bound = self._budget_bound(rid, limit)
-                cap = self._turn_cap(task, limit - bound)
+                full = self._turn_cap(task, limit - bound)
+                if full is not None:
+                    # Whole cents, whatever set the cap (task, agent or per_task_usd); a cap that floors to nothing is not
+                    # a call that can be held.
+                    full = _floor_cents(full)
+                    if full < float(_CENT):
+                        raise BudgetExceeded(f"호출 상한이 1센트보다 작아 보내지 않았습니다(one cent: ${full:.4f}); "
+                                             "nothing was dispatched")
+                # #1139: a turn holds no more than the request still has, so a request budget smaller than the per-turn
+                # cap (the default $5) is not asked about at its first turn; what it may spend is still the hold.
+                cap = _clip_to_remaining(full, limit - bound)
                 adopted = getattr(self.hub, "recovery_task_id", lambda _task: None)(task)
                 if adopted is not None:
                     # Restart recovery: the gateway answers this turn with an earlier task instead of sending it (same
@@ -5003,7 +5127,7 @@ class Orchestrator:
                         holds[adopted] = cap if cap is not None else self._unknown_reserve(limit)
                         await persist_request(self.hub, rid)
                     return task
-                if cap is not None and bound + cap <= limit:
+                if cap is not None and bound + cap <= limit + _HOLD_EPSILON:
                     holds = req.setdefault("budget_holds", {})
                     previous = holds.get(task.id)
                     holds[task.id] = max(cap, previous) if _usd_amount(previous) else cap
@@ -5013,7 +5137,7 @@ class Orchestrator:
                 if optional:
                     raise BudgetExceeded("facilities diagnosis budget exhausted" if task.meta.get("facilities_diagnosis")
                                          else "optional turn budget exhausted before dispatch")
-                needed = cap if cap is not None else self._unknown_reserve(limit)
+                needed = full if full is not None else self._unknown_reserve(limit)  # the whole cap: what a raise must make room for
             await self._check_budget(rid, reserve=needed)  # approval raises the cap; a denial raises here
 
     async def _drop_unsent_holds(self, rid: str) -> None:
@@ -5767,7 +5891,7 @@ class Orchestrator:
                             ask = AskRequest(task_id=res.task_id, agent_id=res.agent_id, request_id=rid,
                                              to="cso", question=question.strip(),
                                              why_blocked=f"step {sid}의 묻고 멈추는 게이트", wait="hibernate")
-                            origin = self.hub.agent_runner.get(res.agent_id, "")
+                            origin = hub_runner(self.hub, res.agent_id, rid) or ""
                             self.hub.store.put("ask", ask.id, {"state": "working", "origin": origin,
                                                                "ask": ask.model_dump(mode="json")})
                             await self.hub.publish({"type": "agent.ask", "ts": time.time(),
@@ -5810,7 +5934,8 @@ class Orchestrator:
         contract = req["research_contract"]
         failed = [s["id"] for s in steps if s["id"] not in results or not results[s["id"]].ok]
         successful = [s for s in steps if s["id"] not in failed]
-        warnings = [f"{sid}: 단계 실패 또는 의존 단계 건너뜀 — " +
+        branch_of = {s["id"]: s.get("branch") for s in steps}
+        warnings = [f"{sid}{f' (갈래 {branch_of[sid]})' if branch_of.get(sid) else ''}: 단계 실패 또는 의존 단계 건너뜀 — " +
                     safe_failure_cause(results[sid].error if sid in results else "not run") for sid in failed]
         warnings += [f"{step['id']}: {warning}" for step in successful
                      for warning in results[step["id"]].step_warnings]
@@ -6454,7 +6579,7 @@ class Orchestrator:
 
     def _research_reuse_tools(self, rid: str, plan: dict) -> dict[str, str]:
         """Declared execution configuration, including the request's pinned agent identity."""
-        agents = dict(self.hub.agents)
+        agents = dict(hub_agents(self.hub, rid))
         for step in plan.get('steps') or []:
             aid = step['agent_id']
             identity = self._request_identity(rid, aid)
@@ -6894,7 +7019,7 @@ class Orchestrator:
                 return
 
             # A contract hire on probation stays on the web roster as 수습 but is not offered to the CSO (#424).
-            all_agents = [a for a in self.hub.agents.values() if not not_yet_active(a)]
+            all_agents = [a for a in hub_agents(self.hub, rid).values() if not not_yet_active(a)]
             known = {a["id"] for a in all_agents}
             # The configured orchestration agents, not only the default ids, stay out of the worker roster.
             orchestration = set(ORCHESTRATION_ROLES) | {
@@ -6943,7 +7068,9 @@ class Orchestrator:
             packs = configured_pack_defs
             active_pack_hashes = pack_snapshot(packs)
             # The first plan, research plan and re-plan after resume (#271) all use this same snapshot.
-            capabilities = format_capabilities(roster, getattr(self.hub, "runner_capabilities", None))
+            capabilities = format_capabilities(roster, getattr(self.hub, "runner_capabilities", None),
+                                               run_where="wsl" if req.get("wsl_pinned") else None,
+                                               run_where_note=req.get("run_where_note"))
 
             async def finish_research_plan(plan: dict[str, Any]) -> bool:
                 async def end_revised(new_rid: str, note: str) -> None:
@@ -7195,6 +7322,8 @@ class Orchestrator:
                 research_limit = (len(req["plan"].get("branches") or []) * self.cfg.max_branch_steps + 3
                                   if req["plan"].get("branches") else self.cfg.max_steps)
                 validate_steps(req["plan"]["steps"], known, research_limit, orchestration,
+                               stored_environment=any("environment_binding" in s or "environment_bindings" in s
+                                                      for s in req["plan"]["steps"]),
                                guard=self._external_guard(rid), tier_rules=self._tier_rules())
                 await persist_request(self.hub, rid)
 
@@ -7207,7 +7336,7 @@ class Orchestrator:
                     if (any(ENV_LOCK_OUTPUT in s.get("outputs", []) for s in saved_steps)
                             and not any("environment_binding" in s or "environment_bindings" in s
                                         for s in saved_steps)):
-                        req["plan"]["steps"] = self._prepare_runner_environments(saved_steps)
+                        req["plan"]["steps"] = self._bind_request_environments(rid, saved_steps)
                 if research_lane:
                     # A frozen contract resumes by its CP1 snapshot, never by a fresh applicability decision: the
                     # snapshot holds the applied packs, and a pack answered not_applicable (pre-topic, or a sentence-
@@ -7397,7 +7526,7 @@ class Orchestrator:
                         topic_vocab = output_vocab.current()
                         template = RESEARCH_CP2_PLAN_PROMPT if research_execution else RESEARCH_PLAN_PROMPT
                         prompt = template.format(
-                            request=plan_request, roster=format_roster(roster),
+                            request=plan_request, roster=format_roster(roster, alphagenome=self._alphagenome_ready),
                             capabilities=capabilities or "No workers available",
                             briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
                             max_branches=self.cfg.max_branches,
@@ -7416,7 +7545,8 @@ class Orchestrator:
                     else:
                         vocab = self._output_vocab()
                         topic_vocab = output_vocab.current()
-                        prompt = PLAN_PROMPT.format(request=plan_request, roster=format_roster(roster),
+                        prompt = PLAN_PROMPT.format(request=plan_request,
+                                                    roster=format_roster(roster, alphagenome=self._alphagenome_ready),
                                                     capabilities=capabilities or "No workers available",
                                                     briefing=clip(briefing, 4000) or "(none)",
                                                     max_steps=self.cfg.max_steps, question_rule=QUESTION_RULE,
@@ -7818,7 +7948,7 @@ class Orchestrator:
                 steps = req["plan"]["steps"]
                 # A plan-only request never executes, so it must not wait for a consumer runner (#674).
                 if req["mode"] != "plan_only" and any(ENV_LOCK_OUTPUT in step.get("outputs", []) for step in steps):
-                    steps = self._prepare_runner_environments(steps)
+                    steps = self._bind_request_environments(rid, steps)
                     req["plan"] = {**req["plan"], "steps": steps}
                     if research_lane:
                         req["plan"] = validate_research_plan(
@@ -7960,7 +8090,8 @@ class Orchestrator:
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=replan_schema(vocab is not None),
                         resume_session_id=session_id,
                         prompt=REPLAN_PROMPT.format(
-                            roster=format_roster(roster), capabilities=capabilities or "No workers available",
+                            roster=format_roster(roster, alphagenome=self._alphagenome_ready),
+                            capabilities=capabilities or "No workers available",
                             trigger=why, retired=", ".join(unfinished) or "none", drop_rule=drop_rule,
                             used=", ".join(sorted(used)), max_steps=self.cfg.max_steps,
                             output_types_rule=output_types.prompt_rule(vocab) if vocab else "",
@@ -8291,6 +8422,8 @@ class Orchestrator:
             await asyncio.gather(*self.cancel_steps(rid), return_exceptions=True)
             await self.hub._set_status(rid, "interrupted", evidence=exc.evidence)
         except Exception as e:
+            if req.get("status") == "cancelled" or req.get("cancelling") is not None:
+                return  # a cancel is committing its own terminal record; an error after it does not end the request as failed (#1168)
             if self._continuation_unstarted(req):
                 # Ends as the revise it continued, with that round's plan and results put back (``_finish``).
                 (await self._finish(rid, f"{type(e).__name__}: {e}", {}, ok=False, error=f"{type(e).__name__}: {e}"))
@@ -8594,6 +8727,7 @@ class Orchestrator:
                 ok = False
         data = {"ok": ok, "report_package": req["report_package"],
                 **_terminal_reports(rid, report, report_appendix, req.get("execution_record") or ""), "cost_usd": req["cost_usd"],
+                **({"failed_steps": failed} if (failed := failed_step_ids(req)) else {}),
                 "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary"),
                 "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}

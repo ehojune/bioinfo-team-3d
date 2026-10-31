@@ -1,0 +1,12 @@
+pr: 1251
+rows:
+  - sha: "105864c"
+    at: "2026-11-01 13:20"
+    summary: "느린 Windows 러너에서 브라우저 시험 하나가 30초 상한에 걸리던 것을 60초로 늘렸습니다(검사 내용은 그대로)."
+    text: "web_office_focus_layout의 바깥 시간 상한을 60초로 둔다 (Refs #1076)"
+  - sha: "bd47d7a"
+    at: "2026-11-01 14:00"
+    text: "데모 Chrome에 --no-proxy-server를 주고 test_web_3d digest를 갱신한다 (Refs #1076)"
+  - sha: "ecaa1b6"
+    at: "2026-11-01 14:30"
+    text: "focus_layout 바깥 상한을 Chrome 세션 둘에 맞춰 120초로, status 문구를 적용 상태에 맞춘다 (Refs #1076)"
