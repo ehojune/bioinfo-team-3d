@@ -433,6 +433,38 @@ def _alphagenome_row(settings: Settings) -> dict:
     return _row("annot", "AlphaGenome", "ok", "키 있음", "")
 
 
+def _alphagenome_atlas_row(settings: Settings | None = None, agents: list[AgentSpec] | None = None) -> dict:
+    from fnmatch import fnmatchcase
+    from .tools.annot_alphagenome_atlas import KEY_ENV, credential, sdk_available
+
+    parent = dict(os.environ)
+    present = {"runner": bool(credential(parent))}
+    if settings is not None:
+        agents = _roster(settings) if agents is None else agents
+        names = {settings.runner.force_engine or agent.engine.value for agent in agents
+                 if "annot" in agent.builtin_mcp and not any(
+                     rule == "mcp__labhq_annot" or fnmatchcase("mcp__labhq_annot__alphagenome_atlas", rule)
+                     for rule in agent.disallowed_tools)}
+        if not names:
+            return _row("annot", "AlphaGenome Atlas", "skip", "Atlas 사용 직원 없음", "")
+        present = {}
+        for name in sorted(names):
+            config = getattr(settings.engines, name, None)
+            engine_env = expand_env(config.env) if config is not None else {}
+            # Same resolver as the runner; task-specific overrides do not exist during doctor.
+            present[name] = bool(credential(parent, engine_env))
+    if not any(present.values()):
+        return _row("annot", "AlphaGenome Atlas", "skip", "환경변수 키 없음", f"runner 환경에 {KEY_ENV}를 설정하세요.")
+    if not sdk_available():
+        return _row("annot", "AlphaGenome Atlas", "warn", "환경변수 키 있음, Atlas SDK 없음",
+                    "runner의 Python에 pip install 'labhq[alphagenome]' (alphagenome>=0.10.0)")
+    if not all(present.values()):
+        missing = ", ".join(name for name, has_key in present.items() if not has_key)
+        return _row("annot", "AlphaGenome Atlas", "warn", f"일부 engine 환경변수 키 없음: {missing}; 실제 접근 미검증",
+                    f"해당 engine 환경의 {KEY_ENV} 설정을 확인하세요.")
+    return _row("annot", "AlphaGenome Atlas", "ok", "환경변수 키·SDK 있음, 실제 접근 미검증", "")
+
+
 def claude_login_command(windows: bool) -> str:
     """What the PI runs once to sign the staff Claude in to ~/.labhq/claude-staff. Home variables only, so no
     user name or path is printed."""
@@ -931,6 +963,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     private = _doctor_private(settings, agents, forced)
     rows.append(_private_paths_row(private))
     rows.append(_alphagenome_row(settings))
+    rows.append(_alphagenome_atlas_row(settings, agents))
     from .knowledge.recall import health as recall_health
     recall = recall_health(settings)
     rows.append(_row("knowledge", "local recall", "ok" if recall["available"] else "warn",
