@@ -316,3 +316,130 @@ def test_a_backslash_newline_continues_the_line(tmp_path):
 
 def test_descriptor_move_names_no_file(tmp_path):
     assert folders("curl -s https://example.org/a 1>&3-", tmp_path) == [tmp_path.as_posix()]
+
+
+# ----- the PowerShell tool (#1167) -----
+
+def ps_check(command, workdir, free_gib, **kw):
+    return disk_space.powershell_check(command, str(workdir), probe=drive(free_gib), **{**CHECK, **kw})
+
+
+@pytest.mark.parametrize("command,words", [
+    (r"Invoke-WebRequest https://x.org/a.zip -OutFile C:\data\a.zip", ["Invoke-WebRequest", "https://x.org/a.zip", "-OutFile", r"C:\data\a.zip"]),
+    ("iwr 'https://x.org/a b.zip' -o \"D:\\my data\\a.zip\"", ["iwr", "https://x.org/a b.zip", "-o", "D:\\my data\\a.zip"]),
+    ("Expand-Archive a.zip -DestinationPath out; Get-ChildItem", None),
+    ("iwr u -OutFile a.zip # -OutFile ignored.zip", ["iwr", "u", "-OutFile", "a.zip"]),
+    ("iwr 'it''s.zip' -OutFile `\"x`\".zip", ["iwr", "it's.zip", "-OutFile", '"x".zip']),
+])
+def test_powershell_words_are_read_as_powershell_reads_them(command, words):
+    commands = disk_space._ps_commands(command)
+    if words is None:
+        assert [c[0] for c in commands] == ["Expand-Archive", "Get-ChildItem"]
+    else:
+        assert commands == [words]
+
+
+def test_an_unclosed_quote_is_not_read(tmp_path):
+    assert disk_space._ps_commands("iwr 'x -OutFile a.zip") == []
+    assert ps_check("iwr 'x -OutFile a.zip", tmp_path, 0.5) is None
+
+
+def test_invoke_webrequest_to_a_full_drive_asks(tmp_path):
+    verdict = ps_check("Invoke-WebRequest -Uri https://x.org/a.zip -OutFile out\\a.zip", tmp_path, 1.0)
+    assert verdict.action == "ask" and "1.0 GiB" in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    "iwr https://x.org/a.zip -OutFile a.zip", "irm https://x.org/a.json -OutFile a.json",
+    "curl https://x.org/a.zip -OutFile a.zip", "wget https://x.org/a.zip -OutFile:a.zip",
+    "Invoke-WebRequest https://x.org/a.zip -OutF a.zip",       # an unambiguous prefix of the parameter name
+    "invoke-webrequest https://x.org/a.zip -outfile a.zip",
+])
+def test_powershell_download_spellings_all_ask_on_a_full_drive(tmp_path, command):
+    assert ps_check(command, tmp_path, 1.0).action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "Invoke-WebRequest https://x.org/page",                  # the answer goes to the pipeline, not to a file
+    "iwr https://x.org/a.zip | Select-Object StatusCode",
+    "iwr https://x.org/a.zip -OutFile $env:TEMP\\a.zip",     # a variable: not written out, left alone
+    "Get-ChildItem C:\\data", "Write-Output 'hello'", "Copy-Item a b",
+])
+def test_other_powershell_commands_and_unreadable_paths_never_ask(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5) is None
+
+
+def test_a_powershell_download_of_unknown_size_only_warns_on_a_low_drive(tmp_path):
+    assert ps_check("iwr https://x.org/a.zip -OutFile a.zip", tmp_path, 6).action == "warn"
+    assert ps_check("iwr https://x.org/a.zip -OutFile a.zip", tmp_path, 50) is None
+
+
+def test_expand_archive_that_will_not_fit_asks_with_the_zips_real_size(tmp_path):
+    with zipfile.ZipFile(tmp_path / "raw.zip", "w") as z:
+        z.writestr("big.bin", b"\0" * (3 * 1024 * 1024))
+    tight = lambda f: Space(10 * GIB, 0, int(2 * GIB + 1024))
+    for command in ("Expand-Archive raw.zip -DestinationPath out", "Expand-Archive -Path raw.zip -DestinationPath out -Force",
+                    "Expand-Archive -LiteralPath raw.zip -DestinationPath:out", "Expand-Archive raw.zip out"):
+        verdict = disk_space.powershell_check(command, str(tmp_path), probe=tight, **CHECK)
+        assert verdict.action == "ask" and "필요" in verdict.reason, command
+    assert ps_check("Expand-Archive raw.zip -DestinationPath out", tmp_path, 50) is None
+
+
+def test_expand_archive_without_a_destination_is_left_alone(tmp_path):
+    assert ps_check("Expand-Archive raw.zip", tmp_path, 0.5) is None
+
+
+def test_start_bitstransfer_reads_its_destination(tmp_path):
+    for command in ("Start-BitsTransfer -Source https://x.org/a.zip -Destination out\\a.zip",
+                    "Start-BitsTransfer https://x.org/a.zip out\\a.zip"):
+        assert ps_check(command, tmp_path, 1.0).action == "ask", command
+
+
+def test_a_powershell_chain_is_read_command_by_command_and_the_worst_wins(tmp_path):
+    verdict = ps_check("Get-Date; iwr https://x.org/a.zip -OutFile a.zip; Write-Output done", tmp_path, 1.0)
+    assert verdict.action == "ask"
+
+
+def test_a_leading_set_location_moves_where_the_next_command_runs(tmp_path):
+    seen = []
+
+    def probe(folder):
+        seen.append(folder)
+        return Space(100 * GIB, 0, 50 * GIB)
+
+    disk_space.powershell_check("Set-Location big; iwr https://x.org/a.zip -OutFile a.zip", str(tmp_path), probe=probe, **CHECK)
+    assert seen and seen[0] == (tmp_path / "big").resolve()
+
+
+def test_an_unreadable_drive_never_asks_a_powershell_command(tmp_path):
+    def broken(folder):
+        raise OSError("drive gone")
+
+    assert disk_space.powershell_check("iwr u -OutFile a.zip", str(tmp_path), probe=broken, **CHECK) is None
+
+
+@pytest.mark.asyncio
+async def test_the_gate_turns_an_allowed_powershell_download_on_a_full_drive_into_a_card(gate, monkeypatch):
+    mcp, sent = gate
+    monkeypatch.setattr(disk_space, "usage", drive(0.5))
+    result = json.loads(await mcp.approval_prompt(
+        "PowerShell", {"command": "Invoke-WebRequest https://example.org/a.zip -OutFile outputs/raw.zip"}))
+    assert result["behavior"] == "deny"  # the fake PI declined the card
+    assert len(sent) == 1 and sent[0][0].endswith("/approval") and "여유" in sent[0][1]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_the_gate_leaves_a_powershell_download_alone_when_there_is_room(gate, monkeypatch):
+    mcp, sent = gate
+    monkeypatch.setattr(disk_space, "usage", drive(500, 1000))
+    result = json.loads(await mcp.approval_prompt(
+        "PowerShell", {"command": "Invoke-WebRequest https://example.org/a.zip -OutFile outputs/raw.zip"}))
+    assert result["behavior"] == "allow" and sent == []
+
+
+@pytest.mark.parametrize("rule,expected", [
+    ("PowerShell(Invoke-WebRequest *)", True), ("PowerShell(iwr:*)", True), ("PowerShell(Expand-Archive *)", True),
+    ("PowerShell(Start-BitsTransfer *)", True), ("PowerShell(Get-ChildItem *)", False), ("PowerShell", False),
+    ("PowerShell()", False)])
+def test_which_powershell_rules_preapprove_a_bulk_write(rule, expected):
+    assert disk_space.preapproves_bulk_write(rule) is expected

@@ -336,6 +336,45 @@ def _write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | Non
     return None
 
 
+def _assess(what: str, folder: Path, estimate: int | None, extra: list[Path], *, probe, fail_gb: float,
+            warn_gb: float, warn_percent: float) -> ShellCheck | None:
+    """The verdict for one write: where it goes (`folder` and every `extra` folder the same command also writes), and
+    how big it is when that is known."""
+    spaces = []
+    for candidate in dict.fromkeys([folder, *extra]):
+        try:
+            spaces.append((candidate, probe(candidate)))
+        except (OSError, ValueError):
+            continue  # an unreadable drive is never a reason to ask
+    spaces = [(f, sp) for f, sp in spaces if sp.total > 0]
+    if not spaces:
+        return None
+    for candidate, space in spaces:
+        if fail_gb and space.free < fail_gb * GIB:
+            return ShellCheck("ask", f"{what} 대상 드라이브({candidate.as_posix()}) 여유가 "
+                                     f"{space.free / GIB:.1f} GiB로 기준 {fail_gb:g} GiB보다 적습니다")
+    main = spaces[0][1] if spaces[0][0] == folder else None
+    if main is None:
+        return None
+    free = main.free / GIB
+    if estimate is not None and fail_gb and main.free - estimate < fail_gb * GIB:
+        return ShellCheck("ask", f"{what}에 약 {estimate / GIB:.1f} GiB가 필요한데 대상 드라이브"
+                                 f"({folder.as_posix()}) 여유는 {free:.1f} GiB뿐입니다"
+                                 f"(기준 {fail_gb:g} GiB 남겨야 함)")
+    if estimate is None and low(main, warn_gb, warn_percent):
+        return ShellCheck("warn", f"{what}: 대상 드라이브({folder.as_posix()}) 여유가 적습니다({free:.1f} GiB). "
+                                  "크기를 알 수 없어 막지 않습니다")
+    return None
+
+
+def _worse(worst: ShellCheck | None, verdict: ShellCheck | None) -> ShellCheck | None:
+    if verdict is None:
+        return worst
+    if worst is None or (verdict.action == "ask" and worst.action != "ask"):
+        return verdict
+    return worst
+
+
 def shell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, warn_percent: float,
                 probe=None) -> ShellCheck | None:
     """Whether a shell command that downloads or unpacks should ask the PI first because the drive it writes to is short.
@@ -355,38 +394,182 @@ def shell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, w
             if found is None:
                 continue
             what, folder, estimate = found
-            folders = [folder, *_operand_folders(words, cwd), *(_resolve(target, cwd) for target in redirects)]
-            spaces = []
-            for candidate in dict.fromkeys(folders):
-                try:
-                    spaces.append((candidate, probe(candidate)))
-                except (OSError, ValueError):
-                    continue  # an unreadable drive is never a reason to ask
+            extra = [*_operand_folders(words, cwd), *(_resolve(target, cwd) for target in redirects)]
         except (OSError, ValueError):
             continue
-        spaces = [(f, sp) for f, sp in spaces if sp.total > 0]
-        if not spaces:
+        worst = _worse(worst, _assess(what, folder, estimate, extra, probe=probe, fail_gb=fail_gb, warn_gb=warn_gb,
+                                      warn_percent=warn_percent))
+    return worst
+
+
+# ---- the same for the PowerShell tool (#1167) ----
+# PowerShell is read as PowerShell reads it, not as bash: `\` is a path separator, not an escape; `'…'` is literal and
+# `"…"` takes a backtick escape; `;` `|` `&&` `||` and newlines end a command; `#` starts a comment at a word start.
+_PS_DOWNLOADS = frozenset({"invoke-webrequest", "iwr", "invoke-restmethod", "irm", "curl", "wget"})
+_PS_UNPACK = frozenset({"expand-archive"})
+_PS_TRANSFER = frozenset({"start-bitstransfer"})
+_PS_SEPARATORS = ";|&\n\r"
+
+
+def _ps_commands(command: str) -> list[list[str]]:
+    """The commands of a PowerShell line as word lists. A line whose quotes do not close is not read at all."""
+    commands: list[list[str]] = []
+    words: list[str] = []
+    current: list[str] | None = None
+    quote: str | None = None
+    i, n = 0, len(command)
+
+    def end_word() -> None:
+        nonlocal current
+        if current is not None:
+            words.append("".join(current))
+            current = None
+
+    def end_command() -> None:
+        nonlocal words
+        end_word()
+        if words:
+            commands.append(words)
+        words = []
+
+    while i < n:
+        c = command[i]
+        if quote == "'":
+            if c == "'":
+                if command[i + 1:i + 2] == "'":  # '' is one quote inside a literal string
+                    current.append("'")
+                    i += 1
+                else:
+                    quote = None
+            else:
+                current.append(c)
+        elif quote == '"':
+            if c == "`" and i + 1 < n:
+                current.append(command[i + 1])
+                i += 1
+            elif c == '"':
+                if command[i + 1:i + 2] == '"':
+                    current.append('"')
+                    i += 1
+                else:
+                    quote = None
+            else:
+                current.append(c)
+        elif c in "'\"":
+            quote = c
+            current = [] if current is None else current
+        elif c == "`" and i + 1 < n:
+            current = [] if current is None else current
+            current.append(command[i + 1])
+            i += 1
+        elif c in _PS_SEPARATORS:
+            end_command()
+        elif c.isspace():
+            end_word()
+        elif c == "#" and current is None:
+            while i < n and command[i] not in "\r\n":
+                i += 1
             continue
-        verdict = None
-        for candidate, space in spaces:
-            if fail_gb and space.free < fail_gb * GIB:
-                verdict = ShellCheck("ask", f"{what} 대상 드라이브({candidate.as_posix()}) 여유가 "
-                                            f"{space.free / GIB:.1f} GiB로 기준 {fail_gb:g} GiB보다 적습니다")
-                break
-        main = spaces[0][1] if spaces[0][0] == folder else None
-        if verdict is None and main is not None:
-            free = main.free / GIB
-            if estimate is not None and fail_gb and main.free - estimate < fail_gb * GIB:
-                verdict = ShellCheck("ask", f"{what}에 약 {estimate / GIB:.1f} GiB가 필요한데 대상 드라이브"
-                                            f"({folder.as_posix()}) 여유는 {free:.1f} GiB뿐입니다"
-                                            f"(기준 {fail_gb:g} GiB 남겨야 함)")
-            elif estimate is None and low(main, warn_gb, warn_percent):
-                verdict = ShellCheck("warn", f"{what}: 대상 드라이브({folder.as_posix()}) 여유가 적습니다({free:.1f} GiB). "
-                                             "크기를 알 수 없어 막지 않습니다")
-        if verdict is None:
+        else:
+            current = [] if current is None else current
+            current.append(c)
+        i += 1
+    if quote is not None:
+        return []
+    end_command()
+    return commands
+
+
+def _ps_param(words: list[str], full: str, minimum: int) -> str | None:
+    """The value of a named parameter: `-OutFile x`, `-OutFile:x`, or any unambiguous prefix of its name of at least
+    `minimum` letters (PowerShell accepts `-OutF`). The last occurrence wins."""
+    found = None
+    for index, word in enumerate(words[1:], start=1):
+        if not word.startswith("-") or len(word) < 2:
             continue
-        if worst is None or (verdict.action == "ask" and worst.action != "ask"):
-            worst = verdict
+        name, colon, value = word[1:].partition(":")
+        if len(name) < minimum or not full.startswith(name.casefold()):
+            continue
+        if colon:
+            found = value
+        elif index + 1 < len(words) and not words[index + 1].startswith("-"):
+            found = words[index + 1]
+    return found
+
+
+def _ps_positional(words: list[str]) -> list[str]:
+    """Words that are neither a parameter nor, as far as can be told, a parameter's value."""
+    out = []
+    skip = False
+    for word in words[1:]:
+        if skip:
+            skip = False
+            continue
+        if word.startswith("-") and len(word) > 1:
+            skip = ":" not in word and word[1:].casefold() in {
+                "path", "literalpath", "destinationpath", "destination", "source", "outfile", "uri"}
+            continue
+        out.append(word)
+    return out
+
+
+def _ps_write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | None:
+    """(what, folder it writes into, estimated bytes or None) for one PowerShell command, or None when it is none."""
+    name = words[0].casefold()
+    if name in _PS_DOWNLOADS:
+        out = _ps_param(words, "outfile", 4)
+        if not out:
+            return None  # the result goes to the pipeline, not to a file
+        target = _resolve(out, workdir)
+        return "다운로드", target.parent, None
+    if name in _PS_UNPACK:
+        destination = _ps_param(words, "destinationpath", 1)
+        archive = _ps_param(words, "path", 1) or _ps_param(words, "literalpath", 1)
+        positional = _ps_positional(words)
+        if archive is None and positional:
+            archive = positional[0]
+        if destination is None and len(positional) >= 2:
+            destination = positional[1]
+        if not destination:
+            return None
+        return ("압축 해제", _resolve(destination, workdir),
+                _zip_size(_resolve(archive, workdir)) if archive else None)
+    if name in _PS_TRANSFER:
+        destination = _ps_param(words, "destination", 4)
+        positional = _ps_positional(words)
+        if destination is None and len(positional) >= 2:
+            destination = positional[1]
+        if not destination:
+            return None
+        target = _resolve(destination, workdir)
+        return "다운로드", (target.parent if target.suffix else target), None
+    return None
+
+
+def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, warn_percent: float,
+                     probe=None) -> ShellCheck | None:
+    """`shell_check` for the PowerShell tool: `Invoke-WebRequest -OutFile`, `Invoke-RestMethod -OutFile`,
+    `Expand-Archive` and `Start-BitsTransfer`. Same rule: only a certain shortfall asks, an unknown size never blocks,
+    a command that uses a variable or a subexpression for the path is left alone."""
+    probe = probe or usage
+    worst: ShellCheck | None = None
+    cwd = workdir
+    for words in _ps_commands(command):
+        name = words[0].casefold()
+        if name in {"cd", "set-location", "sl", "push-location", "pushd"} and len(words) == 2 and "$" not in words[1]:
+            cwd = str(_resolve(words[1], cwd))
+            continue
+        if any("$" in word for word in words):
+            continue  # a path that is not written out cannot be read
+        try:
+            found = _ps_write(words, cwd)
+        except (OSError, ValueError):
+            continue
+        if found is None:
+            continue
+        what, folder, estimate = found
+        worst = _worse(worst, _assess(what, folder, estimate, [], probe=probe, fail_gb=fail_gb, warn_gb=warn_gb,
+                                      warn_percent=warn_percent))
     return worst
 
 
@@ -394,12 +577,14 @@ def preapproves_bulk_write(rule: str) -> bool:
     """Whether a Claude `--allowedTools` rule such as `Bash(unzip *)` or `Bash(git clone *)` pre-approves a command
     that `shell_check` reads. Claude runs a pre-approved call without asking the gate, so the rule is left out and
     the call reaches the gate (and the disk check) instead (#678)."""
-    match = re.fullmatch(r"\s*Bash\((.*)\)\s*", rule, flags=re.DOTALL)
+    match = re.fullmatch(r"\s*(Bash|PowerShell)\((.*)\)\s*", rule, flags=re.DOTALL)
     if not match:
         return False
-    words = [w for w in re.split(r"[\s:*]+", match.group(1)) if w]
+    words = [w for w in re.split(r"[\s:*]+", match.group(2)) if w]
     if not words:
         return False
+    if match.group(1) == "PowerShell":
+        return words[0].casefold() in _PS_DOWNLOADS | _PS_UNPACK | _PS_TRANSFER
     name = Path(words[0]).name.casefold().removesuffix(".exe")
     if name == "git":
         return words[1:2] == ["clone"]
