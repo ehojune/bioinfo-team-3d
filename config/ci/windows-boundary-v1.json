@@ -604,7 +604,7 @@
       }
     },
     "tests/test_web_3d.py": {
-      "sha256": "131fc9f44e43e51bb7fff65a0e92e239985e7bff214b7fa588b1109271401a64",
+      "sha256": "13107a7f362e926c4fd7ba5468bcadd4a610409d45f2beb8d19db369d61553c8",
       "reason": "Only static JS pose/marker string assertions are omitted; server/browser/auth/path/packaging and native Node nodes remain.",
       "nodes": {
         "test_both_pages_load_same_reducer_and_keep_dom_approvals": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
