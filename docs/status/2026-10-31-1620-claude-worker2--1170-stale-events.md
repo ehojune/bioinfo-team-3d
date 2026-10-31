@@ -6,3 +6,4 @@
 - `web_environment.cjs`: 입력 seq가 1,2,2,3으로 겹쳤고 서버는 이벤트마다 seq를 하나씩 붙이므로 시험 입력의 오류다. 입력 seq를 4~9로 바꿨고 단언은 그대로다.
 - 실행: 새 시험은 수정 전 7개 실패, 수정 후 통과. `test_web_3d`·`test_web` 107 passed, 1 skipped.
 - 미해결/미검증: 두 페이지의 `lastSeq` 복사본은 `test_web.py`·`web_cards_status.cjs`가 문구를 고정해 그대로 둠(reducer 가드가 있어 동작은 안전). 실제 브라우저 재연결, 3D 렌더러의 표시는 못 봄. 서버가 종료 뒤 늦은 이벤트를 실제로 내보내는 빈도는 못 쟀음(#1148·#1168 범위).
+- CI 기록: 첫 head(01de761)에서 `pytest (3.10)`이 `test_patch_notes::test_merge_resolution_requires_note_only_for_own_code_change`의 CPython 내부 `SystemError: tupleobject.c:964` 한 건으로 실패했다(이 PR은 Python 코드를 바꾸지 않음). 재실행 권한이 없어(사용자·봇 신원 모두 거절) 기록 커밋으로 CI를 다시 돌렸다.
