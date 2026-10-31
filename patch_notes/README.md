@@ -31,6 +31,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 09:30 | [`52d3851`](https://github.com/ehojune/bioinfo-team-3d/pull/1226/commits/52d3851) | 읽기 전용 노티스를 엔진별로 만든다: Codex는 셸을 가진다 (Refs #1224) |
 | 09:00 | [`09770de`](https://github.com/ehojune/bioinfo-team-3d/pull/1217/commits/09770de) | **설치 점검 설명서의 Git Bash 확인 범위를 실제로 확인한 새 설치 단계까지로 좁혔습니다.**<br>문서: Git Bash 확인 범위를 새 clone 단계까지로 좁힌다 (#1216 리뷰 P1) |
 | 09:00 | [`2288a41`](https://github.com/ehojune/bioinfo-team-3d/pull/1226/commits/2288a41) | 읽기 전용 도구 안내에서 금지한 도구를 빼고 manual 한·영에 적는다 (Refs #1224) |
+| 08:30 | [`3c67915`](https://github.com/ehojune/bioinfo-team-3d/pull/1240/commits/3c67915) | **CI 진단이 다른 시험을 가끔 깨뜨리던 문제를 없앴습니다. 진단은 스레드 덤프만 남깁니다.**<br>CI Python 3.10에서만 test_patch_notes가 SystemError(tupleobject.c)로 드물게 실패했다. stall 진단 스레드가 gc.get_objects()를 쥐고 있는 동안 다른 스레드가 f(*generator) 인자를 만들면 그 튜플의 참조 수가 늘어 생기는 오류였다. 진단은 faulthandler 덤프만 남기고 gc를 훑지 않으며(test.yml·scripts/ci_suite.py), patch_notes.py는 느린 git 호출을 list로 먼저 끝낸다. 재현 시험 두 건을 더했다 (#1238) |
 | 08:10 | [`1e0e956`](https://github.com/ehojune/bioinfo-team-3d/pull/1226/commits/1e0e956) | sci_reviewer 프롬프트가 실제로 없는 PubMed·bioRxiv 도구를 쓰라고 하지 않는다 (Refs #1224) |
 | 08:05 | [`c6b6a65`](https://github.com/ehojune/bioinfo-team-3d/pull/1226/commits/c6b6a65) | main을 합치며 test_read_only_profile의 양쪽 시험을 모두 남긴다 (Refs #1224) |
 | 08:00 | [`534ef9c`](https://github.com/ehojune/bioinfo-team-3d/pull/1217/commits/534ef9c) | **설치 점검 설명서에 Git Bash가 내보내는 셸 변수를 점검에 넘기지 않는다는 점을 적었습니다.**<br>문서: 설치 점검이 Git Bash 셸 변수를 넘기지 않는다 (#1216 리뷰 P1) |

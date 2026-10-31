@@ -19,6 +19,16 @@
 - 근거: 각 이슈 댓글(#1029, #844, #1107, #898). 집계는 `tally1076w.py`·`tally1076w.json`(test.yml 최종 실패 run의 pytest-windows 로그).
 - 한계: 재실행해 통과한 job은 run 결론이 success로 덮여 보이지 않는다. #898의 원인은 재현하지 않았다.
 
+# #1238 — 3.10 `SystemError`: CI stall 진단 스레드가 gc를 훑던 것
+
+| 항목 | 내용 |
+|---|---|
+| 결론 | 원인은 인터프리터가 아니라 진단 스레드의 `gc.get_objects()`다. 진단은 faulthandler 덤프만 남긴다 |
+| 바뀐 것 | `.github/workflows/test.yml`·`scripts/ci_suite.py`의 snapshot에서 gc 순회와 asyncio 대기 task 출력을 뺐다. `scripts/patch_notes.py`는 `*[list]`로 바꿨다. 시험 두 건 |
+| 실행한 것 | 재현 스크립트(3.10.21에서 300회 중 54회 실패, list는 0회), 새 시험 2건 통과, 옛 generator 코드로 되돌리면 patch_notes 시험이 SystemError로 실패, CI 정책 시험 293건 통과 |
+| 미해결 | 진단에서 asyncio 대기 task의 stack은 더 출력하지 않는다. 필요하면 이벤트 루프 스레드 안에서 모으는 방식으로 따로 다룬다 |
+| 근거 | https://github.com/ehojune/bioinfo-team-3d/issues/1238 |
+
 # #1076 rev26: 시간 경쟁 시험 네 개를 안정화한다
 
 - 결론: rev25 집계에서 PR과 무관하게 반복 실패한 시험 중 시험 파일만으로 고칠 수 있는 네 개를 고쳤다. 시험이 잡으려던 결함(loop를 막는 commit·fsync)은 그대로 잡는다. 제품 코드는 바꾸지 않았다.
