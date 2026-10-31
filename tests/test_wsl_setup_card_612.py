@@ -447,3 +447,20 @@ def test_a_wsl_request_for_another_staff_member_is_a_400_not_a_422(tmp_path, mon
         response = client.post("/api/requests", json={"text": "x", "mode": "direct", "agent_id": "analyst",
                                                       "run_where": "wsl"}, headers=auth)
     assert response.status_code == 400 and "bioinfo-agent" in response.json()["detail"]
+
+
+async def test_a_wsl_choice_that_cannot_be_honoured_is_announced_in_the_feed_not_only_recorded(hub, monkeypatch):
+    monkeypatch.setattr(wsl_setup, "configured", lambda s: False)
+    hub.requests["r"]["run_where"] = "wsl"
+    await asyncio.wait_for(hub.prepare_wsl_request("r"), 2)
+    warnings = [e for e in hub.published if e["type"] == "agent.log" and e.get("request_id") == "r"]
+    assert warnings and warnings[-1]["data"]["level"] == "warn"
+    assert warnings[-1]["data"]["text"] == hub.requests["r"]["run_where_note"]
+
+
+async def test_a_wsl_choice_that_is_honoured_announces_no_warning(hub, monkeypatch):
+    monkeypatch.setattr(wsl_setup, "check", lambda s: READY)
+    wsl_owns_the_agent(hub)
+    hub.requests["r"]["run_where"] = "wsl"
+    await asyncio.wait_for(hub.prepare_wsl_request("r"), 2)
+    assert not [e for e in hub.published if e["type"] == "agent.log"]

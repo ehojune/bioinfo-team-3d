@@ -3495,6 +3495,9 @@ class Hub:
         else:
             req["wsl_pinned"] = True  # the WSL runner owns the agent: the request stays there
         await self.asave_request(rid)
+        if reason:  # the PI chose WSL and does not get it: say so in the feed and the CLI, not only in the record
+            await self.publish({"type": "agent.log", "ts": time.time(), "request_id": rid,
+                                "data": {"level": "warn", "text": reason}})
 
     async def _wsl_unavailable_reason(self, rid: str) -> str | None:
         """None when the WSL runner is ready and owns bioinfo-agent; else why not, in one sentence for the PI."""
