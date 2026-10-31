@@ -3149,18 +3149,24 @@ RESTRICTED_STALE_S = 90.0  # a request older than this was already refused at th
 
 # A hold below one cent cannot be enforced (Claude's CLI renders cents), so a request with less left than that is not clipped
 # to it: the turn asks like any other (#1139).
-_MIN_HOLD_USD = 0.01
 _HOLD_EPSILON = 1e-9
+
+
+_CENT = Decimal("0.01")
+_FLOAT_NOISE = Decimal("1e-9")  # what a subtraction of two amounts (2.0 - 1.98, 5.0 - 4.99) can be off by
 
 
 def _clip_to_remaining(cap: float | None, remaining: float) -> float | None:
     """The hold for one turn: its cap, cut to what the request still has when that is enough to hold at all. A cut hold is
     rounded down to whole cents, as the Claude adapter renders the cap in cents (a $0.019 hold sent as $0.02 would spend
-    more than was held and more than the request has left); under one cent it is not cut."""
-    remaining = round(remaining, 6)  # float noise (2.0 - 1.98) must not cost a cent
-    if cap is None or remaining < _MIN_HOLD_USD or cap <= remaining:
+    more than was held and more than the request has left); under one cent it is not cut. Decimal arithmetic with an explicit
+    float-noise tolerance: $0.0199996 is $0.01, while 2.0 - 1.98 (0.020000000000000018) is $0.02 and 5.0 - 4.99 is a cent."""
+    if cap is None or not math.isfinite(remaining) or cap <= remaining:
         return cap
-    return float(Decimal(str(remaining)).quantize(Decimal("0.01"), rounding=ROUND_FLOOR))
+    left = Decimal(repr(float(remaining))) + _FLOAT_NOISE
+    if left < _CENT:
+        return cap
+    return float(left.quantize(_CENT, rounding=ROUND_FLOOR))
 
 
 class Orchestrator:
