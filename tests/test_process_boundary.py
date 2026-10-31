@@ -424,7 +424,7 @@ class FakeEventChild:
 
     def communicate(self, timeout):
         self.actions.append("communicate")
-        if self.failure in ("timeout", "wait"):
+        if self.failure in ("timeout", "wait", "timeout_delivery"):
             raise subprocess.TimeoutExpired("synthetic", timeout)
         self.returncode = 1 if self.failure == "nonzero" else 0
         return b"", b""
@@ -434,6 +434,8 @@ class FakeEventChild:
 
     def kill(self):
         self.actions.append("kill")
+        if self.failure == "kill":
+            raise OSError("synthetic kill failure")
 
     def wait(self, timeout):
         self.actions.append("wait")
@@ -444,21 +446,22 @@ class FakeEventChild:
 
 
 @pytest.mark.parametrize("failure", [None, "nonzero", "timeout", "wait", "identity", "launch_delivery",
-                                    "termination_delivery", "start", "spawn", "ready", "close"])
+                                    "termination_delivery", "start", "spawn", "ready", "close",
+                                    "timeout_delivery", "kill"])
 def test_broker_opt_in_lifecycle_and_failures(failure):
     events, order = [], []
     child = FakeEventChild(failure=failure)
 
     def emit(event):
         order.append(event["kind"])
-        if failure == event["kind"] + "_delivery":
+        if failure == event["kind"] + "_delivery" or (failure == "timeout_delivery" and event["kind"] == "termination"):
             raise OSError("synthetic delivery failure")
         if event["kind"] == "termination":
             assert child.returncode is not None
         events.append(event)
 
     def identity(pid):
-        if failure == "identity":
+        if failure in ("identity", "kill"):
             raise ValueError("missing identity")
         return {"pid": pid, "birth_id": "fixture-birth"}
 
@@ -502,18 +505,24 @@ def test_broker_opt_in_lifecycle_and_failures(failure):
     else:
         assert child.stdout.closed and child.stderr.closed
         assert popen.call_args.kwargs["close_fds"] is True
-        if failure in ("identity", "launch_delivery"):
+        if failure in ("identity", "launch_delivery", "kill"):
             assert not events and child.actions == ["kill", "wait"]
-        elif failure in ("wait", "termination_delivery"):
+        elif failure in ("wait", "termination_delivery", "timeout_delivery"):
             assert [event["kind"] for event in events] == ["launch"]
         else:
             assert [event["kind"] for event in events] == ["launch", "termination"]
             assert [event["sequence"] for event in events] == [1, 2]
             assert all(event["run_id"] == receipt.run_id for event in events)
             assert events[0]["identity"] == events[1]["identity"]
-        if failure in ("timeout", "wait"):
+        if failure in ("timeout", "wait", "timeout_delivery"):
             assert child.actions == ["communicate", "kill", "wait"]
             assert "BROKER_TIMEOUT" in receipt.unsupported_reasons
+        if failure == "timeout_delivery":
+            assert "LIFECYCLE_TERMINATION_DELIVERY_FAILED" in receipt.unsupported_reasons
+        if failure == "kill":
+            assert "LIFECYCLE_CHILD_KILL_FAILED" in receipt.unsupported_reasons
+        if failure == "wait":
+            assert "LIFECYCLE_CHILD_REAP_FAILED" in receipt.unsupported_reasons
         assert receipt.launch == ("exited_0" if failure in (None, "close") else "failed")
     if failure == "close":
         assert receipt.cleanup.startswith("failed")

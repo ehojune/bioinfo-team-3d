@@ -302,30 +302,56 @@ class DiagnosticLifecycleEvents:
         self._emit(event)
 
 
+class _LifecycleFailure(Exception):
+    def __init__(self, reasons):
+        super().__init__("synthetic lifecycle failed")
+        self.reasons = reasons
+
+
 def _run_broker_with_events(command, *, timeout, lifecycle):
     """Record direct-child lifecycle only; never infer descendant cleanup."""
     child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, close_fds=True)
     launched = False
+    reasons = []
+    primary_error = None
+    result = None
     try:
         lifecycle._launch(child.pid)
         launched = True
         stdout, stderr = child.communicate(timeout=timeout)
-        return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
-    except BaseException:
+        result = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+    except BaseException as exc:
+        primary_error = exc
+        reasons.append("BROKER_TIMEOUT" if isinstance(exc, subprocess.TimeoutExpired) else
+                       "LIFECYCLE_CHILD_FAILED" if launched else "LIFECYCLE_LAUNCH_FAILED")
         # Identity, authentication/delivery and timeout failures still reap our child.
-        if child.poll() is None:
-            child.kill()
-        child.wait(timeout=timeout)
-        raise
+        try:
+            if child.poll() is None:
+                child.kill()
+        except Exception:
+            reasons.append("LIFECYCLE_CHILD_KILL_FAILED")
+        finally:
+            try:
+                child.wait(timeout=timeout)
+            except Exception:
+                reasons.append("LIFECYCLE_CHILD_REAP_FAILED")
     finally:
         try:
             if launched and child.returncode is not None:
-                lifecycle._termination()
+                try:
+                    lifecycle._termination()
+                except Exception:
+                    reasons.append("LIFECYCLE_TERMINATION_DELIVERY_FAILED")
         finally:
             for pipe in (child.stdout, child.stderr):
                 if pipe is not None:
                     pipe.close()
+    if primary_error is not None and not isinstance(primary_error, Exception):
+        raise primary_error
+    if reasons:
+        raise _LifecycleFailure(reasons) from None
+    return result
 
 
 def diagnostic_broker_probe(broker_factory, *, timeout=10, on_ready=None, run_id=None, lifecycle=None):
@@ -382,6 +408,9 @@ def diagnostic_broker_probe(broker_factory, *, timeout=10, on_ready=None, run_id
                                             check=False)
                 else:
                     result = _run_broker_with_events(command, timeout=timeout, lifecycle=lifecycle)
+            except _LifecycleFailure as exc:
+                receipt.launch = "failed"
+                receipt.unsupported_reasons.extend(exc.reasons)
             except subprocess.TimeoutExpired:
                 receipt.launch = "failed"
                 receipt.unsupported_reasons.append("BROKER_TIMEOUT")
