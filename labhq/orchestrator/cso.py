@@ -8296,6 +8296,8 @@ class Orchestrator:
             await asyncio.gather(*self.cancel_steps(rid), return_exceptions=True)
             await self.hub._set_status(rid, "interrupted", evidence=exc.evidence)
         except Exception as e:
+            if req.get("status") == "cancelled" or req.get("cancelling") is not None:
+                return  # a cancel is committing its own terminal record; an error after it does not end the request as failed (#1168)
             if self._continuation_unstarted(req):
                 # Ends as the revise it continued, with that round's plan and results put back (``_finish``).
                 (await self._finish(rid, f"{type(e).__name__}: {e}", {}, ok=False, error=f"{type(e).__name__}: {e}"))

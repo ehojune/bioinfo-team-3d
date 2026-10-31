@@ -325,6 +325,11 @@ class SavedResults(dict):
 # "the caller did not say what the runner reports": only the runner ID is compared (Hub._session_pin_refusal).
 _RUNTIME_UNCHECKED = object()
 
+
+def _ended_by_cancel(req: dict) -> bool:
+    """The request was cancelled, or its cancel is still committing (`cancelling` stays until the terminal record is out)."""
+    return req.get("status") == "cancelled" or req.get("cancelling") is not None
+
 class Hub:
     result_review_required = True
 
@@ -819,19 +824,26 @@ class Hub:
             self.events.append(event)
             self.pending_committed.append((event, tuple(self.clients)))
 
-    async def _set_status(self, rid: str, status: str, *, evidence: dict | None = None) -> None:
-        """A status the gateway sets itself (resume, restart), told to open pages as request.status."""
+    async def _set_status(self, rid: str, status: str, *, evidence: dict | None = None) -> bool | None:
+        """A status the gateway sets itself (resume, restart), told to open pages as request.status.
+
+        False when the write was skipped because the request was cancelled meanwhile: the caller must not go on as if
+        it had resumed it (#1168). Anything else returns None or True."""
         if status == "interrupted":
             self.interrupt_request(rid, evidence=evidence)
             await self._send_committed_event()
             await self.close_publish_cards(rid)
             return
         req = self.requests[rid]
+        if is_active_request(status) and _ended_by_cancel(req):
+            return False  # a cancel that landed while the caller waited is not undone by a late resume (#1168)
         before = req.get("status")
         req["status"] = status
         if status == "failed":
             await self.close_publish_cards(rid)
         await self.asave_request(rid)
+        if is_active_request(status) and _ended_by_cancel(req):
+            return False  # the cancel landed during the save: no `request.status` for a state it already replaced (#1168)
         if before != status:
             await self.publish({"type": "request.status", "ts": time.time(), "request_id": rid,
                                 "data": {"status": status, "previous": before}})
@@ -2106,10 +2118,12 @@ class Hub:
         deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
         previous: set[str] | None = None
         while True:
-            if req.get("status") == "cancelled":
+            if _ended_by_cancel(req):
                 return
             missing = {aid for aid in (await self.aresume_agents(rid))
                        if self.agent_runner.get(aid) not in self.runners}
+            if _ended_by_cancel(req):  # a cancel can land while the agents are looked up (#1168)
+                return
             if req.get("recruit_contract_failure"):
                 error = "계획에 배정된 파견직 계약이 종료되었습니다: " + ", ".join(req["recruit_contract_failure"])
                 req.update(status="failed", outcome="recruit_contract_ended", error=error, finished_at=time.time())
@@ -2134,9 +2148,15 @@ class Hub:
                         await self.asave_request(rid)
                         (await self.aschedule_terminal(rid, "request.failed", {"error": req["error"]}))
                         return
-                await self._set_status(rid, "running")
+                if await self._set_status(rid, "running") is False:  # skipped: a cancel landed (#1168)
+                    return
+                agents = sorted(await self.aresume_agents(rid))
+                if _ended_by_cancel(req):
+                    return
                 await self.publish({"type": "request.resumed", "ts": time.time(), "request_id": rid,
-                                    "data": {"agents": sorted((await self.aresume_agents(rid)))}})
+                                    "data": {"agents": agents}})
+                if _ended_by_cancel(req):  # nothing is dispatched for a request that was cancelled while this was told
+                    return
                 self.recovery_started[rid] = time.time()
                 self.recovery_steps.add(rid)
                 try:
