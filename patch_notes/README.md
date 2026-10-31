@@ -31,6 +31,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 08:10 | [`1e0e956`](https://github.com/ehojune/bioinfo-team-3d/pull/1226/commits/1e0e956) | sci_reviewer 프롬프트가 실제로 없는 PubMed·bioRxiv 도구를 쓰라고 하지 않는다 (Refs #1224) |
 | 08:05 | [`c6b6a65`](https://github.com/ehojune/bioinfo-team-3d/pull/1226/commits/c6b6a65) | main을 합치며 test_read_only_profile의 양쪽 시험을 모두 남긴다 (Refs #1224) |
 | 08:00 | [`534ef9c`](https://github.com/ehojune/bioinfo-team-3d/pull/1217/commits/534ef9c) | **설치 점검 설명서에 Git Bash가 내보내는 셸 변수를 점검에 넘기지 않는다는 점을 적었습니다.**<br>문서: 설치 점검이 Git Bash 셸 변수를 넘기지 않는다 (#1216 리뷰 P1) |
+| 08:00 | [`a464bda`](https://github.com/ehojune/bioinfo-team-3d/pull/1237/commits/a464bda) | **공유 러너에서 시간이 조금 어긋나도 실패하던 시험 네 개를 안정화했습니다(검사하는 내용은 그대로).**<br>시간 경쟁 시험 네 개를 순서·간격이 갈리게 고친다 (Refs #1076) |
 | 08:00 | [`5fea616`](https://github.com/ehojune/bioinfo-team-3d/pull/1226/commits/5fea616) | **읽기 전용으로 도는 직원은 이번 실행에서 실제로 쓸 수 있는 도구 목록을 프롬프트 끝에서 받습니다.**<br>읽기 전용 프로필이 프롬프트 끝에 이번 실행의 도구 목록을 붙인다 (Refs #1224) |
 | 07:40 | [`e742200`](https://github.com/ehojune/bioinfo-team-3d/pull/1235/commits/e742200) | **새 시험의 정리 방식을 저장소의 프로세스 종료 규칙에 맞췄습니다.**<br>새 시험의 정리 코드가 taskkill의 /T를 쓰던 것을 test_no_tree_kill 규칙에 맞게 뺀다. 정리는 pid 파일의 프로세스를 하나씩 죽이므로 동작은 같다 (#1232) |
 | 07:00 | [`e717a8c`](https://github.com/ehojune/bioinfo-team-3d/pull/1217/commits/e717a8c) | **Git Bash에서 설치 점검을 돌려도 새 설치를 받는 단계에서 죽지 않습니다. 그 뒤 단계까지의 전체 점검은 이번에 확인하지 않았습니다.**<br>clean_install_check: Git Bash의 MSYSTEM 등 셸 변수를 설치 점검에 넘기지 않는다 (#1216) |
