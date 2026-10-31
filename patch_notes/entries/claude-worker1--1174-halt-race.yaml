@@ -4,3 +4,7 @@ rows:
     at: "2026-10-31 23:10"
     summary: "멈춤을 요청한 순간 직원 CLI가 스스로 끝났다면, 이미 받은 결과를 실패(halted)로 바꾸지 않고 그대로 완료로 처리합니다."
     text: "halt: 멈춤 안내를 쓰는 사이 끝난 실행은 halted가 아니라 결과로 둔다 (#1174)"
+  - sha: "6b36821"
+    at: "2026-10-31 23:50"
+    summary: "결과 이벤트를 처리하는 중에 멈춤 요청이 겹친 Codex·Gemini 실행도 완료로 남고 halted로 바뀌지 않습니다."
+    text: "halt: 완료 flag(result_seen)가 선 실행도 halted로 덮지 않는다 (#1174 리뷰 P1)"
