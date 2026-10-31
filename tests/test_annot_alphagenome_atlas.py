@@ -1080,11 +1080,43 @@ async def test_atlas_probe_timeout_retains_partial_output_and_redacts():
 async def test_real_mcp_process_calls_runner_without_key(service, monkeypatch):
     ctx, broker, service, token, key, seen = service
     monkeypatch.setenv(atlas.KEY_ENV, key)
+    started = time.monotonic()
+
+    def mark(phase):
+        print(f"ATLAS_PARENT {phase} {time.monotonic() - started:.3f}", flush=True)
+
+    async def traced_app(scope, receive, send):
+        mark("asgi_enter")
+
+        async def traced_receive():
+            message = await receive()
+            mark("receive_" + message["type"])
+            return message
+
+        async def traced_send(message):
+            mark("send_" + message["type"])
+            await send(message)
+
+        try:
+            await broker.app(scope, traced_receive, traced_send)
+        finally:
+            mark("asgi_exit")
+
+    query = service._query
+
+    async def traced_query(*args):
+        mark("query_enter")
+        try:
+            return await query(*args)
+        finally:
+            mark("query_exit")
+
+    monkeypatch.setattr(service, "_query", traced_query)
     # Hold a bound socket until uvicorn owns it; no free-port probe race.
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(broker.app, log_level="error", lifespan="off"))
+    server = uvicorn.Server(uvicorn.Config(traced_app, log_level="error", lifespan="off"))
     server.install_signal_handlers = lambda: None
     serving = asyncio.create_task(server.serve(sockets=[sock]))
     proc = None
@@ -1108,10 +1140,41 @@ def mark(phase):
 mark('import_start')
 atexit.register(mark, 'interpreter_exit')
 import asyncio, os
+from contextlib import asynccontextmanager
 from labhq.tools import annot_mcp as m
 mark('import_done')
 assert 'ALPHAGENOME_API_KEY' not in os.environ
 assert m.ATLAS_ENABLED
+slot = m._step_slot
+admitted = m._admitted
+@asynccontextmanager
+async def traced_slot(workdir):
+    mark('slot_wait')
+    async with slot(workdir):
+        mark('slot_enter')
+        yield
+    mark('slot_exit')
+@asynccontextmanager
+async def traced_admitted(tool):
+    mark('admission_wait')
+    async with admitted(tool) as hooks:
+        mark('admission_enter')
+        yield hooks
+    mark('admission_exit')
+m._step_slot = traced_slot
+m._admitted = traced_admitted
+Client = m.httpx.AsyncClient
+class TracedClient(Client):
+    def __init__(self, *args, **kwargs):
+        mark('http_init_start')
+        super().__init__(*args, **kwargs)
+        mark('http_init_done')
+    async def send(self, request, *args, **kwargs):
+        mark('http_send')
+        result = await super().send(request, *args, **kwargs)
+        mark('http_response')
+        return result
+m.httpx.AsyncClient = TracedClient
 async def call():
     mark('call_start')
     result = await m.alphagenome_atlas(['chr1:100:A:G'])
