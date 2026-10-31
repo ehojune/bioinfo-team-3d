@@ -8,3 +8,7 @@ rows:
   at: 2026-11-01 11:00
   text: 'bench와 demo가 gateway·broker 포트를 free_port로 따로 뽑던 곳을 서로 다른 포트를 한 번에 뽑는 free_ports로 바꿔 같은 포트를 둘이 잡는 일을 막았다. runner broker 포트 충돌이 종료 코드 3 대신 포트 번호가 든 예외로 끝난다는 것을 manual 한·영에 적었다 (#1238)'
   summary: 데모·벤치가 같은 포트를 두 번 쓰지 않게 하고, 포트 충돌 때의 동작을 매뉴얼에 적었습니다.
+- sha: '896b9da'
+  at: 2026-11-01 11:40
+  text: 'bench가 free_ports를 쓰게 되면서 free_port를 가로채던 bench 시험 두 곳이 깨져 같은 방식으로 free_ports를 가로채게 고쳤다. 시험의 의도(소켓을 열지 않음)는 그대로다 (#1238)'
+  summary: 포트 뽑기 방식을 바꾸며 영향받은 벤치 시험 두 건을 맞췄습니다.
