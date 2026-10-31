@@ -3,6 +3,7 @@ import ast
 from fnmatch import fnmatchcase
 from functools import lru_cache
 import hashlib
+import functools
 import json
 import os
 import re
@@ -280,6 +281,69 @@ def _test_imports(tree):
     return tuple(imports)
 
 
+FIXTURE_ROOTS = ("tests/fixtures/",)  # data and programs a test runs or reads by name; imports do not reach them
+_GENERIC_FIXTURE_NAMES = {"__init__", "conftest", "README"}
+
+
+def changed_fixtures(changed):
+    """The changed paths that are fixtures (#1242)."""
+    return sorted(path for path in changed if path.startswith(FIXTURE_ROOTS))
+
+
+def references_fixture(text, fixture):
+    """Does this test source name the fixture, by path, by file name or by module name?
+
+    A fixture is often run as a subprocess (`FAKE_CLI = ROOT / "tests/fixtures/x.py"`) or read from disk, so no import
+    leads to it. Matching the strings the source spells is wide on purpose: a test that merely mentions the name is
+    selected too, never the other way round. A fixture that is a common file name (`README.md`) is matched by its path
+    only; a data fixture (not `.py`) by its path or full file name, never by the bare stem, which is an ordinary word
+    (`codex`, `claude`, `expected`) in tests that have nothing to do with it. A test that takes a whole folder
+    (`copytree("tests/fixtures/wiki")`) names the folders above the fixture, so those count too."""
+    name = fixture.rsplit("/", 1)[-1]
+    stem = name.rsplit(".", 1)[0] if "." in name else name
+    short = fixture[len("tests/"):] if fixture.startswith("tests/") else fixture
+    names = {fixture, short}
+    if stem not in _GENERIC_FIXTURE_NAMES:
+        names.add(name)
+        if name.endswith(".py") and len(stem) >= 4:  # a program fixture is also imported by its module name
+            names.add(stem)
+    parent = fixture.rsplit("/", 1)[0]
+    while parent.count("/") >= 2:  # tests/fixtures/<folder>[/...]: every folder below tests/fixtures
+        names |= {parent, parent[len("tests/"):]}
+        parent = parent.rsplit("/", 1)[0]
+    if any(candidate and candidate in text for candidate in names):
+        return True
+    # pathlib joins spell the folders one by one: `Path(__file__).parent / "fixtures" / "wiki"`
+    # A test that names a folder reads what is below it, so the first folder under fixtures is enough.
+    folders = fixture.split("/")[2:-1]
+    quoted = lambda part: ('"' + part + '"') in text or ("'" + part + "'") in text
+    return bool(folders) and quoted("fixtures") and quoted(folders[0])
+
+
+@functools.lru_cache(maxsize=None)  # one entry per changed fixture: a bound below that count would rescan per test
+def _fixture_named_anywhere(root, fixture):
+    """Does any collected test file (tests/test_*.py) name this fixture? One scan per root and fixture per process:
+    the changed range does not move while a job runs."""
+    for test in sorted((Path(root) / "tests").glob("test_*.py")):
+        try:
+            if references_fixture(test.read_text(encoding="utf-8", errors="replace"), fixture):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _fixture_reason(text, changed, root):
+    """Why this test runs for a changed fixture, else None. A fixture no collected test names cannot be tied to a
+    test, so every test is chosen rather than guessed (#1242)."""
+    for fixture in changed_fixtures(changed):
+        if references_fixture(text, fixture):
+            return 'changed fixture this test refers to'
+        if not _fixture_named_anywhere(str(Path(root).resolve()), fixture):
+            return 'changed fixture no collected test names; all routine Windows tests'
+    return None
+
+
 def include_windows(path, text, data, *, root=ROOT, changed=frozenset(), node=None):
     """Maintained essential contracts + direct OS APIs, never product transitivity.
 
@@ -297,6 +361,9 @@ def include_windows(path, text, data, *, root=ROOT, changed=frozenset(), node=No
             raise ValueError('mixed-module contract drift; update reviewed profile')
         if path in changed or node is None:
             return True, 'changed Windows-relevant mixed test or file contract'
+        reason = _fixture_reason(text, changed, root)
+        if reason:
+            return True, reason
         symbol = node.split('[', 1)[0]
         if symbol in row['nodes']:
             return True, row['nodes'][symbol]
@@ -322,6 +389,9 @@ def include_windows(path, text, data, *, root=ROOT, changed=frozenset(), node=No
         _boundary_scope(_syntax(text), node.split('[', 1)[0], aliases(_syntax(text)))
     if path in changed and intrinsic_boundary(text, node=node.split('[', 1)[0] if node else None):
         return True, "direct OS/runtime API in test/local fixture scope"
+    reason = _fixture_reason(text, changed, root)
+    if reason:
+        return True, reason
     # Direct helper edits retain their consumers, without a speculative
     # transitive walk through arbitrary product/runtime implementations.
     for imports in _test_imports(_syntax(text)):
