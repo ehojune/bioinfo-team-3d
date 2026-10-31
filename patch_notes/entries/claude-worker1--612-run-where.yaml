@@ -4,3 +4,7 @@ rows:
     at: "2026-10-31 19:00"
     summary: "요청을 보낼 때 이 PC의 WSL에서 분석하도록 고를 수 있고(labhq send --wsl, 웹의 WSL에서 체크), WSL이 준비되지 않았으면 계획을 세우기 전에 셋업 카드가 먼저 뜹니다."
     text: "요청에 run_where(auto|wsl)를 더해 WSL을 고르면 계획 전에 셋업 카드를 연다 (#612)"
+  - sha: "f970f84"
+    at: "2026-10-31 22:00"
+    summary: "WSL에서 실행하도록 고른 요청은 같은 직원을 가진 Windows runner가 있어도 WSL 셋업 카드를 열고, WSL runner가 직원을 맡으면 그 요청의 분석을 WSL runner에 고정합니다."
+    text: "run_where=wsl: native runner가 같이 호스트해도 카드를 열고, WSL runner가 직원을 맡으면 요청의 bioinfo-agent를 WSL runner에 고정한다 (#612 리뷰 P1)"
