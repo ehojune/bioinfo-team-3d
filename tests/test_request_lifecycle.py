@@ -1384,3 +1384,68 @@ async def test_an_error_that_arrives_after_the_cancel_does_not_turn_the_request_
         assert not [e for e in hub.events if e.get("type") == "request.failed"]
     finally:
         hub.store.close()
+
+
+async def _resume_with_a_cancel_at(tmp_path, point):
+    """`resume_when_ready` as untracked code runs it, with the cancel landing at one await; returns (hub, started)."""
+    hub = _guard_hub(tmp_path)
+    _request(hub, "r", "interrupted")
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = {"agents": 0}
+    started = []
+
+    async def agents(rid):
+        calls["agents"] += 1
+        if point == "second_agents_lookup" and calls["agents"] == 2:
+            entered.set()
+            await release.wait()
+        return set()
+
+    hub.aresume_agents = agents
+    publish = hub.publish
+
+    async def gated_publish(event):
+        if point == "resumed_event" and event.get("type") == "request.resumed":
+            entered.set()
+            await release.wait()
+        await publish(event)
+
+    hub.publish = gated_publish
+    save = hub.asave_request
+
+    async def gated_save(rid):
+        if point == "status_save" and hub.requests[rid].get("status") == "running" and not entered.is_set():
+            entered.set()
+            await release.wait()
+        await save(rid)
+
+    hub.asave_request = gated_save
+
+    class Orchestration:
+        async def run_request(self, *args, **kwargs):
+            started.append(args)
+
+    hub.orchestrator = Orchestration()
+    resume = asyncio.create_task(hub.resume_when_ready("r"))
+    await asyncio.wait_for(entered.wait(), 2)
+    hub.requests["r"].update(status="cancelled", cancelling={"quota_steps": []})  # the cancel lands at that await
+    release.set()
+    await asyncio.wait_for(resume, 2)
+    return hub, started
+
+
+@pytest.mark.parametrize("point", ["status_save", "second_agents_lookup", "resumed_event"])
+@pytest.mark.asyncio
+async def test_a_cancel_at_any_await_of_the_resume_stops_it_before_the_orchestration_starts(tmp_path, point):
+    """#1172 review: the guard after the first lookup was not enough; the status save, the second lookup and the
+    `request.resumed` event each await too, and nothing after them looked again."""
+    hub, started = await _resume_with_a_cancel_at(tmp_path, point)
+    try:
+        assert hub.requests["r"]["status"] == "cancelled"
+        assert not started
+        if point != "resumed_event":  # that event is already on its way when the cancel lands
+            assert not [e for e in hub.events if e.get("type") == "request.resumed"]
+        if point == "status_save":  # the cancel replaced the state that this save was about: nothing says it was entered
+            assert not [e for e in hub.events if e.get("type") == "request.status" and e["data"]["status"] == "running"]
+    finally:
+        hub.store.close()
