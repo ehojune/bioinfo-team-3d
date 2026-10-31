@@ -42,6 +42,15 @@
 - 실행한 것: `test_e2e_mock`(6, 새 시험 포함)·`test_demo_separation`·`test_research_cp2`·`test_intake_questions`·`test_clean_install_check` 160 passed. 새 시험은 옛 mock에서 계획 검증 실패로 실패함을 확인.
 - 미해결/미검증: 시험은 Windows runner에서 restricted 데이터 구역을 뺀 설정으로 돈다(init도 Windows에서 그렇게 둔다). 다단계·branch·pack 적용 research 계획은 mock이 내지 않는다.
 
+# #1212 — 정상 취소의 묶음 경고
+
+- 결론: 분석 단계 작업 폴더가 한 번도 보고되지 않은 채 취소된 요청만 묶음 경고를 내지 않는다. 이 정의 한 줄이 `Hub._bundle_outcome` 앞 주석에 있다. 폴더가 보고됐는데 사라졌거나, 취소가 아닌 종료이거나, 다른 묶음 실패면 경고를 그대로 둔다. 계획·briefing·review task의 폴더는 묶지 않는 폴더라 판정에서 뺀다.
+- 구조: 취소된 run도 만든 작업 폴더를 결과에 싣는다(`Runner._run_guarded`의 취소 경로가 `workdir`·`workdir_id`를 채움). 그래서 게이트웨이는 "폴더가 있었는데 기록이 없다"와 "폴더가 없었다"를 구분한다.
+- 바꾼 것: `labhq/request_bundle.py`(`NoStepWorkdirs`), `labhq/gateway/server.py`, `labhq/runner/daemon.py`, `tests/test_request_bundle.py`, manual 한·영(예외 한 문장).
+- 시험(`tests/test_request_bundle.py`, 추가 7건): 취소 시 경고 없음(실제 build) · 실패 시 경고 유지 · 취소지만 다른 OSError면 경고 유지 · 기록된 폴더가 사라진 취소는 경고 유지 · task 결과에만 기록된 폴더도 경고 유지 · 계획 단계까지 마치고 취소해도 경고 없음 · 취소된 run이 만든 폴더를 보고함. 판정 조건을 지우면 해당 시험이 실패하는 것을 확인했다.
+- 실행: 관련 시험 1004건 통과(`bundle_warning`·`commit_terminal`·`_run_guarded`를 쓰는 시험 파일 전체).
+- 미검증: 요청 단위 e2e 취소 흐름. 수락됐지만 결과가 아예 오지 않은 task(runner가 사라진 경우)는 폴더가 보고되지 않아 조용히 넘어간다.
+
 # #1193 후속: 보고서 각주 처리가 길이가 다른 코드 펜스를 알아본다
 
 - 결론: 결함이 있었다. `reader_markdown(footnotes=True)`의 코드 보호 정규식(`` ```.*?``` ``)이 4개 이상 백틱·물결표 펜스를 통째로 보호하지 못해, 그 안의 `[^1]`이 "근거" 번호로 바뀌었다(재현: 4백틱 펜스 안에 3백틱 펜스가 든 문서의 `open[^1]`이 `open[근거 1]`로 바뀜).
