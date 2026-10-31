@@ -20,3 +20,7 @@ rows:
     at: "2026-10-31 20:30"
     summary: "manual의 디스크 감시 설명에 쓸 수 있는 project 폴더도 감시한다는 내용을 더했습니다."
     text: "문서: 감시 대상에 project 폴더 (#678)"
+  - sha: "1a6301f"
+    at: "2026-10-31 20:50"
+    summary: "읽기 전용 task는 쓰지 못하는 project 폴더의 드라이브 때문에 멈추지 않습니다."
+    text: "디스크 감시: 읽기 전용 task는 project 폴더를 감시하지 않는다 (#678 리뷰 P2)"
