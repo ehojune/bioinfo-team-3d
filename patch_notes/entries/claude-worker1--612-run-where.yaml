@@ -40,3 +40,7 @@ rows:
     at: "2026-11-01 01:50"
     summary: "WSL을 고른 요청의 계획이 WSL runner의 scheduler·capability를 보고, 첫 runner 대기·login 안내·환경 binding·재개 판정도 같은 WSL runner를 기준으로 합니다."
     text: "요청의 WSL 고정을 runner·roster·capability를 고르는 모든 곳에 한 helper로 건다 (#1204, #612 리뷰 P1)"
+  - sha: "bb30dd4"
+    at: "2026-11-01 02:20"
+    summary: "WSL을 고른 요청은 WSL runner가 잠시 끊겨도 계획과 login 안내가 WSL 기준으로 남고, native runner의 scheduler로 계획이 짜이지 않습니다."
+    text: "고정은 요청이 고른 것이지 지금 연결된 것이 아니다 (#1204, #612 리뷰 P1)"
