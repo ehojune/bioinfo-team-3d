@@ -28,7 +28,7 @@ def fake_claude(tmp: Path, finish_after_s: float) -> Path:
     return script
 
 
-async def run_with_halt(tmp: Path, *, emit_s: float, finish_after_s: float):
+async def run_with_halt(tmp: Path, *, finish_after_s: float, halt_on: str = "agent.status"):
     s = Settings()
     s.engines.claude_code.bin = sys.executable
     s.engines.claude_code.prefix_args = [str(fake_claude(tmp, finish_after_s))]
@@ -37,10 +37,8 @@ async def run_with_halt(tmp: Path, *, emit_s: float, finish_after_s: float):
 
     async def emit(kind, data):
         events.append((kind, data))
-        if kind == "agent.status" and data.get("model"):
-            halt.set()  # the PI halts as soon as the CLI is up
-        if kind == "agent.log" and "멈춤" in str(data.get("text")):
-            await asyncio.sleep(emit_s)  # the durable commit of the halt notice
+        if kind == halt_on and (kind != "agent.status" or data.get("model")):
+            halt.set()  # the PI halts as soon as the CLI is up, or as soon as its result has been handled
 
     workdir = tmp / "wd"
     workdir.mkdir()
@@ -49,16 +47,42 @@ async def run_with_halt(tmp: Path, *, emit_s: float, finish_after_s: float):
     return await asyncio.wait_for(get_adapter(agent.engine, s).run(ctx), 30), events
 
 
+def fake_lingering_claude(tmp: Path) -> Path:
+    """Prints init and its result at once, then lingers like a CLI that has not exited yet."""
+    script = tmp / "claude"
+    script.write_text(chr(10).join([
+        "import sys, json, time", "sys.stdout.reconfigure(encoding='utf-8')",
+        f"print(json.dumps({INIT!r}), flush=True)", f"print(json.dumps({RESULT!r}), flush=True)",
+        "time.sleep(4)", ""]), encoding="utf-8")
+    return script
+
+
 @pytest.mark.asyncio
-async def test_a_result_that_arrives_while_the_halt_is_logged_stays_a_result(tmp_path):
-    result, events = await run_with_halt(tmp_path, emit_s=1.5, finish_after_s=0.4)
-    assert result.error_kind != "halted"
-    assert result.ok and result.text == "done"
+async def test_a_halt_that_comes_after_the_result_keeps_the_result_and_does_not_claim_a_kill(tmp_path):
+    s = Settings()
+    s.engines.claude_code.bin = sys.executable
+    s.engines.claude_code.prefix_args = [str(fake_lingering_claude(tmp_path))]
+    agent = AgentSpec(id="a1", name="A", role="r", engine=Engine.claude_code, model="m", tools=["Read"])
+    halt, events = asyncio.Event(), []
+
+    async def emit(kind, data):
+        events.append((kind, data))
+        if kind == "agent.usage":  # the result handler has set result_seen and is still running
+            halt.set()
+
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    ctx = RunContext(task=Task(agent_id="a1", prompt="x"), agent=agent, workdir=workdir, settings=s, mcp_servers=[],
+                     env={}, emit=emit, prompt="x", extra_dirs=[], claude_settings={}, halt=halt, halt_grace_s=0.0)
+    result = await asyncio.wait_for(get_adapter(agent.engine, s).run(ctx), 30)
+    assert result.error_kind != "halted" and result.ok and result.text == "done"
+    texts = [str(d.get("text")) for kind, d in events if kind == "agent.log"]
+    assert not any("프로세스 트리를 끝냈습니다" in text for text in texts)  # nothing was ended, so nothing is claimed
 
 
 @pytest.mark.asyncio
 async def test_a_halt_that_finds_the_cli_still_running_still_stops_it(tmp_path):
-    result, events = await run_with_halt(tmp_path, emit_s=0.0, finish_after_s=20)
+    result, events = await run_with_halt(tmp_path, finish_after_s=20)
     assert result.error_kind == "halted" and not result.ok
     assert result.session_id == "sess-1"  # the session is kept for the resume
     assert json.dumps(events, ensure_ascii=False).count("멈춤") >= 1
@@ -83,12 +107,9 @@ async def test_a_completed_turn_whose_handler_is_still_awaiting_is_not_halted(tm
     halt = asyncio.Event()
 
     async def emit(kind, data):
-        if kind == "agent.status" and data.get("model"):
-            halt.set()
-        if kind == "agent.log" and "멈춤" in str(data.get("text")):
-            await asyncio.sleep(0.6)  # the halt notice commits while the result event is being handled
         if kind == "agent.usage":
-            await asyncio.sleep(1.5)  # the handler is still awaiting here, result_seen already set
+            halt.set()  # the PI halts while the handler of the result event is still running (result_seen already set)
+            await asyncio.sleep(1.5)
 
     workdir = tmp_path / "wd"
     workdir.mkdir()

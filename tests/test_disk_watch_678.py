@@ -203,3 +203,20 @@ async def test_writable_project_folders_are_watched_too(tmp_path):
     runner._start_disk_watch(task(), AGENT, tmp_path / "ws", [str(project), str(project)])
     await asyncio.sleep(0.05)
     assert seen.count(project.as_posix()) == 1  # on another drive it is the one that fills
+
+
+@pytest.mark.asyncio
+async def test_a_read_only_run_does_not_watch_the_bulk_data_root(tmp_path):
+    runner, events, applied, live = runner_with(tmp_path)
+    runner.s.runner.bulk_data_root = str(tmp_path / "bulk")
+    seen = []
+
+    async def spy(task_, agent, folders):
+        seen.extend(Path(f).as_posix() for f in folders)
+        live["held"] = False
+
+    runner._disk_watch = spy
+    runner._start_disk_watch(task(), AGENT, tmp_path / "ws", read_only=True)
+    await asyncio.sleep(0.05)
+    assert (tmp_path / "ws").as_posix() in seen  # its own workspace is still watched
+    assert (tmp_path / "bulk").as_posix() not in seen  # a drive it cannot write is no reason to halt it
