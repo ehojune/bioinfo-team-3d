@@ -14,6 +14,13 @@
 - 시험: 4개 이상 백틱·물결표 펜스가 안의 짧은 펜스와 링크를 가리고, 3개 펜스·펜스 밖 링크·닫히지 않은 펜스·더 긴 닫는 펜스의 기존 동작은 유지된다(수정 전 앞의 둘이 실패). 정리본·저장 계열 298 passed.
 - 미해결/미검증: `labhq/report_contract.py:50`에 같은 정규식의 복사본이 있다(보고서 계약 검사의 별개 용도, 이 claim 밖이라 두었다). 같은 길이 펜스 문제가 있을 수 있으나 확인하지 않았다. 닫는 펜스가 같은 줄 앞쪽 공백이나 문장 중간에 있는 경우는 옛 정규식과 같게(줄 시작 조건 없이) 처리한다.
 
+# #1076 halt 시험의 실제 프로세스 제거
+
+- 결론: #1189 CI의 3.10 job이 25분 상한에 끊겼고 stall 덤프 로그에서 시작만 하고 끝나지 않은 시험이 둘이었다. 하나가 `tests/test_halt_watch_1174.py::test_a_completed_turn_whose_handler_is_still_awaiting_is_not_halted`였다. 그 시험은 가짜 Gemini CLI 스크립트를 실제 프로세스로 띄워 결과 뒤 4초를 살려 둔다. 이 경로가 정리되지 않을 때 `asyncio.wait_for`로 끊지 못하고 멈출 수 있다. Gemini 경우와 Claude "결과 뒤 halt" 경우를 `FakeProc`(OS 프로세스 없음, 스트림 두 개, 끝나는 시각을 시험이 정함)로 바꾸고 시험 안에 5초 상한(`LIMIT_S`)을 뒀다.
+- 확인: 제품 코드를 바꾸지 않았고 두 시험 모두 `halt_watch`의 `st.result_seen` 확인을 빼면 실패한다(이전 변이 확인과 같음). 로컬에서 6회 반복해 모두 통과.
+- 남은 것: `test_a_halt_that_finds_the_cli_still_running_still_stops_it`는 실제 프로세스를 죽이는 것이 시험 대상이라 그대로 둔다(상한 30초, 별도 관찰 대상). 같은 job의 다른 미종료 시험 `test_paper_skill_recovery_identity...[cancel]`은 이 claim 밖이다.
+- 미검증: 이 변경이 3.10·Windows 정지를 실제로 없애는지(CI 재실행으로 확인). 정지의 원인이 이 시험이었다는 증거는 "시작만 하고 끝나지 않은 시험 둘 중 하나"까지다.
+
 # #1193 정리본 진행 기록의 리뷰 인용문 링크가 저장을 막지 않게
 
 - 결론: `draft_documents`가 `PROGRESS.md`의 세 JSON 블록(확인 질문·수정 회차·검토)을 ```` ```json ```` 코드 블록으로 싣는다. 리뷰어가 보고서의 그림 링크를 `evidence_quote`로 인용해도 `run/progress.md`의 링크가 되지 않는다.

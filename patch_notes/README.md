@@ -16,7 +16,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 |---|---|---|
 | 23:50 | [`6b36821`](https://github.com/ehojune/bioinfo-team-3d/pull/1175/commits/6b36821) | **결과 이벤트를 처리하는 중에 멈춤 요청이 겹친 Codex·Gemini 실행도 완료로 남고 halted로 바뀌지 않습니다.**<br>halt: 완료 flag(result_seen)가 선 실행도 halted로 덮지 않는다 (#1174 리뷰 P1) |
 | 23:10 | [`ca61824`](https://github.com/ehojune/bioinfo-team-3d/pull/1175/commits/ca61824) | **멈춤을 요청한 순간 직원 CLI가 스스로 끝났다면, 이미 받은 결과를 실패(halted)로 바꾸지 않고 그대로 완료로 처리합니다.**<br>halt: 멈춤 안내를 쓰는 사이 끝난 실행은 halted가 아니라 결과로 둔다 (#1174) |
+| 23:00 | [`d73edc2`](https://github.com/ehojune/bioinfo-team-3d/pull/1196/commits/d73edc2) | **멈춤 시험의 5초 상한이 멈춘 실행의 정리를 다시 기다리지 않고 바로 실패하도록 고쳤습니다.**<br>시험: 5초 상한을 cleanup을 다시 기다리지 않는 hard timeout으로 만든다 (#1076 리뷰 P1) |
 | 22:40 | [`1aba36a`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/1aba36a) | **셸 확인이 줄 끝 백슬래시로 이어 쓴 명령과 1&gt;&amp;3- 같은 출력 이동도 bash처럼 읽습니다.**<br>셸 확인: 줄 끝 백슬래시 이어쓰기와 1>&3- 이동을 bash처럼 읽는다 (#678 리뷰) |
+| 22:30 | [`88cc02b`](https://github.com/ehojune/bioinfo-team-3d/pull/1196/commits/88cc02b) | **멈춤과 완료가 겹치는 경우의 시험이 실제 프로세스를 4초씩 살려 두지 않고 가짜 프로세스로 돌며, 5초 안에 끝나지 않으면 실패합니다.**<br>시험: halt 뒤늦은 도착 시험을 실제 프로세스 없이 fake proc으로 바꾸고 5초 상한을 둔다 (#1076) |
 | 22:10 | [`feec236`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/feec236) | **manual에 셸 확인이 리다이렉션 대상·cd 위치·주석·묶음 옵션을 어떻게 읽는지 적었습니다.**<br>문서: 셸 확인의 명령 읽기 규칙 (#678) |
 | 21:40 | [`d2c95fd`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/d2c95fd) | **셸 확인이 2&gt;&amp;1 같은 출력 복제를 파일 이름으로 읽지 않습니다.**<br>셸 확인: 2>&1 같은 descriptor 복제는 파일로 보지 않는다 (#678 리뷰 P2) |
 | 21:10 | [`2103272`](https://github.com/ehojune/bioinfo-team-3d/pull/1191/commits/2103272) | **멈춤·재개 명령이 보낸 순서대로 runner에 닿는다는 가정을 시험으로 고정해, 이 순서를 깨는 변경이 들어오면 시험이 실패합니다.**<br>시험: pause/resume 프레임의 송신 순서가 보존된다는 전제를 고정한다 (#1190) |
