@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: '30962b3'
+  at: 2026-10-31 20:20
+  text: PowerShell 도구의 Invoke-WebRequest·Invoke-RestMethod(iwr·irm·curl·wget 별칭)의 -OutFile, Expand-Archive, Start-BitsTransfer도 Bash와 같은 디스크 확인(disk_space.powershell_check)을 받는다. 대상 드라이브 여유가 기준 아래거나 zip 목록의 실제 크기를 풀면 기준 아래로 내려가면 승인 카드로 묻고, 크기를 모르면 막지 않고 경고만 남긴다. PowerShell을 PowerShell로 읽는 tokenizer를 따로 두어 역슬래시는 경로 구분자, 작은따옴표는 문자 그대로, 큰따옴표는 백틱 이스케이프로 본다. 판정 공통부는 _assess로 모아 Bash 쪽 동작은 그대로다. 사전 승인 규칙 PowerShell(Invoke-WebRequest *) 등도 gate로 돌린다
+  summary: PowerShell로 내려받거나 푸는 명령이 디스크 확인을 건너뛰던 틈을 닫습니다. allow에서 ask로만 엄격해지고 크기를 모르면 막지 않습니다.
