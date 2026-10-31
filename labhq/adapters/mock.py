@@ -2,7 +2,8 @@
 planning (DAG), reviewer revise loop, approvals, HPC hibernate/wake, and contract recruitment.
 
 Tokens in the request text steer it: [needs-approval], [hpc], [revise], [recruit], [question], [block],
-[revision-fail], [max-turns], [artifact].
+[revision-fail], [max-turns], [artifact]. In a research plan, [multistep] gives two dependent steps and
+[branched] two branches plus a synthesis step (#1207); without either the plan has one step.
 """
 
 from __future__ import annotations
