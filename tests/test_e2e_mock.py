@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 import shutil
 import time
@@ -314,8 +315,10 @@ def _init_settings(tmp_path: Path) -> Settings:
     return s
 
 
-async def _run_default_init_request(tmp_path, text):
-    """Run one request through the gateway and a mock runner under the init config; return (request, event order)."""
+async def _run_default_init_request(tmp_path, text, *, status="done"):
+    """Run one request through the gateway and a mock runner under the init config; return (request, event order, seen, hub).
+
+    The request must end in `status`; a failed request is asserted by the caller."""
     s = _init_settings(tmp_path)
     assert s.research.enabled and s.research.evidence_checkpoint  # what init turns on
     app = create_app(s)
@@ -351,10 +354,10 @@ async def _run_default_init_request(tmp_path, text):
         await _wait_for_request_terminal(hub, rid, seen)
         request = hub.requests[rid]
         state = _request_state(hub, rid, seen)
-        assert request["status"] == "done", (request.get("error"), state)
+        assert request["status"] == status, (request.get("error"), state)
         order = [(e.get("data") or {}).get("kind") for e in seen if e.get("request_id") == rid
                  and e["type"] in ("task.dispatched", "approval.requested")]
-        return request, order
+        return request, order, seen, hub
     finally:
         server.should_exit = True
         for task in tasks:
@@ -369,7 +372,7 @@ def _every_claim_is_cited(request):
 
 
 async def test_default_init_config_runs_a_research_request_to_the_end_with_mock_agents(tmp_path):
-    request, order = await _run_default_init_request(tmp_path, "공개 데이터 예시 3개에서 행 수를 세고 보고해 줘")
+    request, order, _seen, _hub = await _run_default_init_request(tmp_path, "공개 데이터 예시 3개에서 행 수를 세고 보고해 줘")
     # Planned once; the storage card comes with the plan, before the CP1 card; steps run only after CP1.
     assert order == ["briefing", "precedent", "plan", "result_storage", "research_plan", "step", "research_evidence",
                      "review", "synthesis"], order
@@ -378,7 +381,7 @@ async def test_default_init_config_runs_a_research_request_to_the_end_with_mock_
 
 
 async def test_default_init_config_runs_a_multistep_research_plan_with_a_dependency(tmp_path):
-    request, order = await _run_default_init_request(tmp_path, "행 수를 두 단계로 세고 보고해 줘 [multistep]")
+    request, order, _seen, _hub = await _run_default_init_request(tmp_path, "행 수를 두 단계로 세고 보고해 줘 [multistep]")
     steps = request["plan"]["steps"]
     assert [(step["id"], step["depends_on"]) for step in steps] == [("s1", []), ("s2", ["s1"])]
     assert order.count("step") == 2 and order.index("research_plan") < order.index("step"), order
@@ -387,13 +390,44 @@ async def test_default_init_config_runs_a_multistep_research_plan_with_a_depende
 
 
 async def test_default_init_config_runs_a_branched_research_plan_to_the_end(tmp_path):
-    request, order = await _run_default_init_request(tmp_path, "두 갈래로 행 수를 세고 보고해 줘 [branched]")
+    request, order, _seen, _hub = await _run_default_init_request(tmp_path, "두 갈래로 행 수를 세고 보고해 줘 [branched]")
     plan = request["plan"]
     assert [branch["id"] for branch in plan["branches"]] == ["b1", "b2"]
     assert {step["id"]: step["branch"] for step in plan["steps"]} == {"s1": "b1", "s2": "b2", "s3": "synthesis"}
     assert order.count("step") == 3 and set(request["results"]) == {"s1", "s2", "s3"}, order
     assert order[-2:] == ["review", "synthesis"], order
     _every_claim_is_cited(request)
+
+
+def _cp2_warnings(seen):
+    return [e["data"].get("summary", "") for e in seen
+            if e.get("type") == "approval.requested" and e["data"].get("kind") == "research_evidence"]
+
+
+async def test_a_failing_branch_is_reported_and_the_other_branch_and_synthesis_are_kept(tmp_path):
+    request, order, seen, hub = await _run_default_init_request(tmp_path, "두 갈래로 행 수를 세고 보고해 줘 [branch-fail]")
+    ok = {sid: result.get("ok") for sid, result in request["results"].items()}
+    assert ok == {"s1": True, "s2": False, "s3": True}, ok  # b2 fails; b1 and the synthesis step still ran
+    assert request["results"]["s2"]["error"] == "mock step failure"
+    report = request["report"]
+    assert "[[claim:s1/c1]]" in report and "[[claim:s3/c3]]" in report, report
+    assert "[[claim:s2/c2]]" not in report, report  # nothing is concluded from the failed branch
+    assert "s2: 단계 실패 또는 의존 단계 건너뜀 — mock step failure" in report, report  # the failure is not silent
+    assert any("경고" in summary and "실패 단계" in summary for summary in _cp2_warnings(seen)), _cp2_warnings(seen)
+    synthesis_step = next(v for v in hub.store.all("task").values()
+                          if (v.get("payload") or {}).get("meta", {}).get("step_id") == "s3")
+    memo = json.dumps(synthesis_step["payload"].get("context"), ensure_ascii=False)
+    assert "실패한 갈래: b2" in memo and "mock step failure" in memo, memo  # the synthesis step is told which branch failed
+
+
+async def test_a_failing_step_is_reported_and_the_steps_before_it_are_kept(tmp_path):
+    request, order, seen, _hub = await _run_default_init_request(tmp_path, "행 수를 두 단계로 세고 보고해 줘 [step-fail]")
+    ok = {sid: result.get("ok") for sid, result in request["results"].items()}
+    assert ok == {"s1": True, "s2": False}, ok
+    report = request["report"]
+    assert "[[claim:s1/c1]]" in report and "[[claim:s2/c2]]" not in report, report
+    assert "s2: 단계 실패 또는 의존 단계 건너뜀 — mock step failure" in report, report
+    assert any("경고" in summary and "실패 단계" in summary for summary in _cp2_warnings(seen)), _cp2_warnings(seen)
 
 
 async def test_a_mock_step_whose_read_only_baseline_is_refused_fails_before_it_runs(tmp_path):
