@@ -1,5 +1,9 @@
-pr: null
+pr: 1188
 rows:
+  - sha: 4e80e0e
+    at: "2026-11-01 00:10"
+    summary: "모델 비교의 두 실행 비용을 먼저 예약하는 모의 시험을 추가합니다."
+    text: "bench: 정수 합산 admission과 timeout·취소·늦은 receipt 검증, live 차단 유지 (#625)"
   - sha: 102b473
     at: "2026-10-31 18:45"
     summary: "고정 계획의 모델 등급 비교를 mock으로 검증합니다."
