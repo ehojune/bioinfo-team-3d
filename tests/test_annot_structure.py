@@ -361,3 +361,24 @@ async def test_each_pdb_request_is_counted_and_the_one_past_the_limit_is_not_sen
     hosts = [(r["host"], r["tool"]) for r in limited.ledger.sends("req-1")]
     assert hosts[0] == ("search.rcsb.org", "pdb") and {h for h, _ in hosts[1:]} == {"data.rcsb.org"}
 
+
+def test_the_roster_tells_the_cso_about_the_structure_and_compound_tools():
+    """The CSO plans from the roster line: an agent with every annot tool must be listed with PDB and ChEMBL, and a
+    restricted one (the chief of staff) must not."""
+    from labhq.models import AgentSpec
+    from labhq.orchestrator.cso import format_roster
+    everything = format_roster([AgentSpec(id="b", name="B", role="r", builtin_mcp=["approval", "annot"]).summary()])
+    assert "RCSB PDB structure" in everything and "ChEMBL compound" in everything
+    restricted = format_roster([AgentSpec(id="c", name="C", role="r", builtin_mcp=["annot"],
+                                          annot_tools=["fulltext"]).summary()])
+    assert "PDB" not in restricted and "ChEMBL" not in restricted
+
+
+def test_the_manual_describes_both_tools_in_korean_and_english():
+    for name, needles in (("manual.md", ("`pdb(ids_or_queries, top)`", "`chembl(targets_or_compounds, kind, limit)`", "CC0 1.0",
+                                         "CC BY-SA 3.0", "truncated")),
+                          ("manual.en.md", ("`pdb(ids_or_queries, top)`", "`chembl(targets_or_compounds, kind, limit)`",
+                                            "CC0 1.0", "CC BY-SA 3.0", "truncated"))):
+        text = (REPO / "docs" / name).read_text(encoding="utf-8")
+        assert all(needle in text for needle in needles), (name, [n for n in needles if n not in text])
+
