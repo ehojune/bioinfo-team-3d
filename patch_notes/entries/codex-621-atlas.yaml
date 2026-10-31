@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "04c3477"
+    at: "2026-10-31 21:22"
+    summary: "격리 설치한 labhq CLI와 Atlas MCP의 가짜 응답 왕복을 확인하고 실제 서비스·Codex shell 미검증 경계를 기록합니다."
+    text: "docs: record installed Atlas CLI and MCP mock verification"
   - sha: "959f378"
     at: "2026-10-31 21:11"
     summary: "다른 엔진에 설정된 Atlas 키의 별칭도 직원 환경에서 제거하고 실행 설정 복원을 막습니다."
