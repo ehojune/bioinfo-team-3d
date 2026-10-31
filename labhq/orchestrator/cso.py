@@ -2232,52 +2232,20 @@ def _rewrite_output_references(instruction: str, inner: str, rel: str) -> tuple[
 # Korean particle (`...jsonl에`): only ASCII name characters continue it.
 _RESERVED_WRITE = re.compile(
     r"(?<![A-Za-z0-9_-])(?:" + "|".join(re.escape(name) for name in sorted(output_checks.RESERVED_OUTPUTS)) + r")(?![A-Za-z0-9_-])(?!\.[A-Za-z0-9_])")
-# What tells the staff to put something into a file: a verb, a shell redirection, "a new file". Plain mentions (read,
-# report, summarize, name it in the report) carry none of these.
-_WRITE_SIGNAL = re.compile(
-    r"\b(?:write|writes|written|writing|save|saves|saving|append|appends|appending|create|creates|creating|"
-    r"store|stores|storing|emit|emits|dump|dumps|put|add|tee)\b|\bnew file\b|>>?|새 파일|쓴다|쓰고|쓰며|쓰세요|저장|추가|만들|작성|생성",
-    re.IGNORECASE)
-# Another file the same verb may be about.
-_OTHER_PATH = re.compile(r"(?:[\w.-]*/)+[\w.-]+|[\w-]+\.[A-Za-z0-9]{1,6}\b")
-_CLAUSE_END = re.compile(r"(?<=[.!?。;])\s+|\n")
-
-
-def _tells_staff_to_write(text: str, match: re.Match) -> bool:
-    """Whether the sentence around `match` makes the staff write that file, not merely read or report it (#676).
-
-    A write signal counts when no other file name stands between it and the reserved name: "Write the report to
-    outputs/answer.md and mention outputs/external_lookup_status.jsonl" writes the report, not the record."""
-    start = max([0, *(m.end() for m in _CLAUSE_END.finditer(text, 0, match.start()))])
-    ends = [m.start() for m in _CLAUSE_END.finditer(text, match.end())]
-    clause = text[start:ends[0] if ends else len(text)]
-    here, there = match.start() - start, match.end() - start
-    for signal in _WRITE_SIGNAL.finditer(clause):
-        if signal.end() <= here:  # a verb before the name: it is about the name unless another file comes between
-            about_it = not _OTHER_PATH.search(clause[signal.end():here])
-        elif signal.start() >= there:  # a verb after it: not if another file comes between, or follows as its object
-            about_it = not _OTHER_PATH.search(clause[there:signal.start()]) and not _OTHER_PATH.search(clause[signal.end():])
-        else:
-            about_it = False
-        if about_it:
-            return True
-    return False
 
 
 def _reserved_names(step: dict) -> list[str]:
-    """Names labhq writes itself that this step declares as its own output or tells its staff to write (#676).
+    """Names labhq writes itself that this step declares as an output or names in its instruction (#676).
 
-    A declared output is the step's own file. In the instruction only a sentence that tells the staff to write the name
-    counts: reading or reporting it (the staff are asked to name it in their report) is allowed, as is a name reached
-    through an upstream step's folder (`inputs/<step>/outputs/<name>`), which is that step's record."""
+    The instruction may not name one at all: whether a sentence tells the staff to write it, read it or report it is
+    a reading of wording that has variants without end, so a plan that names it is sent back and the planner words the
+    step without it. The one name that stays is an upstream step's record reached through that step's folder
+    (`inputs/<step>/outputs/<name>`), which the step reads and cannot write."""
     found = [rel for field in ("outputs", "optional_outputs") for name in step.get(field) or []
              if (rel := output_relpath(str(name))) in output_checks.RESERVED_OUTPUTS]
     text = step.get("instruction") or ""
-    for match in _RESERVED_WRITE.finditer(text):
-        if re.search(r"inputs/[^/\s]+/$", text[:match.start()]):
-            continue
-        if _tells_staff_to_write(text, match):
-            found.append(match.group(0))
+    found += [match.group(0) for match in _RESERVED_WRITE.finditer(text)
+              if not re.search(r"inputs/[^/\s]+/$", text[:match.start()])]
     return list(dict.fromkeys(found))
 
 

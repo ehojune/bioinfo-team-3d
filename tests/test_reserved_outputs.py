@@ -53,16 +53,18 @@ def test_a_longer_file_name_that_starts_with_a_reserved_name_is_not_the_record(i
 
 
 @pytest.mark.parametrize("instruction", [
-    "Name each missing lookup and outputs/external_lookup_status.jsonl (when present) in the final report; never invent results.",
+    "Name each missing lookup and outputs/external_lookup_status.jsonl (when present) in the final report.",
     "Summarize outputs/external_lookup_status.jsonl into outputs/answer.md.",
     "Write the final report to outputs/answer.md and mention outputs/external_lookup_status.jsonl in it.",
     "Report outputs/external_lookup_status.jsonl.",
     "outputs/external_lookup_status.jsonl 을 읽고 outputs/answer.md에 요약한다.",
     "Read outputs/literature_access.jsonl, then write outputs/answer.md.",
 ])
-def test_reading_or_reporting_the_steps_own_record_stays_allowed(instruction):
-    assert cso._reserved_names(plan(instruction=instruction)["steps"][0]) == []
-    cso._normalize_plan_outputs(plan(instruction=instruction))
+def test_a_reserved_name_in_the_instruction_is_sent_back_whether_it_is_read_reported_or_written(instruction):
+    """Telling a read from a write is a reading of wording with variants without end (#1161 review, twice), so the name
+    may not appear at all: the planner words the step without it and the plan is not rejected for a verb it parsed."""
+    with pytest.raises(PlanOutputsError, match="labhq writes itself"):
+        cso._normalize_plan_outputs(plan(instruction=instruction))
 
 
 @pytest.mark.parametrize("instruction", [
@@ -72,17 +74,12 @@ def test_reading_or_reporting_the_steps_own_record_stays_allowed(instruction):
     "Save one JSON line per lookup in a new file outputs/external_lookup_status.jsonl and report it.",
     "이번 단계의 조회 상태는 새 파일 outputs/external_lookup_status.jsonl에 한 줄에 한 항목씩 쓴다.",   # the 6th run
     "Read the input first. Then append each result to ./outputs/literature_access.jsonl.",
+    "Write records from inputs/table.tsv to outputs/external_lookup_status.jsonl",    # a source stands between verb and name
+    "Copy inputs/a.tsv into outputs/annotation_queries.jsonl as the staff's ledger.",
 ])
-def test_telling_the_staff_to_write_a_reserved_name_is_still_rejected(instruction):
+def test_telling_the_staff_to_write_a_reserved_name_is_rejected_however_it_is_worded(instruction):
     with pytest.raises(PlanOutputsError, match="labhq writes itself"):
         cso._normalize_plan_outputs(plan(instruction=instruction))
-
-
-def test_a_write_verb_about_another_file_does_not_make_a_mention_a_write():
-    step = plan(instruction="Write outputs/answer.md from the table, and cite outputs/external_lookup_status.jsonl.")["steps"][0]
-    assert cso._reserved_names(step) == []
-    step = plan(instruction="Cite outputs/external_lookup_status.jsonl and write outputs/external_lookup_status.jsonl.")["steps"][0]
-    assert cso._reserved_names(step) == ["outputs/external_lookup_status.jsonl"]
 
 
 def test_reading_an_upstream_steps_record_and_ordinary_outputs_stay_allowed():
