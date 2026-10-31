@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: '97d227c'
+  at: 2026-10-31 12:30
+  text: POSIX 호스트에서 정책이 os.path.realpath를 부르기 전에 연속 슬래시를 하나로 합치는 helper(_collapse_separators, _realpath)를 policy.py의 다섯 호출처가 함께 쓴다. CPython의 posixpath.realpath가 구분자 run에서 제곱(3.10·3.12 모두)이라 52만 자에 1.75초였다. 앞머리 슬래시 둘은 보존하고 셋 이상은 하나로 읽으며, Windows 경로는 그대로 둔다
+  summary: 긴 구분자 run이 든 명령 하나로 정책 검사가 수 초 걸리던 제곱 비용을 없애고 Linux에서 반복되던 선형성 시험 실패의 원인을 고칩니다.
