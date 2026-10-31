@@ -1214,7 +1214,8 @@ def _finished_request_lines(req: dict) -> list[str]:
     """What `labhq status` prints for a finished request: its bundle and, for one that finished `done` with failed,
     skipped or never-run steps, which steps (#1220). Empty when there is nothing to say."""
     failed = failed_step_ids(req)
-    if req.get("status") not in {"done", "failed"} or not (req.get("bundle_path") or req.get("bundle_warning") or failed):
+    if req.get("status") not in {"done", "failed", "review_pending"} or not (
+            req.get("bundle_path") or req.get("bundle_warning") or failed):
         return []
     lines = [f"  {req['id']} {request_display_label(req)}"]
     if failed:

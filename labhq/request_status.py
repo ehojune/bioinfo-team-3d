@@ -16,26 +16,24 @@ def request_status_label(status: object) -> str:
 
 
 def failed_step_ids(request: dict) -> list[str]:
-    """The steps of a request that finished `done` without completing: failed, skipped, or never run (#1220).
+    """The steps of a request that finished `done` but left a failed or skipped result (#1220).
 
-    Derived from what the request already holds and never stored: a summary that lists them (`failed_steps`) is used as it
-    is, else the plan's steps and the results are read. Any other status has none, since `failed` and `cancelled` already
-    say that something did not complete. A plan-only request is read from its own mode, not from its missing results: a
-    run in which no step left a result must still be marked."""
+    Derived from the results the request already holds and never stored: a summary that lists them (`failed_steps`) is
+    used as it is. Only a step that recorded a result can be counted. The plan minus the results is not read as "never
+    ran": plan-only, a solo route that keeps the team plan and a plan approved without the evidence checkpoint all end
+    `done` with plan steps that were never meant to run. Any other status has none, since `failed` and `cancelled` already
+    say that something did not complete."""
     if request.get("status") not in {"done", "review_pending"}:
         return []
-    if request.get("mode") == "plan_only" or request.get("outcome") == "plan_only":
-        return []  # it ends `done` on purpose with the plan and no results: nothing was meant to run
     listed = request.get("failed_steps")
     if isinstance(listed, list):
         return [str(step) for step in listed]
     results = request.get("results") if isinstance(request.get("results"), dict) else {}
     planned = [str(step["id"]) for step in (request.get("plan") or {}).get("steps") or []
                if isinstance(step, dict) and step.get("id")]
-    never_ran = [step for step in planned if step not in results]
-    others = [str(step) for step in results if str(step) not in planned]
-    return [step for step in [*planned, *others]
-            if step in never_ran or not isinstance(results.get(step), dict) or results[step].get("ok") is not True
+    ordered = [step for step in planned if step in results] + [str(step) for step in results if str(step) not in planned]
+    return [step for step in ordered
+            if not isinstance(results.get(step), dict) or results[step].get("ok") is not True
             or results[step].get("status") == "skipped"]
 
 

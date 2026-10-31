@@ -31,8 +31,9 @@ def request(status="done", **extra):
 
 # ----- the helper and the label -----
 
-def test_failed_step_ids_are_the_failed_skipped_and_never_run_steps_of_a_done_request():
-    assert failed_step_ids(request()) == ["s2", "s3", "s4"]  # s4 has no result at all: it never ran
+def test_failed_step_ids_are_the_failed_and_skipped_steps_that_left_a_result():
+    # s4 has no result: a step without one is not counted (it may never have been meant to run)
+    assert failed_step_ids(request()) == ["s2", "s3"]
 
 
 def test_a_request_that_is_not_done_has_no_partial_failure_marker():
@@ -47,22 +48,26 @@ def test_a_clean_done_request_and_a_direct_one_have_no_marker_unless_they_failed
     assert failed_step_ids({"status": "done", "mode": "direct", "results": {"direct": {"ok": False}}}) == ["direct"]
 
 
-def test_a_plan_only_request_keeps_its_plan_and_has_no_results_and_is_not_partially_failed():
-    """#1222 review P1: a plan-only request ends `done` on purpose with the plan and no results."""
-    plan = {"steps": [{"id": "s1"}, {"id": "s2"}]}
-    by_mode = {"status": "done", "mode": "plan_only", "plan": plan, "results": {}}
-    by_outcome = {"status": "done", "mode": "team", "outcome": "plan_only", "plan": plan, "results": {}}
-    for planned in (by_mode, by_outcome):
-        assert failed_step_ids(planned) == []
-        assert request_display_label(planned) == "완료"
+@pytest.mark.parametrize("name,done", [
+    ("plan_only", {"mode": "plan_only", "results": {}}),                                   # plans on purpose, runs nothing
+    ("plan_only by outcome", {"mode": "team", "outcome": "plan_only", "results": {}}),
+    ("plan approved, checkpoint off", {"mode": "team", "outcome": "plan_approved", "results": {}}),
+    ("solo route after a team plan", {"mode": "team", "results": {"direct": {"ok": True}}}),
+])
+def test_a_request_that_left_plan_steps_unused_on_purpose_is_not_partially_failed(name, done):
+    """#1222 review: plan_only, a solo route that keeps the team plan, and a plan approved without the evidence checkpoint
+    all end `done` with plan steps that never ran. No step failed, so nothing is marked: the marker counts only steps that
+    left a failed or skipped result, never the plan minus the results."""
+    planned = {"status": "done", "plan": {"steps": [{"id": "s1"}, {"id": "s2"}]}, **done}
+    assert failed_step_ids(planned) == [], name
+    assert request_display_label(planned) == "완료", name
 
 
-def test_a_done_request_whose_steps_all_left_no_result_is_still_marked():
-    """The plan-only rule is read from the request's own mode, not from the missing results: a run in which no step left a
-    result is exactly what the marker must not hide."""
-    ran_nothing = {"status": "done", "mode": "team", "plan": {"steps": [{"id": "s1"}, {"id": "s2"}]}, "results": {}}
-    assert failed_step_ids(ran_nothing) == ["s1", "s2"]
-    assert request_display_label(ran_nothing) == "완료 · 일부 실패 2"
+def test_a_failure_that_left_a_result_is_marked_whatever_else_the_request_did():
+    team = {"status": "done", "mode": "team", "plan": {"steps": [{"id": "s1"}, {"id": "s2"}]},
+            "results": {"s1": {"ok": True}, "s2": {"ok": False, "error": "x"}}}
+    assert failed_step_ids(team) == ["s2"]
+    assert request_display_label(team) == "완료 · 일부 실패 1"
 
 
 def test_a_summary_that_already_lists_the_failed_steps_is_used_as_it_is():
@@ -71,12 +76,12 @@ def test_a_summary_that_already_lists_the_failed_steps_is_used_as_it_is():
 
 
 def test_the_label_says_partial_failure_only_for_a_done_request_with_failed_steps():
-    assert request_display_label(request()) == "완료 · 일부 실패 3"
+    assert request_display_label(request()) == "완료 · 일부 실패 2"
     assert request_display_label({**request(), "results": {"s1": {"ok": True}}, "plan": {"steps": [{"id": "s1"}]}}) == "완료"
     assert request_display_label(request("failed")) == "실패"  # a failed request keeps its own word
     # a review wait keeps its own word first and still says what did not finish (the PI reads that label)
-    assert request_display_label(request(pi_review_pending=True)) == "보고서 검토 대기 · 일부 실패 3"
-    assert request_display_label(request("review_pending", pi_review_pending=True)) == "보고서 검토 대기 · 일부 실패 3"
+    assert request_display_label(request(pi_review_pending=True)) == "보고서 검토 대기 · 일부 실패 2"
+    assert request_display_label(request("review_pending", pi_review_pending=True)) == "보고서 검토 대기 · 일부 실패 2"
     clean_review = {"status": "done", "pi_review_pending": True, "plan": {"steps": [{"id": "s1"}]},
                     "results": {"s1": {"ok": True}}}
     assert request_display_label(clean_review) == "보고서 검토 대기"
@@ -96,7 +101,7 @@ def test_request_summary_lists_the_failed_steps_without_changing_the_step_progre
     try:
         req = request()
         summary = hub.request_summary(req, running=[])
-        assert summary["failed_steps"] == ["s2", "s3", "s4"]
+        assert summary["failed_steps"] == ["s2", "s3"]
         assert summary["status"] == "done"
         assert summary["step_progress"]["steps"] == {"s1": "done", "s2": "failed", "s3": "skipped", "s4": "pending"}
         assert hub.request_summary(request("running"), running=[])["failed_steps"] == []
@@ -119,6 +124,8 @@ def test_watch_says_which_steps_failed_when_a_request_completes(capsys):
 def test_status_lists_a_partially_failed_finished_request_even_without_a_bundle():
     lines = cli._finished_request_lines({"id": "r", "status": "done", "failed_steps": ["s2", "s3"]})
     assert lines[0] == "  r 완료 · 일부 실패 2"
+    review = cli._finished_request_lines({"id": "r4", "status": "review_pending", "failed_steps": ["s2"]})
+    assert "일부 실패한 단계: s2" in "\n".join(review)  # a CP4 review wait names the steps too
     assert "일부 실패한 단계: s2, s3" in "\n".join(lines)
     plain = cli._finished_request_lines({"id": "r2", "status": "done", "bundle_path": "x"})
     assert plain[0] == "  r2 완료" and "일부 실패" not in "\n".join(plain)
@@ -165,7 +172,7 @@ async def test_a_lost_branch_is_named_in_the_limits_and_in_the_completed_event()
     assert any(w.startswith("B1 (갈래 B): 단계 실패") for w in card["warnings"]), card["warnings"]
     assert any(w.startswith("B2 (갈래 B): 단계 실패") for w in card["warnings"]), card["warnings"]
     done = next(e for e in hub.events if e["type"] == "request.completed")
-    assert done["data"]["failed_steps"] == ["B1", "B2"], done["data"]
+    assert done["data"]["failed_steps"] == ["B1", "B2"], done["data"]  # B2 left a "skipped: upstream B1" result
     assert "failed_steps" not in hub.requests["r"]  # derived at the moment of the event, never stored
 
 
@@ -210,7 +217,7 @@ def node_state(expression):
         "const fs=require('fs'),vm=require('vm');const ctx=vm.createContext({});"
         f"vm.runInContext(fs.readFileSync({json.dumps(str(ROOT / 'labhq/web/state.js'))},'utf8'),ctx);"
         f"console.log(JSON.stringify((function(S){{return {expression};}})(ctx.LabHQState)));")
-    done = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=60)
+    done = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout)
 
@@ -240,7 +247,7 @@ def test_the_pdf_header_and_its_cache_key_carry_the_partial_failure_label():
     partial = {**request(), "report": "# Title\n\nbody", "created_at": 1.0}
     clean = {**partial, "results": {"s1": {"ok": True}}, "plan": {"steps": [{"id": "s1"}]}}
     page, _ = build_report_html(partial, None)
-    assert "완료 · 일부 실패 3" in page
+    assert "완료 · 일부 실패 2" in page
     clean_page, _ = build_report_html(clean, None)
     assert "일부 실패" not in clean_page
     assert _cache_key(partial, None) != _cache_key({**partial, "results": clean["results"], "plan": clean["plan"]}, None)
