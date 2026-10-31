@@ -1,0 +1,1179 @@
+{
+  "version": 3,
+  "trusted": {
+    "run_id": "fixture-run-a",
+    "launch_nonce": "fixture-nonce-a",
+    "child_id": "fixture-child",
+    "witness_id": "fixture-external-witness",
+    "supervisor": {
+      "subject_id": "fixture-supervisor",
+      "executable_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "objects": {
+      "parent:root": {
+        "object_id": "fixture-volume:10",
+        "kind": "directory",
+        "symlink": false,
+        "nlink": 2,
+        "parent_ref": null,
+        "parent_identity": null
+      },
+      "parent:source": {
+        "object_id": "fixture-volume:11",
+        "kind": "directory",
+        "symlink": false,
+        "nlink": 2,
+        "parent_ref": "parent:root",
+        "parent_identity": {
+          "object_id": "fixture-volume:10",
+          "kind": "directory",
+          "symlink": false,
+          "nlink": 2
+        }
+      },
+      "source:tool.py": {
+        "object_id": "fixture-volume:12",
+        "kind": "file",
+        "symlink": false,
+        "nlink": 1,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "parent_ref": "parent:source",
+        "parent_identity": {
+          "object_id": "fixture-volume:11",
+          "kind": "directory",
+          "symlink": false,
+          "nlink": 2
+        }
+      }
+    },
+    "writer_id": "fixture-writer",
+    "broker_id": "fixture-broker",
+    "request_id": "fixture-request",
+    "deadline_ns": 35,
+    "token_id": "fixture-scoped-token",
+    "store_id": "fixture-external-ledger",
+    "ledger": {
+      "store_id": "fixture-external-ledger",
+      "observer_id": "fixture-external-witness",
+      "run_id": "fixture-run-a",
+      "launch_nonce": "fixture-nonce-a",
+      "hashes": [
+        "72ffb7c9c9cbc44197b2b09020ed124865c171b67843369e4d36e82d67f8c7cb",
+        "000a23787c5a07dbbc52ae7d80b87ce8bcc8553a2d60e23308d4dad89b01efa4",
+        "5cbce1a245dcf2b27bc3b034c6a746087dcf72fbc17d056b952f28799651b5b6",
+        "bcf550eceab2e077466f5388f5c1bc2ba2d0a287a1f54865e1b9a6ebfb876147",
+        "829696af566366d50f5757a3db78066aa67bb9b0c40295077fcad3316488d44b",
+        "f335891a26f02fd590f2fbce5f203d811230f1b50f267bb43df319c470223312",
+        "24beb44c595342728cad16287645c37d0c4e3d18aa040602dd23b4fb113c8387"
+      ]
+    },
+    "clock_id": "fixture-shared-wall-epoch"
+  },
+  "positive": {
+    "adapter": "synthetic-v3",
+    "authority": "independent_witness",
+    "child_receipt": {
+      "status": "PASS",
+      "run_id": "fixture-run-a"
+    },
+    "witness": {
+      "observer_id": "fixture-external-witness",
+      "origin": "independent",
+      "run_id": "fixture-run-a",
+      "launch_nonce": "fixture-nonce-a",
+      "supervisor": {
+        "subject_id": "fixture-supervisor",
+        "executable_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "events": [
+        {
+          "sequence": 0,
+          "time_ns": 0,
+          "type": "monitor_start",
+          "scope": [
+            "parent:root",
+            "parent:source",
+            "source:tool.py"
+          ],
+          "mechanism": "synthetic-continuous-events",
+          "loss_count": 0,
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "clock_id": "fixture-shared-wall-epoch"
+        },
+        {
+          "sequence": 1,
+          "time_ns": 10,
+          "type": "seal",
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "seal": {
+            "writer_id": "fixture-writer",
+            "enforcement": "synthetic_readonly_mount",
+            "handle_inventory": "complete",
+            "retained_writable_handles": [],
+            "attempts": {
+              "write": "denied",
+              "rename": "denied",
+              "link": "denied",
+              "inherited_fd": "denied"
+            }
+          },
+          "clock_id": "fixture-shared-wall-epoch"
+        },
+        {
+          "sequence": 2,
+          "time_ns": 20,
+          "type": "exec_start",
+          "child_id": "fixture-child",
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "deadline": {
+            "request_id": "fixture-request",
+            "supervisor_id": "fixture-supervisor",
+            "clock": "independent_wall",
+            "clock_id": "fixture-shared-wall-epoch",
+            "expires_ns": 35
+          },
+          "broker": {
+            "id": "fixture-broker",
+            "state": "ready",
+            "credential_holders": [
+              "fixture-broker"
+            ],
+            "network_route": "broker_only",
+            "direct_auth": false,
+            "token": {
+              "id": "fixture-scoped-token",
+              "run_id": "fixture-run-a",
+              "audience": "fixture-child",
+              "scopes": [
+                "model:synthetic"
+              ],
+              "expires_ns": 35
+            }
+          },
+          "clock_id": "fixture-shared-wall-epoch"
+        },
+        {
+          "sequence": 3,
+          "time_ns": 30,
+          "type": "exec_end",
+          "reason": "normal",
+          "returncode": 0,
+          "child_id": "fixture-child",
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "allowed_work": {
+            "read_object_id": "fixture-volume:12",
+            "output_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "output_scope": "run",
+            "completed": true
+          },
+          "clock_id": "fixture-shared-wall-epoch"
+        },
+        {
+          "sequence": 4,
+          "time_ns": 40,
+          "type": "cleanup",
+          "scope": "whole_process_tree",
+          "descendants": [],
+          "sockets": [],
+          "child_id": "fixture-child",
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "mounts": [],
+          "handles": [],
+          "broker_endpoints": [],
+          "active_tokens": [],
+          "inventory_source": "independent_observer",
+          "inventory_scope": "all_owned_resources",
+          "clock_id": "fixture-shared-wall-epoch"
+        },
+        {
+          "sequence": 5,
+          "time_ns": 50,
+          "type": "final_snapshot",
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "clock_id": "fixture-shared-wall-epoch"
+        },
+        {
+          "sequence": 6,
+          "time_ns": 60,
+          "type": "monitor_stop",
+          "scope": [
+            "parent:root",
+            "parent:source",
+            "source:tool.py"
+          ],
+          "mechanism": "synthetic-continuous-events",
+          "loss_count": 0,
+          "objects": {
+            "parent:root": {
+              "object_id": "fixture-volume:10",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          },
+          "observer_id": "fixture-external-witness",
+          "sequence_source": "observer",
+          "time_source": "observer_wall",
+          "clock_id": "fixture-shared-wall-epoch"
+        }
+      ],
+      "store": {
+        "id": "fixture-external-ledger",
+        "location": "outside_run",
+        "mode": "append_only",
+        "appenders": [
+          "fixture-external-witness"
+        ],
+        "rewriters": [],
+        "deleters": []
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "positive_control",
+      "changes": [],
+      "expected": {
+        "contract": "accepted",
+        "status": "synthetic_only",
+        "reason": null
+      }
+    },
+    {
+      "id": "missing_witness",
+      "changes": [
+        {
+          "path": [
+            "witness"
+          ],
+          "remove": true
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "missing_independent_witness"
+      }
+    },
+    {
+      "id": "child_receipt_authority",
+      "changes": [
+        {
+          "path": [
+            "authority"
+          ],
+          "value": "child_receipt"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "child_receipt_is_not_authority"
+      }
+    },
+    {
+      "id": "child_as_witness",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "observer_id"
+          ],
+          "value": "fixture-child"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "witness_not_independent"
+      }
+    },
+    {
+      "id": "run_id_mismatch",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "run_id"
+          ],
+          "value": "fixture-run-b"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "run_id_mismatch"
+      }
+    },
+    {
+      "id": "nonce_replay",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "launch_nonce"
+          ],
+          "value": "fixture-old-nonce"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "launch_nonce_mismatch"
+      }
+    },
+    {
+      "id": "source_replaced_same_bytes",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            5,
+            "objects",
+            "source:tool.py",
+            "object_id"
+          ],
+          "value": "fixture-volume:99"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "object_replaced"
+      }
+    },
+    {
+      "id": "parent_replaced_same_bytes",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            5,
+            "objects",
+            "parent:source",
+            "object_id"
+          ],
+          "value": "fixture-volume:99"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "object_replaced"
+      }
+    },
+    {
+      "id": "symlink_substitution",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            5,
+            "objects",
+            "source:tool.py",
+            "symlink"
+          ],
+          "value": true
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "symlink_substitution"
+      }
+    },
+    {
+      "id": "hardlink_substitution",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            5,
+            "objects",
+            "source:tool.py",
+            "nlink"
+          ],
+          "value": 2
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "hardlink_substitution"
+      }
+    },
+    {
+      "id": "transient_mutation_restored",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3
+          ],
+          "insert": {
+            "time_ns": 25,
+            "type": "mutation",
+            "resource": "source:tool.py",
+            "operation": "write_then_restore"
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "mutation_observed"
+      }
+    },
+    {
+      "id": "untrusted_supervisor",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "supervisor",
+            "executable_sha256"
+          ],
+          "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unsupported",
+        "reason": "untrusted_supervisor"
+      }
+    },
+    {
+      "id": "leftover_descendant",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            4,
+            "descendants"
+          ],
+          "value": [
+            "fixture-grandchild"
+          ]
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "descendants_not_cleared"
+      }
+    },
+    {
+      "id": "leftover_socket",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            4,
+            "sockets"
+          ],
+          "value": [
+            "fixture-listener"
+          ]
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "sockets_not_cleared"
+      }
+    },
+    {
+      "id": "timeout",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3,
+            "reason"
+          ],
+          "value": "timeout"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "execution_incomplete"
+      }
+    },
+    {
+      "id": "supervisor_failure",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            3,
+            "reason"
+          ],
+          "value": "supervisor_failed"
+        },
+        {
+          "path": [
+            "witness",
+            "events",
+            3,
+            "returncode"
+          ],
+          "value": 7
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "execution_incomplete"
+      }
+    },
+    {
+      "id": "endpoint_hashes_only",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            0,
+            "mechanism"
+          ],
+          "value": "endpoint_hashes"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "continuous_monitor_unverified"
+      }
+    },
+    {
+      "id": "monitor_overflow",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            6,
+            "loss_count"
+          ],
+          "value": 1
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "monitor_lost_events"
+      }
+    },
+    {
+      "id": "production_adapter_missing",
+      "changes": [
+        {
+          "path": [
+            "adapter"
+          ],
+          "value": "protected_launch"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unsupported",
+        "reason": "producer_adapter_unavailable"
+      }
+    },
+    {
+      "id": "child_substitution",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "child_id"
+          ],
+          "value": "fixture-other-child"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "child_identity_mismatch"
+      }
+    },
+    {
+      "id": "wrong_parent_identity",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "source:tool.py",
+            "parent_identity"
+          ],
+          "value": {
+            "object_id": "fixture-volume:10",
+            "kind": "directory",
+            "symlink": false,
+            "nlink": 2
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "valid_identity_under_wrong_parent",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "source:tool.py",
+            "parent_ref"
+          ],
+          "value": "parent:root"
+        },
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "source:tool.py",
+            "parent_identity"
+          ],
+          "value": {
+            "object_id": "fixture-volume:10",
+            "kind": "directory",
+            "symlink": false,
+            "nlink": 2
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "missing_parent_edge",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "source:tool.py",
+            "parent_ref"
+          ],
+          "remove": true
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "self_parent_edge",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:source",
+            "parent_ref"
+          ],
+          "value": "parent:source"
+        },
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:source",
+            "parent_identity"
+          ],
+          "value": {
+            "object_id": "fixture-volume:11",
+            "kind": "directory",
+            "symlink": false,
+            "nlink": 2
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "cyclic_parent_graph",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:root",
+            "parent_ref"
+          ],
+          "value": "parent:source"
+        },
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:root",
+            "parent_identity"
+          ],
+          "value": {
+            "object_id": "fixture-volume:11",
+            "kind": "directory",
+            "symlink": false,
+            "nlink": 2
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "detached_subtree",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:source",
+            "parent_ref"
+          ],
+          "value": null
+        },
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:source",
+            "parent_identity"
+          ],
+          "value": null
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "coherent_root_substitution",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects"
+          ],
+          "value": {
+            "parent:root": {
+              "object_id": "fixture-volume:10:replacement",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": null,
+              "parent_identity": null
+            },
+            "parent:source": {
+              "object_id": "fixture-volume:11",
+              "kind": "directory",
+              "symlink": false,
+              "nlink": 2,
+              "parent_ref": "parent:root",
+              "parent_identity": {
+                "object_id": "fixture-volume:10:replacement",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            },
+            "source:tool.py": {
+              "object_id": "fixture-volume:12",
+              "kind": "file",
+              "symlink": false,
+              "nlink": 1,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "parent_ref": "parent:source",
+              "parent_identity": {
+                "object_id": "fixture-volume:11",
+                "kind": "directory",
+                "symlink": false,
+                "nlink": 2
+              }
+            }
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "object_replaced"
+      }
+    },
+    {
+      "id": "transient_relationship_restored",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "source:tool.py",
+            "parent_ref"
+          ],
+          "value": "parent:root"
+        },
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "source:tool.py",
+            "parent_identity"
+          ],
+          "value": {
+            "object_id": "fixture-volume:10",
+            "kind": "directory",
+            "symlink": false,
+            "nlink": 2
+          }
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    },
+    {
+      "id": "extra_parent_edge",
+      "changes": [
+        {
+          "path": [
+            "witness",
+            "events",
+            2,
+            "objects",
+            "parent:root",
+            "parent_ref"
+          ],
+          "value": "parent:source"
+        }
+      ],
+      "expected": {
+        "contract": "rejected",
+        "status": "unverified",
+        "reason": "parent_ancestry_mismatch"
+      }
+    }
+  ]
+}

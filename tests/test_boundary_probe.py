@@ -1,0 +1,741 @@
+import os
+from pathlib import Path
+import subprocess
+import time
+
+import pytest
+
+from scripts.boundary_probe import probe
+from scripts.boundary_probe import integration_probe
+
+
+def test_unisolated_process_exposes_fixtures():
+    result = probe.run([])
+    assert result["cases"]["allowed"]["status"] == "pass"
+    for case in ("read", "write", "env", "socket"):
+        assert result["cases"][case]["status"] == "fail"
+    assert result["cases"]["fd"]["status"] == ("fail" if os.name == "posix" else "unsupported")
+    assert result["protection_verified"] is False
+    assert "fixture-only" not in str(result["cases"])
+    assert result["run_id"]
+    assert result["cases"]["external_writer"] == {"status": "fail", "host_witness": True}
+    assert result["cases"]["parent_replace"]["status"] in ("fail", "inconclusive")
+    assert result["cases"]["detached_child"]["status"] == "unsupported"
+    for case in ("control_hook", "tool_use_hook"):
+        assert result["cases"][case] == {"status": "pass", "host_witness": True,
+                                          "scope": "direct_function_only"}
+    assert result["cases"]["builtin_mcp"] == {"status": "pass", "host_witness": True,
+                                               "scope": "stdio_list_only"}
+
+
+def test_missing_launcher_is_never_protection_pass():
+    result = probe.run(["nonexistent-boundary-probe-launcher"])
+    assert result["cases"]["allowed"]["status"] == "unsupported"
+    assert all(v["status"] != "pass" for v in result["cases"].values())
+
+
+def test_failed_positive_control_invalidates_denial(monkeypatch):
+    def fake_run(argv, **kwargs):
+        case = argv[-2]
+        return subprocess.CompletedProcess(argv, 10 if case != "write" else 0,
+                                           stdout=b"boundary-probe-child\n")
+
+    monkeypatch.setattr(probe.subprocess, "run", fake_run)
+    result = probe.run([])
+    assert result["cases"]["allowed"]["status"] == "fail"
+    assert result["cases"]["read"]["status"] == "inconclusive"
+    assert result["cases"]["write"]["status"] == "fail"
+    assert result["cases"]["control_hook"]["status"] == "inconclusive"
+
+
+def test_launcher_exit_code_without_child_is_not_denial(monkeypatch):
+    monkeypatch.setattr(probe.subprocess, "run", lambda argv, **kw:
+                        subprocess.CompletedProcess(argv, 10, stdout=b""))
+    result = probe.run([])
+    assert result["cases"]["read"]["status"] == "inconclusive"
+
+
+def test_mutation_requires_ready_barrier_and_witness(tmp_path):
+    work = tmp_path / "work"
+    outside = tmp_path / "outside"
+    work.mkdir()
+    outside.mkdir()
+    (tmp_path / "run-id").write_text("run-a", encoding="ascii")
+    result = probe.mutation_probe("external_writer", [], os.sys.executable,
+                                  str(probe.__file__), tmp_path, work, outside,
+                                  os.environ.copy(), "wrong-run", 2)
+    assert result == {"status": "inconclusive", "host_witness": False}
+
+
+def test_receipt_never_establishes_seal_or_accepts_another_run():
+    receipt = dict(version=1, run_id="run-a", snapshot_digest=None, runtime_digest=None,
+                   policy_digest=None, supervisor_identity=None, child_identity=None,
+                   namespace_identities={}, preparation="ok", launch="exited_0",
+                   cleanup="unknown", seal_status="unsealed", unsupported_reasons=[])
+    assert probe.receipt_diagnostic(receipt, "run-a")["status"] == "unsupported"
+    assert probe.receipt_diagnostic(receipt, "run-b")["status"] == "inconclusive"
+    receipt["seal_status"] = "sealed"
+    assert probe.receipt_diagnostic(receipt, "run-a")["status"] == "unsupported"
+    receipt.pop("cleanup")
+    assert probe.receipt_diagnostic(receipt, "run-a")["status"] == "inconclusive"
+
+
+def test_reverse_interop_writer_is_run_bound(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    (tmp_path / "run-id").write_text("run-a", encoding="ascii")
+    proc = subprocess.run([os.sys.executable, probe.__file__, "--interop-writer", str(tmp_path)])
+    assert proc.returncode == 0
+    assert (work / "reverse_interop.marker").read_text(encoding="ascii") == "run-a"
+
+
+def test_interop_passes_python_code_as_argv_not_shell_literal(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "interop.distro").write_text("disposable", encoding="ascii")
+    (tmp_path / "run-id").write_text("run-a", encoding="ascii")
+    calls = []
+    def capture(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0)
+    monkeypatch.setattr(probe.subprocess, "run", capture)
+    assert probe.child("interop", tmp_path) == 0
+    assert calls[0][5] == "-c"
+    assert calls[0][6].startswith("import os,pathlib,") and "os.replace(" in calls[0][6]
+    assert calls[0][-1] == "run-a"
+
+
+def test_missing_process_observation_is_unknown(tmp_path):
+    assert probe.synthetic_writer_alive(tmp_path) is None
+
+
+def test_detached_probe_never_launches_without_lifecycle(monkeypatch, tmp_path):
+    run = probe.subprocess.run
+    popen = probe.subprocess.Popen
+    calls = []
+
+    def guarded_run(argv, **kwargs):
+        calls.append(argv)
+        assert "detached_child" not in argv
+        assert "--detached-writer" not in argv
+        return run(argv, **kwargs)
+
+    def guarded_popen(argv, **kwargs):
+        calls.append(argv)
+        assert "detached_child" not in argv
+        assert "--detached-writer" not in argv
+        return popen(argv, **kwargs)
+
+    monkeypatch.setattr(probe.subprocess, "run", guarded_run)
+    monkeypatch.setattr(probe.subprocess, "Popen", guarded_popen)
+    launcher = tmp_path / "launcher.py"
+    marker = tmp_path / "delayed-started"
+    launcher.write_text(
+        "import pathlib, subprocess, sys, time\n"
+        "marker, *command = sys.argv[1:]\n"
+        "if 'detached_child' in command:\n"
+        "    pathlib.Path(marker).write_text('started')\n"
+        "    time.sleep(1)\n"
+        "sys.exit(subprocess.call(command))\n", encoding="utf-8")
+    for prefix in ([], [os.sys.executable, str(launcher), str(marker)]):
+        result = probe.run(prefix, timeout=2)
+        assert result["cases"]["detached_child"] == {
+            "status": "unsupported",
+            "reason": "trusted descendant lifecycle ownership unavailable",
+        }
+        assert result["protection_verified"] is False
+    assert calls and not marker.exists()
+
+
+def test_launcher_environment_excludes_host_secret(monkeypatch):
+    monkeypatch.setenv("BOUNDARY_TEST_SECRET", "private-fixture")
+    seen = []
+    def capture(argv, **kwargs):
+        seen.append(kwargs.get("env", {}))
+        return subprocess.CompletedProcess(argv, 20, stdout=b"")
+    monkeypatch.setattr(probe.subprocess, "run", capture)
+    probe.run([])
+    assert seen and all("BOUNDARY_TEST_SECRET" not in env for env in seen)
+
+
+def test_integration_missing_modules_is_inconclusive(tmp_path):
+    result = integration_probe.run(tmp_path / "missing-a.py", tmp_path / "missing-b.py")
+    assert result["status"] == "inconclusive"
+    assert result["protection_verified"] is False
+
+
+def test_integration_invalid_module_is_inconclusive(tmp_path):
+    boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"
+    broker.write_text("pass\n")
+    for contents in ("invalid syntax !\n", "raise RuntimeError('fixture')\n"):
+        boundary.write_text(contents)
+        result = integration_probe.run(boundary, broker)
+        assert result["status"] == "inconclusive"
+        assert result["error_type"] in ("SyntaxError", "RuntimeError")
+        assert "fixture" not in str(result)
+
+
+def test_integration_receipt_without_ready_witness_is_inconclusive(monkeypatch, tmp_path):
+    (tmp_path / "boundary.py").write_text("boundary")
+    (tmp_path / "broker.py").write_text("broker")
+    called = []
+    class Receipt:
+        def to_dict(self):
+            return {"run_id": "synthetic", "preparation": "diagnostic_ready",
+                    "launch": "exited_0", "cleanup": "broker_closed_socket_absent; descendants_unverified",
+                    "seal_status": "unsealed"}
+
+    class Boundary:
+        @staticmethod
+        def diagnostic_broker_probe(factory, on_ready, run_id):
+            called.append(True)
+            return Receipt()  # A receipt alone is not a socket witness.
+
+    monkeypatch.setattr(integration_probe, "load", lambda *args: Boundary())
+    result = integration_probe._run(tmp_path / "boundary.py", tmp_path / "broker.py")
+    assert called == [True]
+    assert result["run_id_matches"] is False
+    assert result["status"] == "inconclusive"
+    assert result["protection_verified"] is False
+
+
+def test_integration_source_mismatch_and_mutation(monkeypatch, tmp_path):
+    boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"
+    boundary.write_text("before")
+    broker.write_text("broker")
+    assert integration_probe.run(boundary, broker, expected_boundary="0" * 64)["reason"] == "expected source hash mismatch"
+
+    class Boundary:
+        @staticmethod
+        def diagnostic_broker_probe(factory, on_ready, run_id):
+            boundary.write_text("after")
+            raise ValueError("fixture")
+    monkeypatch.setattr(integration_probe, "load", lambda *args: Boundary())
+    result = integration_probe._run(boundary, broker)
+    assert result["status"] == "inconclusive"
+    assert result["reason"] == "source changed during diagnostic"
+    assert result["sources"]["boundary"]["before"] != result["sources"]["boundary"]["after"]
+
+
+def test_load_executes_supplied_bytes_not_stale_bytecode(tmp_path):
+    import py_compile
+    source = tmp_path / "fixture.py"
+    source.write_text("value = 1\n")
+    py_compile.compile(str(source), doraise=True)
+    source.write_text("value = 2\n")
+    module = integration_probe.load(source, "source_bytes_fixture", source.read_bytes())
+    assert module.value == 2
+
+
+def test_process_broker_cache_prevents_pass(tmp_path):
+    import py_compile
+    boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"
+    boundary.write_text("value = 1\n")
+    broker.write_text("value = 1\n")
+    py_compile.compile(str(broker), doraise=True)
+    result = integration_probe.run(boundary, broker, "process")
+    assert result["status"] == "inconclusive"
+    assert result["reason"] == "broker bytecode cache present"
+
+
+def test_malformed_frames_require_rejection_and_live_listener(monkeypatch, tmp_path):
+    monkeypatch.setattr(integration_probe.uuid, "uuid4", lambda: "r")
+    boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"
+    boundary.write_text("boundary")
+    broker.write_text("broker")
+    class Receipt:
+        def to_dict(self):
+            return {"run_id": "r", "preparation": "diagnostic_ready", "launch": "exited_0",
+                    "cleanup": "broker_closed_socket_absent; descendants_unverified", "seal_status": "unsealed"}
+    class Boundary:
+        @staticmethod
+        def diagnostic_broker_probe(factory, on_ready, run_id):
+            on_ready("r", "absent-fixture.sock")
+            return Receipt()
+    monkeypatch.setattr(integration_probe, "load", lambda *args: Boundary())
+    monkeypatch.setattr(integration_probe, "request", lambda path, obj: b'{"error":"request rejected"}\n' if obj.get("run_id") != "r" or "url" in obj or obj.get("body") == "cmVmbGVjdA==" else b'{"body":"b2s="}\n')
+    monkeypatch.setattr(integration_probe, "request_raw", lambda path, data: b'{"error":"request rejected"}\n')
+    class ClosedSocket:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def settimeout(self, value): pass
+        def connect(self, path): raise OSError("closed")
+    monkeypatch.setattr(integration_probe.socket, "socket", lambda *args: ClosedSocket())
+    monkeypatch.setattr(integration_probe.socket, "AF_UNIX", 1, raising=False)
+    result = integration_probe._run(boundary, broker)
+    assert result["status"] == "pass", result
+    assert len(result["witness"]["malformed"]) == 5
+    monkeypatch.setattr(integration_probe, "request_raw", lambda path, data: b'{"body":"b2s="}\n')
+    assert integration_probe._run(boundary, broker)["status"] == "inconclusive"
+
+
+def test_unreadable_fixture_metadata_is_not_a_denial(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "port.txt").mkdir()  # reading it fails with an OS error, as a launcher denying host-made files would
+    (work / "fd.txt").mkdir()
+    assert probe.child("socket", tmp_path) == 20
+    assert probe.child("fd", tmp_path) == 20
+
+
+def test_run_reports_unreadable_fixture_as_inconclusive(monkeypatch):
+    def fake_run(argv, **kwargs):
+        # allowed passes; every other child could not read its fixture, so it exits 20 and never attempted anything
+        case = argv[-2]
+        return subprocess.CompletedProcess(argv, 0 if case == "allowed" else 20, stdout=b"boundary-probe-child\n")
+
+    monkeypatch.setattr(probe.subprocess, "run", fake_run)
+    result = probe.run([])
+    assert result["cases"]["allowed"]["status"] == "pass"
+    assert result["cases"]["socket"]["status"] == "inconclusive"
+    assert result["cases"]["fd"]["status"] in ("inconclusive", "unsupported")
+
+
+def test_marker_observation_waits_and_ignores_partial_content(tmp_path):
+    import threading
+
+    marker = tmp_path / "m.marker"
+
+    def late():
+        time.sleep(0.2)
+        marker.write_text("run-", encoding="ascii")  # a partial run id is not this run's marker
+        time.sleep(0.2)
+        probe.publish_signal(marker, "run-a")
+
+    worker = threading.Thread(target=late)
+    worker.start()
+    try:
+        assert probe.observe_marker(marker, "run-a", 0) is False
+        assert probe.observe_marker(marker, "run-a", 3) is True
+    finally:
+        worker.join()
+    assert probe.observe_marker(tmp_path / "never", "run-a", 0.1) is False
+    assert probe.observe_marker(marker, "other-run", 0) is False
+
+
+def test_interop_never_launches_without_lifecycle(monkeypatch, tmp_path):
+    original = probe.subprocess.run
+    calls = []
+
+    def guarded_run(argv, **kwargs):
+        calls.append(argv)
+        assert "interop" not in argv and "reverse_interop" not in argv
+        return original(argv, **kwargs)
+
+    monkeypatch.setattr(probe.subprocess, "run", guarded_run)
+    launcher = tmp_path / "delayed.py"
+    marker = tmp_path / "started"
+    launcher.write_text(
+        "import pathlib, subprocess, sys, time\n"
+        "marker, *command = sys.argv[1:]\n"
+        "if 'interop' in command or 'reverse_interop' in command:\n"
+        "    time.sleep(1); pathlib.Path(marker).write_text('started')\n"
+        "sys.exit(subprocess.call(command))\n", encoding="utf-8")
+    for prefix in ([], [os.sys.executable, str(launcher), str(marker)]):
+        result = probe.run(prefix, interop_distro="disposable", timeout=2)
+        for case in ("interop", "reverse_interop"):
+            assert result["cases"][case] == {
+                "status": "unsupported",
+                "reason": "trusted descendant lifecycle ownership unavailable",
+            }
+        assert result["protection_verified"] is False
+    assert calls and not marker.exists()
+
+
+def test_mutation_probe_rejects_unowned_launcher_before_spawn(monkeypatch, tmp_path):
+    def forbidden(*args, **kwargs):
+        pytest.fail("unowned launcher was invoked")
+    monkeypatch.setattr(probe.subprocess, "Popen", forbidden)
+    for prefix, python in ((["delayed-launcher"], os.sys.executable), ([], "other-python")):
+        for case in ("parent_replace", "external_writer"):
+            result = probe.mutation_probe(case, prefix, python, probe.__file__, tmp_path,
+                                          tmp_path, tmp_path, {}, "run-a", 0.01)
+            assert result == {"status": "unsupported",
+                              "reason": "trusted descendant lifecycle ownership unavailable"}
+
+
+@pytest.fixture
+def mock_diagnostic(monkeypatch, tmp_path):
+    """Only protocol responses are simulated; no process or socket is launched."""
+    boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"
+    boundary.write_text("boundary", encoding="ascii")
+    broker.write_text("broker", encoding="ascii")
+    state = {"receipt_run": "run-a", "ready_run": "run-a", "cleanup":
+             "broker_closed_socket_absent; descendants_unverified", "fault": None}
+    monkeypatch.setattr(integration_probe.uuid, "uuid4", lambda: "run-a")
+
+    class Receipt:
+        def to_dict(self):
+            return {"run_id": state["receipt_run"], "preparation": "diagnostic_ready",
+                    "launch": "exited_0", "cleanup": state["cleanup"], "seal_status": "unsealed"}
+
+    class Boundary:
+        @staticmethod
+        def diagnostic_broker_probe(factory, on_ready, run_id):
+            assert run_id == "run-a"
+            if state["fault"] == "observer_death":
+                raise RuntimeError("observer unavailable")
+            if state["fault"] != "missing_ready":
+                on_ready(state["ready_run"], "mock.sock")
+            return Receipt()
+
+    def request(path, obj):
+        if state["fault"] == "broker_death":
+            raise ConnectionError("broker unavailable")
+        if state["fault"] == "timeout":
+            raise TimeoutError("broker timed out")
+        if obj.get("run_id") != state["ready_run"] or "url" in obj or obj.get("body") == "cmVmbGVjdA==":
+            return b'{"error":"request rejected"}\n'
+        return b'{"body":"b2s="}\n'
+
+    class ClosedSocket:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def settimeout(self, value): pass
+        def connect(self, path): raise OSError("closed")
+
+    monkeypatch.setattr(integration_probe, "load", lambda *args: Boundary())
+    monkeypatch.setattr(integration_probe, "request", request)
+    monkeypatch.setattr(integration_probe, "request_raw", lambda *args: b'{"error":"request rejected"}\n')
+    monkeypatch.setattr(integration_probe.socket, "socket", lambda *args: ClosedSocket())
+    monkeypatch.setattr(integration_probe.socket, "AF_UNIX", 1, raising=False)
+    return state, lambda: integration_probe._run(boundary, broker)
+
+
+def test_mock_diagnostic_positive_is_unsealed_only(mock_diagnostic):
+    _, run = mock_diagnostic
+    result = run()
+    assert result["status"] == "pass"
+    assert result["scope"] == "synthetic_unsealed_diagnostic"
+    assert result["protection_verified"] is False
+    assert result["receipt"]["cleanup"] is True  # explicitly descendants_unverified
+
+
+def test_matching_replayed_ready_and_receipt_rejected(mock_diagnostic):
+    state, run = mock_diagnostic
+    state.update(ready_run="old-run", receipt_run="old-run")
+    assert run()["status"] == "inconclusive"
+
+
+def test_diagnostic_worker_does_not_inherit_host_secret(tmp_path, monkeypatch):
+    boundary, broker, observed = (tmp_path / name for name in ("boundary.py", "broker.py", "observed"))
+    monkeypatch.setenv("BOUNDARY_TEST_HOST_SECRET", "synthetic-secret")
+    broker.write_text("pass\n")
+    boundary.write_text("import os, pathlib\npathlib.Path(%r).write_text(os.getenv('BOUNDARY_TEST_HOST_SECRET', 'absent'))\n" % str(observed))
+    result = integration_probe.run(boundary, broker)
+    assert result["status"] == "inconclusive"
+    assert observed.read_text() == "absent"
+
+
+@pytest.mark.parametrize("phase", ["startup", "cleanup"])
+def test_entire_diagnostic_deadline_terminates_worker(tmp_path, phase):
+    boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"
+    broker.write_text("pass\n")
+    boundary.write_text(
+        "import time\n"
+        "def diagnostic_broker_probe(factory, on_ready, run_id):\n"
+        + ("    try: on_ready(run_id, 'missing.sock')\n    except Exception: pass\n" if phase == "cleanup" else "")
+        + "    time.sleep(60)\n")
+    started = time.monotonic()
+    result = integration_probe.run(boundary, broker, timeout=1)
+    assert time.monotonic() - started < 10
+    assert result["reason"] == "diagnostic deadline exceeded"
+    assert result["worker_terminated"] is True
+    assert result["descendants_terminated"] == "unverified"
+    assert result["status"] == "inconclusive"
+
+
+@pytest.mark.parametrize("change", [
+    {"receipt_run": "other-run"}, {"ready_run": "replayed-run"},
+    {"fault": "missing_ready"}, {"fault": "observer_death"},
+    {"fault": "broker_death"}, {"fault": "timeout"},
+    {"cleanup": "residual_descendant"}, {"cleanup": "residual_socket"},
+    {"cleanup": "cleanup_failed"},
+])
+def test_mock_failures_never_establish_protection_or_diagnostic_pass(mock_diagnostic, change):
+    state, run = mock_diagnostic
+    state.update(change)
+    result = run()
+    assert result["status"] == "inconclusive"
+    assert result["protection_verified"] is False
+
+
+@pytest.mark.xfail(strict=True, reason="no authenticated observer evidence input or verifier exists")
+def test_forged_observer_evidence_requires_future_verifier(mock_diagnostic):
+    state, run = mock_diagnostic
+    state["observer_evidence"] = {"run_id": "run-a", "signature": "forged"}
+    # The current diagnostic never consumes this evidence; it cannot reject the forgery.
+    assert run()["status"] == "inconclusive"
+
+
+def test_synthetic_seal_adapter_contract():
+    from copy import deepcopy
+    import hashlib
+    import hmac
+    import importlib.util
+    import json
+    import sys
+    root = Path(__file__).parent / "fixtures" / "process_boundary_seal"
+    spec = importlib.util.spec_from_file_location("offline_seal_adapter", root / "validator.py")
+    validator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = validator
+    spec.loader.exec_module(validator)
+    CORPUS = json.loads((root / "cases.json").read_text(encoding="utf-8"))
+    def record_external_ledger(evidence, trusted):
+        """Test-only observer recording, never called by validate or a child adapter."""
+        witness = evidence["witness"]
+        previous, hashes = "0" * 64, []
+        for event in witness["events"]:
+            payload = [witness["run_id"], witness["launch_nonce"], previous, event]
+            previous = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            hashes.append(previous)
+        trusted["ledger"] = {
+            "store_id": trusted["store_id"], "observer_id": witness["observer_id"],
+            "run_id": witness["run_id"], "launch_nonce": witness["launch_nonce"], "hashes": hashes,
+        }
+
+
+    def test_authenticated_offline_adapter_and_independent_cleanup():
+        trusted, evidence = deepcopy(CORPUS["trusted"]), deepcopy(CORPUS["positive"])
+        receipt = dict(version=1, run_id=trusted["run_id"], snapshot_digest=None, runtime_digest=None,
+                       policy_digest=None, supervisor_identity=None, child_identity=None, namespace_identities={},
+                       preparation="diagnostic_ready", launch="exited_0",
+                       cleanup="broker_closed_socket_absent; descendants_unverified", seal_status="unsealed",
+                       unsupported_reasons=["diagnostic only; runtime and storage are unsealed"])
+        producer_key, observer_key = b"p" * 32, b"o" * 32
+
+        def tags_for(r, e):
+            def sign(domain, value, key):
+                data = json.dumps([domain, trusted["run_id"], trusted["launch_nonce"], value],
+                                  sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+                return hmac.new(key, data, hashlib.sha256).hexdigest()
+            return {"producer": sign("producer", r, producer_key), "observer": sign("observer", e, observer_key)}
+
+        def run(r=receipt, e=evidence, tags=None, seen=None, expectations=trusted):
+            return validator.adapt_producer(r, evidence=e, trusted=expectations, tags=tags or tags_for(r, e),
+                                            producer_key=producer_key, observer_key=observer_key,
+                                            consumed=set() if seen is None else seen)
+
+        seen = set()
+        assert run(seen=seen).status == "synthetic_only"
+        assert run(seen=seen).contract == "rejected"
+        assert run(tags={"producer": "0" * 64, "observer": tags_for(receipt, evidence)["observer"]}).contract == "rejected"
+        retry = set()
+        assert run(tags={"producer": "0" * 64, "observer": tags_for(receipt, evidence)["observer"]}, seen=retry).contract == "rejected"
+        assert not retry
+        failed_receipt = deepcopy(receipt)
+        failed_receipt["launch"] = "failed"
+        assert run(r=failed_receipt, seen=retry).contract == "rejected"
+        assert retry == {(trusted["run_id"], trusted["launch_nonce"])}
+        assert run(seen=retry).contract == "rejected"
+        malformed_seen = set()
+        assert run(r={}, seen=malformed_seen).contract == "rejected"
+        assert malformed_seen == {(trusted["run_id"], trusted["launch_nonce"])}
+        forged = deepcopy(evidence)
+        forged["witness"]["observer_id"] = "producer"
+        assert run(e=forged, tags=tags_for(receipt, evidence)).contract == "rejected"
+        for change in (lambda r: r.update(run_id="wrong"), lambda r: r.pop("cleanup"),
+                       lambda r: r.update(launch="failed"), lambda r: r.update(seal_status="sealed")):
+            bad = deepcopy(receipt)
+            change(bad)
+            assert run(r=bad).contract == "rejected"
+        for resource in ("descendants", "sockets", "mounts", "handles", "broker_endpoints", "active_tokens"):
+            bad = deepcopy(evidence)
+            cleanup = next(event for event in bad["witness"]["events"] if event["type"] == "cleanup")
+            cleanup[resource] = ["remaining"]
+            # An independent ledger and signature record the failure, rather than
+            # making the test pass merely because a stale signature was rejected.
+            updated = deepcopy(trusted)
+            record_external_ledger(bad, updated)
+            verdict = run(e=bad, expectations=updated)
+            assert "cleanup_resources_not_cleared" in verdict.reasons
+        for failure in ("broker_timeout", "observer_death", "supervisor_interrupted", "deadline_expired"):
+            bad = deepcopy(evidence)
+            events = bad["witness"]["events"]
+            fault = deepcopy(events[2])
+            fault["type"] = failure
+            events.insert(3, fault)
+            for index, event in enumerate(events):
+                event["sequence"] = index
+                event["time_ns"] = index
+            updated = deepcopy(trusted)
+            record_external_ledger(bad, updated)
+            verdict = run(e=bad, expectations=updated)
+            assert failure + "_observed" in verdict.reasons
+            assert "reasoned_stop_unverified" in verdict.reasons
+
+
+    test_authenticated_offline_adapter_and_independent_cleanup()
+
+
+def test_offline_collector_and_producer_lifecycle_contract():
+    import copy
+    import hashlib
+    import hmac
+    import importlib.util
+    import json
+    import sys
+    import uuid
+
+    root = Path(__file__).parent / "fixtures" / "process_boundary_seal"
+    spec = importlib.util.spec_from_file_location("collector_fixture_validator", root / "validator.py")
+    validator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = validator
+    spec.loader.exec_module(validator)
+    run_id = str(uuid.uuid4())
+    corpus = json.loads((root / "cases.json").read_text(encoding="utf-8").replace("fixture-run-a", run_id))
+    trusted, evidence = corpus["trusted"], corpus["positive"]
+    nonce = trusted["launch_nonce"]
+    previous, hashes = "0" * 64, []
+    for event in evidence["witness"]["events"]:
+        payload = [run_id, nonce, previous, event]
+        previous = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        hashes.append(previous)
+    trusted["ledger"]["hashes"] = hashes
+    producer_key, observer_key = b"p" * 32, b"o" * 32
+
+    def sign(role, value, key):
+        message = json.dumps([role, run_id, nonce, value], sort_keys=True,
+                             separators=(",", ":"), allow_nan=False).encode()
+        return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+    class Producer:
+        def diagnostic_broker_probe(self, factory, *, on_ready, run_id):
+            assert factory is sentinel
+            on_ready(run_id, "synthetic-socket")
+            return dict(version=1, run_id=run_id, snapshot_digest=None, runtime_digest=None,
+                        policy_digest=None, supervisor_identity=None, child_identity=None,
+                        namespace_identities={}, preparation="diagnostic_ready", launch="exited_0",
+                        cleanup="broker_closed_socket_absent; descendants_unverified", seal_status="unsealed",
+                        unsupported_reasons=["diagnostic only; runtime and storage are unsealed"])
+
+    class ObservationSource:
+        def read(self, rid, n):
+            assert (rid, n) == (run_id, nonce)
+            return copy.deepcopy(evidence)
+
+    class Collector:
+        def __init__(self):
+            self.calls = []
+            self.source = ObservationSource()
+
+        def arm(self, rid, n):
+            self.calls.append(("arm", rid, n))
+
+        def ready(self, rid, n, path):
+            self.calls.append(("ready", rid, n, path))
+
+        def finish(self, rid, n, outcome):
+            self.calls.append(("finish", rid, n, outcome))
+            observed = self.source.read(rid, n)
+            return observed, sign("observer", observed, observer_key)
+
+    def transport(fn, factory, **kwargs):
+        receipt = fn(factory, **kwargs)
+        return receipt, sign("producer", receipt, producer_key)
+
+    sentinel = object()
+    collector, seen = Collector(), set()
+    def run(transport_fn=transport, observer=collector, consumed=seen):
+        return integration_probe.collect_offline_contract(
+            Producer(), sentinel, transport_fn, observer, validator, trusted=trusted,
+            producer_key=producer_key, observer_key=observer_key, consumed=consumed)
+
+    result = run()
+    assert result["status"] == "synthetic_only"
+    assert result["protection_verified"] is False and result["cleanup_verified"] is False
+    assert [entry[0] for entry in collector.calls] == ["arm", "ready", "finish"]
+    assert run()["contract"] == "rejected"  # replay
+    assert len(collector.calls) == 3  # replay does not invoke the producer
+    def forged(fn, factory, **kwargs):
+        receipt, _ = transport(fn, factory, **kwargs)
+        return receipt, "0" * 64
+    assert run(forged, Collector(), set())["contract"] == "rejected"
+    def failed(fn, factory, **kwargs):
+        raise TimeoutError()
+    observer = Collector()
+    assert run(failed, observer, set())["status"] == "inconclusive"
+    assert observer.calls[-1] == ("finish", run_id, nonce, "failed")
+    retry_set = set()
+    assert run(failed, Collector(), retry_set)["status"] == "inconclusive"
+    assert run(transport, Collector(), retry_set)["status"] == "synthetic_only"
+    class MissingCollector(Collector):
+        def finish(self, rid, n, outcome):
+            raise RuntimeError("observation unavailable")
+    assert run(observer=MissingCollector(), consumed=set())["status"] == "inconclusive"
+    class ForgedCollector(Collector):
+        def finish(self, rid, n, outcome):
+            observed, _ = super().finish(rid, n, outcome)
+            return observed, "0" * 64
+    assert run(observer=ForgedCollector(), consumed=set())["contract"] == "rejected"
+    class LostProvenance(Collector):
+        def finish(self, rid, n, outcome):
+            observed, _ = super().finish(rid, n, outcome)
+            del observed["witness"]
+            return observed, sign("observer", observed, observer_key)
+    assert run(observer=LostProvenance(), consumed=set())["contract"] == "rejected"
+    def duplicate_ready(fn, factory, **kwargs):
+        receipt = fn(factory, **kwargs)
+        try:
+            kwargs["on_ready"](run_id, "duplicate")
+        except ValueError:
+            pass
+        return receipt, sign("producer", receipt, producer_key)
+    invalid_seen = set()
+    assert run(duplicate_ready, Collector(), invalid_seen)["status"] == "inconclusive"
+    assert invalid_seen == {(run_id, nonce)}
+    assert run(transport, Collector(), invalid_seen)["contract"] == "rejected"
+
+
+def test_imported_seal_negative_corpora():
+    from copy import deepcopy
+    import hashlib
+    import importlib.util
+    import json
+    import sys
+
+    root = Path(__file__).parent / "fixtures" / "process_boundary_seal"
+    spec = importlib.util.spec_from_file_location("corpus_validator", root / "validator.py")
+    validator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = validator
+    spec.loader.exec_module(validator)
+    corpus = json.loads((root / "cases.json").read_text(encoding="utf-8"))
+    controls = json.loads((root / "controls.json").read_text(encoding="utf-8"))["cases"]
+
+    def materialize(case):
+        evidence = deepcopy(corpus["positive"])
+        for change in case["changes"]:
+            parent = evidence
+            for part in change["path"][:-1]:
+                parent = parent[part]
+            key = change["path"][-1]
+            if change.get("remove"):
+                del parent[key]
+            elif "insert" in change:
+                parent.insert(key, deepcopy(change["insert"]))
+                for i, event in enumerate(parent):
+                    event["sequence"] = i
+            else:
+                parent[key] = deepcopy(change["value"])
+        return evidence
+
+    for case in corpus["cases"]:
+        verdict = validator.validate(materialize(case), deepcopy(corpus["trusted"]))
+        assert (verdict.contract, verdict.status) == (case["expected"]["contract"], case["expected"]["status"]), case["id"]
+        assert (case["expected"]["reason"] in verdict.reasons if case["expected"]["reason"] else not verdict.reasons), case["id"]
+        assert verdict.protection == "unverified"
+    for case in controls:
+        for rerecord in (False, True):
+            evidence, trusted = materialize(case), deepcopy(corpus["trusted"])
+            if rerecord:
+                witness = evidence["witness"]
+                previous, hashes = "0" * 64, []
+                for event in witness["events"]:
+                    payload = [witness["run_id"], witness["launch_nonce"], previous, event]
+                    previous = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                    hashes.append(previous)
+                trusted["ledger"] = {"store_id": trusted["store_id"], "observer_id": witness["observer_id"],
+                                     "run_id": witness["run_id"], "launch_nonce": witness["launch_nonce"], "hashes": hashes}
+            verdict = validator.validate(evidence, trusted)
+            assert verdict.contract == "rejected" and case["reason"] in verdict.reasons, case["id"]
+            assert verdict.protection == "unverified"
