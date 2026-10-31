@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: 102b473
+    at: "2026-10-31 18:45"
+    summary: "고정 계획의 모델 등급 비교를 mock으로 검증합니다."
+    text: "bench: 격리된 두 단계 등급 fixture와 live 호출 차단 추가 (#625)"
