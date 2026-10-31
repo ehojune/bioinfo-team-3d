@@ -9,3 +9,4 @@
 - 전체 시험: 13,065 passed, 3 failed. 그중 `test_annot`·`test_annot_regulatory` 2개는 main에서도 같은 실패(이 PR 무관), 나머지 1개(위 정적 시험)는 고쳤다.
 - manual: 한·영의 "result 수신의 나머지 저장·dispatch…sync 경계는 남습니다"를 실제에 맞췄다(#1179 P2).
 - 미검증: 실제 느린 디스크, runner·gateway loop를 나눈 측정, 이 PC D:가 빠른 디스크라는 점.
+- 리뷰 P1(Codex, head 0414915a): 느린 skill 복사 중 `task.cancel`이 오면 `to_thread` worker는 중단되지 않아, 취소 결과를 보낸 뒤에도 `install_required_skills`가 skill 폴더를 교체하고 같은 폴더를 쓰는 retry와 경합한다. 고침: `_settled_thread`가 취소를 받아도 worker가 끝날 때까지 기다린 뒤 전파한다(두 번째 취소가 와도 계속 기다림). 작업 폴더를 바꾸는 `TaskWorkspace` 2곳·`install_required_skills`·파일을 쓰는 `_system_ca_env`에 쓰고, 읽기만 하는 `lexists`·`resolve_private_paths`와 멱등한 채용 build `mkdir`는 plain `to_thread`로 둔다. 시험 2개(`test_a_cancel_waits_for_the_file_system_work_that_changes_the_workspace`)는 수정 전 실패.
