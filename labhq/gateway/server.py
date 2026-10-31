@@ -112,6 +112,7 @@ REQUEST_DEADLINE_TICK_S = 15.0
 ATTACHMENT_ACK_TIMEOUT_S = 30.0
 # Statuses a hold sets and _sync_hold_status may lift again.
 WSL_BOUND_AGENTS = frozenset({"bioinfo-agent"})  # staff that only run in the local WSL runner (#612)
+WSL_RUNNER_WAIT_S = 300.0  # a request that chose WSL waits at most this long for a ready WSL runner to connect (#612)
 HOLD_STATES = frozenset({"waiting_login", "waiting_quota", "waiting_facilities_fix", "waiting_pi"})
 
 
@@ -3400,8 +3401,13 @@ class Hub:
                 return None
             try:
                 rows = await asyncio.wait_for(asyncio.to_thread(wsl_setup.check, self.s), 60)
-            except Exception:  # a check that cannot run says nothing about readiness: keep the old behaviour
-                return None
+            except Exception as exc:  # a check that cannot run says nothing about readiness...
+                if not explicit:
+                    return None  # ...so a task that merely needs the agent keeps the old behaviour
+                state.update(status="failed", note=f"WSL 점검을 하지 못했습니다({type(exc).__name__}). "
+                                                   "`labhq setup-wsl --check`로 확인하세요.")
+                await self.asave_request(rid)
+                return self._wsl_not_ready(task, state["note"])  # the PI chose WSL: that is an answer, not silence
             if not wsl_setup.pending_rows(rows):
                 return None
             detail = wsl_setup.card_detail(rows)
@@ -3469,41 +3475,48 @@ class Hub:
     async def prepare_wsl_request(self, rid: str) -> None:
         """The PI asked for this PC's WSL (``run_where == "wsl"``, #612): make it ready before the plan is made.
 
-        The same check and card as a task that needs bioinfo-agent (``offer_wsl_setup``, asked even when a native runner
-        also hosts the agent), once per request. A yes runs the setup and the request then waits until the WSL runner
-        itself owns the agent; from then on the request's bioinfo-agent tasks are pinned to it (``_pin_wsl_request``), so a
-        native runner never takes them. A no, a failed setup, another PC or a WSL runner that does not connect in time
-        leaves a note on the request and the request carries on without WSL, never blocked on a runner that will not come."""
+        One question with two answers: is a WSL runner ready and connected now (``_wsl_unavailable_reason`` is None), or
+        why not. Ready: the request's bioinfo-agent tasks are pinned to it (``_pin_wsl_request``), so a native runner
+        never takes them. Not ready, whatever the reason (no config, a check or setup that raised, a no, another PC, a
+        runner that does not connect in time): the reason is a note on the request and it carries on without WSL, never
+        blocked on a runner that will not come."""
         req = self.requests.get(rid)
         if not req or req.get("run_where") != "wsl":
             return
-        from .. import wsl_setup
-
-        if not wsl_setup.configured(self.s):  # no runner.wsl block: no WSL runner will ever connect, so do not wait for one
-            req["run_where_note"] = ("이 설치에는 WSL runner 설정이 없어 WSL 없이 진행합니다. 이 PC에서 "
-                                     "`labhq setup-wsl`로 먼저 준비하세요")
-            await self.asave_request(rid)
-            return
-        agent = next(iter(WSL_BOUND_AGENTS))
-        probe = Task(agent_id=agent, request_id=rid, prompt="")
-        stopped = await self.offer_wsl_setup(probe, explicit=True)
-        note = None
-        if stopped is not None:
-            note = ((req.get("wsl_setup") or {}).get("note") or stopped.error
-                    or "이 PC의 WSL을 준비하지 못해 WSL 없이 진행합니다")
-        elif not await self._wait_for_wsl_owner(rid, agent):
-            note = "이 PC의 WSL runner가 시간 안에 연결되지 않아 WSL 없이 진행합니다"
-        if note:
-            req["run_where_note"] = note
+        try:
+            reason = await self._wsl_unavailable_reason(rid)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # the text can carry installer output: only its kind is kept
+            log.warning("WSL preparation for %s failed: %s", rid, type(exc).__name__)
+            reason = f"WSL 준비를 확인하지 못해({type(exc).__name__}) WSL 없이 진행합니다"
+        if reason:
+            req["run_where_note"] = reason
         else:
             req["wsl_pinned"] = True  # the WSL runner owns the agent: the request stays there
         await self.asave_request(rid)
 
+    async def _wsl_unavailable_reason(self, rid: str) -> str | None:
+        """None when the WSL runner is ready and owns bioinfo-agent; else why not, in one sentence for the PI."""
+        from .. import wsl_setup
+
+        if not wsl_setup.configured(self.s):  # no runner.wsl block: no WSL runner will ever connect
+            return ("이 설치에는 WSL runner 설정이 없어 WSL 없이 진행합니다. 이 PC에서 "
+                    "`labhq setup-wsl`로 먼저 준비하세요")
+        agent = next(iter(WSL_BOUND_AGENTS))
+        stopped = await self.offer_wsl_setup(Task(agent_id=agent, request_id=rid, prompt=""), explicit=True)
+        if stopped is not None:
+            return ((self.requests[rid].get("wsl_setup") or {}).get("note") or stopped.error
+                    or "이 PC의 WSL을 준비하지 못해 WSL 없이 진행합니다")
+        if not await self._wait_for_wsl_owner(rid, agent):
+            return "이 PC의 WSL runner가 시간 안에 연결되지 않아 WSL 없이 진행합니다"
+        return None
+
     async def _wait_for_wsl_owner(self, rid: str, agent: str) -> bool:
-        """Until the WSL runner is the one that owns ``agent`` (a ready, connected WSL runner always does, see
-        ``effective_roster``), at most ``gateway.runner_wait_s``. False on timeout or when the request is cancelled."""
+        """The one wait left: until a ready, connected WSL runner owns ``agent`` (``effective_roster`` gives it to the
+        WSL runner as soon as it is ready), at most ``WSL_RUNNER_WAIT_S``. False on timeout or request cancel."""
         wsl_id = self.s.runner.wsl.id
-        deadline = time.monotonic() + float(self.s.gateway.runner_wait_s)
+        deadline = time.monotonic() + min(float(self.s.gateway.runner_wait_s), WSL_RUNNER_WAIT_S)
         while self.agent_runner.get(agent) != wsl_id or wsl_id not in self.runners:
             if (self.requests.get(rid) or {}).get("status") == "cancelled" or time.monotonic() >= deadline:
                 return False
@@ -5584,6 +5597,7 @@ class Hub:
                          default_references=bool(old.get("default_references", True)),
                          budget_usd=old.get("requested_budget_usd", old.get("budget_usd")),
                          project_id=old.get("project_id"), cso_model=old.get("cso_model"),
+                         run_where=old.get("run_where", "auto"),
                          route=old.get("route", "auto"), meta={**(old.get("meta") or {}), "revised_from": rid})
         new_rid = (await self.acreate_request(body, extra=extra))
         old["revised_to"] = new_rid
@@ -6174,6 +6188,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(404, f"unknown agent {body.agent_id!r}")
         if body.mode == "direct" and not_yet_active(hub.agents.get(body.agent_id or "") or {}):
             raise HTTPException(409, probation_refusal(str(body.agent_id)))  # still on probation (#424)
+        try:
+            hub._check_run_where(body)
+        except ValueError as e:  # a combination no request can ever satisfy: 400, not the 422 of a bad reference
+            raise HTTPException(400, str(e))
         try:
             return {"request_id": (await hub.acreate_request(body))}
         except KeyError as e:

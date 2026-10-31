@@ -383,3 +383,67 @@ def test_send_wsl_with_another_agent_is_refused_by_the_cli(monkeypatch, tmp_path
     monkeypatch.setenv("LABHQ_CONFIG", str(config))
     with pytest.raises(SystemExit):
         cli.main(["send", "분석", "--agent", "analyst", "--wsl", "--no-wait"])
+
+
+# ---- one question for every way WSL can be unavailable: "ready" waits, everything else says why and carries on ----
+
+@pytest.mark.parametrize("failure", ["check_raises", "setup_not_configured", "setup_raises"])
+async def test_every_way_wsl_can_be_unavailable_ends_in_one_note_and_no_wait(hub, monkeypatch, failure):
+    hub.s.gateway.runner_wait_s = 86400  # the default: any wait that is not for a ready runner would hang here
+    hub.requests["r"]["run_where"] = "wsl"
+
+    def raising(s):
+        raise RuntimeError("wsl.exe is missing")
+
+    if failure == "check_raises":
+        monkeypatch.setattr(wsl_setup, "check", raising)
+    elif failure == "setup_not_configured":
+        monkeypatch.setattr(wsl_setup, "configured", lambda s: False)
+    else:
+        monkeypatch.setattr(wsl_setup, "check", lambda s: MISSING)
+        monkeypatch.setattr(wsl_setup, "setup", raising)
+    pending = asyncio.ensure_future(hub.prepare_wsl_request("r"))
+    if failure == "setup_raises":
+        await hub.resolve_approval((await card_of(hub))["id"], True, "")
+    await asyncio.wait_for(pending, 3)
+    request = hub.requests["r"]
+    assert request["run_where_note"] and not request.get("wsl_pinned") and request["status"] == "running"
+    assert "wsl.exe is missing" not in request["run_where_note"], "the exception text can carry output: only the kind"
+
+
+async def test_the_only_wait_left_is_for_a_ready_wsl_runner_and_it_is_bounded(hub, monkeypatch):
+    monkeypatch.setattr(wsl_setup, "check", lambda s: READY)
+    hub.s.gateway.runner_wait_s = 86400
+    monkeypatch.setattr("labhq.gateway.server.WSL_RUNNER_WAIT_S", 0.3)
+    hub.requests["r"]["run_where"] = "wsl"
+    await asyncio.wait_for(hub.prepare_wsl_request("r"), 3)  # ready, but the runner never connects
+    assert "시간 안에" in hub.requests["r"]["run_where_note"] and not hub.requests["r"].get("wsl_pinned")
+
+
+async def test_a_revised_request_keeps_where_the_old_one_ran(tmp_path, monkeypatch):
+    from tests.test_research_cp1_revise import _gateway, _old_request
+    gateway = _gateway(tmp_path, monkeypatch)
+    _old_request(gateway, run_where="wsl")
+    sync_new = gateway.create_revised_request("old", "note")
+    assert gateway.requests[sync_new]["run_where"] == "wsl"
+    gateway.requests["old"].pop("revised_to", None)
+    for rid in [sync_new]:
+        gateway.requests.pop(rid, None)
+    async_new = await gateway.acreate_revised_request("old", "another note")
+    assert gateway.requests[async_new]["run_where"] == "wsl"
+    gateway.store.close()
+
+
+def test_a_wsl_request_for_another_staff_member_is_a_400_not_a_422(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from labhq.gateway.server import create_app
+
+    s = Settings()
+    s.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(s)
+    app.state.hub.agents["analyst"] = {"id": "analyst"}
+    auth = {"Authorization": f"Bearer {s.gateway.client_token}"}
+    with TestClient(app) as client:
+        response = client.post("/api/requests", json={"text": "x", "mode": "direct", "agent_id": "analyst",
+                                                      "run_where": "wsl"}, headers=auth)
+    assert response.status_code == 400 and "bioinfo-agent" in response.json()["detail"]
