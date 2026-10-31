@@ -134,6 +134,7 @@
     "tests/test_git_hooks.py",
     "tests/test_github_reporter.py",
     "tests/test_github_token_687.py",
+    "tests/test_halt_watch_1174.py",
     "tests/test_hpc_consult.py",
     "tests/test_hpc_failures.py",
     "tests/test_hpc_followups.py",
