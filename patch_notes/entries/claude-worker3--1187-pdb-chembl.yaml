@@ -1,0 +1,18 @@
+pr: 1195
+rows:
+- sha: '98912a6'
+  at: 2026-10-31 20:33
+  text: 직원이 쓰는 PDB(RCSB)와 ChEMBL 조회 도구 pdb와 chembl을 labhq_annot 서버에 더한다. 시간 상한, 요청 조회 원장과 횟수 상한, 조회 기록과 원본 보관, 캐시는 기존 조회 도구와 같은 경로를 그대로 지난다. pdb는 PDB ID나 검색어로 구조 요약을 주고 좌표 파일은 받지 않으며, chembl은 target과 compound와 activity를 주고 잘린 목록에는 truncated를 표시한다. 라이선스 이름과 URL을 source에 남긴다. CSO 직원 명단 문장에 두 도구를 더한다. 오프라인 fixture 시험 27건
+  summary: 직원이 웹을 직접 열지 않고도 PDB와 ChEMBL을 조회하며, 그 조회가 기록과 횟수 집계 안에 들어옵니다.
+- sha: '4fc1b1d'
+  at: 2026-10-31 20:38
+  text: rcsb와 chembl의 요청 간격과 pdb의 캐시 기한을 annot.py에 더하고, 도구 목록을 정확히 비교하던 세 시험에 새 도구 이름을 더하며, 새 시험 파일을 Windows inventory에 넣는다
+  summary: 새 조회 도구의 요청 간격과 시험 목록을 맞춥니다.
+- sha: '7a2a45e'
+  at: 2026-10-31 21:10
+  text: chief_of_staff는 문헌 도구만 받도록 다른 조회 도구를 이름으로 막아 두었으므로 새 pdb와 chembl도 그 목록에 넣는다. 그 목록을 고정한 시험의 집합도 같이 고친다. 시험을 먼저 고쳐 수정 전 실패를 확인했다
+  summary: 새 구조·화합물 조회 도구가 비서 직원에게 열리지 않게 합니다.
+- sha: 'ca08ab6'
+  at: 2026-10-31 22:10
+  text: CI 실패 둘과 리뷰 P2 둘을 고친다. 시험이 mcp 2.x에 없는 모듈에서 ToolError를 가져오던 것을 labhq.tools._mcpcompat에서 가져오게 하고, staff 쪽 파일에 REST 접두어를 쓰지 못하게 하는 시험에 걸린 ChEMBL 주소를 GTEx처럼 부분으로 이어 쓴다. ChEMBL target과 molecule과 activity의 API 원본 응답을 결과 파일에 보존하고 도구 응답은 요약만 준다. 모든 입력이 잘못되었으면 release 확인을 포함해 요청을 보내지 않고 오류만 기록한다
+  summary: ChEMBL 결과 파일에 API 원본이 남고, 잘못된 입력만으로는 외부 요청이 나가지 않습니다.

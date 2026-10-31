@@ -22,7 +22,7 @@ import httpx
 
 from ..runner.lookup_admission import ENV as LOOKUP_ADMISSION_ENV
 from ..settings import Settings
-from . import annot, annot_keys, annot_literature, annot_regulatory
+from . import annot, annot_keys, annot_literature, annot_regulatory, annot_structure
 from ._mcpcompat import make_server, tool_failure
 from .external_wait import LookupTimeout, exclude_human_wait, run_lookup
 
@@ -55,6 +55,8 @@ server = make_server(
         "(clinical classification) for variants; chipatlas (ChIP-Atlas enrichment of public ChIP/ATAC peaks for a gene "
         "list or regions), chipatlas_targets (target genes of a transcription factor), encode (ENCODE candidate "
         "cis-regulatory elements overlapping regions), gtex (GTEx tissue expression and eQTLs for genes or variants), "
+        "pdb (RCSB PDB structure summaries by PDB ID or text search; no coordinate files), chembl (ChEMBL targets, "
+        "compounds and measured activities), "
         "fulltext (the body of a paper by PMID, PMCID or DOI: Europe PMC open-access full text, else the abstract), "
         "key_fulltext (for conclusion-critical papers: permitted OA, opt-in institution session, then one PI PDF card), "
         "citation_chase (references and citing papers for one paper), preprints (bioRxiv/medRxiv search; 심사 전), "
@@ -189,6 +191,19 @@ async def _run(method: str, *args: object, **kwargs: object) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
+async def _run_structure(method: str, *args: object) -> str:
+    async with _admitted(method) as hooks, httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0),
+                                                             headers={"User-Agent": annot.USER_AGENT},
+                                                             **hooks) as client:
+        annotator = annot_structure.StructureAnnotator(client, WORKDIR, CACHE_DIR, pace=PACE)
+        try:
+            result = await run_lookup(lambda: getattr(annotator, method)(*args),
+                                      tool=method, workdir=WORKDIR, notify=_lookup_progress)
+        except (annot.LookupFailed, LookupTimeout, ValueError) as exc:
+            raise tool_failure(str(exc)) from exc
+    return json.dumps(result, ensure_ascii=False)
+
+
 async def _run_literature(method: str, *args: object) -> str:
     async with _admitted(method) as hooks, httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0),
                                                              follow_redirects=True,
@@ -318,6 +333,27 @@ async def gtex(genes_or_variants: list[str], tissues: list[str] | None = None, d
     variants (chr:pos:ref:alt on GRCh38, or rsID). tissues are GTEx tissueSiteDetailId values such as Liver or
     Whole_Blood (all tissues when empty). Up to 50 items per call; eQTL lists stop at 1,000 rows per item."""
     return await _run("gtex", genes_or_variants, tissues, dataset, eqtl)
+
+
+@server.tool()
+async def pdb(ids_or_queries: list[str], top: int = annot_structure.PDB_TOP_DEFAULT) -> str:
+    """RCSB PDB structure summaries (title, experimental method, resolution, deposit and release dates, bound
+    ligand components, primary citation) for PDB IDs such as 4HHB. Any other string is a text search: the best `top`
+    entries (1..25) are summarized and `truncated` says when more matched. Coordinate files are not downloaded.
+    Up to 25 items per call. Use this instead of browsing rcsb.org: it is counted against the request's lookup limit
+    and recorded, and the raw response is kept under outputs/annotation/ (cite it)."""
+    return await _run_structure("pdb", ids_or_queries, top)
+
+
+@server.tool()
+async def chembl(targets_or_compounds: list[str], kind: Literal["target", "compound", "activity"] = "activity",
+                 limit: int = annot_structure.CHEMBL_LIMIT_DEFAULT) -> str:
+    """ChEMBL records. kind=target or compound: ChEMBL IDs (CHEMBL203) or a text search (best 5 matches). kind=activity:
+    measured activities (standard type, value, unit, assay, document) for target ChEMBL IDs, up to `limit` rows
+    (1..200); `truncated` says when the target has more, and a truncated list must not be quoted as complete.
+    Activities come from different assays: compare only the same standard_type and unit. ChEMBL is CC BY-SA 3.0.
+    Up to 25 items per call. Recorded under outputs/annotation/ like the other lookups."""
+    return await _run_structure("chembl", targets_or_compounds, kind, limit)
 
 
 @server.tool()
