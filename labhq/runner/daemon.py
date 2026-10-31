@@ -1972,9 +1972,10 @@ class Runner:
         return result
 
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
-        refusal = await self._refuse_process_boundary(task)
-        if refusal is not None:
-            return refusal
+        if getattr(self, "process_boundary", None) is not None:
+            refusal = await self._refuse_process_boundary(task)
+            if refusal is not None:
+                return refusal
         refusal = await self._refuse_unprotected_environment(task)
         if refusal is not None:
             return refusal
@@ -2152,9 +2153,10 @@ class Runner:
                 "작업 폴더 밖이라 쓰기는 평소처럼 승인을 거칠 수 있습니다.")
 
     async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
-        refusal = await self._refuse_process_boundary(task)
-        if refusal is not None:
-            return refusal
+        if getattr(self, "process_boundary", None) is not None:
+            refusal = await self._refuse_process_boundary(task)
+            if refusal is not None:
+                return refusal
         refusal = await self._refuse_unprotected_environment(task)
         if refusal is not None:
             return refusal

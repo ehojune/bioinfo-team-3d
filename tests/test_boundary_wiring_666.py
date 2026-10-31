@@ -3,6 +3,7 @@ import asyncio
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -116,6 +117,14 @@ async def test_default_runner_reaches_existing_gate(monkeypatch):
         await instance.run_task(Task(agent_id="worker", prompt="offline"))
     producer.assert_not_called()
     instance.emit_all.assert_not_called()
+
+
+@pytest.mark.parametrize("entry", ["run_task", "_run_task"])
+async def test_legacy_runner_double_without_boundary_reaches_existing_gate(entry):
+    instance = SimpleNamespace(_refuse_unprotected_environment=AsyncMock(
+        side_effect=RuntimeError("existing gate reached")))
+    with pytest.raises(RuntimeError, match="existing gate reached"):
+        await getattr(Runner, entry)(instance, Task(agent_id="worker", prompt="offline"))
 
 
 async def test_cancellation_during_refusal_does_not_start_task():

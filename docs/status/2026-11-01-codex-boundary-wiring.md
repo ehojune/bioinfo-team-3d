@@ -7,7 +7,7 @@
 - 실제 보호·인증 cleanup·engine/provider 호출은 미검증입니다.
 
 ## 테스트 결과
-- `python -m pytest tests/test_boundary_wiring_666.py tests/test_boundary_observer.py tests/test_process_boundary.py tests/test_cli_exit_evidence.py tests/test_runner_env_inputs_674.py -q`: 199 passed, 10 skipped, 1 xfailed.
+- `python -m pytest tests/test_boundary_wiring_666.py tests/test_recruit_disabled_static.py tests/test_boundary_observer.py tests/test_process_boundary.py tests/test_cli_exit_evidence.py tests/test_runner_env_inputs_674.py -q`: 215 passed, 10 skipped, 1 xfailed, 7 subtests passed. 기존 경계 설정이 없는 runner double도 기존 gate를 유지합니다.
 - `scripts.ci_selection.validate_profile()`: 새 테스트 inventory 미등록으로 실패.
 - `scripts/check_public.sh` 통과. `test_ci_boundary_preview.py`: 59 passed, 1 failed(같은 inventory 미등록).
 - `notes_index.py --validate`: 배정된 status 파일명에 HHMM이 없어 실패. 최종 head CI·리뷰는 PR 댓글에서 추적합니다.
