@@ -498,3 +498,74 @@ async def test_an_option_in_prefix_args_refuses_a_read_only_run(tmp_path, monkey
     assert len(spawned) == 2
     pair = tuple(spawned[1][i:i + 2] for i in range(len(spawned[1]) - 1))
     assert ("cli.js", flag) in pair, "an ordinary step keeps the PI's launcher"
+
+
+# ---- #1055: a read-only run keeps labhq_annot for an explicit, narrow list of tools ----
+
+def _annot_staff(engine=Engine.codex, **fields):
+    base = dict(id="reviewer", name="Reviewer", role="r", engine=engine, builtin_mcp=["annot"],
+                annot_tools=["pdb", "chembl"])
+    return AgentSpec(**{**base, **fields})
+
+
+@pytest.mark.parametrize("engine, servers", [(Engine.codex, ["annot"]), (Engine.claude_code, ["approval", "annot"])])
+def test_a_read_only_run_keeps_only_the_annot_tools_that_are_named_and_allowed(engine, servers):
+    from labhq.adapters import read_only_profile
+
+    profile = read_only_profile(_annot_staff(engine, annot_tools=["pdb", "fulltext", "chembl", "alphagenome"]))
+    assert profile.builtin_mcp == servers and profile.annot_tools == ["pdb", "chembl"]
+    assert profile.mcp == [] and profile.plugin_dirs == [] and not profile.allow_skills, "no other channel opens"
+
+
+@pytest.mark.parametrize("fields", [
+    {"annot_tools": None}, {"annot_tools": []}, {"annot_tools": ["fulltext", "alphagenome"]}, {"builtin_mcp": []},
+    {"builtin_mcp": ["approval"]},
+])
+def test_a_read_only_run_without_an_allowed_explicit_list_gets_no_annot_server(fields):
+    from labhq.adapters import read_only_profile
+
+    profile = read_only_profile(_annot_staff(**fields))
+    assert "annot" not in profile.builtin_mcp and profile.annot_tools is None
+
+
+def test_the_science_reviewer_keeps_pdb_and_chembl_in_a_read_only_run():
+    """The reason for #1055: its yaml named the tools, and the read-only profile used to erase them."""
+    import yaml
+
+    from labhq.adapters import read_only_profile
+
+    spec = AgentSpec.model_validate(yaml.safe_load((Path(__file__).resolve().parents[1] / "agents/core/sci_reviewer.yaml")
+                                                   .read_text(encoding="utf-8")))
+    profile = read_only_profile(spec)
+    assert "annot" in profile.builtin_mcp and profile.annot_tools == ["pdb", "chembl"]
+
+
+def test_the_runner_mounts_annot_in_a_read_only_run_and_the_mismatch_check_accepts_exactly_that(tmp_path):
+    from labhq.adapters import read_only_profile
+    from labhq.adapters.read_only import read_only_mismatch
+
+    runner = _runner(tmp_path)
+    profile = read_only_profile(_annot_staff())
+    servers = runner._mcp_servers(profile, {}, allow_ask=False)
+    assert [s.name for s in servers] == ["labhq_annot"] and servers[0].env["LABHQ_ANNOT_TOOLS"] == "pdb,chembl"
+    assert read_only_mismatch(profile, servers) is None
+    widened = servers[0].model_copy(update={"env": {**servers[0].env, "LABHQ_ANNOT_TOOLS": "*"}})
+    assert read_only_mismatch(profile, [widened]) is not None, "an unrestricted server never runs read-only"
+    other = servers[0].model_copy(update={"name": "labhq_hpc", "args": ["-m", "labhq.tools.hpc_mcp"]})
+    assert read_only_mismatch(profile, [*servers, other]) is not None
+    bare = read_only_profile(_annot_staff(annot_tools=None))
+    assert read_only_mismatch(bare, servers) is not None, "a file without the list may not run the annot server"
+
+
+def test_a_sender_cannot_widen_the_annot_tools_of_a_read_only_run(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from labhq.adapters import read_only_profile
+
+    runner = _runner(tmp_path)
+    staff = _annot_staff()
+    runner.registry = SimpleNamespace(get=lambda agent_id: staff)
+    sender = {"builtin_mcp": ["annot", "approval", "hpc"], "annot_tools": ["fulltext", "pdb", "alphagenome"]}
+    task = Task(agent_id="reviewer", request_id="r", prompt="q", meta={"kind": "review", "agent_overrides": sender})
+    resolved = runner._resolve_agent(task)
+    assert read_only_profile(resolved).annot_tools == ["pdb", "chembl"], "the registry spec decides, not the sender"
