@@ -1,5 +1,9 @@
 pr: 1080
 rows:
+  - sha: 427807f
+    at: "2026-10-31 14:11"
+    summary: "ASCII 출력 환경에서도 fixture 계획 오류를 JSON으로 반환합니다."
+    text: "Preserve fixture JSON on legacy output encodings"
   - sha: 8e7e601
     at: "2026-10-31 14:06"
     summary: "fixture 계획의 offline 검사와 보호 검증 한계를 manual에 안내합니다."
