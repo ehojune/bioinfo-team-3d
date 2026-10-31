@@ -745,7 +745,7 @@ runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니�
 | 🦝 너구리 분석가 | `analyst` | 분석 설계·실행 | Claude Code / opus | — | HPC* |
 | 🐙 문어 엔지니어 | `engineer` | 파이프라인·도구·테스트 | Codex / gpt-6.1-sol | workspace-write | 웹 disabled·HPC* |
 | 🦔 고슴도치 Data QC | `qc_reviewer` | PASS/WARN/FAIL QC | Claude Code / sonnet | — | HPC* |
-| 🐢 거북이 과학 리뷰어 | `sci_reviewer` | 3기준 교차 리뷰 | Codex / gpt-6-astra | 자기 outputs/·.tmp/만 쓰기 | live 웹 |
+| 🐢 거북이 과학 리뷰어 | `sci_reviewer` | 3기준 교차 리뷰 | Codex / gpt-6-astra | 자기 outputs/·.tmp/만 쓰기 | live 웹, `labhq_annot`의 `pdb`·`chembl` |
 | 카피바라 인사팀 | `recruiter` | Paper2Agent 변환·검증 | Claude Code / opus | — | Skill·Agent |
 | 🦁 사자 단독 처리 | `solo` | 한 요청을 계획부터 보고까지 단독 처리 | 로컬 설정 | 로컬 설정 | 로컬 설정 |
 | 🐹 시설팀 | `facilities` | 환경 오류 진단·PI 조치 안내 | Codex / gpt-6.1-sol | read-only | 전달된 진단 근거만 |
@@ -790,7 +790,7 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 
 ### 공개 자원 조회 도구
 
-`labhq_annot`은 변이·영역·유전자와 논문을 공개 DB에서 조회하는 내장 MCP입니다(#435, #697, #720, #744). `builtin_mcp`에 `annot`이 있는 직원(analyst·bioinfo-agent·biologist·lit_scout)에게 붙고, 이어 묻기·상담 같은 읽기 전용 실행에는 붙지 않습니다.
+`labhq_annot`은 변이·영역·유전자와 논문을 공개 DB에서 조회하는 내장 MCP입니다(#435, #697, #720, #744). `builtin_mcp`에 `annot`이 있는 직원(analyst·bioinfo-agent·biologist·lit_scout, 그리고 도구를 좁힌 chief_of_staff·sci_reviewer)에게 붙습니다. 이어 묻기·상담·리뷰 같은 읽기 전용 실행에는 기본으로 붙지 않고, 직원 파일이 `annot_tools`에 명시한 도구 중 읽기 전용에 허용된 `pdb`·`chembl`만 예외로 붙습니다. 지금 이 예외를 받는 직원은 sci_reviewer입니다.
 
 직원 파일의 `annot_tools`로 그 직원이 받는 도구를 좁힐 수 있습니다(#1200). 없으면 서버의 도구를 전부 줍니다. `annot_tools: [fulltext, unpaywall]`처럼 이름을 적으면 그 도구만 주고, 빈 목록 `[]`은 하나도 주지 않습니다. 서버가 모르는 이름이 있으면 `labhq_annot`이 시작하지 않아 오타가 도구를 조용히 열거나 닫지 못합니다. 엔진과 관계없이 서버가 적용하고, 직원 명단(CSO가 계획에 쓰는 글)에도 실제로 받는 도구만 나옵니다. `sci_reviewer`(과학 리뷰어)는 `pdb`와 `chembl`만 받습니다(#1055). 구조·화합물 주장을 확인할 때 셸에서 RCSB·ChEMBL을 직접 부르지 않고 이 도구로 조회해야 요청 조회 한도에 세어지고 원본 응답이 남습니다. 도구를 주는 것이 셸 HTTP를 막는 것은 아닙니다(그 차단은 별도 작업). 기본 `chief_of_staff`는 문헌 도구 7개(`fulltext`, `key_fulltext`, `citation_chase`, `preprints`, `openalex_works`, `crossref_doi`, `unpaywall`)만 받으며, 새 조회 도구가 생겨도 목록에 넣기 전에는 닫혀 있습니다. 읽기 전용 실행(리뷰·이어 묻기·상담)은 기본으로 `labhq_annot`을 받지 않습니다. 예외는 하나입니다. 직원 파일이 `builtin_mcp`에 `annot`을 적고 `annot_tools`에 이름을 명시했을 때, 그중 읽기 전용에 허용된 도구(`pdb`, `chembl`)만 남습니다(`READ_ONLY_ANNOT_TOOLS`, #1055). 직원 파일의 목록은 이 허용 목록을 좁히기만 하고 넓히지 못하며, 보내는 쪽의 override로도 바뀌지 않습니다. 허용 목록을 넓히는 것은 코드에서 따로 정하는 일입니다. runner가 서버에 넘기는 환경 변수 `LABHQ_ANNOT_TOOLS`(`*`은 제한 없음)는 직접 설정하지 않습니다.
 
