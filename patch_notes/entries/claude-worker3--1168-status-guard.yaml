@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: '718f823'
+  at: 2026-10-31 15:10
+  text: _set_status가 되살리는 값(running, waiting_for_runner)을 요청이 cancelled이거나 cancelling(취소 기록이 아직 커밋 중)이면 쓰지 않는다. resume_when_ready는 agents를 기다린 뒤에도 취소를 다시 확인한다. run_request의 except Exception은 취소됐거나 취소 중이면 failed 기록을 만들지 않는다. failed 요청을 같은 id로 다시 이어 가는 모델 거절 재시도는 그대로 통과한다
+  summary: 취소가 끼어든 뒤 늦게 도착한 resume이나 오류가 취소된 요청을 되살리거나 실패로 덮던 틈을 닫습니다.
