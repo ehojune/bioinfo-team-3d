@@ -22,6 +22,7 @@
     "tests/test_approval_fatigue.py",
     "tests/test_approval_timeout.py",
     "tests/test_ask.py",
+    "tests/test_ask_early_answer_1168.py",
     "tests/test_ask_policy.py",
     "tests/test_ask_review3.py",
     "tests/test_ask_review4.py",
