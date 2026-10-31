@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +37,20 @@ def test_missing_conflicts_unknown_and_wrong_types():
     for expected in ('owner: missing', 'must be distinct', 'network:', 'interop:',
                      'missing vm', 'expected string array', 'unknown'):
         assert expected in errors
+
+
+def test_cli_reports_unicode_key_on_ascii_stdout(tmp_path):
+    p = plan()
+    p['추가'] = 'unknown'
+    source = tmp_path / 'plan.json'
+    source.write_text(json.dumps(p, ensure_ascii=False), encoding='utf-8')
+    script = Path(__file__).resolve().parents[1] / 'scripts' / 'boundary_fixture_plan.py'
+    proc = subprocess.run([sys.executable, str(script), str(source)], capture_output=True,
+                          env={**os.environ, 'PYTHONIOENCODING': 'ascii'})
+    assert proc.returncode == 1
+    result = json.loads(proc.stdout)
+    assert result['protection'] == 'UNVERIFIED'
+    assert any('추가' in issue and 'unknown' in issue for issue in result['issues'])
 
 
 def test_expired_and_bad_digest():

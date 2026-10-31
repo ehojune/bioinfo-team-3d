@@ -93,7 +93,7 @@ def main():
         result = validate(plan)
     except (OSError, UnicodeError, ValueError) as exc:
         result = {'plan_valid': False, 'protection': 'UNVERIFIED', 'issues': [f'input: {exc}']}
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps(result, ensure_ascii=True, indent=2))
     return 0 if result['plan_valid'] else 1
 
 
