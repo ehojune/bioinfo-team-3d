@@ -698,6 +698,29 @@ async def test_owner_and_allowlist_cannot_be_overridden(service, body, status):
     assert response.status_code == status and not seen
 
 
+@pytest.mark.parametrize("rule,allowed", [
+    ("mcp__labhq_annot__alphagenome_atlas", False),
+    ("mcp__labhq_annot", False),
+    ("mcp__labhq_annot__*", False),
+    ("mcp__*__alphagenome*", False),
+    ("*", False),
+    ("mcp__labhq_annot__alphagenome", True),
+    ("mcp__labhq_annot__alphagenome_variant", True),
+    ("mcp__labhq_annot__pubmed*", True),
+])
+async def test_broker_grant_respects_atlas_deny_rules(service, rule, allowed):
+    ctx, broker, service, token, key, seen = service
+    await service.finish(ctx.task.id)
+    ctx.agent.disallowed_tools = [rule]
+    service.register(ctx, key)
+    assert (ctx.task.id in service.grants) is allowed
+    async with client(broker) as c:
+        response = await c.post("/annot/atlas", headers={"X-Labhq-Token": token},
+                                json={"variants": ["chr1:100:A:G"]})
+    assert response.status_code == (200 if allowed else 403)
+    assert seen == ([key] if allowed else [])
+
+
 async def test_token_admission_and_finished_task_refuse_before_sdk(service):
     ctx, broker, service, token, _, seen = service
     async with client(broker) as c:
@@ -956,6 +979,37 @@ def test_installed_codex_sandbox_shell_has_no_key(tmp_path, monkeypatch):
     for path in tmp_path.rglob("*"):
         if path.is_file():
             assert key.encode() not in path.read_bytes()
+
+
+@pytest.mark.parametrize("denied", [False, True])
+async def test_runner_atlas_availability_and_direct_http_obey_deny(service, tmp_path, monkeypatch, denied):
+    from labhq.models import TaskResult
+    from tests.test_observed_outputs import _runner, _task
+    _, _, _, _, key, seen = service
+    monkeypatch.setenv(atlas.KEY_ENV, key)
+    runner = _runner(tmp_path / "runner", monkeypatch, lambda _: None, engine=Engine.codex)
+    task = _task()
+    agent = runner._resolve_agent(task)
+    agent.builtin_mcp = ["annot"]
+    agent.disallowed_tools = ["mcp__labhq_annot__alphagenome*"] if denied else []
+    contexts = []
+
+    class Staff:
+        async def run(self, ctx):
+            contexts.append(ctx)
+            assert ctx.env[ENABLED_ENV] == ("0" if denied else "1")
+            assert (ctx.task.id in runner.annot_broker.grants) is not denied
+            async with client(runner.broker) as c:
+                response = await c.post("/annot/atlas", headers={"X-Labhq-Token": ctx.env["LABHQ_BROKER_TOKEN"]},
+                                        json={"variants": ["chr1:100:A:G"]})
+            assert response.status_code == (403 if denied else 200)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="done")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *a: Staff())
+    result = await runner.run_task(task)
+    assert result.ok and contexts
+    assert seen == ([] if denied else [key])
+    assert not runner.annot_broker.grants and not runner.broker.identities
 
 
 @pytest.mark.parametrize("outcome", ["ok", "error", "cancelled", "cleanup_cancelled"])

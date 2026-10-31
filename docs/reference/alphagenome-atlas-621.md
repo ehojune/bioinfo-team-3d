@@ -2,12 +2,12 @@
 
 Lookup-only implementation evidence, checked 2026-10-31. Live Atlas access is **UNVERIFIED** pending PI's key-location answer.
 
-Integration hold: manuals are owned by another worker. The runner retains `ALPHAGENOME_API_KEY`; staff CLI/MCP environments receive only a task-bound broker capability and availability flag. The fixed `/annot/atlas` operation accepts Atlas query parameters, never caller URLs, commands or output roots.
+Integration hold: cross-engine key aliases still reach staff environments (P1); `labhq/adapters/base.py` needs ownership before repair. Manuals remain separately owned. The fixed `/annot/atlas` operation accepts query parameters, never caller URLs, commands or output roots.
 
 | Contract | Implementation |
 |---|---|
 | Credentials | Runner/expanded engine/task precedence. Remove keys and aliases from staff environments; refuse key-bearing launch overrides and literal staff config copies. Use environment references. Doctor checks active Atlas staff engines, including force_engine, with the runner's resolver; partial key availability warns. Task overrides and live access remain unverified. |
-| Roles | chief_of_staff denies Atlas alongside the existing variant/region tools; literature tools remain available. |
+| Roles | Exact/wildcard Atlas deny rules gate both availability and broker grants, including direct HTTP calls. Unrelated denies preserve Atlas access; literature tools remain available. |
 | Inputs | GRCh38 SNVs, 1–10 per call; scorer names 1–10 (default `RNA_SEQ`); ontology CURIEs and Ensembl gene IDs up to 20 each. No interval/bulk or automatic inference fallback. |
 | Output | Raw scores, available quantiles, signed direction, tissue/gene metadata, explicit precomputed source and usage terms. Empty filtered scores do not establish no effect. AVI is supported only if the service exposes that requested scorer; its live name/availability is unverified. |
 | Bounds | One active Atlas query per task; 16 KiB request cap, 300-second SDK wait, 20-minute step deadline. Task finish, HTTP disconnect and timeout cancel the operation and disable later RPCs. An already-running SDK RPC may finish on its bounded daemon thread. At most 1 million score cells, 1,000 saved rows and 100 displayed per variant. |
@@ -22,6 +22,8 @@ Integration hold: manuals are owned by another worker. The runner retains `ALPHA
 - [Official README terms and citation](https://github.com/google-deepmind/alphagenome#terms): Atlas API information is non-commercial, not for training other ML models or clinical decisions, subject to explicit permitted-artifact exceptions. [Full terms](https://alphagenome.google/terms) require a script-rendered page; its text was not independently extracted. Citation: Cheng et al. 2026, [doi:10.64898/2026.09.16.26363192](https://doi.org/10.64898/2026.09.16.26363192).
 
 ## Credential boundary verification (rev7)
+
+Rev10: deny regression was 5 failed/3 passed before repair; Atlas/literature/doctor/adapter/runner-env tests now pass (306 passed, 12 skipped). Fake-only P1 reproduction confirms that collecting every engine key in daemon alone does not stop `Adapter.staff_env()` from restoring a different engine's inherited alias. Resolve all engine environments in both adapter credential checks and daemon before claiming this boundary is complete.
 
 - `tests/test_annot_alphagenome_atlas.py`: real MCP Python child → loopback HTTP → runner SDK fixture receives the fake key. Child environments, argv, responses and generated files contain no key. Direct PowerShell child tests cover parent/engine/task sources, case variants, aliases and empty overrides. Broker regressions share this inventoried module; no Windows coverage inventory change is needed.
 - `shell_environment_policy.set`, engine `extra_args`, MCP env and expanded prefix restoration are refused before generated files or process launch. Identity spoofing, arbitrary operation fields, admission, busy requests, disconnect, deadline and runner success/error/cancel cleanup have regressions.

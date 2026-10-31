@@ -68,7 +68,7 @@ from ..util import INPUT_STEP_ID, output_relpath, short, tool_input_fingerprint
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
 from .approvals import Broker
-from .annot_broker import AnnotBroker, ENABLED_ENV as ATLAS_ENABLED_ENV, refuse_credential_copy
+from .annot_broker import AnnotBroker, ENABLED_ENV as ATLAS_ENABLED_ENV, atlas_allowed, refuse_credential_copy
 from ..tools.annot_alphagenome_atlas import credential, credentials, without_credentials
 from .codex_sandbox import SandboxWatch
 from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
@@ -2519,7 +2519,7 @@ class Runner:
             }
             env.update(environment_env)
             env = without_credentials(env, atlas_secrets)
-            env[ATLAS_ENABLED_ENV] = "1" if atlas_key and not read_only and "annot" in agent.builtin_mcp else "0"
+            env[ATLAS_ENABLED_ENV] = "1" if atlas_key and atlas_allowed(agent, read_only=read_only) else "0"
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
             if self.broker.lookup_admission is not None:

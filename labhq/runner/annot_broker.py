@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
 import json
 from pathlib import Path
 
@@ -18,6 +19,13 @@ from ..tools.external_wait import LookupTimeout, run_lookup
 
 ENABLED_ENV = "LABHQ_ATLAS_BROKER_ENABLED"
 _FIELDS = {"variants", "requested_scorers", "ontology_terms", "gene_ids", "top", "assembly"}
+
+
+def atlas_allowed(agent, *, read_only: bool) -> bool:
+    """Enforce role policy at the credential boundary, including direct HTTP callers."""
+    return not read_only and "annot" in agent.builtin_mcp and not any(
+        rule == "mcp__labhq_annot" or fnmatchcase("mcp__labhq_annot__alphagenome_atlas", rule)
+        for rule in agent.disallowed_tools)
 
 
 def refuse_credential_copy(settings, secrets: set[str]) -> None:
@@ -104,7 +112,7 @@ class AnnotBroker:
                     grant.pending = None
 
     def register(self, ctx, key: str) -> None:
-        if key and not ctx.read_only and "annot" in ctx.agent.builtin_mcp:
+        if key and atlas_allowed(ctx.agent, read_only=ctx.read_only):
             self.grants[ctx.task.id] = _Grant(ctx, key)
 
     async def finish(self, task_id: str) -> None:
