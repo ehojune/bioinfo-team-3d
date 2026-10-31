@@ -1,6 +1,9 @@
 import json
 import subprocess
 import sys
+import io
+import hashlib
+import hmac
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -378,3 +381,188 @@ def test_broker_timeout_requires_distinct_reason_code():
     assert "BROKER_TIMEOUT" in receipt.unsupported_reasons
     assert "broker diagnostic preparation or launch failed" not in receipt.unsupported_reasons
     assert receipt.cleanup == "broker_closed_socket_absent; descendants_unverified"
+
+
+def lifecycle_stream(events, **overrides):
+    options = dict(run_id="12345678-1234-4234-8234-123456789abc", nonce="fixture-nonce",
+                   key_id="fixture-producer", key=b"fixture-only-producer-key",
+                   identity_reader=lambda pid: {"pid": pid, "birth_id": "fixture-birth"},
+                   emit=events.append)
+    options.update(overrides)
+    return boundary.DiagnosticLifecycleEvents(**options)
+
+
+def test_lifecycle_matches_observer_f54642c3_interoperability_vector():
+    events = []
+    stream = lifecycle_stream(events, run_id="fixture-run")
+    stream._claim_run("fixture-run")
+    stream._launch(1234)
+    stream._termination()
+    assert [event["auth"]["tag"] for event in events] == [
+        "6757471661c5aa8e249183960730c87bae2466ebccf5a6912121e7568ffb6ec3",
+        "3deb53adf003f8508ae31419504aecd068fe9db1b4b581eb0d3ee8fd6db4a9cc"]
+    for sequence, event in enumerate(events, 1):
+        assert event == dict(version=1, run_id="fixture-run", nonce="fixture-nonce",
+                             sequence=sequence, kind="launch" if sequence == 1 else "termination",
+                             identity={"pid": 1234, "birth_id": "fixture-birth"},
+                             auth={"key_id": "fixture-producer", "algorithm": "hmac-sha256",
+                                   "tag": event["auth"]["tag"]})
+    with pytest.raises(ValueError):
+        stream._claim_run("fixture-run")
+    with pytest.raises(ValueError):
+        stream._termination()
+
+
+class FakeEventChild:
+    pid = 1234
+
+    def __init__(self, *, failure=None):
+        self.returncode = None
+        self.stdout, self.stderr = io.BytesIO(), io.BytesIO()
+        self.actions = []
+        self.failure = failure
+
+    def communicate(self, timeout):
+        self.actions.append("communicate")
+        if self.failure in ("timeout", "wait"):
+            raise subprocess.TimeoutExpired("synthetic", timeout)
+        self.returncode = 1 if self.failure == "nonzero" else 0
+        return b"", b""
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self):
+        self.actions.append("kill")
+
+    def wait(self, timeout):
+        self.actions.append("wait")
+        if self.failure == "wait":
+            raise subprocess.TimeoutExpired("synthetic", timeout)
+        self.returncode = -9
+        return self.returncode
+
+
+@pytest.mark.parametrize("failure", [None, "nonzero", "timeout", "wait", "identity", "launch_delivery",
+                                    "termination_delivery", "start", "spawn", "ready", "close"])
+def test_broker_opt_in_lifecycle_and_failures(failure):
+    events, order = [], []
+    child = FakeEventChild(failure=failure)
+
+    def emit(event):
+        order.append(event["kind"])
+        if failure == event["kind"] + "_delivery":
+            raise OSError("synthetic delivery failure")
+        if event["kind"] == "termination":
+            assert child.returncode is not None
+        events.append(event)
+
+    def identity(pid):
+        if failure == "identity":
+            raise ValueError("missing identity")
+        return {"pid": pid, "birth_id": "fixture-birth"}
+
+    def start():
+        order.append("start")
+        if failure == "start":
+            raise OSError("synthetic start failure")
+
+    def ready(*_):
+        order.append("ready")
+        if failure == "ready":
+            raise ValueError("synthetic readiness failure")
+
+    def close():
+        order.append("close")
+        if failure == "close":
+            raise OSError("synthetic close failure")
+
+    stream = lifecycle_stream(events, identity_reader=identity, emit=emit)
+    with patch.object(boundary, "_broker_prerequisites", return_value=True), \
+         patch.object(boundary.shutil, "which", return_value="bwrap"), \
+         patch.object(boundary.Path, "lstat", return_value=SimpleNamespace(st_mode=0o140000)), \
+         patch.object(boundary.subprocess, "run", side_effect=AssertionError("legacy runner used")), \
+         patch.object(boundary.subprocess, "Popen", return_value=child,
+                      side_effect=OSError("synthetic spawn failure") if failure == "spawn" else None) as popen:
+        receipt = boundary.diagnostic_broker_probe(
+            lambda *_: SimpleNamespace(start=start, close=close), on_ready=ready,
+            run_id=stream._run_id, lifecycle=stream, timeout=1)
+    assert order[-1] == "close"
+    assert receipt.seal_status == "unsealed" and "descendants_unverified" in receipt.cleanup
+    assert receipt.child_identity is None and receipt.supervisor_identity is None
+    assert set(receipt.to_dict()) == {
+        "version", "run_id", "snapshot_digest", "runtime_digest", "policy_digest",
+        "supervisor_identity", "child_identity", "namespace_identities", "preparation",
+        "launch", "cleanup", "seal_status", "unsupported_reasons"}
+    if failure in ("start", "ready"):
+        popen.assert_not_called()
+        assert not events and receipt.launch == "not_started"
+    elif failure == "spawn":
+        assert not events and receipt.launch == "failed"
+    else:
+        assert child.stdout.closed and child.stderr.closed
+        assert popen.call_args.kwargs["close_fds"] is True
+        if failure in ("identity", "launch_delivery"):
+            assert not events and child.actions == ["kill", "wait"]
+        elif failure in ("wait", "termination_delivery"):
+            assert [event["kind"] for event in events] == ["launch"]
+        else:
+            assert [event["kind"] for event in events] == ["launch", "termination"]
+            assert [event["sequence"] for event in events] == [1, 2]
+            assert all(event["run_id"] == receipt.run_id for event in events)
+            assert events[0]["identity"] == events[1]["identity"]
+        if failure in ("timeout", "wait"):
+            assert child.actions == ["communicate", "kill", "wait"]
+            assert "BROKER_TIMEOUT" in receipt.unsupported_reasons
+        assert receipt.launch == ("exited_0" if failure in (None, "close") else "failed")
+    if failure == "close":
+        assert receipt.cleanup.startswith("failed")
+
+
+@pytest.mark.parametrize("identity", [None, {}, {"pid": True, "birth_id": "x"},
+                                    {"pid": 0, "birth_id": "x"}, {"pid": 1235, "birth_id": "x"},
+                                    {"pid": 1234, "birth_id": ""},
+                                    {"pid": 1234, "birth_id": "x", "trusted": True}])
+def test_lifecycle_rejects_invalid_identity_without_event(identity):
+    events = []
+    stream = lifecycle_stream(events, identity_reader=lambda _: identity)
+    stream._claim_run(stream._run_id)
+    with pytest.raises(ValueError):
+        stream._launch(1234)
+    assert not events
+
+
+@pytest.mark.parametrize("options", [{"key": None}, {"key": b""}, {"nonce": ""},
+                                    {"key_id": ""}, {"identity_reader": None}, {"emit": None}])
+def test_lifecycle_requires_authentication_and_identity_inputs(options):
+    with pytest.raises(ValueError):
+        lifecycle_stream([], **options)
+
+
+def test_lifecycle_wrong_run_and_reuse_refused_before_preparation():
+    stream = lifecycle_stream([])
+    with patch.object(boundary, "_broker_prerequisites", side_effect=AssertionError("preparation")):
+        with pytest.raises(ValueError, match="another run"):
+            boundary.diagnostic_broker_probe(lambda *_: None, lifecycle=stream,
+                                            run_id="22345678-1234-4234-8234-123456789abc")
+    with patch.object(boundary, "_broker_prerequisites", return_value=False):
+        receipt = boundary.diagnostic_broker_probe(lambda *_: None, lifecycle=stream, run_id=stream._run_id)
+    assert receipt.launch == "not_started"
+    with pytest.raises(ValueError, match="consumed"):
+        boundary.diagnostic_broker_probe(lambda *_: None, lifecycle=stream, run_id=stream._run_id)
+
+
+def test_lifecycle_sink_mutation_cannot_change_pinned_termination_identity():
+    events = []
+    def emit(event):
+        events.append(deepcopy(event))
+        event["identity"]["birth_id"] = "mutated"
+    stream = lifecycle_stream(events, emit=emit)
+    stream._claim_run(stream._run_id)
+    stream._launch(1234)
+    stream._termination()
+    assert events[0]["identity"] == events[1]["identity"]
+    for event in events:
+        auth = event.pop("auth")
+        canonical = json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        assert hmac.compare_digest(auth["tag"], hmac.new(b"fixture-only-producer-key", canonical, hashlib.sha256).hexdigest())

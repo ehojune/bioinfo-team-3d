@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import json
 import hashlib
+import hmac
 import shutil
 import stat
 import subprocess
@@ -246,11 +247,94 @@ def _broker_prerequisites():
     return os.name == "posix" and bool(shutil.which("bwrap")) and os.path.isfile("/usr/bin/python3")
 
 
-def diagnostic_broker_probe(broker_factory, *, timeout=10, on_ready=None, run_id=None):
+class DiagnosticLifecycleEvents:
+    """One-use synthetic event signer; injected identity and key confer no trust.
+
+    Implements the offline v1 contract pinned by observer commit f54642c3.
+    ``identity_reader(pid)`` must return exactly pid and an incarnation birth_id.
+    ``emit(event)`` must return after delivery or raise on failure.
+    """
+
+    def __init__(self, *, run_id, nonce, key_id, key, identity_reader, emit):
+        if not all(isinstance(value, str) and value for value in (run_id, nonce, key_id)):
+            raise ValueError("event run_id, nonce and key_id must be nonempty strings")
+        if not isinstance(key, bytes) or not key:
+            raise ValueError("event key must be nonempty bytes")
+        if not callable(identity_reader) or not callable(emit):
+            raise ValueError("identity_reader and emit are required")
+        self._run_id, self._nonce, self._key_id = run_id, nonce, key_id
+        self._key, self._identity_reader, self._emit = key, identity_reader, emit
+        self._state = "new"
+        self._identity = None
+
+    def _claim_run(self, run_id):
+        if self._state != "new" or run_id != self._run_id:
+            raise ValueError("event stream is consumed or belongs to another run")
+        self._state = "claimed"
+
+    def _launch(self, pid):
+        if self._state != "claimed":
+            raise ValueError("event stream not claimed")
+        self._state = "failed"
+        identity = self._identity_reader(pid)
+        if (not isinstance(identity, dict) or set(identity) != {"pid", "birth_id"}
+                or type(identity["pid"]) is not int or identity["pid"] <= 0
+                or identity["pid"] != pid or not isinstance(identity["birth_id"], str)
+                or not identity["birth_id"]):
+            raise ValueError("invalid process incarnation identity")
+        self._identity = dict(identity)
+        self._send("launch", 1)
+        self._state = "launched"
+
+    def _termination(self):
+        if self._state != "launched":
+            raise ValueError("launch event was not delivered")
+        self._state = "failed"
+        self._send("termination", 2)
+        self._state = "terminated"
+
+    def _send(self, kind, sequence):
+        event = {"version": 1, "run_id": self._run_id, "nonce": self._nonce,
+                 "sequence": sequence, "kind": kind, "identity": dict(self._identity)}
+        payload = json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        event["auth"] = {"key_id": self._key_id, "algorithm": "hmac-sha256",
+                         "tag": hmac.new(self._key, payload, hashlib.sha256).hexdigest()}
+        self._emit(event)
+
+
+def _run_broker_with_events(command, *, timeout, lifecycle):
+    """Record direct-child lifecycle only; never infer descendant cleanup."""
+    child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, close_fds=True)
+    launched = False
+    try:
+        lifecycle._launch(child.pid)
+        launched = True
+        stdout, stderr = child.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+    except BaseException:
+        # Identity, authentication/delivery and timeout failures still reap our child.
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=timeout)
+        raise
+    finally:
+        try:
+            if launched and child.returncode is not None:
+                lifecycle._termination()
+        finally:
+            for pipe in (child.stdout, child.stderr):
+                if pipe is not None:
+                    pipe.close()
+
+
+def diagnostic_broker_probe(broker_factory, *, timeout=10, on_ready=None, run_id=None, lifecycle=None):
     """Exercise a synthetic broker in an unsealed non-model namespace.
 
     The trusted factory must create only a synthetic broker; it receives a
     private directory and the receipt run ID. This is not a protected launch.
+    Optional DiagnosticLifecycleEvents emits synthetic authenticated events,
+    preserving the v1 receipt; no identity source or signing key is trusted here.
     """
     if run_id is None:
         run_id = str(uuid.uuid4())
@@ -263,6 +347,10 @@ def diagnostic_broker_probe(broker_factory, *, timeout=10, on_ready=None, run_id
     receipt = Receipt(1, run_id, None, None, None, None, None, {},
                       "unsupported", "not_started", "not_needed", "unsealed",
                       ["diagnostic only; runtime and storage are unsealed"])
+    if lifecycle is not None:
+        if not isinstance(lifecycle, DiagnosticLifecycleEvents):
+            raise ValueError("lifecycle must be DiagnosticLifecycleEvents")
+        lifecycle._claim_run(run_id)
     bwrap = shutil.which("bwrap")
     if not _broker_prerequisites():
         receipt.unsupported_reasons.append("Linux bubblewrap and /usr/bin/python3 required")
@@ -288,9 +376,12 @@ def diagnostic_broker_probe(broker_factory, *, timeout=10, on_ready=None, run_id
                             "/usr/bin/python3", "-c", _BROKER_CLIENT, receipt.run_id])
             receipt.preparation = "diagnostic_ready"
             try:
-                result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                        stderr=subprocess.PIPE, close_fds=True, timeout=timeout,
-                                        check=False)
+                if lifecycle is None:
+                    result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                            stderr=subprocess.PIPE, close_fds=True, timeout=timeout,
+                                            check=False)
+                else:
+                    result = _run_broker_with_events(command, timeout=timeout, lifecycle=lifecycle)
             except subprocess.TimeoutExpired:
                 receipt.launch = "failed"
                 receipt.unsupported_reasons.append("BROKER_TIMEOUT")
