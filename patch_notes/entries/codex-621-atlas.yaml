@@ -1,6 +1,6 @@
 pr: 1186
 rows:
-  - sha: "0000000"
+  - sha: "d6c7b6f"
     at: "2026-10-31 20:02"
     summary: "키 보호 회귀를 기존 Atlas 시험 모듈에 모아 Windows 검사 범위에 포함합니다."
     text: "test: keep broker regressions in the inventoried Atlas module"
