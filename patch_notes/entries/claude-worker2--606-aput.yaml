@@ -1,0 +1,5 @@
+rows:
+- sha: "d5375d8"
+  at: 2026-10-31 16:16
+  text: runner 메시지(task 수락·결과) 처리의 동기 store 쓰기와 PI 번역 예약을 event loop 밖에서 commit한다 (#606).
+  summary: 직원 작업의 수락·결과를 기록하는 동안 서버가 디스크 쓰기를 기다리며 멈추던 시간을 줄였습니다.
