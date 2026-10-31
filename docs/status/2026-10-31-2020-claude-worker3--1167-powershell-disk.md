@@ -20,3 +20,10 @@
 ## manual (rev2)
 - manual 한·영의 `셸 다운로드·압축 해제 확인`(#678) 단락에 PowerShell 도구의 확인을 적었다. 읽는 cmdlet과 매개변수, PowerShell 문법으로 읽는다는 점, 읽지 않는 경우(파일로 가지 않는 `iwr`, `$` 변수 경로), 사전 승인 규칙을 gate로 돌리는 것.
 - "적용하지 못하는 곳"에서 PowerShell의 `Invoke-WebRequest`·`Expand-Archive`를 빼고(이제 적용), `Copy-Item`·`robocopy`·`Invoke-Expression`을 넣었다. "접두 규칙이 체인 전체를 미리 허용하는 경우" 항목은 Claude Code가 체인을 명령마다 나눠 검사한다는 #1163 결과에 맞춰 뺐다. main을 반영했고 문서 gate가 풀렸다.
+
+## 리뷰 후 수정 (rev3)
+- P1(`disk_space.py:563`): 출력 경로와 무관한 `$` 변수 때문에 명령 전체를 건너뛰던 것을, 쓰는 경로(`-OutFile`, `-DestinationPath`, `-Destination`)에 변수가 든 경우만 건너뛰게 바꿨다(`_unwritten`). zip 경로가 변수면 크기만 모르고 대상 드라이브는 그대로 검사한다.
+- P1(`disk_space.py:534`): `Expand-Archive`가 대상을 생략하면 현재 폴더로 보고 검사한다(전에는 건너뜀).
+- P2(`disk_space.py:538`): `Start-BitsTransfer`는 `-TransferType Upload`이거나 대상이 URL이면 로컬 폴더를 쓰지 않으므로 검사하지 않는다.
+- P1(patch note, manual): 지적은 manual을 더하기 전 head(`35b9ca9d`)에서 나온 것이고 이 head에는 한·영 manual에 PowerShell 설명이 들어 있다.
+- 시험 10건 추가(+기존 1건을 새 동작에 맞춤). `test_disk_shell_check_678.py` 99 passed, 옛 코드에서는 새 시험이 실패한다.
