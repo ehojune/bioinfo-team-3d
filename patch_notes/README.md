@@ -14,6 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:00 | [`fa5b247`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/fa5b247) | **키 파일이 링크된 폴더 아래에 있어도 키를 설정한 PC에서 조회 도구를 쓰는 직원의 실행이 막히지 않습니다.**<br>Atlas 점검 예외를 labhq가 키 파일 경로를 쓰는 두 곳(비공개 경로 목록·Claude 규칙)에서 가져온다 (#1225 리뷰) |
+| 15:00 | [`c266979`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/c266979) | **키 파일 위치를 확인하는 단계가 테스트 환경의 보호 때문에 멈추지 않고, 확인하지 못한 형태만 예외에서 빠집니다.**<br>Atlas 점검: 테스트 가드가 settings.path를 거절해도 그 형태만 예외에서 뺀다 (#1225 CI) |
+| 14:00 | [`d9546e8`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/d9546e8) | **키 파일 위치를 파일 이름만으로 적어 두어도 키를 덮어쓰는 설정은 그대로 막힙니다.**<br>Atlas 점검 예외: 구분자 있는 절대 경로와 ~ 형태만 두고 규칙 생성 실패는 규칙을 빼 더 엄격하게 한다 (#1225 리뷰) |
+| 13:00 | [`8405949`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/8405949) | **키를 덮어쓰는 설정은 어떤 모양이든 막고, 키 파일의 설정된 위치만 예외로 둡니다. PowerShell 방식으로 키를 덮어쓰려는 설정도 막힙니다.**<br>Atlas 점검의 예외를 설정된 키 파일 경로와 labhq가 그 경로로 만든 규칙으로 좁힌다 (#1225 리뷰 P1) |
+| 12:00 | [`196ac54`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/196ac54) | **AlphaGenome 키를 설정한 PC에서 조회 도구를 쓰는 직원의 실행이 시작 전에 거절되던 문제를 고쳤습니다. 키 파일의 위치만 있어도 키를 덮어쓴 것으로 오해하던 점검이 이제 실제로 키를 덮어쓴 경우만 막습니다.**<br>Atlas 시작 점검: 키 파일 경로가 아니라 환경 변수 이름과 값으로 판정한다 (#1225) |
 | 11:00 | [`abe1eff`](https://github.com/ehojune/bioinfo-team-3d/pull/1223/commits/abe1eff) | **설명서의 직원 도구 표와 조회 도구 소개가 과학 리뷰어의 PDB·ChEMBL 조회와 읽기 전용 예외를 같은 말로 설명합니다.**<br>문서: 직원 표와 labhq_annot 소개문을 리뷰어의 읽기 전용 예외에 맞춘다 (#1055 리뷰 P1) |
 | 10:30 | [`1ccb1af`](https://github.com/ehojune/bioinfo-team-3d/pull/1230/commits/1ccb1af) | manual: 로컬 job 디스크 확인의 크기 모름 동작을 실제대로 적는다 (Refs #1167) |
 | 10:00 | [`9e2bf53`](https://github.com/ehojune/bioinfo-team-3d/pull/1230/commits/9e2bf53) | **매뉴얼에 모든 호출 상한이 센트로 내려간다는 점과 로컬 작업에도 디스크 확인이 붙는다는 점을 적었습니다.**<br>manual 한·영에 호출 상한 센트 내림과 로컬 job 디스크 확인을 적는다 (Refs #1139 #1167) |
