@@ -260,3 +260,8 @@ def test_a_quoted_separator_does_not_split_a_command(tmp_path):
     verdict = check("curl -o out.zip 'https://example.org/a;v=1'", tmp_path, 1.0)
     assert verdict is not None and verdict.action == "ask"
     assert check("echo 'curl -O x; ls", tmp_path, 1.0) is None  # unclosed quote: not read
+
+
+def test_a_hash_inside_a_word_is_not_a_comment(tmp_path):
+    big = (tmp_path / "big").as_posix()
+    assert any(f.startswith(big) for f in folders(f"curl https://example.org/file#frag -o {big}/a", tmp_path))

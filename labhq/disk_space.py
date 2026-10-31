@@ -57,6 +57,7 @@ def _segments(command: str) -> list[list[str]]:
     A line whose quotes do not close is not read at all."""
     operators = "();<>|&" + chr(10)
     lexer = shlex.shlex(command, posix=True, punctuation_chars=operators)
+    lexer.commenters = ""  # bash starts a comment only at a word start; `url#frag -o /x` is one word, not a comment
     lexer.whitespace, lexer.whitespace_split = " " + chr(9) + chr(13), True
     out: list[list[str]] = [[]]
     try:
