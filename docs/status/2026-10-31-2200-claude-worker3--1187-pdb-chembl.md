@@ -39,3 +39,7 @@
 - manual 한·영: 공개 자원 조회 도구 표에 `pdb`·`chembl` 행, 설명 단락. 입력 형식, `truncated`, `answer.raw` 보존, 요청 간격(0.2초·0.5초)과 **공식 한도 미확인**, 캐시(PDB 7일·ChEMBL 버전 키), 라이선스(CC0 1.0·CC BY-SA 3.0), 비서실장 제외.
 - 시험 먼저: 명단이 PDB·ChEMBL을 알리고 제한된 직원에는 알리지 않는 것, manual 한영에 두 도구가 있는 것. 수정 전 둘 다 실패. 관련 203건과 `test_annot_structure.py`·`test_annot_literature.py` 90건 통과.
 - 확인하지 못한 것: RCSB·ChEMBL 공식 호출 한도(공식 문서를 열지 못함, 제3자 목록은 "수치 비공개"), 실제 서비스 호출, 로컬 mcp 1.x에서 `is_error` 오류 2건(CI는 mcp 2.x).
+
+## rev8: main 반영(Atlas 병합 뒤)
+- #1186(AlphaGenome Atlas)이 병합되어 `annot_mcp.py` import 줄과 manual 한·영의 AlphaGenome 항목이 충돌했다. 서버는 `annot_structure`와 `ATLAS_ENABLED_ENV` import를 둘 다 두고, manual은 PDB·ChEMBL 항목에 main의 AlphaGenome 항목을 이어 붙였다.
+- 시험: `test_annot_structure.py`·`test_annot_literature.py`·`test_external_wait_board_676.py`·`test_annot.py`·`test_annot_regulatory.py`·`test_annot_alphagenome_atlas.py`·`test_semantics_actions_run.py`·`test_agent_prompts.py` 363 passed, 4 skipped. 로컬 mcp 1.x의 `is_error` 오류 2건은 이 변경과 무관(CI는 mcp 2.x).
