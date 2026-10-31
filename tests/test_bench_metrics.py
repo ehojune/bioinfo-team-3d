@@ -234,7 +234,7 @@ async def test_labhq_bench_uses_only_its_own_request_and_runner(tmp_path, monkey
     from labhq.runner import daemon
     case, _, _, _ = harness
     hub = case.pop("_harness_hub")
-    monkeypatch.setattr(bench, "free_port", lambda: 43333)  # no socket even with fake server
+    monkeypatch.setattr(bench, "free_ports", lambda n: [43333 + i for i in range(n)])  # no socket even with fake server
     original_runner, instances = daemon.Runner, []
     def make_runner(settings):
         obj = original_runner(settings)
