@@ -41,8 +41,6 @@ def collect_offline_contract(producer, factory, transport, collector, validator,
         return result
     if (run_id, nonce) in consumed:
         return {**result, "contract": "rejected"}
-    # This fixture set is only single-process replay state, not durable authority.
-    consumed.add((run_id, nonce))
     ready_count = 0
     ready_invalid = False
     outcome = "failed"
@@ -82,7 +80,7 @@ def collect_offline_contract(producer, factory, transport, collector, validator,
         verdict = validator.adapt_producer(
             receipt, evidence=evidence, trusted=trusted,
             tags={"producer": tag, "observer": observer_tag},
-            producer_key=producer_key, observer_key=observer_key, consumed=set())
+            producer_key=producer_key, observer_key=observer_key, consumed=consumed)
         result.update(status=verdict.status, contract=verdict.contract,
                       reasons=list(verdict.reasons))
     except Exception:

@@ -645,6 +645,9 @@ def test_offline_collector_and_producer_lifecycle_contract():
     observer = Collector()
     assert run(failed, observer, set())["status"] == "inconclusive"
     assert observer.calls[-1] == ("finish", run_id, nonce, "failed")
+    retry_set = set()
+    assert run(failed, Collector(), retry_set)["status"] == "inconclusive"
+    assert run(transport, Collector(), retry_set)["status"] == "synthetic_only"
     class MissingCollector(Collector):
         def finish(self, rid, n, outcome):
             raise RuntimeError("observation unavailable")
@@ -660,3 +663,57 @@ def test_offline_collector_and_producer_lifecycle_contract():
             del observed["witness"]
             return observed, sign("observer", observed, observer_key)
     assert run(observer=LostProvenance(), consumed=set())["contract"] == "rejected"
+
+
+def test_imported_seal_negative_corpora():
+    from copy import deepcopy
+    import hashlib
+    import importlib.util
+    import json
+    import sys
+
+    root = Path(__file__).parent / "fixtures" / "process_boundary_seal"
+    spec = importlib.util.spec_from_file_location("corpus_validator", root / "validator.py")
+    validator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = validator
+    spec.loader.exec_module(validator)
+    corpus = json.loads((root / "cases.json").read_text(encoding="utf-8"))
+    controls = json.loads((root / "controls.json").read_text(encoding="utf-8"))["cases"]
+
+    def materialize(case):
+        evidence = deepcopy(corpus["positive"])
+        for change in case["changes"]:
+            parent = evidence
+            for part in change["path"][:-1]:
+                parent = parent[part]
+            key = change["path"][-1]
+            if change.get("remove"):
+                del parent[key]
+            elif "insert" in change:
+                parent.insert(key, deepcopy(change["insert"]))
+                for i, event in enumerate(parent):
+                    event["sequence"] = i
+            else:
+                parent[key] = deepcopy(change["value"])
+        return evidence
+
+    for case in corpus["cases"]:
+        verdict = validator.validate(materialize(case), deepcopy(corpus["trusted"]))
+        assert (verdict.contract, verdict.status) == (case["expected"]["contract"], case["expected"]["status"]), case["id"]
+        assert (case["expected"]["reason"] in verdict.reasons if case["expected"]["reason"] else not verdict.reasons), case["id"]
+        assert verdict.protection == "unverified"
+    for case in controls:
+        for rerecord in (False, True):
+            evidence, trusted = materialize(case), deepcopy(corpus["trusted"])
+            if rerecord:
+                witness = evidence["witness"]
+                previous, hashes = "0" * 64, []
+                for event in witness["events"]:
+                    payload = [witness["run_id"], witness["launch_nonce"], previous, event]
+                    previous = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                    hashes.append(previous)
+                trusted["ledger"] = {"store_id": trusted["store_id"], "observer_id": witness["observer_id"],
+                                     "run_id": witness["run_id"], "launch_nonce": witness["launch_nonce"], "hashes": hashes}
+            verdict = validator.validate(evidence, trusted)
+            assert verdict.contract == "rejected" and case["reason"] in verdict.reasons, case["id"]
+            assert verdict.protection == "unverified"
