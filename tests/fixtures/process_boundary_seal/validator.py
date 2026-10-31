@@ -243,17 +243,6 @@ def adapt_producer(receipt: object, *, evidence=None, trusted=None, tags=None,
             or not isinstance(observer_key, bytes) or len(producer_key) < 32
             or len(observer_key) < 32 or hmac.compare_digest(producer_key, observer_key)):
         return rejected
-    if (receipt["run_id"] != trusted.get("run_id") or receipt["seal_status"] != "unsealed"
-            or receipt["preparation"] != "diagnostic_ready" or receipt["launch"] != "exited_0"
-            or receipt["cleanup"] != "broker_closed_socket_absent; descendants_unverified"
-            or any(receipt[key] is not None for key in ("snapshot_digest", "runtime_digest", "policy_digest",
-                                                          "supervisor_identity", "child_identity"))
-            or receipt["namespace_identities"] != {} or not isinstance(receipt["unsupported_reasons"], list)
-            or "diagnostic only; runtime and storage are unsealed" not in receipt["unsupported_reasons"]
-            or not all(isinstance(reason, str) for reason in receipt["unsupported_reasons"])
-            or not isinstance(evidence.get("child_receipt"), dict)
-            or evidence["child_receipt"].get("run_id") != receipt["run_id"]):
-        return rejected
     nonce = trusted.get("launch_nonce")
     run_id = trusted.get("run_id")
     if not _text(nonce) or not _text(run_id) or (run_id, nonce) in consumed:
@@ -272,6 +261,17 @@ def adapt_producer(receipt: object, *, evidence=None, trusted=None, tags=None,
     # Consume even rejected observations so a signed failure cannot be retried
     # with different evidence under the same independently issued nonce.
     consumed.add((run_id, nonce))
+    if (receipt["run_id"] != run_id or receipt["seal_status"] != "unsealed"
+            or receipt["preparation"] != "diagnostic_ready" or receipt["launch"] != "exited_0"
+            or receipt["cleanup"] != "broker_closed_socket_absent; descendants_unverified"
+            or any(receipt[key] is not None for key in ("snapshot_digest", "runtime_digest", "policy_digest",
+                                                          "supervisor_identity", "child_identity"))
+            or receipt["namespace_identities"] != {} or not isinstance(receipt["unsupported_reasons"], list)
+            or "diagnostic only; runtime and storage are unsealed" not in receipt["unsupported_reasons"]
+            or not all(isinstance(reason, str) for reason in receipt["unsupported_reasons"])
+            or not isinstance(evidence.get("child_receipt"), dict)
+            or evidence["child_receipt"].get("run_id") != receipt["run_id"]):
+        return rejected
     return validate(evidence, trusted)
 
 

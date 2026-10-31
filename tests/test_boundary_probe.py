@@ -520,6 +520,14 @@ def test_synthetic_seal_adapter_contract():
         assert run(seen=seen).status == "synthetic_only"
         assert run(seen=seen).contract == "rejected"
         assert run(tags={"producer": "0" * 64, "observer": tags_for(receipt, evidence)["observer"]}).contract == "rejected"
+        retry = set()
+        assert run(tags={"producer": "0" * 64, "observer": tags_for(receipt, evidence)["observer"]}, seen=retry).contract == "rejected"
+        assert not retry
+        failed_receipt = deepcopy(receipt)
+        failed_receipt["launch"] = "failed"
+        assert run(r=failed_receipt, seen=retry).contract == "rejected"
+        assert retry == {(trusted["run_id"], trusted["launch_nonce"])}
+        assert run(seen=retry).contract == "rejected"
         forged = deepcopy(evidence)
         forged["witness"]["observer_id"] = "producer"
         assert run(e=forged, tags=tags_for(receipt, evidence)).contract == "rejected"
