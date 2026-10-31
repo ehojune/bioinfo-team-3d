@@ -3,7 +3,8 @@ planning (DAG), reviewer revise loop, approvals, HPC hibernate/wake, and contrac
 
 Tokens in the request text steer it: [needs-approval], [hpc], [revise], [recruit], [question], [block],
 [revision-fail], [max-turns], [artifact]. In a research plan, [multistep] gives two dependent steps and
-[branched] two branches plus a synthesis step; [step-fail] and [branch-fail] fail step s2 of those plans (#1207).
+[branched] two branches plus a synthesis step; [step-fail] and [branch-fail] fail step s2 of those plans and
+[all-branch-fail] fails both branches (#1207). In a team (non-research) plan, [step-fail] fails the bioinfo-agent step.
 Without a token the plan has one step.
 """
 
@@ -73,21 +74,24 @@ def _research_shape(worker: str, request: str) -> dict:
     """Steps (and branches) of the mock research plan: one step, or `[multistep]` (s2 reads s1), or `[branched]`
     (two independent branches and a synthesis step that reads both). `[step-fail]` makes s2 of a multistep plan
     fail, `[branch-fail]` makes the second branch of a branched plan fail (each implies its plan shape)."""
-    if "[branched]" in request or "[branch-fail]" in request:
+    if "[branched]" in request or "[branch-fail]" in request or "[all-branch-fail]" in request:
         shape = {"branches": [{"id": "b1", "question": "First mock question", "evidence_type": "mock_table",
                                "data_boundary": "mock data only"},
                               {"id": "b2", "question": "Second mock question", "evidence_type": "mock_table",
                                "data_boundary": "mock data only"}],
                  "steps": [_research_step("s1", worker, [], "b1"), _research_step("s2", worker, [], "b2"),
                            _research_step("s3", worker, ["s1", "s2"], "synthesis")]}
-        failing = "[branch-fail]" in request
+        failing = "[branch-fail]" in request or "[all-branch-fail]" in request
     elif "[multistep]" in request or "[step-fail]" in request:
         shape = {"steps": [_research_step("s1", worker, []), _research_step("s2", worker, ["s1"])]}
         failing = "[step-fail]" in request
     else:
         return {"steps": [_research_step("s1", worker, [])]}
     if failing:
-        shape["steps"][1]["instruction"] += " [step-fail]"
+        failed = ("s1", "s2") if "[all-branch-fail]" in request else ("s2",)
+        for step in shape["steps"]:
+            if step["id"] in failed:
+                step["instruction"] += " [step-fail]"
     return shape
 
 
@@ -188,6 +192,8 @@ class MockAdapter(AgentAdapter):
                     tokens += " [max-turns]"
                 if aid == "data_steward" and "[artifact]" in request:
                     tokens += " [artifact]"
+                if aid == "bioinfo-agent" and "[step-fail]" in request:
+                    tokens += " [step-fail]"
                 steps.append({"id": sid[aid], "agent_id": aid, "depends_on": d,
                               "instruction": f"{aid} 파트 수행{tokens}",
                               "outputs": ["artifact.txt"] if "[artifact]" in tokens else []})
