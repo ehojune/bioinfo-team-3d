@@ -823,6 +823,7 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 
 - 직원은 `labhq_annot`의 `alphagenome_atlas(variants, requested_scorers, ontology_terms, gene_ids, top, assembly)`로 사전 계산 점수를 조회합니다. 별도 CLI 하위 명령은 없습니다. 입력은 GRCh38 SNV `chr:pos:ref>alt` 1–10개이며 scorer 기본값은 `RNA_SEQ`입니다. scorer·ontology·gene 필터를 지원하고 raw/quantile 점수·metadata·출처·사용 조건을 반환합니다. 미수록·빈 결과를 무효과로 해석하거나 자동 inference로 넘기지 않습니다.
 - runner의 `ALPHAGENOME_API_KEY`와 `alphagenome>=0.10.0`이 필요하며 기존 키 파일은 쓰지 않습니다. 키·별칭은 직원 환경에서 제거합니다. 기존 요청 승인 범위 안에서 `annot` 허용 역할에만 task 조회 권한을 주며 읽기 전용 task·Atlas deny는 거부합니다. task 종료·오류·취소 때 권한을 회수하고 이후 호출은 거부합니다. 진행 중 SDK 호출의 즉시 종료를 보장하지는 않습니다. 요청 전체 조회 상한이 켜져 있으면 Atlas도 거부합니다.
+- 시작 점검: launch 설정(엔진 인자·prefix·MCP 서버 환경·Claude 설정)에 키 **값**이 있거나 환경 변수 이름 `ALPHAGENOME_API_KEY`가 어떤 모양으로든 있으면(설정·목록·참조·`Env:\` 경로 포함) 실행을 시작 전에 `Atlas credentials/config overrides…`로 거절합니다. 예외는 설정된 키 파일 경로(`annot.alphagenome_key_file`: `~` 펼침·절대·실제 경로)와 labhq가 그 경로로 만드는 비공개 경로 목록·Claude 규칙뿐입니다. 그래서 `labhq init`으로 키 파일을 둔 PC에서도 `annot`을 쓰는 직원은 정상으로 실행됩니다(#1225). 파일 이름만 적은 상대 경로 설정은 예외가 되지 않고, 키 파일이 아닌 다른 경로에 같은 이름이 들어 있으면 거절합니다.
 - 격리 설치본의 CLI 도움말·MCP stdio·SDK mock 왕복과 권한 회수 후 403을 확인했습니다. 의존성은 기존 승인 설치본을 복사했습니다. **실제 Atlas 조회·설치 Codex sandbox shell은 UNVERIFIED**입니다. 검증은 새 서비스·연구 실행 승인이 아닙니다. [설치 근거·검증 한계](reference/alphagenome-atlas-621.md#installed-package-verification-rev12).
 
 - 형식이 틀린 항목은 그 항목만 오류로 돌아오고 나머지는 조회합니다. 항목 오류는 조회 실패이고, `found: false`는 조회에 성공했는데 DB에 없다는 뜻입니다.
