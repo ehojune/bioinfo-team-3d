@@ -1401,10 +1401,11 @@ class Hub:
                         runner_capabilities: dict | None = None) -> dict:
         """Build against a terminal snapshot; safe to call in a worker thread.
 
-        No work folder is the normal result of a cancel that came before the first step made one, not a bundle failure
-        (#1212): that case alone is quiet, meaning the request was cancelled and no work folder was ever recorded for it
-        (in its results or in its tasks). A recorded folder that is gone is lost data and warns, like every other failure
-        and like a missing folder on any other ending."""
+        THE DEFINITION (#1212): no work folder is the normal result of a cancel that came before any analysis step made
+        one, not a bundle failure. That case alone is quiet: the request was cancelled and no step or direct task of it
+        ever reported a work folder (a cancelled run reports the folder it made too). A folder that was reported and is
+        gone is lost data and warns, like every other failure and like a missing folder on any other ending. The
+        briefing, plan and review tasks do not count: they make folders that are never bundled."""
         try:
             from ..request_bundle import NoStepWorkdirs, RemoteRunnerBundle, build_request_bundle
 
@@ -1428,13 +1429,13 @@ class Hub:
 
     @staticmethod
     def _recorded_workdir(rid: str, request: dict, tasks: dict) -> bool:
-        """A work folder was recorded for this request, in its results or in the result of one of its tasks."""
+        """An analysis step (a step or direct task) of this request reported a work folder."""
         def named(result: Any) -> bool:
             return isinstance(result, Mapping) and bool(result.get("workdir_id"))
 
         return (any(named(r) for r in (request.get("results") or {}).values()) or
-                any(isinstance(t, Mapping) and t.get("request_id") == rid and named(t.get("result"))
-                    for t in tasks.values()))
+                any(isinstance(t, Mapping) and t.get("request_id") == rid and t.get("kind") in ("step", "direct")
+                    and named(t.get("result")) for t in tasks.values()))
 
     def _apply_bundle_outcome(self, rid: str, data: dict, outcome: dict) -> None:
         self._apply_bundle_to_request(self.requests[rid], data, outcome)
