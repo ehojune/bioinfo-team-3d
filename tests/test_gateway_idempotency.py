@@ -2,6 +2,7 @@
 import asyncio
 
 import pytest
+from fastapi import HTTPException
 
 from labhq.gateway.idempotency import Idempotency
 from labhq.settings import Settings
@@ -53,18 +54,37 @@ async def test_no_key_a_new_key_a_new_body_or_a_new_scope_runs_again():
     assert len(calls) == 7
 
 
-async def test_a_failed_call_is_not_remembered_so_the_caller_can_retry():
+async def test_a_refusal_is_not_remembered_so_the_caller_can_retry():
     memory, calls = Idempotency(), []
 
     async def work():
         calls.append(1)
         if len(calls) == 1:
-            raise RuntimeError("runner is down")
+            raise HTTPException(409, "runner is down")  # nothing was applied
         return "ok"
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(HTTPException):
         await memory.run("s", "k", {}, work)
     assert await memory.run("s", "k", {}, work) == "ok"
+    assert len(calls) == 2
+
+
+async def test_an_ambiguous_failure_is_not_run_again_under_the_same_key():
+    memory, calls = Idempotency(), []
+
+    async def work():
+        calls.append(1)
+        raise ConnectionError("the frame may have reached the runner")
+
+    with pytest.raises(ConnectionError):
+        await memory.run("s", "k", {}, work)
+    for _ in range(2):
+        with pytest.raises(HTTPException) as again:
+            await memory.run("s", "k", {}, work)
+        assert again.value.status_code == 409
+    assert len(calls) == 1
+    with pytest.raises(ConnectionError):
+        await memory.run("s", "other", {}, work)  # a new key is a new attempt
     assert len(calls) == 2
 
 
@@ -178,3 +198,23 @@ def test_a_double_post_of_a_new_request_creates_one_request(tmp_path, monkeypatc
                for _ in range(2)]
         other = client.post("/api/requests", json={"text": "다른 요청"}, headers=auth).json()["request_id"]
     assert ids == ["req_1", "req_1"] and other == "req_2" and created == ["분석해 줘", "다른 요청"]
+
+
+def test_an_ambiguous_send_failure_is_answered_409_to_the_same_key_and_sent_once(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    s, app, hub, sent = _app(tmp_path, monkeypatch)
+    s.recruit.enabled = True
+    hub.agent_runner["c_x"] = "lab"
+
+    async def break_mid_frame(runner_id, msg):
+        sent.append(msg)
+        raise ConnectionError("closed mid-frame")
+
+    monkeypatch.setattr(hub, "send_runner", break_mid_frame)
+    auth = {"Authorization": f"Bearer {s.gateway.client_token}", "Idempotency-Key": "k"}
+    with TestClient(app, raise_server_exceptions=False) as client:
+        body = {"action": "extend", "days": 14}
+        assert client.post("/api/contracts/c_x", json=body, headers=auth).status_code == 500
+        assert client.post("/api/contracts/c_x", json=body, headers=auth).status_code == 409
+    assert len(sent) == 1

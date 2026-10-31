@@ -1562,7 +1562,7 @@ async def _send_and_wait(s: Settings, body: dict) -> None:
     login_holds: set[str] = set()
     async with websockets.connect(url, max_size=64 * 2**20) as ws:
         await ws.recv()  # snapshot
-        rid = _api(s, "POST", "/api/requests", json=body)["request_id"]
+        rid = _api(s, "POST", "/api/requests", json=body, headers={"Idempotency-Key": uuid.uuid4().hex})["request_id"]
         print(f"request {rid}")
         async for raw in ws:
             ev = json.loads(raw)
@@ -2452,7 +2452,7 @@ def main(argv: list[str] | None = None) -> None:
             except ValueError as exc:
                 p.error(str(exc))
         elif args.no_wait:
-            print(_api(s, "POST", "/api/requests", json=body))
+            print(_api(s, "POST", "/api/requests", json=body, headers={"Idempotency-Key": uuid.uuid4().hex}))
         else:
             _run_websocket(s, _send_and_wait(s, body))
     elif args.cmd == "note":

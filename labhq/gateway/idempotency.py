@@ -14,9 +14,12 @@ import time
 from collections import OrderedDict
 from typing import Any, Awaitable, Callable, Optional, get_type_hints
 
+from fastapi import HTTPException
+
 TTL_S = 600.0
 MAX_ENTRIES = 512
 MAX_KEY_CHARS = 64
+_AMBIGUOUS = object()
 
 
 class Idempotency:
@@ -28,8 +31,10 @@ class Idempotency:
     async def run(self, scope: str, key: str | None, body: Any, work: Callable[[], Awaitable[Any]]) -> Any:
         """`work()` once per (scope, key, body); a call without a key just runs it.
 
-        The same key with a different body is a different request, not a replay. An exception is not remembered, so
-        the caller may retry. The work is not cancelled when the first caller goes away: a retry then waits for it.
+        The same key with a different body is a different request, not a replay. A refusal (`HTTPException`: nothing was
+        applied) is not remembered, so the caller may retry. Any other failure is ambiguous (the action may have reached
+        the runner or GitHub before the answer failed): it is remembered, and the same key gets a 409 instead of a
+        second run. The work is not cancelled when the first caller goes away: a retry then waits for it.
         """
         key = (key or "").strip()[:MAX_KEY_CHARS]
         if not key:
@@ -37,21 +42,35 @@ class Idempotency:
         ident = (scope, key, json.dumps(body, sort_keys=True, default=str))
         self._expire()
         if ident in self._done:
-            return self._done[ident][1]
+            return self._replay(self._done[ident][1])
         task = self._running.get(ident)
         if task is None:
             task = self._running[ident] = asyncio.ensure_future(self._finish(ident, work))
-        return await asyncio.shield(task)
+        return await asyncio.shield(task)  # a waiter sees the first call's outcome, a failure included
 
     async def _finish(self, ident: tuple, work: Callable[[], Awaitable[Any]]) -> Any:
         try:
             result = await work()
-            self._done[ident] = (self.clock() + self.ttl_s, result)
-            while len(self._done) > self.max_entries:
-                self._done.popitem(last=False)
-            return result
+        except HTTPException:
+            raise
+        except Exception:
+            self._remember(ident, _AMBIGUOUS)
+            raise
         finally:
             self._running.pop(ident, None)
+        self._remember(ident, result)
+        return result
+
+    def _remember(self, ident: tuple, result: Any) -> None:
+        self._done[ident] = (self.clock() + self.ttl_s, result)
+        while len(self._done) > self.max_entries:
+            self._done.popitem(last=False)
+
+    @staticmethod
+    def _replay(result: Any) -> Any:
+        if result is _AMBIGUOUS:
+            raise HTTPException(409, "이 키의 이전 요청이 어디까지 적용됐는지 알 수 없습니다. 상태를 확인한 뒤 새 키로 다시 보내세요")
+        return result
 
     def _expire(self) -> None:
         now = self.clock()
