@@ -314,7 +314,8 @@ def _init_settings(tmp_path: Path) -> Settings:
     return s
 
 
-async def test_default_init_config_runs_a_research_request_to_the_end_with_mock_agents(tmp_path):
+async def _run_default_init_request(tmp_path, text):
+    """Run one request through the gateway and a mock runner under the init config; return (request, event order)."""
     s = _init_settings(tmp_path)
     assert s.research.enabled and s.research.evidence_checkpoint  # what init turns on
     app = create_app(s)
@@ -346,20 +347,64 @@ async def test_default_init_config_runs_a_research_request_to_the_end_with_mock_
     try:
         await _until(lambda: "cso" in hub.agents and "analyst" in hub.agents, HANG_S, "runner agent registration",
                      lambda: {"agents": list(hub.agents)})
-        rid = hub.create_request(RequestIn(text="공개 데이터 예시 3개에서 행 수를 세고 보고해 줘"))
+        rid = hub.create_request(RequestIn(text=text))
         await _wait_for_request_terminal(hub, rid, seen)
         request = hub.requests[rid]
         state = _request_state(hub, rid, seen)
         assert request["status"] == "done", (request.get("error"), state)
         order = [(e.get("data") or {}).get("kind") for e in seen if e.get("request_id") == rid
                  and e["type"] in ("task.dispatched", "approval.requested")]
-        # Planned once; the storage card comes with the plan, before the CP1 card; steps run only after CP1.
-        assert order == ["briefing", "precedent", "plan", "result_storage", "research_plan", "step", "research_evidence",
-                         "review", "synthesis"], order
-        assert request["plan"]["steps"] and request["results"], state
-        assert "[[claim:s1/c1]]" in request["report"], request["report"]
+        return request, order
     finally:
         server.should_exit = True
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_default_init_config_runs_a_research_request_to_the_end_with_mock_agents(tmp_path):
+    request, order = await _run_default_init_request(tmp_path, "공개 데이터 예시 3개에서 행 수를 세고 보고해 줘")
+    # Planned once; the storage card comes with the plan, before the CP1 card; steps run only after CP1.
+    assert order == ["briefing", "precedent", "plan", "result_storage", "research_plan", "step", "research_evidence",
+                     "review", "synthesis"], order
+    assert request["plan"]["steps"] and request["results"]
+    assert "[[claim:s1/c1]]" in request["report"], request["report"]
+
+
+async def test_default_init_config_runs_a_multistep_research_plan_with_a_dependency(tmp_path):
+    request, order = await _run_default_init_request(tmp_path, "행 수를 두 단계로 세고 보고해 줘 [multistep]")
+    steps = request["plan"]["steps"]
+    assert [(step["id"], step["depends_on"]) for step in steps] == [("s1", []), ("s2", ["s1"])]
+    assert order.count("step") == 2 and order.index("research_plan") < order.index("step"), order
+    assert set(request["results"]) == {"s1", "s2"}
+    assert "[[claim:s1/c1]]" in request["report"] or "[[claim:s2/c2]]" in request["report"], request["report"]
+
+
+async def test_default_init_config_runs_a_branched_research_plan_to_the_end(tmp_path):
+    request, order = await _run_default_init_request(tmp_path, "두 갈래로 행 수를 세고 보고해 줘 [branched]")
+    plan = request["plan"]
+    assert [branch["id"] for branch in plan["branches"]] == ["b1", "b2"]
+    assert {step["id"]: step["branch"] for step in plan["steps"]} == {"s1": "b1", "s2": "b2", "s3": "synthesis"}
+    assert order.count("step") == 3 and set(request["results"]) == {"s1", "s2", "s3"}, order
+    assert order[-2:] == ["review", "synthesis"], order
+
+
+async def test_a_mock_step_whose_read_only_baseline_is_refused_fails_before_it_runs(tmp_path):
+    from types import SimpleNamespace
+    from labhq.adapters.mock import MockAdapter
+    from labhq.models import AgentSpec, Task
+
+    workdir = tmp_path / "work"
+    (workdir / "outputs").mkdir(parents=True)
+    emitted = []
+
+    async def emit(kind, data):
+        emitted.append(kind)
+
+    task = Task(agent_id="analyst", prompt="Write a result [artifact]", meta={"kind": "step", "step_id": "s1"})
+    agent = AgentSpec(id="analyst", name="Analyst", role="test", engine="mock")
+    ctx = SimpleNamespace(task=task, agent=agent, workdir=workdir, emit=emit,
+                          before_spawn=lambda: "감시할 경로를 읽을 수 없어 시작하지 않았습니다")
+    result = await MockAdapter(Settings()).run(ctx)
+    assert not result.ok and "읽을 수 없어" in result.error
+    assert not (workdir / "outputs" / "artifact.txt").exists() and "agent.status" not in emitted
