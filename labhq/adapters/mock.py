@@ -50,13 +50,36 @@ def _research_plan(t, a) -> dict:
                      "statistics": {"applicable": False, "reason": "a stand-in run draws no inference"},
                      "packs": []},
         "pack_values": {}, "clarifying_questions": [],
-        "steps": [{"id": "s1", "agent_id": worker, "instruction": "Write outputs/result.tsv with the mock row count.",
-                   "phase": "analysis", "claim_ids": ["c1"], "input_refs": ["mock-input"],
-                   "outputs": ["outputs/result.tsv"], "checks": ["file written"],
-                   "evidence_slots": [{"id": "e1", "required": True, "description": "the mock result table"}],
-                   "depends_on": []}],
+        **_research_shape(worker, asked + " " + t.prompt),
         "recruit": [], "notes": "mock research plan",
     }
+
+
+def _research_step(sid: str, worker: str, depends_on: list[str], branch: str | None = None) -> dict:
+    n = sid[1:]
+    step = {"id": sid, "agent_id": worker, "instruction": f"Write outputs/result{n}.tsv with the mock row count.",
+            "phase": "analysis", "claim_ids": [f"c{n}"], "input_refs": ["mock-input"],
+            "outputs": [f"outputs/result{n}.tsv"], "checks": ["file written"],
+            "evidence_slots": [{"id": f"e{n}", "required": True, "description": f"mock result table {n}"}],
+            "depends_on": depends_on}
+    if branch:
+        step["branch"] = branch
+    return step
+
+
+def _research_shape(worker: str, request: str) -> dict:
+    """Steps (and branches) of the mock research plan: one step, or `[multistep]` (s2 reads s1), or `[branched]`
+    (two independent branches and a synthesis step that reads both)."""
+    if "[branched]" in request:
+        return {"branches": [{"id": "b1", "question": "First mock question", "evidence_type": "mock_table",
+                              "data_boundary": "mock data only"},
+                             {"id": "b2", "question": "Second mock question", "evidence_type": "mock_table",
+                              "data_boundary": "mock data only"}],
+                "steps": [_research_step("s1", worker, [], "b1"), _research_step("s2", worker, [], "b2"),
+                          _research_step("s3", worker, ["s1", "s2"], "synthesis")]}
+    if "[multistep]" in request:
+        return {"steps": [_research_step("s1", worker, []), _research_step("s2", worker, ["s1"])]}
+    return {"steps": [_research_step("s1", worker, [])]}
 
 
 _RESULT_COPY = re.compile(r"plan_sha256=([0-9a-f]{64}), step_id=(\S+?), claim_ids=(\[.*?\]), and fill evidence_slots="
@@ -108,7 +131,9 @@ class MockAdapter(AgentAdapter):
         kind = t.meta.get("kind", "step")
         request = t.meta.get("request", "") + " " + t.prompt
         if ctx.before_spawn:  # the runner takes its output baseline here; without it no output of a mock step is hashed
-            ctx.before_spawn()
+            refused = ctx.before_spawn()
+            if refused:  # a read-only baseline that cannot be taken fails the step before it runs
+                return TaskResult(task_id=t.id, agent_id=a.id, ok=False, error=refused)
         await ctx.emit("agent.status", {"state": "working", "model": "mock"})
         await asyncio.sleep(self.settings.runner.mock_delay_s)
         structured = None
