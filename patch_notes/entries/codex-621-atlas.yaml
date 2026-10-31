@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "0000000"
+    at: "2026-10-31 20:02"
+    summary: "키 보호 회귀를 기존 Atlas 시험 모듈에 모아 Windows 검사 범위에 포함합니다."
+    text: "test: keep broker regressions in the inventoried Atlas module"
   - sha: "1d7710c"
     at: "2026-10-31 19:58"
     summary: "Atlas API 키를 runner 조회 서비스에 보관하고 직원 환경·명령·설정으로 넘기지 않습니다."

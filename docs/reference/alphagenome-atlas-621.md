@@ -22,7 +22,7 @@ Integration hold: manuals are owned by another worker. The runner retains `ALPHA
 
 ## Credential boundary verification (rev7)
 
-- `tests/test_annot_broker.py`: real MCP Python child → loopback HTTP → runner SDK fixture receives the fake key. Child environments, argv, responses and generated files contain no key. Direct PowerShell child tests cover parent/engine/task sources, case variants, aliases and empty overrides.
+- `tests/test_annot_alphagenome_atlas.py`: real MCP Python child → loopback HTTP → runner SDK fixture receives the fake key. Child environments, argv, responses and generated files contain no key. Direct PowerShell child tests cover parent/engine/task sources, case variants, aliases and empty overrides. Broker regressions share this inventoried module; no Windows coverage inventory change is needed.
 - `shell_environment_policy.set`, engine `extra_args`, MCP env and expanded prefix restoration are refused before generated files or process launch. Identity spoofing, arbitrary operation fields, admission, busy requests, disconnect, deadline and runner success/error/cancel cleanup have regressions.
 - Installed Codex `0.165.0-alpha.1.2` sandbox probe remains **UNVERIFIED**: isolated HOME, `:workspace`, unelevated mode, no model/login/service calls. PowerShell and cmd probes timed out at 30 seconds; the owned process tree was ended. The opt-in regression retains this check; normal CI skips it.
 - The credential boundary separates process environments and broker operations. It does not establish OS isolation against same-account process inspection. Live Atlas access, installed Codex shell execution and final integration remain separate gates; keep the PR on hold.
