@@ -318,7 +318,7 @@ def references_fixture(text, fixture):
     return bool(folders) and quoted("fixtures") and all(quoted(folder) for folder in folders)
 
 
-@functools.lru_cache(maxsize=64)
+@functools.lru_cache(maxsize=None)  # one entry per changed fixture: a bound below that count would rescan per test
 def _fixture_named_anywhere(root, fixture):
     """Does any collected test file (tests/test_*.py) name this fixture? One scan per root and fixture per process:
     the changed range does not move while a job runs."""

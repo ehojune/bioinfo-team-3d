@@ -340,3 +340,24 @@ def test_the_real_wiki_readme_change_selects_the_test_that_takes_the_folder_and_
              if p.name != Path(__file__).name  # this file spells the fixture's name to test it
              and selection.references_fixture(p.read_text(encoding='utf-8', errors='replace'), readme)]
     assert [Path(p).name for p in named] == ['test_wiki_index.py'], named
+
+
+def test_many_changed_fixtures_scan_the_tests_once_each_not_once_per_test(tmp_path, monkeypatch):
+    """#1245 review: the per-fixture answer was kept in a 64-entry cache, so a change of more than 64 fixtures evicted it
+    for every collected test and the selection grew with tests x fixtures x test files."""
+    source = 'def test_logic(): assert 1\n'
+    fixtures = {f'tests/fixtures/data_{n:03d}.json' for n in range(100)}
+    # another test names every one of them, so each answer is "named" and the loop goes on to the next fixture
+    data = _fixture_root(tmp_path, {'test_math.py': source, 'test_other.py': ' '.join(sorted(fixtures))})
+    reads = []
+    original = Path.read_text
+
+    def counted(self, *args, **kwargs):
+        reads.append(self.name)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', counted)
+    selection._fixture_named_anywhere.cache_clear()
+    for _ in range(5):  # five collected tests see the same changed set
+        selection.include_windows('tests/test_math.py', source, data, changed=fixtures, root=tmp_path, node='test_logic')
+    assert reads.count('test_math.py') <= len(fixtures), "one scan per fixture, however many tests are selected"
