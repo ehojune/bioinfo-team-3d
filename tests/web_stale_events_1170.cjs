@@ -161,6 +161,29 @@ test('a status of a task whose kind is unknown does not start work for a finishe
   assert.equal(office.ag('analyst').state, 'done', 'an ending status still applies');
 });
 
+test('only a follow-up turn may start after the end: any other kind is refused, listed or not', () => {
+  for (const kind of ['facilities_fix', 'blind_draft', 'wrap_up', 'hpc_wake', 'something_new']) {
+    const office = settled('failed');
+    office.apply({type: 'task.dispatched', seq: 10, agent_id: 'analyst', task_id: `x-${kind}`, request_id: 'r1', data: {kind, title: 't'}});
+    office.apply({type: 'agent.status', seq: 11, agent_id: 'analyst', task_id: `x-${kind}`, request_id: 'r1', data: {state: 'working', task: 't'}});
+    assert.equal(office.ag('analyst').tasks.has(`x-${kind}`), false, kind);
+    assert.equal(office.S.activeTasks.has(`x-${kind}`), false, kind);
+    assert.notEqual(office.ag('analyst').state, 'working', kind);
+  }
+});
+
+test('a snapshot does not restore a pipeline task of a finished request, but keeps its running follow-up turn', () => {
+  const office = L.createOfficeState({now: () => 100});
+  const staffTask = (id, kind, extra = {}) => ({id, request_id: 'r1', agent_id: 'analyst', kind, state: 'running', title: 't', ...extra});
+  office.apply(snapshot(40, {requests: [{id: 'r1', text: 'x', status: 'done', mode: 'orchestrate'}],
+    running_tasks: [staffTask('t9', 'step', {step_id: 's2'}), staffTask('f1', 'followup')]}));
+  assert.equal(office.S.activeTasks.has('t9'), false, 'the stale pipeline task is not on the ledger');
+  assert.equal(office.ag('analyst').tasks.has('t9'), false);
+  assert.equal(office.S.requests.get('r1').steps.s2, undefined);
+  assert.equal(office.S.activeTasks.has('f1'), true, 'the follow-up turn is');
+  assert.equal(office.S.requests.get('r1').phase, 'done');
+});
+
 test('the 2.5D page closes its previous socket before opening a new one, as the 3D page does', () => {
   const page = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const open = /const open = \(\) => \{[\s\S]*?new WebSocket/.exec(page);

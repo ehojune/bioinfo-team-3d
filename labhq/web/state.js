@@ -142,8 +142,9 @@ const TERMINAL_FOLLOWUP_STATES = new Set(['done', 'failed', 'interrupted']);
 const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue', 'result_storage', 'result_publish', 'recruit_plan', 'literature_pdf', 'disk_space']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
-// Tasks of the request pipeline itself; a follow-up turn is not one: it runs after the request is over (#1170).
-const PIPELINE_TASK_KINDS = new Set(['briefing', 'plan', 'step', 'review', 'synthesis', 'direct', 'replan', 'precedent', 'consult']);
+// The one kind of task that may start after its request is over: the PI's follow-up turn (#1170). A list of what may
+// start, not of what may not, so a kind added later is refused until it is named here.
+const POST_END_TASK_KINDS = new Set(['followup']);
 // Events that start or hold pipeline work. A request that is over (isTerminalRequest, review_pending included: no staff
 // runs while the PI reviews) takes none of them; what ends work (step_done, a done/idle status, a result), what follows
 // a finished request (a follow-up turn, usage, cards, review, storage) and everything else still applies (#1170).
@@ -722,13 +723,13 @@ function endedRequestRefuses(ev) {
   const q = ev.request_id && S.requests.get(ev.request_id);
   if (!q || !isTerminalRequest(q.status)) return false;
   if (PIPELINE_STARTS.has(ev.type)) return true;
-  // Only a task known not to be the pipeline's (a follow-up turn) may start after the end; one whose kind is not known
-  // (its dispatch is older than the replay window) is refused too.
-  const followsTheEnd = kind => !!kind && !PIPELINE_TASK_KINDS.has(kind);
-  if (ev.type === 'task.dispatched') return !followsTheEnd(ev.data?.kind);
-  if (ev.type === 'agent.status') return STATUS_THAT_STARTS_WORK.has(ev.data?.state) && !followsTheEnd(S.taskKind.get(ev.task_id));
+  // A task of unknown kind (its dispatch is older than the replay window) is refused like any other.
+  if (ev.type === 'task.dispatched') return !POST_END_TASK_KINDS.has(ev.data?.kind);
+  if (ev.type === 'agent.status') return STATUS_THAT_STARTS_WORK.has(ev.data?.state) && !POST_END_TASK_KINDS.has(S.taskKind.get(ev.task_id));
   return false;
 }
+// A snapshot's running task of a request that is over is not restored either, unless it is a follow-up turn.
+const staleTask = task => { const q = S.requests.get(task.request_id); return !!q && isTerminalRequest(q.status) && !POST_END_TASK_KINDS.has(task.kind); };
 function apply(ev, replay = false) {
   const effects = [];
   // A snapshot sets the point itself, and the events it replays carry seqs it already covers. An event with no seq
@@ -820,13 +821,13 @@ function apply(ev, replay = false) {
       const staffTasks = d.staff_tasks || d.running_tasks;
       if (Array.isArray(staffTasks)) {
         S.activeTasks.clear();
-        for (const task of staffTasks) S.activeTasks.set(task.id, {...task,
+        for (const task of staffTasks.filter(task => !staleTask(task))) S.activeTasks.set(task.id, {...task,
           activity: {...(task.activity || {}), tools: {...(task.activity?.tools || {})}}});
         for (const [jid, context] of S.jobContext)
           if (context.task_id && !S.activeTasks.has(context.task_id)) S.jobContext.delete(jid);
       }
       for (const task of d.running_tasks || []) {
-        if (!task.request_id || !task.step_id) continue;
+        if (!task.request_id || !task.step_id || staleTask(task)) continue;
         const key = `${task.request_id}:${task.step_id}`, previous = restored.get(key);
         const rank = [task.state === 'running' ? 1 : 0, Number(task.dispatched_at) || 0];
         if (previous && (previous.rank[0] > rank[0] ||
