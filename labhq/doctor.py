@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import json
 import os
 import re
@@ -235,6 +236,23 @@ def _bioinfo_row(settings: Settings) -> dict:
                     bioinfo_link.NOT_CONNECTED + "BIOINFO_AGENT_DIR 폴더에서 plugin(.claude-plugin/plugin.json, "
                     "skills/bioinfo-analyze)을 찾지 못했습니다", bioinfo_link.FIX)
     return _row("config", "bioinfo-agent", "ok", f"연결됨: {_safe_path(folder)}", "")
+
+
+MCP_FLOOR = (2, 0)  # the lowest `mcp` the code runs on: it uses 2.x names (CallToolResult.is_error, MCPServer); keep in step with pyproject
+
+
+def _mcp_row() -> dict:
+    """Whether the installed `mcp` package is at least MCP_FLOOR (#1202): 1.x names differ, so a 1.x install breaks tools."""
+    floor = ".".join(map(str, MCP_FLOOR))
+    hint = f'`pip install -U "mcp>={floor}"`로 올리세요(labhq를 다시 설치해도 됩니다).'
+    try:
+        found = importlib.metadata.version("mcp")
+    except importlib.metadata.PackageNotFoundError:
+        return _row("config", "mcp", "warn", f"mcp 패키지가 없습니다(필요: >={floor})", hint)
+    parts = tuple(int(n) for n in re.findall(r"\d+", found)[:2])
+    if parts < MCP_FLOOR:
+        return _row("config", "mcp", "warn", f"mcp {found}는 하한 {floor}보다 낮아 도구와 시험이 맞지 않을 수 있습니다", hint)
+    return _row("config", "mcp", "ok", f"mcp {found}", "")
 
 
 FINE_GRAINED_PREFIX = "github_pat_"
@@ -931,6 +949,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     private = _doctor_private(settings, agents, forced)
     rows.append(_private_paths_row(private))
     rows.append(_alphagenome_row(settings))
+    rows.append(_mcp_row())
     from .knowledge.recall import health as recall_health
     recall = recall_health(settings)
     rows.append(_row("knowledge", "local recall", "ok" if recall["available"] else "warn",
