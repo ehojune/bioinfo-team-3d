@@ -28,6 +28,7 @@
     "tests/test_ask_review4.py",
     "tests/test_ask_review5.py",
     "tests/test_ask_review6.py",
+    "tests/test_atlas_key_file_1225.py",
     "tests/test_bench.py",
     "tests/test_bench_calibration.py",
     "tests/test_bench_legacy_report.py",
