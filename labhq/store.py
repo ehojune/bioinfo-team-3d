@@ -332,10 +332,18 @@ class StateStore:
 
     def _append_event_now(self, body: dict, limit: int, runner_id: str | None, runner_seq: int | None,
                           reporter_delivery: bool, request: tuple[str, dict] | None = None,
-                          activity: tuple[str, Callable[[dict], dict]] | None = None) -> dict:
+                          activity: tuple[str, Callable[[dict], dict]] | None = None) -> dict | None:
         """The event, the request snapshot and the task activity it belongs to, and the runner cursor commit together
-        (#1129, #1132): all or none. The activity reducer runs here, on the writer thread, against the latest task row."""
+        (#1129, #1132): all or none. The activity reducer runs here, on the writer thread, against the latest task row.
+
+        None when the runner's seq is already at or below the stored cursor: that message was stored by another copy of
+        itself that committed first (a resend racing its original), so nothing is added again, activity included
+        (#1143)."""
         with self._transaction() as conn:
+            if runner_id is not None and runner_seq is not None:
+                seen = conn.execute("SELECT seq FROM runner_cursor WHERE runner_id=?", (runner_id,)).fetchone()
+                if seen is not None and runner_seq <= seen[0]:
+                    return None
             if request is not None:
                 conn.execute("INSERT OR REPLACE INTO state VALUES ('request', ?, ?)", (request[0], _dumps(request[1])))
             if activity is not None:
@@ -345,8 +353,8 @@ class StateStore:
                 conn.execute("INSERT OR REPLACE INTO state VALUES ('reporter_delivery', ?, ?)",
                              (str(body["seq"]), _dumps(body)))
             if runner_id is not None and runner_seq is not None:
-                conn.execute("INSERT INTO runner_cursor VALUES (?, ?) ON CONFLICT(runner_id) DO UPDATE SET seq=excluded.seq",
-                             (runner_id, runner_seq))
+                conn.execute("INSERT INTO runner_cursor VALUES (?, ?) ON CONFLICT(runner_id) DO UPDATE SET seq=excluded.seq "
+                             "WHERE excluded.seq > runner_cursor.seq", (runner_id, runner_seq))
         return body
 
     def _insert_event(self, conn: sqlite3.Connection, body: dict, limit: int) -> dict:
@@ -508,6 +516,6 @@ class StateStore:
         durable.call(self.lane, self._mark_runner_now, runner_id, seq)
 
     def _mark_runner_now(self, runner_id: str, seq: int) -> None:
-        with self._transaction() as conn:
-            conn.execute("INSERT INTO runner_cursor VALUES (?, ?) ON CONFLICT(runner_id) DO UPDATE SET seq=excluded.seq",
-                         (runner_id, seq))
+        with self._transaction() as conn:  # the cursor only moves forward (#1143)
+            conn.execute("INSERT INTO runner_cursor VALUES (?, ?) ON CONFLICT(runner_id) DO UPDATE SET seq=excluded.seq "
+                         "WHERE excluded.seq > runner_cursor.seq", (runner_id, seq))

@@ -1746,3 +1746,265 @@ def test_a_failing_runner_batch_leaves_nothing_and_reloads_nothing(tmp_path, mon
     assert runner.store.pending() == [] and runner.store.get("accepted_task", "t1") is None
     assert reloads == []
     runner.store.close()
+
+
+# ---- #1125: acks that arrive while one commits share the next commit ---------------------------------------------
+def _runner_with_outbox(tmp_path, count):
+    runner = Runner(settings(tmp_path))
+    for n in range(count):
+        runner.send({"type": "agent.log", "data": {"n": n}})
+    return runner, [row["runner_seq"] for row in runner.store.pending()]
+
+
+@pytest.mark.asyncio
+async def test_acks_that_arrive_during_a_commit_share_the_next_one(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 8)
+    committed = []
+    real_aack = runner.store.aack
+
+    async def slow_aack(seq):
+        await asyncio.sleep(0.05)  # a commit waiting for a slow fsync
+        committed.append(seq)
+        await real_aack(seq)
+
+    runner.store.aack = slow_aack
+    runner._ack_nowait(seqs[0])  # the first ack starts its commit at once: nothing waits for company
+    await asyncio.sleep(0.01)
+    for seq in seqs[1:]:  # the rest arrive while it commits
+        runner._ack_nowait(seq)
+    await runner._ack_drain()
+    assert committed == [seqs[0], seqs[-1]]  # two commits for eight acks, the second one cumulative
+    assert runner.store.pending() == []
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_an_ack_goes_to_the_store_without_a_delay_when_nothing_else_is_waiting(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 3)
+    runner._ack_nowait(seqs[1])
+    await asyncio.wait_for(runner._ack_drain(), 5)  # no timer: it is committed as soon as the loop runs it
+    assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[2]]
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_runner_ack_message_returns_once_its_rows_are_deleted(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 4)
+    await runner._on_message({"type": "runner.ack", "runner_seq": seqs[2]})  # as before: awaited means durable
+    assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[3]]
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_ack_commit_reaches_the_next_ack_and_a_waiting_caller(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 4)
+
+    async def failing_aack(seq):
+        raise OSError("the disk is full")
+
+    runner.store.aack = failing_aack
+    runner._ack_nowait(seqs[0])
+    await asyncio.sleep(0.01)
+    with pytest.raises(OSError, match="disk is full"):
+        runner._ack_nowait(seqs[1])  # as when the ack was committed inline: the connection sees the failure
+    with pytest.raises(OSError, match="disk is full"):
+        await runner._on_message({"type": "runner.ack", "runner_seq": seqs[2]})
+    assert len(runner.store.pending()) == 4  # nothing was deleted: the rows are resent, and the gateway dedups
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_commits_the_acks_it_already_received(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 5)
+    runner._ack_nowait(seqs[3])
+    await runner.shutdown(timeout_s=0.05)
+    assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[4]]
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stays_inside_its_deadline_when_an_ack_commit_hangs(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 3)
+    hung = asyncio.Event()
+
+    async def hanging_aack(seq):
+        await hung.wait()  # a commit stuck behind a stalled disk
+
+    runner.store.aack = hanging_aack
+    runner._ack_nowait(seqs[1])
+    started = time.monotonic()
+    await asyncio.wait_for(runner.shutdown(timeout_s=0.2), 3)  # returns, as the documented bounded shutdown does
+    assert time.monotonic() - started < 1.5
+    assert len(runner.store.pending()) == 3  # nothing was deleted: the rows stay in the outbox for replay
+    hung.set()
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_drain_with_a_timeout_leaves_the_commit_to_finish_on_its_own(tmp_path):
+    runner, seqs = _runner_with_outbox(tmp_path, 3)
+    real_aack = runner.store.aack
+
+    async def slow_aack(seq):
+        await asyncio.sleep(0.3)
+        await real_aack(seq)
+
+    runner.store.aack = slow_aack
+    runner._ack_nowait(seqs[1])
+    started = time.monotonic()
+    await runner._ack_drain(timeout=0.05)
+    assert time.monotonic() - started < 0.25  # gave up waiting, did not cancel the commit
+    await runner._ack_drain()  # the commit is still running and finishes
+    assert [row["runner_seq"] for row in runner.store.pending()] == [seqs[2]]
+    runner.store.close()
+
+
+@pytest.mark.asyncio
+async def test_the_exit_after_a_shutdown_shares_the_shutdowns_deadline(tmp_path):
+    """After a signal `shutdown()` runs, then the entry point cancels `run_forever`, whose exit also drains the acks:
+    that wait is what is left of the shutdown's deadline, not a second 30 s."""
+    runner, seqs = _runner_with_outbox(tmp_path, 3)
+    assert runner._ack_wait_s(30.0) == 30.0  # no shutdown yet: the normal wait
+    hung = asyncio.Event()
+
+    async def hanging_aack(seq):
+        await hung.wait()
+
+    runner.store.aack = hanging_aack
+    runner._ack_nowait(seqs[1])
+    await runner.shutdown(timeout_s=0.2)
+    assert runner._ack_wait_s(30.0) < 0.1  # the deadline is used up (within a coarse Windows clock tick), not 30 s
+    started = time.monotonic()
+    await runner._ack_drain(raise_error=False, timeout=runner._ack_wait_s(30.0))  # what the exit path runs
+    assert time.monotonic() - started < 0.2
+    assert len(runner.store.pending()) == 3
+    hung.set()
+    runner.store.close()
+
+
+class _AckSocket:
+    def __init__(self):
+        self.sent = []
+
+    async def send_text(self, body):
+        self.sent.append(json.loads(body))
+
+
+async def test_the_same_runner_seq_arriving_twice_at_once_is_stored_and_acked_once(tmp_path):
+    # #1143: runner_seen was read outside the transaction and the cursor upsert always overwrote, so a resend that arrived
+    # while the first copy was still being committed (an old and a new connection of one runner) was stored a second time.
+    s = settings(tmp_path)
+    gateway = Hub(s)
+    socket = _AckSocket()
+    gateway.register_runner("local", socket, [])
+    message = {"type": "test.note", "runner_seq": 5, "request_id": None, "data": {"n": 1}}
+    try:
+        await asyncio.gather(gateway.on_runner_message("local", dict(message)), gateway.on_runner_message("local", dict(message)))
+        assert [e["type"] for e in gateway.events if e["type"] == "test.note"] == ["test.note"]
+        assert gateway.store.runner_seen("local") == 5
+        # The second copy waited for the first, found the seq stored and acked it: both copies are answered.
+        assert [m for m in socket.sent if m["type"] == "runner.ack"] == [{"type": "runner.ack", "runner_seq": 5}] * 2
+        await gateway.on_runner_message("local", dict(message))  # a later resend is still answered, not stored again
+        assert len([e for e in gateway.events if e["type"] == "test.note"]) == 1
+        assert [m["runner_seq"] for m in socket.sent if m["type"] == "runner.ack"] == [5, 5, 5]
+    finally:
+        gateway.store.close()
+
+
+async def test_a_resend_waits_for_the_first_copy_so_the_next_seq_cannot_overtake_it(tmp_path):
+    # #1143 review: a resend that returned at once let the new connection go on to seq N+1, whose cursor commit then made the
+    # first copy's event look "already seen" and dropped it. The resend must wait, and N+1 must follow N.
+    s = settings(tmp_path)
+    gateway = Hub(s)
+    gateway.register_runner("local", _AckSocket(), [])
+    first_msg = {"type": "test.note", "runner_seq": 5, "request_id": None, "data": {"n": 5}}
+    next_msg = {"type": "test.note", "runner_seq": 6, "request_id": None, "data": {"n": 6}}
+    release = asyncio.Event()
+    real = gateway.publish
+
+    async def slow_five(ev, runner_id=None, runner_seq=None):
+        if runner_seq == 5:
+            await release.wait()
+        return await real(ev, runner_id=runner_id, runner_seq=runner_seq)
+
+    gateway.publish = slow_five
+
+    async def new_connection():  # one receive loop: the resend of 5, then 6
+        await gateway.on_runner_message("local", dict(first_msg))
+        await gateway.on_runner_message("local", dict(next_msg))
+
+    try:
+        old = asyncio.create_task(gateway.on_runner_message("local", dict(first_msg)))
+        await asyncio.sleep(0.05)
+        new = asyncio.create_task(new_connection())
+        await asyncio.sleep(0.2)
+        assert gateway.store.runner_seen("local") == 0 and not new.done()  # 6 has not been processed ahead of 5
+        release.set()
+        await asyncio.wait_for(asyncio.gather(old, new), 10)
+        notes = [e["data"]["n"] for e in gateway.events if e["type"] == "test.note"]
+        assert notes == [5, 6] and gateway.store.runner_seen("local") == 6
+    finally:
+        release.set()
+        gateway.store.close()
+
+
+async def test_a_cancelled_first_copy_does_not_block_the_resend(tmp_path):
+    s = settings(tmp_path)
+    gateway = Hub(s)
+    gateway.register_runner("local", _AckSocket(), [])
+    message = {"type": "test.note", "runner_seq": 9, "request_id": None, "data": {}}
+    release = asyncio.Event()
+    real = gateway.publish
+
+    async def stuck(*args, **kwargs):
+        await release.wait()
+        return await real(*args, **kwargs)
+
+    gateway.publish = stuck
+    try:
+        first = asyncio.create_task(gateway.on_runner_message("local", dict(message)))
+        await asyncio.sleep(0.05)
+        first.cancel()
+        await asyncio.gather(first, return_exceptions=True)
+        gateway.publish = real
+        await gateway.on_runner_message("local", dict(message))  # the runner resends what was never acked
+        assert len([e for e in gateway.events if e["type"] == "test.note"]) == 1
+        assert gateway.store.runner_seen("local") == 9
+    finally:
+        gateway.store.close()
+
+
+def test_the_runner_cursor_never_moves_back_and_a_seen_seq_adds_no_event(tmp_path):
+    store = StateStore(tmp_path / "state.sqlite3")
+    try:
+        first = store.append_event({"type": "x"}, 100, "r", 7)
+        assert first["seq"] and store.runner_seen("r") == 7
+        assert store.append_event({"type": "y"}, 100, "r", 5) is None  # older than the cursor: already stored
+        assert store.append_event({"type": "z"}, 100, "r", 7) is None  # the same seq again
+        store.mark_runner("r", 3)
+        assert store.runner_seen("r") == 7                                  # a late, lower mark does not lower it
+        assert store.append_event({"type": "w"}, 100, "r", 8)["type"] == "w" and store.runner_seen("r") == 8
+        assert store.append_event({"type": "plain"}, 100) is not None        # no runner cursor: always stored
+        types = [json.loads(row[0])["type"] for row in store.db.execute("SELECT body FROM events ORDER BY seq")]
+        assert types == ["x", "w", "plain"]
+    finally:
+        store.close()
+
+
+async def test_a_task_result_sent_twice_under_two_seqs_records_its_cost_once(tmp_path):
+    # #1143: a runner can enqueue the same task.result again (a new outbox row), which the cursor does not recognise.
+    # The cost record is keyed by task id, so it is counted once.
+    s = settings(tmp_path)
+    gateway = Hub(s)
+    gateway.register_runner("local", _AckSocket(), [])
+    gateway.requests["r1"] = {"id": "r1", "status": "running", "created_at": time.time(), "text": "t", "usage": {}}
+    result = TaskResult(task_id="t1", agent_id="a", ok=True, text="done", cost_usd=0.5, cost_known=True)
+    body = {"type": "task.result", "task_id": "t1", "agent_id": "a", "request_id": "r1",
+            "data": result.model_dump(mode="json")}
+    try:
+        await gateway.on_runner_message("local", {**body, "runner_seq": 1})
+        await gateway.on_runner_message("local", {**body, "runner_seq": 2})
+        request = gateway.requests["r1"]
+        assert request["cost_by_task"] == {"t1": 0.5} and request["cost_usd"] == 0.5
+    finally:
+        gateway.store.close()

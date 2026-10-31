@@ -3571,6 +3571,10 @@ class Hub:
                                   ev.get("type") in ProjectReporter.HANDLED)
                 ev, cancelled = await self._append_event_with_request(ev, runner_id, runner_seq, durable_report,
                                                                       activity)
+                if ev is None:  # a copy of a runner message that is already stored (#1143): nothing to publish again
+                    if cancelled:
+                        raise asyncio.CancelledError
+                    return
                 self._record_published_event(ev)
                 self._queue_committed_event(ev)
                 try:
@@ -3608,6 +3612,8 @@ class Hub:
             updated["updated_at"] = time.time()
             try:
                 saved, cancelled = await self._publication_write(append((rid, updated)))
+                if saved is None:  # already stored by another copy of the same runner message (#1143)
+                    return None, cancelled
             except Exception:
                 # Nothing was stored: put the live request back to what is stored, as `_asave_request` does, so a
                 # later handler does not act on state that a restart would lose.
@@ -3642,6 +3648,34 @@ class Hub:
 
     async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                 incarnation: str | None = None) -> None:
+        """One runner message, once (#1143).
+
+        Within one connection the messages are handled in order, but the old and the new connection of a runner can both
+        be handling the same outbox row while it is still being committed: the resend passed the `runner_seen` check
+        before the first copy's commit, and both stored it. The row being handled is noted here before the first await.
+        A second copy WAITS for the first to finish (it must not return at once: the new connection would go on to the
+        next seq, commit its cursor first, and the first copy's event would then be dropped as "already seen"); when the
+        first is done the copy takes the ordinary path, which finds the seq stored, acks it and returns. If the first
+        one failed or was cancelled the copy processes the row itself. The store refuses a seq it already holds as the
+        last guard."""
+        seq = msg.get("runner_seq") if isinstance(msg, dict) else None
+        if seq is None:
+            return await self._on_runner_message(runner_id, msg, ws, incarnation)
+        if not hasattr(self, "runner_seq_inflight"):
+            self.runner_seq_inflight = {}
+        key = (runner_id, incarnation, seq)
+        while key in self.runner_seq_inflight:
+            await asyncio.wait([self.runner_seq_inflight[key]])  # returns when it is done, whatever the outcome
+        done = asyncio.get_running_loop().create_future()
+        self.runner_seq_inflight[key] = done
+        try:
+            await self._on_runner_message(runner_id, msg, ws, incarnation)
+        finally:
+            self.runner_seq_inflight.pop(key, None)
+            done.set_result(None)
+
+    async def _on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
+                                 incarnation: str | None = None) -> None:
         pipeline_event = None
         if ws is not None and (self.runners.get(runner_id) is not ws or
                                self.runner_incarnations.get(runner_id) != incarnation):
@@ -4574,6 +4608,12 @@ class Hub:
                 nonlocal saved
                 await self._add_approval(approval.id, {"approval": approval.model_dump(mode="json"),
                                                       "origin": None, "future": fut})
+                if not is_active_request(req_state.get("status")) or req_state.get("cancelling"):
+                    # The request was cancelled or ended while the card was being stored (a slow write): it must not
+                    # come back to life as waiting, nor keep a card for a request that is over (#1148).
+                    saved = {"status": "cancelled", "approval_id": approval.id}  # kept in this call only
+                    await self.close_approval(approval.id, "request cancelled")
+                    return
                 saved = {"status": "waiting", "approval_id": approval.id,
                          "proposal": {key: proposal[key] for key in
                                       ("fix_id", "signature_id", "action", "execution", "import_name", "package",
@@ -4582,6 +4622,13 @@ class Hub:
                 fixes[step_id] = saved
                 req_state["status"] = "waiting_facilities_fix"
                 await self.asave_request(rid)
+                if (approval.id not in self.approvals or not is_active_request(req_state.get("status"))
+                        or req_state.get("cancelling")):
+                    # A cancel closed the card (and published approval.expired) while the request was being saved:
+                    # announcing it now would put a card back in the page after it was withdrawn. Checked in the same
+                    # synchronous stretch as the publish call, so a cancel that comes later publishes expired after
+                    # this requested (#1148 review).
+                    return
                 await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
                                     "data": approval.model_dump(mode="json")})
             _, cancelled = await self._publication_write(open_fix())
@@ -5384,12 +5431,26 @@ class Hub:
             asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
         return new_rid
 
+    def _revise_lock(self, rid: str) -> asyncio.Lock:
+        if not hasattr(self, "revise_locks"):
+            self.revise_locks = {}
+        return self.revise_locks.setdefault(rid, asyncio.Lock())
+
     async def acreate_revised_request(self, rid: str, note: str) -> str:
         """CP1 수정 요청: a new research request with the PI's note, the previous plan to revise (``revision_of``), the
         answers and PI notes already given, the same references, project, requested budget and CSO model. It plans again
         from the note and asks a new CP1; the old request ends (no step ran). Everything the new request reads is in
         its first save, and a request already opened for ``rid`` is returned, so a restart never opens a second one.
-        Raises what create_request raises (a removed project or CSO model, a reference no longer allowed)."""
+        Raises what create_request raises (a removed project or CSO model, a reference no longer allowed).
+
+        One call at a time per request (#1140): the check for an already opened request is made here, but the new request
+        is registered by a task the write wrapper starts, so two calls ready in the same loop turn used to both pass the
+        check and open a revised request each (double cost). The second now waits and returns the first's request."""
+        async with self._revise_lock(rid):
+            return await self._acreate_revised_request(rid, note)
+
+    async def _acreate_revised_request(self, rid: str, note: str) -> str:
+        """The body of acreate_revised_request, run under its per-request lock."""
         old = self.requests[rid]
         existing = self.revised_request_of(rid)
         if existing:

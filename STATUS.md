@@ -4,6 +4,122 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1148 취소가 시설 수리 카드 저장 중에 들어오면 요청이 되살아나는 결함
+
+- 결론: `Hub._request_facilities_fix`의 `open_fix`가 카드를 저장하는 `await self._add_approval(...)` 뒤에 `req_state["status"] = "waiting_facilities_fix"`를 썼다. 그 사이에 취소가 들어오면(저장이 느린 디스크에서는 수십 ms) 취소된 요청이 "시설 수리 승인 대기"로 되돌아가고 그 상태가 저장되며 카드가 남았다. 함수 맨 앞의 `cancelled` 검사는 이 `await` 뒤에는 없었다. #1148 조사(#1139 후속)에서 재현했다.
+- 바꾼 것: `labhq/gateway/server.py`의 `open_fix`가 `_add_approval` 뒤에 요청이 이미 끝났거나(`is_active_request`가 아님) `cancelling`이면 상태를 쓰지 않고 방금 연 카드를 `close_approval`로 닫고 돌아온다(이 호출 안에서만 쓰는 `saved`는 `cancelled`로 둬 뒤 코드가 깨지지 않는다). 요청 행의 `status`·`cancelling` 표식이 이미 "끝내는 중"을 뜻하므로 #1146의 별도 집합은 필요 없다.
+- 시험(`tests/test_facilities_fixes.py` 1건): 카드 저장을 느리게 막고 취소한 뒤 풀면 요청은 `cancelled`로 남고 `facilities_fixes`에 대기 항목이 없고 수리 카드가 없으며 `approval.requested`가 나가지 않는다. main의 코드에서는 카드가 닫히지 않아 수리 호출이 대기를 끝내지 못하고 실패한다. 파일 44 passed, 관련 시험 1,597 passed.
+- 리뷰 P1(같은 부류의 더 좁은 변형): 첫 검사 뒤에도 `asave_request`·`publish`로 `await`가 더 있어, 그 사이 취소가 카드를 닫고 `approval.expired`를 먼저 내보낸 뒤 `approval.requested`가 늦게 나가면 웹 reducer가 카드를 다시 띄운다. 게시 직전(같은 동기 구간)에 카드가 아직 `self.approvals`에 있고 요청이 활성인지 다시 보고, 아니면 게시하지 않는다. 이렇게 하면 그 뒤에 취소가 와도 `approval.expired`는 이 `approval.requested`보다 뒤에 나간다. 시험을 카드 저장이 느린 경우와 그 뒤 요청 저장이 느린 경우 둘로 나눴고, 둘째는 이전 head에서 실패한다.
+- 의미를 바꾸지 않은 것: 상태 쓰기는 직접 대입 그대로다. `_sync_hold_status`로 바꾸면 로그인·쿼터 대기가 수리 카드보다 우선하는 의미 변화가 생겨 이번 범위에서 뺐다.
+- 미확인: 실제 발생 빈도. 같은 패턴이 다른 카드 종류에 있는지는 #1148 조사 범위의 스캔에서 이 한 곳만 나왔다.
+- 근거: #1148 조사 댓글 6536217329.
+
+# #1149 task보다 먼저 도착한 task.cancel이 사라지는 문제
+
+- 결론: runner가 보유도 접수도 하지 않은 task의 `task.cancel`을 받으면 `cancelled_task` 행(tombstone)을 영속 저장한다. 같은 id의 `task.dispatch`가 접수 기록 없이 오면 시작하지 않고 `task.accepted` + 취소 결과(`ok=False`, `error_kind="cancelled"`, `cleanup_evidence.status="not_started", cost_usd=0.0, cost_known=True`)를 한 묶음으로 보내고 `accepted_task`를 `finished`로 남긴 뒤 tombstone을 지운다. 이후 같은 dispatch가 다시 와도 접수 기록이 있어 시작하지 않는다.
+- 원인(#1147 판정 ①): 취소는 `self.tasks`에 task가 없으면 `_jobs_cancelled`에만 id를 넣고, 이 집합은 job 제출만 막는다. 재연결 때 `flush_task_cancels`가 `task.dispatch` 재전송보다 먼저 도착하면 취소가 사라진다.
+- 시험(`tests/test_runner_cancel_tombstone.py`, 5건): 취소→dispatch는 시작 안 함(수정 전 `_run_guarded` 호출로 실패), 재전송 dispatch도 시작 안 함(수정 전 실패), dispatch→취소는 tombstone 없음, 다른 task 취소는 영향 없음, 2일 지난 tombstone은 다음 취소 때 정리(수정 전 실패).
+- 바꾼 것: `labhq/runner/daemon.py`, `tests/test_runner_cancel_tombstone.py`, `config/ci/windows-boundary-v1.json`, `docs/manual.md`·`manual.en.md` 각 한 줄.
+- tombstone 정리: 처리 시 삭제, 아니면 2일(`CANCEL_TOMBSTONE_KEEP_S`, gateway의 `TASK_CANCEL_KEEP_S`와 같음) 지난 것을 다음 취소 때 삭제.
+- 미검증: 실제 ws 재연결 순서, Windows 실행. 범위 밖: ② pause/resume 순서, ③ 더블 클릭 중복.
+
+# #1144 로컬 job 폴링이 취소로 끝난 job을 덮어쓰는 경합
+
+- 결론: `_poll_local_jobs`가 `await to_thread(local_jobs.status)`로 상태를 읽는 사이에 취소 경로(`_end_local_job`)가 job을 `cancelled`·`terminal`로 끝내면, 폴링이 깨어나 읽어 둔 상태(예: 방금 정상 종료한 `completed`)로 job을 덮고 `job.state`를 한 번 더 보냈다. 그러면 취소된 단계가 깨어날 수 있었다. 창은 job이 자연히 끝나는 순간과 취소가 겹칠 때뿐이라 좁다.
+- 바꾼 것: `labhq/runner/daemon.py`의 `_poll_local_jobs`가 상태를 읽은 뒤 `if j["terminal"]: continue`로 낡은 읽기를 버린다(한 줄). 취소의 결과가 마지막이다.
+- 시험(`tests/test_local_jobs_675.py` 1건): 상태 읽기를 이벤트로 막아 둔 채 `task.jobs_cancel`로 job을 끝내고 읽기를 풀면, job은 `cancelled`로 남고 `job.state`는 `cancelled` 하나뿐이며 `jobs.finished`가 나가지 않는다. main의 코드에서는 `completed`로 덮여 실패한다. 파일 전체 37 passed, 1 skipped.
+- 리뷰 P1로 넓힌 것: 취소의 `kill`이 실패하면 `_end_local_job`은 job을 `terminal`로 두지 않고 `cancel_requested`만 설정해 다음 폴링이 다시 끝내게 한다. 처음 가드(`terminal`만)는 이 경우를 통과시켜, 낡은 `completed` 읽기가 job을 끝난 것으로 만들고 살아 있는 프로세스 트리를 놓칠 수 있었다. 가드를 `terminal` 또는 `cancel_requested`로 넓혔다(다음 폴링 맨 앞의 기존 분기가 재시도한다). 시험 1건(kill이 실패한 취소 뒤 낡은 읽기가 job을 끝내지 못하고, 다음 폴링이 `cancelled`로 끝내 프로세스가 남지 않음)을 더했고 이전 가드에서는 실패한다.
+- 같은 부류의 세 번째 변형(리뷰 P1)과 구조적 수정: 처음 두 가드는 취소가 상태를 기록한 뒤(`terminal`·`cancel_requested`)만 봤다. 취소가 시작됐지만 `kill`이 아직 반환하지 않은 동안에도 낡은 읽기가 job을 끝낼 수 있었고, 뒤늦게 kill이 실패하면 살아 있는 프로세스 트리를 영구히 놓칠 수 있었다. 사례를 하나씩 막지 않고 부류를 닫았다: `_end_local_job`이 첫 줄에서 job을 "끝내는 중" 집합(`_ending_local_jobs`)에 넣고 마지막 줄에서 빼며, 폴링은 읽기 전후에 이 집합과 `terminal`·`cancel_requested`를 모두 본다. 시험 2건(kill이 반환되기 전 낡은 읽기가 돌아옴: kill 성공·실패)을 더했고 이전 가드에서는 둘 다 실패한다.
+- 미확인: HPC job 폴링(`_poll_jobs`)에 같은 패턴이 있는지는 이번 범위가 아니라 보지 않았다(HPC job은 이 취소 경로를 쓰지 않는다). 창이 좁아 실제 발생 빈도는 재지 못했다.
+- 근거: #1139 판정 댓글 6535399863, #1144.
+
+# #1143 같은 runner 메시지가 동시에 두 번 처리되는 문제
+
+- 결론: `Hub.on_runner_message`가 처리 중인 `(runner_id, incarnation, runner_seq)`를 메모리 dict(키별 future)에 두어(첫 await 전의 동기 구간) 같은 행의 두 번째 사본은 첫 처리기가 끝날 때까지 **기다린 뒤**(바로 돌아가면 새 연결의 다음 seq가 커서를 먼저 올려 첫 사본의 이벤트가 "이미 봄"으로 버려진다) 보통 경로로 가서 seq가 저장돼 있으면 ack만 하고 돌아간다. 첫 처리기가 실패·취소되면 사본이 직접 처리한다. 두 사본 모두 ack를 받는다. 저장소는 마지막 방어선이다: `_append_event_now`가 트랜잭션 안에서 커서를 읽어 이미 본 seq면 이벤트를 넣지 않고 `None`을 돌려주며(`publish`가 그대로 끝냄), 커서 갱신(`_append_event_now`·`_mark_runner_now`)은 `WHERE excluded.seq > runner_cursor.seq`로 앞으로만 움직인다.
+- 원인(#1139 rev2): `runner_seen` 확인이 트랜잭션 밖이었고 커서 갱신이 무조건 덮어써서, 옛 연결과 새 연결이 같은 outbox 행을 동시에 처리하면 이벤트가 두 번 저장됐다.
+- 시험(`tests/test_state.py`): 같은 seq 동시 두 번 → 이벤트 1건(수정 전 2건)이고 두 사본 모두 ack, 재전송이 첫 사본을 기다려 다음 seq(6)가 5를 앞지르지 못함(즉시 반환 구현에서는 실패), 첫 사본이 취소되면 재전송이 처리됨, 커서가 뒤로 안 가고 이미 본 seq는 이벤트를 안 넣음(수정 전 새 이벤트가 들어감), 같은 `task.result`를 두 seq로 보내도 비용은 한 번만 기록됨(이미 task id로 멱등이라 수정 전에도 통과).
+- 비용 이중 기록 확인: `_arecord_task_cost`가 `cost_by_task`에 task id가 있으면 건너뛰므로 같은 `task.result`가 다른 seq로 두 번 와도 `cost_usd`는 한 번만 더해진다(시험으로 고정).
+- 바꾼 것: `labhq/gateway/server.py`(`on_runner_message` 바깥 wrapper, `publish`·`_append_event_with_request`의 `None` 처리), `labhq/store.py`, `tests/test_state.py`, `tests/test_state_activity_durable.py`(활동 메시지 도우미가 `seq` 인자를 받음).
+- 시험 도우미 수정: `tests/test_state_activity_durable.py::test_concurrent_activity_merges_tools_and_owns_inputs`가 서로 다른 두 메시지에 같은 `runner_seq: 1`을 줘서 새 중복 방지에 걸렸다(실제 runner는 seq를 되풀이하지 않음). `activity_message`가 `seq` 인자를 받고 두 번째 메시지에 `seq=2`를 준다.
+- 미검증: 실제 재연결 중복 도착, 메시지 종류별 멱등성(비용 외).
+
+# #1137 안 G1 — run.json 갱신 묶기
+
+- 결론: task마다 run.json(작업공간 `manifest.json`의 `runs[task_id]`)을 4번 쓰던 것(①시작 ②산출 환경 ③입력 hash ④종료)을 2번으로 줄였다. ②③은 CLI가 끝난 뒤 `task.result`를 보내기 직전까지 연달아 일어나고 그 값은 단계가 끝난 뒤에만 읽히므로, ④의 쓰기에 실었다. ①(CLI 전에 저장)과 실행 중 accounting(비용 기준선·session_id)은 지금처럼 즉시 쓴다. 지연 fsync가 아니다: `task.result`가 나가기 전에 모든 필드가 한 번의 fsync로 디스크에 있다.
+- 바꾼 것:
+  - `labhq/runner/workspace.py`: `stage_run`(메모리에 모음), `aflush_run`(모은 것만 씀)을 더했고, `update_run`/`aupdate_run`은 모아 둔 필드를 자기 필드 아래에 합쳐 한 번에 쓴다(같은 이름은 명시한 값이 이긴다). 쓰기가 실패하면 모아 둔 필드는 다음 쓰기를 위해 되돌려 놓는다.
+  - `labhq/runner/daemon.py`: `collect_observed_outputs`와 입력 hash 기록이 `stage_run`을 쓴다. 단계가 끊기는 경로(취소·예외 뒤)의 입력·산출 기록은 전처럼 즉시 쓴다. `run_task`의 `finally`가 `aflush_run`을 불러, 모은 뒤 최종 쓰기 없이 끝난 단계(RESULT 쓰기 예외 등)도 기록을 남긴다.
+- 실행한 것(이 PC, 상태 폴더 D:, lab 요청 1회, mock 엔진, FULL):
+  - `os.fsync` 94~97회 → 70~73회(−24). 요청 처리 20.1~21.0 s → 19.3~19.8 s(중앙값 약 20.7 s → 약 19.7 s). D: 디스크 편차가 있어 약 4~5% 감소로만 본다.
+  - 관련 시험 3,000여 건 통과(후보 5개 파일 포함), 이 경로를 쓰는 기존 시험은 편집 없이 통과한다.
+- 시험(`tests/test_resume_accounting.py` 4건): 단계의 첫 쓰기는 `started_at`이고 `ended_at`을 싣는 쓰기가 `environment_record`·`input_files`를 함께 싣는다(앞선 쓰기에는 없음), RESULT 쓰기가 예외로 끊겨도 모은 기록이 남고 `ended_at`은 없다, 모은 필드는 다음 쓰기에 합쳐지고 명시한 필드가 이긴다, 쓰기가 실패하면 모은 필드가 보존되고 `aflush_run`은 모은 것만 쓴다. main의 코드에서는 3건이 실패하고 끊긴 경로 시험은 보존 확인이라 양쪽 통과한다.
+- 미확인: 실제 엔진의 실행 중 갱신이 더 많을 때의 비중, CI Windows 전후 시간.
+- 근거: #1137 W1 설계 댓글 6534352217.
+
+# #1140 CP1 수정 요청의 중복 개설
+
+- 결론: `Hub.acreate_revised_request`가 요청별 lock 안에서 "이미 열린 수정 요청이 있는가" 확인부터 새 요청 등록, `revised_to` 기록까지 한다. 두 번째 호출은 기다렸다가 첫 번째가 연 요청을 그대로 돌려준다.
+- 원인(#1139 조사): 확인은 호출한 코루틴에서 했고 새 요청은 `_publication_write`가 만든 별도 task에서 등록돼, 같은 루프 반복에 준비된 두 호출이 둘 다 확인을 통과했다. 같은 수정 요청이 연구 요청 둘을 열어 비용이 두 번 났다.
+- 시험: `tests/test_research_cp1_revise.py`에 동시 두 호출(수정 전 `req_… != req_…`로 실패, 수정 후 통과)과, 실패한 호출 뒤에 lock이 잡혀 있지 않은지(다음 호출 5초 안에 완료) 두 건.
+- 바꾼 것: `labhq/gateway/server.py`(`_revise_lock`, 바깥 `acreate_revised_request`와 안쪽 `_acreate_revised_request`), 시험 파일 하나.
+- 범위 밖: 동기판 `create_revised_request`는 await가 없어 같은 경합이 없다. 프로세스 사이 경합과 #1139에서 읽지 않은 후보는 다루지 않았다.
+- 미검증: 실제 웹에서 같은 버튼을 두 연결로 동시에 누르는 경우, W3의 #1134와 같은 `server.py`의 병합 충돌(main 반영 때 확인).
+
+# #621 P2: 여러 염기 REF의 창 중앙
+
+- 결론: `alphagenome_variant`의 점수 창이 변이의 첫 염기가 아니라 REF 구간(`Query.start0`~`end`)의 가운데를 중심으로 잡힌다. 1,000 bp 결실이면 REF 전체가 창 안에 양쪽 같은 여유로 들어간다(예전에는 중심이 500 bp 왼쪽).
+- 한 염기 REF는 `(pos-1 + pos) // 2 = pos-1`이라 창이 그대로다. 염색체 시작 근처는 여전히 0으로 잘린다.
+- 바꾼 것: `labhq/tools/annot_alphagenome.py`(한 줄과 주석), `tests/test_annot_alphagenome_variant.py`(시험 하나: 결실 중앙, 한 염기 불변, 시작 근처 0). 새 시험은 옛 코드에서 실패함을 확인했다.
+- 알려진 것: 같은 시험 묶음의 `tests/test_annot_regulatory.py::test_with_a_key_the_server_offers_alphagenome…`가 이 PC에서 `CallToolResult.is_error` 속성 오류로 실패한다(설치된 mcp SDK와 시험 코드의 속성 이름 차이, 이 변경과 무관).
+- 한계: 염색체 끝을 넘는 창은 바꾸지 않았다. D(Atlas)는 PI 결정 대기(#621 댓글).
+
+## 단계
+#1132(#1125 E3): PI 문장 번역 결과의 쓰기를 한 transaction으로.
+
+## 한 일
+- `labhq/pi_language.py` `_interpret`의 `finally`: `pi_translation` 행, 메시지 `pi_display`(`set_message_display`), 승인 카드 복사본 저장을 `store.arun_batch`(#1131) 한 transaction으로 했다. 승인 행은 loop thread에서 deep copy한 것만 writer thread가 쓴다(live gateway 상태를 writer thread가 읽지 않음).
+- 뒤따르는 `persist_request`는 없앴다. 바로 이어지는 `messenger.translated` 발행(#1130)이 같은 request를 한 transaction으로 저장한다.
+- 번역 1건의 실제 COMMIT이 4회에서 2회가 되고, 동기 `put`이 event loop를 막던 것도 없어졌다. 재시작 뒤 번역 결과·표시·카드 사본이 서로 어긋날 틈이 없다.
+- 시험(`test_gateway_publish_durable.py`): COMMIT 2회, 두 번째 쓰기 실패 시 첫 쓰기도 없음. 둘 다 옛 코드에서 실패함을 확인했다. 기존 `test_pi_language*`·`test_messenger_history`·`test_approval_durable_606`은 그대로 통과(235 passed 포함).
+
+## 실측 (D: 드라이브, FULL, lab 요청 1회)
+| | transaction | commit 시간 합 | 요청 시간 |
+|---|---|---|---|
+| main | 659, 657 | 18.9 s, 19.0 s | 23.4 s, 23.9 s |
+| 이 브랜치 | 663, 669 | 18.6 s, 18.3 s | 23.2 s, 23.3 s |
+lab 요청에는 번역이 나오지 않아(번역은 기술적인 영문 메시지에만 붙음) **차이가 없고 오차 안입니다.** 이 측정으로는 E3의 효과를 보일 수 없습니다. 효과는 번역 1건당 실제 COMMIT 4회 → 2회(시험으로 확인)입니다. 디스크 fsync가 앞선 측정(commit 합 34 s)보다 빨라 이 드라이브의 상태가 달라졌습니다.
+
+## 하지 않은 것
+- lab 요청 1회에 번역이 몇 건 나오는지는 요청에 따라 달라 효과가 작을 수 있다. 번역이 없는 요청에서는 차이가 없다.
+- E2(`pending` 표시를 이벤트와 함께)는 이번 범위가 아니다.
+
+# #1125 안 D — runner ack 합치기
+
+- 결론: gateway는 runner의 outbox 행마다 ack를 보내고 runner는 ack마다 commit·fsync를 했다. ack는 누적(`DELETE … WHERE seq<=?`)이라, 진행 중인 commit 동안 도착한 ack를 다음 commit 하나로 합친다. 지연 fsync나 타이머는 없다.
+- 바꾼 것(`labhq/runner/daemon.py`):
+  - `_ack_nowait(seq)`: 가장 높은 seq를 적고, 진행 중인 flush가 없으면 즉시 시작한다. `_ack_flush`는 commit하는 동안 높아진 seq까지 한 번 더 commit하고 끝난다.
+  - 연결 루프는 `runner.ack`를 기다리지 않고 읽는다. 다음 메시지를 읽는 일이 ack의 fsync에 막히지 않는다.
+  - `_on_message({"type":"runner.ack"})`를 직접 부르는 호출자는 전과 같이 durable이 된 뒤 돌아온다(`_ack_drain`).
+  - 연결이 끝날 때(재연결 전), `shutdown()`, `run_forever()` 종료 때 `_ack_drain`으로 이미 받은 ack를 commit한다. commit이 실패하면 다음 ack 또는 기다리는 호출자에게 같은 예외가 간다(전에는 인라인 commit이 연결 루프로 올렸다).
+- 리뷰 P1로 고친 것: ack drain이 shutdown의 5초 기한 밖에서 시간 제한 없이 기다려, commit이 멈추면 종료가 끝나지 않을 수 있었다. `_ack_drain(timeout=)`을 더해 shutdown은 전체 기한(`timeout_s`) 안에서, 재연결은 5초(`ACK_DRAIN_S`), `run_forever` 종료는 `durable.EXIT_DRAIN_S` 안에서만 기다린다. 끝나지 않은 commit은 취소하지 않고 스스로 끝나게 두며, 그 행은 outbox에 남아 재전송되고 gateway가 중복을 거른다. 시험 2건(멈춘 commit에서도 shutdown이 기한 안에 돌아옴, 시간 제한 drain이 commit을 취소하지 않음)을 더했고 이전 head에서는 둘 다 실패한다.
+- 두 번째 리뷰 P1: 신호 종료에서는 `shutdown()`이 끝난 뒤 entry point가 `run_forever`를 취소하고 그 `finally`가 ack를 최대 30초 더 기다린 뒤 `durable.adrain`도 기다려, 종료가 5초 상한을 넘을 수 있었다. `shutdown()`이 자기 마감(`_shutdown_deadline`)을 적어 두고, 연결 종료와 `run_forever` 종료의 ack 대기(`_ack_wait_s`)는 그 마감의 남은 시간만 쓴다. 시험 1건을 더했다.
+- 안전: ack가 늦거나 없어져도 행이 남아 재전송될 뿐이고, gateway가 `runner_cursor`(`runner_seen`)로 중복을 걸러낸다(`test_runner_job_recovery_outbox_and_gateway_dedup`).
+- 시험(`tests/test_state.py` 5건, `tests/test_runner_shutdown_signals.py`의 `SimpleNamespace` 대역에 `_ack_drain` 추가): ack가 commit 중 도착하면 commit 둘(첫 ack 단독 + 나머지 누적)로 끝남, 아무도 기다리지 않으면 지연 없이 commit, `_on_message` ack는 durable 뒤 반환, commit 실패는 다음 ack·기다리는 호출자에게 전달되고 행은 남음, shutdown은 이미 받은 ack를 commit. 이전 daemon에서는 이 중 동작 시험 4건이 실패한다. 관련 시험 2,799 passed, 35 skipped.
+- 실측(이 PC, 상태 폴더 D:, lab 요청 1회, main에는 안 A가 반영됨): 실제 `COMMIT` 문 main 613~624회 → 548회(runner 221~227 → 151, −31%). 요청 처리는 main 20.9~35.5 s(중앙값 약 22 s)에서 19.9~21.6 s(중앙값 약 20.6 s)로, D: 디스크 편차가 커서 3~7%대 감소와 편차 축소 정도로만 본다.
+- 미확인: CI Windows 전후 시간, ack가 더 크게 몰리는 느린 디스크에서의 효과.
+- 근거: #1125 설계 댓글 6531718393.
+
+# #1107 Chrome 예열 step
+
+- 결론: Windows job이 critical 단계(첫 브라우저 시험) 앞에서 `scripts/ci_chrome_warmup.py`로 Chrome을 시험과 같은 플래그·빈 프로필로 한 번 띄워, DevTools 포트와 첫 페이지 target까지 걸린 시간을 로그에 한 줄로 남기고 끝낸다. cold start 검증을 이 step이 맡는다. 상한은 드라이버 기본 `START_MS`와 같은 60초(step은 2분)이고 실패하면 "Chrome warm-up failed"로 이름 붙어 끝난다. Chrome이 없는 곳에서는 알림만 내고 통과한다.
+- 시험의 30초 시작 상한(`STARTUP_BUDGET_MS`)과 critical step의 3분 상한은 바꾸지 않았다(이제 데워진 Chrome의 시작을 확인한다). 시험이 그 값을 지키는지, 예열 상한이 `START_MS`와 같은지 `tests/test_ci_chrome_warmup.py`가 확인한다.
+- 정책 변경(총괄 결정 B안, #1107): `docs/reference/ci-reuse.md`의 "사전 기동 없음" 원칙을 "첫 Chrome의 cold start는 예열 step이 60초로 검증, 시험은 데워진 Chrome의 30초"로 고쳤고, 같은 문서에 남은 옛 상한(job 14분·pool 9분)을 18분·13분으로 바로잡았다.
+- 근거: 같은 job에서 첫 Chrome인 `web_resizable_panels`만 35~51초 꼬리가 있었다(#1107 댓글 6533222880).
+- 바꾼 것: `scripts/ci_chrome_warmup.py`(새), `tests/test_ci_chrome_warmup.py`(새, 8건), `.github/workflows/test.yml`(step 하나), `config/ci/windows-boundary-v1.json`(`known_tests` 한 줄).
+- 하지 않은 것: 통과한 run에서 시험의 시작 구간을 남기는 일. 시험 프로세스의 출력은 pytest가 실패할 때만 보이고, step 요약은 API로 읽을 수 없다. 대신 예열 step의 한 줄이 같은 정보를 로그에 남긴다.
+- 한계: 예열이 시험의 cold start를 실제로 없애는지는 미검증이다. job 시간이 최대 2분 늘 수 있고 job 상한(18분)은 그대로다.
+- 효과 확인: PR 병합 뒤 Windows run 몇 개의 예열 시간과 `web_resizable_panels` 소요(`--durations`)를 #1107에 모은다.
+
 # #1127 validation-manifest가 방금 끝난 Windows job을 못 찾는 문제
 
 - 결론: `scripts/ci_skip.py`의 `windows_artifact`가 effective attempt의 `pytest-windows`가 **아직 목록에 없거나 완료되지 않은** 동안만 3초 간격으로 최대 40번(약 2분) 다시 읽는다. 완료된 뒤의 검증(`conclusion`, run·attempt·head 묶기, artifact 시각 포함)은 그대로이고, 완료된 실패·2개 이상 겹침·묶기 실패는 기다리지 않고 즉시 실패한다. 상한을 넘으면 같은 `missing/ambiguous Windows producer` 오류가 난다.
