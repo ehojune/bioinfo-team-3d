@@ -87,6 +87,34 @@ def is_read_only_task(meta: dict | None, agent: AgentSpec | None = None) -> bool
             or (meta.get("agent_overrides") or {}).get("sandbox") == "read-only")
 
 
+TOOL_NOTICE_HEAD = "## Tools in this read-only run"
+
+
+def available_tools(fields: dict) -> list[str]:
+    """The tools a read-only run really has, by the name an instruction would use: built-in file tools, the engine's
+    web tools the profile kept, and the labhq_annot tools of an explicit allowlist (#1224)."""
+    names = [name for name in (fields.get("builtin_tools") or "").split(",") if name]
+    names += [name for name in fields.get("tools") or [] if isinstance(name, str)]
+    annot = fields.get("annot_tools")
+    if "annot" in (fields.get("builtin_mcp") or []) and annot:
+        names.append("labhq_annot (" + ", ".join(annot) + ")")
+    return names
+
+
+def with_tool_notice(prompt: str, fields: dict) -> str:
+    """`prompt` plus what this read-only run can use. The persona and the role text are written for the staff member's
+    ordinary run, where MCP servers and web tools exist; a read-only profile drops them, and without this the
+    instructions keep sending the model to tools it does not have (#1224). Appended once: a profile of a profile
+    keeps the notice it already has."""
+    if TOOL_NOTICE_HEAD in prompt:
+        return prompt
+    tools = ", ".join(available_tools(fields)) or "none"
+    return (prompt.rstrip() + "\n\n" + TOOL_NOTICE_HEAD + "\nAvailable now: " + tools + ".\n"
+            "Every other tool or service named in the instructions above (for example PubMed or bioRxiv tools, other "
+            "labhq_annot tools, shell commands) is not available in this run. Do not try it; say what you "
+            "could not check instead.")
+
+
 def read_only_profile(agent: AgentSpec) -> AgentSpec:
     """The only spec a read-only task runs with: built from the staff member's identity, never from the sender.
 
@@ -109,6 +137,7 @@ def read_only_profile(agent: AgentSpec) -> AgentSpec:
         # Diagnosis is supplied as context; this staff member needs no execution or write tools.
         fields.update(sandbox="read-only", builtin_tools="", builtin_mcp=[], tools=[])
         kept["project_dirs"] = []
+    kept["system_prompt"] = with_tool_notice(kept["system_prompt"], fields)
     return AgentSpec(**kept, **fields)
 
 
