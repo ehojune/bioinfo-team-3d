@@ -417,6 +417,16 @@ def test_matching_replayed_ready_and_receipt_rejected(mock_diagnostic):
     assert run()["status"] == "inconclusive"
 
 
+def test_diagnostic_worker_does_not_inherit_host_secret(tmp_path, monkeypatch):
+    boundary, broker, observed = (tmp_path / name for name in ("boundary.py", "broker.py", "observed"))
+    monkeypatch.setenv("BOUNDARY_TEST_HOST_SECRET", "synthetic-secret")
+    broker.write_text("pass\n")
+    boundary.write_text("import os, pathlib\npathlib.Path(%r).write_text(os.getenv('BOUNDARY_TEST_HOST_SECRET', 'absent'))\n" % str(observed))
+    result = integration_probe.run(boundary, broker)
+    assert result["status"] == "inconclusive"
+    assert observed.read_text() == "absent"
+
+
 @pytest.mark.parametrize("phase", ["startup", "cleanup"])
 def test_entire_diagnostic_deadline_terminates_worker(tmp_path, phase):
     boundary, broker = tmp_path / "boundary.py", tmp_path / "broker.py"

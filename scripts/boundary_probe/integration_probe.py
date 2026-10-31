@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import signal
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -161,6 +162,11 @@ def _run(boundary_path: Path, broker_path: Path, broker_kind="synthetic", expect
 
 def run(boundary_path: Path, broker_path: Path, broker_kind="synthetic", expected_boundary=None, expected_broker=None, timeout=30):
     """Bound the entire diagnostic, including imports, startup and cleanup."""
+    with tempfile.TemporaryDirectory(prefix="boundary-diagnostic-") as directory:
+        return _bounded_worker(boundary_path, broker_path, broker_kind, expected_boundary, expected_broker, timeout, directory)
+
+
+def _bounded_worker(boundary_path, broker_path, broker_kind, expected_boundary, expected_broker, timeout, directory):
     args = [sys.executable, str(Path(__file__).resolve()), "--worker",
             "--boundary-module", str(boundary_path.resolve()), "--broker-module", str(broker_path.resolve()),
             "--broker-kind", broker_kind]
@@ -168,7 +174,10 @@ def run(boundary_path: Path, broker_path: Path, broker_kind="synthetic", expecte
         if value is not None:
             args.extend((option, value))
     options = {"start_new_session": True} if os.name != "nt" else {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-    process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **options)
+    env = {key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR") if key in os.environ}
+    env.update(PATH=os.defpath, HOME=directory, USERPROFILE=directory, TEMP=directory, TMP=directory,
+               TMPDIR=directory, PYTHONDONTWRITEBYTECODE="1")
+    process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, **options)
     try:
         output, _ = process.communicate(timeout=timeout)
         if process.returncode != 0:
