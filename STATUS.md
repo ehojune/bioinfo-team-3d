@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #678 셸 확인의 명령 읽기 보정(Argon P1 두 건)
+
+- 결론: `disk_space._segments`를 shlex 대신 직접 읽는 tokenizer로 바꿨다. 명령은 따옴표 밖의 `;` `&&` `||` `|` `&` `(` `)` 개행에서 끝나고, `#`은 단어 시작에서만 주석이며(`url#frag`은 한 단어), `>` `>>` `&>` `2>`는 명령을 쪼개지 않고 그 대상 파일을 쓰기 경로로 돌려주며 `<`는 읽기라 버린다. 따옴표가 닫히지 않으면 읽지 않는다.
+- Argon P1: (1) `commenters=""`가 실제 주석(`# it's …`)의 아포스트로피로 따옴표를 어긋나게 하거나 주석 뒤 명령 문자까지 읽던 것 → 단어 시작의 `#`만 주석. (2) `<`·`>`를 구분자로 취급해 `curl … > /full/log`가 쪼개지던 것 → 리다이렉션 대상의 드라이브를 확인 대상에 넣음.
+- P2도 같이: `unzip … -x 패턴… -d dir`에서 패턴 뒤 `-d`를 읽고, `curl -Lo file`·`-fsSLo file`처럼 묶음 플래그의 값을 읽는다.
+- 시험: `tests/test_disk_shell_check_678.py`에 주석·리다이렉션·`-x`·묶음 플래그 5건 추가, 파일 전체와 관련 기존 시험 119건 통과.
+- 미검증: heredoc 본문 줄이 명령으로 읽히는 경우(초과 질문만 생김), 중첩 `$(…)`·백틱 안의 명령, Windows CI.
+
 # #678 task 도중 디스크 감시
 
 - 결론: runner가 task를 실제로 돌리는 동안(`working` 이후) `runner.disk_watch_s`(기본 30 s, 0이면 끔)마다 작업 폴더·runner 상태 폴더·`runner.bulk_data_root`·직원이 쓸 수 있는 project 폴더의 드라이브 여유를 읽고, 하나라도 `runner.disk_fail_free_gb`(2 GiB) 미만이면 그 task를 한 번만 halt한다. 세션은 보존되고 gateway의 기존 `멈춤 · 재개 가능` 흐름이 PI에게 묻는다. 재개 turn은 새 task 시작이라 `_disk_gate`를 다시 거친다.
