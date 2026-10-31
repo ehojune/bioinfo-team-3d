@@ -1662,7 +1662,9 @@ def _annot_roster(a: dict, alphagenome: bool = True) -> str:
     return f"labhq_annot=yes (tools: {', '.join(tools)}); " if tools else ""
 
 
-def format_roster(agents: list[dict], *, alphagenome: bool = True) -> str:
+def format_roster(agents: list[dict], *, alphagenome: bool | Callable[[dict], bool] = True) -> str:
+    """One line per agent. ``alphagenome`` is a flag for every agent or a function of the agent: AlphaGenome is usable on
+    the runner that serves the agent, not everywhere (#1200)."""
     lines = []
     for a in agents:
         tag = " [파견직]" if a.get("employment") == "contract" else ""
@@ -1683,7 +1685,7 @@ def format_roster(agents: list[dict], *, alphagenome: bool = True) -> str:
                      f"{'own outputs/ and .tmp/ writable; ' if access == 'read-only' else ''}"
                      f"tools={allowed or builtin or 'default'}; denied={a.get('disallowed_tools') or []}; "
                      f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}; "
-                     f"{_annot_roster(a, alphagenome)}"
+                     f"{_annot_roster(a, alphagenome(a) if callable(alphagenome) else alphagenome)}"
                      f"max_turns={a.get('max_turns') or 'unlimited'}{tools}")
     return "\n".join(lines)
 
@@ -4790,17 +4792,26 @@ class Orchestrator:
                 if block:
                     raise BudgetExceeded(reason)
 
-    def _alphagenome_ready(self) -> bool:
+    def _alphagenome_ready(self, agent: dict | None = None) -> bool:
         """Whether the AlphaGenome tools exist for the staff, as the runners say at registration (``alphagenome_ready`` in
         their capabilities): a runner registers them only with the key file and the client, and it may run on another
-        account or PC than the gateway, so the gateway's own look would drop tools a runner has. Any runner that
-        reports ready is enough. With no runner report at all (an older runner) the gateway looks for itself, as
-        before: the roster the CSO plans from must not list the tools when nothing can serve them (#1200)."""
+        account or PC than the gateway, so the gateway's own look would drop tools a runner has.
+
+        For one agent (a roster row, which carries the ``runner_id`` that serves it, a request's WSL pin included) it is
+        that runner's report: a runner that does not serve the agent says nothing about it. Without an agent, any runner
+        that reports ready is enough. A runner that has reported nothing (an older runner) leaves the gateway to look
+        for itself, as before: the roster the CSO plans from must not list the tools when nothing can serve them (#1200)."""
         capabilities = getattr(self.hub, "runner_capabilities", None) or {}
-        reports = [caps["alphagenome_ready"] for caps in capabilities.values()
-                   if isinstance(caps, dict) and "alphagenome_ready" in caps]
-        if reports:
-            return any(report is True for report in reports)
+        runner = (agent or {}).get("runner_id")
+        if runner is not None:
+            caps = capabilities.get(runner)
+            if isinstance(caps, dict) and "alphagenome_ready" in caps:
+                return caps["alphagenome_ready"] is True
+        else:
+            reports = [caps["alphagenome_ready"] for caps in capabilities.values()
+                       if isinstance(caps, dict) and "alphagenome_ready" in caps]
+            if reports:
+                return any(report is True for report in reports)
         try:
             from ..tools import annot_keys, annot_regulatory
             return bool(annot_keys.read_key(self.hub.s)) and annot_regulatory.alphagenome_client_available()
@@ -7513,7 +7524,7 @@ class Orchestrator:
                         topic_vocab = output_vocab.current()
                         template = RESEARCH_CP2_PLAN_PROMPT if research_execution else RESEARCH_PLAN_PROMPT
                         prompt = template.format(
-                            request=plan_request, roster=format_roster(roster, alphagenome=self._alphagenome_ready()),
+                            request=plan_request, roster=format_roster(roster, alphagenome=self._alphagenome_ready),
                             capabilities=capabilities or "No workers available",
                             briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
                             max_branches=self.cfg.max_branches,
@@ -7533,7 +7544,7 @@ class Orchestrator:
                         vocab = self._output_vocab()
                         topic_vocab = output_vocab.current()
                         prompt = PLAN_PROMPT.format(request=plan_request,
-                                                    roster=format_roster(roster, alphagenome=self._alphagenome_ready()),
+                                                    roster=format_roster(roster, alphagenome=self._alphagenome_ready),
                                                     capabilities=capabilities or "No workers available",
                                                     briefing=clip(briefing, 4000) or "(none)",
                                                     max_steps=self.cfg.max_steps, question_rule=QUESTION_RULE,
@@ -8077,7 +8088,7 @@ class Orchestrator:
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=replan_schema(vocab is not None),
                         resume_session_id=session_id,
                         prompt=REPLAN_PROMPT.format(
-                            roster=format_roster(roster, alphagenome=self._alphagenome_ready()),
+                            roster=format_roster(roster, alphagenome=self._alphagenome_ready),
                             capabilities=capabilities or "No workers available",
                             trigger=why, retired=", ".join(unfinished) or "none", drop_rule=drop_rule,
                             used=", ".join(sorted(used)), max_steps=self.cfg.max_steps,

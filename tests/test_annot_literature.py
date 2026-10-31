@@ -1054,3 +1054,44 @@ def test_any_ready_runner_is_enough_and_an_old_runner_that_reports_nothing_falls
     monkeypatch.setattr(annot_keys, "read_key", lambda _settings: "AIza-local")
     monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: True)
     assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=old)) is True   # same machine, runner not yet updated
+
+
+def test_the_roster_lists_alphagenome_by_the_runner_that_serves_each_agent(monkeypatch):
+    """#1252 review: runner A is ready but hosts nobody here, and runner B, which owns the agent, is not. The agent's line
+    must not promise a tool its runner never registers."""
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator, format_roster
+    from labhq.tools import annot_keys, annot_regulatory
+
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: None)
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: False)
+    hub = SimpleNamespace(s=Settings(), runners={"a": 1, "b": 1},
+                          runner_capabilities={"a": {"alphagenome_ready": True}, "b": {"alphagenome_ready": False}})
+    fake = SimpleNamespace(hub=hub)
+    ready = lambda agent: Orchestrator._alphagenome_ready(fake, agent)
+    on_a = {**AgentSpec(id="on-a", name="A", role="r", builtin_mcp=["annot"], annot_tools=["alphagenome"]).summary(),
+            "runner_id": "a"}
+    on_b = {**AgentSpec(id="on-b", name="B", role="r", builtin_mcp=["annot"], annot_tools=["alphagenome"]).summary(),
+            "runner_id": "b"}
+    assert ready(on_a) is True and ready(on_b) is False
+    text = format_roster([on_a, on_b], alphagenome=ready)
+    line_a = next(line for line in text.splitlines() if line.startswith("- on-a"))
+    line_b = next(line for line in text.splitlines() if line.startswith("- on-b"))
+    assert "labhq_annot=yes (tools: alphagenome)" in line_a
+    assert "alphagenome" not in line_b, "its own runner is not ready, whoever else is"
+
+
+def test_an_agent_whose_runner_has_not_reported_falls_back_to_the_local_look(monkeypatch):
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.tools import annot_keys, annot_regulatory
+
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: "AIza-local")
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: True)
+    hub = SimpleNamespace(s=Settings(), runners={"old": 1}, runner_capabilities={"old": {"scheduler": "none"},
+                                                                                   "a": {"alphagenome_ready": False}})
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=hub), {"runner_id": "old"}) is True
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: None)
+    assert Orchestrator._alphagenome_ready(SimpleNamespace(hub=hub), {"runner_id": "old"}) is False
