@@ -16,7 +16,7 @@ from labhq.tools.annot import LookupFailed
 
 
 @pytest.mark.parametrize("source", ["parent", "engine", "task", "missing", "empty"])
-def test_codex_forwards_atlas_key_by_name_only(tmp_path, monkeypatch, source):
+def test_codex_never_forwards_atlas_key(tmp_path, monkeypatch, source):
     from labhq.adapters.base import RunContext
     from labhq.adapters.codex import CodexAdapter
     from labhq.models import AgentSpec, Engine, McpServerSpec, Task
@@ -49,7 +49,9 @@ def test_codex_forwards_atlas_key_by_name_only(tmp_path, monkeypatch, source):
     forwarded = next(v for v in argv if v.startswith("mcp_servers.labhq_annot.env_vars="))
     names = json.loads(forwarded.split("=", 1)[1])
     assert "LABHQ_TASK_ID" in names
-    assert (atlas.KEY_ENV in names) == (source in {"parent", "engine", "task"})
+    assert atlas.KEY_ENV not in names
+    assert atlas.KEY_ENV not in adapter.staff_env(ctx)
+    assert secret not in json.dumps(adapter.staff_env(ctx))
     assert all(atlas.KEY_ENV not in v for v in argv if v.startswith("mcp_servers.other."))
     assert 'mcp_servers.other.env={UNCHANGED = "literal"}' in argv
     assert [s.model_dump() for s in servers] == before
@@ -362,7 +364,7 @@ def test_doctor_reports_presence_without_reading_key_file(monkeypatch):
 async def test_mcp_registration_deadline_and_lookup_admission(monkeypatch, tmp_path):
     from labhq.tools import annot_keys
     monkeypatch.setattr(annot_keys, "read_key", lambda *a: "")
-    monkeypatch.setenv(atlas.KEY_ENV, uuid.uuid4().hex)
+    monkeypatch.setenv("LABHQ_ATLAS_BROKER_ENABLED", "1")
     from labhq.tools import annot_mcp
     mcp = importlib.reload(annot_mcp)
     monkeypatch.setattr(mcp, "WORKDIR", tmp_path)
@@ -370,14 +372,14 @@ async def test_mcp_registration_deadline_and_lookup_admission(monkeypatch, tmp_p
     monkeypatch.setattr(mcp, "LOOKUP_LIMITED", False)
     called = []
 
-    async def query(self, variants, **kwargs):
-        called.append((variants, kwargs))
-        return {"mock": True}
-
-    monkeypatch.setattr(reg.RegulatoryAnnotator, "alphagenome_atlas", query)
+    monkeypatch.setattr(mcp, "BROKER_TOKEN", "test-broker")
+    async def post(self, url, **kwargs):
+        called.append((url, kwargs))
+        return httpx.Response(200, json={"mock": True}, request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
     assert json.loads(await mcp.alphagenome_atlas(["chr1:100:A:G"])) == {"mock": True}
-    status = (tmp_path / "outputs/external_lookup_status.jsonl").read_text(encoding="utf-8")
-    assert '"tool": "alphagenome_atlas"' in status and '"status": "ok"' in status
+    assert called[0][0].endswith("/annot/atlas")
+    assert called[0][1]["json"]["variants"] == ["chr1:100:A:G"]
     monkeypatch.setattr(mcp, "LOOKUP_LIMITED", True)
     monkeypatch.setattr(mcp, "BROKER_TOKEN", "test-broker")
     with pytest.raises(Exception, match="상한"):
@@ -390,13 +392,13 @@ async def test_mcp_all_error_status_is_failed(monkeypatch, tmp_path):
     monkeypatch.setattr(mcp, "WORKDIR", tmp_path)
     monkeypatch.setattr(mcp, "CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(mcp, "LOOKUP_LIMITED", False)
-    async def query(self, *args, **kwargs):
-        return {"n_ok": 0, "results": [{"error": "Atlas 인증·접근 권한 없음"}]}
-    monkeypatch.setattr(reg.RegulatoryAnnotator, "alphagenome_atlas", query)
-    with pytest.raises(Exception, match="권한"):
+    monkeypatch.setattr(mcp, "BROKER_TOKEN", "test-broker")
+    async def post(self, url, **kwargs):
+        return httpx.Response(502, json={"detail": "untrusted upstream text"},
+                              request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    with pytest.raises(Exception, match="runner lookup failed"):
         await mcp.alphagenome_atlas(["chr1:100:A:G"])
-    status = (tmp_path / "outputs/external_lookup_status.jsonl").read_text(encoding="utf-8")
-    assert '"status": "failed"' in status and '"status": "ok"' not in status
 
 
 async def test_installed_sdk_proto_roundtrip_without_network(factory):

@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "0000000"
+    at: "2026-10-31 19:58"
+    summary: "Atlas API 키를 runner 조회 서비스에 보관하고 직원 환경·명령·설정으로 넘기지 않습니다."
+    text: "fix: keep Atlas credentials in a task-bound runner lookup service"
   - sha: "5f23921"
     at: "2026-10-31 19:27"
     summary: "Atlas 키 확인에 Codex 엔진 환경의 우선순위를 반영합니다. 직원 shell 격리는 아직 미해결입니다."

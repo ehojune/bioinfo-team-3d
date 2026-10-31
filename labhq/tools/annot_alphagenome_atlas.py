@@ -17,6 +17,29 @@ from .annot import Item, LookupFailed
 from .annot_alphagenome import _rank, _scalar
 
 KEY_ENV = "ALPHAGENOME_API_KEY"
+
+
+def credential(*environments: dict[str, str]) -> str:
+    """Resolve the runner/engine/task credential in order, including Windows name casing."""
+    value = ""
+    for env in environments:
+        for name, candidate in env.items():
+            if name.casefold() == KEY_ENV.casefold():
+                value = candidate.strip()
+    return value
+
+
+def credentials(*environments: dict[str, str]) -> set[str]:
+    # Remove shadowed values and aliases too; an empty engine override must not expose the parent's key.
+    return {value.strip() for env in environments for name, value in env.items()
+            if name.casefold() == KEY_ENV.casefold() and value.strip()}
+
+
+def without_credentials(env: dict[str, str], secrets: set[str]) -> dict[str, str]:
+    return {name: value for name, value in env.items()
+            if name.casefold() != KEY_ENV.casefold() and not any(key in value for key in secrets)}
+
+
 MAX_SCORERS = 10
 MAX_ROWS = 1000
 MAX_CELLS = 1_000_000

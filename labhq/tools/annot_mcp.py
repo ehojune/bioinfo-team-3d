@@ -8,7 +8,7 @@ citation chasing, bioRxiv/medRxiv preprints, OpenAlex discovery, Crossref metada
 Env (set by the runner): LABHQ_WORKDIR (where outputs/annotation_queries.jsonl goes), LABHQ_CONFIG (state_dir for the
 cache, annot.alphagenome_key_file). The AlphaGenome key is read here from that owner-only file, never from the
 command line or the environment, and is kept only inside the backend object. The separate Atlas tool uses only
-ALPHAGENOME_API_KEY from the runner environment; it never uses that legacy key file.
+the runner-owned Atlas endpoint; the staff CLI and this MCP process never receive its API key.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ import httpx
 from ..runner.lookup_admission import ENV as LOOKUP_ADMISSION_ENV
 from ..settings import Settings
 from . import annot, annot_keys, annot_literature, annot_regulatory
-from .annot_alphagenome_atlas import KEY_ENV as ATLAS_KEY_ENV
+from ..runner.annot_broker import ENABLED_ENV as ATLAS_ENABLED_ENV
 from ._mcpcompat import make_server, tool_failure
 from .external_wait import LookupTimeout, exclude_human_wait, run_lookup
 
@@ -48,7 +48,7 @@ def _alphagenome() -> annot_regulatory.AlphaGenomeBackend | None:
 
 
 ALPHAGENOME = _alphagenome()
-ATLAS_ENABLED = bool(os.environ.get(ATLAS_KEY_ENV, "").strip())
+ATLAS_ENABLED = os.environ.get(ATLAS_ENABLED_ENV) == "1"
 
 server = make_server(
     "labhq-annot",
@@ -403,8 +403,21 @@ async def alphagenome_atlas(variants: list[str], requested_scorers: list[str] | 
     Requires runner ALPHAGENOME_API_KEY (no key file) and alphagenome>=0.10.0. Reports missing/unsupported access.
     Non-commercial research only, no clinical decisions or training other ML models. Does not infer absent scores.
     Request-wide lookup limits refuse this SDK transport, as for other AlphaGenome tools."""
-    return await _run("alphagenome_atlas", variants, requested_scorers=requested_scorers,
-                      ontology_terms=ontology_terms, gene_ids=gene_ids, top=top, assembly=assembly)
+    async with _admitted("alphagenome_atlas"):
+        if not BROKER_TOKEN:
+            raise tool_failure("Atlas runner broker is unavailable")
+        try:
+            # The runner owns the deadline, records, admission and credential. No caller URL or command.
+            async with httpx.AsyncClient(timeout=httpx.Timeout(1220, connect=10), trust_env=False) as client:
+                response = await client.post(f"{BROKER}/annot/atlas", headers={"X-Labhq-Token": BROKER_TOKEN},
+                    json={"task_id": TASK_ID, "agent_id": AGENT_ID, "variants": variants,
+                          "requested_scorers": requested_scorers, "ontology_terms": ontology_terms,
+                          "gene_ids": gene_ids, "top": top, "assembly": assembly})
+                response.raise_for_status()
+                return json.dumps(response.json(), ensure_ascii=False)
+        except (httpx.HTTPError, ValueError):
+            raise tool_failure("Atlas runner lookup failed; see outputs/annotation_queries.jsonl and "
+                               "outputs/external_lookup_status.jsonl") from None
 
 
 if ATLAS_ENABLED:

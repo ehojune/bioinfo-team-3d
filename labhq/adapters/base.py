@@ -876,7 +876,8 @@ class AgentAdapter(ABC):
         drop |= {COMMIT_AGENT_ENV.casefold()}
         staff = {key: value for key, value in env.items() if key.casefold() not in drop}
         staff[COMMIT_AGENT_ENV] = "none"
-        return staff
+        from ..tools.annot_alphagenome_atlas import credentials, without_credentials
+        return without_credentials(staff, credentials(dict(os.environ), self.engine_env(), ctx.env))
 
     def stdin_payload(self, ctx: RunContext) -> bytes | None:
         """Bytes to write to the agent's stdin (then closed); None → stdin is /dev/null."""
@@ -918,6 +919,18 @@ class AgentAdapter(ABC):
         env = self.staff_env(ctx)
         engine_bin = getattr(self.settings.engines, self.engine, None)
         prefix = [os.path.expandvars(os.path.expanduser(arg)) for arg in (engine_bin.prefix_args if engine_bin else [])]
+        from ..tools.annot_alphagenome_atlas import KEY_ENV, credentials
+        atlas_secrets = credentials(dict(os.environ), self.engine_env(), ctx.env)
+        # Refuse before prepare writes engine settings. A shell policy `set`/MCP env override must not
+        # restore the key after staff_env stripped it, including overrides supplied through extra_args.
+        launch_config = json.dumps({"engine": engine_bin.model_dump(exclude={"env"}) if engine_bin else {},
+                                    "mcp": [s.model_dump() for s in ctx.mcp_servers],
+                                    "settings": ctx.claude_settings, "prefix": prefix},
+                                   ensure_ascii=False, default=str)
+        launch_config = os.path.expandvars(launch_config)
+        if KEY_ENV.casefold() in launch_config.casefold() or any(key in launch_config for key in atlas_secrets):
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
+                              error="Atlas credentials/config overrides are not allowed in staff launch settings")
         refused = ((read_only_mismatch(ctx.agent, ctx.mcp_servers) or read_only_launch_error(self.engine, prefix)
                     or read_only_workspace_error(
                         self.engine, ctx.workdir, labhq_workspace_paths(ctx.agent, self.engine, ctx.workdir)))
