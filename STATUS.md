@@ -12,6 +12,27 @@
 - 시험: `tests/test_disk_shell_check_678.py`에 주석·리다이렉션·`-x`·묶음 플래그 5건 추가, 파일 전체와 관련 기존 시험 119건 통과.
 - 미검증: heredoc 본문 줄이 명령으로 읽히는 경우(초과 질문만 생김), 중첩 `$(…)`·백틱 안의 명령, Windows CI.
 
+# #606 단계 시작의 파일 시스템 작업을 event loop 밖으로
+
+- 결론: `Runner._run_task`가 단계를 시작할 때 loop thread에서 하던 파일 시스템 작업을 `asyncio.to_thread`로 옮겼다. 대상은 `TaskWorkspace`(작업 폴더 만들기)·`os.path.lexists`·`install_required_skills`(기본 skill 복사)·`resolve_private_paths` 3곳(`stage_inputs` 인자로 미리 평가되던 1곳 포함)·`_system_ca_env`(OS 인증서 저장소 읽기)와 채용 `Recruitment.run`의 build 폴더 만들기다. 호출 자리의 동작·순서는 그대로다.
+- 측정(mock lab 요청 1건, D:·`synchronous=FULL`, 3회): #1179 병합 직후 → 이번
+  - p99 loop 늦음 33–34 ms → 17–21 ms, 50 ms 넘은 횟수 13–15 → 5–8, 그 정지의 합 1.09–1.68 s → 0.38–0.98 s.
+  - 최대 정지 148–158 ms(이상치 417 ms) → 132 · 187 ms(이상치 417 ms). **최대 100 ms 밑 목표는 이번에도 못 맞췄다.** `install_skill`·`private_paths`·`mkdir`는 상위 정지 목록에서 사라졌다.
+- 남은 큰 정지: `server.py dispatch`의 `store.put`(#674 보장 때문에 의도적으로 그대로), `knowledge/recall.py`의 `_write`·`store.delete`(이 claim 밖), `rounds._git_commit`(자식 프로세스 대기, create_request).
+- 시험: `test_gateway_loop_lag_606.py`에 러너 단계 시작 시험 1개를 더했다(세 함수를 0.2 s씩 늦추고 loop 늦음 0.1 s 밑을 확인, 수정 전 0.632 s로 실패). 정적 시험 `test_recruit_inherited_budget_static`이 `build.mkdir(` 모양을 찾아서 `to_thread(lambda: build.mkdir(...))` 모양으로 유지했다. 관련 계열 1119 passed, 38 skipped.
+- 전체 시험: 13,065 passed, 3 failed. 그중 `test_annot`·`test_annot_regulatory` 2개는 main에서도 같은 실패(이 PR 무관), 나머지 1개(위 정적 시험)는 고쳤다.
+- manual: 한·영의 "result 수신의 나머지 저장·dispatch…sync 경계는 남습니다"를 실제에 맞췄다(#1179 P2).
+- 미검증: 실제 느린 디스크, runner·gateway loop를 나눈 측정, 이 PC D:가 빠른 디스크라는 점.
+- 리뷰 P1(Codex, head 0414915a): 느린 skill 복사 중 `task.cancel`이 오면 `to_thread` worker는 중단되지 않아, 취소 결과를 보낸 뒤에도 `install_required_skills`가 skill 폴더를 교체하고 같은 폴더를 쓰는 retry와 경합한다. 고침: `_settled_thread`가 취소를 받아도 worker가 끝날 때까지 기다린 뒤 전파한다(두 번째 취소가 와도 계속 기다림). 작업 폴더를 바꾸는 `TaskWorkspace` 2곳·`install_required_skills`·파일을 쓰는 `_system_ca_env`에 쓰고, 읽기만 하는 `lexists`·`resolve_private_paths`와 멱등한 채용 build `mkdir`는 plain `to_thread`로 둔다. 시험 2개(`test_a_cancel_waits_for_the_file_system_work_that_changes_the_workspace`)는 수정 전 실패.
+
+# #1076 종료 ack 시험의 shutdown 한도 5초
+
+- 결론: `test_shutdown_commits_the_acks_it_already_received`의 `shutdown(timeout_s=...)`를 0.05초(#1181 전) → 0.5초(#1181) → 5.0초(제품 기본값)로 올렸다. 단언(이미 받은 ack를 종료 전에 commit한다)과 제품 코드는 그대로다.
+- 관측: 0.05초와 0.5초 모두 Windows 러너에서 `[1,2,3,4,5] == [5]`로 실패했다(#1180 attempt 2, #1182 attempt 1). 두 번 다 로그에 `runner local: an ack commit is still running; its rows stay in the outbox`가 있어, ack commit 하나가 shutdown의 drain 한도 안에 끝나지 않았다. 재실행에서는 통과했다.
+- 원인: **첫 commit이 한 번 느렸던 것으로 추정하며 재지 않았다.** 이 시험은 task가 없어 `finish()`가 마감을 먼저 쓰는 경로가 아니다(`finish()`가 바로 반환하고 drain이 거의 전체 한도를 받는다). `_ack_flush`의 대기(`ACK_MERGE_S`)는 drain이 `hurry`를 세워 건너뛰므로 원인이 아니라고 코드로 확인했으나 실행으로 확인하지는 않았다.
+- 시험: `-k shutdown` 3건 통과.
+- 미검증: Windows CI에서의 안정성(이 PR이 첫 확인), 첫 commit 지연의 실제 시간. 다시 실패하면 `_ack_flush` 첫 commit 시간을 러너에서 재는 진단이 필요하다.
+
 # #678 디스크 감시·halt 안내 P2 두 건
 
 - 결론: (1) #1169의 P2 — 읽기 전용 task도 `runner.bulk_data_root`를 감시해, 쓸 수 없는 드라이브가 기준 아래면 불필요하게 halt될 수 있었다. `_start_disk_watch(..., read_only=)`가 읽기 전용이면 bulk 폴더를 빼고(작업 폴더·state 폴더는 계속 본다) 호출부가 `read_only`를 넘긴다. (2) #1175의 P2 — `halt_watch`가 "프로세스 트리를 끝냈습니다" 안내를 먼저 쓴 뒤 결과 확인을 다시 해서, 완료가 이기면 안내와 최종 상태가 어긋났다. 안내를 `await` 앞이 아니라 kill 뒤로 옮기고, 확인과 표시(`halted`)와 kill 사이에 `await`가 없게 했다. 완료가 먼저면 halt하지도 안내하지도 않는다.
@@ -88,6 +109,31 @@
 - 바꾼 것: `labhq/runner/daemon.py`, `tests/test_environment_grant_674.py`(7건), `config/ci/windows-boundary-v1.json`. `step_inputs.py`는 `validate_runner_env`가 이미 venv 경로를 돌려줘 바꾸지 않았다.
 - 시험: 신규 7건(Claude 허용, 타 엔진 거부, 검증 실패 시 grant 제거, binding 없음, read_dirs·env·브리핑, 읽기 전용 제외, 플래그 동작)은 구현 전 4건이 실패했고 지금 통과. 환경·입력·예약 기록 관련 기존 시험 포함 314건 통과.
 - 미검증: 실제 Windows·WSL에서 Claude가 grant된 venv의 interpreter를 실행하는지와 승인 카드가 뜨는지(mock만), 실제 ② 시운전, Codex 소비 단계, manual 한·영(차례를 기다림).
+
+## 단계
+#1168: helper를 거치는 경로에서 `await` 뒤 낡은 상태로 쓰는 지점. 근거: [#1168 점검 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1168#issuecomment-6538696689).
+
+## 한 일 (시험을 먼저 쓰고 수정 전 13건 실패를 확인한 뒤 고쳤다)
+- `Hub._set_status`: 되살리는 값(활성 상태)은 요청이 `cancelled`이거나 `cancelling`이면 쓰지 않고 돌아온다. `interrupted`·`failed`는 그대로 통과한다. 다른 터미널 상태(`done`·`failed`)는 막지 않는다. 모델 거절은 `failed` 요청을 같은 id로 `waiting_for_runner`로 되돌려 재시도하기 때문이다(시험으로 고정).
+- `Hub.resume_when_ready`: 루프 맨 앞과 `await aresume_agents` 뒤, 두 곳에서 `_ended_by_cancel`을 본다. `track_request`로 감싸이지 않은 호출(복구된 카드의 만료 타이머)은 취소가 task를 멈추지 못한다.
+- `Orchestrator.run_request`의 `except Exception`: 취소됐거나 취소 중이면 `failed` 기록과 `request.failed`를 만들지 않는다. 취소 쪽 터미널 기록과 충돌한다.
+- 시험은 기존 `tests/test_request_lifecycle.py`에 넣었다(인벤토리 claim 밖): `_set_status`가 cancelled/cancelling을 되살리지 않음, 막지 말아야 할 것(failed 재개, failed·interrupted 쓰기, 활성끼리 이동), 직접 호출한 resume이 기다리는 사이의 취소, 취소 뒤 단계 오류.
+
+## 확인
+- `test_request_lifecycle.py` 65 passed. 취소·재개·모델 거절·quota·재시작·facilities 계열은 아래 결과(PR 본문).
+
+## 하지 않은 것
+- `daemon.py`(runner) 쪽의 같은 부류와 helper 밖의 직접 쓰기는 보지 않았다.
+- 복구된 facilities 타이머가 취소 때 이미 멈추는지는 확인하지 않았다. 이번 수정은 그 경우에도 안전하다.
+
+## 후속 (같은 PR)
+- `_ended_by_cancel`을 메서드로 두었더니 `test_resume_receipt_clock`(가짜 hub에 `Hub.resume_when_ready`만 붙임) 3건이 `AttributeError`로 죽었다(main에서는 통과). 모듈 함수로 옮겼다.
+- 취소·재개·모델 거절·quota·재시작·facilities·interrupt 계열 1549 passed, 18 skipped(0 failed). `test_request_lifecycle.py` 65 passed 포함.
+
+## 리뷰 후 수정 (rev3)
+- P1(`server.py:2120`): 첫 조회 뒤 한 번만 확인해서, `_set_status("running")`의 저장·두 번째 `aresume_agents`·`request.resumed` 발행 중에 취소가 끼면 `run_request`가 취소된 요청에 시작될 수 있었다.
+- `_set_status`는 건너뛰면 `False`를 돌려주고(저장 뒤 취소도 포함, 그때는 `request.status`도 보내지 않는다), `resume_when_ready`는 `is False`일 때 돌아온다(가짜 hub가 `None`을 돌려주는 기존 시험은 그대로 통과). 두 번째 조회와 `request.resumed` 발행 뒤에도 `_ended_by_cancel`을 본다.
+- 시험 3건(`status_save`, `second_agents_lookup`, `resumed_event`): 수정 전 3건 실패, 수정 후 통과. 취소·재개·모델 거절·quota·재시작·facilities·interrupt 계열 1552 passed.
 
 # #678 task 도중 디스크 감시
 
