@@ -1,0 +1,10 @@
+pr: null
+rows:
+- sha: '98912a6'
+  at: 2026-10-31 20:33
+  text: 직원이 쓰는 PDB(RCSB)와 ChEMBL 조회 도구 pdb와 chembl을 labhq_annot 서버에 더한다. 시간 상한, 요청 조회 원장과 횟수 상한, 조회 기록과 원본 보관, 캐시는 기존 조회 도구와 같은 경로를 그대로 지난다. pdb는 PDB ID나 검색어로 구조 요약을 주고 좌표 파일은 받지 않으며, chembl은 target과 compound와 activity를 주고 잘린 목록에는 truncated를 표시한다. 라이선스 이름과 URL을 source에 남긴다. CSO 직원 명단 문장에 두 도구를 더한다. 오프라인 fixture 시험 27건
+  summary: 직원이 웹을 직접 열지 않고도 PDB와 ChEMBL을 조회하며, 그 조회가 기록과 횟수 집계 안에 들어옵니다.
+- sha: '4fc1b1d'
+  at: 2026-10-31 20:38
+  text: rcsb와 chembl의 요청 간격과 pdb의 캐시 기한을 annot.py에 더하고, 도구 목록을 정확히 비교하던 세 시험에 새 도구 이름을 더하며, 새 시험 파일을 Windows inventory에 넣는다
+  summary: 새 조회 도구의 요청 간격과 시험 목록을 맞춥니다.
