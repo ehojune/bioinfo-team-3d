@@ -4604,6 +4604,12 @@ class Hub:
                 nonlocal saved
                 await self._add_approval(approval.id, {"approval": approval.model_dump(mode="json"),
                                                       "origin": None, "future": fut})
+                if not is_active_request(req_state.get("status")) or req_state.get("cancelling"):
+                    # The request was cancelled or ended while the card was being stored (a slow write): it must not
+                    # come back to life as waiting, nor keep a card for a request that is over (#1148).
+                    saved = {"status": "cancelled", "approval_id": approval.id}  # kept in this call only
+                    await self.close_approval(approval.id, "request cancelled")
+                    return
                 saved = {"status": "waiting", "approval_id": approval.id,
                          "proposal": {key: proposal[key] for key in
                                       ("fix_id", "signature_id", "action", "execution", "import_name", "package",
@@ -4612,6 +4618,13 @@ class Hub:
                 fixes[step_id] = saved
                 req_state["status"] = "waiting_facilities_fix"
                 await self.asave_request(rid)
+                if (approval.id not in self.approvals or not is_active_request(req_state.get("status"))
+                        or req_state.get("cancelling")):
+                    # A cancel closed the card (and published approval.expired) while the request was being saved:
+                    # announcing it now would put a card back in the page after it was withdrawn. Checked in the same
+                    # synchronous stretch as the publish call, so a cancel that comes later publishes expired after
+                    # this requested (#1148 review).
+                    return
                 await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
                                     "data": approval.model_dump(mode="json")})
             _, cancelled = await self._publication_write(open_fix())
