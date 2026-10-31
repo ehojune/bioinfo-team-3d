@@ -168,6 +168,28 @@ def test_partial_stage_and_callback_failure_cleanup():
         assert "diagnostic staging failed" in receipt.unsupported_reasons
 
 
+@pytest.mark.parametrize("name", ["snapshot", "runtime", "policy"])
+@pytest.mark.parametrize("action", ["mutate", "remove"])
+def test_payload_change_after_callback_fails_and_cleans_up(name, action):
+    stager = boundary.DiagnosticStager()
+    directories = []
+    def change(run_id):
+        directory = stager._runs[run_id]
+        directories.append(directory)
+        payload = directory / name
+        if action == "mutate":
+            payload.write_bytes(b"changed")
+        else:
+            payload.unlink()
+    with patch.object(boundary.subprocess, "run", side_effect=AssertionError("spawned")):
+        receipt = boundary.diagnostic_staging_probe(stager, on_staged=change)
+    assert receipt.preparation == "unsupported"
+    assert receipt.launch == "not_started" and receipt.seal_status == "unsealed"
+    assert "diagnostic staging failed" in receipt.unsupported_reasons
+    assert receipt.cleanup.startswith("stager_cleanup_returned")
+    assert not directories[0].exists() and not stager._runs
+
+
 def test_digest_mismatch_and_cleanup_failure_are_reported():
     stager = SimpleNamespace(stage=lambda run_id, payloads: {},
                              cleanup=lambda run_id: (_ for _ in ()).throw(OSError()))
@@ -231,7 +253,8 @@ def test_deleted_leaf_is_not_recreated_by_observer():
 
 def test_missing_ancestry_observer_fails_and_cleans_up():
     actual = boundary.DiagnosticStager()
-    stager = SimpleNamespace(stage=actual.stage, cleanup=actual.cleanup)
+    stager = SimpleNamespace(stage=actual.stage, cleanup=actual.cleanup,
+                             observe_payload_digests=actual.observe_payload_digests)
     receipt = boundary.diagnostic_staging_probe(stager)
     assert receipt.preparation == "unsupported"
     assert receipt.ancestry_observations == []
@@ -295,6 +318,7 @@ def test_broker_failure_paths_report_and_do_not_claim_cleanup(failure):
 def test_forged_ancestry_witness_requires_reason_coded_refusal():
     actual = boundary.DiagnosticStager()
     stager = SimpleNamespace(stage=actual.stage, cleanup=actual.cleanup,
+                             observe_payload_digests=actual.observe_payload_digests,
                              observe_ancestry=lambda run_id: {
                                  **actual.observe_ancestry(run_id),
                              })

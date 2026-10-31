@@ -70,6 +70,11 @@ class DiagnosticStager:
             digests[name] = hashlib.sha256((directory / name).read_bytes()).hexdigest()
         return digests
 
+    def observe_payload_digests(self, run_id):
+        directory = self._runs[run_id]
+        return {name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
+                for name in ("snapshot", "runtime", "policy")}
+
     def observe_ancestry(self, run_id):
         """Sample local lstat identities; these are unauthenticated observations."""
         root = self._runs[run_id]
@@ -102,7 +107,8 @@ def diagnostic_staging_probe(stager, *, on_staged=None):
     """Exercise staging and cleanup with fixed synthetic bytes, never a seal.
 
     The injected stager is diagnostic code, not an authority. Its interface is
-    stage(run_id, payloads) and cleanup(run_id); stage returns three byte digests.
+    stage, observe_payload_digests, observe_ancestry and cleanup accept the run ID;
+    digest observations are untrusted.
     Cleanup is attempted even when staging partially fails. No child is launched.
     """
     receipt = Receipt(2, str(uuid.uuid4()), None, None, None, None, None, {},
@@ -122,6 +128,8 @@ def diagnostic_staging_probe(stager, *, on_staged=None):
                                               "objects": stager.observe_ancestry(receipt.run_id)})
         if on_staged is not None:
             on_staged(receipt.run_id)
+        if stager.observe_payload_digests(receipt.run_id) != digests:
+            raise ValueError("staging digest changed after callback")
         receipt.ancestry_observations.append({"phase": "after_callback", "provenance": "stager_untrusted",
                                               "objects": stager.observe_ancestry(receipt.run_id)})
         observations = [entry["objects"] for entry in receipt.ancestry_observations]
