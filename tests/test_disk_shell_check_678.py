@@ -385,8 +385,43 @@ def test_expand_archive_that_will_not_fit_asks_with_the_zips_real_size(tmp_path)
     assert ps_check("Expand-Archive raw.zip -DestinationPath out", tmp_path, 50) is None
 
 
-def test_expand_archive_without_a_destination_is_left_alone(tmp_path):
-    assert ps_check("Expand-Archive raw.zip", tmp_path, 0.5) is None
+def test_expand_archive_without_a_destination_unpacks_into_the_current_folder(tmp_path):
+    """#1184 review: an omitted destination is not a reason to skip the check; the folder it unpacks into is the current one."""
+    assert ps_check("Expand-Archive raw.zip", tmp_path, 0.5).action == "ask"
+    assert ps_check("Expand-Archive -Path raw.zip -Force", tmp_path, 0.5).action == "ask"
+    assert ps_check("Expand-Archive raw.zip", tmp_path, 50) is None
+    with zipfile.ZipFile(tmp_path / "big.zip", "w") as z:
+        z.writestr("big.bin", b"\0" * (3 * 1024 * 1024))
+    tight = lambda f: Space(10 * GIB, 0, int(2 * GIB + 1024))
+    verdict = disk_space.powershell_check("Expand-Archive big.zip", str(tmp_path), probe=tight, **CHECK)
+    assert verdict.action == "ask" and "필요" in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    "iwr https://x.org/a.zip -Headers $headers -OutFile a.zip",             # a variable elsewhere does not hide the path
+    "iwr https://x.org/a.zip -Credential $cred -UseBasicParsing -OutFile out\a.zip",
+    "Expand-Archive -Path raw.zip -DestinationPath out -ErrorAction $action",
+])
+def test_a_variable_that_is_not_the_output_path_does_not_hide_the_command(tmp_path, command):
+    assert ps_check(command, tmp_path, 1.0).action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "iwr https://x.org/a.zip -OutFile $dest", "iwr https://x.org/a.zip -OutFile $env:TEMP\a.zip",
+    "Expand-Archive raw.zip -DestinationPath $out",
+])
+def test_a_variable_in_the_path_that_is_written_still_leaves_the_command_alone(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5) is None
+
+
+@pytest.mark.parametrize("command", [
+    "Start-BitsTransfer -Source big.zip -Destination https://x.org/upload -TransferType Upload",
+    "Start-BitsTransfer big.zip https://x.org/upload -TransferType Upload",
+    "Start-BitsTransfer -Source big.zip -Destination https://x.org/upload",       # a remote destination is no local folder
+    "Start-BitsTransfer -Source big.zip -Destination out\big.zip -TransferType Upload",
+])
+def test_a_bits_upload_is_not_a_local_download(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5) is None
 
 
 def test_start_bitstransfer_reads_its_destination(tmp_path):

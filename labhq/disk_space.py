@@ -513,13 +513,18 @@ def _ps_positional(words: list[str]) -> list[str]:
     return out
 
 
+def _unwritten(path: str) -> bool:
+    """A path that a variable or subexpression makes: not written out, so not read."""
+    return "$" in path or "`" in path
+
+
 def _ps_write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | None:
     """(what, folder it writes into, estimated bytes or None) for one PowerShell command, or None when it is none."""
     name = words[0].casefold()
     if name in _PS_DOWNLOADS:
         out = _ps_param(words, "outfile", 4)
-        if not out:
-            return None  # the result goes to the pipeline, not to a file
+        if not out or _unwritten(out):
+            return None  # the result goes to the pipeline, or the path is not written out
         target = _resolve(out, workdir)
         return "다운로드", target.parent, None
     if name in _PS_UNPACK:
@@ -530,17 +535,20 @@ def _ps_write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | 
             archive = positional[0]
         if destination is None and len(positional) >= 2:
             destination = positional[1]
-        if not destination:
+        if destination is not None and _unwritten(destination):
             return None
-        return ("압축 해제", _resolve(destination, workdir),
-                _zip_size(_resolve(archive, workdir)) if archive else None)
+        # No destination named: it unpacks into the current folder, which is still a drive that can be short.
+        folder = _resolve(destination, workdir) if destination else Path(workdir)
+        known = _zip_size(_resolve(archive, workdir)) if archive and not _unwritten(archive) else None
+        return "압축 해제", folder, known
     if name in _PS_TRANSFER:
         destination = _ps_param(words, "destination", 4)
         positional = _ps_positional(words)
         if destination is None and len(positional) >= 2:
             destination = positional[1]
-        if not destination:
-            return None
+        transfer = (_ps_param(words, "transfertype", 4) or "").casefold()
+        if not destination or _unwritten(destination) or transfer == "upload" or "://" in destination:
+            return None  # an upload, or a remote destination, writes no local folder
         target = _resolve(destination, workdir)
         return "다운로드", (target.parent if target.suffix else target), None
     return None
@@ -559,8 +567,6 @@ def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: flo
         if name in {"cd", "set-location", "sl", "push-location", "pushd"} and len(words) == 2 and "$" not in words[1]:
             cwd = str(_resolve(words[1], cwd))
             continue
-        if any("$" in word for word in words):
-            continue  # a path that is not written out cannot be read
         try:
             found = _ps_write(words, cwd)
         except (OSError, ValueError):
