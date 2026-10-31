@@ -62,3 +62,37 @@ async def test_a_halt_that_finds_the_cli_still_running_still_stops_it(tmp_path):
     assert result.error_kind == "halted" and not result.ok
     assert result.session_id == "sess-1"  # the session is kept for the resume
     assert json.dumps(events, ensure_ascii=False).count("멈춤") >= 1
+
+
+@pytest.mark.asyncio
+async def test_a_completed_turn_whose_handler_is_still_awaiting_is_not_halted(tmp_path):
+    """Gemini's result handler sets `result_seen` and then awaits `agent.usage`; `result_arrived` follows after that."""
+    script = tmp_path / "gemini"
+    events = [{"type": "init", "session_id": "g-1", "model": "gemini-pro"},
+              {"type": "message", "role": "assistant", "content": "done", "delta": True},
+              {"type": "result", "status": "success", "stats": {"total_tokens": 9}}]
+    nl = chr(10)
+    script.write_text(nl.join([
+        "import sys, json, time", "sys.stdout.reconfigure(encoding='utf-8')",
+        f"for e in {events!r}:", "    print(json.dumps(e), flush=True)", "    time.sleep(0.1)",
+        "time.sleep(4)", ""]), encoding="utf-8")  # the CLI lingers after its result
+    s = Settings()
+    s.engines.gemini.bin = sys.executable
+    s.engines.gemini.prefix_args = [str(script)]
+    agent = AgentSpec(id="a1", name="A", role="r", engine=Engine.gemini, model="m", tools=[])
+    halt = asyncio.Event()
+
+    async def emit(kind, data):
+        if kind == "agent.status" and data.get("model"):
+            halt.set()
+        if kind == "agent.log" and "멈춤" in str(data.get("text")):
+            await asyncio.sleep(0.6)  # the halt notice commits while the result event is being handled
+        if kind == "agent.usage":
+            await asyncio.sleep(1.5)  # the handler is still awaiting here, result_seen already set
+
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    ctx = RunContext(task=Task(agent_id="a1", prompt="x"), agent=agent, workdir=workdir, settings=s, mcp_servers=[],
+                     env={}, emit=emit, prompt="x", extra_dirs=[], claude_settings={}, halt=halt, halt_grace_s=0.0)
+    result = await asyncio.wait_for(get_adapter(agent.engine, s).run(ctx), 30)
+    assert result.error_kind != "halted" and result.ok
