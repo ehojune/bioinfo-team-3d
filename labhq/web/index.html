@@ -1321,6 +1321,7 @@ function startLive() {
   const open = () => {
     if (!token) { S.conn = 'auth'; bar.classList.add('show'); schedule(); return; }
     bar.classList.remove('show');
+    if (ws) { ws.onclose = null; ws.onmessage = null; ws.close(); }  // one socket at a time (#1170)
     ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}${lastSeq ? `&since=${lastSeq}` : ''}`);
     ws.onopen = () => { S.conn = 'live'; backoff = 1000; refreshHistory(); schedule(); };
     ws.onmessage = e => { try {

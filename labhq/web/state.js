@@ -142,6 +142,11 @@ const TERMINAL_FOLLOWUP_STATES = new Set(['done', 'failed', 'interrupted']);
 const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue', 'result_storage', 'result_publish', 'recruit_plan', 'literature_pdf', 'disk_space']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
+// A request that is over for good. review_pending is terminal too, but the PI may still send it back for a revision.
+const SETTLED_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
+const isSettled = q => !!q && SETTLED_REQUEST_STATES.has(q.status);
+// Tasks of the request pipeline itself; a follow-up turn is not one: it runs after the request is over (#1170).
+const PIPELINE_TASK_KINDS = new Set(['briefing', 'plan', 'step', 'review', 'synthesis', 'direct', 'replan', 'precedent', 'consult']);
 const hasActiveFollowup = q => (q?.followups || []).some(f => !TERMINAL_FOLLOWUP_STATES.has(f.status));
 const isPastRequest = q => !!q && isTerminalRequest(q.status) && !!q.pi_reviewed_at && !hasActiveFollowup(q);
 const officeRequests = requests => [...requests].filter(q => !isPastRequest(q));
@@ -292,6 +297,9 @@ const S = {
   jobs: new Map(), feed: [], cost: 0, conn: mode === 'demo' ? 'demo' : 'connecting', projects: [],
   lastSay: {}, taskStep: new Map(), seq: 0, doorUntil: 0,
 };
+// The newest gateway event seq applied: a repeated or older event is ignored here, so no page needs a copy of this
+// guard, and the pages resume a reconnect from it (#1170). Not enumerable: the legacy state digests are unchanged.
+Object.defineProperty(S, 'lastSeq', { value: 0, writable: true, enumerable: false });
 // Task detail is derived from events and may be rebuilt from a snapshot.
 // Keep it out of legacy state serialization while exposing it to both UIs.
 Object.defineProperty(S, 'stepDetails', { value: new Map(), enumerable: false });
@@ -685,7 +693,7 @@ function onDispatch(ev) {
   if (a) a.task = d.title || short(stripPrompt(d.prompt), 60);
   if (d.step_id) S.taskStep.set(ev.task_id, d.step_id);
   if (d.kind && ev.task_id) S.taskKind.set(ev.task_id, d.kind);
-  if (q) {
+  if (q && !isSettled(q)) {  // a dispatch that arrives after the request ended does not reopen it (#1170)
     const ph = { briefing: 'briefing', plan: 'plan', review: 'review', synthesis: 'report', direct: 'execute' }[d.kind];
     if (ph) q.phase = ph;
     // A planned research request waits at CP1 in 계획; it is in 실행 once a step is dispatched.
@@ -707,6 +715,12 @@ function setPipelinePr(q, d) {
 }
 function apply(ev, replay = false) {
   const effects = [];
+  // A snapshot sets the point itself, and the events it replays carry seqs it already covers. An event with no seq
+  // (the demo, a local notice) is always applied.
+  if (!replay && ev.type !== 'snapshot' && Number.isFinite(ev.seq) && ev.seq > 0) {
+    if (ev.seq <= S.lastSeq) return effects;
+    S.lastSeq = ev.seq;
+  }
   const t = ev.type, d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, ts = ev.ts || now();
   trackActivity(ev);
   switch (t) {
@@ -722,6 +736,7 @@ function apply(ev, replay = false) {
       // Reconnection keeps a view selected even by older UI consumers that assign S.current directly.
       if (S.current && S.current !== preferred?.id) preferred = {id:S.current, manual:true};
       resetSnapshotState();
+      S.lastSeq = Number(ev.seq) || 0;
       S.sessionStartedAt = Number(d.session_started_at) || 0;
       (d.agents || []).forEach(upsertAgent);
       S.projects = d.projects || [];
@@ -825,7 +840,9 @@ function apply(ev, replay = false) {
     case 'agent.status': {
       const a = ag(id); if (!a) break;
       a.state = d.state || a.state; a.stateAt = ts;
-      trackTask(a, ev.task_id, d.state || a.state, d.task, Boolean(d.halted), rid, S.taskStep.get(ev.task_id));
+      // A pipeline task of a request that is over gets no row (#1170); a follow-up turn runs after it ends and does.
+      if (!(isSettled(S.requests.get(rid)) && PIPELINE_TASK_KINDS.has(S.taskKind.get(ev.task_id))))
+        trackTask(a, ev.task_id, d.state || a.state, d.task, Boolean(d.halted), rid, S.taskStep.get(ev.task_id));
       // Display only, like usage and trace: kept out of the replayed state the golden hashes compare.
       if (['hibernating', 'waiting', 'working', 'idle', 'done'].includes(d.state)) Object.defineProperty(a, 'waitFor', { writable: true, configurable: true, enumerable: false,
         value: (d.jobs || []).length ? (d.jobs.some(jid => String(jid).startsWith('local-'))
@@ -1098,7 +1115,8 @@ function apply(ev, replay = false) {
     case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncHoldStatus(q); break; }
     case 'request.review': {
       const q = req(rid), sc = d.scores || {};
-      q.review = d; q.phase = d.verdict === 'revise' ? 'execute' : 'review';
+      q.review = d;
+      if (!isSettled(q)) q.phase = d.verdict === 'revise' ? 'execute' : 'review';  // a late review does not reopen it (#1170)
       for (const step of q.plan) stepDetail(rid, step.id).review_issues = (d.issues || []).filter(issue => issue.step_id === step.id);
       if (d.verdict === 'revise') (d.issues || []).forEach(i => { if (i.step_id in q.steps) q.steps[i.step_id] = 'revise'; });
       const unparsed = d.status === 'review_unparsed';
