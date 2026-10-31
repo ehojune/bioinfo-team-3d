@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '19d10f6'
+    at: '2026-11-01 07:34'
+    summary: 'Sync main and preserve Windows test inventory.'
+    text: 'Merge main into boundary observer branch'
   - sha: '8f64b59'
     at: '2026-11-01 04:51'
     summary: 'Reject invalid producer key identifiers.'
