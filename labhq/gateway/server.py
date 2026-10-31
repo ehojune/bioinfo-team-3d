@@ -3554,7 +3554,8 @@ class Hub:
         self.events.clear()
         self.events.extend(ordered)
 
-    async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
+    async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None,
+                      activity: tuple[str, Callable[[dict], dict]] | None = None) -> None:
         ev = copy.deepcopy(ev)
         internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
         if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
@@ -3568,7 +3569,8 @@ class Hub:
                 await self._flush_committed_events()
                 durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
                                   ev.get("type") in ProjectReporter.HANDLED)
-                ev, cancelled = await self._append_event_with_request(ev, runner_id, runner_seq, durable_report)
+                ev, cancelled = await self._append_event_with_request(ev, runner_id, runner_seq, durable_report,
+                                                                      activity)
                 if ev is None:  # a copy of a runner message that is already stored (#1143): nothing to publish again
                     if cancelled:
                         raise asyncio.CancelledError
@@ -3593,11 +3595,11 @@ class Hub:
             await self._close_step_controls(ev["request_id"], (ev.get("data") or {}).get("step_id"))
 
     async def _append_event_with_request(self, ev: dict, runner_id: str | None, runner_seq: int | None,
-                                         durable_report: bool):
+                                         durable_report: bool, activity=None):
         """Append the event and save its request in one transaction (#1129): both land or neither does."""
         def append(request=None):
             return self.store.aappend_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
-                                            reporter_delivery=durable_report, request=request)
+                                            reporter_delivery=durable_report, request=request, activity=activity)
         rid = ev.get("request_id")
         if rid not in self.requests:
             return await self._publication_write(append())
@@ -3686,6 +3688,7 @@ class Hub:
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
             return
         typ = msg.get("type")
+        activity_update = None
         # Keep current staff activity in the task ledger: the 200-event snapshot window
         # can evict a tool start while a quiet command is still running.
         if typ in {"agent.status", "agent.tool", "agent.tool_result", "agent.log"}:
@@ -3734,7 +3737,8 @@ class Hub:
                             activity.pop("external_wait", None)
                     return activity
 
-                await self.store.aupdate_task_activity(tid, update_activity)
+                # The activity is saved with this message's event in one transaction (#1132): the final publish below.
+                activity_update = (tid, update_activity)
         if typ == "runner.roster":
             self.set_roster(runner_id, msg.get("agents", []), msg.get("capabilities"))
             await self.publish({"type": "roster.updated", "ts": time.time(), "data": {"agents": list(self.agents.values())}})
@@ -3986,7 +3990,10 @@ class Hub:
         if entry and entry.get("count"):
             entry["count"] -= 1
         if typ != "agent.control" or not msg.get("task_id"):
-            await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
+            # Only a message that carries task activity passes the argument: a publish that wraps this one with the
+            # older signature (a test double, a decorator) keeps working for every other message.
+            carried = {} if activity_update is None else {"activity": activity_update}
+            await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq, **carried)
         if pipeline_event is not None:
             await self.publish(pipeline_event)
         if runner_seq is not None:
@@ -4604,6 +4611,12 @@ class Hub:
                 nonlocal saved
                 await self._add_approval(approval.id, {"approval": approval.model_dump(mode="json"),
                                                       "origin": None, "future": fut})
+                if not is_active_request(req_state.get("status")) or req_state.get("cancelling"):
+                    # The request was cancelled or ended while the card was being stored (a slow write): it must not
+                    # come back to life as waiting, nor keep a card for a request that is over (#1148).
+                    saved = {"status": "cancelled", "approval_id": approval.id}  # kept in this call only
+                    await self.close_approval(approval.id, "request cancelled")
+                    return
                 saved = {"status": "waiting", "approval_id": approval.id,
                          "proposal": {key: proposal[key] for key in
                                       ("fix_id", "signature_id", "action", "execution", "import_name", "package",
@@ -4612,6 +4625,13 @@ class Hub:
                 fixes[step_id] = saved
                 req_state["status"] = "waiting_facilities_fix"
                 await self.asave_request(rid)
+                if (approval.id not in self.approvals or not is_active_request(req_state.get("status"))
+                        or req_state.get("cancelling")):
+                    # A cancel closed the card (and published approval.expired) while the request was being saved:
+                    # announcing it now would put a card back in the page after it was withdrawn. Checked in the same
+                    # synchronous stretch as the publish call, so a cancel that comes later publishes expired after
+                    # this requested (#1148 review).
+                    return
                 await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
                                     "data": approval.model_dump(mode="json")})
             _, cancelled = await self._publication_write(open_fix())

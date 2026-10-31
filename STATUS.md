@@ -4,6 +4,16 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1148 취소가 시설 수리 카드 저장 중에 들어오면 요청이 되살아나는 결함
+
+- 결론: `Hub._request_facilities_fix`의 `open_fix`가 카드를 저장하는 `await self._add_approval(...)` 뒤에 `req_state["status"] = "waiting_facilities_fix"`를 썼다. 그 사이에 취소가 들어오면(저장이 느린 디스크에서는 수십 ms) 취소된 요청이 "시설 수리 승인 대기"로 되돌아가고 그 상태가 저장되며 카드가 남았다. 함수 맨 앞의 `cancelled` 검사는 이 `await` 뒤에는 없었다. #1148 조사(#1139 후속)에서 재현했다.
+- 바꾼 것: `labhq/gateway/server.py`의 `open_fix`가 `_add_approval` 뒤에 요청이 이미 끝났거나(`is_active_request`가 아님) `cancelling`이면 상태를 쓰지 않고 방금 연 카드를 `close_approval`로 닫고 돌아온다(이 호출 안에서만 쓰는 `saved`는 `cancelled`로 둬 뒤 코드가 깨지지 않는다). 요청 행의 `status`·`cancelling` 표식이 이미 "끝내는 중"을 뜻하므로 #1146의 별도 집합은 필요 없다.
+- 시험(`tests/test_facilities_fixes.py` 1건): 카드 저장을 느리게 막고 취소한 뒤 풀면 요청은 `cancelled`로 남고 `facilities_fixes`에 대기 항목이 없고 수리 카드가 없으며 `approval.requested`가 나가지 않는다. main의 코드에서는 카드가 닫히지 않아 수리 호출이 대기를 끝내지 못하고 실패한다. 파일 44 passed, 관련 시험 1,597 passed.
+- 리뷰 P1(같은 부류의 더 좁은 변형): 첫 검사 뒤에도 `asave_request`·`publish`로 `await`가 더 있어, 그 사이 취소가 카드를 닫고 `approval.expired`를 먼저 내보낸 뒤 `approval.requested`가 늦게 나가면 웹 reducer가 카드를 다시 띄운다. 게시 직전(같은 동기 구간)에 카드가 아직 `self.approvals`에 있고 요청이 활성인지 다시 보고, 아니면 게시하지 않는다. 이렇게 하면 그 뒤에 취소가 와도 `approval.expired`는 이 `approval.requested`보다 뒤에 나간다. 시험을 카드 저장이 느린 경우와 그 뒤 요청 저장이 느린 경우 둘로 나눴고, 둘째는 이전 head에서 실패한다.
+- 의미를 바꾸지 않은 것: 상태 쓰기는 직접 대입 그대로다. `_sync_hold_status`로 바꾸면 로그인·쿼터 대기가 수리 카드보다 우선하는 의미 변화가 생겨 이번 범위에서 뺐다.
+- 미확인: 실제 발생 빈도. 같은 패턴이 다른 카드 종류에 있는지는 #1148 조사 범위의 스캔에서 이 한 곳만 나왔다.
+- 근거: #1148 조사 댓글 6536217329.
+
 # #1149 task보다 먼저 도착한 task.cancel이 사라지는 문제
 
 - 결론: runner가 보유도 접수도 하지 않은 task의 `task.cancel`을 받으면 `cancelled_task` 행(tombstone)을 영속 저장한다. 같은 id의 `task.dispatch`가 접수 기록 없이 오면 시작하지 않고 `task.accepted` + 취소 결과(`ok=False`, `error_kind="cancelled"`, `cleanup_evidence.status="not_started", cost_usd=0.0, cost_known=True`)를 한 묶음으로 보내고 `accepted_task`를 `finished`로 남긴 뒤 tombstone을 지운다. 이후 같은 dispatch가 다시 와도 접수 기록이 있어 시작하지 않는다.
@@ -98,6 +108,39 @@ lab 요청에는 번역이 나오지 않아(번역은 기술적인 영문 메시
 - 실측(이 PC, 상태 폴더 D:, lab 요청 1회, main에는 안 A가 반영됨): 실제 `COMMIT` 문 main 613~624회 → 548회(runner 221~227 → 151, −31%). 요청 처리는 main 20.9~35.5 s(중앙값 약 22 s)에서 19.9~21.6 s(중앙값 약 20.6 s)로, D: 디스크 편차가 커서 3~7%대 감소와 편차 축소 정도로만 본다.
 - 미확인: CI Windows 전후 시간, ack가 더 크게 몰리는 느린 디스크에서의 효과.
 - 근거: #1125 설계 댓글 6531718393.
+
+## 단계
+#1132(#1125 E1): task activity를 이벤트 transaction에.
+
+## 한 일
+- `labhq/store.py`: `aappend_event`/`append_event`/`_append_event_now`에 `activity=(key, reducer)`를 더했다. reducer는 writer thread에서 같은 transaction 안의 최신 task 행에 적용된다(`_apply_activity`로 분리).
+- `labhq/gateway/server.py`: `on_runner_message`가 activity를 따로 commit하지 않고 마지막 `publish(..., activity=...)`에 실어 보낸다. 이벤트, request 저장본, activity, runner cursor가 한 transaction이다.
+- 시험: `test_state_activity_durable.py`의 publish stub을 실제 publish로 바꿨다. 단언은 약하게 하지 않았고 의미가 바뀐 한 곳만 새 시험으로 명시했다. 취소가 commit 중이면 이전에는 activity만 남고 이벤트·cursor는 없었다. 이제 commit이 끝나면 이벤트·activity·cursor가 함께 남고 재전송은 중복으로 걸러진다(ack만 보냄). commit이 실패하면 모두 없고 재전송은 다시 적용된다. `test_gateway_publish_durable.py`에 세 시험을 더했다(한 publish는 한 commit·실패 시 모두 없음, `agent.tool` 40건 폭주에서 메시지당 한 commit·순서·전 tool 보존, 느린 client가 락을 잡아도 timeout 안에 activity 저장).
+- manual 한영의 발행 보장 문장에 activity를 더했다.
+
+## 실측 (D: 드라이브, lab 요청 1회, main과 이 브랜치 각 2회)
+| | transaction | commit 시간 합 | 요청 시간 |
+|---|---|---|---|
+| main | 635, 641 | 0.7 s, 0.5 s | 16.2 s, 15.8 s |
+| 이 브랜치 | 587, 586 | 0.6 s, 0.6 s | 14.1 s, 16.3 s |
+- transaction −48~−55(약 −8%). lab은 #1126 이후 `synchronous=NORMAL`이라 commit 시간 합이 0.5~0.7 s로 줄어 fsync 비용이 보이지 않고, 요청 시간 차이(−2.1 s, +0.5 s)는 오차 안이다. 기본 `synchronous=FULL`에서 건당 약 37 ms로 계산하면 −48건은 약 −1.8 s로 **추정**한다(측정 아님).
+
+## 확인
+- 관련 시험 13개 파일 503 passed, 1 skipped.
+
+## 하지 않은 것
+- 기본 FULL 모드의 요청 시간은 측정하지 않았다(lab이 NORMAL).
+- 전체 suite와 Windows CI는 CI에 맡긴다.
+
+## CI 후 수정 (rev6)
+- `test_state_control_durable::test_halt_after_activity_read_keeps_committed_tool`이 3.10·3.12·Windows에서 실패했다. 원인은 시험이 `hub.publish`를 빈 `AsyncMock`으로 바꿔 activity가 publish 안으로 옮겨진 뒤 저장되지 않은 것이다. 제품 순서는 안전하다(halt는 `aupdate_task_control`, activity는 이벤트 transaction의 reducer로 같은 writer lane에서 최신 행에 병합).
+- stub이 `store.aappend_event(..., activity=activity)`를 실제로 부르게 했고 단언은 그대로다. 같은 부류를 찾으려고 publish를 stub한 시험 14개 파일을 훑었고 activity에 기대는 파일은 `test_state_activity_durable`(이미 수정)과 이 파일뿐이었다.
+- 관련 4개 파일 72 passed.
+
+## main 반영 (rev8)
+- #1151 병합 뒤 `server.py`·`store.py`·`test_gateway_publish_durable.py`의 충돌을 풀었다. #1143의 중복 runner 메시지 건너뛰기는 cursor 검사에서 먼저 `None`을 돌려주므로 activity는 중복 복사본에 다시 적용되지 않는다.
+- 합친 뒤 `test_state::test_a_resend_waits_for_the_first_copy_...`가 `publish(ev, runner_id, runner_seq)` 시그니처로 감싼 double에 `activity=`가 넘어가 실패했다. `activity` 인자를 activity가 있는 메시지에만 넘기게 해 시험을 고치지 않고 풀었다.
+- 관련 시험 174 passed.
 
 # #1107 Chrome 예열 step
 
