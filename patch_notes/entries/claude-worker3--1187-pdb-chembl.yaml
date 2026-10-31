@@ -28,3 +28,7 @@ rows:
   at: 2026-11-01 05:00
   text: AlphaGenome Atlas 도구가 main에 들어와 annot 서버와 manual의 같은 자리를 고친 충돌을 푼다. 서버는 구조 조회 모듈과 Atlas 환경 변수 불러오기를 둘 다 가져오고, manual은 PDB와 ChEMBL 항목과 main의 AlphaGenome 항목을 모두 남긴다
   summary: Atlas 병합 뒤에도 PDB·ChEMBL 도구와 설명이 그대로 들어갑니다.
+- sha: 'd8a5ec9'
+  at: 2026-11-01 06:10
+  text: ChEMBL activity 요약 행이 ChEMBL 자신의 유효성 표지를 버리던 것을 고친다. data_validity_comment와 potential_duplicate를 요약 행에 싣고, 표지가 붙은 행이 있으면 개수와 함께 의심 측정과 중복 인용이라는 경고를 요약에 적는다. 표지가 없으면 경고를 붙이지 않는다. 원본 응답은 전과 같이 결과 파일에 그대로 있다
+  summary: 의심되거나 중복 인용된 ChEMBL 측정값이 요약에서 보통 측정값처럼 보이지 않습니다.

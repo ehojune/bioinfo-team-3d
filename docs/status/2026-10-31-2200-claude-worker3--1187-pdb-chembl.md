@@ -43,3 +43,8 @@
 ## rev8: main 반영(Atlas 병합 뒤)
 - #1186(AlphaGenome Atlas)이 병합되어 `annot_mcp.py` import 줄과 manual 한·영의 AlphaGenome 항목이 충돌했다. 서버는 `annot_structure`와 `ATLAS_ENABLED_ENV` import를 둘 다 두고, manual은 PDB·ChEMBL 항목에 main의 AlphaGenome 항목을 이어 붙였다.
 - 시험: `test_annot_structure.py`·`test_annot_literature.py`·`test_external_wait_board_676.py`·`test_annot.py`·`test_annot_regulatory.py`·`test_annot_alphagenome_atlas.py`·`test_semantics_actions_run.py`·`test_agent_prompts.py` 363 passed, 4 skipped. 로컬 mcp 1.x의 `is_error` 오류 2건은 이 변경과 무관(CI는 mcp 2.x).
+
+## rev9: 리뷰 P1 — 유효성 표지
+- P1(`b0540f54` 리뷰): activity 요약의 허용 목록이 `data_validity_comment`·`potential_duplicate`를 버려 의심 값과 중복 인용이 보통 측정값처럼 보였다. 두 필드를 `_ACTIVITY_KEEP`에 넣었다.
+- 요약에 `flagged_rows`(표지가 붙은 행 수)를 항상 싣고, 1건 이상이면 `validity_note`로 "의심스러운 측정·독립이 아닌 중복 인용, 근거로 쓰기 전에 확인"을 적는다. 표지가 없으면 노트는 없다.
+- 시험 먼저: 표지가 요약 행에 있고 개수·노트가 맞는 것, 표지가 없으면 노트가 없는 것(수정 전 둘 다 실패). `test_annot_structure.py` 34건과 관련 시험 통과.
