@@ -1,5 +1,9 @@
 pr: 1051
 rows:
+  - sha: '2b7fa5f'
+    at: '2026-11-01 03:03'
+    summary: '서명된 실패도 같은 합성 nonce의 재사용을 막습니다.'
+    text: 'Consume fixture nonce after authenticating failure receipts'
   - sha: '4480fe5'
     at: '2026-11-01 03:00'
     summary: '합성 관측의 재시도와 실패 사례를 검사합니다.'
