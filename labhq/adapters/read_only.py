@@ -87,6 +87,43 @@ def is_read_only_task(meta: dict | None, agent: AgentSpec | None = None) -> bool
             or (meta.get("agent_overrides") or {}).get("sandbox") == "read-only")
 
 
+TOOL_NOTICE_HEAD = "## Tools in this read-only run"
+
+
+SHELL_TOOL = "shell commands (they may write only in outputs/ and .tmp/)"
+
+
+def available_tools(fields: dict, denied: tuple | list = (), shell: bool = False) -> list[str]:
+    """The tools a read-only run really has, by the name an instruction would use (#1224).
+
+    Claude gets the file tools named in `builtin_tools`. Codex ignores that field: its read-only sandbox runs shell
+    commands (`shell`), which can write only in outputs/ and .tmp/, and it has no named file tools. Both keep the web
+    tools the profile kept and the labhq_annot tools of an explicit allowlist. A tool the staff file denies outright
+    (`disallowed_tools: [Write]`) is not listed; a denial of part of a tool (`Read(./data/**)`) leaves it."""
+    gone = {name for name in denied if isinstance(name, str) and "(" not in name}
+    names = [SHELL_TOOL] if shell else [name for name in (fields.get("builtin_tools") or "").split(",") if name]
+    names += [name for name in fields.get("tools") or [] if isinstance(name, str)]
+    names = [name for name in names if name not in gone]
+    annot = fields.get("annot_tools")
+    if "annot" in (fields.get("builtin_mcp") or []) and annot:
+        names.append("labhq_annot (" + ", ".join(annot) + ")")
+    return names
+
+
+def with_tool_notice(prompt: str, fields: dict, denied: tuple | list = (), shell: bool = False) -> str:
+    """`prompt` plus what this read-only run can use. The persona and the role text are written for the staff member's
+    ordinary run, where MCP servers and web tools exist; a read-only profile drops them, and without this the
+    instructions keep sending the model to tools it does not have (#1224). Appended once: a profile of a profile
+    keeps the notice it already has."""
+    if TOOL_NOTICE_HEAD in prompt:
+        return prompt
+    tools = ", ".join(available_tools(fields, denied, shell)) or "none"
+    others = "PubMed or bioRxiv tools, other labhq_annot tools" + ("" if shell else ", shell commands")
+    return (prompt.rstrip() + "\n\n" + TOOL_NOTICE_HEAD + "\nAvailable now: " + tools + ".\n"
+            "Every other tool or service named in the instructions above (for example " + others + ") is not "
+            "available in this run. Do not try it; say what you could not check instead.")
+
+
 def read_only_profile(agent: AgentSpec) -> AgentSpec:
     """The only spec a read-only task runs with: built from the staff member's identity, never from the sender.
 
@@ -115,6 +152,8 @@ def read_only_profile(agent: AgentSpec) -> AgentSpec:
         # Diagnosis is supplied as context; this staff member needs no execution or write tools.
         fields.update(sandbox="read-only", builtin_tools="", builtin_mcp=[], tools=[])
         kept["project_dirs"] = []
+    shell = agent.engine == "codex" and agent.id != "facilities"  # facilities runs with its shell disabled
+    kept["system_prompt"] = with_tool_notice(kept["system_prompt"], fields, kept["disallowed_tools"], shell)
     return AgentSpec(**kept, **fields)
 
 

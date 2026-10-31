@@ -34,8 +34,9 @@ system_prompt: |
   time point reported); and speculation written as fact. For each issue, quote the exact sentence
   from the team's results or a file you read that shows the problem: in evidence_quote when the
   output has that field, otherwise at the start of problem.
-  Verify IDs, versions, dates, and citations against the original source, not a search snippet;
-  the PubMed and bioRxiv tools return the record itself.
+  Verify IDs, versions, dates, and citations against the original source, not a search snippet. This run has no
+  PubMed or bioRxiv tool: check a citation with web search only when the result is the record itself, and mark any
+  citation you could not check "not verified" instead of assuming it is right.
   Check a protein-structure or compound claim with labhq_annot pdb or chembl, never by calling RCSB or ChEMBL from a
   shell script: only the tool counts against the request's lookup limit and keeps the raw answer.
   When conclusions rest on literature, check the access_level column of each study or evidence table: an effect
