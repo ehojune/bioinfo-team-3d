@@ -160,3 +160,35 @@ def test_a_settings_path_that_the_test_guard_refuses_only_leaves_that_form_out(m
     assert adapters_base.names_atlas_key({"env": {"ALPHAGENOME_API_KEY": "x"}}, forms)
     settings.annot.alphagenome_key_file = "~/.labhq/secrets/alphagenome_api_key"
     assert adapters_base.atlas_key_file_forms(settings), "the ~ spelling alone still works"
+
+
+REAL_KEY_FILE = "D:/storage/real/.labhq/secrets/alphagenome_api_key"  # where a linked parent folder really points
+
+
+def test_the_real_path_of_a_linked_parent_folder_is_allowed_too(monkeypatch):
+    """#1228 review: the runner puts the key file's real path among the private paths as well as the configured one, and
+    the file has the same name under either."""
+    real_of = adapters_base.os.path.realpath
+    monkeypatch.setattr(adapters_base.os.path, "realpath",
+                        lambda path, **kw: REAL_KEY_FILE if str(path).replace("\\", "/").endswith("alphagenome_api_key") else real_of(path, **kw))
+    settings = Settings()
+    settings.annot.alphagenome_key_file = KEY_FILE
+    forms = adapters_base.atlas_key_file_forms(settings)
+    for spelling in (REAL_KEY_FILE, REAL_KEY_FILE.replace("/", "\\")):
+        assert not adapters_base.names_atlas_key(spelling, forms), spelling
+    rules = [rule for rule in forms if rule.startswith(("Read(", "Bash("))]
+    assert any("real" in rule for rule in rules), "the Claude rules for the real path are allowed with it"
+    assert adapters_base.names_atlas_key("D:/storage/other/alphagenome_api_key", forms)
+
+
+def test_the_private_paths_the_runner_hands_the_task_are_allowed_whatever_spellings_it_adds(monkeypatch):
+    from labhq import private_paths
+
+    spelled = ("E:\\linked\\secrets\\alphagenome_api_key", "E:\\LINKED~1\\secrets\\alphagenome_api_key")
+    monkeypatch.setattr(private_paths, "resolve_private_paths",
+                        lambda settings, *a, **k: private_paths.PrivatePaths(paths=spelled))
+    settings = Settings()
+    settings.annot.alphagenome_key_file = KEY_FILE
+    forms = adapters_base.atlas_key_file_forms(settings)
+    assert all(not adapters_base.names_atlas_key(path, forms) for path in spelled)
+    assert adapters_base.names_atlas_key("E:\\somewhere\\else\\alphagenome_api_key", forms)

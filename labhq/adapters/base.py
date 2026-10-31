@@ -831,30 +831,44 @@ def _anchored_path(text: str) -> bool:
 
 
 def atlas_key_file_forms(settings: Settings) -> list[str]:
-    """Every anchored spelling of the one configured key file location, longest first: ``~`` kept or expanded, resolved
-    against the settings, with either slash, and the Claude rules labhq writes for that absolute path. A bare file
-    name, a relative path and anything else that is not an anchored path are left out, so they cannot hide the
-    variable's name elsewhere. Only these exact strings are not read as the key (#1225)."""
+    """Every anchored spelling of the one configured key file location, longest first. These exact strings, and nothing
+    else, are not read as the key (#1225). A bare file name, a relative path or any text that is not an anchored path is
+    left out, so it cannot hide the variable's name elsewhere.
+
+    The spellings come from where labhq itself writes them: the configured path as written, expanded and resolved
+    against the settings, its real path (a linked parent folder), and the private paths the runner hands the task
+    (``resolve_private_paths``: path, real path and 8.3 short spellings); and the Claude deny and ask rules
+    (``claude_deny_private``) for each of those paths. A spelling labhq adds later to those two writers is allowed with
+    them, and nothing here guesses at one. A writer that fails (the test guard refuses an operator path) only leaves its
+    spellings out, which refuses more, never less."""
     raw = settings.annot.alphagenome_key_file
-    absolute = [os.path.expanduser(raw)]
+    name = os.path.basename(raw.replace("\\", "/")).casefold()
+    paths = [os.path.expanduser(raw)]
     try:
-        absolute.append(str(settings.path(raw)))
+        paths.append(str(settings.path(raw)))
     except (OSError, ValueError, RuntimeError):  # RuntimeError: the test guard refuses an operator `.labhq` path
         pass
-    forms = {raw, *absolute}
+    for path in list(paths):
+        if _anchored_path(path):
+            try:
+                paths.append(os.path.realpath(path))
+            except (OSError, ValueError):
+                pass
+    try:
+        from ..private_paths import resolve_private_paths
+
+        paths += [path for path in resolve_private_paths(settings).paths if os.path.basename(path.replace("\\", "/")).casefold() == name]
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        pass
+    anchored = [path for path in dict.fromkeys(paths) if _anchored_path(path)]
+    forms = {raw, *paths}
     forms |= {form.replace("\\", "/") for form in forms} | {form.replace("/", "\\") for form in forms}
     forms = {form for form in forms if _anchored_path(form)}
-    # The rules labhq itself writes for that file (Claude's deny and ask rules spell the path their own way, such as
-    # `Read(//c/Users/x/.labhq/secrets/alphagenome_api_key)`): taken from the one function that writes them, so a rule
-    # syntax added later is allowed with it and nothing here guesses at a spelling. A failure to write them (the test
-    # guard refuses an operator path) only leaves them out, which refuses more, never less.
-    anchored = [path for path in absolute if _anchored_path(path)]
     if anchored:
         try:
             from ..policy import claude_deny_private
 
-            rules = claude_deny_private({}, [anchored[-1]]).get("permissions") or {}
-            name = os.path.basename(anchored[-1]).casefold()
+            rules = claude_deny_private({}, anchored).get("permissions") or {}
             forms |= {rule for group in rules.values() if isinstance(group, list) for rule in group
                       if isinstance(rule, str) and name in rule.casefold() and ("/" in rule or "\\" in rule)}
         except (OSError, ValueError, KeyError, TypeError, RuntimeError):
