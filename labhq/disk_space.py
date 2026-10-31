@@ -502,13 +502,13 @@ _PS_WEB = {"uri": True, "outfile": True, "method": True, "body": True, "contentt
            "httpversion": True, "sslprotocol": True, "custommethod": True, "preserveauthorizationonredirect": False,
            "preservehttpmethodonredirect": False}
 _PS_ARCHIVE = {"path": True, "literalpath": True, "destinationpath": True, "force": False}
-_PS_BITS = {"source": True, "destination": True, "displayname": True, "description": True, "priority": True,
+_PS_BITS: dict[str, bool | None] = {"source": True, "destination": True, "displayname": True, "description": True, "priority": True,
             "transfertype": True, "retryinterval": True, "retrytimeout": True, "credential": True,
             "authentication": True, "proxyusage": True, "proxylist": True, "proxybypass": True,
             "proxycredential": True, "proxyauthentication": True, "notifyflags": True, "notifycmdline": True,
             "customheaders": True, "securityflags": True, "httpmethod": True, "transferpolicy": True,
-            "asynchronous": False, "suspended": False, "dynamic": False, "usestoredcredential": True,
-            "acls": False, "monitor": False, "cleanuponcompletion": False}
+            "asynchronous": False, "suspended": False, "dynamictransfer": False, "usestoredcredential": True,
+            "maxdownloadtime": True, "aclflags": True, "customheaderswriteonly": None}
 _PS_LOCATION = {"path": True, "literalpath": True, "passthru": False, "stackname": True}
 _PS_LOCATION_NAMES = frozenset({"cd", "chdir", "set-location", "sl", "push-location", "pushd"})
 _PS_LOCATION_LOST = frozenset({"pop-location", "popd"})
@@ -532,42 +532,70 @@ def _ps_match(name: str, table: dict[str, bool]) -> str | None:
     return found[0] if len(found) == 1 else None
 
 
-def _ps_bind(words: list[str], spec: dict[str, bool], order: tuple[str, ...]) -> tuple[dict[str, str | bool], bool]:
-    """The parameter values of one command: named ones, then the positional words in `order`. The flag says whether
-    every word was understood; if not, only the named values are returned (a word that may be an unknown parameter's
-    value is never taken for a positional argument)."""
+_PS_MAX_DOUBT = 4  # unknown parameters read both ways; past this many the positional words are not read at all
+
+
+def _ps_flag(word: str) -> bool:
+    return word.startswith("-") and len(word) > 1 and not word[1].isdigit()
+
+
+def _ps_bind(words: list[str], spec: dict[str, bool | None], order: tuple[str, ...]) -> list[dict[str, str | bool]]:
+    """Every way one command's words can bind to its parameters: named values first, then the positional words in
+    `order`. A parameter that is not in the table (or whose kind is marked None) may be a switch or may take the next
+    word, so both readings are returned and the caller looks at all of them; a word is never silently dropped. `partial`
+    marks a reading whose positional words were not assigned (too many doubts, or a value-taking parameter without its
+    value)."""
     table = {**_PS_COMMON, **spec}
-    named: dict[str, str | bool] = {}
-    positional: list[str] = []
-    clean = True
-    index = 1
-    while index < len(words):
-        word = words[index]
-        index += 1
-        if word == "--":
-            positional.extend(words[index:])
-            break
-        if not (word.startswith("-") and len(word) > 1 and not word[1].isdigit()):
-            positional.append(word)
-            continue
-        name, colon, value = word[1:].partition(":")
-        key = _ps_match(name, table)
-        if key is None:
-            clean = False  # an unknown parameter: whether the next word is its value cannot be told
-        elif not table[key]:
-            named[key] = True  # a switch (`-Force:$false` still names it; the value is not a path)
-        elif colon and value:
-            named[key] = value
-        elif not colon and index < len(words) and not (words[index].startswith("-") and len(words[index]) > 1):
-            named[key] = words[index]
-            index += 1
+    readings: list[dict[str, str | bool]] = []
+
+    def finish(named: dict, positional: list[str], partial: bool) -> None:
+        bound = dict(named)
+        if partial:
+            bound["partial"] = True
         else:
-            clean = False
-    if clean:
-        left = [key for key in order if key not in named
-                and not (key == "path" and "literalpath" in named)]
-        named.update(zip(left, positional))
-    return named, clean
+            left = [key for key in order if key not in named and not (key == "path" and "literalpath" in named)]
+            bound.update(zip(left, positional))
+        if bound not in readings:
+            readings.append(bound)
+
+    def walk(index: int, named: dict, positional: list[str], doubt: int) -> None:
+        while index < len(words):
+            word = words[index]
+            index += 1
+            if word == "--":
+                positional = positional + words[index:]
+                break
+            if not _ps_flag(word):
+                positional = positional + [word]
+                continue
+            name, colon, value = word[1:].partition(":")
+            key = _ps_match(name, table)
+            kind = table[key] if key is not None else None
+            if kind is False:
+                named = {**named, key: True}  # a switch (`-Force:$false` still names it; the value is not a path)
+                continue
+            if colon and value:  # the value is attached: nothing to guess
+                named = {**named, key: value} if key is not None else named
+                continue
+            following = words[index] if index < len(words) and not _ps_flag(words[index]) else None
+            if kind is True:
+                if following is None:
+                    finish(named, positional, True)  # a value-taking parameter without a value: not understood
+                    return
+                named = {**named, key: following}
+                index += 1
+                continue
+            if doubt >= _PS_MAX_DOUBT:
+                finish(named, positional, True)
+                return
+            walk(index, named, positional, doubt + 1)  # unknown or uncertain: a switch, ...
+            if following is not None:  # ... or a parameter that takes the next word
+                walk(index + 1, {**named, key: following} if key is not None else named, positional, doubt + 1)
+            return
+        finish(named, positional, False)
+
+    walk(1, {}, [], 0)
+    return readings
 
 
 def _unwritten(path: str) -> bool:
@@ -575,54 +603,76 @@ def _unwritten(path: str) -> bool:
     return "$" in path or "`" in path
 
 
-def _ps_write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | None:
-    """(what, folder it writes into, estimated bytes or None) for one PowerShell command, or None when it is none."""
-    name = _ps_name(words[0])
-    if name in _PS_DOWNLOADS:
-        out = _ps_bind(words, _PS_WEB, ("uri",))[0].get("outfile")
-        if not isinstance(out, str) or _unwritten(out):
-            return None  # the result goes to the pipeline, or the path is not written out
-        return "다운로드", _resolve(out, workdir).parent, None
-    if name in _PS_UNPACK:
-        bound, clean = _ps_bind(words, _PS_ARCHIVE, ("path", "destinationpath"))
-        destination = bound.get("destinationpath")
-        archive = bound.get("path") or bound.get("literalpath")
-        if not clean and destination is None:
-            return None  # a destination that may sit behind an unknown parameter is not guessed
-        if isinstance(destination, str) and _unwritten(destination):
+def _ps_folders(destination: object, workdir: str, *, file_like: bool) -> list[Path] | None:
+    """The local folders a `-Destination`-style value writes into: a comma list names one target per element. None
+    when any element is not written out."""
+    if not isinstance(destination, str):
+        return None
+    folders = []
+    for part in destination.split(","):
+        part = part.strip()
+        if not part or _unwritten(part) or "://" in part:
             return None
-        # No destination named: it unpacks into the current folder, which is still a drive that can be short.
-        folder = _resolve(destination, workdir) if isinstance(destination, str) else Path(workdir)
-        known = (_zip_size(_resolve(archive, workdir)) if isinstance(archive, str) and not _unwritten(archive)
-                 else None)
-        return "압축 해제", folder, known
-    if name in _PS_TRANSFER:
-        bound = _ps_bind(words, _PS_BITS, ("source", "destination"))[0]
-        destination = bound.get("destination")
-        transfer = str(bound.get("transfertype") or "").casefold()
-        if (not isinstance(destination, str) or _unwritten(destination) or transfer.startswith("upload")
-                or "://" in destination):
-            return None  # an upload, or a remote destination, writes no local folder
-        target = _resolve(destination, workdir)
-        return "다운로드", (target.parent if target.suffix else target), None
-    return None
+        target = _resolve(part, workdir)
+        folders.append(target.parent if file_like and target.suffix else target)
+    return folders or None
+
+
+def _ps_write(words: list[str], workdir: str) -> list[tuple[str, list[Path], int | None]]:
+    """The writes one PowerShell command may make, one per way its words can bind: (what, folders it writes into,
+    estimated bytes or None). Empty when it writes nothing readable."""
+    name = _ps_name(words[0])
+    found: list[tuple[str, list[Path], int | None]] = []
+    if name in _PS_DOWNLOADS:
+        for bound in _ps_bind(words, _PS_WEB, ("uri",)):
+            out = bound.get("outfile")
+            if isinstance(out, str) and not _unwritten(out):  # no -OutFile: the result goes to the pipeline
+                found.append(("다운로드", [_resolve(out, workdir).parent], None))
+    elif name in _PS_UNPACK:
+        for bound in _ps_bind(words, _PS_ARCHIVE, ("path", "destinationpath")):
+            destination = bound.get("destinationpath")
+            if destination is None and bound.get("partial"):
+                continue  # a destination that may sit behind a word that was not understood is not guessed
+            if isinstance(destination, str) and _unwritten(destination):
+                continue
+            archive = bound.get("path") or bound.get("literalpath")
+            # No destination named: it unpacks into the current folder, which is still a drive that can be short.
+            folder = _resolve(destination, workdir) if isinstance(destination, str) else Path(workdir)
+            known = (_zip_size(_resolve(archive, workdir)) if isinstance(archive, str) and not _unwritten(archive)
+                     else None)
+            found.append(("압축 해제", [folder], known))
+    elif name in _PS_TRANSFER:
+        for bound in _ps_bind(words, _PS_BITS, ("source", "destination")):
+            if str(bound.get("transfertype") or "").casefold().startswith("upload"):
+                continue  # an upload writes no local folder
+            folders = _ps_folders(bound.get("destination"), workdir, file_like=True)
+            if folders:
+                found.append(("다운로드", folders, None))
+    return found
 
 
 def _ps_location(words: list[str], cwd: str | None) -> str | None:
-    """Where the commands after a `Set-Location`/`Push-Location` run; None when that cannot be read."""
-    bound = _ps_bind(words, _PS_LOCATION, ("path",))[0]
-    target = bound.get("literalpath") or bound.get("path")
-    if cwd is None or not isinstance(target, str) or _unwritten(target) or target == "-":
+    """Where the commands after a `Set-Location`/`Push-Location` run; None when that cannot be read (or the readings
+    of its words disagree)."""
+    if cwd is None:
         return None
-    return str(_resolve(target, cwd))
+    targets = set()
+    for bound in _ps_bind(words, _PS_LOCATION, ("path",)):
+        target = bound.get("literalpath") or bound.get("path")
+        if not isinstance(target, str) or _unwritten(target) or target == "-":
+            return None
+        targets.add(str(_resolve(target, cwd)))
+    return targets.pop() if len(targets) == 1 else None
 
 
 def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, warn_percent: float,
                      probe=None) -> ShellCheck | None:
     """`shell_check` for the PowerShell tool: `Invoke-WebRequest -OutFile`, `Invoke-RestMethod -OutFile`,
     `Expand-Archive` and `Start-BitsTransfer`. Same rule: only a certain shortfall asks, an unknown size never blocks,
-    a command that uses a variable or a subexpression for the path is left alone. Once the folder the commands run in
-    can no longer be read (a `Set-Location` it cannot parse, `Pop-Location`) the later ones are left alone too."""
+    a command that uses a variable or a subexpression for the path is left alone. A word the parameter tables do not
+    explain is read both ways and the worst reading counts: if either could be a certain shortfall it asks, which is
+    only ever when the drive really is short. Once the folder the commands run in can no longer be read (a
+    `Set-Location` it cannot parse, `Pop-Location`) the later ones are left alone."""
     probe = probe or usage
     worst: ShellCheck | None = None
     cwd: str | None = workdir
@@ -634,14 +684,12 @@ def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: flo
         if cwd is None:
             continue
         try:
-            found = _ps_write(words, cwd)
+            writes = _ps_write(words, cwd)
         except (OSError, ValueError):
             continue
-        if found is None:
-            continue
-        what, folder, estimate = found
-        worst = _worse(worst, _assess(what, folder, estimate, [], probe=probe, fail_gb=fail_gb, warn_gb=warn_gb,
-                                      warn_percent=warn_percent))
+        for what, folders, estimate in writes:
+            worst = _worse(worst, _assess(what, folders[0], estimate, folders[1:], probe=probe, fail_gb=fail_gb,
+                                          warn_gb=warn_gb, warn_percent=warn_percent))
     return worst
 
 

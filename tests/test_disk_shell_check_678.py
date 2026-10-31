@@ -510,7 +510,6 @@ def test_a_location_change_that_cannot_be_read_leaves_the_later_commands_alone(t
 @pytest.mark.parametrize("command", [
     "Start-BitsTransfer https://x.org/a.zip -Priority High",             # an option's value is not the destination
     "Start-BitsTransfer -Source https://x.org/a.zip -DisplayName job",
-    "Start-BitsTransfer https://x.org/a.zip -Bogus out\a.zip",          # an unknown option: its value cannot be told
     "Start-BitsTransfer -Priority High https://x.org/a.zip -RetryInterval 60",
 ])
 def test_bits_option_values_are_never_read_as_the_destination(tmp_path, command):
@@ -554,4 +553,56 @@ def test_literalpath_leaves_the_second_positional_word_to_the_destination(tmp_pa
 
 def test_an_ambiguous_or_unknown_parameter_name_is_not_guessed(tmp_path):
     assert ps_check("iwr https://x.org/a.zip -Out a.zip", tmp_path, 0.5) is None  # -Out: OutFile, OutVariable, OutBuffer
-    assert ps_check("Expand-Archive raw.zip out -Bogus 1", tmp_path, 0.5) is None  # 'out' may be -Bogus's value
+    assert ps_check("Expand-Archive raw.zip out -Bogus 1", tmp_path, 0.5).action == "ask"  # either way it is 'out'
+
+
+# ----- a word the tables do not explain is read both ways; arrays are checked element by element (#1167 review) -----
+
+def per_folder_probe(free_by_name, seen=None):
+    """A probe that answers by the last folder name, so each drive of one command can differ."""
+    def probe(folder):
+        if seen is not None:
+            seen.append(folder)
+        return Space(100 * GIB, 0, int(free_by_name.get(Path(folder).name, 50) * GIB))
+    return probe
+
+
+@pytest.mark.parametrize("command", [
+    "Start-BitsTransfer -MaxDownloadTime 3600 https://x.org/a.zip out\a.zip",    # a real option the table could miss
+    "Start-BitsTransfer -Frobnicate 3 https://x.org/a.zip out\a.zip",            # an option no table knows
+    "Start-BitsTransfer https://x.org/a.zip -Frobnicate out\a.zip",
+    "Start-BitsTransfer https://x.org/a.zip -Frobnicate -Another out\a.zip",
+    "Start-BitsTransfer https://x.org/a.zip -Bogus out\a.zip",
+])
+def test_an_option_the_table_does_not_know_never_hides_the_destination(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5).action == "ask"
+
+
+def test_an_option_the_table_does_not_know_still_asks_nothing_on_a_roomy_drive(tmp_path):
+    assert ps_check("Start-BitsTransfer -Frobnicate 3 https://x.org/a.zip out\a.zip", tmp_path, 50) is None
+
+
+def test_too_many_unknown_options_leave_the_positional_words_unread(tmp_path):
+    command = "Start-BitsTransfer " + " ".join(f"-Unknown{n} v{n}" for n in range(6)) + " https://x.org/a.zip out\a.zip"
+    assert ps_check(command, tmp_path, 0.5) is None
+
+
+@pytest.mark.parametrize("command", [
+    "Start-BitsTransfer -Source https://x.org/a,https://x.org/b -Destination bigdrive\\x.zip,tight\\y.zip",
+    "Start-BitsTransfer https://x.org/a,https://x.org/b bigdrive\\x.zip,tight\\y.zip",
+    "Start-BitsTransfer -Source u1,u2 -Dest bigdrive\,tight\\",
+])
+def test_every_element_of_a_destination_array_is_checked(tmp_path, command):
+    seen = []
+    verdict = disk_space.powershell_check(command, str(tmp_path), probe=per_folder_probe({"tight": 0.5}, seen), **CHECK)
+    assert verdict.action == "ask" and "0.5 GiB" in verdict.reason
+    assert {Path(f).name for f in seen} >= {"bigdrive", "tight"}
+
+
+def test_a_destination_array_with_a_variable_element_is_left_alone(tmp_path):
+    assert ps_check("Start-BitsTransfer -Source a,b -Destination out\a.zip,$env:TEMP\b.zip", tmp_path, 0.5) is None
+
+
+def test_an_unknown_option_before_set_location_target_is_not_guessed(tmp_path):
+    # Both readings of `-Bogus big` name different folders (big, or none): the later commands are left alone.
+    assert ps_check("Set-Location -Bogus big; iwr https://x.org/a.zip -OutFile a.zip", tmp_path, 0.5) is None
