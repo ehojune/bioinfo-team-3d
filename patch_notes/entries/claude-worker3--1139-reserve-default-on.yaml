@@ -1,0 +1,10 @@
+pr: null
+rows:
+- sha: '87bcdb7'
+  at: 2026-10-31 21:40
+  text: policy.budget.reserve_before_dispatch의 기본값을 false에서 true로 바꾼다. 모델 호출마다 보내기 전에 그 호출의 상한을 요청 예산에서 미리 잡으므로 병렬 단계가 각자 상한을 쓰고도 요청 상한을 넘지 못한다. 예시 설정 두 사본도 true로 맞추고, 켜진 기본값과 예시 설정, 꺼도 되는 것, 병렬 두 단계가 요청 상한을 넘지 못하는 것과 꺼 두면 두 단계 모두 시작하는 것을 tests/test_reserve_default_on.py로 고정한다
+  summary: 병렬 단계가 요청 예산을 넘겨 쓰던 틈을 기본으로 막습니다. false로 끄면 이전처럼 이미 쓴 비용만 봅니다.
+- sha: '07955fd'
+  at: 2026-10-31 22:30
+  text: 기본값이 켜지면서 깨진 tests/test_cso.py의 시험 11건을 고친다. FakeHub가 옛 검사(이미 쓴 비용만 봄)를 명시하게 하고 예약은 자체 hub와 새 시험 파일에서 따로 시험한다. 기본값을 확인하던 시험은 꺼 둔 경우의 시험으로 바꾼다. manual 한영의 보내기 전 예약 설명과 비용 표를 기본 켬으로 고치고 새 시험 파일을 Windows inventory known_tests에 넣는다
+  summary: 기본값 변경으로 깨진 시험과 설명을 맞춥니다.
