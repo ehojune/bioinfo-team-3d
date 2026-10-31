@@ -839,7 +839,7 @@ def atlas_key_file_forms(settings: Settings) -> list[str]:
     absolute = [os.path.expanduser(raw)]
     try:
         absolute.append(str(settings.path(raw)))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError):  # RuntimeError: the test guard refuses an operator `.labhq` path
         pass
     forms = {raw, *absolute}
     forms |= {form.replace("\\", "/") for form in forms} | {form.replace("/", "\\") for form in forms}

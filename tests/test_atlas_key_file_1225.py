@@ -143,3 +143,20 @@ def test_a_failing_rule_generator_leaves_the_rules_out_and_refuses_more(monkeypa
     forms = adapters_base.atlas_key_file_forms(settings)
     assert KEY_FILE in forms and not [form for form in forms if form.startswith(("Read(", "Bash("))]
     assert adapters_base.names_atlas_key(f"Read(//c/Users/someone/.labhq/secrets/alphagenome_api_key)", forms)
+
+
+def test_a_settings_path_that_the_test_guard_refuses_only_leaves_that_form_out(monkeypatch):
+    """CI (#1228): `Settings.path` raises RuntimeError for the operator's `~/.labhq/...` default under pytest. That one
+    spelling is then not allowed (more is refused, never less); the others and the name check stay."""
+    def refuse(self, text):
+        raise RuntimeError("pytest refused operator .labhq path; use an isolated temporary home/state")
+
+    monkeypatch.setattr(Settings, "path", refuse)
+    settings = Settings()
+    settings.annot.alphagenome_key_file = KEY_FILE
+    forms = adapters_base.atlas_key_file_forms(settings)
+    assert KEY_FILE in forms and KEY_FILE_BACKSLASH in forms
+    assert not adapters_base.names_atlas_key(KEY_FILE, forms)
+    assert adapters_base.names_atlas_key({"env": {"ALPHAGENOME_API_KEY": "x"}}, forms)
+    settings.annot.alphagenome_key_file = "~/.labhq/secrets/alphagenome_api_key"
+    assert adapters_base.atlas_key_file_forms(settings), "the ~ spelling alone still works"
