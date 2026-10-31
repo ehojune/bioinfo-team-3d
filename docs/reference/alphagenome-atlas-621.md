@@ -2,7 +2,7 @@
 
 Lookup-only implementation evidence, checked 2026-10-31. Live Atlas access is **UNVERIFIED** pending PI's key-location answer.
 
-Integration hold: final-head CI/review and installed CLI verification remain pending. Cross-engine alias filtering now shares one collector across daemon and adapter. Manuals remain separately owned. The fixed `/annot/atlas` operation accepts query parameters, never caller URLs, commands or output roots.
+Integration hold: final-head CI and manuals remain pending; installed package CLI/MCP mocks pass. The installed Codex sandbox shell and live Atlas access remain unverified. Cross-engine alias filtering shares one collector across daemon and adapter. The fixed `/annot/atlas` operation accepts query parameters, never caller URLs, commands or output roots.
 
 | Contract | Implementation |
 |---|---|
@@ -29,6 +29,16 @@ Rev11: cross-engine alias regression was 3 failed before repair; Atlas/adapter/r
 - `shell_environment_policy.set`, engine `extra_args`, MCP env and expanded prefix restoration are refused before generated files or process launch. Identity spoofing, arbitrary operation fields, admission, busy requests, disconnect, deadline and runner success/error/cancel cleanup have regressions.
 - Installed Codex `0.165.0-alpha.1.2` sandbox probe remains **UNVERIFIED**: isolated HOME, `:workspace`, unelevated mode, no model/login/service calls. PowerShell and cmd probes timed out at 30 seconds; the owned process tree was ended. The opt-in regression retains this check; normal CI skips it.
 - The credential boundary separates process environments and broker operations. It does not establish OS isolation against same-account process inspection. Live Atlas access, installed Codex shell execution and final integration remain separate gates; keep the PR on hold.
+
+## Installed package verification (rev12)
+
+Built a wheel offline from `1ec4212b21e281c6f5bb3e87b45b1d8fd5a8adb7`; installed non-editable `labhq 0.5.0` in a separate Python 3.12.10 environment. SHA-256: `dbe54b5b13e56a81539c06cc2f1eb7087797f1a1f49c8065eedfd0216d2530df`.
+
+- Existing approved dependency files were copied from the worktree environment, including SDK 0.10.0 and the relative pywin32 path hook; editable/source hooks were excluded. Offline dependency resolution lacked cached packages, so this is not a fresh dependency-install proof.
+- `uv build --offline --wheel --out-dir wheels src` and `uv pip install --offline --no-deps --python venv/Scripts/python.exe wheels/labhq-0.5.0-py3-none-any.whl`: exit 0. Imported `labhq` resolves under the isolated `site-packages`.
+- `venv/Scripts/labhq.exe --help` and `doctor --help`: exit 0. Atlas is an MCP tool, not a CLI subcommand; its description/schema passed real stdio `tools/list` from `venv/Scripts/python.exe -m labhq.tools.annot_mcp`.
+- `tools/call` reached the real loopback broker and SDK 0.10.0 with an in-memory protobuf stub: one query, raw score -2, track metadata preserved. Grant revocation returned a tool error/HTTP 403 without another SDK call. Fake key/alias were absent from the child environment, result and output files; grants and server were cleaned up.
+- The harness used an isolated HOME/config, explicit absent key-file path, environment whitelist and loopback-only Python socket guard. No provider login or live Atlas call. Local evidence: `probe.py`, `dependencies.txt`, `result.json`, `atlas-tool-help.json`, `mock-result.json` in the task's external installation folder.
 
 ## Proposed manual wording (awaiting scoped ownership)
 
