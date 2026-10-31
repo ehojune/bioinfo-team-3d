@@ -1642,7 +1642,7 @@ def format_roster(agents: list[dict]) -> str:
                      f"{'own outputs/ and .tmp/ writable; ' if access == 'read-only' else ''}"
                      f"tools={allowed or builtin or 'default'}; denied={a.get('disallowed_tools') or []}; "
                      f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}; "
-                     f"{'labhq_annot=yes (VEP with AlphaMissense for human GRCh38, gnomAD, ClinVar, ChIP-Atlas, ENCODE cCRE, GTEx lookups; AlphaGenome when its key is set); ' if 'annot' in (a.get('builtin_mcp') or []) else ''}"
+                     f"{'labhq_annot=yes (VEP with AlphaMissense for human GRCh38, gnomAD, ClinVar, ChIP-Atlas, ENCODE cCRE, GTEx, RCSB PDB structure and ChEMBL compound lookups; AlphaGenome when its key is set); ' if 'annot' in (a.get('builtin_mcp') or []) else ''}"
                      f"max_turns={a.get('max_turns') or 'unlimited'}{tools}")
     return "\n".join(lines)
 
