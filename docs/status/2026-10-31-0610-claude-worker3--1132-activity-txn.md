@@ -25,3 +25,8 @@
 - `test_state_control_durable::test_halt_after_activity_read_keeps_committed_tool`이 3.10·3.12·Windows에서 실패했다. 원인은 시험이 `hub.publish`를 빈 `AsyncMock`으로 바꿔 activity가 publish 안으로 옮겨진 뒤 저장되지 않은 것이다. 제품 순서는 안전하다(halt는 `aupdate_task_control`, activity는 이벤트 transaction의 reducer로 같은 writer lane에서 최신 행에 병합).
 - stub이 `store.aappend_event(..., activity=activity)`를 실제로 부르게 했고 단언은 그대로다. 같은 부류를 찾으려고 publish를 stub한 시험 14개 파일을 훑었고 activity에 기대는 파일은 `test_state_activity_durable`(이미 수정)과 이 파일뿐이었다.
 - 관련 4개 파일 72 passed.
+
+## main 반영 (rev8)
+- #1151 병합 뒤 `server.py`·`store.py`·`test_gateway_publish_durable.py`의 충돌을 풀었다. #1143의 중복 runner 메시지 건너뛰기는 cursor 검사에서 먼저 `None`을 돌려주므로 activity는 중복 복사본에 다시 적용되지 않는다.
+- 합친 뒤 `test_state::test_a_resend_waits_for_the_first_copy_...`가 `publish(ev, runner_id, runner_seq)` 시그니처로 감싼 double에 `activity=`가 넘어가 실패했다. `activity` 인자를 activity가 있는 메시지에만 넘기게 해 시험을 고치지 않고 풀었다.
+- 관련 시험 174 passed.
