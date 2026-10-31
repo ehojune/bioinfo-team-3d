@@ -217,6 +217,19 @@ Claude의 `--disallowedTools`만 이름 목록을 지키고 Codex·Gemini 어댑
 - 시험: `-k shutdown` 통과.
 - 미검증: Windows CI에서의 안정성(이 PR의 CI가 첫 확인).
 
+# #621 Atlas 조회와 runner credential 경계
+
+- rev20: main의 CoS 문헌 allowlist를 보존하고 Atlas 등록·broker grant에도 적용했습니다. 통합 전 회귀 6 failed, 수정 후 Atlas·문헌·대기 시험 213 passed·1 skipped. 최초 Windows timeout 원인은 미확정이며 최종 head CI·리뷰 뒤 승인 병합합니다.
+- rev18 진단: child slot·admission·HTTP 생성/송수신, parent ASGI·query 시각을 기록합니다. [진단 head CI](https://github.com/ehojune/bioinfo-team-3d/actions/runs/41208827109)는 Windows 4,398 passed·42 skipped, Linux 두 버전 PASS. patch-note 누락은 보완했습니다. 제품 수정은 없으며 최초 정체 원인은 미확정입니다.
+- 계측 없는 원래 경로와 진단 경로를 모두 20초 안에 검사합니다. 로컬 취소·deadline·출력 보존·실제 child 6 passed. CI plugin 4-worker Atlas 141 passed·1 skipped, 전체 수집 후 문제 시험 1 passed. 최종 CI·실제 리뷰 전까지 hold 유지.
+- GRCh38 SNV 최대 10개, scorer·ontology·gene 필터, raw/quantile·metadata, 출처·사용 조건·일 단위 cache를 제공합니다. 자동 inference 전환은 없습니다.
+- 키는 runner backend에만 전달합니다. engine/task mapping의 연쇄·순환 별칭을 직원 환경·launch override·설정 사본에서 검사합니다. task token·조회 상한·deny·deadline과 종료 시 정리를 적용합니다.
+- rev17: main 충돌을 풀어 MCP·Atlas doctor 검사를 모두 보존했습니다. 각 행이 한 번씩 나오는 회귀와 `mcp>=2.0`·`alphagenome>=0.10.0` 하한을 확인했습니다.
+- doctor가 미해결 환경변수 참조를 실제 키로 보던 P2를 수정했습니다. runner·engine의 세 가지 참조 문법에서 6 failed를 재현했고, 수정 후 Atlas·doctor **212 passed, 1 skipped**. 공개 저장소 검사 통과. 최종 head CI·실제 리뷰 P1=0 확인 뒤 hold 해제·승인된 병합을 진행합니다.
+- rev16의 20초 MCP 자식 제한·단계별 시각·timeout 출력 보존은 유지합니다. 최초 Windows CI 지연 원인은 미확정입니다. 이전 wheel/SDK mock 검증은 [reference](../reference/alphagenome-atlas-621.md)에 있습니다.
+- 남은 P2: [credential별 cache 분리](https://github.com/ehojune/bioinfo-team-3d/pull/1186#issuecomment-6543891313), [nullable ontology metadata](https://github.com/ehojune/bioinfo-team-3d/pull/1186#discussion_r4431872382). 후자는 rev17 밖 제품 파일의 소유 범위 판단이 필요합니다.
+- **UNVERIFIED: 실제 Atlas 조회·설치 Codex sandbox shell. PI 키 위치 답 대기.** 실제 provider·키 탐색·연구/HPC·배포 실행은 없으며 #621은 닫지 않습니다.
+
 # #674 Codex·Gemini 소비 단계에도 검증된 환경 전달
 
 - 결론: 검증을 통과한 환경(`validate_runner_env`)을 `ENVIRONMENT_ENGINES = {claude_code, codex, gemini}` 소비 단계가 받는다. 세 엔진 모두 env `LABHQ_ENV_PYTHON`(검증된 interpreter 절대 경로)·`PYTHONDONTWRITEBYTECODE=1`과 브리핑 `[Runner environment]` 단락을 받고, 읽기 전용 root(`read_dirs`)는 기존대로 Claude만 더 연다(`ENVIRONMENT_GRANT_ENGINES`). antigravity·cli·mock·알 수 없는 agent는 기존 거부를 유지한다.
