@@ -10,3 +10,6 @@ rows:
   - sha: "48d6264"
     at: "2026-10-31 21:30"
     text: "README: CI 시간 상한 문서 링크 (Refs #1198)"
+  - sha: "b0682dde"
+    at: "2026-10-31 22:00"
+    text: "CI: Windows 명령의 -o 제거, Linux 시험 문구를 실제 메시지에 맞춤 (Refs #1198)"
