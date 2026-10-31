@@ -635,7 +635,7 @@ def hub_runner(hub: Any, agent_id: str, request_id: str | None) -> str | None:
 
 
 def format_capabilities(roster: list[dict], runner_capabilities: dict | None = None,
-                        run_where: str | None = None) -> str:
+                        run_where: str | None = None, run_where_note: str | None = None) -> str:
     lines = [
         f"- {a['id']}: scheduler={a.get('scheduler', 'none')}, "
         f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}, "
@@ -651,6 +651,9 @@ def format_capabilities(roster: list[dict], runner_capabilities: dict | None = N
         if runner.get("runtime_env") == "wsl":
             lines.append(f"- runner {runner_id}: 로컬 WSL. bioinfo-agent 분석은 이 runner에서 실행한다. "
                          "위 tools의 nextflow/docker가 yes이면 로컬 Linux 파이프라인을 계획에 넣는다.")
+    if run_where != "wsl" and run_where_note:  # the PI chose WSL and did not get it: plan for what will run
+        lines.append("- PI가 WSL에서 실행하라고 골랐지만 WSL을 쓸 수 없어 WSL 없이 실행한다: "
+                     f"{' '.join(str(run_where_note).split())[:300]}")
     if run_where == "wsl":
         lines.append("- PI가 이 PC의 WSL에서 실행하라고 골랐다. bioinfo-agent가 roster에 있으면 분석 단계에 쓰고, "
                      "없으면 그 이유를 계획에 적는다.")
@@ -7009,7 +7012,8 @@ class Orchestrator:
             active_pack_hashes = pack_snapshot(packs)
             # The first plan, research plan and re-plan after resume (#271) all use this same snapshot.
             capabilities = format_capabilities(roster, getattr(self.hub, "runner_capabilities", None),
-                                               run_where=req.get("run_where"))
+                                               run_where="wsl" if req.get("wsl_pinned") else None,
+                                               run_where_note=req.get("run_where_note"))
 
             async def finish_research_plan(plan: dict[str, Any]) -> bool:
                 async def end_revised(new_rid: str, note: str) -> None:

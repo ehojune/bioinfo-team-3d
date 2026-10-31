@@ -823,6 +823,39 @@ def expand_env(env: dict[str, str], source: dict[str, str] | None = None) -> dic
                       lambda m: source.get(m.group(1), m.group(0)), v) for k, v in env.items()}
 
 
+def atlas_credentials(settings: Settings, task_env: dict[str, str]) -> set[str]:
+    """Collect secrets for removal, independently of the selected engine's key precedence."""
+    from ..tools.annot_alphagenome_atlas import KEY_ENV, credentials
+    environments = [dict(os.environ), task_env, *(engine.env for _, engine in settings.engines)]
+    secrets = credentials(environments[0], task_env,
+                          *(expand_env(env) for env in environments[2:]))
+    # expandvars only reads the parent environment. Follow references in every raw mapping too,
+    # retaining shadowed alias values for removal without changing the backend key precedence.
+    aliases: dict[str, set[str]] = {}
+    pending = []
+    for env in environments:
+        for name, value in env.items():
+            aliases.setdefault(name.casefold() if os.name == "nt" else name, set()).add(value)
+            if name.casefold() == KEY_ENV.casefold():
+                pending.append(value)
+    pattern = r"\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)"
+    if os.name == "nt":
+        pattern += r"|%([^%]+)%"
+    seen: set[str] = set()
+    while pending:
+        value = pending.pop()
+        if value in seen:
+            continue
+        seen.add(value)
+        for match in re.finditer(pattern, value):
+            name = next(group for group in match.groups() if group is not None)
+            for alias in aliases.get(name.casefold() if os.name == "nt" else name, ()):
+                # Keep intermediate references as well as leaves, so cycles cannot reach staff.
+                secrets.update(v.strip() for v in (alias, os.path.expandvars(alias)) if v.strip())
+                pending.append(alias)
+    return secrets
+
+
 def child_config_dirs(env: dict[str, str], cwd: Path, var: str, default_name: str) -> list[Path]:
     """Every config dir the child CLI might use, so checks and excludes fail closed.
 
@@ -876,7 +909,8 @@ class AgentAdapter(ABC):
         drop |= {COMMIT_AGENT_ENV.casefold()}
         staff = {key: value for key, value in env.items() if key.casefold() not in drop}
         staff[COMMIT_AGENT_ENV] = "none"
-        return staff
+        from ..tools.annot_alphagenome_atlas import without_credentials
+        return without_credentials(staff, atlas_credentials(self.settings, ctx.env))
 
     def stdin_payload(self, ctx: RunContext) -> bytes | None:
         """Bytes to write to the agent's stdin (then closed); None → stdin is /dev/null."""
@@ -918,6 +952,18 @@ class AgentAdapter(ABC):
         env = self.staff_env(ctx)
         engine_bin = getattr(self.settings.engines, self.engine, None)
         prefix = [os.path.expandvars(os.path.expanduser(arg)) for arg in (engine_bin.prefix_args if engine_bin else [])]
+        from ..tools.annot_alphagenome_atlas import KEY_ENV
+        atlas_secrets = atlas_credentials(self.settings, ctx.env)
+        # Refuse before prepare writes engine settings. A shell policy `set`/MCP env override must not
+        # restore the key after staff_env stripped it, including overrides supplied through extra_args.
+        launch_config = json.dumps({"engine": engine_bin.model_dump(exclude={"env"}) if engine_bin else {},
+                                    "mcp": [s.model_dump() for s in ctx.mcp_servers],
+                                    "settings": ctx.claude_settings, "prefix": prefix},
+                                   ensure_ascii=False, default=str)
+        launch_config = os.path.expandvars(launch_config)
+        if KEY_ENV.casefold() in launch_config.casefold() or any(key in launch_config for key in atlas_secrets):
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
+                              error="Atlas credentials/config overrides are not allowed in staff launch settings")
         refused = ((read_only_mismatch(ctx.agent, ctx.mcp_servers) or read_only_launch_error(self.engine, prefix)
                     or read_only_workspace_error(
                         self.engine, ctx.workdir, labhq_workspace_paths(ctx.agent, self.engine, ctx.workdir)))
