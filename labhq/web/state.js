@@ -729,7 +729,9 @@ function endedRequestRefuses(ev) {
   return false;
 }
 // A snapshot's running task of a request that is over is not restored either, unless it is a follow-up turn.
-const staleTask = task => { const q = S.requests.get(task.request_id); return !!q && isTerminalRequest(q.status) && !POST_END_TASK_KINDS.has(task.kind); };
+// The gateway sends a follow-up turn of staff_tasks as step_id 'followup' with no kind.
+const snapshotTaskKind = task => task.kind || (task.step_id === 'followup' ? 'followup' : undefined);
+const staleTask = task => { const q = S.requests.get(task.request_id); return !!q && isTerminalRequest(q.status) && !POST_END_TASK_KINDS.has(snapshotTaskKind(task)); };
 function apply(ev, replay = false) {
   const effects = [];
   // A snapshot sets the point itself, and the events it replays carry seqs it already covers. An event with no seq
@@ -821,8 +823,8 @@ function apply(ev, replay = false) {
       const staffTasks = d.staff_tasks || d.running_tasks;
       if (Array.isArray(staffTasks)) {
         S.activeTasks.clear();
-        for (const task of staffTasks.filter(task => !staleTask(task))) S.activeTasks.set(task.id, {...task,
-          activity: {...(task.activity || {}), tools: {...(task.activity?.tools || {})}}});
+        for (const task of staffTasks.filter(task => !staleTask(task))) { if (snapshotTaskKind(task)) S.taskKind.set(task.id, snapshotTaskKind(task)); S.activeTasks.set(task.id, {...task,
+          activity: {...(task.activity || {}), tools: {...(task.activity?.tools || {})}}}); }
         for (const [jid, context] of S.jobContext)
           if (context.task_id && !S.activeTasks.has(context.task_id)) S.jobContext.delete(jid);
       }

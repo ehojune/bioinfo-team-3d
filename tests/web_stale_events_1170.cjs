@@ -184,6 +184,19 @@ test('a snapshot does not restore a pipeline task of a finished request, but kee
   assert.equal(office.S.requests.get('r1').phase, 'done');
 });
 
+test('a snapshot keeps a follow-up turn in the shape the gateway sends it: step_id "followup", no kind', () => {
+  const office = L.createOfficeState({now: () => 100});
+  office.apply(snapshot(50, {requests: [{id: 'r1', text: 'x', status: 'failed', mode: 'orchestrate'}],
+    staff_tasks: [{id: 'f1', request_id: 'r1', agent_id: 'analyst', step_id: 'followup', title: 'ask', state: 'running',
+      dispatched_at: 1, activity: {}},
+      {id: 't9', request_id: 'r1', agent_id: 'analyst', step_id: 'step_2', kind: 'step', title: 'late', state: 'queued',
+        dispatched_at: 2, activity: {}}]}));
+  assert.equal(office.S.activeTasks.has('f1'), true, 'the follow-up turn is on the ledger');
+  assert.equal(office.S.activeTasks.has('t9'), false, 'the stale pipeline task is not');
+  office.apply({type: 'agent.status', seq: 51, agent_id: 'analyst', task_id: 'f1', request_id: 'r1', data: {state: 'working', task: 'ask'}});
+  assert.equal(office.ag('analyst').tasks.has('f1'), true, 'its later status is recognised as a follow-up turn');
+});
+
 test('the 2.5D page closes its previous socket before opening a new one, as the 3D page does', () => {
   const page = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const open = /const open = \(\) => \{[\s\S]*?new WebSocket/.exec(page);
