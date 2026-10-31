@@ -126,7 +126,8 @@ class AtlasBackend:
                     meta = data.var.iloc[j].to_dict()
                     # Server-side filters are also checked before saving returned metadata.
                     # Match the SDK: scorers without ontology metadata are exempt (e.g. aggregate scores).
-                    if terms and meta.get("ontology_curie") and meta["ontology_curie"] not in terms:
+                    ontology = _scalar(meta.get("ontology_curie"), self)
+                    if terms and ontology and ontology not in terms:
                         continue
                     if genes and obs.get("gene_id") not in genes:
                         continue
@@ -229,12 +230,15 @@ async def query_variants(annotator: reg.RegulatoryAnnotator, variants: object, *
         except ValueError:
             items.append(Item(None, "[invalid input]", error="Atlas는 GRCh38 SNV(chr:pos:ref>alt)만 받습니다"))
     version = backend.redact(await reg._alphagenome_call(backend.setup))
-    # No dataset release is exposed: expire reuse daily and name this limitation, never invent a release.
-    source = {**SOURCE, "sdk_version": version, "cache_epoch_utc": datetime.now(timezone.utc).date().isoformat()}
+    # No dataset release is exposed; the date is provenance, not a release guarantee.
+    source = {**SOURCE, "sdk_version": version, "cache_epoch_utc": datetime.now(timezone.utc).date().isoformat(),
+              "cache_policy": "disabled"}
     release = f"AlphaGenome Atlas / SDK {version} / {source['cache_epoch_utc']}"
     options = {"assembly": assembly, "requested_scorers": scorers, "ontology_terms": terms,
                "gene_ids": genes, "schema": 2, "saved_rows_limit": MAX_ROWS}
-    annotator._from_cache("alphagenome_atlas", release, options, items)
+    # Shared persistent answers cannot prove this credential still has Atlas access.
+    # Never read legacy unscoped entries or persist a credential/fingerprint in provenance.
+    # Deduplication below is limited to this call, after the current backend authorizes it.
     done: dict[str, Any] = {}
     stopped = False
     for item in items:
@@ -280,7 +284,7 @@ async def query_variants(annotator: reg.RegulatoryAnnotator, variants: object, *
             item.answer = done[key]
     # Keep per-item failures in the same result file and counts ledger, including an all-error response.
     return annotator._finish("alphagenome_atlas", "Google DeepMind AlphaGenome Atlas", release, SOURCE["url"],
-                             options, items, lambda item: _summary(item, top), source_details=source,
+                             options, items, lambda item: _summary(item, top), source_details=source, cache=False,
                              note=SOURCE["usage"] + " |quantile| 순 정렬이며 p값·병원성 확률이 아닙니다. "
                              "quantile 없는 행은 뒤에 둡니다. 자동 model inference 전환은 없습니다. "
                              "미수록 변이는 별도 승인한 alphagenome_variant 조회를 검토하세요.")
