@@ -25,17 +25,21 @@ def _long_separator_runs(fraction=1):
 
 
 # A scan that retries at every delimiter of a run costs the square of the run length. The contract is relative, on
-# the calling thread: the full input may cost at most _MAX_SCALE times the same composition at a quarter of its
-# length. A linear scan costs about 4x; a quadratic one about 16x. On Linux this contract exposed a real quadratic
-# step (run 39849219342: 11.2x and 10.2x): `_norm` handed the 131,072-character separator candidate to CPython's
-# pure-Python `ntpath.normpath`, which deletes empty components from a list one by one. Windows' native normpath
-# hid it, so `_windows_normpath` now applies the same rules in one pass on every host. This checks these inputs
-# only; it is not a proof of linearity for every input, and a quadratic regression of the full input would still
-# run long before failing.
-_MAX_SCALE = 8
+# the calling thread, and read at three sizes: a quarter, a half and the whole of the same composition. Each doubling
+# of the input may cost at most _MAX_DOUBLING times the smaller one. A linear scan costs about 2x per doubling, a
+# quadratic one about 4x. Two points four times apart (8x allowed, 4x linear, 16x quadratic) failed on Linux runners
+# that are not linear in cache and memory (8-10x in #1076, with one stalled call already ruled out), because the whole
+# input costs more per character than a quarter of it. A cache effect adds a little to every doubling; it cannot make a
+# doubling cost the 4x of a square. On Linux this contract exposed a real quadratic step (run 39849219342: 11.2x and
+# 10.2x at four times): `_norm` handed the 131,072-character separator candidate to CPython's pure-Python
+# `ntpath.normpath`, which deletes empty components from a list one by one. Windows' native normpath hid it, so
+# `_windows_normpath` now applies the same rules in one pass on every host. This checks these inputs only; it is not a
+# proof of linearity for every input, and a quadratic regression of the full input would still run long before failing.
+_MAX_DOUBLING = 3.2
+_SIZES = {"quarter": 0.25, "half": 0.5, "full": 1}
 _BLOCK_S = 0.1  # a sample is a block of calls of at least this much CPU, so a 15.6 ms Windows clock tick stays below 16 %
 _MIN_SAMPLES = 3  # a single slow block cannot decide a side
-_MAX_BLOCK_CALLS = {"quarter": 16, "full": 4}  # bounds the work of one block: at most 12 full-input calls per scan
+_MAX_BLOCK_CALLS = {"quarter": 16, "half": 8, "full": 4}  # bounds the work of one block: at most 12 full-input calls
 _CLOCK_TICK_S = 0.0157  # the coarsest thread_time tick in use (Windows 15.6 ms): one tick of slack per average
 
 
@@ -64,38 +68,45 @@ def _costs(call, texts, vary=True):
 
 
 def _assert_linear(call, build=_long_separator_runs, expected=None, vary=True):
-    cost, results = _costs(call, {"quarter": build(0.25), "full": build(1)}, vary)
-    quarter_cost, full_cost = cost["quarter"], cost["full"]
+    cost, results = _costs(call, {name: build(fraction) for name, fraction in _SIZES.items()}, vary)
     assert all(result == expected for values in results.values() for result in values), \
         "the scan must keep its result"
-    assert full_cost <= _MAX_SCALE * quarter_cost + _CLOCK_TICK_S, (
-        f"path scanning must stay linear in the text length: a 4x input cost {full_cost / max(quarter_cost, 1e-9):.1f}x"
-        f" ({quarter_cost:.4f} s -> {full_cost:.4f} s per call)")
+    for small, big in (("quarter", "half"), ("half", "full")):
+        assert cost[big] <= _MAX_DOUBLING * cost[small] + _CLOCK_TICK_S, (
+            f"path scanning must stay linear in the text length: doubling the input from {small} to {big} cost "
+            f"{cost[big] / max(cost[small], 1e-9):.1f}x ({cost[small]:.4f} s -> {cost[big]:.4f} s per call)")
 
 
-@pytest.mark.parametrize("quarter_s,full_s,result,reject,expected_calls", [
-    (0.125, 0.5, None, False, {"quarter": 3, "full": 3}),      # linear: 4x
-    (0.125, 1.0, None, False, {"quarter": 3, "full": 3}),      # the bound itself
-    (0.125, 2.0, None, True, {"quarter": 3, "full": 3}),       # quadratic: 16x
-    (0.125, 1.0625, None, True, {"quarter": 3, "full": 3}),
-    (0.125, 0.5, False, True, {"quarter": 3, "full": 3}),      # wrong result: separator runs name no path
-    (0.0078125, 0.03125, None, False, {"quarter": 39, "full": 12}),  # fast machine: blocks of calls, then the fastest
-    (0.0, 0.0078125, None, False, {"quarter": 48, "full": 12}),  # quarter below one clock tick: one tick of slack
-    (0.0, 0.03125, None, True, {"quarter": 48, "full": 12}),     # but not more than one tick
+def _size_of(text, full_text):
+    return "full" if len(text) > len(full_text) * 3 // 4 else "half" if len(text) > len(full_text) * 3 // 8 else "quarter"
+
+
+@pytest.mark.parametrize("quarter_s,half_s,full_s,result,reject,expected_calls", [
+    (0.125, 0.25, 0.5, None, False, {"quarter": 3, "half": 3, "full": 3}),     # linear: 2x per doubling
+    (0.125, 0.25, 0.8, None, False, {"quarter": 3, "half": 3, "full": 3}),     # the bound itself, 3.2x
+    (0.125, 0.5, 2.0, None, True, {"quarter": 3, "half": 3, "full": 3}),       # quadratic: 4x per doubling
+    (0.125, 0.25, 0.84, None, True, {"quarter": 3, "half": 3, "full": 3}),     # over the bound at the last doubling
+    (0.125, 0.5, 0.75, None, True, {"quarter": 3, "half": 3, "full": 3}),      # over the bound at the first doubling
+    (0.125, 0.25, 0.5, False, True, {"quarter": 3, "half": 3, "full": 3}),     # wrong result: separator runs name no path
+    (0.0078125, 0.015625, 0.03125, None, False, {"quarter": 39, "half": 21, "full": 12}),  # fast: blocks of calls
+    (0.0, 0.0, 0.0078125, None, False, {"quarter": 48, "half": 24, "full": 12}),  # below one clock tick: one tick of slack
+    (0.0, 0.0, 0.03125, None, True, {"quarter": 48, "half": 24, "full": 12}),     # but not more than one tick
 ])
 def test_linear_scan_budget_uses_cpu_and_preserves_result_and_strict_limit(
-        monkeypatch, quarter_s, full_s, result, reject, expected_calls):
-    clock, calls = [0.0], {"quarter": 0, "full": 0}
+        monkeypatch, quarter_s, half_s, full_s, result, reject, expected_calls):
+    clock, calls = [0.0], {"quarter": 0, "half": 0, "full": 0}
+    spend = {"quarter": quarter_s, "half": half_s, "full": full_s}
     # Replace only this module's time object; pytest's real clocks stay intact.
     monkeypatch.setitem(globals(), "time", SimpleNamespace(thread_time=lambda: clock[0]))
-    full_text, quarter_text = _long_separator_runs(), _long_separator_runs(0.25)
-    assert len(full_text) == 731_072 and len(quarter_text) * 4 == len(full_text)  # the full CI input is kept
+    full_text = _long_separator_runs()
+    texts = (full_text, _long_separator_runs(0.5), _long_separator_runs(0.25))
+    assert len(full_text) == 731_072 and len(texts[2]) * 4 == len(full_text)  # the full CI input is kept
 
     def scan(text):
-        size = "full" if len(text) > len(full_text) // 2 else "quarter"
-        assert text.startswith((full_text, quarter_text))
+        size = _size_of(text, full_text)
+        assert text.startswith(texts)
         calls[size] += 1
-        clock[0] += full_s if size == "full" else quarter_s
+        clock[0] += spend[size]
         return result
 
     if reject:
@@ -106,20 +117,23 @@ def test_linear_scan_budget_uses_cpu_and_preserves_result_and_strict_limit(
     assert calls == expected_calls  # the full input is always scanned, and never more than the bound
 
 
-@pytest.mark.parametrize("quarter_costs,full_costs,reject", [
-    ([0.125] * 3, [3.0, 0.5, 0.5], False),             # one stalled full call (the CI failure): the fastest decides
-    ([0.5, 0.125, 0.125], [0.5, 0.5, 0.5], False),     # one stalled quarter call
-    ([0.125] * 3, [2.0, 2.5, 2.0], True),              # quadratic: every full call is about 16x
-    ([0.125] * 3, [1.4, 2.0, 1.5], True),              # all full calls are over the bound
+@pytest.mark.parametrize("quarter_costs,half_costs,full_costs,reject", [
+    ([0.125] * 3, [0.25] * 3, [3.0, 0.5, 0.5], False),      # one stalled full call (the CI failure): the fastest decides
+    ([0.5, 0.125, 0.125], [0.25] * 3, [0.5] * 3, False),    # one stalled quarter call
+    ([0.125] * 3, [1.0, 0.25, 0.25], [0.5] * 3, False),     # one stalled half call
+    ([0.125] * 3, [0.5] * 3, [2.0, 2.5, 2.0], True),        # quadratic: every doubling is about 4x
+    ([0.125] * 3, [0.25] * 3, [0.9, 1.0, 0.95], True),      # all full calls are over the bound
+    ([0.125] * 3, [0.25] * 3, [0.6, 0.5, 0.55], False),     # a runner that is not linear: 8-10x over four times, 2.2x here
 ])
 def test_linear_scan_budget_ignores_one_stalled_call_but_not_a_slow_scan(
-        monkeypatch, quarter_costs, full_costs, reject):
-    clock, queue = [0.0], {"quarter": list(quarter_costs), "full": list(full_costs)}
+        monkeypatch, quarter_costs, half_costs, full_costs, reject):
+    clock = [0.0]
+    queue = {"quarter": list(quarter_costs), "half": list(half_costs), "full": list(full_costs)}
     monkeypatch.setitem(globals(), "time", SimpleNamespace(thread_time=lambda: clock[0]))
-    full_text, quarter_text = _long_separator_runs(), _long_separator_runs(0.25)
+    full_text = _long_separator_runs()
 
     def scan(text):
-        clock[0] += queue["full" if len(text) > len(full_text) // 2 else "quarter"].pop(0)
+        clock[0] += queue[_size_of(text, full_text)].pop(0)
         return None
 
     if reject:
