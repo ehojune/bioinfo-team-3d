@@ -1,6 +1,6 @@
 pr: 1050
 rows:
-  - sha: 'cb00095'
+  - sha: 'db6b53f'
     at: "2026-10-31 20:20"
     summary: "비봉인 프로세스 진단의 사용법과 한계를 한영 매뉴얼에 안내합니다."
     text: "docs: describe unsealed process diagnostic"
