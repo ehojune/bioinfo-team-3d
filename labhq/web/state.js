@@ -142,11 +142,15 @@ const TERMINAL_FOLLOWUP_STATES = new Set(['done', 'failed', 'interrupted']);
 const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue', 'result_storage', 'result_publish', 'recruit_plan', 'literature_pdf', 'disk_space']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
-// A request that is over for good. review_pending is terminal too, but the PI may still send it back for a revision.
-const SETTLED_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
-const isSettled = q => !!q && SETTLED_REQUEST_STATES.has(q.status);
 // Tasks of the request pipeline itself; a follow-up turn is not one: it runs after the request is over (#1170).
 const PIPELINE_TASK_KINDS = new Set(['briefing', 'plan', 'step', 'review', 'synthesis', 'direct', 'replan', 'precedent', 'consult']);
+// Events that start or hold pipeline work. A request that is over (isTerminalRequest, review_pending included: no staff
+// runs while the PI reviews) takes none of them; what ends work (step_done, a done/idle status, a result), what follows
+// a finished request (a follow-up turn, usage, cards, review, storage) and everything else still applies (#1170).
+const PIPELINE_STARTS = new Set(['request.review', 'request.plan', 'request.route', 'request.questions', 'request.step_attempt',
+  'request.step_paused', 'request.step_halted', 'request.step_quota_wait', 'request.step_login_wait', 'request.resume_waiting',
+  'request.resumed', 'request.runner_wait']);
+const STATUS_THAT_STARTS_WORK = new Set(['working', 'queued', 'waiting', 'hibernating']);
 const hasActiveFollowup = q => (q?.followups || []).some(f => !TERMINAL_FOLLOWUP_STATES.has(f.status));
 const isPastRequest = q => !!q && isTerminalRequest(q.status) && !!q.pi_reviewed_at && !hasActiveFollowup(q);
 const officeRequests = requests => [...requests].filter(q => !isPastRequest(q));
@@ -693,7 +697,7 @@ function onDispatch(ev) {
   if (a) a.task = d.title || short(stripPrompt(d.prompt), 60);
   if (d.step_id) S.taskStep.set(ev.task_id, d.step_id);
   if (d.kind && ev.task_id) S.taskKind.set(ev.task_id, d.kind);
-  if (q && !isSettled(q)) {  // a dispatch that arrives after the request ended does not reopen it (#1170)
+  if (q) {
     const ph = { briefing: 'briefing', plan: 'plan', review: 'review', synthesis: 'report', direct: 'execute' }[d.kind];
     if (ph) q.phase = ph;
     // A planned research request waits at CP1 in 계획; it is in 실행 once a step is dispatched.
@@ -713,6 +717,15 @@ function setPipelinePr(q, d) {
   if (d.status === 'open' && d.url && !q.github.some(g => g.kind === 'pipeline_pr' && g.url === d.url))
     q.github.push({ kind: 'pipeline_pr', url: d.url, number: d.number });
 }
+// True when `ev` would start or hold pipeline work for a request that is over.
+function endedRequestRefuses(ev) {
+  const q = ev.request_id && S.requests.get(ev.request_id);
+  if (!q || !isTerminalRequest(q.status)) return false;
+  if (PIPELINE_STARTS.has(ev.type)) return true;
+  if (ev.type === 'task.dispatched') return PIPELINE_TASK_KINDS.has(ev.data?.kind);
+  if (ev.type === 'agent.status') return STATUS_THAT_STARTS_WORK.has(ev.data?.state) && PIPELINE_TASK_KINDS.has(S.taskKind.get(ev.task_id));
+  return false;
+}
 function apply(ev, replay = false) {
   const effects = [];
   // A snapshot sets the point itself, and the events it replays carry seqs it already covers. An event with no seq
@@ -720,6 +733,11 @@ function apply(ev, replay = false) {
   if (!replay && ev.type !== 'snapshot' && Number.isFinite(ev.seq) && ev.seq > 0) {
     if (ev.seq <= S.lastSeq) return effects;
     S.lastSeq = ev.seq;
+  }
+  if (!replay && ev.type !== 'snapshot' && endedRequestRefuses(ev)) {  // one rule for all of them (#1170)
+    // Only the task's kind is kept, so the statuses that follow a refused dispatch are recognised as its own.
+    if (ev.type === 'task.dispatched' && ev.task_id) S.taskKind.set(ev.task_id, ev.data?.kind);
+    return effects;
   }
   const t = ev.type, d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, ts = ev.ts || now();
   trackActivity(ev);
@@ -840,9 +858,7 @@ function apply(ev, replay = false) {
     case 'agent.status': {
       const a = ag(id); if (!a) break;
       a.state = d.state || a.state; a.stateAt = ts;
-      // A pipeline task of a request that is over gets no row (#1170); a follow-up turn runs after it ends and does.
-      if (!(isSettled(S.requests.get(rid)) && PIPELINE_TASK_KINDS.has(S.taskKind.get(ev.task_id))))
-        trackTask(a, ev.task_id, d.state || a.state, d.task, Boolean(d.halted), rid, S.taskStep.get(ev.task_id));
+      trackTask(a, ev.task_id, d.state || a.state, d.task, Boolean(d.halted), rid, S.taskStep.get(ev.task_id));
       // Display only, like usage and trace: kept out of the replayed state the golden hashes compare.
       if (['hibernating', 'waiting', 'working', 'idle', 'done'].includes(d.state)) Object.defineProperty(a, 'waitFor', { writable: true, configurable: true, enumerable: false,
         value: (d.jobs || []).length ? (d.jobs.some(jid => String(jid).startsWith('local-'))
@@ -1115,8 +1131,7 @@ function apply(ev, replay = false) {
     case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncHoldStatus(q); break; }
     case 'request.review': {
       const q = req(rid), sc = d.scores || {};
-      q.review = d;
-      if (!isSettled(q)) q.phase = d.verdict === 'revise' ? 'execute' : 'review';  // a late review does not reopen it (#1170)
+      q.review = d; q.phase = d.verdict === 'revise' ? 'execute' : 'review';
       for (const step of q.plan) stepDetail(rid, step.id).review_issues = (d.issues || []).filter(issue => issue.step_id === step.id);
       if (d.verdict === 'revise') (d.issues || []).forEach(i => { if (i.step_id in q.steps) q.steps[i.step_id] = 'revise'; });
       const unparsed = d.status === 'review_unparsed';

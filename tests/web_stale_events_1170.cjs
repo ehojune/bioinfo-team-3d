@@ -69,7 +69,7 @@ test('a late step dispatch does not reopen a finished request', () => {
   const q = office.S.requests.get('r1');
   assert.equal(q.status, 'done'); assert.equal(q.phase, 'done', 'the phase stays done');
   assert.equal(q.steps.s2, undefined, 'the late step is not shown as working');
-  assert.equal(office.S.taskStep.get('t9'), 's2', 'the task is still recorded');
+  assert.equal(office.S.taskStep.has('t9'), false, 'the refused dispatch leaves no step ownership');
 });
 
 test("a late status of a finished request's pipeline task adds no staff row; a follow-up turn still does", () => {
@@ -97,6 +97,43 @@ test('a running request still follows its steps, review and completion', () => {
   assert.equal(office.S.requests.get('r1').phase, 'review');
   completed(office, 5);
   assert.equal(office.S.requests.get('r1').phase, 'done');
+});
+
+const settled = status => { const office = fresh(); created(office, 2); dispatched(office, 3, 't1');
+  office.apply({type: 'request.completed', seq: 9, request_id: 'r1', data: {status, ok: status === 'done'}}); return office; };
+
+for (const status of ['done', 'failed', 'cancelled', 'rejected', 'review_pending']) {
+  test(`${status}: an event that starts or holds pipeline work leaves the request, its staff and its ledger alone`, () => {
+    const office = settled(status);
+    const before = JSON.stringify({q: office.S.requests.get('r1'), tasks: [...office.S.activeTasks.keys()],
+      agent: office.ag('analyst').state, task: office.ag('analyst').task, rows: [...office.ag('analyst').tasks.keys()]});
+    dispatched(office, 10, 't9');
+    office.apply({type: 'agent.status', seq: 11, agent_id: 'analyst', task_id: 't1', request_id: 'r1', data: {state: 'working', task: 'late'}});
+    office.apply({type: 'agent.status', seq: 12, agent_id: 'analyst', task_id: 't9', request_id: 'r1', data: {state: 'queued', task: 'late'}});
+    office.apply({type: 'request.review', seq: 13, request_id: 'r1', data: {verdict: 'revise', issues: [{step_id: 's1'}]}});
+    office.apply({type: 'request.step_attempt', seq: 14, request_id: 'r1', data: {step_id: 's1', attempt: 2}});
+    office.apply({type: 'request.step_quota_wait', seq: 15, request_id: 'r1', data: {step_id: 's1'}});
+    office.apply({type: 'request.plan', seq: 16, request_id: 'r1', data: {steps: []}});
+    office.apply({type: 'request.resumed', seq: 17, request_id: 'r1', data: {}});
+    const after = JSON.stringify({q: office.S.requests.get('r1'), tasks: [...office.S.activeTasks.keys()],
+      agent: office.ag('analyst').state, task: office.ag('analyst').task, rows: [...office.ag('analyst').tasks.keys()]});
+    assert.equal(after, before);
+    assert.equal(office.S.lastSeq, 17, 'the dropped events still count as seen');
+  });
+}
+
+test('what settles or follows a finished request still applies: done/idle status, step end, follow-up, usage, cards', () => {
+  const office = settled('done');
+  office.apply({type: 'agent.status', seq: 10, agent_id: 'analyst', task_id: 't1', request_id: 'r1', data: {state: 'done'}});
+  assert.equal(office.ag('analyst').state, 'done');
+  office.apply({type: 'request.step_done', seq: 11, request_id: 'r1', data: {step_id: 's1', ok: true}});
+  assert.equal(office.S.requests.get('r1').steps.s1, 'done');
+  dispatched(office, 12, 'f1', 'followup');
+  office.apply({type: 'agent.status', seq: 13, agent_id: 'analyst', task_id: 'f1', request_id: 'r1', data: {state: 'working', task: 'follow-up'}});
+  assert.equal(office.ag('analyst').state, 'working');
+  assert.ok(office.S.activeTasks.has('f1'), 'a follow-up turn is on the ledger');
+  office.apply({type: 'approval.requested', seq: 14, request_id: 'r1', data: {id: 'a9', kind: 'result_storage', summary: 's'}});
+  assert.ok(office.S.approvals.has('a9'), 'a card of a finished request is shown');
 });
 
 test('the 2.5D page closes its previous socket before opening a new one, as the 3D page does', () => {
