@@ -350,6 +350,12 @@ def _isolated_env(root: Path, checkout: Path) -> dict[str, str]:
     env = os.environ.copy()
     for name in list(env):
         upper = name.upper()
+        # Git Bash exports MSYSTEM and friends. With them set and PATH narrowed to System32, the mingw64 git.exe it
+        # puts first on PATH dies at startup (0xC0000005) in "새 clone" (#1216). The check is isolated from the shell
+        # anyway, so the shell's own variables are dropped like the operator's.
+        if upper.startswith(("MSYS", "MINGW")) or upper in {"EXEPATH", "ORIGINAL_PATH", "ORIGINAL_TEMP", "ORIGINAL_TMP"}:
+            env.pop(name)
+            continue
         if (upper.startswith(("LABHQ_", "GIT_")) and not upper.startswith("LABHQ_TEST_")) or (
             upper.startswith(("OPENAI_", "ANTHROPIC_", "CODEX_", "CLAUDE_", "GEMINI_", "BIOINFO_", "GH_", "GITHUB_", "PIP_"))
             or upper.endswith(("_API_KEY", "_TOKEN")) or upper in {
