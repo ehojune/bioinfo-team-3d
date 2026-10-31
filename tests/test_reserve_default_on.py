@@ -78,9 +78,9 @@ async def test_with_the_default_parallel_steps_share_the_request_cap_and_a_third
         await asyncio.gather(first, second)
 
 
-async def _one_step(budget, per_task=5.0, **task):
+async def _one_step(budget, per_task=5.0, cost=0.1, **task):
     async def dispatch(t):
-        return result(t, text="done", cost_usd=0.1)
+        return result(t, text="done", cost_usd=cost)
 
     hub = FakeHub(dispatch)
     hub.s.policy.budget.reserve_before_dispatch = BudgetSettings().reserve_before_dispatch
@@ -148,3 +148,51 @@ async def test_with_it_off_the_older_check_lets_both_start_on_the_same_unspent_b
     finally:
         release.set()
         await asyncio.gather(first, second)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget,held", [(0.019, 0.01), (0.0199, 0.01), (1.239, 1.23), (0.01, 0.01), (2.0 - 1.98, 0.02),
+                                         (3.0 - 2.98, 0.02)])
+async def test_a_clipped_hold_is_rounded_down_to_whole_cents(budget, held):
+    """The Claude adapter renders --max-budget-usd in cents, so a hold of $0.019 would be sent as $0.02: more than was held
+    and more than the request has left. The clipped hold is floored to the cent (PR #1192 review)."""
+    hub = await _one_step(budget, cost=0.0)  # a free turn: no overrun card after it
+    assert hub.approvals == [] and len(hub.calls) == 1
+    assert hub.calls[0].budget_usd == pytest.approx(held) and hub.calls[0].request_budget_remaining_usd == pytest.approx(held)
+    assert hub.calls[0].budget_usd * 100 == pytest.approx(round(hub.calls[0].budget_usd * 100))  # whole cents
+    assert hub.calls[0].budget_usd <= budget + 1e-9  # never more than the request had
+
+
+@pytest.mark.asyncio
+async def test_a_hold_that_is_already_below_the_remaining_amount_is_not_rounded():
+    """Only the hold cut to the remaining amount is floored: a task's own cap is held as it is."""
+    hub = await _one_step(10.0, per_task=2.5)
+    assert hub.calls[0].budget_usd == 2.5
+
+
+@pytest.mark.parametrize("remaining,expected", [
+    (0.0199996, 0.01),       # a real $0.0199996 is not rounded up to $0.02 (PR #1210 review)
+    (0.019999, 0.01),
+    (0.0199999999, 0.02),    # 1e-10 under: float noise, not a missing cent
+    (2.0 - 1.98, 0.02),      # 0.020000000000000018
+    (5.0 - 4.99, 0.01),      # 0.009999999999999787: exactly one cent left, not under it
+    (0.0099999999, 0.01),
+    (1.239, 1.23),
+    (1.9800004, 1.98),
+])
+def test_the_clip_floors_to_cents_with_an_explicit_tolerance_for_float_noise(remaining, expected):
+    from labhq.orchestrator.cso import _clip_to_remaining
+    assert _clip_to_remaining(5.0, remaining) == pytest.approx(expected)
+    assert _clip_to_remaining(5.0, remaining) <= remaining + 1e-9  # never more than was left
+
+
+@pytest.mark.parametrize("remaining", [0.0099, 0.005, 0.0, -1.0])
+def test_under_a_cent_the_clip_leaves_the_cap_alone(remaining):
+    from labhq.orchestrator.cso import _clip_to_remaining
+    assert _clip_to_remaining(5.0, remaining) == 5.0
+
+
+def test_a_cap_below_the_remaining_amount_and_a_missing_cap_pass_through():
+    from labhq.orchestrator.cso import _clip_to_remaining
+    assert _clip_to_remaining(0.015, 1.0) == 0.015 and _clip_to_remaining(None, 1.0) is None
+
