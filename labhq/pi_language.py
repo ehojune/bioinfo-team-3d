@@ -3,6 +3,7 @@ from __future__ import annotations
 from .request_persistence import persist_request, record_task_cost
 
 import asyncio
+import copy
 import json
 import math
 import re
@@ -193,18 +194,28 @@ class PiInterpreter:
                                       outcome_unknown=True)
                 hub.orchestrator._count_cost(rid, task.id)
         finally:
-            hub.store.put("pi_translation", key, display)
-            hub.store.set_message_display(event["seq"], display)
             approval_id = (event.get("data") or {}).get("id") if event.get("type") == "approval.requested" else None
+            approval_row = None
             if approval_id in hub.approvals:
                 hub.approvals[approval_id]["approval"]["pi_display"] = display
-                hub.save_approval(approval_id)
+                # Copy now: the batch below runs on the writer thread and must not read live gateway state.
+                approval_row = copy.deepcopy({k: v for k, v in hub.approvals[approval_id].items() if k != "future"})
+
+            def save_display() -> None:
+                hub.store.put("pi_translation", key, display)
+                hub.store.set_message_display(event["seq"], display)
+                if approval_row is not None:
+                    hub.store.put("approval", approval_id, approval_row)
+
+            # The translation result, the message's display and the approval card's copy are one transaction (#1132):
+            # a restart never shows one of them translated and another not. It was three commits, each blocking the loop.
+            await hub.store.arun_batch(save_display)
             followup_id = (event.get("data") or {}).get("id") if event.get("type") == "request.followup_done" else None
             if followup_id and rid in hub.requests:
                 for followup in hub.requests[rid].get("followups") or []:
                     if followup.get("id") == followup_id:
                         followup["pi_display"] = display
-                await persist_request(hub, rid)
+                # No separate request save: the `messenger.translated` event below saves this request with it.
             for saved in hub.events:
                 if saved["seq"] == event["seq"]:
                     saved.setdefault("data", {})["pi_display"] = display

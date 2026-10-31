@@ -211,6 +211,64 @@ async def test_event_and_request_commit_in_one_transaction(gateway, monkeypatch)
     assert hub.requests["r"]["status"] == "before"  # the live request goes back to what is stored (a restart would show it)
 
 
+def translation_hub(tmp_path):
+    from labhq.settings import Settings
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    hub.store.put("approval", "a1", {"approval": {"id": "a1"}, "origin": None})
+    hub.approvals["a1"] = {"approval": {"id": "a1"}, "origin": None}
+    saved = hub.store.append_event({"type": "approval.requested", "ts": 1, "data": {"id": "a1", "summary": "x"}}, 100)
+    return hub, saved
+
+
+async def test_translation_result_is_one_commit_with_its_display_and_approval_copy(tmp_path, monkeypatch):
+    """#1132: the translation result, the message's display and the approval card's copy are saved together, then the
+    `messenger.translated` event: two commits, where it was one per write."""
+    hub, saved = translation_hub(tmp_path)
+    commits = []  # real COMMIT statements: writes inside a batch join one transaction
+    hub.store._write_connection().set_trace_callback(
+        lambda sql: commits.append(sql) if sql.strip().upper().startswith("COMMIT") else None)
+    try:
+        await hub.pi_interpreter._interpret(saved, "source text")  # no request: the failed display is written
+        assert len(commits) == 2
+        key = str(saved["seq"])
+        display = hub.store.get("pi_translation", key)
+        assert display["status"] == "failed"
+        assert hub.store.get("approval", "a1")["approval"]["pi_display"] == display
+        assert hub.store.events_since(0)[0]["data"]["pi_display"] == display
+    finally:
+        hub.store.close()
+
+
+async def test_a_failed_translation_commit_leaves_no_part_of_the_result(tmp_path, monkeypatch):
+    """#1132: all or none. Before, a failure after the first write left the translation saved and the card not."""
+    hub, saved = translation_hub(tmp_path)
+    transaction = hub.store._transaction
+    writes = 0
+
+    @contextmanager
+    def failing():
+        nonlocal writes
+        writes += 1
+        with transaction() as conn:
+            yield conn
+            if writes == 2:  # the second write of the result: the first must not stay behind
+                raise OSError("write failed")
+
+    monkeypatch.setattr(hub.store, "_transaction", failing)
+    try:
+        with pytest.raises(OSError):
+            await hub.pi_interpreter._interpret(saved, "source text")
+        monkeypatch.setattr(hub.store, "_transaction", transaction)
+        assert hub.store.get("pi_translation", str(saved["seq"])) is None
+        assert "pi_display" not in hub.store.get("approval", "a1")["approval"]
+        assert "pi_display" not in hub.store.events_since(0)[0]["data"]
+    finally:
+        hub.store.close()
+
+
 async def test_publication_without_request(gateway):
     await gateway.publish(event(request=False))
     assert len(gateway.events) == 1
