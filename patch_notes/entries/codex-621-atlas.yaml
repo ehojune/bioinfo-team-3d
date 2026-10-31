@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "be8a1b9"
+    at: "2026-10-31 23:20"
+    summary: "진단 계측이 없는 Atlas 호출도 별도 실행해 두 경로의 응답과 키 비노출을 확인합니다."
+    text: "test: compare original Atlas transport with phase tracing"
   - sha: "612b540"
     at: "2026-10-31 23:09"
     summary: "Atlas 단계별 진단의 로컬 기준값과 미확정 범위를 기록합니다."
