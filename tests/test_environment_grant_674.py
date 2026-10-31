@@ -48,9 +48,9 @@ def test_a_verified_environment_is_granted_to_a_claude_consumer(tmp_path):
     assert Path(grant["python"]) == folder / expected["python_path"]
 
 
-def test_other_engines_keep_the_refusal_because_they_get_no_read_grant(tmp_path):
+def test_engines_without_any_environment_path_keep_the_refusal(tmp_path):
     root, folder, artifact, expected = fixture(tmp_path)
-    runner = runner_for(root, Engine.codex)
+    runner = runner_for(root, Engine.cli)
     task = bound_task(folder, artifact, expected)
     assert "protected interpreter alias is not implemented" in runner._environment_refusal_reason(task)
     assert task.id not in getattr(runner, "_env_grants", {})
@@ -102,7 +102,7 @@ def test_a_read_only_task_gets_no_grant(tmp_path):
 def test_the_flag_still_gates_every_other_engine(tmp_path, monkeypatch):
     import labhq.runner.daemon as daemon
     root, folder, artifact, expected = fixture(tmp_path)
-    runner = runner_for(root, Engine.codex)
+    runner = runner_for(root, Engine.cli)
     task = bound_task(folder, artifact, expected)
     monkeypatch.setattr(daemon, "ENVIRONMENT_ALIAS_AVAILABLE", True)
     assert runner._environment_refusal_reason(task) is None  # a future alias would open it for any engine
@@ -169,3 +169,32 @@ def test_an_environment_without_a_write_deny_rule_is_not_shared(tmp_path, monkey
     reason = runner._environment_refusal_reason(task)
     assert "cannot be shared read-only" in reason and "network path" in reason
     assert task.id not in runner._env_grants
+
+
+@pytest.mark.parametrize("engine", [Engine.codex, Engine.gemini])
+def test_codex_and_gemini_get_the_interpreter_path_without_a_read_root(tmp_path, engine):
+    root, folder, artifact, expected = fixture(tmp_path)
+    runner = runner_for(root, engine)
+    task = bound_task(folder, artifact, expected)
+    assert runner._environment_refusal_reason(task) is None
+    other = str(tmp_path / "reference")
+    read_dirs, env, note = runner._apply_environment_grants(task, [other], read_only=False)
+    assert read_dirs == [other]  # Codex's sandbox already reads outside the work folder; Gemini has no read-only grant
+    python = str(folder / expected["python_path"])
+    assert env == {"LABHQ_ENV_PYTHON": python, "PYTHONDONTWRITEBYTECODE": "1"} and python in note
+
+
+@pytest.mark.parametrize("engine", [Engine.codex, Engine.gemini])
+def test_the_fail_closed_checks_apply_to_every_engine(tmp_path, monkeypatch, engine):
+    import labhq.runner.daemon as daemon
+    root, folder, artifact, expected = fixture(tmp_path)
+    task = bound_task(folder, artifact, expected)
+    monkeypatch.setattr(daemon, "claude_rule_ready", lambda path: False)  # a UNC workspace
+    runner = runner_for(root, engine)
+    assert "cannot be shared read-only" in runner._environment_refusal_reason(task)  # same refusal as for Claude
+    monkeypatch.undo()
+    plan = runner_for(root, engine, plan="plan")
+    assert "read-only step" in plan._environment_refusal_reason(task)
+    tampered = runner_for(root, engine)
+    artifact["output_sha256"]["outputs/env/runner-manifest.json"] = "0" * 64
+    assert "environment validation failed" in tampered._environment_refusal_reason(task)
