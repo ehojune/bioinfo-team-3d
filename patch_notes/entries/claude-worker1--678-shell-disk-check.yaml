@@ -8,3 +8,7 @@ rows:
     at: "2026-10-31 13:50"
     summary: "디스크 확인이 tar의 모든 추출 표기와 git clone·fasterq-dump·aws·rsync가 쓰는 폴더도 읽습니다."
     text: "tar의 모든 추출 표기와 git clone·bulk 도구의 대상 폴더를 읽는다 (#678 리뷰 P1)"
+  - sha: "9ab45f7"
+    at: "2026-10-31 14:20"
+    summary: "Claude 직원에게 미리 허용돼 있던 git clone·unzip·curl 같은 규칙도 이제 gate를 거쳐 디스크 여유 확인을 받습니다."
+    text: "사전 승인된 다운로드·압축 해제 규칙을 allowedTools에서 빼 gate의 디스크 확인을 받게 한다 (#678 리뷰 P1)"
