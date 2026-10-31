@@ -278,8 +278,22 @@ def _workdir_write(data: dict, workspaces: dict) -> bool:
     return inside(Path(workspace.dir).resolve(), path)
 
 
+def _create_fixed_plan_request(hub, body, plan):
+    """Use the stored-plan resume path in this isolated benchmark gateway."""
+    original = hub.orchestrator.run_request
+    selected = set()
+
+    async def resume_selected(rid, resume=False, continuation=False):
+        return await original(rid, resume=resume or rid in selected, continuation=continuation)
+
+    hub.orchestrator.run_request = resume_selected
+    rid = hub.create_request(body, extra={"plan": plan})
+    selected.add(rid)  # create_request schedules the coroutine; it cannot run until the loop yields.
+    return rid
+
+
 async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_settings,
-                     approve_budget_up_to: float | None = None) -> dict[str, Any]:
+                     approve_budget_up_to: float | None = None, fixed_plan=None) -> dict[str, Any]:
     import uvicorn
 
     from .gateway.server import RequestIn, create_app
@@ -291,8 +305,18 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
     staff_models = []
     for path in sorted((state / "agents").rglob("*.yaml")):
         spec = yaml.safe_load(path.read_text(encoding="utf-8"))
+        changed = False
         if spec.get("engine") == "claude_code" and spec.get("model") in settings.bench.staff_model:
             spec["model"] = settings.bench.staff_model[spec["model"]]
+            changed = True
+        if fixed_plan is not None and spec.get("id") == "analyst":
+            if spec.get("engine") != "claude_code" or spec.get("model_tier") != "reasoning":
+                raise ValueError("fixed tier fixture requires a reasoning-tier Claude analyst")
+            spec["model"] = settings.model_tiers.model_for("reasoning", "claude_code")
+            if not spec["model"]:
+                raise ValueError("fixed tier fixture needs a reasoning model")
+            changed = True
+        if changed:
             path.write_text(yaml.safe_dump(spec, allow_unicode=True, sort_keys=False), encoding="utf-8")
         staff_models.append({"id": spec["id"], "engine": spec.get("engine"), "model": spec.get("model")})
     if settings.recruit.contract_engine == "claude_code":
@@ -365,9 +389,10 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
         runner = Runner(settings)
         runner_task = asyncio.create_task(runner.run_forever())
         await _until(lambda: "cso" in hub.agents, 20, "benchmark runner did not register")
-        rid = hub.create_request(RequestIn(text=_prompt(case),
-                                           budget_usd=float(case["budget_usd"]),
-                                           meta={"case_id": case["id"]}))
+        body = RequestIn(text=_prompt(case), budget_usd=float(case["budget_usd"]),
+                         meta={"case_id": case["id"]})
+        rid = (_create_fixed_plan_request(hub, body, fixed_plan) if fixed_plan is not None
+               else hub.create_request(body))
         metrics.request_id = rid
         runner._bench_observer = metrics.spawn
         timeout = float(case.get("timeout_s", settings.runner.task_timeout_s))
@@ -928,6 +953,36 @@ async def run_case(case_id: str, output_root: Path, engines: str = "real",
               "budget_usd": float(case["budget_usd"]), "mode": engines, "rows": rows}
     _write_comparison(case_dir, result)
     report_case(case_id, output_root, engines)
+    return result
+
+
+async def run_fixed_tier_pair(output_root: Path, settings, models: dict[str, str],
+                              engines: str = "mock") -> dict[str, Any]:
+    """Offline fixture only: provider-wide aggregate spending control is not yet available."""
+    if engines != "mock":
+        raise ValueError("live tier pair disabled: aggregate provider spending control is unverified")
+    if set(models) != {"reasoning", "balanced"} or any(not isinstance(v, str) or not v.strip()
+                                                         for v in models.values()):
+        raise ValueError("both reasoning and balanced model IDs are required")
+    case = load_case("public-protein-qc")
+    root = Path(output_root).resolve()
+    root.mkdir(parents=True, exist_ok=False)
+    rows = []
+    for tier in ("reasoning", "balanced"):
+        arm_dir = root / tier
+        arm_dir.mkdir()
+        arm_settings = settings.model_copy(deep=True)
+        arm_settings.orchestrator.step_model_tiers = True
+        arm_settings.model_tiers.reasoning = {"claude_code": models["reasoning"]}
+        arm_settings.model_tiers.balanced = {"claude_code": models["balanced"]}
+        plan = {"steps": [{"id": "s1", "agent_id": "analyst", "instruction": _prompt(case),
+                            "depends_on": [], "outputs": [], "model_tier": tier}]}
+        run = await _run_labhq(case, arm_dir, engines, arm_settings, fixed_plan=plan)
+        row = await _score(case, arm_dir, run)
+        rows.append({"tier": tier, "requested_model": models[tier], "run": run, "score": row})
+    result = {"case_id": case["id"], "mode": engines,
+              "notice": "Mock answers are fixtures, not model quality or cost measurements.", "rows": rows}
+    atomic_write_text(root / "pair.json", json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     return result
 
 

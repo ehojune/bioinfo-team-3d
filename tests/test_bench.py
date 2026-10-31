@@ -13,6 +13,106 @@ from labhq import bench
 from labhq.cli import main
 
 
+def test_fixed_plan_is_resumed_without_fresh_planning():
+    plan = {"steps": [{"id": "s1", "agent_id": "analyst", "instruction": "QC"}]}
+    seen = []
+
+    class Orchestrator:
+        async def run_request(self, rid, resume=False, continuation=False):
+            seen.append((rid, resume, continuation))
+
+    class Hub:
+        def __init__(self):
+            self.orchestrator = Orchestrator()
+
+        def create_request(self, body, extra=None):
+            assert extra["plan"] == plan
+            asyncio.create_task(self.orchestrator.run_request("r"))
+            return "r"
+
+    async def run():
+        hub = Hub()
+        bench._create_fixed_plan_request(hub, object(), plan)
+        await asyncio.sleep(0)
+        assert seen == [("r", True, False)]
+
+    asyncio.run(run())
+
+
+def test_tier_pair_uses_separate_states_and_same_rubric(tmp_path, monkeypatch):
+    from labhq.settings import Settings
+
+    seen = []
+
+    async def run(case, arm_dir, engines, settings, approve_budget_up_to=None, fixed_plan=None):
+        seen.append((case, arm_dir, settings, fixed_plan))
+        return {"status": "done"}
+
+    async def score(case, arm_dir, run):
+        return {"case": case["id"], "check": case["check"]}
+
+    monkeypatch.setattr(bench, "_run_labhq", run)
+    monkeypatch.setattr(bench, "_score", score)
+    result = asyncio.run(bench.run_fixed_tier_pair(tmp_path / "pair", Settings(),
+                                                  {"reasoning": "model-a", "balanced": "model-b"}))
+    assert [row["tier"] for row in result["rows"]] == ["reasoning", "balanced"]
+    assert seen[0][1] != seen[1][1]
+    assert seen[0][0] == seen[1][0] and result["rows"][0]["score"] == result["rows"][1]["score"]
+    steps = [entry[3]["steps"][0] for entry in seen]
+    assert {k: v for k, v in steps[0].items() if k != "model_tier"} == {
+        k: v for k, v in steps[1].items() if k != "model_tier"}
+    assert [s["model_tier"] for s in steps] == ["reasoning", "balanced"]
+    assert all(entry[2].orchestrator.step_model_tiers for entry in seen)
+    assert seen[1][2].model_tiers.model_for("balanced", "claude_code") == "model-b"
+
+
+def test_tier_pair_blocks_live_before_any_dispatch(tmp_path, monkeypatch):
+    from labhq.settings import Settings
+
+    async def forbidden(*args, **kwargs):
+        pytest.fail("no live dispatch without an aggregate provider cap")
+
+    monkeypatch.setattr(bench, "_run_labhq", forbidden)
+    with pytest.raises(ValueError, match="aggregate provider spending control"):
+        asyncio.run(bench.run_fixed_tier_pair(tmp_path / "pair", Settings(),
+                                             {"reasoning": "model-a", "balanced": "model-b"}, "real"))
+    assert not (tmp_path / "pair").exists()
+
+
+def test_fixed_tier_pair_dispatches_saved_plan_without_planning(tmp_path):
+    import sqlite3
+    import yaml
+    from labhq.models import AgentSpec, Task
+    from labhq.runner.daemon import Runner
+    from labhq.settings import Settings
+
+    settings = Settings()
+    settings.runner.agents_dir = str(bench.REPO / "agents")
+    result = asyncio.run(bench.run_fixed_tier_pair(tmp_path / "pair", settings,
+                                                  {"reasoning": "model-a", "balanced": "model-b"}))
+    for row in result["rows"]:
+        tier = row["tier"]
+        assert row["run"]["status"] == "done"
+        state = tmp_path / "pair" / tier / "state"
+        spec = yaml.safe_load((state / "agents/core/analyst.yaml").read_text(encoding="utf-8"))
+        assert spec["model"] == "model-a"
+        with sqlite3.connect(state / "gateway/gateway.sqlite3") as db:
+            tasks = [json.loads(body) for (body,) in db.execute("select body from state where kind='task'")]
+        assert not any(task["kind"] in {"plan", "planning", "briefing"} for task in tasks)
+        steps = [task for task in tasks if task["kind"] == "step"]
+        assert len(steps) == 1 and steps[0]["payload"]["agent_id"] == "analyst"
+        # The declared reasoning tier is represented by no override; balanced is an explicit override.
+        assert steps[0]["payload"]["meta"].get("model_tier") == (None if tier == "reasoning" else "balanced")
+        # Resolve the actual captured task with the real engine configured, without launching a provider.
+        runner = Runner.__new__(Runner)
+        runner.s = settings.model_copy(deep=True)
+        runner.s.model_tiers.reasoning = {"claude_code": "model-a"}
+        runner.s.model_tiers.balanced = {"claude_code": "model-b"}
+        runner.registry = SimpleNamespace(get=lambda _id: AgentSpec.model_validate(spec))
+        resolved = runner._resolve_agent(Task.model_validate(steps[0]["payload"]))
+        assert resolved.model == ("model-a" if tier == "reasoning" else "model-b")
+
+
 def test_case_catalog_has_five_bounded_cases():
     cases = bench.load_cases()
     assert [case["id"] for case in cases] == [
