@@ -6,3 +6,4 @@
 - 시험: runner의 네 조합 보고와 키 값 비누출, 키 없는 gateway가 runner 보고로 명단에 올림, 준비 안 됨 보고가 gateway의 키보다 우선, 하나만 준비돼도 충분, 이전 runner의 fallback. `test_cso.py`의 시험은 가짜 키 파일이 있는 홈에서도 통과함을 확인했다.
 - 미검증: 실제로 다른 계정의 runner에서 gateway 명단이 바뀌는지(단위 시험까지). manual은 이 PR 범위에 넣지 않았다.
 - 리뷰 P1 반영(PR #1252): 보고를 runner 전체에서 `any`로 모으면 준비된 runner A가 그 직원을 맡지 않는데도 B가 맡은 직원 줄에 도구가 표시된다. 명단의 직원 줄마다 그 직원을 맡은 runner(`runner_id`, 요청의 WSL 고정 포함)의 보고로 정한다. `format_roster`의 `alphagenome`은 직원마다 정하는 함수도 받는다. 그 runner가 아직 보고하지 않았으면(이전 runner) gateway 자체 확인으로 돌아간다. 시험 2건(맡은 runner 기준, 보고 없는 runner의 fallback)은 이 변경 없이는 실패한다.
+- rev10: manual 한·영의 AlphaGenome 절에 한 항목을 더했다. 준비 여부는 각 runner가 등록 때 `alphagenome_ready`로 보고하고(키 값은 보내지 않음), 명단의 직원 줄은 그 직원을 맡은 runner의 보고를 따르며(WSL 고정 포함), 키를 넣거나 클라이언트를 설치한 뒤에는 runner를 다시 시작해야 하고, 보고하지 않는 이전 runner는 gateway 자체 확인으로 처리한다. `integrations.py --check` 통과.
