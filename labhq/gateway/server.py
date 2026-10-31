@@ -59,6 +59,7 @@ from ..security import token_matches
 from .. import durable
 from ..store import StateStore
 from ..util import short
+from .idempotency import Idempotency, idempotent_routes
 from .shutdown import ShutdownIn, WebShutdown
 
 log = logging.getLogger(__name__)
@@ -382,6 +383,7 @@ class Hub:
         # ended by recruit.done/failed or by a different runner process; a reconnect of the same process keeps them
         # (#515). The incarnation survives a restart, so the process id decides when the runner sends one (#521).
         self.recruits_running: dict[str, dict[str, Any]] = {}
+        self.idempotency = Idempotency(refusals=(RunnerNotSent,))  # a repeated POST with the same Idempotency-Key is applied once (#1164)
         self.cancel_result_wait_s = CANCEL_RESULT_WAIT_S
         self.request_deadline_tick_s = REQUEST_DEADLINE_TICK_S
         self._deadline_task: asyncio.Task | None = None
@@ -5907,6 +5909,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         hub.demo_status = {"phase": "starting", "remaining_s": 0}
     app = FastAPI(title="labhq gateway", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.hub = hub
+    idempotent = idempotent_routes(hub.idempotency)
     shutdown = WebShutdown(settings, hub)
     app.state.shutdown = shutdown
 
@@ -6070,6 +6073,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return list(hub.agents.values())
 
     @app.post("/api/requests", dependencies=[Depends(auth)])
+    @idempotent
     async def create_request(body: RequestIn) -> dict:
         if body.mode == "direct" and not hub.knows_agent(body.agent_id):
             raise HTTPException(404, f"unknown agent {body.agent_id!r}")
@@ -6124,6 +6128,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return [p.model_dump(exclude={"local_dir"}) for p in settings.projects]
 
     @app.post("/api/projects/{pid}/prs/{number}/codex-review", dependencies=[Depends(auth)])
+    @idempotent
     async def codex_review(pid: str, number: int, body: CodexReviewIn) -> dict:
         proj = settings.project(pid)
         gh = hub.reporter.client()
@@ -6445,6 +6450,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                                            for request_id, sid in released]}
 
     @app.post("/api/recruit", dependencies=[Depends(auth)])
+    @idempotent
     async def recruit(body: RecruitIn) -> dict:
         if not paper2agent.enabled(settings):
             raise HTTPException(403, "recruitment is disabled (recruit.enabled=false)")
@@ -6469,6 +6475,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return {"ok": True, "runner_id": rid}
 
     @app.post("/api/contracts/{agent_id}", dependencies=[Depends(auth)])
+    @idempotent
     async def contract(agent_id: str, body: ContractIn) -> dict:
         if body.action != "release" and not paper2agent.enabled(settings):
             raise HTTPException(403, "recruitment is disabled (recruit.enabled=false)")
