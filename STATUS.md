@@ -4,6 +4,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1193 후속: 보고서 각주 처리가 길이가 다른 코드 펜스를 알아본다
+
+- 결론: 결함이 있었다. `reader_markdown(footnotes=True)`의 코드 보호 정규식(`` ```.*?``` ``)이 4개 이상 백틱·물결표 펜스를 통째로 보호하지 못해, 그 안의 `[^1]`이 "근거" 번호로 바뀌었다(재현: 4백틱 펜스 안에 3백틱 펜스가 든 문서의 `open[^1]`이 `open[근거 1]`로 바뀜).
+- 바뀐 것: `labhq/report_contract.py`에 `code_spans`·`mask_code`(portfolio에 있던 스캐너를 옮김)를 두고 `reader_markdown`이 그 span으로 코드를 보호한다. `labhq/portfolio.py`는 `mask_code`를 가져다 쓴다(중복 제거). `tests/test_report_contract.py`에 3건 추가.
+- 실행한 것: `test_report_contract`·`test_result_storage`·`test_report_markdown`·`test_report_pdf`·`test_portfolio_edition`·`test_portfolio_branch_folders`·`test_request_bundle` 280 passed, 2 skipped(수정 전 새 시험 2건은 실패 확인).
+- 미해결/미검증: 전체 suite는 CI에 맡긴다. `report_markdown.py`·`report_pdf.py`의 다른 코드 처리 정규식은 이번 범위 밖이라 보지 않았다.
+
 # #1198 시험 상한 P2 두 건(#1199 리뷰)
 
 - 결론: (1) 예고 타이머가 전역 ini(300초)만 보던 것을 `item_limit`로 바꿨다. pytest-timeout의 순서(가까운 `@pytest.mark.timeout(n)` → `--timeout` → `PYTEST_TIMEOUT` 환경 변수 → ini)를 그대로 따르고, marker가 0이면 상한이 없는 것으로 본다. 잘못된 값은 0(타이머 없음). (2) Windows critical 단계(step 상한 3분)에 `PYTEST_TIMEOUT: '100'` 환경 변수를 줘 시험 상한이 단계보다 먼저 오게 했다(시험이 차례로 돌아 전체 약 45초라, 끝쪽 시험이 멈춰도 앞선 시간과 합쳐 180초 안에 끊긴다). phase 수집 필터가 거부하는 `-o`를 쓰지 않는다.
@@ -112,6 +119,31 @@ Claude의 `--disallowedTools`만 이름 목록을 지키고 Codex·Gemini 어댑
 - P2도 같이: `unzip … -x 패턴… -d dir`에서 패턴 뒤 `-d`를 읽고, `curl -Lo file`·`-fsSLo file`처럼 묶음 플래그의 값을 읽는다.
 - 시험: `tests/test_disk_shell_check_678.py`에 주석·리다이렉션·`-x`·묶음 플래그 5건 추가, 파일 전체와 관련 기존 시험 119건 통과.
 - 미검증: heredoc 본문 줄이 명령으로 읽히는 경우(초과 질문만 생김), 중첩 `$(…)`·백틱 안의 명령, Windows CI.
+
+## 단계
+#1139(PI 승인 5번): `policy.budget.reserve_before_dispatch` 기본값을 `true`로.
+
+## 한 일
+- `labhq/settings.py`: 기본값 `True`(주석도 "기본 켬"으로). 켜져 있으면 `per_task_usd`·`per_request_usd`가 유한한 0 이상이어야 한다는 검증이 기본으로 걸린다.
+- 예시 설정 두 사본(`config/labhq.example.yaml`, `labhq/config/labhq.example.yaml`): `reserve_before_dispatch: true`와 설명.
+- manual 한·영: 비용 표와 `보내기 전 예약` 단락을 기본 켬에 맞췄다(끄는 법과 병렬 단계 설명 포함).
+- `tests/test_reserve_default_on.py` 7건(Windows inventory `known_tests`에 추가): 기본값이 켜짐, 두 예시 설정이 기본값과 같음, `false`로 끌 수 있음, 비유한 상한 거절, **병렬 두 단계(호출 상한 1.5, 요청 상한 2.0)에서 기본으로 두 번째 단계가 `BudgetExceeded`**, 꺼 두면 두 단계가 모두 시작함.
+- 기존 시험: `tests/test_cso.py`의 시험 11건이 옛 검사를 기대해 깨졌다. `FakeHub`가 옛 검사(`reserve_before_dispatch=False`)를 명시해 그 시험들이 원래 보던 것을 유지하고, 기본값을 확인하던 시험은 "꺼 두면 task가 그대로"로 바꿨다. 예약은 `_reserving_hub`와 새 시험 파일이 따로 본다. `test_budget_headroom_940.py`는 이미 플래그를 명시해 바꾸지 않았다.
+
+## 확인
+- `test_reserve_default_on.py`·`test_cso.py`·`test_budget_headroom_940.py` 통과(239 passed 이상). `validate_profile` 통과.
+- 처음 전체 suite가 96%에서 멈춘 원인은 새 시험의 "기본값" 시험이 `FakeHub`의 옛 설정을 받아 두 번째 단계가 풀리지 않고 기다린 것이었다. `FakeHub`가 아니라 제품 기본값(`BudgetSettings()`)을 쓰도록 고쳤다.
+
+## 하지 않은 것
+- 전체 suite를 로컬에서 끝까지 돌리지 못했다(`-n 4`가 시간 제한에 걸림). 다른 시험이 더 깨지는지는 CI 결과로 확인한다.
+
+## rev9: A안 — 보류액을 남은 요청 예산으로 자름
+- 원인: 보류액이 `min(task, agent, per_task_usd)`라 요청 예산이 per_task(기본 $5)보다 작으면 첫 호출부터 예산 카드가 떴다(진단: [#1139 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1139#issuecomment-6544463979), 결정: A안).
+- 구현(`orchestrator/cso.py`): `_clip_to_remaining`. 요청에 1센트 이상 남았으면 보류액 = min(호출 상한, 남은 예산), 그 미만이면 자르지 않고 카드. 카드가 올릴 상한은 호출 상한 전체(`needed = full`)를 담도록 그대로 둔다.
+- 시험: `test_reserve_default_on.py` 13건(작은 예산 첫 호출 카드 없음, 병렬 둘이 합쳐 상한을 못 넘고 셋째는 거절, 1센트 미만은 묻는다, 카드는 호출 상한 전체를 요구). 클리핑을 끄면 5건 실패함을 확인.
+- 고친 기존 시험(분류): (a) 예산이 주제가 아닌 것: `test_ask_review3/4/5`(13, 요청 레코드를 만든다), `test_plan_only_cso_model`·`test_branched_research`·`test_contract_slot_repair`의 병렬 보류액 예산, `test_bench`·`test_cp1_input_fit_796`·`test_request_lifecycle`·`test_resume_accounting`은 A안만으로 통과. (b) 사용자에게 보이는 동작이 바뀌는 것(PR 본문에 목록): 아래.
+- (b) 목록: `test_research_notes_budget`(`..._would_pass_the_request_budget...` 카드 대신 남은 예산으로 보류, 정확히 상한을 쓴 요청은 다음 호출 전에 묻는다, 질문 대기 보고 turn은 올린 상한 안에서 끝나 final-turn 기록이 없다), `test_cso.py`(동시 turn은 합쳐 보류, 마지막 turn은 남은 만큼 보류, 선택 turn은 남은 만큼 보류하고 0이면 거절, 취소 turn의 보류), `test_facilities_diagnosis`(`budget`·`unknown_budget`은 옛 검사로 고정하고 `reserved_budget` 추가).
+- 확인하지 못한 것: 전체 suite(총괄 지시로 CI에 맡긴다), `test_semantics_shadow_remove`(서브프로세스로 전체 suite를 돌려 로컬에서 90초 이상 걸림).
 
 # #606 단계 시작의 파일 시스템 작업을 event loop 밖으로
 

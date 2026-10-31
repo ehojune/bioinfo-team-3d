@@ -3146,6 +3146,19 @@ RESTRICTED_APPROVAL_LIMIT = 5  # calls the CSO lets through while one restrictio
 RESTRICTED_STALE_S = 90.0  # a request older than this was already refused at the hook (30 s wait): never judged
 
 
+# A hold below one cent cannot be enforced (Claude's CLI renders cents), so a request with less left than that is not clipped
+# to it: the turn asks like any other (#1139).
+_MIN_HOLD_USD = 0.01
+_HOLD_EPSILON = 1e-9
+
+
+def _clip_to_remaining(cap: float | None, remaining: float) -> float | None:
+    """The hold for one turn: its cap, cut to what the request still has when that is enough to hold at all."""
+    if cap is None or remaining < _MIN_HOLD_USD:
+        return cap
+    return min(cap, remaining)
+
+
 class Orchestrator:
     def __init__(self, hub: "Hub"):
         self.hub = hub
@@ -5039,7 +5052,10 @@ class Orchestrator:
                     raise BudgetExceeded(f"invalid request budget {limit!r}; nothing was dispatched")
                 limit = float(limit)
                 _spent, _unknown, bound = self._budget_bound(rid, limit)
-                cap = self._turn_cap(task, limit - bound)
+                full = self._turn_cap(task, limit - bound)
+                # #1139: a turn holds no more than the request still has, so a request budget smaller than the per-turn
+                # cap (the default $5) is not asked about at its first turn; what it may spend is still the hold.
+                cap = _clip_to_remaining(full, limit - bound)
                 adopted = getattr(self.hub, "recovery_task_id", lambda _task: None)(task)
                 if adopted is not None:
                     # Restart recovery: the gateway answers this turn with an earlier task instead of sending it (same
@@ -5051,7 +5067,7 @@ class Orchestrator:
                         holds[adopted] = cap if cap is not None else self._unknown_reserve(limit)
                         await persist_request(self.hub, rid)
                     return task
-                if cap is not None and bound + cap <= limit:
+                if cap is not None and bound + cap <= limit + _HOLD_EPSILON:
                     holds = req.setdefault("budget_holds", {})
                     previous = holds.get(task.id)
                     holds[task.id] = max(cap, previous) if _usd_amount(previous) else cap
@@ -5061,7 +5077,7 @@ class Orchestrator:
                 if optional:
                     raise BudgetExceeded("facilities diagnosis budget exhausted" if task.meta.get("facilities_diagnosis")
                                          else "optional turn budget exhausted before dispatch")
-                needed = cap if cap is not None else self._unknown_reserve(limit)
+                needed = full if full is not None else self._unknown_reserve(limit)  # the whole cap: what a raise must make room for
             await self._check_budget(rid, reserve=needed)  # approval raises the cap; a denial raises here
 
     async def _drop_unsent_holds(self, rid: str) -> None:

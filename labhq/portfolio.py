@@ -24,7 +24,7 @@ from .models import RunnerPathFields
 from .policy import touches
 from .research.contract import branch_plan_topology
 from .report_abstract import build_graphical_abstract
-from .report_contract import (ReportAsset, ReportPackage, build_report_package, reader_markdown,
+from .report_contract import (ReportAsset, ReportPackage, build_report_package, mask_code as _mask_code, reader_markdown,
                               render_report_front, research_question, with_report_front)
 from .report_markdown import READER_FILENAMES, render_marker_message, rendered_markers
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
@@ -178,53 +178,6 @@ def table_allowed(name: str, body: str | bytes, *, internal: bool,
 def portfolio_root_file(name: str) -> bool:
     """Whether a builder-selected layout path belongs at a new repository's root."""
     return name in _PORTFOLIO_TOP or name.startswith(_PORTFOLIO_FOLDERS)
-
-
-_CODE_RUN = re.compile(r"`+|~{3,}")
-_INLINE_CODE = re.compile(r"`[^`\n]*`")
-
-
-def _mask_code(text: str) -> str:
-    """`text` with every fenced and inline code span blanked out to spaces, so a link inside code is not a link.
-
-    A fence opens with three or more backticks or tildes and closes with a run of the same character at least as long
-    (a four-backtick fence holds a three-backtick one: the progress record's JSON blocks do, #1193); a fence that never
-    closes is not a fence. A long run of backticks with nothing to close it costs a little more than linear (20,000 in
-    a row take about 0.1 s), which no real document has."""
-    out: list[str] = []
-    last = position = 0
-    size = len(text)
-    unclosed: dict[str, int] = {}  # the shortest run length of a character that found no closing run
-    while position < size:
-        run = _CODE_RUN.search(text, position)
-        if run is None:
-            break
-        char, length = text[run.start()], run.end() - run.start()
-        if length >= 3 and length < unclosed.get(char, size + 1):
-            close = _closing_fence(text, char, length, run.end())
-            if close is None:  # the position only moves on, so no later run of this length or more can close either
-                unclosed[char] = length
-            else:
-                out.append(text[last:run.start()])
-                out.append(" " * (close - run.start()))
-                last = position = close
-                continue
-        if char == "`":
-            inline = _INLINE_CODE.match(text, run.start())
-            if inline is not None:
-                out.append(text[last:inline.start()])
-                out.append(" " * (inline.end() - inline.start()))
-                last = position = inline.end()
-                continue
-        position = run.end()
-    out.append(text[last:])
-    return "".join(out)
-
-
-def _closing_fence(text: str, char: str, length: int, start: int) -> int | None:
-    """The end of the first run of `char` at least `length` long at or after `start`, else None."""
-    found = re.compile(re.escape(char) + "{" + str(length) + ",}").search(text, start)
-    return None if found is None else found.end()
 
 
 def _markdown_targets(text: str):

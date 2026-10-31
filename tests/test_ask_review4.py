@@ -25,6 +25,8 @@ async def produce(hub, source, rejected=True):
     ask = AskRequest(task_id="blocked", agent_id="worker", request_id="r", to=target,
                      question="Cases or controls?", why_blocked="cohort missing")
     hub.agents = {a: {"engine": "mock"} for a in ("worker", "cso", "facilities", "peer")}
+    # A consult is asked in the name of a request: with the pre-dispatch hold (#1139) the request has to exist.
+    hub.requests.setdefault("r", {"id": "r", "text": "study", "status": "running"})
     if source in {"pi", "timeout"}:
         ask.question = "May I cross the restricted data zone?"
 
