@@ -897,3 +897,28 @@ def test_down_on_a_runner_only_pc_fails_when_its_own_unrecorded_runner_is_still_
         cli._down(settings, force=False)
     assert stopped.value.code == 2
     assert f"runner({settings.runner.id})가 gateway" in capsys.readouterr().err
+
+
+def test_free_ports_holds_every_socket_until_all_ports_are_drawn(monkeypatch):
+    """Two `free_port()` calls in a row can return one number once the first socket is closed; a test that took the
+    gateway and the broker port that way could bind the same port twice (#1238)."""
+    import socket
+
+    from labhq import util
+
+    live, peak = set(), [0]
+    real = socket.socket
+
+    class Tracking(real):
+        def bind(self, address):
+            super().bind(address)
+            live.add(id(self))
+            peak[0] = max(peak[0], len(live))
+
+        def close(self):
+            live.discard(id(self))
+            super().close()
+
+    monkeypatch.setattr(socket, "socket", Tracking)
+    ports = util.free_ports(3)
+    assert peak[0] == 3 and len(set(ports)) == 3 and not live

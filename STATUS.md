@@ -19,6 +19,16 @@
 - 이미 고쳐진 것: #1131·#1150·#1157·#1186(deny)·#1189·#1165·#1169·#1160·#1097 등. 근거 줄은 댓글에 적었다.
 - 한계: "고쳐짐"은 직접 읽어 확인한 것만 표시했고 나머지는 "미확인"이다. 사람이 남긴 지적은 집계하지 않았다.
 
+# #1238 rev4 — 포트 충돌이 worker 전체를 끝내던 문제
+
+| 항목 | 내용 |
+|---|---|
+| 결론 | `Runner.run_forever`가 broker 시작 실패의 `SystemExit`를 `RuntimeError`로 바꾼다. 시험의 포트 두 번 뽑기는 `free_ports`로 바꿨다 |
+| 바뀐 것 | `labhq/runner/daemon.py`, `labhq/util.py`(`free_ports`), `labhq/bench.py`·`labhq/cli.py` demo(포트 두 번 뽑기를 `free_ports`로), `tests/semantics_shadow_lab.py`, 이를 가로채던 `tests/test_bench_metrics.py`·`tests/test_bench_receipt_review.py`, 회귀 시험 2건(`test_durable_writer.py`, `test_cli_launch.py`), manual 한·영 |
+| 실행한 것 | 새 시험 2건 통과, 옛 daemon 코드로 되돌리면 runner 시험이 `SystemExit: 3`으로 실패, 관련 시험 172건 통과 |
+| 미해결 | `labhq runner`를 포트 충돌로 시작하면 종료 코드가 uvicorn의 3에서 예외 종료로 바뀐다(메시지는 포트를 알려 준다. manual에 적음). 3.10 CI에서 포트 충돌이 다시 날 때의 모습은 확인하지 못했다 |
+| 근거 | https://github.com/ehojune/bioinfo-team-3d/issues/1238 |
+
 # #1242 — fixture만 바뀐 PR이 그 fixture를 쓰는 Windows 시험을 고르지 못하는 구멍
 
 - 결론: Windows 시험 선택(`scripts/ci_selection.py`의 `include_windows`)이 Python import만 따라가서, 시험이 subprocess로 돌리거나 파일로 읽는 `tests/fixtures/` 파일이 바뀌어도 그 시험이 선택되지 않았다. 사례 하나씩 등록하지 않고 부류를 닫았다.
@@ -147,6 +157,18 @@ Refs #621 rev24. Atlas 영속 캐시 재사용을 꺼 다른 키의 결과로 �
   - 셸 다운로드·압축 해제 확인 단락: 로컬 job 제출 경로를 "적용하지 못하는 곳"에서 빼고, runner가 직접 시작하는 로컬 job의 셸 명령에도 같은 확인을 한다고 적었다(여유가 `runner.disk_fail_free_gb` 미만이면 크기를 몰라도 묻고, 크기를 모르고 경고 기준 아래일 뿐이면 경고만 남기며, 확인 중 오류가 나도 정책이 허용한 명령은 막지 않는다).
 - 실행한 것: `patch_notes.py check`·`check_public.sh` 통과(문서만 바뀜, 시험 실행 없음).
 - 미해결/미검증: PR #1227의 1e12 이상 큰 상한은 센트로 내리지 않는다는 점은 극단 값이라 적지 않았다. 실제 Windows·Claude 로컬 job 실행은 확인하지 않았다.
+
+# #1047 process boundary — PR #1050
+
+Protected launch remains unsupported. Standalone unsealed namespace, staging and synthetic broker diagnostics retain their receipts and CLI failure status. An opt-in lifecycle stream now emits run/nonce/identity-bound launch and termination events under the offline observer contract [f54642c3](https://github.com/ehojune/bioinfo-team-3d/commit/f54642c3). Existing broker calls and v1 JSON remain unchanged.
+
+- Tests: `python -X utf8 -m pytest tests/test_process_boundary.py tests/test_text_encoding.py -q` — **87 passed, 1 xfailed** on Windows. The existing strict xfail covers the unavailable authenticated ancestry witness.
+- New coverage: exact observer HMAC vectors, identity/run binding, delivery failures, child exit/timeout/reaping failure, one-use stream and receipt compatibility. New process paths use mocks; no live probe was run.
+- Two review P2s reproduced as failing tests and fixed: concurrent termination-delivery failure preserves the timeout reason; kill failure still attempts reaping. Distinct failure codes are retained together.
+- Rev19: synchronized with main `5f80e3bf` without conflicts, including both manuals; repeated offline tests: **87 passed, 1 xfailed**. The lead authorized producer-first merge after final-head CI and actual review clear P1 findings. Keep draft/hold until those gates pass; no engine/daemon integration, provisioning, provider or HPC execution.
+- Fixture HMACs and injected identities are not trusted authority. Actual protection, independent cleanup and production replay protection remain **UNVERIFIED**. See [reference](../reference/process-boundary-stage1.md).
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
 ## 단계
 #1167 rev8: 로컬 job 제출 경로에도 셸 명령과 같은 디스크 확인을 붙인다. [PR #1184](https://github.com/ehojune/bioinfo-team-3d/pull/1184)(PowerShell 도구)와 다른 브랜치다.
@@ -566,6 +588,11 @@ Claude의 `--disallowedTools`만 이름 목록을 지키고 Codex·Gemini 어댑
 - (b) 목록: `test_research_notes_budget`(`..._would_pass_the_request_budget...` 카드 대신 남은 예산으로 보류, 정확히 상한을 쓴 요청은 다음 호출 전에 묻는다, 질문 대기 보고 turn은 올린 상한 안에서 끝나 final-turn 기록이 없다), `test_cso.py`(동시 turn은 합쳐 보류, 마지막 turn은 남은 만큼 보류, 선택 turn은 남은 만큼 보류하고 0이면 거절, 취소 turn의 보류), `test_facilities_diagnosis`(`budget`·`unknown_budget`은 옛 검사로 고정하고 `reserved_budget` 추가).
 - 확인하지 못한 것: 전체 suite(총괄 지시로 CI에 맡긴다), `test_semantics_shadow_remove`(서브프로세스로 전체 suite를 돌려 로컬에서 90초 이상 걸림).
 
+# Process boundary manual (#1047)
+
+- Korean and English manuals describe the unsealed diagnostic, default refusal, JSON receipt and exit status.
+- Protected launch and independent cleanup remain unverified. PR #1050 remains draft and on hold.
+
 # #606 단계 시작의 파일 시스템 작업을 event loop 밖으로
 
 - 결론: `Runner._run_task`가 단계를 시작할 때 loop thread에서 하던 파일 시스템 작업을 `asyncio.to_thread`로 옮겼다. 대상은 `TaskWorkspace`(작업 폴더 만들기)·`os.path.lexists`·`install_required_skills`(기본 skill 복사)·`resolve_private_paths` 3곳(`stage_inputs` 인자로 미리 평가되던 1곳 포함)·`_system_ca_env`(OS 인증서 저장소 읽기)와 채용 `Recruitment.run`의 build 폴더 만들기다. 호출 자리의 동작·순서는 그대로다.
@@ -799,6 +826,18 @@ Claude의 `--disallowedTools`만 이름 목록을 지키고 Codex·Gemini 어댑
 - 적용 범위 밖: Codex·Gemini·cli 직원(엔진 sandbox가 명령을 직접 실행), 로컬 job 제출 경로(`daemon.py`는 이 claim 밖), PowerShell `Invoke-WebRequest`·`Expand-Archive`, 명령 도중 디스크가 차는 경우. 작업 도중 디스크 감시는 다음 PR.
 - 미검증: 실제 디스크 부족 상황, 압축 배수 4의 실제 비율, Windows CI.
 
+# CLI diagnostic exit status
+
+- The CLI retains its JSON receipt and returns nonzero on refusal, unsupported preparation, child failure, timeout or cleanup failure. Diagnostic exit zero does not establish protection.
+- Mock and CLI tests cover these outcomes; actual protection and independent cleanup remain unverified.
+- PR #1050 remains draft and on hold; the manual finding awaits separate ownership.
+
+# Staging digest diagnostic
+
+- After the callback, the diagnostic re-reads snapshot, runtime and policy; changed or missing payloads fail and trigger cleanup.
+- Local mock tests: 35 passed, 1 xfailed. Observations are untrusted and point-in-time; protected launch, independent cleanup and actual protection remain unverified.
+- PR #1050 remains draft and on hold. The manual review finding awaits separate ownership.
+
 ## 단계
 #1158: `os.path.realpath`가 구분자 run에서 제곱이라 정책 검사가 길어지는 결함. 근거: [#1152 댓글](https://github.com/ehojune/bioinfo-team-3d/pull/1152#issuecomment-6537401540), [두 번째](https://github.com/ehojune/bioinfo-team-3d/pull/1152#issuecomment-6537446112).
 
@@ -827,6 +866,12 @@ Claude의 `--disallowedTools`만 이름 목록을 지키고 Codex·Gemini 어댑
 - P1(`policy.py:2304`): `_root_rules`가 `Path` 루트를 `_realpath`에 넘기는데 `_collapse_separators`가 `p.lstrip`을 불러 Linux(3.10·3.12)에서 `AttributeError`가 났다. `_realpath`가 `os.fspath`로 문자열로 바꾼 뒤 합치게 했다. `bytes`는 합치지 않고 `os.path.realpath`에 그대로 넘긴다.
 - 시험 둘: `_realpath`가 `Path`·`str`·`bytes`에서 `os.path.realpath`와 같은 답, `_root_rules`가 `Path`와 같은 루트의 문자열에 같은 규칙. 둘 다 `posix_merge` fixture로 Windows 호스트에서도 POSIX 병합 경로를 타서 옛 코드에서 실패함을 확인했다(옛 코드는 Windows에서는 합치기를 건너뛰어 이 시험이 통과했을 것이다).
 - Windows 288 passed, 6 skipped. Linux(WSL 3.10, httpx 설치) `test_policy.py` 294 passed. 이전 보고의 1건 실패는 `httpx` 모듈이 없던 환경 문제였다.
+
+# #1047 producer nonce
+
+- Synthetic broker probe accepts a caller's canonical UUID and propagates it to the factory, callback, child and receipt; invalid input fails before preparation. Omission generates a fresh UUID. Callers must use a fresh nonce; replay detection is not provided.
+- Windows mock tests: 29 passed, 1 xfailed. Actual protection, authenticated ancestry and independent cleanup remain UNVERIFIED.
+- PR #1050 remains draft/hold. Manual review P1 awaits a separate ownership claim; final-head CI and review are pending.
 
 ## 단계
 #676 B4: CSO 계획이 직원에게 labhq 소유 파일 `outputs/external_lookup_status.jsonl`에 쓰라고 지시해, 직원이 쓴 줄 8개가 CP2 경고 "읽지 않은 잘못된 기록 8줄"로 나온 문제.
@@ -1180,6 +1225,13 @@ lab 요청에는 번역이 나오지 않아(번역은 기술적인 영문 메시
 ## 하지 않은 것
 - CSO prompt·CP1 표시·비용 예상(PR B)과 bench 측정(PI 승인 뒤).
 - 실제 연구 계획 재개 전체 흐름(모델 호출이 필요한 CP2까지)은 돌리지 않았고, 재개가 지나는 지점의 결정을 단위 시험으로 확인했다.
+
+# Producer synthetic controls — #1047
+
+- Mock controls check refusal of missing or forged authority and broker start, child, timeout and cleanup failures. Protected launch remains unsupported.
+- The broker child timeout records `BROKER_TIMEOUT` and still closes the broker. The remaining strict xfail exposes missing authenticated ancestry; neither mock test proves protection.
+- Follow-up needs an authenticated run-bound observer verifier and broader structured failure codes. Diagnostic ancestry is untrusted; cleanup and descendant termination remain independently unverified.
+- PR #1050 remains draft/hold. No provisioning, live boundary experiment or engine/provider/model execution was performed.
 
 ## 단계
 #1117: `tests/test_state.py`의 고정 횟수 대기를 시간 기준 대기로. 근거: [#1076 계측 실측](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6530142714).
@@ -1645,6 +1697,24 @@ Windows `test_ci_windows10m`·`test_ci_windows_phases`·`test_ci_boundary_previe
 ## 테스트 결과
 - Windows `test_contract_slot_repair`·`test_research_cp2`·`test_research_evidence` 244 passed.
 - 미검증: 실제 ② 요청에서의 재현, 범위 밖 claim을 만든 직원 프롬프트 쪽 원인(왜 claim_ids 밖 claim을 냈는지)은 보지 않았다.
+
+# #1047 process boundary stage 1 — PR #1050
+
+## Scope
+
+Fail-closed protected entry point and separate fixed non-model diagnostics. The staging receipt is v2; other probes retain v1. Synthetic staging exercises cleanup; a broker probe uses a run-scoped socket. The reference includes a review-only disposable VM fixture proposal. Protected launch remains unsupported; no engine or daemon integration is included.
+
+The v2 synthetic ancestry representation checks fixed parent relationships and sampled identities against supplied pins. Local samples are unauthenticated; a real anchored supervisor and witness remain unimplemented.
+
+## Verification
+
+- Windows: `python -m pytest tests/test_process_boundary.py tests/test_text_encoding.py -q` — 32 passed.
+- WSL: fixed unsealed diagnostic exited 0. A synthetic broker probe connected and exited 0 with the same run ID; socket removal was observed. These do not prove protection.
+- Public check passed using an LF-normalized copy of the tracked script with its checkout directory preserved.
+
+## Hold
+
+Keep draft and hold: trusted supervisor and sealed storage, dedicated fixture and independent witnesses remain outstanding. Fixture provisioning is not authorized or executed. Actual engine protection, CLI compatibility and descendant cleanup are UNVERIFIED. Integration with the final broker is pending. [Receipt contract](https://github.com/ehojune/bioinfo-team-3d/issues/1047#issuecomment-6512928878).
 
 ## 단계
 #1045(#910 ② 2차): 엔진 CLI가 시작 직후 출력 없이 끝났을 때 원인을 가릴 근거가 없던 문제.
