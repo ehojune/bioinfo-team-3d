@@ -2003,9 +2003,12 @@ class Runner:
                 f"작업 폴더 드라이브 여유가 적습니다: {free_gib:.1f} GiB. 큰 다운로드 전에 확인하세요")})
         return None
 
-    def _start_disk_watch(self, task: Task, agent: AgentSpec, workspace_dir: Path, extra_dirs=()) -> None:
+    def _start_disk_watch(self, task: Task, agent: AgentSpec, workspace_dir: Path, extra_dirs=(), *,
+                          read_only: bool = False) -> None:
         """Watch the drives this running task fills (#678): the work folder, the runner state folder,
-        ``runner.bulk_data_root`` and its writable project folders (``extra_dirs``). A facilities fix runs regardless: clearing a full workspace is what it is for."""
+        ``runner.bulk_data_root`` and its writable project folders (``extra_dirs``). A read-only run writes only its own
+        workspace, so a full bulk or project drive is no reason to halt it. A facilities fix runs regardless: clearing a
+        full workspace is what it is for."""
         runner = self.s.runner
         if not runner.disk_watch_s or not runner.disk_fail_free_gb or task.meta.get("kind") == "facilities_fix":
             return
@@ -2013,7 +2016,7 @@ class Runner:
         if task.id in watchers:
             return
         folders = [workspace_dir, self.s.path(runner.state_dir)]
-        if runner.bulk_data_root:
+        if runner.bulk_data_root and not read_only:
             folders.append(Path(os.path.expandvars(os.path.expanduser(str(self.s.path(runner.bulk_data_root))))))
         folders.extend(Path(d) for d in extra_dirs)
         watcher = asyncio.get_running_loop().create_task(self._disk_watch(task, agent, list(dict.fromkeys(folders))))
@@ -2376,7 +2379,7 @@ class Runner:
                         f"{task.context}\n\n[Upstream inputs not linked]\n{note}")})
             # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
             # Every folder this run may write: a read-only run writes only its own workspace.
-            self._start_disk_watch(task, agent, workspace_dir, () if read_only else extra_dirs)
+            self._start_disk_watch(task, agent, workspace_dir, () if read_only else extra_dirs, read_only=read_only)
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs],
                                                                needs_rules=agent.engine == Engine.claude_code)
             read_dirs, environment_env, environment_note = self._apply_environment_grants(
