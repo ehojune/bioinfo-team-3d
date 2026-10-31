@@ -14,9 +14,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:50 | [`e82f31f`](https://github.com/ehojune/bioinfo-team-3d/pull/1201/commits/e82f31f) | **PI 통역 같은 override가 비서실장 설정과 합쳐져도 직원 스펙이 유효합니다.**<br>직원 파일에 annot_tools가 있는데 PI 통역처럼 builtin_mcp를 빈 목록으로 덮어쓰면 검증이 annot_tools needs builtin_mcp를 이유로 병합된 스펙을 거부해 통역 호출이 전부 실패했다. 검증에서 builtin_mcp와의 결합을 빼고 이름 형식만 본다. annot 서버가 없으면 annot_tools는 쓰이지 않을 뿐이다. 덮어쓴 스펙이 유효하고 annot 서버를 붙이지 않는 것을 시험으로 고정한다 |
 | 01:40 | [`3b22fe0`](https://github.com/ehojune/bioinfo-team-3d/pull/1205/commits/3b22fe0) | **Windows 핵심 단계의 시험별 상한을 100초로 줄여, 앞선 시험이 돈 시간과 합쳐도 단계 상한 안에서 멈춘 시험이 이름과 함께 실패합니다.**<br>CI: Windows critical 단계의 시험 상한을 100초로 줄여 앞선 시험 시간과 합쳐도 단계 안에 든다 (#1198 리뷰 P2) |
+| 01:20 | [`1d8427e`](https://github.com/ehojune/bioinfo-team-3d/pull/1201/commits/1d8427e) | **직원 명단이 실제 조회 도구를 알려 주고, 제한 없는 직원이 환경 변수에 좁혀지지 않으며, annot\_tools 사용법이 문서에 있습니다.**<br>리뷰 지적 셋을 고친다. 직원 명단이 annot_tools가 있는 직원도 전체 조회 도구를 가진 것처럼 적던 것을 실제로 받는 도구만 적게 한다. annot_tools가 없는 직원에게는 제한 없음을 뜻하는 표지값을 runner가 서버에 분명히 넘겨 runner가 물려받은 환경 변수가 그 직원을 좁히지 못하게 한다. manual 한영의 공개 자원 조회 도구 절에 annot_tools의 계약을 적는다 |
 | 01:10 | [`8d1a238`](https://github.com/ehojune/bioinfo-team-3d/pull/1205/commits/8d1a238) | **CI에서 멈춘 시험의 이름을 미리 알리는 타이머가 시험에 붙은 timeout 표시와 환경 변수를 따르고, Windows critical 단계에서는 시험 상한이 단계 상한보다 먼저 와 멈춘 시험이 이름과 함께 실패합니다.**<br>CI: stall 예고가 시험의 실제 상한(marker·--timeout·환경 변수·ini)을 따르고, Windows critical 단계의 시험 상한을 단계보다 짧게 둔다 (#1198) |
+| 00:50 | [`2fecd3e`](https://github.com/ehojune/bioinfo-team-3d/pull/1201/commits/2fecd3e) | **검토와 후속 질의 같은 읽기 전용 실행이 annot\_tools 필드를 추가한 뒤에도 정상 시작합니다.**<br>읽기 전용 프로필은 AgentSpec의 모든 필드를 분류해야 하는데 새 annot_tools가 빠져 읽기 전용 실행이 시작하지 못했다. 읽기 전용 실행은 labhq MCP 서버를 모두 끄므로 annot_tools도 비우는 쪽에 분류하고 한 시험으로 고정한다 |
+| 00:20 | [`1b54efe`](https://github.com/ehojune/bioinfo-team-3d/pull/1201/commits/1b54efe) | **도구 등록 방식이 바뀌어도 모든 조회 도구가 시간 상한을 거치는지 계속 확인합니다.**<br>모든 labhq_annot 도구가 20분 실행기를 지나는지 보는 시험이 server.tool 장식자만 도구로 세던 것을 offered 장식자도 세게 한다. 요구하는 도구 수와 실행기 확인은 그대로다 |
 | 00:00 | [`f85fbb6`](https://github.com/ehojune/bioinfo-team-3d/pull/1203/commits/f85fbb6) | **mcp 패키지 하한을 2.0으로 올리고, 더 낮은 버전이 깔려 있으면 doctor가 경고합니다.**<br>mcp 하한을 2.0으로 올리고 doctor가 낮은 mcp를 경고 (Refs #1202) |
+| 00:00 | [`58b02f4`](https://github.com/ehojune/bioinfo-team-3d/pull/1201/commits/58b02f4) | **비서실장 같은 직원은 허용된 조회 도구만 받고, 나중에 생기는 도구는 기본으로 닫힙니다.**<br>직원이 쓸 수 있는 labhq_annot 도구를 서버가 걸러 준다. 직원 파일의 annot_tools에 이름을 적으면 러너가 환경 변수 LABHQ_ANNOT_TOOLS로 서버에 넘기고, 서버는 그 도구만 등록한다. 값이 없으면 전부 내므로 기존 직원은 달라지지 않고, 목록에 모르는 이름이 있으면 서버가 시작하지 않는다. 이름 목록으로 막던 비서실장은 문헌 도구 7개 허용 목록으로 바꾸어 새 도구가 생겨도 닫혀 있다. 엔진마다 다르게 걸리던 차단이 모든 엔진에 같게 걸린다 |
 
 ## 2026-10-31
 
