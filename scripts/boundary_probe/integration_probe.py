@@ -17,6 +17,79 @@ import uuid
 from pathlib import Path
 
 
+def collect_offline_contract(producer, factory, transport, collector, validator, *,
+                             trusted, producer_key, observer_key, consumed):
+    """Connect the producer API to separate injected fixture transports.
+
+    This is an offline contract exercise, not a trusted launcher or observer.
+    The transport calls diagnostic_broker_probe and returns (receipt, tag).
+    The collector has arm(run, nonce), ready(run, nonce, path), and
+    finish(run, nonce, outcome), returning (evidence, tag). Its independent
+    ledger and expectations are supplied by the caller, not the producer.
+    The caller owns deadlines and cleanup if an injected component hangs.
+    """
+    result = {"status": "inconclusive", "protection_verified": False,
+              "cleanup_verified": False}
+    run_id = trusted.get("run_id") if isinstance(trusted, dict) else None
+    nonce = trusted.get("launch_nonce") if isinstance(trusted, dict) else None
+    try:
+        if str(uuid.UUID(run_id)) != run_id or not isinstance(nonce, str) or not nonce:
+            return result
+    except (TypeError, ValueError, AttributeError):
+        return result
+    if not isinstance(consumed, set):
+        return result
+    if (run_id, nonce) in consumed:
+        return {**result, "contract": "rejected"}
+    # This fixture set is only single-process replay state, not durable authority.
+    consumed.add((run_id, nonce))
+    ready_count = 0
+    ready_invalid = False
+    outcome = "failed"
+    receipt = tag = None
+    armed = False
+    evidence = observer_tag = None
+    try:
+        collector.arm(run_id, nonce)
+        armed = True
+
+        def ready(observed_run, path):
+            nonlocal ready_count, ready_invalid
+            ready_count += 1
+            if observed_run != run_id or ready_count != 1:
+                ready_invalid = True
+                raise ValueError("invalid producer ready event")
+            try:
+                collector.ready(run_id, nonce, path)
+            except Exception:
+                ready_invalid = True
+                raise
+
+        receipt, tag = transport(producer.diagnostic_broker_probe, factory,
+                                 on_ready=ready, run_id=run_id)
+        outcome = "returned"
+    except Exception:
+        outcome = "failed"
+    finally:
+        if armed:
+            try:
+                evidence, observer_tag = collector.finish(run_id, nonce, outcome)
+            except Exception:
+                outcome = "failed"
+    if outcome != "returned" or ready_count != 1 or ready_invalid:
+        return result
+    try:
+        verdict = validator.adapt_producer(
+            receipt, evidence=evidence, trusted=trusted,
+            tags={"producer": tag, "observer": observer_tag},
+            producer_key=producer_key, observer_key=observer_key, consumed=set())
+        result.update(status=verdict.status, contract=verdict.contract,
+                      reasons=list(verdict.reasons))
+    except Exception:
+        pass
+    return result
+
+
 def load(path: Path, name: str, source: bytes):
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:

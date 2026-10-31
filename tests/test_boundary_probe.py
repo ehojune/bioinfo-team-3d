@@ -466,3 +466,197 @@ def test_forged_observer_evidence_requires_future_verifier(mock_diagnostic):
     state["observer_evidence"] = {"run_id": "run-a", "signature": "forged"}
     # The current diagnostic never consumes this evidence; it cannot reject the forgery.
     assert run()["status"] == "inconclusive"
+
+
+def test_synthetic_seal_adapter_contract():
+    from copy import deepcopy
+    import hashlib
+    import hmac
+    import importlib.util
+    import json
+    import sys
+    root = Path(__file__).parent / "fixtures" / "process_boundary_seal"
+    spec = importlib.util.spec_from_file_location("offline_seal_adapter", root / "validator.py")
+    validator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = validator
+    spec.loader.exec_module(validator)
+    CORPUS = json.loads((root / "cases.json").read_text(encoding="utf-8"))
+    def record_external_ledger(evidence, trusted):
+        """Test-only observer recording, never called by validate or a child adapter."""
+        witness = evidence["witness"]
+        previous, hashes = "0" * 64, []
+        for event in witness["events"]:
+            payload = [witness["run_id"], witness["launch_nonce"], previous, event]
+            previous = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            hashes.append(previous)
+        trusted["ledger"] = {
+            "store_id": trusted["store_id"], "observer_id": witness["observer_id"],
+            "run_id": witness["run_id"], "launch_nonce": witness["launch_nonce"], "hashes": hashes,
+        }
+
+
+    def test_authenticated_offline_adapter_and_independent_cleanup():
+        trusted, evidence = deepcopy(CORPUS["trusted"]), deepcopy(CORPUS["positive"])
+        receipt = dict(version=1, run_id=trusted["run_id"], snapshot_digest=None, runtime_digest=None,
+                       policy_digest=None, supervisor_identity=None, child_identity=None, namespace_identities={},
+                       preparation="diagnostic_ready", launch="exited_0",
+                       cleanup="broker_closed_socket_absent; descendants_unverified", seal_status="unsealed",
+                       unsupported_reasons=["diagnostic only; runtime and storage are unsealed"])
+        producer_key, observer_key = b"p" * 32, b"o" * 32
+
+        def tags_for(r, e):
+            def sign(domain, value, key):
+                data = json.dumps([domain, trusted["run_id"], trusted["launch_nonce"], value],
+                                  sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+                return hmac.new(key, data, hashlib.sha256).hexdigest()
+            return {"producer": sign("producer", r, producer_key), "observer": sign("observer", e, observer_key)}
+
+        def run(r=receipt, e=evidence, tags=None, seen=None, expectations=trusted):
+            return validator.adapt_producer(r, evidence=e, trusted=expectations, tags=tags or tags_for(r, e),
+                                            producer_key=producer_key, observer_key=observer_key,
+                                            consumed=set() if seen is None else seen)
+
+        seen = set()
+        assert run(seen=seen).status == "synthetic_only"
+        assert run(seen=seen).contract == "rejected"
+        assert run(tags={"producer": "0" * 64, "observer": tags_for(receipt, evidence)["observer"]}).contract == "rejected"
+        forged = deepcopy(evidence)
+        forged["witness"]["observer_id"] = "producer"
+        assert run(e=forged, tags=tags_for(receipt, evidence)).contract == "rejected"
+        for change in (lambda r: r.update(run_id="wrong"), lambda r: r.pop("cleanup"),
+                       lambda r: r.update(launch="failed"), lambda r: r.update(seal_status="sealed")):
+            bad = deepcopy(receipt)
+            change(bad)
+            assert run(r=bad).contract == "rejected"
+        for resource in ("descendants", "sockets", "mounts", "handles", "broker_endpoints", "active_tokens"):
+            bad = deepcopy(evidence)
+            cleanup = next(event for event in bad["witness"]["events"] if event["type"] == "cleanup")
+            cleanup[resource] = ["remaining"]
+            # An independent ledger and signature record the failure, rather than
+            # making the test pass merely because a stale signature was rejected.
+            updated = deepcopy(trusted)
+            record_external_ledger(bad, updated)
+            verdict = run(e=bad, expectations=updated)
+            assert "cleanup_resources_not_cleared" in verdict.reasons
+        for failure in ("broker_timeout", "observer_death", "supervisor_interrupted", "deadline_expired"):
+            bad = deepcopy(evidence)
+            events = bad["witness"]["events"]
+            fault = deepcopy(events[2])
+            fault["type"] = failure
+            events.insert(3, fault)
+            for index, event in enumerate(events):
+                event["sequence"] = index
+                event["time_ns"] = index
+            updated = deepcopy(trusted)
+            record_external_ledger(bad, updated)
+            verdict = run(e=bad, expectations=updated)
+            assert failure + "_observed" in verdict.reasons
+            assert "reasoned_stop_unverified" in verdict.reasons
+
+
+    test_authenticated_offline_adapter_and_independent_cleanup()
+
+
+def test_offline_collector_and_producer_lifecycle_contract():
+    import copy
+    import hashlib
+    import hmac
+    import importlib.util
+    import json
+    import sys
+    import uuid
+
+    root = Path(__file__).parent / "fixtures" / "process_boundary_seal"
+    spec = importlib.util.spec_from_file_location("collector_fixture_validator", root / "validator.py")
+    validator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = validator
+    spec.loader.exec_module(validator)
+    run_id = str(uuid.uuid4())
+    corpus = json.loads((root / "cases.json").read_text(encoding="utf-8").replace("fixture-run-a", run_id))
+    trusted, evidence = corpus["trusted"], corpus["positive"]
+    nonce = trusted["launch_nonce"]
+    previous, hashes = "0" * 64, []
+    for event in evidence["witness"]["events"]:
+        payload = [run_id, nonce, previous, event]
+        previous = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        hashes.append(previous)
+    trusted["ledger"]["hashes"] = hashes
+    producer_key, observer_key = b"p" * 32, b"o" * 32
+
+    def sign(role, value, key):
+        message = json.dumps([role, run_id, nonce, value], sort_keys=True,
+                             separators=(",", ":"), allow_nan=False).encode()
+        return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+    class Producer:
+        def diagnostic_broker_probe(self, factory, *, on_ready, run_id):
+            assert factory is sentinel
+            on_ready(run_id, "synthetic-socket")
+            return dict(version=1, run_id=run_id, snapshot_digest=None, runtime_digest=None,
+                        policy_digest=None, supervisor_identity=None, child_identity=None,
+                        namespace_identities={}, preparation="diagnostic_ready", launch="exited_0",
+                        cleanup="broker_closed_socket_absent; descendants_unverified", seal_status="unsealed",
+                        unsupported_reasons=["diagnostic only; runtime and storage are unsealed"])
+
+    class ObservationSource:
+        def read(self, rid, n):
+            assert (rid, n) == (run_id, nonce)
+            return copy.deepcopy(evidence)
+
+    class Collector:
+        def __init__(self):
+            self.calls = []
+            self.source = ObservationSource()
+
+        def arm(self, rid, n):
+            self.calls.append(("arm", rid, n))
+
+        def ready(self, rid, n, path):
+            self.calls.append(("ready", rid, n, path))
+
+        def finish(self, rid, n, outcome):
+            self.calls.append(("finish", rid, n, outcome))
+            observed = self.source.read(rid, n)
+            return observed, sign("observer", observed, observer_key)
+
+    def transport(fn, factory, **kwargs):
+        receipt = fn(factory, **kwargs)
+        return receipt, sign("producer", receipt, producer_key)
+
+    sentinel = object()
+    collector, seen = Collector(), set()
+    def run(transport_fn=transport, observer=collector, consumed=seen):
+        return integration_probe.collect_offline_contract(
+            Producer(), sentinel, transport_fn, observer, validator, trusted=trusted,
+            producer_key=producer_key, observer_key=observer_key, consumed=consumed)
+
+    result = run()
+    assert result["status"] == "synthetic_only"
+    assert result["protection_verified"] is False and result["cleanup_verified"] is False
+    assert [entry[0] for entry in collector.calls] == ["arm", "ready", "finish"]
+    assert run()["contract"] == "rejected"  # replay
+    assert len(collector.calls) == 3  # replay does not invoke the producer
+    def forged(fn, factory, **kwargs):
+        receipt, _ = transport(fn, factory, **kwargs)
+        return receipt, "0" * 64
+    assert run(forged, Collector(), set())["contract"] == "rejected"
+    def failed(fn, factory, **kwargs):
+        raise TimeoutError()
+    observer = Collector()
+    assert run(failed, observer, set())["status"] == "inconclusive"
+    assert observer.calls[-1] == ("finish", run_id, nonce, "failed")
+    class MissingCollector(Collector):
+        def finish(self, rid, n, outcome):
+            raise RuntimeError("observation unavailable")
+    assert run(observer=MissingCollector(), consumed=set())["status"] == "inconclusive"
+    class ForgedCollector(Collector):
+        def finish(self, rid, n, outcome):
+            observed, _ = super().finish(rid, n, outcome)
+            return observed, "0" * 64
+    assert run(observer=ForgedCollector(), consumed=set())["contract"] == "rejected"
+    class LostProvenance(Collector):
+        def finish(self, rid, n, outcome):
+            observed, _ = super().finish(rid, n, outcome)
+            del observed["witness"]
+            return observed, sign("observer", observed, observer_key)
+    assert run(observer=LostProvenance(), consumed=set())["contract"] == "rejected"
