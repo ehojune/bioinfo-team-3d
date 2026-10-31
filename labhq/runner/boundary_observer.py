@@ -54,8 +54,7 @@ def observe(events, *, run_id, nonce, producer_key_id, producer_key, observer_ke
             observer_key, replay_store, collector):
     """Validate events and separate injected snapshots; return synthetic evidence only.
 
-    Collector receives phase and identity; it must return an independently collected
-    mapping with run_id, nonce, phase, identity, processes, resources and provenance.
+    Collector receives phase and identity and returns a synthetic inventory mapping.
     This function cannot establish the collector's independence or completeness.
     """
     if not _text(run_id) or not _text(nonce) or not _text(observer_key_id):
@@ -77,12 +76,16 @@ def observe(events, *, run_id, nonce, producer_key_id, producer_key, observer_ke
                 raise ValueError("event count") from exc
             verify_event(event, producer_key_id, producer_key, run_id, nonce, 2, phase, ident)
         snap = collector(phase, dict(ident))
-        required = {"run_id", "nonce", "phase", "identity", "processes", "resources", "provenance"}
+        required = {"run_id", "nonce", "phase", "identity", "processes", "resources", "provenance", "sequence", "complete"}
         if (not isinstance(snap, dict) or set(snap) != required or snap["run_id"] != run_id
             or snap["nonce"] != nonce or snap["phase"] != phase or snap["identity"] != ident
             or not _text(snap["provenance"]) or not isinstance(snap["processes"], list)
-            or not isinstance(snap["resources"], list)):
+            or not isinstance(snap["resources"], list) or snap["complete"] is not True
+            or type(snap["sequence"]) is not int or snap["sequence"] != len(snapshots) + 1
+            or (snapshots and snap["provenance"] != snapshots[0]["provenance"])):
             raise ValueError("collector observation")
+        if phase == "launch" and ident not in snap["processes"]:
+            raise ValueError("missing launch identity")
         snapshots.append(snap)
     sentinel = object()
     if next(iterator, sentinel) is not sentinel:

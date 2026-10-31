@@ -43,3 +43,6 @@ Producer events are JSON objects with exactly `version` (integer 1), `run_id`, `
 For this synthetic v1 contract, `algorithm` is `hmac-sha256`; `tag` is lowercase hex HMAC-SHA256 over UTF-8 JSON of the event without `auth`, serialized with sorted keys, separators `(',', ':')`, and ASCII escaping. The verifier selects a preconfigured key by `key_id`; keys are never carried in events. The fixture key is public test data and grants no trust. `tests/fixtures/process_boundary_seal/lifecycle-v1.json` is the byte-level interoperability vector.
 
 Observer inventory is separately collected, ordered and run/nonce bound; producer events alone cannot prove cleanup. Production authentication, protected replay storage and independent OS process/resource collection require a separately trusted implementation. This offline contract does not establish protection.
+# Offline observer inventory assertions
+
+Synthetic snapshots carry a source label, phase sequence and complete flag; launch must include the launch identity. These are fixture assertions, not authenticated provenance or proof of a complete OS inventory. The synchronous collector is not bounded; a separately owned supervisor must enforce timeouts and protect keys and replay storage. Actual cleanup remains UNVERIFIED.

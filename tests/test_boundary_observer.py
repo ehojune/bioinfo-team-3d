@@ -12,7 +12,8 @@ KEY = FIXTURE['test_key_utf8'].encode()
 
 def collector(phase, identity):
     return dict(run_id='fixture-run', nonce='fixture-nonce', phase=phase, identity=identity,
-                processes=[identity] if phase == 'launch' else [], resources=[], provenance='fixture-collector')
+                processes=[identity] if phase == 'launch' else [], resources=[], provenance='fixture-collector',
+                sequence=1 if phase == 'launch' else 2, complete=True)
 
 
 def invoke(events, store, collect=collector):
@@ -68,3 +69,16 @@ def test_collector_runs_between_stream_events(tmp_path):
         return collector(phase, identity)
     invoke(stream(), ReplayStore(tmp_path / 'replay.sqlite'), collect)
     assert phases == ['launch', 'termination']
+
+
+@pytest.mark.parametrize('problem', ['incomplete', 'wrong_order', 'changed_source', 'missing_launch'])
+def test_invalid_inventory_fails_closed(tmp_path, problem):
+    def collect(phase, identity):
+        snap = collector(phase, identity)
+        if problem == 'incomplete': snap['complete'] = False
+        if problem == 'wrong_order': snap['sequence'] = 1
+        if problem == 'changed_source' and phase == 'termination': snap['provenance'] = 'other'
+        if problem == 'missing_launch' and phase == 'launch': snap['processes'] = []
+        return snap
+    with pytest.raises(ValueError):
+        invoke(copy.deepcopy(FIXTURE['events']), ReplayStore(tmp_path / 'replay.sqlite'), collect)
