@@ -11,6 +11,18 @@
 - 이미 고쳐진 것: #1131·#1150·#1157·#1186(deny)·#1189·#1165·#1169·#1160·#1097 등. 근거 줄은 댓글에 적었다.
 - 한계: "고쳐짐"은 직접 읽어 확인한 것만 표시했고 나머지는 "미확인"이다. 사람이 남긴 지적은 집계하지 않았다.
 
+# #1242 — fixture만 바뀐 PR이 그 fixture를 쓰는 Windows 시험을 고르지 못하는 구멍
+
+- 결론: Windows 시험 선택(`scripts/ci_selection.py`의 `include_windows`)이 Python import만 따라가서, 시험이 subprocess로 돌리거나 파일로 읽는 `tests/fixtures/` 파일이 바뀌어도 그 시험이 선택되지 않았다. 사례 하나씩 등록하지 않고 부류를 닫았다.
+- 규칙(`changed_fixtures`·`references_fixture`·`_fixture_reason`): 바뀐 경로 중 `tests/fixtures/` 아래 파일마다, 시험 소스가 그 파일의 경로·파일 이름·모듈 이름(짧거나 `__init__` 같은 이름은 제외)을 문자열로 적고 있으면 그 시험을 고른다. 이름을 적은 시험이 하나도 없으면(`tests/test_*.py` 전체를 한 번 훑어 확인) 짐작하지 않고 모든 routine Windows 시험을 고른다. 넓게 맞추는 쪽이라 이름만 언급한 시험도 선택될 뿐, 빠지는 쪽으로는 틀리지 않는다.
+- 바꾼 것: `scripts/ci_selection.py`, `tests/test_ci_parallel_policy.py`(+10건). `scripts/ci_suite.py`는 건드리지 않았다. "아무도 이름을 안 적은 fixture"의 전체 선택을 `select()` 쪽이 아니라 `include_windows`에서 한다(claim 범위 때문이기도 하고, 시험 한 건마다 판정이 같아져 설명이 쉽다).
+- 시험: 경로·파일 이름·모듈 이름으로 선택, 변경이 없으면 제외, 다른 시험이 이름을 적었으면 이 시험은 제외, 아무도 이름을 안 적으면 전부 선택, `tests/fixtures/` 밖의 파일은 fixture로 보지 않음, 그리고 실제 사례(PR #1235: `tests/fixtures/fake_deadline_cli.py`만 바뀜)가 `tests/test_request_deadline_descendants_1232.py`를 고름. 모든 `tests/test_ci_*.py` 1268건 통과. 실제 정책으로 이 fixture만 바뀐 경우 선택되는 시험은 2건, 선택 판정 비용은 약 1.3초(시험 파일 400개 기준).
+- 미검증: 실제 PR의 Windows CI에서 선택이 바뀌는지(이 PR은 fixture를 바꾸지 않아 이 규칙이 켜지지 않는다). 비 Python fixture를 시험이 디렉터리 glob으로만 읽는 경우는 이름이 없어 "아무도 이름을 안 적음"으로 처리되어 전체가 돌아간다(안전한 쪽).
+- 리뷰 P2 반영: `README.md`처럼 흔한 파일 이름은 이름만으로 맞추면 무관한 시험이 끌려오고 전체 선택도 막혔다. 흔한 이름(`__init__`·`conftest`·`README`)은 경로로만 맞추고, 폴더째 쓰는 시험은 폴더 경로 문자열이나 pathlib 조각(`/ "fixtures" / "wiki"`)으로 잡는다. `tests/fixtures/wiki/README.md`가 바뀌면 `test_wiki_index.py` 한 건만 선택되는 것을 실제 저장소로 시험했다.
+- 리뷰 P2 반영(2): fixture별 답을 64칸 cache에 두면 한 PR이 65개 이상의 fixture를 바꿀 때 모든 시험마다 다시 훑어 `시험 수 × fixture 수 × 시험 파일 수`로 커진다. cache를 무제한(바뀐 fixture당 한 칸)으로 하고, 100개 fixture를 바꿔도 시험 5건이 한 번씩만 훑는 시험을 더했다(`maxsize=2`로 되돌리면 실패).
+- 리뷰 P2 반영(3): 데이터 fixture(`.py`가 아닌 것)를 이름의 앞부분(stem)으로도 맞추면 `codex`·`claude`·`expected` 같은 흔한 단어가 든 시험이 65~86개씩 끌려왔다. 모듈 이름은 `.py` fixture에만 쓰고 데이터 fixture는 경로나 확장자까지 붙은 이름으로만 맞춘다. `codex.cmd`·`claude.txt`·`expected.yaml`이 바뀔 때 선택되는 시험이 각각 2건이 되었다(이전 65·83·86).
+- 리뷰 P2 반영(4): `tests/fixtures/semantics/records/agents/contract/ag_seqtool.yaml`처럼 깊이 중첩된 fixture는 시험이 중간 폴더 이름을 모두 적어야 맞았는데, 실제로는 `fixtures/semantics/records`를 재귀로 읽는 시험이 있다. pathlib 조각 판정을 fixtures 바로 아래 첫 폴더만 보도록 줄였다(폴더를 부르면 그 아래를 읽는 것으로 본다).
+
 # #898: 종료 신호 시험의 시간 가정을 고친다
 
 - 결론: `test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resume[SIGTERM|SIGHUP]`이 main Windows에서 세 번 실패했다(10-30 16:31 SIGHUP `shutdown returned before durable ACK`, 10-30 18:30·10-31 15:57 SIGTERM `gateway_resume timed out`). 시험의 fixture 단계 5초와 `Runner.shutdown`의 기본 5초가 gateway 쪽 fsync가 느린 러너에서 모자랐다.

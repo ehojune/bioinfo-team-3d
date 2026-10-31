@@ -10,10 +10,20 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-02
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 00:00 | [`8e60b3d`](https://github.com/ehojune/bioinfo-team-3d/pull/1245/commits/8e60b3d) | **시험용 보조 파일이 폴더 깊숙이 있어도, 그 위 폴더를 통째로 읽는 시험이 자동 검사에 포함됩니다.**<br>Windows 시험 선택: 깊이 중첩된 fixture는 그 위 폴더를 읽는 시험도 고른다 (#1245 리뷰 P2) |
+
 ## 2026-11-01
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:00 | [`d3f8f13`](https://github.com/ehojune/bioinfo-team-3d/pull/1245/commits/d3f8f13) | **시험용 보조 파일이 바뀌어도 이름이 흔한 단어와 같다는 이유로 상관없는 시험이 수십 개씩 검사에 끌려오지 않습니다.**<br>Windows 시험 선택: 데이터 fixture는 이름 전체나 경로로만 맞추고 모듈 이름은 .py에만 쓴다 (#1245 리뷰 P2) |
+| 22:00 | [`338aa5f`](https://github.com/ehojune/bioinfo-team-3d/pull/1245/commits/338aa5f) | **시험용 보조 파일을 많이 바꾼 변경에서도 자동 검사가 어떤 시험을 돌릴지 고르는 데 시간이 오래 걸리지 않습니다.**<br>Windows 시험 선택: 바뀐 fixture 수만큼 쓰는 무제한 cache로 시험 수만큼 다시 훑지 않는다 (#1245 리뷰 P2) |
+| 21:00 | [`ba376a0`](https://github.com/ehojune/bioinfo-team-3d/pull/1245/commits/ba376a0) | **시험용 보조 파일을 폴더째 가져다 쓰는 시험도 그 파일이 바뀌면 자동 검사에 포함되고, 어디에나 있는 파일 이름 때문에 상관없는 시험이 끌려오지 않습니다.**<br>Windows 시험 선택: 흔한 파일 이름은 경로로만 맞추고 폴더째 쓰는 시험을 폴더 이름으로 잡는다 (#1245 리뷰 P2) |
+| 20:00 | [`35478f0`](https://github.com/ehojune/bioinfo-team-3d/pull/1245/commits/35478f0) | **시험용 보조 파일만 바뀐 변경도, 그 파일을 쓰는 Windows 시험이 자동 검사에 포함됩니다.**<br>Windows 시험 선택: 바뀐 fixture를 이름으로 적은 시험을 고르고, 아무도 안 적었으면 routine 전체를 고른다 (#1242) |
 | 19:00 | [`9f5ea94`](https://github.com/ehojune/bioinfo-team-3d/pull/1236/commits/9f5ea94) | **리눅스·맥에서 AlphaGenome 키를 화면에 남기지 않고 넣는 안내가 셸 종류별로 정확해졌습니다.**<br>문서: POSIX 키 입력은 Bash·zsh 기준이고 dash용 대안을 적는다 (#1236 리뷰 P2) |
 | 18:30 | [`8a878b4`](https://github.com/ehojune/bioinfo-team-3d/pull/1236/commits/8a878b4) | **AlphaGenome 조회용 도구를 설치할 때 runner가 쓰는 가상환경에 설치하도록 안내합니다.**<br>문서: Atlas SDK는 runner의 가상환경 python으로 설치한다 (#1236 리뷰 P2) |
 | 18:00 | [`0f2b216`](https://github.com/ehojune/bioinfo-team-3d/pull/1236/commits/0f2b216) | **설명서의 AlphaGenome 조회 절이 이미 병합됐다는 현재 상태를 말하고, 키를 화면과 명령 기록에 남기지 않고 넣는 방법을 안내합니다.**<br>문서: Atlas 절을 병합 상태에 맞추고 키를 환경 변수로 넣는 법을 적는다 (#1225) |
