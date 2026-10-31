@@ -18,3 +18,8 @@
 - 구조: 지금 단계 instruction에 예약 이름이 나오면 모두 거절한다. 허용은 앞 단계 산출물 경로뿐이다. 읽기·보고 허용 휴리스틱(`_WRITE_SIGNAL`, `_OTHER_PATH`, `_CLAUSE_END`, `_tells_staff_to_write`)을 뺐다. 정상 계획이 거절되면 계획을 다시 받는 비용으로 본다(CSO 재시도 경로). 파일명 경계 수정은 유지한다.
 - 시험: 읽기·보고·쓰기 6건이 모두 거절되고, 출처가 낀 쓰기·`as`·`into` 변형이 거절된다. `test_reserved_outputs.py` 50 passed, cso·plan·output·reserved·lookup 계열 1711 passed, 9 skipped, `validate_profile` 통과.
 - P1(`cso.py:2272`, manual 한·영): 이 PR 범위에 manual이 없어 쓰지 않았다. 총괄이 W2의 #1155 뒤 rev4에서 넣는다.
+
+## manual과 docstring (rev4)
+- manual 한·영(plan 산출 설명 단락 끝): 예약 이름 세 개, 선언·instruction 이름 모두 CSO 재요청, 앞 단계 `inputs/<단계>/outputs/<이름>`만 허용, 이름이 더 긴 파일은 예약 아님, CP2의 "읽지 않은 잘못된 기록"에서 직원이 쓴 줄(`tool` 키 없는 JSON 객체)은 세지 않음. main을 반영했고 문서 gate가 풀렸다.
+- `labhq/policy.py` docstring: "`Bash(ls *)`가 `&&` 뒤 설치를 통과시킨다"는 설명을 #1163 결과(Claude Code 2.1.310은 체인을 나눠 명령마다 검사)에 맞게 고쳤다. 사전 승인 접두에 맞는 명령 자신이 권한 프롬프트를 건너뛰어 설치 검사를 못 받는다는 것이 공유 환경에서 모든 셸 호출을 gate에 맡기는 이유다.
+- `test_policy.py`·`test_reserved_outputs.py` 338 passed, 6 skipped, `validate_profile` 통과.
