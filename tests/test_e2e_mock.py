@@ -315,7 +315,7 @@ def _init_settings(tmp_path: Path) -> Settings:
     return s
 
 
-async def _run_default_init_request(tmp_path, text, *, status="done"):
+async def _run_default_init_request(tmp_path, text, *, status="done", work_kind="auto"):
     """Run one request through the gateway and a mock runner under the init config; return (request, event order, seen, hub).
 
     The request must end in `status`; a failed request is asserted by the caller."""
@@ -350,7 +350,7 @@ async def _run_default_init_request(tmp_path, text, *, status="done"):
     try:
         await _until(lambda: "cso" in hub.agents and "analyst" in hub.agents, HANG_S, "runner agent registration",
                      lambda: {"agents": list(hub.agents)})
-        rid = hub.create_request(RequestIn(text=text))
+        rid = hub.create_request(RequestIn(text=text, work_kind=work_kind))
         await _wait_for_request_terminal(hub, rid, seen)
         request = hub.requests[rid]
         state = _request_state(hub, rid, seen)
@@ -428,6 +428,36 @@ async def test_a_failing_step_is_reported_and_the_steps_before_it_are_kept(tmp_p
     assert "[[claim:s1/c1]]" in report and "[[claim:s2/c2]]" not in report, report
     assert "s2: 단계 실패 또는 의존 단계 건너뜀 — mock step failure" in report, report
     assert any("경고" in summary and "실패 단계" in summary for summary in _cp2_warnings(seen)), _cp2_warnings(seen)
+
+
+async def test_a_failed_step_in_team_mode_fails_the_request_after_one_replan(tmp_path):
+    """Recorded for #1220: without the research lane one failed step ends the whole request as failed."""
+    request, order, seen, _hub = await _run_default_init_request(
+        tmp_path, "팀 모드로 단계 하나가 실패하는 요청 [step-fail]", status="failed", work_kind="simple")
+    ok = {sid: result.get("ok") for sid, result in request["results"].items()}
+    assert ok == {"s1": True, "s2": True, "s3": False, "s4": False, "s5": False}, ok
+    assert request["results"]["s3"]["error"] == "mock step failure"
+    assert request["results"]["s4"]["error"].startswith("skipped: upstream s3"), request["results"]["s4"]
+    assert request["results"]["s5"]["error"].startswith("skipped: upstream s4"), request["results"]["s5"]
+    assert order[-1] == "replan" and order.count("step") == 3, order  # s4 and s5 never ran; one replan, then the end
+    assert request["error"] == "s3 실패: mock step failure"
+    assert request["report"].startswith("실패한 단계: s3"), request["report"]
+    assert [e["data"]["kind"] for e in seen if e.get("type") == "approval.requested"] == []  # no card for a failed team request
+
+
+async def test_every_branch_failing_ends_the_research_request_failed_before_cp2(tmp_path):
+    """Recorded for #1220: with no branch left the synthesis step is skipped and the request fails at once."""
+    request, order, seen, _hub = await _run_default_init_request(
+        tmp_path, "모든 갈래가 실패하는 요청 [all-branch-fail]", status="failed", work_kind="research")
+    ok = {sid: result.get("ok") for sid, result in request["results"].items()}
+    assert ok == {"s1": False, "s2": False, "s3": False}, ok
+    assert request["results"]["s3"]["error"].startswith("skipped: upstream s1"), request["results"]["s3"]
+    assert request.get("outcome") == "research_failed"
+    assert order == ["briefing", "precedent", "plan", "result_storage", "research_plan", "step", "step"], order
+    report = request["report"]
+    assert "| b1 | failed | s1 | s1: mock step failure | none |" in report, report  # each branch is named
+    assert "| b2 | failed | s2 | s2: mock step failure | none |" in report, report
+    assert "research_evidence" not in {e["data"].get("kind") for e in seen if e.get("type") == "approval.requested"}
 
 
 async def test_a_mock_step_whose_read_only_baseline_is_refused_fails_before_it_runs(tmp_path):
