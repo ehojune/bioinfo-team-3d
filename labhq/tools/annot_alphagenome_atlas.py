@@ -104,10 +104,12 @@ class AtlasBackend:
                                       reference_bases=variant.ref, alternate_bases=variant.alt)
         scores = self._client.query_variant(allele, requested_scorers=scorers,
                                            ontology_terms=terms or None, gene_ids=genes or None)
+        self._check_active()
         best: list[tuple[float, int, dict]] = []
         count = 0
         cells = 0
         for name, data in scores.items():
+            self._check_active()
             if name not in scorers:
                 raise LookupFailed("Atlas 응답 scorer가 요청과 다릅니다")
             cells += data.n_obs * data.n_vars
@@ -116,8 +118,11 @@ class AtlasBackend:
             signed = bool(self._metadata[name].is_signed)
             quantiles = data.layers.get("quantiles")
             for i in range(data.n_obs):
+                self._check_active()
                 obs = data.obs.iloc[i].to_dict()
                 for j in range(data.n_vars):
+                    if j % 128 == 0:
+                        self._check_active()
                     meta = data.var.iloc[j].to_dict()
                     # Server-side filters are also checked before saving returned metadata.
                     # Match the SDK: scorers without ontology metadata are exempt (e.g. aggregate scores).
@@ -142,6 +147,7 @@ class AtlasBackend:
                         heapq.heappush(best, entry)
                     elif entry[:2] > best[0][:2]:
                         heapq.heapreplace(best, entry)
+        self._check_active()
         return {"rows": [row for _, _, row in sorted(best, reverse=True)], "n_rows": count,
                 "scorers": [{"name": name, "is_signed": bool(self._metadata[name].is_signed)} for name in scorers]}
 
@@ -157,6 +163,20 @@ def _filter(values: object, pattern: str, label: str, limit: int = 20) -> list[s
             isinstance(v, str) and re.fullmatch(pattern, v) for v in values):
         raise ValueError(f"{label} 형식 또는 {limit}개 상한을 확인하세요")
     return sorted(set(values))
+
+
+def _invalid_api_key(error: ValueError) -> bool:
+    """The SDK maps both INVALID_ARGUMENT and NOT_FOUND to ValueError; never echo its details."""
+    cause = error.__cause__
+    if cause is not None and callable(getattr(cause, "code", None)):
+        try:
+            if getattr(cause.code(), "name", "") != "INVALID_ARGUMENT":
+                return False
+        except Exception:
+            return False
+    detail = re.sub(r"[_\s-]+", " ", str(error).casefold())
+    return any(marker in detail for marker in (
+        "api key not valid", "api key is invalid", "invalid api key", "api key invalid"))
 
 
 def _summary(item: Item, top: int) -> dict:
@@ -238,8 +258,12 @@ async def query_variants(annotator: reg.RegulatoryAnnotator, variants: object, *
                 except asyncio.CancelledError:
                     backend.cancelled.set()
                     raise
-                except (ValueError, IndexError):
-                    done[key] = "Atlas 변이 미수록 또는 요청 조건 미지원. 효과 없음으로 해석하지 마세요"
+                except (ValueError, IndexError) as exc:
+                    if isinstance(exc, ValueError) and _invalid_api_key(exc):
+                        stopped = True
+                        done[key] = "Atlas 인증·접근 권한 없음. 키의 Atlas 권한을 확인하세요"
+                    else:
+                        done[key] = "Atlas 변이 미수록 또는 요청 조건 미지원. 효과 없음으로 해석하지 마세요"
                 except NotImplementedError:
                     stopped = True
                     done[key] = "Atlas 서비스 또는 SDK가 이 조회를 지원하지 않습니다"

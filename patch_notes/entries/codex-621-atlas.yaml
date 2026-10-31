@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "0000000"
+    at: "2026-10-31 20:14"
+    summary: "취소된 Atlas 응답의 계산을 멈추고 잘못된 API 키를 변이 미수록과 구분합니다."
+    text: "fix: stop late Atlas processing and classify invalid-key errors"
   - sha: "44bd72b"
     at: "2026-10-31 20:06"
     summary: "Atlas 조회가 PDF 승인 대기와 겹쳐 조회 시간 계산을 바꾸지 않도록 실행 순서를 유지합니다."

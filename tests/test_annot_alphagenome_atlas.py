@@ -243,6 +243,100 @@ async def test_errors_redacted_and_bounded(factory, error, message, expected, tm
     assert secret not in "".join(p.read_text(encoding="utf-8") for p in tmp_path.rglob("*.json*"))
 
 
+@pytest.mark.parametrize("code,detail,expected", [
+    ("INVALID_ARGUMENT", "API key not valid. Please pass a valid API key.", 1),
+    ("INVALID_ARGUMENT", "API_KEY_INVALID", 1),
+    ("NOT_FOUND", "variant not found", 2),
+    ("INVALID_ARGUMENT", "unsupported scorer filter", 2),
+])
+async def test_sdk_value_error_distinguishes_key_failure(factory, tmp_path, code, detail, expected):
+    a, backend, calls, secret = factory()
+    class RpcError(Exception):
+        def code(self):
+            return NS(name=code)
+    def query(*args, **kwargs):
+        calls.append(("variant",))
+        raise ValueError(detail + " " + secret) from RpcError()
+    backend._client = NS(scorer_metadata=lambda: {"RNA_SEQ": NS(is_signed=True)}, query_variant=query)
+    result = await a.alphagenome_atlas(["chr1:100:A:G", "chr1:101:A:G"])
+    assert len(calls) == expected
+    assert ("권한" in result["results"][0]["error"]) == (expected == 1)
+    assert secret not in json.dumps(result)
+    assert secret not in "".join(p.read_text(encoding="utf-8") for p in tmp_path.rglob("*.json*"))
+
+
+async def test_cancelled_rpc_response_is_not_traversed(factory):
+    _, backend, _, _ = factory()
+    entered, release = threading.Event(), threading.Event()
+    traversed = []
+    class Response:
+        def items(self):
+            traversed.append(True)
+            return []
+    def rpc(*args, **kwargs):
+        entered.set()
+        release.wait(5)
+        return Response()
+    backend._metadata = {"RNA_SEQ": NS(is_signed=True)}
+    backend._client = NS(query_variant=rpc)
+    work = asyncio.create_task(asyncio.to_thread(backend.query,
+        reg._alphagenome_query("chr1:100:A:G", 1), ["RNA_SEQ"], [], []))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        backend.cancelled.set()
+        release.set()
+        with pytest.raises(reg.AlphaGenomeUnavailable):
+            await work
+        assert not traversed
+    finally:
+        release.set()
+        await asyncio.gather(work, return_exceptions=True)
+
+
+def test_cancellation_during_wide_response_stops_within_one_chunk(factory):
+    _, backend, _, _ = factory()
+    data = scores([[-1] * 1000], [[0.5] * 1000])
+    data.var = Frame([{"biosample_name": "fixture"}] * 1000)
+    visited = []
+    class CancellingMatrix:
+        def __getitem__(self, index):
+            visited.append(index)
+            backend.cancelled.set()
+            return -1
+    data.X = CancellingMatrix()
+    backend._metadata = {"RNA_SEQ": NS(is_signed=True)}
+    backend._client = NS(query_variant=lambda *a, **k: {"RNA_SEQ": data})
+    with pytest.raises(reg.AlphaGenomeUnavailable):
+        backend.query(reg._alphagenome_query("chr1:100:A:G", 1), ["RNA_SEQ"], [], [])
+    assert 1 <= len(visited) <= 128
+
+
+def test_installed_sdk_maps_invalid_key_to_value_error():
+    sdk = pytest.importorskip("alphagenome.atlas.atlas")
+    import grpc
+    class InvalidKey(grpc.RpcError, grpc.Call):
+        def code(self):
+            return grpc.StatusCode.INVALID_ARGUMENT
+        def details(self):
+            return "API key not valid. Please pass a valid API key."
+        def initial_metadata(self):
+            return ()
+        def trailing_metadata(self):
+            return ()
+        def is_active(self):
+            return False
+        def time_remaining(self):
+            return 0
+        def cancel(self):
+            return False
+        def add_callback(self, callback):
+            return False
+    with pytest.raises(ValueError) as caught:
+        with sdk.handle_rpc_error():
+            raise InvalidKey()
+    assert atlas._invalid_api_key(caught.value)
+
+
 async def test_unknown_scorer_and_response_bound(factory):
     a, _, calls, _ = factory()
     result = await a.alphagenome_atlas(["chr1:100:A:G"], requested_scorers=["NO_SUCH_SCORER"])
