@@ -1,5 +1,9 @@
 pr: 1050
 rows:
+  - sha: 'cb00095'
+    at: "2026-10-31 20:20"
+    summary: "비봉인 프로세스 진단의 사용법과 한계를 한영 매뉴얼에 안내합니다."
+    text: "docs: describe unsealed process diagnostic"
   - sha: '2b50368'
     at: "2026-10-31 12:40"
     summary: "경계 진단 실패와 지원하지 않는 실행을 CLI 종료 코드에 반영합니다."
