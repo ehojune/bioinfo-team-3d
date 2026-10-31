@@ -4367,6 +4367,11 @@ class Hub:
             self.task_runner.pop(task.id, None)
             self.store.delete("task", task.id)
             await self._release_steers(task)
+            # task.dispatched is already published: end that task for the web and the messenger, which would keep it
+            # queued as if it ran otherwise.
+            await self.publish({"type": "task.result", "ts": time.time(), "task_id": task.id,
+                                "agent_id": task.agent_id, "request_id": task.request_id,
+                                "data": refused.model_dump(mode="json")})
             return refused
         try:
             await self.send_runner(rid, {"type": "task.dispatch", "task": task.model_dump(mode="json")})

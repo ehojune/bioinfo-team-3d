@@ -430,7 +430,13 @@ async def test_a_runner_that_changes_runtime_while_task_dispatched_is_published_
     async def send(rid, frame):
         sent.append(frame)
 
-    hub.publish = publish_and_reregister
+    events = []
+
+    async def record(event):
+        events.append(event)
+        await publish_and_reregister(event)
+
+    hub.publish = record
     hub.send_runner = send
     import asyncio
 
@@ -438,3 +444,7 @@ async def test_a_runner_that_changes_runtime_while_task_dispatched_is_published_
     assert not result.ok and result.cost_usd == 0.0 and "expects runtime wsl" in result.error
     assert sent == [] and task.id not in hub.futures and task.id not in hub.task_runner
     assert hub.store.get("task", task.id) is None
+    # The dispatch event is closed by a result, so the web does not keep the task queued.
+    kinds = [event["type"] for event in events if event.get("task_id") == task.id]
+    assert kinds == ["task.dispatched", "task.result"]
+    assert events[-1]["data"]["ok"] is False and events[-1]["data"]["cost_usd"] == 0.0
