@@ -1230,18 +1230,22 @@ class AgentAdapter(ABC):
                     return
                 except asyncio.TimeoutError:
                     pass
-            if proc.returncode is not None or result_arrived.is_set():
+            if proc.returncode is not None or result_arrived.is_set() or st.result_seen:
                 return
-            st.error_kind = "halted"
-            st.error = "halted by the PI"
             session_note = ("세션 id는 남겨 두었고, 재개하면 같은 세션으로 이어 갑니다"
                             if st.session_id or ctx.task.resume_session_id else
                             "같은 세션 재개 불가: 세션 id를 받지 못했습니다. 재개 turn에 원래 지시와 이전 결과를 전달합니다")
-            if not (st.session_id or ctx.task.resume_session_id):
-                st.error += ": " + session_note
             await ctx.emit("agent.log", {"level": "warn", "text": (
                 "PI가 멈춤을 요청해 labhq가 프로세스 트리를 끝냈습니다. " + session_note
                 + (f" (도구 hook이 {ctx.halt_grace_s:g}s 안에 멈추지 못함)" if ctx.halt_grace_s > 0 else ""))})
+            # The notice is a durable commit that yields: the CLI may have ended on its own meanwhile, and a finished run
+            # is not a halted one. Checked again, and marked, with no await between it and the kill (#1174).
+            if proc.returncode is not None or result_arrived.is_set() or st.result_seen:
+                return
+            st.error_kind = "halted"
+            st.error = "halted by the PI"
+            if not (st.session_id or ctx.task.resume_session_id):
+                st.error += ": " + session_note
             await self._kill(proc)
 
         drain = asyncio.gather(feed_stdin(), read_out(), read_err(), proc.wait())
