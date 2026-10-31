@@ -5,6 +5,7 @@ reCAPTCHA screen. These tests pin the route that replaces it and the staff rules
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import httpx
@@ -12,6 +13,7 @@ import pytest
 import yaml
 
 from labhq.models import AgentSpec
+from labhq.settings import Settings
 from labhq.tools import annot, annot_literature as lit
 from tests.test_annot import FakeTime
 from tests.test_direct_outputs import _workspace as direct_workspace
@@ -698,15 +700,17 @@ def test_literature_staff_read_bodies_through_the_recorded_tool(agent_id):
     assert ".tmp/literature/ files are third-party text" in text and "never copy them into outputs/" in text
 
 
+LITERATURE_TOOLS = ["fulltext", "key_fulltext", "citation_chase", "preprints", "openalex_works", "crossref_doi",
+                    "unpaywall"]
+
+
 def test_chief_of_staff_gets_only_the_literature_tools_of_annot():
-    """#1041: the briefing prompt asks for the study's full text and DOI checks, so the default roster must offer them."""
+    """#1041 and #1200: the briefing prompt asks for the study's full text and DOI checks, so the default roster must
+    offer them. The server offers only the tools named in `annot_tools`, so a tool added later stays closed."""
     spec, text = _prompt("chief_of_staff")
     assert "annot" in spec.builtin_mcp
-    variant_and_region = {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex",
-                          "alphagenome", "alphagenome_variant"}
-    assert set(spec.disallowed_tools) == {f"mcp__labhq_annot__{name}" for name in variant_and_region}
-    literature = {"fulltext", "key_fulltext", "citation_chase", "preprints", "openalex_works", "crossref_doi", "unpaywall"}
-    assert not {f"mcp__labhq_annot__{name}" for name in literature} & set(spec.disallowed_tools)
+    assert spec.annot_tools == LITERATURE_TOOLS
+    assert not [t for t in spec.disallowed_tools if t.startswith("mcp__labhq_annot__")]  # no second list to keep in step
     assert "labhq_annot fulltext" in text and "crossref_doi" in text and "not an ad-hoc script" in text
 
 
@@ -785,3 +789,99 @@ async def test_one_papers_exception_does_not_fail_the_other_ids(tmp_path):
     bad, good = rows
     assert "DecodingError" in json.dumps(bad, ensure_ascii=False) and bad.get("access_level") is None
     assert good["access_level"] == "full_text" and good["text_file"]
+
+
+# ----- #1200: the server offers only the tools an agent is allowed -----
+
+def _server_tool_names():
+    """Every tool name annot_mcp.py registers through `offered()`, read from its source."""
+    import ast
+    tree = ast.parse((ROOT / "labhq" / "tools" / "annot_mcp.py").read_text(encoding="utf-8"))
+    return {n.name for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and any(
+        isinstance(d, ast.Call) and getattr(d.func, "id", "") == "offered" for d in n.decorator_list)}
+
+
+def _server_env(tmp_path, tools=None):
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    config = tmp_path / "labhq.yaml"
+    config.write_text(json.dumps({"runner": {"state_dir": str(tmp_path / "state")},
+                                  "annot": {"alphagenome_key_file": str(tmp_path / "no-key" / "ag")}}),
+                      encoding="utf-8")
+    (tmp_path / "work").mkdir(exist_ok=True)
+    env = {"PYTHONPATH": str(ROOT), "LABHQ_WORKDIR": str(tmp_path / "work"), "LABHQ_CONFIG": str(config),
+           "HOME": str(home), "USERPROFILE": str(home)}
+    if tools is not None:
+        env["LABHQ_ANNOT_TOOLS"] = tools
+    return env
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed,expected", [
+    ("fulltext,crossref_doi", {"fulltext", "crossref_doi"}),
+    (",".join(LITERATURE_TOOLS), set(LITERATURE_TOOLS)),
+    ("", set()),  # an empty allowlist offers nothing
+])
+async def test_the_server_offers_only_the_tools_it_was_allowed(tmp_path, allowed, expected):
+    import sys
+    from labhq.models import McpServerSpec
+    from labhq.tools._mcpcompat import list_tools
+    tools = await list_tools(McpServerSpec(name="annot", command=sys.executable, args=["-m", "labhq.tools.annot_mcp"],
+                                           env=_server_env(tmp_path, allowed)))
+    assert set(tools) == expected
+
+
+@pytest.mark.asyncio
+async def test_without_an_allowlist_the_server_offers_everything_as_before(tmp_path):
+    import sys
+    from labhq.models import McpServerSpec
+    from labhq.tools._mcpcompat import list_tools
+    tools = await list_tools(McpServerSpec(name="annot", command=sys.executable, args=["-m", "labhq.tools.annot_mcp"],
+                                           env=_server_env(tmp_path)))
+    assert set(tools) == _server_tool_names() - {"alphagenome", "alphagenome_variant"}  # those need a key file
+
+
+@pytest.mark.parametrize("allowed", ["fulltext,fultext", "nonsense", "fulltext,,unpaywall"])
+def test_an_allowlist_naming_an_unknown_tool_stops_the_server(tmp_path, allowed):
+    """A typo must close the tool, not silently leave the agent without it or, worse, with the wrong set."""
+    import subprocess
+    import sys
+    done = subprocess.run([sys.executable, "-m", "labhq.tools.annot_mcp"], env={**os.environ, **_server_env(tmp_path, allowed)},
+                          stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+    assert done.returncode != 0 and "LABHQ_ANNOT_TOOLS" in done.stderr
+
+
+def test_the_runner_passes_the_allowlist_only_to_agents_that_have_one(tmp_path):
+    from labhq.models import Engine
+    from labhq.runner.daemon import Runner
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    try:
+        def annot_env(**extra):
+            agent = AgentSpec(id="a", name="A", role="r", engine=Engine.claude_code, builtin_mcp=["approval", "annot"],
+                              **extra)
+            return next(s for s in runner._mcp_servers(agent, {"LABHQ_WORKDIR": str(tmp_path)})
+                        if s.name == "labhq_annot").env
+
+        assert "LABHQ_ANNOT_TOOLS" not in annot_env()
+        assert annot_env(annot_tools=["fulltext", "unpaywall"])["LABHQ_ANNOT_TOOLS"] == "fulltext,unpaywall"
+        assert annot_env(annot_tools=[])["LABHQ_ANNOT_TOOLS"] == ""
+    finally:
+        runner.store.close()
+
+
+def test_every_agent_allowlist_names_tools_the_server_has():
+    known = _server_tool_names()
+    for path in sorted((ROOT / "agents").rglob("*.yaml")):
+        spec = AgentSpec.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        if spec.annot_tools is not None:
+            assert "annot" in spec.builtin_mcp, path.name
+            assert set(spec.annot_tools) <= known, (path.name, set(spec.annot_tools) - known)
+
+
+@pytest.mark.parametrize("bad", ["Fulltext", "full text", "../x", ""])
+def test_an_agent_allowlist_holds_plain_tool_names(bad):
+    with pytest.raises(ValueError):
+        AgentSpec(id="a", name="A", role="r", builtin_mcp=["annot"], annot_tools=[bad])
