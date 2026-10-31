@@ -16,6 +16,7 @@
     "tests/test_annot_keys_console.py",
     "tests/test_annot_literature.py",
     "tests/test_annot_regulatory.py",
+    "tests/test_annot_structure.py",
     "tests/test_approval_closed_grammar.py",
     "tests/test_approval_durable_606.py",
     "tests/test_approval_fatigue.py",

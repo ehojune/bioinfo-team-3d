@@ -1652,7 +1652,7 @@ def _annot_roster(a: dict) -> str:
     tools = a.get("annot_tools")
     if tools is None:
         return ("labhq_annot=yes (VEP with AlphaMissense for human GRCh38, gnomAD, ClinVar, ChIP-Atlas, ENCODE cCRE, "
-                "GTEx lookups; AlphaGenome when its key is set); ")
+                "GTEx, RCSB PDB structure and ChEMBL compound lookups; AlphaGenome when its key is set); ")
     return f"labhq_annot=yes (tools: {', '.join(tools)}); " if tools else ""
 
 

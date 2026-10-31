@@ -66,7 +66,7 @@ def test_the_view_and_the_cli_line_cap_at_the_limit_and_ignore_bad_records():
 
 def test_every_labhq_annot_tool_goes_through_the_20_minute_executor():
     tree = ast.parse(ANNOT_MCP.read_text(encoding="utf-8"))
-    runners = {"_run", "_run_literature", "_run_key_fulltext"}
+    runners = {"_run", "_run_literature", "_run_structure", "_run_key_fulltext"}
     functions = {node.name: node for node in ast.walk(tree) if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))}
 
     def calls(node):

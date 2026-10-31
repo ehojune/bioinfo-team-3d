@@ -515,7 +515,7 @@ async def test_stdio_server_lists_tools_and_answers_malformed_items_offline(tmp_
     # not registered.
     assert set(tools) == {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex",
                           "fulltext", "key_fulltext", "citation_chase", "preprints", "openalex_works",
-                          "crossref_doi", "unpaywall"}
+                          "crossref_doi", "unpaywall", "pdb", "chembl"}
     params = StdioServerParameters(command=sys.executable, args=["-m", "labhq.tools.annot_mcp"],
                                    env={**os.environ, **env})
     async with stdio_client(params) as streams:
