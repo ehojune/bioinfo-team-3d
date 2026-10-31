@@ -334,6 +334,47 @@ def _ended_by_cancel(req: dict) -> bool:
     """The request was cancelled, or its cancel is still committing (`cancelling` stays until the terminal record is out)."""
     return req.get("status") == "cancelled" or req.get("cancelling") is not None
 
+# Routing of a task pinned to WSL (#1204). Module functions, so a Hub test double that borrows ``dispatch`` needs
+# nothing more than it had.
+def _wsl_runner_ready(hub: "Hub", runner_id: str, agent_id: str) -> bool:
+    """The WSL runner itself is connected, reports a ready WSL and hosts ``agent_id``. Not about who owns the agent in
+    ``agent_runner``: another request's unfinished work can keep a native runner the owner."""
+    from ..wsl_readiness import wsl_readiness
+
+    caps = hub.runner_capabilities.get(runner_id, {})
+    return bool(runner_id in hub.runners and caps.get("runtime_env") == "wsl" and
+                wsl_readiness(caps.get("wsl_readiness", {})) and
+                runner_id in hub.effective_roster(hosts=True).get(agent_id, ()))
+
+
+def _wsl_pin(meta: dict | None) -> str | None:
+    """The WSL runner a request's task is pinned to (``Hub._pin_wsl_request``), or None. A resumed session's pin is not
+    this one: it keeps its old rule (the owner must match, or the task is refused at $0)."""
+    meta = meta or {}
+    return str(meta["session_runner"]) if meta.get("wsl_pin") and meta.get("session_runner") else None
+
+
+def _target_runner(hub: "Hub", agent_id: str, meta: dict | None = None) -> str | None:
+    """Where a task goes: the WSL runner it is pinned to while that one is ready, else the agent's owner."""
+    pin = _wsl_pin(meta)
+    if pin and _wsl_runner_ready(hub, pin, agent_id):
+        return pin
+    return hub.agent_runner.get(agent_id)
+
+
+def _runner_ready_for(hub: "Hub", agent_id: str, meta: dict | None = None) -> bool:
+    """Is the runner this task must use connected (a pinned task waits for its WSL runner, not for the owner)."""
+    pin = _wsl_pin(meta)
+    if pin:
+        return _wsl_runner_ready(hub, pin, agent_id)
+    return hub.agent_runner.get(agent_id) in hub.runners
+
+
+def _pin_kwargs(meta: dict | None) -> dict:
+    """What ``wait_agent_online`` is told about a WSL-pinned task; nothing for any other task."""
+    return {"meta": meta} if _wsl_pin(meta) else {}
+
+
 class Hub:
     result_review_required = True
 
@@ -2283,7 +2324,8 @@ class Hub:
         hosted_agents = {aid for aid, a in self.effective_roster().items() if a["runner_id"] == runner_id}
         for tid, entry in self.store.all("task").items():
             if (not entry.get("completed") and
-                    (entry.get("payload") or {}).get("agent_id") in hosted_agents and
+                    ((entry.get("payload") or {}).get("agent_id") in hosted_agents or
+                     entry.get("runner_id") == runner_id) and
                     not self._same_runner_generation(entry, runner_id, incarnation)):
                 self._abandon_previous_generation(tid, entry)
         self._session_state_changed()
@@ -2317,7 +2359,8 @@ class Hub:
         hosted_agents = {aid for aid, a in self.effective_roster().items() if a["runner_id"] == runner_id}
         for tid, entry in self.store.all("task").items():
             if (not entry.get("completed") and
-                    (entry.get("payload") or {}).get("agent_id") in hosted_agents and
+                    ((entry.get("payload") or {}).get("agent_id") in hosted_agents or
+                     entry.get("runner_id") == runner_id) and
                     not self._same_runner_generation(entry, runner_id, incarnation)):
                 (await self._aabandon_previous_generation(tid, entry))
         self._session_state_changed()
@@ -3253,11 +3296,13 @@ class Hub:
             if (entry.get("ask") or {}).get("request_id") == rid and entry.get("state") in {"pending", "working"}:
                 self._start_ask(AskRequest.model_validate(entry["ask"]), entry.get("origin"))
 
-    def effective_roster(self, *, include_history: bool = False) -> dict[str, dict]:
+    def effective_roster(self, *, include_history: bool = False, hosts: bool = False) -> dict[str, Any]:
         """Resolve one owner per agent. Unfinished deliveries pin ownership even while offline.
 
         Advertised rosters are input only here; routing, recovery and registration use this view.
         History is for discovery/waiting, never for dispatch to a disconnected runner.
+        ``hosts=True`` gives instead, per agent, every runner that may host it (a WSL runner that is not ready left
+        out): the owner is one of them, and a task pinned to a WSL runner goes there whatever the owner is (#1204).
         """
         from ..wsl_readiness import wsl_readiness
 
@@ -3274,6 +3319,8 @@ class Hub:
                         not wsl_readiness(caps.get("wsl_readiness", {}))):
                     continue
                 candidates.setdefault(aid, {})[rid] = agent
+        if hosts:
+            return {aid: set(runners) for aid, runners in candidates.items()}
         owners = {}
         for aid, hosts in candidates.items():
             online = [rid for rid in hosts if rid in self.runners]
@@ -3288,6 +3335,8 @@ class Hub:
                 aid = (entry.get("payload") or {}).get("agent_id")
                 rid = entry.get("runner_id")
                 if aid and rid and not entry.get("completed"):
+                    if _wsl_pin((entry.get("payload") or {}).get("meta")):
+                        continue  # a request's WSL pin goes to that runner by itself; it never makes it the owner (#1204)
                     owners[aid] = rid
                     prior = next((a for a in self.last_runner_rosters.get(rid, {}).get("agents", [])
                                   if a.get("id") == aid), {"id": aid})
@@ -3350,7 +3399,7 @@ class Hub:
         req = self.requests.get(task.request_id or "")
         if req is None or not is_active_request(req.get("status")):
             return False
-        if (first and not self.runners) or task.agent_id in self.agent_runner:
+        if (first and not self.runners) or task.agent_id in self.agent_runner or _wsl_pin(task.meta):
             return True
         # Known from the roster of a runner that is away; a connected runner that dropped the agent does not count.
         owner = self.effective_roster(include_history=True).get(task.agent_id)
@@ -3511,16 +3560,20 @@ class Hub:
         if stopped is not None:
             return ((self.requests[rid].get("wsl_setup") or {}).get("note") or stopped.error
                     or "이 PC의 WSL을 준비하지 못해 WSL 없이 진행합니다")
-        if not await self._wait_for_wsl_owner(rid, agent):
+        if not await self._wait_for_wsl_runner(rid, agent):
             return "이 PC의 WSL runner가 시간 안에 연결되지 않아 WSL 없이 진행합니다"
         return None
 
-    async def _wait_for_wsl_owner(self, rid: str, agent: str) -> bool:
-        """The one wait left: until a ready, connected WSL runner owns ``agent`` (``effective_roster`` gives it to the
-        WSL runner as soon as it is ready), at most ``WSL_RUNNER_WAIT_S``. False on timeout or request cancel."""
+    def _holder_runner(self, agent_id: str, entry: dict) -> str | None:
+        """The runner an earlier task of the ledger lives on: its WSL pin, else the agent's owner."""
+        return _wsl_pin((entry.get("payload") or {}).get("meta")) or self.agent_runner.get(agent_id)
+
+    async def _wait_for_wsl_runner(self, rid: str, agent: str) -> bool:
+        """The one wait left: until the ready, connected WSL runner hosts ``agent``, at most ``WSL_RUNNER_WAIT_S``.
+        False on timeout or request cancel."""
         wsl_id = self.s.runner.wsl.id
         deadline = time.monotonic() + min(float(self.s.gateway.runner_wait_s), WSL_RUNNER_WAIT_S)
-        while self.agent_runner.get(agent) != wsl_id or wsl_id not in self.runners:
+        while not _wsl_runner_ready(self, wsl_id, agent):
             if (self.requests.get(rid) or {}).get("status") == "cancelled" or time.monotonic() >= deadline:
                 return False
             await asyncio.sleep(0.2)
@@ -3531,7 +3584,9 @@ class Hub:
         a native runner that also hosts the agent is refused at $0 instead of taking the work (#612)."""
         req = self.requests.get(task.request_id or "") or {}
         if req.get("wsl_pinned") and task.agent_id in WSL_BOUND_AGENTS:
-            task.meta.setdefault("session_runner", self.s.runner.wsl.id)
+            wsl_id = self.s.runner.wsl.id
+            if task.meta.setdefault("session_runner", wsl_id) == wsl_id:
+                task.meta["wsl_pin"] = True  # this request chose the pin; a resumed session of another runner did not
 
     async def wait_for_runner(self, task: Task, *, first: bool = False) -> bool:
         """Park the task's request as waiting_for_runner until a runner hosting the agent connects, at most
@@ -3551,7 +3606,8 @@ class Hub:
                                                 f"{task.agent_id} 작업부터 이어 갑니다."}})
         try:
             return await self.wait_agent_online(task.agent_id, bound,
-                                                still_waiting=lambda: self._waits_for_runner(task, first=first))
+                                                still_waiting=lambda: self._waits_for_runner(task, first=first),
+                                                **_pin_kwargs(task.meta))
         finally:
             before = req.get("status")
             waits = req.get("runner_waits") or {}
@@ -3563,11 +3619,14 @@ class Hub:
             await self._publish_hold_status(rid, before)  # open pages see the request move on
 
     async def wait_agent_online(self, agent_id: str, timeout_s: float,
-                                still_waiting: Callable[[], bool] | None = None) -> bool:
+                                still_waiting: Callable[[], bool] | None = None,
+                                meta: dict | None = None) -> bool:
+        """Until the runner the task needs is up: the agent's owner, or for a task pinned to WSL that runner (#1204)."""
         signal = self.agent_online.setdefault(agent_id, asyncio.Event())
         deadline = asyncio.get_running_loop().time() + timeout_s
+        pinned = _wsl_pin(meta) is not None
         while True:
-            if self.agent_runner.get(agent_id) in self.runners:
+            if _runner_ready_for(self, agent_id, meta):
                 return True
             if still_waiting is not None and not still_waiting():
                 return False
@@ -3575,10 +3634,11 @@ class Hub:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 return False
-            try:
-                await asyncio.wait_for(signal.wait(), remaining)
+            try:  # a pinned runner can connect without the agent's owner changing: look again every second
+                await asyncio.wait_for(signal.wait(), min(remaining, 1.0) if pinned else remaining)
             except asyncio.TimeoutError:
-                return False
+                if not pinned:
+                    return False
 
     async def send_runner(self, runner_id: str, msg: dict) -> None:
         ws = self.runners.get(runner_id)
@@ -4161,7 +4221,7 @@ class Hub:
                 if checkpoint and checkpoint.get("task_id") == tid:
                     self.recovered_tasks.add(tid)
                     return TaskResult.model_validate(checkpoint["result"]).model_copy(update={"cost_usd": 0.0})
-                current_runner = self.agent_runner.get(task.agent_id)
+                current_runner = _target_runner(self, task.agent_id, task.meta)
                 if not self._same_runner_generation(entry, current_runner,
                                                     self.runner_incarnations.get(current_runner)):
                     self.recovered_tasks.add(tid)
@@ -4173,11 +4233,11 @@ class Hub:
         if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                               error="request cancelled")
-        if self.agent_runner.get(task.agent_id) not in self.runners:
+        if not _runner_ready_for(self, task.agent_id, task.meta):
             stopped = await self.offer_wsl_setup(task)  # the local WSL runner is not ready: one PI card, not a wait
             if stopped is not None:
                 return stopped
-        if self.agent_runner.get(task.agent_id) not in self.runners and self._waits_for_runner(task):
+        if not _runner_ready_for(self, task.agent_id, task.meta) and self._waits_for_runner(task):
             arrived = await self.wait_for_runner(task)
             if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
@@ -4186,7 +4246,7 @@ class Hub:
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                                   error_kind="runner_offline", error=self._runner_wait_failure(task.agent_id))
             # Not arrived and nothing left to wait for: a runner came back without the agent (#521), below.
-        rid = self.agent_runner.get(task.agent_id)
+        rid = _target_runner(self, task.agent_id, task.meta)
         if not rid:
             # Nothing was sent, so nothing was spent: a real $0, not an unaccounted cost (#270).
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
@@ -4245,7 +4305,8 @@ class Hub:
             deadline = asyncio.get_running_loop().time() + self.s.orchestrator.runner_reconnect_timeout_s
             while not fut.done():
                 remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0 or not await self.wait_agent_online(task.agent_id, remaining):
+                if remaining <= 0 or not await self.wait_agent_online(task.agent_id, remaining,
+                                                                      **_pin_kwargs(task.meta)):
                     if fut.done():
                         break
                     self.futures.pop(task.id, None)
@@ -4257,7 +4318,7 @@ class Hub:
                     return result
                 if fut.done():
                     break
-                target = self.agent_runner[task.agent_id]
+                target = _target_runner(self, task.agent_id, task.meta)
                 refused = self._session_pin_refusal(task, target,
                                                     self.runner_capabilities.get(target, {}).get("runtime_env"))
                 if (refused or target != rid or
@@ -4301,9 +4362,9 @@ class Hub:
                             "data": {"step_id": sid, "reason": reason}})
         try:
             if not entry.get("accepted") and entry.get("payload"):
-                runner_id = self.agent_runner.get(agent_id)
-                pinned = ((entry["payload"].get("meta") or {}).get("session_runner")
-                          if isinstance(entry["payload"], dict) else None)
+                prior_meta = entry["payload"].get("meta") if isinstance(entry["payload"], dict) else None
+                runner_id = _target_runner(self, agent_id, prior_meta)
+                pinned = (prior_meta or {}).get("session_runner")
                 if runner_id and (not pinned or pinned == runner_id):  # a pinned session never goes elsewhere
                     try:
                         await self.send_runner(runner_id, {"type": "task.dispatch", "task": entry["payload"]})
@@ -4315,7 +4376,7 @@ class Hub:
             deadline = None
             while not future.done():
                 accepted = bool((self.store.get("task", tid) or {}).get("accepted"))
-                online = self.agent_runner.get(agent_id) in self.runners
+                online = _runner_ready_for(self, agent_id, (entry.get("payload") or {}).get("meta"))
                 if accepted and online:
                     deadline = None
                 elif deadline is None:
@@ -4370,7 +4431,7 @@ class Hub:
             await self.wait_agent_online(agent_id, self.s.gateway.resume_wait_s)
             entry = self.store.get("task", tid) or entry
         if not entry.get("completed"):
-            runner = self.agent_runner.get(agent_id)
+            runner = self._holder_runner(agent_id, entry)
             if not self._same_runner_generation(entry, runner, self.runner_incarnations.get(runner)):
                 return attempt, None
             await self._await_prior_task(tid, entry, agent_id, entry.get("request_id"), "consult",
@@ -4438,13 +4499,14 @@ class Hub:
                     # The known holders finished, but a continuation (ask, job, retry) may already hold
                     # the session under a new task id: rescan the ledger once before releasing it.
                     break
-                runner = self.agent_runner.get(agent_id)
-                online = runner in self.runners
+                runner_of = {tid: self._holder_runner(agent_id, entry) for tid, entry in holders}
+                online = all(r in self.runners for r in runner_of.values())
                 if online:
                     offline_deadline = None
                 elif offline_deadline is None:
                     offline_deadline = loop.time() + self.s.gateway.resume_wait_s
                 for tid, entry in holders:
+                    runner = runner_of[tid]
                     running = (online and bool(entry.get("accepted")) and
                                self._same_runner_generation(entry, runner, self.runner_incarnations.get(runner)))
                     if entry.get("abandoned"):

@@ -11,6 +11,7 @@ from labhq import cli, wsl_setup
 from labhq.gateway.server import Hub
 from labhq.models import Task
 from labhq.pi_text import approval_copy
+from labhq.wsl_readiness import REQUIRED
 from labhq.settings import Settings
 
 ADMIN = wsl_setup.ADMIN_HINTS["java"]
@@ -242,8 +243,8 @@ async def test_a_request_that_did_not_ask_for_wsl_gets_no_check_and_no_card(hub,
 def wsl_owns_the_agent(hub):
     """What the roster looks like once the WSL runner is ready and connected."""
     wsl_id = hub.s.runner.wsl.id
-    hub.runners[wsl_id] = object()
-    hub.agent_runner["bioinfo-agent"] = wsl_id
+    hub.register_runner(wsl_id, object(), [{"id": "bioinfo-agent", "engine": "claude_code"}], "inc-wsl",
+                        {"runtime_env": "wsl", "wsl_readiness": {key: True for key in REQUIRED}}, "proc-wsl")
     return wsl_id
 
 
