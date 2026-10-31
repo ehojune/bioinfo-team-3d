@@ -147,7 +147,7 @@ def factory(tmp_path, monkeypatch):
         asyncio.run(client.aclose())
 
 
-async def test_success_filters_summary_records_and_cache(factory, tmp_path):
+async def test_success_filters_summary_records_without_cache(factory, tmp_path):
     a, backend, calls, secret = factory()
     kwargs = dict(ontology_terms=["UBERON:0002107"], gene_ids=["ENSG00000000001"])
     result = await a.alphagenome_atlas(["chr1:100:A>G", "1:100:A:G"], **kwargs)
@@ -163,7 +163,7 @@ async def test_success_filters_summary_records_and_cache(factory, tmp_path):
     assert variants[0][1].position == 100
     assert variants[0][2] == dict(requested_scorers=["RNA_SEQ"], **kwargs)
     second = await a.alphagenome_atlas(["chr1:100:A:G"], top=1, **kwargs)
-    assert second["n_cached"] == 1 and len(calls) == 3
+    assert second["n_cached"] == 0 and len(calls) == 4
     assert (a.workdir / result["full_result"]).is_file()
     ledger = (a.workdir / result["query_log"]).read_text(encoding="utf-8")
     assert '"n_ok": 2' in ledger and "chr1" not in ledger
@@ -172,7 +172,94 @@ async def test_success_filters_summary_records_and_cache(factory, tmp_path):
     backend.version = "0.10.1"
     await a.alphagenome_atlas(["chr1:100:A:G"], **kwargs)
     await a.alphagenome_atlas(["chr1:100:A:G"], ontology_terms=["UBERON:0000955"])
-    assert len([c for c in calls if c[0] == "variant"]) == 3
+    assert len([c for c in calls if c[0] == "variant"]) == 4
+
+
+async def test_credential_change_and_legacy_cache_cannot_bypass_authorization(factory, tmp_path):
+    from labhq.tools.annot import Cache
+
+    a, _, _, secret_a = factory()
+    first = await a.alphagenome_atlas(["chr1:100:A:G"])
+    assert first["n_ok"] == 1
+    full = json.loads((a.workdir / first["full_result"]).read_text(encoding="utf-8"))
+    # Seed the exact unscoped schema used before this fix, even when new writes stop.
+    options = dict(assembly="GRCh38", requested_scorers=["RNA_SEQ"], ontology_terms=[],
+                   gene_ids=[], schema=2, saved_rows_limit=atlas.MAX_ROWS)
+    cache_key = Cache.key("alphagenome_atlas", first["source"]["release_or_version"],
+                          options, "chr1:100:A:G")
+    a.cache.put("alphagenome_atlas", cache_key, full["results"][0]["answer"],
+                first["source"]["queried_at"])
+    b, _, calls, secret_b = factory(error=PermissionError)
+    result = await b.alphagenome_atlas(["chr1:100:A:G"])
+    assert result["n_cached"] == 0 and result["n_errors"] == 1
+    assert any(c[0] == "variant" for c in calls)
+    assert "권한" in result["results"][0]["error"]
+    written = "".join(p.read_text(encoding="utf-8") for p in tmp_path.rglob("*.json*"))
+    assert secret_a not in written and secret_b not in written
+
+
+async def test_atlas_does_not_read_or_write_shared_cache(factory, monkeypatch):
+    a, _, calls, _ = factory()
+    def forbidden(*args, **kwargs):
+        pytest.fail("Atlas must not reuse persistent credential-independent answers")
+    monkeypatch.setattr(a.cache, "get", forbidden)
+    monkeypatch.setattr(a.cache, "put", forbidden)
+    for _ in range(2):
+        result = await a.alphagenome_atlas(["chr1:100:A:G", "1:100:A:G"])
+        assert result["n_ok"] == 2 and result["n_cached"] == 0
+    assert len([c for c in calls if c[0] == "variant"]) == 2
+
+
+class NullableOntology:
+    """pd.NA's scalar contract without requiring the optional Atlas SDK stack."""
+    def __bool__(self):
+        raise TypeError("boolean value of NA is ambiguous")
+
+    def __str__(self):
+        return "<NA>"
+
+
+@pytest.mark.parametrize("metadata,expected", [
+    ({}, 1), ({"ontology_curie": None}, 1), ({"ontology_curie": float("nan")}, 1),
+    ({"ontology_curie": NullableOntology()}, 1),
+    ({"ontology_curie": "UBERON:0002107"}, 1), ({"ontology_curie": "UBERON:0000955"}, 0),
+])
+async def test_nullable_ontology_filter(factory, metadata, expected):
+    data = scores([[1.0]], [[0.5]])
+    data.var = Frame([metadata])
+    a, *_ = factory(data={"RNA_SEQ": data})
+    result = await a.alphagenome_atlas(["chr1:100:A:G"], ontology_terms=["UBERON:0002107"])
+    assert result["n_ok"] == 1
+    assert result["results"][0]["n_rows"] == expected
+
+
+async def test_pandas_nullable_ontology_filter(factory):
+    pd = pytest.importorskip("pandas")
+    data = scores([[1.0]], [[0.5]])
+    data.var = Frame([{"ontology_curie": pd.NA}])
+    a, *_ = factory(data={"RNA_SEQ": data})
+    result = await a.alphagenome_atlas(["chr1:100:A:G"], ontology_terms=["UBERON:0002107"])
+    assert result["n_ok"] == 1 and result["results"][0]["n_rows"] == 1
+    assert result["results"][0]["top"][0]["ontology_curie"] is None
+
+
+@pytest.mark.parametrize("allowlist,deny,expected", [
+    (["pubmed"], [], "skip"), ([], [], "skip"),
+    (["alphagenome_atlas"], [], "ok"), (None, [], "ok"),
+    (["alphagenome_atlas"], ["mcp__labhq_annot__*"], "skip"),
+    (None, ["mcp__labhq_annot"], "skip"),
+])
+def test_doctor_atlas_matches_broker_allowlist(monkeypatch, allowlist, deny, expected):
+    from labhq import doctor
+    from labhq.runner.annot_broker import atlas_allowed
+
+    monkeypatch.setenv(atlas.KEY_ENV, "fake-key")
+    monkeypatch.setattr(atlas, "sdk_available", lambda: True)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.codex,
+                      builtin_mcp=["annot"], annot_tools=allowlist, disallowed_tools=deny)
+    assert atlas_allowed(agent, read_only=False) == (expected == "ok")
+    row = doctor._alphagenome_atlas_row(Settings(), [agent])
+    assert row["status"] == expected
 
 
 async def test_env_only_missing_key_and_unsupported_sdk(factory, monkeypatch):
