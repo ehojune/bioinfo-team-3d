@@ -284,8 +284,10 @@ _EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_
 
 # Flip only when a protected alias hands the validated runner-local interpreter to consumers of every engine.
 ENVIRONMENT_ALIAS_AVAILABLE = False
-# Engines that receive a verified environment as a read-only grant instead (`read_dirs`, Edit/Write denied): only
-# Claude gets `read_dirs`, so every other engine stays refused until it can be given the same grant (#674).
+# Engines that receive a verified environment (#674): its interpreter path in `LABHQ_ENV_PYTHON` and a briefing line.
+# Claude also gets the folder as a read-only root (`read_dirs`, Edit/Write denied); Codex's sandbox already reads outside
+# the work folder and Gemini has no read-only grant to give, so they get the path only. Other engines stay refused.
+ENVIRONMENT_ENGINES = frozenset({Engine.claude_code, Engine.codex, Engine.gemini})
 ENVIRONMENT_GRANT_ENGINES = frozenset({Engine.claude_code})
 
 ACK_DRAIN_S = 5.0  # how long a reconnect waits for the acks it already received to commit (#1125)
@@ -1846,14 +1848,16 @@ class Runner:
             read_only = is_read_only_task(task.meta, agent)
         except Exception:  # noqa: BLE001 - an unknown agent is refused later; here it simply gets no grant
             engine = None
-        if engine in ENVIRONMENT_GRANT_ENGINES:
+        if engine in ENVIRONMENT_ENGINES:
             if read_only:  # a read-only run takes no grant, and running it on the system Python would be another result
                 return prefix + "a read-only step cannot be given the planned environment"
             for grant in verified:
                 problem = self._environment_grant_problem(Path(grant["venv"]))
                 if problem:  # Claude would follow a link out of the venv: fail closed, no grant
                     return prefix + f"environment folder cannot be shared read-only: {problem}"
-            grants[task.id] = verified  # the consumer reads the verified .venv through read_dirs (#674)
+            for grant in verified:
+                grant["read_dir"] = engine in ENVIRONMENT_GRANT_ENGINES  # Claude opens the folder; the rest get the path
+            grants[task.id] = verified
             return None
         if not ENVIRONMENT_ALIAS_AVAILABLE:
             # The validated .venv is not exposed to the consumer (no protected alias or read grant for this engine),
@@ -1885,11 +1889,12 @@ class Runner:
         """(read dirs with the verified environments added, extra env, briefing line) for a consumer step (#674).
 
         The grant is the folder the runner just verified, opened read-only like a reference folder (Claude denies
-        Edit/Write there); a read-only run takes none. `PYTHONDONTWRITEBYTECODE` keeps Python from writing into it."""
+        Edit/Write there); a read-only run takes none. `PYTHONDONTWRITEBYTECODE` keeps Python from writing into it.
+        Engines other than Claude get the env and the briefing line without the extra read root."""
         grants = self.__dict__.get("_env_grants", {}).get(task.id) or []
         if read_only or not grants:
             return read_dirs, {}, ""
-        dirs = list(dict.fromkeys([*read_dirs, *(grant["venv"] for grant in grants)]))
+        dirs = list(dict.fromkeys([*read_dirs, *(grant["venv"] for grant in grants if grant.get("read_dir"))]))
         python = grants[0]["python"]
         note = ("[Runner environment]\n" + "\n".join(
             f"- Python with the packages the plan asked for ({grant['step_id']}): {grant['python']}" for grant in grants)
