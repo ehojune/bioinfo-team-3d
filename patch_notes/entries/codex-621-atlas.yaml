@@ -1,6 +1,6 @@
 pr: 1186
 rows:
-  - sha: "c3764506"
+  - sha: "2552fd98"
     at: "2026-10-31 21:00"
     summary: "Atlas 조회가 금지된 직원에게 조회 권한을 발급하지 않아 직접 HTTP 우회도 막습니다."
     text: "fix: enforce Atlas role denies before broker grants"
