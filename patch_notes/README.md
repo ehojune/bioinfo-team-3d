@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:00 | [`34700c5`](https://github.com/ehojune/bioinfo-team-3d/pull/1252/commits/34700c5) | **설명서에 AlphaGenome 사용 가능 여부를 각 작업 프로그램이 알리고 직원 명단은 그 직원을 맡은 프로그램을 따른다는 점, 키를 넣은 뒤 다시 시작해야 한다는 점을 적었습니다.**<br>문서: AlphaGenome 준비 상태를 runner가 보고하고 명단은 직원을 맡은 runner를 따른다 (#1252 리뷰 P1) |
+| 02:00 | [`38efd2f`](https://github.com/ehojune/bioinfo-team-3d/pull/1252/commits/38efd2f) | **작업 프로그램이 여럿일 때, 직원 명단의 AlphaGenome 조회 도구 표시가 그 직원을 맡은 작업 프로그램의 상태를 따릅니다.**<br>AlphaGenome 명단 표시는 직원을 맡은 runner의 보고로 정한다 (#1252 리뷰 P1) |
+| 01:10 | [`6868205`](https://github.com/ehojune/bioinfo-team-3d/pull/1252/commits/6868205) | **작업 프로그램이 보고하는 능력 목록의 시험이 이 PC에 AlphaGenome 키가 있는지에 따라 달라지지 않습니다.**<br>시험: runner 보고 capabilities 비교가 이 PC의 AlphaGenome 키와 무관하게 한다 (#1200) |
+| 01:00 | [`46bf521`](https://github.com/ehojune/bioinfo-team-3d/pull/1252/commits/46bf521) | **AlphaGenome 키가 서버와 다른 계정이나 PC의 작업 프로그램에 있어도, 계획을 세우는 직원 명단에서 그 조회 도구가 빠지지 않습니다.**<br>AlphaGenome 준비 상태를 gateway가 아니라 runner가 등록 때 보고한다 (#1200 #1246) |
 | 00:00 | [`8e60b3d`](https://github.com/ehojune/bioinfo-team-3d/pull/1245/commits/8e60b3d) | **시험용 보조 파일이 폴더 깊숙이 있어도, 그 위 폴더를 통째로 읽는 시험이 자동 검사에 포함됩니다.**<br>Windows 시험 선택: 깊이 중첩된 fixture는 그 위 폴더를 읽는 시험도 고른다 (#1245 리뷰 P2) |
 
 ## 2026-11-01
