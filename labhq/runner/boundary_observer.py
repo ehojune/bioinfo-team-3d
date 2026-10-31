@@ -15,6 +15,8 @@ def _text(value):
 
 
 def verify_event(event, key_id, key, run_id, nonce, sequence, kind, identity=None):
+    if not _text(key_id):
+        raise ValueError("producer key identifier")
     if not isinstance(event, dict) or set(event) != {"version", "run_id", "nonce", "sequence", "kind", "identity", "auth"}:
         raise ValueError("event shape")
     ident, auth = event["identity"], event["auth"]
@@ -58,7 +60,7 @@ def observe(events, *, run_id, nonce, producer_key_id, producer_key, observer_ke
     Collector receives phase and identity and returns a synthetic inventory mapping.
     This function cannot establish the collector's independence or completeness.
     """
-    if not _text(run_id) or not _text(nonce) or not _text(observer_key_id):
+    if not _text(run_id) or not _text(nonce) or not _text(producer_key_id) or not _text(observer_key_id):
         raise ValueError("expectations")
     iterator = iter(events)
     try:

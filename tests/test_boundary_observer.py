@@ -106,3 +106,11 @@ def test_later_collection_cannot_change_earlier_snapshot(tmp_path):
     evidence = invoke(copy.deepcopy(FIXTURE['events']), ReplayStore(tmp_path / 'replay.sqlite'), collect)
     assert evidence['snapshots'][0]['complete'] is True
     assert evidence['snapshots'][0]['processes'] == [evidence['identity']]
+
+
+@pytest.mark.parametrize('key_id', ['', None, 123])
+def test_producer_key_identifier_required(key_id):
+    event = copy.deepcopy(FIXTURE['events'][0])
+    event['auth']['key_id'] = key_id
+    with pytest.raises(ValueError, match='producer key identifier'):
+        verify_event(event, key_id, KEY, 'fixture-run', 'fixture-nonce', 1, 'launch')
