@@ -482,6 +482,9 @@ async function openDemo(opts = {}) {
     const [browser, browserArgs] = browserCommand(chromePath, ['--headless=new', '--remote-debugging-port=0',
       `--user-data-dir=${profile}`,
       '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--force-color-profile=srgb',
+      // The demo talks only to its own loopback server. Without this Chrome may look up the system proxy first; on the CI
+      // Windows runner the first request reached the page's server 11.6 s after the navigation (#1076).
+      '--no-proxy-server',
       `--lang=${process.env.LABHQ_TEST_LOCALE || 'ko-KR'}`,
       ...(process.env.LABHQ_TEST_CHROME_ARGS ? process.env.LABHQ_TEST_CHROME_ARGS.split(' ') : []),
       ...(process.env.CI ? ['--no-sandbox'] : []), 'about:blank'], jobPython);
