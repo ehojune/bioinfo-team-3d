@@ -6,7 +6,8 @@ Integration hold: manuals are owned by another worker. The runner retains `ALPHA
 
 | Contract | Implementation |
 |---|---|
-| Credentials | Runner/expanded engine/task environment precedence. Remove the key name, shadowed values and value aliases from staff environments. Refuse key-bearing launch overrides before prepare; refuse literal keys before making staff config copies. Use environment references in configuration. Doctor checks process plus expanded Codex engine environment. |
+| Credentials | Runner/expanded engine/task precedence. Remove keys and aliases from staff environments; refuse key-bearing launch overrides and literal staff config copies. Use environment references. Doctor checks active Atlas staff engines, including force_engine, with the runner's resolver; partial key availability warns. Task overrides and live access remain unverified. |
+| Roles | chief_of_staff denies Atlas alongside the existing variant/region tools; literature tools remain available. |
 | Inputs | GRCh38 SNVs, 1–10 per call; scorer names 1–10 (default `RNA_SEQ`); ontology CURIEs and Ensembl gene IDs up to 20 each. No interval/bulk or automatic inference fallback. |
 | Output | Raw scores, available quantiles, signed direction, tissue/gene metadata, explicit precomputed source and usage terms. Empty filtered scores do not establish no effect. AVI is supported only if the service exposes that requested scorer; its live name/availability is unverified. |
 | Bounds | One active Atlas query per task; 16 KiB request cap, 300-second SDK wait, 20-minute step deadline. Task finish, HTTP disconnect and timeout cancel the operation and disable later RPCs. An already-running SDK RPC may finish on its bounded daemon thread. At most 1 million score cells, 1,000 saved rows and 100 displayed per variant. |

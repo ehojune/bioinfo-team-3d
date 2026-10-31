@@ -438,7 +438,8 @@ async def test_cancel_during_metadata_never_starts_variant_rpc(factory):
     ("fake-parent-key", None, True),
     (None, "${ATLAS_TEST_KEY}", True),
 ])
-def test_doctor_atlas_uses_codex_environment(monkeypatch, parent, engine, present):
+@pytest.mark.parametrize("engine_name", ["codex", "claude_code"])
+def test_doctor_atlas_uses_agent_environment(monkeypatch, parent, engine, present, engine_name):
     from labhq import doctor
     from labhq.settings import Settings
 
@@ -447,13 +448,66 @@ def test_doctor_atlas_uses_codex_environment(monkeypatch, parent, engine, presen
     if parent is not None:
         monkeypatch.setenv(atlas.KEY_ENV, parent)
     settings = Settings()
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine(engine_name), builtin_mcp=["annot"])
+    monkeypatch.setattr(doctor, "_roster", lambda s: [agent])
     if engine is not None:
-        settings.engines.codex.env[atlas.KEY_ENV] = engine
+        getattr(settings.engines, engine_name).env[atlas.KEY_ENV] = engine
     monkeypatch.setattr(atlas, "sdk_available", lambda: True)
     row = doctor._alphagenome_atlas_row(settings)
     assert row["status"] == ("ok" if present else "skip")
     for value in ("fake-engine-key", "fake-parent-key", "fake-expanded-key"):
         assert value not in json.dumps(row)
+
+
+@pytest.mark.parametrize("engines,claude_key,codex_key,force,blocked,status", [
+    (["claude_code"], None, "fake-unused-key", None, False, "skip"),
+    (["claude_code"], "fake-claude-key", "", None, False, "ok"),
+    (["claude_code", "codex"], "fake-claude-key", "", None, False, "warn"),
+    (["claude_code", "codex"], "fake-claude-key", "fake-codex-key", None, False, "ok"),
+    (["claude_code"], "fake-claude-key", "", "codex", False, "skip"),
+    (["codex"], "fake-claude-key", "", "claude_code", False, "ok"),
+    (["claude_code"], "fake-claude-key", None, None, True, "skip"),
+    ([], "fake-claude-key", "fake-codex-key", None, False, "skip"),
+])
+def test_doctor_atlas_checks_only_effective_eligible_engines(
+        monkeypatch, engines, claude_key, codex_key, force, blocked, status):
+    from labhq import doctor
+
+    monkeypatch.delenv(atlas.KEY_ENV, raising=False)
+    settings = Settings()
+    settings.runner.force_engine = force
+    for name, key in (("claude_code", claude_key), ("codex", codex_key)):
+        if key is not None:
+            getattr(settings.engines, name).env[atlas.KEY_ENV] = key
+    agents = [AgentSpec(id=f"worker-{i}", name="Worker", role="test", engine=Engine(name),
+                       builtin_mcp=["annot"],
+                       disallowed_tools=["mcp__labhq_annot__alphagenome_atlas"] if blocked else [])
+              for i, name in enumerate(engines)]
+    # A configured engine with a key must not count if its staff cannot use annot.
+    agents.append(AgentSpec(id="unrelated", name="Other", role="test", engine=Engine.claude_code,
+                            builtin_mcp=[]))
+    monkeypatch.setattr(doctor, "_roster", lambda s: agents)
+    monkeypatch.setattr(atlas, "sdk_available", lambda: True)
+    row = doctor._alphagenome_atlas_row(settings)
+    assert row["status"] == status
+    assert "fake-" not in json.dumps(row)
+    if status == "warn":
+        assert "codex" in row["detail"]
+
+
+def test_chief_of_staff_denies_atlas_in_claude_command(tmp_path):
+    from labhq.adapters.claude_code import ClaudeCodeAdapter
+
+    path = Path(__file__).resolve().parents[1] / "agents/core/chief_of_staff.yaml"
+    agent = AgentSpec.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    ctx = context(tmp_path)
+    ctx.agent = agent
+    ctx.task = Task(agent_id=agent.id, prompt="brief")
+    argv = ClaudeCodeAdapter(ctx.settings).build_command(ctx)
+    denied = argv[argv.index("--disallowedTools") + 1:]
+    assert "mcp__labhq_annot__alphagenome_atlas" in denied
+    assert "mcp__labhq_annot__alphagenome_variant" in denied
+    assert "mcp__labhq_annot__fulltext" not in denied
 
 
 def test_doctor_reports_presence_without_reading_key_file(monkeypatch):
