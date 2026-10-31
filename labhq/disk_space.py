@@ -217,3 +217,19 @@ def shell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, w
         if worst is None or (verdict.action == "ask" and worst.action != "ask"):
             worst = verdict
     return worst
+
+
+def preapproves_bulk_write(rule: str) -> bool:
+    """Whether a Claude `--allowedTools` rule such as `Bash(unzip *)` or `Bash(git clone *)` pre-approves a command
+    that `shell_check` reads. Claude runs a pre-approved call without asking the gate, so the rule is left out and
+    the call reaches the gate (and the disk check) instead (#678)."""
+    match = re.fullmatch(r"\s*Bash\((.*)\)\s*", rule, flags=re.DOTALL)
+    if not match:
+        return False
+    words = [w for w in re.split(r"[\s:*]+", match.group(1)) if w]
+    if not words:
+        return False
+    name = Path(words[0]).name.casefold().removesuffix(".exe")
+    if name == "git":
+        return words[1:2] == ["clone"]
+    return name in _BULK_TOOLS or name in {"curl", "wget", "unzip", "tar", "bsdtar", "7z", "7za", "7zr"}

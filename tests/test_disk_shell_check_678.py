@@ -169,3 +169,35 @@ async def test_a_low_drive_with_unknown_size_logs_a_warning_and_allows(gate, mon
     result = json.loads(await mcp.approval_prompt("Bash", {"command": "wget https://example.org/a.tgz"}))
     assert result["behavior"] == "allow"
     assert len(sent) == 1 and sent[0][0].endswith("/event") and sent[0][1]["data"]["level"] == "warn"
+
+
+def _allowed_tools(tmp_path, tools):
+    from labhq.adapters import get_adapter
+    from labhq.adapters.base import RunContext
+    from labhq.models import AgentSpec, Engine, Task
+    from labhq.settings import Settings
+    agent = AgentSpec(id="analyst", name="A", role="test", engine=Engine.claude_code, tools=list(tools),
+                      builtin_mcp=["approval"])
+    (tmp_path / "ws" / ".labhq").mkdir(parents=True, exist_ok=True)
+    ctx = RunContext(task=Task(agent_id=agent.id, prompt="x"), agent=agent, workdir=tmp_path / "ws",
+                     settings=Settings(), mcp_servers=[], env={}, emit=None, prompt="x", extra_dirs=[],
+                     claude_settings={})
+    cmd = get_adapter(agent.engine, Settings()).build_command(ctx)
+    i = cmd.index("--allowedTools")
+    end = cmd.index("--disallowedTools") if "--disallowedTools" in cmd else len(cmd)
+    return cmd[i + 1:end]
+
+
+def test_preapproved_download_and_unpack_rules_are_left_for_the_gate(tmp_path):
+    allowed = _allowed_tools(tmp_path, ["Read", "Bash(git clone *)", "Bash(unzip *)", "Bash(curl:*)", "Bash(tar xzf *)",
+                                        "Bash(uv *)", "Bash(ls *)", "Bash(mkdir *)"])
+    assert "Bash(git clone *)" not in allowed and "Bash(unzip *)" not in allowed
+    assert "Bash(curl:*)" not in allowed and "Bash(tar xzf *)" not in allowed
+    assert {"Read", "Bash(uv *)", "Bash(ls *)", "Bash(mkdir *)"} <= set(allowed)  # other rules are untouched
+
+
+@pytest.mark.parametrize("rule,expected", [
+    ("Bash(git clone *)", True), ("Bash(git status)", False), ("Bash(git *)", False), ("Bash(wget *)", True),
+    ("Bash(rsync -a *)", True), ("Bash(python *)", False), ("Bash", False), ("Read", False), ("Bash()", False)])
+def test_which_rules_preapprove_a_bulk_write(rule, expected):
+    assert disk_space.preapproves_bulk_write(rule) is expected
