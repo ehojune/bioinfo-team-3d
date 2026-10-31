@@ -82,3 +82,27 @@ def test_invalid_inventory_fails_closed(tmp_path, problem):
         return snap
     with pytest.raises(ValueError):
         invoke(copy.deepcopy(FIXTURE['events']), ReplayStore(tmp_path / 'replay.sqlite'), collect)
+
+
+def test_stream_cannot_change_authenticated_launch_identity(tmp_path):
+    events = copy.deepcopy(FIXTURE['events'])
+    def stream():
+        yield events[0]
+        events[0]['identity']['birth_id'] = 'changed'
+        yield events[1]
+    result = invoke(stream(), ReplayStore(tmp_path / 'replay.sqlite'))
+    assert result['identity'] == FIXTURE['events'][0]['identity']
+
+
+def test_later_collection_cannot_change_earlier_snapshot(tmp_path):
+    saved = []
+    def collect(phase, identity):
+        if saved:
+            saved[0]['complete'] = False
+            saved[0]['processes'].clear()
+        result = collector(phase, identity)
+        saved.append(result)
+        return result
+    evidence = invoke(copy.deepcopy(FIXTURE['events']), ReplayStore(tmp_path / 'replay.sqlite'), collect)
+    assert evidence['snapshots'][0]['complete'] is True
+    assert evidence['snapshots'][0]['processes'] == [evidence['identity']]

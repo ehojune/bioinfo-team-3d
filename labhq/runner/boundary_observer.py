@@ -1,4 +1,5 @@
 """Offline lifecycle observer model. No OS isolation or cleanup guarantees."""
+import copy
 import hashlib
 import hmac
 import json
@@ -32,7 +33,7 @@ def verify_event(event, key_id, key, run_id, nonce, sequence, kind, identity=Non
     expected = hmac.new(key, _canonical(unsigned), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, auth["tag"]):
         raise ValueError("event authentication")
-    return ident
+    return dict(ident)
 
 
 class ReplayStore:
@@ -75,7 +76,7 @@ def observe(events, *, run_id, nonce, producer_key_id, producer_key, observer_ke
             except StopIteration as exc:
                 raise ValueError("event count") from exc
             verify_event(event, producer_key_id, producer_key, run_id, nonce, 2, phase, ident)
-        snap = collector(phase, dict(ident))
+        snap = copy.deepcopy(collector(phase, dict(ident)))
         required = {"run_id", "nonce", "phase", "identity", "processes", "resources", "provenance", "sequence", "complete"}
         if (not isinstance(snap, dict) or set(snap) != required or snap["run_id"] != run_id
             or snap["nonce"] != nonce or snap["phase"] != phase or snap["identity"] != ident
