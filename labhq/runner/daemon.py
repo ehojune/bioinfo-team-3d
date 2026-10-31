@@ -1323,7 +1323,7 @@ class Runner:
         if "annot" in agent.builtin_mcp:
             # Read-only public lookups: no per-call approval, also for variants from restricted zones (PI 2026-10-06).
             # annot_tools limits which of its tools the server offers (#1200): the server, not each engine, enforces it.
-            annot_env = env if agent.annot_tools is None else {**env, "LABHQ_ANNOT_TOOLS": ",".join(agent.annot_tools)}
+            annot_env = {**env, "LABHQ_ANNOT_TOOLS": "*" if agent.annot_tools is None else ",".join(agent.annot_tools)}
             servers.append(McpServerSpec(name="labhq_annot", command=sys.executable,
                                          args=["-m", "labhq.tools.annot_mcp"], env=annot_env,
                                          auto_approve=True, timeout_s=literature_mcp_timeout_s(self.s)))

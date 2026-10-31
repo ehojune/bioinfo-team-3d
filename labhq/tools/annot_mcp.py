@@ -81,7 +81,9 @@ server = make_server(
 # every tool is offered. An empty value offers none. Every tool is registered through `offered()`, so the names the
 # allowlist may use are exactly the ones defined below.
 _RAW_ALLOWED = os.environ.get("LABHQ_ANNOT_TOOLS")
-_ALLOWED = None if _RAW_ALLOWED is None else (set(_RAW_ALLOWED.split(",")) if _RAW_ALLOWED else set())
+# "*" says out loud that nothing is restricted: the runner sends it for an agent without `annot_tools`, so a
+# LABHQ_ANNOT_TOOLS the runner itself inherited cannot narrow that agent.
+_ALLOWED = (None if _RAW_ALLOWED in (None, "*") else (set(_RAW_ALLOWED.split(",")) if _RAW_ALLOWED else set()))
 _DEFINED: set[str] = set()
 KEY_TOOLS = frozenset({"alphagenome", "alphagenome_variant"})  # defined only when an AlphaGenome key file exists
 

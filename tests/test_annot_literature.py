@@ -832,16 +832,17 @@ async def test_the_server_offers_only_the_tools_it_was_allowed(tmp_path, allowed
 
 
 @pytest.mark.asyncio
-async def test_without_an_allowlist_the_server_offers_everything_as_before(tmp_path):
+@pytest.mark.parametrize("allowed", [None, "*"])
+async def test_without_an_allowlist_the_server_offers_everything_as_before(tmp_path, allowed):
     import sys
     from labhq.models import McpServerSpec
     from labhq.tools._mcpcompat import list_tools
     tools = await list_tools(McpServerSpec(name="annot", command=sys.executable, args=["-m", "labhq.tools.annot_mcp"],
-                                           env=_server_env(tmp_path)))
+                                           env=_server_env(tmp_path, allowed)))
     assert set(tools) == _server_tool_names() - {"alphagenome", "alphagenome_variant"}  # those need a key file
 
 
-@pytest.mark.parametrize("allowed", ["fulltext,fultext", "nonsense", "fulltext,,unpaywall"])
+@pytest.mark.parametrize("allowed", ["fulltext,fultext", "nonsense", "fulltext,,unpaywall", "*,fulltext"])
 def test_an_allowlist_naming_an_unknown_tool_stops_the_server(tmp_path, allowed):
     """A typo must close the tool, not silently leave the agent without it or, worse, with the wrong set."""
     import subprocess
@@ -865,7 +866,8 @@ def test_the_runner_passes_the_allowlist_only_to_agents_that_have_one(tmp_path):
             return next(s for s in runner._mcp_servers(agent, {"LABHQ_WORKDIR": str(tmp_path)})
                         if s.name == "labhq_annot").env
 
-        assert "LABHQ_ANNOT_TOOLS" not in annot_env()
+        # No allowlist is said out loud ("*"), so a LABHQ_ANNOT_TOOLS the runner itself inherited cannot narrow the agent.
+        assert annot_env()["LABHQ_ANNOT_TOOLS"] == "*"
         assert annot_env(annot_tools=["fulltext", "unpaywall"])["LABHQ_ANNOT_TOOLS"] == "fulltext,unpaywall"
         assert annot_env(annot_tools=[])["LABHQ_ANNOT_TOOLS"] == ""
     finally:
@@ -893,3 +895,17 @@ def test_a_read_only_run_offers_no_annot_tools_whatever_the_staff_spec_allows():
 def test_an_agent_allowlist_holds_plain_tool_names(bad):
     with pytest.raises(ValueError):
         AgentSpec(id="a", name="A", role="r", builtin_mcp=["annot"], annot_tools=[bad])
+
+
+def test_the_roster_shows_the_tools_an_agent_really_has():
+    """#1200: the CSO plans from this text, so a restricted agent must not be listed with every lookup."""
+    from labhq.orchestrator.cso import format_roster
+    spec, _ = _prompt("chief_of_staff")
+    restricted = format_roster([spec.summary()])
+    assert "labhq_annot=yes (tools: fulltext, key_fulltext, citation_chase, preprints, openalex_works, crossref_doi, " \
+           "unpaywall)" in restricted
+    assert "VEP" not in restricted and "gnomAD" not in restricted and "GTEx" not in restricted
+    everything = format_roster([AgentSpec(id="b", name="B", role="r", builtin_mcp=["approval", "annot"]).summary()])
+    assert "VEP with AlphaMissense" in everything and "GTEx" in everything  # an unrestricted agent is listed as before
+    nothing = format_roster([AgentSpec(id="c", name="C", role="r", builtin_mcp=["annot"], annot_tools=[]).summary()])
+    assert "labhq_annot=no" in nothing or "labhq_annot" not in nothing

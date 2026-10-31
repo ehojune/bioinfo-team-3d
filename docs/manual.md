@@ -788,6 +788,8 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 
 `labhq_annot`은 변이·영역·유전자와 논문을 공개 DB에서 조회하는 내장 MCP입니다(#435, #697, #720, #744). `builtin_mcp`에 `annot`이 있는 직원(analyst·bioinfo-agent·biologist·lit_scout)에게 붙고, 이어 묻기·상담 같은 읽기 전용 실행에는 붙지 않습니다.
 
+직원 파일의 `annot_tools`로 그 직원이 받는 도구를 좁힐 수 있습니다(#1200). 없으면 서버의 도구를 전부 줍니다. `annot_tools: [fulltext, unpaywall]`처럼 이름을 적으면 그 도구만 주고, 빈 목록 `[]`은 하나도 주지 않습니다. 서버가 모르는 이름이 있으면 `labhq_annot`이 시작하지 않아 오타가 도구를 조용히 열거나 닫지 못합니다. 엔진과 관계없이 서버가 적용하고, 직원 명단(CSO가 계획에 쓰는 글)에도 실제로 받는 도구만 나옵니다. 기본 `chief_of_staff`는 문헌 도구 7개(`fulltext`, `key_fulltext`, `citation_chase`, `preprints`, `openalex_works`, `crossref_doi`, `unpaywall`)만 받으며, 새 조회 도구가 생겨도 목록에 넣기 전에는 닫혀 있습니다. 읽기 전용 실행은 `annot_tools`와 관계없이 `labhq_annot`을 받지 않습니다. runner가 서버에 넘기는 환경 변수 `LABHQ_ANNOT_TOOLS`(`*`은 제한 없음)는 직접 설정하지 않습니다.
+
 | 도구 | DB | 받는 것 | 판본 기록 |
 |---|---|---|---|
 | `vep(variants, assembly, species)` | Ensembl REST VEP (사람 GRCh38은 AlphaMissense 플러그인 포함) | `chr:pos:ref:alt`·HGVS·rsID | `/info/data`의 Ensembl release (GRCh37은 grch37 서버). AlphaMissense는 `source.additional_sources`에 라이선스와 인용 |

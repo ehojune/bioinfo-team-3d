@@ -1621,6 +1621,17 @@ def reference_meta(request: dict | None) -> dict[str, list[str]]:
     return {"reference_dirs": dirs} if dirs else {}
 
 
+def _annot_roster(a: dict) -> str:
+    """The labhq_annot part of a roster line: everything the server has, or only the tools this agent was given (#1200)."""
+    if "annot" not in (a.get("builtin_mcp") or []):
+        return ""
+    tools = a.get("annot_tools")
+    if tools is None:
+        return ("labhq_annot=yes (VEP with AlphaMissense for human GRCh38, gnomAD, ClinVar, ChIP-Atlas, ENCODE cCRE, "
+                "GTEx lookups; AlphaGenome when its key is set); ")
+    return f"labhq_annot=yes (tools: {', '.join(tools)}); " if tools else ""
+
+
 def format_roster(agents: list[dict]) -> str:
     lines = []
     for a in agents:
@@ -1642,7 +1653,7 @@ def format_roster(agents: list[dict]) -> str:
                      f"{'own outputs/ and .tmp/ writable; ' if access == 'read-only' else ''}"
                      f"tools={allowed or builtin or 'default'}; denied={a.get('disallowed_tools') or []}; "
                      f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}; "
-                     f"{'labhq_annot=yes (VEP with AlphaMissense for human GRCh38, gnomAD, ClinVar, ChIP-Atlas, ENCODE cCRE, GTEx lookups; AlphaGenome when its key is set); ' if 'annot' in (a.get('builtin_mcp') or []) else ''}"
+                     f"{_annot_roster(a)}"
                      f"max_turns={a.get('max_turns') or 'unlimited'}{tools}")
     return "\n".join(lines)
 

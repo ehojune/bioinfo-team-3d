@@ -220,6 +220,7 @@ class AgentSpec(BaseModel):
             "contract_provenance": self.contract.provenance() if self.contract else None,
             "mcp": [m.name for m in self.mcp],
             "builtin_mcp": self.builtin_mcp,
+            "annot_tools": self.annot_tools,
             "sandbox": self.sandbox,
             "tools": self.tools,
             "disallowed_tools": self.disallowed_tools,
