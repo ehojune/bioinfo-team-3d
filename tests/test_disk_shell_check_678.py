@@ -559,7 +559,8 @@ def test_an_ambiguous_or_unknown_parameter_name_is_not_guessed(tmp_path):
 # ----- a word the tables do not explain is read both ways; arrays are checked element by element (#1167 review) -----
 
 def per_folder_probe(free_by_name, seen=None):
-    """A probe that answers by the last folder name, so each drive of one command can differ."""
+    """A probe that answers by the last folder name, so each drive of one command can differ. The tests use `/`:
+    a backslash is a path separator only on Windows, so a name taken from it would differ on Linux."""
     def probe(folder):
         if seen is not None:
             seen.append(folder)
@@ -588,9 +589,9 @@ def test_too_many_unknown_options_leave_the_positional_words_unread(tmp_path):
 
 
 @pytest.mark.parametrize("command", [
-    "Start-BitsTransfer -Source https://x.org/a,https://x.org/b -Destination bigdrive\\x.zip,tight\\y.zip",
-    "Start-BitsTransfer https://x.org/a,https://x.org/b bigdrive\\x.zip,tight\\y.zip",
-    "Start-BitsTransfer -Source u1,u2 -Dest bigdrive\,tight\\",
+    "Start-BitsTransfer -Source https://x.org/a,https://x.org/b -Destination bigdrive/x.zip,tight/y.zip",
+    "Start-BitsTransfer https://x.org/a,https://x.org/b bigdrive/x.zip,tight/y.zip",
+    "Start-BitsTransfer -Source u1,u2 -Dest bigdrive/,tight/",
 ])
 def test_every_element_of_a_destination_array_is_checked(tmp_path, command):
     seen = []
