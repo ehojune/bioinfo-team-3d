@@ -2,5 +2,5 @@ pr: 1153
 rows:
   - sha: "9b18362"
     at: "2026-10-31 11:10"
-    summary: "runner가 gateway의 ack를 받아 outbox 행을 지우는 commit이 0.5초에 한 번으로 묶여, 요청 한 번의 ack commit이 81회에서 약 33회로 줄었습니다. 종료·재연결 때는 기다리지 않고 바로 commit합니다."
-    text: "runner: ack commit을 0.5초에 한 번으로 묶는다 (#1125)"
+    summary: "runner가 gateway의 ack를 받아 outbox 행을 지우는 commit이 0.5초에 한 번으로 묶여, 요청 한 번의 ack commit이 81회에서 약 33회로 줄었습니다."
+    text: "runner: ack commit을 0.5초에 한 번으로 묶는다. 종료·재연결의 drain은 기다리지 않고 바로 commit한다 (#1125)"
