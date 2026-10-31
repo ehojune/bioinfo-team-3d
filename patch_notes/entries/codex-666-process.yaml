@@ -1,6 +1,6 @@
 pr: 1050
 rows:
-  - sha: '12cde12'
+  - sha: '63b6090'
     at: "2026-10-31 12:30"
     summary: "합성 staging callback 뒤 세 payload의 digest를 다시 확인합니다."
     text: "fix: recheck diagnostic staged payload digests"
