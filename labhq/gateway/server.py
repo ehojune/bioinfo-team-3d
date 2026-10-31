@@ -325,6 +325,11 @@ class SavedResults(dict):
 # "the caller did not say what the runner reports": only the runner ID is compared (Hub._session_pin_refusal).
 _RUNTIME_UNCHECKED = object()
 
+
+def _ended_by_cancel(req: dict) -> bool:
+    """The request was cancelled, or its cancel is still committing (`cancelling` stays until the terminal record is out)."""
+    return req.get("status") == "cancelled" or req.get("cancelling") is not None
+
 class Hub:
     result_review_required = True
 
@@ -826,7 +831,7 @@ class Hub:
             await self.close_publish_cards(rid)
             return
         req = self.requests[rid]
-        if is_active_request(status) and self._ended_by_cancel(req):
+        if is_active_request(status) and _ended_by_cancel(req):
             return  # a cancel that landed while the caller waited is not undone by a late resume (#1168)
         before = req.get("status")
         req["status"] = status
@@ -836,11 +841,6 @@ class Hub:
         if before != status:
             await self.publish({"type": "request.status", "ts": time.time(), "request_id": rid,
                                 "data": {"status": status, "previous": before}})
-
-    @staticmethod
-    def _ended_by_cancel(req: dict) -> bool:
-        """The request was cancelled, or its cancel is still committing (`cancelling` stays until the terminal record is out)."""
-        return req.get("status") == "cancelled" or req.get("cancelling") is not None
 
     async def _publish_hold_status(self, rid: str | None, before: str | None = None) -> None:
         """Recompute a request's hold status, save it, and tell clients when it changed (R5)."""
@@ -2112,11 +2112,11 @@ class Hub:
         deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
         previous: set[str] | None = None
         while True:
-            if self._ended_by_cancel(req):
+            if _ended_by_cancel(req):
                 return
             missing = {aid for aid in (await self.aresume_agents(rid))
                        if self.agent_runner.get(aid) not in self.runners}
-            if self._ended_by_cancel(req):  # a cancel can land while the agents are looked up (#1168)
+            if _ended_by_cancel(req):  # a cancel can land while the agents are looked up (#1168)
                 return
             if req.get("recruit_contract_failure"):
                 error = "계획에 배정된 파견직 계약이 종료되었습니다: " + ", ".join(req["recruit_contract_failure"])
