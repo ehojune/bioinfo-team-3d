@@ -209,6 +209,52 @@ test("a snapshot's request status is known before its events replay: a completio
   assert.equal(office.S.requests.get('r1').status, 'done');
 });
 
+for (const status of ['done', 'failed', 'cancelled', 'rejected', 'review_pending']) {
+  test(`${status}: a late step resume or quota/login release does not turn a finished step back into work`, () => {
+    const office = settled(status);
+    office.apply({type: 'request.step_done', seq: 10, request_id: 'r1', data: {step_id: 's1', ok: true}});
+    const before = JSON.stringify(office.S.requests.get('r1'));
+    for (const [seq, type] of [[11, 'request.step_resumed'], [12, 'request.step_quota_resumed'], [13, 'request.step_login_resumed']])
+      office.apply({type, seq, agent_id: 'analyst', task_id: 't1', request_id: 'r1', data: {step_id: 's1'}});
+    assert.equal(JSON.stringify(office.S.requests.get('r1')), before);
+    assert.equal(office.S.requests.get('r1').steps.s1, 'done');
+  });
+}
+
+test('on a running request a step resume and a quota/login release still apply', () => {
+  const office = fresh();
+  created(office, 2); dispatched(office, 3, 't1');
+  office.apply({type: 'request.step_quota_wait', seq: 4, request_id: 'r1', data: {step_id: 's1'}});
+  assert.equal(office.S.requests.get('r1').steps.s1, 'waiting_quota');
+  office.apply({type: 'request.step_quota_resumed', seq: 5, request_id: 'r1', data: {step_id: 's1'}});
+  assert.equal(office.S.requests.get('r1').steps.s1, 'pending');
+  office.apply({type: 'request.step_login_wait', seq: 6, request_id: 'r1', data: {step_id: 's1'}});
+  office.apply({type: 'request.step_login_resumed', seq: 7, request_id: 'r1', data: {step_id: 's1'}});
+  assert.notEqual(office.S.requests.get('r1').steps.s1, 'waiting_login');
+});
+
+for (const status of ['done', 'failed', 'cancelled', 'rejected', 'review_pending']) {
+  test(`${status}: a late review that asks for a revision, with issues, leaves the finished steps alone`, () => {
+    const office = settled(status);
+    office.apply({type: 'request.step_done', seq: 10, request_id: 'r1', data: {step_id: 's1', ok: true}});
+    office.apply({type: 'request.review', seq: 11, request_id: 'r1', data: {verdict: 'revise',
+      issues: [{step_id: 's1', text: 'redo the table'}]}});
+    const q = office.S.requests.get('r1');
+    assert.equal(q.steps.s1, 'done', 'not revise');
+    assert.equal(q.review, undefined, 'the late review is not recorded');
+    assert.equal(q.phase, 'done');
+  });
+}
+
+test('on a running request a review that asks for a revision still marks the step', () => {
+  const office = fresh();
+  created(office, 2); dispatched(office, 3, 't1');
+  office.apply({type: 'request.step_done', seq: 4, request_id: 'r1', data: {step_id: 's1', ok: true}});
+  office.apply({type: 'request.review', seq: 5, request_id: 'r1', data: {verdict: 'revise', issues: [{step_id: 's1', text: 'redo'}]}});
+  assert.equal(office.S.requests.get('r1').steps.s1, 'revise');
+  assert.equal(office.S.requests.get('r1').phase, 'execute');
+});
+
 test('the 2.5D page closes its previous socket before opening a new one, as the 3D page does', () => {
   const page = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const open = /const open = \(\) => \{[\s\S]*?new WebSocket/.exec(page);
