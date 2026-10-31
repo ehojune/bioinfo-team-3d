@@ -139,6 +139,9 @@ async def test_result_race_leaves_no_cancel_intent(hub, monkeypatch, completion_
     original_put = hub.store.aput
 
     async def delayed_put(kind, key, body):
+        if kind != "task_cancel":  # only the cancel intent's write is held; the completion's own writes go through
+            await original_put(kind, key, body)
+            return
         entered.set()
         await release.wait()
         await original_put(kind, key, body)
