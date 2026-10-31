@@ -146,6 +146,10 @@ class AgentSpec(BaseModel):
     disallowed_tools: list[str] = []
     builtin_tools: str | None = None  # Claude Code --tools (restrict the built-in tool set)
     builtin_mcp: list[str] = ["approval"]  # labhq-provided MCP servers: approval, hpc, job, annot, wiki
+    # The labhq_annot tools this agent is offered (#1200). None: all of them. A list: only those, whatever tool the
+    # server gains later; the server refuses to start on a name it does not have, so a typo cannot quietly open or
+    # close one.
+    annot_tools: list[str] | None = None
     mcp: list[McpServerSpec] = []
     project_dirs: list[str] = []
     plugin_dirs: list[str] = []  # Claude Code --plugin-dir; ${VAR} expands at run time
@@ -194,6 +198,11 @@ class AgentSpec(BaseModel):
             raise ValueError("required_skills needs plugin_dirs and allow_skills: true")
         if self.engine == Engine.antigravity and (self.builtin_mcp or self.mcp):
             raise ValueError("antigravity does not support builtin_mcp or MCP servers")
+        if self.annot_tools is not None:
+            if "annot" not in self.builtin_mcp:
+                raise ValueError("annot_tools needs builtin_mcp: annot")
+            if not all(re.fullmatch(r"[a-z][a-z_]*", tool) for tool in self.annot_tools):
+                raise ValueError("annot_tools holds plain tool names such as fulltext")
         return self
 
     def summary(self) -> dict[str, Any]:

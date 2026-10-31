@@ -77,6 +77,25 @@ server = make_server(
 )
 
 
+# The tools this process offers (#1200). The runner sets LABHQ_ANNOT_TOOLS for an agent that has `annot_tools`; without it
+# every tool is offered. An empty value offers none. Every tool is registered through `offered()`, so the names the
+# allowlist may use are exactly the ones defined below.
+_RAW_ALLOWED = os.environ.get("LABHQ_ANNOT_TOOLS")
+_ALLOWED = None if _RAW_ALLOWED is None else (set(_RAW_ALLOWED.split(",")) if _RAW_ALLOWED else set())
+_DEFINED: set[str] = set()
+KEY_TOOLS = frozenset({"alphagenome", "alphagenome_variant"})  # defined only when an AlphaGenome key file exists
+
+
+def offered():
+    """`@server.tool()` for a tool this process may offer; a tool outside the allowlist is simply not registered."""
+    def register(function):
+        _DEFINED.add(function.__name__)
+        if _ALLOWED is None or function.__name__ in _ALLOWED:
+            server.tool()(function)
+        return function
+    return register
+
+
 # Last request time per service for this server process: each tool call builds a new Annotator, and a fresh pace
 # would send its first request without waiting (gnomAD 10/min, NCBI 3/s; PR #449 review).
 PACE: dict[str, float] = {}
@@ -253,7 +272,7 @@ async def _run_key_fulltext(papers: list[dict[str, Any]]) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
-@server.tool()
+@offered()
 async def vep(variants: list[str], assembly: Literal["GRCh38", "GRCh37"] = "GRCh38", species: str = "human") -> str:
     """Ensembl VEP consequences (most severe consequence, genes, MANE/canonical transcript HGVS) for variants given
     as chr:pos:ref:alt, HGVS or rsID. Sent in batches of 200 within Ensembl's rate limits. For human GRCh38 each
@@ -263,7 +282,7 @@ async def vep(variants: list[str], assembly: Literal["GRCh38", "GRCh37"] = "GRCh
     return await _run("vep", variants, assembly, species)
 
 
-@server.tool()
+@offered()
 async def gnomad(variants: list[str], dataset: str = "gnomad_r4") -> str:
     """gnomAD allele frequencies (exome, genome, main genetic ancestry groups) for chr:pos:ref:alt or rsID.
     dataset is a gnomAD dataset ID such as gnomad_r4 (GRCh38) or gnomad_r2_1 (GRCh37). gnomAD allows about
@@ -271,14 +290,14 @@ async def gnomad(variants: list[str], dataset: str = "gnomad_r4") -> str:
     return await _run("gnomad", variants, dataset)
 
 
-@server.tool()
+@offered()
 async def clinvar(variants_or_ids: list[str], assembly: Literal["GRCh38", "GRCh37"] = "GRCh38") -> str:
     """ClinVar classifications (germline, clinical impact, oncogenicity, review status) through NCBI E-utilities.
     Accepts chr:pos:ref:alt (matched by position on `assembly`), HGVS, rsID, VCV accession or ClinVar Variation ID."""
     return await _run("clinvar", variants_or_ids, assembly)
 
 
-@server.tool()
+@offered()
 async def chipatlas(genes_or_regions: list[str], genome: str = "hg38", antigen_class: str = "TFs and others",
                     cell_class: str = "All cell types", threshold: Literal[50, 100, 200, 500] = 50,
                     distance_kb: int = 5, permutations: Literal[1, 10, 100] = 1, wait_s: float = 600,
@@ -294,7 +313,7 @@ async def chipatlas(genes_or_regions: list[str], genome: str = "hg38", antigen_c
                       permutations, wait_s, request_id)
 
 
-@server.tool()
+@offered()
 async def chipatlas_targets(antigens: list[str], genome: str = "hg38", distance_kb: Literal[1, 5, 10] = 5,
                             genes: list[str] | None = None, top: int = 50) -> str:
     """ChIP-Atlas target genes of transcription factors (e.g. POU5F1): genes ranked by the average MACS2 binding score
@@ -303,7 +322,7 @@ async def chipatlas_targets(antigens: list[str], genome: str = "hg38", distance_
     return await _run("chipatlas_targets", antigens, genome, distance_kb, genes, top)
 
 
-@server.tool()
+@offered()
 async def encode(regions: list[str], assembly: Literal["GRCh38", "mm10"] = "GRCh38") -> str:
     """ENCODE candidate cis-regulatory elements (cCREs: PLS, pELS, dELS, CA-CTCF, CA-TF, ...) overlapping regions
     given as chr:start-end (1-based, inclusive) or chr:pos. Uses the newest released ENCODE cCRE registry (V4) file,
@@ -311,7 +330,7 @@ async def encode(regions: list[str], assembly: Literal["GRCh38", "mm10"] = "GRCh
     return await _run("encode", regions, assembly)
 
 
-@server.tool()
+@offered()
 async def gtex(genes_or_variants: list[str], tissues: list[str] | None = None, dataset: str = "gtex_v10",
                eqtl: bool = True) -> str:
     """GTEx tissue expression (median TPM) and single-tissue eQTLs for genes (symbol or Ensembl ID) and eQTLs for
@@ -320,7 +339,7 @@ async def gtex(genes_or_variants: list[str], tissues: list[str] | None = None, d
     return await _run("gtex", genes_or_variants, tissues, dataset, eqtl)
 
 
-@server.tool()
+@offered()
 async def fulltext(ids: list[str]) -> str:
     """The body of papers given as PMID, PMCID (PMC...) or DOI, up to 20 per call. Europe PMC finds each record; an
     open-access copy there is written as Markdown (sections, tables, figure captions, references) to
@@ -333,7 +352,7 @@ async def fulltext(ids: list[str]) -> str:
     return await _run_literature("fulltext", ids)
 
 
-@server.tool()
+@offered()
 async def key_fulltext(papers: list[dict[str, Any]]) -> str:
     """Read conclusion-critical papers through permitted routes only. Each item needs id, title, why_key, needed and
     optional tried. Open access is checked first. When configured, one DOI at a time may use the PI's institution
@@ -344,7 +363,7 @@ async def key_fulltext(papers: list[dict[str, Any]]) -> str:
     return await _run_key_fulltext(papers)
 
 
-@server.tool()
+@offered()
 async def citation_chase(paper_id: str, limit: int = 100) -> str:
     """For one PMID, PMCID or DOI, retrieve both references (backward citation chasing) and publications that cite
     it (forward citation chasing) from Europe PMC. Up to `limit` candidates per direction (1..1000). Results contain
@@ -352,14 +371,14 @@ async def citation_chase(paper_id: str, limit: int = 100) -> str:
     return await _run_literature("citation_chase", paper_id, limit)
 
 
-@server.tool()
+@offered()
 async def preprints(query: str, limit: int = 25) -> str:
     """Search bioRxiv and medRxiv through Europe PMC SRC:PPR. Returns up to `limit` candidates (1..100), all marked
     `심사 전`; do not treat them as peer-reviewed evidence."""
     return await _run_literature("preprints", query, limit)
 
 
-@server.tool()
+@offered()
 async def openalex_works(query: str, filters: list[str] | None = None, limit: int = 25) -> str:
     """Search OpenAlex works across disciplines. `filters` are OpenAlex filter expressions, one per list item, and
     `limit` is 1..200. Results include DOI, PMID, OA status and best_oa_location, citation count, cited-by query URL,
@@ -367,14 +386,14 @@ async def openalex_works(query: str, filters: list[str] | None = None, limit: in
     return await _run_literature("openalex_works", query, filters, limit)
 
 
-@server.tool()
+@offered()
 async def crossref_doi(dois: list[str]) -> str:
     """Crossref metadata for up to 50 DOIs: registered version, licenses, relations, update-to records and an
     explicit retraction flag. Metadata does not prove that a full-text copy was acquired."""
     return await _run_literature("crossref_doi", dois)
 
 
-@server.tool()
+@offered()
 async def unpaywall(dois: list[str]) -> str:
     """Unpaywall legal OA locations for up to 50 DOIs. Requires annot.unpaywall_email; without it the call returns
     enabled=false without contacting the API. The contact email is never written to results, logs or cache keys."""
@@ -382,7 +401,7 @@ async def unpaywall(dois: list[str]) -> str:
 
 
 if ALPHAGENOME is not None:
-    @server.tool()
+    @offered()
     async def alphagenome_variant(variants: list[str], sequence_length: Literal["16KB", "100KB", "500KB", "1MB"] = "1MB",
                                   ontology_terms: list[str] | None = None, tissues: list[str] | None = None,
                                   top: int = 20, assembly: Literal["GRCh38"] = "GRCh38") -> str:
@@ -395,7 +414,7 @@ if ALPHAGENOME is not None:
         return await _run("alphagenome_variant", variants, sequence_length=sequence_length,
                           ontology_terms=ontology_terms, tissues=tissues, top=top, assembly=assembly)
 
-    @server.tool()
+    @offered()
     async def alphagenome(variants_or_intervals: list[str], outputs: list[str] | None = None,
                           ontology_terms: list[str] | None = None,
                           sequence_length: Literal["16KB", "100KB", "500KB", "1MB"] = "100KB",
@@ -410,5 +429,16 @@ if ALPHAGENOME is not None:
         return await _run("alphagenome", variants_or_intervals, outputs, ontology_terms, sequence_length, organism)
 
 
+def _check_allowlist() -> None:
+    """An allowlist naming a tool this server does not define stops the server: a typo must not leave the agent with a
+    different set than its file says."""
+    if _ALLOWED is None:
+        return
+    unknown = sorted(_ALLOWED - _DEFINED - KEY_TOOLS)
+    if unknown or "" in _ALLOWED:
+        raise SystemExit(f"LABHQ_ANNOT_TOOLS names tools labhq_annot does not have: {unknown or ['(empty name)']}")
+
+
 if __name__ == "__main__":
+    _check_allowlist()
     server.run()
