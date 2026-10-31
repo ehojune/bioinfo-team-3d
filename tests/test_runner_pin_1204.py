@@ -306,3 +306,17 @@ async def test_sweep_adopting_a_pinned_consult_waits_for_its_own_runner_not_the_
     await until(lambda: "held" in hub.futures)  # past the guard: it did not sit out resume_wait_s for the away owner
     hub.futures["held"].set_result(TaskResult(task_id="held", agent_id=AGENT, ok=True))
     await asyncio.wait_for(adopting, 3)
+
+
+async def test_a_pin_is_what_the_request_chose_not_what_is_connected_plan_and_runner_stay_wsl_while_it_is_away(hub):
+    """The definition (#1204): the WSL runner drops after the pin and before the plan, a native runner is up."""
+    win, wsl = both(hub)
+    hub.requests["r"]["wsl_pinned"] = True
+    hub.unregister_runner("lab-wsl", wsl)
+    assert "lab-wsl" not in hub.runners and "win" in hub.runners
+    mine = hub_agents(hub, "r")
+    assert mine[AGENT]["runner_id"] == "lab-wsl" and mine[AGENT]["scheduler"] == "sge", "not the native owner's entry"
+    assert hub_runner(hub, AGENT, "r") == "lab-wsl" and hub.request_runner(AGENT, "r") == "lab-wsl"
+    assert hub_agents(hub, "other")[AGENT]["runner_id"] == "win"
+    assert not _request_ready(hub, AGENT, "r"), "away is for sending, not for what the request chose"
+    assert dispatched(win) == []

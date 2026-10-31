@@ -334,7 +334,11 @@ def _ended_by_cancel(req: dict) -> bool:
     """The request was cancelled, or its cancel is still committing (`cancelling` stays until the terminal record is out)."""
     return req.get("status") == "cancelled" or req.get("cancelling") is not None
 
-# Routing of a task pinned to WSL (#1204). Module functions, so a Hub test double that borrows ``dispatch`` needs
+# THE DEFINITION: a pin is what this request chose, not what is connected right now. A request that chose WSL (and got
+# it) is pinned to the WSL runner whether that runner is up, away or back: its plan, login advice, environment bindings
+# and tasks all name it. Connection only decides whether work can be sent now (``_runner_ready_for``), and a pinned task
+# then waits for that runner; it never falls back to the owner. (#1204)
+# Routing of a task pinned to WSL. Module functions, so a Hub test double that borrows ``dispatch`` needs
 # nothing more than it had.
 def _wsl_runner_ready(hub: "Hub", runner_id: str, agent_id: str) -> bool:
     """The WSL runner itself is connected, reports a ready WSL and hosts ``agent_id``. Not about who owns the agent in
@@ -379,8 +383,9 @@ def _request_pin_meta(hub: "Hub", agent_id: str, request_id: str | None) -> dict
 
 
 def _request_runner(hub: "Hub", agent_id: str, request_id: str | None) -> str | None:
-    """The runner ``agent_id`` works on for this request: the pinned WSL runner while it is ready, else the owner."""
-    return _target_runner(hub, agent_id, _request_pin_meta(hub, agent_id, request_id))
+    """The runner ``agent_id`` works on for this request: its pinned WSL runner, connected or not, else the owner."""
+    pin = _request_pin_meta(hub, agent_id, request_id)
+    return pin["session_runner"] if pin else hub.agent_runner.get(agent_id)
 
 
 def _request_ready(hub: "Hub", agent_id: str, request_id: str | None) -> bool:
@@ -3385,11 +3390,12 @@ class Hub:
 
     def request_agents(self, request_id: str | None) -> dict[str, dict]:
         """The staff this request plans and runs with: ``agents``, but a request that is pinned to WSL sees the WSL
-        runner's entry for its WSL-bound agents (scheduler, compute backends, capabilities), not the owner's (#1204)."""
+        runner's entry for its WSL-bound agents (scheduler, compute backends, capabilities), not the owner's, also while
+        that runner is away: the roster outlives the connection and the task will go there when it is back (#1204)."""
         view = dict(self.agents)
         for aid in WSL_BOUND_AGENTS:
             pin = _request_pin_meta(self, aid, request_id)
-            if pin and _runner_ready_for(self, aid, pin):
+            if pin:
                 row = self.effective_roster(hosts=True).get(aid, {}).get(pin["session_runner"])
                 if row is not None:
                     view[aid] = self._agent_entry({**row, "runner_id": pin["session_runner"]})
