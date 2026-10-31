@@ -76,9 +76,7 @@ jobs:
         timeout-minutes: 25  # Normal rerun: 13m47s; allow 11m13s headroom (Refs #786).
         run: |
           python -u - <<'PY'
-          import asyncio
           import faulthandler
-          import gc
           import os
           import threading
           import pytest
@@ -109,16 +107,9 @@ jobs:
                   while not self.stop.wait(300):
                       try:
                           print(f"\nCI snapshot: {self.context}", file=self.stream, flush=True)
+                          # No gc.get_objects() from this thread: it raises the refcount of a tuple another thread is
+                          # building and `f(*generator)` fails with SystemError (#1238).
                           faulthandler.dump_traceback(file=self.stream, all_threads=True)
-                          shown = 0
-                          for value in gc.get_objects():
-                              if isinstance(value, asyncio.Task) and not value.done():
-                                  if shown == 50:
-                                      print("Further pending tasks omitted", file=self.stream)
-                                      break
-                                  value.print_stack(limit=20, file=self.stream)
-                                  shown += 1
-                          print(f"Pending task stacks shown: {shown}", file=self.stream, flush=True)
                       except Exception as error:
                           print(f"CI snapshot failed: {type(error).__name__}", file=self.stream, flush=True)
 

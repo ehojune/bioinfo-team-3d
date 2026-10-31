@@ -151,7 +151,8 @@ def check(base: str, head: str, cwd: Path | None = None) -> list[str]:
         problems.append(f"생성 파일({names})을 직접 바꾸지 말고 entries·docs/status에 쓰세요.")
 
     # every file any PR commit touched, not the net diff: a README edit reverted later is still a README edit
-    committed = set().union(*(changed_from_parent(sha, cwd) for sha in commits)) if commits else set()
+    # a list, not a generator: `*generator` builds a tuple while the git calls run, and a thread walking gc breaks it (#1238)
+    committed = set().union(*[changed_from_parent(sha, cwd) for sha in commits]) if commits else set()
     last = git("log", "-1", "--format=%H", base, "--", *DOCS, cwd=cwd)
     behind = counted_main_commits(last, base, cwd)
     if commits and not touched & set(DOCS) and not invisible(committed) and behind + 1 >= README_EVERY:

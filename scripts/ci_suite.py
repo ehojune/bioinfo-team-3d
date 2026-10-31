@@ -7,7 +7,6 @@ import contextlib
 from collections import defaultdict
 from datetime import datetime
 import faulthandler
-import gc
 import hashlib
 import importlib.metadata
 import io
@@ -613,20 +612,12 @@ class WorkerStall:
             self.stream.close()
 
     def watch(self):
-        import asyncio
+        # No gc.get_objects() here: another thread holding that list raises the refcount of a tuple a running thread
+        # is still building, and `f(*generator)` then fails with SystemError (#1238). The traceback dump is enough.
         while not self.stop.wait(self.interval):
             try:
                 print(f"\nCI snapshot: {self.context()}", file=self.stream, flush=True)
                 faulthandler.dump_traceback(file=self.stream, all_threads=True)
-                shown = 0
-                for value in gc.get_objects():
-                    if isinstance(value, asyncio.Task) and not value.done():
-                        if shown == 50:
-                            print("Further pending tasks omitted", file=self.stream)
-                            break
-                        value.print_stack(limit=20, file=self.stream)
-                        shown += 1
-                print(f"Pending task stacks shown: {shown}", file=self.stream, flush=True)
             except Exception as error:
                 print(f"CI snapshot failed: {type(error).__name__}", file=self.stream, flush=True)
 
