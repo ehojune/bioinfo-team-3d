@@ -11,4 +11,5 @@
 - 관찰: 일부 실패를 허용하는 곳은 연구 모드뿐이다. 팀 모드는 한 단계가 실패하면 요청 전체가 실패한다. 연구 모드도 살아 있는 갈래가 하나도 없으면 실패다.
 - 바뀐 것: `labhq/adapters/mock.py`(`[step-fail]`을 팀 계획의 bioinfo-agent 단계에, `[all-branch-fail]`을 분기 계획의 두 갈래에 적용), `tests/test_e2e_mock.py`(helper에 `work_kind`, 시험 2건).
 - 실행한 것: `test_e2e_mock`(13) 로컬 통과. 새 시험 2건은 옛 mock에서 실패함을 확인.
-- 미해결/미검증: manual의 mock 토큰 단락에 `[all-branch-fail]`·팀 모드 `[step-fail]`은 아직 없다(claim 밖). 갈래 안 여러 단계, 재시도, replan이 성공하는 경우는 확인하지 않았다.
+- 문서: manual 한·영의 mock 엔진 단락에 `[all-branch-fail]`과 팀 모드 `[step-fail]`을 적었다(rev9).
+- 미해결/미검증: 갈래 안 여러 단계, 재시도, replan이 성공하는 경우는 확인하지 않았다.
