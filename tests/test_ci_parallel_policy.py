@@ -361,3 +361,13 @@ def test_many_changed_fixtures_scan_the_tests_once_each_not_once_per_test(tmp_pa
     for _ in range(5):  # five collected tests see the same changed set
         selection.include_windows('tests/test_math.py', source, data, changed=fixtures, root=tmp_path, node='test_logic')
     assert reads.count('test_math.py') <= len(fixtures), "one scan per fixture, however many tests are selected"
+
+
+def test_a_data_fixture_is_not_matched_by_its_bare_stem_but_a_program_fixture_by_its_module_name():
+    """#1245 review: `tests/fixtures/npm/codex.cmd` selected 65 unrelated tests because the word `codex` occurs in them."""
+    assert not selection.references_fixture('engine = Engine.codex  # claude_code, expected result', 'tests/fixtures/npm/codex.cmd')
+    assert not selection.references_fixture('Engine.claude_code', 'tests/fixtures/quota/claude.txt')
+    assert not selection.references_fixture('the expected value', 'tests/fixtures/semantics/expected.yaml')
+    assert selection.references_fixture('shutil.copy("tests/fixtures/npm/codex.cmd", dest)', 'tests/fixtures/npm/codex.cmd')
+    assert selection.references_fixture('FIXTURES / "codex.cmd"', 'tests/fixtures/npm/codex.cmd')
+    assert selection.references_fixture('from tests.fixtures import repeat_fake_fixture', 'tests/fixtures/repeat_fake_fixture.py')

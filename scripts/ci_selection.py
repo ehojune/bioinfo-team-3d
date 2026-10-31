@@ -296,7 +296,8 @@ def references_fixture(text, fixture):
     A fixture is often run as a subprocess (`FAKE_CLI = ROOT / "tests/fixtures/x.py"`) or read from disk, so no import
     leads to it. Matching the strings the source spells is wide on purpose: a test that merely mentions the name is
     selected too, never the other way round. A fixture that is a common file name (`README.md`) is matched by its path
-    only, since its bare name appears in tests that have nothing to do with it. A test that takes a whole folder
+    only; a data fixture (not `.py`) by its path or full file name, never by the bare stem, which is an ordinary word
+    (`codex`, `claude`, `expected`) in tests that have nothing to do with it. A test that takes a whole folder
     (`copytree("tests/fixtures/wiki")`) names the folders above the fixture, so those count too."""
     name = fixture.rsplit("/", 1)[-1]
     stem = name.rsplit(".", 1)[0] if "." in name else name
@@ -304,7 +305,7 @@ def references_fixture(text, fixture):
     names = {fixture, short}
     if stem not in _GENERIC_FIXTURE_NAMES:
         names.add(name)
-        if len(stem) >= 4:
+        if name.endswith(".py") and len(stem) >= 4:  # a program fixture is also imported by its module name
             names.add(stem)
     parent = fixture.rsplit("/", 1)[0]
     while parent.count("/") >= 2:  # tests/fixtures/<folder>[/...]: every folder below tests/fixtures
