@@ -375,6 +375,9 @@ class BudgetSettings(BaseModel):
                 value = getattr(self, name)
                 if not math.isfinite(value) or value < 0:
                     raise ValueError(f"policy.budget.{name} must be a finite amount >= 0 with reserve_before_dispatch")
+            if 0 < self.per_task_usd < 0.01:
+                # The Claude CLI writes a call cap in cents: a positive cap below one cent cannot be held (0 is no cap).
+                raise ValueError("policy.budget.per_task_usd must be 0 or at least $0.01 with reserve_before_dispatch")
         return self
 
 
