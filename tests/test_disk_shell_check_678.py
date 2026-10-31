@@ -1,7 +1,9 @@
 """A shell download or unpack asks the PI when its target drive is short on space (#678)."""
 import json
+import os
 import zipfile
 from collections import namedtuple
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -316,3 +318,353 @@ def test_a_backslash_newline_continues_the_line(tmp_path):
 
 def test_descriptor_move_names_no_file(tmp_path):
     assert folders("curl -s https://example.org/a 1>&3-", tmp_path) == [tmp_path.as_posix()]
+
+
+# ----- the PowerShell tool (#1167) -----
+
+def ps_check(command, workdir, free_gib, **kw):
+    return disk_space.powershell_check(command, str(workdir), probe=drive(free_gib), **{**CHECK, **kw})
+
+
+@pytest.mark.parametrize("command,words", [
+    (r"Invoke-WebRequest https://x.org/a.zip -OutFile C:\data\a.zip", ["Invoke-WebRequest", "https://x.org/a.zip", "-OutFile", r"C:\data\a.zip"]),
+    ("iwr 'https://x.org/a b.zip' -o \"D:\\my data\\a.zip\"", ["iwr", "https://x.org/a b.zip", "-o", "D:\\my data\\a.zip"]),
+    ("Expand-Archive a.zip -DestinationPath out; Get-ChildItem", None),
+    ("iwr u -OutFile a.zip # -OutFile ignored.zip", ["iwr", "u", "-OutFile", "a.zip"]),
+    ("iwr 'it''s.zip' -OutFile `\"x`\".zip", ["iwr", "it's.zip", "-OutFile", '"x".zip']),
+])
+def test_powershell_words_are_read_as_powershell_reads_them(command, words):
+    commands = disk_space._ps_commands(command)
+    if words is None:
+        assert [c[0] for c in commands] == ["Expand-Archive", "Get-ChildItem"]
+    else:
+        assert commands == [words]
+
+
+def test_an_unclosed_quote_is_not_read(tmp_path):
+    assert disk_space._ps_commands("iwr 'x -OutFile a.zip") == []
+    assert ps_check("iwr 'x -OutFile a.zip", tmp_path, 0.5) is None
+
+
+def test_invoke_webrequest_to_a_full_drive_asks(tmp_path):
+    verdict = ps_check("Invoke-WebRequest -Uri https://x.org/a.zip -OutFile out\\a.zip", tmp_path, 1.0)
+    assert verdict.action == "ask" and "1.0 GiB" in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    "iwr https://x.org/a.zip -OutFile a.zip", "irm https://x.org/a.json -OutFile a.json",
+    "curl https://x.org/a.zip -OutFile a.zip", "wget https://x.org/a.zip -OutFile:a.zip",
+    "Invoke-WebRequest https://x.org/a.zip -OutF a.zip",       # an unambiguous prefix of the parameter name
+    "invoke-webrequest https://x.org/a.zip -outfile a.zip",
+])
+def test_powershell_download_spellings_all_ask_on_a_full_drive(tmp_path, command):
+    assert ps_check(command, tmp_path, 1.0).action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "Invoke-WebRequest https://x.org/page",                  # the answer goes to the pipeline, not to a file
+    "iwr https://x.org/a.zip | Select-Object StatusCode",
+    "Get-ChildItem C:\\data", "Write-Output 'hello'", "Copy-Item a b",
+])
+def test_other_powershell_commands_and_unreadable_paths_never_ask(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5) is None
+
+
+def test_a_powershell_download_of_unknown_size_only_warns_on_a_low_drive(tmp_path):
+    assert ps_check("iwr https://x.org/a.zip -OutFile a.zip", tmp_path, 6).action == "warn"
+    assert ps_check("iwr https://x.org/a.zip -OutFile a.zip", tmp_path, 50) is None
+
+
+def test_expand_archive_that_will_not_fit_asks_with_the_zips_real_size(tmp_path):
+    with zipfile.ZipFile(tmp_path / "raw.zip", "w") as z:
+        z.writestr("big.bin", b"\0" * (3 * 1024 * 1024))
+    tight = lambda f: Space(10 * GIB, 0, int(2 * GIB + 1024))
+    for command in ("Expand-Archive raw.zip -DestinationPath out", "Expand-Archive -Path raw.zip -DestinationPath out -Force",
+                    "Expand-Archive -LiteralPath raw.zip -DestinationPath:out", "Expand-Archive raw.zip out"):
+        verdict = disk_space.powershell_check(command, str(tmp_path), probe=tight, **CHECK)
+        assert verdict.action == "ask" and "필요" in verdict.reason, command
+    assert ps_check("Expand-Archive raw.zip -DestinationPath out", tmp_path, 50) is None
+
+
+def test_expand_archive_without_a_destination_unpacks_into_the_current_folder(tmp_path):
+    """#1184 review: an omitted destination is not a reason to skip the check; the folder it unpacks into is the current one."""
+    assert ps_check("Expand-Archive raw.zip", tmp_path, 0.5).action == "ask"
+    assert ps_check("Expand-Archive -Path raw.zip -Force", tmp_path, 0.5).action == "ask"
+    assert ps_check("Expand-Archive raw.zip", tmp_path, 50) is None
+    with zipfile.ZipFile(tmp_path / "big.zip", "w") as z:
+        z.writestr("big.bin", b"\0" * (3 * 1024 * 1024))
+    tight = lambda f: Space(10 * GIB, 0, int(2 * GIB + 1024))
+    verdict = disk_space.powershell_check("Expand-Archive big.zip", str(tmp_path), probe=tight, **CHECK)
+    assert verdict.action == "ask" and "필요" in verdict.reason
+
+
+@pytest.mark.parametrize("command", [
+    "iwr https://x.org/a.zip -Headers $headers -OutFile a.zip",             # a variable elsewhere does not hide the path
+    "iwr https://x.org/a.zip -Credential $cred -UseBasicParsing -OutFile out\a.zip",
+    "Expand-Archive -Path raw.zip -DestinationPath out -ErrorAction $action",
+])
+def test_a_variable_that_is_not_the_output_path_does_not_hide_the_command(tmp_path, command):
+    assert ps_check(command, tmp_path, 1.0).action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "iwr https://x.org/a.zip -OutFile $dest", "iwr https://x.org/a.zip -OutFile $env:TEMP/a.zip",
+    "Expand-Archive raw.zip -DestinationPath $out", "Start-BitsTransfer https://x.org/a.zip $env:TEMP/a.zip",
+])
+def test_a_target_that_is_not_written_out_is_unknown_so_the_current_folder_is_checked(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5).action == "ask"
+    assert ps_check(command, tmp_path, 50) is None
+    assert ps_folders(command, tmp_path)[0] == Path(tmp_path)
+
+
+@pytest.mark.parametrize("command", [
+    "Start-BitsTransfer -Source big.zip -Destination https://x.org/upload -TransferType Upload",
+    "Start-BitsTransfer big.zip https://x.org/upload -TransferType Upload",
+    "Start-BitsTransfer -Source big.zip -Destination https://x.org/upload",       # a remote destination is no local folder
+    "Start-BitsTransfer -Source big.zip -Destination out\big.zip -TransferType Upload",
+])
+def test_a_bits_upload_is_not_a_local_download(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5) is None
+
+
+def test_start_bitstransfer_reads_its_destination(tmp_path):
+    for command in ("Start-BitsTransfer -Source https://x.org/a.zip -Destination out\\a.zip",
+                    "Start-BitsTransfer https://x.org/a.zip out\\a.zip"):
+        assert ps_check(command, tmp_path, 1.0).action == "ask", command
+
+
+def test_a_powershell_chain_is_read_command_by_command_and_the_worst_wins(tmp_path):
+    verdict = ps_check("Get-Date; iwr https://x.org/a.zip -OutFile a.zip; Write-Output done", tmp_path, 1.0)
+    assert verdict.action == "ask"
+
+
+def test_a_leading_set_location_moves_where_the_next_command_runs(tmp_path):
+    seen = []
+
+    def probe(folder):
+        seen.append(folder)
+        return Space(100 * GIB, 0, 50 * GIB)
+
+    disk_space.powershell_check("Set-Location big; iwr https://x.org/a.zip -OutFile a.zip", str(tmp_path), probe=probe, **CHECK)
+    assert seen and seen[0] == (tmp_path / "big").resolve()
+
+
+def test_an_unreadable_drive_never_asks_a_powershell_command(tmp_path):
+    def broken(folder):
+        raise OSError("drive gone")
+
+    assert disk_space.powershell_check("iwr u -OutFile a.zip", str(tmp_path), probe=broken, **CHECK) is None
+
+
+@pytest.mark.asyncio
+async def test_the_gate_turns_an_allowed_powershell_download_on_a_full_drive_into_a_card(gate, monkeypatch):
+    mcp, sent = gate
+    monkeypatch.setattr(disk_space, "usage", drive(0.5))
+    result = json.loads(await mcp.approval_prompt(
+        "PowerShell", {"command": "Invoke-WebRequest https://example.org/a.zip -OutFile outputs/raw.zip"}))
+    assert result["behavior"] == "deny"  # the fake PI declined the card
+    assert len(sent) == 1 and sent[0][0].endswith("/approval") and "여유" in sent[0][1]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_the_gate_leaves_a_powershell_download_alone_when_there_is_room(gate, monkeypatch):
+    mcp, sent = gate
+    monkeypatch.setattr(disk_space, "usage", drive(500, 1000))
+    result = json.loads(await mcp.approval_prompt(
+        "PowerShell", {"command": "Invoke-WebRequest https://example.org/a.zip -OutFile outputs/raw.zip"}))
+    assert result["behavior"] == "allow" and sent == []
+
+
+@pytest.mark.parametrize("rule,expected", [
+    ("PowerShell(Invoke-WebRequest *)", True), ("PowerShell(iwr:*)", True), ("PowerShell(Expand-Archive *)", True),
+    ("PowerShell(Start-BitsTransfer *)", True), ("PowerShell(Get-ChildItem *)", False), ("PowerShell", False),
+    ("PowerShell()", False)])
+def test_which_powershell_rules_preapprove_a_bulk_write(rule, expected):
+    assert disk_space.preapproves_bulk_write(rule) is expected
+
+
+# ----- PowerShell arguments are bound from each cmdlet's parameter table (#1167 review) -----
+
+def ps_folders(command, workdir):
+    """The folders a PowerShell command makes the check look at."""
+    seen = []
+
+    def probe(folder):
+        seen.append(folder)
+        return Space(100 * GIB, 0, 50 * GIB)
+
+    disk_space.powershell_check(command, str(workdir), probe=probe, **CHECK)
+    return seen
+
+
+@pytest.mark.parametrize("move", ["Set-Location -Path big", "Set-Location -LiteralPath big", "sl -Path:big",
+                                  "Push-Location -Path big -PassThru", "cd big", "Set-Location big -PassThru"])
+def test_a_named_set_location_moves_where_the_next_command_runs(tmp_path, move):
+    assert ps_folders(move + "; iwr https://x.org/a.zip -OutFile a.zip", tmp_path) == [(tmp_path / "big").resolve()]
+
+
+@pytest.mark.parametrize("move", ["Set-Location", "Set-Location -", "Pop-Location", "Set-Location -Bogus x",
+                                  "Set-Location $env:TEMP"])
+def test_a_location_change_that_cannot_be_read_leaves_the_folder_unknown_so_the_last_known_one_is_checked(tmp_path, move):
+    command = move + "; iwr https://x.org/a.zip -OutFile a.zip"
+    assert ps_check(command, tmp_path, 0.5).action == "ask"
+    assert ps_check(command, tmp_path, 50) is None
+
+
+@pytest.mark.parametrize("command", [
+    "Start-BitsTransfer https://x.org/a.zip -Priority High",             # an option's value is not the destination
+    "Start-BitsTransfer -Source https://x.org/a.zip -DisplayName job",
+    "Start-BitsTransfer -Priority High https://x.org/a.zip -RetryInterval 60",
+])
+def test_bits_option_values_are_never_read_as_the_destination(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5) is None
+
+
+@pytest.mark.parametrize("command", [
+    "Start-BitsTransfer -Priority High https://x.org/a.zip out\a.zip",
+    "Start-BitsTransfer https://x.org/a.zip out\a.zip -DisplayName job -Asynchronous",
+    "Start-BitsTransfer -Source https://x.org/a.zip -Dest out\a.zip -Priority High",
+])
+def test_bits_positional_source_and_destination_still_count_with_options_around_them(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5).action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "Microsoft.PowerShell.Utility\Invoke-WebRequest https://x.org/a.zip -OutFile a.zip",
+    "microsoft.powershell.archive\Expand-Archive raw.zip out",
+    "Microsoft.BackgroundIntelligentTransfer.Management\Start-BitsTransfer https://x.org/a.zip out\a.zip",
+])
+def test_a_module_qualified_cmdlet_name_is_read_like_the_bare_one(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5).action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "Expand-Archive raw.zip -ErrorAction Stop", "Expand-Archive raw.zip -ea Stop -Force",
+    "Expand-Archive raw.zip -InformationVariable iv -Verbose", "Expand-Archive raw.zip -WarningAction SilentlyContinue",
+])
+def test_common_parameter_values_are_not_the_destination(tmp_path, command):
+    assert ps_folders(command, tmp_path) == [Path(tmp_path)]  # no destination named: the current folder
+
+
+def test_a_common_parameter_value_does_not_hide_the_real_destination(tmp_path):
+    assert ps_folders("Expand-Archive -ErrorAction Stop raw.zip out", tmp_path) == [(tmp_path / "out").resolve()]
+    assert ps_folders("Expand-Archive raw.zip -ev e -DestinationPath out", tmp_path) == [(tmp_path / "out").resolve()]
+
+
+def test_literalpath_leaves_the_second_positional_word_to_the_destination(tmp_path):
+    assert ps_folders("Expand-Archive -LiteralPath raw.zip out", tmp_path) == [(tmp_path / "out").resolve()]
+
+
+def test_an_ambiguous_or_unknown_parameter_name_is_not_guessed(tmp_path):
+    assert ps_check("iwr https://x.org/a.zip -Out a.zip", tmp_path, 0.5) is None  # -Out: OutFile, OutVariable, OutBuffer
+    assert ps_check("Expand-Archive raw.zip out -Bogus 1", tmp_path, 0.5).action == "ask"  # either way it is 'out'
+
+
+# ----- a word the tables do not explain is read both ways; arrays are checked element by element (#1167 review) -----
+
+def per_folder_probe(free_by_name, seen=None):
+    """A probe that answers by the last folder name, so each drive of one command can differ. The tests use `/`:
+    a backslash is a path separator only on Windows, so a name taken from it would differ on Linux."""
+    def probe(folder):
+        if seen is not None:
+            seen.append(folder)
+        return Space(100 * GIB, 0, int(free_by_name.get(Path(folder).name, 50) * GIB))
+    return probe
+
+
+@pytest.mark.parametrize("command", [
+    "Start-BitsTransfer -MaxDownloadTime 3600 https://x.org/a.zip out\a.zip",    # a real option the table could miss
+    "Start-BitsTransfer -Frobnicate 3 https://x.org/a.zip out\a.zip",            # an option no table knows
+    "Start-BitsTransfer https://x.org/a.zip -Frobnicate out\a.zip",
+    "Start-BitsTransfer https://x.org/a.zip -Frobnicate -Another out\a.zip",
+    "Start-BitsTransfer https://x.org/a.zip -Bogus out\a.zip",
+])
+def test_an_option_the_table_does_not_know_never_hides_the_destination(tmp_path, command):
+    assert ps_check(command, tmp_path, 0.5).action == "ask"
+
+
+def test_an_option_the_table_does_not_know_still_asks_nothing_on_a_roomy_drive(tmp_path):
+    assert ps_check("Start-BitsTransfer -Frobnicate 3 https://x.org/a.zip out\a.zip", tmp_path, 50) is None
+
+
+def test_too_many_unknown_options_leave_the_positional_words_unread(tmp_path):
+    command = "Start-BitsTransfer " + " ".join(f"-Unknown{n} v{n}" for n in range(6)) + " https://x.org/a.zip out\a.zip"
+    assert ps_check(command, tmp_path, 0.5) is None
+
+
+@pytest.mark.parametrize("command", [
+    "Start-BitsTransfer -Source https://x.org/a,https://x.org/b -Destination bigdrive/x.zip,tight/y.zip",
+    "Start-BitsTransfer https://x.org/a,https://x.org/b bigdrive/x.zip,tight/y.zip",
+    "Start-BitsTransfer -Source u1,u2 -Dest bigdrive/,tight/",
+])
+def test_every_element_of_a_destination_array_is_checked(tmp_path, command):
+    seen = []
+    verdict = disk_space.powershell_check(command, str(tmp_path), probe=per_folder_probe({"tight": 0.5}, seen), **CHECK)
+    assert verdict.action == "ask" and "0.5 GiB" in verdict.reason
+    assert {Path(f).name for f in seen} >= {"bigdrive", "tight"}
+
+
+def test_a_destination_array_with_a_variable_element_checks_the_current_folder_for_it(tmp_path):
+    command = "Start-BitsTransfer -Source a,b -Destination bigdrive/a.zip,$env:TEMP/b.zip"
+    seen = []
+    verdict = disk_space.powershell_check(command, str(tmp_path), probe=per_folder_probe({tmp_path.name: 0.5}, seen),
+                                          **CHECK)
+    assert verdict.action == "ask" and Path(tmp_path) in seen
+
+
+def test_an_unknown_option_before_set_location_target_is_not_guessed(tmp_path):
+    # Both readings of `-Bogus big` name different folders (big, or none): the folder is unknown, so the last known
+    # one is what gets checked.
+    command = "Set-Location -Bogus big; iwr https://x.org/a.zip -OutFile a.zip"
+    assert ps_check(command, tmp_path, 0.5).action == "ask"
+    assert ps_check(command, tmp_path, 50) is None
+
+
+# ----- PowerShell syntax the tokenizer must read as PowerShell does; what cannot be read is "unknown", not skipped -----
+
+@pytest.mark.parametrize("brk", ["`\n", "`\r\n"])
+def test_a_backtick_before_a_line_break_continues_the_command(tmp_path, brk):
+    command = "iwr https://x.org/a.zip " + brk + "  -OutFile out/a.zip"
+    assert ps_folders(command, tmp_path) == [(tmp_path / "out").resolve()]
+    assert ps_check(command, tmp_path, 0.5).action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "Start-BitsTransfer -Source https://x.org/a, https://x.org/b -Destination bigdrive/x.zip, tight/y.zip",
+    "Start-BitsTransfer -Source https://x.org/a ,https://x.org/b -Destination bigdrive/x.zip ,tight/y.zip",
+    "Start-BitsTransfer https://x.org/a, https://x.org/b bigdrive/x.zip, tight/y.zip",
+])
+def test_a_comma_array_is_one_value_with_or_without_spaces_around_the_comma(tmp_path, command):
+    seen = []
+    verdict = disk_space.powershell_check(command, str(tmp_path), probe=per_folder_probe({"tight": 0.5}, seen), **CHECK)
+    assert verdict.action == "ask" and {Path(f).name for f in seen} >= {"bigdrive", "tight"}
+
+
+@pytest.mark.parametrize("quotes", ["\u201c\u201d", "\u201e\u201d", "\u2018\u2019", "\u201a\u2018"])
+def test_smart_quotes_quote_a_path_like_ascii_ones(tmp_path, quotes):
+    command = f"iwr https://x.org/a.zip -OutFile {quotes[0]}my data/raw.zip{quotes[1]}"
+    assert ps_folders(command, tmp_path) == [(tmp_path / "my data").resolve()]
+
+
+def test_a_drive_letter_command_changes_the_drive_so_the_current_folder_is_still_checked(tmp_path):
+    command = "D:; iwr https://x.org/a.zip -OutFile raw.zip"
+    assert ps_check(command, tmp_path, 0.5).action == "ask"  # the old folder stays a candidate
+    assert ps_check(command, tmp_path, 50) is None
+    assert ps_check("D: ; iwr https://x.org/a.zip -OutFile raw.zip", tmp_path, 0.5).action == "ask"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="drive letters are a Windows path form")
+def test_a_drive_letter_command_makes_that_drive_a_candidate(tmp_path):
+    seen = []
+    disk_space.powershell_check("D:; iwr https://x.org/a.zip -OutFile raw.zip", str(tmp_path),
+                                probe=per_folder_probe({}, seen), **CHECK)
+    assert any(str(f).upper().startswith("D:") for f in seen)
+
+
+def test_a_partly_written_path_with_a_drive_checks_that_drive_too(tmp_path):
+    command = "iwr https://x.org/a.zip -OutFile D:" + chr(92) + "$name.zip"
+    seen = []
+    disk_space.powershell_check(command, str(tmp_path), probe=per_folder_probe({}, seen), **CHECK)
+    assert Path(tmp_path) in seen
+    if os.name == "nt":
+        assert any(str(f).upper().startswith("D:") for f in seen)
