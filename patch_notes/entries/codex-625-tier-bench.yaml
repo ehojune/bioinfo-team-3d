@@ -4,7 +4,7 @@ rows:
     at: "2026-10-31 18:45"
     summary: "고정 계획의 모델 등급 비교를 mock으로 검증합니다."
     text: "bench: 격리된 두 단계 등급 fixture와 live 호출 차단 추가 (#625)"
-  - sha: 69b9240b
+  - sha: 69b9240
     at: "2026-10-31 21:23"
     summary: "고정 등급 fixture의 mock 전용 호출법을 한영 manual에 안내합니다."
     text: "docs: 고정 등급 fixture 호출법과 live 차단 안내 (#625)"
