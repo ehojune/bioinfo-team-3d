@@ -8,7 +8,7 @@ rows:
   at: 2026-10-31 22:30
   text: 기본값이 켜지면서 깨진 tests/test_cso.py의 시험 11건을 고친다. FakeHub가 옛 검사(이미 쓴 비용만 봄)를 명시하게 하고 예약은 자체 hub와 새 시험 파일에서 따로 시험한다. 기본값을 확인하던 시험은 꺼 둔 경우의 시험으로 바꾼다. manual 한영의 보내기 전 예약 설명과 비용 표를 기본 켬으로 고치고 새 시험 파일을 Windows inventory known_tests에 넣는다
   summary: 기본값 변경으로 깨진 시험과 설명을 맞춥니다.
-- sha: 'SHA6'
+- sha: '2f5d663'
   at: 2026-10-31 23:10
   text: tests/test_recruit_plan_review3.py의 복구 뒤 변환 비용 시험이 hub를 옛 검사로 고정한 FakeHub와 예약이 켜진 runner를 섞어 변환이 ValueError로 시작도 못 하던 것을 고친다. 두 쪽을 같은 값으로 맞춘다. 제품 결함은 아니고 hub와 runner 중 한쪽만 false인 설정에서 계획 전 채용이 failed로 끝나는 것을 manual 한영에 적는다
   summary: 게이트웨이와 runner의 예약 설정이 다르면 채용이 실패한다는 점을 manual에 적었습니다.
