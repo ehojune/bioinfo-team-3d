@@ -44,7 +44,9 @@ def budget_slot_hub(*, cap, step_cost):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(('step_cost', 'expected_questions'), [(1.0, 0), (0.95, 0), (0.80, 1)])
+# 0.99, not 1.0: a request that has used its cap to the cent asks before its next turn once the hold is on (#1139),
+# and that is not what this test is about.
+@pytest.mark.parametrize(('step_cost', 'expected_questions'), [(0.99, 0), (0.95, 0), (0.80, 1)])
 async def test_slot_question_only_runs_when_its_budget_reservation_fits(step_cost, expected_questions):
     hub = budget_slot_hub(cap=1.0, step_cost=step_cost)
     await Orchestrator(hub).run_request('r')
@@ -104,6 +106,7 @@ async def test_unanswered_slot_is_warning_in_cp2_reviewer_and_report_limitations
 @pytest.mark.asyncio
 async def test_s2_failure_only_blocks_descendants_and_independent_results_reach_cp2(tmp_path):
     hub = _hub()
+    hub.requests['r']['budget_usd'] = 100  # this test is about failure propagation: room for the four parallel holds (#1139)
     original = hub.reply
     hub.s.gateway.state_dir = str(tmp_path / 'state')
 

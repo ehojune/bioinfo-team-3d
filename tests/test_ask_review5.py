@@ -219,6 +219,9 @@ async def test_logical_cap_applies_during_actual_wakes(tmp_path, step):
 async def test_other_steps_and_requests_have_separate_caps(tmp_path, rid, step):
     hub = Hub(settings(tmp_path))
     hub.agents = {"cso": {"engine": "mock"}}
+    # A consult is asked in the name of a request: with the pre-dispatch hold (#1139) the request has to exist.
+    for name in ("r", "other"):
+        hub.requests[name] = {"id": name, "text": "study", "status": "running"}
     for i in range(2):
         save_task(hub, f"old-{i}")
         ask = AskRequest(task_id=f"old-{i}", request_id="r", agent_id="worker", to="cso",
