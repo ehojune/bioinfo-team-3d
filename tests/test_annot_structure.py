@@ -320,7 +320,8 @@ def test_every_tool_in_the_server_goes_through_a_lookup_runner():
     tools = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.AsyncFunctionDef) and any(
-                isinstance(d, ast.Call) and getattr(d.func, "attr", "") == "tool" for d in node.decorator_list):
+                isinstance(d, ast.Call) and (getattr(d.func, "attr", "") == "tool" or getattr(d.func, "id", "") == "offered")
+                for d in node.decorator_list):
             tools[node.name] = {n.func.id for n in ast.walk(node) if isinstance(n, ast.Call)
                                 and isinstance(n.func, ast.Name)}
     assert {"pdb", "chembl"} <= set(tools)

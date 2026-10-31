@@ -162,7 +162,9 @@ WSL을 설정하지 않은 설치에서 `doctor`는 선택 기능이 꺼졌다�
 2. `labhq -c <설정> setup-wsl`로 없는 Nextflow(24.10.5)·editable labhq venv·runner 설정을 준비합니다. 분석 준비와 연결을 모두 확인한 뒤 활성화를 저장합니다. Claude CLI 설치·로그인과 관리자 명령은 안내만 합니다.
 3. 이후 `up`·`down`이 WSL runner도 시작·종료합니다. 따로 제어하려면 같은 설정으로 `wsl-runner start` 또는 `wsl-runner stop`을 씁니다. 기존 supervisor와 프로세스 신원 검사를 재사용합니다.
 
-**WSL이 준비되지 않았을 때(#612).** `bioinfo-agent`에게 맡긴 일(직접 요청이나 이미 계획된 단계)이 갈 곳이 없고 설정에 `runner.wsl`이 있으면, 요청마다 한 번 "WSL 준비가 덜 됐어요. 셋업할까요?" 카드가 뜹니다. 승인하면 gateway가 `setup-wsl`과 같은 준비를 thread에서 돌립니다. 15분은 기다림의 상한이라 이미 시작한 준비는 멈추지 못하고, 끝날 때까지 다른 셋업은 새로 시작하지 않습니다. 다른 native runner가 같은 직원을 맡고 있으면(잠시 끊긴 경우) 카드 없이 기존 대기 경로를 씁니다. 관리자 권한이 필요한 명령이 남으면 카드와 오류에 그 명령을 보여 주고, 요청은 runner를 기다리지 않고 바로 멈춥니다(비용 $0). 거절하거나 시간이 끝나도 같은 요청 안에서는 다시 묻지 않습니다. gateway가 WSL이 있는 PC가 아니면 실행하지 않고 `labhq setup-wsl`을 안내만 합니다. 카드와 피드에는 설치 출력이 아니라 항목 이름과 고정 안내만 남습니다. 자동 계획이 WSL을 고르게 하는 "실행 위치 카드"는 #578과 함께 옵니다.
+**WSL이 준비되지 않았을 때(#612).** `bioinfo-agent`에게 맡긴 일(직접 요청이나 이미 계획된 단계)이 갈 곳이 없고 설정에 `runner.wsl`이 있으면, 요청마다 한 번 "WSL 준비가 덜 됐어요. 셋업할까요?" 카드가 뜹니다. 승인하면 gateway가 `setup-wsl`과 같은 준비를 thread에서 돌립니다. 15분은 기다림의 상한이라 이미 시작한 준비는 멈추지 못하고, 끝날 때까지 다른 셋업은 새로 시작하지 않습니다. 다른 native runner가 같은 직원을 맡고 있으면(잠시 끊긴 경우) 카드 없이 기존 대기 경로를 씁니다. 관리자 권한이 필요한 명령이 남으면 카드와 오류에 그 명령을 보여 주고, 요청은 runner를 기다리지 않고 바로 멈춥니다(비용 $0). 거절하거나 시간이 끝나도 같은 요청 안에서는 다시 묻지 않습니다. gateway가 WSL이 있는 PC가 아니면 실행하지 않고 `labhq setup-wsl`을 안내만 합니다. 카드와 피드에는 설치 출력이 아니라 항목 이름과 고정 안내만 남습니다.
+
+**이 PC의 WSL에서 실행하기(#612).** 요청을 보낼 때 WSL을 직접 고를 수 있습니다: `labhq send --wsl`, 웹 요청 칸의 "WSL에서" 체크, API의 `run_where: "wsl"`(기본 `auto`). 고르면 계획이 직원 목록을 읽기 전에 위 카드를 요청 단위로 한 번 열고(다른 native runner가 같은 직원을 호스트해도 묻습니다), 승인하면 준비 뒤 WSL runner가 직원을 맡을 때까지 기다린 다음 그 요청의 `bioinfo-agent` 작업을 WSL runner에 고정합니다(`session_runner`). 고정된 작업은 다른 요청의 `bioinfo-agent` 작업이 native runner에서 아직 끝나지 않았어도 WSL runner로만 보내고, 다시 보내거나 gateway 재시작 뒤 이어받을 때도 같은 runner로만 갑니다. WSL runner가 잠시 끊기면 native로 돌리지 않고 그 runner가 돌아오기를 기다립니다. WSL runner를 기다리는 시간은 최대 5분이고, 설정(`runner.wsl`)이 없거나 점검·셋업이 실패하거나 거절·시간 초과가 나면 기다리지 않고 요청의 `run_where_note`에 이유를 남긴 채 WSL 없이 진행합니다. 계획에는 "PI가 이 PC의 WSL에서 실행하라고 골랐다"가 한 줄 전달되고, CP1 수정 요청과 후속 요청도 같은 선택을 이어받습니다. 이 선택은 `bioinfo-agent`에만 해당해서, 다른 직원을 직접 고른 요청에 붙이면 API(400)·CLI·웹이 거부합니다. HPC·local 선택지와 자동 계획이 WSL을 고르게 하는 "실행 위치 카드"는 #578과 함께 옵니다.
 
 | `runner.wsl` 설정 | 기본값 / 용도 |
 |---|---|
@@ -787,6 +789,8 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 ### 공개 자원 조회 도구
 
 `labhq_annot`은 변이·영역·유전자와 논문을 공개 DB에서 조회하는 내장 MCP입니다(#435, #697, #720, #744). `builtin_mcp`에 `annot`이 있는 직원(analyst·bioinfo-agent·biologist·lit_scout)에게 붙고, 이어 묻기·상담 같은 읽기 전용 실행에는 붙지 않습니다.
+
+직원 파일의 `annot_tools`로 그 직원이 받는 도구를 좁힐 수 있습니다(#1200). 없으면 서버의 도구를 전부 줍니다. `annot_tools: [fulltext, unpaywall]`처럼 이름을 적으면 그 도구만 주고, 빈 목록 `[]`은 하나도 주지 않습니다. 서버가 모르는 이름이 있으면 `labhq_annot`이 시작하지 않아 오타가 도구를 조용히 열거나 닫지 못합니다. 엔진과 관계없이 서버가 적용하고, 직원 명단(CSO가 계획에 쓰는 글)에도 실제로 받는 도구만 나옵니다. 기본 `chief_of_staff`는 문헌 도구 7개(`fulltext`, `key_fulltext`, `citation_chase`, `preprints`, `openalex_works`, `crossref_doi`, `unpaywall`)만 받으며, 새 조회 도구가 생겨도 목록에 넣기 전에는 닫혀 있습니다. 읽기 전용 실행은 `annot_tools`와 관계없이 `labhq_annot`을 받지 않습니다. runner가 서버에 넘기는 환경 변수 `LABHQ_ANNOT_TOOLS`(`*`은 제한 없음)는 직접 설정하지 않습니다.
 
 | 도구 | DB | 받는 것 | 판본 기록 |
 |---|---|---|---|

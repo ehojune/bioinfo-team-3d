@@ -8,11 +8,10 @@ model_tier: balanced
 permission_mode: default
 tools: [WebSearch, WebFetch, Read]
 builtin_mcp: [approval, annot]
-# Only the literature tools of labhq_annot (#1041): fulltext, key_fulltext, citation_chase, preprints, openalex_works,
-# crossref_doi, unpaywall. The variant, region, structure and compound lookups are not part of a briefing.
-disallowed_tools: [mcp__labhq_annot__vep, mcp__labhq_annot__gnomad, mcp__labhq_annot__clinvar, mcp__labhq_annot__chipatlas,
-  mcp__labhq_annot__chipatlas_targets, mcp__labhq_annot__encode, mcp__labhq_annot__gtex, mcp__labhq_annot__alphagenome,
-  mcp__labhq_annot__alphagenome_variant, mcp__labhq_annot__pdb, mcp__labhq_annot__chembl]
+# Only the literature tools of labhq_annot (#1041, #1200). The server offers exactly these, so a lookup tool added later
+# (variants, regions, structures) stays closed here until it is listed. The variant and region lookups are not part of a
+# briefing.
+annot_tools: [fulltext, key_fulltext, citation_chase, preprints, openalex_works, crossref_doi, unpaywall]
 max_turns: 25
 system_prompt: |
   도구 오류 원문을 그대로 근거로 쓰고 확인하지 않은 원인을 지어내지 않는다. 안전 검사 등으로 추측하지 않는다.
