@@ -96,6 +96,53 @@ def _packed_size(path: Path) -> int | None:
         return None
 
 
+def _tar_options(words: list[str]) -> tuple[bool, str | None, str | None]:
+    """(extracts?, archive, folder) from every spelling: `xzf a.tgz`, `-C out -xf a`, `--extract --file=a`, `--get`."""
+    extract, archive, folder = False, None, None
+    rest = words[1:]
+    i = 0
+    while i < len(rest):
+        word = rest[i]
+        nxt = rest[i + 1] if i + 1 < len(rest) else None
+        if word.startswith("--"):
+            flag, equal, attached = word.partition("=")
+            extract = extract or flag in {"--extract", "--get"}
+            if flag == "--file":
+                archive, i = (attached, i) if equal else (nxt, i + 1)
+            elif flag == "--directory":
+                folder, i = (attached, i) if equal else (nxt, i + 1)
+        elif (word.startswith("-") and len(word) > 1) or (i == 0 and re.match(r"^[A-Za-z]+$", word)):
+            for letter in word.lstrip("-"):
+                if letter == "x":
+                    extract = True
+                elif letter in "fC":
+                    value = nxt if i + 1 < len(rest) else None
+                    if letter == "f":
+                        archive = value
+                    else:
+                        folder = value
+                    i += 1 if value is not None else 0
+                    nxt = rest[i + 1] if i + 1 < len(rest) else None
+        i += 1
+    return extract, archive, folder
+
+
+def _clone_folder(words: list[str], workdir: str) -> Path:
+    """Where `git clone [options] <repo> [<dir>]` writes: the named folder, else a new one inside the work folder."""
+    skip = {"-b", "--branch", "--depth", "-o", "--origin", "-c", "--config", "--reference", "-j", "--jobs",
+            "--template", "--separate-git-dir", "--filter", "-u", "--upload-pack"}
+    positional, i = [], words.index("clone") + 1
+    while i < len(words):
+        word = words[i]
+        if word in skip:
+            i += 2
+            continue
+        if not word.startswith("-"):
+            positional.append(word)
+        i += 1
+    return _resolve(positional[1], workdir) if len(positional) > 1 else Path(workdir)
+
+
 def _write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | None:
     """(what, folder it writes into, estimated bytes or None) for one simple command, or None when it is no big write."""
     name = Path(words[0]).name.casefold().removesuffix(".exe")
@@ -110,14 +157,9 @@ def _write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | Non
         return ("압축 해제", _resolve(folder, workdir) if folder else Path(workdir),
                 _zip_size(_resolve(archive, workdir)) if archive else None)
     if name in {"tar", "bsdtar"}:
-        flags = "".join(w.lstrip("-") for w in words[1:2] if re.match(r"-?[A-Za-z]+$", w))
-        if "x" not in flags:
+        extract, archive, folder = _tar_options(words)
+        if not extract:
             return None
-        archive = _option(words, "-f", "--file")
-        if archive is None and "f" in flags:
-            index = 2 if len(words) > 2 else None
-            archive = words[index] if index is not None and not words[index].startswith("-") else None
-        folder = _option(words, "-C", "--directory")
         return ("압축 해제", _resolve(folder, workdir) if folder else Path(workdir),
                 _packed_size(_resolve(archive, workdir)) if archive else None)
     if name in {"7z", "7za", "7zr"} and len(words) > 2 and words[1] in {"x", "e"}:
@@ -125,8 +167,15 @@ def _write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | Non
         folder = next((w[2:] for w in words[2:] if w.startswith("-o") and len(w) > 2), None)
         return ("압축 해제", _resolve(folder, workdir) if folder else Path(workdir),
                 _packed_size(_resolve(archive, workdir)) if archive else None)
-    if name in _BULK_TOOLS or (name == "git" and "clone" in words[1:3]):
-        return "큰 데이터 내려받기", Path(workdir), None
+    if name == "git" and "clone" in words[1:3]:
+        return "큰 데이터 내려받기", _clone_folder(words, workdir), None
+    if name in _BULK_TOOLS:
+        out = _option(words, "-O", "--outdir") if name in {"fasterq-dump", "fastq-dump", "prefetch"} else None
+        if out is None and name in {"aws", "gsutil", "rsync"}:
+            last = words[-1] if len(words) > 2 and not words[-1].startswith("-") else ""
+            if last and "://" not in last and not re.match(r"^[^/\:]{2,}:", last):  # a local folder, not s3://, gs://, host:
+                out = last
+        return "큰 데이터 내려받기", _resolve(out, workdir) if out else Path(workdir), None
     return None
 
 

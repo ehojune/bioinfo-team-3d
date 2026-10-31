@@ -51,16 +51,51 @@ def test_a_tar_is_guessed_from_its_packed_size(tmp_path, monkeypatch):
     assert check("tar xzf a.tgz -C out", tmp_path, 8) is None
 
 
-def test_the_target_folder_decides_the_drive(tmp_path):
+def folders(command, workdir):
     seen = []
 
     def probe(folder):
         seen.append(folder.as_posix())
         return Space(100 * GIB, 0, 50 * GIB)
 
-    shell_check("tar -xf a.tar -C D:/data/out", str(tmp_path), probe=probe, **CHECK)
-    shell_check("unzip a.zip -d sub", str(tmp_path), probe=probe, **CHECK)
-    assert seen[0] == "D:/data/out" and seen[1].endswith("/sub")
+    shell_check(command, str(workdir), probe=probe, **CHECK)
+    return seen
+
+
+def test_the_target_folder_decides_the_drive(tmp_path):
+    other = (tmp_path / "elsewhere").as_posix()
+    assert folders(f"tar -xf a.tar -C {other}", tmp_path) == [other]
+    assert folders("unzip a.zip -d sub", tmp_path)[0].endswith("/sub")
+    assert folders("curl -o dl/a.zip https://example.org/a.zip", tmp_path)[0].endswith("/dl")
+
+
+@pytest.mark.parametrize("command", [
+    "tar xzf a.tgz -C {out}", "tar -xzf a.tgz -C {out}", "tar -C {out} -xf a.tgz",
+    "tar --extract --file a.tgz -C {out}", "tar --extract --file=a.tgz --directory={out}", "tar --get -f a.tgz -C {out}"])
+def test_every_tar_extract_spelling_is_read(tmp_path, command):
+    out = (tmp_path / "out").as_posix()
+    (tmp_path / "a.tgz").write_bytes(b"x")
+    assert folders(command.format(out=out), tmp_path) == [out]
+
+
+def test_tar_listing_and_creating_are_not_extraction(tmp_path):
+    assert folders("tar tf a.tar", tmp_path) == []
+    assert folders("tar czf out.tgz data/", tmp_path) == []
+
+
+def test_git_clone_probes_its_destination(tmp_path):
+    other = (tmp_path / "bigdisk" / "repo").as_posix()
+    assert folders(f"git clone https://example.org/r.git {other}", tmp_path) == [other]
+    assert folders(f"git clone --depth 1 -b main https://example.org/r.git {other}", tmp_path) == [other]
+    assert folders("git clone https://example.org/r.git", tmp_path) == [tmp_path.as_posix()]
+
+
+def test_bulk_tools_probe_their_named_output(tmp_path):
+    out = (tmp_path / "sra").as_posix()
+    assert folders(f"fasterq-dump SRR1 -O {out}", tmp_path) == [out]
+    assert folders(f"aws s3 sync s3://bucket/x {out}", tmp_path) == [out]
+    assert folders("aws s3 cp local.txt s3://bucket/x", tmp_path) == [tmp_path.as_posix()]
+    assert folders(f"rsync -a host:/data {out}", tmp_path) == [out]
 
 
 @pytest.mark.parametrize("command", ["ls -la", "cat notes.txt", "python run.py", "tar tf a.tar",
