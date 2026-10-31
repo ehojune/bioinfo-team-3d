@@ -810,8 +810,9 @@ class Runner:
                 if prior is None and self.store.get("cancelled_task", task.id) is not None:
                     # Its cancel arrived first (reconnect flush overtook this dispatch): never start it, answer it.
                     result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="cancelled",
-                                        error_kind="cancelled", cleanup_evidence={
-                                            "status": "NOT_STARTED", "reason": "cancelled_before_dispatch",
+                                        error_kind="cancelled", cost_usd=0.0, cost_known=True,
+                                        cleanup_evidence={
+                                            "status": "not_started", "reason": "cancelled_before_dispatch",
                                             "active_processes_measured": False})
                     await self._send_batch([
                         ({"type": "task.accepted", "task_id": task.id, "request_id": task.request_id},

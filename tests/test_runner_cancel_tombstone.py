@@ -53,6 +53,8 @@ async def test_cancel_before_dispatch_does_not_start_the_task():
     assert [m["type"] for m in sent] == ["task.accepted", "task.result"]
     data = sent[1]["data"]
     assert data["ok"] is False and data["error_kind"] == "cancelled"
+    assert data["cost_usd"] == 0.0 and data["cost_known"] is True
+    assert data["cleanup_evidence"]["status"] == "not_started"
     assert rows[("accepted_task", "t1")] == {"state": "finished"}
     assert ("cancelled_task", "t1") not in rows
 
