@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "1df11b0"
+    at: "2026-10-31 22:31"
+    summary: "Atlas 시험이 시간 초과 전에 남긴 출력을 보존해 지연 단계를 확인합니다."
+    text: "test: retain Atlas child diagnostics across bounded timeout"
   - sha: "6e1d0cf"
     at: "2026-10-31 22:14"
     summary: "main 충돌을 풀어 Atlas SDK 하한과 시험당 300초 제한을 함께 보존합니다."

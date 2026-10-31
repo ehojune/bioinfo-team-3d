@@ -47,3 +47,10 @@ Built a wheel offline from `1ec4212b21e281c6f5bb3e87b45b1d8fd5a8adb7`; installed
 - Related tests: Atlas, literature, doctor, fake CLI and runner environment inputs: **328 passed, 12 skipped**. Live Atlas and installed Codex sandbox remain **UNVERIFIED**. Final-head CI/review are tracked in PR #1186; hold remains.
 
 The proposed wording was replaced by bilingual manual updates in rev13. Manual ownership was returned before rev14.
+
+## Windows child timeout diagnostics (rev16)
+
+- [CI run 41204799221](https://github.com/ehojune/bioinfo-team-3d/actions/runs/41204799221) exceeded the existing 20-second child deadline. Its log cannot distinguish import, broker call or interpreter shutdown; the original delay remains unexplained.
+- Shield the pipe readers from deadline cancellation, kill the child and drain for at most five seconds. Preserve partial stdout/stderr and exit status while masking the fake credential/token. A deterministic timeout regression proves consumed output survives; the prior cancellation pattern loses it.
+- The real child emits flushed monotonic import/call/loop-close/interpreter-exit markers. Response and credential-absence assertions remain; stdin is closed and parent cleanup is bounded. No timeout increase or new skip.
+- Local Windows: Atlas **135 passed, 1 skipped**; focused child import 0.609s, call completion 0.937s, interpreter exit 0.937s. Final-head CI/review remain required; this is diagnostic repair, not proof of the original CI cause.
