@@ -11,11 +11,13 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import yaml
 
@@ -278,8 +280,22 @@ def _workdir_write(data: dict, workspaces: dict) -> bool:
     return inside(Path(workspace.dir).resolve(), path)
 
 
+def _create_fixed_plan_request(hub, body, plan):
+    """Use the stored-plan resume path in this isolated benchmark gateway."""
+    original = hub.orchestrator.run_request
+    selected = set()
+
+    async def resume_selected(rid, resume=False, continuation=False):
+        return await original(rid, resume=resume or rid in selected, continuation=continuation)
+
+    hub.orchestrator.run_request = resume_selected
+    rid = hub.create_request(body, extra={"plan": plan})
+    selected.add(rid)  # create_request schedules the coroutine; it cannot run until the loop yields.
+    return rid
+
+
 async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_settings,
-                     approve_budget_up_to: float | None = None) -> dict[str, Any]:
+                     approve_budget_up_to: float | None = None, fixed_plan=None) -> dict[str, Any]:
     import uvicorn
 
     from .gateway.server import RequestIn, create_app
@@ -291,8 +307,18 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
     staff_models = []
     for path in sorted((state / "agents").rglob("*.yaml")):
         spec = yaml.safe_load(path.read_text(encoding="utf-8"))
+        changed = False
         if spec.get("engine") == "claude_code" and spec.get("model") in settings.bench.staff_model:
             spec["model"] = settings.bench.staff_model[spec["model"]]
+            changed = True
+        if fixed_plan is not None and spec.get("id") == "analyst":
+            if spec.get("engine") != "claude_code" or spec.get("model_tier") != "reasoning":
+                raise ValueError("fixed tier fixture requires a reasoning-tier Claude analyst")
+            spec["model"] = settings.model_tiers.model_for("reasoning", "claude_code")
+            if not spec["model"]:
+                raise ValueError("fixed tier fixture needs a reasoning model")
+            changed = True
+        if changed:
             path.write_text(yaml.safe_dump(spec, allow_unicode=True, sort_keys=False), encoding="utf-8")
         staff_models.append({"id": spec["id"], "engine": spec.get("engine"), "model": spec.get("model")})
     if settings.recruit.contract_engine == "claude_code":
@@ -365,9 +391,10 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
         runner = Runner(settings)
         runner_task = asyncio.create_task(runner.run_forever())
         await _until(lambda: "cso" in hub.agents, 20, "benchmark runner did not register")
-        rid = hub.create_request(RequestIn(text=_prompt(case),
-                                           budget_usd=float(case["budget_usd"]),
-                                           meta={"case_id": case["id"]}))
+        body = RequestIn(text=_prompt(case), budget_usd=float(case["budget_usd"]),
+                         meta={"case_id": case["id"]})
+        rid = (_create_fixed_plan_request(hub, body, fixed_plan) if fixed_plan is not None
+               else hub.create_request(body))
         metrics.request_id = rid
         runner._bench_observer = metrics.spawn
         timeout = float(case.get("timeout_s", settings.runner.task_timeout_s))
@@ -928,6 +955,145 @@ async def run_case(case_id: str, output_root: Path, engines: str = "real",
               "budget_usd": float(case["budget_usd"]), "mode": engines, "rows": rows}
     _write_comparison(case_dir, result)
     report_case(case_id, output_root, engines)
+    return result
+
+
+class MockTierCostControl:
+    """In-memory, single-control mock contract; never a provider billing guarantee.
+
+    Amounts use one caller-declared integer currency unit throughout. Verification
+    flags simulate trusted control/receipt verification, not provider authentication.
+    Share this instance across both arms, competing pairs and retries. Outstanding
+    reservations survive exceptions, cancellation and expiry; no timeout releases them.
+    """
+
+    def __init__(self, limit_units: int, *, valid_until: float, verified: bool = False,
+                 clock=time.monotonic):
+        if type(limit_units) is not int or limit_units < 0:
+            raise ValueError("cost control needs a nonnegative integer limit")
+        if type(valid_until) not in (int, float) or not math.isfinite(valid_until):
+            raise ValueError("cost control needs a finite validity deadline")
+        self._limit = limit_units
+        self._valid_until = valid_until
+        self._verified = verified is True
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._reservations: dict[str, dict[str, Any]] = {}
+        self._settled = 0
+        self._blocked = False
+
+    def _check(self):
+        if not self._verified or self._blocked:
+            raise ValueError("cost control is unverified or blocked")
+        try:
+            now = self._clock()
+            valid = type(now) in (int, float) and math.isfinite(now) and now < self._valid_until
+        except Exception as exc:
+            raise ValueError("cost control freshness is unverifiable") from exc
+        if not valid:
+            raise ValueError("cost control is stale")
+
+    def _outstanding(self) -> int:
+        return sum(r["bound"] for r in self._reservations.values() if r["charged"] is None)
+
+    def reserve_pair(self, worst_case_units: dict[str, int]) -> dict[str, str]:
+        """Atomically reserve BOTH arms before either can dispatch."""
+        if not isinstance(worst_case_units, dict) or set(worst_case_units) != {"reasoning", "balanced"}:
+            raise ValueError("both arms need known worst-case costs")
+        bounds = dict(worst_case_units)
+        if any(type(value) is not int or value < 0 for value in bounds.values()):
+            raise ValueError("worst-case costs must be nonnegative integer units")
+        with self._lock:
+            self._check()
+            if self._settled + self._outstanding() + sum(bounds.values()) > self._limit:
+                raise ValueError("aggregate cost limit exceeded")
+            ids = {tier: uuid4().hex for tier in bounds}
+            for tier, reservation_id in ids.items():
+                self._reservations[reservation_id] = {"bound": bounds[tier], "started": False,
+                                                       "charged": None}
+            return ids
+
+    def start(self, reservation_id: str):
+        """Consume a reservation once; retry dispatch needs a new reservation."""
+        with self._lock:
+            self._check()
+            reservation = self._reservations.get(reservation_id)
+            if reservation is None:
+                raise ValueError("unknown cost reservation")
+            if reservation["started"]:
+                raise ValueError("cost reservation already dispatched")
+            reservation["started"] = True
+
+    def settle(self, reservation_id: str, charged_units: int, *, verified: bool = False,
+               final: bool = False):
+        """Apply a simulated final receipt, even late. Identical redelivery is a no-op."""
+        if (verified is not True or final is not True or type(charged_units) is not int
+                or charged_units < 0):
+            raise ValueError("cost receipt must be verified, final and known in integer units")
+        with self._lock:
+            reservation = self._reservations.get(reservation_id)
+            if reservation is None or not reservation["started"]:
+                raise ValueError("receipt has no dispatched cost reservation")
+            previous = reservation["charged"]
+            if charged_units > reservation["bound"] or (previous is not None and previous != charged_units):
+                self._blocked = True
+                raise ValueError("cost receipt contradicts the bound or prior final receipt; control blocked")
+            if previous is None:
+                reservation["charged"] = charged_units
+                self._settled += charged_units
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {"mode": "mock", "limit_units": self._limit, "settled_units": self._settled,
+                    "outstanding_units": self._outstanding(), "blocked": self._blocked}
+
+
+async def run_fixed_tier_pair(output_root: Path, settings, models: dict[str, str],
+                              engines: str = "mock", *,
+                              cost_control: MockTierCostControl | None = None,
+                              worst_case_units: dict[str, int] | None = None) -> dict[str, Any]:
+    """Offline fixture only: provider-wide aggregate spending control is not yet available."""
+    if engines != "mock":
+        raise ValueError("live tier pair disabled: aggregate provider spending control is unverified")
+    if set(models) != {"reasoning", "balanced"} or any(not isinstance(v, str) or not v.strip()
+                                                         for v in models.values()):
+        raise ValueError("both reasoning and balanced model IDs are required")
+    if type(cost_control) is not MockTierCostControl:
+        raise ValueError("a verified mock cost control is required")
+    case = load_case("public-protein-qc")
+    root = Path(output_root).resolve()
+    if root.exists():
+        raise FileExistsError(root)
+    reservations = cost_control.reserve_pair(worst_case_units)
+    root.mkdir(parents=True, exist_ok=False)
+    # Persist IDs before dispatch so late mock receipts can be matched after interruption.
+    # This is evidence only, not a restartable ledger or permission to create a new control.
+    atomic_write_text(root / "cost-reservations.json", json.dumps(reservations, indent=2) + "\n")
+    rows = []
+    for tier in ("reasoning", "balanced"):
+        arm_dir = root / tier
+        arm_dir.mkdir()
+        arm_settings = settings.model_copy(deep=True)
+        arm_settings.orchestrator.step_model_tiers = True
+        arm_settings.model_tiers.reasoning = {"claude_code": models["reasoning"]}
+        arm_settings.model_tiers.balanced = {"claude_code": models["balanced"]}
+        plan = {"steps": [{"id": "s1", "agent_id": "analyst", "instruction": _prompt(case),
+                            "depends_on": [], "outputs": [], "model_tier": tier}]}
+        cost_control.start(reservations[tier])
+        run = await _run_labhq(case, arm_dir, engines, arm_settings, fixed_plan=plan)
+        receipt = run.get("mock_cost_receipt")
+        if receipt is not None:
+            if not isinstance(receipt, dict):
+                raise ValueError("invalid mock cost receipt")
+            cost_control.settle(reservations[tier], receipt.get("units"),
+                                verified=receipt.get("verified"), final=receipt.get("final"))
+        row = await _score(case, arm_dir, run)
+        rows.append({"tier": tier, "requested_model": models[tier], "run": run, "score": row,
+                     "cost_reservation": reservations[tier]})
+    result = {"case_id": case["id"], "mode": engines,
+              "notice": "Mock answers are fixtures, not model quality or cost measurements.", "rows": rows,
+              "cost_control": cost_control.snapshot()}
+    atomic_write_text(root / "pair.json", json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     return result
 
 
