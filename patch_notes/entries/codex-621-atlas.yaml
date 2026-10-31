@@ -1,6 +1,6 @@
 pr: 1186
 rows:
-  - sha: "0000000"
+  - sha: "9f2d53a"
     at: "2026-10-31 20:14"
     summary: "취소된 Atlas 응답의 계산을 멈추고 잘못된 API 키를 변이 미수록과 구분합니다."
     text: "fix: stop late Atlas processing and classify invalid-key errors"
