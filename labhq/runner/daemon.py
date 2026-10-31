@@ -2310,7 +2310,8 @@ class Runner:
                     task = ws.task = task.model_copy(update={"context": (
                         f"{task.context}\n\n[Upstream inputs not linked]\n{note}")})
             # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
-            self._start_disk_watch(task, agent, workspace_dir, extra_dirs)  # every folder this run may write
+            # Every folder this run may write: a read-only run writes only its own workspace.
+            self._start_disk_watch(task, agent, workspace_dir, () if read_only else extra_dirs)
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs],
                                                                needs_rules=agent.engine == Engine.claude_code)
             asked_links, _internal_incomplete = await self._project_links(
