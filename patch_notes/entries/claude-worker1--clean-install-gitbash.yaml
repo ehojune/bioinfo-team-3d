@@ -1,0 +1,5 @@
+rows:
+  - sha: "e717a8c"
+    at: "2026-11-01 07:00"
+    summary: "Git Bash에서 설치 점검(clean_install_check)을 돌려도 새 clone 단계에서 죽지 않습니다. 셸이 내보내는 MSYSTEM 등 변수를 점검 환경에서 뺍니다."
+    text: "clean_install_check: Git Bash의 MSYSTEM 등 셸 변수를 설치 점검에 넘기지 않는다 (#1216)"
