@@ -1,5 +1,9 @@
 pr: 1186
 rows:
+  - sha: "612b540"
+    at: "2026-10-31 23:09"
+    summary: "Atlas 단계별 진단의 로컬 기준값과 미확정 범위를 기록합니다."
+    text: "docs: record Atlas transport diagnostic baseline"
   - sha: "ccbdb11"
     at: "2026-10-31 23:08"
     summary: "Atlas 시험에서 slot·admission·HTTP·runner 단계를 나눠 시간 초과 위치를 기록합니다."
