@@ -1,6 +1,6 @@
 pr: 1050
 rows:
-  - sha: 'be2ea2e'
+  - sha: '12bbd84'
     at: "2026-10-31 12:20"
     summary: "합성 broker 진단에서 호출자가 지정한 실행 ID를 일관되게 전달합니다."
     text: "진단 전 UUID를 검증하며 생략하면 새 ID를 생성합니다."
