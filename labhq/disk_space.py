@@ -44,7 +44,6 @@ def data_drives() -> list[Path]:
 # ---- a shell command that is about to write a lot (#678) ----
 ARCHIVE_RATIO = 4.0  # a tar/gz of unknown content is guessed at this many times its size; zip says its real size
 _BULK_TOOLS = frozenset({"fasterq-dump", "fastq-dump", "prefetch", "aws", "gsutil", "rsync"})
-_SEGMENT = re.compile(r"&&|\|\||[;|\n]")
 
 
 @dataclass(frozen=True)
@@ -53,11 +52,22 @@ class ShellCheck:
     reason: str
 
 
-def _words(segment: str) -> list[str] | None:
+def _segments(command: str) -> list[list[str]]:
+    """The simple commands of a shell line as word lists, split quote-aware at `;` `&&` `||` `|` `&` and newlines.
+    A line whose quotes do not close is not read at all."""
+    operators = "();<>|&" + chr(10)
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=operators)
+    lexer.whitespace, lexer.whitespace_split = " " + chr(9) + chr(13), True
+    out: list[list[str]] = [[]]
     try:
-        return shlex.split(segment, posix=True)
+        for token in lexer:
+            if set(token) <= set(operators):
+                out.append([])
+            else:
+                out[-1].append(token)
     except ValueError:
-        return None
+        return []
+    return [words for words in out if words]
 
 
 def _resolve(text: str, workdir: str) -> Path:
@@ -259,10 +269,7 @@ def shell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, w
     probe = probe or usage
     worst: ShellCheck | None = None
     cwd = workdir
-    for segment in _SEGMENT.split(command):
-        words = _words(segment)
-        if not words:
-            continue
+    for words in _segments(command):
         if Path(words[0]).name in {"cd", "pushd"} and len(words) == 2 and "$" not in words[1] and "`" not in words[1]:
             cwd = str(_resolve(words[1], cwd))  # the commands that follow run there
             continue

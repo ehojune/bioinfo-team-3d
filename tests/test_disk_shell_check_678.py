@@ -254,3 +254,9 @@ def test_unzip_skips_option_values_and_ignores_listing_modes(tmp_path):
     assert asked is not None and asked.action == "ask"
     for listing in ("unzip -l raw.zip", "unzip -t raw.zip", "unzip -p raw.zip"):
         assert shell_check(listing, str(tmp_path), probe=drive(0.5), **CHECK) is None
+
+
+def test_a_quoted_separator_does_not_split_a_command(tmp_path):
+    verdict = check("curl -o out.zip 'https://example.org/a;v=1'", tmp_path, 1.0)
+    assert verdict is not None and verdict.action == "ask"
+    assert check("echo 'curl -O x; ls", tmp_path, 1.0) is None  # unclosed quote: not read
