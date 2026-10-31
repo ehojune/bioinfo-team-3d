@@ -143,8 +143,8 @@ def activity_hub(tmp_path, monkeypatch):
     hub.store.close()
 
 
-def activity_message(tool="one"):
-    return {"type": "agent.tool", "task_id": "t", "runner_seq": 1,
+def activity_message(tool="one", seq=1):  # a runner never reuses a seq for another message (#1143)
+    return {"type": "agent.tool", "task_id": "t", "runner_seq": seq,
             "data": {"id": tool, "name": "mock", "input": {"value": "original"}}, "ts": 1}
 
 
@@ -234,7 +234,7 @@ async def test_concurrent_activity_merges_tools_and_owns_inputs(activity_hub, mo
         assert await asyncio.to_thread(entered.wait, 3)
         first = activity_message("one")
         pending = [asyncio.create_task(hub.on_runner_message("r", first)),
-                   asyncio.create_task(hub.on_runner_message("r", activity_message("two")))]
+                   asyncio.create_task(hub.on_runner_message("r", activity_message("two", seq=2)))]
         await asyncio.wait_for(queued.wait(), 3)
         first["data"]["input"]["value"] = "mutated"
         release.set()
