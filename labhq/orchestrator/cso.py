@@ -17,6 +17,7 @@ import math
 import re
 import time
 from contextlib import asynccontextmanager
+from decimal import ROUND_FLOOR, Decimal
 from pathlib import Path, PurePosixPath
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, Literal
@@ -3150,10 +3151,13 @@ _HOLD_EPSILON = 1e-9
 
 
 def _clip_to_remaining(cap: float | None, remaining: float) -> float | None:
-    """The hold for one turn: its cap, cut to what the request still has when that is enough to hold at all."""
-    if cap is None or remaining < _MIN_HOLD_USD:
+    """The hold for one turn: its cap, cut to what the request still has when that is enough to hold at all. A cut hold is
+    rounded down to whole cents, as the Claude adapter renders the cap in cents (a $0.019 hold sent as $0.02 would spend
+    more than was held and more than the request has left); under one cent it is not cut."""
+    remaining = round(remaining, 6)  # float noise (2.0 - 1.98) must not cost a cent
+    if cap is None or remaining < _MIN_HOLD_USD or cap <= remaining:
         return cap
-    return min(cap, remaining)
+    return float(Decimal(str(remaining)).quantize(Decimal("0.01"), rounding=ROUND_FLOOR))
 
 
 class Orchestrator:

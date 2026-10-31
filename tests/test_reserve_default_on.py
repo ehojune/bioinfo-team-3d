@@ -78,9 +78,9 @@ async def test_with_the_default_parallel_steps_share_the_request_cap_and_a_third
         await asyncio.gather(first, second)
 
 
-async def _one_step(budget, per_task=5.0, **task):
+async def _one_step(budget, per_task=5.0, cost=0.1, **task):
     async def dispatch(t):
-        return result(t, text="done", cost_usd=0.1)
+        return result(t, text="done", cost_usd=cost)
 
     hub = FakeHub(dispatch)
     hub.s.policy.budget.reserve_before_dispatch = BudgetSettings().reserve_before_dispatch
@@ -148,3 +148,24 @@ async def test_with_it_off_the_older_check_lets_both_start_on_the_same_unspent_b
     finally:
         release.set()
         await asyncio.gather(first, second)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget,held", [(0.019, 0.01), (0.0199, 0.01), (1.239, 1.23), (0.01, 0.01), (2.0 - 1.98, 0.02),
+                                         (3.0 - 2.98, 0.02)])
+async def test_a_clipped_hold_is_rounded_down_to_whole_cents(budget, held):
+    """The Claude adapter renders --max-budget-usd in cents, so a hold of $0.019 would be sent as $0.02: more than was held
+    and more than the request has left. The clipped hold is floored to the cent (PR #1192 review)."""
+    hub = await _one_step(budget, cost=0.0)  # a free turn: no overrun card after it
+    assert hub.approvals == [] and len(hub.calls) == 1
+    assert hub.calls[0].budget_usd == pytest.approx(held) and hub.calls[0].request_budget_remaining_usd == pytest.approx(held)
+    assert hub.calls[0].budget_usd * 100 == pytest.approx(round(hub.calls[0].budget_usd * 100))  # whole cents
+    assert hub.calls[0].budget_usd <= budget + 1e-9  # never more than the request had
+
+
+@pytest.mark.asyncio
+async def test_a_hold_that_is_already_below_the_remaining_amount_is_not_rounded():
+    """Only the hold cut to the remaining amount is floored: a task's own cap is held as it is."""
+    hub = await _one_step(10.0, per_task=2.5)
+    assert hub.calls[0].budget_usd == 2.5
+
