@@ -106,6 +106,20 @@ async def test_a_caller_that_goes_away_does_not_cancel_the_work_a_retry_waits_fo
     assert len(calls) == 1
 
 
+async def test_a_listed_refusal_is_not_remembered_either():
+    memory, calls = Idempotency(refusals=(LookupError,)), []
+
+    async def work():
+        calls.append(1)
+        if len(calls) == 1:
+            raise LookupError("the frame never left")
+        return "ok"
+
+    with pytest.raises(LookupError):
+        await memory.run("s", "k", {}, work)
+    assert await memory.run("s", "k", {}, work) == "ok"
+
+
 async def test_a_key_longer_than_the_limit_is_refused_not_cut():
     memory, calls = Idempotency(), []
 
@@ -231,3 +245,27 @@ def test_an_ambiguous_send_failure_is_answered_409_to_the_same_key_and_sent_once
         assert client.post("/api/contracts/c_x", json=body, headers=auth).status_code == 500
         assert client.post("/api/contracts/c_x", json=body, headers=auth).status_code == 409
     assert len(sent) == 1
+
+
+def test_a_contract_whose_runner_was_not_reached_can_be_sent_again_with_the_same_key(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from labhq.models import RunnerNotSent
+
+    s, app, hub, sent = _app(tmp_path, monkeypatch)
+    s.recruit.enabled = True
+    hub.agent_runner["c_x"] = "lab"
+    offline = [True]
+
+    async def send(runner_id, msg):
+        if offline[0]:
+            raise RunnerNotSent("runner lab is offline")  # the frame never left
+        sent.append(msg)
+
+    monkeypatch.setattr(hub, "send_runner", send)
+    auth = {"Authorization": f"Bearer {s.gateway.client_token}", "Idempotency-Key": "k"}
+    with TestClient(app, raise_server_exceptions=False) as client:
+        body = {"action": "extend", "days": 14}
+        assert client.post("/api/contracts/c_x", json=body, headers=auth).status_code == 500
+        offline[0] = False
+        assert client.post("/api/contracts/c_x", json=body, headers=auth).status_code == 200
+    assert [m["type"] for m in sent] == ["contract.update"]

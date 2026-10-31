@@ -23,15 +23,17 @@ _AMBIGUOUS = object()
 
 
 class Idempotency:
-    def __init__(self, ttl_s: float = TTL_S, max_entries: int = MAX_ENTRIES, clock: Callable[[], float] = time.monotonic):
-        self.ttl_s, self.max_entries, self.clock = ttl_s, max_entries, clock
+    def __init__(self, ttl_s: float = TTL_S, max_entries: int = MAX_ENTRIES, clock: Callable[[], float] = time.monotonic,
+                 refusals: tuple[type[Exception], ...] = ()):
+        """`refusals`: exceptions besides `HTTPException` that mean nothing was applied (the frame never left)."""
+        self.ttl_s, self.max_entries, self.clock, self.refusals = ttl_s, max_entries, clock, refusals
         self._done: OrderedDict[tuple, tuple[float, Any]] = OrderedDict()
         self._running: dict[tuple, asyncio.Task] = {}
 
     async def run(self, scope: str, key: str | None, body: Any, work: Callable[[], Awaitable[Any]]) -> Any:
         """`work()` once per (scope, key, body); a call without a key just runs it.
 
-        The same key with a different body is a different request, not a replay. A refusal (`HTTPException`: nothing was
+        The same key with a different body is a different request, not a replay. A refusal (`HTTPException` or a `refusals` type: nothing was
         applied) is not remembered, so the caller may retry. Any other failure is ambiguous (the action may have reached
         the runner or GitHub before the answer failed): it is remembered, and the same key gets a 409 instead of a
         second run. The work is not cancelled when the first caller goes away: a retry then waits for it.
@@ -53,7 +55,7 @@ class Idempotency:
     async def _finish(self, ident: tuple, work: Callable[[], Awaitable[Any]]) -> Any:
         try:
             result = await work()
-        except HTTPException:
+        except (HTTPException, *self.refusals):
             raise
         except Exception:
             self._remember(ident, _AMBIGUOUS)
