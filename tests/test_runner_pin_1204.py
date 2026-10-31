@@ -289,6 +289,16 @@ async def test_sweep_ask_origin_and_consult_runner_follow_the_request(hub):
     assert hub_runner(hub, "analyst", "r") is None, "only the WSL-bound agent is pinned"
 
 
+def test_the_plan_prompt_names_wsl_only_for_a_request_that_got_it_and_gives_the_reason_when_it_did_not():
+    roster = [{"id": AGENT, "runner_id": "win"}]
+    got = format_capabilities(roster, {}, run_where="wsl")
+    assert "PI가 이 PC의 WSL에서 실행하라고 골랐다" in got and "WSL 없이 실행한다" not in got
+    fell_back = format_capabilities(roster, {}, run_where=None, run_where_note="이 PC의 WSL runner가 시간 안에 연결되지 않았습니다")
+    assert "PI가 이 PC의 WSL에서 실행하라고 골랐다" not in fell_back, "a fallback is not planned as WSL"
+    assert "WSL 없이 실행한다: 이 PC의 WSL runner가 시간 안에 연결되지 않았습니다" in fell_back
+    assert "WSL" not in format_capabilities(roster, {}), "a request that did not choose WSL hears nothing about it"
+
+
 async def test_sweep_helpers_fall_back_for_a_hub_that_has_no_request_view():
     plain = SimpleNamespace(agents={AGENT: {"id": AGENT}}, agent_runner={AGENT: "x"})
     assert hub_agents(plain, "r") is plain.agents and hub_runner(plain, AGENT, "r") == "x"
