@@ -1,0 +1,10 @@
+pr: 1159
+rows:
+- sha: '97d227c'
+  at: 2026-10-31 12:30
+  text: POSIX 호스트에서 정책이 os.path.realpath를 부르기 전에 연속 슬래시를 하나로 합치는 helper(_collapse_separators, _realpath)를 policy.py의 다섯 호출처가 함께 쓴다. CPython의 posixpath.realpath가 구분자 run에서 제곱(3.10·3.12 모두)이라 52만 자에 1.75초였다. 앞머리 슬래시 둘은 보존하고 셋 이상은 하나로 읽으며, Windows 경로는 그대로 둔다
+  summary: 긴 구분자 run이 든 명령 하나로 정책 검사가 수 초 걸리던 제곱 비용을 없애고 Linux에서 반복되던 선형성 시험 실패의 원인을 고칩니다.
+- sha: '3a1bd0e'
+  at: 2026-10-31 13:10
+  text: _realpath가 os.fspath로 먼저 문자열로 바꾼 뒤 합치게 한다. _root_rules가 Path 루트를 넘기는데 Path에는 lstrip이 없어 Linux에서 TypeError가 났다. bytes는 합치지 않고 그대로 realpath에 넘긴다. Path·str·bytes 입력이 os.path.realpath와 같은 답을 내는 시험과 Path 루트를 받는 _root_rules 시험을 더하고, 시험은 어느 호스트에서든 POSIX 병합으로 돌린다
+  summary: PR 리뷰 P1과 Linux CI 실패의 원인인 Path 입력 오류를 고칩니다.
