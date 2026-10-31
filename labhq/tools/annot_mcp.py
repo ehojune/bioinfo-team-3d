@@ -7,7 +7,8 @@ citation chasing, bioRxiv/medRxiv preprints, OpenAlex discovery, Crossref metada
 
 Env (set by the runner): LABHQ_WORKDIR (where outputs/annotation_queries.jsonl goes), LABHQ_CONFIG (state_dir for the
 cache, annot.alphagenome_key_file). The AlphaGenome key is read here from that owner-only file, never from the
-command line or the environment, and is kept only inside the backend object.
+command line or the environment, and is kept only inside the backend object. The separate Atlas tool uses only
+the runner-owned Atlas endpoint; the staff CLI and this MCP process never receive its API key.
 """
 
 from __future__ import annotations
@@ -23,8 +24,9 @@ import httpx
 from ..runner.lookup_admission import ENV as LOOKUP_ADMISSION_ENV
 from ..settings import Settings
 from . import annot, annot_keys, annot_literature, annot_regulatory, annot_structure
+from ..runner.annot_broker import ENABLED_ENV as ATLAS_ENABLED_ENV
 from ._mcpcompat import make_server, tool_failure
-from .external_wait import LookupTimeout, exclude_human_wait, run_lookup
+from .external_wait import LookupTimeout, _step_slot, exclude_human_wait, run_lookup
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
 WORKDIR = Path(os.environ["LABHQ_WORKDIR"]).resolve() if os.environ.get("LABHQ_WORKDIR") else None
@@ -46,6 +48,7 @@ def _alphagenome() -> annot_regulatory.AlphaGenomeBackend | None:
 
 
 ALPHAGENOME = _alphagenome()
+ATLAS_ENABLED = os.environ.get(ATLAS_ENABLED_ENV) == "1"
 
 server = make_server(
     "labhq-annot",
@@ -64,6 +67,8 @@ server = make_server(
         "metadata), unpaywall (legal OA locations; explicitly disabled when annot.unpaywall_email is empty)"
         + ("; alphagenome_variant (recommended variant effect scores, GRCh38), "
            "alphagenome (legacy track summaries over variants or intervals)" if ALPHAGENOME else "")
+        + ("; alphagenome_atlas (precomputed GRCh38 SNV scores, requires ALPHAGENOME_API_KEY and Atlas SDK)"
+           if ATLAS_ENABLED else "")
         + ". Give variants as chr:pos:ref:alt (VCF-style alleles), HGVS or rsID, and regions as chr:start-end "
         "(1-based, inclusive). A malformed item comes back as that item's error and the rest are still looked up. "
         "Each result names the database release under `source` and is logged to outputs/annotation_queries.jsonl, "
@@ -90,11 +95,11 @@ _DEFINED: set[str] = set()
 KEY_TOOLS = frozenset({"alphagenome", "alphagenome_variant"})  # defined only when an AlphaGenome key file exists
 
 
-def offered():
+def offered(*, enabled: bool = True):
     """`@server.tool()` for a tool this process may offer; a tool outside the allowlist is simply not registered."""
     def register(function):
         _DEFINED.add(function.__name__)
-        if _ALLOWED is None or function.__name__ in _ALLOWED:
+        if enabled and (_ALLOWED is None or function.__name__ in _ALLOWED):
             server.tool()(function)
         return function
     return register
@@ -203,8 +208,16 @@ async def _run(method: str, *args: object, **kwargs: object) -> str:
                                                              **hooks) as client:
         annotator = annot_regulatory.RegulatoryAnnotator(client, WORKDIR, CACHE_DIR, pace=PACE,
                                                          alphagenome=ALPHAGENOME)
+        async def operation():
+            result = await getattr(annotator, method)(*args, **kwargs)
+            if method == "alphagenome_atlas" and result.get("n_ok") == 0:
+                # The per-item errors are already recorded; do not log an all-error query as a successful lookup.
+                reason = result["results"][0]["error"]
+                raise annot.LookupFailed(f"Atlas 조회가 모두 실패했습니다: {reason}")
+            return result
+
         try:
-            result = await run_lookup(lambda: getattr(annotator, method)(*args, **kwargs),
+            result = await run_lookup(operation,
                                       tool=method, workdir=WORKDIR, notify=_lookup_progress)
         except (annot.LookupFailed, LookupTimeout, ValueError) as exc:
             message = ALPHAGENOME.redact(str(exc)) if ALPHAGENOME else str(exc)
@@ -436,6 +449,38 @@ async def unpaywall(dois: list[str]) -> str:
     """Unpaywall legal OA locations for up to 50 DOIs. Requires annot.unpaywall_email; without it the call returns
     enabled=false without contacting the API. The contact email is never written to results, logs or cache keys."""
     return await _run_literature("unpaywall", dois)
+
+
+async def alphagenome_atlas(variants: list[str], requested_scorers: list[str] | None = None,
+                           ontology_terms: list[str] | None = None, gene_ids: list[str] | None = None,
+                           top: int = 20, assembly: Literal["GRCh38"] = "GRCh38") -> str:
+    """Precomputed AlphaGenome Atlas scores, never model inference. GRCh38 SNVs chr:pos:ref>alt only, 1..10.
+    requested_scorers: exact Atlas scorer names, default RNA_SEQ, up to 10; ontology_terms: up to 20 CURIEs;
+    gene_ids: up to 20 Ensembl gene IDs. Both filters are sent to Atlas. top 1..100, stores at most 1000 rows.
+    Requires runner ALPHAGENOME_API_KEY (no key file) and alphagenome>=0.10.0. Reports missing/unsupported access.
+    Non-commercial research only, no clinical decisions or training other ML models. Does not infer absent scores.
+    Request-wide lookup limits refuse this SDK transport, as for other AlphaGenome tools."""
+    # Retain this MCP loop's ordering with other lookups and human PDF waits; only the runner
+    # records the Atlas deadline/status, so a broker call does not duplicate those records.
+    async with _step_slot(WORKDIR), _admitted("alphagenome_atlas"):
+        if not BROKER_TOKEN:
+            raise tool_failure("Atlas runner broker is unavailable")
+        try:
+            # The runner owns the deadline, records, admission and credential. No caller URL or command.
+            async with httpx.AsyncClient(timeout=httpx.Timeout(1220, connect=10), trust_env=False) as client:
+                response = await client.post(f"{BROKER}/annot/atlas", headers={"X-Labhq-Token": BROKER_TOKEN},
+                    json={"task_id": TASK_ID, "agent_id": AGENT_ID, "variants": variants,
+                          "requested_scorers": requested_scorers, "ontology_terms": ontology_terms,
+                          "gene_ids": gene_ids, "top": top, "assembly": assembly})
+                response.raise_for_status()
+                return json.dumps(response.json(), ensure_ascii=False)
+        except (httpx.HTTPError, ValueError):
+            raise tool_failure("Atlas runner lookup failed; see outputs/annotation_queries.jsonl and "
+                               "outputs/external_lookup_status.jsonl") from None
+
+
+# Atlas is defined even when disabled; explicit registration preserves that callable for broker tests.
+offered(enabled=ATLAS_ENABLED)(alphagenome_atlas)
 
 
 if ALPHAGENOME is not None:

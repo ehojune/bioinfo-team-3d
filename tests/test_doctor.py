@@ -778,6 +778,7 @@ def test_the_mcp_floor_matches_pyproject():
     assert f'"mcp>={doctor.MCP_FLOOR[0]}.{doctor.MCP_FLOOR[1]}"' in project
 
 
-def test_collect_reports_the_mcp_row(tmp_path):
+def test_collect_reports_mcp_and_alphagenome_atlas_rows(tmp_path):
     names = [row["name"] for row in doctor.collect(_settings(tmp_path), dry_run=True)["checks"]]
     assert names.count("mcp") == 1
+    assert names.count("AlphaGenome Atlas") == 1

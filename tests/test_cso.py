@@ -21,6 +21,9 @@ from labhq.tools.scheduler import Scheduler
 class FakeHub:
     def __init__(self, dispatch):
         self.s = Settings()
+        # Reservation is on by default (#1139). The tests that use this hub are about the older check, which looks only
+        # at what is already spent; reservation has its own hub (`_reserving_hub`) and tests/test_reserve_default_on.py.
+        self.s.policy.budget.reserve_before_dispatch = False
         self.s.orchestrator.chief_of_staff_agent = None
         self.s.orchestrator.step_retry_backoff_s = 0
         self.requests = {"r": {"text": "question", "mode": "team", "budget_usd": 10}}
@@ -3106,43 +3109,50 @@ def _reserving_hub(dispatch, *, limit=2.0, per_task=1.5):
 
 
 @pytest.mark.asyncio
-async def test_reservation_is_off_by_default_and_leaves_the_task_unchanged():
+async def test_with_reservation_off_the_task_is_left_unchanged():
     async def dispatch(task):
         return result(task, text="done", cost_usd=0.4)
 
     hub = FakeHub(dispatch)
-    assert hub.s.policy.budget.reserve_before_dispatch is False
+    hub.s.policy.budget.reserve_before_dispatch = False  # the option is on by default since #1139
     await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work"))
     assert hub.calls[0].budget_usd is None and "budget_holds" not in hub.requests["r"]
 
 
 @pytest.mark.asyncio
-async def test_concurrent_turns_cannot_both_start_on_the_same_unspent_budget():
+async def test_concurrent_turns_share_the_unspent_budget_by_their_holds():
+    """Two turns of up to 1.5 on a 2.0 request: the second holds only the 0.5 that is left (#1139), so both start and the
+    holds never pass 2.0. Nothing is left for a third, which asks for a whole turn's cap."""
     started, release = asyncio.Event(), asyncio.Event()
 
     async def dispatch(task):
         started.set()
         await release.wait()
-        return result(task, text="done", cost_usd=1.0)
+        return result(task, text="done", cost_usd=min(1.0, task.budget_usd))
 
     hub = _reserving_hub(dispatch)
     orch = Orchestrator(hub)
     first = asyncio.create_task(orch.run_step(Task(agent_id="worker", request_id="r", prompt="first")))
     await started.wait()
     assert hub.requests["r"]["budget_holds"] == {hub.calls[0].id: 1.5}
-    with pytest.raises(BudgetExceeded, match="budget reservation"):  # 1.5 held + 1.5 more would pass 2.0
-        await orch.run_step(Task(agent_id="worker", request_id="r", prompt="second"))
-    assert len(hub.calls) == 1 and hub.approvals[0]["detail"]["reserve_usd"] == 1.5
-    # The started turn is capped at the amount held for it, for the CLI and its structured-output retries.
-    assert (hub.calls[0].budget_usd, hub.calls[0].request_budget_remaining_usd) == (1.5, 1.5)
+    second = asyncio.create_task(orch.run_step(Task(agent_id="worker", request_id="r", prompt="second")))
+    await asyncio.sleep(0.05)
+    assert len(hub.calls) == 2 and hub.approvals == []
+    assert hub.requests["r"]["budget_holds"] == {hub.calls[0].id: 1.5, hub.calls[1].id: 0.5}
+    with pytest.raises(BudgetExceeded, match="budget reservation"):  # 2.0 held, 1.5 more would pass 2.0
+        await orch.run_step(Task(agent_id="worker", request_id="r", prompt="third"))
+    assert len(hub.calls) == 2 and hub.approvals[0]["detail"]["reserve_usd"] == 1.5
+    # Each started turn is capped at the amount held for it, for the CLI and its structured-output retries.
+    assert [(c.budget_usd, c.request_budget_remaining_usd) for c in hub.calls] == [(1.5, 1.5), (0.5, 0.5)]
     release.set()
-    assert (await first).ok
-    assert hub.requests["r"]["budget_holds"] == {} and orch.cost["r"] == 1.0  # counted once, hold released
+    assert (await first).ok and (await second).ok
+    assert hub.requests["r"]["budget_holds"] == {} and orch.cost["r"] == pytest.approx(1.5)  # counted once, holds released
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("spent,per_task,sent", [(1.0, 1.0, True), (1.0, 1.5, False), (2.0, 0, False)])
-async def test_the_last_turn_starts_only_when_its_whole_cap_fits(spent, per_task, sent):
+@pytest.mark.parametrize("spent,per_task,sent", [(1.0, 1.0, True), (1.0, 1.5, True), (2.0, 0, False), (2.0, 1.5, False),
+                                                  (1.995, 1.5, False)])
+async def test_the_last_turn_starts_when_something_is_left_to_hold_and_is_held_at_that(spent, per_task, sent):
     async def dispatch(task):
         return result(task, text="done", cost_usd=0.1)
 
@@ -3154,7 +3164,8 @@ async def test_the_last_turn_starts_only_when_its_whole_cap_fits(spent, per_task
     if sent:
         assert (await orch.run_step(task)).ok and hub.calls[0].budget_usd == 1.0
     else:
-        # per_task 0 holds what is left; nothing left means no free or unlimited turn is sent.
+        # per_task 0 holds what is left; nothing left (or under a cent, which cannot be held) means no free or unlimited
+        # turn is sent.
         with pytest.raises(BudgetExceeded):
             await orch.run_step(task)
         assert hub.calls == []
@@ -3177,7 +3188,7 @@ async def test_an_invalid_request_budget_dispatches_nothing(limit):
                                          ("per_request_usd", float("inf"))])
 def test_reservation_refuses_non_amount_settings(field, value):
     from labhq.settings import BudgetSettings
-    BudgetSettings(**{field: value})  # unchanged when the option is off
+    BudgetSettings(reserve_before_dispatch=False, **{field: value})  # unchanged when the option is off
     with pytest.raises(ValueError):
         BudgetSettings(reserve_before_dispatch=True, **{field: value})
 
@@ -3193,10 +3204,13 @@ async def test_optional_recruit_and_diagnosis_turns_reserve_and_are_clamped_with
     # The recruiter's own 25 USD budget is cut to the per-task cap that was held.
     await orch.run_step(Task(agent_id="worker", request_id="r", prompt="hire", budget_usd=25, meta=dict(meta)))
     assert hub.calls[0].budget_usd == 1.0
-    hub.requests["r"]["budget_usd"] = 1.1  # 0.2 spent + 1.0 more does not fit; optional turns never open a card
+    hub.requests["r"]["budget_usd"] = 1.1  # 0.2 spent, 0.9 left: held at that, not refused (#1139)
+    await orch.run_step(Task(agent_id="worker", request_id="r", prompt="again", budget_usd=25, meta=dict(meta)))
+    assert hub.calls[1].budget_usd == pytest.approx(0.9)
+    hub.requests["r"]["budget_usd"] = 0.4  # 0.4 spent, nothing left; optional turns never open a card
     with pytest.raises(BudgetExceeded):
-        await orch.run_step(Task(agent_id="worker", request_id="r", prompt="again", budget_usd=25, meta=dict(meta)))
-    assert len(hub.calls) == 1 and hub.approvals == []
+        await orch.run_step(Task(agent_id="worker", request_id="r", prompt="third", budget_usd=25, meta=dict(meta)))
+    assert len(hub.calls) == 2 and hub.approvals == []
 
 
 @pytest.mark.asyncio
@@ -3207,7 +3221,7 @@ async def test_a_cancelled_or_restarted_turn_keeps_its_hold_until_its_cost_is_re
         started.set()
         await asyncio.Event().wait()
 
-    hub = _reserving_hub(hang)
+    hub = _reserving_hub(hang, limit=1.5)  # the hold takes the whole request: a restarted turn finds nothing left
     running = asyncio.create_task(Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="a")))
     await started.wait()
     running.cancel()  # a request cancel or shutdown: the runner may still be spending
