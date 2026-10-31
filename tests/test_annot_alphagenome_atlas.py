@@ -664,6 +664,77 @@ async def test_other_engine_alias_is_removed_and_launch_override_refused(tmp_pat
         assert not ctx.commands_ran
 
 
+@pytest.mark.parametrize("source", ["engine", "task"])
+@pytest.mark.parametrize("shape", ["direct", "chain", "cycle"])
+@pytest.mark.parametrize("syntax", ["braced", "bare", "percent"])
+async def test_mapping_atlas_aliases_protect_staff_config_and_launch(tmp_path, source, shape, syntax):
+    from unittest.mock import patch
+    from labhq.adapters.base import atlas_credentials
+
+    if syntax == "percent" and os.name != "nt":
+        pytest.skip("percent expansion is Windows-only")
+    def ref(name):
+        return {"braced": "${" + name + "}", "bare": "$" + name, "percent": "%" + name + "%"}[syntax]
+
+    ctx = context(tmp_path)
+    key = "same-mapping-fixture-secret"
+    mapping = {atlas.KEY_ENV: ref("ATLAS_ALIAS"), "ATLAS_ALIAS": key, "SAFE": "keep"}
+    if shape != "direct":
+        mapping["ATLAS_ALIAS"] = ref("ATLAS_NEXT")
+        mapping["ATLAS_NEXT"] = key if shape == "chain" else key + ref("ATLAS_ALIAS")
+    if source == "engine":
+        ctx.settings.engines.codex.env = mapping
+    else:
+        ctx.env = mapping
+    config = tmp_path / "source.yaml"
+    ctx.settings.config_path = str(config)
+    # Only the alias literal is in the copied document: detecting the named key is insufficient.
+    config.write_text(yaml.safe_dump({"env": {"ATLAS_ALIAS": mapping["ATLAS_ALIAS"],
+                                             "ATLAS_NEXT": mapping.get("ATLAS_NEXT", "")}}), encoding="utf-8")
+    adapter = CodexAdapter(ctx.settings)
+    with patch.dict(os.environ, {"PARENT_SAFE": "unchanged"}, clear=True):
+        secrets = atlas_credentials(ctx.settings, ctx.env)
+        env = adapter.staff_env(ctx)
+        assert not {atlas.KEY_ENV, "ATLAS_ALIAS", "ATLAS_NEXT"} & env.keys()
+        assert env["SAFE"] == "keep" and env["PARENT_SAFE"] == "unchanged"
+        assert key not in json.dumps(env)
+        with pytest.raises(ValueError, match="environment"):
+            refuse_credential_copy(ctx.settings, secrets)
+        assert not (tmp_path / "staff").exists()
+        ctx.settings.engines.codex.extra_args = ["-c", "restored=" + mapping.get("ATLAS_NEXT", key)]
+        result = await adapter.run(ctx)
+        assert not result.ok and "overrides" in result.error
+        assert key not in result.error and not ctx.commands_ran
+        assert list(tmp_path.iterdir()) == [config]
+
+
+def test_atlas_alias_graph_includes_shadowed_values_and_preserves_safe_references(tmp_path):
+    from unittest.mock import patch
+    from labhq.adapters.base import atlas_credentials
+
+    ctx = context(tmp_path)
+    ctx.settings.engines.codex.env = {atlas.KEY_ENV: "${ATLAS_ALIAS}", "SAFE": "${NORMAL}"}
+    ctx.settings.engines.gemini.env = {"ATLAS_ALIAS": "engine-fixture-secret"}
+    ctx.env = {"ATLAS_ALIAS": "task-fixture-secret"}
+    adapter = CodexAdapter(ctx.settings)
+    config = tmp_path / "source.yaml"
+    ctx.settings.config_path = str(config)
+    config.write_text(yaml.safe_dump({"engines": {"codex": {"env": ctx.settings.engines.codex.env}}}),
+                      encoding="utf-8")
+    with patch.dict(os.environ, {"ATLAS_ALIAS": "${ATLAS_LEAF}", "ATLAS_LEAF": "parent-fixture-secret",
+                                 "NORMAL": "normal-value"}, clear=True):
+        secrets = atlas_credentials(ctx.settings, ctx.env)
+        assert {"engine-fixture-secret", "task-fixture-secret", "parent-fixture-secret"} <= secrets
+        assert not {"ATLAS_ALIAS", "ATLAS_LEAF"} & adapter.staff_env(ctx).keys()
+        assert adapter.staff_env(ctx)["SAFE"] == "normal-value"
+        assert "normal-value" not in secrets
+    # A resolved parent reference remains valid for an ordinary config copy.
+    with patch.dict(os.environ, {"ATLAS_ALIAS": "parent-fixture-secret", "NORMAL": "normal-value"}, clear=True):
+        refuse_credential_copy(ctx.settings, atlas_credentials(ctx.settings, ctx.env))
+        name = write_staff_config(ctx.settings, tmp_path / "staff")
+        assert "parent-fixture-secret" not in Path(name).read_text(encoding="utf-8")
+
+
 @pytest.fixture
 def service(tmp_path, monkeypatch):
     ctx = context(tmp_path)

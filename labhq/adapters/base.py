@@ -825,9 +825,35 @@ def expand_env(env: dict[str, str], source: dict[str, str] | None = None) -> dic
 
 def atlas_credentials(settings: Settings, task_env: dict[str, str]) -> set[str]:
     """Collect secrets for removal, independently of the selected engine's key precedence."""
-    from ..tools.annot_alphagenome_atlas import credentials
-    return credentials(dict(os.environ), task_env,
-                       *(expand_env(engine.env) for _, engine in settings.engines))
+    from ..tools.annot_alphagenome_atlas import KEY_ENV, credentials
+    environments = [dict(os.environ), task_env, *(engine.env for _, engine in settings.engines)]
+    secrets = credentials(environments[0], task_env,
+                          *(expand_env(env) for env in environments[2:]))
+    # expandvars only reads the parent environment. Follow references in every raw mapping too,
+    # retaining shadowed alias values for removal without changing the backend key precedence.
+    aliases: dict[str, set[str]] = {}
+    pending = []
+    for env in environments:
+        for name, value in env.items():
+            aliases.setdefault(name.casefold() if os.name == "nt" else name, set()).add(value)
+            if name.casefold() == KEY_ENV.casefold():
+                pending.append(value)
+    pattern = r"\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)"
+    if os.name == "nt":
+        pattern += r"|%([^%]+)%"
+    seen: set[str] = set()
+    while pending:
+        value = pending.pop()
+        if value in seen:
+            continue
+        seen.add(value)
+        for match in re.finditer(pattern, value):
+            name = next(group for group in match.groups() if group is not None)
+            for alias in aliases.get(name.casefold() if os.name == "nt" else name, ()):
+                # Keep intermediate references as well as leaves, so cycles cannot reach staff.
+                secrets.update(v.strip() for v in (alias, os.path.expandvars(alias)) if v.strip())
+                pending.append(alias)
+    return secrets
 
 
 def child_config_dirs(env: dict[str, str], cwd: Path, var: str, default_name: str) -> list[Path]:

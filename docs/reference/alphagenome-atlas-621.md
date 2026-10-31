@@ -2,7 +2,7 @@
 
 Lookup-only implementation evidence, checked 2026-10-31. Live Atlas access is **UNVERIFIED** pending PI's key-location answer.
 
-Integration hold: final-head CI and manuals remain pending; installed package CLI/MCP mocks pass. The installed Codex sandbox shell and live Atlas access remain unverified. Cross-engine alias filtering shares one collector across daemon and adapter. The fixed `/annot/atlas` operation accepts query parameters, never caller URLs, commands or output roots.
+Integration hold: final-head CI/review remain pending; bilingual manuals and installed package CLI/MCP mocks are recorded. The installed Codex sandbox shell and live Atlas access remain unverified. Alias filtering shares one collector across daemon and adapter. The fixed `/annot/atlas` operation accepts query parameters, never caller URLs, commands or output roots.
 
 | Contract | Implementation |
 |---|---|
@@ -40,8 +40,10 @@ Built a wheel offline from `1ec4212b21e281c6f5bb3e87b45b1d8fd5a8adb7`; installed
 - `tools/call` reached the real loopback broker and SDK 0.10.0 with an in-memory protobuf stub: one query, raw score -2, track metadata preserved. Grant revocation returned a tool error/HTTP 403 without another SDK call. Fake key/alias were absent from the child environment, result and output files; grants and server were cleaned up.
 - The harness used an isolated HOME/config, explicit absent key-file path, environment whitelist and loopback-only Python socket guard. No provider login or live Atlas call. Local evidence: `probe.py`, `dependencies.txt`, `result.json`, `atlas-tool-help.json`, `mock-result.json` in the task's external installation folder.
 
-## Proposed manual wording (awaiting scoped ownership)
+## Same-mapping alias verification (rev14)
 
-KO: `alphagenome_atlas`는 GRCh38 SNV를 한 번에 10개까지 사전 계산 Atlas에서 조회합니다. runner의 `ALPHAGENOME_API_KEY` 환경변수와 `alphagenome>=0.10.0`이 필요하며 키 파일은 쓰지 않습니다. scorer·ontology·gene 필터와 출처·사용 조건을 반환합니다. 미수록 변이를 자동으로 모델 추론에 넘기지 않습니다. 실제 Atlas 접근은 키 권한 확인 전까지 미검증입니다.
+- Review [r4431737820](https://github.com/ehojune/bioinfo-team-3d/pull/1186#discussion_r4431737820): `expandvars` missed aliases stored alongside the key reference in engine/task mappings. The collector now follows references through all raw mappings, retains shadowed values and intermediate references, and terminates cycles with a visited set. Backend key precedence is unchanged.
+- Fake-only regression: 19 failed before repair, 19 passed after. Covers engine/task direct, chained and cyclic references (`${NAME}`, `$NAME`, Windows `%NAME%`), cross-layer shadowing, staff removal, config-copy refusal, launch refusal before generated files, and preservation of ordinary environment/config references.
+- Related tests: Atlas, literature, doctor, fake CLI and runner environment inputs: **328 passed, 12 skipped**. Live Atlas and installed Codex sandbox remain **UNVERIFIED**. Final-head CI/review are tracked in PR #1186; hold remains.
 
-EN: `alphagenome_atlas` queries precomputed Atlas scores for up to 10 GRCh38 SNVs. It requires `ALPHAGENOME_API_KEY` in the runner environment and `alphagenome>=0.10.0`; it does not read a key file. Scorer, ontology and gene filters are supported, with provenance and usage terms in the result. Missing variants never trigger model inference automatically. Live access remains unverified until the key's Atlas permissions are checked.
+The proposed wording was replaced by bilingual manual updates in rev13. Manual ownership was returned before rev14.
