@@ -17,3 +17,8 @@
 ## 후속 (같은 PR)
 - `_ended_by_cancel`을 메서드로 두었더니 `test_resume_receipt_clock`(가짜 hub에 `Hub.resume_when_ready`만 붙임) 3건이 `AttributeError`로 죽었다(main에서는 통과). 모듈 함수로 옮겼다.
 - 취소·재개·모델 거절·quota·재시작·facilities·interrupt 계열 1549 passed, 18 skipped(0 failed). `test_request_lifecycle.py` 65 passed 포함.
+
+## 리뷰 후 수정 (rev3)
+- P1(`server.py:2120`): 첫 조회 뒤 한 번만 확인해서, `_set_status("running")`의 저장·두 번째 `aresume_agents`·`request.resumed` 발행 중에 취소가 끼면 `run_request`가 취소된 요청에 시작될 수 있었다.
+- `_set_status`는 건너뛰면 `False`를 돌려주고(저장 뒤 취소도 포함, 그때는 `request.status`도 보내지 않는다), `resume_when_ready`는 `is False`일 때 돌아온다(가짜 hub가 `None`을 돌려주는 기존 시험은 그대로 통과). 두 번째 조회와 `request.resumed` 발행 뒤에도 `_ended_by_cancel`을 본다.
+- 시험 3건(`status_save`, `second_agents_lookup`, `resumed_event`): 수정 전 3건 실패, 수정 후 통과. 취소·재개·모델 거절·quota·재시작·facilities·interrupt 계열 1552 passed.

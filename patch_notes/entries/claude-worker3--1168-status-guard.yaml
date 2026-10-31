@@ -8,3 +8,7 @@ rows:
   at: 2026-10-31 15:40
   text: 취소 판정 helper(_ended_by_cancel)를 Hub 메서드에서 server.py의 모듈 함수로 옮긴다. test_resume_receipt_clock처럼 Hub.resume_when_ready만 떼어 쓰는 가짜 hub에 메서드가 없어 시험 3건이 죽었다. 취소·재개·모델 거절·quota·재시작·facilities 계열 1549건이 통과한다
   summary: 가짜 hub로 resume_when_ready를 돌리는 시험이 깨지지 않게 합니다.
+- sha: '9405e08'
+  at: 2026-10-31 16:20
+  text: _set_status가 되살리지 못하고 건너뛰면 False를 돌려주고, 저장 뒤에 취소가 끼었으면 request.status도 보내지 않는다. resume_when_ready는 상태를 쓴 뒤, 두 번째 agents 조회 뒤, request.resumed 발행 뒤에 취소를 다시 보고 그때마다 돌아와 run_request를 시작하지 않는다. 세 지점에서 취소가 끼어드는 시험을 더한다
+  summary: 리뷰 P1(복구된 카드 경로에서 재개 오케스트레이션을 시작하기 직전 취소 재확인)을 고칩니다.
