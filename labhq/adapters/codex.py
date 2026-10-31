@@ -314,6 +314,10 @@ class CodexAdapter(AgentAdapter):
                 env, child = expand_env(s.env), self.staff_env(ctx)
                 held = [k for k, v in env.items() if child.get(k) == v]
                 inline = {k: v for k, v in env.items() if k not in held}
+                # Atlas reads the staff process environment; only its built-in MCP needs this name.
+                # Do not add a value/reference to the shared spec (other engines persist expanded env).
+                if s.name == "labhq_annot" and child.get("ALPHAGENOME_API_KEY") and "ALPHAGENOME_API_KEY" not in env:
+                    held.append("ALPHAGENOME_API_KEY")
                 if inline:
                     flags += ["-c", f"{key}.env={_toml(inline)}"]
                 if held:

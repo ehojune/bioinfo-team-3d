@@ -15,6 +15,51 @@ from labhq.tools import annot_regulatory as reg
 from labhq.tools.annot import LookupFailed
 
 
+@pytest.mark.parametrize("source", ["parent", "engine", "task", "missing", "empty"])
+def test_codex_forwards_atlas_key_by_name_only(tmp_path, monkeypatch, source):
+    from labhq.adapters.base import RunContext
+    from labhq.adapters.codex import CodexAdapter
+    from labhq.models import AgentSpec, Engine, McpServerSpec, Task
+    from labhq.settings import Settings
+
+    secret = uuid.uuid4().hex
+    monkeypatch.delenv(atlas.KEY_ENV, raising=False)
+    settings = Settings()
+    task_env = {"LABHQ_TASK_ID": "atlas-mock"}
+    if source in ("parent", "empty"):
+        monkeypatch.setenv(atlas.KEY_ENV, secret if source == "parent" else "")
+    elif source == "engine":
+        settings.engines.codex.env[atlas.KEY_ENV] = secret
+    elif source == "task":
+        task_env[atlas.KEY_ENV] = secret
+    servers = [
+        McpServerSpec(name="labhq_annot", command="python",
+                      args=["-m", "labhq.tools.annot_mcp"],
+                      env={"LABHQ_TASK_ID": "atlas-mock"}, auto_approve=True),
+        McpServerSpec(name="other", command="python", env={"UNCHANGED": "literal"}),
+    ]
+    before = [s.model_dump() for s in servers]
+    ctx = RunContext(task=Task(agent_id="worker", prompt="go"),
+                     agent=AgentSpec(id="worker", name="Worker", role="test", engine=Engine.codex),
+                     workdir=tmp_path, settings=settings, mcp_servers=servers,
+                     env=task_env, emit=None, prompt="go")
+    adapter = CodexAdapter(settings)
+    adapter.prepare(ctx)
+    argv = adapter.build_command(ctx)
+    forwarded = next(v for v in argv if v.startswith("mcp_servers.labhq_annot.env_vars="))
+    names = json.loads(forwarded.split("=", 1)[1])
+    assert "LABHQ_TASK_ID" in names
+    assert (atlas.KEY_ENV in names) == (source in {"parent", "engine", "task"})
+    assert all(atlas.KEY_ENV not in v for v in argv if v.startswith("mcp_servers.other."))
+    assert 'mcp_servers.other.env={UNCHANGED = "literal"}' in argv
+    assert [s.model_dump() for s in servers] == before
+    assert secret not in json.dumps(argv)
+    assert secret not in json.dumps([s.model_dump() for s in servers])
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            assert secret not in path.read_text(encoding="utf-8")
+
+
 class Frame:
     def __init__(self, rows):
         self.rows = rows

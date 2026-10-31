@@ -2,7 +2,7 @@
 
 Lookup-only implementation evidence, checked 2026-10-31. Live Atlas access is **UNVERIFIED** pending PI's key-location answer.
 
-Integration hold: manuals are owned by another worker. The Codex adapter explicitly forwards MCP environment names from `McpServerSpec.env`; the built-in annotation server currently lacks the Atlas name. A separately claimed runner change must forward a name/reference without persisting the key, followed by transport testing. Direct MCP environment tests below do not establish runner-to-engine delivery.
+Integration hold: manuals are owned by another worker. The Codex adapter now forwards `ALPHAGENOME_API_KEY` by name to built-in `labhq_annot` when present in `staff_env(ctx)`. Shared MCP specs remain unchanged; no value or placeholder is added to argv or generated files. Parent/engine/task fake-key tests cover forwarding, absent/empty keys and unrelated MCP preservation. This does not establish live Atlas access.
 
 | Contract | Implementation |
 |---|---|
