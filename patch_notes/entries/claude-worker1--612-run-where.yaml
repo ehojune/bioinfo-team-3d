@@ -1,0 +1,5 @@
+rows:
+  - sha: "fd770f9"
+    at: "2026-10-31 19:00"
+    summary: "요청을 보낼 때 이 PC의 WSL에서 분석하도록 고를 수 있고(labhq send --wsl, 웹의 WSL에서 체크), WSL이 준비되지 않았으면 계획을 세우기 전에 셋업 카드가 먼저 뜹니다."
+    text: "요청에 run_where(auto|wsl)를 더해 WSL을 고르면 계획 전에 셋업 카드를 연다 (#612)"
