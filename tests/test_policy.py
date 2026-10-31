@@ -36,6 +36,7 @@ def _long_separator_runs(fraction=1):
 # `_windows_normpath` now applies the same rules in one pass on every host. This checks these inputs only; it is not a
 # proof of linearity for every input, and a quadratic regression of the full input would still run long before failing.
 _MAX_DOUBLING = 3.2
+_MAX_OVERALL = _MAX_DOUBLING ** 2  # the whole run, a quarter to the full input, read once: see _assert_linear
 _SIZES = {"quarter": 0.25, "half": 0.5, "full": 1}
 _BLOCK_S = 0.1  # a sample is a block of calls of at least this much CPU, so a 15.6 ms Windows clock tick stays below 16 %
 _MIN_SAMPLES = 3  # a single slow block cannot decide a side
@@ -75,6 +76,11 @@ def _assert_linear(call, build=_long_separator_runs, expected=None, vary=True):
         assert cost[big] <= _MAX_DOUBLING * cost[small] + _CLOCK_TICK_S, (
             f"path scanning must stay linear in the text length: doubling the input from {small} to {big} cost "
             f"{cost[big] / max(cost[small], 1e-9):.1f}x ({cost[small]:.4f} s -> {cost[big]:.4f} s per call)")
+    # One clock tick of slack for the whole run, not one per step: a cost that squares at every doubling (4, 16, 64 ms)
+    # stays under each step's bound plus its own tick, but not under the bound of the two steps together plus one tick.
+    assert cost["full"] <= _MAX_OVERALL * cost["quarter"] + _CLOCK_TICK_S, (
+        f"path scanning must stay linear in the text length: a 4x input cost "
+        f"{cost['full'] / max(cost['quarter'], 1e-9):.1f}x ({cost['quarter']:.4f} s -> {cost['full']:.4f} s per call)")
 
 
 def _size_of(text, full_text):
@@ -91,6 +97,8 @@ def _size_of(text, full_text):
     (0.0078125, 0.015625, 0.03125, None, False, {"quarter": 39, "half": 21, "full": 12}),  # fast: blocks of calls
     (0.0, 0.0, 0.0078125, None, False, {"quarter": 48, "half": 24, "full": 12}),  # below one clock tick: one tick of slack
     (0.0, 0.0, 0.03125, None, True, {"quarter": 48, "half": 24, "full": 12}),     # but not more than one tick
+    (0.004, 0.016, 0.064, None, True, {"quarter": 48, "half": 21, "full": 6}),   # squares at every step: 4, 16, 64 ms
+    (0.004, 0.012, 0.036, None, False, {"quarter": 48, "half": 24, "full": 9}),   # 3x a step stays under the bound, 9x in all
 ])
 def test_linear_scan_budget_uses_cpu_and_preserves_result_and_strict_limit(
         monkeypatch, quarter_s, half_s, full_s, result, reject, expected_calls):
