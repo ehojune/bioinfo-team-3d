@@ -52,23 +52,83 @@ class ShellCheck:
     reason: str
 
 
-def _segments(command: str) -> list[list[str]]:
-    """The simple commands of a shell line as word lists, split quote-aware at `;` `&&` `||` `|` `&` and newlines.
-    A line whose quotes do not close is not read at all."""
-    operators = "();<>|&" + chr(10)
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=operators)
-    lexer.commenters = ""  # bash starts a comment only at a word start; `url#frag -o /x` is one word, not a comment
-    lexer.whitespace, lexer.whitespace_split = " " + chr(9) + chr(13), True
-    out: list[list[str]] = [[]]
-    try:
-        for token in lexer:
-            if set(token) <= set(operators):
-                out.append([])
+def _segments(command: str) -> list[tuple[list[str], list[str]]]:
+    """The simple commands of a shell line as (words, redirect targets), read the way bash reads it.
+
+    Commands end at `;` `&&` `||` `|` `&` `(` `)` and newlines outside quotes. A `#` starts a comment only at the start
+    of a word (`url#frag` is one word). `>` `>>` `&>` `2>` name a file the command writes and `<` a file it reads: the
+    redirection is not part of the words and splits nothing. A line whose quotes do not close is not read at all."""
+    segments: list[tuple[list[str], list[str]]] = []
+    words: list[str] = []
+    redirects: list[str] = []
+    current: list[str] | None = None  # the word being read; None between words
+    pending: str | None = None  # "out" / "in": the next word is a redirection target
+    i, n = 0, len(command)
+
+    def finish_word() -> None:
+        nonlocal current, pending
+        if current is None:
+            return
+        word = "".join(current)
+        current = None
+        if pending == "out":
+            redirects.append(word)
+        elif pending is None:
+            words.append(word)
+        pending = None
+
+    def finish_segment() -> None:
+        nonlocal words, redirects
+        finish_word()
+        if words:
+            segments.append((words, redirects))
+        words, redirects = [], []
+
+    while i < n:
+        c = command[i]
+        if c in " \t\r":
+            finish_word()
+        elif c == "\n":
+            finish_segment()
+        elif c == "#" and current is None:
+            while i < n and command[i] != "\n":
+                i += 1
+            continue
+        elif c in "'\"":
+            j = i + 1
+            while j < n and command[j] != c:
+                j += 2 if (c == '"' and command[j] == "\\" and j + 1 < n) else 1
+            if j >= n:
+                return []
+            current = (current or []) + list(command[i + 1:j].replace('\\"', '"') if c == '"' else command[i + 1:j])
+            i = j
+        elif c == "\\" and i + 1 < n:
+            current = (current or []) + [command[i + 1]]
+            i += 1
+        elif c in ";(|)" or (c == "&" and command[i + 1:i + 2] != ">"):
+            finish_segment()
+            if command[i:i + 2] in {"&&", "||"}:
+                i += 1
+        elif c in "<>" or c == "&":
+            if current is not None and "".join(current).isdigit():
+                current = None  # `2>file`: the 2 is a file descriptor
             else:
-                out[-1].append(token)
-    except ValueError:
-        return []
-    return [words for words in out if words]
+                finish_word()
+            out = c in ">&"  # `&>` is an output redirect too
+            i += 1
+            if c == "&":
+                i += 1
+                if command[i:i + 1] == ">":
+                    i += 1
+            elif command[i:i + 1] in (">", "&", "|") if c == ">" else command[i:i + 1] in ("<", ">", "&"):
+                i += 1
+            pending = "out" if out else "in"
+            continue
+        else:
+            current = (current or []) + [c]
+        i += 1
+    finish_segment()
+    return segments
 
 
 def _resolve(text: str, workdir: str) -> Path:
@@ -89,6 +149,16 @@ def _option(words: list[str], short: str, long: str | None = None) -> str | None
             return words[i + 1]
         if short and word.startswith(short) and len(word) > len(short) and not word.startswith("--"):
             return word[len(short):]
+        letter = short[1:]
+        if len(letter) == 1 and word.startswith("-") and not word.startswith("--") and len(word) > 2:
+            cluster = word[1:]
+            at = cluster.find(letter)
+            if at >= 0:  # `-Lo file`: the letter ends a cluster and takes the next word; `-sfoFILE` takes the rest
+                rest = cluster[at + 1:]
+                if rest:
+                    return rest
+                if i + 1 < len(words):
+                    return words[i + 1]
     return None
 
 
@@ -184,8 +254,11 @@ def _unzip_options(words: list[str]) -> tuple[str | None, str | None, bool]:
                 folder = words[i + 1]
             i += 2
             continue
-        if word in {"-x", "-i"}:  # the rest are file patterns
-            break
+        if word in {"-x", "-i"}:  # file patterns follow up to the next option
+            i += 1
+            while i < len(words) and not words[i].startswith("-"):
+                i += 1
+            continue
         if word.startswith("-d") and len(word) > 2:
             folder = word[2:]
         elif word.startswith("-") and len(word) > 1:
@@ -270,7 +343,7 @@ def shell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, w
     probe = probe or usage
     worst: ShellCheck | None = None
     cwd = workdir
-    for words in _segments(command):
+    for words, redirects in _segments(command):
         if Path(words[0]).name in {"cd", "pushd"} and len(words) == 2 and "$" not in words[1] and "`" not in words[1]:
             cwd = str(_resolve(words[1], cwd))  # the commands that follow run there
             continue
@@ -279,7 +352,7 @@ def shell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, w
             if found is None:
                 continue
             what, folder, estimate = found
-            folders = [folder, *_operand_folders(words, cwd)]
+            folders = [folder, *_operand_folders(words, cwd), *(_resolve(target, cwd) for target in redirects)]
             spaces = []
             for candidate in dict.fromkeys(folders):
                 try:

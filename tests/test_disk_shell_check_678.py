@@ -265,3 +265,37 @@ def test_a_quoted_separator_does_not_split_a_command(tmp_path):
 def test_a_hash_inside_a_word_is_not_a_comment(tmp_path):
     big = (tmp_path / "big").as_posix()
     assert any(f.startswith(big) for f in folders(f"curl https://example.org/file#frag -o {big}/a", tmp_path))
+
+
+def test_a_comment_starts_only_at_a_word_start(tmp_path):
+    big = (tmp_path / "big").as_posix()
+    # an apostrophe in a real comment must not swallow the command that follows or poison the quotes
+    verdict = check("# it's the nightly fetch\ncurl -O https://example.org/a.zip", tmp_path, 1.0)
+    assert verdict is not None and verdict.action == "ask"
+    assert any(f.startswith(big) for f in folders(f"curl https://example.org/file#frag -o {big}/a", tmp_path))
+    assert folders("curl -O https://example.org/a.zip # don't forget", tmp_path)  # a trailing comment is dropped
+
+
+def test_a_real_comment_hides_the_command_text_after_it(tmp_path):
+    assert check("echo hi # curl -O https://example.org/a.zip", tmp_path, 0.1) is None
+
+
+def test_redirections_do_not_split_a_command_and_their_target_is_probed(tmp_path):
+    big = (tmp_path / "big").as_posix()
+    assert any(f.startswith(big) for f in folders(f"curl -s https://example.org/a > {big}/a.json", tmp_path))
+    assert any(f.startswith(big) for f in folders(f"curl -s https://example.org/a >> {big}/log 2>&1", tmp_path))
+    assert any(f.startswith(big) for f in folders(f"curl -s https://example.org/a &> {big}/all", tmp_path))
+    assert check("curl -O https://example.org/a.zip 2>/dev/null", tmp_path, 1.0).action == "ask"
+    assert check("tar xzf a.tgz < /dev/null", tmp_path, 50) is None
+
+
+def test_unzip_patterns_after_x_do_not_hide_the_destination(tmp_path):
+    big = (tmp_path / "big").as_posix()
+    assert any(f.startswith(big) for f in folders(f"unzip raw.zip -x '*.tmp' 'junk/*' -d {big}", tmp_path))
+    assert any(f.startswith(big) for f in folders(f"unzip -x '*.tmp' -d {big} raw.zip", tmp_path))
+
+
+def test_curl_short_option_clusters_name_their_output(tmp_path):
+    big = (tmp_path / "big").as_posix()
+    assert any(f.startswith(big) for f in folders(f"curl -Lo {big}/a.zip https://example.org/a.zip", tmp_path))
+    assert any(f.startswith(big) for f in folders(f"curl -fsSLo {big}/a.zip https://example.org/a.zip", tmp_path))
