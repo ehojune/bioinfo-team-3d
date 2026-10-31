@@ -10,6 +10,7 @@ import pytest
 
 from labhq.settings import Settings, ProjectSettings
 from tests.support.serve_task import serve_task, wait_started
+from labhq.portfolio import broken_markdown_links
 from labhq.result_storage import ResultStorage, clean_document, draft_documents
 
 
@@ -424,3 +425,23 @@ def test_citation_authors_come_from_the_setting_when_the_request_names_none():
     own = _citation_cff({**req, "authors": ["Park C"]}, settings)  # the request's own names win
     assert '"Park C"' in own and "Kim A" not in own
     assert _citation_cff(req, Settings()) == ""
+
+
+def test_a_reviewers_quoted_image_link_is_not_a_link_of_the_progress_record(tmp_path):
+    """#1193: the reviewer quotes the report's figure link as evidence. PROGRESS.md holds the review as JSON text, so that
+    quote used to read as a real link of `run/progress.md` and the edition check refused the whole save (② 7th run)."""
+    hub = Hub(tmp_path)
+    req = hub.requests["req_test"]
+    req["report"] = "# 결과\n\n![그림 1](graphical_abstract.svg)\n"
+    req["review"] = {"verdict": "accept", "issues": [{
+        "step_id": "S5", "priority": "P2", "evidence_quote": "![그래픽 초록](../graphical_abstract.svg)",
+        "problem": "S2 그림이 보고서에 없습니다. 인용: [표](../tables/missing.tsv)"}]}
+    docs = draft_documents(req, hub.s)
+    assert broken_markdown_links({"run/progress.md": docs["PROGRESS.md"]}) == []
+    assert "../graphical_abstract.svg" in docs["PROGRESS.md"], "the quote is kept, only not as a link"
+    assert "../tables/missing.tsv" in docs["PROGRESS.md"]
+
+
+def test_a_real_broken_link_in_a_document_is_still_found():
+    files = {"run/progress.md": "# 진행\n\n[없는 파일](../nowhere.svg)\n", "figures/a.svg": "<svg/>"}
+    assert broken_markdown_links(files) == [{"document": "run/progress.md", "target": "../nowhere.svg"}]
