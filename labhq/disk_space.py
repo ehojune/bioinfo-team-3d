@@ -72,7 +72,7 @@ def _segments(command: str) -> list[tuple[list[str], list[str]]]:
         word = "".join(current)
         current = None
         if pending == "out":
-            if not (word.isdigit() or word == "-"):  # `2>&1` duplicates a descriptor, it names no file
+            if not (word.rstrip("-").isdigit() or word == "-"):  # `2>&1`, `1>&3-` duplicate or move a descriptor
                 redirects.append(word)
         elif pending is None:
             words.append(word)
@@ -103,6 +103,8 @@ def _segments(command: str) -> list[tuple[list[str], list[str]]]:
                 return []
             current = (current or []) + list(command[i + 1:j].replace('\\"', '"') if c == '"' else command[i + 1:j])
             i = j
+        elif c == "\\" and command[i + 1:i + 2] == chr(10):
+            i += 1  # a backslash-newline continues the line: bash drops both
         elif c == "\\" and i + 1 < n:
             current = (current or []) + [command[i + 1]]
             i += 1

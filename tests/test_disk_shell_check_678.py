@@ -304,3 +304,15 @@ def test_curl_short_option_clusters_name_their_output(tmp_path):
 def test_descriptor_duplication_names_no_file(tmp_path):
     assert folders("curl -s https://example.org/a 2>&1", tmp_path) == [tmp_path.as_posix()]
     assert folders("curl -s https://example.org/a >&2", tmp_path) == [tmp_path.as_posix()]
+
+
+def test_a_backslash_newline_continues_the_line(tmp_path):
+    big = (tmp_path / "big").as_posix()
+    cont = chr(92) + chr(10)  # a backslash at the end of a line
+    assert any(f.startswith(big) for f in folders(f"tar -xf a.tar -C {cont}{big}", tmp_path))
+    command = f"curl -sSL {cont}  -o {big}/a.zip {cont}  https://example.org/a.zip"
+    assert any(f.startswith(big) for f in folders(command, tmp_path))
+
+
+def test_descriptor_move_names_no_file(tmp_path):
+    assert folders("curl -s https://example.org/a 1>&3-", tmp_path) == [tmp_path.as_posix()]
