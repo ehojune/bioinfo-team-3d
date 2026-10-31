@@ -28,10 +28,10 @@ def fixture(tmp_path):
     return root, folder, artifact, expected
 
 
-def runner_for(root, engine, zones=(), entries=2000):
+def runner_for(root, engine, zones=(), entries=2000, plan=None):
     runner = daemon_runner(root)
     runner.s.policy = SimpleNamespace(data_zones=[])
-    runner._resolve_agent = lambda task: SimpleNamespace(engine=engine)
+    runner._resolve_agent = lambda task: SimpleNamespace(engine=engine, sandbox=None, permission_mode=plan, builtin_tools=None)
     runner._zones = lambda: list(zones)
     runner.s.runner.reference_scan_max_entries = entries
     runner.s.runner.reference_scan_max_depth = 16
@@ -147,3 +147,25 @@ def test_a_grant_does_not_outlive_its_task_or_pass_to_a_reused_id(tmp_path):
     assert runner._environment_refusal_reason(plain) is None  # the same id again, now without a binding
     assert task.id not in runner._env_grants  # the early return cleared the old grant too
     assert runner._apply_environment_grants(plain, ["x"], read_only=False) == (["x"], {}, "")
+
+
+def test_a_read_only_consumer_is_refused_rather_than_run_on_the_system_python(tmp_path):
+    root, folder, artifact, expected = fixture(tmp_path)
+    runner = runner_for(root, Engine.claude_code, plan="plan")  # permission_mode plan makes the run read-only
+    task = bound_task(folder, artifact, expected)
+    assert "read-only step cannot be given the planned environment" in runner._environment_refusal_reason(task)
+    assert task.id not in runner._env_grants
+    task.meta["kind"] = "review"  # a review step is read-only too
+    plain = runner_for(root, Engine.claude_code)
+    assert "read-only step" in plain._environment_refusal_reason(task)
+
+
+def test_an_environment_without_a_write_deny_rule_is_not_shared(tmp_path, monkeypatch):
+    import labhq.runner.daemon as daemon
+    root, folder, artifact, expected = fixture(tmp_path)
+    runner = runner_for(root, Engine.claude_code)
+    task = bound_task(folder, artifact, expected)
+    monkeypatch.setattr(daemon, "claude_rule_ready", lambda path: False)  # a UNC workspace
+    reason = runner._environment_refusal_reason(task)
+    assert "cannot be shared read-only" in reason and "network path" in reason
+    assert task.id not in runner._env_grants

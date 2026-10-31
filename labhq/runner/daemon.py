@@ -1839,11 +1839,16 @@ class Runner:
                 return prefix + "environment validation failed"
             verified.append({"step_id": sid, "venv": str(venv),
                              "python": str(Path(steps[sid]) / binding["python_path"])})
+        read_only = False
         try:
-            engine = self._resolve_agent(task).engine
+            agent = self._resolve_agent(task)
+            engine = agent.engine
+            read_only = is_read_only_task(task.meta, agent)
         except Exception:  # noqa: BLE001 - an unknown agent is refused later; here it simply gets no grant
             engine = None
         if engine in ENVIRONMENT_GRANT_ENGINES:
+            if read_only:  # a read-only run takes no grant, and running it on the system Python would be another result
+                return prefix + "a read-only step cannot be given the planned environment"
             for grant in verified:
                 problem = self._environment_grant_problem(Path(grant["venv"]))
                 if problem:  # Claude would follow a link out of the venv: fail closed, no grant
@@ -1862,6 +1867,8 @@ class Runner:
         may link out to its base interpreter, so only zones are judged, as for a project clone)."""
         try:
             directory = Path(venv).resolve()
+            if not claude_rule_ready(str(directory)):  # no Edit/Write deny rule can be made (a UNC path): not read-only
+                return "no Claude write-deny rule can be made for it (a network path)"
             zones = self._zones()
             if overlaps_restricted(str(directory), self.s) or overlaps_zone(directory, zones):
                 return "it lies in a controlled data zone"
