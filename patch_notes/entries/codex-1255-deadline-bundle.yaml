@@ -24,3 +24,7 @@ rows:
   at: 2026-11-01 12:50
   text: Keep the latest available output when a retry has no result.
   summary: Preserve completed attempt outputs after an unfinished retry.
+- sha: ae6aea62
+  at: 2026-11-01 13:00
+  text: Preserve cancelled revision outputs alongside existing results.
+  summary: Keep both revisions in the request bundle.
