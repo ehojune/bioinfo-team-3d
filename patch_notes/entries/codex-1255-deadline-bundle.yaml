@@ -12,3 +12,7 @@ rows:
   at: 2026-11-01 12:35
   text: Document partial output preservation on cancellation.
   summary: Describe preservation and scan limits in both manuals.
+- sha: befad03
+  at: 2026-11-01 12:40
+  text: Preserve ledger results completed before cancellation.
+  summary: Include completed tasks missed by cancellation dispatch.
