@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: 4f348f9
+    at: "2026-11-01 11:27"
+    summary: "격리 전송 초안에서 위조·재전송 요청을 가짜 peer로 검사합니다."
+    text: "Add default-off synthetic transport admission, trusted verifier boundary, durable one-shot run consumption and env/stdio allowlists; no CLI wiring or OS protection claim (#666)."
