@@ -12,3 +12,7 @@ rows:
   at: 2026-11-01 16:00
   text: Preserve lookup share precision from configuration (#691).
   summary: Keep precise decimal shares through loading and staff configuration.
+- sha: 60ad318
+  at: 2026-11-01 16:30
+  text: Preserve lookup share precision when enabling WSL (#691).
+  summary: Keep the configured lookup share unchanged during WSL setup.
