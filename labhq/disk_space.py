@@ -165,6 +165,59 @@ def _option(words: list[str], short: str, long: str | None = None) -> str | None
     return None
 
 
+# curl short/long options that consume a value, from curl --help all (8.21.0).
+# policy.py has a deliberately smaller allowlist for shell safety, not a complete parser.
+_CURL_SHORT_VALUES = frozenset('EKCbcdDFPHmoxUQreXYytzTuAw')
+_CURL_LONG_VALUES = frozenset(('--abstract-unix-socket', '--alt-svc', '--aws-sigv4', '--cacert', '--capath', '--cert', '--cert-type', '--ciphers', '--config', '--connect-timeout', '--connect-to', '--continue-at', '--cookie', '--cookie-jar', '--create-file-mode', '--crlfile', '--curves', '--data', '--data-ascii', '--data-binary', '--data-raw', '--data-urlencode', '--delegation', '--dns-interface', '--dns-ipv4-addr', '--dns-ipv6-addr', '--dns-servers', '--doh-url', '--dump-header', '--ech', '--egd-file', '--engine', '--etag-compare', '--etag-save', '--expect100-timeout', '--form', '--form-string', '--ftp-account', '--ftp-alternative-to-user', '--ftp-method', '--ftp-port', '--ftp-ssl-ccc-mode', '--happy-eyeballs-timeout-ms', '--haproxy-clientip', '--header', '--help', '--hostpubmd5', '--hostpubsha256', '--hsts', '--interface', '--ip-tos', '--ipfs-gateway', '--json', '--keepalive-cnt', '--keepalive-time', '--key', '--key-type', '--knownhosts', '--krb', '--libcurl', '--limit-rate', '--local-port', '--login-options', '--mail-auth', '--mail-from', '--mail-rcpt', '--max-filesize', '--max-redirs', '--max-time', '--netrc-file', '--noproxy', '--oauth2-bearer', '--output', '--output-dir', '--parallel-max', '--parallel-max-host', '--pass', '--pinnedpubkey', '--preproxy', '--proto', '--proto-default', '--proto-redir', '--proxy', '--proxy-cacert', '--proxy-capath', '--proxy-cert', '--proxy-cert-type', '--proxy-ciphers', '--proxy-crlfile', '--proxy-header', '--proxy-key', '--proxy-key-type', '--proxy-pass', '--proxy-pinnedpubkey', '--proxy-service-name', '--proxy-tls13-ciphers', '--proxy-tlsauthtype', '--proxy-tlspassword', '--proxy-tlsuser', '--proxy-user', '--proxy1.0', '--pubkey', '--quote', '--random-file', '--range', '--rate', '--referer', '--request', '--request-target', '--resolve', '--retry', '--retry-delay', '--retry-max-time', '--sasl-authzid', '--service-name', '--sigalgs', '--socks4', '--socks4a', '--socks5', '--socks5-gssapi-service', '--socks5-hostname', '--speed-limit', '--speed-time', '--ssl-sessions', '--stderr', '--telnet-option', '--tftp-blksize', '--time-cond', '--tls-max', '--tls13-ciphers', '--tlsauthtype', '--tlspassword', '--tlsuser', '--trace', '--trace-ascii', '--trace-config', '--unix-socket', '--upload-file', '--upload-flags', '--url', '--url-query', '--user', '--user-agent', '--variable', '--vlan-priority', '--write-out'))
+
+
+def _curl_options(words: list[str]) -> list[tuple[str | None, str | None]]:
+    output = outdir = None
+    clauses = []
+    i = 1
+    while i < len(words):
+        word = words[i]
+        if word == "--":
+            break
+        if word in {"--next", "-:"}:
+            clauses.append((output, outdir))
+            output = outdir = None
+            i += 1
+            continue
+        if word.startswith("--"):
+            flag, equal, value = word.partition("=")
+            if flag in _CURL_LONG_VALUES:
+                if not equal:
+                    i += 1
+                    value = words[i] if i < len(words) else ""
+                if flag == "--output" and output is None:
+                    output = value
+                elif flag == "--output-dir":
+                    outdir = value
+        elif word.startswith("-") and word != "-":
+            for j, letter in enumerate(word[1:], 1):
+                if letter in _CURL_SHORT_VALUES:
+                    value = word[j + 1:]
+                    if not value:
+                        i += 1
+                        value = words[i] if i < len(words) else ""
+                    if letter == "o" and output is None:
+                        output = value
+                    break
+        i += 1
+    clauses.append((output, outdir))
+    return clauses
+
+
+def _curl_folders(words: list[str], workdir: str) -> list[Path]:
+    folders = []
+    for out, outdir in _curl_options(words):
+        base = _resolve(outdir, workdir) if outdir else Path(workdir)
+        target = _resolve(out, str(base)) if out else base
+        folders.append(target.parent if out and target.suffix else target)
+    return folders
+
+
 def _zip_size(path: Path) -> int | None:
     try:
         with zipfile.ZipFile(path) as archive:
@@ -301,9 +354,9 @@ def _write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | Non
     """(what, folder it writes into, estimated bytes or None) for one simple command, or None when it is no big write."""
     name = Path(words[0]).name.casefold().removesuffix(".exe")
     if name in {"curl", "wget"}:
-        out = _option(words, "-o", "--output") if name == "curl" else (_option(words, "-O", "--output-document")
-                                                                      or _option(words, "-P", "--directory-prefix"))
-        outdir = _option(words, "", "--output-dir") if name == "curl" else None
+        if name == "curl":
+            return "다운로드", _curl_folders(words, workdir)[0], None
+        out, outdir = _option(words, "-O", "--output-document") or _option(words, "-P", "--directory-prefix"), None
         base = _resolve(outdir, workdir) if outdir else Path(workdir)
         target = (_resolve(out, str(base)) if out else base)
         return "다운로드", (target.parent if out and target.suffix else target), None
@@ -355,7 +408,8 @@ def shell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, w
             if found is None:
                 continue
             what, folder, estimate = found
-            folders = [folder, *_operand_folders(words, cwd), *(_resolve(target, cwd) for target in redirects)]
+            main_folders = _curl_folders(words, cwd) if Path(words[0]).name.casefold().removesuffix(".exe") == "curl" else [folder]
+            folders = [*main_folders, *_operand_folders(words, cwd), *(_resolve(target, cwd) for target in redirects)]
             spaces = []
             for candidate in dict.fromkeys(folders):
                 try:
@@ -383,6 +437,11 @@ def shell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, w
             elif estimate is None and low(main, warn_gb, warn_percent):
                 verdict = ShellCheck("warn", f"{what}: 대상 드라이브({folder.as_posix()}) 여유가 적습니다({free:.1f} GiB). "
                                              "크기를 알 수 없어 막지 않습니다")
+        if verdict is None and estimate is None:
+            for candidate, space in spaces:
+                if candidate in main_folders and low(space, warn_gb, warn_percent):
+                    verdict = ShellCheck("warn", f"{what}: {candidate.as_posix()} ({space.free / GIB:.1f} GiB)")
+                    break
         if verdict is None:
             continue
         if worst is None or (verdict.action == "ask" and worst.action != "ask"):

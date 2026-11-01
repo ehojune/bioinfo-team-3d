@@ -215,6 +215,23 @@ def test_curl_output_dir_decides_the_drive(tmp_path):
     assert other in folders(f"curl --output-dir {other} -o a.zip https://example.org/a.zip", tmp_path)
 
 
+@pytest.mark.parametrize("separator", ["--next", "-:"])
+def test_curl_first_output_dir_is_not_overwritten_by_next_clause(tmp_path, separator):
+    first = (tmp_path / "first").as_posix()
+    second = (tmp_path / "second").as_posix()
+    command = f"curl --output-dir {first} -o a.zip https://example.org/a {separator} --output-dir {second} -o b.zip https://example.org/b"
+    assert first in folders(command, tmp_path)
+
+
+def test_curl_later_clause_warns_on_its_own_output_drive(tmp_path):
+    slow = tmp_path / "slow"
+    def probe(folder):
+        return drive(6 if folder == slow else 50)(folder)
+    command = f"curl https://example.org/a --next --output-dir {slow.as_posix()} -o sample.fastq https://example.org/b"
+    verdict = shell_check(command, str(tmp_path), probe=probe, **CHECK)
+    assert verdict is not None and verdict.action == "warn" and slow.as_posix() in verdict.reason
+
+
 def test_attached_tar_option_values_are_read(tmp_path):
     out = (tmp_path / "out").as_posix()
     (tmp_path / "a.tgz").write_bytes(b"x")
@@ -316,3 +333,12 @@ def test_a_backslash_newline_continues_the_line(tmp_path):
 
 def test_descriptor_move_names_no_file(tmp_path):
     assert folders("curl -s https://example.org/a 1>&3-", tmp_path) == [tmp_path.as_posix()]
+
+@pytest.mark.parametrize("args", [
+    ["-dfoo", "-o", "dest/file.zip"], ["-d", "foo", "-o", "dest/file.zip"],
+    ["-fsSLdfoo", "-o", "dest/file.zip"], ["-H", "foo", "-Lodest/file.zip"],
+    ["--data", "-o", "--output=dest/file.zip"],
+])
+def test_curl_values_do_not_hide_output(tmp_path, args):
+    result = disk_space._write(["curl", *args, "https://example.org/a"], str(tmp_path))
+    assert result[1] == tmp_path / "dest"
