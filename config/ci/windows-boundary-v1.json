@@ -49,6 +49,7 @@
     "tests/test_breaker.py",
     "tests/test_breaker_enforcement.py",
     "tests/test_budget_headroom_940.py",
+    "tests/test_budget_parallel_1255.py",
     "tests/test_cgroup_memory.py",
     "tests/test_checklist_review.py",
     "tests/test_ci807_research_regression.py",
