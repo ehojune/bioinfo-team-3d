@@ -49,11 +49,21 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 11:30 | [`a2f582c`](https://github.com/ehojune/bioinfo-team-3d/pull/1249/commits/a2f582c) | **요청 시간 상한의 남은 시간이 서버가 실제로 취소하는 시각과 같게 보입니다.**<br>웹 남은 시간을 서버의 wall_clock.deadline_at으로 계산한다 (Refs #1246 #1103) |
 | 11:00 | [`abe1eff`](https://github.com/ehojune/bioinfo-team-3d/pull/1223/commits/abe1eff) | **설명서의 직원 도구 표와 조회 도구 소개가 과학 리뷰어의 PDB·ChEMBL 조회와 읽기 전용 예외를 같은 말로 설명합니다.**<br>문서: 직원 표와 labhq_annot 소개문을 리뷰어의 읽기 전용 예외에 맞춘다 (#1055 리뷰 P1) |
 | 11:00 | [`ca91f1c`](https://github.com/ehojune/bioinfo-team-3d/pull/1248/commits/ca91f1c) | **데모·벤치가 같은 포트를 두 번 쓰지 않게 하고, 포트 충돌 때의 동작을 매뉴얼에 적었습니다.**<br>bench와 demo가 gateway·broker 포트를 free_port로 따로 뽑던 곳을 서로 다른 포트를 한 번에 뽑는 free_ports로 바꿔 같은 포트를 둘이 잡는 일을 막았다. runner broker 포트 충돌이 종료 코드 3 대신 포트 번호가 든 예외로 끝난다는 것을 manual 한·영에 적었다 (#1238) |
+| 11:00 | [`a3d53b0`](https://github.com/ehojune/bioinfo-team-3d/pull/1258/commits/a3d53b0) | 만료된 시설 수정 승인을 거절로 표시하지 않습니다 (#983). |
+| 10:53 | [`7e297b2`](https://github.com/ehojune/bioinfo-team-3d/pull/1258/commits/7e297b2) | 복구 이벤트와 3D 대기 표시의 회귀 검사를 갱신합니다 (#983). |
 | 10:30 | [`1ccb1af`](https://github.com/ehojune/bioinfo-team-3d/pull/1230/commits/1ccb1af) | manual: 로컬 job 디스크 확인의 크기 모름 동작을 실제대로 적는다 (Refs #1167) |
 | 10:30 | [`5942841`](https://github.com/ehojune/bioinfo-team-3d/pull/1248/commits/5942841) | **포트가 겹쳐도 CI 시험 한 건만 실패하고 나머지 시험이 이어서 돌아갑니다.**<br>runner broker 포트를 다른 프로세스가 잡고 있으면 uvicorn이 sys.exit(3)을 내고, 그 SystemExit가 run_forever task에서 올라와 xdist worker 하나의 남은 시험 54건을 연달아 실패시키고 INTERNALERROR로 끝낸 적이 있다(PR 1236의 3.10 job). run_forever가 이를 포트를 알려 주는 RuntimeError로 바꿔 시험 하나만 실패하게 했다. 시험이 gateway와 broker 포트를 free_port로 따로 두 번 뽑던 곳은 서로 다른 포트를 한 번에 뽑는 free_ports로 바꿨다 (#1238) |
+| 10:08 | [`cb3e9d8`](https://github.com/ehojune/bioinfo-team-3d/pull/1258/commits/cb3e9d8) | 취소된 수정과 결과를 알 수 없는 재실행을 구분해 표시합니다 (#983). |
+| 10:02 | [`a643d16`](https://github.com/ehojune/bioinfo-team-3d/pull/1258/commits/a643d16) | 시설팀 복구 상태의 화면 위치와 해석을 한영 매뉴얼에 설명합니다 (#983). |
 | 10:00 | [`9e2bf53`](https://github.com/ehojune/bioinfo-team-3d/pull/1230/commits/9e2bf53) | **매뉴얼에 모든 호출 상한이 센트로 내려간다는 점과 로컬 작업에도 디스크 확인이 붙는다는 점을 적었습니다.**<br>manual 한·영에 호출 상한 센트 내림과 로컬 job 디스크 확인을 적는다 (Refs #1139 #1167) |
+| 09:55 | [`84ca320`](https://github.com/ehojune/bioinfo-team-3d/pull/1258/commits/84ca320) | 이전 직접 요청 기록과 수락 전 재실행 상태를 표시합니다 (#983). |
+| 09:52 | [`2ac55c9`](https://github.com/ehojune/bioinfo-team-3d/pull/1258/commits/2ac55c9) | 직접 시설팀 문의를 표시하고 snapshot 기록을 요청별로 묶습니다 (#983). |
 | 09:50 | [`2bb749d`](https://github.com/ehojune/bioinfo-team-3d/pull/1243/commits/2bb749d) | **느린 Windows 러너에서 종료 신호 시험이 시간 때문에 실패하던 것을 안정화했습니다(검사 내용은 그대로).**<br>shutdown 신호 시험의 fixture 단계와 shutdown 대기를 30초로 늘린다 (Refs #898) |
+| 09:48 | [`5bc1d27`](https://github.com/ehojune/bioinfo-team-3d/pull/1258/commits/5bc1d27) | 직접 요청 재실행 기록을 연결하고 snapshot 상태 계산을 재사용합니다 (#983). |
+| 09:45 | [`3cd5108`](https://github.com/ehojune/bioinfo-team-3d/pull/1258/commits/3cd5108) | 일반 task의 불필요한 이력 조회를 없애고 직접 요청 완료 상태를 갱신합니다 (#983). |
+| 09:41 | [`0261d1f`](https://github.com/ehojune/bioinfo-team-3d/pull/1258/commits/0261d1f) | 재연결 순서와 2D·3D 복구 상태 갱신을 격리 mock으로 확인합니다 (#983). |
 | 09:40 | [`69d9242`](https://github.com/ehojune/bioinfo-team-3d/pull/1223/commits/69d9242) | **리뷰·이어 묻기 같은 읽기 전용 작업도, 직원 파일이 명시한 PDB·ChEMBL 조회에 한해 도구를 받습니다. 그 밖의 읽기 전용 제한은 그대로입니다.**<br>읽기 전용 실행도 허용된 annot 도구(pdb·chembl)는 명시한 직원에게 남긴다 (#1055) |
+| 09:38 | [`410d05f`](https://github.com/ehojune/bioinfo-team-3d/pull/1258/commits/410d05f) | **시설팀 복구 과정의 기록을 요청 화면에서 구분해 보여 줍니다.**<br>요청 대상과 담당, 답변, 승인, 수정, 재실행 및 원 단계 결과를 기존 근거로 표시합니다 (#983). |
 | 09:30 | [`b0312b7`](https://github.com/ehojune/bioinfo-team-3d/pull/1223/commits/b0312b7) | **과학 리뷰어가 구조·화합물 근거를 확인할 때 쓸 PDB·ChEMBL 조회 도구가 직원 파일에 지정됩니다.**<br>과학 리뷰어가 labhq_annot의 pdb·chembl 조회만 받는다 (#1055) |
 | 09:30 | [`52d3851`](https://github.com/ehojune/bioinfo-team-3d/pull/1226/commits/52d3851) | 읽기 전용 노티스를 엔진별로 만든다: Codex는 셸을 가진다 (Refs #1224) |
 | 09:10 | [`0aa12f8`](https://github.com/ehojune/bioinfo-team-3d/pull/1244/commits/0aa12f8) | **CI 진단이 실제로 남기는 내용에 맞춰 정책 문서를 고쳤습니다.**<br>CI 정책 문서(ci-reuse.md)가 worker 진단이 5분마다 task stack을 남긴다고 적고 있었다. 진단 스레드가 gc를 훑지 않게 바꾼 뒤(#1240) 남는 것은 node와 faulthandler 스레드 stack뿐이라 문서를 그에 맞추고 이유를 적었다 (#1238) |

@@ -92,6 +92,14 @@
 | 미해결 | 없음 |
 | 근거 | https://github.com/ehojune/bioinfo-team-3d/pull/1240 |
 
+# #983 시설팀 복구 상태 표시
+
+기존 기록으로 요청 대상·담당·답변·승인·수정·재실행·원 단계 결과를 분리한다. snapshot과 실시간 이벤트를 2D·3D에서 읽으며 근거가 없으면 `unknown`이다. [상태 계약](../reference/facilities-recovery-contract-983.md).
+
+격리 mock에서 offline 거부, CSO 대체, timeout, ledger 누락, 중복·역순 이벤트와 2D·3D 갱신을 확인했다. 일반 task에서 ledger 전체 조회를 피하고 direct 종료 기록 뒤 상태를 다시 발행한다. 관련 Python 119 passed, Node 회귀와 public 검사 통과. 실제 시설팀 복구는 **UNVERIFIED**이며 #983은 OPEN이다. 최종 CI와 리뷰는 PR에서 확인한다.
+
+한영 manual에 표시 위치와 해석을 추가했다(한국어 228,679→228,906자, 영어 403,460→403,902자). 취소된 수정은 취소로, abandoned 재실행은 결과 미확인으로 표시한다. 전용 회귀 11 passed, Node 화면 회귀 통과.
+
 # #1255: 8차 전 mock 리허설
 
 - 결론: main `50cb789a`를 새로 설치한 일회용 instance(mock 엔진, PI 포트 미사용)에서 요청 기한, 예약 기본값, 결정 카드 응답, 일부 실패 표지, 로컬 저장과 요청 묶음, `doctor --runtime`이 모두 통과했다. 결함은 하나(경미)라 수정 claim은 그것만 요청했다. 표와 근거 경로는 [#1255 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1255#issuecomment-6549530236)에 있다. 저장소 코드는 바꾸지 않았다.
