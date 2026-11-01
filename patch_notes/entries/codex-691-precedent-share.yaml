@@ -8,7 +8,7 @@ rows:
   at: 2026-11-01 15:00
   text: Share the lookup allowance across pre-plan stages (#691).
   summary: Apply one exact decimal cap to briefing and precedent lookups.
-- sha: pending
+- sha: 980f753
   at: 2026-11-01 16:00
   text: Preserve lookup share precision from configuration (#691).
   summary: Keep precise decimal shares through loading and staff configuration.
