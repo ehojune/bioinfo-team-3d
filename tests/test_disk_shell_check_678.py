@@ -316,3 +316,12 @@ def test_a_backslash_newline_continues_the_line(tmp_path):
 
 def test_descriptor_move_names_no_file(tmp_path):
     assert folders("curl -s https://example.org/a 1>&3-", tmp_path) == [tmp_path.as_posix()]
+
+@pytest.mark.parametrize("args", [
+    ["-dfoo", "-o", "dest/file.zip"], ["-d", "foo", "-o", "dest/file.zip"],
+    ["-fsSLdfoo", "-o", "dest/file.zip"], ["-H", "foo", "-Lodest/file.zip"],
+    ["--data", "-o", "--output=dest/file.zip"],
+])
+def test_curl_values_do_not_hide_output(tmp_path, args):
+    result = disk_space._write(["curl", *args, "https://example.org/a"], str(tmp_path))
+    assert result[1] == tmp_path / "dest"
