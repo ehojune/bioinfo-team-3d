@@ -6,7 +6,7 @@ const COLUMN = { pending:'waiting', queued:'waiting', working:'working', waiting
 const pad = n => String(n).padStart(2, '0');
 export function facilitiesLines(p) {
   const label = value => ({unknown:'확인 안 됨', waiting:'대기', answered:'답변', rejected:'거절', approved:'승인',
-    declined:'거절', timed_out:'시간 초과', applied:'적용', succeeded:'성공', failed:'실패', running:'진행 중'})[value] || value || '확인 안 됨';
+    declined:'거절', timed_out:'시간 초과', cancelled:'취소', applied:'적용', succeeded:'성공', failed:'실패', running:'진행 중'})[value] || value || '확인 안 됨';
   return [`시설팀 요청: ${label(p.requested_to)} · 담당: ${label(p.routed_to)} · 답변자: ${label(p.answered_by)}`,
     `답변: ${label(p.answer_status)}${p.answer ? ` · ${p.answer}` : ''}`,
     `승인: ${label(p.approval_status)}${p.approval_note ? ` · ${p.approval_note}` : ''} · 수정: ${label(p.fix_status)} · 재실행: ${label(p.rerun_status)} · 원 단계: ${label(p.step_status)}`];

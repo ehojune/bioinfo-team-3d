@@ -33,6 +33,7 @@ console.log('facilities projection ordering passed');
   assert.match(lines, /담당: cso/);
   assert.match(lines, /시간 초과/);
   assert.match(lines, /수정: 적용 · 재실행: 확인 안 됨 · 원 단계: 실패/);
+  assert.match(facilitiesLines({fix_status:'cancelled'}).join('\n'), /수정: 취소/);
   const index = fs.readFileSync(path.join(__dirname, '../labhq/web/index.html'), 'utf8');
   const live = fs.readFileSync(path.join(__dirname, '../labhq/web/lab3d/src/live.js'), 'utf8');
   assert.match(index, /S\.stepDetails\.get\(`\$\{q\.id\}:direct`\)/);

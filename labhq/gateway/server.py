@@ -3889,7 +3889,8 @@ class Hub:
             reruns.sort(key=lambda pair: (pair[1].get("dispatched_at") or 0, pair[0]))
             retry = reruns[-1][1] if reruns else {}
             retry_result = retry.get("result") or {}
-            rerun_status = ("waiting" if retry.get("completed") and waiting(retry_result) else
+            rerun_status = ("unknown" if retry.get("abandoned") else
+                            "waiting" if retry.get("completed") and waiting(retry_result) else
                             "succeeded" if retry.get("completed") and retry_result.get("ok") is True else
                             "failed" if retry.get("completed") and retry_result.get("ok") is False else
                             "running" if retry.get("accepted") and not retry.get("completed") else
@@ -3897,7 +3898,7 @@ class Hub:
             step_result = (request.get("results") or {}).get(sid) or {}
             step_status = ("unknown" if waiting(step_result) else "succeeded" if step_result.get("ok") is True else
                            "failed" if step_result.get("ok") is False else "unknown")
-            fix_status = fix.get("status") if fix.get("status") in {"applied", "succeeded", "failed"} else "unknown"
+            fix_status = fix.get("status") if fix.get("status") in {"applied", "succeeded", "failed", "cancelled"} else "unknown"
             result[sid] = {"requested_to": (ask.get("ask") or {}).get("to") or "unknown",
                            "routed_to": answer.get("routed_to") or ask.get("routed_to") or "unknown",
                            "answered_by": answer.get("from") or "unknown",

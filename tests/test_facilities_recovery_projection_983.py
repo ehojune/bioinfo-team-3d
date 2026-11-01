@@ -88,6 +88,14 @@ async def test_separate_durable_evidence_and_missing_ledger(tmp_path):
         hub.save_request('r')
         p = hub.facilities_projection('r')['s1']
         assert (p['rerun_status'], p['step_status']) == ('failed', 'failed')
+        hub.requests['r']['facilities_fixes']['s1']['status'] = 'cancelled'
+        hub.store.put('task', 'retry', {'request_id': 'r', 'step_id': 's1', 'accepted': True,
+                      'completed': True, 'abandoned': True, 'result': {'ok': False},
+                      'payload': {'meta': {'facilities_rerun': True}}})
+        hub.save_request('r')
+        p = hub.facilities_projection('r')['s1']
+        assert (p['fix_status'], p['rerun_status']) == ('cancelled', 'unknown')
+        assert hub.snapshot()['data']['requests'][0]['facilities_projection']['s1'] == p
         hub.store.put('task', 'retry', {'request_id': 'r', 'step_id': 's1', 'accepted': True,
                       'completed': True, 'result': {'ok': True, 'pending_asks': ['a']},
                       'payload': {'meta': {'facilities_rerun': True}}})
