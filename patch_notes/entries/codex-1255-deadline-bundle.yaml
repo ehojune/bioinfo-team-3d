@@ -16,3 +16,7 @@ rows:
   at: 2026-11-01 12:40
   text: Preserve ledger results completed before cancellation.
   summary: Include completed tasks missed by cancellation dispatch.
+- sha: 17f791d
+  at: 2026-11-01 12:45
+  text: Select the latest cancellation result without blocking the gateway.
+  summary: Preserve the latest attempt and read the ledger off the event loop.
