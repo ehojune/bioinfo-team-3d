@@ -4,3 +4,7 @@ rows:
   at: 2026-11-01 14:00
   text: Reserve lookup capacity after briefing and precedent search (#691).
   summary: Preserve lookup capacity for later stages when a request cap is configured.
+- sha: 18d3c36
+  at: 2026-11-01 15:00
+  text: Share the lookup allowance across pre-plan stages (#691).
+  summary: Apply one exact decimal cap to briefing and precedent lookups.
