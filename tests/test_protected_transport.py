@@ -203,6 +203,19 @@ def test_unavailable_ledger_fails_closed(policy, tmp_path):
         gate.prepare(wire(payload(policy)), channel=CHANNEL)
 
 
+def test_relative_ledger_stays_bound_when_cwd_changes(policy, tmp_path, monkeypatch):
+    first, other = tmp_path / "first", tmp_path / "other"
+    first.mkdir()
+    other.mkdir()
+    monkeypatch.chdir(first)
+    gate = transport(policy, "ledger")
+    gate.prepare(wire(payload(policy)), channel=CHANNEL)
+    monkeypatch.chdir(other)
+    TransportReplayStore("ledger")  # A different initialized DB must not replace the first.
+    with pytest.raises(TransportDenied, match="replay"):
+        gate.prepare(wire(payload(policy)), channel=CHANNEL)
+
+
 @pytest.mark.parametrize("changes", [dict(run_id="bad"), dict(nonce="short"), dict(expires_at=True),
     dict(env=[("LANG", "C")]), dict(env=(("LANG", "C"), ("LANG", "x"))),
     dict(stdio=(("stdout", True),)), dict(stdio=(("credential", 101),)),

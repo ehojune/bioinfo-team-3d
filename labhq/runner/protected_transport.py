@@ -6,6 +6,7 @@ Only tests supply a verifier today. Nothing imports this module on the CLI path.
 from contextlib import closing
 from dataclasses import dataclass
 import json
+from pathlib import Path
 import re
 import sqlite3
 import time
@@ -105,6 +106,7 @@ class TransportReplayStore:
         self.path = str(path)
         if not self.path or self.path == ":memory:":
             raise TransportDenied("replay_store")
+        self.path = str(Path(self.path).resolve())
         try:
             with closing(sqlite3.connect(self.path)) as db, db:
                 db.execute("CREATE TABLE IF NOT EXISTS transport_consumed "
