@@ -91,6 +91,8 @@ POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".
 
 **실험 중인 연결(#666):** 프로세스 경계는 기본 off이며 embedding Python API에서만 요청합니다. 요청하면 아직 unsupported로 실행을 거부하고, offline observer 결과는 합성 근거에 머뭅니다. 실제 보호·인증 cleanup은 미검증입니다. [연결 범위](reference/sandbox-666-phase2.md).
 
+VM 없는 transport 초안도 기본 off이며 일반 CLI와 연결되지 않습니다. 가짜 peer로 요청 인증·재전송 거절·env/FD 허용 목록을 시험하는 단계로, 실제 OS 인증이나 보호 실행을 제공하지 않습니다. [초안의 범위와 한계](reference/sandbox-666-transport.md).
+
 전제: Python ≥ 3.10, Git, 설정한 직원 CLI의 설치·로그인. npm 설치 CLI는 Node.js도 필요합니다.
 
 ```bash
