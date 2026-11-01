@@ -7417,11 +7417,17 @@ class Orchestrator:
             else:
                 briefing = ""
                 cos = self.cfg.chief_of_staff_agent
-                brief_job = (self._step_task(rid, self.run_step(Task(
+                brief_task = Task(
                     agent_id=cos, request_id=rid,
                     prompt=BRIEFING_PROMPT.format(request=text, capabilities=capabilities or "No workers available") + self._lookup_usage_line(rid, stage="briefing"),
-                    meta={**refs, "kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"})))
-                             if cos and cos in known and not continuation else None)
+                    meta={**refs, "kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"}) if cos and cos in known and not continuation else None
+                brief_job = (self._step_task(rid, self.run_step(brief_task))
+                             if brief_task is not None else None)
+                remaining = self._request_budget_remaining(rid) if brief_task else None
+                brief_cap = self._turn_cap(brief_task, remaining or 0.0) if brief_task else None
+                defer_precedent = bool(brief_job and self.hub.s.policy.budget.reserve_before_dispatch
+                                       and remaining is not None and brief_cap is not None
+                                       and brief_cap >= remaining - _HOLD_EPSILON)
                 # A continuation's plan prompt carries the revised plan and the reviewer's P1 issues (#90), or the
                 # PI's CP2 revise note as the revision request (R10).
                 carried = (req.get("research_contract") or {}).get("continuation") or {}
@@ -7450,6 +7456,7 @@ class Orchestrator:
                         # step (#514 review).
                         + json.dumps(revision["plan"], ensure_ascii=False, sort_keys=True))
                 precedent_job = None
+                precedent_task = None
                 precedent_agent = self.cfg.precedent_agent
                 if "analysis_precedents" not in req and precedent_agent:
                     if precedent_agent in known:
@@ -7458,7 +7465,8 @@ class Orchestrator:
                             prompt=PRECEDENT_PROMPT.format(request=text) + self._lookup_usage_line(rid, stage="precedent"),
                             meta={**refs, "kind": "precedent", "request": text,
                                   "title": "선행 연구 분석 기준 조사", "max_attempts": 1})
-                        precedent_job = self._step_task(rid, self.run_step(precedent_task))
+                        if not defer_precedent:
+                            precedent_job = self._step_task(rid, self.run_step(precedent_task))
                     else:
                         req["analysis_precedents"] = precedent_warning("agent_unavailable")
                         await persist_request(self.hub, rid)
@@ -7496,6 +7504,8 @@ class Orchestrator:
                         (await self._finish(rid, "브리핑 뒤 예산 승인 거부", {"briefing": b.model_dump(mode="json")}, ok=False))
                         return
                     briefing = b.text
+                if defer_precedent and precedent_task is not None:
+                    precedent_job = self._step_task(rid, self.run_step(precedent_task))
                 if precedent_job:
                     try:
                         precedent_result = await precedent_job
