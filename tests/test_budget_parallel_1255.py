@@ -7,8 +7,11 @@ from tests.test_cso import FakeHub, result
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('first_cost,second_sent', [(0.1, True), (0.5, False)])
-async def test_preplan_waits_for_small_budget_hold_to_settle(first_cost, second_sent):
+@pytest.mark.parametrize('budget,per_task,first_cost,second_sent,scout_cap', [
+    (0.5, 5.0, 0.1, True, 0.4), (0.5, 5.0, 0.5, False, None),
+    (5.019, 5.015, 0.1, True, 4.91),
+])
+async def test_preplan_waits_for_small_budget_hold_to_settle(budget, per_task, first_cost, second_sent, scout_cap):
     started, release = asyncio.Event(), asyncio.Event()
 
     async def dispatch(task):
@@ -20,8 +23,8 @@ async def test_preplan_waits_for_small_budget_hold_to_settle(first_cost, second_
 
     hub = FakeHub(dispatch)
     hub.s.policy.budget.reserve_before_dispatch = True
-    hub.s.policy.budget.per_task_usd = 5.0
-    hub.requests['r']['budget_usd'] = 0.5
+    hub.s.policy.budget.per_task_usd = per_task
+    hub.requests['r']['budget_usd'] = budget
     hub.s.orchestrator.chief_of_staff_agent = 'chief'
     hub.s.orchestrator.precedent_agent = 'scout'
     for name in ('chief', 'scout'):
@@ -39,7 +42,7 @@ async def test_preplan_waits_for_small_budget_hold_to_settle(first_cost, second_
         assert bool(scouts) is second_sent
         assert not hub.requests['r'].get('budget_holds')
         if second_sent:
-            assert scouts[0].budget_usd == pytest.approx(0.4)
+            assert scouts[0].budget_usd == pytest.approx(scout_cap)
         else:
             assert any(card['kind'] == 'budget' for card in hub.approvals)
     finally:

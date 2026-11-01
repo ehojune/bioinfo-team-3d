@@ -7425,9 +7425,12 @@ class Orchestrator:
                              if brief_task is not None else None)
                 remaining = self._request_budget_remaining(rid) if brief_task else None
                 brief_cap = self._turn_cap(brief_task, remaining or 0.0) if brief_task else None
+                # Dispatch caps and remaining allowance are both floored to cents. If no whole cent is left,
+                # wait for the briefing's actual cost before deciding whether the scout needs a budget card.
                 defer_precedent = bool(brief_job and self.hub.s.policy.budget.reserve_before_dispatch
                                        and remaining is not None and brief_cap is not None
-                                       and brief_cap >= remaining - _HOLD_EPSILON)
+                                       and _floor_cents(remaining - min(_floor_cents(brief_cap),
+                                                                        _floor_cents(remaining))) < float(_CENT))
                 # A continuation's plan prompt carries the revised plan and the reviewer's P1 issues (#90), or the
                 # PI's CP2 revise note as the revision request (R10).
                 carried = (req.get("research_contract") or {}).get("continuation") or {}
