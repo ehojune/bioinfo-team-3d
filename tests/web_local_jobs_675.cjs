@@ -202,7 +202,7 @@ test('HPC keeps its identity, mixed jobs are explicit and 3D uses the shared lab
   emit('job.submitted', {job_id:'local-one', name:'<script> & GSEA'});
   assert.match(ui.stepWaitLabel('hibernating', q.stepJobs.s1), /로컬 계산·HPC 대기.*로컬 계산 <script> & GSEA/);
   const source = fs.readFileSync(path.join(web, 'lab3d/src/live.js'), 'utf8');
-  assert.match(source, /import \{stepWaitLabel\} from '..\/..\/ui\/tasks.js'/);
+  assert.match(source, /import \{[^}]*\bstepWaitLabel\b[^}]*\} from '..\/..\/ui\/tasks.js'/);
   assert.match(source, /stepWaitLabel\(q.steps\[step.id\] \|\| 'pending', q.stepJobs\[step.id\]\)/);
   assert.match(source, /q.steps, q.stepJobs,/);
 });
