@@ -111,3 +111,37 @@ async def test_direct_without_plan_is_published_and_snapshotted(tmp_path):
         assert hub.snapshot()['data']['requests'][0]['facilities_projection']['direct'] == p
     finally:
         hub.store.close()
+
+
+async def test_unrelated_task_events_do_not_scan_ledgers(tmp_path, monkeypatch):
+    hub = make_hub(tmp_path)
+    hub.save_request('r')
+    original = hub.store.all
+    scans = []
+    def counted(kind):
+        if kind in {'task', 'ask'}:
+            scans.append(kind)
+        return original(kind)
+    monkeypatch.setattr(hub.store, 'all', counted)
+    try:
+        for typ in ('task.dispatched', 'task.accepted', 'task.result'):
+            await hub.publish({'type': typ, 'request_id': 'r', 'data': {}})
+        assert scans == []
+    finally:
+        hub.store.close()
+
+
+async def test_direct_terminal_commit_publishes_final_step(tmp_path, monkeypatch):
+    import copy
+    hub = make_hub(tmp_path)
+    hub.requests['r'].update(mode='direct', plan=None, facilities_fixes={'direct': {'status': 'applied'}})
+    hub.save_request('r')
+    before = copy.deepcopy(hub.requests['r'])
+    proposed = {**before, 'status': 'done', 'results': {'direct': {'ok': True}}}
+    monkeypatch.setattr(hub, '_bundle_outcome', lambda *args: None)
+    try:
+        await hub.aschedule_terminal('r', 'request.completed', {'ok': True}, request=proposed, before=before)
+        event = [e for e in hub.events if e['type'] == 'request.facilities_projection'][-1]
+        assert event['data']['direct']['step_status'] == 'succeeded'
+    finally:
+        hub.store.close()

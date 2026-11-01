@@ -1599,6 +1599,7 @@ class Hub:
                 await self._aqueue_terminal_delivery(event)
             if getattr(self, "semantics_shadow", None) is not None:  # semantics-hook
                 self.semantics_shadow.after_request(rid)  # semantics-hook
+        await self.publish_facilities_projection(rid)
         try:
             await self.rounds.awrite(rid)
             await self.rounds.asubmit(rid)
@@ -3789,6 +3790,12 @@ class Hub:
                 await self._flush_committed_events()
                 if ev.get("type") == "request.facilities_projection":
                     ev["data"] = self.facilities_projection(ev["request_id"])
+                    if not hasattr(self, "_facilities_visible"):
+                        self._facilities_visible = set()
+                    if ev["data"]:
+                        self._facilities_visible.add(ev["request_id"])
+                    else:
+                        self._facilities_visible.discard(ev["request_id"])
                 durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
                                   ev.get("type") in ProjectReporter.HANDLED)
                 ev, cancelled = await self._append_event_with_request(ev, runner_id, runner_seq, durable_report,
@@ -3818,21 +3825,17 @@ class Hub:
         if (ev.get("type") in {"agent.ask", "approval.resolved", "task.dispatched", "task.accepted", "task.result",
                                "request.step_done", "request.step_skipped"}
                 and ev.get("request_id") in self.requests):
-            await self.publish_facilities_projection(ev["request_id"])
+            await self.publish_facilities_projection(ev["request_id"],
+                force=ev.get("type") == "agent.ask" and (ev.get("data") or {}).get("to") == "facilities")
 
-    async def publish_facilities_projection(self, rid: str) -> None:
+    async def publish_facilities_projection(self, rid: str, *, force: bool = False) -> None:
         try:
-            if not hasattr(self, "_facilities_visible"):
-                self._facilities_visible = set()
-            visible = bool(self.facilities_projection(rid))
-            if not visible and rid not in self._facilities_visible:
+            request = self.requests.get(rid) or {}
+            if not (force or request.get("facilities_diagnoses") or request.get("facilities_fixes")
+                    or rid in getattr(self, "_facilities_visible", set())):
                 return
             await self.publish({"type": "request.facilities_projection", "request_id": rid,
                                 "ts": time.time(), "data": {}})
-            if visible:
-                self._facilities_visible.add(rid)
-            else:
-                self._facilities_visible.discard(rid)
         except Exception:
             log.exception("Could not publish facilities projection for request %s", rid)
 
@@ -4778,7 +4781,7 @@ class Hub:
                             "agent_id": answer.get("from"), "request_id": ask.request_id,
                             "data": {**answer, "to": ask.agent_id, "question": ask.question}})
         if ask.to == "facilities" and ask.request_id in self.requests:
-            await self.publish_facilities_projection(ask.request_id)
+            await self.publish_facilities_projection(ask.request_id, force=True)
         if runner_id in self.runners:
             await self.send_runner(runner_id, {"type": "ask.resolved", "id": ask.id, "answer": answer})
 
