@@ -8,3 +8,7 @@ rows:
   at: 2026-11-01 12:30
   text: 취소된 작업의 부분 산출물을 안전하게 목록에 모은다.
   summary: 취소 전 만들어진 부분 산출물을 묶음에 담도록 목록을 보존합니다.
+- sha: 5653849
+  at: 2026-11-01 12:35
+  text: Document partial output preservation on cancellation.
+  summary: Describe preservation and scan limits in both manuals.
