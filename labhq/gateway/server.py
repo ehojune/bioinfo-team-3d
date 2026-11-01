@@ -5511,6 +5511,16 @@ class Hub:
         """Write a cancelled request's report and terminal record. ``cancelling`` leaves in that same commit."""
         before = copy.deepcopy(self.requests[rid])
         req = copy.deepcopy(before)
+        # The orchestration has unwound, so cancelled turns report to the task ledger
+        # rather than its results. Include their folders without replacing finished steps.
+        for tid in req.get("cancelled_tasks") or []:
+            task = self.store.get("task", tid) or {}
+            result = task.get("result") or {}
+            if (task.get("request_id") == rid and task.get("completed")
+                    and task.get("kind") in ("step", "direct") and result.get("workdir_id")):
+                sid = task.get("step_id") or ("direct" if task.get("kind") == "direct" else None)
+                if sid:
+                    req.setdefault("results", {}).setdefault(sid, copy.deepcopy(result))
         pending = req.pop("cancelling", None) or {}
         report, appendix = self._cancel_report(req, list(req.get("cancelled_tasks") or []),
                                                dict.fromkeys(pending.get("quota_steps") or []))

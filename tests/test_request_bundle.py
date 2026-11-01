@@ -1818,6 +1818,29 @@ def test_a_swapped_requests_folder_is_refused_and_nothing_below_the_new_target_i
 
 # ---- #1212: a cancel before the first step made a work folder is not a bundle failure ----
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", [None, "request_deadline"])
+async def test_cancelled_step_result_in_ledger_is_bundled(tmp_path, reason):
+    settings, request, task = pending_bundle_fixture(tmp_path, "deadline")
+    result = task["result"]
+    result.update(ok=False, error="cancelled")
+    task.update(kind="step", step_id="s1")
+    request.update(mode="orchestrate", status="cancelled", error="cancelled", results={},
+                   cancelling={}, cancelled_tasks=[result["task_id"]], cancel_reason=reason,
+                   plan={"steps": [{"id": "s1", "depends_on": []}]})
+    hub = Hub(settings)
+    hub.requests[request["id"]] = request
+    hub.store.put("task", result["task_id"], task)
+    await hub._afinish_cancel(request["id"])
+    pending = hub.terminal_tasks.get(request["id"])
+    if pending:
+        await pending
+    saved = hub.requests[request["id"]]
+    assert not saved.get("bundle_warning")
+    assert (Path(saved["bundle_path"]) / "steps/s1/outputs/answer.txt").read_text() == "answer\n"
+    await asyncio_sleep()
+    hub.store.close()
+
 def _sent_step_without_workdir(tmp_path, rid, status):
     hub = Hub(configured(tmp_path))
     hub.requests[rid] = {"id": rid, "text": "request", "mode": "orchestrate", "status": status, "report": "body",
