@@ -1823,7 +1823,8 @@ def test_a_swapped_requests_folder_is_refused_and_nothing_below_the_new_target_i
 async def test_cancelled_step_result_in_ledger_is_bundled(tmp_path, reason):
     settings, request, task = pending_bundle_fixture(tmp_path, "deadline")
     result = task["result"]
-    result.update(ok=False, error="cancelled")
+    result.update(ok=False, error="cancelled", unreported_outputs=result.pop("outputs"))
+    result.pop("output_sha256")
     task.update(kind="step", step_id="s1")
     request.update(mode="orchestrate", status="cancelled", error="cancelled", results={},
                    cancelling={}, cancelled_tasks=[result["task_id"]], cancel_reason=reason,
@@ -1945,8 +1946,10 @@ async def test_a_run_cancelled_after_its_work_folder_was_made_reports_that_folde
 
     from labhq.models import Task
     from labhq.runner.daemon import Runner
+    from labhq.runner.workspace import TaskWorkspace
 
     runner = Runner.__new__(Runner)
+    runner.s = configured(tmp_path)
     runner.breakers, runner.event_buffers, runner._result_queued, runner._cleanup_reports = {}, {}, set(), {}
     runner._recruitment_conversions, runner._stopping = {}, False
     runner.controls = SimpleNamespace(finish=lambda task_id: None)
@@ -1970,8 +1973,11 @@ async def test_a_run_cancelled_after_its_work_folder_was_made_reports_that_folde
     assert not before.get("workdir_id"), "cancelled before any folder: nothing to report"
 
     sent.clear()
-    runner.workspaces = {"t-run": SimpleNamespace(dir=tmp_path / "runs" / "2026-11-01" / "task_made")}
+    workdir = tmp_path / "runs" / "2026-11-01" / "task_made"
+    write(workdir / "outputs" / "partial.txt", "partial")
+    runner.workspaces = {"t-run": TaskWorkspace.existing(workdir, "t-run")}
     with pytest.raises(asyncio.CancelledError):
         await runner._run_guarded(task)
     after = next(e for e in sent if e.type == "task.result").data
     assert after["workdir_id"] == "task_made" and after["workdir"].endswith("task_made")
+    assert "outputs/partial.txt" in after["unreported_outputs"]
