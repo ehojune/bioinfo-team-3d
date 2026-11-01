@@ -40,6 +40,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 14:30 | [`ecaa1b6`](https://github.com/ehojune/bioinfo-team-3d/pull/1251/commits/ecaa1b6) | focus_layout 바깥 상한을 Chrome 세션 둘에 맞춰 120초로, status 문구를 적용 상태에 맞춘다 (Refs #1076) |
 | 14:00 | [`d9546e8`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/d9546e8) | **키 파일 위치를 파일 이름만으로 적어 두어도 키를 덮어쓰는 설정은 그대로 막힙니다.**<br>Atlas 점검 예외: 구분자 있는 절대 경로와 ~ 형태만 두고 규칙 생성 실패는 규칙을 빼 더 엄격하게 한다 (#1225 리뷰) |
 | 14:00 | [`bd47d7a`](https://github.com/ehojune/bioinfo-team-3d/pull/1251/commits/bd47d7a) | 데모 Chrome에 --no-proxy-server를 주고 test_web_3d digest를 갱신한다 (Refs #1076) |
+| 14:00 | [`fd9b83f`](https://github.com/ehojune/bioinfo-team-3d/commit/fd9b83f) | **종료 요청과 코드의 원인 미확인을 status에서 구분합니다.**<br>종료 요청 중 프로세스가 끝난 사실과 종료 코드를 함께 표시한다 (#1255). |
 | 14:00 | [`eb05303`](https://github.com/ehojune/bioinfo-team-3d/commit/eb05303) | **Preserve lookup capacity for later stages when a request cap is configured.**<br>Reserve lookup capacity after briefing and precedent search (#691). |
 | 13:50 | [`24fdfae`](https://github.com/ehojune/bioinfo-team-3d/pull/1254/commits/24fdfae) | **보내지 못한 단계가 화면에 계속 대기 중으로 남지 않게 했습니다.**<br>publish 뒤 runtime 재확인이 task를 거절할 때 이미 나간 task.dispatched event를 같은 task의 task.result(실패, $0)로 닫아 웹과 메신저가 그 task를 대기 중으로 남기지 않게 했다 (#674) |
 | 13:20 | [`105864c`](https://github.com/ehojune/bioinfo-team-3d/pull/1251/commits/105864c) | **느린 Windows 러너에서 브라우저 시험 하나가 30초 상한에 걸리던 것을 60초로 늘렸습니다(검사 내용은 그대로).**<br>web_office_focus_layout의 바깥 시간 상한을 60초로 둔다 (Refs #1076) |
