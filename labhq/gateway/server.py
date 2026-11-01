@@ -3856,7 +3856,8 @@ class Hub:
             if not sid:
                 continue
             matches = [(tid, entry) for tid, entry in tasks.items()
-                       if entry.get("request_id") == rid and entry.get("step_id") == sid]
+                       if entry.get("request_id") == rid and (entry.get("step_id") == sid or
+                          (sid == "direct" and entry.get("kind") == "direct" and not entry.get("step_id")))]
             task_ids = {tid for tid, _ in matches}
             ask_id = diagnoses.get(sid)
             candidates = [(aid, entry) for aid, entry in asks.items()
@@ -5971,8 +5972,8 @@ class Hub:
         asks = self.store.all("ask")
         if not hasattr(self, "_facilities_visible"):
             self._facilities_visible = set()
-        self._facilities_visible.update(rid for rid in self.requests
-                                        if self.facilities_projection(rid, tasks, asks))
+        projections = {rid: self.facilities_projection(rid, tasks, asks) for rid in self.requests}
+        self._facilities_visible = {rid for rid, projection in projections.items() if projection}
         running = self.running_tasks(tasks)
         # Staff can also be queued, consulting, or answering a finished request.
         # Keep this separate from the request board's accepted-step selection.
@@ -6022,7 +6023,7 @@ class Hub:
                           "pi_reviewed_at": r.get("pi_reviewed_at"), "final_checkpoint": cp4.summary(r),
                           "error": short(r.get("error") or "", 2000),
                           "step_details": self.request_step_details(r.get("id", ""), r, tasks),
-                          "facilities_projection": self.facilities_projection(r.get("id", ""), tasks, asks),
+                          "facilities_projection": projections.get(r.get("id", ""), {}),
                           **({} if r.get("id") in recent_terminals else snapshot_reports(r)),
                           **({"pipeline_pr": pipeline_prs[r["id"]]} if r.get("id") in pipeline_prs else {}),
                           "review": r.get("review") or (r.get("review_progress") or {}).get("review")}

@@ -136,6 +136,9 @@ async def test_direct_terminal_commit_publishes_final_step(tmp_path, monkeypatch
     hub = make_hub(tmp_path)
     hub.requests['r'].update(mode='direct', plan=None, facilities_fixes={'direct': {'status': 'applied'}})
     hub.save_request('r')
+    hub.store.put('task', 'retry', {'request_id': 'r', 'step_id': None, 'kind': 'direct',
+                  'completed': True, 'result': {'ok': True},
+                  'payload': {'meta': {'facilities_rerun': True}}})
     before = copy.deepcopy(hub.requests['r'])
     proposed = {**before, 'status': 'done', 'results': {'direct': {'ok': True}}}
     monkeypatch.setattr(hub, '_bundle_outcome', lambda *args: None)
@@ -143,5 +146,22 @@ async def test_direct_terminal_commit_publishes_final_step(tmp_path, monkeypatch
         await hub.aschedule_terminal('r', 'request.completed', {'ok': True}, request=proposed, before=before)
         event = [e for e in hub.events if e['type'] == 'request.facilities_projection'][-1]
         assert event['data']['direct']['step_status'] == 'succeeded'
+        assert event['data']['direct']['rerun_status'] == 'succeeded'
+    finally:
+        hub.store.close()
+
+
+def test_snapshot_calculates_each_projection_once(tmp_path, monkeypatch):
+    hub = make_hub(tmp_path)
+    hub.save_request('r')
+    original = hub.facilities_projection
+    calls = []
+    def counted(rid, *args):
+        calls.append(rid)
+        return original(rid, *args)
+    monkeypatch.setattr(hub, 'facilities_projection', counted)
+    try:
+        hub.snapshot()
+        assert calls == ['r']
     finally:
         hub.store.close()
