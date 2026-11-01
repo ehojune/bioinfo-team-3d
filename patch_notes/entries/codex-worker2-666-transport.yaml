@@ -1,5 +1,9 @@
-pr: null
+pr: 1260
 rows:
+  - sha: f562282
+    at: "2026-11-01 11:32"
+    summary: "작업 위치가 바뀌어도 같은 재전송 기록으로 요청을 검사합니다."
+    text: "Pin the replay ledger to its resolved absolute path; reproduce and fix duplicate acceptance after cwd changes (review P2)."
   - sha: 4f348f9
     at: "2026-11-01 11:27"
     summary: "격리 전송 초안에서 위조·재전송 요청을 가짜 peer로 검사합니다."
