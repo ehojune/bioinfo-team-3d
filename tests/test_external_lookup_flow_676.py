@@ -192,3 +192,23 @@ def test_mixed_preplan_and_decimal_share(tmp_path):
         assert ledger.admit("r", "t", "a", "search", "example.org", stage=stage)["admitted"]
     assert ledger.admit("r", "t", "a", "search", "example.org", stage="precedent")["reason"] == "stage share exhausted"
     assert all(ledger.admit("r", "t", "a", "search", "example.org", stage="plan")["admitted"] for _ in range(5))
+
+
+def test_yaml_precise_share_survives_staff_copy_and_admission(tmp_path):
+    from decimal import Decimal
+    from labhq.runner.lookup_admission import usage_note
+    from labhq.settings import Settings, write_staff_config
+
+    config = tmp_path / "config.yaml"
+    config.write_text("annot:\n  request_lookup_limit: 100\n  precedent_lookup_share: 0.29999999999999999\n", encoding="utf-8")
+    settings = Settings.load(str(config))
+    assert settings.annot.precedent_lookup_share == Decimal("0.29999999999999999")
+    assert settings.model_dump(mode="json")["annot"]["precedent_lookup_share"] == "0.29999999999999999"
+    staff = Settings.load(write_staff_config(settings, tmp_path / "staff"))
+    assert staff.annot.precedent_lookup_share == settings.annot.precedent_lookup_share
+    ledger = LookupAdmission(tmp_path / "precise.db", 100, precedent_share=staff.annot.precedent_lookup_share)
+    for _ in range(29):
+        assert ledger.admit("r", "t", "a", "search", "example.org", stage="precedent")["admitted"]
+    assert ledger.admit("r", "t", "a", "search", "example.org", stage="briefing")["reason"] == "stage share exhausted"
+    assert "Pre-plan share: 29 of 29 used, 0 left" in usage_note(ledger, "r", stage="precedent")
+    assert ledger.admit("r", "t", "a", "search", "example.org", stage="plan")["admitted"]

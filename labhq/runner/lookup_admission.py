@@ -14,7 +14,7 @@ other processes on the same file. A second runner with its own state folder keep
 from __future__ import annotations
 
 import re
-from decimal import Decimal, ROUND_FLOOR
+from decimal import Decimal
 import sqlite3
 import time
 from pathlib import Path
@@ -22,7 +22,8 @@ from pathlib import Path
 PREPLAN_STAGES = ("briefing", "precedent")
 
 def share_cap(limit, share):
-    return int((Decimal(limit) * Decimal(str(share))).to_integral_value(rounding=ROUND_FLOOR))
+    numerator, denominator = Decimal(str(share)).as_integer_ratio()
+    return limit * numerator // denominator
 
 FILE = "lookup_admission.sqlite3"
 ENV = "LABHQ_LOOKUP_ADMISSION"  # set to "1" by the runner for every task while the limit is on
