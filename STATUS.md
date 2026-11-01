@@ -28,6 +28,13 @@
 - 리뷰 P1 반영(PR #1252): 보고를 runner 전체에서 `any`로 모으면 준비된 runner A가 그 직원을 맡지 않는데도 B가 맡은 직원 줄에 도구가 표시된다. 명단의 직원 줄마다 그 직원을 맡은 runner(`runner_id`, 요청의 WSL 고정 포함)의 보고로 정한다. `format_roster`의 `alphagenome`은 직원마다 정하는 함수도 받는다. 그 runner가 아직 보고하지 않았으면(이전 runner) gateway 자체 확인으로 돌아간다. 시험 2건(맡은 runner 기준, 보고 없는 runner의 fallback)은 이 변경 없이는 실패한다.
 - rev10: manual 한·영의 AlphaGenome 절에 한 항목을 더했다. 준비 여부는 각 runner가 등록 때 `alphagenome_ready`로 보고하고(키 값은 보내지 않음), 명단의 직원 줄은 그 직원을 맡은 runner의 보고를 따르며(WSL 고정 포함), 키를 넣거나 클라이언트를 설치한 뒤에는 runner를 다시 시작해야 하고, 보고하지 않는 이전 runner는 gateway 자체 확인으로 처리한다. `integrations.py --check` 통과.
 
+# #1255 기한 취소와 요청 묶음
+
+- 취소된 단계의 완료 결과가 task ledger에만 남아 묶음에서 빠지는 문제를 수정했다. 기존 단계 결과는 보존한다.
+- 기존 결과와 취소 revision은 별도 경로에 보존한다. 같은 workdir과 다른 workdir, 같은 파일명도 확인했다.
+- 회귀시험은 수정 전 실패했고 수정 후 통과했다. `tests/test_request_bundle.py`: 114 passed, 2 skipped.
+- 실제 모델·원격 runner·HPC와 PI instance는 검증하지 않았다. 취소 대기 시간 안에 보고되지 않은 결과는 이 시험 범위 밖이다.
+
 # #1168 rev8 — 병합한 PR의 남은 지적 두 건을 manual에 반영
 
 | 항목 | 내용 |
