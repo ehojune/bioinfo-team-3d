@@ -1838,6 +1838,9 @@ async def test_cancelled_step_result_in_ledger_is_bundled(tmp_path, reason, list
     old["result"].update(workdir_id="old-missing", workdir=str(tmp_path / "old-missing"))
     hub.store.put("task", "aaa-old-attempt", old)
     hub.store.put("task", result["task_id"], task)
+    unfinished = copy.deepcopy(task)
+    unfinished.update(attempt=3, completed=False, result={})
+    hub.store.put("task", "zzz-unfinished", unfinished)
     await hub._afinish_cancel(request["id"])
     pending = hub.terminal_tasks.get(request["id"])
     if pending:

@@ -5520,7 +5520,8 @@ class Hub:
             meta = (task.get("payload") or {}).get("meta") or {}
             sid = task.get("step_id") or ("direct" if task.get("kind") == "direct" else None)
             if (task.get("request_id") != rid or task.get("kind") not in ("step", "direct") or not sid
-                    or int(meta.get("research_round") or 1) != current_round):
+                    or int(meta.get("research_round") or 1) != current_round or not task.get("completed")
+                    or not (task.get("result") or {}).get("workdir_id")):
                 continue
             rank = (int(task.get("revision") or 0), int(task.get("attempt") or 1),
                     float(task.get("dispatched_at") or 0), tid)
