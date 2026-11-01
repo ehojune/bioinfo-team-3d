@@ -14,9 +14,16 @@ other processes on the same file. A second runner with its own state folder keep
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 import sqlite3
 import time
 from pathlib import Path
+
+PREPLAN_STAGES = ("briefing", "precedent")
+
+def share_cap(limit, share):
+    numerator, denominator = Decimal(str(share)).as_integer_ratio()
+    return limit * numerator // denominator
 
 FILE = "lookup_admission.sqlite3"
 ENV = "LABHQ_LOOKUP_ADMISSION"  # set to "1" by the runner for every task while the limit is on
@@ -34,10 +41,10 @@ def admission_for(settings) -> "LookupAdmission | None":
     limit = settings.annot.request_lookup_limit
     if limit is None:
         return None
-    return LookupAdmission(settings.path(settings.runner.state_dir) / FILE, limit)
+    return LookupAdmission(settings.path(settings.runner.state_dir) / FILE, limit, precedent_share=settings.annot.precedent_lookup_share)
 
 
-def usage_note_for(settings, request_id: object, *, now=None) -> str:
+def usage_note_for(settings, request_id: object, *, now=None, stage=None) -> str:
     """The prompt paragraph for a request, or "" when no cap is configured (nothing is counted, so there is nothing to
     plan around). A configured cap whose counter cannot be opened or read is UNKNOWN, never zero."""
     if settings.annot.request_lookup_limit is None:
@@ -46,10 +53,10 @@ def usage_note_for(settings, request_id: object, *, now=None) -> str:
         admission = admission_for(settings)
     except (sqlite3.Error, OSError):
         return usage_note(None, request_id, now=now, why="the lookup counter could not be opened")
-    return usage_note(admission, request_id, now=now)
+    return usage_note(admission, request_id, now=now, stage=stage)
 
 
-def usage_note(admission: "LookupAdmission | None", request_id: object, *, now=None, why: str | None = None) -> str:
+def usage_note(admission: "LookupAdmission | None", request_id: object, *, now=None, why: str | None = None, stage=None) -> str:
     """One prompt paragraph with this request's public lookup usage as a fact, or an explicit "unknown" (#1088).
 
     A counter that is off, a request id that is missing or a file that cannot be read is unknown, never zero: a
@@ -67,29 +74,39 @@ def usage_note(admission: "LookupAdmission | None", request_id: object, *, now=N
         return unknown.format(why="the request has no identity")
     stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(now if now is not None else time.time()))
     who = ", ".join(f"{agent} {count}" for agent, count in usage["by_agent"].items()) or "none yet"
+    stage_note = ""
+    if stage in PREPLAN_STAGES and admission.precedent_share is not None:
+        cap = share_cap(admission.limit, admission.precedent_share)
+        remaining = min(usage["remaining"], max(0, cap - usage["precedent_used"]))
+        stage_note = f" Pre-plan share: {usage['precedent_used']} of {cap} used, {remaining} left."
     return (f"Public lookup usage of this request (labhq_annot and source-check HTTP requests; every retry and "
             f"redirect counts): {usage['used']} of {usage['limit']} used, {usage['remaining']} left at {stamp} "
             f"(by agent: {who}). This is the count of this PC's runner; a number written in the request text is a "
-            f"separate statement that labhq does not enforce.")
+            f"separate statement that labhq does not enforce.{stage_note}")
 
 
 class LookupAdmission:
-    def __init__(self, path: str | Path, limit: int, *, clock=time.time):
+    def __init__(self, path: str | Path, limit: int, *, precedent_share: float | None = None, clock=time.time):
         self.path, self.limit, self.clock = Path(path), limit, clock
+        self.precedent_share = precedent_share
         self.path.parent.mkdir(parents=True, exist_ok=True)
         db = self._connect()
         try:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("CREATE TABLE IF NOT EXISTS sends (request_id TEXT NOT NULL, seq INTEGER NOT NULL, "
                        "task_id TEXT, agent_id TEXT, tool TEXT NOT NULL, host TEXT NOT NULL, "
                        "admitted_at REAL NOT NULL, http_status INTEGER, outcome TEXT, "
                        "PRIMARY KEY (request_id, seq))")
+            if "stage" not in {row[1] for row in db.execute("PRAGMA table_info(sends)")}:
+                db.execute("ALTER TABLE sends ADD COLUMN stage TEXT")
+            db.execute("COMMIT")
         finally:
             db.close()
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path, timeout=30, isolation_level=None)
 
-    def admit(self, request_id: object, task_id: object, agent_id: object, tool: object, host: object) -> dict:
+    def admit(self, request_id: object, task_id: object, agent_id: object, tool: object, host: object, *, stage: str | None = None) -> dict:
         """Count one outbound request and allow it to be sent, or refuse it without counting when none is left."""
         if not isinstance(request_id, str) or not request_id:
             return {"admitted": False, "limit": self.limit, "reason": "no trusted request identity"}
@@ -105,9 +122,15 @@ class LookupAdmission:
                 if used >= self.limit:
                     db.execute("ROLLBACK")
                     return {"admitted": False, "used": used, "limit": self.limit, "reason": "exhausted"}
-                db.execute("INSERT INTO sends (request_id, seq, task_id, agent_id, tool, host, admitted_at) "
-                           "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                           (request_id, used + 1, str(task_id or ""), str(agent_id or ""), tool, host, self.clock()))
+                if stage in PREPLAN_STAGES and self.precedent_share is not None:
+                    stage_used = db.execute("SELECT COUNT(*) FROM sends WHERE request_id = ? AND stage IN (?, ?)",
+                                            (request_id, *PREPLAN_STAGES)).fetchone()[0]
+                    if stage_used >= share_cap(self.limit, self.precedent_share):
+                        db.execute("ROLLBACK")
+                        return {"admitted": False, "used": used, "limit": self.limit, "reason": "stage share exhausted"}
+                db.execute("INSERT INTO sends (request_id, seq, task_id, agent_id, tool, host, admitted_at, stage) "
+                           "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                           (request_id, used + 1, str(task_id or ""), str(agent_id or ""), tool, host, self.clock(), stage))
                 db.execute("COMMIT")
             except BaseException:
                 if db.in_transaction:
@@ -151,6 +174,8 @@ class LookupAdmission:
             return None
         db = self._connect()
         try:
+            precedent_used = db.execute("SELECT COUNT(*) FROM sends WHERE request_id = ? AND stage IN (?, ?)",
+                                        (request_id, *PREPLAN_STAGES)).fetchone()[0]
             rows = db.execute("SELECT agent_id, tool, COUNT(*) FROM sends WHERE request_id = ? "
                               "GROUP BY agent_id, tool", (request_id,)).fetchall()
         finally:
@@ -161,8 +186,11 @@ class LookupAdmission:
             by_agent[agent or "?"] = by_agent.get(agent or "?", 0) + count
             by_tool[tool] = by_tool.get(tool, 0) + count
         used = sum(by_tool.values())
-        return {"used": used, "limit": self.limit, "remaining": max(0, self.limit - used),
-                "by_agent": dict(sorted(by_agent.items())), "by_tool": dict(sorted(by_tool.items()))}
+        result = {"used": used, "limit": self.limit, "remaining": max(0, self.limit - used),
+                  "by_agent": dict(sorted(by_agent.items())), "by_tool": dict(sorted(by_tool.items()))}
+        if self.precedent_share is not None:
+            result["precedent_used"] = precedent_used
+        return result
 
     def sends(self, request_id: str) -> list[dict]:
         db = self._connect()

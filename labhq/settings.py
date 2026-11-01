@@ -6,6 +6,7 @@ import ntpath
 import re
 import stat
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any  # semantics-hook
 from typing import Literal
@@ -15,6 +16,20 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, 
 
 from .intake import Reference
 from .test_guard import guard_test_path
+
+
+class _ConfigLoader(yaml.SafeLoader):
+    def construct_mapping(self, node, deep=False):
+        result = super().construct_mapping(node, deep=deep)
+        for key_node, value_node in node.value:
+            if (key_node.value == "precedent_lookup_share"
+                    and value_node.tag == "tag:yaml.org,2002:float"):
+                result[key_node.value] = value_node.value.replace("_", "")
+        return result
+
+
+def _load_config(text: str):
+    return yaml.load(text, Loader=_ConfigLoader)
 
 
 class GatewaySettings(BaseModel):
@@ -715,6 +730,7 @@ class AnnotSettings(BaseModel):
     # each admitted by the runner before it is sent (#858). None keeps lookups uncounted; 0 refuses every lookup.
     # See runner/lookup_admission.py for what one attempt is.
     request_lookup_limit: int | None = Field(default=None, ge=0, le=10000)
+    precedent_lookup_share: Decimal | None = Field(default=Decimal("0.5"), ge=0, le=1, allow_inf_nan=False)
 
 
 class ResultStorageSettings(BaseModel):
@@ -848,7 +864,7 @@ class Settings(BaseModel):
         if path and not Path(path).is_file():
             raise FileNotFoundError(f"설정 파일이 없습니다: {path}")
         if path:
-            data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+            data = _load_config(Path(path).read_text(encoding="utf-8")) or {}
         s = cls.model_validate(data)
         if path:
             s.config_path = str(Path(path).resolve())
@@ -882,7 +898,7 @@ def write_staff_config(settings: Settings, directory: Path) -> str | None:
 
     guard_test_path(Path(settings.config_path))
     guard_test_path(directory)
-    data = yaml.safe_load(Path(settings.config_path).read_text(encoding="utf-8")) or {}
+    data = _load_config(Path(settings.config_path).read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ValueError("config is not a mapping")
     gateway = data.get("gateway") if isinstance(data.get("gateway"), dict) else {}

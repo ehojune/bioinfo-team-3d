@@ -128,6 +128,22 @@ def test_setup_repeat_uses_same_private_config_and_no_nextflow_install(settings,
     assert Settings.load(settings.config_path).runner.wsl.enabled
 
 
+def test_save_enabled_preserves_precise_lookup_share(settings):
+    from decimal import Decimal
+    from labhq import wsl_setup
+    from labhq.runner.lookup_admission import share_cap
+
+    path = Path(settings.config_path)
+    with path.open("a", encoding="utf-8") as config:
+        config.write("\nannot:\n  request_lookup_limit: 100\n  precedent_lookup_share: 0.29999999999999999\n")
+    settings = Settings.load(str(path))
+    wsl_setup._save_enabled(settings)
+    reloaded = Settings.load(str(path))
+    assert reloaded.runner.wsl.enabled
+    assert reloaded.annot.precedent_lookup_share == Decimal("0.29999999999999999")
+    assert share_cap(reloaded.annot.request_lookup_limit, reloaded.annot.precedent_lookup_share) == 29
+
+
 def test_token_only_in_stdin_and_errors_do_not_echo_it(settings, monkeypatch, capsys):
     from labhq import wsl_bootstrap, wsl_setup
     monkeypatch.setattr(wsl_setup, "_linux_path", lambda *a: "/mnt/c/checkout with space")
