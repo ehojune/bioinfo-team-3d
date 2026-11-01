@@ -176,7 +176,7 @@ def _curl_options(words: list[str]) -> tuple[str | None, str | None]:
     i = 1
     while i < len(words):
         word = words[i]
-        if word == "--":
+        if word in {"--", "--next", "-:"}:
             break
         if word.startswith("--"):
             flag, equal, value = word.partition("=")
