@@ -1276,6 +1276,19 @@ class Runner:
             # before any folder existed" (nothing to bundle) from a folder whose record was lost (#1212).
             made = self.__dict__.get("workspaces", {}).get(task.id)
             folder = {"workdir": str(made.dir), "workdir_id": made.dir.name} if made is not None else {}
+            if cancelled and made is not None:
+                try:
+                    paths, note = await asyncio.to_thread(
+                        made.scan_outputs, self._zones(), self.s.runner.reference_scan_max_entries,
+                        self.s.runner.reference_scan_max_depth)
+                    folder["unreported_outputs"] = paths
+                    if note:
+                        folder["step_warnings"] = [note]
+                except asyncio.CancelledError as again:
+                    interrupted = again
+                except Exception:
+                    log.exception("could not scan cancelled task outputs for %s", task.id)
+                    folder["step_warnings"] = ["Could not scan cancelled task outputs"]
             res = self._shutdown_result(
                 TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err, cleanup_evidence=cleanup,
                            **folder, **costs),

@@ -1818,6 +1818,78 @@ def test_a_swapped_requests_folder_is_refused_and_nothing_below_the_new_target_i
 
 # ---- #1212: a cancel before the first step made a work folder is not a bundle failure ----
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", [None, "request_deadline"])
+@pytest.mark.parametrize("listed", [True, False])
+async def test_cancelled_step_result_in_ledger_is_bundled(tmp_path, reason, listed):
+    import copy
+    settings, request, task = pending_bundle_fixture(tmp_path, "deadline")
+    result = task["result"]
+    result.update(ok=False, error="cancelled", unreported_outputs=result.pop("outputs"))
+    result.pop("output_sha256")
+    task.update(kind="step", step_id="s1", attempt=2)
+    request.update(mode="orchestrate", status="cancelled", error="cancelled", results={},
+                   cancelling={}, cancelled_tasks=[result["task_id"]] if listed else [], cancel_reason=reason,
+                   plan={"steps": [{"id": "s1", "depends_on": []}]})
+    hub = Hub(settings)
+    hub.requests[request["id"]] = request
+    old = copy.deepcopy(task)
+    old.update(attempt=1)
+    old["result"].update(workdir_id="old-missing", workdir=str(tmp_path / "old-missing"))
+    hub.store.put("task", "aaa-old-attempt", old)
+    hub.store.put("task", result["task_id"], task)
+    unfinished = copy.deepcopy(task)
+    unfinished.update(attempt=3, completed=False, result={})
+    hub.store.put("task", "zzz-unfinished", unfinished)
+    await hub._afinish_cancel(request["id"])
+    pending = hub.terminal_tasks.get(request["id"])
+    if pending:
+        await pending
+    saved = hub.requests[request["id"]]
+    assert not saved.get("bundle_warning")
+    assert (Path(saved["bundle_path"]) / "steps/s1/outputs/answer.txt").read_text() == "answer\n"
+    await asyncio_sleep()
+    hub.store.close()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_workdir", [True, False])
+async def test_cancelled_revision_preserves_existing_and_partial_outputs(tmp_path, same_workdir):
+    import copy
+    settings, request, task = pending_bundle_fixture(tmp_path, "revisions")
+    old = copy.deepcopy(task["result"])
+    old_dir = Path(old["workdir"])
+    new_dir = old_dir if same_workdir else old_dir.parent / "task_revision"
+    write(new_dir / "manifest.json", json.dumps({"host": platform.node()}))
+    write(new_dir / "outputs/partial.txt", "partial revision")
+    if not same_workdir:
+        write(new_dir / "outputs/answer.txt", "new revision")
+    result = copy.deepcopy(old)
+    result.update(task_id="t-revision", workdir=str(new_dir), workdir_id=new_dir.name,
+                  ok=False, error="cancelled", outputs=[], output_sha256={},
+                  unreported_outputs=["outputs/partial.txt"] + ([] if same_workdir else ["outputs/answer.txt"]))
+    task.update(kind="step", step_id="s1", attempt=2, result=result)
+    request.update(mode="orchestrate", status="cancelled", error="cancelled", results={"s1": old}, cancelling={},
+                   plan={"steps": [{"id": "s1", "depends_on": []}]})
+    hub = Hub(settings)
+    hub.requests[request["id"]] = request
+    hub.store.put("task", result["task_id"], task)
+    await hub._afinish_cancel(request["id"])
+    pending = hub.terminal_tasks.get(request["id"])
+    if pending:
+        await pending
+    saved = hub.requests[request["id"]]
+    assert not saved.get("bundle_warning")
+    bundle = Path(saved["bundle_path"])
+    assert (bundle / "steps/s1/outputs/answer.txt").read_text() == "answer\n"
+    partial = list((bundle / "steps").glob("*/outputs/partial.txt"))
+    assert len(partial) == 1 and partial[0].read_text() == "partial revision"
+    if not same_workdir:
+        assert (partial[0].parent / "answer.txt").read_text() == "new revision"
+    assert "s1: steps/cancelled_revision_1/" in (bundle / "execution_record.md").read_text(encoding="utf-8")
+    await asyncio_sleep()
+    hub.store.close()
+
+
 def _sent_step_without_workdir(tmp_path, rid, status):
     hub = Hub(configured(tmp_path))
     hub.requests[rid] = {"id": rid, "text": "request", "mode": "orchestrate", "status": status, "report": "body",
@@ -1922,8 +1994,10 @@ async def test_a_run_cancelled_after_its_work_folder_was_made_reports_that_folde
 
     from labhq.models import Task
     from labhq.runner.daemon import Runner
+    from labhq.runner.workspace import TaskWorkspace
 
     runner = Runner.__new__(Runner)
+    runner.s = configured(tmp_path)
     runner.breakers, runner.event_buffers, runner._result_queued, runner._cleanup_reports = {}, {}, set(), {}
     runner._recruitment_conversions, runner._stopping = {}, False
     runner.controls = SimpleNamespace(finish=lambda task_id: None)
@@ -1947,8 +2021,11 @@ async def test_a_run_cancelled_after_its_work_folder_was_made_reports_that_folde
     assert not before.get("workdir_id"), "cancelled before any folder: nothing to report"
 
     sent.clear()
-    runner.workspaces = {"t-run": SimpleNamespace(dir=tmp_path / "runs" / "2026-11-01" / "task_made")}
+    workdir = tmp_path / "runs" / "2026-11-01" / "task_made"
+    write(workdir / "outputs" / "partial.txt", "partial")
+    runner.workspaces = {"t-run": TaskWorkspace.existing(workdir, "t-run")}
     with pytest.raises(asyncio.CancelledError):
         await runner._run_guarded(task)
     after = next(e for e in sent if e.type == "task.result").data
     assert after["workdir_id"] == "task_made" and after["workdir"].endswith("task_made")
+    assert "outputs/partial.txt" in after["unreported_outputs"]

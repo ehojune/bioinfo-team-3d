@@ -5511,6 +5511,30 @@ class Hub:
         """Write a cancelled request's report and terminal record. ``cancelling`` leaves in that same commit."""
         before = copy.deepcopy(self.requests[rid])
         req = copy.deepcopy(before)
+        # A result may reach the ledger just before cancellation without reaching
+        # the orchestration results or the list of tasks sent a cancellation.
+        tasks = await asyncio.to_thread(self.store.all, "task")
+        current_round = int((req.get("research_contract") or {}).get("round") or 1)
+        latest = {}
+        for tid, task in tasks.items():
+            meta = (task.get("payload") or {}).get("meta") or {}
+            sid = task.get("step_id") or ("direct" if task.get("kind") == "direct" else None)
+            if (task.get("request_id") != rid or task.get("kind") not in ("step", "direct") or not sid
+                    or int(meta.get("research_round") or 1) != current_round or not task.get("completed")
+                    or not (task.get("result") or {}).get("workdir_id")):
+                continue
+            rank = (int(task.get("revision") or 0), int(task.get("attempt") or 1),
+                    float(task.get("dispatched_at") or 0), tid)
+            if sid not in latest or rank > latest[sid][0]:
+                latest[sid] = (rank, task)
+        for sid, (_, task) in latest.items():
+            result = task.get("result") or {}
+            if task.get("completed") and result.get("workdir_id"):
+                current = req.setdefault("results", {}).get(sid)
+                if not current:
+                    req["results"][sid] = copy.deepcopy(result)
+                elif current.get("task_id") != result.get("task_id"):
+                    req.setdefault("bundle_additional_results", {})[sid] = copy.deepcopy(result)
         pending = req.pop("cancelling", None) or {}
         report, appendix = self._cancel_report(req, list(req.get("cancelled_tasks") or []),
                                                dict.fromkeys(pending.get("quota_steps") or []))
