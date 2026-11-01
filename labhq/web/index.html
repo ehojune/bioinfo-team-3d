@@ -777,7 +777,7 @@ ${FOLLOWUP_STATUSES.includes(q.status) && api?.followup ? '<button type="button"
 let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
-  const details = q ? q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)) : [];
+  const details = q ? [...q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)), S.stepDetails.get(`${q.id}:direct`)] : [];
   // The per-agent cost line names staff through the roster, so a rename or late roster redraws it (#415 review).
   const staffNames = q && q.costSummary && q.costSummary.by_agent ? Object.keys(q.costSummary.by_agent).map(nick) : [];
   // The status line also names a waiting resume card or the runners a resume still needs (R14).

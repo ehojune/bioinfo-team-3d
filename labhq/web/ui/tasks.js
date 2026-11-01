@@ -4,6 +4,13 @@ export const STATUS = { pending:'대기', queued:'대기', working:'진행 중',
 const COLUMN = { pending:'waiting', queued:'waiting', working:'working', waiting_quota:'working', waiting_login:'working', waiting_facilities_fix:'working', hibernating:'working', halted:'working', paused:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
 
 const pad = n => String(n).padStart(2, '0');
+export function facilitiesLines(p) {
+  const label = value => ({unknown:'확인 안 됨', waiting:'대기', answered:'답변', rejected:'거절', approved:'승인',
+    declined:'거절', timed_out:'시간 초과', applied:'적용', succeeded:'성공', failed:'실패', running:'진행 중'})[value] || value || '확인 안 됨';
+  return [`시설팀 요청: ${label(p.requested_to)} · 담당: ${label(p.routed_to)} · 답변자: ${label(p.answered_by)}`,
+    `답변: ${label(p.answer_status)}${p.answer ? ` · ${p.answer}` : ''}`,
+    `승인: ${label(p.approval_status)}${p.approval_note ? ` · ${p.approval_note}` : ''} · 수정: ${label(p.fix_status)} · 재실행: ${label(p.rerun_status)} · 원 단계: ${label(p.step_status)}`];
+}
 export function stepWaitLabel(status, jobs) {
   const local = (jobs || []).filter(job => String(job.id).startsWith('local-'));
   const hpc = (jobs || []).some(job => !String(job.id).startsWith('local-'));
@@ -67,6 +74,9 @@ function cardFor(step, status, detail, options) {
   list(card, '리뷰 지적', detail.review_issues, 'review');
   // Environment failure (#35): what is missing on the runner PC and what to do, above the raw error.
   if (detail.environment) add(card, 'p', `환경 문제: ${detail.environment.cause || detail.environment.id || ''}${detail.environment.hint ? ` — ${detail.environment.hint}` : ''}`, 'task-error task-environment');
+  if (detail.facilities_projection) {
+    for (const line of facilitiesLines(detail.facilities_projection)) add(card, 'p', line, 'task-meta');
+  }
   if (detail.facilities_fix) {
     const fix = detail.facilities_fix, status = fix.status || (fix.ok ? 'succeeded' : 'failed');
     const label = status === 'applied' ? '적용' : status === 'succeeded' ? '성공' : '실패';
@@ -115,6 +125,12 @@ export function syncTaskBoard(container, request, stepDetails, options = {}) {
     const status = request.steps[step.id] || 'pending';
     const detail = stepDetails.get(`${request.id}:${step.id}`) || { attempts:0, outputs:[], missing_outputs:[], review_issues:[] };
     columns[COLUMN[status] || 'waiting'].append(cardFor(step, status, detail, {...options, jobs:jobs[step.id]}));
+  }
+  const direct = stepDetails.get(`${request.id}:direct`);
+  if (direct?.facilities_projection && !(request.plan || []).some(step => step.id === 'direct')) {
+    const section = add(board, 'section', '', 'kanban-column');
+    add(section, 'h3', '직접 요청');
+    for (const line of facilitiesLines(direct.facilities_projection)) add(section, 'p', line, 'task-meta');
   }
   for (const [id, column] of Object.entries(columns)) {
     const count = column.children.length - 1;

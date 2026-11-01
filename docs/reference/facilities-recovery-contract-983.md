@@ -13,8 +13,8 @@
 
 근거: `labhq/orchestrator/cso.py:3438,3500,3538,3590,3988,4341`, `labhq/gateway/server.py:4374,4464,4542`, `labhq/models.py:423`, `labhq/web/state.js:1065`, `labhq/runner/daemon.py:1975`. 승인된 package와 cache fix는 실행 방식이 다르다. 저장된 ask·approval·request·task 결과는 독립 기록이며 통합 복구 상태 필드는 없다.
 
-## 최소 후속안
+## 상태 표시
 
-`labhq/gateway/server.py`에서 request/step 단위의 읽기 전용 projection을 만들고 `labhq/web/state.js`와 `labhq/web/ui/tasks.js`가 소비한다. 기존 ask·approval·fix·step 결과를 각각 참조하고 `requested_to`, `routed_to`, `answer_status/reason`, `approval_status/id`, `fix_status`, `rerun_status`, `step_status`를 별도로 노출한다. 없는 증거는 `unknown`으로 표시한다. 이 필드명은 제안이며 저장 schema 확정이 아니다. 기존 결과만으로 재시도 시작 여부가 확실하지 않으면 `unknown`; 별도 durable rerun task ID와 완료 기록이 필요할 때는 `cso.py`와 gateway 저장 경계를 추가하는 별도 구현 배정을 받는다. crash/restart 중 정확히 한 번 실행을 추정하지 않는다.
+Gateway는 기존 ask·approval·fix·task·step 기록을 읽어 단계별 projection을 만든다. snapshot과 실시간 이벤트를 공통 reducer가 처리하며 2D와 3D에 표시한다. 요청 대상·담당·답변·승인·수정·재실행·원 단계 결과는 별개다. 기록이 없으면 `unknown`이다. ledger가 없어도 재실행하지 않았다고 추정하지 않는다. `applied`는 원 단계 성공이 아니다.
 
 Gate: fallback 및 자동 offline 차이, 답변/거부, 승인/timeout, fix applied/failed/succeeded, rerun 실패/성공, login/quota/policy, 재시작과 기존 record 호환을 mock으로 검증한다. 불명 상태를 성공으로 승격하지 않는다. 실제 설치판 진단·승인된 수정·원 단계 복구는 별도 승인과 실증이 필요하다.
