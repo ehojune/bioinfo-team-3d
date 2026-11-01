@@ -569,6 +569,22 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
     linked_figures = set(linked_figure_paths(report_text))
     plan_steps = [step for step in ((req.get("plan") or {}).get("steps") or []) if isinstance(step, Mapping)]
     ordered_ids, ordered_steps = _topological_steps(plan_steps, results)
+    # Keep a later cancelled attempt separate from the published result, including
+    # when both attempts wrote files with the same name in different workdirs.
+    bundle_results = dict(results)
+    bundle_ids = list(ordered_ids)
+    additional_names = []
+    additional = req.get("bundle_additional_results") or {}
+    if isinstance(additional, Mapping):
+        for index, (original_id, result) in enumerate(sorted(additional.items()), 1):
+            if original_id not in results or not isinstance(result, Mapping):
+                continue
+            name = f"cancelled_revision_{index}"
+            while name in bundle_ids or name in bundle_results:
+                name += "_"
+            bundle_results[name] = result
+            bundle_ids.append(name)
+            additional_names.append((original_id, name))
     key_figures_declared = any("key_figures" in step for step in ordered_steps)
     key_figures: list[str] = []
     for step in ordered_steps:
@@ -676,10 +692,10 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
     try:
         found_workdirs = 0
         with ExitStack() as stack:
-            for step_id in ordered_ids:
+            for step_id in bundle_ids:
                 if not _SAFE_ID.fullmatch(step_id):
                     raise ValueError(f"unsafe step id for bundle: {step_id!r}")
-                result = results.get(step_id)
+                result = bundle_results.get(step_id)
                 if not isinstance(result, Mapping):
                     continue
                 # A local WSL worker shares this exact drive root; unrelated remote hosts still refuse.
@@ -809,6 +825,10 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
         appendix, legacy = split_appendix(str(req.get("report_appendix") or ""))
         tool_calls = _tool_calls_section(ordered_ids, results)
         execution = "\n\n".join(p for p in [str(req.get("execution_record") or ""), legacy, tool_calls] if p)
+        if additional_names:
+            execution += "\n\n## Cancelled revision artifacts\n\n" + "\n".join(
+                f"- {original}: steps/{name}/ (partial revision outputs)"
+                for original, name in additional_names if _SAFE_ID.fullmatch(str(original)))
         from .research import semantic_device_report
         device_report = (semantic_device_report.build_report(req, settings)
                          if semantic_device_report.applies(req, settings) else None)

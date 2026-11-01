@@ -5530,7 +5530,11 @@ class Hub:
         for sid, (_, task) in latest.items():
             result = task.get("result") or {}
             if task.get("completed") and result.get("workdir_id"):
-                req.setdefault("results", {}).setdefault(sid, copy.deepcopy(result))
+                current = req.setdefault("results", {}).get(sid)
+                if not current:
+                    req["results"][sid] = copy.deepcopy(result)
+                elif current.get("task_id") != result.get("task_id"):
+                    req.setdefault("bundle_additional_results", {})[sid] = copy.deepcopy(result)
         pending = req.pop("cancelling", None) or {}
         report, appendix = self._cancel_report(req, list(req.get("cancelled_tasks") or []),
                                                dict.fromkeys(pending.get("quota_steps") or []))

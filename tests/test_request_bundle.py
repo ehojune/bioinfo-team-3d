@@ -1851,6 +1851,45 @@ async def test_cancelled_step_result_in_ledger_is_bundled(tmp_path, reason, list
     await asyncio_sleep()
     hub.store.close()
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_workdir", [True, False])
+async def test_cancelled_revision_preserves_existing_and_partial_outputs(tmp_path, same_workdir):
+    import copy
+    settings, request, task = pending_bundle_fixture(tmp_path, "revisions")
+    old = copy.deepcopy(task["result"])
+    old_dir = Path(old["workdir"])
+    new_dir = old_dir if same_workdir else old_dir.parent / "task_revision"
+    write(new_dir / "manifest.json", json.dumps({"host": platform.node()}))
+    write(new_dir / "outputs/partial.txt", "partial revision")
+    if not same_workdir:
+        write(new_dir / "outputs/answer.txt", "new revision")
+    result = copy.deepcopy(old)
+    result.update(task_id="t-revision", workdir=str(new_dir), workdir_id=new_dir.name,
+                  ok=False, error="cancelled", outputs=[], output_sha256={},
+                  unreported_outputs=["outputs/partial.txt"] + ([] if same_workdir else ["outputs/answer.txt"]))
+    task.update(kind="step", step_id="s1", attempt=2, result=result)
+    request.update(mode="orchestrate", status="cancelled", error="cancelled", results={"s1": old}, cancelling={},
+                   plan={"steps": [{"id": "s1", "depends_on": []}]})
+    hub = Hub(settings)
+    hub.requests[request["id"]] = request
+    hub.store.put("task", result["task_id"], task)
+    await hub._afinish_cancel(request["id"])
+    pending = hub.terminal_tasks.get(request["id"])
+    if pending:
+        await pending
+    saved = hub.requests[request["id"]]
+    assert not saved.get("bundle_warning")
+    bundle = Path(saved["bundle_path"])
+    assert (bundle / "steps/s1/outputs/answer.txt").read_text() == "answer\n"
+    partial = list((bundle / "steps").glob("*/outputs/partial.txt"))
+    assert len(partial) == 1 and partial[0].read_text() == "partial revision"
+    if not same_workdir:
+        assert (partial[0].parent / "answer.txt").read_text() == "new revision"
+    assert "s1: steps/cancelled_revision_1/" in (bundle / "execution_record.md").read_text(encoding="utf-8")
+    await asyncio_sleep()
+    hub.store.close()
+
+
 def _sent_step_without_workdir(tmp_path, rid, status):
     hub = Hub(configured(tmp_path))
     hub.requests[rid] = {"id": rid, "text": "request", "mode": "orchestrate", "status": status, "report": "body",
