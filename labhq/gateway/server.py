@@ -3850,7 +3850,7 @@ class Hub:
         result = {}
         steps = list((request.get("plan") or {}).get("steps", []))
         direct_ids = {tid for tid, entry in tasks.items() if entry.get("request_id") == rid
-                      and entry.get("kind") == "direct" and not entry.get("step_id")}
+                      and entry.get("kind") == "direct" and entry.get("step_id") in (None, "", "direct")}
         direct_ask = any((entry.get("ask") or {}).get("task_id") in direct_ids
                          and (entry.get("ask") or {}).get("to") == "facilities" for entry in asks.values())
         if ("direct" in diagnoses or "direct" in fixes or direct_ask) and not any(s.get("id") == "direct" for s in steps):
@@ -3892,7 +3892,8 @@ class Hub:
             rerun_status = ("waiting" if retry.get("completed") and waiting(retry_result) else
                             "succeeded" if retry.get("completed") and retry_result.get("ok") is True else
                             "failed" if retry.get("completed") and retry_result.get("ok") is False else
-                            "running" if retry.get("accepted") and not retry.get("completed") else "unknown")
+                            "running" if retry.get("accepted") and not retry.get("completed") else
+                            "waiting" if retry and not retry.get("completed") else "unknown")
             step_result = (request.get("results") or {}).get(sid) or {}
             step_status = ("unknown" if waiting(step_result) else "succeeded" if step_result.get("ok") is True else
                            "failed" if step_result.get("ok") is False else "unknown")
