@@ -223,6 +223,15 @@ def test_curl_first_output_dir_is_not_overwritten_by_next_clause(tmp_path, separ
     assert first in folders(command, tmp_path)
 
 
+def test_curl_later_clause_warns_on_its_own_output_drive(tmp_path):
+    slow = tmp_path / "slow"
+    def probe(folder):
+        return drive(6 if folder == slow else 50)(folder)
+    command = f"curl https://example.org/a --next --output-dir {slow.as_posix()} -o sample.fastq https://example.org/b"
+    verdict = shell_check(command, str(tmp_path), probe=probe, **CHECK)
+    assert verdict is not None and verdict.action == "warn" and slow.as_posix() in verdict.reason
+
+
 def test_attached_tar_option_values_are_read(tmp_path):
     out = (tmp_path / "out").as_posix()
     (tmp_path / "a.tgz").write_bytes(b"x")
