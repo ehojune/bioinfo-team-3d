@@ -3849,7 +3849,11 @@ class Hub:
         diagnoses = request.get("facilities_diagnoses") or {}
         result = {}
         steps = list((request.get("plan") or {}).get("steps", []))
-        if ("direct" in diagnoses or "direct" in fixes) and not any(s.get("id") == "direct" for s in steps):
+        direct_ids = {tid for tid, entry in tasks.items() if entry.get("request_id") == rid
+                      and entry.get("kind") == "direct" and not entry.get("step_id")}
+        direct_ask = any((entry.get("ask") or {}).get("task_id") in direct_ids
+                         and (entry.get("ask") or {}).get("to") == "facilities" for entry in asks.values())
+        if ("direct" in diagnoses or "direct" in fixes or direct_ask) and not any(s.get("id") == "direct" for s in steps):
             steps.append({"id": "direct"})
         for step in steps:
             sid = step.get("id")
@@ -5972,7 +5976,22 @@ class Hub:
         asks = self.store.all("ask")
         if not hasattr(self, "_facilities_visible"):
             self._facilities_visible = set()
-        projections = {rid: self.facilities_projection(rid, tasks, asks) for rid in self.requests}
+        tasks_by_request: dict[str, dict] = {}
+        for tid, entry in tasks.items():
+            tasks_by_request.setdefault(entry.get("request_id"), {})[tid] = entry
+        asks_by_request: dict[str, dict] = {}
+        task_requests = {tid: entry.get("request_id") for tid, entry in tasks.items()}
+        for aid, entry in asks.items():
+            ask = entry.get("ask") or {}
+            rid = ask.get("request_id") or task_requests.get(ask.get("task_id"))
+            asks_by_request.setdefault(rid, {})[aid] = entry
+        # Older linked diagnoses may omit request_id; the stored diagnosis id is authoritative.
+        for rid, request in self.requests.items():
+            for aid in (request.get("facilities_diagnoses") or {}).values():
+                if aid in asks:
+                    asks_by_request.setdefault(rid, {})[aid] = asks[aid]
+        projections = {rid: self.facilities_projection(rid, tasks_by_request.get(rid, {}),
+                                                       asks_by_request.get(rid, {})) for rid in self.requests}
         self._facilities_visible = {rid for rid, projection in projections.items() if projection}
         running = self.running_tasks(tasks)
         # Staff can also be queued, consulting, or answering a finished request.

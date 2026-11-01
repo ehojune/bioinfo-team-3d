@@ -165,3 +165,22 @@ def test_snapshot_calculates_each_projection_once(tmp_path, monkeypatch):
         assert calls == ['r']
     finally:
         hub.store.close()
+
+
+async def test_direct_ordinary_ask_is_visible_live_and_in_snapshot(tmp_path):
+    hub = make_hub(tmp_path)
+    hub.requests['r'].update(mode='direct', plan=None)
+    hub.save_request('r')
+    hub.store.put('task', 't', {'request_id': 'r', 'kind': 'direct', 'step_id': None})
+    ask = AskRequest(id='a', request_id='r', task_id='t', agent_id='worker',
+                     to='facilities', question='help', why_blocked='environment')
+    hub.store.put('ask', 'a', {'ask': ask.model_dump(mode='json'), 'state': 'pending'})
+    try:
+        await hub.publish({'type': 'agent.ask', 'request_id': 'r', 'data': ask.model_dump(mode='json')})
+        live = [e for e in hub.events if e['type'] == 'request.facilities_projection'][-1]['data']['direct']
+        assert live['requested_to'] == 'facilities' and live['answer_status'] == 'waiting'
+        assert hub.snapshot()['data']['requests'][0]['facilities_projection']['direct'] == live
+        await hub.resolve_ask(ask, 'absent', {'status': 'answered', 'answer': 'advice', 'from': 'cso'})
+        assert [e for e in hub.events if e['type'] == 'request.facilities_projection'][-1]['data']['direct']['answer'] == 'advice'
+    finally:
+        hub.store.close()
