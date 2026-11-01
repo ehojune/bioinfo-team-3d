@@ -64,7 +64,10 @@ async def test_failed_consult_is_rejected_with_reason(tmp_path, target, failure)
         assert {"offline": "runner offline", "cli": "CLI exit 2", "empty": "empty"}[failure] in answer["reason"]
         assert "answer" not in answer
         assert (await hub.wait_asks([ask.id]))[0] == answer
-        assert hub.events[-1]["data"]["status"] == "rejected"
+        answer_events = [event for event in hub.events if event["type"] == "agent.answer"
+                         and event.get("task_id") == ask.task_id]
+        assert len(answer_events) == 1
+        assert answer_events[0]["data"]["status"] == "rejected"
     finally:
         hub.store.close()
 

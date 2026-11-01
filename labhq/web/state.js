@@ -751,6 +751,7 @@ const snapshotTaskKind = task => task.kind || (task.step_id === 'followup' ? 'fo
 const staleTask = task => { const q = S.requests.get(task.request_id); return !!q && isTerminalRequest(q.status) && !POST_END_TASK_KINDS.has(snapshotTaskKind(task)); };
 function apply(ev, replay = false) {
   const effects = [];
+  if (!replay && ev.type === 'snapshot' && !ev.replay_gap && Number.isFinite(ev.seq) && ev.seq < S.lastSeq) return effects;
   // A snapshot sets the point itself, and the events it replays carry seqs it already covers. An event with no seq
   // (the demo, a local notice) is always applied.
   if (!replay && ev.type !== 'snapshot' && Number.isFinite(ev.seq) && ev.seq > 0) {
@@ -830,6 +831,10 @@ function apply(ev, replay = false) {
         Object.assign(q.steps, r.step_status || {});
         q.failed_steps = Array.isArray(r.failed_steps) ? r.failed_steps : undefined;
         for (const [sid, detail] of Object.entries(r.step_details || {})) Object.assign(stepDetail(r.id, sid), detail);
+        if (Object.hasOwn(r, 'facilities_projection')) {
+          for (const [key, detail] of S.stepDetails) if (key.startsWith(`${r.id}:`)) delete detail.facilities_projection;
+          for (const [sid, projection] of Object.entries(r.facilities_projection || {})) stepDetail(r.id, sid).facilities_projection = projection;
+        }
         if (r.review) q.review = r.review;
         // recent_events may no longer hold a long request's plan event: a planned active request is past briefing.
         // With no step started and no review yet it is still in 계획, waiting for the PI to approve the plan (CP1).
@@ -1151,6 +1156,11 @@ function apply(ev, replay = false) {
       q.semantic_devices = { ...d };
       const message = `의미 장치 중단: ${first.device || '장치'} ${first.code || '상태 확인 필요'} · 단계 ${first.stage || '미기록'} · 시각 ${first.at || d.checked_at || '미기록'} · ${first.message || '장치 상태를 확인하세요.'}`;
       feed({ who: 'system', text: short(message, 300), fullText: message, cls: 'alert' }, ts, rid);
+      break;
+    }
+    case 'request.facilities_projection': {
+      for (const [key, detail] of S.stepDetails) if (key.startsWith(`${rid}:`)) delete detail.facilities_projection;
+      for (const [sid, projection] of Object.entries(d)) stepDetail(rid, sid).facilities_projection = projection;
       break;
     }
     case 'request.facilities_fix': { const detail = stepDetail(rid, d.step_id), status = d.status || (d.ok ? 'succeeded' : 'failed'); detail.facilities_fix = { ...d, status }; const label = status === 'applied' ? '환경 수정 적용' : status === 'succeeded' ? '환경 수정 성공' : '환경 수정 실패'; feed({ who: 'facilities', text: `${label}: ${short((status === 'failed' ? d.error : d.action) || d.fix_id || '', 120)}`, fullText: `${label}: ${(status === 'failed' ? d.error : d.action) || d.fix_id || ''}`, cls: status === 'failed' ? 'alert' : '' }, ts, rid); break; }

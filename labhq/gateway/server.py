@@ -1599,6 +1599,7 @@ class Hub:
                 await self._aqueue_terminal_delivery(event)
             if getattr(self, "semantics_shadow", None) is not None:  # semantics-hook
                 self.semantics_shadow.after_request(rid)  # semantics-hook
+        await self.publish_facilities_projection(rid)
         try:
             await self.rounds.awrite(rid)
             await self.rounds.asubmit(rid)
@@ -3787,6 +3788,14 @@ class Hub:
         try:
             async with self.event_lock:
                 await self._flush_committed_events()
+                if ev.get("type") == "request.facilities_projection":
+                    ev["data"] = self.facilities_projection(ev["request_id"])
+                    if not hasattr(self, "_facilities_visible"):
+                        self._facilities_visible = set()
+                    if ev["data"]:
+                        self._facilities_visible.add(ev["request_id"])
+                    else:
+                        self._facilities_visible.discard(ev["request_id"])
                 durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
                                   ev.get("type") in ProjectReporter.HANDLED)
                 ev, cancelled = await self._append_event_with_request(ev, runner_id, runner_seq, durable_report,
@@ -3813,6 +3822,94 @@ class Hub:
             raise asyncio.CancelledError
         if ev.get("type") in ("request.step_done", "request.step_skipped") and ev.get("request_id"):
             await self._close_step_controls(ev["request_id"], (ev.get("data") or {}).get("step_id"))
+        if (ev.get("type") in {"agent.ask", "approval.resolved", "task.dispatched", "task.accepted", "task.result",
+                               "request.step_done", "request.step_skipped"}
+                and ev.get("request_id") in self.requests):
+            await self.publish_facilities_projection(ev["request_id"],
+                force=ev.get("type") == "agent.ask" and (ev.get("data") or {}).get("to") == "facilities")
+
+    async def publish_facilities_projection(self, rid: str, *, force: bool = False) -> None:
+        try:
+            request = self.requests.get(rid) or {}
+            if not (force or request.get("facilities_diagnoses") or request.get("facilities_fixes")
+                    or rid in getattr(self, "_facilities_visible", set())):
+                return
+            await self.publish({"type": "request.facilities_projection", "request_id": rid,
+                                "ts": time.time(), "data": {}})
+        except Exception:
+            log.exception("Could not publish facilities projection for request %s", rid)
+
+    def facilities_projection(self, rid: str, ledger: Mapping[str, dict] | None = None,
+                              ask_records: Mapping[str, dict] | None = None) -> dict:
+        """Read existing evidence only; a missing ledger row cannot prove that no retry happened."""
+        request = self.store.get("request", rid) or {}
+        tasks = self.store.all("task") if ledger is None else ledger
+        asks = self.store.all("ask") if ask_records is None else ask_records
+        fixes = request.get("facilities_fixes") or {}
+        diagnoses = request.get("facilities_diagnoses") or {}
+        result = {}
+        steps = list((request.get("plan") or {}).get("steps", []))
+        direct_ids = {tid for tid, entry in tasks.items() if entry.get("request_id") == rid
+                      and entry.get("kind") == "direct" and entry.get("step_id") in (None, "", "direct")}
+        direct_ask = any((entry.get("ask") or {}).get("task_id") in direct_ids
+                         and (entry.get("ask") or {}).get("to") == "facilities" for entry in asks.values())
+        if ("direct" in diagnoses or "direct" in fixes or direct_ask) and not any(s.get("id") == "direct" for s in steps):
+            steps.append({"id": "direct"})
+        for step in steps:
+            sid = step.get("id")
+            if not sid:
+                continue
+            matches = [(tid, entry) for tid, entry in tasks.items()
+                       if entry.get("request_id") == rid and (entry.get("step_id") == sid or
+                          (sid == "direct" and entry.get("kind") == "direct" and not entry.get("step_id")))]
+            task_ids = {tid for tid, _ in matches}
+            ask_id = diagnoses.get(sid)
+            candidates = [(aid, entry) for aid, entry in asks.items()
+                          if aid == ask_id or ((entry.get("ask") or {}).get("task_id") in task_ids
+                          and (entry.get("ask") or {}).get("to") == "facilities")]
+            fix = fixes.get(sid) or {}
+            if not candidates and not fix:
+                continue
+            # The diagnosis id is a durable link. Multiple other asks lack a reliable ordering;
+            # do not present an arbitrary older answer as the current one.
+            linked = [entry for aid, entry in candidates if aid == ask_id]
+            ask = linked[0] if linked else candidates[0][1] if len(candidates) == 1 else {}
+            answer = ask.get("answer") or {}
+            approval_id = fix.get("approval_id")
+            decision = self.store.get("approval_decision", approval_id) if approval_id else None
+            if decision:
+                approval_status = ("timed_out" if decision.get("state") == "timed_out" else
+                                   "unknown" if decision.get("state") == "expired" else
+                                   "approved" if decision.get("approved") is True else
+                                   "declined" if decision.get("approved") is False else "unknown")
+            elif approval_id and approval_id in self.approvals:
+                approval_status = "waiting"
+            else:
+                approval_status = "unknown"
+            reruns = [(tid, entry) for tid, entry in matches
+                      if ((entry.get("payload") or {}).get("meta") or {}).get("facilities_rerun")]
+            reruns.sort(key=lambda pair: (pair[1].get("dispatched_at") or 0, pair[0]))
+            retry = reruns[-1][1] if reruns else {}
+            retry_result = retry.get("result") or {}
+            rerun_status = ("unknown" if retry.get("abandoned") else
+                            "waiting" if retry.get("completed") and waiting(retry_result) else
+                            "succeeded" if retry.get("completed") and retry_result.get("ok") is True else
+                            "failed" if retry.get("completed") and retry_result.get("ok") is False else
+                            "running" if retry.get("accepted") and not retry.get("completed") else
+                            "waiting" if retry and not retry.get("completed") else "unknown")
+            step_result = (request.get("results") or {}).get(sid) or {}
+            step_status = ("unknown" if waiting(step_result) else "succeeded" if step_result.get("ok") is True else
+                           "failed" if step_result.get("ok") is False else "unknown")
+            fix_status = fix.get("status") if fix.get("status") in {"applied", "succeeded", "failed", "cancelled"} else "unknown"
+            result[sid] = {"requested_to": (ask.get("ask") or {}).get("to") or "unknown",
+                           "routed_to": answer.get("routed_to") or ask.get("routed_to") or "unknown",
+                           "answered_by": answer.get("from") or "unknown",
+                           "answer_status": answer.get("status") or ("waiting" if ask.get("state") == "pending" else "unknown"),
+                           "answer": short(answer.get("answer") or answer.get("reason") or "", SNAPSHOT_ANSWER_CHARS),
+                           "approval_status": approval_status, "approval_id": approval_id,
+                           "approval_note": short((decision or {}).get("note") or fix.get("note") or "", 500),
+                           "fix_status": fix_status, "rerun_status": rerun_status, "step_status": step_status}
+        return result
 
     async def _append_event_with_request(self, ev: dict, runner_id: str | None, runner_seq: int | None,
                                          durable_report: bool, activity=None):
@@ -4692,6 +4789,8 @@ class Hub:
         await self.publish({"type": "agent.answer", "ts": time.time(), "task_id": ask.task_id,
                             "agent_id": answer.get("from"), "request_id": ask.request_id,
                             "data": {**answer, "to": ask.agent_id, "question": ask.question}})
+        if ask.to == "facilities" and ask.request_id in self.requests:
+            await self.publish_facilities_projection(ask.request_id, force=True)
         if runner_id in self.runners:
             await self.send_runner(runner_id, {"type": "ask.resolved", "id": ask.id, "answer": answer})
 
@@ -4744,6 +4843,7 @@ class Hub:
             self.store.put("ask", ask_id, entry)
         req.setdefault("facilities_diagnoses", {})[key] = ask_id
         await self.asave_request(rid)
+        await self.publish_facilities_projection(rid)
         if entry.get("state") == "resolved":
             return
         ask = AskRequest.model_validate(entry["ask"])
@@ -4826,6 +4926,7 @@ class Hub:
             fixes[step_id] = saved
             self._sync_hold_status(req_state)
             await self.asave_request(rid)
+            await self.publish_facilities_projection(rid)
             return {"approved": bool(decision.get("approved")), **saved}
 
         if saved:
@@ -4868,6 +4969,7 @@ class Hub:
                 fixes[step_id] = saved
                 req_state["status"] = "waiting_facilities_fix"
                 await self.asave_request(rid)
+                await self.publish_facilities_projection(rid)
                 if (approval.id not in self.approvals or not is_active_request(req_state.get("status"))
                         or req_state.get("cancelling")):
                     # A cancel closed the card (and published approval.expired) while the request was being saved:
@@ -4892,6 +4994,7 @@ class Hub:
                      state=answer.get("state") or "resolved")
         self._sync_hold_status(req_state)
         await self.asave_request(rid)
+        await self.publish_facilities_projection(rid)
         return {"approved": bool(answer.get("approved")), **saved}
 
     async def record_facilities_fix(self, rid: str, step_id: str, record: dict) -> None:
@@ -4904,6 +5007,7 @@ class Hub:
         entry.update(status=status, execution=record)
         self._sync_hold_status(req)
         await self.asave_request(rid)
+        await self.publish_facilities_projection(rid)
         await self.publish({"type": "request.facilities_fix", "ts": time.time(), "request_id": rid,
                             "data": {"step_id": step_id, "ok": record.get("ok"), "status": status,
                                      "fix_id": record.get("fix_id"), "action": record.get("action"),
@@ -5873,6 +5977,26 @@ class Hub:
     def snapshot(self) -> dict[str, Any]:
         # Read the task ledger once for every request below; one read per request stalled the loop (2026-10-08).
         tasks = self.store.all("task")
+        asks = self.store.all("ask")
+        if not hasattr(self, "_facilities_visible"):
+            self._facilities_visible = set()
+        tasks_by_request: dict[str, dict] = {}
+        for tid, entry in tasks.items():
+            tasks_by_request.setdefault(entry.get("request_id"), {})[tid] = entry
+        asks_by_request: dict[str, dict] = {}
+        task_requests = {tid: entry.get("request_id") for tid, entry in tasks.items()}
+        for aid, entry in asks.items():
+            ask = entry.get("ask") or {}
+            rid = ask.get("request_id") or task_requests.get(ask.get("task_id"))
+            asks_by_request.setdefault(rid, {})[aid] = entry
+        # Older linked diagnoses may omit request_id; the stored diagnosis id is authoritative.
+        for rid, request in self.requests.items():
+            for aid in (request.get("facilities_diagnoses") or {}).values():
+                if aid in asks:
+                    asks_by_request.setdefault(rid, {})[aid] = asks[aid]
+        projections = {rid: self.facilities_projection(rid, tasks_by_request.get(rid, {}),
+                                                       asks_by_request.get(rid, {})) for rid in self.requests}
+        self._facilities_visible = {rid for rid, projection in projections.items() if projection}
         running = self.running_tasks(tasks)
         # Staff can also be queued, consulting, or answering a finished request.
         # Keep this separate from the request board's accepted-step selection.
@@ -5922,6 +6046,7 @@ class Hub:
                           "pi_reviewed_at": r.get("pi_reviewed_at"), "final_checkpoint": cp4.summary(r),
                           "error": short(r.get("error") or "", 2000),
                           "step_details": self.request_step_details(r.get("id", ""), r, tasks),
+                          "facilities_projection": projections.get(r.get("id", ""), {}),
                           **({} if r.get("id") in recent_terminals else snapshot_reports(r)),
                           **({"pipeline_pr": pipeline_prs[r["id"]]} if r.get("id") in pipeline_prs else {}),
                           "review": r.get("review") or (r.get("review_progress") or {}).get("review")}
