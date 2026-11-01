@@ -12,3 +12,7 @@ rows:
   at: 2026-11-01 16:36
   text: 소액 예산에서 선행 조사 대기 조건을 한영 manual에 설명한다 (#1255).
   summary: 브리핑 완료와 예산 카드 시점을 명확히 합니다.
+- sha: 59ea990
+  at: 2026-11-01 16:43
+  text: 병렬 예산 회귀 시험을 Windows CI inventory에 등록한다 (#1255).
+  summary: Windows에서도 소액 예산 동작을 확인합니다.
