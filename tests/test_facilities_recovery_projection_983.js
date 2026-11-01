@@ -39,12 +39,38 @@ console.log('facilities projection ordering passed');
   assert.match(live, /facilitiesLines\(direct\)/);
   const elements = [];
   function element(tag) { return {tag, children: [], dataset: {}, append(c) {this.children.push(c)},
-    replaceChildren(...c) {this.children = c}, addEventListener() {}}; }
+    replaceChildren(...c) {this.children = c}, addEventListener() {}, setAttribute() {}}; }
   global.document = {createElement(tag) { const e = element(tag); elements.push(e); return e; }};
   const board = element('div');
   const details = new Map([['r:direct', {facilities_projection: {fix_status:'applied'}}]]);
   const {syncTaskBoard} = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
   syncTaskBoard(board, {id:'r', plan:[], steps:{}}, details);
   assert(elements.some(e => String(e.textContent).includes('수정: 적용')));
+  details.set('r:s1', {facilities_projection:{fix_status:'failed'}});
+  syncTaskBoard(board, {id:'r', plan:[{id:'s1'}], steps:{}}, details);
+  const content = el => (el.textContent || '') + el.children.map(content).join('');
+  assert.match(content(board), /수정: 실패/);
+  details.get('r:s1').facilities_projection.fix_status = 'succeeded';
+  syncTaskBoard(board, {id:'r', plan:[{id:'s1'}], steps:{}}, details);
+  assert.match(content(board), /수정: 성공/);
+  assert.doesNotMatch(content(board), /수정: 실패/);
+  // Exercise the real 3D renderer with the isolated DOM/socket harness.
+  const harness = fs.readFileSync(path.join(__dirname, 'web_live.cjs'), 'utf8').split('(async()=>{')[0]
+    .replace("const root = path.resolve(__dirname, '..', 'labhq/web');", `const root = ${JSON.stringify(path.resolve(__dirname, '../labhq/web'))};`);
+  const scenario = `(async()=>{
+    const {startLiveOffice} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+    startLiveOffice(()=>{}); const ws=sockets[0]; ws.readyState=1; ws.onopen();
+    const send = ev => ws.onmessage({data:JSON.stringify(ev)});
+    const row = id => element('requests').children.find(x=>x.dataset.requestId===id);
+    send({type:'snapshot',seq:1,data:{requests:[{id:'r',status:'running',plan:{steps:[{id:'s1'}]}}]}});
+    send({type:'request.facilities_projection',seq:2,request_id:'r',data:{s1:{fix_status:'applied'},direct:{fix_status:'failed'}}});
+    assert.match(textIn(row('r')),/수정: 적용/); assert.match(textIn(row('r')),/수정: 실패/);
+    send({type:'request.facilities_projection',seq:3,request_id:'r',data:{s1:{fix_status:'succeeded'}}});
+    assert.match(textIn(row('r')),/수정: 성공/); assert.doesNotMatch(textIn(row('r')),/수정: 실패/);
+    send({type:'snapshot',seq:4,data:{requests:[{id:'r',status:'running',plan:{steps:[{id:'s1'}]},facilities_projection:{s1:{fix_status:'succeeded'}}}]}});
+    assert.match(textIn(row('r')),/수정: 성공/);
+  })().catch(e=>{console.error(e);process.exitCode=1});`;
+  const result = require('node:child_process').spawnSync(process.execPath, ['-e', harness + scenario], {encoding:'utf8'});
+  assert.equal(result.status, 0, result.stdout + result.stderr);
   console.log('shared 2D/3D labels passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
