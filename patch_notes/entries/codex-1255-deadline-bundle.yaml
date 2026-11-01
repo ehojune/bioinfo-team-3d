@@ -20,3 +20,7 @@ rows:
   at: 2026-11-01 12:45
   text: Select the latest cancellation result without blocking the gateway.
   summary: Preserve the latest attempt and read the ledger off the event loop.
+- sha: 5df0723
+  at: 2026-11-01 12:50
+  text: Keep the latest available output when a retry has no result.
+  summary: Preserve completed attempt outputs after an unfinished retry.
