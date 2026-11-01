@@ -1822,16 +1822,21 @@ def test_a_swapped_requests_folder_is_refused_and_nothing_below_the_new_target_i
 @pytest.mark.parametrize("reason", [None, "request_deadline"])
 @pytest.mark.parametrize("listed", [True, False])
 async def test_cancelled_step_result_in_ledger_is_bundled(tmp_path, reason, listed):
+    import copy
     settings, request, task = pending_bundle_fixture(tmp_path, "deadline")
     result = task["result"]
     result.update(ok=False, error="cancelled", unreported_outputs=result.pop("outputs"))
     result.pop("output_sha256")
-    task.update(kind="step", step_id="s1")
+    task.update(kind="step", step_id="s1", attempt=2)
     request.update(mode="orchestrate", status="cancelled", error="cancelled", results={},
                    cancelling={}, cancelled_tasks=[result["task_id"]] if listed else [], cancel_reason=reason,
                    plan={"steps": [{"id": "s1", "depends_on": []}]})
     hub = Hub(settings)
     hub.requests[request["id"]] = request
+    old = copy.deepcopy(task)
+    old.update(attempt=1)
+    old["result"].update(workdir_id="old-missing", workdir=str(tmp_path / "old-missing"))
+    hub.store.put("task", "aaa-old-attempt", old)
     hub.store.put("task", result["task_id"], task)
     await hub._afinish_cancel(request["id"])
     pending = hub.terminal_tasks.get(request["id"])
