@@ -32,10 +32,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 18:30 | [`8a878b4`](https://github.com/ehojune/bioinfo-team-3d/pull/1236/commits/8a878b4) | **AlphaGenome 조회용 도구를 설치할 때 runner가 쓰는 가상환경에 설치하도록 안내합니다.**<br>문서: Atlas SDK는 runner의 가상환경 python으로 설치한다 (#1236 리뷰 P2) |
 | 18:00 | [`0f2b216`](https://github.com/ehojune/bioinfo-team-3d/pull/1236/commits/0f2b216) | **설명서의 AlphaGenome 조회 절이 이미 병합됐다는 현재 상태를 말하고, 키를 화면과 명령 기록에 남기지 않고 넣는 방법을 안내합니다.**<br>문서: Atlas 절을 병합 상태에 맞추고 키를 환경 변수로 넣는 법을 적는다 (#1225) |
 | 17:00 | [`aaf17a8`](https://github.com/ehojune/bioinfo-team-3d/pull/1233/commits/aaf17a8) | **설명서에 AlphaGenome 키를 설정한 PC에서도 조회 도구를 쓰는 직원이 정상으로 실행되고, 키를 덮어쓰는 설정만 막힌다는 점을 적었습니다.**<br>문서: Atlas 시작 점검의 최종 정의와 키 파일이 있는 PC의 동작을 적는다 (#1225) |
+| 16:43 | [`59ea990`](https://github.com/ehojune/bioinfo-team-3d/commit/59ea990) | **Windows에서도 소액 예산 동작을 확인합니다.**<br>병렬 예산 회귀 시험을 Windows CI inventory에 등록한다 (#1255). |
+| 16:36 | [`a0413c4`](https://github.com/ehojune/bioinfo-team-3d/commit/a0413c4) | **브리핑 완료와 예산 카드 시점을 명확히 합니다.**<br>소액 예산에서 선행 조사 대기 조건을 한영 manual에 설명한다 (#1255). |
 | 16:30 | [`60ad318`](https://github.com/ehojune/bioinfo-team-3d/commit/60ad318) | **Keep the configured lookup share unchanged during WSL setup.**<br>Preserve lookup share precision when enabling WSL (#691). |
+| 16:29 | [`996276f`](https://github.com/ehojune/bioinfo-team-3d/commit/996276f) | **1센트 미만의 잔액을 예약 가능한 금액으로 취급하지 않습니다.**<br>선행 조사 예약 판단에도 센트 단위 내림을 반영한다 (#1255). |
 | 16:00 | [`fa5b247`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/fa5b247) | **키 파일이 링크된 폴더 아래에 있어도 키를 설정한 PC에서 조회 도구를 쓰는 직원의 실행이 막히지 않습니다.**<br>Atlas 점검 예외를 labhq가 키 파일 경로를 쓰는 두 곳(비공개 경로 목록·Claude 규칙)에서 가져온다 (#1225 리뷰) |
 | 16:00 | [`980f753`](https://github.com/ehojune/bioinfo-team-3d/commit/980f753) | **Keep precise decimal shares through loading and staff configuration.**<br>Preserve lookup share precision from configuration (#691). |
 | 15:00 | [`c266979`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/c266979) | **키 파일 위치를 확인하는 단계가 테스트 환경의 보호 때문에 멈추지 않고, 확인하지 못한 형태만 예외에서 빠집니다.**<br>Atlas 점검: 테스트 가드가 settings.path를 거절해도 그 형태만 예외에서 뺀다 (#1225 CI) |
+| 15:00 | [`3497ee2`](https://github.com/ehojune/bioinfo-team-3d/commit/3497ee2) | **예약 중인 예산을 실제 소진으로 오인해 즉시 승인 카드를 띄우지 않습니다.**<br>소액 예산에서 브리핑 예약이 끝난 뒤 선행 조사를 시작한다 (#1255). |
 | 15:00 | [`18d3c36`](https://github.com/ehojune/bioinfo-team-3d/commit/18d3c36) | **Apply one exact decimal cap to briefing and precedent lookups.**<br>Share the lookup allowance across pre-plan stages (#691). |
 | 14:30 | [`ecaa1b6`](https://github.com/ehojune/bioinfo-team-3d/pull/1251/commits/ecaa1b6) | focus_layout 바깥 상한을 Chrome 세션 둘에 맞춰 120초로, status 문구를 적용 상태에 맞춘다 (Refs #1076) |
 | 14:00 | [`d9546e8`](https://github.com/ehojune/bioinfo-team-3d/pull/1228/commits/d9546e8) | **키 파일 위치를 파일 이름만으로 적어 두어도 키를 덮어쓰는 설정은 그대로 막힙니다.**<br>Atlas 점검 예외: 구분자 있는 절대 경로와 ~ 형태만 두고 규칙 생성 실패는 규칙을 빼 더 엄격하게 한다 (#1225 리뷰) |
