@@ -4941,12 +4941,12 @@ class Orchestrator:
                            **({"plan_warnings": req.get("plan_warnings") or [], "plan_validation": req["plan_validation"]}
                               if (req.get("plan_validation") or {}).get("semantic_checks") else {})}}
 
-    def _lookup_usage_line(self, rid: str) -> str:
+    def _lookup_usage_line(self, rid: str, *, stage: str | None = None) -> str:
         """This request's public lookup usage as a fact for plan, re-plan, precedent and step prompts (#1088).
 
         "" when no cap is configured; UNKNOWN (never zero) when a configured counter cannot be read. A new request
         starts at zero: usage is not carried over from another request."""
-        note = usage_note_for(self.hub.s, rid)
+        note = usage_note_for(self.hub.s, rid, stage=stage)
         return f"{chr(10)}{chr(10)}{note}" if note else ""
 
     def _spending_cap_line(self, rid: str) -> str:
@@ -7455,7 +7455,7 @@ class Orchestrator:
                     if precedent_agent in known:
                         precedent_task = Task(
                             agent_id=precedent_agent, request_id=rid, output_schema=PRECEDENT_SCHEMA,
-                            prompt=PRECEDENT_PROMPT.format(request=text) + self._lookup_usage_line(rid),
+                            prompt=PRECEDENT_PROMPT.format(request=text) + self._lookup_usage_line(rid, stage="precedent"),
                             meta={**refs, "kind": "precedent", "request": text,
                                   "title": "선행 연구 분석 기준 조사", "max_attempts": 1})
                         precedent_job = self._step_task(rid, self.run_step(precedent_task))

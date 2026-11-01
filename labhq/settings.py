@@ -715,6 +715,7 @@ class AnnotSettings(BaseModel):
     # each admitted by the runner before it is sent (#858). None keeps lookups uncounted; 0 refuses every lookup.
     # See runner/lookup_admission.py for what one attempt is.
     request_lookup_limit: int | None = Field(default=None, ge=0, le=10000)
+    precedent_lookup_share: float | None = Field(default=0.5, ge=0, le=1)
 
 
 class ResultStorageSettings(BaseModel):

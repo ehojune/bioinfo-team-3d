@@ -398,7 +398,8 @@ class Runner:
                              on_approval_timeout=self._on_approval_timeout, on_local_job=self._on_local_job,
                              on_restricted=self._on_restricted,
                              lookup_admission=None if limit is None else LookupAdmission(
-                                 settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit))
+                                 settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit,
+                                 precedent_share=settings.annot.precedent_lookup_share))
         self.scheduler = Scheduler(settings.hpc)
         self.annot_broker = AnnotBroker(self.broker, settings)
         self._local_procs: dict = {}  # job id -> the child this runner started (reaped when polled), #675
@@ -2581,7 +2582,7 @@ class Runner:
                     f"{agent.id}: 개인 경로 차단 중에는 셸 명령을 미리 허용하지 않고 승인 게이트로 보냅니다. "
                     "builtin_mcp에 approval이 없어 셸 명령이 모두 거부됩니다")})
             broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id, workdir=str(ws.dir),
-                                                        restricted=restricted_task(task, self.s))
+                                                        restricted=restricted_task(task, self.s), stage=task.meta.get("kind"))
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),

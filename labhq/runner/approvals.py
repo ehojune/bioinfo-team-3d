@@ -67,11 +67,11 @@ class Broker:
         return f"http://127.0.0.1:{self.port}"
 
     def issue_task_token(self, task_id: str, agent_id: str, request_id: str | None, *,
-                         workdir: str | None = None, restricted: bool = False) -> str:
+                         workdir: str | None = None, restricted: bool = False, stage: str | None = None) -> str:
         token = secrets.token_urlsafe(24)
         # Always present, so a caller's body can never clear it: identity values override the body (#424).
         self.identities[token] = {"task_id": task_id, "agent_id": agent_id, "request_id": request_id,
-                                  "source_workdir": workdir, "source_restricted": restricted}
+                                  "source_workdir": workdir, "source_restricted": restricted, "stage": stage}
         return token
 
     def revoke_task_token(self, token: str) -> None:
@@ -136,7 +136,7 @@ class Broker:
                 raise HTTPException(409, "public lookup limit is not configured on this runner")
             return await asyncio.to_thread(self.lookup_admission.admit, identity["request_id"],
                                            identity["task_id"], identity["agent_id"], body.get("tool"),
-                                           body.get("host"))
+                                           body.get("host"), stage=identity["stage"])
 
         @app.post("/lookup/finish")
         async def lookup_finish(body: dict, x_labhq_token: str = Header(default="")) -> dict:
