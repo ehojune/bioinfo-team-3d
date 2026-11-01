@@ -92,6 +92,8 @@ To see only the UI without a gateway, run `python -m http.server --directory lab
 
 **Experimental wiring (#666):** The process boundary is off by default and can only be requested through the embedding Python API. Requests still refuse execution as unsupported; offline observer results remain synthetic evidence. Actual protection and authenticated cleanup are unverified. [Wiring scope](reference/sandbox-666-phase2.md).
 
+The VM-free transport draft is also off by default and disconnected from the ordinary CLI. It tests request authentication, replay rejection and env/FD allowlists with fake peers; it provides no OS authentication or protected execution. [Draft scope and limits](reference/sandbox-666-transport.md).
+
 Prerequisites: Python ≥ 3.10, Git, and the staff CLIs you configure installed and logged in. CLIs installed through npm also need Node.js.
 
 ```bash
