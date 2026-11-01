@@ -14,10 +14,15 @@ other processes on the same file. A second runner with its own state folder keep
 from __future__ import annotations
 
 import re
-import math
+from decimal import Decimal, ROUND_FLOOR
 import sqlite3
 import time
 from pathlib import Path
+
+PREPLAN_STAGES = ("briefing", "precedent")
+
+def share_cap(limit, share):
+    return int((Decimal(limit) * Decimal(str(share))).to_integral_value(rounding=ROUND_FLOOR))
 
 FILE = "lookup_admission.sqlite3"
 ENV = "LABHQ_LOOKUP_ADMISSION"  # set to "1" by the runner for every task while the limit is on
@@ -69,10 +74,10 @@ def usage_note(admission: "LookupAdmission | None", request_id: object, *, now=N
     stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(now if now is not None else time.time()))
     who = ", ".join(f"{agent} {count}" for agent, count in usage["by_agent"].items()) or "none yet"
     stage_note = ""
-    if stage == "precedent" and admission.precedent_share is not None:
-        cap = math.floor(admission.limit * admission.precedent_share)
+    if stage in PREPLAN_STAGES and admission.precedent_share is not None:
+        cap = share_cap(admission.limit, admission.precedent_share)
         remaining = min(usage["remaining"], max(0, cap - usage["precedent_used"]))
-        stage_note = f" Precedent share: {usage['precedent_used']} of {cap} used, {remaining} left."
+        stage_note = f" Pre-plan share: {usage['precedent_used']} of {cap} used, {remaining} left."
     return (f"Public lookup usage of this request (labhq_annot and source-check HTTP requests; every retry and "
             f"redirect counts): {usage['used']} of {usage['limit']} used, {usage['remaining']} left at {stamp} "
             f"(by agent: {who}). This is the count of this PC's runner; a number written in the request text is a "
@@ -116,10 +121,10 @@ class LookupAdmission:
                 if used >= self.limit:
                     db.execute("ROLLBACK")
                     return {"admitted": False, "used": used, "limit": self.limit, "reason": "exhausted"}
-                if stage == "precedent" and self.precedent_share is not None:
-                    stage_used = db.execute("SELECT COUNT(*) FROM sends WHERE request_id = ? AND stage = ?",
-                                            (request_id, "precedent")).fetchone()[0]
-                    if stage_used >= math.floor(self.limit * self.precedent_share):
+                if stage in PREPLAN_STAGES and self.precedent_share is not None:
+                    stage_used = db.execute("SELECT COUNT(*) FROM sends WHERE request_id = ? AND stage IN (?, ?)",
+                                            (request_id, *PREPLAN_STAGES)).fetchone()[0]
+                    if stage_used >= share_cap(self.limit, self.precedent_share):
                         db.execute("ROLLBACK")
                         return {"admitted": False, "used": used, "limit": self.limit, "reason": "stage share exhausted"}
                 db.execute("INSERT INTO sends (request_id, seq, task_id, agent_id, tool, host, admitted_at, stage) "
@@ -168,8 +173,8 @@ class LookupAdmission:
             return None
         db = self._connect()
         try:
-            precedent_used = db.execute("SELECT COUNT(*) FROM sends WHERE request_id = ? AND stage = ?",
-                                        (request_id, "precedent")).fetchone()[0]
+            precedent_used = db.execute("SELECT COUNT(*) FROM sends WHERE request_id = ? AND stage IN (?, ?)",
+                                        (request_id, *PREPLAN_STAGES)).fetchone()[0]
             rows = db.execute("SELECT agent_id, tool, COUNT(*) FROM sends WHERE request_id = ? "
                               "GROUP BY agent_id, tool", (request_id,)).fetchall()
         finally:

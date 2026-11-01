@@ -7419,7 +7419,7 @@ class Orchestrator:
                 cos = self.cfg.chief_of_staff_agent
                 brief_job = (self._step_task(rid, self.run_step(Task(
                     agent_id=cos, request_id=rid,
-                    prompt=BRIEFING_PROMPT.format(request=text, capabilities=capabilities or "No workers available"),
+                    prompt=BRIEFING_PROMPT.format(request=text, capabilities=capabilities or "No workers available") + self._lookup_usage_line(rid, stage="briefing"),
                     meta={**refs, "kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"})))
                              if cos and cos in known and not continuation else None)
                 # A continuation's plan prompt carries the revised plan and the reviewer's P1 issues (#90), or the
