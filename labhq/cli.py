@@ -794,9 +794,13 @@ def _exit_text(row: dict) -> str:
     extra = [f"PID {row.get('child_pid')}"]
     if row.get("uptime_s") is not None:
         extra.append(f"가동 {row['uptime_s']}초")
-    if row.get("stop_requested"):
+    requested = row.get("stop_requested") is True
+    if requested:
         extra.append("종료 요청(down·웹 종료)")
-    return f"{row.get('time')} {code} ({', '.join(extra)})"
+    label = "종료 요청 중 종료 — " if requested else ""
+    if requested and row.get("code") != 0:
+        extra.append("종료 코드의 원인 확인 불가")
+    return f"{row.get('time')} {label}{code} ({', '.join(extra)})"
 
 
 def _supervisor_detail(s: Settings, role: str, logs: Path, child_state: str) -> tuple[str, bool]:

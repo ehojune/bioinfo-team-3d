@@ -424,6 +424,20 @@ def test_the_exit_line_names_a_windows_status_a_signal_or_a_requested_stop(tmp_p
     assert shown in _row(settings)["detail"]
 
 
+def test_requested_exit_is_labeled_before_code_without_claiming_its_cause():
+    row = {"time": "now", "code": 1, "child_pid": CHILD, "stop_requested": True}
+    assert "종료 요청 중 종료" in cli._exit_text(row)
+    assert "code=1" in cli._exit_text(row)
+    assert "원인 확인 불가" in cli._exit_text(row)
+
+
+@pytest.mark.parametrize("stop_requested", [False, None, "true"])
+def test_unrequested_or_incomplete_exit_is_not_labeled_requested(stop_requested):
+    row = {"time": "now", "code": 1, "child_pid": CHILD, "stop_requested": stop_requested}
+    assert "종료 요청 중 종료" not in cli._exit_text(row)
+    assert "code=1" in cli._exit_text(row)
+
+
 def test_a_role_started_before_supervisors_existed_says_so_and_is_not_a_warning(tmp_path):
     settings = _settings(tmp_path)
     _record(settings, ROLE, CHILD)
