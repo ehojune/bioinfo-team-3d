@@ -31,6 +31,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 19:00 | [`9f5ea94`](https://github.com/ehojune/bioinfo-team-3d/pull/1236/commits/9f5ea94) | **리눅스·맥에서 AlphaGenome 키를 화면에 남기지 않고 넣는 안내가 셸 종류별로 정확해졌습니다.**<br>문서: POSIX 키 입력은 Bash·zsh 기준이고 dash용 대안을 적는다 (#1236 리뷰 P2) |
 | 18:30 | [`8a878b4`](https://github.com/ehojune/bioinfo-team-3d/pull/1236/commits/8a878b4) | **AlphaGenome 조회용 도구를 설치할 때 runner가 쓰는 가상환경에 설치하도록 안내합니다.**<br>문서: Atlas SDK는 runner의 가상환경 python으로 설치한다 (#1236 리뷰 P2) |
 | 18:00 | [`0f2b216`](https://github.com/ehojune/bioinfo-team-3d/pull/1236/commits/0f2b216) | **설명서의 AlphaGenome 조회 절이 이미 병합됐다는 현재 상태를 말하고, 키를 화면과 명령 기록에 남기지 않고 넣는 방법을 안내합니다.**<br>문서: Atlas 절을 병합 상태에 맞추고 키를 환경 변수로 넣는 법을 적는다 (#1225) |
+| 17:33 | [`333e766`](https://github.com/ehojune/bioinfo-team-3d/commit/333e766) | **여러 전송의 출력 위치도 확인합니다.**<br>curl의 각 전송 구간에서 출력 드라이브의 여유를 확인합니다. |
+| 17:28 | [`4400512`](https://github.com/ehojune/bioinfo-team-3d/commit/4400512) | **curl 전송 구간의 출력 위치를 구분합니다.**<br>curl의 다음 전송 구간이 첫 출력 폴더를 덮지 않게 고칩니다. |
+| 17:25 | [`228d802`](https://github.com/ehojune/bioinfo-team-3d/commit/228d802) | **curl 옵션 설명을 읽기 쉽게 고칩니다.**<br>curl 명령 예시의 서식을 바로잡고 상태 기록 파일명을 수정합니다. |
+| 17:16 | [`3df624d`](https://github.com/ehojune/bioinfo-team-3d/commit/3df624d) | **curl 데이터 값에 들어간 글자를 출력 옵션으로 잘못 읽지 않습니다.**<br>curl 값 옵션과 출력 옵션을 구분해 디스크 확인 경로를 고칩니다 (#1167). |
 | 17:00 | [`aaf17a8`](https://github.com/ehojune/bioinfo-team-3d/pull/1233/commits/aaf17a8) | **설명서에 AlphaGenome 키를 설정한 PC에서도 조회 도구를 쓰는 직원이 정상으로 실행되고, 키를 덮어쓰는 설정만 막힌다는 점을 적었습니다.**<br>문서: Atlas 시작 점검의 최종 정의와 키 파일이 있는 PC의 동작을 적는다 (#1225) |
 | 16:43 | [`59ea990`](https://github.com/ehojune/bioinfo-team-3d/commit/59ea990) | **Windows에서도 소액 예산 동작을 확인합니다.**<br>병렬 예산 회귀 시험을 Windows CI inventory에 등록한다 (#1255). |
 | 16:36 | [`a0413c4`](https://github.com/ehojune/bioinfo-team-3d/commit/a0413c4) | **브리핑 완료와 예산 카드 시점을 명확히 합니다.**<br>소액 예산에서 선행 조사 대기 조건을 한영 manual에 설명한다 (#1255). |

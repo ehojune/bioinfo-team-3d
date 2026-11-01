@@ -4,6 +4,12 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1167 curl option values
+
+- curl option values no longer hide a later output path; the table is based on curl 8.21.0 help. The policy allowlist serves a separate safety check.
+- Regression before fix: 3 failed, 2 passed. After fix: 59 passed in `tests/test_disk_shell_check_678.py`. No actual downloads.
+- #1167 remains open for its other items.
+
 # #691 precedent lookup share
 
 - A configured request cap reserves capacity for later stages: briefing and precedent share a cap that defaults to floor(cap × 0.5); `null` disables its share limit.
