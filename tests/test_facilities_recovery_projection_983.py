@@ -73,6 +73,25 @@ async def test_approval_timeout_publishes_after_decision(tmp_path):
         hub.store.close()
 
 
+@pytest.mark.parametrize(('decision', 'expected'), [
+    ({'approved': False, 'state': 'expired'}, 'unknown'),
+    ({'approved': False, 'state': 'timed_out'}, 'timed_out'),
+    ({'approved': False, 'state': 'resolved'}, 'declined'),
+    ({'approved': True, 'state': 'resolved'}, 'approved'),
+    ({'state': 'resolved'}, 'unknown'),
+])
+async def test_approval_projection_requires_decision_evidence(tmp_path, decision, expected):
+    hub = make_hub(tmp_path)
+    hub.requests['r']['plan'] = {'steps': [{'id': 's1'}]}
+    hub.requests['r']['facilities_fixes'] = {'s1': {'status': 'cancelled', 'approval_id': 'a'}}
+    hub.save_request('r')
+    hub.store.put('approval_decision', 'a', decision)
+    try:
+        assert hub.facilities_projection('r')['s1']['approval_status'] == expected
+    finally:
+        hub.store.close()
+
+
 async def test_separate_durable_evidence_and_missing_ledger(tmp_path):
     hub = make_hub(tmp_path)
     hub.requests['r']['plan'] = {'steps': [{'id': 's1'}]}

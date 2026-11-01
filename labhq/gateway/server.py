@@ -3879,7 +3879,9 @@ class Hub:
             decision = self.store.get("approval_decision", approval_id) if approval_id else None
             if decision:
                 approval_status = ("timed_out" if decision.get("state") == "timed_out" else
-                                   "approved" if decision.get("approved") else "declined")
+                                   "unknown" if decision.get("state") == "expired" else
+                                   "approved" if decision.get("approved") is True else
+                                   "declined" if decision.get("approved") is False else "unknown")
             elif approval_id and approval_id in self.approvals:
                 approval_status = "waiting"
             else:
