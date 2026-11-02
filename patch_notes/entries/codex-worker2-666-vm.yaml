@@ -1,0 +1,5 @@
+rows:
+  - sha: 5905ceb
+    at: "2026-11-02 17:53"
+    summary: "격리 시험용 Hyper-V VM을 전원 OFF 상태로 준비합니다."
+    text: "Prepare an offline Hyper-V fixture with manual elevation/reboot gates and 31 mocked provisioning checks; runtime protection remains UNVERIFIED (#666)."
