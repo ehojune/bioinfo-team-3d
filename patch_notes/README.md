@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:06 | [`58ad9a2`](https://github.com/ehojune/bioinfo-team-3d/commit/58ad9a2) | **기존 deadline 검증을 유지합니다.**<br>요청 접수 시점부터 적용되는 deadline 시험을 복구했습니다 (#1076). |
+| 16:52 | [`e96e24f`](https://github.com/ehojune/bioinfo-team-3d/commit/e96e24f) | **승인 대기 실패 시 누락된 항목과 task 상태를 기록합니다.**<br>Windows 요청 lifecycle 시험의 실패 진단을 보강했습니다 (#1076). |
 | 03:00 | [`34700c5`](https://github.com/ehojune/bioinfo-team-3d/pull/1252/commits/34700c5) | **설명서에 AlphaGenome 사용 가능 여부를 각 작업 프로그램이 알리고 직원 명단은 그 직원을 맡은 프로그램을 따른다는 점, 키를 넣은 뒤 다시 시작해야 한다는 점을 적었습니다.**<br>문서: AlphaGenome 준비 상태를 runner가 보고하고 명단은 직원을 맡은 runner를 따른다 (#1252 리뷰 P1) |
 | 02:00 | [`38efd2f`](https://github.com/ehojune/bioinfo-team-3d/pull/1252/commits/38efd2f) | **작업 프로그램이 여럿일 때, 직원 명단의 AlphaGenome 조회 도구 표시가 그 직원을 맡은 작업 프로그램의 상태를 따릅니다.**<br>AlphaGenome 명단 표시는 직원을 맡은 runner의 보고로 정한다 (#1252 리뷰 P1) |
 | 01:10 | [`6868205`](https://github.com/ehojune/bioinfo-team-3d/pull/1252/commits/6868205) | **작업 프로그램이 보고하는 능력 목록의 시험이 이 PC에 AlphaGenome 키가 있는지에 따라 달라지지 않습니다.**<br>시험: runner 보고 capabilities 비교가 이 PC의 AlphaGenome 키와 무관하게 한다 (#1200) |
