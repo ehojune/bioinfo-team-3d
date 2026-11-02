@@ -1,6 +1,6 @@
 pr: 1267
 rows:
-  - sha: 25012094
+  - sha: 61d08815
     at: "2026-11-02 18:10"
     summary: "VM mock 시험을 Windows CI에 등록하고 VM 설정 삭제에 별도 확인을 요구합니다."
     text: "Register the PowerShell mock suite in Windows boundary CI and expose destructive VM configuration removal with explicit confirmation (#666)."
