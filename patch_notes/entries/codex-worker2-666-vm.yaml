@@ -1,5 +1,9 @@
 pr: 1267
 rows:
+  - sha: pending
+    at: "2026-11-02 18:30"
+    summary: "한영 매뉴얼에 검토 중인 VM 준비 절차와 삭제 전 백업 조건을 안내합니다."
+    text: "Link the draft Hyper-V workflow from both manuals and state manual admin execution, destructive RemoveVM consent and UNVERIFIED protection limits (#666)."
   - sha: 61d0881
     at: "2026-11-02 18:10"
     summary: "VM mock 시험을 Windows CI에 등록하고 VM 설정 삭제에 별도 확인을 요구합니다."

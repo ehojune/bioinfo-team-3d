@@ -94,6 +94,10 @@ To see only the UI without a gateway, run `python -m http.server --directory lab
 
 The VM-free transport draft is also off by default and disconnected from the ordinary CLI. It tests request authentication, replay rejection and env/FD allowlists with fake peers; it provides no OS authentication or protected execution. [Draft scope and limits](reference/sandbox-666-transport.md).
 
+**VM preparation draft (#666, PR #1267 under review; draft/hold):** Following the [Hyper-V installation and cleanup guide](reference/sandbox-666-vm-install.md) (Korean), the user manually runs `Inspect` → `EnableFeature` → any required manual reboot → `Provision` in an elevated Windows PowerShell 5.1 session. There is no automatic elevation, reboot or VM start; the prepared VM remains powered OFF with zero NICs.
+
+`RemoveVM` deletes VM configuration and checkpoints, requiring a prior export/backup, the exact VmId and `-ConfirmConfigurationRemoval` (VHD, ISO and state remain). Actual installation, guest setup, privilege separation, OS protection and termination/cleanup are **UNVERIFIED**; isolation from the same administrator account is **UNSUPPORTED**. The feature stays off by default, disconnected from the ordinary CLI, and #666 remains OPEN.
+
 Prerequisites: Python ≥ 3.10, Git, and the staff CLIs you configure installed and logged in. CLIs installed through npm also need Node.js.
 
 ```bash
