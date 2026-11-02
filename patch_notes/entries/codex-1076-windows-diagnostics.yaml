@@ -2,5 +2,5 @@
 rows:
 - sha: e96e24f
   at: 2026-11-02 16:52
-  text: Windows 요청 deadline 시험의 순서와 실패 진단을 보강했습니다 (#1076).
-  summary: 자손 생성 뒤 deadline을 시작하고 실패 시 대기 상태를 기록합니다.
+  text: Windows 요청 lifecycle 시험의 실패 진단을 보강했습니다 (#1076).
+  summary: 승인 대기 실패 시 누락된 항목과 task 상태를 기록합니다.
