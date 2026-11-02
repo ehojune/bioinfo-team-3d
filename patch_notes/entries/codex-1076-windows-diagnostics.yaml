@@ -1,0 +1,10 @@
+﻿pr: null
+rows:
+- sha: 58ad9a2
+  at: 2026-11-02 17:06
+  text: 요청 접수 시점부터 적용되는 deadline 시험을 복구했습니다 (#1076).
+  summary: 기존 deadline 검증을 유지합니다.
+- sha: e96e24f
+  at: 2026-11-02 16:52
+  text: Windows 요청 lifecycle 시험의 실패 진단을 보강했습니다 (#1076).
+  summary: 승인 대기 실패 시 누락된 항목과 task 상태를 기록합니다.
