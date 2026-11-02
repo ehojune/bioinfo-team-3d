@@ -202,7 +202,21 @@ catch { $_.Exception.Message }
 """) == "Supply the exact fixture.json VmId; no other VM is touched."
 
 
-@pytest.mark.parametrize("phase", ["preparing", "quarantined", "unregistered"])
+def test_configuration_removal_requires_separate_destructive_confirmation():
+    assert ps(r"""
+function Assert-VM666Administrator {}
+function Import-Module {}
+function Read-VM666State { [pscustomobject]@{Phase = 'prepared'} }
+function Get-VM666OwnedVM { [pscustomobject]@{Id = 'owned-id'; State = 'Off'} }
+function Assert-VM666Offline {}
+function Remove-VM { throw 'VM configuration deleted without confirmation' }
+function Write-VM666State { throw 'state changed without confirmation' }
+try { Stop-VM666Fixture 'owned-id' $true; throw 'accepted' }
+catch { $_.Exception.Message }
+""") == "RemoveVM deletes VM configuration and checkpoints; supply -ConfirmConfigurationRemoval after backup."
+
+
+@pytest.mark.parametrize("phase", ["preparing", "quarantined", "removed"])
 def test_incomplete_manifest_never_looks_up_vm(phase):
     assert ps(r"""
 function Get-VM { throw 'looked up incomplete VM' }
@@ -211,8 +225,8 @@ catch { $_.Exception.Message }
 """.replace("PHASE", phase)) == "Incomplete/quarantined fixture; manual reconciliation required."
 
 
-@pytest.mark.parametrize("unregister", [False, True])
-def test_confirmed_cleanup_targets_only_owned_vm_and_retains_disks(unregister):
+@pytest.mark.parametrize("remove", [False, True])
+def test_confirmed_cleanup_targets_only_owned_vm_and_retains_disks(remove):
     events = json.loads(ps(r"""
 $script:events = [Collections.Generic.List[string]]::new()
 function Assert-VM666Administrator {}
@@ -222,12 +236,13 @@ function Get-VM666OwnedVM { [pscustomobject]@{Id = 'owned-id'; State = 'Running'
 function Assert-VM666Offline { $script:events.Add('offline') }
 function Write-VM666State($State) { $script:events.Add('state:' + $State.Phase) }
 function Remove-Item { throw 'disk deletion forbidden' }
-function Remove-VM { param($VM, [switch]$Force); if ($VM.Id -ne 'owned-id') { throw 'wrong VM' }; $script:events.Add('unregister') }
+function Remove-VM { param($VM, [switch]$Force); if ($VM.Id -ne 'owned-id') { throw 'wrong VM' }; $script:events.Add('remove-configuration') }
 function Stop-VM { param($VM, [switch]$TurnOff, [switch]$Force); if ($VM.Id -ne 'owned-id' -or -not $TurnOff) { throw 'wrong stop' }; $script:events.Add('stop') }
-$null = Stop-VM666Fixture 'owned-id' UNREGISTER
+$message = Stop-VM666Fixture 'owned-id' REMOVE -ConfirmConfigurationRemoval
+if (REMOVE -and $message -notlike 'VM configuration deleted; checkpoints deleted/merged*') { throw 'misleading removal result' }
 ConvertTo-Json -InputObject @($script:events)
-""".replace("UNREGISTER", f"${str(unregister).lower()}")))
-    assert events == (["offline", "unregister", "state:unregistered"] if unregister else ["stop"])
+""".replace("REMOVE", f"${str(remove).lower()}")))
+    assert events == (["offline", "remove-configuration", "state:removed"] if remove else ["stop"])
 
 
 ACL_MOCK = r"""

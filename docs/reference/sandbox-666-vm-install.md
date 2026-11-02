@@ -35,11 +35,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\vm\Install-VM666
 - **관리자 로그인 계정과 같은 계정의 공격에 대한 보호는 UNSUPPORTED**다. 향후 엔진은 별도 standard Windows principal/guest 비특권 UID로 실행하고 VM 관리 그룹·VHD·console·root·snapshot 접근 거절을 실제 확인해야 한다. 서비스/broker provisioning은 아직 없다.
 - D: 부모 ACL에 비신뢰 주체의 `DELETE_CHILD`·`WRITE_DAC`·`WRITE_OWNER`가 있으면 중단한다. 부모 ACL은 자동 수정하지 않는다. 대안은 별도 관리 volume/host다. reparse 경로·외부 경로·hash 불일치·부분 설치도 거절한다. 정적 ACL 검사는 effective-access 증명이 아니다.
 - 실패하면 `fixture.json`의 `quarantined` 상태와 디스크를 보존한다. 자동 복구/재다운로드/타 VM 변경은 없다. 준비 중 manifest 생성 전 실패도 기존 root로 남겨 재사용을 거절한다.
-- 정리: 관리자가 `D:\LabHQ-VM666\fixture.json`의 `VmId`를 확인하고 아래 명령의 `<VmId>`를 교체한다. Stop은 강제 전원 종료이므로 guest 저장을 먼저 끝낸다. Unregister는 전원 OFF·NIC0·integration off 확인 후 등록만 지운다. ISO/VHD/state와 Hyper-V 기능은 보존하며 파일 삭제는 크기·경로 검토 후 별도 진행한다.
+- 정리: 관리자가 `D:\LabHQ-VM666\fixture.json`의 `VmId`를 확인하고 `<VmId>`를 교체한다. Stop은 강제 전원 종료이므로 guest 저장을 먼저 끝낸다.
+- **RemoveVM은 되돌릴 수 없는 VM 삭제다.** 전원 OFF·NIC0·integration off 확인 후 VM 설정을 삭제하고 checkpoint를 삭제·VHD에 병합한다. 원래 firmware·격리 설정 복구에는 사전 export/백업이 필요하다. 백업 확인 후 `-ConfirmConfigurationRemoval`을 직접 지정한다. ISO/VHD/state와 Hyper-V 기능은 남으며 디스크 파일 삭제는 별도다. ([Remove-VM 공식 동작](https://learn.microsoft.com/en-us/powershell/module/hyper-v/remove-vm))
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\vm\Install-VM666.ps1 -Action Stop -ConfirmVmId '<VmId>'
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\vm\Install-VM666.ps1 -Action Unregister -ConfirmVmId '<VmId>'
+# VM 설정·checkpoint 삭제를 승인할 때만 실행한다. 먼저 필요한 VM export/백업을 보관한다.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\vm\Install-VM666.ps1 -Action RemoveVM -ConfirmVmId '<VmId>' -ConfirmConfigurationRemoval
 ```
 
 ## 검증·출처

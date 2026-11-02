@@ -4,8 +4,9 @@ Disposable fixture preparation only. No engine launch or protection verdict.
 Dot-source to load functions without performing an action (used by mock tests).
 #>
 [CmdletBinding()]
-param([ValidateSet('Inspect', 'EnableFeature', 'Provision', 'Stop', 'Unregister')]
-      [string]$Action = 'Inspect', [string]$ConfirmVmId = '')
+param([ValidateSet('Inspect', 'EnableFeature', 'Provision', 'Stop', 'RemoveVM')]
+      [string]$Action = 'Inspect', [string]$ConfirmVmId = '',
+      [switch]$ConfirmConfigurationRemoval)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -245,18 +246,22 @@ function Assert-VM666Offline($Vm) {
     }
 }
 
-function Stop-VM666Fixture([string]$ExpectedId, [bool]$Unregister) {
+function Stop-VM666Fixture([string]$ExpectedId, [bool]$RemoveConfiguration,
+                          [switch]$ConfirmConfigurationRemoval) {
     Assert-VM666Administrator
     Import-Module Hyper-V -ErrorAction Stop
     $state = Read-VM666State
     $vm = Get-VM666OwnedVM $state
     if ($ExpectedId -ne [string]$vm.Id) { throw 'Supply the exact fixture.json VmId; no other VM is touched.' }
-    if ($Unregister) {
+    if ($RemoveConfiguration) {
+        if (-not $ConfirmConfigurationRemoval) {
+            throw 'RemoveVM deletes VM configuration and checkpoints; supply -ConfirmConfigurationRemoval after backup.'
+        }
         Assert-VM666Offline $vm
         Remove-VM -VM $vm -Force
-        $state.Phase = 'unregistered'
+        $state.Phase = 'removed'
         Write-VM666State $state
-        'VM unregistered; ISO/VHD/state retained. No recursive deletion or Hyper-V feature removal.'
+        'VM configuration deleted; checkpoints deleted/merged by Hyper-V. ISO/VHD/state retained; original VM settings cannot be recovered without a backup. Hyper-V feature retained.'
     } elseif ([string]$vm.State -ne 'Off') {
         Stop-VM -VM $vm -TurnOff -Force
         'Disposable VM powered off; guest data may be lost. Cleanup/protection still UNVERIFIED.'
@@ -269,6 +274,6 @@ if ($MyInvocation.InvocationName -ne '.') {
         'EnableFeature' { Enable-VM666Feature }
         'Provision' { New-VM666Fixture }
         'Stop' { Stop-VM666Fixture $ConfirmVmId $false }
-        'Unregister' { Stop-VM666Fixture $ConfirmVmId $true }
+        'RemoveVM' { Stop-VM666Fixture $ConfirmVmId $true -ConfirmConfigurationRemoval:$ConfirmConfigurationRemoval }
     }
 }
