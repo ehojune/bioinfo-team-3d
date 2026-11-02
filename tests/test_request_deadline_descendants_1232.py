@@ -3,7 +3,7 @@
 A real gateway and runner run as processes. The CLI is a fake (tests/fixtures/fake_deadline_cli.py, no model call) that
 starts a child and a grandchild. The gateway's own deadline loop (`enforce_request_deadlines`) cancels the request, the
 runner ends the process tree, and `deadline_receipt` says the stop is confirmed. A process outside the request is not
-touched. Only the 60 s floor of `request_wall_clock_s` and the 15 s look interval are shortened, in the gateway process.
+touched. The gateway test harness arms a shortened deadline only after the complete process tree is observed.
 """
 import json
 import os
@@ -26,11 +26,26 @@ FAKE_CLI = ROOT / "tests" / "fixtures" / "fake_deadline_cli.py"
 LIMIT_S = 6
 SLEEPER = "import time; time.sleep(3600)"
 
-GATEWAY_PATCH = (
-    "from labhq.gateway import server as g\n"
-    "g.REQUEST_DEADLINE_TICK_S = 1.0\n"
-    f"g.Hub._new_wall_clock = lambda self, created_at: {{'enabled': True, 'limit_s': {LIMIT_S}, 'held_s': 0.0,"
-    f" 'deadline_at': created_at + {LIMIT_S}}}\n")
+GATEWAY_PATCH = """
+from labhq.gateway import server as g
+from pathlib import Path
+import time
+g.REQUEST_DEADLINE_TICK_S = 1.0
+g.Hub._new_wall_clock = lambda self, created_at: {'enabled': True, 'limit_s': 6, 'held_s': 0.0, 'deadline_at': created_at + 3600}
+_original_enforce = g.Hub.enforce_request_deadlines
+async def _arm_after_tree(self, now=None):
+    marker = Path(ARM_FILE)
+    if not marker.exists():
+        return []
+    for req in self.requests.values():
+        clock = req.get('wall_clock') or {}
+        if clock.get('enabled') and not clock.get('_test_armed'):
+            clock['held_s'] = time.time() - req['created_at']
+            clock['deadline_at'] = req['created_at'] + clock['held_s'] + 6
+            clock['_test_armed'] = True
+    return await _original_enforce(self, now)
+g.Hub.enforce_request_deadlines = _arm_after_tree
+"""
 
 
 def alive(pid: int) -> bool:
@@ -79,7 +94,7 @@ class Instance:
         self.procs: list[subprocess.Popen] = []
 
     def role(self, name: str) -> subprocess.Popen:
-        code = (f"import sys\nsys.path.insert(0, {str(ROOT)!r})\n" + (GATEWAY_PATCH if name == "gateway" else "") +
+        code = (f"import sys\nsys.path.insert(0, {str(ROOT)!r})\n" + (f"ARM_FILE = {str(self.root / 'arm-deadline')!r}\n" + GATEWAY_PATCH if name == "gateway" else "") +
                 f"from labhq import cli\nsys.argv = ['labhq', '-c', {str(self.config)!r}, {name!r}]\ncli.main()\n")
         log = open(self.root / f"{name}.log", "wb")
         proc = subprocess.Popen([sys.executable, "-X", "utf8", "-c", code], stdout=log, stderr=subprocess.STDOUT,
@@ -136,12 +151,12 @@ def test_the_deadline_ends_the_cli_and_every_process_it_started_and_only_those()
         try:
             instance.role("gateway")
             instance.wait_gateway()
-            instance.role("runner")
             body = {"text": "Say hello", "mode": "direct", "agent_id": "analyst", "route": "auto",
                     "work_kind": "simple", "default_references": False, "budget_usd": 1.0}
             reply = instance.call("/api/requests", body)
             rid = reply.get("id") or reply.get("request_id")
-            started = time.monotonic()
+            time.sleep(8)  # Regression: startup exceeds the old six-second request deadline.
+            instance.role("runner")
 
             def tree_up():
                 seen = {kind: instance.pids(f"{kind}-*.pid") for kind in ("cli", "child", "grandchild")}
@@ -152,6 +167,9 @@ def test_the_deadline_ends_the_cli_and_every_process_it_started_and_only_those()
             everyone = {pid for group in seen.values() for pid in group} | set(instance.pids("great-*.pid"))
             assert len(everyone) >= 3 and all(alive(pid) for pid in everyone)
             assert instance.call(f"/api/requests/{rid}")["status"] != "cancelled"
+
+            started = time.monotonic()
+            (instance.root / "arm-deadline").touch()
 
             def receipt():
                 view = instance.call(f"/api/requests/{rid}")
@@ -166,6 +184,15 @@ def test_the_deadline_ends_the_cli_and_every_process_it_started_and_only_those()
             wait_for(lambda: not any(alive(pid) for pid in everyone), 30,
                      "every descendant to end: " + str({pid: alive(pid) for pid in everyone}))
             assert control.poll() is None and alive(control.pid)
+        except Exception as exc:
+            try:
+                request_state = instance.call(f"/api/requests/{rid}") if "rid" in locals() else "request not created"
+            except Exception as error:
+                request_state = repr(error)
+            logs = {name: (instance.root / f"{name}.log").read_text(encoding="utf-8", errors="replace")[-10000:]
+                    if (instance.root / f"{name}.log").exists() else "not started" for name in ("gateway", "runner")}
+            files = {p.name: p.read_text(errors="replace") for p in instance.fake.glob("*.pid")} if instance.fake.exists() else {}
+            raise AssertionError(f"deadline test failed: {exc!r}; pid files={files}; request={request_state}; logs={logs}") from exc
         finally:
             control.kill()
             instance.stop()
