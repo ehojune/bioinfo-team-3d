@@ -376,6 +376,7 @@
     "tests/test_topic_checklists_precedents.py",
     "tests/test_topics.py",
     "tests/test_variant_effect_topic.py",
+    "tests/test_vm_provision_666.py",
     "tests/test_vocab_tables.py",
     "tests/test_web.py",
     "tests/test_web_3d.py",
@@ -399,6 +400,7 @@
     "tests/test_wsl_shared.py"
   ],
   "boundary_cohorts": {
+    "tests/test_vm_provision_666.py": "Windows PowerShell 5.1 VM fixture provisioning, ACL, destructive removal confirmation and offline lifecycle contracts; OS/network/Hyper-V effects are mocked.",
     "tests/test_pr990_stale_dispatch_repro.py": "Stale revision dispatch returns its own SQLite steer and drop-notice reservations; isolated in-process mocks.",
     "tests/test_step_state_async_606.py": "Step-control SQLite commit/rollback, heartbeat, latest-row races, cancellation and steer replay; isolated in-process mocks.",
     "tests/test_facilities_fallback_983.py": "Missing facilities fallback notices and bounded same-step reasks (#983).",

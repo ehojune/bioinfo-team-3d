@@ -93,6 +93,10 @@ POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".
 
 VM 없는 transport 초안도 기본 off이며 일반 CLI와 연결되지 않습니다. 가짜 peer로 요청 인증·재전송 거절·env/FD 허용 목록을 시험하는 단계로, 실제 OS 인증이나 보호 실행을 제공하지 않습니다. [초안의 범위와 한계](reference/sandbox-666-transport.md).
 
+**VM 준비 초안(#666, PR #1267 검토 중·draft/hold):** [Hyper-V 설치·정리 안내](reference/sandbox-666-vm-install.md)에 따라 사용자가 관리자 권한 Windows PowerShell 5.1에서 `Inspect` → `EnableFeature` → 필요한 수동 재부팅 → `Provision`을 직접 실행합니다. 자동 UAC·재부팅·VM 시작은 없으며, 준비된 VM은 전원 OFF·NIC 0 상태입니다.
+
+`RemoveVM`은 VM 설정·checkpoint를 삭제하므로 사전 export/백업과 정확한 VmId·`-ConfirmConfigurationRemoval`이 필요합니다(VHD·ISO·state는 남음). 실제 설치·guest·권한 분리·OS 보호·종료/회수는 **UNVERIFIED**, 같은 관리자 계정 격리는 **UNSUPPORTED**입니다. 기본 off·일반 CLI 미연결·#666 OPEN을 유지합니다.
+
 전제: Python ≥ 3.10, Git, 설정한 직원 CLI의 설치·로그인. npm 설치 CLI는 Node.js도 필요합니다.
 
 ```bash
