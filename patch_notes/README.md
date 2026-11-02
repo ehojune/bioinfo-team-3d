@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:24 | [`e97d4b6`](https://github.com/ehojune/bioinfo-team-3d/pull/1267/commits/e97d4b6) | **한영 매뉴얼에 검토 중인 VM 준비 절차와 삭제 전 백업 조건을 안내합니다.**<br>Link the draft Hyper-V workflow from both manuals and state manual admin execution, destructive RemoveVM consent and UNVERIFIED protection limits (#666). |
+| 18:10 | [`61d0881`](https://github.com/ehojune/bioinfo-team-3d/pull/1267/commits/61d0881) | **VM mock 시험을 Windows CI에 등록하고 VM 설정 삭제에 별도 확인을 요구합니다.**<br>Register the PowerShell mock suite in Windows boundary CI and expose destructive VM configuration removal with explicit confirmation (#666). |
+| 17:53 | [`5905ceb`](https://github.com/ehojune/bioinfo-team-3d/pull/1267/commits/5905ceb) | **격리 시험용 Hyper-V VM을 전원 OFF 상태로 준비합니다.**<br>Prepare an offline Hyper-V fixture with manual elevation/reboot gates and 31 mocked provisioning checks; runtime protection remains UNVERIFIED (#666). |
 | 17:06 | [`58ad9a2`](https://github.com/ehojune/bioinfo-team-3d/commit/58ad9a2) | **기존 deadline 검증을 유지합니다.**<br>요청 접수 시점부터 적용되는 deadline 시험을 복구했습니다 (#1076). |
 | 16:52 | [`e96e24f`](https://github.com/ehojune/bioinfo-team-3d/commit/e96e24f) | **승인 대기 실패 시 누락된 항목과 task 상태를 기록합니다.**<br>Windows 요청 lifecycle 시험의 실패 진단을 보강했습니다 (#1076). |
 | 03:00 | [`34700c5`](https://github.com/ehojune/bioinfo-team-3d/pull/1252/commits/34700c5) | **설명서에 AlphaGenome 사용 가능 여부를 각 작업 프로그램이 알리고 직원 명단은 그 직원을 맡은 프로그램을 따른다는 점, 키를 넣은 뒤 다시 시작해야 한다는 점을 적었습니다.**<br>문서: AlphaGenome 준비 상태를 runner가 보고하고 명단은 직원을 맡은 runner를 따른다 (#1252 리뷰 P1) |
