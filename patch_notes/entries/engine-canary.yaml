@@ -9,3 +9,6 @@ rows:
 - sha: 8ab05bf
   at: 2026-11-04 10:50
   text: "canary 취소 성공 판정에 cleanup 근거를 요구"
+- sha: bea38b2
+  at: 2026-11-04 10:58
+  text: "canary token 사용량과 준비 상태 판정 수정"
