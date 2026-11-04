@@ -4,6 +4,12 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1076 approval 시험 진단
+
+- 송신 취소·timer·task stack·runner/lock·publish 상태를 실패 시 기록한다. publish barrier로 송신 timeout 이후 대기를 따로 검증한다.
+- Windows 로컬 Python 3.12: `tests/test_approval_durable_606.py` 45 passed, CI 선택 정책 시험 129 passed.
+- 이전 Windows 실패 원인은 미확인이다. #1076 종료는 보류하고 web cleanup은 별도 후속으로 남긴다.
+
 # #666 rev13 — VM 설치 코드·manual 검토
 
 - 결과: 기존 PowerShell 5.1 installer와 31개 mock 시험을 PR로 제출한다. 실제 설치는 관리자 실행 결과 대기다. 이번 배정은 병합 전 검토까지이며 hold를 유지한다.

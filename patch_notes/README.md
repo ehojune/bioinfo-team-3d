@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 11:30 | [`2a8ca6c`](https://github.com/ehojune/bioinfo-team-3d/pull/1268/commits/2a8ca6c) | **일찍 끝난 승인 작업의 예외도 진단에 담습니다.**<br>시험: action 완료·취소 상태와 예외를 출력한다 (#1076) |
+| 11:24 | [`d11c68c`](https://github.com/ehojune/bioinfo-team-3d/pull/1268/commits/d11c68c) | **시험 정리 작업이 지연 진단을 무기한 막지 않게 했습니다.**<br>시험: cleanup task 대기에 시간 제한을 둔다 (#1076) |
+| 11:15 | [`295283d`](https://github.com/ehojune/bioinfo-team-3d/pull/1268/commits/295283d) | **송신이 시작되지 않은 경우에도 지연 진단을 남깁니다.**<br>시험: send 진입 대기 timeout에도 task와 timer 상태를 출력한다 (#1076) |
+| 11:10 | [`25c8754`](https://github.com/ehojune/bioinfo-team-3d/pull/1268/commits/25c8754) | **승인 응답 시험이 지연될 때 어느 단계에서 멈췄는지 확인할 수 있게 했습니다.**<br>시험: 송신 취소·timer·task·lock·publish 진단과 publish barrier 회귀 추가 (#1076); 기존 실패 원인은 미확인 |
 | 10:42 | [`9bbc66e`](https://github.com/ehojune/bioinfo-team-3d/pull/1080/commits/9bbc66e) | **Windows 검사 목록을 최신 변경과 함께 유지합니다.**<br>Merge main and preserve Windows boundary test inventory |
 
 ## 2026-11-02
