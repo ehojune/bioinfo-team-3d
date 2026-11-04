@@ -45,14 +45,29 @@ def test_canary_aborts_remaining_calls_when_job_is_not_idle(tmp_path, monkeypatc
         calls.append("initial")
         return None, [], {}
 
-    def not_idle():
-        raise BoundaryError("remaining child")
-
     monkeypatch.setattr(doctor, "_canary_call", initial)
-    monkeypatch.setattr(doctor, "_canary_between_calls", not_idle)
+    monkeypatch.setattr(doctor, "_resolve_command", lambda *args: ["fake"])
+    monkeypatch.setattr(doctor, "_probe", lambda *args: (0, "2.1.282"))
+    attempts = iter([None, BoundaryError("remaining child")])
+    def idle_then_remaining():
+        result = next(attempts)
+        if result:
+            raise result
+    monkeypatch.setattr(doctor, "_canary_between_calls", idle_then_remaining)
     with pytest.raises(BoundaryError, match="remaining child"):
         asyncio.run(doctor._run_canaries(settings, "worker"))
     assert calls == ["initial"]
+
+
+@pytest.mark.parametrize("version", ["2.0.0", "unknown"])
+def test_canary_rejects_unsupported_or_unknown_version_before_adapter(tmp_path, monkeypatch, version):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(doctor, "_resolve_command", lambda *args: ["fake"])
+    monkeypatch.setattr(doctor, "_probe", lambda *args: (0, version))
+    monkeypatch.setattr(doctor, "get_adapter", lambda *args: pytest.fail("provider path entered"))
+    rows = asyncio.run(doctor._run_canaries(settings, "worker"))
+    assert len(rows) == 5
+    assert all(row["status"] == "fail" for row in rows)
 
 
 def test_doctor_warns_for_invalid_claude_model_id(tmp_path, monkeypatch):
@@ -117,6 +132,9 @@ def _fake_canary_cli(tmp_path: Path, engine: Engine) -> Path:
     script.write_text(
         """import json, pathlib, sys, time
 root = pathlib.Path(__file__).parent
+if sys.argv[-1] == '--version':
+    print('2.1.282' if sys.argv[1] == 'claude_code' else '0.160.1')
+    sys.exit(0)
 calls = root / 'calls.jsonl'
 with calls.open('a', encoding='utf-8') as out:
     out.write(json.dumps(sys.argv[1:]) + '\\n')

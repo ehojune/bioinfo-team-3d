@@ -1232,8 +1232,22 @@ def _canary_between_calls() -> None:
 
 
 async def _agent_canary(settings: Settings, agent: AgentSpec) -> list[dict]:
-    adapter = get_adapter(agent.engine, settings)
     checks = ("result", "cost/tokens", "session", "resume", "cancel")
+    name = agent.engine.value
+    if name in ENGINE_CLI_REQUIREMENTS:
+        spec = getattr(settings.engines, name)
+        env = {**os.environ, **expand_env(spec.env, os.environ)}
+        cmd = [os.path.expandvars(os.path.expanduser(part)) for part in [spec.bin, *spec.prefix_args]]
+        try:
+            resolved = _resolve_command(cmd, env, name)
+            code, raw = _probe([*resolved, "--version"], env)
+        except (OSError, ValueError):
+            code, raw = None, ""
+        _canary_between_calls()
+        version = _minimum_version_row(name, code, raw, dry_run=False)
+        if version["status"] != "ok":
+            return [_canary_row(agent.id, check, False, "CLI version unsupported or unverified") for check in checks]
+    adapter = get_adapter(agent.engine, settings)
     if not adapter.enforces_read_only or not adapter.supports_resume:
         return [_canary_row(agent.id, check, False, f"{agent.engine.value} cannot enforce this canary contract")
                 for check in checks]
