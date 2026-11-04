@@ -16,7 +16,7 @@ import yaml
 
 from . import instance_guard
 from . import wsl_readiness
-from .settings import Settings
+from .settings import Settings, _load_config
 from .util import atomic_write_text
 from .wsl_paths import shared_path
 
@@ -161,7 +161,7 @@ def render(rows: list[dict]) -> str:
 
 def _save_enabled(s: Settings) -> None:
     path = Path(s.config_path)
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data = _load_config(path.read_text(encoding="utf-8")) or {}
     wsl = s.runner.wsl.model_dump(exclude_none=True)
     wsl["enabled"] = True
     data.setdefault("runner", {})["wsl"] = wsl

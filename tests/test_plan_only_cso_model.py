@@ -59,7 +59,10 @@ class ModelHub:
         self.s.orchestrator.chief_of_staff_agent = None
         self.s.orchestrator.max_revisions = 0
         self.requests = {"r": {"text": "same request", "mode": mode, "agent_id": None,
-                                "work_kind": "auto", "scope_status": "in_scope", "budget_usd": 10,
+                                "work_kind": "auto", "scope_status": "in_scope",
+                                # These turns report no cost, so each is held at the per-task cap (#1139): room for the
+                                # plan, step, review and synthesis, which is not what these tests are about.
+                                "budget_usd": 100,
                                 "project_dirs": [], "cso_model": cso_model}}
         self.agents = {
             "cso": {"id": "cso", "name": "CSO", "role": "plan", "engine": "claude_code", "model": "opus"},

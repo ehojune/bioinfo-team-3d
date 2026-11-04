@@ -510,9 +510,11 @@ def _alphagenome_summary(item: Item) -> dict:
 
 
 class RegulatoryAnnotator(Annotator):
-    def __init__(self, *args: Any, alphagenome: AlphaGenomeBackend | None = None, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, alphagenome: AlphaGenomeBackend | None = None,
+                 atlas: Any = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.alphagenome_backend = alphagenome
+        self.atlas_backend = atlas
 
     # ----- helpers -----
     def _set_record(self, tool: str, db: str, release: str, url: str, options: dict, inputs: list[str],
@@ -1068,6 +1070,10 @@ class RegulatoryAnnotator(Annotator):
                 "eqtl": {"rows": rows, "total": total, "truncated": truncated}}
 
     # ----- AlphaGenome -----
+    async def alphagenome_atlas(self, variants: object, **kwargs: Any) -> dict:
+        from .annot_alphagenome_atlas import query_variants
+        return await query_variants(self, variants, **kwargs)
+
     async def alphagenome_variant(self, variants: object, **kwargs: Any) -> dict:
         from .annot_alphagenome import score_variants
         return await score_variants(self, variants, **kwargs)

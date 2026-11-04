@@ -69,6 +69,7 @@ class PiInterpreter:
         self.hub = hub
         self.tasks: dict[asyncio.Task, str | None] = {}
         self._budget_locks: dict[str, asyncio.Lock] = {}
+        self._reserving: set[str] = set()  # messages whose reservation is being committed
         for key, entry in hub.store.all("pi_translation").items():
             if entry.get("status") == "pending":
                 failed = {"status": "failed", "label": "번역 못 함", "by": "chief_of_staff"}
@@ -88,21 +89,38 @@ class PiInterpreter:
     def _budget_lock(self, rid: str) -> asyncio.Lock:
         return self._budget_locks.setdefault(rid, asyncio.Lock())
 
-    def schedule(self, event: dict) -> None:
+    def _reservation(self, event: dict) -> tuple[str, str, dict] | None:
+        """(key, source, pending row) for a message that needs a translation and has none yet, else None."""
         source = message_source(event)
         if not source or not technical(source):
-            return
+            return None
         key = str(event["seq"])
         if self.hub.store.get("pi_translation", key):
-            return
-        # Reserve before starting: a crash never causes a second paid call for this message.
-        self.hub.store.put("pi_translation", key, {"status": "pending", "request_id": event.get("request_id"),
-                            "followup_id": (event.get("data") or {}).get("id") if event.get("type") == "request.followup_done" else None,
-                            "approval_id":
-                            (event.get("data") or {}).get("id") if event.get("type") == "approval.requested" else None})
-        task = asyncio.create_task(self._interpret(event, source))
+            return None
+        return key, source, {"status": "pending", "request_id": event.get("request_id"),
+                             "followup_id": (event.get("data") or {}).get("id") if event.get("type") == "request.followup_done" else None,
+                             "approval_id":
+                             (event.get("data") or {}).get("id") if event.get("type") == "approval.requested" else None}
+
+    def schedule(self, event: dict) -> None:
+        """Start the translation of a message that needs one. Returns at once: the reservation commits on the writer
+        thread inside the task (#606), so the event loop is not held for its fsync."""
+        reservation = self._reservation(event)
+        if reservation is None or reservation[0] in self._reserving:
+            return  # a second call for a message whose reservation is committing: still one paid call
+        key, source, pending = reservation
+        self._reserving.add(key)
+        task = asyncio.create_task(self._reserve_then_interpret(event, key, source, pending))
         self.tasks[task] = event.get("request_id")
         task.add_done_callback(lambda done: self.tasks.pop(done, None))
+
+    async def _reserve_then_interpret(self, event: dict, key: str, source: str, pending: dict) -> None:
+        # Reserve before starting: a crash never causes a second paid call for this message.
+        try:
+            await self.hub.store.aput("pi_translation", key, pending)
+        finally:
+            self._reserving.discard(key)
+        await self._interpret(event, source)
 
     async def _interpret(self, event: dict, source: str) -> None:
         hub, cfg = self.hub, self.hub.s.pi_language

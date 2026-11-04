@@ -248,6 +248,7 @@ PC를 다시 켜도 저장소 폴더에서 같은 `up`·`open` 명령을 씁니�
 | [어휘·topic·점검표](docs/vocabulary.md) | topic이 무엇인지, topic별 점검표, 핵심 단어(어휘 키)를 표로 보려는 사람 |
 | [패치노트](patch_notes/README.md) | 바뀐 내용 |
 | [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | labhq를 고치는 개발자: 규칙·구조·현재 작업 순서 |
+| [CI 실행·시간 상한](docs/reference/ci-reuse.md) | CI가 시험을 어떻게 나눠 돌리는지, 시험마다 300초 상한이 있다는 것을 알고 싶은 개발자 |
 | [참고 기록](docs/reference/README.md) | 검증 근거와 이전 결정이 필요할 때만 조회 |
 
 코드는 [GPL-3.0-or-later](LICENSE), 문서·그림·데이터 표는 [CC BY-SA 4.0](LICENSE-CC-BY-SA-4.0.txt)입니다. 예외는 [매뉴얼의 라이선스](docs/manual.md#라이선스)에 있습니다.

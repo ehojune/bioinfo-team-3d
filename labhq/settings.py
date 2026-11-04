@@ -6,6 +6,7 @@ import ntpath
 import re
 import stat
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any  # semantics-hook
 from typing import Literal
@@ -15,6 +16,20 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, 
 
 from .intake import Reference
 from .test_guard import guard_test_path
+
+
+class _ConfigLoader(yaml.SafeLoader):
+    def construct_mapping(self, node, deep=False):
+        result = super().construct_mapping(node, deep=deep)
+        for key_node, value_node in node.value:
+            if (key_node.value == "precedent_lookup_share"
+                    and value_node.tag == "tag:yaml.org,2002:float"):
+                result[key_node.value] = value_node.value.replace("_", "")
+        return result
+
+
+def _load_config(text: str):
+    return yaml.load(text, Loader=_ConfigLoader)
 
 
 class GatewaySettings(BaseModel):
@@ -362,9 +377,11 @@ _BACKGROUND_SHELL_TOOLS = ("BashOutput", "KillShell", "TaskOutput", "TaskStop")
 class BudgetSettings(BaseModel):
     per_task_usd: float = 5.0
     per_request_usd: float = 30.0
-    # Opt-in (#862): hold each charged turn's whole cap before it is sent, so in-flight turns and the last turn
-    # cannot pass the request cap on the product's own cost accounting. Not a provider billing guarantee.
-    reserve_before_dispatch: bool = False
+    # On by default since #1139 (#862): hold each charged turn's cap before it is sent, so in-flight turns and the
+    # last turn cannot pass the request cap on the product's own cost accounting. The hold is cut to what the request
+    # still has, so a request budget below per_task_usd is not asked about at its first turn. Not a provider billing
+    # guarantee. `false` restores the older check, which only looks at what is already spent.
+    reserve_before_dispatch: bool = True
 
     @model_validator(mode="after")
     def reserved_budgets_are_amounts(self) -> "BudgetSettings":
@@ -373,6 +390,9 @@ class BudgetSettings(BaseModel):
                 value = getattr(self, name)
                 if not math.isfinite(value) or value < 0:
                     raise ValueError(f"policy.budget.{name} must be a finite amount >= 0 with reserve_before_dispatch")
+            if 0 < self.per_task_usd < 0.01:
+                # The Claude CLI writes a call cap in cents: a positive cap below one cent cannot be held (0 is no cap).
+                raise ValueError("policy.budget.per_task_usd must be 0 or at least $0.01 with reserve_before_dispatch")
         return self
 
 
@@ -710,6 +730,7 @@ class AnnotSettings(BaseModel):
     # each admitted by the runner before it is sent (#858). None keeps lookups uncounted; 0 refuses every lookup.
     # See runner/lookup_admission.py for what one attempt is.
     request_lookup_limit: int | None = Field(default=None, ge=0, le=10000)
+    precedent_lookup_share: Decimal | None = Field(default=Decimal("0.5"), ge=0, le=1, allow_inf_nan=False)
 
 
 class ResultStorageSettings(BaseModel):
@@ -843,7 +864,7 @@ class Settings(BaseModel):
         if path and not Path(path).is_file():
             raise FileNotFoundError(f"설정 파일이 없습니다: {path}")
         if path:
-            data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+            data = _load_config(Path(path).read_text(encoding="utf-8")) or {}
         s = cls.model_validate(data)
         if path:
             s.config_path = str(Path(path).resolve())
@@ -877,7 +898,7 @@ def write_staff_config(settings: Settings, directory: Path) -> str | None:
 
     guard_test_path(Path(settings.config_path))
     guard_test_path(directory)
-    data = yaml.safe_load(Path(settings.config_path).read_text(encoding="utf-8")) or {}
+    data = _load_config(Path(settings.config_path).read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ValueError("config is not a mapping")
     gateway = data.get("gateway") if isinstance(data.get("gateway"), dict) else {}

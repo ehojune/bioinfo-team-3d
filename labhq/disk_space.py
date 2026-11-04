@@ -52,23 +52,86 @@ class ShellCheck:
     reason: str
 
 
-def _segments(command: str) -> list[list[str]]:
-    """The simple commands of a shell line as word lists, split quote-aware at `;` `&&` `||` `|` `&` and newlines.
-    A line whose quotes do not close is not read at all."""
-    operators = "();<>|&" + chr(10)
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=operators)
-    lexer.commenters = ""  # bash starts a comment only at a word start; `url#frag -o /x` is one word, not a comment
-    lexer.whitespace, lexer.whitespace_split = " " + chr(9) + chr(13), True
-    out: list[list[str]] = [[]]
-    try:
-        for token in lexer:
-            if set(token) <= set(operators):
-                out.append([])
+def _segments(command: str) -> list[tuple[list[str], list[str]]]:
+    """The simple commands of a shell line as (words, redirect targets), read the way bash reads it.
+
+    Commands end at `;` `&&` `||` `|` `&` `(` `)` and newlines outside quotes. A `#` starts a comment only at the start
+    of a word (`url#frag` is one word). `>` `>>` `&>` `2>` name a file the command writes and `<` a file it reads: the
+    redirection is not part of the words and splits nothing. A line whose quotes do not close is not read at all."""
+    segments: list[tuple[list[str], list[str]]] = []
+    words: list[str] = []
+    redirects: list[str] = []
+    current: list[str] | None = None  # the word being read; None between words
+    pending: str | None = None  # "out" / "in": the next word is a redirection target
+    i, n = 0, len(command)
+
+    def finish_word() -> None:
+        nonlocal current, pending
+        if current is None:
+            return
+        word = "".join(current)
+        current = None
+        if pending == "out":
+            if not (word.rstrip("-").isdigit() or word == "-"):  # `2>&1`, `1>&3-` duplicate or move a descriptor
+                redirects.append(word)
+        elif pending is None:
+            words.append(word)
+        pending = None
+
+    def finish_segment() -> None:
+        nonlocal words, redirects
+        finish_word()
+        if words:
+            segments.append((words, redirects))
+        words, redirects = [], []
+
+    while i < n:
+        c = command[i]
+        if c in " \t\r":
+            finish_word()
+        elif c == "\n":
+            finish_segment()
+        elif c == "#" and current is None:
+            while i < n and command[i] != "\n":
+                i += 1
+            continue
+        elif c in "'\"":
+            j = i + 1
+            while j < n and command[j] != c:
+                j += 2 if (c == '"' and command[j] == "\\" and j + 1 < n) else 1
+            if j >= n:
+                return []
+            current = (current or []) + list(command[i + 1:j].replace('\\"', '"') if c == '"' else command[i + 1:j])
+            i = j
+        elif c == "\\" and command[i + 1:i + 2] == chr(10):
+            i += 1  # a backslash-newline continues the line: bash drops both
+        elif c == "\\" and i + 1 < n:
+            current = (current or []) + [command[i + 1]]
+            i += 1
+        elif c in ";(|)" or (c == "&" and command[i + 1:i + 2] != ">"):
+            finish_segment()
+            if command[i:i + 2] in {"&&", "||"}:
+                i += 1
+        elif c in "<>" or c == "&":
+            if current is not None and "".join(current).isdigit():
+                current = None  # `2>file`: the 2 is a file descriptor
             else:
-                out[-1].append(token)
-    except ValueError:
-        return []
-    return [words for words in out if words]
+                finish_word()
+            out = c in ">&"  # `&>` is an output redirect too
+            i += 1
+            if c == "&":
+                i += 1
+                if command[i:i + 1] == ">":
+                    i += 1
+            elif command[i:i + 1] in (">", "&", "|") if c == ">" else command[i:i + 1] in ("<", ">", "&"):
+                i += 1
+            pending = "out" if out else "in"
+            continue
+        else:
+            current = (current or []) + [c]
+        i += 1
+    finish_segment()
+    return segments
 
 
 def _resolve(text: str, workdir: str) -> Path:
@@ -89,7 +152,70 @@ def _option(words: list[str], short: str, long: str | None = None) -> str | None
             return words[i + 1]
         if short and word.startswith(short) and len(word) > len(short) and not word.startswith("--"):
             return word[len(short):]
+        letter = short[1:]
+        if len(letter) == 1 and word.startswith("-") and not word.startswith("--") and len(word) > 2:
+            cluster = word[1:]
+            at = cluster.find(letter)
+            if at >= 0:  # `-Lo file`: the letter ends a cluster and takes the next word; `-sfoFILE` takes the rest
+                rest = cluster[at + 1:]
+                if rest:
+                    return rest
+                if i + 1 < len(words):
+                    return words[i + 1]
     return None
+
+
+# curl short/long options that consume a value, from curl --help all (8.21.0).
+# policy.py has a deliberately smaller allowlist for shell safety, not a complete parser.
+_CURL_SHORT_VALUES = frozenset('EKCbcdDFPHmoxUQreXYytzTuAw')
+_CURL_LONG_VALUES = frozenset(('--abstract-unix-socket', '--alt-svc', '--aws-sigv4', '--cacert', '--capath', '--cert', '--cert-type', '--ciphers', '--config', '--connect-timeout', '--connect-to', '--continue-at', '--cookie', '--cookie-jar', '--create-file-mode', '--crlfile', '--curves', '--data', '--data-ascii', '--data-binary', '--data-raw', '--data-urlencode', '--delegation', '--dns-interface', '--dns-ipv4-addr', '--dns-ipv6-addr', '--dns-servers', '--doh-url', '--dump-header', '--ech', '--egd-file', '--engine', '--etag-compare', '--etag-save', '--expect100-timeout', '--form', '--form-string', '--ftp-account', '--ftp-alternative-to-user', '--ftp-method', '--ftp-port', '--ftp-ssl-ccc-mode', '--happy-eyeballs-timeout-ms', '--haproxy-clientip', '--header', '--help', '--hostpubmd5', '--hostpubsha256', '--hsts', '--interface', '--ip-tos', '--ipfs-gateway', '--json', '--keepalive-cnt', '--keepalive-time', '--key', '--key-type', '--knownhosts', '--krb', '--libcurl', '--limit-rate', '--local-port', '--login-options', '--mail-auth', '--mail-from', '--mail-rcpt', '--max-filesize', '--max-redirs', '--max-time', '--netrc-file', '--noproxy', '--oauth2-bearer', '--output', '--output-dir', '--parallel-max', '--parallel-max-host', '--pass', '--pinnedpubkey', '--preproxy', '--proto', '--proto-default', '--proto-redir', '--proxy', '--proxy-cacert', '--proxy-capath', '--proxy-cert', '--proxy-cert-type', '--proxy-ciphers', '--proxy-crlfile', '--proxy-header', '--proxy-key', '--proxy-key-type', '--proxy-pass', '--proxy-pinnedpubkey', '--proxy-service-name', '--proxy-tls13-ciphers', '--proxy-tlsauthtype', '--proxy-tlspassword', '--proxy-tlsuser', '--proxy-user', '--proxy1.0', '--pubkey', '--quote', '--random-file', '--range', '--rate', '--referer', '--request', '--request-target', '--resolve', '--retry', '--retry-delay', '--retry-max-time', '--sasl-authzid', '--service-name', '--sigalgs', '--socks4', '--socks4a', '--socks5', '--socks5-gssapi-service', '--socks5-hostname', '--speed-limit', '--speed-time', '--ssl-sessions', '--stderr', '--telnet-option', '--tftp-blksize', '--time-cond', '--tls-max', '--tls13-ciphers', '--tlsauthtype', '--tlspassword', '--tlsuser', '--trace', '--trace-ascii', '--trace-config', '--unix-socket', '--upload-file', '--upload-flags', '--url', '--url-query', '--user', '--user-agent', '--variable', '--vlan-priority', '--write-out'))
+
+
+def _curl_options(words: list[str]) -> list[tuple[str | None, str | None]]:
+    output = outdir = None
+    clauses = []
+    i = 1
+    while i < len(words):
+        word = words[i]
+        if word == "--":
+            break
+        if word in {"--next", "-:"}:
+            clauses.append((output, outdir))
+            output = outdir = None
+            i += 1
+            continue
+        if word.startswith("--"):
+            flag, equal, value = word.partition("=")
+            if flag in _CURL_LONG_VALUES:
+                if not equal:
+                    i += 1
+                    value = words[i] if i < len(words) else ""
+                if flag == "--output" and output is None:
+                    output = value
+                elif flag == "--output-dir":
+                    outdir = value
+        elif word.startswith("-") and word != "-":
+            for j, letter in enumerate(word[1:], 1):
+                if letter in _CURL_SHORT_VALUES:
+                    value = word[j + 1:]
+                    if not value:
+                        i += 1
+                        value = words[i] if i < len(words) else ""
+                    if letter == "o" and output is None:
+                        output = value
+                    break
+        i += 1
+    clauses.append((output, outdir))
+    return clauses
+
+
+def _curl_folders(words: list[str], workdir: str) -> list[Path]:
+    folders = []
+    for out, outdir in _curl_options(words):
+        base = _resolve(outdir, workdir) if outdir else Path(workdir)
+        target = _resolve(out, str(base)) if out else base
+        folders.append(target.parent if out and target.suffix else target)
+    return folders
 
 
 def _zip_size(path: Path) -> int | None:
@@ -184,8 +310,11 @@ def _unzip_options(words: list[str]) -> tuple[str | None, str | None, bool]:
                 folder = words[i + 1]
             i += 2
             continue
-        if word in {"-x", "-i"}:  # the rest are file patterns
-            break
+        if word in {"-x", "-i"}:  # file patterns follow up to the next option
+            i += 1
+            while i < len(words) and not words[i].startswith("-"):
+                i += 1
+            continue
         if word.startswith("-d") and len(word) > 2:
             folder = word[2:]
         elif word.startswith("-") and len(word) > 1:
@@ -225,9 +354,9 @@ def _write(words: list[str], workdir: str) -> tuple[str, Path, int | None] | Non
     """(what, folder it writes into, estimated bytes or None) for one simple command, or None when it is no big write."""
     name = Path(words[0]).name.casefold().removesuffix(".exe")
     if name in {"curl", "wget"}:
-        out = _option(words, "-o", "--output") if name == "curl" else (_option(words, "-O", "--output-document")
-                                                                      or _option(words, "-P", "--directory-prefix"))
-        outdir = _option(words, "", "--output-dir") if name == "curl" else None
+        if name == "curl":
+            return "다운로드", _curl_folders(words, workdir)[0], None
+        out, outdir = _option(words, "-O", "--output-document") or _option(words, "-P", "--directory-prefix"), None
         base = _resolve(outdir, workdir) if outdir else Path(workdir)
         target = (_resolve(out, str(base)) if out else base)
         return "다운로드", (target.parent if out and target.suffix else target), None
@@ -270,7 +399,7 @@ def shell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, w
     probe = probe or usage
     worst: ShellCheck | None = None
     cwd = workdir
-    for words in _segments(command):
+    for words, redirects in _segments(command):
         if Path(words[0]).name in {"cd", "pushd"} and len(words) == 2 and "$" not in words[1] and "`" not in words[1]:
             cwd = str(_resolve(words[1], cwd))  # the commands that follow run there
             continue
@@ -279,7 +408,8 @@ def shell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, w
             if found is None:
                 continue
             what, folder, estimate = found
-            folders = [folder, *_operand_folders(words, cwd)]
+            main_folders = _curl_folders(words, cwd) if Path(words[0]).name.casefold().removesuffix(".exe") == "curl" else [folder]
+            folders = [*main_folders, *_operand_folders(words, cwd), *(_resolve(target, cwd) for target in redirects)]
             spaces = []
             for candidate in dict.fromkeys(folders):
                 try:
@@ -307,6 +437,11 @@ def shell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, w
             elif estimate is None and low(main, warn_gb, warn_percent):
                 verdict = ShellCheck("warn", f"{what}: 대상 드라이브({folder.as_posix()}) 여유가 적습니다({free:.1f} GiB). "
                                              "크기를 알 수 없어 막지 않습니다")
+        if verdict is None and estimate is None:
+            for candidate, space in spaces:
+                if candidate in main_folders and low(space, warn_gb, warn_percent):
+                    verdict = ShellCheck("warn", f"{what}: {candidate.as_posix()} ({space.free / GIB:.1f} GiB)")
+                    break
         if verdict is None:
             continue
         if worst is None or (verdict.action == "ask" and worst.action != "ask"):

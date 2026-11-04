@@ -27,10 +27,11 @@ from . import instance_guard, proc_tree
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
 from .process_diagnostics import SUPERVISOR_SUFFIX
-from .request_status import is_terminal_request, request_deadline_text, request_display_label, request_status_label
+from .request_status import (failed_step_ids, is_terminal_request, request_deadline_text, request_display_label,
+                             request_status_label)
 from .settings import Settings
 from .test_guard import guard_test_path
-from .util import atomic_write_text, free_port, short, without_windows_app_aliases
+from .util import atomic_write_text, free_port, free_ports, short, without_windows_app_aliases
 
 REPO = Path(__file__).resolve().parents[1]
 ICON = {"cso": "🦉", "chief_of_staff": "🐧", "biologist": "🐻", "data_steward": "🐿️", "lit_scout": "🦊",
@@ -165,6 +166,8 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
     elif t == "request.completed":
         summary = d.get("cost_summary")
         label = "보고서 검토 대기 (CP4)" if d.get("status") == "review_pending" else "요청 완료"
+        if d.get("failed_steps"):  # done, but not every step finished (#1220)
+            label += f" · 일부 실패 {', '.join(map(str, d['failed_steps']))}"
         line = f"🏁 {label} (ok={d.get('ok')}, cost={cost_text(d.get('cost_usd'), d.get('cost_known'), summary)})"
         if d.get("status") == "review_pending" and (final := d.get("final_checkpoint")):
             line += (f"\n   검토 후: labhq review-done {ev.get('request_id')} --revision {final['revision']}"
@@ -791,9 +794,13 @@ def _exit_text(row: dict) -> str:
     extra = [f"PID {row.get('child_pid')}"]
     if row.get("uptime_s") is not None:
         extra.append(f"가동 {row['uptime_s']}초")
-    if row.get("stop_requested"):
+    requested = row.get("stop_requested") is True
+    if requested:
         extra.append("종료 요청(down·웹 종료)")
-    return f"{row.get('time')} {code} ({', '.join(extra)})"
+    label = "종료 요청 중 종료 — " if requested else ""
+    if requested and row.get("code") != 0:
+        extra.append("종료 코드의 원인 확인 불가")
+    return f"{row.get('time')} {label}{code} ({', '.join(extra)})"
 
 
 def _supervisor_detail(s: Settings, role: str, logs: Path, child_state: str) -> tuple[str, bool]:
@@ -1205,6 +1212,26 @@ def _stop_background(s: Settings, role: str) -> int | None:
         raise SystemExit(2) from None
     _pid_file(s, role).unlink(missing_ok=True)
     return pid
+
+
+def _finished_request_lines(req: dict) -> list[str]:
+    """What `labhq status` prints for a finished request: its bundle and, for one that finished `done` with failed,
+    skipped or never-run steps, which steps (#1220). Empty when there is nothing to say."""
+    failed = failed_step_ids(req)
+    if req.get("status") not in {"done", "failed", "review_pending"} or not (
+            req.get("bundle_path") or req.get("bundle_warning") or failed):
+        return []
+    lines = [f"  {req['id']} {request_display_label(req)}"]
+    if failed:
+        lines.append(f"    일부 실패한 단계: {', '.join(failed)}")
+    if req.get("bundle_path"):
+        lines.append(f"    요청 묶음: {req['bundle_path']}")
+    if req.get("bundle_grade"):
+        reasons = "; ".join(map(str, req.get("bundle_grade_reasons") or []))
+        lines.append(f"    재현 등급: {req['bundle_grade']}" + (f" ({reasons})" if reasons else ""))
+    if req.get("bundle_warning"):
+        lines.append(f"    경고: {req['bundle_warning']}")
+    return lines
 
 
 def _active_request_line(request: dict) -> str:
@@ -1866,7 +1893,8 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
     s.gateway.runner_token = _demo_token(exposed, s.gateway.runner_token)
     # The mock team's approvals expire after this; in phone mode it must outlast the tap fallback.
     s.policy.approvals.timeout_s = math.ceil(approve_timeout) + 30 if phone else 60
-    s.runner.broker_port = free_port()
+    # Two different ports drawn together: the one that is not the gateway's (#1238).
+    s.runner.broker_port = next(candidate for candidate in free_ports(2) if candidate != gport)
 
     app = create_app(s, demo=True)
     hub = app.state.hub
@@ -2033,6 +2061,8 @@ def main(argv: list[str] | None = None) -> None:
     sp.add_argument("--work-kind", choices=("auto", "simple", "research"), default="auto",
                     help="with research.enabled: simple skips the research lane (CP1/CP2), research forces it")
     sp.add_argument("--cso-model", help="request-local CSO model from orchestrator.cso_models")
+    sp.add_argument("--wsl", action="store_true",
+                    help="run the analysis in this PC's WSL; if it is not ready the request opens the WSL setup card first")
     sp.add_argument("--dry-run", action="store_true",
                     help="show pre-plan calls and cost ranges without calling models, tools or the network")
     sp.add_argument("--no-wait", action="store_true")
@@ -2356,20 +2386,11 @@ def main(argv: list[str] | None = None) -> None:
             print(f"환경 문제로 멈춘 단계: {len(problems)}")
             for rid, sid, problem in problems:
                 print(f"  {rid} {sid}: {problem}")
-        finished = [req for req in recent
-                    if req.get("status") in {"done", "failed"} and
-                    (req.get("bundle_path") or req.get("bundle_warning"))]
+        finished = [lines for req in recent if (lines := _finished_request_lines(req))]
         if finished:
             print(f"최근 완료 요청: {len(finished)}")
-            for req in finished:
-                print(f"  {req['id']} {req.get('status')}")
-                if req.get("bundle_path"):
-                    print(f"    요청 묶음: {req['bundle_path']}")
-                if req.get("bundle_grade"):
-                    reasons = "; ".join(map(str, req.get("bundle_grade_reasons") or []))
-                    print(f"    재현 등급: {req['bundle_grade']}" + (f" ({reasons})" if reasons else ""))
-                if req.get("bundle_warning"):
-                    print(f"    경고: {req['bundle_warning']}")
+            for lines in finished:
+                print("\n".join(lines))
         approvals = _api(s, "GET", "/api/approvals")
         print(f"승인 대기: {len(approvals)}")
         for approval in approvals:
@@ -2437,13 +2458,15 @@ def main(argv: list[str] | None = None) -> None:
             references.append(reference)
         if args.agent and (args.plan_only or args.cso_model or args.team):
             p.error("--agent cannot be used with --plan-only, --cso-model or --team")
+        if args.wsl and args.agent and args.agent != "bioinfo-agent":
+            p.error("--wsl places only bioinfo-agent in WSL: use --agent bioinfo-agent, or drop --agent to send it to the team")
         if args.agent and args.work_kind == "research":
             p.error("--work-kind research needs the team (CSO) path: drop --agent")
         body = {"text": args.text, "mode": "direct" if args.agent else "plan_only" if args.plan_only else "orchestrate",
                 "agent_id": args.agent, "cso_model": args.cso_model, "route": "team" if args.team else "auto",
                 "project_dirs": args.project_dir, "budget_usd": args.budget, "project_id": args.project,
                 "references": references, "default_references": not args.no_default_refs,
-                "work_kind": args.work_kind}
+                "work_kind": args.work_kind, "run_where": "wsl" if args.wsl else "auto"}
         if args.dry_run:
             from .dry_run import build_preview, render_preview
 

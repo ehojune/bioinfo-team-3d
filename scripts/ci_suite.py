@@ -3,10 +3,10 @@
 Loaded only with -p scripts.ci_suite; no global addopts or child-pytest parallelism.
 """
 import argparse
+import contextlib
 from collections import defaultdict
 from datetime import datetime
 import faulthandler
-import gc
 import hashlib
 import importlib.metadata
 import io
@@ -411,7 +411,9 @@ class Observation:
             self.stall = WorkerStall(self.directory / f"stacks-{self.worker}.log", lambda: self.context)
             self.stall.start()
 
-    @pytest.hookimpl(wrapper=True)
+    # Outermost, so the host-resource lock below is held before pytest-timeout starts its clock: waiting for the lock
+    # is not test time.
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
     def pytest_runtest_protocol(self, item, nextitem):
         path = Path(item.path)
         symbol = item.nodeid.split('::')[1:] if '::' in item.nodeid else None
@@ -431,8 +433,10 @@ class Observation:
             started = time.perf_counter()
             with FileLock(str(self.directory / "host-resources.lock"), timeout=1500):
                 self.resource_waits[path.relative_to(ROOT).as_posix()] += time.perf_counter() - started
-                return (yield)
-        return (yield)
+                with limit_notice(item):
+                    return (yield)
+        with limit_notice(item):
+            return (yield)
 
     def pytest_runtest_logstart(self, nodeid, location):
         self.context = f"{nodeid} [setup]"
@@ -513,6 +517,70 @@ class Observation:
             json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+TEST_LIMIT_NOTICE_S = 5  # the per-test limit (pytest-timeout, #1198) names its test this long before it fires
+
+
+def test_limit(config):
+    """Seconds one test may run (the `timeout` ini of pytest-timeout), 0 when the plugin is absent or the limit off."""
+    try:
+        return max(float(config.getini("timeout") or 0), 0.0)
+    except (ValueError, TypeError, AttributeError):
+        return 0.0
+
+
+def _seconds(value):
+    try:
+        return max(float(value), 0.0)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def item_limit(item):
+    """The limit pytest-timeout applies to this test, in its own order: the closest `@pytest.mark.timeout(n)`, then
+    `--timeout`, then the `PYTEST_TIMEOUT` environment variable, then the ini. 0 means no limit (a marker may lift it)."""
+    marker = item.get_closest_marker("timeout") if hasattr(item, "get_closest_marker") else None
+    if marker is not None:
+        value = marker.args[0] if marker.args else marker.kwargs.get("timeout")
+        if value is not None:
+            return _seconds(value)
+    config = getattr(item, "config", None)
+    try:
+        option = config.getoption("timeout", None)
+    except (ValueError, AttributeError):
+        option = None
+    if option not in (None, ""):
+        return _seconds(option)
+    environment = os.environ.get("PYTEST_TIMEOUT")
+    if environment not in (None, ""):
+        return _seconds(environment)
+    return test_limit(config)
+
+
+@contextlib.contextmanager
+def limit_notice(item):
+    """Name the test shortly before the per-test limit fires; cancelled when the test ends first."""
+    limit = item_limit(item)
+    if not limit:
+        yield
+        return
+    notice = threading.Timer(max(limit - TEST_LIMIT_NOTICE_S, 0), announce_limit, (item.nodeid,))
+    notice.daemon = True
+    notice.start()
+    try:
+        yield
+    finally:
+        notice.cancel()
+
+
+def announce_limit(nodeid):
+    """The thread method of pytest-timeout dumps stacks without the test name and exits the worker; name it first."""
+    try:
+        print(f"\nCI per-test limit reached soon: {nodeid}", file=sys.__stderr__, flush=True)
+        faulthandler.dump_traceback(file=sys.__stderr__, all_threads=True)
+    except Exception:
+        pass
+
+
 STALL_INTERVAL_S = 300  # default seconds between snapshots; CI_STALL_INTERVAL_S tunes it (#1076)
 
 
@@ -544,20 +612,12 @@ class WorkerStall:
             self.stream.close()
 
     def watch(self):
-        import asyncio
+        # No gc.get_objects() here: another thread holding that list raises the refcount of a tuple a running thread
+        # is still building, and `f(*generator)` then fails with SystemError (#1238). The traceback dump is enough.
         while not self.stop.wait(self.interval):
             try:
                 print(f"\nCI snapshot: {self.context()}", file=self.stream, flush=True)
                 faulthandler.dump_traceback(file=self.stream, all_threads=True)
-                shown = 0
-                for value in gc.get_objects():
-                    if isinstance(value, asyncio.Task) and not value.done():
-                        if shown == 50:
-                            print("Further pending tasks omitted", file=self.stream)
-                            break
-                        value.print_stack(limit=20, file=self.stream)
-                        shown += 1
-                print(f"Pending task stacks shown: {shown}", file=self.stream, flush=True)
             except Exception as error:
                 print(f"CI snapshot failed: {type(error).__name__}", file=self.stream, flush=True)
 

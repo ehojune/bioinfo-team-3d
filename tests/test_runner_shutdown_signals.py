@@ -86,6 +86,8 @@ def test_generic_watcher_still_leaves_default_handlers_untouched(signals):
     assert signals == original
 
 
+FIXTURE_S = 30  # time one fixture phase of the standard-entry test may take; not a product deadline
+
 @pytest.mark.parametrize("sig_name", ["SIGTERM", "SIGHUP"])
 async def test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resume(
         tmp_path, monkeypatch, signals, sig_name, record_property):
@@ -120,9 +122,10 @@ async def test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resum
     async def phase(name, awaitable):
         began = time.monotonic()
         try:
-            # These are fixture operations, not a new product shutdown deadline. The former
-            # three-second gather also covered gateway work and ACK, while shutdown allows five.
-            return await asyncio.wait_for(awaitable, 5)
+            # These are fixture operations, not a product shutdown deadline. The gateway side fsyncs, and a loaded
+            # Windows runner took more than five seconds for it (main CI, three times, #898), so each phase may take
+            # FIXTURE_S. The product deadline is shortened by none of this: see observed_shutdown below.
+            return await asyncio.wait_for(awaitable, FIXTURE_S)
         except asyncio.TimeoutError:
             pending = runner.store.pending()
             pytest.fail(f"shutdown phase={name} timed out; prior={stages}; "
@@ -136,7 +139,11 @@ async def test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resum
     shutdown = runner.shutdown
 
     async def observed_shutdown():
-        await shutdown()
+        # Runner.shutdown(timeout_s=5) returns with results retained when no ACK comes in time (the outbox replays
+        # them). This test checks the ordering with an ACK that does come, so its fixture gets the same time as the
+        # phases. The product default of 5 s is unchanged, and the bounded wait itself (results kept, a short
+        # timeout_s) is checked by test_shutdown_keeps_unacknowledged_results_and_has_a_bounded_wait (#898).
+        await shutdown(timeout_s=FIXTURE_S)
         pending_at_shutdown_return.append(len(runner.store.pending()))
 
     monkeypatch.setattr(runner, "shutdown", observed_shutdown)

@@ -48,29 +48,29 @@ const done = (seq, data) => ({ type: 'request.step_done', seq, ts: 1, request_id
     step_id: 's1', ok: null, status: 'applied', fix_id: 'install_python_package', action: 'Python 패키지 설치 지시' } });
   assert.ok(office.S.feed.some(row => row.text.includes('환경 수정 적용')));
 
-  office.apply(done(1, { ok: false, reason: 'exit 1: OSError: [Errno 28] No space left on device', environment }));
+  office.apply(done(4, { ok: false, reason: 'exit 1: OSError: [Errno 28] No space left on device', environment }));
   tasks.syncTaskBoard(board, office.S.requests.get('r1'), office.S.stepDetails, { nick: id => id });
   assert.deepEqual(errors(), ['환경 문제: 디스크 공간이 부족합니다 — 작업 폴더 디스크를 비우세요',
     'exit 1: OSError: [Errno 28] No space left on device']);
 
   const applied = { ok: null, status: 'applied', fix_id: 'install_python_package', action: 'Python 패키지 설치 지시' };
-  office.apply(done(2, { ok: false, reason: 'exit 1: other error', facilities_fix: applied }));
+  office.apply(done(5, { ok: false, reason: 'exit 1: other error', facilities_fix: applied }));
   tasks.syncTaskBoard(board, office.S.requests.get('r1'), office.S.stepDetails, { nick: id => id });
   assert.ok(board.querySelectorAll('p').some(el => el.textContent.includes('환경 수정 적용')));
 
   const fixed = { ok: true, status: 'succeeded', fix_id: 'install_python_package', action: 'Python 패키지 설치 지시' };
-  office.apply({ type: 'request.facilities_fix', seq: 4, ts: 1, request_id: 'r1', data: { step_id: 's1', ...fixed } });
+  office.apply({ type: 'request.facilities_fix', seq: 6, ts: 1, request_id: 'r1', data: { step_id: 's1', ...fixed } });
   assert.ok(office.S.feed.some(row => row.text.includes('환경 수정 성공')));
-  office.apply(done(2, { ok: true, reason: null, facilities_fix: fixed }));
+  office.apply(done(7, { ok: true, reason: null, facilities_fix: fixed }));
   tasks.syncTaskBoard(board, office.S.requests.get('r1'), office.S.stepDetails, { nick: id => id });
   assert.ok(!('environment' in office.S.stepDetails.get('r1:s1')), 'a later success clears the problem');
   assert.ok(!errors().some(text => text.startsWith('환경 문제')));
   assert.ok(board.querySelectorAll('p').some(el => el.textContent.includes('환경 수정 성공')));
 
-  office.apply(done(3, { ok: false, reason: 'exit 1: crashed' }));
+  office.apply(done(8, { ok: false, reason: 'exit 1: crashed' }));
   tasks.syncTaskBoard(board, office.S.requests.get('r1'), office.S.stepDetails, { nick: id => id });
   assert.deepEqual(errors(), ['exit 1: crashed'], 'an ordinary failure shows only its error');
-  office.apply({ type: 'request.facilities_fix', seq: 5, ts: 1, request_id: 'r1', data: {
+  office.apply({ type: 'request.facilities_fix', seq: 9, ts: 1, request_id: 'r1', data: {
     step_id: 's1', ok: false, status: 'failed', fix_id: 'install_python_package', error: '같은 오류가 다시 발생' } });
   assert.ok(office.S.feed.some(row => row.text.includes('환경 수정 실패')));
   console.log('environment failure web tests passed');
