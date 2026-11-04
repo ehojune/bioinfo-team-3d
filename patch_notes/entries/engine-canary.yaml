@@ -3,3 +3,6 @@ rows:
 - sha: f2bf8ed
   at: 2026-10-12 15:02
   text: "doctor에 유료 엔진 canary와 직원 모델·CLI 최소 판본 검사를 추가"
+- sha: 46c7f3a
+  at: 2026-11-04 10:43
+  text: "canary ?? ?? ??? ?? ?? ?? ??, ?? main ??"
