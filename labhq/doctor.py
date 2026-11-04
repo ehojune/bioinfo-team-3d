@@ -1227,6 +1227,10 @@ def _canary_row(agent_id: str, check: str, passed: bool, detail: str) -> dict:
                 "Fix the engine/model/login and rerun this explicit canary.")
 
 
+def _canary_between_calls() -> None:
+    """Replaced by the contained bootstrap with its Job accounting check."""
+
+
 async def _agent_canary(settings: Settings, agent: AgentSpec) -> list[dict]:
     adapter = get_adapter(agent.engine, settings)
     checks = ("result", "cost/tokens", "session", "resume", "cancel")
@@ -1250,6 +1254,7 @@ async def _agent_canary(settings: Settings, agent: AgentSpec) -> list[dict]:
                 directory.mkdir()
             initial, initial_events, baseline = await _canary_call(
                 canary_settings, prepared, initial_dir, CANARY_PROMPT)
+            _canary_between_calls()
             usage_events = [data for kind, data in initial_events if kind == "agent.usage"]
             exact = initial.ok and initial.text.strip() == CANARY_EXPECTED and bool(usage_events)
             rows = [_canary_row(agent.id, "result", exact,
@@ -1269,6 +1274,7 @@ async def _agent_canary(settings: Settings, agent: AgentSpec) -> list[dict]:
                 resumed, resumed_events, _ = await _canary_call(
                     canary_settings, prepared, initial_dir, CANARY_PROMPT,
                     resume_session_id=initial.session_id, resume_baseline=baseline)
+                _canary_between_calls()
                 resumed_ok = (resumed.ok and resumed.session_id == initial.session_id
                               and resumed.text.strip() == CANARY_EXPECTED
                               and any(kind == "agent.usage" for kind, _ in resumed_events))
@@ -1277,10 +1283,14 @@ async def _agent_canary(settings: Settings, agent: AgentSpec) -> list[dict]:
             rows.append(_canary_row(agent.id, "resume", resumed_ok,
                                     "same session completed" if resumed_ok else "resume did not complete in the same session"))
             cancelled = await _canary_cancel(canary_settings, prepared, cancel_dir)
+            _canary_between_calls()
             rows.append(_canary_row(agent.id, "cancel", cancelled,
                                     "running adapter call cancelled" if cancelled else "cancellation was not observed"))
             return rows
-    except Exception:  # noqa: BLE001 - a paid diagnostic must become failed rows, never crash doctor
+    except Exception as exc:  # noqa: BLE001 - a paid diagnostic must become failed rows, never crash doctor
+        from .canary_process import BoundaryError
+        if isinstance(exc, BoundaryError):
+            raise  # abort all remaining paid calls; the parent must clean up the Job
         return [_canary_row(agent.id, check, False, "canary execution failed") for check in checks]
 
 

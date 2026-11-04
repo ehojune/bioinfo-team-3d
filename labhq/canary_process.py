@@ -43,19 +43,7 @@ class WindowsJob:
             raise
 
     def active(self):
-        import ctypes
-        from ctypes import wintypes
-
-        class Accounting(ctypes.Structure):
-            _fields_ = [("TotalUserTime", ctypes.c_longlong), ("TotalKernelTime", ctypes.c_longlong),
-                        ("ThisPeriodTotalUserTime", ctypes.c_longlong), ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
-                        ("TotalPageFaultCount", wintypes.DWORD), ("TotalProcesses", wintypes.DWORD),
-                        ("ActiveProcesses", wintypes.DWORD), ("TotalTerminatedProcesses", wintypes.DWORD)]
-
-        info = Accounting()
-        if not self.kernel.QueryInformationJobObject(self.handle, 1, ctypes.byref(info), ctypes.sizeof(info), None):
-            raise BoundaryError("Job accounting failed")
-        return info.ActiveProcesses
+        return _active_processes(self.kernel, self.handle)
 
     def cleanup(self, timeout=5):
         if not self.kernel.TerminateJobObject(self.handle, 1):
@@ -70,6 +58,29 @@ class WindowsJob:
         if self.handle:
             self.kernel.CloseHandle(self.handle)
             self.handle = None
+
+
+def _active_processes(kernel, handle):
+        import ctypes
+        from ctypes import wintypes
+
+        class Accounting(ctypes.Structure):
+            _fields_ = [("TotalUserTime", ctypes.c_longlong), ("TotalKernelTime", ctypes.c_longlong),
+                        ("ThisPeriodTotalUserTime", ctypes.c_longlong), ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
+                        ("TotalPageFaultCount", wintypes.DWORD), ("TotalProcesses", wintypes.DWORD),
+                        ("ActiveProcesses", wintypes.DWORD), ("TotalTerminatedProcesses", wintypes.DWORD)]
+
+        info = Accounting()
+        if not kernel.QueryInformationJobObject(handle, 1, ctypes.byref(info), ctypes.sizeof(info), None):
+            raise BoundaryError("Job accounting failed")
+        return info.ActiveProcesses
+
+
+def _require_no_children():
+    from .runner.memory_limit import _windows_api
+    kernel, _ = _windows_api()
+    if _active_processes(kernel, None) != 1:
+        raise BoundaryError("previous canary left processes in the Job")
 
 
 def run(settings, selector, timeout=390):
@@ -113,11 +124,13 @@ def run(settings, selector, timeout=390):
 def _main():
     # No provider code is imported or executed until the parent releases this barrier.
     payload = json.load(sys.stdin.buffer)
-    from .doctor import _run_canaries
+    from . import doctor
+    from .canary_process import _require_no_children
     from .settings import Settings
     import asyncio
 
-    rows = asyncio.run(_run_canaries(Settings.model_validate(payload["settings"]), payload["selector"]))
+    doctor._canary_between_calls = _require_no_children
+    rows = asyncio.run(doctor._run_canaries(Settings.model_validate(payload["settings"]), payload["selector"]))
     sys.stdout.buffer.write(json.dumps(rows).encode("utf-8"))
 
 

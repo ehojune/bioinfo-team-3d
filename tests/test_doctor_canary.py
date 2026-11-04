@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from labhq import cli, doctor
+from labhq.canary_process import BoundaryError
 from labhq.models import Engine
 from labhq.settings import Settings
 
@@ -34,6 +35,24 @@ def _doctor_without_host_tools(settings: Settings, monkeypatch, version: str) ->
     monkeypatch.setattr(doctor, "_probe", lambda argv, env: (0, version))
     monkeypatch.setattr(doctor.shutil, "which", lambda *args, **kwargs: None)
     return doctor.collect(settings)
+
+
+def test_canary_aborts_remaining_calls_when_job_is_not_idle(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    calls = []
+
+    async def initial(*args, **kwargs):
+        calls.append("initial")
+        return None, [], {}
+
+    def not_idle():
+        raise BoundaryError("remaining child")
+
+    monkeypatch.setattr(doctor, "_canary_call", initial)
+    monkeypatch.setattr(doctor, "_canary_between_calls", not_idle)
+    with pytest.raises(BoundaryError, match="remaining child"):
+        asyncio.run(doctor._run_canaries(settings, "worker"))
+    assert calls == ["initial"]
 
 
 def test_doctor_warns_for_invalid_claude_model_id(tmp_path, monkeypatch):
