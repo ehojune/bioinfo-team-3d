@@ -12,6 +12,6 @@ rows:
 - sha: bea38b2
   at: 2026-11-04 10:58
   text: "canary token 사용량과 준비 상태 판정 수정"
-- sha: 711910ec
+- sha: 1c18cf22
   at: 2026-11-04 11:21
   text: "canary에 Windows Job 종료 확인과 미지원 환경 사전 거절 추가"
