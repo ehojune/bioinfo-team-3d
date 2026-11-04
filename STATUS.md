@@ -1766,6 +1766,13 @@ Windows `test_ci_windows10m`·`test_ci_windows_phases`·`test_ci_boundary_previe
 
 제품 수정은 없다. #983은 OPEN, 실제 설치판 복구는 **UNVERIFIED**다. CI와 동일 head 리뷰 결과는 PR에서 확인한다.
 
+## #1079 — disposable fixture 계획 검사
+
+- JSON 계획의 누락·타입·충돌·만료를 offline에서 검사한다. 실제 보호는 `UNVERIFIED`다.
+- `python -m pytest tests/test_boundary_fixture_plan.py -q`: 7 passed. 날짜만 있는 expiry와 principal 공백 중복도 검사한다.
+- 실제 VM, 권한, network와 teardown은 관측하지 않았다. 독립 검토가 필요하다.
+- Windows inventory 등록 후 관련 검사 129건 통과. 실제 보호는 여전히 `UNVERIFIED`다.
+
 # #1073 validation-manifest base drift가 main 추가 이동에 실패
 
 - 결론: `scripts/ci_skip.py`의 `confirmed_base_drift()`가 manifest 실행 시점의 main이 checkout parent와 정확히 같을 때만 drift로 인정했다. 목차 자동 commit이 job 도중 main에 한 번 더 들어오면 같은 forward drift인데도 `checkout-parents` 오류가 됐다(#1063 run 41033951645).
