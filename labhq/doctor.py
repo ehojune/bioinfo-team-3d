@@ -1256,7 +1256,7 @@ async def _agent_canary(settings: Settings, agent: AgentSpec) -> list[dict]:
                                 "result event and exact reply received" if exact else "result event or exact reply missing")]
 
             usage = usage_events[-1] if usage_events else {}
-            accounting = bool(usage_events) and "cost_known" in usage and "usage_known" in usage
+            accounting = "cost_known" in usage and usage.get("usage_known") is True
             cost = f"${initial.cost_usd:.6f}" if initial.cost_known and initial.cost_usd is not None else "unknown"
             tokens = sum(value for value in initial.usage.values() if isinstance(value, int) and not isinstance(value, bool))
             rows.append(_canary_row(agent.id, "cost/tokens", accounting,

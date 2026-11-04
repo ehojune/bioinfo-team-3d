@@ -191,7 +191,8 @@ def test_doctor_without_canary_never_enters_the_paid_call_path(tmp_path, monkeyp
     cli.main(["-c", str(config), "doctor"])
 
 
-def test_doctor_cli_adds_explicit_canary_rows_to_json(tmp_path, monkeypatch):
+@pytest.mark.parametrize("status", ["ok", "fail"])
+def test_doctor_cli_adds_explicit_canary_rows_to_json(tmp_path, monkeypatch, status):
     config = tmp_path / "labhq.yaml"
     agents = tmp_path / "agents" / "core"
     agents.mkdir(parents=True)
@@ -208,16 +209,25 @@ def test_doctor_cli_adds_explicit_canary_rows_to_json(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     called = []
-    row = {"group": "canary", "name": "mock: result", "status": "ok", "detail": "pass; fake", "hint": ""}
+    row = {"group": "canary", "name": "mock: result", "status": status, "detail": "fake", "hint": ""}
     monkeypatch.setattr(doctor, "run_canaries", lambda settings, selector: called.append(selector) or [row])
     monkeypatch.setattr(doctor.shutil, "which", lambda *args, **kwargs: None)
 
-    cli.main(["-c", str(config), "doctor", "--canary", "mock", "--json"])
+    if status == "fail":
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["-c", str(config), "doctor", "--canary", "mock", "--json"])
+        assert exc.value.code == 1
+    else:
+        cli.main(["-c", str(config), "doctor", "--canary", "mock", "--json"])
 
     manifest = json.loads((state / "capabilities.json").read_text(encoding="utf-8"))
     assert called == ["mock"]
     assert row in manifest["checks"]
-    assert manifest["summary"]["ok"] >= 1
+    assert manifest["summary"][status] >= 1
+    if status == "fail":
+        assert manifest["readiness"]["ready"] is False
+        assert "canary fail 1" in manifest["readiness"]["reasons"]
+        assert manifest["configuration_readiness"]["ready"] is False
 
 
 def test_canary_context_protects_private_paths_including_cancel(tmp_path, monkeypatch):
@@ -298,3 +308,27 @@ def test_canary_cancel_fails_without_verified_cleanup(tmp_path, monkeypatch, evi
 
     monkeypatch.setattr(doctor, "get_adapter", lambda *args: Adapter())
     assert not asyncio.run(doctor._canary_cancel(settings, agent, tmp_path))
+
+
+@pytest.mark.parametrize("known,status", [(True, "ok"), (False, "fail")])
+def test_canary_requires_known_token_usage(tmp_path, monkeypatch, known, status):
+    import asyncio
+    from types import SimpleNamespace
+    from labhq.models import AgentSpec
+
+    settings = _settings(tmp_path)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.codex)
+    monkeypatch.setattr(doctor, "get_adapter", lambda *args: SimpleNamespace(enforces_read_only=True, supports_resume=True))
+
+    async def call(*args, **kwargs):
+        result = SimpleNamespace(ok=True, text=doctor.CANARY_EXPECTED, session_id="session",
+                                 cost_known=False, cost_usd=None, usage={}, usage_known=known)
+        return result, [("agent.usage", {"cost_known": False, "usage_known": known})], {}
+
+    async def cancel(*args):
+        return True
+
+    monkeypatch.setattr(doctor, "_canary_call", call)
+    monkeypatch.setattr(doctor, "_canary_cancel", cancel)
+    rows = asyncio.run(doctor._agent_canary(settings, agent))
+    assert next(row for row in rows if row["name"].endswith(": cost/tokens"))["status"] == status

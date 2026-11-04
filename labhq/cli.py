@@ -2258,9 +2258,15 @@ def main(argv: list[str] | None = None) -> None:
         requested = args.config or os.environ.get("LABHQ_CONFIG")
         result = collect(s, requested_config=requested, network=args.network, fix=args.fix, runtime=args.runtime)
         if args.canary:
-            result["checks"].extend(run_canaries(s, args.canary))
+            canary_rows = run_canaries(s, args.canary)
+            result["checks"].extend(canary_rows)
             result["summary"] = {status: sum(row["status"] == status for row in result["checks"])
                                  for status in ("ok", "warn", "fail", "skip")}
+            failed_canaries = sum(row["status"] == "fail" for row in canary_rows)
+            if failed_canaries:
+                for key in ("readiness", "configuration_readiness"):
+                    result[key]["ready"] = False
+                    result[key]["reasons"].append(f"canary fail {failed_canaries}")
 
         if args.json:
             try:
