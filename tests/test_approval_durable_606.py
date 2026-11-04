@@ -515,6 +515,10 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
     finally:
         release.set()
         publish_release.set()
+        done, _ = await asyncio.wait({task}, timeout=1)
+        if not done:
+            task.cancel()
+            pytest.fail("cleanup did not finish: " + diagnostics())
         result = (await asyncio.gather(task, return_exceptions=True))[0]
     assert isinstance(result, asyncio.CancelledError)
     assert hub.store.get("decision", card.id) is not None
