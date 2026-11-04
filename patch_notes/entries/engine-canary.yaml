@@ -15,3 +15,6 @@ rows:
 - sha: 1c18cf2
   at: 2026-11-04 11:21
   text: "canary에 Windows Job 종료 확인과 미지원 환경 사전 거절 추가"
+- sha: ee376dc
+  at: 2026-11-04 11:27
+  text: "canary 자식이 남으면 다음 모델 호출을 중단"
