@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: 98dc3ad
+  at: 2026-10-22 03:47
+  summary: 공개 전 검사가 Windows에서 몇 초 안에 끝나고, 이름이 특이하거나 읽을 수 없는 파일을 통과시키지 않도록 고쳤습니다.
+  text: 'scripts/check_public.sh는 추적 파일마다 find를 띄우던 크기 검사를 xargs 묶음 검사로 바꿨다(이 저장소 1,891개, Windows Git Bash 84초→약 4초). 목록을 git ls-files -z로 넘기고 grep에 --, find에 ./를 붙여 공백·따옴표·선행 하이픈·비ASCII 이름의 비밀값·5MB 초과·데이터 파일을 잡는다. 기존에는 이런 이름이 조용히 빠졌고, Windows에서 xargs가 여러 묶음으로 나뉘면 비밀값을 출력하고도 통과했다. 없거나 읽지 못하는 추적 파일과 끊긴 링크는 실패로 판정한다. 5MB 경계(find +5M, 5,242,880바이트 초과), 링크 자체 크기 판정, 종료 코드 0/1은 유지했다. LC_ALL=C로 비UTF-8 텍스트도 줄 단위로 잡는다. 정적 검사 1건은 순수 실행으로 옛 스크립트 FAIL→새 스크립트 PASS를 확인했고, Git Bash synthetic 11가지 사례에서 옛/새 결과를 대조했다. tests/test_private_paths.py의 subprocess 계약 검사(줄바꿈 이름·링크·권한은 POSIX만)는 작성만 했고 Linux/Windows CI 확인이 남았다.'

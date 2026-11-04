@@ -1,0 +1,6 @@
+pr: 825
+rows:
+- sha: '3b814e5'
+  at: 2026-10-21 19:30
+  summary: Windows 검사에서 수집과 정리 시간을 구분해 남기고 기존 10분 안에서 배정을 조정했습니다.
+  text: '#825: serial critical step만 2→3분으로 배정하고 job600초·parallel6분·원래 test/service timeout은 보존한다. 각 phase의 bounded monotonic checkpoint는 미관측 시각을 생략하고 stage 시작/완료와 report 수를 진단 전용 JSON에 기록하며 PASS receipt/proof에서는 읽지 않는다. Fake hook/clock·중단·쓰기 실패·proof 분리 등 관련103건과 Python3.10 AST/public/기록/diff 검사를 수행했다. ZIP 시각의 collection 약85초는 간접 추정이며 새 head의 native 성공·실제600초 충족은 미검증이다.'

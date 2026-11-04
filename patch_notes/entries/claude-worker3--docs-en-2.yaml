@@ -1,0 +1,14 @@
+pr: 1014
+rows:
+- sha: 14ebe15
+  at: 2026-10-29 13:56
+  text: '영문 문서 3종 추가(docs/research_protocol.en.md, pi-qa.en.md, vocabulary.en.md), README.en과 manual.en의 해당 링크를 영문판으로, AGENTS.md에 영문판 동시 갱신 안내'
+  summary: 연구 수행 규약·PI Q&A·어휘 표의 영문판을 추가하고 영문 README와 영문 매뉴얼이 이를 가리킵니다.
+- sha: '0063375'
+  at: 2026-10-29 13:58
+  text: 한국어 매뉴얼 머리에 영문판 안내 추가
+  summary: 한국어 매뉴얼 맨 위에서 영문판 문서로 바로 갈 수 있습니다.
+- sha: 2fd8feb
+  at: 2026-10-29 14:11
+  text: 영문 매뉴얼 머리말의 언어 안내를 영문판 현황에 맞게 고침
+  summary: 영문 매뉴얼 첫머리가 현재 영문판이 있는 문서를 정확히 알려 줍니다.

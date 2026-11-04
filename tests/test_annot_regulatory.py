@@ -679,7 +679,9 @@ def _server_env(tmp_path, key_file, with_package):
             "LABHQ_CONFIG": str(config), "FAKE_AG_KEY_SHA256": hashlib.sha256(FAKE_KEY.encode()).hexdigest()}
 
 
-BASE_TOOLS = {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex"}
+BASE_TOOLS = {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex", "fulltext",
+              "key_fulltext", "citation_chase", "preprints", "openalex_works", "crossref_doi", "unpaywall",
+              "pdb", "chembl"}
 
 
 @pytest.mark.parametrize("key,package", [(False, True), (True, False)])
@@ -702,7 +704,7 @@ async def test_with_a_key_the_server_offers_alphagenome_and_keeps_the_key_out_of
     env = _server_env(tmp_path, key_file, True)
     spec = McpServerSpec(name="annot", command=sys.executable, args=["-m", "labhq.tools.annot_mcp"], env=env)
     assert FAKE_KEY not in json.dumps(spec.model_dump(mode="json"))  # neither the command line nor its env
-    assert set(await list_tools(spec)) == BASE_TOOLS | {"alphagenome"}
+    assert set(await list_tools(spec)) == BASE_TOOLS | {"alphagenome", "alphagenome_variant"}
     params = StdioServerParameters(command=sys.executable, args=spec.args, env={**os.environ, **env})
     async with stdio_client(params) as streams:
         async with ClientSession(streams[0], streams[1]) as session:
@@ -816,7 +818,9 @@ def home(tmp_path, monkeypatch):
 def test_init_asks_once_and_stores_the_key_only_in_the_owner_only_file(home, tmp_path, monkeypatch, capsys):
     prompts = []
     monkeypatch.setattr(wizard, "_interactive", lambda: True)
-    monkeypatch.setattr(wizard.getpass, "getpass", lambda prompt: prompts.append(prompt) or f"  {FAKE_KEY}  ")
+    # init also asks for a GitHub token now (#687); only the AlphaGenome question is counted here.
+    monkeypatch.setattr(wizard.getpass, "getpass",
+                        lambda prompt: (prompts.append(prompt) if "AlphaGenome" in prompt else None) or f"  {FAKE_KEY}  ")
     result = wizard.run()
     assert len(prompts) == 1 and "AlphaGenome API 키가 있으면 붙여 넣으세요, 없으면 Enter" in prompts[0]
     key_file = home / ".labhq" / "secrets" / "alphagenome_api_key"
@@ -836,7 +840,8 @@ def test_init_asks_once_and_stores_the_key_only_in_the_owner_only_file(home, tmp
 def test_init_skip_leaves_no_file_and_asks_again_next_time(home, tmp_path, monkeypatch, capsys):
     prompts = []
     monkeypatch.setattr(wizard, "_interactive", lambda: True)
-    monkeypatch.setattr(wizard.getpass, "getpass", lambda prompt: prompts.append(prompt) or "")
+    monkeypatch.setattr(wizard.getpass, "getpass",
+                        lambda prompt: (prompts.append(prompt) if "AlphaGenome" in prompt else None) or "")
     result = wizard.run()
     assert len(prompts) == 1 and not (home / ".labhq" / "secrets").exists()
     assert "건너뜀" in capsys.readouterr().out

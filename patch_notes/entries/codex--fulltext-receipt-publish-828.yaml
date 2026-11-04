@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: 8ad4857
+  at: 2026-10-21 17:03
+  summary: 논문 스킬을 만들거나 다시 쓸 때 실제 본문과 추출 범위 기록을 확인합니다.
+  text: tool 원본 receipt와 본문·변환 입력 hash를 결박하고 partial/unknown·구판은 자료를 요청한다. PDF 확보와 읽을 수 있는 방법/QC 근거를 구분하며 실제 PDF 범위·OCR·연구 효용은 미검증이다. 이슈828은 부분 해결이다.

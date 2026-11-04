@@ -16,3 +16,9 @@ export function initTabShell(nav, root, initial = 'decisions') {
   activateTab(nav, panels, initial);
   return id => activateTab(nav, panels, id);
 }
+
+export function updateDecisionBadge(badge, count) {
+  badge.textContent = count ? String(count) : '';
+  badge.hidden = count === 0;
+  badge.setAttribute?.('aria-label', `결정 대기 ${count}건`);
+}

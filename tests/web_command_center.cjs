@@ -63,6 +63,14 @@ async function load(name){
   assert.equal(statusCards[1]._staffParts.status.textContent,'오류');
   assert.match(statusCards[1].className,/staff-error/,'오류 카드는 색 구분용 class를 가진다');
   assert.equal(statusCards[2]._staffParts.status.textContent,'순서 대기');
+  strip.syncStaffCards(staff,[{id:'busy',name:'Busy',state:'idle'}],{
+    visual:()=> 'working', stateText:()=> '명령 실행 중 · 9분째',
+    currentTool:()=> ({name:'Bash'}), toolLabel:()=> '명령 실행'
+  });
+  const busy=staff.querySelectorAll('[data-agent]')[0];
+  assert.equal(busy._staffParts.status.textContent,'명령 실행 중 · 9분째');
+  assert.equal(busy._staffParts.tool.textContent,'도구 · 명령 실행');
+  assert.match(busy['aria-label'],/명령 실행 중/);
 
   const shell=await load('shell.js');
   const nav=new Element('nav'),panels=[new Element('section'),new Element('section')];

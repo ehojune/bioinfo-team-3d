@@ -97,32 +97,73 @@ def _posix_process_exited(pid: int) -> bool:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows process-tree termination")
+@pytest.mark.parametrize("startup_delay", [0, 1.5])
 @pytest.mark.asyncio
-async def test_windows_timeout_kills_cli_and_grandchild(tmp_path):
+async def test_windows_timeout_kills_cli_and_grandchild(tmp_path, monkeypatch, startup_delay):
     pids = tmp_path / "pids.txt"
     script = tmp_path / "tree.py"
     script.write_text(
         "import os, pathlib, subprocess, sys, time\n"
-        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
-        "pathlib.Path(sys.argv[1]).write_text(f'{os.getpid()} {child.pid}', encoding='utf-8')\n"
+        "time.sleep(float(sys.argv[2]))\n"
+        "out = pathlib.Path(sys.argv[1])\n"
+        "ready = out.with_suffix('.ready')\n"
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "'import pathlib,sys,time; pathlib.Path(sys.argv[1]).touch(); time.sleep(60)', str(ready)])\n"
+        "try:\n"
+        "    deadline = time.monotonic() + 8\n"
+        "    while not ready.exists():\n"
+        "        if time.monotonic() >= deadline:\n"
+        "            raise RuntimeError('grandchild did not become ready')\n"
+        "        time.sleep(0.01)\n"
+        "except BaseException:\n"
+        "    child.kill()\n"
+        "    child.wait(timeout=5)\n"
+        "    raise\n"
+        "out.with_suffix('.tmp').write_text(f'{os.getpid()} {child.pid}', encoding='utf-8')\n"
+        "os.replace(out.with_suffix('.tmp'), out)\n"
         "time.sleep(60)\n",
         encoding="utf-8",
     )
     settings = Settings()
     settings.runner.task_timeout_s = 1
     agent = AgentSpec(id="a", name="A", role="test", engine=Engine.cli, builtin_mcp=[],
-                      cli=CliSpec(command=[sys.executable, str(script), str(pids)]))
+                      cli=CliSpec(command=[sys.executable, str(script), str(pids), str(startup_delay)]))
     workdir = tmp_path / "workdir"
     workdir.mkdir()
     ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=workdir,
                      settings=settings, mcp_servers=[], env={}, emit=_emit, prompt="x")
-    result = await get_adapter(agent.engine, settings).run(ctx)
-    assert not result.ok and result.error == "timeout after 1s"
-    parent, child = map(int, pids.read_text(encoding="utf-8").split())
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline and not (_process_exited(parent) and _process_exited(child)):
-        await asyncio.sleep(0.05)
-    assert _process_exited(parent) and _process_exited(child)
+    adapter = get_adapter(agent.engine, settings)
+    create_process = asyncio.create_subprocess_exec
+    processes = []
+
+    async def create_ready_process(*args, **kwargs):
+        proc = await create_process(*args, **kwargs)
+        if str(script) not in args:
+            return proc
+        processes.append(proc)
+        # Test setup has its own bounded handshake. Production still gets the real process and
+        # enforces its unchanged 1s timeout; even a 1.5s interpreter startup reaches the kill assertions.
+        deadline = time.monotonic() + 10
+        while not pids.exists():
+            if proc.returncode is not None or time.monotonic() >= deadline:
+                pytest.fail("Windows process-tree fixture did not become ready within 10s")
+            await asyncio.sleep(0.05)
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_ready_process)
+    try:
+        result = await adapter.run(ctx)
+        assert not result.ok and result.error == "timeout after 1s"
+        parent, child = map(int, pids.read_text(encoding="utf-8").split())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not (_process_exited(parent) and _process_exited(child)):
+            await asyncio.sleep(0.05)
+        assert _process_exited(parent) and _process_exited(child)
+    finally:
+        # A failed readiness handshake must not leave the fixture tree running.
+        for proc in processes:
+            await adapter._kill(proc)
+            await asyncio.wait_for(proc.communicate(), 5)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process-group termination")

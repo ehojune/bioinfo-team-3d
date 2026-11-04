@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 import time
 
 import pytest
@@ -11,6 +12,12 @@ from labhq.models import AskRequest, Task, TaskResult
 from labhq.settings import Settings
 
 ROSTER = [{"id": "cso", "engine": "claude_code"}, {"id": "worker", "engine": "claude_code"}]
+
+
+@pytest.fixture(autouse=True)
+def fake_git_provenance(monkeypatch):
+    # Fake consult recovery does not depend on checkout metadata or a Git process.
+    monkeypatch.setattr("labhq.integrations.rounds._git_commit", lambda: None)
 
 
 class CaptureSocket:
@@ -53,9 +60,34 @@ async def eventually(predicate, timeout=2.0):
     raise AssertionError("condition not reached")
 
 
+SETTLE_BOUND_S = 3
+SETTLE_EVIDENCE_TIMES = 8
+
+
+def settle_timeout_evidence(tasks, completed, elapsed):
+    """Failure output only: counts and times, never a coroutine repr, ask text, environment or path. Nightly run
+    39858916081 timed out here with the gathered asks already finished; observations alone do not prove the cause."""
+    done = sum(1 for task in tasks if task.done())
+    cancelled = sum(1 for task in tasks if task.cancelled())
+    times = sorted(round(float(at), 3) for at in completed.values())[:SETTLE_EVIDENCE_TIMES]
+    return (f"settle: the {SETTLE_BOUND_S}s bound fired after {elapsed:.3f}s for {len(tasks)} ask task(s). "
+            f"Observed after the timeout: done={done} cancelled={cancelled} not_done={len(tasks) - done} "
+            f"(the timeout's own cancel may not be processed yet). Completion callbacks so far={len(completed)}, "
+            f"seconds after settle started: {times}")
+
+
 async def settle(hub):
     if hub.ask_tasks:
-        await asyncio.wait_for(asyncio.gather(*list(hub.ask_tasks.values())), 3)
+        tasks = list(hub.ask_tasks.values())
+        started = time.monotonic()
+        completed = {}  # callback execution times; a busy loop may run callbacks after the tasks actually ended
+        for index, task in enumerate(tasks):
+            task.add_done_callback(lambda _task, index=index: completed.setdefault(index, time.monotonic() - started))
+        try:
+            await asyncio.wait_for(asyncio.gather(*tasks), SETTLE_BOUND_S)
+        except asyncio.TimeoutError:
+            print(settle_timeout_evidence(tasks, completed, time.monotonic() - started), file=sys.stderr)
+            raise
     await asyncio.sleep(0)
 
 
@@ -97,37 +129,76 @@ async def approve_resume(hub):
 
 
 @pytest.mark.parametrize("runner", ["same_generation", "late_reconnect"])
-async def test_restart_adopts_running_consult_instead_of_overlapping(tmp_path, runner):
+async def test_restart_adopts_running_consult_instead_of_overlapping(tmp_path, runner, monkeypatch):
+    # Only an outer deadlock watchdog: readiness is established by events, never elapsed sleeps.
+    await asyncio.wait_for(_restart_adopts_running_consult(tmp_path, runner, monkeypatch), 60)
+
+
+async def _restart_adopts_running_consult(tmp_path, runner, monkeypatch):
     s = settings(tmp_path)
     workdir = str(tmp_path / "cso-workdir")
     ask, running = await start_consult_then_crash(s, workdir)
 
     second = Hub(s)
     socket = CaptureSocket()
+    waiting_for_runner = asyncio.Event()
+    adoption_entered, release_adoption, adoption_ready = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    wait_online, publish = second.wait_agent_online, second.publish
+
+    async def observe_online(agent_id, timeout_s, still_waiting=None):
+        assert agent_id == "cso" and timeout_s == s.gateway.resume_wait_s
+        waiting_for_runner.set()
+        return await wait_online(agent_id, timeout_s, still_waiting=still_waiting)
+
+    async def observe_publish(event, **kwargs):
+        adopting = (event["type"] == "request.step_wait"
+                    and event.get("data", {}).get("step_id") == "consult")
+        if adopting:
+            # _await_prior_task installs the old task's result future before publishing this event.
+            assert running["id"] in second.futures
+            adoption_entered.set()
+            await release_adoption.wait()  # inject delayed readiness without a wall-clock race
+        await publish(event, **kwargs)
+        if adopting:
+            adoption_ready.set()
+
+    monkeypatch.setattr(second, "wait_agent_online", observe_online)
+    monkeypatch.setattr(second, "publish", observe_publish)
     try:
         assert second.requests["r"]["status"] == "interrupted"
         if runner == "same_generation":
             second.register_runner("local", socket, ROSTER, "inc-1")
         await approve_resume(second)
-        await asyncio.sleep(0.1)
         if runner == "late_reconnect":
+            await waiting_for_runner.wait()
             assert second.store.get("ask", ask.id)["state"] == "working", "wait for the runner, do not fail"
+            assert not adoption_entered.is_set() and consults(socket) == []
             second.register_runner("local", socket, ROSTER, "inc-1")
-            await asyncio.sleep(0.1)
+        await adoption_entered.wait()
+        assert not adoption_ready.is_set()
+        assert not second.futures[running["id"]].done()
         # The old consult still owns the CSO session and workdir on the runner.
         for task in consults(socket):
             assert task["id"] == running["id"] or (
                 task["resume_session_id"] != "shared-session" and task["meta"].get("workdir") != workdir)
         assert [task for task in consults(socket) if task["id"] != running["id"]] == []
 
+        release_adoption.set()
+        await adoption_ready.wait()
         await second.on_runner_message("local", result_frame(running["id"], "Use cohort C7", "rotated-session"))
-        await settle(second)
+        # The entire scenario has a watchdog; completion must not race a separate three-second timer.
+        await asyncio.gather(*list(second.ask_tasks.values()))
+        await asyncio.sleep(0)
         entry = second.store.get("ask", ask.id)
         assert entry["state"] == "resolved"
         assert entry["answer"]["status"] == "answered" and entry["answer"]["answer"] == "Use cohort C7"
         assert second.requests["r"]["cso_session_id"] == "rotated-session"
         assert [frame["type"] for frame in socket.sent].count("task.dispatch") == 0
     finally:
+        tasks = list(second.ask_tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         second.store.close()
 
 
@@ -233,6 +304,134 @@ async def test_adoption_prefers_the_latest_consult_over_a_higher_attempt(tmp_pat
         attempt, result = await hub.adopt_consult("the-ask", "cso")
         assert attempt == 1 and result is not None and result.text == "Use cohort C7"
     finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize("completion", ["before_adoption", "while_waiting"])
+@pytest.mark.parametrize("max_attempts", [1, 3])
+@pytest.mark.parametrize("old_cost", [0.75, None])
+async def test_interrupted_consult_resumes_at_last_attempt_with_new_task(
+        tmp_path, monkeypatch, completion, max_attempts, old_cost):
+    s = settings(tmp_path)
+    s.orchestrator.step_max_attempts = max_attempts
+    s.pi_language.enabled = False
+    hub = Hub(s)
+    socket = CaptureSocket()
+    try:
+        hub.register_runner("local", socket, ROSTER, "inc-1")
+        req = hub.requests["r"] = {
+            "id": "r", "text": "compare cohorts", "status": "running", "cost_usd": 0.0,
+            "cso_session_id": "old-session", "cso_workdir": str(tmp_path / "old-workdir"),
+        }
+        # The latest interrupted result must not expose an older, already answered consult.
+        stale = TaskResult(task_id="stale", agent_id="cso", ok=True, text="stale answer", cost_usd=0)
+        ledger_consult(hub, "stale", attempt=1, dispatched_at=0, completed=True, result=stale)
+        ledger_consult(hub, "interrupted", attempt=max_attempts, dispatched_at=1, completed=False)
+        interrupted = TaskResult(task_id="interrupted", agent_id="cso", ok=False,
+                                 error="runner interrupted during shutdown", cost_usd=old_cost,
+                                 shutdown_evidence={"confirmed_dead": True})
+
+        async def finish_old():
+            await hub.on_runner_message("local", {
+                "type": "task.result", "task_id": interrupted.task_id, "request_id": "r",
+                "data": interrupted.model_dump(mode="json"),
+            })
+
+        if completion == "before_adoption":
+            await finish_old()
+        else:
+            publish = hub.publish
+
+            async def finish_while_waiting(event, **kwargs):
+                if event["type"] == "request.step_wait" and event.get("data", {}).get("step_id") == "consult":
+                    assert "interrupted" in hub.futures and not consults(socket)
+                    await finish_old()
+                await publish(event, **kwargs)
+
+            monkeypatch.setattr(hub, "publish", finish_while_waiting)
+        calls = []
+
+        async def dispatch(task):
+            calls.append(task)
+            result = TaskResult(task_id=task.id, agent_id="cso", ok=True, text="Use cohort C7", cost_usd=0.25)
+            hub._record_task_cost("r", task.id, result)
+            return result
+
+        monkeypatch.setattr(hub, "dispatch", dispatch)
+        await asyncio.wait_for(hub.orchestrator.answer_ask(question("the-ask"), "local"), 5)
+        assert len(calls) == 1, "the interrupted last attempt needs one fresh consult"
+        fresh = calls[0]
+        assert fresh.id not in {"interrupted", "stale"}
+        assert fresh.meta["attempt"] == max_attempts
+        assert fresh.resume_session_id is None and "workdir" not in fresh.meta
+        assert hub.store.get("ask", "the-ask")["answer"]["answer"] == "Use cohort C7"
+        assert {"interrupted", "stale"} <= hub.recovered_tasks
+        assert hub.store.get("task", "interrupted")["result"] == interrupted.model_dump(mode="json")
+        assert req["cost_by_task"] == {"interrupted": old_cost, fresh.id: 0.25}
+        assert req["cost_usd"] == (old_cost or 0) + 0.25
+        assert req["cost_known"] is (old_cost is not None)
+        assert req["cost_items"]["interrupted"]["status"] == ("actual" if old_cost is not None else "unknown")
+    finally:
+        await hub.pi_interpreter.close()
+        hub.store.close()
+
+
+async def test_interrupted_consult_result_received_during_reconnect_is_not_adopted(tmp_path, monkeypatch):
+    hub = Hub(settings(tmp_path))
+    try:
+        ledger_consult(hub, "interrupted", attempt=3, dispatched_at=1, completed=False)
+        done = TaskResult(task_id="interrupted", agent_id="cso", ok=False,
+                          shutdown_evidence={"confirmed_dead": True})
+
+        async def reconnect(agent_id, timeout_s):
+            hub.register_runner("local", CaptureSocket(), ROSTER, "inc-1")
+            ledger_consult(hub, "interrupted", attempt=3, dispatched_at=1, completed=True, result=done)
+
+        monkeypatch.setattr(hub, "wait_agent_online", reconnect)
+        assert await hub.adopt_consult("the-ask", "cso") == (3, None)
+        assert "interrupted" in hub.recovered_tasks
+    finally:
+        await hub.pi_interpreter.close()
+        hub.store.close()
+
+
+@pytest.mark.parametrize("ok,shutdown", [(True, {}), (True, {"confirmed_dead": True}), (False, {})])
+async def test_completed_consult_without_failed_shutdown_is_still_adopted(tmp_path, ok, shutdown):
+    hub = Hub(settings(tmp_path))
+    try:
+        done = TaskResult(task_id="completed", agent_id="cso", ok=ok, text="answer" if ok else "",
+                          error=None if ok else "invalid input", shutdown_evidence=shutdown, cost_usd=0.75)
+        ledger_consult(hub, done.task_id, attempt=3, dispatched_at=1, completed=True, result=done)
+        attempt, result = await hub.adopt_consult("the-ask", "cso")
+        assert attempt == 3 and result == done.model_copy(update={"cost_usd": 0.0})
+        assert hub.store.get("task", done.task_id)["result"] == done.model_dump(mode="json")
+    finally:
+        hub.store.close()
+
+
+async def test_interrupted_automatic_facilities_consult_is_never_rerun(tmp_path, monkeypatch):
+    s = settings(tmp_path)
+    s.pi_language.enabled = False
+    hub = Hub(s)
+    try:
+        hub.agents = {"worker": ROSTER[1], "facilities": {"id": "facilities", "engine": "codex"}}
+        hub.requests["r"] = {"id": "r", "text": "compare cohorts", "status": "running"}
+        ask = question("the-ask").model_copy(update={"to": "facilities"})
+        hub.store.put("ask", ask.id, {"ask": ask.model_dump(mode="json"), "state": "working",
+                                      "scope": ["r", "step", "s1"], "facilities_diagnosis": True})
+        done = TaskResult(task_id="interrupted", agent_id="facilities", ok=False,
+                          shutdown_evidence={"confirmed_dead": True})
+        ledger_consult(hub, "interrupted", attempt=1, dispatched_at=1, completed=True,
+                       result=done, agent="facilities")
+
+        async def forbidden(task):
+            pytest.fail("automatic facilities diagnosis must not rerun")
+
+        monkeypatch.setattr(hub, "dispatch", forbidden)
+        await hub.orchestrator.answer_ask(ask, "local")
+        assert hub.store.get("ask", ask.id)["answer"]["status"] == "rejected"
+    finally:
+        await hub.pi_interpreter.close()
         hub.store.close()
 
 
@@ -344,7 +543,10 @@ async def test_adoption_never_takes_another_agents_consult_or_session(tmp_path):
         await hub.orchestrator.answer_ask(ask, "local")
         assert [task.agent_id for task in calls] == ["cso"]
         assert hub.requests["r"]["cso_session_id"] == "cso-next"
-        assert hub.store.get("ask", "the-ask")["answer"]["answer"] == "Use bay 2"
+        answer = hub.store.get("ask", "the-ask")["answer"]
+        assert answer["answer"].endswith("\n\nUse bay 2")
+        assert answer["fallback_reason"] == "facilities_unavailable"
+        assert "시설팀에 다시 문의하지 마세요" in answer["answer"]
     finally:
         hub.store.close()
 
@@ -729,20 +931,30 @@ async def test_restart_keeps_a_facilities_ask_with_facilities_across_a_late_reco
         second.store.close()
 
 
-async def test_facilities_ask_without_facilities_goes_to_the_cso_without_waiting(tmp_path):
+async def test_facilities_ask_without_facilities_goes_to_the_cso_without_waiting(tmp_path, monkeypatch):
     s = settings(tmp_path)
-    s.gateway.resume_wait_s = 30  # a wait for facilities would outlast every bound below
+    s.gateway.resume_wait_s = 30
     ask, running = await start_facilities_ask_then_crash(s, with_facilities=False)
     second = Hub(s)
     waits = record_runner_waits(second)
+    recorded_wait = second.wait_agent_online
+
+    async def no_facilities_wait(agent_id, timeout_s):
+        if agent_id == "facilities":
+            pytest.fail("an ask already routed to CSO must not wait for facilities")
+        return await recorded_wait(agent_id, timeout_s)
+
+    monkeypatch.setattr(second, "wait_agent_online", no_facilities_wait)
     local = CaptureSocket()
     try:
         second.register_runner("local", local, ROSTER, "inc-1")
         await approve_resume(second)
         await second.on_runner_message("local", result_frame(running["id"], "Use bay 2", "cso-next"))
-        await asyncio.wait_for(settle(second), 2)
+        await settle(second)
         answer = second.store.get("ask", ask.id)["answer"]
-        assert answer["answer"] == "Use bay 2" and answer["from"] == "cso"
+        assert answer["answer"].endswith("\n\nUse bay 2") and answer["from"] == "cso"
+        assert answer["fallback_reason"] == "facilities_unavailable"
+        assert "시설팀에 다시 문의하지 마세요" in answer["answer"]
         assert consults(local) == [] and "facilities" not in waits
     finally:
         second.store.close()
@@ -765,10 +977,30 @@ async def test_facilities_ask_falls_back_to_the_cso_when_facilities_never_return
             return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="Use bay 2")
 
         hub.dispatch = dispatch
-        await asyncio.wait_for(hub.orchestrator.answer_ask(ask, "local"), 2)
+        waits, original = [], hub.wait_agent_online
+
+        async def recording(agent_id, timeout_s, *args, **kwargs):
+            # The real wait runs: facilities never registers, so it ends offline at its own deadline.
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            online = await original(agent_id, timeout_s, *args, **kwargs)
+            waits.append((agent_id, timeout_s, online, loop.time() - started))
+            return online
+
+        hub.wait_agent_online = recording
+        # A hang guard only, as in the restart case above. The claim is the configured facilities wait and the CSO
+        # fallback, not how fast this host's disk commits the ask records (PR #837 Windows pool).
+        await asyncio.wait_for(hub.orchestrator.answer_ask(ask, "local"), 60)
+        assert [wait[:3] for wait in waits] == [("facilities", 0.2, False)]
+        # asyncio may fire a timer up to its clock resolution early; the wait still lasted its configured 0.2 s.
+        assert waits[0][3] >= 0.2 - 2 * time.get_clock_info("monotonic").resolution
         assert [task.agent_id for task in calls] == ["cso"]
         entry = hub.store.get("ask", ask.id)
-        assert entry["routed_to"] == "cso" and entry["answer"]["answer"] == "Use bay 2"
+        assert entry["routed_to"] == "cso" and entry["state"] == "resolved"
+        assert entry["answer"]["answer"].endswith("\n\nUse bay 2")
+        assert entry["answer"]["fallback_reason"] == "facilities_unavailable"
+        assert "시설팀에 다시 문의하지 마세요" in entry["answer"]["answer"]
+        assert entry["answer"]["from"] == "cso" and entry["answer"]["routed_to"] == "cso"
     finally:
         hub.store.close()
 
@@ -804,6 +1036,33 @@ async def test_unrouted_facilities_ask_uses_the_durable_roster_and_waits_for_cso
         await hub.orchestrator.answer_ask(ask, "local")
         assert waits == ["facilities", "cso"]
         assert [task.agent_id for task in calls] == ["cso"]
-        assert hub.store.get("ask", ask.id)["answer"]["answer"] == "Use bay 2"
+        answer = hub.store.get("ask", ask.id)["answer"]
+        assert answer["answer"].endswith("\n\nUse bay 2")
+        assert answer["fallback_reason"] == "facilities_unavailable"
+        assert "시설팀에 다시 문의하지 마세요" in answer["answer"]
     finally:
         hub.store.close()
+
+
+def test_settle_timeout_evidence_counts_states_and_never_shows_the_tasks():
+    """Pure: no event loop. Inert stand-ins whose repr would leak if the evidence printed a task."""
+    class FakeTask:
+        def __init__(self, done, cancelled=False):
+            self._done, self._cancelled = done, cancelled
+
+        def done(self):
+            return self._done
+
+        def cancelled(self):
+            return self._cancelled
+
+        def __repr__(self):
+            return "<coro Which cohort should the comparison use? C:/private/path>"
+
+    tasks = [FakeTask(True), FakeTask(True, cancelled=True), FakeTask(False)]
+    text = settle_timeout_evidence(tasks, {0: 3.0004, 1: 3.0001}, 3.1234)
+    assert f"the {SETTLE_BOUND_S}s bound fired after 3.123s for 3 ask task(s)" in text
+    assert "done=2 cancelled=1 not_done=1" in text and "callbacks so far=2" in text and "[3.0, 3.0]" in text
+    assert "cohort" not in text and "private" not in text and "coro" not in text
+    many = settle_timeout_evidence([FakeTask(True)] * 50, {i: i / 10 for i in range(50)}, 4.0)
+    assert many.endswith("[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]")  # bounded, not one time per task

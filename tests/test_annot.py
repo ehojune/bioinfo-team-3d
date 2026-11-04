@@ -105,7 +105,9 @@ async def test_vep_sends_batches_of_200_per_endpoint_and_keeps_input_order(tmp_p
     assert [c.url.path for c in posts] == ["/vep/human/region"] * 3 + ["/vep/human/hgvs", "/vep/human/id"]
     assert [len(json.loads(c.content)["variants"]) for c in posts[:3]] == [200, 200, 50]
     assert json.loads(posts[0].content)["variants"][0] == "1 1000 labhq0 A G . . ."
-    assert all(parse_qs(c.url.query.decode()) == {"canonical": ["1"], "hgvs": ["1"], "mane": ["1"]} for c in posts)
+    # human GRCh38 also asks for the AlphaMissense plugin (#621); the other assemblies and species do not
+    assert all(parse_qs(c.url.query.decode()) == {"canonical": ["1"], "hgvs": ["1"], "mane": ["1"],
+                                                  "AlphaMissense": ["1"]} for c in posts)
     assert result["n_inputs"] == result["n_ok"] == 452 and result["n_errors"] == 0
     assert [r["input"] for r in result["results"]] == variants
     first = result["results"][0]
@@ -488,7 +490,7 @@ def test_core_staff_with_annot_and_roster_line(tmp_path):
     registry = Registry(REPO / "agents", tmp_path / "talent")
     registry.load()
     with_annot = {a.id for a in registry.agents.values() if "annot" in a.builtin_mcp}
-    assert with_annot == {"analyst", "bioinfo-agent", "biologist", "lit_scout"}
+    assert with_annot == {"analyst", "bioinfo-agent", "biologist", "chief_of_staff", "lit_scout", "sci_reviewer"}  # briefing: literature tools only (#1041)
     analyst = registry.get("analyst").summary()
     assert "labhq_annot" in Hub._agent_mcp(analyst)
     assert "labhq_annot=yes" in format_roster([analyst])
@@ -509,8 +511,11 @@ async def test_stdio_server_lists_tools_and_answers_malformed_items_offline(tmp_
     (tmp_path / "work").mkdir()
     tools = await list_tools(McpServerSpec(name="annot", command=sys.executable,
                                            args=["-m", "labhq.tools.annot_mcp"], env=env))
-    # #435 C ③ added the regional tools; without a key alphagenome is not registered.
-    assert set(tools) == {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex"}
+    # #435 C ③ added the regional tools, #697 fulltext and #720 literature discovery; without a key alphagenome is
+    # not registered.
+    assert set(tools) == {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex",
+                          "fulltext", "key_fulltext", "citation_chase", "preprints", "openalex_works",
+                          "crossref_doi", "unpaywall", "pdb", "chembl"}
     params = StdioServerParameters(command=sys.executable, args=["-m", "labhq.tools.annot_mcp"],
                                    env={**os.environ, **env})
     async with stdio_client(params) as streams:

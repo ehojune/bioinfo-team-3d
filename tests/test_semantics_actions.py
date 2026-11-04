@@ -382,3 +382,11 @@ def test_the_report_skips_a_broken_section_and_proposes_removal_only_with_enough
     assert acts.report(many, setting="shadow", on=True)["propose"] == []
     many += [_follow("refused", followups=[]) for _ in range(5)]  # refused while the model said open
     assert any(p.startswith("불일치") for p in acts.report(many, setting="shadow", on=True)["propose"])
+
+
+def test_the_example_config_a_new_init_copies_asks_for_ab_with_confirmed_actions():
+    """#613: `labhq init` turns the action layer on as `actions: confirm`; the settings test covers the rest."""
+    from labhq.settings import Settings
+    settings = Settings.load(str(ROOT / "config" / "labhq.example.yaml"))
+    assert shadow.configured(settings) == "ab" and shadow.actions_setting(settings) == "confirm"
+    assert shadow.resolve(settings.semantics).actions is True

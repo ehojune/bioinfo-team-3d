@@ -1,13 +1,25 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
 import socket
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
+
+from . import durable
+
+
+def tool_input_summary(value: Any) -> str:
+    """A readable tool input head, taken before JSON previews are truncated."""
+    if isinstance(value, dict):
+        value = next((value[key] for key in ("command", "file_path", "path", "query", "pattern", "description")
+                      if key in value), ", ".join(value))
+    return " ".join(str(value or "").split())[:160]
 
 
 CLAUDE_ENV_PASSTHROUGH = frozenset({
@@ -71,8 +83,37 @@ def without_windows_app_aliases(env: dict[str, str]) -> dict[str, str]:
     return cleaned
 
 
+REPLACE_RETRY = os.name == "nt"
+
+
+def replace_file(source: str | Path, target: str | Path, *, attempts: int = 20, delay_s: float = 0.05) -> None:
+    """os.replace that waits out a Windows scanner or indexer briefly holding either path open.
+
+    Windows reports that as PermissionError (WinError 5 or 32) though nothing is wrong with the permissions, and the
+    same call succeeds a few milliseconds later. POSIX, other errors, and a hold that outlasts `attempts` raise."""
+    for attempt in range(1, attempts + 1):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if not REPLACE_RETRY or attempt == attempts:
+                raise
+            time.sleep(delay_s)
+
+
 def atomic_write_text(path: str | Path, text: str) -> None:
-    """Replace a text file from a same-directory temporary file."""
+    """Replace a text file from a same-directory temporary file.
+
+    Queues behind the files' durable writer while it has work queued (labhq.durable), so it cannot overtake a write."""
+    durable.call(durable.FILES, _atomic_write_text_now, path, text)
+
+
+async def aatomic_write_text(path: str | Path, text: str) -> None:
+    """`atomic_write_text` for a coroutine: the fsync runs on the durable writer thread, not on the event loop."""
+    await durable.run(durable.FILES, _atomic_write_text_now, path, text)
+
+
+def _atomic_write_text_now(path: str | Path, text: str) -> None:
     target = Path(path)
     temporary: Path | None = None
     try:
@@ -84,7 +125,7 @@ def atomic_write_text(path: str | Path, text: str) -> None:
             out.write(text)
             out.flush()
             os.fsync(out.fileno())
-        os.replace(temporary, target)
+        replace_file(temporary, target)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -113,6 +154,28 @@ def short(obj: Any, n: int = 300) -> str:
     s = obj if isinstance(obj, str) else json.dumps(obj, ensure_ascii=False, default=str)
     s = " ".join(s.split())
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+TOOL_INPUT_CHARS = 4096
+
+
+def tool_input_fingerprint(name: str | None, value: Any) -> str | None:
+    """Hash raw tool input before display clipping; preserve string whitespace and sort JSON keys."""
+    if value is None or value == "":
+        return None  # the engine did not report an input
+    canonical = value if isinstance(value, str) else json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    text = f"{name or ''}\0{canonical[:TOOL_INPUT_CHARS]}"
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+
+
+def event_preview(field: str, obj: Any, n: int = 300) -> dict:
+    """Display only: whitespace is collapsed. Fingerprint raw tool input before calling this."""
+    value = short(obj, n)
+    whole = short(obj, 2**63 - 1)
+    if len(whole) <= n:
+        return {field: value}
+    return {field: value, f"{field}_truncated": True, f"{field}_chars": len(whole), f"{field}_limit": n}
 
 
 def clip(text: str | None, n: int) -> str:
@@ -401,6 +464,21 @@ def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def free_ports(count: int) -> list[int]:
+    """`count` different free loopback ports. All are held until every one is drawn: two `free_port()` calls in a row
+    can return the same number once the first socket is closed (#1238)."""
+    held: list[socket.socket] = []
+    try:
+        for _ in range(count):
+            sock = socket.socket()
+            held.append(sock)
+            sock.bind(("127.0.0.1", 0))
+        return [sock.getsockname()[1] for sock in held]
+    finally:
+        for sock in held:
+            sock.close()
 
 
 def output_relpath(name: str) -> str | None:

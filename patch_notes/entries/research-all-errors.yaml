@@ -3,6 +3,8 @@ rows:
 - sha: 57f7929
   at: 2026-10-03 20:00
   text: '결과 계약의 슬롯·claim 결합 문제를 필드 오류와 함께 첫 교정에 알림(9차 시운전: 슬롯 누락이 마지막 검증에서야 드러나 단계 실패)'
+  summary: 결과 항목과 주장 연결의 오류를 첫 교정 때 함께 알려줍니다.
 - sha: d44f51a
   at: 2026-10-03 20:04
-  text: '원본 JSON 결합 검사는 claims·evidence가 list일 때만 해 scalar ledger에서 예외 대신 교정을 받음(봇 P1)'
+  text: 원본 JSON 결합 검사는 claims·evidence가 list일 때만 해 scalar ledger에서 예외 대신 교정을 받음(봇 P1)
+  summary: 결과 목록 대신 잘못된 값이 와도 검사 중 죽지 않고 교정을 요청합니다.

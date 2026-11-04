@@ -1,0 +1,26 @@
+pr: 908
+rows:
+- sha: cee72e9
+  at: '2026-10-24 04:21'
+  summary: 출처를 확정하지 못해도 이미 시도한 조회 기록을 보존합니다.
+  text: P2 4363365293을 수정했다. 미해결 citation lineage 오류가 문제 link를 가리키도록 해 기존 salvage가 evidence 행 대신 support·contradict link만 거부한다. 접근 metadata·필수 slot·다른 context link를 보존하는 회귀 6건이 수정 전 실패했고 관련 pytest 420 passed로 통과했다. Refs #905.
+- sha: 73ae05f
+  at: '2026-10-24 03:24'
+  summary: 확장한 result schema의 고정 hash와 optional 호환성 검사를 갱신합니다.
+  text: 두 Linux CI에서 result schema 고정 hash 1건만 실패한 것을 확인하고 local에서도 재현했다. 결과 schema hash만 새 값으로 고정하며 plan schema·planning prompt·기존 plan hash assertion은 유지한다. 새 metadata가 engine schema에서도 optional인지 검사했다. 관련 pytest 337 passed. Refs #905.
+- sha: 4abf4bf
+  at: '2026-10-24 03:12'
+  summary: 원출처·중간 인용 출처의 결함을 claim으로 전달해 최종 인용을 차단합니다.
+  text: P1 4362801349를 수정했다. 계보의 not_found·conflicting·insufficient·철회는 claim.defects와 defective로 전파하고 실제 조회 미완료만 unverified로 남긴다. linked row 자체의 조회 미완료에도 결함을 보존한다. 수정 전 회귀 16 failed, 수정 후 관련 pytest 323 passed. Refs #905.
+- sha: 51601e6
+  at: '2026-10-24 03:06'
+  summary: 같은 원출처의 모든 인용 행을 검증해 추가 URI·artifact 미확인이 통과되지 않게 합니다.
+  text: P1 4362739079의 URI·artifact 미확인 회귀 2건을 수정 전 재현했다. original_evidence_ids는 병합 component의 모든 확인된 원출처 행을 보존하고 source_keys·independence_groups만 중복 제거한다. 성공 대조군을 포함한 관련 pytest 307 passed, Windows inventory·public 검사 PASS. Refs #905.
+- sha: 2b4bfd5
+  at: '2026-10-24 03:04'
+  summary: 계보 회귀 검사를 기존 evidence test 모듈에 포함해 Windows inventory를 유지합니다.
+  text: 새 파일을 요구하는 Windows selection 거부를 확인하고 모든 계보 검사와 assertion을 기존 test_research_evidence.py에 옮겼다. validate_profile PASS, 관련 pytest 303 passed. workflow·inventory 정책은 변경하지 않았다. Refs #905.
+- sha: d4375c9
+  at: '2026-10-24 02:58'
+  summary: 원문 접근 범위와 최초 실증 출처를 구분하고 순환 인용을 독립 근거에서 제외합니다.
+  text: SourceRef의 optional 접근·Methods/QC·보충자료 metadata와 Evidence.lineage를 추가했다. 순수 assess_lineage가 확인된 원출처의 source identity와 group을 병합하며 순환·누락·미확인은 context로 보존한다. legacy round-trip과 관련 test 303 passed. Refs #905; report·manual 통합은 #907.

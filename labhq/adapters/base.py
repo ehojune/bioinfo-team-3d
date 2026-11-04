@@ -15,13 +15,16 @@ from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Iterable
 
+from .. import durable, proc_tree
+from ..runner import memory_limit
 from ..facilities import signatures as env_signatures
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
-from ..util import extract_json, merge_staff_env, short, without_windows_app_aliases
-from .owned import OwnedPathError, plain_directory, write_owned
+from ..test_guard import guard_test_path
+from ..util import event_preview, extract_json, merge_staff_env, short, without_windows_app_aliases
+from .owned import OwnedPathError, awrite_owned, plain_directory, write_owned
 from .read_only import (labhq_workspace_paths, read_only_engine_env, read_only_launch_error, read_only_mismatch,
                         read_only_workspace_error)
 
@@ -35,6 +38,7 @@ _NPM_NODE_LINE = re.compile(
 
 
 GITHUB_TOKEN_NAMES = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")  # gh / git credentials
+COMMIT_AGENT_ENV = "LABHQ_COMMIT_AGENT"  # read by the PC's gh/git wrappers and .githooks/commit-msg (#813)
 
 
 @dataclass(frozen=True)
@@ -198,45 +202,6 @@ def _idle_process_tree(root_pid: int, servers: list[McpServerSpec]) -> bool | No
     return True
 
 
-def _windows_descendants(root_pid: int) -> list[int]:
-    """Snapshot descendants before taskkill; some sandboxed Windows hosts deny taskkill /T."""
-    if os.name != "nt":
-        return []
-    import ctypes
-    from ctypes import wintypes
-
-    class ProcessEntry(ctypes.Structure):
-        _fields_ = [
-            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
-            ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
-            ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
-            ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", wintypes.LONG),
-            ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260),
-        ]
-
-    kernel = ctypes.windll.kernel32
-    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    snapshot = kernel.CreateToolhelp32Snapshot(0x00000002, 0)
-    if snapshot == ctypes.c_void_p(-1).value:
-        return []
-    children: dict[int, list[int]] = {}
-    entry = ProcessEntry()
-    entry.dwSize = ctypes.sizeof(entry)
-    try:
-        more = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
-        while more:
-            children.setdefault(int(entry.th32ParentProcessID), []).append(int(entry.th32ProcessID))
-            more = kernel.Process32NextW(snapshot, ctypes.byref(entry))
-    finally:
-        kernel.CloseHandle(snapshot)
-    found, pending = [], list(children.get(root_pid, []))
-    while pending:
-        pid = pending.pop()
-        found.append(pid)
-        pending.extend(children.get(pid, []))
-    return found
-
-
 def _npm_script(shim: Path) -> tuple[Path, bool] | None:
     try:
         lines = shim.read_text(encoding="utf-8-sig").splitlines()
@@ -255,6 +220,44 @@ def _npm_script(shim: Path) -> tuple[Path, bool] | None:
                     for line in lines))
                 return script, local_node
     return None
+
+
+def _wrapper_identity(pid: int) -> int | None:
+    """Creation time (FILETIME ticks) of the step's own wrapper child, read while the runner still holds it (#863)."""
+    if os.name != "nt":
+        return None
+    try:
+        handle = proc_tree._open(pid, terminate=False)
+    except (OSError, ValueError):
+        return None
+    if handle is None:
+        return None
+    try:
+        return handle.created
+    finally:
+        handle.close()
+
+
+def cleanup_verdict(record: dict[str, Any]) -> dict[str, Any]:
+    """What the runner may say about a staff CLI's end, from its own observations only (#863).
+
+    `job_close_contract_enforced` needs the wrapper's own activation line before the CLI started and a completed wait
+    for that wrapper: it held the only KILL_ON_CLOSE handle, so its end makes Windows end the rest of the Job. That is
+    the Job close contract, not a measured empty Job (no ActiveProcesses query). A non-zero exit, including labhq's
+    own kill, is not a failed cleanup. Anything less is UNKNOWN; a spawn that created nothing is `not_started`."""
+    evidence = {**record, "active_processes_measured": False}
+    if record.get("spawn") == "failed":
+        evidence["status"] = "not_started"
+    elif record.get("spawn") == "cancelled":
+        evidence.update(status="UNKNOWN", reason="spawn_cancelled_before_handover")
+    elif record.get("job") != "active":
+        evidence.update(status="UNKNOWN", reason=("windows_job_disabled" if record.get("job") == "disabled"
+                                                  else "windows_job_unconfirmed"))
+    elif record.get("wait") != "completed" or type(record.get("returncode")) is not int:
+        evidence.update(status="UNKNOWN", reason="wrapper_wait_unfinished")
+    else:
+        evidence["status"] = "job_close_contract_enforced"
+    return evidence
 
 
 def _is_windows() -> bool:
@@ -370,21 +373,31 @@ def _command_too_long(cmd: list[str]) -> tuple[int, int, str] | None:
     return None
 
 
-ROLE_FOOTER = """
+from ..pi_text import PI_TEXT_RULE
+from ..bioinfo_policy import BIOINFO_ASSIGNMENT_RULE
+
+ROLE_FOOTER = PI_TEXT_RULE + """
 ## Lab rules (all agents)
 - Work inside your task workspace; write deliverables to ./outputs/ and cite their paths.
 - Heavy compute or anything touching restricted data goes through the labhq_hpc tools, never inline.
 - If environment, installation, login or tool errors block you, use labhq_ask(to="facilities").
 - For a method or scope decision use to="cso"; ask a colleague only for a fact only that colleague can answer.
 - Use to="pi" only for the hard stops configured for your role.
-- bioinfo-agent sends every gate question to the CSO first. Build a missing reusable pipeline when the CSO says to;
-  put it under outputs/pipeline/<name>/ with manifest.json so labhq can open the upstream PR.
+- bioinfo-agent sends every gate question to the CSO first.
+- """ + BIOINFO_ASSIGNMENT_RULE + """
 - Separate observed results from hypotheses. Record tool versions and parameters.
+- 도구 오류 원문을 그대로 근거로 쓰고 확인하지 않은 원인을 지어내지 않는다. 안전 검사 등으로 추측하지 않는다.
+- StructuredOutput JSON 파싱 오류는 labhq가 재시도한다. 같은 내용의 JSON만 고치고 PI에게 진행 방식을 묻지 않는다.
 - A lookup that failed (error, timeout, refused access) is a failure, never a negative result; report it as one.
+  Bound external API/remote-service polling to 20 minutes per step; include a wall-clock timeout in scripts too.
+  On timeout, record "조회 불가(시간 초과)", skip that lookup and continue the remaining work without automatic retries.
+  Name each missing lookup and outputs/external_lookup_status.jsonl (when present) in the final report; never invent results.
   A search that found nothing goes in the report with what was searched: source, query, scope and filters.
 - If you fall back to a weaker method (a substitute tool, a subsample, a simpler model), state it and why in
   your report; never switch silently.
 - Report in Korean; keep technical terms, gene names and commands in English.
+- Markdown 강조는 짧은 낱말만 감싼다. 문장부호 뒤에 닫는 `**`를 두고 바로 조사를 붙이지 않는다.
+  그때는 띄우거나 문장을 바꾼다.
 - On GitHub PRs, every comment that contains @codex starts a separate Codex review session. Reply to
   Codex review findings without @codex; after pushing all fixes, post `@codex review` once at the top
   of the PR, and not again while a review is still running.
@@ -397,25 +410,45 @@ GENERAL_RESULT_RULES = (
 
 # The rest of the lab rules for staff that write (not read-only tasks). Writes outside the workspace and paths
 # built from shell variables each raised a PI approval card in the 2nd mock trial (2026-10-03).
-WORKSPACE_WRITE_RULES = (
+# The long-computation rule differs by engine: only Claude staff can use labhq_job, because a job the runner starts
+# runs outside the OS sandbox a Codex (or other engine) run keeps its commands in, and only the Claude approval gate
+# refuses detaching commands (#1003).
+_WRITE_RULES_HEAD = (
     "- Put temporary files and scripts under ./.tmp/ in your workspace; writing to /tmp or %TEMP% outside it needs PI "
     "approval.\n"
     "- In shell commands, write paths relative to your workspace, not built from shell variables; the approval gate "
-    "cannot resolve a variable path and asks the PI.\n"
+    "cannot resolve a variable path and asks the PI.\n")
+_LONG_COMPUTATION_JOB = (
     "- Wait for every command to finish and verify its result before ending your turn; ending the turn stops "
-    "background work and finishes the step with only the outputs present then. Use labhq_hpc tools for long-running "
-    "compute, or ask the PI before proceeding.\n"
+    "background work and finishes the step with only the outputs present then. A computation that takes more than "
+    "10 minutes goes through labhq_job (job_submit with the command and an estimate, then end your turn and you "
+    "are resumed when it finishes) or the labhq_hpc tools, or ask the PI before proceeding; never detach it with "
+    "nohup, a trailing & or Start-Process, which is refused.\n")
+_LONG_COMPUTATION_NO_JOB = (
+    "- Wait for every command to finish and verify its result before ending your turn; ending the turn stops "
+    "background work and finishes the step with only the outputs present then. labhq_job is not available to you: a "
+    "job the runner starts would run outside the sandbox this engine keeps your commands in. A computation that takes "
+    "more than 10 minutes goes through the labhq_hpc tools when you have them; otherwise split it into parts that each "
+    "finish, with their output saved to a file, or ask the PI before proceeding. Do not leave a process running in "
+    "the background (nohup, a trailing & or Start-Process): ending your turn stops it.\n")
+_WRITE_RULES_TAIL = (
     "- If the plan has an environment step, run packages from its interpreter, by the path it reported, but never "
-    "install into that shared environment. For an extra package the PI approved, install it into ./.pylib in your "
-    "own workspace (python -m pip install --target ./.pylib ...) and put ./.pylib first on PYTHONPATH. For R use "
+    "install into that shared environment. If you need an extra package, for example to read a file you received, install it into ./.pylib in your "
+    "own workspace without asking (python -m pip install --target ./.pylib <package>==<version>) and put ./.pylib first on PYTHONPATH. For R use "
     "./.rlib explicitly; never write into another step's workspace. Record task-local Python packages with "
     "`python -m pip freeze --path ./.pylib` (or the package table from ./.rlib) in outputs/env/<step id>.txt.\n")
+WORKSPACE_WRITE_RULES = _WRITE_RULES_HEAD + _LONG_COMPUTATION_JOB + _WRITE_RULES_TAIL
+WORKSPACE_WRITE_RULES_NO_JOB = _WRITE_RULES_HEAD + _LONG_COMPUTATION_NO_JOB + _WRITE_RULES_TAIL
+
+
+def workspace_write_rules(engine: object) -> str:
+    return WORKSPACE_WRITE_RULES if getattr(engine, "value", engine) == "claude_code" else WORKSPACE_WRITE_RULES_NO_JOB
 
 
 def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open: bool = False) -> str:
     """The staff rule for PI personal paths (policy.private_paths). Only `~` and role labels: role files and
     prompts can reach round records and public reports, so no absolute home path goes in. `saved_output_open`:
-    a Claude task whose own project folder in the staff config folder is open for reading (#298 ⑤)."""
+    a task with read-only exceptions for plugin/skill files or its own Claude saved output."""
     if not labels:
         return ""
     lines = ["", "## PI 개인 파일 (모든 직원)",
@@ -424,18 +457,67 @@ def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open
              '- 작업에 꼭 필요해 보이면 손대기 전에 labhq_ask(to="cso")로 묻습니다.',
              "- 대상: " + ", ".join(f"`{label}`" for label in labels)]
     if saved_output_open:
-        lines.append("- Claude가 긴 도구 출력을 따로 저장한 파일(직원 설정 폴더 `projects/` 아래 이 작업 몫)은 Read로 다시 읽을 수 "
-                     "있습니다. 그 폴더의 다른 파일은 열지 않습니다.")
+        lines.append("- 이 작업에 읽기로 열린 plugin·skill 또는 Claude의 작업별 저장 출력은 Read로 다시 읽을 수 있습니다. "
+                     "상위 폴더의 다른 파일과 쓰기는 허용하지 않습니다.")
     elif "~/.claude" in labels:
         lines.append("- 긴 명령 출력은 작업 폴더 안 파일로 남겨 읽습니다. Claude가 `~/.claude` 아래에 따로 저장한 긴 출력은 다시 열리지 않을 수 있습니다.")
     return "\n".join(lines) + "\n"
 
 
 def role_footer(ctx: "RunContext") -> str:
-    """ROLE_FOOTER, the write rules unless the task is read-only, and this task's personal-path section."""
+    """Common rules, the task's write boundary, and its personal-path section."""
+    bundled = [name for name in ctx.agent.required_skills if ":" not in name]
+    skills = ("\n- Use the required first-party skills before producing their matching deliverables: "
+              + ", ".join(bundled) + ".\n") if bundled else ""
     return (ROLE_FOOTER + (GENERAL_RESULT_RULES if ctx.task.meta.get("general_result_contract") else "") +
-            ("" if ctx.read_only else WORKSPACE_WRITE_RULES) +
+            skills +
+            ("\nWrite only in your own task's outputs/ and .tmp/. Inputs, upstream results, other tasks and project "
+             "sources are read-only.\n" if ctx.read_only else workspace_write_rules(ctx.agent.engine)) +
             private_paths_section(ctx.private_labels, bool(ctx.private_open_reads)))
+
+
+@dataclass(frozen=True)
+class ProcessBoundaryGate:
+    """Default-off integration seam, not a protected engine transport.
+
+    Only the embedding runner opts in. Task metadata, environment and synthetic
+    observations cannot enable protection or authorize the ordinary CLI path.
+    """
+
+    required: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.required) is not bool:
+            raise ValueError("process boundary opt-in must be a bool")
+
+    def refusal(self, task: Task) -> TaskResult | None:
+        if not self.required:
+            return None
+        from ..runner import process_boundary
+
+        try:
+            receipt = process_boundary.protected_launch()
+            unsupported = receipt.preparation == "unsupported" and receipt.launch == "not_started"
+            reason = ("trusted supervisor and sealed storage unavailable" if unsupported else
+                      "protected adapter transport unavailable")
+        except Exception:
+            # Do not expose exception text (which may contain credentials or host paths).
+            reason = "producer check failed"
+        # Even a future successful receipt cannot fall through to create_subprocess_exec.
+        # That needs a separately reviewed transport and authenticated lifecycle owner.
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
+                          cost_usd=0.0, cost_known=True, error_kind="boundary_unsupported",
+                          error=f"process boundary unsupported: {reason}")
+
+    def observe_lifecycle(self, events, **expectations) -> dict:
+        """Offline observer seam; its synthetic output never changes launch admission.
+
+        Keys, replay storage and collector must come from the embedding test/operator,
+        never task metadata. Invalid, incomplete or cancelled observations propagate.
+        """
+        from ..runner.boundary_observer import observe
+
+        return observe(events, **expectations)
 
 
 @dataclass
@@ -457,6 +539,8 @@ class RunContext:
     # Readable, never writable (#36 path references). Claude gets --add-dir plus deny rules; Codex reads
     # outside its workspace without --add-dir, which would grant write access.
     read_dirs: list[str] = field(default_factory=list)
+    # Runner-verified ancestor snapshots inside cwd. Native sandboxes must not grant writes to their parent.
+    read_only_inputs: list[str] = field(default_factory=list)
     claude_settings: dict = field(default_factory=dict)
     # `~` labels of the PI personal paths closed to this task (policy.private_paths); they go in the role footer.
     private_labels: list[str] = field(default_factory=list)
@@ -467,9 +551,21 @@ class RunContext:
     private_enabled: bool = False
     # Folders inside an active path that this Claude task may read (its project folder in the staff config folder).
     private_open_reads: list[str] = field(default_factory=list)
+    # Links in an open project folder that lead into a restricted zone (#132). Claude's deny rules compare the path as
+    # written, so while any is set Claude pre-approves no shell command and no outside read either: another spelling
+    # of the link (8.3 `DATA~1`, a case variant) reaches the gate, which compares real paths (#178).
+    denied_links: list[str] = field(default_factory=list)
+    # Links into an internal zone get ask rules. While any internal zone is configured, scoped Read rules also
+    # make aliases created after the scan reach the real-path approval gate (#725). A root that overlaps a
+    # non-public zone gets no Read pre-approval at all, so same-root aliases also reach that gate.
+    asked_links: list[str] = field(default_factory=list)
+    gate_internal_reads: bool = False
+    gated_read_roots: list[str] = field(default_factory=list)
     # A request with one shared environment sends non-owner install-capable shell rules through approval.
     shared_environment_protected: bool = False
     environment_step: bool = False
+    # Non-public zones remove shell pre-approval so the policy can label row-output commands before they run.
+    gate_non_public_data: bool = False
     use_permission_tool: bool = False
     plugin_provenance: list[dict] = field(default_factory=list)  # set by preflight; recorded in the run manifest
     record_run: Callable[..., None] | None = None  # runner hook: persist run fields before the CLI starts
@@ -479,10 +575,34 @@ class RunContext:
     # Runner hook, called after prepare() wrote the adapter's files and just before the CLI starts. A non-empty
     # return refuses the run (the read-only file check could not take its baseline).
     before_spawn: Callable[[], str | None] | None = None
+    # Recheck PI pause/halt after all preparation, immediately before the spawn baseline.
+    wait_ready: Callable[[], Awaitable[bool]] | None = None
     # Set by run(), runner-local: the launcher it started (executable plus prefix args, resolved) and whether the
     # engine reported a shell command that exited 0. The Codex sandbox record reads both (#328).
     started_command: list[str] | None = None
     commands_ran: bool = False
+    # Set by the runner when the PI halts the task (#59 ①). A hooked Claude run stops itself at its next tool call;
+    # after halt_grace_s (0 for engines without hooks) run() ends the CLI, keeping the session id.
+    halt: asyncio.Event | None = None
+    halt_grace_s: float = 0.0
+    # Runner hook: the CLI process started, so the steers in its prompt reached the engine.
+    on_started: Callable[[], None] | None = None
+    # Runner hook (#863): the cleanup evidence of a run that ends by cancellation, which returns no TaskResult.
+    on_cleanup: Callable[[dict], None] | None = None
+    # Explicit benchmark runner only. Callback accepts identifiers/counts, never prompt/command text.
+    bench_observer: Callable[..., None] | None = None
+    process_boundary: ProcessBoundaryGate = field(default_factory=ProcessBoundaryGate)
+
+    def bench_spawn(self, spawn_id, state: str, argv: list[str], payload: bytes | None) -> None:
+        if self.bench_observer is not None:
+            try:
+                self.bench_observer(task_id=self.task.id, request_id=self.task.request_id,
+                                    spawn_id=spawn_id, state=state,
+                                    prompt_bytes=len(self.prompt.encode("utf-8")),
+                                    argv_bytes=sum(len(arg.encode("utf-8")) + 1 for arg in argv),
+                                    stdin_bytes=len(payload) if payload is not None else 0)
+            except Exception:
+                pass  # Optional measurement cannot change execution or cancellation policy.
 
     @property
     def meta_dir(self) -> Path:
@@ -494,6 +614,10 @@ class RunContext:
     def write_meta(self, name: str, text: str) -> Path:
         """Write one file in the adapter's scratch folder `.labhq/`, never through a link (#165)."""
         return write_owned(self.workdir, f".labhq/{name}", text)
+
+    async def awrite_meta(self, name: str, text: str) -> Path:
+        """`write_meta` for a coroutine: the fsync runs on the durable writer thread (#606)."""
+        return await awrite_owned(self.workdir, f".labhq/{name}", text)
 
 
 
@@ -552,6 +676,11 @@ class RunState:
     # signatures read it, never successful output.
     failed_outputs: deque = field(default_factory=lambda: deque(maxlen=FAILED_OUTPUTS_KEPT))
     shell_calls: set = field(default_factory=set)  # tool call ids of shell tools, for engines that pair by id
+    # Claude's final transcript clips invalid StructuredOutput input at 2,048 characters. With partial stream
+    # events enabled, keep the transport fragments until its tool_result says whether the call failed.
+    structured_output_streams: dict[int, dict[str, Any]] = field(default_factory=dict)
+    structured_output_raw: dict[str, str] = field(default_factory=dict)
+    mcp_status: list[dict[str, str]] = field(default_factory=list)  # {name, status} the CLI reported at start
 
 
 @dataclass
@@ -728,12 +857,124 @@ def wrap_cwd(spec: McpServerSpec) -> tuple[str, list[str]]:
     return "bash", ["-lc", inner]
 
 
+MIN_SECRET_CHARS = 3  # shortest environment secret value this module masks in CLI failure evidence
+
+
 def expand_env(env: dict[str, str], source: dict[str, str] | None = None) -> dict[str, str]:
     if source is None:
         return {k: os.path.expandvars(v) for k, v in env.items()}
     # Match the environment passed to the child, including engine and task overrides.
     return {k: re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}",
                       lambda m: source.get(m.group(1), m.group(0)), v) for k, v in env.items()}
+
+
+def _anchored_path(text: str) -> bool:
+    """A path that names a place on its own: it has a separator and is absolute (POSIX, drive letter or UNC) or starts
+    with ``~``. A bare file name is not one, so it can never stand for the file wherever its letters appear (#1225)."""
+    return ("/" in text or "\\" in text) and (os.path.isabs(text) or text.startswith("~")
+                                              or bool(re.match(r"[A-Za-z]:[\\/]|\\\\", text)))
+
+
+def atlas_key_file_forms(settings: Settings) -> list[str]:
+    """Every anchored spelling of the one configured key file location, longest first. These exact strings, and nothing
+    else, are not read as the key (#1225). A bare file name, a relative path or any text that is not an anchored path is
+    left out, so it cannot hide the variable's name elsewhere.
+
+    The spellings come from where labhq itself writes them: the configured path as written, expanded and resolved
+    against the settings, its real path (a linked parent folder), and the private paths the runner hands the task
+    (``resolve_private_paths``: path, real path and 8.3 short spellings); and the Claude deny and ask rules
+    (``claude_deny_private``) for each of those paths. A spelling labhq adds later to those two writers is allowed with
+    them, and nothing here guesses at one. A writer that fails (the test guard refuses an operator path) only leaves its
+    spellings out, which refuses more, never less."""
+    raw = settings.annot.alphagenome_key_file
+    name = os.path.basename(raw.replace("\\", "/")).casefold()
+    paths = [os.path.expanduser(raw)]
+    try:
+        paths.append(str(settings.path(raw)))
+    except (OSError, ValueError, RuntimeError):  # RuntimeError: the test guard refuses an operator `.labhq` path
+        pass
+    for path in list(paths):
+        if _anchored_path(path):
+            try:
+                paths.append(os.path.realpath(path))
+            except (OSError, ValueError):
+                pass
+    try:
+        from ..private_paths import resolve_private_paths
+
+        paths += [path for path in resolve_private_paths(settings).paths if os.path.basename(path.replace("\\", "/")).casefold() == name]
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        pass
+    anchored = [path for path in dict.fromkeys(paths) if _anchored_path(path)]
+    forms = {raw, *paths}
+    forms |= {form.replace("\\", "/") for form in forms} | {form.replace("/", "\\") for form in forms}
+    forms = {form for form in forms if _anchored_path(form)}
+    if anchored:
+        try:
+            from ..policy import claude_deny_private
+
+            rules = claude_deny_private({}, anchored).get("permissions") or {}
+            forms |= {rule for group in rules.values() if isinstance(group, list) for rule in group
+                      if isinstance(rule, str) and name in rule.casefold() and ("/" in rule or "\\" in rule)}
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+            pass
+    return sorted(forms, key=len, reverse=True)
+
+
+def names_atlas_key(value: Any, allowed: Iterable[str] = ()) -> bool:
+    """Does a launch setting still carry the key's environment variable name once the configured key file path is taken out?
+
+    The documented key file ``~/.labhq/secrets/alphagenome_api_key`` is named like the variable, and its path is among the
+    private paths handed to ``labhq_annot`` and to Claude's deny list. Those exact paths (``allowed``) are the one
+    exception. The name anywhere else is refused, whatever it looks like: set, listed, referenced, ``Env:\\NAME`` or part
+    of some other path. No shape of text decides what is a path (#1225)."""
+    from ..tools.annot_alphagenome_atlas import KEY_ENV
+
+    forms = [re.compile(re.escape(form), re.IGNORECASE) for form in allowed]
+
+    def named(text: str) -> bool:
+        for form in forms:
+            text = form.sub("", text)
+        return KEY_ENV.casefold() in text.casefold()
+
+    if isinstance(value, dict):
+        return any(named(str(key)) or names_atlas_key(item, allowed) for key, item in value.items())
+    if isinstance(value, (list, tuple, set)):
+        return any(names_atlas_key(item, allowed) for item in value)
+    return named(str(value))
+
+
+def atlas_credentials(settings: Settings, task_env: dict[str, str]) -> set[str]:
+    """Collect secrets for removal, independently of the selected engine's key precedence."""
+    from ..tools.annot_alphagenome_atlas import KEY_ENV, credentials
+    environments = [dict(os.environ), task_env, *(engine.env for _, engine in settings.engines)]
+    secrets = credentials(environments[0], task_env,
+                          *(expand_env(env) for env in environments[2:]))
+    # expandvars only reads the parent environment. Follow references in every raw mapping too,
+    # retaining shadowed alias values for removal without changing the backend key precedence.
+    aliases: dict[str, set[str]] = {}
+    pending = []
+    for env in environments:
+        for name, value in env.items():
+            aliases.setdefault(name.casefold() if os.name == "nt" else name, set()).add(value)
+            if name.casefold() == KEY_ENV.casefold():
+                pending.append(value)
+    pattern = r"\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)"
+    if os.name == "nt":
+        pattern += r"|%([^%]+)%"
+    seen: set[str] = set()
+    while pending:
+        value = pending.pop()
+        if value in seen:
+            continue
+        seen.add(value)
+        for match in re.finditer(pattern, value):
+            name = next(group for group in match.groups() if group is not None)
+            for alias in aliases.get(name.casefold() if os.name == "nt" else name, ()):
+                # Keep intermediate references as well as leaves, so cycles cannot reach staff.
+                secrets.update(v.strip() for v in (alias, os.path.expandvars(alias)) if v.strip())
+                pending.append(alias)
+    return secrets
 
 
 def child_config_dirs(env: dict[str, str], cwd: Path, var: str, default_name: str) -> list[Path]:
@@ -745,9 +986,13 @@ def child_config_dirs(env: dict[str, str], cwd: Path, var: str, default_name: st
     raw = env.get(var)
     if raw:
         p = Path(os.path.expanduser(raw))
-        return [p if p.is_absolute() else cwd / p]
-    homes = [Path(h) for h in (env.get("HOME"), env.get("USERPROFILE")) if h] or [Path.home()]
-    return list(dict.fromkeys(h / default_name for h in homes))
+        paths = [p if p.is_absolute() else cwd / p]
+    else:
+        homes = [Path(h) for h in (env.get("HOME"), env.get("USERPROFILE")) if h] or [Path.home()]
+        paths = list(dict.fromkeys(h / default_name for h in homes))
+    for path in paths:
+        guard_test_path(path)
+    return paths
 
 
 class AgentAdapter(ABC):
@@ -779,7 +1024,14 @@ class AgentAdapter(ABC):
             env["PYTHONDONTWRITEBYTECODE"] = "1"
         # Staff never hold a GitHub credential: gh reads GH_TOKEN before GITHUB_TOKEN, so drop every name it uses (#301).
         drop = {self.settings.github.token_env.casefold(), *(name.casefold() for name in GITHUB_TOKEN_NAMES)}
-        return {key: value for key, value in env.items() if key.casefold() not in drop}
+        # The PC's gh/git wrappers read LABHQ_COMMIT_AGENT, else guess a bot from the CLI's own session variables, and
+        # then hand that bot's token and author to the shell. Staff keep the PI's identity (#813): "none" turns the
+        # bot off and no inherited, engine or task value, in any case, brings it back.
+        drop |= {COMMIT_AGENT_ENV.casefold()}
+        staff = {key: value for key, value in env.items() if key.casefold() not in drop}
+        staff[COMMIT_AGENT_ENV] = "none"
+        from ..tools.annot_alphagenome_atlas import without_credentials
+        return without_credentials(staff, atlas_credentials(self.settings, ctx.env))
 
     def stdin_payload(self, ctx: RunContext) -> bytes | None:
         """Bytes to write to the agent's stdin (then closed); None → stdin is /dev/null."""
@@ -818,9 +1070,25 @@ class AgentAdapter(ABC):
 
     async def run(self, ctx: RunContext) -> TaskResult:
         ctx.started_command, ctx.commands_ran = None, False
+        boundary_refusal = ctx.process_boundary.refusal(ctx.task)
+        if boundary_refusal is not None:
+            return boundary_refusal
         env = self.staff_env(ctx)
         engine_bin = getattr(self.settings.engines, self.engine, None)
         prefix = [os.path.expandvars(os.path.expanduser(arg)) for arg in (engine_bin.prefix_args if engine_bin else [])]
+        from ..tools.annot_alphagenome_atlas import KEY_ENV
+        atlas_secrets = atlas_credentials(self.settings, ctx.env)
+        # Refuse before prepare writes engine settings. A shell policy `set`/MCP env override must not
+        # restore the key after staff_env stripped it, including overrides supplied through extra_args.
+        launch = {"engine": engine_bin.model_dump(exclude={"env"}) if engine_bin else {},
+                  "mcp": [s.model_dump() for s in ctx.mcp_servers],
+                  "settings": ctx.claude_settings, "prefix": prefix}
+        launch_config = os.path.expandvars(json.dumps(launch, ensure_ascii=False, default=str))
+        # By the variable and by the value, not by the letters: a path that is named like the variable is no override.
+        if names_atlas_key(launch, atlas_key_file_forms(self.settings)) or any(
+                key in launch_config for key in atlas_secrets):
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
+                              error="Atlas credentials/config overrides are not allowed in staff launch settings")
         refused = ((read_only_mismatch(ctx.agent, ctx.mcp_servers) or read_only_launch_error(self.engine, prefix)
                     or read_only_workspace_error(
                         self.engine, ctx.workdir, labhq_workspace_paths(ctx.agent, self.engine, ctx.workdir)))
@@ -832,9 +1100,14 @@ class AgentAdapter(ABC):
             await ctx.emit("agent.log", {"level": "warn", "text": (
                 f"읽기 전용 실행이라 engines.{self.engine}.env에서 {', '.join(dropped)}를 뺐습니다. "
                 "로그인·설정 위치·API 접속 변수만 씁니다")})
-        self.prepare(ctx)  # may add to ctx.env (engine: cli puts CliSpec.env there)
+        # May add to ctx.env (engine: cli puts CliSpec.env there). It writes labhq's files with an fsync each, so it
+        # runs as one job on the durable writer thread and the event loop keeps serving (#606).
+        await durable.run(durable.FILES, self.prepare, ctx)
         cmd = self.build_command(ctx)
         env = self.staff_env(ctx)
+        memory_limit_bytes = memory_limit.configured_limit_bytes(self.settings.runner)
+        env[memory_limit.MEMORY_LIMIT_ENV] = str(memory_limit_bytes)
+        memory_guard = memory_limit.step_memory_guard(memory_limit_bytes)
 
         def resolved(command: list[str]) -> tuple[list[str], list[str]]:
             """The full command and its launcher: everything before the adapter's own arguments."""
@@ -866,32 +1139,87 @@ class AgentAdapter(ABC):
         refused = self.prompt_pointer_error(ctx)
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
-        ctx.write_meta("command.txt", shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd))
+        await ctx.awrite_meta("command.txt", shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd))
         await ctx.emit("agent.log", {"level": "debug", "text": f"$ {ctx.agent.engine.value} ({len(cmd)} args)"})
 
         payload = self.stdin_payload(ctx)
+        if ctx.wait_ready and not await ctx.wait_ready():
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error_kind="halted",
+                              error="halted before the CLI started", session_id=ctx.task.resume_session_id)
         refused = ctx.before_spawn() if ctx.before_spawn else None
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
+        if ctx.halt is not None and ctx.halt.is_set():  # halted while labhq prepared the run: nothing starts
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error_kind="halted",
+                              error="halted before the CLI started", session_id=ctx.task.resume_session_id)
+        bench_spawn_id = object() if ctx.bench_observer is not None else None
         try:
             group_args = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                           if os.name == "nt" else {"start_new_session": True})
-            proc = await asyncio.create_subprocess_exec(
-                *cmd, cwd=str(ctx.workdir), env=env,
+            group_args.update(memory_guard.spawn_kwargs())
+            spawn_cmd = memory_guard.wrap_command(cmd)
+            ctx.bench_spawn(bench_spawn_id, "attempt", spawn_cmd, payload)
+            spawn = asyncio.ensure_future(asyncio.create_subprocess_exec(
+                *spawn_cmd, cwd=str(ctx.workdir), env=env,
                 stdin=asyncio.subprocess.PIPE if payload is not None else asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 limit=32 * 1024 * 1024, **group_args,
-            )
+            ))
+            try:
+                proc = await asyncio.shield(spawn)
+            except asyncio.CancelledError:
+                # #863: the spawn runs on; a process the OS already created is taken over and ended, not lost.
+                await self._reap_cancelled_spawn(spawn, ctx, memory_guard)
+                raise
         except FileNotFoundError:
+            ctx.bench_spawn(bench_spawn_id, "failed", cmd, payload)
+            memory_guard.close()
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"executable not found: {cmd[0]!r} — install it on the runner or fix "
                                     f"engines/cli settings for agent {ctx.agent.id!r}")
         except OSError as exc:
+            ctx.bench_spawn(bench_spawn_id, "failed", cmd, payload)
+            memory_guard.close()
             detail = exc.strerror or str(exc)
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"could not start executable {cmd[0]!r}: {detail}")
+        ctx.bench_spawn(bench_spawn_id, "started", spawn_cmd, payload)
+        # #863: the wrapper the runner started and holds; its activation line and end are recorded below.
+        wrapper_pid = getattr(proc, "pid", None)  # process doubles in unit tests may have none
+        cleanup: dict[str, Any] = {"job": "pending" if getattr(memory_guard, "job_expected", False) else "disabled",
+                                   "wrapper_pid": wrapper_pid,
+                                   "wrapper_created": _wrapper_identity(wrapper_pid) if type(wrapper_pid) is int else None}
+        try:
+            # Unit adapters use small process doubles; only a real asyncio child has an OS process to constrain.
+            if isinstance(proc, asyncio.subprocess.Process):
+                memory_guard.attach(proc.pid)
+        except OSError as exc:
+            cleanup["kill"] = await self._kill(proc)
+            memory_guard.close()
+            return TaskResult(
+                task_id=ctx.task.id,
+                agent_id=ctx.agent.id,
+                ok=False,
+                error_kind="memory_limit_setup",
+                error=("직원 단계 메모리 상한을 설정하지 못해 실행하지 않았습니다: "
+                       f"{exc}. 관리자 권한은 요청하지 않습니다."),
+                cleanup_evidence=self._cleanup_evidence(cleanup, proc),
+            )
         ctx.started_command = launcher
+        if ctx.on_started:
+            try:
+                ctx.on_started()
+            except BaseException as exc:  # never leave a started CLI running unsupervised (PR #532 review)
+                cleanup["kill"] = await self._kill(proc)
+                memory_guard.close()
+                if not isinstance(exc, Exception):
+                    self._report_cleanup(ctx, cleanup, proc)
+                    raise
+                return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
+                                  error=f"runner could not record the CLI start: {type(exc).__name__}: {exc}",
+                                  cleanup_evidence=self._cleanup_evidence(cleanup, proc))
         st = RunState()
+        started_at = time.monotonic()
         tool_activity = _ToolActivity(self.engine)
         stderr_tail: deque[str] = deque(maxlen=60)
         result_arrived = asyncio.Event()
@@ -912,7 +1240,8 @@ class AgentAdapter(ABC):
                     await self.handle_line(line, st, ctx)
                 except Exception as e:  # never let one odd line kill the run
                     tool_activity.unreadable()
-                    await ctx.emit("agent.log", {"level": "debug", "text": f"[unparsed] {short(line)} ({e})"})
+                    await ctx.emit("agent.log", {**event_preview("text", line), "level": "debug",
+                                                  "text": f"[unparsed] {short(line)} ({e})"})
                 if st.stop_reason and proc.returncode is None:
                     reason, st.stop_reason = st.stop_reason, None
                     await ctx.emit("agent.log", {"level": "warn", "text": reason})
@@ -940,9 +1269,19 @@ class AgentAdapter(ABC):
         async def read_err() -> None:
             nonlocal last_output
             assert proc.stderr
+            first = True
             async for raw in proc.stderr:
                 last_output = time.monotonic()
-                stderr_tail.append(raw.decode(errors="replace").rstrip())
+                text = raw.decode(errors="replace").rstrip()
+                if first:
+                    first = False
+                    if cleanup["job"] == "pending":  # only the wrapper can write before the CLI exists (#863)
+                        confirmed = (type(wrapper_pid) is int and
+                                     getattr(memory_guard, "job_confirmed", lambda *_args: False)(text, wrapper_pid))
+                        cleanup["job"] = "active" if confirmed else "unconfirmed"
+                        if confirmed:
+                            continue
+                stderr_tail.append(text)
 
         async def feed_stdin() -> None:
             """Write the prompt inside the timed, watched run: a CLI that never reads stdin must not hold labhq before
@@ -979,7 +1318,10 @@ class AgentAdapter(ABC):
                     return
                 if not warned and warn_limit > 0 and quiet >= warn_limit:
                     minutes = max(1, int(quiet // 60))
-                    if await pending_uac_prompts():
+                    if tool_activity.active:
+                        await report_block("tool-active", "debug",
+                                           "PI 카드 응답을 기다리는 중이라 끊지 않습니다")
+                    elif await pending_uac_prompts():
                         reported_block = "uac"
                         retry_note = ((" UAC가 사라진 뒤 실행 중인 명령이 없으면 labhq가 끊고 다시 시도합니다. "
                                        "연구 lane에서 단계를 취소하면 요청이 실패로 끝납니다")
@@ -1014,7 +1356,7 @@ class AgentAdapter(ABC):
                         await report_block("stream-unknown", "warn", "CLI 출력 스트림의 도구 호출 상태를 해석할 수 없어 무응답 종료를 보류합니다")
                         return
                     if tool_activity.active:
-                        await report_block("tool-active", "warn", "CLI 출력 스트림에 완료되지 않은 도구 호출이 있어 무응답 종료를 보류합니다")
+                        await report_block("tool-active", "debug", "PI 카드 응답을 기다리는 중이라 끊지 않습니다")
                         await asyncio.sleep(max(0.01, min(30.0, retry_limit / 4)))
                         continue
                     idle = await asyncio.to_thread(_idle_process_tree, proc.pid, ctx.mcp_servers)
@@ -1048,70 +1390,179 @@ class AgentAdapter(ABC):
                 delay = max(0.01, min(30.0, min(due) - quiet))
                 await asyncio.sleep(delay)
 
+        async def halt_watch() -> None:
+            """The PI halted the task: wait for a hooked Claude to stop itself, then end the tree (#59 ①)."""
+            if ctx.halt is None:
+                return
+            await ctx.halt.wait()
+            if ctx.halt_grace_s > 0:
+                try:
+                    await asyncio.wait_for(proc.wait(), ctx.halt_grace_s)
+                    return
+                except asyncio.TimeoutError:
+                    pass
+            if proc.returncode is not None or result_arrived.is_set() or st.result_seen:
+                return
+            session_note = ("세션 id는 남겨 두었고, 재개하면 같은 세션으로 이어 갑니다"
+                            if st.session_id or ctx.task.resume_session_id else
+                            "같은 세션 재개 불가: 세션 id를 받지 못했습니다. 재개 turn에 원래 지시와 이전 결과를 전달합니다")
+            # Decided and marked with no await between the check above and the kill: a run that ends on its own is never
+            # relabelled halted, and the notice is written only once the tree really is being ended (#1174).
+            st.error_kind = "halted"
+            st.error = "halted by the PI"
+            if not (st.session_id or ctx.task.resume_session_id):
+                st.error += ": " + session_note
+            await self._kill(proc)
+            await ctx.emit("agent.log", {"level": "warn", "text": (
+                "PI가 멈춤을 요청해 labhq가 프로세스 트리를 끝냈습니다. " + session_note
+                + (f" (도구 hook이 {ctx.halt_grace_s:g}s 안에 멈추지 못함)" if ctx.halt_grace_s > 0 else ""))})
+
         drain = asyncio.gather(feed_stdin(), read_out(), read_err(), proc.wait())
         guard = asyncio.create_task(exit_guard())
         watch = asyncio.create_task(stall_watch())
+        halting = asyncio.create_task(halt_watch())
         try:
             await asyncio.wait_for(asyncio.shield(drain), timeout=self.settings.runner.task_timeout_s)
         except asyncio.TimeoutError:
             st.error = f"timeout after {self.settings.runner.task_timeout_s}s"
-            await self._kill(proc)
+            cleanup["kill"] = await self._kill(proc)
             await drain
         except asyncio.CancelledError:
             guard.cancel()
-            await self._kill(proc)
-            await asyncio.shield(drain)
+            try:
+                cleanup["kill"] = await self._kill(proc)
+                await asyncio.shield(drain)
+                memory_guard.close()
+            finally:  # also when a second cancel interrupts the wait: then the record stays UNKNOWN
+                self._report_cleanup(ctx, cleanup, proc)
             raise
         finally:
             watch.cancel()
             if not ended_after_result:
                 guard.cancel()
-        await asyncio.gather(guard, watch, return_exceptions=True)  # a guard that is ending the tree finishes first
+            if getattr(st, "error_kind", None) != "halted":
+                halting.cancel()
+        await asyncio.gather(guard, watch, halting, return_exceptions=True)  # an ending tree finishes first
         returncode = 0 if ended_after_result else proc.returncode  # ended by labhq after the result: not a failure
         try:
-            ctx.write_meta("stderr_tail.txt", "\n".join(stderr_tail))
+            await ctx.awrite_meta("stderr_tail.txt", "\n".join(stderr_tail))
         except OwnedPathError:  # the agent replaced .labhq with a link while it ran: keep the result, drop the tail
             await ctx.emit("agent.log", {"level": "warn", "text": (
                 "작업 폴더의 .labhq가 실행 중에 링크로 바뀌어 stderr 기록을 남기지 않았습니다")})
         stderr = " | ".join(x for x in list(stderr_tail)[-5:] if x)
+        stderr_all = "\n".join(stderr_tail)
+        executable_missing = getattr(memory_guard, "executable_missing", lambda _stderr: False)(stderr_all)
+        memory_setup_failed = memory_guard.setup_failed(stderr_all)
+        memory_exceeded = memory_guard.exceeded(returncode, stderr_all)
+        memory_guard.close()
+        if executable_missing:
+            st.error = (f"executable not found: {cmd[0]!r} — install it on the runner or fix "
+                        f"engines/cli settings for agent {ctx.agent.id!r}")
+        elif memory_setup_failed:
+            st.error_kind = "memory_limit_setup"
+            st.error = "직원 단계 메모리 상한을 적용하지 못해 실행하지 않았습니다. runner OS 설정을 확인하세요."
+        elif memory_exceeded:
+            st.error_kind = "memory_limit"
+            st.error = ("메모리 상한을 넘어 직원 단계가 종료되었습니다. 큰 표는 조각 처리하고, 백만 행 이상 "
+                        "범주형 회귀는 칸별 빈도로 묶은 이항 GLM을 먼저 쓰세요.")
         st.error = st.error or self.stderr_error(stderr)
         st.ended_by_guard = ended_after_result
         res = self.finalize(st, ctx, returncode)
+        res.exit_code = returncode
+        res.cleanup_evidence = self._cleanup_evidence(cleanup, proc)
         ctx.commands_ran = st.commands_ran
+        secrets = self._secret_values(ctx, env)
         if res.error and stderr and ("empty CLI stream" in res.error or "IneligibleTierError" in stderr):
-            res.error = f"{res.error}: {short(stderr, 500)}"
+            res.error = f"{res.error}: {short(self._clean_stderr(stderr_tail, 5, secrets), 500)}"
         if returncode not in (0, None) and not res.error:
-            res.error = f"exit {returncode}: " + " | ".join(list(stderr_tail)[-5:])
+            res.error = f"exit {returncode}: " + self._clean_stderr(stderr_tail, 5, secrets)
+        if not res.ok and not st.result_seen and (res.error or "").startswith(("empty CLI stream", "exit ")):
+            await self._record_exit_evidence(ctx, res, st, returncode, stderr_tail, time.monotonic() - started_at,
+                                             secrets)
         # The CLI's own stderr counts only when the run failed; a failed command's output counts either way, because
         # an agent that gave up after "No module named x" can still exit 0 with its outputs missing (#35).
         res.environment = env_signatures.scan_run(self.engine, stderr_tail if not res.ok else (), st.failed_outputs)
         return res
 
+    _SECRET_KEY = re.compile(r"token|secret|passw|credential|api[_-]?key|auth|private|session|cookie", re.IGNORECASE)
+
+    @classmethod
+    def _secret_values(cls, ctx: RunContext, child_env: dict[str, str]) -> list[str]:
+        """Values this run really handed to the CLI and its MCP servers under secret-looking names, or injected through
+        a `${NAME}` placeholder, in every form the CLI sees: as written and expanded against the child environment."""
+        values: set[str] = set()
+
+        def collect(raw: dict[str, str] | None, expanded: list[dict[str, str]]) -> None:
+            for key, original in (raw or {}).items():
+                placeholder = isinstance(original, str) and "$" in original
+                if not (placeholder or cls._SECRET_KEY.search(key)):
+                    continue
+                for form in [{key: original}, *({key: view.get(key)} for view in expanded)]:
+                    value = form.get(key)
+                    if isinstance(value, str) and len(value) >= MIN_SECRET_CHARS:
+                        values.add(value)
+
+        collect(child_env, [])
+        collect(ctx.env, [])
+        for server in ctx.mcp_servers:
+            for table in (server.env, getattr(server, "headers", None)):
+                if table:
+                    collect(table, [expand_env(table), expand_env(table, child_env)])
+        # A multi-line value (a PEM key) is also masked line by line, in case stderr shows only part of it.
+        values.update(line.strip() for value in list(values) for line in value.splitlines() if len(line.strip()) >= MIN_SECRET_CHARS)
+        return sorted(values, key=len, reverse=True)
+
+    def _clean_stderr_lines(self, stderr_tail: deque[str], count: int, secrets: list[str] = ()) -> list[str]:
+        """The last non-empty stderr lines minus labhq's own Job announcement, with secrets and zones masked."""
+        from ..integrations.github import sanitize
+        from ..runner.memory_limit import JOB_ACTIVE
+
+        # The whole tail is masked as one text before lines are picked, so a secret spanning lines cannot slip through.
+        text = sanitize(chr(10).join(stderr_tail), self.settings.policy, secrets, limit=None)
+        for secret in secrets:  # sanitize() skips values under 8 characters; a short real password is still one
+            text = text.replace(secret, "<redacted-secret>")
+        lines = [line for line in text.split(chr(10)) if line.strip() and not line.strip().startswith(JOB_ACTIVE)]
+        return [short(line, 300) for line in lines[-count:]]
+
+    def _clean_stderr(self, stderr_tail: deque[str], count: int, secrets: list[str] = ()) -> str:
+        return " | ".join(self._clean_stderr_lines(stderr_tail, count, secrets))
+
+    async def _record_exit_evidence(self, ctx: RunContext, res: TaskResult, st: RunState, returncode: int | None,
+                                    stderr_tail: deque[str], elapsed_s: float, secrets: list[str] = ()) -> None:
+        """A CLI that ended without any result says why in the result, an event and `.labhq/exit_evidence.json` (#1045).
+
+        The exit code, the end of stderr without labhq's own Job announcement, the run time and the MCP servers'
+        start status; secrets and restricted paths are masked. A CLI that gave a result is not touched."""
+        masked = self._clean_stderr_lines(stderr_tail, 8, secrets)
+        evidence = {"exit_code": returncode, "elapsed_s": round(elapsed_s, 1), "stderr_tail": masked,
+                    "mcp": st.mcp_status or None}
+        summary = (f"CLI 종료 증거: exit {returncode}, {elapsed_s:.1f}s, stderr "
+                   + (" | ".join(masked[-3:]) if masked else "(출력 없음)")
+                   + (", MCP " + ", ".join(f"{m['name']}={m['status']}" for m in st.mcp_status)
+                      if st.mcp_status else ", MCP 시작 정보 없음"))
+        res.error = f"{res.error or 'CLI가 결과 없이 끝남'} [{short(summary, 600)}]"
+        await ctx.emit("agent.log", {"level": "warn", "text": short(summary, 800)})
+        try:
+            await ctx.awrite_meta("exit_evidence.json", json.dumps(evidence, ensure_ascii=False, indent=1))
+        except OwnedPathError:
+            pass  # the .labhq link case is already reported with stderr_tail.txt
+
     @staticmethod
-    async def _kill(proc: asyncio.subprocess.Process) -> None:
+    async def _kill(proc: asyncio.subprocess.Process) -> dict[str, Any]:
+        """End the CLI tree; return what was observed (#863): the tree kill counts and whether the wait completed."""
         if os.name == "nt":
             if proc.returncode is not None:
-                return
-            descendants = _windows_descendants(proc.pid)
-            returncode = None
+                return {"requested": False}
+            outcome: dict[str, Any] = {"requested": True}
+            # Not a kill that collects the tree by parent PID alone: Windows may have reused those PIDs, and one ended an
+            # unrelated tree (#589).
             try:
-                killer = await asyncio.create_subprocess_exec(
-                    "taskkill", "/T", "/F", "/PID", str(proc.pid),
-                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-                )
-                await asyncio.wait_for(killer.wait(), 5)
-                returncode = killer.returncode
-            # Windows can report ERROR_NOT_ENOUGH_MEMORY as MemoryError while
-            # starting taskkill.  The direct PID fallback must still reap the
-            # already-snapshotted tree instead of abandoning cancellation.
-            except (OSError, MemoryError, asyncio.TimeoutError):
-                pass
-            if returncode != 0:
-                for pid in reversed(descendants):
-                    try:
-                        os.kill(pid, signal.SIGTERM)
-                    except (OSError, ProcessLookupError):
-                        pass
+                tree = proc_tree.kill_tree(proc.pid)
+                if isinstance(tree, proc_tree.KillResult):
+                    outcome["tree"] = {"killed": len(tree.killed), "skipped": len(tree.skipped),
+                                       "failed": len(tree.failed), "spared": len(tree.spared)}
+            except (OSError, MemoryError):  # the direct kill below still reaps the child
+                outcome["tree"] = "unavailable"
             if proc.returncode is None:
                 try:
                     proc.kill()
@@ -1119,15 +1570,16 @@ class AgentAdapter(ABC):
                     pass
             try:
                 await asyncio.wait_for(proc.wait(), 5)
+                outcome["wait"] = "completed"
             except asyncio.TimeoutError:
-                pass
-            return
+                outcome["wait"] = "timeout"
+            return outcome
 
         pgid = proc.pid
         try:
             os.killpg(pgid, signal.SIGTERM)
         except ProcessLookupError:
-            return
+            return {"requested": False}
         if proc.returncode is None:
             try:
                 await asyncio.wait_for(proc.wait(), 10)
@@ -1156,3 +1608,54 @@ class AgentAdapter(ABC):
                 await asyncio.wait_for(proc.wait(), 5)
             except asyncio.TimeoutError:
                 pass
+        return {"requested": True, "wait": "completed" if proc.returncode is not None else "timeout"}
+
+    @staticmethod
+    def _cleanup_evidence(record: dict[str, Any], proc: Any) -> dict[str, Any]:
+        """The verdict on the wrapper the runner held, from its own observations only (#863)."""
+        returncode = getattr(proc, "returncode", None)
+        observed = {key: record[key] for key in ("job", "wrapper_pid", "wrapper_created", "spawn") if key in record}
+        if isinstance(record.get("kill"), dict):  # a test double's kill returns no record
+            observed["kill"] = {key: value for key, value in record["kill"].items()
+                                if key in ("requested", "tree", "wait")}
+        observed.update(returncode=returncode if type(returncode) is int else None,
+                        wait="completed" if type(returncode) is int else "not_finished")
+        return cleanup_verdict(observed)
+
+    @classmethod
+    def _report_cleanup(cls, ctx: RunContext, record: dict[str, Any], proc: Any) -> dict[str, Any]:
+        """Hand the evidence of a run that ends by cancellation to the runner, which builds that task's result."""
+        evidence = cls._cleanup_evidence(record, proc)
+        if ctx.on_cleanup:
+            try:
+                ctx.on_cleanup(evidence)
+            except Exception:  # evidence only: never replace the cancellation itself
+                pass
+        return evidence
+
+    @classmethod
+    async def _reap_cancelled_spawn(cls, spawn: asyncio.Future, ctx: RunContext, memory_guard: Any) -> None:
+        """A cancel that lands while the spawn is in flight (#863). asyncio may already have closed and reaped the child
+        itself; otherwise the spawn finishes and labhq ends the process it created, then reports UNKNOWN: the wrapper's
+        activation line was never read. A second cancel leaves the shielded reaper running."""
+        record: dict[str, Any] = {"spawn": "cancelled", "job": "unconfirmed"}
+        state: dict[str, Any] = {"proc": None}
+
+        async def reap() -> None:
+            try:
+                proc = await spawn
+            except FileNotFoundError:  # CreateProcess found no executable: nothing was started
+                record["spawn"] = "failed"
+                return
+            except (OSError, ValueError, asyncio.CancelledError):  # asyncio may have created and closed it: UNKNOWN
+                return
+            state["proc"] = proc
+            record.update(wrapper_pid=proc.pid, wrapper_created=_wrapper_identity(proc.pid))
+            record["kill"] = await cls._kill(proc)
+
+        reaper = asyncio.ensure_future(reap())
+        try:
+            await asyncio.shield(reaper)
+        finally:
+            memory_guard.close()
+            cls._report_cleanup(ctx, record, state["proc"])

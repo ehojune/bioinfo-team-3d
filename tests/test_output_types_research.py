@@ -28,9 +28,30 @@ CANARY = "CANARY-research-91c2"
 # rule and records research choices in protocol, so this fixed prompt hash changes again.
 # PI 점검 R17 adds the optional numeric `budget_usd` to the plan schema and its rule to the prompt; a plan without
 # it keeps its canonical JSON and hash (VALID_PLAN_SHA).
-RESEARCH_PLAN_SCHEMA_SHA = "1041c1742eacc125f697b3b4a95822eb71b63b7c77839d668e89367162321c00"
-RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "afc422989121a61de3b036e20152dc9d7f9b51edaabef628e4de5ab1fce04a9e"  # R17: budget_usd rule
+# #549 adds paper skill selection before CP1; empty additions still preserve VALID_PLAN_SHA.
+# #549 B adds recruit.step_ids and hiring rules; an empty recruitment still preserves VALID_PLAN_SHA.
+# PR #581 P1: fresh recruits require at least one step_id; legacy stored plans remain compatible.
+# #609: graphical abstract creation moves to the final write-capable report step.
+# #586 공유 id 규칙 한 줄: 공유 항목의 bare/qualified 답 형식을 명시한다.
+# #621 adds the approved topic variant_effect, so the topic rule inside this fixed prompt grows by one entry; the
+# prompt template and both schemas are unchanged (RESEARCH_PROMPT_SHA moved on purpose, VALID_PLAN_SHA did not).
+# #683 and #690 add declared analysis figures and SVG text/quality rules; #693 then adds staff-skill fields and guidance.
+# #686 adds optional research branches and per-step branch ids; #694 adds the hypothesis-aligned reference rule.
+# #707 requires every analysis name and action in the request to stay explicit in the scope and planned steps.
+# #716 adds optional_outputs while legacy plans still serialize to VALID_PLAN_SHA.
+# #732 adds the shared nf-core assignment and per-candidate contribution rule; schemas and stored plans do not change.
+# #799 adds the shared cohesive-analysis sentence; with main's policy text the prompt still hashes to the previous
+# 72274c0b…, and both schemas and VALID_PLAN_SHA are unchanged.
+# #890 adds the optional selection_record to the plan schema (new schema hash below); a plan without it keeps
+# VALID_PLAN_SHA, and the prompt, minus its one new rule, still hashes to the previous value.
+# #674 adds the optional environment_binding(s) to research steps (new schema hash below); a plan without them keeps
+# VALID_PLAN_SHA, and the prompt and result schema hashes are unchanged.
+RESEARCH_PLAN_SCHEMA_SHA = "6064277c29766de85dd07346896ceb6417b74d74213bbf517af784e0cc65bb8d"
+# #905 extends only the result schema with optional source access metadata and citation lineage.
+RESEARCH_RESULT_SCHEMA_SHA = "596679add2478c0eff0eddaddd8d85604b0148770fb5a4aaa0a0235e836ca179"
+# #798/#671 change only paper timing/parallel fallback; normalize that sentence to exact previous prompts.
+# #669 adds the task-local install rule to the planning prompt (no new packages is not a default limit).
+RESEARCH_PROMPT_SHA = "2f3c9d03e4a8cf8be46467140edc69b53abb8c45b46132fe35266ca6bda0567e"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 
@@ -49,8 +70,32 @@ def test_engine_schemas_and_prompt_off_are_those_of_main():
     assert raw_sha(rc.RESEARCH_RESULT_SCHEMA) == RESEARCH_RESULT_SCHEMA_SHA
     assert rc.research_plan_schema(False) is rc.RESEARCH_PLAN_SCHEMA
     args = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
+                max_branches=5, max_branch_steps=8, branched_max_steps=43,
                 question_rule=QUESTION_RULE, intake="INTAKE", packs="PACKS", topics_rule=topics.prompt_rule(V))
-    assert raw_sha(cso.RESEARCH_PLAN_PROMPT.format(**args, output_types_rule="")) == RESEARCH_PROMPT_SHA
+    prompt = cso.RESEARCH_PLAN_PROMPT.format(**args, output_types_rule="")
+    rule = "- " + cso.SELECTION_RECORD_RULE + "\n"
+    assert prompt.count(rule) == 1
+    prompt = prompt.replace(rule, "")  # #890: only this rule is new; the rest is the previous prompt
+    claims = "- " + cso.CLAIM_IDS_PLAN_RULE + "\n"
+    assert prompt.count(claims) == 1
+    prompt = prompt.replace(claims, "")  # #1066: a step's result cannot add a claim; only this rule is new
+    scripts = "- " + cso.SCRIPT_OUTPUTS_PLAN_RULE + "\n"
+    assert prompt.count(scripts) == 1 and "outputs/scripts/" in scripts  # the new rule is in the prompt and names the folder
+    prompt = prompt.replace(scripts, "")  # #792: only this rule is new; the rest is the previous prompt
+    budget_now = ("lab's policy cap; when the PI wrote a budget on the request,\n"
+                  "  that budget is the cap and this amount is only the estimate on the CP1 card. Exceeding the cap waits for a PI\n"
+                  "  budget card.")
+    budget_before = "configured request cap; exceeding it waits for a PI\n  budget card."
+    assert prompt.count(budget_now) == 1
+    prompt = prompt.replace(budget_now, budget_before)  # #944: a request budget is the cap; only this sentence is new
+    phase = ("labhq checks metadata before CP1 "
+             "and prepares selected skills after approval alongside the approved steps. A late skill is omitted from that step.")
+    previous = ("labhq checks metadata before CP1 "
+                "and builds selected skills only when their approved steps dispatch.")
+    assert prompt.count(phase) == 1
+    assert raw_sha(prompt.replace(phase, previous)) == RESEARCH_PROMPT_SHA
+    assert raw_sha(prompt.replace(phase, "labhq prepares them before CP1.")) == (
+        "ed59a387489e39817a2d0bce164e1762485f6161656f1b90d4492b759a88e56a")
 
 
 def test_on_schema_offers_optional_entries_without_the_version_field():
@@ -209,3 +254,30 @@ def test_staff_type_fields_are_optional_and_a_bad_value_drops_only_the_field():
     assert typed.artifact_refs[0].data_type == "de_table" and typed.artifact_refs[0].format is None
     assert typed.model_dump(mode="json")["artifact_refs"][0] == {"artifact_id": "a", "path": "outputs/x.tsv",
                                                                   "data_type": "de_table"}
+
+
+def test_the_research_step_rules_tell_the_engine_that_one_source_is_one_independence_group():
+    """#1089: two groups for one source got the later evidence row refused and its claim lost it (② 5th and 6th runs, s3). The rule
+    is in the text every research step prompt carries, beside the other cross-field rules."""
+    rules = cso.RESEARCH_RESULT_FIELD_RULES
+    assert "cite the same source" in rules and "same independence_group" in rules
+    assert rules.index("same independence_group") < rules.index("source_access_metadata")  # a rule, not a literature aside
+
+
+def test_a_research_step_tier_is_optional_and_never_reaches_a_plan_hash_while_unset():
+    """#625 step 2: the field exists for a stored plan, but a plan without it keeps its canonical JSON and hash, and the
+    engine is not offered it."""
+    plan = valid_plan()
+    for field in ("topics", "checklist", "suggested_next"):  # as a plan frozen before #221 had them
+        plan.pop(field)
+    assert rc.plan_sha256(plan) == VALID_PLAN_SHA
+    assert "model_tier" not in json.loads(rc.canonical_plan_json(plan))["steps"][0]
+    assert "model_tier" not in rc.RESEARCH_PLAN_SCHEMA["$defs"]["ResearchStep"]["properties"]
+    assert "model_tier" not in rc.research_plan_schema(True, {"type": "object"})["$defs"]["ResearchStep"]["properties"]
+    lowered = copy.deepcopy(plan)
+    lowered["steps"][0]["model_tier"] = "balanced"
+    assert rc.plan_sha256(lowered) != VALID_PLAN_SHA        # a chosen tier is part of what the PI approves
+    assert json.loads(rc.canonical_plan_json(lowered))["steps"][0]["model_tier"] == "balanced"
+    lowered["steps"][0]["model_tier"] = "turbo"
+    with pytest.raises(ValidationError):
+        rc.ResearchPlan.model_validate(lowered)

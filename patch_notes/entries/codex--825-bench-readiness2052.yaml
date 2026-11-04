@@ -1,0 +1,6 @@
+pr: 825
+rows:
+- sha: 'd309064'
+  at: '2026-10-21 21:08'
+  summary: 종료 검사가 실행 준비 지연 때문에 먼저 실패하지 않도록 시험 준비 순서를 고쳤습니다.
+  text: bench test fixture에서 PID 기록을 완성해 게시하고 live 3-PID 검증 뒤 process를 반환하며 drain 시작 뒤 취소를 허용한다. startup 실패 정리·조기 task 실패·unknown/partial PID 전파를 추출 helper와 fake process/event/clock 18건으로 확인했다. 두 arm×세 stop과 기존 assertion·1/15/30/10초 경계 및 제품 deadline/kill 코드는 유지했다. 실제 process-tree integration은 로컬 미실행이며 새 CI는 미확인이다.

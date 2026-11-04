@@ -1,0 +1,10 @@
+pr: 996
+rows:
+- sha: cd02532
+  at: 2026-10-29 09:12
+  text: StructuredOutput 형식 오류 재시도를 runner 안의 반복에서 gateway의 새 dispatch로 옮겨 병렬 단계가 요청 예산을 승인 없이 넘지 못하게 한다 (#673).
+  summary: 병렬 단계의 출력 형식 오류 재시도가 요청 예산 한도를 넘지 않게 했습니다.
+- sha: 84c198d
+  at: 2026-10-29 05:22
+  text: 재시도 허용 callback 초안과 병렬 예산 회귀 test를 보존한다 (callback은 cd02532에서 gateway 재dispatch로 대체).
+  summary: 병렬 예산 초과 재현 시험을 남겼습니다.

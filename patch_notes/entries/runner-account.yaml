@@ -3,23 +3,28 @@ rows:
 - sha: 99d3674
   at: 2026-10-02 19:19
   text: runner를 별도 Windows 표준 계정으로 격리하는 ACL·로그인·실행 절차와 설정 소유자 기반 doctor 경고를 추가
+  summary: Windows 별도 계정으로 실행기를 분리하는 절차와 설정 소유자 경고를 더했습니다.
 - sha: b14bfa1
   at: 2026-10-02 19:26
-  text: runner 전용 계정 절차서에 labhq 설치·직원 명단·경로를 더하고, doctor는 지정한 runner 계정으로 돌 때만 격리
-    ok
+  text: runner 전용 계정 절차서에 labhq 설치·직원 명단·경로를 더하고, doctor는 지정한 runner 계정으로 돌 때만 격리 ok
+  summary: 별도 실행기 계정의 설치 절차를 보완하고 그 계정으로 실행할 때만 격리 성공으로 봅니다.
 - sha: de4e225
   at: 2026-10-02 19:32
-  text: runner 설정에서 client token을 빼고(gateway·runner 설정 분리), doctor는 whoami로 runner
-    계정을 확인
+  text: runner 설정에서 client token을 빼고(gateway·runner 설정 분리), doctor는 whoami로 runner 계정을 확인
+  summary: 실행기 설정에서 접속 토큰을 빼고 진단 때 실제 실행 계정을 확인합니다.
 - sha: b3b4b00
   at: 2026-10-02 19:38
   text: runner 계정 절차서의 깨진 runner.yaml 경로 6곳 복구
+  summary: 실행기 계정 안내에서 잘못 표시된 설정 파일 경로를 고쳤습니다.
 - sha: af48ee7
   at: 2026-10-02 19:43
   text: 'runner 계정 절차서: runner 명령을 venv 절대경로로, 단계 보고를 최종 doctor 동작에 맞춤'
+  summary: 실행기 계정 안내의 명령 경로와 최종 진단 순서를 실제 동작에 맞췄습니다.
 - sha: 3aef457
   at: 2026-10-02 19:55
   text: 'runner 절차서를 실행 순서대로 다시 씀: 설정 파일 생성 뒤 파일 ACL, runner 프로필에 직원 CLI 설치'
+  summary: 실행기 설치 절차를 설정 생성·권한 설정·직원 도구 설치 순서로 다시 썼습니다.
 - sha: 972090b
   at: 2026-10-02 20:03
   text: 'doctor: 공개된 기본 client token을 경고, runner 설정은 client token을 빈 값으로'
+  summary: 공개된 기본 접속 토큰을 쓰면 경고하고 실행기 설정에서는 그 토큰을 뺍니다.

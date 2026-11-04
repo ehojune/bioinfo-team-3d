@@ -1,0 +1,6 @@
+pr: 825
+rows:
+- sha: 'ce4218a'
+  at: 2026-10-21 20:06
+  summary: Windows 핵심 검사는 필수 파일과 browser case만 수집하도록 바꿨습니다.
+  text: '#825: critical의 두 native 파일 전체+정확한 browser parameter와 필터 없는 discovery를 묶고 새 native case도 포함한다. Execution v2는 좁은 실제 collected/selected와 pool의 실제 global full/eligible을 구분해 critical 집합·disjoint union·동일 identity·전 lifecycle PASS/no-SKIP barrier를 검증하며 v1을 거부한다. Outer manifest8/profile6과 기존 trust/changed-test 계약은 보존하고 routine job600초 안에서 CI step만2/7분으로 배정한다. 관련 fake135·manifest95·별도 offline reader8 PASS, 실제 새 head의 절감·Windows 성공·600초 충족은 미검증이다.'

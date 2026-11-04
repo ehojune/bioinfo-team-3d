@@ -1,17 +1,36 @@
 # 처음이면 `labhq init`이 이 파일로 config/labhq.yaml을 만들고 token을 무작위로 채움.
-# 직접 복사하면 runner_token·client_token을 바꾸고, Windows에서는 data_zones: []로 둠.
+# 직접 복사하면 runner_token·client_token을 바꾸고, Windows에서는 restricted data_zones를 빼고 둠.
+# 연구 모드(CP1·CP2·분야 팩), 의미 모델 ab, 산출물 종류 선언은 PI가 시험한 설정대로 켜 둠(#613).
+# 끄려면 research.enabled·semantics.mode·plan.declare_output_types를 바꿈. 이 값들은
+# labhq/init_defaults.py의 목록과 tests/test_init_defaults.py가 같게 맞춰 둠.
 gateway:
   host: 127.0.0.1            # 폰에서 접속하려면 Tailscale IP나 0.0.0.0 + TLS 프록시
   port: 8787
   url: ws://127.0.0.1:8787   # runner가 접속할 주소 (원격이면 wss://…)
   runner_token: change-me-runner
   client_token: change-me-client
+  # report_browser: C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe  # PDF 보고서를 인쇄할 Edge·Chrome(비우면 자동으로 찾음)
+
+# `up`이 역할마다 띄우는 감독 프로세스. 항상 gateway·runner의 종료 시각과 종료 코드를 기록한다(docs/manual.md).
+# supervisor:
+#   restart: false        # true: 스스로 끝난(종료 코드 0이 아닌) 역할을 다시 시작. 기본은 꺼짐
+#   max_restarts: 5       # restart_window_s 안에 다시 시작하는 최대 횟수. 넘으면 그대로 둠
+#   restart_window_s: 600
+#   backoff_s: 5          # 첫 재시작 전 대기. 다시 시작할 때마다 두 배
+#   backoff_cap_s: 120
 
 runner:
+  facilities_support: unspecified  # required: doctor 준비 필수, optional: 부재 허용, unspecified: 요구 미선언
   id: lab-workstation
   max_parallel: 4
+  # breaker_hard_stop: false        # 폭주 차단기의 stop 단계가 task를 실제로 멈출지(기본 끔: 표시만)
+  # breaker_beat_s: 10              # 차단기가 한 단계씩 올라가는 최소 간격(초)
   consult_parallel: 2             # 막힌 직원의 질의 답변 전용 슬롯(일반 task와 분리)
   workspace_root: ~/.labhq/runs     # 태스크별 실험노트 폴더
+  # disk_fail_free_gb: 2            # 작업 드라이브 여유가 이보다 적으면 PI가 답하기 전엔 task를 시작하지 않음(0이면 끔)
+  # disk_watch_s: 30               # task가 도는 동안 드라이브 여유를 이 초마다 읽어 disk_fail_free_gb 아래면 세션을 보존한 채 멈춤(0이면 끔)
+  # disk_watch_halt: true         # false면 멈추지 않고 작업 기록에 경고만 남김
+  # bulk_data_root: D:/labhq-data   # 수 GB 이상 원자료를 받을 폴더(작업 폴더 밖). 직원 브리핑에 한 줄로 알림
   bundle_max_file_mb: 50            # 요청 묶음에 복사할 파일 하나의 최대 크기
   bundle_max_total_mb: 2048         # 요청 묶음 전체에서 복사할 최대 크기
   bundle_max_files: 5000            # 요청 묶음 전체에서 복사할 최대 파일 수
@@ -19,6 +38,7 @@ runner:
   talent_dir: ~/.labhq/talent       # 인재풀 (파견직 빌드 + 계약서 보관)
   broker_port: 8788
   task_timeout_s: 21600
+  # step_memory_limit_gb: 12        # 생략하면 트리 상한 60%, POSIX 프로세스별 fallback 40%; 0이면 끔
   stall_warn_s: 600                 # 이 시간 동안 출력이 없으면 한 번 경고(0이면 끔)
   stall_retry_s: 1200               # 명령이 안 돌 때만 CLI를 끝내고 재시도(0이면 끔)
   job_poll_s: 60
@@ -27,8 +47,28 @@ runner:
   input_hash_max_total_bytes: 21474836480  # 단계마다 cache miss 입력을 읽는 누적 상한(20 GiB)
   system_ca_bundle: true          # Windows: 직원 Python이 OS 신뢰 저장소도 믿게(기관 TLS 검사 장비). 직접 SSL_CERT_FILE을 정하면 그대로 둠
 
+# dry-run의 호출당 예상 비용 범위. 출처·확인일은 사용하는 엔진의 공식 가격표를 직접 확인한 뒤 적습니다.
+# token 수와 구독 과금이 정해지지 않은 기본값은 지어내지 않고 null로 두며, 이때 "비용 모름"으로 표시합니다.
+model_tier_prices:
+  source: null
+  checked_on: null
+  fast: {min_usd: null, max_usd: null}
+  balanced: {min_usd: null, max_usd: null}
+  reasoning: {min_usd: null, max_usd: null}
+
+# 등급(fast·balanced·reasoning)이 엔진마다 어떤 모델을 뜻하는지(#625). 비워 두면 등급은 모델을 고르지 않고 직원 YAML의
+# `model`이 그대로 쓰입니다. 직원 YAML에 `model`이 있으면 항상 그것이 이기고, 등급은 `model`이 없는 직원에게만 씁니다.
+# 값을 적으면 요청 비용 요약이 선언 등급과 다른 모델로 돈 직원을 `model_tier_mismatch`로 알립니다. 모델명은 공식 목록에서 확인해 적습니다.
+model_tiers:
+  fast: {}        # 예: {claude_code: haiku, codex: gpt-6-luna}
+  balanced: {}
+  reasoning: {}
+
 engines:
 # bioinfo-agent plugin 경로는 러너 환경변수 BIOINFO_AGENT_DIR로 지정 (agents/core/bioinfo-agent.yaml).
+# labhq init이 BIOINFO_AGENT_DIR, D:/bioinfo-agent·~/bioinfo-agent, WSL의 /mnt/d/bioinfo-agent 순으로 찾아 아래 env에
+# 넣음. 못 찾으면 묻고(--bioinfo-agent PATH로 미리 줄 수 있음), 끝내 모르면 꺼 둠. labhq doctor가 연결 여부를 알려 줌.
+# 값 예: D:/bioinfo-agent (WSL 러너면 /mnt/d/bioinfo-agent). 경로는 러너가 도는 쪽 기준.
   claude_code: {bin: claude}
   # Claude 직원 전용 설정 폴더(docs/manual.md 'PI 개인 경로'). PI ~/.claude는 개인 경로라 막히고, Claude는 긴 출력을 설정 폴더에서 다시 읽음.
   # labhq init이 ~/.claude를 보면 아래처럼 넣음(Windows는 ${USERPROFILE}). 로그인: 그 폴더로 claude 실행 뒤 /login
@@ -58,8 +98,10 @@ hpc:
     sbatch_args: ["--nodes=1", "--ntasks=1", "--cpus-per-task={cores}", "--mem={mem}", "--time={walltime}", "--export=NONE"]
 
 policy:
-  data_zones:                 # Windows 러너는 restricted 구역이 있으면 시작 거부. Windows 체험: data_zones: []
+  data_zones:                 # Windows 러너는 restricted 구역이 있으면 시작 거부. Windows 체험: restricted 줄을 지움
     - {path: /data/restricted, level: restricted, note: "DUA 적용 코호트 데이터"}
+    # 의미 모델(semantics)이 산출물 hash를 재려면 작업 폴더가 public·internal 구역이어야 함. init이 runner.workspace_root에 맞춰 둠.
+    - {path: ~/.labhq/runs, level: internal, note: "labhq 작업 폴더 — 의미 모델 hash용"}
   # PI 개인 경로(docs/manual.md 'PI 개인 경로'): 직원이 PI 계정으로 돌 때 열면 안 되는 곳. 키를 빼면 아래 기본 목록,
   # [] 이면 끔. ~는 runner PC에서 펼치고, 없는 경로는 건너뜀. 작업 폴더를 담은 경로는 그 task에서 빠짐.
   # private_paths:
@@ -95,6 +137,7 @@ policy:
   budget:
     per_task_usd: 5
     per_request_usd: 30
+    reserve_before_dispatch: true    # 기본 켬(#1139): 모델 호출마다 보내기 전에 그 상한을 요청 예산에서 미리 잡음(#862). false: 이미 쓴 비용만 봄
   bioinfo_agent:
     hard_stops: [data_zone, budget_cap, installation]
     pipeline_pr: false                     # 기본 꺼짐. true면 새 pipeline을 아래 저장소에 branch·PR로 올림
@@ -102,22 +145,44 @@ policy:
     pipeline_base_branch: main
 
 recruit:
+  enabled: true  # false refuses hiring, Paper2Agent setup/preparation and paper-skill attachments
   agent_id: recruiter
   permission_mode: auto       # 무인 변환. 가능하면 컨테이너/VM 안에서 runner를 돌리세요
   max_budget_usd: 25
   default_ttl_days: 30
   contract_engine: claude_code
   contract_model: sonnet
+  contract_model_tier: balanced
+
+result_storage:
+  authors: []                    # 예: ["Kim Gildong"]. 값이 있을 때만 결과 repo에 CITATION.cff를 씀. 비우면 만들지 않음
 
 github:
   token_env: GITHUB_TOKEN        # 게이트웨이 환경변수. fine-grained PAT: Issues·Contents·Pull requests RW
+  token_file: ~/.labhq/secrets-github/github_token  # 환경변수가 없을 때 gateway가 읽는 파일. labhq init이 이 계정만 읽게 씀
+  progress_branch: labhq/progress # 선택한 요청의 단계별 공개 진행본. 최종 정리본 branch와 분리
   dashboard_url: null            # 예: https://labhq.<tailnet>.ts.net — 이슈 본문에 사무실 링크
   codex_mention: "@codex"        # codex 멘션은 PR 상단 리뷰 요청에만 한 번
+  edition_pdf_max_mb: null       # 기본 무제한. 값을 주면 경고만 하며 그림·PDF를 줄이지 않습니다
 
 # 공개 자원 조회(labhq_annot). AlphaGenome API 키는 이 위치의 파일에만 둡니다: labhq init이 묻고 runner 계정만
 # 읽게 저장합니다. 설정에는 위치만 적고 키 값은 적지 않습니다.
 # annot:
 #   alphagenome_key_file: ~/.labhq/secrets/alphagenome_api_key
+#   unpaywall_email: ""             # 연락용 email. 비우면 Unpaywall 조회는 비활성
+#   request_lookup_limit: 9         # 선택: 한 요청에서 labhq_annot이 보내는 HTTP 요청 상한(실패·재시도·redirect 포함). 비우면 세지 않음
+
+# 핵심 논문 전문. 기본은 기관 경로 꺼짐이며 비밀번호·cookie·token은 설정하지 않습니다.
+# literature:
+#   institution_enabled: false
+#   institution_profile: null       # PI가 직접 로그인한 전용 Edge/Chrome profile 폴더
+#   institution_proxy: null         # 예: https://proxy.example/login?url= 또는 ...?url={url}
+#   institution_request_interval_s: 30
+#   institution_daily_limit: 5
+#   institution_tdm_allowed: false  # 기관·출판사 조건을 확인한 뒤에만 true
+#   external_model_allowed: false   # 본문을 직원 모델이 읽어도 될 때만 true
+#   pdf_request_timeout_s: 7200     # 기관 실패 뒤 PI PDF 요청 대기: 기본 2시간
+#   pdf_max_mb: 40
 
 dev_log:
   enabled: true                   # 로컬 rounds 기록은 항상 생성; false면 GitHub 발행 중단
@@ -150,17 +215,21 @@ orchestrator:
   max_revisions: 1
   max_replans: 0                     # 리뷰 revise 뒤 남은 DAG 재계획 상한
   max_failure_replans: 1             # 단계 실패 뒤 남은 DAG 재계획 상한; 0이면 바로 실패
+  # request_wall_clock_s: 5400        # 요청 하나의 전체 시간 상한(초, 0이면 끔, #877). 수락 때 고정하고 PI 카드 대기(waiting_pi)는 기한에 더하며 보고서 검토 이후는 끊지 않음
+  # step_model_tiers: false           # 계획 단계의 model_tier를 받아 그 등급의 모델로 돌립니다(#625 2단계, 기본 꺼짐). 직원이 선언한 등급 이하로만 낮출 수 있고
+                                      # validation·report 단계는 balanced 아래로 내리지 못합니다. CSO가 등급을 고르게 하는 기능은 아직 없습니다(저장된 계획의 값만 따름).
   max_steps: 12
   max_parallel_steps: 4
+  plan_max_chars: 50000              # 넘으면 경고만 기록; 유효한 계획은 자르지 않음
   quota_default_wait_s: 3600          # reset 시각을 못 읽거나 runner 시간대를 모를 때 최대 1시간 대기 뒤 재확인
   quota_max_wait_s: 604800            # 최초 감지 뒤 최대 7일; 넘으면 실패
   login_retry_s: 600                  # 로그인 만료 뒤 10분마다 같은 turn 재시도
   login_wait_max_s: 86400             # 최초 감지 뒤 최대 1일; 넘으면 실패
 
 # 산출 데이터 종류 선언(#221 할 일 2). 켜면 CSO 계획에 산출마다 data_type·format key를 적게 하고(labhq/vocab),
-# 러너가 모은 산출에 붙여 그림자 기록이 읽습니다. 실행·승인·권한에는 쓰지 않습니다. 기본 off.
+# 러너가 모은 산출에 붙여 그림자 기록이 읽습니다. 실행·승인·권한에는 쓰지 않습니다. init 기본 켜짐(#613).
 plan:
-  declare_output_types: false
+  declare_output_types: true
 
 # CSO가 일반 요청마다 이 범위로 in/borderline/out을 판정합니다. out이면 단계를 돌리기 전에 PI에게 묻습니다.
 # 비워 두면 기본값(one-PI bioinformatics lab: genomics, transcriptomics, ...)을 씁니다.
@@ -172,18 +241,28 @@ lab:
 pi_profile:
   references: []              # 예: [{kind: github, value: owner/repo, note: 분석 규약}, {kind: path, value: /srv/refs/notes}]
 
-# 연구 계약 pilot은 opt-in입니다. evidence_checkpoint를 켜야 승인된 연구 step을 실행합니다.
+# 연구 계약(CP1·CP2·분야 팩). init 기본 켜짐(#613): PI가 시험한 설정과 같음. evidence_checkpoint를 켜야 승인된 연구 step을 실행합니다.
 research:
-  enabled: false              # 켜려면 enabled·evidence_checkpoint를 true로, active_packs도 함께
-  evidence_checkpoint: false  # true면 CP1 뒤 연구 단계를 실행하고 CP2 승인 뒤 리뷰·보고서까지
+  enabled: true               # 끄려면 enabled·evidence_checkpoint를 함께 false로
+  evidence_checkpoint: true   # true면 CP1 뒤 연구 단계를 실행하고 CP2 승인 뒤 리뷰·보고서까지
   live_source_check: false     # true면 CP2와 labhq verify에서 Crossref·NCBI를 live 조회
+  blind_draft: false           # true면 CP1 승인 직후 리뷰어가 원 요청만으로 초안을 쓰고 봉인한 뒤 리뷰에서 대조(#889)
   live_source_contact: ""      # API User-Agent/mailto에 넣을 관리자 email(선택)
   result_corrections: 2       # 결과 JSON 계약 오류만 다시 받는 횟수(분석·산출 파일은 재실행하지 않음)
   finish_turns: 1             # 턴 상한에 걸린 단계를 같은 세션에서 절반 상한으로 마무리하는 횟수
   revise_continuations: 2     # 리뷰 revise·CP2 수정 요청 뒤 새 CP1로 이어 가는 횟수, 둘을 합산(0이면 revise에서 끝)
-  active_packs: []            # 예: [single_cell_de@3, bulk_tumor_normal@3]
+  active_packs: [bulk_tumor_normal@3, single_cell_de@3]   # 기본 분야 팩. 정확한 id@version 키
 
 # 의미 모델 그림자 기록(#150): off | shadow | ab. shadow는 요청이 끝난 뒤 출처 모델·객체 뷰를 계산해
 # gateway.state_dir/semantics/에 ID·hash·개수만 남기고, CSO·승인·보고에는 아무것도 주지 않습니다.
-# ab는 연구 요청 절반에만 재사용 후보를 CSO 계획 참고로 줍니다.
-semantics: off
+# ab는 연구 요청 절반에만 재사용 후보를 CSO 계획 참고로 줍니다. init 기본은 ab + actions: confirm(#613).
+# actions: off | shadow | confirm. confirm이면 PI가 CLI에서 y/N으로 후속 질문을 보낼 수 있습니다.
+semantics:
+  mode: ab
+  actions: confirm
+pi_language:
+  enabled: true
+  model: haiku
+  per_request_usd: 0.50
+  per_message_usd: 0.05
+  timeout_s: 30

@@ -192,6 +192,49 @@ def test_generated_only_main_commits_do_not_count_toward_readme_limit(repo):
     assert pn.counted_main_commits(last, "main", repo) == 0
 
 
+def test_commits_that_only_touch_invisible_paths_do_not_count_toward_readme_limit(repo):
+    last = run(repo, "log", "-1", "--format=%H", "--", "README.md")
+    commit(repo, {"tests/test_x.py": "1\n", "docs/status/s.md": "s\n", "patch_notes/entries/e.yaml": "rows: []\n"}, "tests")
+    commit(repo, {"config/ci/a.json": "{}\n", ".github/workflows/w.yml": "x: 1\n", "scripts/ci_x.py": "1\n"}, "ci")
+    commit(repo, {"STATUS.md": "generated\n", "tests/test_y.py": "2\n"}, "tests and generated index")
+    assert pn.counted_main_commits(last, "main", repo) == 0
+
+
+def test_a_pr_that_only_changes_invisible_paths_passes_the_readme_limit(repo):
+    commit(repo, {"labhq/a.py": "1\n"}, "main product 1")
+    commit(repo, {"labhq/a.py": "2\n"}, "main product 2")
+    run(repo, "checkout", "-q", "-b", "feature")
+    change = commit(repo, {"tests/test_a.py": "1\n"}, "test only")
+    commit(repo, {"patch_notes/entries/feature.yaml": entry(change), "docs/status/s.md": "s\n"}, "패치노트")
+    assert pn.check("main", "HEAD", repo) == []
+
+
+def test_a_pr_that_changes_product_code_is_still_held_by_the_readme_limit(repo):
+    commit(repo, {"labhq/a.py": "1\n"}, "main product 1")
+    commit(repo, {"labhq/a.py": "2\n"}, "main product 2")
+    run(repo, "checkout", "-q", "-b", "feature")
+    change = commit(repo, {"labhq/b.py": "1\n", "tests/test_b.py": "1\n"}, "product and test")
+    commit(repo, {"patch_notes/entries/feature.yaml": entry(change)}, "패치노트")
+    assert any("를 안 고친 커밋이 2개" in problem for problem in pn.check("main", "HEAD", repo))
+
+
+def test_moving_a_product_file_into_an_invisible_path_still_counts(repo):
+    commit(repo, {"labhq/a.py": "product code that a rename keeps byte for byte\n" * 5}, "add product file")
+    last = run(repo, "log", "-1", "--format=%H", "--", "README.md")
+    (repo / "tests").mkdir(exist_ok=True)
+    run(repo, "mv", "labhq/a.py", "tests/a.py")  # git detects this as a rename: only the destination is "tests/"
+    run(repo, "commit", "-q", "-m", "move product file into tests")
+    assert pn.counted_main_commits(last, "main", repo) == 2  # the add and the move both change what a user sees
+
+
+def test_a_commit_mixing_product_code_with_tests_still_counts(repo):
+    last = run(repo, "log", "-1", "--format=%H", "--", "README.md")
+    commit(repo, {"labhq/a.py": "1\n", "tests/test_a.py": "1\n"}, "product and test")
+    commit(repo, {"agents/x.yaml": "a: 1\n"}, "agent definition")
+    commit(repo, {"scripts/other.py": "1\n"}, "other script")  # only scripts/ci_* is invisible
+    assert pn.counted_main_commits(last, "main", repo) == 3
+
+
 def test_an_all_digit_sha_read_as_a_yaml_integer_is_named(repo):
     # PR #410: a hand-written row `sha: 7999708` loads as an int; the check names that, not a missing commit.
     run(repo, "checkout", "-q", "-b", "feature")
@@ -204,3 +247,40 @@ def test_an_all_digit_sha_read_as_a_yaml_integer_is_named(repo):
                         f"감싸세요 (sha: '{sha}')" for sha in ("7999708", "0123456")]
     # The rows command quotes such a sha itself, so it round-trips as text.
     assert yaml.safe_load(yaml.safe_dump([{"sha": "7999708"}])) == [{"sha": "7999708"}]
+
+
+def test_check_survives_another_thread_holding_gc_objects_while_commits_are_read(repo, monkeypatch):
+    """`set().union(*generator)` built its argument tuple while one git call per commit ran. A thread that held
+    `gc.get_objects()` then raised that tuple's refcount and `check` failed with SystemError (the CI stall snapshot,
+    #1238). The list in `check` finishes before the tuple is made."""
+    import gc
+    import threading
+    import time
+
+    run(repo, "checkout", "-q", "-b", "feature")
+    shas = [commit(repo, {f"a{i}.py": "x\n"}, f"fix {i}") for i in range(3)]
+    commit(repo, {"patch_notes/entries/feature.yaml": entry(*shas)}, "패치노트")
+    real = pn.changed_from_parent
+
+    def slow(sha, cwd):
+        time.sleep(0.05)
+        return real(sha, cwd)
+
+    monkeypatch.setattr(pn, "changed_from_parent", slow)
+    stop = threading.Event()
+
+    def walk():
+        while not stop.is_set():
+            held = gc.get_objects()
+            time.sleep(0.03)
+            del held
+            time.sleep(0.001)
+
+    worker = threading.Thread(target=walk, daemon=True)
+    worker.start()
+    try:
+        for _ in range(3):
+            assert pn.check("main", "HEAD", repo) == []
+    finally:
+        stop.set()
+        worker.join(timeout=5)

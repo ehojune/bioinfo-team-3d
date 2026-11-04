@@ -4,7 +4,7 @@ The agent is described by a command template (AgentSpec.cli). labhq writes the t
 command in the task workspace, and reads stdout.
 
 With `output: jsonl`, each stdout line may be a labhq event (anything else is treated as a log line):
-  {"type": "status", "state": "working"}                     → drives the office animation
+  {"type": "status", "state": "working", "session_id": "..."} → animation; optional early session id
   {"type": "log", "text": "aligning sample 3/12"}             → speech bubble + messenger
   {"type": "tool", "name": "bwa-mem2", "input": {...}}        → tool icon
   {"type": "usage", "cost_usd": 0.12, "tokens": {...}}
@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 
 from ..models import CliSpec
-from ..util import short
+from ..util import event_preview, short, tool_input_summary
 from .base import (AgentAdapter, role_footer, RunContext, RunState, expand_env, record_model_id,
                    token_counts, wrap_cwd)
 
@@ -81,17 +81,23 @@ class CliAdapter(AgentAdapter):
                 ev = None
         if not isinstance(ev, dict) or "type" not in ev:
             st.text_parts.append(line + "\n")
-            await ctx.emit("agent.log", {"text": short(line, 2000)})
+            await ctx.emit("agent.log", {**event_preview("text", line, 2000)})
             return
         typ = ev["type"]
         record_model_id(st, ctx, ev.get("model_id") or ev.get("model"))
-        if typ == "status":
+        if typ in ("status", "started"):
+            if isinstance(ev.get("session_id"), str) and ev["session_id"]:
+                st.session_id = ev["session_id"]
             await ctx.emit("agent.status", {"state": ev.get("state", "working"), "task": ev.get("task")})
         elif typ == "log":
             st.text_parts.append(str(ev.get("text", "")) + "\n")
-            await ctx.emit("agent.log", {"text": short(ev.get("text"), 2000)})
+            await ctx.emit("agent.log", {**event_preview("text", ev.get("text"), 2000)})
         elif typ == "tool":
-            await ctx.emit("agent.tool", {"name": ev.get("name"), "input": short(ev.get("input"), 400)})
+            await ctx.emit("agent.tool", {"id": ev.get("id"), "name": ev.get("name"),
+                                         "summary": tool_input_summary(ev.get("input")),
+                                         **event_preview("input", ev.get("input"), 400)})
+        elif typ == "tool_result":
+            await ctx.emit("agent.tool_result", {"id": ev.get("id")})
         elif typ == "usage":
             st.cost_usd = ev.get("cost_usd", st.cost_usd)
             raw = ev.get("tokens")
@@ -107,4 +113,4 @@ class CliAdapter(AgentAdapter):
             if ev.get("ok") is False:
                 st.error = ev.get("error") or "agent reported failure"
         else:
-            await ctx.emit("agent.log", {"text": short(ev, 400), "level": "debug"})
+            await ctx.emit("agent.log", {**event_preview("text", ev, 400), "level": "debug"})

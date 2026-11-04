@@ -11,10 +11,12 @@ from pydantic import ValidationError
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator, PLAN_SCHEMA
 from labhq.research.contract import (RESEARCH_PLAN_SCHEMA, ResearchResult, classify_intake,
-                                     freeze_plan, refresh_plan_approval, validate_research_plan)
+                                     freeze_plan, normalize_result_plan_sha256, plan_sha256,
+                                     refresh_plan_approval, validate_research_plan)
 from labhq.research.packs import configured_packs, load_pack_catalog, pack_snapshot, select_packs
 from labhq.settings import Settings
 from labhq.util import openai_strict_schema, strip_optional_nulls
+from labhq.vocab import topic_checklists
 
 PACK = "single_cell_de@2"
 
@@ -138,6 +140,147 @@ class MiniHub:
         pass
 
 
+@pytest.mark.asyncio
+async def test_stopped_semantics_is_large_on_cp1_feed_and_execution_record(tmp_path):
+    from labhq.research import semantics_shadow as shadow
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.semantics = {"mode": "ab"}
+    settings.research.enabled = True
+    settings.research.evidence_checkpoint = False
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    paths = shadow.ShadowPaths(tmp_path / "state" / "semantics")
+    shadow.write_disabled(paths, "info_boundary", 3, ts=1_797_000_000,
+                          boundary=[{"field": "objects", "class": "path"}])
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    await Orchestrator(hub).run_request("r")
+
+    card = hub.approvals[0]
+    assert "의미 장치 중단:" in card["summary"] and "info_boundary" in card["summary"]
+    assert "labhq semantics enable" in card["summary"]
+    assert card["detail"]["semantic_devices"]["semantics"]["epoch"] == 3
+    assert any(event["type"] == "request.semantic_devices" for event in hub.events)
+    assert "의미 장치 중단:" in hub.requests["r"]["execution_record"]
+
+
+def test_checklist_render_failure_is_recorded_instead_of_empty(monkeypatch):
+    req = {"plan": {"topics": ["dna_methylation"]}}
+    monkeypatch.setattr(topic_checklists, "load", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad checklist")))
+
+    rendered = Orchestrator._checklist_section(req, None)
+
+    assert "체크리스트 오류" in rendered
+    assert req["semantic_devices"]["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_checklist_render_failure_is_in_the_execution_record(monkeypatch):
+    settings = Settings()
+    hub = MiniHub(settings, lambda task: None, mode="orchestrate", work_kind="research")
+    hub.requests["r"]["plan"] = valid_plan(topics=["dna_methylation"])
+    monkeypatch.setattr(topic_checklists, "load",
+                        lambda *a, **k: (_ for _ in ()).throw(ValueError("PRIVATE CHECKLIST BODY")))
+
+    (await Orchestrator(hub)._finish("r", "# 결과", {}, ok=True))
+
+    error = hub.requests["r"]["semantic_devices"]["errors"][-1]
+    assert error["code"] == "checklist_render_failed"
+    assert set(error) == {"code", "device", "stage", "at", "message"}
+    assert "checklist_render_failed" in hub.requests["r"]["execution_record"]
+    assert "PRIVATE CHECKLIST BODY" not in str(hub.requests["r"])
+
+
+@pytest.mark.asyncio
+async def test_resume_pack_failure_preserves_the_frozen_snapshot(monkeypatch):
+    settings = Settings()
+    settings.research.enabled = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured=valid_plan(topics=[]))
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    frozen = {"custom_pack@1": "a" * 64}
+    hub.requests["r"]["research_contract"] = {
+        "work_kind": "research", "execution_enabled": False, "pack_snapshot": dict(frozen)}
+    monkeypatch.setattr("labhq.orchestrator.cso.packs_for_snapshot",
+                        lambda *a, **k: (_ for _ in ()).throw(ValueError("missing frozen pack")))
+
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert hub.calls == []
+    assert hub.requests["r"]["research_contract"]["pack_snapshot"] == frozen
+    assert hub.requests["r"]["status"] == "failed"
+    assert hub.requests["r"]["semantic_devices"]["errors"][-1]["code"] == "pack_snapshot_missing"
+
+
+@pytest.mark.asyncio
+async def test_exception_body_is_absent_from_request_cards_and_execution_record(monkeypatch):
+    settings = Settings()
+    settings.research.enabled = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    private_text = "DUA participant CASE-SECRET-927"
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    monkeypatch.setattr("labhq.research.semantic_devices.configured_packs",
+                        lambda *a, **k: (_ for _ in ()).throw(ValueError(private_text)))
+
+    await Orchestrator(hub).run_request("r")
+
+    public_record = json.dumps({"request": hub.requests["r"], "cards": hub.approvals}, ensure_ascii=False)
+    assert private_text not in public_record
+    assert "pack_load_failed" in hub.requests["r"]["execution_record"]
+
+
+@pytest.mark.asyncio
+async def test_cp1_preserves_load_error_that_already_affected_the_plan(monkeypatch):
+    settings = Settings()
+    hub = MiniHub(settings, lambda task: None, mode="orchestrate", work_kind="research")
+    hub.requests["r"]["semantic_devices"] = {
+        "version": 1,
+        "phase": "request_start",
+        "checked_at": "2026-10-18T10:00:00+09:00",
+        "status": "error",
+        "errors": [{
+            "code": "checklist_load_failed",
+            "device": "체크리스트",
+            "stage": "load",
+            "at": "2026-10-18T10:00:00+09:00",
+            "message": "체크리스트를 불러오지 못했습니다.",
+        }],
+    }
+    healthy = {
+        "version": 1,
+        "phase": "cp1",
+        "checked_at": "2026-10-18T10:01:00+09:00",
+        "status": "ok",
+        "errors": [],
+    }
+    monkeypatch.setattr("labhq.orchestrator.cso.semantic_devices.inspect",
+                        lambda *args, **kwargs: copy.deepcopy(healthy))
+    orchestrator = Orchestrator(hub)
+
+    record = await orchestrator._semantic_devices_check("r", "cp1")
+
+    assert record["status"] == "error"
+    assert record["errors"][0]["code"] == "checklist_load_failed"
+    hub.requests["r"]["plan"] = valid_plan(topics=[])
+    (await orchestrator._finish("r", "# 결과", {}, ok=True))
+    assert "checklist_load_failed" in hub.requests["r"]["execution_record"]
+
+
 def test_intake_classifies_simple_research_and_ambiguous():
     assert classify_intake("TSV를 CSV로 형식 변환해 줘").work_kind == "simple"
     assert classify_intake("후보 바이오마커를 선택해 줘").work_kind == "research"
@@ -189,6 +332,30 @@ def test_research_plan_and_result_contracts_are_strict():
         ResearchResult.model_validate({"schema_version": 2, "step_id": "s1", "claims": [], "evidence": [],
                                        "links": [], "artifact_refs": [], "not_established": [], "failures": [],
                                        "method_changes": []})
+
+
+def test_research_plan_accepts_optional_outputs_without_changing_legacy_canonical_form():
+    legacy = valid_plan()
+    legacy_hash = plan_sha256(legacy)
+    assert plan_sha256(validate_research_plan(legacy, max_steps=2, active_packs={})) == legacy_hash
+
+    marked = copy.deepcopy(legacy)
+    marked["steps"][0]["optional_outputs"] = ["outputs/transform_log.md"]
+    parsed = validate_research_plan(marked, max_steps=2, active_packs={})
+    assert parsed.steps[0].outputs == ["result1.tsv"]
+    assert parsed.steps[0].optional_outputs == ["outputs/transform_log.md"]
+
+
+def test_zero_plan_sha256_placeholder_is_rebound_but_other_wrong_hashes_stay_wrong():
+    plan = valid_plan()
+    zero = {"schema_version": 2, "plan_sha256": "0" * 64, "step_id": "s1"}
+    rebound, warning = normalize_result_plan_sha256(zero, plan=plan)
+    assert rebound["plan_sha256"] == plan_sha256(plan)
+    assert warning == "연구 원장의 0 plan_sha256을 승인된 계획 hash로 보정했습니다"
+
+    wrong = {**zero, "plan_sha256": "1" * 64}
+    unchanged, warning = normalize_result_plan_sha256(wrong, plan=plan)
+    assert unchanged == wrong and warning is None
 
 
 def test_plan_approval_is_invalidated_by_any_contract_change():
@@ -840,6 +1007,42 @@ async def test_cp2_records_approve_revision_or_rejection(cp2, outcome, status):
     assert hub.requests["r"]["outcome"] == outcome
     assert hub.requests["r"]["status"] == status
     assert hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]["decision"] == outcome.removeprefix("evidence_")
+    # A CP2 ending that is not a success says why in the office feed line; an approval has no error.
+    error = hub.requests["r"].get("error")
+    assert (error is None) if status == "done" else ("CP2" in error), error
+
+
+@pytest.mark.asyncio
+async def test_auto_off_reason_is_repeated_on_cp1_cp2_and_execution_record(tmp_path):
+    from labhq.research import semantics_shadow as shadow
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.semantics = {"mode": "ab"}
+    settings.research.enabled = True
+    settings.research.evidence_checkpoint = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    shadow.write_disabled(shadow.ShadowPaths(tmp_path / "state" / "semantics"),
+                          "worker_stuck", 4, ts=1_797_000_000)
+    hub = None
+
+    async def reply(task):
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured=_cp2_result(hub, task), outputs=[path])
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    await Orchestrator(hub).run_request("r")
+
+    cards = {card["kind"]: card for card in hub.approvals}
+    for kind in ("research_plan", "research_evidence"):
+        assert "의미 장치 중단:" in cards[kind]["summary"]
+        assert "worker_stuck" in cards[kind]["summary"]
+        assert cards[kind]["detail"]["semantic_devices"]["semantics"]["epoch"] == 4
+    assert "worker_stuck" in hub.requests["r"]["execution_record"]
 
 
 @pytest.mark.asyncio

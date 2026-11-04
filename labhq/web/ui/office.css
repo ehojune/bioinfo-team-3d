@@ -1,0 +1,55 @@
+/* E: paper, restrained furniture, content-sized rooms. Only decisions use accent. */
+.office { background: var(--ds-paper); border-radius: var(--ds-r-2); align-self: start; width: 100%; }
+.office .wall { padding: var(--ds-sp-1); gap: var(--ds-sp-3); align-items: center; background: var(--ds-sunk); border-bottom: 1px solid var(--ds-line); }
+.office .board { margin: 0; padding: var(--ds-sp-2) var(--ds-sp-3); background: var(--ds-surface); border: 1px solid var(--ds-line-ui); border-radius: var(--ds-r-1); }
+.office .board.alert { border-color: var(--ds-accent); animation: none; }
+.office .board-title { font: 700 var(--ds-fs-4)/1.4 var(--ds-font-sans); }
+.office .phases { font-size: var(--ds-fs-2); }
+.office .rack, .office .door { width: 28px; }
+.office .door-frame { fill: var(--ds-ink-3); }
+.office .door-panel rect { fill: var(--ds-furn) !important; }
+.office .zones { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ds-sp-2); padding: var(--ds-sp-2); align-items: start; }
+.office .zone { padding: var(--ds-sp-2); background: var(--ds-sunk); border: 1px solid var(--ds-line); border-radius: var(--ds-r-1); min-width: 0; }
+.office .zone h3 { display: flex; justify-content: space-between; gap: var(--ds-sp-2); margin: 0 0 var(--ds-sp-1); color: var(--ds-ink-2); font: 700 var(--ds-fs-2)/1.5 var(--ds-font-sans); }
+.office .zone-count { font-weight: 400; }
+.office .seats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: var(--ds-sp-1); }
+.office .seat { display: flex; flex-direction: row; gap: 0; padding: 2px; border-radius: var(--ds-r-1); text-align: left; color: var(--ds-ink); background: var(--ds-surface); min-height: 76px; }
+.office .seat:hover { outline: 1px solid var(--ds-line-ui); }
+.office .seat:focus-visible { outline: 3px solid var(--ds-accent); outline-offset: 2px; }
+.office .seat svg { flex: 0 0 72px; width: 72px; height: 72px; max-width: none; }
+.office .seat-info { min-width: 0; flex: 1; }
+.office .nm { margin: 0; font: 700 var(--ds-fs-3)/1.4 var(--ds-font-sans); overflow-wrap: anywhere; }
+.office .sub { white-space: normal; font: 400 var(--ds-fs-2)/1.35 var(--ds-font-sans); color: var(--ds-ink-2); }
+.office-status { display: flex; gap: 5px; align-items: baseline; margin-top: var(--ds-sp-1); color: var(--ds-ink-2); font: 500 var(--ds-fs-2)/1.4 var(--ds-font-sans); }
+.office-status .status-dot { width: 7px; height: 7px; flex: 0 0 7px; background: currentColor; border-radius: 50%; }
+.office-status-text { word-break: keep-all; }
+.office .seat[data-status="working"] .office-status { color: var(--ds-work); }
+.office .seat[data-status="error"] .office-status { color: var(--ds-err); }
+.office .seat[data-status="decision"] { box-shadow: inset 3px 0 var(--ds-accent); background: var(--ds-accent-soft); }
+.office .seat[data-status="decision"] .office-status { color: var(--ds-accent); }
+.office.offline .seat svg { filter: none; opacity: 1; }
+.office-body, .office-prop { transform-box: fill-box; transform-origin: center bottom; }
+@media (prefers-reduced-motion: no-preference) {
+  .office .seat[data-status="working"] .office-prop { animation: office-work 2.8s ease-in-out infinite; }
+  .office .seat[data-status="decision"] .office-body { animation: office-nod 2.4s ease-in-out infinite; }
+  .office .seat[data-status="answer"] .office-body { animation: office-nod 4s ease-in-out infinite; }
+  .office .seat[data-status="idle"] .office-body { animation: office-breathe 5s ease-in-out infinite; }
+  .office .seat[data-status="done"] .office-body { animation: office-nod .8s ease-in-out 2; }
+}
+@keyframes office-work { 50% { transform: translateY(-2px); } }
+@keyframes office-nod { 50% { transform: rotate(2deg); } }
+@keyframes office-breathe { 50% { transform: scaleY(.985); } }
+@media (prefers-reduced-motion: reduce) {
+  .office *, .office *::before, .office *::after { animation: none !important; transition: none !important; }
+}
+@media (max-width: 620px) {
+  .office { scroll-margin-top: 160px; }
+  .office .wall { padding: var(--ds-sp-2); }
+  .office .zones { grid-template-columns: minmax(0, 1fr); gap: var(--ds-sp-2); padding: var(--ds-sp-2); }
+  .office .zone { padding: var(--ds-sp-2); }
+  .office .zone[data-zone="data"] { order: -2; }
+  .office .zone[data-zone="lead"] { order: -1; }
+  .office .seats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .office .seat { min-height: 76px; padding: 2px; gap: 0; }
+  .office .seat svg { flex-basis: 64px; width: 64px; height: 64px; }
+}

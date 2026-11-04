@@ -1,11 +1,121 @@
 const doc = () => globalThis.document;
 
+export function plainPiText(value) {
+  return String(value ?? '').replace(/```[^\n]*\n[\s\S]*?(?:```|$)|~~~[^\n]*\n[\s\S]*?(?:~~~|$)/g, '')
+    .replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)/gm, '')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)').replace(/\*\*|__|`/g, '')
+    .split('\n').filter(line => !/^[\s|:\-]+$/.test(line))
+    .map(line => line.includes('|') ? line.replace(/^\s*\||\|\s*$/g, '').split('|').map(s=>s.trim()).join(' · ') : line)
+    .join('\n').trim();
+}
+
+// Display only. Keep source and decision values intact, including numbers and option indices.
+export function piText(parent, value, options = {}) {
+  if (options.attribution) add(parent, 'small', options.attribution);
+  const raw = String(options.original ?? value ?? ''), plain = plainPiText(value);
+  const codeLine = /^\s*(?:\$[\w]+\s*=|import\s+\w+|from\s+\w+\s+import|(?:const|let|var|def|function|class)\s|print\s*\(|(?:Remove-Item|New-Item|Get-Content|python|powershell|rm|mkdir)\s|[\[{]\s*["'])/mi;
+  const code = /```|~~~/.test(String(value ?? '')) || codeLine.test(String(value ?? ''));
+  const english = /[A-Za-z]{3}/.test(plain) && !/[가-힣]/.test(plain);
+  const prose = code ? plain.split('\n').filter(line => /[가-힣]/.test(line) && !codeLine.test(line) && !/[;{}=]/.test(line)).join('\n') : plain;
+  const shown = english ? '직원이 영어로 보낸 내용입니다. 자세히에서 원문을 확인해 주세요.' :
+    prose || (code ? '명령이나 코드가 포함된 내용입니다. 자세히에서 확인해 주세요.' : '');
+  const preview = options.limit && shown.length > options.limit ? shown.slice(0, options.limit - 1) + '…' : shown;
+  add(parent, options.tag || 'span', preview, 'pi-prose');
+  if (code || english || preview !== shown || options.truncated || options.forceOriginal) {
+    return expandableText(parent, raw, {...options, pi: false, fold: true, summary: '자세히'});
+  }
+  return parent;
+}
+
 function add(parent, tag, text = '', className = '') {
   const el = doc().createElement(tag);
   el.textContent = text;
   if (className) el.className = className;
   parent.append(el);
   return el;
+}
+
+function renderModelRefusal(parent, approval) {
+  parent.hidden = approval?.kind !== 'model_refused';
+  if (parent.hidden) return;
+  const key = JSON.stringify([approval.id, approval.detail?.models]);
+  if (parent._refusalKey === key) return;
+  parent._refusalKey = key;
+  parent.replaceChildren();
+  const actionLabel = add(parent, 'label', '다음 조치 ');
+  const action = add(actionLabel, 'select');
+  for (const [value, text] of [['', '선택해 주세요'],
+    ['model', approval.detail?.continuation ? '다른 CSO 모델로 이어 가기 다시 계획' : '다른 CSO 모델로 다시 계획'],
+    ['edit', '문구를 바꿔 새 요청']]) {
+    const option = add(action, 'option', text); option.value = value;
+  }
+  action.value = '';
+  const modelLabel = add(parent, 'label', 'CSO 모델 ');
+  const model = add(modelLabel, 'select');
+  add(model, 'option', '모델을 선택해 주세요').value = '';
+  for (const value of approval.detail?.models || []) {
+    if (typeof value === 'string') add(model, 'option', value).value = value;
+  }
+  model.value = '';
+  const textLabel = add(parent, 'label', '수정한 요청 ');
+  const text = add(textLabel, 'textarea'); text.maxLength = 4000; text.rows = 3;
+  modelLabel.hidden = textLabel.hidden = true;
+  action.onchange = () => { modelLabel.hidden = action.value !== 'model'; textLabel.hidden = action.value !== 'edit'; };
+  parent._refusalInputs = {action, model, text};
+}
+
+export function modelRefusalChoice(row) {
+  const inputs = row?._decisionParts?.refusal?._refusalInputs;
+  if (row?.dataset.kind !== 'model_refused' || !inputs) return null;
+  if (inputs.action.value === 'model') return {action: 'model', cso_model: inputs.model.value};
+  if (inputs.action.value === 'edit') return {action: 'edit', text: inputs.text.value};
+  return {};  // The server rejects an unselected action; the note never starts a request.
+}
+
+// Native summary provides click, Enter and Space activation; only received text is used.
+export function expandableText(parent, value, options = {}) {
+  if (options.pi) return piText(parent, value, options);
+  const text = String(value ?? ''), limit = options.limit ?? 240;
+  const preview = text.replace(/\s+/g, ' ').trim();
+  const cut = options.truncated ? ' (받은 내용 일부)' : '';
+  if (!options.fold && preview.length <= limit && text.split('\n').length <= 8) {
+    return add(parent, options.tag || 'span', text + cut);
+  }
+  const fold = add(parent, 'details', '', 'expandable-text');
+  fold.open = Boolean(options.open);
+  const summary = add(fold, 'summary', (options.summary || short(preview, limit)) + cut);
+  const expanded = () => summary.setAttribute?.('aria-expanded', String(Boolean(fold.open)));
+  fold.ontoggle = expanded; expanded();
+  add(fold, 'pre', text);
+  if (cut) add(fold, 'small', cut.trim());
+  return fold;
+}
+
+// Do not replace unchanged controls: an open line and keyboard focus survive refreshes.
+export function syncExpandableText(parent, value, options = {}) {
+  const key = JSON.stringify([value, options]);
+  if (parent._expandableKey === key) return;
+  parent._expandableKey = key;
+  parent.replaceChildren(); expandableText(parent, value, options);
+}
+
+export function createHistoryVisibility(scope, storage) {
+  const key = `labhq_hidden_decisions:${scope}`;
+  let hidden = new Set();
+  const getStorage = () => storage === undefined ? globalThis.localStorage : storage;
+  try {
+    const saved = JSON.parse(getStorage()?.getItem(key) || '[]');
+    if (Array.isArray(saved)) hidden = new Set(saved.filter(id => typeof id === 'string'));
+  } catch {}
+  const id = item => String(item.approval?.id || item.approval_id ||
+    JSON.stringify([item.request_id, item.decided_at, item.approval?.summary]));
+  return {
+    has: item => hidden.has(id(item)),
+    hide(item) {
+      hidden.add(id(item));
+      try { getStorage()?.setItem(key, JSON.stringify([...hidden])); } catch {}
+    },
+  };
 }
 
 function detailValue(value) {
@@ -25,11 +135,8 @@ function detailEntry(list, key, value, options = {}) {
   const cell = add(list, 'dd');
   const text = options.raw ? String(value) : detailValue(value);
   if (options.fold || text.length > 500 || text.split('\n').length > 8) {
-    const fold = add(cell, 'details');
-    fold.open = Boolean(options.open);
-    add(fold, 'summary', options.summary || `전체 보기 (${text.length}자) · ${text.slice(0, 120)}…`);
-    add(fold, 'pre', text);
-  } else add(cell, 'pre', text);
+    expandableText(cell, text, {...options, fold: true, limit: 120});
+  } else piText(cell, text, options);
 }
 
 const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
@@ -45,9 +152,30 @@ function renderResearchPlan(list, canonical) {
   detailEntry(list, '가설', [`주 가설: ${brief.primary_hypothesis ?? ''}`, '대안·귀무:', bullets(brief.null_or_alternatives),
     '가르는 관찰:', bullets(brief.distinguishing_observations)].join('\n'), {raw: true, open: true});
   detailEntry(list, '완료 조건', bullets(brief.completion_conditions), {raw: true});
+  // #890: what the planner weighed, frozen with the plan. A plan without it says so and is not blocked.
+  const record = plan.selection_record;
+  detailEntry(list, '선택 기록', record ? [`질문: ${record.question ?? ''}`, '전제:', bullets(record.premises), '성공 기준:',
+    bullets(record.success_criteria), '검토한 대안(배제 이유):',
+    bullets((record.alternatives || []).map(row => `${row.option} — ${row.rejected_because}`)),
+    '판단을 바꿀 관측:', bullets(record.change_signals)].join('\n') : '선택 기록 없음', {raw: true, open: !!record});
+  const branches = Array.isArray(plan.branches) ? plan.branches : [];
+  if (branches.length) {
+    add(list, 'dt', `갈래 (${branches.length}개)`);
+    const cell = add(list, 'dd'), table = add(add(cell, 'div', '', 'evidence-wrap'), 'table', '', 'evidence-table');
+    const head = add(add(table, 'thead'), 'tr');
+    for (const label of ['갈래', '질문', '자료', '단계 수', '추정 예산']) add(head, 'th', label);
+    const body = add(table, 'tbody');
+    for (const branch of branches) {
+      const line = add(body, 'tr');
+      const count = steps.filter(step => step.branch === branch.id).length;
+      for (const value of [branch.id, branch.question, `${branch.evidence_type} · ${branch.data_boundary}`,
+        `${count}개`, branch.estimated_budget_usd == null ? '미제공' : `$${Number(branch.estimated_budget_usd).toFixed(2)}`])
+        add(line, 'td', value);
+    }
+  }
   detailEntry(list, '단계', steps.map(step => {
     const outputs = Array.isArray(step.outputs) ? step.outputs.join(', ') : '';
-    return `${step.id} · ${step.agent_id || '미배정'} · ${short(step.instruction, 120)}${outputs ? `\n    산출: ${outputs}` : ''}`;
+    return `${step.id} · ${step.agent_id || '미배정'} · ${step.instruction || ''}${outputs ? `\n    산출: ${outputs}` : ''}`;
   }).join('\n') || '(없음)', {raw: true, fold: steps.length > 0, open: true, summary: `단계 ${steps.length}개 (id · 직원 · 지시 앞부분 · 산출)`});
   detailEntry(list, '중단 조건', bullets(protocol.stop_conditions), {raw: true});
   detailEntry(list, '자원 상한', bullets(protocol.resource_limits), {raw: true});
@@ -102,7 +230,8 @@ export function evidenceRows(detail) {
       }
       if (unsupported.has(`${sid}/${claim.id}`)) marks.push('근거 잃음');
       if (!links.length) marks.push('연결된 근거 없음');
-      rows.push({ step: sid, claim: claim.id, statement: String(claim.statement ?? ''),
+      rows.push({ branch: detail?.step_branches?.[sid] || '미분류', step: sid,
+        claim: claim.id, statement: String(claim.statement ?? ''),
         status: CLAIM_STATUS_KO[claim.status] || String(claim.status ?? ''),
         evidence: [...kinds].map(([label, n]) => (n > 1 ? `${label} ×${n}` : label)).join(', '), marks: marks.join(', ') });
     }
@@ -113,6 +242,7 @@ export function evidenceRows(detail) {
 function renderEvidenceTable(list, detail) {
   const rows = evidenceRows(detail);
   if (!rows.length) return;
+  const branched = detail?.step_branches && Object.keys(detail.step_branches).length > 0;
   add(list, 'dt', `claim별 근거 (${rows.length}개)`);
   const cell = add(list, 'dd');
   const count = status => rows.filter(row => row.status === status).length;
@@ -122,10 +252,11 @@ function renderEvidenceTable(list, detail) {
     `표시 있는 claim ${rows.filter(row => row.marks).length}`].join(' · '), 'decision-meta');
   const table = add(add(cell, 'div', '', 'evidence-wrap'), 'table', '', 'evidence-table');
   const head = add(add(table, 'thead'), 'tr');
-  for (const label of ['단계', 'claim', '상태', '근거 종류', '표시']) add(head, 'th', label);
+  for (const label of [...(branched ? ['갈래'] : []), '단계', 'claim', '상태', '근거 종류', '표시']) add(head, 'th', label);
   const body = add(table, 'tbody');
   for (const row of rows) {
     const line = add(body, 'tr', '', row.marks ? 'flagged' : '');
+    if (branched) add(line, 'td', row.branch);
     add(line, 'td', row.step);
     const claim = add(line, 'td');
     add(claim, 'div', row.statement);
@@ -191,12 +322,12 @@ function renderQuestions(container, approval) {
   container._answers = questions.map((question, index) => {
     const answer = { choice: null, free: null };
     const block = add(container, 'fieldset', '', 'clarify-q');
-    add(block, 'legend', `${index + 1}. ${question.question}`);
+    piText(add(block, 'legend'), `${index + 1}. ${question.question}`);
     if (question.depth) add(block, 'small', `깊이 약 ${question.depth}분`, 'clarify-depth');
     if (question.options.length) {
       const group = add(block, 'div', '', 'clarify-options');
       const buttons = question.options.map((option, choice) => {
-        const button = add(group, 'button', `${LETTERS[choice]}) ${option}`, 'btn opt');
+        const button = add(group, 'button', `${LETTERS[choice]}) ${plainPiText(option)}`, 'btn opt');
         button.type = 'button'; button.ariaPressed = 'false';
         button.onclick = () => {
           answer.choice = answer.choice === choice ? null : choice;
@@ -250,6 +381,54 @@ export function decisionNote(row, approved = true) {
   return lines.join('\n');
 }
 
+export function storageChoice(row) {
+  const box = row?._decisionParts?.storage;
+  if (!box || box.hidden) return null;
+  return {mode: box._mode.value, repo: box._repo.value.trim(), visibility: box._visibility.value,
+    ...(box._progress ? {progress_push: box._progress.checked} : {})};
+}
+
+function renderStorage(box, value) {
+  const config = value?.detail?.storage;
+  box.hidden = !config;
+  if (!config || box._config === JSON.stringify(config)) return;
+  box._config = JSON.stringify(config);
+  box.replaceChildren();
+  add(box, 'strong', '결과를 GitHub 저장소로 정리할까요?');
+  if (config.initial_label) add(box, 'p', `처음 선택: ${config.initial_label}`);
+  if (config.warning) add(box, 'p', config.warning);
+  const modeLabel = add(box, 'label', '저장 위치 '), mode = add(modeLabel, 'select');
+  const choices = config.allow_keep ? [['keep','처음 선택 유지'], ['local','로컬만'],
+    ['new','새 GitHub 저장소 만들기'], ['existing','기존 GitHub 저장소']] :
+    [['local','로컬만 (기본)'], ['new','새 GitHub 저장소 만들기'], ['existing','기존 GitHub 저장소']];
+  for (const [key, label] of choices) {
+    const option = add(mode, 'option', label); option.value = key;
+    option.disabled = !['keep','local'].includes(key) && !config.github_available;
+  }
+  mode.value = config.default || 'local';
+  const repoLabel = add(box, 'label', '저장소 이름 '), repo = add(repoLabel, 'input');
+  repo.value = config.suggested_name || '';
+  const visibilityLabel = add(box, 'label', '공개 범위 '), visibility = add(visibilityLabel, 'select');
+  for (const [key, label] of [['private','비공개'], ['public','공개 (누구나 볼 수 있음)']]) {
+    const option = add(visibility, 'option', label); option.value = key;
+  }
+  visibility.value = 'private';
+  let progress = null, progressLabel = null;
+  if (config.progress_question) {
+    progressLabel = add(box, 'label', '');
+    progress = add(progressLabel, 'input'); progress.type = 'checkbox';
+    progress.checked = Boolean(config.progress_default); progress.disabled = !config.progress_available;
+    add(progressLabel, 'span', ` ${config.progress_question} (기본 꺼짐)`);
+  }
+  const update = () => {
+    repoLabel.hidden = visibilityLabel.hidden = ['keep','local'].includes(mode.value);
+    if (progressLabel) progressLabel.hidden = ['keep','local'].includes(mode.value);
+    repo.placeholder = mode.value === 'existing' ? '소유자/저장소' : config.suggested_name;
+  };
+  mode.onchange = () => {repo.value = mode.value === 'new' ? config.suggested_name : ''; update();};
+  box._mode = mode; box._repo = repo; box._visibility = visibility; box._progress = progress; update();
+}
+
 // CP2 evidence review (#90): the decision is a structured choice; the note is only a memo.
 const EVIDENCE_LABELS = { refused_rows: '계약에 맞지 않아 뺀 근거',
   refused_evidence: '거부된 evidence (승인 대상 아님)', unsupported_claims: '근거를 잃은 claim',
@@ -262,13 +441,19 @@ export function decisionChoice(approval, act) {
 
 const DETAIL_LABELS = {
   budget: { spent_usd: '지금까지 쓴 비용', limit_usd: '지금 상한', requested_budget_usd: '승인하면 새 상한',
-    unknown_count: '비용 미집계 작업', unknown_reserve_usd: '미집계 작업 1건당 가정 비용' },
-  research_evidence: { ...EVIDENCE_LABELS, plan_sha256: 'plan hash', unreported_outputs: '보고하지 않은 산출',
+    unknown_count: '비용 모름 작업', unknown_reserve_usd: '비용 모름 작업 1건당 가정 비용' },
+  research_evidence: { ...EVIDENCE_LABELS, plan_sha256: 'plan hash', semantic_report: '온톨로지·의미 장치 보고서',
+    unreported_outputs: '보고하지 않은 산출',
     artifact_sha256: '산출 파일 hash', continuation: '이어 가기 차수' },
   research_plan: { target_sha256: 'plan hash', scope_status: '범위 판정', continuation: '이어 가기 차수' },
+  recruit_plan: { recruits: '논문·채용 이유·담당 단계', activate_on_pass: '수습 통과하면 바로 투입', target_sha256: '채용 묶음 hash' },
   research_continue: { round: '이어 가기 차수', limit: '이어 가기 상한', plan_sha256: '지난 계획 plan hash' },
   question: { why_blocked: '막힌 이유', from: '묻는 직원' },
   resume: { created_at: '접수 시각', steps: '남은 단계' },
+  result_publish: { pdf: '보고서 PDF' },
+  disk_space: { free_gib: '여유(GiB)', floor_gib: '시작 기준(GiB)', path: '작업 폴더' },
+  literature_pdf: { papers: '필요한 논문', inbox: 'PDF를 둘 폴더', wait_seconds: '대기 시간(초)',
+    institution: '기관 접근 조건', external_model_allowed: '외부 모델 읽기 허용', why_blocked: '요청 이유' },
 };
 // A resume card's epoch seconds read as a local date, the way the gateway writes it in the summary.
 const two = n => String(n).padStart(2, '0');
@@ -277,7 +462,27 @@ function receivedAt(seconds) {
   return Number.isFinite(date.getTime()) && seconds != null ?
     `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}` : String(seconds ?? '');
 }
-function renderDetail(container, kind, detail, approval = null) {
+export function renderDetail(container, kind, detail, approval = null) {
+  if (['tool_permission', 'hpc_submit', 'budget', 'recruit'].includes(kind)) {
+    const signature = JSON.stringify([kind, detail, approval?.summary, approval?.pi_reason, approval?.pi_outcome]);
+    if (container._detailSignature === signature) return;
+    container._detailSignature = signature;
+    container.replaceChildren(); container.hidden = false;
+    piText(add(container, 'p'), approval?.pi_reason || '실행 전에 PI의 확인이 필요합니다.');
+    piText(add(container, 'p'), approval?.pi_outcome || '승인하면 제안된 작업을 진행합니다.');
+    const fold = expandableText(container, '', {fold: true, summary: '자세히', truncated: detail?.input_truncated});
+    // The existing field labels and exact received strings remain accessible inside one closed fold.
+    fold.replaceChildren(fold.children[0]);
+    const list = add(fold, 'dl', '', 'approval-detail');
+    for (const [key, value] of Object.entries(detail || {})) {
+      add(list, 'dt', DETAIL_LABELS[kind]?.[key] || key);
+      const cell = add(list, 'dd');
+      add(cell, 'pre', kind === 'budget' && key.endsWith('_usd') && Number.isFinite(Number(value))
+        ? `$${Number(value).toFixed(2)}` : detailValue(value));
+    }
+    if (approval?.summary) add(fold, 'pre', approval.summary);
+    return;
+  }
   const preferred = kind === 'tool_permission' ? ['tool_name', 'input'] :
     kind === 'hpc_submit' ? ['queue', 'script_path', 'script_preview', 'cores', 'mem', 'walltime', 'resources'] :
     kind === 'facilities_fix' ? ['action', 'reason', 'signature_id', 'command'] :
@@ -285,14 +490,16 @@ function renderDetail(container, kind, detail, approval = null) {
     kind === 'research_plan' ? ['plan_canonical', 'continuation', 'target_sha256', 'scope_status'] :
     kind === 'research_continue' ? ['p1_issues', 'round', 'limit', 'plan_sha256'] :
     kind === 'question' ? ['why_blocked', 'from'] :
-    kind === 'resume' ? ['steps', 'created_at'] : [];
+    kind === 'resume' ? ['steps', 'created_at', 'plan_canonical', 'cp1_target_sha256', 'scope_status'] : [];
   // Keys drawn elsewhere on the card, or repeated inside the frozen plan view (CP1, R18).
   const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions', 'assumptions'] :
     kind === 'research_evidence' ? ['choices', 'gate', 'revise_continues'] :
     kind === 'research_continue' ? ['gate'] :
+    kind === 'resume' && typeof detail?.plan_canonical === 'string' ? ['request_text', 'has_plan', 'pack_applicability', 'warnings', 'protocol_revision', 'packs'] :  // an unapproved plan shown on the card (#654)
     kind === 'resume' ? ['request_text', 'has_plan'] :  // the summary already quotes it; has_plan only picks the steps wording
     kind === 'research_plan' && typeof detail?.plan_canonical === 'string' ? ['gate', 'pack_applicability', 'warnings', 'protocol_revision', 'packs', 'revise_allowed'] :
     kind === 'question' && clarifyQuestions(approval).length ? ['options'] : [];
+  shown.push('storage');
   const entries = detail !== null && typeof detail === 'object' && !Array.isArray(detail) ?
     [...preferred.filter(key => Object.hasOwn(detail, key)), ...Object.keys(detail).filter(key => !preferred.includes(key) && !shown.includes(key))]
       .map(key => [key, detailValue(detail[key])]) : detail == null ? [] : [['detail', detailValue(detail)]];
@@ -306,7 +513,30 @@ function renderDetail(container, kind, detail, approval = null) {
   const list = add(container, 'dl', '', 'approval-detail');
   const labels = DETAIL_LABELS[kind] || {};
   for (const [key, value] of entries) {
-    if (kind === 'research_plan' && key === 'plan_canonical') renderResearchPlan(list, detail.plan_canonical);
+    if (kind === 'research_evidence' && key === 'semantic_report' && detail.semantic_report?.content) {
+      add(list, 'dt', labels[key] || key);
+      const cell = add(list, 'dd');
+      const link = add(cell, 'a', 'semantic_report.md 열기', 'btn');
+      link.href = `data:text/markdown;charset=utf-8,${encodeURIComponent(detail.semantic_report.content)}`;
+      link.download = String(detail.semantic_report.path || 'semantic_report.md').split('/').pop();
+      expandableText(cell, detail.semantic_report.content, {fold:true, summary:'보고서 내용 펼쳐 보기', raw:true});
+    } else if (kind === 'result_publish' && key === 'documents') {
+      for (const [name, body] of Object.entries(detail.documents || {}))
+        detailEntry(list, name, body, {raw:true, fold:true, open:name === 'README.md', summary:name});
+    } else if (kind === 'result_publish' && key === 'images') {
+      for (const [name, uri] of Object.entries(detail.images || {})) {
+        if (!/^data:image\/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(uri)) continue;
+        const figure = add(list, 'div'); add(figure, 'p', name);
+        const img = add(figure, 'img'); img.src = uri; img.alt = name;
+        img.setAttribute?.('style', 'max-width:100%;max-height:420px');
+      }
+    } else if (kind === 'result_publish' && key === 'image_preview_omitted') {
+      for (const [name, item] of Object.entries(detail.image_preview_omitted || {})) {
+        const size = Number(item?.size_bytes || 0);
+        const label = `${name} · ${(size / 1024 / 1024).toFixed(1)} MB · ${String(item?.path || '')}`;
+        detailEntry(list, name, label, {raw:true});
+      }
+    } else if ((kind === 'research_plan' || kind === 'resume') && key === 'plan_canonical') renderResearchPlan(list, detail.plan_canonical);
     else if (kind === 'research_continue' && key === 'p1_issues') renderReviewIssues(list, detail.p1_issues);
     else if (kind === 'resume' && key === 'created_at') detailEntry(list, labels[key], receivedAt(detail.created_at), {raw: true});
     else if (kind === 'resume' && key === 'steps' && Array.isArray(detail.steps))
@@ -320,7 +550,7 @@ function renderDetail(container, kind, detail, approval = null) {
       detailEntry(list, labels[key], value, {raw: true, fold: true, summary: `산출 파일 hash (${Object.keys(detail.artifact_sha256 || {}).length}개)`});
     else if (kind === 'budget' && key.endsWith('_usd') && Number.isFinite(Number(detail[key])))
       detailEntry(list, labels[key] || key, `$${Number(detail[key]).toFixed(2)}`, {raw: true});  // not 25.860455119999997
-    else detailEntry(list, labels[key] || key, value, {raw: true});
+    else detailEntry(list, labels[key] || key, value, {raw: true, truncated: Boolean(detail[`${key}_truncated`])});
   }
 }
 
@@ -342,10 +572,16 @@ function createCard(item, options) {
   request.hidden = true;
   const summary = add(body, 'p', '', 'sum');
   const detail = add(body, 'div', '', 'why');
+  const attachment = add(body, 'div', '', 'literature-pdf-upload');
+  attachment.hidden = true;
   const questions = add(body, 'div', '', 'clarify');
   questions.hidden = true;
+  const storage = add(body, 'div', '', 'result-storage');
+  storage.hidden = true;
   const assumptions = add(body, 'div', '', 'plan-assumptions');
   assumptions.hidden = true;
+  const refusal = add(body, 'div', '', 'model-refusal');
+  refusal.hidden = true;
   const timing = add(body, 'p', '', 'decision-meta');
   const note = add(body, 'textarea', '', 'ans');
   note.rows = item.value.kind === 'clarify' ? 3 : 2;
@@ -358,8 +594,98 @@ function createCard(item, options) {
   revise.type = 'button'; revise.hidden = true;
   const deny = add(actions, 'button', '', 'btn');
   deny.type = 'button';
-  row._decisionParts = { title, who, request, summary, detail, questions, assumptions, timing, note, consequence, approve, revise, deny };
+  row._decisionParts = { title, who, request, summary, detail, attachment, questions, storage, assumptions, refusal, timing, note, consequence, approve, revise, deny };
+  if (options.presentation === 'journal') {
+    row.className += ' ui-card decision-card';
+    const heading = doc().createElement('h3'); heading.className = 'decision-question';
+    const facts = doc().createElement('dl'); facts.className = 'decision-facts';
+    const status = doc().createElement('span'); status.className = 'ui-chip decision-status';
+    const dot = add(status, 'i', '', 'status-dot'); dot.setAttribute?.('aria-hidden', 'true');
+    add(status, 'span', '결정 대기');
+    const source = doc().createElement('details'); source.className = 'decision-source';
+    add(source, 'summary', '자세히'); source.append(detail);
+    const explanation = doc().createElement('div'); explanation.className = 'decision-explanation';
+    const reason = add(explanation, 'p'), outcome = add(explanation, 'p');
+    const memo = doc().createElement('label'); memo.className = 'decision-memo';
+    add(memo, 'span', '메모'); memo.append(note);
+    approve.className += ' ui-button ui-button--primary decision-primary';
+    deny.className += ' ui-button decision-secondary';
+    revise.className += ' ui-button decision-secondary';
+    body.replaceChildren(heading, facts, summary, explanation, status, kind, request, attachment, questions, storage, assumptions, refusal, timing, consequence, actions, memo, source);
+    Object.assign(row._decisionParts, {heading, facts, reason, outcome});
+  }
   return row;
+}
+
+const DECISION_QUESTIONS = {
+  hpc_submit: '클러스터 작업을 시작할까요?', tool_permission: '이 도구 실행을 승인할까요?',
+  budget: '예산 상한을 올릴까요?', recruit: '이 직원을 채용할까요?',
+  research_plan: '이 계획으로 연구를 시작할까요?', research_evidence: '이 근거를 승인할까요?',
+  research_continue: '연구를 한 차례 더 이어 갈까요?', resume: '중단된 작업을 이어 갈까요?',
+  clarify: '어떤 방향으로 진행할까요?', question: '직원에게 어떤 답을 줄까요?',
+  scope: '이 범위로 진행할까요?', facilities_fix: '운영 문제 수정을 승인할까요?',
+  result_storage: '결과를 GitHub 저장소로 정리할까요?', result_publish: '이 정리본을 올릴까요?',
+};
+// Facts come only from received fields; absent resource estimates must never be invented.
+export function decisionFacts(value, who = '') {
+  const d = value.detail || {}, missing = '미제공';
+  const text = v => v == null || v === '' ? missing : String(v);
+  const money = v => v != null && v !== '' && Number.isFinite(Number(v)) ? `$${Number(v).toFixed(2)}` : missing;
+  switch (value.kind) {
+    case 'hpc_submit': return [['자원', [d.cores != null ? `${d.cores}코어` : '', d.mem].filter(Boolean).join(' · ') || missing], ['최대 시간', text(d.walltime)], ['대기열', text(d.queue)]];
+    case 'budget': return [['사용 비용', money(d.spent_usd)], ['현재 상한', money(d.limit_usd)], ['새 상한', money(d.requested_budget_usd)]];
+    case 'research_plan': {
+      let plan = {}; try { plan = JSON.parse(d.plan_canonical || '{}'); } catch {}
+      const steps = Array.isArray(plan.steps) ? plan.steps : [];
+      const people = new Set(steps.map(s => s.agent_id).filter(Boolean)).size;
+      const branches = Array.isArray(plan.branches) ? plan.branches : [];
+      return [['단계', Array.isArray(plan.steps) ? `${steps.length}개` : missing], ['담당', people ? `${people}명` : missing],
+        ...(branches.length ? [['갈래', `${branches.length}개`]] : [])];
+    }
+    case 'research_evidence': return [['검토 단계', d.results ? `${Object.keys(d.results).length}개` : missing], ['근거를 잃은 주장', Array.isArray(d.unsupported_claims) ? `${d.unsupported_claims.length}개` : missing]];
+    case 'research_continue': return [['이번 차수', text(d.round)], ['차수 상한', text(d.limit)]];
+    case 'resume': return [['남은 단계', Array.isArray(d.steps) ? d.steps.join(', ') || (d.has_plan === false ? '요청 전체' : '없음') : missing], ['접수', receivedAt(d.created_at) || missing]];
+    case 'tool_permission': return [['도구', text(d.tool_name)], ['요청 직원', d.requester_name || who || missing]];
+    case 'recruit': return [['제안 직원', who || missing], ['출처', d.repo || value.repo ? '저장소 · 자세히' : '자세히에서 확인']];
+    default: return [['요청 직원', who || missing], ['종류', (DECISION_QUESTIONS[value.kind] || '결정 요청').replace(/\?$/, '')]];
+  }
+}
+
+function updateJournalCard(p, value, suggestion) {
+  const kind = suggestion ? 'recruit' : value.kind;
+  if (!/[가-힣]/.test(p.title.textContent)) p.title.textContent = '결정 요청';
+  p.heading.textContent = DECISION_QUESTIONS[kind] || '이 요청을 승인할까요?';
+  const facts = decisionFacts({...value, kind}, p.who.textContent);
+  const signature = JSON.stringify(facts);
+  if (p.facts._signature !== signature) {
+    p.facts._signature = signature; p.facts.replaceChildren();
+    for (const [label, value] of facts) {
+      const cell = add(p.facts, 'div'); add(cell, 'dt', label); add(cell, 'dd', value);
+    }
+  }
+  syncExpandableText(p.reason, value.pi_reason || value.detail?.reason || value.reason || '', {pi: true});
+  syncExpandableText(p.outcome, value.pi_outcome || '', {pi: true});
+  p.reason.hidden = !p.reason.textContent; p.outcome.hidden = !p.outcome.textContent;
+  // These legacy renderers already fold their raw fields. Reuse that content inside the
+  // journal's single 자세히 rather than making the PI open two identically named folds.
+  if (['tool_permission', 'hpc_submit', 'budget', 'recruit'].includes(kind)) {
+    const fold = [...p.detail.children].find(node => node.tagName?.toLowerCase() === 'details');
+    if (fold) {
+      const caption = fold.children[0]?.textContent || '';
+      p.detail.replaceChildren(...[...fold.children].slice(1));
+      if (caption.includes('받은 내용 일부')) add(p.detail, 'small', caption);
+    }
+  }
+  // Raw values remain exact inside 자세히; field captions are readable Korean, including unknown keys.
+  const captions = {reason:'이유', detail:'상세 내용', input:'명령 입력', tool_name:'도구', command:'명령',
+    queue:'대기열', cores:'코어 수', mem:'메모리', walltime:'최대 시간', resources:'자원', repo:'저장소', paper:'논문',
+    script_path:'스크립트 위치', script_preview:'스크립트 미리보기', action:'조치', signature_id:'문제 식별자',
+    'data boundary':'데이터 경계', topics:'연구 주제', protocol:'연구 절차'};
+  const visit = node => {
+    if (node.tagName?.toLowerCase() === 'dt' && !/[가-힣]/.test(node.textContent)) node.textContent = captions[node.textContent] || '추가 정보';
+    for (const child of node.children || []) visit(child);
+  };
+  visit(p.detail);
 }
 
 function descendants(plan, root) {
@@ -392,16 +718,29 @@ const HIRE_RESULT = '채용하면 원본 commit·license·외부 전송 대상�
 const DENY_RESULT = {
   resume: '거절하면 이 요청은 실패로 끝납니다.',
   research_plan: '거절하면 이 요청은 단계를 돌리지 않고 끝납니다. 계획을 고치려면 고칠 점을 넣어 새 요청을 보내세요.',
+  recruit_plan: '승인하면 수습 통과 뒤 이번 계획에 투입합니다. 거절·실패·시간 초과 때는 정규직이 맡고 계획에 이유를 남깁니다.',
   research_plan_revise: '수정 요청은 메모를 넣은 새 요청으로 계획을 다시 세워 새 CP1을 받습니다. 거절하면 이 요청은 단계를 돌리지 않고 끝납니다.',
   research_evidence: '수정 요청은 메모로 새 계획을 세워 새 CP1을 받고 바뀐 단계만 다시 돌립니다. 거부하면 요청이 끝납니다.',
   question: '거절하면 직원에게 "진행 불가"로 전합니다.',
+  literature_pdf: 'PDF를 지정 파일에 넣고 승인하면 본문으로 이어 갑니다. 거절하거나 시간이 끝나면 초록 또는 다른 OA 논문으로 진행합니다.',
+  disk_space: '승인하면 이 작업을 그대로 시작합니다. 거절하거나 시간이 끝나면 시작하지 않습니다.',
 };
 // Past research.revise_continuations a CP2 수정 요청 ends the request like 거부 (cso.py).
 const EVIDENCE_REVISE_ENDS = '이어 가기 상한에 닿아 수정 요청과 거부는 둘 다 이 요청을 끝냅니다. 근거를 보강하려면 새 요청을 보내세요.';
 // The gateway writes resume step ids as a Python list ("['s2', 's3']"); the card joins them (R19).
 export function displaySummary(approval) {
+  if (approval?.pi_display?.status === 'translated') return approval.pi_display.text;
+  if (approval?.pi_summary) return plainPiText(approval.pi_summary);
   const text = String(approval?.summary ?? '');
-  if (approval?.kind !== 'resume') return text;
+  const d = approval?.detail;
+  if (approval?.kind === 'budget' && Number(d?.unknown_count) > 0 && Number.isFinite(Number(d?.spent_usd)) && Number.isFinite(Number(d?.limit_usd))) {
+    const amount = value => `$${Number(value).toFixed(2)}`;
+    const bound = Number(d.spent_usd) + Number(d.unknown_count) * Number(d.unknown_reserve_usd || 0);
+    return `지금까지 ${amount(d.spent_usd)} 썼고, 비용을 아직 모르는 작업이 ${d.unknown_count}건 있어 상한 ${amount(d.limit_usd)}를 넘을 수 있습니다` +
+      (d.unknown_reserve_usd != null ? ` (모르는 작업을 건당 ${amount(d.unknown_reserve_usd)}로 잡으면 ${amount(bound)}).` : '.') +
+      (d.requested_budget_usd != null ? ` 승인하면 상한을 ${amount(d.requested_budget_usd)}로 올리고, 거절하면 새 작업을 보내지 않습니다.` : '');
+  }
+  if (approval?.kind !== 'resume') return plainPiText(text);
   const ids = inner => [...inner.matchAll(/'([^']*)'/g)].map(match => match[1]);
   const whole = /^중단된 단계 \[([^\]]*)\]를 다시 돌릴까요\?$/.exec(text);
   if (whole) {
@@ -425,20 +764,65 @@ function timingText(approval, options) {
   return `${wait}${countdown}${blocked ? ` · 하류 ${blocked}단계 멈춤` : ''}`;
 }
 
+function renderLiteraturePdfUpload(root, approval, options) {
+  const papers = approval?.kind === 'literature_pdf' && Array.isArray(approval.detail?.papers)
+    ? approval.detail.papers : [];
+  const key = JSON.stringify(papers.map(paper => [paper?.title, paper?.doi, paper?.pdf_file]));
+  if (root.dataset.uploadKey !== key) {
+    root.dataset.uploadKey = key;
+    const rows = papers.map((paper, index) => {
+      const row = doc().createElement('div'); row.className = 'literature-pdf-row';
+      add(row, 'span', `${index + 1}. ${paper?.title || paper?.doi || '논문'}`);
+      const input = add(row, 'input'); input.type = 'file'; input.accept = 'application/pdf,.pdf';
+      const button = add(row, 'button', 'PDF 올리기', 'btn'); button.type = 'button';
+      const status = add(row, 'span', '', 'decision-meta');
+      button.onclick = async () => {
+        const file = input.files?.[0];
+        if (!file) { status.textContent = 'PDF를 골라 주세요.'; return; }
+        if (!options.onAttachment) { status.textContent = '이 화면에서는 파일을 올릴 수 없습니다.'; return; }
+        button.disabled = true; status.textContent = '올리는 중…';
+        try {
+          await options.onAttachment(approval, index, file);
+          status.textContent = '저장됨 · 승인하면 본문으로 이어 갑니다.';
+        } catch (error) {
+          status.textContent = `올리지 못했습니다: ${error?.message || error}`;
+        } finally { button.disabled = false; }
+      };
+      return row;
+    });
+    root.replaceChildren(...rows);
+  }
+  root.hidden = papers.length === 0;
+}
+
 function updateCard(row, item, options) {
   const value = item.value, p = row._decisionParts;
+  if (options.avatarHTML && row.children[0]?.className === 'who') {
+    const html = options.avatarHTML(value, item.type);
+    if (row.children[0].innerHTML !== html) row.children[0].innerHTML = html;
+  }
   row.dataset.kind = value.kind || item.type;
   const labels = options.kindLabels || {};
   const approval = item.type === 'approval';
-  p.title.textContent = item.type === 'suggestion' ? '파견직 채용 제안' : (labels[value.kind] || value.kind || '결정');
-  p.who.textContent = options.nick ? options.nick(value.agent_id) || 'CSO' : value.agent_id || 'CSO';
+  p.title.textContent = item.type === 'suggestion' ? '파견직 채용 제안' : (labels[value.kind] || (value.kind === 'model_refused' ? '모델 계획 거부' : value.kind) || '결정');
+  p.who.textContent = (value.kind === 'tool_permission' && value.detail?.requester_name) ||
+    (options.nick ? options.nick(value.agent_id) || 'CSO' : value.agent_id || 'CSO');
   // Parallel CP1/CP2 cards look alike; the request text tells them apart (data already in the web state).
   const request = approval && value.request_id && options.requests?.get ? options.requests.get(value.request_id) : null;
-  p.request.textContent = request?.text ? `요청: ${short(request.text, 90)}` : '';
+  syncExpandableText(p.request, request?.text ? `요청: ${request.text}` : '', {limit: 90});
   p.request.hidden = !p.request.textContent;
-  p.summary.textContent = item.type === 'suggestion' ? value.repo || value.paper || value.id : displaySummary(value) || value.id;
-  renderDetail(p.detail, value.kind, item.type === 'suggestion' ? value.reason : value.detail, approval ? value : null);
+  syncExpandableText(p.summary, item.type === 'suggestion' ? '필요한 일을 맡길 직원을 추가하려 합니다.' :
+    value.kind === 'tool_permission' && !value.pi_summary ? '직원이 도구를 실행하려 합니다. 작업 내용은 자세히에서 확인해 주세요.' : displaySummary(value) || value.id,
+      {pi: true, attribution: value.pi_display?.status === 'failed' ? '번역 못 함' : value.pi_explainer || value.pi_display ? '펭귄 비서실장 설명' : '',
+        ...(value.pi_summary || value.kind === 'tool_permission' ? {} : {original: value.summary})});
+  renderDetail(p.detail, item.type === 'suggestion' ? 'recruit' : value.kind,
+    item.type === 'suggestion' ? {reason: value.reason, repo: value.repo, paper: value.paper} : value.detail,
+    approval ? value : {pi_reason: plainPiText(value.reason), pi_outcome: HIRE_RESULT});
+  renderLiteraturePdfUpload(p.attachment, approval ? value : null, options);
+  if (p.heading) updateJournalCard(p, value, !approval);
   renderQuestions(p.questions, approval ? value : null);
+  renderStorage(p.storage, approval ? value : null);
+  renderModelRefusal(p.refusal, approval ? value : null);
   renderAssumptions(p.assumptions, approval ? value : null);
   p.timing.textContent = approval ? timingText(value, options) : '';
   p.note.placeholder = value.kind === 'question' ? (p.questions._questions?.length
@@ -456,15 +840,29 @@ function updateCard(row, item, options) {
   const answers = approval && clarifyQuestions(value).length > 0;
   p.approve.textContent = item.type === 'suggestion' ? '채용하기' : evidence ? '증거 승인' : value.kind === 'clarify' || (value.kind === 'question' && answers) ? '답하고 진행' : scope ? '진행' : '승인';
   p.deny.textContent = item.type === 'suggestion' ? '나중에' : evidence ? '거부' : scope ? '중단' : '거절';
+  if (value.kind === 'result_storage') {p.approve.textContent = '선택하고 진행'; p.deny.textContent = '로컬만';}
+  if (value.kind === 'result_publish') {p.approve.textContent = '확인했어요 · 올리기'; p.deny.textContent = '로컬에만 남기기';}
+  if (value.kind === 'model_refused') {
+    p.approve.textContent = value.detail?.continuation ? '선택한 방식으로 다시 계획' : '새 요청으로 계획'; p.deny.textContent = '그대로 종료';
+    p.consequence.textContent = value.detail?.continuation
+      ? '다른 모델은 같은 요청의 이어 가기를 새 계획·CP1부터 재개합니다. 이전 결과·누적 비용을 보존합니다. 문구 수정은 새 요청을 만듭니다.'
+      : '모델 또는 수정한 문구를 직접 선택해야 새 요청을 만듭니다. 원래 요청은 실패 상태로 남고 새 요청도 기존 승인·안전 검사를 거칩니다.';
+    p.consequence.hidden = false;
+  }
   // CP2 수정 요청 re-plans through a new CP1 until the continuation cap, then ends the request like 거부 (R10).
   p.revise.textContent = reviseContinues(value) ? '수정 요청' : '수정 요청(요청 끝남)'; p.revise.hidden = !(evidence || planRevise);
   p.approve.dataset.act = item.type === 'suggestion' ? 'hire' : 'approve';
   p.revise.dataset.act = 'revise';
   p.deny.dataset.act = item.type === 'suggestion' ? 'later' : 'deny';
   const disabled = options.disabled ? options.disabled(value, item.type) : false;
-  p.approve.disabled = disabled; p.revise.disabled = disabled; p.deny.disabled = disabled;
+  const reviewPending = value.kind === 'result_publish' && request?.pi_review_pending === true && !request.pi_reviewed_at;
+  p.approve.disabled = disabled || reviewPending; p.revise.disabled = disabled; p.deny.disabled = disabled;
+  if (reviewPending) {
+    p.consequence.textContent = '보고서 검토·확인을 완료하면 정리본을 올릴 수 있어요.';
+    p.consequence.hidden = false;
+  }
   if (options.onDecision) {
-    p.approve.onclick = () => options.onDecision(value, true, decisionNote(row, true), item.type, decisionChoice(value, 'approve'));
+    p.approve.onclick = () => options.onDecision(value, true, decisionNote(row, true), item.type, decisionChoice(value, 'approve'), storageChoice(row), modelRefusalChoice(row));
     p.revise.onclick = () => options.onDecision(value, false, decisionNote(row, false), item.type, decisionChoice(value, 'revise'));
     p.deny.onclick = () => options.onDecision(value, false, decisionNote(row, false), item.type, decisionChoice(value, 'deny'));
   }
@@ -493,6 +891,60 @@ export function syncDecisionCards(container, approvals, suggestions = [], option
   return rows;
 }
 
+// CP4 uses this same report card; its target travels with the PI's decision.
+export function syncReviewCards(container, requests, options = {}) {
+  const existing = new Map([...container.children].map(row => [row.dataset.reviewRequest, row]));
+  const rows = [...requests].filter(q => globalThis.LabHQState.needsPiReview(q) || globalThis.LabHQState.needsStorage(q)).map(q => {
+    const reviewPending = globalThis.LabHQState.needsPiReview(q);
+    const final = q.status === 'review_pending' ? q.final_checkpoint : null;
+    const reportReady = q.status === 'done' || !!final;
+    const key = JSON.stringify([q.text, q.status, final, q.resultStorage, reviewPending, options.disabled?.(q) || false]);
+    const prior = existing.get(q.id);
+    if (prior?.dataset.reviewKey === key) return prior;
+    const row = doc().createElement('article'); row.className = 'ap';
+    row.dataset.reviewRequest = q.id; row.dataset.reviewKey = key;
+    const body = add(row, 'div');
+    const journal = options.presentation === 'journal';
+    if (journal) {
+      row.className += ' ui-card decision-card';
+      add(body, 'h3', !reviewPending ? '결과를 어디에 저장할까요?' : reportReady ? '보고서를 검토할까요?' : '종료된 요청의 결과를 확인할까요?', 'decision-question');
+      const facts = add(body, 'dl', '', 'decision-facts');
+      for (const [label, value] of [['상태', globalThis.LabHQState.reviewLabel(q)], ['자동 승인', '없음']]) {
+        const cell = add(facts, 'div'); add(cell, 'dt', label); add(cell, 'dd', value);
+      }
+      const status = add(body, 'span', '', 'ui-chip decision-status');
+      add(status, 'i', '', 'status-dot').setAttribute?.('aria-hidden', 'true');
+      add(status, 'span', reviewPending ? '검토 대기' : '저장 위치 미정');
+    }
+    add(body, 'strong', reviewPending ? globalThis.LabHQState.reviewLabel(q) : '결과 저장', 'kind');
+    add(body, 'p', q.text || q.id, 'sum');
+    add(body, 'p', !reviewPending ? '저장 위치를 고르면 결과 정리와 게시 승인으로 이어집니다.' : final ? 'CP4 · 최종 초안을 검토해 주세요. 수용은 게시·전송·실행 승인이 아닙니다.' : reportReady ? '작업 완료 · 보고서를 검토해 주세요.' : '요청 종료 · 결과와 이유를 확인해 주세요.', 'decision-meta');
+    if (final) add(body, 'p', `초안 ${final.revision} · ${final.target_sha256} · 기한 ${new Date(final.deadline_at * 1000).toLocaleString()}`, 'decision-meta');
+    const actions = add(body, 'div', '', 'acts');
+    const open = add(actions, 'button', reportReady ? '보고서 열기' : '결과·이유 보기', 'btn go');
+    if (journal) open.className += ' ui-button ui-button--primary decision-primary';
+    open.type = 'button'; open.onclick = () => options.onOpen?.(q.id);
+    const disabled = options.disabled?.(q) || false;
+    if (reviewPending) {
+      const done = add(actions, 'button', reportReady ? '검토 완료' : '확인 완료', 'btn');
+      done.type = 'button'; done.disabled = disabled;
+      done.onclick = () => options.onDone?.(q.id, final ? {decision:'accepted', revision:final.revision, target_sha256:final.target_sha256} : {});
+      if (final) {
+        const deny = add(actions, 'button', '수용 거부', 'btn'); deny.type = 'button'; deny.disabled = disabled;
+        deny.onclick = () => options.onDone?.(q.id, {decision:'rejected', revision:final.revision, target_sha256:final.target_sha256});
+      }
+    }
+    if (globalThis.LabHQState.needsStorage(q)) {
+      const storage = add(actions, 'button', '저장 위치 정하기', 'btn');
+      storage.type = 'button'; storage.disabled = disabled;
+      storage.onclick = () => options.onStorage?.(q.id);
+    }
+    return row;
+  });
+  placeRows(container, rows);
+  return rows;
+}
+
 // Re-inserting a row detaches it, and a detached textarea loses focus mid-answer (#57). Only finished rows
 // leave and only new or reordered rows move; a row already in place is never touched.
 function placeRows(list, rows) {
@@ -506,9 +958,17 @@ function placeRows(list, rows) {
 }
 
 export function syncDecisionHistory(container, history, options = {}) {
-  const items = Array.from(history || []);
+  const all = Array.from(history || []);
+  const visibility = options.visibility || (container._historyVisibility ||= createHistoryVisibility(options.scope || 'live'));
+  const items = all.filter(item => !visibility.has(item));
   const pageSize = Math.max(1, Number(options.pageSize) || 10);
   if (!Number.isFinite(container._historyShown) || container._historyShown < pageSize) container._historyShown = pageSize;
+  const key = JSON.stringify([items, container._historyShown, items.map(item => {
+    const request = options.requests?.get?.(item.approval?.request_id || item.request_id);
+    return [request?.text, request?.report];
+  })]);
+  if (container._historyKey === key) return;
+  container._historyKey = key;
   const visible = items.slice(0, container._historyShown);
   const root = doc().createElement('div'); root.className = 'decision-history';
   const groups = new Map();
@@ -520,17 +980,38 @@ export function syncDecisionHistory(container, history, options = {}) {
   for (const [requestId, values] of groups) {
     const group = doc().createElement('section'); group.className = 'decision-history-group'; group.dataset.requestId = requestId;
     const request = options.requests?.get?.(requestId);
-    const label = request?.text ? String(request.text).replace(/\s+/g, ' ').slice(0, 44) : requestId === 'other' ? '기타 요청' : `요청 ${requestId}`;
-    add(group, 'h3', label);
+    const label = request?.text || (requestId === 'other' ? '기타 요청' : `요청 ${requestId}`);
+    expandableText(add(group, 'h3'), label, {limit: 44});
     const list = add(group, 'ol');
     for (const item of values) {
       const approval = item.approval || {};
       const row = add(list, 'li', '', 'decision-history-item');
-      const outcome = item.state === 'timed_out' ? '시간 초과' : item.state === 'expired' ? '만료' : item.approved ? '승인' :
+      if (options.presentation === 'journal') row.className += ' ui-card ui-list-row';
+      const outcome = item.state === 'reconciled' ? '저장 선택 복구' : item.state === 'timed_out' ? '시간 초과' : item.state === 'expired' ? '만료' : item.approved ? '승인' :
         item.choice === 'revise' ? '수정 요청' : '거절';
       add(row, 'strong', `${outcome} · ${(options.kindLabels || {})[approval.kind] || approval.kind || '결정'}`);
-      add(row, 'span', displaySummary(approval) || approval.id || '');
-      if (item.note) add(row, 'small', item.note);
+      if (options.presentation === 'journal') {
+        row.children[0].className = 'decision-history-status';
+        add(row.children[0], 'i', '', 'status-dot').setAttribute?.('aria-hidden', 'true');
+      }
+      const at = new Date(Number(item.decided_at) * 1000);
+      if (item.decided_at != null && Number.isFinite(at.getTime())) {
+        const pad = n => String(n).padStart(2, '0');
+        const time = add(row, 'time', `${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`);
+        time.dateTime = at.toISOString();
+      }
+      expandableText(row, displaySummary(approval) || approval.id || '', {limit: 240});
+      if (item.note) expandableText(row, item.note, {limit: 160, tag: 'small'});
+      if (request?.report) {
+        const link = add(row, 'a', '요청 보고서', 'decision-report');
+        link.href = `#request-${encodeURIComponent(requestId)}`;
+        if (options.onOpenRequest) link.onclick = event => { event.preventDefault(); options.onOpenRequest(requestId); };
+      }
+      if (!['open', 'pending'].includes(item.state)) {
+        const hide = add(row, 'button', '×', 'decision-hide'); hide.type = 'button';
+        hide.setAttribute?.('aria-label', '이 결정 목록에서 숨기기');
+        hide.onclick = () => { visibility.hide(item); syncDecisionHistory(container, all, {...options, visibility}); };
+      }
     }
     root.append(group);
   }
@@ -539,7 +1020,7 @@ export function syncDecisionHistory(container, history, options = {}) {
   if (visible.length < items.length) {
     const more = doc().createElement('button'); more.type = 'button'; more.className = 'btn decision-history-more';
     more.textContent = `더 보기 (${items.length - visible.length}건)`;
-    more.onclick = () => { container._historyShown += pageSize; syncDecisionHistory(container, items, options); };
+    more.onclick = () => { container._historyShown += pageSize; syncDecisionHistory(container, all, {...options, visibility}); };
     children.push(more);
   }
   container.replaceChildren(...children);

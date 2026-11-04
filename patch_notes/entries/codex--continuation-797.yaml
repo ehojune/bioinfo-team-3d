@@ -1,0 +1,36 @@
+pr: 807
+rows:
+- sha: 232690b
+  at: 2026-10-20 14:08
+  text: 후속 연구의 노드별 사양·과학 계약·도구 설정·의존 산출 증거를 CP1 전에 검증하고 후보 snapshot을 계획/승인에 고정했다.
+    승인 후·재개·dispatch 직전 drift는 조용한 재실행 대신 중단·재승인을 요구한다. 디렉터리·증거 없는 입력은 제외하며 관련 mock/static
+    72건과 보강 directory fixture 1건 통과, 실제 과학 효용은 미측정이다.
+- sha: d175432
+  at: 2026-10-20 14:46
+  text: 807 CI의 consult/wake 누락 request 조회와 새 계획 채택 전 복구, 예산 거절 rollback 회귀를 수정했다.
+    CP1 사전 snapshot 검증·승인 후 drift 중단은 유지하고 실제 dispatch 진행을 구분했다. 실제 실패 패턴 mock 20건
+    red 뒤 관련 mock/static 100건 통과, 실제 Hub/process 통합은 CI에 맡긴다.
+- sha: ea0f289
+  at: 2026-10-20 16:02
+  text: 실행 prompt와 노드별 재사용 identity를 일치시키고 dispatch/결과 시점의 도구·engine 증거를 기록했다. 부분
+    실행 뒤 재승인은 완료 결과를 검증·seal하여 보존하며 증거 누락/변경은 중단한다. 현재 head 실패 8건 재현 뒤 관련 mock/static
+    113건 통과. 실제 연구·process는 미실행이다.
+- sha: 12039f3
+  at: 2026-10-20 16:53
+  text: 최신 main의 독자별 안내·현행 큐와 PR 807 재사용 계약/검증 근거를 함께 보존해 HANDOFF 충돌을 해결했다. manual에
+    병합 전 구현을 표시했다. 제품/테스트 변경 없이 관련 mock/static 38건 통과, 초기 완료 CI는 성공·Windows 진행 중이며
+    실제 실행/CI 대기는 하지 않았다.
+- sha: 04fbc08
+  at: 2026-10-20 17:44
+  text: 요청 references/project_dirs의 내용 증거가 없으면 CP1 재사용에서 제외하고 dispatch 입력 부재 기록을 보존한다.
+    과거 증거 누락과 승인 후 입력 추가는 중단하며 metadata 삭제로 미검증 이력을 지우지 못한다. 새 회귀 20건 red 뒤 관련 mock/static
+    112건 통과, 실제 입력/연구/process는 미실행이다.
+- sha: 79970c4
+  at: 2026-10-20 17:46
+  text: HANDOFF의 PR 807 현황을 요청 입력 증거 누락 차단과 관련 mock/static 112건 검증으로 갱신하고 P1 수정·미실행
+    경계를 status에 기록했다.
+- sha: 692c8ed
+  at: 2026-10-20 19:04
+  text: '논문 스킬 방법이 바뀌면 이전 결과를 재사용하지 않도록 고쳤습니다. 기술: 단계/직원에 연결된 selection·변환 receipt
+    전체와 순서를 노드 context hash에 결속했다. 해당 단계/후속은 거절하고 독립 후보는 보존하며 구 signature·승인 후 변경은
+    재승인을 요구한다. 회귀 15건 red 뒤 mock/static 129건 통과, 실제 변환/설치/연구는 미실행이다.'

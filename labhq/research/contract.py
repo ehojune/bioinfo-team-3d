@@ -11,6 +11,7 @@ from pydantic import (BaseModel, ConfigDict, Field, ValidationError, field_valid
                       model_validator)
 
 from ..intake import ClarifyingQuestion
+from ..recruit.paper_skills import PaperSkillSelection
 from ..vocab.declare import MAX_ENTRIES, MAX_KEY, MAX_NAME
 from .packs import field_value_problem
 from ..evidence.claims import (STATUS_NEEDS, Claim, Evidence, EvidenceLink, ledger_errors,
@@ -48,8 +49,13 @@ _RESEARCH_SIGNALS = (
 # An analysis the request rules out is not a research signal ("별도 분석 없이 원문만 요약", #498 review).
 _NEGATED_ANALYSIS = re.compile(
     r"(별도\s*|추가\s*)?(분석|해석)\s*(없이|하지\s*말고|은\s*빼고|는\s*하지\s*말)|"
-    r"\bwithout (?:any )?(?:further |additional )?(?:analys[ie]s|interpretation)\b|"
-    r"\bno (?:further |additional )?(?:analys[ie]s|interpretation)\b", re.IGNORECASE)
+    r"(?:[가-힣A-Za-z][가-힣A-Za-z0-9/-]*\s*){0,2}(?:분석|해석|농축)(?:은|는|을|를)?\s*"
+    r"(?:하지\s*말(?:고|아(?:\s*줘)?)?|빼고)|"
+    r"\bwithout (?:any )?(?:further |additional )?(?:[a-z][a-z0-9-]*\s+){0,3}"
+    r"(?:analysis|analyses|interpretation|enrichment)\b|"
+    r"\b(?:do not|don't)\s+(?:(?:run|perform|include)\s+)?(?:[a-z][a-z0-9-]*\s+){0,3}"
+    r"(?:analysis|analyses|interpretation|enrichment)\b|"
+    r"\bno (?:further |additional )?(?:analysis|analyses|interpretation)\b", re.IGNORECASE)
 _SIMPLE_SIGNALS = (
     r"형식\s*변환|파일\s*변환|집계|개수\s*(세기|계산)|원문\s*요약|그대로\s*요약|발췌",
     r"\bconvert\b|\breformat\b|\baggregate\b|\bcount\b|\bsummarize (?:the )?(?:source|text)",
@@ -58,6 +64,11 @@ _SIMPLE_SIGNALS = (
     r"표(로|를)\s*(정리|만들|모아)|목록(을|으로)?\s*(정리|만들)|메타데이터|시료\s*정보|샘플\s*정보|추출|다운로드|내려\s*받",
     r"\bmetadata\b|\b(?:make|build) a table\b|\btabulate\b|\bextract\b|\bdownload\b",
 )
+
+
+def unnegated_analysis_text(text: str) -> str:
+    """Remove analysis phrases the PI explicitly ruled out before matching analysis terms."""
+    return _NEGATED_ANALYSIS.sub(" ", text)
 
 
 def classify_intake(text: str, requested: str = "auto", *, scope_status: str = "in_scope",
@@ -69,7 +80,7 @@ def classify_intake(text: str, requested: str = "auto", *, scope_status: str = "
     if mode == "direct":  # the PI picked one staff member: a task for them, not a frozen research plan (R16)
         return IntakeDecision(work_kind="simple", reason="PI sent the request to one staff member directly",
                               scope_status=scope_status, source="explicit")
-    unnegated = _NEGATED_ANALYSIS.sub(" ", text)
+    unnegated = unnegated_analysis_text(text)
     research = any(re.search(pattern, unnegated, re.IGNORECASE) for pattern in _RESEARCH_SIGNALS)
     simple = any(re.search(pattern, text, re.IGNORECASE) for pattern in _SIMPLE_SIGNALS)
     if simple and not research:
@@ -194,6 +205,23 @@ class OutputTypeEntry(StrictModel):
         return {k: v for k, v in handler(self).items() if v is not None}
 
 
+class EnvironmentBinding(StrictModel):
+    version: Literal[1]
+    logical_step_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+    step_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+    runner_id: str = Field(min_length=1, max_length=256)  # any runner.id the settings accept
+    runtime: Literal["windows", "linux", "wsl"]
+    venv_path: Literal[".venv"]
+    python_path: Literal[".venv/Scripts/python.exe", ".venv/bin/python"]
+
+    @model_validator(mode="after")
+    def interpreter_matches_runtime(self) -> "EnvironmentBinding":
+        expected = ".venv/Scripts/python.exe" if self.runtime == "windows" else ".venv/bin/python"
+        if self.python_path != expected:
+            raise ValueError("environment interpreter does not match runtime")
+        return self
+
+
 class ResearchStep(StrictModel):
     id: str = Field(min_length=1)
     agent_id: str = Field(min_length=1)
@@ -202,18 +230,40 @@ class ResearchStep(StrictModel):
     claim_ids: list[str]
     input_refs: list[str]
     outputs: list[str]
+    # Existing ``outputs`` stay required. Only dispensable logs, conversion records and previews belong here.
+    optional_outputs: list[str] = Field(default_factory=list)
+    key_figures: list[str] = Field(default_factory=list, min_length=1, max_length=2)
     checks: list[str] = Field(min_length=1)
     evidence_slots: list[EvidenceSlot]
     depends_on: list[str]
+    # Present only in a branched plan. Older frozen plans omit it and keep their canonical hash.
+    branch: str | None = Field(default=None, min_length=1)
     # Pack rules and contract checks never read this; pack fields never fill it (no_type_inheritance).
     output_types: list[OutputTypeEntry] = Field(default_factory=list, max_length=MAX_ENTRIES)
+    environment_binding: EnvironmentBinding | None = None
+    environment_bindings: list[EnvironmentBinding] = Field(default_factory=list)
+    # #625: the model tier this step runs on, lowered from its staff member's declared tier. Optional and left out when
+    # unset, so a plan frozen before it keeps its canonical JSON and plan_sha256; not offered in the engine schema.
+    model_tier: Literal["fast", "balanced", "reasoning"] | None = None
 
     @model_serializer(mode="wrap")
-    def _drop_empty_output_types(self, handler: Any) -> dict[str, Any]:
+    def _drop_empty_declarations(self, handler: Any) -> dict[str, Any]:
         # An empty list is left out, so plans approved before #221 keep their canonical JSON and plan_sha256.
         data = handler(self)
         if not data.get("output_types"):
             data.pop("output_types", None)
+        if not data.get("key_figures"):
+            data.pop("key_figures", None)
+        if not data.get("optional_outputs"):
+            data.pop("optional_outputs", None)
+        if data.get("branch") is None:
+            data.pop("branch", None)
+        if data.get("model_tier") is None:
+            data.pop("model_tier", None)
+        if data.get("environment_binding") is None:
+            data.pop("environment_binding", None)
+        if not data.get("environment_bindings"):
+            data.pop("environment_bindings", None)
         return data
 
     @model_validator(mode="after")
@@ -223,6 +273,11 @@ class ResearchStep(StrictModel):
         duplicates = sorted({slot_id for slot_id in ids if ids.count(slot_id) > 1})
         if duplicates:
             raise ValueError(f"step {self.id} declares evidence slot {', '.join(duplicates)} more than once")
+        if any(path not in self.outputs for path in self.key_figures):
+            raise ValueError(f"step {self.id} key_figures must also be declared in outputs")
+        overlap = sorted(set(self.outputs) & set(self.optional_outputs))
+        if overlap:
+            raise ValueError(f"step {self.id} outputs and optional_outputs overlap: {', '.join(overlap)}")
         return self
 
 
@@ -231,6 +286,138 @@ class RecruitProposal(StrictModel):
     repo: str
     focus: str
     reason: str
+    step_ids: list[str] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def omit_empty_steps(self, handler):
+        data = handler(self)
+        if not data.get("step_ids"):
+            data.pop("step_ids", None)
+        return data
+
+
+class ResearchBranch(StrictModel):
+    id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+    question: str = Field(min_length=1)
+    evidence_type: str = Field(min_length=1)
+    data_boundary: str = Field(min_length=1)
+    estimated_budget_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+    @model_serializer(mode="wrap")
+    def _drop_missing_budget(self, handler: Any) -> dict[str, Any]:
+        data = handler(self)
+        if data.get("estimated_budget_usd") is None:
+            data.pop("estimated_budget_usd", None)
+        return data
+
+
+def branch_plan_topology(branches: list[Any], steps: list[Any]) -> dict[str, Any]:
+    """Return the one branch-completeness topology used by PLAN validation and execution."""
+    def field(item: Any, key: str, default: Any = None) -> Any:
+        return item.get(key, default) if isinstance(item, dict) else getattr(item, key, default)
+
+    # "synthesis" is the reserved lane that reads the branches, so a branch the CSO also named "synthesis" is not one
+    # the synthesis must read: it would ask a synthesis step to depend on its own downstream terminal (#948).
+    branch_ids = [field(branch, "id") for branch in branches if field(branch, "id") and field(branch, "id") != "synthesis"]
+    branch_by_step = {field(step, "id"): field(step, "branch") for step in steps if field(step, "id")}
+    dependencies = {field(step, "id"): list(field(step, "depends_on", []) or [])
+                    for step in steps if field(step, "id")}
+    terminals = {
+        branch_id: [step_id for step_id, step_branch in branch_by_step.items()
+                    if step_branch == branch_id and
+                    not any(step_id in other_dependencies and branch_by_step.get(other_id) == branch_id
+                            for other_id, other_dependencies in dependencies.items())]
+        for branch_id in branch_ids
+    }
+    synthesis_ids = [step_id for step_id, branch_id in branch_by_step.items() if branch_id == "synthesis"]
+
+    def ancestors(step_id: str) -> set[str]:
+        found: set[str] = set()
+        pending = list(dependencies.get(step_id, []))
+        while pending:
+            dependency = pending.pop()
+            if dependency in found:
+                continue
+            found.add(dependency)
+            pending.extend(dependencies.get(dependency, []))
+        return found
+
+    def missing_from(step_id: str) -> list[str]:
+        seen = ancestors(step_id)
+        return [branch_id for branch_id in branch_ids
+                if not terminals[branch_id] or any(terminal not in seen for terminal in terminals[branch_id])]
+
+    # One synthesis step must read every branch: the union over several steps let S1 <- A and S2 <- B pass although no
+    # step integrates A with B (PR #703 review). Without such a step, report what the most complete one leaves out.
+    missing_by_synthesis = {step_id: missing_from(step_id) for step_id in synthesis_ids}
+    final_synthesis_ids = [step_id for step_id, missing in missing_by_synthesis.items() if not missing]
+    if final_synthesis_ids:
+        missing_synthesis_branches: list[str] = []
+    elif missing_by_synthesis:
+        missing_synthesis_branches = min(missing_by_synthesis.values(), key=len)
+    else:
+        missing_synthesis_branches = list(branch_ids)
+    return {"branch_ids": branch_ids, "branch_by_step": branch_by_step, "terminals": terminals,
+            "synthesis_ids": synthesis_ids, "final_synthesis_ids": final_synthesis_ids,
+            "missing_synthesis_branches": missing_synthesis_branches}
+
+
+def repair_synthesis_links(plan: Any) -> Any:
+    """Deterministic repair before PLAN validation (#948): connect a synthesis step to every branch's last step.
+
+    A branched plan that has `branch: "synthesis"` steps but none that depends on each branch's terminal steps used
+    to cost the whole request when the CSO's single correction missed it again. labhq completes the synthesis step
+    that is already closest (fewest branches missing, first on a tie): it fills that step's ``depends_on`` with the
+    missing terminals and says so in ``warnings``. Without a synthesis step, when a terminal already depends on it
+    (adding the edge would make a cycle), or when the draft is malformed, nothing is changed and validation reports
+    the problem as before."""
+    try:
+        return _repair_synthesis_links(plan)
+    except (TypeError, ValueError, AttributeError, KeyError):
+        return plan  # a schema-invalid draft goes to the CSO's correction, never out of the planner as an exception
+
+
+def _repair_synthesis_links(plan: Any) -> Any:
+    if not isinstance(plan, dict) or not isinstance(plan.get("steps"), list) or not plan.get("branches"):
+        return plan
+    steps, branches = plan["steps"], plan["branches"]
+    if not all(isinstance(step, dict) for step in steps) or not isinstance(branches, list):
+        return plan
+    topology = branch_plan_topology(branches, steps)
+    if not topology["synthesis_ids"] or not topology["missing_synthesis_branches"]:
+        return plan
+    dependencies = {step.get("id"): list(step.get("depends_on") or []) for step in steps}
+
+    def ancestors(step_id: str) -> set[str]:
+        found: set[str] = set()
+        pending = list(dependencies.get(step_id, []))
+        while pending:
+            item = pending.pop()
+            if item not in found:
+                found.add(item)
+                pending.extend(dependencies.get(item, []))
+        return found
+
+    def gaps(step_id: str) -> list[str]:
+        seen = ancestors(step_id)
+        return [terminal for branch_id in topology["branch_ids"] for terminal in topology["terminals"].get(branch_id) or []
+                if terminal not in seen and terminal != step_id]
+
+    def missing_branches(step_id: str) -> int:
+        seen = ancestors(step_id)
+        return sum(1 for branch_id in topology["branch_ids"]
+                   if any(terminal not in seen and terminal != step_id for terminal in topology["terminals"].get(branch_id) or []))
+
+    # The step missing the fewest branches (not terminals: a branch may fork into several), first on a tie.
+    target = min(topology["synthesis_ids"], key=missing_branches)
+    added = gaps(target)
+    if not added or any(target in ancestors(terminal) for terminal in added):
+        return plan  # nothing to add, or an edge would close a cycle: leave the problem to validation
+    repaired = [{**step, "depends_on": [*dict.fromkeys([*(step.get("depends_on") or []), *added])]}
+                if step.get("id") == target else step for step in steps]
+    note = (f"labhq가 synthesis 단계 {target}의 depends_on에 갈래 마지막 단계({', '.join(added)})를 채웠습니다"
+            "(CSO 계획에는 연결이 없었습니다).")
+    return {**plan, "steps": repaired, "warnings": list(dict.fromkeys([*(plan.get("warnings") or []), note]))}
 
 
 class PackPlanValue(StrictModel):
@@ -259,6 +446,31 @@ class PackApplicabilityRecord(StrictModel):
     reason: Literal["topic_match", "no_topic_match", "topics_empty", "no_topic_condition", "not_applicable"]
 
 
+class RejectedAlternative(StrictModel):
+    option: str = Field(min_length=1, max_length=600)
+    rejected_because: str = Field(min_length=1, max_length=600)
+
+
+class SelectionRecord(StrictModel):
+    """What the planner weighed when it chose this design (#890, #856 ①), written at planning time.
+
+    It is part of the plan, so it enters the CP1 hash: an alternative or a reason added later changes the hash and
+    needs a new approval, and cannot be written to look as if it had been considered."""
+    question: str = Field(min_length=1, max_length=600)
+    premises: list[str] = Field(default_factory=list, max_length=8)
+    success_criteria: list[str] = Field(default_factory=list, max_length=8)
+    alternatives: list[RejectedAlternative] = Field(default_factory=list, max_length=6)
+    change_signals: list[str] = Field(default_factory=list, max_length=6)  # observations that would change the call
+
+    @field_validator("premises", "success_criteria", "change_signals")
+    @classmethod
+    def no_blank_entries(cls, value: list[str]) -> list[str]:
+        # A blank line would count as a recorded premise or signal on the CP1 card and be frozen in the hash.
+        if any(not item.strip() for item in value):
+            raise ValueError("selection_record entries must not be blank")
+        return value
+
+
 class ResearchPlan(StrictModel):
     schema_version: Literal[2]
     topics: list[str] = Field(default_factory=list, max_length=24)
@@ -277,9 +489,15 @@ class ResearchPlan(StrictModel):
     budget_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     # Same structure as the general PLAN; plain strings from older plans keep their canonical hash.
     clarifying_questions: list[str | ClarifyingQuestion]
+    branches: list[ResearchBranch] = Field(default_factory=list)
     steps: list[ResearchStep] = Field(min_length=1)
     recruit: list[RecruitProposal]
+    paper_skills: list[PaperSkillSelection] = Field(default_factory=list, max_length=2)
+    paper_skill_results: list[dict[str, Any]] = Field(default_factory=list, max_length=2)
+    recruit_results: list[dict[str, Any]] = Field(default_factory=list)
     notes: str
+    # Optional; a plan frozen before it keeps its plan_sha256 (the serializer drops None).
+    selection_record: SelectionRecord | None = None
 
     @field_validator("budget_usd", mode="before")
     @classmethod
@@ -311,7 +529,8 @@ class ResearchPlan(StrictModel):
     def _drop_empty_topic_metadata(self, handler: Any) -> dict[str, Any]:
         # Plans frozen before topic routing must keep their canonical JSON and plan hash.
         data = handler(self)
-        for field in ("topics", "pack_applicability", "warnings", "checklist", "suggested_next"):
+        for field in ("topics", "pack_applicability", "warnings", "checklist", "suggested_next",
+                      "paper_skills", "paper_skill_results", "recruit_results", "branches", "selection_record"):
             if not data.get(field):
                 data.pop(field, None)
         if data.get("budget_usd") is None:  # plans frozen before R17 keep their plan_sha256
@@ -326,6 +545,25 @@ class ResearchPlan(StrictModel):
         if len(ids) != len(set(ids)):
             raise ValueError("research step ids must be unique")
         known = set(ids)
+        branch_ids = [branch.id for branch in self.branches]
+        if len(branch_ids) != len(set(branch_ids)):
+            raise ValueError("research branch ids must be unique")
+        if self.branches:
+            allowed = {*branch_ids, "synthesis"}
+            missing = [step.id for step in self.steps if step.branch not in allowed]
+            if missing:
+                raise ValueError(f"branched research steps must name a branch or synthesis: {missing}")
+            if not any(step.branch == "synthesis" for step in self.steps):
+                raise ValueError("branched research plan requires at least one synthesis step")
+            step_branches = {step.id: step.branch for step in self.steps}
+            for step in self.steps:
+                # "synthesis" is the lane that reads the branches, also when the CSO declared a branch of that name (#948).
+                if step.branch in branch_ids and step.branch != "synthesis":
+                    cross = [dep for dep in step.depends_on if step_branches.get(dep) != step.branch]
+                    if cross:
+                        raise ValueError(f"branch step {step.id} depends outside branch {step.branch}: {cross}")
+        elif any(step.branch is not None for step in self.steps):
+            raise ValueError("unbranched research plan must omit step.branch")
         dependencies = {step.id: step.depends_on for step in self.steps}
         for step in self.steps:
             invalid = [dep for dep in step.depends_on if dep not in known or dep == step.id]
@@ -347,6 +585,11 @@ class ResearchPlan(StrictModel):
 
         for step_id in ids:
             visit(step_id)
+        if self.branches:
+            topology = branch_plan_topology(self.branches, self.steps)
+            if topology["missing_synthesis_branches"]:
+                raise ValueError("no single synthesis step depends on every branch's terminal results; missing "
+                                 "branches: " + ", ".join(topology["missing_synthesis_branches"]))
         return self
 
 
@@ -413,16 +656,21 @@ def _without(schema: dict[str, Any], definition: str, fields: tuple[str, ...], d
 
 
 # The engine-facing schemas stay those of main before #221: declarations are offered only when switched on.
-RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(ResearchPlan.model_json_schema(), "ResearchStep", ("output_types",),
+RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(ResearchPlan.model_json_schema(), "ResearchStep", ("output_types", "model_tier"),
                                                 ("OutputTypeEntry", "PackApplicabilityRecord"))
-for _system_field in ("pack_applicability", "warnings"):
+for _system_field in ("pack_applicability", "warnings", "paper_skill_results", "recruit_results"):
     RESEARCH_PLAN_SCHEMA["properties"].pop(_system_field, None)
     if _system_field in RESEARCH_PLAN_SCHEMA.get("required", []):
         RESEARCH_PLAN_SCHEMA["required"].remove(_system_field)
 if "topics" not in RESEARCH_PLAN_SCHEMA["required"]:
     RESEARCH_PLAN_SCHEMA["required"].append("topics")
-RESEARCH_RESULT_SCHEMA: dict[str, Any] = _without(ResearchResult.model_json_schema(), "ArtifactRef",
-                                                  ("data_type", "format"))
+# Fresh proposals must assign work; the stored model still accepts legacy frozen plans.
+RESEARCH_PLAN_SCHEMA["$defs"]["RecruitProposal"]["required"].append("step_ids")
+RESEARCH_PLAN_SCHEMA["$defs"]["RecruitProposal"]["properties"]["step_ids"]["minItems"] = 1
+RESEARCH_RESULT_SCHEMA: dict[str, Any] = _without(
+    _without(ResearchResult.model_json_schema(), "ArtifactRef", ("data_type", "format")),
+    "Evidence", ("origin", "attempt_status"),
+)
 # What a research step's engine is held to: the result, or the same shape with empty ledger lists and the question
 # in ``blocking_decision`` when the step cannot go on without a PI decision (STEP_PROMPT). The question is handled
 # before the ledger is validated, and the step re-runs with the answer (#90 CP2).
@@ -608,14 +856,60 @@ def _pack_value_errors(supplied_all: Any, plan: ResearchPlan | None, active_pack
     return errors
 
 
-def _contract_errors(plan: ResearchPlan | None, value: Any, *, max_steps: int, active_packs: dict[str, str],
+def scheduler_clones_by_branch(steps: Any) -> dict[Any, int]:
+    """Runner environment clones the scheduler added, counted for the branch each one sits in (#674).
+
+    A logical environment step is split into one clone per consuming runner and every clone keeps its branch, so a
+    branch's allowance grows only by its own clones; they never count toward the step limits."""
+    found: dict[tuple[Any, str], int] = {}
+    for step in steps if isinstance(steps, list) else []:
+        get = step.get if isinstance(step, dict) else (lambda key, default=None: getattr(step, key, default))
+        binding = get("environment_binding")
+        logical = binding.get("logical_step_id") if isinstance(binding, dict) else getattr(binding, "logical_step_id", None)
+        if isinstance(logical, str):
+            key = (get("branch"), logical)
+            found[key] = found.get(key, 0) + 1
+    extra: dict[Any, int] = {}
+    for (branch, _logical), count in found.items():
+        extra[branch] = extra.get(branch, 0) + count - 1
+    return extra
+
+
+def _contract_errors(plan: ResearchPlan | None, value: Any, *, max_steps: int, max_branches: int,
+                     max_branch_steps: int, active_packs: dict[str, str],
                      expected_intake: IntakeDecision | None,
                      pack_definitions: dict[str, Any] | None) -> list[str]:
     """Every check after the schema. A draft that fails the schema still gets its pack checks."""
     raw = value if isinstance(value, dict) else {}
     errors: list[str] = []
     steps = plan.steps if plan is not None else raw.get("steps")
-    if isinstance(steps, list) and len(steps) > max_steps:
+    raw_branches = plan.branches if plan is not None else raw.get("branches")
+    branches = raw_branches if isinstance(raw_branches, list) else []
+    clones = scheduler_clones_by_branch(steps)  # runner environment clones: not the planner's steps (#674)
+    scheduler_steps = sum(clones.values())
+    if branches:
+        if len(branches) > max_branches:
+            errors.append(f"research plan has {len(branches)} branches; maximum is {max_branches}; "
+                          "re-plan without truncation")
+        branch_ids = [branch.id if isinstance(branch, ResearchBranch) else branch.get("id")
+                      for branch in branches if isinstance(branch, (ResearchBranch, dict))]
+        if isinstance(steps, list):
+            for branch_id in branch_ids:
+                count = sum((step.branch if isinstance(step, ResearchStep) else step.get("branch")) == branch_id
+                            for step in steps if isinstance(step, (ResearchStep, dict)))
+                if count > max_branch_steps + clones.get(branch_id, 0):
+                    errors.append(f"research branch {branch_id} has {count} steps; maximum is {max_branch_steps}; "
+                                  "re-plan without truncation")
+            synthesis = sum((step.branch if isinstance(step, ResearchStep) else step.get("branch")) == "synthesis"
+                            for step in steps if isinstance(step, (ResearchStep, dict)))
+            if synthesis > 3 + clones.get("synthesis", 0):
+                errors.append(f"research plan has {synthesis} synthesis steps; maximum is 3; "
+                              "re-plan without truncation")
+            total_limit = len(branches) * max_branch_steps + 3 + scheduler_steps
+            if len(steps) > total_limit:
+                errors.append(f"branched research plan has {len(steps)} steps; maximum is {total_limit}; "
+                              "re-plan without truncation")
+    elif isinstance(steps, list) and len(steps) > max_steps + scheduler_steps:
         errors.append(f"research plan has {len(steps)} steps; maximum is {max_steps}; re-plan without truncation")
     if plan is not None:
         selected = {ref.key: ref.sha256 for ref in plan.protocol.packs}
@@ -643,7 +937,8 @@ def schema_error_lines(error: ValidationError) -> list[str]:
     return lines
 
 
-def research_plan_errors(value: Any, *, max_steps: int, active_packs: dict[str, str],
+def research_plan_errors(value: Any, *, max_steps: int, max_branches: int = 5, max_branch_steps: int = 8,
+                         active_packs: dict[str, str],
                          expected_intake: IntakeDecision | None = None,
                          pack_definitions: dict[str, Any] | None = None) -> list[str]:
     """All problems of a PLAN at once, so one correction can fix them together (#222)."""
@@ -652,7 +947,8 @@ def research_plan_errors(value: Any, *, max_steps: int, active_packs: dict[str, 
         errors: list[str] = []
     except ValidationError as error:
         plan, errors = None, schema_error_lines(error)
-    return errors + _contract_errors(plan, value, max_steps=max_steps, active_packs=active_packs,
+    return errors + _contract_errors(plan, value, max_steps=max_steps, max_branches=max_branches,
+                                     max_branch_steps=max_branch_steps, active_packs=active_packs,
                                      expected_intake=expected_intake, pack_definitions=pack_definitions)
 
 
@@ -663,11 +959,14 @@ def with_pack_refs(value: Any, refs: list[dict[str, str]]) -> Any:
     return {**value, "protocol": {**value["protocol"], "packs": [dict(ref) for ref in refs]}}
 
 
-def validate_research_plan(value: Any, *, max_steps: int, active_packs: dict[str, str],
+def validate_research_plan(value: Any, *, max_steps: int, max_branches: int = 5, max_branch_steps: int = 8,
+                           active_packs: dict[str, str],
                            expected_intake: IntakeDecision | None = None,
                            pack_definitions: dict[str, Any] | None = None) -> ResearchPlan:
+    """Runner environment clones the scheduler added do not count toward the step limits (#674)."""
     plan = ResearchPlan.model_validate(value)
-    errors = _contract_errors(plan, value, max_steps=max_steps, active_packs=active_packs,
+    errors = _contract_errors(plan, value, max_steps=max_steps, max_branches=max_branches,
+                              max_branch_steps=max_branch_steps, active_packs=active_packs,
                               expected_intake=expected_intake, pack_definitions=pack_definitions)
     if errors:
         raise ValueError("; ".join(errors))
@@ -820,13 +1119,15 @@ def _validation_salvage_targets(error: ValidationError, value: dict[str, Any]) \
     return targets or None
 
 
-def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], expected_step_id: str) \
+def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], expected_step_id: str,
+                            allow_slot_gaps: bool = False) \
         -> tuple[ResearchResult | None, list[dict[str, str]], list[dict[str, str]], list[str]]:
     """Refuse row-local contract defects after correction turns, without weakening structural validation.
 
     Evidence refusals cascade through ``derived_from`` and links. A claim that loses its only relation required by
     its status is removed from the valid ledger and recorded as unsupported for CP2. The frozen plan identity,
-    result envelope, step binding and required evidence slots are never salvaged.
+    result envelope and step binding are never salvaged. Missing required slots use the separate, explicit
+    slot-repair question and source-free gap rows; this row-refusal function alone never invents a slot answer.
     """
     problems = research_result_errors(value, plan=plan)
     if not problems:
@@ -870,6 +1171,33 @@ def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], 
         refused_index[key] = len(refused)
         refused.append({"row_type": row_type, "row_id": row_id, "reason": reason})
 
+    # A claim the step never declared is not this step's answer. Refusing it (and its links) keeps the rest of the
+    # result, which the ledger checks below still judge; leaving it failed the whole step when it came with an
+    # otherwise salvageable row defect (#1054). When every claim is outside the step, nothing is left to keep.
+    step = next(step for step in parsed_plan.steps if step.id == expected_step_id)
+    declared = set(step.claim_ids)
+    claim_rows = candidate.get("claims") or []
+    outside = [str(row["id"]) for row in claim_rows
+               if isinstance(row, dict) and row.get("id") and str(row["id"]) not in declared]
+    pruned = bool(outside) and any(isinstance(row, dict) and str(row.get("id")) in declared for row in claim_rows)
+    if pruned:
+        reason = f"claim is outside the claim_ids {step.claim_ids} that step {step.id} declared"
+        for claim_id in outside:
+            refuse("claim", claim_id, reason)
+            unsupported.append({"claim_id": claim_id, "reason": reason})
+        link_rows = candidate.get("links") or []
+        for index, link in enumerate(link_rows):
+            if isinstance(link, dict) and str(link.get("claim_id")) in outside:
+                refuse("link", _row_id("link", link, index), f"points to contract-refused claim {link.get('claim_id')}")
+        candidate["claims"] = [row for row in claim_rows
+                               if not (isinstance(row, dict) and str(row.get("id")) in outside)]
+        candidate["links"] = [row for row in link_rows
+                              if not (isinstance(row, dict) and str(row.get("claim_id")) in outside)]
+
+    def none_declared(result: ResearchResult) -> bool:
+        """Later refusals can still empty the step's own claims; nothing left of the step is not a result."""
+        return pruned and not any(claim.id in declared for claim in result.claims)
+
     limit = sum(len(candidate.get(name) or []) for name in ("claims", "evidence", "links")) + 1
     for _ in range(limit):
         try:
@@ -879,11 +1207,20 @@ def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], 
             if not targets:
                 return None, [], [], research_result_errors(candidate, plan=parsed_plan)
         except (TypeError, ValueError):
-            # These are frozen-plan/step binding failures, including a required slot lost during refusal.
+            # Only the orchestrator may request the still-incomplete ledger for its one slot question.
+            if allow_slot_gaps and missing_result_slots(candidate, plan=parsed_plan,
+                                                       expected_step_id=expected_step_id):
+                gapped = ResearchResult.model_validate(candidate)
+                if none_declared(gapped):
+                    return None, [], [], research_result_errors(candidate, plan=parsed_plan)
+                return gapped, refused, unsupported, []
             return None, [], [], research_result_errors(candidate, plan=parsed_plan)
         else:
             if result.step_id != expected_step_id:
                 return None, [], [], [f"research result step_id {result.step_id} does not match {expected_step_id}"]
+            if none_declared(result):
+                return None, [], [], [f"no claim of step {step.id} is left after contract salvage; it declared "
+                                      f"{step.claim_ids}"]
             return result, refused, unsupported, []
 
         evidence_rows = candidate.get("evidence") or []
@@ -971,6 +1308,51 @@ def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], 
         if before == after:
             return None, [], [], research_result_errors(candidate, plan=parsed_plan)
     return None, [], [], research_result_errors(candidate, plan=parsed_plan)
+
+
+def missing_result_slots(value: Any, *, plan: ResearchPlan | dict[str, Any],
+                         expected_step_id: str) -> list[str]:
+    """Return gaps only when the entire envelope, ledger and all other bindings are valid."""
+    try:
+        parsed = ResearchResult.model_validate(value)
+        frozen = plan if isinstance(plan, ResearchPlan) else ResearchPlan.model_validate(plan)
+    except (TypeError, ValueError):
+        return []
+    if parsed.step_id != expected_step_id or parsed.plan_sha256 != plan_sha256(frozen):
+        return []
+    step = next((step for step in frozen.steps if step.id == expected_step_id), None)
+    if step is None:
+        return []
+    errors = step_binding_errors(parsed, step)
+    if not errors or any(not error.startswith("required evidence slot ") for error in errors):
+        return []
+    filled = {slot for row in parsed.evidence for slot in row.slots}
+    return [slot.id for slot in step.evidence_slots if slot.required and slot.id not in filled]
+
+
+def repair_result_slots(value: dict, slots: list[str], answers: Any) -> ResearchResult:
+    """Record reported attempts without promoting a short answer to scientific evidence."""
+    candidate = copy.deepcopy(value)
+    ids = {row["id"] for row in candidate["evidence"]}
+    for slot in slots:
+        answer = answers.get(slot) if isinstance(answers, dict) else None
+        valid = (isinstance(answer, dict) and set(answer) == {"status", "reason"}
+                 and answer.get("status") in {"attempted_found", "attempted_none", "not_attempted"}
+                 and isinstance(answer.get("reason"), str) and bool(answer["reason"].strip())
+                 and len(answer["reason"]) <= 280)
+        origin = "slot_repair" if valid else "omitted_by_output"
+        reason = " ".join(answer["reason"].split()) if valid else "출력에서 빠짐: 칸 질문에 유효한 답이 없음"
+        row_id = f"slot_gap_{len(ids) + 1}"
+        while row_id in ids:
+            row_id += "x"
+        ids.add(row_id)
+        candidate["evidence"].append({
+            "id": row_id, "kind": "observation", "status": "unavailable", "slots": [slot],
+            "origin": origin, "attempt_status": answer["status"] if valid else None,
+            "observation": "필수 증거 칸의 출력 누락 기록", "source": None,
+            "status_detail": reason,
+        })
+    return ResearchResult.model_validate(candidate)
 
 
 def step_binding_errors(result: ResearchResult, step: ResearchStep) -> list[str]:
@@ -1091,6 +1473,14 @@ def canonical_plan_json(plan: ResearchPlan | dict[str, Any]) -> str:
 
 def plan_sha256(plan: ResearchPlan | dict[str, Any]) -> str:
     return hashlib.sha256(canonical_plan_json(plan).encode("utf-8")).hexdigest()
+
+
+def normalize_result_plan_sha256(value: Any, *, plan: ResearchPlan | dict[str, Any]) -> tuple[Any, str | None]:
+    """Bind only an all-zero placeholder to the frozen plan and return an audit warning."""
+    if not isinstance(value, dict) or value.get("plan_sha256") != "0" * 64:
+        return value, None
+    return ({**value, "plan_sha256": plan_sha256(plan)},
+            "연구 원장의 0 plan_sha256을 승인된 계획 hash로 보정했습니다")
 
 
 def freeze_plan(plan: ResearchPlan | dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:

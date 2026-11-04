@@ -1,0 +1,9 @@
+{
+  "name": "labhq-bundled-skills",
+  "version": "0.5.0",
+  "description": "First-party writing and figure skills bundled with labhq",
+  "skills": [
+    "./humanizer",
+    "./graphical-abstract"
+  ]
+}

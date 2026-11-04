@@ -1,0 +1,6 @@
+pr: 825
+rows:
+- sha: 'd9165f7'
+  at: 2026-10-21 20:28
+  summary: 새 진단 검사가 목록에서 빠져 Windows 사전 검사를 막던 문제를 고쳤습니다.
+  text: '#825: 통합 checkout의 test_clean_install_diagnostics.py를 소스 검토한 뒤 known_tests에만 정렬 등록한다. 가짜 startup·소유 임시 JSON·AST 검사이며 새 native cohort나 fallback은 추가하지 않는다. 원래 validate_profile 실패와 단일 순수 회귀 red→green을 확인했고 mixed 계약6개는 기존 digest와 모두 일치해 갱신하지 않았다. Python3.10 AST/public/notes/diff 검사, native/runtime/phase/timeout/선택 규칙 변경 없음. 실제 CI 성공은 미검증이다.'

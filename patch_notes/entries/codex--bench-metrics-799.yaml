@@ -1,0 +1,8 @@
+pr: null
+rows:
+- sha: 76437b0
+  at: 2026-10-21 01:51
+  summary: 벤치마크의 계획과 실제 프로세스 시작 기록을 분리하고 재채점 때 보존합니다.
+  text: '승인 snapshot·task/event·비용을 per-arm receipt로 연결하고 opt-in runner/직접 baseline의 성공 spawn에서 byte 개수만 기록한다. 미수집/해당
+    없음을 0과 구분하며 원문은 저장하지 않는다. fake/static 28+1건·3.10 AST 6파일 통과; git fixture 1건은 guard 차단 후 변경 소스 정적 검사로 대체했다. Reference
+    4833→4780자. 실제 실행·성능 미측정, #799 OPEN, 로컬 커밋만 준비.'

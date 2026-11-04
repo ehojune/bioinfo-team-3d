@@ -1,0 +1,10 @@
+{
+  "qa_port": 55940,
+  "http_status": 200,
+  "owned_server_session": 68608,
+  "stopped": true,
+  "port_closed": true,
+  "original_demo_retried": false,
+  "forbidden_ports_used": [],
+  "writes_outside_node": false
+}

@@ -19,6 +19,7 @@ from labhq.request_bundle import build_request_bundle
 from labhq.ro_crate import (FORMAT_MARKER, INLINE_CONTEXT, METADATA_FILE, PROCESS_RUN_PROFILE, RO_CRATE_PROFILE,
                             build_ro_crate, verify_bundle_copy)
 from labhq.settings import Settings
+import labhq.gateway.server as server_module
 import labhq.request_bundle as request_bundle_module
 import labhq.ro_crate as ro_crate_module
 
@@ -181,7 +182,7 @@ def test_recorded_output_failure_is_manifested_and_marks_bundle_incomplete(tmp_p
     assert row["status"] == expected
     assert not (bundle / "steps/s1/outputs/result.txt").exists()
     assert built["status"] == "incomplete"
-    assert "요청 묶음 상태: incomplete" in (bundle / "report_appendix.md").read_text(encoding="utf-8")
+    assert "요청 묶음 상태: incomplete" in (bundle / "execution_record.md").read_text(encoding="utf-8")
 
 
 def test_only_runner_recorded_and_hashed_outputs_are_copied(tmp_path):
@@ -259,8 +260,8 @@ def test_bundle_is_portable_filtered_and_idempotent(tmp_path):
     bundled_script = (bundle / "steps/s2/outputs/scripts/analyze.py").read_text(encoding="utf-8")
     assert str(upstream) not in bundled_script and upstream.as_posix() not in bundled_script
     assert str(outside) in bundled_script  # a path outside this request's step workdirs is untouched
-    assert "대체됨" in (bundle / "report_appendix.md").read_text(encoding="utf-8")
-    assert old.name in (bundle / "report_appendix.md").read_text(encoding="utf-8")
+    assert "대체됨" in (bundle / "execution_record.md").read_text(encoding="utf-8")
+    assert old.name in (bundle / "execution_record.md").read_text(encoding="utf-8")
 
     with (bundle / "MANIFEST.tsv").open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
@@ -501,7 +502,7 @@ def test_unreported_outputs_are_copied_after_recorded_ones_without_marking_incom
     assert (bundle / "steps/s1/outputs/reference/figure.svg").read_text(encoding="utf-8") == "figure.svg"
     assert not any("escape" in path for path in rows)
     assert built["status"] == "complete"
-    appendix = (bundle / "report_appendix.md").read_text(encoding="utf-8")
+    appendix = (bundle / "execution_record.md").read_text(encoding="utf-8")
     assert "보고하지 않은 산출 3개 미복사" in appendix
     assert "누적 상한으로 기록 산출 일부를 복사하지 않음" not in appendix
 
@@ -580,7 +581,7 @@ def test_request_total_limits_record_every_omission(tmp_path, total_bytes, max_f
     assert by_path["steps/s1/outputs/b.txt"]["status"] == "not copied: total limit"
     assert by_path["steps/s1/outputs/c.txt"]["status"] == "not copied: total limit"
     assert "누적 상한으로 기록 산출 일부를 복사하지 않음" in (
-        bundle / "report_appendix.md").read_text(encoding="utf-8")
+        bundle / "execution_record.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -601,7 +602,7 @@ async def test_remote_runner_records_warning_without_gateway_path(tmp_path):
 
     note = "runner가 다른 PC라 묶음을 만들지 않음"
     assert data["bundle_warning"] == note and "bundle_path" not in data
-    assert note in hub.requests["remote"]["report_appendix"]
+    assert note in hub.requests["remote"]["execution_record"]
     assert hub.events[-1]["data"]["bundle_warning"] == note
     await asyncio.sleep(0)
     hub.store.close()
@@ -794,6 +795,45 @@ async def test_recovered_bundle_is_finishing_until_worker_completes(tmp_path, mo
 
 
 @pytest.mark.asyncio
+async def test_a_bundle_worker_stuck_past_the_limit_no_longer_holds_shutdown_back(tmp_path, monkeypatch):
+    """#658: the finishing mark of a bundle worker that never ends is reported as stuck, and the gateway is ready to
+    shut down; its request keeps bundle_pending, so the next start rebuilds the bundle."""
+    settings, request, ledger = pending_bundle_fixture(tmp_path, "stuck")
+    request["bundle_pending"] = True
+    hub = Hub(settings)
+    hub.requests["stuck"] = request
+    hub.save_request("stuck")
+    hub.store.put("task", "task-stuck", ledger)
+    hub.store.close()
+    started = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def hung_bundle(*_args):
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(5)
+        return {"path": str(tmp_path / "rebuilt"), "status": "complete"}
+
+    monkeypatch.setattr(request_bundle_module, "build_request_bundle", hung_bundle)
+    restored = Hub(settings)
+    assert restored.recover_pending_bundles() == ["stuck"]
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        fresh = restored.shutdown_readiness()
+        assert fresh["ready"] is False
+        assert fresh["finishing"][0]["stuck"] is False and fresh["finishing"][0]["elapsed_s"] < 60
+        restored.terminal_started["stuck"] -= server_module.FINISHING_STUCK_S + 1
+        aged = restored.shutdown_readiness()
+        assert aged["ready"] is True
+        assert [(row["id"], row["stage"], row["stuck"]) for row in aged["finishing"]] == [("stuck", "bundle", True)]
+        assert restored.requests["stuck"]["bundle_pending"] is True
+    finally:
+        release.set()
+    await asyncio.wait_for(restored.terminal_tasks["stuck"], 5)
+    restored.store.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode, research, terminal", [
     ("direct", False, "request.completed"),
     ("orchestrate", False, "request.completed"),
@@ -908,7 +948,7 @@ async def test_incomplete_bundle_status_is_stored_in_bundle_event(tmp_path):
     assert data["bundle_status"] == "incomplete"
     assert hub.events[-1]["type"] == "request.bundle"
     assert hub.events[-1]["data"]["bundle_status"] == "incomplete"
-    assert "요청 묶음 상태: incomplete" in Path(data["bundle_path"], "report_appendix.md").read_text(
+    assert "요청 묶음 상태: incomplete" in Path(data["bundle_path"], "execution_record.md").read_text(
         encoding="utf-8")
     await asyncio_sleep()
     hub.store.close()
@@ -968,6 +1008,10 @@ def test_cli_status_shows_recent_bundle(monkeypatch, capsys):
             return {"runners": []}
         if path == "/api/approvals":
             return []
+        if path == "/api/requests/summary":
+            costs = {"cost_usd": 0, "estimated_usd": 0, "unknown_count": 0,
+                     "legacy_unknown": False}
+            return {"request_count": 1, "past_count": 0, "session": costs, "total": costs}
         if "status=running" in path:
             return []
         return [{"id": "r1", "status": "done", "bundle_path": "C:/runs/requests/r1",
@@ -1101,7 +1145,7 @@ def test_missing_scripts_environment_or_a_kept_absolute_path_lowers_the_grade_wi
         "절대경로가 남은 스크립트: steps/de/outputs/scripts/de.py",
     ]
     assert "- `documented`\n- 스크립트 없이 데이터 산출만 있는 단계: qc\n" in readme
-    appendix = (Path(built["path"]) / "report_appendix.md").read_text(encoding="utf-8")
+    appendix = (Path(built["path"]) / "execution_record.md").read_text(encoding="utf-8")
     assert "- 재현 등급: documented (스크립트 없이 데이터 산출만 있는 단계: qc; " in appendix
 
 
@@ -1219,7 +1263,7 @@ def test_ro_crate_privacy_refusal_is_warning_only(tmp_path):
     assert "crate_warning" in built
     assert not (bundle / METADATA_FILE).exists()
     assert FORMAT_MARKER in (bundle / "README.md").read_text(encoding="utf-8")
-    assert "RO-Crate metadata를 만들지 못했습니다" in (bundle / "report_appendix.md").read_text(encoding="utf-8")
+    assert "RO-Crate metadata를 만들지 못했습니다" in (bundle / "execution_record.md").read_text(encoding="utf-8")
 
 
 def test_ro_crate_allows_consecutive_dots_inside_names():
@@ -1710,3 +1754,278 @@ def test_a_general_bundle_has_no_claims_file(tmp_path):
     settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
     bundle = Path(build_request_bundle(request, settings, tasks)["path"])
     assert not (bundle / "claims.json").exists() and "claims.json" not in manifest_rows(bundle)
+
+
+def test_requests_folder_is_held_during_the_build_and_released_after(tmp_path):
+    """#405: the build opens requests/ once; a rename of it is refused on Windows while it runs, and nothing stays held."""
+    settings, request, _task = pending_bundle_fixture(tmp_path, "held_parent")
+    requests_dir = Path(settings.runner.workspace_root) / "requests"
+    outcome = {}
+    real_replace = request_bundle_module._replace_dir
+
+    def probe(temp, target, **kwargs):
+        try:
+            requests_dir.rename(requests_dir.with_name("requests-moved"))
+            outcome["moved"] = True
+            requests_dir.with_name("requests-moved").rename(requests_dir)  # put it back so the build can finish
+        except OSError:
+            outcome["moved"] = False
+        return real_replace(temp, target, **kwargs)
+
+    request_bundle_module._replace_dir = probe
+    try:
+        built = build_request_bundle(request, settings)
+    except OSError:
+        built = None  # POSIX: the move succeeded and the replace check refused (covered by the next test)
+    finally:
+        request_bundle_module._replace_dir = real_replace
+    if os.name == "nt":
+        assert outcome["moved"] is False and built is not None
+    after = requests_dir.with_name("requests-after")
+    requests_dir.rename(after)  # nothing holds the folder once the build ended
+    after.rename(requests_dir)
+
+
+def test_a_swapped_requests_folder_is_refused_and_nothing_below_the_new_target_is_deleted(tmp_path, monkeypatch):
+    settings, request, _task = pending_bundle_fixture(tmp_path, "swapped_parent")
+    build_request_bundle(request, settings)  # an earlier bundle: its folder is what a rebuild deletes
+    requests_dir = Path(settings.runner.workspace_root) / "requests"
+    victim_parent = tmp_path / "victim"
+    victim = victim_parent / "swapped_parent"
+    write(victim / "precious.txt", "keep")
+    real_clear = request_bundle_module._clear_owned_dir
+    swapped = {}
+
+    def swapping(path, parent, held=None):
+        if path.name == "swapped_parent" and not swapped:
+            try:
+                requests_dir.rename(requests_dir.with_name("requests-moved"))
+                os.symlink(victim_parent, requests_dir, target_is_directory=True)
+                swapped["done"] = True
+            except OSError:
+                swapped["blocked"] = True  # Windows: the held handle refuses the rename
+        return real_clear(path, parent, held)
+
+    monkeypatch.setattr(request_bundle_module, "_clear_owned_dir", swapping)
+    if os.name == "nt":
+        build_request_bundle(request, settings)  # the swap is refused and the rebuild completes
+        assert swapped.get("blocked") and (victim / "precious.txt").read_text(encoding="utf-8") == "keep"
+    else:
+        with pytest.raises(OSError, match="parent changed|not a plain"):
+            build_request_bundle(request, settings)
+        assert swapped.get("done") and (victim / "precious.txt").read_text(encoding="utf-8") == "keep"
+
+
+# ---- #1212: a cancel before the first step made a work folder is not a bundle failure ----
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", [None, "request_deadline"])
+@pytest.mark.parametrize("listed", [True, False])
+async def test_cancelled_step_result_in_ledger_is_bundled(tmp_path, reason, listed):
+    import copy
+    settings, request, task = pending_bundle_fixture(tmp_path, "deadline")
+    result = task["result"]
+    result.update(ok=False, error="cancelled", unreported_outputs=result.pop("outputs"))
+    result.pop("output_sha256")
+    task.update(kind="step", step_id="s1", attempt=2)
+    request.update(mode="orchestrate", status="cancelled", error="cancelled", results={},
+                   cancelling={}, cancelled_tasks=[result["task_id"]] if listed else [], cancel_reason=reason,
+                   plan={"steps": [{"id": "s1", "depends_on": []}]})
+    hub = Hub(settings)
+    hub.requests[request["id"]] = request
+    old = copy.deepcopy(task)
+    old.update(attempt=1)
+    old["result"].update(workdir_id="old-missing", workdir=str(tmp_path / "old-missing"))
+    hub.store.put("task", "aaa-old-attempt", old)
+    hub.store.put("task", result["task_id"], task)
+    unfinished = copy.deepcopy(task)
+    unfinished.update(attempt=3, completed=False, result={})
+    hub.store.put("task", "zzz-unfinished", unfinished)
+    await hub._afinish_cancel(request["id"])
+    pending = hub.terminal_tasks.get(request["id"])
+    if pending:
+        await pending
+    saved = hub.requests[request["id"]]
+    assert not saved.get("bundle_warning")
+    assert (Path(saved["bundle_path"]) / "steps/s1/outputs/answer.txt").read_text() == "answer\n"
+    await asyncio_sleep()
+    hub.store.close()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_workdir", [True, False])
+async def test_cancelled_revision_preserves_existing_and_partial_outputs(tmp_path, same_workdir):
+    import copy
+    settings, request, task = pending_bundle_fixture(tmp_path, "revisions")
+    old = copy.deepcopy(task["result"])
+    old_dir = Path(old["workdir"])
+    new_dir = old_dir if same_workdir else old_dir.parent / "task_revision"
+    write(new_dir / "manifest.json", json.dumps({"host": platform.node()}))
+    write(new_dir / "outputs/partial.txt", "partial revision")
+    if not same_workdir:
+        write(new_dir / "outputs/answer.txt", "new revision")
+    result = copy.deepcopy(old)
+    result.update(task_id="t-revision", workdir=str(new_dir), workdir_id=new_dir.name,
+                  ok=False, error="cancelled", outputs=[], output_sha256={},
+                  unreported_outputs=["outputs/partial.txt"] + ([] if same_workdir else ["outputs/answer.txt"]))
+    task.update(kind="step", step_id="s1", attempt=2, result=result)
+    request.update(mode="orchestrate", status="cancelled", error="cancelled", results={"s1": old}, cancelling={},
+                   plan={"steps": [{"id": "s1", "depends_on": []}]})
+    hub = Hub(settings)
+    hub.requests[request["id"]] = request
+    hub.store.put("task", result["task_id"], task)
+    await hub._afinish_cancel(request["id"])
+    pending = hub.terminal_tasks.get(request["id"])
+    if pending:
+        await pending
+    saved = hub.requests[request["id"]]
+    assert not saved.get("bundle_warning")
+    bundle = Path(saved["bundle_path"])
+    assert (bundle / "steps/s1/outputs/answer.txt").read_text() == "answer\n"
+    partial = list((bundle / "steps").glob("*/outputs/partial.txt"))
+    assert len(partial) == 1 and partial[0].read_text() == "partial revision"
+    if not same_workdir:
+        assert (partial[0].parent / "answer.txt").read_text() == "new revision"
+    assert "s1: steps/cancelled_revision_1/" in (bundle / "execution_record.md").read_text(encoding="utf-8")
+    await asyncio_sleep()
+    hub.store.close()
+
+
+def _sent_step_without_workdir(tmp_path, rid, status):
+    hub = Hub(configured(tmp_path))
+    hub.requests[rid] = {"id": rid, "text": "request", "mode": "orchestrate", "status": status, "report": "body",
+                         "results": {}, "plan": {"steps": [{"id": "s1", "depends_on": []}]}}
+    hub.store.put("task", f"t-{rid}", {"request_id": rid, "kind": "step", "step_id": "s1", "accepted": True})
+    return hub
+
+
+@pytest.mark.asyncio
+async def test_a_request_cancelled_before_any_work_folder_exists_is_not_warned_about(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "c1", "cancelled")  # the real build runs and finds no folder
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c1", "request.completed", data)
+
+    assert "bundle_warning" not in data and "bundle_warning" not in hub.requests["c1"]
+    assert "bundle_path" not in hub.requests["c1"]
+    assert not any(event["data"].get("bundle_warning") for event in hub.store.events_since(0)
+                   if event["type"] == "request.bundle")
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_request_whose_recorded_work_folder_is_gone_still_warns(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "c3", "cancelled")
+    hub.requests["c3"]["results"] = {"s1": {"task_id": "t-c3", "agent_id": "analyst", "ok": True,
+                                            "workdir": str(tmp_path / "runs" / "gone"), "workdir_id": "gone",
+                                            "outputs": []}}
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c3", "request.completed", data)
+
+    assert "단계 작업 폴더를 하나도 찾지 못했습니다" in data["bundle_warning"], "lost data is not a normal cancel"
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_work_folder_recorded_only_on_a_task_result_also_keeps_the_warning(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "c4", "cancelled")
+    hub.store.put("task", "t-c4", {"request_id": "c4", "kind": "step", "step_id": "s1", "completed": True,
+                                   "result": {"task_id": "t-c4", "workdir_id": "gone-too"}})
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c4", "request.completed", data)
+
+    assert "bundle_warning" in data
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_request_without_any_work_folder_still_warns(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "f1", "failed")
+    data = {"ok": False, "report": "body"}
+
+    hub.commit_terminal("f1", "request.failed", data)
+
+    assert "단계 작업 폴더를 하나도 찾지 못했습니다" in data["bundle_warning"]
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_request_whose_bundle_fails_for_another_reason_still_warns(tmp_path, monkeypatch):
+    hub = _sent_step_without_workdir(tmp_path, "c2", "cancelled")
+
+    def fail(*_args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("labhq.request_bundle.build_request_bundle", fail)
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c2", "request.completed", data)
+
+    assert "disk full" in data["bundle_warning"]
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_after_planning_but_before_any_step_is_quiet_even_though_the_plan_made_a_folder(tmp_path):
+    hub = _sent_step_without_workdir(tmp_path, "c5", "cancelled")
+    hub.store.put("task", "t-plan", {"request_id": "c5", "kind": "plan", "completed": True,
+                                     "result": {"task_id": "t-plan", "workdir_id": "plan-folder"}})
+    hub.store.put("task", "t-brief", {"request_id": "c5", "kind": "briefing", "completed": True,
+                                      "result": {"task_id": "t-brief", "workdir_id": "brief-folder"}})
+    data = {"ok": False, "status": "cancelled", "report": "body"}
+
+    hub.commit_terminal("c5", "request.completed", data)
+
+    assert "bundle_warning" not in data, "briefing and plan folders are never bundled"
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_run_cancelled_after_its_work_folder_was_made_reports_that_folder(tmp_path):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from labhq.models import Task
+    from labhq.runner.daemon import Runner
+    from labhq.runner.workspace import TaskWorkspace
+
+    runner = Runner.__new__(Runner)
+    runner.s = configured(tmp_path)
+    runner.breakers, runner.event_buffers, runner._result_queued, runner._cleanup_reports = {}, {}, set(), {}
+    runner._recruitment_conversions, runner._stopping = {}, False
+    runner.controls = SimpleNamespace(finish=lambda task_id: None)
+    sent = []
+
+    async def emit_all(events):
+        sent.extend(events)
+
+    async def run_task(task):
+        raise asyncio.CancelledError
+
+    runner.emit_all, runner.run_task = emit_all, run_task
+    runner._recruitment_cost_fields = AsyncMock(return_value={"cost_usd": None, "cost_known": False})
+    runner._shutdown_result = lambda result, cancelled=False: result
+    task = Task(id="t-run", agent_id="analyst", request_id="r", prompt="p")
+
+    runner.workspaces = {}
+    with pytest.raises(asyncio.CancelledError):
+        await runner._run_guarded(task)
+    before = next(e for e in sent if e.type == "task.result").data
+    assert not before.get("workdir_id"), "cancelled before any folder: nothing to report"
+
+    sent.clear()
+    workdir = tmp_path / "runs" / "2026-11-01" / "task_made"
+    write(workdir / "outputs" / "partial.txt", "partial")
+    runner.workspaces = {"t-run": TaskWorkspace.existing(workdir, "t-run")}
+    with pytest.raises(asyncio.CancelledError):
+        await runner._run_guarded(task)
+    after = next(e for e in sent if e.type == "task.result").data
+    assert after["workdir_id"] == "task_made" and after["workdir"].endswith("task_made")
+    assert "outputs/partial.txt" in after["unreported_outputs"]

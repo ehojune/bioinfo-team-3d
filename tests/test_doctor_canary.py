@@ -218,3 +218,59 @@ def test_doctor_cli_adds_explicit_canary_rows_to_json(tmp_path, monkeypatch):
     assert called == ["mock"]
     assert row in manifest["checks"]
     assert manifest["summary"]["ok"] >= 1
+
+
+def test_canary_context_protects_private_paths_including_cancel(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from labhq.models import AgentSpec
+
+    settings = _settings(tmp_path)
+    secret = tmp_path / "private"
+    secret.mkdir()
+    settings.policy.private_paths = [str(secret)]
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.claude_code)
+    contexts = []
+
+    class Adapter:
+        async def run(self, ctx):
+            contexts.append(ctx)
+            if "CANCEL" in ctx.prompt:
+                await ctx.emit("agent.status", {})
+                await asyncio.Event().wait()
+            return SimpleNamespace()
+
+    monkeypatch.setattr(doctor, "get_adapter", lambda *args: Adapter())
+    asyncio.run(doctor._canary_call(settings, agent, tmp_path, "test"))
+    assert asyncio.run(doctor._canary_cancel(settings, agent, tmp_path))
+    for ctx in contexts:
+        assert ctx.private_enabled
+        assert str(secret) in ctx.private_paths
+        assert ctx.private_labels
+        assert any("private" in rule and rule.startswith("Read(") for rule in ctx.claude_settings["permissions"]["deny"])
+
+
+def test_canary_resumes_in_initial_workdir(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from labhq.models import AgentSpec
+
+    settings = _settings(tmp_path)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.claude_code)
+    dirs = []
+    monkeypatch.setattr(doctor, "get_adapter", lambda *args: SimpleNamespace(enforces_read_only=True, supports_resume=True))
+
+    async def call(settings, agent, workdir, prompt, **kwargs):
+        dirs.append(workdir)
+        result = SimpleNamespace(ok=True, text=doctor.CANARY_EXPECTED, session_id="session",
+                                 cost_known=False, cost_usd=None, usage={}, usage_known=False)
+        return result, [("agent.usage", {"cost_known": False, "usage_known": False})], {}
+
+    async def cancel(*args):
+        return True
+
+    monkeypatch.setattr(doctor, "_canary_call", call)
+    monkeypatch.setattr(doctor, "_canary_cancel", cancel)
+    rows = asyncio.run(doctor._agent_canary(settings, agent))
+    assert dirs[0] == dirs[1]
+    assert next(row for row in rows if row["name"].endswith(": resume"))["status"] == "ok"

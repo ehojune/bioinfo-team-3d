@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from labhq.research import semantics_input_fit as fit
+from labhq.research import input_fit as fit
 from labhq.research import semantics_shadow as shadow
 from labhq.research.contract import plan_sha256
 from labhq.research.semantics_shadow import ShadowPaths, build_report, render_report
@@ -13,6 +13,15 @@ from tests.test_research_protocol import valid_plan
 
 
 PACK = {"id": "single_cell_de", "version": "2", "sha256": "a" * 64}
+
+
+def test_optional_adapter_shares_mainline_verdicts_and_meaning_hash():
+    from labhq.research import semantics_input_fit as adapter
+    assert adapter.evaluate is fit.evaluate
+    assert adapter.VERDICTS == fit.VERDICTS
+    for kind in ("sequence_reads", "raw_counts", None, "unrecognized"):
+        assert adapter.evaluate(plan(kind)) == fit.evaluate(plan(kind))
+    assert adapter.table_sha256() == fit.table_sha256()
 
 
 def plan(data_type: str | None, *, version: str | None = None, agent: str = "analyst") -> dict:
@@ -76,7 +85,7 @@ def test_local_key_judgement_does_not_need_the_optional_edam_subset(tmp_path):
 def test_the_table_digest_follows_its_meaning_not_its_comments(tmp_path, monkeypatch):
     vocab = current()
     original = fit.RELATION_FILE.read_text(encoding="utf-8")
-    copy = tmp_path / "semantics_input_fit.yaml"
+    copy = tmp_path / "input_fit.yaml"
     monkeypatch.setattr(fit, "RELATION_FILE", copy)
     try:
         copy.write_text("# another comment\n" + original, encoding="utf-8")

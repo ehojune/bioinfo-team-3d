@@ -17,6 +17,10 @@ API formats and limits (checked 2026-10-06):
 - NCBI E-utilities: 3 requests per second without an API key. ClinVar build and last update from einfo.
   A VCF-style allele is searched by its span (`a:b[chrpos38]`); ClinVar indexes an indel from its first changed base.
 - gnomAD serves mtDNA through `mitochondrial_variant(variant_id, dataset)`; `variant` answers "not found" for chrM.
+- AlphaMissense (#621, checked live 2026-10-15): the same VEP POST with the extra query option `AlphaMissense=1` returns
+  `transcript_consequences[].alphamissense = {am_pathogenicity: 0..1, am_class}` on missense transcripts only. An
+  option the server does not know is ignored (HTTP 200, no field), so a missing field is not proof of "no score".
+  The GRCh37 server answers the old class names (`pathogenic`); labhq asks for GRCh38 human only.
 """
 
 from __future__ import annotations
@@ -45,14 +49,40 @@ USER_AGENT = "labhq-annot (+https://github.com/ehojune/bioinfo-team-3d)"
 
 VEP_BATCH = 200  # Ensembl's POST limit for vep/:species/{region,hgvs,id}
 VEP_OPTIONS = {"canonical": 1, "hgvs": 1, "mane": 1}
+# Plugin options sent on top of VEP_OPTIONS for human GRCh38 (#621). They are part of the cache key, so an answer cached
+# before AlphaMissense existed is never reused as complete.
+VEP_PLUGIN_OPTIONS = {"AlphaMissense": 1}
+VEP_PLUGIN_ASSEMBLIES = ("GRCh38",)
+ALPHAMISSENSE_FAILED = "labhq_alphamissense_error"  # marks an answer re-fetched without the plugin after Ensembl refused it
+# AlphaMissense class names as Ensembl answers them (GRCh38: likely_*; the GRCh37 server: pathogenic/benign).
+ALPHAMISSENSE_CLASS_KO = {"likely_pathogenic": "병원성 가능성 높음", "pathogenic": "병원성 가능성 높음",
+                          "ambiguous": "불확실",
+                          "likely_benign": "양성 가능성 높음", "benign": "양성 가능성 높음"}
+# Recorded next to the Ensembl release whenever the plugin was asked for (PI 2026-10-15, #621). The predictions' license
+# is CC BY 4.0 since 2024-03-13 (the DeepMind README and the Ensembl plugin document both say so, read 2026-10-15); the
+# 2023 release was CC BY-NC-SA 4.0 (non-commercial, per the #621 brief), so an older copy carries that condition.
+ALPHAMISSENSE_SOURCE = {
+    "db": "AlphaMissense (Google DeepMind)",
+    "release_or_version": "Cheng et al. 2023 predictions as served by the Ensembl VEP AlphaMissense plugin "
+                          "(the REST API names no data version)",
+    "via": "Ensembl REST VEP option AlphaMissense=1",
+    "license": "CC BY 4.0 (출처 표기 필요). 2024-03-13 전의 배포본은 CC BY-NC-SA 4.0(비상업)이었다",
+    "license_url": "https://github.com/google-deepmind/alphamissense#alphamissense-predictions-license",
+    "usage": "예측값이며 임상 근거가 아니다. 임상용으로 검증·승인되지 않았다(DeepMind 고지)",
+    "citation": "Cheng et al. 2023 Science, doi:10.1126/science.adg7492",
+}
 GNOMAD_MAX_PER_CALL = 50  # 10 queries per minute: 50 new variants take about 5 minutes
 CLINVAR_MAX_PER_CALL = 200
 CLINVAR_RETMAX = 50  # a span search near a hotspot (BRCA1 c.68_69del) returns about 20 records
 ESUMMARY_BATCH = 100
-# ChIP-Atlas, ENCODE, GTEx and AlphaGenome publish no hard limit beyond ENCODE's 10 per second; these stay well under it
-# (annot_regulatory.py).
+# ChIP-Atlas, ENCODE, GTEx, AlphaGenome and Europe PMC publish no hard limit beyond ENCODE's 10 per second; these stay
+# well under it (annot_regulatory.py, annot_literature.py).
 MIN_INTERVAL_S = {"ensembl": 1 / 15, "gnomad": 6.0, "ncbi": 1 / 3,
-                  "chipatlas": 1.0, "encode": 0.1, "gtex": 0.25, "alphagenome": 1.0}
+                  "chipatlas": 1.0, "encode": 0.1, "gtex": 0.25, "alphagenome": 1.0, "europepmc": 0.2,
+                  "openalex": 0.1, "crossref": 0.1, "unpaywall": 0.1, "oa_copy": 0.2,
+                  # RCSB PDB and ChEMBL: no hard rate found in the pages reachable on 2026-10-31 (official pages not
+                  # opened, UNVERIFIED); kept at 5 and 2 per second (annot_structure.py).
+                  "rcsb": 0.2, "chembl": 0.5}
 RETRY_STATUS = frozenset({429, 502, 503, 504})
 MAX_ATTEMPTS = 5
 MAX_WAIT_S = 120.0  # a Retry-After longer than this (an hourly quota spent) fails the lookup instead of waiting
@@ -61,7 +91,16 @@ MAX_WAIT_S = 120.0  # a Retry-After longer than this (an hourly quota spent) fai
 CACHE_SCHEMA = 2
 # gnomAD names no release finer than the dataset ID and has republished data under one ID (v4.0 to v4.1), so its
 # answers also age out.
-CACHE_MAX_AGE_S = {"gnomad": 30 * 24 * 3600.0}
+CACHE_MAX_AGE_S = {"gnomad": 30 * 24 * 3600.0,
+                   # Europe PMC has no release; an open-access copy can appear after embargo (annot_literature.py).
+                   "fulltext": 30 * 24 * 3600.0,
+                   "citation_chase": 30 * 24 * 3600.0,
+                   "preprints": 30 * 24 * 3600.0,
+                   "openalex_works": 30 * 24 * 3600.0,
+                   "crossref_doi": 30 * 24 * 3600.0,
+                   "unpaywall": 30 * 24 * 3600.0,
+                   # The PDB archive updates weekly and its API names no release; ChEMBL's version is in its key.
+                   "pdb": 7 * 24 * 3600.0}
 QUERY_LOG = "outputs/annotation_queries.jsonl"
 RESULT_DIR = "outputs/annotation"
 
@@ -77,6 +116,10 @@ FORMAT_HINT = "chr:pos:ref:alt (예: 17:43045712:T:C), HGVS (예: NM_007294.4:c.
 
 class LookupFailed(Exception):
     """A lookup that did not reach an answer (network, server, quota). Never a negative result."""
+
+
+class LookupTimedOut(LookupFailed):
+    error_kind = "timeout"
 
 
 @dataclass(frozen=True)
@@ -155,6 +198,13 @@ def _retry_after(response: httpx.Response) -> float | None:
     return wait if wait is not None and math.isfinite(wait) and wait >= 0 else None
 
 
+DECODED_BODY_HEADERS = frozenset({"content-encoding", "content-length", "transfer-encoding"})
+
+
+class ResponseTooLarge(Exception):
+    """A streamed HTTP response crossed its caller-supplied byte limit."""
+
+
 class Http:
     """Paced requests with retries. One pace per service: Ensembl, gnomAD and NCBI have separate limits."""
 
@@ -172,11 +222,28 @@ class Http:
                 await self.sleep(gap)
         self.last[service] = self.clock()
 
-    async def request(self, service: str, method: str, url: str, **kwargs: Any) -> httpx.Response:
+    async def request(self, service: str, method: str, url: str, *, response_limit: int | None = None,
+                      **kwargs: Any) -> httpx.Response:
         for attempt in range(1, MAX_ATTEMPTS + 1):
             await self._pace(service)
             try:
-                response = await self.client.request(method, url, **kwargs)
+                if response_limit is None:
+                    response = await self.client.request(method, url, **kwargs)
+                else:
+                    async with self.client.stream(method, url, **kwargs) as streamed:
+                        body = bytearray()
+                        if streamed.status_code not in RETRY_STATUS:
+                            async for chunk in streamed.aiter_bytes():
+                                if len(body) + len(chunk) > response_limit:
+                                    raise ResponseTooLarge(response_limit)
+                                body.extend(chunk)
+                        # aiter_bytes() already decoded the body: the old Content-Encoding and sizes would make
+                        # httpx decode it a second time and fail with DecodingError (#954).
+                        headers = httpx.Headers([(name, value) for name, value in streamed.headers.multi_items()
+                                                 if name.lower() not in DECODED_BODY_HEADERS])
+                        response = httpx.Response(
+                            streamed.status_code, headers=headers, content=bytes(body),
+                            request=streamed.request, extensions=streamed.extensions)
             except httpx.TransportError as exc:
                 if attempt == MAX_ATTEMPTS:
                     raise LookupFailed(f"{url}에 연결하지 못했습니다({MAX_ATTEMPTS}회): {exc}") from exc
@@ -248,6 +315,7 @@ class Item:
     error: str | None = None
     answer: object = None
     cached_at: str | None = None
+    volatile: bool = False  # the answer is incomplete (a plugin failed): never cached as if it were whole
 
 
 class Annotator:
@@ -283,12 +351,14 @@ class Annotator:
     def _to_cache(self, tool: str, release: str, options: dict, items: list[Item], queried_at: str) -> None:
         stored: set[str] = set()
         for item in items:
-            if item.variant and item.error is None and item.cached_at is None and item.variant.key not in stored:
+            if (item.variant and item.error is None and item.cached_at is None and not item.volatile
+                    and item.variant.key not in stored):
                 stored.add(item.variant.key)
                 self.cache.put(tool, Cache.key(tool, release, options, item.variant.key), item.answer, queried_at)
 
     def _finish(self, tool: str, db: str, release: str, url: str, options: dict, items: list[Item],
-                summarize: Callable[[Item], dict], note: str | None = None, cache: bool = True) -> dict:
+                summarize: Callable[[Item], dict], note: str | None = None, cache: bool = True,
+                additional_sources: list[dict] | None = None, source_details: dict | None = None) -> dict:
         queried_at = _now()
         if cache:  # False when the caller cached each answer under its own release (ChIP-Atlas target files)
             self._to_cache(tool, release, options, items, queried_at)
@@ -297,6 +367,10 @@ class Annotator:
                                              for item in items]})
         source = {"db": db, "release_or_version": release, "url": url, "queried_at": queried_at,
                   "request_sha256": request_sha256}
+        if source_details:
+            source.update(source_details)
+        if additional_sources:  # a database reached through this one, with its own license (AlphaMissense via VEP)
+            source["additional_sources"] = additional_sources
         results = []
         for item in items:
             row: dict[str, Any] = {"input": item.raw}
@@ -356,7 +430,9 @@ class Annotator:
         base = ENSEMBL[assembly]
         items = self._items(variants)
         release = await self._ensembl_release(base, assembly)
-        options = {"assembly": assembly, "species": species, **VEP_OPTIONS}
+        params = _vep_params(assembly, species)
+        plugins = {key: value for key, value in params.items() if key in VEP_PLUGIN_OPTIONS}
+        options = {"assembly": assembly, "species": species, **params}
         self._from_cache("vep", release, options, items)
         lookup_errors = 0
         endpoints = {"vcf": ("region", "variants"), "hgvs": ("hgvs", "hgvs_notations"), "rsid": ("id", "ids")}
@@ -371,7 +447,7 @@ class Annotator:
                 entries = [(f"labhq{start + i}", _vep_entry(by_key[key], f"labhq{start + i}"), key) if kind == "vcf"
                            else (key, key, key) for i, key in enumerate(batch)]
                 try:
-                    answers = await self._vep_post(base, species, endpoint, body_key, entries)
+                    answers = await self._vep_post(base, species, endpoint, body_key, entries, params)
                 except LookupFailed as exc:
                     lookup_errors += len(batch)
                     answers = {key: LookupFailed(str(exc)) for _token, _payload, key in entries}
@@ -382,10 +458,21 @@ class Annotator:
                             item.error = f"VEP 조회 실패: {answer}"
                         else:
                             item.answer = answer
+                            item.volatile = isinstance(answer, dict) and bool(answer.get(ALPHAMISSENSE_FAILED))
         if self._all_failed(items, lookup_errors):
             raise LookupFailed(f"VEP 조회가 모두 실패했습니다: {next(i.error for i in items if i.error)}")
         url = f"{base}/vep/{'homo_sapiens' if species == 'human' else species}"
-        return self._finish("vep", "Ensembl VEP", release, url, options, items, _vep_summary)
+        note = None
+        if "AlphaMissense" in plugins:
+            note = ("AlphaMissense 점수는 모델 예측이며 임상 근거가 아닙니다(CC BY 4.0, 출처: Cheng et al. 2023 Science). "
+                    "근거와 이용 조건은 source.additional_sources에 있습니다")
+            failed = sum(item.volatile for item in items)
+            if failed:
+                note += (f". 항목 {failed}개는 Ensembl이 AlphaMissense 요청을 거부해 점수 없이 받았습니다"
+                         "(나머지 VEP 결과는 그대로입니다)")
+        return self._finish("vep", "Ensembl VEP", release, url, options, items,
+                            lambda item: _vep_summary(item, "AlphaMissense" in plugins), note,
+                            additional_sources=[ALPHAMISSENSE_SOURCE] if "AlphaMissense" in plugins else None)
 
     async def _ensembl_release(self, base: str, assembly: str) -> str:
         response = await self.http.request("ensembl", "GET", f"{base}/info/data",
@@ -399,18 +486,34 @@ class Annotator:
             raise LookupFailed(f"Ensembl release가 비었습니다({base}/info/data)")
         return f"Ensembl {max(releases)} ({assembly})"
 
-    async def _vep_post(self, base: str, species: str, endpoint: str, body_key: str,
-                        entries: list[tuple[str, str, str]]) -> dict[str, object]:
-        """Answers by variant key. A 400 for a batch is split until the entries Ensembl refuses stand alone."""
-        response = await self.http.request(
-            "ensembl", "POST", f"{base}/vep/{species}/{endpoint}", params=VEP_OPTIONS,
+    async def _vep_send(self, base: str, species: str, endpoint: str, body_key: str,
+                        entries: list[tuple[str, str, str]], params: dict) -> httpx.Response:
+        return await self.http.request(
+            "ensembl", "POST", f"{base}/vep/{species}/{endpoint}", params=params,
             json={body_key: [payload for _token, payload, _key in entries]},
             headers={"Accept": "application/json", "Content-Type": "application/json"})
+
+    async def _vep_post(self, base: str, species: str, endpoint: str, body_key: str,
+                        entries: list[tuple[str, str, str]], params: dict | None = None) -> dict[str, object]:
+        """Answers by variant key. A 400 for a batch is split until the entries Ensembl refuses stand alone.
+
+        A plugin option (AlphaMissense) must not take the rest of the answer with it: when Ensembl refuses the batch
+        (400) or fails (500) with a plugin option, the batch is asked once more without it. If that works, the answers
+        are kept and marked with ALPHAMISSENSE_FAILED, so they are neither cached nor read as "no score"."""
+        params = dict(VEP_OPTIONS) if params is None else params
+        response = await self._vep_send(base, species, endpoint, body_key, entries, params)
+        plugin_error = None
+        plain = {key: value for key, value in params.items() if key not in VEP_PLUGIN_OPTIONS}
+        if len(plain) != len(params) and response.status_code in (400, 500):
+            retry = await self._vep_send(base, species, endpoint, body_key, entries, plain)
+            if retry.status_code == 200:
+                plugin_error = f"HTTP {response.status_code}: {_error_text(response)}"
+                response = retry
         if response.status_code == 400:
             if len(entries) > 1:
                 half = len(entries) // 2
-                return {**await self._vep_post(base, species, endpoint, body_key, entries[:half]),
-                        **await self._vep_post(base, species, endpoint, body_key, entries[half:])}
+                return {**await self._vep_post(base, species, endpoint, body_key, entries[:half], params),
+                        **await self._vep_post(base, species, endpoint, body_key, entries[half:], params)}
             return {entries[0][2]: ValueError(f"Ensembl이 거부했습니다: {_error_text(response)}")}
         if response.status_code != 200:
             raise LookupFailed(f"HTTP {response.status_code}: {_error_text(response)}")
@@ -430,6 +533,8 @@ class Annotator:
                 value = row.get(field)
                 key = tokens.get(value) or (lowered.get(value.lower()) if isinstance(value, str) else None)
                 if key is not None:
+                    if plugin_error:
+                        row[ALPHAMISSENSE_FAILED] = plugin_error
                     answers.setdefault(key, row)
                     break
         for _token, _payload, key in entries:
@@ -630,6 +735,12 @@ GNOMAD_MITO_QUERY = (
     "variant_id reference_genome pos ref alt rsids filters an ac_het ac_hom max_heteroplasmy } }")
 
 
+def _vep_params(assembly: str, species: str) -> dict:
+    """Query options for one VEP call: the base options, plus AlphaMissense for human GRCh38 only."""
+    human = species in ("human", "homo_sapiens")
+    return {**VEP_OPTIONS, **(VEP_PLUGIN_OPTIONS if human and assembly in VEP_PLUGIN_ASSEMBLIES else {})}
+
+
 def _vep_entry(variant: Variant, token: str) -> str:
     return f"{variant.chrom} {variant.pos} {token} {variant.ref} {variant.alt} . . ."
 
@@ -644,7 +755,65 @@ def _error_text(response: httpx.Response) -> str:
     return str(body)[:300]
 
 
-def _vep_summary(item: Item) -> dict:
+def _alphamissense_score(block: object) -> float | None:
+    """am_pathogenicity as a number in 0..1; anything else (missing, text, out of range) is no score."""
+    value = block.get("am_pathogenicity") if isinstance(block, dict) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+        return None
+    return float(value)
+
+
+def _alphamissense_value(transcript: dict, *, other: bool = False) -> dict:
+    """Validated AlphaMissense value for one named transcript."""
+    score = _alphamissense_score(transcript.get("alphamissense"))
+    assert score is not None
+    block = transcript["alphamissense"]
+    am_class = block.get("am_class")
+    am_class = am_class.strip().lower() if isinstance(am_class, str) and am_class.strip() else None
+    label = ALPHAMISSENSE_CLASS_KO.get(am_class or "", f"분류 {am_class}" if am_class else "분류 없음")
+    transcript_id = transcript.get("transcript_id")
+    text = (f"다른 transcript({transcript_id})에는 {score:.2f} ({label})" if other
+            else f"AlphaMissense: {score:.2f} ({label})")
+    out: dict[str, Any] = {"status": "ok", "am_pathogenicity": score, "am_class": am_class, "class_ko": label,
+                           "text": text}
+    for key in ("transcript_id", "gene_symbol"):
+        if transcript.get(key):
+            out[key] = transcript[key]
+    return out
+
+
+def _alphamissense_summary(row: dict, transcripts: list[dict], chosen: dict | None, requested: bool) -> dict:
+    """AlphaMissense from the same transcript the VEP summary shows."""
+    if chosen is not None and _alphamissense_score(chosen.get("alphamissense")) is not None:
+        return _alphamissense_value(chosen)
+    if not any("missense_variant" in (t.get("consequence_terms") or []) for t in transcripts):
+        return {"status": "not_applicable", "text": "AlphaMissense: 해당 없음 (missense 변이가 아닙니다)"}
+    if row.get(ALPHAMISSENSE_FAILED):
+        return {"status": "unavailable", "text": "AlphaMissense: 조회하지 못했습니다 (Ensembl이 플러그인 요청을 거부해 "
+                                                  "점수 없이 받았습니다. 나머지 VEP 결과는 그대로입니다)"}
+    if not requested:
+        return {"status": "not_requested", "text": "AlphaMissense: 요청하지 않았습니다 (GRCh38 사람 변이만 조회합니다)"}
+    out = {"status": "no_score", "text": "AlphaMissense: 점수 없음 (이 transcript). AlphaMissense 표에 없거나 "
+                                          "Ensembl이 점수를 붙이지 않았습니다"}
+    if chosen is not None:
+        for key in ("transcript_id", "gene_symbol"):
+            if chosen.get(key):
+                out[key] = chosen[key]
+    return out
+
+
+def _alphamissense_other(transcripts: list[dict], chosen: dict | None) -> dict | None:
+    """One scored transcript kept separate from the chosen transcript."""
+    scored = [t for t in transcripts if t is not chosen
+              and _alphamissense_score(t.get("alphamissense")) is not None]
+    if not scored:
+        return None
+    pick = (next((t for t in scored if t.get("mane_select")), None)
+            or next((t for t in scored if t.get("canonical")), None) or scored[0])
+    return _alphamissense_value(pick, other=True)
+
+
+def _vep_summary(item: Item, alphamissense: bool = False) -> dict:
     row = item.answer if isinstance(item.answer, dict) else {}
     transcripts = [t for t in row.get("transcript_consequences") or [] if isinstance(t, dict)]
     chosen = (next((t for t in transcripts if t.get("mane_select")), None)
@@ -662,6 +831,11 @@ def _vep_summary(item: Item) -> dict:
         summary["transcript"] = {k: chosen.get(k) for k in ("transcript_id", "gene_symbol", "consequence_terms",
                                                             "impact", "hgvsc", "hgvsp", "mane_select", "canonical")
                                  if chosen.get(k) is not None}
+    summary["alphamissense"] = _alphamissense_summary(row, transcripts, chosen, alphamissense)
+    if summary["alphamissense"]["status"] == "no_score":
+        other = _alphamissense_other(transcripts, chosen)
+        if other is not None:
+            summary["alphamissense_other"] = other
     return summary
 
 

@@ -1,0 +1,6 @@
+pr: 999
+rows:
+- sha: 1a2671e
+  at: 2026-10-29 07:32
+  text: CI 진단 파일 쓰기를 Path.open에서 분리하고 request-input test의 Path.open guard를 보호 폴더로 좁혀 xdist INTERNALERROR를 없앤다 (#998).
+  summary: 테스트가 파일 열기를 막아 둔 사이 CI 진단 기록이 터지던 간헐 실패를 고쳤습니다.

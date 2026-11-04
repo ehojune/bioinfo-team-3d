@@ -1,0 +1,59 @@
+pr: 766
+rows:
+- sha: bc9641a
+  at: '2026-10-19 23:41'
+  text: 이름 기반 광역 프로세스 종료를 승인 카드 전에 거부하고 PID 확인 대안을 안내한다. 백그라운드 PID 추적은 후속으로 남긴다.
+- sha: f092389
+  at: '2026-10-19 23:42'
+  text: Bash kill의 signal 옵션과 명시 PID를 이름 종료로 오인하지 않도록 구분한다. 마지막 두 문자열 회귀는 CI 검증에 맡긴다.
+- sha: 0db50c6
+  at: '2026-10-19 23:48'
+  text: PowerShell kill alias의 literal Name 약어를 거부하고 Bash 숫자 signal PID 종료를 유지한다. 문자열 guard 회귀 53개를 확인했다.
+- sha: 91edaee
+  at: '2026-10-20 02:06'
+  text: unquoted wrapper payload·env 옵션·줄바꿈 pipeline·InputObject 식의 이름 종료 우회를 막고 문자열/fake 회귀 85개를 확인했다.
+- sha: 6bf40b7
+  at: '2026-10-20 02:53'
+  text: sudo 옵션 뒤 명령과 PowerShell script block의 이름 종료 우회를 막았다. 새 실패 31개를 재현한 뒤 문자열/fake 131개와 승인 정책 정적 test 24개를 확인했다.
+- sha: 0997a9a
+  at: '2026-10-20 03:00'
+  text: script block 출력·filter·앞선 문장의 이름 선택 상태를 보존했다. 추가 실패 9개를 재현한 뒤 문자열/fake 144개와 승인 정책 정적 test 24개를 확인했다.
+- sha: 67813c8
+  at: '2026-10-20 03:52'
+  text: 조건문·redirection·wrapper 옵션·literal quote removal 우회를 보강하고 mock/static 235개를 확인했다. 원문 ForEach 지적의 stale 근거를 보존한다.
+- sha: '93d07f8'
+  at: '2026-10-20 04:41'
+  text: xargs 옵션·operand 뒤의 literal 종료 명령을 검사한다. 새 실패 회귀 29개를 재현한 뒤 mock/static 283개와 accident guard blocked 0건을 확인했다.
+- sha: '7e08044'
+  at: '2026-10-20 05:27'
+  text: consult 복구 test의 중복 timeout을 facilities 대기 즉시 실패 검증으로 바꾸고 Git provenance를 mock 처리했다. 가상 시계 실패 재현 뒤 관련 mock 4개와 지연 회귀 1개가 통과했다.
+- sha: '71e08b0'
+  at: '2026-10-20 06:28'
+  text: late-storage 승인 순서 test에서 PDF 준비·Git provenance를 mock 처리했다. 미완료 PDF 조건의 실패를 재현한 뒤 관련 mock 4개와 지연 재현 1개가 통과했다.
+- sha: '98f70d9'
+  at: '2026-10-20 09:27'
+  text: 외부 조회 deadline test의 progress 주기를 제품 기본값으로 되돌리고 operation 취소·timeout 알림을 검증한다. 취소 경합 모사 회귀 3개와 mock/static 20개를 확인했다.
+- sha: 'c484256'
+  at: '2026-10-20 11:16'
+  text: 'literal 실행 payload·wrapper·find action·pgrep pipeline·ANSI-C quote P1 우회를 차단한다. 실패 57개를 재현한 뒤 mock/static 368개를 확인했고 positional Name 원문은 공식 계약의 stale 근거를 남긴다.'
+- sha: '6954ab6'
+  at: '2026-10-20 12:14'
+  text: 'recruit resume fixture만 가상 polling 시계로 고정했다. 기존 assertion·0.2초 기한·2초 watchdog을 보존하고 순수 mock 6개를 확인했다. 원본 Hub fixture는 Popen guard 차단 뒤 재실행하지 않았다.'
+- sha: 'd83da2b'
+  at: '2026-10-20 13:00'
+  text: 'else 실행 위치·PowerShell literal 변수·Bash $()의 이름 선택 PID 종료를 거부했다. 원래 head에서 실패 26개를 재현한 뒤 관련 mock/static 463개와 guard blocked 0건을 확인했다.'
+- sha: '73bb72b'
+  at: '2026-10-20 13:49'
+  text: 'find bare placeholder 뒤 후속 action과 이름 선택 pipeline에서 유래한 Id 소비를 거부한다. 새 실패 17개 재현 뒤 기존 회귀 포함 mock/static 492개와 guard blocked 0건을 확인했다.'
+- sha: 'd16dd8e'
+  at: '2026-10-20 14:33'
+  text: 'skill 이름 선택 종료와 pidof PID 전달을 거부하고 option operand·조회·명시 PID를 구분한다. 새 실패 22개 재현 뒤 mock/static 544개와 guard blocked 0건을 확인했다.'
+- sha: 'e307580'
+  at: '2026-10-20 16:23'
+  text: '이름 선택 식·process substitution·Invoke-Expression·watch·nonpositive PID·Process.Kill 소비의 P1 우회를 거부한다. 새 실패 43개 재현 뒤 mock/static 587개와 guard 환경 유지를 확인했다.'
+- sha: '2b6b8b4'
+  at: '2026-10-20 17:27'
+  text: 'EncodedCommand의 bounded UTF-16LE Base64 payload·ForEach-Object MemberName Kill·stdbuf 실행 우회를 거부한다. 원래 head의 새 실패 37개 재현 뒤 mock/static 649개와 guard 환경 유지를 확인했다.'
+- sha: '45f35f0'
+  at: '2026-10-20 19:03'
+  text: '괄호 안에서 고른 process의 Kill 호출·ionice wrapper·locale quote 실행 우회를 막는다. 앞선 출력의 선택 상태와 명시 PID·조회·데이터 구분을 유지하고 새 실패 31개 재현 뒤 mock/static 710개를 확인했다.'

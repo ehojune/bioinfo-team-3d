@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: '5beab87'
+  at: '2026-10-21 19:07'
+  summary: HPC를 끈 설정에서 작업 조회나 취소 명령이 실행되지 않도록 고쳤습니다.
+  text: scheduler=none의 submit/queue/status/cancel과 내부 명령 실행을 거부하고 Runner의 watcher 예약·직접 polling을 차단한다. 저장 job·missing count·notified를 보존한다. 새 회귀 13건 red 뒤 관련 mock 37건과 Python 3.10 AST/compile·public·diff·기록 형식 검사를 통과했다. 실제 process/thread·HPC·운영·CI는 미검증이다.

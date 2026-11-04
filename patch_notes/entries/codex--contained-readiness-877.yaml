@@ -1,0 +1,14 @@
+pr: 880
+rows:
+  - sha: 8bfb9d5
+    at: "2026-10-23 14:00"
+    summary: "기존 준비 판정 PR에 브라우저 CI 수정을 반영하고 시운전 인계를 바로잡았습니다."
+    text: "#881 포함 main을 충돌 없이 통합했다. readiness 제품과 fake 검사는 검토판 f4512622와 같은 Git blob, browser/workflow는 병합된 main과 같다. B 네 daemon 독립 종료와 직원 자식 미증명을 구분하며 새 요청·cohort는 실행하지 않았다. 새 head CI·리뷰가 남았다."
+  - sha: 78eabdd
+    at: "2026-10-23 13:06"
+    summary: "새 contained 검사를 Windows 필수 cohort에 등록하고 binary 읽기 모드를 명시했습니다."
+    text: "CI의 inventory 누락 거부와 encoding AST 오인 두 원인을 고쳤다. Windows 선택 제한은 유지하고 새 fake 모듈을 필수 포함했다. focused 197건과 CI cohort 134건, profile 검증 통과. 실제 B 변경은 없다."
+  - sha: ccc8f0f
+    at: "2026-10-23 12:58"
+    summary: "운영자가 별도 고정한 owner 계약으로 현재 네 데몬의 contained readiness를 확인합니다."
+    text: "state 밖 계약 pin과 실행 중 verifier 바이트, owner 생성 시각·이미지, fresh pipe challenge, 네 역할의 정확한 Job 포함·마감을 검증한다. 기존 detached·인증 정책은 유지한다. fake 회귀 180건 통과. 실제 배포·직원 자식·90분 종료는 미검증이며 #877의 부분 해결이다."

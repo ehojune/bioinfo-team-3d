@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import socket
 import time
+from copy import deepcopy
 from datetime import date
 
 import pytest
@@ -77,10 +78,12 @@ def test_ab_report_compares_requests_candidates_reference_failure_and_cost(tmp_p
 
     assert rep["arms"]["advisory"] == {"requests": 1, "with_candidates": 1, "referenced": 1,
                                          "reference_rate": 1.0, "failed": 0, "failure_rate": 0.0,
-                                         "cost_usd": 1.5, "cost_unknown": 0}
+                                         "cost_usd": 1.5, "cost_unknown": 0, "excluded": 0,
+                                         "excluded_states": {"error": 0, "not_evaluated": 0}}
     assert rep["arms"]["shadow"]["failure_rate"] == 1.0 and rep["arms"]["shadow"]["cost_unknown"] == 1
-    assert rep["ab_window"] == {"requests": 2, "target_requests": 10, "deadline": "2026-10-23",
-                                 "reached": False}
+    assert rep["ab_window"] == {"requests": 2, "excluded": 0, "target_requests": 10,
+                                 "deadline": "2026-10-23", "reached": False,
+                                 "excluded_states": {"error": 0, "not_evaluated": 0}}
 
 
 def test_ab_report_counts_research_requests_only_so_others_cannot_close_the_window(tmp_path):
@@ -109,6 +112,23 @@ def test_ab_report_takes_candidates_from_the_plan_time_offer_not_the_end(tmp_pat
     rep = shadow.build_report(paths, date(2026, 10, 10), "ab")
 
     assert rep["arms"]["advisory"]["with_candidates"] == 2 and rep["arms"]["advisory"]["reference_rate"] == 0.5
+
+
+def test_ab_report_excludes_and_counts_unevaluated_and_error_separately(tmp_path):
+    excluded = [
+        {**_line(1, lane="research"), "arm": "advisory", "ab_excluded": True,
+         "ab_state": "not_evaluated"},
+        {**_line(2, lane="research"), "arm": "advisory", "ab_excluded": True,
+         "ab_state": "error"},
+    ]
+    paths = _write(tmp_path, excluded)
+
+    rep = shadow.build_report(paths, date(2026, 10, 10), "ab")
+
+    assert rep["arms"]["advisory"]["requests"] == 0
+    assert rep["arms"]["advisory"]["excluded_states"] == {"error": 1, "not_evaluated": 1}
+    assert rep["ab_window"]["requests"] == 0
+    assert rep["ab_window"]["excluded_states"] == {"error": 1, "not_evaluated": 1}
 
 
 def test_info_boundary_report_names_only_the_field_and_category(tmp_path, config, capsys):
@@ -158,6 +178,17 @@ def test_enable_shows_the_reason_and_opens_a_new_epoch(tmp_path, config, capsys)
     assert not paths.disabled.exists() and shadow.read_state(paths)["epoch"] == 2
     code, out = _cli(capsys, config, "report")
     assert "상태: on · 설정 shadow · 자동 off - · epoch 2" in out
+
+
+def test_enable_explains_that_the_legacy_request_id_false_positive_is_resolved(tmp_path, config, capsys):
+    paths = shadow.ShadowPaths(tmp_path / "state" / "semantics")
+    shadow.read_state(paths)
+    shadow.write_disabled(paths, "info_boundary", 1,
+                          boundary=[{"field": "request_id", "class": "identifier"}])
+
+    code, out = _cli(capsys, config, "enable")
+
+    assert code == 0 and "request_id" in out and "오판" in out and "epoch 2" in out
 
 
 def test_mark_checks_its_arguments_and_wrong_identity_turns_semantics_off(tmp_path, config, capsys):
@@ -243,6 +274,87 @@ def test_the_report_cli_never_ends_in_a_traceback(tmp_path, config, capsys, monk
     monkeypatch.setattr(shadow, "build_report", broken)
     code, out = _cli(capsys, config, "report")
     assert code == 1 and "unexpected AttributeError" in out and "Traceback" not in out
+
+
+@pytest.mark.parametrize("field", ["types", "declarations"])
+@pytest.mark.parametrize("json_output", [False, True], ids=["text", "json"])
+def test_report_cli_skips_damaged_nested_counts(tmp_path, config, capsys, field, json_output):
+    damaged = _line(2, candidates=99, lane="research")
+    damaged["provenance"][field] = (
+        {"data_type": {"local": {"declared": "damaged"}}}
+        if field == "types" else {"outputs": "damaged"})
+    paths = _write(tmp_path, [_line(1, candidates=2, lane="research"), damaged, _line(3)])
+    before = paths.log.read_bytes()
+    code, out = _cli(capsys, config, "report", *(["--json"] if json_output else []))
+    assert code == 0
+    if json_output:
+        rep = json.loads(out)
+        assert rep["requests"] == 2 and rep["broken_lines"] == 1
+        assert rep["provenance"]["candidates"] == 2
+        assert rep["research_with_candidates"] == 1
+    else:
+        assert "요청 2건" in out and "깨진 줄 1" in out and "후보 2" in out
+    assert paths.log.read_bytes() == before
+
+
+@pytest.mark.parametrize("path", [
+    "provenance.types", "provenance.types.data_type", "provenance.types.data_type.local",
+    "provenance.types.data_type.local.declared", "provenance.declarations.outputs",
+    "provenance.declarations.data_declared", "provenance.declarations.format_declared",
+    "provenance.declarations.issues", "provenance.declarations.issues.unknown_key",
+    "provenance.excluded.type_unknown", "provenance.lineage.gaps", "provenance.candidates",
+    "objects.objects.Task", "objects.link_total", "objects.unresolved", "objects.pending_jobs",
+    "hash.hashed", "hash.workspaces.ok", "input_fit.fit", "busy_skipped", "offered",
+])
+@pytest.mark.parametrize("value", ["damaged", "2", [], None, True, False, -1, 1.5,
+                                  float("nan"), float("inf"), float("-inf")])
+def test_malformed_count_shapes_and_values_exclude_the_entire_row(tmp_path, path, value):
+    row = _line(1, ms=0.125, candidates=2, lane="research")
+    row.update(arm="advisory", offered=2, referenced=True, cost_usd=0.125, cost_known=True,
+               vocab_sha256="b" * 64, input_fit_sha256="c" * 64,
+               input_fit={"fit": 2, "mismatch": 0, "unknown": 1})
+    row["provenance"].update(model_sha256="a" * 64,
+                             types={"data_type": {"local": {"declared": 2}}},
+                             declarations={"outputs": 3, "data_declared": 2, "format_declared": 0,
+                                           "issues": {"unknown_key": 1}})
+    paths = _write(tmp_path, [row])
+    expected = shadow.build_report(paths)
+    damaged = deepcopy(row)
+    target = damaged
+    *parents, key = path.split(".")
+    for parent in parents:
+        target = target.setdefault(parent, {})
+    target[key] = value
+    # Write raw JSONL, including JSON decoder extensions NaN/Infinity, to test the read boundary.
+    with paths.log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(damaged) + "\n")
+    actual = shadow.build_report(paths)
+    expected["broken_lines"] = 1
+    assert actual == expected  # includes arm, version, input-fit, hash and model totals
+    assert actual["types"]["data_type"]["local"]["declared"] == 2
+    assert actual["total_p95_ms"] == 0.12
+    assert actual["arms"]["advisory"]["cost_usd"] == 0.125
+
+
+@pytest.mark.parametrize("declarations", ["absent", None, {}])
+def test_older_report_schema_and_worker_without_declarations_remain_readable(tmp_path, declarations):
+    row = _line(1, ms=0.125)
+    if declarations != "absent":
+        row["provenance"]["declarations"] = declarations
+    paths = _write(tmp_path, [row])
+    rep = shadow.build_report(paths)
+    assert rep["requests"] == 1 and rep["broken_lines"] == 0
+    assert rep["types"] == {"data_type": {}, "format": {}}
+    assert rep["declarations"]["outputs"] == 0 and rep["input_fit"] == {}
+    assert rep["total_p95_ms"] == 0.12
+
+
+@pytest.mark.parametrize("value", ["damaged", [], True, -1, float("nan"), float("inf")])
+def test_declaration_statistics_require_an_object_or_worker_null(tmp_path, value):
+    row = _line(1)
+    row["provenance"]["declarations"] = value
+    rep = shadow.build_report(_write(tmp_path, [row]))
+    assert rep["requests"] == 0 and rep["broken_lines"] == 1
 
 
 def test_the_report_splits_by_model_and_vocabulary_version_and_sums_type_counts(tmp_path, config, capsys):

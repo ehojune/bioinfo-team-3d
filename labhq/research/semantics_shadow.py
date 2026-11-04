@@ -8,8 +8,8 @@ daemon worker thread, which computes two read-only models within a time cap:
 
 Both results go side by side on one JSON line under ``<gateway.state_dir>/semantics/``, outside the git work
 tree. A line carries ids, kinds, hashes and counts only: no prompt, answer, file content, path, data zone
-or reference value. Nothing is read back into a prompt, plan, approval, receipt, round record or the web
-office, and every failure here ends in a warning and a metric, never in the request.
+or reference value. Advisory candidates may enter a plan only through the separately bounded A/B hook. Device
+status and public-safe failure labels reach cards, reports and the web; rejected values never do.
 
 The gateway imports this module only when the setting is not off; every line that wires it in elsewhere
 ends with ``# semantics-hook`` so ``scripts/semantics_shadow_remove.py`` can take it out again.
@@ -18,6 +18,7 @@ ends with ``# semantics-hook`` so ``scripts/semantics_shadow_remove.py`` can tak
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import itertools
 import json
@@ -102,7 +103,7 @@ BOUNDARY_FIELDS = frozenset({"unknown", "v", "type", "ts", "epoch", "request_id"
                              "mode", "status", "rows", "busy_skipped", "snapshot_ms", "rows_ms",
                              "vocab_sha256", "objects", "provenance", "hash", "actions", "ms", "phase",
                              "key", "error_kind", "reason", "counts", "arm", "offered", "referenced", "cost_usd",
-                             "cost_known", "provenance.types",
+                             "cost_known", "ab_excluded", "provenance.types",
                              "provenance.declarations", "objects.artifact_types", "input_fit",
                              "input_fit_sha256"})
 BOUNDARY_CLASSES = frozenset({"path", "filename", "url", "doi", "employee_id", "free_text", "identifier",
@@ -299,9 +300,10 @@ def read_state(paths: ShadowPaths) -> dict:
 
 
 def write_disabled(paths: ShadowPaths, reason: str, epoch: int, counts: Mapping[str, int] | None = None, *,
-                   boundary: Iterable[Mapping[str, str]] | None = None) -> None:
+                   boundary: Iterable[Mapping[str, str]] | None = None, ts: float | None = None) -> None:
     paths.root.mkdir(parents=True, exist_ok=True)
-    value = {"reason": reason, "ts": time.time(), "epoch": epoch, "counts": dict(counts or {})}
+    value = {"reason": reason, "ts": time.time() if ts is None else ts,
+             "epoch": epoch, "counts": dict(counts or {})}
     detail = _clean_boundary_details(boundary)
     if detail:
         value["boundary"] = detail
@@ -377,13 +379,21 @@ def _light_request(req: Mapping[str, Any]) -> dict:
     offered = _ab_offered(req)
     if offered is not None:
         light["ab_offered"] = offered
+    frozen = req.get("semantics_ab")
+    if isinstance(frozen, Mapping):
+        status = str(frozen.get("status") or ("ok" if isinstance(frozen.get("offered"), list)
+                                              else "not_evaluated"))
+        light["ab_state"] = status if status in {"ok", "not_evaluated", "error"} else "not_evaluated"
+        if light["ab_state"] != "ok":
+            light["ab_excluded"] = True
     return light
 
 
 def _ab_offered(req: Mapping[str, Any]) -> list[str] | None:
     """The candidate ids frozen on a research request when its plan advisory was built (#149 decision 15)."""
     frozen = req.get("semantics_ab")
-    if not isinstance(frozen, Mapping) or not isinstance(frozen.get("offered"), list):
+    if (not isinstance(frozen, Mapping) or frozen.get("status") in {"error", "not_evaluated"}
+            or not isinstance(frozen.get("offered"), list)):
         return None
     return [ref for ref in frozen["offered"] if isinstance(ref, str) and AB_REF.fullmatch(ref)][:MAX_CANDIDATE_REFS]
 
@@ -601,10 +611,38 @@ def _staff_ids(snap: Mapping[str, Any]) -> set[str]:
 def sensitive_values(snap: Mapping[str, Any]) -> dict[str, str]:
     """Forbidden source values mapped to a fixed category; values are never written to the breaker record."""
     found: dict[str, str] = {}
+    owned = {str(snap.get("rid") or "")}
+    for rid, req in (snap.get("requests") or {}).items():
+        owned.update((str(rid), str(req.get("id") or "")))
+    for tid, task in (snap.get("tasks") or {}).items():
+        payload = task.get("payload") if isinstance(task, Mapping) else {}
+        result = task.get("result") if isinstance(task, Mapping) else {}
+        owned.update((str(tid), str(task.get("request_id") or ""),
+                      str((payload or {}).get("id") or ""), str((result or {}).get("task_id") or "")))
+    for approval in snap.get("approvals") or snap.get("pending_approvals") or []:
+        if isinstance(approval, Mapping):
+            owned.update(str(approval.get(key) or "") for key in ("id", "task_id", "request_id"))
+
+    def generated_hashes(value: Any) -> None:
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                if (isinstance(key, str) and (key == "sha256" or key.endswith("_sha256"))
+                        and isinstance(child, str) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", child)):
+                    owned.add(child)
+                generated_hashes(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                generated_hashes(child)
+
+    generated_hashes(snap)
+    owned.discard("")
 
     def add(value: Any, category: str | None = None) -> None:
         if isinstance(value, str) and len(value.strip()) >= SENSITIVE_MIN:
-            found.setdefault(value.strip(), category or _value_class(value))
+            clean = value.strip()
+            if clean in owned:
+                return
+            found.setdefault(clean, category or _value_class(value))
 
     for agent_id in sorted(_staff_ids(snap)):  # any length, and first, so a staff id keeps its class (#266)
         found[agent_id] = "employee_id"
@@ -745,6 +783,22 @@ class ShadowStop(Exception):
 
 class ShadowTimeout(ShadowStop):
     pass
+
+
+class AdvisoryFailure(Exception):
+    """A public-safe advisory failure label carried to the request record."""
+
+    def __init__(self, path: str, kind: str):
+        self.path, self.kind = path, kind
+        super().__init__(f"{path}:{kind}")
+
+
+def _advisory_error_code(path: str, kind: str) -> str:
+    if kind == "provenance_failed":
+        return "semantics_provenance_failed"
+    return {"observed_state": "semantics_observed_state_failed",
+            "advisory_boundary": "semantics_advisory_boundary_failed"}.get(
+                path, "semantics_advisory_projection_failed")
 
 
 # strictest last; a level the settings do not define ranks above restricted, so it is never allowed
@@ -1529,6 +1583,26 @@ def ab_arm(rid: str) -> str:
     return "advisory" if hashlib.sha256(rid.encode("utf-8")).digest()[0] < 128 else "shadow"
 
 
+def write_ab_evaluation(paths: ShadowPaths, rid: str, arm: str, state: str,
+                        *, epoch: int | None = None) -> None:
+    """Persist one plan-time denominator exclusion even when no terminal shadow row can be written."""
+    append_line(paths, {"v": 1, "type": "ab_evaluation", "ts": round(time.time(), 3),
+                        "epoch": epoch, "request_id": rid, "lane": "research",
+                        "arm": arm, "ab_excluded": True, "ab_state": state})
+
+
+def record_ab_evaluation(settings: Any, rid: str, state: str) -> str:
+    """Assign and persist an exclusion when AB startup left no service object."""
+    arm = ab_arm(rid)
+    try:
+        paths = ShadowPaths(shadow_root(settings))
+        if not inside_git_tree(paths.root):
+            write_ab_evaluation(paths, rid, arm, state)
+    except (OSError, TypeError, ValueError) as exc:
+        log.warning("semantics A/B exclusion not written (%s)", type(exc).__name__)
+    return arm
+
+
 def _plan_refs(plan: Any) -> set[str]:
     refs: set[str] = set()
     if not isinstance(plan, Mapping):
@@ -1545,8 +1619,12 @@ def _add_ab_fields(line: dict, snap: Mapping[str, Any], req: Mapping[str, Any]) 
     shadow arm: the ids it would have been offered), never against candidates recomputed at the end."""
     if snap.get("semantics_mode") != "ab" or req.get("lane") != "research":
         return
+    if req.get("ab_excluded") is True:
+        line.update(arm=ab_arm(str(snap["rid"])), ab_excluded=True,
+                    ab_state=req.get("ab_state") or "not_evaluated")
+        return
     offered = set(req.get("ab_offered") or ())
-    line.update(arm=ab_arm(str(snap["rid"])), offered=len(offered),
+    line.update(arm=ab_arm(str(snap["rid"])), ab_excluded=False, ab_state="ok", offered=len(offered),
                 referenced=bool(offered & _plan_refs(req.get("plan"))),
                 cost_usd=float(req.get("cost_usd") or 0), cost_known=req.get("cost_known", True) is not False)
 
@@ -1731,6 +1809,7 @@ class ShadowService:
         self.observed: dict[str, dict] | None = None
         self.observed_dirty = False
         self.window_lock = threading.Lock()  # orders breaker.json writes without holding self.lock
+        self.record_lock = threading.Lock()  # serializes request, auto-off and plan-time exclusion JSONL writes
         self.window_seq = self.window_saved = 0
         self.state_mtime: float | None = None
         self.counts = {"lines": 0, "failures": 0, "busy": 0, "discarded": 0}
@@ -1738,6 +1817,8 @@ class ShadowService:
         self.pending = 0  # queued or running jobs
         self.action_backlog: deque = deque()  # semantics-hook: actions (follow-up observations behind the queue)
         self.action_skipped = 0  # semantics-hook: actions (dropped: queue and backlog full)
+        self.event_loop: asyncio.AbstractEventLoop | None = None
+        self.current_request_id: str | None = None
 
     @classmethod
     def start(cls, hub: Any) -> "ShadowService | None":
@@ -1815,6 +1896,7 @@ class ShadowService:
             if stuck:  # the old thread may never return; give the new epoch its own worker
                 self.queue, self.thread, self.pending = queue.Queue(maxsize=1), None, 0
             self.current = None  # an older job belongs to the closed epoch: no stuck check, no watchdog trip
+            self.current_request_id = None
 
     def trip(self, reason: str, *, expected_epoch: int | None = None, **detail: Any) -> None:
         with self.lock:
@@ -1823,6 +1905,7 @@ class ShadowService:
             self.latched, self.gen = reason, self.gen + 1
             counts = {**self.counts, "recent_failures": sum(self.recent), "consecutive": self.consecutive}
             epoch = self.epoch
+            request_id = str(detail.get("request_id") or self.current_request_id or "")
         log.warning("semantics shadow turned itself off: %s%s", reason,
                     f" ({detail['kind']})" if detail.get("kind") else "")
         boundary = _clean_boundary_details(detail.get("boundary")) if reason == "info_boundary" else []
@@ -1835,14 +1918,44 @@ class ShadowService:
                     "reason": reason, "counts": counts}
             if boundary:
                 line["boundary"] = boundary
-            append_line(self.paths, line)
+            with self.record_lock:
+                append_line(self.paths, line)
         except OSError:
             pass
+        if request_id and self.event_loop is not None:
+            self.event_loop.call_soon_threadsafe(self._surface_stop, request_id, boundary)
+
+    def _surface_stop(self, rid: str, boundary: list[dict[str, str]]) -> None:
+        """Put a public-safe stop on the request even after its terminal event was committed."""
+        req = getattr(self.hub, "requests", {}).get(rid)
+        if not isinstance(req, dict):
+            return
+        from . import semantic_devices
+
+        record = semantic_devices.inspect(self.hub.s, service=self, worker_known=True, phase="auto_off")
+        record["advisory"] = semantic_devices.advisory_state(req.get("semantics_ab"), record.get("semantics"))
+        if boundary:
+            record["semantics"]["boundary"] = boundary
+        req["semantic_devices"] = record
+        text = semantic_devices.execution_record(record)
+        if text not in str(req.get("execution_record") or ""):
+            req["execution_record"] = "\n\n".join(part for part in (req.get("execution_record"), text) if part)
+        saver = getattr(self.hub, "save_request", None)
+        if callable(saver):
+            saver(rid)
+        publisher = getattr(self.hub, "publish", None)
+        if callable(publisher):
+            asyncio.create_task(publisher({"type": "request.semantic_devices", "ts": time.time(),
+                                           "request_id": rid, "data": record}))
 
     # -- event loop side
     def after_request(self, rid: str) -> None:
         """Queue the finished request for the worker. Never raises, never waits, reads no workspace file."""
         try:
+            try:
+                self.event_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass
             self.refresh()
             self.check_stuck()
             if self.latched:
@@ -1865,15 +1978,15 @@ class ShadowService:
                     busy = 0
                     self.ensure_thread()
             if busy >= BUSY_LIMIT:
-                self.trip("worker_busy")
+                self.trip("worker_busy", request_id=rid)
         except Exception as exc:  # noqa: BLE001 - the request already finished; this must not touch it
             log.warning("semantics shadow skipped a request (%s)", type(exc).__name__)
-            self.outcome(failed=True, on_loop=True)
+            self.outcome(failed=True, on_loop=True, request_id=rid)
 
     def advisory_snapshot(self, rid: str, plan: Mapping[str, Any]) -> dict | None:
         """Event-loop side, like ``after_request``: the live state the A/B selector reads, copied with the draft plan.
 
-        None outside ab mode, while off, or on a failure; the request is then offered nothing."""
+        None outside ab mode or while latched. The offer records that as not evaluated."""
         if self.cfg.mode != "ab":
             return None
         try:
@@ -1885,7 +1998,7 @@ class ShadowService:
             return snap
         except Exception as exc:  # noqa: BLE001 - advisory is fail-open
             log.warning("semantics advisory skipped (%s)", type(exc).__name__)
-            return None
+            return {"_error": {"code": "semantics_advisory_snapshot_failed"}}
 
     def advisory_offer(self, rid: str, snap: dict | None) -> dict | None:
         """Worker side: the B1 selector on ``advisory_snapshot``'s copy, in both arms (#149 decision 15). None
@@ -1894,12 +2007,33 @@ class ShadowService:
         ``offered`` is the id set the advisory arm is shown and the shadow arm would have been shown; the orchestrator
         freezes it on the request so the end record judges the plan against it. ``candidates`` (artifact id, data
         type, creating request id) goes into the prompt, in the advisory arm only. A failure offers nothing."""
-        if self.cfg.mode != "ab":
-            return None
         arm = ab_arm(rid)
-        found = self.advisory_candidates(snap) if snap is not None else []
+        if self.cfg.mode != "ab":
+            return {"arm": arm, "status": "not_evaluated", "reason": "mode_not_ab"}
+        if isinstance(snap, Mapping) and isinstance(snap.get("_error"), Mapping):
+            self._record_ab_evaluation(rid, arm, "error")
+            return {"arm": arm, "offered": [], "candidates": [], "status": "error",
+                    "error": dict(snap["_error"])}
+        if snap is None:
+            reason = str(self.latched or "snapshot_unavailable")
+            self._record_ab_evaluation(rid, arm, "not_evaluated")
+            return {"arm": arm, "status": "not_evaluated", "reason": reason}
+        try:
+            found = self.advisory_candidates(snap)
+        except AdvisoryFailure as exc:
+            self._record_ab_evaluation(rid, arm, "error")
+            return {"arm": arm, "offered": [], "candidates": [], "status": "error",
+                    "error": {"code": _advisory_error_code(exc.path, exc.kind)}}
         return {"arm": arm, "offered": [c["artifact_id"] for c in found],
-                "candidates": found if arm == "advisory" else []}
+                "candidates": found if arm == "advisory" else [], "status": "ok"}
+
+    def _record_ab_evaluation(self, rid: str, arm: str, state: str) -> None:
+        """Keep denominator exclusions even when a latched worker cannot write the terminal request row."""
+        try:
+            with self.record_lock:
+                write_ab_evaluation(self.paths, rid, arm, state, epoch=self.epoch)
+        except OSError as exc:
+            log.warning("semantics A/B exclusion not written (%s)", type(exc).__name__)
 
     def advisory_candidates(self, snap: dict) -> list[dict[str, str]]:
         """The selector's prompt fields from the snapshot, its database rows and files only (never live state).
@@ -1916,13 +2050,15 @@ class ShadowService:
             read_rows(snap, check)
             try:
                 observed = _read_json(self.paths.observed) if self.paths.observed.exists() else {}
-            except (OSError, ValueError):
-                observed = {}
+            except (OSError, ValueError) as exc:
+                raise AdvisoryFailure("observed_state", type(exc).__name__) from exc
             summary, _ = compute_provenance(snap, Reader(snap, check), observed if isinstance(observed, dict) else {},
                                              check, include_candidate_details=True)
-            details = summary.get("candidate_details") if summary.get("status") == "ok" else []
+            if summary.get("status") != "ok":
+                raise AdvisoryFailure("advisory_projection", "provenance_failed")
+            details = summary.get("candidate_details")
             if not isinstance(details, list):
-                return []
+                raise AdvisoryFailure("advisory_projection", "invalid_candidate_details")
             safe = []
             for item in details:
                 if (isinstance(item, Mapping) and AB_REF.fullmatch(str(item.get("artifact_id")))
@@ -1930,12 +2066,20 @@ class ShadowService:
                         and str(item.get("request_id")) and SAFE_TOKEN.fullmatch(str(item.get("request_id")))):
                     safe.append({k: str(item[k]) for k in ("artifact_id", "data_type", "request_id")})
             safe = safe[:MAX_CANDIDATE_REFS]
-            return [] if boundary_problems({"provenance": {"candidate_details": safe}}, sensitive_values(snap)) else safe
+            line = {"provenance": {"candidate_details": safe}}
+            problems = boundary_problems(line, sensitive_values(snap))
+            if problems:
+                self.trip("info_boundary", boundary=boundary_findings(line, sensitive_values(snap)),
+                          request_id=str(snap.get("rid") or ""))
+                raise AdvisoryFailure("advisory_boundary", "info_boundary")
+            return safe
         except (KeyboardInterrupt, SystemExit):
+            raise
+        except AdvisoryFailure:
             raise
         except Exception as exc:  # noqa: BLE001 - advisory is fail-open
             log.warning("semantics advisory skipped (%s)", type(exc).__name__)
-            return []
+            raise AdvisoryFailure("advisory_projection", type(exc).__name__) from exc
 
     # semantics-actions: begin (#149 결정 13 A1; scripts/semantics_shadow_remove.py --only actions deletes this)
     def after_followup(self, rid: str, fid: str | None, phase: str, outcome: str | None = None) -> None:
@@ -2068,6 +2212,7 @@ class ShadowService:
         deadline = started + self.cfg.timeout_s
         with self.lock:
             self.current = (gen, started)
+            self.current_request_id = str(snap.get("rid") or "")
         watchdog = threading.Timer(self.stuck_s, self.watch, args=(gen, started))
         watchdog.daemon = True
         watchdog.start()
@@ -2160,7 +2305,7 @@ class ShadowService:
             self.outcome(failed=True)
             return
         if problems:
-            self.trip("info_boundary", boundary=boundary)
+            self.trip("info_boundary", boundary=boundary, request_id=str(snap.get("rid") or ""))
             return
         failed = False
         for model in [m for m in MODELS if m in line]:
@@ -2173,7 +2318,8 @@ class ShadowService:
             if self.gen != gen or self.external_off():
                 self.counts["discarded"] += 1
                 return
-            append_line(self.paths, line)
+            with self.record_lock:
+                append_line(self.paths, line)
             self.save_observed()
             self.counts["lines"] += 1
         except OSError as exc:
@@ -2181,11 +2327,14 @@ class ShadowService:
             failed = True
         self.outcome(failed=failed, followup=line.get("type") == "followup")
 
-    def outcome(self, *, failed: bool, on_loop: bool = False, followup: bool = False) -> None:
+    def outcome(self, *, failed: bool, on_loop: bool = False, followup: bool = False,
+                request_id: str | None = None) -> None:
         """Count one job. ``on_loop``: called on the gateway event loop, so breaker.json is written by a short
         daemon thread instead of there (#173). ``followup``: a follow-up observation that succeeded neither resets
         nor dilutes the request window; one that failed still counts (#260)."""
         with self.lock:
+            if request_id:
+                self.current_request_id = request_id
             if failed:
                 self.counts["failures"] += 1
             elif followup:
@@ -2256,35 +2405,53 @@ WORKSPACE_STATES = ("ok", "remote", "zone_excluded", "not_regular", "missing")
 
 
 def _number(value: Any) -> bool:
-    return value is None or (isinstance(value, (int, float)) and math.isfinite(value))
+    return value is None or (type(value) in (int, float) and value >= 0 and math.isfinite(value))
+
+
+def _count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _counts(value: Any, keys: Iterable[str] | None = None) -> bool:
-    """None, or an object whose values (only `keys`, when given) are finite numbers."""
-    if value is None:
-        return True
-    return isinstance(value, Mapping) and all(_number(v) for k, v in value.items() if keys is None or k in keys)
+    """An object of nonnegative integer counts; absent optional fields are supplied as {}."""
+    return isinstance(value, Mapping) and all(_count(v) for k, v in value.items() if keys is None or k in keys)
+
+
+def _type_counts(value: Any) -> bool:
+    return (isinstance(value, Mapping)
+            and all(isinstance(cells, Mapping) and all(_counts(basis) for basis in cells.values())
+                    for cells in value.values()))
+
+
+def _declaration_counts(value: Any) -> bool:
+    # The worker writes null when the request has no declaration statistics.
+    return value is None or (_counts(value, DECLARATION_COUNTS) and _counts(value.get("issues", {})))
 
 
 def readable_request(line: Mapping[str, Any]) -> bool:
-    """Every field the report adds up, in the shape the worker writes it. A row left by a torn write or an older
-    schema is a broken line, so one bad row does not end the report."""
+    """Validate report inputs before aggregation; older schemas may omit optional fields.
+
+    Reject the whole malformed row rather than coercing its counts to zero.
+    """
     models = [line.get("provenance"), line.get("objects"), line.get("hash")]
     if not all(m is None or isinstance(m, Mapping) for m in models):
         return False
     prov, objs, hashes = (m or {} for m in models)
     return (isinstance(line.get("rows"), (Mapping, type(None)))  # the action section reads it (#259)
-            and all(_number(line.get(k)) for k in ("ms", "snapshot_ms", "busy_skipped"))
-            and _number(line.get("cost_usd")) and _number(line.get("offered"))
+            and all(_number(line.get(k)) for k in ("ms", "snapshot_ms", "cost_usd"))
+            and all(_count(line.get(k, 0)) for k in ("busy_skipped", "offered"))
             and line.get("arm") in (None, "advisory", "shadow")
             and isinstance(line.get("referenced"), (bool, type(None)))
+            and isinstance(line.get("ab_excluded"), (bool, type(None)))
+            and line.get("ab_state") in (None, "ok", "not_evaluated", "error")
             and isinstance(line.get("cost_known"), (bool, type(None)))
             and all(_number(m.get("ms")) for m in (prov, objs))
-            and all(_number(prov.get(k)) for k in ("candidates", "unknown_ratio"))
-            and _counts(prov.get("excluded")) and _counts(prov.get("lineage"), ("gaps",))
-            and _counts(objs.get("objects"))
-            and all(_number(objs.get(k)) for k in ("link_total", "unresolved", "pending_jobs"))
-            and _counts(hashes, HASH_COUNTS) and _counts(hashes.get("workspaces"), WORKSPACE_STATES)
+            and _count(prov.get("candidates", 0)) and _number(prov.get("unknown_ratio"))
+            and _counts(prov.get("excluded", {})) and _counts(prov.get("lineage", {}), ("gaps",))
+            and _type_counts(prov.get("types", {})) and _declaration_counts(prov.get("declarations"))
+            and _counts(objs.get("objects", {}))
+            and all(_count(objs.get(k, 0)) for k in ("link_total", "unresolved", "pending_jobs"))
+            and _counts(hashes, HASH_COUNTS) and _counts(hashes.get("workspaces", {}), WORKSPACE_STATES)
             and isinstance(line.get("input_fit", {}), Mapping)
             and set(line.get("input_fit", {})) <= set(semantics_input_fit.VERDICTS)
             and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0
@@ -2304,11 +2471,98 @@ def configured(settings: Any) -> str:
     return "off" if mode == "off" else "invalid"
 
 
+def _legacy_id_false_positive(disabled: Mapping[str, Any] | None) -> bool:
+    """True only for the #559 breaker shape emitted by releases before generated ids were exempted."""
+    return bool(disabled and disabled.get("reason") == "info_boundary"
+                and _clean_boundary_details(disabled.get("boundary")) == [
+                    {"field": "request_id", "class": "identifier"}])
+
+
+def runtime_state(settings: Any) -> dict[str, Any]:
+    """Small local status shared by doctor and status; never opens the gateway DB or a workspace."""
+    paths = ShadowPaths(shadow_root(settings))
+    try:
+        disabled = read_disabled(paths)
+    except (OSError, ValueError, TypeError):
+        disabled = {"reason": "breaker_storage"}
+    ts = disabled.get("ts") if disabled else None
+    try:
+        stopped_at = datetime.fromtimestamp(float(ts), timezone.utc).astimezone().isoformat(timespec="seconds")
+    except (TypeError, ValueError, OSError, OverflowError):
+        stopped_at = None
+    try:
+        state = read_state(paths) if paths.state.exists() else {}
+    except (OSError, ValueError, TypeError):
+        state = {}
+    try:
+        lines, _broken = read_lines(paths)
+        recorded = [line.get("ts") for line in lines if line.get("type") in {"request", "followup"}]
+        last_recorded_at = datetime.fromtimestamp(float(max(recorded)), timezone.utc).astimezone().isoformat(
+            timespec="seconds") if recorded else None
+        normal = [line.get("ts") for line in lines if line.get("type") == "request"
+                  and all(isinstance(line.get(model), Mapping) and line[model].get("status") == "ok"
+                          for model in MODELS)]
+        last_ok_at = datetime.fromtimestamp(float(max(normal)), timezone.utc).astimezone().isoformat(
+            timespec="seconds") if normal else None
+    except (OSError, ValueError, TypeError, OverflowError):
+        last_recorded_at = last_ok_at = None
+    return {"setting": configured(settings), "stopped": disabled is not None,
+            "reason": (disabled or {}).get("reason"), "stopped_at": stopped_at,
+            "epoch": (disabled or {}).get("epoch", state.get("epoch")),
+            "last_recorded_at": last_recorded_at,
+            "last_ok_at": last_ok_at,
+            "boundary": _clean_boundary_details((disabled or {}).get("boundary")),
+            "reenable_command": "labhq semantics enable",
+            "legacy_false_positive": _legacy_id_false_positive(disabled)}
+
+
+def status_line(settings: Any) -> str | None:
+    """One removable CLI line for a durable stop; healthy shadows stay quiet."""
+    state = runtime_state(settings)
+    if not state["stopped"]:
+        return None
+    boundary = ", ".join(f"{row['field']}:{row['class']}" for row in state["boundary"])
+    return (f"semantics: 멈춤 · {state['reason']} · {state['stopped_at'] or '시각 미기록'}"
+            + f" · epoch {state['epoch'] or '미기록'} · 마지막 정상 기록 {state['last_ok_at'] or '없음'}"
+            + (f" · {boundary}" if boundary else "")
+            + " · 영향: 재사용 후보·객체 연결·행동 판단 평가 안 됨"
+            + f" · 다시 켜기: {state['reenable_command']}")
+
+
+def doctor_row(settings: Any) -> dict[str, str]:
+    """A self-contained doctor row so the optional shadow remains mechanically removable."""
+    state = runtime_state(settings)
+    if not state["stopped"]:
+        setting = state["setting"]
+        status = "ok" if setting in {"shadow", "ab"} else "warn"
+        detail = (f"설정 {setting}; 자동 중단 없음; epoch {state['epoch'] or '미기록'}; "
+                  f"마지막 정상 기록 {state['last_ok_at'] or '없음'}")
+        hint = ("semantics.mode를 shadow 또는 ab로 바꾸고 gateway를 다시 시작하세요"
+                if setting == "off" else "semantics 설정과 gateway.state_dir를 확인하세요"
+                if setting in {"invalid", "refused"} else "")
+        return {"group": "config", "name": "semantics", "status": status,
+                "detail": detail, "hint": hint}
+    boundary = ", ".join(f"{row['field']}:{row['class']}" for row in state["boundary"]) or "기록 없음"
+    recoverable = "; 이 버전에서 해제 가능한 기존 ID 오판" if state["legacy_false_positive"] else ""
+    detail = (f"멈춤: {state['reason']}; 시각 {state['stopped_at'] or '미기록'}; "
+              f"epoch {state['epoch'] or '미기록'}; 마지막 정상 기록 {state['last_ok_at'] or '없음'}; "
+              f"경계 {boundary}{recoverable}")
+    return {"group": "config", "name": "semantics", "status": "warn",
+            "detail": detail, "hint": state["reenable_command"]}
+
+
 def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "unknown") -> dict:
     today = today or date.today()
     lines, broken = read_lines(paths)
     requests = [l for l in lines if l.get("type") == "request" and readable_request(l)]
     broken += sum(1 for l in lines if l.get("type") == "request") - len(requests)
+    raw_ab_evaluations = [l for l in lines if l.get("type") == "ab_evaluation"]
+    valid_ab_evaluations = [l for l in raw_ab_evaluations if l.get("lane") == "research"
+                            and isinstance(l.get("request_id"), str) and l.get("request_id")
+                            and l.get("arm") in {"advisory", "shadow"} and l.get("ab_excluded") is True
+                            and l.get("ab_state") in {"error", "not_evaluated"}]
+    broken += len(raw_ab_evaluations) - len(valid_ab_evaluations)
+    ab_evaluations = list({l["request_id"]: l for l in valid_ab_evaluations}.values())
     try:
         disabled = read_disabled(paths)
     except (OSError, ValueError):
@@ -2372,10 +2626,16 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
     total_ms = [float(r.get("ms") or 0) for r in requests]
     unknown_median = model_stats("provenance")["unknown_ratio_median"]
     # research requests only, as the line writes them; "with candidates" is the plan-time offer, not the end set
+    recorded_request_ids = {r.get("request_id") for r in requests}
     ab_requests = [r for r in requests if r.get("lane") == "research" and r.get("arm") in ("advisory", "shadow")]
+    ab_requests += [r for r in ab_evaluations if r.get("request_id") not in recorded_request_ids]
 
     def arm_stats(arm: str) -> dict:
-        rows = [r for r in ab_requests if r.get("arm") == arm]
+        arm_rows = [r for r in ab_requests if r.get("arm") == arm]
+        rows = [r for r in arm_rows if r.get("ab_excluded") is not True]
+        excluded_states = {state: sum(r.get("ab_excluded") is True and r.get("ab_state") == state
+                                      for r in arm_rows)
+                           for state in ("error", "not_evaluated")}
         with_candidates = sum(1 for r in rows if (r.get("offered") or 0) > 0)
         referenced = sum(1 for r in rows if r.get("referenced") is True)
         failed = sum(1 for r in rows if r.get("status") not in ("done", "completed"))
@@ -2384,11 +2644,13 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
                 "reference_rate": round(referenced / with_candidates, 4) if with_candidates else None,
                 "failed": failed, "failure_rate": round(failed / len(rows), 4) if rows else None,
                 "cost_usd": round(sum(float(r.get("cost_usd") or 0) for r in known), 6),
-                "cost_unknown": len(rows) - len(known)}
+                "cost_unknown": len(rows) - len(known),
+                "excluded": len(arm_rows) - len(rows), "excluded_states": excluded_states}
 
     arms = {arm: arm_stats(arm) for arm in ("advisory", "shadow")}
     ab_deadline = AB_INTRODUCED + timedelta(days=AB_REVIEW_DAYS)
-    ab_window_reached = len(ab_requests) >= AB_REVIEW_RECORDS or today >= ab_deadline
+    ab_eligible = [r for r in ab_requests if r.get("ab_excluded") is not True]
+    ab_window_reached = len(ab_eligible) >= AB_REVIEW_RECORDS or today >= ab_deadline
     deadline = INTRODUCED + timedelta(days=REVIEW_DAYS)
     proposals = []
     if today >= deadline:
@@ -2429,8 +2691,13 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         "types": {k: dict(sorted(v.items())) for k, v in types.items()}, "declarations": declarations,
         "input_fit": dict(sorted(input_fit.items())),
         "marks": {"reviewed": len(marks), "wrong": wrong},
-        "arms": arms, "ab_window": {"requests": len(ab_requests), "target_requests": AB_REVIEW_RECORDS,
-                                      "deadline": ab_deadline.isoformat(), "reached": ab_window_reached},
+        "arms": arms, "ab_window": {"requests": len(ab_eligible), "excluded": len(ab_requests) - len(ab_eligible),
+                                      "excluded_states": {
+                                          state: sum(r.get("ab_excluded") is True and r.get("ab_state") == state
+                                                     for r in ab_requests)
+                                          for state in ("error", "not_evaluated")},
+                                      "target_requests": AB_REVIEW_RECORDS, "deadline": ab_deadline.isoformat(),
+                                      "reached": ab_window_reached},
         "auto_off": [{"day": _day(l.get("ts")), "epoch": l.get("epoch"), "reason": l.get("reason"),
                       "boundary": _clean_boundary_details(l.get("boundary"))}
                       for l in lines if l.get("type") == "auto_off"],
@@ -2489,18 +2756,23 @@ def render_report(rep: Mapping[str, Any]) -> str:
     ]
     out += [f"- {a['day']} epoch {v(a['epoch'])}: {a['reason']}{boundary(a.get('boundary'))}"
             for a in rep["auto_off"]]
-    if rep.get("arms") and (st.get("setting") == "ab" or rep["ab_window"]["requests"]):
+    if rep.get("arms") and (st.get("setting") == "ab" or rep["ab_window"]["requests"]
+                            or rep["ab_window"]["excluded"]):
         out += ["", "A/B (결정 18: 기록 10건 또는 3주):",
-                "| arm | 요청 | 후보 있음 | 참조 | 참조율 | 실패 | 실패율 | 비용 USD | 비용 미상 |",
-                "|---|---|---|---|---|---|---|---|---|"]
+                "| arm | 요청 | 제외(오류/미평가) | 후보 있음 | 참조 | 참조율 | 실패 | 실패율 | 비용 USD | 비용 미상 |",
+                "|---|---|---|---|---|---|---|---|---|---|"]
         for arm in ("advisory", "shadow"):
             row = rep["arms"][arm]
-            out.append(f"| {arm} | {row['requests']} | {row['with_candidates']} | {row['referenced']} | "
+            states = row["excluded_states"]
+            out.append(f"| {arm} | {row['requests']} | {row['excluded']}({states['error']}/{states['not_evaluated']}) | "
+                       f"{row['with_candidates']} | {row['referenced']} | "
                        f"{v(row['reference_rate'])} | {row['failed']} | {v(row['failure_rate'])} | "
                        f"{row['cost_usd']} | {row['cost_unknown']} |")
         window = rep["ab_window"]
+        states = window["excluded_states"]
         out.append(f"판단 창: {window['requests']}/{window['target_requests']}건 · 기한 {window['deadline']} · "
-                   f"{'도달' if window['reached'] else '진행 중'}")
+                   f"{'도달' if window['reached'] else '진행 중'} · 제외 {window['excluded']}건"
+                   f"(오류 {states['error']} · 미평가 {states['not_evaluated']})")
     out += ["", f"중간 점검 {rep['midpoint']} · 판정 기한 {rep['deadline']} (기준은 전부 미측정 제안치)"]
     if rep["propose_removal"]:
         out += ["PROPOSE_REMOVAL — 제거 제안(결정은 PI):"] + [f"- {x}" for x in rep["propose_removal"]]
@@ -2529,7 +2801,10 @@ def enable(paths: ShadowPaths) -> str:
             stale.unlink()
     append_line(paths, {"v": 1, "type": "enable", "ts": round(time.time(), 3), "epoch": epoch,
                         "previous_reason": (disabled or {}).get("reason")})
-    head = f"꺼진 이유: {disabled['reason']}. " if disabled else "꺼져 있지 않았습니다. "
+    if _legacy_id_false_positive(disabled):
+        head = "꺼진 이유: info_boundary(request_id:identifier) 오판. 이 버전은 labhq 생성 ID를 경계 위반에서 제외합니다. "
+    else:
+        head = f"꺼진 이유: {disabled['reason']}. " if disabled else "꺼져 있지 않았습니다. "
     return head + f"새 epoch {epoch}을 엽니다. 설정 mode가 shadow인 gateway는 다음 요청부터 기록합니다."
 
 
@@ -2574,6 +2849,11 @@ def run_cli(args: argparse.Namespace, settings: Any) -> int:
         return 1
     try:
         if args.semantics_cmd == "report":
+            if getattr(args, "request_id", None):
+                from .semantics_request_report import build_request_report, render_request_report
+                rep = build_request_report(settings, args.request_id)
+                print(json.dumps(rep, ensure_ascii=False, indent=2) if args.json else render_request_report(rep))
+                return 0
             today = date.fromisoformat(args.today) if args.today else None
             rep = build_report(paths, today, configured(settings))
             _actions_report(rep, paths, settings)  # semantics-hook: actions

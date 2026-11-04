@@ -11,14 +11,16 @@ dependencies = [
   "httpx>=0.27",
   "pydantic>=2.6",
   "pyyaml>=6",
-  "mcp>=1.2",
+  "mcp>=2.0",
+  "markdown-it-py>=3.0",
 ]
 
 [project.urls]
 Repository = "https://github.com/ehojune/bioinfo-team-3d"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-xdist==3.8.0", "pytest-timeout==2.4.0", "filelock>=3.16,<4"]
+alphagenome = ["alphagenome>=0.10.0"]
 
 [project.scripts]
 labhq = "labhq.cli:main"
@@ -34,11 +36,14 @@ include = ["labhq*"]
 labhq = ["config/*.yaml", "web/*", "web/ui/*", "web/lab3d/*", "web/lab3d/src/*", "web/lab3d/assets/*",
          "bench_data/cases/*.yaml", "bench_data/references/*.md", "bench_data/references/*.tsv",
          "bench_data/checks/*.py",
-         "research/packs/*.yaml", "research/semantics_v1.yaml", "research/semantics_input_fit.yaml",
-         "vocab/*.yaml", "vocab/*.tsv", "vocab/NOTICE.md", "facilities/*.yaml",
+         "research/packs/*.yaml", "research/semantics_v1.yaml", "research/input_fit.yaml",
+         "vocab/*.yaml", "vocab/*.tsv", "vocab/NOTICE.md", "evidence/NOTICE.md",
+         "evidence/LICENSE-APACHE-2.0.txt", "facilities/*.yaml",
+         ".claude-plugin/*.json", "skills/.claude-plugin/*.json", "skills/*/*", "skills/*/*/*",
          "web/vendor/three/*", "web/vendor/three/build/*", "web/vendor/three/examples/jsm/*/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+timeout = 300   # seconds per test (#1198); Linux CI sets timeout_method=signal; Windows falls back to thread
 testpaths = ["tests"]
 pythonpath = ["."]   # tests import scripts/* (redact_stream) the same way under `pytest` and `python -m pytest`

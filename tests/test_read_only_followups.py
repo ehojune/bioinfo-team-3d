@@ -293,7 +293,8 @@ async def test_a_plugin_mcp_server_reaches_a_follow_up_by_no_channel(tmp_path, m
     assert not any(str(plugin) in arg or "plugin_writer" in arg for arg in argv)
     assert "--plugin-dir" not in argv and "--strict-mcp-config" in argv
     servers = json.loads(Path(argv[argv.index("--mcp-config") + 1]).read_text(encoding="utf-8"))
-    assert servers == {"mcpServers": {}}
+    assert set(servers["mcpServers"]) == {"labhq_approval"}
+    assert servers["mcpServers"]["labhq_approval"]["args"] == ["-m", "labhq.tools.approval_mcp"]
     assert not any(str(plugin) in value for value in env.values()), "neither engine env nor the parent session"
 
     await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"}))

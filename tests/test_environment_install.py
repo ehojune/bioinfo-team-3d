@@ -183,6 +183,36 @@ def test_plain_noninstall_commands_remain_allowed(tmp_path, command):
     assert denial(tmp_path, command) is None
 
 
+@pytest.mark.parametrize("command", [
+    '$py = ".\\.venv\\Scripts\\python.exe"; & $py scripts\\de.py',
+    '$env:PYTHONIOENCODING = "utf-8"; python scripts\\de.py',
+    "$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest https://example.org/x -OutFile data\\x.gz",
+    '$out = "outputs\\de"; python scripts\\a.py --out $out',
+    '$df = Import-Csv outputs\\x.csv; $df.Count',
+    '$env:PYTHONPATH = ".\\.pylib"; python scripts\\de.py',
+])
+def test_powershell_assignments_without_installers_remain_allowed(tmp_path, command):
+    assert denial(tmp_path, command, environment_step=False, tool="PowerShell") is None
+
+
+@pytest.mark.parametrize("command", [
+    "PYTHONPATH=./.pylib:$PYTHONPATH python scripts/de.py",
+    'PYTHONPATH="$PWD/.pylib" python scripts/de.py',
+])
+def test_documented_bash_pythonpath_prefix_remains_allowed(tmp_path, command):
+    assert denial(tmp_path, command, environment_step=False) is None
+
+
+@pytest.mark.parametrize("command", [
+    '$installer = "pip"; & $installer install scanpy',
+    '$command = "pip install scanpy"; Invoke-Expression $command',
+    '$py = ".\\.venv\\Scripts\\python.exe"; & $py -m pip install scanpy',
+])
+def test_powershell_assignments_cannot_hide_installers(tmp_path, command):
+    message = denial(tmp_path, command, environment_step=False, tool="PowerShell")
+    assert message and "Only the environment step" in message
+
+
 def test_consumers_still_require_their_own_fixed_library(tmp_path):
     assert denial(tmp_path, "pip install --target ./.pylib scanpy", environment_step=False) is None
     assert denial(tmp_path, "pip install --target ./other scanpy", environment_step=False)
@@ -525,6 +555,52 @@ def test_computed_words_where_a_program_is_named_stay_refused(tmp_path, environm
 def test_a_quoted_variable_interpreter_with_an_r_install_call_is_read_as_r(
         tmp_path, environment_step, tool, command):
     assert denial(tmp_path, command, environment_step=environment_step, tool=tool)
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("tool,command", [
+    # #533: an R call in another program's arguments is data; only a word where a program is named may be R.
+    ("Bash", '''python wrapper.py "$INPUT" "install.packages('x')"'''),
+    ("Bash", '''python wrapper.py R "install.packages('x')"'''),
+    ("Bash", '''nohup python wrapper.py "$INPUT" "BiocManager::install('x')"'''),
+    ("PowerShell", '''python wrapper.py $input "install.packages('x')"'''),
+])
+def test_an_r_install_call_among_another_programs_arguments_is_data(tmp_path, environment_step, tool, command):
+    assert denial(tmp_path, command, environment_step=environment_step, tool=tool) is None
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    # PR #535 review: a launcher's global options come before its subcommand (`uv --project foo run`); the program
+    # the subcommand runs is named in its own right.
+    '''uv --project foo run Rscript -e "install.packages('x')"''',
+    '''uv --directory d run Rscript -e "install.packages('x')"''',
+    'uv --project foo run "$PIP" "$ACTION" scanpy',
+    '''conda -n base run Rscript -e "install.packages('x')"''',
+    'micromamba -r /opt/mm run -n base "$PIP" "$ACTION" scanpy',
+    'conda -n base "$ACTION" scanpy',
+    '''uv tool run --from x Rscript -e "install.packages('x')"''',
+    'uvx --from x "$PIP" "$ACTION" scanpy',
+    '''pixi run Rscript -e "install.packages('x')"''',
+    '''poetry -C d run Rscript -e "install.packages('x')"''',
+    'pnpm --dir d dlx "$PIP" install scanpy',
+    # An option the table does not list, or a launcher the module does not know: every later word may be the program.
+    '''uv --frobnicate x run Rscript -e "install.packages('x')"''',
+    'uv --frobnicate x run "$PIP" "$ACTION" scanpy',
+    '''pdm run Rscript -e "install.packages('x')"''',
+])
+def test_a_launcher_names_its_program_after_global_options_or_fails_closed(tmp_path, environment_step, command):
+    assert denial(tmp_path, command, environment_step=environment_step)
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    '''uv --project foo run python wrapper.py "$IN" "install.packages('x')"''',
+    'conda -n base run python s.py "$IN"',
+    'uv --project foo run python s.py "$IN" "$OUT"',
+])
+def test_a_launched_analysis_script_keeps_its_computed_arguments(tmp_path, environment_step, command):
+    assert denial(tmp_path, command, environment_step=environment_step) is None
 
 
 def test_a_quoted_variable_r_install_meets_the_same_library_rule_as_rscript(tmp_path):

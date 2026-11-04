@@ -8,6 +8,8 @@ import pytest
 from pydantic import ValidationError
 
 from labhq.models import TaskResult
+from labhq.bioinfo_policy import BIOINFO_ASSIGNMENT_RULE
+from labhq.orchestrator import cso
 from labhq.orchestrator.cso import Orchestrator
 from labhq.evidence.verify import SourceRecord, SourceUpdate, StaticResolver
 from labhq.research.contract import plan_sha256, research_result_errors, salvage_research_result
@@ -103,14 +105,14 @@ async def test_live_source_check_marks_retracted_claim_in_card_and_appendix(monk
     await Orchestrator(hub).run_request("r")
 
     assert len(hub.approvals) == 2, {key: hub.requests["r"].get(key)
-                                     for key in ("outcome", "error", "report", "report_appendix")}
+                                     for key in ("outcome", "error", "report", "execution_record")}
     card = hub.approvals[1]["detail"]
     assert card["source_verification"] == [
         "s1/e1: doi:10.1021/am300292v found; defect=retracted_by doi:10.1021/acsami.9b11759",
         "s1/e1: artifact:a1 requires_verification"]
     assert any(row["claim_id"] == "c1" and "retracted_by" in row["reason"]
                for row in card["unsupported_claims"])
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
     assert "Live source verification:" in appendix and "defect=retracted_by" in appendix
 
 
@@ -187,10 +189,28 @@ async def test_cp2_refuses_evidence_whose_artifact_was_not_collected():
     assert [row["claim_id"] for row in receipt["unsupported_claims"]] == ["c1"]
     assert "Refused evidence (not approved at CP2):\n- s1/e1:" in hub.requests["r"]["report"]
     # R18/R10: the card summary is Korean and says that 수정 요청 re-plans through a new CP1.
-    assert hub.approvals[1]["summary"] == ("CP2 근거 검토: 단계 1개, claim 1개, 근거 1행, 거부 1건. 증거 승인·수정 요청·거부 중 "
-                                           "고르세요. 수정 요청은 메모에 적은 고칠 점으로 CSO가 새 계획을 세워 새 CP1을 "
-                                           "받습니다(바뀐 단계만 다시 실행).")
+    summary = hub.approvals[1]["summary"]
+    assert summary.startswith("⚠ 의미 장치 중단: semantics configured_off")
+    assert ("CP2 근거 검토: 단계 1개, claim 1개, 근거 1행, 거부 1건. 증거 승인·수정 요청·거부 중 "
+            "고르세요. 수정 요청은 메모에 적은 고칠 점으로 CSO가 새 계획을 세워 새 CP1을 "
+            "받습니다(바뀐 단계만 다시 실행).") in summary
+    assert "온톨로지·의미 장치 보고서:" in summary
+    assert hub.approvals[1]["detail"]["semantic_report"]["path"] == "semantic_report.md"
+    assert "[semantic_report.md](semantic_report.md)" in hub.requests["r"]["execution_record"]
     assert hub.approvals[1]["detail"]["revise_continues"] is True
+
+
+@pytest.mark.asyncio
+async def test_cp2_card_carries_the_actual_semantic_report():
+    hub = _research_hub(_settings(), [CP1, {"approved": True, "choice": "approve", "note": ""}])
+
+    await Orchestrator(hub).run_request("r")
+
+    document = hub.approvals[1]["detail"]["semantic_report"]
+    assert document["path"] == "semantic_report.md"
+    assert document["content"].startswith("# 온톨로지·의미 장치 보고서")
+    assert "| 장치 | 상태 |" in document["content"]
+    assert isinstance(hub.requests["r"]["research_contract"]["checklist_snapshot"], list)
 
 
 def _rebinding_hub(correction_reply):
@@ -234,6 +254,8 @@ async def test_a_citation_of_an_uncollected_file_gets_a_correction_before_cp2():
     await Orchestrator(hub).run_request("r")
 
     assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "result_correction"]
+    assert hub.calls[2].meta["required_outputs"] == []
+    assert hub.calls[2].meta["optional_outputs"] == []
     prompt = hub.calls[2].prompt
     assert "outputs/qc/checks.json" in prompt and "CP2 would refuse it" in prompt
     assert "this step's outputs (outputs/result1.tsv)" in prompt
@@ -655,7 +677,7 @@ async def test_invalid_result_is_corrected_once_and_the_request_continues():
     (1, ["plan", "step", "result_correction"]),
     (0, ["plan", "step"]),
 ])
-async def test_invalid_correction_or_zero_limit_keeps_the_existing_failure(corrections, expected_kinds):
+async def test_invalid_correction_or_zero_limit_refuses_bad_evidence_and_exposes_gap(corrections, expected_kinds):
     settings = _settings()
     settings.research.result_corrections = corrections
     holder = {}
@@ -680,9 +702,14 @@ async def test_invalid_correction_or_zero_limit_keeps_the_existing_failure(corre
 
     assert [task.meta["kind"] for task in hub.calls] == expected_kinds
     result = hub.requests["r"]["results"]["s1"]
-    assert result["error"].startswith("invalid research result contract: ")
-    assert "assessment_reason" in result["error"]
-    assert hub.requests["r"]["outcome"] == "research_failed"
+    assert result["ok"] and result["error"] is None
+    assert result["structured"]["claims"] == []
+    assert result["structured"]["evidence"][0]["origin"] == "omitted_by_output"
+    cp2 = hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]
+    assert any("assessment_reason" in row["reason"] for row in cp2["refused_rows"])
+    assert cp2["unsupported_claims"] and cp2["warnings"]
+    # CP1's answer is not a structured CP2 choice: a repaired step never implies evidence approval.
+    assert hub.requests["r"]["outcome"] == "evidence_unreadable"
 
 
 @pytest.mark.asyncio
@@ -764,6 +791,28 @@ async def test_research_step_prompt_carries_the_frozen_protocol():
                  plan["protocol"]["statistics"]["multiple_testing"], "method_changes",
                  "never describe the result as following the pre-specified rule"):
         assert text in prompt
+
+
+@pytest.mark.asyncio
+async def test_zero_plan_hash_is_rebound_without_a_result_correction_turn():
+    hub = _research_hub(_settings(), [CP1, {"approved": False, "choice": "deny", "note": "stop"}])
+    original_reply = hub.reply
+
+    async def zero_hash_reply(task):
+        response = await original_reply(task)
+        if task.meta["kind"] == "step" and response.ok:
+            response.structured["plan_sha256"] = "0" * 64
+        return response
+
+    hub.reply = zero_hash_reply
+    await Orchestrator(hub).run_request("r")
+
+    step = hub.requests["r"]["results"]["s1"]
+    assert step["structured"]["plan_sha256"] == hub.requests["r"]["research_contract"]["plan_sha256"]
+    assert step["step_warnings"] == ["연구 원장의 0 plan_sha256을 승인된 계획 hash로 보정했습니다"]
+    assert not any(task.meta["kind"] == "result_correction" for task in hub.calls)
+    assert any("0 plan_sha256" in warning
+               for warning in hub.requests["r"]["research_contract"]["result_warnings"])
 
 
 def test_the_step_digest_carries_the_cp1_hypotheses_word_for_word():
@@ -860,9 +909,10 @@ async def test_research_step_failure_takes_its_own_path_even_with_replans_on():
     assert req["outcome"] == "research_failed" and req["status"] == "failed"
     assert req["research_contract"]["failure"]["steps"] == ["s1"]
     first = req["report"].splitlines()[:3]
-    assert "s1" in first[0] and "원인" in first[1] and first[2].startswith("PI가 할 일:")
+    assert "s1" in first[0] and "원인" in first[1] and first[2] == "개발팀에 자동 보고됨"
+    assert req["dev_reports"][0]["step_id"] == "s1"
     assert "a changed plan needs a new CP1 approval" not in req["report"]
-    assert "a changed plan needs a new CP1 approval" in req["report_appendix"]
+    assert "a changed plan needs a new CP1 approval" in req["execution_record"]
     assert "replan_progress" not in req and "replan_history" not in req
 
 
@@ -1172,7 +1222,11 @@ async def test_research_plan_prompt_matches_the_evidence_checkpoint(on):
         assert cp1_only not in prompt and "Research steps will not run" not in prompt
         assert "stops at CP2" in prompt and "artifact_refs path must be one of that step's declared outputs" in prompt
     else:
-        assert cp1_only in prompt and "CP2" not in prompt
+        # The CP1 pilot contract, not the evidence checkpoint. The shared planning policy names CP1/CP2 as review
+        # boundaries (#799); that does not switch evidence mode, so only the mode-specific rule text is checked.
+        assert cp1_only in prompt and cso.RESEARCH_CP2_RULE not in prompt
+        assert "stops at CP2" not in prompt and "artifact_refs path must be one of that step's declared outputs" not in prompt
+        assert BIOINFO_ASSIGNMENT_RULE in prompt and "CP2" not in prompt.replace(BIOINFO_ASSIGNMENT_RULE, "")
 
 
 @pytest.mark.asyncio
@@ -1256,3 +1310,22 @@ async def test_a_correction_that_still_asks_the_pi_is_not_salvaged():
     assert hub.requests["r"]["outcome"] == "research_failed"
     assert "cannot ask a new blocking_decision" in hub.requests["r"]["results"]["s1"]["error"]
     assert len(hub.approvals) == 1  # CP1 only: nothing reached CP2
+
+
+@pytest.mark.asyncio
+async def test_cp2_literature_lines_are_given_the_stored_precedent_access(monkeypatch):
+    """#1090: the two lines count what the pre-CP1 search stored, so a paper read there is not "조회 기록 없음"."""
+    from labhq import output_checks
+
+    seen = {}
+    for name in ("conclusion_literature_line", "literature_ledger_line"):
+        monkeypatch.setattr(output_checks, name, lambda *a, _n=name, **k: seen.setdefault(_n, k.get("stored")) and None)
+    hub = _research_hub(_settings(), [CP1, {"approved": False, "choice": "deny", "note": "stop"}])
+    hub.requests["r"]["analysis_precedents"] = {"status": "ok", "papers": [{
+        "fulltext_receipt": {"paper_id": "PMID:1", "access_level": "full_text", "text_file": "p.md",
+                             "text_sha256": "a" * 64}, "citations": []}]}
+    expected = output_checks.stored_access(hub.requests["r"]["analysis_precedents"])
+    assert expected, "the fixture must be a record stored_access accepts"
+    await Orchestrator(hub).run_request("r")
+
+    assert seen == {"conclusion_literature_line": expected, "literature_ledger_line": expected}

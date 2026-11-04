@@ -1,0 +1,6 @@
+pr: 825
+rows:
+- sha: '0d81230'
+  at: 2026-10-21 19:10
+  summary: 가짜 Windows 검사가 실행 중인 Python 버전에 섞이지 않도록 고쳤습니다.
+  text: '#825: host3.10 값 때문에 identity interpreter에서 실패한 네 mock 경로의 receipt와 consumer를 같은 Windows3.12/runtime path로 묶는다. host3.10/3.12×4경로 회귀와 실제3.10 identity 거부를 확인하며 기존 단언을 보존하고 missing barrier 원인을 좁혔다. fake red8→파일59 PASS·Python3.10 AST, production/workflow/timeout 변경 없음. 실제 Linux3.10 CI와 S1 native 진단은 재실행하지 않았다.'

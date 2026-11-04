@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: '3590827'
+    at: "2026-10-22 13:18"
+    summary: "Windows 야간 검사가 한 테스트 안의 하위 검사 결과를 같은 테스트의 중복 실행으로 잘못 판단하던 것을 고쳤습니다."
+    text: "run 39681301430은 parallel 단계 11125 passed·7 subtests passed 뒤 report 단계에서 duplicate node execution으로 멈췄다. pytest 9.1.1이 unittest subTest 결과를 같은 nodeid의 call 보고로 한 번 더 내고 ci_suite가 이를 stage_reports에 넣었기 때문이다. ci_suite는 subtest 보고를 subtest_reports에 따로 남기고(실패는 그대로 실패), ci_windows_phases는 각 subtest가 선택된 노드의 통과한 call 안에 있는지와 worker 합이 controller와 같은지 확인한다. 합치거나 집합으로 줄이지 않으며 같은 노드의 실제 재실행, lifecycle, exitstatus, identity·selection·critical 26 검사는 그대로다."

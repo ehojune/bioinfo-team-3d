@@ -1,0 +1,83 @@
+{
+  "copied_files": [
+    {
+      "source": "mock-a/mockups/research-editorial.html",
+      "file": "mockups/research-editorial.html",
+      "sha256": "243a40033907418ebf2eabdbdd174fd282e2ecbc0d638a39cf93c547c1898afa"
+    },
+    {
+      "source": "mock-a/mockups/sunlit-lab.html",
+      "file": "mockups/sunlit-lab.html",
+      "sha256": "f05a66d52276e0791befdcf3f94e219946b8e34d4ed1c6a98f0a9150c9ce6be0"
+    },
+    {
+      "source": "mock-b/mockups/control-room.html",
+      "file": "mockups/control-room.html",
+      "sha256": "dd7fd614a844e098b4ab7968d8eb6e250784501b16db3e7b20e39b3a20c1c774"
+    },
+    {
+      "source": "mock-b/mockups/shared-notebook.html",
+      "file": "mockups/shared-notebook.html",
+      "sha256": "e169bcde952a33344ba6834e5bf37b234a1d53d8b5d7d2d7cd8dea188cf17b6e"
+    },
+    {
+      "source": "characters/characters/index.html",
+      "file": "characters/index.html",
+      "sha256": "c8211ebc350aea33bc3e15a3f523fcb0567e1c9ae9082898255f12b09e2a72ae"
+    },
+    {
+      "source": "characters/characters/characters-proof.png",
+      "file": "characters/characters-proof.png",
+      "sha256": "1ee47f7c38fc4949e243095a1967b6c13fa6fedf25e56cdd3e6153a936807650"
+    },
+    {
+      "source": "characters/characters/size-proof.png",
+      "file": "characters/size-proof.png",
+      "sha256": "fc3ee318aa56112b935ba041a2c16b291522596d5d7ee812e612d312fc09b739"
+    },
+    {
+      "source": "critique/out.md",
+      "file": "docs/reference/critique.md",
+      "sha256": "802c836e0a76a712514b0b1252078b7c9494e5da9134830b7d03cbbf7744f526"
+    },
+    {
+      "source": "refs/out.md",
+      "file": "docs/reference/refs.md",
+      "sha256": "cec27f9d4e242fd4a31597ddb859ef20e57e94d45d8bb95bbdd81a0c5b247737"
+    },
+    {
+      "source": "mock-a/out.md",
+      "file": "docs/reference/mock-a.md",
+      "sha256": "03a1648ab9c8165df3dc3d13b6c3d7dde50bda866963bc2db401be081af6652e"
+    },
+    {
+      "source": "mock-b/out.md",
+      "file": "docs/reference/mock-b.md",
+      "sha256": "e6ccc308e4536c41216eb216e0d39c5b35d3c9ff6f6efdf5215ac97f8c75c90d"
+    },
+    {
+      "source": "characters/out.md",
+      "file": "docs/reference/characters.md",
+      "sha256": "61181fec8bdc17ecca04b4dea5144b16743182ae22016568de1f2162b51f96a7"
+    },
+    {
+      "source": "shots/shots/INDEX.md",
+      "file": "docs/reference/capture-input.md",
+      "sha256": "529126ab63e5c63870aab98b292ec27f4a9aa306ef99eae13e1cf77d728cdd29"
+    }
+  ],
+  "screenshots": [],
+  "preview_type": "original HTML fragment in sandboxed srcdoc",
+  "improvement_source_rows": [
+    "19",
+    "13",
+    "20",
+    "15",
+    "16",
+    "04·05",
+    "27",
+    "07·08",
+    "24·25·26",
+    "09·12"
+  ]
+}

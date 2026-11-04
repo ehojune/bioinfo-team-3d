@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..runner.workspace import WRITE_TOOLS, record_tool_use
+from .control import hook_command
 
 
 def record_post_tool_use(payload: Mapping[str, Any], env: Mapping[str, str] = os.environ,
@@ -29,7 +30,7 @@ def add_claude_hook(settings: dict[str, Any]) -> dict[str, Any]:
     """Merge labhq's PostToolUse recorder with any configured Claude hooks."""
     merged = dict(settings)
     hooks = {key: list(value) for key, value in (merged.get("hooks") or {}).items()}
-    command = subprocess.list2cmdline([sys.executable, "-m", "labhq.hooks.tool_use"])
+    command = hook_command([sys.executable, "-m", "labhq.hooks.tool_use"])
     hooks.setdefault("PostToolUse", []).append({
         "matcher": "Write|Edit|Bash|PowerShell",
         "hooks": [{"type": "command", "command": command}],

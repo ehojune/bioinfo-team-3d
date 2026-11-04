@@ -2,6 +2,7 @@
 across a restart until `labhq semantics enable` opens a new epoch."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
@@ -134,6 +135,30 @@ def test_five_busy_skips_in_a_row_turn_it_off(tmp_path, monkeypatch):
     assert service.drain(10)
 
 
+@pytest.mark.asyncio
+async def test_auto_off_updates_the_request_feed_and_execution_record(tmp_path):
+    service = _service(tmp_path)
+    rid = "req_001"
+    events = []
+    service.hub.save_request = lambda request_id: None
+
+    async def publish(event):
+        events.append(event)
+
+    service.hub.publish = publish
+    service.event_loop = asyncio.get_running_loop()
+    service.current_request_id = rid
+
+    service.trip("worker_stuck")
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    req = service.hub.requests[rid]
+    assert req["semantic_devices"]["semantics"]["reason"] == "worker_stuck"
+    assert "의미 장치 중단:" in req["execution_record"]
+    assert events[-1]["type"] == "request.semantic_devices"
+
+
 def test_one_boundary_violation_turns_it_off_and_writes_nothing(tmp_path, monkeypatch):
     service = _service(tmp_path)
     real = shadow.compute_line
@@ -152,6 +177,43 @@ def test_one_boundary_violation_turns_it_off_and_writes_nothing(tmp_path, monkey
     assert _lines(tmp_path, "auto_off")[-1]["boundary"] == expected
     for path in (tmp_path / "state" / "semantics").iterdir():
         assert "counts.tsv" not in path.read_text(encoding="utf-8")
+
+
+def test_labhq_generated_request_id_in_another_request_does_not_trip_the_boundary(tmp_path):
+    """#559: an earlier request id is provenance, not private input."""
+    service = _service(tmp_path)
+    service.hub.requests["req_001"]["plan"]["steps"][0]["input_refs"] = ["req_000"]
+
+    _run(service, ["req_000"])
+
+    assert service.latched is None
+    assert [line["request_id"] for line in _lines(tmp_path, "request")] == ["req_000"]
+    assert _disabled(tmp_path) is None
+
+
+def test_labhq_task_approval_and_named_hash_ids_are_not_source_secrets():
+    digest = "a" * 64
+    restricted = "C" + ":/restricted/private.tsv"
+    snap = {
+        "rid": "req_0123456789",
+        "requests": {"req_other": {"id": "req_other", "plan": {"steps": [{
+            "instruction": "use recorded provenance",
+            "input_refs": ["task_0123456789", "appr_0123456789", digest],
+        }]}, "results": {}}},
+        "tasks": {"task_0123456789": {"request_id": "req_0123456789",
+                                        "payload": {"id": "task_0123456789"}, "result": {}}},
+        "approvals": [{"id": "appr_0123456789", "request_id": "req_0123456789"}],
+        "plan_sha256": digest,
+    }
+    sensitive = shadow.sensitive_values(snap)
+    line = {"request_id": "req_0123456789", "objects": {
+        "task": "task_0123456789", "approval": "appr_0123456789", "sha256": digest}}
+
+    assert shadow.boundary_problems(line, sensitive) == []
+    assert shadow.boundary_problems(
+        {"objects": {"unexpected": restricted}},
+        {restricted: "path"},
+    )
 
 
 @pytest.mark.parametrize("value", ["outputs/counts.tsv", "C" + ":" + "\\data", "/" + "home" + "/u", "two words",

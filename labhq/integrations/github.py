@@ -19,14 +19,16 @@ import os
 import re
 import time
 from typing import TYPE_CHECKING, Any, Callable, Iterable
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 import httpx
 
 from ..costs import cost_detail, cost_text
 from ..intake import mask_published_references, public_url, url_pattern
-from ..pipeline_pr import pipeline_rejection
+from ..models import ApprovalRequest
+from ..pipeline_pr import pipeline_fingerprint, pipeline_rejection
 from ..policy import _PathTextScan, _scan_mentions_zone, _scan_path_text, restricted_paths
+from ..research import final_checkpoint as cp4
 from ..settings import PolicySettings, ProjectSettings, Settings
 from ..util import clip, short
 
@@ -41,6 +43,12 @@ SECRET_PATTERNS = [
     r"AKIA[0-9A-Z]{16}", r"AIza[0-9A-Za-z_\-]{30,}", r"xox[abpr]-[A-Za-z0-9-]{10,}",
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
 ]
+AUTHORIZATION_CREDENTIAL = re.compile(
+    r"(?i)(\bauthorization\b[\"']?\s*[:=]\s*[\"']?)(?:(?:bearer|basic)\s+)?[^\s,;<}\"']+"
+)
+AUTH_SCHEME_CREDENTIAL = re.compile(
+    r"(?i)(\bbearer\s+)(?!<redacted-secret>)[A-Za-z0-9._~+/=-]{8,}"
+)
 # A credential carried as a URL query or fragment parameter (signed S3/GCS/Azure/CloudFront URLs, API keys,
 # OAuth tokens): the parameter name stays, its value is dropped. Names are compared percent-decoded
 # (`X%2DAmz%2DSignature`), so a separator inside a name never hides the parameter after it.
@@ -86,9 +94,15 @@ def _decoded(name: str) -> str:
 def redact_url_credentials(text: str) -> str:
     """Drop URL userinfo, known webhook path tails and the values of credential-named query or fragment
     parameters, JSON-escaped URLs included."""
-    text = URL_USERINFO.sub(lambda m: m.group(1) + "<redacted-secret>@" if (
-        m.group(1).partition(":")[0].casefold() in USERINFO_SCHEMES or ":" in m.group(2)) else m.group(0), text)
-    text = WEBHOOK_PATH.sub(lambda m: m.group(1) + (m.group(2) or "") + "<redacted-secret>", text)
+    # Necessary literals only: without these, the corresponding regex cannot
+    # match. Keep the full classifiers for every possibly matching input.
+    if "@" in text:
+        text = URL_USERINFO.sub(lambda m: m.group(1) + "<redacted-secret>@" if (
+            m.group(1).partition(":")[0].casefold() in USERINFO_SCHEMES or ":" in m.group(2)) else m.group(0), text)
+    if "." in text:  # Every recognized webhook host contains a literal dot.
+        text = WEBHOOK_PATH.sub(lambda m: m.group(1) + (m.group(2) or "") + "<redacted-secret>", text)
+    if "=" not in text:
+        return text
     out, last = [], 0
     for m in QUERY_PARAM.finditer(text):
         if m.start() < last or not QUERY_SECRET_NAME.fullmatch(_decoded(m.group(1))):
@@ -98,6 +112,12 @@ def redact_url_credentials(text: str) -> str:
             out += [text[last:m.end()], "<redacted-secret>"]
             last = value.end()
     return "".join(out) + text[last:]
+
+
+def redact_authorization_credentials(text: str) -> str:
+    """Mask Authorization header values and standalone Bearer credentials."""
+    text = AUTHORIZATION_CREDENTIAL.sub(r"\1<redacted-secret>", text)
+    return AUTH_SCHEME_CREDENTIAL.sub(r"\1<redacted-secret>", text)
 
 
 def strip_reference_url_queries(text: str, requests: Any) -> str:
@@ -131,6 +151,10 @@ def _path_starts(scan: _PathTextScan) -> Iterable[int]:
             j += 1
 
 
+_SEPARATOR_RUN_END = re.compile(r"[^/\\]")
+_SEPARATOR_ONLY_LINE = re.compile(r"[/\\:]*")
+
+
 def _literal_zone_end(text: str, start: int, zone: str) -> int | None:
     """Match one normalized zone at a scanner-provided path start."""
     pos = start
@@ -138,8 +162,8 @@ def _literal_zone_end(text: str, start: int, zone: str) -> int | None:
     if zone.startswith("/"):
         if pos >= len(text) or text[pos] not in "/\\":
             return None
-        while pos < len(text) and text[pos] in "/\\":
-            pos += 1
+        boundary = _SEPARATOR_RUN_END.search(text, pos)
+        pos = boundary.start() if boundary else len(text)
     for index, part in enumerate(parts):
         end = pos + len(part)
         if text[pos:end].casefold() != part.casefold():
@@ -148,8 +172,8 @@ def _literal_zone_end(text: str, start: int, zone: str) -> int | None:
         if index + 1 < len(parts):
             if pos >= len(text) or text[pos] not in "/\\":
                 return None
-            while pos < len(text) and text[pos] in "/\\":
-                pos += 1
+            boundary = _SEPARATOR_RUN_END.search(text, pos)
+            pos = boundary.start() if boundary else len(text)
     if pos < len(text) and (text[pos].isalnum() or text[pos] in "_.-"):
         return None
     return pos
@@ -172,6 +196,14 @@ def _literal_zone_start(text: str, zones: Iterable[str], scan: _PathTextScan) ->
 
 
 def _sanitize_path_line(line: str, zones: Iterable[str]) -> str:
+    zones = tuple(zones)
+    # Inspect the WHOLE line in C. These characters cannot name a zone with
+    # any other component character, even after lexical normalization. A
+    # separator-only zone (e.g. /:) still needs the original classifier.
+    # Any other character, however late, sends the full line through it too.
+    if (_SEPARATOR_ONLY_LINE.fullmatch(line)
+            and not any(_SEPARATOR_ONLY_LINE.fullmatch(zone) for zone in zones)):
+        return line
     scan = _scan_path_text(line)
     if _scan_mentions_zone(line, zones, scan):
         return "<restricted-zone>"
@@ -198,6 +230,7 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
         out = "\n".join(_sanitize_path_line(line, zones) for line in out.split("\n"))
     for pat in SECRET_PATTERNS:
         out = re.sub(pat, "<redacted-secret>", out)
+    out = redact_authorization_credentials(out)
     out = redact_url_credentials(out)
     for secret in extra_secrets:
         if secret and len(secret) >= 8:
@@ -205,7 +238,7 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
     return clip(out, limit) if limit else out
 
 
-def publish_clean(text: str, settings: Settings, requests: Iterable[dict]) -> str:
+def publish_clean(text: str, settings: Settings, requests: Iterable[dict], limit: int | None = MAX_BODY) -> str:
     """The one cleaner for every text labhq posts: project reports and round records (#130).
 
     Zones and secrets go first: a reference that is part of a zone path (`/refs` in `/srv/refs/vault`) would
@@ -215,7 +248,8 @@ def publish_clean(text: str, settings: Settings, requests: Iterable[dict]) -> st
     requests = list(requests)
     out = strip_reference_url_queries(text or "", requests)  # before sanitize rewrites the query
     out = sanitize(out, settings.policy, [settings.gateway.client_token, settings.gateway.runner_token], limit=None)
-    return clip(mask_published_references(out, settings, requests), MAX_BODY)
+    out = mask_published_references(out, settings, requests)
+    return clip(out, limit) if limit else out
 
 
 def codex_comment(body: str, mention: str = "@codex") -> str:
@@ -257,6 +291,10 @@ class GitHubHTTPError(RuntimeError):
         return max([0.0, *delays])
 
 
+CONTENTS_API_MAX_BYTES = 100 * 1024 * 1024  # GitHub's limit for one file through the contents API, as sent (base64)
+BINARY_WRITE_TIMEOUT_S = 900.0  # an upload of tens of MB over a slow link; the connect and read timeouts stay 30 s
+
+
 class GitHubClient:
     def __init__(self, token: str, api_url: str, transport: httpx.AsyncBaseTransport | None = None,
                  clean: Callable[[str], str] | None = None):
@@ -266,13 +304,14 @@ class GitHubClient:
             "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "labhq",
         })
 
-    async def _req(self, method: str, path: str, **kw: Any) -> Any:
+    async def _req(self, method: str, path: str, *,
+                   content_cleaner: Callable[[str], str] | None = None, **kw: Any) -> Any:
         if method in {"POST", "PUT", "PATCH", "DELETE"}:
             if "json" in kw:
                 if method == "PUT" and "/contents/" in path:
                     payload = dict(kw["json"])
                     content = base64.b64decode(payload["content"]).decode("utf-8")
-                    guarded = base64.b64encode(self.clean(content).encode("utf-8")).decode("ascii")
+                    guarded = base64.b64encode((content_cleaner or self.clean)(content).encode("utf-8")).decode("ascii")
                     kw["json"] = self._clean_value({k: v for k, v in payload.items() if k != "content"})
                     kw["json"]["content"] = guarded
                 else:
@@ -346,10 +385,13 @@ class GitHubClient:
         issue = await self._req("GET", f"/repos/{repo}/issues/{number}")
         return issue.get("state") == "closed"
 
-    async def put_file(self, repo: str, path: str, content: str, message: str, branch: str) -> dict:
-        path, content = self.clean(path), self.clean(content)  # branch is a ref, not published text
+    async def put_file(self, repo: str, path: str, content: str, message: str, branch: str | None, *,
+                       content_cleaner: Callable[[str], str] | None = None) -> dict:
+        path, content = self.clean(path), (content_cleaner or self.clean)(content)  # branch is a ref, not published text
+        path = quote(path, safe="/")
         sha = None
-        r = await self.http.get(f"/repos/{repo}/contents/{path}", params={"ref": branch})
+        params = {"ref": branch} if branch else None
+        r = await self.http.get(f"/repos/{repo}/contents/{path}", params=params)
         if r.status_code == 200:
             existing = r.json()
             sha = existing.get("sha")
@@ -357,13 +399,55 @@ class GitHubClient:
                 return {"content": {"html_url": existing.get("html_url")}, "unchanged": True}
         elif r.status_code != 404:
             r.raise_for_status()
-        body = {"message": message, "branch": branch, "content": base64.b64encode(content.encode()).decode()}
+        body = {"message": message, "content": base64.b64encode(content.encode()).decode()}
+        if branch:
+            body["branch"] = branch
         if sha:
             body["sha"] = sha
-        return await self._req("PUT", f"/repos/{repo}/contents/{path}", json=body)
+        return await self._req("PUT", f"/repos/{repo}/contents/{path}", json=body, content_cleaner=content_cleaner)
 
     async def repo_info(self, repo: str) -> dict:
         return await self._req("GET", f"/repos/{repo}")
+
+    async def repository_is_empty(self, repo: str, default_branch: str) -> bool:
+        """An empty repository has no root contents, so its first contents PUT must omit ``branch``."""
+        endpoint = f"/repos/{repo}/contents/"
+        response = await self.http.get(endpoint, params={"ref": default_branch})
+        if response.status_code == 404:
+            return True
+        if response.status_code >= 400:
+            raise GitHubHTTPError("GET", endpoint, response)
+        return False
+
+    async def put_image(self, repo: str, path: str, content: bytes, branch: str | None,
+                        message: str = "연구 결과 그림") -> dict:
+        """An image from a reviewed result edition; text files use put_file's cleaner."""
+        return await self.put_binary(repo, path, content, branch, message)
+
+    async def put_binary(self, repo: str, path: str, content: bytes, branch: str | None, message: str) -> dict:
+        """Bytes of a reviewed result edition (an image, the report PDF): sent as they are, replacing an existing file.
+
+        The contents API takes the file as base64, a third bigger than the bytes, and refuses a file over
+        CONTENTS_API_MAX_BYTES (100 MB): a 50 MB PDF is 67 MB on the wire. That is checked before anything is sent, and the
+        upload gets the write time such a body needs instead of the 30 seconds of an ordinary call (#608)."""
+        encoded = base64.b64encode(content).decode("ascii")
+        if len(encoded) > CONTENTS_API_MAX_BYTES:
+            raise ValueError(f"{len(content) / 1024 / 1024:.1f} MB is more than the GitHub contents API takes "
+                             f"({CONTENTS_API_MAX_BYTES // 1024 // 1024} MB as base64)")
+        endpoint = f"/repos/{repo}/contents/{quote(path, safe='/')}"
+        params = {"ref": branch} if branch else None
+        existing = await self.http.get(endpoint, params=params)
+        if existing.status_code not in {200, 404}:
+            raise GitHubHTTPError("GET", endpoint, existing)
+        payload = {"message": message, "content": encoded}
+        if branch:
+            payload["branch"] = branch
+        if existing.status_code == 200:
+            payload["sha"] = existing.json()["sha"]
+        response = await self.http.put(endpoint, json=payload, timeout=httpx.Timeout(30.0, write=BINARY_WRITE_TIMEOUT_S))
+        if response.status_code >= 400:
+            raise GitHubHTTPError("PUT", endpoint, response)
+        return response.json()
 
     async def branch_sha(self, repo: str, branch: str) -> str:
         ref = await self._req("GET", f"/repos/{repo}/git/ref/heads/{branch}")
@@ -402,7 +486,7 @@ def _cost_line(cost_usd, cost_known, summary: dict | None) -> str:
 
 class ProjectReporter:
     HANDLED = {"request.created", "request.plan", "request.review", "recruit.done",
-               "request.completed", "request.failed", "pipeline.ready"}
+               "request.completed", "request.failed", "request.reviewed", "pipeline.ready"}
 
     def __init__(self, hub: "Hub", settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
         self.hub, self.s, self.transport = hub, settings, transport
@@ -508,6 +592,10 @@ class ProjectReporter:
         previous, previous_reason = entry.get("state"), entry.get("reason")
         entry.update(state=status, reason=reason, url=url, number=number, updated_at=time.time())
         self.hub.store.put("pipeline_submission", entry["task_id"], entry)
+        if status in {"open", "rejected", "declined"}:
+            for event in self.hub.store.all("reporter_delivery").values():
+                if event.get("type") == "pipeline.ready" and event.get("task_id") == entry["task_id"]:
+                    self.hub.ack_reporter_delivery(event)
         if previous == status and previous_reason == reason:
             return
         await self.hub.publish({"type": "pipeline.pr", "ts": time.time(),
@@ -516,15 +604,73 @@ class ProjectReporter:
                                 "data": {"status": status, "name": (entry.get("submission") or {}).get("name"),
                                          "reason": reason, "url": url, "number": number}})
 
+    async def _pipeline_approved(self, entry: dict) -> bool:
+        """One non-blocking, durable PI card per candidate and destination; no GitHub client before yes."""
+        fingerprint = pipeline_fingerprint(entry["submission"], self.s)
+        aid = entry.get("approval_id")
+        if aid and entry.get("approval_fingerprint") != fingerprint:
+            await self.hub.close_approval(aid, "기여 후보나 게시 대상이 바뀌어 다시 확인합니다")
+            aid = None
+        decision = self.hub.store.get("approval_decision", aid) if aid else None
+        if decision:
+            card = decision.get("approval") or {}
+            if (card.get("kind") == "pipeline_contribute" and card.get("task_id") == entry["task_id"]
+                    and card.get("request_id") == entry.get("request_id")
+                    and (card.get("detail") or {}).get("fingerprint") == fingerprint):
+                if decision.get("approved") is True:
+                    return True
+                await self._pipeline_status(entry, "declined", "PI가 이 pipeline의 기여를 승인하지 않았습니다")
+                return False
+            aid = None  # a decision for another candidate never grants consent
+        if not aid or aid not in self.hub.approvals:
+            submission = entry["submission"]
+            policy = self.s.policy.bioinfo_agent
+            card = ApprovalRequest(**({"id": aid} if aid else {}), kind="pipeline_contribute",
+                task_id=entry["task_id"], request_id=entry.get("request_id"), agent_id=entry.get("agent_id"),
+                summary=f"완성한 {submission['name']} pipeline을 bioinfo-agent에 기여할까요?",
+                detail={"name": submission["name"], "repo": policy.pipeline_repo,
+                        "base": policy.pipeline_base_branch, "fingerprint": fingerprint,
+                        "files": [{"path": item["path"], "content": item["content"]}
+                                  for item in submission["files"]]},
+                ).model_dump(mode="json", exclude={"timeout_s"})
+            # Save the binding before publishing the card; replay repairs a crash between these writes.
+            entry.update(approval_id=card["id"], approval_fingerprint=fingerprint)
+            self.hub.store.put("pipeline_submission", entry["task_id"], entry)
+            self.hub.approvals[card["id"]] = {"approval": card, "origin": None}
+            self.hub.save_approval(card["id"])
+            await self.hub.publish({"type": "approval.requested", "request_id": entry.get("request_id"),
+                                    "data": card})
+        await self._pipeline_status(entry, "awaiting_approval", "PI의 건별 기여 승인을 기다립니다")
+        return False
+
     async def _handle_pipeline(self, ev: dict) -> bool:
         entry = self.hub.store.get("pipeline_submission", str(ev.get("task_id") or ""))
-        if not self.s.policy.bioinfo_agent.pipeline_pr or not entry or entry.get("state") in {"open", "rejected"}:
+        if (not self.s.policy.bioinfo_agent.pipeline_pr or not self.enabled() or not entry
+                or entry.get("state") in {"open", "rejected", "declined"}):
             return True
         submission = entry.get("submission") or {}
         reason = self._pipeline_rejection(submission)
         if reason:
             await self._pipeline_status(entry, "rejected", reason)
             return True
+        # Review the final public bytes, without the report/comment length cap. Keep the original
+        # rejection above: normalization must never turn a forbidden source bundle into an allowed one.
+        def clean_source(text: str) -> str:
+            return publish_clean(text, self.s, self.hub.requests.values(), limit=None)
+
+        public_submission = {**submission, "files": [
+            {**item, "path": clean_source(item["path"]), "content": clean_source(item["content"])}
+            for item in submission["files"]]}
+        reason = self._pipeline_rejection(public_submission)
+        if reason:
+            await self._pipeline_status(entry, "rejected", reason)
+            return True
+        if public_submission != submission:
+            entry["submission"] = public_submission
+            self.hub.store.put("pipeline_submission", entry["task_id"], entry)
+        submission = public_submission
+        if not await self._pipeline_approved(entry):
+            return entry.get("state") == "declined"
         gh = self.client()
         if gh is None:
             await self._pipeline_status(entry, "pending", f"{self.s.github.token_env} is not set")
@@ -533,7 +679,7 @@ class ProjectReporter:
         repo = self.s.policy.bioinfo_agent.pipeline_repo
         base = self.s.policy.bioinfo_agent.pipeline_base_branch
         name = submission["name"]
-        branch = f"labhq-{name}-{str(entry.get('request_id') or entry['task_id'])[-8:]}"
+        branch = f"labhq-{name}-{entry['approval_fingerprint'][:12]}-{entry['task_id'][-8:]}"
         marker = f"<!-- labhq pipeline {entry['task_id']} -->"
         try:
             info = await gh.repo_info(repo)
@@ -555,8 +701,8 @@ class ProjectReporter:
                         raise
                 for item in submission["files"]:
                     await gh.put_file(repo, item["path"], item["content"],
-                                      f"{name} pipeline: add generated file", branch)
-                body = (f"labhq bioinfo-agent가 만든 `{name}` pipeline입니다.\n\n"
+                                      f"{name} pipeline: add generated file", branch, content_cleaner=clean_source)
+                body = (f"labhq에서 구현하고 PI가 건별 기여를 승인한 `{name}` pipeline입니다.\n\n"
                         f"{submission.get('summary') or ''}\n\n{marker}")
                 existing = await gh.create_pull(repo, submission.get("title") or f"{name} pipeline 추가",
                                                 body, branch, base)
@@ -573,6 +719,25 @@ class ProjectReporter:
         rid = ev["request_id"]
         if ev["type"] == "pipeline.ready":
             return await self._handle_pipeline(ev)
+        typ, d = ev["type"], ev.get("data") or {}
+        req = self.hub.requests.get(rid) or {}
+        if typ == "request.reviewed":
+            receipt = d.get("receipt") or {}
+            if not cp4.enabled(req) or receipt.get("gate") != "research_final":
+                return  # ordinary PI acknowledgment is not another terminal delivery
+            if receipt != (req.get("research_contract") or {}).get("final_receipt"):
+                return  # a superseded decision must not publish changed content
+            if receipt.get("decision") == "accepted":
+                if cp4.receipt_errors(req):
+                    return
+                typ = "request.completed"
+            else:
+                typ = "request.failed"
+        elif typ in {"request.completed", "request.failed"} and cp4.enabled(req):
+            if req.get("status") == "review_pending" or d.get("status") == "review_pending":
+                return  # discard old pre-CP4 deliveries recovered after an upgrade
+            if cp4.receipt_errors(req):
+                typ = "request.failed"
         proj = self.project_of(rid)
         if not proj or not proj.repo or root_zone_restricted(self.s.policy):
             return
@@ -584,9 +749,6 @@ class ProjectReporter:
         gh = self.client()
         if gh is None:
             return False  # keep a terminal delivery until credentials are available
-        typ, d = ev["type"], ev.get("data") or {}
-        req = self.hub.requests.get(rid) or {}
-
         if typ == "request.created":
             if not proj.issues:
                 return

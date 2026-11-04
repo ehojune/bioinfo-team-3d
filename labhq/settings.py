@@ -1,17 +1,35 @@
 from __future__ import annotations
 
+import math
 import os
 import ntpath
 import re
 import stat
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any  # semantics-hook
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from .intake import Reference
+from .test_guard import guard_test_path
+
+
+class _ConfigLoader(yaml.SafeLoader):
+    def construct_mapping(self, node, deep=False):
+        result = super().construct_mapping(node, deep=deep)
+        for key_node, value_node in node.value:
+            if (key_node.value == "precedent_lookup_share"
+                    and value_node.tag == "tag:yaml.org,2002:float"):
+                result[key_node.value] = value_node.value.replace("_", "")
+        return result
+
+
+def _load_config(text: str):
+    return yaml.load(text, Loader=_ConfigLoader)
 
 
 class GatewaySettings(BaseModel):
@@ -25,14 +43,50 @@ class GatewaySettings(BaseModel):
     # A request whose task has no connected runner waits this long as waiting_for_runner, then fails (PI 점검 R15).
     runner_wait_s: float = Field(default=86400, gt=0)
     state_dir: str = Field(default_factory=lambda: os.environ.get("LABHQ_STATE_DIR", "~/.labhq/state"))
+    # Edge or Chrome that prints the PDF report (#584). None: look on PATH and in the standard install folders.
+    report_browser: str | None = None
+
+
+class WslSettings(BaseModel):
+    enabled: bool = False
+    distro: str = "Ubuntu-22.04"
+    user: str | None = None
+    id: str = "lab-wsl"
+    # Empty: an instance-specific directory on the Linux filesystem, never the Windows mount.
+    root: str | None = None
+    bioinfo_agent: str = "/mnt/d/bioinfo-agent"
+    gateway_url: str | None = None
+
+
+def _default_step_memory_limit_gb() -> float:
+    from .runner.memory_limit import default_step_memory_limit_gb
+    return default_step_memory_limit_gb()
 
 
 class RunnerSettings(BaseModel):
     id: str = "local"
+    wsl: WslSettings = Field(default_factory=WslSettings)
+    environment: Literal["native", "wsl"] = "native"
     os_account: str | None = None  # the dedicated OS account the runner must run as (docs/runner-account.md)
     max_parallel: int = 4
     consult_parallel: int = Field(default=2, ge=1)
+    # Runaway breaker (#59): a signal that stays tripped moves warn -> constrain -> stop, one stage per new observation
+    # and at most once per beat. The stop stage halts the task only when breaker_hard_stop is on.
+    breaker_hard_stop: bool = False
+    breaker_beat_s: float = Field(default=10, gt=0, allow_inf_nan=False)
     workspace_root: str = "~/.labhq/runs"
+    disk_warning_free_gb: float = Field(default=10, ge=0, allow_inf_nan=False)
+    disk_warning_free_percent: float = Field(default=5, ge=0, le=100, allow_inf_nan=False)
+    # Below this much free space on the work drive the runner starts no task until the PI answers a card (#678);
+    # 0 turns the card off (the warning above stays).
+    disk_fail_free_gb: float = Field(default=2, ge=0, allow_inf_nan=False)
+    # While a task runs the runner reads the free space of its drives every this many seconds and halts the task when one
+    # falls below disk_fail_free_gb, keeping its session for the PI to resume (#678). 0 turns the watch off.
+    disk_watch_s: float = Field(default=30, ge=0, allow_inf_nan=False)
+    # Off: the watch only writes a warning to the task log and never halts.
+    disk_watch_halt: bool = True
+    # Optional folder for multi-GB raw data, outside every step folder: the task briefing names it (#678).
+    bulk_data_root: str | None = None
     bundle_max_file_mb: float = Field(default=50, gt=0)
     bundle_max_total_mb: float = Field(default=2048, gt=0)
     bundle_max_files: int = Field(default=5000, ge=1)
@@ -41,6 +95,16 @@ class RunnerSettings(BaseModel):
     contract_dir: str | None = None  # active contract roster; default agents_dir/contract, per instance (#303)
     broker_port: int = 8788
     task_timeout_s: int = 6 * 3600
+    # Longest owner receipt lifetime the contained-runtime check accepts (issued_at to deadline_at); the owner
+    # that issues the receipt must use the same value. 24 h is the hard ceiling so a typo cannot mean forever (#938).
+    contained_max_s: int = Field(default=5400, ge=60, le=86400)
+    # 0 disables the cap. Default: 60% with a tree cap, 40% for per-process POSIX RLIMIT_AS fallback.
+    step_memory_limit_gb: float = Field(
+        default_factory=_default_step_memory_limit_gb,
+        ge=0,
+        allow_inf_nan=False,
+    )
+    structured_output_retries: int = Field(default=2, ge=0)  # JSON transport repair, separate from result_corrections
     # After the CLI's final turn event, how long its process may take to exit before labhq ends its tree and
     # finishes the step with the result already received (#330).
     exit_grace_s: float = Field(default=45, ge=0)
@@ -54,6 +118,8 @@ class RunnerSettings(BaseModel):
     state_dir: str = Field(default_factory=lambda: os.environ.get("LABHQ_STATE_DIR", "~/.labhq/state"))
     outbox_limit: int = 20000
     force_engine: str | None = None  # "mock" runs every agent with the mock engine (demo/tests)
+    facilities_support: Literal["unspecified", "required", "optional"] = "unspecified"
+    mock_delay_s: float = Field(default=0.05, ge=0)  # only the web demo increases this
     # Read-only roots for `path` references (#36); each project's local_dir also counts.
     reference_roots: list[str] = []
     # A reference folder is listed for links and mounts before it is exposed; past these caps it is refused.
@@ -68,6 +134,15 @@ class RunnerSettings(BaseModel):
     # A consult or follow-up lists every entry it could write to (workspace, writable project/upstream/reference
     # folders) before and after the run; past this many it is refused rather than run unchecked (#36).
     read_only_check_max_entries: int = Field(default=50000, ge=1)
+
+    @model_validator(mode="after")
+    def validate_wsl(self) -> "RunnerSettings":
+        if self.wsl.enabled and self.id == self.wsl.id:
+            raise ValueError("Windows and WSL runner.id must differ")
+        if self.environment == "wsl":
+            from .wsl_paths import shared_path
+            self.workspace_root = shared_path(self.workspace_root, "wsl")
+        return self
 
 
 class EngineBin(BaseModel):
@@ -302,6 +377,23 @@ _BACKGROUND_SHELL_TOOLS = ("BashOutput", "KillShell", "TaskOutput", "TaskStop")
 class BudgetSettings(BaseModel):
     per_task_usd: float = 5.0
     per_request_usd: float = 30.0
+    # On by default since #1139 (#862): hold each charged turn's cap before it is sent, so in-flight turns and the
+    # last turn cannot pass the request cap on the product's own cost accounting. The hold is cut to what the request
+    # still has, so a request budget below per_task_usd is not asked about at its first turn. Not a provider billing
+    # guarantee. `false` restores the older check, which only looks at what is already spent.
+    reserve_before_dispatch: bool = True
+
+    @model_validator(mode="after")
+    def reserved_budgets_are_amounts(self) -> "BudgetSettings":
+        if self.reserve_before_dispatch:
+            for name in ("per_task_usd", "per_request_usd"):
+                value = getattr(self, name)
+                if not math.isfinite(value) or value < 0:
+                    raise ValueError(f"policy.budget.{name} must be a finite amount >= 0 with reserve_before_dispatch")
+            if 0 < self.per_task_usd < 0.01:
+                # The Claude CLI writes a call cap in cents: a positive cap below one cent cannot be held (0 is no cap).
+                raise ValueError("policy.budget.per_task_usd must be 0 or at least $0.01 with reserve_before_dispatch")
+        return self
 
 
 class BioinfoAgentPolicy(BaseModel):
@@ -342,12 +434,14 @@ class PolicySettings(BaseModel):
 
 
 class RecruitSettings(BaseModel):
+    enabled: StrictBool = True  # explicit False disables hiring and Paper2Agent preparation, not ordinary staff
     agent_id: str = "recruiter"
     permission_mode: str = "auto"  # unattended conversion; see docs/manual.md '파견직 제도' (run inside a container if you can)
     max_budget_usd: float = 25.0
     default_ttl_days: int = 30
     contract_engine: str = "claude_code"
     contract_model: str | None = "sonnet"
+    contract_model_tier: Literal["fast", "balanced", "reasoning"] = "balanced"
     skill_source: str = "https://github.com/jmiao24/Paper2Agent"
     # setup-paper2agent installs exactly this commit (40 hex); None installs the latest HEAD and records it (#424).
     skill_commit: str | None = None
@@ -362,6 +456,14 @@ class RecruitSettings(BaseModel):
 
 # A model name labhq passes to an engine CLI as one argument: no leading '-', so it can never read as a flag.
 MODEL_NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}"
+
+
+class PiLanguageSettings(BaseModel):
+    enabled: bool = True
+    model: str | None = Field(default="haiku", pattern="^" + MODEL_NAME_PATTERN + "$")
+    per_request_usd: float = Field(default=0.50, ge=0, allow_inf_nan=False)
+    per_message_usd: float = Field(default=0.05, ge=0.01, multiple_of=0.01, allow_inf_nan=False)
+    timeout_s: float = Field(default=30, gt=0, le=120)
 
 
 class OrchestratorSettings(BaseModel):
@@ -380,9 +482,12 @@ class OrchestratorSettings(BaseModel):
     max_replans: int = Field(default=0, ge=0)
     max_failure_replans: int = Field(default=1, ge=0)
     max_steps: int = 12
+    max_branches: int = Field(default=5, ge=1)
+    max_branch_steps: int = Field(default=8, ge=1)
     max_parallel_steps: int = 4
     max_wake_cycles: int = 5
     context_chars_per_step: int = 12000
+    plan_max_chars: int = Field(default=50_000, ge=1)  # warn; do not clip a valid plan
     step_max_attempts: int = Field(default=2, ge=1)
     step_retry_backoff_s: float = Field(default=0.2, ge=0)
     runner_reconnect_timeout_s: float = Field(default=30, ge=0)
@@ -390,6 +495,21 @@ class OrchestratorSettings(BaseModel):
     quota_max_wait_s: float = Field(default=7 * 86400, ge=1)
     login_retry_s: float = Field(default=600, gt=0)
     login_wait_max_s: float = Field(default=86400, gt=0)
+    # Wall-clock limit for a whole request, fixed when the request is accepted (#877). 0 turns it off. The clock
+    # runs while staff work; time in waiting_pi (PI cards) is added to the deadline, and a request in review_pending
+    # or later is never cut. A value below one minute is a typo (minutes written as seconds), so it is refused.
+    request_wall_clock_s: int = Field(default=0, ge=0, le=7 * 86400)
+    # A plan step may carry its own ``model_tier`` (#625, step 2): carried, capped by the staff member's declared tier
+    # and run on that tier's model. Off by default; off drops the field everywhere and changes nothing, so plan
+    # hashes and prompts stay what they were. The CSO is not yet told it may choose one (that is a later step).
+    step_model_tiers: bool = False
+
+    @field_validator("request_wall_clock_s")
+    @classmethod
+    def wall_clock_is_off_or_a_real_limit(cls, value: int) -> int:
+        if 0 < value < 60:
+            raise ValueError("request_wall_clock_s is in seconds: use 0 (off) or at least 60")
+        return value
 
     @model_validator(mode="before")
     @classmethod
@@ -423,6 +543,83 @@ class PlanSettings(BaseModel):
     declare_output_types: bool = False
 
 
+class ModelTierRate(BaseModel):
+    """Operator-supplied USD range for one model call; blank means unknown."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    min_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    max_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def complete_range(self) -> "ModelTierRate":
+        if (self.min_usd is None) != (self.max_usd is None):
+            raise ValueError("model tier price needs both min_usd and max_usd, or neither")
+        if self.min_usd is not None and self.max_usd is not None and self.max_usd < self.min_usd:
+            raise ValueError("model tier max_usd must be at least min_usd")
+        return self
+
+
+class ModelTierPrices(BaseModel):
+    """One configurable table for dry-run call ranges. No source means every range stays unknown."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str | None = None
+    checked_on: date | None = None
+    fast: ModelTierRate = Field(default_factory=ModelTierRate)
+    balanced: ModelTierRate = Field(default_factory=ModelTierRate)
+    reasoning: ModelTierRate = Field(default_factory=ModelTierRate)
+
+    @model_validator(mode="after")
+    def sourced_prices(self) -> "ModelTierPrices":
+        priced = any(rate.min_usd is not None for rate in (self.fast, self.balanced, self.reasoning))
+        if priced and (not self.source or self.checked_on is None):
+            raise ValueError("priced model tiers require source and checked_on")
+        return self
+
+
+class ModelTierModels(BaseModel):
+    """Which model each tier means on each engine (#625). Empty by default: a tier then names no model, nothing is
+    invented, and every agent runs the model its own YAML gives. An agent's explicit ``model`` always wins."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fast: dict[str, str] = Field(default_factory=dict)
+    balanced: dict[str, str] = Field(default_factory=dict)
+    reasoning: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def valid_engines_and_models(self) -> "ModelTierModels":
+        engines = {"claude_code", "codex", "gemini", "antigravity"}
+        for tier in ("fast", "balanced", "reasoning"):
+            for engine, model in getattr(self, tier).items():
+                if engine not in engines:
+                    raise ValueError(f"model_tiers.{tier}: unknown engine {engine!r}; allowed: {', '.join(sorted(engines))}")
+                if not re.fullmatch(MODEL_NAME_PATTERN, model):
+                    raise ValueError(f"model_tiers.{tier}.{engine}: {model!r} is not a valid model name")
+        return self
+
+    def model_for(self, tier: str | None, engine: str | None) -> str | None:
+        """The configured model of `tier` on `engine`, or None when the table does not say."""
+        row = getattr(self, tier, None) if tier in ("fast", "balanced", "reasoning") else None
+        return row.get(engine) if row and engine else None
+
+
+def models_match(declared: str | None, actual: str | None) -> bool:
+    """One model, named by an alias or a full name: ``opus`` is ``claude-opus-5-5``, ``gpt-6-luna`` is not ``gpt-6``.
+
+    Compared case-insensitively without a leading ``claude-``; a name also matches the same name plus a version
+    suffix (``-5-5``, ``-4.1``). Anything else, including a prefix that is another model, does not match."""
+    if not declared or not actual:
+        return False
+    one, other = (re.sub(r"^claude-", "", value.strip().casefold()) for value in (declared, actual))
+    if one == other:
+        return True
+    short, long = sorted((one, other), key=len)
+    return bool(re.fullmatch(re.escape(short) + r"(?:-\d+(?:\.\d+)?)+", long))
+
+
 class PiProfileSettings(BaseModel):
     """The PI's default reference pointers, added to every request unless the request turns them off.
 
@@ -446,7 +643,11 @@ class ResearchSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
+    semantic_report: bool = True  # request bundle + published run/ device audit (#737)
     evidence_checkpoint: bool = False  # execute approved research steps and stop at CP2
+    final_checkpoint: bool = False  # PI report review accepts a frozen final draft (CP4)
+    # The science reviewer first answers the original request alone, sealed before the first step (#889).
+    blind_draft: bool = False
     live_source_check: bool = False  # Crossref/NCBI verification before CP2 and in labhq verify
     live_source_contact: str = ""  # optional maintainer email for API User-Agent/mailto etiquette
     live_source_timeout_s: float = Field(default=10.0, gt=0)
@@ -460,19 +661,105 @@ class ResearchSettings(BaseModel):
     active_packs: list[str] = []  # exact ``id@version`` keys, fixed into the approved plan
 
 
+class LiteratureSettings(BaseModel):
+    """Opt-in access to a PI-prepared institution session and the bounded PDF request fallback.
+
+    The browser profile is passed only to Edge/Chrome. labhq never reads or copies its cookies or credentials.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    institution_enabled: bool = False
+    institution_profile: str | None = None
+    institution_proxy: str | None = None
+    institution_request_interval_s: float = Field(default=30.0, ge=0)
+    institution_daily_limit: int = Field(default=5, ge=1, le=100)
+    institution_tdm_allowed: bool = False
+    external_model_allowed: bool = False
+    pdf_request_timeout_s: int = Field(default=2 * 3600, ge=1, le=7 * 86400)
+    # Base64 relay stays below the runner WebSocket's 64 MiB frame cap even at the configured maximum.
+    pdf_max_mb: float = Field(default=40.0, gt=0, le=45)
+
+    @model_validator(mode="after")
+    def institution_route_is_explicit(self) -> "LiteratureSettings":
+        if self.institution_enabled and not (self.institution_profile or self.institution_proxy):
+            raise ValueError("literature.institution_enabled needs institution_profile or institution_proxy")
+        if self.institution_proxy:
+            from urllib.parse import urlsplit
+            check = self.institution_proxy.replace("{url}", "https://doi.org/10.1000/example")
+            parsed = urlsplit(check)
+            if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+                raise ValueError("literature.institution_proxy must be an HTTPS prefix without credentials")
+        return self
+
+
+class WikiSettings(BaseModel):
+    """A user LLM-wiki folder linked as a local reference whose notes keep their provenance (#827). Off by default.
+
+    The root must be inside ``runner.reference_roots``; it is only read, never changed. ``external_model_allowed``
+    must be true before a later phase attaches any tool that hands note text to a staff model.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    root: str | None = None
+    external_model_allowed: bool = False
+    extensions: list[Literal[".md", ".txt"]] = [".md", ".txt"]
+    stale_days: int = Field(default=365, ge=1)
+    max_files: int = Field(default=5000, ge=1, le=100000)
+    max_file_bytes: int = Field(default=2 * 1024 * 1024, ge=1, le=16 * 1024 * 1024)
+
+    @model_validator(mode="after")
+    def enabled_needs_a_root(self) -> "WikiSettings":
+        if self.enabled and not (self.root and self.root.strip()):
+            raise ValueError("wiki.enabled needs wiki.root")
+        return self
+
+
 class AnnotSettings(BaseModel):
     """labhq_annot lookups (#435). The AlphaGenome API key lives only in this file, which `labhq init` writes for the
     runner account alone (POSIX 0600, Windows without inherited access); the config holds the location, never the
     key. No key file: the alphagenome tool is not registered."""
 
     alphagenome_key_file: str = "~/.labhq/secrets/alphagenome_api_key"
+    # Unpaywall requires a contact email. It is used only as the API query parameter and is never put in results,
+    # query logs or cache keys. Empty keeps the tool visible but explicitly disabled (#744).
+    unpaywall_email: str = ""
+    # Opt-in request-wide cap on the outbound HTTP requests labhq_annot sends (retries and redirects included),
+    # each admitted by the runner before it is sent (#858). None keeps lookups uncounted; 0 refuses every lookup.
+    # See runner/lookup_admission.py for what one attempt is.
+    request_lookup_limit: int | None = Field(default=None, ge=0, le=10000)
+    precedent_lookup_share: Decimal | None = Field(default=Decimal("0.5"), ge=0, le=1, allow_inf_nan=False)
+
+
+class ResultStorageSettings(BaseModel):
+    """What the published result repository records about its authors (#1104)."""
+    # Names for CITATION.cff. Empty by default: no author is invented, and without a name no CITATION.cff is written.
+    authors: list[str] = []
 
 
 class GitHubSettings(BaseModel):
+    ask_storage: bool = False  # general requests opt in; research requests always ask
+    auto_publish_results: bool = False  # otherwise review the editor draft in the web office
+    progress_branch: str = "labhq/progress"  # optional per-step edition, separate from the approved final branch
+    # Optional warning threshold only. Report figures and PDFs are never shrunk to meet it (#690).
+    edition_pdf_max_mb: float | None = Field(default=None, gt=0)
     token_env: str = "GITHUB_TOKEN"  # token is read from this env var on the gateway host, never from YAML
+    # Without the variable, the gateway reads the token from this owner-only file, which `labhq init` writes when the PI
+    # pastes one (#687). Its own folder: an owner-only folder holds one secret (tools/annot_keys.py).
+    token_file: str = "~/.labhq/secrets-github/github_token"
     api_url: str = "https://api.github.com"
     dashboard_url: str | None = None  # link back to the web office in issue comments
     codex_mention: str = "@codex"  # only in the one top-level review request; each mention starts a Codex session
+
+    @field_validator("progress_branch")
+    @classmethod
+    def valid_progress_branch(cls, value: str) -> str:
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}", value)
+                or ".." in value or "//" in value or value.endswith(("/", "."))):
+            raise ValueError("github.progress_branch is invalid")
+        return value
 
 
 class DevLogSettings(BaseModel):
@@ -501,21 +788,40 @@ class ProjectSettings(BaseModel):
     labels: list[str] = ["labhq"]
 
 
+class SupervisorSettings(BaseModel):
+    """The per-role supervisor `labhq up` starts (#589). It always records how its gateway or runner ended."""
+
+    # On: a gateway or runner that ended on its own with a non-zero code is started again. Off by default, so a crash
+    # stays visible instead of being papered over. Stopping it with `down` or the web shutdown never restarts it.
+    restart: bool = False
+    max_restarts: int = Field(default=5, ge=1)  # within restart_window_s; the next end is final and the supervisor exits
+    restart_window_s: float = Field(default=600, gt=0)
+    backoff_s: float = Field(default=5, ge=0)  # wait before the first restart; doubles for each one still in the window
+    backoff_cap_s: float = Field(default=120, ge=0)
+
+
 class Settings(BaseModel):
     instance: str | None = None
     gateway: GatewaySettings = Field(default_factory=GatewaySettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)
+    supervisor: SupervisorSettings = Field(default_factory=SupervisorSettings)
     engines: EnginesSettings = EnginesSettings()
     bench: BenchSettings = BenchSettings()
     hpc: HpcSettings = HpcSettings()
     policy: PolicySettings = PolicySettings()
     recruit: RecruitSettings = RecruitSettings()
     orchestrator: OrchestratorSettings = OrchestratorSettings()
+    pi_language: PiLanguageSettings = Field(default_factory=PiLanguageSettings)
     plan: PlanSettings = PlanSettings()
+    model_tier_prices: ModelTierPrices = Field(default_factory=ModelTierPrices)
+    model_tiers: ModelTierModels = Field(default_factory=ModelTierModels)
     lab: LabSettings = LabSettings()
     research: ResearchSettings = ResearchSettings()
+    literature: LiteratureSettings = LiteratureSettings()
+    wiki: WikiSettings = WikiSettings()
     pi_profile: PiProfileSettings = PiProfileSettings()
     github: GitHubSettings = GitHubSettings()
+    result_storage: ResultStorageSettings = Field(default_factory=ResultStorageSettings)
     annot: AnnotSettings = AnnotSettings()
     dev_log: DevLogSettings = DevLogSettings()
     projects: list[ProjectSettings] = []
@@ -544,6 +850,7 @@ class Settings(BaseModel):
     def path(self, p: str) -> Path:
         """Expand ~ and $VARS; relative paths are relative to the config file (or cwd)."""
         q = Path(os.path.expandvars(os.path.expanduser(p)))
+        guard_test_path(q if q.is_absolute() else self.base_dir() / q)
         if q.is_absolute():
             return q
         return (self.base_dir() / q).resolve()
@@ -552,10 +859,12 @@ class Settings(BaseModel):
     def load(cls, path: str | None = None) -> "Settings":
         path = path or os.environ.get("LABHQ_CONFIG")
         data: dict = {}
+        if path:
+            guard_test_path(Path(path))
         if path and not Path(path).is_file():
             raise FileNotFoundError(f"설정 파일이 없습니다: {path}")
         if path:
-            data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+            data = _load_config(Path(path).read_text(encoding="utf-8")) or {}
         s = cls.model_validate(data)
         if path:
             s.config_path = str(Path(path).resolve())
@@ -587,7 +896,9 @@ def write_staff_config(settings: Settings, directory: Path) -> str | None:
         return None
     import tempfile
 
-    data = yaml.safe_load(Path(settings.config_path).read_text(encoding="utf-8")) or {}
+    guard_test_path(Path(settings.config_path))
+    guard_test_path(directory)
+    data = _load_config(Path(settings.config_path).read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ValueError("config is not a mapping")
     gateway = data.get("gateway") if isinstance(data.get("gateway"), dict) else {}

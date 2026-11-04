@@ -813,6 +813,10 @@ def _data_command(name: str, args: list[str], powershell: bool) -> str | None:
     if base == "sed":
         parsed = _sed_command(args, powershell)
         return "data" if parsed is not None and parsed.text_is_data else None
+    if powershell and base == 'new-item':
+        # Only the literal directory form seen in the trial. Do not trust provider/value creation.
+        return ('data' if len(values) == 4 and [v.casefold() for v in values[:3]] ==
+                ['-itemtype', 'directory', '-force'] and not values[3].startswith('-') else None)
     if base in {"curl", "wget"}:
         return "data" if _download_options_known(base, args, powershell) else None
     return "data" if base in (_PS_DATA_COMMANDS if powershell else _DATA_COMMANDS) else None
@@ -1173,7 +1177,29 @@ _CMD_RECURSIVE_DELETE = re.compile(r"""(?<![\w.-])(?:rd|rmdir|del|erase)(?:\.exe
                                    re.IGNORECASE)
 # A PowerShell delete after the first pipe, in a script block too (`| ForEach-Object { Remove-Item $_ }`), deletes what
 # the listing before the pipe found (#525 review).
-_PS_DELETE_WORD = re.compile(r"(?<![\w-])(?:Remove-Item|ri|rm|del|erase|rd|rmdir)(?![\w-])|\.Delete\s*\(", re.IGNORECASE)
+_PS_DELETE_CMDLETS = frozenset({"remove-item", "ri", "rm", "del", "erase", "rd", "rmdir"})
+# .NET deletes: `$_.Delete()`, `[IO.Directory]::Delete(p, $true)`, `[IO.File]::Delete(p)`, `...DeleteDirectory(p)`.
+_PS_METHOD_DELETE = re.compile(r"(?:\.|::)\s*Delete\w*\s*\(", re.IGNORECASE)
+_PS_DELETE_WORD = re.compile(r"(?<![\w-])(?:Remove-Item|ri|rm|del|erase|rd|rmdir)(?![\w-])|(?:\.|::)\s*Delete\w*\s*\(",
+                             re.IGNORECASE)
+_PS_RUNS_TEXT = re.compile(r"(?<![\w-])(?:Invoke-Expression|iex)(?![\w-])|&|\.Invoke\s*\(|\[\s*scriptblock\s*\]",
+                           re.IGNORECASE)
+# The pipeline object a delete may name: the item the listing found, as itself or its path.
+_PS_PIPELINE_ITEM = frozenset({"$_", "$psitem", "$_.fullname", "$psitem.fullname", "$_.pspath", "$psitem.pspath"})
+_PS_ITEM_METHOD_DELETE = re.compile(r"\$(?:_|psitem)\s*\.\s*Delete\s*\(\s*(?:\$true|\$false)?\s*\)", re.IGNORECASE)
+# Remove-Item parameters: the ones naming what is deleted, the ones taking another value, and switches.
+_RI_PATH_PARAMETERS = ("-path", "-literalpath")
+_RI_VALUE_PARAMETERS = ("-filter", "-include", "-exclude", "-erroraction", "-warningaction", "-informationaction")
+_RI_SWITCHES = ("-recurse", "-force", "-whatif", "-confirm", "-verbose", "-debug")
+_RI_ALIASES = {"-lp": "-literalpath", "-pspath": "-literalpath", "-ea": "-erroraction", "-wa": "-warningaction",
+               "-infa": "-informationaction", "-vb": "-verbose", "-db": "-debug", "-wi": "-whatif", "-cf": "-confirm"}
+# Stages that pass the listed items on unchanged. Select-Object only with these: -Property and -ExpandProperty make
+# new objects, and a calculated property can name any path.
+_PS_FILTERS = frozenset({"where-object", "where", "?"})
+_PS_SORTS = frozenset({"sort-object", "sort"})
+_PS_SELECTS = frozenset({"select-object", "select"})
+_PS_SELECT_COUNTS = frozenset({"-first", "-last", "-skip", "-skiplast", "-index"})
+_PS_FOREACH = frozenset({"foreach-object", "%", "foreach"})
 _PS_LISTING_WORD = re.compile(r"(?<![\w-])(?:Get-ChildItem|gci|ls|dir|Get-Item|gi)(?![\w-])", re.IGNORECASE)
 _PS_LISTING_START = re.compile(r"\s*(?:Get-ChildItem|gci|ls|dir)(?![\w-])", re.IGNORECASE)
 # Get-ChildItem parameters: the ones naming the listed folder, the ones taking another value, and switches.
@@ -1208,20 +1234,157 @@ def _ps_piped_delete(command: str) -> bool:
     _head, pipe, tail = command.partition("|")
     if not pipe:
         return False
-    if re.search(r"(?<![\w-])(?:Invoke-Expression|iex)(?![\w-])|&|\.Invoke\s*\(", tail, re.IGNORECASE):
+    if _PS_RUNS_TEXT.search(tail):
         return True
     return bool(_PS_DELETE_WORD.search(re.sub(r"'[^']*'|\"[^\"]*\"", "''", tail)))
 
 
+def _ps_method_delete(command: str) -> bool:
+    """Whether a PowerShell command calls a .NET delete. Text a data command only prints or writes (`Write-Output
+    '$_.Delete()'`) is blanked first, as the write check does; where that split is unsure the raw text counts (#535)."""
+    text = _blank_non_syntax(command, True)
+    return bool(_PS_METHOD_DELETE.search(command if text is None else text))
+
+
+def _ps_stages(text: str) -> list[str] | None:
+    """`text` split at its top-level pipes (not inside quotes, braces or parentheses); None when one is left open."""
+    stages: list[str] = []
+    depth = start = i = 0
+    quote = ""
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == quote and text[i + 1:i + 2] == quote:
+                i += 1  # a doubled quote is a literal quote
+            elif ch == quote:
+                quote = ""
+            elif ch == "`" and quote == '"':
+                i += 1
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "`":
+            i += 1
+        elif ch in "({[":
+            depth += 1
+        elif ch in ")}]":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif ch == "|" and not depth:
+            stages.append(text[start:i].strip())
+            start = i + 1
+        i += 1
+    if quote or depth:
+        return None
+    return [*stages, text[start:].strip()]
+
+
+def _ps_parameter(flag: str, aliases: Mapping[str, str], *groups: tuple[str, ...]) -> str | None:
+    """A cmdlet parameter's full name from any unique prefix or alias; None when unknown or ambiguous."""
+    flag = flag.casefold()
+    if flag in aliases:
+        return aliases[flag]
+    names = [name for group in groups for name in group if name.startswith(flag)]
+    return names[0] if len(names) == 1 or flag in names else None
+
+
+def _ps_item_delete(text: str, *, piped: bool) -> bool:
+    """Whether `text` deletes only the pipeline object: `$_.Delete()`/`$_.Delete($true)`, or one Remove-Item (any
+    alias) whose every path is the pipeline object. With no path it deletes its pipeline input, which counts only
+    where it is a pipeline stage (`piped`)."""
+    if _PS_ITEM_METHOD_DELETE.fullmatch(text.strip()):
+        return True
+    if any(char in text for char in "(){}[]@,;&`\"'") or _PS_METHOD_DELETE.search(text):
+        return False  # only the plain forms are read; `$(...)`, arrays and quoted paths are not
+    words = text.split()
+    name = words[0].casefold().rsplit("\\", 1)[-1] if words else ""
+    if name not in _PS_DELETE_CMDLETS or (words[0].count("\\") and
+                                          words[0].casefold().rsplit("\\", 1)[0] != "microsoft.powershell.management"):
+        return False
+    paths: list[str] = []
+    i = 1
+    while i < len(words):
+        word = words[i]
+        if not word.startswith("-") or word == "-":
+            paths.append(word)
+            i += 1
+            continue
+        flag, colon, attached = word.partition(":")
+        parameter = _ps_parameter(flag, _RI_ALIASES, _RI_PATH_PARAMETERS, _RI_VALUE_PARAMETERS, _RI_SWITCHES)
+        if parameter is None:
+            return False
+        if parameter in _RI_SWITCHES:
+            if colon and attached.casefold() not in {"$true", "$false"}:
+                return False
+            i += 1
+            continue
+        value = attached if colon else (words[i + 1] if i + 1 < len(words) else None)
+        if not value:
+            return False
+        if parameter in _RI_PATH_PARAMETERS:
+            paths.append(value)
+        elif "$" in value:
+            return False
+        i += 1 if colon else 2
+    if not paths:
+        return piped
+    return all(path.casefold() in _PS_PIPELINE_ITEM for path in paths)
+
+
+def _ps_passes_items_on(stage: str) -> bool:
+    """Whether a stage between the listing and the delete passes the listed items on unchanged: Where-Object (a
+    script block, or a property filter) with no delete inside, Sort-Object by property, and Select-Object counts."""
+    words = stage.split()
+    name = words[0].casefold() if words else ""
+    rest = stage[len(words[0]):].strip() if words else ""
+    blanked = re.sub(r"'[^']*'|\"[^\"]*\"", "''", rest)
+    if _PS_DELETE_WORD.search(blanked) or _PS_RUNS_TEXT.search(rest):
+        return False
+    if name in _PS_FILTERS:
+        return bool(rest) and (re.fullmatch(r"\{.*\}", rest, re.DOTALL) is not None
+                               or not any(char in blanked for char in "(){}$@"))
+    if name in _PS_SORTS:
+        return not any(char in blanked for char in "(){}$@")
+    if name in _PS_SELECTS:
+        args = words[1:]
+        return (len(args) % 2 == 0 and all(_ps_parameter(flag, {}, tuple(_PS_SELECT_COUNTS)) is not None
+                                           and count.isdigit() for flag, count in zip(args[::2], args[1::2])))
+    return False
+
+
+def _ps_pipeline_deletes_only_items(tail: str) -> bool:
+    """Whether what follows a listing's first pipe deletes the listed items and nothing else (#533).
+
+    The stages before the last must pass the items on unchanged (`_ps_passes_items_on`), and the last must delete the
+    pipeline object: Remove-Item with no path or with `$_`/`$PSItem` (`.FullName`, `.PSPath`), or ForEach-Object whose
+    script block is exactly one such delete or `$_.Delete(...)`. A delete of any other path, a stage that makes new
+    objects (`% { 'C:/x' }`, a calculated property) and text run as code are not read, so they ask.
+    """
+    stages = _ps_stages(tail)
+    if not stages or not all(stages):
+        return False
+    *middle, last = stages
+    if not all(_ps_passes_items_on(stage) for stage in middle):
+        return False
+    words = last.split()
+    if words and words[0].casefold() in _PS_FOREACH:
+        block = last[len(words[0]):].strip()
+        if not (block.startswith("{") and block.endswith("}") and _ps_stages(block[1:-1]) == [block[1:-1].strip()]):
+            return False
+        return _ps_item_delete(block[1:-1], piped=False)
+    return _ps_item_delete(last, piped=True)
+
+
 def _ps_piped_delete_inside_step_tmp(command: str, workdir: str | None) -> bool:
     """A listing piped into a delete meets the `rm -r` rule: one pipeline from one Get-ChildItem whose every folder is
-    literal and below `.tmp`. No folder means the step folder itself; `-FollowSymlink` walks out through links."""
+    literal and below `.tmp`, and whose later stages delete only the items it lists. No folder means the step folder
+    itself; `-FollowSymlink` walks out through links."""
     if not workdir or re.search(r"[;\n\r]|&&|\|\|", command):
         return False
     head, _pipe, tail = command.partition("|")
     start = _PS_LISTING_START.match(head)
-    if not start or _PS_LISTING_WORD.search(tail):
-        return False  # the items come from elsewhere, or a later stage lists another folder
+    if not start or _PS_LISTING_WORD.search(tail) or not _ps_pipeline_deletes_only_items(tail):
+        return False  # the items come from elsewhere, a later stage lists another folder, or deletes another path
     words = head[start.end():].split()
     paths: list[str] = []
     i = 0
@@ -1265,24 +1428,161 @@ def _simple_command_words(command: str, start: int) -> tuple[list[str], re.Match
     return command[start:end.start() if end else len(command)].split(), end
 
 
+_BRACE_EXPANSION = re.compile(r"\{[^{}]*(?:,|\.\.)[^{}]*\}")
+
+
+def _rm_word(word: str) -> tuple[str, bool]:
+    """A word read lexically after `rm`: its leading literal text, and whether an expansion follows that text.
+
+    `$'-rf'`, `"$OPT"`, `` `cmd` `` and a brace list (`{-r,x}`) are expansions; a glob is not (it expands to names). A
+    quote left open is the lexical scan's own edge (`sh -c 'rm x'`), not more of the word (#533).
+    """
+    value: list[str] = []
+    i = 0
+    while i < len(word):
+        ch = word[i]
+        if ch == "'":
+            end = word.find("'", i + 1)
+            if end < 0:
+                break
+            value.append(word[i + 1:end])
+            i = end + 1
+        elif ch == '"':
+            j = i + 1
+            while j < len(word) and word[j] != '"':
+                if word[j] in "$`":
+                    return "".join(value), True
+                if word[j] == "\\" and j + 1 < len(word):
+                    j += 1
+                value.append(word[j])
+                j += 1
+            if j >= len(word):
+                break
+            i = j + 1
+        elif ch in "$`" or (ch == "{" and _BRACE_EXPANSION.match(word, i)):
+            return "".join(value), True
+        elif ch == "\\" and i + 1 < len(word):
+            value.append(word[i + 1])
+            i += 2
+        else:
+            value.append(ch)
+            i += 1
+    return "".join(value), False
+
+
+# Programs that run the words after them as a command line, so an `rm` there is a real rm (#535 follow-up).
+_RUNS_COMMAND_LINE = _EXECUTES_ARGUMENTS | frozenset({
+    "command", "builtin", "stdbuf", "setsid", "doas", "busybox", "ionice", "taskset", "chrt", "flock", "srun",
+    "mpirun", "mpiexec", "unshare", "nsenter", "chroot", "runuser", "strace", "ltrace", "valgrind", "unbuffer"})
+# Where a simple command can start, read lexically. An opening quote right before the word counts too (`_rm_runs`).
+_COMMAND_START = frozenset(";|&\n(`{'\"")
+_REDIRECTION_WORD = re.compile(r"(?:\d+|&)?(?:>>?|<|>&|<&|&>>?)(.*)")
+_GIT_VALUE_OPTIONS = frozenset({"-c", "--namespace", "--super-prefix", "--config-env"})
+
+
+def _git_rm_reaches_another_tree(options: list[str], assignments: list[str]) -> bool | None:
+    """`git <options> rm`: True when the options or the environment may point git at another tree (`-C`, `--git-dir`,
+    `--work-tree`, `core.worktree`, GIT_DIR/GIT_WORK_TREE) or a computed word may, False when it removes files in the
+    current tree. None when `rm` is not the subcommand but another one's argument (`git log --grep rm`)."""
+    if any(re.match(r"GIT_(?:DIR|WORK_TREE)=", word) for word in assignments) or \
+            any("core.worktree" in _bare(word).casefold() for word in options):
+        return True
+    k = 0
+    while k < len(options):
+        word, value = options[k], _bare(options[k])
+        if "$" in word or "`" in word:
+            return True
+        if not value.startswith("-"):
+            return None
+        name = value.split("=", 1)[0]
+        if name in {"-C", "--git-dir", "--work-tree"} or value.startswith("-C"):
+            return True
+        k += 2 if name in _GIT_VALUE_OPTIONS and "=" not in value else 1
+    return False
+
+
+def _rm_runs(command: str, match: re.Match) -> str:
+    """How a lexical `rm` word runs: "rm" for a filesystem rm, "elsewhere" for a `git rm` that may reach another tree,
+    "" for another program's argument (`docker rm "$id"`, `git rm -r x` in the current tree).
+
+    The rm is a filesystem rm when it starts a simple command (after assignments, keywords and redirections), or
+    follows a computed program or one that runs a command line (`sudo`, `xargs`, `find`, `sh`, ...).
+    """
+    start = match.start()
+    while start and not command[start - 1].isspace() and command[start - 1] not in _COMMAND_START:
+        start -= 1
+    name = re.split(r"[\\/]", _bare(command[start:match.end()]))[-1].lstrip("!").casefold()
+    if name not in {"rm", "rm.exe"}:
+        return ""  # `X=rm`: an assignment's value
+    if start and command[start - 1] in "'\"":
+        return "rm"  # it opens quoted text, which may be run (`sh -c 'rm ..'`)
+    head = start
+    while head and command[head - 1] not in _COMMAND_START - {"'", '"'}:
+        head -= 1
+    words: list[str] = []
+    assignments: list[str] = []
+    before = command[head:start].split()
+    k = 0
+    while k < len(before):
+        word = before[k]
+        redirection = _REDIRECTION_WORD.fullmatch(word)
+        if redirection:
+            k += 1 if redirection.group(1) else 2
+        elif not words and _BASH_ASSIGNMENT.match(word):
+            assignments.append(word)
+            k += 1
+        elif not words and word in _BASH_KEYWORDS:
+            k += 1
+        else:
+            words.append(word)
+            k += 1
+    if not words:
+        return "rm"
+    program = re.split(r"[\\/]", _bare(words[0]))[-1].casefold()
+    program = program[:-4] if program.endswith(".exe") else program
+    if "$" in words[0] or "`" in words[0] or program in _RUNS_COMMAND_LINE:
+        return "rm"
+    if program == "git" and _git_rm_reaches_another_tree(words[1:], assignments):
+        return "elsewhere"
+    return ""
+
+
 def _recursive_rm(command: str) -> bool:
-    """Whether a bash `rm` asks for recursion in any of its option words (#17).
+    """Whether a bash `rm` asks for recursion in any of its option words (#17), or may (#533).
 
     GNU rm reads options anywhere before `--`, so `rm -f -r`, `rm -v -rf`, `rm --recursive` and `rm x -r` are all
     recursive; the pattern in settings sees only the first cluster. The scan is lexical, as that pattern is: a
-    quoted `sh -c 'rm -f -r x'` counts too.
+    quoted `sh -c 'rm -f -r x'` counts too, but `docker rm` and `git rm` are not filesystem rms (`_rm_runs`). A word
+    the gate cannot read as literal text may be an option, `-r` among them: one that starts with an expansion
+    (`$'-rf'`, `"$OPT"`) or an option followed by one (`-f"$X"`) counts as recursive, except one double-quoted word
+    that is the only operand (`rm -f "$f"`): one word is one option cluster with nothing to delete, or one file.
+    After `--` every word is a target. A `git rm` that may reach another tree counts too.
     """
     for match in _BASH_RM_WORD.finditer(command):
+        runs = _rm_runs(command, match)
+        if runs == "elsewhere":
+            return True
+        if runs != "rm":
+            continue
+        computed: list[str] = []
+        operands = 0
         for word in _simple_command_words(command, match.end())[0]:
-            value = _bare(word)
-            if value == "--":
+            value, expands = _rm_word(word)
+            if expands and (not value or value.startswith("-")):
+                computed.append(word)
+            elif value == "--":
                 break
-            if value.startswith("--"):
+            elif value.startswith("--"):
                 flag = value.split("=", 1)[0]
                 if len(flag) > 2 and "--recursive".startswith(flag):
                     return True
-            elif value.startswith("-") and any(letter in "rR" for letter in value[1:]):
-                return True
+            elif value.startswith("-") and len(value) > 1:
+                if any(letter in "rR" for letter in value[1:]):
+                    return True
+            elif value:
+                operands += 1
+        if computed and not (len(computed) == 1 and not operands and re.fullmatch(r'"[^"]*"', computed[0])):
+            return True
     return False
 
 
@@ -1290,18 +1590,57 @@ def _recursive_rm(command: str) -> bool:
 class _FindDelete:
     starts: tuple[str, ...]  # raw words; none means `.`
     follows_links: bool
+    targets: tuple[str, ...] = ()  # literal paths an `-exec rm` payload names besides the found item `{}`
+    unreadable: bool = False  # a payload that may delete what the gate cannot read (#533)
+
+
+_FOUND = "\x00found"  # find's `{}` while a payload is read: the found path, never an expansion
+
+
+def _find_payload(action: str, words: list[str]) -> tuple[str, list[str]]:
+    """What one `-exec`/`-execdir`/`-ok`/`-okdir` payload deletes: ("none" | "delete" | "unreadable", other targets).
+
+    The payload is read as one literal simple command. A computed program (`$CMD`, `$'rm'`) may be rm, and a program
+    that runs other code (`sh -c '...'`, `xargs rm`, `env rm`) with a delete word in it hides what it deletes: both
+    are unreadable. A literal rm/unlink deletes `{}` and its other targets, which must be literal too; `-execdir`
+    runs in each found item's folder, so there only `{}` is read (#533).
+    """
+    literals = [_literal_shell_word(word.replace("{}", _FOUND), False) for word in words]
+    if not literals:
+        return "none", []
+    if literals[0] is None:
+        return "unreadable", []
+    program = re.split(r"[\\/]", literals[0])[-1].casefold()
+    program = program[:-4] if program.endswith(".exe") else program
+    if program not in {"rm", "unlink"}:
+        return ("unreadable" if any(_BASH_DELETE_WORD.search(word) for word in words) else "none"), []
+    if any(value is None for value in literals):
+        return "unreadable", []
+    targets: list[str] = []
+    after_options = False
+    for value in literals[1:]:
+        if not after_options and value == "--":
+            after_options = True
+        elif not after_options and value.startswith("-") and value != "-":
+            continue
+        elif value != _FOUND:
+            if _FOUND in str(value) or action in {"-execdir", "-okdir"}:
+                return "unreadable", []
+            targets.append(str(value))
+    return "delete", targets
 
 
 def _find_deletes(command: str) -> list[_FindDelete]:
     """Each bash find that deletes what it finds (#17).
 
-    A find deletes with `-delete`, with `-exec`/`-execdir`/`-ok`/`-okdir` running rm or unlink (also inside a
-    quoted `sh -c` body), or when its output is piped to `xargs ... rm`.
+    A find deletes with `-delete`, with `-exec`/`-execdir`/`-ok`/`-okdir` running rm or unlink, or when its output
+    is piped to `xargs ... rm`. A payload the gate cannot read may delete anything, so it counts too (#533).
     """
     found: list[_FindDelete] = []
     for match in _BASH_FIND_WORD.finditer(command):
         words, end = _simple_command_words(command, match.end())
-        deletes = follows = False
+        deletes = follows = unreadable = False
+        targets: list[str] = []
         for index, word in enumerate(words):
             value = _bare(word).rstrip(")")  # `$(find . -delete)`
             if value == "-delete":
@@ -1311,7 +1650,10 @@ def _find_deletes(command: str) -> list[_FindDelete]:
             elif value in _FIND_EXEC:
                 tail = words[index + 1:]
                 close = next((k for k, w in enumerate(tail) if _bare(w) in {";", "+"}), len(tail))
-                deletes = deletes or any(_BASH_DELETE_WORD.search(w) for w in tail[:close])
+                kind, named = _find_payload(value, tail[:close])
+                deletes = deletes or kind != "none"
+                unreadable = unreadable or kind == "unreadable"
+                targets += named
         if not deletes and end and end.group() == "|":
             piped = re.split(r"[;&\n]|\|\|", command[end.end():], maxsplit=1)[0]
             deletes = bool(re.search(r"(?<![\w.-])xargs\b", piped) and _BASH_DELETE_WORD.search(piped))
@@ -1326,7 +1668,7 @@ def _find_deletes(command: str) -> list[_FindDelete]:
         while k < len(words) and not _bare(words[k]).startswith(("-", "(", "!", ")", ",")):
             starts.append(words[k])
             k += 1
-        found.append(_FindDelete(tuple(starts), follows))
+        found.append(_FindDelete(tuple(starts), follows, tuple(targets), unreadable))
     return found
 
 
@@ -1334,9 +1676,10 @@ def _find_delete_inside_step_tmp(command: str, find: _FindDelete, workdir: str |
     """A deleting find meets the rule `rm -r` meets: one simple command, every start literal and below `.tmp`.
 
     No start means `.`, the step folder itself. A pipe (`| xargs rm`), a redirection, `cd` or a substitution makes it
-    more than one simple command, as it does for rm; `-L` walks through links to wherever they lead.
+    more than one simple command, as it does for rm; `-L` walks through links to wherever they lead. An `-exec rm`
+    payload's own targets meet the same rule, and a payload the gate cannot read never passes (#533).
     """
-    if not workdir or find.follows_links:
+    if not workdir or find.follows_links or find.unreadable:
         return False
     plain = _FIND_TEXT.sub("", command)
     if any(char in plain for char in ";|&()<>`\r\n") or not _BASH_FIND_WORD.match(plain.lstrip()):
@@ -1344,7 +1687,7 @@ def _find_delete_inside_step_tmp(command: str, find: _FindDelete, workdir: str |
     starts = [_literal_shell_word(raw, False) for raw in find.starts] or ["."]
     if any(start is None for start in starts):
         return False
-    return _targets_below_step_tmp([str(start) for start in starts], False, workdir)
+    return _targets_below_step_tmp([*(str(start) for start in starts), *find.targets], False, workdir)
 
 
 @dataclass
@@ -1356,13 +1699,47 @@ class Decision:
     updated_input: dict | None = None
 
 
+def _windows_normpath(path: str) -> str:
+    """`ntpath.normpath` in linear time: the running stdlib's own drive/root split, then one pass over components.
+
+    CPython's pure-Python `ntpath.normpath` (Linux and other non-Windows hosts; Windows has a native one) deletes each
+    empty, `.` and `x\\..` component from a list in place, so a long separator or dot run costs quadratic time
+    (#868: a 131,072-character separator candidate). The prefix still comes from the stdlib, so UNC, device and drive
+    spellings normalize as before; the component rules are the stdlib's, applied with a stack.
+    """
+    splitroot = getattr(ntpath, "splitroot", None)
+    if splitroot is not None:  # Python 3.12+
+        path = path.replace("/", "\\")
+        drive, root, tail = splitroot(path)
+    else:  # Python 3.10/3.11: device and literal paths come back unchanged; leading separators make one root
+        if path.startswith(("\\\\.\\", "\\\\?\\")):
+            return ntpath.normpath(path)
+        path = path.replace("/", "\\")
+        drive, tail = ntpath.splitdrive(path)
+        root = "\\" if tail.startswith("\\") else ""
+        tail = tail.lstrip("\\")
+    comps: list[str] = []
+    for comp in tail.split("\\"):
+        if not comp or comp == ".":
+            continue
+        if comp == "..":
+            if comps and comps[-1] != "..":
+                comps.pop()
+                continue
+            if not comps and root:
+                continue
+        comps.append(comp)
+    prefix = drive + root
+    return prefix + "\\".join(comps) if prefix or comps else "."
+
+
 def _norm(p: str, *, expand_vars: bool = True) -> str:
     """Lexically normalize both POSIX and Windows paths, regardless of the host OS."""
     p = os.path.expanduser(p)
     if expand_vars:
         p = os.path.expandvars(p)
     if re.match(r"^[A-Za-z]:[/\\]", p) or p.startswith(("\\\\", "//")):
-        return ntpath.normpath(p).replace("\\", "/").casefold()
+        return _windows_normpath(p).replace("\\", "/").casefold()
     normalized = posixpath.normpath(p.replace("\\", "/"))
     return normalized.casefold() if os.name == "nt" else normalized
 
@@ -1391,6 +1768,8 @@ class _PathTextScan:
 _URI_PREFIX = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*)://")
 _TOKEN_BREAKS = frozenset(" \t\r\n'\"`|;&<>")
 _CHUNK_BREAKS = frozenset("=<>(),")
+_CHUNK_END = re.compile(r"[=<>(),]")
+_COLON_RUN_END = re.compile(r"[^:]")
 _SCHEME_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+.-")
 
 
@@ -1416,9 +1795,9 @@ def _token_candidates(token: str) -> Iterator[str]:
             chunk_start += 1
         if chunk_start >= length:
             break
-        chunk_end = chunk_start
-        while chunk_end < length and token[chunk_end] not in _CHUNK_BREAKS:
-            chunk_end += 1
+        # Fixed character classes scan long runs in C, within the same bounds.
+        boundary = _CHUNK_END.search(token, chunk_start, length)
+        chunk_end = boundary.start() if boundary else length
         left, right = chunk_start, chunk_end
         while left < right and token[left] in "[]{}":
             left += 1
@@ -1448,9 +1827,8 @@ def _token_candidates(token: str) -> Iterator[str]:
                 break
             if colon > part_start:
                 yield token[part_start:colon]
-            part_start = colon + 1
-            while part_start < right and token[part_start] == ":":
-                part_start += 1
+            boundary = _COLON_RUN_END.search(token, colon + 1, right)
+            part_start = boundary.start() if boundary else right
         chunk_start = chunk_end + 1
 
 
@@ -1534,6 +1912,43 @@ def _candidate_paths(s: str) -> Iterator[str]:
 
 def restricted_paths(policy: PolicySettings) -> list[str]:
     return [_norm(z.path) for z in policy.data_zones if z.level == "restricted"]
+
+
+def non_public_paths(policy: PolicySettings) -> list[str]:
+    """Normalized roots whose records must not be copied into a staff conversation."""
+    return [_norm(z.path) for z in policy.data_zones if z.level in {"internal", "restricted"}]
+
+
+def _zone_hit(tool_input: dict[str, Any], policy: PolicySettings, levels: set[str],
+              workdir: str | None = None):
+    zones = [zone.path for zone in policy.data_zones if zone.level in levels]
+    roots = [_norm(path) for path in zones]
+    return touches(tool_input, roots, workdir=workdir) or touches_resolved(
+        tool_input, zones, workdir=workdir,
+    )
+
+
+def internal_row_output_hit(tool_name: str, tool_input: dict[str, Any], policy: PolicySettings,
+                            workdir: str | None = None) -> bool:
+    """Whether an approval card should warn about non-public source-row output."""
+    return internal_output_classification(tool_name, tool_input, policy, workdir) == "rows"
+
+
+def internal_output_classification(tool_name: str, tool_input: dict[str, Any], policy: PolicySettings,
+                                   workdir: str | None = None) -> str | None:
+    """Advisory card label for a non-public read; never decides allow/ask/deny."""
+    if not _zone_hit(tool_input, policy, {"internal", "restricted"}, workdir):
+        return None
+    if tool_name == "Glob":
+        return "summary"
+    if tool_name in {"Read", "Grep"}:
+        # A first line may be a JSONL record or a headerless table row. Ambiguity stays on the row side.
+        return "rows"
+    if tool_name in SHELL_TOOLS:
+        from .tool_command import command_prints_rows
+        return ("rows" if command_prints_rows(str(tool_input.get("command") or ""),
+                                               powershell=tool_name == "PowerShell") else "summary")
+    return None
 
 
 def _strings(obj: Any, path_field: bool = False) -> Iterator[tuple[str, bool]]:
@@ -1633,9 +2048,36 @@ class Unresolved(str):
     path_field: bool = False
 
 
+def _collapse_separators(p: str, *, nt: bool | None = None) -> str:
+    """`p` with every run of `/` after its first one or two made a single `/`, on a POSIX host (#1158).
+
+    CPython's POSIX `os.path.realpath` copies the rest of the path at every separator, so a run of 65,536 of them costs
+    the square of its length (0.03 s, then 0.12, 0.44, 1.75 s for each doubling; 3.10 and 3.12 alike). A run means what
+    one separator means to `realpath`. A leading pair is kept, the one place a pair differs from a single separator
+    (`//host` is implementation-defined); three or more leading separators are one, as `normpath` reads them. A Windows
+    path is returned as written: its realpath has no such cost, and a UNC prefix with a missing share reads differently
+    when its separators are merged. `nt` is the host's own unless a test names one."""
+    if os.name == "nt" if nt is None else nt:
+        return p
+    lead = len(p) - len(p.lstrip("/"))
+    head = p[:lead] if lead == 2 else p[:1] if lead else ""
+    return head + _SEPARATOR_RUN.sub("/", p[lead:])
+
+
+_SEPARATOR_RUN = re.compile(r"/{2,}")
+
+
+def _realpath(p: str | os.PathLike) -> str:
+    """`os.path.realpath` of `p` with its separator runs merged first: the same path, in time linear in its length.
+
+    Takes what `os.path.realpath` takes: a `str`, `bytes` or any path-like (a `Path` root reaches `_root_rules`)."""
+    text = os.fspath(p)
+    return os.path.realpath(text if isinstance(text, bytes) else _collapse_separators(text))
+
+
 def _real(p: str) -> str | None:
     try:
-        return _norm(os.path.realpath(os.path.expandvars(os.path.expanduser(p))))
+        return _norm(_realpath(os.path.expandvars(os.path.expanduser(p))))
     except (OSError, ValueError):
         return None
 
@@ -1741,10 +2183,16 @@ def claude_settings(policy: PolicySettings) -> dict:
     Absolute paths in permission rules take a leading `//` (e.g. `Read(//data/cohort/**)`).
     """
     deny: list[str] = []
+    ask: list[str] = []
     for p in restricted_paths(policy):
         for tool in ("Read", "Edit", "Write"):
             deny.append(f"{tool}(/{claude_rule_path(p)}/**)")
-    return {"permissions": {"deny": deny}} if deny else {}
+    for zone in policy.data_zones:
+        if zone.level == "internal":
+            for tool in ("Read", "Grep"):
+                ask.append(f"{tool}(/{claude_rule_path(zone.path)}/**)")
+    permissions = {key: value for key, value in (("deny", deny), ("ask", ask)) if value}
+    return {"permissions": permissions} if permissions else {}
 
 
 def claude_deny_links(settings: dict, links: Iterable[str]) -> dict:
@@ -1763,8 +2211,19 @@ def claude_deny_links(settings: dict, links: Iterable[str]) -> dict:
     return {**settings, "permissions": permissions}
 
 
+def claude_ask_internal_links(settings: dict, links: Iterable[str]) -> dict:
+    """Read/Grep ask rules for aliases inside an open folder that lead into an internal zone (#725)."""
+    rules = [f"{tool}(/{claude_rule_path(link)}{tail})" for link in links
+             for tool in ("Read", "Grep") for tail in ("", "/**")]
+    if not rules:
+        return settings
+    permissions = dict(settings.get("permissions") or {})
+    permissions["ask"] = list(dict.fromkeys([*(permissions.get("ask") or []), *rules]))
+    return {**settings, "permissions": permissions}
+
+
 def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None = None,
-                        open_reads: Iterable[str] = ()) -> dict:
+                        open_reads: Iterable[str] = (), write_roots: Iterable[str] = ()) -> dict:
     """Read/Edit/Write deny rules for PI personal paths (policy.private_paths), merged into `settings`, plus
     Bash/PowerShell `ask` rules naming each path.
 
@@ -1778,6 +2237,11 @@ def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None =
     keeps Edit/Write on the whole path, but Read only on its top-level entries off the way to that folder
     (`closed_entries`): a deny rule outranks every allow rule, so a Read deny on the whole path would close it.
     Other tasks' project folders beside it get no rule; the gate refuses reads of them.
+
+    A holder that also holds one of the task's `write_roots` (the workspace root, which the artifact contract marks
+    private around the task's own folder) cannot take an Edit/Write deny on the whole path: a deny outranks the
+    allow rule for the task's own `outputs/`, so a step could write nothing (#946, trial 2026-10-25 attempt 11).
+    There the Edit/Write deny goes on the same top-level entries off the way to the task's folders as the Read deny.
     """
     from .private_paths import closed_entries, holds_open_read, shell_needles
 
@@ -1790,13 +2254,23 @@ def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None =
         except ValueError:
             continue
         ruled.append(p)
-    holders = [p for p in ruled if holds_open_read(p, open_reads)]
+    # Both spellings of each writable folder: with a symlinked or junctioned workspace root the private path is the
+    # real root while the task's folder keeps the alias spelling, and neither alone lies under the other.
+    write_roots = list(dict.fromkeys(
+        spelling for w in write_roots if w
+        for spelling in (str(w), os.path.abspath(str(w)), _realpath(str(w)))))
+    holders = [p for p in ruled if holds_open_read(p, [*open_reads, *write_roots])]
     merged = claude_deny_links(settings, [p for p in ruled if p not in holders])
     if holders:
-        rules = [f"{tool}(/{claude_rule_path(p)}{tail})" for p in holders
+        writable = [p for p in holders if holds_open_read(p, write_roots)]
+        rules = [f"{tool}(/{claude_rule_path(p)}{tail})" for p in holders if p not in writable
                  for tool in ("Edit", "Write") for tail in ("", "/**")]
+        rules += [f"{tool}(/{claude_rule_path(entry)}{tail})" for p in writable
+                  for entry in closed_entries(p, [*open_reads, *write_roots])
+                  for tool in ("Edit", "Write") for tail in ("", "/**")]
         rules += [f"Read(/{claude_rule_path(entry)}{tail})" for p in holders
-                  for entry in closed_entries(p, open_reads) for tail in ("", "/**")]
+                  for entry in closed_entries(p, [*open_reads, *(w for w in write_roots if p in writable)])
+                  for tail in ("", "/**")]
         permissions = dict(merged.get("permissions") or {})
         permissions["deny"] = list(dict.fromkeys([*(permissions.get("deny") or []), *rules]))
         merged = {**merged, "permissions": permissions}
@@ -1830,7 +2304,7 @@ def rule_tool(rule: str) -> str:
 def _root_rules(tool: str, roots: Iterable[str | os.PathLike]) -> list[str]:
     rules = []
     for root in roots:
-        for resolve in (os.path.abspath, os.path.realpath):
+        for resolve in (os.path.abspath, _realpath):
             try:
                 rules.append(f"{tool}(/{claude_rule_path(resolve(root))}/**)")
             except (OSError, ValueError):
@@ -1857,8 +2331,10 @@ def claude_allowed_tools(tools: Iterable[str], write_roots: Iterable[str | os.Pa
     bare `Read` read a junction from the workdir into another folder, `Read(//workdir/**)` sent it to the
     permission prompt, and the same rule still pre-approved Grep and Glob inside the workdir.
 
-    Shared environments also leave every shell call to the gate: `Bash(ls *)` matches a following install
-    joined with `&&`, so narrowing only installer prefixes still skips the installation check.
+    Shared environments also leave every shell call to the gate: a command that a pre-approved prefix matches
+    (`Bash(python *)` for `python -m pip install`) never reaches the permission prompt, so the installation check
+    would not see it. Claude Code 2.1.310 splits an `&&` chain and checks each command against the rules (#1163), so
+    `Bash(ls *)` does not carry a following install through; the reason is the installer's own prefix.
     """
     tools = list(tools)
     if shared_environment_gate:
@@ -1890,7 +2366,7 @@ def _git_bash_tmp(environ: Mapping[str, str]) -> str | None:
             return None
         if os.name == "nt":  # 8.3 names and junctions, as the workdir was resolved
             try:
-                value = os.path.realpath(value)
+                value = _realpath(value)
             except (OSError, ValueError):
                 return None
         found.add(ntpath.normpath(value))
@@ -1952,23 +2428,89 @@ def evaluate_tool(
     private_enabled: bool = False,
     home: str | None = None,
     private_open_reads: Iterable[str] = (),
+    read_only: bool = False,
 ) -> Decision:
     allowed_roots = list(allowed_roots)
+    if tool_name in SHELL_TOOLS:
+        from .process_stop_guard import DENIAL, broad_process_stop
+        if broad_process_stop(str(tool_input.get("command", ""))):
+            return Decision("deny", DENIAL)
+        from .detached_command import DENIAL as DETACHED_DENIAL, detached
+        if detached(tool_name, tool_input.get("command")):  # #675: no card, and the answer names the job tool
+            return Decision("deny", DETACHED_DENIAL)
     judged = claude_write_input(tool_name, tool_input, workdir, allowed_roots, windows=windows, environ=environ)
     # Every check reads a Git Bash command with its drive paths spelled the Windows way, zones and private paths
     # included: converting only the write targets let `cp /c/<zone>/raw /c/<root>/out` through (PR #364 review).
     checked = git_bash_command(tool_name, judged, allowed_roots, windows)
-    decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir)
     # On with no active path (PR #327) still runs the registry check; a non-empty list alone also means on.
     private_paths = list(private_paths)
-    private = (_private_decision(tool_name, checked, private_paths, workdir, home, environ, list(private_open_reads))
+    private_open_reads = list(private_open_reads)
+    closed_zones = [z.path for z in policy.data_zones if z.level == 'restricted']
+    from .workspace_commands import workspace_command_reason
+    grammar = None
+    if tool_name in SHELL_TOOLS:
+        from .private_paths import claude_project_slug
+        reads = [p for p in private_open_reads if not (Path(p).parent.name == 'projects' and
+                 Path(p).name == claude_project_slug(os.path.abspath(workdir or '.')))]
+        grammar = workspace_command_reason(str(checked.get('command', '')), workdir, private_paths,
+                    powershell=tool_name == 'PowerShell', read_roots=reads, forbidden=closed_zones,
+                    environ=environ)
+    scoped = bool(grammar and grammar.startswith('문법 안:'))
+    decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir, environ=environ,
+                              windows=windows, workspace_operation=bool(scoped))
+    private = (_private_decision(tool_name, checked, private_paths, workdir, home, environ,
+                                list(private_open_reads), closed_zones, workspace_operation=scoped)
                if private_enabled or private_paths else None)
     # Only ever stricter: a deny stays a deny, and an ask is not turned into an allow.
     if private and decision.action != "deny" and (private.action == "deny" or decision.action == "allow"):
         decision = private
+    if grammar and (scoped or private_open_reads):
+        # The closed grammar governs the managed task-read exception introduced here.
+        # Legacy policy without a managed read grant retains its existing decisions.
+        if not scoped and private_open_reads and (private_enabled or private_paths) and decision.action == 'allow':
+            decision = Decision('ask', grammar)
+        elif decision.action == 'allow':
+            decision.reason = grammar
+        else:
+            decision.reason = grammar + ' · ' + decision.reason
+    if read_only:
+        if tool_name in WRITE_LIKE:
+            path = judged.get("file_path") or judged.get("notebook_path")
+            if not own_output_write(path, workdir):
+                decision = Decision("deny", "Read-only task may write only its own outputs/ and .tmp/ (no links)")
+        elif tool_name not in READ_LIKE:
+            decision = Decision("deny", "Read-only task permits only reading and scoped file writes")
+        if decision.action == "ask":
+            decision = Decision("deny", decision.reason)
     if judged is not tool_input:
         decision.updated_input = judged
     return decision
+
+
+def own_output_write(path: object, workdir: str | None) -> bool:
+    """Both spelling and real target must stay in this task's plain output/temp directory."""
+    if not isinstance(path, str) or not path or not workdir:
+        return False
+    from .adapters.owned import is_link
+
+    try:
+        root = Path(workdir).resolve()
+        target = Path(os.path.abspath(os.path.join(str(root), path)))
+        for name in ("outputs", ".tmp"):
+            allowed = root / name
+            if target == allowed or not target.is_relative_to(allowed):
+                continue
+            if not target.resolve().is_relative_to(allowed):
+                return False
+            for part in (target, *target.parents):
+                if part == root:
+                    break
+                if os.path.lexists(part) and (is_link(part) or (part.is_file() and part.stat().st_nlink > 1)):
+                    return False
+            return True
+    except (OSError, ValueError, RuntimeError):
+        pass
+    return False
 
 
 # `/c/` where a path starts: after a space, quote, `=`, `>`, `(` ... and never inside a word, URL or other path.
@@ -1996,7 +2538,8 @@ _PRIVATE_PATH_KEYS = ("file_path", "notebook_path", "path")
 
 def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths: list[str], workdir: str | None,
                       home: str | None, environ: Mapping[str, str] | None,
-                      open_reads: list[str] | None = None) -> Decision | None:
+                      open_reads: list[str] | None = None, closed_zones: Iterable[str] = (), *,
+                      workspace_operation: bool = False) -> Decision | None:
     """PI personal paths (policy.private_paths): file tools are denied, a shell command naming one asks the PI.
 
     While private paths are active Claude pre-approves no shell command and no read outside the task's folders
@@ -2006,23 +2549,35 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
     pattern's folder part is. Called while private paths are on, even with no active path: then only the
     registry check has anything to match.
 
-    `open_reads` (#298 ⑤): a read tool may open a path inside one of these folders although a private path holds
-    it, when every spelling of it (as written, `..` resolved, and its real path) is inside one. Shell and write
-    tools are judged as before.
+    `open_reads`: file reads and proven literal Bash reads may use managed folders below a private parent.
+    Written and resolved destinations must stay open. The task's own file-write grant remains scoped to its
+    workdir; other shell/write rules are unchanged.
     """
-    from .private_paths import holds_open_read, mentioned_private_path, open_read_allowed, path_field_text, \
-        registry_access
+    from .private_paths import holds_open_read, inside_any, mentioned_private_path, open_read_allowed, path_field_text, \
+        registry_access, credential_path, managed_shell_read, resolved_read_path
+
+    input_hint = (" 선행 단계 산출물은 읽기 전용 inputs/<step_id>/ 경로를 사용하세요."
+                  if workdir and (Path(workdir) / 'inputs').is_dir() else "")
 
     if tool_name in READ_LIKE | WRITE_LIKE:
-        open_reads = (open_reads or []) if tool_name in READ_LIKE else []
+        # Keep the existing file-write grant for this task, never for all managed folders.
+        managed = open_reads or []
+        open_reads = managed if tool_name in READ_LIKE else (
+            [workdir] if workdir and open_read_allowed(workdir, managed) else [])
         holders = [p for p in private_paths if holds_open_read(p, open_reads)]
         closed = [p for p in private_paths if p not in holders]
 
         def private(spelled: str) -> bool:
+            if credential_path(spelled) and any((
+                    mentioned_private_path(spelled, private_paths, home, environ),
+                    open_read_allowed(os.path.dirname(spelled), open_reads))):
+                return True
             if mentioned_private_path(spelled, closed, home, environ):
                 return True
-            return bool(holders and mentioned_private_path(spelled, holders, home, environ)
-                        and not open_read_allowed(spelled, open_reads))
+            # A broad task read grant cannot reopen an explicitly protected child (e.g. inputs/).
+            return any(mentioned_private_path(spelled, [holder], home, environ)
+                       and not open_read_allowed(spelled, [r for r in open_reads if inside_any(r, [holder])])
+                       for holder in holders)
 
         # (value, folder a relative value starts from): path fields from the workdir, a Glob pattern from its path.
         values = [(tool_input.get(key), workdir) for key in _PRIVATE_PATH_KEYS]
@@ -2038,22 +2593,34 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
             spellings = {spelled}
             if os.path.isabs(spelled):  # a link in the workspace can lead to a personal folder
                 try:
-                    spellings.add(os.path.realpath(spelled))
+                    spellings.add(_realpath(spelled))
+                    raw = value if os.path.isabs(value) else os.path.join(base or '', value)
+                    spellings.add(resolved_read_path(raw))
                 except (OSError, ValueError):
                     pass
             if any(private(s) for s in spellings):
                 return Decision("deny", f"{tool_name} path is a PI personal path (policy.private_paths); it is "
-                                        "outside every staff task. Do not open it; ask the CSO if the task needs it.")
+                                        "outside every staff task. Do not open it; ask the CSO if the task needs it."
+                                        + input_hint)
         return None
     if tool_name in SHELL_TOOLS:
         cmd = str(tool_input.get("command", ""))
+        if workspace_operation and not registry_access(cmd):
+            return None
+        if tool_name == 'Bash' and open_reads:
+            managed = managed_shell_read(cmd, private_paths, open_reads, workdir)
+            if managed is True:
+                return None
+            if managed is False:
+                return Decision('ask', 'Bash reaches a closed or credential path (policy.private_paths)' + input_hint)
         if private_paths and mentioned_private_path(cmd, private_paths, home, environ):
-            return Decision("ask", f"{tool_name} names a PI personal path (policy.private_paths): `{cmd[:200]}`")
+            return Decision("ask", f"{tool_name} names a PI personal path (policy.private_paths): `{cmd[:200]}`"
+                            + input_hint)
         # A link in the workspace (`alias -> ~/.ssh`) names no private path; its real path does.
         hit = private_paths and touches_resolved({"command": cmd}, private_paths, workdir=workdir)
         if hit:
             return Decision("ask", f"{tool_name} reaches a PI personal path (policy.private_paths) through a link, or "
-                                   f"its paths were not all resolved: `{cmd[:200]}`")
+                                   f"its paths were not all resolved: `{cmd[:200]}`" + input_hint)
         if private_paths and _cd_reaches_private(cmd, private_paths, workdir, home, environ):
             return Decision("ask", f"{tool_name} changes into a folder from which it names a PI personal path "
                                    f"(policy.private_paths), or changes folder too often to judge: `{cmd[:200]}`")
@@ -2063,6 +2630,8 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
             return Decision("ask", f"{tool_name} touches the registry (any registry access asks while private paths "
                                    f"are on; HKCU\\Environment holds the PI's tokens such as GITHUB_TOKEN; 레지스트리 "
                                    f"접근은 PI 승인 필요) via `{spelled[:80]}`: `{cmd[:200]}`")
+        if tool_name == 'Bash' and open_reads:
+            return Decision('ask', 'Bash read scope is ambiguous (policy.private_paths); confirmation required')
     return None
 
 
@@ -2119,13 +2688,59 @@ def _glob_base(pattern: str) -> str:
     return base or (pattern[:1] if pattern[:1] in "/\\" else "")
 
 
+def _shell_homes(powershell: bool, environ: Mapping[str, str], windows: bool) -> list[str]:
+    """Every folder a shell may mean by `~` in a write destination; empty when none is known.
+
+    Bash reads HOME; Git Bash sets it from USERPROFILE (older builds from HOMEDRIVE+HOMEPATH) when it is unset.
+    PowerShell's FileSystem home is $HOME: USERPROFILE on Windows, where Windows PowerShell 5.1 may use
+    HOMEDRIVE+HOMEPATH instead, and HOME elsewhere. Where the shell may take either, both are judged.
+    """
+    lookup = {key.casefold(): value for key, value in environ.items()} if windows else dict(environ)
+
+    def get(name: str) -> str:
+        return lookup.get(name.casefold() if windows else name) or ""
+
+    drive_home = get("HOMEDRIVE") + get("HOMEPATH") if get("HOMEDRIVE") and get("HOMEPATH") else ""
+    if powershell:
+        homes = [get("USERPROFILE"), drive_home] if windows else [get("HOME")]
+    elif get("HOME"):
+        homes = [get("HOME")]
+    else:
+        homes = [get("USERPROFILE"), drive_home] if windows else []
+    found = []
+    for home in homes:
+        if home and windows and not powershell:
+            home = _git_bash_path(home, environ) or home  # HOME may be spelled `/c/Users/x`
+        if home:
+            found.append(home)
+    return list(dict.fromkeys(found))
+
+
+def _tilde_targets(target: str, powershell: bool, environ: Mapping[str, str], windows: bool) -> list[str]:
+    """A `~` write destination spelled from each home the shell may use; empty when it cannot be expanded.
+
+    Only `~` alone or before a separator (`/`, and `\\` in PowerShell) is a home. `~user`, `~+`, `~-` and `~\\x` in
+    bash name another user's home, the current or previous folder, or a quoted tilde: the gate does not read them.
+    """
+    rest = target[1:]
+    if rest and not (rest[0] == "/" or powershell and rest[0] == "\\"):
+        return []
+    return [home.rstrip("/\\") + "/" + rest.lstrip("/\\") for home in _shell_homes(powershell, environ, windows)]
+
+
 def _evaluate_tool(
     tool_name: str,
     tool_input: dict[str, Any],
     policy: PolicySettings,
     allowed_roots: Iterable[str] = (),
     workdir: str | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+    windows: bool | None = None,
+    workspace_operation: bool = False,
 ) -> Decision:
+    environ = os.environ if environ is None else environ
+    windows = os.name == "nt" if windows is None else windows
     if tool_name in NATIVE_DELEGATION_TOOLS:
         return Decision("deny", f"{tool_name} starts native delegation outside labhq accounting; use labhq orchestration")
     if tool_name in WRITE_LIKE:
@@ -2153,11 +2768,20 @@ def _evaluate_tool(
             "submit an HPC job (hpc_submit) that writes aggregate/QC summaries and read those instead.",
         )
 
+    # Internal-zone reads all use one approval flow. Output-shape classification only changes the card wording.
+    internal_hit = _zone_hit(tool_input, policy, {"internal"}, workdir)
+    if internal_hit and tool_name in READ_LIKE | SHELL_TOOLS:
+        return Decision("ask", f"internal data zone read requires approval: {internal_hit}")
+
     if tool_name in {"Bash", "PowerShell"}:
         cmd = str(tool_input.get("command", ""))
         if hit:
             return Decision("ask", f"{tool_name} touches restricted zone {hit}: `{cmd[:200]}`")
         powershell = tool_name == "PowerShell"
+        # Reuse the conservative #525/#535 syntax scanner: only proven data is blanked.
+        # Executed strings, substitutions and unknown interpreters still use the raw command.
+        ps_syntax = _blank_non_syntax(cmd, True) if powershell else None
+        delete_text = ps_syntax if ps_syntax is not None else cmd
         patterns = policy.approvals.bash_ask_patterns if not powershell else POWERSHELL_ASK_PATTERNS
         delete_pattern = POWERSHELL_RECURSIVE_DELETE_PATTERN if powershell else BASH_RECURSIVE_DELETE_PATTERN
         roots = [_norm(r) for r in allowed_roots if r]
@@ -2166,29 +2790,42 @@ def _evaluate_tool(
         git_bash = tool_name == "Bash" and any(re.match(r"^[a-z]:/", root) for root in roots)
         for pat in patterns:
             if pat == delete_pattern:
-                # The pattern sees only rm's first option cluster; every option word counts (#17).
-                if ((re.search(pat, cmd, re.IGNORECASE) or not powershell and _recursive_rm(cmd))
-                        and not _recursive_delete_inside_workdir(cmd, powershell, workdir)):
+                # The pattern sees only rm's first option cluster; every option word of a real rm counts (#17), and
+                # `docker rm` or `git rm` in its own tree is not one (#535 follow-up).
+                recursive = _recursive_rm(cmd) if not powershell else re.search(pat, delete_text, re.IGNORECASE)
+                if recursive and not workspace_operation and not _recursive_delete_inside_workdir(cmd, powershell, workdir):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 # A deleting find meets the same `.tmp` rule (find -delete, -exec rm, | xargs rm).
                 if not powershell and not all(_find_delete_inside_step_tmp(cmd, find, workdir)
                                               for find in _find_deletes(cmd)):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
-                if _CMD_RECURSIVE_DELETE.search(cmd):
+                if _CMD_RECURSIVE_DELETE.search(delete_text):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
-                # A listing piped into a delete, in a script block too, meets the same `.tmp` rule (#525 review).
-                if powershell and _ps_piped_delete(cmd) and not _ps_piped_delete_inside_step_tmp(cmd, workdir):
+                # A listing piped into a delete, in a script block too, meets the same `.tmp` rule (#525 review). A
+                # .NET delete (`.Delete($true)`, `[IO.Directory]::Delete(p, $true)`) names no literal path, so it
+                # passes only as `$_.Delete()` in such a pipeline (#533).
+                if (powershell and (_ps_piped_delete(delete_text) or _ps_method_delete(delete_text))
+                        and not _ps_piped_delete_inside_step_tmp(cmd, workdir)):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 continue
             if re.search(pat, cmd, re.IGNORECASE):
                 return Decision("ask", f"위험 명령 확인 필요: `{cmd[:200]}`")
-        for target in _shell_write_targets(cmd, powershell=tool_name == "PowerShell"):
-            if git_bash and _absolute(target) and not _drive_relative(target):
-                target = _git_bash_path(target, os.environ) or target
-            if _drive_relative(target):
-                return Decision("ask", f"drive-relative shell write destination: {target}")
-            if _absolute(target) and not any(_inside(_norm(target), root) for root in roots):
-                return Decision("ask", f"shell write outside allowed roots: {target}")
+        for written in _shell_write_targets(cmd, powershell=tool_name == "PowerShell"):
+            # A `~` destination is the shell's home (#521): judged there, or asked when it cannot be expanded.
+            expanded = _tilde_targets(written, powershell, environ, windows) if written.startswith("~") else [written]
+            if not expanded:
+                return Decision("ask", f"shell write destination starts with a `~` the gate cannot expand: {written}")
+            for target in expanded:
+                if git_bash and _absolute(target) and not _drive_relative(target):
+                    target = _git_bash_path(target, os.environ) or target
+                if _drive_relative(target):
+                    return Decision("ask", f"drive-relative shell write destination: {target}")
+                if written.startswith("~") and not _absolute(target):
+                    return Decision("ask", f"shell write destination starts with a `~` the gate cannot expand: "
+                                           f"{written}")
+                if _absolute(target) and not any(_inside(_norm(target), root) for root in roots):
+                    shown = f"{written} (= {target})" if written.startswith("~") else target
+                    return Decision("ask", f"shell write outside allowed roots: {shown}")
         return Decision("allow")
 
     if tool_name.startswith("mcp__"):

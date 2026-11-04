@@ -19,6 +19,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
+from .models import WireReference
+
 QUESTION_DEPTHS = (30, 60, 90)
 OPTION_LETTERS = "abcd"
 MAX_SUMMARY_CHARS = 2000
@@ -241,7 +243,7 @@ class Reference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["github", "doi", "pmid", "url", "path"]
-    value: str = Field(min_length=1, max_length=2000)
+    value: WireReference = Field(min_length=1, max_length=2000)
     note: str | None = Field(default=None, max_length=300)
     # The URL as given when its query or fragment was dropped; only the gateway's internal store keeps it.
     _original: str | None = PrivateAttr(default=None)

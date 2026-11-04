@@ -28,7 +28,11 @@ assert.equal(restored.S.requests.get('r').processing.agent_id, 'solo');
 const html = fs.readFileSync(path.join(root, 'labhq/web/index.html'), 'utf8');
 assert.match(html, /id="team-only"/);
 assert.match(html, /route: \$\('#team-only'\)\.checked \? 'team' : 'auto'/);
-assert.match(html, /처리: 단독 실패 → 팀/);
+// The labels moved into state.js so both views print the same text (web trial readiness, 2026-10-12).
+const label = context.LabHQState.processingLabel;
+assert.equal(label({status: 'running', processing: {mode: 'solo', agent_id: 'solo'}}), '처리: 단독(solo)');
+assert.equal(label({status: 'running', processing: {mode: 'team', fallback: true}}), '처리: 단독 실패 → 팀');
+assert.match(html, /LabHQState\.processingLabel/);
 const live3d = fs.readFileSync(path.join(root, 'labhq/web/lab3d/src/live.js'), 'utf8');
-assert.match(live3d, /처리: 단독/);
+assert.match(live3d, /LabHQState\.processingLabel\(q\)/);
 console.log('solo route web tests passed');

@@ -1,0 +1,30 @@
+pr: 909
+rows:
+- sha: 104bf97
+  at: 2026-10-24 03:00
+  text: OA/PDF receipt의 접근·보충자료 상태와 Methods/QC 위치를 소비 경로까지 보존했습니다.
+  summary: 논문 확보와 실제 독해를 구분하고 초록 receipt의 전문 승격을 막았습니다.
+- sha: 55dc87b
+  at: 2026-10-24 03:07
+  text: 접근 인계 회귀 검사를 기존 Windows receipt cohort에 모아 inventory와 검증 범위를 유지했습니다.
+  summary: 새 문헌 회귀 검사도 Windows에서 기존 receipt 검사와 함께 실행합니다.
+- sha: '1246390'
+  at: 2026-10-24 03:11
+  text: OA 비공개 표시와 기관 로그인만으로 유료 장벽을 단정하지 않도록 접근 사유를 구분했습니다.
+  summary: 유료 막힘은 구독 또는 구매 안내가 확인될 때만 표시합니다.
+- sha: '69347e6'
+  at: 2026-10-24 03:23
+  text: Paper2Skill static 선택 fixture에 실제 접근 변환 helper를 연결하고 미판정 보존을 확인했습니다.
+  summary: 선택 한도와 중복 제거 검사에서도 실제 접근 상태 변환을 함께 검증합니다.
+- sha: 'c38f471'
+  at: 2026-10-24 04:09
+  text: 기존 scout schema의 optional receipt 투영을 허용하고 본문 소실 뒤 접근 상태를 다시 계산했습니다.
+  summary: 기존 논문 스킬 준비를 유지하고 사라진 본문은 미확보로 표시합니다.
+- sha: '62ac8c6'
+  at: 2026-10-24 04:54
+  text: README 문헌 문단에 본문·보충자료 확보 상태와 Methods/QC 위치 기록을 반영했습니다.
+  summary: 논문에서 실제 확보한 자료와 방법 근거의 위치를 구분해 설명합니다.
+- sha: '921391b'
+  at: 2026-10-24 05:37
+  text: 공용 paper_skills의 문헌 추출 단계 연결과 접근 metadata를 함께 보존해 #916 충돌을 해결했습니다.
+  summary: 문헌 스킬 연결과 원문 접근 기록이 함께 유지되도록 병합했습니다.

@@ -1,0 +1,10 @@
+pr: 884
+rows:
+- sha: 256de7b
+  at: 2026-10-24 00:50
+  text: USERNAME이 없는 Windows 환경에서도 Scheduler가 생성되도록 getpass.getuser 실패 시 "labhq"로 대체한다.
+  summary: 사용자 이름 환경변수가 없는 Windows에서도 스케줄러가 시작되도록 기본 이름을 씁니다.
+- sha: 8ab2874
+  at: 2026-10-24 01:05
+  text: 사용자 이름을 못 구하면 "labhq"를 지어내지 않고 Windows 로그온 계정을 조회하며, 끝내 모르면 queue가 hpc.user 설정을 요구하며 실패한다.
+  summary: 사용자 이름을 지어내지 않고 실제 계정을 조회하며, 알 수 없으면 큐 조회가 설정을 요구하고 멈춥니다.

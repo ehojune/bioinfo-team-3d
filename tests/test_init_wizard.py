@@ -50,13 +50,184 @@ def _digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+@pytest.mark.parametrize("answer,enabled", [("y", True), ("Y", True), ("n", False),
+                                          ("", False), ("yes", False), ("maybe", False)])
+def test_pipeline_consent_requires_explicit_y(monkeypatch, capsys, answer, enabled):
+    prompts = []
+
+    def respond(prompt):
+        prompts.append(prompt)
+        return answer if "기여" in prompt else ""
+
+    monkeypatch.setattr("builtins.input", respond)
+    wizard.run()
+    assert _data()["policy"]["bioinfo_agent"]["pipeline_pr"] is enabled
+    assert sum("기여" in prompt and "y/N" in prompt for prompt in prompts) == 1
+    output = capsys.readouterr().out
+    assert "공개" in output and "ehojune/bioinfo-agent" in output and "fork" in output
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("force", [False, True])
+def test_pipeline_consent_is_preserved_on_reinit(monkeypatch, enabled, force):
+    wizard.run(yes=True)
+    target = Path("config/labhq.yaml")
+    data = _data()
+    data["policy"]["bioinfo_agent"].update(pipeline_pr=enabled, pipeline_repo="example/pipelines")
+    target.write_text(yaml.safe_dump(data), encoding="utf-8")
+    original = target.read_bytes()
+
+    def respond(prompt):
+        assert "기여" not in prompt
+        return ""
+
+    monkeypatch.setattr("builtins.input", respond)
+    wizard.run(force=force)
+    assert _data()["policy"]["bioinfo_agent"]["pipeline_pr"] is enabled
+    assert _data()["policy"]["bioinfo_agent"]["pipeline_repo"] == "example/pipelines"
+    if not force:
+        assert target.read_bytes() == original
+
+
+def test_pipeline_consent_yes_stays_off(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *_: pytest.fail("unexpected prompt"))
+    wizard.run(yes=True)
+    assert _data()["policy"]["bioinfo_agent"]["pipeline_pr"] is False
+
+
+@pytest.mark.parametrize("policy", ["required", "optional", "unspecified"])
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_facilities_support_preserved_on_reinit(monkeypatch, policy, force, dry_run):
+    wizard.run(yes=True)
+    target = Path("config/labhq.yaml")
+    data = _data()
+    data["runner"]["facilities_support"] = policy
+    target.write_text(yaml.safe_dump(data), encoding="utf-8")
+    before = target.read_bytes()
+    seen = []
+    original = doctor.collect
+
+    def collect(settings, **kwargs):
+        seen.append(settings.runner.facilities_support)
+        return original(settings, **kwargs)
+
+    monkeypatch.setattr(doctor, "collect", collect)
+    wizard.run(yes=True, force=force, dry_run=dry_run)
+    assert seen == [policy]
+    assert _data()["runner"]["facilities_support"] == policy
+    if dry_run or not force:
+        assert target.read_bytes() == before
+
+
+@pytest.mark.parametrize("instance", [None, "synthetic"])
+def test_new_init_facilities_intent_unspecified(instance):
+    wizard.run(yes=True, instance=instance)
+    assert _data()["runner"]["facilities_support"] == "unspecified"
+
+
+def test_existing_undeclared_init_remains_undeclared():
+    wizard.run(yes=True)
+    target = Path("config/labhq.yaml")
+    data = _data()
+    data["runner"].pop("facilities_support")
+    target.write_text(yaml.safe_dump(data), encoding="utf-8")
+    before = target.read_bytes()
+    wizard.run(yes=True)
+    assert target.read_bytes() == before
+    wizard.run(yes=True, force=True)
+    assert _data()["runner"]["facilities_support"] == "unspecified"
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_required_init_dry_run_fails_without_writes(force):
+    wizard.run(yes=True)
+    target = Path("config/labhq.yaml")
+    data = _data()
+    data["runner"]["facilities_support"] = "required"
+    target.write_text(yaml.safe_dump(data), encoding="utf-8")
+    before = target.read_bytes()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["init", "--yes", "--dry-run"] + (["--force"] if force else []))
+    assert exc.value.code == 1
+    assert target.read_bytes() == before
+
+
+@pytest.mark.parametrize("broken", ["gateway: [", "gateway: {port: invalid}"])
+def test_force_replaces_unreadable_config(broken):
+    target = Path("config/labhq.yaml")
+    target.parent.mkdir()
+    target.write_text(broken, encoding="utf-8")
+    wizard.run(yes=True, force=True)
+    assert Settings.load(str(target)).policy.bioinfo_agent.pipeline_pr is False
+
+
+def test_force_preserves_consent_but_restores_hard_stops():
+    wizard.run(yes=True)
+    data = _data()
+    data["policy"]["bioinfo_agent"].update(pipeline_pr=True, pipeline_repo="example/pipelines",
+                                            pipeline_base_branch="stable", hard_stops=[])
+    Path("config/labhq.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    wizard.run(yes=True, force=True)
+    policy = _data()["policy"]["bioinfo_agent"]
+    assert policy["hard_stops"] == yaml.safe_load(wizard._template_text())["policy"]["bioinfo_agent"]["hard_stops"]
+    assert policy["pipeline_pr"] and policy["pipeline_repo"] == "example/pipelines"
+    assert policy["pipeline_base_branch"] == "stable"
+
+
+@pytest.mark.parametrize("answer", ["n", "", "unclear"])
+async def test_pipeline_consent_decline_makes_no_github_calls(tmp_path, monkeypatch, answer):
+    from tests.test_bioinfo_pipeline_pr import fake_pipeline_api, pipeline, run_submission
+
+    monkeypatch.setattr("builtins.input", lambda prompt: answer if "기여" in prompt else "")
+    wizard.run()
+    enabled = Settings.load("config/labhq.yaml").policy.bioinfo_agent.pipeline_pr
+    calls = []
+    hub, delivered = await run_submission(tmp_path, pipeline(), fake_pipeline_api(calls), pipeline_pr=enabled)
+    try:
+        assert delivered is True and calls == []
+        assert hub.reporter.enabled() is False
+    finally:
+        hub.store.close()
+
+
+def test_pipeline_consent_dry_run_never_writes(isolated_home, tmp_path, monkeypatch):
+    (isolated_home / ".codex").mkdir()
+    (isolated_home / ".codex" / "AGENTS.md").write_text("personal", encoding="utf-8")
+    monkeypatch.setattr(wizard.secrets, "token_urlsafe", lambda *_: pytest.fail("token generated"))
+    monkeypatch.setattr("builtins.input", lambda prompt: "y" if "기여" in prompt else "")
+    seen = []
+    original_collect = doctor.collect
+
+    def collect(settings, **kwargs):
+        seen.append(settings.policy.bioinfo_agent.pipeline_pr)
+        return original_collect(settings, **kwargs)
+
+    monkeypatch.setattr(doctor, "collect", collect)
+    before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
+    wizard.run(dry_run=True)
+    assert seen == [True]
+    assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
+
+
+def test_pipeline_consent_is_per_instance(isolated_home, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda prompt: "y" if "기여" in prompt else "")
+    cli.main(["init", "--instance", "contributing"])
+    cli.main(["init", "--instance", "local", "--yes"])
+    for name, enabled in (("contributing", True), ("local", False)):
+        path = isolated_home / ".labhq" / name / "labhq.yaml"
+        assert _data(path)["policy"]["bioinfo_agent"]["pipeline_pr"] is enabled
+
+
 def test_yes_accepts_defaults_and_summarizes_doctor(monkeypatch, capsys):
     monkeypatch.setattr(wizard, "_is_windows", lambda: True)
     monkeypatch.setattr("builtins.input", lambda *_: (_ for _ in ()).throw(AssertionError("prompt")))
     cli.main(["init", "--yes"])
     data = _data()
     assert data["hpc"]["scheduler"] == "none"
-    assert data["policy"]["data_zones"] == []
+    # Windows keeps no restricted zone; the run folder is the one internal zone the semantics model needs (#613).
+    assert data["policy"]["data_zones"] == [
+        {"path": "~/.labhq/runs", "level": "internal", "note": "labhq 작업 폴더 — 의미 모델 hash용"}]
     assert data["engines"]["codex"]["bin"] == "auto"
     output = capsys.readouterr().out
     assert "doctor: ok" in output and "fail 0" in output
@@ -158,10 +329,19 @@ def test_no_personal_claude_folder_no_claude_staff_home(isolated_home, capsys):
     assert "CLAUDE_CONFIG_DIR" not in capsys.readouterr().out
 
 
+def test_chosen_workspace_is_saved_with_internal_zone(tmp_path, monkeypatch):
+    chosen = tmp_path / "arbitrary-folder"
+    monkeypatch.setattr("builtins.input", lambda prompt: str(chosen) if "workspace_root" in prompt else "")
+    wizard.run()
+    data = _data()
+    assert data["runner"]["workspace_root"] == str(chosen)
+    assert any(z["path"] == str(chosen) and z["level"] == "internal" for z in data["policy"]["data_zones"])
+
+
 def test_interactive_plugin_and_scheduler_are_recorded(tmp_path, monkeypatch, capsys):
     plugin = tmp_path / "private-checkout"
     plugin.mkdir()
-    answers = iter(["pbs", str(plugin)])
+    answers = iter(["pbs", "", str(plugin), "", "n"])  # scheduler, workspace, plugin, dev log, consent
     monkeypatch.setattr("builtins.input", lambda *_: next(answers))
     wizard.run()
     data = _data()
@@ -493,3 +673,100 @@ def test_init_dry_run_skips_the_consult(monkeypatch, capsys):
 def test_init_without_a_cluster_explains_local_only(capsys):
     wizard.run(yes=True)
     assert _data()["hpc"]["scheduler"] == "none" and hpc_consult.NO_CLUSTER in capsys.readouterr().out
+
+
+# ---------------- institution literature access questions (#826) ----------------
+
+PROXY = "https://proxy.library.example/login?url="
+
+
+@pytest.mark.parametrize("value,kept", [
+    (PROXY, True), ("https://proxy.library.example/login?qurl={url}", True), ("", False),
+    ("http://proxy.library.example/login?url=", False),               # not https
+    ("https://user:secret@proxy.library.example/login?url=", False),  # credentials
+    ("https://proxy.library.example/login?url=&session=abc", False),  # a pasted session
+    ("https://proxy.library.example/login?ticket=abc&url=", False),
+    ("https://proxy.library.example/login?url=https://doi.org/10.1/x", False),  # a whole article link
+    ("https://www.library.example/", False),                           # a homepage has no article slot
+    ("https://proxy.library.example/login?url=#frag", False),
+    ("https://p.lib/login;jsessionid=ABC123?url=", False),             # matrix session
+    ("https://p.lib/ST-1234abcd/login?url=", False),                   # CAS-style ticket segment
+    ("https://{url}", False), ("https://{url}@p.lib/x", False)])       # the article slot in the host or userinfo
+def test_only_a_library_proxy_prefix_without_credentials_or_session_is_kept(value, kept):
+    assert (wizard._proxy_prefix(value) == value.strip()) is kept
+
+
+def _institution_prompts(monkeypatch, answers):
+    asked = []
+
+    def respond(prompt):
+        asked.append(prompt)
+        return next((value for key, value in answers.items() if key in prompt), "")
+    monkeypatch.setattr(wizard, "_interactive", lambda: True)
+    monkeypatch.setattr("builtins.input", respond)
+    monkeypatch.setattr(wizard.getpass, "getpass", lambda *_: "")  # AlphaGenome / GitHub: Enter
+    return asked
+
+
+def test_institution_answers_fill_only_existing_settings_and_leave_the_session_off(monkeypatch, capsys):
+    _institution_prompts(monkeypatch, {"소속 기관 이름": "예시 생명공학연구원", "프록시 주소": PROXY,
+                                       "문헌 서비스": "Web of Science, PubMed", "Unpaywall 연락용": "pi@example.org"})
+    wizard.run()
+    data = _data()
+    assert data["literature"]["institution_proxy"] == PROXY and data["annot"]["unpaywall_email"] == "pi@example.org"
+    assert not data["literature"].get("institution_enabled") and not data["literature"].get("institution_tdm_allowed")
+    assert not data["literature"].get("external_model_allowed")
+    settings = Settings.load("config/labhq.yaml")
+    assert settings.literature.institution_proxy == PROXY and not settings.literature.institution_enabled
+    text = Path("config/labhq.yaml").read_text(encoding="utf-8")
+    assert "예시 생명공학연구원" not in text and "Web of Science" not in text  # name and services shape advice only
+    out = capsys.readouterr().out
+    assert "확인하지 않았고" in out and "자동으로 연결하지 않습니다" in out and "직접 true로" in out
+    assert "비밀번호·cookie·API 키는 묻지 않고" in out
+
+
+def test_enter_at_every_institution_question_skips_and_keeps_the_defaults(monkeypatch, capsys):
+    asked = _institution_prompts(monkeypatch, {})
+    wizard.run()
+    data = _data()
+    assert not (data.get("literature") or {}).get("institution_proxy")
+    assert not (data.get("annot") or {}).get("unpaywall_email")
+    assert any("소속 기관 이름" in prompt for prompt in asked) and any("Unpaywall 연락용" in prompt for prompt in asked)
+    assert not any("프록시 주소" in prompt for prompt in asked)  # no institution: no institution follow-ups
+    assert "건너뜀" in capsys.readouterr().out
+
+
+def test_rejected_institution_answers_are_not_stored(monkeypatch, capsys):
+    _institution_prompts(monkeypatch, {"소속 기관 이름": "예시 기관", "프록시 주소": PROXY + "&session=abc",
+                                       "Unpaywall 연락용": "not an email"})
+    wizard.run()
+    data = _data()
+    assert not (data.get("literature") or {}).get("institution_proxy")
+    assert not (data.get("annot") or {}).get("unpaywall_email") and "session=abc" not in str(data)
+    out = capsys.readouterr().out
+    assert "프록시 주소: 받지 않았습니다" in out and "Unpaywall email: 형식이 아니라" in out
+
+
+def test_a_rerun_shows_the_institution_state_and_never_rewrites_the_config(monkeypatch, capsys):
+    wizard.run(yes=True)
+    target = Path("config/labhq.yaml")
+    original = _digest(target.read_text(encoding="utf-8"))
+    capsys.readouterr()
+    _institution_prompts(monkeypatch, {"소속 기관 이름": "예시 기관", "프록시 주소": PROXY,
+                                       "Unpaywall 연락용": "pi@example.org"})
+    wizard.run()
+    assert _digest(target.read_text(encoding="utf-8")) == original
+    out = capsys.readouterr().out
+    assert "기관 프록시 없음" in out and "아무것도 저장하지 않았습니다" in out
+    assert "literature.institution_proxy·annot.unpaywall_email에 직접 넣으세요" in out and "현재 기관 세션은 꺼짐" in out
+    assert "저장하되" not in out  # a re-run never claims to have saved what it only suggests
+    assert PROXY not in out and "pi@example.org" not in out  # the typed values are not printed back
+
+
+def test_yes_dry_run_and_no_terminal_never_ask_the_institution_questions(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda prompt: pytest.fail(prompt) if "기관" in prompt else "")
+    wizard.run()  # pytest's stdin is not a terminal
+    monkeypatch.setattr(wizard, "_interactive", lambda: True)
+    monkeypatch.setattr(wizard.getpass, "getpass", lambda *_: "")
+    wizard.run(yes=True)
+    wizard.run(dry_run=True)

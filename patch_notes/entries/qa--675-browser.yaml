@@ -1,0 +1,38 @@
+pr: 981
+rows:
+  - sha: 01d87d3
+    at: "2026-10-26 15:40"
+    summary: "직원 대기와 HPC rack 안내를 현재 화면에 맞췄습니다."
+    text: "manual P1을 수정하고 #979/#980 병합 뒤 async 저장 범위와 남은 sync 경계를 통합했습니다. manual·HANDOFF 합계 222자를 줄였으며 운영 PASS로 확대하지 않습니다."
+  - sha: 53fd6ea
+    at: "2026-10-26 14:49"
+    summary: "로컬 계산을 기다리는 직원이 HPC 작업 중으로 보이던 표시를 고쳤습니다."
+    text: "정적 Chrome fixture QA에서 발견한 2.5D·3D 직원 대기 문구와 HPC rack 집계를 수정했습니다. 종료·snapshot·요청 분리 화면을 확인했으며 실제 운영 검증은 아닙니다. Refs #675."
+  - sha: 77b81f1
+    at: "2026-10-26 14:52"
+    summary: "재접속 뒤 계산 정보가 없으면 대기 종류를 단정하지 않습니다."
+    text: "작업 원장이 없는 snapshot은 작업·응답 대기로 표시하고 직접 요청의 단계도 같은 분류에 포함합니다. 관련 Node 66건과 legacy reducer를 확인했습니다."
+  - sha: ca26497
+    at: "2026-10-26 14:56"
+    summary: "정보가 없는 대기도 직원이 쉬는 것으로 표시하지 않습니다."
+    text: "bot P2의 2.5D badge 회귀를 수정 전 실패·수정 후 성공으로 확인했습니다. 공통 reducer의 작업·응답 대기 문구를 그대로 표시합니다."
+  - sha: ae45d9f
+    at: "2026-10-26 14:57"
+    summary: "job 정보가 없는 단계 흐름도 HPC 대기로 단정하지 않습니다."
+    text: "browser에서 정보 없는 snapshot의 badge·직원 strip·단계 흐름이 같은 작업·응답 대기 문구를 표시함을 확인했습니다."
+  - sha: 006f875
+    at: "2026-10-26 15:05"
+    summary: "기존 대기 회귀검사와 3D 계산 안내를 같은 기준으로 맞췄습니다."
+    text: "bot P1의 기존 unknown/HPC 기대값을 분리하고 취소 검사를 유지했습니다. 3D HPC rack에서도 local job을 제외하며 범례·설명을 작업·응답 대기로 통일했습니다."
+  - sha: 3cc14bb
+    at: "2026-10-26 15:16"
+    summary: "대기 회귀검사의 Python 실행 확인 문구를 갱신했습니다."
+    text: "세 OS CI에서 Node 검사는 통과했으나 wrapper가 옛 성공 문구를 요구한 실패를 수정했습니다. 해당 pytest 1 passed를 확인했습니다."
+  - sha: 92256fb
+    at: "2026-10-26 15:22"
+    summary: "검토한 Windows 검사 파일의 판본을 갱신했습니다."
+    text: "Node wrapper 성공 문구 변경에 맞춰 source pin만 갱신했습니다. 필수 node 목록은 유지하며 profile 검증·관련 CI 검사 62건이 통과했습니다."
+  - sha: 0d5d4a0
+    at: "2026-10-26 15:24"
+    summary: "task 기록이 없는 로컬 계산도 종료 뒤 대기 표시를 지웁니다."
+    text: "bot P2의 호환 경로에서 agent job 관측을 roster 갱신 뒤에도 보존하고 terminal event를 반영합니다. 관련 Node 66건·legacy reducer 43 event를 확인했습니다."

@@ -1,0 +1,10 @@
+pr: null
+rows:
+  - sha: c873b85
+    at: "2026-10-22 04:50"
+    summary: "자동 검사가 시간 초과로 끊겨도 어떤 검사가 실패했고 얼마나 걸렸는지 기록이 남습니다."
+    text: "ci_suite가 process별 diagnostics-<worker>.json(진단 전용, proof·재사용 밖)에 실패 stage의 duration·예외 kind·crash 첫 줄과 느린 stage 상위 30을 즉시 원자적으로 남긴다. 시설팀 fallback 검사는 실제 wait_agent_online의 (facilities, 0.2) offline 종료와 CSO fallback·저장을 단언하고 wait_for는 60초 hang 감시로만 둔다. #837 실제 원인은 미확인이다."
+  - sha: 07cbf33
+    at: "2026-10-22 05:07"
+    summary: "긴 이름의 실패 검사도 빠짐없이 기록하고, 오류 메시지 속 인증값 형식을 더 넓게 가립니다."
+    text: "독립 검토 P2: 진단 중복 키를 원본 nodeid sha256으로 바꿔 앞 512자가 같은 긴 parameter 실패가 빠지지 않게 하고, crash 첫 줄을 앞 4096자만 검사해 check_public 형식(sk-/AKIA/AIza/xox*/private key)과 GitHub·Bearer를 고정 패턴으로 가린 뒤 300자만 남긴다. 판정 분리·상한·갱신 간격은 그대로다."

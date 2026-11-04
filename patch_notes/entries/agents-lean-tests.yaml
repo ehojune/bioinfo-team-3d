@@ -3,6 +3,8 @@ rows:
 - sha: ebc68f9
   at: 2026-10-02 20:48
   text: 'AGENTS.md: 로컬은 관련 test, 전체 suite는 CI. P2는 PR 본문 남은 지적 한 줄'
+  summary: 개발 지침에서 로컬 검사 범위를 줄이고 덜 중요한 지적은 PR에 남기게 했습니다.
 - sha: b5016b4
   at: 2026-10-02 20:51
   text: HANDOFF.md 시작 절차도 전체 pytest 대신 관련 test, 전체는 CI
+  summary: 시작 절차에서 관련 검사만 로컬로 돌리고 전체 검사는 자동 검사에 맡깁니다.

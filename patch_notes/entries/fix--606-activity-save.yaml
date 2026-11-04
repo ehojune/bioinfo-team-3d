@@ -1,0 +1,18 @@
+pr: 982
+rows:
+- sha: b31ff8f
+  at: '2026-10-26 17:42'
+  text: manual에 activity·halt/resume intent의 async 저장과 최신 row 병합을 명시하고 남은 sync 경계를 구분한다(Refs #606).
+  summary: 저장 경계와 로드맵의 포괄적인 task/result/control 표현을 수정했습니다. 제품 코드 변경은 없습니다.
+- sha: 00525cc
+  at: '2026-10-26 16:21'
+  text: 뒤따른 전체-row 쓰기가 halt intent를 지우면 성공/queued 대신 대기 거절 또는 재시도를 반환한다(Refs #606).
+  summary: job.submitted 경쟁 1 failed → PASS. 기존 job handler를 바꾸지 않고 durable replay 약속을 검증합니다.
+- sha: ff3546c
+  at: '2026-10-26 16:12'
+  text: halt/resume intent를 최신 task row에 async 병합해 ACK된 activity 덮어쓰기·삭제/완료 복원을 막는다(Refs #606).
+  summary: commit 결과·취소를 판정하고 실패 시 control 전송/성공 알림을 막으며 지연 중 등록된 resume waiter를 깨웁니다.
+- sha: bc267ce
+  at: '2026-10-26 15:41'
+  text: runner activity를 SQLite writer에서 최신 task row에 적용해 느린 commit 중 loop를 유지하고 완료·control·동시 activity를 보존한다(Refs #606).
+  summary: activity 저장 성공 뒤 publish·ACK하며 실패·취소 때 미확정 메시지를 ACK하지 않습니다.

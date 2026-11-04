@@ -59,7 +59,10 @@ class ModelHub:
         self.s.orchestrator.chief_of_staff_agent = None
         self.s.orchestrator.max_revisions = 0
         self.requests = {"r": {"text": "same request", "mode": mode, "agent_id": None,
-                                "work_kind": "auto", "scope_status": "in_scope", "budget_usd": 10,
+                                "work_kind": "auto", "scope_status": "in_scope",
+                                # These turns report no cost, so each is held at the per-task cap (#1139): room for the
+                                # plan, step, review and synthesis, which is not what these tests are about.
+                                "budget_usd": 100,
                                 "project_dirs": [], "cso_model": cso_model}}
         self.agents = {
             "cso": {"id": "cso", "name": "CSO", "role": "plan", "engine": "claude_code", "model": "opus"},
@@ -221,7 +224,7 @@ def test_runner_keeps_the_request_identity_on_read_only_tasks(kind):
     selected = read_only_profile(Runner._resolve_agent(fake_runner(registry_cso), task))
 
     assert selected.engine is Engine.codex and selected.model == "gpt-6-astra"
-    assert selected.tools == [] and selected.sandbox == "read-only", "agent_overrides still give nothing"
+    assert selected.tools == [] and selected.sandbox == "workspace-write", "agent_overrides still give nothing"
     assert registry_cso.engine is Engine.claude_code and registry_cso.model == "opus"
 
 

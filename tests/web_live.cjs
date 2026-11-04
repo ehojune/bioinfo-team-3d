@@ -39,7 +39,9 @@ global.WebSocket = class {
 };
 const decide = fs.readFileSync(path.join(root,'ui/decide.js'),'utf8');
 const decideUrl = 'data:text/javascript;base64,'+Buffer.from(decide).toString('base64');
-const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').replace("'../../ui/decide.js'", `'${decideUrl}'`);
+const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').replace("'../../ui/decide.js'", `'${decideUrl}'`)
+    .replace("'../../ui/tasks.js'", "'data:text/javascript;base64," + Buffer.from(fs.readFileSync(path.join(root, 'ui/tasks.js'), 'utf8')).toString('base64') + "'")
+    .replace("'../../ui/shutdown.js'", "'data:text/javascript;base64," + Buffer.from(fs.readFileSync(path.join(root, 'ui/shutdown.js'), 'utf8')).toString('base64') + "'");
 (async()=>{
   const {startLiveOffice} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
   let S, visual, shown;
@@ -48,14 +50,25 @@ const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').repla
   let ws=sockets[0]; assert(!ws.url.includes('since='));
   ws.readyState=1;ws.onopen();
   const event = ev => ws.onmessage({data:JSON.stringify(ev)});
-  event({type:'snapshot',seq:10,data:{agents:[{id:'analyst'}]}});
+  event({type:'snapshot',seq:10,data:{agents:[{id:'analyst'}],runners:[]}});
+  assert.match(element('service-warning').textContent,/러너 연결 끊김/);
+  event({type:'runner.online',data:{runner_id:'fake-runner'}});
+  assert.equal(element('service-warning').hidden,true);
+  event({type:'runner.offline',data:{runner_id:'fake-runner'}});
+  assert.match(element('service-warning').textContent,/러너 연결 끊김/);
+  ws.onclose({code:1006});
+  assert.match(element('service-warning').textContent,/게이트웨이 연결 끊김/);
+  timers.pop(); // discard this fake reconnect; later assertions inspect their own render timers
+  ws.onopen();
   event({type:'agent.usage',seq:11,data:{cost_usd:1}});
   event({type:'agent.usage',seq:11,data:{cost_usd:1}});
   assert.equal(S.cost,1,'duplicate seq ignored');
   event({type:'approval.requested',seq:12,data:{id:'a1',summary:'<img src=x>',kind:'tool_permission',
     created_at:clock,detail:{tool_name:'Bash',input:JSON.stringify({command:'printf "<example>"',args:['--example']})}}});
   let row=element('approvals').children[0].children[0];
-  assert.equal(row._decisionParts.summary.textContent,'<img src=x>','untrusted text is never HTML');
+  assert.match(textIn(row._decisionParts.summary),/직원이 도구를 실행/);
+  assert.ok(textIn(row._decisionParts.detail).includes('<img src=x>'),'untrusted source is retained as literal text in details');
+  assert.equal(row._decisionParts.detail.children.some(child=>child.tagName==='IMG'),false);
   assert.match(textIn(row._decisionParts.detail),/Bash/);
   assert.match(textIn(row._decisionParts.detail),/printf.*<example>/s,'3D retains tool command input');
   assert.equal(intervals.length,1,'3D starts one periodic decision-card clock');
@@ -66,6 +79,8 @@ const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').repla
   assert.deepEqual(ws.sent,[{type:'approval.resolve',id:'a1',approved:true,note:''}]);
   row._decisionParts.approve.onclick();
   assert.equal(ws.sent.length,1,'pending decision cannot be double sent');
+  event({type:'error',data:{message:'Invalid storage choice'}});
+  assert.equal(row._decisionParts.approve.disabled,false,'validation error unlocks the pending card');
   event({type:'approval.resolved',seq:13,data:{id:'a1',approved:true}});
   assert.equal(S.approvals.size,0);
   event({type:'approval.requested',seq:14,data:{id:'a2',kind:'hpc_submit',summary:'Reject example',
@@ -82,6 +97,17 @@ const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').repla
   S.agents.get('analyst').stateAt-=4;
   timers.shift()();assert.equal(shown,'idle','3D display returns to waiting after three seconds');
   assert.equal(S.agents.get('analyst').state,'done','display must not change event state');
+  const jobEvent = (type, data) => event({type, data, request_id:'local-request', task_id:'local-task', agent_id:'analyst'});
+  jobEvent('request.created', {text:'Local calculation'});
+  jobEvent('request.plan', {steps:[{id:'s1', agent_id:'analyst'}]});
+  jobEvent('task.dispatched', {step_id:'s1'});
+  jobEvent('job.submitted', {job_id:'local-gsea', name:'GSEA'});
+  assert.match(textIn(requestRowForLocal()), /로컬 계산 GSEA: 실행 중/);
+  jobEvent('job.state', {job_id:'local-gsea', state:'held'});
+  assert.match(textIn(requestRowForLocal()), /로컬 계산 GSEA: 보류/);
+  jobEvent('job.state', {job_id:'local-gsea', state:'completed'});
+  assert.doesNotMatch(textIn(requestRowForLocal()), /로컬 계산 GSEA/);
+  function requestRowForLocal() { return element('requests').children.find(row => row.dataset.requestId === 'local-request'); }
   ws.close();assert.equal(S.conn,'offline');assert.equal(element('token-form').hidden,false);
   timers.shift()();ws=sockets.at(-1);assert(ws.url.endsWith('&since=16'));
   ws.readyState=1;ws.onopen();

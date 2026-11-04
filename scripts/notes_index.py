@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import re
 import sys
 from datetime import datetime
@@ -52,7 +53,7 @@ def _load_entry(path: Path) -> list[dict[str, object]]:
     for index, raw in enumerate(data["rows"]):
         if not isinstance(raw, dict):
             raise ValueError(f"{path}: rows[{index}]가 객체가 아닙니다")
-        allowed = {"sha", "at", "text"} | ({"pr"} if path.name == "_legacy.yaml" else set())
+        allowed = {"sha", "at", "text", "summary"} | ({"pr"} if path.name == "_legacy.yaml" else set())
         if set(raw) - allowed or not {"sha", "at", "text"} <= set(raw):
             raise ValueError(f"{path}: rows[{index}] 필드가 잘못됐습니다")
         sha, at, text = raw["sha"], raw["at"], raw["text"]
@@ -66,10 +67,17 @@ def _load_entry(path: Path) -> list[dict[str, object]]:
             raise ValueError(f"{path}: rows[{index}].at 형식은 YYYY-MM-DD HH:MM입니다") from exc
         if not isinstance(text, str) or not text or "\n" in text:
             raise ValueError(f"{path}: rows[{index}].text는 한 줄이어야 합니다")
+        summary = raw.get("summary")
+        if "summary" in raw and (
+            not isinstance(summary, str) or not summary.strip() or "\n" in summary or "\r" in summary
+        ):
+            raise ValueError(f"{path}: rows[{index}].summary는 쉬운 설명 한 줄이어야 합니다")
+        if summary is not None:
+            summary = summary.strip()
         pr = raw.get("pr", default_pr)
         if pr is not None and not isinstance(pr, int):
             raise ValueError(f"{path}: rows[{index}].pr은 정수 또는 null이어야 합니다")
-        loaded.append({"sha": sha, "at": at, "stamp": stamp, "text": text, "pr": pr})
+        loaded.append({"sha": sha, "at": at, "stamp": stamp, "text": text, "pr": pr, "summary": summary})
     return loaded
 
 
@@ -96,7 +104,13 @@ def render_patch_notes(root: Path) -> str:
         sha = str(row["sha"])
         pr = row["pr"]
         link = f"{REPO_URL}/pull/{pr}/commits/{sha}" if pr is not None else f"{REPO_URL}/commit/{sha}"
-        lines.append(f"| {time} | [`{sha}`]({link}) | {row['text']} |")
+        text = str(row["text"])
+        if row["summary"]:
+            # The explanation is plain prose; keep it inside one Markdown table cell.
+            summary = html.escape(str(row["summary"]), quote=False)
+            summary = re.sub(r"([\\`*_\[\]|])", r"\\\1", summary)
+            text = f"**{summary}**<br>{text}"
+        lines.append(f"| {time} | [`{sha}`]({link}) | {text} |")
     return "\n".join(lines) + "\n"
 
 

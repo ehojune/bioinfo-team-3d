@@ -1,9 +1,16 @@
+import ast
+import itertools
+import ntpath
+import os
+import posixpath
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
+from labhq import policy as policy_module
 from labhq.policy import (
     claude_rule_path, claude_settings, core_hours, evaluate_tool, hpc_needs_approval,
     mentions_zone, touches, touches_resolved,
@@ -15,14 +22,183 @@ def _policy(**kw):
     return PolicySettings(data_zones=[DataZone(path="/data/cohort", level="restricted")], **kw)
 
 
-def _long_separator_runs():
-    return "/" * 65_536 + "\\" * 65_536 + ":" * 600_000
+def _long_separator_runs(fraction=1):
+    return "/" * int(65_536 * fraction) + "\\" * int(65_536 * fraction) + ":" * int(600_000 * fraction)
 
 
-def _assert_linear(call):
-    started = time.perf_counter()
-    assert call(_long_separator_runs()) is None
-    assert time.perf_counter() - started < 2, "path scanning must stay linear in the text length"
+# A scan that retries at every delimiter of a run costs the square of the run length. The contract is relative, on
+# the calling thread: the full input may cost at most _MAX_SCALE times the same composition at a quarter of its
+# length. A linear scan costs about 4x; a quadratic one about 16x. On Linux this contract exposed a real quadratic
+# step (run 39849219342: 11.2x and 10.2x): `_norm` handed the 131,072-character separator candidate to CPython's
+# pure-Python `ntpath.normpath`, which deletes empty components from a list one by one. Windows' native normpath
+# hid it, so `_windows_normpath` now applies the same rules in one pass on every host. This checks these inputs
+# only; it is not a proof of linearity for every input, and a quadratic regression of the full input would still
+# run long before failing.
+_MAX_SCALE = 8
+_BLOCK_S = 0.1  # a sample is a block of calls of at least this much CPU, so a 15.6 ms Windows clock tick stays below 16 %
+_MIN_SAMPLES = 3  # a single slow block cannot decide a side
+_MAX_BLOCK_CALLS = {"quarter": 16, "full": 4}  # bounds the work of one block: at most 12 full-input calls per scan
+_CLOCK_TICK_S = 0.0157  # the coarsest thread_time tick in use (Windows 15.6 ms): one tick of slack per average
+
+
+def _costs(call, texts, vary=True):
+    """Calling-thread CPU per call for each input, and every result. A sample is a block of calls, which keeps a coarse
+    clock from reading 0 for a cheap call; the fastest block counts, since a stall on a loaded CI runner only adds time
+    (run 41078175471 read 15.5x from one slow call, where this input costs about 4x) while a quadratic scan is slow in
+    every block. Blocks alternate between the sizes so one stall cannot hit one side only (run 41079954051: 9.1x)."""
+    samples = {name: [] for name in texts}
+    results = {name: [] for name in texts}
+    while any(len(values) < _MIN_SAMPLES for values in samples.values()):
+        for name, text in texts.items():
+            if len(samples[name]) >= _MIN_SAMPLES:
+                continue
+            spent, calls = 0.0, 0
+            while calls < _MAX_BLOCK_CALLS[name] and spent < _BLOCK_S:
+                # A fresh text of the same size each call, so a scan that is slow only the first time it sees a text
+                # (a cache, a warm-up) is measured at its cold cost every time.
+                fresh = f"{text} {'a' * (len(results[name]) + 1)}" if vary else text
+                started = time.thread_time()  # this thread only: other threads in a test worker do not count
+                results[name].append(call(fresh))
+                spent += time.thread_time() - started
+                calls += 1
+            samples[name].append(spent / calls)
+    return {name: min(values) for name, values in samples.items()}, results
+
+
+def _assert_linear(call, build=_long_separator_runs, expected=None, vary=True):
+    cost, results = _costs(call, {"quarter": build(0.25), "full": build(1)}, vary)
+    quarter_cost, full_cost = cost["quarter"], cost["full"]
+    assert all(result == expected for values in results.values() for result in values), \
+        "the scan must keep its result"
+    assert full_cost <= _MAX_SCALE * quarter_cost + _CLOCK_TICK_S, (
+        f"path scanning must stay linear in the text length: a 4x input cost {full_cost / max(quarter_cost, 1e-9):.1f}x"
+        f" ({quarter_cost:.4f} s -> {full_cost:.4f} s per call)")
+
+
+@pytest.mark.parametrize("quarter_s,full_s,result,reject,expected_calls", [
+    (0.125, 0.5, None, False, {"quarter": 3, "full": 3}),      # linear: 4x
+    (0.125, 1.0, None, False, {"quarter": 3, "full": 3}),      # the bound itself
+    (0.125, 2.0, None, True, {"quarter": 3, "full": 3}),       # quadratic: 16x
+    (0.125, 1.0625, None, True, {"quarter": 3, "full": 3}),
+    (0.125, 0.5, False, True, {"quarter": 3, "full": 3}),      # wrong result: separator runs name no path
+    (0.0078125, 0.03125, None, False, {"quarter": 39, "full": 12}),  # fast machine: blocks of calls, then the fastest
+    (0.0, 0.0078125, None, False, {"quarter": 48, "full": 12}),  # quarter below one clock tick: one tick of slack
+    (0.0, 0.03125, None, True, {"quarter": 48, "full": 12}),     # but not more than one tick
+])
+def test_linear_scan_budget_uses_cpu_and_preserves_result_and_strict_limit(
+        monkeypatch, quarter_s, full_s, result, reject, expected_calls):
+    clock, calls = [0.0], {"quarter": 0, "full": 0}
+    # Replace only this module's time object; pytest's real clocks stay intact.
+    monkeypatch.setitem(globals(), "time", SimpleNamespace(thread_time=lambda: clock[0]))
+    full_text, quarter_text = _long_separator_runs(), _long_separator_runs(0.25)
+    assert len(full_text) == 731_072 and len(quarter_text) * 4 == len(full_text)  # the full CI input is kept
+
+    def scan(text):
+        size = "full" if len(text) > len(full_text) // 2 else "quarter"
+        assert text.startswith((full_text, quarter_text))
+        calls[size] += 1
+        clock[0] += full_s if size == "full" else quarter_s
+        return result
+
+    if reject:
+        with pytest.raises(AssertionError):
+            _assert_linear(scan)
+    else:
+        _assert_linear(scan)
+    assert calls == expected_calls  # the full input is always scanned, and never more than the bound
+
+
+@pytest.mark.parametrize("quarter_costs,full_costs,reject", [
+    ([0.125] * 3, [3.0, 0.5, 0.5], False),             # one stalled full call (the CI failure): the fastest decides
+    ([0.5, 0.125, 0.125], [0.5, 0.5, 0.5], False),     # one stalled quarter call
+    ([0.125] * 3, [2.0, 2.5, 2.0], True),              # quadratic: every full call is about 16x
+    ([0.125] * 3, [1.4, 2.0, 1.5], True),              # all full calls are over the bound
+])
+def test_linear_scan_budget_ignores_one_stalled_call_but_not_a_slow_scan(
+        monkeypatch, quarter_costs, full_costs, reject):
+    clock, queue = [0.0], {"quarter": list(quarter_costs), "full": list(full_costs)}
+    monkeypatch.setitem(globals(), "time", SimpleNamespace(thread_time=lambda: clock[0]))
+    full_text, quarter_text = _long_separator_runs(), _long_separator_runs(0.25)
+
+    def scan(text):
+        clock[0] += queue["full" if len(text) > len(full_text) // 2 else "quarter"].pop(0)
+        return None
+
+    if reject:
+        with pytest.raises(AssertionError):
+            _assert_linear(scan)
+    else:
+        _assert_linear(scan)
+
+
+def test_linear_scan_budget_still_rejects_a_really_quadratic_scan():
+    """The fastest-call estimate must keep its power: real CPU, work growing with the square of the text length."""
+    def quadratic(text):
+        n = len(text) // 150
+        return sum(sum(range(n)) for _ in range(n)) and None
+
+    with pytest.raises(AssertionError, match="must stay linear"):
+        _assert_linear(quadratic)
+
+
+def test_linear_scan_budget_still_rejects_a_scan_that_is_slow_only_the_first_time():
+    """A cache or warm-up must not hide a cold quadratic cost behind a fast repeat of the same input."""
+    seen = set()
+
+    def quadratic_once(text):
+        if text in seen:
+            return None
+        seen.add(text)
+        n = len(text) // 150
+        return sum(sum(range(n)) for _ in range(n)) and None
+
+    with pytest.raises(AssertionError, match="must stay linear"):
+        _assert_linear(quadratic_once)
+
+
+@pytest.mark.parametrize("tail,found", [
+    ("/restricted/late.cram", True),
+    (" /restricted/late.cram", True),
+    ("file:///%72estricted/late.cram", True),
+    ("/restricted2/public.txt", False),
+    ("https://public.invalid/restricted/guide", False),
+])
+def test_separator_runs_never_hide_a_late_restricted_path_or_file_uri(tail, found):
+    text = _long_separator_runs() + tail
+    assert mentions_zone(text, ["/restricted"]) is found
+    assert touches({"command": text}, ["/restricted"]) == ("/restricted" if found else None)
+
+
+def _stdlib_pure_ntpath_normpath():
+    """The running CPython's pure-Python `ntpath.normpath`: what Linux runs; Windows normally uses a native one."""
+    tree = ast.parse(Path(ntpath.__file__).read_text(encoding="utf-8"))
+    node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "normpath")
+    scope = dict(vars(ntpath))
+    exec(compile(ast.Module(body=[node], type_ignores=[]), ntpath.__file__, "exec"), scope)
+    return scope["normpath"]
+
+
+def test_windows_normpath_keeps_the_running_stdlib_rules():
+    pure = _stdlib_pure_ntpath_normpath()
+    cases = ["".join(chars) for n in range(5) for chars in itertools.product("\\/.aC:?", repeat=n)]
+    cases += [r"\\server\share\a\..\..\b", "//server/share/../x", r"\\.\C:\a\..\b", "//./C:/a/../b", r"\\?\C:\a\..\b",
+              "//?/C:/a/../b", r"\\?\UNC\server\share\x\..\y", "C:a\\..\\..\\b", "C:\\..\\..\\b", "C:/Users/x/./y//z/../w",
+              "C:/Restricted/./Data//x/../y", r"\\server", r"\\server\share", "\\..\\a", "..\\..\\a", ".", ".."]
+    assert [policy_module._windows_normpath(case) for case in cases] == [pure(case) for case in cases]
+
+
+@pytest.mark.parametrize("build", [
+    lambda f: "/" * int(65_536 * f) + "\\" * int(65_536 * f) + "x",       # the scanner's separator candidate
+    lambda f: "C:" + "/" * int(65_536 * f) + "\\" * int(65_536 * f) + "late",
+    lambda f: "\\\\server\\share" + "\\." * int(100_000 * f) + "\\late",
+    lambda f: "C:\\" + "x\\..\\" * int(60_000 * f) + "late",
+    lambda f: "C:\\" + "..\\" * int(100_000 * f) + "late",
+], ids=["separator-candidate", "drive-separators", "unc-dots", "name-dotdot-pairs", "rooted-dotdots"])
+def test_windows_normpath_stays_linear_on_every_host(build):
+    # The pure-Python stdlib normpath is quadratic on all of these; the native Windows one is not. The expected value
+    # comes from the stdlib rules on a short input of the same shape, which normalizes to the same string.
+    expected = _stdlib_pure_ntpath_normpath()(build(1 / 4096))
+    _assert_linear(policy_module._windows_normpath, build, expected, vary=False)  # its result is the exact text
 
 
 def test_mentions_zone_stays_linear_on_long_separator_runs():
@@ -35,6 +211,78 @@ def test_touches_stays_linear_on_long_separator_runs():
 
 def test_touches_resolved_stays_linear_on_long_separator_runs():
     _assert_linear(lambda text: touches_resolved({"command": text}, ["/restricted"]))
+
+
+@pytest.mark.parametrize("path,expected", [
+    ("/a/b", "/a/b"),                  # nothing to merge
+    ("a//b///c", "a/b/c"),
+    ("//a///b", "//a/b"),              # a leading pair is kept: `//host` is implementation-defined on POSIX
+    ("//", "//"),
+    ("///a", "/a"),                    # three or more leading separators are one
+    ("////", "/"),
+    ("/a\\\\b", "/a\\\\b"),            # a backslash is an ordinary character on POSIX
+    ("", ""),
+])
+def test_separator_runs_merge_but_a_leading_pair_stays(path, expected):
+    assert policy_module._collapse_separators(path, nt=False) == expected
+
+
+@pytest.mark.parametrize("path", ["C:\\a//b", "\\\\server\\share\\x", "//?/C:/x", "//a//", "///a"])
+def test_a_windows_path_is_returned_as_written(path):
+    """Merging the separators of `//a//` (a UNC prefix with no share) changes what ntpath.realpath returns."""
+    assert policy_module._collapse_separators(path, nt=True) == path
+
+
+def test_merging_separator_runs_never_changes_what_posix_realpath_returns():
+    """The merged path names the same place: realpath's answer for it is the one it gives the original."""
+    cases = ["".join(chars) for n in range(7) for chars in itertools.product("/.ab", repeat=n)]
+    cases += ["///a//..//b", "a//b/./c", "//host//share/../x", "/a/b//../c///d"]
+    assert [posixpath.realpath(policy_module._collapse_separators(case, nt=False)) for case in cases] ==         [posixpath.realpath(case) for case in cases]
+
+
+def test_the_policy_realpath_stays_linear_on_long_separator_runs():
+    """#1158: CPython's POSIX realpath is quadratic in a run of separators (0.03 s, 0.12, 0.44, 1.75 s per doubling).
+    Windows' own is not, so this only shows on Linux and macOS, where it failed at 7-16x over four times the input."""
+    _assert_linear(lambda text: policy_module._real(text) and None)
+
+
+@pytest.fixture
+def posix_merge(monkeypatch):
+    """The merge as a POSIX host runs it, on any host: the merge itself returns a Windows path as written."""
+    merge = policy_module._collapse_separators
+    monkeypatch.setattr(policy_module, "_collapse_separators", lambda p, *, nt=None: merge(p, nt=False))
+
+
+def test_the_policy_realpath_takes_what_os_path_realpath_takes(tmp_path, posix_merge):
+    """#1159: `_root_rules` hands it a `Path`, and a `Path` has no `lstrip`."""
+    root = tmp_path / "work" / "run"
+    spelled = f"{tmp_path}//work///run"
+    assert policy_module._realpath(root) == os.path.realpath(root)
+    assert policy_module._realpath(spelled) == os.path.realpath(spelled)
+    assert policy_module._realpath(os.fsencode(spelled)) == os.path.realpath(os.fsencode(spelled))  # bytes pass through
+
+
+def test_root_rules_accept_path_roots_and_name_each_root_alike(tmp_path, posix_merge):
+    """A `Path` root and the same root as text give the same rules, with a run of separators in the text too."""
+    (tmp_path / "work").mkdir()
+    as_path = policy_module._root_rules("Read", [tmp_path / "work"])
+    as_text = policy_module._root_rules("Read", [str(tmp_path / "work")])
+    assert as_path and as_path == as_text
+    assert policy_module._root_rules("Read", [f"{tmp_path}///work"]) == as_text
+
+
+def test_a_collapsed_candidate_gives_the_same_policy_decision(monkeypatch):
+    """The policy decides alike with and without the merge, so long separator runs change its time, not its answer."""
+    run = "/" * 5000
+    spellings = [f"/data{run}cohort/a.vcf", f"/data/{run}cohort//a.vcf", "/data//cohort/a.vcf",
+                 f"/home/u{run}proj/README.md", "/home/u/README.md"]
+
+    def decided():
+        return [evaluate_tool("Read", {"file_path": spelling}, _policy()).action for spelling in spellings]
+
+    merged = decided()
+    monkeypatch.setattr(policy_module, "_collapse_separators", lambda p, *, nt=None: p)
+    assert merged == decided() == ["deny", "deny", "deny", "allow", "allow"]
 
 
 def test_restricted_read_denied_and_bash_asks():
@@ -487,9 +735,68 @@ def test_recursive_deletes_in_every_option_form_ask_outside_the_step(command):
     r"find .tmp -name '*.part' -exec rm {} \;",
     "find . -name x -exec grep -l y {} +",
     "docker run --rm -v data:/data img nextflow run x -profile docker",
+    # #533: an rm payload's literal targets below .tmp pass; an operand after `--`, a glob and a later brace list
+    # cannot be options.
+    "find .tmp -name '*.part' -exec rm -f -- {} +",
+    r"find .tmp -name '*.part' -exec rm -f .tmp/stale.lock {} \;",
+    'rm -f -- "$f"',
+    "rm -f *.log out.{bam,bai}",
+    'echo "rm"',
 ])
 def test_deletes_below_step_tmp_and_commands_that_delete_nothing_stay_allowed(command):
     assert _decide_in_windows_step(command).action == "allow"
+
+
+@pytest.mark.parametrize("command", [
+    # #533: a find payload whose delete the gate cannot read, or that deletes outside .tmp, asks.
+    r"find .tmp -exec rm $'-rf' /outside \;",
+    r"find .tmp -exec rm -f /outside \;",
+    r"find .tmp -exec rm -f ../x {} \;",
+    r"find .tmp -exec $CMD {} \;",
+    r'find .tmp -exec "$RM" -f {} +',
+    r"find .tmp -exec env rm -f C:/Users/pi/Documents/x \;",
+    r"find .tmp -execdir rm -f x \;",
+    r"find .tmp -exec rm {}.bak \;",
+    r'find .tmp -ok rm -- "$X" \;',
+    # An rm option word the gate cannot read may be `-r`.
+    "rm $'-rf' C:/Users/pi/Documents",
+    'rm "$OPT" C:/Users/pi/Documents',
+    'rm -f"$X" C:/Users/pi/Documents',
+    "rm {-r,-f} C:/Users/pi/Documents",
+    "rm `printf -- -rf` C:/Users/pi/Documents",
+])
+def test_find_payloads_and_rm_options_the_gate_cannot_read_ask(command):
+    decision = _decide_in_windows_step(command)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
+@pytest.mark.parametrize("command", [
+    # #535 follow-up: only a real rm meets the recursive-delete rule; `docker rm` is another program's subcommand.
+    'docker rm "$id"', "docker rm -f $(docker ps -aq)",
+    # `git rm` removes files in the current tree only, as `git add` writes there.
+    'git rm "$f"', 'git rm -r "$d"', "git rm -r --cached outputs/old", "git log --grep rm -r",
+    # One double-quoted computed word as the only operand: one option cluster with nothing to delete, or one file.
+    'rm -f "$f"', 'rm "$tmp"', 'rm -fv "${out}.tmp"',
+])
+def test_rm_words_that_cannot_delete_recursively_stay_allowed(command):
+    assert _decide_in_windows_step(command).action == "allow"
+
+
+@pytest.mark.parametrize("command", [
+    # A git rm the options or environment may point at another tree.
+    "git -C C:/Users/pi/repo rm notes.txt", "git --work-tree=C:/Users/pi rm -r Documents",
+    'git --git-dir "$G" rm f', 'git "$OPT" rm f', "GIT_WORK_TREE=C:/Users/pi git rm Documents/x",
+    "git -c core.worktree=C:/Users/pi rm Documents/x", "git -c alias.x='!rm -rf C:/Users/pi/Documents' x",
+    # Computed words rm may read as options, and real rms after a wrapper, a computed program or a redirection.
+    'rm -f "$a" "$b"', "rm -f $f", 'rm -f "$f" C:/Users/pi/x', 'rm C:/Users/pi/x "$f"', 'rm -r "$f"',
+    "sudo rm -rf C:/Users/pi/Documents", '"$RUNNER" rm -rf C:/Users/pi/Documents',
+    "2>/dev/null rm -rf C:/Users/pi/Documents",
+])
+def test_git_rm_into_another_tree_and_unreadable_rm_operands_ask(command):
+    decision = _decide_in_windows_step(command)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
 
 
 @pytest.mark.parametrize("start", [".tmp/link", ".tmp/link/"])
@@ -562,9 +869,92 @@ def test_a_powershell_listing_piped_into_a_delete_asks_outside_step_tmp(command)
     "Get-ChildItem .tmp -Filter *.part | Remove-Item",
     "Get-ChildItem -LiteralPath .tmp/a -Recurse -File -ErrorAction SilentlyContinue | % { $_.Delete() }",
     "Get-ChildItem . -Recurse | Where-Object { $_.Name -like '*rm*' } | Select-Object Name",
+    # #533: filters that pass the listed items on unchanged keep the pipeline readable.
+    "Get-ChildItem .tmp -File | Where-Object { $_.Length -gt 0 } | Sort-Object Length | Select-Object -First 3 "
+    "| Remove-Item -Confirm:$false",
+    "gci .tmp -r | ? Length -gt 0 | % { $PSItem.Delete($true) }",
 ])
 def test_a_powershell_listing_of_step_tmp_piped_into_a_delete_stays_allowed(command):
     assert _decide_powershell_in_windows_step(command).action == "allow"
+
+
+@pytest.mark.parametrize("command", [
+    # #533: after a listing of .tmp, a delete of another path, a stage that makes new objects, or text run as code.
+    "Get-ChildItem .tmp | % { [System.IO.DirectoryInfo]::new('C:/outside').Delete($true) }",
+    "Get-ChildItem .tmp | ForEach-Object { [System.IO.Directory]::Delete('C:/outside', $true) }",
+    "Get-ChildItem .tmp | % { Remove-Item C:/outside }",
+    "Get-ChildItem .tmp | Remove-Item -Path C:/outside",
+    "Get-ChildItem .tmp | % { 'C:/outside' } | Remove-Item",
+    "Get-ChildItem .tmp | Select-Object @{n='PSPath';e={'C:/outside'}} | Remove-Item",
+    "Get-ChildItem .tmp | % { iex $code }",
+    "Get-ChildItem .tmp | Where-Object { [IO.File]::Delete('C:/x') } | Remove-Item",
+    "Get-ChildItem .tmp | % { Remove-Item $_; Remove-Item C:/x }",
+    # A .NET delete names no literal path anywhere else either.
+    "[System.IO.Directory]::Delete('C:/Users/pi/Documents', $true)",
+    "(Get-Item C:/Users/pi/Documents).Delete($true)",
+])
+def test_a_powershell_delete_that_may_reach_another_path_asks(command):
+    decision = _decide_powershell_in_windows_step(command)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
+@pytest.mark.parametrize("command", [
+    # PR #535 review: a .NET delete spelled inside text a data command prints or writes is not a call.
+    "Write-Output '$_.Delete()'", """Set-Content notes.txt '[IO.File]::Delete("x")'""",
+])
+def test_a_dotnet_delete_inside_a_powershell_data_string_is_text(command):
+    assert _decide_powershell_in_windows_step(command).action == "allow"
+    # Text run as code is still read as a delete.
+    assert _decide_powershell_in_windows_step(f"iex {command.split(' ', 1)[1]}").action == "ask"
+
+
+OUTSIDE_HOME = {"HOME": "/home/pi", "USERPROFILE": "C:\\Users\\pi"}
+
+
+@pytest.mark.parametrize("command", [
+    # #521: a write destination starting with `~` is the shell's home, outside the write roots here.
+    "cp a ~/x", "echo x > ~/.bashrc", "curl -o ~/x https://example.org/x", "echo x | tee -a ~/x", "cp a ~",
+])
+def test_a_tilde_write_destination_is_judged_at_the_shell_home(command):
+    decision = evaluate_tool("Bash", {"command": command}, _policy(), ["/work/step"], "/work/step",
+                             windows=False, environ=OUTSIDE_HOME)
+    assert decision.action == "ask" and "outside allowed roots" in decision.reason
+    inside = evaluate_tool("Bash", {"command": command}, _policy(), ["/work/step"], "/work/step",
+                           windows=False, environ={"HOME": "/work/step"})
+    assert inside.action == "allow"
+
+
+@pytest.mark.parametrize("command,environ", [
+    ("cp a ~root/x", OUTSIDE_HOME), ("cp a ~+/x", OUTSIDE_HOME), ("echo x > ~-/x", OUTSIDE_HOME),
+    ("cp a ~/x", {}),  # no HOME: nothing to expand to
+])
+def test_a_tilde_write_destination_the_gate_cannot_expand_asks(command, environ):
+    decision = evaluate_tool("Bash", {"command": command}, _policy(), ["/work/step"], "/work/step",
+                             windows=False, environ=environ)
+    assert decision.action == "ask" and "cannot expand" in decision.reason
+
+
+@pytest.mark.parametrize("command", [
+    "Set-Content ~/x 'a'", r"'a' > ~\x", "Invoke-WebRequest https://example.org/x -OutFile ~/x",
+])
+def test_a_powershell_tilde_write_is_judged_at_every_home_the_shell_may_use(command):
+    root = "C:/Users/pi/labhq/work/step"
+    outside = {"USERPROFILE": "C:\\Users\\pi"}
+    assert evaluate_tool("PowerShell", {"command": command}, _policy(), [root], root, windows=True,
+                         environ=outside).action == "ask"
+    # Windows PowerShell 5.1 may take HOMEDRIVE+HOMEPATH instead of USERPROFILE: both must be inside.
+    split = {"USERPROFILE": root, "HOMEDRIVE": "H:", "HOMEPATH": "\\"}
+    assert evaluate_tool("PowerShell", {"command": command}, _policy(), [root], root, windows=True,
+                         environ=split).action == "ask"
+    assert evaluate_tool("PowerShell", {"command": command}, _policy(), [root], root, windows=True,
+                         environ={"USERPROFILE": root}).action == "allow"
+
+
+@pytest.mark.parametrize("command", ["cat ~/notes.txt > out.txt", "cp ~/a out.txt", "ls ~"])
+def test_tilde_read_paths_are_unchanged(command):
+    assert evaluate_tool("Bash", {"command": command}, _policy(), ["/work/step"], "/work/step",
+                         windows=False, environ=OUTSIDE_HOME).action == "allow"
 
 
 @pytest.mark.parametrize("command", ["find -- /c/Users/pi/Documents -delete", "find -files0-from list.txt -delete"])

@@ -1,0 +1,18 @@
+pr: 994
+rows:
+  - sha: f7043c9
+    at: "2026-10-29 05:20"
+    text: "fix: include halt resume test in Windows inventory"
+    summary: "Windows CI에서 중단과 재개 검증을 실행하도록 등록합니다."
+  - sha: b3e020a
+    at: "2026-10-29 05:14"
+    text: "test: connect halt and resume control flow"
+    summary: "직원 중단과 같은 세션 재개, 다른 요청의 독립성을 검증합니다."
+  - sha: 9ea950d
+    at: "2026-10-29 09:54"
+    text: "main 병합: Windows inventory 충돌 해소 (#59)"
+    summary: "main의 새 테스트 목록과 이 PR의 목록 충돌을 합쳤습니다."
+  - sha: f1ca881
+    at: "2026-10-29 09:54"
+    text: "문서: halt→resume 시험 범위와 한계를 manual에 적는다 (#59)"
+    summary: "중단 뒤 재개 시험의 범위와 실제 network는 검증하지 않았다는 한계를 매뉴얼에 적었습니다."

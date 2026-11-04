@@ -15,7 +15,7 @@ P4 1단계. `/3d`에서 실제 게이트웨이에 연결하며 `?demo=1`은 기�
 | engineer | 문어: 물방울 머리·여덟 팔 / 렌치 |
 | qc_reviewer | 고슴도치: 가시·뾰족한 코 / QC 도장 |
 | sci_reviewer | 거북: 등딱지·작은 머리 / 세 탭 리뷰 문서 |
-| recruiter | 비버: 앞니·격자 꼬리 / 오퍼레터 |
+| recruiter | 카피바라: 둥근 큰 몸·작은 귀·뭉툭한 코 / 명함철 |
 | contract | 병아리: 둥근 몸·종이모자 / 논문의 방법 |
 
 - 정적 데모 실행: 저장소 루트에서 `python -m http.server 8765 --bind 127.0.0.1 --directory labhq/web`, 브라우저에서 `http://127.0.0.1:8765/lab3d/?demo=1`를 연다. 종료는 Ctrl+C.

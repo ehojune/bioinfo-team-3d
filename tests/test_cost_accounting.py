@@ -110,8 +110,8 @@ def test_mixed_costs_keep_engine_subtotals_and_unknown_count_separate():
     assert summary["by_engine"]["codex"]["estimated_usd"] == pytest.approx(3.0)
     assert summary["by_engine"]["gemini"]["unknown_count"] == 1
     assert summary["prices"][0]["model"] == "gpt-6.1-sol" and summary["prices"][0]["catalog_version"]
-    assert format_cost(summary) == "확인 $1.25 + 추정 $3.00 + 미집계 1건"
-    assert format_engines(summary) == "claude_code 확인 $1.25 · codex 추정 $3.00 · gemini 미집계 1건"
+    assert format_cost(summary) == "확인 $1.25 + 추정 $3.00 + 비용 모름 1건"
+    assert format_engines(summary) == "claude_code 확인 $1.25 · codex 추정 $3.00 · gemini 비용 모름 1건"
 
 
 def test_unknown_only_is_never_shown_as_zero_dollars():
@@ -119,9 +119,9 @@ def test_unknown_only_is_never_shown_as_zero_dollars():
                             cost_usd=None, cost_known=False, task_id="u")
     summary = aggregate_costs({"u": unknown})
 
-    assert format_cost(summary) == "미집계 1건"
+    assert format_cost(summary) == "비용 모름 1건"
     assert "$0" not in cost_text(0, False, summary)
-    assert cost_text(0, False) == "비용 미집계" and cost_text(1.5, False) == "$1.50 + 비용 미집계"
+    assert cost_text(0, False) == "비용 모름" and cost_text(1.5, False) == "$1.50 + 비용 모름"
     assert cost_text(0, True) == "$0.00"
     assert format_cost(aggregate_costs({})) == "확인 $0.00"
 
@@ -136,12 +136,28 @@ def test_old_price_catalog_is_flagged():
     assert format_warnings(summary) == "가격표 오래됨: codex gpt-6.1-sol (2026-10-02 확인)"
 
 
-def test_request_summary_waits_for_every_counted_task_to_be_classified():
+def test_request_summary_reads_legacy_numeric_rows_without_classification():
     item = classify_cost(engine="claude_code", model="opus", usage={}, usage_known=True,
                          cost_usd=0.2, cost_known=True, task_id="t1")
 
-    assert request_cost_summary({"cost_by_task": {"t0": 0.1, "t1": 0.2}, "cost_items": {"t1": item}}) is None
+    assert request_cost_summary({"cost_by_task": {"t0": 0.1, "t1": 0.2},
+                                 "cost_items": {"t1": item}})["actual_usd"] == 0.3
     assert request_cost_summary({"cost_by_task": {"t1": 0.2}, "cost_items": {"t1": item}})["actual_usd"] == 0.2
+
+
+def test_legacy_zero_and_new_unknown_rows_are_read_together():
+    unknown = classify_cost(engine="claude_code", model="unpriced", usage={}, usage_known=False,
+                            cost_usd=None, cost_known=False, task_id="new")
+
+    summary = request_cost_summary({
+        "cost_by_task": {"legacy": 0.0, "new": None},
+        "cost_items": {"new": unknown},
+    })
+
+    assert summary["actual_usd"] == 0.0
+    assert summary["unknown_count"] == 1
+    assert summary["unknown_tasks"] == ["new"]
+    assert format_cost(summary) == "비용 모름 1건"
 
 
 def test_request_cost_is_split_by_staff_member_when_items_name_them():
@@ -157,3 +173,124 @@ def test_request_cost_is_split_by_staff_member_when_items_name_them():
         "cso": {"actual_usd": 0.4, "estimated_usd": 0.0, "unknown_count": 0}}
     legacy = {tid: {k: v for k, v in item.items() if k != "agent_id"} for tid, item in {"t1": cso}.items()}
     assert "by_agent" not in aggregate_costs(legacy)
+
+
+# --- #625: the gateway hands its model_tiers table to both cost recorders ---
+
+def _tier_hub(tmp_path, monkeypatch, tiers):
+    from labhq.gateway.server import Hub
+    from labhq.settings import Settings
+
+    monkeypatch.setattr("labhq.integrations.rounds._git_commit", lambda: "test-commit")
+    cfg = Settings.model_validate({"model_tiers": tiers})
+    cfg.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(cfg)
+    hub.requests["r"] = {"id": "r", "status": "running", "budget_usd": 50}
+    hub.agents["lit_scout"] = {"id": "lit_scout", "engine": "claude_code", "model": "claude-opus-5-5",
+                               "model_tier": "fast"}
+    return hub
+
+
+def _scout_result(task_id):
+    return TaskResult(task_id=task_id, agent_id="lit_scout", ok=True, cost_usd=1.0, cost_known=True)
+
+
+MISMATCH = "model_tier_mismatch:lit_scout:fast:claude-opus-5-5"
+
+
+def test_gateway_summary_warns_when_a_fast_agent_ran_opus(tmp_path, monkeypatch):
+    hub = _tier_hub(tmp_path, monkeypatch, {"fast": {"claude_code": "haiku"}})
+    try:
+        hub._record_task_cost("r", "t1", _scout_result("t1"))
+        summary = hub.requests["r"]["cost_summary"]
+        assert MISMATCH in summary["warnings"]
+        assert hub.requests["r"]["cost_items"]["t1"]["model_tier"] == "fast"
+        assert "선언 등급과 다른 모델: lit_scout(fast) → claude-opus-5-5" in format_warnings(summary)
+    finally:
+        hub.store.close()
+
+
+def test_gateway_summary_is_silent_without_a_table_or_when_the_model_matches(tmp_path, monkeypatch):
+    for tiers in ({}, {"fast": {"claude_code": "opus"}}):  # nothing configured; alias of the model that ran
+        hub = _tier_hub(tmp_path / str(len(tiers)), monkeypatch, tiers)
+        try:
+            hub._record_task_cost("r", "t1", _scout_result("t1"))
+            assert hub.requests["r"]["cost_summary"]["warnings"] == []
+            assert format_warnings(hub.requests["r"]["cost_summary"]) == ""
+        finally:
+            hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_the_async_recorder_hands_over_the_same_table(tmp_path, monkeypatch):
+    hub = _tier_hub(tmp_path, monkeypatch, {"fast": {"claude_code": "haiku"}})
+    try:
+        await hub._arecord_task_cost("r", "t2", _scout_result("t2"))
+        assert MISMATCH in hub.requests["r"]["cost_summary"]["warnings"]
+    finally:
+        hub.store.close()
+
+
+def test_an_unobserved_task_never_produces_a_tier_mismatch_warning():
+    """#625 review: an outcome-unknown item carries only the model that was dispatched, not one that was seen."""
+    from labhq.settings import Settings
+
+    tiers = Settings.model_validate({"model_tiers": {"fast": {"claude_code": "haiku"}}}).model_tiers
+    ran = {"task_id": "a", "engine": "claude_code", "model": "claude-opus-5-5", "status": "actual", "usd": 1.0,
+           "agent_id": "lit_scout", "model_tier": "fast"}
+    lost = {**ran, "task_id": "b", "status": "unknown", "usd": None, "reason": "outcome_unknown"}
+    assert aggregate_costs({"b": lost}, tiers)["warnings"] == []
+    assert aggregate_costs({"a": ran}, tiers)["warnings"] == ["model_tier_mismatch:lit_scout:fast:claude-opus-5-5"]
+
+
+def test_a_step_run_on_its_own_tier_is_recorded_at_that_tier_so_a_deliberate_lowering_is_not_a_mismatch():
+    from labhq.costs import task_cost_item
+    from labhq.settings import Settings
+
+    tiers = Settings.model_validate({"model_tiers": {"fast": {"claude_code": "haiku"},
+                                                     "reasoning": {"claude_code": "opus"}}}).model_tiers
+    agent = {"id": "analyst", "engine": "claude_code", "model": "claude-haiku-5-5", "model_tier": "reasoning"}
+    result = {"task_id": "t1", "agent_id": "analyst", "usage": {}, "cost_usd": 1.0, "cost_known": True}
+    plain = task_cost_item(result, agent)
+    assert plain["model_tier"] == "reasoning"                                        # as declared
+    lowered = task_cost_item(result, agent, model_tier="fast")
+    assert lowered["model_tier"] == "fast"
+    assert aggregate_costs({"a": plain}, tiers)["warnings"] == ["model_tier_mismatch:analyst:reasoning:claude-haiku-5-5"]
+    assert aggregate_costs({"a": lowered}, tiers)["warnings"] == []                   # the plan asked for it
+
+
+def _tiered_task(hub, tid, tier):
+    hub.store.put("task", tid, {"request_id": "r", "step_id": "s1", "payload": {"meta": {
+        "kind": "step", **({"model_tier": tier} if tier else {})}}})
+
+
+def test_gateway_records_the_dispatched_step_tier_so_a_lowered_step_is_not_a_mismatch(tmp_path, monkeypatch):
+    hub = _tier_hub(tmp_path, monkeypatch, {"fast": {"claude_code": "haiku"}, "reasoning": {"claude_code": "opus"}})
+    try:
+        hub.agents["lit_scout"]["model_tier"] = "reasoning"          # declared reasoning, ran the opus-class model
+        hub.agents["lit_scout"]["model"] = "claude-haiku-5-5"
+        _tiered_task(hub, "lowered", "fast")
+        _tiered_task(hub, "plain", None)
+        hub._record_task_cost("r", "lowered", _scout_result("lowered"))
+        assert hub.requests["r"]["cost_items"]["lowered"]["model_tier"] == "fast"
+        assert hub.requests["r"]["cost_summary"]["warnings"] == []             # the plan asked for it
+        hub._record_task_cost("r", "plain", _scout_result("plain"))
+        assert hub.requests["r"]["cost_items"]["plain"]["model_tier"] == "reasoning"
+        assert hub.requests["r"]["cost_summary"]["warnings"] == [
+            "model_tier_mismatch:lit_scout:reasoning:claude-haiku-5-5"]       # a lowering nobody asked for still shows
+        _tiered_task(hub, "odd", "turbo")                                      # a value that is not a tier is ignored
+        hub._record_task_cost("r", "odd", _scout_result("odd"))
+        assert hub.requests["r"]["cost_items"]["odd"]["model_tier"] == "reasoning"
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_the_async_recorder_keeps_the_dispatched_step_tier_too(tmp_path, monkeypatch):
+    hub = _tier_hub(tmp_path, monkeypatch, {"fast": {"claude_code": "haiku"}})
+    try:
+        _tiered_task(hub, "t3", "fast")
+        await hub._arecord_task_cost("r", "t3", _scout_result("t3"))
+        assert hub.requests["r"]["cost_items"]["t3"]["model_tier"] == "fast"
+    finally:
+        hub.store.close()

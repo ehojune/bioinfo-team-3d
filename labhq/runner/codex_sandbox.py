@@ -21,6 +21,7 @@ from ..adapters import codex as codex_adapter
 from ..adapters.base import _resolve_command, child_config_dirs
 from ..models import ApprovalRequest
 from ..settings import Settings
+from ..test_guard import guard_test_path
 from .versions import _probe, _version
 
 OK_FILE = ".labhq-sandbox-ok.json"
@@ -130,6 +131,7 @@ def config_windows_sandbox(config: Path) -> str | None:
     """`[windows] sandbox` (or the dotted top-level form) of a Codex config.toml; UNSET when the file has no such key,
     None when there is no readable file. A line scan, not a TOML parser: Python 3.10 has no tomllib, and only this one
     key matters."""
+    guard_test_path(config)
     try:
         lines = config.read_text(encoding="utf-8-sig").splitlines()
     except (OSError, UnicodeDecodeError):
@@ -171,6 +173,7 @@ def home_label(home: Path) -> str:
 
 
 def read_ok(home: Path) -> dict | None:
+    guard_test_path(home / OK_FILE)
     try:
         data = json.loads((home / OK_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -193,6 +196,7 @@ def record_ok(home: Path, version: str, label: str) -> bool:
 
 
 def has_setup_marker(home: Path) -> bool:
+    guard_test_path(home / ".sandbox" / "setup_marker.json")
     return (home / ".sandbox" / "setup_marker.json").is_file()
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path, PurePosixPath
@@ -176,3 +177,10 @@ def pipeline_rejection(submission: dict, settings: Settings) -> str | None:
                     limit=None) != text:
             return "secret or restricted-zone text is not allowed"
     return None
+
+
+def pipeline_fingerprint(submission: dict, settings: Settings) -> str:
+    """Consent covers these exact files and the configured destination, never a later replacement."""
+    policy = settings.policy.bioinfo_agent
+    payload = {"submission": submission, "repo": policy.pipeline_repo, "base": policy.pipeline_base_branch}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")).hexdigest()

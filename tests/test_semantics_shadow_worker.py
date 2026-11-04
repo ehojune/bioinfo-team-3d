@@ -37,15 +37,28 @@ async def test_shadow_writes_one_line_per_finished_request(tmp_path):
     assert len(workers) <= 1 and all(t.daemon for t in workers)
 
 
+@pytest.fixture(scope="module")
+def off_lab_record(tmp_path_factory):
+    """Only serialized evidence is shared: no Hub, settings, DB or mutable nested records."""
+    root = tmp_path_factory.mktemp('shadow-off-baseline')
+    off = asyncio.run(run_lab(root, None, [TEXT]))
+    try:
+        assert not (root / 'state' / 'semantics').exists()
+        return json.dumps(lab_record(off, root), sort_keys=True, ensure_ascii=False)
+    finally:
+        off['hub'].store.close()
+
+
 @pytest.mark.parametrize("value", ["shadow", {"mode": "shadow", "timeout_s": 2}, {"mode": "advisory"}, "bogus"],
                          ids=["shadow", "shadow-mapping", "held-mode", "typo"])
-async def test_the_lab_records_the_same_with_semantics_off_or_on(tmp_path, value):
-    off = await run_lab(tmp_path / "off", None, [TEXT])
+async def test_the_lab_records_the_same_with_semantics_off_or_on(tmp_path, value, off_lab_record):
     on = await run_lab(tmp_path / "on", value, [TEXT])
-    assert lab_record(on, tmp_path / "on") == lab_record(off, tmp_path / "off")
-    assert not (tmp_path / "off" / "state" / "semantics").exists()
-    written = [line for line in on["lines"] if line["type"] == "request"]
-    assert len(written) == (1 if value in ("shadow", {"mode": "shadow", "timeout_s": 2}) else 0)
+    try:
+        assert lab_record(on, tmp_path / "on") == json.loads(off_lab_record)
+        written = [line for line in on["lines"] if line["type"] == "request"]
+        assert len(written) == (1 if value in ("shadow", {"mode": "shadow", "timeout_s": 2}) else 0)
+    finally:
+        on['hub'].store.close()
 
 
 async def test_the_lab_records_the_same_across_a_restart_with_shadow(tmp_path):
@@ -279,3 +292,81 @@ async def test_a_slow_row_query_is_interrupted_at_the_time_cap(tmp_path):
 
     with pytest.raises(shadow.ShadowTimeout):
         shadow.read_rows(snap, past_the_cap)
+
+
+def test_the_file_cap_is_the_shadow_hash_cap():
+    from labhq.research import semantics_shadow as shadow
+    from labhq.runner import workspace as workspace_module
+    assert workspace_module.OUTPUT_SCAN_MAX_FILES == shadow.HASH_MAX_FILES
+
+
+@pytest.mark.asyncio
+async def test_two_direct_requests_need_input_and_target_declarations_beyond_a_source_type(tmp_path):
+    from tests.semantics_shadow_lab import line_for
+    lab = await run_lab(tmp_path, "shadow", ["표 만들기 [artifact]", "앞 표로 비율 [artifact]"],
+                        project_id="shadowproj", request={"mode": "direct", "agent_id": "data_steward"})
+    hub, (first, second) = lab["hub"], lab["rids"]
+    assert hub.requests[first]["results"]["direct"]["outputs"] == ["outputs/artifact.txt"]
+    direct_tasks = [row for row in hub.store.all("task").values() if row.get("kind") == "direct"]
+    assert all((row.get("payload") or {}).get("output_schema") is None for row in direct_tasks)
+    assert all("output_types_vocab" not in ((row.get("payload") or {}).get("meta") or {}) for row in direct_tasks)
+    lines = {line["request_id"]: line for line in lab["lines"] if line["type"] == "request"}
+    assert set(lines) == {first, second} and lines[second]["lane"] == "direct"
+    assert lines[first]["hash"]["observed_new"] == 1
+    # The option is off, so the live path declares no type and the earlier output stays type_unknown.
+    live = lines[second]["provenance"]
+    assert live["history_artifacts"] == 1 and live["candidates"] == 0
+    assert live["excluded"]["type_unknown"] == 1
+    # A source type alone is insufficient: direct mode has neither a target type nor an input identity.
+    # The editor also belongs to this request; only its direct task declares the source output type.
+    tid, row = next((k, v) for k, v in hub.store.all("task").items()
+                    if v.get("request_id") == first and v.get("kind") == "direct")
+    row["payload"]["meta"]["output_types"] = {"outputs/artifact.txt": "raw_counts"}
+    hub.store.put("task", tid, row)
+    observed: dict = {}
+    assert line_for(hub, first, observed)["hash"]["observed_new"] == 1
+    declared = line_for(hub, second, observed)
+    assert declared["hash"]["verified"] == 1
+    prov = declared["provenance"]
+    assert prov["candidates"] == 0 and prov["excluded"]["type_unknown"] == 0
+    assert prov["excluded"]["input_unknown"] == prov["excluded"]["target_type_unknown"] == 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_bundle_waits_for_shadow_and_freezes_its_observation(tmp_path, monkeypatch):
+    from labhq.gateway.server import Hub
+    from labhq.research import semantics_shadow
+    from tests.test_semantic_device_report import fixed_request
+    settings, request = fixed_request(tmp_path)
+    settings.semantics = {"mode": "shadow", "timeout_s": 2}
+    request.pop("semantics_observation")
+    hub = Hub(settings)
+    hub.requests[request["id"]] = request
+    started, release, bundle_called = threading.Event(), threading.Event(), threading.Event()
+    captured = {}
+
+    def delayed_work(_gen, _snap):
+        started.set()
+        assert release.wait(5)
+        semantics_shadow.append_line(hub.semantics_shadow.paths, {
+            "type": "request", "request_id": request["id"], "ts": 1792299500, "epoch": 1,
+            "provenance": {"status": "ok", "candidates": 0, "excluded": {}},
+            "objects": {"status": "ok", "relations": 1},
+            "input_fit": {"fit": 1, "mismatch": 0, "unknown": 0}, "referenced": False,
+        })
+
+    def capture_bundle(_rid, frozen, _tasks, _caps):
+        captured["request"] = frozen
+        bundle_called.set()
+        return {"bundle": {"path": str(tmp_path / "bundle"), "status": "complete"}}
+
+    monkeypatch.setattr(hub.semantics_shadow, "work", delayed_work)
+    monkeypatch.setattr(hub, "_bundle_outcome", capture_bundle)
+    task = hub.schedule_terminal(request["id"], "request.completed", {"ok": True})
+    assert task is not None and await asyncio.to_thread(started.wait, 2)
+    await asyncio.to_thread(bundle_called.wait, 0.3)
+    release.set()
+    await asyncio.wait_for(task, 5)
+
+    assert captured["request"]["semantics_observation"]["request_id"] == request["id"]
+    hub.store.close()

@@ -16,11 +16,14 @@ import re
 import subprocess
 from pathlib import Path, PurePath
 
+from .. import disk_space
 from ..policy import claude_allowed_tools
-from ..util import short
+from ..plugin_checks import read_plugin_manifest, skill_file
+from ..staff_skills import (BUNDLED_PLUGIN_DIR, BUNDLED_PLUGIN_NAME, bundled_requirements)
+from ..util import event_preview, short, tool_input_fingerprint, tool_input_summary
 from .base import (AgentAdapter, role_footer, RunContext, RunState, SHELL_TOOLS, child_config_dirs, expand_env,
                    note_command_ok, note_failed_output, record_model_id, wrap_cwd)
-from .owned import case_sensitive_directory, is_link
+from .owned import OwnedPathError, awrite_owned, case_sensitive_directory, is_link
 from .read_only import WORKSPACE_INSTRUCTION_RULES, workspace_instruction_paths
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
@@ -35,6 +38,41 @@ SKILL_ISOLATION_FLAGS = ["--setting-sources", "local"]
 # mode and Read,Glob,Grep; with this profile none ran and the --settings deny rules still held.
 READ_ONLY_FLAGS = ["--setting-sources", "", "--disable-slash-commands"]
 PLUGIN_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _collect_structured_output_delta(event: dict, st: RunState) -> None:
+    """Reassemble invalid tool input before Claude clips it in the final transcript event."""
+    kind = event.get("type")
+    index = event.get("index")
+    if not isinstance(index, int):
+        return
+    if kind == "content_block_start":
+        block = event.get("content_block") or {}
+        if block.get("type") == "tool_use" and block.get("name") == "StructuredOutput":
+            st.structured_output_streams[index] = {"id": str(block.get("id") or ""), "parts": []}
+    elif kind == "content_block_delta" and index in st.structured_output_streams:
+        delta = event.get("delta") or {}
+        part = delta.get("partial_json") if delta.get("type") == "input_json_delta" else None
+        if isinstance(part, str):
+            st.structured_output_streams[index]["parts"].append(part)
+    elif kind == "content_block_stop":
+        block = st.structured_output_streams.pop(index, None)
+        if block and block["id"]:
+            st.structured_output_raw[block["id"]] = "".join(block["parts"])
+
+
+async def _save_structured_output_failure(ctx: RunContext, tool_id: str, raw: str) -> str | None:
+    """Keep the full invalid JSON in the task workspace without copying it into public event logs."""
+    if not raw:
+        return None
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", tool_id or "unknown")[-60:]
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    relative = f".tmp/structured_output_failures/{safe_id}-{digest}.json"
+    try:
+        await awrite_owned(ctx.workdir, relative, raw)
+    except (OSError, OwnedPathError):
+        return None
+    return relative
 
 
 def workspace_memory_excludes(workdir: Path) -> list[str]:
@@ -81,14 +119,6 @@ def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
 # relative path the manifest itself declares (custom commands/agents/hooks/mcpServers/lspServers files).
 PLUGIN_PARTS = (".claude-plugin", "skills", "agents", "hooks", "commands", "output-styles", "bin", "scripts")
 PLUGIN_ROOT_FILES = (".mcp.json", ".lsp.json", "settings.json")
-
-
-def read_plugin_manifest(path: Path) -> dict | None:
-    try:
-        data = json.loads((path / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
 
 
 def _manifest_paths(value) -> list[str]:
@@ -198,7 +228,7 @@ def plugin_provenance(name: str, path: Path, every_file: bool = False) -> dict:
 
 class ClaudeCodeAdapter(AgentAdapter):
     engine = "claude_code"
-    enforces_read_only = True  # plan mode, --tools Read,Glob,Grep, no settings file, disableAllHooks, no plugin
+    enforces_read_only = True  # file tools + scoped permission gate, no user hooks/plugins or shell
 
     def engine_env(self) -> dict[str, str]:
         # Claude Code documents this as disabling run_in_background, automatic backgrounding and Ctrl+B.
@@ -206,7 +236,13 @@ class ClaudeCodeAdapter(AgentAdapter):
         return {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1", **super().engine_env()}
 
     def _plugin_dirs(self, ctx: RunContext, env: dict[str, str]) -> list[str]:
-        return [expand_env({"dir": raw}, env)["dir"] for raw in ctx.agent.plugin_dirs]
+        directories = [expand_env({"dir": raw}, env)["dir"] for raw in ctx.agent.plugin_dirs]
+        if bundled_requirements(ctx.agent) and not ctx.read_only:
+            directories.append(str(BUNDLED_PLUGIN_DIR))
+        if ctx.agent.id == self.settings.recruit.agent_id and not ctx.read_only:
+            from ..recruit.paper2agent import skill_path
+            directories.append(str(skill_path("claude_code", self.settings).parent.parent))
+        return directories
 
     def _settings_file(self, ctx: RunContext, value: str) -> Path:
         """The --settings JSON as a file, for a command line that would overflow (Windows, 32,000 units).
@@ -238,7 +274,16 @@ class ClaudeCodeAdapter(AgentAdapter):
         # Errors name the configured entry (e.g. ${BIOINFO_AGENT_DIR}), never the resolved path: they reach
         # task results, the final report and project GitHub updates.
         found: dict[str, Path] = {}
-        for raw, directory in zip(ctx.agent.plugin_dirs, self._plugin_dirs(ctx, env)):
+        try:
+            directories = self._plugin_dirs(ctx, env)
+        except ValueError as exc:
+            return str(exc)
+        labels = [*ctx.agent.plugin_dirs]
+        if bundled_requirements(ctx.agent) and not ctx.read_only:
+            labels.append("labhq bundled skills")
+        if ctx.agent.id == self.settings.recruit.agent_id and not ctx.read_only:
+            labels.append("Paper2Agent (labhq setup-paper2agent)")
+        for raw, directory in zip(labels, directories):
             for var in PLUGIN_VAR.findall(raw):
                 if not env.get(var):
                     return f"{var} is not set"
@@ -252,10 +297,17 @@ class ClaudeCodeAdapter(AgentAdapter):
                 return f"plugin manifest for {raw} is missing or unreadable (.claude-plugin/plugin.json)"
             found[str(manifest.get("name") or "")] = path
         for skill in ctx.agent.required_skills:
+            if ":" not in skill:
+                plugin = found.get(BUNDLED_PLUGIN_NAME)
+                if plugin is None:
+                    return f"required bundled skill '{skill}' has no validated Claude plugin"
+                if not skill_file(plugin, skill).is_file():
+                    return f"required bundled skill '{skill}' is missing from the Claude plugin"
+                continue
             plugin, name = skill.split(":")
             if plugin not in found:
                 return f"required plugin '{plugin}' is not among plugin_dirs"
-            if not (found[plugin] / "skills" / name / "SKILL.md").is_file():
+            if not skill_file(found[plugin], name).is_file():
                 return f"required skill '{skill}' is missing from the plugin"
         if found:
             try:
@@ -285,6 +337,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         a, t, b = ctx.agent, ctx.task, self.settings.engines.claude_code
         # Prompt goes right after -p; variadic flags (--mcp-config, --add-dir, --allowedTools…) go last.
         cmd = [b.bin, "-p", ctx.prompt, "--output-format", "stream-json", "--verbose",
+               "--include-partial-messages",
                "--permission-mode", a.permission_mode,
                "--append-system-prompt-file", str(ctx.meta_dir / "system_prompt.md")]
         if a.model:
@@ -325,9 +378,10 @@ class ClaudeCodeAdapter(AgentAdapter):
             settings["claudeMdExcludes"] += workspace_memory_excludes(ctx.workdir)
             settings["disableAllHooks"] = True
         elif b.isolate_user_config:
-            cmd += SKILL_ISOLATION_FLAGS if a.allow_skills else ISOLATION_FLAGS
+            skills = a.allow_skills or a.id == self.settings.recruit.agent_id
+            cmd += SKILL_ISOLATION_FLAGS if skills else ISOLATION_FLAGS
             settings.update(user_config_isolation(self.staff_env(ctx), ctx.workdir))
-            if a.allow_skills:
+            if skills:
                 # A skill-enabled member takes instructions only from labhq and its pinned plugin. A reused
                 # workspace (HPC wake-up) could otherwise carry memory files a previous run wrote.
                 settings["claudeMdExcludes"] += workspace_memory_excludes(ctx.workdir)
@@ -347,12 +401,28 @@ class ClaudeCodeAdapter(AgentAdapter):
             cmd += ["--add-dir", d]
         # Bare Write/Edit become Edit rules for the task's write roots, so an outside write reaches the gate (#219).
         # With PI personal paths active, shell rules go and reads narrow to the task's folders (PR #324 review).
-        on = ctx.private_enabled or bool(ctx.private_paths)  # on with no active path too (PR #327)
+        # On with no active path too (PR #327), and while a project link into a zone is denied by rule (#178).
+        on = (ctx.private_enabled or bool(ctx.private_paths) or bool(ctx.denied_links)
+              or ctx.gate_internal_reads or bool(ctx.gated_read_roots))
         # The task's own project folder in the staff config folder is read-only: Read rules, no Edit rule (#298 ⑤).
-        read_roots = [ctx.workdir, *ctx.extra_dirs, *ctx.read_dirs, *ctx.private_open_reads] if on else None
-        allowed = [*claude_allowed_tools(
-                       a.tools, [ctx.workdir, *ctx.extra_dirs], read_roots,
-                       shared_environment_gate=ctx.shared_environment_protected),
+        all_read_roots = [ctx.workdir, *ctx.extra_dirs, *ctx.read_dirs, *ctx.private_open_reads]
+        gated = set(ctx.gated_read_roots)
+        read_roots = [root for root in all_read_roots if str(root) not in gated] if on else None
+        # A step with the artifact contract writes only outputs/ and .tmp/: a rule for the whole folder would also
+        # pre-approve a case-varied spelling of the read-only inputs/ (Claude compares deny rules literally, #946).
+        meta = ctx.task.meta or {}
+        contract = (meta.get("kind") in {"step", "result_correction", "slot_repair"}
+                    and isinstance(meta.get("upstream_artifacts"), dict))
+        write_roots = ([Path(ctx.workdir) / "outputs", Path(ctx.workdir) / ".tmp"] if contract
+                       else [ctx.workdir])
+        rules = claude_allowed_tools(
+            a.tools, [*write_roots, *ctx.extra_dirs], read_roots,
+            shared_environment_gate=(ctx.shared_environment_protected or ctx.gate_non_public_data))
+        if ctx.use_permission_tool and any(s.name == "labhq_approval" for s in ctx.mcp_servers):
+            # A pre-approved download or unpack (`Bash(unzip *)`) never reaches the gate, so it would skip the disk check
+            # (#678). Only with the gate installed: without it the rule is the only thing letting the command run.
+            rules = [rule for rule in rules if not disk_space.preapproves_bulk_write(rule)]
+        allowed = [*rules,
                    *(f"mcp__{s.name}" for s in ctx.mcp_servers if s.auto_approve)]
         if allowed:
             cmd += ["--allowedTools", *allowed]
@@ -363,28 +433,73 @@ class ClaudeCodeAdapter(AgentAdapter):
     async def handle_line(self, line: str, st: RunState, ctx: RunContext) -> None:
         ev = json.loads(line)
         typ = ev.get("type")
+        if typ == "stream_event":
+            event = ev.get("event")
+            if isinstance(event, dict):
+                _collect_structured_output_delta(event, st)
+            return
         if typ == "system" and ev.get("subtype") == "init":
             st.session_id = ev.get("session_id")
+            st.mcp_status = [{"name": str(m.get("name")), "status": str(m.get("status"))}
+                             for m in ev.get("mcp_servers", []) if isinstance(m, dict)][:20]
             record_model_id(st, ctx, ev.get("model"))
             await ctx.emit("agent.status", {"state": "working", "model": ev.get("model"),
                                             "mcp": [m.get("name") for m in ev.get("mcp_servers", []) if isinstance(m, dict)]})
+        elif typ == "system" and ev.get("subtype") == "compact_boundary":
+            # The session was just compacted (#1008): what it did before is gone from its context, so it may repeat itself.
+            meta = ev.get("compact_metadata") if isinstance(ev.get("compact_metadata"), dict) else {}
+            await ctx.emit("agent.compaction", {key: meta.get(key) for key in ("trigger", "pre_tokens", "post_tokens")})
         elif typ == "assistant":
             for block in (ev.get("message") or {}).get("content") or []:
                 if block.get("type") == "text" and block.get("text"):
                     st.text_parts.append(block["text"])
-                    await ctx.emit("agent.log", {"text": short(block["text"], 2000),
+                    await ctx.emit("agent.log", {**event_preview("text", block["text"], 2000),
                                                  "subagent": bool(ev.get("parent_tool_use_id"))})
                 elif block.get("type") == "tool_use":
+                    if block.get("name") == "StructuredOutput" and block.get("id"):
+                        unparsed = block.get("input") if isinstance(block.get("input"), dict) else {}
+                        unparsed = unparsed.get("__unparsedToolInput")
+                        fallback = unparsed.get("raw") if isinstance(unparsed, dict) else None
+                        if isinstance(fallback, str):
+                            st.structured_output_raw.setdefault(block["id"], fallback)
                     if block.get("name") in SHELL_TOOLS and block.get("id"):
                         st.shell_calls.add(block["id"])
-                    await ctx.emit("agent.tool", {"name": block.get("name"), "input": short(block.get("input"), 400)})
+                    await ctx.emit("agent.tool", {"id": block.get("id"), "name": block.get("name"),
+                                                 "input_fingerprint": tool_input_fingerprint(
+                                                     block.get("name"), block.get("input")),
+                                                 "summary": tool_input_summary(block.get("input")),
+                                                 **event_preview("input", block.get("input"), 400)})
         elif typ == "user":
             for block in (ev.get("message") or {}).get("content") or []:
                 if not isinstance(block, dict) or block.get("type") != "tool_result":
                     continue
+                await ctx.emit("agent.tool_result", {"id": block.get("tool_use_id")})
                 if block.get("is_error"):
                     note_failed_output(st, block.get("content"))
-                    await ctx.emit("agent.tool_error", {"text": short(block.get("content"), 400)})
+                    raw = str(block.get("content") or "")
+                    # Classify before the display preview truncates the tool's original error.
+                    parse_error = "StructuredOutput" in raw and "could not be parsed as JSON" in raw
+                    details = {}
+                    if parse_error:
+                        tool_id = str(block.get("tool_use_id") or "")
+                        received = st.structured_output_raw.pop(tool_id, "")
+                        saved = await _save_structured_output_failure(ctx, tool_id, received)
+                        if received:
+                            limit = ctx.settings.orchestrator.plan_max_chars
+                            chars = len(received)
+                            closed = received.rstrip().endswith(("}", "]"))
+                            details = {
+                                "structured_output_chars": chars,
+                                "structured_output_closed": closed,
+                                "structured_output_near_limit": chars >= int(limit * 0.9),
+                                **({"structured_output_failure_path": saved} if saved else {}),
+                            }
+                    await ctx.emit("agent.tool_error", {
+                        **({"id": block["tool_use_id"]} if block.get("tool_use_id") is not None else {}),
+                        **event_preview("text", block.get("content"), 400),
+                        **({"structured_output_parse_error": True} if parse_error else {}),
+                        **details,
+                    })
                 elif block.get("tool_use_id") in st.shell_calls:
                     note_command_ok(st)
         elif typ == "result":

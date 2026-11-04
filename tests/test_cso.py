@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import os
 import re
@@ -10,8 +11,8 @@ import pytest
 
 from labhq.gateway.server import Hub
 from labhq.models import RunnerUnavailable, Task, TaskResult
-from labhq.orchestrator.cso import (FINISH_PROMPT, BudgetExceeded, Orchestrator, failure_kind, valid_review,
-                                    format_roster, validate_steps)
+from labhq.orchestrator.cso import (ENV_LOCK_OUTPUT, FINISH_PROMPT, split_runner_environments, BudgetExceeded, Orchestrator, failure_kind,
+                                    general_report_warnings, valid_review, format_roster, validate_steps)
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 from labhq.tools.scheduler import Scheduler
@@ -20,6 +21,9 @@ from labhq.tools.scheduler import Scheduler
 class FakeHub:
     def __init__(self, dispatch):
         self.s = Settings()
+        # Reservation is on by default (#1139). The tests that use this hub are about the older check, which looks only
+        # at what is already spent; reservation has its own hub (`_reserving_hub`) and tests/test_reserve_default_on.py.
+        self.s.policy.budget.reserve_before_dispatch = False
         self.s.orchestrator.chief_of_staff_agent = None
         self.s.orchestrator.step_retry_backoff_s = 0
         self.requests = {"r": {"text": "question", "mode": "team", "budget_usd": 10}}
@@ -53,6 +57,13 @@ class FakeHub:
 
     def save_request(self, rid):
         pass
+
+    async def _set_status(self, rid, status, *, evidence=None):
+        self.requests[rid]["status"] = status
+        if evidence is not None:
+            self.requests[rid]["shutdown_evidence"] = evidence
+        await self.publish({"type": "request.status", "request_id": rid,
+                            "data": {"status": status, "evidence": evidence}})
 
     async def wait_agent_online(self, agent_id, timeout_s):
         self.waiting_for_runner.set()
@@ -210,7 +221,7 @@ async def test_run_request_exception_terminal_keeps_saved_cost():
     rid, typ, data = terminal[0]
     assert (rid, typ) == ("r", "request.failed")
     assert data["error"] == "RuntimeError: broken checkpoint"
-    assert "A · worker (FAILED)" in data["report_appendix"]
+    assert "A · worker (FAILED)" in data["execution_record"]
     assert data["cost_usd"] == 1.25 and data["cost_known"] is False
 
 
@@ -392,9 +403,12 @@ async def test_blocking_step_waits_then_reruns_before_dependent():
         if kind == "step" and task.meta["step_id"] == "A":
             if "Your earlier blocking question and its answer:" not in task.prompt:
                 return result(task, text="blocked", structured={"blocking_decision": "Cases or controls?"},
+                              workdir="runs/A", unreported_outputs=["outputs/scripts/prepare.py"],
                               tool_errors=["fixture lookup failed", "shared lookup failed"])
             assert not any(t.meta.get("step_id") == "B" for t in calls)
-            return result(task, text="done", tool_errors=["shared lookup failed", "second lookup failed"])
+            return result(task, text="done", workdir="runs/A",
+                          unreported_outputs=["outputs/figure.png"],
+                          tool_errors=["shared lookup failed", "second lookup failed"])
         return result(task, text="done")
 
     hub = FakeHub(dispatch)
@@ -418,7 +432,8 @@ async def test_blocking_step_waits_then_reruns_before_dependent():
     assert decision["previous_result"]["structured"] == {"blocking_decision": "Cases or controls?"}
     assert decision["previous_result"]["tool_errors"] == ["fixture lookup failed", "shared lookup failed"]
     assert shared["A"].tool_errors == ["fixture lookup failed", "shared lookup failed", "second lookup failed"]
-    appendix = hub.requests["r"]["report_appendix"]
+    assert shared["A"].unreported_outputs == ["outputs/figure.png", "outputs/scripts/prepare.py"]
+    appendix = hub.requests["r"]["execution_record"]
     assert "A: 실패한 조회 — 증거도 부재 증명도 아님 3건" in appendix
     assert "fixture lookup failed" in appendix
 
@@ -431,6 +446,9 @@ async def test_store_backed_blocking_step_asks_cso_and_labels_its_answer():
 
         def put(self, kind, key, value):
             self.rows[(kind, key)] = value
+
+        def get(self, kind, key):
+            return self.rows.get((kind, key))
 
     calls = []
 
@@ -588,8 +606,8 @@ async def test_blocking_decision_denial_cancels_dispatch():
     hub = FakeHub(dispatch)
     await Orchestrator(hub).run_request("r")
     assert hub.requests["r"]["status"] == "failed"
-    assert "Choose a cohort" in hub.requests["r"]["report_appendix"]
-    assert "question was rejected or unanswered" in hub.requests["r"]["report_appendix"]
+    assert "Choose a cohort" in hub.requests["r"]["execution_record"]
+    assert "question was rejected or unanswered" in hub.requests["r"]["execution_record"]
     assert not hub.requests["r"].get("pending_questions")
     assert not hub.requests["r"]["results"]["A"]["ok"]
     assert hub.requests["r"]["results"]["A"]["error_kind"] == "ask_rejected"
@@ -613,9 +631,15 @@ def test_resume_uses_adapter_flag(tmp_path):
     assert hub.supports_resume("cli_resumable")
 
 
-def test_runner_reports_effective_compute_capabilities():
+def test_runner_reports_effective_compute_capabilities(monkeypatch):
     from types import SimpleNamespace
     from labhq.models import AgentSpec
+    from labhq.tools import annot_keys, annot_regulatory
+
+    # The runner reports whether AlphaGenome is usable (#1200): fix both facts so the answer does not depend on whether
+    # this PC has a key file or the client installed.
+    monkeypatch.setattr(annot_keys, "read_key", lambda _settings: None)
+    monkeypatch.setattr(annot_regulatory, "alphagenome_client_available", lambda: True)
 
     runner = object.__new__(Runner)
     runner.s = Settings()
@@ -630,9 +654,12 @@ def test_runner_reports_effective_compute_capabilities():
     runner.local_software = {"r": {"available": False, "version": None}}
     hello = runner.hello()
     assert hello["capabilities"] == {
-        "scheduler": "none", "compute_backends": ["local CLI"], "hpc_tools": False,
+        "scheduler": "none", "runtime_env": "windows" if sys.platform == "win32" else "linux",
+        "workspace_root": str(runner.s.path(runner.s.runner.workspace_root)),
+        "compute_backends": ["local CLI"], "hpc_tools": False,
         "engine_cli_versions": {"mock": "unreported"},
         "local_software": {"r": {"available": False, "version": None}},
+        "alphagenome_ready": False,  # no key, whatever the client
         "platform": sys.platform,
         "environment": {key: os.environ[key] for key in (
             "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "XDG_CONFIG_HOME") if os.environ.get(key)},
@@ -665,6 +692,68 @@ def test_cso_capabilities_include_each_runner_local_software_and_unknown():
     assert "gseapy=no" in text and "java=yes" in text
     assert "runner runner-b local software: unknown" in text
     assert "private-user" not in text
+
+
+@pytest.mark.asyncio
+async def test_briefing_receives_the_planners_sanitized_runner_capabilities():
+    from labhq.orchestrator.cso import format_capabilities
+
+    async def dispatch(task):
+        if task.meta["kind"] == "briefing":
+            return result(task, text="brief")
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": []})
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.chief_of_staff_agent = "chief_of_staff"
+    hub.s.orchestrator.reviewer_agent = None
+    hub.s.orchestrator.precedent_agent = None
+    hub.agents["chief_of_staff"] = {
+        "id": "chief_of_staff", "name": "Chief", "role": "briefing", "engine": "mock"}
+    hub.agents["worker"].update(
+        runner_id="runner-a", scheduler="none", hpc_tools=False, compute_backends=["local CLI"])
+    hub.runner_capabilities = {"runner-a": {
+        "scheduler": "none", "hpc_tools": False, "compute_backends": ["local CLI"],
+        "local_software": {
+            "r": {"available": False, "version": None},
+            "python": {"version": "3.12.7", "packages": {}},
+            "tools": {"docker": False, "nextflow": False, "java": False, "wsl": False},
+            "private_path": r"C:\Users\private-user\environment",
+        },
+    }}
+
+    await Orchestrator(hub).run_request("r")
+
+    briefings = [task for task in hub.calls if task.meta["kind"] == "briefing"]
+    plans = [task for task in hub.calls if task.meta["kind"] == "plan"]
+    assert len(briefings) == len(plans) == 1
+    expected = format_capabilities([hub.agents["worker"]], hub.runner_capabilities)
+    assert expected in briefings[0].prompt and expected in plans[0].prompt
+    assert "scheduler=none" in briefings[0].prompt
+    assert "docker=no" in briefings[0].prompt and "gseapy=unknown" in briefings[0].prompt
+    assert "never as available" in briefings[0].prompt
+    assert "numeric feasibility score or grade" in briefings[0].prompt
+    assert "private-user" not in briefings[0].prompt
+
+
+@pytest.mark.asyncio
+async def test_missing_capabilities_and_unconfigured_chief_keep_the_plan_path():
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": []})
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.reviewer_agent = None
+    hub.s.orchestrator.precedent_agent = None
+
+    await Orchestrator(hub).run_request("r")
+
+    assert not [task for task in hub.calls if task.meta["kind"] == "briefing"]
+    plans = [task for task in hub.calls if task.meta["kind"] == "plan"]
+    assert len(plans) == 1
+    assert "runner capability report: unknown" in plans[0].prompt
 
 
 def test_environment_rule_uses_binary_wheels_and_falls_back_without_asking_pi():
@@ -713,8 +802,8 @@ async def test_failed_branch_skips_transitive_dependents_and_preserves_independe
     assert "A" in req["results"]["B"]["error"]
     assert "B" in req["results"]["C"]["error"]
     assert req["results"]["D"]["status"] == "done"
-    assert "SKIPPED" in req["report_appendix"] and "policy denied" in req["report_appendix"]
-    assert "A [terminal]: policy denied" in req["report_appendix"]
+    assert "SKIPPED" in req["execution_record"] and "policy denied" in req["execution_record"]
+    assert "A [terminal]: policy denied" in req["execution_record"]
     assert Counter(t.meta.get("step_id") for t in hub.calls)["A"] == 1
     assert not any(t.meta.get("step_id") in ("B", "C") for t in hub.calls)
     assert sum(e["type"] == "request.step_skipped" for e in hub.events) == 2
@@ -919,7 +1008,7 @@ async def test_unknown_cost_is_held_at_the_per_task_budget_and_blocks_the_next_t
 
     assert third.ok and len(hub.approvals) == 1  # 3 x $4 = $12 may pass the $10 cap
     approval = hub.approvals[0]
-    assert "예산 판정 불가" in approval["summary"] and "미집계 3건" in approval["summary"]
+    assert "비용을 아직 모르는 작업이 3건" in approval["summary"] and "건당 $" in approval["summary"]
     # The card says what 승인 and 거절 do (trial 2026-10-08), with the cap 승인 sets.
     assert approval["summary"].endswith("승인하면 상한을 $20.00로 올리고, 거절하면 새 작업을 보내지 않습니다.")
     assert approval["detail"] == {"spent_usd": 0, "limit_usd": 10, "requested_budget_usd": 20,
@@ -1015,13 +1104,13 @@ async def test_report_keeps_confirmed_estimated_and_unaccounted_costs_apart():
     orch = Orchestrator(hub)
     orch.cost["r"] = 1.5
     orch.budget_outcomes["r"] = [{"spent_usd": 1.5, "limit_usd": 10, "approved": False, "unknown_count": 1}]
-    orch._finish("r", "Narrative", {"A": {"status": "done"}}, ok=True)
-    report = hub.requests["r"]["report_appendix"]
+    (await orch._finish("r", "Narrative", {"A": {"status": "done"}}, ok=True))
+    report = hub.requests["r"]["execution_record"]
 
-    assert ("비용: 확인 $1.00 + 추정 $0.50 + 미집계 1건 "
-            "(claude_code 확인 $1.00 · codex 추정 $0.50 + 미집계 1건); 추정은") in report
+    assert ("비용: 확인 $1.00 + 추정 $0.50 + 비용 모름 1건 "
+            "(claude_code 확인 $1.00 · codex 추정 $0.50 + 비용 모름 1건); 추정은") in report
     assert "청구액이 아닙니다" in report and "$0.00" not in report
-    assert "Budget: $1.50 + 미집계 1건 / $10.00; denied." in report
+    assert "Budget: $1.50 + 비용 모름 1건 / $10.00; denied." in report
 
 
 @pytest.mark.asyncio
@@ -1164,7 +1253,7 @@ async def test_parallel_budget_decision_preserves_completed_steps_and_controls_n
     assert sum(e["type"] == "request.budget_exceeded" for e in hub.events) == 1
     assert req["results"]["A"]["status"] == "done"
     assert req["results"]["D"]["status"] == "done"
-    assert "Budget: $0.60 > $0.50" in req["report_appendix"]
+    assert "Budget: $0.60 > $0.50" in req["execution_record"]
     if approved:
         assert req["status"] == "done"
         assert req["results"]["B"]["status"] == req["results"]["C"]["status"] == "done"
@@ -1247,7 +1336,7 @@ async def test_failed_revision_keeps_first_result_and_workspace():
     assert req["status"] == "done"
     assert req["results"]["A"]["text"] == "good evidence"
     assert "revision broke" in req["results"]["A"]["revision_failed"]
-    assert "revision failed" in req["report_appendix"]
+    assert "revision failed" in req["execution_record"]
     assert all(t.resume_session_id is None for t in seen if t.meta["kind"] == "review")
 
 
@@ -1259,11 +1348,12 @@ async def test_retry_reuses_workdir_and_dependent_receives_artifact_paths():
         calls.append(task)
         sid = task.meta["step_id"]
         if sid == "A" and len([x for x in calls if x.meta["step_id"] == "A"]) == 1:
-            return result(task, ok=False, error="timeout", workdir="runs/A")
+            return result(task, ok=False, error="timeout", workdir="runs/A",
+                          unreported_outputs=["outputs/scripts/prepare.py", "outputs/table.tsv"])
         if sid == "A":
             assert task.meta["workdir"] == "runs/A"
             return result(task, text="done", workdir="runs/A", workdir_id="A",
-                          outputs=["outputs/table.tsv"])
+                          outputs=["outputs/table.tsv"], unreported_outputs=["outputs/figure.png"])
         assert task.meta["upstream_dirs"] == ["runs/A"]
         assert task.meta["upstream_steps"] == {"A": "runs/A"}
         assert '"workdir_id": "A"' in task.context
@@ -1279,6 +1369,7 @@ async def test_retry_reuses_workdir_and_dependent_receives_artifact_paths():
     outcomes = {}
     await Orchestrator(hub).run_dag("r", "question", steps, outcomes)
     assert outcomes["A"].ok and outcomes["B"].ok
+    assert outcomes["A"].unreported_outputs == ["outputs/figure.png", "outputs/scripts/prepare.py"]
     assert calls[0].id != calls[1].id
 
 
@@ -1308,6 +1399,10 @@ async def test_a_step_gets_inputs_links_for_ancestors_it_reaches_through_other_s
     prep = seen["prep"]
     assert prep.meta["upstream_steps"] == {"qc": "runs/qc", "fetch": "runs/fetch", "pair": "runs/pair"}
     assert prep.meta["upstream_dirs"] == ["runs/qc", "runs/fetch", "runs/pair"]  # direct first, then plan order
+    assert prep.meta["upstream_artifacts"] == {
+        sid: {"task_id": outcomes[sid].task_id, "workdir": f"runs/{sid}",
+              "outputs": [f"outputs/{sid}.tsv"], "output_sha256": {}}
+        for sid in ("qc", "fetch", "pair")}
     assert "## qc · worker\n" in prep.context and "qc done" in prep.context
     assert "## fetch · worker (earlier step, files only)" in prep.context
     assert "inputs/fetch/fetch.tsv" in prep.context and "fetch done" not in prep.context
@@ -1322,6 +1417,8 @@ async def test_max_turns_wraps_once_and_keeps_failure(resume, continuations):
             assert task.resume_session_id == "session-1"
             assert task.meta["agent_overrides"]["max_turns"] == 4
             assert task.meta["workdir"] == "runs/A"
+            assert task.meta["required_outputs"] == ["PARTIAL_STATUS.md"]
+            assert task.meta["optional_outputs"] == []
             return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"])
         return result(task, ok=False, error="turn limit", error_kind="error_max_turns",
                       session_id="session-1", workdir="runs/A")
@@ -1329,7 +1426,10 @@ async def test_max_turns_wraps_once_and_keeps_failure(resume, continuations):
     hub = FakeHub(dispatch)
     hub.supports_resume = lambda agent_id: resume
     res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
-                                                meta={"kind": "step", "step_id": "A"}))
+                                                meta={"kind": "step", "step_id": "A",
+                                                      "outputs": ["report.tsv", "trace.md"],
+                                                      "required_outputs": ["report.tsv"],
+                                                      "optional_outputs": ["trace.md"]}))
     assert not res.ok and res.partial_results is resume
     assert res.outputs == (["outputs/PARTIAL_STATUS.md"] if resume else [])
     assert len(hub.calls) == (2 if resume else 1)
@@ -1358,8 +1458,51 @@ async def test_declared_missing_output_is_incomplete_and_skips_dependent():
     assert req["status"] == "failed"
     assert req["results"]["A"]["status"] == "incomplete"
     assert req["results"]["A"]["missing_outputs"] == ["outputs/table.tsv"]
-    assert "A [terminal]" in req["report_appendix"] and "table.tsv" in req["report_appendix"]
+    assert "A [terminal]" in req["execution_record"] and "table.tsv" in req["execution_record"]
     assert req["results"]["B"]["status"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_missing_optional_output_keeps_step_ok_and_reaches_report_warning():
+    steps = [{"id": "A", "agent_id": "worker", "instruction": "convert table", "depends_on": [],
+              "outputs": ["outputs/table.tsv"], "optional_outputs": ["outputs/transform_log.md"]},
+             {"id": "B", "agent_id": "worker", "instruction": "read A", "depends_on": ["A"],
+              "outputs": []}]
+
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": steps})
+        if task.meta["kind"] == "synthesis":
+            return result(task, text="finished")
+        if task.meta["step_id"] == "A":
+            assert task.meta["outputs"] == ["outputs/table.tsv", "outputs/transform_log.md"]
+            assert task.meta["required_outputs"] == ["outputs/table.tsv"]
+            return result(task, text="converted", workdir_id="A", outputs=["outputs/table.tsv"])
+        return result(task, text="used A", workdir_id="B")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.reviewer_agent = None
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "done"
+    assert req["results"]["A"]["status"] == "done"
+    assert req["results"]["A"]["missing_optional_outputs"] == ["outputs/transform_log.md"]
+    assert req["results"]["B"]["status"] == "done"
+    assert "선택 산출 누락: outputs/transform_log.md" in req["execution_record"]
+    assert "실행 경고가 있습니다. 실행 기록 참고." in req["report"]
+
+
+def test_existing_output_declarations_stay_required_and_optional_outputs_are_warned():
+    legacy = TaskResult(task_id="a", agent_id="worker", ok=False,
+                        missing_outputs=["outputs/table.tsv"], error="incomplete")
+    optional = TaskResult(task_id="b", agent_id="worker", ok=True,
+                          missing_optional_outputs=["outputs/log.md"],
+                          step_warnings=["선택 산출 누락: outputs/log.md"])
+    warnings = general_report_warnings([{"id": "legacy"}, {"id": "optional"}],
+                                       {"legacy": legacy, "optional": optional})
+    assert legacy.missing_outputs == ["outputs/table.tsv"]
+    assert "- optional: 선택 산출 누락: outputs/log.md" in warnings
 
 
 @pytest.mark.asyncio
@@ -1677,7 +1820,7 @@ async def test_resume_rejects_stored_plan_when_max_steps_was_reduced():
     assert req["status"] == "failed"
     assert [step["id"] for step in req["plan"]["steps"]] == ["A", "B"]
     assert "2 steps" in req["error"] and "maximum is 1" in req["error"]
-    assert "### B · worker (FAILED" in req["report_appendix"]
+    assert "### B · worker (FAILED" in req["execution_record"]
     assert hub.calls == []
 
 
@@ -1787,7 +1930,12 @@ async def test_review_replan_uses_max_replans_not_failure_cap():
                             "request": "revise in place"}]
                 if revise else []}
 
-    hub = replan_hub(original, lambda task: result(task, text="analysis done"),
+    def on_step(task):
+        outputs = (["outputs/figure.png"] if task.meta["revision"] else
+                   ["outputs/env/analysis.txt", "outputs/scripts/analysis.py"])
+        return result(task, text="analysis done", workdir="runs/analysis", unreported_outputs=outputs)
+
+    hub = replan_hub(original, on_step,
                      lambda task: pytest.fail("review revise must not use the failure cap"),
                      max_replans=0, max_failure_replans=1, on_review=on_review)
     await Orchestrator(hub).run_request("r")
@@ -1795,6 +1943,8 @@ async def test_review_replan_uses_max_replans_not_failure_cap():
     assert hub.requests["r"]["status"] == "done"
     assert not kinds(hub, "replan")
     assert step_ids(hub) == ["analysis", "analysis"]
+    assert hub.requests["r"]["results"]["analysis"]["unreported_outputs"] == [
+        "outputs/env/analysis.txt", "outputs/figure.png", "outputs/scripts/analysis.py"]
 
 
 @pytest.mark.asyncio
@@ -1872,7 +2022,7 @@ async def test_failed_upstream_replans_only_remaining_dag_and_keeps_success():
     assert req["replan_progress"] == {"attempts": 1, "max": 1, "in_flight": False}
     # The PI still reads why the original method was replaced, not only that it was.
     assert ("Re-plan history:\n- #1 step_failure: applied; retired: primary (primary analysis failed), report; "
-            "added: alternative") in req["report_appendix"]
+            "added: alternative") in req["execution_record"]
 
 
 @pytest.mark.asyncio
@@ -1943,7 +2093,7 @@ async def test_replan_does_not_route_around_a_cancelled_step():
     req = hub.requests["r"]
     assert req["status"] == "failed" and not kinds(hub, "replan")
     assert req["replan_history"][0]["status"] == "blocked"
-    assert "A: cancelled" in req["report_appendix"] and req["replan_progress"]["attempts"] == 0
+    assert "A: cancelled" in req["execution_record"] and req["replan_progress"]["attempts"] == 0
 
 
 @pytest.mark.asyncio
@@ -2061,8 +2211,8 @@ async def test_invalid_replan_keeps_success_failure_and_reports_replan_reason():
     assert req["results"]["kept"]["text"] == "kept evidence"
     assert req["results"]["broken"]["error"] == "tool unavailable"
     assert [step["id"] for step in req["plan"]["steps"]] == ["kept", "broken"]
-    assert "tool unavailable" in req["report_appendix"]
-    assert "#1 step_failure: failed; reason: step bad: invalid dependencies ['missing']" in req["report_appendix"]
+    assert "tool unavailable" in req["execution_record"]
+    assert "#1 step_failure: failed; reason: step bad: invalid dependencies ['missing']" in req["execution_record"]
 
 
 @pytest.mark.parametrize("candidate, reason", [
@@ -2115,7 +2265,7 @@ async def test_replan_cap_stops_repeated_failures():
     assert step_ids(hub) == ["A", "retry1", "retry2"]
     assert req["replan_history"][-1] == {"attempt": None, "trigger": "step_failure", "status": "limit",
                                          "reason": "re-plan limit reached (2/2)"}
-    assert "retry2 failed" in req["report_appendix"]
+    assert "retry2 failed" in req["execution_record"]
 
 
 @pytest.mark.asyncio
@@ -2128,7 +2278,7 @@ async def test_replan_does_not_route_around_a_rejected_pi_decision():
     req = hub.requests["r"]
     assert req["status"] == "failed" and not kinds(hub, "replan")
     assert req["replan_history"][0]["status"] == "blocked"
-    assert "A: a PI decision rejected this step" in req["report_appendix"]
+    assert "A: a PI decision rejected this step" in req["execution_record"]
     assert req["replan_progress"]["attempts"] == 0
 
 
@@ -2161,8 +2311,8 @@ async def test_replan_question_goes_through_clarify_gate_and_reports_pending_dec
     assert req["status"] == "failed"
     assert hub.approvals[-1]["kind"] == "clarify"
     assert req["pending_questions"] == [question]
-    assert "Pending PI decisions/questions:\n- May the fallback use the controlled cohort?" in req["report_appendix"]
-    assert "re-plan needs PI clarification that was denied or unanswered" in req["report_appendix"]
+    assert "Pending PI decisions/questions:\n- May the fallback use the controlled cohort?" in req["execution_record"]
+    assert "re-plan needs PI clarification that was denied or unanswered" in req["execution_record"]
 
 
 @pytest.mark.asyncio
@@ -2345,14 +2495,14 @@ async def test_finish_keeps_bench_result_block_last_after_labhq_metadata():
     orch.budget_outcomes["r"] = [{"spent_usd": 1.25, "limit_usd": 1.0, "approved": True}]
     block = ("<!-- LABHQ_BENCH_RESULT -->\n```json\n{\"answer\": true}\n```\n"
              "<!-- /LABHQ_BENCH_RESULT -->")
-    orch._finish("r", "Narrative\n\n" + block,
-                 {"A": {"status": "done", "workdir_id": "w", "outputs": ["outputs/answer.md"]}}, ok=True)
+    (await orch._finish("r", "Narrative\n\n" + block,
+                 {"A": {"status": "done", "workdir_id": "w", "outputs": ["outputs/answer.md"]}}, ok=True))
     report = hub.requests["r"]["report"]
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
     assert report.rstrip().endswith("<!-- /LABHQ_BENCH_RESULT -->")
-    assert "Step status and output paths" not in report and "비용 미집계" not in report
-    assert appendix.index("Step status and output paths") < appendix.index("비용 미집계")
-    assert appendix.index("비용 미집계") < appendix.index("Budget: $1.25 > $1.00; approved.")
+    assert "Step status and output paths" not in report and "비용 모름" not in report
+    assert appendix.index("Step status and output paths") < appendix.index("비용 모름")
+    assert appendix.index("비용 모름") < appendix.index("Budget: $1.25 > $1.00; approved.")
 
 
 @pytest.mark.asyncio
@@ -2362,21 +2512,21 @@ async def test_finish_groups_status_and_warnings_under_one_execution_appendix():
 
     hub = FakeHub(dispatch)
     hub.requests["r"].update(plan={"steps": [{"id": "A"}]})
-    Orchestrator(hub)._finish(
+    (await Orchestrator(hub)._finish(
         "r", "## 결론과 권고\n결론 본문", {
             "A": {"status": "done", "workdir_id": "w", "outputs": ["outputs/answer.md"],
                   "tool_errors": ["lookup timed out"]},
-        }, ok=True)
+        }, ok=True))
 
     report = hub.requests["r"]["report"]
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
     assert report.startswith("## 결론과 권고") and "실행 기록 참고" in report
     assert "## 부록: 실행 기록" not in report
     assert "## 보고서 경고" in appendix
     assert "Step status and output paths" in appendix
 
 
-def test_finish_preserves_a_long_appendix_and_marks_the_terminal_copy_as_truncated():
+async def test_finish_preserves_a_long_appendix_and_marks_the_terminal_copy_as_truncated():
     async def dispatch(task):
         return result(task, text="unused")
 
@@ -2384,15 +2534,15 @@ def test_finish_preserves_a_long_appendix_and_marks_the_terminal_copy_as_truncat
     terminal = []
     hub.commit_terminal = lambda rid, typ, data: terminal.append((rid, typ, data))
     full = "기록" * 11_000
-    Orchestrator(hub)._finish("r", "PI body\n\n## 부록: 실행 기록\n\n" + full, {}, ok=True)
+    (await Orchestrator(hub)._finish("r", "PI body\n\n## 부록: 실행 기록\n\n" + full, {}, ok=True))
 
-    stored = hub.requests["r"]["report_appendix"]
+    stored = hub.requests["r"]["execution_record"]
     data = terminal[0][2]
     assert full in stored and len(stored) > 20_000
-    assert len(data["report_appendix"]) <= 20_000 and data["report_appendix"] != stored
-    assert data["report_appendix_truncated"] is True
-    assert data["report_appendix_chars"] == len(stored)
-    assert data["report_appendix_api"] == "/api/requests/r"
+    assert len(data["execution_record"]) <= 20_000 and data["execution_record"] != stored
+    assert data["execution_record_truncated"] is True
+    assert data["execution_record_chars"] == len(stored)
+    assert data["execution_record_api"] == "/api/requests/r"
 
 
 def test_cso_plan_prompt_states_the_outputs_rule():
@@ -2428,7 +2578,7 @@ async def test_failed_twelve_step_report_names_each_failure_without_dumping_inst
 
     hub = FakeHub(dispatch)
     await Orchestrator(hub).run_request("r")
-    report = hub.requests["r"]["report_appendix"]
+    report = hub.requests["r"]["execution_record"]
     assert hub.requests["r"]["status"] == "failed"
     assert len(report) < 20000, len(report)
     assert "x" * 300 not in report, "the full instruction stays in the round record"
@@ -2461,7 +2611,8 @@ async def test_failed_report_starts_with_step_cause_and_pi_action_and_masks_path
     first = req["report"].splitlines()[:3]
     assert "s10_results_qc · qc_reviewer" in first[0] and "Windows 명령줄 길이 제한" in first[0]
     assert first[1].startswith("원인: Windows 명령줄 길이 제한")
-    assert first[2] == "PI가 할 일: 개발자에게 알리기"
+    assert first[2] == "개발팀에 자동 보고됨"
+    assert req["dev_reports"][0]["request_id"] == "r" and req["dev_reports"][0]["signature"]
     assert "C:\\Users" not in req["report"] and "secret" not in req["report"]
     assert req["error"], "request.completed must carry a non-empty server-side failure reason"
 
@@ -2487,7 +2638,6 @@ def test_review_revision_reruns_every_step_downstream_of_a_flagged_one():
     assert "Upstream step(s) s5 were revised" in extended["s6"] and "s5" in extended["s8"]
     assert "Upstream step(s) s9 were revised" in extended["s10"]
     assert with_downstream_revisions(steps, {"s10": "- fix wording\n"}) == {"s10": "- fix wording\n"}
-
 
 
 UNRESOLVED_REVIEW = {"verdict": "revise", "scores": {"addresses_question": 4, "evidence": 3, "thoroughness": 4},
@@ -2628,8 +2778,8 @@ async def test_unresolved_review_still_gets_a_cso_report():
     assert req["report"].startswith("CSO report body")
     # labhq appends every open issue verbatim: the CSO saw the review clipped to 3,000 characters (PR #338 review)
     assert "Review: revisions unresolved." not in req["report"]
-    assert "Review: revisions unresolved. The reviewer's open issues, verbatim:\n- A: no sensitivity check → add one" \
-        in req["report_appendix"]
+    assert "Review: revisions unresolved." in req["execution_record"]
+    assert "- P1 · A: no sensitivity check → add one" in req["report_appendix"]
     assert req["error"] == "리뷰 지적이 수정 상한 뒤에도 남아 있습니다"
     assert req["review"]["verdict"] == "revise"
 
@@ -2640,10 +2790,10 @@ async def test_unresolved_review_original_is_in_the_execution_appendix():
     await Orchestrator(hub).run_request("r")
 
     report = hub.requests["r"]["report"]
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
     assert report.startswith("## 결론과 권고")
     assert "## 부록: 실행 기록" not in report and "Review: revisions unresolved." not in report
-    assert appendix.startswith("## 부록: 실행 기록")
+    assert appendix.startswith("## 실행 기록")
     assert "Review: revisions unresolved." in appendix
 
 
@@ -2673,7 +2823,7 @@ async def test_unresolved_synthesis_prompt_lists_open_issues_and_accept_prompt_i
     await Orchestrator(hub).run_request("r")
     prompt = kinds(hub, "synthesis")[0].prompt
     assert prompt.endswith(UNRESOLVED_REVIEW_NOTE)
-    assert "separate execution record" in UNRESOLVED_REVIEW_NOTE and "verbatim" in UNRESOLVED_REVIEW_NOTE
+    assert "scientific appendix" in UNRESOLVED_REVIEW_NOTE and "verbatim" in UNRESOLVED_REVIEW_NOTE
     assert "no sensitivity check" in prompt  # the reviewer's open issue is in the prompt it lists from
 
     accepted = unresolved_hub(lambda task: result(task, text="report"), accept=True)
@@ -2704,13 +2854,13 @@ async def test_unresolved_review_falls_back_to_step_results_when_synthesis_fails
 
     req = hub.requests["r"]
     assert req["status"] == "failed" and req["outcome"] == "review_unresolved"
-    assert "Review: revisions unresolved." in req["report_appendix"]
-    assert "### A · worker (ok)" in req["report_appendix"] and "A revision 1" in req["report_appendix"]
+    assert "Review: revisions unresolved." in req["execution_record"]
+    assert "### A · worker (ok)" in req["execution_record"] and "A revision 1" in req["execution_record"]
     if resume:
         assert not kinds(hub, "synthesis") and len(hub.approvals) == 1
-        assert "Synthesis failed: budget exceeded" in req["report_appendix"]
+        assert "Synthesis failed: budget exceeded" in req["execution_record"]
     else:
-        assert len(kinds(hub, "synthesis")) == 1 and "Synthesis failed: engine crashed" in req["report_appendix"]
+        assert len(kinds(hub, "synthesis")) == 1 and "Synthesis failed: engine crashed" in req["execution_record"]
 
 
 @pytest.mark.asyncio
@@ -2953,3 +3103,339 @@ async def test_resumed_revision_after_a_restart_still_gets_the_current_upstream_
     (b,) = hub.calls
     assert b.resume_session_id == "B-session"
     assert "Current upstream results" in b.prompt and "A v2 result" in b.prompt
+
+
+# ---------------- pre-dispatch reservation (#862, policy.budget.reserve_before_dispatch) ----------------
+
+def _reserving_hub(dispatch, *, limit=2.0, per_task=1.5):
+    hub = FakeHub(dispatch)
+    hub.s.policy.budget.reserve_before_dispatch = True
+    hub.s.policy.budget.per_task_usd = per_task
+    hub.requests["r"]["budget_usd"] = limit
+    return hub
+
+
+@pytest.mark.asyncio
+async def test_with_reservation_off_the_task_is_left_unchanged():
+    async def dispatch(task):
+        return result(task, text="done", cost_usd=0.4)
+
+    hub = FakeHub(dispatch)
+    hub.s.policy.budget.reserve_before_dispatch = False  # the option is on by default since #1139
+    await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+    assert hub.calls[0].budget_usd is None and "budget_holds" not in hub.requests["r"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_turns_share_the_unspent_budget_by_their_holds():
+    """Two turns of up to 1.5 on a 2.0 request: the second holds only the 0.5 that is left (#1139), so both start and the
+    holds never pass 2.0. Nothing is left for a third, which asks for a whole turn's cap."""
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def dispatch(task):
+        started.set()
+        await release.wait()
+        return result(task, text="done", cost_usd=min(1.0, task.budget_usd))
+
+    hub = _reserving_hub(dispatch)
+    orch = Orchestrator(hub)
+    first = asyncio.create_task(orch.run_step(Task(agent_id="worker", request_id="r", prompt="first")))
+    await started.wait()
+    assert hub.requests["r"]["budget_holds"] == {hub.calls[0].id: 1.5}
+    second = asyncio.create_task(orch.run_step(Task(agent_id="worker", request_id="r", prompt="second")))
+    await asyncio.sleep(0.05)
+    assert len(hub.calls) == 2 and hub.approvals == []
+    assert hub.requests["r"]["budget_holds"] == {hub.calls[0].id: 1.5, hub.calls[1].id: 0.5}
+    with pytest.raises(BudgetExceeded, match="budget reservation"):  # 2.0 held, 1.5 more would pass 2.0
+        await orch.run_step(Task(agent_id="worker", request_id="r", prompt="third"))
+    assert len(hub.calls) == 2 and hub.approvals[0]["detail"]["reserve_usd"] == 1.5
+    # Each started turn is capped at the amount held for it, for the CLI and its structured-output retries.
+    assert [(c.budget_usd, c.request_budget_remaining_usd) for c in hub.calls] == [(1.5, 1.5), (0.5, 0.5)]
+    release.set()
+    assert (await first).ok and (await second).ok
+    assert hub.requests["r"]["budget_holds"] == {} and orch.cost["r"] == pytest.approx(1.5)  # counted once, holds released
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spent,per_task,sent", [(1.0, 1.0, True), (1.0, 1.5, True), (2.0, 0, False), (2.0, 1.5, False),
+                                                  (1.995, 1.5, False)])
+async def test_the_last_turn_starts_when_something_is_left_to_hold_and_is_held_at_that(spent, per_task, sent):
+    async def dispatch(task):
+        return result(task, text="done", cost_usd=0.1)
+
+    hub = _reserving_hub(dispatch, per_task=per_task)
+    hub.requests["r"].update(cost_usd=spent, cost_by_task={"old": spent},
+                             cost_items={"old": {"task_id": "old", "status": "actual", "usd": spent}})
+    orch = Orchestrator(hub)  # the durable record is counted once at the gate
+    task = Task(agent_id="worker", request_id="r", prompt="last", meta={"final_budget_turn": True})
+    if sent:
+        assert (await orch.run_step(task)).ok and hub.calls[0].budget_usd == 1.0
+    else:
+        # per_task 0 holds what is left; nothing left (or under a cent, which cannot be held) means no free or unlimited
+        # turn is sent.
+        with pytest.raises(BudgetExceeded):
+            await orch.run_step(task)
+        assert hub.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [float("inf"), float("nan"), -1.0, "5", True])
+async def test_an_invalid_request_budget_dispatches_nothing(limit):
+    async def dispatch(task):
+        return result(task, text="done")
+
+    hub = _reserving_hub(dispatch)
+    hub.requests["r"]["budget_usd"] = limit
+    with pytest.raises(BudgetExceeded):
+        await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+    assert hub.calls == [] and hub.approvals == []
+
+
+@pytest.mark.parametrize("field,value", [("per_task_usd", float("nan")), ("per_task_usd", -1.0),
+                                         ("per_request_usd", float("inf"))])
+def test_reservation_refuses_non_amount_settings(field, value):
+    from labhq.settings import BudgetSettings
+    BudgetSettings(reserve_before_dispatch=False, **{field: value})  # unchanged when the option is off
+    with pytest.raises(ValueError):
+        BudgetSettings(reserve_before_dispatch=True, **{field: value})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("meta", [{"kind": "plan_recruit"}, {"facilities_diagnosis": True}])
+async def test_optional_recruit_and_diagnosis_turns_reserve_and_are_clamped_without_a_card(meta):
+    async def dispatch(task):
+        return result(task, text="done", cost_usd=0.2)
+
+    hub = _reserving_hub(dispatch, limit=2.0, per_task=1.0)
+    orch = Orchestrator(hub)
+    # The recruiter's own 25 USD budget is cut to the per-task cap that was held.
+    await orch.run_step(Task(agent_id="worker", request_id="r", prompt="hire", budget_usd=25, meta=dict(meta)))
+    assert hub.calls[0].budget_usd == 1.0
+    hub.requests["r"]["budget_usd"] = 1.1  # 0.2 spent, 0.9 left: held at that, not refused (#1139)
+    await orch.run_step(Task(agent_id="worker", request_id="r", prompt="again", budget_usd=25, meta=dict(meta)))
+    assert hub.calls[1].budget_usd == pytest.approx(0.9)
+    hub.requests["r"]["budget_usd"] = 0.4  # 0.4 spent, nothing left; optional turns never open a card
+    with pytest.raises(BudgetExceeded):
+        await orch.run_step(Task(agent_id="worker", request_id="r", prompt="third", budget_usd=25, meta=dict(meta)))
+    assert len(hub.calls) == 2 and hub.approvals == []
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_or_restarted_turn_keeps_its_hold_until_its_cost_is_recorded():
+    started = asyncio.Event()
+
+    async def hang(task):
+        started.set()
+        await asyncio.Event().wait()
+
+    hub = _reserving_hub(hang, limit=1.5)  # the hold takes the whole request: a restarted turn finds nothing left
+    running = asyncio.create_task(Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="a")))
+    await started.wait()
+    running.cancel()  # a request cancel or shutdown: the runner may still be spending
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    tid = hub.calls[0].id
+    assert hub.requests["r"]["budget_holds"] == {tid: 1.5}
+
+    async def done(task):
+        return result(task, text="done", cost_usd=0.1)
+
+    hub.reply = done
+    restarted = Orchestrator(hub)  # a new gateway reads the persisted hold from the request record
+    with pytest.raises(BudgetExceeded):
+        await restarted.run_step(Task(agent_id="worker", request_id="r", prompt="b"))
+    assert len(hub.calls) == 1
+    # The gateway records the cancelled turn as unaccounted: the unknown reserve replaces the hold, never both.
+    hub.requests["r"].update(cost_by_task={tid: None}, cost_known=False,
+                             cost_items={tid: {"task_id": tid, "status": "unknown", "usd": None}})
+    again = Orchestrator(hub)
+    assert again._budget_bound("r", 2.0) == (0.0, 0, 1.5)  # recorded but not yet counted: still held
+    again._count_recorded_costs("r")
+    assert again._budget_bound("r", 2.0) == (0.0, 1, 1.5)  # now the unknown reserve, not hold plus reserve
+    hub.requests["r"]["budget_usd"] = 3.0
+    assert (await again.run_step(Task(agent_id="worker", request_id="r", prompt="c"))).ok
+    assert hub.requests["r"]["budget_holds"] == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held", [True, False])
+async def test_a_recovered_earlier_task_is_not_held_twice_and_is_counted_once(held):
+    # Review P2-1, at the original cap: 1.5 held for the pre-restart turn + 1.5 for the new attempt would pass 2.0
+    # and open a card, although the gateway adopts the earlier task and never sends the new attempt.
+    async def recovered(task):
+        assert hub.requests["r"]["budget_holds"] == {"prior": 1.5}  # still covered while the adopted turn runs
+        return TaskResult(task_id="prior", agent_id=task.agent_id, ok=True, text="done", cost_usd=0.3)
+
+    hub = _reserving_hub(recovered)
+    hub.recovery_task_id = lambda task: "prior"  # the gateway's own recovery choice for this turn
+    if held:
+        hub.requests["r"]["budget_holds"] = {"prior": 1.5}  # held before the gateway restarted
+    orch = Orchestrator(hub)
+    assert (await orch.run_step(Task(agent_id="worker", request_id="r", prompt="work"))).ok
+    assert hub.approvals == [] and hub.requests["r"]["budget_usd"] == 2.0 and "r" not in orch.budget_denials
+    orch._count_cost("r", "prior")  # a repeated result event changes nothing
+    assert orch.cost["r"] == pytest.approx(0.3) and orch._budget_bound("r", 2.0)[2] == pytest.approx(0.3)
+    assert orch._dispatch_held("r", 2.0) == 0 and hub.calls[0].budget_usd is None  # the attempt held nothing
+
+
+class _TaskStore:
+    def __init__(self):
+        self.tasks = {}
+
+    def get(self, kind, key):
+        if kind == "pi_translation_reservations":
+            assert key == "r"
+            return {}
+        assert kind == "task"
+        return self.tasks.get(key)
+
+
+@pytest.mark.parametrize("stored,recorded,kept", [(False, False, False), (True, False, True), (False, True, True)])
+async def test_a_restart_drops_only_holds_of_attempts_the_gateway_never_stored(stored, recorded, kept):
+    # Review P2-2: a turn held, then restarted while waiting before the gateway stored it, was never sent.
+    hub = _reserving_hub(None)
+    hub.store = _TaskStore()
+    hub.requests["r"]["budget_holds"] = {"X": 1.5}
+    if stored:
+        hub.store.tasks["X"] = {"request_id": "r"}  # stored first, so possibly sent
+    if recorded:
+        hub.requests["r"]["cost_by_task"] = {"X": None}  # e.g. a failed send recorded as unknown
+    orch = Orchestrator(hub)
+    (await orch._drop_unsent_holds("r"))
+    assert hub.requests["r"]["budget_holds"] == ({"X": 1.5} if kept else {})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored", [False, True])
+async def test_a_cancel_before_the_gateway_stores_the_turn_releases_its_hold(stored):
+    started = asyncio.Event()
+
+    async def wait_before_send(task):  # a PI pause or offline runner: dispatch has not stored the task yet
+        if stored:
+            hub.store.tasks[task.id] = {"request_id": "r"}
+        started.set()
+        await asyncio.Event().wait()
+
+    hub = _reserving_hub(wait_before_send)
+    hub.store = _TaskStore()
+    orch = Orchestrator(hub)
+    running = asyncio.create_task(orch.run_step(Task(agent_id="worker", request_id="r", prompt="a")))
+    await started.wait()
+    (await orch._drop_unsent_holds("r"))  # a concurrent (re)start prune never touches an attempt in flight here
+    assert hub.requests["r"]["budget_holds"] == {hub.calls[0].id: 1.5}
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert hub.requests["r"]["budget_holds"] == ({hub.calls[0].id: 1.5} if stored else {})
+
+
+@pytest.mark.asyncio
+async def test_paper_preparations_keep_their_own_hold_and_are_not_held_twice():
+    async def dispatch(task):
+        return result(task, text="done", cost_usd=0.2)
+
+    hub = _reserving_hub(dispatch)
+    orch = Orchestrator(hub)
+    task = Task(agent_id="worker", request_id="r", prompt="prep", meta={"kind": "paper_skill"})
+    assert await orch._reserve_dispatch("r", task, optional=True) is task
+    assert "budget_holds" not in hub.requests["r"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_names_the_task_it_adopts_and_records_a_failed_send_as_unknown(tmp_path, monkeypatch):
+    class Socket:
+        async def send_text(self, payload):
+            return None
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path)
+    hub = Hub(settings)
+    hub.register_runner("r", Socket(), [{"id": "worker"}])
+    hub.requests["q"] = {"id": "q", "text": "t", "status": "running", "results": {}}
+    task = Task(agent_id="worker", request_id="q", prompt="work", meta={"kind": "step", "step_id": "s1"})
+    assert hub.recovery_task_id(task) is None  # no restart recovery: dispatch sends it
+    # A send that fails after the task was stored may have reached the runner: an unknown cost, not a lost record.
+    async def broken(tid, *, steers=True):
+        raise RuntimeError("state push failed after the frame was sent")
+
+    monkeypatch.setattr(hub, "_push_task_state", broken)
+    with pytest.raises(RuntimeError):
+        await hub.dispatch(task)
+    assert hub.store.get("task", task.id) is None
+    assert hub.requests["q"]["cost_items"][task.id]["status"] == "unknown"
+    # After a restart, recovery names the earlier task by the very rule dispatch uses, and dispatch answers with it.
+    prior = TaskResult(task_id="prior", agent_id="worker", ok=True, text="done")
+    hub.store.put("task", "prior", {"request_id": "q", "kind": "step", "step_id": "s1", "attempt": 1,
+                                    "dispatched_at": 1, "completed": True, "payload": {"meta": {}},
+                                    "result": prior.model_dump(mode="json")})
+    hub.recovery_steps.add("q")
+    hub.recovery_started["q"] = 2
+    again = Task(agent_id="worker", request_id="q", prompt="work", meta={"kind": "step", "step_id": "s1"})
+    assert hub.recovery_task_id(again) == "prior"
+    assert (await hub.dispatch(again)).task_id == "prior"
+
+
+# #1026: a stored runner environment binding is never re-planned or rebound.
+def bound_runner_plan():
+    steps = [
+        {"id": "env", "agent_id": "worker", "instruction": "Install approved packages",
+         "outputs": [ENV_LOCK_OUTPUT], "depends_on": []},
+        {"id": "run", "agent_id": "worker", "instruction": "analyze", "outputs": [], "depends_on": ["env"]},
+    ]
+    return split_runner_environments(steps, {"worker": "r1"}, {"r1": "linux"}, lambda _: True)
+
+
+@pytest.mark.asyncio
+async def test_failure_with_bound_environment_does_not_replan_or_touch_bindings():
+    stored = bound_runner_plan()
+    before = copy.deepcopy(stored)
+    assert any("environment_binding" in s for s in stored)
+    assert any("environment_bindings" in s for s in stored)
+
+    async def dispatch(task):
+        kind = task.meta["kind"]
+        assert kind != "replan", "a bound plan must not reach the CSO re-plan"
+        if kind == "step":
+            if task.meta["step_id"] == "run":
+                return result(task, ok=False, error="analysis failed")
+            return result(task, text="env ready", outputs=task.meta["outputs"])
+        assert kind == "synthesis", kind
+        return result(task, text="final")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.max_replans = 1
+    hub.s.orchestrator.max_failure_replans = 1
+    hub.s.orchestrator.reviewer_agent = None
+    hub.requests["r"]["plan"] = {"steps": copy.deepcopy(stored)}
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    req = hub.requests["r"]
+    assert not [t for t in hub.calls if t.meta["kind"] == "replan"]
+    assert "replan_history" not in req
+    for kept, old in zip(req["plan"]["steps"], before):
+        for key in ("id", "agent_id", "environment_binding", "environment_bindings"):
+            assert kept.get(key) == old.get(key), key
+    assert [s["id"] for s in req["plan"]["steps"]] == [s["id"] for s in before]
+
+
+def test_result_correction_pins_the_claims_to_the_steps_declared_ids():
+    """#1066: a correction that only said "record it as a claim" made a worker add c_mechanistic_hypotheses, a claim id
+    the plan never declared, and the step then failed on it."""
+    from labhq.orchestrator.cso import result_correction
+
+    problems = ["hypothesis row e1 is not evidence and cannot support a claim; link it as context"]
+    text = result_correction(problems, ["c_a", "c_b"])
+    assert '["c_a", "c_b"]' in text and "Never create a claim id outside that list" in text
+    assert "relation context" in text and "never a new claim" in text
+    assert problems[0] in text
+    assert "claim_ids" not in result_correction(problems)  # a caller without a plan step keeps the old wording
+    assert '[]' in result_correction(problems, [])  # a step that declared none may not add one either
+
+
+def test_plan_prompts_tell_the_cso_to_declare_each_claim_a_step_will_state():
+    from labhq.orchestrator import cso
+
+    for prompt in (cso.RESEARCH_PLAN_PROMPT,):
+        flat = " ".join(prompt.split())
+        assert "can state only the claims in that step's claim_ids" in flat
+        assert "declare a claim_id for each of them in the step that produces it" in flat

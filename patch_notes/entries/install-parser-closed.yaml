@@ -1,11 +1,14 @@
 pr: 468
 rows:
-- sha: "1d06b0b"
+- sha: 1d06b0b
   at: 2026-10-07 22:43
-  text: "설치 판별을 비리터럴 인자, 그룹 cwd, 중첩 shell까지 fail closed로 확장"
-- sha: "13a183d"
+  text: 설치 판별을 비리터럴 인자, 그룹 cwd, 중첩 shell까지 fail closed로 확장
+  summary: 공유 환경 설치 검사를 동적 인자·작업 위치 변경·중첩 셸까지 넓혀 불명확하면 막습니다.
+- sha: 13a183d
   at: 2026-10-07 22:56
-  text: "brace cwd와 동적 중첩 shell을 닫고 따옴표 출처 기반 설치 판별로 오탐 제거"
-- sha: "4dab138"
+  text: brace cwd와 동적 중첩 shell을 닫고 따옴표 출처 기반 설치 판별로 오탐 제거
+  summary: 작업 위치 변경과 동적 중첩 셸 우회를 막고 따옴표를 살펴 설치 오탐을 줄였습니다.
+- sha: 4dab138
   at: 2026-10-07 23:26
-  text: "중첩 shell option 문법과 위치별 비리터럴 판별을 구조화"
+  text: 중첩 shell option 문법과 위치별 비리터럴 판별을 구조화
+  summary: 중첩된 셸의 옵션과 동적 표현 위치를 구조에 따라 검사하도록 정리했습니다.

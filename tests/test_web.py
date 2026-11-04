@@ -9,6 +9,19 @@ from labhq.models import ApprovalRequest
 from labhq.settings import Settings
 
 
+def test_snapshot_preserves_request_activity_for_initial_focus(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.requests["older"] = {"id": "older", "text": "Continue work", "status": "running",
+                             "created_at": 10, "updated_at": 90}
+    hub.requests["newer"] = {"id": "newer", "text": "Finished work", "status": "done",
+                             "created_at": 80, "updated_at": 80}
+    rows = {row["id"]: row for row in hub.snapshot()["data"]["requests"]}
+    assert rows["older"]["updated_at"] == 90
+    assert rows["newer"]["updated_at"] == 80
+
+
 def test_office_page_manifest_and_stale_approval(tmp_path):
     s = Settings()
     s.gateway.state_dir = str(tmp_path / "state")
@@ -28,6 +41,13 @@ def test_office_page_manifest_and_stale_approval(tmp_path):
     assert "<!--LABHQ_BOOT-->" not in page.text and 'id="zones"' in page.text
     assert client.get("/manifest.webmanifest").json()["short_name"] == "labhq"
     assert client.get("/icon.svg").headers["content-type"].startswith("image/svg+xml")
+    for name in ("tokens", "components"):
+        css_path = f"ui/{name}.css"
+        assert f'href="{css_path}"' in page.text
+        css = client.get(f"/{css_path}")
+        assert css.status_code == 200
+        assert css.headers["content-type"].startswith("text/css")
+        assert "--ds-" in css.text
     assert client.get("/api/health").json()["service"] == "labhq gateway"
     with client.websocket_connect(f"/ws/client?token={s.gateway.client_token}") as ws:
         assert json.loads(ws.receive_text())["type"] == "snapshot"
@@ -72,7 +92,9 @@ def test_skipped_steps_and_unparsed_reviews_have_explicit_ui_states():
     state = (server.WEB / "state.js").read_text(encoding="utf-8")
     assert "case 'request.step_skipped':" in state
     assert "q.steps[d.step_id] = 'skipped'" in state
-    assert ".chip.st-skipped" in html and ".dag-node.st-skipped" in html
+    components = (server.WEB / "ui" / "components.css").read_text(encoding="utf-8")
+    assert ".chip.st-skipped { text-decoration: line-through; }" in components
+    assert ".dag-node.st-skipped" in html
     assert "skipped: '건너뜀'" in html
     assert "d.status === 'review_unparsed'" in state
     assert "리뷰 판정 실패. PI 확인이 필요해요" in state

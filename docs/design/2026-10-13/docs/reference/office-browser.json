@@ -1,0 +1,225 @@
+{
+  "office": [
+    {
+      "width": 1440,
+      "height": 900,
+      "overflow": false,
+      "top": 86.796875,
+      "bottom": 606.8125,
+      "core": [
+        {
+          "id": "cso",
+          "top": 221.28125,
+          "bottom": 297.28125,
+          "width": 160.734375,
+          "height": 76
+        },
+        {
+          "id": "analyst",
+          "top": 433.0625,
+          "bottom": 515.984375,
+          "width": 160.734375,
+          "height": 82.921875
+        },
+        {
+          "id": "engineer",
+          "top": 519.984375,
+          "bottom": 595.984375,
+          "width": 160.734375,
+          "height": 76
+        },
+        {
+          "id": "qc_reviewer",
+          "top": 519.984375,
+          "bottom": 595.984375,
+          "width": 160.734375,
+          "height": 76
+        }
+      ],
+      "art": [
+        {
+          "top": 223.28125,
+          "bottom": 295.28125,
+          "width": 72,
+          "height": 72
+        },
+        {
+          "top": 223.28125,
+          "bottom": 295.28125,
+          "width": 72,
+          "height": 72
+        },
+        {
+          "top": 303.28125,
+          "bottom": 375.28125,
+          "width": 72,
+          "height": 72
+        },
+        {
+          "top": 226.421875,
+          "bottom": 298.421875,
+          "width": 72,
+          "height": 72
+        },
+        {
+          "top": 226.421875,
+          "bottom": 298.421875,
+          "width": 72,
+          "height": 72
+        },
+        {
+          "top": 309.5625,
+          "bottom": 381.5625,
+          "width": 72,
+          "height": 72
+        },
+        {
+          "top": 438.515625,
+          "bottom": 510.515625,
+          "width": 72,
+          "height": 72
+        },
+        {
+          "top": 438.515625,
+          "bottom": 510.515625,
+          "width": 72,
+          "height": 72
+        },
+        {
+          "top": 521.984375,
+          "bottom": 593.984375,
+          "width": 72,
+          "height": 72
+        },
+        {
+          "top": 521.984375,
+          "bottom": 593.984375,
+          "width": 72,
+          "height": 72
+        },
+        {
+          "top": 435.0625,
+          "bottom": 507.0625,
+          "width": 72,
+          "height": 72
+        }
+      ],
+      "animations": 0,
+      "decision": [
+        "다람쥐데이터 담당승인 기다려요"
+      ],
+      "minTextContrast": 6.502850034620943
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "overflow": false,
+      "top": 142.390625,
+      "bottom": 628,
+      "core": [
+        {
+          "id": "cso",
+          "top": 522.359375,
+          "bottom": 598.359375,
+          "width": 151.5,
+          "height": 76
+        },
+        {
+          "id": "analyst",
+          "top": 309.9375,
+          "bottom": 392.859375,
+          "width": 151.5,
+          "height": 82.921875
+        },
+        {
+          "id": "engineer",
+          "top": 396.859375,
+          "bottom": 472.859375,
+          "width": 151.5,
+          "height": 76
+        },
+        {
+          "id": "qc_reviewer",
+          "top": 396.859375,
+          "bottom": 472.859375,
+          "width": 151.5,
+          "height": 76
+        }
+      ],
+      "art": [
+        {
+          "top": 528.359375,
+          "bottom": 592.359375,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "top": 528.359375,
+          "bottom": 592.359375,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "top": 608.359375,
+          "bottom": 672.359375,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "top": 737,
+          "bottom": 801,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "top": 737,
+          "bottom": 801,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "top": 820.140625,
+          "bottom": 884.140625,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "top": 319.390625,
+          "bottom": 383.390625,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "top": 319.390625,
+          "bottom": 383.390625,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "top": 402.859375,
+          "bottom": 466.859375,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "top": 402.859375,
+          "bottom": 466.859375,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "top": 945.640625,
+          "bottom": 1009.640625,
+          "width": 64,
+          "height": 64
+        }
+      ],
+      "animations": 0,
+      "decision": [
+        "다람쥐데이터 담당승인 기다려요"
+      ],
+      "minTextContrast": 6.502850034620943
+    }
+  ],
+  "externalRequests": 0
+}

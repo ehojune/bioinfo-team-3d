@@ -3,6 +3,7 @@ reduces what the lab recorded to what must not change when the shadow is on."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import shutil
@@ -13,11 +14,12 @@ from typing import Any
 import uvicorn
 
 from labhq.gateway.server import RequestIn, create_app
-from labhq.integrations.rounds import build_record
+from labhq.integrations.rounds import build_record, record_sources
 from labhq.request_status import is_terminal_request
 from labhq.runner.daemon import Runner
 from labhq.settings import DataZone, ProjectSettings, Settings
-from labhq.util import free_port
+from labhq.store import StateStore
+from labhq.util import free_ports
 
 REPO = Path(__file__).resolve().parents[1]
 TIMESTAMP_KEYS = {"ts", "created_at", "updated_at", "finished_at", "dispatched_at", "started_at", "ended_at",
@@ -27,9 +29,9 @@ TIMESTAMP_KEYS = {"ts", "created_at", "updated_at", "finished_at", "dispatched_a
 def lab_settings(tmp: Path, semantics: Any) -> Settings:
     s = Settings()
     s.gateway.state_dir = s.runner.state_dir = str(tmp / "state")
-    port = free_port()
+    port, broker_port = free_ports(2)
     s.gateway.port, s.gateway.url = port, f"ws://127.0.0.1:{port}"
-    s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = free_port(), "mock", 0.05
+    s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = broker_port, "mock", 0.05
     s.runner.workspace_root = str(tmp / "runs")
     s.runner.talent_dir = str(tmp / "talent")
     s.runner.agents_dir = str(tmp / "agents")
@@ -47,9 +49,38 @@ async def _until(pred, timeout: float = 60.0) -> None:
         await asyncio.sleep(0.05)
 
 
+@contextlib.contextmanager
+def _unsynced_commits():
+    """A lab run commits about 840 times (about 6 per event) and each commit waits for an fsync. On a disk with a slow
+    fsync that is the whole run: 25-60 s here and in CI against 4-9 s on a fast one (#1124). These tests compare what
+    the lab recorded, not whether a commit survives power loss, so the state stores of the run use WAL with
+    `synchronous=NORMAL`. Only this run: the patch is undone when it ends, and the product code is not changed."""
+    original = StateStore._write_connection
+
+    def write_connection(self):
+        fresh = self._wdb is None
+        conn = original(self)
+        if fresh:
+            conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
+    StateStore._write_connection = write_connection
+    try:
+        yield
+    finally:
+        StateStore._write_connection = original
+
+
 async def run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: str | None = None,
                   references: list[dict] | None = None, before=None, request: dict | None = None) -> dict:
     """Run each request to its end; return the hub and the shadow lines written."""
+    with _unsynced_commits():
+        return await _run_lab(tmp, semantics, texts, project_id=project_id, references=references, before=before,
+                              request=request)
+
+
+async def _run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: str | None = None,
+                   references: list[dict] | None = None, before=None, request: dict | None = None) -> dict:
     shutil.copytree(REPO / "agents", tmp / "agents")
     s = lab_settings(tmp, semantics)
     app = create_app(s)
@@ -80,7 +111,10 @@ async def run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: st
         for text in texts:
             rid = hub.create_request(RequestIn(text=text, project_id=project_id, references=references or [],
                                                **(request or {})))
-            await _until(lambda: is_terminal_request(hub.requests[rid]["status"]), 60)
+            running = hub.request_tasks.get(rid)
+            if running is not None:
+                await asyncio.wait_for(running, 120)  # bound a deadlock without timing the run (PR #539 review)
+            assert is_terminal_request(hub.requests[rid]["status"])
             rids.append(rid)
         if hub.semantics_shadow is not None:
             assert hub.semantics_shadow.drain(20)
@@ -118,13 +152,14 @@ def _normalize(value: Any, roots: list[str]) -> Any:
 
 
 def lab_record(result: dict, tmp: Path) -> dict:
-    """What the lab recorded for its requests: prompts, schemas, plans, approvals, results, rounds, web."""
+    """The research record: prompts, schemas, plans, approvals, results, rounds and the request web view."""
     hub = result["hub"]
     roots = sorted({str(tmp), str(tmp.resolve())}, key=len, reverse=True)
+    sources = record_sources(hub)
     out = []
     for rid in result["rids"]:
         req = hub.requests[rid]
-        tasks = sorted((t for t in hub.store.all("task").values() if t.get("request_id") == rid),
+        tasks = sorted(sources["tasks"].get(rid, []),
                        key=lambda t: (str(t.get("kind")), str(t.get("step_id")), t.get("attempt") or 0,
                                       t.get("revision") or 0, t.get("dispatched_at") or 0))
         prompts = [{"agent": (t.get("payload") or {}).get("agent_id"), "kind": t.get("kind"),
@@ -135,11 +170,10 @@ def lab_record(result: dict, tmp: Path) -> dict:
         approvals = sorted(json.dumps(_normalize({**{k: (d.get("approval") or {}).get(k) for k in
                                                      ("kind", "summary", "detail")}, "approved": d.get("approved")},
                                                  roots), sort_keys=True, default=str)
-                           for d in hub.store.all("approval_decision").values()
-                           if (d.get("approval") or {}).get("request_id") == rid)
+                           for d in sources["decisions"].get(rid, []))
         events = sorted(json.dumps(_normalize({"type": e.get("type"), "data": e.get("data")}, roots),
                                    sort_keys=True, default=str)
-                        for e in hub.store.events_since(0) if e.get("request_id") == rid)
+                        for e in sources["events"].get(rid, []))
         snapshot = next(r for r in hub.snapshot()["data"]["requests"] if r["id"] == rid)
         out.append({
             "status": req.get("status"), "plan": req.get("plan"), "results": req.get("results"),

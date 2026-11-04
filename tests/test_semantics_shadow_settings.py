@@ -61,14 +61,23 @@ def test_ab_is_supported_but_plain_advisory_remains_held(tmp_path, text):
     assert resolve(_load(tmp_path, text).semantics) == ShadowConfig(mode="ab")
 
 
-def test_default_is_off_and_the_example_configs_say_so():
+def test_code_default_is_off():
     from labhq.research.semantics_shadow import resolve
     assert Settings().semantics is None
+    assert resolve(Settings().semantics) is None
+
+
+def test_the_example_configs_turn_ab_with_confirmed_actions_on_for_a_new_init():
+    """`labhq init` copies these: the PI's tested behaviour (#613). A config without a `semantics` key stays off."""
+    from labhq.research.semantics_shadow import resolve
     texts = [(ROOT / p).read_text(encoding="utf-8") for p in ("config/labhq.example.yaml",
                                                                "labhq/config/labhq.example.yaml")]
     assert texts[0] == texts[1]
     data = yaml.safe_load(texts[0])
-    assert "semantics" in data and resolve(data["semantics"]) is None
+    assert data["semantics"] == {"mode": "ab", "actions": "confirm"}
+    # Without the `actions` key: this file also runs in the actions-layer-removed check, which has no such key.
+    config = resolve({key: value for key, value in data["semantics"].items() if key != "actions"})
+    assert config is not None and config.mode == "ab"
 
 
 def test_a_gateway_with_a_bad_value_starts_with_semantics_off(tmp_path):

@@ -41,6 +41,8 @@ def waiting_calls(monkeypatch):
 @pytest.mark.parametrize("failure", ["offline", "cli", "empty"])
 async def test_failed_consult_is_rejected_with_reason(tmp_path, target, failure):
     hub = Hub(settings(tmp_path))
+    # A consult is asked in the name of a request: with the pre-dispatch hold (#1139) the request has to exist.
+    hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
     routed = target.removeprefix("colleague:")
     hub.agents = {routed: {"engine": "mock"}}
     ask = AskRequest(task_id="blocked", agent_id="worker", request_id="r", to=target,
@@ -62,7 +64,10 @@ async def test_failed_consult_is_rejected_with_reason(tmp_path, target, failure)
         assert {"offline": "runner offline", "cli": "CLI exit 2", "empty": "empty"}[failure] in answer["reason"]
         assert "answer" not in answer
         assert (await hub.wait_asks([ask.id]))[0] == answer
-        assert hub.events[-1]["data"]["status"] == "rejected"
+        answer_events = [event for event in hub.events if event["type"] == "agent.answer"
+                         and event.get("task_id") == ask.task_id]
+        assert len(answer_events) == 1
+        assert answer_events[0]["data"]["status"] == "rejected"
     finally:
         hub.store.close()
 
@@ -166,8 +171,17 @@ async def test_ask_only_direct_restart_requires_offline_worker(tmp_path, checkpo
     try:
         assert restored.completed_direct_result("r") is None
         assert restored.resume_agents("r") == {"worker"}
+        published = asyncio.Event()
+        original_publish = restored.publish
+
+        async def observe_publish(ev, *args, **kwargs):
+            await original_publish(ev, *args, **kwargs)
+            if ev["type"] == "request.resume_waiting":
+                published.set()
+
+        restored.publish = observe_publish
         resumed = asyncio.create_task(restored.resume_when_ready("r"))
-        await asyncio.sleep(0)
+        await asyncio.wait_for(published.wait(), 1)
         assert restored.requests["r"]["status"] == "waiting_for_runner"
         assert restored.events[-1]["type"] == "request.resume_waiting"
         assert restored.events[-1]["data"]["missing_agents"] == ["worker"]
@@ -225,7 +239,7 @@ async def test_runner_ask_only_result_emits_hibernating_status(tmp_path, monkeyp
         assert result.pending_asks == ["ask"] and not result.pending_jobs
         status = [e.data for e in seen if e.type == "agent.status"][-1]
         assert status == {"state": "hibernating", "jobs": [], "asks": ["ask"]}
-        assert waiting_calls.count("run_task") == 2  # state and event payload
+        assert waiting_calls.count("_run_task") == 2  # state and event payload in the wrapped runner body
     finally:
         runner.store.close()
 

@@ -109,7 +109,7 @@ export function buildOffice(s,scene,roster,{demo=true}={}){
     const canvas=dag.image,ctx=canvas.getContext('2d');
     ctx.fillStyle='#FAF7E9';ctx.fillRect(0,0,canvas.width,canvas.height);
     ctx.textAlign='left';ctx.fillStyle='#466052';ctx.font='600 30px sans-serif';
-    ctx.fillText(request?.text||'요청 없음',34,48,950);
+    ctx.fillText(request?.text||'새 요청을 기다리는 중',34,48,950);
     if(request){
       ctx.font='22px sans-serif';ctx.fillText(`${request.status} · ${request.phase}`,34,88,950);
       const plan=request.plan||[],states=request.steps||{};

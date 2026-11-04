@@ -38,7 +38,7 @@ def test_request_list_health_auth_utf8_and_shutdown(tmp_path, caplog):
                                          "steps": {"s1": "done", "s2": "running"}}
         assert hub.snapshot()["data"]["running_tasks"] == [{
             "id": "t2", "request_id": "r1", "state": "running", "step_id": "s2", "agent_id": "worker",
-            "dispatched_at": 0,
+            "dispatched_at": 0, "activity": {}, "title": "",
         }]
         assert "report" not in item and len(item["text"]) <= 120
         assert [r["id"] for r in client.get("/api/requests?status=done", headers=headers).json()] == ["r2"]
@@ -94,6 +94,10 @@ def test_cli_status_shows_running_work_and_approvals(monkeypatch, capsys):
     def api(_settings, _method, path):
         if path == "/api/health":
             return {"runners": ["runner-1"]}
+        if path == "/api/requests/summary":
+            costs = {"cost_usd": 0.5, "estimated_usd": 0.2, "unknown_count": 1,
+                     "legacy_unknown": False}
+            return {"request_count": 1, "past_count": 0, "session": costs, "total": costs}
         if path.startswith("/api/requests?"):
             return [{"id": "r1", "text": "분석", "step_progress":
                      {"done": 1, "total": 2, "steps": {"s1": "done", "s2": "running"}},
@@ -109,8 +113,37 @@ def test_cli_status_shows_running_work_and_approvals(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "runner-1" in output and "r1 1/2 분석" in output
     assert "s2: running" in output and "a1 [tool_permission] 검토" in output
-    assert "확인 $0.30 + 추정 $0.20 + 미집계 1건" in output
-    assert "claude_code 확인 $0.30" in output and "codex 추정 $0.20 + 미집계 1건" in output
+    assert "확인 $0.30 + 추정 $0.20 + 비용 모름 1건" in output
+    assert "claude_code 확인 $0.30" in output and "codex 추정 $0.20 + 비용 모름 1건" in output
+
+
+def test_cli_status_shows_stopped_semantics_and_reenable_command(tmp_path, monkeypatch, capsys):
+    from labhq.research import semantics_shadow as shadow
+
+    config = tmp_path / "labhq.yaml"
+    config.write_text(
+        f"gateway: {{state_dir: '{(tmp_path / 'state').as_posix()}'}}\n"
+        "semantics: {mode: ab}\n",
+        encoding="utf-8",
+    )
+    paths = shadow.ShadowPaths(tmp_path / "state" / "semantics")
+    shadow.write_disabled(paths, "info_boundary", 1,
+                          boundary=[{"field": "request_id", "class": "identifier"}], ts=1_797_000_000)
+
+    def api(_settings, _method, path):
+        if path == "/api/health":
+            return {"runners": []}
+        if path == "/api/requests/summary":
+            return {"request_count": 0, "past_count": 0, "session": {}, "total": {}}
+        if path.startswith("/api/requests?") or path == "/api/approvals":
+            return []
+        raise AssertionError(path)
+
+    monkeypatch.setattr("labhq.cli._api", api)
+    main(["--config", str(config), "status"])
+    output = capsys.readouterr().out
+    assert "semantics: 멈춤" in output and "info_boundary" in output and "2026-" in output
+    assert "labhq semantics enable" in output
 
 
 def test_cli_resume_uses_the_existing_hold_endpoint(monkeypatch, capsys):
@@ -326,7 +359,7 @@ async def test_failure_comment_keeps_stored_accounting(tmp_path):
                          "cost_usd": 1.5, "cost_known": False}
     hub.reporter.issues["r"] = 7
     await hub.reporter.handle({"type": "request.failed", "request_id": "r", "data": {"error": "boom"}})
-    assert posted and "$1.5" in posted[-1] and "비용 미집계" in posted[-1]
+    assert posted and "$1.5" in posted[-1] and "비용 모름" in posted[-1]
 
 
 def test_completion_line_and_project_report_show_unaccounted_cost_apart(tmp_path, capsys):
@@ -340,15 +373,15 @@ def test_completion_line_and_project_report_show_unaccounted_cost_apart(tmp_path
     render({"type": "request.completed", "ts": 1, "data": {"ok": True, "cost_usd": 1.5, "cost_known": False,
                                                             "cost_summary": summary}})
     line = capsys.readouterr().out
-    assert "cost=확인 $1.00 + 추정 $0.50 + 미집계 1건" in line and "codex 추정 $0.50 + 미집계 1건" in line
+    assert "cost=확인 $1.00 + 추정 $0.50 + 비용 모름 1건" in line and "codex 추정 $0.50 + 비용 모름 1건" in line
     render({"type": "request.completed", "ts": 1, "data": {"ok": True, "cost_usd": 0, "cost_known": False}})
-    assert "cost=비용 미집계" in capsys.readouterr().out  # never "$0" for an unreported cost
+    assert "cost=비용 모름" in capsys.readouterr().out  # never "$0" for an unreported cost
 
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
     report = Hub(settings).reporter._report_md("r", {"text": "t", "cost_usd": 1.5, "cost_known": False,
                                                      "cost_summary": summary}, "body")
-    assert "- 비용: 확인 $1.00 + 추정 $0.50 + 미집계 1건 (claude_code 확인 $1.00 · codex" in report
+    assert "- 비용: 확인 $1.00 + 추정 $0.50 + 비용 모름 1건 (claude_code 확인 $1.00 · codex" in report
     assert "청구액이 아닙니다" in report
 
 

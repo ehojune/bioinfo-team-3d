@@ -16,6 +16,8 @@ import struct
 from pathlib import Path
 from typing import NamedTuple
 
+from ..util import replace_file
+
 
 class HeldEntry(NamedTuple):
     name: str
@@ -84,6 +86,12 @@ class HeldDir:
         with other:
             return other.ident == self.ident
 
+    def readlink(self, name: str) -> str:
+        """The target text of the link `name` in this held folder (POSIX only; OSError when it is not a link)."""
+        if os.name == "nt":
+            raise OSError(errno.ENOSYS, "links are not read on Windows")
+        return os.readlink(name, dir_fd=self._handle)
+
     def open_read_file(self, name: str) -> int:
         """Open a regular child file for reading relative to this held folder, without following a link."""
         if os.name == "nt":
@@ -147,7 +155,10 @@ class HeldDir:
         if os.name == "nt":
             if self.path is None:
                 raise OSError(errno.EBADF, "held folder has no stable path")
-            os.replace(self.path / source, self.path / target)
+            # Windows refuses the replace while another handle has the target open without FILE_SHARE_DELETE: a
+            # reader on another thread (read_owned), a scanner. It lets go within milliseconds, so wait it out
+            # as util.replace_file does elsewhere (#606: the write thread now replaces while the loop reads).
+            replace_file(self.path / source, self.path / target)
         else:
             os.replace(source, target, src_dir_fd=self._handle, dst_dir_fd=self._handle)
 

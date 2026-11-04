@@ -5,8 +5,8 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 
 | 무엇 | 수 | 쓰임 |
 |---|---:|---|
-| topic(분야) | 43 | CSO가 계획마다 적는 분야 이름표. 점검표와 분야 규칙 pack을 고르는 열쇠 |
-| 점검표 항목 | 124 | topic마다 계획이 답해야 하는 점검. 할 수 있으면 하고, 못 하면 이유를 밝힌다 |
+| topic(분야) | 45 | CSO가 계획마다 적는 분야 이름표. 점검표와 분야 규칙 pack을 고르는 열쇠 |
+| 점검표 항목 | 135 | topic마다 계획이 답해야 하는 점검. 할 수 있으면 하고, 못 하면 이유를 밝힌다 |
 | 데이터 종류(data) | 30 | 단계 산출에 붙이는 이름표 |
 | 파일 형식(format) | 28 | 단계 산출에 붙이는 이름표 |
 | 작업(operation) | 22 | 단계 산출에 붙이는 이름표 |
@@ -18,6 +18,7 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 |---|---|---:|---|
 | `bulk_rna_seq` | bulk RNA sequencing for gene or transcript expression analysis | 4 | RNA-Seq (topic_3170) |
 | `single_cell_rna_seq` | single-cell or single-nucleus RNA sequencing with cell-resolved expression measurements | 3 | Single-cell sequencing (topic_4028) |
+| `bulk_deconvolution` | estimating cell-type proportions or cell-type-specific signals from bulk transcriptomic mixtures | 5 | - |
 | `spatial_transcriptomics` | transcript measurements retained with positions in intact tissue | 3 | - |
 | `atac_seq` | ATAC-seq analysis of chromatin accessibility | 3 | ATAC-seq (topic_4053) |
 | `chip_seq` | ChIP-seq analysis of protein-DNA binding or histone marks | 3 | ChIP-seq (topic_3169) |
@@ -59,6 +60,7 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 | `metagenomic_functional_profiling` | gene, pathway and functional profiling from metagenomic data | 3 | Metagenomics (topic_3174) |
 | `metagenome_binning` | grouping metagenomic contigs into metagenome-assembled genomes | 3 | - |
 | `metatranscriptomics` | RNA sequencing of microbial communities for activity and function | 2 | Metatranscriptomics (topic_3941) |
+| `variant_effect` | interpreting the likely effect of specific variants (missense, regulatory, splicing) with public frequency, clinical and prediction resources | 6 | - |
 
 ## 점검표
 
@@ -80,6 +82,16 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 | `pseudobulk` | 공여자 간 비교는 세포가 아니라 공여자 단위(pseudobulk 등)로 한다 | 세포를 독립 생물학적 반복으로 세는 오류를 막기 위해서다 |
 | `qc` | 시료별 QC 기준과 doublet·ambient RNA 처리를 밝힌다 | 시료별 품질과 오염이 집단 차이처럼 보일 수 있기 때문이다 |
 | `batch` | 통합(integration) 전후 batch 효과를 확인한다 | 통합이 생물학적 신호를 지우거나 기술 차이를 남길 수 있기 때문이다 |
+
+### bulk_deconvolution
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `reference_profile` | 참조 세포 프로필의 자료 출처, 조직·세포형 범위, 생성 방법과 판본을 기록한다 | 참조가 대상 조직과 맞지 않거나 세포형이 빠지면 추정 비율이 왜곡되기 때문이다 |
+| `mixture_validation` | 합성 혼합물이나 알려진 세포 비율 자료에서 추정값의 오차와 상관을 검증한다 | 정답 비율이 있는 자료 없이 실제 시료의 분해 정확도를 판단하기 어렵기 때문이다 |
+| `rare_cell_limit` | 희귀 세포형의 최소 검출 비율과 오검출을 따로 평가하고 해석 한계를 밝힌다 | 낮은 비율에서는 검출력 저하와 다른 세포형 신호의 혼동이 커지기 때문이다 |
+| `cohort_cross_validation` | 참조 구축과 성능 평가를 환자·코호트 단위로 분리해 제외 교차검증한다 | 같은 환자나 코호트가 양쪽에 들어가면 일반화 성능이 부풀려지기 때문이다 |
+| `normalization_match` | bulk 혼합물과 참조 프로필의 scale·정규화·유전자 식별자 처리를 맞추고 기록한다 | 입력 변환과 정규화 차이가 방법 선택만큼 추정 오차를 바꿀 수 있기 때문이다 |
 
 ### spatial_transcriptomics
 
@@ -403,6 +415,17 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 | `rrna_host_removal` | rRNA 제거(실험·in silico)와 숙주 read 제거 뒤 남은 read 비율을 보고한다 | rRNA와 숙주 read가 남으면 미생물 전사 신호가 묻힌다 |
 | `dna_normalization` | 전사 차이는 짝 metagenome의 DNA 풍부도로 보정해 발현 변화와 분류군 풍부도 변화를 구분한다 | 분류군이 늘어난 것을 발현이 늘어난 것으로 오인하지 않기 위해서다 |
 
+### variant_effect
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `population_frequency` | gnomAD 같은 집단 자료의 dataset 판본과 전체·주요 ancestry 집단별 allele frequency를 보고하고, 관찰되지 않았으면 조회에 성공했는데 없었다고 밝힌다 | 흔한 변이는 희귀 질환의 원인일 가능성이 낮고 빈도는 집단마다 다르기 때문이다 |
+| `clinical_assertions` | ClinVar 분류를 review status와 평가 날짜와 함께 보고하고, 입력 allele과 같은 항목인지 확인한다 | 같은 변이도 제출자마다 해석이 다르고 등록된 항목이 다른 allele일 수 있기 때문이다 |
+| `consequence_annotation` | VEP로 변이 결과 유형을 보고하되 MANE Select(없으면 canonical) transcript를 기준으로 하고 Ensembl release와 참조 유전체 판본을 밝힌다 | transcript에 따라 같은 변이의 결과가 달라지고 판본이 바뀌면 주석도 바뀌기 때문이다 |
+| `missense_prediction` | 암호화 missense 변이는 AlphaMissense 점수와 분류를 같은 transcript 기준으로 보고하고, 다른 변이는 해당 없음으로 적는다 | ClinVar에 없는 missense 변이는 구조와 진화 정보를 합친 예측이 보조 단서가 되기 때문이다 |
+| `regulatory_splicing` | 비암호화·조절·스플라이싱 변이는 labhq_annot의 alphagenome_variant(AlphaGenome 키·SDK가 있을 때)로 권장 scorer의 ref/alt 점수·quantile·조직·방향을 보고하고, 도구가 없으면 SpliceAI 같은 예측이나 공개 조절 주석으로 대신하며 무엇을 썼는지 밝힌다 | 단백질을 바꾸지 않는 변이는 AlphaMissense가 다루지 못하기 때문이다 |
+| `concordance_limits` | 빈도·ClinVar·VEP·예측이 서로 맞는지 비교해 어긋나는 변이를 따로 표시하고, 예측은 임상 근거가 아니라고 한계에 적는다. ACMG/AMP 기준 분류는 요청이 있을 때만 한다 | 예측을 진단처럼 읽거나 어긋난 증거 중 한쪽만 고르지 않게 하기 위해서다 |
+
 ## 데이터 종류(data)
 
 | key | 정의 | EDAM |
@@ -506,7 +529,7 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 | variants | gnomAD | population allele frequency (labhq_annot gnomad tool) |
 | variants | ClinVar | clinical significance (labhq_annot clinvar tool) |
 | variants | dbSNP | rsID and known variant identity |
-| variants | AlphaGenome | predicted regulatory effect of non-coding variants (labhq_annot alphagenome tool when its key is set) |
+| variants | AlphaGenome | predicted regulatory/splicing variant effects (labhq_annot alphagenome_variant recommended scores when key and SDK are available) |
 | variants | COSMIC | somatic mutation recurrence in cancer |
 | genes | Open Targets | target-disease association evidence |
 | genes | DisGeNET | gene-disease associations |

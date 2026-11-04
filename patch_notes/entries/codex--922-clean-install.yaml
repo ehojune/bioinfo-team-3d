@@ -1,0 +1,94 @@
+pr: 925
+rows:
+- sha: b2d3ae9
+  at: '2026-10-24 12:03'
+  summary: Windows 잠금 수정 뒤 설치판과 검증 기록을 맞춥니다.
+  text: 최신 설치 코드·요청 ID와 관련 83 passed를 반영하고 순간 잠금 재시도·영구 실패 경계를 공개 근거에 기록했다.
+- sha: 9c4f0e2
+  at: '2026-10-24 12:01'
+  summary: Windows의 순간 잠금 뒤에도 설치 증거를 저장합니다.
+  text: receipt 교체의 PermissionError에 기존 util과 같은 최대 20회 재시도를 적용했다. 영구 잠금·POSIX·다른 오류는 실패하며 회귀 2 failed→관련 83 passed, Windows 새 설치 전체 PASS·자식 잔류 0을 확인했다.
+- sha: 28220d1
+  at: '2026-10-24 11:46'
+  summary: 원자적 receipt의 실패·정상 경로 검증을 기록합니다.
+  text: 최신 설치판·요청 ID와 관련 79 passed를 갱신하고 쓰기·교체 중 실패해도 이전 JSON이 보존되는 근거를 반영했다.
+- sha: 3ace77d
+  at: '2026-10-24 11:40'
+  summary: receipt JSON을 원자적으로 교체해 이전 증거를 보존합니다.
+  text: 같은 폴더의 임시 파일에 기록·flush·fsync 뒤 닫고 os.replace로 교체한다. 쓰기·교체 중단 회귀 6 failed→관련 79 passed와 Windows 새 설치 전체 PASS·자식 잔류 0을 확인했다.
+- sha: c5c81da
+  at: '2026-10-24 11:24'
+  summary: 최종 receipt 쓰기 중단 근거를 설치판과 맞춥니다.
+  text: 최신 설치판·요청 ID와 관련 73 passed를 반영했다. 실제 command 실패는 기록 중단과 구분하며 manual 소유권 예외를 유지했다.
+- sha: 087e687
+  at: '2026-10-24 11:20'
+  summary: 최종 receipt 기록 중단도 최초 command 실패를 대체하지 않습니다.
+  text: 최종 쓰기의 KeyboardInterrupt/SystemExit를 2 failed로 재현하고 active_error가 있으면 최초 오류를 보존했다. 관련 73 passed와 Windows 새 설치 전체 PASS·자식 잔류 0을 확인했다.
+- sha: ec2811f
+  at: '2026-10-24 11:11'
+  summary: 실제 command 실패와 증거 오류의 분리 검증을 기록합니다.
+  text: 최신 설치판·요청 ID와 관련 71 passed, 성공 command의 증거 오류도 검사 실패로 처리하는 근거를 반영했다.
+- sha: b909a10
+  at: '2026-10-24 11:08'
+  summary: 기록·진단 오류를 실제 설치 실패와 분리합니다.
+  text: 실패 command의 원인을 log·receipt 쓰기나 진단 중단이 덮어쓰지 않도록 기록 계층에서 분리했다. 기록 회귀 11 failed·진단 중단 2 failed를 수정하고 관련 71 passed 및 Windows 새 설치 전체 PASS를 확인했다.
+- sha: 865a75e
+  at: '2026-10-24 10:56'
+  summary: 강제 종료 중단 검증과 manual 소유권을 기록합니다.
+  text: 최신 설치판·요청 ID와 관련 58 passed를 반영하고 manual 보충 위치의 총괄 보고 및 W3 소유권 예외를 명시했다.
+- sha: a69cf83
+  at: '2026-10-24 10:53'
+  summary: 강제 종료 중 추가 중단도 설치의 최초 실패를 덮어쓰지 않습니다.
+  text: down·잔류 검사 중 KeyboardInterrupt/SystemExit를 4 failed로 재현하고 service_cleanup_error로 분리했다. 관련 58 passed와 최신 코드의 Windows 새 설치 전체 PASS·자식 잔류 0을 확인했다.
+- sha: 02502c9
+  at: '2026-10-24 10:43'
+  summary: 마감 중단 검증 근거를 최신 설치판과 맞춥니다.
+  text: 설치 코드·요청 ID와 관련 54 passed를 갱신하고 최종 guard·삭제 중단도 FAIL로 남는 근거를 반영했다.
+- sha: 03a41ab
+  at: '2026-10-24 10:41'
+  summary: 설치 마감 도중 중단돼도 성공으로 기록하지 않습니다.
+  text: guard·삭제 중 KeyboardInterrupt/SystemExit를 4 failed로 재현하고 BaseException FAIL 기록과 정상 종료 때만 PASS 전환으로 고쳤다. 관련 54 passed와 Windows 새 설치 전체 PASS를 확인했다.
+- sha: ef3d98c
+  at: '2026-10-24 10:34'
+  summary: 최종 설치 판정과 실패 회귀 근거를 갱신합니다.
+  text: 설치 코드·요청 ID와 관련 50 passed를 반영하고 참고 기록을 1993→1807자로 줄였다. 중단·겹친 오류를 포함한 최초 실패 보존을 기록했다.
+- sha: 74e3ef6
+  at: '2026-10-24 10:29'
+  summary: 중단·삭제·기록 오류가 겹쳐도 설치 판정을 일치시킵니다.
+  text: 중단을 FAIL로 기록하고 삭제 완료 뒤 PASS를 확정한다. 삭제와 receipt 쓰기 오류가 겹쳐도 최초 원인을 보존하며 관련 50 passed와 Windows 새 설치 전체 PASS를 확인했다.
+- sha: f5d011d
+  at: '2026-10-24 10:28'
+  summary: 설치의 최초 실패를 후속 guard 오류와 구분합니다.
+  text: 기존 실패의 stage·detail을 유지하고 guard·cleanup 오류를 별도 기록하며 receipt 쓰기 실패도 최초 오류를 덮어쓰지 않게 했다. 겹친 오류 회귀를 검증했다.
+- sha: 0913f64
+  at: '2026-10-24 10:19'
+  summary: 최종 설치 근거와 실패 경계 검증을 기록합니다.
+  text: 설치 코드·요청 ID를 갱신하고 Git/pip override와 실패 마감 검증을 공개 근거에 반영했다. 상태 보고는 현재 결과만 남겨 996→742자로 줄였다.
+- sha: e37e33d
+  at: '2026-10-24 10:16'
+  summary: Git 환경 격리와 설치 검사 실패 기록을 보강합니다.
+  text: Git 라우팅 P1·guard 준비 context와 cleanup PASS 오기록 P2를 3 failed로 재현하고 수정 뒤 45 passed, Git·pip override를 상속시킨 공백 경로의 새 설치 전체 PASS·자식 잔류 0을 확인했다.
+- sha: 3b1c17e
+  at: '2026-10-24 10:07'
+  summary: pip override를 배제한 설치 결과를 기록합니다.
+  text: 최신 설치판 commit·mock 요청 ID와 pip override 상속 검사, 공백 경로 전체 PASS·자식 잔류 0을 공개 근거에 반영했다.
+- sha: 4be9896
+  at: '2026-10-24 10:05'
+  summary: 새 설치에 기존 pip index·제약 설정이 섞이지 않습니다.
+  text: PIP_* 환경 override P2를 제거하고 회귀 1 failed→관련 42 passed, dummy index·no-index·constraint를 상속시킨 공백 경로의 새 설치 29 PASS·1 SKIP을 확인했다.
+- sha: 186a0ac
+  at: '2026-10-24 09:54'
+  summary: 공백 경로의 새 설치 결과를 공개 근거에 반영합니다.
+  text: 최종 설치 코드·요청 ID·관련 42 passed와 공백 경로 전체 PASS, 자식 잔류 0을 기록했다.
+- sha: afdeb2f
+  at: '2026-10-24 09:51'
+  summary: 공백이 있는 Windows 설치 경로에서도 검사 명령이 실행됩니다.
+  text: cmd의 외부 따옴표와 batch 경로 인자를 보존하고 공백 경로 회귀 1 failed→관련 42 passed, 새 빈 폴더 전체 설치 29 PASS·1 SKIP과 자식 잔류 0을 확인했다.
+- sha: 0332b06
+  at: '2026-10-24 08:59'
+  summary: Windows 새 설치의 단계별 판정과 설치판 근거를 남깁니다.
+  text: Python 3.14.7 새 설치에서 29 PASS·0 FAIL·1 SKIP, mock 요청 verify·down과 잔류 0을 확인하고 공개 요약·README 길이를 기록했다.
+- sha: 8c2937b
+  at: '2026-10-24 08:55'
+  summary: 새 설치 검사에서 기존 설정·인증을 격리하고 단계별 결과와 로그를 보존합니다.
+  text: Windows 빈 폴더의 clone·venv·init·mock 요청·verify·down을 재현하고 PASS/FAIL/SKIP receipt, 의존성 판본, 부분 기동 실패 종료와 README 한영판 인증 경계를 검증했다. Refs #922.

@@ -1,0 +1,34 @@
+pr: null
+rows:
+  - sha: 39649e4
+    at: "2026-10-26 06:00"
+    summary: "러너를 기다리는 직원만 대기로 표시하고 다른 직원의 차례를 구분합니다."
+    text: "fix: runner_wait의 대상 직원을 보존하고 dispatch·대기 종료 시 정리하는 회귀검사 추가"
+  - sha: 2a9d36c
+    at: "2026-10-26 05:58"
+    summary: "CSO가 실제 맡는 팀 요청과 계획 요청은 참여한 일로 표시합니다."
+    text: "fix: orchestrate·plan_only mode를 CSO 참여 근거로 쓰되 무관한 direct 요청은 제외"
+  - sha: f0bed64
+    at: "2026-10-26 05:53"
+    summary: "직접 맡긴 요청이 러너 연결을 기다릴 때 대기 이유를 표시합니다."
+    text: "fix: 첫 dispatch 전 waiting_for_runner 상태를 차례 대기와 구분하고 회귀검사 추가"
+  - sha: 16adbf2
+    at: "2026-10-26 04:58"
+    summary: "차례를 기다리는 직원의 표시를 데스크톱과 휴대폰 화면에서 확인했습니다."
+    text: "test: 실제 Chrome 32 view를 대조해 차례 대기 상태·문구·chip 크기의 visual baseline 갱신"
+  - sha: 735c608
+    at: "2026-10-26 04:48"
+    summary: "다시 접속해도 실패하거나 산출물이 빠진 단계를 시작 전으로 표시하지 않습니다."
+    text: "fix: gateway snapshot의 failed·incomplete를 오류 상태로 복원하고 회귀검사 보강"
+  - sha: "9033800"
+    at: "2026-10-26 04:43"
+    summary: "직접 맡긴 요청도 로그인이나 한도를 기다리는 이유를 다시 접속한 뒤 보여 줍니다."
+    text: "fix: direct 요청의 step_status.direct를 공통 직원 상태 판정에 포함하고 대기 회귀검사 추가"
+  - sha: 94464bf
+    at: "2026-10-26 04:39"
+    summary: "현재 답변이나 HPC 작업을 기다리는 직원의 상태를 그대로 보여 줍니다."
+    text: "fix: task ledger 없는 live agent 상태를 요청 fallback보다 우선하고 P1 회귀검사 보강"
+  - sha: 17825fb
+    at: "2026-10-26 04:33"
+    summary: "직원이 지금 맡은 일이 지난 요청의 검토 대기에 가려지지 않도록 고쳤습니다."
+    text: "fix: 공통 직원 상태 판정에서 현재 요청을 우선하고 CSO 참여 근거와 검토 요청 제목을 표시 (#653)"

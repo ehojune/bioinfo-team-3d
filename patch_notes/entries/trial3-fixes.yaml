@@ -3,3 +3,4 @@ rows:
 - sha: 470664f
   at: 2026-10-03 11:56
   text: adapter preflight에 실패한 직원을 runner roster에서 빼고 계획 재검증과 Claude 배경 작업 차단을 추가했다.
+  summary: 시작 검사를 못 넘은 직원은 계획 후보에서 빼고 Claude의 배경 실행을 막습니다.

@@ -36,6 +36,8 @@ DAY = "2026-10-06"
 
 def _plan(round_no: int, extra: dict | None = None) -> dict:
     plan = {**valid_plan(steps=2), **(extra or {})}
+    for step in plan['steps']:
+        step['input_refs'] = []  # synthetic generator: no unproved external "public-input"
     plan["steps"][1]["depends_on"] = ["s1"]  # s2 reads s1, so the run order is fixed
     if round_no >= 2:
         plan["steps"][1]["instruction"] = FIXED
@@ -166,12 +168,12 @@ async def test_revise_continues_through_a_new_cp1_and_runs_only_the_changed_step
     assert P1["problem"] in hub.calls[6].prompt  # the second reviewer checks the earlier P1 issue
     assert all(task.meta.get("research_round") == 2 for task in hub.calls[4:])
     assert all("research_round" not in task.meta for task in hub.calls[:4])
-    assert "reused from plan" in req["report_appendix"]
+    assert "reused from plan" in req["execution_record"]
     # The report says what round 1 was asked to fix (web trial 2026-10-08: the round-2 report never named its P1s).
     synthesis = hub.calls[7].prompt
     assert "Earlier rounds of this request:" in synthesis and P1["problem"] in synthesis
     assert "이전 차수에서 고친 것" in synthesis
-    assert "Round 1 review: revise with 1 P1 issue(s):" in req["report_appendix"] and P1["problem"] in req["report_appendix"]
+    assert "Round 1 review: revise with 1 P1 issue(s):" in req["execution_record"] and P1["problem"] in req["execution_record"]
     # The test writer left the section out, so labhq wrote it from round 1's P1 issues (#512 review), in the body.
     assert "## 이전 차수에서 고친 것" in req["report"] and P1["problem"] in req["report"]
     assert req["outcome"] == "research_reported"  # a missing section is not a claim problem
@@ -256,11 +258,13 @@ async def test_reuse_is_refused_when_a_reused_output_changed_after_the_first_rou
 
     req = hub.requests["r"]
     carried = req["research_contract"]["continuation"]
-    assert _steps(hub) == ["plan", "s1", "s2", "review", "plan", "s1", "s2", "review", "synthesis"]
-    assert carried["reuse"] == [] and carried["rerun"]["s1"].startswith("output hash check:")
-    assert "mismatch" in carried["refused_reuse"][0]["reason"]
-    assert req["results"]["s1"]["task_id"] != req["research_contract"]["rounds"][0]["results"]["s1"]["task_id"]
-    assert req["outcome"] == "research_reported"
+    assert _steps(hub) == ["plan", "s1", "s2", "review", "plan"]
+    assert carried["reuse"] == ["s1"] and not carried["verified"]  # preserve what the PI approved
+    assert carried["declined_plan"]["approval"]["status"] == "approval_required"
+    assert carried["ended_before_dispatch"]["outcome"] == "reuse_approval_required"
+    assert req["results"]["s1"]["task_id"] == req["research_contract"]["rounds"][0]["results"]["s1"]["task_id"]
+    assert req["outcome"] == "research_review_revise" and "새 CP1" in req["report"]
+
 
 
 class _Restart(BaseException):
@@ -411,7 +415,7 @@ async def test_declining_the_continuation_ends_the_request_as_before(tmp_path):
     assert req["outcome"] == "research_review_revise" and req["status"] == "failed"
     assert "rounds" not in req["research_contract"] and req["research_contract"].get("round") is None
     assert req["research_contract"]["continue_decision"]["decision"] == "declined"
-    assert "PI가 새 CP1로 이어 가기를 거절했습니다." in req["report"] + req.get("report_appendix", "")
+    assert "PI가 새 CP1로 이어 가기를 거절했습니다." in req["report"] + req.get("execution_record", "")
 
 
 @pytest.mark.asyncio
@@ -524,13 +528,12 @@ async def test_an_identical_continuation_plan_still_needs_a_new_cp1_cp2_and_revi
     assert contract["approval"]["approval_id"] == "a4" and contract["checkpoints"]["cp2"]["approval_id"] == "a5"
     # The second revise meets the limit, so the request ends instead of continuing on round 1's decision.
     assert req["outcome"] == "research_review_revise" and len(contract["rounds"]) == 1
-    assert "상한" in req["report"] + req.get("report_appendix", "")
+    assert "상한" in req["report"] + req.get("execution_record", "")
 
 
 @pytest.mark.asyncio
-async def test_a_refused_reuse_drops_the_steps_earlier_pi_decision(tmp_path):
-    """s1 answered a blocking question in round 1, then its file changed: it re-runs fresh, not as the round-1
-    session in the folder whose file changed (PR #448 review)."""
+async def test_post_approval_drift_never_reuses_an_earlier_pi_decision_to_rerun(tmp_path):
+    """s1 answered a blocking question in round 1; later drift authorizes neither a fresh run nor that session."""
     hub = _hub(tmp_path, [CP1, APPROVE, CONTINUE, CP1, APPROVE])
     old: dict = {}
 
@@ -547,10 +550,10 @@ async def test_a_refused_reuse_drops_the_steps_earlier_pi_decision(tmp_path):
 
     req = hub.requests["r"]
     rerun = [task for task in hub.calls[4:] if task.meta.get("step_id") == "s1"]
-    assert len(rerun) == 1 and rerun[0].meta.get("workdir") != old["workdir"]
-    assert rerun[0].resume_session_id is None and "which cohort?" not in rerun[0].prompt
-    assert "s1" not in (req.get("step_decisions") or {})
-    assert req["outcome"] == "research_reported"
+    assert not rerun  # neither a fresh dispatch nor the earlier PI session is authorized
+    assert _steps(hub)[4:] == ["plan"]
+    assert req["research_contract"]["continuation"]["ended_before_dispatch"]["outcome"] == "reuse_approval_required"
+    assert req["outcome"] == "research_review_revise" and "새 CP1" in req["report"]
 
 
 @pytest.mark.asyncio

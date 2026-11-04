@@ -1,0 +1,22 @@
+pr: 927
+rows:
+- sha: c342ae4
+  at: '2026-10-24 09:48'
+  summary: 완료된 plan·s1의 task identity와 단일 실행을 복구 receipt로 확인합니다.
+  text: 비용·수락 원장이 맞아도 새 task로 plan을 재실행하면 실패한다. raw 비용 원장도 재합산해 summary와 대조한다. 실제 강제 종료와 source 거부 4건 PASS. Refs #924.
+- sha: ea30096
+  at: '2026-10-24 09:40'
+  summary: 복구 script·parent import·child 실행을 같은 checkout에 묶습니다.
+  text: 다른 --source와 다른 제품 import를 출력·process 생성 전에 거부한다. source 판본 거부 2건과 실제 강제 종료·receipt 검증 2건 PASS. Refs #924.
+- sha: d62d35e
+  at: '2026-10-24 09:34'
+  summary: 복구 receipt에서 새 task 비용 행과 known 비용을 빠짐없이 요구합니다.
+  text: 새 task 비용과 합계를 함께 지우면 통과하던 봇 P2를 재현했다. unknown·누락 비용을 거부하고 실제 강제 종료 2건 PASS. GO의 proof 실패·카드 응답 운영 조건도 제품 기본 timeout과 구분했다. Refs #924.
+- sha: 265da22
+  at: '2026-10-24 09:28'
+  summary: 복구 회귀 두 파일을 Windows 필수 CI inventory에 등록합니다.
+  text: 새 검사 누락을 거부하는 CI selection을 유지했다. 등록 전 1 failed·84 passed에서 등록 후 85 passed. Refs #924.
+- sha: 40ce433
+  at: '2026-10-24 09:25'
+  summary: 강제 종료 뒤 interrupted 결과 재사용을 막고 남은 작업을 새 task로 재개합니다.
+  text: 성공 checkpoint·live task와 기존 원장을 보존한다. gateway·runner 강제 종료/재기동 및 승인·중복·기한·비용·조회·잔류 receipt를 검사한다. 관련 회귀 52건과 강제 종료 2건 PASS. manual 1,011자 추가, 상세 대조는 reference에 기록. Refs #924.

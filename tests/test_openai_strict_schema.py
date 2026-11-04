@@ -109,9 +109,23 @@ def test_original_pydantic_validation_keeps_removed_transport_constraints():
         ResearchResult.model_validate(invalid)
 
 
-@pytest.mark.parametrize("schema", [RESEARCH_LANE_REVIEW_SCHEMA, OFFER_SCHEMA])
+@pytest.mark.parametrize("schema", [OFFER_SCHEMA])
 def test_already_strict_schema_is_unchanged(schema):
     assert openai_strict_schema(schema) == schema
+
+
+def test_research_lane_review_schema_differs_only_by_its_optional_fields():
+    # #586, #889: the review's optional `checklist` and `blind_comparison` keep old stored reviews valid. The transport
+    # copy makes them nullable and required for OpenAI; everything else in the schema was already strict.
+    converted = openai_strict_schema(RESEARCH_LANE_REVIEW_SCHEMA)
+    assert RESEARCH_LANE_REVIEW_SCHEMA["required"] == ["verdict", "issues"]
+    assert converted["required"] == ["verdict", "issues", "checklist", "blind_comparison"]
+    assert converted["properties"]["checklist"]["anyOf"][1] == {"type": "null"}
+    assert converted["properties"]["blind_comparison"]["type"] == ["object", "null"]  # an object: nullable by type
+    assert converted["properties"]["issues"] == RESEARCH_LANE_REVIEW_SCHEMA["properties"]["issues"]
+    old = {"verdict": "accept", "issues": []}
+    assert strip_optional_nulls({**old, "checklist": None, "blind_comparison": None},
+                                RESEARCH_LANE_REVIEW_SCHEMA) == old
 
 
 def test_dictionary_schema_round_trips_nested_values_through_refs():

@@ -19,6 +19,7 @@ from labhq.runner.approvals import Broker
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 from labhq.util import free_port
+from tests.support.serve_task import serve_task, wait_started
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -48,7 +49,9 @@ def test_ask_contract_and_hard_stops_are_code_enforced():
     assert hard_stop_kind(ask.model_copy(update={"question": "새 package를 설치해도 되나요?"})) == "installation"
     assert hard_stop_kind(ask.model_copy(update={"question": "통제 데이터 구역 원본을 읽어도 되나요?"})) == "data_zone"
     assert hard_stop_kind(ask.model_copy(update={"question": "예산 상한을 넘겨 계속할까요?"})) == "budget_cap"
-    assert hard_stop_kind(ask.model_copy(update={"question": "요청 범위 밖 분석을 추가할까요?"})) == "out_of_scope"
+    assert hard_stop_kind(ask.model_copy(update={"question": "요청 범위 밖 분석을 추가할까요?"})) is None
+    assert hard_stop_kind(ask.model_copy(update={"question": "요청 범위 밖 분석을 추가할까요?"}),
+                          ["out_of_scope"]) == "out_of_scope"
     assert hard_stop_kind(ask.model_copy(update={"question": "결과 폴더를 재귀 삭제할까요?"})) == "destructive"
     assert hard_stop_kind(ask.model_copy(update={"question": "May I cross the restricted data zone?"})) == "data_zone"
     assert hard_stop_kind(ask.model_copy(update={"question": "The cost cap was exceeded; continue?"})) == "budget_cap"
@@ -57,6 +60,49 @@ def test_ask_contract_and_hard_stops_are_code_enforced():
         AskRequest(task_id="t", agent_id="a", to="cso", question="x" * 701, why_blocked="blocked")
     with pytest.raises(ValueError):
         AskRequest(task_id="t", agent_id="a", to="unknown", question="x", why_blocked="blocked")
+
+
+@pytest.mark.parametrize("question", [
+    "Which output format should the DE table use, TSV or CSV?",
+    "Should I drop the 3 low-quality samples before DE?",
+    "outputs/de.tsv exists from the previous attempt; overwrite it?",
+])
+def test_ordinary_method_and_output_questions_are_not_destructive_hard_stops(question):
+    ask = AskRequest(task_id="task_a", agent_id="analyst", request_id="req_a", to="cso",
+                     question=question, why_blocked="The analysis method needs a choice")
+    assert hard_stop_kind(ask) is None
+
+
+@pytest.mark.parametrize("question", [
+    "Overwrite the source FASTQ files?",
+    "Overwrite raw reads using outputs/de.tsv?",
+    "Overwrite the input files?",
+    "Overwrite these files?",
+    "Overwrite outputs/../original.tsv?",
+    "원본 파일을 덮어쓸까요?",
+])
+def test_source_and_unknown_overwrite_still_require_the_pi(question):
+    ask = AskRequest(task_id="task_a", agent_id="analyst", request_id="req_a", to="cso",
+                     question=question, why_blocked="A file already exists")
+    assert hard_stop_kind(ask, []) == "destructive"
+
+
+@pytest.mark.asyncio
+async def test_routine_cso_question_keeps_the_short_wait_instead_of_hibernating(monkeypatch):
+    import labhq.runner.approvals as approvals
+
+    async def noop(_request):
+        return None
+
+    monkeypatch.setitem(approvals.ASK_WAIT_SECONDS, "cso", 0.2)
+    broker = Broker(0, noop, noop, noop, on_ask=noop)
+    ask = AskRequest(task_id="task_a", agent_id="analyst", request_id="req_a", to="cso",
+                     question="Which output format should the table use?", why_blocked="A method choice is needed")
+    waiting = asyncio.create_task(broker.request_ask(ask))
+    await asyncio.sleep(0.02)
+    assert not waiting.done()
+    assert broker.resolve_ask(ask.id, {"status": "answered", "answer": "TSV"})
+    assert (await waiting)["answer"] == "TSV"
 
 
 @pytest.mark.parametrize(
@@ -469,9 +515,9 @@ async def test_fake_mcp_client_gets_one_terminal_answer(tmp_path):
     broker = Broker(port, noop, noop, noop, answer)
     holder["broker"] = broker
     token = broker.issue_task_token("task_a", "analyst", "req_a")
-    server_task = asyncio.create_task(broker.serve())
+    server_task = serve_task(broker.serve())
     try:
-        await _until(lambda: broker.server is not None and broker.server.started)
+        await wait_started(lambda: broker.server is not None and broker.server.started, server_task, 20, "broker")
         env = {**os.environ, "PYTHONPATH": str(REPO), "LABHQ_BROKER_URL": broker.url,
                "LABHQ_BROKER_TOKEN": token, "LABHQ_TASK_ID": "task_a",
                "LABHQ_AGENT_ID": "analyst", "LABHQ_WORKDIR": str(tmp_path)}
@@ -523,9 +569,9 @@ async def test_mock_engine_ask_routes_without_deadlock_and_pi_hibernates(tmp_pat
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=gateway_port, log_level="warning"))
     runner = Runner(settings)
-    tasks = [asyncio.create_task(server.serve())]
+    tasks = [serve_task(server.serve())]
     try:
-        await _until(lambda: server.started)
+        await wait_started(lambda: server.started, tasks[0], 20, "gateway")
         tasks.append(asyncio.create_task(runner.run_forever()))
         await _until(lambda: "analyst" in hub.agents and "cso" in hub.agents)
 
@@ -539,8 +585,8 @@ async def test_mock_engine_ask_routes_without_deadlock_and_pi_hibernates(tmp_pat
         await _until(lambda: hub.requests[facilities_request]["status"] != "running")
         facilities_answer = next(e for e in seen if e.get("type") == "agent.answer" and
                                  e.get("request_id") == facilities_request)
-        assert facilities_answer["data"]["from"] == "cso"
-        assert facilities_answer["data"]["routed_to"] == "cso"
+        assert facilities_answer["data"]["from"] == "facilities"
+        assert facilities_answer["data"]["routed_to"] == "facilities"
 
         colleague_request = hub.create_request(RequestIn(
             text="[ask:colleague:data_steward] manifest 위치", mode="direct", agent_id="analyst"))
@@ -602,9 +648,9 @@ async def test_ask_tool_schema_limits_wait_and_relays_a_400(tmp_path):
     port = free_port()
     broker = Broker(port, record, record, record, record)
     token = broker.issue_task_token("task_a", "analyst", "req_a")
-    server_task = asyncio.create_task(broker.serve())
+    server_task = serve_task(broker.serve())
     try:
-        await _until(lambda: broker.server is not None and broker.server.started)
+        await wait_started(lambda: broker.server is not None and broker.server.started, server_task, 20, "broker")
         env = {**os.environ, "PYTHONPATH": str(REPO), "LABHQ_BROKER_URL": broker.url,
                "LABHQ_BROKER_TOKEN": token, "LABHQ_TASK_ID": "task_a", "LABHQ_AGENT_ID": "analyst"}
         params = StdioServerParameters(command=sys.executable, args=["-m", "labhq.tools.ask_mcp"], env=env)

@@ -15,6 +15,11 @@ from tests.test_cso import FakeHub
 from tests.test_research_protocol import MiniHub, valid_plan
 
 
+# Only bounds a hang. Each wait below ends on an event, never on this clock: a loaded Windows CI runner is
+# sometimes slow for seconds, and a 1 s bound failed two PR runs (2026-10-13..14).
+WAIT = 60
+
+
 PRECEDENTS = {
     "papers": [
         {"title": "Paired expression best practices", "citations": ["PMID:12345678"]},
@@ -171,6 +176,47 @@ def test_one_id_under_two_declared_topics_keeps_both_checks(tmp_path):
         ["report NRF and PBC", "call peaks"]
 
 
+def test_shared_id_with_the_same_check_keeps_every_topic_and_validates_each_answer():
+    shared = {
+        topic: [topic_checklists.ChecklistItem("pairing", "keep pairs", "avoid pseudoreplication", topic)]
+        for topic in ("bulk_rna_seq", "microarray_expression", "single_cell_rna_seq")
+    }
+    required = topic_checklists.requirements(list(shared), shared)
+    assert required[0].topic == "bulk_rna_seq,microarray_expression,single_cell_rna_seq"
+    answers = {
+        "bulk_rna_seq.pairing": "step:A",
+        "microarray_expression.pairing": "not_applicable: unpaired cohort",
+        "single_cell_rna_seq.pairing": "assumption: donor pairing is unavailable",
+    }
+    assert topic_checklists.answer_errors(answers, required, ["A"]) == []
+    answers["single_cell_rna_seq.pairing"] = "step:missing"
+    assert topic_checklists.answer_errors(answers, required, ["A"]) == [
+        "checklist.single_cell_rna_seq.pairing refers to unknown step missing"]
+
+
+def test_qualified_shared_id_assumptions_are_counted_as_skip_warnings():
+    catalog = topic_checklists.load()
+    topics = ["bulk_rna_seq", "single_cell_rna_seq"]
+    plan = general_plan(topics=topics, checklist={
+        "bulk_rna_seq.batch": "assumption: bulk batch metadata is missing",
+        "single_cell_rna_seq.batch": "assumption: single-cell batch metadata is missing",
+        "pairing": "step:A",
+        "gene_set_test": "step:A",
+        "independent_validation": "not_applicable: no independent cohort",
+        "pseudobulk": "step:A",
+        "qc": "step:A",
+    })
+    warned = cso.with_checklist_skip_warnings(plan, catalog, None)
+    assert warned["warnings"] == [
+        "점검 못 함 bulk_rna_seq/batch: bulk batch metadata is missing",
+        "점검 못 함 single_cell_rna_seq/batch: single-cell batch metadata is missing",
+    ]
+    assert "못 한 점검 2건" in cso.checklist_skip_line(warned)
+    plan["checklist"]["single_cell_rna_seq.batch"] = "not_applicable: no integration was used"
+    warned = cso.with_checklist_skip_warnings(plan, catalog, None)
+    assert warned["warnings"] == ["점검 못 함 bulk_rna_seq/batch: bulk batch metadata is missing"]
+
+
 def test_checklist_requirements_and_answer_contract_are_topic_scoped():
     loaded = topic_checklists.load()
     assert topic_checklists.requirements([], loaded) == []
@@ -229,7 +275,7 @@ class ParallelHub(FakeHub):
 async def test_briefing_and_precedent_dispatch_in_parallel_and_store_structured_result():
     hub = ParallelHub()
     running = asyncio.create_task(Orchestrator(hub).run_request("r"))
-    await asyncio.wait_for(hub.release.wait(), timeout=1)
+    await asyncio.wait_for(hub.release.wait(), timeout=WAIT)
     assert hub.started == {"briefing", "precedent"}
     await running
     record = hub.requests["r"]["analysis_precedents"]
@@ -304,7 +350,7 @@ async def test_research_missing_checklist_is_a_plan_validation_error_after_corre
     settings.orchestrator.chief_of_staff_agent = None
     settings.orchestrator.precedent_agent = None
     settings.orchestrator.reviewer_agent = None
-    plans = [valid_plan(), valid_plan()]
+    plans = [valid_plan() for _ in range(4)]  # first plan + 3 corrections (#948)
     for plan in plans:
         plan.pop("checklist")
 
@@ -314,7 +360,7 @@ async def test_research_missing_checklist_is_a_plan_validation_error_after_corre
 
     hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
     await Orchestrator(hub).run_request("r")
-    assert [task.meta["kind"] for task in hub.calls] == ["plan", "plan"]
+    assert [task.meta["kind"] for task in hub.calls] == ["plan"] * 4
     assert hub.requests["r"]["status"] == "failed" and hub.requests["r"]["outcome"] == "plan_invalid"
     assert "checklist" in " ".join(hub.requests["r"]["plan_validation"]["errors"])
 
@@ -402,7 +448,7 @@ class EarlyEndHub(FakeHub):
 @pytest.mark.asyncio
 async def test_a_failed_briefing_cancels_the_scout_on_its_runner_and_waits_for_it():
     hub = EarlyEndHub(runner_answers_cancel=True)
-    await asyncio.wait_for(Orchestrator(hub).run_request("r"), timeout=5)
+    await asyncio.wait_for(Orchestrator(hub).run_request("r"), timeout=WAIT)
     assert hub.requests["r"]["status"] == "failed"
     assert len(hub.cancel_sent) == 1 and not hub.scout_reaped  # the runner's cancelled result came back
 
@@ -411,7 +457,7 @@ async def test_a_failed_briefing_cancels_the_scout_on_its_runner_and_waits_for_i
 async def test_a_failed_briefing_reaps_a_scout_whose_runner_never_answers(monkeypatch):
     monkeypatch.setattr(cso, "PRECEDENT_CANCEL_GRACE_S", 0.05)
     hub = EarlyEndHub(runner_answers_cancel=False)
-    await asyncio.wait_for(Orchestrator(hub).run_request("r"), timeout=5)
+    await asyncio.wait_for(Orchestrator(hub).run_request("r"), timeout=WAIT)
     assert hub.requests["r"]["status"] == "failed"
     assert hub.cancel_sent == [] and hub.scout_reaped
 

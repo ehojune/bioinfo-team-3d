@@ -53,6 +53,7 @@ def test_repository_readme_passes_cli_check():
     assert result.returncode == 0, result.stderr
     content = render(ROOT / "agents")
     assert "PubMed" in content and "bioRxiv / medRxiv" in content
+    assert "OpenAlex·Crossref·Unpaywall" in content
     assert "bioinfo-agent (`bioinfo`)" in content and "Paper2Agent" in content
     assert "labhq_ask" in content and "AlphaGenome" not in content  # labhq_ask is wired by the runner (#39)
     assert "img.shields.io" not in content  # count badges are gone from the table; targets live at the top
@@ -80,7 +81,7 @@ def test_repository_badges_name_exact_targets_at_readme_top():
     for absent in ("Gemini", "Antigravity", "MOCK", "mock", "NONE",
                    "Codex 웹 검색", "bioinfo:bioinfo-analyze", "PR gate"):
         assert all(absent not in label for label in top), absent
-    assert "Codex: 직원 3명 · gpt-5.6-sol/gpt-6-astra/gpt-6-luna" in top
+    assert "Codex: 직원 5명 · gpt-6-astra/gpt-6-luna/gpt-6.1-sol" in top
     assert "labhq MCP: annot · approval · ask · hpc" in top and "Python: 3.10+" in top
     assert "코드: GPL-3.0" in top and "문서·데이터: CC BY-SA 4.0" in top  # #252: one badge per license file
     generated = block(text, BADGES_START, BADGES_END)

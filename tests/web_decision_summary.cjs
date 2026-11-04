@@ -41,12 +41,16 @@ test('the summary keeps the line breaks of a card question in 2.5D and 3D',()=>{
   }
 });
 
-test('the summary is the literal text, line breaks included',async()=>{
+test('an English summary has Korean guidance and preserves literal source and line breaks in details',async()=>{
   const decide=await modulePromise,container=new Element();
   const summary='Step s1 needs a PI decision:\nWhich group <b>first</b>?\n- cases\n- controls';
   const [row]=decide.syncDecisionCards(container,[{id:'q1',kind:'clarify',summary}],[],{tagName:'article'});
   const part=row._decisionParts.summary;
   assert.equal(part.tagName,'P');
   assert.equal(part.className,'sum');
-  assert.equal(part.textContent,summary);
+  assert.match(part.children[0].textContent,/[가-힣]/);
+  const fold=part.children.find(child=>child.tagName==='DETAILS');
+  assert.equal(fold.open,false);
+  assert.equal(fold.children.find(child=>child.tagName==='PRE').textContent,summary);
+  assert.equal(fold.children.some(child=>child.tagName==='B'),false);
 });

@@ -1,0 +1,30 @@
+pr: null
+rows:
+- sha: 4b9a621
+  at: 2026-11-01 12:00
+  text: 취소된 단계가 보고한 작업 폴더를 요청 묶음에 포함한다 (#1255).
+  summary: 기한 취소 때도 보고된 작업 폴더를 요청 묶음에 담습니다.
+- sha: 7f46a03
+  at: 2026-11-01 12:30
+  text: 취소된 작업의 부분 산출물을 안전하게 목록에 모은다.
+  summary: 취소 전 만들어진 부분 산출물을 묶음에 담도록 목록을 보존합니다.
+- sha: '5653849'
+  at: 2026-11-01 12:35
+  text: Document partial output preservation on cancellation.
+  summary: Describe preservation and scan limits in both manuals.
+- sha: befad03
+  at: 2026-11-01 12:40
+  text: Preserve ledger results completed before cancellation.
+  summary: Include completed tasks missed by cancellation dispatch.
+- sha: 17f791d
+  at: 2026-11-01 12:45
+  text: Select the latest cancellation result without blocking the gateway.
+  summary: Preserve the latest attempt and read the ledger off the event loop.
+- sha: 5df0723
+  at: 2026-11-01 12:50
+  text: Keep the latest available output when a retry has no result.
+  summary: Preserve completed attempt outputs after an unfinished retry.
+- sha: 405399c
+  at: 2026-11-01 13:00
+  text: Preserve cancelled revision outputs alongside existing results.
+  summary: Keep both revisions in the request bundle.

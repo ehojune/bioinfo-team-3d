@@ -1,0 +1,30 @@
+pr: 1017
+rows:
+  - sha: 8773fba
+    at: "2026-10-29 14:46"
+    summary: "Claude sandbox 정책을 검증하고 미검증 실행을 거부합니다."
+    text: "Add fail-closed Claude sandbox policy contract (#666)"
+  - sha: bd7e910
+    at: "2026-10-29 14:51"
+    summary: "빈 domain 목록을 strict allowlist로 잠급니다."
+    text: "Require strict sandbox domain allowlist (#666)"
+  - sha: 6f348f9
+    at: "2026-10-29 14:54"
+    summary: "sandbox 정책 단위시험을 Windows inventory에 등록합니다."
+    text: "Register sandbox policy tests in Windows inventory (#666)"
+  - sha: 887ceed
+    at: "2026-10-29 16:30"
+    summary: "Claude sandbox의 실제 보호가 미검증임을 manual에 명시합니다."
+    text: "Document unverified Claude sandbox protection"
+  - sha: e6c9354
+    at: "2026-10-29 16:33"
+    summary: "영문 manual에도 sandbox 상태를 적습니다."
+    text: "Document sandbox status in English manual"
+  - sha: bcdf030
+    at: "2026-10-29 17:05"
+    summary: "sandbox 정책의 전체 CI를 다시 실행합니다."
+    text: "Trigger fresh full CI for sandbox policy"
+  - sha: a81c53f
+    at: "2026-10-29 17:27"
+    summary: "main과 병합하며 Windows 테스트 목록을 보존합니다."
+    text: "Merge main and preserve sandbox Windows tests"
