@@ -479,10 +479,12 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
     task = asyncio.create_task(action)
     def diagnostics():
         loop = asyncio.get_running_loop()
+        action_error = repr(task.exception()) if task.done() and not task.cancelled() else None
         stacks = {repr(t): [f"{f.f_code.co_filename}:{f.f_lineno}:{f.f_code.co_name}" for f in t.get_stack()]
                   for t in asyncio.all_tasks() if not t.done()}
         timers = [(round(h.when() - loop.time(), 3), repr(h)) for h in loop._scheduled if not h.cancelled()]
         return (f"timeline={timeline!r}, now={time.monotonic()-started:.3f}, "
+                f"action_done={task.done()}, action_cancelled={task.cancelled()}, action_error={action_error}, "
                 f"runner_present={'runner' in hub.runners}, runner_lock={hub.runner_locks.get('runner')!r}, "
                 f"card_lock={hub._approval_lock(card.id)!r}, publish_entered={publishing.is_set()}, "
                 f"publish_released={publish_release.is_set()}, timers={timers!r}, stacks={stacks!r}")
