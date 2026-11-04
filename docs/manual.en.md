@@ -158,6 +158,17 @@ doctor checks only the engines the roster uses, and groups the skipped network a
 | Paper2Agent | fail if the recruiter or skill is missing, or the installed copy differs from the configured commit. skip for mock and demo | `labhq doctor --fix` |
 
 `--fix` installs Paper2Agent at the configured `recruit.skill_commit` and checks again. If the download fails, it leaves a fail with a hint to check the network and source/ref. If you use a separate config file, add the same `-c <config>`. `init` defers the installation check and does not download the skill. Run `doctor --fix` before real staff runs.
+doctor also checks staff models. Claude accepts the `haiku`, `sonnet` and `opus` aliases and the `claude-<family>-<version>` format. Codex checks slugs against the staff `CODEX_HOME/models_cache.json` only when that file exists; otherwise it skips the check. CLI versions below these minimums fail because the adapter's isolation and result contracts cannot be guaranteed; an unreadable version warns.
+
+| Engine | Minimum version | Features checked at this version |
+|---|---:|---|
+| Claude Code | 2.1.282 | stream-json result and usage, `--resume`, `--permission-prompt-tool`, hook/settings JSON isolation |
+| Codex | 0.160.1 | `exec --json` result and usage, `exec resume`, feature names for disabling hooks, plugins and apps |
+
+`labhq doctor --canary <agent_id|all>` calls real models only when explicitly requested. It makes three calls per staff member: a short fixed answer, resume in the same session, and cancellation immediately after starting. These calls incur charges. It reports pass/fail for result, cost and token reporting (cost is unknown if the engine does not provide it), session ID, resume and cancellation, and includes them in the `--json` manifest. CI and ordinary `doctor` do not run the canary.
+
+Cancellation passes only when Windows Job termination is verified. Missing or unverified cleanup evidence is a failure; it does not establish that a process remains. Canary runs only when Windows Job isolation and termination can be verified; on Linux and other unsupported environments it fails before calling a model. Ordinary `doctor` checks remain available. See [boundaries and remaining work](reference/engine-canary-35.md).
+
 npm's `.cmd`/`.bat` shims can corrupt multi-line prompts, so labhq unwraps only standard npm shims and runs them with Node.js.
 Shims it cannot unwrap are refused. To specify one directly on Windows, use `engines.<engine>.bin` and `prefix_args` (check the installed package path).
 
