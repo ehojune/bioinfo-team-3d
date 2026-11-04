@@ -168,6 +168,7 @@ doctor는 roster가 쓰는 엔진만 검사하고, 생략한 네트워크·dry-r
 | Codex | 0.160.1 | `exec --json` result·usage, `exec resume`, hooks·plugins·apps 차단 feature 이름 |
 
 `labhq doctor --canary <agent_id|all>`은 명시할 때만 실제 모델을 부릅니다. 직원마다 짧은 고정 답변, 같은 session의 resume, 시작 직후 cancel까지 세 호출을 하므로 비용이 듭니다. result, 비용·token 보고(엔진이 비용을 안 주면 unknown), session id, resume, cancel을 각각 pass/fail로 표시하며 `--json` manifest에도 넣습니다. CI와 일반 `doctor`는 canary 경로를 부르지 않습니다.
+cancel은 Windows Job 종료 계약을 확인한 경우에만 pass입니다. cleanup 근거가 없거나 확인되지 않은 환경에서는 fail이며 프로세스가 남았다고 단정하지 않습니다.
 
 npm의 `.cmd`/`.bat` shim은 여러 줄 prompt를 손상시킬 수 있어 labhq가 표준 npm shim만 Node.js로 풀어 실행합니다.
 풀 수 없는 shim은 거부합니다. Windows에서 직접 지정하려면 `engines.<engine>.bin`과 `prefix_args`를 쓰세요(설치된 package 경로 확인).

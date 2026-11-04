@@ -147,7 +147,7 @@ def test_canary_fake_cli_reports_each_check_and_uses_resume(tmp_path, engine, mo
 
     assert [row["name"].split(": ", 1)[1] for row in rows] == [
         "result", "cost/tokens", "session", "resume", "cancel"]
-    assert {row["status"] for row in rows} == {"ok"}
+    assert all(row["status"] == "ok" for row in rows[:-1])
     calls = [json.loads(line) for line in (tmp_path / "calls.jsonl").read_text(encoding="utf-8").splitlines()]
     assert len(calls) == 3
     if engine == Engine.claude_code:
@@ -237,7 +237,10 @@ def test_canary_context_protects_private_paths_including_cancel(tmp_path, monkey
             contexts.append(ctx)
             if "CANCEL" in ctx.prompt:
                 await ctx.emit("agent.status", {})
-                await asyncio.Event().wait()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    ctx.on_cleanup({"status": "job_close_contract_enforced"})
             return SimpleNamespace()
 
     monkeypatch.setattr(doctor, "get_adapter", lambda *args: Adapter())
@@ -274,3 +277,24 @@ def test_canary_resumes_in_initial_workdir(tmp_path, monkeypatch):
     rows = asyncio.run(doctor._agent_canary(settings, agent))
     assert dirs[0] == dirs[1]
     assert next(row for row in rows if row["name"].endswith(": resume"))["status"] == "ok"
+
+
+@pytest.mark.parametrize("evidence", [None, {"status": "UNKNOWN"}, {"status": "not_started"}])
+def test_canary_cancel_fails_without_verified_cleanup(tmp_path, monkeypatch, evidence):
+    import asyncio
+    from labhq.models import AgentSpec
+
+    settings = _settings(tmp_path)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.claude_code)
+
+    class Adapter:
+        async def run(self, ctx):
+            await ctx.emit("agent.status", {})
+            try:
+                await asyncio.Event().wait()
+            finally:
+                if evidence is not None:
+                    ctx.on_cleanup(evidence)
+
+    monkeypatch.setattr(doctor, "get_adapter", lambda *args: Adapter())
+    assert not asyncio.run(doctor._canary_cancel(settings, agent, tmp_path))

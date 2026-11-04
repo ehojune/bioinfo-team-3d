@@ -1189,6 +1189,7 @@ async def _canary_call(settings: Settings, agent: AgentSpec, workdir: Path, prom
 
 async def _canary_cancel(settings: Settings, agent: AgentSpec, workdir: Path) -> bool:
     started = asyncio.Event()
+    cleanup: list[dict] = []
 
     async def emit(kind: str, _data: dict) -> None:
         if kind == "agent.status":
@@ -1198,7 +1199,7 @@ async def _canary_cancel(settings: Settings, agent: AgentSpec, workdir: Path) ->
                 meta={"kind": "followup", "doctor_canary": True})
     ctx = RunContext(task=task, agent=agent, workdir=workdir, settings=settings, mcp_servers=[], env={},
                      emit=emit, prompt=CANARY_CANCEL_PROMPT, read_only=True,
-                     **_canary_private_context(settings, workdir))
+                     on_cleanup=cleanup.append, **_canary_private_context(settings, workdir))
     running = asyncio.create_task(get_adapter(agent.engine, settings).run(ctx))
     waiting = asyncio.create_task(started.wait())
     try:
@@ -1213,7 +1214,7 @@ async def _canary_cancel(settings: Settings, agent: AgentSpec, workdir: Path) ->
         try:
             await running
         except asyncio.CancelledError:
-            return requested
+            return requested and len(cleanup) == 1 and cleanup[0].get("status") == "job_close_contract_enforced"
         return False
     finally:
         waiting.cancel()
