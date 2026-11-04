@@ -487,7 +487,10 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
                 f"card_lock={hub._approval_lock(card.id)!r}, publish_entered={publishing.is_set()}, "
                 f"publish_released={publish_release.is_set()}, timers={timers!r}, stacks={stacks!r}")
     try:
-        await asyncio.wait_for(entered.wait(), 10)
+        try:
+            await asyncio.wait_for(entered.wait(), 10)
+        except asyncio.TimeoutError:
+            pytest.fail("send not reached: " + diagnostics())
         assert hub.store.get("approval", card.id) is None
         assert hub.store.get("approval_decision", card.id) is not None
         assert hub.store.get("decision", card.id) is not None
