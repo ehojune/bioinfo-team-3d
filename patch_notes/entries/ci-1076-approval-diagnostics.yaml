@@ -8,7 +8,7 @@ rows:
     at: "2026-11-04 11:15"
     summary: "송신이 시작되지 않은 경우에도 지연 진단을 남깁니다."
     text: "시험: send 진입 대기 timeout에도 task와 timer 상태를 출력한다 (#1076)"
-  - sha: d11c68c8
+  - sha: d11c68c
     at: "2026-11-04 11:24"
     summary: "시험 정리 작업이 지연 진단을 무기한 막지 않게 했습니다."
     text: "시험: cleanup task 대기에 시간 제한을 둔다 (#1076)"
