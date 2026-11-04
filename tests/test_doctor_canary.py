@@ -1,4 +1,6 @@
+import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -143,7 +145,9 @@ def test_canary_fake_cli_reports_each_check_and_uses_resume(tmp_path, engine, mo
         settings.engines.codex.env = {"CODEX_HOME": str(home)}
         settings.engines.codex.windows_sandbox = ""
 
-    rows = doctor.run_canaries(settings, "worker")
+    # Exercise adapter behavior separately where the public canary boundary is unsupported.
+    rows = (doctor.run_canaries(settings, "worker") if os.name == "nt"
+            else asyncio.run(doctor._run_canaries(settings, "worker")))
 
     assert [row["name"].split(": ", 1)[1] for row in rows] == [
         "result", "cost/tokens", "session", "resume", "cancel"]
@@ -163,7 +167,8 @@ def test_canary_fake_cli_marks_every_missing_item_failed(tmp_path):
     settings.engines.claude_code.bin = sys.executable
     settings.engines.claude_code.prefix_args = [str(fake)]
 
-    rows = doctor.run_canaries(settings, "worker")
+    rows = (doctor.run_canaries(settings, "worker") if os.name == "nt"
+            else asyncio.run(doctor._run_canaries(settings, "worker")))
 
     assert len(rows) == 5
     assert {row["status"] for row in rows} == {"fail"}

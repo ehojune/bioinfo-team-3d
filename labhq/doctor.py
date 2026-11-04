@@ -1308,7 +1308,12 @@ async def _run_canaries(settings: Settings, selector: str) -> list[dict]:
 
 def run_canaries(settings: Settings, selector: str) -> list[dict]:
     """Run paid engine calls only for an explicit ``doctor --canary`` request."""
-    return asyncio.run(_run_canaries(settings, selector))
+    from .canary_process import BoundaryError, run
+
+    try:
+        return run(settings, selector)
+    except (BoundaryError, OSError) as exc:
+        return [_canary_row(selector, "containment", False, str(exc))]
 
 
 def render(manifest: dict) -> str:
