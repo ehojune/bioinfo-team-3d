@@ -4,6 +4,12 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1272 web office 간헐 실패 — 단계 보고
+
+- 바뀐 것: `tests/support/demo_driver.cjs`(`listenOnUnreservedPort` 분리, `waitReal` 시간 초과 boot report), `tests/web_office_browser.cjs`(예약 포트 재시도), `tests/web_visual_tooling.cjs`(회귀 2건), `docs/reference/ci-web-office-flake.md`.
+- 실행: `tests/test_web_3d.py` 전체 96 passed 1 skipped(로컬 Windows), 가짜 페이지로 boot report 출력 확인.
+- 미확인: focus_layout 부팅 시간 초과의 실제 원인(재발 로그 대기). 시간 상한·단언은 그대로.
+
 # #1048 r9: broker integration
 
 Integrated main `df1c64c3` into PR #1052; resolved the Windows inventory conflict by retaining both registrations. Runtime broker code remains unchanged and unwired. Added two tests combining the actual ProcessBroker with the current diagnostic launcher and observer event verifier.
