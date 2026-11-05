@@ -210,12 +210,17 @@ jobs:
         run: python -m scripts.ci_suite report
         env:
           GH_TOKEN: ${{ github.token }}
+      - name: Preserve readable Windows evidence and bounded console tails
+        if: always()
+        run: python -m scripts.ci_failure_diagnostics --source "$env:CI_SUITE_ARTIFACT_DIR" --destination "$env:CI_UPLOAD_DIR"
+        env:
+          CI_UPLOAD_DIR: ${{ runner.temp }}/ci-windows-upload-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@v4
         timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 360 || 1 }}
         if: always()
         with:
           name: coverage-windows-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.CI_SUITE_ARTIFACT_DIR }}
+          path: ${{ runner.temp }}/ci-windows-upload-${{ github.run_id }}-${{ github.run_attempt }}
           retention-days: 7
 
 

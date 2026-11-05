@@ -2,6 +2,8 @@
 import subprocess
 import sys
 import textwrap
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +11,65 @@ import yaml
 
 from scripts import ci_suite as suite
 from scripts.ci_selection import ROOT
+
+
+@pytest.mark.parametrize('failure', [None, 'body', 'acquire'])
+def test_lock_observation_preserves_order_and_original_failure(tmp_path, monkeypatch, failure):
+    from collections import defaultdict
+    import filelock
+    events = []
+
+    class Lock:
+        def __init__(self, name, timeout):
+            assert name.endswith('host-resources.lock') and timeout == 1500
+
+        def __enter__(self):
+            events.append('lock_enter')
+            if failure == 'acquire':
+                raise RuntimeError('acquire')
+
+        def __exit__(self, *args):
+            events.append('lock_exit')
+
+    observer = suite.LockDiagnostics(tmp_path / 'lock-state-gw0.json', 'gw0')
+    record = observer.record
+
+    def observe(state, nodeid):
+        events.append(state)
+        record(state, nodeid)
+
+    observer.record = observe
+    monkeypatch.setattr(filelock, 'FileLock', Lock)
+    path = ROOT / 'tests/test_fake.py'
+    observation = SimpleNamespace(serial={(path, ('test_fake',)): True}, worker_count=4,
+        directory=tmp_path, lock_diagnostics=observer, resource_waits=defaultdict(float), context='old')
+    item = fake_item(0)
+    item.path, item.nodeid = path, 'tests/test_fake.py::test_fake'
+    protocol = suite.Observation.pytest_runtest_protocol(observation, item, None)
+    if failure == 'acquire':
+        with pytest.raises(RuntimeError, match='acquire'):
+            next(protocol)
+        assert events == ['waiting', 'lock_enter', 'acquire_failed']
+    else:
+        next(protocol)
+        assert 'lock held' in observation.context
+        if failure == 'body':
+            with pytest.raises(RuntimeError, match='body'):
+                protocol.throw(RuntimeError('body'))
+        else:
+            with pytest.raises(StopIteration):
+                next(protocol)
+        assert events == ['waiting', 'lock_enter', 'acquired', 'releasing', 'lock_exit', 'released']
+    data = json.loads(observer.path.read_text())
+    assert data['current']['worker'] == 'gw0' and data['current']['pid'] > 0
+    assert data['current']['nodeid'] == item.nodeid and data['reusable'] is False
+
+
+def test_lock_observation_is_bounded_and_write_failure_does_not_interrupt(tmp_path):
+    observer = suite.LockDiagnostics(tmp_path / 'missing/lock-state-gw0.json', 'gw0')
+    for _ in range(40):
+        observer.record('waiting', 'x' * 1000)
+    assert len(observer.events) == 32 and len(observer.events[-1]['nodeid']) == 512
 
 
 def fake_item(limit):

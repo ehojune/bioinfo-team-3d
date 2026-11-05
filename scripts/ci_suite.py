@@ -262,6 +262,28 @@ class StageDiagnostics:
                 self.warned = True
 
 
+class LockDiagnostics:
+    """Per-worker lock lifecycle, independent of synchronization and receipt proof."""
+    def __init__(self, path, worker):
+        self.path, self.worker = path, worker
+        self.origin = time.monotonic()
+        self.events = []
+
+    def record(self, state, nodeid):
+        # No diagnostic exception may change acquisition, test execution or lock release.
+        try:
+            row = dict(state=state, nodeid=nodeid[:512], pid=os.getpid(), worker=self.worker,
+                       elapsed_s=round(time.monotonic() - self.origin, 6))
+            self.events.append(row)
+            self.events = self.events[-32:]
+            temporary = self.path.with_suffix('.tmp')
+            with _REAL_OPEN(temporary, 'w', encoding='utf-8') as stream:
+                json.dump(dict(diagnostic_only=True, reusable=False, current=row, events=self.events), stream)
+            os.replace(temporary, self.path)
+        except Exception:  # noqa: BLE001 - observation must not affect the lock
+            pass
+
+
 def collection_arguments(config, phase):
     """Bind real pytest discovery, not a caller's claim of complete coverage."""
     expected = list(windows.TARGETS) if phase == 'critical' else ['tests']
@@ -317,6 +339,7 @@ class Observation:
         self.serial = {}
         self.shared_files = {}
         self.resource_waits = defaultdict(float)
+        self.lock_diagnostics = LockDiagnostics(self.directory / f'lock-state-{self.worker}.json', self.worker)
         self.checkpoints = (PhaseCheckpoints(self.directory / f'checkpoints-{self.worker}.json',
                             self.context_identity, self.phase, self.worker) if self.phase else None)
         try:
@@ -431,10 +454,22 @@ class Observation:
             # Shared only by workers of this CI job. Covers fixture setup and
             # teardown as well as the free-port -> bind window and owned cleanup.
             started = time.perf_counter()
-            with FileLock(str(self.directory / "host-resources.lock"), timeout=1500):
-                self.resource_waits[path.relative_to(ROOT).as_posix()] += time.perf_counter() - started
-                with limit_notice(item):
-                    return (yield)
+            self.context = f"{item.nodeid} [host-resource lock waiting]"
+            self.lock_diagnostics.record('waiting', item.nodeid)
+            acquired = False
+            try:
+                with FileLock(str(self.directory / "host-resources.lock"), timeout=1500):
+                    acquired = True
+                    self.lock_diagnostics.record('acquired', item.nodeid)
+                    self.context = f"{item.nodeid} [host-resource lock held]"
+                    self.resource_waits[path.relative_to(ROOT).as_posix()] += time.perf_counter() - started
+                    try:
+                        with limit_notice(item):
+                            return (yield)
+                    finally:
+                        self.lock_diagnostics.record('releasing', item.nodeid)
+            finally:
+                self.lock_diagnostics.record('released' if acquired else 'acquire_failed', item.nodeid)
         with limit_notice(item):
             return (yield)
 

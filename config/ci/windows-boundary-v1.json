@@ -60,6 +60,7 @@
     "tests/test_ci_chrome_warmup.py",
     "tests/test_ci_cohort823.py",
     "tests/test_ci_empty_association.py",
+    "tests/test_ci_failure_diagnostics.py",
     "tests/test_ci_followup_contract.py",
     "tests/test_ci_manifest_identity.py",
     "tests/test_ci_normative_prose.py",
