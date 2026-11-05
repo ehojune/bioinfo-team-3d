@@ -471,8 +471,6 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
     def observed_submit(fn, *args, **kwargs):
         if getattr(fn, "__name__", "") != "_append_event_now":
             return submit(fn, *args, **kwargs)
-        writer_times["enqueue"] = round(time.monotonic() - started, 3)
-        writer_enqueued.set()
         def observed_job():
             writer_times["start"] = round(time.monotonic() - started, 3)
             writer_context.publish = True
@@ -481,7 +479,10 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
             finally:
                 writer_context.publish = False
                 writer_times["finish"] = round(time.monotonic() - started, 3)
-        return submit(observed_job)
+        result = submit(observed_job)
+        writer_times["enqueue"] = time.monotonic() - started
+        writer_enqueued.set()
+        return result
     monkeypatch.setattr(writer, "submit", observed_submit)
     monkeypatch.setattr(hub.store, "_transaction", observed_transaction)
     original_publish = hub.publish
@@ -528,13 +529,13 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
         assert hub.store.get("approval", card.id) is None
         assert hub.store.get("approval_decision", card.id) is not None
         assert hub.store.get("decision", card.id) is not None
+        deadline = time.monotonic() + 4 * send_bound
         for _ in range(3):
             mark("outer_cancel")
             task.cancel()
             await asyncio.sleep(0)
-        deadline = asyncio.get_running_loop().time() + 4 * send_bound
         try:
-            await asyncio.wait_for(publishing.wait(), max(0, deadline - asyncio.get_running_loop().time()))
+            await asyncio.wait_for(publishing.wait(), max(0, deadline - time.monotonic()))
         except asyncio.TimeoutError:
             pytest.fail("send timeout or unregister did not reach publish within its bound: " + diagnostics())
         assert send_timed_out.is_set(), diagnostics()
@@ -544,14 +545,15 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
             mark("publish_release")
             publish_release.set()
         try:
-            await asyncio.wait_for(writer_enqueued.wait(), max(0, deadline - asyncio.get_running_loop().time()))
+            await asyncio.wait_for(writer_enqueued.wait(), max(0, deadline - time.monotonic()))
         except asyncio.TimeoutError:
             pytest.fail("publish did not enqueue within the send bound: " + diagnostics())
+        assert started + writer_times["enqueue"] <= deadline, diagnostics()
         done, _ = await asyncio.wait({task}, timeout=10)  # durable publish has a separate completion bound
         assert task in done, "durable publish did not complete: " + diagnostics()
         assert any(stage == "publish_done" for stage, _ in timeline), diagnostics()
         assert all(value is not None for value in writer_times.values()), diagnostics()
-        assert list(writer_times.values()) == sorted(writer_times.values()), diagnostics()
+        assert writer_times["start"] <= writer_times["commit_start"] <= writer_times["commit_finish"] <= writer_times["finish"], diagnostics()
         assert send_timed_out.is_set(), diagnostics()
         assert "runner" not in hub.runners, diagnostics()
     finally:
