@@ -301,8 +301,9 @@ class CodexAdapter(AgentAdapter):
             flags += ["-c", f'model_reasoning_effort="{a.effort}"']
         web_search = "live" if any(t.split("(")[0] in WEB_TOOLS for t in a.tools) else "disabled"
         flags += ["-c", f'web_search="{web_search}"']
-        if web_search == "disabled" and (ctx.read_only or ctx.read_only_inputs or a.sandbox == "read-only"):
+        if web_search == "disabled" and (ctx.read_only or a.sandbox == "read-only"):
             # Only the shell sees these, not Codex's own connection. A mistake guard, not a boundary (#1055).
+            # Not read_only_inputs: downstream steps with staged inputs are writable engineers and keep the network.
             flags += ["-c", f"shell_environment_policy.set={_toml(SHELL_NO_PROXY_ENV)}"]
         for d in ([] if ctx.read_only or ctx.read_only_inputs or a.sandbox == "read-only" else ctx.extra_dirs):
             flags += ["--add-dir", d]

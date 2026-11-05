@@ -104,7 +104,7 @@ def test_new_default_private_entries():
 
 
 # ---- #1055: a read-only reviewer's shell reached public sites through the elevated sandbox, uncounted ----
-def _shell_policy(tmp_path, *, tools=(), sandbox="read-only", read_only=False):
+def _shell_policy(tmp_path, *, tools=(), sandbox="read-only", read_only=False, read_only_inputs=()):
     settings = Settings()
     agent = AgentSpec(id="w", name="W", role="test", engine=Engine.codex, builtin_mcp=[], sandbox=sandbox,
                       tools=list(tools))
@@ -115,7 +115,8 @@ def _shell_policy(tmp_path, *, tools=(), sandbox="read-only", read_only=False):
         pass
 
     ctx = RunContext(task=Task(agent_id="w", prompt="x"), agent=agent, workdir=workdir, settings=settings,
-                     mcp_servers=[], env={}, emit=emit, prompt="x", read_only=read_only)
+                     mcp_servers=[], env={}, emit=emit, prompt="x", read_only=read_only,
+                     read_only_inputs=list(read_only_inputs))
     cmd = get_adapter(Engine.codex, settings).build_command(ctx)
     return [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-c" and cmd[i + 1].startswith("shell_environment_policy.")]
 
@@ -150,3 +151,8 @@ def test_the_proxy_is_set_for_the_shell_only_not_for_the_codex_process(tmp_path)
 ])
 def test_agents_that_may_use_the_network_keep_it(tmp_path, kwargs):
     assert _shell_policy(tmp_path, **kwargs) == []
+
+
+def test_a_writable_step_with_staged_inputs_keeps_the_network(tmp_path):
+    # Downstream steps get read_only_inputs but are ordinary workspace-write engineers (pip, curl, references).
+    assert _shell_policy(tmp_path, sandbox="workspace-write", read_only_inputs=[str(tmp_path / "inputs")]) == []
