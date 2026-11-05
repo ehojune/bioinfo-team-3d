@@ -8,3 +8,7 @@ rows:
   at: 2026-11-05 15:52
   text: 리뷰 지적 반영. claude auth status의 authMethod가 claude.ai가 아니면(API 키·토큰·Bedrock/Vertex) 옛 .credentials.json의 만료를 보지 않는다. 출력을 읽을 수 없으면 파일 확인을 유지한다
   summary: 다른 방식으로 로그인한 직원이 옛 OAuth 파일 때문에 fail로 보이지 않게 합니다.
+- sha: '4411941'
+  at: 2026-11-05 16:04
+  text: 리뷰 지적 반영. CLAUDE_CONFIG_DIR이 없으면 engines.claude_code.env의 HOME·USERPROFILE에서 기본 폴더를 찾고, 갱신 토큰이 비었거나 없으면 갱신 토큰 만료일을 믿지 않고 접근 토큰 만료로 판단한다
+  summary: 직원 프로세스의 실제 홈을 보고, 일부만 지워진 로그인도 잡습니다.
