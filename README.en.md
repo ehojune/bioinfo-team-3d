@@ -47,7 +47,7 @@ Still frames: [2.5D](docs/media/office-25d.png) · [3D](docs/media/office-3d.png
 - The default roster defines 13 roles: 8 on Claude Code and 5 on Codex. [Staff YAML](agents/core/) is the source for engines, models, and tools; local solo staff and contractors are separate.
 - Routine, well-defined analyses go to the [bioinfo-agent](https://github.com/ehojune/bioinfo-agent) staff member. It is a Claude Code agent that proposes a matching nf-core Nextflow pipeline and resource plan, and after approval runs it and returns a MultiQC QC verdict.
 - If the team lacks a method, a paper or its code is turned into an agent with [Paper2Agent](https://github.com/jmiao24/Paper2Agent) and hired as a **contractor**.
-- When a job is submitted to HPC (SGE, PBS, Slurm), the staff session rests until the job ends, then resumes the same session.
+- When a job is submitted to HPC (SGE, PBS, Slurm), the staff session rests until the job ends, then resumes the same session. If recruitment assigns ineligible staff to HPC work, the request stops before plan approval (CP1) and processing steps.
 - The CSO asks only about permissions, cost, data access, choices only the PI knows (disease, cohort), and analysis depth. It decides the rest of the design itself and records it as **assumptions** in the plan and report.
 - A research step's result can hold only the claims in the `claim_ids` the plan declared for it, and a result-correction request states that list.
 - When a continuation reuses steps of a request that cites DOI or PMID references, only the identifiers were pinned, so the card and the report say "content not checked" in one line.
