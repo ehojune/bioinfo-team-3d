@@ -289,7 +289,9 @@ async def test_mock_request_reaches_editor_and_fake_github(tmp_path, monkeypatch
             card = ev["data"]
             cards.append(card)
             storage = {"mode": "new", "repo": "study", "visibility": "private"} if card.get("detail", {}).get("storage") else None
-            asyncio.create_task(hub.resolve_approval(card["id"], True, "ok", storage=storage))
+            from labhq.orchestrator.execution import OPTIONS
+            note = OPTIONS[1] if card.get("detail", {}).get("gate") == "execution_location" else "ok"
+            asyncio.create_task(hub.resolve_approval(card["id"], True, note, storage=storage))
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=s.gateway.port, log_level="warning"))
     jobs = [serve_task(server.serve())]

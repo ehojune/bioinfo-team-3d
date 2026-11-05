@@ -4,6 +4,34 @@ import asyncio
 import time
 
 import pytest
+
+
+def test_nested_hpc_lookup_requires_unique_task_identity_after_root_move(tmp_path):
+    import json
+    from labhq.evidence.audit import locate_workdir
+    root = tmp_path / "runs"
+    for request, task_id in [("r1", "t1"), ("r2", "t2")]:
+        directory = root / "hpc" / request / "steps/s1"
+        directory.mkdir(parents=True)
+        (directory / "manifest.json").write_text(json.dumps({
+            "task": {"request_id": request, "meta": {"step_id": "s1"}},
+            "runs": {task_id: {"request_id": request, "step_id": "s1"}},
+        }), encoding="utf-8")
+    result = {"workdir": str(root / "hpc/r1/steps/s1"), "workdir_id": "s1", "task_id": "t1"}
+    moved = tmp_path / "moved"
+    root.rename(moved)
+    found, reason = locate_workdir(moved, result)
+    assert found == moved / "hpc/r1/steps/s1" and reason is None
+    assert locate_workdir(moved, {"workdir_id": "s1", "task_id": "unknown"})[0] is None
+    assert locate_workdir(moved, {"workdir_id": "s1"})[0] is None
+    assert locate_workdir(moved, {**result, "workdir": str(moved / "hpc/r2/steps/s1")})[0] == found
+    copy = moved / "hpc/r3/steps/s1"
+    copy.mkdir(parents=True)
+    (copy / "manifest.json").write_text(json.dumps({
+        "task": {"request_id": "r3", "meta": {"step_id": "s1"}},
+        "runs": {"t1": {"request_id": "r3", "step_id": "s1"}},
+    }), encoding="utf-8")
+    assert locate_workdir(moved, result)[0] is None
 from pydantic import ValidationError
 
 from labhq.evidence.verify import LookupFailed, Resolution, SourceRecord, StaticResolver, verify_sources

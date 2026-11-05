@@ -29,6 +29,7 @@ CANARY = "CANARY-research-91c2"
 # PI 점검 R17 adds the optional numeric `budget_usd` to the plan schema and its rule to the prompt; a plan without
 # it keeps its canonical JSON and hash (VALID_PLAN_SHA).
 # #549 adds paper skill selection before CP1; empty additions still preserve VALID_PLAN_SHA.
+# #430 adds optional execution location; old plans still keep their canonical hash.
 # #549 B adds recruit.step_ids and hiring rules; an empty recruitment still preserves VALID_PLAN_SHA.
 # PR #581 P1: fresh recruits require at least one step_id; legacy stored plans remain compatible.
 # #609: graphical abstract creation moves to the final write-capable report step.
@@ -46,7 +47,7 @@ CANARY = "CANARY-research-91c2"
 # VALID_PLAN_SHA, and the prompt, minus its one new rule, still hashes to the previous value.
 # #674 adds the optional environment_binding(s) to research steps (new schema hash below); a plan without them keeps
 # VALID_PLAN_SHA, and the prompt and result schema hashes are unchanged.
-RESEARCH_PLAN_SCHEMA_SHA = "6064277c29766de85dd07346896ceb6417b74d74213bbf517af784e0cc65bb8d"
+RESEARCH_PLAN_SCHEMA_SHA = "71a0b1a00025027290ba8766fb57090972e5ad629b11d6e63d17c897788afd6c"
 # #905 extends only the result schema with optional source access metadata and citation lineage.
 RESEARCH_RESULT_SCHEMA_SHA = "596679add2478c0eff0eddaddd8d85604b0148770fb5a4aaa0a0235e836ca179"
 # #798/#671 change only paper timing/parallel fallback; normalize that sentence to exact previous prompts.

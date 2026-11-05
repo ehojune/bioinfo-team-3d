@@ -60,6 +60,7 @@
     "tests/test_ci_chrome_warmup.py",
     "tests/test_ci_cohort823.py",
     "tests/test_ci_empty_association.py",
+    "tests/test_ci_failure_diagnostics.py",
     "tests/test_ci_followup_contract.py",
     "tests/test_ci_manifest_identity.py",
     "tests/test_ci_normative_prose.py",
@@ -501,11 +502,12 @@
       }
     },
     "tests/test_evidence_verify.py": {
-      "sha256": "01608f50aa56aa7c9d8c5dc31211f700f52e8364700191f37c6c39149e89334a",
+      "sha256": "032f96638e8ea49e82c2200c9d5ce349278d30690baed7f4038486daa8c53d92",
       "reason": "Remaining nodes validate identifier/status/resolver data with static/fake resolvers; path separator/case nodes retained.",
       "nodes": {
         "test_uri_lookups_keep_path_case_and_fold_only_scheme_and_host": "Reviewed native/encoding/path/CLI boundary in mixed module.",
-        "test_artifact_paths_match_the_manifest_across_separators": "Reviewed native/encoding/path/CLI boundary in mixed module."
+        "test_artifact_paths_match_the_manifest_across_separators": "Reviewed native/encoding/path/CLI boundary in mixed module.",
+        "test_nested_hpc_lookup_requires_unique_task_identity_after_root_move": "Nested HPC manifest lookup and request/task identity after a real filesystem root rename."
       }
     },
     "tests/test_semantics_objects.py": {

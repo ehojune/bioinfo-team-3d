@@ -141,6 +141,56 @@ def crate_entities(bundle: Path) -> dict[str, dict]:
     return {entity["@id"]: entity for entity in crate["@graph"]}
 
 
+def test_nested_steps_keep_distinct_names_run_provenance_and_second_step_links(tmp_path):
+    settings = configured(tmp_path)
+    root = Path(settings.runner.workspace_root)
+    workdirs = {sid: root / "hpc" / "req" / "steps" / sid for sid in ("s1", "s2")}
+    results = {}
+    for sid, engine, model in [("s1", "claude_code", "model-first"), ("s2", "codex", "model-wake")]:
+        workdir = workdirs[sid]
+        task_id = "task-" + sid
+        write(workdir / "outputs/result.tsv", sid + "\n")
+        manifest = {"host": platform.node(), "engine": "wrong-first-engine", "model": "wrong-first-model",
+                    "task": {"request_id": "req", "meta": {"step_id": sid}},
+                    "runs": {task_id: {"agent_id": sid + "-worker", "engine": engine, "model": model,
+                                       "request_id": "req", "step_id": sid}}}
+        write(workdir / "manifest.json", json.dumps(manifest))
+        results[sid] = {"task_id": task_id, "agent_id": sid + "-worker", "ok": True,
+                        "workdir": str(workdir), "workdir_id": sid, "outputs": ["outputs/result.tsv"],
+                        "output_sha256": {"outputs/result.tsv": digest(workdir / "outputs/result.tsv")}}
+    snapshot = root / "hpc/req/data/s1/task-s1"
+    m = json.loads((workdirs["s2"] / "manifest.json").read_text(encoding="utf-8"))
+    m["runs"]["task-s2"]["hpc_data_inputs"] = {"s1": str(snapshot)}
+    write(workdirs["s2"] / "manifest.json", json.dumps(m))
+    from labhq.tools.scheduler import build_script
+    job = workdirs["s2"] / "jobs/analysis.sh"
+    write(job, build_script("cat ../../../data/s1/task-s1/result.tsv > copied.tsv", str(workdirs["s2"] / "outputs")))
+    write(workdirs["s2"] / "jobs.jsonl", json.dumps({"script": str(job), "script_sha256": digest(job)}) + "\n")
+    write(workdirs["s2"] / "outputs/links.md",
+          f'[second]({(workdirs["s2"] / "outputs/result.tsv").as_posix()})\n'
+          f'[first]({(snapshot / "result.tsv").as_posix()})\n')
+    results["s2"]["outputs"].append("outputs/links.md")
+    results["s2"]["output_sha256"]["outputs/links.md"] = digest(workdirs["s2"] / "outputs/links.md")
+    req = {"id": "req", "status": "done", "mode": "team", "results": results,
+           "plan": {"steps": [{"id": "s1"}, {"id": "s2", "depends_on": ["s1"]}]},
+           "report": f'[second]({(workdirs["s2"] / "outputs/result.tsv").as_posix()})'}
+    bundle = Path(build_request_bundle(req, settings)["path"])
+    assert (bundle / "steps/s1/outputs/result.tsv").read_text(encoding="utf-8") == "s1\n"
+    assert (bundle / "steps/s2/outputs/result.tsv").read_text(encoding="utf-8") == "s2\n"
+    assert "steps/s2/outputs/result.tsv" in (bundle / "report.md").read_text(encoding="utf-8")
+    links = (bundle / "steps/s2/outputs/links.md").read_text(encoding="utf-8")
+    assert "[second](./result.tsv)" in links and "[first](../../s1/outputs/result.tsv)" in links
+    script = (bundle / "steps/s2/jobs/analysis.sh").read_text(encoding="utf-8")
+    assert "cd outputs\n" in script and "cat ../../s1/outputs/result.tsv > copied.tsv" in script
+    assert "../../../data" not in script and str(workdirs["s2"]) not in script
+    crate = json.loads((bundle / METADATA_FILE).read_text(encoding="utf-8"))
+    entities = {entity["@id"]: entity for entity in crate["@graph"]}
+    for sid, engine, model in [("s1", "claude_code", "model-first"), ("s2", "codex", "model-wake")]:
+        identity = "\0".join([sid + "-worker", engine, model, ""])
+        software_id = "#software-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
+        assert entities[software_id]["name"] == f"labhq staff CLI ({engine})"
+
+
 @pytest.mark.parametrize("failure", ["changed", "missing", "link"])
 def test_recorded_output_failure_is_manifested_and_marks_bundle_incomplete(tmp_path, failure):
     settings = configured(tmp_path)

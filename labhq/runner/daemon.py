@@ -800,7 +800,10 @@ class Runner:
                 log.warning("runner %s omits unavailable staff %s: %s", self.s.runner.id, agent.id, refused)
                 continue
             summary = agent.summary()
-            agents.append({**summary, "hpc_tools": ("hpc" in summary.get("builtin_mcp", []) and
+            agents.append({**summary,
+                           "whole_request_hpc": ("hpc" in agent.builtin_mcp and self.s.hpc.scheduler != "none"
+                                                 and not agent.project_dirs),
+                           "hpc_tools": ("hpc" in summary.get("builtin_mcp", []) and
                                                       self.s.hpc.scheduler != "none") or
                                                      "labhq_hpc" in summary.get("mcp", []),
                            "wiki_tools": "wiki" in summary.get("builtin_mcp", []) and self._wiki_tool_ready()})
@@ -1351,7 +1354,8 @@ class Runner:
             servers.append(McpServerSpec(name="labhq_approval", command=sys.executable,
                                          args=["-m", "labhq.tools.approval_mcp"], env=env,
                                          timeout_s=timeout_s))
-        if "hpc" in agent.builtin_mcp and self.s.hpc.scheduler != "none":
+        if ("hpc" in agent.builtin_mcp and self.s.hpc.scheduler != "none"
+                and env.get("LABHQ_EXECUTION_MODE") != "local"):
             servers.append(McpServerSpec(name="labhq_hpc", command=sys.executable,
                                          args=["-m", "labhq.tools.hpc_mcp"], env=env,
                                          timeout_s=timeout_s))
@@ -1376,20 +1380,27 @@ class Runner:
             servers.append(McpServerSpec(name="labhq_ask", command=sys.executable,
                                          args=["-m", "labhq.tools.ask_mcp"], env=env,
                                          timeout_s=timeout_s))
-        return servers + list(agent.mcp)
+        return servers + [server for server in agent.mcp
+                          if not (env.get("LABHQ_EXECUTION_MODE") == "local" and server.name == "labhq_hpc")]
 
     def _resume_baseline(self, task: Task, agent: AgentSpec, ws: TaskWorkspace) -> dict | None:
         """Look across this runner's workspaces, including a reused workspace after restart."""
         if not task.resume_session_id:
             return None
         paths = set(self.ws_root.glob("*/*/manifest.json"))
+        paths.update(self.ws_root.glob("hpc/*/steps/*/manifest.json"))
         paths.update(workspace.dir / "manifest.json" for workspace in self.workspaces.values())
         paths.add(ws.dir / "manifest.json")
         latest, latest_at = None, -1.0
         for path in sorted(paths):
             try:  # a manifest.json that is a link is an agent's, not labhq's (#165)
-                manifest = json.loads(read_owned(path.parent, path.name) or "")
-            except ValueError:
+                with contextlib.ExitStack() as stack:
+                    held = stack.enter_context(HeldDir.hold(self.ws_root))
+                    for part in path.parent.relative_to(self.ws_root).parts:
+                        held = stack.enter_context(held.child(part))
+                    with os.fdopen(held.open_read_file(path.name), "rb") as opened:
+                        manifest = json.loads(opened.read(8 * 1024 * 1024 + 1))
+            except (OSError, ValueError):
                 continue
             runs = manifest.get("runs", {}) if isinstance(manifest, dict) else {}
             if not isinstance(runs, dict):
@@ -1400,6 +1411,13 @@ class Runner:
                         or run.get("runner_id", self.s.runner.id) != self.s.runner.id
                         or run.get("engine") != agent.engine.value):
                     continue
+                if (task.meta.get("execution_location") or {}).get("mode") == "hpc":
+                    source = manifest.get("task") or {}
+                    if (run.get("request_id", source.get("request_id")) != task.request_id
+                            or (run.get("step_id") or (source.get("meta") or {}).get("step_id") or "direct") !=
+                               (task.meta.get("step_id") or "direct")
+                            or run.get("hpc_revision", 0) != task.meta.get("revision", 0)):
+                        continue
                 timestamp = max((value for key in ("accounting_at", "ended_at", "started_at")
                                  if type(value := run.get(key)) in (int, float)), default=0)
                 if timestamp >= latest_at:
@@ -1849,6 +1867,9 @@ class Runner:
     def _environment_refusal_reason(self, task: Task) -> str | None:
         grants = self.__dict__.setdefault("_env_grants", {})
         grants.pop(task.id, None)  # whatever happens below, an earlier run of this id leaves no grant behind
+        if ((task.meta.get("execution_location") or {}).get("mode") == "hpc"
+                and (task.meta.get("environment_binding") or task.meta.get("environment_bindings"))):
+            return "HPC environment bindings require a verified scheduler-readable environment snapshot"
         if "environment_binding" in task.meta:
             producer = self._producer_binding_refusal(task, task.meta["environment_binding"])
             if producer is not None:
@@ -2182,14 +2203,32 @@ class Runner:
                                   request_id=task.request_id, data=result.model_dump(mode="json")))
             return result
         agent = self._resolve_agent(task)
+        location = task.meta.get("execution_location") or {}
+        whole_hpc = (location.get("mode") == "hpc" and task.meta.get("kind") in {"step", "direct"})
+        if whole_hpc:
+            if (location.get("runner_id") != self.s.runner.id
+                    or self.s.hpc.scheduler == "none" or "hpc" not in agent.builtin_mcp
+                    or not task.request_id or not re.fullmatch(r"[A-Za-z0-9_-]+", task.request_id)):
+                raise ValueError("whole-request HPC needs a scheduler, built-in HPC worker and request id")
+            step_id = task.meta.get("step_id") or "direct"
+            if (not isinstance(step_id, str) or not INPUT_STEP_ID.fullmatch(step_id)
+                    or step_id in {".", ".."} or step_id != step_id.rstrip(" .")):
+                raise ValueError("whole-request HPC needs a safe step id")
+            workdir_override = self.ws_root / "hpc" / task.request_id / "steps" / step_id
         read_only = is_read_only_task(task.meta, agent)
-        refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
+        input_refusal = ("HPC request inputs require a verified scheduler-readable request-input snapshot"
+                         if whole_hpc and (agent.project_dirs or task.meta.get("project_dirs")
+                                           or task.meta.get("reference_dirs")) else None)
+        if whole_hpc and task.meta.get("precedent_texts"):
+            input_refusal = "HPC precedent texts require a verified scheduler-readable precedent snapshot"
+        refusal = input_refusal or (read_only_refusal(agent.id, agent.engine) if read_only else None)
         # A contract hire works only once active, and staff that send data to external services never take restricted
         # inputs (#424); the gateway refuses both first.
         refusal = (refusal or (probation_refusal(agent.id) if not_yet_active(agent) else None)
                    or external_service_refusal(agent, task, self.s))
         if refusal:  # the gateway refuses first; this holds for any other sender and after force_engine
-            result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal)
+            result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal,
+                                **({"cost_usd": 0.0, "cost_known": True} if input_refusal else {}))
             base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
             await self.emit_all([
                 Event(type="agent.status", data={"state": "error", "error": short(refusal, 200)}, **base),
@@ -2217,6 +2256,10 @@ class Runner:
                                                 "control": self.controls.finish(task.id)}, **base)])
             return result
         reused = await asyncio.to_thread(os.path.lexists, workspace_dir)  # file system work stays off the loop (#606)
+        if whole_hpc:
+            await asyncio.to_thread(self.ws_root.mkdir, parents=True, exist_ok=True)
+            if await asyncio.to_thread(plain_directory, self.ws_root, workspace_dir.relative_to(self.ws_root)) is None:
+                raise ValueError("HPC workspace path is not a plain directory")
         # Do not let TaskWorkspace create files through links left by an earlier run. Fresh workspaces keep
         # the old event ordering; reused ones are registered only after their preflight succeeds (#191).
         ws = None if reused else await _settled_thread(TaskWorkspace, self.ws_root, task, agent, workspace_dir)
@@ -2317,6 +2360,14 @@ class Runner:
                     _links, reason = await self._project_links([str(workspace_dir)], zones, emit, fail_closed=True)
                 if reason is None:  # labhq writes these from outside every sandbox (#165)
                     reason = owned_link_error(workspace_dir)
+                if reason is None and whole_hpc:
+                    try:
+                        source = json.loads(read_owned(workspace_dir, "manifest.json") or "{}").get("task") or {}
+                        if (source.get("request_id") != task.request_id
+                                or ((source.get("meta") or {}).get("step_id") or "direct") != step_id):
+                            reason = "HPC workspace belongs to another request or step (legacy layout is not adopted)"
+                    except (OSError, ValueError, AttributeError):
+                        reason = "HPC workspace identity is unavailable"
                 if reason:
                     self.event_buffers.pop(task.id, None)  # nothing is written into a workspace refused as unsafe
                     error = f"재사용 작업 폴더를 안전하게 열 수 없어 실행을 거부합니다: {reason}"
@@ -2414,6 +2465,18 @@ class Runner:
                         "These copies are read-only; do not read sibling workspaces. "
                         "Save scripts and intermediate files only in outputs/ or .tmp/. "
                         "If an input is unavailable, ask the CSO; there is no direct-path fallback.")
+                if whole_hpc:
+                    if unavailable:
+                        raise ValueError("HPC ancestor snapshot unavailable: " + "; ".join(unavailable.values()))
+                    shared = await asyncio.to_thread(ws.publish_hpc_inputs, accepted, staged_inputs,
+                                                     self.s.runner.input_hash_max_file_bytes,
+                                                     self.s.runner.input_hash_max_total_bytes)
+                    note = ("HPC job cwd is this step's outputs/. Read ancestor files only from these hash-verified "
+                            "request data snapshots (absolute paths, or relative to job cwd):\n" +
+                            "\n".join(f"{sid}: {path} (relative: {os.path.relpath(path, ws.dir / 'outputs')})"
+                                      for sid, path in shared.items()) +
+                            "\nDo not read sibling workspaces. These are runner copies, never input links.")
+                    task = ws.task = task.model_copy(update={"meta": {**task.meta, "hpc_data_inputs": shared}})
                 if unavailable:
                     note += "\n" + "\n".join(unavailable.values())
                     for reason in unavailable.values():
@@ -2586,6 +2649,7 @@ class Runner:
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
+                "LABHQ_EXECUTION_MODE": "hpc" if whole_hpc else "local" if location else "",
                 "LABHQ_READ_ONLY": "1" if read_only else "0",
                 "LABHQ_ENVIRONMENT_STEP": "1" if task.meta.get("environment_step") is True else "0",
                 "LABHQ_SHARED_ENVIRONMENT_PROTECTED": (
@@ -2624,6 +2688,14 @@ class Runner:
                 records, note = ws.scan_output_records(
                     zones, self.s.runner.reference_scan_max_entries, self.s.runner.reference_scan_max_depth)
                 output_before = {row["path"]: output_identity(row) for row in records}
+                if whole_hpc:
+                    # Keep the first submitting turn's view across sleeping jobs AND runner restarts.
+                    # A later revision has its own baseline and never adopts a retired run's outputs.
+                    previous = ws.hpc_output_baseline(task)
+                    if previous is not None:
+                        output_before = previous
+                    ws.update_run(task.id, hpc_output_baseline=output_before,
+                                  hpc_revision=task.meta.get("revision", 0))
                 if note:
                     output_scan_notes.append(note)
                 return refused
@@ -2767,6 +2839,9 @@ class Runner:
             ctx.wait_ready = wait_ready
             await ws.aupdate_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
                                  request_id=task.request_id, step_id=task.meta.get('step_id'),
+                                 agent_id=agent.id,
+                                 **({"hpc_data_inputs": task.meta["hpc_data_inputs"]}
+                                    if whole_hpc and task.meta.get("hpc_data_inputs") else {}),
                                  engine=agent.engine.value, model=agent.model,
                                  engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
                                  resume_of=task.resume_session_id, kind=task.meta.get("kind"),
@@ -2834,6 +2909,16 @@ class Runner:
             self.jobs[jid].update(session_id=result.session_id, workdir=str(ws.dir))
             self.store.put("job", jid, self.jobs[jid])
         result.pending_jobs, result.workdir = pending, str(ws.dir)
+        blocking = result.blocking_decision or (result.structured.get("blocking_decision")
+                                               if isinstance(result.structured, dict) else None)
+        if whole_hpc and result.ok and not pending and not result.pending_asks and not blocking:
+            runs = ws._manifest().get("runs") or {}
+            step_id = task.meta.get("step_id") or "direct"
+            if not any(run.get("hpc_step_id") == step_id and run.get("hpc_submitted")
+                       and run.get("hpc_revision", 0) == task.meta.get("revision", 0)
+                       for run in runs.values()):
+                result = result.model_copy(update={"ok": False,
+                    "error": "HPC 처리 단계에 러너가 제출한 잡 기록이 없습니다. 로컬 결과는 받지 않습니다."})
         result.workdir_id = ws.dir.name
         # The record keeps what the step read: hashes taken before the run. A writable input the step changed gets
         # changed_during_step, and its hash stays the one from before (PR #442 review).
@@ -3185,6 +3270,9 @@ class Runner:
             return {"error": "this task is not running on the runner; the job was not submitted"}
         if running[0]:  # read-only tasks get a broker token too, but no HPC (read_only_profile)
             return {"error": "a read-only task cannot submit HPC jobs; the job was not submitted"}
+        location = getattr(getattr(ws, "task", None), "meta", {}).get("execution_location") or {}
+        if location and (location.get("mode") != "hpc" or ws.task.meta.get("kind") not in {"step", "direct"}):
+            return {"error": "this request selected local execution for this task; no HPC job was submitted"}
 
         async def approve(payload: dict) -> dict:
             return await self.broker.request_approval(ApprovalRequest.model_validate(
@@ -3205,6 +3293,9 @@ class Runner:
                 done.set_result(None)
 
         async def record(result: dict) -> None:
+            if location.get("mode") == "hpc":
+                ws.update_run(tid, hpc_step_id=ws.task.meta.get("step_id") or "direct", hpc_submitted=True,
+                              hpc_revision=ws.task.meta.get("revision", 0))
             await self._track_job({"task_id": tid, "agent_id": aid, "job_id": result["job_id"],
                                    "name": result["name"], "script": result["script"],
                                    "script_sha256": result["script_sha256"],

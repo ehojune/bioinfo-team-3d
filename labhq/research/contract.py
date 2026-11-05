@@ -236,6 +236,7 @@ class ResearchStep(StrictModel):
     checks: list[str] = Field(min_length=1)
     evidence_slots: list[EvidenceSlot]
     depends_on: list[str]
+    execution: Literal["local", "hpc"] | None = None
     # Present only in a branched plan. Older frozen plans omit it and keep their canonical hash.
     branch: str | None = Field(default=None, min_length=1)
     # Pack rules and contract checks never read this; pack fields never fill it (no_type_inheritance).
@@ -250,6 +251,8 @@ class ResearchStep(StrictModel):
     def _drop_empty_declarations(self, handler: Any) -> dict[str, Any]:
         # An empty list is left out, so plans approved before #221 keep their canonical JSON and plan_sha256.
         data = handler(self)
+        if data.get("execution") is None:
+            data.pop("execution", None)
         if not data.get("output_types"):
             data.pop("output_types", None)
         if not data.get("key_figures"):

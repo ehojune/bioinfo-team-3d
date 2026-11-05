@@ -1,0 +1,60 @@
+pr: 578
+rows:
+- sha: "8471dbb"
+  at: 2026-11-05 19:43
+  summary: 중첩 HPC 산출 검증 시험을 Windows 경계 검사에 등록했습니다.
+  text: verify mixed-module hash와 root 이동 후 task identity 시험 등록을 갱신했다. source 검증과 관련 시험 320건이 통과했다.
+- sha: "90fd532"
+  at: 2026-10-14 09:24
+  text: 요청 시작에 HPC·로컬을 선택하고 한 HPC 작업 공간에서 전체 단계를 실행하며 선택·검증 기록을 남긴다.
+- sha: "434a435"
+  at: 2026-10-14 09:29
+  text: HPC 요청의 단독 라우팅 우회를 막아 단계 계획을 유지한다.
+- sha: "d6028f6"
+  at: 2026-10-14 09:56
+  text: 새 실행 위치 카드에 mock·데모가 답하고 PI 답변은 시각순으로 기록하며 로컬 프롬프트·CP1 제목을 보존한다.
+- sha: "a98d99a"
+  at: 2026-10-14 10:38
+  text: 데모 일반 자동 승인을 복구하고 reporter 검증이 실행 위치 승인 대기를 완료로 오인하지 않도록 고친다.
+- sha: "3090632"
+  at: 2026-10-14 11:21
+  text: 최신 main의 디자인 토큰과 결정 카드 공통 부품을 병합해 실행 위치 질문 카드의 CSS 순서 계약을 복구한다.
+- sha: "34426ec"
+  at: 2026-10-14 12:40
+  text: 최신 main의 저장 선택·메신저 시안 변경을 병합해 현재 기준에서 리뷰 수정을 이어 간다.
+- sha: "09ff0a3"
+  at: 2026-10-14 12:43
+  text: HPC 실행 원본과 요청 묶음 경로를 분리하고 direct 요청은 지정 직원의 HPC 권한만 묻는다.
+- sha: "3c44e56"
+  at: 2026-10-14 13:39
+  text: 최신 main의 파견직 사전 채용 변경을 병합하고 HPC·채용 계획 검사를 함께 보존한다.
+- sha: "b45249e"
+  at: 2026-10-14 14:17
+  text: 최신 main의 라운드 기록·표시·사무실·재개 변경을 병합해 현재 기준에서 리뷰 수정을 검증한다.
+- sha: "cf532ae"
+  at: 2026-11-05 16:04
+  text: main을 통합하고 HPC 단계별 원본·검증 입력 복사·wake 기록·bundle 경로·run provenance를 보존한다.
+- sha: "cbfea6c"
+  at: 2026-11-05 16:20
+  text: HPC 환경 binding 계획을 dispatch 전에 거부하고 선택·계획 검증에 요청별 WSL runner view를 쓴다.
+- sha: "dc2f3b2"
+  at: 2026-11-05 16:34
+  text: 요청·직원의 기존 입력 snapshot이 없으면 HPC 처리 전에 거부하고 local 선택·조상 산출 전달은 보존한다.
+- sha: "fb0c8aa"
+  at: 2026-11-05 16:42
+  text: 저장된 HPC 요청의 입력을 briefing·precedent 전 입구와 공통 dispatch에서 검사해 모델 호출도 막는다.
+- sha: "1128536"
+  at: 2026-11-05 16:56
+  text: configured 입력 없는 직원의 whole-request HPC capability를 경로 노출 없이 알리고 선택·계획에 반영한다.
+- sha: "33d1deb"
+  at: 2026-11-05 17:26
+  summary: 설치 안내에서 요청 전체의 HPC·이 PC 선택과 지원 제한을 확인하도록 정리했습니다.
+  text: 04장 한영에 단계별 원본·검증 입력 복사·선택 기록·snapshot 제한을 반영했다. 실제 HPC는 미검증이다.
+- sha: "2fc5b9c"
+  at: 2026-11-05 19:14
+  summary: 최신 설치 안내와 HPC 시험 등록을 합쳤습니다.
+  text: main 6323fff5를 통합했다. 관련 mock 회귀 298건 통과, 25건 skip. verify inventory hash 갱신은 후속 claim이 필요하다.
+- sha: "d79c01b"
+  at: 2026-11-05 19:26
+  summary: 저장된 논문 본문을 HPC 잡에 전달할 수 없으면 처리 전에 멈춥니다.
+  text: scheduler snapshot 없는 precedent 본문을 gateway·runner에서 거부한다. local은 유지하며 관련 회귀 301건, 기존 precedent 회귀 13건 통과했다.

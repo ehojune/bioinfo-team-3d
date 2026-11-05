@@ -7,6 +7,7 @@ LABHQ_WORKDIR, LABHQ_CONFIG.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import stat
@@ -17,7 +18,7 @@ from pathlib import Path
 import httpx
 
 from ..adapters.held_dir import HeldDir
-from ..adapters.owned import chmod_owned, plain_directory, write_owned
+from ..adapters.owned import chmod_owned, plain_directory, read_owned, write_owned
 from ..settings import Settings
 from ._mcpcompat import make_server, tool_failure
 from .scheduler import (
@@ -82,9 +83,61 @@ def _share_workspace_parents(workdir: Path, workspace_root: Path, gid: int,
             raise RuntimeError(f"cannot grant hpc.job_group traverse on {parent}: {e}") from e
 
 
+def _share_data_inputs(workdir: Path, snapshots: dict[str, str], gid: int) -> None:
+    """Grant only this run's inventoried snapshot files, checking bytes before opening group access."""
+    from ..util import INPUT_STEP_ID
+
+    if workdir.parent.name != "steps":
+        raise RuntimeError("shared data requires a step workspace")
+    root = workdir.parent.parent
+    budget = [S.runner.input_hash_max_total_bytes]
+    for step, raw in snapshots.items():
+        snapshot = Path(raw)
+        task_id = snapshot.name
+        if (not INPUT_STEP_ID.fullmatch(step) or not INPUT_STEP_ID.fullmatch(task_id)
+                or step in {".", ".."} or task_id in {".", ".."}
+                or snapshot != root / "data" / step / task_id):
+            raise RuntimeError("invalid shared data identity")
+        records = json.loads(read_owned(root, f".labhq/hpc-inputs/{step}/{task_id}.json") or "null")
+        if not isinstance(records, list) or len(records) > 20_000:
+            raise RuntimeError("shared data inventory is missing or exceeds limit")
+        for row in records:
+            name = row.get("path")
+            parts = Path(name).parts if isinstance(name, str) else ()
+            if (not parts or Path(name).is_absolute() or any(p in {".", ".."} for p in parts)
+                    or row.get("producer_step") != step or row.get("task_id") != task_id):
+                raise RuntimeError("invalid shared data inventory")
+            with ExitStack() as stack:
+                folders = [stack.enter_context(HeldDir.hold(root))]
+                for part in ("data", step, task_id, *parts[:-1]):
+                    folders.append(stack.enter_context(folders[-1].child(part)))
+                with os.fdopen(folders[-1].open_read_file(parts[-1]), "rb") as opened:
+                    info = os.fstat(opened.fileno())
+                    if info.st_nlink != 1 or info.st_size > S.runner.input_hash_max_file_bytes:
+                        raise RuntimeError("shared data is linked or exceeds size limit")
+                    digest = hashlib.sha256()
+                    size = 0
+                    while chunk := opened.read(1024 * 1024):
+                        size += len(chunk)
+                        budget[0] -= len(chunk)
+                        if size > S.runner.input_hash_max_file_bytes or budget[0] < 0:
+                            raise RuntimeError("shared data exceeds size limit")
+                        digest.update(chunk)
+                    if digest.hexdigest() != row.get("sha256"):
+                        raise RuntimeError("shared data hash differs")
+                    os.fchown(opened.fileno(), -1, gid)
+                    os.fchmod(opened.fileno(), 0o440)
+                for folder in folders[1:]:  # request root is already traversal-only; never open its metadata
+                    folder.chown(-1, gid)
+                    folder.chmod(0o2750)
+
+
 def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
                        job_group: str | None = None, workspace_root: Path | None = None,
-                       job_user: str | None = None) -> None:
+                       job_user: str | None = None, *, output_name: str = "hpc_out",
+                       data_inputs: dict[str, str] | None = None) -> None:
+    if output_name not in {"hpc_out", "outputs"}:
+        raise RuntimeError("unknown shared output directory")
     try:
         script_relative = script_path.relative_to(workdir)
         logs_relative = logs.relative_to(workdir)
@@ -103,6 +156,8 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
             raise RuntimeError("runner.workspace_root and hpc.user are required to check job path traversal")
         # Validate traversal outside the managed root before creating jobs/logs.
         _share_workspace_parents(workdir, workspace_root, gid, job_user)
+        if output_name == "outputs" and data_inputs:
+            _share_data_inputs(workdir, data_inputs, gid)
     jobs_dir = plain_directory(workdir, script_relative.parent)
     logs_dir = plain_directory(workdir, logs_relative)
     if jobs_dir is None or logs_dir is None:
@@ -114,7 +169,7 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
             held_logs = stack.enter_context(held_jobs.child(logs_relative.parts[-1]))
             held_logs.chmod(0o700)
     if job_group:
-        output_dir = workdir / "hpc_out"
+        output_dir = workdir / output_name
         for shared in (script_path.parent, logs, output_dir):
             if shared.is_symlink():
                 raise RuntimeError(f"shared job path must not be a symlink: {shared}")
@@ -181,20 +236,32 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     Returns JSON: {"submitted": true, "job_id": ...} or a normal PI denial.
     Operational failures are MCP tool errors; denial must not trigger resubmission.
     """
+    mode = os.environ.get("LABHQ_EXECUTION_MODE", "")
+    if mode == "local":
+        raise tool_failure("this request selected local execution; HPC submission is disabled")
     if S.hpc.scheduler == "slurm" and (option := slurm_cluster_directive(script)):
         raise tool_failure(f"#SBATCH {option}: labhq tracks jobs on the default cluster only; "
                            "remove -M/--clusters and submit again")
     name = sanitize_job_name(job_name)
     logs = WORKDIR / "jobs" / "logs"
-    output_dir = WORKDIR / "hpc_out" if S.hpc.submit_prefix else WORKDIR
+    output_dir = WORKDIR / "outputs" if mode == "hpc" else WORKDIR / "hpc_out" if S.hpc.submit_prefix else WORKDIR
     stamp = time.strftime("%Y%m%d-%H%M%S")
+    if mode == "hpc":
+        stamp += "_" + sanitize_job_name(TASK or "task")
     spath = WORKDIR / "jobs" / f"{name}_{stamp}.sh"
     try:
+        inputs = {}
+        if mode == "hpc" and S.hpc.submit_prefix:
+            manifest = json.loads(read_owned(WORKDIR, "manifest.json") or "{}")
+            inputs = ((manifest.get("runs") or {}).get(TASK) or {}).get("hpc_data_inputs") or {}
+            if not isinstance(inputs, dict):
+                raise RuntimeError("shared data snapshot mapping is invalid")
         _prepare_job_files(WORKDIR, spath, logs,
                            build_script(script, str(output_dir), umask="007" if S.hpc.submit_prefix else None),
                            S.hpc.job_group if S.hpc.submit_prefix else None,
                            S.path(S.runner.workspace_root) if S.hpc.submit_prefix else None,
-                           S.hpc.user if S.hpc.submit_prefix else None)
+                           S.hpc.user if S.hpc.submit_prefix else None,
+                           **({"output_name": "outputs", "data_inputs": inputs} if mode == "hpc" else {}))
     except (OSError, KeyError, RuntimeError) as e:
         raise tool_failure(f"job file permissions: {e}") from e
     # The runner asks the PI when needed and runs the submit command itself: the id its own call returns is the

@@ -1,0 +1,14 @@
+pr: 578
+rows:
+- sha: "5f9ab6b"
+  at: 2026-11-05 22:25
+  summary: HPC 변경의 Windows 시험 범위가 불필요하게 늘지 않도록 공용 helper를 main과 맞췄습니다.
+  text: 'main의 선행 수정 #1284를 통합하고 실행 위치 응답 상수 "1: b"를 그대로 사용한다. helper가 PR diff에서 빠져 진단 대상 shadow 8개 파일의 추가 선택이 사라졌다. 로컬 관련 시험은 84 passed, 1 skipped이며 실제 pool 시간은 새 head CI로 확인한다.'
+- sha: "450e8a4"
+  at: 2026-11-05 20:41
+  summary: HPC에서 처리할 수 없는 선행 연구 입력을 계획 전에 확인합니다.
+  text: 새 receipt와 저장된 receipt를 실행 위치 선택 뒤 검사하고 미지원 입력은 CP1 전에 거부한다. local 선택을 유지하며 unlock 실패는 release_failed로 기록한다. binary mode와 status 이름·기록 시각도 고쳤다. 관련 mock 회귀 327건이 통과했다.
+- sha: "92ed545"
+  at: 2026-11-05 20:15
+  summary: Windows 시험 실패 뒤에도 읽을 수 있는 진단을 따로 보존합니다.
+  text: 잠긴 파일을 제외한 snapshot과 bounded console 출력, worker별 host-resource lock 상태를 추가했다. 선택·상한·receipt 계약을 유지하며 mock 회귀 218건이 통과했다. 실제 timeout 원인은 새 CI에서 확인한다.

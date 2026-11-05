@@ -232,7 +232,11 @@ def test_lan_addresses_and_url_lines(monkeypatch):
     ]
 
 
-def test_approval_delay_and_resolved_fallback(capsys):
+@pytest.mark.parametrize("card_kind", ["legacy", "ordinary", "execution_location"])
+@pytest.mark.parametrize("phone", [False, True])
+def test_approval_delay_and_resolved_fallback(capsys, card_kind, phone):
+    from labhq.orchestrator.execution import OPTIONS
+
     assert cli._approval_delay(False, 120) == 0.3
     assert cli._approval_delay(True, 120) == 120
     assert cli._approval_delay(True, 5) == 5
@@ -240,6 +244,8 @@ def test_approval_delay_and_resolved_fallback(capsys):
     class Hub:
         def __init__(self):
             self.approvals = {"a": {}}
+            if card_kind != "legacy":
+                self.approvals["a"]["approval"] = {"detail": {"gate": card_kind}}
             self.calls = []
 
         async def resolve_approval(self, aid, approved, note):
@@ -248,16 +254,18 @@ def test_approval_delay_and_resolved_fallback(capsys):
 
     async def exercise():
         hub = Hub()
-        fallback = asyncio.create_task(cli._demo_auto_approve(hub, "a", 0.01, True))
+        fallback = asyncio.create_task(cli._demo_auto_approve(hub, "a", 0.01, phone))
         await hub.resolve_approval("a", False, "human denied")
         await fallback
         assert hub.calls == [("a", False, "human denied")]
         assert capsys.readouterr().out == ""
 
         hub = Hub()
-        await cli._demo_auto_approve(hub, "a", 0, True)
-        assert hub.calls == [("a", True, "demo timeout auto-approve")]
-        assert "자동 승인" in capsys.readouterr().out
+        await cli._demo_auto_approve(hub, "a", 0, phone)
+        note = (OPTIONS[0] if card_kind == "execution_location" else
+                "demo timeout auto-approve" if phone else "demo auto-approve")
+        assert hub.calls == [("a", True, note)]
+        assert ("자동 승인" if phone else "폰에서 '승인'") in capsys.readouterr().out
 
     asyncio.run(exercise())
 

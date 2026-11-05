@@ -729,6 +729,20 @@ def test_stage_diagnostics_cannot_replace_or_modify_phase_receipt_proof(receipts
     assert p.combine(receipts) == expected
 
 
+def test_evidence_snapshot_preserves_success_proof_and_cannot_certify_incomplete_session(receipts, tmp_path_factory):
+    from scripts.ci_failure_diagnostics import preserve
+    expected = p.combine(receipts)
+    destination = tmp_path_factory.mktemp('upload') / 'snapshot'
+    preserve(receipts, destination, emit=lambda line: None)
+    assert p.combine(destination) == expected
+    # Diagnostics must never fill a missing lifecycle report or manufacture a receipt.
+    (receipts / 'parallel/metrics-gw0.json').unlink()
+    failed = destination.parent / 'failed-upload'
+    preserve(receipts, failed, emit=lambda line: None)
+    with pytest.raises(ValueError):
+        p.combine(failed)
+
+
 def fake_collection_config(phase, **options):
     return SimpleNamespace(rootpath=suite.ROOT, args=list(p.TARGETS) if phase == 'critical' else ['tests'],
         option=SimpleNamespace(**options), getini=lambda key: {

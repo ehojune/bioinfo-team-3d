@@ -30,6 +30,7 @@ CANARY = "CANARY-7f3a-secret"
 # changes for that planned behavior while output-type declarations still add nothing when off.
 # #557 adds the shared Korean PI prose rule to card questions; the schema and output-type switch stay unchanged.
 # #549 adds optional paper_skills and its selection rule; output-type off/on behavior is unchanged.
+# #430 adds optional execution location; old plans still keep their canonical hash.
 # #549 B adds recruit.step_ids and reproduction/Nextflow planning rules; the exact off contract changes with it.
 # PR #581 P1: fresh recruits require at least one step_id; legacy stored plans remain compatible.
 # #609: graphical abstract creation moves to the final write-capable report step.
@@ -38,7 +39,7 @@ CANARY = "CANARY-7f3a-secret"
 # template, the schema and the output-type switch are unchanged (this hash moved on purpose).
 # PR #693 adds staff-skill fields to the canonical plan schema and writing-skill guidance to the prompt.
 # #716 adds optional_outputs and deterministic conversion guidance.
-PLAN_SCHEMA_SHA = "3f66aee51285e31aba7126f9e9279d7244ce9b7cf0739a3f4164faba2fc606d4"
+PLAN_SCHEMA_SHA = "893287e5f26f5a828f40d9f00b8c480e217865fd24c5857579ca64d76097a28d"
 # Issues #683/#690 intentionally add the SVG figure declaration rules.
 # Issue #707 adds the deterministic request-analysis coverage rule.
 # #799 adds the shared cohesive-analysis sentence to BIOINFO_ASSIGNMENT_RULE; with main's policy text the prompt

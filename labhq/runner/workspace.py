@@ -509,6 +509,56 @@ class TaskWorkspace:
                 for tid, run in (data.get("runs") or {}).items() if isinstance(run, dict)}
         return {"engine": data.get("engine"), "model": data.get("model"), "runs": runs}
 
+    def hpc_output_baseline(self, task: Task) -> dict[str, tuple] | None:
+        """The oldest submitted turn of this request, step and revision, persisted before CLI spawn."""
+        runs = self._manifest().get("runs") or {}
+        candidates = [run for tid, run in runs.items() if tid != task.id and isinstance(run, dict)
+                      and run.get("request_id") == task.request_id
+                      and run.get("hpc_step_id") == (task.meta.get("step_id") or "direct")
+                      and run.get("hpc_revision", 0) == task.meta.get("revision", 0)
+                      and run.get("hpc_submitted") and isinstance(run.get("hpc_output_baseline"), dict)]
+        if not candidates:
+            return None
+        first = min(candidates, key=lambda run: run.get("started_at", 0))
+        return {path: tuple(identity) for path, identity in first["hpc_output_baseline"].items()}
+
+    def publish_hpc_inputs(self, artifacts: dict, staged: list[str], max_file: int, max_total: int) -> dict[str, str]:
+        """Publish only already admitted input snapshots, never private producer workspaces.
+
+        Version by source task so parallel consumers and later revisions cannot replace each other's bytes.
+        The source task, original path and collected hash travel with each immutable snapshot."""
+        from .step_inputs import _copy
+        from ..util import INPUT_STEP_ID
+
+        request_root = self.dir.parent.parent
+        paths = {}
+        remaining = [max_total]
+        for directory in staged:
+            step = Path(directory).name
+            if step not in artifacts:
+                continue  # precedent text snapshots retain their separate input contract
+            artifact = artifacts[step]
+            task_id = artifact.get("task_id")
+            if not isinstance(task_id, str) or not INPUT_STEP_ID.fullmatch(task_id) or task_id in {".", ".."}:
+                raise ValueError("invalid shared data source task")
+            relative = Path("data") / step / task_id
+            if plain_directory(request_root, relative) is None:
+                raise ValueError("shared data destination is not a plain folder")
+            inventory = []
+            for raw in artifact["outputs"]:
+                # stage_inputs already validated names, source identity, policy, hashes and cumulative size.
+                name = raw.replace("\\", "/").removeprefix("./").removeprefix("outputs/")
+                expected = artifact["output_sha256"][raw]
+                _copy(self.dir, ("inputs", step, *name.split("/")), request_root,
+                      (relative / name).as_posix(), expected, max_file, remaining)
+                inventory.append({"producer_step": step, "task_id": task_id,
+                                  "original_path": str(Path(artifact["workdir"]) / raw),
+                                  "path": name, "sha256": expected})
+            write_owned(request_root, (Path(".labhq/hpc-inputs") / step / f"{task_id}.json").as_posix(),
+                        json.dumps(inventory, ensure_ascii=False))
+            paths[step] = str(request_root / relative)
+        return paths
+
     def scan_outputs(self, zones: list[Path], max_entries: int, max_depth: int,
                      max_files: int | None = None) -> tuple[list[str], str | None]:
         """Files a direct run left under outputs/, as `outputs/...`, and why the list is incomplete, if it is (#221).

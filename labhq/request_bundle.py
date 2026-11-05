@@ -272,7 +272,7 @@ def _copy_held(stream, info: os.stat_result, destination: Path) -> str:
     return digest.hexdigest()
 
 
-def _path_prefix_pattern(workdir: Any) -> re.Pattern[str]:
+def _path_prefix_pattern(workdir: Any, *, outputs: bool = True) -> re.Pattern[str]:
     raw = str(workdir)
     windows = bool(re.match(r"^[A-Za-z]:[\\/]", raw) or re.match(r"^[\\/]{2}[^\\/]", raw))
     separator = r"[\\/]+" if windows else "/"
@@ -285,11 +285,12 @@ def _path_prefix_pattern(workdir: Any) -> re.Pattern[str]:
     # Match the rest of a path until a common text delimiter so its separators can be made portable too.
     boundary = r"(?:^|(?<=[\s\"'=\(\[,:]))"
     flags = re.IGNORECASE if windows else 0
-    return re.compile(boundary + prefix + separator + r"outputs" + separator +
+    return re.compile(boundary + prefix + separator + (r"outputs" + separator if outputs else "") +
                       r"(?P<tail>[^\s<>\"'`|]*)", flags)
 
 
-def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]]) -> tuple[int, list[str]]:
+def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]],
+                  data_inputs: list[tuple[str, Path]] = ()) -> tuple[int, list[str]]:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
@@ -307,7 +308,21 @@ def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]]) -> tuple[int, li
         destination = bundle_root / "steps" / relative_path.parts[1]
     else:
         destination = bundle_root
-    for step_id, workdir in workdirs:
+    # hpc_submit's wrapper changes cwd to this step's outputs before the body executes. Preserve that
+    # working directory in the bundle, then rewrite its data operands relative to that same directory.
+    job_owner = None
+    if len(relative_path.parts) == 4 and relative_path.parts[0] == "steps" and relative_path.parts[2] == "jobs":
+        job_owner = next((folder for sid, folder in workdirs if sid == relative_path.parts[1]), None)
+        if job_owner is not None:
+            command = "cd " + shlex.quote(str(job_owner / "outputs"))
+            if command in text.splitlines() and len(re.findall(r"(?m)^cd ", text)) == 1:
+                text = text.replace(command + "\n", "cd outputs\n", 1)
+                replacements += 1
+                destination = bundle_root / "steps" / relative_path.parts[1] / "outputs"
+            else:
+                job_owner = None  # retain documented absolute paths when job cwd cannot be established
+    for step_id, workdir, is_outputs in [*( (sid, folder, True) for sid, folder in workdirs),
+                                         *( (sid, folder, False) for sid, folder in data_inputs)]:
         target = bundle_root / "steps" / step_id / "outputs"
         relative = os.path.relpath(target, destination).replace("\\", "/")
 
@@ -317,7 +332,10 @@ def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]]) -> tuple[int, li
             tail = match.group("tail").replace("\\", "/")
             return f"{relative}/{tail}"
 
-        text = _path_prefix_pattern(workdir).sub(replace, text)
+        text = _path_prefix_pattern(workdir, outputs=is_outputs).sub(replace, text)
+        if not is_outputs and job_owner is not None:
+            original_relative = Path(os.path.relpath(workdir, job_owner / "outputs"))
+            text = _path_prefix_pattern(original_relative, outputs=False).sub(replace, text)
     if text != original:
         path.write_text(text, encoding="utf-8", newline="\n")
     remaining = _absolute_paths(text)
@@ -552,6 +570,7 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
     input_rows: list[dict[str, Any]] = []
     run_records: dict[str, dict[str, Any]] = {}
     workdirs: list[tuple[str, Path]] = []
+    data_inputs: list[tuple[str, Path]] = []
     script_commands: dict[str, dict[str, str]] = {}
     unsafe_scripts: dict[str, set[str]] = {}
     copied_job_scripts: list[str] = []
@@ -731,11 +750,17 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
                 task_id = str(result.get("task_id") or "")
                 run = (manifest.get("runs") or {}).get(task_id) if task_id else None
                 run = run if isinstance(run, Mapping) else {}
+                for producer, snapshot in (run.get("hpc_data_inputs") or {}).items():
+                    source_task = (bundle_results.get(producer) or {}).get("task_id")
+                    if (_SAFE_ID.fullmatch(str(producer)) and _SAFE_ID.fullmatch(str(source_task))
+                            and isinstance(snapshot, str)
+                            and Path(snapshot) == workdir.parent.parent / "data" / producer / source_task):
+                        data_inputs.append((producer, Path(snapshot)))
                 run_records[step_id] = {
                     key: value for key, value in {
-                        "agent_id": result.get("agent_id"),
-                        "engine": manifest.get("engine"),
-                        "model": manifest.get("model"),
+                        "agent_id": run.get("agent_id", result.get("agent_id")),
+                        "engine": run.get("engine", manifest.get("engine")),
+                        "model": run.get("model", manifest.get("model")),
                         "engine_cli_version": run.get("engine_cli_version"),
                         "started_at": run.get("started_at"),
                         "ended_at": run.get("ended_at"),
@@ -908,7 +933,7 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
         for path in sorted(p for p in temp.rglob("*") if p.is_file() and p.suffix.casefold() in TEXT_SUFFIXES):
             if path == temp / "final_checkpoint.json":
                 continue  # hash-bound PI draft: portable report.md may rewrite paths, this record never does
-            count, paths = _rewrite_text(path, workdirs)
+            count, paths = _rewrite_text(path, workdirs, data_inputs)
             if count:
                 rewritten_files += 1
             relative = path.relative_to(temp).as_posix()

@@ -58,8 +58,8 @@ def _lexically_inside(path: str, root: Path) -> bool:
 def locate_workdir(root: Path, result: Mapping[str, Any]) -> tuple[Path | None, str | None]:
     """The step's work folder on this PC, inside ``runner.workspace_root``, or None and the reason.
 
-    A work folder is ``<root>/<YYYY-MM-DD>/<workdir_id>``. The recorded absolute path is tried first, then each
-    date folder; a link in the folder's place or a path that resolves outside the root is never used."""
+    Try the recorded path, legacy date folders, then task-bound HPC step folders. A repeated step name alone
+    cannot identify a request, so nested fallback requires a unique manifest containing the result's task."""
     workdir_id = result.get("workdir_id")
     # ':' would make `root / day / id` a drive-relative path on Windows.
     if (not isinstance(workdir_id, str) or workdir_id in ("", ".", "..")
@@ -78,10 +78,14 @@ def locate_workdir(root: Path, result: Mapping[str, Any]) -> tuple[Path | None, 
         candidates.append(Path(recorded))
     try:
         with os.scandir(root) as entries:
-            days = sorted(entry.name for entry in entries if entry.is_dir(follow_symlinks=False))
+            days = sorted(entry.name for entry in entries if entry.is_dir(follow_symlinks=False)
+                          and re.fullmatch(r"\d{4}-\d{2}-\d{2}", entry.name))
     except OSError:
         days = []
     candidates += [root / day / workdir_id for day in days]
+    if isinstance(result.get("task_id"), str) and _SAFE_REQUEST_ID.fullmatch(workdir_id):
+        candidates += list(root.glob(f"hpc/*/steps/{workdir_id}"))
+    found = set()
     for candidate in candidates:
         if not _is_plain_dir(candidate):
             continue
@@ -90,7 +94,30 @@ def locate_workdir(root: Path, result: Mapping[str, Any]) -> tuple[Path | None, 
         except (OSError, RuntimeError):
             continue
         if real != real_root and real.is_relative_to(real_root):
-            return real, None
+            from ..adapters.held_dir import HeldDir
+            try:
+                with contextlib.ExitStack() as stack:
+                    held = stack.enter_context(HeldDir.hold(root))
+                    parts = candidate.relative_to(root).parts
+                    for part in parts:
+                        held = stack.enter_context(held.child(part))
+                    if len(parts) == 4 and parts[0] == "hpc" and parts[2] == "steps":
+                        with os.fdopen(held.open_read_file("manifest.json"), "rb") as opened:
+                            manifest = json.loads(opened.read(8 * 1024 * 1024 + 1))
+                        task = manifest.get("task") or {}
+                        run = (manifest.get("runs") or {}).get(result.get("task_id"))
+                        if (not isinstance(run, dict) or task.get("request_id") != parts[1]
+                                or ((task.get("meta") or {}).get("step_id") or "direct") != parts[3]
+                                or run.get("request_id", task.get("request_id")) != parts[1]
+                                or (run.get("step_id") or (task.get("meta") or {}).get("step_id") or "direct") != parts[3]):
+                            continue
+                    found.add(real)
+            except (OSError, ValueError, TypeError, AttributeError):
+                continue
+    if len(found) == 1:
+        return found.pop(), None
+    if len(found) > 1:
+        return None, "작업 폴더 식별이 모호합니다(같은 task 기록이 여러 폴더에 있음)"
     return None, f"이 PC의 runner.workspace_root에 작업 폴더 {workdir_id}가 없습니다"
 
 
