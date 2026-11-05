@@ -25,6 +25,15 @@ read-only이고 웹 도구가 없는 Codex 직원의 **셸에만** `shell_enviro
 - 못 막는 것: 프록시 변수를 무시하는 코드(`ProxyHandler({})`, 소켓 직접 연결). 이것은 경계가 아니라 실수 방지입니다.
 - 열어 둔 직원: `sandbox`가 read-only가 아닌 직원(패키지·참고 파일을 받아야 함)과 웹 도구를 준 직원.
 - 리뷰어가 공개 원문을 읽어야 하는 일은 이 조치로 `labhq_annot` 경로로만 가능해집니다. 블라인드 초안 품질에 주는 영향은 ② 6차에서 봅니다.
-- **미확인:** 이 설정이 셸을 정상 실행하게 두는지. 시험 중 elevated sandbox 설정 도우미가 UAC(오류 1223)를 띄워 셸이 실행되지 않았고, 설정 없는 통제군을 돌리지 않아 원인(프록시인지 환경인지)을 가리지 못했습니다. 그래서 이 PR은 draft·hold입니다.
+- **통제군 (2026-11-05, `codex.exe` a159911f, 같은 설정으로 한 번씩):** 아래 표. 프록시를 켜도 셸은 정상으로 돌았습니다. 켠 쪽의 외부 HTTP 차단은 UAC 창 때문에 **확인하지 못했습니다**.
+
+| | echo | `python -c "print(1+1)"` | 셸 `urllib` 외부 호출 |
+|---|---|---|---|
+| 프록시 없음 | exit 0 | exit 0 | 서버에 닿음 (HTTP 403) |
+| 프록시 켬 (`SHELL_NO_PROXY_ENV`) | exit 0 | exit 0 | 시작 전 UAC(`consent.exe`)가 떠 중단. 승인하지 않고 프로세스를 종료함 |
+
+- 두 실행 모두 어댑터와 같은 `:read-only` 확장 프로필, `windows.sandbox="elevated"`, staff `CODEX_HOME`, `gpt-6.1-sol`, 웹 도구 없음. `~/bin/codex.cmd` shim은 unelevated를 강제해 쓰지 않았습니다.
+- UAC의 원인은 프록시로 보지 않습니다. 이 PC에서 elevated sandbox를 쓰는 `CODEX_HOME` 두 곳이 같은 sandbox 계정 비밀번호를 서로 덮어쓰는 #435일 가능성이 큽니다. 근거는 없고 같은 실행을 다시 돌리지 않았습니다.
+- 그래서 "프록시 켠 쪽에서 외부 HTTP가 막히는가"는 이 표로 닫히지 않습니다. 앞서 `codex exec` 6가지 시험(위 표)에서 환경 프록시를 따르는 클라이언트가 막힌다는 근거는 unelevated 한 줄뿐입니다.
 
 근본 대책은 #666(전체 process 격리)입니다.

@@ -7,3 +7,7 @@
 - 한계: 프록시를 무시하는 코드는 막지 못한다. 경계가 아니라 실수 방지다. 근본 대책은 #666.
 - 미확인: 이 설정에서 셸이 정상 실행되는지. 시험 중 elevated sandbox 설정 도우미가 UAC(오류 1223)를 띄워 셸이 실행되지 않았고 통제군을 돌리지 않았다. 그래서 PR은 draft·hold이며 통제군 확인 전에는 병합하지 않는다.
 - 근거: `docs/reference/codex-shell-network.md`, #1055 댓글.
+
+## 통제군 (rev3, 2026-11-05)
+- 실제 Codex(`gpt-6.1-sol`, read-only, 웹 도구 없음, elevated)를 프록시 없음·켬으로 한 번씩 돌렸다. 두 쪽 모두 셸 `echo`·`python -c`가 exit 0으로 끝났다. 프록시를 켜도 셸은 정상이다.
+- 켠 쪽의 외부 HTTP 차단은 UAC 창(#435로 추정) 때문에 확인하지 못했다. 승인하지 않고 중단했고 다시 돌리지 않았다. 표는 `docs/reference/codex-shell-network.md`.
