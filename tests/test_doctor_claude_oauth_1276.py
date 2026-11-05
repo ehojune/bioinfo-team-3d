@@ -19,6 +19,7 @@ def _credentials(folder, **oauth):
     ({"expiresAt": 1000, "refreshTokenExpiresAt": FAR}, False),  # an old access token is renewed on use
     ({"expiresAt": 1000, "refreshToken": ""}, True),  # no refresh token and the access token ran out
     ({"expiresAt": FAR, "refreshToken": ""}, False),
+    ({"expiresAt": 1000, "refreshTokenExpiresAt": FAR, "refreshToken": ""}, True),  # a cleared token keeps its date
     ({"expiresAt": 1000}, False),  # a refresh token without a date is trusted
 ])
 def test_session_expired_reads_only_the_dates_in_the_credentials_file(tmp_path, oauth, expired):
@@ -57,3 +58,14 @@ def test_doctor_fails_the_login_row_when_status_passes_but_the_login_cannot_refr
 ])
 def test_the_saved_login_file_is_checked_only_when_it_is_the_active_source(raw, active):
     assert doctor._saved_oauth_is_active(raw) is active
+
+
+def test_the_default_folder_comes_from_the_staff_process_home_not_doctors(tmp_path, monkeypatch):
+    staff_home, host_home = tmp_path / "staff", tmp_path / "host"
+    for home, oauth in ((staff_home, {"expiresAt": 1, "refreshTokenExpiresAt": 2}), (host_home, {"expiresAt": FAR, "refreshTokenExpiresAt": FAR})):
+        (home / ".claude").mkdir(parents=True)
+        _credentials(home / ".claude", **oauth)
+    monkeypatch.setenv("HOME", str(host_home))
+    monkeypatch.setenv("USERPROFILE", str(host_home))
+    assert doctor.claude_session_expired({"HOME": str(staff_home), "USERPROFILE": str(staff_home)}, now=5000) is True
+    assert doctor.claude_session_expired({}, now=5000) is False

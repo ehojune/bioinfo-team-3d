@@ -787,7 +787,8 @@ def claude_session_expired(env: Mapping[str, str], now: float | None = None) -> 
     .credentials.json alone (no token value is used and nothing is called). `claude auth status` only says a login
     exists, so a staff turn still failed with "OAuth session expired and could not be refreshed" (#1276). Not seen
     this way: a token revoked on the server, and a login kept in the OS keychain instead of that file."""
-    folder = env.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    home = env.get("HOME") or env.get("USERPROFILE") or os.path.expanduser("~")  # the staff process's home, not doctor's
+    folder = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
     try:
         oauth = json.loads((Path(folder) / ".credentials.json").read_text(encoding="utf-8")).get("claudeAiOauth")
     except (OSError, ValueError, AttributeError):
@@ -795,11 +796,14 @@ def claude_session_expired(env: Mapping[str, str], now: float | None = None) -> 
     if not isinstance(oauth, dict):
         return False
     now_ms = (time.time() if now is None else now) * 1000
-    refresh_until, access_until = oauth.get("refreshTokenExpiresAt"), oauth.get("expiresAt")
-    if isinstance(refresh_until, (int, float)) and not isinstance(refresh_until, bool):
-        return refresh_until < now_ms
-    return (isinstance(access_until, (int, float)) and access_until < now_ms
-            and not (isinstance(oauth.get("refreshToken"), str) and oauth["refreshToken"]))
+
+    def passed(key: str) -> bool:
+        value = oauth.get(key)
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and value < now_ms
+
+    if not (isinstance(oauth.get("refreshToken"), str) and oauth["refreshToken"]):
+        return passed("expiresAt")  # nothing to renew with: the date of a refresh token that is gone does not matter
+    return passed("refreshTokenExpiresAt")
 
 
 def _saved_oauth_is_active(raw: str) -> bool:
