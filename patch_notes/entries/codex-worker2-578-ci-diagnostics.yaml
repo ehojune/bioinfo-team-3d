@@ -1,5 +1,9 @@
 pr: 578
 rows:
+- sha: "450e8a4"
+  at: 2026-11-05 20:41
+  summary: HPC에서 처리할 수 없는 선행 연구 입력을 계획 전에 확인합니다.
+  text: 새 receipt와 저장된 receipt를 실행 위치 선택 뒤 검사하고 미지원 입력은 CP1 전에 거부한다. local 선택을 유지하며 unlock 실패는 release_failed로 기록한다. binary mode와 status 이름·기록 시각도 고쳤다. 관련 mock 회귀 327건이 통과했다.
 - sha: "92ed545"
   at: 2026-11-05 20:15
   summary: Windows 시험 실패 뒤에도 읽을 수 있는 진단을 따로 보존합니다.
