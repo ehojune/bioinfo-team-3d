@@ -58,11 +58,15 @@ def plan_rule(choice):
             "Runner-root .venv environment_binding(s) are unsupported on HPC and will be refused before dispatch. "
             "Keep any job-local environment under this step's outputs/ and record its versions there. "
             "Existing project/reference files also require a scheduler-readable request-input snapshot; "
+            "stored precedent full texts are likewise unsupported until that snapshot contract exists. "
             "such requests are refused before processing until that snapshot contract exists. "
             "The CSO report and request bundle collect results only at the end.")
 
 
 def input_errors(metadata, choice):
+    if choice and choice.get("mode") == "hpc" and metadata.get("precedent_texts"):
+        return ["HPC precedent texts require a verified scheduler-readable precedent snapshot; "
+                "processing refused before dispatch"]
     if choice and choice.get("mode") == "hpc" and (metadata.get("project_dirs") or metadata.get("reference_dirs")):
         return ["HPC request inputs require a verified scheduler-readable request-input snapshot; "
                 "processing refused before dispatch"]

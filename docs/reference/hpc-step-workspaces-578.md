@@ -37,4 +37,6 @@ rev2 로컬: 확장 993 passed/39 skipped, 후속 bundle·accounting·CSO 413/7,
 
 ## CI 범위 추가
 
+rev4 실제 head 리뷰 P1 `4479233491`: 저장된 precedent 본문은 scheduler snapshot 계약이 없어 gateway와 runner에서 처리 전에 거부한다. local 선택은 유지하며 자동 전환하지 않는다. 별도 계정에서 step-local 본문을 읽거나 직원 모델이 대신 처리하는 경로를 막는다. 실제 HPC 본문 전달은 미지원이다.
+
 rev4는 `cc7d9087`을 보존하며 main `6323fff5`(`#1281` 포함)를 통합했다. HPC test 등록은 반영됐으나 `test_evidence_verify.py` mixed-node hash·새 node가 남아 inventory 사전 검사는 stale hash로 실패했다. scratch 수정안은 source/AST 검증을 통과했다. policy는 rev4의 34경로 밖이라 편집하지 않았다. 후속 claim이 필요하며 hold를 유지한다. 관련 회귀 298 passed/25 skipped, public·integrations·notes-index·diff 검사 통과. 최종 head CI·실제 리뷰 근거는 PR에 남긴다.

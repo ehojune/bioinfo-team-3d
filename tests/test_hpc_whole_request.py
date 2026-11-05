@@ -514,7 +514,7 @@ async def test_saved_hpc_inputs_refuse_before_briefing_or_precedent(field, resum
     assert not hub.calls
 
 
-@pytest.mark.parametrize("source", ["staff", "project_dirs", "reference_dirs"])
+@pytest.mark.parametrize("source", ["staff", "project_dirs", "reference_dirs", "precedent_texts"])
 async def test_runner_refuses_unstaged_hpc_inputs_before_workspace_or_job(tmp_path, monkeypatch, source):
     from labhq.adapters.mock import MockAdapter
     settings = _settings(tmp_path)
@@ -531,9 +531,31 @@ async def test_runner_refuses_unstaged_hpc_inputs_before_workspace_or_job(tmp_pa
     result = await runner.run_task(Task(agent_id=agent.id, request_id="r", prompt="process input",
         meta={"kind": "step", "step_id": "s1", **({source: [str(tmp_path / "input")]} if source != "staff" else {}),
               "execution_location": {"mode": "hpc", "runner_id": settings.runner.id}}))
-    assert not result.ok and "request-input snapshot" in result.error
+    expected = "precedent snapshot" if source == "precedent_texts" else "request-input snapshot"
+    assert not result.ok and expected in result.error
     assert result.cost_known and result.cost_usd == 0
     assert not runner.workspaces and not runner.jobs
+
+
+@pytest.mark.parametrize("mode", ["hpc", "local"])
+async def test_precedent_texts_refuse_hpc_before_dispatch_without_local_downgrade(mode):
+    async def dispatch(task):
+        assert task.meta["precedent_texts"]
+        return result(task, text="stored paper processed locally")
+
+    hub = hub_for(dispatch)
+    hub.requests["r"]["execution_location"] = {"mode": mode, "runner_id": "cluster"}
+    task = Task(agent_id="worker", request_id="r", prompt="read stored paper",
+                meta={"kind": "step", "step_id": "s1", "precedent_texts": [{
+                    "paper_id": "synthetic", "text_file": "/stored/paper.md", "text_sha256": "a" * 64}]})
+    if mode == "hpc":
+        with pytest.raises(ValueError, match="precedent snapshot"):
+            await Orchestrator(hub).run_step(task)
+        assert not hub.calls
+        assert hub.requests["r"]["execution_location"]["mode"] == "hpc"
+    else:
+        assert (await Orchestrator(hub).run_step(task)).ok
+        assert len(hub.calls) == 1
 
 
 async def test_waiting_job_outputs_survive_wake_and_runner_restart(tmp_path, monkeypatch):
