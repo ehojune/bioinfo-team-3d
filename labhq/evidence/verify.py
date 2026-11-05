@@ -65,7 +65,9 @@ if TYPE_CHECKING:
 LookupState = Literal["succeeded", "failed", "skipped"]
 IdStatus = Literal["found", "not_found", "insufficient", "conflicting", "requires_verification"]
 FAILURE_KINDS = frozenset({"network", "timeout", "rate_limited", "auth", "server", "invalid_response",
-                           "resolver_error", "lookup_limit"})  # lookup_limit: the request's HTTP limit was reached (#891)
+                           "resolver_error", "lookup_limit",
+                           "host_paused"})  # lookup_limit: the request's HTTP limit was reached (#891); host_paused: one host
+# is resting after repeated failures and the request's lookup quota is not used up (#1279)
 SKIP_KINDS = frozenset({"disabled", "unsupported_scheme", "malformed_id", "manifest_unavailable",
                         "uri_unmapped", "base_match_only"})
 
@@ -148,10 +150,12 @@ class Resolution(StrictModel):
 class LookupFailed(Exception):
     """Raised by a resolver when the lookup itself did not complete."""
 
-    def __init__(self, kind: str, detail: str = "") -> None:
+    def __init__(self, kind: str, detail: str = "", *, host: str = "", retry_after_s: int | None = None) -> None:
         super().__init__(detail or kind)
         self.kind = kind if kind in FAILURE_KINDS else "resolver_error"
         self.detail = detail
+        self.host = host  # host_paused: the host that is resting
+        self.retry_after_s = retry_after_s  # host_paused: when a send to it is allowed again
 
 
 class SourceResolver(Protocol):
@@ -253,6 +257,15 @@ class LiveSourceResolver:
         host = (urlsplit(url).hostname or "").lower()
         verdict = await asyncio.to_thread(self.admission.admit, self.request_id, "", "gateway", "source_verify", host)
         if not isinstance(verdict, dict) or not verdict.get("admitted"):
+            if isinstance(verdict, dict) and verdict.get("reason") == "host_paused":
+                # A host resting after repeated failures is not the request's HTTP limit: the quota is not used up.
+                paused = str(verdict.get("host") or host)
+                wait = verdict.get("retry_after_s")
+                wait = int(wait) if isinstance(wait, (int, float)) and not isinstance(wait, bool) else None
+                when = f"약 {wait}초 뒤에 다시 보낼 수 있습니다" if wait is not None else "잠시 뒤 다시 보낼 수 있습니다"
+                raise LookupFailed("host_paused", f"{paused} 호스트가 연속 실패로 쉬는 중이라 조회하지 않았습니다"
+                                                  f"(확인 못 함, 요청의 조회 몫은 남아 있고 {when})",
+                                   host=paused, retry_after_s=wait)
             limit = verdict.get("limit") if isinstance(verdict, dict) else None
             raise LookupFailed("lookup_limit", f"요청 HTTP 상한({limit})에 닿아 조회하지 않았습니다(확인 못 함)")
         return verdict.get("seq") if type(verdict.get("seq")) is int else None

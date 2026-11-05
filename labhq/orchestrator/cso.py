@@ -8,6 +8,7 @@ where dependencies allow (hibernate on HPC jobs, resume when they finish) → sc
 from __future__ import annotations
 from ..request_persistence import create_revised_request, persist_request, remove_result, save_result
 
+import sqlite3
 import asyncio
 import copy
 import hashlib
@@ -122,6 +123,7 @@ REQUEST_ANALYSIS_TERMS: tuple[tuple[str, str, str], ...] = (
     ("평가", r"(?i)(?:평가|evaluat(?:e|ed|ing|ion))", r"(?i)(?:평가|evaluat(?:e|ed|ing|ion))"),
 )
 SCOPE_COVERAGE_WARNING = "요청 범위 누락: 계획의 범위·단계에서 찾지 못한 분석 항목 — "
+PAUSED_HOST_WARNING = "조회 호스트 쉬는 중: "
 REQUEST_SCOPE_RULE = (
     "Copy every analysis name and analysis action explicitly written in the PI's request into the scope and at least "
     "one planned step. Keep names such as DEG, DMP/differential methylation, pathway analysis, regression, "
@@ -303,6 +305,21 @@ def missing_request_analysis_terms(request: str, plan: Any) -> list[str]:
             matches["분석"] = True
     return [label for label, _request_pattern, _plan_pattern in requested
             if not scope_matches[label] or not instruction_matches[label]]
+
+
+def with_paused_host_warning(plan: Any, paused: dict[str, int]) -> Any:
+    """Replace the paused-host warning with the one for these hosts, without rejecting CP1 (#1282). A host that keeps
+    failing is not sent to until its cooldown ends; the request's lookup quota is not spent on it."""
+    if not isinstance(plan, dict):
+        return plan
+    previous = plan.get("warnings") if isinstance(plan.get("warnings"), list) else []
+    kept = [warning for warning in previous
+            if not (isinstance(warning, str) and warning.startswith(PAUSED_HOST_WARNING))]
+    if paused:
+        hosts = ", ".join(f"{host}({seconds}초 남음)" for host, seconds in paused.items())
+        kept.append(f"{PAUSED_HOST_WARNING}{hosts} — 연속 실패로 쉬는 중이라 이 호스트로는 보내지 않습니다. 보내지 않은 시도는 조회 몫을 쓰지 않으며 "
+                    "쉬는 시간이 지나면 다시 보냅니다. 그때까지 이 호스트에서 받을 근거는 확인 못 함으로 남을 수 있습니다")
+    return {**plan, "warnings": kept}
 
 
 def with_scope_coverage_warning(plan: Any, request: str) -> Any:
@@ -4998,6 +5015,15 @@ class Orchestrator:
                            **({"plan_warnings": req.get("plan_warnings") or [], "plan_validation": req["plan_validation"]}
                               if (req.get("plan_validation") or {}).get("semantic_checks") else {})}}
 
+    def _paused_lookup_hosts(self, rid: str) -> dict[str, int]:
+        """The hosts this request's lookups are paused on, and the seconds left; {} when no cap is configured or the
+        counter cannot be read (a plan warning is a note, never a reason to stop)."""
+        try:
+            admission = admission_for(self.hub.s)
+            return admission.paused_hosts(rid) if admission is not None else {}
+        except (OSError, ValueError, sqlite3.Error):
+            return {}
+
     def _lookup_usage_line(self, rid: str, *, stage: str | None = None) -> str:
         """This request's public lookup usage as a fact for plan, re-plan, precedent and step prompts (#1088).
 
@@ -7961,6 +7987,7 @@ class Orchestrator:
                             # Part of the frozen plan, so CP1 shows them and the hash covers them (#446).
                             plan = with_checklist_skip_warnings(plan, checklist_catalog,
                                                                 req.get("analysis_precedents"))
+                            plan = with_paused_host_warning(plan, self._paused_lookup_hosts(rid))  # frozen with the plan
                             validated = validate_research_plan(plan, max_steps=self.cfg.max_steps,
                                                                max_branches=self.cfg.max_branches,
                                                                max_branch_steps=self.cfg.max_branch_steps,
@@ -8064,9 +8091,9 @@ class Orchestrator:
                             plan, plan_res = await resolve_plan_questions(plan, plan_res, correction_suffix)
                             if plan is None:
                                 return
-                    req["plan"] = with_scope_coverage_warning(with_checklist_skip_warnings(
+                    req["plan"] = with_paused_host_warning(with_scope_coverage_warning(with_checklist_skip_warnings(
                         {**plan, "steps": steps, "warnings": warnings}, checklist_catalog,
-                        req.get("analysis_precedents")), str(req.get("text") or text))
+                        req.get("analysis_precedents")), str(req.get("text") or text)), self._paused_lookup_hosts(rid))
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                     # The verdict of the plan that runs, else the first one given (#36, #346 review)

@@ -277,3 +277,96 @@ def test_a_paused_answer_from_the_broker_becomes_a_host_pause_not_a_limit_refusa
     with pytest.raises(annot_mcp.LookupHostPaused) as excinfo:
         asyncio.run(annot_mcp._admit("fulltext", EBI))
     assert "120" in str(excinfo.value) and not isinstance(excinfo.value, annot_mcp.LookupRefused)
+
+
+# ---- #1282: the live source check reports a resting host as host_paused, not as the request's limit ----
+def _live_check(admission):
+    import json
+    from pathlib import Path
+
+    from labhq.evidence.verify import LiveSourceResolver, verify_sources
+    from tests.test_evidence_verify import build, claim, link, row
+
+    doi = "10.1093/nar/gks1195"
+    fixture = Path(__file__).parent / "fixtures" / "live_sources" / "crossref_normal.json"
+    sent = []
+
+    def handler(request):
+        sent.append(request)
+        return httpx.Response(200, request=request, json=json.loads(fixture.read_text(encoding="utf-8")))
+
+    resolver = LiveSourceResolver(transport=httpx.MockTransport(handler), admission=admission, request_id="req_1")
+    result = build([claim("c1")], [row("e1", "doi", doi, kind="literature_claim")], [link("c1", "e1")])
+    return asyncio.run(verify_sources(result, resolver)).evidence[0].resolution, sent, resolver
+
+
+def test_a_resting_host_is_host_paused_with_its_host_and_wait_and_keeps_the_quota(tmp_path):
+    admission, _ = ledger(tmp_path, limit=50)
+    for _ in range(3):
+        send(admission, "api.crossref.org", 503, tool="source_verify")
+    resolution, sent, resolver = _live_check(admission)
+    assert (resolution.lookup, resolution.status, resolution.error_kind) == ("failed", "requires_verification",
+                                                                             "host_paused")
+    assert "api.crossref.org" in resolution.detail and "조회 몫은 남아 있고" in resolution.detail
+    assert not sent and admission.usage("req_1")["used"] == 3  # nothing was sent or counted for the refused ones
+    from labhq.evidence.verify import LookupFailed
+    with pytest.raises(LookupFailed) as caught:
+        asyncio.run(resolver.lookup("doi", "10.1093/nar/gks1195"))
+    assert caught.value.kind == "host_paused" and caught.value.host == "api.crossref.org"
+    assert 0 < caught.value.retry_after_s <= la.BREAKER_COOLDOWN_S
+
+
+def test_an_exhausted_quota_is_still_lookup_limit(tmp_path):
+    admission, _ = ledger(tmp_path, limit=2)
+    for _ in range(2):
+        admission.admit("req_1", "task_1", "bio", "annot", "pubmed.ncbi.nlm.nih.gov")
+    resolution, sent, _ = _live_check(admission)
+    assert resolution.error_kind == "lookup_limit" and not sent
+
+
+# ---- #1282: the CP1 plan carries the resting hosts as a warning ----
+def test_the_plan_warning_names_the_resting_hosts_and_replaces_its_own_earlier_line():
+    from labhq.orchestrator.cso import PAUSED_HOST_WARNING, with_paused_host_warning
+
+    plan = {"steps": [], "warnings": ["other warning", PAUSED_HOST_WARNING + "old.example(5초 남음)"]}
+    cleaned = with_paused_host_warning(plan, {"www.ebi.ac.uk": 120})
+    assert cleaned["warnings"][0] == "other warning" and len(cleaned["warnings"]) == 2
+    line = cleaned["warnings"][1]
+    assert line.startswith(PAUSED_HOST_WARNING) and "www.ebi.ac.uk(120초 남음)" in line and "old.example" not in line
+    assert "조회 몫을 쓰지 않으며" in line  # it does not claim any quota is left
+    assert with_paused_host_warning(cleaned, {})["warnings"] == ["other warning"]  # the host opened again
+    assert with_paused_host_warning("not a plan", {"h": 1}) == "not a plan"
+
+
+def test_the_orchestrator_reads_the_resting_hosts_of_its_own_request_only(tmp_path):
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.settings import Settings
+
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    me = SimpleNamespace(hub=SimpleNamespace(s=settings))
+    assert Orchestrator._paused_lookup_hosts(me, "req_1") == {}  # no cap configured: nothing is counted
+    settings.annot.request_lookup_limit = 50
+    admission = la.admission_for(settings)
+    for _ in range(3):
+        send(admission, EBI, 503)
+    paused = Orchestrator._paused_lookup_hosts(me, "req_1")
+    assert list(paused) == [EBI] and 0 < paused[EBI] <= la.BREAKER_COOLDOWN_S
+    assert Orchestrator._paused_lookup_hosts(me, "req_2") == {}
+
+
+@pytest.mark.asyncio
+async def test_a_research_plan_reaches_cp1_with_the_resting_host_warning():
+    from labhq.orchestrator.cso import PAUSED_HOST_WARNING, Orchestrator
+    from tests.test_cp1_input_fit_796 import no_native_workers, run_plans  # noqa: F401 - the same CP1 flow
+
+    class Resting(Orchestrator):
+        def _paused_lookup_hosts(self, rid):
+            return {EBI: 90}
+
+    hub, req = await run_plans(["raw_counts", "raw_counts"], orchestrator=Resting)
+    warnings = hub.approvals[0]["detail"]["warnings"]
+    assert any(w.startswith(PAUSED_HOST_WARNING) and EBI in w for w in warnings)
+    assert req["outcome"] == "plan_approved"  # a note, never a reason to stop
