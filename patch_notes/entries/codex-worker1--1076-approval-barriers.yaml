@@ -1,5 +1,9 @@
 pr: 1274
 rows:
+  - sha: 1f40ffa
+    at: "2026-11-05 13:43"
+    summary: "writer enqueue까지 기존 시간 제한을 확인합니다."
+    text: "시험: publish 진입 이후 enqueue 대기에도 기존 제한 적용 (#1076)"
   - sha: 4664baa
     at: "2026-11-05 13:31"
     summary: "승인 응답 시험에서 송신과 저장 지연을 따로 확인합니다."
