@@ -97,3 +97,26 @@ def test_a_string_on_the_next_line_is_not_joined_to_the_secret():
     code = 'token = "hunter2xyz"\n"""docstring stays"""\n'
     cleaned = _clean(code)
     assert "hunter2xyz" not in cleaned and '"""docstring stays"""' in cleaned
+
+
+@pytest.mark.parametrize("line,leaked", [
+    ('token = "hunter2\\nxyz"', "xyz"),
+    ('token: Annotated[str, Field(repr=False)] = "hunter2xyz"', "hunter2xyz"),
+    ('token = ("part1abc"\n         "part2xyz")', "part2xyz"),
+    ('client = make(api_key="hunter2xyz")', "hunter2xyz"),
+    ('self.password = b"hunter2xyz"', "hunter2xyz"),
+    ('config["secret"] = f"hunter2xyz{n}"', "hunter2xyz"),
+    ('token = "abc123xyz" + suffix', "abc123xyz"),
+])
+def test_python_secrets_are_found_by_the_parser_in_every_form(line, leaked):
+    cleaned = _clean(f"{line}\n")
+    assert leaked not in cleaned and "redacted-secret" in cleaned
+    assert code_syntax_issues({NAME: cleaned}) == []
+    assert scan_publish_files({NAME: cleaned}) == []
+    assert scan_publish_files({NAME: line + "\n"}) == [{"kind": "secret", "path": NAME}]
+
+
+def test_shell_ansi_c_and_adjacent_quotes_are_hidden():
+    for line in ("TOKEN=$'hunter2xyz'", 'TOKEN="part1abc""part2xyz"', "export PASSWORD='hunter2xyz'"):
+        cleaned = _clean(line + "\n", "steps/s1/outputs/scripts/a.sh")
+        assert "hunter2xyz" not in cleaned and "part2xyz" not in cleaned, line
