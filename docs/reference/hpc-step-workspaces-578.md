@@ -18,6 +18,7 @@
 - bundle은 해당 run의 engine/model을 우선한다. 단계 절대 링크와 기록된 data snapshot 링크를 실제 묶음 파일로 바꾼다. model은 RO-Crate software identity hash에 반영된다.
 - HPC 환경 binding과 예약된 환경 lock 단계는 검증된 scheduler용 snapshot이 없어 dispatch 전에 거부한다. runner도 binding이 든 HPC task를 비용 없이 거부한다. 기존 local 환경 계약은 유지한다.
 - HPC 선택·계획 검증은 요청별 roster와 runner view를 따른다. WSL에 pin된 요청이 native owner의 capability를 쓰지 않는다.
+- 기존 요청 project/path-reference 입력은 scheduler snapshot이 없어 HPC 선택 뒤 어떤 처리 단계도 보내지 않는다. 저장된 HPC 선택도 다시 확인한다. runner는 직원 project 입력까지 포함해 작업 폴더·잡을 만들기 전에 비용 없이 거부한다. local 선택은 유지하며 조상 산출의 검증된 data 전달은 허용한다.
 
 ## 04장 후속 반영
 
@@ -30,7 +31,7 @@ rev2는 #1276 소유의 `04-install.md`·`.en.md`를 편집하지 않는다. mai
 CLI `1: a/b`, 실제 worker만 HPC 선택, 동명 산출·파일 경로 충돌, mock 제출·입력 provenance, wake·runner 재시작·revision 분리, 구형 원본 보존, bundle 링크·run identity, 이동 후 verify·오귀속 거부를 검사한다.
 
 rev2 로컬: 확장 993 passed/39 skipped, 후속 bundle·accounting·CSO 413/7, 경계 138/4(서로 중복 포함). Windows의 POSIX 권한·링크 검사는 skip이며 Linux CI가 맡는다.
-리뷰 후 환경·WSL runner 회귀 401 passed/15 skipped. 08·11장 한영은 합계 158,935→160,875자(+1,940). 경로·검증 상세는 이 reference에 뒀다.
+리뷰 후 환경·WSL runner 회귀 401 passed/15 skipped, 요청 입력·환경·WSL·workspace 회귀 455/33, E2E·resume accounting 39 passed(중복 포함). 08·11장 한영은 합계 158,935→161,077자(+2,142). 경로·검증 상세는 이 reference에 뒀다.
 
 ## CI 범위 추가
 

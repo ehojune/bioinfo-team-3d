@@ -3347,6 +3347,11 @@ class Orchestrator:
     async def _choose_execution(self, rid: str) -> bool:
         req = self.hub.requests[rid]
         if req.get("execution_location"):
+            problems = execution_policy.input_errors(
+                {**reference_meta(req), "project_dirs": req.get("project_dirs")}, req["execution_location"])
+            if problems:
+                await self._finish(rid, "; ".join(problems), {}, ok=False)
+                return False
             return True
         host = execution_policy.available_runner(
             self.hub, req.get("agent_id") if req.get("mode") == "direct" else None, rid)
@@ -3364,6 +3369,11 @@ class Orchestrator:
             req["execution_location"] = {"mode": mode, "source": "PI 선택",
                                          "approval_id": decision.get("approval_id") or decision.get("id"),
                                          **({"runner_id": host, "workspace": rid} if mode == "hpc" else {})}
+        problems = execution_policy.input_errors(
+            {**reference_meta(req), "project_dirs": req.get("project_dirs")}, req["execution_location"])
+        if problems:
+            await self._finish(rid, "; ".join(problems), {}, ok=False)
+            return False
         self.hub.save_request(rid)
         return True
 
@@ -4103,7 +4113,7 @@ class Orchestrator:
         if location:
             task = task.model_copy(update={"meta": {**task.meta, "execution_location": location}})
             if task.meta.get("kind") in {"step", "direct"}:
-                problems = execution_policy.plan_errors(
+                problems = execution_policy.input_errors(task.meta, location) + execution_policy.plan_errors(
                     [{"id": task.meta.get("step_id", "direct"), "agent_id": task.agent_id,
                       "execution": location["mode"],
                       **{key: task.meta[key] for key in ("environment_binding", "environment_bindings")
@@ -5348,7 +5358,10 @@ class Orchestrator:
     async def run_dag(self, rid: str, request: str, steps: list[dict], results: dict[str, TaskResult],
                       only: set[str] | None = None, feedback: dict[str, str] | None = None) -> None:
         choice = self.hub.requests.get(rid, {}).get("execution_location")
-        problems = execution_policy.plan_errors(steps, choice, hub_agents(self.hub, rid))
+        request_row = self.hub.requests.get(rid) or {}
+        problems = execution_policy.input_errors(
+            {**reference_meta(request_row), "project_dirs": request_row.get("project_dirs")}, choice)
+        problems += execution_policy.plan_errors(steps, choice, hub_agents(self.hub, rid))
         if problems:
             raise ValueError("; ".join(problems))
         plan = (self.hub.requests.get(rid) or {}).get('plan') or {}

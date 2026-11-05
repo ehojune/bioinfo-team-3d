@@ -431,6 +431,59 @@ async def test_hpc_choice_and_dispatch_follow_request_pinned_runner_view():
     assert hub.agents["worker"] == native and hub.agent_runner["worker"] == "cluster"
 
 
+@pytest.mark.parametrize("field", ["project_dirs", "references"])
+@pytest.mark.parametrize("mode", ["hpc", "local"])
+async def test_existing_request_paths_refuse_hpc_before_processing_but_preserve_local(field, mode):
+    hub = hub_for(lambda task: None)
+    hub.requests["r"][field] = ["/existing/input"] if field == "project_dirs" else [
+        {"kind": "path", "value": "/existing/input"}]
+
+    async def answer(**card):
+        return {"approved": True, "note": "1: a" if mode == "hpc" else "1: b"}
+
+    hub.request_approval = answer
+    accepted = await Orchestrator(hub)._choose_execution("r")
+    assert accepted is (mode == "local")
+    assert hub.calls == []
+    if mode == "hpc":
+        assert hub.requests["r"]["status"] == "failed"
+        assert "request-input snapshot" in hub.requests["r"]["report"]
+        assert hub.requests["r"]["execution_location"]["mode"] == "hpc"  # no silent local downgrade
+
+
+async def test_saved_hpc_choice_with_unstaged_request_input_never_starts_dag():
+    hub = hub_for(lambda task: None)
+    hub.requests["r"].update(project_dirs=["/existing/input"],
+        execution_location={"mode": "hpc", "runner_id": "cluster", "source": "PI 선택"})
+    with pytest.raises(ValueError, match="request-input snapshot"):
+        await Orchestrator(hub).run_dag("r", "test", [{"id": "s1", "agent_id": "worker",
+            "execution": "hpc", "instruction": "process inputs", "depends_on": []}], {})
+    assert not await Orchestrator(hub)._choose_execution("r")
+    assert not hub.calls and not hub.approvals
+
+
+@pytest.mark.parametrize("source", ["staff", "project_dirs", "reference_dirs"])
+async def test_runner_refuses_unstaged_hpc_inputs_before_workspace_or_job(tmp_path, monkeypatch, source):
+    from labhq.adapters.mock import MockAdapter
+    settings = _settings(tmp_path)
+    settings.hpc.scheduler = "mock"
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.mock, builtin_mcp=["hpc"],
+                     project_dirs=[str(tmp_path / "input")] if source == "staff" else [])
+    runner = Runner(settings)
+    monkeypatch.setattr(runner.registry, "get", lambda _: agent)
+
+    async def never(adapter, ctx):
+        raise AssertionError("unstaged inputs must not reach the adapter")
+
+    monkeypatch.setattr(MockAdapter, "run", never)
+    result = await runner.run_task(Task(agent_id=agent.id, request_id="r", prompt="process input",
+        meta={"kind": "step", "step_id": "s1", **({source: [str(tmp_path / "input")]} if source != "staff" else {}),
+              "execution_location": {"mode": "hpc", "runner_id": settings.runner.id}}))
+    assert not result.ok and "request-input snapshot" in result.error
+    assert result.cost_known and result.cost_usd == 0
+    assert not runner.workspaces and not runner.jobs
+
+
 async def test_waiting_job_outputs_survive_wake_and_runner_restart(tmp_path, monkeypatch):
     from labhq.adapters.mock import MockAdapter
     settings = _settings(tmp_path)

@@ -2213,13 +2213,17 @@ class Runner:
                 raise ValueError("whole-request HPC needs a safe step id")
             workdir_override = self.ws_root / "hpc" / task.request_id / "steps" / step_id
         read_only = is_read_only_task(task.meta, agent)
-        refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
+        input_refusal = ("HPC request inputs require a verified scheduler-readable request-input snapshot"
+                         if whole_hpc and (agent.project_dirs or task.meta.get("project_dirs")
+                                           or task.meta.get("reference_dirs")) else None)
+        refusal = input_refusal or (read_only_refusal(agent.id, agent.engine) if read_only else None)
         # A contract hire works only once active, and staff that send data to external services never take restricted
         # inputs (#424); the gateway refuses both first.
         refusal = (refusal or (probation_refusal(agent.id) if not_yet_active(agent) else None)
                    or external_service_refusal(agent, task, self.s))
         if refusal:  # the gateway refuses first; this holds for any other sender and after force_engine
-            result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal)
+            result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal,
+                                **({"cost_usd": 0.0, "cost_known": True} if input_refusal else {}))
             base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
             await self.emit_all([
                 Event(type="agent.status", data={"state": "error", "error": short(refusal, 200)}, **base),

@@ -56,7 +56,16 @@ def plan_rule(choice):
             "never read sibling workspaces. Different steps may declare identical output names. "
             "Runner-root .venv environment_binding(s) are unsupported on HPC and will be refused before dispatch. "
             "Keep any job-local environment under this step's outputs/ and record its versions there. "
+            "Existing project/reference files also require a scheduler-readable request-input snapshot; "
+            "such requests are refused before processing until that snapshot contract exists. "
             "The CSO report and request bundle collect results only at the end.")
+
+
+def input_errors(metadata, choice):
+    if choice and choice.get("mode") == "hpc" and (metadata.get("project_dirs") or metadata.get("reference_dirs")):
+        return ["HPC request inputs require a verified scheduler-readable request-input snapshot; "
+                "processing refused before dispatch"]
+    return []
 
 
 def plan_errors(steps, choice, agents):
