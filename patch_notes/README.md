@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:05 | [`0dd1a02`](https://github.com/ehojune/bioinfo-team-3d/pull/1284/commits/0dd1a02) | **원인 진단 문서를 docs/reference에 남겼습니다.**<br>docs/reference/ci-1283-windows-pool-timeout.md 추가 |
+| 22:00 | [`3295bb2`](https://github.com/ehojune/bioinfo-team-3d/pull/1284/commits/3295bb2) | **Windows 시험 한 단계가 시간 한계를 넘던 원인을 밝히고, 그 원인이 된 시험 보조 파일의 한 줄을 다른 코드와 무관하게 바꿨습니다.**<br>semantics_shadow_lab 게이트 응답을 상수로 바꿔 #578 모듈 import 제거, #1283 진단 문서 추가 |
 | 21:10 | [`496fc4c`](https://github.com/ehojune/bioinfo-team-3d/pull/1280/commits/496fc4c) | **def connect(token="...") 같은 매개변수 기본값의 비밀값이 가려지지 않던 틈을 닫습니다.**<br>Python 함수와 lambda의 매개변수 이름이 비밀 이름이면 기본값 리터럴도 가린다(위치·키워드 전용 모두) |
 | 20:40 | [`92fb2b5`](https://github.com/ehojune/bioinfo-team-3d/pull/1280/commits/92fb2b5) | **셸 값에 = 가 있을 때 뒷부분이 남던 것과 빈 대입 뒤 주석을 깨뜨리던 것을 바로잡습니다.**<br>셸의 따옴표 없는 비밀값이 =를 포함해도 전체를 가리고, 빈 대입 뒤의 |
 | 20:00 | [`f918ee9`](https://github.com/ehojune/bioinfo-team-3d/pull/1280/commits/f918ee9) | **따옴표를 쓰는 방식을 하나씩 늘려 막던 것을 파서로 바꿔, 어떤 문자열 형식으로 쓴 비밀값도 가립니다.**<br>코드의 비밀값 리터럴 판정을 부류째 구조로 바꾼다. Python은 ast로 읽어 대입·주석 대입·속성·키워드 인자·dict 키의 우변 리터럴을 따옴표 방식(삼중, 줄 이음, 여러 줄 이어 붙임, f-string, bytes)과 상관없이 찾고, 표현식 안의 문자열 조각도 각각 가린다. 읽히지 않는 Python과 R·셸은 패턴을 쓰며 셸의 $'…'와 붙여 쓴 따옴표도 읽는다 |
