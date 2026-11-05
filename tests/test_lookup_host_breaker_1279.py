@@ -322,3 +322,36 @@ def test_an_exhausted_quota_is_still_lookup_limit(tmp_path):
         admission.admit("req_1", "task_1", "bio", "annot", "pubmed.ncbi.nlm.nih.gov")
     resolution, sent, _ = _live_check(admission)
     assert resolution.error_kind == "lookup_limit" and not sent
+
+
+# ---- #1282: the CP1 plan carries the resting hosts as a warning ----
+def test_the_plan_warning_names_the_resting_hosts_and_replaces_its_own_earlier_line():
+    from labhq.orchestrator.cso import PAUSED_HOST_WARNING, with_paused_host_warning
+
+    plan = {"steps": [], "warnings": ["other warning", PAUSED_HOST_WARNING + "old.example(5초 남음)"]}
+    cleaned = with_paused_host_warning(plan, {"www.ebi.ac.uk": 120})
+    assert cleaned["warnings"][0] == "other warning" and len(cleaned["warnings"]) == 2
+    line = cleaned["warnings"][1]
+    assert line.startswith(PAUSED_HOST_WARNING) and "www.ebi.ac.uk(120초 남음)" in line and "old.example" not in line
+    assert "조회 몫은 남아 있고" in line
+    assert with_paused_host_warning(cleaned, {})["warnings"] == ["other warning"]  # the host opened again
+    assert with_paused_host_warning("not a plan", {"h": 1}) == "not a plan"
+
+
+def test_the_orchestrator_reads_the_resting_hosts_of_its_own_request_only(tmp_path):
+    from types import SimpleNamespace
+
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.settings import Settings
+
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    me = SimpleNamespace(hub=SimpleNamespace(s=settings))
+    assert Orchestrator._paused_lookup_hosts(me, "req_1") == {}  # no cap configured: nothing is counted
+    settings.annot.request_lookup_limit = 50
+    admission = la.admission_for(settings)
+    for _ in range(3):
+        send(admission, EBI, 503)
+    paused = Orchestrator._paused_lookup_hosts(me, "req_1")
+    assert list(paused) == [EBI] and 0 < paused[EBI] <= la.BREAKER_COOLDOWN_S
+    assert Orchestrator._paused_lookup_hosts(me, "req_2") == {}
