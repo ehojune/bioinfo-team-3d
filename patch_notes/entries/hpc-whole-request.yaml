@@ -33,3 +33,6 @@ rows:
 - sha: "cbfea6c"
   at: 2026-11-05 16:20
   text: HPC 환경 binding 계획을 dispatch 전에 거부하고 선택·계획 검증에 요청별 WSL runner view를 쓴다.
+- sha: "dc2f3b2"
+  at: 2026-11-05 16:34
+  text: 요청·직원의 기존 입력 snapshot이 없으면 HPC 처리 전에 거부하고 local 선택·조상 산출 전달은 보존한다.
