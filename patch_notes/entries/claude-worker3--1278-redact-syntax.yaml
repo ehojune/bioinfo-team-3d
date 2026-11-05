@@ -12,3 +12,7 @@ rows:
   at: 2026-11-05 18:20
   text: 새 시험 파일 tests/test_result_storage_redact_1278.py를 config/ci/windows-boundary-v1.json의 known_tests에 올려 Windows 검토 목록 검사를 통과시킨다
   summary: 새 시험이 Windows 목록에 없어 CI가 시작 전에 실패하던 것을 바로잡습니다.
+- sha: 'faccab7'
+  at: 2026-11-05 19:00
+  text: 코드의 비밀값 리터럴 판정을 넓힌다. 삼중 따옴표 문자열, 괄호로 감싼 문자열, +나 공백으로 이어 붙인 문자열 전체와 부호가 붙은 숫자·16진수·밑줄 숫자를 읽고, 숫자는 우변 전체일 때만 리터럴로 본다(12345678 + offset은 표현식으로 둔다)
+  summary: 삼중 따옴표나 이어 붙인 문자열, 부호·16진 숫자로 쓴 비밀값이 가려지지 않던 틈을 닫습니다.
