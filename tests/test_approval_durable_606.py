@@ -448,6 +448,7 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
     card, _ = pending_card(hub, "runner")
     entered, release, send_timed_out = asyncio.Event(), asyncio.Event(), asyncio.Event()
     publishing, publish_release = asyncio.Event(), asyncio.Event()
+    writer_enqueued = asyncio.Event()
     timeline = []
     started = time.monotonic()
     def mark(stage):
@@ -471,6 +472,7 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
         if getattr(fn, "__name__", "") != "_append_event_now":
             return submit(fn, *args, **kwargs)
         writer_times["enqueue"] = round(time.monotonic() - started, 3)
+        writer_enqueued.set()
         def observed_job():
             writer_times["start"] = round(time.monotonic() - started, 3)
             writer_context.publish = True
@@ -530,8 +532,9 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
             mark("outer_cancel")
             task.cancel()
             await asyncio.sleep(0)
+        deadline = asyncio.get_running_loop().time() + 4 * send_bound
         try:
-            await asyncio.wait_for(publishing.wait(), 4 * send_bound)
+            await asyncio.wait_for(publishing.wait(), max(0, deadline - asyncio.get_running_loop().time()))
         except asyncio.TimeoutError:
             pytest.fail("send timeout or unregister did not reach publish within its bound: " + diagnostics())
         assert send_timed_out.is_set(), diagnostics()
@@ -540,6 +543,10 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
             assert not task.done(), diagnostics()
             mark("publish_release")
             publish_release.set()
+        try:
+            await asyncio.wait_for(writer_enqueued.wait(), max(0, deadline - asyncio.get_running_loop().time()))
+        except asyncio.TimeoutError:
+            pytest.fail("publish did not enqueue within the send bound: " + diagnostics())
         done, _ = await asyncio.wait({task}, timeout=10)  # durable publish has a separate completion bound
         assert task in done, "durable publish did not complete: " + diagnostics()
         assert any(stage == "publish_done" for stage, _ in timeline), diagnostics()
