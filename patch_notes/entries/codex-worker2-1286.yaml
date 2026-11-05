@@ -1,0 +1,6 @@
+pr: 1287
+rows:
+- sha: "228f36a"
+  at: 2026-11-05 23:31
+  summary: 채용으로 바뀐 담당자가 HPC 실행 조건에 맞지 않으면 계획 승인 전에 중단합니다.
+  text: prepare_recruits 뒤 요청별 roster로 plan_errors를 다시 검사한다. 신규·재개 요청의 적격 HPC·부적격 4종·채용 거절·local mock 28건과 관련 회귀 191 passed, 5 skipped를 확인했다. 실제 HPC와 채용은 실행하지 않았다.
