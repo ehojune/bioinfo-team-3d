@@ -153,6 +153,16 @@ def test_a_local_autouse_with_a_computed_flag_is_in_every_nodes_scope():
     assert any(isinstance(n, ast.Name) and n.id == 'run' for n in s._boundary_scope(tree, 'test_first', names))
 
 
+@pytest.mark.parametrize('flag,expected', [('True', True), ('AUTO', True), ('False', False)])
+def test_a_computed_autouse_fixture_takes_the_host_resource_lock_too(tmp_path, flag, expected):
+    source = ('import pytest, psutil\nAUTO = True\n@pytest.fixture(autouse=' + flag + ')\n'
+              'def scan(): yield list(psutil.process_iter())\ndef test_first(): assert 1\n')
+    test = tmp_path / 'tests/test_math.py'
+    test.parent.mkdir(parents=True, exist_ok=True)
+    test.write_text(source, encoding='utf-8')
+    assert s.host_resource(test, root=tmp_path, symbols=['test_first']) is expected
+
+
 def test_a_file_level_decision_still_selects_the_file(tmp_path):
     assert decide(tmp_path, SOURCE, None)[0]
 
