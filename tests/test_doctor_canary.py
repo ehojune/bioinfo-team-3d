@@ -313,6 +313,8 @@ def test_canary_resumes_in_initial_workdir(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.claude_code)
     dirs = []
+    monkeypatch.setattr(doctor, "_resolve_command", lambda *args: ["fake"])
+    monkeypatch.setattr(doctor, "_probe", lambda *args: (0, "2.1.282" if "claude_code" == "claude_code" else "0.200.0"))
     monkeypatch.setattr(doctor, "get_adapter", lambda *args: SimpleNamespace(enforces_read_only=True, supports_resume=True))
 
     async def call(settings, agent, workdir, prompt, **kwargs):
@@ -360,6 +362,8 @@ def test_canary_requires_known_token_usage(tmp_path, monkeypatch, known, status)
 
     settings = _settings(tmp_path)
     agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.codex)
+    monkeypatch.setattr(doctor, "_resolve_command", lambda *args: ["fake"])
+    monkeypatch.setattr(doctor, "_probe", lambda *args: (0, "2.1.282" if "codex" == "claude_code" else "0.200.0"))
     monkeypatch.setattr(doctor, "get_adapter", lambda *args: SimpleNamespace(enforces_read_only=True, supports_resume=True))
 
     async def call(*args, **kwargs):
