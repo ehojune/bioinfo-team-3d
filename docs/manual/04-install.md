@@ -103,7 +103,7 @@ WSL을 설정하지 않은 설치에서 `doctor`는 선택 기능이 꺼졌다�
 
 **WSL이 준비되지 않았을 때(#612).** `bioinfo-agent`에게 맡긴 일(직접 요청이나 이미 계획된 단계)이 갈 곳이 없고 설정에 `runner.wsl`이 있으면, 요청마다 한 번 "WSL 준비가 덜 됐어요. 셋업할까요?" 카드가 뜹니다. 승인하면 gateway가 `setup-wsl`과 같은 준비를 thread에서 돌립니다. 15분은 기다림의 상한이라 이미 시작한 준비는 멈추지 못하고, 끝날 때까지 다른 셋업은 새로 시작하지 않습니다. 다른 native runner가 같은 직원을 맡고 있으면(잠시 끊긴 경우) 카드 없이 기존 대기 경로를 씁니다. 관리자 권한이 필요한 명령이 남으면 카드와 오류에 그 명령을 보여 주고, 요청은 runner를 기다리지 않고 바로 멈춥니다(비용 $0). 거절하거나 시간이 끝나도 같은 요청 안에서는 다시 묻지 않습니다. gateway가 WSL이 있는 PC가 아니면 실행하지 않고 `labhq setup-wsl`을 안내만 합니다. 카드와 피드에는 설치 출력이 아니라 항목 이름과 고정 안내만 남습니다.
 
-**이 PC의 WSL에서 실행하기(#612).** 요청을 보낼 때 WSL을 직접 고를 수 있습니다: `labhq send --wsl`, 웹 요청 칸의 "WSL에서" 체크, API의 `run_where: "wsl"`(기본 `auto`). 고르면 계획이 직원 목록을 읽기 전에 위 카드를 요청 단위로 한 번 열고(다른 native runner가 같은 직원을 호스트해도 묻습니다), 승인하면 준비 뒤 WSL runner가 직원을 맡을 때까지 기다린 다음 그 요청의 `bioinfo-agent` 작업을 WSL runner에 고정합니다(`session_runner`). 고정된 작업은 다른 요청의 `bioinfo-agent` 작업이 native runner에서 아직 끝나지 않았어도 WSL runner로만 보내고, 다시 보내거나 gateway 재시작 뒤 이어받을 때도 같은 runner로만 갑니다. WSL runner가 잠시 끊기면 native로 돌리지 않고 그 runner가 돌아오기를 기다립니다. WSL runner를 기다리는 시간은 최대 5분이고, 설정(`runner.wsl`)이 없거나 점검·셋업이 실패하거나 거절·시간 초과가 나면 기다리지 않고 요청의 `run_where_note`에 이유를 남긴 채 WSL 없이 진행합니다. 계획에는 WSL을 실제로 얻은 요청에만 "PI가 이 PC의 WSL에서 실행하라고 골랐다"가 한 줄 전달됩니다. 골랐지만 WSL 없이 진행하는 요청은 대신 `run_where_note`의 이유와 "WSL 없이 실행한다"가 전달되어 계획이 WSL을 가정하지 않습니다. CP1 수정 요청과 후속 요청도 같은 선택을 이어받습니다. 이 선택은 `bioinfo-agent`에만 해당해서, 다른 직원을 직접 고른 요청에 붙이면 API(400)·CLI·웹이 거부합니다. HPC·local 선택지와 자동 계획이 WSL을 고르게 하는 "실행 위치 카드"는 #578과 함께 옵니다.
+**이 PC의 WSL에서 실행하기(#612).** 요청을 보낼 때 WSL을 직접 고를 수 있습니다: `labhq send --wsl`, 웹 요청 칸의 "WSL에서" 체크, API의 `run_where: "wsl"`(기본 `auto`). 고르면 계획이 직원 목록을 읽기 전에 위 카드를 요청 단위로 한 번 열고(다른 native runner가 같은 직원을 호스트해도 묻습니다), 승인하면 준비 뒤 WSL runner가 직원을 맡을 때까지 기다린 다음 그 요청의 `bioinfo-agent` 작업을 WSL runner에 고정합니다(`session_runner`). 고정된 작업은 다른 요청의 `bioinfo-agent` 작업이 native runner에서 아직 끝나지 않았어도 WSL runner로만 보내고, 다시 보내거나 gateway 재시작 뒤 이어받을 때도 같은 runner로만 갑니다. WSL runner가 잠시 끊기면 native로 돌리지 않고 그 runner가 돌아오기를 기다립니다. WSL runner를 기다리는 시간은 최대 5분이고, 설정(`runner.wsl`)이 없거나 점검·셋업이 실패하거나 거절·시간 초과가 나면 기다리지 않고 요청의 `run_where_note`에 이유를 남긴 채 WSL 없이 진행합니다. 계획에는 WSL을 실제로 얻은 요청에만 "PI가 이 PC의 WSL에서 실행하라고 골랐다"가 한 줄 전달됩니다. 골랐지만 WSL 없이 진행하는 요청은 대신 `run_where_note`의 이유와 "WSL 없이 실행한다"가 전달되어 계획이 WSL을 가정하지 않습니다. CP1 수정 요청과 후속 요청도 같은 선택을 이어받습니다. 이 선택은 `bioinfo-agent`에만 해당해서, 다른 직원을 직접 고른 요청에 붙이면 API(400)·CLI·웹이 거부합니다. 요청 전체 HPC/local 선택은 아래 절을 보세요.
 
 | `runner.wsl` 설정 | 기본값 / 용도 |
 |---|---|
@@ -118,4 +118,20 @@ WSL을 설정하지 않은 설치에서 `doctor`는 선택 기능이 꺼졌다�
 
 작업은 Windows `runner.workspace_root`와 같은 `/mnt/<drive>/…` 폴더를 씁니다. gateway 위치와 무관하게 대상 runner의 `runtime_env`로 작업·결과·이벤트 경로를 변환해 project·reference·`inputs/<step>`·manifest·bundle을 잇습니다. `/home` 작업 폴더·UNC 경로는 거부합니다. setup은 Windows 승인·예산 정책과 reference root(프로젝트 포함)를 복사하고 개인·통제 구역 경로도 변환합니다. 변환 실패는 설정 거부이며, 정책이나 reference root를 바꿨다면 `wsl-runner stop` 후 setup을 다시 실행하세요.
 
-직원마다 담당 runner는 하나입니다. 실행 중이거나 전송 결과가 불확실한 task가 있으면 담당을 유지하고 새 task도 그 runner에 보냅니다. 모두 끝나면 bioinfo-agent는 준비된 WSL을 우선하며, WSL이 끊겼으면 연결된 Windows 직원으로 돌아갑니다. `up`에서 WSL 시작만 실패하면 경고 한 줄을 출력하고 native 시작은 성공으로 마칩니다. CSO는 연결된 runner의 Nextflow·Docker 확인을 계획에 반영합니다. WSL Claude CLI·직원 로그인(`root/claude-staff`)은 별도 준비하며 setup은 로그인하지 않습니다. 실행 위치 선택 카드는 #612 2단계입니다.
+직원마다 담당 runner는 하나입니다. 실행 중이거나 전송 결과가 불확실한 task가 있으면 담당을 유지하고 새 task도 그 runner에 보냅니다. 모두 끝나면 bioinfo-agent는 준비된 WSL을 우선하며, WSL이 끊겼으면 연결된 Windows 직원으로 돌아갑니다. `up`에서 WSL 시작만 실패하면 경고 한 줄을 출력하고 native 시작은 성공으로 마칩니다. CSO는 연결된 runner의 Nextflow·Docker 확인을 계획에 반영합니다. WSL Claude CLI·직원 로그인(`root/claude-staff`)은 별도 준비하며 setup은 로그인하지 않습니다.
+
+### 요청 전체를 HPC 또는 이 PC에서 실행하기
+
+온라인 runner에 내장 scheduler·HPC 도구와 요청 전체를 맡을 worker가 있으면 브리핑 뒤 CP1 전에 실행 위치를 묻습니다(#578). direct 요청은 지정 직원만 확인합니다. 지원 worker가 없으면 질문 없이 local로 정하고, 질문에 답하지 않으면 처리 단계를 시작하지 않습니다. CLI 답변은 `labhq approve <id> --note "1: a"`(HPC) 또는 `"1: b"`(이 PC)입니다.
+
+| 선택 | 실행·데이터 위치 | 시간·비용 |
+|---|---|---|
+| HPC | 다운로드·준비·QC·분석·그림/보고서 파일 생성을 모두 HPC 잡으로 실행 | 큐 대기·서버 사용료 가능 |
+| 이 PC | 모든 처리 단계가 local이며 HPC 잡 제출은 차단 | 큐 대기 없이 PC 자원 사용 |
+
+- 선택은 요청 기록·CP1 카드·보고서 부록에 남고 재시작 뒤에도 유지됩니다. HPC/local 혼합이나 선택한 runner 밖의 HPC 계획은 거부합니다. WSL 선택은 위의 요청별 runner 고정을 따릅니다.
+- HPC 원본은 `hpc/<request>/steps/<step>/`에 나눠 둡니다. 잡은 해당 단계의 `outputs/`에서 실행하며 앞 단계 입력은 hash를 확인한 `data/<producer>/<source-task>/` 복사본만 읽습니다. 요청 묶음은 별도로 만듭니다.
+- 직원은 스크립트를 준비·제출하고 허용된 요약만 읽습니다. HPC 단계 완료에는 제출 기록이 필요합니다. 공유 계정(`submit_prefix`)의 상위 폴더 접근 권한은 운영자가 준비하며 입력 링크 차단은 유지합니다.
+- 기존 project·경로 참고 입력과 runner 환경 binding은 scheduler용 snapshot이 없어 HPC에서 거부합니다. configured project 입력이 있는 직원·외부 HPC MCP만 쓰는 직원은 요청 전체 HPC 선택 대상이 아닙니다.
+
+계획·제출 검사이며 CLI 전체를 격리하는 sandbox는 아닙니다. 실제 HPC·계정 전환·OS 격리는 UNVERIFIED입니다. [구조](08-structure.md) · [검증 근거](../reference/hpc-step-workspaces-578.md).

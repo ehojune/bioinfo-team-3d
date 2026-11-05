@@ -1,27 +1,23 @@
 ## 단계
 
-PR #578 rev2. main `24b4bb2d`를 통합하고 HPC 실행 원본을 단계별로 나눴습니다. hold를 유지합니다.
+PR #578 rev3. 단계별 HPC 원본·입력·기록 보존 구현과 04장 한영을 반영했습니다. hold를 유지합니다.
 
 ## 바뀐 것
 
-- `hpc/<request>/steps/<step>/`에 manifest·jobs·outputs를 보관합니다. 입력은 검증 후 `data/<producer>/<source-task>/`로 복사하고 출처·hash를 기록합니다.
-- wake baseline을 영속화하고 bundle의 run provenance·링크·job cwd를 고쳤습니다. 중첩 경로의 재개·verify는 요청·step·task를 대조합니다.
-- 실제 worker만 HPC 선택지에 넣고 CLI `1: a/b`를 받습니다. 같은 단계의 중복·부모/자식 파일 경로 충돌을 거부합니다.
-- scheduler용 환경 snapshot이 없는 binding 계획은 dispatch 전에 거부합니다. 선택·계획 검증은 요청별 WSL runner view를 따릅니다.
-- 기존 프로젝트·경로 참고 입력도 snapshot이 없어 HPC 처리 전에 거부합니다. runner는 직원 project 입력까지 검사하며 local 선택은 유지합니다.
-- 저장된 HPC 요청은 briefing·precedent 전 입구에서 검사하고 공통 dispatch에서도 다시 확인합니다.
-- runner가 configured 입력 없는 직원의 whole-request capability만 알리며 gateway 선택·계획에 반영합니다. 실제 경로는 공개하지 않습니다.
-- main의 장 분리·paper 준비·optional outputs·environment binding을 보존했습니다. [상세](../reference/hpc-step-workspaces-578.md).
+- 원본은 `hpc/<request>/steps/<step>/`, 검증 입력은 `data/<producer>/<source-task>/`에 분리합니다.
+- wake baseline·bundle provenance·중첩 경로 resume/verify·동명 산출·경로 충돌을 처리합니다.
+- 요청별 runner와 실제 worker capability를 확인합니다. scheduler snapshot이 없는 기존 입력·환경 binding은 dispatch 전에 거부합니다.
+- 04장에 선택·기록·단계 경로·지원 제한을 한영으로 반영했습니다. [구현·검증 근거](../reference/hpc-step-workspaces-578.md).
 
-## 테스트 결과
+## 확인
 
-- 최신 직원 eligibility·runner·CSO 340 passed/7 skipped, gateway E2E 13 passed. 앞선 확장·bundle·입력·resume 회귀 수치는 reference에 뒀습니다(실행 간 중복 포함).
-- public·notes-index·integrations·compile·diff 검사 PASS. 최종 head CI·실제 리뷰는 PR에서 추적합니다.
-- 08·11장 한영 합계 158,935→160,187자. 실제 HPC·계정 전환·OS 격리는 UNVERIFIED입니다.
+- rev3 관련 HPC·workspace·bundle·verify mock 회귀: 298 passed/25 skipped.
+- 04장 한영 합계: 54,037→56,966자(+2,929, 편집 전 기준).
+- 이전 head `ff2408b6` 실제 Codex 리뷰 무지적. CI inventory 실패는 별도 #1280이 담당합니다.
 
 ## 남은 조건
 
-04장 한영과 `config/ci/windows-boundary-v1.json`의 후속 claim이 필요합니다. Windows inventory에 새 HPC test와 verify mixed-node를 등록해야 CI를 통과합니다. scratch 수정안의 source/AST 검증은 통과했으며 checkout policy는 편집하지 않았습니다. 설치 절 반영과 새 최종 head CI·실제 리뷰 전에는 병합하지 않습니다.
+#1280 병합 뒤 main 통합·inventory 검사·최종 head CI·실제 리뷰가 필요합니다. 실제 HPC·계정 전환·OS 격리는 UNVERIFIED이며 실행하지 않았습니다.
 
 Refs #430
 

@@ -23,11 +23,10 @@
 - runner는 configured project 입력이 없는 내장 scheduler 직원만 `whole_request_hpc: true`로 알린다. 경로는 roster에 내보내지 않는다. gateway는 이 capability가 true인 직원만 선택·계획에 허용한다. 일반 HPC 도구 지원 여부는 별도이며 capability 누락을 지원으로 추정하지 않는다. 관련 회귀 340 passed/7 skipped.
 - 마지막 eligibility 변경 뒤 실제 gateway 왕복 mock E2E 13 passed. 실제 모델·HPC 계정 전환은 실행하지 않았다.
 
-## 04장 후속 반영
+## 04장 반영 (rev3)
 
-rev2는 #1276 소유의 `04-install.md`·`.en.md`를 편집하지 않는다. main의 장 분리·목차를 보존했다.
-이전 PR의 설치 절에 있던 실행 위치 질문·direct 대상 제한·선택 기록·HPC/local 표를 후속 claim에서 04장에 옮긴다.
-그때 공유 `outputs/` 설명은 위 단계별 경로·data 복사로 바꾸고 실제 HPC 미검증을 명시한다.
+`04-install.md`·`.en.md`에 실행 위치 질문·direct 대상·선택 기록·HPC/local 표를 반영했다. 단계별 원본·검증 data 복사·snapshot 미지원·실제 HPC 미검증을 함께 설명한다. WSL 절의 미래형 안내는 현재 절을 가리킨다.
+한영 합계 54,037→56,966자(+2,929, 편집 전 `ff2408b6` 기준). 관련 workspace·bundle·verify·HPC mock 회귀 298 passed/25 skipped. #1280 병합 뒤 main 통합과 최종 head 검증은 별도로 추적한다.
 
 ## 회귀 범위
 
@@ -38,4 +37,4 @@ rev2 로컬: 확장 993 passed/39 skipped, 후속 bundle·accounting·CSO 413/7,
 
 ## CI 범위 추가
 
-`config/ci/windows-boundary-v1.json`은 rev2 claim 밖이다. Windows 사전 검사가 새 `test_hpc_whole_request.py`를 거부하며 `test_evidence_verify.py`의 mixed-node hash도 갱신해야 한다. 이 두 항목과 새 native lookup node를 넣은 scratch 수정안은 현재 source/AST 기준 `validate_profile()`을 통과했다. checkout policy는 보존했다. 이 등록 누락은 Linux 전체 suite의 CI 계약 검사에서도 실패하므로 재실행으로 해결되지 않는다.
+`config/ci/windows-boundary-v1.json`은 rev2·rev3 claim 밖이며 #1280 담당자가 갱신한다. 기존 CI는 새 `test_hpc_whole_request.py` 누락과 `test_evidence_verify.py` mixed-node hash 차이로 실패했다. 이 등록 누락은 Linux CI 계약 검사도 실패시키므로 재실행하지 않았다. #1280 병합 뒤 inventory를 통합해 검사한다.
