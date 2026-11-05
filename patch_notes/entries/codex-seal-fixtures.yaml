@@ -3,6 +3,10 @@ pr: 1064
 # Final-head CI, manifest execution and actual review stay tracked in PR #1064.
 # Code-only merge requires final-head CI/review; real protection remains UNVERIFIED.
 rows:
+  - sha: "2154f17"
+    at: "2026-11-05 12:13"
+    summary: "모의 실행의 알려진 실패와 정상 중단 증거를 알 수 없는 이벤트로 오인하지 않습니다."
+    text: "fix: recognize synthetic failure and reasoned stop events"
   - sha: "fce1303"
     at: "2026-11-05 12:05"
     summary: "모의 보호 검증을 최신 코드와 합치고 실제 보호가 미검증임을 유지합니다."
