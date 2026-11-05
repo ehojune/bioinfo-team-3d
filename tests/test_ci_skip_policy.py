@@ -211,7 +211,7 @@ def test_native_status_fixture_remains_document_only_without_running_git(monkeyp
 @pytest.mark.parametrize("path", ["AGENTS.md", "HANDOFF.md", ".github/workflows/test.yml", "pyproject.toml",
     "config/example.yaml", "agents/core/example.yaml", "tests/example.md", "labhq/example.md",
     "docs/example.py", "docs/examples/usage.md", "requirements.txt", "docs/policy.md", "docs/AGENTS.md",
-    "docs/HANDOFF.md", "docs/manual.md", "docs/runtime.md", "docs/config.md", "docs/tests.md"])
+    "docs/HANDOFF.md", "docs/manual.md", "docs/manual/01-pi-text.md", "docs/runtime.md", "docs/config.md", "docs/tests.md"])
 def test_paths_fail_closed(path):
     assert not cs.document_change(path, "old", "new")
 

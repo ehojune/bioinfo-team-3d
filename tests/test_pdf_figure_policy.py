@@ -30,6 +30,7 @@ from labhq.report_pdf import (NO_BROWSER, FigureEmbedder, build_report_file, bui
                               find_browser, print_pdf, print_report)
 from tests.test_report_pdf import PNG, SVG, build
 from tests.test_result_storage_pdf import approve_all, builder, prepare, publish, puts
+from tests.manual_text import manual_text
 
 REAL_FIND_BROWSER = find_browser  # bound at import: tests/conftest.py patches the module's name for every test
 SVG_NS = "{http://www.w3.org/2000/svg}"
@@ -497,7 +498,7 @@ def test_example_config_and_manual_state_the_new_default():
     root = Path(__file__).resolve().parent.parent
     for name in ("config/labhq.example.yaml", "labhq/config/labhq.example.yaml"):
         assert re.search(r"edition_pdf_max_mb:\s+null\b", (root / name).read_text(encoding="utf-8")), name
-    manual = (root / "docs/manual.md").read_text(encoding="utf-8")
+    manual = manual_text()
     assert "`github.edition_pdf_max_mb`" in manual and "기본은 무제한" in manual and "재인코딩" in manual
     assert "graphical abstract" in manual and "11장" in manual
 

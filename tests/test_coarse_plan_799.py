@@ -20,6 +20,7 @@ ANALYSIS = {"analyst", "engineer"}
 PIPELINE = "bioinfo-agent"
 # Kept boundaries (contract): an independent QC check, biological interpretation, research validation/report phases.
 BOUNDARY_ROLES = {"qc_reviewer", "biologist"}
+from tests.manual_text import manual_text
 BOUNDARY_PHASES = {"validation", "report"}
 
 
@@ -193,7 +194,7 @@ def test_the_manual_describes_the_cohesive_analysis_rule_next_to_the_assignment_
     states it with the boundaries it keeps."""
     from pathlib import Path
 
-    manual = (Path(__file__).resolve().parents[1] / "docs" / "manual.md").read_text(encoding="utf-8")
+    manual = manual_text()
     section = manual.split("## 직원과 도구", 1)[1].split("\n## ", 1)[0]
     paragraph = next(line for line in section.splitlines() if "#732" in line)
     for phrase in ("탐색·전처리·핵심 통계", "한 분석 단계", "독립", "생물학적 해석", "QC", "다른 회사 과학 리뷰",

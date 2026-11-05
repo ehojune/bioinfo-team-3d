@@ -27,7 +27,7 @@ GENERATED = {"STATUS.md", "patch_notes/README.md"}
 README_EVERY = 3
 # Commits whose files all live here change nothing a user sees, so they do not count toward the refresh limit (#1122).
 INVISIBLE = ("tests/", "docs/status/", "patch_notes/entries/", "config/ci/", ".github/", "scripts/ci_")
-DOCS = ("README.md", "docs/manual.md")  # either one counts as the periodic documentation refresh
+DOCS = ("README.md", "docs/manual.md", "docs/manual/")  # any of them (a manual chapter included) counts as the periodic documentation refresh
 KST = timezone(timedelta(hours=9))
 
 
@@ -155,7 +155,8 @@ def check(base: str, head: str, cwd: Path | None = None) -> list[str]:
     committed = set().union(*[changed_from_parent(sha, cwd) for sha in commits]) if commits else set()
     last = git("log", "-1", "--format=%H", base, "--", *DOCS, cwd=cwd)
     behind = counted_main_commits(last, base, cwd)
-    if commits and not touched & set(DOCS) and not invisible(committed) and behind + 1 >= README_EVERY:
+    docs_touched = any(path in DOCS or path.startswith(DOCS[-1]) for path in touched)
+    if commits and not docs_touched and not invisible(committed) and behind + 1 >= README_EVERY:
         problems.append(f"main에 문서({'·'.join(DOCS)})를 안 고친 커밋이 {behind}개 쌓였습니다. "
                         f"이 PR에서 README나 매뉴얼을 갱신해 주세요 (커밋 {README_EVERY}개마다 한 번).")
     return problems
