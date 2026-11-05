@@ -21,6 +21,7 @@ from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 from labhq.store import StateStore
 from labhq.util import aatomic_write_text, atomic_write_text
+from tests.support.serve_task import serve_task, wait_started
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -196,7 +197,9 @@ async def test_store_writes_commit_in_call_order(tmp_path, fresh_writer):
 
 
 async def test_loop_stays_responsive_while_fsync_stalls(tmp_path, monkeypatch, fresh_writer):
-    stall = SlowFsync(monkeypatch, 0.5)
+    # A loop held by an fsync is late by the whole stall; a busy shared runner makes it late by 0.24 s at most (seen on
+    # Windows CI), so the stall is long enough that the two do not meet (#1076).
+    stall = SlowFsync(monkeypatch, 0.8)
     gaps, stop = [], asyncio.Event()
 
     async def ticker():
@@ -215,9 +218,9 @@ async def test_loop_stays_responsive_while_fsync_stalls(tmp_path, monkeypatch, f
     elapsed = time.perf_counter() - started
     stop.set()
     await watcher
-    assert stall.count >= 4 and elapsed >= 4 * 0.5 * 0.9  # the writes really were slow
+    assert stall.count >= 4 and elapsed >= 4 * 0.8 * 0.9  # the writes really were slow
     assert stall.threads == {"labhq-durable-files"}  # and none of the stalls ran on the loop's thread
-    assert max(gaps) < 0.2
+    assert max(gaps) < 0.4
 
 
 class SlowCommit(sqlite3.Connection):
@@ -243,7 +246,7 @@ async def test_store_reads_do_not_wait_for_a_stalled_commit(tmp_path, fresh_writ
         store.all("task")
         reads.append(time.perf_counter() - started)
         await asyncio.sleep(0.02)
-    assert len(reads) >= 20 and max(reads) < 0.1  # the commits took 1.2 s in all
+    assert len(reads) >= 20 and max(reads) < 0.3  # the commits took 1.2 s in all; a read that waited on one would take about that
     assert store.get("task", "n2") == {"i": 2}
     SlowCommit.stall = 0.0
 
@@ -272,11 +275,8 @@ async def test_gateway_shutdown_waits_for_queued_writes(tmp_path, monkeypatch, f
     s.gateway.port = port
     app = create_app(s)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    serve = asyncio.create_task(server.serve())
-    for _ in range(300):
-        if server.started:
-            break
-        await asyncio.sleep(0.05)
+    serve = serve_task(server.serve())
+    await wait_started(lambda: server.started, serve, 15, "gateway")
     assert server.started
     SlowFsync(monkeypatch, 0.05)
     futures = [durable.submit(durable.FILES, owned._write_owned_now, tmp_path, f"f{i}.txt", str(i)) for i in range(20)]
@@ -302,6 +302,29 @@ async def test_runner_shutdown_waits_for_queued_writes(tmp_path, monkeypatch, fr
     run.cancel()
     await asyncio.gather(run, return_exceptions=True)
     assert all(f.done() for f in futures)
+
+
+async def test_a_runner_whose_broker_port_is_taken_fails_with_an_error_not_a_system_exit(tmp_path, fresh_writer):
+    """uvicorn ends a failed start with sys.exit(3). As the SystemExit of the run_forever task it left the event loop and
+    ended the rest of an xdist worker's tests (PR #1236's run, #1238): now one test sees a RuntimeError."""
+    import socket
+
+    s = Settings()
+    s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
+    s.runner.workspace_root = str(tmp_path / "runs")
+    s.runner.talent_dir = str(tmp_path / "talent")
+    s.runner.agents_dir = str(tmp_path / "agents")
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        s.runner.broker_port = taken.getsockname()[1]
+        runner = Runner(s)
+        try:
+            with pytest.raises(RuntimeError, match="could not start") as raised:
+                await asyncio.wait_for(runner.run_forever(), 30)
+        finally:
+            runner.stop()
+    assert str(s.runner.broker_port) in str(raised.value)
 
 
 # ----- a crash in the middle of the queue -----
@@ -645,3 +668,67 @@ async def test_a_cancel_between_two_result_files_cannot_write_only_one(tmp_path,
         await task
     assert await durable.adrain(10)
     assert read_owned(tmp_path, "outputs/RESULT_t.md") == "done" and read_owned(tmp_path, "outputs/RESULT.md") == "done"
+
+
+# ----- #1154: an alias of a file that is fsynced itself is not fsynced again -----
+
+class FsyncedFiles:
+    """Which files os.fsync was asked to flush: the temporary file being written is the one named `.<name>.labhq-*.tmp`,
+    and it is the only such file in its folder while it is written."""
+
+    def __init__(self, monkeypatch, root):
+        self.real, self.root, self.names = os.fsync, Path(root), []
+        monkeypatch.setattr(os, "fsync", self)
+
+    def __call__(self, fd):
+        self.names.extend(tmp.name.split(".labhq-")[0].lstrip(".") for tmp in self.root.rglob(".*.labhq-*.tmp"))
+        return self.real(fd)
+
+
+def test_a_file_write_fsyncs_by_default_and_an_alias_write_does_not(tmp_path, monkeypatch):
+    spy = FsyncedFiles(monkeypatch, tmp_path)
+    owned._write_owned_now(tmp_path, "a.txt", "kept")
+    assert spy.names.count("a.txt") >= 1  # the default is unchanged: the file is flushed
+    before = len(spy.names)
+    owned._write_owned_now(tmp_path, "b.txt", "alias", False)
+    assert len(spy.names) == before  # no fsync for the alias...
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "kept"
+    assert (tmp_path / "b.txt").read_text(encoding="utf-8") == "alias"  # ...but it is written, and by rename:
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["a.txt", "b.txt"]  # no temporary file is left
+
+
+def test_one_job_fsyncs_only_the_files_that_ask_and_writes_them_all(tmp_path, monkeypatch):
+    (tmp_path / "outputs").mkdir()
+    spy = FsyncedFiles(monkeypatch, tmp_path)
+    paths = owned._write_owned_many_now(tmp_path, [("outputs/RESULT_t1.md", "text"), ("outputs/RESULT.md", "text", False)])
+    assert [path.name for path in paths] == ["RESULT_t1.md", "RESULT.md"]
+    assert "RESULT_t1.md" in spy.names and "RESULT.md" not in spy.names  # the per-task file is flushed, the alias not
+    assert (tmp_path / "outputs" / "RESULT_t1.md").read_text(encoding="utf-8") == "text"
+    assert (tmp_path / "outputs" / "RESULT.md").read_text(encoding="utf-8") == "text"
+
+
+@pytest.mark.asyncio
+async def test_a_finished_step_fsyncs_its_per_task_result_and_not_the_alias(tmp_path, monkeypatch):
+    from labhq.models import AgentSpec, Engine, Task, TaskResult
+
+    s = Settings()
+    s.runner.state_dir = s.gateway.state_dir = str(tmp_path / "state")
+    s.runner.workspace_root, s.runner.talent_dir, s.runner.agents_dir = (
+        str(tmp_path / "runs"), str(tmp_path / "talent"), str(tmp_path / "agents"))
+    s.hpc.scheduler = "none"
+    runner = Runner(s)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+
+    class Adapter:
+        async def run(self, ctx):
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, cost_usd=0, text="the answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    spy = FsyncedFiles(monkeypatch, tmp_path / "runs")
+    task = Task(id="t1", agent_id="worker", prompt="x")
+    await runner.run_task(task)
+    assert "RESULT_t1.md" in spy.names and "RESULT.md" not in spy.names
+    outputs = runner.workspaces[task.id].dir / "outputs"
+    assert (outputs / "RESULT_t1.md").read_text(encoding="utf-8") == "the answer"
+    assert (outputs / "RESULT.md").read_text(encoding="utf-8") == "the answer"

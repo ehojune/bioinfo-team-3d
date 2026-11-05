@@ -31,6 +31,9 @@ async def test_conversion_cost_reaches_budget_once_even_after_recovery(runner, m
         return res
 
     hub = FakeHub(local_run)
+    # The gateway and the runner read the same setting (#1139): the runner requires the held allowance that only a
+    # reserving gateway puts on the task. FakeHub pins the older check, so match the runner (default: on).
+    hub.s.policy.budget.reserve_before_dispatch = r.s.policy.budget.reserve_before_dispatch
     hub.agents["recruiter"] = {"id": "recruiter", "engine": "mock"}
     r.s.runner.force_engine = "mock"
     monkeypatch.setattr(r, "run_task", local_run)

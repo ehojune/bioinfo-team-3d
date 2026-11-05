@@ -242,6 +242,9 @@ class ResearchStep(StrictModel):
     output_types: list[OutputTypeEntry] = Field(default_factory=list, max_length=MAX_ENTRIES)
     environment_binding: EnvironmentBinding | None = None
     environment_bindings: list[EnvironmentBinding] = Field(default_factory=list)
+    # #625: the model tier this step runs on, lowered from its staff member's declared tier. Optional and left out when
+    # unset, so a plan frozen before it keeps its canonical JSON and plan_sha256; not offered in the engine schema.
+    model_tier: Literal["fast", "balanced", "reasoning"] | None = None
 
     @model_serializer(mode="wrap")
     def _drop_empty_declarations(self, handler: Any) -> dict[str, Any]:
@@ -255,6 +258,8 @@ class ResearchStep(StrictModel):
             data.pop("optional_outputs", None)
         if data.get("branch") is None:
             data.pop("branch", None)
+        if data.get("model_tier") is None:
+            data.pop("model_tier", None)
         if data.get("environment_binding") is None:
             data.pop("environment_binding", None)
         if not data.get("environment_bindings"):
@@ -651,7 +656,7 @@ def _without(schema: dict[str, Any], definition: str, fields: tuple[str, ...], d
 
 
 # The engine-facing schemas stay those of main before #221: declarations are offered only when switched on.
-RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(ResearchPlan.model_json_schema(), "ResearchStep", ("output_types",),
+RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(ResearchPlan.model_json_schema(), "ResearchStep", ("output_types", "model_tier"),
                                                 ("OutputTypeEntry", "PackApplicabilityRecord"))
 for _system_field in ("pack_applicability", "warnings", "paper_skill_results", "recruit_results"):
     RESEARCH_PLAN_SCHEMA["properties"].pop(_system_field, None)
@@ -1166,6 +1171,33 @@ def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], 
         refused_index[key] = len(refused)
         refused.append({"row_type": row_type, "row_id": row_id, "reason": reason})
 
+    # A claim the step never declared is not this step's answer. Refusing it (and its links) keeps the rest of the
+    # result, which the ledger checks below still judge; leaving it failed the whole step when it came with an
+    # otherwise salvageable row defect (#1054). When every claim is outside the step, nothing is left to keep.
+    step = next(step for step in parsed_plan.steps if step.id == expected_step_id)
+    declared = set(step.claim_ids)
+    claim_rows = candidate.get("claims") or []
+    outside = [str(row["id"]) for row in claim_rows
+               if isinstance(row, dict) and row.get("id") and str(row["id"]) not in declared]
+    pruned = bool(outside) and any(isinstance(row, dict) and str(row.get("id")) in declared for row in claim_rows)
+    if pruned:
+        reason = f"claim is outside the claim_ids {step.claim_ids} that step {step.id} declared"
+        for claim_id in outside:
+            refuse("claim", claim_id, reason)
+            unsupported.append({"claim_id": claim_id, "reason": reason})
+        link_rows = candidate.get("links") or []
+        for index, link in enumerate(link_rows):
+            if isinstance(link, dict) and str(link.get("claim_id")) in outside:
+                refuse("link", _row_id("link", link, index), f"points to contract-refused claim {link.get('claim_id')}")
+        candidate["claims"] = [row for row in claim_rows
+                               if not (isinstance(row, dict) and str(row.get("id")) in outside)]
+        candidate["links"] = [row for row in link_rows
+                              if not (isinstance(row, dict) and str(row.get("claim_id")) in outside)]
+
+    def none_declared(result: ResearchResult) -> bool:
+        """Later refusals can still empty the step's own claims; nothing left of the step is not a result."""
+        return pruned and not any(claim.id in declared for claim in result.claims)
+
     limit = sum(len(candidate.get(name) or []) for name in ("claims", "evidence", "links")) + 1
     for _ in range(limit):
         try:
@@ -1178,11 +1210,17 @@ def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], 
             # Only the orchestrator may request the still-incomplete ledger for its one slot question.
             if allow_slot_gaps and missing_result_slots(candidate, plan=parsed_plan,
                                                        expected_step_id=expected_step_id):
-                return ResearchResult.model_validate(candidate), refused, unsupported, []
+                gapped = ResearchResult.model_validate(candidate)
+                if none_declared(gapped):
+                    return None, [], [], research_result_errors(candidate, plan=parsed_plan)
+                return gapped, refused, unsupported, []
             return None, [], [], research_result_errors(candidate, plan=parsed_plan)
         else:
             if result.step_id != expected_step_id:
                 return None, [], [], [f"research result step_id {result.step_id} does not match {expected_step_id}"]
+            if none_declared(result):
+                return None, [], [], [f"no claim of step {step.id} is left after contract salvage; it declared "
+                                      f"{step.claim_ids}"]
             return result, refused, unsupported, []
 
         evidence_rows = candidate.get("evidence") or []

@@ -47,7 +47,8 @@ _MARKDOWN_LINK = re.compile(
     r"(?P<image>!)?\[(?P<label>[^\]\n]*)\]\(\s*(?P<target><[^>\n]*>|" + _balanced_link_target()
     + r")(?P<title>\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)"
 )
-_MARKDOWN_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.DOTALL)
+_CODE_RUN = re.compile(r"`+|~{3,}")
+_INLINE_CODE = re.compile(r"`[^`\n]*`")
 _FOOTNOTE_DEFINITION = re.compile(r"^\[\^([^\]\n]+)\]:\s*(.*)$")
 _FOOTNOTE_REFERENCE = re.compile(r"\[\^([^\]\n]+)\]")
 _QUESTION_CUTOFF = re.compile(
@@ -323,17 +324,76 @@ def with_report_front(report: str, package: ReportPackage, *, pipeline_images: b
     return f"{lead}\n\n{FRONT_START}\n\n{front}\n{FRONT_END}\n\n{body}".rstrip() + "\n"
 
 
+def code_spans(text: str) -> list[tuple[int, int]]:
+    """The `(start, end)` of every fenced and inline code span in `text`, in order and without overlap.
+
+    A fence opens with three or more backticks or tildes and closes with a run of the same character at least as long
+    (a four-backtick fence holds a three-backtick one: the progress record's JSON blocks do, #1193); a fence that never
+    closes is not a fence. A long run of backticks with nothing to close it costs a little more than linear (20,000 in
+    a row take about 0.1 s), which no real document has."""
+    spans: list[tuple[int, int]] = []
+    position = 0
+    size = len(text)
+    unclosed: dict[str, int] = {}  # the shortest run length of a character that found no closing run
+    while position < size:
+        run = _CODE_RUN.search(text, position)
+        if run is None:
+            break
+        char, length = text[run.start()], run.end() - run.start()
+        if length >= 3 and length < unclosed.get(char, size + 1):
+            close = _closing_fence(text, char, length, run.end())
+            if close is None:  # the position only moves on, so no later run of this length or more can close either
+                unclosed[char] = length
+            else:
+                spans.append((run.start(), close))
+                position = close
+                continue
+        if char == "`":
+            inline = _INLINE_CODE.match(text, run.start())
+            if inline is not None:
+                spans.append((inline.start(), inline.end()))
+                position = inline.end()
+                continue
+        position = run.end()
+    return spans
+
+
+def mask_code(text: str) -> str:
+    """`text` with every code span blanked out to spaces, so a link inside code is not a link."""
+    out: list[str] = []
+    last = 0
+    for start, end in code_spans(text):
+        out.append(text[last:start])
+        out.append(" " * (end - start))
+        last = end
+    out.append(text[last:])
+    return "".join(out)
+
+
+def _closing_fence(text: str, char: str, length: int, start: int) -> int | None:
+    """The end of the first run of `char` at least `length` long at or after `start`, else None."""
+    found = re.compile(re.escape(char) + "{" + str(length) + ",}").search(text, start)
+    return None if found is None else found.end()
+
+
 def reader_markdown(report: str, *, footnotes: bool = False) -> str:
     """Replace audit-only claim syntax; PDFs may also render Markdown footnotes as endnotes."""
     code: list[str] = []
 
-    def stash(match: re.Match[str]) -> str:
-        code.append(match.group(0))
+    def stash(value: str) -> str:
+        code.append(value)
         return f"\x00labhq-code-{len(code) - 1}\x00"
 
     rendered = report
     if footnotes:
-        rendered = _MARKDOWN_CODE.sub(stash, rendered)
+        pieces: list[str] = []
+        last = 0
+        for start, end in code_spans(rendered):
+            pieces.append(rendered[last:start])
+            pieces.append(stash(rendered[start:end]))
+            last = end
+        pieces.append(rendered[last:])
+        rendered = "".join(pieces)
         definitions: dict[str, str] = {}
         body: list[str] = []
         for line in rendered.splitlines():

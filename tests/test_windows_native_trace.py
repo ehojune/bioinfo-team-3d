@@ -9,6 +9,7 @@ from unittest.mock import Mock, call
 
 import pytest
 from tests import test_windows_job_ci as owned
+from tests.support.time_proxy import RuntimeProxy
 
 
 @pytest.fixture
@@ -76,7 +77,7 @@ def test_collision_never_overwrites_an_existing_case(diagnostic, monkeypatch):
 def test_nonfinite_or_out_of_bound_clock_is_explicitly_unmeasured(diagnostic, monkeypatch):
     trace = owned._NativeTrace()
     for value in (float("nan"), float("inf"), -1.0, 1e10):
-        monkeypatch.setattr(owned.time, "monotonic", lambda: value)
+        monkeypatch.setattr(owned, "time", RuntimeProxy(owned.time, monotonic=lambda: value))
         trace.emit("wait_enter", call_ms=float("inf"), result=2**50)
         row = read(trace)["events"][-1]
         assert row["clock_ok"] is False

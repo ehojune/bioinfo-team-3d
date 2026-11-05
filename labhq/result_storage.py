@@ -36,7 +36,7 @@ from .run_report import nextflow_kind
 from .report_figures import (ABSTRACT_FILE, classify, figure_owners, has_abstract_link, image_links, is_abstract_target,
                              link_workdir_figures, output_exists)
 from .report_pdf import NO_BROWSER, ReportRefused, build_report_file, pdf_cap_bytes, size_notes
-from .report_contract import reader_markdown
+from .report_contract import reader_markdown, research_question
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
 from .reproduction_receipt import (LANGUAGES, RECEIPT_PATH, build_receipt, expected_outputs, is_lock_file, receipt_json,
                                    receipt_note, receipt_summary)
@@ -95,6 +95,19 @@ def _denial(exc: Exception) -> GitHubHTTPError | None:
     if isinstance(exc, GitHubHTTPError) and exc.status_code in {403, 404} and not exc.rate_limited:
         return exc
     return None
+
+
+_COMMIT_STEP = re.compile(r"^(?:studies|code)/([^/]+)/")
+
+
+def commit_message(kind: str, name: str, summary: str = "") -> str:
+    """One commit message per published file: what kind, which step, which file, and what the request asked.
+
+    GitHub shows this beside every file, so three fixed sentences would say nothing about the result (#792)."""
+    step = _COMMIT_STEP.match(name)
+    head = f"{kind}: {name}" + (f" (단계 {step.group(1)})" if step else "")
+    one_line = " ".join(summary.split())[:60]
+    return f"{head} — {one_line}" if one_line else head
 
 
 def _retry_command(rid: str) -> str:
@@ -590,6 +603,16 @@ def _reproduce_document(req: dict, settings, assets: Mapping[str, str],
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _json_block(value: Any) -> str:
+    """A record as JSON text in a code block. The review quotes the report, and a quoted `![..](../x.svg)` in plain
+    Markdown is a link of the progress record: the edition check then refuses the whole save over a figure the
+    reviewer only named (#1193). Inside a code block it stays text. The fence is longer than any run of backticks inside."""
+    body = json.dumps(value, ensure_ascii=False, indent=2)
+    longest = max((len(run) for run in re.findall(r"`+", body)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}json\n{body}\n{fence}"
+
+
 def draft_documents(req: dict, settings, included=None, assets=None, *, abstract: bool = False,
                     environment_records: Mapping[str, Any] | None = None,
                     bundle_readme: str = "") -> dict[str, str]:
@@ -604,13 +627,13 @@ def draft_documents(req: dict, settings, included=None, assets=None, *, abstract
         report = with_abstract_link(report) if abstract else abstract_first(report, lambda name: name in included)
     steps = (req.get("plan") or {}).get("steps") or []
     progress = ["# 진행 기록", "", *[f"- {s.get('id')}: {s.get('instruction', '')}" for s in steps],
-                "", "## 결정·카드", json.dumps(req.get("clarifications") or [], ensure_ascii=False, indent=2),
+                "", "## 결정·카드", _json_block(req.get("clarifications") or []),
                 "CP1: " + str((req.get("research_contract") or {}).get("approval", {}).get("state", "기록 없음")),
-                "", "## 수정 회차", json.dumps({"replans": [
+                "", "## 수정 회차", _json_block({"replans": [
                     {k: v for k, v in entry.items() if k != "prior_results"}
                     for entry in req.get("replan_history") or []],
-                    "review_progress": req.get("review_progress") or {}}, ensure_ascii=False, indent=2),
-                "", "## 검토", json.dumps(req.get("review") or {}, ensure_ascii=False, indent=2)]
+                    "review_progress": req.get("review_progress") or {}}),
+                "", "## 검토", _json_block(req.get("review") or {})]
     bibliography = re.search(r"(?im)^#{1,6}\s+(?:references|bibliography|참고(?:\s*문헌|\s*자료)?|출처)[^\n]*\n", report)
     citations = re.split(r"(?m)^#{1,6}\s+", report[bibliography.end():], maxsplit=1)[0] if bibliography else ""
     found = edition_sources.collect(
@@ -1121,9 +1144,9 @@ class ResultStorage:
             payload, omitted, internal_steps, published = self._progress_payload(req, step_id, result)
             for name, body in payload.items():
                 if isinstance(body, bytes):
-                    await gh.put_binary(saved["repo"], name, body, branch, f"labhq 진행: {step_id}")
+                    await gh.put_binary(saved["repo"], name, body, branch, commit_message(f"labhq 진행 {step_id}", name))
                 else:
-                    await gh.put_file(saved["repo"], name, body, f"labhq 진행: {step_id}", branch)
+                    await gh.put_file(saved["repo"], name, body, commit_message(f"labhq 진행 {step_id}", name), branch)
             saved.update(progress_status="pushed", progress_last_step=step_id,
                          progress_files=published, progress_omitted=omitted)
             saved.pop("progress_warning", None)
@@ -1267,6 +1290,11 @@ class ResultStorage:
                 raise ValueError(f"로컬에 남긴 정리본만 GitHub로 옮깁니다(저장 위치 {saved.get('mode')}, 상태 {saved.get('status')}). "
                                  f"게시에 실패했으면 `labhq storage {rid} --republish`, 정리본을 다시 만들려면 `--redraft`, "
                                  "게시한 정리본을 지금 편집기로 다시 만들려면 `--rebuild`를 쓰세요.")
+            if req.get("status") == "review_pending":
+                # CP4: the final draft waits in the report review. Say what to run, so a retry is not spent on this.
+                raise ValueError(f"보고서 검토 대기(review_pending) 중인 요청은 아직 옮길 수 없습니다. 먼저 보고서 카드에 적힌 "
+                                 f"번호와 hash로 `labhq review-done {rid} --revision <번호> --sha256 <hash>`를 실행해 검토를 마치거나, "
+                                 "같은 명령에 `--storage github`를 붙여 검토와 저장 선택을 한 번에 하세요.")
             if req.get("status") not in {"done", "completed", "failed", "cancelled"} or req.get("cancelling"):
                 raise ValueError("끝난 요청만 GitHub로 옮길 수 있습니다.")
             if controlled_request(req, self.s):
@@ -1555,9 +1583,9 @@ class ResultStorage:
                         docs[name] = body
                 if saved.get("mode") != "new" and (missing := document_links(docs["README.md"])):
                     docs["README.md"] += "\n\n" + missing + "\n"
-                if len(str(req.get("report") or "")) > README_EXCERPT_CHARS:
-                    report_path = "report/report.md" if saved.get("mode") == "new" else "report.md"
-                    docs["README.md"] += f"\n이어지는 내용은 {report_path}에 있습니다.\n"
+                if len(str(req.get("report") or "")) > README_EXCERPT_CHARS and saved.get("mode") != "new":
+                    # The repository README links the full report in its first lines; only the flat edition needs the pointer.
+                    docs["README.md"] += "\n이어지는 내용은 report.md에 있습니다.\n"
                 links = "\n".join(f"- [{name}]({quote(name, safe='/')})" for name in [*assets, *images])
                 if links:
                     if saved.get("mode") != "new":
@@ -1818,6 +1846,7 @@ class ResultStorage:
                     return name in internal_files
                 return internal
 
+            summary = clean_publication_text("commit.txt", research_question(str(request.get("text") or "")), self.s, request)
             aggregate_tables = declared_aggregate_tables(self.hub.requests[rid])
             aggregate_tables.update(saved.get("internal_allowed_files") or [])
             aggregate_bodies = {
@@ -1846,16 +1875,16 @@ class ResultStorage:
                                  (_PDF_NAME, _PORTFOLIO_PDF_NAME) if pdf else ()))
             for base, payload_docs, payload_images, pdf_names in payloads:
                 for name, body in payload_docs.items():
-                    await gh.put_file(repo, base + name, body, "연구 결과 정리", write_branch)
+                    await gh.put_file(repo, base + name, body, commit_message("연구 결과 정리", base + name, summary), write_branch)
                     write_branch = branch
                 for name, body in payload_images.items():
                     payload = (clean_svg_for_publish(body, self.s, self.hub.requests[rid])
                                if Path(name).suffix.lower() == ".svg" else body)
-                    await gh.put_image(repo, base + name, payload, write_branch)
+                    await gh.put_image(repo, base + name, payload, write_branch, commit_message("연구 결과 그림", base + name, summary))
                     write_branch = branch
                 if pdf:
                     for name in pdf_names:
-                        await gh.put_binary(repo, base + name, pdf, write_branch, "연구 결과 PDF")
+                        await gh.put_binary(repo, base + name, pdf, write_branch, commit_message("연구 결과 PDF", base + name, summary))
                         write_branch = branch
         except (GitHubHTTPError, httpx.HTTPStatusError) as exc:
             denied(exc, write_denied_text(repo, rid))

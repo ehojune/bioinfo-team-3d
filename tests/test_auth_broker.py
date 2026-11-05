@@ -36,6 +36,16 @@ def process_hard_exit(body, credential):
     os._exit(7)
 
 
+def process_probe(body, credential):
+    assert body == b"probe" and credential == SECRET
+    return credential
+
+
+def process_probe_hang(body, credential):
+    # The marker is a fixture path, passed in place of a real credential.
+    process_hang(credential, b"unused")
+
+
 def request(path, value):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(4)
@@ -300,3 +310,47 @@ def test_transport_pins_address_tls_hostname_and_never_follows_redirect(monkeypa
     assert events[1] == ("tls", "api.anthropic.com")
     assert len(events) == 3
     assert events[2][1].startswith(b"POST /v1/messages HTTP/1.1\r\nHost: api.anthropic.com\r\n")
+
+
+@pytest.mark.parametrize("timeout", [False, True], ids=["accepted", "upstream-timeout"])
+def test_process_broker_with_current_diagnostic_lifecycle(tmp_path, timeout):
+    from labhq.runner.boundary_observer import verify_event
+    from labhq.runner.process_boundary import DiagnosticLifecycleEvents, diagnostic_broker_probe
+
+    if not shutil.which("bwrap") or not os.path.isfile("/usr/bin/python3"):
+        pytest.skip("bubblewrap fixture unavailable")
+    run_id = "12345678-1234-4234-8234-123456789abc"
+    events, instances = [], []
+    key = b"public-synthetic-event-key"
+    marker = tmp_path / "upstream-pid"
+    lifecycle = DiagnosticLifecycleEvents(
+        run_id=run_id, nonce="fixture-nonce", key_id="fixture-producer", key=key,
+        identity_reader=lambda pid: {"pid": pid, "birth_id": "synthetic-incarnation"},
+        emit=events.append,
+    )
+
+    def factory(directory, observed_run):
+        assert observed_run == run_id
+        instance = ProcessBroker(
+            directory, observed_run, str(marker).encode() if timeout else SECRET,
+            process_probe_hang if timeout else process_probe, deadline=1.5,
+        )
+        instances.append(instance)
+        return instance
+
+    receipt = diagnostic_broker_probe(factory, run_id=run_id, lifecycle=lifecycle)
+    assert receipt.preparation == "diagnostic_ready"
+    assert receipt.launch == ("failed" if timeout else "exited_0")
+    assert receipt.cleanup == "broker_closed_socket_absent; descendants_unverified"
+    assert receipt.seal_status == "unsealed"
+    assert receipt.child_identity is receipt.supervisor_identity is None
+    assert receipt.run_id == run_id
+    assert len(events) == 2
+    identity = verify_event(events[0], "fixture-producer", key, run_id, "fixture-nonce", 1, "launch")
+    assert verify_event(events[1], "fixture-producer", key, run_id, "fixture-nonce", 2,
+                        "termination", identity) == identity
+    assert not instances[0].path.exists() and not instances[0]._thread.is_alive()
+    if timeout:
+        assert marker.exists()
+        with pytest.raises(ProcessLookupError):
+            os.kill(int(marker.read_text()), 0)

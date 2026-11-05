@@ -3,6 +3,7 @@ from __future__ import annotations
 from .request_persistence import persist_request, record_task_cost
 
 import asyncio
+import copy
 import json
 import math
 import re
@@ -67,6 +68,8 @@ class PiInterpreter:
     def __init__(self, hub):
         self.hub = hub
         self.tasks: dict[asyncio.Task, str | None] = {}
+        self._budget_locks: dict[str, asyncio.Lock] = {}
+        self._reserving: set[str] = set()  # messages whose reservation is being committed
         for key, entry in hub.store.all("pi_translation").items():
             if entry.get("status") == "pending":
                 failed = {"status": "failed", "label": "번역 못 함", "by": "chief_of_staff"}
@@ -83,21 +86,41 @@ class PiInterpreter:
                             followup["pi_display"] = failed
                     hub.save_request(rid)
 
-    def schedule(self, event: dict) -> None:
+    def _budget_lock(self, rid: str) -> asyncio.Lock:
+        return self._budget_locks.setdefault(rid, asyncio.Lock())
+
+    def _reservation(self, event: dict) -> tuple[str, str, dict] | None:
+        """(key, source, pending row) for a message that needs a translation and has none yet, else None."""
         source = message_source(event)
         if not source or not technical(source):
-            return
+            return None
         key = str(event["seq"])
         if self.hub.store.get("pi_translation", key):
-            return
-        # Reserve before starting: a crash never causes a second paid call for this message.
-        self.hub.store.put("pi_translation", key, {"status": "pending", "request_id": event.get("request_id"),
-                            "followup_id": (event.get("data") or {}).get("id") if event.get("type") == "request.followup_done" else None,
-                            "approval_id":
-                            (event.get("data") or {}).get("id") if event.get("type") == "approval.requested" else None})
-        task = asyncio.create_task(self._interpret(event, source))
+            return None
+        return key, source, {"status": "pending", "request_id": event.get("request_id"),
+                             "followup_id": (event.get("data") or {}).get("id") if event.get("type") == "request.followup_done" else None,
+                             "approval_id":
+                             (event.get("data") or {}).get("id") if event.get("type") == "approval.requested" else None}
+
+    def schedule(self, event: dict) -> None:
+        """Start the translation of a message that needs one. Returns at once: the reservation commits on the writer
+        thread inside the task (#606), so the event loop is not held for its fsync."""
+        reservation = self._reservation(event)
+        if reservation is None or reservation[0] in self._reserving:
+            return  # a second call for a message whose reservation is committing: still one paid call
+        key, source, pending = reservation
+        self._reserving.add(key)
+        task = asyncio.create_task(self._reserve_then_interpret(event, key, source, pending))
         self.tasks[task] = event.get("request_id")
         task.add_done_callback(lambda done: self.tasks.pop(done, None))
+
+    async def _reserve_then_interpret(self, event: dict, key: str, source: str, pending: dict) -> None:
+        # Reserve before starting: a crash never causes a second paid call for this message.
+        try:
+            await self.hub.store.aput("pi_translation", key, pending)
+        finally:
+            self._reserving.discard(key)
+        await self._interpret(event, source)
 
     async def _interpret(self, event: dict, source: str) -> None:
         hub, cfg = self.hub, self.hub.s.pi_language
@@ -117,41 +140,44 @@ class PiInterpreter:
             source_task = hub.store.get("task", event.get("task_id")) if event.get("task_id") else {}
             restricted = ((source_task or {}).get("payload", {}).get("meta", {}).get("restricted_inputs")
                           or (event.get("data") or {}).get("source_restricted"))
-            budget = hub.store.get("pi_translation_budget", str(rid)) or {"reserved": 0.0}
-            reservations = hub.store.get("pi_translation_reservations", str(rid)) or {}
-            # The first new reservation atomically carries the opaque legacy total.
-            # A crash before the aggregate update must not lose either prefix.
-            legacy_values = [r["legacy_reserved_usd"] for r in reservations.values()] or [budget["reserved"]]
-            if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in legacy_values):
-                return
-            legacy = max(legacy_values)
-            reserved = max(budget["reserved"], legacy + sum(r["ceiling_usd"] for r in reservations.values()))
-            limit = float(req.get("budget_usd") or hub.s.policy.budget.per_request_usd)
-            hub.orchestrator._restore_cost_cache(rid)
-            _, _, bound = hub.orchestrator._budget_bound(rid, limit)
-            if not math.isfinite(reserved) or not math.isfinite(bound):
-                return
-            remaining = min(cfg.per_request_usd - reserved,
-                            limit - max(bound, float(req.get("cost_usd") or 0)))
-            if (restricted or not cfg.enabled or not cfg.model or not req or not runner or runner not in hub.runners
-                    or agent.get("engine") != "claude_code" or len(source) > 12000
-                    or not hub.orchestrator._diagnosis_budget_available(rid)
-                    or remaining < cfg.per_message_usd):
-                return
-            # Reserve the entire call ceiling, including failed/unknown calls, across restarts.
-            # Establish an explicit empty research-hold ledger for translation-only requests.
-            req.setdefault("budget_holds", {})
-            await persist_request(hub, rid)
-            reservation_id = f"pi_text_{key}"
-            reservations[reservation_id] = {
-                "reservation_id": reservation_id, "task_id": reservation_id,
-                "request_id": rid, "agent_id": aid, "attempt": 1,
-                "ceiling_usd": cfg.per_message_usd, "state": "reserved",
-                "legacy_reserved_usd": legacy,
-                "source": "pi_translation", "created_at": time.time()}
-            hub.store.put("pi_translation_reservations", str(rid), reservations)
-            hub.store.put("pi_translation_budget", str(rid),
-                          {"reserved": reserved + cfg.per_message_usd})
+            # Check and reserve without an await between them: two messages that arrive together must not both
+            # pass the budget check before either has reserved (#1129). The model call stays outside the lock.
+            async with self._budget_lock(str(rid)):
+                budget = hub.store.get("pi_translation_budget", str(rid)) or {"reserved": 0.0}
+                reservations = hub.store.get("pi_translation_reservations", str(rid)) or {}
+                # The first new reservation atomically carries the opaque legacy total.
+                # A crash before the aggregate update must not lose either prefix.
+                legacy_values = [r["legacy_reserved_usd"] for r in reservations.values()] or [budget["reserved"]]
+                if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in legacy_values):
+                    return
+                legacy = max(legacy_values)
+                reserved = max(budget["reserved"], legacy + sum(r["ceiling_usd"] for r in reservations.values()))
+                limit = float(req.get("budget_usd") or hub.s.policy.budget.per_request_usd)
+                hub.orchestrator._restore_cost_cache(rid)
+                _, _, bound = hub.orchestrator._budget_bound(rid, limit)
+                if not math.isfinite(reserved) or not math.isfinite(bound):
+                    return
+                remaining = min(cfg.per_request_usd - reserved,
+                                limit - max(bound, float(req.get("cost_usd") or 0)))
+                if (restricted or not cfg.enabled or not cfg.model or not req or not runner or runner not in hub.runners
+                        or agent.get("engine") != "claude_code" or len(source) > 12000
+                        or not hub.orchestrator._diagnosis_budget_available(rid)
+                        or remaining < cfg.per_message_usd):
+                    return
+                # Reserve the entire call ceiling, including failed/unknown calls, across restarts.
+                # Establish an explicit empty research-hold ledger for translation-only requests.
+                req.setdefault("budget_holds", {})
+                await persist_request(hub, rid)
+                reservation_id = f"pi_text_{key}"
+                reservations[reservation_id] = {
+                    "reservation_id": reservation_id, "task_id": reservation_id,
+                    "request_id": rid, "agent_id": aid, "attempt": 1,
+                    "ceiling_usd": cfg.per_message_usd, "state": "reserved",
+                    "legacy_reserved_usd": legacy,
+                    "source": "pi_translation", "created_at": time.time()}
+                hub.store.put("pi_translation_reservations", str(rid), reservations)
+                hub.store.put("pi_translation_budget", str(rid),
+                              {"reserved": reserved + cfg.per_message_usd})
             instruction = ("비서실장으로서 아래 원문을 PI에게 설명하세요. 무엇을·왜·영향을 두 문장 이내의 "
                            "쉬운 한국어로 쓰세요. 영어 대화는 뜻을 보존해 번역하세요. "
                            "다시 쓰는 단계 없이 쉼표와 번역투를 줄이세요. 되어진다·가지고 있다·에 있어서·"
@@ -186,18 +212,28 @@ class PiInterpreter:
                                       outcome_unknown=True)
                 hub.orchestrator._count_cost(rid, task.id)
         finally:
-            hub.store.put("pi_translation", key, display)
-            hub.store.set_message_display(event["seq"], display)
             approval_id = (event.get("data") or {}).get("id") if event.get("type") == "approval.requested" else None
+            approval_row = None
             if approval_id in hub.approvals:
                 hub.approvals[approval_id]["approval"]["pi_display"] = display
-                hub.save_approval(approval_id)
+                # Copy now: the batch below runs on the writer thread and must not read live gateway state.
+                approval_row = copy.deepcopy({k: v for k, v in hub.approvals[approval_id].items() if k != "future"})
+
+            def save_display() -> None:
+                hub.store.put("pi_translation", key, display)
+                hub.store.set_message_display(event["seq"], display)
+                if approval_row is not None:
+                    hub.store.put("approval", approval_id, approval_row)
+
+            # The translation result, the message's display and the approval card's copy are one transaction (#1132):
+            # a restart never shows one of them translated and another not. It was three commits, each blocking the loop.
+            await hub.store.arun_batch(save_display)
             followup_id = (event.get("data") or {}).get("id") if event.get("type") == "request.followup_done" else None
             if followup_id and rid in hub.requests:
                 for followup in hub.requests[rid].get("followups") or []:
                     if followup.get("id") == followup_id:
                         followup["pi_display"] = display
-                await persist_request(hub, rid)
+                # No separate request save: the `messenger.translated` event below saves this request with it.
             for saved in hub.events:
                 if saved["seq"] == event["seq"]:
                     saved.setdefault("data", {})["pi_display"] = display

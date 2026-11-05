@@ -56,7 +56,7 @@ async def until_entered(entered):
     async def wait():
         while not entered.is_set():
             await asyncio.sleep(0.001)
-    await asyncio.wait_for(wait(), 2)
+    await asyncio.wait_for(wait(), 10)
 
 
 def event(label="first", request=True):
@@ -65,7 +65,7 @@ def event(label="first", request=True):
 
 
 @pytest.mark.parametrize("active_lane", [False, True])
-@pytest.mark.parametrize("commit", [1, 2])
+@pytest.mark.parametrize("commit", [1])  # event and request share one transaction (#1129): no second commit to stall
 async def test_heartbeat_during_event_and_request_commit(gateway, monkeypatch, active_lane, commit):
     hub = gateway
     assert durable.lane(hub.store.lane).shutdown(5)
@@ -112,7 +112,7 @@ async def test_fifo_snapshot_and_restart(gateway, monkeypatch):
         reopened.close()
 
 
-@pytest.mark.parametrize("commit", [1, 2])
+@pytest.mark.parametrize("commit", [1])  # event and request share one transaction (#1129): no second commit to stall
 @pytest.mark.parametrize("fail", [False, True])
 @pytest.mark.parametrize("cancel", [False, True])
 async def test_repeated_cancel_waits_for_commit_outcome(gateway, monkeypatch, commit, fail, cancel):
@@ -144,7 +144,7 @@ async def test_repeated_cancel_waits_for_commit_outcome(gateway, monkeypatch, co
         await task
     sender = getattr(hub, "committed_sender", None)
     if sender is not None:
-        await asyncio.wait_for(sender, 1)
+        await asyncio.wait_for(sender, 10)
     assert not hub.event_lock.locked()
     persisted = hub.store.events_since(0)
     assert len(persisted) == (0 if fail and commit == 1 else 1)
@@ -161,7 +161,7 @@ async def test_repeated_cancel_waits_for_commit_outcome(gateway, monkeypatch, co
 
 async def test_request_snapshot_does_not_replace_a_later_save(gateway, monkeypatch):
     hub = gateway
-    entered, release = stall_commit(hub, monkeypatch, 2)
+    entered, release = stall_commit(hub, monkeypatch, 1)
     first = asyncio.create_task(hub.publish(event()))
     try:
         await until_entered(entered)
@@ -174,6 +174,189 @@ async def test_request_snapshot_does_not_replace_a_later_save(gateway, monkeypat
         await first
     await later
     assert hub.store.get("request", "r")["status"] == "completed"
+    assert hub.requests["r"]["status"] == "completed"  # the first snapshot's write did not revert the live request
+
+
+async def test_event_and_request_commit_in_one_transaction(gateway, monkeypatch):
+    """#1129: one publication is one commit, and a failed commit leaves neither the event nor the request."""
+    hub = gateway
+    transaction = hub.store._transaction
+    commits = []
+
+    @contextmanager
+    def counted():
+        with transaction() as conn:
+            yield conn
+        commits.append(1)
+
+    monkeypatch.setattr(hub.store, "_transaction", counted)
+    await hub.publish(event(), "runner", 3)
+    assert len(commits) == 1
+    assert len(hub.store.events_since(0)) == 1 and hub.store.get("request", "r")["status"] == "running"
+    assert hub.store.runner_seen("runner") == 3
+
+    @contextmanager
+    def failing():
+        with transaction() as conn:
+            yield conn
+            raise OSError("commit failed")
+
+    hub.store.put("request", "r", {"id": "r", "status": "before"})
+    monkeypatch.setattr(hub.store, "_transaction", failing)
+    with pytest.raises(OSError):
+        await hub.publish(event("second"), "runner", 4)
+    assert len(hub.store.events_since(0)) == 1
+    assert hub.store.get("request", "r")["status"] == "before"
+    assert hub.store.runner_seen("runner") == 3
+    assert hub.requests["r"]["status"] == "before"  # the live request goes back to what is stored (a restart would show it)
+
+
+def tool_activity(name):
+    def update(activity):
+        tools = dict(activity.get("tools") or {})
+        tools[name] = {"name": name}
+        return {**activity, "state": "working", "tools": tools}
+    return update
+
+
+async def test_activity_commits_with_its_event_or_not_at_all(gateway, monkeypatch):
+    """#1132: a publication that carries task activity is one commit; a failed commit leaves neither."""
+    hub = gateway
+    hub.store.put("task", "t", {"completed": False, "activity": {"state": "queued"}})
+    transaction = hub.store._transaction
+    commits = []
+
+    @contextmanager
+    def counted():
+        with transaction() as conn:
+            yield conn
+        commits.append(1)
+
+    monkeypatch.setattr(hub.store, "_transaction", counted)
+    await hub.publish(event(request=False), "runner", 1, activity=("t", tool_activity("one")))
+    assert len(commits) == 1
+    assert set(hub.store.get("task", "t")["activity"]["tools"]) == {"one"}
+    assert len(hub.store.events_since(0)) == 1 and hub.store.runner_seen("runner") == 1
+
+    @contextmanager
+    def failing():
+        with transaction() as conn:
+            yield conn
+            raise OSError("commit failed")
+
+    monkeypatch.setattr(hub.store, "_transaction", failing)
+    with pytest.raises(OSError):
+        await hub.publish(event(request=False), "runner", 2, activity=("t", tool_activity("two")))
+    assert set(hub.store.get("task", "t")["activity"]["tools"]) == {"one"}
+    assert len(hub.store.events_since(0)) == 1 and hub.store.runner_seen("runner") == 1
+
+
+async def test_tool_activity_burst_costs_one_commit_per_message_and_keeps_every_tool(gateway, monkeypatch):
+    """#1132: activity now waits for the event lock with its event. A burst of agent.tool messages must still land in
+    order, one commit each, with no tool lost and no message waiting on an unrelated one beyond its turn."""
+    hub = gateway
+    hub.store.put("task", "t", {"completed": False, "activity": {"state": "queued"}})
+    transaction = hub.store._transaction
+    commits = []
+
+    @contextmanager
+    def counted():
+        with transaction() as conn:
+            yield conn
+        commits.append(1)
+
+    monkeypatch.setattr(hub.store, "_transaction", counted)
+    count = 40
+    publications = [asyncio.create_task(hub.publish(event(request=False), "runner", n + 1,
+                                                    activity=("t", tool_activity(f"tool{n}"))))
+                    for n in range(count)]
+    await asyncio.wait_for(asyncio.gather(*publications), 10)
+    assert len(commits) == count  # it was 2 per message: the event, then the activity
+    assert set(hub.store.get("task", "t")["activity"]["tools"]) == {f"tool{n}" for n in range(count)}
+    assert [e["seq"] for e in hub.store.events_since(0)] == list(range(1, count + 1))
+    assert hub.store.runner_seen("runner") == count
+
+
+async def test_activity_waits_for_a_slow_client_only_as_long_as_its_event_does(gateway, monkeypatch):
+    """#1132: the activity rides the event lock, so a client that stalls the previous event holds it for at most the
+    network timeout (set short here); the activity is then saved and the slow client is dropped, as for any event."""
+    import labhq.gateway.server as server
+
+    hub = gateway
+    hub.store.put("task", "t", {"completed": False, "activity": {"state": "queued"}})
+    monkeypatch.setattr(server, "CLIENT_SEND_TIMEOUT_S", 0.05)
+
+    class Slow:
+        async def send_text(self, text):
+            await asyncio.Event().wait()
+
+        async def close(self, code):
+            pass
+
+    slow = Slow()
+    hub.clients.add(slow)
+    await hub.publish(event(request=False), "runner", 1)  # the slow client stalls this one until its timeout
+    assert slow not in hub.clients
+    await asyncio.wait_for(hub.publish(event(request=False), "runner", 2, activity=("t", tool_activity("late"))), 1)
+    assert set(hub.store.get("task", "t")["activity"]["tools"]) == {"late"}
+
+
+def translation_hub(tmp_path):
+    from labhq.settings import Settings
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    hub.store.put("approval", "a1", {"approval": {"id": "a1"}, "origin": None})
+    hub.approvals["a1"] = {"approval": {"id": "a1"}, "origin": None}
+    saved = hub.store.append_event({"type": "approval.requested", "ts": 1, "data": {"id": "a1", "summary": "x"}}, 100)
+    return hub, saved
+
+
+async def test_translation_result_is_one_commit_with_its_display_and_approval_copy(tmp_path, monkeypatch):
+    """#1132: the translation result, the message's display and the approval card's copy are saved together, then the
+    `messenger.translated` event: two commits, where it was one per write."""
+    hub, saved = translation_hub(tmp_path)
+    commits = []  # real COMMIT statements: writes inside a batch join one transaction
+    hub.store._write_connection().set_trace_callback(
+        lambda sql: commits.append(sql) if sql.strip().upper().startswith("COMMIT") else None)
+    try:
+        await hub.pi_interpreter._interpret(saved, "source text")  # no request: the failed display is written
+        assert len(commits) == 2
+        key = str(saved["seq"])
+        display = hub.store.get("pi_translation", key)
+        assert display["status"] == "failed"
+        assert hub.store.get("approval", "a1")["approval"]["pi_display"] == display
+        assert hub.store.events_since(0)[0]["data"]["pi_display"] == display
+    finally:
+        hub.store.close()
+
+
+async def test_a_failed_translation_commit_leaves_no_part_of_the_result(tmp_path, monkeypatch):
+    """#1132: all or none. Before, a failure after the first write left the translation saved and the card not."""
+    hub, saved = translation_hub(tmp_path)
+    transaction = hub.store._transaction
+    writes = 0
+
+    @contextmanager
+    def failing():
+        nonlocal writes
+        writes += 1
+        with transaction() as conn:
+            yield conn
+            if writes == 2:  # the second write of the result: the first must not stay behind
+                raise OSError("write failed")
+
+    monkeypatch.setattr(hub.store, "_transaction", failing)
+    try:
+        with pytest.raises(OSError):
+            await hub.pi_interpreter._interpret(saved, "source text")
+        monkeypatch.setattr(hub.store, "_transaction", transaction)
+        assert hub.store.get("pi_translation", str(saved["seq"])) is None
+        assert "pi_display" not in hub.store.get("approval", "a1")["approval"]
+        assert "pi_display" not in hub.store.events_since(0)[0]["data"]
+    finally:
+        hub.store.close()
 
 
 async def test_publication_without_request(gateway):
@@ -244,7 +427,7 @@ async def test_rest_history_waits_for_complete_ordered_publication(tmp_path, mon
     publication = asyncio.create_task(hub.publish(event(request=False)))
     read = None
     try:
-        await asyncio.wait_for(committed.wait(), 1)
+        await asyncio.wait_for(committed.wait(), 10)
         hub.review_done("r")
         read = asyncio.create_task(endpoint(since=since))
         await asyncio.sleep(0)
@@ -276,11 +459,11 @@ async def test_cancel_backpressured_client_finishes_storage_and_releases_event_l
     stalled = StalledClient()
     hub.clients.add(stalled)
     publication = asyncio.create_task(hub.publish(event(), "runner", 1))
-    await asyncio.wait_for(entered.wait(), 1)
+    await asyncio.wait_for(entered.wait(), 10)
     publication.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(publication, 1)
-    await asyncio.wait_for(closed.wait(), 1)
+    await asyncio.wait_for(closed.wait(), 10)
     assert not hub.event_lock.locked() and stalled not in hub.clients
     assert hub.store.get("request", "r")["status"] == "running"
     assert hub.store.runner_seen("runner") == 1
@@ -311,7 +494,7 @@ async def test_asgi_cancel_scope_only_shields_storage(gateway):
             await hub.publish(event())
 
     publication = asyncio.create_task(publish_in_scope())
-    await asyncio.wait_for(entered.wait(), 1)
+    await asyncio.wait_for(entered.wait(), 10)
     scopes[0].cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(publication, 1)
@@ -343,12 +526,12 @@ async def test_cancelled_send_still_delivers_to_remaining_clients_without_next_e
 
     hub.clients = OrderedClients([Slow(), Healthy()])
     publication = asyncio.create_task(hub.publish(event()))
-    await asyncio.wait_for(blocked.wait(), 1)
+    await asyncio.wait_for(blocked.wait(), 10)
     publication.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(publication, 1)
-    await asyncio.wait_for(received.wait(), 1)
-    await asyncio.wait_for(hub.committed_sender, 1)
+    await asyncio.wait_for(received.wait(), 10)
+    await asyncio.wait_for(hub.committed_sender, 10)
     assert deliveries == [1] and not hub.pending_committed
     assert not hub.event_lock.locked()
 

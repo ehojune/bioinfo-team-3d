@@ -1,0 +1,14 @@
+pr: 1267
+rows:
+  - sha: e97d4b6
+    at: "2026-11-02 18:24"
+    summary: "한영 매뉴얼에 검토 중인 VM 준비 절차와 삭제 전 백업 조건을 안내합니다."
+    text: "Link the draft Hyper-V workflow from both manuals and state manual admin execution, destructive RemoveVM consent and UNVERIFIED protection limits (#666)."
+  - sha: 61d0881
+    at: "2026-11-02 18:10"
+    summary: "VM mock 시험을 Windows CI에 등록하고 VM 설정 삭제에 별도 확인을 요구합니다."
+    text: "Register the PowerShell mock suite in Windows boundary CI and expose destructive VM configuration removal with explicit confirmation (#666)."
+  - sha: 5905ceb
+    at: "2026-11-02 17:53"
+    summary: "격리 시험용 Hyper-V VM을 전원 OFF 상태로 준비합니다."
+    text: "Prepare an offline Hyper-V fixture with manual elevation/reboot gates and 31 mocked provisioning checks; runtime protection remains UNVERIFIED (#666)."

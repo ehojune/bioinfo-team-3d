@@ -44,7 +44,9 @@ def budget_slot_hub(*, cap, step_cost):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(('step_cost', 'expected_questions'), [(1.0, 0), (0.95, 0), (0.80, 1)])
+# 0.99, not 1.0: a request that has used its cap to the cent asks before its next turn once the hold is on (#1139),
+# and that is not what this test is about.
+@pytest.mark.parametrize(('step_cost', 'expected_questions'), [(0.99, 0), (0.95, 0), (0.80, 1)])
 async def test_slot_question_only_runs_when_its_budget_reservation_fits(step_cost, expected_questions):
     hub = budget_slot_hub(cap=1.0, step_cost=step_cost)
     await Orchestrator(hub).run_request('r')
@@ -104,6 +106,7 @@ async def test_unanswered_slot_is_warning_in_cp2_reviewer_and_report_limitations
 @pytest.mark.asyncio
 async def test_s2_failure_only_blocks_descendants_and_independent_results_reach_cp2(tmp_path):
     hub = _hub()
+    hub.requests['r']['budget_usd'] = 100  # this test is about failure propagation: room for the four parallel holds (#1139)
     original = hub.reply
     hub.s.gateway.state_dir = str(tmp_path / 'state')
 
@@ -326,3 +329,121 @@ async def test_configured_dev_log_keeps_report_and_local_fallback_deduplicates(t
         assert record['result']['dev_reports'][-1]['step_id'] == 's4'
     finally:
         hub.store.close()
+
+
+# ---------- #1054: one wrong group beside an out-of-step claim must not fail the whole step ----------
+
+def _recited_result(extra_claim=False):
+    import copy
+
+    from tests.test_research_cp2 import _extra_observation, _standalone_result
+
+    plan, result = _standalone_result()
+    result = copy.deepcopy(result)
+    recited = _extra_observation("e_recited")
+    recited["source"] = copy.deepcopy(result["evidence"][0]["source"])
+    recited["independence_group"] = "other_group"  # the same source declared in a second group
+    result["evidence"].append(recited)
+    if extra_claim:
+        extra = copy.deepcopy(result["claims"][0])
+        extra["id"] = "c_extra"
+        result["claims"].append(extra)
+        result["links"].append({"claim_id": "c_extra", "claim_revision": 1, "evidence_id": "e1",
+                                "relation": "supports", "rationale": "same table"})
+    return plan, result
+
+
+def test_recited_source_alone_refuses_only_the_second_row():
+    from labhq.research.contract import salvage_research_result
+
+    plan, result = _recited_result()
+    salvaged, refused, unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+    assert problems == [] and salvaged is not None and unsupported == []
+    assert [row.id for row in salvaged.evidence] == ["e1"]
+    assert [(row["row_type"], row["row_id"]) for row in refused] == [("evidence", "e_recited")]
+
+
+def test_a_claim_outside_the_step_no_longer_fails_a_result_with_a_recited_source():
+    from labhq.research.contract import salvage_research_result
+
+    plan, result = _recited_result(extra_claim=True)
+    salvaged, refused, unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+    assert problems == [] and salvaged is not None
+    assert [claim.id for claim in salvaged.claims] == ["c1"]
+    assert [row.id for row in salvaged.evidence] == ["e1"]
+    assert all(link.claim_id == "c1" for link in salvaged.links)
+    assert {(row["row_type"], row["row_id"]) for row in refused} == {("evidence", "e_recited"), ("claim", "c_extra"),
+                                                              ("link", "c_extra@1->e1:supports")}
+    assert [row["claim_id"] for row in unsupported] == ["c_extra"]
+    assert "outside the claim_ids" in unsupported[0]["reason"]
+
+
+def test_an_out_of_step_claim_alone_is_refused_and_the_result_is_kept():
+    import copy
+
+    from labhq.research.contract import salvage_research_result
+    from tests.test_research_cp2 import _standalone_result
+
+    plan, result = _standalone_result()
+    result = copy.deepcopy(result)
+    extra = copy.deepcopy(result["claims"][0])
+    extra["id"] = "c_extra"
+    result["claims"].append(extra)
+    salvaged, refused, unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+    assert problems == [] and salvaged is not None and [claim.id for claim in salvaged.claims] == ["c1"]
+    assert [row["claim_id"] for row in unsupported] == ["c_extra"]
+
+
+def test_a_result_with_no_claim_of_the_step_still_fails():
+    import copy
+
+    from labhq.research.contract import salvage_research_result
+    from tests.test_research_cp2 import _standalone_result
+
+    plan, result = _standalone_result()
+    result = copy.deepcopy(result)
+    result["claims"][0]["id"] = "c_other"
+    result["links"] = [{**link, "claim_id": "c_other"} for link in result["links"]]
+    salvaged, _refused, _unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+    assert salvaged is None and any("outside the claim_ids" in problem for problem in problems)
+
+
+def test_an_undeclared_evidence_slot_is_still_not_salvaged():
+    import copy
+
+    from labhq.research.contract import salvage_research_result
+    from tests.test_research_cp2 import _standalone_result
+
+    plan, result = _standalone_result()
+    result = copy.deepcopy(result)
+    result["evidence"][0]["slots"] = ["not_a_declared_slot"]
+    salvaged, _refused, _unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+    assert salvaged is None and problems
+
+
+def test_a_refused_out_of_step_claim_also_records_its_removed_link():
+    from labhq.research.contract import salvage_research_result
+
+    plan, result = _recited_result(extra_claim=True)
+    _salvaged, refused, _unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+    assert problems == []
+    assert any(row["row_type"] == "link" and row["row_id"].startswith("c_extra@1->e1")
+               and "contract-refused claim c_extra" in row["reason"] for row in refused)
+
+
+def test_pruning_an_out_of_step_claim_cannot_end_with_none_of_the_steps_own_claims():
+    import copy
+
+    from labhq.research.contract import salvage_research_result
+    from tests.test_research_cp2 import _standalone_result
+
+    plan, result = _standalone_result()
+    result = copy.deepcopy(result)
+    result["evidence"][0].pop("assessment_reason")  # c1's only support is refused, so c1 is dropped too
+    extra = copy.deepcopy(result["claims"][0])
+    extra["id"] = "c_extra"
+    result["claims"].append(extra)
+    result["links"].append({"claim_id": "c_extra", "claim_revision": 1, "evidence_id": "e1",
+                            "relation": "supports", "rationale": "same table"})
+    salvaged, _refused, _unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+    assert salvaged is None and problems

@@ -86,6 +86,14 @@ test('the fox sheet lists every precedent and a row opens its skill card as text
   assert.ok(!nodes(second).some(el=>el.tagName==='A'),'an unknown scheme is never a link');
   assert.match(lit.skillFacts({...skill,built:false,status:'skipped',reason:'자료 요청 필요',reference:'not_dispatched'}).map(r=>r.join(' ')).join('\n'),
     /상태 생략 \(자료 요청 필요\)\n생성 버전 생성 안 됨[\s\S]*결과 참조 단계 실행 전/);
+  // #660 stage 2: other requests' uses of the same skill, with the basis of the count; an older gateway sends none and shows no row.
+  const facts=(sk,h)=>lit.skillFacts(sk,h).map(r=>r.join(' ')).join('\n');
+  const prior={...skill,previous_uses:[{request_id:'req_old',created_at:1700000000,attached_steps:['s2'],agents:['analyst'],reference:'referenced'}],previous_use_count:3};
+  assert.match(facts(prior,{limit:500,scanned:480,truncated:false}),/이전 사용 3건 \(최근 480건 기준\): req_old 2023-11-14 · 단계 s2 · 결과에서 참조 확인[^\n]*외 2건/);
+  assert.match(facts({...skill,previous_uses:[],previous_use_count:0},{limit:500,scanned:500,truncated:true}),
+    /이전 사용 다른 요청에서 고른 기록 없음 \(최근 500건 기준, 더 오래된 요청은 세지 않음\)/);
+  assert.ok(!lit.skillFacts(skill).some(row=>row[0]==='이전 사용'),'no row without the gateway sending the history');
+  assert.ok(!facts({...prior,previous_uses:[{request_id:'<b>x</b>',created_at:'bad',attached_steps:'no',reference:'weird'}]},null).includes('<script'));
   assert.equal(lit.summaryText({status:'absent',papers:[]}),'이 요청에는 선행 연구 기록이 없어요.');
   const office=State.createOfficeState({now:()=>100});
   office.apply({type:'request.created',request_id:'r1',data:{text:'t'}});

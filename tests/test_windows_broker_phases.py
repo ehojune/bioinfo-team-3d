@@ -8,6 +8,7 @@ import pytest
 
 from labhq import windows_broker as broker
 from tests.test_windows_broker import world  # Reuse the fully fake native/ownership boundary.
+from tests.support.time_proxy import RuntimeProxy
 
 CREATE = broker._create
 
@@ -26,7 +27,7 @@ def shell(tmp_path, monkeypatch):
     path.touch()
     monkeypatch.setattr(broker, "_powershell", lambda: path)
     ticks = iter([50.0, 60.0])
-    monkeypatch.setattr(broker.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(broker, "time", RuntimeProxy(broker.time, monotonic=lambda: next(ticks)))
     return path
 
 

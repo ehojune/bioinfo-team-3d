@@ -1,0 +1,6 @@
+pr: 1244
+rows:
+- sha: '0aa12f8'
+  at: 2026-11-01 09:10
+  text: 'CI 정책 문서(ci-reuse.md)가 worker 진단이 5분마다 task stack을 남긴다고 적고 있었다. 진단 스레드가 gc를 훑지 않게 바꾼 뒤(#1240) 남는 것은 node와 faulthandler 스레드 stack뿐이라 문서를 그에 맞추고 이유를 적었다 (#1238)'
+  summary: CI 진단이 실제로 남기는 내용에 맞춰 정책 문서를 고쳤습니다.

@@ -305,3 +305,32 @@ async def test_a_revised_request_gets_every_step_of_a_long_previous_plan(tmp_pat
     await Orchestrator(hub).run_request("r")
     plan_prompt = next(task for task in hub.calls if task.meta["kind"] == "plan").prompt
     assert '"id": "s14"' in plan_prompt and "chars clipped" not in plan_prompt.split("CP1 revision request", 1)[1]
+
+
+@pytest.mark.asyncio
+async def test_two_calls_at_once_open_one_revised_request(tmp_path, monkeypatch):
+    # #1140: the existing-request check ran in the caller while the new request was registered in a task the write wrapper
+    # starts, so two calls ready in the same loop turn both passed the check and each opened a revised request.
+    hub = _gateway(tmp_path, monkeypatch)
+    _old_request(hub)
+
+    first, second = await asyncio.gather(hub.acreate_revised_request("old", NOTE), hub.acreate_revised_request("old", NOTE))
+
+    opened = [rid for rid, req in hub.requests.items() if (req.get("meta") or {}).get("revised_from") == "old"]
+    assert first == second and opened == [first]
+    assert hub.started == [first] and hub.requests["old"]["revised_to"] == first
+    # A later call, and a call after the link was lost, still return the same request.
+    assert await hub.acreate_revised_request("old", NOTE) == first
+    hub.requests["old"].pop("revised_to")
+    assert await hub.acreate_revised_request("old", NOTE) == first and hub.started == [first]
+
+
+@pytest.mark.asyncio
+async def test_a_revise_that_fails_leaves_no_lock_held_for_the_next_call(tmp_path, monkeypatch):
+    hub = _gateway(tmp_path, monkeypatch)
+    _old_request(hub, cso_model="not-allowed-anymore")
+    with pytest.raises(ValueError):
+        await hub.acreate_revised_request("old", NOTE)
+    assert hub.revised_request_of("old") is None
+    hub.requests["old"]["cso_model"] = None
+    assert await asyncio.wait_for(hub.acreate_revised_request("old", NOTE), 5) == hub.revised_request_of("old")

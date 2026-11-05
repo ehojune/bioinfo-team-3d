@@ -142,6 +142,16 @@ const TERMINAL_FOLLOWUP_STATES = new Set(['done', 'failed', 'interrupted']);
 const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue', 'result_storage', 'result_publish', 'recruit_plan', 'literature_pdf', 'disk_space']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
+// The one kind of task that may start after its request is over: the PI's follow-up turn (#1170). A list of what may
+// start, not of what may not, so a kind added later is refused until it is named here.
+const POST_END_TASK_KINDS = new Set(['followup']);
+// Events that start or hold pipeline work. A request that is over (isTerminalRequest, review_pending included: no staff
+// runs while the PI reviews) takes none of them; what ends work (step_done, a done/idle status, a result), what follows
+// a finished request (a follow-up turn, usage, cards, review, storage) and everything else still applies (#1170).
+const PIPELINE_STARTS = new Set(['request.review', 'request.plan', 'request.route', 'request.questions', 'request.step_attempt',
+  'request.step_paused', 'request.step_halted', 'request.step_quota_wait', 'request.step_login_wait', 'request.resume_waiting',
+  'request.resumed', 'request.runner_wait', 'request.step_resumed', 'request.step_quota_resumed', 'request.step_login_resumed']);
+const STATUS_THAT_STARTS_WORK = new Set(['working', 'queued', 'waiting', 'hibernating']);
 const hasActiveFollowup = q => (q?.followups || []).some(f => !TERMINAL_FOLLOWUP_STATES.has(f.status));
 const isPastRequest = q => !!q && isTerminalRequest(q.status) && !!q.pi_reviewed_at && !hasActiveFollowup(q);
 const officeRequests = requests => [...requests].filter(q => !isPastRequest(q));
@@ -159,6 +169,14 @@ const REQUEST_STATUS_KO = { running: '진행 중', waiting_for_runner: '러너 �
   waiting_login: '로그인 대기', waiting_facilities_fix: '환경 수정 승인 대기', waiting_pi: 'PI 결정 대기',
   interrupted: '중단됨', done: '완료', failed: '실패', cancelled: '취소됨', rejected: '거부됨', review_pending: '보고서 검토 대기' };
 const requestStatusLabel = status => REQUEST_STATUS_KO[status] || String(status || '상태 모름');
+// A request that finished `done` with failed, skipped or never-run steps (#1220). The snapshot lists them
+// (failed_steps); a request followed live has only its step states, which say the same for the steps that ran.
+const FAILED_STEP_STATES = ['failed', 'error', 'skipped'];
+const partialFailureSteps = q => {
+  if (!q || !['done', 'review_pending'].includes(q.status)) return [];
+  if (Array.isArray(q.failed_steps)) return q.failed_steps.map(String);
+  return Object.entries(q.steps || {}).filter(([, state]) => FAILED_STEP_STATES.includes(state)).map(([id]) => id);
+};
 const needsPiReview = q => !!q && isTerminalRequest(q.status) && q.pi_review_pending === true && !q.pi_reviewed_at;
 const needsStorage = q => !!q && ['done', 'failed', 'cancelled', 'review_pending'].includes(q.status)
   && (q.status !== 'cancelled' || !!String(q.report || '').trim()) && !Object.keys(q.resultStorage || {}).length;
@@ -183,7 +201,10 @@ function processingLabel(q) {
 // The status with what the PI can do about it: resume an interrupted request, or which runner is still missing.
 function requestStatusText(q, approvals) {
   if (!q) return '';
-  if (needsPiReview(q)) return `${reviewLabel(q)} 대기`;
+  const failed = partialFailureSteps(q);
+  const partial = failed.length ? ` · 일부 실패 ${failed.length}` : '';
+  if (needsPiReview(q)) return `${reviewLabel(q)} 대기${partial}`;
+  if (failed.length) return `${requestStatusLabel('done')}${partial}`;
   const label = requestStatusLabel(q.status);
   if (q.status === 'interrupted') {
     const card = [...(approvals ? approvals.values() : [])].some(a => a && a.kind === 'resume' && a.request_id === q.id);
@@ -212,8 +233,42 @@ function engineCostLabel(summary) {
   if (!summary || !summary.by_engine) return '';
   const engines = Object.entries(summary.by_engine).map(([name, e]) => `${name} ${summaryParts(e)}`).join(' · ');
   const stale = (summary.prices || []).filter(p => p && p.stale).map(p => `${p.engine} ${p.model} (${p.checked_on} 확인)`);
+  // `model_tier_mismatch:<staff>:<tier>:<model that ran>` (#625); a model name may hold ':' itself.
+  const mismatched = (summary.warnings || []).filter(w => typeof w === 'string' && w.startsWith('model_tier_mismatch:')).map(w => {
+    const [agent, tier, ...model] = w.slice('model_tier_mismatch:'.length).split(':');
+    return `${agent}(${tier}) → ${model.join(':')}`;
+  });
   return [engines, Number(summary.estimated_usd) > 0 ? '추정은 API 가격표 환산이며 청구액이 아닙니다' : '',
-    stale.length ? `가격표 오래됨: ${stale.join(', ')}` : ''].filter(Boolean).join('; ');
+    stale.length ? `가격표 오래됨: ${stale.join(', ')}` : '',
+    mismatched.length ? `선언 등급과 다른 모델: ${mismatched.join(', ')}` : ''].filter(Boolean).join('; ');
+}
+// The request's time limit (#877), worded as `labhq status` words it. The gateway sends wall_clock with the snapshot and
+// request.created; this reads it with the clock and the status this page already derived. A snapshot cannot tell when a
+// PI wait that began after it started, so such a wait is not subtracted until the next snapshot: the time left reads
+// shorter than it is, never longer. A request whose limit is unknown (an older gateway) shows nothing, not "off".
+function applyWallClock(q, clock) {
+  q.wallClock = clock && typeof clock === 'object' && !Array.isArray(clock) ? { ...clock } : null;
+}
+const spanLabel = seconds => seconds < 120 ? `${Math.trunc(seconds)}초` : `${Math.round(seconds / 60)}분`;
+function deadlineLabel(q, nowSeconds) {
+  const clock = q && q.wallClock;
+  if (!clock || !isActiveRequest(q.status)) return '';
+  if (!Number(clock.limit_s)) return '시간 상한 꺼짐';
+  const waiting = q.status === 'waiting_pi';
+  const since = Number(clock.pi_since);
+  const open = waiting && Number.isFinite(since) && clock.pi_since !== null ? Math.max(0, nowSeconds - since) : 0;
+  const held = (Number(clock.held_s) || 0) + open;
+  // The gateway cancels at `deadline_at`, counted from when it accepted the request and moved by each closed PI wait.
+  // `created_at` of a request.created event is its ts, which lags the acceptance when the start is late, so it only
+  // stands in for an older gateway that sends no deadline (#1103). A PI wait still open is added here.
+  const deadline = Number(clock.deadline_at);
+  const base = clock.deadline_at !== null && clock.deadline_at !== undefined && Number.isFinite(deadline)
+    ? deadline : (Number(q.created_at) || nowSeconds) + Number(clock.limit_s) + (Number(clock.held_s) || 0);
+  const left = base + open - nowSeconds;
+  let text = `시간 상한 켜짐 ${spanLabel(Number(clock.limit_s))} · ` + (left > 0 ? `남은 ${spanLabel(left)}` : '기한이 지났습니다(곧 취소)');
+  if (held > 0) text += ` · PI 대기 제외 ${spanLabel(held)}`;
+  if (waiting) text += ' · PI 결정 대기 중이라 시간이 가지 않습니다';
+  return text;
 }
 // Who spent it: the request's cost per staff member, when the gateway recorded agent ids (by_agent).
 function agentCostLabel(summary, name = id => id) {
@@ -264,6 +319,9 @@ const S = {
   jobs: new Map(), feed: [], cost: 0, conn: mode === 'demo' ? 'demo' : 'connecting', projects: [],
   lastSay: {}, taskStep: new Map(), seq: 0, doorUntil: 0,
 };
+// The newest gateway event seq applied: a repeated or older event is ignored here, so no page needs a copy of this
+// guard, and the pages resume a reconnect from it (#1170). Not enumerable: the legacy state digests are unchanged.
+Object.defineProperty(S, 'lastSeq', { value: 0, writable: true, enumerable: false });
 // Task detail is derived from events and may be rebuilt from a snapshot.
 // Keep it out of legacy state serialization while exposing it to both UIs.
 Object.defineProperty(S, 'stepDetails', { value: new Map(), enumerable: false });
@@ -552,6 +610,7 @@ function req(rid) {
     Object.defineProperty(q, 'assumptions', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'processing', { value: null, writable: true, enumerable: false });
     Object.defineProperty(q, 'costSummary', { value: null, writable: true, enumerable: false });  // #270
+    Object.defineProperty(q, 'wallClock', { value: null, writable: true, enumerable: false });  // #877
     Object.defineProperty(q, 'paperLiterature', { value: null, writable: true, enumerable: false });  // #660, from the detail GET
     Object.defineProperty(q, 'pipelinePr', { value: null, writable: true, enumerable: false });
     Object.defineProperty(q, 'bundlePath', { value: '', writable: true, enumerable: false });
@@ -676,8 +735,34 @@ function setPipelinePr(q, d) {
   if (d.status === 'open' && d.url && !q.github.some(g => g.kind === 'pipeline_pr' && g.url === d.url))
     q.github.push({ kind: 'pipeline_pr', url: d.url, number: d.number });
 }
+// True when `ev` would start or hold pipeline work for a request that is over.
+function endedRequestRefuses(ev) {
+  const q = ev.request_id && S.requests.get(ev.request_id);
+  if (!q || !isTerminalRequest(q.status)) return false;
+  if (PIPELINE_STARTS.has(ev.type)) return true;
+  // A task of unknown kind (its dispatch is older than the replay window) is refused like any other.
+  if (ev.type === 'task.dispatched') return !POST_END_TASK_KINDS.has(ev.data?.kind);
+  if (ev.type === 'agent.status') return STATUS_THAT_STARTS_WORK.has(ev.data?.state) && !POST_END_TASK_KINDS.has(S.taskKind.get(ev.task_id));
+  return false;
+}
+// A snapshot's running task of a request that is over is not restored either, unless it is a follow-up turn.
+// The gateway sends a follow-up turn of staff_tasks as step_id 'followup' with no kind.
+const snapshotTaskKind = task => task.kind || (task.step_id === 'followup' ? 'followup' : undefined);
+const staleTask = task => { const q = S.requests.get(task.request_id); return !!q && isTerminalRequest(q.status) && !POST_END_TASK_KINDS.has(snapshotTaskKind(task)); };
 function apply(ev, replay = false) {
   const effects = [];
+  if (!replay && ev.type === 'snapshot' && !ev.replay_gap && Number.isFinite(ev.seq) && ev.seq < S.lastSeq) return effects;
+  // A snapshot sets the point itself, and the events it replays carry seqs it already covers. An event with no seq
+  // (the demo, a local notice) is always applied.
+  if (!replay && ev.type !== 'snapshot' && Number.isFinite(ev.seq) && ev.seq > 0) {
+    if (ev.seq <= S.lastSeq) return effects;
+    S.lastSeq = ev.seq;
+  }
+  if (ev.type !== 'snapshot' && endedRequestRefuses(ev)) {  // one rule, live and replayed alike (#1170)
+    // Only the task's kind is kept, so the statuses that follow a refused dispatch are recognised as its own.
+    if (ev.type === 'task.dispatched' && ev.task_id) S.taskKind.set(ev.task_id, ev.data?.kind);
+    return effects;
+  }
   const t = ev.type, d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, ts = ev.ts || now();
   trackActivity(ev);
   switch (t) {
@@ -693,10 +778,14 @@ function apply(ev, replay = false) {
       // Reconnection keeps a view selected even by older UI consumers that assign S.current directly.
       if (S.current && S.current !== preferred?.id) preferred = {id:S.current, manual:true};
       resetSnapshotState();
+      S.lastSeq = Number(ev.seq) || 0;
       S.sessionStartedAt = Number(d.session_started_at) || 0;
       (d.agents || []).forEach(upsertAgent);
       S.projects = d.projects || [];
       S.defaultRefs = d.default_references || [];
+      // The gateway's current status of each request is known before its events replay, so a completion older than the
+      // 200-event window still makes a later pipeline event stale (#1170).
+      for (const r of d.requests || []) req(r.id).status = r.status;
       (d.recent_events || []).forEach(e => apply(e, true));
       S.demoStatus = d.demo_status || null;
       (d.engine_holds || []).forEach(hold => S.engineHolds.set(hold.engine, {...hold}));
@@ -733,13 +822,19 @@ function apply(ev, replay = false) {
         if (r.execution_record_truncated) Object.assign(q, { execution_record_truncated: true,
           execution_record_chars: r.execution_record_chars });
         q.costSummary = null; applyCostSummary(q, r.cost_summary);
+        applyWallClock(q, r.wall_clock);
         applySessionCost(q, r, S.sessionStartedAt);
         if (r.plan) setPlan(q, r.plan);
         q.references = r.references || [];
         q.followups = (r.followups || []).map(f => ({ ...f }));
         q.piNotes = (r.pi_notes || []).map(note => ({ ...note }));
         Object.assign(q.steps, r.step_status || {});
+        q.failed_steps = Array.isArray(r.failed_steps) ? r.failed_steps : undefined;
         for (const [sid, detail] of Object.entries(r.step_details || {})) Object.assign(stepDetail(r.id, sid), detail);
+        if (Object.hasOwn(r, 'facilities_projection')) {
+          for (const [key, detail] of S.stepDetails) if (key.startsWith(`${r.id}:`)) delete detail.facilities_projection;
+          for (const [sid, projection] of Object.entries(r.facilities_projection || {})) stepDetail(r.id, sid).facilities_projection = projection;
+        }
         if (r.review) q.review = r.review;
         // recent_events may no longer hold a long request's plan event: a planned active request is past briefing.
         // With no step started and no review yet it is still in 계획, waiting for the PI to approve the plan (CP1).
@@ -754,13 +849,13 @@ function apply(ev, replay = false) {
       const staffTasks = d.staff_tasks || d.running_tasks;
       if (Array.isArray(staffTasks)) {
         S.activeTasks.clear();
-        for (const task of staffTasks) S.activeTasks.set(task.id, {...task,
-          activity: {...(task.activity || {}), tools: {...(task.activity?.tools || {})}}});
+        for (const task of staffTasks.filter(task => !staleTask(task))) { if (snapshotTaskKind(task)) S.taskKind.set(task.id, snapshotTaskKind(task)); S.activeTasks.set(task.id, {...task,
+          activity: {...(task.activity || {}), tools: {...(task.activity?.tools || {})}}}); }
         for (const [jid, context] of S.jobContext)
           if (context.task_id && !S.activeTasks.has(context.task_id)) S.jobContext.delete(jid);
       }
       for (const task of d.running_tasks || []) {
-        if (!task.request_id || !task.step_id) continue;
+        if (!task.request_id || !task.step_id || staleTask(task)) continue;
         const key = `${task.request_id}:${task.step_id}`, previous = restored.get(key);
         const rank = [task.state === 'running' ? 1 : 0, Number(task.dispatched_at) || 0];
         if (previous && (previous.rank[0] > rank[0] ||
@@ -973,6 +1068,7 @@ function apply(ev, replay = false) {
       Object.assign(q, { text: d.text, mode: d.mode, project_id: d.project_id, status: d.status || 'running', phase: isTerminalRequest(d.status) ? 'done' : d.mode === 'direct' ? 'execute' : 'briefing', created_at: ts });
       q.agent_id = d.agent_id || '';
       q.references = d.references || [];
+      applyWallClock(q, d.wall_clock);
       if (!replay && !(preferred?.manual && S.requests.has(S.current) && isTerminalRequest(q.status))) selectRequest(rid, false);
       feed({ who: 'pi', text: `새 요청: ${short(d.text, 130)}`, fullText: `새 요청: ${d.text || ''}` }, ts, rid);
       break;
@@ -1062,6 +1158,11 @@ function apply(ev, replay = false) {
       feed({ who: 'system', text: short(message, 300), fullText: message, cls: 'alert' }, ts, rid);
       break;
     }
+    case 'request.facilities_projection': {
+      for (const [key, detail] of S.stepDetails) if (key.startsWith(`${rid}:`)) delete detail.facilities_projection;
+      for (const [sid, projection] of Object.entries(d)) stepDetail(rid, sid).facilities_projection = projection;
+      break;
+    }
     case 'request.facilities_fix': { const detail = stepDetail(rid, d.step_id), status = d.status || (d.ok ? 'succeeded' : 'failed'); detail.facilities_fix = { ...d, status }; const label = status === 'applied' ? '환경 수정 적용' : status === 'succeeded' ? '환경 수정 성공' : '환경 수정 실패'; feed({ who: 'facilities', text: `${label}: ${short((status === 'failed' ? d.error : d.action) || d.fix_id || '', 120)}`, fullText: `${label}: ${(status === 'failed' ? d.error : d.action) || d.fix_id || ''}`, cls: status === 'failed' ? 'alert' : '' }, ts, rid); break; }
     case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); if (d.ok === false && d.environment) detail.environment = d.environment; else delete detail.environment; if (d.facilities_fix) detail.facilities_fix = d.facilities_fix; delete detail.quota_resume_at; delete detail.quota_engine; delete detail.quota_deadline_at; delete detail.login_resume_at; delete detail.login_engine; delete detail.login_reason; syncHoldStatus(q); break; }
     case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncHoldStatus(q); break; }
@@ -1121,6 +1222,7 @@ function apply(ev, replay = false) {
       for (const a of S.agents.values()) for (const [tid, row] of [...a.tasks]) if (row.rid === rid) { a.tasks.delete(tid); S.taskControl.delete(tid); }
       q.status = isTerminalRequest(d.status) ? d.status : t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
       q.final_checkpoint = d.final_checkpoint || null;
+      q.failed_steps = Array.isArray(d.failed_steps) ? d.failed_steps : undefined;
       q.pi_review_pending = d.pi_review_pending === true; q.pi_reviewed_at = d.pi_reviewed_at || null;
       if (!replay && needsPiReview(q) && !wasPending) effects.push({type:'toast', text:`${q.status === 'done' ? '보고서가 준비됐어요' : '요청이 끝났어요'} · ${reviewLabel(q)} 대기`});
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) {
@@ -1263,9 +1365,9 @@ function toolLabel(name) {
 
 return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentTool, toolInputLine, toolActivitySummary, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES, phaseLabel };
 }
-root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
+root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel, deadlineLabel,
   isActiveRequest, isTerminalRequest, isPastRequest, officeRequests, sessionCostRequests, requestsCostTotal,
-  REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
+  REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, partialFailureSteps, processingLabel,
   needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, serviceWarning, demoBannerText,
   safeReportHref, safeReportImageHref, reportMarkdownHTML, reportWithPackage };
 })(globalThis);

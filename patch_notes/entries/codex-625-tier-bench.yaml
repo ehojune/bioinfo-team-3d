@@ -1,0 +1,18 @@
+pr: 1188
+rows:
+  - sha: 6bd3dc9
+    at: "2026-11-01 00:30"
+    summary: "모델 등급 비교의 한영 호출 예제에 필요한 비용 예약 인자를 보완합니다."
+    text: "docs: mock control 구성과 arm별 상한, 같은 인스턴스 재사용 및 실제 비용 보장과의 차이를 안내 (#625)"
+  - sha: 4e80e0e
+    at: "2026-11-01 00:10"
+    summary: "모델 비교의 두 실행 비용을 먼저 예약하는 모의 시험을 추가합니다."
+    text: "bench: 정수 합산 admission과 timeout·취소·늦은 receipt 검증, live 차단 유지 (#625)"
+  - sha: 102b473
+    at: "2026-10-31 18:45"
+    summary: "고정 계획의 모델 등급 비교를 mock으로 검증합니다."
+    text: "bench: 격리된 두 단계 등급 fixture와 live 호출 차단 추가 (#625)"
+  - sha: 69b9240
+    at: "2026-10-31 21:23"
+    summary: "고정 등급 fixture의 mock 전용 호출법을 한영 manual에 안내합니다."
+    text: "docs: 고정 등급 fixture 호출법과 live 차단 안내 (#625)"

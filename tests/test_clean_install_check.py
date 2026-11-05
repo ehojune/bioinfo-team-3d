@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from scripts import clean_install_check
+from tests.support.time_proxy import RuntimeProxy
 
 
 def test_failure_is_one_utf8_line_when_windows_starts_with_cp1252(tmp_path):
@@ -39,6 +40,45 @@ def test_remaining_venv_process_names_its_recorded_role(tmp_path, monkeypatch):
     assert clean_install_check._venv_python_processes(checkout, {4101: "gateway-supervisor"}) == [
         "gateway-supervisor (python.exe PID 4101)"
     ]
+
+
+def test_git_bash_shell_variables_do_not_reach_the_install(tmp_path, monkeypatch):
+    """#1216: Git Bash's MSYSTEM (with a narrowed PATH) kills the mingw64 git.exe it puts first on PATH."""
+    for name in ("MSYSTEM", "MSYS", "MINGW_PREFIX", "MINGW_CHOST", "EXEPATH", "ORIGINAL_PATH", "ORIGINAL_TEMP"):
+        monkeypatch.setenv(name, "git-bash-value")
+    env = clean_install_check._isolated_env(tmp_path, tmp_path / "checkout")
+    assert not [name for name in env if name.upper().startswith(("MSYS", "MINGW", "ORIGINAL_"))]
+    assert "EXEPATH" not in env
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the crash is the Windows git.exe of Git for Windows")
+def test_a_clone_runs_under_the_isolated_env_from_a_git_bash_shell(tmp_path, monkeypatch):
+    """The real failure: every git.exe Git for Windows puts on PATH must clone under the narrowed environment."""
+    import shutil
+
+    found = shutil.which("git")
+    if not found:
+        pytest.skip("git is not installed")
+    candidates = {Path(found)}
+    mingw = Path(found).parent.parent / "mingw64" / "bin" / "git.exe"
+    if mingw.exists():
+        candidates.add(mingw)
+    source = tmp_path / "source"
+    source.mkdir()
+    run = {"cwd": source, "check": True, "capture_output": True}
+    subprocess.run([found, "init", "-q"], **run)
+    (source / "file.txt").write_text("x", encoding="utf-8")
+    subprocess.run([found, "add", "."], **run)
+    subprocess.run([found, "-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-q", "-m", "m"], **run)
+    monkeypatch.setenv("MSYSTEM", "MINGW64")  # what a Git Bash session exports
+    monkeypatch.setenv("EXEPATH", str(Path(found).parent.parent / "bin"))
+    for index, git in enumerate(sorted(candidates)):
+        work = tmp_path / f"work{index}"
+        work.mkdir()
+        env = clean_install_check._isolated_env(work, work / "checkout")
+        done = subprocess.run([str(git), "clone", "--local", "--no-hardlinks", str(source), str(work / "clone")],
+                              env=env, capture_output=True, text=True, cwd=work, timeout=120)
+        assert done.returncode == 0, f"{git}: exit {done.returncode} {done.stderr[-200:]}"
 
 
 def test_install_drops_operator_overrides_and_auth_before_first_subprocess(tmp_path, monkeypatch):
@@ -489,7 +529,7 @@ def test_receipt_waits_out_a_transient_windows_lock(tmp_path, monkeypatch):
         original_replace(source, target)
     monkeypatch.setattr(clean_install_check, "_RECEIPT_REPLACE_RETRY", True, raising=False)
     monkeypatch.setattr(clean_install_check.os, "replace", locked)
-    monkeypatch.setattr(clean_install_check.time, "sleep", delays.append)
+    monkeypatch.setattr(clean_install_check, "time", RuntimeProxy(clean_install_check.time, sleep=delays.append))
     receipt.data["status"] = "PASS"
     receipt.write()
     assert len(calls) == 3 and delays == [0.05, 0.05]
@@ -509,7 +549,7 @@ def test_receipt_replace_retry_is_bounded_and_specific(tmp_path, monkeypatch, wi
         raise failure("persistent fixture")
     monkeypatch.setattr(clean_install_check, "_RECEIPT_REPLACE_RETRY", windows, raising=False)
     monkeypatch.setattr(clean_install_check.os, "replace", denied)
-    monkeypatch.setattr(clean_install_check.time, "sleep", delays.append)
+    monkeypatch.setattr(clean_install_check, "time", RuntimeProxy(clean_install_check.time, sleep=delays.append))
     with pytest.raises(failure):
         receipt.write()
     assert len(calls) == attempts and len(delays) == attempts - 1

@@ -551,7 +551,7 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
             continue
         if not row.countable:
             errors.append(f"{row.kind} row {row.id} is not evidence and cannot {link.relation[:-1]} a claim; "
-                          "link it as context or record it as a claim")
+                          "link it as context, or record it as a claim only if the plan declared that claim id for this step")
         elif row.status != "observed":
             errors.append(f"evidence {row.id} is {row.status}; a failed or empty lookup is neither evidence "
                           f"nor proof of absence and cannot {link.relation[:-1]} a claim")

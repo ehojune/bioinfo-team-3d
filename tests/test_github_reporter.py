@@ -17,6 +17,8 @@ from labhq.integrations.github import GitHubClient, GitHubHTTPError, codex_comme
 from labhq.runner.daemon import Runner
 from labhq.settings import DataZone, PolicySettings, ProjectSettings, Settings
 from labhq.util import free_port
+from tests.support.serve_task import serve_task, wait_started
+from tests.support.time_proxy import RuntimeProxy
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -24,7 +26,7 @@ REPO = Path(__file__).resolve().parents[1]
 def test_github_error_preserves_rate_limit_reset_as_retry_delay(monkeypatch):
     from labhq.integrations import github
 
-    monkeypatch.setattr(github.time, "time", lambda: 1_000)
+    monkeypatch.setattr(github, "time", RuntimeProxy(github.time, time=lambda: 1_000))
     response = httpx.Response(403, headers={"X-RateLimit-Remaining": "0",
                                             "X-RateLimit-Reset": "1060"}, text="limited")
     error = GitHubHTTPError("GET", "/repos/o/p", response)
@@ -84,8 +86,8 @@ async def test_request_updates_land_in_project_repo(tmp_path):
 
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=gport, log_level="warning"))
-    tasks = [asyncio.create_task(server.serve())]
-    await _until(lambda: server.started, 10)
+    tasks = [serve_task(server.serve())]
+    await wait_started(lambda: server.started, tasks[0], 10, "gateway")
     runner = Runner(s)
     tasks.append(asyncio.create_task(runner.run_forever()))
     try:

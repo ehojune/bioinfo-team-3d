@@ -1310,3 +1310,22 @@ async def test_a_correction_that_still_asks_the_pi_is_not_salvaged():
     assert hub.requests["r"]["outcome"] == "research_failed"
     assert "cannot ask a new blocking_decision" in hub.requests["r"]["results"]["s1"]["error"]
     assert len(hub.approvals) == 1  # CP1 only: nothing reached CP2
+
+
+@pytest.mark.asyncio
+async def test_cp2_literature_lines_are_given_the_stored_precedent_access(monkeypatch):
+    """#1090: the two lines count what the pre-CP1 search stored, so a paper read there is not "조회 기록 없음"."""
+    from labhq import output_checks
+
+    seen = {}
+    for name in ("conclusion_literature_line", "literature_ledger_line"):
+        monkeypatch.setattr(output_checks, name, lambda *a, _n=name, **k: seen.setdefault(_n, k.get("stored")) and None)
+    hub = _research_hub(_settings(), [CP1, {"approved": False, "choice": "deny", "note": "stop"}])
+    hub.requests["r"]["analysis_precedents"] = {"status": "ok", "papers": [{
+        "fulltext_receipt": {"paper_id": "PMID:1", "access_level": "full_text", "text_file": "p.md",
+                             "text_sha256": "a" * 64}, "citations": []}]}
+    expected = output_checks.stored_access(hub.requests["r"]["analysis_precedents"])
+    assert expected, "the fixture must be a record stored_access accepts"
+    await Orchestrator(hub).run_request("r")
+
+    assert seen == {"conclusion_literature_line": expected, "literature_ledger_line": expected}

@@ -16,6 +16,7 @@ from labhq.orchestrator.cso import Orchestrator
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 from labhq.util import free_port
+from tests.support.serve_task import serve_task, wait_started
 
 REPO = Path(__file__).resolve().parents[1]
 REFS = [{"kind": "path", "value": "/srv/refs/yuan", "note": None, "source": "request"}]
@@ -490,8 +491,8 @@ async def test_followup_end_to_end_with_mock_runner(tmp_path):
     app = create_app(s)
     hub = app.state.hub
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    tasks = [asyncio.create_task(server.serve())]
-    await _until(lambda: server.started)
+    tasks = [serve_task(server.serve())]
+    await wait_started(lambda: server.started, tasks[0], 180, "gateway")
     runner = Runner(s)
     tasks.append(asyncio.create_task(runner.run_forever()))
     try:

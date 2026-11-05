@@ -20,6 +20,7 @@ from labhq.models import Event
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 from labhq.util import free_port
+from tests.support.serve_task import serve_task, wait_started
 
 REPO = Path(__file__).resolve().parents[1]
 STALL_S = 0.5      # one slow fsync
@@ -94,8 +95,8 @@ async def test_health_answers_while_the_runner_writes_through_a_slow_disk(tmp_pa
     app = create_app(s)
     hub = app.state.hub
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    tasks = [asyncio.create_task(server.serve())]
-    await _until(lambda: server.started, 30, "gateway start")
+    tasks = [serve_task(server.serve())]
+    await wait_started(lambda: server.started, tasks[0], 30, "gateway start")
     runner = Runner(s)
     tasks.append(asyncio.create_task(runner.run_forever()))
     disk = prober = None

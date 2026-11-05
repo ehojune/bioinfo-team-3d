@@ -10,6 +10,7 @@ import pytest
 
 from labhq import cli, instance_guard, runtime_readiness as runtime, windows_broker, windows_launch
 from labhq.settings import Settings
+from tests.support.time_proxy import RuntimeProxy
 
 
 @pytest.fixture
@@ -25,7 +26,7 @@ def cohort(tmp_path, monkeypatch):
     names = ("gateway", "gateway-supervisor", "runner", "runner-supervisor")
     records = {name: {"pid": i + 10, "created": f"windows:{100 + i}"} for i, name in enumerate(names)}
     monkeypatch.setattr(runtime.sys, "platform", "win32")
-    monkeypatch.setattr(runtime.time, "time", lambda: 1000)
+    monkeypatch.setattr(runtime, "time", RuntimeProxy(runtime.time, time=lambda: 1000))
     monkeypatch.setattr(cli, "_process_record", lambda s, role, **kw: ("alive", records[role], None))
     monkeypatch.setattr(windows_launch, "record_job_membership", lambda r: True)
     monkeypatch.setattr(cli, "_health", lambda s: {"runners": [s.runner.id]})
@@ -123,7 +124,7 @@ def test_bad_containment_never_overrides_detached_failure(cohort, monkeypatch, f
         if fault == "response_role": value["roles"]["runner"]["created"] = "windows:999"
         if fault == "response_provenance": value["provenance"]["launcher_sha256"] = "f" * 64
         if fault == "trust_expired_during_query":
-            monkeypatch.setattr(runtime.time, "time", lambda: 1101)
+            monkeypatch.setattr(runtime, "time", RuntimeProxy(runtime.time, time=lambda: 1101))
             value["observed_at"] = 1101
         return value
     monkeypatch.setattr(runtime, "_pipe_request", query)
