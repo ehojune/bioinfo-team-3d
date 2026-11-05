@@ -58,7 +58,9 @@ def test_scope_index_walks_import_time_and_helper_bodies_once(monkeypatch):
 
 
 def test_cached_import_candidates_keep_live_changed_helper_and_profile_checks(tmp_path, monkeypatch):
-    source = 'from tests.support.helper import shared\ndef test_logic(): assert 1\n'
+    # #1285: a changed helper selects only the nodes that use what they import from it: test_logic does, test_import_only
+    # merely sits in a file that imports it.
+    source = 'from tests.support.helper import shared\ndef test_logic(): shared()\ndef test_import_only(): assert 1\n'
     data = review(source)
     data['mixed_nodes'] = {}
     helper = tmp_path / 'tests/support/helper.py'
@@ -81,6 +83,8 @@ def test_cached_import_candidates_keep_live_changed_helper_and_profile_checks(tm
     helper.write_text('import os\nos.fsync(1)', encoding='utf-8')
     assert s.include_windows('tests/test_math.py', source, data,
                              changed={'tests/support/helper.py'}, **args)[0]
+    assert not s.include_windows('tests/test_math.py', source, data,
+                                 changed={'tests/support/helper.py'}, root=tmp_path, node='test_import_only')[0]
     assert not s.include_windows('tests/test_math.py', source, data, **args)[0]
     helper.write_text('VALUE=1', encoding='utf-8')
     assert not s.include_windows('tests/test_math.py', source, data,

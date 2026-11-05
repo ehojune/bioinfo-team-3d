@@ -263,8 +263,13 @@ def intrinsic_boundary(text, *, node=None, root=None, seen=None):
 
 
 @lru_cache(maxsize=512)
-def _test_imports(tree):
-    """Immutable direct import candidates, independent of the changed range."""
+def _test_import_bindings(tree):
+    """Immutable direct imports, independent of the changed range: (candidate paths, bound names, original names).
+
+    The bound names are what the import puts in the module namespace, so a changed helper can be tied to the nodes
+    that use it (#1285). The original names are what the helper calls them (``import x as y`` binds y, x is the helper's
+    name), which an autouse fixture is matched by. ``None`` bound stands for a star import, whose names cannot be told
+    apart."""
     imports = []
     for statement in ast.walk(tree):
         if isinstance(statement, ast.ImportFrom):
@@ -273,12 +278,87 @@ def _test_imports(tree):
             candidates.update(module + '/' + alias.name + '.py' for alias in statement.names)
             if statement.level or not module.startswith('tests/'):
                 candidates |= {'tests/' + name for name in tuple(candidates)}
+            bound = None if any(alias.name == '*' for alias in statement.names) else frozenset(
+                alias.asname or alias.name for alias in statement.names)
+            origin = frozenset(alias.name for alias in statement.names)
         elif isinstance(statement, ast.Import):
             candidates = {alias.name.replace('.', '/') + '.py' for alias in statement.names}
+            bound = frozenset(alias.asname or alias.name.split('.')[0] for alias in statement.names)
+            origin = frozenset(alias.name.split('.')[0] for alias in statement.names)
         else:
             continue
-        imports.append(frozenset(candidates))
+        imports.append((frozenset(candidates), bound, origin))
     return tuple(imports)
+
+
+def _test_imports(tree):
+    """Immutable direct import candidates, independent of the changed range."""
+    return tuple(candidates for candidates, _, _ in _test_import_bindings(tree))
+
+
+@lru_cache(maxsize=512)
+def _import_time_nodes(tree):
+    """What runs when the test module is imported, whatever node is asked about: module statements, the decorators,
+    defaults and annotations of every function (also a class's methods), and the statements of every class body. A
+    function body runs only when called, so it is not part of this."""
+    nodes = []
+
+    def visit(statements):
+        for statement in statements:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                headers = [*statement.decorator_list, *statement.args.defaults,
+                           *[d for d in statement.args.kw_defaults if d], *([statement.returns] if statement.returns else [])]
+                headers += [a.annotation for a in (*statement.args.posonlyargs, *statement.args.args,
+                                                   *statement.args.kwonlyargs, *filter(None, [statement.args.vararg,
+                                                                                              statement.args.kwarg]))
+                            if a.annotation]
+                for header in headers:
+                    nodes.extend(ast.walk(header))
+            elif isinstance(statement, ast.ClassDef):
+                for header in (*statement.decorator_list, *statement.bases, *statement.keywords):
+                    nodes.extend(ast.walk(header))
+                visit(statement.body)
+            else:
+                nodes.extend(ast.walk(statement))
+
+    visit(tree.body)
+    return tuple(nodes)
+
+
+@lru_cache(maxsize=512)
+def _fixture_names(tree):
+    """{defining function name: the name pytest registers it under} for module-level fixtures with an explicit name."""
+    names = {}
+    for statement in tree.body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for decorator in statement.decorator_list:
+                if isinstance(decorator, ast.Call):
+                    for keyword in decorator.keywords:
+                        if keyword.arg == 'name' and isinstance(keyword.value, ast.Constant)                                 and isinstance(keyword.value.value, str):
+                            names[statement.name] = keyword.value.value
+    return names
+
+
+def _uses_imported_names(scope, names, bound, helper_autouse=(), origin=(), import_time=()):
+    """Does this test's scope (the test, the local helpers and fixtures it names, import-time code) use a name that an
+    import bound? A pytest fixture is used as an argument or through usefixtures, never as a name, and an imported
+    autouse fixture applies to every test of the module without being named (under the helper's own name, whatever
+    alias the test module gave it). Whatever runs at import counts for every node, but a usefixtures mark on some other
+    function applies to that function only."""
+    if any(name in helper_autouse for name in (*bound, *origin)):
+        return True
+    for node in (*scope, *import_time):
+        if isinstance(node, ast.Name) and node.id in bound:
+            return True
+        if isinstance(node, ast.arg) and node.arg in bound:
+            return True
+    # A fixture can be asked for by name without naming it as an argument: usefixtures, request.getfixturevalue,
+    # indirect parametrize. Any string equal to an imported fixture name in the node's own scope counts (#1285): wider
+    # than those APIs, never narrower, and one rule instead of one per API.
+    for node in scope:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in bound:
+            return True
+    return False
 
 
 FIXTURE_ROOTS = ("tests/fixtures/",)  # data and programs a test runs or reads by name; imports do not reach them
@@ -394,14 +474,31 @@ def include_windows(path, text, data, *, root=ROOT, changed=frozenset(), node=No
         return True, reason
     # Direct helper edits retain their consumers, without a speculative
     # transitive walk through arbitrary product/runtime implementations.
-    for imports in _test_imports(_syntax(text)):
+    # #1285: a test is a consumer of the helper only if the node uses what it imports from it. Importing a name
+    # that this node never touches (the shared lab helper is imported by many heavy tests) does not select it.
+    tree, scope = _syntax(text), None
+    for imports, bound, origin in _test_import_bindings(tree):
         for dependency in imports.intersection(changed):
             if dependency.startswith('tests/'):
                 helper = root / dependency
                 helper.resolve().relative_to(root.resolve())
                 if helper.is_symlink():
                     raise ValueError('unreviewed linked test helper')
-                if intrinsic_boundary(helper.read_text(encoding='utf-8')):
+                helper_text = helper.read_text(encoding='utf-8')
+                if not intrinsic_boundary(helper_text):
+                    continue
+                if node is None or bound is None:
+                    return True, 'directly imported changed OS test helper'
+                if scope is None:
+                    # The node's own scope plus everything that runs at import, which precedes every node (#1285).
+                    scope = _boundary_scope(tree, node.split('[', 1)[0], aliases(tree))
+                helper_tree = _syntax(helper_text)
+                autouse = _scope_index(helper_tree, tuple(aliases(helper_tree).items()))[1]
+                # A fixture is used under the name it is registered with, which `@pytest.fixture(name=...)` can change.
+                registered = _fixture_names(helper_tree)
+                names_used = bound | {registered[o] for o in origin if o in registered} | {
+                    registered[b] for b in bound if b in registered}
+                if _uses_imported_names(scope, aliases(tree), names_used, autouse, origin, _import_time_nodes(tree)):
                     return True, 'directly imported changed OS test helper'
     return False, 'ordinary logic/schema/text; full Linux and nightly/manual Windows'
 
