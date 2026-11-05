@@ -96,7 +96,11 @@ async def _run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: s
 
             async def approve():
                 await _until(lambda: aid in hub.approvals, 10)
-                await hub.resolve_approval(aid, True, "ok")
+                # The execution-location gate (#578) takes a choice, not just a yes; "1: b" is the local choice. Main has
+                # no such gate yet, so this only matters once it lands. A constant, not an import of the gate's module:
+                # this helper is imported by the heavy shadow tests, and changing it pulls them all into the Windows pool (#1283).
+                note = "1: b" if ev["data"].get("detail", {}).get("gate") == "execution_location" else "ok"
+                await hub.resolve_approval(aid, True, note)
             asyncio.get_running_loop().create_task(approve())
 
     hub.publish = tap
