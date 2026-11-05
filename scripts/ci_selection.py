@@ -195,8 +195,10 @@ def _scope_index(tree, bindings):
     autouse, module_nodes, module_refs, bodies = [], [], [], {}
     for name, definition in definitions.items():
         if any(isinstance(d, ast.Call) and qualified(d.func, names) in {'pytest.fixture', 'pytest_asyncio.fixture'}
-               and any(k.arg == 'autouse' and isinstance(k.value, ast.Constant) and k.value.value is True
+               and any(k.arg == 'autouse' and not (isinstance(k.value, ast.Constant) and k.value.value is False)
                        for k in d.keywords) for d in getattr(definition, 'decorator_list', [])):
+            # Autouse unless it is the literal False (#1290): `autouse=AUTO` or any other expression cannot be settled
+            # statically, and taking it as autouse only selects more.
             autouse.append(name)
     for statement in tree.body:
         if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):

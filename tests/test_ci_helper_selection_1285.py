@@ -2,6 +2,7 @@
 
 Pure AST/data contracts: no subprocess, socket or worker launch.
 """
+import ast
 import json
 from types import SimpleNamespace
 
@@ -134,6 +135,22 @@ def test_a_fixture_asked_for_by_name_selects_the_node(tmp_path, use):
     source = 'import pytest\nfrom tests.support.lab import lab_fixture\n' + use + 'def test_unrelated(): assert 1\n'
     assert decide(tmp_path, source, 'test_it')[0]
     assert not decide(tmp_path, source, 'test_unrelated')[0]
+
+
+@pytest.mark.parametrize('flag,expected', [
+    ('True', True), ('AUTO', True), ('not False', True), ('settings.auto()', True), ('False', False),
+])
+def test_an_autouse_that_is_not_the_literal_false_counts_as_autouse(tmp_path, flag, expected):
+    helper = (OS_HELPER + 'import pytest\nAUTO = True\n@pytest.fixture(autouse=' + flag + ')\ndef sometimes(): yield\n')
+    source = 'from tests.support.lab import sometimes\ndef test_unrelated(): assert 1\n'
+    assert decide(tmp_path, source, 'test_unrelated', helper=helper)[0] is expected
+
+
+def test_a_local_autouse_with_a_computed_flag_is_in_every_nodes_scope():
+    tree = s._syntax('import pytest\nAUTO = True\n@pytest.fixture(autouse=AUTO)\ndef always(): return run()\n'
+                     'def test_first(): assert 1\n')
+    names = s.aliases(tree)
+    assert any(isinstance(n, ast.Name) and n.id == 'run' for n in s._boundary_scope(tree, 'test_first', names))
 
 
 def test_a_file_level_decision_still_selects_the_file(tmp_path):
