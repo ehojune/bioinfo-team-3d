@@ -36,3 +36,6 @@ rows:
 - sha: "dc2f3b2"
   at: 2026-11-05 16:34
   text: 요청·직원의 기존 입력 snapshot이 없으면 HPC 처리 전에 거부하고 local 선택·조상 산출 전달은 보존한다.
+- sha: "fb0c8aa"
+  at: 2026-11-05 16:42
+  text: 저장된 HPC 요청의 입력을 briefing·precedent 전 입구와 공통 dispatch에서 검사해 모델 호출도 막는다.
