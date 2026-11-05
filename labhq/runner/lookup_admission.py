@@ -33,6 +33,37 @@ _TOOL = re.compile(r"[a-z][a-z0-9_]{0,39}")
 _HOST = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?")
 
 
+# Per-host circuit breaker (#1279). The quota is still counted per send, retries and redirects included (#858); this only
+# stops sending to a host that keeps answering with a server or rate-limit error. #910 8th run: Europe PMC answered 503
+# 15 times and OpenAlex 429 four times before one 200, and all 20 sends were spent without one paper body.
+BREAKER_5XX = 3            # consecutive 5xx answers from one host: a server that is down does not recover in seconds
+BREAKER_ANY = 5            # consecutive 429/5xx answers: annot.MAX_ATTEMPTS, so a rate limit that clears within one lookup is not cut
+BREAKER_COOLDOWN_S = 300.0  # after this long without a send the host gets one probe again (a success closes the breaker)
+
+
+def failing_status(status: int) -> bool:
+    return status == 429 or 500 <= status <= 599
+
+
+PROBE_HOLD_S = 30.0         # while the one probe after a cooldown is still unanswered, nothing else is sent (half-open)
+PROBE_STALE_S = 150.0       # a probe unanswered this long is lost (annot's request timeout is 120 s), not a reason to wait on
+
+
+def breaker_tripped(statuses: list[int]) -> bool:
+    """Whether a host's answers, newest first, are a streak that pauses it."""
+    server_down = len(statuses) >= BREAKER_5XX and all(500 <= s <= 599 for s in statuses[:BREAKER_5XX])
+    limited = len(statuses) >= BREAKER_ANY and all(failing_status(s) for s in statuses[:BREAKER_ANY])
+    return server_down or limited
+
+
+def breaker_wait(statuses: list[int], last_at: float | None, now: float) -> float:
+    """Seconds a host stays paused, 0.0 when it may be sent to. ``statuses`` are its answers, newest first; the last
+    answer's time starts the cooldown. A probe after the cooldown that fails keeps the streak and pauses again."""
+    if not breaker_tripped(statuses) or last_at is None:
+        return 0.0
+    return max(0.0, BREAKER_COOLDOWN_S - (now - last_at))
+
+
 def admission_for(settings) -> "LookupAdmission | None":
     """The request-wide counter when annot.request_lookup_limit is set, else None (no counting, no file).
 
@@ -79,10 +110,19 @@ def usage_note(admission: "LookupAdmission | None", request_id: object, *, now=N
         cap = share_cap(admission.limit, admission.precedent_share)
         remaining = min(usage["remaining"], max(0, cap - usage["precedent_used"]))
         stage_note = f" Pre-plan share: {usage['precedent_used']} of {cap} used, {remaining} left."
+    try:
+        paused = admission.paused_hosts(request_id)
+    except (sqlite3.Error, OSError):
+        paused = {}
+    pause_note = ""
+    if paused:
+        hosts = ", ".join(f"{host} ({seconds}s left)" for host, seconds in paused.items())
+        pause_note = (f" Paused after consecutive HTTP 5xx/429 answers (nothing is sent there and nothing is counted "
+                      f"until the pause ends; use another source or report the lookup as missing): {hosts}.")
     return (f"Public lookup usage of this request (labhq_annot and source-check HTTP requests; every retry and "
             f"redirect counts): {usage['used']} of {usage['limit']} used, {usage['remaining']} left at {stamp} "
             f"(by agent: {who}). This is the count of this PC's runner; a number written in the request text is a "
-            f"separate statement that labhq does not enforce.{stage_note}")
+            f"separate statement that labhq does not enforce.{stage_note}{pause_note}")
 
 
 class LookupAdmission:
@@ -97,8 +137,11 @@ class LookupAdmission:
                        "task_id TEXT, agent_id TEXT, tool TEXT NOT NULL, host TEXT NOT NULL, "
                        "admitted_at REAL NOT NULL, http_status INTEGER, outcome TEXT, "
                        "PRIMARY KEY (request_id, seq))")
-            if "stage" not in {row[1] for row in db.execute("PRAGMA table_info(sends)")}:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(sends)")}
+            if "stage" not in columns:
                 db.execute("ALTER TABLE sends ADD COLUMN stage TEXT")
+            if "answered_at" not in columns:  # #1279: when the answer was recorded, the start of a host pause
+                db.execute("ALTER TABLE sends ADD COLUMN answered_at REAL")
             db.execute("COMMIT")
         finally:
             db.close()
@@ -128,6 +171,11 @@ class LookupAdmission:
                     if stage_used >= share_cap(self.limit, self.precedent_share):
                         db.execute("ROLLBACK")
                         return {"admitted": False, "used": used, "limit": self.limit, "reason": "stage share exhausted"}
+                wait = self._host_wait(db, request_id, host)
+                if wait > 0:
+                    db.execute("ROLLBACK")
+                    return {"admitted": False, "used": used, "limit": self.limit, "reason": "host_paused",
+                            "host": host, "retry_after_s": round(wait)}
                 db.execute("INSERT INTO sends (request_id, seq, task_id, agent_id, tool, host, admitted_at, stage) "
                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                            (request_id, used + 1, str(task_id or ""), str(agent_id or ""), tool, host, self.clock(), stage))
@@ -140,6 +188,40 @@ class LookupAdmission:
             db.close()
         return {"admitted": True, "seq": used + 1, "used": used + 1, "limit": self.limit}
 
+    def _host_wait(self, db: sqlite3.Connection, request_id: str, host: str) -> float:
+        """How long this host is paused for this request. Only answers already recorded count: a send's status is
+        written when its tool call finishes, so a call in flight is not evidence yet. Answers are read in the order
+        they came, not the order they were sent, which differ when several agents query one host at once."""
+        # A send that ended without any HTTP answer (timeout, connection failure) is a failed probe as well: it counts
+        # as a 5xx so that it restarts the cooldown instead of letting the next call straight through.
+        rows = db.execute("SELECT COALESCE(http_status, 599), COALESCE(answered_at, admitted_at) AS at FROM sends "
+                          "WHERE request_id = ? AND host = ? AND (http_status IS NOT NULL OR outcome IN ('failed', 'timeout')) "
+                          "ORDER BY at DESC, seq DESC LIMIT ?", (request_id, host, BREAKER_ANY)).fetchall()
+        statuses = [row[0] for row in rows]
+        last_at = rows[0][1] if rows else None  # the cooldown starts at the newest answer, not at the send
+        now = self.clock()
+        wait = breaker_wait(statuses, last_at, now)
+        if wait == 0.0 and last_at is not None and breaker_tripped(statuses):
+            # The cooldown is over: exactly one probe may go. One already admitted and not yet answered holds the rest.
+            pending = db.execute("SELECT 1 FROM sends WHERE request_id = ? AND host = ? AND http_status IS NULL "
+                                 "AND outcome IS NULL AND admitted_at > ? AND admitted_at > ? LIMIT 1",
+                                 (request_id, host, last_at, now - PROBE_STALE_S)).fetchone()
+            if pending:
+                return PROBE_HOLD_S
+        return wait
+
+    def paused_hosts(self, request_id: object) -> dict[str, int]:
+        """Hosts currently paused for a request and the seconds left; read only."""
+        if not isinstance(request_id, str) or not request_id:
+            return {}
+        db = self._connect()
+        try:
+            hosts = [row[0] for row in db.execute("SELECT DISTINCT host FROM sends WHERE request_id = ?", (request_id,))]
+            waits = {host: self._host_wait(db, request_id, host) for host in hosts}
+        finally:
+            db.close()
+        return {host: round(wait) for host, wait in sorted(waits.items()) if wait > 0}
+
     def finish(self, request_id: object, task_id: object, sends: object, outcome: object) -> int:
         """Record each admitted send's HTTP status and the tool call's outcome; the sends stay counted regardless."""
         if not isinstance(request_id, str) or outcome not in OUTCOMES or not isinstance(sends, list):
@@ -149,12 +231,12 @@ class LookupAdmission:
             if not (isinstance(item, list) and len(item) == 2 and type(item[0]) is int
                     and (item[1] is None or (type(item[1]) is int and 100 <= item[1] <= 599))):
                 return 0
-            rows.append((item[1], outcome, request_id, item[0], str(task_id or "")))
+            rows.append((item[1], outcome, self.clock(), request_id, item[0], str(task_id or "")))
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
             try:
-                changed = sum(db.execute("UPDATE sends SET http_status = ?, outcome = ? WHERE request_id = ? "
+                changed = sum(db.execute("UPDATE sends SET http_status = ?, outcome = ?, answered_at = ? WHERE request_id = ? "
                                          "AND seq = ? AND task_id = ? AND outcome IS NULL", row).rowcount
                               for row in rows)
                 db.execute("COMMIT")
