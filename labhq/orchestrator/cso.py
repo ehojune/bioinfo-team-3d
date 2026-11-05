@@ -7425,6 +7425,11 @@ class Orchestrator:
                                stored_environment=any("environment_binding" in s or "environment_bindings" in s
                                                       for s in req["plan"]["steps"]),
                                guard=self._external_guard(rid), tier_rules=self._tier_rules())
+                # Hiring can replace an eligible fallback; reject before CP1 freezes the final assignments.
+                location_errors = execution_policy.plan_errors(
+                    req["plan"]["steps"], req.get("execution_location"), hub_agents(self.hub, rid))
+                if location_errors:
+                    raise ValueError("execution plan invalid after recruitment: " + "; ".join(location_errors))
                 await persist_request(self.hub, rid)
 
             if resume and not continuation and req.get("plan", {}).get("steps"):
