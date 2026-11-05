@@ -294,6 +294,7 @@
     "tests/test_result_storage.py",
     "tests/test_result_storage_end_ask.py",
     "tests/test_result_storage_pdf.py",
+    "tests/test_result_storage_redact_1278.py",
     "tests/test_result_storage_review.py",
     "tests/test_resume_accounting.py",
     "tests/test_resume_cards_607.py",
