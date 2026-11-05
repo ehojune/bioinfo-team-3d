@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: "bdf69f9"
+    at: "2026-11-06 05:10"
+    summary: "자동 적용 설정의 켜짐 값이 계산식이어도 켜진 것으로 보고, 그 설정을 가져온 시험을 Windows 검사에 넣습니다."
+    text: "helper 선택: autouse가 리터럴 False가 아니면 모두 autouse로 취급 (#1290)"
