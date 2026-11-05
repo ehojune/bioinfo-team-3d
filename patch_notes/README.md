@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:49 | [`dc443e6`](https://github.com/ehojune/bioinfo-team-3d/pull/1287/commits/dc443e6) | **채용 뒤 HPC 실행 조건에 맞지 않을 때의 중단과 비용을 상세 안내에 적었습니다.**<br>파견직 manual 한영판에 최종 배정 재검사와 CP1·처리 단계 전 실패, 이미 쓴 채용 비용 유지를 설명했다. 관련 mock·encoding 검사 208 passed, 5 skipped. |
+| 23:39 | [`64a6b9f`](https://github.com/ehojune/bioinfo-team-3d/pull/1287/commits/64a6b9f) | **채용 뒤 HPC 실행 조건을 검사하는 시점을 첫 안내에 적었습니다.**<br>README 한영판에 계획 승인과 처리 단계 실행 전 중단을 설명하고 status 파일명을 검증 규칙에 맞췄다. 관련 mock 회귀 191 passed, 5 skipped를 다시 확인했다. |
+| 23:31 | [`228f36a`](https://github.com/ehojune/bioinfo-team-3d/pull/1287/commits/228f36a) | **채용으로 바뀐 담당자가 HPC 실행 조건에 맞지 않으면 계획 승인 전에 중단합니다.**<br>prepare_recruits 뒤 요청별 roster로 plan_errors를 다시 검사한다. 신규·재개 요청의 적격 HPC·부적격 4종·채용 거절·local mock 28건과 관련 회귀 191 passed, 5 skipped를 확인했다. 실제 HPC와 채용은 실행하지 않았다. |
 | 22:25 | [`5f9ab6b`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/5f9ab6b) | **HPC 변경의 Windows 시험 범위가 불필요하게 늘지 않도록 공용 helper를 main과 맞췄습니다.**<br>main의 선행 수정 #1284를 통합하고 실행 위치 응답 상수 "1: b"를 그대로 사용한다. helper가 PR diff에서 빠져 진단 대상 shadow 8개 파일의 추가 선택이 사라졌다. 로컬 관련 시험은 84 passed, 1 skipped이며 실제 pool 시간은 새 head CI로 확인한다. |
 | 22:05 | [`0dd1a02`](https://github.com/ehojune/bioinfo-team-3d/pull/1284/commits/0dd1a02) | **원인 진단 문서를 docs/reference에 남겼습니다.**<br>docs/reference/ci-1283-windows-pool-timeout.md 추가 |
 | 22:00 | [`3295bb2`](https://github.com/ehojune/bioinfo-team-3d/pull/1284/commits/3295bb2) | **Windows 시험 한 단계가 시간 한계를 넘던 원인을 밝히고, 그 원인이 된 시험 보조 파일의 한 줄을 다른 코드와 무관하게 바꿨습니다.**<br>semantics_shadow_lab 게이트 응답을 상수로 바꿔 #578 모듈 import 제거, #1283 진단 문서 추가 |
