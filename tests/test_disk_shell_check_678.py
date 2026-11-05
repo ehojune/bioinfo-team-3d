@@ -738,3 +738,16 @@ def test_ps_unplaced_cmdlet_with_room_asks_nothing(tmp_path):
 def test_ps_net_leaves_placed_and_unrelated_text_alone(tmp_path, command):
     placed = disk_space._ps_unplaced(command, disk_space._ps_commands(command))
     assert not placed
+
+
+def test_ps_unplaced_cmdlet_keeps_the_folder_it_ran_in(tmp_path):
+    low = lambda folder: Space(100 * GIB, 0, int((1 if Path(folder) == tmp_path else 50) * GIB))
+    verdict = disk_space.powershell_check(r"$r = iwr https://h/a -OutFile a.zip; Set-Location D:\later", str(tmp_path),
+                                          probe=low, **CHECK)
+    assert verdict is not None and verdict.action == "ask"
+
+
+def test_ps_unplaced_cmdlet_warns_on_a_named_drive_below_the_warning_level(tmp_path):
+    probe = lambda folder: Space(100 * GIB, 0, int((8 if str(folder).upper().startswith("D:") else 50) * GIB))
+    verdict = disk_space.powershell_check(r"$r = iwr https://h/a.zip -OutFile D:\a.zip", str(tmp_path), probe=probe, **CHECK)
+    assert verdict is not None and verdict.action == "warn"

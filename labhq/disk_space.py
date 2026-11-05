@@ -784,17 +784,21 @@ def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: flo
     probe = probe or usage
     worst: ShellCheck | None = None
     cwds = [workdir]
+    ever = [workdir]  # every folder a command could have run in, for what the tokenizer could not place
     commands = _ps_commands(command)
     for words in commands:
         name = _ps_name(words[0])
         if name in _PS_LOCATION_NAMES:
             cwds = _ps_location(words, cwds, workdir)
+            ever = list(dict.fromkeys([*ever, *cwds]))
             continue
         if name in _PS_LOCATION_LOST:
             cwds = list(dict.fromkeys([*cwds, workdir]))
+            ever = list(dict.fromkeys([*ever, *cwds]))
             continue
         if len(words) == 1 and _PS_DRIVE_FUNCTION.match(words[0]):
             cwds = list(dict.fromkeys([f"{words[0].upper()}/", *cwds]))  # `D:` switches to that drive's folder
+            ever = list(dict.fromkeys([*ever, *cwds]))
             continue
         seen = set()
         for cwd in cwds:
@@ -812,9 +816,9 @@ def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: flo
     if _ps_unplaced(command, commands):
         # Where it writes is unknown: the folders the line may be in and every drive the text names are candidates.
         drives = {Path(f"{m.group(1).upper()}:/") for m in re.finditer(r"(?<!\w)([A-Za-z]):[\\/]", command)}
-        folders = list(dict.fromkeys([*(Path(c) for c in cwds), *drives]))
-        worst = _worse(worst, _assess("다운로드·압축 해제", folders[0], None, folders[1:], probe=probe, fail_gb=fail_gb,
-                                      warn_gb=warn_gb, warn_percent=warn_percent))
+        folders = list(dict.fromkeys([*(Path(c) for c in ever), *drives]))
+        worst = _worse(worst, _assess("다운로드·압축 해제", folders[0], None, [], probe=probe, fail_gb=fail_gb,
+                                      warn_gb=warn_gb, warn_percent=warn_percent, mains=folders))
     return worst
 
 
