@@ -39,3 +39,6 @@ rows:
 - sha: "fb0c8aa"
   at: 2026-11-05 16:42
   text: 저장된 HPC 요청의 입력을 briefing·precedent 전 입구와 공통 dispatch에서 검사해 모델 호출도 막는다.
+- sha: "1128536"
+  at: 2026-11-05 16:56
+  text: configured 입력 없는 직원의 whole-request HPC capability를 경로 노출 없이 알리고 선택·계획에 반영한다.
