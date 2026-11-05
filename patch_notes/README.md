@@ -15,6 +15,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 14:30 | [`39fc8a2`](https://github.com/ehojune/bioinfo-team-3d/pull/1273/commits/39fc8a2) | **웹 사무실 시험이 가끔 예약 포트를 받아 실패하던 문제를 고치고, 부팅 시간 초과 때 원인 정보를 함께 남깁니다.**<br>web_office_browser의 listen을 예약 포트 재시도로 바꾸고 waitReal 시간 초과에 boot report를 추가 (#1272) |
+| 13:48 | [`68f2782`](https://github.com/ehojune/bioinfo-team-3d/pull/1274/commits/68f2782) | **실제 enqueue 완료 시각으로 제한을 확인합니다.**<br>시험: submit 반환 시각과 deadline을 직접 비교한다 (#1076) |
+| 13:43 | [`1f40ffa`](https://github.com/ehojune/bioinfo-team-3d/pull/1274/commits/1f40ffa) | **writer enqueue까지 기존 시간 제한을 확인합니다.**<br>시험: publish 진입 이후 enqueue 대기에도 기존 제한 적용 (#1076) |
+| 13:31 | [`4664baa`](https://github.com/ehojune/bioinfo-team-3d/pull/1274/commits/4664baa) | **승인 응답 시험에서 송신과 저장 지연을 따로 확인합니다.**<br>시험: 송신 timeout·unregister 제한과 durable publish 완료 분리, writer 단계 시각 기록 (#1076) |
 | 13:00 | [`cf9c9fb`](https://github.com/ehojune/bioinfo-team-3d/pull/538/commits/cf9c9fb) | **여러 직원을 한 번에 점검할 때 전체 제한 시간이 직원 수만큼 늘어납니다.**<br>canary all의 deadline을 선택된 직원 수에 비례시킴 |
 | 12:44 | [`7a6636b`](https://github.com/ehojune/bioinfo-team-3d/pull/1052/commits/7a6636b) | **최신 코드에서도 합성 인증 중계 시험과 종료 확인을 유지합니다.**<br>Integrate main, preserve both Windows registrations and test ProcessBroker with current diagnostic lifecycle; protection remains unverified |
 | 12:13 | [`2154f17`](https://github.com/ehojune/bioinfo-team-3d/pull/1064/commits/2154f17) | **모의 실행의 알려진 실패와 정상 중단 증거를 알 수 없는 이벤트로 오인하지 않습니다.**<br>fix: recognize synthetic failure and reasoned stop events |

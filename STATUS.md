@@ -10,6 +10,13 @@
 - 실행: `tests/test_web_3d.py` 전체 96 passed 1 skipped(로컬 Windows), 가짜 페이지로 boot report 출력 확인.
 - 미확인: focus_layout 부팅 시간 초과의 실제 원인(재발 로그 대기). 시간 상한·단언은 그대로.
 
+# #1076 승인 응답 시험
+
+- 송신 timeout과 unregister는 기존 1초 관찰 제한으로 확인하고 durable publish 완료는 별도로 확인한다.
+- 실패 시 writer enqueue, start, commit 시작·완료, finish 시각을 남긴다. 미관찰 값은 None이다.
+- 기존 Windows 저장 지연의 원인은 미확인이다.
+- 로컬 Windows Python 3.12: 관련 시험 45개 통과.
+
 # #1048 r9: broker integration
 
 Integrated main `df1c64c3` into PR #1052; resolved the Windows inventory conflict by retaining both registrations. Runtime broker code remains unchanged and unwired. Added two tests combining the actual ProcessBroker with the current diagnostic launcher and observer event verifier.
