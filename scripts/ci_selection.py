@@ -183,6 +183,12 @@ def _boundary_scope(tree, symbol, names):
     return result
 
 
+def _autouse_keyword(keyword):
+    """`autouse=...` of a fixture decorator, unless it is the literal False (#1290): a value that cannot be settled
+    statically (`autouse=AUTO`) counts as autouse, in the selection scope and in the host-resource lock alike."""
+    return keyword.arg == 'autouse' and not (isinstance(keyword.value, ast.Constant) and keyword.value.value is False)
+
+
 @lru_cache(maxsize=512)
 def _scope_index(tree, bindings):
     """Content-bound module work shared by all symbols, never selection results.
@@ -195,8 +201,9 @@ def _scope_index(tree, bindings):
     autouse, module_nodes, module_refs, bodies = [], [], [], {}
     for name, definition in definitions.items():
         if any(isinstance(d, ast.Call) and qualified(d.func, names) in {'pytest.fixture', 'pytest_asyncio.fixture'}
-               and any(k.arg == 'autouse' and isinstance(k.value, ast.Constant) and k.value.value is True
-                       for k in d.keywords) for d in getattr(definition, 'decorator_list', [])):
+               and any(_autouse_keyword(k) for k in d.keywords) for d in getattr(definition, 'decorator_list', [])):
+            # Autouse unless it is the literal False (#1290): `autouse=AUTO` or any other expression cannot be settled
+            # statically, and taking it as autouse only selects more.
             autouse.append(name)
     for statement in tree.body:
         if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -644,8 +651,7 @@ def host_resource(path: Path, root=ROOT, seen=None, symbols=None) -> bool:
         # is inside the protocol lock just like explicitly requested fixtures.
         for name, definition in definitions.items():
             if any(isinstance(d, ast.Call) and qualified(d.func, names) in {'pytest.fixture', 'pytest_asyncio.fixture'}
-                   and any(k.arg == 'autouse' and isinstance(k.value, ast.Constant) and k.value.value is True
-                           for k in d.keywords) for d in getattr(definition, 'decorator_list', [])):
+                   and any(_autouse_keyword(k) for k in d.keywords) for d in getattr(definition, 'decorator_list', [])):
                 if host_resource(path, root, seen, [name]):
                     return True
     else:
