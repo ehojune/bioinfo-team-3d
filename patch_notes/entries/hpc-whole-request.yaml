@@ -46,3 +46,7 @@ rows:
   at: 2026-11-05 17:26
   summary: 설치 안내에서 요청 전체의 HPC·이 PC 선택과 지원 제한을 확인하도록 정리했습니다.
   text: 04장 한영에 단계별 원본·검증 입력 복사·선택 기록·snapshot 제한을 반영했다. 실제 HPC는 미검증이다.
+- sha: "2fc5b9c"
+  at: 2026-11-05 19:14
+  summary: 최신 설치 안내와 HPC 시험 등록을 합쳤습니다.
+  text: main 6323fff5를 통합했다. 관련 mock 회귀 298건 통과, 25건 skip. verify inventory hash 갱신은 후속 claim이 필요하다.
