@@ -120,3 +120,10 @@ def test_shell_ansi_c_and_adjacent_quotes_are_hidden():
     for line in ("TOKEN=$'hunter2xyz'", 'TOKEN="part1abc""part2xyz"', "export PASSWORD='hunter2xyz'"):
         cleaned = _clean(line + "\n", "steps/s1/outputs/scripts/a.sh")
         assert "hunter2xyz" not in cleaned and "part2xyz" not in cleaned, line
+
+
+def test_shell_values_with_equals_are_whole_and_a_comment_is_not_a_value():
+    sh = "steps/s1/outputs/scripts/a.sh"
+    assert "xyz789" not in _clean("TOKEN=abc123=xyz789\n", sh)
+    comment = "TOKEN= # populated by caller\n"
+    assert _clean(comment, sh) == comment

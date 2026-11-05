@@ -66,7 +66,7 @@ _CODE_SECRET_LITERAL = re.compile(
     r"(?P<paren>\(\s*)?(?P<strings>" + _STRING_LITERAL + r"(?:(?:\s*\+\s*|[ \t]*)" + _STRING_LITERAL + r")*)(?P<close>\s*\))?"
     r"|(?P<number>[+-]?(?:0[xXoObB][0-9a-fA-F_]{6,}|\d[\d_]{5,}(?:\.\d+)?(?:[eE][+-]?\d+)?)[jJlL]?)"
     r"(?=\s*(?:[;#,)}\]]|$))"
-    r"|(?P<word>(?![$\"'`])[^\s\"'`$;|&()<>={}\[\],]+))")
+    r"|(?P<word>(?![$\"'`#])[^\s\"'`$;|&()<>{}\[\],]+))")
 _STRING_PIECE = re.compile(r"\$?[rbuf]{0,2}(?P<q>\'\'\'|\"\"\"|\"|')(?P<text>[\s\S]*?)(?P=q)\Z")
 
 
