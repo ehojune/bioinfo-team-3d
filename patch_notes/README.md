@@ -14,11 +14,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:30 | [`7447b66`](https://github.com/ehojune/bioinfo-team-3d/pull/1288/commits/7447b66) | **몫이 이미 바닥난 요청의 계획 경고가 남은 몫이 있다고 말하던 것을 바로잡습니다.**<br>CP1 계획 경고와 manual의 문구를 조회 몫이 남아 있다는 단정에서 보내지 않은 시도는 조회 몫을 쓰지 않는다는 사실로 바꾼다. 상한이 이미 소진된 요청에서도 경고가 사실과 어긋나지 않게 한다 |
 | 07:00 | [`6fe2425`](https://github.com/ehojune/bioinfo-team-3d/pull/1289/commits/6fe2425) | **이름으로 요청한 자동 설정도 보조 파일 사용으로 셉니다.**<br>helper 선택: usefixtures·getfixturevalue·indirect를 가리지 않고 node 범위의 fixture 이름 문자열을 사용으로 판정 (#1285) |
+| 07:00 | [`362c8ff`](https://github.com/ehojune/bioinfo-team-3d/pull/1288/commits/362c8ff) | **구현과 어긋난 manual 문장과 단계 보고를 바로잡습니다.**<br>manual 09장 한영의 옛 문장("차단 사실이 CP1 계획 경고에 오르지 않는다")을 쉬는 호스트가 계획 경고에 오른다는 설명으로 고치고, 단계 보고를 최종 범위로 갱신한다 |
 | 06:30 | [`d8aaac1`](https://github.com/ehojune/bioinfo-team-3d/pull/1289/commits/d8aaac1) | **가변 인자 주석과 이름을 바꿔 등록한 자동 설정도 보조 파일 사용으로 셉니다.**<br>helper 선택: *args/**kwargs 주석과 fixture(name=...) 등록 이름을 사용으로 판정 (#1285) |
+| 06:30 | [`48484a8`](https://github.com/ehojune/bioinfo-team-3d/pull/1288/commits/48484a8) | **연구 요청의 CP1 계획에서 쉬는 호스트 경고가 빠지던 틈을 닫습니다.**<br>쉬는 호스트 경고를 연구 계획(research lane)에도 계획을 검증·동결하기 전에 적용해 CP1 카드와 계획 해시에 들어가게 한다. 연구 요청 CP1 흐름을 거치는 시험을 더했다 |
 | 06:00 | [`bb0d1e7`](https://github.com/ehojune/bioinfo-team-3d/pull/1289/commits/bb0d1e7) | **보조 파일을 쓰는 시험이 빠지지 않도록, 파일을 불러올 때 이미 실행되는 부분과 이름을 바꿔 가져온 자동 적용 설정도 사용으로 셉니다.**<br>helper 선택: 모든 정의의 import 시점 부분(기본값·데코레이터·주석·class 본문)과 별칭 autouse fixture를 사용으로 판정 (#1285) |
+| 05:40 | [`a097fa5`](https://github.com/ehojune/bioinfo-team-3d/pull/1288/commits/a097fa5) | **호스트 차단 사실이 도구 오류와 prompt에만 남던 것을 CP1 계획 경고와 manual에도 남깁니다.**<br>manual 09장 한영에 host_paused와 lookup_limit의 차이와 재시도 시점을 적는다. CP1 계획이 확정될 때 조회 카운터에서 쉬는 호스트를 읽어 계획 경고에 호스트와 남은 시간, 조회 몫이 남아 있다는 사실을 싣는다. 카운터가 없거나 읽지 못하면 경고를 더하지 않고 계획을 막지 않는다 |
 | 05:10 | [`9e4a037`](https://github.com/ehojune/bioinfo-team-3d/pull/1289/commits/9e4a037) | **보조 파일을 쓰는 시험은 선택되고 가져오기만 하는 시험은 빠지는 두 경우를 모두 시험으로 확인합니다.**<br>test_ci_cohort823: 변경 helper를 쓰는 node는 선택, import만 하는 node는 제외를 함께 확인 (#1285) |
 | 04:30 | [`17365b4`](https://github.com/ehojune/bioinfo-team-3d/pull/1289/commits/17365b4) | **시험용 공용 보조 파일이 바뀌면, 그 파일을 실제로 쓰는 시험만 Windows 검사에 넣습니다. 가져오기만 하고 쓰지 않는 시험은 빠집니다. 검사 기록에 각 시험이 들어온 이유도 남깁니다.**<br>ci_selection: 변경 helper 소비자를 파일 전체가 아니라 사용하는 node로 좁힘(인자·usefixtures·autouse·star import 보수 처리), ci_suite: 선택 이유별 개수를 inclusion-<worker>.json으로 기록 (#1285) |
+| 04:30 | [`f8e7538`](https://github.com/ehojune/bioinfo-team-3d/pull/1288/commits/f8e7538) | **쉬는 호스트 때문에 조회하지 못한 것이 상한 소진으로 잘못 보이던 문제를 바로잡습니다.**<br>gateway의 live source 확인이 호스트 차단(host_paused) 응답을 요청 HTTP 상한 소진(lookup_limit)으로 기록하던 것을 고친다. 연속 실패로 쉬는 호스트는 새 실패 종류 host_paused로 기록하고 호스트와 다시 보낼 수 있는 시점(retry_after_s)을 남기며, 조회 몫이 남아 있다는 사실을 상세에 적는다. 상한이 실제로 소진된 경우는 그대로 lookup_limit이다 |
 
 ## 2026-11-05
 
