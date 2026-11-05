@@ -55,3 +55,16 @@ def test_shell_and_r_literals_are_hidden_without_breaking_the_script():
     assert "abc123xyz789" not in sh and '"$TOKEN"' in sh
     r = _clean('token <- "abc123xyz789"\nx <- token\n', "steps/s1/outputs/scripts/a.R")
     assert "abc123xyz789" not in r
+
+
+def test_an_annotated_assignment_keeps_its_annotation_and_hides_the_literal():
+    cleaned = _clean('token: str = "abc123xyz789"\nvalue: int = 3\n')
+    assert "abc123xyz789" not in cleaned and "token: str = " in cleaned
+    assert code_syntax_issues({NAME: cleaned}) == []
+
+
+def test_already_redacted_code_is_not_flagged_and_prose_keeps_its_rule():
+    assert scan_publish_files({NAME: 'token = "<redacted-secret>"\n'}) == []
+    assert scan_publish_files({"README.md": 'token = "<redacted-secret>"\n'}) == []
+    assert scan_publish_files({"README.md": "token = abc123xyz789\n"}) == [{"kind": "secret", "path": "README.md"}]
+    assert scan_publish_files({NAME: 'API_KEY = "abc123xyz789"\n'}) == [{"kind": "secret", "path": NAME}]

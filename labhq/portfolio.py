@@ -50,6 +50,44 @@ _ASSIGNMENT = re.compile(
     r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)"
     r"(?!<redacted-secret>|&lt;redacted-secret&gt;|\[REDACTED\])[^\s,;<]+"
 )
+# In code a secret is a literal value: a quoted string, a long number, or a bare word in a shell script. An
+# expression, call or lookup on the right of `token =` holds no secret, and rewriting it breaks the script (#1278).
+_CODE_SECRET_NAME = (r"\b(?:api[_-]?key|token|password|secret)[\"']?"
+                     r"(?:\s*:\s*[A-Za-z_][\w.\[\], |]*?)?\s*(?:<-|[:=])\s*")
+_CODE_SECRET_LITERAL = re.compile(
+    r"(?im)(?P<name>" + _CODE_SECRET_NAME + r")(?:"
+    r"(?P<pre>[rbuf]{0,2})(?P<q>[\"'])(?P<text>(?:(?!(?P=q))[^\\\n]|\\.)+)(?P=q)"
+    r"|(?P<number>\d{6,}[\w.]*)(?![\w.(\[])"
+    r"|(?P<word>(?![$\"'`])[^\s\"'`$;|&()<>={}\[\],]+))")
+_REDACTED_VALUES = ("<redacted-secret>", "&lt;redacted-secret&gt;", "[REDACTED]")
+
+
+def _code_secret_literals(text: str, suffix: str):
+    """The matches of `_CODE_SECRET_LITERAL` that hold a real literal (a bare word counts only in a shell script)
+    and are not already redacted."""
+    for match in _CODE_SECRET_LITERAL.finditer(text):
+        if match.group("word") is not None and suffix != ".sh":
+            continue
+        value = match.group("text") or match.group("number") or match.group("word")
+        if value.startswith(_REDACTED_VALUES):
+            continue
+        yield match
+
+
+def _redact_code_literals(text: str, suffix: str) -> str:
+    """Hide literal secret values in code and keep its syntax: the quotes and prefix stay, only the value goes."""
+    out, last = [], 0
+    for match in _code_secret_literals(text, suffix):
+        out.append(text[last:match.start()])
+        if match.group("text") is not None:
+            out.append(f'{match.group("name")}{match.group("pre")}{match.group("q")}<redacted-secret>{match.group("q")}')
+        else:
+            out.append(f'{match.group("name")}"<redacted-secret>"')
+        last = match.end()
+    out.append(text[last:])
+    return "".join(out)
+
+
 # A root folder counts only where a path starts: `inputs/om_fetch/data/x.tsv` is a relative path, and catching its
 # `/data/` stopped the whole 10-17 edition over three analysis scripts (#713).
 _LOCAL_SCAN = re.compile(
@@ -533,7 +571,7 @@ def clean_publication_text(name: str, text: str, settings, req: dict) -> str:
                  else _quoted_input_settings(text, suffix))
     rewritten = sanitize(rewritten, settings.policy, [os.environ.get(settings.github.token_env, "")], limit=None)
     rewritten = publish_clean(rewritten, settings, [req], limit=None)
-    return _ASSIGNMENT.sub(r"\1<redacted-secret>", rewritten)
+    return _redact_code_literals(rewritten, suffix)
 
 
 def code_syntax_issues(files: Mapping[str, str | bytes]) -> list[dict[str, str]]:
@@ -2028,8 +2066,14 @@ def scan_publish_files(files: Mapping[str, str | bytes], *,
             text = body.decode("utf-8", errors="replace")
         else:
             text = body
-        if any(re.search(pattern, text) for pattern in SECRET_PATTERNS) or re.search(
-                r"(?im)\b(?:api[_-]?key|token|password|secret)\s*[:=]\s*(?!<redacted-secret>|\[REDACTED\])\S+", text):
+        suffix = PurePosixPath(name).suffix.lower()
+        if suffix in _CODE_SUFFIXES:
+            assigned = next(_code_secret_literals(text, suffix), None) is not None
+        else:
+            assigned = bool(re.search(
+                r"(?im)\b(?:api[_-]?key|token|password|secret)\s*[:=]\s*"
+                r"(?![\"']?(?:<redacted-secret>|\[REDACTED\]))\S+", text))
+        if any(re.search(pattern, text) for pattern in SECRET_PATTERNS) or assigned:
             issues.append({"kind": "secret", "path": name})
         if (_LOCAL_SCAN.search(text) or _PRIVATE_PATH.search(text)
                 or settings is not None and mentions_workspace_path(text, settings)):
