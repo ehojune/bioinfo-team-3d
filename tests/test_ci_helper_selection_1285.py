@@ -125,6 +125,17 @@ def test_a_fixture_registered_under_another_name_is_used_through_that_name(tmp_p
     assert not decide(tmp_path, source, 'test_unrelated', helper=helper)[0]
 
 
+@pytest.mark.parametrize('use', [
+    'def test_it(request): request.getfixturevalue("lab_fixture")\n',
+    'def test_it(request): request.getfixturevalue(name="lab_fixture")\n',
+    '@pytest.mark.parametrize("lab_fixture", [1], indirect=True)\ndef test_it(lab_fixture): assert 1\n',
+])
+def test_a_fixture_asked_for_by_name_selects_the_node(tmp_path, use):
+    source = 'import pytest\nfrom tests.support.lab import lab_fixture\n' + use + 'def test_unrelated(): assert 1\n'
+    assert decide(tmp_path, source, 'test_it')[0]
+    assert not decide(tmp_path, source, 'test_unrelated')[0]
+
+
 def test_a_file_level_decision_still_selects_the_file(tmp_path):
     assert decide(tmp_path, SOURCE, None)[0]
 

@@ -352,10 +352,12 @@ def _uses_imported_names(scope, names, bound, helper_autouse=(), origin=(), impo
             return True
         if isinstance(node, ast.arg) and node.arg in bound:
             return True
+    # A fixture can be asked for by name without naming it as an argument: usefixtures, request.getfixturevalue,
+    # indirect parametrize. Any string equal to an imported fixture name in the node's own scope counts (#1285): wider
+    # than those APIs, never narrower, and one rule instead of one per API.
     for node in scope:
-        if isinstance(node, ast.Call) and qualified(node.func, names) == 'pytest.mark.usefixtures':
-            if any(isinstance(a, ast.Constant) and a.value in bound for a in node.args):
-                return True
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in bound:
+            return True
     return False
 
 
