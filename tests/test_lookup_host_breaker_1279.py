@@ -1,0 +1,197 @@
+"""#1279: a host that keeps answering HTTP 5xx/429 stops getting sends; the quota is still counted per send."""
+
+import asyncio
+
+import httpx
+import pytest
+
+from labhq.runner import lookup_admission as la
+from labhq.runner.lookup_admission import LookupAdmission, breaker_wait, usage_note
+
+EBI = "www.ebi.ac.uk"
+OPENALEX = "api.openalex.org"
+
+
+class Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def ledger(tmp_path, limit=50):
+    clock = Clock()
+    return LookupAdmission(tmp_path / "lookup.sqlite3", limit, clock=clock), clock
+
+
+def send(admission, host, status, request_id="req_1", tool="fulltext"):
+    """One admitted send whose answer is recorded, as the tool does when its call ends."""
+    answer = admission.admit(request_id, "task_1", "lit_scout", tool, host)
+    if answer["admitted"]:
+        admission.finish(request_id, "task_1", [[answer["seq"], status]], "failed" if status >= 400 else "ok")
+    return answer
+
+
+def test_three_consecutive_5xx_pause_the_host_without_counting(tmp_path):
+    admission, _ = ledger(tmp_path)
+    for _ in range(3):
+        assert send(admission, EBI, 503)["admitted"]
+    refused = admission.admit("req_1", "task_1", "lit_scout", "fulltext", EBI)
+    assert refused["admitted"] is False and refused["reason"] == "host_paused" and refused["host"] == EBI
+    assert 0 < refused["retry_after_s"] <= la.BREAKER_COOLDOWN_S
+    assert admission.usage("req_1")["used"] == 3  # the refused one was neither sent nor counted
+
+
+def test_other_hosts_and_other_requests_are_not_paused(tmp_path):
+    admission, _ = ledger(tmp_path)
+    for _ in range(3):
+        send(admission, EBI, 503)
+    assert send(admission, OPENALEX, 200)["admitted"]
+    assert send(admission, EBI, 200, request_id="req_2")["admitted"]
+
+
+def test_two_5xx_or_an_interrupting_answer_do_not_pause(tmp_path):
+    admission, _ = ledger(tmp_path)
+    for status in (503, 503, 200, 503, 503):
+        assert send(admission, EBI, status)["admitted"]
+    assert send(admission, EBI, 503)["admitted"]  # the third in a row is still sent...
+    assert send(admission, EBI, 503)["admitted"] is False  # ...and the fourth is not
+
+
+def test_a_rate_limit_that_clears_within_one_lookup_is_not_cut(tmp_path):
+    admission, _ = ledger(tmp_path)
+    for _ in range(4):  # the #910 8th run: OpenAlex answered 429 four times, then 200
+        assert send(admission, OPENALEX, 429)["admitted"]
+    assert send(admission, OPENALEX, 200)["admitted"]
+    for _ in range(5):
+        assert send(admission, "api.crossref.org", 429)["admitted"]
+    assert send(admission, "api.crossref.org", 429)["admitted"] is False
+
+
+def test_mixed_429_and_5xx_count_toward_the_five(tmp_path):
+    admission, _ = ledger(tmp_path)
+    for status in (503, 429, 503, 429, 503):
+        assert send(admission, EBI, status)["admitted"]
+    assert send(admission, EBI, 503)["admitted"] is False
+
+
+def test_probe_after_the_cooldown_and_a_failed_probe_pauses_again(tmp_path):
+    admission, clock = ledger(tmp_path)
+    for _ in range(3):
+        send(admission, EBI, 503)
+    clock.now += la.BREAKER_COOLDOWN_S + 1
+    assert send(admission, EBI, 503)["admitted"], "one probe is allowed once the cooldown has passed"
+    assert send(admission, EBI, 503)["admitted"] is False
+    clock.now += la.BREAKER_COOLDOWN_S + 1
+    assert send(admission, EBI, 200)["admitted"]  # this probe succeeds and closes the breaker
+    assert send(admission, EBI, 503)["admitted"]
+
+
+def test_unrecorded_sends_are_not_evidence(tmp_path):
+    admission, _ = ledger(tmp_path)
+    for _ in range(4):
+        assert admission.admit("req_1", "task_1", "lit_scout", "fulltext", EBI)["admitted"]  # status not reported yet
+
+
+def test_pause_does_not_change_how_the_quota_is_counted(tmp_path):
+    admission, _ = ledger(tmp_path, limit=4)
+    for _ in range(3):
+        send(admission, EBI, 503)
+    assert send(admission, OPENALEX, 200)["admitted"]
+    assert admission.admit("req_1", "task_1", "lit_scout", "fulltext", OPENALEX)["reason"] == "exhausted"
+
+
+def test_usage_note_names_a_paused_host(tmp_path):
+    admission, _ = ledger(tmp_path)
+    assert "Paused" not in usage_note(admission, "req_1")
+    for _ in range(3):
+        send(admission, EBI, 503)
+    assert admission.paused_hosts("req_1") == {EBI: round(la.BREAKER_COOLDOWN_S)}
+    note = usage_note(admission, "req_1")
+    assert "3 of 50 used" in note and f"{EBI} (300s left)" in note and "nothing is counted" in note
+
+
+def test_breaker_wait_is_a_pure_rule():
+    assert breaker_wait([], None, 0) == 0
+    assert breaker_wait([503, 503], 0, 1) == 0
+    assert breaker_wait([503, 503, 503], 0, 100) == la.BREAKER_COOLDOWN_S - 100
+    assert breaker_wait([503, 503, 503], 0, la.BREAKER_COOLDOWN_S + 1) == 0
+    assert breaker_wait([200, 503, 503, 503], 0, 1) == 0
+
+
+# The tool process keeps the last answers itself: a send's status reaches the file only when its tool call ends, so the
+# retries inside one call would otherwise go on.
+@pytest.fixture
+def annot_mcp(monkeypatch):
+    from labhq.tools import annot_mcp as module
+    monkeypatch.setattr(module, "LOOKUP_LIMITED", True)
+    monkeypatch.setattr(module, "BROKER_TOKEN", "token")
+    module.HOST_ANSWERS.clear()
+    yield module
+    module.HOST_ANSWERS.clear()
+
+
+def test_in_call_retries_stop_at_the_third_503_and_never_reach_the_broker(annot_mcp, monkeypatch):
+    admitted, finished = [], []
+
+    async def fake_admit(tool, host):
+        admitted.append(host)
+        return len(admitted)
+
+    async def fake_finish(sends, outcome):
+        finished.append((sends, outcome))
+
+    monkeypatch.setattr(annot_mcp, "_admit", fake_admit)
+    monkeypatch.setattr(annot_mcp, "_finish", fake_finish)
+    transport = httpx.MockTransport(lambda request: httpx.Response(503))
+
+    async def scenario():
+        async with annot_mcp._admitted("fulltext") as hooks, httpx.AsyncClient(transport=transport, **hooks) as client:
+            outcomes = []
+            for _ in range(5):  # annot.Http would retry up to its five attempts
+                try:
+                    outcomes.append((await client.get(f"https://{EBI}/europepmc/x")).status_code)
+                except annot_mcp.LookupHostPaused as exc:
+                    outcomes.append("paused")
+                    assert EBI in str(exc) and "5xx/429" in str(exc)
+            return outcomes
+
+    assert asyncio.run(scenario()) == [503, 503, 503, "paused", "paused"]
+    assert admitted == [EBI] * 3  # the two paused ones were not even offered to the counter
+    assert [sends for sends, _ in finished] == [[[1, 503], [2, 503], [3, 503]]]  # one receipt, three counted sends
+
+
+def test_pause_of_one_host_does_not_refuse_the_rest_of_the_call(annot_mcp, monkeypatch):
+    async def fake_admit(tool, host):
+        return 1
+
+    async def fake_finish(sends, outcome):
+        pass
+
+    monkeypatch.setattr(annot_mcp, "_admit", fake_admit)
+    monkeypatch.setattr(annot_mcp, "_finish", fake_finish)
+    transport = httpx.MockTransport(lambda request: httpx.Response(503 if request.url.host == EBI else 200))
+
+    async def scenario():
+        async with annot_mcp._admitted("fulltext") as hooks, httpx.AsyncClient(transport=transport, **hooks) as client:
+            for _ in range(3):
+                await client.get(f"https://{EBI}/x")
+            with pytest.raises(annot_mcp.LookupHostPaused):
+                await client.get(f"https://{EBI}/x")
+            return (await client.get(f"https://{OPENALEX}/works")).status_code
+
+    assert asyncio.run(scenario()) == 200
+
+
+def test_a_paused_answer_from_the_broker_becomes_a_host_pause_not_a_limit_refusal(annot_mcp, monkeypatch):
+    def handler(request):
+        return httpx.Response(200, json={"admitted": False, "reason": "host_paused", "host": EBI, "retry_after_s": 120,
+                                         "used": 3, "limit": 20})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(annot_mcp.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(annot_mcp, "BROKER", "http://broker.test")
+    with pytest.raises(annot_mcp.LookupHostPaused) as excinfo:
+        asyncio.run(annot_mcp._admit("fulltext", EBI))
+    assert "120" in str(excinfo.value) and not isinstance(excinfo.value, annot_mcp.LookupRefused)

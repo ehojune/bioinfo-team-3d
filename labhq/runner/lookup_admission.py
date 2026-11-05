@@ -33,6 +33,28 @@ _TOOL = re.compile(r"[a-z][a-z0-9_]{0,39}")
 _HOST = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?")
 
 
+# Per-host circuit breaker (#1279). The quota is still counted per send, retries and redirects included (#858); this only
+# stops sending to a host that keeps answering with a server or rate-limit error. #910 8th run: Europe PMC answered 503
+# 15 times and OpenAlex 429 four times before one 200, and all 20 sends were spent without one paper body.
+BREAKER_5XX = 3            # consecutive 5xx answers from one host: a server that is down does not recover in seconds
+BREAKER_ANY = 5            # consecutive 429/5xx answers: annot.MAX_ATTEMPTS, so a rate limit that clears within one lookup is not cut
+BREAKER_COOLDOWN_S = 300.0  # after this long without a send the host gets one probe again (a success closes the breaker)
+
+
+def failing_status(status: int) -> bool:
+    return status == 429 or 500 <= status <= 599
+
+
+def breaker_wait(statuses: list[int], last_at: float | None, now: float) -> float:
+    """Seconds a host stays paused, 0.0 when it may be sent to. ``statuses`` are its answers, newest first; the last
+    answer's time starts the cooldown. A probe after the cooldown that fails keeps the streak and pauses again."""
+    server_down = len(statuses) >= BREAKER_5XX and all(500 <= s <= 599 for s in statuses[:BREAKER_5XX])
+    limited = len(statuses) >= BREAKER_ANY and all(failing_status(s) for s in statuses[:BREAKER_ANY])
+    if not (server_down or limited) or last_at is None:
+        return 0.0
+    return max(0.0, BREAKER_COOLDOWN_S - (now - last_at))
+
+
 def admission_for(settings) -> "LookupAdmission | None":
     """The request-wide counter when annot.request_lookup_limit is set, else None (no counting, no file).
 
@@ -79,10 +101,19 @@ def usage_note(admission: "LookupAdmission | None", request_id: object, *, now=N
         cap = share_cap(admission.limit, admission.precedent_share)
         remaining = min(usage["remaining"], max(0, cap - usage["precedent_used"]))
         stage_note = f" Pre-plan share: {usage['precedent_used']} of {cap} used, {remaining} left."
+    try:
+        paused = admission.paused_hosts(request_id)
+    except (sqlite3.Error, OSError):
+        paused = {}
+    pause_note = ""
+    if paused:
+        hosts = ", ".join(f"{host} ({seconds}s left)" for host, seconds in paused.items())
+        pause_note = (f" Paused after consecutive HTTP 5xx/429 answers (nothing is sent there and nothing is counted "
+                      f"until the pause ends; use another source or report the lookup as missing): {hosts}.")
     return (f"Public lookup usage of this request (labhq_annot and source-check HTTP requests; every retry and "
             f"redirect counts): {usage['used']} of {usage['limit']} used, {usage['remaining']} left at {stamp} "
             f"(by agent: {who}). This is the count of this PC's runner; a number written in the request text is a "
-            f"separate statement that labhq does not enforce.{stage_note}")
+            f"separate statement that labhq does not enforce.{stage_note}{pause_note}")
 
 
 class LookupAdmission:
@@ -128,6 +159,11 @@ class LookupAdmission:
                     if stage_used >= share_cap(self.limit, self.precedent_share):
                         db.execute("ROLLBACK")
                         return {"admitted": False, "used": used, "limit": self.limit, "reason": "stage share exhausted"}
+                wait = self._host_wait(db, request_id, host)
+                if wait > 0:
+                    db.execute("ROLLBACK")
+                    return {"admitted": False, "used": used, "limit": self.limit, "reason": "host_paused",
+                            "host": host, "retry_after_s": round(wait)}
                 db.execute("INSERT INTO sends (request_id, seq, task_id, agent_id, tool, host, admitted_at, stage) "
                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                            (request_id, used + 1, str(task_id or ""), str(agent_id or ""), tool, host, self.clock(), stage))
@@ -139,6 +175,26 @@ class LookupAdmission:
         finally:
             db.close()
         return {"admitted": True, "seq": used + 1, "used": used + 1, "limit": self.limit}
+
+    def _host_wait(self, db: sqlite3.Connection, request_id: str, host: str) -> float:
+        """How long this host is paused for this request. Only answers already recorded count: a send's status is
+        written when its tool call finishes, so a call in flight is not evidence yet."""
+        rows = db.execute("SELECT http_status, admitted_at FROM sends WHERE request_id = ? AND host = ? "
+                          "AND http_status IS NOT NULL ORDER BY seq DESC LIMIT ?",
+                          (request_id, host, BREAKER_ANY)).fetchall()
+        return breaker_wait([row[0] for row in rows], rows[0][1] if rows else None, self.clock())
+
+    def paused_hosts(self, request_id: object) -> dict[str, int]:
+        """Hosts currently paused for a request and the seconds left; read only."""
+        if not isinstance(request_id, str) or not request_id:
+            return {}
+        db = self._connect()
+        try:
+            hosts = [row[0] for row in db.execute("SELECT DISTINCT host FROM sends WHERE request_id = ?", (request_id,))]
+            waits = {host: self._host_wait(db, request_id, host) for host in hosts}
+        finally:
+            db.close()
+        return {host: round(wait) for host, wait in sorted(waits.items()) if wait > 0}
 
     def finish(self, request_id: object, task_id: object, sends: object, outcome: object) -> int:
         """Record each admitted send's HTTP status and the tool call's outcome; the sends stay counted regardless."""
