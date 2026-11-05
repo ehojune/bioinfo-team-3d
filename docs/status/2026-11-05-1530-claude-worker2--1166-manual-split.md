@@ -3,7 +3,7 @@
 
 ## 한 일
 - 한·영 각 24장을 `docs/manual/01-pi-text` … `24-interpreter-accounting`(`.md`·`.en.md`)으로 옮겼다. 문장은 고치지 않았고 상대 링크만 새 위치에 맞췄다. 장 사이 `#앵커` 링크는 장 파일 링크로 바꿨다.
-- 옛 `manual.md`·`manual.en.md`는 머리말과 장 표에 원래 제목 65개를 그대로 둔 목차다. 각 제목 아래 링크가 장 파일로 간다. 그래서 외부의 `manual.md#앵커` 링크가 계속 유효하다(`disk-writes-and-slow-disks`는 `check_public.sh`가 키로 읽는 글자라 제목만 두고 링크에서 앵커를 뺐다).
+- 옛 `manual.md`·`manual.en.md`는 머리말과 장 표에 원래 제목 65개를 그대로 둔 목차다. 각 제목 아래 링크가 장 파일로 간다. 그래서 외부의 `manual.md#앵커` 링크가 계속 유효하다(디스크 쓰기 절 하나는 앵커 이름이 `check_public.sh`의 키 패턴에 걸려, 제목만 두고 링크에서 앵커를 뺐다).
 - `scripts/integrations.py`: 인벤토리 마커가 든 파일을 09장으로 바꿨다. `scripts/patch_notes.py`·`scripts/ci_skip.py`: 장 파일도 매뉴얼 갱신으로 본다.
 - 시험: 장을 이어 읽는 `tests/manual_text.py`를 두고 내용을 읽던 시험 6개와 경로 목록 시험 3개, `test_integrations.py`를 고쳤다.
 - `AGENTS.md`: 같은 장 동시 수정 금지, 늦게 병합하는 쪽이 rebase.
