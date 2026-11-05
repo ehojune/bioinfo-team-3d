@@ -10,6 +10,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-06
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 07:00 | [`6fe2425`](https://github.com/ehojune/bioinfo-team-3d/pull/1289/commits/6fe2425) | **이름으로 요청한 자동 설정도 보조 파일 사용으로 셉니다.**<br>helper 선택: usefixtures·getfixturevalue·indirect를 가리지 않고 node 범위의 fixture 이름 문자열을 사용으로 판정 (#1285) |
+| 06:30 | [`d8aaac1`](https://github.com/ehojune/bioinfo-team-3d/pull/1289/commits/d8aaac1) | **가변 인자 주석과 이름을 바꿔 등록한 자동 설정도 보조 파일 사용으로 셉니다.**<br>helper 선택: *args/**kwargs 주석과 fixture(name=...) 등록 이름을 사용으로 판정 (#1285) |
+| 06:00 | [`bb0d1e7`](https://github.com/ehojune/bioinfo-team-3d/pull/1289/commits/bb0d1e7) | **보조 파일을 쓰는 시험이 빠지지 않도록, 파일을 불러올 때 이미 실행되는 부분과 이름을 바꿔 가져온 자동 적용 설정도 사용으로 셉니다.**<br>helper 선택: 모든 정의의 import 시점 부분(기본값·데코레이터·주석·class 본문)과 별칭 autouse fixture를 사용으로 판정 (#1285) |
+| 05:10 | [`9e4a037`](https://github.com/ehojune/bioinfo-team-3d/pull/1289/commits/9e4a037) | **보조 파일을 쓰는 시험은 선택되고 가져오기만 하는 시험은 빠지는 두 경우를 모두 시험으로 확인합니다.**<br>test_ci_cohort823: 변경 helper를 쓰는 node는 선택, import만 하는 node는 제외를 함께 확인 (#1285) |
+| 04:30 | [`17365b4`](https://github.com/ehojune/bioinfo-team-3d/pull/1289/commits/17365b4) | **시험용 공용 보조 파일이 바뀌면, 그 파일을 실제로 쓰는 시험만 Windows 검사에 넣습니다. 가져오기만 하고 쓰지 않는 시험은 빠집니다. 검사 기록에 각 시험이 들어온 이유도 남깁니다.**<br>ci_selection: 변경 helper 소비자를 파일 전체가 아니라 사용하는 node로 좁힘(인자·usefixtures·autouse·star import 보수 처리), ci_suite: 선택 이유별 개수를 inclusion-<worker>.json으로 기록 (#1285) |
+
 ## 2026-11-05
 
 | 시간 | 커밋 | 주요 변경사항 |
