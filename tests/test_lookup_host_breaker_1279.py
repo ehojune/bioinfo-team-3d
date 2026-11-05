@@ -277,3 +277,48 @@ def test_a_paused_answer_from_the_broker_becomes_a_host_pause_not_a_limit_refusa
     with pytest.raises(annot_mcp.LookupHostPaused) as excinfo:
         asyncio.run(annot_mcp._admit("fulltext", EBI))
     assert "120" in str(excinfo.value) and not isinstance(excinfo.value, annot_mcp.LookupRefused)
+
+
+# ---- #1282: the live source check reports a resting host as host_paused, not as the request's limit ----
+def _live_check(admission):
+    import json
+    from pathlib import Path
+
+    from labhq.evidence.verify import LiveSourceResolver, verify_sources
+    from tests.test_evidence_verify import build, claim, link, row
+
+    doi = "10.1093/nar/gks1195"
+    fixture = Path(__file__).parent / "fixtures" / "live_sources" / "crossref_normal.json"
+    sent = []
+
+    def handler(request):
+        sent.append(request)
+        return httpx.Response(200, request=request, json=json.loads(fixture.read_text(encoding="utf-8")))
+
+    resolver = LiveSourceResolver(transport=httpx.MockTransport(handler), admission=admission, request_id="req_1")
+    result = build([claim("c1")], [row("e1", "doi", doi, kind="literature_claim")], [link("c1", "e1")])
+    return asyncio.run(verify_sources(result, resolver)).evidence[0].resolution, sent, resolver
+
+
+def test_a_resting_host_is_host_paused_with_its_host_and_wait_and_keeps_the_quota(tmp_path):
+    admission, _ = ledger(tmp_path, limit=50)
+    for _ in range(3):
+        send(admission, "api.crossref.org", 503, tool="source_verify")
+    resolution, sent, resolver = _live_check(admission)
+    assert (resolution.lookup, resolution.status, resolution.error_kind) == ("failed", "requires_verification",
+                                                                             "host_paused")
+    assert "api.crossref.org" in resolution.detail and "조회 몫은 남아 있고" in resolution.detail
+    assert not sent and admission.usage("req_1")["used"] == 3  # nothing was sent or counted for the refused ones
+    from labhq.evidence.verify import LookupFailed
+    with pytest.raises(LookupFailed) as caught:
+        asyncio.run(resolver.lookup("doi", "10.1093/nar/gks1195"))
+    assert caught.value.kind == "host_paused" and caught.value.host == "api.crossref.org"
+    assert 0 < caught.value.retry_after_s <= la.BREAKER_COOLDOWN_S
+
+
+def test_an_exhausted_quota_is_still_lookup_limit(tmp_path):
+    admission, _ = ledger(tmp_path, limit=2)
+    for _ in range(2):
+        admission.admit("req_1", "task_1", "bio", "annot", "pubmed.ncbi.nlm.nih.gov")
+    resolution, sent, _ = _live_check(admission)
+    assert resolution.error_kind == "lookup_limit" and not sent
