@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:40 | [`9aaa867`](https://github.com/ehojune/bioinfo-team-3d/pull/1060/commits/9aaa867) | **닫힌 프록시를 읽기 전용 실행과 read-only 직원에게만 주고, 업스트림 산출물을 받을 뿐인 쓰기 가능한 step은 네트워크를 그대로 씁니다.**<br>fix: staged 입력(read_only_inputs)만으로 셸 프록시를 닫지 않는다 (#1055) |
+| 17:10 | [`024570e`](https://github.com/ehojune/bioinfo-team-3d/pull/1060/commits/024570e) | **manual 09장 한영에 읽기 전용 Codex 직원의 셸이 닫힌 프록시를 받고, 프록시를 무시하는 코드는 막지 못한다는 설명을 적었습니다.**<br>docs: manual 09장에 #1055 닫힌 프록시와 한계를 적는다 |
+| 16:30 | [`0d8715c`](https://github.com/ehojune/bioinfo-team-3d/pull/1060/commits/0d8715c) | **프록시를 켠 Codex 직원의 셸이 정상으로 도는지 실제 통제군으로 확인해 결과표를 남겼습니다. 켠 쪽의 외부 HTTP 차단은 UAC 창 때문에 확인하지 못했습니다.**<br>docs: #1055 통제군 결과표(프록시 없음·켬, 셸 정상)를 reference에 적는다 |
 | 15:40 | [`40cd1e2`](https://github.com/ehojune/bioinfo-team-3d/pull/1275/commits/40cd1e2) | **동작을 바꾸는 PR이 manual 한 쌍을 두고 줄 서지 않도록 장마다 파일을 나눴습니다. 읽는 내용과 옛 링크는 그대로입니다.**<br>manual을 장별 파일로 나눈다. 한·영 각 24장을 docs/manual/<번호-이름>.md·.en.md로 옮기고(내용은 그대로, 상대 링크만 새 위치에 맞춤), docs/manual.md와 manual.en.md는 장 목차로 남긴다. 목차는 원래 제목 65개를 그대로 두어 옛 manual.md#앵커 링크가 이어진다. 연결된 도구 표의 생성 마커는 09장으로 옮겨 scripts/integrations.py가 그 파일을 갱신하고, patch_notes.py·ci_skip.py는 장 파일을 매뉴얼 갱신으로 센다. 시험은 장을 이어 읽는다. AGENTS.md에 같은 장 동시 수정 금지 한 줄 |
 | 15:27 | [`e734766`](https://github.com/ehojune/bioinfo-team-3d/pull/1275/commits/e734766) | **장으로 옮기며 깨졌던 연구 규약 링크를 바로잡습니다.**<br>리뷰 지적 반영. 13장에서 링크 글자가 코드 표기로 된 research_protocol 링크 두 개(한·영)가 새 위치 기준으로 바뀌지 않아 ../ 를 붙인다 |
 | 14:30 | [`39fc8a2`](https://github.com/ehojune/bioinfo-team-3d/pull/1273/commits/39fc8a2) | **웹 사무실 시험이 가끔 예약 포트를 받아 실패하던 문제를 고치고, 부팅 시간 초과 때 원인 정보를 함께 남깁니다.**<br>web_office_browser의 listen을 예약 포트 재시도로 바꾸고 waitReal 시간 초과에 boot report를 추가 (#1272) |
@@ -548,6 +551,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 15:49 | [`88549ba`](https://github.com/ehojune/bioinfo-team-3d/pull/1050/commits/88549ba) | **기준 브랜치 변경 뒤 CI checkout 검증을 다시 실행합니다.**<br>chore: refresh CI checkout identity |
 | 15:45 | [`6fbebd3`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/6fbebd3) | **폴더 산출을 파일별로 모으는 새 방식에 맞춰, 결과 검사 시험의 옛 기대값을 바꿨습니다.**<br>test: 폴더 산출은 hash가 있는 파일로 모인다는 새 동작에 맞춰 verify 시험 기대값을 바꿈 (#1058) |
 | 15:44 | [`2f5887e`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/2f5887e) | **receipt 회귀 테스트가 진단 경로를 실행했는지 확인합니다.**<br>Exercise receipt witness regression path |
+| 15:40 | [`82541bd`](https://github.com/ehojune/bioinfo-team-3d/pull/1060/commits/82541bd) | **읽기 전용 Codex 직원이 셸에서 만든 외부 조회가 조회 집계 밖으로 나가던 것을, 닫힌 프록시 환경을 줘 우연한 조회가 실패하게 했습니다. 프록시를 무시하는 코드는 막지 못합니다.**<br>fix: read-only Codex 직원의 셸에 닫힌 프록시 환경을 준다 (#1055) |
 | 15:40 | [`1419605`](https://github.com/ehojune/bioinfo-team-3d/pull/1050/commits/1419605) | **합성 staging의 binary mode를 명시해 인코딩 검사를 통과합니다.**<br>fix: declare binary staging mode explicitly |
 | 15:39 | [`9489e84`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/9489e84) | **자손 lifecycle을 소유하지 않는 launcher는 모든 probe에서 차단합니다.**<br>Block all probes through unowned launchers |
 | 15:37 | [`35694a3`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/35694a3) | **소유권 없는 launcher의 mutation probe 실행을 차단합니다.**<br>Guard mutation probes from unowned launchers |
