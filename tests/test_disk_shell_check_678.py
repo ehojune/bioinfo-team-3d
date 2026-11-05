@@ -695,3 +695,20 @@ def test_a_partly_written_path_with_a_drive_checks_that_drive_too(tmp_path):
     assert Path(tmp_path) in seen
     if os.name == "nt":
         assert any(str(f).upper().startswith("D:") for f in seen)
+
+
+@pytest.mark.parametrize("command", [
+    "& { Invoke-WebRequest https://h/raw.zip -OutFile D:\raw.zip }",
+    "foreach ($u in $urls) { iwr $u -OutFile D:\raw.zip }",
+    "if ($true) {iwr https://h/a -OutFile D:\a.zip}",
+    "(iwr https://h/a -OutFile D:\a.zip)",
+    "Get-Date; ForEach-Object { Expand-Archive raw.zip D:\out }",
+])
+def test_ps_commands_inside_blocks_are_read(command):
+    commands = disk_space._ps_commands(command)
+    assert any(disk_space._ps_name(words[0]) in {"invoke-webrequest", "iwr", "expand-archive"} for words in commands)
+
+
+def test_ps_block_comment_is_not_a_command():
+    assert disk_space._ps_commands("<# iwr https://h/a -OutFile D:\a.zip\nmore #>\nGet-Date") == [["Get-Date"]]
+    assert disk_space._ps_commands("Get-Date <# note #> ; iwr u -OutFile x") == [["Get-Date"], ["iwr", "u", "-OutFile", "x"]]

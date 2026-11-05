@@ -529,8 +529,12 @@ def _ps_commands(command: str) -> list[list[str]]:
             current = [] if current is None else current
             current.append(command[i + 1])
             i += 1
-        elif c in _PS_SEPARATORS:
-            end_command()
+        elif c in _PS_SEPARATORS or c in "})" or (c in "{(" and current is None):
+            end_command()  # a script block or a parenthesised command holds commands of its own
+        elif c == "<" and current is None and command[i + 1:i + 2] == "#":
+            close = command.find("#>", i + 2)  # a block comment: nothing in it runs
+            i = n if close < 0 else close + 2
+            continue
         elif c == "," and current is None and words:
             current = [words.pop(), ","]  # `a ,b`: the comma belongs to the array that began with the word before it
         elif c.isspace():
