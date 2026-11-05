@@ -90,6 +90,34 @@ def test_an_imported_autouse_fixture_applies_to_every_node_without_being_named(t
     assert not decide(tmp_path, source, 'test_unrelated', helper=plain)[0]
 
 
+@pytest.mark.parametrize('header', [
+    'def setup(value=run_lab()): return value\n',
+    'def decorate(x): return lambda f: f\n@decorate(run_lab())\ndef other(): return 1\n',
+    'def annotated(value: run_lab()): return value\n',
+    'class Group:\n    LAB = run_lab()\n    def method(self): return 1\n',
+    'class Group(run_lab()):\n    pass\n',
+])
+def test_what_runs_at_import_selects_every_node_even_in_an_unrelated_definition(tmp_path, header):
+    source = 'from tests.support.lab import run_lab\n' + header + 'def test_unrelated(): assert 1\n'
+    assert decide(tmp_path, source, 'test_unrelated')[0]
+
+
+def test_a_call_that_only_runs_when_a_function_is_called_does_not_select_other_nodes(tmp_path):
+    source = ('from tests.support.lab import run_lab\n'
+              'def unused(): return run_lab()\n'
+              'class Group:\n    def method(self): return run_lab()\n'
+              'def test_unrelated(): assert 1\n')
+    assert not decide(tmp_path, source, 'test_unrelated')[0]
+
+
+def test_an_aliased_autouse_fixture_is_matched_by_the_helpers_own_name(tmp_path):
+    helper = OS_HELPER + 'import pytest\n@pytest.fixture(autouse=True)\ndef always(): yield\n'
+    source = 'from tests.support.lab import always as renamed\ndef test_unrelated(): assert 1\n'
+    assert decide(tmp_path, source, 'test_unrelated', helper=helper)[0]
+    source = 'import tests.support.lab as lab\ndef test_unrelated(): assert 1\n'
+    assert not decide(tmp_path, source, 'test_unrelated', helper=helper)[0]  # a module import runs no fixture
+
+
 def test_a_file_level_decision_still_selects_the_file(tmp_path):
     assert decide(tmp_path, SOURCE, None)[0]
 
