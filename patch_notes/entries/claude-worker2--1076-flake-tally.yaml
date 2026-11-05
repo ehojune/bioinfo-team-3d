@@ -1,0 +1,9 @@
+rows:
+- sha: '92f7671'
+  at: 2026-11-06 03:09
+  text: "#1076 간헐 실패 집계표를 docs/reference/ci-1076-flake-tally.md에 둔다. 11-04 이후 11건(Windows 6, Linux 5), 가장 잦은 test_office_in_node 5건의 로컬 재현 결과(128 시험 통과, 재현 못 함)와 원인 후보·고칠 범위"
+  summary: 반복되는 CI 간헐 실패를 한 표로 모았습니다.
+- sha: 'a8745a2'
+  at: 2026-11-06 03:09
+  text: demo driver가 작업 deadline에 걸리면 그때 기다리던 단계·label·응답 없는 CDP 호출·마지막 응답 이후 시간·요청 수를 deadline 행에 남기고, cleanup 진단에 경과 시간과 닫히지 않은 핸들별 대기 시간을 더한다. timeout·단언은 그대로다
+  summary: web 시험이 deadline에서 실패하면 어느 단계가 느렸는지 로그로 알 수 있습니다.
