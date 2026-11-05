@@ -3,6 +3,10 @@ pr: 1064
 # Final-head CI, manifest execution and actual review stay tracked in PR #1064.
 # Code-only merge requires final-head CI/review; real protection remains UNVERIFIED.
 rows:
+  - sha: "fce1303"
+    at: "2026-11-05 12:05"
+    summary: "모의 보호 검증을 최신 코드와 합치고 실제 보호가 미검증임을 유지합니다."
+    text: "Merge main into seal fixtures and preserve offline adapter"
   - sha: "b666bc4"
     at: "2026-10-31 04:20"
     summary: "모의 검증 참고 문서를 현재 계약에 맞추고 이전 버전은 수락하지 않음을 명시합니다."
