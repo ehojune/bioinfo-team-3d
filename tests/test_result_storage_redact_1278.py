@@ -1,0 +1,57 @@
+"""#1278: redacting secrets in published code must keep it valid code and still hide real literals."""
+import pytest
+
+from labhq.portfolio import clean_publication_text, code_syntax_issues, scan_publish_files
+from labhq.settings import Settings
+
+REQ = {"id": "r", "text": ""}
+NAME = "steps/s4_qc/outputs/scripts/qc_check.py"
+
+
+def _clean(body, name=NAME):
+    return clean_publication_text(name, body, Settings(), REQ)
+
+
+def test_the_8th_trial_line_stays_valid_python():
+    code = 'token = r["fixed_input_value"].split(",")[0].strip()\nprint(token)\n'
+    cleaned = _clean(code)
+    assert cleaned == code, "an expression is not a secret value"
+    assert code_syntax_issues({NAME: cleaned}) == []
+    assert scan_publish_files({NAME: cleaned}) == []
+
+
+@pytest.mark.parametrize("line", [
+    'api_key = os.environ["API_KEY"]',
+    "password = getpass.getpass()",
+    "secret = load_secret(path)",
+    "token = tokens[0]",
+    "token = row.token.strip()",
+    'password = ""',
+])
+def test_names_that_are_not_literals_are_left_alone(line):
+    cleaned = _clean(f"import os\n{line}\n")
+    assert line in cleaned
+    assert code_syntax_issues({NAME: cleaned}) == []
+    assert scan_publish_files({NAME: cleaned}) == []
+
+
+@pytest.mark.parametrize("line,leaked", [
+    ('api_key = "sk-abc123def456ghi789"', "sk-abc123def456ghi789"),
+    ("password = 'hunter2xyz'", "hunter2xyz"),
+    ('headers = {"token": "abcdef123456"}', "abcdef123456"),
+    ("secret = r'abc123xyz789'", "abc123xyz789"),
+    ("token = 12345678", "12345678"),
+])
+def test_real_literals_are_still_hidden_and_the_code_still_compiles(line, leaked):
+    cleaned = _clean(f"{line}\n")
+    assert leaked not in cleaned
+    assert "redacted-secret" in cleaned
+    assert code_syntax_issues({NAME: cleaned}) == []
+    assert scan_publish_files({NAME: cleaned}) == []
+
+
+def test_shell_and_r_literals_are_hidden_without_breaking_the_script():
+    sh = _clean('export TOKEN=abc123xyz789\ncurl -H "$TOKEN" x\n', "steps/s1/outputs/scripts/a.sh")
+    assert "abc123xyz789" not in sh and '"$TOKEN"' in sh
+    r = _clean('token <- "abc123xyz789"\nx <- token\n', "steps/s1/outputs/scripts/a.R")
+    assert "abc123xyz789" not in r
