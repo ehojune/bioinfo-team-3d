@@ -7987,6 +7987,7 @@ class Orchestrator:
                             # Part of the frozen plan, so CP1 shows them and the hash covers them (#446).
                             plan = with_checklist_skip_warnings(plan, checklist_catalog,
                                                                 req.get("analysis_precedents"))
+                            plan = with_paused_host_warning(plan, self._paused_lookup_hosts(rid))  # frozen with the plan
                             validated = validate_research_plan(plan, max_steps=self.cfg.max_steps,
                                                                max_branches=self.cfg.max_branches,
                                                                max_branch_steps=self.cfg.max_branch_steps,

@@ -355,3 +355,18 @@ def test_the_orchestrator_reads_the_resting_hosts_of_its_own_request_only(tmp_pa
     paused = Orchestrator._paused_lookup_hosts(me, "req_1")
     assert list(paused) == [EBI] and 0 < paused[EBI] <= la.BREAKER_COOLDOWN_S
     assert Orchestrator._paused_lookup_hosts(me, "req_2") == {}
+
+
+@pytest.mark.asyncio
+async def test_a_research_plan_reaches_cp1_with_the_resting_host_warning():
+    from labhq.orchestrator.cso import PAUSED_HOST_WARNING, Orchestrator
+    from tests.test_cp1_input_fit_796 import no_native_workers, run_plans  # noqa: F401 - the same CP1 flow
+
+    class Resting(Orchestrator):
+        def _paused_lookup_hosts(self, rid):
+            return {EBI: 90}
+
+    hub, req = await run_plans(["raw_counts", "raw_counts"], orchestrator=Resting)
+    warnings = hub.approvals[0]["detail"]["warnings"]
+    assert any(w.startswith(PAUSED_HOST_WARNING) and EBI in w for w in warnings)
+    assert req["outcome"] == "plan_approved"  # a note, never a reason to stop
