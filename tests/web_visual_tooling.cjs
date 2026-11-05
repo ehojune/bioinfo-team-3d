@@ -1123,3 +1123,29 @@ test('the cleanup diagnostic names the Node version and which WebSocket client c
   assert.ok(rows.every(row => row.node_version === process.version));
   assert.deepEqual([...new Set(rows.map(row => row.ws_kind))].sort(), ['global', 'mini']);
 });
+
+// #1272: web_office_browser.cjs opens its own server and asserted the port; it now draws again like the demo driver.
+function drawingServer(ports) {
+  const events = [];
+  let draw = -1, port = 0;
+  return {events, once() {}, removeListener() {},
+    listen(_port, _host, done) { port = ports[Math.min(++draw, ports.length - 1)]; events.push('listen'); setImmediate(done); },
+    address() { return {port}; },
+    close(done) { events.push('close'); setImmediate(done); }};
+}
+
+test('listenOnUnreservedPort draws again when the OS hands out a reserved port (#1272)', async () => {
+  const {listenOnUnreservedPort} = require('./support/demo_driver.cjs');
+  const server = drawingServer([55921, 8787, 40000]);
+  await listenOnUnreservedPort(server);
+  assert.deepEqual(server.events, ['listen', 'close', 'listen', 'close', 'listen']);
+  assert.equal(server.address().port, 40000);
+});
+
+test('listenOnUnreservedPort gives up after the allowed number of reserved draws (#1272)', async () => {
+  const {listenOnUnreservedPort} = require('./support/demo_driver.cjs');
+  const server = drawingServer([55921]);
+  await listenOnUnreservedPort(server);
+  assert.equal(server.events.filter(event => event === 'listen').length, RESERVED_DRAWS);
+  assert.equal(server.address().port, 55921);  // handed over as it is: the caller refuses it and closes it
+});
