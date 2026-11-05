@@ -50,3 +50,7 @@ rows:
   at: 2026-11-05 19:14
   summary: 최신 설치 안내와 HPC 시험 등록을 합쳤습니다.
   text: main 6323fff5를 통합했다. 관련 mock 회귀 298건 통과, 25건 skip. verify inventory hash 갱신은 후속 claim이 필요하다.
+- sha: "d79c01b"
+  at: 2026-11-05 19:26
+  summary: 저장된 논문 본문을 HPC 잡에 전달할 수 없으면 처리 전에 멈춥니다.
+  text: scheduler snapshot 없는 precedent 본문을 gateway·runner에서 거부한다. local은 유지하며 관련 회귀 301건, 기존 precedent 회귀 13건 통과했다.
