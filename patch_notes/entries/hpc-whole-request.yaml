@@ -1,6 +1,6 @@
 pr: 578
 rows:
-- sha: "5a48ae7"
+- sha: "8471dbb"
   at: 2026-11-05 19:43
   summary: 중첩 HPC 산출 검증 시험을 Windows 경계 검사에 등록했습니다.
   text: verify mixed-module hash와 root 이동 후 task identity 시험 등록을 갱신했다. source 검증과 관련 시험 320건이 통과했다.
