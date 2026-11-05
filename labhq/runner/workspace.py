@@ -859,14 +859,54 @@ class TaskWorkspace:
         stop = walk(top, PurePath(), 0)
         return found, stop or note
 
+    def stage_run(self, task_id: str, **fields: Any) -> None:
+        """Hold fields of this run's record in memory until the next write of that record (#1137). The record is read
+        only after the step has finished, so what the step's last writes record, right before its result is sent
+        (the outputs' environment, the input hashes), can ride in that final write instead of costing an fsync each.
+        Nothing is delayed past it: `update_run`/`aupdate_run` write what is staged together with their own fields,
+        and `aflush_run` writes it alone when a step ends without a final write (cancelled, crashed)."""
+        self._staged_runs.setdefault(task_id, {}).update(copy.deepcopy(fields))
+
+    @property
+    def _staged_runs(self) -> dict[str, dict[str, Any]]:
+        staged = self.__dict__.get("_staged")
+        if staged is None:
+            staged = self.__dict__["_staged"] = {}
+        return staged
+
+    def _take_staged(self, task_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        """The staged fields of `task_id` merged under `fields` (an explicit field wins), and nothing staged any more."""
+        return {**(self._staged_runs.pop(task_id, None) or {}), **fields}
+
     def update_run(self, task_id: str, **fields: Any) -> None:
         """A workspace can host several runs (original + wake-ups after HPC jobs)."""
-        durable.call(durable.FILES, self._update_run_now, task_id, fields)
+        merged = self._take_staged(task_id, fields)
+        try:
+            durable.call(durable.FILES, self._update_run_now, task_id, merged)
+        except BaseException:
+            self._restage(task_id, merged, fields)
+            raise
 
     async def aupdate_run(self, task_id: str, **fields: Any) -> None:
         """`update_run` for a coroutine: the fsync runs on the durable writer thread (#606). The fields are copied
         first, so the caller may change them while the write is queued."""
-        await durable.run(durable.FILES, self._update_run_now, task_id, copy.deepcopy(fields))
+        merged = copy.deepcopy(self._take_staged(task_id, fields))
+        try:
+            await durable.run(durable.FILES, self._update_run_now, task_id, merged)
+        except BaseException:
+            self._restage(task_id, merged, fields)
+            raise
+
+    async def aflush_run(self, task_id: str) -> None:
+        """Write what is staged for `task_id`, if anything: the step ended without its final write."""
+        if self._staged_runs.get(task_id):
+            await self.aupdate_run(task_id)
+
+    def _restage(self, task_id: str, merged: dict[str, Any], explicit: dict[str, Any]) -> None:
+        """A write that failed keeps its staged fields for the next one (the explicit ones are the caller's to retry)."""
+        for key, value in merged.items():
+            if key not in explicit:
+                self._staged_runs.setdefault(task_id, {}).setdefault(key, value)
 
     def _update_run_now(self, task_id: str, fields: dict[str, Any]) -> None:
         # Read, change and write as one job (see _write_manifest_now).

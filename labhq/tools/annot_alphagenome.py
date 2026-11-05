@@ -19,6 +19,9 @@ from . import annot_regulatory as reg
 MAX_SAVED_ROWS = 1000
 MAX_TOP = 100
 MAX_ALLELE = 1000
+# Part of the cache key. 2: the window is centered on the REF span (#621); scores cached with the older, lopsided window
+# of a many-base REF are not reused.
+SCORE_SCHEMA = 2
 MAX_SCORERS = 20
 LARGE_QUANTILE = 0.99  # display convention, not a clinical or significance cutoff
 SOURCE = {
@@ -74,7 +77,9 @@ def _score(backend: reg.AlphaGenomeBackend, query: reg.Query, width: int, module
             raise reg.AlphaGenomeUnavailable("AlphaGenome 연결 실패(키·연결 상태 확인)") from None
         backend._score_model = model
     variant = query.variant
-    start = max(0, variant.pos - 1 - width // 2)
+    # Centered on the middle of the REF span, as AlphaGenome's `reference_interval.resize(width)` is (#621): a deletion of
+    # many bases is not left lopsided in its window. For a one-base REF the middle is the variant's own base, as before.
+    start = max(0, (query.start0 + query.end) // 2 - width // 2)
     interval = genome.Interval(chromosome=query.chrom, start=start, end=start + width)
     allele = genome.Variant(chromosome=query.chrom, position=variant.pos,
                             reference_bases=variant.ref, alternate_bases=variant.alt)
@@ -181,7 +186,7 @@ async def score_variants(annotator: reg.RegulatoryAnnotator, variants: object, *
     release = f"AlphaGenome v1 / ALL_FOLDS / SDK {source['sdk_version']}"
     options = {"assembly": assembly, "sequence_length": sequence_length, "ontology_terms": terms,
                "tissues": tissue_names, "provenance": source, "saved_rows_limit": MAX_SAVED_ROWS,
-               "score_schema": 1}
+               "score_schema": SCORE_SCHEMA}
     annotator._from_cache("alphagenome_variant", release, options, items)
     done: dict[str, Any] = {}
     stopped = False

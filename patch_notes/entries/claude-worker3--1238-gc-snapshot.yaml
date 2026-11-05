@@ -1,0 +1,6 @@
+pr: 1240
+rows:
+- sha: '3c67915'
+  at: 2026-11-01 08:30
+  text: 'CI Python 3.10에서만 test_patch_notes가 SystemError(tupleobject.c)로 드물게 실패했다. stall 진단 스레드가 gc.get_objects()를 쥐고 있는 동안 다른 스레드가 f(*generator) 인자를 만들면 그 튜플의 참조 수가 늘어 생기는 오류였다. 진단은 faulthandler 덤프만 남기고 gc를 훑지 않으며(test.yml·scripts/ci_suite.py), patch_notes.py는 느린 git 호출을 list로 먼저 끝낸다. 재현 시험 두 건을 더했다 (#1238)'
+  summary: CI 진단이 다른 시험을 가끔 깨뜨리던 문제를 없앴습니다. 진단은 스레드 덤프만 남깁니다.

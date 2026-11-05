@@ -1,0 +1,10 @@
+pr: 1118
+rows:
+- sha: '3249d98'
+  at: 2026-10-31 14:00
+  text: tests/test_state.py의 고정 횟수 대기(range 50~500 × sleep 0.01, 이론상 0.5~5초이고 Windows 타이머 해상도로는 더 김) 12곳을 시간 기준 helper(wait_until, wait_until_sync, 10초 한도, 조건이 서면 즉시 탈출)로 바꾼다. 단언과 시험 의도는 그대로이고, helper의 동작을 확인하는 시험 한 건을 더한다
+  summary: 느린 Windows 러너에서 재개 시험이 대기 한도 때문에 실패하던 간헐 실패(#1076, 5회)를 막습니다.
+- sha: de8c25e
+  at: 2026-10-31 03:38
+  text: helper 시험의 실시간 4초 상한 단언을 뺍니다(느린 러너가 멈추면 실패하는 같은 부류). 같은 파일의 asyncio.wait_for 마감 13곳(1~2초)을 10초로 올립니다. 결과가 오기를 기다리는 곳이라 마감이 단언이 아니고, 실패하면 TimeoutError로 그대로 드러납니다
+  summary: 느린 러너에서 test_state의 짧은 마감(1초)이 먼저 끊기던 실패를 막습니다.

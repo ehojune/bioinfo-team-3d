@@ -30,12 +30,16 @@ async def test_cancel_intent_allows_heartbeat_before_commit(hub, monkeypatch, ac
         await durable.run(hub.store.lane, lambda: None)
     transaction = hub.store._transaction
     timeline = []
+    beat_ran = threading.Event()
 
     @contextmanager
     def slow_commit():
         with transaction() as conn:
             yield conn
-            time.sleep(0.2)
+            # The commit stays open until the loop has run its heartbeat. A loop that waited for this commit could never
+            # run it, so the wait would run out and the timeline would read commit first. No sleep decides the order, so
+            # a busy runner cannot reorder it (#1076).
+            beat_ran.wait(5)
             timeline.append("commit")
 
     async def send(runner, message):
@@ -45,6 +49,7 @@ async def test_cancel_intent_allows_heartbeat_before_commit(hub, monkeypatch, ac
     async def heartbeat():
         await asyncio.sleep(0.02)
         timeline.append("heartbeat")
+        beat_ran.set()
 
     monkeypatch.setattr(hub.store, "_transaction", slow_commit)
     monkeypatch.setattr(hub, "send_runner", send)
@@ -139,6 +144,9 @@ async def test_result_race_leaves_no_cancel_intent(hub, monkeypatch, completion_
     original_put = hub.store.aput
 
     async def delayed_put(kind, key, body):
+        if kind != "task_cancel":  # only the cancel intent's write is held; the completion's own writes go through
+            await original_put(kind, key, body)
+            return
         entered.set()
         await release.wait()
         await original_put(kind, key, body)

@@ -441,33 +441,128 @@ async def test_reconnect_flush_does_not_send_a_decision_superseded_while_waiting
     assert hub.store.get("decision", card.id) is None
 
 
+@pytest.mark.parametrize("publish_barrier", [False, True])
 @pytest.mark.parametrize("operation", ["resolve", "close"])
-async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_hub, monkeypatch, operation):
+async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_hub, monkeypatch, operation, publish_barrier):
     hub = live_hub
     card, _ = pending_card(hub, "runner")
-    entered, release = asyncio.Event(), asyncio.Event()
+    entered, release, send_timed_out = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    publishing, publish_release = asyncio.Event(), asyncio.Event()
+    writer_enqueued = asyncio.Event()
+    timeline = []
+    started = time.monotonic()
+    def mark(stage):
+        timeline.append((stage, round(time.monotonic() - started, 3)))
+    writer_times = {name: None for name in ("enqueue", "start", "commit_start", "commit_finish", "finish")}
+    writer = durable.lane(hub.store.lane)
+    submit = writer.submit
+    transaction = hub.store._transaction
+    writer_context = threading.local()
+
+    @contextmanager
+    def observed_transaction():
+        with transaction() as conn:
+            yield conn
+            if getattr(writer_context, "publish", False):
+                writer_times["commit_start"] = round(time.monotonic() - started, 3)
+        if getattr(writer_context, "publish", False):
+            writer_times["commit_finish"] = round(time.monotonic() - started, 3)
+
+    def observed_submit(fn, *args, **kwargs):
+        if getattr(fn, "__name__", "") != "_append_event_now":
+            return submit(fn, *args, **kwargs)
+        def observed_job():
+            writer_times["start"] = round(time.monotonic() - started, 3)
+            writer_context.publish = True
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                writer_context.publish = False
+                writer_times["finish"] = round(time.monotonic() - started, 3)
+        result = submit(observed_job)
+        writer_times["enqueue"] = time.monotonic() - started
+        writer_enqueued.set()
+        return result
+    monkeypatch.setattr(writer, "submit", observed_submit)
+    monkeypatch.setattr(hub.store, "_transaction", observed_transaction)
+    original_publish = hub.publish
+    async def publish(event, **kwargs):
+        mark("publish_enter")
+        publishing.set()
+        if publish_barrier:
+            await publish_release.wait()
+        await original_publish(event, **kwargs)
+        mark("publish_done")
+    monkeypatch.setattr(hub, "publish", publish)
     class Socket:
         async def send_text(self, payload):
+            mark("send_enter")
             entered.set()
-            await release.wait()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                mark("send_cancelled")
+                send_timed_out.set()  # the send ended because its timer fired, not because the test released it
+                raise
     hub.runners["runner"] = Socket()
     hub.runner_locks["runner"] = asyncio.Lock()
-    monkeypatch.setattr("labhq.gateway.server.CLIENT_SEND_TIMEOUT_S", 0.05)
+    send_bound = 0.25  # larger than a loaded runner's scheduling jitter, small against the wait below
+    monkeypatch.setattr("labhq.gateway.server.CLIENT_SEND_TIMEOUT_S", send_bound)
     action = hub.resolve_approval(card.id, True) if operation == "resolve" else hub.close_approval(card.id, "closed")
     task = asyncio.create_task(action)
+    def diagnostics():
+        loop = asyncio.get_running_loop()
+        action_error = repr(task.exception()) if task.done() and not task.cancelled() else None
+        stacks = {repr(t): [f"{f.f_code.co_filename}:{f.f_lineno}:{f.f_code.co_name}" for f in t.get_stack()]
+                  for t in asyncio.all_tasks() if not t.done()}
+        timers = [(round(h.when() - loop.time(), 3), repr(h)) for h in loop._scheduled if not h.cancelled()]
+        return (f"timeline={timeline!r}, writer_times={writer_times!r} (None=unobserved), now={time.monotonic()-started:.3f}, "
+                f"action_done={task.done()}, action_cancelled={task.cancelled()}, action_error={action_error}, "
+                f"runner_present={'runner' in hub.runners}, runner_lock={hub.runner_locks.get('runner')!r}, "
+                f"card_lock={hub._approval_lock(card.id)!r}, publish_entered={publishing.is_set()}, "
+                f"publish_released={publish_release.is_set()}, timers={timers!r}, stacks={stacks!r}")
     try:
-        await asyncio.wait_for(entered.wait(), 1)
+        try:
+            await asyncio.wait_for(entered.wait(), 10)
+        except asyncio.TimeoutError:
+            pytest.fail("send not reached: " + diagnostics())
         assert hub.store.get("approval", card.id) is None
         assert hub.store.get("approval_decision", card.id) is not None
         assert hub.store.get("decision", card.id) is not None
+        deadline = time.monotonic() + 4 * send_bound
         for _ in range(3):
+            mark("outer_cancel")
             task.cancel()
             await asyncio.sleep(0)
-        done, _ = await asyncio.wait({task}, timeout=0.5)
-        assert task in done, "runner backpressure held cancellation and the card lock indefinitely"
-        assert "runner" not in hub.runners
+        try:
+            await asyncio.wait_for(publishing.wait(), max(0, deadline - time.monotonic()))
+        except asyncio.TimeoutError:
+            pytest.fail("send timeout or unregister did not reach publish within its bound: " + diagnostics())
+        assert send_timed_out.is_set(), diagnostics()
+        assert "runner" not in hub.runners, diagnostics()
+        if publish_barrier:
+            assert not task.done(), diagnostics()
+            mark("publish_release")
+            publish_release.set()
+        try:
+            await asyncio.wait_for(writer_enqueued.wait(), max(0, deadline - time.monotonic()))
+        except asyncio.TimeoutError:
+            pytest.fail("publish did not enqueue within the send bound: " + diagnostics())
+        assert started + writer_times["enqueue"] <= deadline, diagnostics()
+        done, _ = await asyncio.wait({task}, timeout=10)  # durable publish has a separate completion bound
+        assert task in done, "durable publish did not complete: " + diagnostics()
+        assert any(stage == "publish_done" for stage, _ in timeline), diagnostics()
+        assert all(value is not None for value in writer_times.values()), diagnostics()
+        assert writer_times["start"] <= writer_times["commit_start"] <= writer_times["commit_finish"] <= writer_times["finish"], diagnostics()
+        assert send_timed_out.is_set(), diagnostics()
+        assert "runner" not in hub.runners, diagnostics()
     finally:
         release.set()
+        publish_release.set()
+        done, _ = await asyncio.wait({task}, timeout=1)
+        if not done:
+            task.cancel()
+            pytest.fail("cleanup did not finish: " + diagnostics())
         result = (await asyncio.gather(task, return_exceptions=True))[0]
     assert isinstance(result, asyncio.CancelledError)
     assert hub.store.get("decision", card.id) is not None

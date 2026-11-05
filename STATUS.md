@@ -4,6 +4,2059 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1272 web office 간헐 실패 — 단계 보고
+
+- 바뀐 것: `tests/support/demo_driver.cjs`(`listenOnUnreservedPort` 분리, `waitReal` 시간 초과 boot report), `tests/web_office_browser.cjs`(예약 포트 재시도), `tests/web_visual_tooling.cjs`(회귀 2건), `docs/reference/ci-web-office-flake.md`.
+- 실행: `tests/test_web_3d.py` 전체 96 passed 1 skipped(로컬 Windows), 가짜 페이지로 boot report 출력 확인.
+- 미확인: focus_layout 부팅 시간 초과의 실제 원인(재발 로그 대기). 시간 상한·단언은 그대로.
+
+# #1076 승인 응답 시험
+
+- 송신 timeout과 unregister는 기존 1초 관찰 제한으로 확인하고 durable publish 완료는 별도로 확인한다.
+- 실패 시 writer enqueue, start, commit 시작·완료, finish 시각을 남긴다. 미관찰 값은 None이다.
+- 기존 Windows 저장 지연의 원인은 미확인이다.
+- 로컬 Windows Python 3.12: 관련 시험 45개 통과.
+
+# #1048 r9: broker integration
+
+Integrated main `df1c64c3` into PR #1052; resolved the Windows inventory conflict by retaining both registrations. Runtime broker code remains unchanged and unwired. Added two tests combining the actual ProcessBroker with the current diagnostic launcher and observer event verifier.
+
+| Verification | Result |
+|---|---|
+| Existing disposable Linux fixture, temporary source/dependency copies | 39 passed, including acknowledgement and upstream timeout integrations |
+| Windows broker/launcher/observer/seal/preview tests | 747 passed, 39 skipped, 1 xfailed |
+| Windows inventory validation | Passed |
+| Final-head CI and actual review | Pending; tracked in PR #1052 |
+
+Synthetic lifecycle frames validate; timeout reaps the direct upstream PID and closes the socket/listener. The receipt remains unsealed with descendants unverified. Namespace-child events do not inventory the broker or its descendants. The seal adapter still requires separate synthetic evidence and expectations; the broker supplies no trusted observer, protected storage or supervisor deadline ownership. Streaming/CLI compatibility, OS protection, hook/MCP preservation and independent cleanup remain UNVERIFIED. No real credentials, provider/model calls, provisioning, deployment, research, HPC or capability enablement.
+
+Keep draft/hold pending lead review. Recommendation: code-only merge is separable from later protection/CLI gates after final CI and actual review pass; do not enable the prototype.
+
+Procedure exception: the first pre-edit check was refused because it ran outside the registered checkout, but inventory/test edits followed. A subsequent check in the registered checkout passed before further work; the edits are within r9 scope. The assignment was not changed.
+
+## 단계
+#1063 r10 · PR #1064의 synthetic 계약을 main `232e3abf`와 통합합니다. 실제 보호는 UNVERIFIED입니다.
+
+## 한 일
+- 충돌 4건 해결: main의 Windows inventory·offline HMAC adapter·최신 manual 한영판을 보존했습니다.
+- seal suite를 Windows 경계 검사에 추가하고 reference의 adapter 설명을 현 구현에 맞췄습니다. Reference 5,134→5,812자.
+- 리뷰 P2 수정: 알려진 failure·stop 이벤트를 unknown으로 분류하지 않습니다. 원인 없는 stop·잘못된 child·임의 이벤트 거부는 유지합니다.
+- corpus·기존 test·다른 담당자의 변경을 보존했습니다. code-only 병합 범위이며 실제 보호·실행 승인은 별도입니다.
+
+## 테스트 결과
+- seal·observer·offline adapter synthetic 618건, CI 경계·phase 계약 182건 PASS.
+- 별도 offline probe 24건으로 failure·stop 분류와 잘못된 stop 거부를 확인했습니다. 기존 test 파일은 claim 범위 밖이라 보존했습니다.
+- inventory·notes_index·patch_notes·public·diff 검사 PASS. 최종 head CI·실제 리뷰는 PR에서 최종 확인합니다.
+
+## 남은 조건
+- 최종 head CI·실제 리뷰와 미해결 지적 확인 후 draft/hold 해제·병합합니다.
+- OS seal·실제 producer 신원·독립 cleanup은 UNVERIFIED. provisioning·provider·연구/HPC 실행은 없습니다.
+
+Refs #1063; parent #666. PR #1052는 별도 claim 대상입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+## 단계
+#1269(#1184 후속): PowerShell 디스크 확인이 `$r = iwr ...`·`[void](...)`처럼 명령 이름이 첫 단어가 아닌 구문을 놓치던 부류. 같은 종류의 지적이 일곱 번째라 구문을 더 읽지 않고 안전망으로 닫는다.
+
+## 한 일
+- `labhq/disk_space.py`: `_ps_unplaced`를 더했다. 글에 다운로드·압축 해제 cmdlet·별칭이 단어로 든 횟수가 tokenizer가 명령 이름으로 찾은 횟수보다 많으면, 현재 폴더와 글에 적힌 모든 드라이브를 `_assess`로 확인한다.
+- 여유가 `disk_fail_free_gb` 아래일 때만 ask이고 deny는 없다. 크기를 모르니 경고 기준만 걸리면 경고다.
+- 오탐: 문자열·주석 속 단어와 `curl.se` 같은 URL은 단어 경계로 가려내고, 남는 것은 ask로만 끝난다.
+- 시험 11건 추가, 닫히지 않은 따옴표 시험 1건을 새 계약에 맞춰 바꿨다(여유가 없으면 ask, 있으면 통과).
+
+## 확인
+- Windows `tests/test_disk_shell_check_678.py` 175 passed.
+
+## 하지 않은 것
+- manual은 고치지 않았다(W2 PR1064 충돌 때문). 고칠 문장: 한·영 manual 셸 다운로드 단락의 "an `iwr` that does not write a file and a path with a `$` variable are left alone" 뒤에 "a cmdlet the reader cannot place (an assignment, a cast) is checked against the current drive" 취지를 더한다.
+
+## 단계
+#678 rev12: PR #1184(#1167)와 PR #1270(#1269)이 바꾼 PowerShell 디스크 확인을 한·영 manual에 반영한다.
+
+## 한 일
+- `docs/manual.md`·`docs/manual.en.md`의 셸 다운로드·압축 해제 확인 단락에 안전망 문장을 더했다. 읽지 못했지만 이름이 보이는 다운로드는 현재 드라이브와 명령에 적힌 드라이브를 확인하고, 결과는 ask·경고·허용이며 deny는 없다.
+- #1184분(`-OutFile`·`Expand-Archive`·BITS)은 이미 manual에 있어 그대로 두었다.
+
+## 확인
+- 동작은 `labhq/disk_space.py`의 `_ps_unplaced`와 #1270 patch note·status로 대조했다. 코드는 바꾸지 않았다.
+
+## 하지 않은 것
+- 시험은 돌리지 않았다(문서만 변경).
+
+# #1076 approval 시험 진단
+
+- 송신 취소·timer·task stack·runner/lock·publish 상태를 실패 시 기록한다. publish barrier로 송신 timeout 이후 대기를 따로 검증한다.
+- Windows 로컬 Python 3.12: `tests/test_approval_durable_606.py` 45 passed, CI 선택 정책 시험 129 passed.
+- 이전 Windows 실패 원인은 미확인이다. #1076 종료는 보류하고 web cleanup은 별도 후속으로 남긴다.
+
+# #666 rev13 — VM 설치 코드·manual 검토
+
+- 결과: 기존 PowerShell 5.1 installer와 31개 mock 시험을 PR로 제출한다. 실제 설치는 관리자 실행 결과 대기다. 이번 배정은 병합 전 검토까지이며 hold를 유지한다.
+- 변경: installer·mock 시험·[설치 안내](../reference/sandbox-666-vm-install.md)·patch note와 Windows inventory. `known_tests`·`boundary_cohorts`에 PowerShell 시험을 등록했다. 기존 untracked 기록은 보존한다.
+- 동작: Inspect / EnableFeature(-NoRestart) / Provision(4CPU·8GiB·64GiB, OFF·NIC0) / 정확한 VmId로 Stop·RemoveVM. 부모·root ACL, reparse, ISO size/hash, 실패 quarantine을 검사한다.
+- P1 수정: `Unregister`의 등록만 제거한다는 잘못된 안내를 없앴다. `RemoveVM`은 설정·checkpoint 삭제를 명시하고 `-ConfirmConfigurationRemoval` 없이는 거절한다. 백업 필요·VHD 보존을 안내한다. 수정 전 회귀 **1 failed**, 수정 후 VM mock 32개·인코딩 17개 **49 passed**, 8.84s.
+- 남은 조건: 최종 head CI·실제 리뷰, 총괄 병합 판단. draft/hold 유지.
+- manual P1: 한영판의 #666 절에 설치 안내 링크·수동 관리자 실행·파괴적 RemoveVM·사전 백업·UNVERIFIED 제한을 반영했다. PR #1267 검토 중임을 명시했다.
+- rev13 로컬: 인코딩 회귀 **34 passed**(1.41s). installer·시험 코드는 바꾸지 않았다.
+- 미검증: 실제 ACL·VM/guest 설치·권한 분리·OS 보호·lifetime/cleanup·credential 회수. 같은 관리자 계정 격리는 UNSUPPORTED. 기본 off·CLI 미연결·#666 OPEN 유지.
+
+# #1076 rev31 — Windows 실패 진단
+
+- 대상: [run 41355252741, Windows job](https://github.com/ehojune/bioinfo-team-3d/actions/runs/41355252741/job/124993880374), checkout `66bd398c5ef6fa0cdb9cadd43e4a99688d5c035f`.
+- 로컬 Windows Python 3.12: 두 시험 원본 실행 `2 passed, 1 warning in 12.92s`. CI 실패 자체는 재현하지 못했다.
+- lifecycle: `parked`는 모든 `approval.requested` 발행 뒤 설정된다. CI에는 `seen`과 개별 task의 상태·예외가 없어 빠진 kind와 실패 task를 판별할 수 없다. 3초 제한을 늘리기 전에 timeout에서 누락 kind, task 상태·예외·stack을 기록하고 남은 task를 정리하는 시험 진단이 필요하다. 제품 결함 여부 미확인.
+- descendant: 요청 생성 시 6초 deadline이 시작되며 runner readiness나 자손 생성 완료를 기다리지 않는다. 별도 scratch harness에서 runner process 시작을 8초 늦추고 대기를 12초로 줄이자 PID 파일 0개, request `cancelled`, `cancel_reason=request_deadline`, receipt `termination=no_running_tasks`, 동일한 자손 대기 timeout을 관찰했다. 이는 가능한 경쟁의 재현이지 CI 원인 확정이 아니다. CI 로그는 PID 단계와 request 상태를 남기지 않는다.
+- 수정 claim 제안: `tests/test_request_lifecycle.py`에 위 task 진단; `tests/test_request_deadline_descendants_1232.py`에 단계별 PID·request 상태·gateway/runner 로그를 실패 시 기록하고, runner 준비와 deadline 시작 순서를 결정적으로 조정하는 방안 검증. 필요 시 `tests/fixtures/fake_deadline_cli.py`와 gateway/helper 추가 claim. timeout만 늘리지 않는다. CI 재실행·제품 변경은 하지 않았다.
+
+## rev32 — 시험 보강
+
+- lifecycle timeout에 누락 kind와 task 상태·예외·stack을 기록하고 task를 정리한다.
+- descendant 시험의 acceptance 기준 deadline은 기존대로 유지한다. 시작 경쟁의 해결은 후속 작업으로 남긴다.
+- 이전 시험 변경의 Windows Python 3.12 결과는 `2 passed, 1 warning in 21.65s`이며, acceptance 기준을 복구한 최종 변경의 결과는 별도 CI에서 확인한다.
+- 실제 CI 실패 원인과 제품 결함 여부는 미확인이다.
+
+# #1167 curl option values
+
+- curl option values no longer hide a later output path; the table is based on curl 8.21.0 help. The policy allowlist serves a separate safety check.
+- Regression before fix: 3 failed, 2 passed. After fix: 59 passed in `tests/test_disk_shell_check_678.py`. No actual downloads.
+- #1167 remains open for its other items.
+
+# #691 precedent lookup share
+
+- A configured request cap reserves capacity for later stages: briefing and precedent share a cap that defaults to floor(cap × 0.5); `null` disables its share limit.
+- Runner-issued task identity supplies the stage; the broker ignores a caller-supplied stage. Existing rows without stage still count toward the total only.
+- YAML and staff copies preserve decimal share precision; cap arithmetic uses exact integer ratios.
+- Local regression: 12 passed in test_external_lookup_flow_676.py, including YAML 0.29999999999999999 → 29, staff copy, mixed-stage and decimal boundaries. Real PI requests and deployment were not run.
+
+# #1076 rev28: web_office_focus_layout의 Windows 30초 초과
+
+- 결론: 시험 안 확인 다섯 개는 합쳐 약 3초에 끝나는데, CI Windows에서는 같은 스크립트가 28.5초 걸려 30초 상한을 세 번 넘겼다(PR #1221·#1249 등). 로컬은 2.9초다. 시험 쪽 상한을 120초로 늘렸고(Chrome 세션 둘), 원인 후보인 프록시 확인도 껐다.
+- 시간이 드는 곳(PR #1249 Windows 로그의 `focus driver` 단계 기록, 실패 시 stderr에 나옴):
+  - Chrome 시작 → 디버그 포트 준비까지 3.0초.
+  - `navigate-start`(3.2초) 뒤 **11.6초 동안 Chrome이 페이지 서버에 첫 요청을 보내지 않음**(`navigate-waiting`이 5초 시점에 `page_requested:false`). 서버는 요청 뒤 7ms에 응답.
+  - 페이지 boot에 6.5초(`boot-start` 14.9초 → `boot-ready` 21.4초).
+  - 시험 안 확인 다섯 개는 2.5ms·1.7ms·223ms·2.8s·100ms.
+- 원인 제거(rev29): `tests/support/demo_driver.cjs`가 Chrome에 `--no-proxy-server`를 준다(데모는 자기 loopback 서버만 쓴다). 위 11.6초가 Windows 시스템 프록시 확인 때문이라는 가설이 맞는지는 이 PR의 Windows CI와 이후 실행으로 본다. `config/ci/windows-boundary-v1.json`에서 `test_web_3d.py`의 소스 digest를 새 값으로 바꿨다(소스가 바뀌면 Windows 선택이 `stale mixed Windows contract`로 거절한다).
+- 바뀐 것: `tests/test_web_3d.py`의 바깥 시간 상한 표에 `web_office_focus_layout.cjs: 120`(스크립트가 Chrome 세션을 둘 순서대로 열고, 각 top-level 시험의 상한이 120초라 같은 값). `tests/web_office_focus_layout.cjs`는 건드리지 않았다(확인 내용 그대로).
+- 실행한 것: `tests/test_web_3d.py` 96 passed, 1 skipped(로컬). Windows 느린 러너 재현은 못 했다.
+- 제품 웹 코드 원인은 아니라고 본다: 서버 응답은 7ms이고 지연은 Chrome이 요청을 보내기 전과 페이지 boot 구간이다. boot 6.5초가 제품 JS 때문인지 느린 CPU 때문인지는 분리하지 못했다.
+- 가설(미검증): Windows 러너에서 시스템 프록시 확인이 Chrome의 첫 요청을 늦춘다. 그래서 위 `--no-proxy-server`를 줬다. 효과는 이후 CI의 `focus driver` 기록(`navigate-waiting`·`server-request`)으로 확인한다.
+
+# #1200 rev8·rev9 — AlphaGenome 준비 상태를 runner가 보고
+
+- 결론: CSO가 계획에 쓰는 직원 명단의 AlphaGenome 도구 표시를 gateway가 자기 키 파일·패키지로 판단하던 것을, runner가 등록할 때 보고한 `alphagenome_ready`로 바꿨다(#1246 결함 2). 키가 gateway와 다른 계정이나 PC의 runner에 있어도 명단에서 도구가 빠지지 않는다.
+- 재현(main): runner가 준비됐다고 보고해도 gateway에 키가 없으면 `Orchestrator._alphagenome_ready`가 거짓이라 명단에서 `alphagenome`·`alphagenome_variant`가 빠졌다. 시험을 먼저 써서 main에서 7건 실패를 확인했다.
+- 바꾼 것: `labhq/runner/daemon.py`(`capabilities()`에 `alphagenome_ready` — 이 runner의 키 파일과 클라이언트가 있는지, 값은 보내지 않고 사실만, 프로브 실패는 `False`), `labhq/orchestrator/cso.py`(`_alphagenome_ready`가 runner 보고를 읽음: 하나라도 준비됐다고 하면 참, 준비 안 됨만 보고되면 거짓, 보고가 아예 없는 이전 runner만 있으면 예전처럼 gateway 자체 확인), `tests/test_annot_literature.py`(+7건), `tests/test_cso.py`(capabilities 비교 시험이 이 PC의 키 파일·클라이언트 유무에 따라 달라지지 않게 `annot_keys.read_key`와 `alphagenome_client_available`을 고정).
+- 시험: runner의 네 조합 보고와 키 값 비누출, 키 없는 gateway가 runner 보고로 명단에 올림, 준비 안 됨 보고가 gateway의 키보다 우선, 하나만 준비돼도 충분, 이전 runner의 fallback. `test_cso.py`의 시험은 가짜 키 파일이 있는 홈에서도 통과함을 확인했다.
+- 미검증: 실제로 다른 계정의 runner에서 gateway 명단이 바뀌는지(단위 시험까지). manual은 이 PR 범위에 넣지 않았다.
+- 리뷰 P1 반영(PR #1252): 보고를 runner 전체에서 `any`로 모으면 준비된 runner A가 그 직원을 맡지 않는데도 B가 맡은 직원 줄에 도구가 표시된다. 명단의 직원 줄마다 그 직원을 맡은 runner(`runner_id`, 요청의 WSL 고정 포함)의 보고로 정한다. `format_roster`의 `alphagenome`은 직원마다 정하는 함수도 받는다. 그 runner가 아직 보고하지 않았으면(이전 runner) gateway 자체 확인으로 돌아간다. 시험 2건(맡은 runner 기준, 보고 없는 runner의 fallback)은 이 변경 없이는 실패한다.
+- rev10: manual 한·영의 AlphaGenome 절에 한 항목을 더했다. 준비 여부는 각 runner가 등록 때 `alphagenome_ready`로 보고하고(키 값은 보내지 않음), 명단의 직원 줄은 그 직원을 맡은 runner의 보고를 따르며(WSL 고정 포함), 키를 넣거나 클라이언트를 설치한 뒤에는 runner를 다시 시작해야 하고, 보고하지 않는 이전 runner는 gateway 자체 확인으로 처리한다. `integrations.py --check` 통과.
+
+# 소액 예산의 계획 전 호출 (#1255)
+
+- 브리핑이 남은 예산 전액을 예약할 때 선행 조사는 브리핑이 끝난 뒤 보낸다. 실제 잔액이 없으면 예산 승인을 요청한다.
+- Offline 회귀 94건과 CSO 시험 235건 통과. 실제 모델과 운영 인스턴스는 실행하지 않았다.
+- 한·영 manual에 대기 조건과 카드 시점을 추가했다. 글자 수: 한국어 229466 → 229567, 영어 404882 → 405111.
+
+# 종료 요청과 status (#1255)
+
+- Windows 종료 경로는 `TerminateProcess`에 code 1을 전달합니다. 종료 요청 표시는 원인 증명이 아니므로 code와 원인 미확인을 함께 표시합니다.
+- 회귀: 수정 전 요청 표시 시험 실패, 수정 후 supervisor·CLI·diagnostics 시험 73건 통과. 실제 운영 인스턴스는 실행하지 않았습니다.
+
+# #1255 기한 취소와 요청 묶음
+
+- 취소된 단계의 완료 결과가 task ledger에만 남아 묶음에서 빠지는 문제를 수정했다. 기존 단계 결과는 보존한다.
+- 기존 결과와 취소 revision은 별도 경로에 보존한다. 같은 workdir과 다른 workdir, 같은 파일명도 확인했다.
+- 회귀시험은 수정 전 실패했고 수정 후 통과했다. `tests/test_request_bundle.py`: 114 passed, 2 skipped.
+- 실제 모델·원격 runner·HPC와 PI instance는 검증하지 않았다. 취소 대기 시간 안에 보고되지 않은 결과는 이 시험 범위 밖이다.
+
+# #1168 rev8 — 병합한 PR의 남은 지적 두 건을 manual에 반영
+
+| 항목 | 내용 |
+|---|---|
+| 결론 | PR #1231·#1236이 "남은 지적"으로 남긴 manual 두 건을 한·영에 넣었다 |
+| 바뀐 것 | `docs/manual.md`·`docs/manual.en.md`(ask 조기 답 즉시 반환 한 문장, dash 입력 예시의 `trap`), patch note. 코드는 그대로 |
+| 실행한 것 | `patch_notes.py check`, `check_public.sh`, `test_text_encoding.py` |
+| 미해결 | `trap` 예시는 dash에서 실제로 돌려 보지 않았다 |
+| 근거 | https://github.com/ehojune/bioinfo-team-3d/pull/1231, https://github.com/ehojune/bioinfo-team-3d/pull/1236 |
+
+# #1246 결함 1: 웹 남은 시간을 서버 기한으로 계산한다
+
+- 결론: 웹의 "남은 N분"이 서버가 실제로 취소하는 시각과 어긋나던 것을 고쳤다. `request.created` 이벤트로 만든 요청은 `created_at`이 이벤트 `ts`(요청을 시작한 시각)라, 수락과 시작 사이가 늦으면 남은 시간이 서버 기한보다 길게 보였다.
+- 바뀐 것: `labhq/web/state.js`의 `deadlineLabel`이 서버가 보내는 `wall_clock.deadline_at`(수락 시각 기준, 닫힌 PI 대기 반영)을 쓰고, 열려 있는 PI 대기만 더한다. 기한이 없는 옛 gateway에서만 `created_at`+상한+held로 되돌아간다. `tests/web_state.cjs`에 시작이 늦은 `request.created`와 열린 PI 대기 사례 두 건.
+- 실행한 것: `node tests/web_state.cjs` 통과(시험을 먼저 써서 고치기 전 실패 확인). 관련 pytest 194 passed, 1 skipped.
+- 문서(rev3): manual 한·영의 "작업 시간" 행에 웹이 서버의 `wall_clock.deadline_at`으로 남은 시간을 계산한다는 설명을 넣었다(PR 리뷰 P1). patch note SHA 지적은 PR의 코드 커밋(`a2f582c`)이 patch note와 일치해 오분석이라고 스레드에 근거를 답했다.
+- 미해결/미검증: 실제 브라우저 렌더링은 확인하지 않았다(상태 문구 계산만 node로). 결함 2(AlphaGenome 준비 상태)는 따로 claim한다.
+
+# #666 VM 없는 transport 초안
+
+- 결론: 기본 off인 합성 요청 검증기를 추가했다. 일반 CLI와 연결하지 않으며 자식을 실행하지 않는다. Refs #666.
+- 변경: 엄격한 JSON schema, trusted verifier 경계, run UUID·nonce·전체 메시지 인증, SQLite 일회 소비, env/stdio 허용 목록 재구성. fake verifier는 시험에만 있다.
+- 시험: `python -m pytest -q tests/test_protected_transport.py tests/test_boundary_wiring_666.py tests/test_boundary_observer.py` — 108 passed. 최초 Windows 시험에서 SQLite 연결이 남는 결함을 찾아 명시적으로 닫도록 고쳤다. 리뷰 P2는 cwd 변경 뒤 다른 ledger로 replay가 통과하는 시험 실패를 확인하고 절대 경로 고정으로 수정했다.
+- 범위: 같은 ledger 재개와 동시 요청 8건 중 1건 수락까지 합성 검증. OS peer 인증·ledger 보호·VM·실제 FD 상속·lifetime/cleanup은 UNVERIFIED.
+- 보류: draft/hold 유지. 최종 head CI·실제 봇 리뷰와 W1 독립 검토 뒤 총괄이 병합 여부를 판단한다. #666은 OPEN.
+- 계약: [transport 상세](../reference/sandbox-666-transport.md). 기존 untracked 설계·검증 기록은 보존한다.
+
+🤖 Co-Authored-By: Codex (gpt-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# #1246: 10-31 이후 병합 PR의 남은 지적 점검
+
+- 결론: 병합 PR 96건의 "남은 지적"과 마지막 head의 Codex P2 65건(41개 PR)을 main과 대조했다. 대부분은 뒤 PR에서 이미 고쳐졌고, 아직 열린 결함 후보는 셋이다. 표와 수정안은 [#1246 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1246#issuecomment-6548521580)에 있다. 코드는 바꾸지 않았다.
+- 결함 상위 3개: (1) #1103 웹 남은 시간이 `created_at`+상한으로 계산돼 서버 기한보다 길게 보임(`labhq/web/state.js:261`, 확인), (2) #1215 AlphaGenome 준비 상태를 gateway가 판단해 별도 runner 계정 구성에서 어긋남(PR 본문 기준), (3) #1186 Atlas 나머지 P2(취소 뒤 thread, 캐시 credential 범위 등, Codex #621 소유, 미확인).
+- 이미 고쳐진 것: #1131·#1150·#1157·#1186(deny)·#1189·#1165·#1169·#1160·#1097 등. 근거 줄은 댓글에 적었다.
+- 한계: "고쳐짐"은 직접 읽어 확인한 것만 표시했고 나머지는 "미확인"이다. 사람이 남긴 지적은 집계하지 않았다.
+
+# #1238 rev4 — 포트 충돌이 worker 전체를 끝내던 문제
+
+| 항목 | 내용 |
+|---|---|
+| 결론 | `Runner.run_forever`가 broker 시작 실패의 `SystemExit`를 `RuntimeError`로 바꾼다. 시험의 포트 두 번 뽑기는 `free_ports`로 바꿨다 |
+| 바뀐 것 | `labhq/runner/daemon.py`, `labhq/util.py`(`free_ports`), `labhq/bench.py`·`labhq/cli.py` demo(포트 두 번 뽑기를 `free_ports`로), `tests/semantics_shadow_lab.py`, 이를 가로채던 `tests/test_bench_metrics.py`·`tests/test_bench_receipt_review.py`, 회귀 시험 2건(`test_durable_writer.py`, `test_cli_launch.py`), manual 한·영 |
+| 실행한 것 | 새 시험 2건 통과, 옛 daemon 코드로 되돌리면 runner 시험이 `SystemExit: 3`으로 실패, 관련 시험 172건 통과 |
+| 미해결 | `labhq runner`를 포트 충돌로 시작하면 종료 코드가 uvicorn의 3에서 예외 종료로 바뀐다(메시지는 포트를 알려 준다. manual에 적음). 3.10 CI에서 포트 충돌이 다시 날 때의 모습은 확인하지 못했다 |
+| 근거 | https://github.com/ehojune/bioinfo-team-3d/issues/1238 |
+
+# #1242 — fixture만 바뀐 PR이 그 fixture를 쓰는 Windows 시험을 고르지 못하는 구멍
+
+- 결론: Windows 시험 선택(`scripts/ci_selection.py`의 `include_windows`)이 Python import만 따라가서, 시험이 subprocess로 돌리거나 파일로 읽는 `tests/fixtures/` 파일이 바뀌어도 그 시험이 선택되지 않았다. 사례 하나씩 등록하지 않고 부류를 닫았다.
+- 규칙(`changed_fixtures`·`references_fixture`·`_fixture_reason`): 바뀐 경로 중 `tests/fixtures/` 아래 파일마다, 시험 소스가 그 파일의 경로·파일 이름·모듈 이름(짧거나 `__init__` 같은 이름은 제외)을 문자열로 적고 있으면 그 시험을 고른다. 이름을 적은 시험이 하나도 없으면(`tests/test_*.py` 전체를 한 번 훑어 확인) 짐작하지 않고 모든 routine Windows 시험을 고른다. 넓게 맞추는 쪽이라 이름만 언급한 시험도 선택될 뿐, 빠지는 쪽으로는 틀리지 않는다.
+- 바꾼 것: `scripts/ci_selection.py`, `tests/test_ci_parallel_policy.py`(+10건). `scripts/ci_suite.py`는 건드리지 않았다. "아무도 이름을 안 적은 fixture"의 전체 선택을 `select()` 쪽이 아니라 `include_windows`에서 한다(claim 범위 때문이기도 하고, 시험 한 건마다 판정이 같아져 설명이 쉽다).
+- 시험: 경로·파일 이름·모듈 이름으로 선택, 변경이 없으면 제외, 다른 시험이 이름을 적었으면 이 시험은 제외, 아무도 이름을 안 적으면 전부 선택, `tests/fixtures/` 밖의 파일은 fixture로 보지 않음, 그리고 실제 사례(PR #1235: `tests/fixtures/fake_deadline_cli.py`만 바뀜)가 `tests/test_request_deadline_descendants_1232.py`를 고름. 모든 `tests/test_ci_*.py` 1268건 통과. 실제 정책으로 이 fixture만 바뀐 경우 선택되는 시험은 2건, 선택 판정 비용은 약 1.3초(시험 파일 400개 기준).
+- 미검증: 실제 PR의 Windows CI에서 선택이 바뀌는지(이 PR은 fixture를 바꾸지 않아 이 규칙이 켜지지 않는다). 비 Python fixture를 시험이 디렉터리 glob으로만 읽는 경우는 이름이 없어 "아무도 이름을 안 적음"으로 처리되어 전체가 돌아간다(안전한 쪽).
+- 리뷰 P2 반영: `README.md`처럼 흔한 파일 이름은 이름만으로 맞추면 무관한 시험이 끌려오고 전체 선택도 막혔다. 흔한 이름(`__init__`·`conftest`·`README`)은 경로로만 맞추고, 폴더째 쓰는 시험은 폴더 경로 문자열이나 pathlib 조각(`/ "fixtures" / "wiki"`)으로 잡는다. `tests/fixtures/wiki/README.md`가 바뀌면 `test_wiki_index.py` 한 건만 선택되는 것을 실제 저장소로 시험했다.
+- 리뷰 P2 반영(2): fixture별 답을 64칸 cache에 두면 한 PR이 65개 이상의 fixture를 바꿀 때 모든 시험마다 다시 훑어 `시험 수 × fixture 수 × 시험 파일 수`로 커진다. cache를 무제한(바뀐 fixture당 한 칸)으로 하고, 100개 fixture를 바꿔도 시험 5건이 한 번씩만 훑는 시험을 더했다(`maxsize=2`로 되돌리면 실패).
+- 리뷰 P2 반영(3): 데이터 fixture(`.py`가 아닌 것)를 이름의 앞부분(stem)으로도 맞추면 `codex`·`claude`·`expected` 같은 흔한 단어가 든 시험이 65~86개씩 끌려왔다. 모듈 이름은 `.py` fixture에만 쓰고 데이터 fixture는 경로나 확장자까지 붙은 이름으로만 맞춘다. `codex.cmd`·`claude.txt`·`expected.yaml`이 바뀔 때 선택되는 시험이 각각 2건이 되었다(이전 65·83·86).
+- 리뷰 P2 반영(4): `tests/fixtures/semantics/records/agents/contract/ag_seqtool.yaml`처럼 깊이 중첩된 fixture는 시험이 중간 폴더 이름을 모두 적어야 맞았는데, 실제로는 `fixtures/semantics/records`를 재귀로 읽는 시험이 있다. pathlib 조각 판정을 fixtures 바로 아래 첫 폴더만 보도록 줄였다(폴더를 부르면 그 아래를 읽는 것으로 본다).
+
+# #898: 종료 신호 시험의 시간 가정을 고친다
+
+- 결론: `test_standard_entry_cancels_with_evidence_and_mock_gateway_opens_resume[SIGTERM|SIGHUP]`이 main Windows에서 세 번 실패했다(10-30 16:31 SIGHUP `shutdown returned before durable ACK`, 10-30 18:30·10-31 15:57 SIGTERM `gateway_resume timed out`). 시험의 fixture 단계 5초와 `Runner.shutdown`의 기본 5초가 gateway 쪽 fsync가 느린 러너에서 모자랐다.
+- 바뀐 것: `tests/test_runner_shutdown_signals.py`만. fixture 단계 한도와 시험이 부르는 `shutdown(timeout_s=...)`을 30초(`FIXTURE_S`)로. 순서 단언(결과가 내구적, ACK 전에는 종료 안 함, 돌려보낼 때 pending 0)은 그대로다. 제품 기본값 5초와 `test_shutdown_keeps_unacknowledged_results_and_has_a_bounded_wait`(짧은 timeout_s로 유지·한도 확인)는 건드리지 않았다.
+- 실행한 것: `test_runner_shutdown_signals`·`test_shutdown_recovery` 로컬 통과. Windows 느린 러너 재현은 하지 못했다.
+- 미해결/미검증: 30초가 CI 지연을 넘는지는 이 PR 이후 CI로 본다. 가설(시험의 시간 가정과 제품 5초 한도의 어긋남)은 로그 메시지와 코드를 읽어 세웠다.
+
+# #1238 rev3 — ci-reuse.md의 진단 설명을 맞춤
+
+| 항목 | 내용 |
+|---|---|
+| 결론 | `docs/reference/ci-reuse.md` 57행에서 task stack을 빼고 faulthandler 스레드 stack만 남는다고 적었다 |
+| 바뀐 것 | 문서 한 줄, patch note. 코드는 그대로 |
+| 실행한 것 | `patch_notes.py check`, `check_public.sh` |
+| 미해결 | 없음 |
+| 근거 | https://github.com/ehojune/bioinfo-team-3d/pull/1240 |
+
+# #983 시설팀 복구 상태 표시
+
+기존 기록으로 요청 대상·담당·답변·승인·수정·재실행·원 단계 결과를 분리한다. snapshot과 실시간 이벤트를 2D·3D에서 읽으며 근거가 없으면 `unknown`이다. [상태 계약](../reference/facilities-recovery-contract-983.md).
+
+격리 mock에서 offline 거부, CSO 대체, timeout, ledger 누락, 중복·역순 이벤트와 2D·3D 갱신을 확인했다. 일반 task에서 ledger 전체 조회를 피하고 direct 종료 기록 뒤 상태를 다시 발행한다. 관련 Python 119 passed, Node 회귀와 public 검사 통과. 실제 시설팀 복구는 **UNVERIFIED**이며 #983은 OPEN이다. 최종 CI와 리뷰는 PR에서 확인한다.
+
+한영 manual에 표시 위치와 해석을 추가했다(한국어 228,679→228,906자, 영어 403,460→403,902자). 취소된 수정은 취소로, abandoned 재실행은 결과 미확인으로 표시한다. 전용 회귀 11 passed, Node 화면 회귀 통과.
+
+# #1255: 8차 전 mock 리허설
+
+- 결론: main `50cb789a`를 새로 설치한 일회용 instance(mock 엔진, PI 포트 미사용)에서 요청 기한, 예약 기본값, 결정 카드 응답, 일부 실패 표지, 로컬 저장과 요청 묶음, `doctor --runtime`이 모두 통과했다. 결함은 하나(경미)라 수정 claim은 그것만 요청했다. 표와 근거 경로는 [#1255 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1255#issuecomment-6549530236)에 있다. 저장소 코드는 바꾸지 않았다.
+- 발견: (1) 기한으로 취소된 요청도 "요청 묶음을 만들지 못했습니다" 경고를 낸다(작업 폴더는 디스크에 있음, 경미). (2) 소액 예산(`--budget 0.5`)은 병렬 계획 전 호출의 둘째에서 예산 카드가 뜬다(8차 설정 $40에서는 없음). (3) `down` 뒤 status가 `마지막 종료 code=1`을 보인다(관찰).
+- 한계: 실제 모델·GitHub·HPC·WSL은 보지 않았다.
+
+# #1076 rev27: 열린 Windows CI 간헐 실패 이슈 네 건 점검
+
+- 결론: #1029·#844·#1107은 수정 뒤 재발이 없어 닫았고, #898은 R parse 쪽만 재발이 없고 SIGTERM·SIGHUP ACK 쪽에서 새 시험이 재발해 열어 두었다. 코드는 바꾸지 않았다.
+
+| 이슈 | 수정 | 수정 뒤 재발 | 처리 |
+|---|---|---|---|
+| #1029 breakaway | #1035(10-29T13:27Z) | 0건(최종 실패 117 + 통과 361 run) | 닫음 |
+| #844 supervisor 시작 | #851·#873(10-22·23) | 0건(10-23 이후 W1 80건, 10-28 이후 144+446 run) | 닫음, 원인은 미확정 |
+| #1107 web_resizable_panels | #1109(10-30T17:03Z)·#1133(10-30T21:53Z) | 0건(#1133 이후 46+199 run). 다른 부류 `web_office_focus_layout` 30초가 PR #1221에서 한 번(재실행 통과) | 닫음 |
+| #898 R parse·SIGTERM ACK | #900(10-23)·#1002(10-28T23:44Z) | R parse 0건. `test_runner_shutdown_signals`가 main에서 3번(10-30 16:31 SIGHUP, 10-30 18:30·10-31 15:57 SIGTERM, Windows) | 열어 둠, 시험 전용 수정안과 claim 요청 |
+
+- #898 가설: 시험의 `gateway_resume` 단계가 느린 Windows 러너에서 5초를 넘고, runner `shutdown(timeout_s=5)`가 그 안에 ACK를 못 받아 일찍 돌려보낸다. 수정안은 시험이 `shutdown(timeout_s=30)`과 단계 한도 30초를 쓰는 것이다(순서 단언은 그대로).
+- 근거: 각 이슈 댓글(#1029, #844, #1107, #898). 집계는 `tally1076w.py`·`tally1076w.json`(test.yml 최종 실패 run의 pytest-windows 로그).
+- 한계: 재실행해 통과한 job은 run 결론이 success로 덮여 보이지 않는다. #898의 원인은 재현하지 않았다.
+
+# #1238 — 3.10 `SystemError`: CI stall 진단 스레드가 gc를 훑던 것
+
+| 항목 | 내용 |
+|---|---|
+| 결론 | 원인은 인터프리터가 아니라 진단 스레드의 `gc.get_objects()`다. 진단은 faulthandler 덤프만 남긴다 |
+| 바뀐 것 | `.github/workflows/test.yml`·`scripts/ci_suite.py`의 snapshot에서 gc 순회와 asyncio 대기 task 출력을 뺐다. `scripts/patch_notes.py`는 `*[list]`로 바꿨다. 시험 두 건 |
+| 실행한 것 | 재현 스크립트(3.10.21에서 300회 중 54회 실패, list는 0회), 새 시험 2건 통과, 옛 generator 코드로 되돌리면 patch_notes 시험이 SystemError로 실패, CI 정책 시험 293건 통과 |
+| 미해결 | 진단에서 asyncio 대기 task의 stack은 더 출력하지 않는다. 필요하면 이벤트 루프 스레드 안에서 모으는 방식으로 따로 다룬다 |
+| 근거 | https://github.com/ehojune/bioinfo-team-3d/issues/1238 |
+
+# #674 rev14 — binding 점검 두 건의 개선
+
+| 항목 | 내용 |
+|---|---|
+| 결론 | rev13이 찾은 두 개선을 넣었다. 결함 수정이 아니라 어긋남을 더 일찍·넓게 잡는다 |
+| 바뀐 것 | `labhq/orchestrator/cso.py`(`prepare_recruits`의 검사에 `stored_environment`), `labhq/gateway/server.py`(`task.dispatched` publish 뒤 `_session_pin_refusal` 재확인), `tests/test_runner_env_plan_674.py` 시험 2건 |
+| 실행한 것 | 새 시험 2건은 수정 전 실패, 수정 후 통과. 674 시험 세 파일과 `test_cso.py` 358건 통과 |
+| 미해결 | 실제 WSL runner 요청은 하지 않았다. runner 쪽 판정은 그대로다 |
+| 근거 | https://github.com/ehojune/bioinfo-team-3d/issues/674#issuecomment-6549409609 |
+
+## 단계
+
+#666 rev4 · [PR #1257](https://github.com/ehojune/bioinfo-team-3d/pull/1257). Draft/hold 유지, 병합은 총괄 판단.
+
+## 변경
+
+- Runner·adapter의 기본 off 연결은 요청 시 unsupported로 거부합니다. 기존 승인 gate를 유지합니다.
+- offline producer/observer 결과는 `synthetic_only`이며 보호 capability를 부여하지 않습니다.
+- 새 회귀를 Windows inventory와 필수 boundary cohort에 등록하고 manual 한영판에 사용 한계를 명시했습니다.
+- status 파일명을 HHMM 형식으로 고쳤습니다. [연결 계약](../reference/sandbox-666-phase2.md).
+
+## 검증
+
+- 관련 7개 파일 회귀: 275 passed, 10 skipped, 1 xfailed, 7 subtests passed.
+- `scripts.ci_selection.validate_profile()` 통과. 최종 head CI·실제 리뷰·기록 검사는 PR 댓글에서 추적합니다.
+
+## 남은 조건
+
+- 최종 head CI·실제 리뷰와 P1 해결 뒤에도 draft/hold를 유지합니다.
+- 실제 보호·인증 cleanup은 **UNVERIFIED**. 실제 engine/provider·credential·provisioning·연구/HPC·배포는 범위 밖입니다.
+
+# #1076 rev26: 시간 경쟁 시험 네 개를 안정화한다
+
+- 결론: rev25 집계에서 PR과 무관하게 반복 실패한 시험 중 시험 파일만으로 고칠 수 있는 네 개를 고쳤다. 시험이 잡으려던 결함(loop를 막는 commit·fsync)은 그대로 잡는다. 제품 코드는 바꾸지 않았다.
+- 바뀐 것:
+  - `test_gateway_loop_lag_606.py`: 느린 commit을 0.2초에서 0.6초로, 한도를 0.3초로. 막힌 loop은 약 0.6초 늦고 러너 지연은 0.2초 이하(CI에서 0.196초까지 봄)라 둘이 만나지 않는다.
+  - `test_durable_writer.py::test_loop_stays_responsive_while_fsync_stalls`: 멈춤을 0.5초에서 0.8초로, 간격 한도를 0.4초로(Windows CI에서 0.238초가 나왔다).
+  - `test_task_cancel_durable_606.py`: commit이 열린 채 heartbeat가 돌 때까지 기다리게 했다(`threading.Event`). 시간으로 순서를 정하지 않는다.
+  - `test_semantics_actions_shadow.py`: `ended` 줄이 쓰일 때까지 기다린 뒤 drain한다. 단언은 그대로 정확히 두 줄이다.
+- 실행한 것: 네 파일 75 passed. 취소 시험은 commit을 loop 위에서 돌리는 변형(`aput`을 동기 `put`으로 바꿈)을 만들어 두 변형 모두 실패함을 확인했다(탐지력 유지).
+- 미해결/미검증: 한도가 CI의 지연 분포를 실제로 넘는지는 이 PR의 CI와 이후 실행으로 본다. Atlas 자식 프로세스 20초, `test_patch_notes`의 3.10 `SystemError`는 이번 범위 밖이다.
+
+# #1225 — manual의 AlphaGenome Atlas 절을 현재 main에 맞춤
+
+- 결론: 절 제목의 "미병합·hold"를 "2026-10-31 병합"으로 고치고, PI가 키를 넣는 법을 더했다. 절의 나머지 문장은 `labhq/runner/annot_broker.py`·`labhq/tools/annot_alphagenome_atlas.py`·`labhq/doctor.py`와 `docs/reference/alphagenome-atlas-621.md`에 대조했고 어긋난 곳은 제목뿐이었다(입력 1–10개, scorer 기본값 `RNA_SEQ`, 읽기 전용·Atlas deny 거부, 시작 점검).
+- 더한 것(manual 한·영): 켜는 법. 키는 runner 프로세스의 환경 변수 `ALPHAGENOME_API_KEY`만 쓰고 `labhq init`의 키 파일과 별개다. Windows 사용자 환경 변수로 넣는 PowerShell 세 줄(`Read-Host -AsSecureString`로 입력을 가리고 값을 출력하지 않음), `setx`처럼 명령줄에 키를 쓰지 말 것, 새 터미널에서 `labhq down`·`labhq up`, POSIX 방법, SDK 설치(`pip install -e ".[alphagenome]"`), `labhq doctor`의 `AlphaGenome Atlas` 행이 뜻하는 것, 쓰는 직원 범위(`chief_of_staff`·`sci_reviewer`는 받지 않음).
+- 확인: PowerShell 세 줄의 동작(`SetEnvironmentVariable`로 사용자 변수 설정, 읽기, 삭제)을 Windows PowerShell 5.1에서 시험 값으로 확인하고 시험 변수는 지웠다. 실제 키로는 하지 않았다. `integrations.py --check` 통과.
+- 바꾼 것: `docs/manual.md`, `docs/manual.en.md`. 코드·시험은 바꾸지 않았다.
+- 미검증: 실제 Atlas 조회(키로 서비스를 부른 적 없음)는 계속 UNVERIFIED다. POSIX 한 줄은 실행하지 않았다. 새 터미널·재시작 뒤 runner가 키를 받는지는 실제 키로 확인하지 못했다.
+
+# #1232 — 요청 기한 종료가 후손까지 끝내는지 저장소 시험
+
+| 항목 | 내용 |
+|---|---|
+| 결론 | #877 rev6 드라이버를 `tests/test_request_deadline_descendants_1232.py`로 옮겼다 |
+| 바뀐 것 | 새 시험, 가짜 CLI `tests/fixtures/fake_deadline_cli.py`, `windows-boundary-v1.json` 등록, 패치노트. 제품 코드는 그대로 |
+| 실행한 것 | 로컬 Windows에서 1건 통과(8.5초). Linux는 CI에서 확인 |
+| 미해결 | `request_wall_clock_s`의 60초 하한과 15초 점검 간격은 gateway 프로세스 안에서만 줄였다. 실제 CLI·MCP 자식은 #739 gate |
+| 근거 | https://github.com/ehojune/bioinfo-team-3d/issues/1232 |
+
+# #1225 — Atlas 시작 점검의 최종 정의를 manual에 적기
+
+- 결론: manual 한·영의 AlphaGenome Atlas 절에 시작 점검 한 항목을 더했다. PR #1228(병합)에서 정한 최종 정의 그대로다. launch 설정에 키 값이나 환경 변수 이름 `ALPHAGENOME_API_KEY`가 어떤 모양으로든 있으면 실행을 시작 전에 거절하고, 예외는 설정된 키 파일 경로(`~` 펼침·절대·실제 경로)와 labhq가 그 경로로 만드는 비공개 경로 목록·Claude 규칙뿐이다.
+- 바꾼 것: `docs/manual.md`, `docs/manual.en.md`. 코드·시험은 바꾸지 않았다. `integrations.py --check`가 통과한다.
+- 확인: 문장의 근거는 `labhq/adapters/base.py`의 `names_atlas_key`·`atlas_key_file_forms`와 `tests/test_atlas_key_file_1225.py`(26건)다.
+- 미검증: 이 절의 다른 문장(PR #1186이 "미병합·hold"로 적힌 제목 등)은 이번 범위가 아니어서 건드리지 않았고 현재 상태와 맞는지 확인하지 않았다.
+
+# #1076 rev25: 10-31 이후 PR과 무관한 CI 실패 집계
+
+- 결론: `test.yml`의 실패한 run 40건에서 PR 변경과 무관해 보이는 실패를 시험별로 모았다. 표와 수정안은 [#1076 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6547691319)에 있다. 코드는 바꾸지 않았다.
+- 반복된 것(서로 다른 브랜치나 main): Atlas 자식 프로세스 20초(3회), `test_semantics_actions_shadow`의 `ended` 누락(3.12, 3회), `test_gateway_loop_lag_606`(2회), `test_task_cancel_durable_606[True]`(3.10, 2회), Atlas `IndexError`(2회), `test_patch_notes`의 3.10 `SystemError`(2회+재실행 1). Windows 시간 상한에 걸려 `FAILED` 줄이 없는 job이 4건(3건은 #1199 이전).
+- 사전 지정된 `test_policy` 선형 검사는 10-31 이후 실패한 run에 한 건도 없었다.
+- 가설: 시험이 고정된 짧은 시간 한도(0.1s·0.2s·20s)를 쓰는 경쟁이다. 수정안은 이벤트 대기나 막힌 loop와 러너 지연이 갈리는 한도다.
+- 한계: 횟수는 하한이다(재실행해 통과한 job은 run 결론이 success로 덮인다). 원인 가설은 재현하지 않았다.
+
+# #1168 rev6 — request_ask가 넘기는 중에 온 답을 버리던 문제
+
+| 항목 | 내용 |
+|---|---|
+| 결론 | `request_ask`가 `_on_ask` 직후 future가 끝났으면 그 답으로 마친다. `_on_ask`가 실패하면 `pending_asks`를 지운다 |
+| 바뀐 것 | `labhq/runner/approvals.py`, `tests/test_ask_early_answer_1168.py`, 패치노트 |
+| 실행한 것 | 새 test 4건(수정 전 hibernate·실패 경로 2건 실패 확인), `test_ask.py`·`test_ask_policy.py`·`test_ask_review3.py` 포함 78건 통과 |
+| 미해결 | 없음. 실제 gateway와의 경합은 가짜 `_on_ask`로만 재현했다 |
+| 근거 | https://github.com/ehojune/bioinfo-team-3d/issues/1168 |
+
+# Atlas 권한·누락값·doctor 수정
+
+Refs #621 rev24. Atlas 영속 캐시 재사용을 꺼 다른 키의 결과로 권한 오류가 가려지지 않게 했다. 같은 호출의 중복 변이는 한 번만 조회한다.
+
+- ontology 누락/None/NaN/pd.NA를 정규화해 필터 예외·오제외를 고쳤다.
+- doctor는 broker의 `atlas_allowed`로 annot_tools·deny·builtin MCP를 함께 판단한다.
+- 수정 전 관련 시험: 7 failed, 9 passed. 기존 unscoped cache를 넣은 뒤 다른 키의 권한 거부도 재현했다.
+- 수정 후 Atlas·키 파일·doctor 시험: 260 passed, 1 skipped. 취소 뒤 응답 순회 중단 회귀 포함.
+- 기존 캐시는 삭제하지 않으며 키·credential fingerprint를 기록하지 않는다. 실제 Atlas 조회·HPC·배포는 UNVERIFIED. #621 전체 종료는 주장하지 않는다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# manual: 호출 상한 센트 내림(#1139)과 로컬 job 디스크 확인(#1167)
+
+- 결론: 이미 병합된 PR #1227·#1229의 동작을 manual 한·영에 적었다. 코드는 바꾸지 않았다.
+- 바뀐 것: `docs/manual.md`·`docs/manual.en.md`.
+  - 보내기 전 예약 단락: 호출 상한은 어디서 왔든(작업·직원·`per_task_usd`) 센트로 내린다, 내리면 1센트 미만이 되는 상한은 거절한다, 예약이 켜져 있으면 0 < `per_task_usd` < 0.01은 설정 로드 때 거절한다(0은 상한 없음).
+  - 셸 다운로드·압축 해제 확인 단락: 로컬 job 제출 경로를 "적용하지 못하는 곳"에서 빼고, runner가 직접 시작하는 로컬 job의 셸 명령에도 같은 확인을 한다고 적었다(여유가 `runner.disk_fail_free_gb` 미만이면 크기를 몰라도 묻고, 크기를 모르고 경고 기준 아래일 뿐이면 경고만 남기며, 확인 중 오류가 나도 정책이 허용한 명령은 막지 않는다).
+- 실행한 것: `patch_notes.py check`·`check_public.sh` 통과(문서만 바뀜, 시험 실행 없음).
+- 미해결/미검증: PR #1227의 1e12 이상 큰 상한은 센트로 내리지 않는다는 점은 극단 값이라 적지 않았다. 실제 Windows·Claude 로컬 job 실행은 확인하지 않았다.
+
+# #1047 process boundary — PR #1050
+
+Protected launch remains unsupported. Standalone unsealed namespace, staging and synthetic broker diagnostics retain their receipts and CLI failure status. An opt-in lifecycle stream now emits run/nonce/identity-bound launch and termination events under the offline observer contract [f54642c3](https://github.com/ehojune/bioinfo-team-3d/commit/f54642c3). Existing broker calls and v1 JSON remain unchanged.
+
+- Tests: `python -X utf8 -m pytest tests/test_process_boundary.py tests/test_text_encoding.py -q` — **87 passed, 1 xfailed** on Windows. The existing strict xfail covers the unavailable authenticated ancestry witness.
+- New coverage: exact observer HMAC vectors, identity/run binding, delivery failures, child exit/timeout/reaping failure, one-use stream and receipt compatibility. New process paths use mocks; no live probe was run.
+- Two review P2s reproduced as failing tests and fixed: concurrent termination-delivery failure preserves the timeout reason; kill failure still attempts reaping. Distinct failure codes are retained together.
+- Rev19: synchronized with main `5f80e3bf` without conflicts, including both manuals; repeated offline tests: **87 passed, 1 xfailed**. The lead authorized producer-first merge after final-head CI and actual review clear P1 findings. Keep draft/hold until those gates pass; no engine/daemon integration, provisioning, provider or HPC execution.
+- Fixture HMACs and injected identities are not trusted authority. Actual protection, independent cleanup and production replay protection remain **UNVERIFIED**. See [reference](../reference/process-boundary-stage1.md).
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# Observer contract checkpoint
+
+- Lifecycle event v1 and vector: commit f54642c3. Synthetic HMAC keys are public fixtures.
+- Offline observer prototype checks event shape, order and MAC, consumes a SQLite replay key and signs separately supplied snapshots. The caller must protect the database and keys.
+- The injected collector is a fixture, not an independently authenticated OS collector. A streaming source can interleave collection with events, but source and collector provenance and actual cleanup are not established. No process tree or resource backend exists. Actual protection remains UNVERIFIED.
+- Rev22 registers the observer test in the Windows inventory. Offline snapshots require matching source labels, ordered sequence, an asserted complete inventory and the launch identity. These are untrusted assertions, not collector authentication or proof of completeness.
+- Bounded execution needs an owned process supervisor; synchronous injected collectors may hang. Protected keys, replay storage and actual cleanup remain UNVERIFIED.
+
+## 단계
+#1167 rev8: 로컬 job 제출 경로에도 셸 명령과 같은 디스크 확인을 붙인다. [PR #1184](https://github.com/ehojune/bioinfo-team-3d/pull/1184)(PowerShell 도구)와 다른 브랜치다.
+
+## 바뀐 것
+- `labhq/runner/daemon.py`: `_submit_local_job`이 정책 판정이 `allow`일 때 `_local_job_disk_decision`을 거친다. `disk_space.shell_check`가 `ask`면 판정을 `ask`로 바꿔 기존 PI 카드 경로(`tool_permission`)로 보낸다. 여유는 있으나 낮고 크기를 모르면 `agent.log` 경고만 남긴다. `shell_check`가 예외를 내면 판정을 그대로 둔다. `deny`와 이미 `ask`인 판정은 건드리지 않는다.
+- 같은 규칙: 승인 게이트(`approval_mcp._disk_decision`)가 Bash 명령에 하던 것을 runner가 시작하는 job에도 적용한다(runner가 게이트를 거치지 않고 직접 시작하기 때문에 따로 필요했다).
+
+## 시험
+- `tests/test_disk_watch_678.py`에 7건(기존 파일): 가득 찬 드라이브로의 unzip이 시작 전에 묻고 거절하면 시작하지 않음, 승인하면 시작, 여유가 넉넉하면 카드 없음, 다운로드·압축 해제가 아닌 명령은 묻지 않음, 크기를 모르고 여유가 낮으면 경고만 하고 시작, 정책이 이미 묻는 명령은 카드 한 장, 확인 오류가 와도 시작. 먼저 써서 수정 전 3건 실패를 확인했다.
+- 관련 `test_local_jobs_675.py`·`test_disk_shell_check_678.py`·`test_runner_env_integration_674.py` 포함 159 passed, 2 skipped.
+
+## 하지 않은 것
+- `disk_space.py`는 바꾸지 않았다(기존 `shell_check` 재사용).
+- manual의 디스크 확인 설명에 "로컬 job 제출도 같은 확인을 받는다"는 문장은 범위 밖이라 manual 차례에 더한다.
+- 인벤토리는 새 시험 파일이 없어 건드리지 않았다.
+- 실제 Windows·Claude 로컬 job으로 끝까지 돌려 보지는 않았다. 시작 함수(`local_jobs.start`)는 시험에서 대체했다.
+
+# #1225 — AlphaGenome 키 파일이 있는 PC에서 annot 직원 실행이 막힘
+
+- 결론: Atlas 시작 점검이 "launch 설정 문자열에 환경 변수 이름 `ALPHAGENOME_API_KEY`의 글자가 있으면 거절"이었는데, `labhq init`이 두는 키 파일 `~/.labhq/secrets/alphagenome_api_key`의 경로가 `labhq_annot` 서버의 `LABHQ_PRIVATE_PATHS`와 Claude 설정의 deny·ask 규칙에 들어가서 키 값이 없는데도 거절됐다. 점검의 예외를 **설정된 키 파일 경로 하나**로 좁혔다.
+- 판정(`labhq/adapters/base.py`의 `names_atlas_key`와 `atlas_key_file_forms`): launch 설정(엔진 인자·prefix, MCP 서버 환경, Claude 설정)을 구조째 훑어 문자열마다 예외를 지운 뒤, 남은 곳에 변수 이름 글자가 있으면 어떤 모양이든 거절한다. 예외는 두 가지뿐이다. 설정된 키 파일 경로(`annot.alphagenome_key_file`의 원문·`~` 펼친 것·설정 기준 절대 경로·두 슬래시 표기)와, labhq가 그 경로로 쓰는 Claude 규칙(`policy.claude_deny_private`가 만든 `Read(//c/Users/x/.labhq/secrets/…)`·`Bash(*.labhq/secrets/…*)` 등)이다. 규칙은 그 함수에서 가져오므로 규칙 문법이 바뀌어도 같이 따라가고 철자를 추측하지 않는다. 키 값이 설정에 있으면 이름과 상관없이 거절하는 것은 그대로다.
+- 첫 시도(경로 구분자를 앞에서 보고 경로를 가리는 방식)는 PowerShell `Env:\ALPHAGENOME_API_KEY` 설정 형식을 경로로 오인해 통과시켰다(#1228 리뷰 P1). 경로 모양으로 판정하는 방식 자체를 없앴다.
+- 재현: 키 파일 경로를 비공개 경로 목록에 넣은 launch(PC에서 `init`한 상태)가 시작 전에 "Atlas credentials/config overrides…"로 거절되는 시험을 먼저 썼고, 수정 전에 실패하는 것을 확인했다. 실제 홈(키 파일 있음)에서 Codex 읽기 전용 `sci_reviewer` 프로필이 수정 전 0.3초 만에 거절되던 것이 수정 후 `labhq_annot pdb` 호출까지 성공했다(`gpt-5.6-luna`, 34초).
+- 바꾼 것: `labhq/adapters/base.py`, `tests/test_atlas_key_file_1225.py`(신규, 26건), 인벤토리 한 줄. 기존 `tests/test_annot_alphagenome_atlas.py`의 override 거절 시험은 그대로 통과한다.
+- 시험: 키 파일 경로가 있어도 launch 통과, 설정된 경로는 어떤 표기든 변수가 아님, labhq가 그 경로로 만드는 Claude 규칙 전부 통과, 그 밖의 모든 언급(변수 설정·목록·참조, `Env:\`·`Env:/`, `[Environment]::SetEnvironmentVariable`, 키 파일이 아닌 다른 경로에 든 이름)은 거절, 변수 이름이 키 파일 경로 옆에 있어도 거절, 키 값이 있으면 거절. 관련 시험 2581건 통과.
+- manual: Atlas 절에 이 판정을 적는 일은 manual이 비는 대로 #1225 rev3에서 한다(manual은 지금 #1224가 쓰고 있다).
+- 미검증: Claude·Gemini 엔진으로는 실제 실행하지 않았다(점검은 모든 엔진이 거치는 공통 코드이고 Claude 규칙은 생성 함수 출력으로 시험했다).
+
+- rev3: 리뷰가 찾은 두 틈을 고쳤다. (1) CI에서 `claude_deny_private`가 운영자 `.labhq` 경로에 `RuntimeError`(테스트 가드)를 내 기존 Atlas 시험 15건이 실패했다 → 규칙 생성 실패는 그 규칙만 예외에서 빼고(더 엄격), 가드에 걸리지 않게 절대 경로로 만든다. (2) `annot.alphagenome_key_file`이 파일 이름만이면 그 이름이 예외 목록에 들어가 실제 변수 이름까지 지웠다 → 예외 형태는 구분자가 있는 절대 경로(POSIX·드라이브·UNC)나 `~` 형태만 두고, 이름만 있거나 상대 경로인 설정은 설정 기준 절대 경로로 풀어 쓴다. 정의: 예외는 설정된 키 파일의 anchored 경로와 labhq가 그 절대 경로로 만든 규칙뿐이다.
+- rev4: CI(3.10·3.12)에서 기존 Atlas 시험 15건이 `RuntimeError: pytest refused operator .labhq path`로 실패했다. `RuntimeError`는 `policy.claude_deny_private`뿐 아니라 `Settings.path(raw)`(`base.py`)에서도 났다(테스트 가드가 CI의 기본 키 경로를 거절). 그 호출의 `except`에 `RuntimeError`를 더해 그 형태만 예외에서 빼고(더 엄격), 시험 1건을 더했다. 이 시험은 수정을 빼면 실패한다. 로컬에서는 conftest가 홈을 바꿔 가드가 걸리지 않아 재현하지 못했고, 시험은 `Settings.path`가 `RuntimeError`를 내게 해서 확인한다.
+- rev4(리뷰 P1): 키 파일의 상위 폴더가 링크면 `resolve_private_paths`가 설정 경로와 함께 실제 경로(`realpath`)와 8.3 짧은 표기도 비공개 경로와 Claude 규칙에 넣는데, 예외가 설정 경로만 담아 같은 거절이 났다. 예외를 철자 추측이 아니라 labhq가 그 경로를 쓰는 두 곳에서 가져오게 했다: 설정 경로(`~` 펼침·절대·`realpath`), `resolve_private_paths`의 이 파일 항목(실제 경로·짧은 표기 포함), 그 경로 전부에 대해 `claude_deny_private`이 만든 규칙. 시험 2건(실제 경로, 러너가 넘기는 비공개 경로)은 이 변경 없이는 실패한다. 이름이 있는 다른 경로는 여전히 거절한다.
+
+## 단계
+#1139 rev12: [PR #1210](https://github.com/ehojune/bioinfo-team-3d/pull/1210)의 남은 지적. 센트로 내리는 것이 잘라낸 보류액에만 적용되어, 호출 상한이 센트 단위가 아니면(`per_task_usd = 0.015`) 같은 틈이 남았다.
+
+## 바뀐 것
+- `labhq/orchestrator/cso.py`: `_floor_cents`(Decimal 내림, 1e-9 오차 허용, 1e12 이상의 큰 금액은 그대로)를 만들고 `_clip_to_remaining`이 이를 쓴다. `_reserve_dispatch`가 `_turn_cap`의 결과(task·직원·`per_task_usd` 중 최솟값)를 어디서 왔든 센트로 내린다. 내린 값이 1센트 미만이면 `BudgetExceeded`로 보내지 않는다.
+- `labhq/settings.py`: 예약이 켜져 있으면 `0 < per_task_usd < 0.01`을 로드 때 거절한다(0은 상한 없음, 끈 설정은 옛 값 유지).
+- 매우 큰 금액(1e12 이상)은 내리지 않는다. #1210 리뷰 P2(1e26이 Decimal 28자리를 넘겨 `InvalidOperation`)도 이것으로 닫힌다.
+
+## 시험
+- `tests/test_reserve_default_on.py`에 12건 추가(총 45): `per_task` 0.015→0.01·1.239→1.23·2.675→2.67과 센트 단위 값은 그대로, task·직원 상한도 내림, 1센트 미만 상한 거절(아무것도 안 보냄), 설정 로드 거절, 1e26 오버플로 없음. 먼저 추가해 수정 전 8건이 실패함을 확인했다.
+- 관련 `test_cso.py`·`test_budget_headroom_940.py`·연구·진단·예산 시험 등 680 passed.
+
+## 하지 않은 것
+- manual(범위 밖)의 센트 설명은 잘라낸 보류액만 다룬다. 모든 호출 상한이 센트로 내려간다는 문장은 manual 차례에 더한다.
+- 실제 Claude CLI 호출 확인.
+
+# #621 rev22 — Atlas 응답 종료 경쟁 수정
+
+- 변경: disconnect 확인이 취소를 삼켜도 조회가 끝나면 watcher가 종료하도록 stop flag를 먼저 설정한다. 정상 disconnect의 조회 취소와 제품 deadline은 유지한다.
+- 시험: backend 생성 때 포착하고 deadline을 실행 중/시작 전 소진으로 나눠 timeout 기록·backend 취소·실행 coroutine 종료를 확인한다. watcher 취소를 한 번 삼키는 회귀도 추가했다.
+- 검증: 수정 전 종료 경쟁 1 failed·deadline 2 passed. 수정 후 Atlas 전체 148 passed·1 skipped, 관련 lookup 49 passed·1 skipped. deadline 두 경로와 watcher 회귀를 각각 10회 반복해 직렬 30 passed·4-worker 병렬 30 passed.
+- 한계: 최초 CI 원인은 미확정이다. CI 한도·직렬화 정책은 바꾸지 않았다. 실제 Atlas 조회·설치 Codex sandbox shell은 UNVERIFIED이며 #621은 열린 상태로 둔다.
+- 근거: [배정과 이전 진단](https://github.com/ehojune/bioinfo-team-3d/issues/621#issuecomment-6547919066). 최종 head CI·리뷰·병합 결과는 PR에 기록한다.
+
+# #1224: 읽기 전용 실행의 프롬프트가 실제 도구와 맞는다
+
+- 결론: 읽기 전용 프로필(`read_only_profile`)이 프롬프트 끝에 `## Tools in this read-only run`과 이번 실행에서 쓸 수 있는 도구 목록을 한 번 붙이고, 그 밖에 프롬프트가 언급한 도구(PubMed·bioRxiv, 다른 `labhq_annot` 도구, 셸)는 쓸 수 없다고 알린다. 직원마다 프롬프트를 고치지 않고 한 곳에서 닫는다(사전 조사: #1224 댓글, `lit_scout`·`biologist`·`analyst` 등도 같은 어긋남이 있었다).
+- 바뀐 것: `labhq/adapters/read_only.py`(`available_tools`·`with_tool_notice`, profile의 profile에는 한 번만 붙음), `agents/core/sci_reviewer.yaml`(PubMed·bioRxiv 도구가 없다는 것과 "확인 못 한 인용은 not verified"로 표시하라는 문장), `tests/test_read_only_profile.py`(모든 core 직원의 노티스 도구 목록이 프로필의 실제 도구와 같다, 멱등, claude는 웹·annot 없음, codex는 웹만), `tests/test_agent_prompts.py`(sci_reviewer 프롬프트가 프로필에 없는 도구를 말하지 않는다).
+- 리뷰 반영(rev3): 직원 파일이 `disallowed_tools`로 통째로 막은 도구(`Write` 등)는 "Available now"에서 빼고, 일부만 막은 도구(`Read(./data/**)`)는 남긴다. manual 한·영에 읽기 전용 실행의 도구 안내 단락을 적었다.
+- 리뷰 반영(rev3, P1): 노티스를 엔진별로 만든다. Codex 읽기 전용은 이름 붙은 파일 도구 없이 `outputs/`·`.tmp/`에만 쓸 수 있는 셸을 가지므로 그 셸을 목록에 올리고 "셸 쓰지 말라"는 예시는 뺀다(facilities만 셸을 끄므로 `none`).
+- 실행한 것: `test_read_only_profile`·`test_agent_prompts`·`test_annot_literature` 122 passed. read_only·followup·consult를 건드리는 시험 3009 passed, 49 skipped(수정 전 main 기준 동일 파일군).
+- 미해결/미검증: 실제 모델이 노티스를 따르는지는 실행하지 않았다. 노티스는 영어 고정 문구라 한국어 프롬프트 직원도 같은 문장을 받는다.
+
+# #1207 rev8: 팀 모드 단계 실패와 모든 갈래 실패가 어떻게 끝나는지 기록한다
+
+- 결론: 요청이 어떻게 끝나는지 e2e로 고정했다. 제품 결함은 찾지 못했다. #1220의 판단 근거로 쓴다.
+
+| 경우 | 끝 상태 | 단계 결과 | 보고·카드 |
+|---|---|---|---|
+| 팀 모드(`work_kind=simple`), 3번째 단계(bioinfo-agent) 실패 | `failed`, outcome 없음, error `s3 실패: mock step failure` | s1·s2 성공, s3 실패, s4·s5는 `skipped: upstream …`(실행 안 됨) | 한 번 replan한 뒤 끝남. 보고서는 `실패한 단계: s3 · bioinfo-agent`로 시작. 승인 카드 0개 |
+| 연구 모드, 모든 갈래(s1·s2) 실패 | `failed`, outcome `research_failed` | s1·s2 실패, 종합 단계 s3은 `skipped: upstream s1…, s2…` | CP2 카드 없이 CP1(`research_plan`) 뒤 바로 끝남. 보고서에 `갈래별 terminal 상태` 표(b1·b2 모두 failed, 이유·마지막으로 끝난 단계) |
+| (rev6) 연구 모드, 한 갈래만 실패 | `done`, outcome `research_reported` | 다른 갈래와 종합 단계는 실행 | 실패는 보고서 한계와 CP2 경고로만 보임 |
+
+- 관찰: 일부 실패를 허용하는 곳은 연구 모드뿐이다. 팀 모드는 한 단계가 실패하면 요청 전체가 실패한다. 연구 모드도 살아 있는 갈래가 하나도 없으면 실패다.
+- 바뀐 것: `labhq/adapters/mock.py`(`[step-fail]`을 팀 계획의 bioinfo-agent 단계에, `[all-branch-fail]`을 분기 계획의 두 갈래에 적용), `tests/test_e2e_mock.py`(helper에 `work_kind`, 시험 2건).
+- 실행한 것: `test_e2e_mock`(13) 로컬 통과. 새 시험 2건은 옛 mock에서 실패함을 확인.
+- 문서: manual 한·영의 mock 엔진 단락에 `[all-branch-fail]`과 팀 모드 `[step-fail]`을 적었다(rev9).
+- 미해결/미검증: 갈래 안 여러 단계, 재시도, replan이 성공하는 경우는 확인하지 않았다.
+
+## 단계
+#1220: 단계·갈래 일부가 실패해도 목록에 `done`으로만 보이는 문제. 설계는 [#1220 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1220#issuecomment-6546115060)이고 총괄이 파생 표지 안으로 정했다.
+
+## 바뀐 것
+- `request_status.py`: `failed_step_ids(request)`(`done` 요청에서 실패·건너뜀·한 번도 돌지 않은 단계, 이미 `failed_steps`가 있는 요약은 그대로 씀)와 `request_display_label`의 `완료 · 일부 실패 N`. 저장 필드·새 상태·새 outcome 값 없음.
+- `gateway/server.py`: `request_summary.failed_steps`, 스냅샷의 요청별 `failed_steps`.
+- `cli.py`: `labhq watch` 완료 줄에 `일부 실패 B1, B2`, `labhq status` 최근 완료 요청에 `완료 · 일부 실패 N`과 `일부 실패한 단계: …`(`_finished_request_lines`; 묶음이 없어도 실패 단계가 있으면 나온다).
+- `orchestrator/cso.py`: `request.completed` 이벤트 데이터에 `failed_steps`(있을 때만, 이벤트에만 있고 요청에는 저장하지 않음), 연구 보고서 한계 줄에 `B1 (갈래 B): 단계 실패 …`.
+- 웹(`state.js`·`index.html`): `partialFailureSteps`와 상태 문구 `완료 · 일부 실패 N`, 요청 목록의 경고색(`status-halted`의 기존 색 재사용). 스냅샷의 `failed_steps`를 쓰고 라이브 요청은 단계 상태로 같은 판정을 한다.
+- PDF 머리말과 캐시 키는 `request_display_label`을 이미 써서 코드 변경 없이 같은 표지를 쓴다(캐시 키가 라벨을 포함해 표지가 바뀌면 다시 만든다).
+- manual 한·영의 "요청 수명과 PI 검토" 절에 표지를 적었다. Windows inventory에 새 시험 추가.
+
+## 시험
+- `tests/test_partial_failure_1220.py` 13건: 도우미(완료만, 직접 요청, 요약 그대로), 라벨, 요약이 단계 진행을 바꾸지 않고 요청에 쓰지 않음, watch·status, 갈래를 잃은 연구 요청의 한계 줄과 완료 이벤트(깨끗한 요청은 표지 없음), 웹 문구와 경고 판정(node), PDF 머리말과 캐시 키.
+- 관련 688 passed, 2 skipped(`test_request_status.py`·CLI·follow-up·github reporter·web·PDF 포함).
+
+## 하지 않은 것(총괄 지시)
+- 결과 저장 README에 같은 줄을 넣는 것, 비연구 모드에서 단계가 실패해도 `done`이 되는 경로 확인.
+- 알림 팝업.
+- 웹 화면의 실제 렌더링(브라우저 확인)은 하지 않았다. 문구 계산만 node로 확인했다.
+
+## rev3: CI와 리뷰 P1
+- Codex P1(plan_only): 계획만 하는 요청은 계획을 남기고 결과 없이 `done`으로 끝나 모든 단계가 "한 번도 안 돎"으로 셌다. `failed_step_ids`가 요청 자신의 `mode == plan_only` 또는 `outcome == plan_only`를 보고 빈 목록을 돌려준다. 총괄 지시대로 "결과가 없으면 붙이지 않는다"로 판정하지 않았다. 결과를 하나도 남기지 못한 일반 실패 요청은 계속 표시된다(시험으로 고정).
+- CI(`test_e2e_mock.py`, #1219의 시험): 한계 줄이 `s2 (갈래 b2): …`로 바뀌어 기대값을 갈래 id까지 단언하도록 고쳤다(약하게 만들지 않음). 같은 시험에 부분 실패 판정과 라벨 단언을 더했다. 갈래가 없는 다단계 시험은 `s2: …` 그대로.
+- 시험에서 드러난 것: CP4 검토 대기 요청은 라벨이 `보고서 검토 대기`라 표지가 가려졌다. 라벨을 `보고서 검토 대기 · 일부 실패 N`으로 잇고(파이썬·웹), `review_pending` 상태도 같은 판정을 쓴다.
+- 시험: `test_partial_failure_1220.py` 16건과 `test_e2e_mock.py` 등 관련 215 passed, 1 skipped.
+
+## rev5: 구조 수정 — "한 번도 안 돎" 추론을 없앤다
+- Codex P1 셋은 같은 부류였다: plan_only, 단독 경로(팀 계획을 남기고 `direct` 결과만 성공), 증거 체크포인트를 끈 `plan_approved`. 모두 `done`으로 끝나면서 계획 단계 일부를 일부러 돌리지 않았고, 계획 − 결과로 "안 돎"을 세던 추론이 이를 실패로 셌다.
+- `failed_step_ids`는 이제 결과가 실패(`ok`가 참이 아님)나 건너뜀(`status == skipped`)으로 **기록된** 단계만 센다. 이전 rev3의 `plan_only` 특례는 필요 없어져 뺐다. 결과를 남긴 실패는 어떤 경우에도 표시되므로 총괄이 걱정한 "결과를 남기지 못한 다른 실패"는 가려지지 않는다(그런 요청은 `failed`로 끝난다).
+- 갈래 B1이 실패하고 B2가 `skipped: upstream B1` 결과를 남기는 연구 요청은 `[B1, B2]`로 표시된다(시험 유지).
+- P2: `labhq status`의 `일부 실패한 단계` 줄이 `review_pending` 요청에도 나온다.
+- CI(Windows): node 시험이 기본 인코딩(cp1252)으로 한글을 읽다 `stdout=None`이 됐다. `encoding="utf-8"`.
+- manual 한·영의 "한 번도 돌지 않은 단계" 문구를 "결과가 실패·건너뜀으로 기록된 단계"로 고치고 계획을 일부러 돌리지 않은 요청에는 붙지 않는다고 적었다.
+- 시험: `test_partial_failure_1220.py` 18건(의도적으로 안 돌린 계획 네 경우는 표시되지 않는 것 포함)과 관련 247 passed, 1 skipped.
+
+## 단계
+#1200 후속: [PR #1201](https://github.com/ehojune/bioinfo-team-3d/pull/1201) 리뷰 P2(AlphaGenome 표시).
+
+## 바뀐 것
+- `labhq/orchestrator/cso.py`: `format_roster(agents, *, alphagenome=True)`와 `_annot_roster(a, alphagenome)`. 허용 목록이 있는 직원에서 AlphaGenome을 쓸 수 없으면 `alphagenome`·`alphagenome_variant`를 목록에서 빼고, 남는 도구가 없으면 `labhq_annot` 항목을 적지 않는다. 허용 목록이 없는 직원은 이미 "AlphaGenome when its key is set"이라고 적으므로 그대로.
+- `Orchestrator._alphagenome_ready()`: 키 파일(`annot_keys.read_key`)과 클라이언트 설치(`alphagenome_client_available`)가 모두 있을 때만 참. 계획·재계획 prompt를 만드는 세 곳(연구 계획, 일반 계획, 재계획)이 이 값을 넘긴다.
+
+## 시험
+- `tests/test_annot_literature.py`에 4건 추가: 사용할 수 있을 때와 없을 때의 명단, 남는 도구가 없을 때 항목 생략, 허용 목록이 없는 직원 그대로, `_alphagenome_ready`의 키·클라이언트 조합 4가지. 먼저 추가해 수정 전 실패를 확인했다. 관련 `test_annot_literature.py`·`test_cso.py`·`test_ask_policy.py`·`test_branched_research.py`·`test_research_protocol.py` 406 passed.
+
+## 하지 않은 것
+- 게이트웨이와 runner가 다른 컴퓨터일 때 게이트웨이의 키 파일 유무가 runner와 다를 수 있다. 이 판단은 게이트웨이의 설정 기준이다.
+- Atlas 도구(`alphagenome_atlas`)는 허용 목록 이름이 아니라 이번 범위가 아니다.
+
+# #1055 — 과학 리뷰어가 PDB·ChEMBL을 집계되는 도구로만 조회
+
+- 결론: `sci_reviewer`에 `labhq_annot`의 `pdb`·`chembl`을 준다. 그런데 직원 파일만 고치면 효과가 없었다. 리뷰는 읽기 전용 task이고 `read_only_profile`이 `builtin_mcp`·`annot_tools`·`mcp`를 모두 지우기 때문이다(실제 프로필을 돌려 확인). 그래서 **읽기 전용 허용 목록을 바꿨다**.
+- 읽기 전용 허용 목록 변경(`labhq/adapters/read_only.py`): 직원 파일이 `builtin_mcp`에 `annot`을 적고 `annot_tools`에 이름을 명시했을 때, 그중 `READ_ONLY_ANNOT_TOOLS`(`pdb`, `chembl`)에 있는 것만 읽기 전용 프로필에 남긴다. 직원 파일의 목록은 허용 집합을 좁히기만 하고 넓히지 못한다. 목록이 없거나 허용 도구가 하나도 없으면 지금처럼 꺼진다. `read_only_mismatch`는 그 서버가 정확히 그 도구만 내놓을 때만 받아들인다. 보내는 쪽의 override는 읽기 전용 task에 적용되지 않는다.
+- 영향 범위: 이 목록에 있는 도구를 명시한 직원은 `sci_reviewer`뿐이다. `chief_of_staff`의 문헌 도구 목록은 허용 집합과 겹치지 않아 읽기 전용에서 그대로 꺼진다.
+- 바꾼 것: `agents/core/sci_reviewer.yaml`(`builtin_mcp: [annot]`, `annot_tools: [pdb, chembl]`, 셸 대신 도구를 쓰라는 프롬프트 한 문장), `labhq/adapters/read_only.py`, manual 한·영, 시험(`test_read_only_profile.py` +8건, `test_annot_literature.py` +1건, `test_annot.py` 집합 갱신).
+- 시험: 허용 목록으로 좁혀지는지, 목록이 없거나 비면 꺼지는지, 다른 채널(`mcp`·`plugin_dirs` 등)은 여전히 꺼지는지, 실제 `sci_reviewer.yaml`이 프로필에서 살아남는지, 러너가 서버를 달고 mismatch 검사가 정확히 그것만 받아들이는지, 보내는 쪽이 목록을 넓히지 못하는지. 이 변경을 빼면 5건이 실패한다. 관련 시험 253개 파일 중 2건(`test_stdio_server_*`, `test_with_a_key_*`)이 로컬에서 실패하지만 origin/main에서도 같게 실패한다(이 PC의 mcp 1.x).
+- 미검증: Codex 엔진의 `sandbox: read-only` 안에서 `labhq_annot` 호출이 실제로 통하는지(`codex exec` 필요). 셸 HTTP 차단은 이 PR이 아니라 #1060이다. PubMed·bioRxiv 원격 MCP도 읽기 전용 프로필이 지운다는 점은 따로 다룬다.
+
+# #1049 offline adapter and collector contract
+
+- Inputs: producer PR #1050 `0f5ff8023964bf1a02b5c0badc38bd8fbbf8b334`; seal fixture PR #1064 `5637273226ea571cc680ce25384d596b76ec94af`.
+- Separate fixture MACs bind receipt and synthetic observer evidence to run and nonce; malformed, forged, replayed and wrong-run inputs fail closed. Observer-ledger and resource checks remain synthetic.
+- The producer has no authenticated witness, sealed receipt or independent cleanup inventory. Fixture keys and in-memory replay state cannot establish those properties. Real protection and cleanup remain UNVERIFIED; draft/hold remains.
+- The offline adapter invokes the producer lifecycle through an injected transport and collects separate observer evidence through `arm`, `ready`, and `finish`; missing evidence, bad tags, wrong run and replay fail closed. Caller-owned deadlines and replay state are fixture-only.
+- Windows harness: 40 passed, 1 xfailed; imported negative corpora are checked. Failed unauthenticated attempts may retry; authenticated evidence consumes the fixture nonce. The pinned producer API was exercised with a mocked broker, mocked child launch, separate fixture collector and stub validator: plumbing only, no actual subprocess boundary or authentication.
+- Next producer patch: `labhq/runner/process_boundary.py` needs authenticated run-bound child/lifecycle identities and events. A separately owned trusted supervisor/observer needs independent ordered resource and descendant inventory, protected evidence and durable replay prevention. The producer's current `on_ready` socket callback and self-reported cleanup cannot provide these; owner and component placement remain open.
+
+## 단계
+#1139 후속: [PR #1192](https://github.com/ehojune/bioinfo-team-3d/pull/1192) 리뷰 P2(보류액 내림).
+
+## 바뀐 것
+- `labhq/orchestrator/cso.py`의 `_clip_to_remaining`: 남은 예산으로 잘라낸 보류액을 `Decimal`로 센트 단위 내림한다. 먼저 `round(remaining, 6)`으로 부동소수점 오차(예: `2.0 - 1.98`)가 한 센트를 잃게 하지 않는다. 1센트 미만이면 자르지 않고 카드로 묻는다(이미 그랬다).
+- 잘라내지 않은 호출 상한(task·직원·`per_task_usd`)은 그대로 둔다. 이 범위는 클리핑한 값뿐이다.
+- 이유: Claude 어댑터가 `--max-budget-usd`를 센트로 적어 $0.019를 $0.02로 보내면 보류액과 요청 상한을 넘겨 쓸 수 있었다.
+
+## 시험
+- `tests/test_reserve_default_on.py`에 6+1건: $0.019→0.01, $0.0199→0.01, $1.239→1.23, $0.01→0.01, `2.0-1.98`→0.02, `3.0-2.98`→0.02, 잘리지 않은 호출 상한은 그대로.
+- 먼저 추가해 내림이 없을 때 3건이 실패함을 확인(센트가 아닌 경우), 구현 뒤 20건 통과. 관련 `test_cso.py`·`test_budget_headroom_940.py`·연구·진단 등 455 passed.
+
+## 하지 않은 것
+- 잘라내지 않은 호출 상한이 센트 단위가 아닌 경우(예: `per_task_usd = 0.015`)의 내림. 같은 틈이지만 이번 범위가 아니다.
+- 실제 Claude CLI 호출 확인.
+
+## rev11: 리뷰 P1·P2
+- P1(manual): 센트 내림을 manual 한·영의 보내기 전 예약 단락에 적었다.
+- P2(올림): `round(remaining, 6)`이 실제 $0.0199996을 $0.02로 올렸다. `Decimal(repr(remaining)) + 1e-9`를 센트로 내림으로 바꿨다(오차 허용은 `_FLOAT_NOISE`로 명시). `2.0 - 1.98`(0.020000000000000018)은 $0.02, `5.0 - 4.99`(0.00999999999999979)는 1센트, $0.0199996은 $0.01. 쓰지 않게 된 `_MIN_HOLD_USD`를 지웠다.
+- 시험 먼저: 경계값 8건(`0.0199996`, `0.019999`, 1e-10 아래의 오차, 뺄셈 오차 둘, `1.239`, `1.9800004`)과 1센트 미만·cap 통과 시험. `0.0199996`이 수정 전에 실패함을 확인. `test_reserve_default_on.py` 33건, 관련 `test_cso.py`·`test_budget_headroom_940.py`·연구·진단 포함 459 passed.
+
+# #1207 rev6: mock으로 갈래·단계 실패 경로를 확인한다
+
+- 결론: `[branch-fail]`(분기 계획의 둘째 갈래 s2 실패)와 `[step-fail]`(다단계 계획의 s2 실패) 토큰을 더했다. 기본 init 설정 e2e로 실패 경로가 설계대로 도는지 단언했다. 제품 결함은 찾지 못했다.
+- 확인된 동작(설계대로):
+  - 분기: s1(b1)은 성공, s2(b2)는 실패(`mock step failure`), 종합 단계 s3은 그대로 실행됐다. s3 context에 `실패한 갈래: b2 — 이유: s2: mock step failure; 마지막으로 끝난 단계: none`이 들어간다.
+  - 보고서는 s1·s3의 claim만 인용하고 s2의 claim은 인용하지 않는다. 실패는 보고서 한계에 `s2: 단계 실패 또는 의존 단계 건너뜀 — mock step failure`로, CP2 카드에 `경고 1건: 누락 칸·실패 단계는 한계로 남습니다`로 남는다.
+  - 다단계: s1 성공 뒤 s2가 실패해도 같은 방식으로 CP2·리뷰·보고서까지 간다.
+- 관찰(결함으로 단정하지 않음): 두 경우 모두 요청 상태는 `done`, outcome은 `research_reported`이고 요청 단위의 "일부 실패" 표지는 없다. 실패는 보고서 한계와 CP2 경고로만 보인다. 보고서의 labhq 한계 줄은 단계 id(s2)만 말하고 갈래(b2)는 말하지 않는다(갈래 이름은 종합 단계 context의 memo에 있다).
+- 바뀐 것: `labhq/adapters/mock.py`(토큰·실패 반환), `tests/test_e2e_mock.py`(helper가 `hub`를 함께 돌려줌, 실패 시험 2건).
+- 실행한 것: `test_e2e_mock`(11)·`test_demo_separation`·`test_research_cp2` 로컬 통과. 새 시험 2건은 옛 mock에서 실패함을 확인.
+- 문서: manual 한·영의 mock 엔진 단락에 `[step-fail]`·`[branch-fail]`을 적었다(rev7).
+- 일부 실패 요청이 `done`으로만 보이는 문제는 #1220으로 따로 다룬다.
+- 미해결/미검증: 모든 갈래가 실패하는 경우, 갈래 안 여러 단계, 재시도는 확인하지 않았다.
+
+# #1208 — WSL fallback 요청의 계획 prompt
+
+- 결론: `format_capabilities`에 `run_where`를 `wsl_pinned`일 때만 넘기고, fallback이면 `run_where_note`(이유, 300자 이내)를 "WSL 없이 실행한다" 한 줄로 붙인다. 호출부 한 곳(`cso.py`).
+- 시험: `tests/test_runner_pin_1204.py::test_the_plan_prompt_names_wsl_only_for_a_request_that_got_it_and_gives_the_reason_when_it_did_not`. 관련 298건 통과.
+- 미검증: 실제 요청 흐름 전체(함수 단위 시험).
+
+# #1207: mock 엔진이 기본 init 설정(research 켜짐)에서 요청을 끝까지 돌린다
+
+- 결론: mock CSO가 research 계약을 통과하는 계획을 내고, 단계는 결과 ledger와 산출 파일을, 리뷰어는 accept를, 보고서는 claim anchor를 낸다. `labhq init`이 쓰는 예시 설정으로 CSO 경유 요청이 계획 → CP1 → 단계 → CP2 → 리뷰 → 보고서까지 `done`으로 끝난다.
+- 바뀐 것: `labhq/adapters/mock.py`(research 계획·단계 결과·리뷰·보고서 분기, 단계 전에 runner의 출력 기준선 호출), `tests/test_e2e_mock.py`(기본 init 설정 e2e 1건 추가).
+- 숨은 mock 결함 하나: mock이 `before_spawn`을 부르지 않아 단계 산출 파일이 hash 없이 collected되어 CP2의 claim 검사가 `no recorded artifact_sha256`로 막혔다. 호출을 더해 해결.
+- 판정(고치지 않음): 단계 전에 뜨는 `result_storage` 카드와 계획 3번 재실행은 서로 다른 이유다.
+  - 카드는 **제품 동작**이다. 계획이 나온 뒤 CP1 카드 앞에 한 번 뜬다(순서: briefing, precedent, plan, result_storage, research_plan, step, research_evidence, review, synthesis). 계획은 한 번만 돈다.
+  - 계획 3번 재실행은 **mock 탓**이다. 옛 mock 계획이 research 계약 검사에 32건 걸려 CSO 보정이 두 번 더 돈 것이다. 유효한 계획에서는 한 번만 돈다(새 시험이 순서로 고정).
+- 실행한 것: `test_e2e_mock`(6, 새 시험 포함)·`test_demo_separation`·`test_research_cp2`·`test_intake_questions`·`test_clean_install_check` 160 passed. 새 시험은 옛 mock에서 계획 검증 실패로 실패함을 확인.
+- 미해결/미검증: 시험은 Windows runner에서 restricted 데이터 구역을 뺀 설정으로 돈다(init도 Windows에서 그렇게 둔다). 다단계·branch·pack 적용 research 계획은 mock이 내지 않는다.
+
+# #1207 rev5: mock 보고서가 모든 단계의 claim을 싣는다
+
+- 결론: PR #1214 리뷰 P2를 고쳤다. mock synthesis가 `anchors[0]`만 쓰던 것을 모든 claim anchor(중복 제거)마다 한 문장으로 바꿨다. 다단계·분기 계획에서 둘째 이후 단계와 갈래, 종합 단계의 claim이 보고서에 빠지지 않는다.
+- 바뀐 것: `labhq/adapters/mock.py`(synthesis 보고서), `tests/test_e2e_mock.py`(`_every_claim_is_cited`: 계획의 모든 단계·claim_id의 anchor가 보고서에 있는지 단언, `or` 제거, 분기 시험에도 적용).
+- 실행한 것: `test_e2e_mock`·`test_demo_separation`·`test_research_cp2` 101 passed. 다단계·분기 시험 2건은 옛 mock에서 실패함을 확인.
+- 미해결/미검증: pack이 적용되는 주제, 단계마다 다른 작업자, 분기 중 실패한 갈래는 mock이 내지 않는다.
+
+# #1216 — Git Bash에서 clean_install_check이 새 clone에서 죽는 문제
+
+- 결론: 원인은 `git` 경로가 아니라 환경 변수였다. Git Bash가 내보내는 `MSYSTEM=MINGW64`가 점검 환경에 그대로 넘어가고 PATH는 System32로 좁혀지면, PATH 맨 앞의 `mingw64\bin\git.exe`가 시작하다 죽는다(exit 3221225477, 0xC0000005). `Git\cmd\git.exe`는 같은 환경에서도 통과해서 CI는 영향이 없다.
+- 재현: Git Bash에서 `_isolated_env`로 만든 환경으로 `clone --local`을 돌렸다. `mingw64\bin\git.exe`는 3221225477, `cmd\git.exe`는 0. 변수를 하나씩 빼 보니 `MSYSTEM`만 빼면 통과했다.
+- 고침: `_isolated_env`가 `MSYS*`·`MINGW*`·`EXEPATH`·`ORIGINAL_*` 변수를 뺀다. 점검은 어차피 셸과 격리하는 것이라 git 경로를 고르는 것보다 원인을 없애는 쪽이다. 어느 셸에서든 같다.
+- 시험(`tests/test_clean_install_check.py`, 2건): Git Bash 변수가 환경에 없다(모든 OS) · Windows에서 `MSYSTEM`이 설정된 채 PATH의 모든 `git.exe`(`cmd`와 `mingw64\bin`)가 격리 환경으로 실제 clone을 한다. 옛 코드에서는 둘 다 실패하고(실제 clone은 3221225477) 지금 통과한다.
+- 실행: `test_clean_install_check.py`·`test_clean_install_diagnostics.py` 85건 통과.
+- 미검증: 전체 `clean_install_check.py` 실행(설치·mock 요청까지). 새 clone 단계만 재현·확인했다.
+
+# #1207 rev3: mock이 다단계·분기 연구 계획을 낸다
+
+- 결론: 요청 문안에 `[multistep]`을 넣으면 s2가 s1에 의존하는 2단계, `[branched]`를 넣으면 두 갈래(b1·b2)와 둘을 읽는 synthesis 단계(s3)를 가진 research 계획을 낸다. 둘 다 `labhq init` 예시 설정에서 CP1 → 단계 → CP2 → 리뷰 → 보고서까지 `done`으로 끝난다. 문안에 토큰이 없으면 이전처럼 1단계다.
+- 바뀐 것: `labhq/adapters/mock.py`(`_research_shape`·`_research_step`, `before_spawn`의 거부 사유를 `TaskResult(ok=False)`로 돌려줌), `tests/test_e2e_mock.py`(기본 init 설정 e2e를 공용 helper로 묶고 다단계·분기 시험 추가, 거부 시험 추가).
+- 문서: manual 한·영 "mock 엔진으로 연구 모드 끝까지 돌려 보기" 단락과 `mock.py` docstring에 `[multistep]`·`[branched]`를 적었다(PR #1214 리뷰 P1).
+- 이전 PR #1211의 P2: mock이 `before_spawn()`의 거부 사유를 버리던 것을 고쳤다. 거부되면 실행·산출 쓰기 전에 실패한다.
+- 실행한 것: `test_e2e_mock`·`test_demo_separation`·`test_demo_phone`·`test_research_cp2` 123 passed. 새 시험 3건은 옛 mock에서 실패함을 확인.
+- 미해결/미검증: 단계는 모두 한 작업자·한 산출 파일이다. pack이 적용되는 주제, 단계마다 다른 작업자, 분기 중 실패한 갈래는 mock이 내지 않는다.
+
+# #1212 — 정상 취소의 묶음 경고
+
+- 결론: 분석 단계 작업 폴더가 한 번도 보고되지 않은 채 취소된 요청만 묶음 경고를 내지 않는다. 이 정의 한 줄이 `Hub._bundle_outcome` 앞 주석에 있다. 폴더가 보고됐는데 사라졌거나, 취소가 아닌 종료이거나, 다른 묶음 실패면 경고를 그대로 둔다. 계획·briefing·review task의 폴더는 묶지 않는 폴더라 판정에서 뺀다.
+- 구조: 취소된 run도 만든 작업 폴더를 결과에 싣는다(`Runner._run_guarded`의 취소 경로가 `workdir`·`workdir_id`를 채움). 그래서 게이트웨이는 "폴더가 있었는데 기록이 없다"와 "폴더가 없었다"를 구분한다.
+- 바꾼 것: `labhq/request_bundle.py`(`NoStepWorkdirs`), `labhq/gateway/server.py`, `labhq/runner/daemon.py`, `tests/test_request_bundle.py`, manual 한·영(예외 한 문장).
+- 시험(`tests/test_request_bundle.py`, 추가 7건): 취소 시 경고 없음(실제 build) · 실패 시 경고 유지 · 취소지만 다른 OSError면 경고 유지 · 기록된 폴더가 사라진 취소는 경고 유지 · task 결과에만 기록된 폴더도 경고 유지 · 계획 단계까지 마치고 취소해도 경고 없음 · 취소된 run이 만든 폴더를 보고함. 판정 조건을 지우면 해당 시험이 실패하는 것을 확인했다.
+- 실행: 관련 시험 1004건 통과(`bundle_warning`·`commit_terminal`·`_run_guarded`를 쓰는 시험 파일 전체).
+- 미검증: 요청 단위 e2e 취소 흐름. 수락됐지만 결과가 아예 오지 않은 task(runner가 사라진 경우)는 폴더가 보고되지 않아 조용히 넘어간다.
+
+# #1193 후속: 보고서 각주 처리가 길이가 다른 코드 펜스를 알아본다
+
+- 결론: 결함이 있었다. `reader_markdown(footnotes=True)`의 코드 보호 정규식(`` ```.*?``` ``)이 4개 이상 백틱·물결표 펜스를 통째로 보호하지 못해, 그 안의 `[^1]`이 "근거" 번호로 바뀌었다(재현: 4백틱 펜스 안에 3백틱 펜스가 든 문서의 `open[^1]`이 `open[근거 1]`로 바뀜).
+- 바뀐 것: `labhq/report_contract.py`에 `code_spans`·`mask_code`(portfolio에 있던 스캐너를 옮김)를 두고 `reader_markdown`이 그 span으로 코드를 보호한다. `labhq/portfolio.py`는 `mask_code`를 가져다 쓴다(중복 제거). `tests/test_report_contract.py`에 3건 추가.
+- 실행한 것: `test_report_contract`·`test_result_storage`·`test_report_markdown`·`test_report_pdf`·`test_portfolio_edition`·`test_portfolio_branch_folders`·`test_request_bundle` 280 passed, 2 skipped(수정 전 새 시험 2건은 실패 확인).
+- 미해결/미검증: 전체 suite는 CI에 맡긴다. `report_markdown.py`·`report_pdf.py`의 다른 코드 처리 정규식은 이번 범위 밖이라 보지 않았다.
+
+# #1198 시험 상한 P2 두 건(#1199 리뷰)
+
+- 결론: (1) 예고 타이머가 전역 ini(300초)만 보던 것을 `item_limit`로 바꿨다. pytest-timeout의 순서(가까운 `@pytest.mark.timeout(n)` → `--timeout` → `PYTEST_TIMEOUT` 환경 변수 → ini)를 그대로 따르고, marker가 0이면 상한이 없는 것으로 본다. 잘못된 값은 0(타이머 없음). (2) Windows critical 단계(step 상한 3분)에 `PYTEST_TIMEOUT: '100'` 환경 변수를 줘 시험 상한이 단계보다 먼저 오게 했다(시험이 차례로 돌아 전체 약 45초라, 끝쪽 시험이 멈춰도 앞선 시간과 합쳐 180초 안에 끊긴다). phase 수집 필터가 거부하는 `-o`를 쓰지 않는다.
+- 확인: 임시 시험(8초 잠)에 `PYTEST_TIMEOUT=2`를 주면 3초 안에 `Timeout`으로 끝나고 스택이 찍힌다(환경 변수가 실제로 적용됨). `tests/test_ci_suite.py` 신규 5건(수정 전 전부 실패)과 기존 포함 16건 통과.
+- 바꾼 것: `scripts/ci_suite.py`, `.github/workflows/test.yml`, `tests/test_ci_suite.py`, `docs/reference/ci-reuse.md`.
+- 한계: critical 단계의 100초는 그 단계 시험 하나의 측정 최악값(약 10~40초)보다 크게, 전체 합(약 43초)과 더해 180초 안에 들게 잡았지만 새로 재지는 않았다. pool 단계(13분)는 기존 300초 그대로다.
+- 미검증: Windows CI에서 critical 단계가 실제로 이 상한으로 이름과 함께 끊기는지(멈춘 시험이 있을 때만 드러남).
+
+# #1202: mcp 하한을 코드가 쓰는 2.0으로 올리고 doctor가 경고한다
+
+- 결론: `pyproject.toml`의 `mcp>=1.2`를 `mcp>=2.0`으로 올렸고, `labhq doctor`에 `mcp` 행(`config`)을 더했다. 설치된 mcp가 2.0보다 낮거나 없으면 warn과 `pip install -U "mcp>=2.0"` 안내를 낸다.
+- 근거: mcp 1.x는 `CallToolResult.isError`, 2.x는 `is_error`(실측: 1.28.1 필드 `isError`, 2.0.0 필드 `is_error`). 시험(`tests/test_annot.py`)이 2.x 이름을 쓴다. `labhq/tools/_mcpcompat.py`는 제품 코드가 두 판본을 모두 받게 하지만 시험·claim 기준은 2.x다.
+- 바뀐 것: `pyproject.toml`, `labhq/doctor.py`(`MCP_FLOOR`, `_mcp_row`), `tests/test_doctor.py`(경계 5건·없음·pyproject와 하한 일치·collect 행 1개).
+- 실행한 것: 1.28.1 환경과 2.0.0 새 venv 둘 다 `tests/test_doctor.py` 71 passed. 2.0.0 venv에서 `tests/test_annot.py`·`tests/test_external_wait_board_676.py` 30 passed.
+- 미해결/미검증: 설치판이 고정한 mcp 버전은 확인하지 못했다(이 repo에는 고정 파일이 없음). 2.0.0 밖 판본(2.1~2.3)에서 전체 suite는 CI에 맡긴다. 하한 위쪽 상한(`<3`)은 두지 않았다.
+
+## 단계
+#1200: 비서실장(CoS)의 annot 도구를 이름 차단 목록이 아니라 허용 목록으로. 설계는 [#1200 설계 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1200)의 승인안이다.
+
+## 바뀐 것
+- `AgentSpec.annot_tools: list[str] | None = None`(`models.py`). `None`은 전부(기존 동작), 목록이면 그것만. 이름은 소문자 도구 이름이고 `builtin_mcp`에 `annot`이 있어야 한다.
+- `runner/daemon.py`: `annot_tools`가 있으면 `labhq_annot` 서버 env에 `LABHQ_ANNOT_TOOLS=<쉼표 목록>`(빈 목록은 빈 값). 비밀이 아니다.
+- `annot_mcp.py`: 모든 도구를 `@offered()`로 등록한다. 허용 목록 밖이면 등록하지 않는다. 목록에 서버가 정의하지 않은 이름(오타·빈 이름)이 있으면 시작 전에 `SystemExit`(실패 시 닫힘). `alphagenome` 두 도구는 키 파일이 있을 때만 정의되므로 이름은 허용한다.
+- `agents/core/chief_of_staff.yaml`: annot 이름 차단 줄을 지우고 `annot_tools`에 문헌 7개를 적었다.
+
+## 왜 서버에서
+Claude의 `--disallowedTools`만 이름 목록을 지키고 Codex·Gemini 어댑터는 이 목록을 읽지 않는다. Claude에는 MCP 도구 허용 목록 플래그가 없다. 서버가 거르면 모든 엔진이 같은 `list_tools`를 본다.
+
+## 실행한 것
+- 시험을 먼저 추가해 수정 전 실패를 확인했다. `tests/test_annot_literature.py`(52건): stdio 서버가 허용된 도구만 내는지, 환경 변수가 없으면 전부, 모르는 이름이면 시작 거부, 러너 env 전달, 직원 yaml의 목록이 서버 도구의 부분집합, 이름 형식 거부.
+- 관련 `test_annot.py`·`test_annot_regulatory.py`·`test_agent_prompts.py`·`test_agent_capabilities.py`·`test_external_wait.py`·`test_registry.py`: 107 passed. 로컬에서 `CallToolResult.is_error` 속성 오류로 2건이 실패하나 설치된 mcp 버전 차이이며 이 변경 전에도 같다(#1195 상태 문서 참고).
+
+## 하지 않은 것
+- Codex·Gemini 도구 필터 기능은 쓰지 않았다(버전 지원 미확인).
+- Windows inventory는 새 시험 파일이 없어 건드리지 않았다.
+- 신규 직원의 기본을 "문헌만"으로 바꾸는 것은 이번 범위가 아니다.
+- #1195(`pdb`·`chembl`)와 `chief_of_staff.yaml`·`test_annot_literature.py`에서 겹친다. 이 PR을 따르면 #1195의 deny 목록 수정은 필요 없어지고, #1195의 정적 시험(`@server.tool` 장식자를 찾는 시험)은 `offered`를 찾도록 고쳐야 한다.
+
+## rev3
+- `tests/test_external_wait_board_676.py`: 도구를 `@server.tool()`만이 아니라 `@offered()`로도 찾는다. 도구 수 하한(15)과 "모든 도구가 실행기를 부른다"는 확인은 그대로다. 이 시험이 바뀌지 않으면 #1200이 CI에서 실패한다.
+
+## rev4
+- `labhq/adapters/read_only.py`: 읽기 전용 프로필이 `AgentSpec`의 모든 필드를 분류해야 해서 `annot_tools`가 없으면 `RuntimeError`로 읽기 전용 실행(검토·후속)이 시작하지 못했다(CI의 `test_e2e_mock`·`test_followup`·`test_workspace_boundary` 실패). `READ_ONLY_FIELDS`에 `"annot_tools": None`을 넣었다. 설계 때 "확인만"으로 적은 파일이 실제로는 수정 대상이었다.
+- 시험: `test_a_read_only_run_offers_no_annot_tools_whatever_the_staff_spec_allows`. 위 세 시험과 `test_github_reporter.py`는 로컬에서 통과(206 passed, 18 skipped).
+
+## rev5: 리뷰 P1 하나와 P2 둘
+- manual P1: `docs/manual.md`·`docs/manual.en.md`의 공개 자원 조회 도구 절에 `annot_tools`의 세 경우(없음=전부, 목록=그것만, 빈 목록=없음), 모르는 이름이면 서버가 시작하지 않는 것, 읽기 전용 실행은 받지 않는 것을 적었다.
+- roster P2: `AgentSpec.summary()`가 `annot_tools`를 싣고, `format_roster`가 `_annot_roster`로 제한이 있으면 `labhq_annot=yes (tools: ...)`만 적는다(전부면 이전 문장 그대로). CSO가 비서실장에게 못 하는 변이·영역 조회를 배정하지 않게 한다.
+- env P2: `annot_tools`가 없는 직원에게도 runner가 `LABHQ_ANNOT_TOOLS=*`를 서버 env에 명시한다. 서버는 `*`를 제한 없음으로 읽는다(`*,fulltext`는 모르는 이름이라 시작 거부).
+- 시험: `tests/test_annot_literature.py` 56건. 관련 `test_annot.py`·`test_agent_prompts.py`·`test_registry.py`·`test_external_wait_board_676.py`·`test_workspace_boundary.py` 포함 114 passed, 18 skipped. 로컬에서 `test_annot.py::test_stdio_server_lists_tools…`가 `is_error` 속성 오류로 실패(mcp 버전 차이, 이 변경 전부터).
+
+## rev6: override가 만든 스펙
+- 리뷰 P1: `pi_language.py`의 통역 task가 비서실장의 `builtin_mcp`를 `[]`로 덮는데 내가 넣은 검증("annot_tools needs builtin_mcp: annot")이 그 병합 결과를 거부해 통역이 모델 실행 전에 실패했다. 맞는 지적이고 내 결함이다.
+- 고침: 검증에서 `builtin_mcp` 결합을 뺐다(이름 형식만 검증). annot 서버가 없으면 `annot_tools`는 쓰이지 않을 뿐이다. `builtin_mcp`를 덮는 부류(통역·읽기 전용·기타 override) 전체가 닫힌다.
+- 시험 먼저: 덮어쓴 비서실장 스펙이 유효한 것, `builtin_mcp=[]`일 때 러너가 `labhq_annot`을 붙이지 않는 것. 수정 전 둘 다 실패. `test_annot_literature.py`·`test_followup.py`·`test_pi_language.py`·`test_workspace_boundary.py` 등 259 passed, 18 skipped.
+
+# #1193 후속: 정리본 링크 검사가 길이가 다른 코드 펜스를 알아본다
+
+- 결론: `portfolio._markdown_targets`가 코드 펜스를 가리는 방식을 정규식(`` ```.*?``` `` 고정 3개)에서 `_mask_code` 스캔으로 바꿨다. 펜스는 백틱 또는 물결표 3개 이상으로 열고 같은 문자로 같거나 긴 run이 닫는다. PR #1194의 `_json_block`이 본문의 백틱 연속보다 긴 펜스를 쓰기 때문에 필요했다(Codex P2).
+- 바뀐 것: `labhq/portfolio.py`(`_mask_code`·`_closing_fence`, `_MARKDOWN_CODE` 제거), `tests/test_result_storage.py`(6개).
+- 의미 보존: 무작위 입력 60만 건(백틱·물결표·링크 문자·줄바꿈 혼합)을 옛 정규식과 비교해 달라진 입력은 모두 4개 이상 run이 든 것뿐이다(설명되지 않는 차이 0). 4개 미만만 있는 입력의 결과는 같다.
+- 정규식 하나로 고치면 안 됐던 이유: `(?P<fence>`{3,}).*?(?P=fence)`*` 형태는 백틱 2만 개 연속에서 **49초**(옛 정규식 0.4 ms)가 걸렸다. 저장 때마다 모든 문서에 도는 검사라 선형 스캔으로 바꿨다.
+- 성능(실제 함수): 일반 1 MB 6 ms, 닫히지 않은 펜스+1 MB 22 ms, 백틱 2만 개 연속 92 ms, 20만 개 연속 3.3 s. 마지막 두 경우는 병적 입력이고 선형은 아니다(코드 주석에 적음). 정상 문서에는 해당 없다.
+- 시험: 4개 이상 백틱·물결표 펜스가 안의 짧은 펜스와 링크를 가리고, 3개 펜스·펜스 밖 링크·닫히지 않은 펜스·더 긴 닫는 펜스의 기존 동작은 유지된다(수정 전 앞의 둘이 실패). 정리본·저장 계열 298 passed.
+- 미해결/미검증: `labhq/report_contract.py:50`에 같은 정규식의 복사본이 있다(보고서 계약 검사의 별개 용도, 이 claim 밖이라 두었다). 같은 길이 펜스 문제가 있을 수 있으나 확인하지 않았다. 닫는 펜스가 같은 줄 앞쪽 공백이나 문장 중간에 있는 경우는 옛 정규식과 같게(줄 시작 조건 없이) 처리한다.
+
+# #1076 halt 시험의 실제 프로세스 제거
+
+- 결론: #1189 CI의 3.10 job이 25분 상한에 끊겼고 stall 덤프 로그에서 시작만 하고 끝나지 않은 시험이 둘이었다. 하나가 `tests/test_halt_watch_1174.py::test_a_completed_turn_whose_handler_is_still_awaiting_is_not_halted`였다. 그 시험은 가짜 Gemini CLI 스크립트를 실제 프로세스로 띄워 결과 뒤 4초를 살려 둔다. 이 경로가 정리되지 않을 때 `asyncio.wait_for`로 끊지 못하고 멈출 수 있다. Gemini 경우와 Claude "결과 뒤 halt" 경우를 `FakeProc`(OS 프로세스 없음, 스트림 두 개, 끝나는 시각을 시험이 정함)로 바꾸고 시험 안에 5초 상한(`LIMIT_S`)을 뒀다.
+- 확인: 제품 코드를 바꾸지 않았고 두 시험 모두 `halt_watch`의 `st.result_seen` 확인을 빼면 실패한다(이전 변이 확인과 같음). 로컬에서 6회 반복해 모두 통과.
+- 남은 것: `test_a_halt_that_finds_the_cli_still_running_still_stops_it`는 실제 프로세스를 죽이는 것이 시험 대상이라 그대로 둔다(상한 30초, 별도 관찰 대상). 같은 job의 다른 미종료 시험 `test_paper_skill_recovery_identity...[cancel]`은 이 claim 밖이다.
+- 미검증: 이 변경이 3.10·Windows 정지를 실제로 없애는지(CI 재실행으로 확인). 정지의 원인이 이 시험이었다는 증거는 "시작만 하고 끝나지 않은 시험 둘 중 하나"까지다.
+
+## 단계
+#1187(PI 승인 #883 2번): 직원용 PDB(RCSB)·ChEMBL 조회 도구를 `labhq_annot`에 더한다. 구현 설계는 [#1187 설계 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1187)의 승인안 그대로다.
+
+## 바뀐 것
+- `labhq/tools/annot_structure.py`(새): `StructureAnnotator`. `pdb(ids_or_queries, top)`: PDB ID는 Data API, 그 밖의 문자열은 Search API 전문 검색 후 상위 `top`(1~25)을 요약. 좌표 파일은 받지 않는다. `chembl(targets_or_compounds, kind, limit)`: `target`·`compound`는 ID나 검색어(상위 5), `activity`는 target ChEMBL ID만(최대 200행, 100행씩 페이지). 잘리면 `truncated`.
+- `annot_mcp.py`: `_run_structure`와 도구 둘, instructions 문구. 시간 상한(`run_lookup`), 요청 조회 원장(`_admitted`)은 기존 도구와 같은 경로다.
+- `annot.py`: `MIN_INTERVAL_S`에 `rcsb` 0.2초·`chembl` 0.5초, `CACHE_MAX_AGE_S`에 `pdb` 7일. ChEMBL은 `status.json`의 `chembl_db_version`이 캐시 키에 들어가 버전이 바뀌면 새로 받는다.
+- `cso.py`: 직원 명단 문장에 "RCSB PDB structure and ChEMBL compound lookups". 계획 prompt 본문이 아니라 명단 문장이라 해시 시험은 바뀌지 않았다.
+- `source`에 `license`·`license_url`·`usage`: RCSB CC0 1.0, ChEMBL CC BY-SA 3.0.
+- 시험: `tests/test_annot_structure.py` 27건(오프라인 `httpx.MockTransport`). 도구 목록을 정확히 비교하던 `test_annot.py`·`test_annot_regulatory.py`에 두 이름을 더했다. Windows inventory에 새 시험 추가.
+
+## 실행한 것
+- `test_annot_structure.py` 27 passed. `test_annot*.py`·`test_external_wait.py`·`test_output_types*.py` 237 passed.
+- `validate_profile` 통과.
+
+## 확인하지 못한 것
+- RCSB·ChEMBL의 공식 호출 한도와 이용 조건: 공식 페이지를 열지 못했고 제3자 목록은 "수치 상한 비공개"라고만 했다. 간격은 보수적으로 잡았고 코드에 미확인이라고 적었다. 라이선스 이름은 총괄이 준 문구와 알려진 정책이며 RCSB 정책 페이지는 직접 읽지 못했다.
+- 실제 서비스 호출: 하지 않았다. API 응답 모양은 공개 문서 기준 fixture다.
+- 로컬에서 `test_annot.py::test_stdio_server_lists_tools…`와 `test_annot_regulatory.py::test_with_a_key…`가 `CallToolResult.is_error` 속성 오류로 실패한다(설치된 mcp 버전 차이, 이 변경과 무관). 도구 목록 비교 줄은 그 앞에서 통과했다. CI의 고정 버전에서 확인한다.
+- manual 한·영은 총괄이 따로 잡는다.
+
+## rev4: chief_of_staff
+- `agents/core/chief_of_staff.yaml`의 `disallowed_tools`에 `mcp__labhq_annot__pdb`·`mcp__labhq_annot__chembl`을 더했고, 그 집합을 고정한 `tests/test_annot_literature.py::test_chief_of_staff_gets_only_the_literature_tools_of_annot`도 같이 고쳤다. 시험을 먼저 고쳐 수정 전 실패를 확인했다.
+- 후속(구조): 새 도구가 생길 때마다 같은 일이 반복되므로 CoS를 deny 목록이 아니라 allow 목록(문헌 도구만)으로 바꾸는 수정이 필요하다.
+
+## rev5: CI와 P2
+- CI 실패 둘은 제 결함: (1) 시험이 `mcp.server.fastmcp`(mcp 2.x에 없음)에서 `ToolError`를 import → `labhq.tools._mcpcompat`. (2) staff 쪽 파일에 `/api/`가 있으면 안 되는 시험(`test_semantics_actions_run.py`)에 ChEMBL 주소가 걸림 → 문자열을 부분으로 이어 쓰고, 그 이유와 이름이 시험 문자열에 걸리지 않게 주석을 고침.
+- 리뷰 P2: ChEMBL 원본 응답이 요약 허용 목록에서 버려지던 것을 `answer.raw`로 보존(PDB와 같은 방식). 모든 입력이 잘못되면 `status.json`도 부르지 않는다.
+- 실행: `test_annot_structure.py`(31건)·`test_semantics_actions_run.py`·`test_semantics_shadow_remove.py`·`test_external_wait.py` 143 passed.
+
+## rev6: main 반영(#1201 이후)
+- #1201(annot_tools 허용 목록)이 먼저 병합되어 `annot_mcp.py`·`chief_of_staff.yaml`·`test_annot_literature.py`·`cso.py`가 충돌했다. 충돌은 main 쪽을 기준으로 풀었다.
+- `pdb`·`chembl`을 `@offered()`로 등록. `chief_of_staff.yaml`의 deny 목록 추가(rev4)는 허용 목록이 대신하므로 뺐다(CoS는 문헌 7개만 받는다).
+- 정적 시험 둘(`test_annot_structure.py`의 모든 도구가 실행기를 거치는지, `test_external_wait_board_676.py`의 20분 실행기 확인)이 `offered` 장식자와 `_run_structure`를 인식한다.
+- 시험: 관련 `test_annot*.py`·`test_external_wait_board_676.py`·`test_agent_prompts.py`·`test_semantics_actions_run.py` 212 passed. 로컬 mcp 1.x에서 `is_error` 속성 오류 2건은 이 변경과 무관(CI는 mcp 2.x).
+
+## rev7: 명단 문장과 manual
+- `cso.py`의 `_annot_roster` 기본 문장에 "RCSB PDB structure and ChEMBL compound lookups"를 되살렸다(rev6에서 충돌 해결로 빠졌던 것). 허용 목록이 있는 직원은 `tools: ...` 문장이라 영향이 없다.
+- manual 한·영: 공개 자원 조회 도구 표에 `pdb`·`chembl` 행, 설명 단락. 입력 형식, `truncated`, `answer.raw` 보존, 요청 간격(0.2초·0.5초)과 **공식 한도 미확인**, 캐시(PDB 7일·ChEMBL 버전 키), 라이선스(CC0 1.0·CC BY-SA 3.0), 비서실장 제외.
+- 시험 먼저: 명단이 PDB·ChEMBL을 알리고 제한된 직원에는 알리지 않는 것, manual 한영에 두 도구가 있는 것. 수정 전 둘 다 실패. 관련 203건과 `test_annot_structure.py`·`test_annot_literature.py` 90건 통과.
+- 확인하지 못한 것: RCSB·ChEMBL 공식 호출 한도(공식 문서를 열지 못함, 제3자 목록은 "수치 비공개"), 실제 서비스 호출, 로컬 mcp 1.x에서 `is_error` 오류 2건(CI는 mcp 2.x).
+
+## rev8: main 반영(Atlas 병합 뒤)
+- #1186(AlphaGenome Atlas)이 병합되어 `annot_mcp.py` import 줄과 manual 한·영의 AlphaGenome 항목이 충돌했다. 서버는 `annot_structure`와 `ATLAS_ENABLED_ENV` import를 둘 다 두고, manual은 PDB·ChEMBL 항목에 main의 AlphaGenome 항목을 이어 붙였다.
+- 시험: `test_annot_structure.py`·`test_annot_literature.py`·`test_external_wait_board_676.py`·`test_annot.py`·`test_annot_regulatory.py`·`test_annot_alphagenome_atlas.py`·`test_semantics_actions_run.py`·`test_agent_prompts.py` 363 passed, 4 skipped. 로컬 mcp 1.x의 `is_error` 오류 2건은 이 변경과 무관(CI는 mcp 2.x).
+
+## rev9: 리뷰 P1 — 유효성 표지
+- P1(`b0540f54` 리뷰): activity 요약의 허용 목록이 `data_validity_comment`·`potential_duplicate`를 버려 의심 값과 중복 인용이 보통 측정값처럼 보였다. 두 필드를 `_ACTIVITY_KEEP`에 넣었다.
+- 요약에 `flagged_rows`(표지가 붙은 행 수)를 항상 싣고, 1건 이상이면 `validity_note`로 "의심스러운 측정·독립이 아닌 중복 인용, 근거로 쓰기 전에 확인"을 적는다. 표지가 없으면 노트는 없다.
+- 시험 먼저: 표지가 요약 행에 있고 개수·노트가 맞는 것, 표지가 없으면 노트가 없는 것(수정 전 둘 다 실패). `test_annot_structure.py` 34건과 관련 시험 통과.
+
+# #1198: 시험마다 300초 상한으로 CI 정지를 한 시험의 실패로 바꾼다
+
+- 결론: `pytest-timeout==2.4.0`과 `timeout = 300`을 넣었다. Linux 3.10/3.12는 `timeout_method=signal`(멈춘 시험만 실패, 나머지 계속), Windows는 `thread`(worker 덤프 후 종료, xdist가 그 시험만 crash 보고). job `timeout-minutes`는 그대로다.
+- 원인 분석(#1198 댓글): PR #1192 3.10 job 덤프에서 두 worker 모두 main thread가 async 시험의 `run_until_complete → select()`에서 이벤트를 기다렸고 남은 thread·subprocess는 없었다. 진단은 controller의 "마지막 보고 시험"만 보여 멈춘 시험을 가리키지 못했다. 어느 시험인지는 로그만으로 특정하지 못했다.
+- 바뀐 것: `pyproject.toml`, `.github/workflows/test.yml`(Linux 둘 signal, Windows 둘 thread), `scripts/ci_suite.py`(상한 5초 전에 시험 이름과 전 thread 스택을 stderr에 출력, 프로토콜 wrapper를 `tryfirst`로 두어 host-resource lock 대기는 상한에 안 든다), `docs/reference/ci-reuse.md`, `config/ci/windows-boundary-v1.json`(새 시험 inventory), `tests/test_ci_suite.py`(신규).
+- 실행한 것: `test_ci_suite`·`test_ci_parallel_policy`·`test_ci_windows10m`·`test_ci_windows_phases`·`test_ci_normative_prose`·`test_ci_boundary_preview`·`test_ci_manifest_identity` 570 passed, 1 skipped(Windows에서 signal 시험).
+- 미해결/미검증: Linux signal 경로(신규 시험의 실제 실행은 Linux CI에서 처음), thread 방식의 xdist crash 보고, 멈춘 시험의 원인 자체는 상한이 이름을 알려준 뒤 별도로 고친다. 느린 시험은 `@pytest.mark.timeout(n)`으로 연장한다.
+
+# #1193 정리본 진행 기록의 리뷰 인용문 링크가 저장을 막지 않게
+
+- 결론: `draft_documents`가 `PROGRESS.md`의 세 JSON 블록(확인 질문·수정 회차·검토)을 ```` ```json ```` 코드 블록으로 싣는다. 리뷰어가 보고서의 그림 링크를 `evidence_quote`로 인용해도 `run/progress.md`의 링크가 되지 않는다.
+- 원인: 링크 검사의 상대 경로 해석 결함이 아니다. `run/` 기준 `../graphical_abstract.svg`는 루트 `graphical_abstract.svg`로 정확히 풀렸고 정리본에 그 이름의 파일이 없었을 뿐이다(실제 위치는 `figures/graphical_abstract.svg`). 링크를 만든 것은 편집자도 아닌, 리뷰 JSON을 평문으로 싣던 `result_storage.py`의 `PROGRESS.md` 생성이다.
+- 같은 부류의 불일치: `portfolio.py:1336`·`1353`은 같은 JSON을 이미 코드 블록으로 싣는다. `PROGRESS.md`만 평문이었다. 링크 검사(`_markdown_targets`)는 코드를 마스킹한 뒤 링크를 찾는 설계라 코드 블록 안의 인용은 링크가 아니다.
+- 바뀐 것: `labhq/result_storage.py`(`_json_block` 헬퍼, 호출 3곳. 펜스는 본문 안 백틱 연속보다 길게), `tests/test_result_storage.py`(2개).
+- 시험: 리뷰 인용문에 이미지·일반 링크가 든 요청의 `PROGRESS.md`가 링크 검사를 통과한다(수정 전 `../graphical_abstract.svg`·`../tables/missing.tsv` 2건 검출로 실패). 진짜 깨진 링크는 계속 검출된다. 정리본·저장 계열 292 passed.
+- 실제 데이터 확인: 7차 `req_3643a6a43e`의 요청 상세로 `draft_documents`를 돌려 `run/progress.md`의 깨진 링크가 0건이 되는 것을 확인했다(읽기 전용, 모델 호출·저장 없음).
+- 미검증: 정리본 전체의 링크 검사는 재현하지 못했다(bundle·assets·images 입력 필요). 다른 문서에 같은 문제가 더 있는지는 이 요청의 실제 재저장으로만 확인된다. 6차가 통과한 이유는 6차 리뷰 인용문에 링크 문법이 없었기 때문으로 보지만 6차 리뷰 원문은 다시 열지 않았다.
+- 재저장: 병합 뒤 `labhq storage req_3643a6a43e --redraft`(또는 `--republish`)로 7차 결과를 다시 저장한다. 편집자 재실행이 필요한지는 이 수정으로 정리본이 만들어지는지를 보고 정한다.
+
+# #1190 pause/resume 송신 순서의 전제를 시험으로 고정
+
+- 결론: 낡은 pause/resume 프레임이 새 제어를 덮는 경우는 재현되지 않았다([점검](https://github.com/ehojune/bioinfo-team-3d/issues/1190#issuecomment-6542061968)). `control_seq`는 넣지 않고, 순서가 지켜지는 두 전제를 `tests/test_control_order_1190.py`로 고정했다. 제품 코드는 바꾸지 않았다.
+- 전제 1: `send_runner`가 `runner_locks[runner_id]`(FIFO)를 잡고 보낸다 — 첫 송신이 멈춰 있어도 둘째는 앞지르지 못한다.
+- 전제 2: `_push_task_state`가 step 상태를 읽은 뒤 `await` 없이 `send_runner`에 들어간다 — 이벤트 루프 턴 수(ticker)가 읽을 때와 들어갈 때 같다.
+- 시험(27건): 전제 1·전제 2 각 1건, pause·resume·스냅샷 재전송을 섞어 무작위 양보를 준 수렴 시험 25건(마지막 프레임이 gateway 최종 상태와 일치).
+- 변이 확인: 잠금을 빼면 전제 1 시험이, 상태 읽기 뒤에 `await asyncio.sleep(0)`을 넣으면 전제 2 시험이 실패한다(둘 다 직접 확인하고 되돌림).
+- 한계: FakeWs 기반이라 실제 WebSocket 지연과 재연결 중 연결이 둘 걸치는 순간은 모사하지 못했다.
+
+# #678 셸 확인의 명령 읽기 보정(Argon P1 두 건)
+
+- 결론: `disk_space._segments`를 shlex 대신 직접 읽는 tokenizer로 바꿨다. 명령은 따옴표 밖의 `;` `&&` `||` `|` `&` `(` `)` 개행에서 끝나고, `#`은 단어 시작에서만 주석이며(`url#frag`은 한 단어), `>` `>>` `&>` `2>`는 명령을 쪼개지 않고 그 대상 파일을 쓰기 경로로 돌려주며 `<`는 읽기라 버린다. 따옴표가 닫히지 않으면 읽지 않는다.
+- Argon P1: (1) `commenters=""`가 실제 주석(`# it's …`)의 아포스트로피로 따옴표를 어긋나게 하거나 주석 뒤 명령 문자까지 읽던 것 → 단어 시작의 `#`만 주석. (2) `<`·`>`를 구분자로 취급해 `curl … > /full/log`가 쪼개지던 것 → 리다이렉션 대상의 드라이브를 확인 대상에 넣음.
+- P2도 같이: `unzip … -x 패턴… -d dir`에서 패턴 뒤 `-d`를 읽고, `curl -Lo file`·`-fsSLo file`처럼 묶음 플래그의 값을 읽는다.
+- 시험: `tests/test_disk_shell_check_678.py`에 주석·리다이렉션·`-x`·묶음 플래그 5건 추가, 파일 전체와 관련 기존 시험 119건 통과.
+- 미검증: heredoc 본문 줄이 명령으로 읽히는 경우(초과 질문만 생김), 중첩 `$(…)`·백틱 안의 명령, Windows CI.
+
+## 단계
+#1139(PI 승인 5번): `policy.budget.reserve_before_dispatch` 기본값을 `true`로.
+
+## 한 일
+- `labhq/settings.py`: 기본값 `True`(주석도 "기본 켬"으로). 켜져 있으면 `per_task_usd`·`per_request_usd`가 유한한 0 이상이어야 한다는 검증이 기본으로 걸린다.
+- 예시 설정 두 사본(`config/labhq.example.yaml`, `labhq/config/labhq.example.yaml`): `reserve_before_dispatch: true`와 설명.
+- manual 한·영: 비용 표와 `보내기 전 예약` 단락을 기본 켬에 맞췄다(끄는 법과 병렬 단계 설명 포함).
+- `tests/test_reserve_default_on.py` 7건(Windows inventory `known_tests`에 추가): 기본값이 켜짐, 두 예시 설정이 기본값과 같음, `false`로 끌 수 있음, 비유한 상한 거절, **병렬 두 단계(호출 상한 1.5, 요청 상한 2.0)에서 기본으로 두 번째 단계가 `BudgetExceeded`**, 꺼 두면 두 단계가 모두 시작함.
+- 기존 시험: `tests/test_cso.py`의 시험 11건이 옛 검사를 기대해 깨졌다. `FakeHub`가 옛 검사(`reserve_before_dispatch=False`)를 명시해 그 시험들이 원래 보던 것을 유지하고, 기본값을 확인하던 시험은 "꺼 두면 task가 그대로"로 바꿨다. 예약은 `_reserving_hub`와 새 시험 파일이 따로 본다. `test_budget_headroom_940.py`는 이미 플래그를 명시해 바꾸지 않았다.
+
+## 확인
+- `test_reserve_default_on.py`·`test_cso.py`·`test_budget_headroom_940.py` 통과(239 passed 이상). `validate_profile` 통과.
+- 처음 전체 suite가 96%에서 멈춘 원인은 새 시험의 "기본값" 시험이 `FakeHub`의 옛 설정을 받아 두 번째 단계가 풀리지 않고 기다린 것이었다. `FakeHub`가 아니라 제품 기본값(`BudgetSettings()`)을 쓰도록 고쳤다.
+
+## 하지 않은 것
+- 전체 suite를 로컬에서 끝까지 돌리지 못했다(`-n 4`가 시간 제한에 걸림). 다른 시험이 더 깨지는지는 CI 결과로 확인한다.
+
+## rev9: A안 — 보류액을 남은 요청 예산으로 자름
+- 원인: 보류액이 `min(task, agent, per_task_usd)`라 요청 예산이 per_task(기본 $5)보다 작으면 첫 호출부터 예산 카드가 떴다(진단: [#1139 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1139#issuecomment-6544463979), 결정: A안).
+- 구현(`orchestrator/cso.py`): `_clip_to_remaining`. 요청에 1센트 이상 남았으면 보류액 = min(호출 상한, 남은 예산), 그 미만이면 자르지 않고 카드. 카드가 올릴 상한은 호출 상한 전체(`needed = full`)를 담도록 그대로 둔다.
+- 시험: `test_reserve_default_on.py` 13건(작은 예산 첫 호출 카드 없음, 병렬 둘이 합쳐 상한을 못 넘고 셋째는 거절, 1센트 미만은 묻는다, 카드는 호출 상한 전체를 요구). 클리핑을 끄면 5건 실패함을 확인.
+- 고친 기존 시험(분류): (a) 예산이 주제가 아닌 것: `test_ask_review3/4/5`(13, 요청 레코드를 만든다), `test_plan_only_cso_model`·`test_branched_research`·`test_contract_slot_repair`의 병렬 보류액 예산, `test_bench`·`test_cp1_input_fit_796`·`test_request_lifecycle`·`test_resume_accounting`은 A안만으로 통과. (b) 사용자에게 보이는 동작이 바뀌는 것(PR 본문에 목록): 아래.
+- (b) 목록: `test_research_notes_budget`(`..._would_pass_the_request_budget...` 카드 대신 남은 예산으로 보류, 정확히 상한을 쓴 요청은 다음 호출 전에 묻는다, 질문 대기 보고 turn은 올린 상한 안에서 끝나 final-turn 기록이 없다), `test_cso.py`(동시 turn은 합쳐 보류, 마지막 turn은 남은 만큼 보류, 선택 turn은 남은 만큼 보류하고 0이면 거절, 취소 turn의 보류), `test_facilities_diagnosis`(`budget`·`unknown_budget`은 옛 검사로 고정하고 `reserved_budget` 추가).
+- 확인하지 못한 것: 전체 suite(총괄 지시로 CI에 맡긴다), `test_semantics_shadow_remove`(서브프로세스로 전체 suite를 돌려 로컬에서 90초 이상 걸림).
+
+# Process boundary manual (#1047)
+
+- Korean and English manuals describe the unsealed diagnostic, default refusal, JSON receipt and exit status.
+- Protected launch and independent cleanup remain unverified. PR #1050 remains draft and on hold.
+
+## 단계
+#1167(#678 후속): PowerShell 도구의 `Invoke-WebRequest -OutFile`·`Expand-Archive`·`Start-BitsTransfer`가 디스크 확인을 받지 않던 한계.
+
+## 한 일
+- `labhq/disk_space.py`: `powershell_check`를 더했다. `Invoke-WebRequest`·`Invoke-RestMethod`(`iwr`·`irm`·`curl`·`wget`)는 `-OutFile`(`-OutFile:값`, 이름의 모호하지 않은 앞부분 `-OutF`까지)의 부모 폴더, `Expand-Archive`는 `-DestinationPath`(위치 인자 둘째 포함)와 zip 목록의 비압축 크기, `Start-BitsTransfer`는 `-Destination`을 읽는다. 파이프라인으로 흐르는 `iwr`(파일 지정 없음), `$` 변수·부분식이 든 경로, 닫히지 않은 따옴표는 읽지 않는다.
+- PowerShell을 bash처럼 읽지 않도록 `_ps_commands` tokenizer를 따로 두었다(`\`는 경로 구분자, `'…'`는 문자 그대로(`''`는 따옴표), `"…"`는 백틱 이스케이프, `;` `|` `&&` `||` 줄바꿈이 명령을 끝내고 단어 앞 `#`은 주석, `Set-Location`이 이어지는 명령의 위치를 옮긴다).
+- 판정 공통부를 `_assess`와 `_worse`로 모아 `shell_check`와 `powershell_check`가 함께 쓴다. Bash 쪽 시험 54건은 그대로 통과한다.
+- `labhq/tools/approval_mcp.py`: 정책이 allow한 `PowerShell` 호출도 `_disk_decision`을 거친다(경고 로그의 `tool_name`도 실제 도구 이름).
+- `preapproves_bulk_write`: `PowerShell(Invoke-WebRequest *)`·`PowerShell(Expand-Archive *)`·`PowerShell(Start-BitsTransfer *)` 같은 사전 승인 규칙도 gate로 돌린다.
+- 시험(`tests/test_disk_shell_check_678.py`) 35건 추가: 단어 읽기, 닫히지 않은 따옴표, 다운로드 철자 여섯, 읽지 않는 경우 여섯, 알 수 없는 크기, `Expand-Archive`의 실제 크기와 철자 넷, `Start-BitsTransfer`, 체인·`Set-Location`, 읽을 수 없는 드라이브, gate 둘, 규칙 일곱.
+
+## 확인
+- Windows 89 passed(옛 코드에서는 새 시험 31건이 실패). `validate_profile` 통과(known_tests에 이미 있는 파일).
+- Linux(WSL 3.10): 84 passed, 5 errors. 오류는 WSL 환경에 `mcp` 모듈이 없어 gate fixture를 쓰는 시험(기존 3건 포함)이 시작하지 못한 것이다.
+
+## 하지 않은 것
+- `Copy-Item`·`Move-Item`·`robocopy` 같은 복사와 `Invoke-Expression`·`& $변수`는 읽지 않는다. 크기 추정은 zip 목록뿐이다.
+- 명령 도중 디스크가 차는 경우는 #1169의 감시가 맡는다.
+
+## manual (rev2)
+- manual 한·영의 `셸 다운로드·압축 해제 확인`(#678) 단락에 PowerShell 도구의 확인을 적었다. 읽는 cmdlet과 매개변수, PowerShell 문법으로 읽는다는 점, 읽지 않는 경우(파일로 가지 않는 `iwr`, `$` 변수 경로), 사전 승인 규칙을 gate로 돌리는 것.
+- "적용하지 못하는 곳"에서 PowerShell의 `Invoke-WebRequest`·`Expand-Archive`를 빼고(이제 적용), `Copy-Item`·`robocopy`·`Invoke-Expression`을 넣었다. "접두 규칙이 체인 전체를 미리 허용하는 경우" 항목은 Claude Code가 체인을 명령마다 나눠 검사한다는 #1163 결과에 맞춰 뺐다. main을 반영했고 문서 gate가 풀렸다.
+
+## 리뷰 후 수정 (rev3)
+- P1(`disk_space.py:563`): 출력 경로와 무관한 `$` 변수 때문에 명령 전체를 건너뛰던 것을, 쓰는 경로(`-OutFile`, `-DestinationPath`, `-Destination`)에 변수가 든 경우만 건너뛰게 바꿨다(`_unwritten`). zip 경로가 변수면 크기만 모르고 대상 드라이브는 그대로 검사한다.
+- P1(`disk_space.py:534`): `Expand-Archive`가 대상을 생략하면 현재 폴더로 보고 검사한다(전에는 건너뜀).
+- P2(`disk_space.py:538`): `Start-BitsTransfer`는 `-TransferType Upload`이거나 대상이 URL이면 로컬 폴더를 쓰지 않으므로 검사하지 않는다.
+- P1(patch note, manual): 지적은 manual을 더하기 전 head(`35b9ca9d`)에서 나온 것이고 이 head에는 한·영 manual에 PowerShell 설명이 들어 있다.
+- 시험 10건 추가(+기존 1건을 새 동작에 맞춤). `test_disk_shell_check_678.py` 99 passed, 옛 코드에서는 새 시험이 실패한다.
+
+## rev4: 인자 결합을 한 번에
+- 지적 네 건(Set-Location 이름 매개변수, BITS 옵션 값, module 한정 이름, 공통 매개변수 값)은 모두 "어느 단어가 매개변수 값인가"를 추측한 데서 나왔다.
+- cmdlet별 매개변수 표(`_PS_WEB`, `_PS_ARCHIVE`, `_PS_BITS`, `_PS_LOCATION`와 공통 매개변수·별칭)와 `_ps_bind`로 대체했다. 표에 없거나 모호한 이름이 끼면 위치 인자를 읽지 않고, 이름 붙은 값만 쓴다.
+- `Set-Location/Push-Location`은 `-Path`·`-LiteralPath`·위치 인자를 읽고, 읽을 수 없으면(Pop-Location, 변수, `-`, 모르는 옵션) 이후 명령을 건너뛴다.
+- 시험 23건을 먼저 추가해 수정 전 실패를 확인했다. `tests/test_disk_shell_check_678.py` 127 passed.
+- 확인하지 못한 것: PowerShell 실제 바인더와의 일치(표는 문서 기준 수작업이다), PowerShell 7 전용 매개변수 일부.
+
+## rev5: 모르는 단어와 배열
+- 리뷰 P1 두 건(표에 없는 유효한 BITS 옵션, destination 배열)은 표를 완성해도 다시 나올 부류라 읽는 방식을 바꿨다.
+- `_ps_bind`는 이제 가능한 모든 결합을 돌려준다. 표에 없거나 종류가 불확실한 매개변수(`None`)는 스위치와 값을 받는 경우를 둘 다 만들고, `_ps_write`는 읽기마다 쓰기를 만들어 `powershell_check`가 가장 나쁜 판정을 쓴다. 대상 드라이브가 실제로 기준 아래일 때만 묻는다.
+- 의심이 4번을 넘으면 위치 인자를 읽지 않는다(`partial`). destination이 없는 읽기는 현재 폴더로 보되 `partial`이면 건너뛴다.
+- `-Destination a,b`는 쉼표로 나눠 원소마다 폴더를 풀고 모든 드라이브를 검사한다. 변수가 든 원소가 있으면 전체를 읽지 않는다.
+- 시험을 먼저 쓰고 수정 전 실패를 확인했다. `tests/test_disk_shell_check_678.py` 138 passed. 전에는 `-Bogus x`를 "읽지 않음"으로 시험했는데 이제 "두 읽기 중 하나라도 부족하면 묻는다"로 바꿨다. 시험을 약하게 한 것이 아니라 정책을 바꾼 것이다.
+- 확인하지 못한 것: 실제 PowerShell 바인더와의 일치. 같은 부류가 또 나오면 고치지 않고 보고한다(총괄 지시).
+
+## rev6: 시험 이식성
+- rev5의 배열 destination 시험 세 건이 `bigdrive\x.zip`처럼 백슬래시를 써서 Linux에서는 하나의 파일 이름으로 읽혀 폴더 이름 기반 probe가 어긋났다(CI 3.10·3.12 실패). 슬래시로 바꿨다. 제품 코드 결함이 아니다.
+- 확인: Windows 138 passed. WSL Ubuntu-22.04에서 133 passed, 5 error(`mcp` 패키지가 없는 venv에서 gate 시험이 import하지 못함, 이 변경과 무관). 배열 시험 세 건은 통과.
+
+## rev7: 토큰화와 "모르면 후보를 검사"
+- 리뷰 P1 네 건: 백틱 줄 잇기, 쉼표 뒤 공백 배열, 드라이브 문자 `D:`, 스마트 따옴표. 모두 PowerShell 문법을 그대로 읽지 못해 검사가 비껴간 경우다.
+- 토큰화: 스마트 따옴표를 ASCII로 정규화하고, 백틱+줄바꿈은 단어를 끊고 이어 읽고, 쉼표 앞뒤 공백은 같은 단어(배열)로 합친다. `D:` 한 단어 명령은 위치 변경으로 본다.
+- 원칙(총괄 지시): 확실히 못 읽으면 대상을 모른다고 보고 건너뛰지 않는다. 변수·부분식 경로는 현재 폴더와 그 문자열이 이름 붙인 드라이브를, 읽을 수 없는 위치 변경 뒤에는 마지막으로 아는 폴더(와 명령 시작 폴더)를 후보로 검사한다. 판정은 후보 중 하나라도 기준 아래로 확실하면 묻는다.
+- 시험을 먼저 추가해 수정 전 실패 20건을 확인했다. 변수 경로·읽을 수 없는 위치를 "건너뜀"으로 고정하던 시험 다섯 건은 "현재 폴더를 검사"로 바꿨다(정책 변경이며 시험을 약하게 한 것이 아니다). Windows 150 passed, WSL 144 passed·1 skipped·5 error(`mcp` 없음).
+- 변경한 동작: 드라이브가 실제로 부족한 상태에서 변수 대상 다운로드가 묻게 된다(전에는 조용히 통과). 같은 부류가 또 나오면 고치지 않고 보고한다.
+
+## main 병합과 부류 수정 (rev12)
+- main(#1265 curl 출력 판정)을 합쳤다. `_assess`에 `mains`(출력이 여러 개인 curl의 대상 전부)를 더해 Bash·PowerShell이 한 공통부를 쓴다. manual 한·영은 PowerShell 설명과 로컬 job 설명을 함께 남겼다.
+- 열린 지적 6건 중 백틱 줄 연속·공백 있는 BITS 배열·드라이브 함수·smart quote는 이 head 이전 커밋에서 이미 처리돼 있어 시험으로 다시 확인했다. script block은 `{`·`(`를 단어 시작에서, `}`·`)`를 따옴표 밖에서 명령 경계로 읽어 닫았고, block comment `<# #>`는 통째로 건너뛴다.
+- 시험 7건 추가. `test_disk_shell_check_678.py` Windows 164 passed.
+
+# #606 단계 시작의 파일 시스템 작업을 event loop 밖으로
+
+- 결론: `Runner._run_task`가 단계를 시작할 때 loop thread에서 하던 파일 시스템 작업을 `asyncio.to_thread`로 옮겼다. 대상은 `TaskWorkspace`(작업 폴더 만들기)·`os.path.lexists`·`install_required_skills`(기본 skill 복사)·`resolve_private_paths` 3곳(`stage_inputs` 인자로 미리 평가되던 1곳 포함)·`_system_ca_env`(OS 인증서 저장소 읽기)와 채용 `Recruitment.run`의 build 폴더 만들기다. 호출 자리의 동작·순서는 그대로다.
+- 측정(mock lab 요청 1건, D:·`synchronous=FULL`, 3회): #1179 병합 직후 → 이번
+  - p99 loop 늦음 33–34 ms → 17–21 ms, 50 ms 넘은 횟수 13–15 → 5–8, 그 정지의 합 1.09–1.68 s → 0.38–0.98 s.
+  - 최대 정지 148–158 ms(이상치 417 ms) → 132 · 187 ms(이상치 417 ms). **최대 100 ms 밑 목표는 이번에도 못 맞췄다.** `install_skill`·`private_paths`·`mkdir`는 상위 정지 목록에서 사라졌다.
+- 남은 큰 정지: `server.py dispatch`의 `store.put`(#674 보장 때문에 의도적으로 그대로), `knowledge/recall.py`의 `_write`·`store.delete`(이 claim 밖), `rounds._git_commit`(자식 프로세스 대기, create_request).
+- 시험: `test_gateway_loop_lag_606.py`에 러너 단계 시작 시험 1개를 더했다(세 함수를 0.2 s씩 늦추고 loop 늦음 0.1 s 밑을 확인, 수정 전 0.632 s로 실패). 정적 시험 `test_recruit_inherited_budget_static`이 `build.mkdir(` 모양을 찾아서 `to_thread(lambda: build.mkdir(...))` 모양으로 유지했다. 관련 계열 1119 passed, 38 skipped.
+- 전체 시험: 13,065 passed, 3 failed. 그중 `test_annot`·`test_annot_regulatory` 2개는 main에서도 같은 실패(이 PR 무관), 나머지 1개(위 정적 시험)는 고쳤다.
+- manual: 한·영의 "result 수신의 나머지 저장·dispatch…sync 경계는 남습니다"를 실제에 맞췄다(#1179 P2).
+- 미검증: 실제 느린 디스크, runner·gateway loop를 나눈 측정, 이 PC D:가 빠른 디스크라는 점.
+- 리뷰 P1(Codex, head 0414915a): 느린 skill 복사 중 `task.cancel`이 오면 `to_thread` worker는 중단되지 않아, 취소 결과를 보낸 뒤에도 `install_required_skills`가 skill 폴더를 교체하고 같은 폴더를 쓰는 retry와 경합한다. 고침: `_settled_thread`가 취소를 받아도 worker가 끝날 때까지 기다린 뒤 전파한다(두 번째 취소가 와도 계속 기다림). 작업 폴더를 바꾸는 `TaskWorkspace` 2곳·`install_required_skills`·파일을 쓰는 `_system_ca_env`에 쓰고, 읽기만 하는 `lexists`·`resolve_private_paths`와 멱등한 채용 build `mkdir`는 plain `to_thread`로 둔다. 시험 2개(`test_a_cancel_waits_for_the_file_system_work_that_changes_the_workspace`)는 수정 전 실패.
+
+# #1076 종료 ack 시험의 shutdown 한도 5초
+
+- 결론: `test_shutdown_commits_the_acks_it_already_received`의 `shutdown(timeout_s=...)`를 0.05초(#1181 전) → 0.5초(#1181) → 5.0초(제품 기본값)로 올렸다. 단언(이미 받은 ack를 종료 전에 commit한다)과 제품 코드는 그대로다.
+- 관측: 0.05초와 0.5초 모두 Windows 러너에서 `[1,2,3,4,5] == [5]`로 실패했다(#1180 attempt 2, #1182 attempt 1). 두 번 다 로그에 `runner local: an ack commit is still running; its rows stay in the outbox`가 있어, ack commit 하나가 shutdown의 drain 한도 안에 끝나지 않았다. 재실행에서는 통과했다.
+- 원인: **첫 commit이 한 번 느렸던 것으로 추정하며 재지 않았다.** 이 시험은 task가 없어 `finish()`가 마감을 먼저 쓰는 경로가 아니다(`finish()`가 바로 반환하고 drain이 거의 전체 한도를 받는다). `_ack_flush`의 대기(`ACK_MERGE_S`)는 drain이 `hurry`를 세워 건너뛰므로 원인이 아니라고 코드로 확인했으나 실행으로 확인하지는 않았다.
+- 시험: `-k shutdown` 3건 통과.
+- 미검증: Windows CI에서의 안정성(이 PR이 첫 확인), 첫 commit 지연의 실제 시간. 다시 실패하면 `_ack_flush` 첫 commit 시간을 러너에서 재는 진단이 필요하다.
+
+# #910 ② 7차: 새 설치판 KRAS 연구 1건 (`req_3643a6a43e`)
+
+- 결론: 요청은 `done`(약 70분, $15.24, 상한 $40). 결과 저장(#792)은 `failed`였고 원인은 #1193에서 가렸다. 상세 보고는 [#910 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/910#issuecomment-6542562637).
+- 설치판·설정: labhq `0e513be1883e`(오늘 main, #1185까지), 설정 sha256 `acd3035e741279d820c4362e04826e838f6db3fa760c8c3fbc94739efd1ce825`. 6차 대비 차이 7줄: 조회 상한 60→9, `request_wall_clock_s` 5400, `model_tiers` 4줄, 빈 `result_storage.authors`.
+- 계획: 5단계(S1 data_steward → S2 analyst → S3 biologist → S4 qc_reviewer → S5 analyst), 새 조회 0회·논문 스킬 0편. 조회 9회는 CP1 전 사전 단계에서 소진됐다.
+- 확인표: 확인 — #1088 사용량 사실, #1089, #1090, #625 불일치 경고 5건, #877의 `wall_clock` 기록. 미확인 — #877의 "한도에 닿으면 취소+영수증", P2A 논문 스킬, 새 공개 조회 계수. 해당 없음 — #1099(solo 요청 아님).
+- 카드: 도구 카드 약 20건 모두 허용(거절 0, 규칙 밖 0). clarify에는 "추가 9회"가 요청문 상한을 넘어 b)로 답했다. CP1 승인, CP2 `approve`, CP4 `review-done --storage github`.
+- 리뷰: Sol `accept`, P2 6건·P3 1건(P1 0).
+- 실수: 감시기에 시한을 절대 epoch가 아닌 "90"으로 넘겨 첫 요청 `req_7ef10da703`을 6초 만에 취소했다(비용 0). 같은 설정·문안으로 다시 보낸 것이 7차다. 첫 요청은 `review-done`으로 닫았다.
+- 저장 실패 원인(#1193): `PROGRESS.md`가 리뷰 JSON을 평문으로 실어, Sol 리뷰어의 `evidence_quote`에 든 `![그래픽 초록](../graphical_abstract.svg)`가 `run/progress.md`의 실제 링크로 읽혔고 정리본 링크 검사가 저장 전체를 거부했다. 편집자(LLM) 출력이 아니라 결정적 코드(`draft_documents`)가 만든 문서다.
+- 미해결: 이 수정을 병합한 뒤 7차 결과를 다시 저장한다(재편집 여부는 원인상 불필요로 보지만 병합 뒤 정한다). 8차 여부는 PI에게 묻는다. 증거는 `D:\.labhq\dev\tmp\claude-worker2\step2\attempt7-preserved\`.
+
+# #678 디스크 감시·halt 안내 P2 두 건
+
+- 결론: (1) #1169의 P2 — 읽기 전용 task도 `runner.bulk_data_root`를 감시해, 쓸 수 없는 드라이브가 기준 아래면 불필요하게 halt될 수 있었다. `_start_disk_watch(..., read_only=)`가 읽기 전용이면 bulk 폴더를 빼고(작업 폴더·state 폴더는 계속 본다) 호출부가 `read_only`를 넘긴다. (2) #1175의 P2 — `halt_watch`가 "프로세스 트리를 끝냈습니다" 안내를 먼저 쓴 뒤 결과 확인을 다시 해서, 완료가 이기면 안내와 최종 상태가 어긋났다. 안내를 `await` 앞이 아니라 kill 뒤로 옮기고, 확인과 표시(`halted`)와 kill 사이에 `await`가 없게 했다. 완료가 먼저면 halt하지도 안내하지도 않는다.
+- 부수 효과: #1174 H1의 경합 창(안내 emit)이 구조적으로 사라졌다. 그 경합 시험(안내 emit 중 결과 도착)은 상황 자체가 없어져 "결과 이벤트를 처리하는 중이거나 이미 처리한 뒤의 halt는 결과를 유지하고 kill을 주장하지 않는다" 시험(Claude·Gemini)으로 바꿨다.
+- 바꾼 것: `labhq/runner/daemon.py`, `labhq/adapters/base.py`, `tests/test_disk_watch_678.py`(+1: 읽기 전용은 bulk 제외), `tests/test_halt_watch_1174.py`(경합 시험 교체, 결과 뒤 halt 시험 2건·halt가 실행 중이면 여전히 멈춤).
+- 시험: 감시·halt·어댑터 fake CLI·halt 재개 e2e 27건 통과.
+- 미검증: Windows CI, 실제 엔진.
+
+# #612 2단계 — 요청에 "이 PC의 WSL" 선택(#578 없이)
+
+- 결론: `RequestIn.run_where: Literal["auto","wsl"] = "auto"`를 더했다. `labhq send --wsl`과 웹 요청 폼의 "WSL에서" 체크가 채우고, 요청 기록·재개·후속·CP1 수정 요청에 이어진다. `wsl`이면 `_start_request`가 계획이 roster를 읽기 전에 `prepare_wsl_request`를 부른다. 이것은 `offer_wsl_setup`(#1038)과 같은 점검·카드를 요청 단위로 한 번 열고, 승인되면 셋업 뒤 runner가 붙기를 기다린다. 거절·시간 초과·실패·다른 PC(`blocked`)면 요청을 막지 않고 WSL 없이 진행하며 `requests[rid]["run_where_note"]`에 이유를 남긴다. CSO 계획 입력(`format_capabilities`)에는 `wsl`일 때만 "PI가 이 PC의 WSL에서 실행하라고 골랐다" 한 줄이 붙는다.
+- 배경: [#612 점검](https://github.com/ehojune/bioinfo-team-3d/issues/612#issuecomment-6541542363) — 자동 계획은 준비 전 WSL runner의 bioinfo-agent가 roster에 없어 셋업 카드에 닿지 못한다. #578은 draft에 856커밋 뒤라 의존하지 않는다.
+- 바꾼 것: `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `labhq/cli.py`, `labhq/web/index.html`, `tests/test_wsl_setup_card_612.py`(+8건). 웹 코드는 `#wsl-only`가 없는 DOM(다른 node 시험의 stub)에서도 `auto`로 읽는다. `pi_text.py`는 기존 `wsl_setup` 문구를 그대로 써서 바꾸지 않았다.
+- 시험: 신규 8건은 구현 전 전부 실패했고 지금 통과. WSL 관련·CLI·e2e·idempotency 시험 포함 110건과 웹 node 5건 통과.
+- 미검증: 셋업 뒤 WSL runner가 붙기까지의 실제 시간, 실제 WSL에서 gateway가 `setup`을 도는 시험, 웹 폼의 실제 모양(브라우저), manual 한·영(차례를 기다림).
+
+## rev9 — 요청별 runner 선택 (#1204 설계를 이 PR 안에서)
+
+- 결론: native에 끝나지 않은 `bioinfo-agent` 작업이 있어도 WSL을 고른 요청이 WSL runner를 바로 얻는다. 핀은 `meta.wsl_pin`으로 표시하고, 핀이 걸린 task는 `dispatch`·재전송·복구(`_await_prior_task`)·기다림(`wait_agent_online`)에서 `agent_runner` 대신 핀이 가리키는 runner(연결·WSL ready·roster에 직원 있음)로만 간다. 그 runner가 끊기면 native로 가지 않고 기다린다. `effective_roster`는 핀 행을 owner 결정에 쓰지 않는다.
+- 바꾼 것: `labhq/gateway/server.py`(모듈 함수 `_wsl_pin`·`_target_runner`·`_runner_ready_for`·`_wsl_runner_ready`·`_pin_kwargs`, `effective_roster(hosts=True)`, `register_runner`의 이전 generation 정리, `wait_session_free`·`adopt_consult`의 holder runner), `tests/test_runner_pin_1204.py`(9건), `tests/test_wsl_setup_card_612.py`(runner 등록 대역), 인벤토리, manual 한·영.
+- 시험: 새 9건 중 8건은 옛 코드에서 실패(자동 요청 1건은 회귀 확인용), 지금 전부 통과. dispatch·roster·세션·WSL 관련 시험 47개 파일 1746건과 CI 인벤토리 시험 통과.
+- 미검증: 실제 WSL runner 두 개 이상 환경, 같은 직원을 두 runner가 동시에 돌릴 때의 workdir 충돌(핀 task의 workdir는 runner 로컬이라 시험으로 고정하지 않음).
+
+## rev10 — 핀을 요청 단위 helper 하나로 (sweep)
+
+- 결론: 리뷰 P1 두 건(계획 capability, 첫 runner 대기)은 같은 부류라 하나씩 막지 않고, 요청에 대해 runner·roster·capability를 고르는 곳을 모두 찾아 `request_runner`·`request_agents`·`_request_ready`(server)와 `hub_runner`·`hub_agents`(cso) 한 갈래로 모았다. sweep 목록과 시험은 PR 본문.
+- 미검증: 실제 WSL runner 둘 이상 환경.
+
+## rev11 — 핀은 요청이 고른 것
+
+- 결론: 계획 view와 runner 선택이 WSL runner의 현재 연결에 기대던 조건을 뺐다. 핀은 연결 여부와 무관하게 요청이 고른 WSL runner이고, 연결은 보낼 수 있는지(_runner_ready_for)만 정한다. 정의는 server.py 해당 helper 블록 맨 앞 주석, 시험 test_a_pin_is_what_the_request_chose_*.
+
+# #1076 종료 ack 시험의 shutdown 한도
+
+- 결론: `tests/test_state.py::test_shutdown_commits_the_acks_it_already_received`가 `shutdown(timeout_s=0.05)` 안에 ack commit(fsync 포함)이 끝나야 해서, Windows 러너에서 commit이 36~67 ms 걸리면 한도에 닿아 `[1,2,3,4,5] == [5]`로 실패했다(#1180 attempt 2). 한도를 0.5 s로 올렸다. 단언(이미 받은 ack를 종료 전에 commit한다)은 그대로다. 제품 코드는 바꾸지 않았다.
+- 같은 부류로 확인한 것: `test_shutdown_stays_inside_its_deadline_when_an_ack_commit_hangs`는 0.2 s 한도와 `<1.5 s`로 상한을 보는 시험이라 더 느린 commit에 영향이 없다.
+- 시험: `-k shutdown` 통과.
+- 미검증: Windows CI에서의 안정성(이 PR의 CI가 첫 확인).
+
+# #625 fixed-step fixture and mock cost admission
+
+- Two isolated mock arms resume the same saved analyst plan and use identical public input/rubric.
+- New required control reserves both whole-arm bounds before dispatch. Integer settled plus outstanding amounts cannot exceed the limit under the tested interleavings. Unknown/stale/unverified inputs reject; timeout/cancel retains reservations; final receipts settle once. Conflicting receipts block dispatch.
+- Validation: missing control previously reached forbidden dispatch; 25 initial new tests failed before implementation. Final `python -m pytest tests/test_bench.py -q`: 110 passed (33 new cases). Final-head CI/review evidence belongs in PR #1188.
+- [Invocation and limitations](../reference/model-tier-bench-625/README.md): single in-memory mock instance only; no provider cap, restart recovery, paid calls or measured model comparison. Live disabled; draft/hold; no merge.
+- Revision 16: both manuals construct the mock control and pass `cost_control`/`worst_case_units`; they require one shared instance across pairs/retries and distinguish mock admission from provider enforcement.
+- Manual validation: 3 offline checks passed (both extracted Python examples completed both arms; blocks equal the reference). Each retained 10 outstanding units and settled 0. Public and diff checks passed. LF-normalized characters: Korean 217,292 → 217,699; English 384,495 → 385,004. Final-head CI/review tracking remains in PR #1188.
+
+# #621 Atlas 조회와 runner credential 경계
+
+- rev20: main의 CoS 문헌 allowlist를 보존하고 Atlas 등록·broker grant에도 적용했습니다. 통합 전 회귀 6 failed, 수정 후 Atlas·문헌·대기 시험 213 passed·1 skipped. 최초 Windows timeout 원인은 미확정이며 최종 head CI·리뷰 뒤 승인 병합합니다.
+- rev18 진단: child slot·admission·HTTP 생성/송수신, parent ASGI·query 시각을 기록합니다. [진단 head CI](https://github.com/ehojune/bioinfo-team-3d/actions/runs/41208827109)는 Windows 4,398 passed·42 skipped, Linux 두 버전 PASS. patch-note 누락은 보완했습니다. 제품 수정은 없으며 최초 정체 원인은 미확정입니다.
+- 계측 없는 원래 경로와 진단 경로를 모두 20초 안에 검사합니다. 로컬 취소·deadline·출력 보존·실제 child 6 passed. CI plugin 4-worker Atlas 141 passed·1 skipped, 전체 수집 후 문제 시험 1 passed. 최종 CI·실제 리뷰 전까지 hold 유지.
+- GRCh38 SNV 최대 10개, scorer·ontology·gene 필터, raw/quantile·metadata, 출처·사용 조건·일 단위 cache를 제공합니다. 자동 inference 전환은 없습니다.
+- 키는 runner backend에만 전달합니다. engine/task mapping의 연쇄·순환 별칭을 직원 환경·launch override·설정 사본에서 검사합니다. task token·조회 상한·deny·deadline과 종료 시 정리를 적용합니다.
+- rev17: main 충돌을 풀어 MCP·Atlas doctor 검사를 모두 보존했습니다. 각 행이 한 번씩 나오는 회귀와 `mcp>=2.0`·`alphagenome>=0.10.0` 하한을 확인했습니다.
+- doctor가 미해결 환경변수 참조를 실제 키로 보던 P2를 수정했습니다. runner·engine의 세 가지 참조 문법에서 6 failed를 재현했고, 수정 후 Atlas·doctor **212 passed, 1 skipped**. 공개 저장소 검사 통과. 최종 head CI·실제 리뷰 P1=0 확인 뒤 hold 해제·승인된 병합을 진행합니다.
+- rev16의 20초 MCP 자식 제한·단계별 시각·timeout 출력 보존은 유지합니다. 최초 Windows CI 지연 원인은 미확정입니다. 이전 wheel/SDK mock 검증은 [reference](../reference/alphagenome-atlas-621.md)에 있습니다.
+- 남은 P2: [credential별 cache 분리](https://github.com/ehojune/bioinfo-team-3d/pull/1186#issuecomment-6543891313), [nullable ontology metadata](https://github.com/ehojune/bioinfo-team-3d/pull/1186#discussion_r4431872382). 후자는 rev17 밖 제품 파일의 소유 범위 판단이 필요합니다.
+- **UNVERIFIED: 실제 Atlas 조회·설치 Codex sandbox shell. PI 키 위치 답 대기.** 실제 provider·키 탐색·연구/HPC·배포 실행은 없으며 #621은 닫지 않습니다.
+
+# #674 Codex·Gemini 소비 단계에도 검증된 환경 전달
+
+- 결론: 검증을 통과한 환경(`validate_runner_env`)을 `ENVIRONMENT_ENGINES = {claude_code, codex, gemini}` 소비 단계가 받는다. 세 엔진 모두 env `LABHQ_ENV_PYTHON`(검증된 interpreter 절대 경로)·`PYTHONDONTWRITEBYTECODE=1`과 브리핑 `[Runner environment]` 단락을 받고, 읽기 전용 root(`read_dirs`)는 기존대로 Claude만 더 연다(`ENVIRONMENT_GRANT_ENGINES`). antigravity·cli·mock·알 수 없는 agent는 기존 거부를 유지한다.
+- 근거: [#1178 결과](https://github.com/ehojune/bioinfo-team-3d/issues/1178#issuecomment-6540356076) — Windows `codex sandbox`는 작업 폴더 밖 읽기를 허용하고 쓰기만 막는다(grant 불필요). Gemini는 읽기 전용 grant를 표현할 수 없다. [총괄 결정](https://github.com/ehojune/bioinfo-team-3d/issues/674#issuecomment-6540361713).
+- 그대로인 것: `.venv` 아래 통제 구역 링크 검사·목록 미완료 거부·UNC(쓰기 거부 규칙을 못 만드는 경로) 거부·읽기 전용 소비 단계 거부·검증 실패 시 grant 제거는 세 엔진에 똑같이 적용된다.
+- 바꾼 것: `labhq/runner/daemon.py`, `tests/test_environment_grant_674.py`(+4건: Codex·Gemini가 경로만 받음, 두 엔진에도 fail-closed 검사 적용, cli는 거부). `step_inputs.py`는 바꾸지 않았다.
+- 시험: 신규 4건 포함 환경·입력·e2e 관련 101건 통과.
+- 미검증: WSL·Linux의 Codex sandbox가 작업 폴더 밖 읽기를 허용하는지(#1178은 Windows만 실측), Codex·Gemini가 실제로 그 interpreter를 실행하는지, manual 한·영(차례를 기다림).
+
+# #606 event loop 위의 동기 store 쓰기 줄이기
+
+- 결론: runner 메시지 처리(`task.accepted`, `task.result`)의 `store.put/delete`를 `await aput/adelete`로, PI 번역 예약(`PiInterpreter.schedule`)은 task 안에서 `aput`한 뒤 번역을 시작하도록 바꿨다. loop가 SQLite commit의 fsync를 기다리며 멈추던 시간이 줄었다.
+- 측정(mock lab 요청 1건, D:·`synchronous=FULL`, 3회): 수정 전 → 후
+  - `durable.call`의 동기 대기 표본 70·83·81(×10 ms) → 11–14(남은 것은 모두 `server.py dispatch`).
+  - p99 loop 늦음 54–58 ms → 33–34 ms, 50 ms 넘은 횟수 22–27 → 13–15, 그 정지의 합 1.8–2.05 s → 1.09–1.68 s.
+  - 최대 정지 150–265 ms → 148–158 ms(한 번 417 ms: `workspace.py __init__`의 `mkdir`). **목표인 100 ms 밑에는 못 들어갔다.**
+- 남은 정지의 출처: `dispatch`의 `store.put`(아래), `workspace.install_skill`의 `copy2`, `private_paths`의 `realpath`, `workspace.__init__`의 `mkdir`, `recall._write`.
+- `dispatch`를 바꾸지 않은 이유: 두 번째 `_session_pin_refusal`과 task 기록이 await 없는 한 구간이라(#674: 판단한 binding이 실제 전달되는 binding이어야 함) `await aput`을 넣으면 그 보장이 깨진다. 바꾸려면 await 뒤에 다시 판정하고 되돌리는 구조가 필요하다.
+- 시험: 새 `tests/test_gateway_loop_lag_606.py` 2개(수정 전 실패, loop가 0.597 s 늦음 / `aschedule` 없음 → 설계 변경 뒤 통과). gateway·store·runner·semantics 계열 1649 passed, 20 skipped.
+- 미검증: 실제 느린 디스크, runner·gateway loop를 나눈 측정, 이 PC D:가 빠른 디스크라는 점.
+- 인벤토리: 새 시험을 `config/ci/windows-boundary-v1.json`의 `known_tests`에 등록했다(`test_ci_boundary_preview`·`test_ci_cohort823`·`test_ci_skip_policy` 378 passed).
+- 후속: 남은 정지의 출처(`install_skill`·`private_paths`·`mkdir`)를 `to_thread`로 옮기는 일은 이 PR 병합 뒤 따로 claim한다.
+- CI 멈춤: 첫 head(2ccb2ad)에서 `test_task_cancel_durable_606::test_result_race_leaves_no_cancel_intent[True]`가 끝나지 않아 pytest가 25분·Windows 13분 상한에 걸렸다. 이 시험이 `hub.store.aput` 전체를 release까지 대기시켜서, 이번 PR로 같은 `aput`을 쓰게 된 `task.result` 처리가 그 대기에 걸렸다. `delayed_put`이 `task_cancel` 쓰기만 지연하게 고쳤다(경합 단언은 그대로, 3줄). 그 파일 9개와 관련 계열 626 passed.
+- CI 기록: head 46ce28f에서 `pytest (3.12)`가 `test_semantics_actions_shadow::test_an_asked_and_ended_followup_is_observed_once_each_and_changes_nothing` 한 건으로 실패했다(`[(asked, None)] == [(asked, None), (ended, failed)]`). #1155의 3.12 CI에서도 같은 단언이 실패했다가 통과한 간헐 실패로, 이 PR이 닿지 않는 경로다. 재실행 권한이 없어 기록 커밋으로 CI를 다시 돌렸다. 3.10·Windows는 통과.
+
+# #1174 H1 멈춤 요청과 정상 종료가 겹칠 때
+
+- 결론: `adapters/base.py::halt_watch`가 결과를 `halted`로 표시한 뒤 `agent.log` emit(durable commit이라 양보함)을 기다렸다. 그 사이 CLI가 스스로 끝나 결과가 도착하면 완료된 실행이 `ok=False`·`error="halted by the PI"`로 보고됐다. 표시를 emit 뒤로 옮기고, 표시 직전 `proc.returncode`·`result_arrived`를 다시 본다(그 확인과 `_kill` 사이에 `await`가 없다). 디스크 감시(#1169)가 아무 때나 halt를 걸어 노출이 커졌다.
+- 재현: 가짜 claude CLI가 init 뒤 0.4 s에 결과를 내고 끝나고, 시험의 emit이 멈춤 안내에서 1.5 s 양보하면 수정 전 `result.ok=False`(text는 `done`, error `halted by the PI`)였다.
+- 바꾼 것: `labhq/adapters/base.py`, `tests/test_halt_watch_1174.py`(2건: 위 경우는 결과 유지, CLI가 아직 돌면 여전히 멈추고 세션 id 보존), `config/ci/windows-boundary-v1.json`.
+- 시험: 신규 2건과 어댑터·halt·staff control 관련 79건 통과.
+- 미검증: 실제 엔진에서의 발생 빈도, Windows CI. 낮음 2건(L1 `_wake_finished_jobs`, L2 tombstone 정리)은 범위 밖.
+
+# #1170 후속: 늦은 step 재개·해제 이벤트도 끝난 요청에서 거절
+
+- 결론: `request.step_resumed`·`request.step_quota_resumed`·`request.step_login_resumed`를 입구 규칙 목록(`PIPELINE_STARTS`)에 넣었다. 끝난 요청(review_pending 포함)의 완료된 step을 다시 working·pending으로 되돌리지 못한다. PR #1171 리뷰 P2.
+- 바뀐 것: `labhq/web/state.js`(목록 3개), `tests/web_stale_events_1170.cjs`(6개: 5개 종료 상태 + 진행 중 요청에서 정상 동작 유지).
+- 실행: 새 시험은 수정 전 5개 실패, 수정 후 통과. `web_stale_events_1170` 26개, `test_web_3d`·`test_web` 107 passed, 1 skipped.
+- 미해결/미검증: `request.step_halt_expired`는 같은 handler를 쓰지만 step을 working으로 만들지 않고(halted일 때만 error로) 이번 지시 범위 밖이라 그대로 둔다. Argon P2(a52bc03 기준)는 같은 건인지 확인하지 못했다. 실제 브라우저 재연결은 못 봄.
+- manual 한·영 웹 사무실 절에 "끝난 요청과 늦게 온 이벤트" 한 항목을 넣었다(문서 gate).
+- Argon P2(늦은 `request.review` revise가 `q.steps`를 `revise`로 바꿈, a52bc03 기준)는 #1171 병합본의 입구 규칙에 `request.review`가 이미 있어 막혀 있다. 코드 변경 없이 종료 상태 5개 × issues 있는 입력 시험을 더해 고정했다(수정 전 실패 확인은 불가: 이미 막힌 경로).
+- 시험: `web_stale_events_1170` 32개 통과, `test_web_3d`·`test_web` 107 passed.
+
+# #1170 웹 reducer: 중복·늦은 이벤트가 끝난 요청·카드를 되살리지 않게
+
+- 결론: reducer(`state.js apply`)가 `S.lastSeq`로 같은·옛 seq를 무시하고, 끝난 요청(done·failed·cancelled·rejected)은 늦은 `task.dispatched`·파이프라인 task의 `agent.status`·`request.review`로 phase·step·직원 행이 바뀌지 않는다. 2.5D `open()`은 이전 socket을 먼저 닫는다.
+- 바뀐 것: `labhq/web/state.js`(가드), `labhq/web/index.html`(socket 닫기 한 줄), 새 `tests/web_stale_events_1170.cjs`(20개), `tests/web_environment.cjs`(입력 seq만).
+- 설계: `apply()` 입구의 규칙 한 곳(`endedRequestRefuses`): 끝난 요청(`isTerminalRequest`, review_pending 포함: 그동안 직원이 돌지 않는다)은 일을 시작하거나 붙잡는 이벤트(pipeline task의 `task.dispatched`, 일을 시작하는 `agent.status`, `request.review`·`plan`·`route`·`questions`·`resumed`, step 시작·대기)를 받지 않는다. 일을 끝내는 이벤트(`step_done`, done/idle 상태), follow-up turn, usage, 카드, 종료·검토·저장 이벤트는 그대로 적용한다. 거절한 dispatch는 task 종류만 남겨 뒤따르는 status를 알아본다. 규칙은 스냅샷 재생에도 적용한다(재생 중에도 요청 상태가 순서대로 쌓인다). 끝난 요청 뒤에 시작할 수 있는 task kind는 명시한 `followup` 하나뿐이다(목록에 없는 kind와 종류를 모르는 task는 거절). 스냅샷의 `running_tasks`·`staff_tasks` 복원에도 같은 판정(`staleTask`)을 쓴다. gateway의 `staff_tasks` follow-up 행은 `step_id: 'followup'`에 kind가 없어 그 모양도 follow-up으로 알아보고 `taskKind`에 복원한다. 스냅샷은 replay 전에 `d.requests`의 상태를 요청 행에 먼저 심어, 재생 창보다 오래된 완료도 입구 규칙에 쓰인다. seq 없는 이벤트(demo)는 seq 가드를 우회한다.
+- `web_environment.cjs`: 입력 seq가 1,2,2,3으로 겹쳤고 서버는 이벤트마다 seq를 하나씩 붙이므로 시험 입력의 오류다. 입력 seq를 4~9로 바꿨고 단언은 그대로다.
+- 실행: 새 시험은 수정 전 7개 실패, 수정 후 통과. `test_web_3d`·`test_web` 107 passed, 1 skipped.
+- 미해결/미검증: 두 페이지의 `lastSeq` 복사본은 `test_web.py`·`web_cards_status.cjs`가 문구를 고정해 그대로 둠(reducer 가드가 있어 동작은 안전). 실제 브라우저 재연결, 3D 렌더러의 표시는 못 봄. 서버가 종료 뒤 늦은 이벤트를 실제로 내보내는 빈도는 못 쟀음(#1148·#1168 범위).
+- CI 기록: 첫 head(01de761)에서 `pytest (3.10)`이 `test_patch_notes::test_merge_resolution_requires_note_only_for_own_code_change`의 CPython 내부 `SystemError: tupleobject.c:964` 한 건으로 실패했다(이 PR은 Python 코드를 바꾸지 않음). 재실행 권한이 없어(사용자·봇 신원 모두 거절) 기록 커밋으로 CI를 다시 돌렸다.
+
+# #674 검증된 runner 환경의 읽기 grant(B안, Claude 한정)
+
+- 결론: 환경 단계가 만든 `.venv`가 `validate_runner_env` 검증(runner 기록·manifest hash·pinned binding·interpreter 링크 대상)을 통과하면, 소비 단계의 agent가 Claude일 때 `_environment_refusal_reason`이 거부하지 않고 검증된 (venv, python) 경로를 `self._env_grants[task.id]`에 남긴다. `_run_task`가 이를 `_apply_environment_grants`로 `read_dirs`(읽기 전용, Claude가 Edit/Write 거부 규칙을 붙임)에 더하고 env `LABHQ_ENV_PYTHON`·`PYTHONDONTWRITEBYTECODE=1`, 브리핑 `[Runner environment]` 한 단락을 더한다. 검증이 한 번이라도 실패하면 이전 grant도 지운다. 읽기 전용 task는 grant를 받지 않는다.
+- 그 밖의 엔진(Codex·Gemini·cli·알 수 없는 agent)은 `read_dirs`를 받지 않아 기존 "protected interpreter alias is not implemented" 거부를 유지한다. `ENVIRONMENT_ALIAS_AVAILABLE`은 False 그대로다(미래의 별칭이 모든 엔진을 여는 용도). 새 상수 `ENVIRONMENT_GRANT_ENGINES = {claude_code}`.
+- 결정: [#674 결정 메모](https://github.com/ehojune/bioinfo-team-3d/issues/674#issuecomment-6539968861)와 총괄 결정(B안, Claude 한정).
+- 바꾼 것: `labhq/runner/daemon.py`, `tests/test_environment_grant_674.py`(7건), `config/ci/windows-boundary-v1.json`. `step_inputs.py`는 `validate_runner_env`가 이미 venv 경로를 돌려줘 바꾸지 않았다.
+- 시험: 신규 7건(Claude 허용, 타 엔진 거부, 검증 실패 시 grant 제거, binding 없음, read_dirs·env·브리핑, 읽기 전용 제외, 플래그 동작)은 구현 전 4건이 실패했고 지금 통과. 환경·입력·예약 기록 관련 기존 시험 포함 314건 통과.
+- 미검증: 실제 Windows·WSL에서 Claude가 grant된 venv의 interpreter를 실행하는지와 승인 카드가 뜨는지(mock만), 실제 ② 시운전, Codex 소비 단계, manual 한·영(차례를 기다림).
+
+## 단계
+#1168: helper를 거치는 경로에서 `await` 뒤 낡은 상태로 쓰는 지점. 근거: [#1168 점검 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1168#issuecomment-6538696689).
+
+## 한 일 (시험을 먼저 쓰고 수정 전 13건 실패를 확인한 뒤 고쳤다)
+- `Hub._set_status`: 되살리는 값(활성 상태)은 요청이 `cancelled`이거나 `cancelling`이면 쓰지 않고 돌아온다. `interrupted`·`failed`는 그대로 통과한다. 다른 터미널 상태(`done`·`failed`)는 막지 않는다. 모델 거절은 `failed` 요청을 같은 id로 `waiting_for_runner`로 되돌려 재시도하기 때문이다(시험으로 고정).
+- `Hub.resume_when_ready`: 루프 맨 앞과 `await aresume_agents` 뒤, 두 곳에서 `_ended_by_cancel`을 본다. `track_request`로 감싸이지 않은 호출(복구된 카드의 만료 타이머)은 취소가 task를 멈추지 못한다.
+- `Orchestrator.run_request`의 `except Exception`: 취소됐거나 취소 중이면 `failed` 기록과 `request.failed`를 만들지 않는다. 취소 쪽 터미널 기록과 충돌한다.
+- 시험은 기존 `tests/test_request_lifecycle.py`에 넣었다(인벤토리 claim 밖): `_set_status`가 cancelled/cancelling을 되살리지 않음, 막지 말아야 할 것(failed 재개, failed·interrupted 쓰기, 활성끼리 이동), 직접 호출한 resume이 기다리는 사이의 취소, 취소 뒤 단계 오류.
+
+## 확인
+- `test_request_lifecycle.py` 65 passed. 취소·재개·모델 거절·quota·재시작·facilities 계열은 아래 결과(PR 본문).
+
+## 하지 않은 것
+- `daemon.py`(runner) 쪽의 같은 부류와 helper 밖의 직접 쓰기는 보지 않았다.
+- 복구된 facilities 타이머가 취소 때 이미 멈추는지는 확인하지 않았다. 이번 수정은 그 경우에도 안전하다.
+
+## 후속 (같은 PR)
+- `_ended_by_cancel`을 메서드로 두었더니 `test_resume_receipt_clock`(가짜 hub에 `Hub.resume_when_ready`만 붙임) 3건이 `AttributeError`로 죽었다(main에서는 통과). 모듈 함수로 옮겼다.
+- 취소·재개·모델 거절·quota·재시작·facilities·interrupt 계열 1549 passed, 18 skipped(0 failed). `test_request_lifecycle.py` 65 passed 포함.
+
+## 리뷰 후 수정 (rev3)
+- P1(`server.py:2120`): 첫 조회 뒤 한 번만 확인해서, `_set_status("running")`의 저장·두 번째 `aresume_agents`·`request.resumed` 발행 중에 취소가 끼면 `run_request`가 취소된 요청에 시작될 수 있었다.
+- `_set_status`는 건너뛰면 `False`를 돌려주고(저장 뒤 취소도 포함, 그때는 `request.status`도 보내지 않는다), `resume_when_ready`는 `is False`일 때 돌아온다(가짜 hub가 `None`을 돌려주는 기존 시험은 그대로 통과). 두 번째 조회와 `request.resumed` 발행 뒤에도 `_ended_by_cancel`을 본다.
+- 시험 3건(`status_save`, `second_agents_lookup`, `resumed_event`): 수정 전 3건 실패, 수정 후 통과. 취소·재개·모델 거절·quota·재시작·facilities·interrupt 계열 1552 passed.
+
+# #678 task 도중 디스크 감시
+
+- 결론: runner가 task를 실제로 돌리는 동안(`working` 이후) `runner.disk_watch_s`(기본 30 s, 0이면 끔)마다 작업 폴더·runner 상태 폴더·`runner.bulk_data_root`·직원이 쓸 수 있는 project 폴더의 드라이브 여유를 읽고, 하나라도 `runner.disk_fail_free_gb`(2 GiB) 미만이면 그 task를 한 번만 halt한다. 세션은 보존되고 gateway의 기존 `멈춤 · 재개 가능` 흐름이 PI에게 묻는다. 재개 turn은 새 task 시작이라 `_disk_gate`를 다시 거친다.
+- 재사용: 멈추기는 `Controls.apply(halt)` → `adapters/base.py::halt_watch`(모든 엔진 공통), gateway는 `agent.breaker`의 `enforcement: "halt"` 기록으로 기존 경로를 탄다(`episode` 없음: 폭주 차단기 해제 흐름과 섞이지 않음). 폭주 차단기의 `breaker_hard_stop`과는 독립이며 `runner.disk_watch_halt: false`면 경고 기록만 남긴다.
+- 바꾼 것: `labhq/runner/daemon.py`(`_start_disk_watch`·`_disk_watch`, `_run_guarded`에서 정리), `labhq/settings.py`, `labhq/runner/breaker.py`(`stage_text`의 disk 문구), 예시 설정 두 사본, `tests/test_disk_watch_678.py`(9건), `config/ci/windows-boundary-v1.json`.
+- 시험: 한 번만 halt·이벤트 셋·`episode` 없음, 여유 충분하면 무반응, 여러 드라이브 중 낮은 쪽 이름, 읽기 실패 건너뜀, `disk_watch_halt=false`는 경고만, halt 실패는 다음 회차에 다시 시도, task마다 감시자 하나·종료 시 정리·꺼짐 조건·facilities_fix 제외, `bulk_data_root` 포함. 디스크·breaker·`_disk_gate`·예시 설정 관련 기존 1,933건 통과.
+- 미검증: 실제 엔진에서 halt가 `halted` 결과와 세션 보존까지 가는지(기존 halt 시험이 덮음), 실제 디스크가 차는 상황, 기본 간격 30 s와 2 GiB 완충이 빠른 다운로드에 충분한지, 웹 UI가 `signal: "disk"` 기록을 어떻게 그리는지, Windows CI.
+- manual 한·영은 이 PR에 없다(claim 순서 대기).
+
+## 단계
+#676 후속: #1157 리뷰 P2 중 정상 계획을 거절하던 두 건.
+
+## 한 일
+- 파일명 경계: `_RESERVED_WRITE`가 이름 앞뒤에 ASCII 이름 문자가 이어지면 걸리지 않는다(`external_lookup_status.jsonl.md`, `-x`, `my_outputs/...`). 문장 끝 마침표와 한국어 조사(`...jsonl에`)는 이름을 끝낸다.
+- 읽기·보고 허용: instruction에서 그 이름을 쓰게 하는 문장만 거절한다(`_tells_staff_to_write`). 쓰기 동사·리다이렉션·`새 파일`이 이름과 직접 이어진 경우만 쓰기로 본다. 다른 파일이 둘 사이에 있거나(동사 앞) 동사 뒤에 자기 대상 파일이 이어지면(동사 뒤) 그 동사는 이 이름의 것이 아니다. 앞선 단계의 `inputs/<단계>/outputs/<이름>`은 이전처럼 허용한다. 선언한 `outputs`·`optional_outputs`는 이전처럼 항상 거절한다.
+- 시험(`tests/test_reserved_outputs.py`): 비슷한 이름 3건, 읽기·보고 6건, 쓰기 6건(6차 한국어 문장 포함), 다른 파일에 대한 쓰기 동사와 같은 이름 쓰기 구별. 옛 코드에서 10건 실패한다.
+
+## 확인
+- `test_reserved_outputs.py` 49 passed. cso·plan·output·reserved·lookup 계열 1710 passed, 9 skipped. `validate_profile` 통과.
+
+## 하지 않은 것
+- manual 한·영(#1157 P2 3번)은 이 claim 범위에 없어 쓰지 않았다. 별도 claim으로 넣는다.
+- 판정은 문장 단위의 휴리스틱이라 영어·한국어 쓰기 표현을 다 덮지는 못한다(쓰기 동사 목록에 없는 표현은 허용 쪽으로 샌다). 선언된 출력은 항상 거절되므로 labhq 파일에 직원 산출물이 겹치는 일은 막힌다.
+
+## 리뷰 후 수정 (rev3)
+- P1(`cso.py:2257`): "Write records from inputs/table.tsv to outputs/external_lookup_status.jsonl"처럼 쓰기 동사와 목적지 사이에 출처 파일이 끼면 `_OTHER_PATH` 규칙이 다른 파일의 동사로 읽어 통과시켰다. 같은 부류의 변형이 한 번 더 나와, 사례를 막지 않고 구조로 닫았다.
+- 구조: 지금 단계 instruction에 예약 이름이 나오면 모두 거절한다. 허용은 앞 단계 산출물 경로뿐이다. 읽기·보고 허용 휴리스틱(`_WRITE_SIGNAL`, `_OTHER_PATH`, `_CLAUSE_END`, `_tells_staff_to_write`)을 뺐다. 정상 계획이 거절되면 계획을 다시 받는 비용으로 본다(CSO 재시도 경로). 파일명 경계 수정은 유지한다.
+- 시험: 읽기·보고·쓰기 6건이 모두 거절되고, 출처가 낀 쓰기·`as`·`into` 변형이 거절된다. `test_reserved_outputs.py` 50 passed, cso·plan·output·reserved·lookup 계열 1711 passed, 9 skipped, `validate_profile` 통과.
+- P1(`cso.py:2272`, manual 한·영): 이 PR 범위에 manual이 없어 쓰지 않았다. 총괄이 W2의 #1155 뒤 rev4에서 넣는다.
+
+## manual과 docstring (rev4)
+- manual 한·영(plan 산출 설명 단락 끝): 예약 이름 세 개, 선언·instruction 이름 모두 CSO 재요청, 앞 단계 `inputs/<단계>/outputs/<이름>`만 허용, 이름이 더 긴 파일은 예약 아님, CP2의 "읽지 않은 잘못된 기록"에서 직원이 쓴 줄(`tool` 키 없는 JSON 객체)은 세지 않음. main을 반영했고 문서 gate가 풀렸다.
+- `labhq/policy.py` docstring: "`Bash(ls *)`가 `&&` 뒤 설치를 통과시킨다"는 설명을 #1163 결과(Claude Code 2.1.310은 체인을 나눠 명령마다 검사)에 맞게 고쳤다. 사전 승인 접두에 맞는 명령 자신이 권한 프롬프트를 건너뛰어 설치 검사를 못 받는다는 것이 공유 환경에서 모든 셸 호출을 gate에 맡기는 이유다.
+- `test_policy.py`·`test_reserved_outputs.py` 338 passed, 6 skipped, `validate_profile` 통과.
+
+# #1164 요청 멱등성
+
+- 결론: 계약 연장·채용 시작·새 요청·Codex 리뷰 요청 POST가 `Idempotency-Key` 헤더를 받는다. 같은 (경로, 키, 본문)은 한 번만 적용하고 같은 응답을 돌려준다.
+- 바뀐 것: `labhq/gateway/idempotency.py`(진행 중 요청 공유 + 10분·512개 응답 기억), `server.py` 4개 엔드포인트, `index.html`(시트 열린 동안 동작별 키, 전송은 성공할 때까지 같은 키, 채용은 `hire-<제안 id>`), `cli.py`(`send`·`send --no-wait`·`recruit`·`contract`·`codex-review` 실행마다 키 하나), 새 시험 `tests/test_gateway_idempotency.py`, manual 한·영 REST 절에 계약 한 단락.
+- 설계: 요청 본문에 필드를 넣지 않고 헤더로 받는다(`RequestIn`이 요청 기록에 그대로 저장되기 때문). 키가 없으면 종전과 같다. 적용 전 거절(`HTTPException`)만 기억하지 않아 같은 키로 재시도할 수 있고, 그 밖의 실패는 runner·GitHub에 닿았을 수 있어 기억해 같은 키에 409로 답한다. 64자를 넘는 키는 자르지 않고 422로 거절한다. 첫 호출자가 끊겨도 일은 끝까지 가고 재시도는 그 결과를 기다린다.
+- 실행: 새 시험 13개(main의 server.py로 돌리면 엔드포인트 3개가 실패), 관련 시험 `test_request_lifecycle`·`test_web_3d`·index.html을 읽는 시험·`test_ci_boundary_preview` 통과.
+- 미해결/미검증: gateway 재시작 뒤에는 기억이 사라진다. 실제 브라우저 클릭·CLI 실행은 하지 않았다. `test_web_3d`의 `web_visual_tooling`이 다른 시험과 함께 돌 때 한 번 실패했고 단독 재실행은 통과(간헐).
+
+# #678 셸 다운로드·압축 해제 직전 디스크 확인
+
+- 결론: Claude 직원의 Bash 명령이 정책에서 `allow`일 때 `approval_mcp`가 `disk_space.shell_check`를 불러, 대상 드라이브 여유가 `runner.disk_fail_free_gb`(2 GiB) 미만이거나 알려진 크기를 풀면 그 아래로 내려가면 `ask`(기존 tool_permission 카드)로 바꾼다. 크기를 모르는 다운로드는 막지 않고, 여유가 경고 기준(10 GiB·5 %) 아래면 `agent.log` warn만 남긴다. deny는 만들지 않는다.
+- 크기 추정: `unzip`은 zip 중앙 디렉터리의 비압축 합, `tar`·`7z x`는 압축 크기 × 4(`ARCHIVE_RATIO`), `curl`·`wget`·`fasterq-dump`·`prefetch`·`aws`·`gsutil`·`rsync`·`git clone`은 미상. 대상 폴더는 `-o/-O/-P`·`-d`·`-C`·`-o<dir>`이 있으면 그것, 없으면 작업 폴더. 파이프·체인은 명령별로 읽고 가장 엄격한 결과를 쓴다. 해석하지 못한 것과 읽을 수 없는 드라이브는 건드리지 않는다.
+- 바꾼 것: `labhq/disk_space.py`(`shell_check`), `labhq/tools/approval_mcp.py`(`_disk_decision`), `tests/test_disk_shell_check_678.py`, `config/ci/windows-boundary-v1.json`.
+- 시험: 판정표·크기 추정·대상 폴더·체인·읽기 불가·`approval_prompt` 카드/허용/경고 17건 통과, 관련 기존 203건 통과.
+- 적용 범위 밖: Codex·Gemini·cli 직원(엔진 sandbox가 명령을 직접 실행), 로컬 job 제출 경로(`daemon.py`는 이 claim 밖), PowerShell `Invoke-WebRequest`·`Expand-Archive`, 명령 도중 디스크가 차는 경우. 작업 도중 디스크 감시는 다음 PR.
+- 미검증: 실제 디스크 부족 상황, 압축 배수 4의 실제 비율, Windows CI.
+
+# CLI diagnostic exit status
+
+- The CLI retains its JSON receipt and returns nonzero on refusal, unsupported preparation, child failure, timeout or cleanup failure. Diagnostic exit zero does not establish protection.
+- Mock and CLI tests cover these outcomes; actual protection and independent cleanup remain unverified.
+- PR #1050 remains draft and on hold; the manual finding awaits separate ownership.
+
+# Staging digest diagnostic
+
+- After the callback, the diagnostic re-reads snapshot, runtime and policy; changed or missing payloads fail and trigger cleanup.
+- Local mock tests: 35 passed, 1 xfailed. Observations are untrusted and point-in-time; protected launch, independent cleanup and actual protection remain unverified.
+- PR #1050 remains draft and on hold. The manual review finding awaits separate ownership.
+
+## 단계
+#1158: `os.path.realpath`가 구분자 run에서 제곱이라 정책 검사가 길어지는 결함. 근거: [#1152 댓글](https://github.com/ehojune/bioinfo-team-3d/pull/1152#issuecomment-6537401540), [두 번째](https://github.com/ehojune/bioinfo-team-3d/pull/1152#issuecomment-6537446112).
+
+## 한 일
+- `labhq/policy.py`: `_collapse_separators`(POSIX 호스트에서 `/` run을 하나로, 앞머리 정확히 둘은 보존, 셋 이상은 하나, Windows 경로는 그대로)와 `_realpath`를 두고 `os.path.realpath`를 부르던 다섯 곳(`_real`, 쓰기 루트 두 철자, `_root_rules`, Windows 8.3 해석, 읽기 철자)이 모두 이것을 쓴다.
+- 시험(`tests/test_policy.py`): 병합 규칙, Windows 경로는 건드리지 않음, 병합이 `posixpath.realpath`의 답을 바꾸지 않음(길이 6까지 모든 조합), 정책 `_real`의 선형성(Linux에서 실패하던 시험), 병합 유무에 판정이 같음(5개 철자). `mixed_nodes` sha256을 맞췄다.
+
+## 실측
+| (WSL Python 3.10, `touches_resolved`, 이 시험의 입력) | 1/8→1/4 | 1/4→1/2 | 1/2→전체 | 1/4→전체 | 전체 1회 |
+|---|---|---|---|---|---|
+| 수정 전 | 2.30~2.41 | 2.63~2.65 | 2.67~2.72 | 7.04~7.20 | 0.151 s |
+| 수정 후 | 1.92~2.02 | 1.93~2.04 | 2.00~2.04 | 3.92~4.09 | 0.065 s |
+- 수정 후 증가마다 2.0배, 전체 4.0배로 선형이고, 전체 비용도 0.151 → 0.065초다.
+- 판정은 Windows와 Linux(WSL) 모두 병합 유무에 같다(8개 철자 확인).
+
+## 확인
+- Windows: `test_policy.py`·`test_ci_boundary_preview.py`·`test_policy_scan_cost.py` 377 passed, 6 skipped. `validate_profile` 통과.
+- Linux(WSL 3.10, httpx 없음): `test_policy.py` 291 passed, 1 failed(`test_single_recursive_delete_below_step_tmp_is_allowed[rm -rf .tmp]`). 실패는 `httpx` 모듈이 이 환경에 없어서이고 이 변경과 무관해 보이나, 같은 환경의 main에서는 확인하지 않았다.
+
+## 하지 않은 것
+- Python 3.12의 Linux 구현은 못 재고 `posixpath.realpath`를 Windows에서 돌려 같은 제곱임을 확인했다.
+- Windows 경로는 realpath에 제곱이 없어 건드리지 않았다.
+- #1152(3점 비교)는 이 결과를 보고 닫거나 줄인다.
+
+## 리뷰·CI 후 수정 (rev2)
+- P1(`policy.py:2304`): `_root_rules`가 `Path` 루트를 `_realpath`에 넘기는데 `_collapse_separators`가 `p.lstrip`을 불러 Linux(3.10·3.12)에서 `AttributeError`가 났다. `_realpath`가 `os.fspath`로 문자열로 바꾼 뒤 합치게 했다. `bytes`는 합치지 않고 `os.path.realpath`에 그대로 넘긴다.
+- 시험 둘: `_realpath`가 `Path`·`str`·`bytes`에서 `os.path.realpath`와 같은 답, `_root_rules`가 `Path`와 같은 루트의 문자열에 같은 규칙. 둘 다 `posix_merge` fixture로 Windows 호스트에서도 POSIX 병합 경로를 타서 옛 코드에서 실패함을 확인했다(옛 코드는 Windows에서는 합치기를 건너뛰어 이 시험이 통과했을 것이다).
+- Windows 288 passed, 6 skipped. Linux(WSL 3.10, httpx 설치) `test_policy.py` 294 passed. 이전 보고의 1건 실패는 `httpx` 모듈이 없던 환경 문제였다.
+
+# #1047 producer nonce
+
+- Synthetic broker probe accepts a caller's canonical UUID and propagates it to the factory, callback, child and receipt; invalid input fails before preparation. Omission generates a fresh UUID. Callers must use a fresh nonce; replay detection is not provided.
+- Windows mock tests: 29 passed, 1 xfailed. Actual protection, authenticated ancestry and independent cleanup remain UNVERIFIED.
+- PR #1050 remains draft/hold. Manual review P1 awaits a separate ownership claim; final-head CI and review are pending.
+
+# Boundary harness review fixes
+
+- Synthetic diagnostic supplies a fresh UUID and requires both ready and receipt to match it.
+- The entire diagnostic runs in a bounded subprocess. Deadline expiry reports inconclusive and direct worker termination; descendant termination remains unverified.
+- Worker environment excludes host secrets and uses a temporary home. Windows targeted test: 37 passed, 1 xfailed. The xfail records missing authenticated observer evidence.
+- Producer integration on the updated API, actual protection and cleanup remain unverified. PR #1051 remains draft/hold.
+
+## 단계
+#676 B4: CSO 계획이 직원에게 labhq 소유 파일 `outputs/external_lookup_status.jsonl`에 쓰라고 지시해, 직원이 쓴 줄 8개가 CP2 경고 "읽지 않은 잘못된 기록 8줄"로 나온 문제.
+
+## 한 일
+- `labhq/output_checks.py`: `RESERVED_OUTPUTS`에 labhq가 직접 쓰고 읽는 기록 이름 세 개(`external_lookup_status.jsonl`, `annotation_queries.jsonl`, `literature_access.jsonl`)를 한 곳에 모았다.
+- `labhq/orchestrator/cso.py`: `_reserved_names`가 계획의 단계가 이 이름을 `outputs`·`optional_outputs`로 선언하거나 instruction에서 단계 자신의 파일로 쓰게 하면 `PlanOutputsError`로 거절한다. 앞선 단계의 `inputs/<단계>/outputs/<이름>`은 그 단계 기록을 읽는 것이라 허용한다.
+- `output_checks.external_lookups`: `tool` 키가 없는 JSON 객체 줄은 직원이 쓴 줄로 보고 읽지도 세지도 않는다. 객체가 아닌 줄, JSON이 아닌 줄, `tool`을 쓰는데 labhq 규칙에 어긋난 줄은 이전처럼 잘못된 기록으로 센다(`test_external_lookup_record_676.py`는 그대로 통과).
+- 시험 `tests/test_reserved_outputs.py`(Windows inventory `known_tests`에 추가): 세 이름 × 네 가지 표기 × 두 필드 거절, instruction의 쓰기 지시 거절, 읽기·일반 출력 허용, 직원이 쓴 줄 8개가 경고에 안 섞임, labhq 형식이 어긋난 줄은 계속 셈.
+
+## 확인
+- `test_reserved_outputs`·`test_output_types*`·`test_external_lookup_record_676`·`test_output_checks` 198 passed, 1 skipped. cso·plan·output·lookup 계열 918 passed(프롬프트 해시 시험 둘은 아래 이유로 프롬프트를 바꾸지 않았다).
+- `validate_profile` 통과(known_tests 한 줄).
+
+## 하지 않은 것
+- 계획 프롬프트에 "이 이름을 쓰지 마라"는 문구를 넣지 않았다. `test_off_keeps_the_plan_schema_and_prompt_of_main`과 `test_engine_schemas_and_prompt_off_are_those_of_main`이 프롬프트 해시를 고정하고, 둘째는 이 claim 밖이다. 검사가 거절하면 계획 재시도 경로로 간다. 프롬프트에 넣는 것은 해시 시험을 같이 고쳐야 하는 별도 일이다.
+- CSO가 이 이름을 어디서 배웠는지(상류 단계 지시를 베낀 것으로 보임)는 확인하지 않았다.
+
+# #1154 RESULT.md 별칭 fsync 생략
+
+- 결론: `RESULT.md`(최신 별칭)만 fsync를 생략, `RESULT_<task>.md`는 유지. 결과 본문은 outbox(`task.result`)에도 있어 정전 시 별칭만 옛 것·빈 파일·없음일 수 있고 `RESULT_<task>.md`·outbox에서 복구한다.
+- 바뀐 것: `labhq/adapters/owned.py`(`sync` 플래그), `labhq/runner/daemon.py`(별칭만 `False`), `tests/test_durable_writer.py`(3개).
+- 실측(D:, lab 1요청): 파일 `os.fsync` 70→58, 파일 쓰기 3.1–3.9 s→2.7–3.0 s.
+- 실행: 관련 test 2,988 passed·49 skipped. 새 test 3개는 main 코드에서 실패.
+- 미검증: 정전 실험, CI 전체.
+
+# #1125 rev7 runner `_ack_now` commit 합치기
+
+- 결론: ack commit이 한 요청에 81회였던 이유는, gateway가 메시지마다 ack를 보내고 각 ack가 앞 commit이 끝난 뒤 도착해 겹치는 일이 없었기 때문이다(#1135의 합치기는 commit 중 도착한 ack만 합친다). `_ack_flush`가 직전 commit 뒤 `ACK_MERGE_S`(0.5초)가 지나기 전에는 다음 commit을 미루고, 그 사이 ack는 누적값 하나로 합친다. 한가한 runner의 첫 ack는 그대로 즉시 commit한다.
+- 지킨 것: `_ack_drain`(종료·재연결·대기 호출)이 대기 신호를 세워 0.5초를 기다리지 않고 바로 commit한다. 늦은 delete는 크래시 시 몇 행의 재전송이고 gateway `runner_cursor`가 거른다. outbox 행은 ack 전까지 남으므로 #606 보장은 같다.
+- 측정(D:, `synchronous=FULL`, lab 요청 1건, 같은 세션 2회씩): commit 542 → 493~495(실제 COMMIT 538 → 489~491), `_ack_now` 81 → 32~34(합 3.6~4.3 s → 1.3~1.4 s), 요청 wall 19.3~20.1 s → 18.8 s. wall은 runner 쪽 commit이 gateway 경로와 병렬이라 commit 수만큼 줄지 않는다.
+- 시험: `tests/test_state.py` 신규 2건(간격이 벌어진 ack 8개가 3회 이하로 합쳐짐, drain은 창을 기다리지 않음), 기존 ack·종료·durable·loop-liveness 62건 통과. 신규 두 건은 수정 전 `ACK_MERGE_S`가 없어 실패한다.
+- 바꾼 것: `labhq/runner/daemon.py`, `tests/test_state.py`.
+- 미검증: Windows CI 전체, 실제 ws 재연결 중 크래시 재전송 양.
+
+# #1148 취소가 시설 수리 카드 저장 중에 들어오면 요청이 되살아나는 결함
+
+- 결론: `Hub._request_facilities_fix`의 `open_fix`가 카드를 저장하는 `await self._add_approval(...)` 뒤에 `req_state["status"] = "waiting_facilities_fix"`를 썼다. 그 사이에 취소가 들어오면(저장이 느린 디스크에서는 수십 ms) 취소된 요청이 "시설 수리 승인 대기"로 되돌아가고 그 상태가 저장되며 카드가 남았다. 함수 맨 앞의 `cancelled` 검사는 이 `await` 뒤에는 없었다. #1148 조사(#1139 후속)에서 재현했다.
+- 바꾼 것: `labhq/gateway/server.py`의 `open_fix`가 `_add_approval` 뒤에 요청이 이미 끝났거나(`is_active_request`가 아님) `cancelling`이면 상태를 쓰지 않고 방금 연 카드를 `close_approval`로 닫고 돌아온다(이 호출 안에서만 쓰는 `saved`는 `cancelled`로 둬 뒤 코드가 깨지지 않는다). 요청 행의 `status`·`cancelling` 표식이 이미 "끝내는 중"을 뜻하므로 #1146의 별도 집합은 필요 없다.
+- 시험(`tests/test_facilities_fixes.py` 1건): 카드 저장을 느리게 막고 취소한 뒤 풀면 요청은 `cancelled`로 남고 `facilities_fixes`에 대기 항목이 없고 수리 카드가 없으며 `approval.requested`가 나가지 않는다. main의 코드에서는 카드가 닫히지 않아 수리 호출이 대기를 끝내지 못하고 실패한다. 파일 44 passed, 관련 시험 1,597 passed.
+- 리뷰 P1(같은 부류의 더 좁은 변형): 첫 검사 뒤에도 `asave_request`·`publish`로 `await`가 더 있어, 그 사이 취소가 카드를 닫고 `approval.expired`를 먼저 내보낸 뒤 `approval.requested`가 늦게 나가면 웹 reducer가 카드를 다시 띄운다. 게시 직전(같은 동기 구간)에 카드가 아직 `self.approvals`에 있고 요청이 활성인지 다시 보고, 아니면 게시하지 않는다. 이렇게 하면 그 뒤에 취소가 와도 `approval.expired`는 이 `approval.requested`보다 뒤에 나간다. 시험을 카드 저장이 느린 경우와 그 뒤 요청 저장이 느린 경우 둘로 나눴고, 둘째는 이전 head에서 실패한다.
+- 의미를 바꾸지 않은 것: 상태 쓰기는 직접 대입 그대로다. `_sync_hold_status`로 바꾸면 로그인·쿼터 대기가 수리 카드보다 우선하는 의미 변화가 생겨 이번 범위에서 뺐다.
+- 미확인: 실제 발생 빈도. 같은 패턴이 다른 카드 종류에 있는지는 #1148 조사 범위의 스캔에서 이 한 곳만 나왔다.
+- 근거: #1148 조사 댓글 6536217329.
+
+# #1149 task보다 먼저 도착한 task.cancel이 사라지는 문제
+
+- 결론: runner가 보유도 접수도 하지 않은 task의 `task.cancel`을 받으면 `cancelled_task` 행(tombstone)을 영속 저장한다. 같은 id의 `task.dispatch`가 접수 기록 없이 오면 시작하지 않고 `task.accepted` + 취소 결과(`ok=False`, `error_kind="cancelled"`, `cleanup_evidence.status="not_started", cost_usd=0.0, cost_known=True`)를 한 묶음으로 보내고 `accepted_task`를 `finished`로 남긴 뒤 tombstone을 지운다. 이후 같은 dispatch가 다시 와도 접수 기록이 있어 시작하지 않는다.
+- 원인(#1147 판정 ①): 취소는 `self.tasks`에 task가 없으면 `_jobs_cancelled`에만 id를 넣고, 이 집합은 job 제출만 막는다. 재연결 때 `flush_task_cancels`가 `task.dispatch` 재전송보다 먼저 도착하면 취소가 사라진다.
+- 시험(`tests/test_runner_cancel_tombstone.py`, 5건): 취소→dispatch는 시작 안 함(수정 전 `_run_guarded` 호출로 실패), 재전송 dispatch도 시작 안 함(수정 전 실패), dispatch→취소는 tombstone 없음, 다른 task 취소는 영향 없음, 2일 지난 tombstone은 다음 취소 때 정리(수정 전 실패).
+- 바꾼 것: `labhq/runner/daemon.py`, `tests/test_runner_cancel_tombstone.py`, `config/ci/windows-boundary-v1.json`, `docs/manual.md`·`manual.en.md` 각 한 줄.
+- tombstone 정리: 처리 시 삭제, 아니면 2일(`CANCEL_TOMBSTONE_KEEP_S`, gateway의 `TASK_CANCEL_KEEP_S`와 같음) 지난 것을 다음 취소 때 삭제.
+- 미검증: 실제 ws 재연결 순서, Windows 실행. 범위 밖: ② pause/resume 순서, ③ 더블 클릭 중복.
+
+# #1144 로컬 job 폴링이 취소로 끝난 job을 덮어쓰는 경합
+
+- 결론: `_poll_local_jobs`가 `await to_thread(local_jobs.status)`로 상태를 읽는 사이에 취소 경로(`_end_local_job`)가 job을 `cancelled`·`terminal`로 끝내면, 폴링이 깨어나 읽어 둔 상태(예: 방금 정상 종료한 `completed`)로 job을 덮고 `job.state`를 한 번 더 보냈다. 그러면 취소된 단계가 깨어날 수 있었다. 창은 job이 자연히 끝나는 순간과 취소가 겹칠 때뿐이라 좁다.
+- 바꾼 것: `labhq/runner/daemon.py`의 `_poll_local_jobs`가 상태를 읽은 뒤 `if j["terminal"]: continue`로 낡은 읽기를 버린다(한 줄). 취소의 결과가 마지막이다.
+- 시험(`tests/test_local_jobs_675.py` 1건): 상태 읽기를 이벤트로 막아 둔 채 `task.jobs_cancel`로 job을 끝내고 읽기를 풀면, job은 `cancelled`로 남고 `job.state`는 `cancelled` 하나뿐이며 `jobs.finished`가 나가지 않는다. main의 코드에서는 `completed`로 덮여 실패한다. 파일 전체 37 passed, 1 skipped.
+- 리뷰 P1로 넓힌 것: 취소의 `kill`이 실패하면 `_end_local_job`은 job을 `terminal`로 두지 않고 `cancel_requested`만 설정해 다음 폴링이 다시 끝내게 한다. 처음 가드(`terminal`만)는 이 경우를 통과시켜, 낡은 `completed` 읽기가 job을 끝난 것으로 만들고 살아 있는 프로세스 트리를 놓칠 수 있었다. 가드를 `terminal` 또는 `cancel_requested`로 넓혔다(다음 폴링 맨 앞의 기존 분기가 재시도한다). 시험 1건(kill이 실패한 취소 뒤 낡은 읽기가 job을 끝내지 못하고, 다음 폴링이 `cancelled`로 끝내 프로세스가 남지 않음)을 더했고 이전 가드에서는 실패한다.
+- 같은 부류의 세 번째 변형(리뷰 P1)과 구조적 수정: 처음 두 가드는 취소가 상태를 기록한 뒤(`terminal`·`cancel_requested`)만 봤다. 취소가 시작됐지만 `kill`이 아직 반환하지 않은 동안에도 낡은 읽기가 job을 끝낼 수 있었고, 뒤늦게 kill이 실패하면 살아 있는 프로세스 트리를 영구히 놓칠 수 있었다. 사례를 하나씩 막지 않고 부류를 닫았다: `_end_local_job`이 첫 줄에서 job을 "끝내는 중" 집합(`_ending_local_jobs`)에 넣고 마지막 줄에서 빼며, 폴링은 읽기 전후에 이 집합과 `terminal`·`cancel_requested`를 모두 본다. 시험 2건(kill이 반환되기 전 낡은 읽기가 돌아옴: kill 성공·실패)을 더했고 이전 가드에서는 둘 다 실패한다.
+- 미확인: HPC job 폴링(`_poll_jobs`)에 같은 패턴이 있는지는 이번 범위가 아니라 보지 않았다(HPC job은 이 취소 경로를 쓰지 않는다). 창이 좁아 실제 발생 빈도는 재지 못했다.
+- 근거: #1139 판정 댓글 6535399863, #1144.
+
+# #1143 같은 runner 메시지가 동시에 두 번 처리되는 문제
+
+- 결론: `Hub.on_runner_message`가 처리 중인 `(runner_id, incarnation, runner_seq)`를 메모리 dict(키별 future)에 두어(첫 await 전의 동기 구간) 같은 행의 두 번째 사본은 첫 처리기가 끝날 때까지 **기다린 뒤**(바로 돌아가면 새 연결의 다음 seq가 커서를 먼저 올려 첫 사본의 이벤트가 "이미 봄"으로 버려진다) 보통 경로로 가서 seq가 저장돼 있으면 ack만 하고 돌아간다. 첫 처리기가 실패·취소되면 사본이 직접 처리한다. 두 사본 모두 ack를 받는다. 저장소는 마지막 방어선이다: `_append_event_now`가 트랜잭션 안에서 커서를 읽어 이미 본 seq면 이벤트를 넣지 않고 `None`을 돌려주며(`publish`가 그대로 끝냄), 커서 갱신(`_append_event_now`·`_mark_runner_now`)은 `WHERE excluded.seq > runner_cursor.seq`로 앞으로만 움직인다.
+- 원인(#1139 rev2): `runner_seen` 확인이 트랜잭션 밖이었고 커서 갱신이 무조건 덮어써서, 옛 연결과 새 연결이 같은 outbox 행을 동시에 처리하면 이벤트가 두 번 저장됐다.
+- 시험(`tests/test_state.py`): 같은 seq 동시 두 번 → 이벤트 1건(수정 전 2건)이고 두 사본 모두 ack, 재전송이 첫 사본을 기다려 다음 seq(6)가 5를 앞지르지 못함(즉시 반환 구현에서는 실패), 첫 사본이 취소되면 재전송이 처리됨, 커서가 뒤로 안 가고 이미 본 seq는 이벤트를 안 넣음(수정 전 새 이벤트가 들어감), 같은 `task.result`를 두 seq로 보내도 비용은 한 번만 기록됨(이미 task id로 멱등이라 수정 전에도 통과).
+- 비용 이중 기록 확인: `_arecord_task_cost`가 `cost_by_task`에 task id가 있으면 건너뛰므로 같은 `task.result`가 다른 seq로 두 번 와도 `cost_usd`는 한 번만 더해진다(시험으로 고정).
+- 바꾼 것: `labhq/gateway/server.py`(`on_runner_message` 바깥 wrapper, `publish`·`_append_event_with_request`의 `None` 처리), `labhq/store.py`, `tests/test_state.py`, `tests/test_state_activity_durable.py`(활동 메시지 도우미가 `seq` 인자를 받음).
+- 시험 도우미 수정: `tests/test_state_activity_durable.py::test_concurrent_activity_merges_tools_and_owns_inputs`가 서로 다른 두 메시지에 같은 `runner_seq: 1`을 줘서 새 중복 방지에 걸렸다(실제 runner는 seq를 되풀이하지 않음). `activity_message`가 `seq` 인자를 받고 두 번째 메시지에 `seq=2`를 준다.
+- 미검증: 실제 재연결 중복 도착, 메시지 종류별 멱등성(비용 외).
+
+# #1137 안 G1 — run.json 갱신 묶기
+
+- 결론: task마다 run.json(작업공간 `manifest.json`의 `runs[task_id]`)을 4번 쓰던 것(①시작 ②산출 환경 ③입력 hash ④종료)을 2번으로 줄였다. ②③은 CLI가 끝난 뒤 `task.result`를 보내기 직전까지 연달아 일어나고 그 값은 단계가 끝난 뒤에만 읽히므로, ④의 쓰기에 실었다. ①(CLI 전에 저장)과 실행 중 accounting(비용 기준선·session_id)은 지금처럼 즉시 쓴다. 지연 fsync가 아니다: `task.result`가 나가기 전에 모든 필드가 한 번의 fsync로 디스크에 있다.
+- 바꾼 것:
+  - `labhq/runner/workspace.py`: `stage_run`(메모리에 모음), `aflush_run`(모은 것만 씀)을 더했고, `update_run`/`aupdate_run`은 모아 둔 필드를 자기 필드 아래에 합쳐 한 번에 쓴다(같은 이름은 명시한 값이 이긴다). 쓰기가 실패하면 모아 둔 필드는 다음 쓰기를 위해 되돌려 놓는다.
+  - `labhq/runner/daemon.py`: `collect_observed_outputs`와 입력 hash 기록이 `stage_run`을 쓴다. 단계가 끊기는 경로(취소·예외 뒤)의 입력·산출 기록은 전처럼 즉시 쓴다. `run_task`의 `finally`가 `aflush_run`을 불러, 모은 뒤 최종 쓰기 없이 끝난 단계(RESULT 쓰기 예외 등)도 기록을 남긴다.
+- 실행한 것(이 PC, 상태 폴더 D:, lab 요청 1회, mock 엔진, FULL):
+  - `os.fsync` 94~97회 → 70~73회(−24). 요청 처리 20.1~21.0 s → 19.3~19.8 s(중앙값 약 20.7 s → 약 19.7 s). D: 디스크 편차가 있어 약 4~5% 감소로만 본다.
+  - 관련 시험 3,000여 건 통과(후보 5개 파일 포함), 이 경로를 쓰는 기존 시험은 편집 없이 통과한다.
+- 시험(`tests/test_resume_accounting.py` 4건): 단계의 첫 쓰기는 `started_at`이고 `ended_at`을 싣는 쓰기가 `environment_record`·`input_files`를 함께 싣는다(앞선 쓰기에는 없음), RESULT 쓰기가 예외로 끊겨도 모은 기록이 남고 `ended_at`은 없다, 모은 필드는 다음 쓰기에 합쳐지고 명시한 필드가 이긴다, 쓰기가 실패하면 모은 필드가 보존되고 `aflush_run`은 모은 것만 쓴다. main의 코드에서는 3건이 실패하고 끊긴 경로 시험은 보존 확인이라 양쪽 통과한다.
+- 미확인: 실제 엔진의 실행 중 갱신이 더 많을 때의 비중, CI Windows 전후 시간.
+- 근거: #1137 W1 설계 댓글 6534352217.
+
+# #1140 CP1 수정 요청의 중복 개설
+
+- 결론: `Hub.acreate_revised_request`가 요청별 lock 안에서 "이미 열린 수정 요청이 있는가" 확인부터 새 요청 등록, `revised_to` 기록까지 한다. 두 번째 호출은 기다렸다가 첫 번째가 연 요청을 그대로 돌려준다.
+- 원인(#1139 조사): 확인은 호출한 코루틴에서 했고 새 요청은 `_publication_write`가 만든 별도 task에서 등록돼, 같은 루프 반복에 준비된 두 호출이 둘 다 확인을 통과했다. 같은 수정 요청이 연구 요청 둘을 열어 비용이 두 번 났다.
+- 시험: `tests/test_research_cp1_revise.py`에 동시 두 호출(수정 전 `req_… != req_…`로 실패, 수정 후 통과)과, 실패한 호출 뒤에 lock이 잡혀 있지 않은지(다음 호출 5초 안에 완료) 두 건.
+- 바꾼 것: `labhq/gateway/server.py`(`_revise_lock`, 바깥 `acreate_revised_request`와 안쪽 `_acreate_revised_request`), 시험 파일 하나.
+- 범위 밖: 동기판 `create_revised_request`는 await가 없어 같은 경합이 없다. 프로세스 사이 경합과 #1139에서 읽지 않은 후보는 다루지 않았다.
+- 미검증: 실제 웹에서 같은 버튼을 두 연결로 동시에 누르는 경우, W3의 #1134와 같은 `server.py`의 병합 충돌(main 반영 때 확인).
+
+# #621 P2: 여러 염기 REF의 창 중앙
+
+- 결론: `alphagenome_variant`의 점수 창이 변이의 첫 염기가 아니라 REF 구간(`Query.start0`~`end`)의 가운데를 중심으로 잡힌다. 1,000 bp 결실이면 REF 전체가 창 안에 양쪽 같은 여유로 들어간다(예전에는 중심이 500 bp 왼쪽).
+- 한 염기 REF는 `(pos-1 + pos) // 2 = pos-1`이라 창이 그대로다. 염색체 시작 근처는 여전히 0으로 잘린다.
+- 바꾼 것: `labhq/tools/annot_alphagenome.py`(한 줄과 주석), `tests/test_annot_alphagenome_variant.py`(시험 하나: 결실 중앙, 한 염기 불변, 시작 근처 0). 새 시험은 옛 코드에서 실패함을 확인했다.
+- 알려진 것: 같은 시험 묶음의 `tests/test_annot_regulatory.py::test_with_a_key_the_server_offers_alphagenome…`가 이 PC에서 `CallToolResult.is_error` 속성 오류로 실패한다(설치된 mcp SDK와 시험 코드의 속성 이름 차이, 이 변경과 무관).
+- 한계: 염색체 끝을 넘는 창은 바꾸지 않았다. D(Atlas)는 PI 결정 대기(#621 댓글).
+
+## 단계
+#1132(#1125 E3): PI 문장 번역 결과의 쓰기를 한 transaction으로.
+
+## 한 일
+- `labhq/pi_language.py` `_interpret`의 `finally`: `pi_translation` 행, 메시지 `pi_display`(`set_message_display`), 승인 카드 복사본 저장을 `store.arun_batch`(#1131) 한 transaction으로 했다. 승인 행은 loop thread에서 deep copy한 것만 writer thread가 쓴다(live gateway 상태를 writer thread가 읽지 않음).
+- 뒤따르는 `persist_request`는 없앴다. 바로 이어지는 `messenger.translated` 발행(#1130)이 같은 request를 한 transaction으로 저장한다.
+- 번역 1건의 실제 COMMIT이 4회에서 2회가 되고, 동기 `put`이 event loop를 막던 것도 없어졌다. 재시작 뒤 번역 결과·표시·카드 사본이 서로 어긋날 틈이 없다.
+- 시험(`test_gateway_publish_durable.py`): COMMIT 2회, 두 번째 쓰기 실패 시 첫 쓰기도 없음. 둘 다 옛 코드에서 실패함을 확인했다. 기존 `test_pi_language*`·`test_messenger_history`·`test_approval_durable_606`은 그대로 통과(235 passed 포함).
+
+## 실측 (D: 드라이브, FULL, lab 요청 1회)
+| | transaction | commit 시간 합 | 요청 시간 |
+|---|---|---|---|
+| main | 659, 657 | 18.9 s, 19.0 s | 23.4 s, 23.9 s |
+| 이 브랜치 | 663, 669 | 18.6 s, 18.3 s | 23.2 s, 23.3 s |
+lab 요청에는 번역이 나오지 않아(번역은 기술적인 영문 메시지에만 붙음) **차이가 없고 오차 안입니다.** 이 측정으로는 E3의 효과를 보일 수 없습니다. 효과는 번역 1건당 실제 COMMIT 4회 → 2회(시험으로 확인)입니다. 디스크 fsync가 앞선 측정(commit 합 34 s)보다 빨라 이 드라이브의 상태가 달라졌습니다.
+
+## 하지 않은 것
+- lab 요청 1회에 번역이 몇 건 나오는지는 요청에 따라 달라 효과가 작을 수 있다. 번역이 없는 요청에서는 차이가 없다.
+- E2(`pending` 표시를 이벤트와 함께)는 이번 범위가 아니다.
+
+# #1125 안 D — runner ack 합치기
+
+- 결론: gateway는 runner의 outbox 행마다 ack를 보내고 runner는 ack마다 commit·fsync를 했다. ack는 누적(`DELETE … WHERE seq<=?`)이라, 진행 중인 commit 동안 도착한 ack를 다음 commit 하나로 합친다. 지연 fsync나 타이머는 없다.
+- 바꾼 것(`labhq/runner/daemon.py`):
+  - `_ack_nowait(seq)`: 가장 높은 seq를 적고, 진행 중인 flush가 없으면 즉시 시작한다. `_ack_flush`는 commit하는 동안 높아진 seq까지 한 번 더 commit하고 끝난다.
+  - 연결 루프는 `runner.ack`를 기다리지 않고 읽는다. 다음 메시지를 읽는 일이 ack의 fsync에 막히지 않는다.
+  - `_on_message({"type":"runner.ack"})`를 직접 부르는 호출자는 전과 같이 durable이 된 뒤 돌아온다(`_ack_drain`).
+  - 연결이 끝날 때(재연결 전), `shutdown()`, `run_forever()` 종료 때 `_ack_drain`으로 이미 받은 ack를 commit한다. commit이 실패하면 다음 ack 또는 기다리는 호출자에게 같은 예외가 간다(전에는 인라인 commit이 연결 루프로 올렸다).
+- 리뷰 P1로 고친 것: ack drain이 shutdown의 5초 기한 밖에서 시간 제한 없이 기다려, commit이 멈추면 종료가 끝나지 않을 수 있었다. `_ack_drain(timeout=)`을 더해 shutdown은 전체 기한(`timeout_s`) 안에서, 재연결은 5초(`ACK_DRAIN_S`), `run_forever` 종료는 `durable.EXIT_DRAIN_S` 안에서만 기다린다. 끝나지 않은 commit은 취소하지 않고 스스로 끝나게 두며, 그 행은 outbox에 남아 재전송되고 gateway가 중복을 거른다. 시험 2건(멈춘 commit에서도 shutdown이 기한 안에 돌아옴, 시간 제한 drain이 commit을 취소하지 않음)을 더했고 이전 head에서는 둘 다 실패한다.
+- 두 번째 리뷰 P1: 신호 종료에서는 `shutdown()`이 끝난 뒤 entry point가 `run_forever`를 취소하고 그 `finally`가 ack를 최대 30초 더 기다린 뒤 `durable.adrain`도 기다려, 종료가 5초 상한을 넘을 수 있었다. `shutdown()`이 자기 마감(`_shutdown_deadline`)을 적어 두고, 연결 종료와 `run_forever` 종료의 ack 대기(`_ack_wait_s`)는 그 마감의 남은 시간만 쓴다. 시험 1건을 더했다.
+- 안전: ack가 늦거나 없어져도 행이 남아 재전송될 뿐이고, gateway가 `runner_cursor`(`runner_seen`)로 중복을 걸러낸다(`test_runner_job_recovery_outbox_and_gateway_dedup`).
+- 시험(`tests/test_state.py` 5건, `tests/test_runner_shutdown_signals.py`의 `SimpleNamespace` 대역에 `_ack_drain` 추가): ack가 commit 중 도착하면 commit 둘(첫 ack 단독 + 나머지 누적)로 끝남, 아무도 기다리지 않으면 지연 없이 commit, `_on_message` ack는 durable 뒤 반환, commit 실패는 다음 ack·기다리는 호출자에게 전달되고 행은 남음, shutdown은 이미 받은 ack를 commit. 이전 daemon에서는 이 중 동작 시험 4건이 실패한다. 관련 시험 2,799 passed, 35 skipped.
+- 실측(이 PC, 상태 폴더 D:, lab 요청 1회, main에는 안 A가 반영됨): 실제 `COMMIT` 문 main 613~624회 → 548회(runner 221~227 → 151, −31%). 요청 처리는 main 20.9~35.5 s(중앙값 약 22 s)에서 19.9~21.6 s(중앙값 약 20.6 s)로, D: 디스크 편차가 커서 3~7%대 감소와 편차 축소 정도로만 본다.
+- 미확인: CI Windows 전후 시간, ack가 더 크게 몰리는 느린 디스크에서의 효과.
+- 근거: #1125 설계 댓글 6531718393.
+
+## 단계
+#1132(#1125 E1): task activity를 이벤트 transaction에.
+
+## 한 일
+- `labhq/store.py`: `aappend_event`/`append_event`/`_append_event_now`에 `activity=(key, reducer)`를 더했다. reducer는 writer thread에서 같은 transaction 안의 최신 task 행에 적용된다(`_apply_activity`로 분리).
+- `labhq/gateway/server.py`: `on_runner_message`가 activity를 따로 commit하지 않고 마지막 `publish(..., activity=...)`에 실어 보낸다. 이벤트, request 저장본, activity, runner cursor가 한 transaction이다.
+- 시험: `test_state_activity_durable.py`의 publish stub을 실제 publish로 바꿨다. 단언은 약하게 하지 않았고 의미가 바뀐 한 곳만 새 시험으로 명시했다. 취소가 commit 중이면 이전에는 activity만 남고 이벤트·cursor는 없었다. 이제 commit이 끝나면 이벤트·activity·cursor가 함께 남고 재전송은 중복으로 걸러진다(ack만 보냄). commit이 실패하면 모두 없고 재전송은 다시 적용된다. `test_gateway_publish_durable.py`에 세 시험을 더했다(한 publish는 한 commit·실패 시 모두 없음, `agent.tool` 40건 폭주에서 메시지당 한 commit·순서·전 tool 보존, 느린 client가 락을 잡아도 timeout 안에 activity 저장).
+- manual 한영의 발행 보장 문장에 activity를 더했다.
+
+## 실측 (D: 드라이브, lab 요청 1회, main과 이 브랜치 각 2회)
+| | transaction | commit 시간 합 | 요청 시간 |
+|---|---|---|---|
+| main | 635, 641 | 0.7 s, 0.5 s | 16.2 s, 15.8 s |
+| 이 브랜치 | 587, 586 | 0.6 s, 0.6 s | 14.1 s, 16.3 s |
+- transaction −48~−55(약 −8%). lab은 #1126 이후 `synchronous=NORMAL`이라 commit 시간 합이 0.5~0.7 s로 줄어 fsync 비용이 보이지 않고, 요청 시간 차이(−2.1 s, +0.5 s)는 오차 안이다. 기본 `synchronous=FULL`에서 건당 약 37 ms로 계산하면 −48건은 약 −1.8 s로 **추정**한다(측정 아님).
+
+## 확인
+- 관련 시험 13개 파일 503 passed, 1 skipped.
+
+## 하지 않은 것
+- 기본 FULL 모드의 요청 시간은 측정하지 않았다(lab이 NORMAL).
+- 전체 suite와 Windows CI는 CI에 맡긴다.
+
+## CI 후 수정 (rev6)
+- `test_state_control_durable::test_halt_after_activity_read_keeps_committed_tool`이 3.10·3.12·Windows에서 실패했다. 원인은 시험이 `hub.publish`를 빈 `AsyncMock`으로 바꿔 activity가 publish 안으로 옮겨진 뒤 저장되지 않은 것이다. 제품 순서는 안전하다(halt는 `aupdate_task_control`, activity는 이벤트 transaction의 reducer로 같은 writer lane에서 최신 행에 병합).
+- stub이 `store.aappend_event(..., activity=activity)`를 실제로 부르게 했고 단언은 그대로다. 같은 부류를 찾으려고 publish를 stub한 시험 14개 파일을 훑었고 activity에 기대는 파일은 `test_state_activity_durable`(이미 수정)과 이 파일뿐이었다.
+- 관련 4개 파일 72 passed.
+
+## main 반영 (rev8)
+- #1151 병합 뒤 `server.py`·`store.py`·`test_gateway_publish_durable.py`의 충돌을 풀었다. #1143의 중복 runner 메시지 건너뛰기는 cursor 검사에서 먼저 `None`을 돌려주므로 activity는 중복 복사본에 다시 적용되지 않는다.
+- 합친 뒤 `test_state::test_a_resend_waits_for_the_first_copy_...`가 `publish(ev, runner_id, runner_seq)` 시그니처로 감싼 double에 `activity=`가 넘어가 실패했다. `activity` 인자를 activity가 있는 메시지에만 넘기게 해 시험을 고치지 않고 풀었다.
+- 관련 시험 174 passed.
+
+# #1107 Chrome 예열 step
+
+- 결론: Windows job이 critical 단계(첫 브라우저 시험) 앞에서 `scripts/ci_chrome_warmup.py`로 Chrome을 시험과 같은 플래그·빈 프로필로 한 번 띄워, DevTools 포트와 첫 페이지 target까지 걸린 시간을 로그에 한 줄로 남기고 끝낸다. cold start 검증을 이 step이 맡는다. 상한은 드라이버 기본 `START_MS`와 같은 60초(step은 2분)이고 실패하면 "Chrome warm-up failed"로 이름 붙어 끝난다. Chrome이 없는 곳에서는 알림만 내고 통과한다.
+- 시험의 30초 시작 상한(`STARTUP_BUDGET_MS`)과 critical step의 3분 상한은 바꾸지 않았다(이제 데워진 Chrome의 시작을 확인한다). 시험이 그 값을 지키는지, 예열 상한이 `START_MS`와 같은지 `tests/test_ci_chrome_warmup.py`가 확인한다.
+- 정책 변경(총괄 결정 B안, #1107): `docs/reference/ci-reuse.md`의 "사전 기동 없음" 원칙을 "첫 Chrome의 cold start는 예열 step이 60초로 검증, 시험은 데워진 Chrome의 30초"로 고쳤고, 같은 문서에 남은 옛 상한(job 14분·pool 9분)을 18분·13분으로 바로잡았다.
+- 근거: 같은 job에서 첫 Chrome인 `web_resizable_panels`만 35~51초 꼬리가 있었다(#1107 댓글 6533222880).
+- 바꾼 것: `scripts/ci_chrome_warmup.py`(새), `tests/test_ci_chrome_warmup.py`(새, 8건), `.github/workflows/test.yml`(step 하나), `config/ci/windows-boundary-v1.json`(`known_tests` 한 줄).
+- 하지 않은 것: 통과한 run에서 시험의 시작 구간을 남기는 일. 시험 프로세스의 출력은 pytest가 실패할 때만 보이고, step 요약은 API로 읽을 수 없다. 대신 예열 step의 한 줄이 같은 정보를 로그에 남긴다.
+- 한계: 예열이 시험의 cold start를 실제로 없애는지는 미검증이다. job 시간이 최대 2분 늘 수 있고 job 상한(18분)은 그대로다.
+- 효과 확인: PR 병합 뒤 Windows run 몇 개의 예열 시간과 `web_resizable_panels` 소요(`--durations`)를 #1107에 모은다.
+
+# #1127 validation-manifest가 방금 끝난 Windows job을 못 찾는 문제
+
+- 결론: `scripts/ci_skip.py`의 `windows_artifact`가 effective attempt의 `pytest-windows`가 **아직 목록에 없거나 완료되지 않은** 동안만 3초 간격으로 최대 40번(약 2분) 다시 읽는다. 완료된 뒤의 검증(`conclusion`, run·attempt·head 묶기, artifact 시각 포함)은 그대로이고, 완료된 실패·2개 이상 겹침·묶기 실패는 기다리지 않고 즉시 실패한다. 상한을 넘으면 같은 `missing/ambiguous Windows producer` 오류가 난다.
+- 원인(정황): run 41111652681에서 attempt 2는 Windows 완료 3초 뒤에, attempt 3은 성공 job의 복사본이 만들어지기 7초 전에 manifest가 목록을 읽었다. 실패 순간의 API 응답은 보지 못했다.
+- 시험: `tests/test_ci_manifest_identity.py`에 다섯 경우(늦게 나타난 복사본, 진행 중이던 job, 상한 끝의 같은 오류, 완료된 실패 즉시 거부, 2개 즉시 거부). 기존 `select` 도우미는 sleep을 stub해 시험이 실제로 기다리지 않는다.
+- 바꾼 것: `scripts/ci_skip.py`, `tests/test_ci_manifest_identity.py`. `validate_profile()` 통과, `config/ci/windows-boundary-v1.json`은 건드리지 않았다(이 시험 파일은 sha 고정 대상이 아니다).
+- 미검증: 실제 GitHub 재실행에서 2분이 충분한지, 재시도가 API 호출 한도에 걸리는지.
+
+## 단계
+#1129(#1125 A안): `publish`의 이벤트 append와 request 저장을 한 transaction으로.
+
+## 한 일
+- `labhq/store.py`: `append_event`/`aappend_event`/`_append_event_now`에 `request=(rid, snapshot)`을 더했다. 같은 transaction에서 request를 먼저 쓰고 이벤트와 runner cursor를 쓴다.
+- `labhq/gateway/server.py`: `publish`가 `_append_event_with_request`로 이벤트와 request를 한 번에 저장한다. 기존 request 저장의 순서 규칙(request lock, `_request_changed`, `apply_changes`)은 그대로다. 별도 `asave_request` 호출은 없앴다.
+- 보장: 이전에는 이벤트 commit 뒤 request 저장이 실패하면 이벤트만 남았다. 이제 둘 다 되거나 둘 다 안 된다.
+- 시험(`tests/test_gateway_publish_durable.py`): "두 commit"을 가정한 매개변수(`commit=2`) 둘을 없애고(둘째 commit이 없다), 새 보장을 단언하는 시험을 더했다(한 publish는 한 commit, commit 실패 시 이벤트·request·runner cursor 모두 그대로). `request_snapshot_does_not_replace_a_later_save`는 첫 commit을 멈추는 방식으로 바꾸고 live request가 되돌려지지 않음을 더 단언한다. 지운 단언은 없다.
+
+## 실측 (D: 드라이브, lab 요청 1회, 같은 스크립트로 main과 이 브랜치 각 1회)
+| | 실제 transaction(commit) | commit 시간 합 | 요청 시간 |
+|---|---|---|---|
+| main | 844 | 32.9 s | 29.4 s |
+| 이 브랜치 | 670 | 23.9 s | 24.0 s |
+- commit −174(−21%), 요청 −5.4 s(−18%). 1회씩이라 요청 시간의 오차는 확인하지 못했다. 스크립트: `D:/.labhq/dev/tmp/claude-worker3/measure1129.py`.
+
+## 확인
+- `tests/test_gateway_publish_durable.py`, `test_state.py`, `test_approval_durable_606.py`, `test_durable_writer.py`, `test_state_control_async_606.py`, `test_step_state_async_606.py`, `test_request_lifecycle.py` 293 passed.
+
+## 하지 않은 것
+- 전체 suite와 Windows CI는 돌리지 않았다(CI에 맡김). #1125의 C안(runner 배치)은 W2의 별도 PR이라 이 측정에 들어 있지 않다.
+- E안(task activity 등을 이 transaction에 싣기)은 이번 범위가 아니다.
+
+## 리뷰·CI 후 수정 (rev2)
+- P1 롤백: joint commit 실패 시 request revision이 그대로면 live request를 저장본으로 되돌리거나 지운다.
+- P1 manual: 한·영에 발행의 한 transaction 보장과 실패 시 복원을 적었다.
+- CI 실패 두 건의 원인은 commit이 줄어 이벤트 루프 턴 수가 달라진 것이다. `test_quota_wait`는 시험이 단계 A의 대기 진입 순서에 기대고 있었고, `test_pi_language`는 제품의 경합(예산 확인과 reservation 저장 사이에 await가 있어 번역 두 건이 모두 확인을 통과)이 이전 timing에 가려져 있었다. 후자는 `pi_language.py`에서 request별 lock으로 고쳤다(실제 서비스에서도 예산을 넘겨 예약할 수 있었다). `test_pi_language.py`는 그대로다.
+- 관련 시험 438 passed, 1 skipped.
+
+## 단계
+#1122: 문서 주기 gate(main 커밋 3개마다 README·manual 갱신)가 시험만 바꾼 PR까지 막는 문제.
+
+## 한 일
+- `scripts/patch_notes.py`: `INVISIBLE` 접두사(`tests/`, `docs/status/`, `patch_notes/entries/`, `config/ci/`, `.github/`, `scripts/ci_`)를 두고, 바뀐 파일이 전부 그 안이거나 생성 파일인 커밋은 `counted_main_commits`에서 뺀다. `labhq/`·`agents/`나 다른 `scripts/`를 하나라도 바꾼 커밋은 그대로 센다.
+- 규칙 문구: `patch_notes.py` 머리말, `CLAUDE.md`, `AGENTS.md`.
+- 시험 두 건: 세지 않는 경우(tests+status+entries, ci 경로, 생성 목차 섞임), 여전히 세는 경우(제품 코드 혼합, agents, 그 밖의 scripts).
+
+## 확인
+- `tests/test_patch_notes.py` 19 passed.
+- Windows inventory: `tests/test_patch_notes.py`는 `known_tests` 목록에만 있다.
+
+## 하지 않은 것
+- 이미 병합된 main 커밋의 재분류는 하지 않았다(규칙이 병합 뒤부터 새 계산으로 적용된다).
+
+## 리뷰 후 추가 (rev2)
+- P1: `check()`가 현재 PR도 세던 문제. 커밋들이 바꾼 파일의 합집합이 전부 invisible이면 refresh 한도에 더하지 않는다. 순 diff가 아닌 합집합이라 README를 고쳤다 되돌린 PR은 계속 막힌다. 판정은 `invisible()` 하나로 main 커밋과 PR이 같이 쓴다.
+- 시험 2건 추가(시험 전용 PR 통과, 제품 코드 혼합 PR 차단). `tests/test_patch_notes.py` 21 passed.
+
+## 리뷰 후 추가 (rev3)
+- P2: rename 감지가 켜져 있으면 `git diff --name-only`가 목적지만 돌려줘 `labhq/` 파일을 `tests/`로 옮긴 커밋이 invisible로 면제됐다. 두 diff 호출에 `--no-renames`를 줬다.
+- 시험 1건(rename 커밋이 센다). 옛 스크립트로 실패, 새 스크립트로 통과를 확인했다. `tests/test_patch_notes.py` 22 passed.
+
+# #1125 안 C — runner outbox 배치를 한 transaction으로
+
+- 결론: runner의 `_send_batch_now`가 배치 안의 모든 행·메시지를 한 SQLite transaction으로 쓴다. 배치마다 commit·fsync가 한 번이다. 보장은 같거나 강하다(배치는 전부 되거나 전부 안 된다).
+- 바꾼 것:
+  - `labhq/store.py`: `StateStore.batch()`를 더했다. 안에서 이 thread가 하는 쓰기는 한 transaction이고 commit은 블록 끝에서 한 번이다. 안의 `_transaction`은 savepoint라 자기 오류는 자기 행만 되돌리고, 바깥 오류는 배치 전체를 되돌린다. 중첩 batch는 바깥에 합류한다.
+  - `labhq/runner/daemon.py`: `_send_batch_now`가 `store.batch()` 안에서 돈다. 읽는 쪽은 commit된 행만 보므로 outbox 재적재는 batch 안에서 미루고 commit 뒤에 한 번 한다(`_batch_thread`, `_reload_after_batch`).
+- 실행한 것(이 PC, 상태 폴더를 D:에 둔 lab 요청 1회, 5단계·이벤트 141건, SQLite가 실제로 실행한 `COMMIT` 문 수):
+  - main(#1126 반영): runner 298~311 + gateway 533 = **831~844회**. 이 안: runner 251~255 + gateway 533 = **784~788회**(runner lane −17~−18%, 전체 −5~−7%). #1126 이전 main(849~854회)과 비교하면 runner −21%, 전체 −8%였다.
+  - 요청 처리 시간은 25.8~26.5 s에서 23.7~25.2 s로 측정 잡음(±1 s)과 겹친다. runner lane은 요청의 임계 경로가 아니라 시간 이득은 이 안 하나로는 측정되지 않는다. 임계 경로는 gateway lane(533회)이라 안 A가 필요하다.
+  - 시험: `tests/test_state.py`에 6건(배치는 commit 한 번·순서 유지, 오류 시 전부 취소, 안쪽 쓰기 오류는 savepoint로 자기 행만 취소, 중첩 batch 합류, runner 배치의 commit 한 번과 outbox 재적재 한 번, 실패한 배치는 아무것도 안 남기고 재적재도 안 함)을 더했고 main의 store·daemon에서는 6건 모두 실패한다. 관련 시험 2,177 passed, 30 skipped, #606 시험(`test_durable_writer`·`test_approval_durable_606`·`test_gateway_publish_durable`·`test_runner_shutdown_signals`·`test_loop_liveness_606`) 116 passed.
+- 중간에 잡은 결함: 처음 구현은 배치 안의 첫 SAVEPOINT가 명시적 BEGIN 없이 transaction을 열어 그 RELEASE가 곧 COMMIT이었고(실제 commit이 줄지 않음), 시험 `test_store_batch_is_one_commit…`이 잡았다. `batch()`가 `BEGIN IMMEDIATE`를 명시하고, 종료는 연결의 컨텍스트 매니저(`with conn:`)를 그대로 써서 #606 시험이 commit 지연을 거는 지점을 지난다.
+- 리뷰 P2(교착)로 고친 것: `batch()`를 호출 thread에서 쓰면 살아 있는 writer thread가 `_write_lock`을 기다리는 동안 안의 `put()`이 그 뒤에 줄을 서 교착한다(이전 구현에서 재현됨). 이제 `batch()`는 store의 durable lane 안에서만 허용하고(아니면 `RuntimeError`), `run_batch`·`arun_batch`가 lane에서 실행한다. 안의 쓰기는 항상 인라인이고 앞서 큐에 든 쓰기 뒤에 순서대로 간다. 시험 2건(lane 밖 사용 거절, 비동기 쓰기 뒤 배치가 교착 없이 순서를 지킴)을 더했다.
+- 미확인: CI Windows 전후 시간, 배치가 큰 경우의 효과.
+- 근거: #1125 설계 댓글 6531718393, 결정 댓글 6531725554.
+
+## 단계
+#1117 rev5: 후보 ④. 근거: [#1117 조사 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1117#issuecomment-6530661340).
+
+## 판단
+`test_backpressured_runner_delivery_has_a_bound_even_after_cancel`의 의도는 "취소 뒤에도 backpressure 대기가 영원하지 않다"이다. 시험은 전송 상한(`CLIENT_SEND_TIMEOUT_S`)을 0.05초로 줄이고 소켓을 `release` 전까지 막으므로, 마감 0.5초는 상한의 10배일 뿐 의미 있는 경계가 아니었다. 끝나지 않는 구현은 마감이 몇 초든 실패한다. 그래서 의도를 지킨 채 마감만 올릴 수 있다.
+
+## 한 일
+- 종료 마감 `wait({task}, timeout=0.5)`를 5초로, 진입 대기 `wait_for(entered.wait(), 1)`을 10초로. 단언 문구·`release` 구조는 그대로.
+
+## 확인
+- `-k backpressured` 2 passed(resolve, close).
+- 변이 확인: 전송 상한을 100초로 바꾸면 두 건 모두 원래 메시지("held cancellation ... indefinitely")로 실패한다(약 11초).
+- Windows inventory: `known_tests` 목록에만 있고 sha256 고정 없음.
+
+## 하지 않은 것
+- 느린 Windows 러너 재현은 CI에서 확인한다. 구현이 0.05초보다 오래 막히는 문제가 있는지는 이 변경으로 알 수 없다(5초 안에 끝나는 것만 확인).
+
+## 리뷰 후 수정 (rev6)
+- P1: 5초는 설정 상한(0.05초)의 100배라 1~4.9초 붙잡는 회귀를 가렸다. 상한을 0.25초로 두고 마감은 그 4배(1초)로 좁혔다. 마감이 같은 비율이라 러너 지터의 절대 여유(0.75초)는 이전 0.45초보다 크다.
+- 소켓이 `release`가 아니라 timer 취소로 끝났는지(`send_timed_out`)를 단언한다.
+- 변이 확인: 상한을 2초로 바꾸면 두 건 모두 실패한다. `-k backpressured` 2 passed.
+- 한계: 마감은 여전히 실시간이라 매우 느린 러너에서는 1초를 넘길 수 있다. 가짜 clock은 쓰지 않았다.
+
+## 단계
+#1117 rev4: 후보 ②·③. 근거: [#1117 조사 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1117#issuecomment-6530661340).
+
+## 한 일
+- `tests/test_gateway_publish_durable.py`: `asyncio.wait_for(x, 1~2)` 18곳을 10초로. 모두 완료·이벤트 도착을 기다리는 곳이고 마감이 곧 단언인 곳은 없다. 실패하면 `TimeoutError`로 보인다.
+- `tests/test_durable_writer.py`: `max(reads) < 0.1`을 `< 0.3`으로. 정지한 commit은 합계 1.2초라 읽기가 commit을 기다렸다면 그 이상이 되어 여전히 실패한다(관측 0.1049로 실패한 적 있음).
+
+## 확인
+- 두 파일 54 passed.
+- Windows inventory: 두 파일 모두 `known_tests` 목록에만 있고 sha256 고정이 없어 수정하지 않았다.
+
+## 하지 않은 것
+- 느린 Windows 러너에서의 재현은 CI에서 확인한다.
+- 후보 ④(`test_approval_durable_606`)는 마감이 단언이라 이번 범위가 아니다.
+
+## 리뷰 후 수정 (rev6)
+- P1: `pytest.raises(CancelledError)` 아래의 `wait_for(publication)` 4곳과 `publish(event("next"))` 2곳은 lock이 빨리 풀린다는 단언이라 1초로 되돌렸다. 시작·도착 대기 12곳은 10초 그대로.
+- `test_gateway_publish_durable.py` 26 passed.
+
+## 리뷰 후 수정 (rev7)
+- P2: `CLIENT_SEND_TIMEOUT_S`를 0.01초로 둔 시험 두 건의 완료 대기 3곳을 1초로 되돌렸다. 규칙은 "설정한 timeout이 완료를 좌우하는 시험의 완료 대기는 짧게, 시작·도착 대기는 10초"이다.
+- main을 반영했다(#1123 병합 후). 두 파일 54 passed.
+
+## 단계
+#1063 rev8 · [PR #1064](https://github.com/ehojune/bioinfo-team-3d/pull/1064)의 reference P2 수정. Draft/hold·미병합 유지.
+
+## 한 일
+- reference를 `synthetic-v3`에 맞췄습니다. v2는 unsupported이며 정상 read/output만 synthetic 수락합니다.
+- observer·외부 ledger·seal·broker·deadline·cleanup 조건을 현재 corpus/validator와 대조했습니다.
+- reference·전용 patch note·이 status만 바꿉니다. 실제 adapter와 보호는 UNVERIFIED입니다.
+
+## 테스트 결과
+- notes_index·patch_notes·public·diff 검사 PASS. 최종 head CI·실제 리뷰 결과는 PR에 기록합니다.
+- reference 3,638→5,134자. 새 lifecycle 조건은 lookup-only 표에 모았습니다.
+- corpus·validator 변경이 없어 로컬 pytest는 재실행하지 않습니다.
+
+## 막힌 점
+- 실제 adapter 인증·OS seal·handle 취소·독립 inventory와 #666 통합 승인은 남아 있습니다. 실제 실행·provisioning·연구/HPC는 수행하지 않습니다.
+
+# #660 2단계: 요청 사이 사용 이력
+
+- 결론: 논문 스킬이 다른 요청에서 선택된 기록을 세 곳에서 본다. `labhq talent --history`(gateway 없이 store를 읽기 전용으로), `GET /api/paper-skills`(인증), 웹 여우 패널 카드의 `이전 사용` 칸. 모두 최근 요청 500건 기준이며 그보다 오래된 요청이 있으면 그렇게 밝힌다.
+- 바꾼 것: `labhq/recruit/paper_skills.py`(`history_rows`·`skill_history`·`with_previous_uses`), `labhq/gateway/server.py`(API, 요청 상세의 `previous_uses`와 `history`), `labhq/cli.py`(`--history`, store 읽기를 `_paper_skill_store_rows`로 분리), `labhq/web/ui/literature.js`, 시험 `tests/test_contract_provenance.py`·`tests/web_contract_provenance.cjs`, manual 한·영.
+- 사용 이력의 뜻: 그 요청이 스킬을 골랐고 어느 단계에 붙었는지, 결과가 참조했는지다. 결과 참조는 도구 호출이나 효용의 증거가 아니다.
+- 한계: store에 남은 요청만 센다(삭제 정책 미확인). 요청 상세를 열 때마다 최근 500건을 훑는다. 웹 렌더는 시험에서 가짜 DOM으로만 확인했다.
+- 미검증: 실제 gateway와 브라우저에서의 카드, 많은 요청이 쌓인 store의 응답 시간.
+
+# #1124 semantics lab 시험의 commit fsync 대기 줄이기
+
+- 결론: lab 한 번의 실행은 SQLite commit을 약 840번(이벤트당 약 6번) 하고 매번 `synchronous=FULL`로 fsync를 기다린다. fsync가 느린 디스크에서는 이것이 시험 시간의 대부분이다. lab이 이 실행의 상태 저장소만 WAL `synchronous=NORMAL`로 열게 했다. 제품 코드와 #606의 durable 보장은 건드리지 않았다.
+- 바꾼 것: `tests/semantics_shadow_lab.py`의 `run_lab`이 `_unsynced_commits()` 안에서 돈다. `StateStore._write_connection`이 새 쓰기 연결을 열 때 `PRAGMA synchronous=NORMAL`을 더하고, 실행이 끝나면(예외 포함) 원래 함수로 되돌린다. durable 순서·완결을 보는 시험은 이 lab을 쓰지 않는다.
+- 전후(이 PC, pytest 임시 폴더를 D:에 둔 경우, 시험 한 건은 off·on 두 번 실행):
+
+  | 시험 | 전 | 후 |
+  |---|---|---|
+  | `test_the_lab_records_the_same_with_actions_on[shadow]` | 58.8 s | 21.2 s |
+  | `…[confirm]` | 59.5 s | 20.2 s |
+  | `test_shadow_writes_one_line_per_finished_request` | 48.2 s | 14.8 s |
+
+  기본 임시 폴더(C:)에서는 9.0/8.5/6.3 s에서 8.6/8.2/5.9 s로 거의 같다(fsync가 원래 빠르다). lab 1회 단계 측정: commit fsync 합 31.5 s → 0.4 s, 요청 처리 25 s → 7.3 s.
+- 실행한 것: lab을 쓰는 9개 시험 파일 226 passed, 1 skipped(전과 같음). 패치가 실행 뒤 원래대로 복원되는 것을 확인했다.
+- 남은 지연: 요청 처리의 나머지 큰 부분은 `owned.py`의 파일 쓰기가 부르는 `os.fsync` 86회(약 3.8 s/회 실행)다. 제품 동작이라 이번에 건드리지 않았다.
+- CI Windows 전후: 전은 #1111 run 41107759746(pool 단계 780초 초과로 중단). 후는 이 PR의 두 head에서 통과했다 — pool 단계 516 s(run 41113395726)와 647 s(run 41119265658, main 위로 rebase한 head). 같은 변경인데 두 값이 126초 다른 것은 러너 편차이고 둘 다 780초 상한 안이다.
+- 근거: #1124 댓글 6531184747.
+
+## 단계
+#625 2단계 PR A: 계획 단계의 `model_tier` 데이터 경로. 설계: [#625 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/625#issuecomment-6529059780), 승인 조건은 같은 이슈의 총괄 댓글.
+
+## 한 일
+1. `settings.orchestrator.step_model_tiers`(기본 꺼짐).
+2. `research/contract.py`: `ResearchStep.model_tier`는 선택이고 비면 직렬화에서 빠져 기존 계획의 `plan_sha256`이 그대로이며, 엔진 schema(`RESEARCH_PLAN_SCHEMA`)에는 노출하지 않는다.
+3. `cso.py`: `clamp_step_tier`(직원 선언 등급 이하, validation·report 하한 balanced, 선언 없는 직원은 무시)와 `validate_steps(tier_rules=)`. 규칙이 없으면(설정 꺼짐) 필드는 예전처럼 버려진다. 다섯 호출 지점이 모두 `_tier_rules()`를 넘기고, 단계 task meta에 `model_tier`를 싣는다.
+4. `runner/daemon.py`: 단계 등급이 유효하고 표에 그 엔진 항목이 있으면 모델을 바꾼다(직원의 명시 model보다 앞섬).
+5. `costs.task_cost_item(model_tier=)`: 단계 등급을 기록할 수 있다.
+6. 예시 YAML 두 사본과 manual 한·영.
+
+## 확인
+- 새 시험: 등급 자르기 표 10건, `validate_steps` 꺼짐·켜짐·자르기, 연구 계획 hash·schema 불변, 일반 계획 CSO 통합(꺼짐은 아무것도 싣지 않고 켜짐은 자르고 task에 싣는다), 러너 해석, 비용 기록과 불일치 경고. 소스 변경을 빼면 15건이 실패한다.
+- `-k "cso or research or plan or settings or runner or cost or send"` 2232 passed, 20 skipped.
+
+## 리뷰 반영 (rev9)
+- **P1(저장된 연구 계획이 검증을 우회)**: 연구 계획 재개 경로는 `validate_steps` 결과를 버리고 저장된 단계 dict를 그대로 실행해, 설정이 꺼져 있어도 단계 등급이 러너까지 갔다. 단계 task를 만드는 `run_one`의 `_dispatch_step_tier` **한 지점**에서 다시 결정한다: 설정이 꺼져 있으면 싣지 않고, 켜져 있으면 `clamp_step_tier`(직원 선언 이하, 단계의 `phase` 하한)로 자른다. 일반·연구·저장된 계획이 모두 이 지점을 지난다.
+- **P2(비용 기록이 단계 등급을 못 받음)**: `gateway/server.py`의 동기·비동기 비용 기록이 저장된 task의 `payload.meta.model_tier`(발송된 등급)를 비용 항목의 `model_tier`로 남긴다. 의도적으로 낮춘 단계는 `model_tier_mismatch`로 경고되지 않고, 아무도 요청하지 않은 낮춤은 계속 경고된다. 등급이 아닌 값은 무시한다. 호출 signature는 바꾸지 않았다(정적 시험이 `_record_task_cost`를 추출해 쓴다).
+
+## 하지 않은 것
+- CSO prompt·CP1 표시·비용 예상(PR B)과 bench 측정(PI 승인 뒤).
+- 실제 연구 계획 재개 전체 흐름(모델 호출이 필요한 CP2까지)은 돌리지 않았고, 재개가 지나는 지점의 결정을 단위 시험으로 확인했다.
+
+## 단계
+#1063 rev7 · 독립 synthetic seal contract v3. [PR #1064](https://github.com/ehojune/bioinfo-team-3d/pull/1064)는 draft/hold이며 병합하지 않습니다.
+
+## 한 일
+- 정상 read/output control과 reason-code 거부를 같은 fixture로 검증합니다. 기존 ancestry 검사는 유지합니다.
+- observer identity·sequence/time 출처, 외부 append-only ledger, retained writable handle, broker token·실패, supervisor deadline, descendant/resource 잔류를 검사합니다.
+- ledger를 다시 기록한 음성 대조도 거부합니다. expected label은 validator 입력에 쓰지 않습니다.
+
+## 테스트 결과
+- `python -m pytest tests/test_process_boundary_seal_contract.py -q`: 598 passed. 기존 29 case·새 53 control, data-only. 실제 process·engine 호출 없음.
+- public·diff·patch-note 검사와 최종 head CI·실제 리뷰 결과는 PR에 기록합니다. #1123 문서 gate 수정은 아직 미병합입니다.
+
+## 막힌 점
+- 실제 보호 UNVERIFIED. Hash chain은 독립 입력과의 대조이며 실제 서명·storage 접근 제어의 증거가 아닙니다.
+- `adapt_producer`는 unsupported. 후속 최소 범위는 외부 observer 인증/ledger를 받는 adapter와 supervisor의 request deadline·reason-coded stop/cleanup evidence 연결입니다. OS seal·handle 취소·독립 inventory는 별도 구현·실행 승인이 필요합니다.
+- 공통 문서·제품 코드·CI·provisioning·연구/HPC는 수정하거나 실행하지 않았습니다.
+
+# Producer synthetic controls — #1047
+
+- Mock controls check refusal of missing or forged authority and broker start, child, timeout and cleanup failures. Protected launch remains unsupported.
+- The broker child timeout records `BROKER_TIMEOUT` and still closes the broker. The remaining strict xfail exposes missing authenticated ancestry; neither mock test proves protection.
+- Follow-up needs an authenticated run-bound observer verifier and broader structured failure codes. Diagnostic ancestry is untrusted; cleanup and descendant termination remain independently unverified.
+- PR #1050 remains draft/hold. No provisioning, live boundary experiment or engine/provider/model execution was performed.
+
+# Harness synthetic controls
+
+- Mock protocol positive: unsealed diagnostic only; protection remains unverified.
+- Wrong run, missing callback, simulated failures, timeout and residual cleanup report inconclusive.
+- Observer authentication and independent descendant/resource inventory have no harness API. The strict xfail records the missing verifier; it does not establish rejection. Follow-up needs a run-bound authenticated evidence input and independently verified cleanup before any protection or cleanup PASS.
+- No live boundary, engine or provider execution.
+
+## 단계
+#1117: `tests/test_state.py`의 고정 횟수 대기를 시간 기준 대기로. 근거: [#1076 계측 실측](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6530142714).
+
+## 한 일
+- `wait_until(predicate, timeout=10)`(async)와 `wait_until_sync`(TestClient 시험용)를 더하고, 이 파일의 `for _ in range(N): ... sleep(0.01)` 대기 12곳을 모두 바꿨다(async 9, sync 2, resume 한 곳은 두 조건). 조건이 서면 바로 나오고 한도를 넘으면 False를 돌려주므로 뒤의 단언이 그대로 실패를 알린다.
+- 대상 시험 `test_completed_direct_result_finishes_without_original_agent`는 `[False]`·`[True]` 모두 같은 대기를 쓴다. 단언은 하나도 바꾸지 않았다.
+- helper 시험 한 건(조건이 늦게 서도 기다림, 한도 초과는 False, 이미 참이면 즉시).
+
+## 확인
+- `tests/test_state.py` 61 passed.
+- Windows inventory: `config/ci/windows-boundary-v1.json`에 `tests/test_state.py`는 `known_tests` 목록에만 있고 sha256 고정(`mixed_nodes`)이 없어 수정하지 않았다.
+
+## 하지 않은 것
+- 실제 느린 Windows 러너에서의 재현은 하지 못했다(CI에서 확인). 이 PC에서는 시험이 통과하는 것과 helper의 동작만 확인했다.
+- 같은 부류의 다른 시험 파일(`test_state_*.py` 등)의 고정 횟수 대기는 이번 범위가 아니다.
+
+## 리뷰 후 추가 (rev3)
+- P2: helper 시험의 `< 4.0` 실시간 상한 단언을 뺐다(하한 `> 0.3`과 False/True 단언은 유지).
+- 같은 파일의 `asyncio.wait_for(x, 1~2)` 13곳을 10초로 올렸다. 모두 결과가 오기를 기다리는 곳이라 마감이 곧 단언인 곳은 없다. 실패하면 TimeoutError로 보인다. (#1117 조사 후보 ①)
+- `tests/test_state.py` 61 passed.
+
+# #1113 uvicorn 시작 실패가 worker를 죽이지 않게
+
+- 결론: 새 helper `tests/support/serve_task.py`(`serve_task`·`wait_started`)가 `server.serve()`·`broker.serve()`의 `SystemExit`를 uvicorn 로그 꼬리가 담긴 `RuntimeError`로 바꾼다. 시작이 실패하면 그 시험만 원인과 함께 실패하고, 시간 초과까지 기다리지 않는다.
+- 바꾼 곳: 시험 10개 파일의 서버 시작 12곳(`test_ask`는 gateway 1·broker 2). 줄 수 변화는 호출 줄뿐이고 단언은 그대로다. 기다림 한도는 원래 값을 유지했다(`test_web_3d`는 2초에서 10초로 늘렸다).
+- 새 시험: `tests/test_serve_task.py` 5건(점유된 포트, 정상 시작·종료, 로그 없는 종료, 시간 초과, handler 정리).
+- inventory: `known_tests`에 `tests/test_serve_task.py` 한 줄, `mixed_nodes["tests/test_web_3d.py"].sha256`만 새 해시. `validate_profile()` 통과.
+- 확인: 바꾼 시험 파일 213건과 `test_web_3d` 서버 시험 2건, `test_ci_boundary_preview` 통과.
+- 제외: `tests/semantics_shadow_lab.py`는 #1111 범위라 병합 뒤 이 helper로 모은다.
+- 미검증: Windows CI. 포트 경합이 실제 CI 연쇄의 원인인지.
+
+# #1076 Windows pool 단계 상한 재계산
+
+- 결론: #931의 규칙(성공한 pool 단계의 최악값 × 1.5)을 최신 근거로 다시 적용해 pool 단계 상한을 9분에서 13분(780초)으로, job 상한을 14분에서 18분으로 올렸다. 시험 선택과 gate는 바꾸지 않았다.
+- 근거: 최근 성공한 pool 단계의 최악값은 499초(#1106 run, 이 PC의 비교 artifact), main Windows는 363~383초다. 9분(540초) 상한을 넘긴 것은 #1097에서 1회, #1111에서 3회(548초 포함)다. #1111은 `tests/semantics_shadow_lab.py` 변경으로 Windows 선택에 semantics 시험 파일 9개가 더해져 수집 시험이 17,256개에서 18,092개로, 풀 시간이 늘었다. 499 × 1.5 = 748.5초를 올림해 13분이다.
+- 바꾼 것: `.github/workflows/test.yml`의 pool 단계 `timeout-minutes`(9→13), job `timeout-minutes`(14→18, setup + critical 3 + pool 13 + 보고 여유), 단계 요약 문구의 "540 s"를 "780 s"로, 스택 스냅샷 주석. `tests/test_ci_windows10m.py`의 고정값을 같은 값으로 맞췄다.
+- 실행한 것: `tests/test_ci_windows10m.py` 69 passed.
+- 미확인: Windows CI가 새 상한 안에서 도는지는 PR의 CI로 본다. 새 상한도 넘으면 근거를 다시 본다.
+- 근거: #1076 결정 댓글 6529993804.
+
+# #1108 .env.example
+
+- 결론: 새 결과 repo의 정리본 스크립트가 읽는 `LABHQ_INPUT_*` 변수를 모아 루트에 `.env.example`(값은 비움, 설명 주석 두 줄)을 만든다. 변수가 없으면 파일을 만들지 않는다. README 실행 절이 이 파일을 복사해 채우라고 안내하고 저장소 지도에도 올린다.
+- 확인: 변수를 비운 채 재작성된 스크립트를 실행하면 `KeyError`에 변수 이름이 담긴다(시험으로 고정). 개인 경로는 파일에 들어가지 않는다.
+- 바꾼 것: `labhq/portfolio.py`, `tests/test_portfolio_edition.py`.
+- 한계: `.env` 읽기 코드는 넣지 않았다. 사용자가 셸에서 변수를 내보내거나 자신의 도구로 `.env`를 읽어야 한다. `.env.example`은 코드 파일(`.py` 등)에서 찾은 변수만 담고 셸 스크립트의 변수는 코드 확장자에 든 경우만 본다.
+- 미검증: 실제 GitHub 게시.
+
+## 단계
+#1107 rev2: 데모 정리가 `pending:[websocket]`로 끝나던 결함. 원인: [#1107 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1107#issuecomment-6527858912).
+
+## 한 일
+1. `tests/support/mini_ws.cjs`: 업그레이드 전에 `close()`가 불리면 대기 중인 요청을 destroy하고 `onclose`를 즉시 한 번, 연결이 업그레이드 전에 실패하면 `onerror`와 `onclose`를 한 번씩, 업그레이드 뒤에는 이전처럼 socket 'close'에서 한 번. 어느 경우도 `onclose`는 두 번 불리지 않고, `close()`가 스스로 만든 요청 오류는 `onerror`로 올리지 않는다.
+2. `tests/support/demo_driver.cjs`: 정리 진단(`demo cleanup:`)에 `node_version`·`ws_kind`(`mini`/`global`)만 추가. 동작은 그대로.
+3. `tests/web_visual_tooling.cjs`: 업그레이드 전 close, 연결 실패, 업그레이드 뒤 두 끝(client·peer), 진단 필드 시험 4건.
+
+## 확인
+- `LABHQ_TEST_PYTHON`을 지정해 `node tests/web_visual_tooling.cjs` 67 pass. 수정을 빼면 새 시험 3건이 실패함을 확인했다.
+- 지정하지 않으면 Chrome을 여는 기존 시험 2건이 `LABHQ_TEST_PYTHON must name…`로 실패한다(main에서도 같음, 이번 변경과 무관).
+
+## 하지 않은 것
+- 시작이 30초 걸리는 것(느린 러너, #1076 계열)은 바꾸지 않았다. 이 수정으로 `web_resizable_panels`의 그 실패가 사라지지는 않는다.
+- CI Windows runner의 Node가 `MiniWebSocket`을 썼는지는 아직 모른다(다음 사례의 `ws_kind`로 확인).
+
+## 단계
+#660 1단계(`labhq talent` 카드 정보): 결정은 [#660 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/660#issuecomment-6528746993) 설계와 총괄 승인(공개 여부 칸은 만들지 않고 본문 포함 여부와 보관 위치를 적는다, 요약은 하지 않는다).
+
+## 한 일
+1. `paper_skills.skill_content(folder, digest)`: SKILL.md 앞부분(8 KB)의 이름·설명 한 줄, `references/paper.md` 크기, 그림·표·보충 그림·보충 표 파일 수, 보충자료 파일 유무를 읽는다. 링크나 다른 hash의 폴더, 손상된 파일은 None 또는 이름 없음으로 끝나며 아무것도 따라가지 않는다.
+2. `cli.talent_lines`: 같은 줄 끝에 `이름=… · 논문 본문 파일 N KB(이 PC의 이 폴더에만 있고 요청 묶음에는 들어가지 않음) · 그림·표 수 · 보충자료 있음 · 기록 시각(파일) YYYY-MM-DD`. 줄 수는 그대로(기존 시험이 고정)이고 경로는 보이지 않는다.
+
+## 이 PC에서의 실제 출력
+스킬 3개(receipt 있는 것)에 본문 파일 154 KB·3 KB·49 KB, 그림 10·0·4 등이 나온다. 3 KB짜리는 본문이 매우 짧아 초록 수준일 수 있다(크기로 드러남).
+
+## 추가한 것 (rev3)
+- **만든 요청·날짜(`skill_origin`)**: `paper_skills.skill_origins`가 요청들의 `plan.paper_skill_results`에서 이 `skill_sha256`이 처음 `ready`로 나온 요청(id·`created_at`)을 찾는다(`reused`는 이전 요청이 만들었다는 뜻이라 세지 않는다). `labhq talent`는 로컬 gateway store(`gateway.sqlite3`)를 **읽기 전용**(`mode=ro`)으로 열어 읽는다. 없으면 `기록 시각(파일)`로 대신하고 괄호에 이유(`요청 기록에 없음`, `gateway 기록 파일(gateway.sqlite3)이 없습니다`, `요청 기록을 읽지 못했습니다(오류 종류)`)를 적는다. store를 만들거나 쓰지 않는다.
+- **끝나지 않은 빌드**: `build/`만 있고 receipt가 없는 `paper-skill-*` 폴더 수를 마지막 한 줄(`빌드 미완료 폴더 N개`)로 알린다. `tests/test_contract_provenance.py`의 줄 수 단언을 약하게 하지 않고 새 줄을 고정했다.
+- 이 PC에서 실제 store로 돌린 결과: 스킬 3개 중 2개는 `req_750b0e41fd`가 만든 것으로 나오고, 하나는 요청 기록에 없다(빌드한 요청이 store에 없거나 필드가 없던 시절의 요청).
+
+## 하지 않은 것
+- 요청 사이 사용 이력(쓴 요청·단계·직원 누적)과 웹 카드(2단계, gateway API).
+- (manual 한·영은 rev4에서 `labhq talent` 절에 새 출력 항목을 적었다.)
+
+## 테스트
+`tests/test_paper_skill_670.py`에 시험 4건(내용 읽기, 링크·잘못된 hash·큰 파일, talent 줄 내용과 경로 비노출, 읽을 수 없을 때 이전 줄+날짜). 수정을 빼면 4건 모두 실패한다. `test_paper_skill_670`·`test_paper_skill_attach`·`test_contract_provenance` 112 passed.
+
+## 리뷰 반영 (rev6)
+- **만든 요청을 provenance에서도 찾는다**: 실제 요청은 계획의 `paper_skill_results` 행을 `deferred`로 두고 `ready`는 단계 결과의 provenance(`results.*.provenance.runs.*.paper_skills`)에만 남긴다(옛 요청은 계획 행에도 `ready`가 남아 있었다). `skill_origins`가 둘 다 읽고(`reused`는 세지 않음), `labhq talent`의 store 조회는 `results`도 가져온다. 손상된 요청 본문(`json_valid` 아님)은 건너뛰어 한 건이 전체를 막지 않는다. 이 PC의 실제 store에서도 이전과 같은 결과(스킬 2개가 `req_750b0e41fd`)를 확인했다.
+
+# #1076 에이전트 PC에서 node 시험이 못 도는 문제
+
+- 결론: PATH 맨 앞의 `node.cmd` shim(Codex 앱 번들)이 시험 격리로 바뀐 `LOCALAPPDATA`를 보고 node를 못 찾았다. 시험 73건이 main에서도 `node.exe not found`로 실패했다. 제품 코드는 바꾸지 않았다.
+- 바꾼 것: `tests/support/node_binary.py`의 `node_binary()`가 실제 `node.exe`를 먼저 쓴다. shim뿐이면 shim을 한 번만, 운영자의 `LOCALAPPDATA`(프로필의 실제 위치, 없으면 `LABHQ_TEST_REAL_HOME` 기준)로 돌려 `process.execPath`만 알아낸다. 시험은 그 실제 `node.exe`를 격리된 환경 그대로 직접 실행하므로 시험의 자식 프로세스는 운영자 폴더를 보지 않는다. `tests/test_web_3d.py`(두 곳)와 `tests/test_runner_wait_snapshot.py`가 `node_binary()`를 쓴다. `tests/test_ci_windows10m.py`의 `node_wrapper` 가짜 이름공간에는 `node_binary` stub 하나만 더했다. `config/ci/windows-boundary-v1.json`에서는 `tests/test_web_3d.py`의 sha256 한 줄만 바꿨다.
+- 실행한 것: 두 파일 98 passed, 1 skipped(기존 73 failed). PATH를 `~/bin`의 shim만 남기고 비운 경우에도 브라우저·데모 6건을 뺀 92 passed이고 `node_binary()`가 `…\runtimes\cua_node\…\bin\node.exe`를 돌려준다. CI 계약 시험 6개 파일 포함 485 passed.
+- 미확인: 브라우저·데모 6건은 shim-only PATH로 돌리지 않았다. 환경 변수로 `LOCALAPPDATA`를 직접 바꾼 PC는 `SHGetFolderPathW`가 그 값을 반영하지 않아 지원하지 못한다.
+- 근거: #1076 댓글 6527238637.
+
+# #1104 저자 설정과 manual 정정
+
+- 결론: 설정 `result_storage.authors`(기본 빈 목록)에 이름이 있으면 새 결과 repo에 유효한 `CITATION.cff`를 쓴다. 요청의 `authors`가 있으면 그것이 앞선다. 둘 다 비면 파일을 만들지 않고 README에 "인용 정보 미정(저자 미입력)"을 적는다.
+- manual: 커밋 메시지 설명에서 단계별 진행 커밋은 요청 요약이 붙지 않는다고 바로잡았다.
+- 바꾼 것: `labhq/settings.py`, `labhq/portfolio.py`, 예시 YAML 두 사본, 시험 `test_result_storage.py`, manual 한·영.
+- 한계: 요청마다 저자를 받는 입구(`RequestIn`)는 gateway 변경이 필요해 하지 않았다. 사람의 성·이름 분리와 ORCID는 다루지 않는다.
+- 확인: 예시 YAML을 읽는 시험 10개 파일 784건과 `test_portfolio_edition`·`test_result_storage` 통과.
+- 미검증: 실제 GitHub 게시, CFF 검증기.
+
+## 단계
+#1099(#1087 리뷰 P2): `route: solo` prompt에 스크립트 선언 규칙.
+
+## 한 일
+1. `labhq/orchestrator/cso.py` `SOLO_PROMPT`의 "Save analysis code under outputs/scripts" 줄 뒤에 `SCRIPT_OUTPUTS_PLAN_RULE` 한 줄.
+2. `tests/test_output_types.py`: 규칙이 `SOLO_PROMPT`와 request·assumptions를 채운 prompt에 있는지 단언(규칙을 빼면 실패함을 확인).
+
+## 확인
+- `tests/test_output_types.py`·`test_output_types_research.py`·`test_report_figures_svg.py`·`test_report_paper_format.py`·`test_topic_checklists_precedents.py` 121 passed.
+- 계획 prompt의 고정 hash 시험은 solo prompt를 포함하지 않는다(영향 없음).
+
+## 하지 않은 것
+- 실제 solo 요청에서 에이전트가 스크립트를 선언하는지는 보지 못했다.
+
+## 단계
+#877 rev10(A안 1단계): 웹 작업판에 요청 시간 상한과 `model_tier_mismatch` 경고. 설계: [#877 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/877#issuecomment-6526354927), 승인: A안.
+
+## 한 일
+1. `Hub.snapshot()`의 요청 허용 목록과 `request.created` data에 `wall_clock`.
+2. `state.js`: `applyWallClock`(비열거 `q.wallClock`, 상태 digest 불변), `deadlineLabel(q, now)`(`labhq status`와 같은 문구), `engineCostLabel`이 `model_tier_mismatch` 경고를 읽음.
+3. `index.html` 요청 패널 `req-meta`에 활성 요청일 때만 시간 상한 줄. 15초 재그림이 이미 있어 별도 타이머 없음.
+
+## 후속 수정 (리뷰)
+- 남은 시간 문구(`deadlineText`)를 요청 render cache key에 넣어 15초 타이머가 카운트다운을 다시 그리게 했다(P2). 이 key 식을 잘라 평가하는 `tests/web_local_jobs_675.cjs`의 context에 `deadlineText`를 더해 `ReferenceError`를 고쳤고(회귀), 문구가 바뀌면 key가 바뀜을 단언한다.
+- manual 한·영 `작업 시간` 절에 웹 작업판의 시간 상한 줄, snapshot 뒤 PI 대기의 오차, 선언 등급과 다른 모델 비용 줄을 적었다(P1).
+
+## 알려진 오차 (A안)
+snapshot 뒤에 시작한 PI 대기는 다음 snapshot까지 빼지 않아 남은 시간이 실제보다 PI 대기만큼 짧게 보일 수 있다(일찍 경고하는 쪽).
+
+## 테스트
+- `tests/web_state.cjs`(꺼짐·켜짐·모름·waiting_pi·지난 기한·snapshot 뒤 대기·request.created·digest 불변), `tests/web_cost_by_agent.cjs`(경고 문구, ':'가 든 모델명, 옛 summary, index.html 연결), `tests/test_active_request_cancel.py`(snapshot과 request.created가 wall_clock을 싣는지) 추가.
+- 로컬: 위 `.cjs`와 `web_issue87`·`web_issue106`을 node로 직접 돌려 통과, `test_active_request_cancel.py` 28 passed. pytest 안의 node 시험 6건(`web_state`·`web_issue87`·`web_issue106`·`replay_boundary` 3건)은 main에서도 `node.exe not found`(pytest 임시 홈)로 실패하는 로컬 환경 문제라 CI에서 확인한다.
+
+## 하지 않은 것
+- 3D의 요청별 줄. 서버가 `held_s` 변경을 이벤트로 알리는 B안. 실제 브라우저 렌더 확인.
+
+# #792 rev10 CITATION.cff와 커밋 메시지
+
+- 결론: 요청에 `authors`(이름 목록)가 있을 때만 결과 repo 루트에 유효한 `CITATION.cff`를 쓴다. 없으면 파일을 만들지 않고 README "파일 목록"에 "인용 정보 미정(저자 미입력)"을 적는다. 저자와 DOI는 만들지 않는다.
+- 커밋 메시지: 세 문장 고정(`연구 결과 정리/그림/PDF`)을 `종류: 경로 (단계 x) — 요청 요약(60자)`로 바꿨다. 단계별 진행 게시도 파일명을 넣는다.
+- 바꾼 것: `labhq/portfolio.py`, `labhq/result_storage.py`, `labhq/integrations/github.py`, 시험 `test_result_storage.py`·`test_publish_retry_607.py`(새 형식 고정).
+- 한계: 저자는 `name`(단체형) 항목으로만 쓴다. 사람의 성·이름 분리와 ORCID는 요청에 그 구조가 생긴 뒤에 다룬다. 요청에 `authors`를 넣는 입구는 이번에 만들지 않았다.
+- 미검증: 실제 GitHub 게시, CFF 검증기.
+
+## 단계
+#625(Freda·Moore 조사) 1단계: 단계별 모델 등급. 설계: [#625 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/625#issuecomment-6524050761), 승인: 명시한 model 우선·기본 표 빈 값.
+
+## 한 일
+1. `settings.model_tiers`(fast·balanced·reasoning × 엔진 → 모델, 기본 빈 값)와 `models_match`(별칭·정식명 비교).
+2. 러너 `_resolve_agent`: 직원에 `model`이 없고 표에 그 엔진 항목이 있을 때만 등급으로 모델을 채운다. 채우는 때는 `agent_overrides`·`agent_identity`·`runner.force_engine`을 모두 적용한 **뒤**라서 직원이 실제로 도는 엔진의 모델을 쓴다. 명시한 model·override·identity가 이긴다.
+3. `send --dry-run`: 행마다 `(등급·모델)`, 모르면 `모델 미정`. 러너와 같은 엔진(`runner.force_engine`이 있으면 그 엔진)으로 모델을 찾는다.
+4. 비용 항목이 선언 등급(`model_tier`)을 남기고, 표가 있을 때 실제 모델이 다르면 비용 요약 `warnings`에 `model_tier_mismatch:<직원>:<등급>:<실제 모델>`을 남기며 비용 줄(`format_warnings`)에도 보인다. 실제로 돌았는지 관측하지 못한 결과(`outcome_unknown`)는 뺀다.
+5. gateway의 동기·비동기 두 비용 기록 경로가 `model_tiers`를 `request_cost_summary`에 넘긴다(`gateway/server.py`).
+6. `setup-wsl`이 `model_tiers`를 WSL runner 설정에 보내고 `wsl_bootstrap`이 설정에 쓴다(`wsl_setup.py`, `wsl_bootstrap.py`).
+7. manual 한·영에 우선순위(직원 `model`·`agent_overrides`·`cso_model`이 등급보다 앞섬), 빈 표의 의미, `model_tier_mismatch`와 비용 줄, dry-run의 `모델 미정`을 적었다.
+8. 예시 YAML 두 사본에 빈 `model_tiers`와 설명.
+
+## Codex 어댑터 읽은 결과
+- Codex: `-m <model>`(model이 있을 때만), effort는 `-c model_reasoning_effort=...`. Claude Code: `--model`, `--effort`. 등급은 effort를 건드리지 않는다.
+- 실제 모델은 CLI가 알린 값(`record_model_id`, 정식명)이고 직원 YAML은 별칭(opus)일 수 있어 비교는 별칭·정식명 규칙(`models_match`)으로 한다.
+
+## 하지 않은 것
+- CSO가 단계마다 등급을 고르는 것(계획 schema·CP1·plan hash가 바뀌므로 별도 이슈).
+- 실제 ② run에서 선언 등급과 다른 모델 경고가 어떻게 나오는지, 비용 줄이 웹·CLI에서 어떻게 보이는지는 보지 못했다.
+
+## 테스트
+`tests/test_send_dry_run.py`(등급 표 검증, 별칭 비교, dry-run, 러너 채움과 엔진 순서, 비용 항목), `tests/test_cost_accounting.py`(gateway 동기·비동기 연결, 비용 줄, outcome_unknown), `tests/test_wsl_readiness.py`(WSL 설정에 표 전달)에 시험을 더했다. 수정을 빼면 실패함을 각각 확인했다. 관련 시험 64 passed(`test_send_dry_run`·`test_plan_only_cso_model`·`test_wsl_readiness`), `-k "bench or settings or example or config or init"` 988 passed(이전 head).
+
+# #1076 환경·부하에 흔들리던 시험 세 건
+
+- 결론: 세 시험 모두 시험 쪽 문제였고 제품 코드는 바꾸지 않았다.
+- 바꾼 것: `tests/test_doctor.py`는 시작에서 `CLAUDE_*`·`CLAUDECODE*` 변수를 지우고 시험 마커 2개만 센다. `tests/test_staff_control_steps.py`의 `_alive()`는 `tasklist` 출력을 bytes로 읽는다(한국어 Windows에서 `PYTHONUTF8=1`이면 해독 실패). `tests/test_policy.py`의 `_cost`는 평균 대신 가장 빠른 호출을 쓰고 한 쪽당 최소 3회 잰다.
+- 검출력: 가짜 시계 시험 4건(느린 호출 1회는 통과, 모든 호출이 느리면 실패)과 실제 CPU로 제곱 비용을 내는 시험 1건을 더했다. 실제 제곱 시험은 `must stay linear`로 거부된다.
+- 실행한 것: 에이전트 세션 환경(`CLAUDE_*` 10개, `PYTHONUTF8=1`)에서 세 파일 345 passed. Linux 3.12 러너 지연은 재현하지 못했다.
+- 근거: #1076 댓글 6525988210.
+
+# #1076 시험의 전역 시계 patch를 모듈 proxy로
+
+- 결론: 시험 16개 파일이 `X.time.f`로 process 전체의 `time` 함수를 바꾸던 곳을 모두 모듈 자신의 `time`(또는 `asyncio`) 이름만 바꾸는 proxy로 고쳤다.
+- 바꾼 것: `tests/support/time_proxy.py`에 `RuntimeProxy`를 두고 16개 파일이 여기서 import한다. 단언과 시험 의도는 그대로다. `test_doctor`의 roster 시험은 시계를 읽는 `labhq.doctor`와 `labhq.registry` 둘을, `test_login_wait`는 `labhq.orchestrator.cso`를 바꾼다. `test_local_jobs_675`의 `_wait_for_pid`는 시험 파일 안에 있어 그 파일의 `time` 이름을 바꾼다. 범위 밖: `test_ci_windows_phases.py`(자체 정의 유지), 다른 파일의 `asyncio.create_subprocess_exec` 등 시계가 아닌 patch.
+- 실행한 것: 바꾼 16개 파일의 시험을 로컬(Windows)에서 돌렸다. 실패는 main에서도 같은 2건뿐이다: `test_doctor::test_doctor_warns_about_parent_session_markers_and_pi_skills`, `test_staff_control_steps::test_a_cli_start_the_runner_cannot_record_ends_the_cli`.
+- 미확인: 전체 suite는 CI에 맡겼다. 전역 patch가 Windows CI flake의 원인이었는지는 이번에 증명하지 않았다.
+- 근거: #1076, `tests/support/time_proxy.py`.
+
+## 단계
+#1089(② 6차 B2): 근거 표를 만드는 연구 단계 prompt에 규칙 한 줄. 근거: [#910 6차 분류](https://github.com/ehojune/bioinfo-team-3d/issues/910#issuecomment-6521687319).
+
+## 한 일
+1. `labhq/orchestrator/cso.py` `RESEARCH_RESULT_FIELD_RULES`에 같은 출처는 같은 independence_group이라는 규칙 한 줄(`RESULT_CONTRACT_FIELD_RULES`가 있는 `labhq/evidence/claims.py`는 범위 밖이라 건드리지 않고 cso.py 쪽 꼬리에 넣었다).
+2. `tests/test_output_types_research.py`: 규칙 문구가 단계 prompt가 싣는 상수에 있는지 단언.
+
+## 확인
+- 거부 메시지는 이미 충돌을 알려 준다: `labhq/evidence/claims.py:527` "evidence A and B cite the same source X but declare independence groups G1 and G2; re-citation is not independent"(`tests/test_research_evidence.py`가 검증). 고칠 것 없음.
+- 단계 prompt 전체를 고정 hash로 못 박은 시험은 없다(고정 hash는 계획 prompt뿐이라 영향 없음). 그래서 hash 시험 대신 규칙 존재 단언을 넣었다.
+- `tests/test_output_types_research.py`·`tests/test_output_types.py` 55 passed, `tests/test_research_cp2.py` prompt 관련 15 passed.
+
+## 하지 않은 것
+- 실제 ② run에서 엔진이 이 규칙을 따르는지는 다음 run 전까지 못 본다.
+
+## 단계
+#1090(② 6차 B5) 1단계: 근거 표시가 저장된 선행 본문을 세는 재료. 설계: [#1090 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1090#issuecomment-6521798618). `cso.py` 호출 두 줄과 manual은 `cso.py`·manual을 쥔 W1 #792(PR #1087) 병합 뒤 #1088 rev3 다음에 넣는다. 이 브랜치는 PR을 열지 않았다.
+
+## 한 일
+1. `labhq/output_checks.py`: `stored_access(analysis_precedents)`는 `status == "ok"` 기록의 각 논문에서 영수증 `access_level`(LEVELS 안의 값)과 별칭(`paper_id` + `citations`의 PMID·PMCID·DOI), 부분 추출 여부를 `(별칭 집합, 수준, 부분)`으로 돌려준다. 쓸 수 없는 기록(없음·status ≠ ok·모르는 수준·영수증 없음·빈 id)은 비운다.
+2. `conclusion_literature_line`·`literature_ledger_line`에 `stored=()` 인자. **인자가 비면 기존과 똑같다**(기존 시험 그대로 통과). 저장 별칭과 겹치는 결론 근거 집합만 병합하고(인용되지 않은 저장 논문은 더하지 않음), 접근 수준은 단계 기록과 저장 기록 중 좋은 쪽이다. 결론 줄은 출처를 남긴다: `…조회 기록 없음 0편(저장된 선행 검색 기록 4편 포함·CP1 전 기록, 그중 부분 추출 2편)`. 접근 원장 줄은 `확보에는 저장된 선행 검색 기록 N편(CP1 전 기록)이 들어 있습니다.`를 덧붙인다.
+3. 시험 11건을 `tests/test_output_checks.py`에 더했다. ② 6차 재현: 현행 `본문 0·초록 0·서지만 0·조회 기록 없음 5편`, 저장 기록을 합치면 NEJM의 DOI·PMID 두 인용이 한 논문으로 묶여 `4편: 본문 3·초록 1·조회 기록 없음 0`, 인용 안 된 저장 논문 불산입, 단계 기록과 저장 기록 중 좋은 수준, 쓸 수 없는 기록 7종, 접근 원장 줄.
+
+## 아직 하지 않은 것
+`cso.py:5813~5819`의 두 호출에 `stored=output_checks.stored_access(req.get("analysis_precedents"))`를 넘기는 일과 manual 한·영(1200행 부근 세는 규칙 문단). 호출을 연결하기 전에는 실제 CP2 경고가 바뀌지 않는다.
+
+## 테스트 결과
+Windows `tests/test_output_checks.py`·`tests/test_research_report.py` 90 passed.
+
+## 2단계(rev3) — 연결
+`cso.py` `update_conclusion_depth`의 두 호출에 `stored=output_checks.stored_access(요청의 analysis_precedents)`를 넘기고 manual 한·영 세는 규칙 문단에 한 문장을 더했다. 연결 시험은 `tests/test_research_cp2.py`가 claim 범위 밖이라 PR에 넣지 못했다. 로컬에서는 통과(main의 cso.py로 되돌리면 실패)를 확인했고 패치는 `D:\.labhq\dev\tmp\claude-worker3\1090_wiring_test.patch`에 있다. 실행: `tests/test_output_checks.py` 46 passed.
+
+## 단계
+#1088(② 6차 B1) 1단계: 요청 단위 조회 사용량을 사실값으로 내는 재료. 설계: [#1088 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1088#issuecomment-6521726606). prompt 연결과 manual은 `cso.py`·manual을 쥔 W1 #792(PR #1087) 병합 뒤 rev3에서 한다. 1단계는 별도 커밋이고 이 PR이 2단계까지 포함한다.
+
+## 한 일
+1. `labhq/runner/lookup_admission.py`: `LookupAdmission.usage(request_id)`는 읽기 전용으로 `used`·`limit`·`remaining`(음수 없음)·담당별·도구별 건수를 돌려준다. 요청 id가 비었거나 문자열이 아니면 0이 아니라 `None`.
+2. `usage_note(admission, request_id)`: prompt 한 문단. 값이 있으면 "이 요청 사용 N/M, 남음 K(재시도·redirect 포함, 담당별), 이 PC runner의 계수이며 요청문에 적힌 횟수와 별개"를 사실로 적는다. 상한이 꺼졌거나(`admission is None`)·요청 id가 없거나·파일을 읽지 못하면 `UNKNOWN`과 이유를 적고 "0이라 가정하지 말라"고 한다.
+3. 시험 7건을 `tests/test_live_source_limit_891.py`에 더했다(51/60 사용·담당별, 요청 간 분리, 신원 없음 `None`, 남은 값 0에서 멈춤, 문장 내용, unknown 세 경우, 읽기 오류 unknown, 설정 공장).
+
+## 2단계(rev3)에서 한 것
+`cso.py`의 `_lookup_usage_line(rid)`가 CSO 계획(연구·일반 두 lane)·재계획·선행 연구 검색·모든 단계(`run_one`) prompt 끝에 `usage_note_for`의 문단을 붙인다. 상한이 없으면 아무것도 붙이지 않고, 상한이 있는데 계수를 열지·읽지 못하면 UNKNOWN을 붙인다. manual 한·영(조회 상한 항목)에 적었다. 요청 사이 자동 이월은 하지 않는다(총괄 결정).
+
+## 테스트 결과
+Windows `tests/test_live_source_limit_891.py` 20 passed(1단계 7건 + prompt 연결 5건), `test_research_cp2`·`test_output_types_research`·`test_research_report`·`test_cso`·`test_external_wait` 포함 406 passed.
+- 미검증: 재계획 prompt는 같은 helper를 쓰지만 통합 시험은 없다(재계획을 일으키는 장면이 따로 필요). 다른 PC의 runner는 계수가 다르다(문구에 "이 PC runner"로 한정).
+
+# #792 rev7 그림별 원자료와 환경 절
+
+- 결론: 공개본 README의 "그림이 보여 주는 것"이 그림마다 원자료 표(스크립트가 이름을 쓰는 게시 표)를 적는다. 연결을 못 찾으면 못 찾았다고 쓴다. 그래픽 초록은 결과표 숫자를 담지 않는다고 적는다.
+- 환경: "## 환경" 절이 `run/environment/`의 잠금 파일과 `패키지==버전`을 싣는다(15개까지). 기록이 없으면 없다고, 파일만 있고 버전이 없으면 확인하지 못했다고 적는다.
+- P2(#1092): 캡션을 전체 경로로 먼저 맞추고 파일명이 하나뿐일 때만 파일명으로 맞춘다. 같은 이름의 그림끼리 덮어쓰지 않는다.
+- 프롬프트: analyst는 보고서의 그림마다 원자료 파일을 적고 그림 속 숫자를 결과표에서 읽는다. editor는 README에서 같게 한다.
+- 바꾼 것: `labhq/portfolio.py`, `agents/core/{analyst,editor}.yaml`, `tests/test_portfolio_edition.py`.
+- 한계: 원자료 연결은 스크립트 본문에 파일명이 나오는지로 판단하는 휴리스틱이다. 같은 이름의 스크립트·표가 여러 개면 서로 섞여 보일 수 있다. 보고서 본문에 원자료를 자동으로 덧붙이지는 않고 prompt로 요구한다. 환경은 Python 버전을 읽지 않는다.
+- 미검증: 새 실행으로 만든 README, Windows CI.
+
+## 단계
+#1076 rev5: `test_recovery_fake_check[gateway]`의 Windows `ReadTimeout` 3회. 원인 조사: [#1076 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6521284783).
+
+## 한 일
+1. `scripts/recovery_fake_check.py`: `timed_post()`가 두 POST(`/api/requests`, `/api/approvals/<id>`)에 읽기 상한 `POST_TIMEOUT_S = 10`을 주고, 시간 초과(`httpx.TimeoutException`)면 `TimeoutError: POST <호출> timed out after <초>s (<오류 종류>, limit 10s)`로 바꿔 receipt의 `failure`에 남긴다. 클라이언트의 2초 상한은 `/api/health` 반복에 그대로 두고 전체 90초 deadline도 그대로다.
+2. `tests/test_recovery_fake_check.py`: POST가 더 긴 상한으로 나가는지, 4종 시간 초과가 호출·경과·오류 종류를 담은 `TimeoutError`가 되는지(승인 id는 `<id>`로 가림), 시간 초과가 아닌 오류는 건드리지 않는지 시험 6건.
+
+## 확인한 것·못한 것
+- 이 PC에서 같은 시험을 3번 돌려 두 POST는 10~70 ms였고 재시작 직후 첫 health가 약 0.5초 걸렸다. CI Windows pool(worker 4개)에서 2초를 넘는 원인은 재현하지 못했다.
+- 상한을 올리는 것은 한 번의 우연을 가리는 효과가 있지만, 10초에도 걸리면 `failure`가 어느 호출인지 알려 다음 조사가 가능하다.
+
+## 테스트 결과
+Windows `test_recovery_fake_check`·`test_repeat_fake_check` 39 passed.
+
+# #792 결과 repo 감사 후속 (1·2·7)
+
+- 결론: 6차 결과 repo(`labhq-kras-5cf7f22a1b`)의 `run/reproduce.md`는 repo에 없는 `steps/s3·s4/.../*.py`와 `link_inputs.py`를 실행하라고 안내했다. 요청 묶음의 명령 목록은 보고하지 않은 스크립트까지 모두 올렸는데, 정리본은 선언된(보고된) 산출만 싣기 때문이다.
+- 바꾼 것(`labhq/portfolio.py`): 정리본에 싣지 않은 `steps/<단계>` 명령과 `link_inputs.py`를 재현 안내에서 뺀다. 대신 "공개본과 실행본의 차이" 절이 (1) 정리본에 싣지 않은 단계 스크립트와 비공개 요청 묶음에서만 실행된다는 점, (2) 공개한 스크립트 중 `manifest.json`·`inputs/<앞 단계>/…` 같은 작업공간 파일을 읽는 것을 적는다. "공개 자료로 다시 만들 수 있는 것"은 공개 스크립트가 있고 작업공간이 필요 없는 단계로 줄이고, 나머지는 "정리본만으로는 다시 만들 수 없는 것"에 둔다. 공개 code 목록과 재현 안내가 같은 사실을 쓰게 된다.
+- 바꾼 것(`labhq/orchestrator/cso.py`): 계획 prompt(일반·연구·재계획)에 `SCRIPT_OUTPUTS_PLAN_RULE`을 더해, 분석 단계만이 아니라 스크립트를 돌리는 모든 단계(QC 재계산·CI 확인·문헌 추출)가 스크립트를 `outputs/scripts/`에 선언 산출로 두게 한다. 선언하지 않은 스크립트는 게시되지 않는다.
+- 시험: `tests/test_portfolio_edition.py` 2건(빠진 것이 있을 때, 없을 때 변화 없음). 계획 prompt hash를 고정한 시험 2건은 새 규칙 한 줄을 빼고 비교하도록 맞춘다.
+- 이번에 하지 않은 것: #792 감사의 3·4·5·6·8번(고정 환경, 입력 변수·`<local-path>` 잔재, README 구성, 그림 source data, CITATION·커밋 메시지).
+- 미검증: 실제 6차 repo를 이 코드로 다시 만든 결과, 선언 규칙이 모델에게 실제로 지켜지는지.
+
+# #877 `labhq status`의 시간 상한 표시
+
+- 결론: 사용자가 진행 중인 요청의 시간 상한을 `labhq status`에서 볼 수 있다.
+- 바꾼 것: `labhq/request_status.py`의 `request_deadline_text`가 `꺼짐` 또는 `켜짐 N분 · 남은 N분 · PI 대기 제외 N분`을 만들고, `labhq/cli.py`의 status가 요청마다 `시간 상한: …` 한 줄을 요청 기록(`/api/requests/{id}`)에서 읽어 보인다. `waiting_pi` 중에는 시간이 가지 않는다는 말을 덧붙인다. 상한이 없던 때 받은 요청은 `꺼짐`이다. 기록을 못 읽으면 `꺼짐`이라 하지 않고 아무것도 보이지 않는다.
+- 문서: `docs/reference/request-deadline.md`·`.en.md`에 표시와 "영수증이 취소 뒤 2~10초 늦게 붙는다"를 적었다.
+- 시험: `tests/test_active_request_cancel.py`에 6건(꺼짐, 남은 분, 제외한 PI 대기, PI 대기 중 정지한 시계, 기한 경과, status 줄·읽기 실패). 파일 전체 25건과 `test_request_status.py`·`test_cli_launch.py` 통과.
+- 실제 확인: 가짜 엔진 gateway에 한도 5400초로 요청을 보내 `labhq status`를 직접 돌렸다. 진행 중 `시간 상한: 켜짐 90분 · 남은 90분`, 카드 대기 중 `… · PI 대기 제외 13초 · PI 결정 대기 중이라 시간이 가지 않습니다`, 답한 뒤 `… · PI 대기 제외 14초`로 나왔다.
+- 미확인: 웹 작업판 표시는 이번 범위가 아니다(요청 목록 요약 API에 `wall_clock`이 없어 필요하면 `labhq/gateway/server.py` 변경이 따로 필요하다).
+- 근거: #877 rev6 댓글(영수증 지연 판단), `labhq/request_status.py`.
+
+# #792 rev5 공개본 README와 경로 치환
+
+- 결론: 공개본 README의 "한계"는 보고서가 밝힌 실제 한계(최대 3문장)를 싣고, 한 줄짜리 대체문은 없앴다. 그림 설명, 파일 목록, 데이터 유무별 실행 방법, seed 절을 추가했다.
+- 경로: `str(p).replace("\\\\", "/")` 같은 코드의 `"\\"`를 UNC 경로로 오인해 `<local-path>`로 바꾸던 정규식을 고쳤다(호스트와 구분자가 있어야 UNC). 실행 기록의 "남은 절대경로" 목록은 개수로 줄였다.
+- 끝 문장: 저장소 README는 `report/report.md` 링크가 앞에 있어 "이어지는 내용은 …" 문장을 flat 판본에만 붙인다.
+- P2: 작업공간 경로 감지(`inputs`·`outputs`·`manifest.json`)를 대소문자 무시로 바꿨다.
+- 바꾼 것: `labhq/portfolio.py`, `labhq/result_storage.py`, `agents/core/editor.yaml`, 시험 2개, README 한·영 각 한 줄.
+- 한계: 한계 문장 선택은 키워드 휴리스틱이라 보고서 표현에 따라 빠질 수 있다. 목록 항목의 앞 "- "가 남는 경우가 있다. `route: solo` prompt 연결은 W3의 #1088 뒤로 미뤘다.
+- 미검증: 실제 새 실행으로 만든 README, Windows CI.
+
+# #1077 후속: manual 저장 절
+
+- 결론: PR #1078이 `review_pending` 요청의 `--to github`를 거절하고 명령을 안내하도록 바꿨는데, 상세 manual 한·영 저장 절은 "검토 전이면 검토 완료를 기다린다"로만 적혀 있어 새 흐름과 어긋났다(#1078 리뷰의 남은 P2). 코드는 바꾸지 않았다.
+- 바꾼 것: `docs/manual.md`·`docs/manual.en.md`의 "로컬로 끝난 요청을 나중에 GitHub로(#688)" 문단. (1) CP4가 아닌 요청은 이전처럼 검토 완료를 기다림, (2) CP4 요청이 `review_pending`이면 거절하고 보고서 카드의 번호·hash로 `labhq review-done <id> --revision <번호> --sha256 <hash>`를 먼저 하거나 `--storage github [--name] [--visibility]`를 붙여 한 번에 하라고 안내함, (3) 토큰은 gateway 시작 때 읽으므로 새 토큰을 넣었으면 재시작 뒤 실행.
+- 실행한 것: `tests/test_integrations.py` 통과(문서만 변경).
+
+# #877 요청 전체 벽시계 상한 (gateway 집행)
+
+- 결론: ② 6차를 대조한 결과(#877 댓글) 평범한 `labhq up`에는 요청 전체 상한이 없었다. gateway가 요청 단위 상한을 고정하고 집행하도록 했다. 설정은 기본으로 꺼져 있다.
+- 바꾼 것: `orchestrator.request_wall_clock_s`(0이면 끔, 60초 미만은 거절). 요청을 받을 때 `wall_clock`(limit_s, held_s, deadline_at)을 요청 기록에 고정해 이후 설정 변경이 영향을 주지 않는다. gateway 감시 루프(15초)가 활성 요청이 `created_at + limit + held_s`를 넘기면 기존 `cancel_request(active_only=True)`로 취소하고 `cancel_reason=request_deadline`과 `deadline_receipt`를 남긴다.
+- 시계 규칙(총괄 결정): 요청 수락부터 `review_pending` 진입까지를 센다. 이 구간의 도구 카드 대기는 포함한다. `waiting_pi`에 머문 시간은 실제 상태 전환(`pi_since`)으로 정산해 `held_s`로 기한에 더하고, `review_pending` 이후와 `interrupted` 요청은 끊지 않는다. 재시작은 같은 `created_at`과 기록된 `held_s`를 유지하고 꺼져 있던 시간은 빼지 않는다.
+- 영수증: 취소한 task, 취소 뒤 결과를 보고하지 않은 task, 종료 판정(`confirmed`·`unconfirmed`·`no_running_tasks`). runner에 새 ack를 만들지 않고 기존 `_await_cancelled_results`가 결과를 못 받은 task를 "미확인"으로 적는 경로를 썼다.
+- 시험: `tests/test_active_request_cancel.py`에 8건(기한 취소·영수증·라벨, 설정이 아니라 요청 기록의 한도를 읽음, `waiting_pi` 가산, 검토 이후·중단 요청 비적용, 재시작 유지, 미확인 종료, 배경 감시 시작·정지, 설정 검증). 기존 취소 시험 포함 관련 시험 통과.
+- 미확인: 실제 모델 호출 중인 직원과 자식 프로세스를 기한에 끊는 동작(단위 시험은 task 상태만 본다, 별도 disposable instance 확인 필요), Windows Job 경계. 상한이 켜진 실제 요청은 아직 돌려 보지 않았다. 감시는 15초 간격이라 기한 판정에 최대 그만큼의 오차가 있다(대기 시간 정산은 전환 시각이라 오차가 없다). 재시작이 열어 둔 `waiting_pi` 구간은 더하지 않는다.
+- 근거: #877 댓글(6차 대조와 결정), `labhq/gateway/server.py`의 `enforce_request_deadlines`.
+
+## 단계
+#1076 ① Windows pool 9분 초과: 끊긴 순간의 시험을 남기는 진단(상한은 바꾸지 않음). 진단안·승인: [#1076 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6520450345).
+
+## 한 일
+1. `.github/workflows/test.yml`: pool 단계 명령에 `--ci-stall`을 더하고 `pytest-windows` job env에 `CI_STALL_INTERVAL_S: '150'`을 둔다. 150·300·450초에 worker마다 `parallel/stacks-gwN.log`에 현재 시험 nodeid와 모든 스레드 stack, 끝나지 않은 asyncio task stack이 남고, 마지막 snapshot이 상한 540초의 90초 전이다. 산출물은 기존 `if: always()` upload로 끊겨도 7일 보관된다.
+2. `scripts/ci_suite.py`: `stall_interval()`이 `CI_STALL_INTERVAL_S`(1 이상 숫자)를 읽고 아니면 300으로 돌아간다. `WorkerStall`이 이 간격을 쓴다. Linux 3.10 단계는 환경변수가 없어 기존 300초 그대로다.
+3. `tests/test_ci_windows10m.py`: workflow 계약(pool만 `--ci-stall`, 간격 × 3 < 540초, always upload), 간격 해석, snapshot이 현재 시험을 적고 `.log`가 phase 검사 glob(`collection-*.json`·`metrics-*.json`·`*error*.json`)에 걸리지 않는다는 것을 시험으로 더했다.
+
+## 확인한 것 (PR 본문 미확인 3가지 중)
+- `windows.combine`·`check`는 `collection-*.json`·`metrics-*.json`·`*error*.json`만 읽는다(`scripts/ci_windows_phases.py` 99~105·232행). `stacks-gwN.log`는 걸리지 않는다. 첫 CI에서 한 번 더 확인한다.
+
+## 아직 확인하지 못한 것
+- 450초 snapshot이 실제로 상한 전에 artifact에 남는지(상한에 닿는 run이 나와야 확인).
+- Windows에서 `gc.get_objects()` 순회와 스레드의 비용(첫 CI의 pool 단계 소요를 기존 중앙 6.8분과 비교).
+
+## 테스트 결과
+Windows `test_ci_windows10m`·`test_ci_windows_phases`·`test_ci_boundary_preview`·`test_ci_skip_policy`·`test_ci_cohort823` 569 passed.
+
+## 단계
+#1076(CI 간헐 실패 정리) 수정 1단계: 확정된 ④와 계측만 하는 ②. 집계·근거: [#1076 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1076#issuecomment-6520390705).
+
+## 한 일
+1. **④ `scripts/repeat_fake_fixture.py`:** `port()`가 OS가 준 포트가 `RESERVED_PORTS`(8787·55921)이거나 이미 쓴 gateway 포트면 최대 `PORT_DRAWS`(8)번 다시 뽑는다. 8번 모두 예약 포트면 지금처럼 `reserved port`로 거절한다(#1072와 같은 방식). 시험 2건을 등록된 `tests/test_repeat_fake_check.py`에 더했고 수정 전 코드에서 실패함을 확인했다.
+2. **② `tests/test_state.py`:** `test_completed_direct_result_finishes_without_original_agent`의 단언이 실패하면 요청 상태·오류·최근 이벤트 12개·승인 목록·요청 키를 메시지에 담는다. 폴링 창(100×10 ms)은 늘리지 않았다. 강제로 실패시켜 메시지 형식을 확인했다.
+
+## 테스트 결과
+- Windows `test_repeat_fake_check`·`test_recovery_fake_check`·`test_state` 해당 시험 통과(33 passed + 2 passed).
+- 미검증: ②는 계측만이라 원인은 다음 실패 때 확인해야 한다. 로컬에서 40회 돌려도 재현하지 못했다. ①(9분 상한)·③(recovery ReadTimeout)은 이 PR 범위 밖이다.
+
+# #1077 후속: 검토 대기 요청의 `--to github` 안내와 연결 시험
+
+- 결론: 점검(#1077 댓글)에서 나온 두 가지를 반영했다.
+- 바꾼 것: (1) `labhq storage <id> --to github`가 `review_pending`(CP4, 보고서 검토 대기) 요청에서 "끝난 요청만 옮길 수 있습니다"라고만 거절하던 것을 보고서 카드의 번호와 hash를 넣은 `labhq review-done <id> --revision <번호> --sha256 <hash>`로 먼저 검토를 마치거나 같은 명령에 `--storage github`를 붙여 한 번에 하라는 안내로 바꿨다(`labhq/result_storage.py`). 다른 거절 문구는 그대로다. (2) `tests/test_late_github_688.py`에 연결 시험 1건: CP4 요청을 `review-done --storage github`로 넘기면 편집자 → 게시 카드 → 승인 뒤 가짜 GitHub API에 `owner/study`로 업로드(README PUT)되어 `published`가 된다. 업로드는 mock이 아니다.
+- 시험: 안내 문구 1건 + 연결 1건. 관련 저장 시험 51건 통과.
+- 한계: 가짜 GitHub는 빈 probe POST 뒤 repo를 "있음"으로 답해, 이 연결 시험은 repo 생성 자체를 보지 못한다(생성은 `test_result_storage.py`가 별도 확인).
+- 미검증: 실제 토큰·repo 생성 권한, 실제 gateway 재시작 뒤의 흐름(W2 실행 단계).
+
+﻿# #983 시설팀 복구 상태 계약
+
+기준 `da3eff9f`; [계약·근거](../reference/facilities-recovery-contract-983.md). 요청 대상, 실제 담당, 답변·거부, 승인, fix 실행과 원 단계 결과를 분리했다. CSO fallback과 자동 진단 offline 처리도 다르다. package `applied`는 지시이며 성공 증거가 아니다. 기존 기록을 조합하는 projection과 불명 상태 보존을 후속으로 제안한다.
+
+격리 fake hub에서 진단 답변 후 원 단계 실패 유지, 승인 거절·timeout 시 재개 없음, 승인 뒤 성공·실패 재개를 확인했다. 기존 fallback·doctor·fix·진단 회귀를 함께 실행했다.
+
+- `pytest tests/test_facilities_recovery_contract_983.py tests/test_facilities_fallback_983.py tests/test_doctor_facilities_support_983.py tests/test_facilities_diagnosis.py tests/test_facilities_fixes.py -q`: **151 passed**.
+- `pytest tests/test_doctor.py tests/test_ask_review6.py -q`: **86 passed**. 기존 정책 거부 및 roster 회귀 포함.
+- 기존 가상환경 사용, fake dispatch와 임시 store만 사용. 실제 시설팀·엔진·로그인·설치·운영·HPC·배포는 실행하지 않았다.
+
+제품 수정은 없다. #983은 OPEN, 실제 설치판 복구는 **UNVERIFIED**다. CI와 동일 head 리뷰 결과는 PR에서 확인한다.
+
+## #1079 — disposable fixture 계획 검사
+
+- JSON 계획의 누락·타입·충돌·만료를 offline에서 검사한다. 실제 보호는 `UNVERIFIED`다.
+- `python -m pytest tests/test_boundary_fixture_plan.py -q`: 7 passed. 날짜만 있는 expiry와 principal 공백 중복도 검사한다.
+- 실제 VM, 권한, network와 teardown은 관측하지 않았다. 독립 검토가 필요하다.
+- Windows inventory 등록 후 관련 검사 129건 통과. 실제 보호는 여전히 `UNVERIFIED`다.
+
+# #1073 validation-manifest base drift가 main 추가 이동에 실패
+
+- 결론: `scripts/ci_skip.py`의 `confirmed_base_drift()`가 manifest 실행 시점의 main이 checkout parent와 정확히 같을 때만 drift로 인정했다. 목차 자동 commit이 job 도중 main에 한 번 더 들어오면 같은 forward drift인데도 `checkout-parents` 오류가 됐다(#1063 run 41033951645).
+- 바꾼 것: main이 parent와 다르면 `compare/{parent}...{main}`으로 확인해, `status == ahead`, `behind_by == 0`, `base_commit`·`merge_base_commit`이 모두 parent일 때만 인정한다. main이 parent와 같으면 호출을 추가하지 않는다. 나머지 조건(PR snapshot·merge_commit_sha·event base→parent forward·job 상태)은 그대로다. 결과는 지금처럼 `reusable=false, reason=base-drift`이고 재사용 manifest는 만들지 않는다.
+- 막는 것: 갈라졌거나(diverged) 뒤처졌거나(behind, behind_by>0) 무관한 main, 부분 응답, SHA가 아닌 main 값은 계속 `checkout-parents` 오류다.
+- 시험: `tests/test_ci_parent_drift.py`에 8건(앞서 간 main 인정과 호출 수, 실패 6종, 비-SHA). `tests/test_ci_*.py` 전체와 함께 로컬 통과. 기존 `main` 무관 sha 사례는 그대로 실패한다.
+- 미검증: 실제 CI에서 main이 job 도중 한 번 더 움직이는 경합. 병합 뒤 #1064를 새 synchronize로 다시 검증해야 한다.
+
+## 단계
+#1072: Windows `web_resizable_panels` 간헐 실패 재발(#1069 첫 run).
+
+## 원인
+시간 초과가 아니라 `tests/support/demo_driver.cjs`의 정적 서버가 `listen(0)`으로 OS에게 받은 포트가 운영 포트(`FORBIDDEN_PORTS = [8787, 55921]`)와 같을 때 그 자리에서 던지던 방어였다. 실패 run 41028675397은 3.3초 만에 `static server landed on a reserved port 55921`로 끝났고 단계 기록은 `server-ready`(108 ms)까지 정상이었다. 55921은 Windows 임시 포트 범위(49152–65535) 안이라 서버 시작마다 약 1/16,384로 걸린다. #833의 30초 startup 지연과는 별개다. 진단: [#1072 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1072#issuecomment-6519712125).
+
+## 한 일
+1. `startStaticServer`: 예약 포트를 받으면 서버를 닫고 다시 `listen(0)`한다(최대 `STATIC_SERVER_TRIES = 8`). 마지막 시도이거나 닫기가 실패하면 서버를 그대로 넘기고, 호출한 쪽(`openDemo`)이 지금처럼 같은 메시지로 거절하고 자기 `close()`로 정리한다(닫기 실패는 두 오류를 함께 보존).
+2. `tests/web_visual_tooling.cjs`: 가짜 서버가 listen마다 다른 포트를 돌려주게 `ports` 옵션을 더했다. 거절·정리 시험 2건은 계약을 그대로 두고 이벤트 순서만 새 동작(listen/server-close 7번 반복 뒤 마지막 listen)에 맞췄고 닫기 실패 시험은 닫기 횟수 2(재시도 1 + 정리 1)로 맞췄다. "예약 포트를 받으면 다시 받아 시작한다" 시험 1건을 더했다.
+
+## 테스트 결과
+- `node --test tests/web_visual_tooling.cjs`(LABHQ_TEST_PYTHON 지정) 63 pass·0 fail. `tests/test_ci_windows10m.py` 16 passed.
+- 미검증: 실제 Chrome으로 도는 `test_web_3d.py` 브라우저 시험은 이 PC의 node 경로(OpenAI cua_node shim)가 없어 못 돌렸고 CI에서 확인해야 한다. 확률은 임시 포트가 균등하게 뽑힌다는 가정이며 과거 재발이 같은 원인이었는지는 보지 않았다.
+
+# #1066 manual 후속
+
+- 결론: #1067 리뷰가 지적한 manual 한·영 설명을 더했다. 코드는 바꾸지 않았다.
+- 바꾼 것: `docs/manual.md`·`docs/manual.en.md`의 연구 단계 결과 교정 문단에 (1) 결과와 교정 요청은 계획이 선언한 단계 `claim_ids` 안의 주장만 허용, (2) 목록 밖 claim id를 만들지 않고 hypothesis row는 claim이 아니라 context로 연결하거나 링크에서 뺌, (3) 가설·기전·등급별 정리를 결과로 요구하면 계획이 그 몫의 claim을 `claim_ids`에 미리 선언.
+- 실행한 것: `tests/test_integrations.py` 통과.
+- 미검증: 실제 모델이 이 규칙을 따르는지는 ② 6차 이후 결과로 확인한다.
+
+# #1061 후속: 식별자만 고정한 참조의 "내용 미확인" 표시
+
+- 결론: W3의 PR #1062가 DOI·PMID 참조를 식별자 영수증(`unreceipted`)으로 고정해 이어 가기 재사용을 허용했다. 그 재사용을 PI가 알고 고르도록 두 곳에 표시를 더했다.
+- 바꾼 것(`labhq/orchestrator/cso.py`): `unreceipted_references(contract, reused)`가 이전 라운드의 단계별 입력 영수증에서 재사용한 단계들의 `unreceipted` 식별자를 모은다. (1) 이어 가기 CP1 카드(재사용: … 줄 뒤)에 "재사용한 단계가 쓴 DOI·PMID 참조 N건은 식별자만 고정했고 내용은 확인하지 않았습니다." (2) CP2 보고의 이어 가기 줄에 "N DOI/PMID reference(s) of the reused steps are pinned by identifier only; their content was not checked (…)". 표시할 참조가 없으면 카드 문구는 전과 같다(기존 시험의 접두 단정 유지).
+- 시험: `tests/test_continuation_797.py` 3건(재사용한 단계 증명만 모음, 카드·보고에 한 줄, 참조가 없으면 변화 없음). 관련 시험 310여 건 통과.
+- 미검증: 실제 DOI 참조 요청의 CP2 revise 이어 가기에서 카드 문구가 PI에게 어떻게 보이는지(웹 화면). 카드 요약은 길이 상한이 있어 참조가 많은 요청에서 뒷부분이 잘릴 수 있다.
+
+## 단계
+#1065(#1058 후속): producer가 혼자 막을 수 없던 하류 staging 한도 셋.
+
+## 한 일
+1. **누적 입력 예산(`step_inputs.stage_inputs`):** 상류 하나의 필요량이 단계 합계의 남은 양을 넘으면 복사 전에 `cumulative input budget: needs N bytes, M bytes are left of the T bytes ...`로 그 상류만 거절한다. 거절된 상류가 복사하며 쓴 byte는 합계에 돌려준다(이전에는 복사 도중 거절되면 쓴 byte가 합계에서 빠져 뒤 상류가 불필요하게 거절됐다). 상류는 일부만 복사하지 않고 전부 또는 없음을 유지한다.
+2. **hard link:** `_copy`의 거절 사유를 hard link·파일당 한도·남은 합계로 갈랐다. producer(`daemon`)는 수집 파일 중 link가 둘 이상인 것을 `linked_files`로 찾아 `staging_problem(..., linked)`가 `a hard-linked file; a later step refuses it`로 단계를 incomplete 처리한다.
+3. **스캔 범위:** `outputs/` 전체 스캔 note가 있어도 선언 폴더마다 `folder_files`로 그 폴더만 같은 상한(`reference_scan_max_entries`·`depth`)으로 걸어, 끝까지 못 걷거나 걸은 파일 중 스캔 기록에 없는 것이 있을 때만 그 폴더를 incomplete로 한다. 선언하지 않은 하위 폴더나 실행 전 스캔의 오래된 note는 더 이상 단계를 실패시키지 않는다.
+4. 시험은 등록된 `tests/test_observed_outputs.py`에 7건(누적 예산 이름·byte 반환·hard link 하류/상류·`staging_problem` linked·무관한 하위 폴더). 수정 전 코드에서 4건이 실패함을 확인했다. manual 한·영.
+
+## 테스트 결과
+- Windows `test_observed_outputs`·`test_step_inputs_665`·`test_step_inputs_review_791`·`test_labhq_verify` 91 passed·3 skipped(POSIX 전용).
+- 미검증: 실제 연구 요청의 다중 상류 staging, POSIX(WSL)에서의 hard link 시험(Windows NTFS에서만 돌림), 스캔 기록에 없는 파일을 판정하는 `folder_files` 깊이 의미가 스캐너와 정확히 같은지(같은 상한을 쓰나 깊이를 `outputs/` 아래 단계 수로 환산한 근사).
+
+## CI 메모
+- clean-install 한 건이 Windows 임시 폴더 정리의 WinError 32(VSApplicationInsights 파일 잠김)로 실패했다. 같은 run에서 doctor는 통과했고 코드와 무관한 기반 시설 flake라 기록 커밋으로 CI를 다시 돌린다.
+
+# #1066 결과 교정이 단계 claim_ids 밖 claim을 만들게 유도함
+
+- 결론: 효과 큰 순서대로 1~4를 모두 반영했다. #910 5차 s3는 교정 문구 `link it as context or record it as a claim`을 보고 계획에 없던 `c_mechanistic_hypotheses`를 새 claim으로 만들어 binding 오류가 났다(교정 두 번에 $3.65, W3 조사 #1054).
+- 바꾼 것: (1) `result_correction`이 단계 `claim_ids`를 받아 "이 목록 밖 claim id를 만들지 말고 hypothesis 행은 context로 연결하거나 링크에서 뺀다"를 항상 덧붙인다(호출처는 단계의 `claim_ids`를 넘김, 인자 없이 부르면 옛 문구). (2) 연구 단계 prompt에 같은 규칙. (3) `evidence/claims.py`의 오류 문구는 "계획이 이 단계에 선언한 claim id일 때만 claim으로 기록"으로 범위를 밝힘. (4) 연구 계획 prompt에 "가설·기전·등급별 정리를 결과로 요구하면 그 몫의 claim을 `claim_ids`에 선언"을 추가.
+- 시험: `tests/test_cso.py`에 2건(교정 문구에 허용 목록·context 규칙·빈 목록, 계획 prompt 규칙). 관련 시험 860여 건 로컬 통과.
+- 미검증: 실제 모델이 새 문구를 따르는지(② 6차에서 확인). 단계의 `claim_ids`가 비어 있는 계획에서 교정이 어떻게 풀리는지는 시험하지 않았다.
+
+## 단계
+#1061: DOI·URL 참조 요청의 이어 가기 재사용 거부(input proof). 설계안과 B안 결정은 [#1061 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1061#issuecomment-6516819730).
+
+## 한 일
+1. `labhq/research/input_proof.py` `capture`: `doi`·`pmid` 참조는 `doi:<소문자>`·`pmid:<번호>`로 정규화해 `unreceipted`(정렬·중복 제거)에 담고 영수증을 만든다. `url`·`github`가 하나라도 있으면 이전처럼 `None`. path 참조는 파일 hash 증명을 그대로 유지하고, path만 있는 요청의 영수증에는 `unreceipted` 키가 없어 기존 기록의 hash가 바뀌지 않는다.
+2. `continuation.proof_problems`는 바꾸지 않았다: 기록된 영수증과 현재 영수증이 같으면 통과, 다르거나 기록이 `None`이면 거부한다. 게이트웨이와 러너가 같은 `capture`를 써서 `request_input_sha256`이 일치한다.
+3. 시험은 `tests/test_request_input_proof_959.py`에 7건(식별자 영수증·url/github 거부·path 혼합·path-only 형식·`proof_problems`·이어 가기 한 바퀴): 이 파일 27 passed.
+4. manual 한·영 이어 가기 절.
+
+## 알아 둘 것(설계안과 다른 점)
+- 영수증 `descriptor`가 `references`를 입력 그대로 담아서 참조 **순서·표기**가 바뀌어도 hash가 달라져 재사용하지 않는다(안전한 쪽). 설계안의 "순서·표기가 달라도 hash 동일"은 구현하지 않았다.
+- 카드에 "내용은 확인하지 않음"을 표시하는 일은 `cso.py`가 #1058 범위라 이번에 뺐다(총괄 지시). manual에만 적었다.
+
+## 테스트 결과
+- Windows `test_request_input_proof_959`·`test_continuation_797`·`test_continuation_review_807` 84 passed.
+- 미검증: 실제 DOI 참조 요청의 CP2 revise 이어 가기, DOI 본문 개정의 영향.
+
+## 단계
+#1063 · #666 독립 supervisor/seal synthetic acceptance v2. Draft/hold 유지, 통합 승인 전 병합 금지.
+
+## 한 일
+- 29개 corpus case와 독립 pure validator. source→parent→root의 `parent_ref`·전체 `parent_identity`를 독립 pin과 대조합니다.
+- 7개 관측 단계에서 잘못된 parent·누락 edge·cycle·self-edge·분리된 subtree·root 교체·변경 후 원복을 거부합니다.
+- run/nonce·supervisor/child identity·link·연속 관측·descendant/socket 정리 검사와 Windows inventory를 유지합니다.
+- manual 한영판에 synthetic 검증 범위와 실제 보호 UNVERIFIED를 명시했습니다.
+
+## 테스트 결과
+- 기존 seal contract 회귀 364 passed. rev6는 문서만 수정하며 로컬 pytest를 다시 실행하지 않습니다.
+- rev5 CI 41039167818은 patch-notes FAIL·manifest SKIPPED였습니다. rev6는 manual 갱신으로 문서 gate를 복구합니다.
+- 최종 head 문서/public 검사·전체 CI·manifest 실행·실제 review 결과와 identity는 [PR #1064](https://github.com/ehojune/bioinfo-team-3d/pull/1064)에 기록합니다.
+
+## 막힌 점
+- 실제 witness 인증·supervisor·seal·연속 감시·독립 cleanup은 UNVERIFIED. `adapt_producer`와 `protected_launch`는 unsupported입니다.
+- [v2 계약·adapter 전제](../reference/process-boundary-seal-fixtures.md). 실제 root까지의 ancestry 증명은 후속 producer 범위입니다.
+
+# #1058 상류 산출 hash 누락 (② 5차)
+
+- 결론: 두 증상은 같은 뿌리가 아니었다. 수치가 UNVERIFIED로 남은 것은 실제 결함(A)이고, 이어 가기 재사용 거부는 설계상 거절(B)이다.
+- A (고침): 5차 s1 계획이 폴더 `outputs/literature`를 산출로 선언했다. 러너는 이 폴더를 `result.outputs`에 hash 없이 넣었고(5개 중 4개만 hash, gateway의 라운드 기록 근거), `step_inputs.stage_inputs`가 "collected artifact hash is missing"으로 s1 전체를 거절해 s2에 상류 산출이 전달되지 않았다.
+- 바꾼 것: `runner/daemon.py`는 선언된 폴더를 그 안의 파일(산출 후 hash가 있는 것만)로 풀어 수집하고, 필수·선택 산출 검사에서 폴더 선언은 안에 수집된 파일이 있으면 충족으로 본다. `orchestrator/cso.py`의 `apply_declared_output_status`도 같은 규칙이다. 시험 3건(`tests/test_observed_outputs.py`).
+- 동작 변경: 비어 있거나 hash를 만들 수 없는 폴더(너무 큼·링크뿐)는 산출로 치지 않아 단계가 `incomplete: missing outputs`로 끝난다. 전에는 통과한 뒤 하류에서 깨졌다. README 한·영에 적었다.
+- B (이번 범위 밖): 요청 `references`에 DOI 같은 URL형 참조가 있으면 `research/input_proof.capture`가 내용 영수증을 만들 수 없어 None을 돌려주고, 이어 가기가 "request-level input hash record missing"으로 재사용을 거절한다. 5차 요청이 DOI 참조를 가져 항상 걸렸다. 정책 변경은 별도 issue.
+- 실행한 것: 관련 시험 630여 건 통과(runner·step inputs·연속·cso).
+- 미검증: 실제 연구 요청에서 s1 → s2 전달 end-to-end(#910 6차에서 확인).
+
 # #1053 CP2 revise 이어 가기 'step ended before dispatch'
 
 - 결론: 재현했고 고쳤다. 이어 가기 라운드는 앞 라운드에서 끝난 단계의 같은 id를 revision 0으로 다시 dispatch했다. 게이트웨이는 끝난 단계(`_closed_steps`)를 그 단계 turn의 최대 revision에 묶어 두고, 다시 열려면 그보다 높은 revision이 필요하다(`_update_step(reopen=...)`). 리뷰 revise는 `pending_revisions`로 revision을 올리지만 연구 이어 가기는 올리지 않아 `gateway/server.py`의 닫힌 단계 검사가 거절했다(#910 5차 `s1_access_lookup`).
@@ -11,6 +2064,56 @@
 - 닫힌 단계 보호: 검사는 그대로 두었다. 앞 라운드의 낮은 revision turn은 다시 열린 뒤에도 `revision < step revision`으로 거절된다(시험으로 고정).
 - 시험: `tests/test_resume_cards_607.py`에 3건(닫힌 상태 재현, revision 상향·낡은 turn 거절, 오케스트레이터 revision 계산). 관련 시험 310건 통과.
 - 미검증: 실제 연구 요청에서의 CP2 revise → 이어 가기 end-to-end(#910 다음 시도에서 확인). 이어 가기 계획이 재사용을 거부한 이유("request-level input hash record missing")는 이 PR이 다루지 않는다.
+
+## 단계
+#1054(② 5차 s3 실패): "같은 출처 pmid:41820335를 다른 independence group으로 인용해 단계 계약 전체가 무효"로 알려진 문제.
+
+## 원인(재현으로 확인)
+- 같은 출처·다른 group 하나만으로는 단계가 실패하지 않는다. 교정 뒤 `salvage_research_result`가 뒤 행만 거부한다(재현 시험 `test_recited_source_alone_refuses_only_the_second_row`).
+- 5차 s3의 실제 오류는 둘이 한 목록에 있었다: 재인용 group 불일치(살릴 수 있음) + `claim c_mechanistic_hypotheses is outside the claim_ids [...] that step declared`(단계 binding이라 살리지 않음). 후자 때문에 salvage가 None을 돌려 단계 전체가 실패했고 s4~s6이 건너뛰어졌다(근거: `D:/.labhq/dev/tmp/claude-worker2/step2/card-cp2-5.json` warnings[0]).
+
+## 한 일
+1. `labhq/research/contract.py` `salvage_research_result`: 단계가 선언한 `claim_ids` 밖의 claim은 그 claim과 링크만 거부(`refused`·`unsupported`에 올려 CP2에 표시)하고 나머지로 계속한다. 단계 claim이 하나도 남지 않으면 그대로 실패한다. 필수 evidence 칸·plan hash 같은 binding은 여전히 살리지 않는다.
+2. 재인용 group은 합치지 않고 뒤 행 거부를 유지한다. 근거: 합치면 직원이 잘못 적은 독립성이 보이지 않고, 거부는 CP2에 "re-citation is not independent"로 남아 독립 근거를 부풀려 세지 않는다(연구 규약의 과대계산 방지). `labhq/evidence`의 검사는 건드리지 않았다.
+3. `tests/test_contract_slot_repair.py` 5건(재인용만, 재인용+범위 밖 claim, 범위 밖 claim만, 단계 claim 전무는 실패 유지, 선언 안 한 evidence slot은 계속 실패), manual 한·영.
+
+## 테스트 결과
+- Windows `test_contract_slot_repair`·`test_research_cp2`·`test_research_evidence` 244 passed.
+- 미검증: 실제 ② 요청에서의 재현, 범위 밖 claim을 만든 직원 프롬프트 쪽 원인(왜 claim_ids 밖 claim을 냈는지)은 보지 않았다.
+
+# #1048 authentication broker stage 1
+
+## Scope
+
+Unwired broker prototype with a run-scoped Unix socket, fixed HTTPS destination and constant-only credential-bearing responses. No real credentials or provider calls; do not enable it.
+
+## Verification
+
+- Disposable Linux fixture: 37 synthetic broker tests passed, including namespace socket access, fake DNS/TLS policy, redirect rejection, constant responses, timeout and direct process cleanup.
+- `spawn` replaces fork from the listener thread. Non-finite deadlines, unpicklable callables and abrupt upstream exit fail closed. Two tests combining the broker with #1047's unsealed diagnostic launcher passed: namespace access and timeout cleanup. Trusted lifecycle remains unverified.
+- Windows targeted tests: 60 passed, 37 broker tests skipped (Linux AF_UNIX required). Final-head CI and review are tracked in [PR #1052](https://github.com/ehojune/bioinfo-team-3d/pull/1052).
+
+## Hold
+
+Keep draft and hold until integration is reviewed. Actual protection, CLI compatibility and hook/MCP preservation are UNVERIFIED. Streaming and arbitrary provider responses are unsupported; timing and other covert channels are not bounded.
+
+# #1047 process boundary stage 1 — PR #1050
+
+## Scope
+
+Fail-closed protected entry point and separate fixed non-model diagnostics. The staging receipt is v2; other probes retain v1. Synthetic staging exercises cleanup; a broker probe uses a run-scoped socket. The reference includes a review-only disposable VM fixture proposal. Protected launch remains unsupported; no engine or daemon integration is included.
+
+The v2 synthetic ancestry representation checks fixed parent relationships and sampled identities against supplied pins. Local samples are unauthenticated; a real anchored supervisor and witness remain unimplemented.
+
+## Verification
+
+- Windows: `python -m pytest tests/test_process_boundary.py tests/test_text_encoding.py -q` — 32 passed.
+- WSL: fixed unsealed diagnostic exited 0. A synthetic broker probe connected and exited 0 with the same run ID; socket removal was observed. These do not prove protection.
+- Public check passed using an LF-normalized copy of the tracked script with its checkout directory preserved.
+
+## Hold
+
+Keep draft and hold: trusted supervisor and sealed storage, dedicated fixture and independent witnesses remain outstanding. Fixture provisioning is not authorized or executed. Actual engine protection, CLI compatibility and descendant cleanup are UNVERIFIED. Integration with the final broker is pending. [Receipt contract](https://github.com/ehojune/bioinfo-team-3d/issues/1047#issuecomment-6512928878).
 
 ## 단계
 #1045(#910 ② 2차): 엔진 CLI가 시작 직후 출력 없이 끝났을 때 원인을 가릴 근거가 없던 문제.
@@ -8703,6 +10806,49 @@ Refs #435
 - `tests/semantics_shadow_lab.py`
 - `tests/test_login_wait.py`
 - `HANDOFF.md`
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
+## 단계
+P2 — issue #35 엔진 canary와 doctor 모델·CLI 사전 검사
+
+## 한 일
+
+- `doctor`가 Claude 모델 별칭·id 형식과 직원 `CODEX_HOME/models_cache.json`의 Codex slug를 확인합니다.
+- Claude Code 2.1.282, Codex 0.160.1을 adapter 계약의 최소 판본으로 한 곳에 두고 낮으면 fail, 해석할 수 없으면 warn으로 냅니다.
+- `doctor --canary <agent_id|all>`은 명시할 때만 실제 adapter를 호출해 result, 비용·token 보고, session id, resume, cancel을 각각 pass/fail로 표시합니다.
+- 회귀 test는 fake Claude·Codex CLI만 쓰며 실제 canary는 실행하지 않았습니다.
+
+## 테스트 결과
+
+- [x] 새 회귀 test가 `main` 코드에서 9건 실패
+- [x] 관련 pytest: 64 passed
+- [x] Windows 전체 `pytest -q`: 5343 passed, 66 skipped
+- [x] `scripts/check_public.sh`, `git diff --check`
+- [x] manual: 187,893 → 190,100 bytes(+2,207)
+- [x] UI 변경 없음
+
+## 바꾼 파일
+
+- `labhq/doctor.py`, `labhq/cli.py`
+- `tests/test_doctor_canary.py`, `tests/test_doctor.py`
+- `docs/manual.md`
+
+## 막힌 점
+
+- 없음. CI는 기록 commit push 뒤 확인합니다.
+
+## PI·Claude에게 물을 것
+
+- 없음.
+
+## 확인
+
+- [x] `scripts/check_public.sh` 통과
+- [x] `docs/status/2026-10-12-1503-engine-canary.md`에 같은 보고 추가
+- [x] 체크포인트 아님
+
+Refs #35
 
 🤖 Generated with Codex (gpt-5) for the labhq dev lead
 

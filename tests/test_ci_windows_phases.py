@@ -420,11 +420,11 @@ def test_workflow_barrier_download_binding_no_skip_and_ten_minute_total():
     import shlex
     command = shlex.split(steps[critical]['run'])
     assert command[command.index('critical') + 1:] == list(p.TARGETS)
-    assert steps[critical]['timeout-minutes'] == 3 and '|| 9' in steps[parallel]['timeout-minutes']
+    assert steps[critical]['timeout-minutes'] == 3 and '|| 13' in steps[parallel]['timeout-minutes']
     assert shlex.split(steps[parallel]['run'])[-1] == 'tests'
     assert '-n 4 --dist loadfile' in steps[parallel]['run']
     assert not any(x.get('continue-on-error') or x.get('if') for x in steps[critical:parallel+1])
-    assert '|| 14' in job['timeout-minutes'] and 'windows-full-v1' in job['env']['CI_COVERAGE_PROFILE']
+    assert '|| 18' in job['timeout-minutes'] and 'windows-full-v1' in job['env']['CI_COVERAGE_PROFILE']
     assert 'receipt' in job['outputs'] and 'execution' in job['outputs']
     manifest = jobs['validation-manifest']['steps']
     assert any(x.get('uses') == 'actions/download-artifact@v4' and

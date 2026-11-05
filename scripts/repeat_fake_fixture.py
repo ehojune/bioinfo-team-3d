@@ -32,12 +32,22 @@ def write_json(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
 
 
+RESERVED_PORTS = frozenset({8787, 55921})  # the PI's own gateway and broker: a test never binds them
+PORT_DRAWS = 8
+
+
 def configure(settings, root: Path):
     """Configure real services under an empty per-run directory; no PI ports/state."""
-    def port():
-        with socket.socket() as sock:
-            sock.bind(("127.0.0.1", 0))
-            return sock.getsockname()[1]
+    def port(avoid=frozenset()):
+        # The OS picks the port; a reserved or already used draw is closed and drawn again (#1076, as #1072). Only
+        # PORT_DRAWS bad draws in a row are returned and refused below.
+        for _ in range(PORT_DRAWS):
+            with socket.socket() as sock:
+                sock.bind(("127.0.0.1", 0))
+                drawn = sock.getsockname()[1]
+            if drawn not in RESERVED_PORTS and drawn not in avoid:
+                break
+        return drawn
 
     settings.gateway.host = "127.0.0.1"
     settings.gateway.port = port()
@@ -47,7 +57,7 @@ def configure(settings, root: Path):
     settings.runner.workspace_root = str(root / "runs")
     settings.runner.talent_dir = str(root / "talent")
     settings.runner.agents_dir = str(Path(__file__).resolve().parents[1] / "agents")
-    settings.runner.broker_port = port()
+    settings.runner.broker_port = port({settings.gateway.port})
     require(settings.runner.broker_port != settings.gateway.port, "port collision")
     require(not {settings.runner.broker_port, settings.gateway.port} & {8787, 55921}, "reserved port")
     settings.runner.force_engine = "mock"

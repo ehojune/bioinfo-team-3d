@@ -2,6 +2,7 @@
 const {test}=require('node:test'), assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),http=require('node:http');
 const {spawn}=require('node:child_process');
+const {listenOnUnreservedPort}=require('./support/demo_driver.cjs');
 const chromePath=process.env.LABHQ_TEST_CHROME || ['C:/Program Files/Google/Chrome/Application/chrome.exe',
   '/usr/bin/google-chrome','/usr/bin/chromium'].find(p=>fs.existsSync(p));
 const web=process.env.LABHQ_WEB_TEST_ROOT || path.resolve(__dirname,'../labhq/web');
@@ -23,7 +24,7 @@ test('real phone layout shows CSO, analyst, engineer and QC above the composer; 
   });
   let chrome,ws;
   try {
-    await new Promise(r=>server.listen(0,'127.0.0.1',r));phase('server listening');
+    await listenOnUnreservedPort(server);phase('server listening');  // #1272: a reserved draw (1 in 16,384) is drawn again
     const port=server.address().port;assert.ok(![8787,55921].includes(port));
     const origin=`http://127.0.0.1:${port}`;
     const browserHome=path.join(profile,'home');

@@ -28,4 +28,19 @@ assert.match(html, /agentCostLabel\(q\.costSummary, nick\)/);
 assert.match(html, /JSON\.stringify\(\[S\.requests\.size, staffNames,/, 'a roster change redraws the cost line');
 assert.match(html, /agentSpentLabel\(\[\.\.\.S\.requests\.values\(\)\], id\)/);
 assert.match(html, /spent\.textContent = figure/, 'an open sheet keeps its spending live');
+// #625: a staff member whose declared tier ran another model is named in the engine line; without one nothing is added.
+const {engineCostLabel} = context.LabHQState;
+const engines = {claude_code: {actual_usd: 1, estimated_usd: 0, unknown_count: 0}};
+assert.equal(engineCostLabel({by_engine: engines, warnings: ['model_tier_mismatch:lit_scout:fast:claude-opus-5-5',
+  'model_tier_mismatch:qc_reviewer:balanced:claude-opus-5-5']}),
+  'claude_code 확인 $1.00; 선언 등급과 다른 모델: lit_scout(fast) → claude-opus-5-5, qc_reviewer(balanced) → claude-opus-5-5');
+assert.equal(engineCostLabel({by_engine: engines, warnings: ['model_tier_mismatch:a:fast:vendor:model-1']}),
+  'claude_code 확인 $1.00; 선언 등급과 다른 모델: a(fast) → vendor:model-1', 'a model name that holds ":" stays whole');
+assert.equal(engineCostLabel({by_engine: engines, warnings: ['price_stale:codex:x']}), 'claude_code 확인 $1.00');
+assert.equal(engineCostLabel({by_engine: engines}), 'claude_code 확인 $1.00', 'an older summary without warnings adds nothing');
+const page = fs.readFileSync(path.join(root, 'labhq/web/index.html'), 'utf8');
+assert.match(page, /LabHQState\.deadlineLabel\(q, Date\.now\(\) \/ 1000\)/, 'the request panel shows the time limit');
+assert.match(page, /JSON\.stringify\(\[S\.requests\.size, staffNames, statusText, deadlineText,/, 'the countdown is in the render key, so the 15 s timer redraws it');
+assert.match(page, /\$\{deadlineText \? `<span>\$\{esc\(deadlineText\)\}<\/span>` : ''\}/, 'the panel prints the text the key was built from');
+
 console.log('cost by agent web tests passed');

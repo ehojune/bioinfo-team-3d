@@ -13,6 +13,9 @@ const {MiniWebSocket} = require('./mini_ws.cjs');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const WEB_ROOT = process.env.LABHQ_WEB_TEST_ROOT || path.resolve(__dirname, '../../labhq/web');
 const FORBIDDEN_PORTS = [8787, 55921];
+// #1072: the OS picks the static server's port, and one in 16,384 draws is 55921. That draw is closed and made again
+// instead of failing the test; only this many reserved draws in a row are refused (see openDemo).
+const STATIC_SERVER_TRIES = 8;
 const START_MS = 60000;  // Chrome start budget; the node:test budget of each test covers it
 // #833: a navigation still waiting this long reports, once, whether the static server has seen and answered the page
 // request. Diagnostic only; it neither ends nor extends the wait.
@@ -231,13 +234,29 @@ function startStaticServer(rootDir, observe = null) {
       res.end(fs.readFileSync(filename));
     } catch { res.writeHead(404).end(); }
   });
-  return new Promise((resolve, reject) => {
+  return listenOnUnreservedPort(server).then(() => server);
+}
+
+// #1072/#1272: the OS picks the port, and one draw in 16,384 is a reserved one. That draw is closed and made again
+// instead of failing the test; only STATIC_SERVER_TRIES reserved draws in a row are refused. Resolves when `server` is
+// listening on 127.0.0.1, which is also the case on the last draw or when the close itself failed: the caller then
+// refuses the port and its own close reports the failure (both errors kept).
+function listenOnUnreservedPort(server) {
+  const listen = () => new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => {
       server.removeListener('error', reject);
-      resolve(server);
+      resolve();
     });
   });
+  const close = () => new Promise(resolve => server.close(error => resolve(error || null)));
+  return (async () => {
+    for (let attempt = 1; ; attempt++) {
+      await listen();
+      if (!FORBIDDEN_PORTS.includes(server.address().port) || attempt === STATIC_SERVER_TRIES) return;
+      if (await close()) return;
+    }
+  })();
 }
 
 async function removeDir(dir) {
@@ -265,6 +284,8 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
     diagnostic = (stage, pending, extra = {}) => console.error('demo cleanup: ' + JSON.stringify({stage, pending, ...extra,
       active: typeof process.getActiveResourcesInfo === 'function' ? process.getActiveResourcesInfo().slice(0, 16) : null,
       chrome_exit_observed: chrome ? chrome.exitCode !== null || chrome.signalCode !== null : null,
+      // Which client closed the CDP socket and on which Node: a close that never reports differs by implementation (#1107).
+      node_version: process.version, ws_kind: ws ? (ws.constructor?.name === 'MiniWebSocket' ? 'mini' : 'global') : null,
       stderr_closed: typeof chrome?.stderr?.closed === 'boolean' ? chrome.stderr.closed : null}))} = {}) {
   const pending = new Set(), failures = [];
   let graceful = false, socketCloseRequested = false;
@@ -440,10 +461,12 @@ async function openDemo(opts = {}) {
   trace('profile-ready');
   let server, chrome, ws, chromeClosed, wsClosed, requestBrowserClose, closing;
   let pageRequest = null;  // armed by load() for the page request of that one navigation
+  const served = [];  // #1272: the first paths the static server was asked for, for the boot-timeout report
   const close = () => closing ||= closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBrowserClose, server, profile},
     opts.cleanupDiagnostic ? {diagnostic: opts.cleanupDiagnostic} : undefined);
   try {
     server = await startStaticServer(web, (pathname, res) => {
+      if (served.length < 60) served.push(pathname);
       const watch = pageRequest;
       if (!watch || watch.requested || pathname !== '/index.html') return;
       watch.requested = true;
@@ -467,6 +490,9 @@ async function openDemo(opts = {}) {
     const [browser, browserArgs] = browserCommand(chromePath, ['--headless=new', '--remote-debugging-port=0',
       `--user-data-dir=${profile}`,
       '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--force-color-profile=srgb',
+      // The demo talks only to its own loopback server. Without this Chrome may look up the system proxy first; on the CI
+      // Windows runner the first request reached the page's server 11.6 s after the navigation (#1076).
+      '--no-proxy-server',
       `--lang=${process.env.LABHQ_TEST_LOCALE || 'ko-KR'}`,
       ...(process.env.LABHQ_TEST_CHROME_ARGS ? process.env.LABHQ_TEST_CHROME_ARGS.split(' ') : []),
       ...(process.env.CI ? ['--no-sandbox'] : []), 'about:blank'], jobPython);
@@ -543,8 +569,15 @@ async function openDemo(opts = {}) {
       return true;
     };
     const pending = new Map(), external = [], errors = [];
+    const net = {open: new Map(), finished: 0, failed: []};  // #1272: page requests, for the boot-timeout report
     ws.onmessage = e => {
       const m = JSON.parse(e.data);
+      if (m.method === 'Network.requestWillBeSent') net.open.set(m.params.requestId, m.params.request.url);
+      if (m.method === 'Network.loadingFinished') { if (net.open.delete(m.params.requestId)) net.finished++; }
+      if (m.method === 'Network.loadingFailed') {
+        const url = net.open.get(m.params.requestId); net.open.delete(m.params.requestId);
+        if (net.failed.length < 20) net.failed.push(`${url} ${m.params.errorText}`);
+      }
       if (m.method === 'Network.requestWillBeSent' && /^https?:/.test(m.params.request.url) && !m.params.request.url.startsWith(origin + '/')) external.push(m.params.request.url);
       if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
       if (m.id) { const p = pending.get(m.id); pending.delete(m.id); if (p) m.error ? p.reject(Error(JSON.stringify(m.error))) : p.resolve(m.result); }
@@ -590,12 +623,24 @@ async function openDemo(opts = {}) {
         await advance(stepMs); spent += stepMs;
       }
     }
+    // #1272: what a boot timeout leaves behind. Diagnostic only; it neither ends nor extends the wait.
+    async function timeoutReport() {
+      let page;
+      try {
+        page = await evaluate(`JSON.stringify({readyState: document.readyState, labhq: Boolean(window.__labhq),
+          vclock: Boolean(window.__vclock), characters: document.querySelectorAll('#zones .office-character').length,
+          scripts: document.scripts.length})`);
+      } catch (error) { page = 'page snapshot failed: ' + (error && error.message || error); }
+      return '\nboot report: ' + JSON.stringify({
+        page, page_errors: errors.slice(0, 10), served_by_static_server: served.length, served_paths: served.slice(0, 60),
+        requests_unfinished: [...net.open.values()].slice(0, 20), requests_finished: net.finished, requests_failed: net.failed});
+    }
     // Wait, in real time, for a page-side condition that does not depend on the virtual clock (initial boot).
     async function waitReal(label, expression, deadlineMs = 30000) {
       const started = Date.now();
       for (;;) {
         if (await evaluate(`Boolean(${expression})`)) return;
-        if (Date.now() - started > deadlineMs) throw new Error(`timed out waiting for ${label}: ${expression}`);
+        if (Date.now() - started > deadlineMs) throw new Error(`timed out waiting for ${label}: ${expression}${await timeoutReport()}`);
         budget.check(label);
         await sleep(budget.limited ? Math.max(0, Math.min(50, budget.remaining())) : 50);
       }
@@ -647,7 +692,7 @@ async function openDemo(opts = {}) {
   }
 }
 
-module.exports = {openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown,
+module.exports = {listenOnUnreservedPort, openDemo, skipReason, findChrome, sleep, WEB_ROOT, CLOCK_SOURCE, closeDemoResources, demoLifecycleTrace, requestBrowserShutdown,
   CLEANUP_MS, GRACEFUL_CLEANUP_MS, WINDOWS_JOB_WRAPPER, WINDOWS_JOB_LIMIT_BYTES, windowsJobPython, browserCommand,
   JOB_STARTING_BROWSER, chromeStderrWatcher, profileEntryCount, profileActivity, BROWSER_CREATED, portReadCounter, workBudget,
   CLOSE_RESERVE_MS};

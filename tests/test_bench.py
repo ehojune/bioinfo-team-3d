@@ -13,6 +13,367 @@ from labhq import bench
 from labhq.cli import main
 
 
+def _mock_tier_control(limit=10, **kwargs):
+    return bench.MockTierCostControl(limit, valid_until=100, clock=lambda: 0,
+                                     verified=True, **kwargs)
+
+
+def test_tier_cost_missing_control_rejects_before_dispatch(tmp_path, monkeypatch):
+    from labhq.settings import Settings
+
+    async def forbidden(*args, **kwargs):
+        pytest.fail("rejected admission must not dispatch")
+
+    monkeypatch.setattr(bench, "_run_labhq", forbidden)
+    with pytest.raises(ValueError, match="cost control"):
+        asyncio.run(bench.run_fixed_tier_pair(tmp_path / "pair", Settings(),
+                                             {"reasoning": "a", "balanced": "b"}))
+    assert not (tmp_path / "pair").exists()
+
+
+@pytest.mark.parametrize("bounds", [None, {}, {"reasoning": 5},
+                                    {"reasoning": 5, "balanced": None},
+                                    {"reasoning": 5, "balanced": 5.0},
+                                    {"reasoning": 5, "balanced": True},
+                                    {"reasoning": 5, "balanced": -1},
+                                    {"reasoning": 5, "balanced": 6}])
+def test_tier_cost_bad_bounds_reject_without_dispatch(tmp_path, monkeypatch, bounds):
+    from labhq.settings import Settings
+
+    async def forbidden(*args, **kwargs):
+        pytest.fail("rejected admission must not dispatch")
+
+    control = _mock_tier_control()
+    monkeypatch.setattr(bench, "_run_labhq", forbidden)
+    with pytest.raises(ValueError):
+        asyncio.run(bench.run_fixed_tier_pair(tmp_path / "pair", Settings(),
+                                             {"reasoning": "a", "balanced": "b"},
+                                             cost_control=control, worst_case_units=bounds))
+    assert control.snapshot()["outstanding_units"] == 0
+    assert not (tmp_path / "pair").exists()
+
+
+@pytest.mark.parametrize("verified,expires", [(False, 100), (None, 100), (True, 0),
+                                              (True, float("nan"))])
+def test_tier_cost_unverified_or_stale_control_rejects(verified, expires):
+    with pytest.raises(ValueError):
+        control = bench.MockTierCostControl(10, valid_until=expires, clock=lambda: 0,
+                                            verified=verified)
+        control.reserve_pair({"reasoning": 5, "balanced": 5})
+
+
+def test_tier_cost_exact_limit_and_competing_admission():
+    from concurrent.futures import ThreadPoolExecutor
+
+    control = _mock_tier_control()
+
+    def reserve():
+        try:
+            return control.reserve_pair({"reasoning": 4, "balanced": 6})
+        except ValueError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: reserve(), range(2)))
+    assert sum(result is not None for result in results) == 1
+    assert control.snapshot()["outstanding_units"] == 10
+    assert control.snapshot()["settled_units"] == 0
+
+
+@pytest.mark.parametrize("kind", ["missing", "foreign", "unverified", "stale", "bad-clock"])
+def test_tier_cost_invalid_control_never_dispatches(tmp_path, monkeypatch, kind):
+    from labhq.settings import Settings
+
+    control = _mock_tier_control()
+    if kind == "missing":
+        control = None
+    elif kind == "foreign":
+        control = SimpleNamespace(reserve_pair=lambda _: {})
+    elif kind == "unverified":
+        control = bench.MockTierCostControl(10, valid_until=100, clock=lambda: 0)
+    elif kind == "stale":
+        control = bench.MockTierCostControl(10, valid_until=0, clock=lambda: 0, verified=True)
+    elif kind == "bad-clock":
+        def bad_clock():
+            raise RuntimeError("unverifiable")
+        control = bench.MockTierCostControl(10, valid_until=100, clock=bad_clock, verified=True)
+
+    async def forbidden(*args, **kwargs):
+        pytest.fail("invalid control must not dispatch")
+
+    monkeypatch.setattr(bench, "_run_labhq", forbidden)
+    with pytest.raises(ValueError, match="cost control"):
+        asyncio.run(bench.run_fixed_tier_pair(tmp_path / "pair", Settings(),
+                                             {"reasoning": "a", "balanced": "b"},
+                                             cost_control=control,
+                                             worst_case_units={"reasoning": 4, "balanced": 6}))
+    assert not (tmp_path / "pair").exists()
+
+
+def test_tier_cost_dispatch_settlement_and_unknown_usage(tmp_path, monkeypatch):
+    from labhq.settings import Settings
+
+    control = _mock_tier_control()
+    seen = []
+
+    async def run(*args, **kwargs):
+        seen.append(control.snapshot())
+        if len(seen) == 1:
+            return {"mock_cost_receipt": {"units": 2, "verified": True, "final": True}}
+        return {"status": "done", "cost_usd": 0, "cost_known": True}
+
+    async def score(*args):
+        return {}
+
+    monkeypatch.setattr(bench, "_run_labhq", run)
+    monkeypatch.setattr(bench, "_score", score)
+    result = asyncio.run(bench.run_fixed_tier_pair(tmp_path / "pair", Settings(),
+                                                  {"reasoning": "a", "balanced": "b"},
+                                                  cost_control=control,
+                                                  worst_case_units={"reasoning": 4, "balanced": 6}))
+    assert [(s["settled_units"], s["outstanding_units"]) for s in seen] == [(0, 10), (2, 6)]
+    assert result["cost_control"]["outstanding_units"] == 6  # dollars are not a final receipt
+    ids = json.loads((tmp_path / "pair" / "cost-reservations.json").read_text())
+    control.settle(ids["balanced"], 3, verified=True, final=True)
+    control.settle(ids["balanced"], 3, verified=True, final=True)
+    assert control.snapshot()["settled_units"] == 5
+    assert control.snapshot()["outstanding_units"] == 0
+    with pytest.raises(ValueError):
+        control.reserve_pair({"reasoning": 3, "balanced": 3})
+
+
+def test_tier_cost_receipt_cannot_settle_another_control_or_unstarted_arm():
+    control = _mock_tier_control()
+    ids = control.reserve_pair({"reasoning": 4, "balanced": 6})
+    other = _mock_tier_control().reserve_pair({"reasoning": 4, "balanced": 6})
+    for reservation_id in (ids["reasoning"], other["reasoning"]):
+        with pytest.raises(ValueError):
+            control.settle(reservation_id, 0, verified=True, final=True)
+    assert control.snapshot()["outstanding_units"] == 10
+
+
+def test_tier_cost_live_stays_blocked_with_verified_mock_control(tmp_path, monkeypatch):
+    from labhq.settings import Settings
+
+    control = _mock_tier_control(0)
+
+    async def forbidden(*args, **kwargs):
+        pytest.fail("mock verification must never unlock live dispatch")
+
+    monkeypatch.setattr(bench, "_run_labhq", forbidden)
+    with pytest.raises(ValueError, match="live tier pair disabled"):
+        asyncio.run(bench.run_fixed_tier_pair(tmp_path / "pair", Settings(),
+                                             {"reasoning": "a", "balanced": "b"}, "real",
+                                             cost_control=control,
+                                             worst_case_units={"reasoning": 0, "balanced": 0}))
+    assert not (tmp_path / "pair").exists()
+
+
+def test_tier_cost_late_duplicate_receipt_and_retry():
+    control = _mock_tier_control()
+    ids = control.reserve_pair({"reasoning": 4, "balanced": 6})
+    control.start(ids["reasoning"])
+    with pytest.raises(ValueError, match="already"):
+        control.start(ids["reasoning"])
+    with pytest.raises(ValueError):
+        control.reserve_pair({"reasoning": 1, "balanced": 1})
+    # Timeout/cancel do not free anything. A late final receipt does, exactly once.
+    control.settle(ids["reasoning"], 2, verified=True, final=True)
+    assert control.snapshot()["settled_units"] == 2
+    assert control.snapshot()["outstanding_units"] == 6
+    control.settle(ids["reasoning"], 2, verified=True, final=True)
+    retry = control.reserve_pair({"reasoning": 1, "balanced": 1})
+    assert set(retry.values()).isdisjoint(ids.values())
+    assert control.snapshot()["settled_units"] + control.snapshot()["outstanding_units"] == 10
+
+
+@pytest.mark.parametrize("amount,verified,final", [(None, True, True), (1.0, True, True),
+                                                   (True, True, True), (-1, True, True),
+                                                   (1, False, True), (1, True, False)])
+def test_tier_cost_unknown_receipts_preserve_reservation(amount, verified, final):
+    control = _mock_tier_control()
+    ids = control.reserve_pair({"reasoning": 4, "balanced": 6})
+    control.start(ids["reasoning"])
+    with pytest.raises(ValueError):
+        control.settle(ids["reasoning"], amount, verified=verified, final=final)
+    assert control.snapshot()["outstanding_units"] == 10
+
+
+def test_tier_cost_conflicting_or_excess_receipt_poison_control():
+    for first, second in [(2, 3), (None, 5)]:
+        control = _mock_tier_control()
+        ids = control.reserve_pair({"reasoning": 4, "balanced": 6})
+        control.start(ids["reasoning"])
+        if first is not None:
+            control.settle(ids["reasoning"], first, verified=True, final=True)
+        with pytest.raises(ValueError):
+            control.settle(ids["reasoning"], second, verified=True, final=True)
+        assert control.snapshot()["blocked"]
+        with pytest.raises(ValueError):
+            control.start(ids["balanced"])
+
+
+@pytest.mark.parametrize("failure", [TimeoutError, asyncio.CancelledError])
+def test_tier_cost_interrupted_pair_retains_all_reservations(tmp_path, monkeypatch, failure):
+    from labhq.settings import Settings
+
+    seen = []
+    control = _mock_tier_control()
+
+    async def interrupted(*args, **kwargs):
+        seen.append(True)
+        raise failure()
+
+    monkeypatch.setattr(bench, "_run_labhq", interrupted)
+    with pytest.raises(failure):
+        asyncio.run(bench.run_fixed_tier_pair(tmp_path / "pair", Settings(),
+                                             {"reasoning": "a", "balanced": "b"},
+                                             cost_control=control,
+                                             worst_case_units={"reasoning": 4, "balanced": 6}))
+    assert seen == [True]
+    assert control.snapshot()["outstanding_units"] == 10
+    ids = json.loads((tmp_path / "pair" / "cost-reservations.json").read_text())
+    with pytest.raises(ValueError, match="limit"):
+        asyncio.run(bench.run_fixed_tier_pair(tmp_path / "retry", Settings(),
+                                             {"reasoning": "a", "balanced": "b"},
+                                             cost_control=control,
+                                             worst_case_units={"reasoning": 1, "balanced": 1}))
+    assert seen == [True]
+    control.settle(ids["reasoning"], 2, verified=True, final=True)
+    assert control.snapshot()["settled_units"] == 2
+    assert control.snapshot()["outstanding_units"] == 6
+
+
+def test_tier_cost_expiry_between_arms_blocks_second(tmp_path, monkeypatch):
+    from labhq.settings import Settings
+
+    now = [0]
+    control = bench.MockTierCostControl(10, valid_until=1, clock=lambda: now[0], verified=True)
+    seen = []
+
+    async def run(*args, **kwargs):
+        seen.append(True)
+        now[0] = 1
+        return {"status": "done"}
+
+    async def score(*args):
+        return {}
+
+    monkeypatch.setattr(bench, "_run_labhq", run)
+    monkeypatch.setattr(bench, "_score", score)
+    with pytest.raises(ValueError, match="stale"):
+        asyncio.run(bench.run_fixed_tier_pair(tmp_path / "pair", Settings(),
+                                             {"reasoning": "a", "balanced": "b"},
+                                             cost_control=control,
+                                             worst_case_units={"reasoning": 4, "balanced": 6}))
+    assert seen == [True]
+    assert control.snapshot()["outstanding_units"] == 10
+
+
+def test_fixed_plan_is_resumed_without_fresh_planning():
+    plan = {"steps": [{"id": "s1", "agent_id": "analyst", "instruction": "QC"}]}
+    seen = []
+
+    class Orchestrator:
+        async def run_request(self, rid, resume=False, continuation=False):
+            seen.append((rid, resume, continuation))
+
+    class Hub:
+        def __init__(self):
+            self.orchestrator = Orchestrator()
+
+        def create_request(self, body, extra=None):
+            assert extra["plan"] == plan
+            asyncio.create_task(self.orchestrator.run_request("r"))
+            return "r"
+
+    async def run():
+        hub = Hub()
+        bench._create_fixed_plan_request(hub, object(), plan)
+        await asyncio.sleep(0)
+        assert seen == [("r", True, False)]
+
+    asyncio.run(run())
+
+
+def test_tier_pair_uses_separate_states_and_same_rubric(tmp_path, monkeypatch):
+    from labhq.settings import Settings
+
+    seen = []
+
+    async def run(case, arm_dir, engines, settings, approve_budget_up_to=None, fixed_plan=None):
+        seen.append((case, arm_dir, settings, fixed_plan))
+        return {"status": "done"}
+
+    async def score(case, arm_dir, run):
+        return {"case": case["id"], "check": case["check"]}
+
+    monkeypatch.setattr(bench, "_run_labhq", run)
+    monkeypatch.setattr(bench, "_score", score)
+    result = asyncio.run(bench.run_fixed_tier_pair(tmp_path / "pair", Settings(),
+                                                  {"reasoning": "model-a", "balanced": "model-b"},
+                                                  cost_control=_mock_tier_control(),
+                                                  worst_case_units={"reasoning": 4, "balanced": 6}))
+    assert [row["tier"] for row in result["rows"]] == ["reasoning", "balanced"]
+    assert seen[0][1] != seen[1][1]
+    assert seen[0][0] == seen[1][0] and result["rows"][0]["score"] == result["rows"][1]["score"]
+    steps = [entry[3]["steps"][0] for entry in seen]
+    assert {k: v for k, v in steps[0].items() if k != "model_tier"} == {
+        k: v for k, v in steps[1].items() if k != "model_tier"}
+    assert [s["model_tier"] for s in steps] == ["reasoning", "balanced"]
+    assert all(entry[2].orchestrator.step_model_tiers for entry in seen)
+    assert seen[1][2].model_tiers.model_for("balanced", "claude_code") == "model-b"
+
+
+def test_tier_pair_blocks_live_before_any_dispatch(tmp_path, monkeypatch):
+    from labhq.settings import Settings
+
+    async def forbidden(*args, **kwargs):
+        pytest.fail("no live dispatch without an aggregate provider cap")
+
+    monkeypatch.setattr(bench, "_run_labhq", forbidden)
+    with pytest.raises(ValueError, match="aggregate provider spending control"):
+        asyncio.run(bench.run_fixed_tier_pair(tmp_path / "pair", Settings(),
+                                             {"reasoning": "model-a", "balanced": "model-b"}, "real"))
+    assert not (tmp_path / "pair").exists()
+
+
+def test_fixed_tier_pair_dispatches_saved_plan_without_planning(tmp_path):
+    import sqlite3
+    import yaml
+    from labhq.models import AgentSpec, Task
+    from labhq.runner.daemon import Runner
+    from labhq.settings import Settings
+
+    settings = Settings()
+    settings.runner.agents_dir = str(bench.REPO / "agents")
+    result = asyncio.run(bench.run_fixed_tier_pair(tmp_path / "pair", settings,
+                                                  {"reasoning": "model-a", "balanced": "model-b"},
+                                                  cost_control=_mock_tier_control(),
+                                                  worst_case_units={"reasoning": 4, "balanced": 6}))
+    for row in result["rows"]:
+        tier = row["tier"]
+        assert row["run"]["status"] == "done"
+        state = tmp_path / "pair" / tier / "state"
+        spec = yaml.safe_load((state / "agents/core/analyst.yaml").read_text(encoding="utf-8"))
+        assert spec["model"] == "model-a"
+        with sqlite3.connect(state / "gateway/gateway.sqlite3") as db:
+            tasks = [json.loads(body) for (body,) in db.execute("select body from state where kind='task'")]
+        assert not any(task["kind"] in {"plan", "planning", "briefing"} for task in tasks)
+        steps = [task for task in tasks if task["kind"] == "step"]
+        assert len(steps) == 1 and steps[0]["payload"]["agent_id"] == "analyst"
+        # The declared reasoning tier is represented by no override; balanced is an explicit override.
+        assert steps[0]["payload"]["meta"].get("model_tier") == (None if tier == "reasoning" else "balanced")
+        # Resolve the actual captured task with the real engine configured, without launching a provider.
+        runner = Runner.__new__(Runner)
+        runner.s = settings.model_copy(deep=True)
+        runner.s.model_tiers.reasoning = {"claude_code": "model-a"}
+        runner.s.model_tiers.balanced = {"claude_code": "model-b"}
+        runner.registry = SimpleNamespace(get=lambda _id: AgentSpec.model_validate(spec))
+        resolved = runner._resolve_agent(Task.model_validate(steps[0]["payload"]))
+        assert resolved.model == ("model-a" if tier == "reasoning" else "model-b")
+
+
 def test_case_catalog_has_five_bounded_cases():
     cases = bench.load_cases()
     assert [case["id"] for case in cases] == [

@@ -1,11 +1,14 @@
 import json
+import os
 import shutil
+from pathlib import Path
 from types import SimpleNamespace
 import pytest
 from labhq import doctor
 from labhq.adapters import codex as codex_mod
 from labhq.settings import DataZone, Settings
 from labhq.registry import Registry
+from tests.support.time_proxy import RuntimeProxy
 
 
 @pytest.fixture(autouse=True)
@@ -81,9 +84,11 @@ def _write_roster_agent(folder, filename, agent_id, *, employment="contract", st
 
 @pytest.mark.parametrize("custom", [False, True])
 def test_doctor_roster_matches_registry_without_archiving(tmp_path, monkeypatch, custom):
+    import labhq.doctor as doctor_module
     import labhq.registry as registry_module
 
-    monkeypatch.setattr(registry_module.time, "time", lambda: 100)
+    for module in (doctor_module, registry_module):
+        monkeypatch.setattr(module, "time", RuntimeProxy(module.time, time=lambda: 100))
     settings = _settings(tmp_path)
     base = tmp_path / "agents"
     folder = tmp_path / "custom" if custom else base / "contract"
@@ -259,6 +264,8 @@ def test_doctor_compares_runner_with_config_owner(tmp_path, monkeypatch, same_ac
 
 def test_doctor_warns_about_parent_session_markers_and_pi_skills(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
+    for key in [k for k in os.environ if k.upper().startswith(("CLAUDE_", "CLAUDECODE"))]:
+        monkeypatch.delenv(key)  # an agent session already carries its own markers; count only the two below
     monkeypatch.setenv("CLAUDE_CODE_CHILD_SESSION", "1")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "not-reported")
     monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
@@ -282,7 +289,7 @@ def test_doctor_checks_only_roster_engines_and_prints_readiness(tmp_path, monkey
         return [str(executable)]
 
     monkeypatch.setattr(doctor, "_resolve_command", resolve)
-    monkeypatch.setattr(doctor, "_probe", lambda argv, env: (0, "version 1.2.3"))
+    monkeypatch.setattr(doctor, "_probe", lambda argv, env: (0, "version 2.1.289"))
     monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
 
     result = doctor.collect(settings)
@@ -385,7 +392,7 @@ def test_doctor_uses_runner_resolution_and_prefix_args(tmp_path, monkeypatch):
 
     (tmp_path / "node.exe").touch()
     monkeypatch.setattr(doctor, "_resolve_command", resolve)
-    monkeypatch.setattr(doctor, "_probe", lambda argv, env: (0, "version 1.2.3"))
+    monkeypatch.setattr(doctor, "_probe", lambda argv, env: (0, "version 2.1.289"))
     monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
     doctor.collect(settings)
     assert ("claude_code", ["node", "cli.js"]) in calls
@@ -748,3 +755,30 @@ def test_a_misspelled_research_key_is_an_error_not_a_silent_default():
 
     with pytest.raises(ValidationError, match="evidence_checkpiont"):
         Settings.model_validate({"research": {"enabled": True, "evidence_checkpiont": True}})
+
+
+@pytest.mark.parametrize("found,status", [("2.0.0", "ok"), ("2.3.1", "ok"), ("1.30.0", "warn"), ("1.28.1", "warn"),
+                                          ("0.9.1", "warn")])
+def test_doctor_warns_when_mcp_is_below_the_floor(monkeypatch, found, status):
+    monkeypatch.setattr(doctor.importlib.metadata, "version", lambda name: found)
+    row = doctor._mcp_row()
+    assert row["name"] == "mcp" and row["status"] == status
+    assert (found in row["detail"]) and ("pip install" in row["hint"] if status == "warn" else row["hint"] == "")
+
+
+def test_doctor_warns_when_mcp_is_missing(monkeypatch):
+    def missing(name):
+        raise doctor.importlib.metadata.PackageNotFoundError(name)
+    monkeypatch.setattr(doctor.importlib.metadata, "version", missing)
+    assert doctor._mcp_row()["status"] == "warn"
+
+
+def test_the_mcp_floor_matches_pyproject():
+    project = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    assert f'"mcp>={doctor.MCP_FLOOR[0]}.{doctor.MCP_FLOOR[1]}"' in project
+
+
+def test_collect_reports_mcp_and_alphagenome_atlas_rows(tmp_path):
+    names = [row["name"] for row in doctor.collect(_settings(tmp_path), dry_run=True)["checks"]]
+    assert names.count("mcp") == 1
+    assert names.count("AlphaGenome Atlas") == 1

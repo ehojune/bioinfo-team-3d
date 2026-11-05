@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -19,6 +18,8 @@ from starlette.websockets import WebSocketDisconnect
 from labhq.gateway.server import WEB, create_app
 from labhq.settings import Settings
 from labhq.util import free_port
+from tests.support.serve_task import serve_task, wait_started
+from tests.support.node_binary import node_binary
 
 
 @pytest.fixture
@@ -70,12 +71,9 @@ async def test_wrong_client_token_reaches_a_real_websocket_as_1008(tmp_path):
     port = free_port()
     server = uvicorn.Server(uvicorn.Config(create_app(settings), host='127.0.0.1', port=port,
                                            log_level='warning'))
-    serving = asyncio.create_task(server.serve())
+    serving = serve_task(server.serve())
     try:
-        for _ in range(200):
-            if server.started:
-                break
-            await asyncio.sleep(0.01)
+        await wait_started(lambda: server.started, serving, 10, "gateway")
         assert server.started
         async with websockets.connect(f'ws://127.0.0.1:{port}/ws/client?token=wrong') as ws:
             with pytest.raises(websockets.exceptions.ConnectionClosedError) as error:
@@ -190,15 +188,21 @@ NODE_WEB_TESTS = [
 
 @pytest.mark.parametrize('filename,marker', NODE_WEB_TESTS)
 def test_office_in_node(filename, marker):
-    node = shutil.which('node')
+    node = node_binary()
     if not node:
         pytest.skip('Node is optional')
     script = Path(__file__).with_name(filename)
     # The optional installed-browser checks wait for Chrome's start and the demo viewports (node:test budgets of 150 s and 240 s).
     # #833: the required resizable case now has separate cold-start/UI budgets inside one 60 s hard cap.
     # Other Node cases keep their existing limits.
-    timeout = {'web_office_browser.cjs': 170, 'web_visual_demo.cjs': 260,
-               'web_visual_tooling.cjs': 170, 'web_resizable_panels.cjs': 60}.get(filename, 30)
+    # #1076: web_office_focus_layout.cjs opens a real Chrome too. Its five checks take about 3 s in total, but on the CI
+    # Windows runner the same script spent 28 s outside them (Chrome waited 11.6 s before its first request to the
+    # page's own server, then 6.5 s to boot the page; the server answered in 7 ms), and it failed this cap three times.
+    # The script opens two Chrome sessions one after the other (two top-level tests, 120 s each in node:test), so a slow
+    # runner can need that twice; it gets 120 s here. The checks themselves are unchanged, and the demo driver now
+    # starts Chrome with --no-proxy-server, the likely cause of the 11.6 s wait.
+    timeout = {'web_office_browser.cjs': 170, 'web_visual_demo.cjs': 260, 'web_visual_tooling.cjs': 170,
+               'web_resizable_panels.cjs': 60, 'web_office_focus_layout.cjs': 120}.get(filename, 30)
     # On Windows the demo driver starts Chrome inside the owned KILL_ON_CLOSE Job wrapper with this exact
     # interpreter (#842); it never falls back to a PATH or Store python.
     base_env = {**os.environ, 'LABHQ_TEST_PYTHON': sys.executable}
@@ -262,7 +266,7 @@ def test_every_node_web_test_runs_in_ci():
 
 def test_browser_failure_profile_diagnostic_is_bounded_without_browser():
     """#833: a fake directory stream proves the failure receipt is bounded and closes its handle."""
-    node = shutil.which('node')
+    node = node_binary()
     if not node:
         pytest.skip('Node is optional')
     driver = Path(__file__).parent / 'support' / 'demo_driver.cjs'

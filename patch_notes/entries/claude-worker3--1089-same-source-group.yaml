@@ -1,0 +1,10 @@
+pr: 1096
+rows:
+- sha: 'd9e5396'
+  at: 2026-10-30 23:40
+  text: 연구 단계 결과 규칙에 같은 출처(DOI·PMID·accession·산출물 경로)를 인용한 근거 행은 같은 independence_group을 쓴다는 한 줄을 더하고, 규칙 존재 시험을 추가한다
+  summary: 근거 표를 만드는 단계 prompt에 같은 출처는 같은 independence group으로 적으라는 규칙이 더해집니다. 실제 run에서 직원이 따르는지는 아직 확인하지 않았습니다.
+- sha: '74ec3b3'
+  at: 2026-10-30 23:55
+  text: prompt 규칙 문구를 뒤 행만 거부되고 그 claim이 근거를 잃는 실제 동작으로 맞추고, 패치노트 summary에서 미검증 예방 효과 단정을 뺀다(리뷰 P1·P2)
+  summary: 규칙 문구를 실제 거부 동작과 맞췄습니다.

@@ -9,6 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 from tests import test_windows_job_ci as owned
+from tests.support.time_proxy import RuntimeProxy
 
 
 @pytest.mark.parametrize("code", [None, 1, -1, OSError("PRIVATE-error"), True, 2**40])
@@ -82,9 +83,9 @@ def test_actual_fixture_exception_handler_reports_and_reraises(tmp_path, error, 
 
 def test_wait_result_still_fails_at_45_seconds_without_process_access(monkeypatch):
     ticks = iter([0.0, 44.99, 45.0])
-    monkeypatch.setattr(owned.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(owned, "time", RuntimeProxy(owned.time, monotonic=lambda: next(ticks)))
     sleep = Mock()
-    monkeypatch.setattr(owned.time, "sleep", sleep)
+    monkeypatch.setattr(owned, "time", RuntimeProxy(owned.time, monotonic=owned.time.monotonic, sleep=sleep))
     read = Mock(side_effect=FileNotFoundError())
     with pytest.raises(AssertionError, match="^owned launcher produced no outcome$"):
         owned.wait_result(SimpleNamespace(read_text=read))

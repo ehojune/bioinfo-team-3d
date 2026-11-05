@@ -240,4 +240,42 @@ assert.equal(failedCosts.req('failed').costKnown,false);
   view.apply({type:'agent.usage', request_id:'mixed', data:{cost_usd:0.25}});
   assert.equal(costLabel(view.req('mixed')), '$1.75 + 비용 모름', 'live amount is not hidden behind the old summary');
 }
+// #877: a request's time limit reaches the page with the snapshot and request.created, and reads as `labhq status` does.
+{
+  const {deadlineLabel} = context.LabHQState;
+  const view = create({now: () => 1000});
+  view.apply({type:'snapshot', data:{agents:[], approvals:[], requests:[
+    {id:'on', status:'running', created_at:1000, wall_clock:{enabled:true, limit_s:5400, held_s:0, deadline_at:6400}},
+    {id:'off', status:'running', created_at:1000, wall_clock:{enabled:false, limit_s:0, held_s:0, deadline_at:null}},
+    {id:'old', status:'running', created_at:1000},
+    {id:'held', status:'waiting_pi', created_at:1000, wall_clock:{enabled:true, limit_s:5400, held_s:300, pi_since:1400, deadline_at:6700}},
+    {id:'done', status:'done', created_at:1000, wall_clock:{enabled:true, limit_s:5400, held_s:0}},
+  ]}});
+  assert.equal(deadlineLabel(view.req('on'), 1600), '시간 상한 켜짐 90분 · 남은 80분');
+  assert.equal(deadlineLabel(view.req('off'), 1600), '시간 상한 꺼짐');
+  assert.equal(deadlineLabel(view.req('old'), 1600), '', 'a gateway that sends no limit is not shown as "off"');
+  assert.equal(deadlineLabel(view.req('held'), 1600),
+    '시간 상한 켜짐 90분 · 남은 88분 · PI 대기 제외 8분 · PI 결정 대기 중이라 시간이 가지 않습니다');
+  assert.equal(deadlineLabel(view.req('done'), 1600), '', 'a finished request has no clock to show');
+  assert.equal(deadlineLabel({status:'running', created_at:1000, wallClock:{limit_s:60, held_s:0}}, 1120),
+    '시간 상한 켜짐 60초 · 기한이 지났습니다(곧 취소)');
+  // A PI wait that began after the snapshot is not subtracted yet: the time left reads shorter, never longer (A, #877).
+  const late = {status:'waiting_pi', created_at:1000, wallClock:{limit_s:5400, held_s:0, pi_since:null}};
+  assert.equal(deadlineLabel(late, 2000), '시간 상한 켜짐 90분 · 남은 73분 · PI 결정 대기 중이라 시간이 가지 않습니다');
+  view.apply({type:'request.created', request_id:'new', ts:2000, data:{text:'x', mode:'orchestrate',
+    wall_clock:{enabled:true, limit_s:3600, held_s:0, deadline_at:5600}}});
+  assert.equal(deadlineLabel(view.req('new'), 2000), '시간 상한 켜짐 60분 · 남은 60분');
+  assert.ok(!Object.keys(view.req('new')).includes('wallClock'), 'state snapshots stay comparable');
+  // #1103 P2 (#1246): the gateway cancels at deadline_at, counted from when it accepted the request. A request.created
+  // whose ts is later (the start lagged the acceptance) must not push the shown time past that deadline.
+  view.apply({type:'request.created', request_id:'lagged', ts:2300, data:{text:'x', mode:'orchestrate',
+    wall_clock:{enabled:true, limit_s:3600, held_s:0, deadline_at:5600}}});
+  assert.equal(deadlineLabel(view.req('lagged'), 2400), '시간 상한 켜짐 60분 · 남은 53분', 'the server deadline, not ts + limit');
+  // A PI wait still open is added to the server deadline, which only counts closed waits.
+  view.apply({type:'snapshot', data:{agents:[], approvals:[], requests:[
+    {id:'open', status:'waiting_pi', created_at:1000, wall_clock:{enabled:true, limit_s:3600, held_s:0, pi_since:2000, deadline_at:4600}},
+  ]}});
+  assert.equal(deadlineLabel(view.req('open'), 2600),
+    '시간 상한 켜짐 60분 · 남은 43분 · PI 대기 제외 10분 · PI 결정 대기 중이라 시간이 가지 않습니다');
+}
 console.log(`${events.length} legacy event states, replay reset, effects, isolation and bounds: OK`);

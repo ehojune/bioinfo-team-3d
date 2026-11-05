@@ -6,6 +6,7 @@ import ntpath
 import re
 import stat
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any  # semantics-hook
 from typing import Literal
@@ -15,6 +16,20 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, 
 
 from .intake import Reference
 from .test_guard import guard_test_path
+
+
+class _ConfigLoader(yaml.SafeLoader):
+    def construct_mapping(self, node, deep=False):
+        result = super().construct_mapping(node, deep=deep)
+        for key_node, value_node in node.value:
+            if (key_node.value == "precedent_lookup_share"
+                    and value_node.tag == "tag:yaml.org,2002:float"):
+                result[key_node.value] = value_node.value.replace("_", "")
+        return result
+
+
+def _load_config(text: str):
+    return yaml.load(text, Loader=_ConfigLoader)
 
 
 class GatewaySettings(BaseModel):
@@ -65,6 +80,11 @@ class RunnerSettings(BaseModel):
     # Below this much free space on the work drive the runner starts no task until the PI answers a card (#678);
     # 0 turns the card off (the warning above stays).
     disk_fail_free_gb: float = Field(default=2, ge=0, allow_inf_nan=False)
+    # While a task runs the runner reads the free space of its drives every this many seconds and halts the task when one
+    # falls below disk_fail_free_gb, keeping its session for the PI to resume (#678). 0 turns the watch off.
+    disk_watch_s: float = Field(default=30, ge=0, allow_inf_nan=False)
+    # Off: the watch only writes a warning to the task log and never halts.
+    disk_watch_halt: bool = True
     # Optional folder for multi-GB raw data, outside every step folder: the task briefing names it (#678).
     bulk_data_root: str | None = None
     bundle_max_file_mb: float = Field(default=50, gt=0)
@@ -357,9 +377,11 @@ _BACKGROUND_SHELL_TOOLS = ("BashOutput", "KillShell", "TaskOutput", "TaskStop")
 class BudgetSettings(BaseModel):
     per_task_usd: float = 5.0
     per_request_usd: float = 30.0
-    # Opt-in (#862): hold each charged turn's whole cap before it is sent, so in-flight turns and the last turn
-    # cannot pass the request cap on the product's own cost accounting. Not a provider billing guarantee.
-    reserve_before_dispatch: bool = False
+    # On by default since #1139 (#862): hold each charged turn's cap before it is sent, so in-flight turns and the
+    # last turn cannot pass the request cap on the product's own cost accounting. The hold is cut to what the request
+    # still has, so a request budget below per_task_usd is not asked about at its first turn. Not a provider billing
+    # guarantee. `false` restores the older check, which only looks at what is already spent.
+    reserve_before_dispatch: bool = True
 
     @model_validator(mode="after")
     def reserved_budgets_are_amounts(self) -> "BudgetSettings":
@@ -368,6 +390,9 @@ class BudgetSettings(BaseModel):
                 value = getattr(self, name)
                 if not math.isfinite(value) or value < 0:
                     raise ValueError(f"policy.budget.{name} must be a finite amount >= 0 with reserve_before_dispatch")
+            if 0 < self.per_task_usd < 0.01:
+                # The Claude CLI writes a call cap in cents: a positive cap below one cent cannot be held (0 is no cap).
+                raise ValueError("policy.budget.per_task_usd must be 0 or at least $0.01 with reserve_before_dispatch")
         return self
 
 
@@ -470,6 +495,21 @@ class OrchestratorSettings(BaseModel):
     quota_max_wait_s: float = Field(default=7 * 86400, ge=1)
     login_retry_s: float = Field(default=600, gt=0)
     login_wait_max_s: float = Field(default=86400, gt=0)
+    # Wall-clock limit for a whole request, fixed when the request is accepted (#877). 0 turns it off. The clock
+    # runs while staff work; time in waiting_pi (PI cards) is added to the deadline, and a request in review_pending
+    # or later is never cut. A value below one minute is a typo (minutes written as seconds), so it is refused.
+    request_wall_clock_s: int = Field(default=0, ge=0, le=7 * 86400)
+    # A plan step may carry its own ``model_tier`` (#625, step 2): carried, capped by the staff member's declared tier
+    # and run on that tier's model. Off by default; off drops the field everywhere and changes nothing, so plan
+    # hashes and prompts stay what they were. The CSO is not yet told it may choose one (that is a later step).
+    step_model_tiers: bool = False
+
+    @field_validator("request_wall_clock_s")
+    @classmethod
+    def wall_clock_is_off_or_a_real_limit(cls, value: int) -> int:
+        if 0 < value < 60:
+            raise ValueError("request_wall_clock_s is in seconds: use 0 (off) or at least 60")
+        return value
 
     @model_validator(mode="before")
     @classmethod
@@ -537,6 +577,47 @@ class ModelTierPrices(BaseModel):
         if priced and (not self.source or self.checked_on is None):
             raise ValueError("priced model tiers require source and checked_on")
         return self
+
+
+class ModelTierModels(BaseModel):
+    """Which model each tier means on each engine (#625). Empty by default: a tier then names no model, nothing is
+    invented, and every agent runs the model its own YAML gives. An agent's explicit ``model`` always wins."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fast: dict[str, str] = Field(default_factory=dict)
+    balanced: dict[str, str] = Field(default_factory=dict)
+    reasoning: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def valid_engines_and_models(self) -> "ModelTierModels":
+        engines = {"claude_code", "codex", "gemini", "antigravity"}
+        for tier in ("fast", "balanced", "reasoning"):
+            for engine, model in getattr(self, tier).items():
+                if engine not in engines:
+                    raise ValueError(f"model_tiers.{tier}: unknown engine {engine!r}; allowed: {', '.join(sorted(engines))}")
+                if not re.fullmatch(MODEL_NAME_PATTERN, model):
+                    raise ValueError(f"model_tiers.{tier}.{engine}: {model!r} is not a valid model name")
+        return self
+
+    def model_for(self, tier: str | None, engine: str | None) -> str | None:
+        """The configured model of `tier` on `engine`, or None when the table does not say."""
+        row = getattr(self, tier, None) if tier in ("fast", "balanced", "reasoning") else None
+        return row.get(engine) if row and engine else None
+
+
+def models_match(declared: str | None, actual: str | None) -> bool:
+    """One model, named by an alias or a full name: ``opus`` is ``claude-opus-5-5``, ``gpt-6-luna`` is not ``gpt-6``.
+
+    Compared case-insensitively without a leading ``claude-``; a name also matches the same name plus a version
+    suffix (``-5-5``, ``-4.1``). Anything else, including a prefix that is another model, does not match."""
+    if not declared or not actual:
+        return False
+    one, other = (re.sub(r"^claude-", "", value.strip().casefold()) for value in (declared, actual))
+    if one == other:
+        return True
+    short, long = sorted((one, other), key=len)
+    return bool(re.fullmatch(re.escape(short) + r"(?:-\d+(?:\.\d+)?)+", long))
 
 
 class PiProfileSettings(BaseModel):
@@ -649,6 +730,13 @@ class AnnotSettings(BaseModel):
     # each admitted by the runner before it is sent (#858). None keeps lookups uncounted; 0 refuses every lookup.
     # See runner/lookup_admission.py for what one attempt is.
     request_lookup_limit: int | None = Field(default=None, ge=0, le=10000)
+    precedent_lookup_share: Decimal | None = Field(default=Decimal("0.5"), ge=0, le=1, allow_inf_nan=False)
+
+
+class ResultStorageSettings(BaseModel):
+    """What the published result repository records about its authors (#1104)."""
+    # Names for CITATION.cff. Empty by default: no author is invented, and without a name no CITATION.cff is written.
+    authors: list[str] = []
 
 
 class GitHubSettings(BaseModel):
@@ -726,12 +814,14 @@ class Settings(BaseModel):
     pi_language: PiLanguageSettings = Field(default_factory=PiLanguageSettings)
     plan: PlanSettings = PlanSettings()
     model_tier_prices: ModelTierPrices = Field(default_factory=ModelTierPrices)
+    model_tiers: ModelTierModels = Field(default_factory=ModelTierModels)
     lab: LabSettings = LabSettings()
     research: ResearchSettings = ResearchSettings()
     literature: LiteratureSettings = LiteratureSettings()
     wiki: WikiSettings = WikiSettings()
     pi_profile: PiProfileSettings = PiProfileSettings()
     github: GitHubSettings = GitHubSettings()
+    result_storage: ResultStorageSettings = Field(default_factory=ResultStorageSettings)
     annot: AnnotSettings = AnnotSettings()
     dev_log: DevLogSettings = DevLogSettings()
     projects: list[ProjectSettings] = []
@@ -774,7 +864,7 @@ class Settings(BaseModel):
         if path and not Path(path).is_file():
             raise FileNotFoundError(f"설정 파일이 없습니다: {path}")
         if path:
-            data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+            data = _load_config(Path(path).read_text(encoding="utf-8")) or {}
         s = cls.model_validate(data)
         if path:
             s.config_path = str(Path(path).resolve())
@@ -808,7 +898,7 @@ def write_staff_config(settings: Settings, directory: Path) -> str | None:
 
     guard_test_path(Path(settings.config_path))
     guard_test_path(directory)
-    data = yaml.safe_load(Path(settings.config_path).read_text(encoding="utf-8")) or {}
+    data = _load_config(Path(settings.config_path).read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ValueError("config is not a mapping")
     gateway = data.get("gateway") if isinstance(data.get("gateway"), dict) else {}

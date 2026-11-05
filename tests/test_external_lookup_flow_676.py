@@ -71,3 +71,144 @@ async def test_research_cp2_card_and_report_limits_name_a_lookup_missing_from_th
     card = json.dumps(next(a["detail"] for a in hub.approvals if a["kind"] == "research_evidence"), ensure_ascii=False)
     assert LINE in card and "호출·본문 독해 증명은 아님" in card
     assert LINE in req["report"].split("## 한계", 1)[1]
+
+
+from labhq.runner.lookup_admission import LookupAdmission
+
+
+def test_precedent_share_preserves_request_capacity(tmp_path):
+    admission = LookupAdmission(tmp_path / "lookup.sqlite3", 9, precedent_share=0.5)
+    def send(stage):
+        return admission.admit("request", "task", "agent", "search", "example.org", stage=stage)
+
+    assert all(send("precedent")["admitted"] for _ in range(4))
+    assert send("precedent")["reason"] == "stage share exhausted"
+    assert all(send(None)["admitted"] for _ in range(5))
+    assert send(None)["reason"] == "exhausted"
+
+
+def test_migration_and_restart_preserve_counts(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE sends (request_id TEXT NOT NULL, seq INTEGER NOT NULL, task_id TEXT, agent_id TEXT, tool TEXT NOT NULL, host TEXT NOT NULL, admitted_at REAL NOT NULL, http_status INTEGER, outcome TEXT, PRIMARY KEY(request_id, seq))")
+        db.execute("INSERT INTO sends VALUES ('r', 1, 'old', 'a', 'search', 'example.org', 0, NULL, NULL)")
+    ledger = LookupAdmission(path, 4, precedent_share=0.5)
+    assert ledger.usage('r')['used'] == 1
+    assert ledger.admit('r', 't1', 'a', 'search', 'example.org', stage='precedent')['admitted']
+    ledger = LookupAdmission(path, 4, precedent_share=0.5)
+    assert ledger.admit('r', 't2', 'a', 'search', 'example.org', stage='precedent')['admitted']
+    assert ledger.admit('r', 't2', 'a', 'search', 'example.org', stage='precedent')['reason'] == 'stage share exhausted'
+    assert ledger.admit('r', 'plan', 'a', 'search', 'example.org')['admitted']
+    assert ledger.admit('r', 'plan', 'a', 'search', 'example.org')['reason'] == 'exhausted'
+
+
+def test_concurrent_migration_and_admission(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    path = tmp_path / 'concurrent.sqlite3'
+    def attempt(i):
+        ledger = LookupAdmission(path, 9, precedent_share=0.5)
+        return ledger.admit('r', str(i), 'a', 'search', 'example.org', stage='precedent')['admitted']
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        assert sum(pool.map(attempt, range(24))) == 4
+    assert LookupAdmission(path, 9, precedent_share=0.5).usage('r')['used'] == 4
+
+
+def test_share_boundaries_and_prompt(tmp_path):
+    from labhq.runner.lookup_admission import usage_note
+    from labhq.settings import AnnotSettings
+    from pydantic import ValidationError
+    import pytest
+    assert AnnotSettings().precedent_lookup_share == .5
+    assert AnnotSettings(precedent_lookup_share=None).precedent_lookup_share is None
+    for invalid in (-0.1, 1.1):
+        with pytest.raises(ValidationError):
+            AnnotSettings(precedent_lookup_share=invalid)
+    for share, expected in [(None, True), (0, False), (0.5, False), (1, True)]:
+        ledger = LookupAdmission(tmp_path / f'{share}.db', 1, precedent_share=share)
+        assert ledger.admit('r', 't', 'a', 'search', 'example.org', stage='precedent')['admitted'] is expected
+    ledger = LookupAdmission(tmp_path / 'prompt.db', 9, precedent_share=0.5)
+    for _ in range(8):
+        ledger.admit('r', 't', 'a', 'search', 'example.org')
+    assert 'Pre-plan share: 0 of 4 used, 1 left' in usage_note(ledger, 'r', stage='precedent')
+
+
+import httpx
+import pytest
+from labhq.runner.approvals import Broker
+from labhq.runner.lookup_admission import LookupAdmission
+
+
+@pytest.mark.asyncio
+async def test_body_cannot_override_issued_stage(tmp_path):
+    async def noop(*args):
+        pass
+    ledger = LookupAdmission(tmp_path / 'broker.db', 4, precedent_share=0.5)
+    broker = Broker(0, noop, noop, noop, lookup_admission=ledger)
+    token = broker.issue_task_token('t', 'a', 'r', stage='precedent')
+    transport = httpx.ASGITransport(app=broker.app)
+    async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
+        for body in ({'tool': 'search', 'host': 'example.org', 'stage': 'plan'},
+                     {'tool': 'search', 'host': 'example.org'},
+                     {'tool': 'search', 'host': 'example.org', 'stage': None}):
+            response = await client.post('/lookup/admit', json=body, headers={'x-labhq-token': token})
+            assert response.status_code == 200
+        assert response.json()['reason'] == 'stage share exhausted'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('share', [0.25, None])
+async def test_runner_supplies_settings_and_issues_stage(tmp_path, monkeypatch, share):
+    from labhq.settings import Settings
+    from tests import test_observed_outputs as helpers
+    settings = Settings()
+    settings.annot.request_lookup_limit = 8
+    settings.annot.precedent_lookup_share = share
+    monkeypatch.setattr(helpers, 'Settings', lambda: settings)
+    runner = helpers._runner(tmp_path, monkeypatch, lambda _: None)
+    assert runner.broker.lookup_admission.precedent_share == share
+    issue = runner.broker.issue_task_token
+    identities = []
+    def capture(*args, **kwargs):
+        token = issue(*args, **kwargs)
+        identities.append(runner.broker.identities[token].copy())
+        return token
+    monkeypatch.setattr(runner.broker, 'issue_task_token', capture)
+    result = await runner.run_task(helpers._task(kind='precedent'))
+    assert result.ok
+    assert identities[0]['stage'] == 'precedent'
+
+
+def test_mixed_preplan_and_decimal_share(tmp_path):
+    from labhq.runner.lookup_admission import usage_note
+    for share, cap in [(0.29, 29), (0.58, 58)]:
+        ledger = LookupAdmission(tmp_path / f"{share}.db", 100, precedent_share=share)
+        for i in range(cap):
+            assert ledger.admit("r", str(i), "a", "search", "example.org", stage=("briefing" if i % 2 else "precedent"))["admitted"]
+        assert f"Pre-plan share: {cap} of {cap} used, 0 left" in usage_note(ledger, "r", stage="briefing")
+        assert ledger.admit("r", "x", "a", "search", "example.org", stage="briefing")["reason"] == "stage share exhausted"
+    ledger = LookupAdmission(tmp_path / "mixed.db", 9, precedent_share=0.5)
+    for stage in ("briefing", "precedent", "briefing", "precedent"):
+        assert ledger.admit("r", "t", "a", "search", "example.org", stage=stage)["admitted"]
+    assert ledger.admit("r", "t", "a", "search", "example.org", stage="precedent")["reason"] == "stage share exhausted"
+    assert all(ledger.admit("r", "t", "a", "search", "example.org", stage="plan")["admitted"] for _ in range(5))
+
+
+def test_yaml_precise_share_survives_staff_copy_and_admission(tmp_path):
+    from decimal import Decimal
+    from labhq.runner.lookup_admission import usage_note
+    from labhq.settings import Settings, write_staff_config
+
+    config = tmp_path / "config.yaml"
+    config.write_text("annot:\n  request_lookup_limit: 100\n  precedent_lookup_share: 0.29999999999999999\n", encoding="utf-8")
+    settings = Settings.load(str(config))
+    assert settings.annot.precedent_lookup_share == Decimal("0.29999999999999999")
+    assert settings.model_dump(mode="json")["annot"]["precedent_lookup_share"] == "0.29999999999999999"
+    staff = Settings.load(write_staff_config(settings, tmp_path / "staff"))
+    assert staff.annot.precedent_lookup_share == settings.annot.precedent_lookup_share
+    ledger = LookupAdmission(tmp_path / "precise.db", 100, precedent_share=staff.annot.precedent_lookup_share)
+    for _ in range(29):
+        assert ledger.admit("r", "t", "a", "search", "example.org", stage="precedent")["admitted"]
+    assert ledger.admit("r", "t", "a", "search", "example.org", stage="briefing")["reason"] == "stage share exhausted"
+    assert "Pre-plan share: 29 of 29 used, 0 left" in usage_note(ledger, "r", stage="precedent")
+    assert ledger.admit("r", "t", "a", "search", "example.org", stage="plan")["admitted"]

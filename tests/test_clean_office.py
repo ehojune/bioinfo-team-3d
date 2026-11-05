@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from labhq import cli
@@ -5,10 +7,11 @@ from labhq.gateway.server import Hub, create_app
 from labhq.models import TaskResult
 from labhq.request_status import is_office_request, is_past_request
 from labhq.settings import Settings
+from tests.support.time_proxy import RuntimeProxy
 
 
 def test_gateway_marks_one_shared_office_and_session_boundary(tmp_path, monkeypatch):
-    monkeypatch.setattr('labhq.gateway.server.time.time', lambda: 100.0)
+    monkeypatch.setattr('labhq.gateway.server.time', RuntimeProxy(time, time=lambda: 100.0))
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path)
     hub = Hub(settings)
@@ -30,7 +33,7 @@ def test_gateway_marks_one_shared_office_and_session_boundary(tmp_path, monkeypa
 
 
 def test_gateway_request_totals_include_history_beyond_list_limit(tmp_path, monkeypatch):
-    monkeypatch.setattr('labhq.gateway.server.time.time', lambda: 100.0)
+    monkeypatch.setattr('labhq.gateway.server.time', RuntimeProxy(time, time=lambda: 100.0))
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path)
     settings.gateway.client_token = 'test-token'
@@ -59,7 +62,7 @@ def test_gateway_request_totals_include_history_beyond_list_limit(tmp_path, monk
 
 def test_old_reviewed_request_returns_to_office_for_followup_and_counts_only_new_cost(tmp_path, monkeypatch):
     now = [100.0]
-    monkeypatch.setattr('labhq.gateway.server.time.time', lambda: now[0])
+    monkeypatch.setattr('labhq.gateway.server.time', RuntimeProxy(time, time=lambda: now[0]))
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path)
     settings.gateway.client_token = 'test-token'

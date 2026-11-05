@@ -21,7 +21,7 @@ def environment(tmp_path, monkeypatch):
     executable = tmp_path / "synthetic-cli"
     executable.touch()
     evidence = {"agents": [AgentSpec(id="facilities", name="Facilities", role="synthetic", engine="claude_code")],
-                "version": (0, "synthetic 1.2.3"), "login": (0, "signed in"), "preflight": {}, "found": True}
+                "version": (0, "synthetic 2.1.282"), "login": (0, "signed in"), "preflight": {}, "found": True}
     monkeypatch.setattr(doctor, "_roster", lambda s: evidence["agents"])
     monkeypatch.setattr(doctor, "_resolve_command", lambda *a: [str(executable if evidence["found"] else
                                                                                tmp_path / "missing")])
@@ -132,7 +132,7 @@ def test_other_engine_login_does_not_prove_facilities_ready(environment, monkeyp
 
     def probe(args, env):
         if args[-1] == "--version":
-            return 0, "synthetic 1.2.3"
+            return 0, "synthetic 2.1.282"
         ready = (env["FIXTURE_ENGINE"] == "claude_code") == facilities_ready
         return (0, "signed in") if ready else (None, "")
 
