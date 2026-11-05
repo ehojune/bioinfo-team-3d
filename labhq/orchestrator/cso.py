@@ -3349,7 +3349,7 @@ class Orchestrator:
         if req.get("execution_location"):
             return True
         host = execution_policy.available_runner(
-            self.hub, req.get("agent_id") if req.get("mode") == "direct" else None)
+            self.hub, req.get("agent_id") if req.get("mode") == "direct" else None, rid)
         if host is None:
             req["execution_location"] = {"mode": "local", "source": "사용 가능한 HPC 없음"}
         else:
@@ -4105,7 +4105,9 @@ class Orchestrator:
             if task.meta.get("kind") in {"step", "direct"}:
                 problems = execution_policy.plan_errors(
                     [{"id": task.meta.get("step_id", "direct"), "agent_id": task.agent_id,
-                      "execution": location["mode"]}], location, self.hub.agents)
+                      "execution": location["mode"],
+                      **{key: task.meta[key] for key in ("environment_binding", "environment_bindings")
+                         if key in task.meta}}], location, hub_agents(self.hub, rid))
                 if problems:
                     raise ValueError("; ".join(problems))
                 if location["mode"] == "hpc":
@@ -5346,7 +5348,7 @@ class Orchestrator:
     async def run_dag(self, rid: str, request: str, steps: list[dict], results: dict[str, TaskResult],
                       only: set[str] | None = None, feedback: dict[str, str] | None = None) -> None:
         choice = self.hub.requests.get(rid, {}).get("execution_location")
-        problems = execution_policy.plan_errors(steps, choice, self.hub.agents)
+        problems = execution_policy.plan_errors(steps, choice, hub_agents(self.hub, rid))
         if problems:
             raise ValueError("; ".join(problems))
         plan = (self.hub.requests.get(rid) or {}).get('plan') or {}
@@ -7067,7 +7069,7 @@ class Orchestrator:
                 if location["mode"] == "hpc":
                     errors = execution_policy.plan_errors(
                         [{"id": "direct", "agent_id": req["agent_id"], "execution": "hpc"}],
-                        location, self.hub.agents)
+                        location, hub_agents(self.hub, rid))
                     if errors:
                         raise ValueError("; ".join(errors))
                     text += execution_policy.plan_rule(location)
@@ -7816,7 +7818,7 @@ class Orchestrator:
                             problems = [str(error)]
                         problems.extend(recruit_planning.proposal_errors(candidate))
                         drafted = candidate.get("steps") if isinstance(candidate, dict) else None
-                        problems += execution_policy.plan_errors(drafted, req.get("execution_location"), self.hub.agents)
+                        problems += execution_policy.plan_errors(drafted, req.get("execution_location"), hub_agents(self.hub, rid))
                         bad_agents = unavailable_plan_agents(drafted, known, orchestration)
                         if bad_agents:
                             problems.append(f"research plan uses unavailable or orchestration agents: {bad_agents}; "
@@ -7970,7 +7972,7 @@ class Orchestrator:
                                 plan = normalize_plan_topics(plan, topic_vocab, strict=False)
                             plan = normalize_plan_keys(plan, {}, checklist_catalog)
                             location_errors = execution_policy.plan_errors(
-                                plan.get("steps"), req.get("execution_location"), self.hub.agents)
+                                plan.get("steps"), req.get("execution_location"), hub_agents(self.hub, rid))
                             if location_errors:
                                 raise PlanAgentError("; ".join(location_errors))
                             recruit_errors = recruit_planning.proposal_errors(plan)
@@ -8267,7 +8269,7 @@ class Orchestrator:
                                          f"maximum is {self.cfg.max_steps}")
                     type_stats: dict = {}
                     location_errors = execution_policy.plan_errors(
-                        kept + raw, req.get("execution_location"), self.hub.agents)
+                        kept + raw, req.get("execution_location"), hub_agents(self.hub, rid))
                     if location_errors:
                         raise ValueError("; ".join(location_errors))
                     merged, warnings = validate_steps(kept + raw, known, self.cfg.max_steps, orchestration,

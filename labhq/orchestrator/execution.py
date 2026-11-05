@@ -12,16 +12,20 @@ OPTIONS = [
 ]
 
 
-def available_runner(hub, agent_id=None):
+def available_runner(hub, agent_id=None, request_id=None):
     """Only an online, built-in scheduler with a processing worker can own the request."""
-    agents = hub.agents.items() if agent_id is None else ((agent_id, hub.agents.get(agent_id, {})),)
+    request_agents = getattr(hub, "request_agents", None)
+    view = request_agents(request_id) if callable(request_agents) else hub.agents
+    agents = view.items() if agent_id is None else ((agent_id, view.get(agent_id, {})),)
     cfg = hub.s.orchestrator
     excluded = {"cso", "chief_of_staff", "sci_reviewer", "editor", "facilities",
                 cfg.cso_agent, cfg.chief_of_staff_agent, cfg.reviewer_agent}
     for aid, agent in agents:
         if agent_id is None and aid in excluded:
             continue
-        host = getattr(hub, "agent_runner", {}).get(aid) or agent.get("runner_id")
+        request_runner = getattr(hub, "request_runner", None)
+        host = (request_runner(aid, request_id) if callable(request_runner) else
+                getattr(hub, "agent_runner", {}).get(aid) or agent.get("runner_id"))
         caps = getattr(hub, "runner_capabilities", {}).get(host, {})
         if (host in getattr(hub, "runners", {}) and caps.get("scheduler") in {"sge", "pbs", "slurm", "mock"}
                 and agent.get("hpc_tools") and "hpc" in agent.get("builtin_mcp", [])):
@@ -50,6 +54,8 @@ def plan_rule(choice):
             "Local staff only write/submit scripts and read permitted summaries. "
             "Never process data locally. Read only the runner's hash-verified ancestor snapshots in request data/<producer-step>/; "
             "never read sibling workspaces. Different steps may declare identical output names. "
+            "Runner-root .venv environment_binding(s) are unsupported on HPC and will be refused before dispatch. "
+            "Keep any job-local environment under this step's outputs/ and record its versions there. "
             "The CSO report and request bundle collect results only at the end.")
 
 
@@ -68,6 +74,11 @@ def plan_errors(steps, choice, agents):
             errors.append(f"{step.get('id')}: execution must be {choice['mode']}; mixed plans are refused")
         if choice["mode"] == "hpc":
             outputs = []
+            if (step.get("environment_binding") or step.get("environment_bindings")
+                    or any(output_relpath(path) == "outputs/env/requirements.lock.txt"
+                           for path in step.get("outputs") or [])):
+                errors.append(f"{step.get('id')}: HPC environment bindings require a verified scheduler-readable "
+                              "environment snapshot; plan refused before dispatch")
             agent = agents.get(step.get("agent_id"), {})
             if (agent.get("runner_id") != choice["runner_id"] or not agent.get("hpc_tools")
                     or "hpc" not in agent.get("builtin_mcp", [])):

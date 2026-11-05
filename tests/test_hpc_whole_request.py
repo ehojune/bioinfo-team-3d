@@ -365,6 +365,72 @@ def test_same_step_file_collisions_include_ancestors_and_optional_outputs(paths)
     assert plan_errors([{**step, "optional_outputs": []}, other], choice, hub.agents) == []
 
 
+@pytest.mark.parametrize("environment", [
+    {"environment_binding": {"version": 1}}, {"environment_bindings": [{"version": 1}]},
+    {"outputs": ["outputs/env/requirements.lock.txt"]},
+])
+async def test_hpc_environment_contract_refused_before_any_step_dispatch(environment):
+    hub = hub_for(lambda task: None)
+    hub.requests["r"]["execution_location"] = {"mode": "hpc", "runner_id": "cluster"}
+    steps = [{"id": "s1", "agent_id": "worker", "instruction": "prepare", "execution": "hpc",
+              "depends_on": []},
+             {"id": "s2", "agent_id": "worker", "instruction": "environment", "execution": "hpc",
+              "depends_on": ["s1"], **environment}]
+    with pytest.raises(ValueError, match="scheduler-readable environment snapshot"):
+        await Orchestrator(hub).run_dag("r", "test", steps, {})
+    assert hub.calls == []  # not even the preceding non-environment step starts
+
+
+async def test_runner_refuses_hpc_environment_binding_without_spawning(tmp_path, monkeypatch):
+    from labhq.adapters.mock import MockAdapter
+    settings = _settings(tmp_path)
+    settings.hpc.scheduler = "mock"
+    runner = Runner(settings)
+
+    async def never(adapter, ctx):
+        raise AssertionError("must refuse before adapter spawn")
+
+    monkeypatch.setattr(MockAdapter, "run", never)
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="create .venv",
+        meta={"kind": "step", "step_id": "env", "environment_binding": {"version": 1},
+              "execution_location": {"mode": "hpc", "runner_id": settings.runner.id}}))
+    assert not result.ok and "scheduler-readable environment snapshot" in result.error
+    assert result.cost_usd == 0 and result.cost_known
+    assert not runner.workspaces and not runner.jobs
+
+
+async def test_hpc_choice_and_dispatch_follow_request_pinned_runner_view():
+    async def dispatch(task):
+        return result(task, text="done")
+
+    hub = hub_for(dispatch, tools=False)
+    native = dict(hub.agents["worker"])
+    pinned = {**native, "runner_id": "wsl", "hpc_tools": True, "builtin_mcp": ["hpc"]}
+    hub.runners["wsl"] = object()
+    hub.runner_capabilities["wsl"] = {"scheduler": "mock"}
+    class PinnedHub(FakeHub):
+        def request_agents(self, rid):
+            return {**self.agents, "worker": pinned if rid == "r" else native}
+
+        def request_runner(self, aid, rid):
+            return "wsl" if rid == "r" and aid == "worker" else "cluster"
+
+    hub.__class__ = PinnedHub
+
+    async def answer(**card):
+        return {"approved": True, "note": "1: a"}
+
+    hub.request_approval = answer
+    orch = Orchestrator(hub)
+    assert await orch._choose_execution("r")
+    assert hub.requests["r"]["execution_location"]["runner_id"] == "wsl"
+    finished = {}
+    await orch.run_dag("r", "test", [{"id": "s1", "agent_id": "worker", "instruction": "run",
+                                     "depends_on": [], "execution": "hpc"}], finished)
+    assert finished["s1"].ok
+    assert hub.agents["worker"] == native and hub.agent_runner["worker"] == "cluster"
+
+
 async def test_waiting_job_outputs_survive_wake_and_runner_restart(tmp_path, monkeypatch):
     from labhq.adapters.mock import MockAdapter
     settings = _settings(tmp_path)

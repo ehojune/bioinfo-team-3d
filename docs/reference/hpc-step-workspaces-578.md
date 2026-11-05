@@ -16,6 +16,8 @@
 - 잡 제출 전 baseline을 run에 저장한다. 같은 요청·step·revision의 wake는 첫 제출 baseline을 이어받아 대기 중 생긴 보조 파일도 기록한다. revision이 바뀌면 새 baseline을 쓴다.
 - 재개 accounting은 session·runner·engine에 요청·step·revision을 함께 대조한다. verify는 절대 경로가 사라졌을 때 task가 일치하는 유일한 중첩 manifest만 찾는다.
 - bundle은 해당 run의 engine/model을 우선한다. 단계 절대 링크와 기록된 data snapshot 링크를 실제 묶음 파일로 바꾼다. model은 RO-Crate software identity hash에 반영된다.
+- HPC 환경 binding과 예약된 환경 lock 단계는 검증된 scheduler용 snapshot이 없어 dispatch 전에 거부한다. runner도 binding이 든 HPC task를 비용 없이 거부한다. 기존 local 환경 계약은 유지한다.
+- HPC 선택·계획 검증은 요청별 roster와 runner view를 따른다. WSL에 pin된 요청이 native owner의 capability를 쓰지 않는다.
 
 ## 04장 후속 반영
 
@@ -28,4 +30,8 @@ rev2는 #1276 소유의 `04-install.md`·`.en.md`를 편집하지 않는다. mai
 CLI `1: a/b`, 실제 worker만 HPC 선택, 동명 산출·파일 경로 충돌, mock 제출·입력 provenance, wake·runner 재시작·revision 분리, 구형 원본 보존, bundle 링크·run identity, 이동 후 verify·오귀속 거부를 검사한다.
 
 rev2 로컬: 확장 993 passed/39 skipped, 후속 bundle·accounting·CSO 413/7, 경계 138/4(서로 중복 포함). Windows의 POSIX 권한·링크 검사는 skip이며 Linux CI가 맡는다.
-08·11장 한영은 합계 158,935→160,636자(+1,701). 경로·검증 상세는 이 reference에 뒀다.
+리뷰 후 환경·WSL runner 회귀 401 passed/15 skipped. 08·11장 한영은 합계 158,935→160,875자(+1,940). 경로·검증 상세는 이 reference에 뒀다.
+
+## CI 범위 추가
+
+`config/ci/windows-boundary-v1.json`은 rev2 claim 밖이다. Windows 사전 검사가 새 `test_hpc_whole_request.py`를 거부하며 `test_evidence_verify.py`의 mixed-node hash도 갱신해야 한다. 이 두 항목과 새 native lookup node를 넣은 scratch 수정안은 현재 source/AST 기준 `validate_profile()`을 통과했다. checkout policy는 보존했다. 이 등록 누락은 Linux 전체 suite의 CI 계약 검사에서도 실패하므로 재실행으로 해결되지 않는다.

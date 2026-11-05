@@ -1864,6 +1864,9 @@ class Runner:
     def _environment_refusal_reason(self, task: Task) -> str | None:
         grants = self.__dict__.setdefault("_env_grants", {})
         grants.pop(task.id, None)  # whatever happens below, an earlier run of this id leaves no grant behind
+        if ((task.meta.get("execution_location") or {}).get("mode") == "hpc"
+                and (task.meta.get("environment_binding") or task.meta.get("environment_bindings"))):
+            return "HPC environment bindings require a verified scheduler-readable environment snapshot"
         if "environment_binding" in task.meta:
             producer = self._producer_binding_refusal(task, task.meta["environment_binding"])
             if producer is not None:
