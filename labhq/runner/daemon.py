@@ -800,7 +800,10 @@ class Runner:
                 log.warning("runner %s omits unavailable staff %s: %s", self.s.runner.id, agent.id, refused)
                 continue
             summary = agent.summary()
-            agents.append({**summary, "hpc_tools": ("hpc" in summary.get("builtin_mcp", []) and
+            agents.append({**summary,
+                           "whole_request_hpc": ("hpc" in agent.builtin_mcp and self.s.hpc.scheduler != "none"
+                                                 and not agent.project_dirs),
+                           "hpc_tools": ("hpc" in summary.get("builtin_mcp", []) and
                                                       self.s.hpc.scheduler != "none") or
                                                      "labhq_hpc" in summary.get("mcp", []),
                            "wiki_tools": "wiki" in summary.get("builtin_mcp", []) and self._wiki_tool_ready()})

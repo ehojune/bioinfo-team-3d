@@ -20,6 +20,8 @@
 - HPC 선택·계획 검증은 요청별 roster와 runner view를 따른다. WSL에 pin된 요청이 native owner의 capability를 쓰지 않는다.
 - 기존 요청 project/path-reference 입력은 scheduler snapshot이 없어 HPC 선택 뒤 어떤 처리 단계도 보내지 않는다. 저장된 HPC 선택도 다시 확인한다. runner는 직원 project 입력까지 포함해 작업 폴더·잡을 만들기 전에 비용 없이 거부한다. local 선택은 유지하며 조상 산출의 검증된 data 전달은 허용한다.
 - 저장된 HPC 선택은 `run_request` 입구에서 검사해 briefing·precedent도 시작하지 않는다. 공통 `run_step`도 같은 요청 입력을 대조하므로 개별 호출로 우회하지 않는다. entry·resume·accounting 회귀 334 passed/5 skipped.
+- runner는 configured project 입력이 없는 내장 scheduler 직원만 `whole_request_hpc: true`로 알린다. 경로는 roster에 내보내지 않는다. gateway는 이 capability가 true인 직원만 선택·계획에 허용한다. 일반 HPC 도구 지원 여부는 별도이며 capability 누락을 지원으로 추정하지 않는다. 관련 회귀 340 passed/7 skipped.
+- 마지막 eligibility 변경 뒤 실제 gateway 왕복 mock E2E 13 passed. 실제 모델·HPC 계정 전환은 실행하지 않았다.
 
 ## 04장 후속 반영
 
@@ -32,7 +34,7 @@ rev2는 #1276 소유의 `04-install.md`·`.en.md`를 편집하지 않는다. mai
 CLI `1: a/b`, 실제 worker만 HPC 선택, 동명 산출·파일 경로 충돌, mock 제출·입력 provenance, wake·runner 재시작·revision 분리, 구형 원본 보존, bundle 링크·run identity, 이동 후 verify·오귀속 거부를 검사한다.
 
 rev2 로컬: 확장 993 passed/39 skipped, 후속 bundle·accounting·CSO 413/7, 경계 138/4(서로 중복 포함). Windows의 POSIX 권한·링크 검사는 skip이며 Linux CI가 맡는다.
-리뷰 후 환경·WSL runner 회귀 401 passed/15 skipped, 요청 입력·환경·WSL·workspace 회귀 455/33, E2E·resume accounting 39 passed(중복 포함). 08·11장 한영은 합계 158,935→161,077자(+2,142). 경로·검증 상세는 이 reference에 뒀다.
+리뷰 후 환경·WSL runner 회귀 401 passed/15 skipped, 요청 입력·환경·WSL·workspace 회귀 455/33, E2E·resume accounting 39 passed(중복 포함). 08·11장 한영은 합계 158,935→160,187자(+1,252). 경로·검증 상세는 이 reference에 뒀다.
 
 ## CI 범위 추가
 

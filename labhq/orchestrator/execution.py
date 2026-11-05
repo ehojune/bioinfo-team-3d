@@ -28,6 +28,7 @@ def available_runner(hub, agent_id=None, request_id=None):
                 getattr(hub, "agent_runner", {}).get(aid) or agent.get("runner_id"))
         caps = getattr(hub, "runner_capabilities", {}).get(host, {})
         if (host in getattr(hub, "runners", {}) and caps.get("scheduler") in {"sge", "pbs", "slurm", "mock"}
+                and agent.get("whole_request_hpc") is True
                 and agent.get("hpc_tools") and "hpc" in agent.get("builtin_mcp", [])):
             return host
     return None
@@ -90,8 +91,9 @@ def plan_errors(steps, choice, agents):
                               "environment snapshot; plan refused before dispatch")
             agent = agents.get(step.get("agent_id"), {})
             if (agent.get("runner_id") != choice["runner_id"] or not agent.get("hpc_tools")
+                    or agent.get("whole_request_hpc") is not True
                     or "hpc" not in agent.get("builtin_mcp", [])):
-                errors.append(f"{step.get('id')}: requires built-in HPC tools on the selected runner")
+                errors.append(f"{step.get('id')}: requires whole-request HPC eligibility and built-in tools on the selected runner")
             for path in [*(step.get("outputs") or []), *(step.get("optional_outputs") or [])]:
                 path = output_relpath(path)
                 if not path:

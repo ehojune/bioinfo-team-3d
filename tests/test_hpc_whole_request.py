@@ -18,7 +18,8 @@ from tests.test_workspace_boundary import _settings
 def hub_for(dispatch, scheduler="mock", online=True, tools=True):
     hub = FakeHub(dispatch)
     hub.s.orchestrator.reviewer_agent = None
-    hub.agents["worker"].update(runner_id="cluster", hpc_tools=tools, builtin_mcp=["hpc"] if tools else [])
+    hub.agents["worker"].update(runner_id="cluster", hpc_tools=tools, whole_request_hpc=tools,
+                                builtin_mcp=["hpc"] if tools else [])
     hub.agent_runner = {"worker": "cluster"}
     hub.runner_capabilities = {"cluster": {"scheduler": scheduler}}
     hub.runners = {"cluster": object()} if online else {}
@@ -144,7 +145,7 @@ async def test_research_cp1_records_execution_choice(mode):
         return result(task, structured=plan)
 
     hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
-    hub.agents["worker"].update(runner_id="cluster", hpc_tools=True, builtin_mcp=["hpc"])
+    hub.agents["worker"].update(runner_id="cluster", hpc_tools=True, whole_request_hpc=True, builtin_mcp=["hpc"])
     hub.runners = {"cluster": object()}
     hub.runner_capabilities = {"cluster": {"scheduler": "mock"}}
 
@@ -345,9 +346,39 @@ def test_team_choice_excludes_orchestration_only_runners(orchestrator):
     from labhq.orchestrator.execution import available_runner
     hub = hub_for(lambda task: None, tools=False)
     hub.s.orchestrator.chief_of_staff_agent = "custom-chief"
-    hub.agents[orchestrator] = dict(runner_id="cluster", hpc_tools=True, builtin_mcp=["hpc"])
+    hub.agents[orchestrator] = dict(runner_id="cluster", hpc_tools=True, whole_request_hpc=True, builtin_mcp=["hpc"])
     assert available_runner(hub) is None
     assert available_runner(hub, orchestrator) == "cluster"  # explicit direct target remains valid
+
+
+@pytest.mark.parametrize("configured", [False, True])
+def test_runner_reports_whole_request_eligibility_without_exposing_configured_paths(tmp_path, configured):
+    from labhq.orchestrator.execution import available_runner, plan_errors
+    settings = _settings(tmp_path)
+    settings.hpc.scheduler = "mock"
+    runner = Runner(settings)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.mock, builtin_mcp=["hpc"],
+                     project_dirs=[str(tmp_path / "private-input")] if configured else [])
+    runner.registry.agents = {agent.id: agent}
+    row = runner.roster()[0]
+    assert row["hpc_tools"] is True and row["whole_request_hpc"] is (not configured)
+    assert "private-input" not in json.dumps(row) and "project_dirs" not in row
+    hub = hub_for(lambda task: None)
+    hub.agents["worker"] = {**row, "runner_id": "cluster"}
+    assert available_runner(hub, "worker") == (None if configured else "cluster")
+    assert available_runner(hub) == (None if configured else "cluster")
+    errors = plan_errors([{"id": "s1", "agent_id": "worker", "execution": "hpc"}],
+                         {"mode": "hpc", "runner_id": "cluster"}, hub.agents)
+    assert bool(errors) is configured
+
+
+def test_missing_whole_request_capability_is_not_assumed_from_generic_hpc_tools():
+    from labhq.orchestrator.execution import available_runner, plan_errors
+    hub = hub_for(lambda task: None)
+    hub.agents["worker"].pop("whole_request_hpc")
+    assert available_runner(hub) is None
+    assert plan_errors([{"id": "s1", "agent_id": "worker", "execution": "hpc"}],
+                       {"mode": "hpc", "runner_id": "cluster"}, hub.agents)
 
 
 @pytest.mark.parametrize("paths", [
@@ -405,7 +436,7 @@ async def test_hpc_choice_and_dispatch_follow_request_pinned_runner_view():
 
     hub = hub_for(dispatch, tools=False)
     native = dict(hub.agents["worker"])
-    pinned = {**native, "runner_id": "wsl", "hpc_tools": True, "builtin_mcp": ["hpc"]}
+    pinned = {**native, "runner_id": "wsl", "hpc_tools": True, "whole_request_hpc": True, "builtin_mcp": ["hpc"]}
     hub.runners["wsl"] = object()
     hub.runner_capabilities["wsl"] = {"scheduler": "mock"}
     class PinnedHub(FakeHub):
