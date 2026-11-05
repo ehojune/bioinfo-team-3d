@@ -27,3 +27,6 @@ rows:
 - sha: "b45249e"
   at: 2026-10-14 14:17
   text: 최신 main의 라운드 기록·표시·사무실·재개 변경을 병합해 현재 기준에서 리뷰 수정을 검증한다.
+- sha: "cf532ae"
+  at: 2026-11-05 16:04
+  text: main을 통합하고 HPC 단계별 원본·검증 입력 복사·wake 기록·bundle 경로·run provenance를 보존한다.
