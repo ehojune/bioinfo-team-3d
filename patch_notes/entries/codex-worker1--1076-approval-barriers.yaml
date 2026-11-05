@@ -1,6 +1,6 @@
 pr: 0
 rows:
-  - sha: 4664baa1
+  - sha: 4664baa
     at: "2026-11-05 13:31"
     summary: "승인 응답 시험에서 송신과 저장 지연을 따로 확인합니다."
     text: "시험: 송신 timeout·unregister 제한과 durable publish 완료 분리, writer 단계 시각 기록 (#1076)"
