@@ -19,6 +19,19 @@
 ## 하지 않은 것
 - manual은 고치지 않았다(W2 PR1064 충돌 때문). 고칠 문장: 한·영 manual 셸 다운로드 단락의 "an `iwr` that does not write a file and a path with a `$` variable are left alone" 뒤에 "a cmdlet the reader cannot place (an assignment, a cast) is checked against the current drive" 취지를 더한다.
 
+## 단계
+#678 rev12: PR #1184(#1167)와 PR #1270(#1269)이 바꾼 PowerShell 디스크 확인을 한·영 manual에 반영한다.
+
+## 한 일
+- `docs/manual.md`·`docs/manual.en.md`의 셸 다운로드·압축 해제 확인 단락에 안전망 문장을 더했다. 읽지 못했지만 이름이 보이는 다운로드는 현재 드라이브와 명령에 적힌 드라이브를 확인하고, 결과는 ask·경고·허용이며 deny는 없다.
+- #1184분(`-OutFile`·`Expand-Archive`·BITS)은 이미 manual에 있어 그대로 두었다.
+
+## 확인
+- 동작은 `labhq/disk_space.py`의 `_ps_unplaced`와 #1270 patch note·status로 대조했다. 코드는 바꾸지 않았다.
+
+## 하지 않은 것
+- 시험은 돌리지 않았다(문서만 변경).
+
 # #1076 approval 시험 진단
 
 - 송신 취소·timer·task stack·runner/lock·publish 상태를 실패 시 기록한다. publish barrier로 송신 timeout 이후 대기를 따로 검증한다.
