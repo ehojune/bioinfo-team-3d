@@ -452,6 +452,36 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
     started = time.monotonic()
     def mark(stage):
         timeline.append((stage, round(time.monotonic() - started, 3)))
+    writer_times = {name: None for name in ("enqueue", "start", "commit_start", "commit_finish", "finish")}
+    writer = durable.lane(hub.store.lane)
+    submit = writer.submit
+    transaction = hub.store._transaction
+    writer_context = threading.local()
+
+    @contextmanager
+    def observed_transaction():
+        with transaction() as conn:
+            yield conn
+            if getattr(writer_context, "publish", False):
+                writer_times["commit_start"] = round(time.monotonic() - started, 3)
+        if getattr(writer_context, "publish", False):
+            writer_times["commit_finish"] = round(time.monotonic() - started, 3)
+
+    def observed_submit(fn, *args, **kwargs):
+        if getattr(fn, "__name__", "") != "_append_event_now":
+            return submit(fn, *args, **kwargs)
+        writer_times["enqueue"] = round(time.monotonic() - started, 3)
+        def observed_job():
+            writer_times["start"] = round(time.monotonic() - started, 3)
+            writer_context.publish = True
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                writer_context.publish = False
+                writer_times["finish"] = round(time.monotonic() - started, 3)
+        return submit(observed_job)
+    monkeypatch.setattr(writer, "submit", observed_submit)
+    monkeypatch.setattr(hub.store, "_transaction", observed_transaction)
     original_publish = hub.publish
     async def publish(event, **kwargs):
         mark("publish_enter")
@@ -483,7 +513,7 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
         stacks = {repr(t): [f"{f.f_code.co_filename}:{f.f_lineno}:{f.f_code.co_name}" for f in t.get_stack()]
                   for t in asyncio.all_tasks() if not t.done()}
         timers = [(round(h.when() - loop.time(), 3), repr(h)) for h in loop._scheduled if not h.cancelled()]
-        return (f"timeline={timeline!r}, now={time.monotonic()-started:.3f}, "
+        return (f"timeline={timeline!r}, writer_times={writer_times!r} (None=unobserved), now={time.monotonic()-started:.3f}, "
                 f"action_done={task.done()}, action_cancelled={task.cancelled()}, action_error={action_error}, "
                 f"runner_present={'runner' in hub.runners}, runner_lock={hub.runner_locks.get('runner')!r}, "
                 f"card_lock={hub._approval_lock(card.id)!r}, publish_entered={publishing.is_set()}, "
@@ -500,18 +530,21 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
             mark("outer_cancel")
             task.cancel()
             await asyncio.sleep(0)
+        try:
+            await asyncio.wait_for(publishing.wait(), 4 * send_bound)
+        except asyncio.TimeoutError:
+            pytest.fail("send timeout or unregister did not reach publish within its bound: " + diagnostics())
+        assert send_timed_out.is_set(), diagnostics()
+        assert "runner" not in hub.runners, diagnostics()
         if publish_barrier:
-            try:
-                await asyncio.wait_for(publishing.wait(), 10)
-            except asyncio.TimeoutError:
-                pytest.fail("publish not reached: " + diagnostics())
-            assert send_timed_out.is_set(), diagnostics()
-            assert "runner" not in hub.runners, diagnostics()
             assert not task.done(), diagnostics()
             mark("publish_release")
             publish_release.set()
-        done, _ = await asyncio.wait({task}, timeout=4 * send_bound)  # the configured bound plus 3x slack, not a long wait
-        assert task in done, "runner backpressure held cancellation and the card lock past the configured send timeout: " + diagnostics()
+        done, _ = await asyncio.wait({task}, timeout=10)  # durable publish has a separate completion bound
+        assert task in done, "durable publish did not complete: " + diagnostics()
+        assert any(stage == "publish_done" for stage, _ in timeline), diagnostics()
+        assert all(value is not None for value in writer_times.values()), diagnostics()
+        assert list(writer_times.values()) == sorted(writer_times.values()), diagnostics()
         assert send_timed_out.is_set(), diagnostics()
         assert "runner" not in hub.runners, diagnostics()
     finally:
