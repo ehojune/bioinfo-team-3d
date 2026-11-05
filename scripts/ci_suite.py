@@ -51,7 +51,23 @@ def safe_worker(value):
     return value
 
 
+# Why the last select() kept each file's nodes: {reason: {test file: node count}} (#1285). A timeout of the Windows pool
+# used to leave only the omitted side visible; this is the other side, so a selection that grew can be traced to the
+# changed file that grew it. Reset on every call; the observation writes it as inclusion-<worker>.json.
+LAST_INCLUSION: dict = {}
+
+
+def inclusion_summary(inclusion=None, files=15):
+    """{reason: {"nodes": n, "files": {path: n}}} with the largest files first, bounded for the artifact."""
+    inclusion = LAST_INCLUSION if inclusion is None else inclusion
+    return {reason: {"nodes": sum(counts.values()),
+                     "files": dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:files])}
+            for reason, counts in sorted(inclusion.items())}
+
+
 def select(items, profile, root=ROOT, *, changed=None):
+    global LAST_INCLUSION
+    LAST_INCLUSION = {}
     if profile in {"linux-full-v1", "windows-full-v1"}:
         return list(items), [], {}
     if profile not in {WINDOWS_BOUNDARY, WINDOWS_PREVIEW}:
@@ -91,6 +107,8 @@ def select(items, profile, root=ROOT, *, changed=None):
         included, reason = cache[key]
         if included:
             chosen.append(item)
+            LAST_INCLUSION.setdefault(reason, {}).setdefault(relative, 0)
+            LAST_INCLUSION[reason][relative] += 1
         else:
             omitted.append(item)
             reasons[relative] = reason
@@ -422,6 +440,9 @@ class Observation:
                                   **({"reusable": False} if self.profile == WINDOWS_PREVIEW else {}), "full_nodes": full,
                                   "selected_nodes": [i.nodeid for i in chosen],
                                   "excluded_files": reasons})
+        # Diagnostic only, its own file: the phase proof closes the key set of collection-*.json (#1285).
+        self.write("inclusion", {"diagnostic_only": True, "reusable": False, "profile": self.profile,
+                                 "phase": self.phase, "reasons": inclusion_summary()})
         if self.checkpoints:
             self.checkpoints.mark('selection_finished')
 

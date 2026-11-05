@@ -58,7 +58,8 @@ def test_scope_index_walks_import_time_and_helper_bodies_once(monkeypatch):
 
 
 def test_cached_import_candidates_keep_live_changed_helper_and_profile_checks(tmp_path, monkeypatch):
-    source = 'from tests.support.helper import shared\ndef test_logic(): assert 1\n'
+    # #1285: a changed helper selects only the nodes that use what they import from it.
+    source = 'from tests.support.helper import shared\ndef test_logic(): shared()\n'
     data = review(source)
     data['mixed_nodes'] = {}
     helper = tmp_path / 'tests/support/helper.py'

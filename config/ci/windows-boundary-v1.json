@@ -62,6 +62,7 @@
     "tests/test_ci_empty_association.py",
     "tests/test_ci_failure_diagnostics.py",
     "tests/test_ci_followup_contract.py",
+    "tests/test_ci_helper_selection_1285.py",
     "tests/test_ci_manifest_identity.py",
     "tests/test_ci_normative_prose.py",
     "tests/test_ci_parallel_policy.py",
