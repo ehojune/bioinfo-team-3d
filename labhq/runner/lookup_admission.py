@@ -128,8 +128,11 @@ class LookupAdmission:
                        "task_id TEXT, agent_id TEXT, tool TEXT NOT NULL, host TEXT NOT NULL, "
                        "admitted_at REAL NOT NULL, http_status INTEGER, outcome TEXT, "
                        "PRIMARY KEY (request_id, seq))")
-            if "stage" not in {row[1] for row in db.execute("PRAGMA table_info(sends)")}:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(sends)")}
+            if "stage" not in columns:
                 db.execute("ALTER TABLE sends ADD COLUMN stage TEXT")
+            if "answered_at" not in columns:  # #1279: when the answer was recorded, the start of a host pause
+                db.execute("ALTER TABLE sends ADD COLUMN answered_at REAL")
             db.execute("COMMIT")
         finally:
             db.close()
@@ -179,10 +182,11 @@ class LookupAdmission:
     def _host_wait(self, db: sqlite3.Connection, request_id: str, host: str) -> float:
         """How long this host is paused for this request. Only answers already recorded count: a send's status is
         written when its tool call finishes, so a call in flight is not evidence yet."""
-        rows = db.execute("SELECT http_status, admitted_at FROM sends WHERE request_id = ? AND host = ? "
+        rows = db.execute("SELECT http_status, COALESCE(answered_at, admitted_at) FROM sends WHERE request_id = ? AND host = ? "
                           "AND http_status IS NOT NULL ORDER BY seq DESC LIMIT ?",
                           (request_id, host, BREAKER_ANY)).fetchall()
-        return breaker_wait([row[0] for row in rows], rows[0][1] if rows else None, self.clock())
+        # The cooldown starts at the newest answer, not at the send: a slow answer must not use up the pause.
+        return breaker_wait([row[0] for row in rows], max((row[1] for row in rows), default=None), self.clock())
 
     def paused_hosts(self, request_id: object) -> dict[str, int]:
         """Hosts currently paused for a request and the seconds left; read only."""
@@ -205,12 +209,12 @@ class LookupAdmission:
             if not (isinstance(item, list) and len(item) == 2 and type(item[0]) is int
                     and (item[1] is None or (type(item[1]) is int and 100 <= item[1] <= 599))):
                 return 0
-            rows.append((item[1], outcome, request_id, item[0], str(task_id or "")))
+            rows.append((item[1], outcome, self.clock(), request_id, item[0], str(task_id or "")))
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
             try:
-                changed = sum(db.execute("UPDATE sends SET http_status = ?, outcome = ? WHERE request_id = ? "
+                changed = sum(db.execute("UPDATE sends SET http_status = ?, outcome = ?, answered_at = ? WHERE request_id = ? "
                                          "AND seq = ? AND task_id = ? AND outcome IS NULL", row).rowcount
                               for row in rows)
                 db.execute("COMMIT")

@@ -88,6 +88,33 @@ def test_probe_after_the_cooldown_and_a_failed_probe_pauses_again(tmp_path):
     assert send(admission, EBI, 503)["admitted"]
 
 
+def test_the_pause_starts_when_the_last_answer_came_not_when_it_was_sent(tmp_path):
+    admission, clock = ledger(tmp_path)
+    for _ in range(2):
+        send(admission, EBI, 503)
+    answer = admission.admit("req_1", "task_1", "lit_scout", "fulltext", EBI)
+    clock.now += 120  # the third 503 took two minutes to arrive
+    admission.finish("req_1", "task_1", [[answer["seq"], 503]], "failed")
+    assert admission.paused_hosts("req_1") == {EBI: round(la.BREAKER_COOLDOWN_S)}
+    clock.now += la.BREAKER_COOLDOWN_S - 1
+    assert admission.admit("req_1", "task_1", "lit_scout", "fulltext", EBI)["reason"] == "host_paused"
+
+
+def test_a_file_made_before_answered_at_existed_is_migrated(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.sqlite3"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE sends (request_id TEXT NOT NULL, seq INTEGER NOT NULL, task_id TEXT, agent_id TEXT, "
+               "tool TEXT NOT NULL, host TEXT NOT NULL, admitted_at REAL NOT NULL, http_status INTEGER, outcome TEXT, "
+               "stage TEXT, PRIMARY KEY (request_id, seq))")
+    for seq in (1, 2, 3):
+        db.execute("INSERT INTO sends VALUES ('req_1', ?, 't', 'a', 'fulltext', ?, 1000.0, 503, 'failed', NULL)", (seq, EBI))
+    db.commit()
+    db.close()
+    admission = LookupAdmission(path, 50, clock=Clock())
+    assert admission.paused_hosts("req_1") == {EBI: round(la.BREAKER_COOLDOWN_S)}  # old rows fall back to their send time
+
+
 def test_unrecorded_sends_are_not_evidence(tmp_path):
     admission, _ = ledger(tmp_path)
     for _ in range(4):
