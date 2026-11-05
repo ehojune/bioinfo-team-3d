@@ -4112,8 +4112,14 @@ class Orchestrator:
         location = self.hub.requests.get(rid, {}).get("execution_location")
         if location:
             task = task.model_copy(update={"meta": {**task.meta, "execution_location": location}})
+            request_row = self.hub.requests.get(rid) or {}
+            problems = execution_policy.input_errors(
+                {**task.meta, **reference_meta(request_row),
+                 "project_dirs": task.meta.get("project_dirs") or request_row.get("project_dirs")}, location)
+            if problems:
+                raise ValueError("; ".join(problems))
             if task.meta.get("kind") in {"step", "direct"}:
-                problems = execution_policy.input_errors(task.meta, location) + execution_policy.plan_errors(
+                problems = execution_policy.plan_errors(
                     [{"id": task.meta.get("step_id", "direct"), "agent_id": task.agent_id,
                       "execution": location["mode"],
                       **{key: task.meta[key] for key in ("environment_binding", "environment_bindings")
@@ -7050,6 +7056,9 @@ class Orchestrator:
             self._seed_cost(rid, req)
             (await self._drop_unsent_holds(rid))
         try:
+            if ((req.get("execution_location") or {}).get("mode") == "hpc"
+                    and not await self._choose_execution(rid)):
+                return  # saved input compatibility precedes briefing, precedent and every local model turn
             research_pilot = bool(self.hub.s.research.enabled)
             intake = (classify_intake(req["text"], req.get("work_kind", "auto"),
                                       scope_status=req.get("scope_status", "in_scope"), mode=req["mode"])

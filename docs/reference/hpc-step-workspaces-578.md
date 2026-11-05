@@ -19,6 +19,7 @@
 - HPC 환경 binding과 예약된 환경 lock 단계는 검증된 scheduler용 snapshot이 없어 dispatch 전에 거부한다. runner도 binding이 든 HPC task를 비용 없이 거부한다. 기존 local 환경 계약은 유지한다.
 - HPC 선택·계획 검증은 요청별 roster와 runner view를 따른다. WSL에 pin된 요청이 native owner의 capability를 쓰지 않는다.
 - 기존 요청 project/path-reference 입력은 scheduler snapshot이 없어 HPC 선택 뒤 어떤 처리 단계도 보내지 않는다. 저장된 HPC 선택도 다시 확인한다. runner는 직원 project 입력까지 포함해 작업 폴더·잡을 만들기 전에 비용 없이 거부한다. local 선택은 유지하며 조상 산출의 검증된 data 전달은 허용한다.
+- 저장된 HPC 선택은 `run_request` 입구에서 검사해 briefing·precedent도 시작하지 않는다. 공통 `run_step`도 같은 요청 입력을 대조하므로 개별 호출로 우회하지 않는다. entry·resume·accounting 회귀 334 passed/5 skipped.
 
 ## 04장 후속 반영
 

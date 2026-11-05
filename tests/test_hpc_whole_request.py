@@ -462,6 +462,27 @@ async def test_saved_hpc_choice_with_unstaged_request_input_never_starts_dag():
     assert not hub.calls and not hub.approvals
 
 
+@pytest.mark.parametrize("field", ["project_dirs", "references"])
+@pytest.mark.parametrize("resume", [False, True])
+async def test_saved_hpc_inputs_refuse_before_briefing_or_precedent(field, resume):
+    async def never(task):
+        raise AssertionError("saved HPC inputs must refuse before any local model turn")
+
+    hub = hub_for(never)
+    hub.s.orchestrator.chief_of_staff_agent = "cso"
+    req = hub.requests["r"]
+    req[field] = ["/existing/input"] if field == "project_dirs" else [{"kind": "path", "value": "/existing/input"}]
+    req["execution_location"] = {"mode": "hpc", "runner_id": "cluster", "source": "PI 선택"}
+    orch = Orchestrator(hub)
+    await orch.run_request("r", resume=resume)
+    assert req["status"] == "failed" and "request-input snapshot" in req["report"]
+    assert not hub.calls and not hub.approvals
+    with pytest.raises(ValueError, match="request-input snapshot"):
+        await orch.run_step(Task(agent_id="cso", request_id="r", prompt="brief",
+                                 meta={"kind": "briefing"}))
+    assert not hub.calls
+
+
 @pytest.mark.parametrize("source", ["staff", "project_dirs", "reference_dirs"])
 async def test_runner_refuses_unstaged_hpc_inputs_before_workspace_or_job(tmp_path, monkeypatch, source):
     from labhq.adapters.mock import MockAdapter
