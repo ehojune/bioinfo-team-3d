@@ -18,6 +18,7 @@ from labhq.plugin_checks import read_plugin_manifest, skill_file
 from labhq.runner.workspace import TaskWorkspace
 from labhq.settings import Settings
 from labhq.staff_skills import install_required_skills
+from tests.manual_text import manual_text
 
 
 ROOT = Path(__file__).parents[1]
@@ -216,4 +217,4 @@ def test_graphical_abstract_example_is_accessible_text_only_and_uses_tokens():
         own_text = element.text or ""
         if re.search(r"[가-힣]", own_text):
             assert element.tag in {f"{ns}title", f"{ns}desc", f"{ns}text"}
-    assert "graphical-abstract-example.svg" in (ROOT / "docs" / "manual.md").read_text(encoding="utf-8")
+    assert "graphical-abstract-example.svg" in manual_text()

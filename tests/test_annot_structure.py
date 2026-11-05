@@ -12,7 +12,7 @@ from labhq.tools import annot, annot_structure as st
 from labhq.tools._mcpcompat import ToolError
 from tests.test_annot import FakeTime
 from tests.test_external_wait import limited, mcp_module  # noqa: F401  (fixtures)
-
+from tests.manual_text import manual_text
 REPO = Path(__file__).resolve().parents[1]
 ENTRY = {
     "rcsb_id": "4HHB", "struct": {"title": "THE CRYSTAL STRUCTURE OF HUMAN DEOXYHAEMOGLOBIN AT 1.74 A RESOLUTION"},
@@ -382,7 +382,7 @@ def test_the_manual_describes_both_tools_in_korean_and_english():
                                          "CC BY-SA 3.0", "truncated")),
                           ("manual.en.md", ("`pdb(ids_or_queries, top)`", "`chembl(targets_or_compounds, kind, limit)`",
                                             "CC0 1.0", "CC BY-SA 3.0", "truncated"))):
-        text = (REPO / "docs" / name).read_text(encoding="utf-8")
+        text = manual_text(english=name.endswith(".en.md"))
         assert all(needle in text for needle in needles), (name, [n for n in needles if n not in text])
 
 

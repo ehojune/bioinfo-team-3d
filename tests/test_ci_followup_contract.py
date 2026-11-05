@@ -9,7 +9,7 @@ from scripts import ci_skip as cs
 
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY_DOCUMENTS = ["AGENTS.md", "HANDOFF.md", "docs/manual.md", "docs/reference/ci-reuse.md",
+POLICY_DOCUMENTS = ["AGENTS.md", "HANDOFF.md", "docs/manual.md", "docs/manual/01-pi-text.md", "docs/reference/ci-reuse.md",
                     "docs/reference/lead-operations.md", "docs/safety.md"]
 
 

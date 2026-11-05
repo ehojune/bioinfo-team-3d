@@ -33,7 +33,8 @@ ENGLISH = (("문서·데이터", "Docs · data"), ("코드", "Code"), ("라이�
            ("논문 검색", "paper search"), ("preprint 검색", "preprint search"), ("파견직 채용", "contractor hiring"),
            ("직원 skill", "staff skill"))
 HANGUL = re.compile("[ㄱ-ㆎ가-힣]")
-MANUAL = "docs/manual.md"
+MANUAL = "docs/manual.md"  # the index: its headings keep every old anchor
+MANUAL_TOOLS = "docs/manual/09-staff-tools.md"  # the chapter that holds the inventory markers
 # Manual anchors for targets without an official page (test_badge_anchors_point_at_manual_headings checks them).
 TOOLS_ANCHOR = f"{MANUAL}#연결된-도구"
 HPC_ANCHOR = f"{MANUAL}#설정-포인트"
@@ -373,14 +374,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if not (args.root / "agents" / "core").is_dir():
             raise ValueError("agents/core is missing")
-        readme, manual, readme_en = args.root / README, args.root / MANUAL, args.root / README_EN
+        readme, manual, readme_en = args.root / README, args.root / MANUAL_TOOLS, args.root / README_EN
         paths = (readme, manual, *([readme_en] if readme_en.is_file() else []))
         current = {path: path.read_text(encoding="utf-8") for path in paths}
         # Every file is computed before any is written, so a bad marker in one leaves all untouched.
         block = badges(args.root)
         expected = {readme: update_readme(current[readme], block),
                     manual: update_manual(current[manual],
-                                          render(args.root / "agents", "../" * MANUAL.count("/")))}
+                                          render(args.root / "agents", "../" * MANUAL_TOOLS.count("/")))}
         if readme_en in current:
             expected[readme_en] = update_readme(current[readme_en], english(block))
         if args.write:
