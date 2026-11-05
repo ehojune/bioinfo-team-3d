@@ -30,3 +30,6 @@ rows:
 - sha: "cf532ae"
   at: 2026-11-05 16:04
   text: main을 통합하고 HPC 단계별 원본·검증 입력 복사·wake 기록·bundle 경로·run provenance를 보존한다.
+- sha: "cbfea6c"
+  at: 2026-11-05 16:20
+  text: HPC 환경 binding 계획을 dispatch 전에 거부하고 선택·계획 검증에 요청별 WSL runner view를 쓴다.
