@@ -157,6 +157,19 @@ def test_a_probe_that_never_answers_does_not_hold_the_host_for_ever(tmp_path):
     assert admission.admit("req_1", "task_2", "analyst", "fulltext", EBI)["admitted"]
 
 
+def test_a_probe_that_ends_without_an_answer_restarts_the_cooldown(tmp_path):
+    admission, clock = ledger(tmp_path)
+    for _ in range(3):
+        send(admission, EBI, 503)
+    clock.now += la.BREAKER_COOLDOWN_S + 1
+    probe = admission.admit("req_1", "task_1", "lit_scout", "fulltext", EBI)
+    assert probe["admitted"]
+    admission.finish("req_1", "task_1", [[probe["seq"], None]], "timeout")  # no HTTP answer at all
+    again = admission.admit("req_1", "task_2", "analyst", "fulltext", EBI)
+    assert again["admitted"] is False and again["reason"] == "host_paused"
+    assert round(again["retry_after_s"]) == round(la.BREAKER_COOLDOWN_S)
+
+
 def test_unrecorded_sends_are_not_evidence(tmp_path):
     admission, _ = ledger(tmp_path)
     for _ in range(4):

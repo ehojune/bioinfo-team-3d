@@ -192,9 +192,11 @@ class LookupAdmission:
         """How long this host is paused for this request. Only answers already recorded count: a send's status is
         written when its tool call finishes, so a call in flight is not evidence yet. Answers are read in the order
         they came, not the order they were sent, which differ when several agents query one host at once."""
-        rows = db.execute("SELECT http_status, COALESCE(answered_at, admitted_at) AS at FROM sends "
-                          "WHERE request_id = ? AND host = ? AND http_status IS NOT NULL ORDER BY at DESC, seq DESC LIMIT ?",
-                          (request_id, host, BREAKER_ANY)).fetchall()
+        # A send that ended without any HTTP answer (timeout, connection failure) is a failed probe as well: it counts
+        # as a 5xx so that it restarts the cooldown instead of letting the next call straight through.
+        rows = db.execute("SELECT COALESCE(http_status, 599), COALESCE(answered_at, admitted_at) AS at FROM sends "
+                          "WHERE request_id = ? AND host = ? AND (http_status IS NOT NULL OR outcome IN ('failed', 'timeout')) "
+                          "ORDER BY at DESC, seq DESC LIMIT ?", (request_id, host, BREAKER_ANY)).fetchall()
         statuses = [row[0] for row in rows]
         last_at = rows[0][1] if rows else None  # the cooldown starts at the newest answer, not at the send
         now = self.clock()
