@@ -64,6 +64,6 @@ lookup-only. 근거는 [#1076](https://github.com/ehojune/bioinfo-team-3d/issues
 실패 때 원인을 가르기 위한 관찰만 더했다. timeout·단언·실행 순서는 그대로다.
 
 - 작업 deadline이 끝낸 순간의 행(`work-deadline`·`startup-deadline`·`ui-deadline`)에 추가: 그때 기다리던 `until`·`waitReal`의 종류·label·경과 ms, 응답 없는 CDP 호출(method·나이), 마지막 CDP 응답 이후 ms, 미완료·완료·실패 요청 수, 정적 서버가 받은 요청 수, 페이지 오류 수, Chrome 종료 관찰 여부. 시험 안 표현식·URL은 싣지 않는다.
-- cleanup 진단(`demo cleanup: …`)에 추가: cleanup 시작 후 경과 ms, 닫히지 않은 핸들(`chrome-stdio`·`websocket`·`http-server`)별로 닫기를 요청한 뒤 경과 ms. 기존 주입 진단이 받는 행은 바뀌지 않는다.
+- cleanup 진단(`demo cleanup: …`)에 추가: cleanup 시작 후 경과 ms, 닫히지 않은 핸들(`chrome-stdio`·`websocket`·`http-server`)별로 닫기 요청이 실제로 시작된 뒤 경과 ms(아직 시작 전이면 null). 기존 주입 진단이 받는 행은 바뀌지 않는다.
 - 다음 실패 로그에서 "어느 단계가 느렸나"(후보 ①), "cleanup이 먼저 걸렸나"(후보 ②)를 가린다.
 

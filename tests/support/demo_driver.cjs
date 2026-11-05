@@ -295,7 +295,7 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
     try {
       const now = clock();
       return {since_cleanup_ms: Math.round(now - started),
-        pending_for_ms: Object.fromEntries([...pending].map(name => [name, Math.round(now - askedAt.get(name))]))};
+        pending_for_ms: Object.fromEntries([...pending].map(name => [name, askedAt.has(name) ? Math.round(now - askedAt.get(name)) : null]))};
     } catch { return {}; }
   };
   let graceful = false, socketCloseRequested = false;
@@ -320,8 +320,8 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
   };
   const closing = (name, request, acknowledgement) => {
     pending.add(name);
-    try { askedAt.set(name, clock()); } catch { /* diagnostic only */ }
-    return Promise.resolve().then(request).then(() => acknowledgement).then(() => pending.delete(name))
+    // Stamped when the request actually runs: the socket close waits for the browser, or for the forced phase.
+    return Promise.resolve().then(() => { try { askedAt.set(name, clock()); } catch { /* diagnostic only */ } return request(); }).then(() => acknowledgement).then(() => pending.delete(name))
       .catch(error => { failures.push(error); throw error; });
   };
   const waits = [];
