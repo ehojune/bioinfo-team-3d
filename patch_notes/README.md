@@ -24,6 +24,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 05:10 | [`9e4a037`](https://github.com/ehojune/bioinfo-team-3d/pull/1289/commits/9e4a037) | **보조 파일을 쓰는 시험은 선택되고 가져오기만 하는 시험은 빠지는 두 경우를 모두 시험으로 확인합니다.**<br>test_ci_cohort823: 변경 helper를 쓰는 node는 선택, import만 하는 node는 제외를 함께 확인 (#1285) |
 | 04:30 | [`17365b4`](https://github.com/ehojune/bioinfo-team-3d/pull/1289/commits/17365b4) | **시험용 공용 보조 파일이 바뀌면, 그 파일을 실제로 쓰는 시험만 Windows 검사에 넣습니다. 가져오기만 하고 쓰지 않는 시험은 빠집니다. 검사 기록에 각 시험이 들어온 이유도 남깁니다.**<br>ci_selection: 변경 helper 소비자를 파일 전체가 아니라 사용하는 node로 좁힘(인자·usefixtures·autouse·star import 보수 처리), ci_suite: 선택 이유별 개수를 inclusion-<worker>.json으로 기록 (#1285) |
 | 04:30 | [`f8e7538`](https://github.com/ehojune/bioinfo-team-3d/pull/1288/commits/f8e7538) | **쉬는 호스트 때문에 조회하지 못한 것이 상한 소진으로 잘못 보이던 문제를 바로잡습니다.**<br>gateway의 live source 확인이 호스트 차단(host_paused) 응답을 요청 HTTP 상한 소진(lookup_limit)으로 기록하던 것을 고친다. 연속 실패로 쉬는 호스트는 새 실패 종류 host_paused로 기록하고 호스트와 다시 보낼 수 있는 시점(retry_after_s)을 남기며, 조회 몫이 남아 있다는 사실을 상세에 적는다. 상한이 실제로 소진된 경우는 그대로 lookup_limit이다 |
+| 03:36 | [`674ea53`](https://github.com/ehojune/bioinfo-team-3d/pull/1291/commits/674ea53) | **브라우저를 기다리는 소켓 닫기가 cleanup 시작부터 밀린 것처럼 보이지 않게 합니다.**<br>리뷰 지적 반영. cleanup 진단의 핸들별 대기 시간을 닫기 요청이 실제로 시작될 때부터 재고, 아직 시작 전이면 null로 둔다 |
+| 03:23 | [`74865f0`](https://github.com/ehojune/bioinfo-team-3d/pull/1291/commits/74865f0) | **호출은 응답이 없는데 이벤트만 오는 상황을 진단이 구별합니다.**<br>리뷰 지적 반영. deadline 행의 마지막 CDP 응답 시각은 id가 있는 응답으로만 갱신하고, 이벤트는 last_cdp_event_ago_ms로 따로 남긴다 |
+| 03:09 | [`92f7671`](https://github.com/ehojune/bioinfo-team-3d/pull/1291/commits/92f7671) | **반복되는 CI 간헐 실패를 한 표로 모았습니다.**<br>#1076 간헐 실패 집계표를 docs/reference/ci-1076-flake-tally.md에 둔다. 11-04 이후 11건(Windows 6, Linux 5), 가장 잦은 test_office_in_node 5건의 로컬 재현 결과(128 시험 통과, 재현 못 함)와 원인 후보·고칠 범위 |
+| 03:09 | [`a8745a2`](https://github.com/ehojune/bioinfo-team-3d/pull/1291/commits/a8745a2) | **web 시험이 deadline에서 실패하면 어느 단계가 느렸는지 로그로 알 수 있습니다.**<br>demo driver가 작업 deadline에 걸리면 그때 기다리던 단계·label·응답 없는 CDP 호출·마지막 응답 이후 시간·요청 수를 deadline 행에 남기고, cleanup 진단에 경과 시간과 닫히지 않은 핸들별 대기 시간을 더한다. timeout·단언은 그대로다 |
 
 ## 2026-11-05
 
