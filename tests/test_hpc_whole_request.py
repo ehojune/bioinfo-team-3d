@@ -27,6 +27,94 @@ def hub_for(dispatch, scheduler="mock", online=True, tools=True):
     return hub
 
 
+@pytest.mark.parametrize("research", [False, True])
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("mode,recruit_state", [
+    ("hpc", "eligible"), ("hpc", "no_whole_request"), ("hpc", "no_tools"),
+    ("hpc", "no_builtin"), ("hpc", "other_runner"), ("hpc", "denied"),
+    ("local", "no_tools"),
+])
+async def test_recruited_assignments_checked_before_cp1_and_processing(research, resume, mode, recruit_state):
+    from labhq.orchestrator.execution import plan_errors
+    from labhq.settings import Settings
+    from tests.test_research_protocol import MiniHub, valid_plan
+
+    settings = Settings()
+    settings.research.enabled = research
+    settings.research.evidence_checkpoint = False
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    plan = valid_plan()
+    plan["steps"][0]["execution"] = mode
+    plan["recruit"] = [{"paper": "PMID:12345678", "repo": "", "focus": "reproduce method",
+                        "reason": "synthetic recruitment", "step_ids": ["s1"]}]
+    if not research:
+        plan = {key: plan[key] for key in ("steps", "recruit", "notes", "clarifying_questions")}
+        plan["steps"][0]["outputs"] = []
+    eligible = {"runner_id": "cluster", "hpc_tools": True, "whole_request_hpc": True,
+                "builtin_mcp": ["hpc"]}
+    recruit = {"id": "c_paper", "name": "Paper", "role": "method", "engine": "mock",
+               "employment": "contract", "contract_status": "active", **eligible}
+    if recruit_state == "no_whole_request":
+        recruit["whole_request_hpc"] = False
+    elif recruit_state == "no_tools":
+        recruit["hpc_tools"] = False
+    elif recruit_state == "no_builtin":
+        recruit["builtin_mcp"] = []
+    elif recruit_state == "other_runner":
+        recruit["runner_id"] = "other"
+
+    async def reply(task):
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return result(task, structured=plan)
+        if kind == "recruit_check":
+            return result(task, structured={"status": "ready"})
+        if kind == "plan_recruit":
+            hub.agents["c_paper"] = recruit
+            return result(task, structured={"status": "active", "agent_id": "c_paper"})
+        return result(task, text="done")
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research" if research else "simple",
+                  text="Reproduce the synthetic method")
+    hub.agents["worker"].update(eligible)
+    hub.agents["recruiter"] = {"id": "recruiter", "name": "Recruiter", "role": "recruiter", "engine": "mock"}
+    hub.runners = {"cluster": object()}
+    hub.runner_capabilities = {"cluster": {"scheduler": "mock"}}
+    choice = {"mode": mode, "runner_id": "cluster", "workspace": "r", "source": "PI choice"}
+    hub.requests["r"]["execution_location"] = choice
+    assert plan_errors(plan["steps"], choice, hub.agents) == []  # the draft fallback is eligible
+    if resume:
+        hub.requests["r"]["plan"] = plan
+
+    async def approve(**card):
+        hub.approvals.append(card)
+        return {"approved": recruit_state != "denied" or card["kind"] != "recruit_plan",
+                "approval_id": "synthetic", "decided_at": 1.0}
+
+    hub.request_approval = approve
+    await Orchestrator(hub).run_request("r", resume=resume)
+    req = hub.requests["r"]
+    blocked = mode == "hpc" and recruit_state not in {"eligible", "denied"}
+    if blocked:
+        assert req["status"] == "failed"
+        assert "after recruitment" in req["report"] and "whole-request HPC eligibility" in req["report"]
+        assert all(card["kind"] != "research_plan" for card in hub.approvals)
+        assert all(task.meta["kind"] not in {"step", "direct"} for task in hub.calls)
+        assert not req.get("research_contract")
+    else:
+        assert req["status"] == "done", req.get("report")
+        assigned = "worker" if recruit_state == "denied" else "c_paper"
+        assert req["plan"]["steps"][0]["agent_id"] == assigned
+        if research:
+            cp1 = next(card for card in hub.approvals if card["kind"] == "research_plan")
+            assert assigned in cp1["detail"]["plan_canonical"]
+        else:
+            assert any(task.meta["kind"] == "step" and task.agent_id == assigned for task in hub.calls)
+    assert any(card["kind"] == "recruit_plan" for card in hub.approvals)
+    assert any(task.meta["kind"] == "plan_recruit" for task in hub.calls) == (recruit_state != "denied")
+
+
 @pytest.mark.parametrize('mode', ['hpc', 'local'])
 @pytest.mark.parametrize('stored', [False, True])
 async def test_precedent_receipt_is_checked_before_planning_and_cp1(mode, stored):

@@ -65,6 +65,7 @@ The flow of hiring a separate staff member is as follows.
 4. **Contract** — `agents/contract/c_<slug>.yaml`. Secrets are stored only as `${ENV}` placeholders. When the `[contract]` tag and the tool list
    appear in the roster, it takes the matching step of **this request** and the plan is fixed. A hiring decline, failure or timeout goes to regular-staff reassignment,
    and a Paper2Agent doctor failure to skipping the hire, with the reason written in the plan and CP1. The hiring wait cap is `runner.task_timeout_s`.
+   HPC requests recheck the final assignments' execution eligibility after hiring. An ineligible assignment fails the request before CP1 or processing steps run; hiring costs already incurred are not refunded.
 
    Reproducing an existing method (contract staff) and the implementation owner work in parallel and are then compared. For Nextflow, bioinfo-agent takes a supported nf-core pipeline,
    and the engineer or analyst takes a complex new implementation outside support. Contract staff handle the method and tool spec and verification. The manual hiring API (`POST /api/recruit`) is also kept.
