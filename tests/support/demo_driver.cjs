@@ -281,18 +281,28 @@ function requestBrowserShutdown(chrome, requestBrowserClose, failures) {
 
 async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBrowserClose, server, profile},
   {removeProfile = removeDir, setTimer = setTimeout, clearTimer = clearTimeout, clock = () => performance.now(),
-    diagnostic = (stage, pending, extra = {}) => console.error('demo cleanup: ' + JSON.stringify({stage, pending, ...extra,
+    diagnostic = (stage, pending, extra = {}, timeline = {}) => console.error('demo cleanup: ' + JSON.stringify({stage, pending, ...extra, ...timeline,
       active: typeof process.getActiveResourcesInfo === 'function' ? process.getActiveResourcesInfo().slice(0, 16) : null,
       chrome_exit_observed: chrome ? chrome.exitCode !== null || chrome.signalCode !== null : null,
       // Which client closed the CDP socket and on which Node: a close that never reports differs by implementation (#1107).
       node_version: process.version, ws_kind: ws ? (ws.constructor?.name === 'MiniWebSocket' ? 'mini' : 'global') : null,
       stderr_closed: typeof chrome?.stderr?.closed === 'boolean' ? chrome.stderr.closed : null}))} = {}) {
   const pending = new Set(), failures = [];
+  // #1076: when each close was asked for and how long cleanup has run, passed as a fourth argument that only the
+  // default diagnostic prints. Observation only: it adds no timer and changes no row an injected diagnostic sees.
+  const started = (() => { try { return clock(); } catch { return null; } })(), askedAt = new Map();
+  const timing = () => {
+    try {
+      const now = clock();
+      return {since_cleanup_ms: Math.round(now - started),
+        pending_for_ms: Object.fromEntries([...pending].map(name => [name, Math.round(now - askedAt.get(name))]))};
+    } catch { return {}; }
+  };
   let graceful = false, socketCloseRequested = false;
   const closeSocket = () => {
     if (!socketCloseRequested) { socketCloseRequested = true; ws.close(); }
   };
-  const report = (stage, extra) => { try { diagnostic(stage, [...pending], extra); } catch { /* diagnostic only */ } };
+  const report = (stage, extra) => { try { diagnostic(stage, [...pending], extra, timing()); } catch { /* diagnostic only */ } };
   // After the deadline, record which owned acknowledgements still arrive and when (#842). Observation only: no
   // timer or handle is added, the rejection stands, and a late event never removes the profile or marks closure.
   const acknowledged = {chrome: false, socket: false};
@@ -310,6 +320,7 @@ async function closeDemoResources({ws, wsClosed, chrome, chromeClosed, requestBr
   };
   const closing = (name, request, acknowledgement) => {
     pending.add(name);
+    try { askedAt.set(name, clock()); } catch { /* diagnostic only */ }
     return Promise.resolve().then(request).then(() => acknowledgement).then(() => pending.delete(name))
       .catch(error => { failures.push(error); throw error; });
   };
@@ -453,8 +464,12 @@ async function openDemo(opts = {}) {
   const jobPython = windowsJobPython();  // fails closed before any profile, server or browser exists
   const {width = 1440, height = 900, reducedMotion = true, colorScheme = 'light', web = WEB_ROOT, layoutFont = false, fontFamily = null} = opts;
   let portReads = null;
+  // #1076: what was in flight when a deadline ended the work. Filled in once the CDP socket exists; it only reads
+  // state the driver already keeps, so it sends nothing and cannot move the deadline.
+  let deadlineContext = () => ({});
+  const context = () => { try { return deadlineContext(); } catch { return {}; } };
   const phaseBudget = (deadline, phase) => workBudget(deadline, {phase, onExpired: stage =>
-    trace.final(`${phase}-deadline`, {during: stage, ...(portReads ? {port_reads: portReads.counts()} : {})})});
+    trace.final(`${phase}-deadline`, {during: stage, ...(portReads ? {port_reads: portReads.counts()} : {}), ...context()})});
   let budget = phaseBudget(phased ? startupDeadline : opts.workDeadline, phased ? 'startup' : 'work');
   budget.check('open-start');  // an exhausted shared budget opens nothing: no profile, server or browser
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'labhq-visual-'));
@@ -570,7 +585,10 @@ async function openDemo(opts = {}) {
     };
     const pending = new Map(), external = [], errors = [];
     const net = {open: new Map(), finished: 0, failed: []};  // #1272: page requests, for the boot-timeout report
+    const inflight = new Map();  // #1076: CDP calls sent and not yet answered, for the deadline row
+    let lastReply = null, activeWait = null;
     ws.onmessage = e => {
+      lastReply = performance.now();
       const m = JSON.parse(e.data);
       if (m.method === 'Network.requestWillBeSent') net.open.set(m.params.requestId, m.params.request.url);
       if (m.method === 'Network.loadingFinished') { if (net.open.delete(m.params.requestId)) net.finished++; }
@@ -586,8 +604,25 @@ async function openDemo(opts = {}) {
     // fails; the browser and socket are ended by close().
     const cdp = (method, params = {}) => {
       const id = ++serial;
-      return budget.bound(method, () => new Promise((resolve, reject) => { pending.set(id, {resolve, reject}); ws.send(JSON.stringify({id, method, params})); }),
-        () => pending.delete(id));
+      const call = budget.bound(method, () => new Promise((resolve, reject) => {
+        pending.set(id, {resolve, reject}); inflight.set(id, {method, at: performance.now()}); ws.send(JSON.stringify({id, method, params}));
+      }), () => pending.delete(id));
+      const done = () => inflight.delete(id);  // after the deadline row is written: the expiry reports it first
+      call.then(done, done);
+      return call;
+    };
+    const waiting = (kind, label, run) => {
+      const outer = activeWait;
+      activeWait = {kind, label, at: performance.now()};
+      return run().finally(() => { activeWait = outer; });
+    };
+    deadlineContext = () => {
+      const now = performance.now();
+      return {wait: activeWait && {kind: activeWait.kind, label: activeWait.label, running_ms: Math.round(now - activeWait.at)},
+        cdp_inflight: [...inflight.values()].slice(0, 8).map(call => ({method: call.method, age_ms: Math.round(now - call.at)})),
+        last_cdp_reply_ago_ms: lastReply === null ? null : Math.round(now - lastReply),
+        requests_unfinished: net.open.size, requests_finished: net.finished, requests_failed: net.failed.length,
+        served_by_static_server: served.length, page_errors: errors.length, chrome_exit_observed: exited !== null};
     };
     const evaluate = async expression => {
       const r = await cdp('Runtime.evaluate', {expression, returnByValue: true, awaitPromise: true});
@@ -612,7 +647,8 @@ async function openDemo(opts = {}) {
     const frames = () => evaluate('window.__vclock.frames()');
     const advance = ms => evaluate(`window.__vclock.advance(${Number(ms)})`);
     // Advance virtual time in small steps until the page-side expression is truthy. Real time only bounds a hung page.
-    async function until(label, expression, {maxVirtualMs = 120000, stepMs = 100} = {}) {
+    const until = (label, expression, options) => waiting('until', label, () => untilLoop(label, expression, options));
+    async function untilLoop(label, expression, {maxVirtualMs = 120000, stepMs = 100} = {}) {
       const started = Date.now();
       let spent = 0;
       for (;;) {
@@ -636,7 +672,8 @@ async function openDemo(opts = {}) {
         requests_unfinished: [...net.open.values()].slice(0, 20), requests_finished: net.finished, requests_failed: net.failed});
     }
     // Wait, in real time, for a page-side condition that does not depend on the virtual clock (initial boot).
-    async function waitReal(label, expression, deadlineMs = 30000) {
+    const waitReal = (label, expression, deadlineMs) => waiting('waitReal', label, () => waitRealLoop(label, expression, deadlineMs));
+    async function waitRealLoop(label, expression, deadlineMs = 30000) {
       const started = Date.now();
       for (;;) {
         if (await evaluate(`Boolean(${expression})`)) return;

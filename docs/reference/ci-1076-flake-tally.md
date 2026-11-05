@@ -49,7 +49,7 @@ lookup-only. 근거는 [#1076](https://github.com/ehojune/bioinfo-team-3d/issues
 | 실패 뒤 cleanup이 `chrome-stdio`·`websocket`을 닫지 못해 두 번째 오류가 덮음 | visual_tooling의 `demo cleanup incomplete` | 처음 실패와 cleanup 실패 중 무엇이 먼저인지 |
 | 같은 runner에서 pytest 4 worker가 동시에 Chrome을 띄워 자원 경쟁 | 실패가 모두 병렬 pool 안에서 났다(확인 가능한 run 기준) | 단독 직렬 run에서 나지 않았다는 직접 증거 |
 
-고칠 범위(제안, 이번에는 코드 수정 없음):
+고칠 범위(제안). 1번은 같은 PR에서 `tests/support/demo_driver.cjs`에 넣었다(아래 "진단 추가"):
 1. 진단 먼저: `tests/support/demo_driver.cjs`가 실패 때 단계별 monotonic 시각(Chrome spawn, 첫 요청, 페이지 ready, 마지막 CDP 호출)과 pending 핸들을 한 줄로 출력한다. approval 시험 #1274처럼 실패 메시지가 원인을 가르게 한다.
 2. 그 뒤 로그로 후보를 가린 다음 `tests/support/demo_driver.cjs`, `tests/web_resizable_panels.cjs`, `tests/test_web_3d.py`의 해당 경로만 고친다. 원인 확인 전에는 timeout만 늘리지 않는다.
 3. Linux 3건과 CI 인프라 2건은 한 번씩만 나왔다. 두 번째 재발 때 같은 방식으로 진단한다.
@@ -58,3 +58,12 @@ lookup-only. 근거는 [#1076](https://github.com/ehojune/bioinfo-team-3d/issues
 
 - #1076 댓글에 남은 건만 셌다. 기록 없이 재실행한 실패는 빠진다.
 - 실패 run의 원본 로그를 직접 다시 읽지는 않았다(재실행으로 attempt 1 로그를 열 수 없는 run이 있다). 오류 문구는 댓글에 적힌 대로다.
+
+## 진단 추가 (같은 PR)
+
+실패 때 원인을 가르기 위한 관찰만 더했다. timeout·단언·실행 순서는 그대로다.
+
+- 작업 deadline이 끝낸 순간의 행(`work-deadline`·`startup-deadline`·`ui-deadline`)에 추가: 그때 기다리던 `until`·`waitReal`의 종류·label·경과 ms, 응답 없는 CDP 호출(method·나이), 마지막 CDP 응답 이후 ms, 미완료·완료·실패 요청 수, 정적 서버가 받은 요청 수, 페이지 오류 수, Chrome 종료 관찰 여부. 시험 안 표현식·URL은 싣지 않는다.
+- cleanup 진단(`demo cleanup: …`)에 추가: cleanup 시작 후 경과 ms, 닫히지 않은 핸들(`chrome-stdio`·`websocket`·`http-server`)별로 닫기를 요청한 뒤 경과 ms. 기존 주입 진단이 받는 행은 바뀌지 않는다.
+- 다음 실패 로그에서 "어느 단계가 느렸나"(후보 ①), "cleanup이 먼저 걸렸나"(후보 ②)를 가린다.
+
