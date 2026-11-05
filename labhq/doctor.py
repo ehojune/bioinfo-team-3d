@@ -782,6 +782,26 @@ def _paper2agent_row(settings: Settings, agents: list[AgentSpec], fix: bool = Fa
     return _row("staff", "paper2agent", "fail", detail, hint)
 
 
+def claude_session_expired(env: Mapping[str, str], now: float | None = None) -> bool:
+    """Whether the Claude login in this config folder can no longer refresh itself, read from the dates in
+    .credentials.json alone (no token value is used and nothing is called). `claude auth status` only says a login
+    exists, so a staff turn still failed with "OAuth session expired and could not be refreshed" (#1276). Not seen
+    this way: a token revoked on the server, and a login kept in the OS keychain instead of that file."""
+    folder = env.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    try:
+        oauth = json.loads((Path(folder) / ".credentials.json").read_text(encoding="utf-8")).get("claudeAiOauth")
+    except (OSError, ValueError, AttributeError):
+        return False
+    if not isinstance(oauth, dict):
+        return False
+    now_ms = (time.time() if now is None else now) * 1000
+    refresh_until, access_until = oauth.get("refreshTokenExpiresAt"), oauth.get("expiresAt")
+    if isinstance(refresh_until, (int, float)) and not isinstance(refresh_until, bool):
+        return refresh_until < now_ms
+    return (isinstance(access_until, (int, float)) and access_until < now_ms
+            and not (isinstance(oauth.get("refreshToken"), str) and oauth["refreshToken"]))
+
+
 def _login_evidence(code: int | None, raw: str) -> str:
     """Keep unavailable status separate from an explicit signed-out result; never publish raw auth output."""
     if code is None:
@@ -1025,6 +1045,11 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             code, auth_raw = _probe([*resolved, *LOGIN[name]], env)
             login_codes[name] = code
             login_evidence[name] = _login_evidence(code, auth_raw)
+            if name == "claude_code" and code == 0 and claude_session_expired(env):
+                login_evidence[name] = "blocked"
+                rows.append(_row("login", name, "fail", "status command succeeded, but the saved login can no longer refresh",
+                                 f"Sign in again: {claude_login_command(os.name == 'nt')}"))
+                continue
             rows.append(_row("login", name, "ok" if code == 0 else "warn",
                              "status command succeeded" if code == 0 else "status unavailable or signed out",
                              f"Check {name} login locally; doctor never starts login."))
