@@ -159,6 +159,18 @@ doctor는 roster가 쓰는 엔진만 검사하고, 생략한 네트워크·dry-r
 | Paper2Agent | recruiter·skill이 없거나 설정한 commit과 설치본이 다르면 fail. mock·데모는 skip | `labhq doctor --fix` |
 
 `--fix`는 설정한 `recruit.skill_commit`에 맞춰 Paper2Agent를 설치한 뒤 다시 검사합니다. 다운로드에 실패하면 네트워크·source/ref 확인 안내와 fail을 남깁니다. 별도 설정 파일을 쓴다면 같은 `-c <config>`를 붙이세요. `init`은 설치 검사를 미루며 skill을 내려받지 않습니다. 이후 실제 직원 실행 전에는 `doctor --fix`를 실행하세요.
+
+직원 모델도 함께 봅니다. Claude는 `haiku`·`sonnet`·`opus` 별칭과 `claude-<family>-<version>` 형식을 검사합니다. Codex는 직원 전용 `CODEX_HOME/models_cache.json`이 있을 때만 그 안의 slug와 대조하고, 파일이 없으면 skip합니다. 최소 CLI는 아래와 같습니다. 더 낮으면 adapter의 격리·결과 계약을 보장할 수 없어 fail, 판본을 읽지 못하면 warn입니다.
+
+| 엔진 | 최소 판본 | 이 판본에서 확인한 의존 기능 |
+|---|---:|---|
+| Claude Code | 2.1.282 | stream-json result·usage, `--resume`, `--permission-prompt-tool`, hook/settings JSON 격리 |
+| Codex | 0.160.1 | `exec --json` result·usage, `exec resume`, hooks·plugins·apps 차단 feature 이름 |
+
+`labhq doctor --canary <agent_id|all>`은 명시할 때만 실제 모델을 부릅니다. 직원마다 짧은 고정 답변, 같은 session의 resume, 시작 직후 cancel까지 세 호출을 하므로 비용이 듭니다. result, 비용·token 보고(엔진이 비용을 안 주면 unknown), session id, resume, cancel을 각각 pass/fail로 표시하며 `--json` manifest에도 넣습니다. CI와 일반 `doctor`는 canary 경로를 부르지 않습니다.
+cancel은 Windows Job 종료 계약을 확인한 경우에만 pass입니다. cleanup 근거가 없거나 확인되지 않은 환경에서는 fail이며 프로세스가 남았다고 단정하지 않습니다.
+canary는 Windows Job 격리와 종료 확인이 가능할 때만 실행합니다. Linux 등 지원하지 않는 환경에서는 모델 호출 전에 실패합니다. 일반 `doctor` 검사는 그대로 사용할 수 있습니다. [경계와 남은 과제](reference/engine-canary-35.md)
+
 npm의 `.cmd`/`.bat` shim은 여러 줄 prompt를 손상시킬 수 있어 labhq가 표준 npm shim만 Node.js로 풀어 실행합니다.
 풀 수 없는 shim은 거부합니다. Windows에서 직접 지정하려면 `engines.<engine>.bin`과 `prefix_args`를 쓰세요(설치된 package 경로 확인).
 

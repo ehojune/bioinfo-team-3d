@@ -2044,8 +2044,11 @@ def main(argv: list[str] | None = None) -> None:
     doctor = sub.add_parser("doctor", help="check runner capabilities without starting agents")
     doctor.add_argument("--json", action="store_true", help="write state_dir/capabilities.json")
     doctor.add_argument("--network", action="store_true", help="check public data source reachability")
+    doctor.add_argument("--canary", metavar="AGENT_ID|all",
+                        help="make paid engine calls to check result/accounting/session/resume/cancel")
     doctor.add_argument("--fix", action="store_true", help="install missing Paper2Agent for the recruiter and recheck")
     doctor.add_argument("--runtime", action="store_true", help="require live authenticated gateway/runner and valid managed process identities")
+
     sp = sub.add_parser("send")
     sp.add_argument("text")
     sp.add_argument("--agent", help="direct mode: send to one agent")
@@ -2250,10 +2253,21 @@ def main(argv: list[str] | None = None) -> None:
 
         raise SystemExit(wiki_cli(s, args.action, args.target, p))
     elif args.cmd == "doctor":
-        from .doctor import collect, render, save
+        from .doctor import collect, render, run_canaries, save
 
         requested = args.config or os.environ.get("LABHQ_CONFIG")
         result = collect(s, requested_config=requested, network=args.network, fix=args.fix, runtime=args.runtime)
+        if args.canary:
+            canary_rows = run_canaries(s, args.canary)
+            result["checks"].extend(canary_rows)
+            result["summary"] = {status: sum(row["status"] == status for row in result["checks"])
+                                 for status in ("ok", "warn", "fail", "skip")}
+            failed_canaries = sum(row["status"] == "fail" for row in canary_rows)
+            if failed_canaries:
+                for key in ("readiness", "configuration_readiness"):
+                    result[key]["ready"] = False
+                    result[key]["reasons"].append(f"canary fail {failed_canaries}")
+
         if args.json:
             try:
                 save(result, s)
