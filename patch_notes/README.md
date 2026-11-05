@@ -14,7 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:00 | [`cf9c9fb`](https://github.com/ehojune/bioinfo-team-3d/pull/538/commits/cf9c9fb) | **여러 직원을 한 번에 점검할 때 전체 제한 시간이 직원 수만큼 늘어납니다.**<br>canary all의 deadline을 선택된 직원 수에 비례시킴 |
 | 12:10 | [`28b0e46`](https://github.com/ehojune/bioinfo-team-3d/pull/1270/commits/28b0e46) | **드라이브 상대 경로로 가득 찬 드라이브를 비껴가던 틈을 닫습니다.**<br>안전망이 D:a.zip처럼 슬래시 없는 드라이브 상대 경로의 드라이브도 후보로 모은다 |
+| 12:00 | [`bd5ceff`](https://github.com/ehojune/bioinfo-team-3d/pull/538/commits/bd5ceff) | **canary 테스트가 CLI 판본 확인을 대체하도록 고치고 Windows 검토 목록에 canary 프로세스 테스트를 등록했습니다.**<br>canary 테스트의 CLI 판본 stub 보강과 Windows inventory 등록 |
 | 11:30 | [`4b42987`](https://github.com/ehojune/bioinfo-team-3d/pull/1270/commits/4b42987) | **안전망이 위치 변경 앞의 작업 드라이브를 잃지 않고, 이름 붙은 드라이브의 경고도 정상 판정과 같게 냅니다.**<br>읽지 못한 다운로드 뒤에 Set-Location·드라이브 전환이 와도 그 명령이 돌았을 수 있는 모든 작업 폴더를 확인한다. 글에 적힌 드라이브도 주 대상으로 보아 크기를 모를 때의 경고 기준을 같이 적용한다 |
 | 11:04 | [`be2e25d`](https://github.com/ehojune/bioinfo-team-3d/pull/1271/commits/be2e25d) | **manual의 두 문장이 서로 어긋나지 않게 예외 범위를 분명히 합니다.**<br>리뷰 지적 반영. "파일로 가지 않는 iwr는 건드리지 않는다"를 명령으로 읽힌 경우로 한정하고, 읽지 못한 `$r = iwr ...`는 OutFile이 없어도 확인을 받는다고 한·영 manual에 적는다 |
 | 11:00 | [`9e87f6d`](https://github.com/ehojune/bioinfo-team-3d/pull/1270/commits/9e87f6d) | **할당식이나 감싼 호출 안의 다운로드가 디스크 확인을 피하던 부류를 구조적으로 닫습니다. 읽지 못해도 이름이 보이면 현재 드라이브를 확인합니다.**<br>PowerShell 디스크 확인에 종류 전체를 닫는 안전망을 둔다. 명령 문자열에 다운로드·압축 해제 cmdlet이나 별칭(Invoke-WebRequest·iwr·irm·curl·wget·Expand-Archive·Start-BitsTransfer, module 한정 이름 포함)이 단어로 있는데 tokenizer가 그만큼 명령 이름으로 찾지 못하면(할당식 $r = iwr, [void](...), 닫히지 않은 따옴표, 앞으로 나올 다른 감싸기) 통과시키지 않고 현재 폴더와 글에 적힌 드라이브를 확인한다. 여유가 기준 아래일 때만 묻고 deny는 없다. 문자열·주석 속 단어는 같은 확인을 받을 수 있다 |
@@ -26,10 +28,17 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 12:00 | [`9a7dff5`](https://github.com/ehojune/bioinfo-team-3d/pull/538/commits/9a7dff5) | **영문 manual에 canary 절을 추가했습니다.**<br>Document engine canary in English manual |
 | 11:30 | [`2a8ca6c`](https://github.com/ehojune/bioinfo-team-3d/pull/1268/commits/2a8ca6c) | **일찍 끝난 승인 작업의 예외도 진단에 담습니다.**<br>시험: action 완료·취소 상태와 예외를 출력한다 (#1076) |
+| 11:30 | [`d5c4abf`](https://github.com/ehojune/bioinfo-team-3d/pull/538/commits/d5c4abf) | **지원 여부를 확인하지 못한 엔진에는 진단 호출을 보내지 않습니다.**<br>지원하지 않거나 확인되지 않은 CLI 판본을 모델 호출 전에 거절 |
+| 11:27 | [`ee376dc`](https://github.com/ehojune/bioinfo-team-3d/pull/538/commits/ee376dc) | **이전 호출의 자식이 남으면 추가 호출을 멈춥니다.**<br>canary 자식이 남으면 다음 모델 호출을 중단 |
 | 11:24 | [`d11c68c`](https://github.com/ehojune/bioinfo-team-3d/pull/1268/commits/d11c68c) | **시험 정리 작업이 지연 진단을 무기한 막지 않게 했습니다.**<br>시험: cleanup task 대기에 시간 제한을 둔다 (#1076) |
+| 11:21 | [`1c18cf2`](https://github.com/ehojune/bioinfo-team-3d/pull/538/commits/1c18cf2) | **진단 호출의 자식 프로세스를 격리하고 종료를 확인합니다.**<br>canary에 Windows Job 종료 확인과 미지원 환경 사전 거절 추가 |
 | 11:15 | [`295283d`](https://github.com/ehojune/bioinfo-team-3d/pull/1268/commits/295283d) | **송신이 시작되지 않은 경우에도 지연 진단을 남깁니다.**<br>시험: send 진입 대기 timeout에도 task와 timer 상태를 출력한다 (#1076) |
 | 11:10 | [`25c8754`](https://github.com/ehojune/bioinfo-team-3d/pull/1268/commits/25c8754) | **승인 응답 시험이 지연될 때 어느 단계에서 멈췄는지 확인할 수 있게 했습니다.**<br>시험: 송신 취소·timer·task·lock·publish 진단과 publish barrier 회귀 추가 (#1076); 기존 실패 원인은 미확인 |
+| 10:58 | [`bea38b2`](https://github.com/ehojune/bioinfo-team-3d/pull/538/commits/bea38b2) | **사용량과 준비 상태를 검사 결과에 정확히 반영합니다.**<br>canary token 사용량과 준비 상태 판정 수정 |
+| 10:50 | [`8ab05bf`](https://github.com/ehojune/bioinfo-team-3d/pull/538/commits/8ab05bf) | **취소 후 종료 근거가 확인된 경우에만 성공으로 표시합니다.**<br>canary 취소 성공 판정에 cleanup 근거를 요구 |
+| 10:43 | [`46c7f3a`](https://github.com/ehojune/bioinfo-team-3d/pull/538/commits/46c7f3a) | **진단 호출에서 개인 파일을 보호하고 같은 세션을 이어갑니다.**<br>canary 개인 경로 보호와 재개 작업 폴더 수정, 최신 main 통합 |
 | 10:42 | [`9bbc66e`](https://github.com/ehojune/bioinfo-team-3d/pull/1080/commits/9bbc66e) | **Windows 검사 목록을 최신 변경과 함께 유지합니다.**<br>Merge main and preserve Windows boundary test inventory |
 
 ## 2026-11-02
@@ -1706,6 +1715,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 15:19 | [`c14107e`](https://github.com/ehojune/bioinfo-team-3d/pull/532/commits/c14107e) | **계획·직접 작업만 직원 제어를 허용하고 계산 작업이나 질문 대기에는 일시 정지를 안내합니다.**<br>직원 제어는 계획 단계 작업과 직접 맡긴 작업에만 되고, 상담·이어 묻기 같은 작업은 거절한다. HPC 잡·질문 대기 중에는 멈추기 대신 일시 정지를 쓰라고 하고, 대기에 들어가며 받은 멈춤은 잡과 대기 뒤 turn을 남긴 채 일시 정지가 된다(#59). |
 | 15:16 | [`7abdd1e`](https://github.com/ehojune/bioinfo-team-3d/pull/539/commits/7abdd1e) | **완료 신호를 기다리는 검사에도 최종 시간 제한을 두어 오류 때 무한 대기를 막습니다.**<br>완료 신호를 기다리는 test에 60~120초 바깥 상한을 다시 둬, 회귀 때 CI가 멈추지 않고 실패로 끝난다. |
 | 15:04 | [`2217a18`](https://github.com/ehojune/bioinfo-team-3d/pull/539/commits/2217a18) | **로그인 재시도 검사를 두 번째 작업 전송 완료 신호에 맞춰 진행합니다.**<br>로그인 재시도 test를 두 번째 dispatch 완료 event로 동기화 |
+| 15:02 | [`f2bf8ed`](https://github.com/ehojune/bioinfo-team-3d/pull/538/commits/f2bf8ed) | **직원 엔진과 모델의 사용 가능 여부를 미리 확인합니다.**<br>doctor에 유료 엔진 canary와 직원 모델·CLI 최소 판본 검사를 추가 |
 | 14:39 | [`1da9abb`](https://github.com/ehojune/bioinfo-team-3d/pull/539/commits/1da9abb) | **한도·멈춤·모의 연구 검사를 짧은 실제 시간 대신 완료 신호에 맞췄습니다.**<br>quota·stall·mock-lab test를 실제시간 상한 대신 완료 event와 task로 동기화 |
 | 14:25 | [`0c34544`](https://github.com/ehojune/bioinfo-team-3d/pull/532/commits/0c34544) | **직원에게 보낸 방향·정지·멈춤을 단계에 보관해 다음 실행에도 적용되게 했습니다.**<br>직원 제어 재설계: 방향·정지·멈춤은 작업이 아니라 단계에 걸리고 gateway가 쓰일 때까지 보관한다. 끝난 작업 줄에서 보내도 같은 단계의 지금 turn에 가고, 아직 시작하지 않은 turn은 정지와 방향을 받은 뒤 시작하며, 단계가 끝날 때 쓰이지 않은 방향은 알린다(#59). |
 | 14:08 | [`7fa7718`](https://github.com/ehojune/bioinfo-team-3d/pull/536/commits/7fa7718) | **Windows 문자 설정과 무관하게 단계 이름과 실패 출력을 UTF-8로 보존합니다.**<br>Windows CI의 cp1252 console에서도 단계와 실패 출력을 UTF-8 한 줄로 보존한다 |
