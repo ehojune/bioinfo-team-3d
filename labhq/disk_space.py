@@ -815,7 +815,7 @@ def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: flo
                                               warn_gb=warn_gb, warn_percent=warn_percent))
     if _ps_unplaced(command, commands):
         # Where it writes is unknown: the folders the line may be in and every drive the text names are candidates.
-        drives = {Path(f"{m.group(1).upper()}:/") for m in re.finditer(r"(?<!\w)([A-Za-z]):[\\/]", command)}
+        drives = {Path(f"{m.group(1).upper()}:/") for m in re.finditer(r"(?<![\w$])([A-Za-z]):", command)}  # `D:a.zip` and `D:\a.zip` alike
         folders = list(dict.fromkeys([*(Path(c) for c in ever), *drives]))
         worst = _worse(worst, _assess("다운로드·압축 해제", folders[0], None, [], probe=probe, fail_gb=fail_gb,
                                       warn_gb=warn_gb, warn_percent=warn_percent, mains=folders))

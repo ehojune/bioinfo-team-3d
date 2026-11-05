@@ -751,3 +751,10 @@ def test_ps_unplaced_cmdlet_warns_on_a_named_drive_below_the_warning_level(tmp_p
     probe = lambda folder: Space(100 * GIB, 0, int((8 if str(folder).upper().startswith("D:") else 50) * GIB))
     verdict = disk_space.powershell_check(r"$r = iwr https://h/a.zip -OutFile D:\a.zip", str(tmp_path), probe=probe, **CHECK)
     assert verdict is not None and verdict.action == "warn"
+
+
+def test_ps_unplaced_cmdlet_reads_a_drive_relative_path(tmp_path):
+    probe = lambda folder: Space(100 * GIB, 0, int((1 if str(folder).upper().startswith("D:") else 50) * GIB))
+    verdict = disk_space.powershell_check(r"$r = iwr https://h/a.zip -OutFile D:a.zip", str(tmp_path), probe=probe, **CHECK)
+    assert verdict is not None and verdict.action == "ask"
+    assert disk_space.powershell_check(r"$r = iwr https://h/a.zip -OutFile $env:TEMP\a.zip", str(tmp_path), probe=probe, **CHECK) is None
