@@ -1,5 +1,9 @@
 pr: 578
 rows:
+- sha: "5f9ab6b"
+  at: 2026-11-05 22:25
+  summary: HPC 변경의 Windows 시험 범위가 불필요하게 늘지 않도록 공용 helper를 main과 맞췄습니다.
+  text: 'main의 선행 수정 #1284를 통합하고 실행 위치 응답 상수 "1: b"를 그대로 사용한다. helper가 PR diff에서 빠져 진단 대상 shadow 8개 파일의 추가 선택이 사라졌다. 로컬 관련 시험은 84 passed, 1 skipped이며 실제 pool 시간은 새 head CI로 확인한다.'
 - sha: "450e8a4"
   at: 2026-11-05 20:41
   summary: HPC에서 처리할 수 없는 선행 연구 입력을 계획 전에 확인합니다.
