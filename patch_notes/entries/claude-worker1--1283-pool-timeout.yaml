@@ -1,0 +1,10 @@
+pr: 1284
+rows:
+  - sha: "3295bb2"
+    at: "2026-11-05 22:00"
+    summary: "Windows 시험 한 단계가 시간 한계를 넘던 원인을 밝히고, 그 원인이 된 시험 보조 파일의 한 줄을 다른 코드와 무관하게 바꿨습니다."
+    text: "semantics_shadow_lab 게이트 응답을 상수로 바꿔 #578 모듈 import 제거, #1283 진단 문서 추가"
+  - sha: "0dd1a02"
+    at: "2026-11-05 22:05"
+    summary: "원인 진단 문서를 docs/reference에 남겼습니다."
+    text: "docs/reference/ci-1283-windows-pool-timeout.md 추가"
