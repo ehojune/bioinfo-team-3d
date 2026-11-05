@@ -50,6 +50,155 @@ _ASSIGNMENT = re.compile(
     r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)"
     r"(?!<redacted-secret>|&lt;redacted-secret&gt;|\[REDACTED\])[^\s,;<]+"
 )
+# In code a secret is a literal value on the right of `token =` (or `{"token": ...}`, `f(token=...)`): any string or
+# number the language accepts, however it is quoted, joined or annotated. An expression, call or lookup there holds no
+# secret, and rewriting it breaks the script (#1278). Python is read with `ast`, so every literal form is the parser's
+# own; R and shell, which have no parser here, use a pattern and are checked in their own syntax.
+_SECRET_NAME = re.compile(r"(?:api[_-]?key|token|password|secret)", re.I)
+_REDACTED_VALUES = ("<redacted-secret>", "&lt;redacted-secret&gt;", "[REDACTED]")
+_REDACTED_LITERAL = '"<redacted-secret>"'
+_CODE_SECRET_NAME = (r"\b(?:api[_-]?key|token|password|secret)[\"']?"
+                     r"(?:\s*:\s*[A-Za-z_][\w.\[\], |]*?)?\s*(?:<-|[:=])\s*")
+_STRING_LITERAL = (r"\$?[rbuf]{0,2}(?:\'\'\'[\s\S]*?\'\'\'|\"\"\"[\s\S]*?\"\"\""
+                   r"|\"(?:[^\"\\]|\\[\s\S])*\"|'(?:[^'\\]|\\[\s\S])*')")
+_CODE_SECRET_LITERAL = re.compile(
+    r"(?im)(?P<name>" + _CODE_SECRET_NAME + r")(?:"
+    r"(?P<paren>\(\s*)?(?P<strings>" + _STRING_LITERAL + r"(?:(?:\s*\+\s*|[ \t]*)" + _STRING_LITERAL + r")*)(?P<close>\s*\))?"
+    r"|(?P<number>[+-]?(?:0[xXoObB][0-9a-fA-F_]{6,}|\d[\d_]{5,}(?:\.\d+)?(?:[eE][+-]?\d+)?)[jJlL]?)"
+    r"(?=\s*(?:[;#,)}\]]|$))"
+    r"|(?P<word>(?![$\"'`#])[^\s\"'`$;|&()<>{}\[\],]+))")
+_STRING_PIECE = re.compile(r"\$?[rbuf]{0,2}(?P<q>\'\'\'|\"\"\"|\"|')(?P<text>[\s\S]*?)(?P=q)\Z")
+
+
+def _pattern_secret_spans(text: str, suffix: str) -> list[tuple[int, int, str]]:
+    """(start, end, replacement) of each literal secret value found by pattern: R and shell, and Python that does not
+    parse (which `code_syntax_issues` stops anyway)."""
+    spans = []
+    for match in _CODE_SECRET_LITERAL.finditer(text):
+        if match.group("strings") is not None:
+            pieces = [m.group("text") for m in map(_STRING_PIECE.match, re.findall(_STRING_LITERAL, match.group("strings"))) if m]
+            value = "".join(pieces)
+            begin = match.start("strings")
+            finish = match.end("strings")
+        elif match.group("number") is not None:
+            value, begin, finish = match.group("number"), match.start("number"), match.end("number")
+        elif suffix == ".sh":
+            value, begin, finish = match.group("word"), match.start("word"), match.end("word")
+        else:
+            continue
+        if value and not value.startswith(_REDACTED_VALUES):
+            spans.append((begin, finish, _REDACTED_LITERAL))
+    return spans
+
+
+def _py_literal_secret(node) -> bool:
+    """Whether a Python value node is a literal that can hold a secret: a string, bytes or number, an f-string with
+    text, or `-`/`+` of a number. A name, call, attribute or subscript is not."""
+    import ast
+    if isinstance(node, ast.Constant):
+        value = node.value
+        if isinstance(value, (str, bytes)):
+            text = value if isinstance(value, str) else value.decode("latin-1")
+            return bool(text) and not text.startswith(_REDACTED_VALUES)
+        if isinstance(value, (int, float, complex)) and not isinstance(value, bool):
+            return len(re.sub(r"\D", "", ast.unparse(node))) >= 6
+        return False
+    if isinstance(node, ast.JoinedStr):
+        return any(isinstance(part, ast.Constant) and part.value for part in node.values)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        return isinstance(node.operand, ast.Constant) and _py_literal_secret(node.operand)
+    return False
+
+
+def _py_secret_spans(text: str) -> list[tuple[int, int, str]] | None:
+    """The literal secret values of a Python source, by `ast`; None when it does not parse."""
+    import ast
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError):
+        return None
+    lines = text.splitlines(keepends=True)
+    starts = [0]
+    for line in lines:
+        starts.append(starts[-1] + len(line))
+
+    def offset(row: int, col: int) -> int:  # ast columns are utf-8 byte offsets
+        return starts[row - 1] + len(lines[row - 1].encode("utf-8")[:col].decode("utf-8", "ignore"))
+
+    def named(target) -> bool:
+        if isinstance(target, ast.Name):
+            return bool(_SECRET_NAME.fullmatch(target.id))
+        if isinstance(target, ast.Attribute):
+            return bool(_SECRET_NAME.fullmatch(target.attr))
+        if isinstance(target, ast.Subscript):
+            key = target.slice
+            return isinstance(key, ast.Constant) and isinstance(key.value, str) and bool(_SECRET_NAME.fullmatch(key.value))
+        return False
+
+    found: dict[tuple[int, int], str] = {}
+
+    def take(value) -> None:
+        if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Add):
+            # `"abc" + suffix`: each text piece is a secret on its own; a number inside an expression is not.
+            for side in (value.left, value.right):
+                if isinstance(side, ast.BinOp) or not (isinstance(side, ast.Constant) and isinstance(side.value, (int, float, complex))):
+                    take(side)
+            return
+        if value is not None and _py_literal_secret(value):
+            quoted = _REDACTED_LITERAL
+            if isinstance(value, ast.Constant) and isinstance(value.value, bytes):
+                quoted = "b" + _REDACTED_LITERAL
+            found[(offset(value.lineno, value.col_offset), offset(value.end_lineno, value.end_col_offset))] = quoted
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(named(t) for t in node.targets):
+            take(node.value)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and named(node.target):
+            take(node.value)
+        elif isinstance(node, ast.NamedExpr) and named(node.target):
+            take(node.value)
+        elif isinstance(node, ast.keyword) and node.arg and _SECRET_NAME.fullmatch(node.arg):
+            take(node.value)
+        elif isinstance(node, ast.arguments):  # `def f(token="x")`, `lambda password="x": ...`
+            positional = [*node.posonlyargs, *node.args]
+            for arg, default in zip(positional[len(positional) - len(node.defaults):], node.defaults):
+                if _SECRET_NAME.fullmatch(arg.arg):
+                    take(default)
+            for arg, default in zip(node.kwonlyargs, node.kw_defaults):
+                if default is not None and _SECRET_NAME.fullmatch(arg.arg):
+                    take(default)
+        elif isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                if isinstance(key, ast.Constant) and isinstance(key.value, str) and _SECRET_NAME.fullmatch(key.value):
+                    take(value)
+    return [(begin, end, quoted) for (begin, end), quoted in sorted(found.items())]
+
+
+def _code_secret_spans(text: str, suffix: str) -> list[tuple[int, int, str]]:
+    if suffix == ".py":
+        spans = _py_secret_spans(text)
+        if spans is not None:
+            return spans
+    return _pattern_secret_spans(text, suffix)
+
+
+def _code_secret_literals(text: str, suffix: str) -> bool:
+    """Whether the code holds a literal secret value that is not yet redacted."""
+    return bool(_code_secret_spans(text, suffix))
+
+
+def _redact_code_literals(text: str, suffix: str) -> str:
+    """Hide literal secret values in code and keep its syntax: only the value goes."""
+    out, last = [], 0
+    for begin, end, replacement in _code_secret_spans(text, suffix):
+        if begin < last:
+            continue
+        out.extend((text[last:begin], replacement))
+        last = end
+    out.append(text[last:])
+    return "".join(out)
+
+
 # A root folder counts only where a path starts: `inputs/om_fetch/data/x.tsv` is a relative path, and catching its
 # `/data/` stopped the whole 10-17 edition over three analysis scripts (#713).
 _LOCAL_SCAN = re.compile(
@@ -533,7 +682,7 @@ def clean_publication_text(name: str, text: str, settings, req: dict) -> str:
                  else _quoted_input_settings(text, suffix))
     rewritten = sanitize(rewritten, settings.policy, [os.environ.get(settings.github.token_env, "")], limit=None)
     rewritten = publish_clean(rewritten, settings, [req], limit=None)
-    return _ASSIGNMENT.sub(r"\1<redacted-secret>", rewritten)
+    return _redact_code_literals(rewritten, suffix)
 
 
 def code_syntax_issues(files: Mapping[str, str | bytes]) -> list[dict[str, str]]:
@@ -2028,8 +2177,14 @@ def scan_publish_files(files: Mapping[str, str | bytes], *,
             text = body.decode("utf-8", errors="replace")
         else:
             text = body
-        if any(re.search(pattern, text) for pattern in SECRET_PATTERNS) or re.search(
-                r"(?im)\b(?:api[_-]?key|token|password|secret)\s*[:=]\s*(?!<redacted-secret>|\[REDACTED\])\S+", text):
+        suffix = PurePosixPath(name).suffix.lower()
+        if suffix in _CODE_SUFFIXES:
+            assigned = _code_secret_literals(text, suffix)
+        else:
+            assigned = bool(re.search(
+                r"(?im)\b(?:api[_-]?key|token|password|secret)\s*[:=]\s*"
+                r"(?![\"']?(?:<redacted-secret>|\[REDACTED\]))\S+", text))
+        if any(re.search(pattern, text) for pattern in SECRET_PATTERNS) or assigned:
             issues.append({"kind": "secret", "path": name})
         if (_LOCAL_SCAN.search(text) or _PRIVATE_PATH.search(text)
                 or settings is not None and mentions_workspace_path(text, settings)):
