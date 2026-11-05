@@ -115,6 +115,48 @@ def test_a_file_made_before_answered_at_existed_is_migrated(tmp_path):
     assert admission.paused_hosts("req_1") == {EBI: round(la.BREAKER_COOLDOWN_S)}  # old rows fall back to their send time
 
 
+def answer_at(admission, clock, answer, status, when):
+    clock.now = when
+    admission.finish("req_1", "task_1", [[answer["seq"], status]], "failed" if status >= 400 else "ok")
+
+
+def test_answers_are_read_in_the_order_they_came_not_the_order_they_were_sent(tmp_path):
+    admission, clock = ledger(tmp_path)
+    sends = [admission.admit("req_1", "task_1", "lit_scout", "fulltext", EBI) for _ in range(4)]
+    for number, status, when in ((4, 503, 1010), (3, 503, 1011), (2, 503, 1012), (1, 200, 1020)):
+        answer_at(admission, clock, sends[number - 1], status, when)
+    assert admission.paused_hosts("req_1") == {}  # the earliest send answered last, with a 200: not a streak
+    admission, clock = ledger(tmp_path / "b")
+    sends = [admission.admit("req_1", "task_1", "lit_scout", "fulltext", EBI) for _ in range(4)]
+    for number, status, when in ((2, 200, 1000), (4, 503, 1001), (3, 503, 1002), (1, 503, 1030)):
+        answer_at(admission, clock, sends[number - 1], status, when)
+    assert list(admission.paused_hosts("req_1")) == [EBI]  # three 503s are the newest answers although seq 2 sits between
+
+
+def test_only_one_probe_goes_after_the_cooldown_until_it_is_answered(tmp_path):
+    admission, clock = ledger(tmp_path)
+    for _ in range(3):
+        send(admission, EBI, 503)
+    clock.now += la.BREAKER_COOLDOWN_S + 1
+    probe = admission.admit("req_1", "task_1", "lit_scout", "fulltext", EBI)
+    assert probe["admitted"]
+    second = admission.admit("req_1", "task_2", "analyst", "fulltext", EBI)
+    assert second["admitted"] is False and second["reason"] == "host_paused"
+    assert admission.usage("req_1")["used"] == 4  # the held one was not counted
+    admission.finish("req_1", "task_1", [[probe["seq"], 200]], "ok")
+    assert admission.admit("req_1", "task_2", "analyst", "fulltext", EBI)["admitted"]  # the probe succeeded
+
+
+def test_a_probe_that_never_answers_does_not_hold_the_host_for_ever(tmp_path):
+    admission, clock = ledger(tmp_path)
+    for _ in range(3):
+        send(admission, EBI, 503)
+    clock.now += la.BREAKER_COOLDOWN_S + 1
+    assert admission.admit("req_1", "task_1", "lit_scout", "fulltext", EBI)["admitted"]  # lost: never finished
+    clock.now += la.PROBE_STALE_S + 1
+    assert admission.admit("req_1", "task_2", "analyst", "fulltext", EBI)["admitted"]
+
+
 def test_unrecorded_sends_are_not_evidence(tmp_path):
     admission, _ = ledger(tmp_path)
     for _ in range(4):

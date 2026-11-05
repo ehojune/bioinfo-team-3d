@@ -45,12 +45,21 @@ def failing_status(status: int) -> bool:
     return status == 429 or 500 <= status <= 599
 
 
+PROBE_HOLD_S = 30.0         # while the one probe after a cooldown is still unanswered, nothing else is sent (half-open)
+PROBE_STALE_S = 150.0       # a probe unanswered this long is lost (annot's request timeout is 120 s), not a reason to wait on
+
+
+def breaker_tripped(statuses: list[int]) -> bool:
+    """Whether a host's answers, newest first, are a streak that pauses it."""
+    server_down = len(statuses) >= BREAKER_5XX and all(500 <= s <= 599 for s in statuses[:BREAKER_5XX])
+    limited = len(statuses) >= BREAKER_ANY and all(failing_status(s) for s in statuses[:BREAKER_ANY])
+    return server_down or limited
+
+
 def breaker_wait(statuses: list[int], last_at: float | None, now: float) -> float:
     """Seconds a host stays paused, 0.0 when it may be sent to. ``statuses`` are its answers, newest first; the last
     answer's time starts the cooldown. A probe after the cooldown that fails keeps the streak and pauses again."""
-    server_down = len(statuses) >= BREAKER_5XX and all(500 <= s <= 599 for s in statuses[:BREAKER_5XX])
-    limited = len(statuses) >= BREAKER_ANY and all(failing_status(s) for s in statuses[:BREAKER_ANY])
-    if not (server_down or limited) or last_at is None:
+    if not breaker_tripped(statuses) or last_at is None:
         return 0.0
     return max(0.0, BREAKER_COOLDOWN_S - (now - last_at))
 
@@ -181,12 +190,23 @@ class LookupAdmission:
 
     def _host_wait(self, db: sqlite3.Connection, request_id: str, host: str) -> float:
         """How long this host is paused for this request. Only answers already recorded count: a send's status is
-        written when its tool call finishes, so a call in flight is not evidence yet."""
-        rows = db.execute("SELECT http_status, COALESCE(answered_at, admitted_at) FROM sends WHERE request_id = ? AND host = ? "
-                          "AND http_status IS NOT NULL ORDER BY seq DESC LIMIT ?",
+        written when its tool call finishes, so a call in flight is not evidence yet. Answers are read in the order
+        they came, not the order they were sent, which differ when several agents query one host at once."""
+        rows = db.execute("SELECT http_status, COALESCE(answered_at, admitted_at) AS at FROM sends "
+                          "WHERE request_id = ? AND host = ? AND http_status IS NOT NULL ORDER BY at DESC, seq DESC LIMIT ?",
                           (request_id, host, BREAKER_ANY)).fetchall()
-        # The cooldown starts at the newest answer, not at the send: a slow answer must not use up the pause.
-        return breaker_wait([row[0] for row in rows], max((row[1] for row in rows), default=None), self.clock())
+        statuses = [row[0] for row in rows]
+        last_at = rows[0][1] if rows else None  # the cooldown starts at the newest answer, not at the send
+        now = self.clock()
+        wait = breaker_wait(statuses, last_at, now)
+        if wait == 0.0 and last_at is not None and breaker_tripped(statuses):
+            # The cooldown is over: exactly one probe may go. One already admitted and not yet answered holds the rest.
+            pending = db.execute("SELECT 1 FROM sends WHERE request_id = ? AND host = ? AND http_status IS NULL "
+                                 "AND outcome IS NULL AND admitted_at > ? AND admitted_at > ? LIMIT 1",
+                                 (request_id, host, last_at, now - PROBE_STALE_S)).fetchone()
+            if pending:
+                return PROBE_HOLD_S
+        return wait
 
     def paused_hosts(self, request_id: object) -> dict[str, int]:
         """Hosts currently paused for a request and the seconds left; read only."""
