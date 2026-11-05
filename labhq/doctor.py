@@ -782,6 +782,43 @@ def _paper2agent_row(settings: Settings, agents: list[AgentSpec], fix: bool = Fa
     return _row("staff", "paper2agent", "fail", detail, hint)
 
 
+def claude_session_expired(env: Mapping[str, str], now: float | None = None) -> bool:
+    """Whether the Claude login in this config folder can no longer refresh itself, read from the dates in
+    .credentials.json alone (no token value is used and nothing is called). `claude auth status` only says a login
+    exists, so a staff turn still failed with "OAuth session expired and could not be refreshed" (#1276). Not seen
+    this way: a token revoked on the server, and a login kept in the OS keychain instead of that file."""
+    home = env.get("HOME") or env.get("USERPROFILE") or os.path.expanduser("~")  # the staff process's home, not doctor's
+    folder = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+    if folder == "~" or folder.startswith(("~/", "~\\")):
+        folder = os.path.join(home, folder[2:])  # the `~/.labhq/claude-staff` spelling, against that same home
+    try:
+        oauth = json.loads((Path(folder) / ".credentials.json").read_text(encoding="utf-8")).get("claudeAiOauth")
+    except (OSError, ValueError, AttributeError):
+        return False
+    if not isinstance(oauth, dict):
+        return False
+    now_ms = (time.time() if now is None else now) * 1000
+
+    def passed(key: str) -> bool:
+        value = oauth.get(key)
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and value < now_ms
+
+    if not (isinstance(oauth.get("refreshToken"), str) and oauth["refreshToken"]):
+        return passed("expiresAt")  # nothing to renew with: the date of a refresh token that is gone does not matter
+    return passed("refreshTokenExpiresAt")
+
+
+def _saved_oauth_is_active(raw: str) -> bool:
+    """False only when `claude auth status` names another source (an API key, a token, Bedrock/Vertex): then an old
+    OAuth file in the folder is not what the staff turn signs in with. Unreadable output keeps the file check."""
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        return True
+    method = payload.get("authMethod") if isinstance(payload, dict) else None
+    return not isinstance(method, str) or method == "claude.ai"
+
+
 def _login_evidence(code: int | None, raw: str) -> str:
     """Keep unavailable status separate from an explicit signed-out result; never publish raw auth output."""
     if code is None:
@@ -1025,6 +1062,11 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             code, auth_raw = _probe([*resolved, *LOGIN[name]], env)
             login_codes[name] = code
             login_evidence[name] = _login_evidence(code, auth_raw)
+            if name == "claude_code" and code == 0 and _saved_oauth_is_active(auth_raw) and claude_session_expired(env):
+                login_evidence[name] = "blocked"
+                rows.append(_row("login", name, "fail", "status command succeeded, but the saved login can no longer refresh",
+                                 f"Sign in again: {claude_login_command(os.name == 'nt')}"))
+                continue
             rows.append(_row("login", name, "ok" if code == 0 else "warn",
                              "status command succeeded" if code == 0 else "status unavailable or signed out",
                              f"Check {name} login locally; doctor never starts login."))

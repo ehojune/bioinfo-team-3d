@@ -1,6 +1,6 @@
 ## 단계
 
-PR #578 rev3. 단계별 HPC 원본·입력·기록 보존 구현과 04장 한영을 반영했습니다. hold를 유지합니다.
+PR #578 rev4. 로컬 `cc7d9087`을 보존하며 main `6323fff5`(`#1281` 포함)를 충돌 없이 통합했습니다. hold를 유지합니다.
 
 ## 바뀐 것
 
@@ -11,13 +11,13 @@ PR #578 rev3. 단계별 HPC 원본·입력·기록 보존 구현과 04장 한영
 
 ## 확인
 
-- rev3 관련 HPC·workspace·bundle·verify mock 회귀: 298 passed/25 skipped.
+- rev4 관련 HPC·workspace·bundle·verify mock 회귀: 298 passed/25 skipped.
 - 04장 한영 합계: 54,037→56,966자(+2,929, 편집 전 기준).
-- 이전 head `ff2408b6` 실제 Codex 리뷰 무지적. CI inventory 실패는 별도 #1280이 담당합니다.
+- public·integrations·notes-index·diff 검사 통과. 최종 head CI·실제 리뷰는 PR에서 추적합니다.
 
 ## 남은 조건
 
-#1280 병합 뒤 main 통합·inventory 검사·최종 head CI·실제 리뷰가 필요합니다. 실제 HPC·계정 전환·OS 격리는 UNVERIFIED이며 실행하지 않았습니다.
+#1281은 HPC test 등록을 포함하지만 `test_evidence_verify.py` mixed-node hash·새 node는 남았습니다. inventory 사전 검사는 stale hash로 실패했습니다. scratch 수정안의 source/AST 검증은 통과했으나 policy는 rev4의 34경로 밖이므로 편집하지 않았습니다. 후속 claim과 최종 CI·리뷰 통과가 필요합니다. 실제 HPC·계정 전환·OS 격리는 UNVERIFIED이며 실행하지 않았습니다.
 
 Refs #430
 

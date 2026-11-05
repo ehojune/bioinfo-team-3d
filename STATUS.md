@@ -5,6 +5,47 @@
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
 ## 단계
+#1278(#910 8차): 게시용 코드의 비밀값 가리기가 `token = r["x"].split(",")[0]`를 `token = <redacted-secret>,")[0]`로 바꿔 `python_syntax`로 결과 저장 전체가 실패한 문제.
+
+## 한 일
+- 원인은 `labhq/portfolio.py`의 `clean_publication_text`·`scan_publish_files`가 쓰는 `_ASSIGNMENT`였다(`result_storage.py`가 아님).
+- 코드 파일(.py·.r·.sh)은 값이 리터럴일 때만 가린다(`_redact_code_literals`). 따옴표 문자열은 따옴표·접두를 남기고, 6자리 이상 숫자와 셸 단어는 `"<redacted-secret>"`로 바꾼다. 표현식·호출·조회는 그대로다.
+- `scan_publish_files`는 코드 파일에 같은 규칙을 쓰고, 문서는 기존 규칙에 따옴표로 감싼 가림 표시만 인정한다. `SECRET_PATTERNS`는 그대로다.
+- 시험 15건(`tests/test_result_storage_redact_1278.py`): 수정 전 13건 실패.
+
+## 확인
+- Windows: 새 시험 15건과 `test_portfolio_edition.py`·`test_result_storage.py`·`test_portfolio_branch_folders.py` 합쳐 105 passed.
+
+## 하지 않은 것
+- 문서(.md 등)의 가리기 규칙은 바꾸지 않았다. manual은 claim 범위 밖이다.
+- 병합 뒤 `req_7e1eeb8237` 결과 저장 재시도는 병합 후 한다.
+
+# #1279 공개 조회 호스트 차단기 — 단계 보고
+
+- 결론: 같은 호스트가 연속으로 5xx·429를 돌려주면 그 호스트로 보내지 않습니다. 조회 몫 계산(실패·재시도·redirect 포함, 보내기 직전 1회)은 바꾸지 않았고, 차단된 시도는 보내지도 세지도 않습니다.
+- 기준과 근거: 5xx는 3회 연속, 429는 429·5xx 합쳐 5회 연속(annot의 `MAX_ATTEMPTS`). 차단 후 300초가 지나면 한 번만 다시 보내 보고, 성공하면 풀립니다. #910 8차에서 Europe PMC는 503 15회 연속(본문 0편), OpenAlex는 429 4회 뒤 200이었습니다. 429를 5회로 둔 것은 이 8차처럼 한 조회 안에서 풀리는 제한을 자르지 않기 위해서입니다. 이 기준이면 8차의 Europe PMC 15회가 3회로 줄어 몫 12회가 다른 출처에 남습니다.
+- `Retry-After`: 한 조회 안의 재시도는 기존 `annot.Http`가 이미 지킵니다(최대 120초). 차단 기준에는 쓰지 않았습니다. 서버가 늦게 풀리는 값을 주는 경우도 300초 뒤 한 번 다시 시도하는 것으로 충분하다고 봤습니다(미검증).
+- 바뀐 것: `labhq/runner/lookup_admission.py`(`breaker_wait`, `admit`의 `host_paused`, `paused_hosts`, 사용량 문단에 차단 호스트), `labhq/tools/annot_mcp.py`(도구 프로세스의 호스트별 최근 응답과 `LookupHostPaused`), `tests/test_lookup_host_breaker_1279.py`.
+- 두 겹: 한 도구 호출 안의 재시도는 응답이 호출 끝에야 파일에 기록되므로 도구 프로세스가 직접 막고, 다른 호출·단계·직원은 요청 단위 파일의 기록으로 막습니다.
+- 실행: `tests/test_lookup_host_breaker_1279.py` 13건과 기존 조회 시험 245 passed, 3 skipped(로컬 Windows).
+- 미확인·한계: 실제 Europe PMC·OpenAlex 호출은 하지 않았습니다. 상한이 꺼져 있으면(`request_lookup_limit` 미설정) 차단기도 없습니다. 계획 경고(CP1 카드)에 차단 사실을 싣는 것은 이 claim 밖이라 하지 않았습니다. 차단 사실은 도구 오류 문구와 단계 prompt의 사용량 문단에 남습니다.
+
+## 단계
+#1276 rev1: doctor가 갱신할 수 없게 만료된 직원 Claude 로그인을 ok로 보고하던 문제.
+
+## 한 일
+- `labhq/doctor.py`: `claude_session_expired`를 더했다. 직원 폴더(`CLAUDE_CONFIG_DIR`, 없으면 `~/.claude`)의 `.credentials.json`에서 날짜만 읽는다. `refreshTokenExpiresAt`이 지났거나, 갱신 토큰 없이 `expiresAt`이 지났으면 만료로 본다. 이때 status가 0이어도 login 행을 fail로 바꾸고 로그인 증거를 blocked로 둔다.
+- 쓰는 값은 날짜뿐이고 토큰은 읽거나 출력하지 않는다. 호출은 하지 않는다.
+- 한계(04장 한·영에 적음): 서버에서 취소된 토큰, OS 키체인에 든 로그인은 못 본다.
+- `tests/test_doctor_claude_oauth_1276.py` 13건: 날짜 조합, 읽을 수 없는 파일, doctor 행.
+
+## 확인
+- 새 시험 13건과 `-k doctor` 268건 통과.
+
+## 하지 않은 것
+- 이 PC의 실제 로그인 만료는 재현하지 않았다. 현재 직원 폴더의 갱신 토큰은 만료 27일 전이라 새 코드로는 ok다.
+
+## 단계
 #1166 rev3: `docs/manual.md`·`manual.en.md`를 장별 파일로 나눈다. PI GO 2026-11-05.
 
 ## 한 일
@@ -2075,6 +2116,20 @@ Windows `test_ci_windows10m`·`test_ci_windows_phases`·`test_ci_boundary_previe
 - B (이번 범위 밖): 요청 `references`에 DOI 같은 URL형 참조가 있으면 `research/input_proof.capture`가 내용 영수증을 만들 수 없어 None을 돌려주고, 이어 가기가 "request-level input hash record missing"으로 재사용을 거절한다. 5차 요청이 DOI 참조를 가져 항상 걸렸다. 정책 변경은 별도 issue.
 - 실행한 것: 관련 시험 630여 건 통과(runner·step inputs·연속·cso).
 - 미검증: 실제 연구 요청에서 s1 → s2 전달 end-to-end(#910 6차에서 확인).
+
+# #1055 읽기 전용 Codex 직원의 셸 네트워크
+
+- 결론: 5차 블라인드 리뷰어(`sci_reviewer`)의 셸이 Europe PMC·RCSB·ChEMBL을 직접 호출했고 조회 집계에 들어가지 않았다(집계 DB에서 그 task는 0건). 원인은 Windows elevated sandbox가 프로필·`network_access` 설정과 무관하게 셸 연결을 허용하는 것이다.
+- 시험: Codex 0.165.0-alpha.1.2에서 `codex exec` 6가지 설정 중 elevated는 하나도 막지 못했고 unelevated만 막았다(#382 보호를 잃어 쓰지 않음). 표는 `docs/reference/codex-shell-network.md`.
+- 바꾼 것: `labhq/adapters/codex.py`에 `SHELL_NO_PROXY_ENV`를 추가해 read-only이고 웹 도구가 없는 Codex 직원의 셸에만 닫힌 프록시를 준다. Codex 프로세스 자신의 환경은 건드리지 않는다.
+- 시험(단위): `tests/test_codex_deny_read.py`에 4건. 전체 15건 통과.
+- 한계: 프록시를 무시하는 코드는 막지 못한다. 경계가 아니라 실수 방지다. 근본 대책은 #666.
+- 미확인: 이 설정에서 셸이 정상 실행되는지. 시험 중 elevated sandbox 설정 도우미가 UAC(오류 1223)를 띄워 셸이 실행되지 않았고 통제군을 돌리지 않았다. 그래서 PR은 draft·hold이며 통제군 확인 전에는 병합하지 않는다.
+- 근거: `docs/reference/codex-shell-network.md`, #1055 댓글.
+
+## 통제군 (rev3, 2026-11-05)
+- 실제 Codex(`gpt-6.1-sol`, read-only, 웹 도구 없음, elevated)를 프록시 없음·켬으로 한 번씩 돌렸다. 두 쪽 모두 셸 `echo`·`python -c`가 exit 0으로 끝났다. 프록시를 켜도 셸은 정상이다.
+- 켠 쪽의 외부 HTTP 차단은 UAC 창(#435로 추정) 때문에 확인하지 못했다. 승인하지 않고 중단했고 다시 돌리지 않았다. 표는 `docs/reference/codex-shell-network.md`.
 
 # #1053 CP2 revise 이어 가기 'step ended before dispatch'
 

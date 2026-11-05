@@ -16,12 +16,13 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Literal
 
 import httpx
 
-from ..runner.lookup_admission import ENV as LOOKUP_ADMISSION_ENV
+from ..runner.lookup_admission import BREAKER_ANY, ENV as LOOKUP_ADMISSION_ENV, breaker_wait
 from ..settings import Settings
 from . import annot, annot_keys, annot_literature, annot_regulatory, annot_structure
 from ..runner.annot_broker import ENABLED_ENV as ATLAS_ENABLED_ENV
@@ -129,6 +130,32 @@ class LookupRefused(annot.LookupFailed):
     """The request's public lookup limit refused one outbound request, which was therefore never sent (#858)."""
 
 
+class LookupHostPaused(annot.LookupFailed):
+    """A host that keeps answering HTTP 5xx/429 is paused: the request was not sent and not counted (#1279). Unlike a
+    refusal by the limit, it concerns this host only; requests to other hosts of the same call go on."""
+
+
+# This process's recent answers per host, newest first, and when the last one came. The admission file holds the same
+# for the whole request, but a send's status reaches it only when its tool call ends, so the retries inside one call
+# need this copy. The server process lives as long as its task, so the copy also spans that task's tool calls.
+HOST_ANSWERS: dict[str, tuple[list[int], float]] = {}
+
+
+def _host_pause(host: str) -> float:
+    answers, last_at = HOST_ANSWERS.get(host, ([], None))
+    return breaker_wait(answers, last_at, time.time())
+
+
+def _note_answer(host: str, status: int) -> None:
+    answers, _ = HOST_ANSWERS.get(host, ([], None))
+    HOST_ANSWERS[host] = ([status, *answers][:BREAKER_ANY], time.time())
+
+
+def _paused_message(tool: str, host: str, seconds: float) -> str:
+    return (f"{tool}: {host}가 HTTP 5xx/429를 연달아 돌려줘 {round(seconds)}초 동안 이 호스트로 보내지 않습니다"
+            "(조회 몫은 쓰지 않았습니다). 같은 조회를 다시 부르지 말고 다른 출처를 쓰거나 빠진 조회를 보고서에 적으세요")
+
+
 async def _admit(tool: str, host: str) -> int:
     """One counted attempt from the runner's broker for one outbound request, just before it is sent; else refuse."""
     try:
@@ -139,6 +166,8 @@ async def _admit(tool: str, host: str) -> int:
             answer = response.json()
     except (httpx.HTTPError, ValueError):
         raise LookupRefused(f"{tool}: 요청의 공개 조회 상한을 확인하지 못해 보내지 않았습니다") from None
+    if isinstance(answer, dict) and answer.get("reason") == "host_paused" and answer.get("admitted") is not True:
+        raise LookupHostPaused(_paused_message(tool, str(answer.get("host") or host), float(answer.get("retry_after_s") or 0)))
     if not isinstance(answer, dict) or answer.get("admitted") is not True or type(answer.get("seq")) is not int:
         detail = answer if isinstance(answer, dict) else {}
         raise LookupRefused(f"{tool}: 이 요청의 공개 조회 시도 상한({detail.get('limit')}회, 재시도·redirect 포함)에서 "
@@ -177,8 +206,11 @@ async def _admitted(tool: str):
     async def admit(request: httpx.Request) -> None:
         if refused:
             raise LookupRefused(refused[0])
+        host = (request.url.host or "").lower()
+        if (wait := _host_pause(host)) > 0:
+            raise LookupHostPaused(_paused_message(tool, host, wait))
         try:
-            seq = await _admit(tool, (request.url.host or "").lower())
+            seq = await _admit(tool, host)
         except LookupRefused as exc:
             refused.append(str(exc))
             raise
@@ -189,6 +221,7 @@ async def _admitted(tool: str):
         seq = response.request.extensions.get("labhq_lookup_seq")
         if seq in sends:
             sends[seq] = response.status_code
+            _note_answer((response.request.url.host or "").lower(), response.status_code)
 
     outcome = "failed"
     try:

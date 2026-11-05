@@ -37,4 +37,4 @@ rev2 로컬: 확장 993 passed/39 skipped, 후속 bundle·accounting·CSO 413/7,
 
 ## CI 범위 추가
 
-`config/ci/windows-boundary-v1.json`은 rev2·rev3 claim 밖이며 #1280 담당자가 갱신한다. 기존 CI는 새 `test_hpc_whole_request.py` 누락과 `test_evidence_verify.py` mixed-node hash 차이로 실패했다. 이 등록 누락은 Linux CI 계약 검사도 실패시키므로 재실행하지 않았다. #1280 병합 뒤 inventory를 통합해 검사한다.
+rev4는 `cc7d9087`을 보존하며 main `6323fff5`(`#1281` 포함)를 통합했다. HPC test 등록은 반영됐으나 `test_evidence_verify.py` mixed-node hash·새 node가 남아 inventory 사전 검사는 stale hash로 실패했다. scratch 수정안은 source/AST 검증을 통과했다. policy는 rev4의 34경로 밖이라 편집하지 않았다. 후속 claim이 필요하며 hold를 유지한다. 관련 회귀 298 passed/25 skipped, public·integrations·notes-index·diff 검사 통과. 최종 head CI·실제 리뷰 근거는 PR에 남긴다.
