@@ -8,3 +8,7 @@ rows:
   text: 코드 파일(.py·.r·.sh)의 비밀값 가리기를 리터럴 값에만 적용한다. 따옴표 문자열은 따옴표와 접두를 남기고 안쪽만, 6자리 이상 숫자와 셸의 따옴표 없는 단어는 따옴표 문자열로 바꾸며 표현식·호출·os.environ 조회는 그대로 둔다. 이름 뒤 따옴표(dict·JSON 키)·R의 <-·타입 주석이 붙은 대입도 읽는다. scan_publish_files도 코드 파일은 같은 규칙으로 판정하고 따옴표로 감싼 가림 표시를 이미 가린 값으로 인정한다. 문서 규칙과 SECRET_PATTERNS는 그대로다
   at: 2026-11-05 17:50
   summary: 변수명이 token·key·secret인 분석 코드 때문에 결과 저장 전체가 실패하던 문제를 닫습니다. 실제 리터럴 비밀값은 계속 가립니다.
+- sha: '811b105'
+  at: 2026-11-05 18:20
+  text: 새 시험 파일 tests/test_result_storage_redact_1278.py를 config/ci/windows-boundary-v1.json의 known_tests에 올려 Windows 검토 목록 검사를 통과시킨다
+  summary: 새 시험이 Windows 목록에 없어 CI가 시작 전에 실패하던 것을 바로잡습니다.
