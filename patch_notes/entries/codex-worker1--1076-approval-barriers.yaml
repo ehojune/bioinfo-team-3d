@@ -1,5 +1,9 @@
 pr: 1274
 rows:
+  - sha: 68f2782
+    at: "2026-11-05 13:48"
+    summary: "실제 enqueue 완료 시각으로 제한을 확인합니다."
+    text: "시험: submit 반환 시각과 deadline을 직접 비교한다 (#1076)"
   - sha: 1f40ffa
     at: "2026-11-05 13:43"
     summary: "writer enqueue까지 기존 시간 제한을 확인합니다."
