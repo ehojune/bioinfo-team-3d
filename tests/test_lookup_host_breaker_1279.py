@@ -333,7 +333,7 @@ def test_the_plan_warning_names_the_resting_hosts_and_replaces_its_own_earlier_l
     assert cleaned["warnings"][0] == "other warning" and len(cleaned["warnings"]) == 2
     line = cleaned["warnings"][1]
     assert line.startswith(PAUSED_HOST_WARNING) and "www.ebi.ac.uk(120초 남음)" in line and "old.example" not in line
-    assert "조회 몫은 남아 있고" in line
+    assert "조회 몫을 쓰지 않으며" in line  # it does not claim any quota is left
     assert with_paused_host_warning(cleaned, {})["warnings"] == ["other warning"]  # the host opened again
     assert with_paused_host_warning("not a plan", {"h": 1}) == "not a plan"
 

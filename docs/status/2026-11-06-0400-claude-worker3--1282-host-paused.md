@@ -9,7 +9,7 @@
 - Windows: `test_lookup_host_breaker_1279.py`·`test_live_source_limit_891.py`·`test_evidence_verify.py` 122 passed.
 
 ## manual과 CP1 계획 경고 (rev2)
-- `labhq/orchestrator/cso.py`: `with_paused_host_warning`과 `_paused_lookup_hosts`를 더했다. CP1 계획이 확정될 때(일반 계획과 연구 계획 모두, 연구 계획은 검증·동결 전) 조회 카운터에서 쉬는 호스트를 읽어 계획 경고에 호스트·남은 초·"조회 몫은 남아 있다"를 싣는다. 카운터가 없거나 읽지 못하면 경고만 빠지고 계획은 막히지 않는다.
+- `labhq/orchestrator/cso.py`: `with_paused_host_warning`과 `_paused_lookup_hosts`를 더했다. CP1 계획이 확정될 때(일반 계획과 연구 계획 모두, 연구 계획은 검증·동결 전) 조회 카운터에서 쉬는 호스트를 읽어 계획 경고에 호스트·남은 초·"보내지 않은 시도는 조회 몫을 쓰지 않는다"를 싣는다. 카운터가 없거나 읽지 못하면 경고만 빠지고 계획은 막히지 않는다.
 - manual 09장 한·영: `host_paused`와 `lookup_limit`의 차이, 재시도 시점, CP1 계획 경고 설명을 적었다(옛 "CP1 경고에 오르지 않는다" 문장은 고쳤다).
 - 시험(`tests/test_lookup_host_breaker_1279.py`): 계획 경고 helper, 요청별 읽기, 연구 요청 CP1 흐름. CP1·live source 시험 포함 75 passed 이상.
 

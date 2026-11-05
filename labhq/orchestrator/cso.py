@@ -317,7 +317,7 @@ def with_paused_host_warning(plan: Any, paused: dict[str, int]) -> Any:
             if not (isinstance(warning, str) and warning.startswith(PAUSED_HOST_WARNING))]
     if paused:
         hosts = ", ".join(f"{host}({seconds}초 남음)" for host, seconds in paused.items())
-        kept.append(f"{PAUSED_HOST_WARNING}{hosts} — 연속 실패로 쉬는 중이라 이 호스트로는 보내지 않습니다. 조회 몫은 남아 있고 "
+        kept.append(f"{PAUSED_HOST_WARNING}{hosts} — 연속 실패로 쉬는 중이라 이 호스트로는 보내지 않습니다. 보내지 않은 시도는 조회 몫을 쓰지 않으며 "
                     "쉬는 시간이 지나면 다시 보냅니다. 그때까지 이 호스트에서 받을 근거는 확인 못 함으로 남을 수 있습니다")
     return {**plan, "warnings": kept}
 
