@@ -69,3 +69,11 @@ def test_the_default_folder_comes_from_the_staff_process_home_not_doctors(tmp_pa
     monkeypatch.setenv("USERPROFILE", str(host_home))
     assert doctor.claude_session_expired({"HOME": str(staff_home), "USERPROFILE": str(staff_home)}, now=5000) is True
     assert doctor.claude_session_expired({}, now=5000) is False
+
+
+def test_a_tilde_config_folder_is_read_against_the_staff_home(tmp_path):
+    folder = tmp_path / ".labhq" / "claude-staff"
+    folder.mkdir(parents=True)
+    _credentials(folder, expiresAt=1, refreshTokenExpiresAt=2)
+    env = {"HOME": str(tmp_path), "USERPROFILE": str(tmp_path), "CLAUDE_CONFIG_DIR": "~/.labhq/claude-staff"}
+    assert doctor.claude_session_expired(env, now=5000) is True

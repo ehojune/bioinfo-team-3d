@@ -789,6 +789,8 @@ def claude_session_expired(env: Mapping[str, str], now: float | None = None) -> 
     this way: a token revoked on the server, and a login kept in the OS keychain instead of that file."""
     home = env.get("HOME") or env.get("USERPROFILE") or os.path.expanduser("~")  # the staff process's home, not doctor's
     folder = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+    if folder == "~" or folder.startswith(("~/", "~\\")):
+        folder = os.path.join(home, folder[2:])  # the `~/.labhq/claude-staff` spelling, against that same home
     try:
         oauth = json.loads((Path(folder) / ".credentials.json").read_text(encoding="utf-8")).get("claudeAiOauth")
     except (OSError, ValueError, AttributeError):
