@@ -14,12 +14,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:25 | [`5f9ab6b`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/5f9ab6b) | **HPC 변경의 Windows 시험 범위가 불필요하게 늘지 않도록 공용 helper를 main과 맞췄습니다.**<br>main의 선행 수정 #1284를 통합하고 실행 위치 응답 상수 "1: b"를 그대로 사용한다. helper가 PR diff에서 빠져 진단 대상 shadow 8개 파일의 추가 선택이 사라졌다. 로컬 관련 시험은 84 passed, 1 skipped이며 실제 pool 시간은 새 head CI로 확인한다. |
 | 22:05 | [`0dd1a02`](https://github.com/ehojune/bioinfo-team-3d/pull/1284/commits/0dd1a02) | **원인 진단 문서를 docs/reference에 남겼습니다.**<br>docs/reference/ci-1283-windows-pool-timeout.md 추가 |
 | 22:00 | [`3295bb2`](https://github.com/ehojune/bioinfo-team-3d/pull/1284/commits/3295bb2) | **Windows 시험 한 단계가 시간 한계를 넘던 원인을 밝히고, 그 원인이 된 시험 보조 파일의 한 줄을 다른 코드와 무관하게 바꿨습니다.**<br>semantics_shadow_lab 게이트 응답을 상수로 바꿔 #578 모듈 import 제거, #1283 진단 문서 추가 |
 | 21:10 | [`496fc4c`](https://github.com/ehojune/bioinfo-team-3d/pull/1280/commits/496fc4c) | **def connect(token="...") 같은 매개변수 기본값의 비밀값이 가려지지 않던 틈을 닫습니다.**<br>Python 함수와 lambda의 매개변수 이름이 비밀 이름이면 기본값 리터럴도 가린다(위치·키워드 전용 모두) |
+| 20:41 | [`450e8a4`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/450e8a4) | **HPC에서 처리할 수 없는 선행 연구 입력을 계획 전에 확인합니다.**<br>새 receipt와 저장된 receipt를 실행 위치 선택 뒤 검사하고 미지원 입력은 CP1 전에 거부한다. local 선택을 유지하며 unlock 실패는 release_failed로 기록한다. binary mode와 status 이름·기록 시각도 고쳤다. 관련 mock 회귀 327건이 통과했다. |
 | 20:40 | [`92fb2b5`](https://github.com/ehojune/bioinfo-team-3d/pull/1280/commits/92fb2b5) | **셸 값에 = 가 있을 때 뒷부분이 남던 것과 빈 대입 뒤 주석을 깨뜨리던 것을 바로잡습니다.**<br>셸의 따옴표 없는 비밀값이 =를 포함해도 전체를 가리고, 빈 대입 뒤의 |
+| 20:15 | [`92ed545`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/92ed545) | **Windows 시험 실패 뒤에도 읽을 수 있는 진단을 따로 보존합니다.**<br>잠긴 파일을 제외한 snapshot과 bounded console 출력, worker별 host-resource lock 상태를 추가했다. 선택·상한·receipt 계약을 유지하며 mock 회귀 218건이 통과했다. 실제 timeout 원인은 새 CI에서 확인한다. |
 | 20:00 | [`f918ee9`](https://github.com/ehojune/bioinfo-team-3d/pull/1280/commits/f918ee9) | **따옴표를 쓰는 방식을 하나씩 늘려 막던 것을 파서로 바꿔, 어떤 문자열 형식으로 쓴 비밀값도 가립니다.**<br>코드의 비밀값 리터럴 판정을 부류째 구조로 바꾼다. Python은 ast로 읽어 대입·주석 대입·속성·키워드 인자·dict 키의 우변 리터럴을 따옴표 방식(삼중, 줄 이음, 여러 줄 이어 붙임, f-string, bytes)과 상관없이 찾고, 표현식 안의 문자열 조각도 각각 가린다. 읽히지 않는 Python과 R·셸은 패턴을 쓰며 셸의 $'…'와 붙여 쓴 따옴표도 읽는다 |
+| 19:43 | [`8471dbb`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/8471dbb) | **중첩 HPC 산출 검증 시험을 Windows 경계 검사에 등록했습니다.**<br>verify mixed-module hash와 root 이동 후 task identity 시험 등록을 갱신했다. source 검증과 관련 시험 320건이 통과했다. |
+| 19:26 | [`d79c01b`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/d79c01b) | **저장된 논문 본문을 HPC 잡에 전달할 수 없으면 처리 전에 멈춥니다.**<br>scheduler snapshot 없는 precedent 본문을 gateway·runner에서 거부한다. local은 유지하며 관련 회귀 301건, 기존 precedent 회귀 13건 통과했다. |
 | 19:20 | [`4a6e5b7`](https://github.com/ehojune/bioinfo-team-3d/pull/1280/commits/4a6e5b7) | **비밀값 다음 줄의 문자열이 함께 가려지던 과잉 일치를 막습니다.**<br>이어 붙인 문자열의 공백 연결을 같은 줄 안의 공백·탭으로 한정해 다음 줄의 독립된 문자열(docstring 등)까지 가리지 않게 한다 |
+| 19:14 | [`2fc5b9c`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/2fc5b9c) | **최신 설치 안내와 HPC 시험 등록을 합쳤습니다.**<br>main 6323fff5를 통합했다. 관련 mock 회귀 298건 통과, 25건 skip. verify inventory hash 갱신은 후속 claim이 필요하다. |
 | 19:05 | [`4cda37d`](https://github.com/ehojune/bioinfo-team-3d/pull/1281/commits/4cda37d) | **응답이 아예 없이 끝난 시험 요청도 실패로 보고 쉬는 시간을 다시 시작합니다.**<br>호스트 차단기: HTTP 응답 없는 failed/timeout 종료를 5xx로 취급해 cooldown 재시작 (#1279) |
 | 19:00 | [`faccab7`](https://github.com/ehojune/bioinfo-team-3d/pull/1280/commits/faccab7) | **삼중 따옴표나 이어 붙인 문자열, 부호·16진 숫자로 쓴 비밀값이 가려지지 않던 틈을 닫습니다.**<br>코드의 비밀값 리터럴 판정을 넓힌다. 삼중 따옴표 문자열, 괄호로 감싼 문자열, +나 공백으로 이어 붙인 문자열 전체와 부호가 붙은 숫자·16진수·밑줄 숫자를 읽고, 숫자는 우변 전체일 때만 리터럴로 본다(12345678 + offset은 표현식으로 둔다) |
 | 18:45 | [`22f565b`](https://github.com/ehojune/bioinfo-team-3d/pull/1281/commits/22f565b) | **여러 직원이 같은 서버를 동시에 조회해도 응답이 온 순서대로 오류를 세고, 쉬는 시간이 끝난 뒤에는 시험 요청을 하나만 보냅니다.**<br>호스트 차단기: 응답 시각 순서로 streak 판정, 쿨다운 뒤 미응답 probe가 있으면 추가 전송 보류 (#1279) |
@@ -28,13 +34,19 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 17:50 | [`db4a004`](https://github.com/ehojune/bioinfo-team-3d/pull/1280/commits/db4a004) | **변수명이 token·key·secret인 분석 코드 때문에 결과 저장 전체가 실패하던 문제를 닫습니다. 실제 리터럴 비밀값은 계속 가립니다.**<br>코드 파일(.py·.r·.sh)의 비밀값 가리기를 리터럴 값에만 적용한다. 따옴표 문자열은 따옴표와 접두를 남기고 안쪽만, 6자리 이상 숫자와 셸의 따옴표 없는 단어는 따옴표 문자열로 바꾸며 표현식·호출·os.environ 조회는 그대로 둔다. 이름 뒤 따옴표(dict·JSON 키)·R의 <-·타입 주석이 붙은 대입도 읽는다. scan_publish_files도 코드 파일은 같은 규칙으로 판정하고 따옴표로 감싼 가림 표시를 이미 가린 값으로 인정한다. 문서 규칙과 SECRET_PATTERNS는 그대로다 |
 | 17:40 | [`9aaa867`](https://github.com/ehojune/bioinfo-team-3d/pull/1060/commits/9aaa867) | **닫힌 프록시를 읽기 전용 실행과 read-only 직원에게만 주고, 업스트림 산출물을 받을 뿐인 쓰기 가능한 step은 네트워크를 그대로 씁니다.**<br>fix: staged 입력(read_only_inputs)만으로 셸 프록시를 닫지 않는다 (#1055) |
 | 17:30 | [`037d806`](https://github.com/ehojune/bioinfo-team-3d/pull/1281/commits/037d806) | **매뉴얼 09장에 서버 오류가 이어질 때 그 서버로 잠시 보내지 않는 동작을 한국어·영어로 적었습니다.**<br>docs/manual 09장 한영에 조회 상한의 호스트 차단기 문단 추가 (#1279) |
+| 17:26 | [`33d1deb`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/33d1deb) | **설치 안내에서 요청 전체의 HPC·이 PC 선택과 지원 제한을 확인하도록 정리했습니다.**<br>04장 한영에 단계별 원본·검증 입력 복사·선택 기록·snapshot 제한을 반영했다. 실제 HPC는 미검증이다. |
 | 17:20 | [`a9c7e73`](https://github.com/ehojune/bioinfo-team-3d/pull/1280/commits/a9c7e73) | **결과 저장 실패의 원인을 재현하는 실패 시험 13건을 먼저 둡니다.**<br>게시용 코드의 비밀값 가리기가 구문을 깨던 8차 시운전 사례(token = r["x"].split(",")[0])를 회귀 시험으로 먼저 만든다. 리터럴 비밀값은 계속 가려지고 코드는 compile되며 scan_publish_files를 통과해야 한다 |
 | 17:15 | [`0d967b9`](https://github.com/ehojune/bioinfo-team-3d/pull/1281/commits/0d967b9) | **서버가 늦게 오류를 돌려줘도 그 응답이 도착한 때부터 300초를 셉니다.**<br>호스트 차단 시작을 보낸 시각이 아니라 마지막 응답 기록 시각(answered_at)으로 계산하고 옛 파일을 이전 (#1279) |
 | 17:10 | [`024570e`](https://github.com/ehojune/bioinfo-team-3d/pull/1060/commits/024570e) | **manual 09장 한영에 읽기 전용 Codex 직원의 셸이 닫힌 프록시를 받고, 프록시를 무시하는 코드는 막지 못한다는 설명을 적었습니다.**<br>docs: manual 09장에 #1055 닫힌 프록시와 한계를 적는다 |
+| 16:56 | [`1128536`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/1128536) | configured 입력 없는 직원의 whole-request HPC capability를 경로 노출 없이 알리고 선택·계획에 반영한다. |
 | 16:53 | [`95cdbf2`](https://github.com/ehojune/bioinfo-team-3d/pull/1281/commits/95cdbf2) | **공개 문헌 서버가 오류(5xx)나 요청 제한(429)을 연달아 돌려주면 그 서버로는 잠시 보내지 않고, 다른 출처에 조회 횟수를 씁니다.**<br>조회 호스트별 차단기: 5xx 3회·429/5xx 5회 연속이면 300초 보내지 않음. 조회 몫 계산은 그대로 (#1279) |
+| 16:42 | [`fb0c8aa`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/fb0c8aa) | 저장된 HPC 요청의 입력을 briefing·precedent 전 입구와 공통 dispatch에서 검사해 모델 호출도 막는다. |
+| 16:34 | [`dc2f3b2`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/dc2f3b2) | 요청·직원의 기존 입력 snapshot이 없으면 HPC 처리 전에 거부하고 local 선택·조상 산출 전달은 보존한다. |
 | 16:30 | [`0d8715c`](https://github.com/ehojune/bioinfo-team-3d/pull/1060/commits/0d8715c) | **프록시를 켠 Codex 직원의 셸이 정상으로 도는지 실제 통제군으로 확인해 결과표를 남겼습니다. 켠 쪽의 외부 HTTP 차단은 UAC 창 때문에 확인하지 못했습니다.**<br>docs: #1055 통제군 결과표(프록시 없음·켬, 셸 정상)를 reference에 적는다 |
+| 16:20 | [`cbfea6c`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/cbfea6c) | HPC 환경 binding 계획을 dispatch 전에 거부하고 선택·계획 검증에 요청별 WSL runner view를 쓴다. |
 | 16:15 | [`3c6ccac`](https://github.com/ehojune/bioinfo-team-3d/pull/1277/commits/3c6ccac) | **물결표로 적은 직원 폴더의 만료도 놓치지 않습니다.**<br>리뷰 지적 반영. CLAUDE_CONFIG_DIR을 ~/.labhq/claude-staff처럼 적어도 직원 프로세스의 홈 기준으로 풀어 .credentials.json을 읽는다 |
 | 16:04 | [`4411941`](https://github.com/ehojune/bioinfo-team-3d/pull/1277/commits/4411941) | **직원 프로세스의 실제 홈을 보고, 일부만 지워진 로그인도 잡습니다.**<br>리뷰 지적 반영. CLAUDE_CONFIG_DIR이 없으면 engines.claude_code.env의 HOME·USERPROFILE에서 기본 폴더를 찾고, 갱신 토큰이 비었거나 없으면 갱신 토큰 만료일을 믿지 않고 접근 토큰 만료로 판단한다 |
+| 16:04 | [`cf532ae`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/cf532ae) | main을 통합하고 HPC 단계별 원본·검증 입력 복사·wake 기록·bundle 경로·run provenance를 보존한다. |
 | 15:52 | [`19eab4d`](https://github.com/ehojune/bioinfo-team-3d/pull/1277/commits/19eab4d) | **다른 방식으로 로그인한 직원이 옛 OAuth 파일 때문에 fail로 보이지 않게 합니다.**<br>리뷰 지적 반영. claude auth status의 authMethod가 claude.ai가 아니면(API 키·토큰·Bedrock/Vertex) 옛 .credentials.json의 만료를 보지 않는다. 출력을 읽을 수 없으면 파일 확인을 유지한다 |
 | 15:40 | [`40cd1e2`](https://github.com/ehojune/bioinfo-team-3d/pull/1275/commits/40cd1e2) | **동작을 바꾸는 PR이 manual 한 쌍을 두고 줄 서지 않도록 장마다 파일을 나눴습니다. 읽는 내용과 옛 링크는 그대로입니다.**<br>manual을 장별 파일로 나눈다. 한·영 각 24장을 docs/manual/<번호-이름>.md·.en.md로 옮기고(내용은 그대로, 상대 링크만 새 위치에 맞춤), docs/manual.md와 manual.en.md는 장 목차로 남긴다. 목차는 원래 제목 65개를 그대로 두어 옛 manual.md#앵커 링크가 이어진다. 연결된 도구 표의 생성 마커는 09장으로 옮겨 scripts/integrations.py가 그 파일을 갱신하고, patch_notes.py·ci_skip.py는 장 파일을 매뉴얼 갱신으로 센다. 시험은 장을 이어 읽는다. AGENTS.md에 같은 장 동시 수정 금지 한 줄 |
 | 15:40 | [`19530b2`](https://github.com/ehojune/bioinfo-team-3d/pull/1277/commits/19530b2) | **8차 시운전에서 doctor가 ok라 했는데 첫 직원 turn이 로그인 만료로 멈춘 문제를 doctor가 미리 알립니다.**<br>doctor의 Claude login 행이 claude auth status가 통과해도 직원 폴더 .credentials.json의 날짜를 읽는다. 갱신 토큰이 만료됐거나, 갱신 토큰 없이 접근 토큰이 만료됐으면 fail로 바꾸고 다시 로그인하라고 안내한다. 토큰 값은 쓰지 않고 호출도 하지 않는다. 서버에서 취소된 토큰과 OS 키체인 로그인은 알 수 없다는 한계를 04장 한영에 적는다 |
@@ -1632,11 +1644,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 16:34 | [`9e29940`](https://github.com/ehojune/bioinfo-team-3d/pull/596/commits/9e29940) | **보고서 그림과 PDF 자동 검사·매뉴얼 안내를 추가했습니다.**<br>보고서 그림·PDF의 test(브라우저 mock 포함)와 manual의 보고서 PDF 절을 더했다(#584). |
 | 16:15 | [`68b4532`](https://github.com/ehojune/bioinfo-team-3d/pull/595/commits/68b4532) | **화면 표시용 통역 작업을 연구 기록에서 분리해 의미 비교에 섞이지 않게 했습니다.**<br>통역 표시 전용 task·event를 연구 round 기록과 재접속 작업 목록에서 분리해 semantics 비교를 안정화 |
 | 14:20 | [`c10a801`](https://github.com/ehojune/bioinfo-team-3d/pull/592/commits/c10a801) | **분야별 공유 점검 항목 답변 규칙에 맞춰 계획 지시문의 검사 식별값을 갱신했습니다.**<br>공유 ID 답 규칙을 반영해 일반·연구 계획 프롬프트의 고정 해시를 갱신했다. |
+| 14:17 | [`b45249e`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/b45249e) | 최신 main의 라운드 기록·표시·사무실·재개 변경을 병합해 현재 기준에서 리뷰 수정을 검증한다. |
 | 14:13 | [`f3efe4d`](https://github.com/ehojune/bioinfo-team-3d/pull/594/commits/f3efe4d) | **통제 자료 통역을 막고 통역 비용·실패·진행·종료 대기를 바로잡았습니다.**<br>통제 요청의 통역 차단과 비용·미집계 예산 반영, 실패 표시·진행·종료 대기 수정 |
 | 13:50 | [`2e5aebe`](https://github.com/ehojune/bioinfo-team-3d/pull/592/commits/2e5aebe) | **여러 분야가 공유하는 점검 항목의 답변 검사와 생략 경고 집계를 보완했습니다.**<br>공유 점검 ID의 분야별 답 검증과 생략 경고 집계를 보완하고 매뉴얼 수치를 갱신했다. |
 | 13:45 | [`f24e76c`](https://github.com/ehojune/bioinfo-team-3d/pull/593/commits/f24e76c) | **끝난 채용 단계는 재개 대기에서 빼고 아직 끝나지 않은 단계만 기다립니다.**<br>완료된 채용 단계의 파견직 receipt를 재개 대기에서 제외하고 미완료 단계만 기다리게 함 |
 | 13:42 | [`b8e00f9`](https://github.com/ehojune/bioinfo-team-3d/pull/592/commits/b8e00f9) | **같은 점검 번호라도 분야별로 유효한 답이 있으면 계획 검사를 통과하게 했습니다.**<br>공유 checklist ID에 분야별 유효 답이 모두 있으면 계획 검증을 통과하게 했다. |
 | 13:42 | [`30c49dd`](https://github.com/ehojune/bioinfo-team-3d/pull/592/commits/30c49dd) | **벌크 발현 자료의 세포 구성 추정 분야와 재현·검증 점검 항목을 추가했습니다.**<br>bulk deconvolution topic과 재현성·검증 점검표 5개를 어휘에 추가했다. |
+| 13:39 | [`3c44e56`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/3c44e56) | 최신 main의 파견직 사전 채용 변경을 병합하고 HPC·채용 계획 검사를 함께 보존한다. |
 | 13:19 | [`f2a1156`](https://github.com/ehojune/bioinfo-team-3d/pull/588/commits/f2a1156) | **최신 웹 자동 검사 수집 기능을 유지하도록 병합 충돌을 풀었습니다.**<br>최신 main의 Node 웹 테스트 자동 수집을 유지해 충돌 해소 |
 | 13:16 | [`3741906`](https://github.com/ehojune/bioinfo-team-3d/pull/587/commits/3741906) | **본문이 달라졌다면 실패한 처리를 다시 시도하고 가변 내용을 같은 한도 안에서 줄입니다.**<br>최신 본문 digest가 다른 실패를 재시도하고 모든 가변 절을 공통 예산으로 축약 |
 | 13:11 | [`1f0f40e`](https://github.com/ehojune/bioinfo-team-3d/pull/590/commits/1f0f40e) | **웹 자동 검사 수집과 사무실 디자인 값 검사를 모두 살려 합쳤습니다.**<br>main의 Node 웹 테스트 자동 수집과 사무실 token 검사를 함께 보존 |
@@ -1644,7 +1658,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 12:50 | [`80da10b`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/80da10b) | **웹 자동 검사 수집을 합치고 채용 검사 표시도 유지했습니다.**<br>최신 main의 웹 테스트 자동 수집을 병합하고 채용 회귀 marker 보존 |
 | 12:46 | [`a8fae43`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/a8fae43) | **모의 채용 제안에 담당 단계를 넣고 직원 목록이 없어도 재개 계약을 확인합니다.**<br>mock 채용 제안에 담당 단계를 넣고 roster 없는 재개에서도 계약을 확인 |
 | 12:44 | [`e505794`](https://github.com/ehojune/bioinfo-team-3d/pull/590/commits/e505794) | **분리된 테스트 설정 폴더에서도 사무실 브라우저 검사가 실행되게 했습니다.**<br>격리된 테스트 홈에서도 사무실 브라우저 검사를 실행 |
+| 12:43 | [`09ff0a3`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/09ff0a3) | HPC 실행 원본과 요청 묶음 경로를 분리하고 direct 요청은 지정 직원의 HPC 권한만 묻는다. |
 | 12:42 | [`7771337`](https://github.com/ehojune/bioinfo-team-3d/pull/588/commits/7771337) | **배포 예시 설정을 맞추고 새 웹 검사를 자동 검사 목록에 넣었습니다.**<br>배포용 예시 설정을 동기화하고 새 웹 테스트를 CI 실행 목록에 등록 |
+| 12:40 | [`34426ec`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/34426ec) | 최신 main의 저장 선택·메신저 시안 변경을 병합해 현재 기준에서 리뷰 수정을 이어 간다. |
 | 12:36 | [`3472b35`](https://github.com/ehojune/bioinfo-team-3d/pull/590/commits/3472b35) | **사무실 브라우저 검사를 자동 검사 실행 목록에 등록했습니다.**<br>사무실 브라우저 검사를 CI 실행 목록에 등록 |
 | 12:34 | [`913ee3f`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/913ee3f) | **변환 비용의 중복 계산을 막고 변환 재시도·제안 확인·종료 후 재개를 고쳤습니다.**<br>변환 비용 중복 없는 집계·payload 재변환·제안 검증과 종료 계약 재개를 수정 |
 | 12:31 | [`a8b8bca`](https://github.com/ehojune/bioinfo-team-3d/pull/588/commits/a8b8bca) | **두 사무실 화면에서 같은 통역 결과를 보여 주고 재시작 후 실패 상태도 유지합니다.**<br>2D·3D 이어 묻기 상세에 같은 통역 캐시를 표시하고 재시작 실패 상태를 보존 |
@@ -1660,6 +1676,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 11:37 | [`faf5d6e`](https://github.com/ehojune/bioinfo-team-3d/pull/585/commits/faf5d6e) | **화면이 갱신돼도 첨부·참고 버튼 문구가 바뀌지 않도록 고쳤습니다.**<br>첨부·참고 버튼 문구를 화면 갱신 뒤에도 유지하고 회귀 검사·캡처 갱신 |
 | 11:26 | [`192cd27`](https://github.com/ehojune/bioinfo-team-3d/pull/585/commits/192cd27) | **작업판의 빈 목록·완료 접기와 메신저·직원 카드·입력창을 새 시안으로 정리했습니다.**<br>작업판 빈 목록·완료 접기, 전체 제목 요청 전환, 메신저·직원 카드·48px 입력을 시안 E로 정리 |
 | 11:25 | [`1a3de63`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/1a3de63) | **취소된 일부 결과도 저장·게시하게 하고 저장 선택을 기한 없이 재시작 후에도 유지합니다.**<br>Node 웹 test 자동 수집·기존 성공 표시 보존, 취소된 부분 결과 저장·게시와 무기한 저장 선택·재시작 복원 수정 |
+| 11:21 | [`3090632`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/3090632) | 최신 main의 디자인 토큰과 결정 카드 공통 부품을 병합해 실행 위치 질문 카드의 CSS 순서 계약을 복구한다. |
 | 11:20 | [`9c0ac31`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/9c0ac31) | **최신 결정 카드 디자인과 늦은 저장 버튼을 모두 살리고 실제 화면 상태로 검사합니다.**<br>최신 main의 결정 카드 디자인과 늦은 저장 버튼을 함께 보존하고 디자인 test를 실제 state에 연결 |
 | 11:08 | [`7c4752d`](https://github.com/ehojune/bioinfo-team-3d/pull/580/commits/7c4752d) | **최신 변경과 오류 수정 검사를 보존하고 디자인 파일의 적용 순서 충돌을 풀었습니다.**<br>최신 main 병합: P2·design-token·shutdown 테스트 보존, CSS 로드 순서 충돌 해소 |
 | 11:03 | [`9bacb02`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/9bacb02) | **병합 후에도 종료 창과 공통 디자인 파일의 적용 순서를 유지했습니다.**<br>종료 창 CSS와 공통 디자인 CSS의 로드 순서를 병합 후에도 유지 |
@@ -1667,15 +1684,19 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 10:58 | [`7329af9`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/7329af9) | **최신 변경을 합치고 채용과 디자인 값 검사를 모두 보존했습니다.**<br>최신 main을 병합하고 채용·디자인 토큰 웹 테스트 목록을 모두 보존 |
 | 10:57 | [`a057d3a`](https://github.com/ehojune/bioinfo-team-3d/pull/583/commits/a057d3a) | **끝난 요청도 저장 위치를 골라 편집자 정리와 게시 승인으로 이어가게 했습니다.**<br>끝난 요청의 저장 위치 카드를 API·CLI·웹에서 열고 검토 뒤 편집자 정리·게시 승인으로 연결. 수정 회차·환경·출처와 README 링크 보강 |
 | 10:55 | [`6bf1e95`](https://github.com/ehojune/bioinfo-team-3d/pull/587/commits/6bf1e95) | **큰 연구 기록에서 중복 JSON을 빼고 내용을 줄여 게시하며 과거 전송 실패도 복구합니다.**<br>큰 라운드 기록에서 JSON을 빼고 결과를 줄 단위로 줄여 게시하며 과거 크기 초과 delivery를 복구 |
+| 10:38 | [`a98d99a`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/a98d99a) | 데모 일반 자동 승인을 복구하고 reporter 검증이 실행 위치 승인 대기를 완료로 오인하지 않도록 고친다. |
 | 10:35 | [`b1983fd`](https://github.com/ehojune/bioinfo-team-3d/pull/582/commits/b1983fd) | **결정 카드의 중요도·대기 표시·휴대폰 배치를 정리하고 전후 화면 검사를 더했습니다.**<br>시안 E의 결정 카드 위계·대기 배지·폰 우선 배치와 검토·이력 공통 부품, 전후 화면 및 회귀 검사를 추가했다. |
 | 10:29 | [`f8ea0ae`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/f8ea0ae) | **채용 승인도 책임자의 다른 승인 기록과 함께 생성 시각순으로 보여 줍니다.**<br>채용 카드 추가 후 PI 승인 기록을 생성 시각순으로 정렬하고 직접·일괄 기록 회귀 추가 |
 | 10:13 | [`fd4ac7b`](https://github.com/ehojune/bioinfo-team-3d/pull/580/commits/fd4ac7b) | **후속 오류를 막는 웹 검사를 자동 검사 실행 목록에 연결했습니다.**<br>P2 웹 회귀 파일을 pytest의 CI 실행 목록에 연결 |
+| 09:56 | [`d6028f6`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/d6028f6) | 새 실행 위치 카드에 mock·데모가 답하고 PI 답변은 시각순으로 기록하며 로컬 프롬프트·CP1 제목을 보존한다. |
 | 09:52 | [`6fdb37d`](https://github.com/ehojune/bioinfo-team-3d/pull/580/commits/6fdb37d) | **대기·결과·이어 묻기·메신저·검색·초기 설정 등 웹 후속 오류를 수정했습니다.**<br>병합된 P2 22건 수정: 대기 표시·결과 정리·follow-up·시설팀·메신저·검색·init |
 | 09:48 | [`006c3dc`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/006c3dc) | **계획 전 채용 형식과 지시문 검사 기준을 맞추고 새 웹 검사를 등록했습니다.**<br>계획 전 채용 schema·prompt 고정 hash와 새 웹 회귀의 CI 실행 목록 갱신 |
 | 09:47 | [`a411da2`](https://github.com/ehojune/bioinfo-team-3d/pull/579/commits/a411da2) | **긴 참고 URL과 논문 번호는 줄을 나누고 상태 표시는 한 줄로 유지합니다.**<br>긴 URL·DOI 참고 칩의 줄바꿈을 보존하고 상태 칩만 한 줄로 표시한다. |
 | 09:30 | [`28e6a8e`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/28e6a8e) | **채용 승인 대기 중 재시작해도 같은 화면을 중복 생성하지 않고 저장 결정을 복원합니다.**<br>채용 승인 대기 재시작 때 중복 카드를 막고 저장된 결정을 복구 |
+| 09:29 | [`434a435`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/434a435) | HPC 요청의 단독 라우팅 우회를 막아 단계 계획을 유지한다. |
 | 09:29 | [`d640098`](https://github.com/ehojune/bioinfo-team-3d/pull/581/commits/d640098) | **논문 재현 담당을 계획 승인 전에 채용하고 실패 시 재배정과 재고용을 지원합니다.**<br>논문 재현 파견직을 CP1 전에 채용하고 이번 계획에 배정·실패 재배정·인재풀 재고용 |
 | 09:28 | [`50d4e52`](https://github.com/ehojune/bioinfo-team-3d/pull/579/commits/50d4e52) | **새 시안의 공통 디자인 값을 적용하고 캐릭터·검토·전후 화면 자료를 보관했습니다.**<br>시안 E의 63개 토큰과 2D 공통 부품을 적용하고 시안·캐릭터·비평·전후 화면을 보관했다. |
+| 09:24 | [`90fd532`](https://github.com/ehojune/bioinfo-team-3d/pull/578/commits/90fd532) | 요청 시작에 HPC·로컬을 선택하고 한 HPC 작업 공간에서 전체 단계를 실행하며 선택·검증 기록을 남긴다. |
 | 09:07 | [`3036ac1`](https://github.com/ehojune/bioinfo-team-3d/pull/576/commits/3036ac1) | **웹 종료가 자기 서버의 종료를 기다리며 멈추던 문제와 Windows 프로세스 판정을 고쳤습니다.**<br>웹 종료가 gateway 자신의 종료를 기다리다 강제 종료되던 교착을 분리하고 Windows venv launcher PID를 인정 |
 | 09:01 | [`eae315c`](https://github.com/ehojune/bioinfo-team-3d/pull/573/commits/eae315c) | **최종 초안 수용 뒤에만 게시·검색 등록을 시작하고 종료 때 대기 처리와 저장소를 정리합니다.**<br>최신 main 병합 — 편집자 게시·GitHub 전송·검색 색인은 CP4 수용 뒤에만 시작하고 종료 때 타이머 취소와 저장소 close를 함께 처리 |
 | 08:55 | [`9d600ea`](https://github.com/ehojune/bioinfo-team-3d/pull/576/commits/9d600ea) | **종료 화면과 결과 저장 편집기를 모두 유지하도록 병합 충돌을 풀었습니다.**<br>main 병합 충돌 해소 — 종료 UI와 결과 저장 편집기 등록을 함께 보존 |

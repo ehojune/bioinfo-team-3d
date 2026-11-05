@@ -12,6 +12,16 @@
 - 다음: 이 PR 병합 뒤 #578이 helper 변경을 빼고 main을 합쳐 최종 CI·리뷰를 받습니다. 시간 한계 증액·시험 제외는 하지 않습니다.
 - 미확인: 분리 뒤 #578의 실제 pool 시간은 예측입니다. 이 PR 자신의 pool 시간은 CI 결과로 기록합니다.
 
+# #578 rev10 main 통합·Windows 선택 확인
+
+**hold 유지·미병합.** 실제 HPC는 실행하지 않았다.
+
+- main `a7ca7667`을 통합했다. [#1284](https://github.com/ehojune/bioinfo-team-3d/pull/1284)의 helper 상수 `"1: b"`를 그대로 받아 `tests/semantics_shadow_lab.py`가 main과 같아졌다. 다른 충돌은 없었다.
+- [이전 CI](https://github.com/ehojune/bioinfo-team-3d/actions/runs/42021211558)는 Windows pool의 13분 상한으로 실패했다. [진단 근거](../reference/ci-1283-windows-pool-timeout.md)에 따라 helper 변경을 PR diff에서 없앴다. 시험 선택 정책·assertion·상한·lock 보호는 바꾸지 않았다.
+- 로컬 관련 회귀와 정적 시험: **84 passed/1 skipped**. integrations·vocab·notes-index·public·diff 검사 통과. 새 head의 CI·실제 리뷰는 대기 중이다.
+
+rev8의 receipt P1·unlock P2 수정과 **327 passed/6 skipped**는 [이전 검증](https://github.com/ehojune/bioinfo-team-3d/pull/578#issuecomment-6657466961)에 보존했다. 통합 뒤 실제 Windows 실행 시간은 아직 미확인이다.
+
 ## 단계
 #1278(#910 8차): 게시용 코드의 비밀값 가리기가 `token = r["x"].split(",")[0]`를 `token = <redacted-secret>,")[0]`로 바꿔 `python_syntax`로 결과 저장 전체가 실패한 문제.
 
@@ -71,6 +81,34 @@
 ## 하지 않은 것
 - 앵커 링크를 쓰는 README·HANDOFF·pi-qa·references·reference/*는 고치지 않았다(목차 제목이 받는다).
 - 전체 suite는 CI에 맡겼다.
+
+## 단계
+
+PR #578 rev5. main `6323fff5`와 기존 수정은 보존하며 inventory P1을 수정했습니다. hold를 유지합니다.
+
+## 바뀐 것
+
+- 원본은 `hpc/<request>/steps/<step>/`, 검증 입력은 `data/<producer>/<source-task>/`에 분리합니다.
+- wake baseline·bundle provenance·중첩 경로 resume/verify·동명 산출·경로 충돌을 처리합니다.
+- 요청별 runner와 실제 worker capability를 확인합니다. scheduler snapshot이 없는 기존 입력·환경 binding은 dispatch 전에 거부합니다.
+- 04장에 선택·기록·단계 경로·지원 제한을 한영으로 반영했습니다. [구현·검증 근거](../reference/hpc-step-workspaces-578.md).
+- 리뷰 P1 `4479233491`: snapshot 없는 저장 precedent 본문을 gateway dispatch·runner 시작 전에 거부합니다. local 선택은 유지합니다.
+- inventory P1 `4479191971`: verify mixed-module hash와 root 이동 후 task identity node를 갱신했습니다. 다른 policy 필드는 같습니다.
+
+## 확인
+
+- rev4 P1 수정 후 HPC·workspace·bundle·verify mock 회귀: 301 passed/25 skipped. 기존 precedent 회귀 13 passed.
+- rev5 source/AST `validate_profile()` 통과. CI inventory·선택 정책·verify 관련 시험 320 passed.
+- 04장 한영 합계: 54,037→56,966자(+2,929, 편집 전 기준).
+- public·integrations·notes-index·diff 검사 통과. 최종 head CI·실제 리뷰는 PR에서 추적합니다.
+
+## 남은 조건
+
+rev4 CI는 stale inventory 계약으로 실패했고 재실행하지 않았습니다. rev5 새 head의 CI·실제 리뷰가 남았습니다. 실제 HPC·계정 전환·OS 격리는 UNVERIFIED이며 실행하지 않았습니다.
+
+Refs #430
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
 # #1272 web office 간헐 실패 — 단계 보고
 
@@ -9167,6 +9205,28 @@ PR #592에서 공유 점검 ID의 분야별 답을 허용하고 bulk deconvoluti
 
 ## 결론
 
+PR #578의 P1·P2 리뷰 지적을 고쳤다. HPC 실행 원본은 요청 묶음과 분리되고, direct 요청은 지정 직원의 HPC 권한만 따른다.
+
+## 바뀐 것
+
+- 4266517517(P1): 공유 실행 workspace를 `hpc/<request_id>`로 옮겨 bundle 뒤에도 manifest·job 기록·outputs를 보존한다.
+- 4266517530(P2): direct 실행 위치는 지정 `agent_id`가 해당 runner에서 HPC를 쓸 때만 묻고, 아니면 local로 정한다.
+- 최신 main의 파견직 사전 채용·라운드 기록·표시·사무실·재개 변경을 병합하고 branch 패치노트에 기록했다.
+
+## 확인
+
+- 수정 전 새 회귀 test 2건 실패, 수정 뒤 통과. 최종 관련 pytest 331 passed, 3 skipped.
+- Node 54개 파일 통과. 최종 Windows 전체 pytest 6,487 passed, 67 skipped.
+- 공개·patch-notes·notes-index 검사 통과. 실제 HPC·PI/trial은 실행하지 않았다.
+
+## 남은 지적
+
+- push 뒤 CI 확인이 남았다. 테스트 basetemp 삭제는 실행 정책이 막아 일곱 폴더가 남았다.
+
+Refs #430
+
+## 결론
+
 PR #590 · Refs #546. 시안 E와 캐릭터 1을 2D 사무실에 적용했습니다.
 
 ## 바뀐 것
@@ -9320,6 +9380,30 @@ PR #581의 봇 2차 지적 P1·P2를 수정했다. Refs #549.
 
 ## 결론
 
+PR #578에 최신 main을 병합해 2D 디자인 토큰·결정 카드 규칙을 맞췄다. 실행 위치 질문은 기존 `clarify` 카드와 공통 부품을 사용한다. Refs #430.
+
+## 바뀐 것
+
+- legacy `<style>` 뒤에 `shutdown.css`, `tokens.css`, `components.css`를 순서대로 읽는다.
+- `e9f56a9`에는 토큰·부품 CSS 링크가 없어 CI가 실패했다. 별도 HPC 카드 CSS는 추가하지 않았다.
+- merge commit `3090632`을 브랜치 패치노트에 기록했다.
+
+## 확인
+
+- `node --test tests/web_design_tokens.cjs`: 3 passed.
+- Node 전체 55개 파일 통과.
+- 관련 pytest: 152 passed, 2 skipped.
+- Windows 전체 pytest: 6,298 passed, 67 skipped.
+
+## 남은 지적
+
+- push 뒤 CI 결과 확인이 남았다.
+- 실제 HPC·PI/trial 실행, 고정 포트 사용, 리뷰 요청, 병합은 하지 않았다.
+
+🤖 Generated with Codex (gpt-5.6-sol) for the labhq dev lead
+
+## 결론
+
 PR #585: 시안 E를 작업판·메신저·직원 시트·요청 입력에 적용했다. Refs #546.
 
 ## 바뀐 것
@@ -9435,6 +9519,32 @@ PR #580에 main `4a7c03b`를 병합했다(merge `7c4752d`). P2·design-token·sh
 - PR 병합과 리뷰 요청은 하지 않았다.
 
 Refs #580
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+PR #578의 데모 자동 승인 누락과 reporter 테스트의 완료 오판을 수정했다. Windows 전체 테스트가 통과했다.
+
+## 바뀐 것
+
+- 데모: 카드 정보가 없는 승인 항목도 기존 문구로 자동 승인한다. 일반 카드·실행 위치 카드·사용자 선응답을 검증한다.
+- reporter: 실행 위치 카드의 `waiting_pi`를 완료로 보던 조건을 terminal 상태 대기로 바꿨다. 응답 지연을 넣고 `done`과 기존 댓글·보고서를 모두 검증한다.
+- scheduler 없음·오프라인·HPC 도구 없음이면 질문 없이 로컬로 정하는 규칙을 유지했다.
+
+## 확인
+
+- 최신 main `4a7c03b`: 지정한 두 테스트 **2 passed**.
+- 수정 전: 데모 자동 승인 실패, 지연 응답을 넣은 reporter에서 `IndexError` 재현.
+- 수정 후 관련 테스트: **91 passed, 1 skipped**.
+- Windows 전체: **6,214 passed, 67 skipped** (745.64초).
+- 공개·diff 검사 통과. 패치노트·목차 검사는 기록 커밋에서 수행한다.
+
+## 남은 지적
+
+- push 후 CI 각 job 결과를 PR 본문에 갱신한다. 실제 HPC·PI/trial·리뷰 요청·병합은 하지 않았다.
+
+Refs #430
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
 
@@ -9573,6 +9683,35 @@ PR #579: PI가 고른 E + 캐릭터 1의 첫 구현. 63개 토큰(기존 셸 별
 - PI/trial 실행·설정·배포, 3D 코드 변경, 리뷰 요청·인라인 답글·병합은 하지 않았다.
 
 Refs #546
+
+🤖 Generated with Codex (gpt-6) for the labhq dev lead
+
+## 결론
+
+요청 시작에 HPC/이 PC를 고르고 모든 처리 단계를 그 위치에서 이어 간다.
+
+## 바뀐 것
+
+- 브리핑 뒤·CP1 전 실행 위치 카드. 온라인 scheduler·내장 HPC 직원이 없으면 로컬.
+- HPC는 같은 runner·요청 작업 폴더에서 순서대로 잡 실행. 혼합 계획·산출 경로 충돌·잡 없는 완료는 거부.
+- 로컬은 HPC 도구와 broker 제출 차단. 선택을 요청·CP1·보고서 부록에 기록.
+- 매뉴얼 갱신. 중단된 미커밋 작업을 보존하고 최신 main을 반영했다.
+
+## 확인
+
+- 기준 main `d56253a`: 새 회귀 18 failed, 1 skipped. branch 관련 검사: 295 passed/1 skipped + 205 passed/20 skipped. 단독 라우팅 보완 뒤 38 passed/1 skipped. 기록 순서 회귀는 main에서 1 failed, 수정 후 기록·shadow·제거 검증 103 passed/1 skipped.
+- 로컬 Windows 전체 pytest: 다른 레인의 연속 실행으로 차례를 확보하지 못해 미실행. 완료 조건이 남아 draft로 인계한다.
+- CI: 초기 head에서 카드 자동 응답·schema 기준값·호환성 실패를 확인해 수정했다. 수정 head CI 확인 중.
+- 공개·diff·패치노트·목차 검사 통과.
+
+## 남은 지적
+
+- 실제 HPC·공유 계정 실행은 서버 복구 뒤 확인. mock은 같은 폴더의 앞 단계 산출 접근을 검증하며 POSIX 권한은 Linux CI에서 확인한다.
+- 초기 입력·상위 폴더 접근 권한은 운영자 준비가 필요하다. 계획·제출 검사는 직원 CLI의 sandbox가 아니다.
+- 임시 폴더 삭제는 자동 승인 검토가 `blocked by policy`로 거부해 미완료.
+- 실제 HPC·PI/trial 실행·설정 수정·리뷰 요청·인라인 답글·병합은 하지 않았다.
+
+Refs #430
 
 🤖 Generated with Codex (gpt-6) for the labhq dev lead
 
