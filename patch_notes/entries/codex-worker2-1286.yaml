@@ -1,5 +1,9 @@
 pr: 1287
 rows:
+- sha: "dc443e6"
+  at: 2026-11-05 23:49
+  summary: 채용 뒤 HPC 실행 조건에 맞지 않을 때의 중단과 비용을 상세 안내에 적었습니다.
+  text: 파견직 manual 한영판에 최종 배정 재검사와 CP1·처리 단계 전 실패, 이미 쓴 채용 비용 유지를 설명했다. 관련 mock·encoding 검사 208 passed, 5 skipped.
 - sha: "64a6b9f"
   at: 2026-11-05 23:39
   summary: 채용 뒤 HPC 실행 조건을 검사하는 시점을 첫 안내에 적었습니다.
