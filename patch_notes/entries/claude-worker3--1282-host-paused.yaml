@@ -1,0 +1,5 @@
+rows:
+- sha: 'f8e7538'
+  text: gateway의 live source 확인이 호스트 차단(host_paused) 응답을 요청 HTTP 상한 소진(lookup_limit)으로 기록하던 것을 고친다. 연속 실패로 쉬는 호스트는 새 실패 종류 host_paused로 기록하고 호스트와 다시 보낼 수 있는 시점(retry_after_s)을 남기며, 조회 몫이 남아 있다는 사실을 상세에 적는다. 상한이 실제로 소진된 경우는 그대로 lookup_limit이다
+  at: 2026-11-06 04:30
+  summary: 쉬는 호스트 때문에 조회하지 못한 것이 상한 소진으로 잘못 보이던 문제를 바로잡습니다.
