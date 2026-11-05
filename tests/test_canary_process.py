@@ -97,3 +97,34 @@ def test_job_terminates_child_in_separate_process_group(tmp_path):
         if proc.poll() is None:
             proc.kill()
         proc.wait(timeout=5)
+
+
+@pytest.mark.parametrize("selector,roster,expected", [("worker", 5, 390), ("all", 3, 1170), ("all", 0, 390)])
+def test_deadline_scales_with_selected_agents(monkeypatch, selector, roster, expected):
+    from labhq import doctor
+
+    seen = []
+
+    class Process:
+        returncode = 0
+
+        def communicate(self, payload, timeout=None):
+            seen.append(timeout)
+            return b"[]", b""
+
+        def wait(self, timeout=None):
+            return 0
+
+    class Job:
+        def __init__(self, process):
+            pass
+
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+
+    monkeypatch.setattr(canary_process, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(canary_process.subprocess, "Popen", lambda *a, **k: Process())
+    monkeypatch.setattr(canary_process, "WindowsJob", Job)
+    monkeypatch.setattr(doctor, "_roster", lambda settings: [object()] * roster)
+    canary_process.run(SimpleNamespace(model_dump=lambda **kwargs: {}), selector)
+    assert seen == [expected]

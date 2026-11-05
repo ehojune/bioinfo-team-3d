@@ -7,6 +7,8 @@ import subprocess
 import sys
 import time
 
+import yaml
+
 
 class BoundaryError(Exception):
     pass
@@ -83,9 +85,24 @@ def _require_no_children():
         raise BoundaryError("previous canary left processes in the Job")
 
 
-def run(settings, selector, timeout=390):
+PER_AGENT_DEADLINE_S = 390
+
+
+def _selected_count(settings, selector):
+    if selector != "all":
+        return 1
+    from . import doctor
+    try:
+        return max(1, len(doctor._roster(settings)))
+    except (OSError, ValueError, yaml.YAMLError):
+        return 1
+
+
+def run(settings, selector, timeout=None):
     if os.name != "nt":
         raise BoundaryError("canary containment unsupported on this platform")
+    if timeout is None:
+        timeout = PER_AGENT_DEADLINE_S * _selected_count(settings, selector)
     process = subprocess.Popen([sys.executable, "-m", "labhq.canary_process"], stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     job = None
