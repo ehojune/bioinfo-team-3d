@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: "17365b4"
+    at: "2026-11-06 04:30"
+    summary: "시험용 공용 보조 파일이 바뀌면, 그 파일을 실제로 쓰는 시험만 Windows 검사에 넣습니다. 가져오기만 하고 쓰지 않는 시험은 빠집니다. 검사 기록에 각 시험이 들어온 이유도 남깁니다."
+    text: "ci_selection: 변경 helper 소비자를 파일 전체가 아니라 사용하는 node로 좁힘(인자·usefixtures·autouse·star import 보수 처리), ci_suite: 선택 이유별 개수를 inclusion-<worker>.json으로 기록 (#1285)"
