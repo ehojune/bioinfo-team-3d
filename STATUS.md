@@ -5,6 +5,28 @@
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
 ## 단계
+#1063 r10 · PR #1064의 synthetic 계약을 main `232e3abf`와 통합합니다. 실제 보호는 UNVERIFIED입니다.
+
+## 한 일
+- 충돌 4건 해결: main의 Windows inventory·offline HMAC adapter·최신 manual 한영판을 보존했습니다.
+- seal suite를 Windows 경계 검사에 추가하고 reference의 adapter 설명을 현 구현에 맞췄습니다. Reference 5,134→5,812자.
+- 리뷰 P2 수정: 알려진 failure·stop 이벤트를 unknown으로 분류하지 않습니다. 원인 없는 stop·잘못된 child·임의 이벤트 거부는 유지합니다.
+- corpus·기존 test·다른 담당자의 변경을 보존했습니다. code-only 병합 범위이며 실제 보호·실행 승인은 별도입니다.
+
+## 테스트 결과
+- seal·observer·offline adapter synthetic 618건, CI 경계·phase 계약 182건 PASS.
+- 별도 offline probe 24건으로 failure·stop 분류와 잘못된 stop 거부를 확인했습니다. 기존 test 파일은 claim 범위 밖이라 보존했습니다.
+- inventory·notes_index·patch_notes·public·diff 검사 PASS. 최종 head CI·실제 리뷰는 PR에서 최종 확인합니다.
+
+## 남은 조건
+- 최종 head CI·실제 리뷰와 미해결 지적 확인 후 draft/hold 해제·병합합니다.
+- OS seal·실제 producer 신원·독립 cleanup은 UNVERIFIED. provisioning·provider·연구/HPC 실행은 없습니다.
+
+Refs #1063; parent #666. PR #1052는 별도 claim 대상입니다.
+
+🤖 Co-Authored-By: Codex (gpt-6.1-sol) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+## 단계
 #1269(#1184 후속): PowerShell 디스크 확인이 `$r = iwr ...`·`[void](...)`처럼 명령 이름이 첫 단어가 아닌 구문을 놓치던 부류. 같은 종류의 지적이 일곱 번째라 구문을 더 읽지 않고 안전망으로 닫는다.
 
 ## 한 일
@@ -1443,6 +1465,22 @@ lab 요청에는 번역이 나오지 않아(번역은 기술적인 영문 메시
 - P2: `CLIENT_SEND_TIMEOUT_S`를 0.01초로 둔 시험 두 건의 완료 대기 3곳을 1초로 되돌렸다. 규칙은 "설정한 timeout이 완료를 좌우하는 시험의 완료 대기는 짧게, 시작·도착 대기는 10초"이다.
 - main을 반영했다(#1123 병합 후). 두 파일 54 passed.
 
+## 단계
+#1063 rev8 · [PR #1064](https://github.com/ehojune/bioinfo-team-3d/pull/1064)의 reference P2 수정. Draft/hold·미병합 유지.
+
+## 한 일
+- reference를 `synthetic-v3`에 맞췄습니다. v2는 unsupported이며 정상 read/output만 synthetic 수락합니다.
+- observer·외부 ledger·seal·broker·deadline·cleanup 조건을 현재 corpus/validator와 대조했습니다.
+- reference·전용 patch note·이 status만 바꿉니다. 실제 adapter와 보호는 UNVERIFIED입니다.
+
+## 테스트 결과
+- notes_index·patch_notes·public·diff 검사 PASS. 최종 head CI·실제 리뷰 결과는 PR에 기록합니다.
+- reference 3,638→5,134자. 새 lifecycle 조건은 lookup-only 표에 모았습니다.
+- corpus·validator 변경이 없어 로컬 pytest는 재실행하지 않습니다.
+
+## 막힌 점
+- 실제 adapter 인증·OS seal·handle 취소·독립 inventory와 #666 통합 승인은 남아 있습니다. 실제 실행·provisioning·연구/HPC는 수행하지 않습니다.
+
 # #660 2단계: 요청 사이 사용 이력
 
 - 결론: 논문 스킬이 다른 요청에서 선택된 기록을 세 곳에서 본다. `labhq talent --history`(gateway 없이 store를 읽기 전용으로), `GET /api/paper-skills`(인증), 웹 여우 패널 카드의 `이전 사용` 칸. 모두 최근 요청 500건 기준이며 그보다 오래된 요청이 있으면 그렇게 밝힌다.
@@ -1491,6 +1529,23 @@ lab 요청에는 번역이 나오지 않아(번역은 기술적인 영문 메시
 ## 하지 않은 것
 - CSO prompt·CP1 표시·비용 예상(PR B)과 bench 측정(PI 승인 뒤).
 - 실제 연구 계획 재개 전체 흐름(모델 호출이 필요한 CP2까지)은 돌리지 않았고, 재개가 지나는 지점의 결정을 단위 시험으로 확인했다.
+
+## 단계
+#1063 rev7 · 독립 synthetic seal contract v3. [PR #1064](https://github.com/ehojune/bioinfo-team-3d/pull/1064)는 draft/hold이며 병합하지 않습니다.
+
+## 한 일
+- 정상 read/output control과 reason-code 거부를 같은 fixture로 검증합니다. 기존 ancestry 검사는 유지합니다.
+- observer identity·sequence/time 출처, 외부 append-only ledger, retained writable handle, broker token·실패, supervisor deadline, descendant/resource 잔류를 검사합니다.
+- ledger를 다시 기록한 음성 대조도 거부합니다. expected label은 validator 입력에 쓰지 않습니다.
+
+## 테스트 결과
+- `python -m pytest tests/test_process_boundary_seal_contract.py -q`: 598 passed. 기존 29 case·새 53 control, data-only. 실제 process·engine 호출 없음.
+- public·diff·patch-note 검사와 최종 head CI·실제 리뷰 결과는 PR에 기록합니다. #1123 문서 gate 수정은 아직 미병합입니다.
+
+## 막힌 점
+- 실제 보호 UNVERIFIED. Hash chain은 독립 입력과의 대조이며 실제 서명·storage 접근 제어의 증거가 아닙니다.
+- `adapt_producer`는 unsupported. 후속 최소 범위는 외부 observer 인증/ledger를 받는 adapter와 supervisor의 request deadline·reason-coded stop/cleanup evidence 연결입니다. OS seal·handle 취소·독립 inventory는 별도 구현·실행 승인이 필요합니다.
+- 공통 문서·제품 코드·CI·provisioning·연구/HPC는 수정하거나 실행하지 않았습니다.
 
 # Producer synthetic controls — #1047
 
@@ -1943,6 +1998,24 @@ Windows `test_ci_windows10m`·`test_ci_windows_phases`·`test_ci_boundary_previe
 ## 테스트 결과
 - Windows `test_request_input_proof_959`·`test_continuation_797`·`test_continuation_review_807` 84 passed.
 - 미검증: 실제 DOI 참조 요청의 CP2 revise 이어 가기, DOI 본문 개정의 영향.
+
+## 단계
+#1063 · #666 독립 supervisor/seal synthetic acceptance v2. Draft/hold 유지, 통합 승인 전 병합 금지.
+
+## 한 일
+- 29개 corpus case와 독립 pure validator. source→parent→root의 `parent_ref`·전체 `parent_identity`를 독립 pin과 대조합니다.
+- 7개 관측 단계에서 잘못된 parent·누락 edge·cycle·self-edge·분리된 subtree·root 교체·변경 후 원복을 거부합니다.
+- run/nonce·supervisor/child identity·link·연속 관측·descendant/socket 정리 검사와 Windows inventory를 유지합니다.
+- manual 한영판에 synthetic 검증 범위와 실제 보호 UNVERIFIED를 명시했습니다.
+
+## 테스트 결과
+- 기존 seal contract 회귀 364 passed. rev6는 문서만 수정하며 로컬 pytest를 다시 실행하지 않습니다.
+- rev5 CI 41039167818은 patch-notes FAIL·manifest SKIPPED였습니다. rev6는 manual 갱신으로 문서 gate를 복구합니다.
+- 최종 head 문서/public 검사·전체 CI·manifest 실행·실제 review 결과와 identity는 [PR #1064](https://github.com/ehojune/bioinfo-team-3d/pull/1064)에 기록합니다.
+
+## 막힌 점
+- 실제 witness 인증·supervisor·seal·연속 감시·독립 cleanup은 UNVERIFIED. `adapt_producer`와 `protected_launch`는 unsupported입니다.
+- [v2 계약·adapter 전제](../reference/process-boundary-seal-fixtures.md). 실제 root까지의 ancestry 증명은 후속 producer 범위입니다.
 
 # #1058 상류 산출 hash 누락 (② 5차)
 
