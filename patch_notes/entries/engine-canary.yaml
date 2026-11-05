@@ -36,3 +36,7 @@ rows:
   at: 2026-11-05 12:00
   summary: "canary 테스트가 CLI 판본 확인을 대체하도록 고치고 Windows 검토 목록에 canary 프로세스 테스트를 등록했습니다."
   text: "canary 테스트의 CLI 판본 stub 보강과 Windows inventory 등록"
+- sha: cf9c9fb
+  at: 2026-11-05 13:00
+  summary: "여러 직원을 한 번에 점검할 때 전체 제한 시간이 직원 수만큼 늘어납니다."
+  text: "canary all의 deadline을 선택된 직원 수에 비례시킴"
