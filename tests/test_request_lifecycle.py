@@ -95,22 +95,39 @@ async def test_pi_decision_cards_outlive_the_gate_timeout_and_park_active_reques
             hub.requests[f"r_{kind}"]["status"] = "done"
             hub.review_done(f"r_{kind}")
     waits = {kind: asyncio.create_task(hub.request_approval(kind, f"{kind}?", f"r_{kind}")) for kind in kinds}
-    await asyncio.wait_for(parked.wait(), 3)
-    await asyncio.sleep(1.4)
-    assert not [kind for kind, wait in waits.items() if wait.done()]
-    assert {kind: hub.requests[f"r_{kind}"]["status"] for kind in kinds} == {
-        kind: "done" if kind == "result_publish" else "waiting_pi" for kind in kinds}
-    cards = {entry["approval"]["request_id"]: aid for aid, entry in hub.approvals.items()}
-    for kind in kinds:
-        assert hub.approvals[cards[f"r_{kind}"]]["approval"]["timeout_s"] == s.policy.approvals.pi_decision_timeout_s
-        await hub.resolve_approval(cards[f"r_{kind}"], True, "진행")
-    decisions = {kind: await asyncio.wait_for(wait, 1) for kind, wait in waits.items()}
-    assert all(decision["approved"] and "state" not in decision for decision in decisions.values())
-    assert {kind: hub.requests[f"r_{kind}"]["status"] for kind in kinds} == {
-        kind: "done" if kind == "result_publish" else "running" for kind in kinds}
-    assert not any(hub.requests[f"r_{kind}"].get("pi_waits") for kind in kinds)
-    statuses = [e["data"]["status"] for e in hub.events if e["type"] == "request.status"]
-    assert statuses.count("waiting_pi") == len(kinds) - 1 and statuses.count("running") == len(kinds) - 1
+    try:
+        try:
+            await asyncio.wait_for(parked.wait(), 3)
+        except asyncio.TimeoutError as exc:
+            details = {}
+            for kind, task in waits.items():
+                details[kind] = {
+                    "done": task.done(), "cancelled": task.cancelled(),
+                    "exception": repr(task.exception()) if task.done() and not task.cancelled() else None,
+                    "stack": [f"{frame.f_code.co_filename}:{frame.f_lineno} in {frame.f_code.co_name}"
+                              for frame in task.get_stack()],
+                }
+            raise AssertionError(f"approval wait timed out; missing={sorted(set(kinds) - seen)}; tasks={details}") from exc
+        await asyncio.sleep(1.4)
+        assert not [kind for kind, wait in waits.items() if wait.done()]
+        assert {kind: hub.requests[f"r_{kind}"]["status"] for kind in kinds} == {
+            kind: "done" if kind == "result_publish" else "waiting_pi" for kind in kinds}
+        cards = {entry["approval"]["request_id"]: aid for aid, entry in hub.approvals.items()}
+        for kind in kinds:
+            assert hub.approvals[cards[f"r_{kind}"]]["approval"]["timeout_s"] == s.policy.approvals.pi_decision_timeout_s
+            await hub.resolve_approval(cards[f"r_{kind}"], True, "진행")
+        decisions = {kind: await asyncio.wait_for(wait, 1) for kind, wait in waits.items()}
+        assert all(decision["approved"] and "state" not in decision for decision in decisions.values())
+        assert {kind: hub.requests[f"r_{kind}"]["status"] for kind in kinds} == {
+            kind: "done" if kind == "result_publish" else "running" for kind in kinds}
+        assert not any(hub.requests[f"r_{kind}"].get("pi_waits") for kind in kinds)
+        statuses = [e["data"]["status"] for e in hub.events if e["type"] == "request.status"]
+        assert statuses.count("waiting_pi") == len(kinds) - 1 and statuses.count("running") == len(kinds) - 1
+    finally:
+        for task in waits.values():
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*waits.values(), return_exceptions=True)
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,9 @@
 import asyncio
+import json
 import re
 import shutil
 import time
+from importlib import resources
 from pathlib import Path
 
 import pytest
@@ -293,3 +295,192 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         for t in pending:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _init_settings(tmp_path: Path) -> Settings:
+    """The example config `labhq init` copies (research on, CP1 and CP2), with this test's ports and folders."""
+    text = resources.files("labhq").joinpath("config").joinpath("labhq.example.yaml").read_text(encoding="utf-8")
+    s = Settings.model_validate(yaml.safe_load(text))
+    shutil.copytree(REPO / "agents", tmp_path / "agents")
+    s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
+    gport = free_port()
+    s.gateway.port, s.gateway.url = gport, f"ws://127.0.0.1:{gport}"
+    s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = free_port(), "mock", 0.05
+    s.runner.workspace_root = str(tmp_path / "runs")
+    s.runner.talent_dir = str(tmp_path / "talent")
+    s.runner.agents_dir = str(tmp_path / "agents")
+    s.hpc.scheduler = "mock"
+    # `labhq init` leaves restricted zones out on Windows, where the runner refuses to start with one.
+    s.policy.data_zones = [zone for zone in s.policy.data_zones if zone.level != "restricted"]
+    return s
+
+
+async def _run_default_init_request(tmp_path, text, *, status="done", work_kind="auto"):
+    """Run one request through the gateway and a mock runner under the init config; return (request, event order, seen, hub).
+
+    The request must end in `status`; a failed request is asserted by the caller."""
+    s = _init_settings(tmp_path)
+    assert s.research.enabled and s.research.evidence_checkpoint  # what init turns on
+    app = create_app(s)
+    hub = app.state.hub
+    seen: list[dict] = []
+    publish = hub.publish
+
+    async def tap(ev, **kwargs):
+        seen.append(ev)
+        await publish(ev, **kwargs)
+        if ev.get("type") == "approval.requested":
+            aid = ev["data"]["id"]
+
+            async def approve():
+                await _until(lambda: aid in hub.approvals, HANG_S, f"approval {aid} to be pending",
+                             lambda: {"pending": sorted(hub.approvals)})
+                # The evidence card (CP2) takes the PI's choice, not just a yes.
+                await hub.resolve_approval(aid, True, "ok", "approve" if ev["data"]["kind"] == "research_evidence" else None)
+
+            asyncio.get_running_loop().create_task(approve())
+
+    hub.publish = tap
+    gport = s.gateway.port
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=gport, log_level="warning"))
+    tasks = [serve_task(server.serve())]
+    await wait_started(lambda: server.started, tasks[0], HANG_S, "gateway server startup")
+    runner = Runner(s)
+    tasks.append(asyncio.create_task(runner.run_forever()))
+    try:
+        await _until(lambda: "cso" in hub.agents and "analyst" in hub.agents, HANG_S, "runner agent registration",
+                     lambda: {"agents": list(hub.agents)})
+        rid = hub.create_request(RequestIn(text=text, work_kind=work_kind))
+        await _wait_for_request_terminal(hub, rid, seen)
+        request = hub.requests[rid]
+        state = _request_state(hub, rid, seen)
+        assert request["status"] == status, (request.get("error"), state)
+        order = [(e.get("data") or {}).get("kind") for e in seen if e.get("request_id") == rid
+                 and e["type"] in ("task.dispatched", "approval.requested")]
+        return request, order, seen, hub
+    finally:
+        server.should_exit = True
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _every_claim_is_cited(request):
+    """Each claim of each planned step is anchored in the report: the synthesis leaves no step or branch out."""
+    anchors = [f"[[claim:{step['id']}/{claim}]]" for step in request["plan"]["steps"] for claim in step["claim_ids"]]
+    assert anchors and all(anchor in request["report"] for anchor in anchors), (anchors, request["report"])
+
+
+async def test_default_init_config_runs_a_research_request_to_the_end_with_mock_agents(tmp_path):
+    request, order, _seen, _hub = await _run_default_init_request(tmp_path, "공개 데이터 예시 3개에서 행 수를 세고 보고해 줘")
+    # Planned once; the storage card comes with the plan, before the CP1 card; steps run only after CP1.
+    assert order == ["briefing", "precedent", "plan", "result_storage", "research_plan", "step", "research_evidence",
+                     "review", "synthesis"], order
+    assert request["plan"]["steps"] and request["results"]
+    _every_claim_is_cited(request)
+
+
+async def test_default_init_config_runs_a_multistep_research_plan_with_a_dependency(tmp_path):
+    request, order, _seen, _hub = await _run_default_init_request(tmp_path, "행 수를 두 단계로 세고 보고해 줘 [multistep]")
+    steps = request["plan"]["steps"]
+    assert [(step["id"], step["depends_on"]) for step in steps] == [("s1", []), ("s2", ["s1"])]
+    assert order.count("step") == 2 and order.index("research_plan") < order.index("step"), order
+    assert set(request["results"]) == {"s1", "s2"}
+    _every_claim_is_cited(request)
+
+
+async def test_default_init_config_runs_a_branched_research_plan_to_the_end(tmp_path):
+    request, order, _seen, _hub = await _run_default_init_request(tmp_path, "두 갈래로 행 수를 세고 보고해 줘 [branched]")
+    plan = request["plan"]
+    assert [branch["id"] for branch in plan["branches"]] == ["b1", "b2"]
+    assert {step["id"]: step["branch"] for step in plan["steps"]} == {"s1": "b1", "s2": "b2", "s3": "synthesis"}
+    assert order.count("step") == 3 and set(request["results"]) == {"s1", "s2", "s3"}, order
+    assert order[-2:] == ["review", "synthesis"], order
+    _every_claim_is_cited(request)
+
+
+def _cp2_warnings(seen):
+    return [e["data"].get("summary", "") for e in seen
+            if e.get("type") == "approval.requested" and e["data"].get("kind") == "research_evidence"]
+
+
+async def test_a_failing_branch_is_reported_and_the_other_branch_and_synthesis_are_kept(tmp_path):
+    request, order, seen, hub = await _run_default_init_request(tmp_path, "두 갈래로 행 수를 세고 보고해 줘 [branch-fail]")
+    ok = {sid: result.get("ok") for sid, result in request["results"].items()}
+    assert ok == {"s1": True, "s2": False, "s3": True}, ok  # b2 fails; b1 and the synthesis step still ran
+    assert request["results"]["s2"]["error"] == "mock step failure"
+    report = request["report"]
+    assert "[[claim:s1/c1]]" in report and "[[claim:s3/c3]]" in report, report
+    assert "[[claim:s2/c2]]" not in report, report  # nothing is concluded from the failed branch
+    # the failure is not silent, and it names the branch beside the step (#1220)
+    assert "s2 (갈래 b2): 단계 실패 또는 의존 단계 건너뜀 — mock step failure" in report, report
+    assert any("경고" in summary and "실패 단계" in summary for summary in _cp2_warnings(seen)), _cp2_warnings(seen)
+    from labhq.request_status import failed_step_ids, request_display_label
+    assert failed_step_ids(request) == ["s2"] and request_display_label(request) == "보고서 검토 대기 · 일부 실패 1"
+    synthesis_step = next(v for v in hub.store.all("task").values()
+                          if (v.get("payload") or {}).get("meta", {}).get("step_id") == "s3")
+    memo = json.dumps(synthesis_step["payload"].get("context"), ensure_ascii=False)
+    assert "실패한 갈래: b2" in memo and "mock step failure" in memo, memo  # the synthesis step is told which branch failed
+
+
+async def test_a_failing_step_is_reported_and_the_steps_before_it_are_kept(tmp_path):
+    request, order, seen, _hub = await _run_default_init_request(tmp_path, "행 수를 두 단계로 세고 보고해 줘 [step-fail]")
+    ok = {sid: result.get("ok") for sid, result in request["results"].items()}
+    assert ok == {"s1": True, "s2": False}, ok
+    report = request["report"]
+    assert "[[claim:s1/c1]]" in report and "[[claim:s2/c2]]" not in report, report
+    assert "s2: 단계 실패 또는 의존 단계 건너뜀 — mock step failure" in report, report
+    assert any("경고" in summary and "실패 단계" in summary for summary in _cp2_warnings(seen)), _cp2_warnings(seen)
+    from labhq.request_status import failed_step_ids
+    assert failed_step_ids(request) == ["s2"]  # a plan without branches names the step alone
+
+
+async def test_a_failed_step_in_team_mode_fails_the_request_after_one_replan(tmp_path):
+    """Recorded for #1220: without the research lane one failed step ends the whole request as failed."""
+    request, order, seen, _hub = await _run_default_init_request(
+        tmp_path, "팀 모드로 단계 하나가 실패하는 요청 [step-fail]", status="failed", work_kind="simple")
+    ok = {sid: result.get("ok") for sid, result in request["results"].items()}
+    assert ok == {"s1": True, "s2": True, "s3": False, "s4": False, "s5": False}, ok
+    assert request["results"]["s3"]["error"] == "mock step failure"
+    assert request["results"]["s4"]["error"].startswith("skipped: upstream s3"), request["results"]["s4"]
+    assert request["results"]["s5"]["error"].startswith("skipped: upstream s4"), request["results"]["s5"]
+    assert order[-1] == "replan" and order.count("step") == 3, order  # s4 and s5 never ran; one replan, then the end
+    assert request["error"] == "s3 실패: mock step failure"
+    assert request["report"].startswith("실패한 단계: s3"), request["report"]
+    assert [e["data"]["kind"] for e in seen if e.get("type") == "approval.requested"] == []  # no card for a failed team request
+
+
+async def test_every_branch_failing_ends_the_research_request_failed_before_cp2(tmp_path):
+    """Recorded for #1220: with no branch left the synthesis step is skipped and the request fails at once."""
+    request, order, seen, _hub = await _run_default_init_request(
+        tmp_path, "모든 갈래가 실패하는 요청 [all-branch-fail]", status="failed", work_kind="research")
+    ok = {sid: result.get("ok") for sid, result in request["results"].items()}
+    assert ok == {"s1": False, "s2": False, "s3": False}, ok
+    assert request["results"]["s3"]["error"].startswith("skipped: upstream s1"), request["results"]["s3"]
+    assert request.get("outcome") == "research_failed"
+    assert order == ["briefing", "precedent", "plan", "result_storage", "research_plan", "step", "step"], order
+    report = request["report"]
+    assert "| b1 | failed | s1 | s1: mock step failure | none |" in report, report  # each branch is named
+    assert "| b2 | failed | s2 | s2: mock step failure | none |" in report, report
+    assert "research_evidence" not in {e["data"].get("kind") for e in seen if e.get("type") == "approval.requested"}
+
+
+async def test_a_mock_step_whose_read_only_baseline_is_refused_fails_before_it_runs(tmp_path):
+    from types import SimpleNamespace
+    from labhq.adapters.mock import MockAdapter
+    from labhq.models import AgentSpec, Task
+
+    workdir = tmp_path / "work"
+    (workdir / "outputs").mkdir(parents=True)
+    emitted = []
+
+    async def emit(kind, data):
+        emitted.append(kind)
+
+    task = Task(agent_id="analyst", prompt="Write a result [artifact]", meta={"kind": "step", "step_id": "s1"})
+    agent = AgentSpec(id="analyst", name="Analyst", role="test", engine="mock")
+    ctx = SimpleNamespace(task=task, agent=agent, workdir=workdir, emit=emit,
+                          before_spawn=lambda: "감시할 경로를 읽을 수 없어 시작하지 않았습니다")
+    result = await MockAdapter(Settings()).run(ctx)
+    assert not result.ok and "읽을 수 없어" in result.error
+    assert not (workdir / "outputs" / "artifact.txt").exists() and "agent.status" not in emitted

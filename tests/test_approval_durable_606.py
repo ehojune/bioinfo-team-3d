@@ -441,17 +441,34 @@ async def test_reconnect_flush_does_not_send_a_decision_superseded_while_waiting
     assert hub.store.get("decision", card.id) is None
 
 
+@pytest.mark.parametrize("publish_barrier", [False, True])
 @pytest.mark.parametrize("operation", ["resolve", "close"])
-async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_hub, monkeypatch, operation):
+async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_hub, monkeypatch, operation, publish_barrier):
     hub = live_hub
     card, _ = pending_card(hub, "runner")
     entered, release, send_timed_out = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    publishing, publish_release = asyncio.Event(), asyncio.Event()
+    timeline = []
+    started = time.monotonic()
+    def mark(stage):
+        timeline.append((stage, round(time.monotonic() - started, 3)))
+    original_publish = hub.publish
+    async def publish(event, **kwargs):
+        mark("publish_enter")
+        publishing.set()
+        if publish_barrier:
+            await publish_release.wait()
+        await original_publish(event, **kwargs)
+        mark("publish_done")
+    monkeypatch.setattr(hub, "publish", publish)
     class Socket:
         async def send_text(self, payload):
+            mark("send_enter")
             entered.set()
             try:
                 await release.wait()
             except asyncio.CancelledError:
+                mark("send_cancelled")
                 send_timed_out.set()  # the send ended because its timer fired, not because the test released it
                 raise
     hub.runners["runner"] = Socket()
@@ -460,20 +477,50 @@ async def test_backpressured_runner_delivery_has_a_bound_even_after_cancel(live_
     monkeypatch.setattr("labhq.gateway.server.CLIENT_SEND_TIMEOUT_S", send_bound)
     action = hub.resolve_approval(card.id, True) if operation == "resolve" else hub.close_approval(card.id, "closed")
     task = asyncio.create_task(action)
+    def diagnostics():
+        loop = asyncio.get_running_loop()
+        action_error = repr(task.exception()) if task.done() and not task.cancelled() else None
+        stacks = {repr(t): [f"{f.f_code.co_filename}:{f.f_lineno}:{f.f_code.co_name}" for f in t.get_stack()]
+                  for t in asyncio.all_tasks() if not t.done()}
+        timers = [(round(h.when() - loop.time(), 3), repr(h)) for h in loop._scheduled if not h.cancelled()]
+        return (f"timeline={timeline!r}, now={time.monotonic()-started:.3f}, "
+                f"action_done={task.done()}, action_cancelled={task.cancelled()}, action_error={action_error}, "
+                f"runner_present={'runner' in hub.runners}, runner_lock={hub.runner_locks.get('runner')!r}, "
+                f"card_lock={hub._approval_lock(card.id)!r}, publish_entered={publishing.is_set()}, "
+                f"publish_released={publish_release.is_set()}, timers={timers!r}, stacks={stacks!r}")
     try:
-        await asyncio.wait_for(entered.wait(), 10)
+        try:
+            await asyncio.wait_for(entered.wait(), 10)
+        except asyncio.TimeoutError:
+            pytest.fail("send not reached: " + diagnostics())
         assert hub.store.get("approval", card.id) is None
         assert hub.store.get("approval_decision", card.id) is not None
         assert hub.store.get("decision", card.id) is not None
         for _ in range(3):
+            mark("outer_cancel")
             task.cancel()
             await asyncio.sleep(0)
+        if publish_barrier:
+            try:
+                await asyncio.wait_for(publishing.wait(), 10)
+            except asyncio.TimeoutError:
+                pytest.fail("publish not reached: " + diagnostics())
+            assert send_timed_out.is_set(), diagnostics()
+            assert "runner" not in hub.runners, diagnostics()
+            assert not task.done(), diagnostics()
+            mark("publish_release")
+            publish_release.set()
         done, _ = await asyncio.wait({task}, timeout=4 * send_bound)  # the configured bound plus 3x slack, not a long wait
-        assert task in done, "runner backpressure held cancellation and the card lock past the configured send timeout"
-        assert send_timed_out.is_set()
-        assert "runner" not in hub.runners
+        assert task in done, "runner backpressure held cancellation and the card lock past the configured send timeout: " + diagnostics()
+        assert send_timed_out.is_set(), diagnostics()
+        assert "runner" not in hub.runners, diagnostics()
     finally:
         release.set()
+        publish_release.set()
+        done, _ = await asyncio.wait({task}, timeout=1)
+        if not done:
+            task.cancel()
+            pytest.fail("cleanup did not finish: " + diagnostics())
         result = (await asyncio.gather(task, return_exceptions=True))[0]
     assert isinstance(result, asyncio.CancelledError)
     assert hub.store.get("decision", card.id) is not None

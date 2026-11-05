@@ -19,7 +19,7 @@ from labhq.request_status import is_terminal_request
 from labhq.runner.daemon import Runner
 from labhq.settings import DataZone, ProjectSettings, Settings
 from labhq.store import StateStore
-from labhq.util import free_port
+from labhq.util import free_ports
 
 REPO = Path(__file__).resolve().parents[1]
 TIMESTAMP_KEYS = {"ts", "created_at", "updated_at", "finished_at", "dispatched_at", "started_at", "ended_at",
@@ -29,9 +29,9 @@ TIMESTAMP_KEYS = {"ts", "created_at", "updated_at", "finished_at", "dispatched_a
 def lab_settings(tmp: Path, semantics: Any) -> Settings:
     s = Settings()
     s.gateway.state_dir = s.runner.state_dir = str(tmp / "state")
-    port = free_port()
+    port, broker_port = free_ports(2)
     s.gateway.port, s.gateway.url = port, f"ws://127.0.0.1:{port}"
-    s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = free_port(), "mock", 0.05
+    s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = broker_port, "mock", 0.05
     s.runner.workspace_root = str(tmp / "runs")
     s.runner.talent_dir = str(tmp / "talent")
     s.runner.agents_dir = str(tmp / "agents")

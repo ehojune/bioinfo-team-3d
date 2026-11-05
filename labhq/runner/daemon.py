@@ -32,7 +32,7 @@ import yaml
 from .. import disk_space, durable
 from ..adapters import (adapter_preflight_error, get_adapter, is_read_only_task, read_only_profile,
                         read_only_refusal)
-from ..adapters.base import RunContext
+from ..adapters.base import ProcessBoundaryGate, RunContext, atlas_credentials, expand_env
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
                               awrite_owned_bytes, awrite_owned_many, remove_entry, write_owned)
@@ -68,6 +68,8 @@ from ..util import INPUT_STEP_ID, output_relpath, short, tool_input_fingerprint
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
 from .approvals import Broker
+from .annot_broker import AnnotBroker, ENABLED_ENV as ATLAS_ENABLED_ENV, atlas_allowed, refuse_credential_copy
+from ..tools.annot_alphagenome_atlas import credential, without_credentials
 from .codex_sandbox import SandboxWatch
 from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
 from . import local_jobs
@@ -326,7 +328,10 @@ class Runner:
     _ack_last = 0.0  # monotonic time the last ack commit finished
     _shutdown_deadline: float | None = None  # time.monotonic() when `shutdown()` must be done
 
-    def __init__(self, settings: Settings):
+    process_boundary = ProcessBoundaryGate()  # default also covers lightweight test runners
+
+    def __init__(self, settings: Settings, *, process_boundary: bool = False):
+        self.process_boundary = ProcessBoundaryGate(process_boundary)
         settings.runner.validate_wsl()
         self.s = settings
         # The loop and its thread, noted by `_send_durably`: a message committed on the durable writer thread asks
@@ -393,8 +398,10 @@ class Runner:
                              on_approval_timeout=self._on_approval_timeout, on_local_job=self._on_local_job,
                              on_restricted=self._on_restricted,
                              lookup_admission=None if limit is None else LookupAdmission(
-                                 settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit))
+                                 settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit,
+                                 precedent_share=settings.annot.precedent_lookup_share))
         self.scheduler = Scheduler(settings.hpc)
+        self.annot_broker = AnnotBroker(self.broker, settings)
         self._local_procs: dict = {}  # job id -> the child this runner started (reaped when polled), #675
         self._local_watch: asyncio.Task | None = None  # the local job poller, started with the first job
         self.connected = asyncio.Event()
@@ -468,8 +475,17 @@ class Runner:
             os.umask(0o077)  # task inputs created by this runner and its agents stay private
         self.registry.load()
         log.info("runner %s: %d agents", self.s.runner.id, len(self.registry.agents))
+        async def serve_broker() -> None:
+            # uvicorn ends a failed start (a port another process took) with sys.exit(3). As the SystemExit of a task it
+            # leaves the event loop and takes the rest of a test worker down with it (#1238); a start failure is an error.
+            try:
+                await self.broker.serve()
+            except SystemExit as exit_:
+                raise RuntimeError(f"runner broker could not start on 127.0.0.1:{self.s.runner.broker_port} "
+                                   f"(uvicorn exit code {exit_.code}; is the port already in use?)") from None
+
         try:
-            loops = [self.broker.serve(), self._connection_loop()]
+            loops = [serve_broker(), self._connection_loop()]
             if self.s.hpc.scheduler != "none":
                 loops.append(self._job_watch_loop())
             else:
@@ -828,6 +844,13 @@ class Runner:
                         "engine_cli_versions": dict(self.engine_versions or {}),
                         "platform": sys.platform,
                         "environment": {key: os.environ[key] for key in LOGIN_PATH_ENV if os.environ.get(key)}}
+        # The runner registers the AlphaGenome tools, so it is the one that knows whether they exist: the key file on its
+        # account and the client in its Python. Only the fact travels; the gateway never looks for the key (#1200).
+        try:
+            from ..tools import annot_keys, annot_regulatory
+            capabilities["alphagenome_ready"] = bool(annot_keys.read_key(self.s)) and annot_regulatory.alphagenome_client_available()
+        except Exception:  # noqa: BLE001 - a probe that cannot run says "not ready", never blocks the registration
+            capabilities["alphagenome_ready"] = False
         local_software = getattr(self, "local_software", None)
         if local_software is not None:
             capabilities["local_software"] = local_software
@@ -1250,9 +1273,26 @@ class Runner:
                 # A second cancel can interrupt the receipt read. Still send conservative UNKNOWN, then preserve
                 # cancellation; the queued barrier never mutates the binding or manufactures a finished receipt.
                 costs, interrupted = {"cost_usd": None, "cost_known": False}, again
+            # A run cancelled after its work folder was made still reports the folder: the gateway tells "cancelled
+            # before any folder existed" (nothing to bundle) from a folder whose record was lost (#1212).
+            made = self.__dict__.get("workspaces", {}).get(task.id)
+            folder = {"workdir": str(made.dir), "workdir_id": made.dir.name} if made is not None else {}
+            if cancelled and made is not None:
+                try:
+                    paths, note = await asyncio.to_thread(
+                        made.scan_outputs, self._zones(), self.s.runner.reference_scan_max_entries,
+                        self.s.runner.reference_scan_max_depth)
+                    folder["unreported_outputs"] = paths
+                    if note:
+                        folder["step_warnings"] = [note]
+                except asyncio.CancelledError as again:
+                    interrupted = again
+                except Exception:
+                    log.exception("could not scan cancelled task outputs for %s", task.id)
+                    folder["step_warnings"] = ["Could not scan cancelled task outputs"]
             res = self._shutdown_result(
                 TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err, cleanup_evidence=cleanup,
-                           **costs),
+                           **folder, **costs),
                 cancelled=cancelled)
             base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
             # One unit: a second cancel arriving while this commits cannot leave the status without the result.
@@ -1322,8 +1362,10 @@ class Runner:
                                          args=["-m", "labhq.tools.local_job_mcp"], env=env, timeout_s=timeout_s))
         if "annot" in agent.builtin_mcp:
             # Read-only public lookups: no per-call approval, also for variants from restricted zones (PI 2026-10-06).
+            # annot_tools limits which of its tools the server offers (#1200): the server, not each engine, enforces it.
+            annot_env = {**env, "LABHQ_ANNOT_TOOLS": "*" if agent.annot_tools is None else ",".join(agent.annot_tools)}
             servers.append(McpServerSpec(name="labhq_annot", command=sys.executable,
-                                         args=["-m", "labhq.tools.annot_mcp"], env=env,
+                                         args=["-m", "labhq.tools.annot_mcp"], env=annot_env,
                                          auto_approve=True, timeout_s=literature_mcp_timeout_s(self.s)))
         if "wiki" in agent.builtin_mcp and self._wiki_tool_ready():
             # Read-only search over the PI's own notes; every call is logged to outputs/wiki_queries.jsonl.
@@ -1934,7 +1976,20 @@ class Runner:
             Event(type="task.result", data=result.model_dump(mode="json"), **base)])
         return result
 
+    async def _refuse_process_boundary(self, task: Task) -> TaskResult | None:
+        result = self.process_boundary.refusal(task)
+        if result is not None:
+            base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
+            await self.emit_all([
+                Event(type="agent.status", data={"state": "error", "error": result.error}, **base),
+                Event(type="task.result", data=result.model_dump(mode="json"), **base)])
+        return result
+
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
+        if getattr(self, "process_boundary", None) is not None:
+            refusal = await self._refuse_process_boundary(task)
+            if refusal is not None:
+                return refusal
         refusal = await self._refuse_unprotected_environment(task)
         if refusal is not None:
             return refusal
@@ -2112,6 +2167,10 @@ class Runner:
                 "작업 폴더 밖이라 쓰기는 평소처럼 승인을 거칠 수 있습니다.")
 
     async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
+        if getattr(self, "process_boundary", None) is not None:
+            refusal = await self._refuse_process_boundary(task)
+            if refusal is not None:
+                return refusal
         refusal = await self._refuse_unprotected_environment(task)
         if refusal is not None:
             return refusal
@@ -2458,6 +2517,11 @@ class Runner:
             for note in notes:
                 await emit("agent.log", {"level": "warn", "text": f"읽기 전용 쓰기 확인에서 제외: {note}"})
             try:  # staff read a copy without the gateway tokens, never the PI's file (#149 결정 16)
+                engine_config = getattr(self.s.engines, agent.engine.value, None)
+                atlas_engine_env = expand_env(engine_config.env) if engine_config is not None else {}
+                atlas_key = credential(dict(os.environ), atlas_engine_env, environment_env)
+                atlas_secrets = atlas_credentials(self.s, environment_env)
+                refuse_credential_copy(self.s, atlas_secrets)
                 staff_config = write_staff_config(self.s, self.s.path(self.s.runner.state_dir) / "staff")
             except (OSError, ValueError, yaml.YAMLError) as exc:
                 error = f"직원용 설정 사본을 만들 수 없어 실행을 거부합니다 ({type(exc).__name__})"
@@ -2518,7 +2582,7 @@ class Runner:
                     f"{agent.id}: 개인 경로 차단 중에는 셸 명령을 미리 허용하지 않고 승인 게이트로 보냅니다. "
                     "builtin_mcp에 approval이 없어 셸 명령이 모두 거부됩니다")})
             broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id, workdir=str(ws.dir),
-                                                        restricted=restricted_task(task, self.s))
+                                                        restricted=restricted_task(task, self.s), stage=task.meta.get("kind"))
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
@@ -2532,6 +2596,8 @@ class Runner:
                 PRIVATE_OPEN_READS_ENV: os.pathsep.join(private.open_reads),
             }
             env.update(environment_env)
+            env = without_credentials(env, atlas_secrets)
+            env[ATLAS_ENABLED_ENV] = "1" if atlas_key and atlas_allowed(agent, read_only=read_only) else "0"
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
             if self.broker.lookup_admission is not None:
@@ -2634,6 +2700,7 @@ class Runner:
                 on_started=lambda: self.controls.started(task.id),
                 on_cleanup=lambda evidence: self._cleanup_reports.__setitem__(task.id, evidence),
                 bench_observer=getattr(self, "_bench_observer", None),
+                process_boundary=self.process_boundary,
             )
             # External folders exposed to this step are its reproducibility inputs. Upstream outputs use the same
             # inputs/<step> spelling the bundle restores; other runner paths use ~/... under the runner account.
@@ -2707,6 +2774,7 @@ class Runner:
             self.active_roots[task.id] = (read_only, [ws.dir.resolve(), *(Path(d).resolve() for d in extra_dirs)])
             self.tool_contexts[task.id] = ctx
             try:
+                self.annot_broker.register(ctx, atlas_key)
                 refused = watch.take_baseline() if watch else None
                 if refused:  # fail closed: a run whose writes cannot be checked does not start
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refused)
@@ -2740,21 +2808,24 @@ class Runner:
                 if outcome["status"] == "rejected":
                     result = rejected_step(result, outcome["reason"])
             finally:
-                self.tool_contexts.pop(task.id, None)
-                ended = self.active_roots.pop(task.id, None)
-                # A submit command already running for this run lands in pending_jobs below; later ones are refused.
-                if in_flight := list(self.submitting.pop(task.id, ())):
-                    await asyncio.gather(*in_flight)
-                now = time.time()
-                if ended is not None:
-                    self.ended_roots.append((now, task.id, *ended))
-                horizon = now - self.s.runner.task_timeout_s - 60  # no read-only run is older than this
-                self.ended_roots = [entry for entry in self.ended_roots if entry[0] >= horizon]
                 self.broker.revoke_task_token(broker_token)
-                self.broker.finish_task(task.id)
-                if staff_config:  # this task's own copy; the next task gets a fresh one
-                    with contextlib.suppress(OSError):
-                        os.unlink(staff_config)
+                try:
+                    await self.annot_broker.finish(task.id)
+                finally:
+                    self.tool_contexts.pop(task.id, None)
+                    ended = self.active_roots.pop(task.id, None)
+                    # A submit already running lands in pending_jobs below; later ones are refused.
+                    if in_flight := list(self.submitting.pop(task.id, ())):
+                        await asyncio.gather(*in_flight)
+                    now = time.time()
+                    if ended is not None:
+                        self.ended_roots.append((now, task.id, *ended))
+                    horizon = now - self.s.runner.task_timeout_s - 60
+                    self.ended_roots = [entry for entry in self.ended_roots if entry[0] >= horizon]
+                    self.broker.finish_task(task.id)
+                    if staff_config:  # this task's own copy; the next task gets a fresh one
+                        with contextlib.suppress(OSError):
+                            os.unlink(staff_config)
 
         # Every job this run submitted, finished or not: _poll_jobs sends jobs.finished for them only after the run
         # ends, and a job the watcher saw finish while the agent still talked would otherwise never wake it (#281).
@@ -3215,6 +3286,28 @@ class Runner:
             return self._local_view(jid, j, logs=op == "status")
         return await self._submit_local_job(identity)
 
+    async def _local_job_disk_decision(self, decision, command: str, workdir: Path, task_id: str, agent_id: str | None,
+                                       request_id: str | None):
+        """The shell command's disk check for a job the runner starts (#1167): a download or unpack aimed at a drive that is
+        short on space asks the PI instead of starting. Only allow becomes ask; an unknown size is never blocked, and a short
+        drive with no known size only logs a warning. A probe bug never stops a command the policy already allowed."""
+        runner = self.s.runner
+        try:
+            check = disk_space.shell_check(
+                command, str(workdir), fail_gb=runner.disk_fail_free_gb, warn_gb=runner.disk_warning_free_gb,
+                warn_percent=runner.disk_warning_free_percent)
+        except Exception:  # noqa: BLE001
+            return decision
+        if check is None:
+            return decision
+        if check.action == "ask":
+            from ..policy import Decision
+            return Decision("ask", check.reason, updated_input=decision.updated_input)
+        await self.emit(Event(type="agent.log", task_id=task_id, agent_id=agent_id, request_id=request_id,
+                              data={"level": "warn", "text": check.reason, "tool_name": local_jobs.shell_tool(),
+                                    "policy_action": "allow", "policy_rule": "disk_space"}))
+        return decision
+
     async def _submit_local_job(self, identity: dict) -> dict:
         """Start one command as a job this runner owns: submitted, a PI or policy refusal, or an error.
 
@@ -3256,6 +3349,8 @@ class Runner:
             private_open_reads=ctx.private_open_reads if ctx else [], read_only=False)
         if decision.action == "deny":
             return {"submitted": False, "reason": decision.reason}
+        if decision.action == "allow":
+            decision = await self._local_job_disk_decision(decision, command, ws.dir, tid, aid, identity.get("request_id"))
         if decision.action == "ask":
             answer = await self.broker.request_approval(ApprovalRequest(
                 task_id=tid, agent_id=aid, request_id=identity.get("request_id"), kind="tool_permission",

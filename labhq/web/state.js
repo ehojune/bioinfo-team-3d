@@ -169,6 +169,14 @@ const REQUEST_STATUS_KO = { running: '진행 중', waiting_for_runner: '러너 �
   waiting_login: '로그인 대기', waiting_facilities_fix: '환경 수정 승인 대기', waiting_pi: 'PI 결정 대기',
   interrupted: '중단됨', done: '완료', failed: '실패', cancelled: '취소됨', rejected: '거부됨', review_pending: '보고서 검토 대기' };
 const requestStatusLabel = status => REQUEST_STATUS_KO[status] || String(status || '상태 모름');
+// A request that finished `done` with failed, skipped or never-run steps (#1220). The snapshot lists them
+// (failed_steps); a request followed live has only its step states, which say the same for the steps that ran.
+const FAILED_STEP_STATES = ['failed', 'error', 'skipped'];
+const partialFailureSteps = q => {
+  if (!q || !['done', 'review_pending'].includes(q.status)) return [];
+  if (Array.isArray(q.failed_steps)) return q.failed_steps.map(String);
+  return Object.entries(q.steps || {}).filter(([, state]) => FAILED_STEP_STATES.includes(state)).map(([id]) => id);
+};
 const needsPiReview = q => !!q && isTerminalRequest(q.status) && q.pi_review_pending === true && !q.pi_reviewed_at;
 const needsStorage = q => !!q && ['done', 'failed', 'cancelled', 'review_pending'].includes(q.status)
   && (q.status !== 'cancelled' || !!String(q.report || '').trim()) && !Object.keys(q.resultStorage || {}).length;
@@ -193,7 +201,10 @@ function processingLabel(q) {
 // The status with what the PI can do about it: resume an interrupted request, or which runner is still missing.
 function requestStatusText(q, approvals) {
   if (!q) return '';
-  if (needsPiReview(q)) return `${reviewLabel(q)} 대기`;
+  const failed = partialFailureSteps(q);
+  const partial = failed.length ? ` · 일부 실패 ${failed.length}` : '';
+  if (needsPiReview(q)) return `${reviewLabel(q)} 대기${partial}`;
+  if (failed.length) return `${requestStatusLabel('done')}${partial}`;
   const label = requestStatusLabel(q.status);
   if (q.status === 'interrupted') {
     const card = [...(approvals ? approvals.values() : [])].some(a => a && a.kind === 'resume' && a.request_id === q.id);
@@ -247,7 +258,13 @@ function deadlineLabel(q, nowSeconds) {
   const since = Number(clock.pi_since);
   const open = waiting && Number.isFinite(since) && clock.pi_since !== null ? Math.max(0, nowSeconds - since) : 0;
   const held = (Number(clock.held_s) || 0) + open;
-  const left = (Number(q.created_at) || nowSeconds) + Number(clock.limit_s) + held - nowSeconds;
+  // The gateway cancels at `deadline_at`, counted from when it accepted the request and moved by each closed PI wait.
+  // `created_at` of a request.created event is its ts, which lags the acceptance when the start is late, so it only
+  // stands in for an older gateway that sends no deadline (#1103). A PI wait still open is added here.
+  const deadline = Number(clock.deadline_at);
+  const base = clock.deadline_at !== null && clock.deadline_at !== undefined && Number.isFinite(deadline)
+    ? deadline : (Number(q.created_at) || nowSeconds) + Number(clock.limit_s) + (Number(clock.held_s) || 0);
+  const left = base + open - nowSeconds;
   let text = `시간 상한 켜짐 ${spanLabel(Number(clock.limit_s))} · ` + (left > 0 ? `남은 ${spanLabel(left)}` : '기한이 지났습니다(곧 취소)');
   if (held > 0) text += ` · PI 대기 제외 ${spanLabel(held)}`;
   if (waiting) text += ' · PI 결정 대기 중이라 시간이 가지 않습니다';
@@ -734,6 +751,7 @@ const snapshotTaskKind = task => task.kind || (task.step_id === 'followup' ? 'fo
 const staleTask = task => { const q = S.requests.get(task.request_id); return !!q && isTerminalRequest(q.status) && !POST_END_TASK_KINDS.has(snapshotTaskKind(task)); };
 function apply(ev, replay = false) {
   const effects = [];
+  if (!replay && ev.type === 'snapshot' && !ev.replay_gap && Number.isFinite(ev.seq) && ev.seq < S.lastSeq) return effects;
   // A snapshot sets the point itself, and the events it replays carry seqs it already covers. An event with no seq
   // (the demo, a local notice) is always applied.
   if (!replay && ev.type !== 'snapshot' && Number.isFinite(ev.seq) && ev.seq > 0) {
@@ -811,7 +829,12 @@ function apply(ev, replay = false) {
         q.followups = (r.followups || []).map(f => ({ ...f }));
         q.piNotes = (r.pi_notes || []).map(note => ({ ...note }));
         Object.assign(q.steps, r.step_status || {});
+        q.failed_steps = Array.isArray(r.failed_steps) ? r.failed_steps : undefined;
         for (const [sid, detail] of Object.entries(r.step_details || {})) Object.assign(stepDetail(r.id, sid), detail);
+        if (Object.hasOwn(r, 'facilities_projection')) {
+          for (const [key, detail] of S.stepDetails) if (key.startsWith(`${r.id}:`)) delete detail.facilities_projection;
+          for (const [sid, projection] of Object.entries(r.facilities_projection || {})) stepDetail(r.id, sid).facilities_projection = projection;
+        }
         if (r.review) q.review = r.review;
         // recent_events may no longer hold a long request's plan event: a planned active request is past briefing.
         // With no step started and no review yet it is still in 계획, waiting for the PI to approve the plan (CP1).
@@ -1135,6 +1158,11 @@ function apply(ev, replay = false) {
       feed({ who: 'system', text: short(message, 300), fullText: message, cls: 'alert' }, ts, rid);
       break;
     }
+    case 'request.facilities_projection': {
+      for (const [key, detail] of S.stepDetails) if (key.startsWith(`${rid}:`)) delete detail.facilities_projection;
+      for (const [sid, projection] of Object.entries(d)) stepDetail(rid, sid).facilities_projection = projection;
+      break;
+    }
     case 'request.facilities_fix': { const detail = stepDetail(rid, d.step_id), status = d.status || (d.ok ? 'succeeded' : 'failed'); detail.facilities_fix = { ...d, status }; const label = status === 'applied' ? '환경 수정 적용' : status === 'succeeded' ? '환경 수정 성공' : '환경 수정 실패'; feed({ who: 'facilities', text: `${label}: ${short((status === 'failed' ? d.error : d.action) || d.fix_id || '', 120)}`, fullText: `${label}: ${(status === 'failed' ? d.error : d.action) || d.fix_id || ''}`, cls: status === 'failed' ? 'alert' : '' }, ts, rid); break; }
     case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); if (d.ok === false && d.environment) detail.environment = d.environment; else delete detail.environment; if (d.facilities_fix) detail.facilities_fix = d.facilities_fix; delete detail.quota_resume_at; delete detail.quota_engine; delete detail.quota_deadline_at; delete detail.login_resume_at; delete detail.login_engine; delete detail.login_reason; syncHoldStatus(q); break; }
     case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncHoldStatus(q); break; }
@@ -1194,6 +1222,7 @@ function apply(ev, replay = false) {
       for (const a of S.agents.values()) for (const [tid, row] of [...a.tasks]) if (row.rid === rid) { a.tasks.delete(tid); S.taskControl.delete(tid); }
       q.status = isTerminalRequest(d.status) ? d.status : t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
       q.final_checkpoint = d.final_checkpoint || null;
+      q.failed_steps = Array.isArray(d.failed_steps) ? d.failed_steps : undefined;
       q.pi_review_pending = d.pi_review_pending === true; q.pi_reviewed_at = d.pi_reviewed_at || null;
       if (!replay && needsPiReview(q) && !wasPending) effects.push({type:'toast', text:`${q.status === 'done' ? '보고서가 준비됐어요' : '요청이 끝났어요'} · ${reviewLabel(q)} 대기`});
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) {
@@ -1338,7 +1367,7 @@ return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentToo
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel, deadlineLabel,
   isActiveRequest, isTerminalRequest, isPastRequest, officeRequests, sessionCostRequests, requestsCostTotal,
-  REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
+  REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, partialFailureSteps, processingLabel,
   needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, serviceWarning, demoBannerText,
   safeReportHref, safeReportImageHref, reportMarkdownHTML, reportWithPackage };
 })(globalThis);

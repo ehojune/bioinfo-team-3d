@@ -1,6 +1,6 @@
 import {answerRequired, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText} from '../../ui/decide.js';
 import {bindShutdown} from '../../ui/shutdown.js';
-import {stepWaitLabel} from '../../ui/tasks.js';
+import {stepWaitLabel, facilitiesLines} from '../../ui/tasks.js';
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
@@ -179,7 +179,8 @@ export function startLiveOffice(onState) {
       text({append: row => rows.push(row)}, 'p', '새 요청을 기다리는 중');
     for (const q of globalThis.LabHQState.sortRequests(S.requests.values())) {
       const status = globalThis.LabHQState.requestStatusText(q, S.approvals);  // R14: never a raw status
-      const key = JSON.stringify([q.text, q.status, status, q.phase, q.plan, q.steps, q.stepJobs, q.processing, q.review, q.error, q.report,
+      const recovery = [...q.plan.map(step => S.stepDetails.get(`${q.id}:${step.id}`)?.facilities_projection || null), S.stepDetails.get(`${q.id}:direct`)?.facilities_projection || null];
+      const key = JSON.stringify([q.text, q.status, status, q.phase, q.plan, q.steps, q.stepJobs, recovery, q.processing, q.review, q.error, q.report,
         q.report_appendix, q.execution_record, q.execution_record_truncated, q.report_truncated, q.report_appendix_truncated, q.followups, q.piNotes,
         q.assumptions, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, loadingAnswers.has(q.id)]);
       const prior = oldRows.get(q.id);
@@ -199,7 +200,13 @@ export function startLiveOffice(onState) {
         for (const value of q.assumptions) text(row, 'p', `· ${value}`);
         text(row, 'p', '바꾸려면 실행 중 메모로 알려 주세요.');
       }
-      for (const step of q.plan) text(row, 'p', `${step.id} · ${step.instruction || ''} · ${stepWaitLabel(q.steps[step.id] || 'pending', q.stepJobs[step.id])}`);
+      for (const step of q.plan) {
+        text(row, 'p', `${step.id} · ${step.instruction || ''} · ${stepWaitLabel(q.steps[step.id] || 'pending', q.stepJobs[step.id])}`);
+        const p = S.stepDetails.get(`${q.id}:${step.id}`)?.facilities_projection;
+        if (p) for (const line of facilitiesLines(p)) text(row, 'p', line);
+      }
+      const direct = S.stepDetails.get(`${q.id}:direct`)?.facilities_projection;
+      if (direct && !q.plan.some(step => step.id === 'direct')) for (const line of facilitiesLines(direct)) text(row, 'p', line);
       if (q.review?.status === 'review_unparsed') text(row, 'p', '리뷰 판정 실패. PI 확인이 필요해요');
       if (q.error) text(row, 'p', q.error);
       if (globalThis.LabHQState.needsPiReview(q)) {
@@ -293,6 +300,7 @@ export function startLiveOffice(onState) {
     ws.onmessage = event => {
       try {
         const ev = JSON.parse(event.data);
+        if (ev.type === 'snapshot' && !ev.replay_gap && Number.isFinite(ev.seq) && ev.seq < lastSeq) return;
         if (ev.type !== 'snapshot' && ev.seq && ev.seq <= lastSeq) return;
         for (const effect of apply(ev)) {
           if (effect.type === 'toast') notice(effect.text, effect.approval_id || null);

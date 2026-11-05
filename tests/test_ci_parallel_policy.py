@@ -258,3 +258,125 @@ def test_current_plain_language_patch_summary_is_metadata_only(summary, expected
     value = {"pr": 793, "rows": [{"sha": "abcdef0", "at": "2026-10-21 00:40", "text": "Technical detail.",
                                    "summary": summary}]}
     assert cs.record(yaml.safe_dump(value)) is expected
+
+
+# ---- #1242: a changed fixture reaches the tests that name it, and when none does, every routine Windows test ----
+
+def _fixture_root(tmp_path, sources):
+    from tests.test_ci_cohort823 import review
+
+    (tmp_path / 'tests').mkdir(exist_ok=True)
+    for name, text in sources.items():
+        (tmp_path / 'tests' / name).write_text(text, encoding='utf-8')
+    return review(sources['test_math.py'])
+
+
+FIXTURE = 'tests/fixtures/fake_deadline_cli.py'
+
+
+def test_a_changed_fixture_selects_the_test_that_runs_it_by_path_name_or_module(tmp_path):
+    source = 'FAKE = ROOT / "tests" / "fixtures" / "fake_deadline_cli.py"\ndef test_logic(): assert 1\n'
+    data = _fixture_root(tmp_path, {'test_math.py': source})
+    args = dict(root=tmp_path, node='test_logic')
+    assert not selection.include_windows('tests/test_math.py', source, data, changed=set(), **args)[0]
+    included, reason = selection.include_windows('tests/test_math.py', source, data, changed={FIXTURE}, **args)
+    assert included and 'refers to' in reason
+    by_module = 'from tests.fixtures import fake_deadline_cli\ndef test_logic(): assert 1\n'
+    data = _fixture_root(tmp_path, {'test_math.py': by_module})
+    assert selection.include_windows('tests/test_math.py', by_module, data, changed={FIXTURE}, **args)[0]
+
+
+def test_a_test_that_does_not_name_the_changed_fixture_stays_out_while_another_does(tmp_path):
+    source = 'def test_logic(): assert 1\n'
+    data = _fixture_root(tmp_path, {'test_math.py': source, 'test_other.py': 'RUN = "fake_deadline_cli.py"\n'})
+    included, reason = selection.include_windows('tests/test_math.py', source, data, changed={FIXTURE},
+                                                 root=tmp_path, node='test_logic')
+    assert not included, "another test names the fixture, so no guess is needed"
+
+
+def test_a_changed_fixture_that_no_test_names_runs_every_routine_windows_test(tmp_path):
+    source = 'def test_logic(): assert 1\n'
+    data = _fixture_root(tmp_path, {'test_math.py': source})
+    included, reason = selection.include_windows('tests/test_math.py', source, data,
+                                                 changed={'tests/fixtures/orphan_table.json'}, root=tmp_path,
+                                                 node='test_logic')
+    assert included and 'no collected test names' in reason
+
+
+def test_a_changed_file_outside_the_fixtures_is_not_read_as_one(tmp_path):
+    source = 'def test_logic(): assert 1\n'
+    data = _fixture_root(tmp_path, {'test_math.py': source})
+    assert not selection.include_windows('tests/test_math.py', source, data, changed={'tests/support/helper.txt'},
+                                         root=tmp_path, node='test_logic')[0]
+
+
+def test_the_real_fixture_only_change_of_pr_1235_now_reaches_its_windows_test():
+    """The hole: only tests/fixtures/fake_deadline_cli.py changed, and the test that runs it as a subprocess was not
+    chosen because nothing imports it."""
+    path = 'tests/test_request_deadline_descendants_1232.py'
+    text = (selection.ROOT / path).read_text(encoding='utf-8')
+    assert selection.references_fixture(text, FIXTURE)
+    included, reason = selection.include_windows(path, text, selection.policy(), root=selection.ROOT,
+                                                 changed={FIXTURE})
+    assert included, reason
+
+
+def test_a_common_file_name_is_matched_by_path_not_by_the_bare_name():
+    """#1245 review: `tests/fixtures/wiki/README.md` changed, and every test that mentions README.md was chosen while the
+    one that copies the wiki folder was not."""
+    readme = 'tests/fixtures/wiki/README.md'
+    assert not selection.references_fixture('the README.md of the repo explains this', readme)
+    assert not selection.references_fixture('conftest.py and __init__.py are not fixtures', 'tests/fixtures/conftest.py')
+    assert selection.references_fixture('shutil.copytree(ROOT / "tests/fixtures/wiki", dest)', readme)
+    assert selection.references_fixture('FIXTURE = Path(__file__).parent / "fixtures" / "wiki"', readme)
+    assert not selection.references_fixture('Path(__file__).parent / "fixtures" / "other"', readme)
+
+
+def test_the_real_wiki_readme_change_selects_the_test_that_takes_the_folder_and_not_the_readme_mentions():
+    from pathlib import Path
+
+    readme = 'tests/fixtures/wiki/README.md'
+    named = [p.as_posix() for p in sorted((selection.ROOT / 'tests').glob('test_*.py'))
+             if p.name != Path(__file__).name  # this file spells the fixture's name to test it
+             and selection.references_fixture(p.read_text(encoding='utf-8', errors='replace'), readme)]
+    assert [Path(p).name for p in named] == ['test_wiki_index.py'], named
+
+
+def test_many_changed_fixtures_scan_the_tests_once_each_not_once_per_test(tmp_path, monkeypatch):
+    """#1245 review: the per-fixture answer was kept in a 64-entry cache, so a change of more than 64 fixtures evicted it
+    for every collected test and the selection grew with tests x fixtures x test files."""
+    source = 'def test_logic(): assert 1\n'
+    fixtures = {f'tests/fixtures/data_{n:03d}.json' for n in range(100)}
+    # another test names every one of them, so each answer is "named" and the loop goes on to the next fixture
+    data = _fixture_root(tmp_path, {'test_math.py': source, 'test_other.py': ' '.join(sorted(fixtures))})
+    reads = []
+    original = Path.read_text
+
+    def counted(self, *args, **kwargs):
+        reads.append(self.name)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', counted)
+    selection._fixture_named_anywhere.cache_clear()
+    for _ in range(5):  # five collected tests see the same changed set
+        selection.include_windows('tests/test_math.py', source, data, changed=fixtures, root=tmp_path, node='test_logic')
+    assert reads.count('test_math.py') <= len(fixtures), "one scan per fixture, however many tests are selected"
+
+
+def test_a_data_fixture_is_not_matched_by_its_bare_stem_but_a_program_fixture_by_its_module_name():
+    """#1245 review: `tests/fixtures/npm/codex.cmd` selected 65 unrelated tests because the word `codex` occurs in them."""
+    assert not selection.references_fixture('engine = Engine.codex  # claude_code, expected result', 'tests/fixtures/npm/codex.cmd')
+    assert not selection.references_fixture('Engine.claude_code', 'tests/fixtures/quota/claude.txt')
+    assert not selection.references_fixture('the expected value', 'tests/fixtures/semantics/expected.yaml')
+    assert selection.references_fixture('shutil.copy("tests/fixtures/npm/codex.cmd", dest)', 'tests/fixtures/npm/codex.cmd')
+    assert selection.references_fixture('FIXTURES / "codex.cmd"', 'tests/fixtures/npm/codex.cmd')
+    assert selection.references_fixture('from tests.fixtures import repeat_fake_fixture', 'tests/fixtures/repeat_fake_fixture.py')
+
+
+def test_a_deeply_nested_fixture_reaches_the_test_that_reads_a_folder_above_it():
+    """#1245 review: `tests/fixtures/semantics/records/agents/contract/ag_seqtool.yaml` changed, and the test that reads
+    `fixtures/semantics/records` recursively was not chosen because it does not spell `agents` and `contract`."""
+    deep = 'tests/fixtures/semantics/records/agents/contract/ag_seqtool.yaml'
+    assert selection.references_fixture('RECORDS = Path(__file__).parent / "fixtures" / "semantics" / "records"', deep)
+    assert selection.references_fixture('for path in (ROOT / "tests/fixtures/semantics/records").rglob("*.yaml")', deep)
+    assert not selection.references_fixture('Path(__file__).parent / "fixtures" / "other" / "records"', deep)

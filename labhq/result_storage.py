@@ -603,6 +603,16 @@ def _reproduce_document(req: dict, settings, assets: Mapping[str, str],
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _json_block(value: Any) -> str:
+    """A record as JSON text in a code block. The review quotes the report, and a quoted `![..](../x.svg)` in plain
+    Markdown is a link of the progress record: the edition check then refuses the whole save over a figure the
+    reviewer only named (#1193). Inside a code block it stays text. The fence is longer than any run of backticks inside."""
+    body = json.dumps(value, ensure_ascii=False, indent=2)
+    longest = max((len(run) for run in re.findall(r"`+", body)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}json\n{body}\n{fence}"
+
+
 def draft_documents(req: dict, settings, included=None, assets=None, *, abstract: bool = False,
                     environment_records: Mapping[str, Any] | None = None,
                     bundle_readme: str = "") -> dict[str, str]:
@@ -617,13 +627,13 @@ def draft_documents(req: dict, settings, included=None, assets=None, *, abstract
         report = with_abstract_link(report) if abstract else abstract_first(report, lambda name: name in included)
     steps = (req.get("plan") or {}).get("steps") or []
     progress = ["# 진행 기록", "", *[f"- {s.get('id')}: {s.get('instruction', '')}" for s in steps],
-                "", "## 결정·카드", json.dumps(req.get("clarifications") or [], ensure_ascii=False, indent=2),
+                "", "## 결정·카드", _json_block(req.get("clarifications") or []),
                 "CP1: " + str((req.get("research_contract") or {}).get("approval", {}).get("state", "기록 없음")),
-                "", "## 수정 회차", json.dumps({"replans": [
+                "", "## 수정 회차", _json_block({"replans": [
                     {k: v for k, v in entry.items() if k != "prior_results"}
                     for entry in req.get("replan_history") or []],
-                    "review_progress": req.get("review_progress") or {}}, ensure_ascii=False, indent=2),
-                "", "## 검토", json.dumps(req.get("review") or {}, ensure_ascii=False, indent=2)]
+                    "review_progress": req.get("review_progress") or {}}),
+                "", "## 검토", _json_block(req.get("review") or {})]
     bibliography = re.search(r"(?im)^#{1,6}\s+(?:references|bibliography|참고(?:\s*문헌|\s*자료)?|출처)[^\n]*\n", report)
     citations = re.split(r"(?m)^#{1,6}\s+", report[bibliography.end():], maxsplit=1)[0] if bibliography else ""
     found = edition_sources.collect(

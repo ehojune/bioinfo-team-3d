@@ -13,7 +13,9 @@ from labhq.gateway.server import Hub
 from labhq.models import Task, TaskResult
 from test_wsl_setup import settings  # noqa: F401  (the fixture)
 
-DELAY_S = 0.2
+# A loop held by the commit is late by about DELAY_S; a busy shared runner makes it late by 0.2 s at most (0.196 s was
+# seen on CI). The two have to be far apart, or the limit measures the runner instead of the code (#1076).
+DELAY_S = 0.6
 LIMIT_S = DELAY_S / 2
 
 

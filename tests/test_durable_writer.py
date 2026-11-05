@@ -197,7 +197,9 @@ async def test_store_writes_commit_in_call_order(tmp_path, fresh_writer):
 
 
 async def test_loop_stays_responsive_while_fsync_stalls(tmp_path, monkeypatch, fresh_writer):
-    stall = SlowFsync(monkeypatch, 0.5)
+    # A loop held by an fsync is late by the whole stall; a busy shared runner makes it late by 0.24 s at most (seen on
+    # Windows CI), so the stall is long enough that the two do not meet (#1076).
+    stall = SlowFsync(monkeypatch, 0.8)
     gaps, stop = [], asyncio.Event()
 
     async def ticker():
@@ -216,9 +218,9 @@ async def test_loop_stays_responsive_while_fsync_stalls(tmp_path, monkeypatch, f
     elapsed = time.perf_counter() - started
     stop.set()
     await watcher
-    assert stall.count >= 4 and elapsed >= 4 * 0.5 * 0.9  # the writes really were slow
+    assert stall.count >= 4 and elapsed >= 4 * 0.8 * 0.9  # the writes really were slow
     assert stall.threads == {"labhq-durable-files"}  # and none of the stalls ran on the loop's thread
-    assert max(gaps) < 0.2
+    assert max(gaps) < 0.4
 
 
 class SlowCommit(sqlite3.Connection):
@@ -300,6 +302,29 @@ async def test_runner_shutdown_waits_for_queued_writes(tmp_path, monkeypatch, fr
     run.cancel()
     await asyncio.gather(run, return_exceptions=True)
     assert all(f.done() for f in futures)
+
+
+async def test_a_runner_whose_broker_port_is_taken_fails_with_an_error_not_a_system_exit(tmp_path, fresh_writer):
+    """uvicorn ends a failed start with sys.exit(3). As the SystemExit of the run_forever task it left the event loop and
+    ended the rest of an xdist worker's tests (PR #1236's run, #1238): now one test sees a RuntimeError."""
+    import socket
+
+    s = Settings()
+    s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
+    s.runner.workspace_root = str(tmp_path / "runs")
+    s.runner.talent_dir = str(tmp_path / "talent")
+    s.runner.agents_dir = str(tmp_path / "agents")
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        s.runner.broker_port = taken.getsockname()[1]
+        runner = Runner(s)
+        try:
+            with pytest.raises(RuntimeError, match="could not start") as raised:
+                await asyncio.wait_for(runner.run_forever(), 30)
+        finally:
+            runner.stop()
+    assert str(s.runner.broker_port) in str(raised.value)
 
 
 # ----- a crash in the middle of the queue -----

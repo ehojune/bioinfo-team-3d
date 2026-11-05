@@ -1,0 +1,10 @@
+pr: 1209
+rows:
+  - sha: "d4fcd2c"
+    at: "2026-11-01 02:40"
+    summary: "WSL을 골랐지만 얻지 못해 WSL 없이 진행하는 요청은 계획 prompt에도 그렇게 적혀, 실제로 돌지 않는 WSL을 가정한 계획이 나오지 않습니다."
+    text: "계획 prompt는 WSL을 실제로 얻은 요청에만 WSL 선택을 적고, fallback이면 이유를 보인다 (#1208)"
+  - sha: "f6c6ed3"
+    at: "2026-11-01 03:10"
+    summary: "manual에 WSL 선택 문구가 WSL을 얻은 요청에만 계획으로 가고, 얻지 못했으면 이유가 간다고 적었습니다."
+    text: "문서: WSL 선택 문구는 WSL을 얻은 요청에만 가고 fallback이면 이유가 간다 (#1208 리뷰 P1)"

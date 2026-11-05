@@ -41,6 +41,8 @@ def waiting_calls(monkeypatch):
 @pytest.mark.parametrize("failure", ["offline", "cli", "empty"])
 async def test_failed_consult_is_rejected_with_reason(tmp_path, target, failure):
     hub = Hub(settings(tmp_path))
+    # A consult is asked in the name of a request: with the pre-dispatch hold (#1139) the request has to exist.
+    hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
     routed = target.removeprefix("colleague:")
     hub.agents = {routed: {"engine": "mock"}}
     ask = AskRequest(task_id="blocked", agent_id="worker", request_id="r", to=target,
@@ -62,7 +64,10 @@ async def test_failed_consult_is_rejected_with_reason(tmp_path, target, failure)
         assert {"offline": "runner offline", "cli": "CLI exit 2", "empty": "empty"}[failure] in answer["reason"]
         assert "answer" not in answer
         assert (await hub.wait_asks([ask.id]))[0] == answer
-        assert hub.events[-1]["data"]["status"] == "rejected"
+        answer_events = [event for event in hub.events if event["type"] == "agent.answer"
+                         and event.get("task_id") == ask.task_id]
+        assert len(answer_events) == 1
+        assert answer_events[0]["data"]["status"] == "rejected"
     finally:
         hub.store.close()
 

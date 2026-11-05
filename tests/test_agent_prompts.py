@@ -35,3 +35,18 @@ def test_sci_reviewer_checks_overreach_in_any_review_and_quotes_its_evidence():
     assert "In every review, whatever its format" in text
     assert "overgeneralization" in text and "cherry-picking" in text and "speculation written as fact" in text
     assert "quote the exact sentence" in text and "evidence_quote" in text
+
+
+def test_sci_reviewer_prompt_names_only_tools_its_read_only_run_has():
+    """#1224: the reviewer always runs read-only (review, blind_draft). Its own text must not send it to PubMed or
+    bioRxiv tools the profile drops, and every labhq_annot tool it names must be one the profile keeps."""
+    import re
+    from labhq.adapters.read_only import read_only_profile
+    raw = yaml.safe_load((ROOT / "agents" / "core" / "sci_reviewer.yaml").read_text(encoding="utf-8"))
+    agent = AgentSpec.model_validate(raw)
+    profile = read_only_profile(agent)
+    text = " ".join(agent.system_prompt.split())
+    assert "the PubMed and bioRxiv tools return the record itself" not in text and "no PubMed or bioRxiv tool" in text
+    named = set(re.findall(r"labhq_annot (\w+)", text))
+    assert named and named <= set(profile.annot_tools or []), (named, profile.annot_tools)
+    assert "WebSearch" in profile.tools and "WebFetch" not in text

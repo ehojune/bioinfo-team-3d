@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: "7b72ef7"
+    at: "2026-11-01 04:14"
+    summary: "Atlas 조회가 끝난 뒤 연결 감시가 남아 응답을 막는 종료 경쟁을 고쳤습니다."
+    text: "stop flag를 watcher 취소 전에 설정하고 deadline의 실행 전·실행 중 취소와 watcher 종료 회귀를 확인했다. 최초 CI 원인은 미확정이다."

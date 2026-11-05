@@ -16,7 +16,7 @@ from .owned import case_sensitive_directory, is_link as _is_link
 # templates all run outside the engine's sandbox or plan mode, and a field added to AgentSpec later would be a new
 # channel nobody removed (#36). `read_only_profile` keeps who the staff member is and switches everything else off.
 READ_ONLY_FIELDS = {"sandbox": "workspace-write", "permission_mode": "default", "builtin_tools": "Read,Glob,Grep,Write,Edit",
-                    "tools": [], "builtin_mcp": [], "mcp": [], "plugin_dirs": [],
+                    "tools": [], "builtin_mcp": [], "annot_tools": None, "mcp": [], "plugin_dirs": [],
                     "allow_skills": False, "required_skills": [], "cli": None, "can_orchestrate": False}
 # Identity, persona, limits and denials: none of these lets the CLI run anything. project_dirs stay readable;
 # disallowed_tools (e.g. a Read deny on a data folder) only take away, so a read-only run keeps them.
@@ -87,6 +87,43 @@ def is_read_only_task(meta: dict | None, agent: AgentSpec | None = None) -> bool
             or (meta.get("agent_overrides") or {}).get("sandbox") == "read-only")
 
 
+TOOL_NOTICE_HEAD = "## Tools in this read-only run"
+
+
+SHELL_TOOL = "shell commands (they may write only in outputs/ and .tmp/)"
+
+
+def available_tools(fields: dict, denied: tuple | list = (), shell: bool = False) -> list[str]:
+    """The tools a read-only run really has, by the name an instruction would use (#1224).
+
+    Claude gets the file tools named in `builtin_tools`. Codex ignores that field: its read-only sandbox runs shell
+    commands (`shell`), which can write only in outputs/ and .tmp/, and it has no named file tools. Both keep the web
+    tools the profile kept and the labhq_annot tools of an explicit allowlist. A tool the staff file denies outright
+    (`disallowed_tools: [Write]`) is not listed; a denial of part of a tool (`Read(./data/**)`) leaves it."""
+    gone = {name for name in denied if isinstance(name, str) and "(" not in name}
+    names = [SHELL_TOOL] if shell else [name for name in (fields.get("builtin_tools") or "").split(",") if name]
+    names += [name for name in fields.get("tools") or [] if isinstance(name, str)]
+    names = [name for name in names if name not in gone]
+    annot = fields.get("annot_tools")
+    if "annot" in (fields.get("builtin_mcp") or []) and annot:
+        names.append("labhq_annot (" + ", ".join(annot) + ")")
+    return names
+
+
+def with_tool_notice(prompt: str, fields: dict, denied: tuple | list = (), shell: bool = False) -> str:
+    """`prompt` plus what this read-only run can use. The persona and the role text are written for the staff member's
+    ordinary run, where MCP servers and web tools exist; a read-only profile drops them, and without this the
+    instructions keep sending the model to tools it does not have (#1224). Appended once: a profile of a profile
+    keeps the notice it already has."""
+    if TOOL_NOTICE_HEAD in prompt:
+        return prompt
+    tools = ", ".join(available_tools(fields, denied, shell)) or "none"
+    others = "PubMed or bioRxiv tools, other labhq_annot tools" + ("" if shell else ", shell commands")
+    return (prompt.rstrip() + "\n\n" + TOOL_NOTICE_HEAD + "\nAvailable now: " + tools + ".\n"
+            "Every other tool or service named in the instructions above (for example " + others + ") is not "
+            "available in this run. Do not try it; say what you could not check instead.")
+
+
 def read_only_profile(agent: AgentSpec) -> AgentSpec:
     """The only spec a read-only task runs with: built from the staff member's identity, never from the sender.
 
@@ -105,18 +142,50 @@ def read_only_profile(agent: AgentSpec) -> AgentSpec:
         fields["builtin_mcp"] = ["approval"]
     elif agent.engine == "codex":
         fields["tools"] = [t for t in agent.tools if t in {"WebSearch", "WebFetch"}]
+    if annot_allowlist(agent):
+        # The one MCP server a read-only run may keep (#1055): labhq_annot, and only the tools that are both named by
+        # the staff file and in READ_ONLY_ANNOT_TOOLS. They are public read-only lookups that labhq counts, limits in
+        # time and records; the server offers nothing outside the list. A file without an explicit list gets nothing.
+        fields["builtin_mcp"] = [*fields["builtin_mcp"], "annot"]
+        fields["annot_tools"] = read_only_annot_tools(agent)
     if agent.id == "facilities":
         # Diagnosis is supplied as context; this staff member needs no execution or write tools.
         fields.update(sandbox="read-only", builtin_tools="", builtin_mcp=[], tools=[])
         kept["project_dirs"] = []
+    shell = agent.engine == "codex" and agent.id != "facilities"  # facilities runs with its shell disabled
+    kept["system_prompt"] = with_tool_notice(kept["system_prompt"], fields, kept["disallowed_tools"], shell)
     return AgentSpec(**kept, **fields)
 
 
+# The labhq_annot tools a read-only run may ever keep. A tool is added here on purpose, after someone decided that a
+# review or follow-up may call it: the staff file's own `annot_tools` list can only narrow this, never widen it (#1055).
+READ_ONLY_ANNOT_TOOLS = ("pdb", "chembl")
+
+
+def read_only_annot_tools(agent: AgentSpec) -> list[str]:
+    """What a read-only run keeps of the staff file's `annot_tools`: its explicit names that are also in
+    READ_ONLY_ANNOT_TOOLS. Nothing (the server stays off) for a file without the annot server or without a list."""
+    if "annot" not in agent.builtin_mcp or not agent.annot_tools:
+        return []
+    return [tool for tool in agent.annot_tools if tool in READ_ONLY_ANNOT_TOOLS]
+
+
+def annot_allowlist(agent: AgentSpec) -> bool:
+    return bool(read_only_annot_tools(agent))
+
+
+def _read_only_server_ok(agent: AgentSpec, server) -> bool:
+    if (agent.engine == "claude_code" and server.name == "labhq_approval"
+            and server.args == ["-m", "labhq.tools.approval_mcp"]):
+        return True
+    return (annot_allowlist(agent) and server.name == "labhq_annot" and server.args == ["-m", "labhq.tools.annot_mcp"]
+            and (server.env or {}).get("LABHQ_ANNOT_TOOLS") == ",".join(read_only_annot_tools(agent)))
+
+
 def read_only_mismatch(agent: AgentSpec, mcp_servers: list) -> str | None:
-    """Refuse a non-profile agent or any MCP server except the runner's scoped Claude permission gate."""
-    allowed = agent.engine == "claude_code" and all(
-        s.name == "labhq_approval" and s.args == ["-m", "labhq.tools.approval_mcp"] for s in mcp_servers)
-    if (mcp_servers and not allowed) or agent != read_only_profile(agent):
+    """Refuse a non-profile agent or any MCP server except the runner's scoped Claude permission gate and, for a staff
+    file with an explicit `annot_tools` list, labhq_annot offering exactly those tools."""
+    if any(not _read_only_server_ok(agent, s) for s in mcp_servers) or agent != read_only_profile(agent):
         return "read-only run refused: the agent is not the read-only profile"
     return None
 

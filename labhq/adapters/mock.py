@@ -2,7 +2,10 @@
 planning (DAG), reviewer revise loop, approvals, HPC hibernate/wake, and contract recruitment.
 
 Tokens in the request text steer it: [needs-approval], [hpc], [revise], [recruit], [question], [block],
-[revision-fail], [max-turns], [artifact].
+[revision-fail], [max-turns], [artifact]. In a research plan, [multistep] gives two dependent steps and
+[branched] two branches plus a synthesis step; [step-fail] and [branch-fail] fail step s2 of those plans and
+[all-branch-fail] fails both branches (#1207). In a team (non-research) plan, [step-fail] fails the bioinfo-agent step.
+Without a token the plan has one step.
 """
 
 from __future__ import annotations
@@ -16,6 +19,108 @@ import httpx
 
 from ..models import TaskResult
 from .base import AgentAdapter, RunContext, RunState
+
+def _is_schema(task, *fields: str) -> bool:
+    """Whether the task's output schema has all of `fields`: how the mock tells a research plan or step from a generic one."""
+    properties = (task.output_schema or {}).get("properties") or {}
+    return all(name in properties for name in fields)
+
+
+def _research_plan(t, a) -> dict:
+    """A valid research-contract plan (#1207): one step on a roster worker, no domain pack (topics left empty)."""
+    roster = [r["id"] for r in t.meta.get("roster", [])]
+    worker = next((name for name in ("analyst", "biologist", "data_steward") if name in roster),
+                  next((name for name in sorted(roster) if name != a.id), a.id))
+    marker = "(copy it into `intake`):"
+    intake = {}
+    if marker in t.prompt:
+        try:
+            intake = json.loads(t.prompt.split(marker, 1)[1].strip().split("\n\n", 1)[0])
+        except ValueError:
+            intake = {}
+    asked = (t.meta.get("request") or t.prompt.rsplit("PI's request:", 1)[-1]).strip().splitlines()[0][:300] or "mock request"
+    return {
+        "schema_version": 2, "topics": [], "checklist": {}, "suggested_next": [], "intake": intake,
+        "brief": {"question": asked, "purpose": "Exercise the research lane with a stand-in agent",
+                  "subject": "mock public data", "scope": "mock data only", "deliverables": ["one result table"],
+                  "completion_conditions": ["the result table is written"], "study_type": "technical",
+                  "primary_hypothesis": "", "null_or_alternatives": [], "distinguishing_observations": []},
+        "protocol": {"revision": 1, "analysis_unit": "mock row", "selection_criteria": ["every mock row"],
+                     "exclusion_criteria": ["none"], "comparators": ["none"], "primary_metrics": ["row count"],
+                     "validation_methods": ["file written"], "resource_limits": ["mock engine, no cost"],
+                     "stop_conditions": ["file missing"], "approval_conditions": ["CP1 before execution"],
+                     "not_applicable": {}, "data_boundaries": ["mock data only"],
+                     "statistics": {"applicable": False, "reason": "a stand-in run draws no inference"},
+                     "packs": []},
+        "pack_values": {}, "clarifying_questions": [],
+        **_research_shape(worker, asked + " " + t.prompt),
+        "recruit": [], "notes": "mock research plan",
+    }
+
+
+def _research_step(sid: str, worker: str, depends_on: list[str], branch: str | None = None) -> dict:
+    n = sid[1:]
+    step = {"id": sid, "agent_id": worker, "instruction": f"Write outputs/result{n}.tsv with the mock row count.",
+            "phase": "analysis", "claim_ids": [f"c{n}"], "input_refs": ["mock-input"],
+            "outputs": [f"outputs/result{n}.tsv"], "checks": ["file written"],
+            "evidence_slots": [{"id": f"e{n}", "required": True, "description": f"mock result table {n}"}],
+            "depends_on": depends_on}
+    if branch:
+        step["branch"] = branch
+    return step
+
+
+def _research_shape(worker: str, request: str) -> dict:
+    """Steps (and branches) of the mock research plan: one step, or `[multistep]` (s2 reads s1), or `[branched]`
+    (two independent branches and a synthesis step that reads both). `[step-fail]` makes s2 of a multistep plan
+    fail, `[branch-fail]` makes the second branch of a branched plan fail (each implies its plan shape)."""
+    if "[branched]" in request or "[branch-fail]" in request or "[all-branch-fail]" in request:
+        shape = {"branches": [{"id": "b1", "question": "First mock question", "evidence_type": "mock_table",
+                               "data_boundary": "mock data only"},
+                              {"id": "b2", "question": "Second mock question", "evidence_type": "mock_table",
+                               "data_boundary": "mock data only"}],
+                 "steps": [_research_step("s1", worker, [], "b1"), _research_step("s2", worker, [], "b2"),
+                           _research_step("s3", worker, ["s1", "s2"], "synthesis")]}
+        failing = "[branch-fail]" in request or "[all-branch-fail]" in request
+    elif "[multistep]" in request or "[step-fail]" in request:
+        shape = {"steps": [_research_step("s1", worker, []), _research_step("s2", worker, ["s1"])]}
+        failing = "[step-fail]" in request
+    else:
+        return {"steps": [_research_step("s1", worker, [])]}
+    if failing:
+        failed = ("s1", "s2") if "[all-branch-fail]" in request else ("s2",)
+        for step in shape["steps"]:
+            if step["id"] in failed:
+                step["instruction"] += " [step-fail]"
+    return shape
+
+
+_RESULT_COPY = re.compile(r"plan_sha256=([0-9a-f]{64}), step_id=(\S+?), claim_ids=(\[.*?\]), and fill evidence_slots="
+                          r"(\[.*?\])\. ", re.S)
+
+
+def _research_result(t) -> dict:
+    """The result ledger a research step returns: the plan hash, step and slots are copied from the prompt it was given."""
+    found = _RESULT_COPY.search(t.prompt)
+    plan_hash, step_id, claim_ids, slots = (found.group(1), found.group(2), json.loads(found.group(3)),
+                                            json.loads(found.group(4))) if found else ("0" * 64, "s1", ["c1"], [])
+    outputs = t.meta.get("required_outputs") or t.meta.get("outputs") or ["outputs/result.tsv"]
+    return {
+        "schema_version": 2, "plan_sha256": plan_hash, "step_id": step_id,
+        "claims": [{"id": cid, "revision": 1, "statement": "The mock result table was written.",
+                    "scope": "the mock input", "kind": "finding", "status": "supported", "importance": "major",
+                    "status_reason": "the file exists", "limitations": ["a stand-in agent"]} for cid in claim_ids],
+        "evidence": [{"id": "ev1", "kind": "experimental", "observation": "the mock result table",
+                      "status": "observed", "source": {"artifact_id": "a1", "locator": "row 1"},
+                      "directness": "direct", "source_level": "primary", "independence_group": "mock",
+                      "assessment_reason": "written by the planned step",
+                      "slots": [slot["id"] for slot in slots if isinstance(slot, dict) and "id" in slot]}],
+        "links": [{"claim_id": cid, "claim_revision": 1, "evidence_id": "ev1", "relation": "supports",
+                   "rationale": "the table is the planned result"} for cid in claim_ids],
+        "artifact_refs": [{"artifact_id": "a1", "path": outputs[0]}],
+        "not_established": [], "failures": [], "method_changes": [],
+    }
+
 
 class MockAdapter(AgentAdapter):
     engine = "mock"
@@ -38,12 +143,30 @@ class MockAdapter(AgentAdapter):
         t, a = ctx.task, ctx.agent
         kind = t.meta.get("kind", "step")
         request = t.meta.get("request", "") + " " + t.prompt
+        if ctx.before_spawn:  # the runner takes its output baseline here; without it no output of a mock step is hashed
+            refused = ctx.before_spawn()
+            if refused:  # a read-only baseline that cannot be taken fails the step before it runs
+                return TaskResult(task_id=t.id, agent_id=a.id, ok=False, error=refused)
         await ctx.emit("agent.status", {"state": "working", "model": "mock"})
         await asyncio.sleep(self.settings.runner.mock_delay_s)
         structured = None
         text = f"[mock:{a.id}] {kind} 완료 — {t.prompt.splitlines()[0][:80]}"
+        anchors = re.findall(r"\[\[claim:[^\]\s]+\]\]", t.prompt.split("Citable claims:", 1)[-1].split("Claims that cannot", 1)[0]) \
+            if kind == "synthesis" and "Citable claims:" in t.prompt else []
+        if anchors:  # the research report: every conclusion carries the anchor of the claim it rests on
+            anchors = list(dict.fromkeys(anchors))  # one sentence per claim, so no step or branch is left out
+            text = ("## 요약\n\n모의 결과 표가 작성되었습니다 " + anchors[0] + ".\n\n## 결론\n\n"
+                    + "".join(f"모의 단계의 결과 표가 작성되었습니다 {anchor}.\n\n" for anchor in anchors).rstrip("\n") + "\n")
 
-        if kind == "plan":
+        if kind == "plan" and _is_schema(t, "pack_values", "protocol"):
+            structured = _research_plan(t, a)
+        elif kind == "step" and _is_schema(t, "plan_sha256", "claims"):
+            structured = _research_result(t)
+            for name in t.meta.get("required_outputs") or t.meta.get("outputs") or []:
+                target = ctx.workdir / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("row\tcount\nmock\t1\n", encoding="utf-8")
+        elif kind == "plan":
             roster = {r["id"] for r in t.meta.get("roster", [])}
             # biologist ∥ data_steward → bioinfo-agent (routine preprocessing) → analyst (HPC) → qc_reviewer
             layout = [("biologist", []), ("data_steward", []), ("bioinfo-agent", ["data_steward"]),
@@ -69,6 +192,8 @@ class MockAdapter(AgentAdapter):
                     tokens += " [max-turns]"
                 if aid == "data_steward" and "[artifact]" in request:
                     tokens += " [artifact]"
+                if aid == "bioinfo-agent" and "[step-fail]" in request:
+                    tokens += " [step-fail]"
                 steps.append({"id": sid[aid], "agent_id": aid, "depends_on": d,
                               "instruction": f"{aid} 파트 수행{tokens}",
                               "outputs": ["artifact.txt"] if "[artifact]" in tokens else []})
@@ -84,6 +209,8 @@ class MockAdapter(AgentAdapter):
             verdict = "out" if "[out-of-scope]" in request else "borderline" if "[borderline]" in request else "in"
             structured = {"scope": {"verdict": verdict, "reason": f"mock: {verdict} of lab scope"},
                           "clarifying_questions": questions, "steps": steps, "recruit": recruit, "notes": "mock plan"}
+        elif kind == "review" and _is_schema(t, "verdict", "issues") and not _is_schema(t, "scores"):
+            structured = {"verdict": "accept", "issues": []}  # the research lane's one review after CP2 (no scores)
         elif kind == "review":
             revise = "[revise]" in request and t.meta.get("revision", 0) == 0
             m = re.search(r"### (\S+) · analyst", t.prompt)
@@ -138,6 +265,9 @@ class MockAdapter(AgentAdapter):
         if kind == "step" and "[revision-fail]" in own and t.meta.get("revision", 0):
             return TaskResult(task_id=t.id, agent_id=a.id, ok=False, error="revision failed",
                               session_id=f"mock-session-{t.id[-4:]}", cost_usd=0.0)
+        if kind == "step" and "[step-fail]" in own:
+            return TaskResult(task_id=t.id, agent_id=a.id, ok=False, error="mock step failure",
+                              session_id=f"mock-session-{t.id[-4:]}", cost_usd=0.0)
         if kind == "step" and "[max-turns]" in own:
             return TaskResult(task_id=t.id, agent_id=a.id, ok=False, error="error_max_turns",
                               error_kind="error_max_turns", session_id=f"mock-session-{t.id[-4:]}", cost_usd=0.0)
@@ -162,7 +292,7 @@ class MockAdapter(AgentAdapter):
                 text += " · HPC 작업 제출 후 대기" if out.get("submitted") else " · HPC 제출 안 됨"
             else:
                 text += " · HPC 생략(mock 스케줄러가 아님)"
-        if t.resume_session_id:
+        if t.resume_session_id and not anchors:
             text += " · (깨어나서) 작업 결과 확인 후 마무리"
 
         if kind == "review" and structured is not None:
