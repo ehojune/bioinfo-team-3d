@@ -1,0 +1,5 @@
+rows:
+- sha: '9e87f6d'
+  at: 2026-11-05 11:00
+  text: PowerShell 디스크 확인에 종류 전체를 닫는 안전망을 둔다. 명령 문자열에 다운로드·압축 해제 cmdlet이나 별칭(Invoke-WebRequest·iwr·irm·curl·wget·Expand-Archive·Start-BitsTransfer, module 한정 이름 포함)이 단어로 있는데 tokenizer가 그만큼 명령 이름으로 찾지 못하면(할당식 $r = iwr, [void](...), 닫히지 않은 따옴표, 앞으로 나올 다른 감싸기) 통과시키지 않고 현재 폴더와 글에 적힌 드라이브를 확인한다. 여유가 기준 아래일 때만 묻고 deny는 없다. 문자열·주석 속 단어는 같은 확인을 받을 수 있다
+  summary: 할당식이나 감싼 호출 안의 다운로드가 디스크 확인을 피하던 부류를 구조적으로 닫습니다. 읽지 못해도 이름이 보이면 현재 드라이브를 확인합니다.
