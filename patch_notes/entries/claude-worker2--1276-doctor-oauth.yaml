@@ -1,0 +1,5 @@
+rows:
+- sha: '19530b2'
+  at: 2026-11-05 15:40
+  text: doctor의 Claude login 행이 claude auth status가 통과해도 직원 폴더 .credentials.json의 날짜를 읽는다. 갱신 토큰이 만료됐거나, 갱신 토큰 없이 접근 토큰이 만료됐으면 fail로 바꾸고 다시 로그인하라고 안내한다. 토큰 값은 쓰지 않고 호출도 하지 않는다. 서버에서 취소된 토큰과 OS 키체인 로그인은 알 수 없다는 한계를 04장 한영에 적는다
+  summary: 8차 시운전에서 doctor가 ok라 했는데 첫 직원 turn이 로그인 만료로 멈춘 문제를 doctor가 미리 알립니다.
