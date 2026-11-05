@@ -13,13 +13,14 @@ from labhq.integrations.github import publish_clean
 from labhq.models import AskRequest, TaskResult
 from labhq.orchestrator.cso import PLAN_PROMPT, REPLAN_PROMPT, RESEARCH_PLAN_PROMPT
 from tests.test_bioinfo_pipeline_pr import fake_pipeline_api, pipeline, settings
+from tests.manual_text import manual_text
 
 
 READY = {"type": "pipeline.ready", "request_id": "r", "task_id": "t"}
 
 
 def test_manual_matches_assignment_and_per_candidate_contribution_policy():
-    manual = (Path(__file__).parents[1] / "docs" / "manual.md").read_text(encoding="utf-8")
+    manual = manual_text()
     for current in (
         "지원하는 nf-core pipeline을 우선",
         "지원 밖의 복잡한 신규 구현은 engineer나 analyst",

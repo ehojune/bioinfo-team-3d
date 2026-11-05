@@ -74,7 +74,7 @@ def test_prose_in_the_same_normative_paragraph_remains_conservatively_full():
     assert not cs.document_change('README.md', before, after)
 
 
-@pytest.mark.parametrize('path', (*PATHS, 'AGENTS.md', 'HANDOFF.md', 'docs/manual.md'))
+@pytest.mark.parametrize('path', (*PATHS, 'AGENTS.md', 'HANDOFF.md', 'docs/manual.md', 'docs/manual/01-pi-text.md'))
 @pytest.mark.parametrize('before,after', [
     ('Authentication remains mandatory. Widgets stay closed.',
      'Authentication remains mandatory.\nWidgets stay closed.'),

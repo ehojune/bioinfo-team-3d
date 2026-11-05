@@ -310,7 +310,7 @@ def document_change(path: str, before: str, after: str) -> bool:
         if path not in {"README.md", "README.en.md", "STATUS.md", "patch_notes/README.md"}:
             if not re.fullmatch(r"docs/(?:[\w-]+/)*[\w-]+\.md", path):
                 return False
-            if path == "docs/manual.md" or re.search(
+            if path == "docs/manual.md" or path.startswith("docs/manual/") or re.search(
                          r"example|policy|ci[-_. /]|guard|approval|safety|security|operations|instruction|contract|protocol|"
                          r"config|package|runtime|dependenc|(?:^|/)(?:tests?|agents|handoff)(?:[./_-]|$)",
                          path, re.IGNORECASE):
