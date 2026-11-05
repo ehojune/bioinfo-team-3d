@@ -12,3 +12,7 @@ rows:
   at: 2026-11-05 16:04
   text: 리뷰 지적 반영. CLAUDE_CONFIG_DIR이 없으면 engines.claude_code.env의 HOME·USERPROFILE에서 기본 폴더를 찾고, 갱신 토큰이 비었거나 없으면 갱신 토큰 만료일을 믿지 않고 접근 토큰 만료로 판단한다
   summary: 직원 프로세스의 실제 홈을 보고, 일부만 지워진 로그인도 잡습니다.
+- sha: '3c6ccac'
+  at: 2026-11-05 16:15
+  text: 리뷰 지적 반영. CLAUDE_CONFIG_DIR을 ~/.labhq/claude-staff처럼 적어도 직원 프로세스의 홈 기준으로 풀어 .credentials.json을 읽는다
+  summary: 물결표로 적은 직원 폴더의 만료도 놓치지 않습니다.
