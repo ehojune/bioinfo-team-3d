@@ -91,3 +91,9 @@ def test_every_python_literal_form_is_hidden(line, leaked):
 def test_a_number_inside_an_expression_is_not_a_literal_secret():
     code = "token = 12345678 + offset\n"
     assert _clean(code) == code
+
+
+def test_a_string_on_the_next_line_is_not_joined_to_the_secret():
+    code = 'token = "hunter2xyz"\n"""docstring stays"""\n'
+    cleaned = _clean(code)
+    assert "hunter2xyz" not in cleaned and '"""docstring stays"""' in cleaned

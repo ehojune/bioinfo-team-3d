@@ -59,7 +59,7 @@ _STRING_LITERAL = (r"[rbuf]{0,2}(?:\'\'\'[\s\S]*?\'\'\'|\"\"\"[\s\S]*?\"\"\""
                    r"|\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*')")
 _CODE_SECRET_LITERAL = re.compile(
     r"(?im)(?P<name>" + _CODE_SECRET_NAME + r")(?:"
-    r"(?P<paren>\(\s*)?(?P<strings>" + _STRING_LITERAL + r"(?:(?:\s*\+\s*|\s+)" + _STRING_LITERAL + r")*)(?P<close>\s*\))?"
+    r"(?P<paren>\(\s*)?(?P<strings>" + _STRING_LITERAL + r"(?:(?:\s*\+\s*|[ \t]+)" + _STRING_LITERAL + r")*)(?P<close>\s*\))?"
     r"|(?P<number>[+-]?(?:0[xXoObB][0-9a-fA-F_]{6,}|\d[\d_]{5,}(?:\.\d+)?(?:[eE][+-]?\d+)?)[jJlL]?)"
     r"(?=\s*(?:[;#,)}\]]|$))"
     r"|(?P<word>(?![$\"'`])[^\s\"'`$;|&()<>={}\[\],]+))")
