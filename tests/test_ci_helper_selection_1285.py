@@ -118,6 +118,13 @@ def test_an_aliased_autouse_fixture_is_matched_by_the_helpers_own_name(tmp_path)
     assert not decide(tmp_path, source, 'test_unrelated', helper=helper)[0]  # a module import runs no fixture
 
 
+def test_a_fixture_registered_under_another_name_is_used_through_that_name(tmp_path):
+    helper = OS_HELPER + 'import pytest\n@pytest.fixture(name="public")\ndef internal(): yield\n'
+    source = 'from tests.support.lab import internal\ndef test_it(public): assert 1\ndef test_unrelated(): assert 1\n'
+    assert decide(tmp_path, source, 'test_it', helper=helper)[0]
+    assert not decide(tmp_path, source, 'test_unrelated', helper=helper)[0]
+
+
 def test_a_file_level_decision_still_selects_the_file(tmp_path):
     assert decide(tmp_path, SOURCE, None)[0]
 

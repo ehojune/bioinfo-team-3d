@@ -309,7 +309,9 @@ def _import_time_nodes(tree):
                 headers = [*statement.decorator_list, *statement.args.defaults,
                            *[d for d in statement.args.kw_defaults if d], *([statement.returns] if statement.returns else [])]
                 headers += [a.annotation for a in (*statement.args.posonlyargs, *statement.args.args,
-                                                   *statement.args.kwonlyargs) if a.annotation]
+                                                   *statement.args.kwonlyargs, *filter(None, [statement.args.vararg,
+                                                                                              statement.args.kwarg]))
+                            if a.annotation]
                 for header in headers:
                     nodes.extend(ast.walk(header))
             elif isinstance(statement, ast.ClassDef):
@@ -321,6 +323,20 @@ def _import_time_nodes(tree):
 
     visit(tree.body)
     return tuple(nodes)
+
+
+@lru_cache(maxsize=512)
+def _fixture_names(tree):
+    """{defining function name: the name pytest registers it under} for module-level fixtures with an explicit name."""
+    names = {}
+    for statement in tree.body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for decorator in statement.decorator_list:
+                if isinstance(decorator, ast.Call):
+                    for keyword in decorator.keywords:
+                        if keyword.arg == 'name' and isinstance(keyword.value, ast.Constant)                                 and isinstance(keyword.value.value, str):
+                            names[statement.name] = keyword.value.value
+    return names
 
 
 def _uses_imported_names(scope, names, bound, helper_autouse=(), origin=(), import_time=()):
@@ -476,7 +492,11 @@ def include_windows(path, text, data, *, root=ROOT, changed=frozenset(), node=No
                     scope = _boundary_scope(tree, node.split('[', 1)[0], aliases(tree))
                 helper_tree = _syntax(helper_text)
                 autouse = _scope_index(helper_tree, tuple(aliases(helper_tree).items()))[1]
-                if _uses_imported_names(scope, aliases(tree), bound, autouse, origin, _import_time_nodes(tree)):
+                # A fixture is used under the name it is registered with, which `@pytest.fixture(name=...)` can change.
+                registered = _fixture_names(helper_tree)
+                names_used = bound | {registered[o] for o in origin if o in registered} | {
+                    registered[b] for b in bound if b in registered}
+                if _uses_imported_names(scope, aliases(tree), names_used, autouse, origin, _import_time_nodes(tree)):
                     return True, 'directly imported changed OS test helper'
     return False, 'ordinary logic/schema/text; full Linux and nightly/manual Windows'
 
