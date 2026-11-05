@@ -586,10 +586,10 @@ async function openDemo(opts = {}) {
     const pending = new Map(), external = [], errors = [];
     const net = {open: new Map(), finished: 0, failed: []};  // #1272: page requests, for the boot-timeout report
     const inflight = new Map();  // #1076: CDP calls sent and not yet answered, for the deadline row
-    let lastReply = null, activeWait = null;
+    let lastReply = null, lastEvent = null, activeWait = null;
     ws.onmessage = e => {
-      lastReply = performance.now();
       const m = JSON.parse(e.data);
+      if (m.id) lastReply = performance.now(); else lastEvent = performance.now();  // an answer to a call, or an event
       if (m.method === 'Network.requestWillBeSent') net.open.set(m.params.requestId, m.params.request.url);
       if (m.method === 'Network.loadingFinished') { if (net.open.delete(m.params.requestId)) net.finished++; }
       if (m.method === 'Network.loadingFailed') {
@@ -621,6 +621,7 @@ async function openDemo(opts = {}) {
       return {wait: activeWait && {kind: activeWait.kind, label: activeWait.label, running_ms: Math.round(now - activeWait.at)},
         cdp_inflight: [...inflight.values()].slice(0, 8).map(call => ({method: call.method, age_ms: Math.round(now - call.at)})),
         last_cdp_reply_ago_ms: lastReply === null ? null : Math.round(now - lastReply),
+        last_cdp_event_ago_ms: lastEvent === null ? null : Math.round(now - lastEvent),
         requests_unfinished: net.open.size, requests_finished: net.finished, requests_failed: net.failed.length,
         served_by_static_server: served.length, page_errors: errors.length, chrome_exit_observed: exited !== null};
     };
