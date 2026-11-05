@@ -10,6 +10,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-05
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 10:40 | [`966aba8`](https://github.com/ehojune/bioinfo-team-3d/pull/1184/commits/966aba8) | **script block 안의 다운로드가 디스크 확인을 피하던 틈과 주석 속 예시 명령의 오탐을 닫습니다.**<br>PowerShell 토큰화에서 중괄호 script block과 괄호 안의 명령을 별도 명령으로 읽고, 문자열 밖의 block comment(<# |
+| 10:20 | [`32a1bf5`](https://github.com/ehojune/bioinfo-team-3d/pull/1184/commits/32a1bf5) | **main과 충돌을 풀어 curl 여러 출력 판정과 PowerShell 판정을 하나의 공통부로 쓰게 합니다.**<br>main을 합쳐 curl 출력 판정(#1265)의 여러 출력 처리를 PowerShell 판정과 공유하는 _assess에 넣는다. manual 한영의 PowerShell 설명과 로컬 job 확인 설명이 함께 남도록 충돌을 풀고, 적용하지 못하는 곳 목록에서 로컬 job 제출 경로를 뺀다 |
+
 ## 2026-11-04
 
 | 시간 | 커밋 | 주요 변경사항 |
@@ -182,10 +189,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:58 | [`29e9891`](https://github.com/ehojune/bioinfo-team-3d/pull/1184/commits/29e9891) | **표에 없는 PowerShell 옵션과 여러 destination 드라이브가 디스크 확인을 피하던 틈을 닫습니다.**<br>매개변수 표가 모르는 단어를 버리지 않고 두 가지로 읽는다. 스위치로 보는 읽기와 다음 단어를 값으로 받는 읽기를 모두 만들고 하나라도 대상 드라이브가 확실히 부족하면 묻는다. 표에 없는 유효한 BITS 옵션이 끼어도 위치형 source와 destination이 검사를 피하지 못한다. Source와 Destination의 쉼표 배열은 원소마다 폴더를 풀어 모든 드라이브를 검사한다. 의심이 네 번을 넘으면 위치 인자를 읽지 않는다. 읽을 수 없는 Set-Location 대상은 뒤 명령을 건너뛴다 |
 | 23:50 | [`6b36821`](https://github.com/ehojune/bioinfo-team-3d/pull/1175/commits/6b36821) | **결과 이벤트를 처리하는 중에 멈춤 요청이 겹친 Codex·Gemini 실행도 완료로 남고 halted로 바뀌지 않습니다.**<br>halt: 완료 flag(result_seen)가 선 실행도 halted로 덮지 않는다 (#1174 리뷰 P1) |
 | 23:50 | [`55de127`](https://github.com/ehojune/bioinfo-team-3d/pull/1189/commits/55de127) | **manual에 이 PC의 WSL에서 실행하기(--wsl, 웹 체크, run\_where)의 동작, 고정, 기다리는 시간, 안 될 때의 처리, 거부되는 조합을 적었습니다.**<br>문서: 이 PC의 WSL에서 실행하기(run_where) (#612) |
 | 23:49 | [`d9a513b`](https://github.com/ehojune/bioinfo-team-3d/pull/1186/commits/d9a513b) | **CoS 문헌 allowlist를 보존하고 Atlas MCP 등록과 broker 권한에도 적용합니다.**<br>merge: preserve CoS allowlist across Atlas integration |
 | 23:40 | [`4bd0d32`](https://github.com/ehojune/bioinfo-team-3d/pull/1189/commits/4bd0d32) | **WSL을 고른 요청은 설정 없음·점검 실패·거절·시간 초과를 모두 같은 안내 하나로 남기고 기다리지 않으며, CP1 수정 요청도 같은 실행 위치를 이어받고 잘못된 조합은 400으로 거부됩니다.**<br>WSL 준비 결과를 '준비됨/이유' 둘로 모으고(점검 예외 포함), 비동기 수정 요청에도 run_where를 잇고, 잘못된 조합은 400으로 돌려준다 (#612 리뷰) |
+| 23:40 | [`aecd193`](https://github.com/ehojune/bioinfo-team-3d/pull/1184/commits/aecd193) | **PowerShell 디스크 확인이 인자를 잘못 짝짓던 부류를 표 하나로 닫습니다.**<br>PowerShell 인자를 읽는 방식을 cmdlet별 매개변수 표로 바꿔 같은 부류의 지적을 한 번에 닫는다. 이름이나 모호하지 않은 접두어가 표에 있을 때만 매개변수로 보고, 값을 받는 매개변수와 공통 매개변수의 값은 위치 인자로 세지 않는다. 표에 없는 매개변수가 끼면 위치 인자는 읽지 않는다. Module 한정 이름도 같은 cmdlet으로 읽고, Set-Location과 Push-Location의 -Path와 -LiteralPath를 읽는다. 읽을 수 없는 위치 변경 뒤의 명령은 건너뛴다 |
+| 23:30 | [`252fb6d`](https://github.com/ehojune/bioinfo-team-3d/pull/1184/commits/252fb6d) | **읽지 못한 PowerShell 대상도 현재 폴더와 후보 드라이브를 확인하고, 줄 잇기·쉼표 배열·스마트 따옴표·드라이브 문자를 읽습니다.**<br>PowerShell를 PowerShell처럼 읽는 부분 네 가지를 맞춘다. 백틱 바로 뒤 줄바꿈은 줄 잇기로 보고, 쉼표 앞뒤에 공백이 있는 배열도 하나의 값으로 읽고, 스마트 따옴표를 ASCII 따옴표처럼 묶음으로 읽고, 드라이브 문자만 쓴 명령을 위치 변경으로 본다. 확실히 읽지 못한 대상은 건너뛰지 않고 모른다고 보아 현재 폴더와 명령이 이름 붙인 드라이브를 검사한다. 읽을 수 없는 Set-Location와 Pop-Location 뒤에도 마지막으로 아는 폴더가 후보로 남는다. 변수 경로를 건너뛰던 시험 네 건은 이 원칙에 맞게 바꾼다 |
 | 23:20 | [`be8a1b9`](https://github.com/ehojune/bioinfo-team-3d/pull/1186/commits/be8a1b9) | **진단 계측이 없는 Atlas 호출도 별도 실행해 두 경로의 응답과 키 비노출을 확인합니다.**<br>test: compare original Atlas transport with phase tracing |
 | 23:10 | [`ca61824`](https://github.com/ehojune/bioinfo-team-3d/pull/1175/commits/ca61824) | **멈춤을 요청한 순간 직원 CLI가 스스로 끝났다면, 이미 받은 결과를 실패(halted)로 바꾸지 않고 그대로 완료로 처리합니다.**<br>halt: 멈춤 안내를 쓰는 사이 끝난 실행은 halted가 아니라 결과로 둔다 (#1174) |
 | 23:10 | [`2f5d663`](https://github.com/ehojune/bioinfo-team-3d/pull/1192/commits/2f5d663) | **게이트웨이와 runner의 예약 설정이 다르면 채용이 실패한다는 점을 manual에 적었습니다.**<br>tests/test_recruit_plan_review3.py의 복구 뒤 변환 비용 시험이 hub를 옛 검사로 고정한 FakeHub와 예약이 켜진 runner를 섞어 변환이 ValueError로 시작도 못 하던 것을 고친다. 두 쪽을 같은 값으로 맞춘다. 제품 결함은 아니고 hub와 runner 중 한쪽만 false인 설정에서 계획 전 채용이 failed로 끝나는 것을 manual 한영에 적는다 |
@@ -206,11 +216,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 22:10 | [`ca08ab6`](https://github.com/ehojune/bioinfo-team-3d/pull/1195/commits/ca08ab6) | **ChEMBL 결과 파일에 API 원본이 남고, 잘못된 입력만으로는 외부 요청이 나가지 않습니다.**<br>CI 실패 둘과 리뷰 P2 둘을 고친다. 시험이 mcp 2.x에 없는 모듈에서 ToolError를 가져오던 것을 labhq.tools._mcpcompat에서 가져오게 하고, staff 쪽 파일에 REST 접두어를 쓰지 못하게 하는 시험에 걸린 ChEMBL 주소를 GTEx처럼 부분으로 이어 쓴다. ChEMBL target과 molecule과 activity의 API 원본 응답을 결과 파일에 보존하고 도구 응답은 요약만 준다. 모든 입력이 잘못되었으면 release 확인을 포함해 요청을 보내지 않고 오류만 기록한다 |
 | 22:00 | [`f970f84`](https://github.com/ehojune/bioinfo-team-3d/pull/1189/commits/f970f84) | **WSL에서 실행하도록 고른 요청은 같은 직원을 가진 Windows runner가 있어도 WSL 셋업 카드를 열고, WSL runner가 직원을 맡으면 그 요청의 분석을 WSL runner에 고정합니다.**<br>run_where=wsl: native runner가 같이 호스트해도 카드를 열고, WSL runner가 직원을 맡으면 요청의 bioinfo-agent를 WSL runner에 고정한다 (#612 리뷰 P1) |
 | 22:00 | [`b0682dd`](https://github.com/ehojune/bioinfo-team-3d/pull/1199/commits/b0682dd) | CI: Windows 명령의 -o 제거, Linux 시험 문구를 실제 메시지에 맞춤 (Refs #1198) |
+| 22:00 | [`5fe6139`](https://github.com/ehojune/bioinfo-team-3d/pull/1184/commits/5fe6139) | **PowerShell 디스크 확인의 리뷰 지적 세 건을 고쳐 검사를 건너뛰는 틈을 줄입니다.**<br>PowerShell 명령에 출력 경로와 무관한 $ 변수가 있어도(-Headers $h 같은 것) 더는 명령 전체를 건너뛰지 않고, 쓰는 경로 자체에 변수가 든 경우만 읽지 않는다. Expand-Archive는 대상을 생략하면 현재 폴더로 보고 검사한다. Start-BitsTransfer는 -TransferType Upload나 URL 대상이면 로컬 다운로드로 보지 않는다 |
 | 21:55 | [`3a6ed6d`](https://github.com/ehojune/bioinfo-team-3d/pull/1186/commits/3a6ed6d) | **같은 엔진·작업 환경 안에서 이어지는 Atlas 키 별칭도 직원 환경과 실행 설정에서 차단합니다.**<br>fix: trace Atlas aliases within engine and task mappings |
 | 21:41 | [`728fde6`](https://github.com/ehojune/bioinfo-team-3d/pull/1186/commits/728fde6) | **미병합 Atlas 조회의 사용법과 권한 회수, 설치 검증의 한계를 한영 매뉴얼에 명시합니다.**<br>docs: describe pending Atlas access and verification boundaries |
 | 21:40 | [`d2c95fd`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/d2c95fd) | **셸 확인이 2&gt;&amp;1 같은 출력 복제를 파일 이름으로 읽지 않습니다.**<br>셸 확인: 2>&1 같은 descriptor 복제는 파일로 보지 않는다 (#678 리뷰 P2) |
 | 21:40 | [`87bcdb7`](https://github.com/ehojune/bioinfo-team-3d/pull/1192/commits/87bcdb7) | **병렬 단계가 요청 예산을 넘겨 쓰던 틈을 기본으로 막습니다. false로 끄면 이전처럼 이미 쓴 비용만 봅니다.**<br>policy.budget.reserve_before_dispatch의 기본값을 false에서 true로 바꾼다. 모델 호출마다 보내기 전에 그 호출의 상한을 요청 예산에서 미리 잡으므로 병렬 단계가 각자 상한을 쓰고도 요청 상한을 넘지 못한다. 예시 설정 두 사본도 true로 맞추고, 켜진 기본값과 예시 설정, 꺼도 되는 것, 병렬 두 단계가 요청 상한을 넘지 못하는 것과 꺼 두면 두 단계 모두 시작하는 것을 tests/test_reserve_default_on.py로 고정한다 |
 | 21:30 | [`48d6264`](https://github.com/ehojune/bioinfo-team-3d/pull/1199/commits/48d6264) | README: CI 시간 상한 문서 링크 (Refs #1198) |
+| 21:30 | [`0d39c5d`](https://github.com/ehojune/bioinfo-team-3d/pull/1184/commits/0d39c5d) | **배열 destination 시험이 Linux에서도 같은 뜻으로 돌아갑니다.**<br>여러 destination 드라이브를 검사하는 시험 세 건이 Windows 경로 구분자에 기대 Linux에서는 폴더 이름이 달라져 실패했다. 구분자를 슬래시로 바꾸고 이유를 시험 도우미 주석에 적는다. 제품 코드는 바뀌지 않았다. Linux에서도 같은 시험이 통과함을 확인했다 |
 | 21:23 | [`69b9240`](https://github.com/ehojune/bioinfo-team-3d/pull/1188/commits/69b9240) | **고정 등급 fixture의 mock 전용 호출법을 한영 manual에 안내합니다.**<br>docs: 고정 등급 fixture 호출법과 live 차단 안내 (#625) |
 | 21:22 | [`04c3477`](https://github.com/ehojune/bioinfo-team-3d/pull/1186/commits/04c3477) | **격리 설치한 labhq CLI와 Atlas MCP의 가짜 응답 왕복을 확인하고 실제 서비스·Codex shell 미검증 경계를 기록합니다.**<br>docs: record installed Atlas CLI and MCP mock verification |
 | 21:13 | [`48a2d47`](https://github.com/ehojune/bioinfo-team-3d/pull/1199/commits/48a2d47) | CI: 새 시험 파일을 Windows inventory에 등록 (Refs #1198) |
@@ -219,6 +231,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 21:10 | [`2103272`](https://github.com/ehojune/bioinfo-team-3d/pull/1191/commits/2103272) | **멈춤·재개 명령이 보낸 순서대로 runner에 닿는다는 가정을 시험으로 고정해, 이 순서를 깨는 변경이 들어오면 시험이 실패합니다.**<br>시험: pause/resume 프레임의 송신 순서가 보존된다는 전제를 고정한다 (#1190) |
 | 21:10 | [`7a2a45e`](https://github.com/ehojune/bioinfo-team-3d/pull/1195/commits/7a2a45e) | **새 구조·화합물 조회 도구가 비서 직원에게 열리지 않게 합니다.**<br>chief_of_staff는 문헌 도구만 받도록 다른 조회 도구를 이름으로 막아 두었으므로 새 pdb와 chembl도 그 목록에 넣는다. 그 목록을 고정한 시험의 집합도 같이 고친다. 시험을 먼저 고쳐 수정 전 실패를 확인했다 |
 | 21:00 | [`f78e755`](https://github.com/ehojune/bioinfo-team-3d/pull/1173/commits/f78e755) | **셸 다운로드·압축 해제 확인이 명령을 bash처럼 읽어, 단어 앞의 #만 주석으로 보고 리다이렉션 대상 파일의 드라이브도 함께 봅니다.**<br>셸 줄을 bash처럼 읽는다: 단어 앞의 #만 주석이고 리다이렉션은 구분자가 아니다 (#678 Argon P1) |
+| 21:00 | [`911023e`](https://github.com/ehojune/bioinfo-team-3d/pull/1184/commits/911023e) | **리뷰가 요구할 사용자용 설명을 manual에 더하고 사실과 어긋난 한계 목록을 바로잡습니다.**<br>manual 한영의 셸 다운로드·압축 해제 확인 단락에 PowerShell 도구도 같은 확인을 받는다는 설명(읽는 cmdlet과 매개변수, PowerShell 문법으로 읽음, 읽지 않는 경우, 사전 승인 규칙)을 넣고 적용하지 못하는 곳 목록에서 PowerShell의 두 cmdlet과 접두 규칙 체인 항목을 뺀다. 체인 항목은 Claude Code가 체인을 명령마다 나눠 검사한다는 |
 | 21:00 | [`2552fd9`](https://github.com/ehojune/bioinfo-team-3d/pull/1186/commits/2552fd9) | **Atlas 조회가 금지된 직원에게 조회 권한을 발급하지 않아 직접 HTTP 우회도 막습니다.**<br>fix: enforce Atlas role denies before broker grants |
 | 20:50 | [`1a6301f`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/1a6301f) | **읽기 전용 task는 쓰지 못하는 project 폴더의 드라이브 때문에 멈추지 않습니다.**<br>디스크 감시: 읽기 전용 task는 project 폴더를 감시하지 않는다 (#678 리뷰 P2) |
 | 20:49 | [`f628168`](https://github.com/ehojune/bioinfo-team-3d/pull/1197/commits/f628168) | **정리본에서 코드 상자 안에 든 링크 문법이 깨진 링크로 오인되지 않도록 검사를 보완했습니다.**<br>정리본 링크 검사가 백틱·물결표 3개 이상의 길이가 다른 코드 펜스를 알아보게 한다 (#1193 후속). |
@@ -228,6 +241,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 20:32 | [`c48dbda`](https://github.com/ehojune/bioinfo-team-3d/pull/1186/commits/c48dbda) | **비서실장의 Atlas 조회를 막고 실제 조회 직원의 엔진 환경에서 키를 확인합니다.**<br>fix: respect Atlas staff roles and engine credential precedence |
 | 20:30 | [`df1d8f9`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/df1d8f9) | **manual의 디스크 감시 설명에 쓸 수 있는 project 폴더도 감시한다는 내용을 더했습니다.**<br>문서: 감시 대상에 project 폴더 (#678) |
 | 20:20 | [`b7ad386`](https://github.com/ehojune/bioinfo-team-3d/pull/1169/commits/b7ad386) | **디스크 감시가 직원이 쓸 수 있는 project 폴더가 다른 드라이브에 있어도 그 드라이브의 여유를 함께 봅니다.**<br>디스크 감시: 쓸 수 있는 project 폴더의 드라이브도 본다 (#678 리뷰 P1) |
+| 20:20 | [`30962b3`](https://github.com/ehojune/bioinfo-team-3d/pull/1184/commits/30962b3) | **PowerShell로 내려받거나 푸는 명령이 디스크 확인을 건너뛰던 틈을 닫습니다. allow에서 ask로만 엄격해지고 크기를 모르면 막지 않습니다.**<br>PowerShell 도구의 Invoke-WebRequest·Invoke-RestMethod(iwr·irm·curl·wget 별칭)의 -OutFile, Expand-Archive, Start-BitsTransfer도 Bash와 같은 디스크 확인(disk_space.powershell_check)을 받는다. 대상 드라이브 여유가 기준 아래거나 zip 목록의 실제 크기를 풀면 기준 아래로 내려가면 승인 카드로 묻고, 크기를 모르면 막지 않고 경고만 남긴다. PowerShell을 PowerShell로 읽는 tokenizer를 따로 두어 역슬래시는 경로 구분자, 작은따옴표는 문자 그대로, 큰따옴표는 백틱 이스케이프로 본다. 판정 공통부는 _assess로 모아 Bash 쪽 동작은 그대로다. 사전 승인 규칙 PowerShell(Invoke-WebRequest *) 등도 gate로 돌린다 |
 | 20:20 | [`db6b53f`](https://github.com/ehojune/bioinfo-team-3d/pull/1050/commits/db6b53f) | **비봉인 프로세스 진단의 사용법과 한계를 한영 매뉴얼에 안내합니다.**<br>docs: describe unsealed process diagnostic |
 | 20:14 | [`9f2d53a`](https://github.com/ehojune/bioinfo-team-3d/pull/1186/commits/9f2d53a) | **취소된 Atlas 응답의 계산을 멈추고 잘못된 API 키를 변이 미수록과 구분합니다.**<br>fix: stop late Atlas processing and classify invalid-key errors |
 | 20:08 | [`04087c1`](https://github.com/ehojune/bioinfo-team-3d/pull/1194/commits/04087c1) | **결과를 GitHub 저장소로 정리할 때 리뷰 인용문 속 그림 링크 때문에 저장이 실패하던 문제를 고쳤습니다.**<br>정리본 진행 기록(PROGRESS.md)의 JSON 블록을 코드 블록으로 실어, 리뷰어 인용문의 링크가 정리본 링크 검사에서 저장 전체를 막지 않게 한다 (#1193). |
