@@ -15,6 +15,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 13:00 | [`cf9c9fb`](https://github.com/ehojune/bioinfo-team-3d/pull/538/commits/cf9c9fb) | **여러 직원을 한 번에 점검할 때 전체 제한 시간이 직원 수만큼 늘어납니다.**<br>canary all의 deadline을 선택된 직원 수에 비례시킴 |
+| 12:44 | [`7a6636b`](https://github.com/ehojune/bioinfo-team-3d/pull/1052/commits/7a6636b) | **최신 코드에서도 합성 인증 중계 시험과 종료 확인을 유지합니다.**<br>Integrate main, preserve both Windows registrations and test ProcessBroker with current diagnostic lifecycle; protection remains unverified |
 | 12:13 | [`2154f17`](https://github.com/ehojune/bioinfo-team-3d/pull/1064/commits/2154f17) | **모의 실행의 알려진 실패와 정상 중단 증거를 알 수 없는 이벤트로 오인하지 않습니다.**<br>fix: recognize synthetic failure and reasoned stop events |
 | 12:10 | [`28b0e46`](https://github.com/ehojune/bioinfo-team-3d/pull/1270/commits/28b0e46) | **드라이브 상대 경로로 가득 찬 드라이브를 비껴가던 틈을 닫습니다.**<br>안전망이 D:a.zip처럼 슬래시 없는 드라이브 상대 경로의 드라이브도 후보로 모은다 |
 | 12:05 | [`fce1303`](https://github.com/ehojune/bioinfo-team-3d/pull/1064/commits/fce1303) | **모의 보호 검증을 최신 코드와 합치고 실제 보호가 미검증임을 유지합니다.**<br>Merge main into seal fixtures and preserve offline adapter |
@@ -533,6 +534,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 16:21 | [`2ba02be`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/2ba02be) | **producer 실행 오류를 inconclusive로 보고합니다.**<br>Report producer execution errors as inconclusive |
 | 16:17 | [`1de9508`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/1de9508) | **해시한 소스 바이트를 실행하고 broker bytecode cache를 검사합니다.**<br>Bind diagnostics to compiled source bytes |
 | 16:11 | [`48dd86f`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/48dd86f) | **폴더 산출의 파일 목록을 끝까지 읽지 못했으면 미완료로 처리하고, 연구 단계에는 폴더 안 파일을 근거로 인용하라고 안내했습니다.**<br>fix: 폴더 산출 스캔이 불완전하면 미완료로 하고 연구 단계 지침에 폴더 안 파일을 인용하라고 적음 (#1058 리뷰 P1) |
+| 16:11 | [`b235548`](https://github.com/ehojune/bioinfo-team-3d/pull/1052/commits/b235548) | **합성 broker가 별도 프로세스를 안전한 시작 방식으로 실행합니다.**<br>Use spawn and reject non-finite deadlines; verify start failure, abrupt exit and timeout cleanup with synthetic tests |
 | 16:10 | [`f4ff7d8`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/f4ff7d8) | **진단 소스 해시와 잘못된 broker 프레임 거절을 검증합니다.**<br>Verify diagnostic source hashes and broker frames |
 | 15:58 | [`bfd0aeb`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/bfd0aeb) | **매뉴얼의 단계 산출 설명에 폴더 산출을 파일별로 모으는 규칙과 미완료 조건을 적었습니다.**<br>docs: manual 한·영 출력 계약에 폴더 산출 규칙을 적음 (#1058) |
 | 15:56 | [`646c270`](https://github.com/ehojune/bioinfo-team-3d/pull/1059/commits/646c270) | **폴더 산출은 확인값이 있는 파일이 있어야 충족되고, 파일이 200개를 넘으면 미완료로 처리해 다음 단계가 거절하는 일이 없게 했습니다.**<br>fix: 폴더 산출은 hash 있는 파일이 있어야 충족되고 200개를 넘으면 미완료 (#1058 리뷰 P1) |
@@ -555,12 +557,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 13:47 | [`6d4bc37`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/6d4bc37) | **fixture를 읽지 못한 경우를 보호 pass로 세지 않고, 늦게 나온 interop marker도 기다려 관측합니다.**<br>Classify unreadable fixtures as inconclusive and wait for delayed atomic interop markers |
 | 13:32 | [`6b16f3c`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/6b16f3c) | **자손 lifecycle이 보장되지 않으면 detached probe 실행을 차단합니다.**<br>Guard detached probe without lifecycle ownership |
 | 13:21 | [`74212ef`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/74212ef) | **timeout 뒤 synthetic writer를 종료합니다.**<br>Cancel detached probe writer on timeout |
+| 13:20 | [`7ccce33`](https://github.com/ehojune/bioinfo-team-3d/pull/1052/commits/7ccce33) | **Windows test inventory에 broker 시험을 등록합니다.**<br>Register broker test in Windows inventory |
 | 13:02 | [`d907b67`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/d907b67) | **진단 barrier 신호를 완성한 뒤 게시합니다.**<br>Publish probe barriers atomically |
 | 12:56 | [`b49b57b`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/b49b57b) | **분리된 자식의 marker를 완성한 뒤 게시합니다.**<br>Publish detached witness atomically |
 | 12:49 | [`91e0a30`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/91e0a30) | **진단 환경의 비밀값 상속을 막고 writer 대기 시간을 조정합니다.**<br>Restrict probe environment and bound writer lifetime |
 | 12:43 | [`9bb491a`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/9bb491a) | **느린 launcher에서도 분리된 자식의 증거를 기다립니다.**<br>Fix detached witness after slow launch |
 | 12:40 | [`d9e499a`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/d9e499a) | **경계 진단 테스트를 Windows 검증 대상에 등록합니다.**<br>Register boundary probe Windows tests |
 | 12:24 | [`a54ea98`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/a54ea98) | **합성 upstream으로 process broker의 고정 응답을 검사합니다.**<br>test: exercise constant-response process broker (#1049) |
+| 12:22 | [`41e1d99`](https://github.com/ehojune/bioinfo-team-3d/pull/1052/commits/41e1d99) | **합성 인증 broker와 격리 socket 시험을 추가합니다.**<br>Add synthetic authentication broker prototype |
 | 12:20 | [`857204e`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/857204e) | **WSL 진단에 Python 인수를 직접 전달해 실행 여부를 확인합니다.**<br>fix: pass WSL interop arguments directly (#1049) |
 | 12:18 | [`c15b010`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/c15b010) | **확인된 경계 위반은 응답이나 종료 관측이 없어도 실패로 남깁니다.**<br>fix: preserve witnessed boundary failures (#1049) |
 | 12:14 | [`4e4936b`](https://github.com/ehojune/bioinfo-team-3d/pull/1051/commits/4e4936b) | **격리 진단에 독립 fixture와 합성 broker 연결 검사를 추가합니다.**<br>test: add independent boundary diagnostic harness (#1049) |

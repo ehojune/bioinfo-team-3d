@@ -4,6 +4,23 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1048 r9: broker integration
+
+Integrated main `df1c64c3` into PR #1052; resolved the Windows inventory conflict by retaining both registrations. Runtime broker code remains unchanged and unwired. Added two tests combining the actual ProcessBroker with the current diagnostic launcher and observer event verifier.
+
+| Verification | Result |
+|---|---|
+| Existing disposable Linux fixture, temporary source/dependency copies | 39 passed, including acknowledgement and upstream timeout integrations |
+| Windows broker/launcher/observer/seal/preview tests | 747 passed, 39 skipped, 1 xfailed |
+| Windows inventory validation | Passed |
+| Final-head CI and actual review | Pending; tracked in PR #1052 |
+
+Synthetic lifecycle frames validate; timeout reaps the direct upstream PID and closes the socket/listener. The receipt remains unsealed with descendants unverified. Namespace-child events do not inventory the broker or its descendants. The seal adapter still requires separate synthetic evidence and expectations; the broker supplies no trusted observer, protected storage or supervisor deadline ownership. Streaming/CLI compatibility, OS protection, hook/MCP preservation and independent cleanup remain UNVERIFIED. No real credentials, provider/model calls, provisioning, deployment, research, HPC or capability enablement.
+
+Keep draft/hold pending lead review. Recommendation: code-only merge is separable from later protection/CLI gates after final CI and actual review pass; do not enable the prototype.
+
+Procedure exception: the first pre-edit check was refused because it ran outside the registered checkout, but inventory/test edits followed. A subsequent check in the registered checkout passed before further work; the edits are within r9 scope. The assignment was not changed.
+
 ## 단계
 #1063 r10 · PR #1064의 synthetic 계약을 main `232e3abf`와 통합합니다. 실제 보호는 UNVERIFIED입니다.
 
@@ -2050,6 +2067,22 @@ Windows `test_ci_windows10m`·`test_ci_windows_phases`·`test_ci_boundary_previe
 ## 테스트 결과
 - Windows `test_contract_slot_repair`·`test_research_cp2`·`test_research_evidence` 244 passed.
 - 미검증: 실제 ② 요청에서의 재현, 범위 밖 claim을 만든 직원 프롬프트 쪽 원인(왜 claim_ids 밖 claim을 냈는지)은 보지 않았다.
+
+# #1048 authentication broker stage 1
+
+## Scope
+
+Unwired broker prototype with a run-scoped Unix socket, fixed HTTPS destination and constant-only credential-bearing responses. No real credentials or provider calls; do not enable it.
+
+## Verification
+
+- Disposable Linux fixture: 37 synthetic broker tests passed, including namespace socket access, fake DNS/TLS policy, redirect rejection, constant responses, timeout and direct process cleanup.
+- `spawn` replaces fork from the listener thread. Non-finite deadlines, unpicklable callables and abrupt upstream exit fail closed. Two tests combining the broker with #1047's unsealed diagnostic launcher passed: namespace access and timeout cleanup. Trusted lifecycle remains unverified.
+- Windows targeted tests: 60 passed, 37 broker tests skipped (Linux AF_UNIX required). Final-head CI and review are tracked in [PR #1052](https://github.com/ehojune/bioinfo-team-3d/pull/1052).
+
+## Hold
+
+Keep draft and hold until integration is reviewed. Actual protection, CLI compatibility and hook/MCP preservation are UNVERIFIED. Streaming and arbitrary provider responses are unsupported; timing and other covert channels are not bounded.
 
 # #1047 process boundary stage 1 — PR #1050
 
