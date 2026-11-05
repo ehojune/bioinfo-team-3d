@@ -27,6 +27,8 @@ PARENTS = {
     "source:tool.py": "parent:source",
 }
 PHASES = ("monitor_start", "seal", "exec_start", "exec_end", "cleanup", "final_snapshot", "monitor_stop")
+FAILURE_EVENTS = frozenset({"broker_death", "broker_timeout", "broker_transport_failure", "observer_death",
+                            "supervisor_interrupted", "deadline_expired", "mutation"})
 
 
 def identity(obj: dict[str, Any]) -> dict[str, Any]:
@@ -167,8 +169,8 @@ def validate(evidence: dict[str, Any], trusted: dict[str, Any]) -> Verdict:
         if not isinstance(kind, str):
             reject("malformed_observation")
             continue
-        if kind not in phases:
-            reject("mutation_observed" if kind == "mutation" else "unknown_observation")
+        if kind not in phases and kind not in FAILURE_EVENTS and kind != "stop":
+            reject("unknown_observation")
         if kind in {"exec_start", "exec_end", "cleanup"} and event.get("child_id") != trusted["child_id"]:
             reject("child_identity_mismatch")
         if kind in phases:
@@ -371,9 +373,7 @@ def _validate_controls(witness, trusted, reject):
            ("descendants", "sockets", "mounts", "handles", "broker_endpoints", "active_tokens")):
         reject("cleanup_resources_not_cleared")
 
-    failures = {"broker_death", "broker_timeout", "broker_transport_failure", "observer_death",
-                "supervisor_interrupted", "deadline_expired", "mutation"}
-    faults = [event for event in events if isinstance(event.get("type"), str) and event["type"] in failures]
+    faults = [event for event in events if isinstance(event.get("type"), str) and event["type"] in FAILURE_EVENTS]
     for fault in faults:
         reject(fault["type"] + "_observed")
     if type(end_time) is int and end_time >= deadline:
@@ -381,6 +381,9 @@ def _validate_controls(witness, trusted, reject):
         if not any(fault["type"] == "deadline_expired" for fault in faults):
             faults.append({"type": "deadline_expired", "time_ns": deadline})
     # A reason-coded stop cannot substitute for independent cleanup evidence.
+    for event in events:
+        if event.get("type") == "stop" and not any(event.get("reason") == fault["type"] for fault in faults):
+            reject("reasoned_stop_unverified")
     for fault in faults:
         stops = [event for event in events if event.get("type") == "stop" and event.get("reason") == fault["type"]]
         if len(stops) != 1:
