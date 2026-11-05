@@ -16,3 +16,7 @@ rows:
     at: "2026-11-06 06:30"
     summary: "가변 인자 주석과 이름을 바꿔 등록한 자동 설정도 보조 파일 사용으로 셉니다."
     text: "helper 선택: *args/**kwargs 주석과 fixture(name=...) 등록 이름을 사용으로 판정 (#1285)"
+  - sha: "6fe2425"
+    at: "2026-11-06 07:00"
+    summary: "이름으로 요청한 자동 설정도 보조 파일 사용으로 셉니다."
+    text: "helper 선택: usefixtures·getfixturevalue·indirect를 가리지 않고 node 범위의 fixture 이름 문자열을 사용으로 판정 (#1285)"
