@@ -36,7 +36,13 @@ assert.equal(S.requests.get('r1').status, 'cancelled', 'a late status event neve
 
 const html = fs.readFileSync(path.join(root, 'labhq/web/index.html'), 'utf8');
 assert.match(html, /id="runner-off"[^>]*hidden>러너 꺼짐 — 터미널에서 <code>labhq up<\/code>/);
-assert.match(html, /\$\('#runner-off'\)\.hidden = !\(MODE !== 'demo' && S\.conn === 'live' && S\.runnersKnown && !S\.runners\.size\)/);
+assert.match(html, /const warning = LabHQState\.serviceWarning\(S, IS_DEMO\)/);
+assert.match(html, /\$\('#runner-off'\)\.textContent = warning/);
+assert.match(html, /\$\('#runner-off'\)\.hidden = !warning/);
+assert.match(global.LabHQState.serviceWarning({conn: 'live', runnersKnown: true, runners: new Set()}), /러너 연결 끊김/);
+assert.equal(global.LabHQState.serviceWarning({conn: 'live', runnersKnown: true, runners: new Set(['r'])}), '');
+assert.equal(global.LabHQState.serviceWarning({conn: 'live', runnersKnown: false, runners: new Set()}), '');
+assert.equal(global.LabHQState.serviceWarning({conn: 'live', runnersKnown: true, runners: new Set()}, true), '');
 assert.match(html, /cancelRequest: rid => post\(`\/api\/requests\/\$\{encodeURIComponent\(rid\)\}\/cancel`, \{\}\)/);
 assert.match(html, /LabHQState\.isActiveRequest\(q\.status\) \|\| q\.status === 'interrupted'\) \? `<p class="req-actions"><button class="btn" id="req-cancel"/);
 assert.equal(global.LabHQState.requestStatusLabel('waiting_pi'), 'PI 결정 대기');

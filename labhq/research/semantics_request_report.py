@@ -82,6 +82,7 @@ def build_request_report(settings: Any, rid: str) -> dict:
     elif process_state == "unknown":
         warnings.append("gateway 실행 상태를 확인하지 못했습니다.")
     return {"request_id": rid, "shadow": observed, "observations": len(valid), "actual": actual,
+            "semantic_devices": req.get("semantic_devices") if isinstance(req.get("semantic_devices"), dict) else None,
             "setting": mode, "config_mismatch": mismatch, "warnings": warnings}
 
 
@@ -112,6 +113,10 @@ def _kinds(prov: Mapping[str, Any]) -> str:
 def render_request_report(rep: Mapping[str, Any]) -> str:
     actual, line = rep["actual"], rep["shadow"]
     out = [f"요청 {rep['request_id']} 비교", "저장된 그림자 관측과 현재 요청 기록을 비교합니다."]
+    devices = rep.get("semantic_devices")
+    if isinstance(devices, Mapping):
+        from .semantic_devices import execution_record
+        out += ["", execution_record(devices), ""]
     out.extend(rep["warnings"])
     if line:
         try:

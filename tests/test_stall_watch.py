@@ -11,6 +11,10 @@ from labhq.orchestrator.cso import failure_kind
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 
+# Only bounds a hang. Each wait below ends on an event, never on this clock: a loaded Windows CI runner is
+# sometimes slow for seconds, and a 2 s bound failed four PR runs (2026-10-11..13).
+WAIT = 60
+
 
 class _QuietProc:
     """A Codex CLI that says nothing for `quiet` seconds, then finishes its turn."""
@@ -165,7 +169,7 @@ async def test_quiet_cli_without_a_command_is_ended_as_transient(tmp_path, monke
                      finish=False, session_first=True)
 
     result = await asyncio.wait_for(
-        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), WAIT)
 
     assert killed == [41073]
     assert not result.ok and result.session_id == "t1"
@@ -190,7 +194,7 @@ async def test_started_mcp_call_without_completion_is_not_ended(tmp_path, monkey
                      prelude=prelude)
 
     result = await asyncio.wait_for(
-        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), WAIT)
 
     assert result.ok, result.error
     assert killed == []
@@ -220,7 +224,7 @@ async def test_completed_mcp_call_then_quiet_idle_cli_is_transient(tmp_path, mon
                      finish=False, session_first=True, prelude=prelude)
 
     result = await asyncio.wait_for(
-        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), WAIT)
 
     assert killed == [41073]
     assert not result.ok and failure_kind(result) == "transient"
@@ -239,7 +243,7 @@ async def test_quiet_cli_with_a_long_child_command_is_not_ended(tmp_path, monkey
     runner = _runner(tmp_path, monkeypatch, quiet=0.2, stall_warn_s=0.02, stall_retry_s=0.04)
 
     result = await asyncio.wait_for(
-        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), WAIT)
 
     assert result.ok, result.error
     assert killed == []
@@ -262,7 +266,7 @@ async def test_quiet_cli_with_only_resident_helpers_is_ended(tmp_path, monkeypat
                      finish=False)
 
     result = await asyncio.wait_for(
-        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), WAIT)
 
     assert not result.ok and failure_kind(result) == "transient"
     assert killed == [41073]
@@ -280,7 +284,7 @@ async def test_pending_uac_keeps_a_quiet_cli_running(tmp_path, monkeypatch):
     runner = _runner(tmp_path, monkeypatch, quiet=0.2, stall_warn_s=0.02, stall_retry_s=0.04)
 
     result = await asyncio.wait_for(
-        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), WAIT)
 
     assert result.ok, result.error
     assert killed == []
@@ -305,7 +309,7 @@ async def test_uac_that_disappears_is_rechecked_then_cli_is_ended(tmp_path, monk
                      finish=False, session_first=True)
 
     result = await asyncio.wait_for(
-        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), WAIT)
 
     assert checks >= 5
     assert killed == [41073]
@@ -327,7 +331,7 @@ async def test_retry_shorter_than_warning_uses_the_warning_limit(tmp_path, monke
     runner = _runner(tmp_path, monkeypatch, quiet=0.05, stall_warn_s=0.1, stall_retry_s=0.01)
 
     result = await asyncio.wait_for(
-        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), WAIT)
 
     assert result.ok, result.error
     assert killed == [] and _logs(runner) == []
@@ -347,7 +351,7 @@ async def test_unreadable_or_unknown_process_tree_is_not_ended(tmp_path, monkeyp
     runner = _runner(tmp_path, monkeypatch, quiet=0.2, stall_warn_s=0.02, stall_retry_s=0.04)
 
     result = await asyncio.wait_for(
-        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), WAIT)
 
     assert result.ok, result.error
     assert killed == []
@@ -375,8 +379,8 @@ async def test_temporary_process_snapshot_failure_is_rechecked(tmp_path, monkeyp
 
     running = asyncio.create_task(
         runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})))
-    await asyncio.wait_for(killed_event.wait(), 60)
-    result = await asyncio.wait_for(running, 60)
+    await asyncio.wait_for(killed_event.wait(), WAIT)
+    result = await asyncio.wait_for(running, WAIT)
 
     assert snapshots >= 4
     assert killed == [41073]

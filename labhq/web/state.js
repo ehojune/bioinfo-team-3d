@@ -17,14 +17,118 @@ function connectionLabel(conn, demo = false) {
   return {live: demo ? '데모(mock)' : '실시간', demo: '데모(mock)', connecting: '연결 중',
     offline: '연결 끊김 · 재시도 중', auth: '토큰을 확인해 주세요'}[conn] || '';
 }
+function serviceWarning(S, demo = false) {
+  if (demo) return '';
+  if (S.conn === 'offline' || (S.conn === 'connecting' && S.runnersKnown))
+    return '게이트웨이 연결 끊김 · 종료 또는 네트워크 문제일 수 있어요. 자동 재연결 중이며 계속되면 labhq status로 확인하세요.';
+  if (S.conn === 'live' && S.runnersKnown && !S.runners.size)
+    return '러너 연결 끊김 · 작업을 진행하지 못하고 있어요. labhq status로 확인한 뒤 labhq up으로 시작하세요.';
+  return '';
+}
 function demoBannerText(status) {
   const base = '데모입니다 — 실제 요청은 labhq up으로 띄운 사무실에서';
   const progress = status?.phase === 'waiting' ? `다음 데모 요청까지 ${status.remaining_s}초`
     : status?.phase === 'running' ? 'mock 요청 진행 중' : 'mock 데모 준비 중';
   return `${base} · ${progress}`;
 }
-const STAFF_NAMES = {cso:'CSO(부엉이)', chief_of_staff:'비서실장', biologist:'생물학자', data_steward:'데이터 관리자', lit_scout:'문헌 조사원', analyst:'분석가', engineer:'엔지니어', qc_reviewer:'품질 리뷰어', sci_reviewer:'과학 리뷰어', recruiter:'채용 담당', facilities:'시설팀', colleague:'동료 직원', 'bioinfo-agent':'생물정보 직원', pi:'나', hpc:'HPC', github:'GitHub', system:'시스템'};
-const STAFF_CHARACTERS = {cso:'owl', chief_of_staff:'penguin', biologist:'bear', data_steward:'squirrel', lit_scout:'fox', analyst:'raccoon', engineer:'octopus', qc_reviewer:'hedgehog', sci_reviewer:'turtle', recruiter:'beaver', 'bioinfo-agent':'otter'};
+const reportEsc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+function safeReportHref(value) {
+  const href = String(value || '').trim().replace(/^<|>$/g, '');
+  if (!href || /[\\\u0000-\u001f]/.test(href) || href.startsWith('//')) return '';
+  if (/^(?:https?:|mailto:)/i.test(href) || /^(?:#|\.\.?\/)/.test(href)) return href;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(href)) return '';
+  return /^[A-Za-z0-9]/.test(href) && !/[\s<>"']/.test(href) ? href : '';
+}
+function safeReportImageHref(value) {
+  const raw = String(value || '').trim().replace(/^<|>$/g, '');
+  if (/^data:image\/(?:png|jpeg|gif|webp|svg\+xml);base64,[A-Za-z0-9+/]*={0,2}$/i.test(raw)) return raw;
+  const href = safeReportHref(raw);
+  return href && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(href) && !href.startsWith('#') ? href : '';
+}
+function reportInline(value) {
+  const kept = [];
+  const keep = html => `\u0000${kept.push(html) - 1}\u0000`;
+  let text = String(value ?? '').replace(/\u0000/g, '');
+  text = text.replace(/!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_all, alt, raw) => {
+    const imageHref = safeReportImageHref(raw);
+    if (imageHref) return keep(`<figure><img src="${reportEsc(imageHref)}" alt="${reportEsc(alt)}"><figcaption>${reportEsc(alt)}</figcaption></figure>`);
+    const linkHref = safeReportHref(raw);
+    return keep(linkHref ? `<a href="${reportEsc(linkHref)}" target="_blank" rel="noopener noreferrer">${reportEsc(alt || raw)}</a>`
+      : `<span class="report-missing">그림 링크를 열 수 없음: ${reportEsc(alt)}</span>`);
+  });
+  text = text.replace(/\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_all, label, raw) => {
+    const href = safeReportHref(raw);
+    return keep(href ? `<a href="${reportEsc(href)}" target="_blank" rel="noopener noreferrer">${reportEsc(label)}</a>`
+      : reportEsc(label));
+  });
+  text = text.replace(/`([^`\n]+)`/g, (_all, code) => keep(`<code>${reportEsc(code)}</code>`));
+  text = reportEsc(text)
+    .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '<strong>$1</strong>')
+    .replace(/~~(?=\S)(.+?)(?<=\S)~~/g, '<del>$1</del>')
+    .replace(/(?<![A-Za-z0-9_*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![A-Za-z0-9_*])/g, '<em>$1</em>');
+  return text.replace(/\u0000(\d+)\u0000/g, (_all, index) => kept[Number(index)] || '');
+}
+function reportMarkdownHTML(markdown) {
+  const lines = String(markdown || '').replace(/\r\n?/g, '\n')
+    .replace(/\[\[\s*claim\s*:[^\[\]\n]+\]\]/gi, '[근거]').split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length;) {
+    const line = lines[i];
+    const fence = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+    if (fence) {
+      const code = []; i++;
+      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) code.push(lines[i++]);
+      i++; out.push(`<pre><code>${reportEsc(code.join('\n'))}</code></pre>`); continue;
+    }
+    const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) { const level = Math.min(6, heading[1].length + 1); out.push(`<h${level}>${reportInline(heading[2])}</h${level}>`); i++; continue; }
+    if (i + 1 < lines.length && /^\s*\|?.+\|.+\|?\s*$/.test(line) && /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[i + 1])) {
+      const cells = row => row.trim().replace(/^\||\|$/g, '').split('|').map(cell => cell.trim());
+      const header = cells(line); i += 2; const rows = [];
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim()) rows.push(cells(lines[i++]));
+      out.push(`<table><thead><tr>${header.map(cell => `<th>${reportInline(cell)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${header.map((_cell, n) => `<td>${reportInline(row[n] || '')}</td>`).join('')}</tr>`).join('')}</tbody></table>`); continue;
+    }
+    const item = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (item) {
+      const items = [];
+      while (i < lines.length) { const found = lines[i].match(/^\s*[-*+]\s+(.+)$/); if (!found) break; items.push(found[1]); i++; }
+      out.push(`<ul>${items.map(value => `<li>${reportInline(value)}</li>`).join('')}</ul>`); continue;
+    }
+    if (!line.trim()) { i++; continue; }
+    if (/^!\[[^\]\n]*\]\([^)]+\)$/.test(line.trim())) { out.push(reportInline(line.trim())); i++; continue; }
+    const paragraph = [line.trim()]; i++;
+    while (i < lines.length && lines[i].trim() && !/^\s*(?:#{1,6}\s|[-*+]\s|```|~~~)/.test(lines[i])) paragraph.push(lines[i++].trim());
+    out.push(`<p>${reportInline(paragraph.join(' '))}</p>`);
+  }
+  return `<div class="report-markdown">${out.join('\n')}</div>`;
+}
+function reportWithPackage(markdown, reportPackage) {
+  const source = String(markdown || '');
+  const p = reportPackage && typeof reportPackage === 'object' ? reportPackage : null;
+  if (!p || source.includes('<!-- labhq-report-package:v1 -->')) return source;
+  const assets = (rows, omission) => Array.isArray(rows) && rows.length
+    ? rows.map(row => `- [${String(row.label || row.path || '파일')}](${String(row.path || '')})`).join('\n')
+    : `- 해당 없음 — ${omission || '이 항목이 기록되지 않았습니다.'}`;
+  const evidence = Array.isArray(p.evidence_notes) && p.evidence_notes.length
+    ? p.evidence_notes.map((value, index) => `- [근거 ${index + 1}] 근거 원장 \`${String(value)}\``).join('\n')
+    : '- 근거 각주가 없습니다.';
+  const front = [
+    ['질문', String(p.question || '질문 기록 없음')],
+    ['답', String(p.answer || '답이 기록되지 않았습니다.')],
+    ['한계', String(p.limitations || '해석 범위는 본문을 확인하세요.')],
+    ['대표 그림', assets(p.figures, p.omissions?.figures)],
+    ['결과표', assets(p.tables, p.omissions?.tables)],
+    ['재현 안내', p.reproduction ? `- [요청 묶음 재현 안내](${p.reproduction})` : '- 해당 없음 — 실패 요청은 재현 절차를 요구하지 않습니다.'],
+    ['근거 각주', evidence],
+    ['실행 기록', p.execution_record ? `- [실행 기록](${p.execution_record})` : '- 실행 기록이 없습니다.'],
+  ].map(([title, body]) => `## ${title}\n\n${body}`).join('\n\n');
+  const heading = source.match(/^#\s+.+(?:\n|$)/);
+  const title = heading ? heading[0].trim() : `# ${String(p.title || '결과 보고서')}`;
+  const body = heading ? source.slice(heading[0].length).trimStart() : source;
+  return `${title}\n\n<!-- labhq-report-package:v1 -->\n\n${front}\n\n<!-- labhq-report-package:end -->\n\n${body}`.trimEnd() + '\n';
+}
+const STAFF_NAMES = {cso:'CSO(부엉이)', chief_of_staff:'비서실장', biologist:'생물학자', data_steward:'데이터 관리자', lit_scout:'문헌 조사원', analyst:'분석가', engineer:'엔지니어', qc_reviewer:'품질 리뷰어', sci_reviewer:'과학 리뷰어', recruiter:'카피바라(인사팀)', solo:'사자 단독 처리', facilities:'시설팀', colleague:'동료 직원', 'bioinfo-agent':'생물정보 직원', pi:'나', hpc:'HPC', github:'GitHub', system:'시스템'};
+const STAFF_CHARACTERS = {cso:'owl', chief_of_staff:'penguin', biologist:'bear', data_steward:'squirrel', lit_scout:'fox', analyst:'raccoon', engineer:'octopus', qc_reviewer:'hedgehog', sci_reviewer:'turtle', recruiter:'capybara', editor:'beaver', solo:'lion', 'bioinfo-agent':'otter'};
 function staffCharacter(a) {
   const id = String(a?.id || '').toLowerCase();
   return STAFF_CHARACTERS[id] || (id.startsWith('c_') ? 'chick' : a?.character && a.character !== 'paper-hat-chick' && a.character !== 'chick' ? a.character : 'neutral');
@@ -32,11 +136,31 @@ function staffCharacter(a) {
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
 const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login', 'waiting_facilities_fix', 'waiting_pi']);
 const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected', 'review_pending']);
+const TERMINAL_FOLLOWUP_STATES = new Set(['done', 'failed', 'interrupted']);
 // Cards that park an active request as waiting_pi (server.py PI_DECISION_KINDS). A resume card is one too, but its
 // request is interrupted, not parked.
-const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue', 'result_storage', 'result_publish', 'recruit_plan']);
+const PI_DECISION_KINDS = new Set(['clarify', 'question', 'scope', 'budget', 'research_plan', 'research_evidence', 'research_continue', 'result_storage', 'result_publish', 'recruit_plan', 'literature_pdf', 'disk_space']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
+// The one kind of task that may start after its request is over: the PI's follow-up turn (#1170). A list of what may
+// start, not of what may not, so a kind added later is refused until it is named here.
+const POST_END_TASK_KINDS = new Set(['followup']);
+// Events that start or hold pipeline work. A request that is over (isTerminalRequest, review_pending included: no staff
+// runs while the PI reviews) takes none of them; what ends work (step_done, a done/idle status, a result), what follows
+// a finished request (a follow-up turn, usage, cards, review, storage) and everything else still applies (#1170).
+const PIPELINE_STARTS = new Set(['request.review', 'request.plan', 'request.route', 'request.questions', 'request.step_attempt',
+  'request.step_paused', 'request.step_halted', 'request.step_quota_wait', 'request.step_login_wait', 'request.resume_waiting',
+  'request.resumed', 'request.runner_wait', 'request.step_resumed', 'request.step_quota_resumed', 'request.step_login_resumed']);
+const STATUS_THAT_STARTS_WORK = new Set(['working', 'queued', 'waiting', 'hibernating']);
+const hasActiveFollowup = q => (q?.followups || []).some(f => !TERMINAL_FOLLOWUP_STATES.has(f.status));
+const isPastRequest = q => !!q && isTerminalRequest(q.status) && !!q.pi_reviewed_at && !hasActiveFollowup(q);
+const officeRequests = requests => [...requests].filter(q => !isPastRequest(q));
+const sessionCostRequests = (requests, startedAt) => [...requests].flatMap(q => {
+  if (Number.isFinite(q.sessionCost)) return [{...q, cost:q.sessionCost,
+    costKnown:q.sessionCostKnown, costSummary:q.sessionCostSummary}];
+  return !isPastRequest(q) || (Number(q.created_at) || 0) >= (Number(startedAt) || Infinity) ? [q] : [];
+});
+const requestsCostTotal = requests => [...requests].reduce((total, q) => total + (Number(q?.cost) || Number(q?.cost_usd) || 0), 0);
 const websocketCloseAction = code => code === 1008
   ? {connection: 'auth', retry: false}
   : {connection: 'offline', retry: true};
@@ -45,6 +169,14 @@ const REQUEST_STATUS_KO = { running: '진행 중', waiting_for_runner: '러너 �
   waiting_login: '로그인 대기', waiting_facilities_fix: '환경 수정 승인 대기', waiting_pi: 'PI 결정 대기',
   interrupted: '중단됨', done: '완료', failed: '실패', cancelled: '취소됨', rejected: '거부됨', review_pending: '보고서 검토 대기' };
 const requestStatusLabel = status => REQUEST_STATUS_KO[status] || String(status || '상태 모름');
+// A request that finished `done` with failed, skipped or never-run steps (#1220). The snapshot lists them
+// (failed_steps); a request followed live has only its step states, which say the same for the steps that ran.
+const FAILED_STEP_STATES = ['failed', 'error', 'skipped'];
+const partialFailureSteps = q => {
+  if (!q || !['done', 'review_pending'].includes(q.status)) return [];
+  if (Array.isArray(q.failed_steps)) return q.failed_steps.map(String);
+  return Object.entries(q.steps || {}).filter(([, state]) => FAILED_STEP_STATES.includes(state)).map(([id]) => id);
+};
 const needsPiReview = q => !!q && isTerminalRequest(q.status) && q.pi_review_pending === true && !q.pi_reviewed_at;
 const needsStorage = q => !!q && ['done', 'failed', 'cancelled', 'review_pending'].includes(q.status)
   && (q.status !== 'cancelled' || !!String(q.report || '').trim()) && !Object.keys(q.resultStorage || {}).length;
@@ -69,7 +201,10 @@ function processingLabel(q) {
 // The status with what the PI can do about it: resume an interrupted request, or which runner is still missing.
 function requestStatusText(q, approvals) {
   if (!q) return '';
-  if (needsPiReview(q)) return `${reviewLabel(q)} 대기`;
+  const failed = partialFailureSteps(q);
+  const partial = failed.length ? ` · 일부 실패 ${failed.length}` : '';
+  if (needsPiReview(q)) return `${reviewLabel(q)} 대기${partial}`;
+  if (failed.length) return `${requestStatusLabel('done')}${partial}`;
   const label = requestStatusLabel(q.status);
   if (q.status === 'interrupted') {
     const card = [...(approvals ? approvals.values() : [])].some(a => a && a.kind === 'resume' && a.request_id === q.id);
@@ -85,21 +220,55 @@ function costParts(actual, estimated, unknown) {
   const parts = [];
   if (actual > 0 || !(estimated > 0 || unknown)) parts.push(`확인 ${usd(actual)}`);
   if (estimated > 0) parts.push(`추정 ${usd(estimated)}`);
-  if (unknown) parts.push(`미집계된 비용 ${unknown}건`);
+  if (unknown) parts.push(`비용 모름 ${unknown}건`);
   return parts.join(' + ');
 }
 const summaryParts = s => costParts(Number(s.actual_usd) || 0, Number(s.estimated_usd) || 0, Number(s.unknown_count) || 0);
 function costLabel(q) {
   if (q && q.costSummary) return summaryParts(q.costSummary);
   const cost = Number(q && q.cost) || 0;
-  return q && q.costKnown === false ? `${cost ? usd(cost) + ' + ' : ''}미집계된 비용` : usd(cost);
+  return q && q.costKnown === false ? `${cost ? usd(cost) + ' + ' : ''}비용 모름` : usd(cost);
 }
 function engineCostLabel(summary) {
   if (!summary || !summary.by_engine) return '';
   const engines = Object.entries(summary.by_engine).map(([name, e]) => `${name} ${summaryParts(e)}`).join(' · ');
   const stale = (summary.prices || []).filter(p => p && p.stale).map(p => `${p.engine} ${p.model} (${p.checked_on} 확인)`);
+  // `model_tier_mismatch:<staff>:<tier>:<model that ran>` (#625); a model name may hold ':' itself.
+  const mismatched = (summary.warnings || []).filter(w => typeof w === 'string' && w.startsWith('model_tier_mismatch:')).map(w => {
+    const [agent, tier, ...model] = w.slice('model_tier_mismatch:'.length).split(':');
+    return `${agent}(${tier}) → ${model.join(':')}`;
+  });
   return [engines, Number(summary.estimated_usd) > 0 ? '추정은 API 가격표 환산이며 청구액이 아닙니다' : '',
-    stale.length ? `가격표 오래됨: ${stale.join(', ')}` : ''].filter(Boolean).join('; ');
+    stale.length ? `가격표 오래됨: ${stale.join(', ')}` : '',
+    mismatched.length ? `선언 등급과 다른 모델: ${mismatched.join(', ')}` : ''].filter(Boolean).join('; ');
+}
+// The request's time limit (#877), worded as `labhq status` words it. The gateway sends wall_clock with the snapshot and
+// request.created; this reads it with the clock and the status this page already derived. A snapshot cannot tell when a
+// PI wait that began after it started, so such a wait is not subtracted until the next snapshot: the time left reads
+// shorter than it is, never longer. A request whose limit is unknown (an older gateway) shows nothing, not "off".
+function applyWallClock(q, clock) {
+  q.wallClock = clock && typeof clock === 'object' && !Array.isArray(clock) ? { ...clock } : null;
+}
+const spanLabel = seconds => seconds < 120 ? `${Math.trunc(seconds)}초` : `${Math.round(seconds / 60)}분`;
+function deadlineLabel(q, nowSeconds) {
+  const clock = q && q.wallClock;
+  if (!clock || !isActiveRequest(q.status)) return '';
+  if (!Number(clock.limit_s)) return '시간 상한 꺼짐';
+  const waiting = q.status === 'waiting_pi';
+  const since = Number(clock.pi_since);
+  const open = waiting && Number.isFinite(since) && clock.pi_since !== null ? Math.max(0, nowSeconds - since) : 0;
+  const held = (Number(clock.held_s) || 0) + open;
+  // The gateway cancels at `deadline_at`, counted from when it accepted the request and moved by each closed PI wait.
+  // `created_at` of a request.created event is its ts, which lags the acceptance when the start is late, so it only
+  // stands in for an older gateway that sends no deadline (#1103). A PI wait still open is added here.
+  const deadline = Number(clock.deadline_at);
+  const base = clock.deadline_at !== null && clock.deadline_at !== undefined && Number.isFinite(deadline)
+    ? deadline : (Number(q.created_at) || nowSeconds) + Number(clock.limit_s) + (Number(clock.held_s) || 0);
+  const left = base + open - nowSeconds;
+  let text = `시간 상한 켜짐 ${spanLabel(Number(clock.limit_s))} · ` + (left > 0 ? `남은 ${spanLabel(left)}` : '기한이 지났습니다(곧 취소)');
+  if (held > 0) text += ` · PI 대기 제외 ${spanLabel(held)}`;
+  if (waiting) text += ' · PI 결정 대기 중이라 시간이 가지 않습니다';
+  return text;
 }
 // Who spent it: the request's cost per staff member, when the gateway recorded agent ids (by_agent).
 function agentCostLabel(summary, name = id => id) {
@@ -121,15 +290,27 @@ function agentSpentLabel(requests, id) {
 function totalCostLabel(requests, total) {
   let estimated = 0, unknown = 0, legacyUnknown = false;
   for (const q of requests) {
-    if (q.costSummary) { estimated += Number(q.costSummary.estimated_usd) || 0; unknown += Number(q.costSummary.unknown_count) || 0; }
-    else if (q.costKnown === false) legacyUnknown = true;
+    const summary = q.costSummary || q.cost_summary;
+    if (summary) { estimated += Number(summary.estimated_usd) || 0; unknown += Number(summary.unknown_count) || 0; }
+    else if (q.costKnown === false || q.cost_known === false) legacyUnknown = true;
   }
   return `사용 비용 ${usd(total)}${estimated > 0 ? ` (추정 ${usd(estimated)} 포함)` : ''}` +
-    (unknown ? ` + 미집계된 비용 ${unknown}건${legacyUnknown ? ' 이상' : ''}` : legacyUnknown ? ' + 미집계된 비용' : '');
+    (unknown ? ` + 비용 모름 ${unknown}건${legacyUnknown ? ' 이상' : ''}` : legacyUnknown ? ' + 비용 모름' : '');
 }
 function applyCostSummary(q, summary) {
   if (!summary || typeof summary !== 'object') return;
   q.costSummary = summary; q.costKnown = !(Number(summary.unknown_count) > 0);
+}
+function applySessionCost(q, data, startedAt) {
+  if (typeof data.session_cost_usd === 'number' && Number.isFinite(data.session_cost_usd)) {
+    q.sessionCost = data.session_cost_usd;
+    q.sessionCostKnown = data.session_cost_known !== false;
+    q.sessionCostSummary = data.session_cost_summary || null;
+  } else if ((Number(q.created_at) || 0) >= (Number(startedAt) || Infinity)) {
+    q.sessionCost = q.cost;
+    q.sessionCostKnown = q.costKnown;
+    q.sessionCostSummary = q.costSummary;
+  }
 }
 function createOfficeState({mode = 'live', now = () => Date.now() / 1000, focusStorage = null} = {}) {
 let preferred = focusStorage?.get() || null;
@@ -138,6 +319,9 @@ const S = {
   jobs: new Map(), feed: [], cost: 0, conn: mode === 'demo' ? 'demo' : 'connecting', projects: [],
   lastSay: {}, taskStep: new Map(), seq: 0, doorUntil: 0,
 };
+// The newest gateway event seq applied: a repeated or older event is ignored here, so no page needs a copy of this
+// guard, and the pages resume a reconnect from it (#1170). Not enumerable: the legacy state digests are unchanged.
+Object.defineProperty(S, 'lastSeq', { value: 0, writable: true, enumerable: false });
 // Task detail is derived from events and may be rebuilt from a snapshot.
 // Keep it out of legacy state serialization while exposing it to both UIs.
 Object.defineProperty(S, 'stepDetails', { value: new Map(), enumerable: false });
@@ -154,6 +338,8 @@ Object.defineProperty(S, 'taskControl', { value: new Map(), enumerable: false })
 Object.defineProperty(S, 'taskKind', { value: new Map(), enumerable: false });
 Object.defineProperty(S, 'demoStatus', { value: null, writable: true, enumerable: false });
 Object.defineProperty(S, 'activeTasks', { value: new Map(), enumerable: false });
+Object.defineProperty(S, 'jobContext', { value: new Map(), enumerable: false });
+Object.defineProperty(S, 'sessionStartedAt', { value: 0, writable: true, enumerable: false });
 function resetSnapshotState() {
   S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
   S.jobs.clear(); S.feed = []; S.cost = 0; S.projects = [];
@@ -161,10 +347,56 @@ function resetSnapshotState() {
   S.taskControl.clear(); S.taskKind.clear();
   S.defaultRefs = [];
   S.activeTasks.clear();
+  S.jobContext.clear();
+}
+// Event identity and snapshot pending_jobs are the only sources of step ownership.
+function stepJobs(rid) {
+  const q = S.requests.get(rid), result = {};
+  if (!q || isTerminalRequest(q.status)) return result;
+  const add = (job, sid) => {
+    if (!sid || ['done', 'skipped', 'error', 'failed', 'halted', 'cancelled'].includes(q.steps[sid])) return;
+    const id = String(job.id);
+    const rows = result[sid] ||= [];
+    if (['completed', 'failed', 'cancelled', 'unknown_finished', 'error'].includes(job.state)) return;
+    if (!rows.some(row => row.id === id)) rows.push({id, name: job.name || id, state: job.state || 'missing'});
+  };
+  for (const context of S.jobContext.values()) {
+    const task = S.activeTasks.get(context.task_id);
+    const sid = context.step_id || S.taskStep.get(context.task_id) || task?.step_id;
+    const current = S.stepDetails.get(`${rid}:${sid}`)?.task_id;
+    if ((context.request_id || task?.request_id) === rid && (!current || !context.task_id || current === context.task_id))
+      add(context, sid);
+  }
+  for (const task of S.activeTasks.values()) if (task.request_id === rid) {
+    const current = S.stepDetails.get(`${rid}:${task.step_id}`)?.task_id;
+    if (!current || current === task.id)
+      for (const jid of task.activity?.jobs || []) {
+        const job = S.jobContext.get(JSON.stringify([task.id, String(jid)]));
+        add(job && (!job.request_id || job.request_id === rid) ? job : {id:jid}, task.step_id);
+      }
+  }
+  return result;
+}
+function trackJob(ev) {
+  const d = ev.data || {}, jid = String(d.job_id);
+  // Scheduler ids are runner-local. Task ids identify their owner across runners.
+  let key = ev.task_id ? JSON.stringify([ev.task_id, jid]) : null;
+  if (!key) {
+    const candidates = [...S.jobContext].filter(([, row]) => row.id === jid &&
+      (!ev.request_id || row.request_id === ev.request_id));
+    if (candidates.length !== 1) return;
+    key = candidates[0][0];
+  }
+  const previous = S.jobContext.get(key) || {};
+  S.jobContext.set(key, {...previous, id:jid, name:d.name || previous.name,
+    // Local submission is emitted after process start; its next event may be terminal.
+    state:ev.type === 'job.submitted' ? jid.startsWith('local-') ? 'running' : 'queued' : d.state,
+    request_id:ev.request_id || previous.request_id, task_id:ev.task_id || previous.task_id,
+    step_id:S.taskStep.get(ev.task_id) || previous.step_id});
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
   hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
-const KIND_KO = { result_storage: '결과 저장 위치', result_publish: '편집자 정리본 확인', hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', recruit_plan: '계획 전 채용', download: '대용량 다운로드', clarify: 'PI 질문', scope: '범위 확인', research_plan: 'CP1 계획 승인', research_evidence: 'CP2 증거 검토', research_continue: '리뷰 뒤 이어 가기', codex_sandbox_setup: 'Codex sandbox 준비', facilities_fix: '환경 자동 수정', resume: '중단된 요청 재개', question: '직원 질문 · PI 확인' };
+const KIND_KO = { pipeline_contribute: '새 pipeline 기여', result_storage: '결과 저장 위치', result_publish: '편집자 정리본 확인', hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', recruit_plan: '계획 전 채용', download: '대용량 다운로드', clarify: 'PI 질문', scope: '범위 확인', research_plan: 'CP1 계획 승인', research_evidence: 'CP2 증거 검토', research_continue: '리뷰 뒤 이어 가기', literature_pdf: '핵심 논문 PDF 요청', disk_space: '디스크 여유 부족', codex_sandbox_setup: 'Codex sandbox 준비', facilities_fix: '환경 자동 수정', resume: '중단된 요청 재개', question: '직원 질문 · PI 확인' };
 const JOB_KO = { queued: '대기', running: '실행 중', completed: '완료', failed: '실패', held: '보류', suspended: '일시정지',
   cancelled: '취소', unknown_finished: '종료 (확인 필요)', error: '오류', missing: '확인 중' };
 const GH_KO = { issue: 'GitHub에 이 요청의 이슈를 열었어요', plan: '이슈에 계획을 올렸어요', review: '이슈에 리뷰 결과를 올렸어요',
@@ -176,7 +408,45 @@ const phaseLabel = q => q.phase === 'done' ? '완료' : (PHASES.find(([key]) => 
 
 const ag = id => S.agents.get(String(id || '').toLowerCase());
 const hasPiDecision = a => [...S.approvals.values()].some(p => String(p.agent_id || '').toLowerCase() === a.id);
-const completedForReview = a => [...S.requests.values()].some(q => needsPiReview(q) && (q.agent_id === a.id || q.plan.some(s => s.agent_id === a.id) || a.id === 'cso'));
+// Request participation is evidence-based, including CSO. Active plans outrank old reports.
+const participates = (a, q) => q.agent_id === a.id || q.plan.some(s => s.agent_id === a.id)
+  || (a.id === 'cso' && ['orchestrate', 'plan_only'].includes(q.mode));
+const runnerWaitsFor = (a, q) => q.status === 'waiting_for_runner' &&
+  (q.runnerMissing.size ? q.runnerMissing.has(a.id) : q.resumeMissing.length ? q.resumeMissing.includes(a.id)
+    : q.mode === 'direct' ? q.agent_id === a.id
+      : a.id === 'cso' && !q.plan.length && ['orchestrate', 'plan_only'].includes(q.mode));
+const jobWaitText = ids => {
+  const local = ids.some(id => String(id).startsWith('local-'));
+  const hpc = ids.some(id => !String(id).startsWith('local-'));
+  return local ? hpc ? '로컬 계산·HPC 작업 기다리는 중' : '로컬 계산 기다리는 중'
+    : hpc ? 'HPC 작업 기다리는 중' : '후속 처리 기다리는 중';
+};
+function requestStaffStatus(a) {
+  const requests = sortRequests([...S.requests.values()].filter(q => participates(a, q)));
+  const active = requests.filter(q => isActiveRequest(q.status));
+  if (active.length) {
+    const steps = active.flatMap(q => q.mode === 'direct' && q.agent_id === a.id
+      ? [q.steps.direct || 'pending']
+      : q.plan.filter(s => s.agent_id === a.id).map(s => q.steps[s.id] || 'pending'));
+    if (steps.some(s => ['working', 'running'].includes(s))) return {state:'working', text:'작업 중'};
+    if (steps.some(s => ['error', 'failed', 'incomplete'].includes(s))) return {state:'error', text:'문제 발생'};
+    for (const [step, text] of [['halted','멈춤 · 재개 가능'], ['paused','일시 정지됨'],
+      ['waiting_login','로그인 대기'], ['waiting_quota','한도 대기'], ['waiting_facilities_fix','환경 수정 승인 대기']]) {
+      if (steps.includes(step)) return {state:'waiting', text};
+    }
+    if (steps.includes('hibernating')) {
+      const jobs = active.flatMap(q => (q.mode === 'direct' && q.agent_id === a.id ? ['direct']
+        : q.plan.filter(s => s.agent_id === a.id).map(s => s.id))
+        .filter(sid => q.steps[sid] === 'hibernating').flatMap(sid => (q.stepJobs[sid] || []).map(job => job.id)));
+      return {state:'hibernating', text:jobs.length ? jobWaitText(jobs) : '작업·응답 대기'};
+    }
+    if (steps.length && steps.every(s => ['done', 'skipped'].includes(s))) return {state:'done', text:'담당 단계 완료'};
+    if (active.some(q => runnerWaitsFor(a, q))) return {state:'waiting', text:'러너 기다림'};
+    return {state:'queued', text:'차례 대기'};
+  }
+  const review = requests.find(needsPiReview);
+  return review ? {state:'done', text:`작업 끝 · PI 검토 대기 · ${short(review.text || review.id, 32)}`} : null;
+}
 const controlledState = t => {
   if (!t) return '';
   const c = S.taskControl.get(t.id) || t.control || {};
@@ -198,9 +468,18 @@ const taskState = a => {
   if (state === 'waiting') return 'hibernating';
   return ['queued', 'waiting', 'hibernating', 'error'].includes(state) ? state : 'working';
 };
-const visual = a => warning(a) ? 'error' : taskState(a) || (hasPiDecision(a) ? 'waiting' : completedForReview(a) ? 'done' : a.state === 'waiting' ? (a.waitFor === 'answer' ? 'hibernating' : 'idle') : a.state === 'done' && now() - (a.stateAt || 0) > 3
-  ? 'idle' : STATE_KO[a.state] ? a.state : 'idle');
+// Older/replayed streams can carry live agent activity without a task ledger entry.
+const liveAgentState = a => ['queued', 'working', 'hibernating', 'error'].includes(a.state) ? a.state
+  : a.state === 'waiting' && a.waitFor === 'answer' ? 'hibernating' : '';
+const visual = a => warning(a) ? 'error' : taskState(a) || (hasPiDecision(a) ? 'waiting' : liveAgentState(a) || requestStaffStatus(a)?.state || (a.state === 'waiting' ? (a.waitFor === 'answer' ? 'hibernating' : 'idle') : a.state === 'done' && now() - (a.stateAt || 0) > 3
+  ? 'idle' : STATE_KO[a.state] ? a.state : 'idle'));
 // 'hibernating' covers HPC jobs and unanswered asks (runner agent.status: jobs, asks); a PI question is not HPC.
+// "외부 응답 대기 n분째 / 상한 m분": the last progress event's elapsed time plus the time since it arrived.
+function externalWaitText(wait) {
+  const limit = Math.max(1, Math.round((Number(wait.timeout_s) || 0) / 60));
+  const spent = (Number(wait.elapsed_s) || 0) + Math.max(0, now() - (Number(wait.at) || now()));
+  return `외부 응답 대기 ${Math.min(limit, Math.floor(spent / 60))}분째 / 상한 ${limit}분`;
+}
 const stateText = (a, vs = visual(a)) => {
   if (warning(a)) return warning(a);
   const t = activeTask(a), activity = t?.activity || {}, tool = currentTool(a);
@@ -209,11 +488,23 @@ const stateText = (a, vs = visual(a)) => {
     if (controlledState(t) === 'paused') return '일시 정지됨';
     if (vs === 'queued') return '차례 기다리는 중';
     if (vs === 'waiting') return activity.ask ? '답 기다리는 중' : 'PI 결정 기다리는 중';
-    if (vs === 'hibernating') return (activity.jobs || []).length ? 'HPC 작업 기다리는 중' : '답 기다리는 중';
+    if (vs === 'hibernating') {
+      const jobs = (activity.jobs || []).filter(jid => !['completed', 'failed', 'cancelled', 'unknown_finished', 'error']
+        .includes(S.jobContext.get(JSON.stringify([t.id, String(jid)]))?.state));
+      return jobs.length ? jobWaitText(jobs) : (activity.asks || []).length ? '답 기다리는 중'
+        : (activity.jobs || []).length ? jobWaitText([]) : '답 기다리는 중';
+    }
+    if (vs === 'working' && activity.external_wait) return externalWaitText(activity.external_wait);
     if (vs === 'working') return tool ? `${/Bash|PowerShell|shell|command_execution/i.test(tool.name) ? '명령' : '도구'} 실행 중 · ${Math.max(0, Math.floor((now() - tool.at) / 60))}분째` : '생각하는 중';
   }
-  if (vs === 'done' && completedForReview(a)) return '작업 끝 · PI 검토 대기';
-  return vs === 'hibernating' && a.waitFor === 'answer' ? '답 기다리는 중' : STATE_KO[vs];
+  if (!t && !hasPiDecision(a) && !liveAgentState(a)) {
+    const status = requestStaffStatus(a);
+    if (status) return status.text;
+  }
+  if (vs === 'hibernating' && a.waitFor === 'answer') return '답 기다리는 중';
+  if (vs === 'hibernating' && ['local', 'mixed'].includes(a.waitFor))
+    return jobWaitText((a.waitJobs?.rows || []).filter(job => !['completed', 'failed', 'cancelled', 'unknown_finished', 'error'].includes(job.state)).map(job => job.id));
+  return STATE_KO[vs];
 };
 function toolInputLine(input) {
   let value = input;
@@ -221,9 +512,19 @@ function toolInputLine(input) {
   if (value && typeof value === 'object') value = value.command ?? value.file_path ?? value.path ?? value.query ?? value.pattern ?? value.description ?? Object.keys(value).join(', ');
   return String(value ?? '').replace(/\s+/g, ' ').trim();
 }
+// Display categories only: a script's contents and effects are not inferred from its name.
+function toolActivitySummary(tool = {}) {
+  const command = toolInputLine(tool.input), shell = /Bash|PowerShell|shell|command_execution/i.test(tool.name || '');
+  if (!shell) return ({Read:'파일 읽기', Glob:'파일 목록 보기', Grep:'파일 내용 검색', Write:'파일 쓰기', Edit:'파일 수정'}[tool.name]) || '도구 실행';
+  const engine = /\buv\s+run\b/.test(command) ? 'uv' : /\bpython(?:3|\.exe)?\b/.test(command) ? 'python' : '';
+  if (engine && /(?:^|[\s/\\])paper_bundle\.py\b/.test(command)) return `논문 묶음을 만드는 스크립트 실행(${engine})`;
+  if (engine) return `스크립트 실행(${engine})`;
+  return '작업 명령 실행';
+}
 function trackActivity(ev) {
   const d = ev.data || {}, tid = ev.task_id;
   if (!tid) return;
+  if (ev.type === 'task.dispatched' && ev.request_id) req(ev.request_id).runnerMissing.delete(String(ev.agent_id || '').toLowerCase());
   if (ev.type === 'task.dispatched' && ev.request_id && (d.step_id || d.kind)) {
     for (const [oldId, old] of S.activeTasks) if (oldId !== tid && old.request_id === ev.request_id &&
       old.step_id === (d.step_id || d.kind)) S.activeTasks.delete(oldId);
@@ -256,6 +557,12 @@ function trackActivity(ev) {
   } else if (ev.type === 'agent.log') {
     if (['warn', 'alert'].includes(d.level)) activity.warning = d.text;
     else if (!['debug', 'thinking'].includes(d.level)) delete activity.warning;
+    // #676: a public lookup waiting on its service shows its elapsed time; the final status clears it.
+    const lookup = d.external_lookup;
+    if (lookup && typeof lookup === 'object') {
+      if (lookup.status === 'waiting') activity.external_wait = {tool: lookup.tool || '', elapsed_s: lookup.elapsed_s, timeout_s: lookup.timeout_s, at: ts};
+      else delete activity.external_wait;
+    }
   } else if (ev.type === 'task.result') {
     if (d.error_kind === 'halted') { t.state = 'halted'; t.activity = {}; }
     else if ((d.pending_jobs || []).length || (d.pending_asks || []).length) {
@@ -263,7 +570,7 @@ function trackActivity(ev) {
     } else S.activeTasks.delete(tid);
   }
 }
-const nick = id => { const key = String(id || '').toLowerCase(), a = ag(key); return ({cso:STAFF_NAMES.cso, facilities:STAFF_NAMES.facilities}[key]) || (a?.name && a.name !== a.id ? String(a.name).split(' ')[0] : STAFF_NAMES[key] || (key.startsWith('c_') ? '파견 직원' : id ? '직원' : '')); };
+const nick = id => { const key = String(id || '').toLowerCase(), a = ag(key); return ({cso:STAFF_NAMES.cso, recruiter:STAFF_NAMES.recruiter, facilities:STAFF_NAMES.facilities}[key]) || (a?.name && a.name !== a.id ? (['recruiter','editor'].includes(key) ? String(a.name) : String(a.name).split(' ')[0]) : STAFF_NAMES[key] || (key.startsWith('c_') ? '파견 직원' : id ? '직원' : '')); };
 // A staff member's task rows: kept while the task runs, waits for HPC or an answer, is halted, or holds its paused
 // step; removed on its terminal event, as a reload would (PR #532 review).
 function trackTask(a, tid, state, title, keep = false, rid = '', sid = '') {
@@ -285,6 +592,7 @@ function upsertAgent(a) {
   // Not part of the replayed state: the trace survives roster updates but stays out of state comparisons.
   Object.defineProperty(next, 'trace', { value: prev.trace || [], writable: true, enumerable: false });
   Object.defineProperty(next, 'waitFor', { value: prev.waitFor || '', writable: true, configurable: true, enumerable: false });
+  Object.defineProperty(next, 'waitJobs', { value: prev.waitJobs, writable: true, configurable: true, enumerable: false });
   // The staff member's live tasks, task id -> {state, title} (#59 ①): two can run at once, and the staff sheet's
   // control rows each act on one of them (PR #532 review).
   Object.defineProperty(next, 'tasks', { value: prev.tasks || new Map(), writable: true, configurable: true, enumerable: false });
@@ -302,6 +610,8 @@ function req(rid) {
     Object.defineProperty(q, 'assumptions', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'processing', { value: null, writable: true, enumerable: false });
     Object.defineProperty(q, 'costSummary', { value: null, writable: true, enumerable: false });  // #270
+    Object.defineProperty(q, 'wallClock', { value: null, writable: true, enumerable: false });  // #877
+    Object.defineProperty(q, 'paperLiterature', { value: null, writable: true, enumerable: false });  // #660, from the detail GET
     Object.defineProperty(q, 'pipelinePr', { value: null, writable: true, enumerable: false });
     Object.defineProperty(q, 'bundlePath', { value: '', writable: true, enumerable: false });
     Object.defineProperty(q, 'bundleStatus', { value: '', writable: true, enumerable: false });
@@ -310,6 +620,8 @@ function req(rid) {
     Object.defineProperty(q, 'bundleWarning', { value: '', writable: true, enumerable: false });
     Object.defineProperty(q, 'skipWarningsShown', { value: new Set(), writable: true, enumerable: false });  // #446
     Object.defineProperty(q, 'resumeMissing', { value: [], writable: true, enumerable: false });  // R14
+    Object.defineProperty(q, 'runnerMissing', { value: new Set(), enumerable: false });
+    Object.defineProperty(q, 'stepJobs', { get: () => stepJobs(rid), enumerable: false });
     S.requests.set(rid, q);
   }
   return S.requests.get(rid);
@@ -328,6 +640,7 @@ function setPlan(q, plan) {
 function receivedText(row, text, metadata = {}) {
   Object.defineProperties(row, {
     fullText: {value: String(text ?? ''), enumerable: false},
+    piText: {value: metadata.piText, enumerable: false},
     truncated: {value: Boolean(metadata.text_truncated || metadata.input_truncated), enumerable: false},
     cutChars: {value: metadata.text_limit ?? metadata.input_limit ?? [...String(metadata.text ?? metadata.input ?? text ?? '')].length, enumerable: false},
   });
@@ -382,8 +695,9 @@ function selectRequest(id, manual = true) {
   focusStorage?.set(preferred);
 }
 function pickCurrent() {
-  const saved = preferred && S.requests.has(preferred.id) ? preferred : null;
-  const id = saved?.id || sortRequests(S.requests.values())[0]?.id;
+  const savedRequest = preferred && S.requests.get(preferred.id);
+  const saved = savedRequest && !isPastRequest(savedRequest) ? preferred : null;
+  const id = saved?.id || sortRequests(officeRequests(S.requests.values()))[0]?.id;
   if (id) selectRequest(id, saved?.manual || false);
   else { S.current = null; preferred = null; focusStorage?.set(null); }
 }
@@ -421,8 +735,34 @@ function setPipelinePr(q, d) {
   if (d.status === 'open' && d.url && !q.github.some(g => g.kind === 'pipeline_pr' && g.url === d.url))
     q.github.push({ kind: 'pipeline_pr', url: d.url, number: d.number });
 }
+// True when `ev` would start or hold pipeline work for a request that is over.
+function endedRequestRefuses(ev) {
+  const q = ev.request_id && S.requests.get(ev.request_id);
+  if (!q || !isTerminalRequest(q.status)) return false;
+  if (PIPELINE_STARTS.has(ev.type)) return true;
+  // A task of unknown kind (its dispatch is older than the replay window) is refused like any other.
+  if (ev.type === 'task.dispatched') return !POST_END_TASK_KINDS.has(ev.data?.kind);
+  if (ev.type === 'agent.status') return STATUS_THAT_STARTS_WORK.has(ev.data?.state) && !POST_END_TASK_KINDS.has(S.taskKind.get(ev.task_id));
+  return false;
+}
+// A snapshot's running task of a request that is over is not restored either, unless it is a follow-up turn.
+// The gateway sends a follow-up turn of staff_tasks as step_id 'followup' with no kind.
+const snapshotTaskKind = task => task.kind || (task.step_id === 'followup' ? 'followup' : undefined);
+const staleTask = task => { const q = S.requests.get(task.request_id); return !!q && isTerminalRequest(q.status) && !POST_END_TASK_KINDS.has(snapshotTaskKind(task)); };
 function apply(ev, replay = false) {
   const effects = [];
+  if (!replay && ev.type === 'snapshot' && !ev.replay_gap && Number.isFinite(ev.seq) && ev.seq < S.lastSeq) return effects;
+  // A snapshot sets the point itself, and the events it replays carry seqs it already covers. An event with no seq
+  // (the demo, a local notice) is always applied.
+  if (!replay && ev.type !== 'snapshot' && Number.isFinite(ev.seq) && ev.seq > 0) {
+    if (ev.seq <= S.lastSeq) return effects;
+    S.lastSeq = ev.seq;
+  }
+  if (ev.type !== 'snapshot' && endedRequestRefuses(ev)) {  // one rule, live and replayed alike (#1170)
+    // Only the task's kind is kept, so the statuses that follow a refused dispatch are recognised as its own.
+    if (ev.type === 'task.dispatched' && ev.task_id) S.taskKind.set(ev.task_id, ev.data?.kind);
+    return effects;
+  }
   const t = ev.type, d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, ts = ev.ts || now();
   trackActivity(ev);
   switch (t) {
@@ -438,9 +778,14 @@ function apply(ev, replay = false) {
       // Reconnection keeps a view selected even by older UI consumers that assign S.current directly.
       if (S.current && S.current !== preferred?.id) preferred = {id:S.current, manual:true};
       resetSnapshotState();
+      S.lastSeq = Number(ev.seq) || 0;
+      S.sessionStartedAt = Number(d.session_started_at) || 0;
       (d.agents || []).forEach(upsertAgent);
       S.projects = d.projects || [];
       S.defaultRefs = d.default_references || [];
+      // The gateway's current status of each request is known before its events replay, so a completion older than the
+      // 200-event window still makes a later pipeline event stale (#1170).
+      for (const r of d.requests || []) req(r.id).status = r.status;
       (d.recent_events || []).forEach(e => apply(e, true));
       S.demoStatus = d.demo_status || null;
       (d.engine_holds || []).forEach(hold => S.engineHolds.set(hold.engine, {...hold}));
@@ -449,6 +794,15 @@ function apply(ev, replay = false) {
         const q = req(r.id);
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
         q.pi_review_pending = r.pi_review_pending === true; q.pi_reviewed_at = r.pi_reviewed_at || null; q.agent_id = r.agent_id || '';
+        // Current request memory outlives the 200-event replay. Older snapshots can still use replay evidence.
+        if (r.status !== 'waiting_for_runner' || Object.hasOwn(r, 'runner_waits')) {
+          q.runnerMissing.clear();
+          if (r.status === 'waiting_for_runner' && r.runner_waits && typeof r.runner_waits === 'object' && !Array.isArray(r.runner_waits)) {
+            for (const wait of Object.values(r.runner_waits)) {
+              if (typeof wait?.agent_id === 'string' && wait.agent_id.trim()) q.runnerMissing.add(wait.agent_id.trim().toLowerCase());
+            }
+          }
+        }
         q.final_checkpoint = r.final_checkpoint || null;
         q.resultStorage = r.result_storage || {};
         q.updated_at = Math.max(q.updated_at, Number(r.updated_at) || 0);
@@ -456,19 +810,31 @@ function apply(ev, replay = false) {
         q.resumed = q.resumed || r.status === 'running';
         if (r.route_decision && typeof r.route_decision === 'object') q.processing = { ...r.route_decision };
         if (typeof r.report === 'string') q.report = r.report;
+        if (r.report_package && typeof r.report_package === 'object') q.reportPackage = { ...r.report_package };
         if (typeof r.error === 'string' && r.error) q.error = r.error;
         if (typeof r.report_appendix === 'string') q.report_appendix = r.report_appendix;
+        if (typeof r.execution_record === 'string') q.execution_record = r.execution_record;
+        if (r.semantic_devices && typeof r.semantic_devices === 'object') q.semantic_devices = { ...r.semantic_devices };
         q.bundlePath = r.bundle_path || ''; q.bundleStatus = r.bundle_status || ''; q.bundleGrade = r.bundle_grade || ''; q.bundleGradeReasons = r.bundle_grade_reasons || []; q.bundleWarning = r.bundle_warning || '';
         if (r.report_truncated) Object.assign(q, { report_truncated: true, report_chars: r.report_chars });
         if (r.report_appendix_truncated) Object.assign(q, { report_appendix_truncated: true,
           report_appendix_chars: r.report_appendix_chars });
+        if (r.execution_record_truncated) Object.assign(q, { execution_record_truncated: true,
+          execution_record_chars: r.execution_record_chars });
         q.costSummary = null; applyCostSummary(q, r.cost_summary);
+        applyWallClock(q, r.wall_clock);
+        applySessionCost(q, r, S.sessionStartedAt);
         if (r.plan) setPlan(q, r.plan);
         q.references = r.references || [];
         q.followups = (r.followups || []).map(f => ({ ...f }));
         q.piNotes = (r.pi_notes || []).map(note => ({ ...note }));
         Object.assign(q.steps, r.step_status || {});
+        q.failed_steps = Array.isArray(r.failed_steps) ? r.failed_steps : undefined;
         for (const [sid, detail] of Object.entries(r.step_details || {})) Object.assign(stepDetail(r.id, sid), detail);
+        if (Object.hasOwn(r, 'facilities_projection')) {
+          for (const [key, detail] of S.stepDetails) if (key.startsWith(`${r.id}:`)) delete detail.facilities_projection;
+          for (const [sid, projection] of Object.entries(r.facilities_projection || {})) stepDetail(r.id, sid).facilities_projection = projection;
+        }
         if (r.review) q.review = r.review;
         // recent_events may no longer hold a long request's plan event: a planned active request is past briefing.
         // With no step started and no review yet it is still in 계획, waiting for the PI to approve the plan (CP1).
@@ -483,11 +849,13 @@ function apply(ev, replay = false) {
       const staffTasks = d.staff_tasks || d.running_tasks;
       if (Array.isArray(staffTasks)) {
         S.activeTasks.clear();
-        for (const task of staffTasks) S.activeTasks.set(task.id, {...task,
-          activity: {...(task.activity || {}), tools: {...(task.activity?.tools || {})}}});
+        for (const task of staffTasks.filter(task => !staleTask(task))) { if (snapshotTaskKind(task)) S.taskKind.set(task.id, snapshotTaskKind(task)); S.activeTasks.set(task.id, {...task,
+          activity: {...(task.activity || {}), tools: {...(task.activity?.tools || {})}}}); }
+        for (const [jid, context] of S.jobContext)
+          if (context.task_id && !S.activeTasks.has(context.task_id)) S.jobContext.delete(jid);
       }
       for (const task of d.running_tasks || []) {
-        if (!task.request_id || !task.step_id) continue;
+        if (!task.request_id || !task.step_id || staleTask(task)) continue;
         const key = `${task.request_id}:${task.step_id}`, previous = restored.get(key);
         const rank = [task.state === 'running' ? 1 : 0, Number(task.dispatched_at) || 0];
         if (previous && (previous.rank[0] > rank[0] ||
@@ -525,7 +893,12 @@ function apply(ev, replay = false) {
       trackTask(a, ev.task_id, d.state || a.state, d.task, Boolean(d.halted), rid, S.taskStep.get(ev.task_id));
       // Display only, like usage and trace: kept out of the replayed state the golden hashes compare.
       if (['hibernating', 'waiting', 'working', 'idle', 'done'].includes(d.state)) Object.defineProperty(a, 'waitFor', { writable: true, configurable: true, enumerable: false,
-        value: (d.jobs || []).length ? 'hpc' : d.ask || (d.asks || []).length ? 'answer' : '' });
+        value: (d.jobs || []).length ? (d.jobs.some(jid => String(jid).startsWith('local-'))
+          ? d.jobs.some(jid => !String(jid).startsWith('local-')) ? 'mixed' : 'local' : 'hpc')
+          : d.ask || (d.asks || []).length ? 'answer' : '' });
+      if (['hibernating', 'waiting', 'working', 'idle', 'done'].includes(d.state)) Object.defineProperty(a, 'waitJobs', {
+        writable:true, configurable:true, enumerable:false,
+        value:{request_id:rid, task_id:ev.task_id, rows:(d.jobs || []).map(jid => ({id:String(jid)}))} });
       if (d.task) a.task = d.task;
       if (d.state === 'done' || d.state === 'idle') a.tool = '';
       if (d.error) { a.error = d.error; logTo(a, `오류: ${d.error}`, ts); }
@@ -534,7 +907,8 @@ function apply(ev, replay = false) {
     }
     case 'agent.tool': { const a = ag(id); if (!a) break; a.tool = d.name; a.toolAt = ts; a.toolCalls = (a.toolCalls || 0) + 1;
       const input = typeof d.input === 'string' ? d.input : JSON.stringify(d.input ?? '');
-      logTo(a, `도구 ${toolLabel(d.name)} ${input}`, ts, {...d, previewText: `도구 ${toolLabel(d.name)} ${short(d.summary || toolInputLine(d.input), 80)}`}); break; }
+      logTo(a, `도구 ${toolLabel(d.name)} ${input}`, ts, {...d, piText: toolActivitySummary(d),
+        previewText: `도구 ${toolLabel(d.name)} ${short(d.summary || toolInputLine(d.input), 80)}`}); break; }
     case 'agent.control': {
       // Merged, never replaced: a steer or pause to a halted task keeps it halted until resumed or expired.
       if (ev.task_id) {
@@ -672,8 +1046,18 @@ function apply(ev, replay = false) {
       feed(unanswered ? { who: 'system', text: `${unanswered}${note}`, fullText: `${unanswered}${fullNote}` }
         : { who: 'pi', text: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${note}`,
           fullText: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${fullNote}` }, ts, rid); break; }
-    case 'job.submitted': S.jobs.set(String(d.job_id), { id: String(d.job_id), name: d.name, state: 'queued', agent: id, ts }); feed({ who: id, text: `HPC 작업 제출: ${d.name || ''} (${d.job_id})` }, ts, rid); break;
+    case 'job.submitted': {
+      const jid = String(d.job_id);
+      trackJob(ev);
+      S.jobs.set(jid, { id: jid, name: d.name, state: jid.startsWith('local-') ? 'running' : 'queued', agent: id, ts });
+      feed({ who: id, text: `${jid.startsWith('local-') ? '로컬 계산' : 'HPC 작업'} 제출: ${d.name || ''} (${d.job_id})` }, ts, rid); break;
+    }
     case 'job.state': {
+      trackJob(ev);
+      const wait = ag(id)?.waitJobs;
+      if (wait && (!rid || !wait.request_id || rid === wait.request_id) &&
+          (!ev.task_id || !wait.task_id || ev.task_id === wait.task_id))
+        for (const job of wait.rows) if (job.id === String(d.job_id)) job.state = d.state;
       const j = S.jobs.get(String(d.job_id)) || { id: String(d.job_id), name: d.name, agent: id };
       Object.assign(j, { state: d.state, exit: d.exit_status, ts }); S.jobs.set(j.id, j);
       break;
@@ -684,6 +1068,7 @@ function apply(ev, replay = false) {
       Object.assign(q, { text: d.text, mode: d.mode, project_id: d.project_id, status: d.status || 'running', phase: isTerminalRequest(d.status) ? 'done' : d.mode === 'direct' ? 'execute' : 'briefing', created_at: ts });
       q.agent_id = d.agent_id || '';
       q.references = d.references || [];
+      applyWallClock(q, d.wall_clock);
       if (!replay && !(preferred?.manual && S.requests.has(S.current) && isTerminalRequest(q.status))) selectRequest(rid, false);
       feed({ who: 'pi', text: `새 요청: ${short(d.text, 130)}`, fullText: `새 요청: ${d.text || ''}` }, ts, rid);
       break;
@@ -766,6 +1151,18 @@ function apply(ev, replay = false) {
       break;
     }
     case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, fullText: `확인이 필요해요: ${(d.questions || []).join(' / ')}`, cls: 'alert' }, ts, rid); break;
+    case 'request.semantic_devices': {
+      const q = req(rid), first = (d.errors || [])[0] || {};
+      q.semantic_devices = { ...d };
+      const message = `의미 장치 중단: ${first.device || '장치'} ${first.code || '상태 확인 필요'} · 단계 ${first.stage || '미기록'} · 시각 ${first.at || d.checked_at || '미기록'} · ${first.message || '장치 상태를 확인하세요.'}`;
+      feed({ who: 'system', text: short(message, 300), fullText: message, cls: 'alert' }, ts, rid);
+      break;
+    }
+    case 'request.facilities_projection': {
+      for (const [key, detail] of S.stepDetails) if (key.startsWith(`${rid}:`)) delete detail.facilities_projection;
+      for (const [sid, projection] of Object.entries(d)) stepDetail(rid, sid).facilities_projection = projection;
+      break;
+    }
     case 'request.facilities_fix': { const detail = stepDetail(rid, d.step_id), status = d.status || (d.ok ? 'succeeded' : 'failed'); detail.facilities_fix = { ...d, status }; const label = status === 'applied' ? '환경 수정 적용' : status === 'succeeded' ? '환경 수정 성공' : '환경 수정 실패'; feed({ who: 'facilities', text: `${label}: ${short((status === 'failed' ? d.error : d.action) || d.fix_id || '', 120)}`, fullText: `${label}: ${(status === 'failed' ? d.error : d.action) || d.fix_id || ''}`, cls: status === 'failed' ? 'alert' : '' }, ts, rid); break; }
     case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); if (d.ok === false && d.environment) detail.environment = d.environment; else delete detail.environment; if (d.facilities_fix) detail.facilities_fix = d.facilities_fix; delete detail.quota_resume_at; delete detail.quota_engine; delete detail.quota_deadline_at; delete detail.login_resume_at; delete detail.login_engine; delete detail.login_reason; syncHoldStatus(q); break; }
     case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncHoldStatus(q); break; }
@@ -813,9 +1210,11 @@ function apply(ev, replay = false) {
       break;
     case 'recruit.failed': feed({ who: 'recruiter', text: `채용하지 못했어요: ${short(d.error, 120)}`, fullText: `채용하지 못했어요: ${d.error || ''}`, cls: 'alert' }, ts, rid); break;
     // A status the gateway sets itself: waiting_pi, waiting_for_runner, interrupted, running (R5, R15, #494).
-    case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; break; }
-    case 'request.runner_wait': feed({ who: 'system', text: d.message || '러너를 기다려요', cls: 'alert' }, ts, rid); break;
-    case 'request.reviewed': { const q = req(rid); q.pi_review_pending = d.pi_review_pending === true; q.pi_reviewed_at = d.pi_reviewed_at; if (d.status) q.status = d.status; if (d.final_checkpoint) q.final_checkpoint = d.final_checkpoint; break; }
+    case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; if (q.status !== 'waiting_for_runner') q.runnerMissing.clear(); break; }
+    case 'request.runner_wait':
+      for (const target of d.missing_agents || [d.agent_id]) if (target) req(rid).runnerMissing.add(String(target).toLowerCase());
+      feed({ who: 'system', text: d.message || '러너를 기다려요', cls: 'alert' }, ts, rid); break;
+    case 'request.reviewed': { const q = req(rid); q.pi_review_pending = d.pi_review_pending === true; q.pi_reviewed_at = d.pi_reviewed_at; if (d.status) q.status = d.status; if (d.final_checkpoint) q.final_checkpoint = d.final_checkpoint; if (S.current === rid && isPastRequest(q)) pickCurrent(); break; }
     case 'request.completed': case 'request.failed': {
       for (const [tid, task] of S.activeTasks) if (task.request_id === rid) S.activeTasks.delete(tid);
       const q = req(rid), wasPending = needsPiReview(q);
@@ -823,6 +1222,7 @@ function apply(ev, replay = false) {
       for (const a of S.agents.values()) for (const [tid, row] of [...a.tasks]) if (row.rid === rid) { a.tasks.delete(tid); S.taskControl.delete(tid); }
       q.status = isTerminalRequest(d.status) ? d.status : t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
       q.final_checkpoint = d.final_checkpoint || null;
+      q.failed_steps = Array.isArray(d.failed_steps) ? d.failed_steps : undefined;
       q.pi_review_pending = d.pi_review_pending === true; q.pi_reviewed_at = d.pi_reviewed_at || null;
       if (!replay && needsPiReview(q) && !wasPending) effects.push({type:'toast', text:`${q.status === 'done' ? '보고서가 준비됐어요' : '요청이 끝났어요'} · ${reviewLabel(q)} 대기`});
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) {
@@ -830,13 +1230,19 @@ function apply(ev, replay = false) {
       }
       if (d.cost_known === false) q.costKnown = false;
       applyCostSummary(q, d.cost_summary);
+      applySessionCost(q, d, S.sessionStartedAt);
       if (d.report) q.report = d.report;
+      if (d.report_package && typeof d.report_package === 'object') q.reportPackage = { ...d.report_package };
       if (d.report_appendix) q.report_appendix = d.report_appendix;
+      if (d.execution_record) q.execution_record = d.execution_record;
       delete q.report_truncated; delete q.report_chars;
       delete q.report_appendix_truncated; delete q.report_appendix_chars;
+      delete q.execution_record_truncated; delete q.execution_record_chars;
       if (d.report_truncated) Object.assign(q, { report_truncated: true, report_chars: d.report_chars });
       if (d.report_appendix_truncated) Object.assign(q, { report_appendix_truncated: true,
         report_appendix_chars: d.report_appendix_chars });
+      if (d.execution_record_truncated) Object.assign(q, { execution_record_truncated: true,
+        execution_record_chars: d.execution_record_chars });
       if (d.error) q.error = d.error;
       q.bundlePath = d.bundle_path || ''; q.bundleStatus = d.bundle_status || ''; q.bundleGrade = d.bundle_grade || ''; q.bundleGradeReasons = d.bundle_grade_reasons || []; q.bundleWarning = d.bundle_warning || '';
       // The gateway sends a reason; when it did not, say what is known instead of ending the line on a colon.
@@ -872,7 +1278,7 @@ function apply(ev, replay = false) {
     }
     case 'request.followup_done': {
       const q = req(rid), prev = q.followups.find(f => f.id === d.id);
-      const entry = { ...(prev || { id: d.id, text: '' }), status: d.ok ? 'done' : 'failed', answer: d.answer || '', error: d.error || '' };
+      const entry = { ...(prev || { id: d.id, text: '' }), status: d.status === 'interrupted' ? 'interrupted' : d.ok ? 'done' : 'failed', answer: d.answer || '', error: d.error || '' };
       if (d.pi_display) entry.pi_display = d.pi_display;
       delete entry.answer_truncated; delete entry.answer_chars;
       if (d.answer_truncated) Object.assign(entry, { answer_truncated: true, answer_chars: d.answer_chars });  // a snapshot replay (#126)
@@ -880,6 +1286,7 @@ function apply(ev, replay = false) {
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) { S.cost += d.cost_usd - q.cost; q.cost = d.cost_usd; }
       if (d.cost_known === false) q.costKnown = false;
       applyCostSummary(q, d.cost_summary);
+      applySessionCost(q, d, S.sessionStartedAt);
       feed({ who: entry.agent_id || 'cso', to: 'pi', text: d.ok ? `답변: ${short(d.answer, 130)}` : `이어 묻기에 답하지 못했어요: ${short(d.error, 100)}`,
         fullText: d.ok ? `답변: ${d.answer || ''}` : `이어 묻기에 답하지 못했어요: ${d.error || ''}`, truncated: d.answer_truncated, cutText: d.answer,
         cls: d.ok ? '' : 'alert' }, ts, rid);
@@ -889,10 +1296,10 @@ function apply(ev, replay = false) {
     case 'github.failed': feed({ who: 'github', text: `GitHub 업데이트 실패: ${short(d.error, 110)}`, fullText: `GitHub 업데이트 실패: ${d.error || ''}`, cls: 'alert' }, ts, rid); break;
     case 'pipeline.pr': {
       setPipelinePr(req(rid), d);
+      const label = { pending: '대기', awaiting_approval: '승인 대기', declined: '미기여' }[d.status] || '거부';
       feed({ who: 'github', text: d.status === 'open' ? `새 pipeline PR을 열었어요: ${d.name}`
-        : d.status === 'pending' ? `새 pipeline PR 대기: ${short(d.reason, 100)}`
-        : `새 pipeline PR 거부: ${short(d.reason, 100)}`,
-        fullText: d.status === 'open' ? undefined : `새 pipeline PR ${d.status === 'pending' ? '대기' : '거부'}: ${d.reason || ''}`,
+        : `새 pipeline PR ${label}: ${short(d.reason, 100)}`,
+        fullText: d.status === 'open' ? undefined : `새 pipeline PR ${label}: ${d.reason || ''}`,
         cls: d.status === 'open' ? '' : 'alert', url: d.url || undefined }, ts, rid);
       break;
     }
@@ -922,6 +1329,13 @@ function fillFollowups(rid, request) {
 function fillRequestDetail(rid, request) {
   const q = S.requests.get(rid);
   let filled = fillFollowups(rid, request);
+  // Not counted as filled text: the paper list is a derived view, not a truncated report (#660).
+  if (q && request?.paper_literature && typeof request.paper_literature === 'object' && Array.isArray(request.paper_literature.papers))
+    q.paperLiterature = request.paper_literature;
+  if (q && request?.report_package && typeof request.report_package === 'object') {
+    q.reportPackage = { ...request.report_package };
+    filled++;
+  }
   if (q && typeof request?.error === 'string' && q.error !== request.error) { q.error = request.error; filled++; }
   if (q && typeof request?.report === 'string' && (q.report_truncated || q.report !== request.report)) {
     q.report = request.report;
@@ -934,6 +1348,12 @@ function fillRequestDetail(rid, request) {
     delete q.report_appendix_truncated; delete q.report_appendix_chars;
     filled++;
   }
+  if (q && typeof request?.execution_record === 'string' &&
+      (q.execution_record_truncated || q.execution_record !== request.execution_record)) {
+    q.execution_record = request.execution_record;
+    delete q.execution_record_truncated; delete q.execution_record_chars;
+    filled++;
+  }
   return filled;
 }
 function toolLabel(name) {
@@ -943,9 +1363,11 @@ function toolLabel(name) {
     Skill: '스킬 실행', Agent: '서브에이전트', edit: '파일 수정', web_search: '웹 검색' }[n]) || n;
 }
 
-return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentTool, toolInputLine, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES, phaseLabel };
+return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentTool, toolInputLine, toolActivitySummary, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES, phaseLabel };
 }
-root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
-  isActiveRequest, isTerminalRequest, REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, processingLabel,
-  needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, demoBannerText };
+root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel, deadlineLabel,
+  isActiveRequest, isTerminalRequest, isPastRequest, officeRequests, sessionCostRequests, requestsCostTotal,
+  REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, partialFailureSteps, processingLabel,
+  needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, serviceWarning, demoBannerText,
+  safeReportHref, safeReportImageHref, reportMarkdownHTML, reportWithPackage };
 })(globalThis);

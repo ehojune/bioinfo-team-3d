@@ -23,6 +23,7 @@ def payload(req: dict) -> dict:
     results = req.get("results") or {}
     return {"plan_sha256": contract.get("plan_sha256"),
             "report": req.get("report") or "", "report_appendix": req.get("report_appendix") or "",
+            **({"execution_record": req["execution_record"]} if "execution_record" in req else {}),
             "review": contract.get("review"), "report_check": contract.get("report_check"),
             "cp2": (contract.get("checkpoints") or {}).get("cp2"),
             "claims": {step["id"]: (results.get(step["id"]) or {}).get("structured")
@@ -30,8 +31,11 @@ def payload(req: dict) -> dict:
 
 
 def hashes(content: dict) -> dict:
+    audit_fields = ("report_appendix", "review", "report_check", "cp2")
+    if "execution_record" in content:  # #609: keep old frozen drafts byte-compatible
+        audit_fields += ("execution_record",)
     return {"target_sha256": digest(content), "report_sha256": digest(content["report"]),
-            "audit_sha256": digest({k: content[k] for k in ("report_appendix", "review", "report_check", "cp2")}),
+            "audit_sha256": digest({k: content[k] for k in audit_fields}),
             "claims_sha256": digest(content["claims"])}
 
 

@@ -17,12 +17,52 @@ global.document={createElement:tag=>new Element(tag)};
 const source=fs.readFileSync(path.join(__dirname,'../labhq/web/ui/decide.js'),'utf8');
 const modulePromise=import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const nodes=el=>[el,...el.children.flatMap(nodes)];
-async function card(kind,detail) {
+async function card(kind,detail,options={}) {
   const decide=await modulePromise,container=new Element();
   const approval={id:'example',kind,detail};
-  const [row]=decide.syncDecisionCards(container,[approval]);
+  const [row]=decide.syncDecisionCards(container,[approval],[],options);
   return {decide,container,approval,row,detail:row._decisionParts.detail};
 }
+
+test('literature PDF card uploads each selected PDF before approval',async()=>{
+  const uploaded=[];
+  const c=await card('literature_pdf',{papers:[{title:'Key paper',doi:'10.1000/key',
+    pdf_file:'.tmp/literature/inbox/key.pdf'}]},
+    {onAttachment:async(approval,index,file)=>uploaded.push([approval.id,index,file.name])});
+  const input=nodes(c.row).find(n=>n.tagName==='INPUT');
+  const button=nodes(c.row).find(n=>n.tagName==='BUTTON'&&n.textContent==='PDF 올리기');
+  assert.equal(input.accept,'application/pdf,.pdf');
+  input.files=[{name:'key.pdf'}];
+  await button.onclick();
+  assert.deepEqual(uploaded,[['example',0,'key.pdf']]);
+  assert.match(c.row.textContent,/저장됨.*승인하면 본문으로 이어 갑니다/);
+});
+
+test('disk space card names the free space, the floor and what each answer does (#678)',async()=>{
+  const c=await card('disk_space',{free_gib:1.2,floor_gib:2,path:'C:/runs'});
+  const text=c.row.textContent;
+  for (const value of ['여유(GiB)','시작 기준(GiB)','작업 폴더','1.2','C:/runs','승인하면 이 작업을 그대로 시작합니다'])
+    assert.ok(text.includes(value),value+' must be visible: '+text);
+});
+
+test('2.5D office wires the literature PDF upload callback to the gateway endpoint',()=>{
+  const index=fs.readFileSync(path.join(__dirname,'../labhq/web/index.html'),'utf8');
+  assert.match(index,/onAttachment:\s*uploadLiteraturePdf/);
+  assert.match(index,/\/api\/approvals\/\$\{encodeURIComponent\(approval\.id\)\}\/literature-pdf\/\$\{paperIndex\}/);
+  assert.match(index,/Content-Type':\s*'application\/pdf'/);
+});
+
+test('legacy task-scope detail never adds a grant choice', async () => {
+  const decide = await modulePromise, container = new Element(), sent = [];
+  const approval = {id:'task-class', kind:'tool_permission', detail:{task_scope_label:'bundle.py execution'}};
+  const [row] = decide.syncDecisionCards(container, [approval], [], {onDecision:(...args)=>sent.push(args)});
+  assert.equal(row._decisionParts.taskClass, undefined);
+  assert.equal(nodes(row).some(node=>node.textContent.includes('같은 부류 허용')), false);
+  row._decisionParts.approve.onclick();
+  assert.equal(sent[0][1], true);
+  assert.equal(sent[0][4], null);
+  assert.equal(decide.decisionChoice(approval, 'allow_task_class'), null);
+});
 
 test('tool_permission command, arguments and all extra fields appear as literal DOM text',async()=>{
   for (const input of [{command:'printf "<img src=x onerror=alert(1)>"',args:['--example','a&b']},
@@ -81,7 +121,9 @@ test('research plan card shows the full canonical PLAN in readable sections',asy
       validators:{'single_cell_de.donor_unit':'donor-level pseudobulk'},acceptance:{'single_cell_de.donor_model':'accepted'}}},
     pack_applicability:{'bulk_tumor_normal@1':{applied:false,topics_any:['bulk_rna_seq'],matched_topics:[],reason:'topics_empty'}},
     warnings:['topics is empty; topic-conditioned packs were not applied'],
-    clarifying_questions:[],steps:[{id:'s1'}],recruit:[],notes:'frozen'};
+    clarifying_questions:[],branches:[{id:'omics',question:'Does expression differ?',evidence_type:'public omics',
+      data_boundary:'public counts only',estimated_budget_usd:12.5}],
+    steps:[{id:'s1',branch:'omics'}],recruit:[],notes:'frozen'};
   // Use Python-compatible recursively sorted canonical JSON for the approval payload.
   const sortValue=value=>Array.isArray(value)?value.map(sortValue):value&&typeof value==='object'?
     Object.fromEntries(Object.keys(value).sort().map(key=>[key,sortValue(value[key])])):value;
@@ -89,11 +131,31 @@ test('research plan card shows the full canonical PLAN in readable sections',asy
   const sha=crypto.createHash('sha256').update(canonicalPlan,'utf8').digest('hex');
   const c=await card('research_plan',{gate:'research_plan',target_sha256:sha,plan_canonical:canonicalPlan});
   assert.equal(crypto.createHash('sha256').update(canonicalPlan,'utf8').digest('hex'),sha);
-  for (const label of ['질문','가설','완료 조건','중단 조건','자원 상한','data boundary','topics','pack 적용 판정','경고','pack 값','동결 PLAN 전체'])
+  for (const label of ['질문','가설','완료 조건','선택 기록','갈래 (1개)','갈래질문자료단계 수추정 예산','중단 조건','자원 상한','data boundary','topics','pack 적용 판정','경고','pack 값','동결 PLAN 전체'])
     assert.ok(c.detail.textContent.includes(label),label+' must be visible');
   for (const value of ['Does condition change expression?','Condition changes expression','design not identifiable',
-    'public counts only','metadata.donor_id','raw_counts']) assert.ok(c.detail.textContent.includes(value),value+' must be visible');
+    'Does expression differ?','public omics · public counts only','1개','$12.50','metadata.donor_id','raw_counts']) assert.ok(c.detail.textContent.includes(value),value+' must be visible');
   assert.ok(c.detail.textContent.includes(canonicalPlan),'the exact hash input must remain visible');
+});
+
+test('research plan card shows the selection record, or says there is none (#890)',async()=>{
+  const base={intake:{scope_status:'in_scope'},brief:{question:'Q?',completion_conditions:['done']},protocol:{revision:1},steps:[]};
+  const withRecord={...base,selection_record:{question:'Q?',premises:['public counts suffice'],success_criteria:['donor-level effect'],
+    alternatives:[{option:'cell-level test',rejected_because:'pseudo-replication'}],change_signals:['fewer than 3 donors']}};
+  const shown=await card('research_plan',{gate:'research_plan',target_sha256:'a'.repeat(64),plan_canonical:JSON.stringify(withRecord)});
+  for (const value of ['선택 기록','public counts suffice','donor-level effect','cell-level test — pseudo-replication','fewer than 3 donors'])
+    assert.ok(shown.detail.textContent.includes(value),value+' must be visible');
+  const none=await card('research_plan',{gate:'research_plan',target_sha256:'b'.repeat(64),plan_canonical:JSON.stringify(base)});
+  assert.ok(none.detail.textContent.includes('선택 기록 없음'));
+});
+
+test('research evidence card groups claim rows by branch',async()=>{
+  const ledger={claims:[{id:'c1',statement:'no genes passed FDR',status:'supported'}],
+    evidence:[{id:'e1',kind:'experimental',status:'observed'}],links:[{claim_id:'c1',evidence_id:'e1'}]};
+  const c=await card('research_evidence',{results:{omics:ledger,stats:ledger},step_branches:{omics:'public_omics',stats:'domestic_stats'}});
+  const text=c.detail.textContent;
+  for (const value of ['갈래단계claim상태근거 종류표시','public_omics','domestic_stats','no genes passed FDR'])
+    assert.ok(text.includes(value),value+' must be visible: '+text);
 });
 
 test('research_continue lists each review P1 issue by step with its problem and requested fix',async()=>{
@@ -123,6 +185,24 @@ test('resume card shows the received time as a date and the steps left as a list
   assert.ok(left.detail.textContent.includes('남은 단계s2, s3'));
 });
 
+test('a resume card that also stands for CP1 shows the whole frozen plan like the CP1 card (#654)',async()=>{
+  const plan={schema_version:2,topics:[],intake:{scope_status:'in_scope'},brief:{question:'Does condition change expression?',
+    primary_hypothesis:'Condition changes expression',null_or_alternatives:['batch explains the change'],
+    completion_conditions:['QC and effect interval reported']},protocol:{revision:1,stop_conditions:['design not identifiable'],
+    resource_limits:['one local planning call'],data_boundaries:['public counts only'],packs:[]},pack_values:{},
+    pack_applicability:{},warnings:[],clarifying_questions:[],branches:[],steps:[{id:'s1'}],recruit:[],notes:'frozen'};
+  const canonicalPlan=JSON.stringify(plan);
+  const created=new Date(2026,9,8,11,33).getTime()/1000;
+  const c=await card('resume',{request_text:'표 정리',created_at:created,steps:['s1'],has_plan:true,
+    cp1_target_sha256:'a'.repeat(64),plan_canonical:canonicalPlan,pack_applicability:{},warnings:[],protocol_revision:1,
+    packs:[],scope_status:'in_scope'});
+  const text=c.detail.textContent;
+  for (const value of ['남은 단계s1','질문','Does condition change expression?','design not identifiable','public counts only',
+    'a'.repeat(64)]) assert.ok(text.includes(value),value+' must be visible: '+text);
+  assert.ok(text.includes(canonicalPlan),'the exact hash input stays visible');
+  assert.ok(!text.includes('protocol_revision'),'repeated inside the plan view');
+});
+
 test('a resume card for a request without a plan says the whole request reruns, not that nothing is left (#521)',async()=>{
   const created=new Date(2026,9,8,11,33).getTime()/1000;
   const direct=await card('resume',{request_text:'표 정리',created_at:created,steps:[],has_plan:false});
@@ -137,7 +217,7 @@ test('a resume card for a request without a plan says the whole request reruns, 
 test('budget card shows dollar amounts to the cent under Korean names, including the cap 승인 sets',async()=>{
   const c=await card('budget',{spent_usd:25.860455119999997,limit_usd:30,requested_budget_usd:60,unknown_count:1,unknown_reserve_usd:5});
   const text=c.detail.textContent;
-  for (const value of ['지금까지 쓴 비용$25.86','지금 상한$30.00','승인하면 새 상한$60.00','비용 미집계 작업1','미집계 작업 1건당 가정 비용$5.00'])
+  for (const value of ['지금까지 쓴 비용$25.86','지금 상한$30.00','승인하면 새 상한$60.00','비용 모름 작업1','비용 모름 작업 1건당 가정 비용$5.00'])
     assert.ok(text.includes(value),value+' must be visible: '+text);
   assert.ok(!text.includes('25.8604'),'no float noise');
 });

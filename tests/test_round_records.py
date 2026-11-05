@@ -9,6 +9,10 @@ import pytest
 from labhq.gateway.server import Hub
 from labhq.settings import DataZone, Settings
 
+# Only bounds a hang. Each drain ends when the delivery queue empties, never on this clock: a loaded Windows CI
+# runner is sometimes slow for seconds, and a 2 s bound failed a PR run (2026-10-12).
+WAIT = 60
+
 
 def settings(tmp_path):
     cfg = Settings()
@@ -35,9 +39,10 @@ def round_request(hub, rid, status):
         "review": {"verdict": "accept", "scores": {"evidence": 4}},
         "review_progress": {"last_completed_revision": 1}, "usage": {"input_tokens": 8},
         "cost_usd": 0.01, "cost_known": True,
-        "report": "Cause: analyst result; reviewer skipped" if status == "failed" else "Finished",
+        "execution_record": "Cause: analyst result; reviewer skipped" if status == "failed" else "Finished",
     }
     if status == "failed":
+        hub.requests[rid]["error"] = "Cause: analyst result; reviewer skipped"
         hub.requests[rid]["results"]["b"] = {"status": "skipped", "attempts": 0,
                                                "error_kind": "dependency_failed", "error": "skipped: a"}
     hub.save_request(rid)
@@ -63,6 +68,30 @@ def test_local_round_schema_and_status(tmp_path, status):
     assert "<details><summary>JSON schema v1</summary>" in md
     assert json.loads((hub.rounds.directory / "req-one.json").read_text(encoding="utf-8")) == record
     assert "/data/restricted/sample" in md
+
+
+def test_terminal_error_without_execution_record_stays_in_the_operation_record(tmp_path):
+    hub = Hub(settings(tmp_path))
+    round_request(hub, "req-resume", "failed")
+    reason = "resume timed out before a runner accepted the request"
+    hub.requests["req-resume"].update(error=reason, execution_record="")
+    hub.save_request("req-resume")
+
+    record = hub.rounds.write("req-resume")
+    markdown = (hub.rounds.directory / "req-resume.md").read_text(encoding="utf-8")
+
+    assert record["result"]["root_cause_summary"] == reason
+    assert reason in markdown
+
+
+def test_round_without_a_remote_report_uses_a_path_label_not_a_broken_link(tmp_path):
+    hub = Hub(settings(tmp_path))
+    round_request(hub, "req-local", "failed")
+    hub.rounds.write("req-local")
+    markdown = (hub.rounds.directory / "req-local.md").read_text(encoding="utf-8")
+
+    assert "](/api/requests/req-local)" not in markdown
+    assert "`/api/requests/req-local`" in markdown
 
 
 def test_round_environment_links_the_configured_labhq_commit(tmp_path):
@@ -139,7 +168,7 @@ async def test_oversized_round_posts_human_body_without_json(tmp_path, monkeypat
     hub = Hub(cfg, httpx.MockTransport(remote))
     round_request(hub, "req-large-json", "done")
     report = "사람용 결과 한 줄\n" * 80
-    hub.requests["req-large-json"]["report"] = report
+    hub.requests["req-large-json"]["execution_record"] = report
     hub.save_request("req-large-json")
     hub.rounds.write("req-large-json")
     monkeypatch.setattr(rounds, "MAX_BODY", 3_000)
@@ -162,7 +191,7 @@ async def test_oversized_human_report_is_cut_only_between_lines(tmp_path, monkey
     hub = Hub(cfg, httpx.MockTransport(remote))
     round_request(hub, "req-large-report", "done")
     report_lines = [f"| row-{i:03d} | {'x' * 60} |" for i in range(100)]
-    hub.requests["req-large-report"]["report"] = "\n".join(report_lines)
+    hub.requests["req-large-report"]["execution_record"] = "\n".join(report_lines)
     hub.save_request("req-large-report")
     hub.rounds.write("req-large-report")
     monkeypatch.setattr(rounds, "MAX_BODY", 2_000)
@@ -173,7 +202,7 @@ async def test_oversized_human_report_is_cut_only_between_lines(tmp_path, monkey
     assert len(body) <= rounds.MAX_BODY
     assert kept and kept == report_lines[:len(kept)]
     assert report_lines[-1] not in body
-    assert "결과 보고서 전문은 로컬 기록 rounds/req-large-report.md에 있음" in body
+    assert "운전 기록 전문은 로컬 기록 rounds/req-large-report.md에 있음" in body
     assert "JSON 원본은 로컬 rounds/req-large-report.json에 있음" in body
 
 
@@ -194,7 +223,7 @@ async def test_every_variable_round_section_fits_the_body_limit(tmp_path, monkey
     if large_part in {"paths", "all"}:
         request["results"]["a"]["outputs"] = [f"outputs/{'x' * 320}-{i:03d}.txt" for i in range(200)]
     if large_part in {"report", "all"}:
-        request["report"] = "\n".join(f"보고서 {i:03d} {'r' * 100}" for i in range(400))
+        request["execution_record"] = "\n".join(f"보고서 {i:03d} {'r' * 100}" for i in range(400))
     if large_part == "all":
         request["clarifications"] = [
             {"questions": [f"질문 {i} {'q' * 100}"], "answer": f"답변 {'a' * 100}"}
@@ -229,7 +258,7 @@ async def test_oversized_round_edits_the_issue_with_the_same_marker(tmp_path, mo
     remote.issue = {"number": 7, "body": f"{marker}\n\n수동 게시 본문"}
     hub = Hub(cfg, httpx.MockTransport(remote))
     round_request(hub, "req-existing-large", "done")
-    hub.requests["req-existing-large"]["report"] = "긴 결과\n" * 100
+    hub.requests["req-existing-large"]["execution_record"] = "긴 결과\n" * 100
     hub.save_request("req-existing-large")
     hub.rounds.write("req-existing-large")
     monkeypatch.setattr(rounds, "MAX_BODY", 3_000)
@@ -249,7 +278,7 @@ async def test_recovery_retries_a_delivery_failed_by_the_old_size_limit(tmp_path
     remote = FakeGitHub()
     hub = Hub(cfg, httpx.MockTransport(remote))
     round_request(hub, "req-recover-large", "done")
-    hub.requests["req-recover-large"]["report"] = "복구할 결과\n" * 100
+    hub.requests["req-recover-large"]["execution_record"] = "복구할 결과\n" * 100
     hub.save_request("req-recover-large")
     hub.rounds.write("req-recover-large")
     monkeypatch.setattr(rounds, "MAX_BODY", 3_000)
@@ -259,7 +288,7 @@ async def test_recovery_retries_a_delivery_failed_by_the_old_size_limit(tmp_path
 
     hub.rounds.recover()
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         assert remote.issue is not None
         assert hub.store.get("round_delivery", "req-recover-large") is None
         before = len(remote.calls)
@@ -287,7 +316,7 @@ async def test_recovery_retries_failed_large_update_when_issue_digest_is_stale(t
     remote.issue = {"number": 7, "body": f"{marker}\n\n중간 상태"}
     hub = Hub(cfg, httpx.MockTransport(remote))
     round_request(hub, rid, "done")
-    hub.requests[rid]["report"] = "최종 결과\n" * 100
+    hub.requests[rid]["execution_record"] = "최종 결과\n" * 100
     hub.save_request(rid)
     hub.rounds.write(rid)
     monkeypatch.setattr(rounds, "MAX_BODY", 3_000)
@@ -298,7 +327,7 @@ async def test_recovery_retries_failed_large_update_when_issue_digest_is_stale(t
 
     hub.rounds.recover()
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         assert "최종 결과" in remote.issue["body"]
         assert any(method == "PATCH" for method, _, _ in remote.calls)
         assert hub.store.get("round_delivery", rid) is None
@@ -331,7 +360,7 @@ async def test_transient_publication_retries_without_restart(tmp_path, method, m
     hub.rounds.write("req-retry")
     hub.rounds.submit("req-retry")
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         assert remote.failed
         assert remote.issue is not None and "Finished" in remote.issue["body"]
         assert hub.store.get("round_delivery", "req-retry") is None
@@ -359,7 +388,7 @@ async def test_403_reset_requires_exhausted_remaining_and_waits_until_reset(tmp_
     hub.rounds.write("req-forbidden")
     hub.rounds.submit("req-forbidden")
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         delivery = hub.store.get("round_delivery", "req-forbidden")
         assert delivery["state"] == "failed" and delivery["attempts"] == 1
         assert len(forbidden.calls) == 1
@@ -390,7 +419,7 @@ async def test_403_reset_requires_exhausted_remaining_and_waits_until_reset(tmp_
     hub.rounds.write("req-limited")
     hub.rounds.submit("req-limited")
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         assert waited and waited[0] > 1_000_000_000
         assert remote.issue is not None
         assert hub.store.get("round_delivery", "req-limited") is None
@@ -425,7 +454,7 @@ async def test_rate_limit_retry_after_is_a_lower_bound_and_does_not_exhaust_atte
     hub.rounds.write("req-rate")
     hub.rounds.submit("req-rate")
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         assert slept == [60]
         assert remote.issue is not None
         assert hub.store.get("round_delivery", "req-rate") is None
@@ -444,7 +473,7 @@ async def test_missing_token_stays_pending_and_recovers_after_restart(tmp_path, 
     first.rounds.write("req-token")
     first.rounds.submit("req-token")
     try:
-        await asyncio.wait_for(first.rounds.drain(), 2)
+        await asyncio.wait_for(first.rounds.drain(), WAIT)
         assert first.store.get("round_delivery", "req-token")["state"] == "pending"
     finally:
         first.rounds.worker.cancel()
@@ -455,7 +484,7 @@ async def test_missing_token_stays_pending_and_recovers_after_restart(tmp_path, 
     restarted = Hub(cfg, httpx.MockTransport(remote))
     restarted.rounds.recover()
     try:
-        await asyncio.wait_for(restarted.rounds.drain(), 2)
+        await asyncio.wait_for(restarted.rounds.drain(), WAIT)
         assert remote.issue is not None
         assert restarted.store.get("round_delivery", "req-token") is None
     finally:
@@ -483,7 +512,7 @@ async def test_publication_stops_on_permanent_failure_or_retry_limit(tmp_path, f
     hub.rounds.write("req-stop")
     hub.rounds.submit("req-stop")
     try:
-        await asyncio.wait_for(hub.rounds.drain(), 2)
+        await asyncio.wait_for(hub.rounds.drain(), WAIT)
         assert len(calls) == (2 if failure == "public" else 3 if failure == 500 else 1)
         assert not any(method in {"POST", "PATCH"} for method in calls)
         assert hub.store.get("round_delivery", "req-stop")["state"] == "failed"
@@ -513,7 +542,7 @@ async def test_private_issue_redaction_restart_and_update(tmp_path):
     assert first.count("<!-- labhq round req-one -->") == 1
 
     restarted = Hub(cfg, httpx.MockTransport(remote))
-    restarted.requests["req-one"].update(status="done", report="Finished after resume", finished_at=8.0)
+    restarted.requests["req-one"].update(status="done", execution_record="Finished after resume", finished_at=8.0)
     restarted.save_request("req-one")
     restarted.rounds.write("req-one")
     assert await restarted.rounds.publish("req-one")
@@ -664,14 +693,14 @@ async def test_every_write_directly_follows_a_visibility_check_even_after_paging
     round_request(hub, "req-a", "done")
     hub.rounds.write("req-a")
     assert await hub.rounds.publish("req-a")  # create
-    hub.requests["req-a"]["report"] = "updated"
+    hub.requests["req-a"]["execution_record"] = "updated"
     hub.rounds.write("req-a")
     assert await hub.rounds.publish("req-a")  # edit
     writes = [i for i, (method, _, _) in enumerate(remote.calls) if method in {"POST", "PATCH"}]
     assert len(writes) == 2
     assert all(remote.calls[i - 1][:2] == ("GET", "/repos/records/private") for i in writes)
     remote.flip = True  # the repository turns public while the issue list is being read
-    hub.requests["req-a"]["report"] = "updated again"
+    hub.requests["req-a"]["execution_record"] = "updated again"
     hub.rounds.write("req-a")
     before = len([c for c in remote.calls if c[0] in {"POST", "PATCH"}])
     assert not await hub.rounds.publish("req-a")
@@ -687,7 +716,7 @@ async def test_round_records_drop_url_reference_queries_before_posting(tmp_path)
     round_request(hub, "req-url", "done")
     legacy = "https://share.example.org/f/cohort.tsv?dl=opaqueSHAREcode99&token=tok123456"
     hub.requests["req-url"].update(references=[{"kind": "url", "value": legacy, "source": "request"}],
-                                   report=f"Finished from {legacy}")
+                                   execution_record=f"Finished from {legacy}")
     hub.save_request("req-url")
     hub.rounds.write("req-url")
     assert await hub.rounds.publish("req-url")
@@ -710,15 +739,18 @@ async def test_round_records_mask_reference_paths_like_project_reports(tmp_path)
     round_request(hub, "req-ref", "done")
     request = hub.requests["req-ref"]
     request["references"] = [{"kind": "path", "value": "/srv/private-notes/cohort", "source": "request"}]
+    request["bundle_path"] = "/srv/private-notes/cohort/request-bundle"
     request["plan"]["steps"][0]["instruction"] = "Read /srv/private-notes/cohort/summary.md first"
     request["review"]["issues"] = [{"step_id": "a", "problem": "missed c:/users/pi/yuan/lessons.md"}]
-    request["report"] = r"Used /srv/private-notes/cohort/a.tsv and C:\Users\pi\Yuan\b.md."
+    request["execution_record"] = r"Used /srv/private-notes/cohort/a.tsv and C:\Users\pi\Yuan\b.md."
     hub.save_request("req-ref")
     hub.rounds.write("req-ref")
     assert await hub.rounds.publish("req-ref")
     body = remote.issue["body"]
     assert "private-notes" not in body and "yuan" not in body.casefold()
     assert body.count("<reference-path>") >= 4
+    assert "[과학 보고서 · 요청 묶음]" not in body
+    assert "`<reference-path>/request-bundle/report.md`" in body
     text = "see /srv/private-notes/cohort/x.md"
     assert hub.rounds.client.clean(text) == hub.reporter._clean(text) == "see <reference-path>/x.md"
 

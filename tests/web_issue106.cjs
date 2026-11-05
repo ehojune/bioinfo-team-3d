@@ -48,6 +48,10 @@ const snapshot = running_tasks => ({ type: 'snapshot', data: {
 
   office.apply(snapshot([{ id: 'sleeping', request_id: 'r1', step_id: 's1', state: 'hibernating', dispatched_at: 30 }]));
   tasks.syncTaskBoard(board, office.S.requests.get('r1'), office.S.stepDetails, { nick: id => id });
-  assert.ok(board.querySelectorAll('span').some(el => el.textContent === 'HPC 대기'), 'hibernating has a Korean task label');
-  console.log('snapshot task priority, cancellation and hibernating label: OK');
+  assert.ok(board.querySelectorAll('span').some(el => el.textContent === '작업·응답 대기'), 'hibernating without job identity stays neutral');
+  office.apply(snapshot([{ id: 'hpc-sleeping', request_id: 'r1', step_id: 's1', state: 'hibernating', dispatched_at: 40,
+    activity:{state:'hibernating',jobs:['42']} }]));
+  tasks.syncTaskBoard(board, office.S.requests.get('r1'), office.S.stepDetails, { nick: id => id });
+  assert.ok(board.querySelectorAll('span').some(el => el.textContent === 'HPC 대기'), 'known HPC job keeps its label');
+  console.log('snapshot task priority, cancellation and unknown/HPC wait labels: OK');
 })().catch(error => { console.error(error); process.exitCode = 1; });

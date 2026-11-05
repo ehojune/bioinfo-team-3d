@@ -211,7 +211,7 @@ class CodexAdapter(AgentAdapter):
             return ("Codex staff session refused: the workspace holds AGENTS.override.md, which Codex reads instead "
                     "of labhq's role instructions (AGENTS.md) and no flag turns off. An earlier run left it; move it "
                     "out of the workspace to continue.")
-        isolated = b.isolate_user_config or ctx.read_only
+        isolated = b.isolate_user_config or ctx.read_only or bool(ctx.read_only_inputs)
         homes = child_config_dirs(env, ctx.workdir, "CODEX_HOME", ".codex")
         if isolated and not b.allow_global_agents_md:
             found = [n for home in homes for n in ("AGENTS.md", "AGENTS.override.md") if (home / n).is_file()]
@@ -235,7 +235,7 @@ class CodexAdapter(AgentAdapter):
         platforms keep the instruction in the role footer. labhq passes windows.sandbox only to isolated runs."""
         b = self.settings.engines.codex
         if not (ctx.private_paths and _is_windows() and b.windows_sandbox == "elevated"
-                and (b.isolate_user_config or ctx.read_only)):
+                and (b.isolate_user_config or ctx.read_only or ctx.read_only_inputs)):
             return []
         return list(dict.fromkeys(ctx.private_paths))
 
@@ -243,26 +243,31 @@ class CodexAdapter(AgentAdapter):
         """`-s <mode>`, or with private paths to refuse a permission profile that extends the same built-in mode.
         Codex profiles and `-s` do not compose: a run takes one or the other."""
         sandbox = ctx.agent.sandbox
-        if ctx.read_only or sandbox == "read-only":
+        from ..private_paths import inside_any
+
+        deny = self.deny_read_paths(ctx)
+        restricted = [str(self.settings.path(z.path)) for z in self.settings.policy.data_zones
+                      if z.level == 'restricted']
+        reads = {path: 'read' for path in ctx.private_open_reads
+                 if inside_any(path, deny) and not inside_any(path, restricted)}
+        if ctx.read_only or sandbox == "read-only" or ctx.read_only_inputs:
             # Start with read access only: unlike :workspace this grants neither cwd nor global temp writes.
             # Adding these two roots produces a scoped workspace-write sandbox, including for resumed sessions.
-            filesystem = {str(ctx.workdir.resolve() / name): "write" for name in ("outputs", ".tmp")}
+            filesystem = dict(reads)
+            filesystem.update({str(ctx.workdir.resolve() / name): "write" for name in ("outputs", ".tmp")})
             if ctx.agent.id == "facilities":
-                filesystem = {}
-            filesystem.update({path: "deny" for path in self.deny_read_paths(ctx)})
-            filesystem.update({str(self.settings.path(z.path)): "deny"
-                               for z in self.settings.policy.data_zones if z.level == "restricted"})
+                filesystem = dict(reads)
+            filesystem.update({path: "deny" for path in deny})
+            filesystem.update({path: "deny" for path in restricted})
             profile = {"extends": ":read-only", "filesystem": filesystem}
             return ["-c", f"default_permissions={_toml(STAFF_PROFILE)}",
                     "-c", f"permissions.{STAFF_PROFILE}={_toml(profile)}", "-c", 'approval_policy="never"']
         parent = PROFILE_PARENTS.get(sandbox)
-        deny = self.deny_read_paths(ctx) if parent else []
+        deny = deny if parent else []
         if not deny:
             return ["-s", sandbox]
-        from ..private_paths import inside_any
-
         # Specific read roots reopen only the skill/plugin subtree inside a denied config home.
-        filesystem = {path: "read" for path in ctx.private_open_reads if inside_any(path, deny)}
+        filesystem = reads
         filesystem.update({path: "deny" for path in deny})
         profile = {"extends": parent, "filesystem": filesystem}
         return ["-c", f"default_permissions={_toml(STAFF_PROFILE)}",
@@ -272,7 +277,7 @@ class CodexAdapter(AgentAdapter):
         a, t, b = ctx.agent, ctx.task, self.settings.engines.codex
         flags = ["--json", "--skip-git-repo-check", "-C", str(ctx.workdir), *self.sandbox_flags(ctx),
                  "-o", str(ctx.meta_dir / "last_message.txt")]
-        if b.isolate_user_config or ctx.read_only:
+        if b.isolate_user_config or ctx.read_only or ctx.read_only_inputs:
             # config.toml carries the PI's plugins, notify hook and MCP servers. The global AGENTS.md in
             # CODEX_HOME still loads; set engines.codex.env.CODEX_HOME to a separate staff login to drop it.
             flags += ["--ignore-user-config", "--ignore-rules"]
@@ -288,7 +293,7 @@ class CodexAdapter(AgentAdapter):
             flags += ["-c", f'model_reasoning_effort="{a.effort}"']
         web_search = "live" if any(t.split("(")[0] in WEB_TOOLS for t in a.tools) else "disabled"
         flags += ["-c", f'web_search="{web_search}"']
-        for d in ([] if ctx.read_only or a.sandbox == "read-only" else ctx.extra_dirs):
+        for d in ([] if ctx.read_only or ctx.read_only_inputs or a.sandbox == "read-only" else ctx.extra_dirs):
             flags += ["--add-dir", d]
         if t.output_schema:
             flags += ["--output-schema", str(ctx.meta_dir / "output_schema.json")]
@@ -315,7 +320,7 @@ class CodexAdapter(AgentAdapter):
                     flags += ["-c", f"{key}.env_vars={_toml(held)}"]
             else:
                 flags += ["-c", f"{key}.url={_toml(s.url)}"]
-        if not ctx.read_only:  # PI extra_args could widen the sandbox; a read-only run takes none
+        if not (ctx.read_only or ctx.read_only_inputs):  # extra_args could reopen the input snapshots for writing
             flags += b.extra_args
         prompt = self.compose_prompt(ctx)
         if t.resume_session_id:
@@ -356,7 +361,8 @@ class CodexAdapter(AgentAdapter):
                     note_failed_output(st, item.get("aggregated_output"))
                     if _command_needs_setup(message):
                         _stop_for_setup(st, ELEVATED_SETUP_ERROR)
-                    await ctx.emit("agent.tool_error", {**event_preview("text", message, 400)})
+                    await ctx.emit("agent.tool_error", {**({"id": item["id"]} if item.get("id") is not None else {}),
+                                                         **event_preview("text", message, 400)})
             elif it == "mcp_tool_call" and typ == "item.started":
                 call = {"id": item.get("id"), "name": f"mcp:{item.get('server')}.{item.get('tool')}"}
                 call["input_fingerprint"] = tool_input_fingerprint(call["name"], item.get("arguments"))
@@ -378,7 +384,8 @@ class CodexAdapter(AgentAdapter):
                 # labhq wired the server wrong (openai/codex#24135), so that one fails the task loudly.
                 if "approval policy" in message:
                     st.error = message
-                await ctx.emit("agent.tool_error", {**event_preview("text", message, 400)})
+                await ctx.emit("agent.tool_error", {**({"id": item["id"]} if item.get("id") is not None else {}),
+                                                     **event_preview("text", message, 400)})
             elif it == "file_change" and typ == "item.completed":
                 changes = item.get("changes") or []
                 await ctx.emit("agent.tool", {"name": "edit", "completed": True,

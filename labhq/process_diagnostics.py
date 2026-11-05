@@ -12,6 +12,11 @@ import sys
 import threading
 import traceback
 from datetime import datetime, timezone
+from typing import Iterable
+
+
+# A role's supervisor (#589) writes its own diagnostics, as role `<role>-supervisor`.
+SUPERVISOR_SUFFIX = "-supervisor"
 
 
 def _resources() -> dict:
@@ -105,6 +110,10 @@ class ProcessDiagnostics:
         self.reason, self.code = f"signal:{signal.Signals(sig).name}", 128 + sig
         self.write("signal", reason=self.reason, code=self.code)
 
+    def signal_disposition(self, sig, installed):
+        """Expose only our own wrapper's prior disposition so a role can provide graceful defaults."""
+        return self._signals.get(sig, installed) if installed == self._signal else installed
+
     def _signal(self, sig, frame) -> None:
         self.note_signal(sig)
         previous = self._signals[sig]
@@ -171,9 +180,13 @@ class ProcessDiagnostics:
         self._output.close()
 
 
-def latest_records(logs: Path, role: str, pid: int) -> dict:
-    """Read a bounded tail and ignore earlier processes, including previous starts of a reused PID."""
+def latest_records(logs: Path, role: str, pid: int, *, also: Iterable[int] = ()) -> dict:
+    """Read a bounded tail and ignore earlier processes, including previous starts of a reused PID.
+
+    `also` names more PIDs whose rows count as this process's: a venv's python.exe launcher is the PID `up` records,
+    and its child, the real interpreter, writes the rows."""
     latest = {}
+    pids = {pid, *also}
     try:
         with (logs / f"{role}-diagnostics.jsonl").open(mode="rb") as source:
             size = source.seek(0, 2)
@@ -184,7 +197,7 @@ def latest_records(logs: Path, role: str, pid: int) -> dict:
                 row = json.loads(line)
             except (ValueError, UnicodeError):
                 continue
-            if not isinstance(row, dict) or row.get("pid") != pid:
+            if not isinstance(row, dict) or row.get("pid") not in pids:
                 continue
             event = row.get("event")
             if event == "start":
@@ -193,4 +206,26 @@ def latest_records(logs: Path, role: str, pid: int) -> dict:
                 latest[event] = row
     except OSError:
         pass
+    return latest
+
+
+def latest_child_exit(logs: Path, role: str) -> dict | None:
+    """The newest `child_exit` row the role's supervisor wrote, from whichever supervisor process: how the gateway or
+    runner ended, with its exit code. A forced kill leaves the child's own `exit` row unwritten, so this is the only
+    record of one. Reads a bounded tail."""
+    latest = None
+    try:
+        with (logs / f"{role}{SUPERVISOR_SUFFIX}-diagnostics.jsonl").open(mode="rb") as source:
+            size = source.seek(0, 2)
+            source.seek(max(0, size - 262144))
+            lines = source.read().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except (ValueError, UnicodeError):
+            continue
+        if isinstance(row, dict) and row.get("event") == "child_exit":
+            latest = row
     return latest

@@ -78,6 +78,10 @@ async def test_unreviewable_request_cannot_open(setup, status):
 @pytest.mark.parametrize("reviewed", [False, True])
 async def test_late_selection_runs_editor_after_review_then_approval_and_mock_upload(setup, monkeypatch, reviewed, status):
     app, hub, calls = setup
+    monkeypatch.setattr("labhq.integrations.rounds._git_commit", lambda: None)
+    # PDF rendering has dedicated tests; this test checks review/approval/upload ordering.
+    pdf = AsyncMock(return_value=(None, "PDF unavailable in this mock"))
+    monkeypatch.setattr(hub.result_storage, "edition_pdf", pdf)
     hub.requests["r"]["status"] = status
     if reviewed:
         hub.requests["r"]["pi_reviewed_at"] = 1
@@ -114,10 +118,15 @@ async def test_late_selection_runs_editor_after_review_then_approval_and_mock_up
             await asyncio.sleep(0.01)
         assert publish
         editor.assert_awaited_once()
+        pdf.assert_awaited_once()
         docs = publish["detail"]["documents"]
-        assert {"README.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md"} <= docs.keys()
-        assert "python analysis.py" in docs["REPRODUCE.md"] and "3.12" in docs["REPRODUCE.md"]
-        for filename in ("report.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md"):
+        portfolio_docs = {
+            "report/report.md", "run/progress.md", "run/reproduce.md", "REFERENCES.md",
+        }
+        assert {"README.md", "PROGRESS.md", "REPRODUCE.md", "SOURCES.md", *portfolio_docs} <= docs.keys()
+        assert docs["run/progress.md"] == docs["PROGRESS.md"]
+        assert "python analysis.py" in docs["run/reproduce.md"] and "3.12" in docs["run/reproduce.md"]
+        for filename in portfolio_docs:
             assert filename in docs["README.md"]
         assert not any(method in {"POST", "PUT"} for method, _, _ in calls)
         assert (await client.post(f"/api/approvals/{publish['id']}", json={"approved": True})).status_code == 200
@@ -193,7 +202,22 @@ async def test_cancelled_finish_edits_partial_report(setup):
     await hub.result_storage.finish("r")
     saved = hub.requests["r"]["result_storage"]
     assert saved["status"] == "local"
-    assert (Path(saved["draft_path"]) / "report.md").read_text(encoding="utf-8") == "Result"
+    edition = Path(saved["draft_path"])
+    # #608/#748: preserve the abstract and partial report, then append truthful receipt evidence.
+    assert (edition / "report.md").read_text(encoding="utf-8") == (
+        "![Graphical abstract — 질문 → 데이터 → 방법 → 핵심 결과](graphical_abstract.svg)\n\nResult"
+        "\n\n## 재현 검증\n\n"
+        "문법 검사: not_applicable · 실행: not_rerun · lock: missing · 문법 실패 0 · 도구 없음 0 · "
+        "미검사 0 · 누락 입력 0. 문법 PASS는 실행 PASS가 아닙니다."
+        "\n\n[검사 receipt](REPRODUCTION_RECEIPT.json)\n")
+    receipt = json.loads((edition / "REPRODUCTION_RECEIPT.json").read_text(encoding="utf-8"))
+    assert receipt["schema_version"] == 1
+    assert receipt["files"] == [] and receipt["locks"] == [] and receipt["lock_status"] == "missing"
+    assert saved["reproduction_receipt"]["syntax"] == "not_applicable"
+    assert saved["reproduction_receipt"]["execution"] == "not_rerun"
+    assert hub.requests["r"]["status"] == "cancelled"
+    assert hub.requests["r"]["report"] == "Result"
+    assert (edition / "graphical_abstract.svg").read_text(encoding="utf-8").startswith("<svg ")
     assert not calls
 
 

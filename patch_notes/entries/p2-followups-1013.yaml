@@ -1,11 +1,14 @@
 pr: 580
 rows:
-- sha: '6fdb37d'
+- sha: 6fdb37d
   at: 2026-10-14 09:52
   text: '병합된 P2 22건 수정: 대기 표시·결과 정리·follow-up·시설팀·메신저·검색·init'
-- sha: 'fd4ac7b'
+  summary: 대기·결과·이어 묻기·메신저·검색·초기 설정 등 웹 후속 오류를 수정했습니다.
+- sha: fd4ac7b
   at: 2026-10-14 10:13
   text: P2 웹 회귀 파일을 pytest의 CI 실행 목록에 연결
-- sha: '7c4752d'
+  summary: 후속 오류를 막는 웹 검사를 자동 검사 실행 목록에 연결했습니다.
+- sha: 7c4752d
   at: 2026-10-14 11:08
   text: '최신 main 병합: P2·design-token·shutdown 테스트 보존, CSS 로드 순서 충돌 해소'
+  summary: 최신 변경과 오류 수정 검사를 보존하고 디자인 파일의 적용 순서 충돌을 풀었습니다.

@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: 'c1fe6f9'
+  at: 2026-10-22 01:41
+  summary: 브라우저 시작이 실패해도 이미 만든 자원을 정리하도록 고쳤습니다.
+  text: 'Server 획득·reserved-port 거부를 기존 cleanup 범위로 옮기고 listen 오류를 원래 호출에 반환한다. 기존16행 상한 안에 startup 경계를 추가했다. 동기 trace/등록 probe6·기존 wrapper/static11 PASS, 격리 VM의 비동기 정리 계약3건은 CI용으로 추가했다. 실제 main 로그에는 desktop open/start가 있어 startup 원인은 아직 미확정이다. Policy blob 불일치의 reuse 거부 근거를 기록했으며 assertions·30초·필수26·receipt·CI policy는 유지했다. Refs #833; 새 PR 및 main의 native 확인이 남았다.'

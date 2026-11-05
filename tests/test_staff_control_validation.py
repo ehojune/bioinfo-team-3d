@@ -60,7 +60,7 @@ async def test_state_flush_does_not_overwrite_changes_while_send_waits(tmp_path,
         elif mutation == "pause":
             await hub.control_task("t1", "pause")
         elif mutation == "settle":
-            hub._settle_steers("t1", entry, {"delivered": [first]})
+            await hub._settle_steers("t1", entry, {"delivered": [first]})
         else:
             await hub._close_step_controls("r", "A")
         expected = hub.store.get("step_control", key)

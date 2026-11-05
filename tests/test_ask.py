@@ -19,6 +19,7 @@ from labhq.runner.approvals import Broker
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 from labhq.util import free_port
+from tests.support.serve_task import serve_task, wait_started
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -514,9 +515,9 @@ async def test_fake_mcp_client_gets_one_terminal_answer(tmp_path):
     broker = Broker(port, noop, noop, noop, answer)
     holder["broker"] = broker
     token = broker.issue_task_token("task_a", "analyst", "req_a")
-    server_task = asyncio.create_task(broker.serve())
+    server_task = serve_task(broker.serve())
     try:
-        await _until(lambda: broker.server is not None and broker.server.started)
+        await wait_started(lambda: broker.server is not None and broker.server.started, server_task, 20, "broker")
         env = {**os.environ, "PYTHONPATH": str(REPO), "LABHQ_BROKER_URL": broker.url,
                "LABHQ_BROKER_TOKEN": token, "LABHQ_TASK_ID": "task_a",
                "LABHQ_AGENT_ID": "analyst", "LABHQ_WORKDIR": str(tmp_path)}
@@ -568,9 +569,9 @@ async def test_mock_engine_ask_routes_without_deadlock_and_pi_hibernates(tmp_pat
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=gateway_port, log_level="warning"))
     runner = Runner(settings)
-    tasks = [asyncio.create_task(server.serve())]
+    tasks = [serve_task(server.serve())]
     try:
-        await _until(lambda: server.started)
+        await wait_started(lambda: server.started, tasks[0], 20, "gateway")
         tasks.append(asyncio.create_task(runner.run_forever()))
         await _until(lambda: "analyst" in hub.agents and "cso" in hub.agents)
 
@@ -647,9 +648,9 @@ async def test_ask_tool_schema_limits_wait_and_relays_a_400(tmp_path):
     port = free_port()
     broker = Broker(port, record, record, record, record)
     token = broker.issue_task_token("task_a", "analyst", "req_a")
-    server_task = asyncio.create_task(broker.serve())
+    server_task = serve_task(broker.serve())
     try:
-        await _until(lambda: broker.server is not None and broker.server.started)
+        await wait_started(lambda: broker.server is not None and broker.server.started, server_task, 20, "broker")
         env = {**os.environ, "PYTHONPATH": str(REPO), "LABHQ_BROKER_URL": broker.url,
                "LABHQ_BROKER_TOKEN": token, "LABHQ_TASK_ID": "task_a", "LABHQ_AGENT_ID": "analyst"}
         params = StdioServerParameters(command=sys.executable, args=["-m", "labhq.tools.ask_mcp"], env=env)

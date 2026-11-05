@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from urllib.parse import quote
 
 import httpx
@@ -14,7 +14,7 @@ from labhq.integrations.github import GitHubClient
 from labhq.request_bundle import build_request_bundle
 from labhq.result_storage import ResultStorage
 from labhq.ro_crate import verify_bundle_copy
-from labhq.settings import ProjectSettings, Settings
+from labhq.settings import DataZone, ProjectSettings, Settings
 from tests.test_request_bundle import pending_bundle_fixture
 from tests.test_result_storage import Hub
 
@@ -101,7 +101,9 @@ async def test_restart_reuses_saved_draft_without_editor(tmp_path, monkeypatch):
     assert editor.await_count == 1
     assert approval.call_args.kwargs["detail"] == original
     assert upload.call_args.args[1] == original["documents"]
-    assert upload.call_args.args[2] == {"steps/s1/outputs/plot.png": b"original-image"}
+    uploaded_images = upload.call_args.args[2]
+    assert uploaded_images["steps/s1/outputs/plot.png"] == b"original-image"
+    assert uploaded_images["graphical_abstract.svg"].startswith(b"<svg")
     assert before == {p.relative_to(draft): (p.read_bytes(), p.stat().st_mtime_ns) for p in draft.rglob("*") if p.is_file()}
     await restarted.result_storage.close()
 
@@ -126,11 +128,220 @@ async def test_auto_publish_waits_for_review_and_resumes_draft(tmp_path, monkeyp
     await hub.result_storage.close()
 
 
+@pytest.mark.parametrize("failure_point", ["write", "submit"])
+async def test_round_refresh_failure_does_not_turn_a_completed_upload_into_failure(
+        tmp_path, monkeypatch, failure_point):
+    hub = Hub(tmp_path)
+    hub.s.github.auto_publish_results = True
+    hub.requests["req_test"].update(
+        status="done", report="original report", pi_reviewed_at=1,
+        result_storage={"mode": "existing", "repo": "owner/study", "status": "selected"})
+    hub.rounds = SimpleNamespace(
+        awrite=AsyncMock(side_effect=OSError("round state unavailable") if failure_point == "write" else None),
+        asubmit=AsyncMock(side_effect=OSError("round state unavailable") if failure_point == "submit" else None))
+    service = ResultStorage(hub)
+    monkeypatch.setattr(service, "edition_pdf", AsyncMock(return_value=(None, "test environment")))
+    monkeypatch.setattr(service, "upload", AsyncMock())
+
+    await service.finish("req_test")
+
+    saved = hub.requests["req_test"]["result_storage"]
+    assert saved["status"] == "published"
+    assert saved["round_warning"] == "게시를 마쳤지만 운전 기록을 갱신하지 못했습니다(OSError)."
+    service.upload.assert_awaited_once()
+    if failure_point == "write":
+        hub.rounds.asubmit.assert_not_awaited()
+    else:
+        hub.rounds.asubmit.assert_awaited_once_with("req_test")
+
+
 async def test_direct_upload_rejects_unreviewed_request(tmp_path):
     hub = Hub(tmp_path)
     hub.requests["req_test"]["result_storage"] = {"mode": "new", "repo": "owner/study"}
     with pytest.raises(ValueError, match="검토 완료"):
         await ResultStorage(hub).upload("req_test", {"README.md": "result"})
+
+
+async def test_new_repository_has_one_canonical_payload_without_compatibility_copy(tmp_path):
+    hub = Hub(tmp_path)
+    internal = tmp_path / "internal"
+    internal.mkdir()
+    hub.s.policy.data_zones = [DataZone(path=str(internal), level="internal")]
+    hub.requests["req_test"].update(
+        pi_reviewed_at=1,
+        project_dirs=[str(internal)],
+        plan={"steps": [{"id": "s1", "output_types": [
+            {"name": "outputs/result_summary.tsv", "data_type": "table"},
+        ]}]},
+        result_storage={"mode": "new", "repo": "owner/study", "allow_public": True},
+    )
+    calls = []
+
+    class GitHub:
+        async def repo_info(self, _repo):
+            return {"private": True, "default_branch": "main"}
+
+        async def repository_is_empty(self, _repo, _branch):
+            return False
+
+        async def put_file(self, _repo, name, body, _message, branch):
+            calls.append((name, body, branch))
+
+        async def put_image(self, _repo, name, body, branch):
+            calls.append((name, body, branch))
+
+        async def put_binary(self, _repo, name, body, branch, _message):
+            calls.append((name, body, branch))
+
+    service = ResultStorage(hub)
+    service.client = lambda: GitHub()
+    docs = {
+        "README.md": "portfolio",
+        "report/report.md": "report",
+        "tables/result_summary.tsv": "group\tcount\nall\t42\n",
+        "report.md": "compatibility",
+        "steps/s1/outputs/notes.txt": "allowed compatibility output",
+        "steps/s1/outputs/sample_metadata.tsv": "sample\tgroup\ns1\tcase\n",
+        "steps/s1/outputs/by_group.tsv": "group\tcount\ncase\t9\n",
+        "steps/s1/outputs/patient_summary.tsv": "patient_id\tage\nP001\t42\nP002\t53\n",
+        "steps/s1/outputs/result_summary.tsv": "group\tcount\nall\t42\n",
+        "tables/rows.json": '{"rows": [{"sample": "s1"}]}',
+        "run/samples.txt": "s1\ns2\n",
+        "steps/s1/outputs/rows.json": '{"rows": [{"sample": "s1"}]}',
+        "steps/s1/outputs/samples.txt": "s1\ns2\n",
+    }
+
+    await service.upload("req_test", docs)
+
+    names = {name for name, _body, _branch in calls}
+    assert {"README.md", "report/report.md", "tables/result_summary.tsv"} <= names
+    assert "report.md" not in names and not any(name.startswith("steps/") for name in names)
+    compat = "labhq/results/req_test/"
+    assert not any(name.startswith(compat) for name in names)
+    assert not any(any(table in name for table in ("sample_metadata.tsv", "by_group.tsv", "patient_summary.tsv"))
+                   for name in names)
+    assert not any(name.endswith(("rows.json", "samples.txt")) for name in names)
+
+
+async def test_existing_repository_keeps_the_compatibility_copy(tmp_path):
+    hub = Hub(tmp_path)
+    hub.requests["req_test"].update(
+        pi_reviewed_at=1,
+        result_storage={"mode": "existing", "repo": "owner/study", "allow_public": True},
+    )
+    names = []
+
+    class GitHub:
+        async def repo_info(self, _repo):
+            return {"private": True, "default_branch": "main"}
+
+        async def repository_is_empty(self, _repo, _branch):
+            return False
+
+        async def put_file(self, _repo, name, _body, _message, _branch):
+            names.append(name)
+
+        async def put_image(self, _repo, name, _body, _branch):
+            names.append(name)
+
+        async def put_binary(self, _repo, name, _body, _branch, _message):
+            names.append(name)
+
+    service = ResultStorage(hub)
+    service.client = lambda: GitHub()
+    await service.upload("req_test", {"README.md": "result", "report.md": "report"})
+
+    assert "labhq/results/req_test/README.md" in names
+    assert "labhq/results/req_test/report.md" in names
+
+
+async def test_upload_keeps_public_step_small_cells_outside_the_internal_scope(tmp_path):
+    hub = Hub(tmp_path)
+    internal = tmp_path / "internal"
+    internal.mkdir()
+    hub.s.policy.data_zones = [DataZone(path=str(internal), level="internal")]
+    public_table = "studies/B-public/tables/public.tsv"
+    internal_tables = {
+        "studies/A-internal/tables/private.tsv",
+        "tables/synthesis.tsv",
+    }
+    hub.requests["req_test"].update(
+        text=f"{internal / 'cohort.tsv'}와 공개 자료를 비교한다.",
+        project_dirs=[str(internal)],
+        pi_reviewed_at=1,
+        result_storage={
+            "mode": "new", "repo": "owner/study", "allow_public": True,
+            "internal_publication_scope": "step",
+            "internal_files": sorted(internal_tables),
+            "internal_allowed_files": [],
+        },
+    )
+    calls = []
+
+    class GitHub:
+        async def repo_info(self, _repo):
+            return {"private": True, "default_branch": "main"}
+
+        async def repository_is_empty(self, _repo, _branch):
+            return False
+
+        async def put_file(self, _repo, name, body, _message, branch):
+            calls.append(name)
+
+        async def put_image(self, *_args):
+            raise AssertionError("no images")
+
+    service = ResultStorage(hub)
+    service.client = lambda: GitHub()
+    docs = {
+        "README.md": "portfolio",
+        "report/report.md": "report",
+        public_table: "gene\trank\nG1\t5\n",
+        "studies/A-internal/tables/private.tsv": "group\tcount\nA\t5\n",
+        "tables/synthesis.tsv": "group\tcount\nA\t5\n",
+    }
+
+    await service.upload("req_test", docs)
+
+    assert public_table in calls
+    assert not any(name.startswith("labhq/results/req_test/") for name in calls)
+    assert not any(name in internal_tables for name in calls)
+
+
+async def test_public_payload_keeps_json_and_text_outputs(tmp_path):
+    hub = Hub(tmp_path)
+    hub.requests["req_test"].update(
+        pi_reviewed_at=1,
+        result_storage={"mode": "new", "repo": "owner/study", "allow_public": True},
+    )
+    calls = []
+
+    class GitHub:
+        async def repo_info(self, _repo):
+            return {"private": True, "default_branch": "main"}
+
+        async def repository_is_empty(self, _repo, _branch):
+            return False
+
+        async def put_file(self, _repo, name, body, _message, branch):
+            calls.append(name)
+
+        async def put_image(self, *_args):
+            raise AssertionError("no images")
+
+    service = ResultStorage(hub)
+    service.client = lambda: GitHub()
+    docs = {
+        "README.md": "portfolio",
+        "report/report.md": "report",
+        "tables/rows.json": '{"rows": [{"sample": "s1"}]}',
+        "run/samples.txt": "s1\ns2\n",
+    }
+
+    await service.upload("req_test", docs)
+
+    assert "tables/rows.json" in calls and "run/samples.txt" in calls
+    assert not any(name.startswith("labhq/results/req_test/") for name in calls)
 
 
 async def test_public_project_without_permission_stays_local(tmp_path):

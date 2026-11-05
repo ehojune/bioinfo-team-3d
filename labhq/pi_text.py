@@ -74,11 +74,11 @@ def tool_description(detail: dict) -> str:
 def approval_copy(kind: str, summary: str, detail: dict) -> dict[str, str]:
     """Stable Korean explanation for old and new producers; source fields are left intact."""
     if kind == 'tool_permission':
-        one = tool_description(detail)
-        reason = '자동으로 허용하는 범위를 벗어나 실행 전에 확인이 필요합니다.'
+        from .tool_explanation import explain, reason as tool_reason
+        described, risk, _ = explain(detail)
+        one = described or tool_description(detail)
         policy_reason = str(detail.get('policy_reason') or summary)
-        if '재귀 삭제' in policy_reason:
-            reason = '폴더 안의 파일까지 지우는 명령이 감지됐습니다. 실제 삭제 대상은 원문에서 확인해 주세요.'
+        reason = tool_reason(detail, policy_reason, risk)
         outcome = '승인하면 이 도구 호출을 한 번 허용합니다. 거절하면 실행하지 않습니다.'
     elif kind == 'hpc_submit':
         one = '계산 서버에 작업을 보내려 합니다.'
@@ -103,6 +103,30 @@ def approval_copy(kind: str, summary: str, detail: dict) -> dict[str, str]:
         one = '필요한 일을 맡길 직원을 추가하려 합니다.'
         reason = korean_text(detail.get('reason'), '현재 직원만으로 맡기기 어려운 일이 있습니다.')
         outcome = '승인하면 제안된 직원의 준비를 시작합니다. 준비가 끝나야 일을 맡깁니다.'
+    elif kind == 'pipeline_contribute':
+        one = f"완성한 {plain_text(detail.get('name'))} pipeline을 bioinfo-agent에 기여할까요?"
+        reason = '새 pipeline의 코드를 공개 저장소에 보내기 전에 건별 동의를 받습니다.'
+        outcome = '승인하면 이 후보의 코드로 PR을 엽니다. 거절하면 기여하지 않고 분석 결과를 보관합니다.'
+    elif kind == 'disk_space':
+        one = '작업 폴더가 있는 드라이브의 여유 공간이 거의 없습니다.'
+        free, floor = detail.get('free_gib'), detail.get('floor_gib')
+        reason = (f'여유가 {free:.1f} GiB이고 시작 기준은 {floor:g} GiB입니다. 디스크가 차면 이 작업과 gateway가 멈출 수 있습니다.'
+                  if isinstance(free, (int, float)) and isinstance(floor, (int, float)) else
+                  '디스크가 차면 이 작업과 gateway가 멈출 수 있습니다.')
+        outcome = '승인하면 이 작업을 그대로 시작합니다. 거절하거나 시간이 끝나면 시작하지 않고 이유를 남깁니다.'
+    elif kind == 'wsl_setup':
+        one = 'WSL 준비가 덜 됐어요. 셋업할까요?'
+        missing = detail.get('missing') if isinstance(detail.get('missing'), list) else []
+        reason = ('bioinfo-agent는 이 PC의 WSL에서 돌아가는데 아직 준비되지 않았습니다.'
+                  + (f" 빠진 것: {', '.join(plain_text(item) for item in missing[:8])}." if missing else ''))
+        outcome = ('승인하면 관리자 권한이 필요 없는 준비(Nextflow 설치, WSL 안 labhq, runner 등록)를 바로 합니다. '
+                   '관리자 명령이 남으면 카드가 보여 주고, 요청은 기다리지 않고 멈춥니다. 거절하면 셋업하지 않습니다.')
+    elif kind == 'literature_pdf':
+        papers = detail.get('papers') if isinstance(detail.get('papers'), list) else []
+        one = f'핵심 논문 {len(papers)}편의 PDF를 요청합니다.'
+        reason = '허용된 공개·기관 경로에서 결론에 필요한 본문을 읽지 못했습니다.'
+        outcome = ('지정 파일에 PDF를 넣고 승인하면 본문으로 이어 갑니다. 거절하거나 대기 시간이 끝나면 '
+                   '초록 또는 다른 오픈 액세스 논문으로 진행하고 한계에 남깁니다.')
     else:
         one = korean_text(summary, '다음 작업을 진행하기 전에 확인이 필요합니다.')
         reason = korean_text(detail.get('why_blocked') or detail.get('reason'), '진행 방향을 정하려면 PI의 답이 필요합니다.')
@@ -111,7 +135,9 @@ def approval_copy(kind: str, summary: str, detail: dict) -> dict[str, str]:
 
 
 def with_approval_copy(card: dict) -> dict:
+    from .tool_explanation import needs_interpretation
     copy = approval_copy(str(card.get('kind', '')), str(card.get('summary', '')), card.get('detail') or {})
     return {**card, **{key: card.get(key) or value for key, value in copy.items()},
-            **({'pi_explainer': 'chief_of_staff', 'pi_needs_interpretation': True}
+            **({'pi_explainer': 'chief_of_staff', 'pi_needs_interpretation':
+                card.get('kind') != 'tool_permission' or needs_interpretation(card.get('detail') or {})}
                if not card.get('pi_summary') else {})}

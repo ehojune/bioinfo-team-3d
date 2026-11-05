@@ -1,0 +1,50 @@
+pr: 990
+rows:
+- sha: 9a8af6b
+  at: '2026-10-27 17:16'
+  text: 새 dispatch 경합 회귀를 Windows boundary CI에 포함한다(Refs #606).
+  summary: Windows test 선택 목록을 보완해 새 회귀도 검사한다.
+- sha: 4618a13
+  at: '2026-10-27 17:10'
+  text: 이전 revision의 전달이 거부되면 해당 작업의 방향과 알림 예약을 반환한다(Refs #606).
+  summary: 경합으로 전달되지 않은 방향과 버린 수 알림이 다음 turn에 남도록 고쳤다.
+- sha: a2dbca7
+  at: '2026-10-26 22:24'
+  text: result admission lock을 halt intent에 한정해 pause 전송 중 result 정산을 보존한다(Refs #606).
+  summary: 신규 halt 회귀 3건과 기존 result 삭제 경쟁을 합쳐 4 PASS. 전체 관련 검증과 최종 head CI·리뷰는 잔여다.
+- sha: 404664c
+  at: '2026-10-26 22:23'
+  text: result snapshot과 종료 정산 표식을 PI intent·전송 판정과 직렬화한다(Refs #606).
+  summary: durable halt 뒤 응답 거절과 pause가 엇갈리는 P1의 ask·실패·성공 회귀를 3 FAIL에서 3 PASS로 검증했다.
+- sha: 0ee0aaa
+  at: '2026-10-26 22:08'
+  text: 종료 경쟁 때 이번 steer ID만 반환하고 기존 예약은 result의 delivered 정산에 맡긴다(Refs #606).
+  summary: pause·halt·steer가 전달 완료된 지시를 재예약하는 P1을 3 FAIL로 재현하고 관련 164 PASS로 검증했다.
+- sha: a97dee5
+  at: '2026-10-26 22:01'
+  text: 종료 정산 중 halt를 거절하고 revision 전진 뒤 취소된 attach의 예약을 반환한다(Refs #606).
+  summary: 리뷰 P1·P2를 수정 전 2 FAIL로 재현하고 관련 161건을 검증했다. close 후 새 row의 알림은 보존한다.
+- sha: 23b2273
+  at: '2026-10-26 21:40'
+  text: 질문-only turn의 완료 이벤트를 답변 후로 미루고 취소된 attach의 drop 알림 몫만 반환한다(Refs #606).
+  summary: 질문 답변 뒤 같은 단계가 계속 실행되며 전달 전 취소로 누락됐던 방향 수 알림을 다음 turn에 보존한다.
+- sha: 59340c3
+  at: '2026-10-26 21:04'
+  text: 전송 직전 종료 중인 turn의 steer 예약을 반환하고 control publication과 step close를 직렬화한다(Refs #606).
+  summary: 최종 리뷰 P1·P2의 격리 회귀 2 FAIL을 재현하고 수정 뒤 관련 85 PASS를 확인했다. Linux e2e 실패는 미해결이며 hold를 유지한다.
+- sha: 5d7a94f
+  at: '2026-10-26 20:50'
+  text: 기존 revision dispatch 자격을 보존하고 복구 test는 durable dispatch readiness를 기다린다(Refs #606).
+  summary: CI의 기존 경로 차단·한 loop-turn 가정을 바로잡고 신규 44건과 실패 mock 11건을 합쳐 55 PASS로 검증했다.
+- sha: 7cd7d7e
+  at: '2026-10-26 20:36'
+  text: caller 취소 전 commit된 steer의 같은 ID 전송을 정산한다(Refs #606).
+  summary: 리뷰 P2는 asyncio·AnyIO 2 FAIL → 관련 122 PASS로 검증했다. W3 변경 뒤 manual에 step 경계를 반영했다.
+- sha: c47bfce
+  at: '2026-10-26 20:32'
+  text: step 종료 표식을 revision별로 적용해 새 revision은 열고 이전 turn의 늦은 attach는 막는다(Refs #606).
+  summary: 재개 회귀 1 FAIL → PASS, 신규 mock 43 PASS. PR 번호 누락으로 실패한 notes-index schema도 바로잡는다.
+- sha: cf36af2
+  at: '2026-10-26 20:27'
+  text: step 제어를 최신 row 기준으로 직렬화하고 async commit 뒤 wake·전송을 처리한다(Refs #606).
+  summary: 경쟁·rollback·반복 취소·steer replay·격리 복구 읽기를 mock으로 검증한다. 실제 운영 성능은 미검증이다.

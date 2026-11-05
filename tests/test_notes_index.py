@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 
 import yaml
+import pytest
 
 spec = importlib.util.spec_from_file_location("notes_index", Path(__file__).resolve().parents[1] / "scripts" / "notes_index.py")
 ni = importlib.util.module_from_spec(spec)
@@ -59,7 +60,11 @@ def test_legacy_migration_recreates_the_old_indexes_byte_for_byte(tmp_path):
     status_dir = tmp_path / "docs" / "status"
     patch_dir.mkdir(parents=True)
     status_dir.mkdir(parents=True)
-    shutil.copyfile(root / "patch_notes" / "entries" / "_legacy.yaml", patch_dir / "_legacy.yaml")
+    # Easy explanations are an added presentation layer, not edits to the old record.
+    legacy = yaml.safe_load((root / "patch_notes" / "entries" / "_legacy.yaml").read_text(encoding="utf-8"))
+    for row in legacy["rows"]:
+        row.pop("summary", None)
+    (patch_dir / "_legacy.yaml").write_text(yaml.safe_dump(legacy, allow_unicode=True, sort_keys=False), encoding="utf-8")
     shutil.copyfile(root / "docs" / "status" / "_legacy.md", status_dir / "_legacy.md")
     notice = ni.GENERATED_NOTICE + "\n\n"
     patch = ni.render_patch_notes(tmp_path).replace(notice, "", 1).encode()
@@ -86,3 +91,32 @@ def test_validate_rejects_a_row_the_generator_would_refuse(tmp_path):
         pass
     else:
         raise AssertionError("a row without `at` must fail before the merge, not on main")
+
+
+def test_easy_explanation_precedes_the_unchanged_technical_record(tmp_path):
+    technical = "재현 receipt의 ctx=Load 판정 (#774)"
+    write_entry(tmp_path, "easy.yaml", 774, [{
+        "sha": "abc1234", "at": "2026-10-20 12:34", "text": technical,
+        "summary": "  쓰기 대상을 입력 파일과 혼동하지 않도록 고쳤습니다.  ",
+    }])
+    rendered = ni.render_patch_notes(tmp_path)
+    assert f"**쓰기 대상을 입력 파일과 혼동하지 않도록 고쳤습니다.**<br>{technical}" in rendered
+    assert "| 12:34 | [`abc1234`](https://github.com/ehojune/bioinfo-team-3d/pull/774/commits/abc1234) |" in rendered
+
+
+def test_easy_explanation_cannot_break_the_markdown_table(tmp_path):
+    write_entry(tmp_path, "easy.yaml", None, [{
+        "sha": "abc1234", "at": "2026-10-20 12:34", "text": "기술 기록",
+        "summary": "A | <B> **C**",
+    }])
+    rendered = ni.render_patch_notes(tmp_path)
+    assert r"**A \| &lt;B&gt; \*\*C\*\***<br>기술 기록" in rendered
+
+
+@pytest.mark.parametrize("summary", [None, "", "   ", "첫줄\n둘째줄", "첫줄\r둘째줄", 7, ["설명"]])
+def test_invalid_easy_explanations_are_rejected_before_main_generation(tmp_path, summary):
+    write_entry(tmp_path, "easy.yaml", 774, [{
+        "sha": "abc1234", "at": "2026-10-20 12:34", "text": "기술 기록", "summary": summary,
+    }])
+    with pytest.raises(ValueError, match="summary"):
+        ni.render_patch_notes(tmp_path)

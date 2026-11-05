@@ -1,8 +1,10 @@
 pr: 554
 rows:
-- sha: '8ded85f'
+- sha: 8ded85f
   at: 2026-10-13 17:21
   text: test 홈·state를 격리하고 사용자 저장소 guard와 백업 우선 dry-run 정리 도구 추가
-- sha: 'd38535f'
+  summary: 테스트 저장 위치를 격리하고 사용자 자료 보호와 백업 우선 정리 사전 확인을 더했습니다.
+- sha: d38535f
   at: 2026-10-13 17:57
   text: 설정·instance·staff·cache·skill·doctor 읽기 전 사용자 홈 guard 적용, 회귀 17건 추가
+  summary: 사용자 설정을 읽기 전에 테스트 접근 보호를 적용하고 오류 재발 검사를 더했습니다.

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">그래픽 초록 제목</title>
+  <desc id="desc">질문, 자료, 방법, 핵심 결과, 결론을 왼쪽에서 오른쪽으로 보여 주는 템플릿.</desc>
+  <style>
+    text { font-family: 'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; fill: #0F172A; }
+    .label { font-size: 14px; font-weight: 700; }
+    .body { font-size: 13px; fill: #475569; }
+  </style>
+  <rect width="1200" height="360" rx="16" fill="#F8FAFC"/>
+  <g fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5">
+    <rect x="30" y="72" width="200" height="220" rx="12"/>
+    <rect x="265" y="72" width="200" height="220" rx="12"/>
+    <rect x="500" y="72" width="200" height="220" rx="12"/>
+    <rect x="735" y="72" width="200" height="220" rx="12"/>
+    <rect x="970" y="72" width="200" height="220" rx="12"/>
+  </g>
+  <g class="label">
+    <text x="50" y="106">질문</text><text x="285" y="106">자료</text><text x="520" y="106">방법</text>
+    <text x="755" y="106">핵심 결과</text><text x="990" y="106">결론</text>
+  </g>
+  <g class="body">
+    <text x="50" y="142">{{질문}}</text><text x="285" y="142">{{자료}}</text><text x="520" y="142">{{방법}}</text>
+    <text x="755" y="142">{{핵심 결과}}</text><text x="990" y="142">{{결론}}</text>
+  </g>
+</svg>

@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: b577a8b
+  at: '2026-10-21 21:42'
+  summary: HPC를 끈 상태의 안전 검사도 Windows 검사 목록에 넣었습니다.
+  text: scheduler:none의 검토된 구현과 test를 보존하고 미병합 #828/#825 후보와 로컬 통합했다. known_tests 319개와 정확한 파일 cohort에 등록하고 기존6 mixed/5 mandatory를 유지했다. source-only profile·포함18판정·Python3.10 AST4파일을 확인했으며 실제 통합 CI와 최종 main 반영은 미확인이다.

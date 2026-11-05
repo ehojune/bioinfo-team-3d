@@ -19,6 +19,7 @@ from labhq.research.packs import configured_packs, pack_snapshot, render_pack_ca
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 from labhq.util import free_port
+from tests.support.serve_task import serve_task, wait_started
 from tests.test_e2e_mock import _request_state, _until, _wait_for_request_terminal
 from tests.test_research_protocol import PACK, MiniHub, valid_pack_values, valid_plan
 
@@ -110,7 +111,7 @@ async def test_malformed_agent_id_goes_to_the_correction_instead_of_failing_the_
 async def test_plan_still_invalid_after_correction_tells_the_pi_why():
     bad = valid_plan(pack_values=valid_pack_values())
     bad["pack_values"][PACK]["acceptance"] = {"batch_condition_distinguishable": "met"}
-    hub, selected = await _plan_with([bad, copy.deepcopy(bad)])
+    hub, selected = await _plan_with([copy.deepcopy(bad) for _ in range(4)])  # first plan + 3 corrections (#948)
     request = hub.requests["r"]
     assert request["status"] == "failed" and request["outcome"] == "plan_invalid"
     assert hub.approvals == []
@@ -121,7 +122,7 @@ async def test_plan_still_invalid_after_correction_tells_the_pi_why():
     assert "ValueError" not in report and "Traceback" not in report
     assert request["error"].startswith("연구 계획 검증 실패")
     assert any("acceptance" in problem for problem in request["plan_validation"]["errors"])
-    assert request["plan_validation"]["attempts"] == 2
+    assert request["plan_validation"]["attempts"] == 4
 
 
 def test_plan_errors_collect_schema_and_pack_problems_in_one_pass():
@@ -200,8 +201,8 @@ async def test_public_research_request_reaches_cp1_card_through_the_claude_schem
 
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=gport, log_level="warning"))
-    tasks = [asyncio.create_task(server.serve())]
-    await _until(lambda: server.started, 10, "gateway server startup", lambda: {"started": server.started})
+    tasks = [serve_task(server.serve())]
+    await wait_started(lambda: server.started, tasks[0], 10, "gateway server startup")
     runner = Runner(s)
     tasks.append(asyncio.create_task(runner.run_forever()))
     try:

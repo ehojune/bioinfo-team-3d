@@ -4,13 +4,15 @@ instructions list them as `~` labels."""
 
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 import labhq.private_paths as private_paths
 from labhq import doctor
-from labhq.adapters.base import ROLE_FOOTER, WORKSPACE_WRITE_RULES, RunContext
+from labhq.adapters.base import ROLE_FOOTER, RunContext, workspace_write_rules
 from labhq.adapters.claude_code import ClaudeCodeAdapter
 from labhq.adapters.codex import CodexAdapter
 from labhq.models import AgentSpec, Engine, Task, TaskResult
@@ -245,7 +247,7 @@ def test_every_staff_instruction_lists_private_paths_as_tilde_labels(tmp_path, e
     assert home not in text and Path.home().as_posix() not in text
     plain = _ctx(tmp_path / "plain", engine, [])
     adapter(Settings()).prepare(plain)
-    assert read(plain.workdir).endswith(ROLE_FOOTER + WORKSPACE_WRITE_RULES)  # nothing configured: no private section
+    assert read(plain.workdir).endswith(ROLE_FOOTER + workspace_write_rules(engine))  # nothing configured: no private section
 
 
 # ---------------- runner ----------------
@@ -279,20 +281,22 @@ def _capture_runner(settings, monkeypatch, engine=Engine.claude_code):
 async def test_runner_gives_claude_rules_the_gate_list_and_the_labels(tmp_path, monkeypatch):
     home = _home(tmp_path)
     monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
-    settings = _runner_settings(tmp_path, ["~/.ssh", str(tmp_path)])  # tmp_path holds the workspace: skipped
+    settings = _runner_settings(tmp_path, ["~/.ssh", str(tmp_path)])  # managed reads leave private siblings closed
     runner, seen = _capture_runner(settings, monkeypatch)
     for task_id in ("t1", "t2"):
         result = await runner.run_task(Task(id=task_id, agent_id="worker", request_id="r", prompt="q"))
         assert result.ok, result.error
     ctx = seen["ctx"]
-    assert ctx.private_labels == ["~/.ssh"]
+    assert ctx.private_labels == ["~/.ssh", f"{OUTSIDE_HOME_LABEL} …/{tmp_path.name}"]
     deny = ctx.claude_settings["permissions"]["deny"]
     rule = f"Read(/{private_paths_rule(home / '.ssh')}/**)"
     assert rule in deny
-    assert ctx.env[ENV_VAR].split(os.pathsep) == [str(home / ".ssh")]
+    assert ctx.env[ENV_VAR].split(os.pathsep) == [str(home / ".ssh"), str(tmp_path)]
+    assert evaluate_tool('Read', {'file_path': str(tmp_path / 'private.txt')}, settings.policy,
+                         private_paths=ctx.private_paths, private_open_reads=ctx.private_open_reads).action == 'deny'
     warned = [e["data"]["text"] for e in runner.store.pending()
               if e["type"] == "agent.log" and "개인 경로 차단에서 제외" in e["data"].get("text", "")]
-    assert len(warned) == 1 and OUTSIDE_HOME_LABEL in warned[0], "said once, not on every task"
+    assert not warned, 'managed reads must not exempt the containing private folder'
 
 
 def private_paths_rule(path: Path) -> str:
@@ -374,8 +378,8 @@ def _doctor_row(settings, monkeypatch):
 
 @pytest.mark.parametrize("private,status,detail", [
     (["~/.ssh", "~/.netrc"], "ok", "2 active"),
-    (["~/.ssh", "TMP"], "ok", "1 active; skipped, holds a work folder: OUTSIDE"),
-    (["TMP"], "warn", "0 active; skipped, holds a work folder: OUTSIDE"),
+    (["~/.ssh", "TMP"], "ok", "2 active"),
+    (["TMP"], "ok", "1 active"),
     ([], "warn", "off (policy.private_paths: [])"),
     (["~/.kube"], "warn", "0 active"),
 ])
@@ -1031,7 +1035,7 @@ def test_enabled_with_no_active_path_pre_approves_no_shell_and_explicit_off_keep
 async def test_runner_keeps_private_paths_on_when_no_entry_is_active(tmp_path, monkeypatch):
     home = _home(tmp_path)
     monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
-    for private, enabled in ((["~/missing", str(tmp_path)], True), ([], False)):  # absent + holds the workspace
+    for private, enabled in ((["~/missing"], True), ([], False)):  # absent list still enables registry protection
         runner, seen = _capture_runner(_runner_settings(tmp_path / str(enabled), private), monkeypatch)
         assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q"))).ok
         ctx = seen["ctx"]
@@ -1097,3 +1101,108 @@ def test_a_word_is_absent_only_when_no_volume_could_match_it_to_an_entry(tmp_pat
         assert not _absent_below(token, str(tmp_path), listings), token
     for token in ("nothing/x", "aliasx", "cafe/x"):
         assert _absent_below(token, str(tmp_path), listings), token
+
+
+# ---------------- pre-publish check (scripts/check_public.sh, #831) ----------------
+
+CHECK_PUBLIC = Path(__file__).resolve().parents[1] / "scripts" / "check_public.sh"
+SECRET = ("k=ghp_" + "A" * 24 + "\n").encode()  # built here so this file passes the check itself
+MIB5 = 5 * 1024 * 1024
+
+
+def _bash() -> str | None:
+    """Git's own bash on Windows: System32's bash.exe would start WSL."""
+    git = shutil.which("git")
+    if git is None or os.name != "nt":
+        return git and shutil.which("bash")
+    for root in Path(git).resolve().parents[:3]:
+        if (root / "bin" / "bash.exe").is_file():
+            return str(root / "bin" / "bash.exe")
+    return None
+
+
+BASH = _bash()
+needs_bash = pytest.mark.skipif(BASH is None, reason="needs git and Git Bash (Windows) or bash")
+posix_only = pytest.mark.skipif(os.name == "nt", reason="newline names, symlinks and file modes")
+
+
+def _check_public(tmp_path, files, *, after=None, links=()):
+    """Run a copy of the script in a fresh repo whose index holds `files`; `after(repo)` runs once they are added."""
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "scripts" / "check_public.sh").write_bytes(CHECK_PUBLIC.read_bytes().replace(b"\r\n", b"\n"))
+    (repo / ".gitignore").write_text("x\n", encoding="utf-8")
+    for name, data in files.items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_bytes(data)
+    for name, target in links:
+        os.symlink(target, repo / name)
+    git = ["git", "-c", "core.autocrlf=false"]
+    subprocess.run([*git, "init", "-q"], cwd=repo, check=True)
+    subprocess.run([*git, "add", "-A", "-f", "--", "."], cwd=repo, check=True)
+    if after:
+        after(repo)
+    # a relative $0: Git Bash's dirname would not split a backslash path
+    run = subprocess.run([BASH, "scripts/check_public.sh"], cwd=repo, capture_output=True, timeout=120)
+    return run.returncode, (run.stdout + run.stderr).decode("utf-8", "replace")
+
+
+def test_check_public_sizes_tracked_files_in_batches_not_one_find_each():
+    script = CHECK_PUBLIC.read_text(encoding="utf-8")
+    assert "xargs -I" not in script  # a find per tracked file took about 84 s on Windows for 1,891 files
+    assert "git ls-files -z" in script and script.count("files | xargs -0 sh -c") == 2
+    assert "-size +5M" in script and script.rstrip().endswith("exit $fail")
+
+
+@needs_bash
+def test_check_public_passes_odd_names_and_a_file_of_exactly_5_mib(tmp_path):
+    rc, out = _check_public(tmp_path, {"-lead.txt": b"ok\n", "a b.txt": b"ok\n", "it's.txt": b"ok\n",
+                                       "한글.txt": b"ok\n", "sub/-x.txt": b"ok\n", "exact.bin": bytes(MIB5)})
+    assert rc == 0, out
+    assert "✓" in out
+
+
+@needs_bash
+@pytest.mark.parametrize("files, says", [
+    ({"-lead.txt": SECRET}, "-lead.txt:1:"),
+    ({"a b.txt": SECRET}, "a b.txt:1:"),
+    ({"it's.txt": SECRET}, "it's.txt:1:"),
+    ({"한글.txt": SECRET}, "한글.txt:1:"),
+    ({"latin1.txt": b"caf\xe9 " + SECRET}, "latin1.txt:1:"),
+    # more names than one Windows xargs batch (about 18K): a batch without a hit used to hide the hit
+    ({**{f"f{i:03}_{'p' * 80}.txt": b"ok\n" for i in range(300)}, "zz.txt": SECRET}, "zz.txt:1:"),
+    ({"-big file.bin": bytes(MIB5 + 1)}, "5MB 넘는 파일: -big file.bin"),
+    ({"-a b.vcf.gz": b"x"}, "데이터 파일이 포함됨: -a b.vcf.gz"),
+], ids=["leading-dash", "space", "quote", "non-ascii", "non-utf8", "many-batches", "5mib-plus-1", "data"])
+def test_check_public_fails_whatever_the_file_is_named(tmp_path, files, says):
+    rc, out = _check_public(tmp_path, {"plain.txt": b"ok\n", **files})
+    assert rc == 1, out
+    assert says in out and "✓" not in out
+
+
+@needs_bash
+def test_check_public_fails_when_a_tracked_file_is_missing(tmp_path):
+    rc, out = _check_public(tmp_path, {"gone.txt": b"ok\n"}, after=lambda repo: (repo / "gone.txt").unlink())
+    assert rc == 1, out
+    assert "읽지 못해" in out and "✓" not in out
+
+
+@needs_bash
+@posix_only
+def test_check_public_fails_on_a_newline_name_a_dangling_link_or_an_unreadable_file(tmp_path):
+    rc, out = _check_public(tmp_path / "newline", {"a\nb.txt": SECRET})
+    assert rc == 1 and "비밀값으로" in out, out
+    rc, out = _check_public(tmp_path / "dangling", {}, links=[("link.txt", "missing.txt")])
+    assert rc == 1 and "읽지 못해" in out, out
+    if os.geteuid() != 0:  # root reads a mode-000 file
+        rc, out = _check_public(tmp_path / "mode", {"locked.txt": b"ok\n"},
+                                after=lambda repo: (repo / "locked.txt").chmod(0))
+        assert rc == 1 and "읽지 못해" in out, out
+
+
+@needs_bash
+@posix_only
+def test_check_public_sizes_a_tracked_link_itself_not_its_target(tmp_path):
+    (tmp_path / "outside.bin").write_bytes(bytes(MIB5 + 1))
+    rc, out = _check_public(tmp_path, {}, links=[("big-link", str(tmp_path / "outside.bin"))])
+    assert rc == 0, out

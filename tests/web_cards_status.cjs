@@ -74,6 +74,33 @@ test('a page left open across a gateway restart learns the request is interrupte
   assert.equal(office.S.requests.get('r1').status,'failed');
 });
 
+test('semantic device stops are large in the request feed',()=>{
+  const office=State.createOfficeState({now:()=>100});
+  office.apply({type:'request.created',request_id:'r1',data:{text:'연구',mode:'orchestrate'}});
+  office.apply({type:'request.semantic_devices',request_id:'r1',data:{checked_at:'2026-10-18T10:00:00+09:00',
+    errors:[{code:'info_boundary',device:'semantics',stage:'auto_off',
+      at:'2026-10-18T09:59:00+09:00',message:'semantics 평가가 자동으로 중단됐습니다. labhq semantics enable로 다시 켜세요.'}]}});
+  const q=office.S.requests.get('r1'), message=office.S.feed[0];
+  assert.equal(q.semantic_devices.errors[0].code,'info_boundary');
+  assert.equal(message.cls,'alert');
+  assert.match(message.fullText,/의미 장치 중단: semantics info_boundary/);
+  assert.match(message.fullText,/labhq semantics enable/);
+});
+
+test('snapshot restores semantic device state after its event ages out',()=>{
+  const office=State.createOfficeState({now:()=>100});
+  const semantic_devices={checked_at:'2026-10-18T10:00:00+09:00',status:'error',
+    errors:[{code:'info_boundary',device:'semantics',stage:'auto_off',
+      at:'2026-10-18T09:59:00+09:00',message:'semantics 평가가 자동으로 중단됐습니다.'}]};
+
+  office.apply({type:'snapshot',data:{requests:[{id:'r1',text:'연구',status:'interrupted',
+    mode:'orchestrate',semantic_devices}],recent_events:[]}});
+
+  const restored=office.S.requests.get('r1').semantic_devices;
+  assert.equal(restored.status,'error');
+  assert.equal(restored.errors[0].code,'info_boundary');
+});
+
 test('an alert log raises a toast once, never on replay (R21)',()=>{
   const office=State.createOfficeState({now:()=>100});
   office.apply({type:'snapshot',data:{agents:[{id:'engineer',name:'Engineer Kim'}]}});
@@ -287,12 +314,13 @@ test('before the first snapshot the office reads as loading, not as an empty lab
   assert.match(html,/if \(ev\.type === 'snapshot'\) \{ lastSeq = ev\.seq \|\| 0; snapshotLoaded = true; schedule\(\); return; \}/);
   // Without a token nothing loads until one is entered, so the text says so (#516 review).
   assert.match(html,/const loadingText = what => S\.conn === 'auth' \? `토큰을 넣으면 \$\{what\}을 불러와요` : `\$\{what\} 불러오는 중`;/);
-  assert.match(html,/snapshotLoaded \? LabHQState\.totalCostLabel\(\[\.\.\.S\.requests\.values\(\)\], S\.cost\) : `사용 비용 · \$\{loadingText\('비용'\)\}`/);
-  assert.match(html,/snapshotLoaded \? '오늘의 할 일을 기다리는 중' : loadingText\('사무실 상태'\)/);
+  assert.match(html,/const costRequests = LabHQState\.sessionCostRequests\(allRequests, S\.sessionStartedAt\);/);
+  assert.match(html,/snapshotLoaded \? LabHQState\.totalCostLabel\(costRequests, currentCost\) : `사용 비용 · \$\{loadingText\('비용'\)\}`/);
+  assert.match(html,/snapshotLoaded \? '새 요청을 기다리는 중' : loadingText\('사무실 상태'\)/);
   assert.match(html,/snapshotLoaded \? 'none' : `loading:\$\{S\.conn\}`/);
   assert.match(html,/snapshotLoaded \? \(reviews.length \? '추가 승인 대기는 없어요\.' : '지금은 결정할 일이 없어요\. 승인이 필요하면 여기에 바로 떠요\.'\) : loadingText\('결정할 일'\)/);
   // #521: the request panel too, and it redraws once the snapshot or the token arrives.
   const renderRequest=html.slice(html.indexOf('function renderRequest()'),html.indexOf('function renderStaff()'));
-  assert.match(renderRequest,/: snapshotLoaded \? 'none' : `loading:\$\{S\.conn\}`;/);
-  assert.match(renderRequest,/if \(!q\) \{ el\.innerHTML = `<p class="empty-note">\$\{snapshotLoaded \? '아직 요청이 없어요\. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요\.' : loadingText\('요청'\)\}<\/p>`; return; \}/);
+  assert.match(renderRequest,/: snapshotLoaded \? `none:\$\{JSON\.stringify\(requestDigest\)\}` : `loading:\$\{S\.conn\}`;/);
+  assert.match(renderRequest,/if \(!q\) \{ el\.innerHTML = `\$\{pick\}<p class="empty-note">\$\{snapshotLoaded \? '새 요청을 기다리는 중입니다\. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요\.' : loadingText\('요청'\)\}<\/p>`; return; \}/);
 });

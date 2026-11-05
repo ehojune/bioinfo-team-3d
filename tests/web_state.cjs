@@ -11,6 +11,10 @@ const create = context.LabHQState.createOfficeState;
 assert.deepEqual({...context.LabHQState.websocketCloseAction(1008)}, {connection:'auth', retry:false});
 assert.deepEqual({...context.LabHQState.websocketCloseAction(1006)}, {connection:'offline', retry:true});
 const office = create({now: () => 1000});
+const names = create();
+names.apply({type:'snapshot', data:{agents:[{id:'recruiter',name:'비버 인사팀'}, {id:'editor',name:'비버 편집자'}]}});
+assert.equal(names.nick('recruiter'), '카피바라(인사팀)');
+assert.equal(names.nick('editor'), '비버 편집자');
 const agent = {id:'analyst', name:'Analyst', employment:'core'};
 const plan = {steps:[{id:'s1', agent_id:'analyst', instruction:'Inspect'}, {id:'s2', depends_on:['s1']}]};
 const events = [
@@ -82,6 +86,12 @@ notesSnapshot.apply({type:'snapshot',data:{requests:[{id:'r2',status:'running',p
 assert.equal(notesSnapshot.S.requests.get('r2').piNotes[0].at,1234,'a late client restores PI notes');
 fresh.apply({type:'pipeline.pr',request_id:'r2',data:{status:'pending',name:'tiny',reason:'write permission required'}});
 assert.equal(fresh.S.requests.get('r2').pipelinePr.status,'pending');
+for (const [status, label] of [['awaiting_approval', '승인 대기'], ['declined', '미기여']]) {
+  fresh.apply({type:'pipeline.pr',request_id:'r2',data:{status,name:'tiny',reason:'PI의 기여 선택'}});
+  assert.equal(fresh.S.requests.get('r2').pipelinePr.status,status);
+  assert.ok(fresh.S.feed[0].text.includes(label));
+}
+assert.equal(fresh.KIND_KO.pipeline_contribute,'새 pipeline 기여');
 fresh.apply({type:'pipeline.pr',request_id:'r2',data:{status:'open',name:'tiny',url:'https://example.org/pr/9',number:9}});
 assert.equal(fresh.S.requests.get('r2').github.at(-1).kind,'pipeline_pr');
 { // #301 review: a late client restores the stored status from the snapshot, without a duplicate link
@@ -211,23 +221,61 @@ assert.equal(failedCosts.req('failed').costKnown,false);
     {id:'estimated', status:'done', cost_usd:0.2, cost_known:true, cost_summary:estimated},
     {id:'legacy', status:'done', cost_usd:0.4, cost_known:false},
   ]}});
-  assert.equal(costLabel(view.req('mixed')), '확인 $1.00 + 추정 $0.50 + 미집계된 비용 1건');
-  assert.equal(costLabel(view.req('unknown')), '미집계된 비용 2건', 'unknown-only is not $0');
-  assert.equal(costLabel(view.req('legacy')), '$0.40 + 미집계된 비용');
+  assert.equal(costLabel(view.req('mixed')), '확인 $1.00 + 추정 $0.50 + 비용 모름 1건');
+  assert.equal(costLabel(view.req('unknown')), '비용 모름 2건', 'unknown-only is not $0');
+  assert.equal(costLabel(view.req('legacy')), '$0.40 + 비용 모름');
   assert.equal(view.req('unknown').costKnown, false);
   assert.equal(view.req('estimated').costKnown, true);
   const engines = engineCostLabel(view.req('mixed').costSummary);
-  assert.match(engines, /^claude_code 확인 \$1\.00 · codex 추정 \$0\.50 \+ 미집계된 비용 1건; 추정은 API 가격표 환산/);
+  assert.match(engines, /^claude_code 확인 \$1\.00 · codex 추정 \$0\.50 \+ 비용 모름 1건; 추정은 API 가격표 환산/);
   assert.match(engines, /가격표 오래됨: codex gpt-6\.1-sol \(2026-10-02 확인\)/);
-  assert.equal(totalCostLabel([...view.S.requests.values()], view.S.cost), '사용 비용 $2.10 (추정 $0.70 포함) + 미집계된 비용 3건 이상');
+  assert.equal(totalCostLabel([...view.S.requests.values()], view.S.cost), '사용 비용 $2.10 (추정 $0.70 포함) + 비용 모름 3건 이상');
   view.apply({type:'request.followup_done', request_id:'unknown', data:{id:'f', ok:true, answer:'a', cost_usd:0.1,
     cost_known:true, cost_summary:{...estimated, estimated_usd:0.1, subtotal_usd:0.1}}});
   assert.equal(costLabel(view.req('unknown')), '추정 $0.10', 'a follow-up summary replaces the request summary');
   assert.ok(!Object.keys(view.req('mixed')).includes('costSummary'), 'state snapshots stay comparable');
   // A live cost the stored summary does not hold yet replaces the stale summary with the running total.
   view.apply({type:'agent.usage', request_id:'estimated', data:{tokens:{input_tokens:5}, cost_known:false}});
-  assert.equal(costLabel(view.req('estimated')), '$0.20 + 미집계된 비용', 'running Codex task is not shown as settled');
+  assert.equal(costLabel(view.req('estimated')), '$0.20 + 비용 모름', 'running Codex task is not shown as settled');
   view.apply({type:'agent.usage', request_id:'mixed', data:{cost_usd:0.25}});
-  assert.equal(costLabel(view.req('mixed')), '$1.75 + 미집계된 비용', 'live amount is not hidden behind the old summary');
+  assert.equal(costLabel(view.req('mixed')), '$1.75 + 비용 모름', 'live amount is not hidden behind the old summary');
+}
+// #877: a request's time limit reaches the page with the snapshot and request.created, and reads as `labhq status` does.
+{
+  const {deadlineLabel} = context.LabHQState;
+  const view = create({now: () => 1000});
+  view.apply({type:'snapshot', data:{agents:[], approvals:[], requests:[
+    {id:'on', status:'running', created_at:1000, wall_clock:{enabled:true, limit_s:5400, held_s:0, deadline_at:6400}},
+    {id:'off', status:'running', created_at:1000, wall_clock:{enabled:false, limit_s:0, held_s:0, deadline_at:null}},
+    {id:'old', status:'running', created_at:1000},
+    {id:'held', status:'waiting_pi', created_at:1000, wall_clock:{enabled:true, limit_s:5400, held_s:300, pi_since:1400, deadline_at:6700}},
+    {id:'done', status:'done', created_at:1000, wall_clock:{enabled:true, limit_s:5400, held_s:0}},
+  ]}});
+  assert.equal(deadlineLabel(view.req('on'), 1600), '시간 상한 켜짐 90분 · 남은 80분');
+  assert.equal(deadlineLabel(view.req('off'), 1600), '시간 상한 꺼짐');
+  assert.equal(deadlineLabel(view.req('old'), 1600), '', 'a gateway that sends no limit is not shown as "off"');
+  assert.equal(deadlineLabel(view.req('held'), 1600),
+    '시간 상한 켜짐 90분 · 남은 88분 · PI 대기 제외 8분 · PI 결정 대기 중이라 시간이 가지 않습니다');
+  assert.equal(deadlineLabel(view.req('done'), 1600), '', 'a finished request has no clock to show');
+  assert.equal(deadlineLabel({status:'running', created_at:1000, wallClock:{limit_s:60, held_s:0}}, 1120),
+    '시간 상한 켜짐 60초 · 기한이 지났습니다(곧 취소)');
+  // A PI wait that began after the snapshot is not subtracted yet: the time left reads shorter, never longer (A, #877).
+  const late = {status:'waiting_pi', created_at:1000, wallClock:{limit_s:5400, held_s:0, pi_since:null}};
+  assert.equal(deadlineLabel(late, 2000), '시간 상한 켜짐 90분 · 남은 73분 · PI 결정 대기 중이라 시간이 가지 않습니다');
+  view.apply({type:'request.created', request_id:'new', ts:2000, data:{text:'x', mode:'orchestrate',
+    wall_clock:{enabled:true, limit_s:3600, held_s:0, deadline_at:5600}}});
+  assert.equal(deadlineLabel(view.req('new'), 2000), '시간 상한 켜짐 60분 · 남은 60분');
+  assert.ok(!Object.keys(view.req('new')).includes('wallClock'), 'state snapshots stay comparable');
+  // #1103 P2 (#1246): the gateway cancels at deadline_at, counted from when it accepted the request. A request.created
+  // whose ts is later (the start lagged the acceptance) must not push the shown time past that deadline.
+  view.apply({type:'request.created', request_id:'lagged', ts:2300, data:{text:'x', mode:'orchestrate',
+    wall_clock:{enabled:true, limit_s:3600, held_s:0, deadline_at:5600}}});
+  assert.equal(deadlineLabel(view.req('lagged'), 2400), '시간 상한 켜짐 60분 · 남은 53분', 'the server deadline, not ts + limit');
+  // A PI wait still open is added to the server deadline, which only counts closed waits.
+  view.apply({type:'snapshot', data:{agents:[], approvals:[], requests:[
+    {id:'open', status:'waiting_pi', created_at:1000, wall_clock:{enabled:true, limit_s:3600, held_s:0, pi_since:2000, deadline_at:4600}},
+  ]}});
+  assert.equal(deadlineLabel(view.req('open'), 2600),
+    '시간 상한 켜짐 60분 · 남은 43분 · PI 대기 제외 10분 · PI 결정 대기 중이라 시간이 가지 않습니다');
 }
 console.log(`${events.length} legacy event states, replay reset, effects, isolation and bounds: OK`);

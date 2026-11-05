@@ -1,0 +1,7 @@
+humanizer is vendored from DaleSeo/korean-skills humanizer v1.6.0 under the MIT License.
+Source: https://github.com/DaleSeo/korean-skills
+
+This repository carries version 1.6.1-local. It adds 패턴 41, "줄임 전문어",
+for the PI-approved must-be-zero terms 비유의, 비유의적, 유의차, 미보정, 무보정,
+and 비보정. The local addition is described in SKILL.md and
+references/vocabulary-patterns.md.

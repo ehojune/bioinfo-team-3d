@@ -1,14 +1,18 @@
 pr: 450
 rows:
-- sha: 'efa23b0'
+- sha: efa23b0
   at: 2026-10-06 18:32
-  text: 'labhq_annot에 ChIP-Atlas(enrichment·target genes)·ENCODE cCRE·GTEx 조회와 AlphaGenome 예측을 더한다. AlphaGenome 키는 labhq init이 한 번 묻고 runner 계정만 읽는 파일에 둔다(없으면 도구 미등록)'
-- sha: '2a1ba2d'
+  text: labhq_annot에 ChIP-Atlas(enrichment·target genes)·ENCODE cCRE·GTEx 조회와 AlphaGenome 예측을 더한다. AlphaGenome 키는 labhq init이 한 번 묻고 runner 계정만 읽는 파일에 둔다(없으면 도구 미등록)
+  summary: 조절 영역·조직별 발현·예측 조회를 추가하고 예측 키는 실행 계정만 읽게 보관합니다.
+- sha: 2a1ba2d
   at: 2026-10-06 19:18
-  text: 'AlphaGenome 구간은 요청 구간만 요약하고 연결 시간 제한·전용 thread·기본 100KB를 둔다. GTEx는 조직마다 eQTL을 받고, ChIP-Atlas request_id는 입력과 묶어 확인하며, 키 파일 폴더가 공용이면 저장을 거부한다'
-- sha: 'fc3e403'
+  text: AlphaGenome 구간은 요청 구간만 요약하고 연결 시간 제한·전용 thread·기본 100KB를 둔다. GTEx는 조직마다 eQTL을 받고, ChIP-Atlas request_id는 입력과 묶어 확인하며, 키 파일 폴더가 공용이면 저장을 거부한다
+  summary: 예측은 요청 구간만 요약하고 크기·시간을 제한하며 유전자 조회와 키 보관 검사를 보강했습니다.
+- sha: fc3e403
   at: 2026-10-06 19:49
-  text: 'ChIP-Atlas request_id에 제출 때 release를 묶어, 그 사이 갱신됐으면 제출 때 release로 기록하고 캐시하지 않는다. AlphaGenome client 호출은 매번 새 daemon thread에서 돌고, 시간이 초과돼 멈춘 thread가 4개 쌓이면 새 호출을 바로 거부한다'
-- sha: '5676cd7'
+  text: ChIP-Atlas request_id에 제출 때 release를 묶어, 그 사이 갱신됐으면 제출 때 release로 기록하고 캐시하지 않는다. AlphaGenome client 호출은 매번 새 daemon thread에서 돌고, 시간이 초과돼 멈춘 thread가 4개 쌓이면 새 호출을 바로 거부한다
+  summary: 외부 서비스 판본을 요청 시점에 고정하고 응답 없는 예측 호출이 쌓이면 추가 호출을 막습니다.
+- sha: 5676cd7
   at: 2026-10-06 20:11
-  text: 'Windows에서 AlphaGenome 키 폴더와 파일의 ACL을 현재 계정 항목 하나로 통째로 새로 쓴다. 폴더에 미리 있던 명시 항목(SYSTEM·Administrators 등) 때문에 CI runner에서 키 저장이 거부되던 문제를 고쳤다'
+  text: Windows에서 AlphaGenome 키 폴더와 파일의 ACL을 현재 계정 항목 하나로 통째로 새로 쓴다. 폴더에 미리 있던 명시 항목(SYSTEM·Administrators 등) 때문에 CI runner에서 키 저장이 거부되던 문제를 고쳤다
+  summary: Windows 예측 키의 파일 권한을 현재 계정 전용으로 다시 써 저장 거부 오류를 고쳤습니다.

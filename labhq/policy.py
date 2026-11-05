@@ -1699,13 +1699,47 @@ class Decision:
     updated_input: dict | None = None
 
 
+def _windows_normpath(path: str) -> str:
+    """`ntpath.normpath` in linear time: the running stdlib's own drive/root split, then one pass over components.
+
+    CPython's pure-Python `ntpath.normpath` (Linux and other non-Windows hosts; Windows has a native one) deletes each
+    empty, `.` and `x\\..` component from a list in place, so a long separator or dot run costs quadratic time
+    (#868: a 131,072-character separator candidate). The prefix still comes from the stdlib, so UNC, device and drive
+    spellings normalize as before; the component rules are the stdlib's, applied with a stack.
+    """
+    splitroot = getattr(ntpath, "splitroot", None)
+    if splitroot is not None:  # Python 3.12+
+        path = path.replace("/", "\\")
+        drive, root, tail = splitroot(path)
+    else:  # Python 3.10/3.11: device and literal paths come back unchanged; leading separators make one root
+        if path.startswith(("\\\\.\\", "\\\\?\\")):
+            return ntpath.normpath(path)
+        path = path.replace("/", "\\")
+        drive, tail = ntpath.splitdrive(path)
+        root = "\\" if tail.startswith("\\") else ""
+        tail = tail.lstrip("\\")
+    comps: list[str] = []
+    for comp in tail.split("\\"):
+        if not comp or comp == ".":
+            continue
+        if comp == "..":
+            if comps and comps[-1] != "..":
+                comps.pop()
+                continue
+            if not comps and root:
+                continue
+        comps.append(comp)
+    prefix = drive + root
+    return prefix + "\\".join(comps) if prefix or comps else "."
+
+
 def _norm(p: str, *, expand_vars: bool = True) -> str:
     """Lexically normalize both POSIX and Windows paths, regardless of the host OS."""
     p = os.path.expanduser(p)
     if expand_vars:
         p = os.path.expandvars(p)
     if re.match(r"^[A-Za-z]:[/\\]", p) or p.startswith(("\\\\", "//")):
-        return ntpath.normpath(p).replace("\\", "/").casefold()
+        return _windows_normpath(p).replace("\\", "/").casefold()
     normalized = posixpath.normpath(p.replace("\\", "/"))
     return normalized.casefold() if os.name == "nt" else normalized
 
@@ -1734,6 +1768,8 @@ class _PathTextScan:
 _URI_PREFIX = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*)://")
 _TOKEN_BREAKS = frozenset(" \t\r\n'\"`|;&<>")
 _CHUNK_BREAKS = frozenset("=<>(),")
+_CHUNK_END = re.compile(r"[=<>(),]")
+_COLON_RUN_END = re.compile(r"[^:]")
 _SCHEME_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+.-")
 
 
@@ -1759,9 +1795,9 @@ def _token_candidates(token: str) -> Iterator[str]:
             chunk_start += 1
         if chunk_start >= length:
             break
-        chunk_end = chunk_start
-        while chunk_end < length and token[chunk_end] not in _CHUNK_BREAKS:
-            chunk_end += 1
+        # Fixed character classes scan long runs in C, within the same bounds.
+        boundary = _CHUNK_END.search(token, chunk_start, length)
+        chunk_end = boundary.start() if boundary else length
         left, right = chunk_start, chunk_end
         while left < right and token[left] in "[]{}":
             left += 1
@@ -1791,9 +1827,8 @@ def _token_candidates(token: str) -> Iterator[str]:
                 break
             if colon > part_start:
                 yield token[part_start:colon]
-            part_start = colon + 1
-            while part_start < right and token[part_start] == ":":
-                part_start += 1
+            boundary = _COLON_RUN_END.search(token, colon + 1, right)
+            part_start = boundary.start() if boundary else right
         chunk_start = chunk_end + 1
 
 
@@ -1877,6 +1912,43 @@ def _candidate_paths(s: str) -> Iterator[str]:
 
 def restricted_paths(policy: PolicySettings) -> list[str]:
     return [_norm(z.path) for z in policy.data_zones if z.level == "restricted"]
+
+
+def non_public_paths(policy: PolicySettings) -> list[str]:
+    """Normalized roots whose records must not be copied into a staff conversation."""
+    return [_norm(z.path) for z in policy.data_zones if z.level in {"internal", "restricted"}]
+
+
+def _zone_hit(tool_input: dict[str, Any], policy: PolicySettings, levels: set[str],
+              workdir: str | None = None):
+    zones = [zone.path for zone in policy.data_zones if zone.level in levels]
+    roots = [_norm(path) for path in zones]
+    return touches(tool_input, roots, workdir=workdir) or touches_resolved(
+        tool_input, zones, workdir=workdir,
+    )
+
+
+def internal_row_output_hit(tool_name: str, tool_input: dict[str, Any], policy: PolicySettings,
+                            workdir: str | None = None) -> bool:
+    """Whether an approval card should warn about non-public source-row output."""
+    return internal_output_classification(tool_name, tool_input, policy, workdir) == "rows"
+
+
+def internal_output_classification(tool_name: str, tool_input: dict[str, Any], policy: PolicySettings,
+                                   workdir: str | None = None) -> str | None:
+    """Advisory card label for a non-public read; never decides allow/ask/deny."""
+    if not _zone_hit(tool_input, policy, {"internal", "restricted"}, workdir):
+        return None
+    if tool_name == "Glob":
+        return "summary"
+    if tool_name in {"Read", "Grep"}:
+        # A first line may be a JSONL record or a headerless table row. Ambiguity stays on the row side.
+        return "rows"
+    if tool_name in SHELL_TOOLS:
+        from .tool_command import command_prints_rows
+        return ("rows" if command_prints_rows(str(tool_input.get("command") or ""),
+                                               powershell=tool_name == "PowerShell") else "summary")
+    return None
 
 
 def _strings(obj: Any, path_field: bool = False) -> Iterator[tuple[str, bool]]:
@@ -1976,9 +2048,36 @@ class Unresolved(str):
     path_field: bool = False
 
 
+def _collapse_separators(p: str, *, nt: bool | None = None) -> str:
+    """`p` with every run of `/` after its first one or two made a single `/`, on a POSIX host (#1158).
+
+    CPython's POSIX `os.path.realpath` copies the rest of the path at every separator, so a run of 65,536 of them costs
+    the square of its length (0.03 s, then 0.12, 0.44, 1.75 s for each doubling; 3.10 and 3.12 alike). A run means what
+    one separator means to `realpath`. A leading pair is kept, the one place a pair differs from a single separator
+    (`//host` is implementation-defined); three or more leading separators are one, as `normpath` reads them. A Windows
+    path is returned as written: its realpath has no such cost, and a UNC prefix with a missing share reads differently
+    when its separators are merged. `nt` is the host's own unless a test names one."""
+    if os.name == "nt" if nt is None else nt:
+        return p
+    lead = len(p) - len(p.lstrip("/"))
+    head = p[:lead] if lead == 2 else p[:1] if lead else ""
+    return head + _SEPARATOR_RUN.sub("/", p[lead:])
+
+
+_SEPARATOR_RUN = re.compile(r"/{2,}")
+
+
+def _realpath(p: str | os.PathLike) -> str:
+    """`os.path.realpath` of `p` with its separator runs merged first: the same path, in time linear in its length.
+
+    Takes what `os.path.realpath` takes: a `str`, `bytes` or any path-like (a `Path` root reaches `_root_rules`)."""
+    text = os.fspath(p)
+    return os.path.realpath(text if isinstance(text, bytes) else _collapse_separators(text))
+
+
 def _real(p: str) -> str | None:
     try:
-        return _norm(os.path.realpath(os.path.expandvars(os.path.expanduser(p))))
+        return _norm(_realpath(os.path.expandvars(os.path.expanduser(p))))
     except (OSError, ValueError):
         return None
 
@@ -2084,10 +2183,16 @@ def claude_settings(policy: PolicySettings) -> dict:
     Absolute paths in permission rules take a leading `//` (e.g. `Read(//data/cohort/**)`).
     """
     deny: list[str] = []
+    ask: list[str] = []
     for p in restricted_paths(policy):
         for tool in ("Read", "Edit", "Write"):
             deny.append(f"{tool}(/{claude_rule_path(p)}/**)")
-    return {"permissions": {"deny": deny}} if deny else {}
+    for zone in policy.data_zones:
+        if zone.level == "internal":
+            for tool in ("Read", "Grep"):
+                ask.append(f"{tool}(/{claude_rule_path(zone.path)}/**)")
+    permissions = {key: value for key, value in (("deny", deny), ("ask", ask)) if value}
+    return {"permissions": permissions} if permissions else {}
 
 
 def claude_deny_links(settings: dict, links: Iterable[str]) -> dict:
@@ -2106,8 +2211,19 @@ def claude_deny_links(settings: dict, links: Iterable[str]) -> dict:
     return {**settings, "permissions": permissions}
 
 
+def claude_ask_internal_links(settings: dict, links: Iterable[str]) -> dict:
+    """Read/Grep ask rules for aliases inside an open folder that lead into an internal zone (#725)."""
+    rules = [f"{tool}(/{claude_rule_path(link)}{tail})" for link in links
+             for tool in ("Read", "Grep") for tail in ("", "/**")]
+    if not rules:
+        return settings
+    permissions = dict(settings.get("permissions") or {})
+    permissions["ask"] = list(dict.fromkeys([*(permissions.get("ask") or []), *rules]))
+    return {**settings, "permissions": permissions}
+
+
 def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None = None,
-                        open_reads: Iterable[str] = ()) -> dict:
+                        open_reads: Iterable[str] = (), write_roots: Iterable[str] = ()) -> dict:
     """Read/Edit/Write deny rules for PI personal paths (policy.private_paths), merged into `settings`, plus
     Bash/PowerShell `ask` rules naming each path.
 
@@ -2121,6 +2237,11 @@ def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None =
     keeps Edit/Write on the whole path, but Read only on its top-level entries off the way to that folder
     (`closed_entries`): a deny rule outranks every allow rule, so a Read deny on the whole path would close it.
     Other tasks' project folders beside it get no rule; the gate refuses reads of them.
+
+    A holder that also holds one of the task's `write_roots` (the workspace root, which the artifact contract marks
+    private around the task's own folder) cannot take an Edit/Write deny on the whole path: a deny outranks the
+    allow rule for the task's own `outputs/`, so a step could write nothing (#946, trial 2026-10-25 attempt 11).
+    There the Edit/Write deny goes on the same top-level entries off the way to the task's folders as the Read deny.
     """
     from .private_paths import closed_entries, holds_open_read, shell_needles
 
@@ -2133,13 +2254,23 @@ def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None =
         except ValueError:
             continue
         ruled.append(p)
-    holders = [p for p in ruled if holds_open_read(p, open_reads)]
+    # Both spellings of each writable folder: with a symlinked or junctioned workspace root the private path is the
+    # real root while the task's folder keeps the alias spelling, and neither alone lies under the other.
+    write_roots = list(dict.fromkeys(
+        spelling for w in write_roots if w
+        for spelling in (str(w), os.path.abspath(str(w)), _realpath(str(w)))))
+    holders = [p for p in ruled if holds_open_read(p, [*open_reads, *write_roots])]
     merged = claude_deny_links(settings, [p for p in ruled if p not in holders])
     if holders:
-        rules = [f"{tool}(/{claude_rule_path(p)}{tail})" for p in holders
+        writable = [p for p in holders if holds_open_read(p, write_roots)]
+        rules = [f"{tool}(/{claude_rule_path(p)}{tail})" for p in holders if p not in writable
                  for tool in ("Edit", "Write") for tail in ("", "/**")]
+        rules += [f"{tool}(/{claude_rule_path(entry)}{tail})" for p in writable
+                  for entry in closed_entries(p, [*open_reads, *write_roots])
+                  for tool in ("Edit", "Write") for tail in ("", "/**")]
         rules += [f"Read(/{claude_rule_path(entry)}{tail})" for p in holders
-                  for entry in closed_entries(p, open_reads) for tail in ("", "/**")]
+                  for entry in closed_entries(p, [*open_reads, *(w for w in write_roots if p in writable)])
+                  for tail in ("", "/**")]
         permissions = dict(merged.get("permissions") or {})
         permissions["deny"] = list(dict.fromkeys([*(permissions.get("deny") or []), *rules]))
         merged = {**merged, "permissions": permissions}
@@ -2173,7 +2304,7 @@ def rule_tool(rule: str) -> str:
 def _root_rules(tool: str, roots: Iterable[str | os.PathLike]) -> list[str]:
     rules = []
     for root in roots:
-        for resolve in (os.path.abspath, os.path.realpath):
+        for resolve in (os.path.abspath, _realpath):
             try:
                 rules.append(f"{tool}(/{claude_rule_path(resolve(root))}/**)")
             except (OSError, ValueError):
@@ -2200,8 +2331,10 @@ def claude_allowed_tools(tools: Iterable[str], write_roots: Iterable[str | os.Pa
     bare `Read` read a junction from the workdir into another folder, `Read(//workdir/**)` sent it to the
     permission prompt, and the same rule still pre-approved Grep and Glob inside the workdir.
 
-    Shared environments also leave every shell call to the gate: `Bash(ls *)` matches a following install
-    joined with `&&`, so narrowing only installer prefixes still skips the installation check.
+    Shared environments also leave every shell call to the gate: a command that a pre-approved prefix matches
+    (`Bash(python *)` for `python -m pip install`) never reaches the permission prompt, so the installation check
+    would not see it. Claude Code 2.1.310 splits an `&&` chain and checks each command against the rules (#1163), so
+    `Bash(ls *)` does not carry a following install through; the reason is the installer's own prefix.
     """
     tools = list(tools)
     if shared_environment_gate:
@@ -2233,7 +2366,7 @@ def _git_bash_tmp(environ: Mapping[str, str]) -> str | None:
             return None
         if os.name == "nt":  # 8.3 names and junctions, as the workdir was resolved
             try:
-                value = os.path.realpath(value)
+                value = _realpath(value)
             except (OSError, ValueError):
                 return None
         found.add(ntpath.normpath(value))
@@ -2298,18 +2431,48 @@ def evaluate_tool(
     read_only: bool = False,
 ) -> Decision:
     allowed_roots = list(allowed_roots)
+    if tool_name in SHELL_TOOLS:
+        from .process_stop_guard import DENIAL, broad_process_stop
+        if broad_process_stop(str(tool_input.get("command", ""))):
+            return Decision("deny", DENIAL)
+        from .detached_command import DENIAL as DETACHED_DENIAL, detached
+        if detached(tool_name, tool_input.get("command")):  # #675: no card, and the answer names the job tool
+            return Decision("deny", DETACHED_DENIAL)
     judged = claude_write_input(tool_name, tool_input, workdir, allowed_roots, windows=windows, environ=environ)
     # Every check reads a Git Bash command with its drive paths spelled the Windows way, zones and private paths
     # included: converting only the write targets let `cp /c/<zone>/raw /c/<root>/out` through (PR #364 review).
     checked = git_bash_command(tool_name, judged, allowed_roots, windows)
-    decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir, environ=environ, windows=windows)
     # On with no active path (PR #327) still runs the registry check; a non-empty list alone also means on.
     private_paths = list(private_paths)
-    private = (_private_decision(tool_name, checked, private_paths, workdir, home, environ, list(private_open_reads))
+    private_open_reads = list(private_open_reads)
+    closed_zones = [z.path for z in policy.data_zones if z.level == 'restricted']
+    from .workspace_commands import workspace_command_reason
+    grammar = None
+    if tool_name in SHELL_TOOLS:
+        from .private_paths import claude_project_slug
+        reads = [p for p in private_open_reads if not (Path(p).parent.name == 'projects' and
+                 Path(p).name == claude_project_slug(os.path.abspath(workdir or '.')))]
+        grammar = workspace_command_reason(str(checked.get('command', '')), workdir, private_paths,
+                    powershell=tool_name == 'PowerShell', read_roots=reads, forbidden=closed_zones,
+                    environ=environ)
+    scoped = bool(grammar and grammar.startswith('문법 안:'))
+    decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir, environ=environ,
+                              windows=windows, workspace_operation=bool(scoped))
+    private = (_private_decision(tool_name, checked, private_paths, workdir, home, environ,
+                                list(private_open_reads), closed_zones, workspace_operation=scoped)
                if private_enabled or private_paths else None)
     # Only ever stricter: a deny stays a deny, and an ask is not turned into an allow.
     if private and decision.action != "deny" and (private.action == "deny" or decision.action == "allow"):
         decision = private
+    if grammar and (scoped or private_open_reads):
+        # The closed grammar governs the managed task-read exception introduced here.
+        # Legacy policy without a managed read grant retains its existing decisions.
+        if not scoped and private_open_reads and (private_enabled or private_paths) and decision.action == 'allow':
+            decision = Decision('ask', grammar)
+        elif decision.action == 'allow':
+            decision.reason = grammar
+        else:
+            decision.reason = grammar + ' · ' + decision.reason
     if read_only:
         if tool_name in WRITE_LIKE:
             path = judged.get("file_path") or judged.get("notebook_path")
@@ -2375,7 +2538,8 @@ _PRIVATE_PATH_KEYS = ("file_path", "notebook_path", "path")
 
 def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths: list[str], workdir: str | None,
                       home: str | None, environ: Mapping[str, str] | None,
-                      open_reads: list[str] | None = None) -> Decision | None:
+                      open_reads: list[str] | None = None, closed_zones: Iterable[str] = (), *,
+                      workspace_operation: bool = False) -> Decision | None:
     """PI personal paths (policy.private_paths): file tools are denied, a shell command naming one asks the PI.
 
     While private paths are active Claude pre-approves no shell command and no read outside the task's folders
@@ -2385,23 +2549,35 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
     pattern's folder part is. Called while private paths are on, even with no active path: then only the
     registry check has anything to match.
 
-    `open_reads` (#298 ⑤): a read tool may open a path inside one of these folders although a private path holds
-    it, when every spelling of it (as written, `..` resolved, and its real path) is inside one. Shell and write
-    tools are judged as before.
+    `open_reads`: file reads and proven literal Bash reads may use managed folders below a private parent.
+    Written and resolved destinations must stay open. The task's own file-write grant remains scoped to its
+    workdir; other shell/write rules are unchanged.
     """
-    from .private_paths import holds_open_read, mentioned_private_path, open_read_allowed, path_field_text, \
-        registry_access
+    from .private_paths import holds_open_read, inside_any, mentioned_private_path, open_read_allowed, path_field_text, \
+        registry_access, credential_path, managed_shell_read, resolved_read_path
+
+    input_hint = (" 선행 단계 산출물은 읽기 전용 inputs/<step_id>/ 경로를 사용하세요."
+                  if workdir and (Path(workdir) / 'inputs').is_dir() else "")
 
     if tool_name in READ_LIKE | WRITE_LIKE:
-        open_reads = (open_reads or []) if tool_name in READ_LIKE else []
+        # Keep the existing file-write grant for this task, never for all managed folders.
+        managed = open_reads or []
+        open_reads = managed if tool_name in READ_LIKE else (
+            [workdir] if workdir and open_read_allowed(workdir, managed) else [])
         holders = [p for p in private_paths if holds_open_read(p, open_reads)]
         closed = [p for p in private_paths if p not in holders]
 
         def private(spelled: str) -> bool:
+            if credential_path(spelled) and any((
+                    mentioned_private_path(spelled, private_paths, home, environ),
+                    open_read_allowed(os.path.dirname(spelled), open_reads))):
+                return True
             if mentioned_private_path(spelled, closed, home, environ):
                 return True
-            return bool(holders and mentioned_private_path(spelled, holders, home, environ)
-                        and not open_read_allowed(spelled, open_reads))
+            # A broad task read grant cannot reopen an explicitly protected child (e.g. inputs/).
+            return any(mentioned_private_path(spelled, [holder], home, environ)
+                       and not open_read_allowed(spelled, [r for r in open_reads if inside_any(r, [holder])])
+                       for holder in holders)
 
         # (value, folder a relative value starts from): path fields from the workdir, a Glob pattern from its path.
         values = [(tool_input.get(key), workdir) for key in _PRIVATE_PATH_KEYS]
@@ -2417,22 +2593,34 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
             spellings = {spelled}
             if os.path.isabs(spelled):  # a link in the workspace can lead to a personal folder
                 try:
-                    spellings.add(os.path.realpath(spelled))
+                    spellings.add(_realpath(spelled))
+                    raw = value if os.path.isabs(value) else os.path.join(base or '', value)
+                    spellings.add(resolved_read_path(raw))
                 except (OSError, ValueError):
                     pass
             if any(private(s) for s in spellings):
                 return Decision("deny", f"{tool_name} path is a PI personal path (policy.private_paths); it is "
-                                        "outside every staff task. Do not open it; ask the CSO if the task needs it.")
+                                        "outside every staff task. Do not open it; ask the CSO if the task needs it."
+                                        + input_hint)
         return None
     if tool_name in SHELL_TOOLS:
         cmd = str(tool_input.get("command", ""))
+        if workspace_operation and not registry_access(cmd):
+            return None
+        if tool_name == 'Bash' and open_reads:
+            managed = managed_shell_read(cmd, private_paths, open_reads, workdir)
+            if managed is True:
+                return None
+            if managed is False:
+                return Decision('ask', 'Bash reaches a closed or credential path (policy.private_paths)' + input_hint)
         if private_paths and mentioned_private_path(cmd, private_paths, home, environ):
-            return Decision("ask", f"{tool_name} names a PI personal path (policy.private_paths): `{cmd[:200]}`")
+            return Decision("ask", f"{tool_name} names a PI personal path (policy.private_paths): `{cmd[:200]}`"
+                            + input_hint)
         # A link in the workspace (`alias -> ~/.ssh`) names no private path; its real path does.
         hit = private_paths and touches_resolved({"command": cmd}, private_paths, workdir=workdir)
         if hit:
             return Decision("ask", f"{tool_name} reaches a PI personal path (policy.private_paths) through a link, or "
-                                   f"its paths were not all resolved: `{cmd[:200]}`")
+                                   f"its paths were not all resolved: `{cmd[:200]}`" + input_hint)
         if private_paths and _cd_reaches_private(cmd, private_paths, workdir, home, environ):
             return Decision("ask", f"{tool_name} changes into a folder from which it names a PI personal path "
                                    f"(policy.private_paths), or changes folder too often to judge: `{cmd[:200]}`")
@@ -2442,6 +2630,8 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
             return Decision("ask", f"{tool_name} touches the registry (any registry access asks while private paths "
                                    f"are on; HKCU\\Environment holds the PI's tokens such as GITHUB_TOKEN; 레지스트리 "
                                    f"접근은 PI 승인 필요) via `{spelled[:80]}`: `{cmd[:200]}`")
+        if tool_name == 'Bash' and open_reads:
+            return Decision('ask', 'Bash read scope is ambiguous (policy.private_paths); confirmation required')
     return None
 
 
@@ -2547,6 +2737,7 @@ def _evaluate_tool(
     *,
     environ: Mapping[str, str] | None = None,
     windows: bool | None = None,
+    workspace_operation: bool = False,
 ) -> Decision:
     environ = os.environ if environ is None else environ
     windows = os.name == "nt" if windows is None else windows
@@ -2577,6 +2768,11 @@ def _evaluate_tool(
             "submit an HPC job (hpc_submit) that writes aggregate/QC summaries and read those instead.",
         )
 
+    # Internal-zone reads all use one approval flow. Output-shape classification only changes the card wording.
+    internal_hit = _zone_hit(tool_input, policy, {"internal"}, workdir)
+    if internal_hit and tool_name in READ_LIKE | SHELL_TOOLS:
+        return Decision("ask", f"internal data zone read requires approval: {internal_hit}")
+
     if tool_name in {"Bash", "PowerShell"}:
         cmd = str(tool_input.get("command", ""))
         if hit:
@@ -2597,7 +2793,7 @@ def _evaluate_tool(
                 # The pattern sees only rm's first option cluster; every option word of a real rm counts (#17), and
                 # `docker rm` or `git rm` in its own tree is not one (#535 follow-up).
                 recursive = _recursive_rm(cmd) if not powershell else re.search(pat, delete_text, re.IGNORECASE)
-                if recursive and not _recursive_delete_inside_workdir(cmd, powershell, workdir):
+                if recursive and not workspace_operation and not _recursive_delete_inside_workdir(cmd, powershell, workdir):
                     return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
                 # A deleting find meets the same `.tmp` rule (find -delete, -exec rm, | xargs rm).
                 if not powershell and not all(_find_delete_inside_step_tmp(cmd, find, workdir)

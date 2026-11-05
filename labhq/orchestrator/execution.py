@@ -1,5 +1,8 @@
 """One compute location for the lifetime of a request (#430)."""
 
+import re
+from pathlib import PurePosixPath
+
 from ..util import output_relpath
 
 QUESTION = "이 요청을 HPC에서 처음부터 끝까지 할까요, 이 PC에서 할까요?"
@@ -12,7 +15,12 @@ OPTIONS = [
 def available_runner(hub, agent_id=None):
     """Only an online, built-in scheduler with a processing worker can own the request."""
     agents = hub.agents.items() if agent_id is None else ((agent_id, hub.agents.get(agent_id, {})),)
+    cfg = hub.s.orchestrator
+    excluded = {"cso", "chief_of_staff", "sci_reviewer", "editor", "facilities",
+                cfg.cso_agent, cfg.chief_of_staff_agent, cfg.reviewer_agent}
     for aid, agent in agents:
+        if agent_id is None and aid in excluded:
+            continue
         host = getattr(hub, "agent_runner", {}).get(aid) or agent.get("runner_id")
         caps = getattr(hub, "runner_capabilities", {}).get(host, {})
         if (host in getattr(hub, "runners", {}) and caps.get("scheduler") in {"sge", "pbs", "slurm", "mock"}
@@ -22,9 +30,12 @@ def available_runner(hub, agent_id=None):
 
 
 def selection(note):
-    # The existing clarify card composes "1. question\na) option"; do not infer a choice from prose.
-    choices = [mode for mode, option in zip(("hpc", "local"), OPTIONS) if option in note]
-    return choices[0] if len(choices) == 1 else None
+    choices = {mode for mode, option in zip(("hpc", "local"), OPTIONS) if option in note}
+    # The approve CLI documents `--note "1: a"`; accept only an unambiguous answer to this one question.
+    short = re.fullmatch(r"\s*(?:1\s*:\s*)?([ab12])\s*[.)]?\s*", note, re.I)
+    if short:
+        choices.add("hpc" if short[1].lower() in {"a", "1"} else "local")
+    return next(iter(choices)) if len(choices) == 1 else None
 
 
 def plan_rule(choice):
@@ -34,17 +45,18 @@ def plan_rule(choice):
     return ("\n\nExecution location fixed by the PI: HPC for the WHOLE request. Every DAG step must declare "
             "execution=hpc and use a worker with built-in hpc tools on runner " + choice["runner_id"] + ". "
             "All download, preparation, QC, analysis and figure/report-file generation runs in scheduler jobs "
-            "in ONE request workspace. Use hpc_submit; job cwd is outputs/, so strip outputs/ from output "
+            "in isolated steps/<step-id>/ workspaces. Use hpc_submit; job cwd is this step's outputs/, so strip outputs/ from output "
             "paths inside scripts. Submit, end the turn and resume after the job finishes. "
             "Local staff only write/submit scripts and read permitted summaries. "
-            "Never process data locally or copy upstream data between steps. Declare distinct output paths "
-            "outputs/<step-id>/<file> across steps. The CSO report and request bundle collect results only at the end.")
+            "Never process data locally. Read only the runner's hash-verified ancestor snapshots in request data/<producer-step>/; "
+            "never read sibling workspaces. Different steps may declare identical output names. "
+            "The CSO report and request bundle collect results only at the end.")
 
 
 def plan_errors(steps, choice, agents):
     if not choice:
         return []  # historical plans keep their frozen hash and execution contract
-    errors, outputs = [], set()
+    errors = []
     if not isinstance(steps, list):
         return ["execution plan steps must be a list"]
     for step in steps or []:
@@ -55,18 +67,20 @@ def plan_errors(steps, choice, agents):
         if mode != choice["mode"]:
             errors.append(f"{step.get('id')}: execution must be {choice['mode']}; mixed plans are refused")
         if choice["mode"] == "hpc":
+            outputs = []
             agent = agents.get(step.get("agent_id"), {})
             if (agent.get("runner_id") != choice["runner_id"] or not agent.get("hpc_tools")
                     or "hpc" not in agent.get("builtin_mcp", [])):
                 errors.append(f"{step.get('id')}: requires built-in HPC tools on the selected runner")
-            for path in step.get("outputs") or []:
+            for path in [*(step.get("outputs") or []), *(step.get("optional_outputs") or [])]:
                 path = output_relpath(path)
                 if not path:
                     errors.append(f"{step.get('id')}: HPC outputs must stay in outputs/")
                     continue
-                if path in outputs:
-                    errors.append(f"{step.get('id')}: shared workspace output collision: {path}")
-                outputs.add(path)
+                parts = PurePosixPath(path.casefold()).parts
+                if any(parts[:len(old)] == old or old[:len(parts)] == parts for old in outputs):
+                    errors.append(f"{step.get('id')}: step workspace output collision: {path}")
+                outputs.append(parts)
     return errors
 
 

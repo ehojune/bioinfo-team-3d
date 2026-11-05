@@ -24,6 +24,14 @@ CONTINUE_NOTE = "이어 가되 s2 효과 열은 donor 단위로만 계산할 것
 VALID_PLAN_SHA = "6b454f6784e1e68d0dc14b0a78b82cb87eafa60327834f79e94d71298f2d74a4"
 
 
+def _lab_cap(hub, usd=10):
+    """The lab's policy cap with no budget on the request: the plan's sum (spent + plan budget) is the cap up to it. A
+    budget the PI wrote on the request is the cap itself (#944)."""
+    hub.requests["r"]["budget_usd"] = None
+    hub.s.policy.budget.per_request_usd = usd
+    return hub
+
+
 def _kinds(hub, kind):
     return [task for task in hub.calls if task.meta["kind"] == kind]
 
@@ -104,7 +112,7 @@ async def test_cp2_note_reaches_the_review_and_the_report_prompts_and_stays_in_t
         assert "PI 승인 메모 (CP2)" in prompt and CP2_NOTE in prompt
     assert "does not change the CP2 decision" in review
     assert "한계" in synthesis.split("PI 승인 메모 (CP2)", 1)[1]
-    assert f"PI note: {CP2_NOTE}" in req["report_appendix"]  # the audit record is unchanged
+    assert f"PI note: {CP2_NOTE}" in req["execution_record"]  # the audit record is unchanged
     assert all(CP2_NOTE not in task.prompt for task in _kinds(hub, "step"))
 
 
@@ -129,7 +137,7 @@ async def test_a_long_note_is_clipped_with_a_marker_in_prompts_but_kept_whole_in
     synthesis = _kinds(hub, "synthesis")[0].prompt
     assert note not in synthesis and note[:cso.APPROVAL_NOTE_CHARS] in synthesis and "메모가 길어" in synthesis
     assert hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]["note"] == note
-    assert note in hub.requests["r"]["report_appendix"]
+    assert note in hub.requests["r"]["execution_record"]
 
 
 # ---------- R11: 이어 가기 note (and the CP2 note before it) → the continuation plan ----------
@@ -156,7 +164,7 @@ async def test_continue_and_cp2_notes_reach_the_continuation_plan_prompt(tmp_pat
 
 @pytest.mark.asyncio
 async def test_a_plan_budget_overrun_on_the_finished_report_is_recorded_without_a_card():
-    hub = _with_plan(rep._hub(synthesis_usd=2.0), budget_usd=1)
+    hub = _lab_cap(_with_plan(rep._hub(synthesis_usd=2.0), budget_usd=1))
     orch = Orchestrator(hub)
     await orch.run_request("r")
 
@@ -173,15 +181,19 @@ async def test_a_plan_budget_overrun_on_the_finished_report_is_recorded_without_
     assert orch.budget_denials == {}
     assert orch.budget_outcomes["r"] == [{"spent_usd": 2.0, "limit_usd": 1.0,
                                            "approved": None, "final_turn": True}]
-    assert "final turn; no further work" in req["report_appendix"]
+    assert "final turn; no further work" in req["execution_record"]
 
 
 @pytest.mark.asyncio
-async def test_a_report_turn_that_waits_for_an_answer_is_not_the_final_turn_until_its_wake_ends():
+@pytest.mark.parametrize("reserve", [False, True])
+async def test_a_report_turn_that_waits_for_an_answer_is_not_the_final_turn_until_its_wake_ends(reserve):
     """PR #527 review P2: the first report turn returned a question and ran over the cap; the record said "final
     turn; no further work" and then a budget card opened before the wake turn. The card is the one decision for
-    that overrun, and the exemption is judged on the turn that really ends the step."""
-    hub = _with_plan(rep._hub(), budget_usd=1)
+    that overrun, and the exemption is judged on the turn that really ends the step. With the pre-dispatch hold on
+    (#1139) the raise also leaves room for a whole next turn, so the wake turn does not pass the raised cap and no
+    final-turn record is written."""
+    hub = _lab_cap(_with_plan(rep._hub(), budget_usd=1))
+    hub.s.policy.budget.reserve_before_dispatch = reserve
     reply = hub.reply
     synthesis = []
 
@@ -206,9 +218,13 @@ async def test_a_report_turn_that_waits_for_an_answer_is_not_the_final_turn_unti
     req = hub.requests["r"]
     assert len(synthesis) == 2 and req["outcome"] == "research_reported"
     assert [item["kind"] for item in hub.approvals] == ["research_plan", "research_evidence", "budget"]
+    appendix = req["execution_record"]
+    if reserve:  # the card's raise left room for the wake turn: it ends inside the new cap
+        assert orch.budget_outcomes["r"] == [{"spent_usd": 2.0, "limit_usd": 1.0, "approved": True}]
+        assert appendix.count("final turn; no further work") == 0 and "$2.00 > $1.00; approved" in appendix
+        return
     assert orch.budget_outcomes["r"] == [{"spent_usd": 2.0, "limit_usd": 1.0, "approved": True},
                                          {"spent_usd": 3.0, "limit_usd": 2.0, "approved": None, "final_turn": True}]
-    appendix = req["report_appendix"]
     assert appendix.count("final turn; no further work") == 1
     assert appendix.index("$2.00 > $1.00; approved") < appendix.index("$3.00 > $2.00; final turn")
 
@@ -242,8 +258,8 @@ async def test_without_a_request_budget_the_cap_is_the_policy_per_request_cap():
 
 @pytest.mark.asyncio
 async def test_a_resume_keeps_a_budget_the_pi_raised_after_cp1():
-    hub = _with_plan(_research_hub(_settings(), [CP1, {"approved": True, "choice": "approve", "note": ""}]),
-                     budget_usd=1)
+    hub = _lab_cap(_with_plan(_research_hub(_settings(), [CP1, {"approved": True, "choice": "approve", "note": ""}]),
+                              budget_usd=1))
     await Orchestrator(hub).run_request("r")
     assert hub.requests["r"]["budget_usd"] == 1.0
 
@@ -263,7 +279,7 @@ APPROVE_CP2 = {"approved": True, "choice": "approve", "note": ""}
 async def test_the_cap_is_the_spend_before_cp1_plus_the_plan_budget_and_no_card_follows_the_approval():
     """req_6e21a09296: $3.16 was spent before CP1, the plan said $3.00, the cap became $3.00 and the budget card
     "예산 초과: $3.16 / $3.00" opened 4 minutes after the PI approved the plan (PI asked for --budget 10)."""
-    hub = _costed(_with_plan(rep._hub(), budget_usd=3), plan=3.16)
+    hub = _lab_cap(_costed(_with_plan(rep._hub(), budget_usd=3), plan=3.16))
     _answer(hub, [CP1, APPROVE_CP2])
     orch = Orchestrator(hub)
     await orch.run_request("r")
@@ -283,12 +299,12 @@ async def test_the_cap_is_the_spend_before_cp1_plus_the_plan_budget_and_no_card_
 
 @pytest.mark.asyncio
 async def test_execution_past_the_plan_budget_on_top_of_the_spend_still_raises_the_card():
-    hub = _costed(_with_plan(rep._hub(), budget_usd=3), plan=3.16, step=2.9)
+    hub = _lab_cap(_costed(_with_plan(rep._hub(), budget_usd=3), plan=3.16, step=2.9))
     _answer(hub, [CP1, APPROVE_CP2], budget=True)
     await Orchestrator(hub).run_request("r")
     assert [item["kind"] for item in hub.approvals] == ["research_plan", "research_evidence"]  # $6.06 of $6.16
 
-    hub = _costed(_with_plan(rep._hub(), budget_usd=3), plan=3.16, step=3.1)
+    hub = _lab_cap(_costed(_with_plan(rep._hub(), budget_usd=3), plan=3.16, step=3.1))
     _answer(hub, [CP1, APPROVE_CP2], budget=True)
     await Orchestrator(hub).run_request("r")
     assert [item["kind"] for item in hub.approvals] == ["research_plan", "budget", "research_evidence"]
@@ -330,7 +346,7 @@ def test_the_cp1_card_line_names_the_plan_budget_and_the_spend_before_it():
 
 @pytest.mark.asyncio
 async def test_step_and_review_prompts_say_how_the_enforced_cap_was_made():
-    hub = _costed(_with_plan(rep._hub(), budget_usd=3), plan=2.96)
+    hub = _lab_cap(_costed(_with_plan(rep._hub(), budget_usd=3), plan=2.96))
     await Orchestrator(hub).run_request("r")
 
     for kind in ("step", "review"):
@@ -346,18 +362,19 @@ async def test_step_and_review_prompts_say_how_the_enforced_cap_was_made():
 
 @pytest.mark.asyncio
 async def test_a_continuation_round_counts_its_own_spend_at_its_cp1(tmp_path):
-    """Round 1: a $2 plan turn, plan budget $1, cap $3, then two $0.50 steps: $3 spent. Round 2 plans for free: its cap
-    is that $3 + its plan's $2 = $5, not the plan's $2, which the $3 already spent would have passed the moment CP1
-    was approved."""
+    """Round 1: a $2 plan turn, plan budget $1.20, cap $3.20, then two $0.50 steps: $3 spent. Round 2 plans for free: its
+    cap is that $3 + its plan's $2 = $5, not the plan's $2, which the $3 already spent would have passed the moment CP1
+    was approved. The plan budget leaves a little room: with the pre-dispatch hold on (#1139) a request that has used its
+    cap to the cent asks before its next turn, which is not what this test is about."""
     decisions = [CP1, cont.APPROVE, cont.CONTINUE, CP1, cont.APPROVE]
-    hub = cont._hub(tmp_path, decisions)
+    hub = _lab_cap(cont._hub(tmp_path, decisions))
     reply = hub.reply
 
     async def costed(task):
         result = await reply(task)
         second = "Continuation (research round 2)" in task.prompt
         if task.meta["kind"] == "plan" and isinstance(result.structured, dict):
-            result = result.model_copy(update={"structured": {**result.structured, "budget_usd": 2 if second else 1}})
+            result = result.model_copy(update={"structured": {**result.structured, "budget_usd": 2 if second else 1.2}})
         usd = {"plan": 0.0 if second else 2.0, "step": 0.5}.get(task.meta["kind"], 0.0)
         return result.model_copy(update={"cost_usd": usd, "cost_known": True})
 
@@ -370,11 +387,11 @@ async def test_a_continuation_round_counts_its_own_spend_at_its_cp1(tmp_path):
     first, = contract["rounds"]
     assert [item["kind"] for item in hub.approvals] == ["research_plan", "research_evidence", "research_continue",
                                                        "research_plan", "research_evidence"]
-    assert first["budget_usd"] == 3.0
+    assert first["budget_usd"] == 3.2  # round 1's cap: the $2 spent on its plan + the plan budget
     assert contract["approval"]["budget"] == {"plan_budget_usd": 2.0, "spent_before_plan_usd": 3.0, "cap_usd": 5.0,
                                               "source": "plan", "configured_cap_usd": 10.0}
     assert orch.budget_denials == {} and "r" not in orch.budget_outcomes
-    assert contract["budget_cap"] == {"configured_cap_usd": 10.0, "source": "request"}  # round 1's, never re-fixed
+    assert contract["budget_cap"] == {"configured_cap_usd": 10.0, "source": "policy"}  # round 1's, never re-fixed
 
 
 def test_budget_usd_is_optional_positive_and_out_of_the_hash_of_older_plans():
@@ -452,17 +469,91 @@ async def test_earlier_round_cp2_notes_stay_in_the_audit_appendix_with_their_rou
     hub = cont._hub(tmp_path, decisions)
     await Orchestrator(hub).run_request("r")
 
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
     assert f"PI note (round 1 CP2): {long_note}" in appendix  # whole, though prompts clip it
     assert "PI note: 2차 확인" in appendix
 
 
 @pytest.mark.asyncio
 async def test_step_and_review_prompts_carry_the_enforced_cap_not_only_resource_limits():
-    hub = _with_plan(rep._hub(), budget_usd=1)
+    hub = _lab_cap(_with_plan(rep._hub(), budget_usd=1))
     await Orchestrator(hub).run_request("r")
 
     for kind in ("step", "review"):
         prompt = _kinds(hub, kind)[0].prompt
         assert "Enforced spending cap for this request: $1.00" in prompt
         assert "protocol.resource_limits" in prompt.split("Enforced spending cap", 1)[1]
+
+
+# ---------- #944: a budget the PI wrote on the request is the cap, not the plan's estimate ----------
+
+@pytest.mark.asyncio
+async def test_a_request_budget_of_40_stays_the_cap_after_cp1_when_the_plan_estimates_7():
+    """10th attempt (req_fbaa5e34cf): $40 asked, $2.70 spent before CP1, plan $7 → the cap fell to $9.70 and two
+    $10 per-task reservations opened two budget cards although the run cost $2.98."""
+    hub = _costed(_with_plan(rep._hub(), budget_usd=7), plan=2.7, step=1.3)
+    hub.requests["r"]["budget_usd"] = 40
+    hub.s.policy.budget.per_task_usd = 10
+    hub.s.policy.budget.reserve_before_dispatch = True
+    _answer(hub, [CP1, APPROVE_CP2], budget=True)
+    orch = Orchestrator(hub)
+    await orch.run_request("r")
+
+    req = hub.requests["r"]
+    cp1 = hub.approvals[0]
+    assert cp1["detail"]["budget"] == {"plan_budget_usd": 7.0, "spent_before_plan_usd": 2.7, "cap_usd": 40.0,
+                                       "source": "request", "configured_cap_usd": 40.0}
+    assert "집행 상한 $40.00(요청 예산 그대로). 계획 추정은 참고만 합니다: 계획 예산 $7.00 + 계획까지 쓴 $2.70 = $9.70" in cp1["summary"]
+    assert req["budget_usd"] == 40.0 and req["research_contract"]["approval"]["budget"]["cap_usd"] == 40.0
+    assert [item["kind"] for item in hub.approvals if item["kind"] == "budget"] == []  # 0 cards
+    assert req["outcome"] == "research_reported" and orch.budget_denials == {}
+    assert "$40.00 (the request's own budget" in orch._spending_cap_line("r")
+
+
+@pytest.mark.asyncio
+async def test_a_task_whose_full_cap_would_pass_the_request_budget_is_held_at_what_is_left():
+    """35 spent of $40 and a $10 per-turn cap: the turn holds the $5 left (#1139) and goes without a card, so the request
+    still cannot pass $40. Before the hold was cut to what is left, this asked."""
+    hub = _costed(_with_plan(rep._hub(), budget_usd=7), plan=35.0, step=1.0)
+    hub.requests["r"]["budget_usd"] = 40
+    hub.s.policy.budget.per_task_usd = 10
+    hub.s.policy.budget.reserve_before_dispatch = True
+    _answer(hub, [CP1, APPROVE_CP2], budget=False)
+    orch = Orchestrator(hub)
+    await orch.run_request("r")
+
+    assert [item for item in hub.approvals if item["kind"] == "budget"] == []
+    step = _kinds(hub, "step")
+    assert step and all(task.budget_usd <= 5.0 for task in step)  # capped at what the request had left
+    assert hub.requests["r"]["cost_usd"] <= 40.0
+
+
+@pytest.mark.asyncio
+async def test_a_task_that_would_pass_the_request_budget_by_more_than_what_is_left_is_still_held_for_a_card():
+    """Under a cent left cannot be held (the CLI renders cents): such a request asks, and nothing is sent past the cap."""
+    hub = _costed(_with_plan(rep._hub(), budget_usd=7), plan=39.995, step=1.0)
+    hub.requests["r"]["budget_usd"] = 40
+    hub.s.policy.budget.per_task_usd = 10
+    hub.s.policy.budget.reserve_before_dispatch = True
+    _answer(hub, [CP1, APPROVE_CP2], budget=False)
+    orch = Orchestrator(hub)
+    await orch.run_request("r")
+
+    cards = [item for item in hub.approvals if item["kind"] == "budget"]
+    assert len(cards) == 1 and cards[0]["detail"]["limit_usd"] == 40.0
+    assert not _kinds(hub, "step")  # nothing is sent past the cap
+
+
+@pytest.mark.asyncio
+async def test_a_limit_a_budget_card_raised_before_cp1_is_not_a_request_budget():
+    """PR #945 review: no --budget was given; a card raised the policy limit to $20 before CP1. The plan's sum is still
+    the cap, up to that limit: only a budget the PI wrote on the request is the cap itself."""
+    hub = _costed(_with_plan(rep._hub(), budget_usd=7), plan=2.7)
+    hub.requests["r"].update(budget_usd=20, requested_budget_usd=None)
+    _answer(hub, [CP1, APPROVE_CP2])
+    await Orchestrator(hub).run_request("r")
+
+    budget = hub.approvals[0]["detail"]["budget"]
+    assert budget == {"plan_budget_usd": 7.0, "spent_before_plan_usd": 2.7, "cap_usd": 9.7, "source": "plan",
+                      "configured_cap_usd": 20.0}
+    assert hub.requests["r"]["research_contract"]["budget_cap"]["source"] == "policy"

@@ -64,7 +64,7 @@ async def test_shipped_facilities_answers_and_resumes_own_session(staff, monkeyp
         answer = hub.store.get("ask", ask.id)["answer"]
         assert answer["from"] == answer["routed_to"] == "facilities"
     assert calls[0].agent.name == "시설팀"
-    assert calls[0].agent.model == "gpt-6-sol"
+    assert calls[0].agent.model == "gpt-6.1-sol"
     assert calls[0].task.resume_session_id is None
     assert calls[1].task.resume_session_id == "facility-session"
     assert calls[0].workdir == calls[1].workdir

@@ -123,9 +123,9 @@ async def test_general_report_warns_without_copying_long_tool_output():
                         evidence_path_warnings=["outputs/missing.tsv"],
                         tool_errors=["fixture lookup failed\n" + "PRIVATE " * 200,
                                      "second failure should only affect the count"])
-    Orchestrator(hub)._finish("r", "Narrative", {"A": {**result.model_dump(mode="json"), "status": "done"}}, ok=True)
+    (await Orchestrator(hub)._finish("r", "Narrative", {"A": {**result.model_dump(mode="json"), "status": "done"}}, ok=True))
     report = hub.requests["r"]["report"]
-    appendix = hub.requests["r"]["report_appendix"]
+    appendix = hub.requests["r"]["execution_record"]
 
     assert "실행 기록 참고" in report
     assert "## 보고서 경고" not in report
@@ -137,9 +137,9 @@ async def test_general_report_warns_without_copying_long_tool_output():
 
 
 def test_research_prompt_hash_and_empty_research_result_fields_stay_fixed():
-    # #373 benches A/B add durable artifacts and one-block upstream path variables; #423 makes them inputs/ paths and asks for an outputs/env/ record.
+    # #690 intentionally adds the SVG text/font/no-capture contract to the frozen research step prompt; #669 the install-and-read rule.
     assert hashlib.sha256(RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "e88d8a951eeb9db9a9d6fa4570ad53654dd3e09fe9e0547bd4f48d053f675a49")
+        "c6bb88d99f75b5b454145030377a027a9b6518ee5bad0ee791316cb7c5a91e09")
     dumped = TaskResult(task_id="t", agent_id="worker", ok=True, structured={"version": 2}).model_dump(mode="json")
     assert "general_sections" not in dumped and "evidence_path_warnings" not in dumped and "tool_errors" not in dumped
 

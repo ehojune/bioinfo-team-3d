@@ -3,12 +3,16 @@ rows:
 - sha: 4efe1d1
   at: 2026-10-03 06:14
   text: Claude 직원 설정 폴더를 개인 경로로 막고 그 task 몫 projects 폴더만 읽기로 연다
+  summary: Claude 설정은 보호하되 해당 작업에 필요한 대화 폴더만 읽게 합니다.
 - sha: 3102dc5
   at: 2026-10-03 06:14
   text: doctor에 Claude 직원 설정 폴더 점검 행(claude staff config)을 더한다
+  summary: 환경 진단에서 Claude 직원의 설정 폴더도 확인합니다.
 - sha: 2bd2574
   at: 2026-10-03 06:15
   text: init이 Claude 직원 전용 ~/.labhq/claude-staff와 CLAUDE_CONFIG_DIR를 넣고 로그인 명령만 안내한다
+  summary: 초기 설정에서 Claude 직원 전용 설정 폴더를 만들고 로그인 방법을 안내합니다.
 - sha: 64d1801
   at: 2026-10-03 06:32
   text: 설정 폴더 Read deny를 최상위 항목으로 한정해 task가 쌓여도 명령줄이 늘지 않게 한다
+  summary: 설정 폴더 접근 차단 규칙이 작업 수만큼 길어지지 않게 줄였습니다.

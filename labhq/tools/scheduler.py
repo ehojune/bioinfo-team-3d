@@ -291,12 +291,37 @@ def slurm_job(job_id: str, records: list[JobInfo]) -> JobInfo | None:
 
 # ---------- backend ----------
 
+def _windows_logon_user() -> str:
+    if os.name != "nt":
+        return ""
+    try:
+        import ctypes
+        size = ctypes.c_uint32(257)
+        buf = ctypes.create_unicode_buffer(size.value)
+        return buf.value if ctypes.windll.advapi32.GetUserNameW(buf, ctypes.byref(size)) else ""
+    except Exception:
+        return ""
+
+
+def _local_user() -> str:
+    """Logon account name, or "" when it cannot be resolved (never a made-up name: it would filter qstat/squeue)."""
+    try:
+        return getpass.getuser()
+    except Exception:  # getpass falls back to POSIX-only `pwd` when USERNAME/USER/LOGNAME are unset on Windows
+        return _windows_logon_user()
+
+
 class Scheduler:
     def __init__(self, cfg: HpcSettings):
         self.cfg = cfg
-        self.user = cfg.user or getpass.getuser()
+        self.user = cfg.user or _local_user()
+
+    def _require_enabled(self, operation: str) -> None:
+        if self.cfg.scheduler == "none":
+            raise RuntimeError(f"{operation} not supported for scheduler=none (HPC disabled)")
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess:
+        self._require_enabled("command execution")
         if self.cfg.ssh_host:
             args = ["ssh", "-o", "BatchMode=yes", self.cfg.ssh_host, shlex.join(args)]
         return subprocess.run(args, capture_output=True, text=True, timeout=self.cfg.command_timeout_s,
@@ -304,6 +329,7 @@ class Scheduler:
 
     def submit_args(self, script: str, name: str, cores: int, mem: str, walltime: str,
                     queue: str | None, stdout: str, stderr: str) -> list[str]:
+        self._require_enabled("submit")
         name = sanitize_job_name(name)
         wt = normalize_walltime(walltime)
         if self.cfg.scheduler == "sge":
@@ -366,8 +392,11 @@ class Scheduler:
         return m.group(1)
 
     def queue(self) -> list[JobInfo]:
+        self._require_enabled("queue")
         if self.cfg.scheduler == "mock":
             return []
+        if not self.user:
+            raise RuntimeError("cannot determine the OS user for the queue query; set hpc.user")
         if self.cfg.scheduler == "slurm":
             # -r: one line per array task, so every listed id is one hpc_status/hpc_cancel accepts
             # (without it pending tasks read "4100_[1-4,8]").
@@ -384,6 +413,7 @@ class Scheduler:
         return parse_sge_qstat(p.stdout) if self.cfg.scheduler == "sge" else parse_pbs_qstat_table(p.stdout)
 
     def status(self, job_id: str) -> JobInfo:
+        self._require_enabled("status")
         if self.cfg.scheduler == "mock":  # ids are "mock-…" and nothing is run
             return JobInfo(job_id=job_id, state="completed", exit_status=0)
         checked_job_id(job_id)
@@ -453,6 +483,7 @@ class Scheduler:
         return accounted or live or JobInfo(job_id=job_id, state="missing")
 
     def cancel(self, job_id: str) -> str:
+        self._require_enabled("cancel")
         if self.cfg.scheduler == "mock":
             return "cancelled (mock)"
         checked_job_id(job_id)

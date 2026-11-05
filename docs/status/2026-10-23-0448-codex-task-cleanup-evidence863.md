@@ -1,0 +1,21 @@
+## #863 — 작업 취소 접수와 직원 프로세스 정리 증거 구분 (base f47e841)
+
+- 문제: 요청은 먼저 `cancelled`로 저장되고, CLI cancel 성공과 `task.result`만으로는 직원 CLI 자손이 끝났다고 말할 수 없었다. `_kill`은 종료 결과와 wait timeout을 버렸다. Windows wrapper의 Job 활성은 기록되지 않았다.
+- 변경(기존 wrapper 확장, 새 launcher·pipe·제어면 없음):
+  - `runner/memory_limit.py`: wrapper가 Job에 들어간 직후, CLI를 만들기 전에 stderr 첫 줄 `LABHQ_JOB_ACTIVE pid=<wrapper> kill_on_close=1`을 쓴다. Job 생성·handle 보유·KILL_ON_CLOSE·wait·returncode 처리는 그대로다.
+  - `adapters/base.py`:
+    - runner는 wrapper stderr의 **첫 줄**이 자기 wrapper PID의 그 줄일 때만 Job 활성으로 본다. CLI는 그 뒤에야 같은 stream에 쓸 수 있고, stdout은 보지 않는다. 확인된 줄은 CLI stderr에서 뺀다.
+    - `_kill`이 tree 종료 수와 wait 완료 여부를 돌려준다.
+    - spawn은 shield 안에서 돈다. 도중에 취소되면 끝난 spawn이 만든 wrapper를 넘겨받아 끝내고 `UNKNOWN`(spawn_cancelled_before_handover)으로 남긴다. 실행 파일이 없으면 `not_started`다.
+  - `models.TaskResult.cleanup_evidence`(새 필드): status는 `job_close_contract_enforced`(활성 확인 + wrapper wait 완료) / `UNKNOWN`(reason) / `not_started`이고, `active_processes_measured: false`를 함께 둔다. 종료 코드가 0이 아니어도(labhq가 끝낸 경우 포함) 정리 실패로 보지 않는다.
+  - `runner/daemon.py`:
+    - 취소로 끝난 run은 adapter가 보고한 증거를 받는다. 보고가 없으면 UNKNOWN(no_runner_observation)이다.
+    - runner 재시작만 있는 결과는 UNKNOWN(runner_restart_only)이다.
+    - `_shutdown_result`는 `shutdown_evidence`를 덮어쓰지 않고 합치며, 중단일 때만 `cleanup`을 더한다. 정상 종료의 shutdown_evidence는 계속 비어 있다.
+  - manual 요청 취소 문단에 한 단락을 더했다.
+- 범위 밖: Job ActiveProcesses 조회, handle 복제, 광범위 kill, COM·WMI·서비스 등 Job 밖 실행, 제품 전체 제어면 개편.
+- 가정(manual에 명시, 독립 검토 P1/P2 0 뒤): runner가 띄운 wrapper의 코드·실행 환경을 믿고, wrapper가 복제·상속하지 않은 유일한 Job handle을 끝까지 쥔다. OS sandbox도, ActiveProcesses 0 측정도 아니다. 실행 코드는 바꾸지 않았다.
+- 검사(가짜만):
+  - `tests/test_step_memory_limit.py` +12 함수, 18 case: 알림 순서, Job 배정 실패, Job handle 비상속·wrapper 보유, 첫 줄·PID 판정, verdict 표(메타데이터 누락·wait 미완료 포함), 정상·0이 아닌 종료·위조 줄·다른 PID·무알림·Job 꺼짐, 실행 중 취소, spawn 중 취소(만들어짐/없음), daemon 합치기·재시작.
+  - 프로세스 없이 in-process로 실행했다: adapter·wrapper 14 case 통과, daemon 두 메서드(AST 추출) 통과. 이전 코드에서는 새 API가 없어 실패한다.
+  - Python 3.10 AST 통과. 실제 Job·프로세스·WMI는 CI 몫이다.

@@ -2,12 +2,19 @@
 const {test}=require('node:test'), assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),http=require('node:http');
 const {spawn}=require('node:child_process');
+const {listenOnUnreservedPort}=require('./support/demo_driver.cjs');
 const chromePath=process.env.LABHQ_TEST_CHROME || ['C:/Program Files/Google/Chrome/Application/chrome.exe',
   '/usr/bin/google-chrome','/usr/bin/chromium'].find(p=>fs.existsSync(p));
 const web=process.env.LABHQ_WEB_TEST_ROOT || path.resolve(__dirname,'../labhq/web');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const START_MS=60000;  // Chrome start budget; the node:test budget below covers it plus the two viewport passes
+const CDP_MS=30000,CLOSE_MS=5000;  // one DevTools call; Browser.close, whose reply Chrome may never send
+// #1000: phase names go to stderr, which test_office_in_node prints when this process is killed, so a stall names the
+// last phase reached (main 82125d74 stopped after the measurements with only the node:test timeout to show for it).
+const T0=Date.now();
+const phase=name=>process.stderr.write(`office phase +${Date.now()-T0}ms: ${name}\n`);
 test('real phone layout shows CSO, analyst, engineer and QC above the composer; reduced motion and local assets',
-  {skip:!chromePath || typeof WebSocket==='undefined',timeout:90000},async()=>{
+  {skip:!chromePath || typeof WebSocket==='undefined',timeout:150000},async()=>{
   const profile=fs.mkdtempSync(path.join(os.tmpdir(),'labhq-office-browser-'));
   const server=http.createServer((req,res)=>{
     const filename=path.resolve(web,decodeURIComponent(new URL(req.url,'http://localhost').pathname.slice(1)));
@@ -17,7 +24,7 @@ test('real phone layout shows CSO, analyst, engineer and QC above the composer; 
   });
   let chrome,ws;
   try {
-    await new Promise(r=>server.listen(0,'127.0.0.1',r));
+    await listenOnUnreservedPort(server);phase('server listening');  // #1272: a reserved draw (1 in 16,384) is drawn again
     const port=server.address().port;assert.ok(![8787,55921].includes(port));
     const origin=`http://127.0.0.1:${port}`;
     const browserHome=path.join(profile,'home');
@@ -34,18 +41,40 @@ test('real phone layout shows CSO, analyst, engineer and QC above the composer; 
       {windowsHide:true,env:{...process.env,HOME:browserHome,USERPROFILE:browserHome,
         HOMEDRIVE:path.parse(browserHome).root.slice(0,2),HOMEPATH:browserHome.slice(2),
         LOCALAPPDATA:local,APPDATA:roaming,XDG_CONFIG_HOME:config},stdio:['ignore','ignore','pipe']});
-    chrome.stderr.on('data',chunk=>{chromeError=(chromeError+chunk).slice(-2000);});
-    let debug;
-    for(let i=0;i<100;i++){try{debug=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').split('\n')[0];break;}catch{await sleep(100);}}
-    assert.ok(debug,`Chrome started: ${chromeError}`);
-    const targets=await(await fetch(`http://127.0.0.1:${debug}/json`)).json();
-    ws=new WebSocket(targets.find(t=>t.type==='page').webSocketDebuggerUrl);
-    await new Promise(r=>ws.onopen=r);
+    chrome.stderr.on('data',chunk=>{chromeError=(chromeError+chunk).slice(-2000);});phase('chrome spawned');
+    // Chrome's cold start on a loaded CI runner took more than the old 10 s (ubuntu 3.10: a PR run and a main run, 2026-10-14).
+    // Wait for the DevToolsActivePort file and the page target on a deadline, and stop early if Chrome exits.
+    let debug,exited=null;
+    chrome.on('exit',(code,signal)=>{exited={code,signal};});
+    const startDeadline=Date.now()+START_MS;
+    for(;;){
+      try{debug=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').split('\n')[0];}catch{}
+      if(debug||exited||Date.now()>=startDeadline)break;
+      await sleep(100);
+    }
+    phase(`debug port ${debug?'published':'missing'}`);
+    assert.ok(debug,`Chrome did not publish its debugging port within ${START_MS/1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
+    let page;
+    while(!page&&!exited&&Date.now()<startDeadline){
+      try{page=(await(await fetch(`http://127.0.0.1:${debug}/json`)).json()).find(t=>t.type==='page');}catch{}
+      if(!page)await sleep(100);
+    }
+    phase(`page target ${page?'found':'missing'}`);
+    assert.ok(page,`Chrome has no page target within ${START_MS/1000}s (exit: ${JSON.stringify(exited)}): ${chromeError}`);
+    ws=new WebSocket(page.webSocketDebuggerUrl);
+    await new Promise((resolve,reject)=>{ws.onopen=resolve;ws.onerror=()=>reject(new Error('DevTools websocket failed to open'));});
+    phase('devtools websocket open');
     let serial=0;const pending=new Map(),external=[],errors=[];
+    // A closed socket answers nothing: fail every waiting call by name instead of waiting for the node:test timeout.
+    ws.onclose=()=>{for(const [id,p] of [...pending]){pending.delete(id);p.reject(Error('DevTools websocket closed'));}};
     ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.method==='Network.requestWillBeSent'&&/^https?:/.test(m.params.request.url)&&!m.params.request.url.startsWith(origin+'/'))external.push(m.params.request.url);
       if(m.method==='Runtime.exceptionThrown')errors.push(m.params.exceptionDetails.text);
       if(m.id){const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(Error(JSON.stringify(m.error))):p.resolve(m.result);}};
-    const cdp=(method,params={})=>new Promise((resolve,reject)=>{const id=++serial;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}));});
+    const cdp=(method,params={},ms=CDP_MS)=>new Promise((resolve,reject)=>{const id=++serial;
+      const timer=setTimeout(()=>{pending.delete(id);reject(Error(`CDP ${method} had no reply within ${ms}ms`));},ms);
+      pending.set(id,{resolve:v=>{clearTimeout(timer);resolve(v);},reject:e=>{clearTimeout(timer);reject(e);}});
+      // A socket that closed already can throw here; settle at once so the 30 s timer does not outlive the call.
+      try{ws.send(JSON.stringify({id,method,params}));}catch(e){clearTimeout(timer);pending.delete(id);reject(e);}});
     const evaluate=async expression=>{const r=await cdp('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
     await cdp('Page.enable');await cdp('Network.enable');await cdp('Runtime.enable');
     await cdp('Page.addScriptToEvaluateOnNewDocument',{source:"localStorage.clear();const t=setTimeout;window.setTimeout=(f,ms,...a)=>ms===15000?0:t(f,ms,...a);"});
@@ -56,6 +85,7 @@ test('real phone layout shows CSO, analyst, engineer and QC above the composer; 
       await cdp('Page.navigate',{url:origin+'/index.html?demo=1'});
       let ready=false;
       for(let i=0;i<250;i++){if(await evaluate("document.querySelectorAll('#approvals .ap').length>=2")){ready=true;break;}await sleep(100);}
+      phase(`${width}x${height} demo ${ready?'loaded':'not loaded'}`);
       assert.ok(ready,'demo decisions loaded');await sleep(2800);
       if(width===390)await evaluate("document.querySelector('#office').scrollIntoView({block:'start'})");
       const result=await evaluate(`(()=>{const r=e=>{const b=e.getBoundingClientRect();return {top:b.top,bottom:b.bottom,width:b.width,height:b.height}};return {
@@ -82,14 +112,20 @@ test('real phone layout shows CSO, analyst, engineer and QC above the composer; 
       await evaluate("document.documentElement.dataset.theme='light'");
       await cdp('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
       assert.ok(await evaluate("document.querySelector('#office').getAnimations({subtree:true}).length>0"));
-      evidence.push({width,height,...result});
+      evidence.push({width,height,...result});phase(`${width}x${height} checked`);
     }
     assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
     console.log(JSON.stringify({office:evidence,externalRequests:external.length}));
-    await cdp('Browser.close');
+    phase('both viewports measured');
+    // #1000: Chrome may close the socket, or exit, before it replies to Browser.close; the old bare await then never
+    // settled and only the 150 s node:test timeout ended it, after every assertion had passed. The result is already
+    // decided here, so wait a short, named time and let the finally block below end Chrome.
+    await cdp('Browser.close',{},CLOSE_MS).then(()=>phase('Browser.close replied'),e=>phase(`Browser.close: ${e.message}`));
   } finally {
+    phase('cleanup start');
     ws?.close();chrome?.kill();server.close();
     // Only our freshly created temporary Chrome profile.
     for(let i=0;i<20;i++){try{fs.rmSync(profile,{recursive:true,force:true});break;}catch(e){if(i===19)throw e;await sleep(100);}}
+    phase('cleanup done');
   }
 });

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -22,6 +23,7 @@ import stat
 import subprocess
 import tempfile
 import time
+from decimal import Decimal, ROUND_FLOOR
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -75,6 +77,62 @@ DRAFT_STATUSES = frozenset({"mechanical_failure", "unreviewed", "unresolved_disc
                             "failed", "failure"})
 SOURCE_MARKER = ".labhq-source.json"  # which Paper2Agent commit setup-paper2agent installed
 
+# Known upstream defects patched into the installed copy (#662). Paper2Agent's reading_package.py builds bundle keys
+# with str(path.relative_to(root)), which is backslash-separated on Windows and no longer matches the manifest and
+# evidence keys. as_posix() is identical on POSIX. Each `old` text must occur exactly once; a file that already holds
+# every `new` text (upstream fixed it, or an earlier install patched it) is left alone; anything else is a mismatch.
+UPSTREAM_PATCHES = (
+    {"id": "windows-relative-to-posix", "file": "paper2skill/scripts/reading_package.py",
+     "upstream_commit": "8c2d059165ef8cdcb70dbea76655b9c2b55b38e6",
+     "replace": (
+         ("str(evidence.relative_to(work))", "evidence.relative_to(work).as_posix()"),
+         ("str(p.relative_to(stage))", "p.relative_to(stage).as_posix()"),
+         ("str(path.relative_to(root))", "path.relative_to(root).as_posix()"),
+         ("str(p.relative_to(output))", "p.relative_to(output).as_posix()"),
+     )},
+)
+
+
+def patch_state(skill: Path, patch: dict) -> str:
+    """absent (no such file) / unpatched / patched / mismatch for one patch against a skill folder."""
+    target = skill / patch["file"]
+    if not target.is_file():
+        return "absent"
+    text = target.read_text(encoding="utf-8")
+    olds = [text.count(old) for old, _ in patch["replace"]]
+    news = [text.count(new) for _, new in patch["replace"]]
+    if all(n == 1 for n in olds):
+        return "unpatched"
+    if not any(olds) and all(n == 1 for n in news):
+        return "patched"
+    return "mismatch"
+
+
+def apply_upstream_patches(skill: Path) -> list[dict]:
+    """Patch a staged skill copy and return the provenance records. A mismatch raises, so a changed upstream is
+    reported instead of installed with the defect or half a patch."""
+    records = []
+    for patch in UPSTREAM_PATCHES:
+        state = patch_state(skill, patch)
+        if state == "mismatch":
+            raise RuntimeError(f"Paper2Agent patch {patch['id']} does not match {patch['file']}; upstream changed. "
+                               "Review the patch before installing this commit")
+        if state == "unpatched":
+            target = skill / patch["file"]
+            text = target.read_text(encoding="utf-8")
+            for old, new in patch["replace"]:
+                text = text.replace(old, new)
+            target.write_text(text, encoding="utf-8", newline="")
+        records.append({"id": patch["id"], "file": patch["file"], "upstream_commit": patch["upstream_commit"],
+                        "result": {"unpatched": "applied", "patched": "already_patched", "absent": "file_absent"}[state]})
+    return records
+
+
+def skill_patched(skill: Path) -> bool:
+    """False when an installed copy is unpatched or only half patched; reinstalling patches it or reports the mismatch."""
+    return all(patch_state(skill, patch) in ("patched", "absent") for patch in UPSTREAM_PATCHES)
+
+
 CONTRACT_PROMPT = """You are {name}, a contract specialist (파견직) hired into the lab from a published method.
 Source paper: {paper}
 Code: {repo}
@@ -122,7 +180,26 @@ def skill_installed(engine: str = "claude_code", settings=None) -> bool:
     return (path / "SKILL.md").is_file()
 
 
+def enabled(settings) -> bool:
+    # Missing stays enabled for callers predating this setting; Settings validates strict booleans.
+    return getattr(settings.recruit, "enabled", True) is not False
+
+
+def require_enabled(settings) -> None:
+    if not enabled(settings):
+        raise ValueError("recruitment and Paper2Agent are disabled (recruit.enabled=false)")
+
+
+def disabled_task(settings, task) -> bool:
+    """Refuse stale/forged conversion tasks and attachments before recovery or workspace effects."""
+    return not enabled(settings) and (
+        task.agent_id == settings.recruit.agent_id
+        or task.meta.get("kind") in {"recruit", "recruit_check", "plan_recruit", "paper_skill"}
+        or bool(task.meta.get("paper_skills")))
+
+
 def recruiter_engine(settings, recruiter) -> str:
+    require_enabled(settings)
     if settings.runner.force_engine == "mock":
         return "mock"
     if recruiter is None:
@@ -132,6 +209,7 @@ def recruiter_engine(settings, recruiter) -> str:
 
 def setup_paper2agent(settings, commit: str | None = None) -> list[Path]:
     """Shared CLI/doctor fix path, without changing staff or PI configuration."""
+    require_enabled(settings)
     from ..doctor import _roster
 
     recruiter = next((a for a in _roster(settings) if a.id == settings.recruit.agent_id), None)
@@ -293,7 +371,6 @@ def install_skill(source: str, cache: Path, commit: str | None = None,
     skill = repo / "skills" / "paper2agent"
     if not skill.is_dir() or not (skill / "SKILL.md").is_file():
         raise FileNotFoundError(f"Paper2Agent source skill is missing SKILL.md: {skill}")
-    marker = json.dumps({"source": origin or source, "commit": installed}) + "\n"  # where it really came from
     staged: list[tuple[Path, Path]] = []
     published: set[Path] = set()
     backups: set[Path] = set()
@@ -306,6 +383,8 @@ def install_skill(source: str, cache: Path, commit: str | None = None,
             shutil.copytree(skill, stage / "new")
             if not (stage / "new" / "SKILL.md").is_file():
                 raise FileNotFoundError(f"Staged Paper2Agent skill is missing SKILL.md: {stage / 'new'}")
+            patches = apply_upstream_patches(stage / "new")  # a mismatch aborts before either copy is replaced
+            marker = json.dumps({"source": origin or source, "commit": installed, "patches": patches}) + "\n"
             (stage / "new" / SOURCE_MARKER).write_text(marker, encoding="utf-8")
         for dst, stage in staged:
             if dst.exists() or dst.is_symlink():
@@ -381,6 +460,25 @@ def probation(kind: str, tools: list[str], skill_dir: str | None, offer_status: 
     return (False, f"offer_status {', '.join(draft)}") if draft else (True, None)
 
 
+def conversion_budget(settings, parent_task_id, budget, remaining):
+    """A reserved plan hire spends its existing hold, never the recruiter's larger default.
+
+    Manual hires and reservation-off plans retain their configured limit. Claude's CLI renders cents, so round
+    down before sending: rounding a sub-cent reservation up would authorize more than its hold.
+    """
+    if not parent_task_id or not settings.policy.budget.reserve_before_dispatch:
+        return settings.recruit.max_budget_usd, None
+    values = (budget, remaining, settings.recruit.max_budget_usd)
+    if any(value is None for value in values):
+        raise ValueError("reserved recruitment requires a parent budget and remaining allowance")
+    if any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0 for value in values):
+        raise ValueError("reserved recruitment requires finite positive allowances")
+    cap = float(Decimal(str(min(values))).quantize(Decimal("0.01"), rounding=ROUND_FLOOR))
+    if cap <= 0:
+        raise ValueError("reserved recruitment allowance is below one CLI cent")
+    return cap, cap
+
+
 class Recruitment:
     def __init__(self, runner: "Runner", msg: dict):
         self.r, self.s = runner, runner.s
@@ -388,6 +486,8 @@ class Recruitment:
         self.ttl_days = float(msg.get("ttl_days") or self.s.recruit.default_ttl_days)
         self.request_id = msg.get("request_id")
         self.plan_task_id = msg.get("plan_task_id")
+        self.parent_budget = msg.get("parent_budget_usd")
+        self.parent_remaining = msg.get("parent_budget_remaining_usd")
         self.slug = slugify(msg.get("name") or self.repo or self.paper or "contract")
 
     async def _emit(self, typ: str, data: dict) -> None:
@@ -395,10 +495,23 @@ class Recruitment:
                                 data={"slug": self.slug, **data,
                                       **({"plan_task_id": self.plan_task_id} if self.plan_task_id else {})}))
 
+    def conversion_task(self, build) -> Task:
+        budget, remaining = conversion_budget(self.s, self.plan_task_id, self.parent_budget, self.parent_remaining)
+        return Task(
+            agent_id=self.s.recruit.agent_id, request_id=self.request_id, output_schema=OFFER_SCHEMA,
+            prompt=build_prompt(self.paper, self.repo, self.focus, build), budget_usd=budget,
+            request_budget_remaining_usd=remaining,
+            meta={"kind": "recruit", "slug": self.slug, "title": f"파견직 채용 변환: {self.slug}",
+                  "agent_overrides": {"permission_mode": self.s.recruit.permission_mode}},
+        )
+
     async def run(self) -> AgentSpec | None:
+        require_enabled(self.s)
+        # Validate inherited allowances before creating a build directory or preparing a model turn.
+        conversion_budget(self.s, self.plan_task_id, self.parent_budget, self.parent_remaining)
         talent = self.r.registry.talent_dir / self.slug
         build = talent / "build"
-        build.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(lambda: build.mkdir(parents=True, exist_ok=True))  # off the event loop (#606)
         recruiter = self.r.registry.agents.get(self.s.recruit.agent_id)
         engine = recruiter_engine(self.s, recruiter)
         real = engine != "mock"
@@ -407,14 +520,11 @@ class Recruitment:
             return None
 
         await self._emit("recruit.status", {"stage": "converting", "paper": self.paper, "repo": self.repo})
-        task = Task(
-            agent_id=self.s.recruit.agent_id, request_id=self.request_id, output_schema=OFFER_SCHEMA,
-            prompt=build_prompt(self.paper, self.repo, self.focus, build), budget_usd=self.s.recruit.max_budget_usd,
-            meta={"kind": "recruit", "slug": self.slug, "title": f"파견직 채용 변환: {self.slug}",
-                  "agent_overrides": {"permission_mode": self.s.recruit.permission_mode}},
-        )
+        task = self.conversion_task(build)
         # Tracked like a dispatched task: a card answer that arrives after this turn ended must not mark the
         # recruiter working again (PR #526 review, #521).
+        if self.plan_task_id and self.s.policy.budget.reserve_before_dispatch:
+            self.r._bind_recruitment_conversion(self.plan_task_id, task)
         turn = asyncio.ensure_future(self.r.run_task(task, workdir_override=build))
         self.r.tasks[task.id] = turn
         result = await turn
@@ -452,7 +562,7 @@ class Recruitment:
         if reason:
             c.verification["probation_reason"] = reason
         c.status = "active" if passed else "probation"
-        path = self.r.registry.save_contract(spec)
+        path = await self.r.registry.asave_contract(spec)
         await self._emit("recruit.done", {"agent": spec.summary(), "path": str(path), "passed_probation": passed})
         return spec
 
@@ -507,6 +617,7 @@ class Recruitment:
             id=f"c_{self.slug}"[:48], name=offer.get("agent_name") or self.slug,
             role=f"[파견] {offer.get('role_summary', '')}"[:200], character="paper-hat-chick",
             engine=Engine(self.s.recruit.contract_engine), model=self.s.recruit.contract_model,
+            model_tier=self.s.recruit.contract_model_tier,
             system_prompt=CONTRACT_PROMPT.format(name=offer.get("agent_name"), paper=self.paper, repo=self.repo,
                                                  role=offer.get("role_summary"), server=server, tools=tools_txt,
                                                  limits=limits, external=external),

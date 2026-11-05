@@ -1,0 +1,6 @@
+pr: 825
+rows:
+- sha: 9fd7c43
+  at: '2026-10-21 20:46'
+  summary: 설치 실패 진단의 바이너리 읽기가 기존 인코딩 검사를 통과하도록 표기를 맞췄습니다.
+  text: 'clean_install_check.py의 Path.open("rb")를 mode="rb"로 명시한다. 실제 encoding 검사1건 red→green·기존 bounded 진단 fake11건 포함12 PASS, Python3.10 AST/compile·공개/diff/기록 검사 통과. AST는 이 인자 표기 외 동일하며 검사기/allowlist/test·16 KiB/8행/4096 JSON·원래 CheckFailure/up/cleanup/timeout을 보존했다. 실제 native 실행이나 간헐적 WMI 원인 해결을 주장하지 않으며 로컬 커밋만 준비했다.'

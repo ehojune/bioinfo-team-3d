@@ -1,0 +1,27 @@
+## #833: Windows 브라우저 시작 지연을 wrapper와 Chrome으로 나누는 진단 (source bd401f7, base f47e841)
+
+- 관측: PR861 CI의 critical `web_resizable_panels.cjs`가 30초를 넘겼다.
+  - 단계 기록은 `chrome-spawned`(651 ms)에서 멈췄고, DevToolsActivePort는 30초 안에 생기지 않았다.
+  - 앞선 run 39835363858에서는 port가 생기기까지 20.4초가 걸렸다.
+  - 이 시간이 Python wrapper·Job 준비인지, Chrome 자체인지 가를 기록이 없었다.
+- 변경(진단 전용):
+  - `windows_job_browser.py`: Job을 만든 뒤 Chrome을 시작하기 직전에 고정 줄 `LABHQ_JOB_STARTING_BROWSER`를 stderr에 한 번 쓴다.
+  - `demo_driver.cjs`:
+    - 그 줄이 stderr 첫 줄일 때만 관측 `job-ready`를 남긴다.
+    - port가 5초 지나도 없으면 관측 `chrome-waiting` 한 줄을 남긴다. 담는 값은 표시를 받았는지, profile 최상위 항목 수(드라이버가 만든 `home` 1개 포함), Chrome stderr byte 수뿐이다.
+    - 두 행 모두 기존 관측 6행 예산 안이다. 경로·stderr 내용·URL·argv·환경 값은 남기지 않는다.
+- 바꾸지 않은 것:
+  - 시작 판정: DevToolsActivePort의 port만으로 대기가 끝난다.
+  - START_MS 60초, node 30초, 정리·receipt·재시도·skip·CI 설정·제품 코드.
+  - 표시가 없거나 Chrome 출력 중간에 같은 문자열이 있어도 판정에 쓰이지 않는다.
+- 검사:
+  - wrapper 시험(가짜 Job·start) 13건을 in-process로 통과했다. 기존 정확 일치 2건에는 표시 줄을 앞에 붙였다.
+  - watcher 순수 검사와 `node --check`를 통과했다.
+  - Python 3.10 AST를 통과했다.
+  - 실제 브라우저·process·pytest·node test 실행은 CI 몫이다.
+- 다음 재발 때 판정:
+  - `job-ready`가 늦으면 wrapper·Job 준비 쪽이다.
+  - 빠른데 port가 없을 때 profile 항목·stderr가 늘었으면 Chrome이 일하는 중이다.
+  - 늘지 않았으면 Chrome이 아직 실행되지 않은 것이다(이미지 로드·검사 등).
+- 독립 검토 P2 수정(`733b644`): 표시 줄의 CR과 LF가 다른 chunk로 오면 표시를 놓쳤다. 이제 표시+CRLF/LF의 앞부분인 동안만 기다린다(최대 표시 길이+2 글자). fake case 1건을 더했다.
+- 원인은 아직 모른다. #833은 열어 둔다.

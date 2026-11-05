@@ -1,0 +1,6 @@
+pr: 868
+rows:
+- sha: 0c09b30
+  at: 2026-10-23 04:26
+  summary: Windows에서 감독 프로세스를 띄울 때 확인 파일이 잠깐 다른 프로그램에 잡혀 있어도 실패하지 않고 다시 읽습니다.
+  text: 'WMI bootstrap과 부모의 receipt·ACK 대기 루프가 FileNotFoundError만 아직 없음으로 보고, 다른 handle(쓰는 쪽의 원자적 replace나 파일 검사기)이 파일을 잡고 있을 때 나는 Windows 공유 위반(winerror 32)은 바로 실패로 끝냈다. PR859 CI에서 부모가 ACK를 쓴 뒤 bootstrap이 stage=ack_wait error=PermissionError로 멈춘 실패와 맞는다. 두 대기 루프만 공유 위반을 아직 없음으로 보고 기존 deadline 안에서 다시 읽는다. 접근 거부 등 다른 오류와 첫 request 읽기는 그대로 실패하고 nonce·caller·Job 확인은 바뀌지 않는다. 정지 기록에 winerror 숫자를 덧붙인다. mock 시험 4건은 이전 코드에서 공유 위반 2건이 실패하고 새 코드에서 통과한다.'

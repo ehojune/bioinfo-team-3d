@@ -3,3 +3,4 @@ rows:
 - sha: 9df2eec
   at: 2026-10-04 07:10
   text: 최종 보고서의 실행 기록을 부록으로 모으고 분석 script와 reference를 outputs에 보존
+  summary: 보고서 본문은 짧게 두고 실행 기록·분석 코드·참고 자료를 결과 폴더에 남깁니다.

@@ -62,7 +62,7 @@ a{color:var(--sleep-ink)}
 
 /* layout */
 .layout{max-width:1280px;margin:0 auto;padding:14px 16px;display:grid;gap:18px}
-@media (min-width:1000px){.layout{grid-template-columns:minmax(0,1.45fr) minmax(330px,1fr);align-items:start}}
+@media (min-width:1000px){.layout{grid-template-columns:minmax(320px,var(--office-panel-size,1.45fr)) var(--ds-resize-hit) minmax(330px,1fr);gap:0;align-items:start}}
 
 /* office */
 .office{background:var(--floor) var(--tile);border:1px solid var(--line);border-radius:18px;overflow:hidden}
@@ -216,7 +216,7 @@ a{color:var(--sleep-ink)}
 details.report{margin-top:8px}
 details.report summary{cursor:pointer;font-weight:500}
 details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:340px;overflow:auto}
-.pi-report{margin-top:8px}.pi-report h3{margin:0 0 6px}.pi-report>pre,.report-appendix pre{white-space:pre-wrap;font:14px/1.65 var(--ui);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:340px;overflow:auto}.report-appendix{margin-top:8px}.report-appendix summary{cursor:pointer;font-weight:500}
+.pi-report{margin-top:8px}.pi-report h3{margin:0 0 6px}.report-markdown{font:14px/1.65 var(--ui);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:340px;overflow:auto;margin:1em 0}.report-markdown h2,.report-markdown h3,.report-markdown h4{margin:14px 0 6px}.report-markdown h2:first-child{margin-top:0}.report-markdown table{border-collapse:collapse;width:100%;display:block;overflow:auto}.report-markdown th,.report-markdown td{border:1px solid var(--line);padding:5px 7px;text-align:left}.report-markdown img{max-width:100%;max-height:360px}.report-markdown figure{margin:10px 0;text-align:center}.report-markdown figcaption{color:var(--muted);font-size:12px}.report-missing{color:var(--danger)}.report-appendix pre{white-space:pre-wrap;font:14px/1.65 var(--ui);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:340px;overflow:auto}.report-appendix{margin-top:8px}.report-appendix summary{cursor:pointer;font-weight:500}
 .msg{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:2px 8px;align-items:start;padding:7px 0;border-bottom:1px solid var(--line)}
 .msg .av svg,.glyph{width:28px;height:28px;display:block}
 .glyph{display:grid;place-items:center;border-radius:50%;background:var(--wall);font:600 10px var(--ui);color:var(--muted)}
@@ -281,6 +281,8 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
   .office{max-height:100%;overflow:auto}
   .panels{max-height:100%}
   .staff-wrap{position:static;flex:none;width:100%}
+  .staff-wrap{height:var(--staff-panel-size,auto);min-height:92px;max-height:300px;box-sizing:border-box}
+  .staff-strip{height:100%;overflow-y:auto;box-sizing:border-box}
   .composer{position:relative;flex:none}
 }
 @media (max-width:620px){
@@ -309,6 +311,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 .sheet .role{margin:2px 0 0;color:var(--muted);font-size:14px}
 .facts{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:14px 0;font-size:14px}
 .facts dt{color:var(--muted)}.facts dd{margin:0;overflow-wrap:anywhere}
+.paper-literature{margin:10px 0;font-size:14px}.paper-literature .paper-row summary{cursor:pointer;overflow-wrap:anywhere}.paper-literature .facts{margin:6px 0 10px}
 .acts{display:flex;flex-wrap:wrap;gap:8px}
 .staff-control{display:grid;gap:8px;margin:10px 0 12px;padding:10px;border:1px solid var(--line);border-radius:12px}
 .staff-control .control-head{margin:0;font-size:13px;color:var(--muted)}
@@ -359,13 +362,20 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
     <div class="zones" id="zones"></div>
   </section>
 
+  <div class="panel-splitter panel-splitter--vertical" id="main-splitter" role="separator" tabindex="0"
+       aria-label="사무실과 결정·작업판·메신저 너비 조정" aria-orientation="vertical"
+       aria-controls="office command-center"></div>
+
   <aside class="panels ui-card" id="command-center" aria-label="Command Center">
+    <div class="cc-heading">
+    <ol class="step-flow" id="step-flow" aria-label="현재 요청의 계획 단계" hidden></ol>
     <nav class="cc-tabs" id="cc-tabs" aria-label="Command Center 탭">
       <button class="ui-tab" type="button" data-tab-target="decisions">결정 <span class="ui-tab__count" id="decision-count" hidden></span></button>
       <button class="ui-tab" type="button" data-tab-target="tasks">작업판</button>
       <button class="ui-tab" type="button" data-tab-target="feed">메신저</button>
       <button class="ui-tab" type="button" data-tab-target="jobs">HPC</button>
     </nav>
+    </div>
     <section class="panel" data-tab="decisions" aria-labelledby="h-ap">
       <h2 id="h-ap">결정할 일 <span class="n" id="ap-count"></span></h2>
       <div id="review-cards"></div>
@@ -391,11 +401,18 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
   </aside>
 </main>
 
+<div class="panel-splitter panel-splitter--horizontal" id="staff-splitter" role="separator" tabindex="0"
+     aria-label="작업 영역과 직원 시트 높이 조정" aria-orientation="horizontal"
+     aria-controls="office command-center staff-strip"></div>
+
 <section class="staff-wrap" aria-labelledby="staff-heading">
   <h2 id="staff-heading">직원</h2>
+  <button class="btn staff-close" id="staff-close" type="button" aria-label="직원 카드 영역 닫기" aria-controls="staff-strip">×</button>
   <button class="staff-toggle" id="staff-toggle" type="button" aria-controls="staff-strip" aria-expanded="false">직원 보기</button>
   <div class="staff-strip" id="staff-strip"></div>
 </section>
+
+<button class="btn staff-reopen" id="staff-reopen" type="button" aria-controls="staff-strip" hidden>직원 카드 보기</button>
 
 <div class="composer">
   <div class="ref-panel" id="ref-panel" hidden>
@@ -417,6 +434,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
     <label class="sr" for="target">받는 사람</label>
     <select id="target"></select>
     <label class="team-toggle" id="team-only-label"><input id="team-only" type="checkbox">팀으로</label>
+    <label class="team-toggle" id="wsl-only-label" title="이 PC의 WSL에서 분석합니다. 준비가 덜 됐으면 셋업 카드가 먼저 뜹니다"><input id="wsl-only" type="checkbox">WSL에서</label>
     <label class="sr" for="work-kind">작업 종류</label>
     <select id="work-kind" title="연구 lane이 켜져 있을 때: 간단은 CP1·CP2 없이, 연구는 계획 승인(CP1)과 근거 승인(CP2)을 거쳐요">
       <option value="auto">자동 판단</option><option value="simple">간단한 일</option><option value="research">연구</option>
@@ -435,11 +453,13 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 <script type="module">
 import {officeSVG, officeHead, officeCharacter, officeStatus} from './ui/office-art.js';
 import {bindShutdown} from './ui/shutdown.js';
-import {answerRequired, decisionChoice, decisionNote, storageChoice, revisedToast, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
+import {answerRequired, decisionChoice, decisionNote, storageChoice, modelRefusalChoice, revisedToast, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
-import {syncTaskBoard} from './ui/tasks.js';
+import {syncPaperLiterature} from './ui/literature.js';
+import {syncTaskBoard, syncStepFlow} from './ui/tasks.js';
 import {controlHtml, controlKey, staffControls} from './ui/control.js';
 import {initTabShell, updateDecisionBadge} from './ui/shell.js';
+import {initResizablePanels} from './ui/resizable.js';
 import {createMessenger, bindHistoryViewport, syncMessageRows} from './ui/messenger.js';
 import {KIND_LABELS as REF_KIND, inferReference, syncReferenceChips} from './ui/refs.js';
 (() => {
@@ -464,6 +484,10 @@ const store = {
   set(k, v) { try { localStorage.setItem(LabHQState.officeStorageKey({demo: IS_DEMO}, k), v); } catch (e) { /* storage unavailable */ } },
 };
 const raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (f => setTimeout(f, 16));
+initResizablePanels({layout: $('.layout'), office: $('#office'), staff: $('.staff-wrap'),
+  mainSplitter: $('#main-splitter'), staffSplitter: $('#staff-splitter'),
+  closeButton: $('#staff-close'), reopenButton: $('#staff-reopen'),
+  storage: store, storageKey: `panel_sizes:${INSTANCE}`});
 const safeUrl = u => (typeof u === 'string' && /^https?:\/\//.test(u)) ? u : null;
 const showTab = initTabShell($('#cc-tabs'), $('#command-center'), 'decisions');
 $('#cc-tabs').addEventListener('click', event => {
@@ -494,7 +518,7 @@ const headSVG = officeHead;
 /* ---------------- state ---------------- */
 const officeState = LabHQState.createOfficeState({mode: MODE, now,
   focusStorage: LabHQState.createRequestFocusStorage({demo: IS_DEMO, instance: INSTANCE})});
-const { S, ag, visual, stateText, currentTask, currentTool, toolInputLine, nick, req, setPlan, feed, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
+const { S, ag, visual, stateText, currentTask, currentTool, toolInputLine, toolActivitySummary, nick, req, setPlan, feed, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
 const messenger = createMessenger({fetchPage: before => api.messenger(before)});
 function apply(ev, replay = false) {
   if (MODE === 'live') {
@@ -514,6 +538,7 @@ let pending = false;
 function schedule() { if (!pending) { pending = true; raf(() => { pending = false; render(); }); } }
 function render() {
   renderHeader(); renderOffice(); renderBoard(); renderRack(); renderDoor();
+  syncStepFlow($('#step-flow'), S.requests.get(S.current), {nick});
   renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderComposerMode(); renderStaff(); renderRefs(); renderSheetLogs();
 }
 function ago(ts) {
@@ -544,10 +569,17 @@ function renderHeader() {
   const txt = LabHQState.connectionLabel(S.conn, IS_DEMO);
   c.className = `conn ${S.conn}`;
   if (c.lastChild.textContent !== txt) c.lastChild.textContent = txt;
-  $('#cost').textContent = snapshotLoaded ? LabHQState.totalCostLabel([...S.requests.values()], S.cost) : `사용 비용 · ${loadingText('비용')}`;
+  const allRequests = [...S.requests.values()];
+  const costRequests = LabHQState.sessionCostRequests(allRequests, S.sessionStartedAt);
+  const currentCost = LabHQState.requestsCostTotal(costRequests);
+  const cumulativeCost = LabHQState.totalCostLabel(allRequests, LabHQState.requestsCostTotal(allRequests));
+  $('#cost').textContent = snapshotLoaded ? LabHQState.totalCostLabel(costRequests, currentCost) : `사용 비용 · ${loadingText('비용')}`;
+  $('#cost').title = snapshotLoaded ? `전체 ${cumulativeCost}` : '';
   $('#note').hidden = !IS_DEMO;
   if (IS_DEMO) $('#note').textContent = LabHQState.demoBannerText(S.demoStatus);
-  $('#runner-off').hidden = !(MODE !== 'demo' && S.conn === 'live' && S.runnersKnown && !S.runners.size);  // R15
+  const warning = LabHQState.serviceWarning(S, IS_DEMO);
+  $('#runner-off').textContent = warning;
+  $('#runner-off').hidden = !warning;
   $('#office').classList.toggle('offline', S.conn === 'offline');
   const n = S.approvals.size;
   const title = `${n ? `(${n}) ` : ''}labhq${INSTANCE ? ` ${INSTANCE}` : ''} 사무실`;
@@ -558,7 +590,7 @@ const ZONES = [
   ['lead', '지휘부', ['chief_of_staff', 'cso', 'sci_reviewer']],
   ['research', '연구', ['biologist', 'lit_scout', 'bioinfo-agent']],
   ['data', '데이터와 분석', ['data_steward', 'analyst', 'engineer', 'qc_reviewer']],
-  ['hr', '운영과 파견직', ['recruiter', 'facilities']],
+  ['hr', '운영과 파견직', ['recruiter', 'editor', 'facilities']],
 ];
 let officeKey = '', seatEls = new Map();
 function seatHTML(a) {
@@ -603,11 +635,11 @@ function renderBoard() {
   const key = q ? JSON.stringify([q.id, q.phase, q.steps, q.text, q.processing, resume, q.pi_review_pending, q.pi_reviewed_at]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
   if (el.dataset.key === key) return;
   el.dataset.key = key;
-  if (!q) { el.innerHTML = `<p class="board-empty">${snapshotLoaded ? '오늘의 할 일을 기다리는 중' : loadingText('사무실 상태')}</p>`; return; }
+  if (!q) { el.innerHTML = `<p class="board-empty">${snapshotLoaded ? '새 요청을 기다리는 중' : loadingText('사무실 상태')}</p>`; return; }
   el.innerHTML = `<p class="board-title">${esc(processingLabel(q) || '요청 진행')}</p>${resume ? `<p class="req-meta">${esc(resume)}</p>` : ''}${phaseList(q)}${LabHQState.needsPiReview(q) ? `<p>✓ ${esc(LabHQState.requestStatusText(q))}</p><button class="btn go" style="font-size:1.1em;padding:10px 18px" data-open-review="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '보고서 열기' : '결과·이유 보기'}</button>` : ''}`;
 }
 function renderRack() {
-  const jobs = [...S.jobs.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 8);
+  const jobs = [...S.jobs.values()].filter(j => !String(j.id).startsWith('local-')).sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 8);
   const key = jobs.map(j => j.id + j.state).join();
   const el = $('#rack');
   if (el.dataset.key === key) return;
@@ -650,7 +682,8 @@ function renderApprovals() {
   const holdList = document.createElement('div'); holdList.className = 'list'; holdList.replaceChildren(...holdRows);
   $('#engine-holds').replaceChildren(...(holdRows.length ? [holdList] : []));
   syncDecisionCards($('#approvals'), items, sugs, { presentation:'journal', now, nick, kindLabels: KIND_KO, requests: S.requests,
-    taskStep: S.taskStep, avatarHTML: (value, type) => headSVG(type === 'suggestion' ? 'owl' : kindOf(ag(value.agent_id) || {id:value.agent_id})),
+    taskStep: S.taskStep, onAttachment: uploadLiteraturePdf,
+    avatarHTML: (value, type) => headSVG(type === 'suggestion' ? 'owl' : kindOf(ag(value.agent_id) || {id:value.agent_id})),
     emptyText: snapshotLoaded ? (reviews.length ? '추가 승인 대기는 없어요.' : '지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.') : loadingText('결정할 일') });
   syncDecisionHistory($('#approval-history'), decisionHistory, { presentation:'journal', kindLabels: KIND_KO, requests: S.requests,
     visibility: historyVisibility, onOpenRequest: id => { officeState.selectRequest(id); reqKey = ''; renderRequest(); schedule(); showTab('tasks'); $('#request').scrollIntoView({block: 'start'}); } });
@@ -695,20 +728,26 @@ const fullAnswerHTML = (q, f) => !f.answer_truncated ? '' : `<p class="fu-more">
 function followupHTML(q) {
   const list = (q.followups || []).map(f => `<li class="fu"><p class="fu-q">${esc(f.text)}</p>${
     f.status === 'running' ? '<p class="fu-wait">답을 기다리는 중…</p>'
+      : f.status !== 'done' ? `<p class="fu-err">답을 받지 못했어요: ${esc(f.pi_display?.status === 'translated' ? f.pi_display.text : f.error || '오류 내용 없음')}</p>${f.pi_display?.status === 'translated' ? `<details><summary>자세히</summary><pre>${esc(f.error)}</pre></details>` : ''}`
       : f.pi_display?.status === 'translated' ? `<p class="fu-a">펭귄 비서실장 설명: ${esc(f.pi_display.text)}</p><details><summary>자세히</summary><pre>${esc(f.answer || f.error)}</pre>${fullAnswerHTML(q, f)}</details>`
-      : f.status === 'done' ? `${f.pi_display ? '<small>번역 못 함</small>' : ''}<pre class="fu-a">${esc(f.answer)}${f.answer_truncated ? '…' : ''}</pre>${fullAnswerHTML(q, f)}`
-      : `<p class="fu-err">${esc(f.error || '답을 받지 못했어요')}</p>`}</li>`).join('');
+      : `${f.pi_display ? '<small>번역 못 함</small>' : ''}<pre class="fu-a">${esc(f.answer)}${f.answer_truncated ? '…' : ''}</pre>${fullAnswerHTML(q, f)}`}</li>`).join('');
   const busy = (q.followups || []).some(f => f.status === 'running');
   const form = FOLLOWUP_STATUSES.includes(q.status) && api?.followup ? `<div class="fu-in"><label class="sr" for="fu-text">이어 묻기</label>
 <textarea id="fu-text" data-rid="${esc(q.id)}" rows="2" placeholder="이 결과에 대해 더 물어보기. 같은 CSO 세션이 이어서 답해요"></textarea>
 <button class="btn" id="fu-send" type="button"${busy ? ' disabled' : ''}>이어 묻기</button></div>` : '';
   return list || form ? `<section class="followups" aria-label="이어 묻기">${list ? `<ol>${list}</ol>` : ''}${form}</section>` : '';
 }
-const reportHTML = q => !q.report ? '' : `<section class="pi-report"><h3>PI용 보고서</h3><pre>${esc(q.report)}${q.report_truncated ? '…' : ''}</pre>${
+const reportHTML = q => !q.report ? '' : `<section class="pi-report"><h3>PI용 보고서</h3>${
+  globalThis.LabHQState?.reportMarkdownHTML?.(globalThis.LabHQState?.reportWithPackage?.(q.report, q.reportPackage) + (q.report_truncated ? '\n\n…' : '')) || `<pre>${esc(q.report)}${q.report_truncated ? '…' : ''}</pre>`}${
   q.report_truncated ? `<p class="fu-more">앞 ${[...q.report].length.toLocaleString()}자만 보여요${q.report_chars ? ` (전체 ${Number(q.report_chars).toLocaleString()}자)` : ''}${
     api?.requestDetail ? ` <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button>` : ''}</p>` : ''}${q.report_appendix ?
-    `<details class="report-appendix"><summary>실행 기록</summary><pre>${esc(q.report_appendix)}${q.report_appendix_truncated ? '…' : ''}</pre>${q.report_appendix_truncated && api?.requestDetail ?
-      `<p class="fu-more">앞 ${[...q.report_appendix].length.toLocaleString()}자만 보여요 <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button></p>` : ''}</details>` : ''}</section>`;
+    `<details class="report-appendix"><summary>${q.report_appendix.startsWith('## 부록\n') ? '과학 부록' : '실행 기록'}</summary><pre>${esc(q.report_appendix)}${q.report_appendix_truncated ? '…' : ''}</pre>${q.report_appendix_truncated && api?.requestDetail ?
+      `<p class="fu-more">앞 ${[...q.report_appendix].length.toLocaleString()}자만 보여요 <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button></p>` : ''}</details>` : ''}${q.execution_record ?
+    `<details class="report-appendix"><summary>실행 기록</summary><pre>${esc(q.execution_record)}${q.execution_record_truncated ? '…' : ''}</pre>${q.execution_record_truncated && api?.requestDetail ?
+      `<p class="fu-more">앞 ${[...q.execution_record].length.toLocaleString()}자만 보여요 <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button></p>` : ''}</details>` : ''}</section>`;
+// A finished request's report with its figures as a PDF (an HTML page when this PC has no browser to print it) (#584).
+const reportPdfHTML = q => !q.report || !api?.reportPdf || !LabHQState.isTerminalRequest(q.status) ? ''
+  : `<p><button class="btn report-pdf" type="button" data-rid="${esc(q.id)}">PDF로 받기</button> <small>그림이 들어간 전체 보고서</small></p>`;
 const auditHTML = q => api?.auditBundle
   ? `<p><a class="btn audit-bundle" href="/api/requests/${encodeURIComponent(q.id)}/audit-bundle" data-rid="${esc(q.id)}" download>감사 번들</a></p>` : '';
 const notesHTML = q => !(q.piNotes || []).length ? '' : `<section class="pi-notes" aria-label="실행 중 메모"><h3>실행 중 메모</h3><ol>${q.piNotes.map(note =>
@@ -726,30 +765,44 @@ const bundleHTML = q => {
   const warning = q.bundleWarning ? `<p class="empty-note">요청 묶음 경고: ${esc(q.bundleWarning)}</p>` : '';
   return bundle + warning;
 };
+const hasOutcome = q => ['failed', 'rejected', 'cancelled', 'interrupted'].includes(q.status);
+const outcomeHTML = q => !hasOutcome(q) ? '' : `<section id="request-outcome" class="request-outcome" tabindex="-1" aria-label="결과와 이유">
+<h3>결과·이유</h3><p>${esc(LabHQState.requestStatusText(q, S.approvals))}</p>
+<h4>이유</h4><p>${esc(q.error || '요청 수준의 이유가 기록되지 않았어요. 아래 작업판에서 단계별 기록을 확인해 주세요.')}</p>
+<h4>남은 결과</h4>${q.report ? reportHTML(q) : '<p>남아 있는 보고서가 없어요. 단계별 산출물은 아래 작업판에서 확인해 주세요.</p>'}
+<h4>다음 행동</h4><p>${q.status === 'interrupted' ? '결정 탭의 재개 카드에서 이어 가기를 승인해 주세요.' : '원인을 해결한 뒤 새 요청으로 다시 시작하거나 남은 결과에 이어 물어보세요.'}</p>
+${q.status === 'interrupted' ? '<button type="button" class="btn" data-outcome-next="resume">재개 결정 보기</button>' : ''}
+<button type="button" class="btn" data-outcome-next="request">새 요청으로 다시 시작</button>
+${FOLLOWUP_STATUSES.includes(q.status) && api?.followup ? '<button type="button" class="btn" data-outcome-next="followup">남은 결과에 이어 묻기</button>' : ''}</section>`;
 let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
-  const details = q ? q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)) : [];
+  const details = q ? [...q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)), S.stepDetails.get(`${q.id}:direct`)] : [];
   // The per-agent cost line names staff through the roster, so a rename or late roster redraws it (#415 review).
   const staffNames = q && q.costSummary && q.costSummary.by_agent ? Object.keys(q.costSummary.by_agent).map(nick) : [];
   // The status line also names a waiting resume card or the runners a resume still needs (R14).
   const statusText = q ? LabHQState.requestStatusText(q, S.approvals) : '';
+  // The time limit counts down with no event, so its text is part of the key: the 15 s timer then redraws it (#877).
+  const deadlineText = q ? LabHQState.deadlineLabel(q, Date.now() / 1000) : '';
   const all = LabHQState.sortRequests(S.requests.values());
-  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, all.map(r => [r.id, r.status, r.text, r.pi_review_pending, r.pi_reviewed_at]), q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? 'none' : `loading:${S.conn}`;
+  const requestDigest = all.map(r => [r.id, r.status, r.text, r.pi_review_pending, r.pi_reviewed_at, Math.round(r.cost * 100), r.costKnown]);
+  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, deadlineText, requestDigest, q.id, q.phase, q.status, q.error, q.steps, q.stepJobs, details, q.github.length, q.pipelinePr, q.report, q.reportPackage, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? `none:${JSON.stringify(requestDigest)}` : `loading:${S.conn}`;
   if (key === reqKey) return;
   reqKey = key;
+  const current = all.filter(r => !LabHQState.isPastRequest(r)), past = all.filter(LabHQState.isPastRequest);
+  const choice = r => `<button type="button" class="request-choice" data-request-id="${esc(r.id)}" value="${esc(r.id)}" aria-current="${r.id === q?.id}"><span class="request-title">${esc(r.text || r.id)}</span><span class="status-label ${LabHQState.needsPiReview(r) ? 'status-decision' : LabHQState.partialFailureSteps(r).length ? 'status-partial status-halted' : 'status-neutral'}"><span class="status-dot" aria-hidden="true"></span>${esc(LabHQState.requestStatusText(r, S.approvals))}</span></button>`;
+  const cumulative = LabHQState.totalCostLabel(all, LabHQState.requestsCostTotal(all)).replace(/^사용 비용 /, '');
+  const pick = all.length ? `<nav class="request-list" aria-label="요청 목록"><h3>요청</h3>${current.map(choice).join('')}${past.length ? `<details class="past-requests"><summary>지난 요청 ${past.length}건 · 누적 비용 ${esc(cumulative)}</summary>${past.map(choice).join('')}</details>` : ''}</nav>` : '';
   // Before the first snapshot no request is known yet, which is not the same as none (#521).
-  if (!q) { el.innerHTML = `<p class="empty-note">${snapshotLoaded ? '아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.' : loadingText('요청')}</p>`; return; }
-  const pick = `<nav class="request-list" aria-label="최근 요청"><h3>최근 요청</h3>${all.map(r =>
-    `<button type="button" class="request-choice" data-request-id="${esc(r.id)}" value="${esc(r.id)}" aria-current="${r.id === q.id}"><span class="request-title">${esc(r.text || r.id)}</span><span class="status-label ${LabHQState.needsPiReview(r) ? 'status-decision' : 'status-neutral'}"><span class="status-dot" aria-hidden="true"></span>${esc(LabHQState.requestStatusText(r, S.approvals))}</span></button>`).join('')}</nav>`;
+  if (!q) { el.innerHTML = `${pick}<p class="empty-note">${snapshotLoaded ? '새 요청을 기다리는 중입니다. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.' : loadingText('요청')}</p>`; return; }
   const proj = S.projects.find(p => p.id === q.project_id);
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', pipeline_pr: 'bioinfo-agent pipeline PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
-  const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${q.pipelinePr.status === 'pending' ? '대기' : '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';
+  const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${{pending: '대기', awaiting_approval: '승인 대기', declined: '미기여'}[q.pipelinePr.status] || '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
-  el.innerHTML = `${pick}<p class="req-meta">${processingLabel(q) ? `<span>${esc(processingLabel(q))}</span>` : ''}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}<div id="task-board"></div>
-<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}${q.costSummary && q.costSummary.by_agent ? `<span>${esc(LabHQState.agentCostLabel(q.costSummary, nick))}</span>` : ''}<span class="req-status status-label st-${esc(q.status)}"><span class="status-dot" aria-hidden="true"></span>${esc(statusText)}</span></p>
+  el.innerHTML = `${pick}${outcomeHTML(q)}<p class="req-meta">${processingLabel(q) ? `<span>${esc(processingLabel(q))}</span>` : ''}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}<div id="task-board"></div>
+<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${deadlineText ? `<span>${esc(deadlineText)}</span>` : ''}${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}${q.costSummary && q.costSummary.by_agent ? `<span>${esc(LabHQState.agentCostLabel(q.costSummary, nick))}</span>` : ''}<span class="req-status status-label st-${esc(q.status)}"><span class="status-dot" aria-hidden="true"></span>${esc(statusText)}</span></p>
   ${api?.cancelRequest && (LabHQState.isActiveRequest(q.status) || q.status === 'interrupted') ? `<p class="req-actions"><button class="btn" id="req-cancel" type="button" data-rid="${esc(q.id)}">요청 취소</button></p>` : ''}
-  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${reportHTML(q)}${LabHQState.needsPiReview(q) ? `<p><button class="btn go" data-review-done="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '검토 완료' : '확인 완료'}</button></p>` : ''}${bundleHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
+  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${hasOutcome(q) ? '' : reportHTML(q)}${reportPdfHTML(q)}${LabHQState.needsPiReview(q) ? `<p><button class="btn go" data-review-done="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '검토 완료' : '확인 완료'}</button></p>` : ''}${bundleHTML(q)}${auditHTML(q)}${followupHTML(q)}`;
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick,
     onCancel: api?.cancel ? id => api.cancel(id).then(() => toast('취소 요청을 보냈어요')).catch(err => toast(`취소하지 못했어요: ${err.message}`)) : null,
@@ -811,6 +864,7 @@ function renderComposerMode() {
   $('.composer-options').hidden = noteMode;
   $('#target').hidden = noteMode;
   $('#team-only-label').hidden = noteMode;
+  if ($('#wsl-only-label')) $('#wsl-only-label').hidden = noteMode;
   $('#work-kind').hidden = noteMode;
   $('#project').hidden = noteMode || !S.projects.length;
   $('#ref-toggle').hidden = noteMode;
@@ -822,11 +876,19 @@ function renderComposerMode() {
 let api = null;
 async function openReview(rid) {
   officeState.selectRequest(rid); reqKey = ''; renderRequest(); showTab('tasks');
-  $('#request').scrollIntoView({block:'start'});
+  renderBoard(); renderComposerMode();
+  syncStepFlow($('#step-flow'), S.requests.get(S.current), {nick});
+  const reveal = () => {
+    if (S.current !== rid) return;
+    const target = $('#request-outcome') || $('#request');
+    target.setAttribute('tabindex', '-1');
+    target.scrollIntoView({block:'start'}); target.focus({preventScroll:true});
+  };
+  reveal();
   if (api?.requestDetail) {
     try {
       const detail = await api.requestDetail(rid); fillRequestDetail(rid, detail);
-      reqKey = ''; schedule();
+      if (S.current === rid) { reqKey = ''; renderRequest(); reveal(); }
     } catch (err) { toast(`보고서를 불러오지 못했어요: ${err.message}`); }
   }
 }
@@ -851,6 +913,15 @@ async function finishReview(rid, target) {
 document.addEventListener('click', e => {
   const open = e.target.closest('[data-open-review]');
   if (open) { e.stopPropagation(); openReview(open.dataset.openReview); }
+  const next = e.target.closest('[data-outcome-next]');
+  if (next) {
+    if (next.dataset.outcomeNext === 'followup') $('#fu-text')?.focus();
+    else if (next.dataset.outcomeNext === 'resume') { showTab('decisions'); $('#command-center').scrollIntoView({block:'start'}); }
+    else {
+      $('#send-mode').value = 'request'; renderComposerMode();
+      $('#ask').value = S.requests.get(S.current)?.text || ''; $('#ask').focus();
+    }
+  }
   const done = e.target.closest('[data-review-done]');
   if (done) finishReview(done.dataset.reviewDone);
 });
@@ -865,6 +936,11 @@ function toast(text, approvalId = null) {
   clearTimeout(toastTimer); toastTimer = setTimeout(hideToast, 2600);
 }
 function hideToast() { clearTimeout(toastTimer); toastApproval = null; $('#toast').classList.remove('show'); }
+async function uploadLiteraturePdf(approval, paperIndex, file) {
+  if (!api?.uploadLiteraturePdf) throw new Error('이 화면에서는 파일을 올릴 수 없습니다.');
+  await api.uploadLiteraturePdf(approval, paperIndex, file);
+  toast('PDF를 작업 폴더에 보냈어요. 카드를 승인하면 바로 읽습니다.', approval.id);
+}
 /* reference pointers (#36): chips go with the next request; the gateway checks kinds and runner paths */
 const refs = { items: [], useDefaults: true };
 let refsKey = '';
@@ -906,15 +982,19 @@ async function send() {
     return;
   }
   if (target && $('#team-only').checked) { toast('직원에게 직접 맡기기와 팀으로 보내기를 함께 고를 수 없어요'); return; }
+  if (target && target !== 'bioinfo-agent' && ($('#wsl-only') || {}).checked) { toast('WSL에서는 bioinfo-agent만 일해요. 받는 사람을 bioinfo-agent나 팀으로 바꿔 주세요'); return; }
   const workKind = $('#work-kind').value;
   // A research request goes through the CSO's frozen plan (CP1); one staff member cannot take it directly (R16).
   if (target && workKind === 'research') { toast('연구는 팀(CSO)에게 보내야 해요. 받는 사람을 CSO로 바꿔 주세요'); return; }
   const body = { text, mode: target ? 'direct' : 'orchestrate', agent_id: target || null, project_id: project || null,
-    route: $('#team-only').checked ? 'team' : 'auto', work_kind: workKind,
+    route: $('#team-only').checked ? 'team' : 'auto', work_kind: workKind, run_where: ($('#wsl-only') || {}).checked ? 'wsl' : 'auto',
     references: refs.items.map(({kind, value}) => ({kind, value})), default_references: refs.useDefaults };
   try {
-    await api.request(body);
-    input.value = ''; refs.items = []; $('#team-only').checked = false; $('#work-kind').value = 'auto'; showRefs(false); renderRefs();
+    // Kept on `send` until the request is accepted: a retry of the same text is the same request (#1164).
+    send.key = send.key || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    await api.request(body, send.key);
+    send.key = null;
+    input.value = ''; refs.items = []; $('#team-only').checked = false; if ($('#wsl-only')) $('#wsl-only').checked = false; $('#work-kind').value = 'auto'; showRefs(false); renderRefs();
     toast(target ? `${nick(target)}에게 맡겼어요` : 'CSO에게 요청을 보냈어요');
   } catch (e) { toast(`보내지 못했어요: ${e.message}`); }
 }
@@ -942,13 +1022,13 @@ $('#approvals').addEventListener('click', async e => {
       const approval = S.approvals.get(li.dataset.id), missing = revisionNoteMissing(approval, act, note);
       if (missing) { toast(missing); ans.focus(); btn.disabled = false; return; }
       // CP2 evidence review sends its approve/revise/deny choice; the note never decides it (#90).
-      await api.approve(li.dataset.id, act === 'approve', note, decisionChoice(approval || { kind: li.dataset.kind }, act), storageChoice(li));
+      await api.approve(li.dataset.id, act === 'approve', note, decisionChoice(approval || { kind: li.dataset.kind }, act), storageChoice(li), modelRefusalChoice(li));
       toast(act === 'approve' ? (li.dataset.kind === 'clarify' ? '답을 보냈어요' : '승인했어요') : act === 'revise' ? revisedToast(approval) : '거절했어요');
     }
     else {
       const s = S.suggestions.find(x => x.id === li.dataset.sug);
       S.suggestions = S.suggestions.filter(x => x.id !== li.dataset.sug); schedule();
-      if (s && act === 'hire') { await api.recruit(s); toast('인사팀에 채용을 맡겼어요'); }
+      if (s && act === 'hire') { await api.recruit(s, `hire-${s.id}`); toast('인사팀에 채용을 맡겼어요'); }
     }
   } catch (err) { btn.disabled = false; toast(`처리하지 못했어요: ${err.message}`); }
 });
@@ -962,6 +1042,20 @@ $('#request').addEventListener('click', async e => {
       const url = URL.createObjectURL(blob), link = document.createElement('a');
       link.href = url; link.download = `labhq-audit-${e.target.dataset.rid}.zip`; link.click(); URL.revokeObjectURL(url);
     } catch (err) { toast(`감사 번들을 받지 못했어요: ${err.message}`); }
+    return;
+  }
+  if (e.target.classList?.contains('report-pdf')) {
+    e.preventDefault();
+    const button = e.target, rid = button.dataset.rid;
+    if (button.disabled) return;
+    button.disabled = true; toast('PDF를 만드는 중이에요. 몇 초 걸려요');
+    try {
+      const {blob, kind, reason} = await api.reportPdf(rid);
+      const url = URL.createObjectURL(blob), link = document.createElement('a');
+      link.href = url; link.download = `labhq-report-${rid}.${kind}`; link.click(); URL.revokeObjectURL(url);
+      toast(reason || 'PDF를 받았어요');
+    } catch (err) { toast(`PDF를 만들지 못했어요: ${err.message}`); }
+    finally { button.disabled = false; }
     return;
   }
   if (e.target.classList?.contains('fu-full') || e.target.classList?.contains('report-full')) {
@@ -1015,8 +1109,8 @@ function renderSheetLogs() {
       row = document.createElement('li'); if (trace) row.className = 'trace';
       row.append(document.createElement('time'));
       if (trace) { const label = document.createElement('b'); label.textContent = l.level === 'thinking' ? '생각' : '디버그'; row.append(label); }
-      expandableText(row, l.fullText ?? l.text, {limit: trace ? 400 : 240, summary: l.text,
-        fold: l.fullText != null && l.fullText !== l.text, truncated: l.truncated, cutChars: l.cutChars});
+      expandableText(row, l.piText ?? l.text, {pi:true, original:l.fullText ?? l.text, limit: trace ? 400 : 240,
+        forceOriginal: l.fullText != null && l.fullText !== l.text, truncated: l.truncated, cutChars: l.cutChars});
     }
     row.querySelector('time').textContent = ago(l.ts); next.set(l, row); return row;
   });
@@ -1028,8 +1122,9 @@ function renderSheetLogs() {
   const command = $('#sheet-in .sheet-command'), tool = currentTool(a);
   if (command) {
     command.hidden = !tool;
-    syncExpandableText(command, tool ? (typeof tool.input === 'string' ? tool.input : JSON.stringify(tool.input ?? '')) : '',
-      {limit: 120, summary: tool?.summary || toolInputLine(tool?.input), fold: Boolean(tool), truncated: tool?.input_truncated, cutChars: tool?.input_limit});
+    syncExpandableText(command, tool ? toolActivitySummary(tool) : '',
+      {limit: 120, pi:true, original: tool ? (typeof tool.input === 'string' ? tool.input : JSON.stringify(tool.input ?? '')) : '', forceOriginal:Boolean(tool),
+        summary:'자세히', fold:Boolean(tool), truncated:tool?.input_truncated});
   }
   const spent = $('#sheet-in .sheet-spent'), figure = sheetSpent(a.id); if (spent && spent.textContent !== figure) spent.textContent = figure;
   // #59 ①: the control block follows the task (paused, halted, ended) without wiping a direction being typed.
@@ -1071,14 +1166,37 @@ function openSheet(id) {
 <dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd${k === '쓴 비용' ? ' class="sheet-spent"' : k === '상태' ? ' class="sheet-state"' : k === '지금 하는 일' ? ' class="sheet-task"' : ''}>${esc(v)}</dd>`).join('')}</dl>
 <div class="sheet-command" aria-label="실행 중인 도구 입력"></div>
 <div class="staff-control-slot" data-key="${esc(controlKey(control))}">${controlHtml(control, esc)}</div>
+${id === 'lit_scout' ? '<section class="paper-literature" aria-label="선행 연구 목록"></section>' : ''}
 <div class="log-view" role="group" aria-label="기록 보기"><button type="button" class="btn" data-act="log" data-view="activity" aria-pressed="${view === 'activity'}">활동</button><button type="button" class="btn" data-act="log" data-view="trace" aria-pressed="${view === 'trace'}">생각·디버그 <span class="trace-count">${(a.trace || []).length}</span></button></div>
 <ul class="activity" data-view="${view}"></ul>
 <div class="acts">${acts.join('')}</div>`;
   dlg.dataset.agent = id;
   if (typeof dlg.showModal === 'function') { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute('open', '');
   renderSheetLogs();
+  renderSheetLiterature();
 }
-function closeSheet() { const d = $('#sheet'); if (typeof d.close === 'function' && d.open) d.close(); else d.removeAttribute('open'); }
+// #660: the current request's papers on the fox's sheet; one detail GET, the same record the review uses.
+const literatureLoading = new Set(), literatureAt = new Map();
+function renderSheetLiterature() {
+  const box = $('#sheet-in .paper-literature'), rid = S.current, q = rid && S.requests.get(rid);
+  if (!box) return;
+  if (!q) { box.replaceChildren(); box.textContent = '선택한 요청이 없어요.'; return; }
+  if (!api?.requestDetail && !q.paperLiterature) { box.replaceChildren(); box.textContent = '선행 연구 목록은 실시간 사무실에서 보여요.'; return; }
+  // Refetch only after the request moved on (a skill built or a step finished since the last read).
+  const fresh = q.paperLiterature && literatureAt.get(rid) === q.updated_at;
+  if (fresh || !api?.requestDetail) { syncPaperLiterature(box, q.paperLiterature); return; }
+  syncPaperLiterature(box, null, {loading: true});
+  if (literatureLoading.has(rid)) return;
+  literatureLoading.add(rid); literatureAt.set(rid, q.updated_at);
+  api.requestDetail(rid).then(detail => fillRequestDetail(rid, detail)).catch(() => {}).finally(() => {
+    literatureLoading.delete(rid);
+    const current = $('#sheet-in .paper-literature');
+    if (current && S.current === rid) syncPaperLiterature(current, S.requests.get(rid)?.paperLiterature);
+  });
+}
+const sheetKeys = new Map();  // one Idempotency-Key per action while a sheet stays open: a double click applies once (#1164)
+const newKey = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+function closeSheet() { sheetKeys.clear(); const d = $('#sheet'); if (typeof d.close === 'function' && d.open) d.close(); else d.removeAttribute('open'); }
 $('#sheet').addEventListener('click', async e => {
   const d = $('#sheet');
   if (e.target === d) { closeSheet(); return; }
@@ -1087,7 +1205,7 @@ $('#sheet').addEventListener('click', async e => {
   if (act === 'close') return closeSheet();
   if (act === 'log') { d.dataset.log = btn.dataset.view; openSheet(id); return; }
   if (act === 'assign') { closeSheet(); $('#send-mode').value = 'request'; $('#target').value = id; renderComposerMode(); $('#ask').focus(); toast(`${nick(id)}에게 맡길 내용을 적어 주세요`); return; }
-  if (['steer', 'pause', 'resume', 'halt'].includes(act)) {  // #59 ①: acts on the task the sheet shows
+  if (['steer', 'pause', 'resume', 'halt', 'release_breaker'].includes(act)) {  // #59 ①: acts on the task the sheet shows
     const row = btn.closest('.staff-control'), task = row?.dataset.task, input = row?.querySelector('textarea.steer-text');
     const text = act === 'steer' ? (input?.value || '').trim() : '';
     if (!task) return;
@@ -1096,12 +1214,13 @@ $('#sheet').addEventListener('click', async e => {
       const out = await api.control(task, act, text);
       if (act === 'steer' && input) input.value = '';
       toast(out?.resumed_halted ? '멈췄던 작업을 재개해요' : { steer: '방향 수정을 보냈어요', pause: '일시 정지를 보냈어요',
-        resume: '재개를 보냈어요', halt: '멈춤을 보냈어요' }[act] + (out && out.sent === false
-          ? (act === 'halt' ? ' · 러너가 연결되면 전달해요' : ' · 같은 단계의 다음 turn에 적용해요') : ''));
+        resume: '재개를 보냈어요', halt: '멈춤을 보냈어요', release_breaker: '도구 제한 해제를 보냈어요' }[act] + (out && out.sent === false
+          ? (['halt', 'release_breaker'].includes(act) ? ' · 러너가 연결되면 전달해요' : ' · 같은 단계의 다음 turn에 적용해요') : ''));
     } catch (err) { toast(`보내지 못했어요: ${err.message}`); }
     return;
   }
-  try { await api.contract(id, act, 14); toast(act === 'extend' ? '계약을 14일 연장했어요' : '계약을 종료했어요'); closeSheet(); }
+  if (!sheetKeys.has(act)) sheetKeys.set(act, newKey());
+  try { await api.contract(id, act, 14, sheetKeys.get(act)); toast(act === 'extend' ? '계약을 14일 연장했어요' : '계약을 종료했어요'); closeSheet(); }
   catch (err) { toast(`처리하지 못했어요: ${err.message}`); }
 });
 
@@ -1144,8 +1263,8 @@ function startLive() {
   const link = (rel, href) => { const l = document.createElement('link'); l.rel = rel; l.href = href; document.head.appendChild(l); };
   link('manifest', '/manifest.webmanifest'); link('icon', '/icon.svg'); link('apple-touch-icon', '/icon.svg');
   const bar = $('#tokenbar');
-  const post = async (path, body) => {
-    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+  const post = async (path, body, key) => {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(key ? { 'Idempotency-Key': key } : {}) }, body: JSON.stringify(body) });
     if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 120)}`);
     return r.json();
   };
@@ -1162,21 +1281,40 @@ function startLive() {
   let ws = null, backoff = 1000;
   api = {
     messenger: before => get(`/api/messenger?limit=40${before == null ? '' : `&before=${before}`}`),
-    request: body => post('/api/requests', body),
+    request: (body, key) => post('/api/requests', body, key),
     note: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/notes`, { text }),
     followup: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/followup`, { text }),
     requestDetail: rid => get(`/api/requests/${encodeURIComponent(rid)}`),
     auditBundle: rid => getBlob(`/api/requests/${encodeURIComponent(rid)}/audit-bundle`),
-    approve: async (id, ok, note = '', choice = null, storage = null) => {
+    reportPdf: async rid => {
+      const r = await fetch(`/api/requests/${encodeURIComponent(rid)}/report-pdf`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) {
+        let detail = ''; try { detail = (await r.json()).detail; } catch {}
+        throw new Error(typeof detail === 'string' && detail ? detail : String(r.status));
+      }
+      return { blob: await r.blob(), kind: r.headers.get('X-Labhq-Report-Kind') === 'pdf' ? 'pdf' : 'html',
+               reason: decodeURIComponent(r.headers.get('X-Labhq-Reason') || '') };
+    },
+    approve: async (id, ok, note = '', choice = null, storage = null, model_refusal = null) => {
       const decision = choice ? { approved: ok, note, choice } : { approved: ok, note };
       if (storage) decision.storage = storage;
+      if (model_refusal) decision.model_refusal = model_refusal;
       if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'approval.resolve', id, ...decision }));
       else await post(`/api/approvals/${encodeURIComponent(id)}`, decision);
     },
-    recruit: s => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }),
-    contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
+    uploadLiteraturePdf: async (approval, paperIndex, file) => {
+      const response = await fetch(`/api/approvals/${encodeURIComponent(approval.id)}/literature-pdf/${paperIndex}`,
+        {method:'POST', headers:{Authorization:`Bearer ${token}`, 'Content-Type':'application/pdf'}, body:file});
+      if (!response.ok) {
+        let detail = ''; try { detail = (await response.json()).detail; } catch {}
+        throw new Error(typeof detail === 'string' && detail ? detail : String(response.status));
+      }
+      return response.json();
+    },
+    recruit: (s, key) => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }, key),
+    contract: (id, action, days, key) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }, key),
     cancel: id => post(`/api/tasks/${encodeURIComponent(id)}/cancel`, {}),
-    control: (id, action, text) => post(`/api/tasks/${encodeURIComponent(id)}/${action}`, action === 'steer' ? { text } : {}),
+    control: (id, action, text) => post(`/api/tasks/${encodeURIComponent(id)}/${action === 'release_breaker' ? 'breaker/release' : action}`, action === 'steer' ? { text } : {}),
     storage: rid => post(`/api/requests/${encodeURIComponent(rid)}/storage`, {}),
     reviewDone: (rid, target = {}) => post(`/api/requests/${encodeURIComponent(rid)}/review-done`, target),
     cancelRequest: rid => post(`/api/requests/${encodeURIComponent(rid)}/cancel`, {}),
@@ -1186,10 +1324,12 @@ function startLive() {
   const open = () => {
     if (!token) { S.conn = 'auth'; bar.classList.add('show'); schedule(); return; }
     bar.classList.remove('show');
+    if (ws) { ws.onclose = null; ws.onmessage = null; ws.close(); }  // one socket at a time (#1170)
     ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}${lastSeq ? `&since=${lastSeq}` : ''}`);
     ws.onopen = () => { S.conn = 'live'; backoff = 1000; refreshHistory(); schedule(); };
     ws.onmessage = e => { try {
       const ev = JSON.parse(e.data);
+      if (ev.type === 'snapshot' && !ev.replay_gap && Number.isFinite(ev.seq) && ev.seq < lastSeq) return;
       if (ev.type !== 'snapshot' && ev.seq && ev.seq <= lastSeq) return;
       apply(ev);
       if (ev.type === 'snapshot') { lastSeq = ev.seq || 0; snapshotLoaded = true; schedule(); return; }
@@ -1223,7 +1363,7 @@ const Demo = (() => {
     ['lit_scout', '여우 문헌·헤드헌터', '문헌 검색, 파견직 후보 발굴', 'codex', 'gpt-6-luna'], ['bioinfo-agent', '수달 bioinfo-agent', '반복·정형 분석 전담', 'cli', null],
     ['data_steward', '다람쥐 데이터 담당', '데이터 확보·매니페스트', 'claude_code', 'sonnet'], ['analyst', '너구리 분석가', '분석 설계·실행', 'claude_code', 'opus'],
     ['engineer', '문어 코딩 엔지니어', '파이프라인·도구 개발', 'codex', null], ['qc_reviewer', '고슴도치 Data QC', 'PASS/WARN/FAIL QC', 'claude_code', 'sonnet'],
-    ['recruiter', '비버 인사팀', 'Paper2Agent 채용', 'claude_code', 'opus'],
+    ['recruiter', '카피바라 인사팀', 'Paper2Agent 채용', 'claude_code', 'opus'],
   ].map(([id, name, role, engine, model]) => ({ id, name, role, engine, model, employment: 'core',
     capabilities: { resume: engine !== 'cli', read_only: engine !== 'cli', effort: null, max_turns: null,
       permission: engine === 'codex' ? 'workspace-write' : engine === 'cli' ? null : 'default',

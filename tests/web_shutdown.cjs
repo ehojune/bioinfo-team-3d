@@ -48,6 +48,14 @@ test('all shutdown blocker categories have readable counts and titles', async ()
     followups: [{text: '질문'}], recruits: 2, finishing: [{text: '묶음'}]});
   for (const part of ['진행 중인 요청 1건 (<분석>)', 'PI 결정 대기 1건 (계획)', '이어 묻기 진행 중 1건', '채용 진행 중 2건', '마무리 중 1건']) assert.ok(text.includes(part));
   assert.throws(() => readinessText({}));
+  // #658: a stuck bundle does not block and the age shows; the next start rebuilds it.
+  const aged = readinessText({ready: false, finishing: [{text: '묶음', elapsed_s: 300}]});
+  assert.ok(aged.includes('마무리 중 1건 (묶음 5분째)'));
+  const staged = readinessText({ready: false, finishing: [{text: 'A', stage: 'cancel'}, {text: 'B', stage: 'bundle', elapsed_s: 300},
+    {text: 'C', stage: 'result_storage'}, {text: 'D', stage: 'pi_interpretation'}]});
+  for (const part of ['A · 취소 기록을 쓰는 중', 'B · 보고서 묶음 저장을 마무리하는 중 5분째', 'C · 결과 저장을 마무리하는 중', 'D · PI 해석을 마무리하는 중']) assert.ok(staged.includes(part), part);
+  const stuck = readinessText({ready: true, finishing: [{text: '묶음', stuck: true}]});
+  assert.ok(stuck.startsWith('요청이 모두 끝났습니다') && stuck.includes('멈춘 마무리 1건은 다음 시작 때 이어서 합니다'));
 });
 test('busy work needs a second explicit click; Enter cannot shut down', async () => {
   const ui = await office({ready: false, requests: [{status: 'waiting_pi', text: '계획'}]});

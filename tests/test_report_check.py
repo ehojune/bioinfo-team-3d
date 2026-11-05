@@ -45,3 +45,13 @@ def test_anchor_variants_are_checked_and_code_is_not_a_conclusion():
     assert check["anchors"] == 3 and len(check["problems"]) == 1 and "claim c9" in check["problems"][0]
     shown = "x [[claim:s1/c1]].\n```\n[[claim:<step_id>/<claim_id>]]\n```\nand `[[claim:s9/c1]]`"
     assert check_report(shown, {"s1": _ledger()}, artifact_sha256=hashes) == {"anchors": 1, "problems": []}
+
+
+def test_legacy_summary_rows_do_not_bypass_cp2_refusal():
+    ledger = _ledger()
+    del ledger["evidence"][0]["status"]
+    assert [row["claim"]["id"] for row in claim_rows({"s1": ledger})[0]] == ["c1"]
+    refused = [{"step_id": "s1", "evidence_id": "e1"}]
+    assert not claim_rows({"s1": ledger}, refused=refused)[0]
+    assert "no CP2-accepted support" in check_report("x [[claim:s1/c1]]", {"s1": ledger},
+                                                    refused=refused)["problems"][0]

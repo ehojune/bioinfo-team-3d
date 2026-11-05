@@ -1,0 +1,38 @@
+pr: null
+rows:
+- sha: 55d1f47
+  at: 2026-10-24 16:08
+  text: '긴 계산을 runner가 소유하는 로컬 job으로: labhq_job 도구, 취소 시 정리, 떼어 내기 거절 (#675)'
+  summary: 10분 넘는 계산을 직원이 로컬 job으로 내면 끝날 때 이어서 깨우고, 취소하면 프로세스를 함께 끝내며, 몰래 떼어 내는 명령은 안내와 함께 거절합니다.
+- sha: 4e65c07
+  at: 2026-10-24 16:35
+  text: '로컬 job 감시를 HPC watcher와 분리: scheduler=none 계약을 지키고 첫 job부터 별도 watcher로 지켜본다 (#675 CI)'
+  summary: 로컬 job 감시를 HPC 감시와 따로 두어, HPC를 끈 설정의 기존 동작은 그대로 두고 로컬 job만 따로 지켜봅니다.
+- sha: 23243d9
+  at: 2026-10-24 16:56
+  text: 'test: 로컬 job 시험은 셸 없는 대체로 돌려 느린 Windows runner의 PowerShell 시동에 기대지 않는다 (#675 CI)'
+  summary: 로컬 job 시험이 느린 Windows 검사 환경의 PowerShell 시작 시간에 흔들리지 않게 했습니다.
+- sha: 8d9e3d0
+  at: 2026-10-24 17:25
+  text: 'runner: __init__ 없이 만든 Runner에서도 stop()이 동작하도록 로컬 watcher 접근을 방어 (#675 CI)'
+  summary: 종료 처리가 로컬 job 감시가 없는 상태에서도 오류 없이 끝나게 했습니다.
+- sha: 105ef29
+  at: 2026-10-24 17:48
+  text: '로컬 job 리뷰 반영: 시작 중 취소·process group 정리·공유 환경 guard·Codex 제외·슬롯 예약·응답 손실 안내 (#675 리뷰 P1/P2)'
+  summary: 로컬 job 기능의 취소·정리·보호 규칙에서 리뷰가 짚은 빈틈을 메웠습니다.
+- sha: 8004c2c
+  at: 2026-10-24 18:00
+  text: '로컬 job 리뷰 반영 2: job 취소를 runner 확인 전까지 보관·재전송, 재사용 pid의 group을 job 것으로 보지 않음, Start-Process마다 -Wait 검사 (#675 리뷰 P1/P2)'
+  summary: 꺼져 있던 runner에도 요청 취소가 job까지 전해지게 하고, 옛 프로세스 번호를 잘못 건드리지 않게 하며, Start-Process를 호출마다 검사합니다.
+- sha: 44a191b
+  at: 2026-10-24 18:11
+  text: '로컬 job 리뷰 반영 3: 실패 경로 정리 — 신원 조회 실패 시 시작한 프로세스 종료, 종료 실패는 취소로 확정하지 않음, Bash 명령은 Bash로 실행 (#675 리뷰 P1/P2)'
+  summary: 오류가 났을 때 시작한 프로세스가 추적 없이 남지 않게 하고, 끝내지 못한 job은 취소됐다고 보고하지 않으며, 실행 셸을 판정한 셸과 맞췄습니다.
+- sha: e611086
+  at: 2026-10-24 18:40
+  text: '로컬 job 리뷰 반영 4: 종료에 실패한 취소는 row에 남겨 watcher가 다시 끝내고, 취소 보관을 job 최대 수명(7일)보다 길게 (#675 리뷰 P1)'
+  summary: 취소 때 프로세스를 다 끝내지 못해도 runner가 계속 다시 시도하며(재시작 뒤에도), 오프라인 runner에 대한 취소가 48시간 뒤 사라지지 않습니다.
+- sha: 07279b7
+  at: 2026-10-24 19:00
+  text: '로컬 job 리뷰 반영 5: sh·bash로 넘기는 heredoc 안의 떼어 내기도 거절 (#675 리뷰 P1)'
+  summary: bash <<EOF 처럼 셸에 넘기는 heredoc 안의 백그라운드 실행도 정책에서 거절합니다. python·cat에 넘기는 데이터 heredoc은 그대로 둡니다.

@@ -60,12 +60,13 @@ async def test_a_cp2_revise_with_a_note_replans_through_a_new_cp1_and_reruns_onl
     assert first["plan_sha256"] in second
     cp1 = hub.approvals[2]
     assert cp1["summary"].startswith("이어 가기 2차 계획(CP2 수정 요청 반영). 재사용: s1 · 다시 실행: s2. ")
+    assert '재사용 거부 이유: spec changed.' in cp1['summary']
     assert cp1["detail"]["continuation"]["trigger"] == "cp2_revise"
     assert cp1["detail"]["continuation"]["pi_request"] == NOTE
     # The round-2 reviewer checks the revision the PI asked for, and the record keeps the request whole.
     review = next(task for task in hub.calls if task.meta["kind"] == "review")
     assert "asked at CP2 for this revision" in review.prompt and NOTE in review.prompt
-    assert f"PI 수정 요청 (round 1 CP2): {NOTE}" in req["report_appendix"]
+    assert f"PI 수정 요청 (round 1 CP2): {NOTE}" in req["execution_record"]
     continued = [event for event in hub.events if event.get("type") == "request.continued"]
     assert [event["data"]["trigger"] for event in continued] == ["cp2_revise"]
 
@@ -92,7 +93,7 @@ async def test_a_cp2_revise_that_never_gets_a_note_ends_without_a_new_plan(tmp_p
     assert _kinds(hub) == ["research_plan", "research_evidence", "research_evidence", "research_evidence"]
     assert len(_plans(hub)) == 1 and "rounds" not in req["research_contract"]
     assert req["outcome"] == "evidence_revision_requested" and req["status"] == "failed"
-    assert "수정 요청에 메모가 없어 새 계획을 세우지 않았습니다." in req["report"] + req.get("report_appendix", "")
+    assert "수정 요청에 메모가 없어 새 계획을 세우지 않았습니다." in req["report"] + req.get("execution_record", "")
 
 
 @pytest.mark.asyncio
@@ -105,7 +106,7 @@ async def test_past_the_cap_a_cp2_revise_ends_the_request_as_before(tmp_path):
     assert card["detail"]["revise_continues"] is False and "상한" in card["summary"]
     assert _kinds(hub) == ["research_plan", "research_evidence"] and len(_plans(hub)) == 1
     assert req["outcome"] == "evidence_revision_requested" and req["status"] == "failed"
-    text = req["report"] + req.get("report_appendix", "")
+    text = req["report"] + req.get("execution_record", "")
     assert "research.revise_continuations=0" in text and f"PI note: {NOTE}" in text
 
 
@@ -125,7 +126,7 @@ async def test_cp2_revises_and_review_revises_share_one_cap(tmp_path):
     await Orchestrator(hub).run_request("r")
     assert _kinds(hub) == ["research_plan", "research_evidence", "research_plan", "research_evidence"]
     assert hub.requests["r"]["outcome"] == "research_review_revise"
-    assert "상한" in hub.requests["r"]["report"] + hub.requests["r"].get("report_appendix", "")
+    assert "상한" in hub.requests["r"]["report"] + hub.requests["r"].get("execution_record", "")
 
     # A review revise uses it first; the next CP2 revise ends the request as before, and its card says so.
     hub = cont._hub(tmp_path / "second", [CP1, cont.APPROVE, cont.CONTINUE, CP1, REVISE],
@@ -137,7 +138,7 @@ async def test_cp2_revises_and_review_revises_share_one_cap(tmp_path):
     assert hub.approvals[1]["detail"]["revise_continues"] is True
     assert hub.approvals[4]["detail"]["revise_continues"] is False
     assert req["outcome"] == "evidence_revision_requested" and len(req["research_contract"]["rounds"]) == 1
-    assert "research.revise_continuations=1" in req["report"] + req.get("report_appendix", "")
+    assert "research.revise_continuations=1" in req["report"] + req.get("execution_record", "")
 
 
 @pytest.mark.asyncio
@@ -221,7 +222,8 @@ async def test_a_rolled_back_round_restores_the_previous_spending_cap(tmp_path, 
     the spend so far, up to the configured $3.50: round 1 is $2 + $1 = $3. Round 2's planning ran past that $3 and the
     PI granted a card (GRANT); its CP1 then cuts $4 + $1 to the configured $3.50, below the $4 spent."""
     hub = cont._hub(tmp_path, [*decisions, {"approved": False, "note": ""}], reviews=[cont.REVISE])
-    hub.requests["r"]["budget_usd"] = 3.5
+    hub.requests["r"]["budget_usd"] = None  # the lab's policy cap: a budget on the request is the cap itself (#944)
+    hub.s.policy.budget.per_request_usd = 3.5
     reply = hub.reply
 
     async def costed(task):
@@ -252,7 +254,8 @@ async def test_the_cp1_card_summary_is_korean_and_keeps_the_hash_in_detail(tmp_p
 
     card = hub.approvals[0]
     plan_hash = hub.requests["r"]["research_contract"]["plan_sha256"]
-    assert card["summary"].startswith("CP1 연구 계획 승인: 고정할 질문·방법·완료/중단 조건·데이터 범위·적용 pack을 ")
+    assert card["summary"].startswith("⚠ 의미 장치 중단: semantics configured_off")
+    assert "CP1 연구 계획 승인: 고정할 질문·방법·완료/중단 조건·데이터 범위·적용 pack을 " in card["summary"]
     assert plan_hash not in card["summary"] and "plan_sha256" not in card["summary"]
     assert card["detail"]["target_sha256"] == plan_hash
 

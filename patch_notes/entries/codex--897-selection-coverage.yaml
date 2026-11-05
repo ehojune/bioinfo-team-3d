@@ -1,0 +1,6 @@
+pr: 903
+rows:
+- sha: 6526d2f
+  at: '2026-10-24 02:28'
+  summary: Windows CI에서 원래 실패를 coverage 후속 오류와 구분합니다.
+  text: selection 거부에 error annotation을 남기고 선행 단계가 성공할 때만 coverage report를 실행한다. 실패 artifact와 성공 실행의 receipt 의무를 유지한다. 순수 workflow·receipt·재사용 검사 477 passed. Refs #897.

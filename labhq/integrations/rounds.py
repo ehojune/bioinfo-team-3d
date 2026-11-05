@@ -18,7 +18,7 @@ import httpx
 from .. import __version__
 from ..models import TaskResult
 from ..orchestrator.cso import environment_problem, failure_kind
-from ..util import short
+from ..util import replace_file, short
 from .github import GitHubClient, GitHubHTTPError, MAX_BODY, publish_clean, root_zone_restricted
 
 if TYPE_CHECKING:
@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("labhq.rounds")
 REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _ORIGINAL_REPORT = object()
+DISPLAY_TASK_KINDS = frozenset({"pi_interpretation"})
+DISPLAY_EVENT_TYPES = frozenset({"messenger.translated"})
 
 
 class RoundPublicationDeferred(RuntimeError):
@@ -75,6 +77,16 @@ def environment_snapshot(hub: "Hub") -> dict:
             "state_dir_name": Path(hub.s.gateway.state_dir).name}
 
 
+def is_research_task(task: dict) -> bool:
+    """Display-only work is billed and audited, but is not a research step or provenance source."""
+    return task.get("kind") not in DISPLAY_TASK_KINDS
+
+
+def is_research_event(event: dict, display_task_ids: set[str]) -> bool:
+    """Keep UI delivery events in the raw ledger without folding them into the request's research record."""
+    return event.get("type") not in DISPLAY_EVENT_TYPES and event.get("task_id") not in display_task_ids
+
+
 def record_sources(hub: "Hub") -> dict[str, dict[str, list[dict]]]:
     """Tasks, events and approval decisions grouped by request, read from the state DB once.
 
@@ -82,9 +94,15 @@ def record_sources(hub: "Hub") -> dict[str, dict[str, list[dict]]]:
     on the 10-08 trial state (40 requests, 18 MB of task rows) that held the start for 7 s.
     """
     grouped: dict[str, dict[str, list[dict]]] = {"tasks": {}, "events": {}, "decisions": {}}
-    for task in hub.store.all("task").values():
+    all_tasks = hub.store.all("task")
+    display_task_ids = {tid for tid, task in all_tasks.items() if not is_research_task(task)}
+    for task in all_tasks.values():
+        if not is_research_task(task):
+            continue
         grouped["tasks"].setdefault(str(task.get("request_id")), []).append(task)
     for event in hub.store.events_since(0):
+        if not is_research_event(event, display_task_ids):
+            continue
         grouped["events"].setdefault(str(event.get("request_id")), []).append(event)
     for decision in hub.store.all("approval_decision").values():
         grouped["decisions"].setdefault(str((decision.get("approval") or {}).get("request_id")), []).append(decision)
@@ -115,14 +133,10 @@ def metadata_failure_kind(result: dict) -> str | None:
 def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]] | None = None) -> dict:
     req = hub.requests[rid]
     if sources is None:
-        tasks = [v for v in hub.store.all("task").values() if v.get("request_id") == rid]
-        events = [v for v in hub.store.events_since(0) if v.get("request_id") == rid]
-        decisions = [v for v in hub.store.all("approval_decision").values()
-                     if (v.get("approval") or {}).get("request_id") == rid]
-    else:
-        tasks = list(sources["tasks"].get(rid, []))
-        events = list(sources["events"].get(rid, []))
-        decisions = list(sources["decisions"].get(rid, []))
+        sources = record_sources(hub)
+    tasks = list(sources["tasks"].get(rid, []))
+    events = list(sources["events"].get(rid, []))
+    decisions = list(sources["decisions"].get(rid, []))
     decisions += [{"approval": v["approval"], "approved": None, "note": None,
                    "state": "pending"} for v in hub.approvals.values()
                   if v["approval"].get("request_id") == rid]
@@ -232,12 +246,14 @@ def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]]
         "review": {"verdict": (req.get("review") or {}).get("verdict"),
                    "scores": (req.get("review") or {}).get("scores") or {},
                    "revision_rounds": (req.get("review_progress") or {}).get("last_completed_revision", 0),
-                   "revision_failures": [s["revision_failed"] for s in steps if s["revision_failed"]],
-                   "detail": req.get("review") or {}},
+                   "revision_failures": [s["revision_failed"] for s in steps if s["revision_failed"]]},
         "pi_decisions": [{"kind": (d.get("approval") or {}).get("kind"), "approved": d.get("approved"),
                           "note": d.get("note"), "state": d.get("state") or "resolved"} for d in decisions],
-        "result": {"status": req.get("status"), "root_cause_summary": req.get("report") or req.get("error"),
-                   "report": req.get("report"), "pending_decisions": pending,
+        "result": {"status": req.get("status"), "root_cause_summary": req.get("error"),
+                   **({"dev_reports": req["dev_reports"]} if req.get("dev_reports") else {}),
+                   "report_links": _report_links(req),
+                   "execution_record": req.get("execution_record") or "",
+                   "bundle_conversion": req.get("bundle_conversion") or "", "pending_decisions": pending,
                    "anomalies": anomalies, "usage": req.get("usage") or {},
                    "cost_usd": req.get("cost_usd"), "cost_known": req.get("cost_known"),
                    "cost_summary": req.get("cost_summary"),
@@ -245,9 +261,65 @@ def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]]
     }
 
 
+def _report_links(req: dict) -> list[dict]:
+    links = []
+    if req.get("bundle_path"):
+        root = str(req["bundle_path"]).replace("\\", "/").rstrip("/")
+        links += [{"label": "과학 보고서 · 요청 묶음", "path": root + "/report.md"},
+                  {"label": "운전 기록 · 요청 묶음", "path": root + "/execution_record.md"}]
+    saved = req.get("result_storage") or {}
+    if saved.get("status") == "published" and saved.get("repo"):
+        url = (f"https://github.com/{saved['repo']}/blob/{saved.get('branch') or 'main'}/"
+               f"labhq/results/{req['id']}/report.md")
+        links.append({"label": "과학 보고서 · GitHub 정리본", "path": url})
+    return links
+
+
+def _operation_lines(record: dict) -> list[str]:
+    from urllib.parse import quote
+    result = record["result"]
+    links = result.get("report_links") or []
+    lines = []
+    for link in links:
+        label, path = str(link["label"]), str(link["path"])
+        if re.match(r"^https?://", path, re.IGNORECASE):
+            lines.append(f"- [{label}]({quote(path, safe='/:')})")
+        else:
+            lines.append(f"- {label}: `{path.replace('`', '')}`")
+    if not links:
+        path = f"/api/requests/{quote(str(record['request_id']), safe='')}"
+        lines.append(f"- 과학 보고서 · 요청 상세: `{path}` (묶음·게시 링크 없음)")
+    seen = set()
+    for step in record["steps"]:
+        for raw in step.get("output_paths") or []:
+            path = str(raw).replace("\\", "/")
+            parts = path.rstrip("/").split("/")
+            if parts[-1] in {"report.html", "timeline.html", "trace.txt"} or "pipeline_info" in parts:
+                if path not in seen:
+                    lines.append(f"- Nextflow · {parts[-1]}: `{path.replace('`', '')}`")
+                    seen.add(path)
+    execution = str(result.get("execution_record") or "")
+    root_cause = str(result.get("root_cause_summary") or "")
+    if root_cause and root_cause not in execution:
+        lines.append(f"- 실패 원인: {root_cause}")
+    lines += [f"- 비용: {result.get('cost_usd')} (집계: {result.get('cost_known')})",
+              execution, str(result.get("bundle_conversion") or "")]
+    return lines
+
+
+def _operation_record(record: dict) -> dict:
+    # Old JSON records remain readable, but their scientific text must not leak into rendered JSON/Markdown.
+    legacy_scientific_body = "report" in record["result"]
+    dropped = {"report", "root_cause_summary"} if legacy_scientific_body else {"report"}
+    result = {key: value for key, value in record["result"].items() if key not in dropped}
+    review = {key: value for key, value in record["review"].items() if key != "detail"}
+    return {**record, "result": result, "review": review}
+
+
 def render_record(record: dict, *, include_json: bool = True,
                   report_override: object = _ORIGINAL_REPORT,
                   report_notice: str | None = None) -> str:
+    record = _operation_record(record)
     data = json.dumps(record, ensure_ascii=False, indent=2, default=str)
     req, result = record["request"], record["result"]
     commit = record["environment"].get("git_commit")
@@ -274,14 +346,10 @@ def render_record(record: dict, *, include_json: bool = True,
               f"- 점수: {json.dumps(record['review']['scores'], ensure_ascii=False)}",
               f"- 수정 회차: {record['review']['revision_rounds']}", "", "## PI 결정"]
     lines += [f"- {d['kind']}: {d['approved']} {d['note'] or ''}" for d in record["pi_decisions"]]
-    if report_override is _ORIGINAL_REPORT:
-        report = result.get("report") or result.get("root_cause_summary") or ""
-    else:
-        report = str(report_override)
     lines += ["", "## 결과", f"- 상태: {result['status']}",
               f"- 미결정: {json.dumps(result['pending_decisions'], ensure_ascii=False)}",
               f"- 이상 징후: {', '.join(result['anomalies']) or '없음'}",
-               report]
+               *_operation_lines(record)]
     if report_notice:
         lines += ["", report_notice]
     if include_json:
@@ -331,7 +399,7 @@ def _fit_variable_sections(prefix: str, sections: list[tuple[str, str]], suffix:
         return "\n".join(parts)
 
     empty = assemble([""] * len(sections))
-    available = max(0, limit - len(empty))
+    available = max(0, limit - len(empty) - len(sections))  # nonempty content adds one separator per section
     texts = [text for _, text in sections]
     allocations = [0] * len(texts)
     active = set(range(len(texts)))
@@ -375,7 +443,7 @@ def _compact_record_body(record: dict, marker: str, limit: int) -> str:
         step_lines.append(f"- {step['id']}: {step['status']}, 시도 {step['attempts']}")
         outputs = step["output_paths"]
         step_lines += [f"  - 산출물: {path}" for path in outputs] if outputs else ["  - 산출물: 없음"]
-    report = str(result.get("report") or result.get("root_cause_summary") or "")
+    report = "\n".join(_operation_lines(record))
     sections = [
         ("## 요청", "\n".join([
             str(req.get("text") or ""), f"- 모드: {req.get('mode') or '—'}",
@@ -407,7 +475,7 @@ def _compact_record_body(record: dict, marker: str, limit: int) -> str:
         ])),
     ]
     suffix = "\n".join([
-        f"> 결과 보고서 전문은 로컬 기록 rounds/{record['request_id']}.md에 있음",
+        f"> 운전 기록 전문은 로컬 기록 rounds/{record['request_id']}.md에 있음",
         f"> JSON 원본은 로컬 rounds/{record['request_id']}.json에 있음",
     ])
     return _fit_variable_sections(marker, sections, suffix, limit)
@@ -454,8 +522,48 @@ class RoundRecorder:
             target = self.directory / f"{rid}.{suffix}"
             temporary = target.with_suffix(f".{suffix}.tmp")
             temporary.write_text(body, encoding="utf-8")
-            os.replace(temporary, target)
+            replace_file(temporary, target)
         return record
+
+    @staticmethod
+    def _write_record(directory: str, rid: str, record: dict) -> None:
+        directory = Path(directory)
+        for suffix, body in (("json", json.dumps(record, ensure_ascii=False, indent=2, default=str) + "\n"),
+                             ("md", render_record(record))):
+            target = directory / f"{rid}.{suffix}"
+            temporary = target.with_suffix(f".{suffix}.tmp")
+            temporary.write_text(body, encoding="utf-8")
+            replace_file(temporary, target)
+
+    async def awrite(self, rid: str, sources: dict[str, dict[str, list[dict]]] | None = None) -> dict:
+        from .. import durable
+        from ..request_persistence import persist_request
+
+        req = self.hub.requests[rid]
+        if not req.get("environment"):
+            req["environment"] = self._stored_environment(rid) or environment_snapshot(self.hub)
+            await persist_request(self.hub, rid)
+        record = build_record(self.hub, rid, sources)
+        snapshot = json.loads(json.dumps(record, ensure_ascii=False, default=str))
+        # Neither the request nor the recorder itself crosses into the writer.
+        _, cancelled = await self.hub._publication_write(
+            durable.run(durable.FILES, self._write_record, str(self.directory), rid, snapshot))
+        if cancelled:
+            raise asyncio.CancelledError
+        return record
+
+    async def asubmit(self, rid: str, *, attempts: int = 0) -> None:
+        if not self.s.dev_log.enabled or not self.s.dev_log.repo or root_zone_restricted(self.s.policy):
+            return
+        self.generation += 1
+        generation = self.generation
+        body = {"request_id": rid, "generation": generation, "attempts": attempts, "state": "pending"}
+        _, cancelled = await self.hub._publication_write(self.hub.store.aput("round_delivery", rid, body))
+        if self.worker is None or self.worker.done():
+            self.worker = asyncio.get_running_loop().create_task(self._run())
+        self.queue.put_nowait((rid, generation))
+        if cancelled:
+            raise asyncio.CancelledError
 
     def _stored_environment(self, rid: str) -> dict | None:
         try:

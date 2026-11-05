@@ -1,0 +1,6 @@
+pr: 1012
+rows:
+- sha: 2632ab6
+  at: 2026-10-29 13:35
+  text: '영문 매뉴얼 docs/manual.en.md 추가(한국어 manual과 같은 절 구조, 코드·명령·설정 키는 원문), README.en의 Further reading·본문 링크를 영문판으로, AGENTS.md에 한국어 manual을 고칠 때 영문판도 같은 PR에서 고친다는 안내'
+  summary: 영어 독자가 읽을 수 있는 영문 매뉴얼을 추가하고 영문 README가 영문 매뉴얼로 연결됩니다.

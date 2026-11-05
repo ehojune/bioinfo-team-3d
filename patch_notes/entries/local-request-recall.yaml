@@ -1,5 +1,6 @@
 pr: 574
 rows:
-- sha: "63e2bbe"
+- sha: 63e2bbe
   at: 2026-10-13 21:04
   text: 완료 요청을 가린 로컬 색인으로 검색하는 recall API·CLI와 checkpoint 재처리·doctor를 추가
+  summary: 완료 요청을 민감 정보가 가려진 로컬 검색으로 찾고 색인 복구·진단을 지원합니다.

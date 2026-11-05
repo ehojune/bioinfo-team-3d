@@ -23,8 +23,10 @@ const cp2={id:'cp2',kind:'research_evidence',summary:'CP2 evidence review',creat
     refused_rows:REFUSED_ROWS,refused_evidence:REFUSED,results:{s1:{claims:[],evidence:[]}}}};
 
 test('the CP2 card offers approve, revise and deny and sends each as a choice',async()=>{
-  const decide=await modulePromise,container=new Element(),sent=[];
-  const [row]=decide.syncDecisionCards(container,[cp2],[],{onDecision:(a,ok,note,type,choice)=>sent.push([ok,note,choice])});
+  const decide=await modulePromise,container=new Element(),sent=[],refusalChoices=[];
+  const [row]=decide.syncDecisionCards(container,[cp2],[],{onDecision:(a,ok,note,type,choice,storage,refusal)=>{
+    sent.push([ok,note,choice]); refusalChoices.push(refusal);
+  }});
   const p=row._decisionParts;
   assert.equal(p.approve.textContent,'증거 승인');
   assert.equal(p.revise.hidden,false);
@@ -36,6 +38,8 @@ test('the CP2 card offers approve, revise and deny and sends each as a choice',a
   p.note.value='Request revision';
   p.approve.onclick(); p.revise.onclick(); p.deny.onclick();
   assert.deepEqual(sent,[[true,'Request revision','approve'],[false,'Request revision','revise'],[false,'Request revision','deny']]);
+  assert.equal(decide.modelRefusalChoice(row),null,'CP2 never offers model-refusal recovery');
+  assert.deepEqual(refusalChoices,[null,undefined,undefined],'CP2 decisions carry no model-refusal payload');
 });
 
 test('past the continuation cap the revise button says the request ends (R10)',async()=>{
@@ -85,7 +89,7 @@ test('both offices forward the CP2 choice to the gateway',()=>{
   const html=fs.readFileSync(path.join(web,'index.html'),'utf8');
   const live=fs.readFileSync(path.join(web,'lab3d/src/live.js'),'utf8');
   // The whole card goes in, so CP1 sends 수정 요청 only where detail.revise_allowed offers it.
-  assert.match(html,/api\.approve\(li\.dataset\.id, act === 'approve', note, decisionChoice\(approval \|\| \{ kind: li\.dataset\.kind \}, act\), storageChoice\(li\)\)/);
+  assert.match(html,/api\.approve\(li\.dataset\.id, act === 'approve', note, decisionChoice\(approval \|\| \{ kind: li\.dataset\.kind \}, act\), storageChoice\(li\), modelRefusalChoice\(li\)\)/);
   assert.match(html,/choice \? \{ approved: ok, note, choice \} : \{ approved: ok, note \}/);
   assert.match(live,/choice \? \{type:'approval\.resolve', id:a\.id, approved, note, choice\}/);
   // Both refuse an empty-note revise before anything is sent (R10).

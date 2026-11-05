@@ -47,7 +47,7 @@ from typing import Any, Callable
 
 import httpx
 
-from .annot import Annotator, Cache, Item, LookupFailed, Variant, _error_text, _now, _sha256, parse_variant
+from .annot import Annotator, Cache, Item, LookupFailed, LookupTimedOut, Variant, _error_text, _now, _sha256, parse_variant
 
 CHIPATLAS_WABI = "https://dtn1.ddbj.nig.ac.jp/wabi/chipatlas/"
 CHIPATLAS_DATA = "https://chip-atlas.dbcls.jp/data"
@@ -389,8 +389,8 @@ class AlphaGenomeUnavailable(Exception):
 
 
 async def _alphagenome_call(fn: Callable[..., Any], *args: Any) -> Any:
-    """`fn(*args)` on a fresh daemon thread, waited for at most AG_TIMEOUT_S. A timed-out thread is left running
-    (daemon, so it never holds up exit) and counted in `_AG_STUCK` until it ends."""
+    """`fn(*args)` on a fresh daemon thread, waited for at most AG_TIMEOUT_S. A timed-out or cancelled thread
+    cannot be killed; it is counted in `_AG_STUCK` until it ends and never holds up exit."""
     _AG_STUCK[:] = [thread for thread in _AG_STUCK if thread.is_alive()]
     if len(_AG_STUCK) >= AG_MAX_STUCK:
         raise AlphaGenomeUnavailable(f"앞서 시간이 초과된 AlphaGenome 호출 {len(_AG_STUCK)}개가 아직 끝나지 않았습니다. "
@@ -420,7 +420,7 @@ async def _alphagenome_call(fn: Callable[..., Any], *args: Any) -> Any:
     thread.start()
     try:
         return await asyncio.wait_for(future, AG_TIMEOUT_S)
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, asyncio.CancelledError):
         if thread.is_alive():
             _AG_STUCK.append(thread)
         raise
@@ -510,9 +510,11 @@ def _alphagenome_summary(item: Item) -> dict:
 
 
 class RegulatoryAnnotator(Annotator):
-    def __init__(self, *args: Any, alphagenome: AlphaGenomeBackend | None = None, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, alphagenome: AlphaGenomeBackend | None = None,
+                 atlas: Any = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.alphagenome_backend = alphagenome
+        self.atlas_backend = atlas
 
     # ----- helpers -----
     def _set_record(self, tool: str, db: str, release: str, url: str, options: dict, inputs: list[str],
@@ -682,8 +684,9 @@ class RegulatoryAnnotator(Annotator):
             if response.status_code not in (200, 404):
                 raise LookupFailed(f"ChIP-Atlas 결과 HTTP {response.status_code}: {text[:200]}")
             if self.http.clock() - started + CHIPATLAS_POLL_S > wait_s:
-                raise LookupFailed(f"ChIP-Atlas 분석이 {wait_s:.0f}초 안에 끝나지 않았습니다. 같은 입력·옵션에 "
-                                   f"request_id=\"{request_id}\"를 붙여 다시 부르면 결과를 이어 받습니다")
+                raise LookupTimedOut(f"조회 불가(시간 초과): ChIP-Atlas 분석이 {wait_s:.0f}초 안에 끝나지 않았습니다. "
+                                          f"request_id=\"{request_id}\". 자동 재시도하지 말고 빠진 조회로 기록한 뒤 "
+                                          "남은 작업을 진행하세요. 명시적으로 요청받았을 때만 같은 입력으로 이어 받으세요.")
             await self.http.sleep(CHIPATLAS_POLL_S)
 
     # ----- ChIP-Atlas target genes -----
@@ -1067,6 +1070,14 @@ class RegulatoryAnnotator(Annotator):
                 "eqtl": {"rows": rows, "total": total, "truncated": truncated}}
 
     # ----- AlphaGenome -----
+    async def alphagenome_atlas(self, variants: object, **kwargs: Any) -> dict:
+        from .annot_alphagenome_atlas import query_variants
+        return await query_variants(self, variants, **kwargs)
+
+    async def alphagenome_variant(self, variants: object, **kwargs: Any) -> dict:
+        from .annot_alphagenome import score_variants
+        return await score_variants(self, variants, **kwargs)
+
     async def alphagenome(self, variants_or_intervals: object, outputs: list[str] | None = None,
                           ontology_terms: list[str] | None = None, sequence_length: str = AG_DEFAULT_LENGTH,
                           organism: str = "human") -> dict:

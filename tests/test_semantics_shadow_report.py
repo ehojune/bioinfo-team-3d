@@ -78,10 +78,12 @@ def test_ab_report_compares_requests_candidates_reference_failure_and_cost(tmp_p
 
     assert rep["arms"]["advisory"] == {"requests": 1, "with_candidates": 1, "referenced": 1,
                                          "reference_rate": 1.0, "failed": 0, "failure_rate": 0.0,
-                                         "cost_usd": 1.5, "cost_unknown": 0}
+                                         "cost_usd": 1.5, "cost_unknown": 0, "excluded": 0,
+                                         "excluded_states": {"error": 0, "not_evaluated": 0}}
     assert rep["arms"]["shadow"]["failure_rate"] == 1.0 and rep["arms"]["shadow"]["cost_unknown"] == 1
-    assert rep["ab_window"] == {"requests": 2, "target_requests": 10, "deadline": "2026-10-23",
-                                 "reached": False}
+    assert rep["ab_window"] == {"requests": 2, "excluded": 0, "target_requests": 10,
+                                 "deadline": "2026-10-23", "reached": False,
+                                 "excluded_states": {"error": 0, "not_evaluated": 0}}
 
 
 def test_ab_report_counts_research_requests_only_so_others_cannot_close_the_window(tmp_path):
@@ -110,6 +112,23 @@ def test_ab_report_takes_candidates_from_the_plan_time_offer_not_the_end(tmp_pat
     rep = shadow.build_report(paths, date(2026, 10, 10), "ab")
 
     assert rep["arms"]["advisory"]["with_candidates"] == 2 and rep["arms"]["advisory"]["reference_rate"] == 0.5
+
+
+def test_ab_report_excludes_and_counts_unevaluated_and_error_separately(tmp_path):
+    excluded = [
+        {**_line(1, lane="research"), "arm": "advisory", "ab_excluded": True,
+         "ab_state": "not_evaluated"},
+        {**_line(2, lane="research"), "arm": "advisory", "ab_excluded": True,
+         "ab_state": "error"},
+    ]
+    paths = _write(tmp_path, excluded)
+
+    rep = shadow.build_report(paths, date(2026, 10, 10), "ab")
+
+    assert rep["arms"]["advisory"]["requests"] == 0
+    assert rep["arms"]["advisory"]["excluded_states"] == {"error": 1, "not_evaluated": 1}
+    assert rep["ab_window"]["requests"] == 0
+    assert rep["ab_window"]["excluded_states"] == {"error": 1, "not_evaluated": 1}
 
 
 def test_info_boundary_report_names_only_the_field_and_category(tmp_path, config, capsys):
@@ -159,6 +178,17 @@ def test_enable_shows_the_reason_and_opens_a_new_epoch(tmp_path, config, capsys)
     assert not paths.disabled.exists() and shadow.read_state(paths)["epoch"] == 2
     code, out = _cli(capsys, config, "report")
     assert "상태: on · 설정 shadow · 자동 off - · epoch 2" in out
+
+
+def test_enable_explains_that_the_legacy_request_id_false_positive_is_resolved(tmp_path, config, capsys):
+    paths = shadow.ShadowPaths(tmp_path / "state" / "semantics")
+    shadow.read_state(paths)
+    shadow.write_disabled(paths, "info_boundary", 1,
+                          boundary=[{"field": "request_id", "class": "identifier"}])
+
+    code, out = _cli(capsys, config, "enable")
+
+    assert code == 0 and "request_id" in out and "오판" in out and "epoch 2" in out
 
 
 def test_mark_checks_its_arguments_and_wrong_identity_turns_semantics_off(tmp_path, config, capsys):

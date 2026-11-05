@@ -1,0 +1,16 @@
+pr: 872
+rows:
+- sha: 97b7ecd
+  at: 2026-10-23 08:29
+  summary: 야간 시험이 실패하면 설명 없는 시간 초과로 끝내지 않고, 원인을 가릴 진단을 실패 출력에 남깁니다.
+  text: 'Windows 야간 run 39858916081에서 tests/test_consult_restart.py의 settle()이 TimeoutError로
+    끝났는데, traceback에는 모은 ask 작업이 이미 [None]으로 끝나 있었다. 이제 시간 초과 때만 stderr 한 줄에 작업 수,
+    시간 초과 뒤 관찰한 done·cancelled 수, 완료 callback 실행 시각(최대 8개)과 경과 시간을 남긴다. callback은
+    작업 종료보다 늦게 실행될 수 있어 실제 종료 시각이나 정체 원인을 이 값만으로 확정하지 않는다. 3초 상한, 예외 전파, 판정 기준은 그대로이고
+    다시 기다리거나 재시도하지 않는다. coroutine repr·질문 본문·환경·경로는 쓰지 않는다. 가짜 작업만 쓰는 순수 시험 1건을 더했다.
+    supervisor 실제 gateway 시험은 #843부터 제한된 시작 증거를 이미 출력하므로 바꾸지 않았다. 원인은 아직 UNKNOWN이다.'
+- sha: 5cf87e8
+  at: 2026-10-23 08:47
+  summary: 진단에 기록된 시각을 실제 작업 종료 시각으로 오해하지 않도록 설명을 고쳤습니다.
+  text: 완료 callback은 event loop 사정에 따라 늦게 실행될 수 있음을 주석과 기록에 명시했다. 실행 코드·검사 단언·제한시간은
+    바꾸지 않았다.

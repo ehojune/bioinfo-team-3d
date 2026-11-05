@@ -30,9 +30,11 @@ README_EN = "README.en.md"
 # so a new badge cannot leave the English README stale or half Korean (PR #428 review).
 ENGLISH = (("문서·데이터", "Docs · data"), ("코드", "Code"), ("라이선스", "License"), ("패치노트", "Patch notes"),
            ("화합물 검색", "compound search"), ("임상시험 검색", "trial search"), ("표적 검색", "target search"),
-           ("논문 검색", "paper search"), ("preprint 검색", "preprint search"), ("파견직 채용", "contractor hiring"))
+           ("논문 검색", "paper search"), ("preprint 검색", "preprint search"), ("파견직 채용", "contractor hiring"),
+           ("직원 skill", "staff skill"))
 HANGUL = re.compile("[ㄱ-ㆎ가-힣]")
-MANUAL = "docs/manual.md"
+MANUAL = "docs/manual.md"  # the index: its headings keep every old anchor
+MANUAL_TOOLS = "docs/manual/09-staff-tools.md"  # the chapter that holds the inventory markers
 # Manual anchors for targets without an official page (test_badge_anchors_point_at_manual_headings checks them).
 TOOLS_ANCHOR = f"{MANUAL}#연결된-도구"
 HPC_ANCHOR = f"{MANUAL}#설정-포인트"
@@ -81,7 +83,7 @@ EXTERNAL = {
 BUILTIN = {
     "approval": ("labhq_approval", "PI 승인 요청"),
     "hpc": ("labhq_hpc", "HPC 제출·감시 (scheduler가 none이 아닐 때)"),
-    "annot": ("labhq_annot", "공개 자원 조회: Ensembl VEP·gnomAD·ClinVar·ChIP-Atlas·ENCODE cCRE·GTEx, API 키가 있으면 변이 효과 예측 모델 (판본 기록·캐시)"),
+    "annot": ("labhq_annot", "공개 자원 조회: Ensembl VEP·gnomAD·ClinVar·ChIP-Atlas·ENCODE cCRE·GTEx, Europe PMC 본문, OpenAlex·Crossref·Unpaywall 문헌 검색·접근, API 키가 있으면 변이 효과 예측 모델 (판본 기록·캐시)"),
 }
 ENGINES = {"claude_code": "Claude Code", "codex": "Codex", "gemini": "Gemini CLI",
            "antigravity": "Antigravity", "cli": "자체 CLI", "mock": "mock"}
@@ -168,9 +170,11 @@ def collect(agents_dir: Path) -> list[Integration]:
                 add("외부 MCP", name, "직원 설정의 MCP 서버", staff, source,
                     look=Look("MCP", TOOLS_ANCHOR, "", "007EC6"))
 
+        skills = [identifier(s) for s in spec.get("required_skills", [])]
+        plugin_skills = [skill for skill in skills if ":" in skill]
+        bundled_skills = [skill for skill in skills if ":" not in skill]
         if engine == "claude_code" and spec.get("plugin_dirs"):
-            skills = [identifier(s) for s in spec.get("required_skills", [])]
-            plugins = sorted({s.split(":", 1)[0] for s in skills})
+            plugins = sorted({s.split(":", 1)[0] for s in plugin_skills})
             # BIOINFO_AGENT_DIR is a portable configured reference, never expanded/read.
             if "${BIOINFO_AGENT_DIR}" in spec["plugin_dirs"]:
                 add("Claude Code plugin", "bioinfo-agent (`bioinfo`)",
@@ -186,11 +190,13 @@ def collect(agents_dir: Path) -> list[Integration]:
                 # Unnamed plugin directories stay in the table only: a badge would name nothing.
                 add("Claude Code plugin", f"plugin ({staff}:{index + 1})",
                     "직원 설정의 plugin_dirs (경로 비공개)", staff, source)
-            for skill in skills:
+            for skill in plugin_skills:
                 if spec.get("allow_skills"):
-                    # plugin:skill is shown by its plugin's badge; a bare skill gets its own.
                     add("skill", skill, "실행 전 존재 확인 (required_skills)", staff, source,
-                        look=None if ":" in skill else Look("Claude Code skill", TOOLS_ANCHOR, "", SKILL_COLOR))
+                        look=None)
+        for skill in bundled_skills:
+            add("skill", skill, "Claude plugin·Codex .agents/skills (required_skills)", staff, source,
+                look=Look("직원 skill", TOOLS_ANCHOR, "", SKILL_COLOR))
 
         # The recruiter declares the skill in its prompt/tools; paper2agent.py invokes it.
         if (engine == "claude_code" and "Skill" in tools
@@ -368,14 +374,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if not (args.root / "agents" / "core").is_dir():
             raise ValueError("agents/core is missing")
-        readme, manual, readme_en = args.root / README, args.root / MANUAL, args.root / README_EN
+        readme, manual, readme_en = args.root / README, args.root / MANUAL_TOOLS, args.root / README_EN
         paths = (readme, manual, *([readme_en] if readme_en.is_file() else []))
         current = {path: path.read_text(encoding="utf-8") for path in paths}
         # Every file is computed before any is written, so a bad marker in one leaves all untouched.
         block = badges(args.root)
         expected = {readme: update_readme(current[readme], block),
                     manual: update_manual(current[manual],
-                                          render(args.root / "agents", "../" * MANUAL.count("/")))}
+                                          render(args.root / "agents", "../" * MANUAL_TOOLS.count("/")))}
         if readme_en in current:
             expected[readme_en] = update_readme(current[readme_en], english(block))
         if args.write:

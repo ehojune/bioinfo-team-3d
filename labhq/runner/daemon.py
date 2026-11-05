@@ -7,7 +7,12 @@ task.dispatch, runs the agent's CLI in a per-task workspace, and streams normali
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
+import contextvars
+import copy
+from dataclasses import replace
+import inspect
 import json
 import logging
 import os
@@ -15,6 +20,7 @@ import re
 import stat
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -23,50 +29,103 @@ from typing import Any
 import websockets
 import yaml
 
+from .. import disk_space, durable
 from ..adapters import (adapter_preflight_error, get_adapter, is_read_only_task, read_only_profile,
                         read_only_refusal)
-from ..adapters.base import RunContext
+from ..adapters.base import ProcessBoundaryGate, RunContext, atlas_credentials, expand_env
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
-                              remove_entry, write_owned)
+                              awrite_owned_bytes, awrite_owned_many, remove_entry, write_owned)
 from ..ask_results import read_ask_results, rejected_step
 from ..artifact_policy import unreported_warning_paths
+from .. import output_checks
 from ..facilities import fixes as facility_fixes
 from ..login import LOGIN_PATH_ENV
-from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
-from .breaker import Breaker, trip_text
+from ..models import (ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task,
+                      TaskResult, ToolCallCount, waiting)
+from .breaker import Breaker, BreakerPolicy, Escalation, stage_text, trip_text
 from ..hooks.control import CONTROL_ENV, add_control_hooks
 from .versions import engine_cli_versions
 from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone, reference_roots,
                       scan_reference_dir, withhold_reference_paths, zone_links)
-from ..policy import (SHELL_TOOLS, claude_deny_links, claude_deny_private, claude_read_only, claude_rule_path,
-                      claude_settings, rule_tool)
+from ..policy import (SHELL_TOOLS, claude_ask_internal_links, claude_deny_links, claude_deny_private,
+                      claude_read_only, claude_rule_path, claude_settings, evaluate_tool, rule_tool)
 from ..private_paths import ENABLED_ENV_VAR as PRIVATE_ENABLED_ENV, ENV_VAR as PRIVATE_PATHS_ENV, \
     OPEN_READS_ENV_VAR as PRIVATE_OPEN_READS_ENV, plugin_keep_dirs, resolve_private_paths, \
-    staff_claude_project_dirs
+    staff_claude_project_dirs, scoped_open_reads
 from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
+from ..bioinfo_policy import PIPELINE_AUTHORS
 from ..quota import quota_reset_instant
 from ..recruit.provenance import external_service_refusal, not_yet_active, probation_refusal, restricted_task
+from ..recruit import paper2agent
 from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
+from ..staff_skills import install_required_skills
 from ..store import StateStore
-from ..tools.scheduler import MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, job_in_family
-from ..util import INPUT_STEP_ID, output_relpath, short
+from ..tools.scheduler import (MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, command_env, job_in_family,
+                               sanitize_job_name)
+from ..util import INPUT_STEP_ID, output_relpath, short, tool_input_fingerprint
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
 from .approvals import Broker
+from .annot_broker import AnnotBroker, ENABLED_ENV as ATLAS_ENABLED_ENV, atlas_allowed, refuse_credential_copy
+from ..tools.annot_alphagenome_atlas import credential, without_credentials
 from .codex_sandbox import SandboxWatch
 from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
+from . import local_jobs
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
+from .lookup_admission import ENV as LOOKUP_ADMISSION_ENV, FILE as LOOKUP_ADMISSION_FILE, LookupAdmission
 from .system_ca import CA_ENV, system_ca_pem
-from .workspace import InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, restricted_zones
+from .step_inputs import folder_files, linked_files, stage_inputs, stage_precedent_texts, staging_problem
+from ..research.precedent_texts import step_note as precedent_step_note
+from .workspace import (InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, resolved_zones,
+                        restricted_zones)
 
 log = logging.getLogger("labhq.runner")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONSULT_REF_MAX_FILE_BYTES = 8 * 1024 * 1024
 CONSULT_REFS_MAX_TOTAL_BYTES = 32 * 1024 * 1024
 CONSULT_REF_COPY_CHUNK = 1024 * 1024
+
+
+def _recorded_tool_name(value: object) -> str:
+    """Return one bounded display name, normalizing Claude's MCP spelling to server.tool."""
+    name = str(value or "unknown").replace("\r", " ").replace("\n", " ").replace("|", " ").strip()
+    if name.startswith("mcp__"):
+        parts = name.split("__", 2)
+        if len(parts) == 3 and parts[1] and parts[2]:
+            name = f"mcp:{parts[1]}.{parts[2]}"
+    return name[:160] or "unknown"
+
+
+class ToolCallCounter:
+    """Count normalized runner events without retaining any tool input or output."""
+
+    def __init__(self) -> None:
+        self.calls: dict[str, int] = {}
+        self.failures: dict[str, int] = {}
+        self.by_id: dict[str, str] = {}
+
+    def observe(self, typ: str, data: dict[str, Any]) -> None:
+        if typ == "agent.tool":
+            name = _recorded_tool_name(data.get("name"))
+            self.calls[name] = self.calls.get(name, 0) + 1
+            if data.get("id") is not None:
+                self.by_id[str(data["id"])] = name
+        elif typ == "agent.tool_error":
+            tool_id = data.get("id")
+            name = self.by_id.get(str(tool_id)) if tool_id is not None else None
+            if name is None:
+                name = "도구 미상 오류"
+                self.calls[name] = self.calls.get(name, 0) + 1
+                self.failures[name] = self.failures.get(name, 0) + 1
+            elif name in self.calls:
+                self.failures[name] = self.failures.get(name, 0) + 1
+
+    def summary(self) -> dict[str, ToolCallCount]:
+        return {name: ToolCallCount(calls=calls, failures=min(self.failures.get(name, 0), calls))
+                for name, calls in sorted(self.calls.items())}
 
 
 @contextlib.asynccontextmanager
@@ -82,6 +141,11 @@ def labhq_mcp_timeout_s(settings: Settings) -> int:
     """How long a staff CLI may wait on one labhq MCP call: the longest approval or ask wait, plus 120 s for the
     tool's own work. Claude gets it as each server's `timeout` and MCP_TOOL_TIMEOUT, Codex as `tool_timeout_sec`."""
     return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + 120
+
+
+def literature_mcp_timeout_s(settings: Settings) -> int:
+    """Only the literature MCP may remain blocked on the two-hour PI PDF card."""
+    return max(labhq_mcp_timeout_s(settings), settings.literature.pdf_request_timeout_s + 120)
 
 
 def checked_identity(identity: object) -> dict[str, str]:
@@ -185,7 +249,44 @@ def output_identity(row: dict[str, Any]) -> tuple:
     return (bool(row.get("link")), row.get("size"), row.get("mtime_ns"), row.get("ino"), row.get("ctime_ns"))
 
 
+def _should_check_declared_outputs(result: TaskResult) -> bool:
+    """Whether this successful turn finishes the step and can be held to its declared outputs."""
+    if not result.ok or waiting(result):
+        return False
+    question = result.blocking_decision
+    if not question and isinstance(result.structured, dict):
+        question = result.structured.get("blocking_decision")
+    return not (isinstance(question, str) and question.strip())
+
+
 ENVIRONMENT_LOCK = "outputs/env/requirements.lock.txt"
+
+
+async def _maybe_await(value: Any) -> None:
+    """`await` for the result of `stage_run` (None) or `aupdate_run` (a coroutine) alike."""
+    if inspect.isawaitable(value):
+        await value
+
+
+async def _settled_thread(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """`asyncio.to_thread` that a cancel cannot leave running (#606).
+
+    The loop is free while `fn` runs, but a thread cannot be interrupted: after a plain cancelled `to_thread` the
+    step is reported cancelled while `fn` still changes the workspace, and a retry in the same folder races it. So the
+    cancel waits for `fn` to finish, then goes on. Used for what writes in the workspace; a read may stay unawaited.
+    """
+    work = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+    try:
+        return await asyncio.shield(work)
+    except asyncio.CancelledError:
+        while not work.done():
+            try:
+                await asyncio.wait([work])
+            except asyncio.CancelledError:
+                pass  # a second cancel still waits for the worker
+        if not work.cancelled():
+            work.exception()  # retrieved: the cancel, not the worker's error, is what propagates
+        raise
 
 
 def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -200,9 +301,60 @@ def environment_record(rows: list[dict[str, Any]]) -> dict[str, Any]:
             **({"size": row.get("size")} if row.get("size") is not None else {})}
 
 
+# While `Runner.emit_all` runs, `emit` collects each event here instead of sending it, and emit_all sends them as one job.
+_EMIT_UNIT: contextvars.ContextVar[list | None] = contextvars.ContextVar("labhq_emit_unit", default=None)
+
+
+# Flip only when a protected alias hands the validated runner-local interpreter to consumers of every engine.
+ENVIRONMENT_ALIAS_AVAILABLE = False
+# Engines that receive a verified environment (#674): its interpreter path in `LABHQ_ENV_PYTHON` and a briefing line.
+# Claude also gets the folder as a read-only root (`read_dirs`, Edit/Write denied); Codex's sandbox already reads outside
+# the work folder and Gemini has no read-only grant to give, so they get the path only. Other engines stay refused.
+ENVIRONMENT_ENGINES = frozenset({Engine.claude_code, Engine.codex, Engine.gemini})
+ENVIRONMENT_GRANT_ENGINES = frozenset({Engine.claude_code})
+
+ACK_DRAIN_S = 5.0  # how long a reconnect waits for the acks it already received to commit (#1125)
+ACK_MERGE_S = 0.5  # at most one ack commit per this long: acks arriving between two commits share the second (#1125)
+
+
 class Runner:
-    def __init__(self, settings: Settings):
+    # Defaults for a Runner built without __init__ (tests do): no batch open, no ack in flight.
+    _batch_thread: threading.Thread | None = None
+    _reload_after_batch = False
+    _ack_high = 0
+    _ack_done = 0
+    _ack_task: asyncio.Task | None = None
+    _ack_error: BaseException | None = None
+    _ack_last = 0.0  # monotonic time the last ack commit finished
+    _shutdown_deadline: float | None = None  # time.monotonic() when `shutdown()` must be done
+
+    process_boundary = ProcessBoundaryGate()  # default also covers lightweight test runners
+
+    def __init__(self, settings: Settings, *, process_boundary: bool = False):
+        self.process_boundary = ProcessBoundaryGate(process_boundary)
+        settings.runner.validate_wsl()
         self.s = settings
+        # The loop and its thread, noted by `_send_durably`: a message committed on the durable writer thread asks
+        # this loop to reload the outbox queue (#606).
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_thread: threading.Thread | None = None
+        self._batch_thread: threading.Thread | None = None  # the writer thread while `_send_batch_now` holds its batch
+        self._reload_after_batch = False
+        # The gateway acks every outbox row. The acks are cumulative, so those that arrive while one is committing
+        # share the next commit (#1125): `_ack_high` is the highest seq the gateway has stored, `_ack_done` the highest
+        # one whose rows are deleted.
+        self._ack_high = 0
+        self._ack_done = 0
+        self._ack_task: asyncio.Task | None = None
+        self._ack_error: BaseException | None = None
+        # Tasks whose task.result is already queued in this run. A cancel that arrives while the result commits does
+        # not stop the commit, so the cancel handler must not queue a second, "cancelled" one over it (#606).
+        self._result_queued: set[str] = set()
+        # Actual nested conversion identity, registered by the reserved plan-hire path before dispatch. This is
+        # private runner state, never accounting metadata supplied by a model or a task's caller.
+        self._recruitment_conversions: dict[str, dict] = {}
+        # #863: cleanup evidence an adapter reports when its run ends by cancellation (no TaskResult of its own).
+        self._cleanup_reports: dict[str, dict] = {}
         self.store = StateStore(settings.path(settings.runner.state_dir) / f"runner-{settings.runner.id}.sqlite3")
         saved_incarnation = self.store.all("runner_meta").get("incarnation")
         self.incarnation = saved_incarnation["id"] if saved_incarnation else uuid.uuid4().hex
@@ -211,6 +363,7 @@ class Runner:
         self.process = uuid.uuid4().hex  # never saved: tells the gateway a restart from a reconnect (#521)
         self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir),
                                  settings.path(settings.runner.contract_dir) if settings.runner.contract_dir else None)
+        self._contract_lock = asyncio.Lock()
         self.ws_root = settings.path(settings.runner.workspace_root)
         self.input_hash_cache = InputHashCache(
             settings.path(settings.runner.state_dir) / "input-sha256-cache.json")
@@ -222,6 +375,7 @@ class Runner:
         self.project_link_warned: set[tuple] = set()
         self.outbox: asyncio.Queue[str] = asyncio.Queue()
         self.tasks: dict[str, asyncio.Task] = {}
+        self._dispatches: set[asyncio.Future] = set()  # Acceptance/result writes not yet represented by a task.
         self.workspaces: dict[str, TaskWorkspace] = {}
         # Events of a task whose reused workspace is still being checked: written to its events.jsonl, in order,
         # once the check passes (#193), and dropped with the workspace when it fails.
@@ -233,20 +387,32 @@ class Runner:
         self.ended_roots: list[tuple[float, str, bool, list[Path]]] = []
         self.task_req: dict[str, str | None] = {}
         self.approval_tasks: dict[str, tuple[str | None, str | None]] = {}
+        self.tool_contexts: dict[str, Any] = {}
         self.submitting: dict[str, set[asyncio.Future]] = {}  # submit commands running, by task (#214 review)
         self.jobs: dict[str, dict] = self.store.all("job")
         self.notified: set[str] = set(self.store.all("notified"))
         self.task_req.update({j["task_id"]: j.get("request_id") for j in self.jobs.values() if j.get("task_id")})
+        limit = settings.annot.request_lookup_limit
         self.broker = Broker(settings.runner.broker_port, self._on_approval, self._on_tool_event,
                              self._on_submit, self._on_ask, self._owns_job,
-                             on_approval_timeout=self._on_approval_timeout)
+                             on_approval_timeout=self._on_approval_timeout, on_local_job=self._on_local_job,
+                             on_restricted=self._on_restricted,
+                             lookup_admission=None if limit is None else LookupAdmission(
+                                 settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit,
+                                 precedent_share=settings.annot.precedent_lookup_share))
         self.scheduler = Scheduler(settings.hpc)
+        self.annot_broker = AnnotBroker(self.broker, settings)
+        self._local_procs: dict = {}  # job id -> the child this runner started (reaped when polled), #675
+        self._local_watch: asyncio.Task | None = None  # the local job poller, started with the first job
         self.connected = asyncio.Event()
         self._stopping = False
+        self.started_at = time.time()
         self.engine_versions: dict[str, str] | None = None  # probed once, off the event loop, before connecting
         self.local_software: dict | None = None  # bounded doctor probes, once before the first hello
         self.codex_sandbox = SandboxWatch()  # elevated setup still fits this Codex (#328)
         # Steer, pause and halt files (#59 ①): runner state, outside every staff write root.
+        self.breakers: dict[str, Escalation] = {}  # #59: running tasks' breaker stage
+        self._disk_watchers: dict[str, asyncio.Task] = {}  # #678: one per running task
         self.controls = Controls(settings.path(settings.runner.state_dir) / "control")
         self._finish_interrupted_tasks()
 
@@ -273,8 +439,25 @@ class Runner:
                               pending_jobs=[job["job_id"] for job in jobs],
                               workdir=next((job.get("workdir") for job in jobs if job.get("workdir")), None),
                               session_id=next((job.get("session_id") for job in jobs if job.get("session_id")), None))
-        return TaskResult(task_id=tid, agent_id=agent_id, ok=False,
-                          error="runner restarted: accepted task interrupted")
+        # This runner never held that task's wrapper: a restart proves the old runner ended, not its staff tree (#863).
+        return self._shutdown_result(TaskResult(task_id=tid, agent_id=agent_id, ok=False,
+                          error="runner restarted: accepted task interrupted",
+                          cleanup_evidence={"status": "UNKNOWN", "reason": "runner_restart_only",
+                                            "active_processes_measured": False}), cancelled=True, recovered=True)
+
+    def _shutdown_result(self, result: TaskResult, *, cancelled: bool = False,
+                         recovered: bool = False) -> TaskResult:
+        """Attach the same evidence before live delivery, durable enqueue or restart recovery."""
+        from ..interruption import shutdown_interruption, stopping_marker
+        stopping = recovered or self._stopping or stopping_marker(self.s, self.started_at)
+        if not result.ok and shutdown_interruption(exit_code=result.exit_code, error=result.error,
+                                                   stopping=stopping, cancelled=cancelled):
+            # Merged, never replaced (#863): evidence already on the result stays, and the task's cleanup evidence joins.
+            result.shutdown_evidence = {**result.shutdown_evidence, "exit_code": result.exit_code,
+                "error": result.error, "stopping": True, "cancelled": cancelled,
+                "source": "runner-recovery" if recovered else "runner", "at": time.time(),
+                **({"cleanup": result.cleanup_evidence} if result.cleanup_evidence else {})}
+        return result
 
     # ---------------- lifecycle ----------------
     def _check_job_group(self) -> None:
@@ -292,20 +475,182 @@ class Runner:
             os.umask(0o077)  # task inputs created by this runner and its agents stay private
         self.registry.load()
         log.info("runner %s: %d agents", self.s.runner.id, len(self.registry.agents))
-        await asyncio.gather(self.broker.serve(), self._connection_loop(), self._job_watch_loop())
+        async def serve_broker() -> None:
+            # uvicorn ends a failed start (a port another process took) with sys.exit(3). As the SystemExit of a task it
+            # leaves the event loop and takes the rest of a test worker down with it (#1238); a start failure is an error.
+            try:
+                await self.broker.serve()
+            except SystemExit as exit_:
+                raise RuntimeError(f"runner broker could not start on 127.0.0.1:{self.s.runner.broker_port} "
+                                   f"(uvicorn exit code {exit_.code}; is the port already in use?)") from None
+
+        try:
+            loops = [serve_broker(), self._connection_loop()]
+            if self.s.hpc.scheduler != "none":
+                loops.append(self._job_watch_loop())
+            else:
+                log.warning("HPC job polling disabled (scheduler=none); saved job records are retained, "
+                            "not refreshed")
+            if any(local_jobs.is_local(jid) for jid in self.jobs):  # jobs saved by the previous runner process (#675)
+                self._ensure_local_watch()
+            await asyncio.gather(*loops)
+        finally:
+            # Acks already received are not left in memory. After a signal the wait is what is left of the shutdown's
+            # own deadline, so the whole exit stays inside it.
+            await self._ack_drain(raise_error=False, timeout=self._ack_wait_s(durable.EXIT_DRAIN_S))
+            # Writes queued by the tasks that were just cancelled still finish (#606).
+            await durable.adrain(durable.EXIT_DRAIN_S)
 
     def stop(self) -> None:
         self._stopping = True
+        watch = getattr(self, "_local_watch", None)  # a Runner built without __init__ (tests) has none
+        if watch is not None:
+            watch.cancel()
         self.broker.stop()
         for t in self.tasks.values():
             t.cancel()
 
+    async def shutdown(self, timeout_s: float = 5) -> None:
+        """Cancel tasks with shutdown evidence before closing the connection; retain any unacked results."""
+        self.stop()
+
+        async def finish():
+            while True:
+                while self._dispatches:
+                    # A connection handler outlives one dispatch. Wait only for that dispatch's durable result,
+                    # without cancelling its completion future when this bounded shutdown times out.
+                    await asyncio.gather(*(asyncio.shield(done) for done in tuple(self._dispatches)))
+                await asyncio.gather(*list(self.tasks.values()), return_exceptions=True)
+                if self._dispatches:  # Another dispatch may have entered while cancelled tasks were draining.
+                    continue
+                if not self.connected.is_set() or not any(e.get("type") == "task.result" for e in self.store.pending()):
+                    return
+                await asyncio.sleep(.05)
+
+        deadline = self._shutdown_deadline = time.monotonic() + timeout_s
+        try:
+            await asyncio.wait_for(finish(), timeout_s)
+        except asyncio.TimeoutError:
+            pass  # Durable outbox replay remains the fallback when the gateway cannot acknowledge in time.
+        # Every ack received so far is committed before this returns, inside the same deadline: an ack that does not
+        # finish in time leaves its rows in the outbox for replay.
+        await self._ack_drain(raise_error=False, timeout=max(0.0, deadline - time.monotonic()))
+
+    def _ack_nowait(self, seq: int) -> None:
+        """The gateway has stored every outbox row up to `seq`: start deleting them. Nothing waits: the first ack
+        commits at once, and the acks that arrive while it commits are merged into the next commit (cumulative, so
+        only the highest matters). A commit that failed is raised here, on the next ack, as it was when the ack was
+        committed inline."""
+        if self._ack_error is not None:
+            error, self._ack_error = self._ack_error, None
+            raise error
+        self._ack_high = max(self._ack_high, seq)
+        if self._ack_task is None or self._ack_task.done():
+            self._ack_task = asyncio.get_running_loop().create_task(self._ack_flush())
+
+    async def _ack_flush(self) -> None:
+        """Commit the highest ack. An idle runner commits at once; after a commit the next one waits until
+        `ACK_MERGE_S` have passed (the acks that arrive meanwhile are cumulative and share it), unless a caller is
+        waiting in `_ack_drain`. A late delete only means a few rows are resent after a crash and deduped by the
+        gateway's cursor."""
+        hurry = self.__dict__.setdefault("_ack_hurry", asyncio.Event())
+        try:
+            while self._ack_done < self._ack_high:
+                wait = self._ack_last + ACK_MERGE_S - time.monotonic()
+                if wait > 0 and not hurry.is_set():
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(hurry.wait(), wait)
+                high = self._ack_high
+                await self.store.aack(high)
+                self._ack_done = max(self._ack_done, high)
+                self._ack_last = time.monotonic()
+        except Exception as exc:  # noqa: BLE001 - raised to the next caller, where the inline commit raised it
+            self._ack_error = exc
+        finally:
+            hurry.clear()
+
+    def _ack_wait_s(self, normal: float) -> float:
+        """How long a closing-down path may wait for the acks: `normal`, or what is left of an open shutdown deadline."""
+        if self._shutdown_deadline is None:
+            return normal
+        return max(0.0, min(normal, self._shutdown_deadline - time.monotonic()))
+
+    async def _ack_drain(self, *, raise_error: bool = True, timeout: float | None = None) -> None:
+        """Every ack noted so far is committed. Errors are raised unless the caller is closing down anyway. With a
+        `timeout` an unfinished commit is left to finish on its own: its rows stay in the durable outbox, are resent,
+        and the gateway dedups them."""
+        task = self._ack_task
+        if task is not None and not task.done():
+            self.__dict__.setdefault("_ack_hurry", asyncio.Event()).set()  # someone waits: do not hold the commit back
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout)
+            except asyncio.TimeoutError:
+                log.warning("runner %s: an ack commit is still running; its rows stay in the outbox", self.s.runner.id)
+                return
+        if raise_error and self._ack_error is not None:
+            error, self._ack_error = self._ack_error, None
+            raise error
+
     def send(self, obj: dict) -> None:
         if obj.get("type") not in {"runner.roster"}:
             self.store.enqueue(obj, self.s.runner.outbox_limit)
-            self.reload_outbox()
+            self._reload_outbox_after_commit()
         else:
             self.outbox.put_nowait(json.dumps(obj, ensure_ascii=False, default=str))
+
+    def _reload_outbox_after_commit(self) -> None:
+        # On the loop's own thread this is the old straight call. On the durable writer thread (`_send_durably`) the
+        # reload is queued for the loop, and runs before the awaiting caller resumes.
+        if self._batch_thread is threading.current_thread():
+            self._reload_after_batch = True  # its rows are not committed yet: once, after the batch's commit
+            return
+        loop = self._loop
+        if loop is not None and threading.current_thread() is not self._loop_thread:
+            loop.call_soon_threadsafe(self.reload_outbox)
+        else:
+            self.reload_outbox()
+
+    async def _send_durably(self, obj: dict, *, before: tuple | None = None, after: tuple | None = None) -> None:
+        """`send` for a coroutine (#606): `before`, the message and `after` are one job on the durable writer thread,
+        in that order, so the loop is not held for their fsyncs and a cancelled caller cannot leave one of them
+        undone. `before` and `after` are `(kind, key, body)` rows for the state table. The message still goes through
+        `self.send`, the one place every outgoing message passes."""
+        self._loop, self._loop_thread = asyncio.get_running_loop(), threading.current_thread()
+        if obj.get("type") in {"runner.roster"} and before is None and after is None:
+            self.send(obj)  # not stored: nothing to wait for
+            return
+        await self._send_batch([(obj, [before] if before else [], [after] if after else [])])
+
+    async def _send_batch(self, items: list[tuple[dict, list[tuple], list[tuple]]]) -> None:
+        """Several messages, each with its rows before and after, as ONE job: all of it is committed, in this order,
+        whatever happens to the caller while it waits."""
+        self._loop, self._loop_thread = asyncio.get_running_loop(), threading.current_thread()
+        await durable.run(self.store.lane, self._send_batch_now, items)
+
+    def _send_batch_now(self, items: list[tuple[dict, list[tuple], list[tuple]]]) -> None:
+        """The rows and messages of `items`, in order, in ONE transaction: one commit and fsync for the batch instead
+        of one per row and message (#1125). The outbox is reloaded once after that commit, because a reader sees only
+        committed rows."""
+        def write() -> None:
+            # Runs on the store's lane thread, whichever thread asked: `send` defers its reload while this is set.
+            self._batch_thread, self._reload_after_batch = threading.current_thread(), False
+            try:
+                for obj, befores, afters in items:
+                    for row in befores:
+                        self.store.put(*row)
+                    self.send(obj)
+                    for row in afters:
+                        self.store.put(*row)
+            finally:
+                self._batch_thread = None
+
+        self._reload_after_batch = False
+        self.store.run_batch(write)  # from the lane's own job this is a plain inline call
+        if self._reload_after_batch:
+            self._reload_outbox_after_commit()
+
+    async def asend(self, obj: dict) -> None:
+        await self._send_durably(obj)
 
     def reload_outbox(self, preserve_roster: bool = True) -> None:
         roster = []
@@ -319,15 +664,63 @@ class Runner:
             self.outbox.put_nowait(json.dumps(item, ensure_ascii=False, default=str))
 
     async def emit(self, ev: Event) -> None:
+        prepared = self._prepare_event(ev)
+        if prepared is None:
+            return
+        unit = _EMIT_UNIT.get()
+        if unit is not None:  # inside emit_all: sent with the others as one job
+            unit.append(prepared)
+            return
+        await self._send_events([prepared])
+
+    def _prepare_event(self, ev: Event) -> tuple[dict, list[tuple], list[tuple]] | None:
+        """What `emit` does before the send: the task's own log, its buffer, and for a task.result the mark that the
+        task finished and the note that its result is queued. None for a roster, which is not stored."""
         d = ev.model_dump(mode="json")
         ws = self.workspaces.get(ev.task_id or "")
         if ws:
             ws.append_event(d)
         elif ev.task_id in self.event_buffers:
             self.event_buffers[ev.task_id].append(d)
-        self.send(d)
+        if d.get("type") == "runner.roster":
+            self.send(d)
+            return None
+        marks: list[tuple] = []
         if ev.type == "task.result" and ev.task_id:
-            self.store.put("accepted_task", ev.task_id, {"state": "finished"})
+            marks.append(("accepted_task", ev.task_id, {"state": "finished"}))
+            self._result_queued.add(ev.task_id)
+        return d, [], marks
+
+    async def _send_events(self, items: list[tuple[dict, list[tuple], list[tuple]]]) -> None:
+        try:
+            await self._send_batch(items)
+        except Exception:
+            # Nothing was queued after all. (A cancel is not this: the job runs on and its result stays queued.)
+            self._result_queued.difference_update(
+                d.get("task_id") for d, _before, _after in items if d.get("type") == "task.result")
+            raise
+
+    async def emit_all(self, events: list[Event], *, before: list[tuple] | None = None,
+                       after: list[tuple] | None = None) -> None:
+        """Events that belong together (a closing status and the task's result; an approval and the status it
+        causes) as one uncancellable unit: one durable job that commits all of them, in order, with the rows in
+        `before` ahead of the first and the rows in `after` behind the last. These used to run without a pause, so a
+        cancel could not land between them; it still cannot (#606). Each event still passes through `self.emit`."""
+        unit: list[tuple[dict, list[tuple], list[tuple]]] = []
+        token = _EMIT_UNIT.set(unit)
+        try:
+            for ev in events:
+                await self.emit(ev)
+        finally:
+            _EMIT_UNIT.reset(token)
+        if not unit:
+            return
+        # Copied now: the writer thread serializes them later, and the caller goes on changing its own objects.
+        if before:
+            unit[0] = (unit[0][0], [copy.deepcopy(row) for row in before], unit[0][2])
+        if after:
+            unit[-1] = (unit[-1][0], unit[-1][1], [*unit[-1][2], *[copy.deepcopy(row) for row in after]])
+        await self._send_events(unit)
 
     async def _connection_loop(self) -> None:
         url = f"{self.s.gateway.url.rstrip('/')}/ws/runner?token={self.s.gateway.runner_token}"
@@ -339,11 +732,16 @@ class Runner:
             from ..doctor import staff_python_summary
             try:
                 self.local_software = await asyncio.to_thread(staff_python_summary)
+                if self.s.runner.environment == "wsl":
+                    from ..doctor import wsl_tool_status
+
+                    self.local_software["tools"].update(await asyncio.to_thread(wsl_tool_status))
             except Exception:  # noqa: BLE001 - a host probe must not keep the runner offline
                 log.warning("runner %s could not summarize local software", self.s.runner.id, exc_info=True)
                 self.local_software = {}
         while not self._stopping:
             try:
+                await asyncio.to_thread(self._refresh_wsl_readiness)
                 async with websockets.connect(url, max_size=64 * 2**20, ping_interval=20, ping_timeout=60) as ws:
                     backoff = 1.0
                     await ws.send(json.dumps(self.hello()))
@@ -352,10 +750,19 @@ class Runner:
                     sender = asyncio.create_task(self._sender(ws))
                     try:
                         async for raw in ws:
-                            await self._on_message(json.loads(raw))
+                            msg = json.loads(raw)
+                            if msg.get("type") == "runner.ack":
+                                # Not waited for: the next messages are read while it commits, and the acks among them
+                                # share the next commit instead of one fsync each (#1125).
+                                self._ack_nowait(int(msg["runner_seq"]))
+                                continue
+                            await self._on_message(msg)
                     finally:
                         sender.cancel()
                         self.connected.clear()
+                        # A reconnect reloads the outbox from the store: commit the acks first, but a stuck commit must
+                        # not hold the reconnect (its rows are resent and deduped).
+                        await self._ack_drain(raise_error=False, timeout=self._ack_wait_s(ACK_DRAIN_S))
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -395,12 +802,41 @@ class Runner:
             summary = agent.summary()
             agents.append({**summary, "hpc_tools": ("hpc" in summary.get("builtin_mcp", []) and
                                                       self.s.hpc.scheduler != "none") or
-                                                     "labhq_hpc" in summary.get("mcp", [])})
+                                                     "labhq_hpc" in summary.get("mcp", []),
+                           "wiki_tools": "wiki" in summary.get("builtin_mcp", []) and self._wiki_tool_ready()})
         return agents
+
+    def _wiki_tool_ready(self) -> bool:
+        """The LLM-wiki tool hands note text to a staff model, so it needs the PI's explicit opt-in (#827)."""
+        wiki = self.s.wiki
+        return bool(wiki.enabled and wiki.root and wiki.external_model_allowed)
+
+    def _refresh_wsl_readiness(self) -> None:
+        if self.s.runner.environment != "wsl":
+            return
+        from .. import wsl_readiness
+
+        self.wsl_readiness = {}
+        agent = self.registry.agents.get("bioinfo-agent")
+        if agent is None:
+            return
+        adapter = get_adapter(Engine.claude_code, self.s)
+        ctx = RunContext(task=Task(agent_id=agent.id, prompt=""), agent=agent, workdir=self.ws_root,
+                         settings=self.s, mcp_servers=[], env={}, emit=lambda *_: None, prompt="")
+        env = adapter.staff_env(ctx)
+        try:
+            directories = [str(self.ws_root / p) if not Path(p).is_absolute() else p
+                           for p in adapter._plugin_dirs(ctx, env)]
+            self.wsl_readiness = wsl_readiness.probe(directories, env, self.s.engines.claude_code.bin)
+        except (OSError, ValueError):
+            pass  # no positive facts: gateway keeps the native worker
 
     def capabilities(self) -> dict:
         external_hpc = any("labhq_hpc" in a.get("mcp", []) for a in self.registry.roster())
         capabilities = {"scheduler": self.s.hpc.scheduler,
+                        "runtime_env": ("wsl" if self.s.runner.environment == "wsl" else
+                                        "windows" if sys.platform == "win32" else "linux"),
+                        "workspace_root": str(self.s.path(self.s.runner.workspace_root)),
                         "compute_backends": ["local CLI"] +
                                             ([self.s.hpc.scheduler] if self.s.hpc.scheduler != "none" else []) +
                                             (["external labhq_hpc MCP"] if external_hpc else []),
@@ -408,9 +844,18 @@ class Runner:
                         "engine_cli_versions": dict(self.engine_versions or {}),
                         "platform": sys.platform,
                         "environment": {key: os.environ[key] for key in LOGIN_PATH_ENV if os.environ.get(key)}}
+        # The runner registers the AlphaGenome tools, so it is the one that knows whether they exist: the key file on its
+        # account and the client in its Python. Only the fact travels; the gateway never looks for the key (#1200).
+        try:
+            from ..tools import annot_keys, annot_regulatory
+            capabilities["alphagenome_ready"] = bool(annot_keys.read_key(self.s)) and annot_regulatory.alphagenome_client_available()
+        except Exception:  # noqa: BLE001 - a probe that cannot run says "not ready", never blocks the registration
+            capabilities["alphagenome_ready"] = False
         local_software = getattr(self, "local_software", None)
         if local_software is not None:
             capabilities["local_software"] = local_software
+        if self.s.runner.environment == "wsl":
+            capabilities["wsl_readiness"] = dict(getattr(self, "wsl_readiness", {}))
         return capabilities
 
     def hello(self) -> dict:
@@ -422,49 +867,169 @@ class Runner:
     async def _on_message(self, msg: dict) -> None:
         typ = msg.get("type")
         if typ == "task.dispatch":
-            task = Task.model_validate(msg["task"])
-            prior = self.store.get("accepted_task", task.id)
-            if prior is None:
-                self.store.put("accepted_task", task.id,
-                               {"state": "running", "task": task.model_dump(mode="json")})
-            self.send({"type": "task.accepted", "task_id": task.id, "request_id": task.request_id})
-            if prior is None:
-                self.tasks[task.id] = asyncio.create_task(self._run_guarded(task))
-            elif prior.get("state") == "running" and task.id not in self.tasks:
-                has_result = any(e.get("type") == "task.result" and e.get("task_id") == task.id
-                                 for e in self.store.pending())
-                if not has_result:
-                    self.send({"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
-                                "request_id": task.request_id,
-                                "data": self._interrupted_result(task.id, task.agent_id).model_dump(mode="json")})
-                    self.store.put("accepted_task", task.id, {"state": "finished"})
+            done = asyncio.get_running_loop().create_future()
+            self._dispatches.add(done)  # Before the first await, including acceptance already on the writer lane.
+            try:
+                task = Task.model_validate(msg["task"])
+                prior = self.store.get("accepted_task", task.id)
+                if prior is None and self.store.get("cancelled_task", task.id) is not None:
+                    # Its cancel arrived first (reconnect flush overtook this dispatch): never start it, answer it.
+                    result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="cancelled",
+                                        error_kind="cancelled", cost_usd=0.0, cost_known=True,
+                                        cleanup_evidence={
+                                            "status": "not_started", "reason": "cancelled_before_dispatch",
+                                            "active_processes_measured": False})
+                    await self._send_batch([
+                        ({"type": "task.accepted", "task_id": task.id, "request_id": task.request_id},
+                         [("accepted_task", task.id, {"state": "finished"})], []),
+                        ({"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
+                          "request_id": task.request_id, "data": result.model_dump(mode="json")}, [], [])])
+                    await self.store.adelete("cancelled_task", task.id)
+                    return
+                await self._send_durably(
+                    {"type": "task.accepted", "task_id": task.id, "request_id": task.request_id},
+                    before=(("accepted_task", task.id, {"state": "running", "task": task.model_dump(mode="json")})
+                            if prior is None else None))
+                # Acceptance is durable (and may yield): check shutdown again before starting any staff work.
+                if prior is None and not self._stopping:
+                    self.tasks[task.id] = asyncio.create_task(self._run_guarded(task))
+                elif (prior is None or prior.get("state") == "running") and task.id not in self.tasks:
+                    has_result = any(e.get("type") == "task.result" and e.get("task_id") == task.id
+                                     for e in self.store.pending())
+                    if not has_result:
+                        result = (self._shutdown_result(TaskResult(task_id=task.id, agent_id=task.agent_id,
+                                      ok=False, error="runner stopping: task not started"), cancelled=True)
+                                  if self._stopping else self._interrupted_result(task.id, task.agent_id))
+                        await self._send_durably(
+                            {"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
+                             "request_id": task.request_id,
+                             "data": result.model_dump(mode="json")},
+                            after=("accepted_task", task.id, {"state": "finished"}))
+            finally:
+                self._dispatches.discard(done)
+                done.set_result(None)
         elif typ == "task.cancel":
-            t = self.tasks.get(msg.get("task_id", ""))
+            cancel_id = str(msg.get("task_id") or "")
+            t = self.tasks.get(cancel_id)
             if t:
                 t.cancel()
+            elif cancel_id and self.store.get("accepted_task", cancel_id) is None:
+                await self._remember_cancel(cancel_id)  # not held, not seen: its dispatch may still arrive
+            await self._cancel_local_jobs(cancel_id)
+        elif typ == "task.jobs_cancel":  # the step is parked on its jobs and its request was cancelled (#675)
+            tid = str(msg.get("task_id") or "")
+            if await self._cancel_local_jobs(tid):
+                self.send({"type": "task.jobs_cancelled", "task_id": tid})  # durable: the gateway stops resending on it
         elif typ == "task.control":
             await self._on_control(msg)
+        elif typ == "approval.attachment":
+            ok, note = await self._store_approval_attachment(msg)
+            await self.asend({"type": "approval.attachment.ack", "id": msg.get("id"),
+                              "paper_index": msg.get("paper_index"), "transfer_id": msg.get("transfer_id"),
+                              "ok": ok, "note": note})
         elif typ == "approval.resolved":
-            if self.broker.resolve(msg["id"], bool(msg.get("approved")), msg.get("note", "")):
+            if self.broker.resolve(msg["id"], bool(msg.get("approved")), msg.get("note", ""),
+                                   **({'choice': msg['choice']} if msg.get('choice') else {})):
                 task_id, agent_id = self.approval_tasks.pop(msg["id"], (None, None))
                 run = self.tasks.get(task_id or "")
                 if task_id and not (run and run.done()):  # an answer after the task ended must not revive it
                     await self.emit(Event(type="agent.status", task_id=task_id, agent_id=agent_id,
                                           request_id=self.task_req.get(task_id), data={"state": "working"}))
-            self.send({"type": "approval.ack", "id": msg["id"]})
+            await self.asend({"type": "approval.ack", "id": msg["id"]})
+        elif typ == "restricted.resolved":
+            self.broker.resolve_restricted(str(msg.get("id") or ""), msg)
         elif typ == "ask.resolved":
             self.broker.resolve_ask(msg["id"], msg.get("answer") or {})
-            self.send({"type": "ask.ack", "id": msg["id"]})
+            await self.asend({"type": "ask.ack", "id": msg["id"]})
         elif typ == "runner.ack":
-            self.store.ack(int(msg["runner_seq"]))
+            self._ack_nowait(int(msg["runner_seq"]))
+            await self._ack_drain()  # a caller that waits for the ack gets it durable, as before
         elif typ == "registry.reload":
             self.registry.load()
+            await asyncio.to_thread(self._refresh_wsl_readiness)
             self._send_roster()
         elif typ == "recruit.start":
-            asyncio.create_task(self._recruit(msg))
+            if paper2agent.enabled(self.s):
+                asyncio.create_task(self._recruit(msg))
+            else:
+                await self._recruit(msg)  # send the refusal without creating a background conversion
         elif typ == "contract.update":
-            self._contract_update(msg)
-            self._send_roster()
+            await self._acontract_update(msg)
+
+    async def _store_approval_attachment(self, msg: dict) -> tuple[bool, str]:
+        """Write only the PDF filename already fixed by this pending card, inside its live task workspace."""
+        approval_id = str(msg.get("id") or "")
+        req = self.broker.pending_requests.get(approval_id)
+        task_id, _agent_id = self.approval_tasks.get(approval_id, (None, None))
+        workspace = self.workspaces.get(task_id or "")
+        papers = req.detail.get("papers") if req and isinstance(req.detail, dict) else None
+        index = msg.get("paper_index")
+        if req is None or req.kind != "literature_pdf" or workspace is None or not isinstance(papers, list):
+            return False, "PDF 요청 카드의 실행 작업을 찾지 못했습니다"
+        if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(papers):
+            return False, "논문 번호가 카드와 맞지 않습니다"
+        relative = str((papers[index] or {}).get("pdf_file") or "") if isinstance(papers[index], dict) else ""
+        path = Path(relative)
+        if (path.is_absolute() or path.suffix.lower() != ".pdf" or
+                path.parts[:3] != (".tmp", "literature", "inbox") or len(path.parts) != 4):
+            return False, "PDF 저장 경로가 요청 안 inbox가 아닙니다"
+        try:
+            data = base64.b64decode(str(msg.get("content_b64") or ""), validate=True)
+        except (ValueError, TypeError):
+            return False, "PDF 전송값을 읽지 못했습니다"
+        maximum = int(self.s.literature.pdf_max_mb * 1024 * 1024)
+        if not data.startswith(b"%PDF-") or not 5 <= len(data) <= maximum:
+            return False, "PDF 형식 또는 크기가 허용 범위와 맞지 않습니다"
+        try:
+            await awrite_owned_bytes(workspace.dir, relative, data)
+        except OwnedPathError:
+            return False, "PDF를 요청 안 inbox에 안전하게 쓰지 못했습니다"
+        return True, "PDF를 요청 안 inbox에 저장했습니다"
+
+    async def _breaker_stage(self, task_id: str, agent_id: str, request_id: str | None, breaker: Breaker, stage: str,
+                             hooked: bool) -> None:
+        """Enforce one stage of the runaway breaker and say what really happened (#59). Never fails the run."""
+        hard_stop = self.s.runner.breaker_hard_stop
+        # What really happened, per stage: a warn only tells the PI and a quiet warn that cleared is a release; only
+        # constrain and stop enforce anything, and they overwrite this below (#1030).
+        how = {"warn": "notice", "normal": "released"}.get(stage, "applied")
+        halted = None
+        try:
+            if stage == "constrain":
+                if hooked:
+                    halted = await self.controls.apply({"task_id": task_id, "action": "constrain"})
+                else:
+                    how = "unsupported"  # no hook on this engine: nothing was restricted, so never report it as done
+            elif stage == "stop":
+                if hard_stop:
+                    halted = await self.controls.apply({"task_id": task_id, "action": "halt"})
+                    how = "halt" if halted else "failed"
+                else:
+                    how = "off"
+        except Exception:
+            log.warning("task %s breaker stage %s not applied", task_id, stage, exc_info=True)
+            how = "failed"
+        ladder = self.breakers.get(task_id)
+        record = breaker.stage_record(stage, how, hard_stop=hard_stop, episode=ladder.episode_id if ladder else None)
+        base = dict(task_id=task_id, agent_id=agent_id, request_id=request_id)
+        await self.emit(Event(type="agent.breaker", data=record, **base))
+        await self.emit(Event(type="agent.log", data={"level": "alert", "text": stage_text(record)}, **base))
+        if halted:  # the staff sheet reads the restriction and a breaker halt from agent.control, like the PI's own
+            await self.emit(Event(type="agent.control", data={**halted, "source": "breaker"}, **base))
+
+    async def _announce_breaker_release(self, task_id: str, command_id: str = "", *, changed: bool = True,
+                                        enforcement: str = "released") -> None:
+        """Say the PI lifted the restriction (the ladder was already reset by ``_on_control``). With a ``command_id``
+        this is also the acknowledgement the gateway waits for: ``released`` (applied now or by an earlier send of the
+        same command) or ``stale`` (the command named an earlier restriction and was not applied)."""
+        ladder = self.breakers.get(task_id)
+        record = {"stage": ladder.policy.stage if ladder else "normal", "enforcement": enforcement, "mode": "enforce",
+                  "signal": None, **({"command_id": command_id} if command_id else {}),
+                  **({"episode": ladder.episode_id} if ladder else {})}
+        base = dict(task_id=task_id, agent_id=self.controls.agent_of(task_id), request_id=self.task_req.get(task_id))
+        await self.emit(Event(type="agent.breaker", data=record, **base))
+        if changed and enforcement == "released":
+            await self.emit(Event(type="agent.log", data={"level": "info", "text": stage_text(record)}, **base))
 
     CONTROL_RETRY_S = (0.2, 1.0)  # waits before the second and third attempt; then the gateway's resend takes over
 
@@ -476,6 +1041,19 @@ class Runner:
         base = dict(task_id=tid, agent_id=self.controls.agent_of(tid) or msg.get("agent_id"),
                     request_id=self.task_req.get(tid) or msg.get("request_id"))
         error: Exception | None = None
+        # Reset the ladder before the hook is released: a tool event arriving meanwhile must not climb from constrain to
+        # stop and halt the task the PI is freeing (PR #995 review).
+        ladder = self.breakers.get(tid) if msg.get("action") == "release_constraint" else None
+        command = str(msg.get("command_id") or "")
+        if ladder is not None and command:
+            if command == ladder.last_command:  # a resend of a command already applied: nothing changes, only re-ack
+                await self._announce_breaker_release(tid, command, changed=False)
+                return
+            episode = msg.get("episode")
+            if isinstance(episode, str) and episode != ladder.episode_id:  # meant for an earlier restriction or run
+                await self._announce_breaker_release(tid, command, changed=False, enforcement="stale")
+                return
+        released = bool(ladder and ladder.release())
         for wait in (0.0, *self.CONTROL_RETRY_S):
             if wait:
                 await asyncio.sleep(wait)
@@ -490,12 +1068,18 @@ class Runner:
             reason = "unknown task" if error is None else f"not applied: {type(error).__name__}"
             if error is not None:
                 log.warning("task %s control %s not applied: %s", tid, msg.get("action"), error)
-            self.send({"type": "control.nack", "task_id": tid, "action": msg.get("action"),
-                       "steer_id": (msg.get("steer") or {}).get("id") if isinstance(msg.get("steer"), dict) else None,
-                       "reason": reason})
+            await self.asend({"type": "control.nack", "task_id": tid, "action": msg.get("action"),
+                              "steer_id": ((msg.get("steer") or {}).get("id")
+                                           if isinstance(msg.get("steer"), dict) else None),
+                              "reason": reason})
             return
         base["agent_id"] = self.controls.agent_of(tid) or base["agent_id"]
         await self.emit(Event(type="agent.control", data=summary, **base))
+        if ladder is not None and command:
+            ladder.last_command = command
+            await self._announce_breaker_release(tid, command, changed=released)
+        elif released:
+            await self._announce_breaker_release(tid)
         note = self._control_note(summary)
         if note:
             await self.emit(Event(type="agent.log", data={"level": "info", "text": note}, **base))
@@ -523,25 +1107,100 @@ class Runner:
                     "멈춤을 받았어요. 멈추면 따로 알립니다")
         return None
 
-    def _contract_update(self, msg: dict) -> None:
+    async def _acontract_update(self, msg: dict) -> None:
+        # Own the payload before yielding. Serialize snapshots through publication, including when the receiver
+        # is cancelled repeatedly: the next update must see the committed version, never the pre-write object.
+        msg = copy.deepcopy(msg)
+        if msg.get("action") != "release" and not paper2agent.enabled(self.s):
+            log.warning("contract update refused: recruit.enabled=false")
+            self._send_roster()
+            return
+        async with self._contract_lock:
+            # Recruitment publishes its new spec on the loop before its FILES job completes. Observe those earlier
+            # publications, then snapshot AND submit without yielding so a later hire cannot overtake this update.
+            await durable.run(durable.FILES, lambda: None)
+            staged = copy.copy(self)
+            staged.registry = copy.copy(self.registry)
+            previous = dict(self.registry.agents)
+            staged.registry.agents = {key: spec.model_copy(deep=True)
+                                      for key, spec in self.registry.agents.items()}
+            staged.registry.paths = dict(self.registry.paths)
+            loop = asyncio.get_running_loop()
+            published = loop.create_future()
+
+            def publish(spec: AgentSpec | None) -> None:
+                try:
+                    agent_id = spec.id if msg.get("action") == "rehire" and spec is not None else msg.get("agent_id")
+                    # A synchronous plan rehire can wait behind this job on the loop, publish a newer object,
+                    # then return before this callback is serviced. Its completed write supersedes this snapshot.
+                    if self.registry.agents.get(agent_id) is not previous.get(agent_id):
+                        self._send_roster()
+                        published.set_result(None)
+                        return
+                    # Only publish the affected entry; unrelated recruitment may have finished during the write.
+                    if agent_id in staged.registry.agents:
+                        self.registry.agents[agent_id] = staged.registry.agents[agent_id]
+                        self.registry.paths[agent_id] = staged.registry.paths[agent_id]
+                    elif agent_id in self.registry.agents and msg.get("action") == "release":
+                        self.registry.agents.pop(agent_id, None)
+                        self.registry.paths.pop(agent_id, None)
+                    self._send_roster()
+                except BaseException as exc:
+                    published.set_exception(exc)
+                else:
+                    published.set_result(spec)
+
+            def job() -> None:
+                spec = staged._contract_update(msg)
+                # Match Registry.asave_contract: publication is scheduled by the FIFO writer before it advances
+                # to a later hire, rather than by an awaiting task that may resume after that hire's publication.
+                loop.call_soon_threadsafe(publish, spec)
+
+            write = asyncio.wrap_future(durable.submit(durable.FILES, job))
+
+            async def commit() -> None:
+                await write
+                spec = await published
+                if msg.get("action") == "rehire" and spec is not None and spec.contract:
+                    changed = spec.contract.verification.get("rehire_changed")
+                    if changed:
+                        await self.emit(Event(type="contract.warning", agent_id=spec.id,
+                                              data={"agent_id": spec.id, "changed": changed}))
+
+            pending = asyncio.create_task(commit())
+            cancelled = None
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError as exc:
+                    cancelled = exc
+            pending.result()  # A storage error takes precedence over cancellation; never announce completion.
+            if cancelled is not None:
+                raise cancelled
+
+    def _contract_update(self, msg: dict) -> AgentSpec | None:
+        if msg.get("action") != "release" and not paper2agent.enabled(self.s):
+            log.warning("contract update refused: recruit.enabled=false")
+            return
         action, days = msg.get("action"), float(msg.get("days") or self.s.recruit.default_ttl_days)
         if action == "extend":
-            self.registry.extend(msg["agent_id"], days)
+            return self.registry.extend(msg["agent_id"], days)
         elif action == "release":
             self.registry.release(msg["agent_id"])
         elif action == "activate":
-            self.registry.activate(msg["agent_id"])
+            return self.registry.activate(msg["agent_id"])
         elif action == "rehire":
-            spec = self.registry.rehire(msg["slug"], days)
-            changed = spec.contract.verification.get("rehire_changed") if spec.contract else None
-            if changed:  # #424: the PI sees it in the feed, not only in the runner log
-                asyncio.get_running_loop().create_task(self.emit(Event(
-                    type="contract.warning", agent_id=spec.id, data={"agent_id": spec.id, "changed": changed})))
+            return self.registry.rehire(msg["slug"], days)
 
     async def _recruit(self, msg: dict) -> None:
+        if not paper2agent.enabled(self.s):
+            await self.emit(Event(type="recruit.failed", request_id=msg.get("request_id"),
+                                  data={"error": "recruitment is disabled (recruit.enabled=false)"}))
+            return
         from ..recruit.paper2agent import Recruitment
 
         try:
+            paper2agent.require_enabled(self.s)
             await Recruitment(self, msg).run()
         except Exception as e:
             log.exception("recruitment failed")
@@ -549,21 +1208,110 @@ class Runner:
         self._send_roster()
 
     # ---------------- task execution ----------------
+    def _bind_recruitment_conversion(self, parent_id: str, child: Task) -> None:
+        if (not isinstance(parent_id, str) or not parent_id or parent_id in self._recruitment_conversions
+                or child.id == parent_id or not child.request_id
+                or child.id in self.tasks or child.id in self._result_queued
+                or self.store.get("accepted_task", child.id) is not None
+                or any(e.get("task_id") == child.id for e in self.store.pending())):
+            raise ValueError("recruitment conversion identity is already used or missing")
+        self._recruitment_conversions[parent_id] = {
+            "task_id": child.id, "request_id": child.request_id, "agent_id": child.agent_id}
+
+    async def _recruitment_cost_fields(self, task: Task) -> dict:
+        """A finished receipt follows the nested result's durable outbox write, even when its waiter was cancelled.
+
+        The FIFO barrier runs behind that job; a Python return or `_result_queued` hint is not a commit receipt.
+        ACK may already have removed the outbox event, but its finished state row remains. No dollars are copied.
+        """
+        if not self.s.policy.budget.reserve_before_dispatch or task.meta.get("kind") != "plan_recruit":
+            return {}
+        binding = self._recruitment_conversions.get(task.id)
+        if binding is None:
+            return {}  # No nested dispatch was registered; callers preserve their ordinary result semantics.
+        unknown = {"cost_usd": None, "cost_known": False}
+        if (not isinstance(binding, dict) or set(binding) != {"task_id", "request_id", "agent_id"}
+                or not isinstance(binding["task_id"], str) or not binding["task_id"]
+                or binding["task_id"] == task.id or binding["request_id"] != task.request_id
+                or binding["agent_id"] != task.agent_id):
+            return unknown
+        expected = dict(binding)
+        try:
+            await durable.run(self.store.lane, lambda: None)
+            receipt = self.store.get("accepted_task", expected["task_id"])
+        except Exception:
+            return unknown
+        if self._recruitment_conversions.get(task.id) is not binding or binding != expected:
+            return unknown
+        return {"cost_usd": 0, "cost_known": True} if receipt == {"state": "finished"} else unknown
+
     async def _run_guarded(self, task: Task) -> None:
         try:
             await self.run_task(task)
-        except BaseException as e:  # cancelled or crashed: the gateway must still get a result
+        except BaseException as e:
+            self.breakers.pop(task.id, None)  # a crash or cancel skips emit_final
+            # cancelled or crashed: the gateway must still get a result
             self.event_buffers.pop(task.id, None)
-            err = "cancelled" if isinstance(e, asyncio.CancelledError) else f"{type(e).__name__}: {e}"
-            if not isinstance(e, asyncio.CancelledError):
+            cancelled = isinstance(e, asyncio.CancelledError)
+            if not cancelled:
                 log.exception("task %s crashed", task.id)
-            res = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err)
+            if task.id in self._result_queued:
+                # The real result is already on its way and commits even though this task was cancelled while it
+                # waited. A second, "cancelled" one would overwrite it at the gateway (#606).
+                if cancelled:
+                    raise
+                return
+            err = "cancelled" if cancelled else f"{type(e).__name__}: {e}"
+            # The adapter reported what it saw of its wrapper's end before the cancellation reached here; a run that
+            # never got that far has no observation, so it stays UNKNOWN (#863).
+            cleanup = self._cleanup_reports.pop(task.id, None) or {
+                "status": "UNKNOWN", "reason": "no_runner_observation", "active_processes_measured": False}
+            interrupted = None
+            try:
+                costs = await self._recruitment_cost_fields(task)
+            except asyncio.CancelledError as again:
+                # A second cancel can interrupt the receipt read. Still send conservative UNKNOWN, then preserve
+                # cancellation; the queued barrier never mutates the binding or manufactures a finished receipt.
+                costs, interrupted = {"cost_usd": None, "cost_known": False}, again
+            # A run cancelled after its work folder was made still reports the folder: the gateway tells "cancelled
+            # before any folder existed" (nothing to bundle) from a folder whose record was lost (#1212).
+            made = self.__dict__.get("workspaces", {}).get(task.id)
+            folder = {"workdir": str(made.dir), "workdir_id": made.dir.name} if made is not None else {}
+            if cancelled and made is not None:
+                try:
+                    paths, note = await asyncio.to_thread(
+                        made.scan_outputs, self._zones(), self.s.runner.reference_scan_max_entries,
+                        self.s.runner.reference_scan_max_depth)
+                    folder["unreported_outputs"] = paths
+                    if note:
+                        folder["step_warnings"] = [note]
+                except asyncio.CancelledError as again:
+                    interrupted = again
+                except Exception:
+                    log.exception("could not scan cancelled task outputs for %s", task.id)
+                    folder["step_warnings"] = ["Could not scan cancelled task outputs"]
+            res = self._shutdown_result(
+                TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=err, cleanup_evidence=cleanup,
+                           **folder, **costs),
+                cancelled=cancelled)
             base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
-            await self.emit(Event(type="agent.status", data={"state": "error", "error": short(err, 200)}, **base))
-            await self.emit(Event(type="task.result", data={**res.model_dump(mode="json"),
-                                                            "control": self.controls.finish(task.id)}, **base))
-            if isinstance(e, asyncio.CancelledError):
+            # One unit: a second cancel arriving while this commits cannot leave the status without the result.
+            await self.emit_all([
+                Event(type="agent.status", data={"state": "error", "error": short(err, 200)}, **base),
+                Event(type="task.result", data={**res.model_dump(mode="json"),
+                                                "control": self.controls.finish(task.id)}, **base)])
+            if interrupted is not None:
+                raise interrupted
+            if cancelled:
                 raise
+        finally:
+            self.__dict__.get("_env_grants", {}).pop(task.id, None)  # the run is over: its grant goes with it
+            watcher = self.__dict__.get("_disk_watchers", {}).pop(task.id, None)
+            if watcher is not None:
+                watcher.cancel()
+            self._recruitment_conversions.pop(task.id, None)
+            self._result_queued.discard(task.id)  # the run is over: nothing left to guard
+            self._cleanup_reports.pop(task.id, None)
 
     def _resolve_agent(self, task: Task) -> AgentSpec:
         agent = self.registry.get(task.agent_id)
@@ -580,6 +1328,19 @@ class Runner:
             agent = AgentSpec.model_validate({**agent.model_dump(), **identity, **limits})
         if self.s.runner.force_engine:
             agent = agent.model_copy(update={"engine": Engine(self.s.runner.force_engine)})
+        # Last, so the tier means a model on the engine the agent really runs on: an override, a request identity or
+        # a forced engine that moved it has already been applied, and any model they named is kept (#625).
+        # A plan step's own tier (#625, step 2) is a decision of the approved plan, already capped by the gateway at
+        # the staff member's declared tier, so it comes before the member's model: only a lower tier is ever sent.
+        step_tier = task.meta.get("model_tier")
+        if step_tier in ("fast", "balanced", "reasoning"):
+            step_model = self.s.model_tiers.model_for(step_tier, agent.engine.value)
+            if step_model:
+                agent = agent.model_copy(update={"model": step_model, "model_tier": step_tier})
+        if agent.model is None and agent.model_tier:
+            tier_model = self.s.model_tiers.model_for(agent.model_tier, agent.engine.value)
+            if tier_model:
+                agent = agent.model_copy(update={"model": tier_model})
         return agent
 
     def _mcp_servers(self, agent: AgentSpec, env: dict[str, str], allow_ask: bool = True) -> list[McpServerSpec]:
@@ -595,10 +1356,22 @@ class Runner:
             servers.append(McpServerSpec(name="labhq_hpc", command=sys.executable,
                                          args=["-m", "labhq.tools.hpc_mcp"], env=env,
                                          timeout_s=timeout_s))
+        # Local jobs the runner owns (#675); no scheduler needed. Claude staff only: the runner refuses the call for any
+        # other engine, so mounting it there would offer a tool that always fails (#1003).
+        if "job" in agent.builtin_mcp and agent.engine == Engine.claude_code:
+            servers.append(McpServerSpec(name="labhq_job", command=sys.executable,
+                                         args=["-m", "labhq.tools.local_job_mcp"], env=env, timeout_s=timeout_s))
         if "annot" in agent.builtin_mcp:
             # Read-only public lookups: no per-call approval, also for variants from restricted zones (PI 2026-10-06).
+            # annot_tools limits which of its tools the server offers (#1200): the server, not each engine, enforces it.
+            annot_env = {**env, "LABHQ_ANNOT_TOOLS": "*" if agent.annot_tools is None else ",".join(agent.annot_tools)}
             servers.append(McpServerSpec(name="labhq_annot", command=sys.executable,
-                                         args=["-m", "labhq.tools.annot_mcp"], env=env,
+                                         args=["-m", "labhq.tools.annot_mcp"], env=annot_env,
+                                         auto_approve=True, timeout_s=literature_mcp_timeout_s(self.s)))
+        if "wiki" in agent.builtin_mcp and self._wiki_tool_ready():
+            # Read-only search over the PI's own notes; every call is logged to outputs/wiki_queries.jsonl.
+            servers.append(McpServerSpec(name="labhq_wiki", command=sys.executable,
+                                         args=["-m", "labhq.tools.wiki_mcp"], env=env,
                                          auto_approve=True, timeout_s=timeout_s))
         if allow_ask and agent.engine != Engine.antigravity:
             servers.append(McpServerSpec(name="labhq_ask", command=sys.executable,
@@ -612,13 +1385,19 @@ class Runner:
         if not task.resume_session_id:
             return None
         paths = set(self.ws_root.glob("*/*/manifest.json"))
+        paths.update(self.ws_root.glob("hpc/*/steps/*/manifest.json"))
         paths.update(workspace.dir / "manifest.json" for workspace in self.workspaces.values())
         paths.add(ws.dir / "manifest.json")
         latest, latest_at = None, -1.0
         for path in sorted(paths):
             try:  # a manifest.json that is a link is an agent's, not labhq's (#165)
-                manifest = json.loads(read_owned(path.parent, path.name) or "")
-            except ValueError:
+                with contextlib.ExitStack() as stack:
+                    held = stack.enter_context(HeldDir.hold(self.ws_root))
+                    for part in path.parent.relative_to(self.ws_root).parts:
+                        held = stack.enter_context(held.child(part))
+                    with os.fdopen(held.open_read_file(path.name), "rb") as opened:
+                        manifest = json.loads(opened.read(8 * 1024 * 1024 + 1))
+            except (OSError, ValueError):
                 continue
             runs = manifest.get("runs", {}) if isinstance(manifest, dict) else {}
             if not isinstance(runs, dict):
@@ -629,6 +1408,13 @@ class Runner:
                         or run.get("runner_id", self.s.runner.id) != self.s.runner.id
                         or run.get("engine") != agent.engine.value):
                     continue
+                if (task.meta.get("execution_location") or {}).get("mode") == "hpc":
+                    source = manifest.get("task") or {}
+                    if (run.get("request_id", source.get("request_id")) != task.request_id
+                            or (run.get("step_id") or (source.get("meta") or {}).get("step_id") or "direct") !=
+                               (task.meta.get("step_id") or "direct")
+                            or run.get("hpc_revision", 0) != task.meta.get("revision", 0)):
+                        continue
                 timestamp = max((value for key in ("accounting_at", "ended_at", "started_at")
                                  if type(value := run.get(key)) in (int, float)), default=0)
                 if timestamp >= latest_at:
@@ -637,6 +1423,9 @@ class Runner:
 
     def _zones(self) -> list[Path]:
         return restricted_zones(self.s)
+
+    def _internal_zones(self) -> list[Path]:
+        return resolved_zones(self.s, {"internal"})
 
     def _upstream_refusal(self, directory: Path, zones: list[Path]) -> str | None:
         """Why an earlier step's workspace is not opened to this step, or None (#132).
@@ -658,8 +1447,13 @@ class Runner:
 
     def _consult_workspace_input(
         self, task: Task,
-    ) -> tuple[tuple[Path, tuple[str, ...], list[tuple[str, tuple[str, ...]]]] | None, str | None]:
-        """Validate declared runner-local refs; staging reopens every component through held folders (#86)."""
+    ) -> tuple[tuple[Path, tuple[str, ...], list[tuple[str, tuple[str, ...]]], list[tuple[str, str]]] | None,
+               str | None]:
+        """Validate declared runner-local refs; staging reopens every component through held folders (#86).
+
+        A ref that escapes the folder, goes through a link or is a restricted file refuses the consultation. A ref
+        that merely names nothing usable (no such file, a sentence instead of a path) is left out with its
+        reason, so one wrong entry does not end the whole request (#1043)."""
         raw_source = task.meta.get("source_workdir")
         refs = task.meta.get("consult_refs") or []
         if task.meta.get("kind") != "consult" or not refs:
@@ -674,25 +1468,36 @@ class Runner:
                 raise ValueError
             source_parts = resolved_source.relative_to(workspace_root).parts
             resolved: list[tuple[str, tuple[str, ...]]] = []
+            left_out: list[tuple[str, str]] = []
             for raw_ref in refs:
                 normalized = str(raw_ref).replace("\\", "/")
                 if (not normalized or normalized.startswith(("/", "../")) or "/../" in normalized
                         or normalized.endswith("/..") or re.match(r"^[A-Za-z]:", normalized)):
                     raise ValueError
+                if any(re.match(r"^[A-Za-z]:", part) for part in Path(normalized).parts):
+                    raise ValueError  # a drive-qualified part anywhere, also behind a missing folder
                 current = source
+                missing = False
                 for part in Path(normalized).parts:
                     current /= part
-                    if not os.path.lexists(current) or is_link(current):
+                    if not os.path.lexists(current):
+                        missing = True
+                        break
+                    if is_link(current):
                         raise ValueError
-                if (not current.resolve(strict=True).is_relative_to(resolved_source)
-                        or not current.is_file()):
+                if missing:
+                    left_out.append((str(raw_ref), "원래 작업 폴더에 그런 파일이 없음"))
+                    continue
+                if not current.resolve(strict=True).is_relative_to(resolved_source):
+                    raise ValueError
+                if not current.is_file():
                     raise ValueError
                 if task.agent_id == "facilities" and overlaps_zone(current.resolve(strict=True), self._zones()):
                     raise ValueError
                 resolved.append((normalized, tuple(Path(normalized).parts)))
         except (OSError, RuntimeError, ValueError):
             return None, "consult refs는 이 runner의 원래 작업 폴더 안에 있는 링크 아닌 파일이어야 합니다"
-        return (workspace_root, source_parts, resolved), None
+        return (workspace_root, source_parts, resolved, left_out), None
 
     @staticmethod
     def _open_consult_ref(root: Path, source_parts: tuple[str, ...], ref_parts: tuple[str, ...]) -> int:
@@ -736,7 +1541,7 @@ class Runner:
             }})
         if error or inputs is None:
             return task, error
-        workspace_root, source_parts, sources = inputs
+        workspace_root, source_parts, sources, left_out = inputs
         safe_id = "consult-" + re.sub(r"[^A-Za-z0-9_.-]", "_", task.id)[:80]
         relative_root = Path("refs") / safe_id
         staged_root = plain_directory(ws.dir, relative_root)
@@ -750,7 +1555,7 @@ class Runner:
 
         total = 0
         copied: dict[str, str] = {}
-        skipped: list[tuple[str, str]] = []
+        skipped: list[tuple[str, str]] = list(left_out)
         for number, (raw_ref, ref_parts) in enumerate(sources, 1):
             fd = -1
             try:
@@ -829,7 +1634,7 @@ class Runner:
         return "Saved doctor snapshot (not a live check; skip is unverified):\n" + json.dumps(safe)
 
     async def _project_links(self, directories: list[str], zones: list[Path], emit,
-                             fail_closed: bool = False) -> tuple[list[str], str | None]:
+                             fail_closed: bool = False, ask: bool = False) -> tuple[list[str], str | None]:
         """Links in a writable project folder that lead into a zone, and their aliases, for Claude deny rules (#132).
 
         The folder itself stays open: the task works there, and refusing it would stop every step of the
@@ -855,18 +1660,22 @@ class Runner:
                     more = f" 외 {len(links) - 5}개" if len(links) > 5 else ""
                     return denied, f"하위 링크가 통제 데이터 구역을 가리키거나 풀 수 없음: {names}{more}"
                 return denied, incomplete
-            key = (str(path), tuple(map(str, links)), incomplete)
+            key = (str(path), tuple(map(str, links)), incomplete, ask)
             if (links or incomplete) and key not in self.project_link_warned:
                 self.project_link_warned.add(key)
                 if links:
                     names = ", ".join(link.relative_to(path).as_posix() for link in links[:5])
+                    action = ("Claude는 그 경로를 승인 게이트로 보내고 다른 표기도 경로 판정을 거칩니다"
+                              if ask else
+                              "Claude는 그 경로를 막고 다른 표기와 셸 명령은 승인 게이트로 보냅니다")
                     await emit("agent.log", {"level": "warn", "text": (
                         f"프로젝트 폴더 {path.name}의 링크 {len(links)}개가 통제 데이터 구역으로 이어지거나 풀 수 없습니다: "
-                        f"{names}. Claude는 그 경로를 막고 다른 표기와 셸 명령은 승인 게이트로 보내지만 다른 엔진은 막지 못합니다")})
+                        f"{names}. {action}")})
                 if incomplete:
                     await emit("agent.log", {"level": "warn", "text": (
                         f"프로젝트 폴더 {path.name}의 링크를 다 확인하지 못했습니다({incomplete}). "
-                        "그 너머의 링크가 통제 구역을 가리켜도 막지 못합니다")})
+                        + ("별칭 Read는 Claude 승인 경로 판정으로 보냅니다" if ask else
+                           "그 너머의 링크가 통제 구역을 가리켜도 막지 못합니다"))})
         return denied, None
 
     def _reference_dirs(self, task: Task, writable: list[str],
@@ -949,8 +1758,8 @@ class Runner:
         if not changed:
             return result
         # Labels stand in for local paths in the error and the alert; this local manifest maps them back.
-        ws.update_run(task_id, read_only_changes=changed,
-                      read_only_roots={label: str(path) for label, path in watch.roots})
+        await ws.aupdate_run(task_id, read_only_changes=changed,
+                             read_only_roots={label: str(path) for label, path in watch.roots})
         shown = ", ".join(changed[:8]) + (f" 외 {len(changed) - 8}개" if len(changed) > 8 else "")
         await emit("agent.log", {"level": "alert", "text": (
             f"읽기 전용 실행이 파일을 바꿨습니다: {shown}. 되돌리지 않았으니 확인하세요. "
@@ -1027,8 +1836,197 @@ class Runner:
         drop()
         return False
 
+    def _producer_binding_refusal(self, task: Task, binding: Any) -> str | None:
+        """An environment step carries its own single binding: it must be this runner's, before anything runs."""
+        prefix = "runner environment producer refused: "
+        runtime = ("wsl" if self.s.runner.environment == "wsl" else
+                   "windows" if sys.platform == "win32" else "linux")
+        if not isinstance(binding, dict):
+            return prefix + "invalid binding"
+        python = {"windows": ".venv/Scripts/python.exe", "linux": ".venv/bin/python",
+                  "wsl": ".venv/bin/python"}.get(binding.get("runtime") if isinstance(binding.get("runtime"), str) else None)
+        runner_id = binding.get("runner_id")
+        if (type(binding.get("version")) is not int or binding["version"] != 1 or python is None or
+                binding.get("venv_path") != ".venv" or binding.get("python_path") != python or
+                any(not isinstance(binding.get(key), str) or not INPUT_STEP_ID.fullmatch(binding[key])
+                    or binding[key] != binding[key].rstrip(" .") for key in ("logical_step_id", "step_id")) or
+                not isinstance(runner_id, str) or not 0 < len(runner_id) <= 256):
+            return prefix + "invalid binding contract"
+        session = task.meta.get("session_runner")  # compared, never hashed: it may be any JSON value
+        if runner_id != self.s.runner.id or session != self.s.runner.id:  # a valid dispatch always names the runner
+            return prefix + "runner mismatch"
+        if binding["runtime"] != runtime:
+            return prefix + "runtime mismatch"
+        if task.meta.get("step_id") != binding["step_id"]:  # a valid producer dispatch always names its step
+            return prefix + "step mismatch"
+        return None
+
+    def _environment_refusal_reason(self, task: Task) -> str | None:
+        grants = self.__dict__.setdefault("_env_grants", {})
+        grants.pop(task.id, None)  # whatever happens below, an earlier run of this id leaves no grant behind
+        if "environment_binding" in task.meta:
+            producer = self._producer_binding_refusal(task, task.meta["environment_binding"])
+            if producer is not None:
+                return producer
+        bindings = task.meta.get("environment_bindings", [])
+        if isinstance(bindings, list) and not bindings:
+            return None
+        prefix = "runner environment inputs unavailable: "
+        if not isinstance(bindings, list):
+            return prefix + "invalid bindings"
+        steps = task.meta.get("upstream_steps")
+        artifacts = task.meta.get("upstream_artifacts")
+        if not isinstance(steps, dict) or not isinstance(artifacts, dict):
+            return prefix + "ancestor mapping missing"
+        runtime = ("wsl" if self.s.runner.environment == "wsl" else
+                   "windows" if sys.platform == "win32" else "linux")
+        for binding in bindings:
+            if not isinstance(binding, dict):
+                return prefix + "invalid binding"
+            python = {"windows": ".venv/Scripts/python.exe", "linux": ".venv/bin/python",
+                      "wsl": ".venv/bin/python"}.get(binding.get("runtime") if isinstance(binding.get("runtime"), str) else None)
+            identities = (binding.get("logical_step_id"), binding.get("step_id"))
+            runner_id = binding.get("runner_id")
+            if (type(binding.get("version")) is not int or binding["version"] != 1 or
+                    python is None or binding.get("venv_path") != ".venv" or
+                    binding.get("python_path") != python or
+                    any(not isinstance(x, str) or not INPUT_STEP_ID.fullmatch(x) or x != x.rstrip(" .")
+                        for x in identities) or not isinstance(runner_id, str) or not 0 < len(runner_id) <= 256):
+                return prefix + "invalid binding contract"
+            if binding["runner_id"] != self.s.runner.id or task.meta.get("session_runner") != self.s.runner.id:
+                return prefix + "runner mismatch"
+            if binding["runtime"] != runtime:
+                return prefix + "runtime mismatch"
+            sid = binding["step_id"]
+            artifact = artifacts.get(sid)
+            if (not isinstance(steps.get(sid), str) or not steps[sid] or
+                    not isinstance(artifact, dict) or not isinstance(artifact.get("task_id"), str) or
+                    not artifact["task_id"] or artifact.get("workdir") != steps[sid]):
+                return prefix + "ancestor mapping mismatch"
+        # Metadata alone never establishes success: the runner's own run record, the hashed manifest and the
+        # interpreter in the producer's workdir must all check out. No alias to the interpreter is created, so
+        # the result only tells why a consumer is (still) refused (#674).
+        root = getattr(self, "ws_root", None)
+        if root is None or not task.request_id:
+            return prefix + "workspace or request identity unavailable"
+        from .step_inputs import validate_runner_env
+        verified: list[dict[str, str]] = []
+        for binding in bindings:
+            sid = binding["step_id"]
+            try:
+                venv = validate_runner_env(root, steps[sid], artifacts[sid], binding, request_id=task.request_id)
+            except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
+                return prefix + "environment validation failed"
+            verified.append({"step_id": sid, "venv": str(venv),
+                             "python": str(Path(steps[sid]) / binding["python_path"])})
+        read_only = False
+        try:
+            agent = self._resolve_agent(task)
+            engine = agent.engine
+            read_only = is_read_only_task(task.meta, agent)
+        except Exception:  # noqa: BLE001 - an unknown agent is refused later; here it simply gets no grant
+            engine = None
+        if engine in ENVIRONMENT_ENGINES:
+            if read_only:  # a read-only run takes no grant, and running it on the system Python would be another result
+                return prefix + "a read-only step cannot be given the planned environment"
+            for grant in verified:
+                problem = self._environment_grant_problem(Path(grant["venv"]))
+                if problem:  # Claude would follow a link out of the venv: fail closed, no grant
+                    return prefix + f"environment folder cannot be shared read-only: {problem}"
+            for grant in verified:
+                grant["read_dir"] = engine in ENVIRONMENT_GRANT_ENGINES  # Claude opens the folder; the rest get the path
+            grants[task.id] = verified
+            return None
+        if not ENVIRONMENT_ALIAS_AVAILABLE:
+            # The validated .venv is not exposed to the consumer (no protected alias or read grant for this engine),
+            # so starting it would run without the packages the plan asked for: stay closed (#674).
+            return prefix + "environment verified but protected interpreter alias is not implemented"
+        return None
+
+    def _environment_grant_problem(self, venv: Path) -> str | None:
+        """Why a verified .venv must not be opened to Claude, or None. A package may leave a link below it that leads
+        into a controlled data zone, and `--add-dir` follows links; a listing that cannot finish is refused too (a venv
+        may link out to its base interpreter, so only zones are judged, as for a project clone)."""
+        try:
+            directory = Path(venv).resolve()
+            if not claude_rule_ready(str(directory)):  # no Edit/Write deny rule can be made (a UNC path): not read-only
+                return "no Claude write-deny rule can be made for it (a network path)"
+            zones = self._zones()
+            if overlaps_restricted(str(directory), self.s) or overlaps_zone(directory, zones):
+                return "it lies in a controlled data zone"
+            links, incomplete = zone_links(directory, zones, self.s.runner.reference_scan_max_entries * 10,
+                                           self.s.runner.reference_scan_max_depth)
+        except Exception:  # noqa: BLE001 - not scanned means not shared
+            return "it could not be scanned"
+        if links:
+            return "a link below it leads into a controlled data zone"
+        return f"its listing was incomplete ({incomplete})" if incomplete else None
+
+    def _apply_environment_grants(self, task: Task, read_dirs: list[str], *,
+                                  read_only: bool) -> tuple[list[str], dict[str, str], str]:
+        """(read dirs with the verified environments added, extra env, briefing line) for a consumer step (#674).
+
+        The grant is the folder the runner just verified, opened read-only like a reference folder (Claude denies
+        Edit/Write there); a read-only run takes none. `PYTHONDONTWRITEBYTECODE` keeps Python from writing into it.
+        Engines other than Claude get the env and the briefing line without the extra read root."""
+        grants = self.__dict__.get("_env_grants", {}).get(task.id) or []
+        if read_only or not grants:
+            return read_dirs, {}, ""
+        dirs = list(dict.fromkeys([*read_dirs, *(grant["venv"] for grant in grants if grant.get("read_dir"))]))
+        python = grants[0]["python"]
+        note = ("[Runner environment]\n" + "\n".join(
+            f"- Python with the packages the plan asked for ({grant['step_id']}): {grant['python']}" for grant in grants)
+            + "\nRun scripts with that interpreter. The folder is read-only: do not install into it.")
+        return dirs, {"LABHQ_ENV_PYTHON": python, "PYTHONDONTWRITEBYTECODE": "1"}, note
+
+    async def _refuse_unprotected_environment(self, task: Task) -> TaskResult | None:
+        error = await asyncio.to_thread(self._environment_refusal_reason, task)
+        if error is None:
+            return None
+        result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=error,
+                            cost_usd=0.0, cost_known=True)
+        base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
+        await self.emit_all([
+            Event(type="agent.status", data={"state": "error", "error": error}, **base),
+            Event(type="task.result", data=result.model_dump(mode="json"), **base)])
+        return result
+
+    async def _refuse_process_boundary(self, task: Task) -> TaskResult | None:
+        result = self.process_boundary.refusal(task)
+        if result is not None:
+            base = dict(task_id=task.id, agent_id=task.agent_id, request_id=task.request_id)
+            await self.emit_all([
+                Event(type="agent.status", data={"state": "error", "error": result.error}, **base),
+                Event(type="task.result", data=result.model_dump(mode="json"), **base)])
+        return result
+
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
+        if getattr(self, "process_boundary", None) is not None:
+            refusal = await self._refuse_process_boundary(task)
+            if refusal is not None:
+                return refusal
+        refusal = await self._refuse_unprotected_environment(task)
+        if refusal is not None:
+            return refusal
+        if paper2agent.disabled_task(self.s, task):
+            result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
+                                error="recruitment and Paper2Agent are disabled (recruit.enabled=false)")
+            await self.emit(Event(type="task.result", task_id=task.id, agent_id=task.agent_id,
+                                  request_id=task.request_id, data=result.model_dump(mode="json")))
+            return result
         from ..recruit.paper_skills import PaperSkillBuild
+
+        if self.s.runner.environment == "wsl":
+            from ..wsl_paths import message_paths, shared_path
+            task = Task.model_validate(message_paths(task.model_dump(), "wsl"))
+            shared_path(str(self.ws_root.resolve()), "wsl")
+            if workdir_override is not None:
+                workdir_override = Path(shared_path(str(workdir_override), "wsl"))
+            override = workdir_override or task.meta.get("workdir")
+            if override:
+                shared_path(str(Path(override).resolve()), "wsl")
+
+        self._result_queued.discard(task.id)  # a new run of this id
 
         if task.meta.get("kind") in {"recruit_check", "plan_recruit"}:
             from ..recruit.planning import run_task
@@ -1054,8 +2052,150 @@ class Runner:
             ws = self.workspaces.get(task.id)
             if ws is not None and task.meta.get("paper_skills"):
                 ws.clear_paper_skills()
+            if ws is not None:  # a step cut short after it staged its record: the record is still written (#1137)
+                with contextlib.suppress(Exception):
+                    await ws.aflush_run(task.id)
+
+    async def _disk_gate(self, task: Task, agent: AgentSpec, workspace_dir: Path) -> str | None:
+        """Free space of the drive this run's folder is on, when a task starts (#678): None to go on, else why not.
+
+        Below ``runner.disk_fail_free_gb`` the task waits for a PI card; approving starts it, declining or no answer does
+        not. Below the doctor's warning level it only warns. An unreadable drive never blocks. A facilities fix
+        runs regardless: clearing a full workspace is what it is for."""
+        runner = self.s.runner
+        if task.meta.get("kind") == "facilities_fix":
+            return None
+
+        async def emit(kind: str, data: dict) -> None:
+            await self.emit(Event(type=kind, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
+
+        try:
+            space = disk_space.usage(workspace_dir)
+        except (OSError, ValueError):
+            return None
+        if space.total <= 0:
+            return None
+        free_gib = space.free / disk_space.GIB
+        if runner.disk_fail_free_gb and free_gib < runner.disk_fail_free_gb:
+            summary = (f"작업 폴더 드라이브 여유 {free_gib:.1f} GiB(시작 기준 {runner.disk_fail_free_gb:g} GiB): "
+                       "그래도 이 작업을 시작할까요?")
+            await emit("agent.log", {"level": "warn", "text": f"디스크 여유가 거의 없어 PI 확인을 기다립니다: {free_gib:.1f} GiB"})
+            decision = await self.broker.request_approval(ApprovalRequest(
+                task_id=task.id, agent_id=agent.id, request_id=task.request_id, kind="disk_space", summary=summary,
+                detail={"free_gib": round(free_gib, 2), "floor_gib": runner.disk_fail_free_gb,
+                        "path": str(workspace_dir)}, timeout_s=24 * 3600))
+            if decision.get("approved"):
+                await emit("agent.log", {"level": "warn", "text": "PI가 디스크 여유가 적은 채로 시작을 승인했습니다"})
+                return None
+            return (f"작업 폴더 드라이브 여유가 {free_gib:.1f} GiB로 시작 기준 {runner.disk_fail_free_gb:g} GiB보다 적어 "
+                    "시작하지 않았습니다(PI 거절 또는 무응답). 여유를 확보하거나 작업 폴더를 다른 드라이브로 옮기세요")
+        if disk_space.low(space, runner.disk_warning_free_gb, runner.disk_warning_free_percent):
+            await emit("agent.log", {"level": "warn", "text": (
+                f"작업 폴더 드라이브 여유가 적습니다: {free_gib:.1f} GiB. 큰 다운로드 전에 확인하세요")})
+        return None
+
+    def _start_disk_watch(self, task: Task, agent: AgentSpec, workspace_dir: Path, extra_dirs=(), *,
+                          read_only: bool = False) -> None:
+        """Watch the drives this running task fills (#678): the work folder, the runner state folder,
+        ``runner.bulk_data_root`` and its writable project folders (``extra_dirs``). A read-only run writes only its own
+        workspace, so a full bulk or project drive is no reason to halt it. A facilities fix runs regardless: clearing a
+        full workspace is what it is for."""
+        runner = self.s.runner
+        if not runner.disk_watch_s or not runner.disk_fail_free_gb or task.meta.get("kind") == "facilities_fix":
+            return
+        watchers = self.__dict__.setdefault("_disk_watchers", {})
+        if task.id in watchers:
+            return
+        folders = [workspace_dir, self.s.path(runner.state_dir)]
+        if runner.bulk_data_root and not read_only:
+            folders.append(Path(os.path.expandvars(os.path.expanduser(str(self.s.path(runner.bulk_data_root))))))
+        folders.extend(Path(d) for d in extra_dirs)
+        watcher = asyncio.get_running_loop().create_task(self._disk_watch(task, agent, list(dict.fromkeys(folders))))
+        watchers[task.id] = watcher
+        watcher.add_done_callback(lambda done, tid=task.id: watchers.pop(tid, None) if watchers.get(tid) is done else None)
+
+    async def _disk_watch(self, task: Task, agent: AgentSpec, folders: list[Path]) -> None:
+        """Read the free space of ``folders`` every ``runner.disk_watch_s`` while the task is held; below
+        ``runner.disk_fail_free_gb`` halt it once, session kept, for the PI to resume. The resume starts a new turn that
+        meets ``_disk_gate`` again. An unreadable drive is skipped. Ends with the task."""
+        runner = self.s.runner
+        base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
+        while self.controls.holds(task.id):
+            await asyncio.sleep(runner.disk_watch_s)
+            if not self.controls.holds(task.id):
+                return
+            low = None
+            for folder in folders:
+                try:
+                    space = await asyncio.to_thread(disk_space.usage, folder)
+                except (OSError, ValueError):
+                    continue
+                if space.total > 0 and space.free < runner.disk_fail_free_gb * disk_space.GIB:
+                    low = (folder, space.free / disk_space.GIB)
+                    break
+            if low is None:
+                continue
+            folder, free_gib = low
+            text = (f"디스크 여유가 {free_gib:.1f} GiB로 기준 {runner.disk_fail_free_gb:g} GiB보다 적습니다"
+                    f"({Path(folder).as_posix()})")
+            halted = None
+            if runner.disk_watch_halt:
+                try:
+                    halted = await self.controls.apply({"task_id": task.id, "action": "halt"})
+                except Exception:  # noqa: BLE001 - the watch never fails the run; it tries again at the next beat
+                    log.warning("task %s disk halt not applied; trying again", task.id, exc_info=True)
+                    continue
+                if halted is None:  # the controls no longer hold the task: it ended meanwhile
+                    return
+            record = {"signal": "disk", "mode": "enforce", "stage": "stop",
+                      "enforcement": "halt" if halted else "off",
+                      "free_gib": round(free_gib, 2), "floor_gib": runner.disk_fail_free_gb,
+                      "path": Path(folder).as_posix()}
+            await self.emit(Event(type="agent.log", data={"level": "alert", "text": text}, **base))
+            if halted:
+                await self.emit(Event(type="agent.control", data={**halted, "source": "disk"}, **base))
+            await self.emit(Event(type="agent.breaker", data=record, **base))
+            return  # once per turn: a resumed turn is a new task and is checked again at its start
+
+    async def _bulk_data_hint(self, emit, zones: list) -> str:
+        """The briefing line for ``runner.bulk_data_root``, or "" when unset or the folder is not one staff may use.
+
+        The folder is outside the step folder, so a write there still goes through the usual approval; only a
+        controlled zone keeps it out of the briefing (#678)."""
+        root = self.s.runner.bulk_data_root
+        if not root:
+            return ""
+        path = Path(os.path.expandvars(os.path.expanduser(str(self.s.path(root)))))
+        try:
+            resolved = path.resolve()
+            if overlaps_zone(resolved, zones):
+                raise ValueError("controlled zone")
+        except (OSError, RuntimeError, ValueError):
+            await emit("agent.log", {"level": "warn", "text": f"runner.bulk_data_root({root})를 직원 안내에 쓰지 않았습니다: "
+                                                             "통제 구역이거나 경로를 확인할 수 없습니다"})
+            return ""
+        try:
+            free = f" (여유 {disk_space.usage(resolved).free / disk_space.GIB:.0f} GiB)"
+        except (OSError, ValueError):
+            free = ""
+        return (f"큰 원자료(수 GB 이상)는 작업 폴더가 아니라 {resolved}{free} 아래에 받으세요. "
+                "작업 폴더 밖이라 쓰기는 평소처럼 승인을 거칠 수 있습니다.")
 
     async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
+        if getattr(self, "process_boundary", None) is not None:
+            refusal = await self._refuse_process_boundary(task)
+            if refusal is not None:
+                return refusal
+        refusal = await self._refuse_unprotected_environment(task)
+        if refusal is not None:
+            return refusal
+        # Recheck after asynchronous preparation, and protect internal/direct callers too.
+        if paper2agent.disabled_task(self.s, task):
+            result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
+                                error="recruitment and Paper2Agent are disabled (recruit.enabled=false)")
+            await self.emit(Event(type="task.result", task_id=task.id, agent_id=task.agent_id,
+                                  request_id=task.request_id, data=result.model_dump(mode="json")))
+            return result
         agent = self._resolve_agent(task)
         location = task.meta.get("execution_location") or {}
         whole_hpc = (location.get("mode") == "hpc" and task.meta.get("kind") in {"step", "direct"})
@@ -1064,7 +2204,11 @@ class Runner:
                     or self.s.hpc.scheduler == "none" or "hpc" not in agent.builtin_mcp
                     or not task.request_id or not re.fullmatch(r"[A-Za-z0-9_-]+", task.request_id)):
                 raise ValueError("whole-request HPC needs a scheduler, built-in HPC worker and request id")
-            workdir_override = self.ws_root / "hpc" / task.request_id
+            step_id = task.meta.get("step_id") or "direct"
+            if (not isinstance(step_id, str) or not INPUT_STEP_ID.fullmatch(step_id)
+                    or step_id in {".", ".."} or step_id != step_id.rstrip(" .")):
+                raise ValueError("whole-request HPC needs a safe step id")
+            workdir_override = self.ws_root / "hpc" / task.request_id / "steps" / step_id
         read_only = is_read_only_task(task.meta, agent)
         refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
         # A contract hire works only once active, and staff that send data to external services never take restricted
@@ -1074,8 +2218,9 @@ class Runner:
         if refusal:  # the gateway refuses first; this holds for any other sender and after force_engine
             result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal)
             base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
-            await self.emit(Event(type="agent.status", data={"state": "error", "error": short(refusal, 200)}, **base))
-            await self.emit(Event(type="task.result", data=result.model_dump(mode="json"), **base))
+            await self.emit_all([
+                Event(type="agent.status", data={"state": "error", "error": short(refusal, 200)}, **base),
+                Event(type="task.result", data=result.model_dump(mode="json"), **base)])
             return result
         if read_only:  # an allowlist built from the staff member's identity, never the sender's overrides
             agent = read_only_profile(agent)
@@ -1086,10 +2231,26 @@ class Runner:
                             steers=task.meta.get("steers") or [], dropped=task.meta.get("steer_dropped") or 0)
         override = workdir_override or (Path(task.meta["workdir"]) if task.meta.get("workdir") else None)
         workspace_dir = Path(override) if override else self.ws_root / time.strftime("%Y-%m-%d") / f"{task.id}_{agent.id}"
-        reused = os.path.lexists(workspace_dir)
+        # #678: judged on the folder this run really uses, before the workspace is created or a run slot is held, so a
+        # full drive neither fails the directory creation first nor lets waiting cards take every slot.
+        disk_error = await self._disk_gate(task, agent, workspace_dir)
+        if disk_error:
+            result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=disk_error)
+            base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
+            await self.emit_all([
+                Event(type="agent.log", data={"level": "alert", "text": disk_error}, **base),
+                Event(type="agent.status", data={"state": "error", "error": short(disk_error, 200)}, **base),
+                Event(type="task.result", data={**result.model_dump(mode="json"),
+                                                "control": self.controls.finish(task.id)}, **base)])
+            return result
+        reused = await asyncio.to_thread(os.path.lexists, workspace_dir)  # file system work stays off the loop (#606)
+        if whole_hpc:
+            await asyncio.to_thread(self.ws_root.mkdir, parents=True, exist_ok=True)
+            if await asyncio.to_thread(plain_directory, self.ws_root, workspace_dir.relative_to(self.ws_root)) is None:
+                raise ValueError("HPC workspace path is not a plain directory")
         # Do not let TaskWorkspace create files through links left by an earlier run. Fresh workspaces keep
         # the old event ordering; reused ones are registered only after their preflight succeeds (#191).
-        ws = None if reused else TaskWorkspace(self.ws_root, task, agent, workspace_dir)
+        ws = None if reused else await _settled_thread(TaskWorkspace, self.ws_root, task, agent, workspace_dir)
         if reused:
             self.workspaces.pop(task.id, None)  # emit() must not append through the previous workspace yet
             self.event_buffers[task.id] = []  # ...but queued/working still belong in its log once it is safe
@@ -1098,23 +2259,50 @@ class Runner:
             self.task_req[task.id] = task.request_id
 
         tool_errors: list[str] = []
+        tool_calls = ToolCallCounter()
         breaker = Breaker()
+        escalation = Escalation(BreakerPolicy(hard_stop=self.s.runner.breaker_hard_stop), self.s.runner.breaker_beat_s)
+        self.breakers[task.id] = escalation
 
         async def emit(typ: str, data: dict) -> None:
+            tool_calls.observe(typ, data)
             if typ == "task.result":  # the last event: which steers were delivered, for the gateway's step (#59 ①)
                 data = {**data, "control": self.controls.finish(task.id)}
             if typ == "agent.tool_error" and task.meta.get("general_result_contract"):
                 first = str(data.get("text") or "tool failed").splitlines()[0].strip() or "tool failed"
                 tool_errors.append(short(first, 200))
             await self.emit(Event(type=typ, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
+            if typ == "task.result":
+                self.breakers.pop(task.id, None)
+            if typ == "agent.compaction":
+                breaker.reset_window()
+                if escalation.compacted():
+                    await self._announce_breaker_release(task.id)
+                await self.emit(Event(type="agent.log", task_id=task.id, agent_id=agent.id, request_id=task.request_id,
+                                      data={"level": "info", "text": "컨텍스트가 압축돼 폭주 감지를 처음부터 다시 셉니다"}))
             trip = breaker.observe(typ, data)
-            if trip:  # #59 shadow: tell the PI once per signal, keep the agent running
+            # Once restricted, a failing call may be the restriction's own denial, so only a repeat keeps climbing (#1008).
+            signalled = breaker.repeating if escalation.policy.stage in ("constrain", "stop") else breaker.active
+            stage = escalation.observe(signalled) if typ in ("agent.tool", "agent.tool_error") else None
+            if trip:  # the first crossing of a signal is the warn stage: tell the PI once, keep the agent running
                 for kind, body in (("agent.breaker", trip), ("agent.log", {"level": "alert", "text": trip_text(trip)})):
                     await self.emit(Event(type=kind, task_id=task.id, agent_id=agent.id, request_id=task.request_id,
                                           data=body))
+            if stage and (stage != "warn" or not trip):  # a first-ever warn was just announced as the trip itself
+                await self._breaker_stage(task.id, agent.id, task.request_id, breaker, stage, hooked)
+
+        async def emit_final(state: dict, result_data: dict) -> None:
+            """The closing agent.status and the task.result as one uncancellable unit (see `emit_all`)."""
+            base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
+            self.breakers.pop(task.id, None)
+            await self.emit_all([
+                Event(type="agent.status", data=state, **base),
+                Event(type="task.result", data={**result_data, "control": self.controls.finish(task.id)}, **base)])
 
         await emit("agent.status", {"state": "queued"})
-        consult = task.meta.get("kind") == "consult"
+        # PI-text translations are short, tool-less display calls: on the research slot they queued behind a running
+        # step past their 30 s timeout and were cancelled unstarted, leaving an unknown cost (#942, 9차 pi_text_20/34).
+        consult = task.meta.get("kind") in ("consult", "pi_interpretation")
         semaphore = self.consult_sem if consult else self.sem
         # Not started until the PI lets it: a pause holds it before and after it waits for a run slot, and a halt while
         # it waits parks it without starting the CLI (PR #532 review).
@@ -1135,8 +2323,7 @@ class Runner:
                 task_id=task.id, agent_id=agent.id, ok=False, error_kind="halted",
                 error="halted before the turn started", session_id=task.resume_session_id))
             await emit("agent.log", {"level": "info", "text": "시작하기 전에 멈췄어요. 받은 방향 수정은 같은 단계의 다음 turn에 남깁니다"})
-            await emit("agent.status", {"state": "idle", "halted": True})
-            await emit("task.result", result.model_dump(mode="json"))
+            await emit_final({"state": "idle", "halted": True}, result.model_dump(mode="json"))
             return result
         async with _holding(semaphore):
             steers, dropped = self.controls.take_prompt_steers(task.id)
@@ -1146,6 +2333,7 @@ class Runner:
                     ws.task = task
             await emit("agent.status", {"state": "working", "task": task.meta.get("title") or short(task.prompt, 120)})
             zones = self._zones()
+            internal_zones = self._internal_zones()
             preclean_started: float | None = None
             preclean_record: dict | None = None
             if reused:
@@ -1160,13 +2348,20 @@ class Runner:
                     _links, reason = await self._project_links([str(workspace_dir)], zones, emit, fail_closed=True)
                 if reason is None:  # labhq writes these from outside every sandbox (#165)
                     reason = owned_link_error(workspace_dir)
+                if reason is None and whole_hpc:
+                    try:
+                        source = json.loads(read_owned(workspace_dir, "manifest.json") or "{}").get("task") or {}
+                        if (source.get("request_id") != task.request_id
+                                or ((source.get("meta") or {}).get("step_id") or "direct") != step_id):
+                            reason = "HPC workspace belongs to another request or step (legacy layout is not adopted)"
+                    except (OSError, ValueError, AttributeError):
+                        reason = "HPC workspace identity is unavailable"
                 if reason:
                     self.event_buffers.pop(task.id, None)  # nothing is written into a workspace refused as unsafe
                     error = f"재사용 작업 폴더를 안전하게 열 수 없어 실행을 거부합니다: {reason}"
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
                     await emit("agent.log", {"level": "alert", "text": error})
-                    await emit("agent.status", {"state": "error", "error": short(error, 200)})
-                    await emit("task.result", result.model_dump(mode="json"))
+                    await emit_final({"state": "error", "error": short(error, 200)}, result.model_dump(mode="json"))
                     return result
                 proposal = task.meta.get("facilities_fix")
                 if task.meta.get("kind") == "facilities_fix" and facility_fixes.is_workspace_cache(proposal):
@@ -1174,7 +2369,7 @@ class Runner:
                     # memory, clear the allowlisted cache first, then create/register TaskWorkspace and flush them.
                     preclean_started = time.time()
                     preclean_record = await facility_fixes.execute(proposal, workspace_dir)
-                ws = TaskWorkspace(self.ws_root, task, agent, workspace_dir)
+                ws = await _settled_thread(TaskWorkspace, self.ws_root, task, agent, workspace_dir)
                 for event in self.event_buffers.pop(task.id, []):  # before any later event (#193)
                     ws.append_event(event)
                 self.workspaces[task.id] = ws
@@ -1183,33 +2378,35 @@ class Runner:
             if task.meta.get("kind") == "facilities_fix":
                 started = preclean_started or time.time()
                 proposal = task.meta.get("facilities_fix")
-                ws.update_run(task.id, started_at=started, kind="facilities_fix",
-                              fix_id=proposal.get("fix_id") if isinstance(proposal, dict) else None)
+                await ws.aupdate_run(task.id, started_at=started, kind="facilities_fix",
+                                     fix_id=proposal.get("fix_id") if isinstance(proposal, dict) else None)
                 record = preclean_record or await facility_fixes.execute(proposal, ws.dir)
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=bool(record.get("ok")),
                                     text=record.get("action") or "", cost_usd=0.0, cost_known=True,
                                     error=record.get("error"), facilities_fix=record,
                                     workdir=str(ws.dir), workdir_id=ws.dir.name)
-                ws.update_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error,
-                              cost_usd=0.0, cost_known=True, facilities_fix=record)
+                await ws.aupdate_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error,
+                                     cost_usd=0.0, cost_known=True, facilities_fix=record)
                 result.provenance = ws.provenance()
                 status = "완료" if result.ok else "실패"
                 await emit("agent.log", {"level": "info" if result.ok else "alert",
                                          "text": f"환경 수정 {status}: {record.get('action') or record.get('error') or ''}"})
-                await emit("agent.status", {"state": "done" if result.ok else "error",
-                                            **({"error": short(result.error, 200)} if result.error else {})})
-                await emit("task.result", result.model_dump(mode="json"))
+                await emit_final({"state": "done" if result.ok else "error",
+                                  **({"error": short(result.error, 200)} if result.error else {})},
+                                 result.model_dump(mode="json"))
                 return result
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
             task, consult_error = self._stage_consult_refs(task, ws)
             if agent.id == "facilities" and not consult_error:
                 task = task.model_copy(update={"context": task.context + "\n\n" + self._facilities_doctor_context()})
+            if bulk_hint := await self._bulk_data_hint(emit, [*zones, *internal_zones]):
+                task = task.model_copy(update={"context": (task.context + "\n\n" if task.context else "") + bulk_hint})
             ws.task = task
             if consult_error:
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=consult_error)
                 await emit("agent.log", {"level": "alert", "text": consult_error})
-                await emit("agent.status", {"state": "error", "error": short(consult_error, 200)})
-                await emit("task.result", result.model_dump(mode="json"))
+                await emit_final({"state": "error", "error": short(consult_error, 200)},
+                                 result.model_dump(mode="json"))
                 return result
             # Every folder opened to the task is judged by the same zone rule (intake.overlaps_zone) (#132).
             denied_links, _incomplete = await self._project_links(extra_dirs, zones, emit)
@@ -1224,11 +2421,13 @@ class Runner:
                          "(네트워크(UNC) 경로) 실행을 거부합니다. 드라이브 경로로 설정하거나 링크를 옮기세요")
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
                 await emit("agent.log", {"level": "alert", "text": error})
-                await emit("agent.status", {"state": "error", "error": short(error, 200)})
-                await emit("task.result", result.model_dump(mode="json"))
+                await emit_final({"state": "error", "error": short(error, 200)}, result.model_dump(mode="json"))
                 return result
             root = self.ws_root.resolve()
-            for directory in task.meta.get("upstream_dirs", []):
+            artifact_contract = (task.meta.get("kind") in {"step", "result_correction", "slot_repair"} and
+                                 isinstance(task.meta.get("upstream_artifacts"), dict))
+            staged_inputs: list[str] = []
+            for directory in ([] if artifact_contract else task.meta.get("upstream_dirs", [])):
                 upstream = Path(directory).resolve()
                 if upstream.is_dir() and upstream.is_relative_to(root):
                     reason = await asyncio.to_thread(self._upstream_refusal, upstream, zones)
@@ -1237,7 +2436,54 @@ class Runner:
                         continue
                     extra_dirs.append(str(upstream))
             upstream_steps = task.meta.get("upstream_steps")
-            if isinstance(upstream_steps, dict) and upstream_steps and not read_only:
+            if artifact_contract:
+                artifacts = task.meta["upstream_artifacts"]
+                steps = upstream_steps if isinstance(upstream_steps, dict) else {}
+                accepted = {sid: row for sid, row in artifacts.items()
+                            if isinstance(row, dict) and row.get("workdir") == steps.get(sid)}
+                input_budget = [self.s.runner.input_hash_max_total_bytes]  # one cumulative limit for every input copy
+                private_now = (await asyncio.to_thread(resolve_private_paths, self.s, [], cwd=ws.dir)).paths
+                staged_inputs, unavailable = await asyncio.to_thread(
+                    stage_inputs, ws, accepted, root, [*zones, *internal_zones],
+                    list(private_now),
+                    self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes, input_budget)
+                unavailable.update({str(sid): f"inputs/{sid} unavailable (ancestor mapping mismatch)"
+                                    for sid in artifacts if sid not in accepted})
+                note = ("Read collected ancestor artifacts only through inputs/<step_id>/. "
+                        "These copies are read-only; do not read sibling workspaces. "
+                        "Save scripts and intermediate files only in outputs/ or .tmp/. "
+                        "If an input is unavailable, ask the CSO; there is no direct-path fallback.")
+                if whole_hpc:
+                    if unavailable:
+                        raise ValueError("HPC ancestor snapshot unavailable: " + "; ".join(unavailable.values()))
+                    shared = await asyncio.to_thread(ws.publish_hpc_inputs, accepted, staged_inputs,
+                                                     self.s.runner.input_hash_max_file_bytes,
+                                                     self.s.runner.input_hash_max_total_bytes)
+                    note = ("HPC job cwd is this step's outputs/. Read ancestor files only from these hash-verified "
+                            "request data snapshots (absolute paths, or relative to job cwd):\n" +
+                            "\n".join(f"{sid}: {path} (relative: {os.path.relpath(path, ws.dir / 'outputs')})"
+                                      for sid, path in shared.items()) +
+                            "\nDo not read sibling workspaces. These are runner copies, never input links.")
+                    task = ws.task = task.model_copy(update={"meta": {**task.meta, "hpc_data_inputs": shared}})
+                if unavailable:
+                    note += "\n" + "\n".join(unavailable.values())
+                    for reason in unavailable.values():
+                        await emit("agent.log", {"level": "warn", "text": reason})
+                # The precedent search's stored full texts, as read-only inputs of every research step (#951).
+                precedent_rows = task.meta.get("precedent_texts")
+                if isinstance(precedent_rows, list) and precedent_rows:
+                    precedent_dirs, precedent_refused, precedent_listing = await asyncio.to_thread(
+                        stage_precedent_texts, ws, precedent_rows, root, [*zones, *internal_zones],
+                        self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes,
+                        list(artifacts), input_budget)
+                    staged_inputs = [*staged_inputs, *precedent_dirs]
+                    precedent_note = precedent_step_note(precedent_listing, precedent_refused)
+                    if precedent_note:
+                        note += "\n" + precedent_note
+                    for reason in precedent_refused.values():
+                        await emit("agent.log", {"level": "warn", "text": reason})
+                task = ws.task = task.model_copy(update={"context": task.context + "\n\n" + note})
+            elif isinstance(upstream_steps, dict) and upstream_steps and not read_only:
                 # The step prompt names upstream files as inputs/<step id>/... (#423); link the folders opened above.
                 links: dict[str, Path] = {}
                 unlinked: dict[str, str] = {}
@@ -1264,8 +2510,17 @@ class Runner:
                     task = ws.task = task.model_copy(update={"context": (
                         f"{task.context}\n\n[Upstream inputs not linked]\n{note}")})
             # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
+            # Every folder this run may write: a read-only run writes only its own workspace.
+            self._start_disk_watch(task, agent, workspace_dir, () if read_only else extra_dirs, read_only=read_only)
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs],
                                                                needs_rules=agent.engine == Engine.claude_code)
+            read_dirs, environment_env, environment_note = self._apply_environment_grants(
+                task, read_dirs, read_only=read_only)
+            if environment_note:
+                task = ws.task = task.model_copy(update={"context": f"{task.context}\n\n{environment_note}".strip()})
+            asked_links, _internal_incomplete = await self._project_links(
+                [str(ws.dir), *extra_dirs, *read_dirs], internal_zones, emit, ask=True)
+            asked_links = [link for link in asked_links if claude_rule_ready(link)]
             for note in skipped:
                 await emit("agent.log", {"level": "warn", "text": f"참고 경로 제외: {note}"})
             kept = [str(r) for r in task.meta.get("reference_dirs") or [] if str(r) not in refused]
@@ -1278,7 +2533,7 @@ class Runner:
                 task = ws.task = task.model_copy(update={"prompt": rewrite(task.prompt),
                                                          "context": rewrite(task.context)})
             # Reference tables the prompt names by file (topic checklists, #420), written before TASK.md.
-            for name in ws.write_reference_files(task.meta.get("workspace_files")):
+            for name in await ws.awrite_reference_files(task.meta.get("workspace_files")):
                 await emit("agent.log", {"level": "warn", "text": f"참고 파일 거부: {name}"})
             if task.meta.get("paper_skills"):
                 plugin, skill_warnings = ws.install_paper_skills(task.meta["paper_skills"], self.s.runner.id)
@@ -1288,15 +2543,18 @@ class Runner:
                 for note in skill_warnings:
                     await emit("agent.log", {"level": "warn", "text": note})
                 task = ws.task = task.model_copy(update={"context": task.context + "\n\n" + (
-                    "Use the request's paper advice in .agents/skills/paper-*/SKILL.md; cite the paper when used."
+                    ws.paper_skill_instructions()
                     if plugin else "논문 스킬 장착 불가; 제공된 선행 연구 요약으로 계속하세요.")})
-            prompt = ws.write_task_md()
+            prompt = await ws.awrite_task_md()
+            if skill_error := await _settled_thread(install_required_skills, ws, agent):
+                result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=skill_error)
+                await emit_final({"state": "error", "error": skill_error}, result.model_dump(mode="json"))
+                return result
             if agent.contract and agent.contract.skill_dir:
                 skill_error = ws.install_skill(Path(agent.contract.skill_dir))
                 if skill_error:
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=skill_error)
-                    await emit("agent.status", {"state": "error", "error": skill_error})
-                    await emit("task.result", result.model_dump(mode="json"))
+                    await emit_final({"state": "error", "error": skill_error}, result.model_dump(mode="json"))
                     return result
             for directory in read_dirs:
                 # Pre-approved shell commands (e.g. Bash(python *)) are not sandboxed; only OS permissions
@@ -1310,20 +2568,30 @@ class Runner:
             for note in notes:
                 await emit("agent.log", {"level": "warn", "text": f"읽기 전용 쓰기 확인에서 제외: {note}"})
             try:  # staff read a copy without the gateway tokens, never the PI's file (#149 결정 16)
+                engine_config = getattr(self.s.engines, agent.engine.value, None)
+                atlas_engine_env = expand_env(engine_config.env) if engine_config is not None else {}
+                atlas_key = credential(dict(os.environ), atlas_engine_env, environment_env)
+                atlas_secrets = atlas_credentials(self.s, environment_env)
+                refuse_credential_copy(self.s, atlas_secrets)
                 staff_config = write_staff_config(self.s, self.s.path(self.s.runner.state_dir) / "staff")
             except (OSError, ValueError, yaml.YAMLError) as exc:
                 error = f"직원용 설정 사본을 만들 수 없어 실행을 거부합니다 ({type(exc).__name__})"
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
-                await emit("agent.status", {"state": "error", "error": error})
-                await emit("task.result", result.model_dump(mode="json"))
+                await emit_final({"state": "error", "error": error}, result.model_dump(mode="json"))
                 return result
-            # PI personal paths (policy.private_paths): one that holds a folder this task works in is left open.
+            # Explicit references retain their policy exception; managed roots stay private.
             keep = [ws.dir, self.ws_root, *extra_dirs, *read_dirs,
                     *(self.s.path(r) for r in self.s.runner.reference_roots),
                     *(self.s.path(p.local_dir) for p in self.s.projects if p.local_dir)]
             # Loading code never exempts its containing config/login folder from protection.
             open_reads = plugin_keep_dirs(self.s, agent.plugin_dirs, ws.dir)
-            if agent.id == self.s.recruit.agent_id or task.meta.get("kind") == "recruit":
+            # Only references that passed the runner's zone/link/scan checks get a shell read grant.
+            open_reads.extend(read_dirs)
+            open_reads.extend(staged_inputs)
+            paper_inputs = ws.paper_skill_read_files() if task.meta.get('paper_skills') else []
+            open_reads.extend(paper_inputs)
+            if task.meta.get("kind") == "recruit" or (
+                    task.meta.get("kind") == "paper_skill" and agent.id == self.s.recruit.agent_id):
                 from ..recruit.paper2agent import skill_path
                 if agent.engine in (Engine.claude_code, Engine.codex):
                     skill = skill_path(agent.engine.value, self.s)
@@ -1331,7 +2599,26 @@ class Runner:
             # A Claude task reads back the long tool output Claude saved in the staff config folder (#298 ⑤).
             if agent.engine == Engine.claude_code:
                 open_reads.extend(staff_claude_project_dirs(self.s, ws.dir))
-            private = resolve_private_paths(self.s, keep, open_reads=open_reads, cwd=ws.dir)
+            private = await asyncio.to_thread(resolve_private_paths, self.s, keep, open_reads=open_reads, cwd=ws.dir)
+            if artifact_contract:
+                # Reuse the existing private/read-root machinery; inputs never become write roots.
+                private = replace(private, paths=tuple(dict.fromkeys([
+                                      *private.paths, str(root), str(ws.dir / "inputs"),
+                                      # Both spellings: with a junctioned root the real inputs path is otherwise
+                                      # not denied and matches the resolved workdir's write allow (#946).
+                                      os.path.realpath(ws.dir / "inputs")])),
+                                  labels=(*private.labels, "선행 단계 읽기 전용 입력"), enabled=True,
+                                  open_reads=tuple(scoped_open_reads(self.s, [
+                                      *private.open_reads, str(ws.dir), *staged_inputs], cwd=ws.dir)))
+            gated_read_roots: list[str] = []
+            non_public_zones = [*zones, *internal_zones]
+            for root_path in dict.fromkeys(map(str, [ws.dir, *extra_dirs, *read_dirs, *private.open_reads])):
+                try:
+                    resolved_root = Path(os.path.expandvars(os.path.expanduser(root_path))).resolve()
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                if overlaps_zone(resolved_root, non_public_zones):
+                    gated_read_roots.append(root_path)
             for label in private.skipped:
                 if label not in self.private_skip_warned:
                     self.private_skip_warned.add(label)
@@ -1346,7 +2633,7 @@ class Runner:
                     f"{agent.id}: 개인 경로 차단 중에는 셸 명령을 미리 허용하지 않고 승인 게이트로 보냅니다. "
                     "builtin_mcp에 approval이 없어 셸 명령이 모두 거부됩니다")})
             broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id, workdir=str(ws.dir),
-                                                        restricted=restricted_task(task, self.s))
+                                                        restricted=restricted_task(task, self.s), stage=task.meta.get("kind"))
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
@@ -1360,15 +2647,27 @@ class Runner:
                 PRIVATE_ENABLED_ENV: "1" if private.enabled else "0",
                 PRIVATE_OPEN_READS_ENV: os.pathsep.join(private.open_reads),
             }
+            env.update(environment_env)
+            env = without_credentials(env, atlas_secrets)
+            env[ATLAS_ENABLED_ENV] = "1" if atlas_key and atlas_allowed(agent, read_only=read_only) else "0"
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
+            if self.broker.lookup_admission is not None:
+                # labhq_annot asks the broker before every tool call even if its config copy were missing (#858).
+                env[LOOKUP_ADMISSION_ENV] = "1"
             if hooked:
                 env[CONTROL_ENV] = str(self.controls.path(task.id))
-            env.update(self._system_ca_env(agent))
+            env.update(await _settled_thread(self._system_ca_env, agent))  # reads the OS certificate store, writes its copy (#606)
             output_before: dict[str, tuple] | None = None
             output_records: list[dict[str, Any]] = []
             observed_outputs: list[dict[str, Any]] = []
             output_scan_notes: list[str] = []
+            # A declared step artifact is a future ancestor input. Hash through the same admission cap;
+            # Steps without declared artifacts retain their configured observation/output cap.
+            artifact_hash_limit = self.s.runner.output_hash_max_bytes
+            if task.meta.get('kind') == 'step' and task.meta.get('outputs'):
+                artifact_hash_limit = max(artifact_hash_limit, min(
+                    self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes))
 
             def before_spawn() -> str | None:
                 """Take both baselines after adapter preparation, immediately before its CLI spawn."""
@@ -1377,22 +2676,32 @@ class Runner:
                 records, note = ws.scan_output_records(
                     zones, self.s.runner.reference_scan_max_entries, self.s.runner.reference_scan_max_depth)
                 output_before = {row["path"]: output_identity(row) for row in records}
+                if whole_hpc:
+                    # Keep the first submitting turn's view across sleeping jobs AND runner restarts.
+                    # A later revision has its own baseline and never adopts a retired run's outputs.
+                    previous = ws.hpc_output_baseline(task)
+                    if previous is not None:
+                        output_before = previous
+                    ws.update_run(task.id, hpc_output_baseline=output_before,
+                                  hpc_revision=task.meta.get("revision", 0))
                 if note:
                     output_scan_notes.append(note)
                 return refused
 
-            async def collect_observed_outputs() -> None:
-                """Hash the post-run view off the event loop, before labhq writes RESULT files."""
+            async def collect_observed_outputs(*, stage: bool = True) -> None:
+                """Hash the post-run view off the event loop, before labhq writes RESULT files. The record rides in the
+                step's final write (`stage_run`, #1137); a step that is being cut short writes it now."""
                 nonlocal output_records, observed_outputs
+                record = ws.stage_run if stage else ws.aupdate_run
                 if output_before is None:
                     records, _note = await asyncio.to_thread(
                         ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
-                        self.s.runner.reference_scan_max_depth, self.s.runner.output_hash_max_bytes)
-                    ws.update_run(task.id, environment_record=environment_record(records))
+                        self.s.runner.reference_scan_max_depth, artifact_hash_limit)
+                    await _maybe_await(record(task.id, environment_record=environment_record(records)))
                     return
                 output_records, note = await asyncio.to_thread(
                     ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
-                    self.s.runner.reference_scan_max_depth, self.s.runner.output_hash_max_bytes)
+                    self.s.runner.reference_scan_max_depth, artifact_hash_limit)
                 if note:
                     output_scan_notes.append(note)
                 observed_at_ns = time.time_ns()
@@ -1405,14 +2714,14 @@ class Runner:
                     if output_before.get(row["path"]) != output_identity(row)
                 ]
                 incomplete = "; ".join(dict.fromkeys(output_scan_notes)) or None
-                ws.update_run(task.id, observed_outputs=observed_outputs,
-                              environment_record=environment_record(output_records),
-                              **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
+                await _maybe_await(record(task.id, observed_outputs=observed_outputs,
+                                          environment_record=environment_record(output_records),
+                                          **({"observed_outputs_incomplete": incomplete} if incomplete else {})))
 
-            engine_settings = claude_deny_private(claude_deny_links(claude_read_only(
+            engine_settings = claude_deny_private(claude_ask_internal_links(claude_deny_links(claude_read_only(
                 claude_settings(self.s.policy), [d for d in [*read_dirs, *(extra_dirs if read_only else [])]
-                                               if claude_rule_ready(d)]), denied_links),
-                private.paths, open_reads=private.open_reads)
+                                               if claude_rule_ready(d)]), denied_links), asked_links),
+                private.paths, open_reads=private.open_reads, write_roots=[str(ws.dir)])
             if hooked:
                 from ..hooks.tool_use import add_claude_hook
 
@@ -1423,7 +2732,8 @@ class Runner:
                 mcp_servers=self._mcp_servers(agent, env, allow_ask=not read_only),
                 env={**env, "MCP_TOOL_TIMEOUT": str(labhq_mcp_timeout_s(self.s) * 1000)},
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
-                read_dirs=read_dirs,
+                read_dirs=read_dirs, read_only_inputs=([*staged_inputs, *paper_inputs] or
+                    ([str(ws.dir / 'inputs')] if os.path.lexists(ws.dir / 'inputs') else [])),
                 # Other engines never read these rules; only paths a rule can name go in (#177).
                 claude_settings=engine_settings,
                 private_labels=list(private.labels),
@@ -1431,8 +2741,14 @@ class Runner:
                 private_enabled=private.enabled,
                 private_open_reads=list(private.open_reads),
                 denied_links=list(denied_links),
+                asked_links=list(asked_links),
+                gate_internal_reads=bool(internal_zones),
+                gated_read_roots=gated_read_roots,
                 shared_environment_protected=task.meta.get("shared_environment_protected") is True,
                 environment_step=task.meta.get("environment_step") is True,
+                gate_non_public_data=("approval" in agent.builtin_mcp and
+                                      any(z.level in {"internal", "restricted"}
+                                          for z in self.s.policy.data_zones)),
                 use_permission_tool="approval" in agent.builtin_mcp,
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
                 resume_baseline=self._resume_baseline(task, agent, ws),
@@ -1442,6 +2758,9 @@ class Runner:
                 halt=self.controls.halt_event(task.id),
                 halt_grace_s=HALT_GRACE_S if hooked else 0.0,
                 on_started=lambda: self.controls.started(task.id),
+                on_cleanup=lambda evidence: self._cleanup_reports.__setitem__(task.id, evidence),
+                bench_observer=getattr(self, "_bench_observer", None),
+                process_boundary=self.process_boundary,
             )
             # External folders exposed to this step are its reproducibility inputs. Upstream outputs use the same
             # inputs/<step> spelling the bundle restores; other runner paths use ~/... under the runner account.
@@ -1457,6 +2776,8 @@ class Runner:
                 except (OSError, RuntimeError, ValueError):
                     continue
             input_roots: list[tuple[Path, str]] = []
+            input_roots.extend((Path(directory), "inputs/" + Path(directory).name)
+                               for directory in staged_inputs)
             own_dir = os.path.normcase(str(ws.dir.resolve()))
             for directory in [*extra_dirs, *read_dirs]:
                 try:
@@ -1469,7 +2790,7 @@ class Runner:
                     continue
                 upstream = upstream_roots.get(os.path.normcase(str(path)))
                 input_roots.append(upstream or (path, portable_input_path(path)))
-            hash_private = resolve_private_paths(self.s, [], cwd=ws.dir)
+            hash_private = await asyncio.to_thread(resolve_private_paths, self.s, [], cwd=ws.dir)
 
             async def scan_inputs() -> tuple[list[dict[str, Any]], list[str]]:
                 return await asyncio.to_thread(
@@ -1480,12 +2801,23 @@ class Runner:
 
             # Hash before the CLI starts (PR #442 review): writable inputs (project and upstream folders) may change.
             input_files, input_notes = await scan_inputs()
+            from ..research.input_proof import capture as capture_reuse_inputs
+            async def reuse_inputs():
+                descriptor = task.meta.get('reuse_input_request')
+                if not isinstance(descriptor, dict):
+                    return None
+                return await asyncio.to_thread(capture_reuse_inputs, descriptor, self.s,
+                                               task.meta.get('reuse_input_meta'))
+            reuse_before = await reuse_inputs()
 
             async def wait_ready() -> bool:
                 """Refresh inputs after preparation/pause, before the adapter's spawn baseline."""
-                nonlocal input_files, input_notes
+                nonlocal input_files, input_notes, reuse_before
                 while await self.controls.wait_ready(task.id):
                     input_files, input_notes = await scan_inputs()
+                    fresh = await reuse_inputs()
+                    if fresh != reuse_before:
+                        reuse_before = None  # preparation/pause drift is not an unchanged execution
                     # Hashing yields to the control loop. A new pause needs another wait and fresh scan.
                     live = self.controls.live.get(task.id)
                     if live is None or live.resumed.is_set():
@@ -1493,25 +2825,33 @@ class Runner:
                 return False
 
             ctx.wait_ready = wait_ready
-            ws.update_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
-                          engine=agent.engine.value, model=agent.model,
-                          engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
-                          resume_of=task.resume_session_id, kind=task.meta.get("kind"),
-                          **({"reference_dirs": read_dirs} if read_dirs else {}))
+            await ws.aupdate_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
+                                 request_id=task.request_id, step_id=task.meta.get('step_id'),
+                                 agent_id=agent.id,
+                                 **({"hpc_data_inputs": task.meta["hpc_data_inputs"]}
+                                    if whole_hpc and task.meta.get("hpc_data_inputs") else {}),
+                                 engine=agent.engine.value, model=agent.model,
+                                 engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
+                                 resume_of=task.resume_session_id, kind=task.meta.get("kind"),
+                                 **({"reference_dirs": read_dirs} if read_dirs else {}))
             self.active_roots[task.id] = (read_only, [ws.dir.resolve(), *(Path(d).resolve() for d in extra_dirs)])
+            self.tool_contexts[task.id] = ctx
             try:
+                self.annot_broker.register(ctx, atlas_key)
                 refused = watch.take_baseline() if watch else None
                 if refused:  # fail closed: a run whose writes cannot be checked does not start
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refused)
                 else:
                     adapter = get_adapter(agent.engine, self.s)
                     try:
-                        result = await adapter.run(ctx)
+                        from .structured_output import run_with_json_retries
+                        result = await run_with_json_retries(adapter, ctx)
                     except BaseException:  # cancelled or crashed after the CLI was stopped: still compare
                         # Keep what the failed step read; the after-run comparison is skipped (PR #442 review).
-                        ws.update_run(task.id, input_files=input_files,
-                                      **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
-                        await collect_observed_outputs()
+                        await ws.aupdate_run(task.id, input_files=input_files,
+                                             **({"input_files_incomplete": "; ".join(input_notes)}
+                                                if input_notes else {}))
+                        await collect_observed_outputs(stage=False)
                         if watch and watch.baseline is not None:
                             await self._read_only_verdict(TaskResult(task_id=task.id, agent_id=agent.id, ok=False),
                                                           watch, emit, ws, task.id)
@@ -1531,20 +2871,24 @@ class Runner:
                 if outcome["status"] == "rejected":
                     result = rejected_step(result, outcome["reason"])
             finally:
-                ended = self.active_roots.pop(task.id, None)
-                # A submit command already running for this run lands in pending_jobs below; later ones are refused.
-                if in_flight := list(self.submitting.pop(task.id, ())):
-                    await asyncio.gather(*in_flight)
-                now = time.time()
-                if ended is not None:
-                    self.ended_roots.append((now, task.id, *ended))
-                horizon = now - self.s.runner.task_timeout_s - 60  # no read-only run is older than this
-                self.ended_roots = [entry for entry in self.ended_roots if entry[0] >= horizon]
                 self.broker.revoke_task_token(broker_token)
-                self.broker.finish_task(task.id)
-                if staff_config:  # this task's own copy; the next task gets a fresh one
-                    with contextlib.suppress(OSError):
-                        os.unlink(staff_config)
+                try:
+                    await self.annot_broker.finish(task.id)
+                finally:
+                    self.tool_contexts.pop(task.id, None)
+                    ended = self.active_roots.pop(task.id, None)
+                    # A submit already running lands in pending_jobs below; later ones are refused.
+                    if in_flight := list(self.submitting.pop(task.id, ())):
+                        await asyncio.gather(*in_flight)
+                    now = time.time()
+                    if ended is not None:
+                        self.ended_roots.append((now, task.id, *ended))
+                    horizon = now - self.s.runner.task_timeout_s - 60
+                    self.ended_roots = [entry for entry in self.ended_roots if entry[0] >= horizon]
+                    self.broker.finish_task(task.id)
+                    if staff_config:  # this task's own copy; the next task gets a fresh one
+                        with contextlib.suppress(OSError):
+                            os.unlink(staff_config)
 
         # Every job this run submitted, finished or not: _poll_jobs sends jobs.finished for them only after the run
         # ends, and a job the watcher saw finish while the agent still talked would otherwise never wake it (#281).
@@ -1567,6 +2911,9 @@ class Runner:
         # The record keeps what the step read: hashes taken before the run. A writable input the step changed gets
         # changed_during_step, and its hash stays the one from before (PR #442 review).
         after_files, after_notes = await scan_inputs()
+        reuse_after = await reuse_inputs()
+        result.request_input_sha256 = (reuse_before['sha256']
+            if reuse_before is not None and reuse_after == reuse_before else None)
         after = {row["path"]: row.get("sha256") for row in after_files}
         for row in input_files:
             if row.get("sha256") and after.get(row["path"]) != row["sha256"]:
@@ -1575,19 +2922,23 @@ class Runner:
         if changed:
             input_notes.append(f"입력 파일 {changed}개가 단계 실행 중에 바뀌었습니다(기록된 hash는 실행 전 내용)")
         input_notes = list(dict.fromkeys([*input_notes, *after_notes]))
-        ws.update_run(task.id, input_files=input_files,
-                      **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
+        # Staged: the step's final write, right before its result is sent, carries it (#1137).
+        ws.stage_run(task.id, input_files=input_files,
+                     **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
         for note in input_notes:
             await emit("agent.log", {"level": "warn", "text": note})
         declared = task.meta.get("outputs", [])
+        required_declared = task.meta.get("required_outputs", declared)
+        optional_declared = task.meta.get("optional_outputs", [])
         found = []
+        declared_dirs = []
         for name in declared:
             relative = output_relpath(name)
             if relative is None:
                 continue
             target = (ws.dir / relative).resolve()
             if target.exists() and target.is_relative_to((ws.dir / "outputs").resolve()):
-                found.append(relative)
+                (declared_dirs if target.is_dir() else found).append(relative)
         listed_outputs: list[str] | None = None
         output_scan_note: str | None = None
         if task.meta.get("kind") == "direct" or task.meta.get("collect_direct_outputs") is True:
@@ -1598,6 +2949,13 @@ class Runner:
             found += listed_outputs
             if output_scan_note:
                 await emit("agent.log", {"level": "warn", "text": output_scan_note})
+        # A declared folder is collected as its files, each with the hash recorded after the run (#1058): a folder entry
+        # has no hash, and a later step refuses an ancestor whose collected list holds one. A file that was not hashed
+        # (too large, a link) is not collected; it stays unreported.
+        for folder in declared_dirs:
+            prefix = folder.rstrip("/") + "/"
+            found += [row["path"] for row in output_records
+                      if row["path"].startswith(prefix) and isinstance(row.get("sha256"), str)]
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
         hashed = {row["path"]: row["sha256"] for row in output_records
                   if isinstance(row.get("sha256"), str) and row["path"] in result.outputs}
@@ -1605,6 +2963,76 @@ class Runner:
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
+        if _should_check_declared_outputs(result):
+            def has_output(rel: str) -> bool:
+                # A declared folder is there when a file with a hash is under it: a later step stages only those.
+                return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in result.output_sha256)
+
+            missing_required = [rel for name in required_declared
+                                if (rel := output_relpath(name)) and not has_output(rel)]
+            missing_optional = [rel for name in optional_declared
+                                if (rel := output_relpath(name)) and not has_output(rel)]
+            if missing_required:
+                result.ok = False
+                result.missing_outputs = list(dict.fromkeys([*result.missing_outputs, *missing_required]))
+                result.error = "incomplete: missing outputs: " + ", ".join(result.missing_outputs)
+            if declared_dirs and result.ok and output_scan_notes:
+                # The bounded walk of outputs/ skipped something (too deep, too many entries, unreadable). That only
+                # matters for a declared folder the walk did not see whole: each folder is walked on its own, and an
+                # unrelated subtree or a note from an earlier scan does not fail it (#1058, #1065).
+                seen = {row["path"] for row in output_records}
+                folder_problems = []
+                for folder in declared_dirs:
+                    paths, why = await asyncio.to_thread(
+                        folder_files, ws.dir, folder, self.s.runner.reference_scan_max_entries,
+                        self.s.runner.reference_scan_max_depth)
+                    if why:
+                        folder_problems.append(f"{folder}: {why}")
+                    elif unseen := [path for path in paths if path not in seen]:
+                        folder_problems.append(f"{folder}: the scan did not record {len(unseen)} file(s), "
+                                               f"for example {unseen[0]}")
+                if folder_problems:
+                    result.ok = False
+                    result.error = ("incomplete: the outputs scan is incomplete, so declared folder(s) "
+                                    f"{', '.join(declared_dirs)} cannot be collected whole: "
+                                    + "; ".join(folder_problems))
+            if declared_dirs and result.ok:
+                # A later step stages at most this many files and bytes of ONE ancestor, folder files and plain
+                # declared files together, and refuses the whole ancestor otherwise (#1058): the producer must not
+                # pass what no later step can take.
+                sizes = {row["path"]: int(row.get("size") or 0) for row in output_records}
+                linked = set(await asyncio.to_thread(linked_files, ws.dir, result.outputs))
+                problem = staging_problem(result.outputs, result.output_sha256, sizes,
+                                          self.s.runner.input_hash_max_file_bytes,
+                                          self.s.runner.input_hash_max_total_bytes, linked)
+                if problem:
+                    result.ok = False
+                    result.error = (f"incomplete: declared folder(s) {', '.join(declared_dirs)} make the step collect "
+                                    f"outputs a later step would refuse: {problem}")
+            if result.ok and not declared_dirs and task.meta.get("kind") != "direct":
+                # A hard-linked output is hashed like any other, but a later step refuses it and with it the
+                # whole ancestor; steps that declare a folder get the same check inside the staging check (#1065).
+                # Every collected path, optional and unreported ones too: a later step stages the whole list.
+                linked_declared = await asyncio.to_thread(linked_files, ws.dir, result.outputs)
+                if linked_declared:
+                    result.ok = False
+                    result.error = ("incomplete: a later step refuses a hard-linked output: "
+                                    + ", ".join(linked_declared))
+            if missing_optional:
+                result.missing_optional_outputs = list(dict.fromkeys([
+                    *result.missing_optional_outputs, *missing_optional]))
+                warning = "선택 산출 누락: " + ", ".join(result.missing_optional_outputs)
+                result.step_warnings = list(dict.fromkeys([*result.step_warnings, warning]))
+                await emit("agent.log", {"level": "warn", "text": warning})
+        binding = task.meta.get("environment_binding")
+        # Only the final turn: a step paused on a job or a question has not written its environment yet.
+        if _should_check_declared_outputs(result) and isinstance(binding, dict):
+            from .step_inputs import producer_environment_problem
+            problem = await asyncio.to_thread(producer_environment_problem, self.ws_root, ws.dir,
+                                              result.outputs, result.output_sha256, binding)
+            if problem:
+                result.ok = False
+                result.error = "incomplete: runner environment does not match the pinned binding: " + problem
         # Bytecode caches are the interpreter's, not the employee's: 21 unreported files of the v0.5 trial included
         # outputs/lib/__pycache__ (#485). They stay in the observed records.
         result.unreported_outputs = sorted(row["path"] for row in observed_outputs
@@ -1614,10 +3042,31 @@ class Runner:
         if warning_outputs:
             await emit("agent.log", {"level": "warn", "text": (
                 "보고하지 않은 관찰 산출물: " + ", ".join(warning_outputs))})
+        # Read back from the runner's disk: the gateway may not share it (#697, #710). A check that breaks leaves a
+        # warning; it never turns the finished task into a failure (PR #712 review).
+        try:
+            result.table_warnings = await asyncio.to_thread(output_checks.table_warnings, ws.dir, result.outputs)
+            result.literature_access = await asyncio.to_thread(output_checks.literature_access, ws.dir)
+            result.literature_access_failures = await asyncio.to_thread(
+                output_checks.literature_access_failures, ws.dir)
+            result.literature_ledger = await asyncio.to_thread(output_checks.literature_ledger, ws.dir)
+        except Exception as exc:  # noqa: BLE001
+            await emit("agent.log", {"level": "warn", "text": f"산출 검사를 하지 못했습니다: {type(exc).__name__}"})
+        if result.table_warnings:
+            await emit("agent.log", {"level": "warn", "text": (
+                "표로 읽히지 않는 산출물: " + "; ".join(result.table_warnings))})
+        # The shared lookup status reaches the result and its report warnings, not only the employee's prompt (#676).
+        try:
+            result.external_lookups = await asyncio.to_thread(output_checks.external_lookups, ws.dir)
+        except Exception as exc:  # noqa: BLE001
+            await emit("agent.log", {"level": "warn", "text": f"외부 조회 상태를 읽지 못했습니다: {type(exc).__name__}"})
+        if lookup_lines := output_checks.external_lookup_lines(result.external_lookups):
+            await emit("agent.log", {"level": "warn", "text": (
+                f"외부 조회 상태({output_checks.LOOKUP_RECORD_NOTE}): " + "; ".join(lookup_lines))})
         for note in dict.fromkeys(output_scan_notes):
             await emit("agent.log", {"level": "warn", "text": note})
         # Only a finished, successful turn: a bundle written before HPC checks or an ask is not final (#301 review).
-        if (agent.id == "bioinfo-agent" and task.meta.get("pipeline_pr") is True  # the gateway asked (#300)
+        if (agent.id in PIPELINE_AUTHORS and task.meta.get("pipeline_pr") is True  # the gateway asked (#300)
                 and result.ok and not waiting(result)):
             if listed_outputs is None:
                 listed_outputs, output_scan_note = await asyncio.to_thread(
@@ -1666,17 +3115,38 @@ class Runner:
                 await emit("agent.log", {"level": "warn", "text": "output type records unavailable; result kept"})
         if paper_skill_build is not None:
             result = await asyncio.to_thread(paper_skill_build.finish, result)
+        counted_tools = tool_calls.summary()
+        result = result.model_copy(update={
+            "tool_calls": counted_tools,
+            "tool_call_turns": ({task.id: counted_tools} if counted_tools else {}),
+        })
         try:
-            for name in (f"RESULT_{task.id}.md", "RESULT.md"):  # never through a link the agent made (#165)
-                write_owned(ws.dir, f"outputs/{name}", result.text or "")
+            # Never through a link the agent made (#165). Both files are one job: a cancel cannot write only one.
+            # RESULT.md is the latest alias of RESULT_<task>.md, the same text: only the per-task file is fsynced. The
+            # text is in task.result (the outbox) too, so a power cut can leave the alias old, empty or missing (#1154).
+            await awrite_owned_many(ws.dir, [(f"outputs/RESULT_{task.id}.md", result.text or ""),
+                                             ("outputs/RESULT.md", result.text or "", False)])
         except OwnedPathError:
             error = "작업 폴더의 outputs가 실행 중에 링크로 바뀌어 결과 파일을 쓰지 않았습니다"
             await emit("agent.log", {"level": "alert", "text": error})
             result = result.model_copy(update={"ok": False, "error": error})
-        ws.update_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error, cost_usd=result.cost_usd,
-                      cost_known=result.cost_known if result.cost_known is not None else result.cost_usd is not None,
-                      usage=result.usage, usage_known=result.usage_known,
-                      session_id=result.session_id, pending_jobs=pending)
+        else:
+            # RESULT.md is runner-owned and absent from the staff output scan. Check it only after all response
+            # normalization and the owned write, so a retry never checks the preceding turn's response.
+            try:
+                result.markdown_warnings = await asyncio.to_thread(
+                    output_checks.markdown_warnings, ws.dir,
+                    [*result.outputs, *result.unreported_outputs, "outputs/RESULT.md"])
+            except Exception as exc:  # noqa: BLE001 - keep an incomplete check visible to the terminal contract
+                result.markdown_warnings = [f"Markdown 검사 실패({type(exc).__name__}). 문서를 다시 검사하세요."]
+        await ws.aupdate_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error,
+                             cost_usd=result.cost_usd,
+                             cost_known=result.cost_known if result.cost_known is not None
+                             else result.cost_usd is not None,
+                             usage=result.usage, usage_known=result.usage_known,
+                             session_id=result.session_id, pending_jobs=pending)
+        if task.meta.get("paper_skills"):
+            ws.record_paper_skill_usage(result)
         result.provenance = ws.provenance()
         if task.meta.get("paper_skills"):
             ws.clear_paper_skills()  # before task.result can release a dependent step
@@ -1684,37 +3154,96 @@ class Runner:
             result.tool_errors = [*result.tool_errors, *tool_errors]
         if not result.ok and result.quota_reset_at is None:  # only this machine knows the CLI's zone
             result.quota_reset_at = quota_reset_instant(agent.engine.value, result.error)
+        self._shutdown_result(result)
         state = "hibernating" if waiting(result) else ("done" if result.ok else "error")
         extra = ({"jobs": pending, "asks": result.pending_asks} if waiting(result) else
                  ({"error": short(result.error, 200)} if result.error else {}))
         if result.error_kind == "halted":  # stopped by the PI and resumable, not a problem to show
             state, extra = "idle", {"halted": True}
-        await emit("agent.status", {"state": state, **extra})
-        await emit("task.result", result.model_dump(mode="json"))
+        await emit_final({"state": state, **extra}, result.model_dump(mode="json"))
         return result
 
     # ---------------- broker callbacks (from MCP tools) ----------------
     async def _on_approval(self, req: ApprovalRequest) -> None:
         req.request_id = req.request_id or self.task_req.get(req.task_id or "")
+        ws = self.workspaces.get(req.task_id or '')
+        if req.kind == 'tool_permission' and ws:
+            from ..pi_text import approval_copy
+            from ..recruit.paper2agent import skill_path
+            meta = ws.task.meta
+            labels = {str(ws.dir): '이 작업의 빌드 폴더' if meta.get('kind') == 'paper_skill' else '이 작업의 폴더',
+                      str(self.s.path(self.s.runner.talent_dir)): 'labhq 논문 스킬 보관 폴더',
+                      str(self.s.path(self.s.runner.workspace_root)): 'labhq 작업 폴더'}
+            if meta.get('kind') in ('paper_skill', 'recruit') and ws.agent.engine in (Engine.claude_code, Engine.codex):
+                try:
+                    labels[str(skill_path(ws.agent.engine.value, self.s))] = 'Paper2Agent 스킬 참고 자료'
+                except ValueError:
+                    pass  # Invalid install configuration must not prevent an approval from being delivered.
+            req.agent_id = ws.task.agent_id
+            from ..tool_explanation import internal_output_classification
+            output_class = internal_output_classification(
+                str(req.detail.get('tool_name') or ''),
+                req.detail.get('tool_input') or req.detail.get('input') or {},
+                self.s.policy,
+                str(ws.dir),
+            )
+            detail = {**req.detail, 'requester_name': ws.agent.name,
+                          'workdir': str(ws.dir),
+                          'permission_mode': ws.agent.permission_mode,
+                          'task_context': {'kind': meta.get('kind'), 'title': meta.get('title'),
+                                           'step_id': meta.get('step_id'),
+                                           'paper_title': (meta.get('paper_skill') or {}).get('title')},
+                          'path_labels': labels}
+            if output_class:
+                detail['internal_output_classification'] = output_class
+            else:
+                detail.pop('internal_output_classification', None)
+            if output_class == 'rows':
+                detail['internal_row_output'] = True
+            else:
+                detail.pop('internal_row_output', None)
+            req.detail = detail
+            for key, value in approval_copy(req.kind, req.summary, req.detail).items():
+                setattr(req, key, value)
+            from ..tool_explanation import needs_interpretation
+            req.pi_needs_interpretation = needs_interpretation(req.detail)
         self.approval_tasks[req.id] = (req.task_id, req.agent_id)
         base = dict(task_id=req.task_id, agent_id=req.agent_id, request_id=req.request_id)
-        await self.emit(Event(type="approval.requested", data=req.model_dump(mode="json"), **base))
-        if req.task_id:
-            await self.emit(Event(type="agent.status", data={"state": "waiting", "approval": req.id}, **base))
+        await self.emit_all([
+            Event(type="approval.requested", data=req.model_dump(mode="json"), **base),
+            *([Event(type="agent.status", data={"state": "waiting", "approval": req.id}, **base)]
+              if req.task_id else [])])
 
     async def _on_approval_timeout(self, req: ApprovalRequest) -> None:
         self.approval_tasks.pop(req.id, None)
         base = dict(task_id=req.task_id, agent_id=req.agent_id, request_id=req.request_id)
-        await self.emit(Event(type="approval.timed_out", data={"id": req.id}, **base))
-        if req.task_id:
-            await self.emit(Event(type="agent.status", data={"state": "working"}, **base))
+        await self.emit_all([
+            Event(type="approval.timed_out", data={"id": req.id}, **base),
+            *([Event(type="agent.status", data={"state": "working"}, **base)] if req.task_id else [])])
 
     async def _on_ask(self, req: AskRequest) -> None:
         req.request_id = req.request_id or self.task_req.get(req.task_id or "")
         base = dict(task_id=req.task_id, agent_id=req.agent_id, request_id=req.request_id)
-        await self.emit(Event(type="ask.requested", data=req.model_dump(mode="json"), **base))
-        if req.task_id:
-            await self.emit(Event(type="agent.status", data={"state": "waiting", "ask": req.id}, **base))
+        await self.emit_all([
+            Event(type="ask.requested", data=req.model_dump(mode="json"), **base),
+            *([Event(type="agent.status", data={"state": "waiting", "ask": req.id}, **base)] if req.task_id else [])])
+
+    async def _on_restricted(self, call: dict) -> None:
+        """A restricted task wants to call a tool (#1008): the CSO decides at the gateway. A task the breaker has
+        already released is answered at once; otherwise the call goes up with this restriction's episode, so an answer
+        meant for an earlier one is never taken for this one."""
+        tid = str(call.get("task_id") or "")
+        ladder = self.breakers.get(tid)
+        if ladder is None or ladder.policy.stage not in ("constrain", "stop"):
+            self.broker.resolve_restricted(call["id"], {"approved": True, "note": "제한이 풀려 있습니다"})
+            return
+        name = str(call.get("tool_name") or "")
+        tool_input = call.get("tool_input") if isinstance(call.get("tool_input"), dict) else {}
+        await self.emit(Event(type="restricted.requested", task_id=tid, agent_id=call.get("agent_id"),
+                              request_id=self.task_req.get(tid) or call.get("request_id"),
+                              data={"id": call["id"], "tool_name": name,  # no input: this event is stored and replayed
+                                    "fingerprint": tool_input_fingerprint(name, tool_input),
+                                    "episode": ladder.episode_id, "at": time.time()}))
 
     async def _on_tool_event(self, body: dict) -> None:
         tid = body.get("task_id")
@@ -1762,7 +3291,7 @@ class Runner:
 
         return await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record)
 
-    async def _track_job(self, body: dict) -> None:
+    async def _track_job(self, body: dict, extra: dict | None = None) -> None:
         """Watch a job the runner submitted. No broker endpoint reaches this with a caller's id."""
         jid, tid = str(body["job_id"]), body.get("task_id")
         ws = self.workspaces.get(tid or "")
@@ -1771,13 +3300,15 @@ class Runner:
                            "exit_status": None, "submitted_at": time.time(),
                            "scheduler": self.s.hpc.scheduler, "request_id": self.task_req.get(tid or ""),
                            "workdir": str(ws.dir) if ws else None,
-                           "script_sha256": body.get("script_sha256"), "submitted_by_runner": True}
-        self.store.put("job", jid, self.jobs[jid])
+                           "script_sha256": body.get("script_sha256"), "submitted_by_runner": True, **(extra or {})}
         if ws:
             ws.append_job({**body, "submitted_at": time.time()})
-        await self.emit(Event(type="job.submitted", task_id=tid, agent_id=body.get("agent_id"),
-                              request_id=self.task_req.get(tid or ""),
-                              data={"job_id": jid, "name": body.get("name"), "core_hours": body.get("core_hours")}))
+        # The job row and the event that announces it are one unit: a cancel cannot keep the row and lose the event.
+        await self.emit_all([Event(type="job.submitted", task_id=tid, agent_id=body.get("agent_id"),
+                                   request_id=self.task_req.get(tid or ""),
+                                   data={"job_id": jid, "name": body.get("name"),
+                                         "core_hours": body.get("core_hours")})],
+                            before=[("job", jid, self.jobs[jid])])
 
     async def _owns_job(self, identity: dict) -> bool:
         """hpc_cancel scope (#172): a job the runner submitted for this agent in this task or request.
@@ -1794,8 +3325,267 @@ class Runner:
                 return True
         return False
 
+    # ---------------- local jobs (#675) ----------------
+    def _local_owned(self, identity: dict, job_id: str | None = None) -> list[tuple[str, dict]]:
+        """The local job rows this runner started for this agent in this task or request; one when `job_id` names it."""
+        rows = []
+        for jid, j in self.jobs.items():
+            if (not local_jobs.is_local(jid) or not j.get("submitted_by_runner")
+                    or j.get("agent_id") != identity.get("agent_id")):
+                continue
+            if j.get("task_id") != identity.get("task_id") and not (
+                    identity.get("request_id") and j.get("request_id") == identity.get("request_id")):
+                continue
+            if job_id is None or jid == job_id:
+                rows.append((jid, j))
+        return rows
+
+    def _local_view(self, jid: str, j: dict, *, logs: bool = False) -> dict:
+        local = j.get("local") or {}
+        view = {"job_id": jid, "name": j.get("name"), "state": j.get("state"), "terminal": bool(j.get("terminal")),
+                "exit_status": j.get("exit_status"),
+                "elapsed_s": int(time.time() - float(j.get("submitted_at") or time.time())),
+                "expected_minutes": local.get("expected_minutes"), "command": short(local.get("command"), 300)}
+        if logs:
+            view.update(stdout_tail=local_jobs.tail(local.get("out")), stderr_tail=local_jobs.tail(local.get("err")))
+        return view
+
+    async def _on_local_job(self, op: str, identity: dict) -> dict:
+        if op == "list":
+            return {"jobs": [self._local_view(jid, j) for jid, j in self._local_owned(identity)]}
+        if op in {"status", "cancel"}:
+            job_id = str(identity.get("job_id") or "")
+            rows = self._local_owned(identity, job_id)
+            if not rows:
+                return {"error": f"job {job_id} was not submitted by you through job_submit; labhq tracks only your own"}
+            jid, j = rows[0]
+            if op == "cancel" and not j.get("terminal"):  # an ended job keeps how it ended
+                if not await self._end_local_job(jid, j, "cancelled"):
+                    return {"error": f"job {jid} could not be ended: some of its processes are still running"}
+            return self._local_view(jid, j, logs=op == "status")
+        return await self._submit_local_job(identity)
+
+    async def _local_job_disk_decision(self, decision, command: str, workdir: Path, task_id: str, agent_id: str | None,
+                                       request_id: str | None):
+        """The shell command's disk check for a job the runner starts (#1167): a download or unpack aimed at a drive that is
+        short on space asks the PI instead of starting. Only allow becomes ask; an unknown size is never blocked, and a short
+        drive with no known size only logs a warning. A probe bug never stops a command the policy already allowed."""
+        runner = self.s.runner
+        try:
+            check = disk_space.shell_check(
+                command, str(workdir), fail_gb=runner.disk_fail_free_gb, warn_gb=runner.disk_warning_free_gb,
+                warn_percent=runner.disk_warning_free_percent)
+        except Exception:  # noqa: BLE001
+            return decision
+        if check is None:
+            return decision
+        if check.action == "ask":
+            from ..policy import Decision
+            return Decision("ask", check.reason, updated_input=decision.updated_input)
+        await self.emit(Event(type="agent.log", task_id=task_id, agent_id=agent_id, request_id=request_id,
+                              data={"level": "warn", "text": check.reason, "tool_name": local_jobs.shell_tool(),
+                                    "policy_action": "allow", "policy_rule": "disk_space"}))
+        return decision
+
+    async def _submit_local_job(self, identity: dict) -> dict:
+        """Start one command as a job this runner owns: submitted, a PI or policy refusal, or an error.
+
+        The command is judged by the approval gate's own rules here, so a call straight to the broker cannot skip it."""
+        tid, aid = str(identity.get("task_id") or ""), identity.get("agent_id")
+        ws, running = self.workspaces.get(tid), self.active_roots.get(tid)
+        if ws is None or running is None:
+            return {"error": "this task is not running on the runner; the job was not submitted"}
+        if running[0]:
+            return {"error": "a read-only task cannot submit jobs"}
+        ctx, tool = self.tool_contexts.get(tid), local_jobs.shell_tool()
+        if ctx is not None and ctx.agent.engine != Engine.claude_code:
+            # A Codex run is held inside the engine's OS sandbox; a job the runner starts would run outside it.
+            return {"error": "local jobs are for Claude staff: a job started by the runner runs outside the "
+                             f"sandbox the {ctx.agent.engine.value} engine keeps its commands in. For a long computation "
+                             "use the labhq_hpc tools if you have them, split it into parts that each finish, or ask the PI"}
+        command = identity.get("command")
+        if not isinstance(command, str) or not command.strip() or len(command) > 20000:
+            return {"error": "command must be a shell command of at most 20000 characters"}
+        try:
+            expected = None if identity.get("expected_minutes") is None else float(identity["expected_minutes"])
+        except (TypeError, ValueError):
+            return {"error": "expected_minutes must be a number"}
+        if expected is not None and not 0 < expected <= 7 * 24 * 60:
+            return {"error": "expected_minutes must be between 0 and 10080"}
+        name = sanitize_job_name(str(identity.get("name") or "job"))
+        if ctx is not None:  # the same rule the approval gate applies to an install into the shared environment
+            from ..environment_install import shared_environment_install_denial
+
+            install = shared_environment_install_denial(
+                tool, {"command": command}, protected=ctx.shared_environment_protected,
+                environment_step=ctx.environment_step, workdir=str(ws.dir))
+            if install:
+                return {"submitted": False, "reason": install}
+        decision = evaluate_tool(
+            tool, {"command": command}, self.s.policy,
+            allowed_roots=[str(ws.dir), *(ctx.extra_dirs if ctx else [])], workdir=str(ws.dir),
+            private_paths=ctx.private_paths if ctx else [], private_enabled=bool(ctx and ctx.private_enabled),
+            private_open_reads=ctx.private_open_reads if ctx else [], read_only=False)
+        if decision.action == "deny":
+            return {"submitted": False, "reason": decision.reason}
+        if decision.action == "allow":
+            decision = await self._local_job_disk_decision(decision, command, ws.dir, tid, aid, identity.get("request_id"))
+        if decision.action == "ask":
+            answer = await self.broker.request_approval(ApprovalRequest(
+                task_id=tid, agent_id=aid, request_id=identity.get("request_id"), kind="tool_permission",
+                summary=f"{tool}: {decision.reason}",
+                detail={"tool_name": tool, "input": short({"command": command}, 1500),
+                        "tool_input": {"command": command}, "policy_reason": decision.reason},
+                timeout_s=self.s.policy.approvals.timeout_s))
+            if not answer.get("approved"):
+                return {"submitted": False, "reason": answer.get("note") or "denied by the PI"}
+        done = asyncio.get_running_loop().create_future()
+        self.submitting.setdefault(tid, set()).add(done)  # run_task waits for a submit in flight before it ends
+        starting = self.__dict__.setdefault("_local_starting", 0)
+        try:
+            if self.active_roots.get(tid) is not running or tid in self.__dict__.get("_jobs_cancelled", ()):
+                return {"error": "the task ended or was cancelled; the job was not submitted"}
+            # The slot is reserved before the first await, so two submits cannot both pass the same count.
+            busy = sum(1 for jid, j in self.jobs.items() if local_jobs.is_local(jid) and not j.get("terminal"))
+            if busy + starting >= self.s.runner.max_parallel:
+                return {"error": f"{self.s.runner.max_parallel} local jobs are already running on this runner; "
+                                 "wait for one to finish before submitting another"}
+            self._local_starting = starting + 1
+            try:
+                job_id = local_jobs.new_id()
+                try:
+                    facts, process = await asyncio.to_thread(
+                        local_jobs.start, self.s.path(self.s.runner.state_dir), job_id, command, ws.dir,
+                        command_env())
+                except OSError as exc:
+                    return {"error": f"could not start the job: {exc}"}
+                if tid in self.__dict__.get("_jobs_cancelled", ()):
+                    # The step was cancelled while the process was starting: no row existed for the cancel to find.
+                    if await asyncio.to_thread(local_jobs.kill, facts, process):
+                        return {"error": "the task was cancelled while the job started; the job was ended"}
+                    # Its processes survived: keep it as a row so the watcher keeps ending it, not an ownerless process.
+                    self._local_procs[job_id] = process
+                    self._ensure_local_watch()
+                    await self._track_job({"task_id": tid, "agent_id": aid, "job_id": job_id, "name": name,
+                                           "core_hours": None},
+                                          extra={"scheduler": "local", "state": "running", "cancel_requested": True,
+                                                 "cancel_wake": False,
+                                                 "local": {**facts, "command": command, "expected_minutes": expected}})
+                    return {"error": "the task was cancelled while the job started; it could not be ended yet and "
+                                     "the runner keeps trying"}
+                self._local_procs[job_id] = process
+                self._ensure_local_watch()
+                await self._track_job({"task_id": tid, "agent_id": aid, "job_id": job_id, "name": name,
+                                       "core_hours": None},
+                                      extra={"scheduler": "local", "state": "running",  # no queue: it starts at once
+                                             "local": {**facts, "command": command, "expected_minutes": expected}})
+            finally:
+                self._local_starting -= 1
+            return {"submitted": True, "job_id": job_id, "name": name}
+        finally:
+            self.submitting.get(tid, set()).discard(done)
+            done.set_result(None)
+
+    async def _end_local_job(self, jid: str, j: dict, state: str, *, wake: bool = True) -> bool:
+        """Kill a local job's process tree. Only when nothing of it is left is it recorded as ended (`wake` False keeps
+        its step from being woken); a tree that survives leaves the job running and the watcher keeps checking it.
+        The job counts as being ended from the first line to the last, so a status the watcher read meanwhile cannot
+        write over it (#1144)."""
+        ending = self.__dict__.setdefault("_ending_local_jobs", set())
+        ending.add(jid)
+        try:
+            return await self._end_local_job_now(jid, j, state, wake=wake)
+        finally:
+            ending.discard(jid)
+
+    async def _end_local_job_now(self, jid: str, j: dict, state: str, *, wake: bool) -> bool:
+        tid = j.get("task_id")
+        if not await asyncio.to_thread(local_jobs.kill, j.get("local") or {}, self._local_procs.get(jid)):
+            # Remembered with the row (so it survives a restart): the watcher ends it again until nothing is left.
+            j.update(cancel_requested=True, cancel_wake=wake)
+            self.store.put("job", jid, j)
+            return False
+        self._local_procs.pop(jid, None)
+        j.update(state=state, terminal=True, exit_status=None)
+        after = [("job", jid, j)]
+        if not wake and tid:
+            self.notified.add(tid)
+            after.append(("notified", tid, {"done": True}))
+        await self.emit_all([Event(type="job.state", task_id=tid, agent_id=j.get("agent_id"),
+                                   request_id=self.task_req.get(tid or ""),
+                                   data={"job_id": jid, "name": j.get("name"), "state": state, "exit_status": None})],
+                            after=after)
+        return True
+
+    def _ensure_local_watch(self) -> None:
+        """Poll local jobs from the first one on. It is started lazily, so a runner without local jobs runs the same
+        loops as before (the HPC watcher stays off with scheduler=none)."""
+        if getattr(self, "_local_watch", None) is None or self._local_watch.done():
+            self._local_watch = asyncio.get_running_loop().create_task(self._local_job_watch_loop())
+
+    async def _local_job_watch_loop(self) -> None:
+        while not self._stopping:
+            await asyncio.sleep(self.s.runner.job_poll_s)
+            try:
+                await self._poll_local_jobs()
+            except Exception:
+                log.exception("local job poll failed")
+
+    async def _poll_local_jobs(self) -> None:
+        if not any(local_jobs.is_local(jid) for jid in self.jobs):
+            return
+        ending = self.__dict__.setdefault("_ending_local_jobs", set())
+        for jid, j in list(self.jobs.items()):
+            if j["terminal"] or not local_jobs.is_local(jid) or jid in ending:
+                continue
+            if j.get("cancel_requested"):  # an earlier cancel could not end the whole tree: try again
+                await self._end_local_job(jid, j, "cancelled", wake=bool(j.get("cancel_wake", True)))
+                continue
+            state, exit_status = await asyncio.to_thread(local_jobs.status, j.get("local") or {},
+                                                         self._local_procs.get(jid))
+            if j["terminal"] or j.get("cancel_requested") or jid in ending:
+                # A cancel came in while the status was read: it is still ending the job, ended it, or could not end the
+                # whole tree and left the job for the next poll to end again (the branch above). What was read is stale
+                # (#1144).
+                continue
+            if state == j["state"]:
+                continue
+            j.update(state=state, exit_status=exit_status, terminal=state in TERMINAL)
+            if j["terminal"]:
+                self._local_procs.pop(jid, None)  # the poll that saw it end has reaped it
+            await self.emit_all([Event(type="job.state", task_id=j["task_id"], agent_id=j["agent_id"],
+                                       request_id=self.task_req.get(j["task_id"] or ""),
+                                       data={"job_id": jid, "name": j["name"], "state": state,
+                                             "exit_status": exit_status})],
+                                after=[("job", jid, j)])
+        await self._wake_finished_jobs()
+
+    CANCEL_TOMBSTONE_KEEP_S = 2 * 86400  # the gateway keeps a cancel for as long (TASK_CANCEL_KEEP_S)
+
+    async def _remember_cancel(self, task_id: str) -> None:
+        """A cancel for a task this runner has not seen: keep it so the dispatch that follows is not started."""
+        now = time.time()
+        for tid, row in list(self.store.all("cancelled_task").items()):
+            if now - float(row.get("at") or 0) > self.CANCEL_TOMBSTONE_KEEP_S:
+                await self.store.adelete("cancelled_task", tid)
+        await self.store.aput("cancelled_task", task_id, {"at": now})
+
+    async def _cancel_local_jobs(self, task_id: str) -> bool:
+        """The step was cancelled: end its running local jobs so no process outlives it, and do not wake the step.
+        False when some job's processes could not be ended, so the cancel is not confirmed."""
+        if not task_id:
+            return True
+        ended = True
+        self.__dict__.setdefault("_jobs_cancelled", set()).add(task_id)  # a submit that is mid-start sees this
+        for jid, j in list(getattr(self, "jobs", {}).items()):
+            if local_jobs.is_local(jid) and j.get("task_id") == task_id and not j.get("terminal"):
+                ended = await self._end_local_job(jid, j, "cancelled", wake=False) and ended
+        return ended
+
     # ---------------- HPC job watcher ----------------
     async def _job_watch_loop(self) -> None:
+        if self.s.hpc.scheduler == "none":
+            return
         while not self._stopping:
             await asyncio.sleep(self.s.runner.job_poll_s)
             try:
@@ -1804,8 +3594,10 @@ class Runner:
                 log.exception("job poll failed")
 
     async def _poll_jobs(self) -> None:
+        if self.s.hpc.scheduler == "none":
+            return  # Retain saved state, missing counts and notifications; do not invent a final outcome.
         for jid, j in list(self.jobs.items()):
-            if j["terminal"]:
+            if j["terminal"] or local_jobs.is_local(jid):  # a local job has its own watcher (#675)
                 continue
             info = await asyncio.to_thread(self.scheduler.status, jid)
             state = info.state
@@ -1817,15 +3609,22 @@ class Runner:
                 state = "unknown_finished"
             else:
                 j["missing"] = 0
-            if state != j["state"]:
+            changed = state != j["state"]
+            if changed:
                 j.update(state=state, exit_status=info.exit_status)
-                await self.emit(Event(type="job.state", task_id=j["task_id"], agent_id=j["agent_id"],
-                                      request_id=self.task_req.get(j["task_id"] or ""),
-                                      data={"job_id": jid, "name": j["name"], "state": state,
-                                            "exit_status": info.exit_status}))
             j["terminal"] = state in TERMINAL
-            self.store.put("job", jid, j)
+            if changed:  # the event and the saved job state are one unit
+                await self.emit_all([Event(type="job.state", task_id=j["task_id"], agent_id=j["agent_id"],
+                                           request_id=self.task_req.get(j["task_id"] or ""),
+                                           data={"job_id": jid, "name": j["name"], "state": state,
+                                                 "exit_status": info.exit_status})],
+                                    after=[("job", jid, j)])
+            else:
+                self.store.put("job", jid, j)
+        await self._wake_finished_jobs()
 
+    async def _wake_finished_jobs(self) -> None:
+        """Wake each task whose jobs have all ended, once: the agent was waiting on them (#281)."""
         by_task: dict[str, list[dict]] = {}
         for j in self.jobs.values():
             by_task.setdefault(j["task_id"], []).append(j)
@@ -1835,10 +3634,14 @@ class Runner:
             t = self.tasks.get(tid)
             if t is not None and not t.done():  # the agent is still talking; wake it after it ends
                 continue
-            await self.emit(Event(
-                type="jobs.finished", task_id=tid, agent_id=js[0]["agent_id"], request_id=self.task_req.get(tid),
-                data={"jobs": [{k: x.get(k) for k in ("job_id", "name", "state", "exit_status")} for x in js],
-                      "session_id": js[0].get("session_id"), "workdir": js[0].get("workdir")},
-            ))
+            # The event and the "notified" mark are one unit: a cancel cannot send the wake-up and forget that it did.
             self.notified.add(tid)
-            self.store.put("notified", tid, {"done": True})
+            try:
+                await self.emit_all([Event(
+                    type="jobs.finished", task_id=tid, agent_id=js[0]["agent_id"], request_id=self.task_req.get(tid),
+                    data={"jobs": [{k: x.get(k) for k in ("job_id", "name", "state", "exit_status")} for x in js],
+                          "session_id": js[0].get("session_id"), "workdir": js[0].get("workdir")},
+                )], after=[("notified", tid, {"done": True})])
+            except Exception:
+                self.notified.discard(tid)
+                raise

@@ -23,6 +23,7 @@ from labhq.hooks import control as hook
 from labhq.models import AgentSpec, Engine, Task, TaskResult
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
+from tests.support.time_proxy import RuntimeProxy
 
 
 # ---------------- harness ----------------
@@ -119,7 +120,7 @@ async def test_a_steer_waits_on_its_step_through_a_long_halt_park(tmp_path, monk
         "control": {"delivered": [], "undelivered": [{"id": steer_id}], "paused": False}}}, None, None)
     await first
     later = time.time() + 3 * 86400  # past the runner's old 2-day carry limit, within the 7-day halt park
-    monkeypatch.setattr(gateway_server.time, "time", lambda: later)
+    monkeypatch.setattr(gateway_server, "time", RuntimeProxy(gateway_server.time, time=lambda: later))
     resumed = asyncio.create_task(hub.dispatch(_step_task("t2")))
     frame = await _frame(ws, "task.dispatch", "t2")
     assert [s["text"] for s in frame["task"]["meta"]["steers"]] == ["주말 뒤에 GRCh38로"]
@@ -197,8 +198,8 @@ async def test_a_control_through_an_ended_turn_reaches_the_steps_live_turn(tmp_p
 def _alive(pid: int) -> bool:
     if os.name == "nt":
         out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"], capture_output=True,
-                             text=True, timeout=15).stdout
-        return f'"{pid}"' in out
+                             timeout=15).stdout  # bytes: the console code page is not the Python text encoding
+        return f'"{pid}"'.encode() in out
     try:
         os.kill(pid, 0)
         return True

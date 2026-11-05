@@ -1,0 +1,6 @@
+pr: 825
+rows:
+- sha: f2b6464
+  at: '2026-10-21 20:04'
+  summary: 설치 후 시작이 실패하면 임시 폴더를 지우기 전에 안전한 진단을 남깁니다.
+  text: 'Clean-install up 실패 시 기존 launch journal의 두 supervisor 사실을 tail16 KiB/8행·JSON4096자로 제한해 출력한다. 명령·환경·경로·PID·원문 로그는 제외하며 누락/손상과 원래 실패를 보존한다. 신규10건 red 후 최종 fake/static12건과 Python3.10 AST·기존 up/readiness/cleanup 대조·public/diff/기록 검사 통과. Reference1720→2075자. 제품 transport/timeout/Job/ACK는 변경하지 않았다. Provider timeout 원인과 실제 설치 후 시작은 미확인이고 로컬 커밋만 준비했다.'

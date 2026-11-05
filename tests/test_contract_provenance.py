@@ -358,7 +358,7 @@ def test_a_pinned_install_fetches_and_checks_out_that_commit(install):
         ["git", "-C", repo, "fetch", "--depth", "1", "origin", COMMIT],
         ["git", "-C", repo, "checkout", "--detach", "FETCH_HEAD"]]
     for dst in install.destinations.values():
-        assert _marker(dst) == {"source": SOURCE, "commit": COMMIT}
+        assert {k: v for k, v in _marker(dst).items() if k != "patches"} == {"source": SOURCE, "commit": COMMIT}
         assert (dst / "SKILL.md").read_text(encoding="utf-8") == "new skill\n"
     assert paper2agent.installed_commit("codex") == COMMIT
 
@@ -561,7 +561,7 @@ def test_a_changed_skill_source_is_cloned_fresh_not_pulled_from_the_old_origin(i
     assert not list(install.cache.glob(".Paper2Agent-*")), "the swap folder is cleaned up"
     for dst in install.destinations.values():
         assert (dst / "SKILL.md").read_text(encoding="utf-8") == "fresh skill\n"
-        assert _marker(dst) == {"source": SOURCE, "commit": COMMIT}
+        assert {k: v for k, v in _marker(dst).items() if k != "patches"} == {"source": SOURCE, "commit": COMMIT}
 
 
 def test_a_failed_clone_of_a_changed_source_keeps_the_old_checkout_and_installs(install):
@@ -764,3 +764,280 @@ def test_a_cached_checkout_whose_origin_cannot_be_read_is_cloned_fresh(install):
     assert paper2agent.origin_url(install.repo) == SOURCE
     for dst in install.destinations.values():
         assert _marker(dst)["source"] == SOURCE and (dst / "SKILL.md").read_text(encoding="utf-8") == "verified skill\n"
+
+
+# ---------------- labhq talent lists built paper skills (#660) ----------------
+
+def _paper_skill_receipt(talent: Path, pid: str, **fields) -> Path:
+    import hashlib
+    from labhq.recruit.paper_skills import paper_id
+    folder = talent / ("paper-skill-" + hashlib.sha256(paper_id(pid).encode()).hexdigest()[:24])
+    folder.mkdir(parents=True)
+    row = {"paper_id": paper_id(pid), "status": "ready", "skill_dir": str(folder / "skill" / ("b" * 64)),
+           "skill_sha256": "b" * 64, "runner_id": "local", "paper2agent_commit": "c" * 40,
+           "fulltext_receipt": {"text_file": "/private/paper.md"}, "fulltext_receipt_sha256": "d" * 64, **fields}
+    (folder / "paper-skill.json").write_text(json.dumps(row), encoding="utf-8")
+    return folder
+
+
+def test_talent_lists_contracts_and_built_paper_skills_without_claiming_use(tmp_path):
+    from labhq.cli import talent_lines
+    reg, _ = _hired(tmp_path)
+    folder = _paper_skill_receipt(tmp_path / "talent", "PMID:12345678")
+    lines = talent_lines(reg)
+    assert lines[0].startswith("🐥 tissue")  # the existing contract line is unchanged and first
+    paper, = [line for line in lines if line.startswith("📄")]
+    assert folder.name in paper and "pmid:12345678" in paper and "생성됨" in paper
+    assert "skill=" + "b" * 12 in paper and "commit=ccccccc" in paper and "요청별 기록 참조" in paper
+    assert "호출됨" not in paper and "called" not in paper  # built is not used, read or useful
+    assert "/private/paper.md" not in paper and "skill/" not in paper and "local" not in paper  # no paths/receipt
+
+
+def test_talent_marks_broken_or_foreign_paper_skill_receipts_without_echoing_them(tmp_path):
+    from labhq.cli import talent_lines
+    talent = tmp_path / "talent"
+    _paper_skill_receipt(talent, "PMID:1", status="failed")
+    _paper_skill_receipt(talent, "PMID:2", skill_sha256="not-a-hash")
+    broken = _paper_skill_receipt(talent, "PMID:3")
+    (broken / "paper-skill.json").write_text("{\x1b[31m not json", encoding="utf-8")
+    foreign = _paper_skill_receipt(talent, "PMID:4")
+    (foreign / "paper-skill.json").write_text(json.dumps({"paper_id": "pmid:99", "status": "ready",
+                                                          "skill_sha256": "e" * 64}), encoding="utf-8")
+    huge = _paper_skill_receipt(talent, "PMID:5")
+    (huge / "paper-skill.json").write_text(" " * (256 * 1024 + 1), encoding="utf-8")
+    (talent / "paper-skill-unfinished").mkdir()  # a failed build writes no receipt: counted, not listed as a skill
+    lines = talent_lines(SimpleNamespace(talent_pool=lambda: [], talent_dir=talent))
+    assert len(lines) == 6 and all(line.startswith("📄") for line in lines)
+    assert all("표시 생략" in line for line in lines[:5])
+    assert lines[5].startswith("📄 빌드 미완료 폴더 1개") and "표시 생략" not in lines[5]
+    assert sum("다른 논문" in line for line in lines) == 1
+    assert not any(token in "".join(lines) for token in ("\x1b", "pmid:99", "not-a-hash", "failed", "e" * 12))
+
+
+def test_talent_lists_a_paper_skill_once_when_a_contract_already_holds_it(tmp_path):
+    from labhq.cli import talent_lines
+    talent = tmp_path / "talent"
+    folder = _paper_skill_receipt(talent, "PMID:7", skill_sha256="f" * 64)
+    contract = SimpleNamespace(id="c_p", name="P", contract=SimpleNamespace(
+        talent_dir=str(talent / "p"), kind="consultant", paper="PMID: 7", source_commit=None, external_services=[],
+        skill_sha256="f" * 64))
+    lines = talent_lines(SimpleNamespace(talent_pool=lambda: [contract], talent_dir=talent))
+    assert len(lines) == 1 and lines[0].startswith("🐥 p")
+    (folder / "contract.yaml").write_text("", encoding="utf-8")  # a contract in the same folder is the contract line
+    assert talent_lines(SimpleNamespace(talent_pool=lambda: [], talent_dir=talent)) == []
+
+
+def test_talent_command_prints_the_same_lines(tmp_path, capsys):
+    from labhq import cli
+    _paper_skill_receipt(tmp_path / "talent", "doi:10.1000/xyz")
+    (tmp_path / "agents" / "core").mkdir(parents=True)
+    config = tmp_path / "labhq.yaml"
+    config.write_text(yaml.safe_dump({"runner": {"agents_dir": str(tmp_path / "agents"),
+                                                 "talent_dir": str(tmp_path / "talent")}}), encoding="utf-8")
+    cli.main(["-c", str(config), "talent"])
+    out = capsys.readouterr().out.splitlines()
+    assert len(out) == 1 and "doi:10.1000/xyz" in out[0] and "생성됨" in out[0]
+
+
+# ---------------- #660: the fox's paper list, from the stored request only ----------------
+
+def _literature_request(*, referenced=True):
+    from labhq.recruit.paper_skills import reference_token
+    use = {"paper_id": "doi:10.1000/fit", "step_id": "s1", "selection_sha256": "sel", "input_ref": "inputs/paper_skills/x.md",
+           "skill_id": "paper-" + "c" * 24, "skill_sha256": "a" * 64, "document_sha256": "d" * 64,
+           "paper2agent_commit": "e" * 40, "status": "ready", "called": referenced,
+           "call_status": "referenced" if referenced else "unverified",
+           "reason": "result_reference" if referenced else "no_result_reference"}
+    if referenced:
+        use["evidence"] = reference_token(use)
+    papers = [{"title": "Fit method", "citations": ["https://doi.org/10.1000/FIT"],
+               "fulltext_receipt": {"paper_id": "doi:10.1000/fit", "text_file": "/private/fit.txt"}},
+              {"title": "Reproduced study", "citations": ["PMID: 4242"]},
+              {"title": "Context only", "citations": ["no identifier"]}]
+    plan = {"steps": [{"id": "s1", "agent_id": "analyst"}],
+            "paper_skill_results": [{"paper_id": "doi:10.1000/fit", "title": "Fit method", "reason": "같은 QC 방법",
+                                     "step_ids": ["s1"], "agent_ids": ["analyst"], "status": "ready",
+                                     "selection_sha256": "sel", "skill_dir": "/private/talent/x"}],
+            "recruit_results": [{"paper": "PMID:4242", "step_ids": ["s1"], "status": "active", "agent_id": "c_repro"}]}
+    return {"id": "r", "status": "done", "analysis_precedents": {"status": "ok", "papers": papers},
+            "plan": plan, "results": {"s1": {"ok": True, "provenance": {"runs": {"t1": {"paper_skills": [use]}}}}}}
+
+
+def test_paper_literature_lists_every_precedent_and_the_stored_skill_receipts():
+    from labhq.recruit.paper_skills import literature_view
+    view = literature_view(_literature_request())
+    fit, hire, context = view["papers"]
+    assert view["status"] == "ok" and [row["title"] for row in view["papers"]] == ["Fit method", "Reproduced study", "Context only"]
+    assert fit["uses"] == ["planning", "paper_skill"] and fit["ids"] == ["doi:10.1000/fit"]
+    assert fit["skill"] == {"status": "ready", "built": True, "reason": None, "selection_reason": "같은 QC 방법",
+                            "agents": ["analyst"], "skill_sha256": "a" * 64, "paper2agent_commit": "e" * 40,
+                            "selected_steps": ["s1"], "attached_steps": ["s1"], "reference": "referenced",
+                            "reference_reasons": ["result_reference"]}
+    assert hire["uses"] == ["planning", "recruit"] and hire["recruit"] == {"status": "active", "agent_id": "c_repro", "step_ids": ["s1"]}
+    assert context["uses"] == ["planning"] and context["ids"] == [] and context["skill"] is None
+    assert "/private" not in json.dumps(view)  # no receipt path or talent folder
+    unverified = literature_view(_literature_request(referenced=False))["papers"][0]["skill"]
+    assert unverified["reference"] == "unverified" and unverified["reference_reasons"] == ["no_result_reference"]
+
+
+def test_paper_literature_bounds_damaged_records_and_says_when_there_is_none():
+    from labhq.recruit.paper_skills import literature_view
+    assert literature_view({"id": "r"}) == {"status": "absent", "papers": []}
+    req = _literature_request()
+    req["analysis_precedents"]["papers"] += ["bad", {"title": "<b>x</b>\x00\n" + "y" * 900, "citations": "PMID: 1"}]
+    req["plan"]["paper_skill_results"].append("bad")
+    req["results"]["s2"] = {"provenance": "bad"}
+    view = literature_view(req)
+    assert view["damaged"] is True and all(row["skill"] is None for row in view["papers"])
+    long = view["papers"][-1]
+    assert len(long["title"]) == 300 and "\x00" not in long["title"] and long["ids"] == []
+    # #849 review: a non-list hire record or an unhashable receipt field is damaged data, never a raised error.
+    hostile = _literature_request()
+    hostile["plan"]["recruit_results"] = 5
+    hostile["results"]["s1"]["provenance"]["runs"]["t1"]["paper_skills"][0].update(status=["ready"], reason=["x"])
+    shown = literature_view(hostile)
+    assert shown["damaged"] is True and [row["recruit"] for row in shown["papers"]] == [None, None, None]
+    assert shown["papers"][0]["skill"]["reference_reasons"] == []
+    failed = literature_view({"analysis_precedents": {"status": "warning", "warning": "analysis precedents unavailable (no_papers)"}})
+    assert failed == {"status": "unavailable", "papers": [], "warning": "analysis precedents unavailable (no_papers)"}
+
+
+@pytest.mark.asyncio
+async def test_request_detail_carries_the_paper_list_without_changing_the_record(tmp_path):
+    import httpx
+
+    from labhq.gateway.server import create_app
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.requests["r"] = _literature_request()
+    hub.requests["bad"] = {**_literature_request(), "id": "bad", "plan": {"recruit_results": 5}}
+    stored = json.dumps(hub.requests["bad"], sort_keys=True)
+    headers = {"Authorization": f"Bearer {settings.gateway.client_token}"}
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as client:
+            detail = await client.get("/api/requests/r", headers=headers)
+            anonymous = await client.get("/api/requests/r")
+            missing = await client.get("/api/requests/none", headers=headers)
+            malformed = await client.get("/api/requests/bad", headers=headers)
+        assert detail.status_code == 200 and detail.json()["paper_literature"]["papers"][0]["skill"]["reference"] == "referenced"
+        assert anonymous.status_code == 401 and missing.status_code == 404
+        assert "paper_literature" not in hub.requests["r"]
+        assert malformed.status_code == 200 and malformed.json()["paper_literature"]["damaged"] is True
+        assert json.dumps(hub.requests["bad"], sort_keys=True) == stored  # the detail never rewrites a damaged record
+    finally:
+        hub.store.close()
+
+
+def _history_request(created_at, *, steps=("s1",), digest="a" * 64, referenced=True):
+    req = _literature_request(referenced=referenced)
+    req["created_at"] = created_at
+    req["plan"]["paper_skill_results"][0]["step_ids"] = list(steps)
+    req["results"] = {step: {"ok": True, "provenance": {"runs": {"t": {"paper_skills": [
+        {**req["results"]["s1"]["provenance"]["runs"]["t1"]["paper_skills"][0], "step_id": step, "skill_sha256": digest}]}}}}
+        for step in steps}
+    return req
+
+
+def test_skill_history_lists_the_requests_that_selected_each_built_skill_newest_first():
+    from labhq.recruit.paper_skills import history_rows, skill_history
+
+    requests = {"old": _history_request(100.0), "new": _history_request(300.0, steps=("s1", "s2"), referenced=False),
+                "mid": _history_request(200.0, digest="b" * 64), "no_time": {**_history_request(1.0), "created_at": None},
+                "bad": {"created_at": 50.0, "plan": {"paper_skill_results": ["x", 5]}, "results": "oops"}}
+    rows, truncated = history_rows(requests)
+    assert truncated is False and [row[0] for row in rows] == ["new", "mid", "old", "bad"]  # no_time is not ordered, so skipped
+    history = skill_history(rows)
+    fit = history[("doi:10.1000/fit", "a" * 64)]
+    assert [use["request_id"] for use in fit] == ["new", "old"] and fit[0]["created_at"] == 300.0
+    assert fit[0]["attached_steps"] == ["s1", "s2"] and fit[0]["reference"] == "unverified"  # a reference is not proof of a call
+    assert fit[1]["reference"] == "referenced" and fit[1]["agents"] == ["analyst"]
+    assert [use["request_id"] for use in history[("doi:10.1000/fit", "b" * 64)]] == ["mid"]
+    many = skill_history([(f"r{n}", float(n), requests["old"]["plan"]["paper_skill_results"], requests["old"]["results"])
+                          for n in range(1, 61)])
+    assert len(many[("doi:10.1000/fit", "a" * 64)]) == 60  # the count is never cut to a display length
+    assert "bad" not in {use["request_id"] for uses in history.values() for use in uses}  # a damaged record is skipped, not guessed
+
+
+def test_history_reads_only_the_newest_requests_and_says_when_older_ones_were_left_out(monkeypatch):
+    from labhq.recruit import paper_skills
+
+    monkeypatch.setattr(paper_skills, "HISTORY_REQUEST_LIMIT", 3)
+    requests = {f"r{n}": _history_request(float(n)) for n in range(1, 6)}
+    rows, truncated = paper_skills.history_rows(requests)
+    assert truncated is True and [row[0] for row in rows] == ["r5", "r4", "r3"]
+    view = paper_skills.literature_view(_literature_request())
+    shown = paper_skills.with_previous_uses(view, paper_skills.skill_history(rows), "r5", len(rows), truncated)
+    assert shown["history"] == {"limit": 3, "scanned": 3, "truncated": True}
+    skill = shown["papers"][0]["skill"]
+    assert [use["request_id"] for use in skill["previous_uses"]] == ["r4", "r3"] and skill["previous_use_count"] == 2
+    assert shown["papers"][2]["skill"] is None  # a paper without a skill gets no history
+
+
+@pytest.mark.asyncio
+async def test_the_paper_skills_api_and_request_detail_carry_the_history(tmp_path, monkeypatch):
+    import httpx
+
+    from labhq.recruit import paper_skills
+
+    from labhq.gateway.server import create_app
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.requests["r_old"] = {**_history_request(100.0), "id": "r_old"}
+    hub.requests["r"] = {**_history_request(200.0), "id": "r"}
+    headers = {"Authorization": f"Bearer {settings.gateway.client_token}"}
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as client:
+            listing = await client.get("/api/paper-skills", headers=headers)
+            anonymous = await client.get("/api/paper-skills")
+            detail = await client.get("/api/requests/r", headers=headers)
+        assert anonymous.status_code == 401 and listing.status_code == 200
+        body = listing.json()
+        assert body["basis"] == {"limit": 500, "scanned": 2, "truncated": False}
+        skill, = body["skills"]
+        assert skill["paper_id"] == "doi:10.1000/fit" and [use["request_id"] for use in skill["uses"]] == ["r", "r_old"]
+        assert skill["use_count"] == 2
+        assert skill["first_built"] == {"request_id": "r_old", "created_at": 100.0}
+        monkeypatch.setattr(paper_skills, "HISTORY_REQUEST_LIMIT", 1)  # r_old is now outside the history, but still the origin
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as again:
+            cut = (await again.get("/api/paper-skills", headers=headers)).json()
+        assert cut["basis"]["truncated"] is True and cut["skills"][0]["first_built"]["request_id"] == "r_old"
+        card = detail.json()["paper_literature"]["papers"][0]["skill"]
+        assert [use["request_id"] for use in card["previous_uses"]] == ["r_old"]  # the request is left out of its own list
+        assert detail.json()["paper_literature"]["history"]["scanned"] == 2
+        assert "previous_uses" not in json.dumps(hub.requests["r"])  # the stored record is unchanged
+    finally:
+        hub.store.close()
+
+
+def test_talent_history_reads_the_store_read_only_and_works_without_a_gateway(tmp_path):
+    import sqlite3
+
+    from labhq import cli
+
+    state = tmp_path / "state"
+    state.mkdir()
+    path = state / "gateway.sqlite3"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE state (kind TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(kind, key))")
+    for rid, body in {"req_a": _history_request(100.0), "req_b": _history_request(200.0, steps=("s1", "s2"))}.items():
+        db.execute("INSERT INTO state VALUES ('request', ?, ?)", (rid, json.dumps(body)))
+    db.commit()
+    db.close()
+    before = (path.stat().st_mtime_ns, path.stat().st_size)
+    settings = Settings.model_validate({"gateway": {"state_dir": str(state)}})
+    rows, error = cli._paper_skill_store_rows(settings)
+    assert error is None and (path.stat().st_mtime_ns, path.stat().st_size) == before  # nothing was written
+    lines = cli.talent_history_lines(rows)
+    assert "최근 요청 2건 기준" in lines[0] and "증거가 아닙니다" in lines[0]
+    assert any("doi:10.1000/fit" in line and "고른 요청 2건" in line for line in lines)
+    assert any("req_b" in line and "붙은 단계=s1,s2" in line and "결과 참조=referenced" in line for line in lines)
+    none = cli.talent_history_lines([("r", 1.0, None, None)])
+    assert "논문 스킬을 고른 요청이 없습니다(최근 요청 1건 기준)" in none[0]
+    unread = cli.talent_history_lines(None, "gateway 기록 파일(gateway.sqlite3)이 없습니다")
+    assert "읽지 못했습니다" in unread[0] and "gateway.sqlite3" in unread[0]

@@ -1,0 +1,26 @@
+pr: 902
+rows:
+- sha: 68a6c3e
+  at: '2026-10-24 01:46'
+  summary: 에이전트가 만든 커밋에 봇 작성자 정보를 붙입니다.
+  text: 저장소 commit-msg·post-commit 훅을 머신 전역 훅에 연결하고 전역 훅이 없는 환경의 기존 동작을 유지했다.
+- sha: '7957961'
+  at: '2026-10-24 03:12'
+  summary: 다른 사람이 쓴 커밋을 옮길 때 원래 작성자를 보존합니다.
+  text: rebase·cherry-pick·충돌 뒤 continue의 전역 author 변경을 막고 linked worktree와 reflog 비활성화 회귀 12건을 검증했다.
+- sha: a2b041e
+  at: '2026-10-24 03:14'
+  summary: Windows에서도 커밋 작성자 보존 검사를 모두 실행합니다.
+  text: Git 훅 검사 전체를 Windows 필수 cohort와 inventory에 등록하고 selection 회귀 8건을 확인했다.
+- sha: 9f2ab56
+  at: '2026-10-24 03:18'
+  summary: merge 커밋에서도 에이전트 작성자 표식이 빠지지 않게 했습니다.
+  text: 자동 merge와 --no-commit merge는 전역 위임 대신 저장소 trailer 규칙을 쓰며, 수정 전 2건 실패·최종 훅 회귀 14건 통과를 확인했다.
+- sha: bd4d8a0
+  at: '2026-10-24 03:28'
+  summary: 변경을 되돌린 에이전트도 커밋 작성자로 남깁니다.
+  text: 새 inverse commit인 revert에 전역 작성자 처리를 적용하고 단건·연속 revert와 연속 cherry-pick을 포함한 훅 회귀 17건을 검증했다.
+- sha: 91b8df0
+  at: '2026-10-24 03:37'
+  summary: 커밋을 수정해도 원래 작성자를 보존합니다.
+  text: amend와 명시 author를 전역 작성자 변경에서 제외하고 다른 작성자 메시지는 trailer를 남기며 최종 훅 회귀 20건을 검증했다.

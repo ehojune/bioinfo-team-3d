@@ -1,14 +1,18 @@
 pr: 576
 rows:
-- sha: "ff1b133"
+- sha: ff1b133
   at: 2026-10-13 21:40
   text: '웹 종료 확인 창과 PI 전용 종료 API: 진행 중 거부·강제 확인·탭만 닫기, down 재사용'
-- sha: "8ddabf0"
+  summary: 웹에서 종료를 확인하고 진행 중이면 거부하거나 강제 종료·탭 닫기를 고르게 했습니다.
+- sha: 8ddabf0
   at: 2026-10-13 22:14
   text: 종료 UI 회귀 파일을 CI의 Node 검사 목록에 등록
-- sha: "9d600ea"
+  summary: 종료 화면의 오류 재발 검사를 자동 웹 검사 목록에 넣었습니다.
+- sha: 9d600ea
   at: 2026-10-14 08:55
   text: main 병합 충돌 해소 — 종료 UI와 결과 저장 편집기 등록을 함께 보존
-- sha: "3036ac1"
+  summary: 종료 화면과 결과 저장 편집기를 모두 유지하도록 병합 충돌을 풀었습니다.
+- sha: 3036ac1
   at: 2026-10-14 09:07
   text: 웹 종료가 gateway 자신의 종료를 기다리다 강제 종료되던 교착을 분리하고 Windows venv launcher PID를 인정
+  summary: 웹 종료가 자기 서버의 종료를 기다리며 멈추던 문제와 Windows 프로세스 판정을 고쳤습니다.

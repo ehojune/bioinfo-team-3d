@@ -42,6 +42,7 @@ def test_question_rule_is_shared_by_general_replan_and_research_planning():
         assert phrase in QUESTION_RULE
 
     common = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
+                  max_branches=5, max_branch_steps=8, branched_max_steps=43,
                   question_rule=QUESTION_RULE, output_types_rule="", topics_rule="", lab_scope="LAB")
     rendered = [
         cso.PLAN_PROMPT.format(**common),

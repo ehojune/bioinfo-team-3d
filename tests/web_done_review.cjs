@@ -64,8 +64,8 @@ test('review cards have open and explicit finish actions without deadline', asyn
   buttons[0].onclick();buttons[1].onclick();assert.equal(opened,'r');assert.equal(reviewed,'r');
 });
 test('unknown cost uses the same readable noun phrase', () => {
-  assert.equal(state.totalCostLabel([{costKnown:false}],25.36),'사용 비용 $25.36 + 미집계된 비용');
-  assert.match(state.costLabel({costSummary:{actual_usd:25.36,unknown_count:1}}),/미집계된 비용 1건/);
+  assert.equal(state.totalCostLabel([{costKnown:false}],25.36),'사용 비용 $25.36 + 비용 모름');
+  assert.match(state.costLabel({costSummary:{actual_usd:25.36,unknown_count:1}}),/비용 모름 1건/);
 });
 test('budget card explains unknown costs and both decisions in sentences', async () => {
   const ui=await decide;
@@ -78,7 +78,7 @@ test('budget card explains unknown costs and both decisions in sentences', async
 });
 test('whiteboard exposes completed report action and staff keep completion until review', () => {
   const office=state.createOfficeState();
-  office.apply({type:'snapshot',data:{agents:[{id:'cso'}],requests:[{id:'r',text:'Study',status:'done',pi_review_pending:true}]}});
+  office.apply({type:'snapshot',data:{agents:[{id:'cso'}],requests:[{id:'r',agent_id:'cso',text:'Study',status:'done',pi_review_pending:true}]}});
   const html=fs.readFileSync(require('node:path').join(__dirname,'../labhq/web/index.html'),'utf8');
   const board={dataset:{},innerHTML:''};
   const vm=require('node:vm'), ctx=vm.createContext({S:office.S,LabHQState:state,$:()=>board,

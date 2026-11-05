@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="ga-title ga-desc">
+  <title id="ga-title">합성 그래픽 초록 예시</title>
+  <desc id="ga-desc">가상의 연구 질문을 자료, 방법, 핵심 결과, 결론 순서로 정리한 숫자 없는 SVG 예시다.</desc>
+  <style>
+    text { font-family: 'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; fill: #0F172A; }
+    .title { font-size: 23px; font-weight: 700; }
+    .head { font-size: 15px; font-weight: 700; }
+    .body { font-size: 13px; fill: #475569; }
+  </style>
+  <defs>
+    <marker id="ga-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10Z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="420" rx="16" fill="#F8FAFC"/>
+  <text class="title" x="34" y="48">합성 예시 — 연구 결과를 한 장에 정리하기</text>
+  <text class="body" x="34" y="75">실제 작업에서는 보고서에 있는 문장과 숫자만 옮긴다</text>
+  <g stroke-width="1.7">
+    <rect x="34" y="112" width="200" height="238" rx="12" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <rect x="266" y="112" width="200" height="238" rx="12" fill="#FEF3C7" stroke="#D97706"/>
+    <rect x="498" y="112" width="200" height="238" rx="12" fill="#EEF2FF" stroke="#6366F1"/>
+    <rect x="730" y="112" width="200" height="238" rx="12" fill="#ECFDF5" stroke="#16A34A"/>
+    <rect x="962" y="112" width="204" height="238" rx="12" fill="#F5F3FF" stroke="#7C3AED"/>
+  </g>
+  <g class="head">
+    <text x="54" y="148">질문</text><text x="286" y="148">자료</text><text x="518" y="148">방법</text>
+    <text x="750" y="148">핵심 결과</text><text x="982" y="148">결론</text>
+  </g>
+  <g class="body">
+    <text x="54" y="188">처리 조건에 따라</text><text x="54" y="210">관찰값이 달라지는가?</text>
+    <text x="286" y="188">공개 합성 표</text><text x="286" y="210">변수와 단위를 확인</text>
+    <text x="518" y="188">사전에 정한 비교</text><text x="518" y="210">민감도 분석 포함</text>
+    <text x="750" y="188">방향과 불확실성을</text><text x="750" y="210">보고서 그대로 표시</text>
+    <text x="982" y="188">근거가 지지하는</text><text x="982" y="210">범위까지만 말한다</text>
+  </g>
+  <g stroke="#475569" stroke-width="2" marker-end="url(#ga-arrow)">
+    <line x1="234" y1="231" x2="260" y2="231"/><line x1="466" y1="231" x2="492" y2="231"/>
+    <line x1="698" y1="231" x2="724" y2="231"/><line x1="930" y1="231" x2="956" y2="231"/>
+  </g>
+</svg>

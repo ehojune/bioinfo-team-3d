@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from scripts import integrations
-from scripts.integrations import BADGES_END, BADGES_START, END, MANUAL, ROOT, START, Look, badges, main, render
+from scripts.integrations import BADGES_END, BADGES_START, END, MANUAL, MANUAL_TOOLS, ROOT, START, Look, badges, main, render
 
 README_TEXT = f"# title\n{BADGES_START}\n{BADGES_END}\nafter\n"
 MANUAL_TEXT = f"# manual\nbefore\n{START}\n{END}\nafter\n"
@@ -20,8 +20,8 @@ def staff(root, filename, **settings):
 
 
 def docs(root, readme_text=README_TEXT, manual_text=MANUAL_TEXT):
-    """README with the badge markers and docs/manual.md with the inventory markers."""
-    readme, manual = root / "README.md", root / MANUAL
+    """README with the badge markers and the manual chapter (docs/manual/09-staff-tools.md) with the inventory markers."""
+    readme, manual = root / "README.md", root / MANUAL_TOOLS
     manual.parent.mkdir(parents=True, exist_ok=True)
     readme.write_bytes(readme_text.encode("utf-8"))
     manual.write_bytes(manual_text.encode("utf-8"))
@@ -53,15 +53,16 @@ def test_repository_readme_passes_cli_check():
     assert result.returncode == 0, result.stderr
     content = render(ROOT / "agents")
     assert "PubMed" in content and "bioRxiv / medRxiv" in content
+    assert "OpenAlex·Crossref·Unpaywall" in content
     assert "bioinfo-agent (`bioinfo`)" in content and "Paper2Agent" in content
     assert "labhq_ask" in content and "AlphaGenome" not in content  # labhq_ask is wired by the runner (#39)
     assert "img.shields.io" not in content  # count badges are gone from the table; targets live at the top
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    manual = (ROOT / MANUAL).read_text(encoding="utf-8")
+    manual = (ROOT / MANUAL_TOOLS).read_text(encoding="utf-8")
     assert START not in readme and BADGES_START not in manual  # README for first-time users (#298)
     table = block(manual, START, END)
     local = re.findall(r"\]\((?!https?://)([^)#]+)\)", table)
-    assert local and all((ROOT / MANUAL).parent.joinpath(target).resolve().exists() for target in local)
+    assert local and all((ROOT / MANUAL_TOOLS).parent.joinpath(target).resolve().exists() for target in local)
 
 
 def test_repository_badges_name_exact_targets_at_readme_top():
@@ -80,7 +81,7 @@ def test_repository_badges_name_exact_targets_at_readme_top():
     for absent in ("Gemini", "Antigravity", "MOCK", "mock", "NONE",
                    "Codex 웹 검색", "bioinfo:bioinfo-analyze", "PR gate"):
         assert all(absent not in label for label in top), absent
-    assert "Codex: 직원 5명 · gpt-5.6-sol/gpt-6-astra/gpt-6-luna/gpt-6-sol" in top
+    assert "Codex: 직원 5명 · gpt-6-astra/gpt-6-luna/gpt-6.1-sol" in top
     assert "labhq MCP: annot · approval · ask · hpc" in top and "Python: 3.10+" in top
     assert "코드: GPL-3.0" in top and "문서·데이터: CC BY-SA 4.0" in top  # #252: one badge per license file
     generated = block(text, BADGES_START, BADGES_END)
@@ -156,7 +157,7 @@ def test_config_change_fails_check_and_write_preserves_surrounding_text(tmp_path
     assert text.startswith(f"# title\n{BADGES_START}\n") and text.endswith(f"{BADGES_END}\nafter\n")
     assert table.startswith(f"# manual\nbefore\n{START}\n") and table.endswith(f"{END}\nafter\n")
     assert "Codex 웹 검색" in table and "Codex 웹 검색" not in text
-    assert "](../agents/core/staff.yaml)" in table  # links resolve from docs/
+    assert "](../../agents/core/staff.yaml)" in table  # links resolve from docs/manual/
     assert main([*args, "--write"]) == 0
     assert (readme.read_text(encoding="utf-8"), manual.read_text(encoding="utf-8")) == (text, table)
     # A badge-only change (another Codex staff) also makes --check fail.

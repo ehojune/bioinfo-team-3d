@@ -52,7 +52,7 @@
   /* 반경 */
   --ds-r-1: 8px;  --ds-r-2: 12px;  --ds-r-pill: 999px;
   /* 높이 */
-  --ds-h-touch: 48px;  --ds-h-ctl: 44px;  --ds-h-dense: 32px;
+  --ds-h-touch: 48px;  --ds-h-ctl: 44px;  --ds-h-dense: 32px;  --ds-resize-hit: 18px;
   /* 그림자 2단 */
   --ds-e-1: 0 1px 2px rgb(28 36 48 / .08);
   --ds-e-2: 0 12px 32px rgb(28 36 48 / .18);

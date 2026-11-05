@@ -1,11 +1,14 @@
 pr: 556
 rows:
-- sha: 'acf36a7'
+- sha: acf36a7
   at: 2026-10-13 17:20
   text: doctor·gateway 시작 시 개발 기록 저장소의 private 여부를 조회하고 public·unknown을 경고
-- sha: 'f964487'
+  summary: 개발 기록 저장소가 공개이거나 공개 여부를 모르면 시작·진단 때 경고합니다.
+- sha: f964487
   at: 2026-10-13 18:01
   text: direct 요청의 outputs/ 산출 경로와 최대 200개 기록 상한 설명 복원
-- sha: '2d69340'
+  summary: 직접 요청 결과물의 저장 경로와 기록 개수 제한 안내를 복원했습니다.
+- sha: 2d69340
   at: 2026-10-13 19:01
   text: '최신 main 병합: dev_log 공개 여부 진단·startup 경고와 사용자 홈 접근 guard 보존'
+  summary: 개발 기록 공개 여부 경고와 사용자 설정 폴더 보호를 함께 유지했습니다.

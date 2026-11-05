@@ -32,6 +32,18 @@ test('missing token disables GitHub choices and clarify keeps one card',async()=
   assert.equal(row._decisionParts.storage._mode.children[1].disabled,true);
   assert.match(row.textContent,/토큰 설정 필요/);
 });
+test('initial GitHub choice offers opt-in step progress, off by default',async()=>{
+  const ui=await mod, host=new Element();
+  const card={id:'progress',kind:'result_storage',detail:{storage:{github_available:true,
+    suggested_name:'study',progress_available:true,progress_default:false,
+    progress_question:'진행 과정도 단계마다 올릴까요?'}}};
+  const [row]=ui.syncDecisionCards(host,[card]);
+  const box=row._decisionParts.storage;
+  assert.equal(box._progress.checked,false);
+  box._mode.value='new';box._mode.onchange();box._progress.checked=true;
+  assert.deepEqual(ui.storageChoice(row),{mode:'new',repo:'study',visibility:'private',progress_push:true});
+  assert.match(row.textContent,/진행 과정도 단계마다 올릴까요\? \(기본 꺼짐\)/);
+});
 test('both offices pass structured storage choices',()=>{
   assert.match(fs.readFileSync(path.join(web,'index.html'),'utf8'),/storageChoice\(li\)/);
   assert.match(fs.readFileSync(path.join(web,'lab3d/src/live.js'),'utf8'),/if \(storage\) decision\.storage = storage/);
@@ -44,6 +56,18 @@ test('PI-opened late storage stays answerable without a countdown',async()=>{
   const [row]=ui.syncDecisionCards(host,[card],[],{now:()=>1e9});
   assert.doesNotMatch(row.textContent,/시간 초과|남음/);
   assert.equal(row._decisionParts.approve.disabled,false);
+});
+
+test('end storage card shows the first choice and can keep or change it',async()=>{
+  const ui=await mod, host=new Element();
+  const card={id:'end',kind:'result_storage',detail:{storage:{github_available:true,default:'keep',allow_keep:true,
+    initial_label:'새 GitHub 저장소 owner/study',suggested_name:'study'}}};
+  const [row]=ui.syncDecisionCards(host,[card]);
+  assert.match(row.textContent,/처음 선택: 새 GitHub 저장소 owner\/study/);
+  assert.equal(ui.storageChoice(row).mode,'keep');
+  const box=row._decisionParts.storage;
+  box._mode.value='local';box._mode.onchange();
+  assert.equal(ui.storageChoice(row).mode,'local');
 });
 
 test('publishing waits for PI review and preserves the editor preview',async()=>{
@@ -63,4 +87,39 @@ test('publishing waits for PI review and preserves the editor preview',async()=>
   assert.match(reviewed.textContent,/Editor draft/);
   ui.syncDecisionCards(host,[card],[],{requests,disabled:()=>true});
   assert.equal(reviewed._decisionParts.approve.disabled,true);
+});
+
+test('publish card names the PDF line, included or skipped',async()=>{
+  const ui=await mod, host=new Element();
+  const skipped={id:'p1',kind:'result_publish',request_id:'r',detail:{documents:{'README.md':'draft'},
+    pdf:'PDF는 포함하지 않았어요: 이 PC에서 Edge나 Chrome을 찾지 못했어요.'}};
+  const [row]=ui.syncDecisionCards(host,[skipped],[],{requests:new Map([['r',{pi_reviewed_at:1}]])});
+  assert.match(row.textContent,/보고서 PDF/);
+  assert.match(row.textContent,/PDF는 포함하지 않았어요: 이 PC에서 Edge나 Chrome을 찾지 못했어요\./);
+  const included={id:'p2',kind:'result_publish',request_id:'r',detail:{documents:{'README.md':'draft'},pdf:'포함: report.pdf (1.2 MB)'}};
+  const [row2]=ui.syncDecisionCards(new Element(),[included],[],{requests:new Map([['r',{pi_reviewed_at:1}]])});
+  assert.match(row2.textContent,/포함: report\.pdf \(1\.2 MB\)/);
+});
+
+test('publish card previews base64 SVG as an image and rejects inline SVG markup',async()=>{
+  const ui=await mod, host=new Element();
+  const safe='data:image/svg+xml;base64,'+Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>').toString('base64');
+  const card={id:'svg',kind:'result_publish',request_id:'r',detail:{documents:{},images:{'safe.svg':safe,
+    'unsafe.svg':'data:image/svg+xml,<svg onload="alert(1)"></svg>'}}};
+  const [row]=ui.syncDecisionCards(host,[card],[],{requests:new Map([['r',{pi_reviewed_at:1}]])});
+  const walk=node=>[node,...node.children.flatMap(walk)];
+  const images=walk(row).filter(node=>node.tagName==='IMG');
+  assert.equal(images.length,1);
+  assert.equal(images[0].src,safe);
+  assert.equal(images[0].alt,'safe.svg');
+});
+
+test('publish card shows the size and local path when an image preview is omitted',async()=>{
+  const ui=await mod, host=new Element();
+  const card={id:'large',kind:'result_publish',request_id:'r',detail:{documents:{},images:{},
+    image_preview_omitted:{'large.png':{size_bytes:1500000,path:'C:/draft/large.png'}}}};
+  const [row]=ui.syncDecisionCards(host,[card],[],{requests:new Map([['r',{pi_reviewed_at:1}]])});
+  assert.match(row.textContent,/large\.png/);
+  assert.match(row.textContent,/1\.4 MB/);
+  assert.match(row.textContent,/C:\/draft\/large\.png/);
 });

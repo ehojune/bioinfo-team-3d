@@ -1,0 +1,6 @@
+pr: 876
+rows:
+  - sha: dbc9a90
+    at: "2026-10-23 10:47"
+    summary: "PR의 기준 브랜치가 앞으로 이동해도 테스트한 병합본을 기준으로 Windows 검사를 고릅니다."
+    text: "이벤트 base가 병합 commit의 첫 parent보다 뒤처지면 head 일치와 forward ancestry를 확인한 뒤 첫 parent부터 변경 경로를 계산한다. 뒤바뀐 parent·반대 방향 drift·preview drift는 거부한다. artifact reuse는 기존 별도 검사에 맡긴다. mock/static 11건과 Python 3.10 문법 검사를 통과했다."

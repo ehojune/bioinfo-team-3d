@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import json
 import os
 import re
@@ -18,9 +19,12 @@ from urllib.request import Request, urlopen
 
 import yaml
 
-from .adapters.base import _resolve_command, codex_app_choice, expand_env
-from .adapters import adapter_preflight_error, get_adapter
-from .models import AgentSpec, Engine
+from .adapters.base import RunContext, _resolve_command, codex_app_choice, expand_env, version_key
+from .adapters import adapter_preflight_error, get_adapter, read_only_profile
+from . import bioinfo_link, disk_space, github_token, instance_guard
+from .models import AgentSpec, Engine, Task
+from .registry import is_employed, iter_agent_specs
+from .policy import claude_deny_private, claude_read_only, claude_settings
 from . import private_paths as private_path_module
 from .private_paths import (PrivatePaths, configured_claude_config_dir, in_pi_claude, inside_any,
                             plugin_keep_dirs, resolve_private_paths, staff_claude_config_dir)
@@ -46,6 +50,33 @@ LOCAL_PYTHON_PACKAGES = {
     "statsmodels": "statsmodels", "scikit-learn": "sklearn", "gseapy": "gseapy", "pydeseq2": "pydeseq2",
 }
 LOCAL_TOOLS = ("docker", "nextflow", "java", "wsl")
+
+# These are the oldest versions on which the complete adapter contract below was measured, not a claim that each
+# individual flag first appeared there. Older CLIs fail doctor because silently losing an isolation or accounting
+# feature is less safe than asking the operator to update.
+ENGINE_CLI_REQUIREMENTS = {
+    "claude_code": {
+        "minimum": "2.1.282",
+        "reason": "stream-json result/usage, --resume, --permission-prompt-tool, and hook/settings JSON isolation",
+    },
+    "codex": {
+        "minimum": "0.160.1",
+        "reason": "exec --json result/usage, exec resume, and the hooks/plugins/apps disable feature names",
+    },
+}
+CLAUDE_MODEL_ALIASES = frozenset({"haiku", "sonnet", "opus"})
+CLAUDE_MODEL_ID = re.compile(r"claude-(?:haiku|sonnet|opus)-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")
+CANARY_PROMPT = "Reply exactly LABHQ_CANARY_OK."
+CANARY_CANCEL_PROMPT = "LABHQ_CANARY_CANCEL: wait until cancelled."
+CANARY_EXPECTED = "LABHQ_CANARY_OK"
+CANARY_START_TIMEOUT_S = 30
+
+
+def wsl_tool_status() -> dict[str, bool]:
+    """Called inside the WSL runner: installed Docker alone does not prove its daemon answers."""
+    commands = {"docker": ["docker", "info"], "nextflow": ["nextflow", "-version"],
+                "java": ["java", "-version"]}
+    return {name: _probe(argv, dict(os.environ), timeout=15)[0] == 0 for name, argv in commands.items()}
 
 
 def _safe_path(path: str | Path) -> str:
@@ -85,8 +116,190 @@ def _research_row(settings: Settings) -> dict:
     return _row("config", "research lane", "ok", f"켜짐: CP1 → 단계 → CP2 → 리뷰 → 보고서, pack {packs}", "")
 
 
+def _semantics_row(settings: Settings) -> dict:  # semantics-hook
+    from .research.semantics_shadow import doctor_row  # semantics-hook
+    return doctor_row(settings)  # semantics-hook
+
+
+def _semantic_device_rows(settings: Settings) -> list[dict]:
+    from .research.semantic_devices import inspect
+
+    record = inspect(settings, phase="doctor")
+    vocab = record["vocabulary"]
+    checklist = record["checklist"]
+    packs = record["packs"]
+    return [
+        _row("config", "meaning vocabulary", "ok" if vocab["status"] == "ok" else "warn",
+             (f"hash {vocab.get('sha256', '-')[:12]}; keys {vocab.get('counts', {}).get('keys', 0)}; "
+              f"EDAM {vocab.get('counts', {}).get('edam_terms', 0)}") if vocab["status"] == "ok" else
+             str(vocab.get("error_code") or vocab.get("edam_problem") or "불러오기 실패"),
+             "단어장·EDAM 파일을 고친 뒤 gateway를 다시 시작하세요."),
+        _row("config", "topic checklists", "ok" if checklist["status"] == "ok" else "warn",
+             (f"hash {checklist.get('sha256', '-')[:12]}; topic {checklist.get('topics', 0)}; "
+              f"items {checklist.get('items', 0)}") if checklist["status"] == "ok" else
+             str(checklist.get("error_code") or "불러오기 실패"),
+             "체크리스트 파일을 고친 뒤 gateway를 다시 시작하세요."),
+        _row("config", "research packs", "ok" if packs["status"] == "ok" else "warn",
+             (f"loaded {packs.get('count', 0)}; hashes " +
+              (", ".join(f"{key}:{value[:12]}" for key, value in packs.get("sha256", {}).items()) or "없음"))
+              if packs["status"] == "ok" else str(packs.get("error_code") or "불러오기 실패"),
+             "pack 설정·파일을 고친 뒤 gateway를 다시 시작하세요."),
+    ]
+
+
+def _wiki_row(settings: Settings) -> dict:
+    """The linked LLM-wiki (#827): off by default; read-only, it never creates or refreshes the index."""
+    if not settings.wiki.enabled:
+        return _row("knowledge", "wiki", "skip", "not linked (wiki.enabled is false)",
+                    "Optional: `labhq wiki connect <folder>` checks a folder and prints the config to add.")
+    from .wiki.index import status
+
+    info = status(settings)
+    detail = (f"root={info['root']}; docs={info['docs']}; chunks={info['chunks']}; stale={info['stale']}; "
+              f"index={'present' if info['available'] else 'absent'}")
+    if info["root_problem"]:
+        return _row("knowledge", "wiki", "warn", f"{detail}; problem: {info['root_problem']}",
+                    "Fix wiki.root: it must be a plain folder inside runner.reference_roots, outside private paths.")
+    if not info["available"]:
+        return _row("knowledge", "wiki", "warn", detail, "Run `labhq wiki reindex` to build the index.")
+    return _row("knowledge", "wiki", "ok", detail, "")
+
+
 def _row(group: str, name: str, status: str, detail: str, hint: str) -> dict:
     return {"group": group, "name": name, "status": status, "detail": detail, "hint": hint}
+
+
+def _volume(path: Path):
+    """Device of the nearest existing ancestor, the folder disk_space.usage probes; nothing is created."""
+    path = path.expanduser().absolute()
+    while not path.exists():
+        if path.parent == path:
+            raise OSError("disk unavailable")
+        path = path.parent
+    device = os.stat(path).st_dev
+    if not device:  # 0 names no volume (UNC or special volumes); equal zeros must not hide a separate drive
+        raise OSError("volume not identified")
+    return device
+
+
+def _disk_rows(settings: Settings) -> list[dict]:
+    workspace = settings.path(settings.runner.workspace_root)
+    paths = [("workspace disk", workspace), ("temporary disk", Path(tempfile.gettempdir()))]
+    for engine, variable, fallback in (("codex", "CODEX_HOME", ".codex"),
+                                       ("claude_code", "CLAUDE_CONFIG_DIR", ".claude")):
+        env = {**os.environ, **expand_env(getattr(settings.engines, engine).env, os.environ)}
+        raw = os.path.expanduser(env.get(variable) or str(Path.home() / fallback))
+        path = Path(raw)
+        paths.append((f"{engine} staff home disk", path if path.is_absolute() else workspace / path))
+    # The gateway's SQLite state and events (#678) can fill another volume and stop the gateway. On a volume a row
+    # above already shows it would only repeat that row; a volume that cannot be told apart keeps its own row.
+    state = settings.path(settings.gateway.state_dir)
+    try:
+        separate = _volume(state) not in {_volume(path) for _name, path in paths}
+    except (OSError, ValueError):
+        separate = True
+    if separate:
+        paths.append(("gateway state disk", state))
+    rows = []
+    runner = settings.runner
+    for name, path in paths:
+        try:
+            space = disk_space.usage(path)
+            status = "warn" if disk_space.low(space, runner.disk_warning_free_gb,
+                                               runner.disk_warning_free_percent) else "ok"
+            # The drives the runner and the gateway write to: below the level the runner asks the PI before starting a
+            # task on (runner.disk_fail_free_gb) a run is likely to fill them, so doctor fails here (#678). Temporary
+            # and staff-home drives stay warnings.
+            if (name in {"workspace disk", "gateway state disk"} and runner.disk_fail_free_gb
+                    and space.free < runner.disk_fail_free_gb * disk_space.GIB):
+                status = "fail"
+            detail = (f"여유 {space.free / disk_space.GIB:.1f} GiB / {space.total / disk_space.GIB:.1f} GiB "
+                      f"({100 * space.free / space.total:.1f}%)" if space.total else "용량 확인 불가")
+        except (OSError, ValueError):
+            status, detail = "warn", "드라이브 여유 공간을 확인하지 못했습니다"
+        rows.append(_row("disk", name, status, detail,
+                         "runner.disk_warning_free_gb·disk_warning_free_percent·disk_fail_free_gb를 확인하고 여유 있는 "
+                         "드라이브를 고르세요. 자동 이동·삭제는 하지 않습니다."))
+    return rows
+
+
+def _memory_limit_row(settings: Settings) -> dict:
+    from .runner.memory_limit import configured_limit_bytes, memory_limit_mechanism, memory_limit_supported
+
+    memory_bytes = configured_limit_bytes(settings.runner)
+    enabled = memory_bytes > 0
+    supported = memory_limit_supported()
+    return _row(
+        "config",
+        "step memory limit",
+        "skip" if not enabled else ("ok" if supported else "fail"),
+        "꺼짐" if not enabled else f"{memory_bytes / (1024 ** 3):.2f} GiB · {memory_limit_mechanism()}",
+        ("runner.step_memory_limit_gb에 0보다 큰 값을 두세요." if not enabled else
+         "이 OS에서 지원하는 runner를 쓰세요." if not supported else ""),
+    )
+
+
+def _bioinfo_row(settings: Settings) -> dict:
+    """Whether the bioinfo-agent plugin is connected (#613): the folder a runner would hand to claude_code."""
+    env = {**os.environ, **expand_env(settings.engines.claude_code.env, os.environ)}
+    folder = bioinfo_link.configured_dir(env)
+    if not folder:
+        return _row("config", "bioinfo-agent", "warn",
+                    bioinfo_link.NOT_CONNECTED + "BIOINFO_AGENT_DIR이 비어 있어 bioinfo-agent 직원(Nextflow 분석)을 쓸 수 없습니다",
+                    bioinfo_link.FIX)
+    if not os.path.isabs(os.path.expandvars(os.path.expanduser(folder))):
+        return _row("config", "bioinfo-agent", "warn",
+                    bioinfo_link.NOT_CONNECTED + "BIOINFO_AGENT_DIR이 상대 경로라 task마다 다른 폴더로 읽혀 연결에 실패합니다",
+                    "BIOINFO_AGENT_DIR을 절대 경로로 바꾸세요(예: D:/bioinfo-agent). 새 설정이면 `labhq init --bioinfo-agent <폴더>`가 "
+                    "절대 경로로 저장합니다.")
+    if not bioinfo_link.is_plugin_dir(folder):
+        return _row("config", "bioinfo-agent", "warn",
+                    bioinfo_link.NOT_CONNECTED + "BIOINFO_AGENT_DIR 폴더에서 plugin(.claude-plugin/plugin.json, "
+                    "skills/bioinfo-analyze)을 찾지 못했습니다", bioinfo_link.FIX)
+    return _row("config", "bioinfo-agent", "ok", f"연결됨: {_safe_path(folder)}", "")
+
+
+MCP_FLOOR = (2, 0)  # the lowest `mcp` the code runs on: it uses 2.x names (CallToolResult.is_error, MCPServer); keep in step with pyproject
+
+
+def _mcp_row() -> dict:
+    """Whether the installed `mcp` package is at least MCP_FLOOR (#1202): 1.x names differ, so a 1.x install breaks tools."""
+    floor = ".".join(map(str, MCP_FLOOR))
+    hint = f'`pip install -U "mcp>={floor}"`로 올리세요(labhq를 다시 설치해도 됩니다).'
+    try:
+        found = importlib.metadata.version("mcp")
+    except importlib.metadata.PackageNotFoundError:
+        return _row("config", "mcp", "warn", f"mcp 패키지가 없습니다(필요: >={floor})", hint)
+    parts = tuple(int(n) for n in re.findall(r"\d+", found)[:2])
+    if parts < MCP_FLOOR:
+        return _row("config", "mcp", "warn", f"mcp {found}는 하한 {floor}보다 낮아 도구와 시험이 맞지 않을 수 있습니다", hint)
+    return _row("config", "mcp", "ok", f"mcp {found}", "")
+
+
+FINE_GRAINED_PREFIX = "github_pat_"
+
+
+def _github_token_row(settings: Settings, dry_run: bool = False) -> dict:
+    """What the GitHub token may do for result repositories (#687), judged by probes that create nothing, not by its
+    prefix (#607 warned every fine-grained token, even one that could create repositories). No token is a valid setup:
+    results stay local. Nothing of the token is shown."""
+    token = github_token.read_token(settings)
+    if not token:
+        return _row("config", "github token", "ok", "GitHub 토큰 없음: 결과는 로컬에 저장합니다",
+                    "결과를 GitHub 저장소로 정리하려면 `labhq init`으로 토큰을 넣으세요. " + github_token.NEEDED_TEXT)
+    if dry_run:
+        return _row("config", "github token", "ok", "GitHub 토큰 있음: dry-run이라 권한은 확인하지 않았습니다",
+                    github_token.NEEDED_TEXT)
+    status, detail, hint = github_token.describe(github_token.check_permissions(settings, token))
+    if status == "warn" and token.startswith(FINE_GRAINED_PREFIX):
+        hint += " 게시가 실패했다면 권한을 고친 뒤 `labhq storage <요청 id> --republish`."
+    return _row("config", "github token", status, detail, hint)
+
+
+def _instance_rows(settings: Settings) -> list[dict]:
+    """Other configs that share this one's state folder or port, or a primary config that differs (#613)."""
+    return [_row("instance", instance_guard.DOCTOR_NAME[notice.key], "warn", notice.text, notice.fix)
+            for notice in instance_guard.check(settings, show=_safe_path)]
 
 
 def _writable(path: Path) -> bool:
@@ -205,23 +418,82 @@ def _safe_executable_path(path: str, env: dict[str, str]) -> str:
 
 def _roster(settings: Settings) -> list[AgentSpec]:
     base = settings.path(settings.runner.agents_dir)
+    contract = settings.path(settings.runner.contract_dir) if settings.runner.contract_dir else None
     agents = {}
-    for kind in ("core", "contract"):
-        guard_test_path(base / kind)
-        for path in sorted((base / kind).glob("*.yaml")):
-            if path.name.startswith("_"):
-                continue
-            guard_test_path(path)
-            spec = AgentSpec.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
-            if spec.contract and (spec.contract.status in ("expired", "archived") or
-                                  time.time() > spec.contract.expires_at):
-                continue
+    for spec, _ in iter_agent_specs(base, contract, check_path=guard_test_path):
+        if is_employed(spec, time.time()):
             agents[spec.id] = spec
+        elif spec.contract and spec.contract.status not in ("expired", "archived"):
+            # Registry archives elapsed contracts and removes any earlier entry with the same ID.
+            # Mirror that roster result without archiving or changing the source files.
+            agents.pop(spec.id, None)
     return list(agents.values())
 
 
 def _adapter_check(settings: Settings, agent: AgentSpec) -> str | None:
     return adapter_preflight_error(settings, agent)
+
+
+def _minimum_version_row(name: str, code: int | None, raw: str, *, dry_run: bool) -> dict | None:
+    requirement = ENGINE_CLI_REQUIREMENTS.get(name)
+    if not requirement:
+        return None
+    minimum = requirement["minimum"]
+    hint = f"Update {name} to >= {minimum}; required for {requirement['reason']}."
+    if dry_run:
+        return _row("engine", f"{name} version", "skip", f">= {minimum} not probed (dry-run)", hint)
+    parsed = version_key(raw) if code == 0 else None
+    if parsed is None:
+        return _row("engine", f"{name} version", "warn", f"unrecognized; required >= {minimum}", hint)
+    if parsed < version_key(minimum):
+        return _row("engine", f"{name} version", "fail", f"{_version(raw)} < {minimum}", hint)
+    return _row("engine", f"{name} version", "ok", f"{_version(raw)} >= {minimum}", "")
+
+
+def _codex_models(settings: Settings) -> tuple[set[str] | None, str, str]:
+    """Return (slugs, status, detail); never fall back to the PI's default Codex home."""
+    env = expand_env(settings.engines.codex.env, os.environ)
+    configured = env.get("CODEX_HOME")
+    if not configured:
+        return None, "skip", "CODEX_HOME not configured; model list skipped"
+    cache = Path(os.path.expandvars(os.path.expanduser(configured))) / "models_cache.json"
+    if not cache.is_file():
+        return None, "skip", "models_cache.json absent; model list skipped"
+    try:
+        if cache.stat().st_size > 32 * 1024 * 1024:
+            return None, "warn", "models_cache.json is too large to inspect"
+        data = json.loads(cache.read_text(encoding="utf-8"))
+        models = data.get("models") if isinstance(data, dict) else None
+        if not isinstance(models, list):
+            raise ValueError("models is not a list")
+        slugs = {item.get("slug") for item in models if isinstance(item, dict) and isinstance(item.get("slug"), str)}
+        if not slugs:
+            raise ValueError("model list is empty")
+        return slugs, "ok", f"models_cache.json: {len(slugs)} models"
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        return None, "warn", "models_cache.json could not be parsed"
+
+
+def _model_row(settings: Settings, agent: AgentSpec) -> dict:
+    name = f"{agent.id} model"
+    if not agent.model:
+        return _row("staff", name, "skip", f"{agent.engine.value}: CLI default", "Set model in the agent YAML to pin it.")
+    if agent.engine == Engine.claude_code:
+        valid = agent.model in CLAUDE_MODEL_ALIASES or bool(CLAUDE_MODEL_ID.fullmatch(agent.model))
+        return _row("staff", name, "ok" if valid else "warn",
+                    f"claude_code: {agent.model}; " + ("known alias/id format" if valid else "unknown alias/id format"),
+                    "Use haiku, sonnet, opus, or a claude-<family>-<version> model id.")
+    if agent.engine == Engine.codex:
+        slugs, status, detail = _codex_models(settings)
+        if slugs is None:
+            return _row("staff", name, status, f"codex: {agent.model}; {detail}",
+                        "Run the staff Codex once to populate CODEX_HOME/models_cache.json, then rerun doctor.")
+        valid = agent.model in slugs
+        return _row("staff", name, "ok" if valid else "warn",
+                    f"codex: {agent.model}; {detail}; " + ("found" if valid else "not found"),
+                    "Choose a slug present in the staff CODEX_HOME models_cache.json.")
+    return _row("staff", name, "skip", f"{agent.engine.value}: model catalog check unavailable",
+                "Check this engine's model list locally.")
 
 
 PRIVATE_PATHS_HINT = "See docs/manual.md 'PI 개인 경로' (policy.private_paths)."
@@ -258,8 +530,43 @@ def _alphagenome_row(settings: Settings) -> dict:
                     "키가 생기면 labhq init을 다시 실행해 붙여 넣으세요.")
     if not alphagenome_client_available():
         return _row("annot", "AlphaGenome", "warn", "키 있음, alphagenome 패키지 없음 (도구 미등록)",
-                    "runner의 Python에 pip install alphagenome")
+                    "runner의 Python에 pip install 'labhq[alphagenome]' 또는 pip install alphagenome")
     return _row("annot", "AlphaGenome", "ok", "키 있음", "")
+
+
+def _alphagenome_atlas_row(settings: Settings | None = None, agents: list[AgentSpec] | None = None) -> dict:
+    from .runner.annot_broker import atlas_allowed
+    from .tools.annot_alphagenome_atlas import KEY_ENV, credential, sdk_available
+
+    def has_key(*environments: dict[str, str]) -> bool:
+        value = credential(*environments)
+        # Expansion leaves unknown references intact; those are not credentials.
+        return bool(value) and re.search(r"\$(?:\{[^}]+\}|[A-Za-z_]\w*)|%[^%]+%", value) is None
+
+    parent = dict(os.environ)
+    present = {"runner": has_key(parent)}
+    if settings is not None:
+        agents = _roster(settings) if agents is None else agents
+        names = {settings.runner.force_engine or agent.engine.value for agent in agents
+                 if atlas_allowed(agent, read_only=False)}
+        if not names:
+            return _row("annot", "AlphaGenome Atlas", "skip", "Atlas 사용 직원 없음", "")
+        present = {}
+        for name in sorted(names):
+            config = getattr(settings.engines, name, None)
+            engine_env = expand_env(config.env) if config is not None else {}
+            # Same resolver as the runner; task-specific overrides do not exist during doctor.
+            present[name] = has_key(parent, engine_env)
+    if not any(present.values()):
+        return _row("annot", "AlphaGenome Atlas", "skip", "환경변수 키 없음", f"runner 환경에 {KEY_ENV}를 설정하세요.")
+    if not sdk_available():
+        return _row("annot", "AlphaGenome Atlas", "warn", "환경변수 키 있음, Atlas SDK 없음",
+                    "runner의 Python에 pip install 'labhq[alphagenome]' (alphagenome>=0.10.0)")
+    if not all(present.values()):
+        missing = ", ".join(name for name, has_key in present.items() if not has_key)
+        return _row("annot", "AlphaGenome Atlas", "warn", f"일부 engine 환경변수 키 없음: {missing}; 실제 접근 미검증",
+                    f"해당 engine 환경의 {KEY_ENV} 설정을 확인하세요.")
+    return _row("annot", "AlphaGenome Atlas", "ok", "환경변수 키·SDK 있음, 실제 접근 미검증", "")
 
 
 def claude_login_command(windows: bool) -> str:
@@ -436,6 +743,8 @@ def local_software_summary(python_executable: str) -> dict:
 
 
 def _paper2agent_row(settings: Settings, agents: list[AgentSpec], fix: bool = False) -> dict:
+    if not paper2agent.enabled(settings):
+        return _row("staff", "paper2agent", "skip", "disabled by recruit.enabled=false", "")
     hint = "labhq doctor --fix"
     recruiter = next((a for a in agents if a.id == settings.recruit.agent_id), None)
     if settings.runner.force_engine == "mock" or (agents and all(a.engine == Engine.mock for a in agents)
@@ -452,6 +761,8 @@ def _paper2agent_row(settings: Settings, agents: list[AgentSpec], fix: bool = Fa
             if (settings.recruit.skill_commit is not None
                     and paper2agent.installed_commit(engine, settings) != settings.recruit.skill_commit):
                 return False
+            if not paper2agent.skill_patched(path):
+                return False  # an older install still carries a known upstream defect; setup patches it
             if engine == "claude_code":
                 from .adapters.claude_code import read_plugin_manifest
                 return (read_plugin_manifest(path.parent.parent) or {}).get("name") == "labhq-paper2agent"
@@ -471,9 +782,62 @@ def _paper2agent_row(settings: Settings, agents: list[AgentSpec], fix: bool = Fa
     return _row("staff", "paper2agent", "fail", detail, hint)
 
 
+def _login_evidence(code: int | None, raw: str) -> str:
+    """Keep unavailable status separate from an explicit signed-out result; never publish raw auth output."""
+    if code is None:
+        return "unverified"
+    text = raw.strip().lower()
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        payload = None
+    if isinstance(payload, dict) and payload.get("loggedIn") is False:
+        return "blocked"
+    if text in {"not logged in", "not logged in.", "signed out", "not authenticated"}:
+        return "blocked"
+    authenticated = (isinstance(payload, dict) and payload.get("loggedIn") is True) or (
+        text == "logged in" or text.startswith("logged in using ") or text == "signed in")
+    return "ready" if code == 0 and authenticated else "unverified"
+
+
+def _facilities_support_row(settings: Settings, agents: list[AgentSpec], forced: Engine | None,
+                            invalid_force: bool, versions: dict[str, str], logins: dict[str, str],
+                            preflights: dict[str, bool], dry_run: bool) -> dict:
+    """Assess only the effective facilities agent using evidence already collected by doctor."""
+    policy = settings.runner.facilities_support
+    agent = next((agent for agent in agents if agent.id == "facilities"), None)
+    reasons = []
+    if agent is None:
+        state = "absent"
+        reasons.append("시설팀 지원 없음; 대체 담당 CSO (실응답 준비 미검증)")
+    else:
+        engine = (forced or agent.engine).value
+        if invalid_force or preflights.get(agent.id) is False:
+            state = "blocked"
+            reasons.append("invalid force_engine or facilities preflight failed")
+        elif engine == "mock":
+            state = "mock_only"
+            reasons.append("mock evidence only")
+        elif versions.get(engine) == "blocked" or logins.get(engine) == "blocked":
+            state = "blocked"
+            reasons.append("executable/version or login failed")
+        elif dry_run or versions.get(engine) != "ready" or logins.get(engine) != "ready":
+            state = "unverified"
+            reasons.append("dry-run: probes skipped" if dry_run else "version/login evidence unavailable")
+        else:
+            state = "ready"
+            reasons.append("executable/version, facilities preflight and login checked; response/quota/recovery unverified")
+    status = "fail" if policy == "required" and state != "ready" else (
+        "ok" if policy != "unspecified" and state == "ready" else "warn")
+    declaration = "; 시설팀 지원 요구 미선언" if policy == "unspecified" else ""
+    return _row("support", "facilities", status,
+                f"policy={policy}; state={state}{declaration}; " + "; ".join(reasons),
+                "runner.facilities_support: required/optional/unspecified; optional은 직원 비활성화 명령이 아닙니다.")
+
+
 def collect(settings: Settings, *, requested_config: str | None = None, network: bool = False,
             dry_run: bool = False, require_roster: bool = False, fix: bool = False,
-            require_paper2agent: bool = True, github_transport=None) -> dict:
+            require_paper2agent: bool = True, github_transport=None, runtime: bool = False) -> dict:
     rows: list[dict] = []
     from .cli import _local_process_diagnostics
 
@@ -506,6 +870,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     rows.append(_row("config", "runner account isolation", owner_status, owner_detail,
                      "Default guard is policy.private_paths (docs/manual.md 'PI 개인 경로'). Optional, advanced: a dedicated runner "
                      "account, docs/runner-account.md."))
+    rows.append(_memory_limit_row(settings))
     if settings.gateway.client_token == "change-me-client":
         # The published default is a working client token for anyone while a gateway accepts it, and a runner
         # config that drops the key falls back to it (#304 review).
@@ -519,6 +884,12 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                          "gateway.client_token is set in the runner's config",
                          "Give the runner a config without gateway.client_token; see docs/runner-account.md."))
     rows.append(_research_row(settings))
+    rows.append(_semantics_row(settings))  # semantics-hook
+    rows.extend(_semantic_device_rows(settings))
+    rows.append(_bioinfo_row(settings))
+    rows.append(_github_token_row(settings, dry_run))
+    rows.extend(_instance_rows(settings))
+    rows.extend(_disk_rows(settings))
     markers = parent_claude_markers(dict(os.environ))
     rows.append(_row("staff", "claude_parent_session_env", "warn" if markers else "ok",
                      f"부모 Claude 세션 마커 {len(markers)}개를 직원 subprocess에서 제거"
@@ -561,7 +932,9 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         status = "ok" if visibility == "private" else "warn"
         detail = f"{repo}; visibility: {visibility}; 종료: v1.0, #40 bench 뒤 20 rounds 새 교훈 없음, 또는 보고 채널 이전 (#69)"
         rows.append(_row("config", "dev log", status, detail,
-                         "dev_log.repo에 비공개 기록 저장소를 지정하세요."))
+                         "dev_log.repo에 비공개 기록 저장소를 지정하세요." if settings.dev_log.repo else
+                         "dev_log.repo는 사람마다 달라 기본값이 없습니다. 개발 기록을 GitHub에도 남기려면 설정 파일의 dev_log.repo에 "
+                         "비공개 저장소 owner/name을 적고 gateway를 다시 시작하세요. 비워 두면 이 PC에만 기록합니다."))
 
     try:
         agents = _roster(settings)
@@ -604,6 +977,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                          "Set each engine: cli staff member's cli.command and cli.env.PATH."))
     codex_now: dict[str, str | list[str] | None] = {"version": None, "command": None}
     login_codes: dict[str, int | None] = {}  # the CLI's own status command, with engines.<name>.env applied
+    version_evidence: dict[str, str] = {}
+    login_evidence: dict[str, str] = {}
     for name in settings.engines.__class__.model_fields:
         if name not in roster_engines:
             continue
@@ -618,10 +993,13 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             resolved, found = [], False
         available[name] = found
         if not found:
+            version_evidence[name] = "blocked"
             rows.append(_row("engine", name, "warn", "executable missing or unsupported shim",
                              f"Install {name} or set engines.{name}.bin and prefix_args."))
             continue
         code, raw = (None, "") if dry_run else _probe([*resolved, "--version"], env)
+        version_evidence[name] = ("unverified" if code is None else "blocked" if code != 0 else
+                                  "ready" if _version(raw) != "unreported" else "unverified")
         detail = _safe_executable_path(resolved[0], env) + (" (probe skipped: dry-run)" if dry_run else " " + _version(raw))
         if name == "codex":
             codex_now.update(version=_version(raw) if code == 0 and _version(raw) != "unreported" else None,
@@ -630,13 +1008,23 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             if choice and choice["path"] == resolved[0]:
                 detail += (f"; auto: 앱 폴더 {choice['folder']} 선택 (codex.exe 있는 폴더 {choice['candidates']}개 중 " +
                            ("판본이 가장 높은 폴더)" if choice["by"] == "version" else "판본 비교 불가, 가장 최근 폴더)"))
-        rows.append(_row("engine", name, "skip" if dry_run else "ok" if code == 0 else "warn", detail,
-                         "Check the executable and prefix_args if version fails."))
+        minimum_row = _minimum_version_row(name, code, raw, dry_run=dry_run)
+        status = "skip" if dry_run else "ok" if code == 0 else "warn"
+        hint = "Check the executable and prefix_args if version fails."
+        if minimum_row:
+            rank = {"ok": 0, "skip": 1, "warn": 2, "fail": 3}
+            if rank[minimum_row["status"]] > rank[status]:
+                status = minimum_row["status"]
+            detail += f"; minimum {minimum_row['detail']}"
+            if minimum_row["status"] != "ok":
+                hint = minimum_row["hint"]
+        rows.append(_row("engine", name, status, detail, hint))
         if dry_run:
             continue
         if name in LOGIN:
-            code, _ = (None, "") if dry_run else _probe([*resolved, *LOGIN[name]], env)
+            code, auth_raw = _probe([*resolved, *LOGIN[name]], env)
             login_codes[name] = code
+            login_evidence[name] = _login_evidence(code, auth_raw)
             rows.append(_row("login", name, "ok" if code == 0 else "warn",
                              "status command succeeded" if code == 0 else "status unavailable or signed out",
                              f"Check {name} login locally; doctor never starts login."))
@@ -648,6 +1036,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                          f"dry-run: login not checked ({len(roster_engines)} engines)",
                          "Run doctor without dry-run to check login."))
     sandbox_homes: set[Path] = set()
+    preflights: dict[str, bool] = {}
     for agent in agents:
         if invalid_force:
             rows.append(_row("staff", agent.id, "fail", "invalid runner.force_engine",
@@ -656,6 +1045,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         if forced:
             agent = agent.model_copy(update={"engine": forced})
         engine = agent.engine.value
+        rows.append(_model_row(settings, agent))
         ready = available.get(engine, engine == "mock")
         plugin = engine == "claude_code" and (agent.plugin_dirs or agent.required_skills
                                               or agent.id == settings.recruit.agent_id)
@@ -663,6 +1053,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             error = _adapter_check(settings, agent)
         except OSError:
             error = "adapter preflight files inaccessible"
+        preflights[agent.id] = not bool(error)
         if error:
             for raw in agent.plugin_dirs:
                 error = error.replace(raw, _safe_path(raw))
@@ -681,15 +1072,20 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         if plugin:
             rows.append(_row("plugin", agent.id, "warn" if error else "ok", error or "plugin ready",
                              "Set the plugin directory and install its required skill."))
+    rows.append(_facilities_support_row(settings, agents, forced, invalid_force, version_evidence,
+                                        login_evidence, preflights, dry_run))
     private = _doctor_private(settings, agents, forced)
     rows.append(_private_paths_row(private))
     rows.append(_alphagenome_row(settings))
+    rows.append(_alphagenome_atlas_row(settings, agents))
+    rows.append(_mcp_row())
     from .knowledge.recall import health as recall_health
     recall = recall_health(settings)
     rows.append(_row("knowledge", "local recall", "ok" if recall["available"] else "warn",
                      f"count={recall['count']}; last_success={recall['last_success'] or 'never'}; "
                      f"fallback={recall['fallback'] if recall['fallback'] is not None else 'unknown'}",
                      "Start this instance's gateway to build or retry its local index."))
+    rows.append(_wiki_row(settings))
     claude_staff = _claude_staff_row(settings, agents, forced, private, login_codes.get("claude_code"))
     if claude_staff:
         rows.append(claude_staff)
@@ -711,6 +1107,14 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         found = bool(shutil.which(tool))
         rows.append(_row("compute", tool, "ok" if found else "warn", "on PATH" if found else "missing",
                          f"Install or configure {tool} if bioinfo-agent needs it."))
+    if sys.platform == "win32" or settings.runner.wsl.enabled:
+        from .wsl_setup import check as check_wsl, configured as wsl_configured
+
+        if not settings.runner.wsl.enabled and not wsl_configured(settings):
+            rows.append(_row("WSL", "선택 기능", "skip", "꺼짐", "labhq setup-wsl"))
+        else:
+            rows.extend(check_wsl(settings) if not dry_run else [
+                _row("WSL", "준비 상태", "skip", "dry-run", "labhq setup-wsl --check")])
     if network and not dry_run:
         for name, url in SOURCES.items():
             reachable = _network_check(url)
@@ -730,10 +1134,210 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     missing_engines = sorted(name for name in roster_engines if name != "mock" and not available.get(name, False))
     if missing_engines:
         readiness_reasons.append("roster engine 실행 파일 없음: " + ", ".join(missing_engines))
+    from . import runtime_readiness, windows_launch
+    config_reasons = list(readiness_reasons)
+    config_failures = sum(r["status"] == "fail" for r in rows)
+    if config_failures:
+        config_reasons.append(f"fail {config_failures}건")
+    operational = runtime_readiness.inspect(settings)
+    if runtime:
+        operational = runtime_readiness.deployment(settings, operational)
+    rows.append(_row("runtime", "daemon identity", "fail" if operational["reasons"] or (
+        runtime and operational["ready"] is not True) else "ok" if operational["ready"] else "skip",
+        operational["status"] + (": " + "; ".join(operational["reasons"]) if operational["reasons"] else ""),
+        "labhq doctor --runtime; inspect PID identity and detached-launch.jsonl; normal down differs from disappearance."))
+    if sys.platform == "win32":
+        job = windows_launch.current_job()
+        rows.append(_row("runtime", "Windows Job (doctor)", "ok" if job["in_job"] is False else "warn",
+                         json.dumps(job), "Limits describe only the immediate job, not the cause of a past exit."))
+    readiness_reasons.extend(operational["reasons"])
     return {"schema_version": 1, "runner_capabilities": runner_capabilities, "checks": rows,
-            "readiness": {"ready": not readiness_reasons, "reasons": readiness_reasons},
+            "configuration_readiness": {"ready": not config_reasons, "reasons": config_reasons},
+            "runtime_readiness": operational,
+            "readiness": {"ready": not config_reasons and not operational["reasons"] and (
+                not runtime or operational["ready"] is True), "reasons": readiness_reasons},
             "summary": {status: sum(r["status"] == status for r in rows)
                         for status in ("ok", "warn", "fail", "skip")}}
+
+
+def _canary_private_context(settings: Settings, workdir: Path) -> dict:
+    private = resolve_private_paths(settings, cwd=workdir)
+    rules = claude_deny_private(claude_read_only(claude_settings(settings.policy), []),
+                                private.paths, open_reads=private.open_reads, write_roots=[str(workdir)])
+    return {"private_paths": list(private.paths), "private_labels": list(private.labels),
+            "private_enabled": private.enabled, "private_open_reads": list(private.open_reads),
+            "claude_settings": rules}
+
+
+async def _canary_call(settings: Settings, agent: AgentSpec, workdir: Path, prompt: str, *,
+                       resume_session_id: str | None = None, resume_baseline: dict | None = None):
+    events: list[tuple[str, dict]] = []
+    recorded: dict = {}
+
+    async def emit(kind: str, data: dict) -> None:
+        events.append((kind, data))
+
+    task = Task(agent_id=agent.id, prompt=prompt, resume_session_id=resume_session_id, budget_usd=0.25,
+                meta={"kind": "followup", "doctor_canary": True})
+    ctx = RunContext(task=task, agent=agent, workdir=workdir, settings=settings, mcp_servers=[], env={},
+                     emit=emit, prompt=prompt, read_only=True, resume_baseline=resume_baseline,
+                     **_canary_private_context(settings, workdir),
+                     record_run=lambda **fields: recorded.update(fields))
+    result = await get_adapter(agent.engine, settings).run(ctx)
+    return result, events, recorded
+
+
+async def _canary_cancel(settings: Settings, agent: AgentSpec, workdir: Path) -> bool:
+    started = asyncio.Event()
+    cleanup: list[dict] = []
+
+    async def emit(kind: str, _data: dict) -> None:
+        if kind == "agent.status":
+            started.set()
+
+    task = Task(agent_id=agent.id, prompt=CANARY_CANCEL_PROMPT, budget_usd=0.25,
+                meta={"kind": "followup", "doctor_canary": True})
+    ctx = RunContext(task=task, agent=agent, workdir=workdir, settings=settings, mcp_servers=[], env={},
+                     emit=emit, prompt=CANARY_CANCEL_PROMPT, read_only=True,
+                     on_cleanup=cleanup.append, **_canary_private_context(settings, workdir))
+    running = asyncio.create_task(get_adapter(agent.engine, settings).run(ctx))
+    waiting = asyncio.create_task(started.wait())
+    try:
+        done, _ = await asyncio.wait({running, waiting}, timeout=CANARY_START_TIMEOUT_S,
+                                     return_when=asyncio.FIRST_COMPLETED)
+        if waiting not in done or not started.is_set() or running.done():
+            if not running.done():
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+            return False
+        requested = running.cancel()
+        try:
+            await running
+        except asyncio.CancelledError:
+            return requested and len(cleanup) == 1 and cleanup[0].get("status") == "job_close_contract_enforced"
+        return False
+    finally:
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
+
+
+def _canary_row(agent_id: str, check: str, passed: bool, detail: str) -> dict:
+    return _row("canary", f"{agent_id}: {check}", "ok" if passed else "fail",
+                f"{'pass' if passed else 'fail'}; {detail}",
+                "Fix the engine/model/login and rerun this explicit canary.")
+
+
+def _canary_between_calls() -> None:
+    """Replaced by the contained bootstrap with its Job accounting check."""
+
+
+async def _agent_canary(settings: Settings, agent: AgentSpec) -> list[dict]:
+    checks = ("result", "cost/tokens", "session", "resume", "cancel")
+    name = agent.engine.value
+    if name in ENGINE_CLI_REQUIREMENTS:
+        spec = getattr(settings.engines, name)
+        env = {**os.environ, **expand_env(spec.env, os.environ)}
+        cmd = [os.path.expandvars(os.path.expanduser(part)) for part in [spec.bin, *spec.prefix_args]]
+        try:
+            resolved = _resolve_command(cmd, env, name)
+            code, raw = _probe([*resolved, "--version"], env)
+        except (OSError, ValueError):
+            code, raw = None, ""
+        _canary_between_calls()
+        version = _minimum_version_row(name, code, raw, dry_run=False)
+        if version["status"] != "ok":
+            return [_canary_row(agent.id, check, False, "CLI version unsupported or unverified") for check in checks]
+    adapter = get_adapter(agent.engine, settings)
+    if not adapter.enforces_read_only or not adapter.supports_resume:
+        return [_canary_row(agent.id, check, False, f"{agent.engine.value} cannot enforce this canary contract")
+                for check in checks]
+
+    canary_settings = settings.model_copy(deep=True)
+    canary_settings.runner.task_timeout_s = max(1, min(settings.runner.task_timeout_s, 120))
+    canary_settings.runner.stall_warn_s = 0
+    canary_settings.runner.stall_retry_s = 0
+    prepared = agent.model_copy(update={"system_prompt": "Return only the requested canary text.",
+                                        "max_turns": 1, "max_budget_usd": 0.25})
+    prepared = read_only_profile(prepared)
+    try:
+        with tempfile.TemporaryDirectory(prefix="labhq-canary-") as scratch:
+            root = Path(scratch)
+            initial_dir = root / "initial"
+            cancel_dir = root / "cancel"
+            for directory in (initial_dir, cancel_dir):
+                directory.mkdir()
+            initial, initial_events, baseline = await _canary_call(
+                canary_settings, prepared, initial_dir, CANARY_PROMPT)
+            _canary_between_calls()
+            usage_events = [data for kind, data in initial_events if kind == "agent.usage"]
+            exact = initial.ok and initial.text.strip() == CANARY_EXPECTED and bool(usage_events)
+            rows = [_canary_row(agent.id, "result", exact,
+                                "result event and exact reply received" if exact else "result event or exact reply missing")]
+
+            usage = usage_events[-1] if usage_events else {}
+            accounting = "cost_known" in usage and usage.get("usage_known") is True
+            cost = f"${initial.cost_usd:.6f}" if initial.cost_known and initial.cost_usd is not None else "unknown"
+            tokens = sum(value for value in initial.usage.values() if isinstance(value, int) and not isinstance(value, bool))
+            rows.append(_canary_row(agent.id, "cost/tokens", accounting,
+                                    f"cost={cost}, tokens={tokens if initial.usage_known else 'unknown'}"))
+
+            session = bool(initial.session_id)
+            rows.append(_canary_row(agent.id, "session", session,
+                                    "session id received" if session else "session id missing"))
+            if session:
+                resumed, resumed_events, _ = await _canary_call(
+                    canary_settings, prepared, initial_dir, CANARY_PROMPT,
+                    resume_session_id=initial.session_id, resume_baseline=baseline)
+                _canary_between_calls()
+                resumed_ok = (resumed.ok and resumed.session_id == initial.session_id
+                              and resumed.text.strip() == CANARY_EXPECTED
+                              and any(kind == "agent.usage" for kind, _ in resumed_events))
+            else:
+                resumed_ok = False
+            rows.append(_canary_row(agent.id, "resume", resumed_ok,
+                                    "same session completed" if resumed_ok else "resume did not complete in the same session"))
+            cancelled = await _canary_cancel(canary_settings, prepared, cancel_dir)
+            _canary_between_calls()
+            rows.append(_canary_row(agent.id, "cancel", cancelled,
+                                    "running adapter call cancelled" if cancelled else "cancellation was not observed"))
+            return rows
+    except Exception as exc:  # noqa: BLE001 - a paid diagnostic must become failed rows, never crash doctor
+        from .canary_process import BoundaryError
+        if isinstance(exc, BoundaryError):
+            raise  # abort all remaining paid calls; the parent must clean up the Job
+        return [_canary_row(agent.id, check, False, "canary execution failed") for check in checks]
+
+
+async def _run_canaries(settings: Settings, selector: str) -> list[dict]:
+    try:
+        agents = _roster(settings)
+    except (OSError, ValueError, yaml.YAMLError):
+        return [_canary_row(selector, "selection", False, "roster could not be read")]
+    selected = agents if selector == "all" else [agent for agent in agents if agent.id == selector]
+    if not selected:
+        return [_canary_row(selector, "selection", False, "active agent not found")]
+    forced = None
+    if settings.runner.force_engine:
+        try:
+            forced = Engine(settings.runner.force_engine)
+        except ValueError:
+            return [_canary_row(selector, "selection", False, "runner.force_engine is invalid")]
+    rows: list[dict] = []
+    for agent in selected:
+        if forced:
+            agent = agent.model_copy(update={"engine": forced})
+        rows.extend(await _agent_canary(settings, agent))
+    return rows
+
+
+def run_canaries(settings: Settings, selector: str) -> list[dict]:
+    """Run paid engine calls only for an explicit ``doctor --canary`` request."""
+    from .canary_process import BoundaryError, run
+
+    try:
+        return run(settings, selector)
+    except (BoundaryError, OSError) as exc:
+        return [_canary_row(selector, "containment", False, str(exc))]
 
 
 def render(manifest: dict) -> str:
@@ -744,6 +1348,12 @@ def render(manifest: dict) -> str:
     fail_count = manifest.get("summary", {}).get("fail")
     if fail_count is None:
         fail_count = sum(row.get("status") == "fail" for row in manifest["checks"])
+    if "configuration_readiness" in manifest:
+        configured = manifest["configuration_readiness"]
+        runtime = manifest["runtime_readiness"]
+        lines.append(f"설정 준비: {'예' if configured['ready'] else '아니오'}")
+        lines.append(f"운영 준비: {'예' if runtime['ready'] is True else '아니오' if runtime['ready'] is False else '미확인'} "
+                     f"({runtime['status']})")
     readiness = manifest.get("readiness")
     if readiness is None:  # manifests written before readiness reasons were recorded
         lines.append(f"실행 준비: {'예' if fail_count == 0 else f'아니오(fail {fail_count}건)'}")

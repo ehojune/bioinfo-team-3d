@@ -258,6 +258,10 @@ def test_cli_status_shows_environment_problems(monkeypatch, capsys):
         if path.startswith("/api/requests?status=all"):
             return [{"id": "r1", "status": "running", "step_environment": {"s1": problem}},
                     {"id": "r0", "status": "failed", "step_environment": {"a": problem}}]
+        if path == "/api/requests/summary":
+            costs = {"cost_usd": 0, "estimated_usd": 0, "unknown_count": 0,
+                     "legacy_unknown": False}
+            return {"request_count": 2, "past_count": 0, "session": costs, "total": costs}
         return []
 
     monkeypatch.setattr("labhq.cli._api", api)

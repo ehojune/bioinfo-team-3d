@@ -1,5 +1,6 @@
 """Finish approved technical hiring before freezing a request's plan (#549)."""
 from __future__ import annotations
+from ..request_persistence import persist_request
 
 import asyncio
 import copy
@@ -10,6 +11,9 @@ import time
 import yaml
 
 from ..models import Task, TaskResult
+from .. import durable
+from ..registry import Registry
+from ..interruption import ShutdownInterrupted
 from . import paper2agent, paper_skills, provenance
 
 PLAN_RULE = (
@@ -19,9 +23,10 @@ PLAN_RULE = (
     "steps. In the draft use the closest core employee's agent_id as the fallback; labhq replaces it with the "
     "active hire before CP1. Never invent a future agent id. Reuse the same paper's talent when available. "
     "If both the existing method and a new implementation are requested, put reproduction (hire) and new "
-    "implementation (bioinfo-agent) in parallel with identical upstream dependencies, then a comparison step "
-    "depending on both. For a Nextflow workflow, sequence the hire's method/tool specification, bioinfo-agent's "
-    "workflow implementation, and the hire's validation using depends_on. These rules also apply outside the "
+    "implementation (engineer or analyst) in parallel with identical upstream dependencies, then a comparison step "
+    "depending on both. For a new Nextflow workflow, sequence the hire's method/tool specification, the engineer's "
+    "or analyst's workflow implementation, and the hire's validation using depends_on. Supported nf-core execution "
+    "stays with bioinfo-agent. These rules also apply outside the "
     "research lane. Unavailable hiring falls back to the named core employee with a plan warning.")
 
 
@@ -115,8 +120,7 @@ def _refresh_receipt(receipt, hub):
     if terms is None:
         agent = getattr(hub, "agents", {}).get(aid)
         if agent is None:
-            agent = next((a for entry in getattr(hub, "last_runner_rosters", {}).values()
-                          for a in entry.get("agents", []) if a.get("id") == aid), {})
+            agent = hub.effective_roster(include_history=True).get(aid, {})
         terms = {"status": agent.get("contract_status"), "expires_at": agent.get("expires_at")}
     status = terms.get("status")
     expires = terms.get("expires_at")
@@ -179,12 +183,59 @@ def pending_receipt_agents(req, hub):
     return {row["agent_id"] for pid, row in batch.get("results", {}).items()
             if pid in pending_papers and row.get("status") == "active" and row.get("agent_id")}
 
+async def apending_receipt_agents(req, hub):
+    """Reconcile all remaining assignments before waiting for a runner, including frozen plans."""
+    plan = req.get("plan") or {}
+    frozen = bool(req.get("research_contract") or req.get("results"))
+    # Read legacy frozen proposals as saved; validation is for new plans, not canonical snapshots.
+    batch = (req.get("plan_recruitment") or {}).get(_batch_key(plan.get("recruit") or []), {})
+    changed = [_refresh_receipt(row, hub) for row in batch.get("results", {}).values()]
+    remaining = {s["agent_id"] for s in plan.get("steps", []) if s["id"] not in (req.get("results") or {})}
+    ended = set()
+    for aid in remaining:
+        probe = {"status": "active", "agent_id": aid}
+        if _refresh_receipt(probe, hub):
+            ended.add(aid)
+    restored = False if frozen else _restore_fallbacks(plan, batch)
+    if not frozen:
+        for step in plan.get("steps", []):
+            if step["id"] in (req.get("results") or {}) or step["agent_id"] not in ended:
+                continue
+            fallback = batch.get("fallback_agents", {}).get(step["id"])
+            if fallback and fallback not in ended:
+                step["agent_id"] = fallback
+                restored = True
+    unresolved = ended.intersection(s["agent_id"] for s in plan.get("steps", [])
+                                   if s["id"] not in (req.get("results") or {}))
+    if unresolved:
+        req["recruit_contract_failure"] = sorted(unresolved)
+    if any(changed) or restored or unresolved:
+        await persist_request(hub, req["id"])
+    remaining_steps = {s["id"] for s in plan.get("steps", [])
+                       if s["id"] not in (req.get("results") or {})}
+    pending_papers = set()
+    for proposal in plan.get("recruit") or []:
+        step_ids = proposal.get("step_ids")
+        # Legacy proposals without target metadata keep the conservative wait.
+        if not isinstance(step_ids, list) or not step_ids or remaining_steps.intersection(step_ids):
+            pending_papers.add(paper_key(proposal.get("paper") or proposal.get("repo")))
+    return {row["agent_id"] for pid, row in batch.get("results", {}).items()
+            if pid in pending_papers and row.get("status") == "active" and row.get("agent_id")}
+
+
+
 
 async def prepare_plan(plan, rid, hub, run):
     plan = copy.deepcopy(plan)
     steps = {s["id"]: s for s in plan.get("steps", [])}
     proposals = _proposals(plan)
     if not proposals:
+        return plan
+    if not paper2agent.enabled(hub.s):
+        plan["recruit_results"] = [{"paper": row.get("paper", ""), "step_ids": row["step_ids"],
+                                    "status": "unavailable", "error": "recruit_disabled"} for row in proposals]
+        plan["warnings"] = list(dict.fromkeys([*(plan.get("warnings") or []),
+                                               "채용 생략: recruit.enabled=false; 기존 직원 배정을 유지합니다."]))
         return plan
     req = hub.requests[rid]
     # The approval and each receipt survive a restart between hiring and CP1.
@@ -203,12 +254,14 @@ async def prepare_plan(plan, rid, hub, run):
         try:
             res = await run(task)
             return res.structured if res.ok and isinstance(res.structured, dict) else {"status": "failed"}
+        except ShutdownInterrupted:
+            raise
         except Exception as exc:
             return {"status": "failed", "error": type(exc).__name__}
 
     if "check" not in batch:
         batch["check"] = await dispatch("recruit_check")
-        hub.save_request(rid)
+        await persist_request(hub, rid)
     available = batch["check"].get("status") == "ready"
     if available and "approval" not in batch and batch.get("approval_started"):
         # Gateway restart expires pending cards. Recover a decision already made; never open a second hire card.
@@ -219,14 +272,14 @@ async def prepare_plan(plan, rid, hub, run):
         batch["approval"] = saved or {"approved": False, "state": "expired", "note": "채용 승인 대기 중단"}
     if available and "approval" not in batch:
         batch["approval_started"] = True
-        hub.save_request(rid)
+        await persist_request(hub, rid)
         batch["approval"] = await hub.request_approval(
             kind="recruit_plan", request_id=rid,
             summary=f"논문 재현 파견직 {len(proposals)}건 채용: 수습 통과하면 바로 투입합니다. "
                     "승인하면 변환·수습(인재풀에 있으면 재고용) 후 이번 계획을 확정합니다.",
             detail={"gate": "recruit_plan", "target_sha256": key, "recruits": proposals,
                     "activate_on_pass": True})
-        hub.save_request(rid)
+        await persist_request(hub, rid)
     approved = available and batch.get("approval", {}).get("approved")
     rows = []
     for row in proposals:
@@ -236,10 +289,10 @@ async def prepare_plan(plan, rid, hub, run):
                                      {"status": ("timed_out" if batch.get("approval", {}).get("state") in {"timed_out", "expired"}
                                                  else "denied") if available else
                                       batch["check"].get("status", "failed")})
-            hub.save_request(rid)
+            await persist_request(hub, rid)
         receipt = batch["results"][pid]
         if _refresh_receipt(receipt, hub):
-            hub.save_request(rid)
+            await persist_request(hub, rid)
         _restore_fallbacks(plan, batch)
         agent = hub.agents.get(receipt.get("agent_id")) or {}
         active = (receipt.get("status") == "active" and agent.get("employment") == "contract"
@@ -260,8 +313,29 @@ async def prepare_plan(plan, rid, hub, run):
     return plan
 
 
+def _rehire_candidate(registry, pid, payload):
+    """Read and check detached candidates on FILES; never publish live registry state."""
+    for spec in registry.talent_pool():
+        c = spec.contract
+        if not c or paper_key(c.paper or c.repo) != pid or c.kind not in {"technician", "full"}:
+            continue
+        if c.verification.get("conversion_payload") != payload:
+            continue
+        passed, _ = paper2agent.probation(c.kind, c.verification.get("probe_tools") or [],
+                                         c.skill_dir, c.verification.get("offer_status"))
+        if (not passed or c.status == "probation" or provenance.missing_hashes(spec)
+                or provenance.provenance_changes(spec)):
+            return None, {"status": "failed", "error": "인재풀 수습·hash 확인 실패"}
+        return spec, None
+    return None, None
+
+
 async def run_task(runner, task):
     """A tracked runner task wraps the existing recruiter and announces the roster before its receipt."""
+    if not paper2agent.enabled(runner.s):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0, cost_known=True,
+                          structured={"status": "unavailable", "error": "recruit_disabled"},
+                          error="recruitment is disabled (recruit.enabled=false)")
     from ..doctor import _paper2agent_row
 
     async def recruit():
@@ -276,42 +350,76 @@ async def run_task(runner, task):
         row = task.meta["recruit"]
         pid = paper_key(row.get("paper") or row.get("repo"))
         payload = conversion_payload(row)
-        for spec in runner.registry.talent_pool():
-            c = spec.contract
-            if not c or paper_key(c.paper or c.repo) != pid or c.kind not in {"technician", "full"}:
-                continue
-            if c.verification.get("conversion_payload") != payload:
-                continue
-            # A failed probation or changed payload must never be silently promoted by rehire.
+
+        def validate_rehire(candidate):
+            c = candidate.contract
+            if (not c or paper_key(c.paper or c.repo) != pid or c.kind not in {"technician", "full"}
+                    or c.verification.get("conversion_payload") != payload):
+                raise ValueError("rehire contract no longer matches the approved conversion")
             passed, _ = paper2agent.probation(c.kind, c.verification.get("probe_tools") or [],
                                              c.skill_dir, c.verification.get("offer_status"))
-            if (not passed or c.status == "probation" or provenance.missing_hashes(spec)
-                    or provenance.provenance_changes(spec)):
-                return {"status": "failed", "error": "인재풀 수습·hash 확인 실패"}
+            if (not passed or c.status == "probation" or provenance.missing_hashes(candidate)
+                    or provenance.provenance_changes(candidate)):
+                raise ValueError("rehire contract no longer passes probation/hash checks")
+
+        # Only immutable paths cross into the reader job. Cancellation leaves a read-only job;
+        # no rehire is submitted until this await returns successfully.
+        snapshot = Registry(runner.registry.agents_dir, runner.registry.talent_dir, runner.registry.contract_dir)
+        spec, rejected = await durable.run(durable.FILES, _rehire_candidate, snapshot, pid, payload)
+        if rejected is not None:
+            return rejected
+        if spec is not None:
             current = runner.registry.agents.get(spec.id)
             if not current or not current.contract or current.contract.expires_at <= time.time():
-                spec = runner.registry.rehire(runner.registry._slug(spec), runner.s.recruit.default_ttl_days)
+                spec = await runner.registry.arehire(runner.registry._slug(spec), runner.s.recruit.default_ttl_days,
+                                                     on_commit=runner._send_roster, validate=validate_rehire)
             elif current.contract.status != "active":
                 return {"status": "failed", "error": "인재풀 직원이 active가 아님"}
-            runner._send_roster()
+            else:
+                runner._send_roster()
             return {"status": "active", "agent_id": spec.id, "reused": True}
         name = "plan-" + _batch_key(payload)[:24]
-        spec = await paper2agent.Recruitment(runner, {
+        conversion = paper2agent.Recruitment(runner, {
             **row, "name": name, "request_id": task.request_id, "plan_task_id": task.id,
+            "parent_budget_usd": task.budget_usd,
+            "parent_budget_remaining_usd": task.request_budget_remaining_usd,
             "focus": row.get("focus", "") + "\nDeliver a technician/full hire with executable paper tools.",
-        }).run()
+        })
+        spec = await conversion.run()
         runner._send_roster()
         if not spec or not spec.contract or spec.contract.status != "active" or spec.contract.kind not in {"technician", "full"}:
             return {"status": "failed", "error": "기술자형 수습 미통과"}
         spec.contract.verification["conversion_payload"] = payload
-        runner.registry.save_contract(spec)
+        await runner.registry.asave_contract(spec)
         return {"status": "active", "agent_id": spec.id, "reused": False}
 
     try:
-        receipt = await asyncio.wait_for(recruit(), timeout=runner.s.runner.task_timeout_s)
+        work = asyncio.create_task(recruit())
+        pending = asyncio.create_task(asyncio.wait_for(work, timeout=runner.s.runner.task_timeout_s))
+        cancelled = None
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError as exc:
+                # Cancel the work once, leaving wait_for shielded: its Python 3.10 cancellation cleanup can
+                # mask a child's storage error or be interrupted before the nested writer settles.
+                if cancelled is None:
+                    cancelled = exc
+                    work.cancel()
+        # Python 3.10 wait_for can finish cancelled while its child finished with a storage error.
+        # Keep the child handle and observe that result before the timeout/cancellation wrapper's result.
+        if work.done() and not work.cancelled():
+            work.result()
+        receipt = pending.result()
+        if cancelled is not None:
+            raise cancelled
     except asyncio.TimeoutError:
         receipt = {"status": "timed_out"}
     except Exception as exc:
         receipt = {"status": "failed", "error": type(exc).__name__}
-    return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, cost_usd=0,
+    # The nested writer may have committed its result even if cancellation lost the Python return. Account that
+    # task by its own ID, using the runner's ordered durable receipt rather than charging another outer unknown.
+    costs = (await runner._recruitment_cost_fields(task) if runner.s.policy.budget.reserve_before_dispatch else {})
+    return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                      **(costs or {"cost_usd": 0, "cost_known": True}),
                       structured=receipt, text="계획 전 채용: " + receipt["status"])

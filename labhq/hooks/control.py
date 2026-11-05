@@ -45,7 +45,7 @@ STEER_HEADER = "[PI 방향 수정] 실행 중에 PI가 보낸 지시입니다. �
 def new_state(task_id: str = "") -> dict[str, Any]:
     """``steers`` wait for delivery; ``prompt_steers`` went into the turn's prompt and count as delivered once the CLI
     starts; ``delivered_ids`` reached Claude (hook) or a started CLI. The runner reports the three to the gateway."""
-    return {"version": 1, "task_id": task_id, "paused": False, "halt": None, "halted_at": None, "steers": [],
+    return {"version": 1, "task_id": task_id, "paused": False, "constrained": False, "halt": None, "halted_at": None, "steers": [],
             "next_seq": 1, "dropped": 0, "dropped_told": 0, "delivered": 0, "prompt_steers": [], "delivered_ids": []}
 
 
@@ -201,6 +201,10 @@ def apply_control(state: dict[str, Any], action: str, text: str | None = None, s
         state["paused"] = True
     elif action == "resume":
         state["paused"] = False
+    elif action == "constrain":
+        state["constrained"] = True
+    elif action == "release_constraint":
+        state["constrained"] = False
     elif action == "halt":
         state["halt"] = {"requested_at": time.time() if now is None else now}
         state["paused"] = False  # resuming a halted task continues it; it does not start paused again
@@ -211,7 +215,7 @@ def apply_control(state: dict[str, Any], action: str, text: str | None = None, s
 
 def summary(state: dict[str, Any] | None) -> dict[str, Any]:
     state = state or new_state()
-    return {"paused": bool(state["paused"]), "halt": bool(state["halt"]), "halted": bool(state["halted_at"]),
+    return {"paused": bool(state["paused"]), "constrained": bool(state["constrained"]), "halt": bool(state["halt"]), "halted": bool(state["halted_at"]),
             "steers_pending": len(state["steers"]), "steers_delivered": int(state["delivered"]),
             "steers_dropped": int(state["dropped"])}
 
@@ -224,7 +228,34 @@ def _halt(path: str | Path, state: dict[str, Any]) -> dict[str, Any]:
     return {"continue": False, "stopReason": HALT_REASON}
 
 
-def pre_tool_use(path: str | Path, *, hold_s: float = PAUSE_HOLD_S, poll_s: float = PAUSE_POLL_S,
+RESTRICTED_HTTP_S = 40.0  # a little over the broker's own wait for the CSO (``runner.approvals.RESTRICTED_WAIT_S``)
+READ_TOOLS = frozenset({"Read", "Glob", "Grep"})
+
+
+def ask_restricted(tool_name: str, tool_input: Any, *, environ: dict[str, str] | None = None) -> dict[str, Any]:
+    """Ask the CSO, through the runner's broker, whether this one call may run while the task is restricted (#1008).
+    Anything but a clear yes is a no: no broker, a bad answer, a timeout. Standard library only."""
+    import urllib.request
+
+    env = os.environ if environ is None else environ
+    url, token = env.get("LABHQ_BROKER_URL"), env.get("LABHQ_BROKER_TOKEN")
+    if not url or not token:
+        return {"approved": False, "note": "CSO에 물어볼 수 없어 제한 중에는 허용하지 않습니다"}
+    try:
+        body = json.dumps({"tool_name": tool_name, "tool_input": tool_input if isinstance(tool_input, dict) else {}})
+        request = urllib.request.Request(url.rstrip("/") + "/restricted", data=body.encode("utf-8"), method="POST",
+                                         headers={"Content-Type": "application/json", "X-Labhq-Token": token})
+        with urllib.request.urlopen(request, timeout=RESTRICTED_HTTP_S) as reply:
+            answer = json.loads(reply.read().decode("utf-8"))
+        if isinstance(answer, dict):
+            return {"approved": answer.get("approved") is True, "note": str(answer.get("note") or "")}
+    except Exception:
+        pass
+    return {"approved": False, "note": "CSO의 답을 받지 못해 제한 중에는 허용하지 않습니다"}
+
+
+def pre_tool_use(path: str | Path, *, tool_name: str = "", tool_input: Any = None,
+                 ask: Callable[[str, Any], dict[str, Any]] = ask_restricted, hold_s: float = PAUSE_HOLD_S, poll_s: float = PAUSE_POLL_S,
                  sleep: Callable[[float], Any] = time.sleep,
                  clock: Callable[[], float] = time.monotonic) -> dict[str, Any] | None:
     """Halt stops Claude before the tool runs; pause holds the call, then denies it if the PI has not resumed."""
@@ -240,6 +271,23 @@ def pre_tool_use(path: str | Path, *, hold_s: float = PAUSE_HOLD_S, poll_s: floa
     if state["paused"]:
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                        "permissionDecisionReason": PAUSE_REASON}}
+    if state["constrained"] and tool_name not in READ_TOOLS:
+        # Restricted to read tools, but the CSO may let one call through. A yes only stops objecting here: the normal
+        # permission gate still judges the call, and the restriction stays until the PI lifts it.
+        answer = ask(tool_name, tool_input)
+        # The wait can take up to the CSO's whole answer time. A halt or pause the PI gave meanwhile wins over the
+        # answer, a refusal included: the halt must still be applied and recorded, not just this one call denied.
+        state = read_state(path) or state
+        if state["halt"]:
+            return _halt(path, state)
+        if state["paused"]:
+            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                           "permissionDecisionReason": PAUSE_REASON}}
+        if answer.get("approved") is not True:
+            note = answer.get("note") or "CSO가 허용하지 않았습니다"
+            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                           "permissionDecisionReason":
+                                               f"폭주 제한 중이라 읽기 도구만 쓸 수 있습니다. {note}"}}
     return None
 
 
@@ -260,9 +308,29 @@ def post_tool_use(path: str | Path, event: str = "PostToolUse") -> dict[str, Any
 EVENTS = {"pre": "PreToolUse", "post": "PostToolUse", "failure": "PostToolUseFailure"}
 
 
-def hook_commands() -> dict[str, str]:
+def hook_command(argv: list[str], *, windows: bool | None = None) -> str:
+    """One command string for a Claude Code hook (#1030).
+
+    Claude Code hands it to bash, Git Bash on Windows. ``subprocess.list2cmdline`` leaves a space-free Windows path
+    bare, and bash eats its backslashes (the path collapses into one word and the command is not found), so every hook
+    labhq made never ran there. The executable is double-quoted with forward slashes, which Git Bash and cmd both
+    take; the arguments are plain words.
+    """
+    import shlex
     import subprocess
-    return {name: subprocess.list2cmdline([sys.executable, "-m", "labhq.hooks.control", name]) for name in EVENTS}
+
+    windows = os.name == "nt" if windows is None else windows
+    executable, *rest = argv
+    if windows:
+        path = str(executable).replace(chr(92), "/")
+        for special in ('"', "$", chr(96)):  # still live inside bash double quotes: one escape each
+            path = path.replace(special, chr(92) + special)
+        return " ".join(['"' + path + '"', *([subprocess.list2cmdline(rest)] if rest else [])])
+    return shlex.join([str(executable), *rest])
+
+
+def hook_commands() -> dict[str, str]:
+    return {name: hook_command([sys.executable, "-m", "labhq.hooks.control", name]) for name in EVENTS}
 
 
 def add_control_hooks(settings: dict[str, Any]) -> dict[str, Any]:
@@ -280,13 +348,16 @@ def main(argv: list[str] | None = None) -> int:
     """Fail open: a broken control file must not stop the staff run. JSON goes out as ASCII, whatever the console."""
     args = sys.argv[1:] if argv is None else argv
     event = EVENTS.get(args[0] if args else "post", "PostToolUse")
+    tool_name, tool_input = "", None
     with contextlib.suppress(Exception):
-        sys.stdin.buffer.read()  # Claude writes the tool call; the decision does not depend on it
+        payload = json.load(sys.stdin.buffer)
+        if isinstance(payload, dict) and isinstance(payload.get("tool_name"), str):
+            tool_name, tool_input = payload["tool_name"], payload.get("tool_input")
     path = os.environ.get(CONTROL_ENV)
     if not path:
         return 0
     try:
-        out = pre_tool_use(path) if event == "PreToolUse" else post_tool_use(path, event)
+        out = pre_tool_use(path, tool_name=tool_name, tool_input=tool_input) if event == "PreToolUse" else post_tool_use(path, event)
     except Exception:
         return 0
     if out:

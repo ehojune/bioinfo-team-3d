@@ -2,10 +2,12 @@
 import ast
 import asyncio
 import json
+import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
+import sys
+import time
 
 import pytest
 import uvicorn
@@ -16,6 +18,8 @@ from starlette.websockets import WebSocketDisconnect
 from labhq.gateway.server import WEB, create_app
 from labhq.settings import Settings
 from labhq.util import free_port
+from tests.support.serve_task import serve_task, wait_started
+from tests.support.node_binary import node_binary
 
 
 @pytest.fixture
@@ -67,12 +71,9 @@ async def test_wrong_client_token_reaches_a_real_websocket_as_1008(tmp_path):
     port = free_port()
     server = uvicorn.Server(uvicorn.Config(create_app(settings), host='127.0.0.1', port=port,
                                            log_level='warning'))
-    serving = asyncio.create_task(server.serve())
+    serving = serve_task(server.serve())
     try:
-        for _ in range(200):
-            if server.started:
-                break
-            await asyncio.sleep(0.01)
+        await wait_started(lambda: server.started, serving, 10, "gateway")
         assert server.started
         async with websockets.connect(f'ws://127.0.0.1:{port}/ws/client?token=wrong') as ws:
             with pytest.raises(websockets.exceptions.ConnectionClosedError) as error:
@@ -148,14 +149,17 @@ def test_package_data_includes_office_assets():
 
 # Legacy scripts print their own success message; node:test uses fail 0.
 NODE_WEB_MARKERS = {
+    'web_disk_preflight.cjs': 'disk preflight web state: passed',
     'web_recruit_before_plan.cjs': 'pre-plan recruitment card passed',
+    'web_recruiter_capybara.cjs': 'recruiter capybara identity, unique roster and artwork: OK',
+    'web_solo_lion.cjs': 'solo lion default, unique roster and artwork: OK',
     'web_state.cjs': 'isolation and bounds: OK',
     'web_live.cjs': 'reconnect and replay gap: OK',
     'web_command_center.cjs': 'keyed decisions, staff strip and tabs: OK',
     'web_issue126.cjs': 'full answer on demand in 2.5D and 3D: OK',
     'web_issue75.cjs': 'mobile staff collapse and bounded grouped decision history: OK',
     'web_ask.cjs': 'web_ask: ask/answer feed, refusal, targets and replay passed',
-    'web_issue106.cjs': 'snapshot task priority, cancellation and hibernating label: OK',
+    'web_issue106.cjs': 'snapshot task priority, cancellation and unknown/HPC wait labels: OK',
     'web_issue87.cjs': 'snapshot restores an active step after a 200-event replay gap: OK',
     'web_issue58.cjs': 'web issue58 tests passed',
     'web_assumptions.cjs': 'assumptions web tests passed',
@@ -184,15 +188,71 @@ NODE_WEB_TESTS = [
 
 @pytest.mark.parametrize('filename,marker', NODE_WEB_TESTS)
 def test_office_in_node(filename, marker):
-    node = shutil.which('node')
+    node = node_binary()
     if not node:
         pytest.skip('Node is optional')
     script = Path(__file__).with_name(filename)
-    # The optional installed-browser check waits for two demo viewports (90s node:test budget).
-    timeout = 100 if filename == 'web_office_browser.cjs' else 30
-    result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8', timeout=timeout)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert marker in result.stdout, result.stdout + result.stderr
+    # The optional installed-browser checks wait for Chrome's start and the demo viewports (node:test budgets of 150 s and 240 s).
+    # #833: the required resizable case now has separate cold-start/UI budgets inside one 60 s hard cap.
+    # Other Node cases keep their existing limits.
+    # #1076: web_office_focus_layout.cjs opens a real Chrome too. Its five checks take about 3 s in total, but on the CI
+    # Windows runner the same script spent 28 s outside them (Chrome waited 11.6 s before its first request to the
+    # page's own server, then 6.5 s to boot the page; the server answered in 7 ms), and it failed this cap three times.
+    # The script opens two Chrome sessions one after the other (two top-level tests, 120 s each in node:test), so a slow
+    # runner can need that twice; it gets 120 s here. The checks themselves are unchanged, and the demo driver now
+    # starts Chrome with --no-proxy-server, the likely cause of the 11.6 s wait.
+    timeout = {'web_office_browser.cjs': 170, 'web_visual_demo.cjs': 260, 'web_visual_tooling.cjs': 170,
+               'web_resizable_panels.cjs': 60, 'web_office_focus_layout.cjs': 120}.get(filename, 30)
+    # On Windows the demo driver starts Chrome inside the owned KILL_ON_CLOSE Job wrapper with this exact
+    # interpreter (#842); it never falls back to a PATH or Store python.
+    base_env = {**os.environ, 'LABHQ_TEST_PYTHON': sys.executable}
+    # #833: the resizable script runs once per viewport, in this order, each under its own watchdog and with that
+    # watchdog's absolute end (epoch ms), so its browser work stops early enough to close what it owns before the kill
+    # below would skip that close. Every invocation must pass; none may be skipped when the browser is required.
+    resizable = {'desktop': 'desktop splitters drag, respond to arrows, persist and reset',
+                 'phone': 'phone layout hides the splitters and keeps the office full width'}
+    for viewport in (list(resizable) if filename == 'web_resizable_panels.cjs' else [None]):
+        env = dict(base_env)
+        launch = None
+        if viewport:
+            env['LABHQ_RESIZABLE_VIEWPORT'] = viewport
+            # One wall-clock reading sets the deadline; a monotonic one measures how long this invocation took.
+            launch = (time.time(), time.monotonic())
+            env['LABHQ_TEST_OUTER_DEADLINE_MS'] = str(int((launch[0] + timeout) * 1000))
+        label = f'{filename} ({viewport})' if viewport else filename
+
+        def timing():
+            # #833: fixed numbers only. `*_epoch_ms` is the wall clock that the script's own timing rows also use;
+            # `returned_after_mono_ms` is this process's monotonic clock from just before the launch to now.
+            if launch is None:
+                return ''
+            return '\nresizable timing (python): ' + json.dumps({
+                'viewport': viewport, 'launch_epoch_ms': int(launch[0] * 1000),
+                'deadline_epoch_ms': int((launch[0] + timeout) * 1000),
+                'returned_after_mono_ms': round((time.monotonic() - launch[1]) * 1000)})
+        try:
+            result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8',
+                                    timeout=timeout, env=env)
+        except subprocess.TimeoutExpired as exc:
+            # TimeoutExpired may contain bytes even with text=True. Keep partial TAP
+            # and browser phase diagnostics; a timeout remains a failure.
+            def captured(value):
+                return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else (value or '')
+            raise AssertionError(f'{label} exceeded {timeout}s{timing()}\nstdout:\n{captured(exc.output)}'
+                                 f'\nstderr:\n{captured(exc.stderr)}') from exc
+        output = f'{label}{timing()}\n{result.stdout}{result.stderr}'
+        assert result.returncode == 0, output
+        assert marker in result.stdout, output
+        if viewport and os.environ.get('LABHQ_REQUIRE_RESIZABLE_BROWSER') == '1':
+            # A Python PASS alone must not certify an optional inner Node skip, or another viewport's test.
+            assert re.search(r'^# pass 3\s*$', result.stdout, re.MULTILINE), output
+            assert re.search(r'^# skipped 0\s*$', result.stdout, re.MULTILINE), output
+            assert re.search(r'^ok 3 - ' + re.escape(resizable[viewport]) + r'\s*$', result.stdout, re.MULTILINE), output
+        if (filename in ('web_office_focus_layout.cjs', 'web_visual_tooling.cjs') and os.name == 'nt'
+                and os.environ.get('GITHUB_ACTIONS') == 'true'):
+            # #842: on hosted Windows the real-Chrome cleanup regressions (forced path included) must run; an inner
+            # node:test skip would otherwise still print "fail 0" and pass this parent. Chrome stays optional elsewhere.
+            assert re.search(r'^# skipped 0\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
 
 
 def test_every_node_web_test_runs_in_ci():
@@ -202,3 +262,33 @@ def test_every_node_web_test_runs_in_ci():
     assert NODE_WEB_MARKERS.keys() <= on_disk
     assert all(collected[name] == NODE_WEB_MARKERS.get(name, 'fail 0') for name in on_disk)
     assert all(isinstance(marker, str) and marker for marker in collected.values())
+
+
+def test_browser_failure_profile_diagnostic_is_bounded_without_browser():
+    """#833: a fake directory stream proves the failure receipt is bounded and closes its handle."""
+    node = node_binary()
+    if not node:
+        pytest.skip('Node is optional')
+    driver = Path(__file__).parent / 'support' / 'demo_driver.cjs'
+    code = r"""
+const assert = require('node:assert/strict');
+const {profileActivity} = require(process.argv[1]);
+const file = name => ({name, isFile: () => true, isDirectory: () => false});
+let reads = 0, closes = 0;
+const many = () => ({readSync: () => { reads++; return file('private-' + reads); }, closeSync: () => { closes++; }});
+assert.deepEqual(profileActivity('mock', many),
+  {entries: 96, files: 96, directories: 0, truncated: true, unreadable: false});
+assert.equal(reads, 96);
+assert.equal(closes, 1);
+const missing = () => { throw Error('private path'); };
+assert.deepEqual(profileActivity('mock', missing),
+  {entries: 0, files: 0, directories: 0, truncated: false, unreadable: true});
+const broken = () => ({readSync: () => { throw Error('private path'); }, closeSync: () => { closes++; }});
+assert.deepEqual(profileActivity('mock', broken),
+  {entries: 0, files: 0, directories: 0, truncated: false, unreadable: true});
+assert.equal(closes, 2);
+console.log('bounded profile diagnostic: OK');
+"""
+    result = subprocess.run([node, '-e', code, str(driver)], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == 'bounded profile diagnostic: OK'

@@ -14,9 +14,9 @@ def _render() -> str:
 
 
 def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
-    # #373 benches A/B: keep artifacts and upstream paths in one block; #423: as inputs/<step id>/ paths, plus an outputs/env/ record.
+    # #690 adds the SVG text/font/no-capture figure contract to every execution step; #669 adds the install-and-read rule.
     assert hashlib.sha256(STEP_PROMPT.encode()).hexdigest() == (
-        "3f42246163bd0c1fa1497fd32e1706da7fbca6e5dfda60b4730c5e710b11f49a")
+        "86628071066d3b371bc21d66f583f4163b18305482d3688918cd5f4b798bf9a0")
     assert "If an HPC job runs the analysis" in STEP_PROMPT
 
 
@@ -38,9 +38,9 @@ def test_step_prompts_keep_reproducibility_artifacts_out_of_tmp():
 
 
 def test_research_step_prompt_bytes_stay_at_the_previous_baseline():
-    # #373 benches A/B apply both reproducibility rules to the frozen research lane; #423 inputs/ paths and an outputs/env/ record.
+    # #690 adds the SVG text/font/no-capture figure contract to the frozen research lane; #669 the install-and-read rule.
     assert hashlib.sha256(cso.RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "e88d8a951eeb9db9a9d6fa4570ad53654dd3e09fe9e0547bd4f48d053f675a49")
+        "c6bb88d99f75b5b454145030377a027a9b6518ee5bad0ee791316cb7c5a91e09")
     assert "If an HPC job runs the analysis" in cso.RESEARCH_STEP_PROMPT
 
 
@@ -62,6 +62,7 @@ def test_plan_questions_fit_the_phone_card_and_the_research_plan_keeps_its_own_r
     """Plan questions are structured (options are a/b/c/d buttons), so only the length and the order apply."""
     rule = QUESTION_RULE + " Each question must fit the PI's phone card: at most 700 characters, the question itself first."
     args = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
+                max_branches=5, max_branch_steps=8, branched_max_steps=43,
                 question_rule=QUESTION_RULE, output_types_rule="", topics_rule="", lab_scope="LAB")
     assert rule in cso.PLAN_PROMPT.format(**args)
     assert "phone card" not in cso.RESEARCH_PLAN_PROMPT.format(**args, intake="INTAKE", packs="PACKS")
@@ -71,16 +72,24 @@ def test_plan_prompts_declare_analysis_scripts_as_outputs():
     for prompt in (cso.PLAN_PROMPT, cso.REPLAN_PROMPT, cso.RESEARCH_PLAN_PROMPT):
         assert "analysis step" in prompt
         assert "outputs/scripts/" in prompt
+
+
+def test_plan_prompts_use_one_python_script_for_literal_or_format_conversion():
+    for prompt in (cso.PLAN_PROMPT, cso.REPLAN_PROMPT, cso.RESEARCH_PLAN_PROMPT):
+        assert "one Python script" in prompt
+        assert "sed" in prompt and "shell escaping" in prompt
+        assert "optional_outputs" in prompt
         assert "outputs/reference/" in prompt
 
 
-def test_report_prompts_put_the_readable_body_before_the_execution_appendix():
+def test_report_prompts_put_the_scientific_body_before_its_appendix_and_keep_operations_separate():
     for prompt in (cso.SYNTH_PROMPT, cso.RESEARCH_SYNTH_PROMPT):
-        structure = prompt.split("Use these sections in this order:", 1)[1]
-        headings = [structure.index(f'"{heading}"') for heading in ("결론과 권고", "결과", "방법 요약", "한계")]
+        headings = [prompt.index(f'"{heading}"') for heading in
+                    ("제목", "요약(Abstract)", "서론", "방법", "결과", "논의", "결론", "참고", "부록")]
         assert headings == sorted(headings)
         assert "separate execution record" in prompt
         assert "실행 기록 참고" in prompt
+        assert "## 부록: 실행 기록" not in prompt
 
 
 def test_step_prompt_asks_for_escaped_line_breaks_inside_the_json_string():
@@ -152,6 +161,7 @@ def test_research_plan_questions_carry_the_length_their_validation_enforces():
     rule = (f"Each question is at most {limit} characters (a longer one fails plan validation), "
             "the question itself first.")
     args = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
+                max_branches=5, max_branch_steps=8, branched_max_steps=43,
                 question_rule=QUESTION_RULE, output_types_rule="", topics_rule="", intake="INTAKE", packs="PACKS")
     for template in (cso.RESEARCH_PLAN_PROMPT, cso.RESEARCH_CP2_PLAN_PROMPT):
         assert rule in " ".join(template.format(**args).split())

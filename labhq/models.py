@@ -3,8 +3,9 @@ from __future__ import annotations
 import re
 import time
 import uuid
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable, Literal
+from typing import Annotated, Any, Iterable, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
@@ -138,12 +139,17 @@ class AgentSpec(BaseModel):
     character: str | None = None
     engine: Engine = Engine.claude_code
     model: str | None = None
+    model_tier: Literal["fast", "balanced", "reasoning"] | None = None
     effort: str | None = None
     system_prompt: str = ""
     tools: list[str] = []  # pre-approved tools (Claude Code --allowedTools rule syntax)
     disallowed_tools: list[str] = []
     builtin_tools: str | None = None  # Claude Code --tools (restrict the built-in tool set)
-    builtin_mcp: list[str] = ["approval"]  # labhq-provided MCP servers: approval, hpc
+    builtin_mcp: list[str] = ["approval"]  # labhq-provided MCP servers: approval, hpc, job, annot, wiki
+    # The labhq_annot tools this agent is offered (#1200). None: all of them. A list: only those, whatever tool the
+    # server gains later; the server refuses to start on a name it does not have, so a typo cannot quietly open or
+    # close one.
+    annot_tools: list[str] | None = None
     mcp: list[McpServerSpec] = []
     project_dirs: list[str] = []
     plugin_dirs: list[str] = []  # Claude Code --plugin-dir; ${VAR} expands at run time
@@ -161,6 +167,8 @@ class AgentSpec(BaseModel):
 
     @model_validator(mode="after")
     def valid_engine_options(self) -> "AgentSpec":
+        from .staff_skills import is_bundled_skill
+
         efforts = {
             Engine.claude_code: {"low", "medium", "high", "xhigh", "max"},
             Engine.codex: {"low", "medium", "high", "xhigh", "max", "ultra"},
@@ -172,15 +180,28 @@ class AgentSpec(BaseModel):
             if self.effort not in allowed:
                 values = ", ".join(sorted(allowed))
                 raise ValueError(f"unknown {self.engine.value} effort {self.effort!r}; allowed: {values}")
-        if self.engine != Engine.claude_code and (self.plugin_dirs or self.allow_skills or self.required_skills):
-            raise ValueError("plugin_dirs, allow_skills and required_skills require engine: claude_code")
+        bundled, plugin = [], []
         for skill in self.required_skills:
-            if skill.count(":") != 1 or not all(skill.split(":")):
-                raise ValueError(f"required_skills entries are 'plugin:skill', got {skill!r}")
-        if self.required_skills and not (self.plugin_dirs and self.allow_skills):
+            if ":" not in skill and is_bundled_skill(skill):
+                bundled.append(skill)
+            elif skill.count(":") == 1 and all(skill.split(":")):
+                plugin.append(skill)
+            else:
+                raise ValueError(f"required_skills entries are a bundled skill or 'plugin:skill', got {skill!r}")
+        if self.engine != Engine.claude_code and (self.plugin_dirs or self.allow_skills or plugin):
+            raise ValueError("plugin_dirs, allow_skills and plugin required_skills require engine: claude_code")
+        if bundled and self.engine not in (Engine.claude_code, Engine.codex):
+            raise ValueError("bundled required_skills require engine: claude_code or codex")
+        if bundled and self.engine == Engine.claude_code and not self.allow_skills:
+            raise ValueError("bundled required_skills need allow_skills: true for Claude Code")
+        if plugin and not (self.plugin_dirs and self.allow_skills):
             raise ValueError("required_skills needs plugin_dirs and allow_skills: true")
         if self.engine == Engine.antigravity and (self.builtin_mcp or self.mcp):
             raise ValueError("antigravity does not support builtin_mcp or MCP servers")
+        # annot_tools is not tied to builtin_mcp: an override that removes the annot server (PI interpretation sets
+        # builtin_mcp to []) leaves it unused, never invalid.
+        if self.annot_tools is not None and not all(re.fullmatch(r"[a-z][a-z_]*", tool) for tool in self.annot_tools):
+            raise ValueError("annot_tools holds plain tool names such as fulltext")
         return self
 
     def summary(self) -> dict[str, Any]:
@@ -191,12 +212,14 @@ class AgentSpec(BaseModel):
             "character": self.character,
             "engine": self.engine.value,
             "model": self.model,
+            "model_tier": self.model_tier,
             "employment": self.employment.value,
             "expires_at": self.contract.expires_at if self.contract else None,
             "contract_status": self.contract.status if self.contract else None,
             "contract_provenance": self.contract.provenance() if self.contract else None,
             "mcp": [m.name for m in self.mcp],
             "builtin_mcp": self.builtin_mcp,
+            "annot_tools": self.annot_tools,
             "sandbox": self.sandbox,
             "tools": self.tools,
             "disallowed_tools": self.disallowed_tools,
@@ -209,6 +232,75 @@ class AgentSpec(BaseModel):
         }
 
 
+@dataclass(frozen=True)
+class PathShape:
+    """Which part of a wire field contains paths (not arbitrary user text)."""
+
+    kind: Literal["scalar", "items", "keys", "values", "opaque"]
+    when: tuple[str, str] | None = None
+
+
+WirePath = Annotated[str, PathShape("scalar")]
+WirePaths = Annotated[list[str], PathShape("items")]
+WirePathKeys = Annotated[dict[str, Any], PathShape("keys")]
+WirePathValues = Annotated[dict[str, str], PathShape("values")]
+WireReference = Annotated[str, PathShape("scalar", ("kind", "path"))]
+WireOpaque = Annotated[Any, PathShape("opaque")]
+
+
+@dataclass
+class RunnerPathFields:
+    """Path contract for Task.meta, TaskResult, Event.data and their manifests.
+
+    The boundary derives its field table from these annotations. Keep structured
+    user content opaque; new path fields must be declared here (checked in tests).
+    Relative paths stay relative. Mapping keys such as step IDs stay unchanged.
+    """
+
+    workdir: WirePath
+    source_workdir: WirePath
+    cwd: WirePath
+    workspace_root: WirePath
+    project_dirs: WirePaths
+    plugin_dirs: WirePaths
+    reference_dirs: WirePaths
+    reference_roots: WirePaths
+    upstream_dirs: WirePaths
+    upstream_steps: WirePathValues
+    outputs: WirePaths
+    required_outputs: WirePaths
+    optional_outputs: WirePaths
+    missing_outputs: WirePaths
+    missing_optional_outputs: WirePaths
+    unreported_outputs: WirePaths
+    output_sha256: WirePathKeys
+    output_types: WirePathKeys
+    output_tool_use_ids: WirePathKeys
+    consult_refs: WirePaths
+    path: WirePath
+    file_path: WirePath
+    local_dir: WirePath
+    skill_dir: WirePath
+    talent_dir: WirePath
+    mcp_path: WirePath
+    mcp_entry_path: WirePath
+    value: WireReference
+    manifest: WirePath
+    manifest_path: WirePath
+    bundle: WirePath
+    bundle_path: WirePath
+    read_only_roots: WirePathValues
+    # These are content, not transport fields, even when they contain a "path" key.
+    prompt: WireOpaque
+    context: WireOpaque
+    text: WireOpaque
+    structured: WireOpaque
+    output_schema: WireOpaque
+    workspace_files: WireOpaque
+    workdir_id: WireOpaque
+    evidence_path_warnings: WireOpaque
+
+
 class Task(BaseModel):
     id: str = Field(default_factory=lambda: new_id("task"))
     request_id: str | None = None
@@ -218,8 +310,54 @@ class Task(BaseModel):
     output_schema: dict[str, Any] | None = None
     resume_session_id: str | None = None
     budget_usd: float | None = None
+    request_budget_remaining_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     created_at: float = Field(default_factory=time.time)
-    meta: dict[str, Any] = {}
+    meta: Annotated[dict[str, Any], RunnerPathFields] = {}
+
+
+class ToolCallCount(BaseModel):
+    calls: int = Field(ge=0)
+    failures: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def failures_do_not_exceed_calls(self) -> "ToolCallCount":
+        if self.failures > self.calls:
+            raise ValueError("tool call failures cannot exceed calls")
+        return self
+
+
+EXTERNAL_LOOKUP_TOOL = r"^[a-z][a-z0-9_]{0,47}$"
+EXTERNAL_LOOKUP_MAX_S = 366 * 86400.0  # a sanity bound; a workspace reused for weeks keeps its step budget
+EXTERNAL_LOOKUP_MAX_TOOLS = 50
+
+
+class ExternalLookupTool(BaseModel):
+    """Outcome counts of one lookup tool in a step's outputs/external_lookup_status.jsonl (#676)."""
+    tool: str = Field(pattern=EXTERNAL_LOOKUP_TOOL)
+    ok: int = Field(default=0, ge=0)
+    timeout: int = Field(default=0, ge=0)
+    failed: int = Field(default=0, ge=0)
+    cancelled: int = Field(default=0, ge=0)
+    # The tool's last record is "waiting": a lookup started and no outcome was written.
+    unfinished: bool = False
+    elapsed_s: float = Field(ge=0, le=EXTERNAL_LOOKUP_MAX_S, allow_inf_nan=False)
+    timeout_s: float = Field(gt=0, le=EXTERNAL_LOOKUP_MAX_S, allow_inf_nan=False)
+
+    @property
+    def missing(self) -> bool:
+        return bool(self.timeout or self.failed or self.cancelled or self.unfinished)
+
+
+class ExternalLookupRecord(BaseModel):
+    """The workspace's own lookup status file read back by the runner. It is the step workspace's record, not proof
+    that a tool was called or a paper was read; it never fills an evidence slot."""
+    tools: list[ExternalLookupTool] = Field(default_factory=list, max_length=EXTERNAL_LOOKUP_MAX_TOOLS)
+    invalid_rows: int = Field(default=0, ge=0)
+    duplicate_rows: int = Field(default=0, ge=0)
+    dropped_tools: int = Field(default=0, ge=0)
+    truncated: bool = False
+    # The file is there but is a link, not a plain file, or failed to read: not the same as no file.
+    unreadable: bool = False
 
 
 class TaskResult(BaseModel):
@@ -230,31 +368,59 @@ class TaskResult(BaseModel):
     structured: Any = None
     blocking_decision: str | None = None
     session_id: str | None = None
+    # "plain" or "compact" when the turn ended with a StructuredOutput format error that a resumed turn may repair; the
+    # orchestrator sends that repair as a new dispatch (#673). None: no repair is offered.
+    format_retry: str | None = None
     cost_usd: float | None = None
     cost_known: bool | None = None
     usage: dict[str, int] = {}
     usage_known: bool = True
     pending_jobs: list[str] = []
     pending_asks: list[str] = []
-    workdir: str | None = None
+    workdir: WirePath | None = None
     workdir_id: str | None = None
-    outputs: list[str] = []  # paths relative to workdir
-    missing_outputs: list[str] = []
+    outputs: WirePaths = []  # paths relative to workdir
+    missing_outputs: WirePaths = []
+    missing_optional_outputs: WirePaths = []
+    step_warnings: list[str] = []
     # output relpath -> type record (labhq.vocab.declare.runner_records); only for collected outputs (#221)
-    output_types: dict[str, Any] = {}
+    output_types: WirePathKeys = {}
     output_types_stats: dict[str, Any] = {}
-    output_sha256: dict[str, str] = {}
-    output_tool_use_ids: dict[str, str] = {}
-    unreported_outputs: list[str] = []
+    output_sha256: Annotated[dict[str, str], PathShape("keys")] = {}
+    request_input_sha256: str | None = None  # runner-observed stable input manifest (#959)
+    output_tool_use_ids: Annotated[dict[str, str], PathShape("keys")] = {}
+    unreported_outputs: WirePaths = []
     # Parsed only for ordinary orchestration steps. Research steps keep their result v2 ledger in ``structured``.
     general_sections: dict[str, str] = {}
     evidence_path_warnings: list[str] = []
-    # One bounded first line per failed tool call, collected by the runner for ordinary steps only.
+    # One bounded first line per failed tool call, collected for every employee task.
     tool_errors: list[str] = []
+    # Tool names and aggregate counts only; arguments, commands and paths never enter this record (#701).
+    tool_calls: dict[str, ToolCallCount] = {}
+    # Per-turn source ledger keyed by task id. The gateway unions these keys before deriving ``tool_calls`` so a
+    # result that was already merged cannot make an earlier turn count twice.
+    tool_call_turns: dict[str, dict[str, ToolCallCount]] = {}
+    # "<output>: <problem>" for a collected .tsv/.tab/.csv that does not read as a table (#710).
+    table_warnings: list[str] = []
+    # Reader Markdown marker locations and repair instructions only (#757).
+    markdown_warnings: list[str] = []
+    # {paper id: best access_level} from this task's labhq_annot.fulltext lookups (#697).
+    literature_access: dict[str, str] = {}
+    # Metadata-only failures from outputs/literature_access.jsonl; paper text stays under .tmp/literature/ (#745).
+    literature_access_failures: dict[str, str] = {}
+    # Public paper IDs only: discovery candidates, selected fulltext inputs and unread reasons (#744).
+    literature_ledger: dict[str, Any] = {}
+    # Counts and seconds only from outputs/external_lookup_status.jsonl; None when the step left no such file (#676).
+    external_lookups: ExternalLookupRecord | None = None
     provenance: dict[str, Any] = {}  # manifest summary; the gateway may not share the runner's disk
     pipeline_submission: dict[str, Any] | None = None  # gateway-only handoff; stripped before web publication
     partial_results: bool = False
     revision_failed: str | None = None
+    exit_code: int | None = None
+    shutdown_evidence: dict[str, Any] = {}
+    # What the runner itself observed of the staff CLI wrapper's end (#863): Job activation, wrapper identity, wait and
+    # exit. Kept apart from shutdown_evidence, whose presence means an interruption; merged into it only then.
+    cleanup_evidence: dict[str, Any] = {}
     error_kind: str | None = None
     error: str | None = None
     # Epoch seconds of a subscription-quota reset. The runner reads the CLI's clock time in its own zone (#37).
@@ -293,6 +459,17 @@ class TaskResult(BaseModel):
         from .vocab.declare import bounded_stats
         return bounded_stats(value)
 
+    @field_validator("external_lookups", mode="before")
+    @classmethod
+    def bounded_external_lookups(cls, value: Any) -> ExternalLookupRecord | None:
+        # A malformed record from another runner version drops the summary, never the result.
+        if value is None or isinstance(value, ExternalLookupRecord):
+            return value
+        try:
+            return ExternalLookupRecord.model_validate(value)
+        except ValueError:
+            return None
+
     @model_serializer(mode="wrap")
     def _drop_empty_internal_fields(self, handler: Any) -> dict[str, Any]:
         # Results without declarations, a gateway handoff or a quota reset serialize exactly as before those
@@ -315,6 +492,22 @@ class TaskResult(BaseModel):
                 data.pop("evidence_path_warnings", None)
             if not data.get("tool_errors"):
                 data.pop("tool_errors", None)
+            if not data.get("tool_calls"):
+                data.pop("tool_calls", None)
+            if not data.get("tool_call_turns"):
+                data.pop("tool_call_turns", None)
+            if not data.get("table_warnings"):
+                data.pop("table_warnings", None)
+            if not data.get("markdown_warnings"):
+                data.pop("markdown_warnings", None)
+            if not data.get("literature_access"):
+                data.pop("literature_access", None)
+            if not data.get("literature_access_failures"):
+                data.pop("literature_access_failures", None)
+            if not data.get("literature_ledger"):
+                data.pop("literature_ledger", None)
+            if data.get("external_lookups") is None:
+                data.pop("external_lookups", None)
             if data.get("pipeline_submission") is None:
                 data.pop("pipeline_submission", None)
             if data.get("quota_reset_at") is None:
@@ -341,7 +534,7 @@ class Event(BaseModel):
     task_id: str | None = None
     agent_id: str | None = None
     request_id: str | None = None
-    data: dict[str, Any] = {}
+    data: Annotated[dict[str, Any], RunnerPathFields] = {}
 
 
 class ApprovalRequest(BaseModel):
@@ -349,7 +542,7 @@ class ApprovalRequest(BaseModel):
     task_id: str | None = None
     agent_id: str | None = None
     request_id: str | None = None
-    kind: str  # hpc_submit | tool_permission | budget | recruit | download | facilities_fix
+    kind: str  # hpc_submit | tool_permission | budget | recruit | download | facilities_fix | wsl_setup
     summary: str
     detail: dict[str, Any] = {}
     created_at: float = Field(default_factory=time.time)
@@ -358,6 +551,7 @@ class ApprovalRequest(BaseModel):
     pi_reason: str = ''
     pi_outcome: str = ''
     pi_explainer: str = ''
+    pi_needs_interpretation: bool = False
 
     @model_validator(mode='after')
     def explain_for_pi(self) -> 'ApprovalRequest':
@@ -368,6 +562,9 @@ class ApprovalRequest(BaseModel):
                 setattr(self, key, value)
         if missing:
             self.pi_explainer = 'chief_of_staff'
+            if self.kind == 'tool_permission':
+                from .tool_explanation import needs_interpretation
+                self.pi_needs_interpretation = needs_interpretation(self.detail)
         return self
 
 

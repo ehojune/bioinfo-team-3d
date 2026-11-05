@@ -2,7 +2,7 @@
 
 <!-- badges:start -->
 [![Claude Code: 직원 8명 · opus/sonnet](https://img.shields.io/static/v1?label=Claude%20Code&message=%EC%A7%81%EC%9B%90%208%EB%AA%85%20%C2%B7%20opus%2Fsonnet&color=D97757&logo=claude)](https://code.claude.com/docs/en/overview)
-[![Codex: 직원 5명 · gpt-5.6-sol/gpt-6-astra/gpt-6-luna/gpt-6-sol](https://img.shields.io/static/v1?label=Codex&message=%EC%A7%81%EC%9B%90%205%EB%AA%85%20%C2%B7%20gpt-5.6-sol%2Fgpt-6-astra%2Fgpt-6-luna%2Fgpt-6-sol&color=10A37F)](https://github.com/openai/codex)
+[![Codex: 직원 5명 · gpt-6-astra/gpt-6-luna/gpt-6.1-sol](https://img.shields.io/static/v1?label=Codex&message=%EC%A7%81%EC%9B%90%205%EB%AA%85%20%C2%B7%20gpt-6-astra%2Fgpt-6-luna%2Fgpt-6.1-sol&color=10A37F)](https://github.com/openai/codex)
 [![SGE: HPC scheduler](https://img.shields.io/static/v1?label=SGE&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#설정-포인트)
 [![PBS: HPC scheduler](https://img.shields.io/static/v1?label=PBS&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#설정-포인트)
 [![SLURM: HPC scheduler](https://img.shields.io/static/v1?label=SLURM&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#설정-포인트)
@@ -14,6 +14,8 @@
 [![bioRxiv / medRxiv: MCP · preprint 검색](https://img.shields.io/static/v1?label=bioRxiv%20%2F%20medRxiv&message=MCP%20%C2%B7%20preprint%20%EA%B2%80%EC%83%89&color=007EC6)](https://www.biorxiv.org/)
 [![bioinfo-agent: Claude Code plugin](https://img.shields.io/static/v1?label=bioinfo-agent&message=Claude%20Code%20plugin&color=8A2BE2)](https://github.com/ehojune/bioinfo-agent)
 [![Paper2Agent: skill · 파견직 채용](https://img.shields.io/static/v1?label=Paper2Agent&message=skill%20%C2%B7%20%ED%8C%8C%EA%B2%AC%EC%A7%81%20%EC%B1%84%EC%9A%A9&color=228B22)](https://github.com/jmiao24/Paper2Agent)
+[![graphical-abstract: 직원 skill](https://img.shields.io/static/v1?label=graphical-abstract&message=%EC%A7%81%EC%9B%90%20skill&color=228B22)](docs/manual.md#연결된-도구)
+[![humanizer: 직원 skill](https://img.shields.io/static/v1?label=humanizer&message=%EC%A7%81%EC%9B%90%20skill&color=228B22)](docs/manual.md#연결된-도구)
 
 [![test: GitHub Actions](https://github.com/ehojune/bioinfo-team-3d/actions/workflows/test.yml/badge.svg)](https://github.com/ehojune/bioinfo-team-3d/actions/workflows/test.yml)
 [![Python: 3.10+](https://img.shields.io/static/v1?label=Python&message=3.10%2B&color=3776AB&logo=python)](https://www.python.org/)
@@ -25,30 +27,34 @@
 <p align="center"><b>한국어</b> · <a href="README.en.md">English</a></p>
 
 labhq는 Claude Code와 Codex를 **연구소 직원**처럼 부리는 바이오인포 **멀티 에이전트 오케스트레이션 플랫폼**입니다.
-웹 사무실에 요청을 적으면 CSO가 계획을 세우고, 직원들이 나눠 실행하고, 다른 회사 모델이 리뷰한 뒤 보고서가 나옵니다.
+웹 사무실에 요청을 적으면 CSO가 계획을 세우고, 직원이 나눠 실행한 뒤 과학 리뷰와 보고서로 이어집니다.
 위험한 일과 돈이 드는 일은 PI가 웹이나 폰에서 승인합니다.
+이 프로젝트는 [The Virtual Biotech](https://doi.org/10.1126/science.aeg6779)의 연구팀 구조를 벤치마킹하며 시작했습니다.
 
 | 2.5D 사무실 (`/`) | 3D 사무실 (`/3d`) |
 |---|---|
-| ![2.5D 사무실: 요청 진행 그래프, 사내 메신저, 직원 책상](docs/media/office-25d.webp) | ![3D 종이숲 사무실: 직원 책상과 진행 중인 요청 패널](docs/media/office-3d.webp) |
+| ![2.5D 사무실 데모: 요청이 들어오면 직원이 일하고, 결정 카드를 승인하면 보고서가 나오는 약 13초 흐름](docs/media/office-25d.gif) | ![3D 종이숲 사무실: 직원 책상과 진행 중인 요청 패널](docs/media/office-3d.webp) |
 
-mock 데모(`labhq demo --web`)를 15초 동안 녹화한 화면입니다. 요청 하나가 CSO 계획, 승인, 단계 진행을 거쳐 끝납니다.
+mock 데모(`labhq demo --web`)입니다. 약 13초 영상에 계획·직원 작업·카드 승인·보고서가 이어집니다.
 정지 화면: [2.5D](docs/media/office-25d.png) · [3D](docs/media/office-3d.png)
 
 ## 어떻게 일하나
 
 ![요청이 흐르는 길: PI 요청 → 브리핑 → CSO 계획 → 직원 단계 → 과학 리뷰 → 최종 보고서. 아래는 PI 결정함 카드가 끼는 자리](docs/media/request-flow.svg)
 
-- 직원 11명이 역할마다 다른 엔진·모델·도구를 씁니다. 과학 리뷰어는 일부러 다른 회사 모델입니다.
-- 반복·정형 분석은 [bioinfo-agent](https://github.com/ehojune/bioinfo-agent) 직원이 맡습니다. 이 프로젝트의 PI가 만든 Claude Code 에이전트로, 말로 시킨 분석에 맞는 nf-core Nextflow 파이프라인을 골라 시간·디스크를 계산한 계획서를 내고, 승인 뒤 실행해 MultiQC로 QC 판정까지 돌려줍니다.
+- 기본 역할 설정은 13개(Claude Code 8개·Codex 5개)입니다. 엔진·모델·도구는 [직원 YAML](agents/core/)이 기준이며, 로컬 단독 직원과 파견직은 별도입니다.
+- 반복·정형 분석은 [bioinfo-agent](https://github.com/ehojune/bioinfo-agent) 직원이 맡습니다. 분석에 맞는 nf-core Nextflow 파이프라인과 자원 계획을 내고 승인 뒤 실행·MultiQC 판정을 맡는 Claude Code 에이전트입니다.
 - 팀에 없는 방법이 필요하면 논문·코드를 [Paper2Agent](https://github.com/jmiao24/Paper2Agent)로 바꿔 **파견직**으로 채용합니다.
 - HPC(SGE·PBS·Slurm)에 잡을 내면 직원 세션은 잡이 끝날 때까지 쉬었다가 같은 세션으로 이어 갑니다.
 - CSO는 권한·비용·데이터 접근, PI만 아는 선택(질병·코호트), 분석 깊이만 묻습니다. 나머지 설계는 스스로 정하고 계획과 보고서에 **가정**으로 적습니다.
-- 단계마다 작업 폴더에 지시문·산출·엔진·비용 기록이 남습니다.
+- 연구 단계의 결과는 계획이 그 단계에 선언한 `claim_ids` 안의 주장만 담을 수 있고, 결과 교정 요청도 이 목록을 그대로 알려 줍니다.
+- 이어 가기가 DOI·PMID 참조가 있는 요청의 단계를 재사용할 때는 식별자만 고정한 것이므로, 카드와 보고서가 "내용은 확인하지 않음"을 한 줄 알립니다.
+- 보고서 검토를 기다리는 연구 요청을 GitHub로 옮기려 하면(`labhq storage <id> --to github`) 먼저 보고서 카드에 적힌 번호와 hash로 `labhq review-done <id> --revision <번호> --sha256 <hash>`를 하라고 안내합니다. 같은 명령에 `--storage github`를 붙이면 검토와 저장 선택을 한 번에 할 수 있습니다.
+- 단계마다 작업 폴더에 지시문·산출·엔진·비용 기록이 남습니다. 산출로 폴더를 선언하면 그 안의 파일을 파일마다 hash와 함께 모읍니다(hash가 있는 파일이 하나도 없거나 파일이 200개를 넘는 폴더는 단계가 미완료로 끝납니다).
 
 ## labhq가 공들인 네 가지
 
-labhq는 빨리 끝내기보다 점검을 겹쳐 두고 근거를 다시 확인할 수 있게 남기는 쪽을 골랐습니다.
+단계마다 점검하고 근거를 다시 확인하도록 남깁니다.
 
 <table>
 <tr>
@@ -58,15 +64,9 @@ labhq는 빨리 끝내기보다 점검을 겹쳐 두고 근거를 다시 확인�
 
 **틀린 근거를 미리 거른다**
 
-AI가 인용을 지어내거나 잘못 읽는 실수(hallucination)를 보고서 전에 잡으려고 검사를 두 겹 둡니다. 과학 리뷰어(GPT-6-Astra)가 PubMed 원문을 열어 인용을 대조하고, 결론을 바꾸는 지적(P1)이 남으면 요청은 통과하지 못합니다. [The Virtual Biotech](https://github.com/harrisongzhang/TheVirtualBiotech)(Science 2026)에서 가져온 claim 장부와 산출 sha256 기록(MIT)으로 `labhq verify`가 보고서 근거 앵커와 hash를 다시 검사합니다.
+과학 리뷰와 claim 장부·산출 sha256을 겹쳐 보고서 근거를 확인합니다. `labhq verify`는 앵커와 파일 hash를 다시 검사합니다.
 
-<details><summary>근거와 한계</summary>
-
-<sub>근거: [11차 시운전](https://github.com/ehojune/bioinfo-team-3d/issues/298#issuecomment-5969847101)(GSE19804): 문헌 단계가 원 논문의 SEMA5A 방향을 거꾸로 적고 Yang 2018 허브 목록을 빠뜨린 것을 리뷰어가 PubMed 원문과 대조해 잡았고, 요청은 보고서를 내기 전에 멈췄습니다 · [예시 GSE10072](docs/examples/gse10072/README.md): `labhq verify`로 산출 58개 hash 재확인 · [#339](https://github.com/ehojune/bioinfo-team-3d/pull/339)(verify)</sub>
-
-<sub>한계: 근거 앵커와 PI 근거 승인(CP2)은 기본 꺼짐인 연구 lane에서만 돕니다. `verify`는 파일이 바뀌지 않았는지만 보며, 내용이 옳다는 증명은 아닙니다. 리뷰가 놓친 비율은 재지 않았습니다.</sub>
-
-</details>
+한계: 앵커·CP2는 연구 lane에서만 작동하며 hash 일치는 내용의 정확성을 보장하지 않습니다. 리뷰의 누락률도 미측정입니다. [근거·한계](docs/reference/readme-evidence.md#카드-1)
 
 </td>
 <td width="50%" valign="top">
@@ -75,15 +75,9 @@ AI가 인용을 지어내거나 잘못 읽는 실수(hallucination)를 보고서
 
 **논문에서 출발한다**
 
-계획 전에 선행 연구 직원이 같은 주제의 논문·리뷰 몇 편에서 꼭 할 분석을 뽑아 점검표에 넣고, 보고서에는 인용을 붙인 '선행 연구 기준' 절을 둡니다. 팀에 없는 방법이 필요하면 PI 승인 뒤 [Paper2Agent](https://github.com/jmiao24/Paper2Agent)로 그 논문의 코드를 도구로 쥔 기한부 **파견직**을 들일 수 있습니다.
+같은 주제의 논문·리뷰로 필수 분석을 점검합니다. 본문 확보·보충자료 상태와 Methods/QC 위치를 남깁니다. 부족한 방법은 PI 승인 뒤 Paper2Agent 파견직으로 보강합니다.
 
-<details><summary>근거와 한계</summary>
-
-<sub>근거: [#395](https://github.com/ehojune/bioinfo-team-3d/pull/395)(선행 연구 단계) · [매뉴얼: 선행 연구 기준](docs/manual.md#topic-점검표와-선행-연구-기준) · [매뉴얼: 파견직 제도](docs/manual.md#파견직-제도-paper2agent)</sub>
-
-<sub>한계: 선행 연구 단계는 시험 요청 4건에서만 돌았습니다. 파견직은 mock 시험만 통과했고 실제 논문으로 채용까지 간 적이 없으며, Paper2Agent skill은 따로 설치해야 합니다.</sub>
-
-</details>
+한계: 선행 연구 단계는 시험 요청 4건에서 확인했습니다. 실제 논문으로 파견직 채용까지 간 사례는 없고 skill 설치가 필요합니다. [근거·한계](docs/reference/readme-evidence.md#카드-2)
 
 </td>
 </tr>
@@ -94,15 +88,9 @@ AI가 인용을 지어내거나 잘못 읽는 실수(hallucination)를 보고서
 
 **일을 넘겨도 기준은 같다**
 
-CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 검토한 어휘(123키, 그중 79키는 [EDAM](https://github.com/edamontology/edamontology) 온톨로지와 연결)의 topic 43개에서 고릅니다. topic은 논문 63편·교과서 4권·웹 자료 66건을 조사해 넓혔고([#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)), topic마다 근거 논문을 30편 이상, 모두 1286편 붙였습니다([#446](https://github.com/ehojune/bioinfo-team-3d/pull/446), [목록](docs/reference/topic_papers.md)). 코드는 그 키로 점검표를 골라 계획·리뷰·단독 처리에 같은 목록을 넘기고, 가정으로 답한 항목은 보고서 '한계'에 남깁니다. 연구 lane(기본 꺼짐)의 분야 규칙 pack도 같은 키로 붙습니다.
+topic 키로 계획·과학 리뷰·단독 처리에 같은 점검표를 넘깁니다. 논문 [1,286편](docs/reference/topic_papers.md)을 분야별 근거 목록으로 정리했습니다. 현재 45개 분야·135항목이며 연구 lane의 분야 pack도 같은 키를 씁니다.
 
-<details><summary>근거와 한계</summary>
-
-<sub>근거: [#390](https://github.com/ehojune/bioinfo-team-3d/pull/390)(topic 필수, 어휘 100키) · [#369](https://github.com/ehojune/bioinfo-team-3d/issues/369)(계획 문장 한 줄로 분야 규칙이 빠지던 우회 → topic 판정으로 닫음)</sub>
-
-<sub>한계: 점검표는 43개 분야, 124항목입니다([#402](https://github.com/ehojune/bioinfo-team-3d/pull/402), [#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)). 처음 세 분야 밖의 40개 분야는 실제 요청에서 돌지 않았습니다. 누락이 줄었는지는 재지 않았습니다. 이름표 사이 관계를 쓰는 의미 모델은 기본 꺼짐인 [그림자 단계](#어노테이션시맨틱온톨로지)이고, 단순 SQL 기준선보다 낫다는 결과는 없습니다.</sub>
-
-</details>
+한계: 처음 3개 밖의 42개 분야는 실제 요청에서 돌지 않았습니다. 누락 감소와 의미 모델의 기준선 대비 이점도 미측정입니다. [근거·한계](docs/reference/readme-evidence.md#카드-3)
 
 </td>
 <td width="50%" valign="top">
@@ -111,15 +99,11 @@ CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 �
 
 **끊겨도 잇고, 묶어서 남긴다**
 
-요청·단계·승인을 SQLite에 저장합니다. PC가 멈춰도 PI 재개 카드 한 장이면 끝난 단계는 건너뛰고 멈춘 단계부터 잇고, 구독 한도·로그인 만료에는 요청을 세워 두었다가 풀리면 다시 갑니다. 요청이 끝나면 hash로 확인한 산출과 분석 코드를 한 폴더([요청 묶음](docs/manual.md#요청-묶음))에 모으고, 단계 사이 경로는 상대경로로 바꿉니다.
+SQLite에 요청·단계·승인을 남겨 중단 지점부터 잇고, 끝나면 hash로 확인한 산출과 코드를 요청 묶음에 모읍니다.
 
-<details><summary>근거와 한계</summary>
+환경 계획은 소비 단계의 runner별로 나누고 binding을 승인 계획에 저장해 재개 시 복원합니다. 환경 경로 별칭은 아직 활성화하지 않았으며 daemon 연결과 실제 WSL·엔진 보호는 미검증입니다.
 
-<sub>근거: [v0.25 리허설](docs/status/2026-10-04-0458-release-v025.md) 요청 2: PC가 멈춰 labhq가 모두 꺼진 뒤 이어 가기 카드 한 장으로 다시 이어서 리뷰 통과(accept)까지 갔습니다 · [벤치 A 2차](https://github.com/ehojune/bioinfo-team-3d/issues/373#issuecomment-5975156477): labhq 재현성 2 → 4점([#384](https://github.com/ehojune/bioinfo-team-3d/pull/384)), Astra 단독은 같은 보고서가 두 채점에서 4점·3점 · [#389](https://github.com/ehojune/bioinfo-team-3d/pull/389)(요청 묶음)</sub>
-
-<sub>한계: 한도·로그인 대기는 10-05 실제 로그인 만료로 요청 4건이 실패한 뒤 고쳤고, test로만 확인했습니다. 재로그인은 사람이 합니다. 요청 묶음은 같은 PC runner의 산출만 모읍니다. `documented`는 기록만, `replayable`은 스크립트·환경·경로 조건 충족, `rerun_verified`는 별도 재실행 receipt까지 있는 경우입니다.</sub>
-
-</details>
+한계: 한도·로그인 대기 수정은 test로만 확인했고 재로그인은 사람이 합니다. 묶음은 같은 PC runner 산출만 모으며 재실행 검증은 별도 receipt가 필요합니다. [근거·한계](docs/reference/readme-evidence.md#카드-4)
 
 </td>
 </tr>
@@ -134,16 +118,13 @@ CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 �
 | 근거 추적 | ✅ 산출 hash·앵커 재검사 | ⚠️ 남긴 스크립트·로그 | ✅ 산출 출처·재실행 비교 |
 | 승인 | ✅ 웹·폰 카드 | ⚠️ 세션 안에서 | ✅ 승인 모드·폰 원격 |
 | 중단 뒤 | ✅ 멈춘 단계부터 | ⚠️ 세션만 재개 | ✅ 원격 잡 복구 |
-| 문헌 관리 | ⚠️ 검색·인용만 | ⚠️ 붙인 도구 따라 | ✅ 서재·PDF·선별 |
+| 문헌 관리 | ⚠️ 검색·인용·본문 요청 | ⚠️ 붙인 도구 따라 | ✅ 서재·PDF·선별 |
 | 속도·비용 | ❌ 큰 과제 144분·$31 | ✅ 같은 과제 19분 | — |
 
-연구 workbench 칸은 [open-science](https://github.com/aipoch/open-science) v0.35.0 README·ROADMAP을 읽고 적었고, 앱은 돌려 보지 않았습니다(2026-10, [#316](https://github.com/ehojune/bioinfo-team-3d/issues/316)). 속도·비용은 재지 않아 —로 둡니다. labhq 점검표가 누락을 줄이는지는 아직 재지 않았습니다.
-\* Claude 직원 8명의 산출 기준입니다. 문헌 담당을 포함한 Codex 직원 3명의 산출은 같은 회사(OpenAI) 리뷰어가 봅니다.
-단독 칸의 속도·근거 추적은 벤치 기준선(GPT-6-Astra 단독)에서 잰 값입니다. 채점은 GPT-6.1-Sol이 출처를 가리고 과제마다 한 번 했습니다([#373](https://github.com/ehojune/bioinfo-team-3d/issues/373)).
+\* 기본 과학 리뷰어는 Codex/GPT-6-Astra입니다. Claude 분석에는 다른 회사, Codex 분석에는 같은 회사 리뷰입니다. workbench는 문서 조사만 했으며 실행하지 않았습니다.
 
-**labhq가 맞는 경우**: 결과를 근거째 남에게 넘겨야 하거나, 몇 시간짜리 분석을 맡겨 두고 결정만 폰으로 하고 싶을 때. v0.25 리허설에서 accept된 4건은 설치·예산·이어 가기를 뺀 PI 카드가 요청당 0~1장이었습니다([리허설](docs/status/2026-10-04-0458-release-v025.md)).
-
-**아직 지는 곳**: 같은 과제를 눈가림 채점하면 정확성은 같았지만 총점은 단독 세션이 앞섰습니다(10-05 벤치 C: 큰 과제 22 대 28, 작은 과제 20:24·22:23·20:23). 진 곳은 재현 자료가 덜 갖춰진 점과 보고서가 긴 점입니다(큰 과제 본문 약 12,600자 대 3,100자)([#373](https://github.com/ehojune/bioinfo-team-3d/issues/373), [#423](https://github.com/ehojune/bioinfo-team-3d/issues/423)). 작은 요청은 [#388](https://github.com/ehojune/bioinfo-team-3d/pull/388)부터 강한 모델 한 명이 바로 끝내고, 이 경로를 탄 과제는 격차가 줄었습니다(2→1점, 6→3점). 이때는 기본으로 리뷰를 거치지 않습니다. 이 경로는 `orchestrator.solo_agent`를 설정해야 켜지고, 기본은 꺼져 있어 작은 요청도 팀으로 갑니다. 문헌 서재·PDF 관리가 중심이면 workbench가 맞습니다.
+**맞는 경우**: 근거와 재현 자료를 묶어 넘기거나 긴 분석의 결정만 웹·폰으로 할 때.
+**남은 약점**: 기존 눈가림 bench의 총점·속도는 단독 Astra가 앞섰습니다. 재현 자료와 보고서 길이를 고쳤고 공개본 README에는 실제 한계·그림 설명·실행 방법·seed를 적습니다. 새 비교는 아직입니다. 작은 요청의 선택형 solo 경로는 기본으로 리뷰를 생략합니다. [비교 조건·점수·한계](docs/reference/readme-evidence.md#비교-근거)
 
 ## 예시: 공개 폐선암 데이터 분석
 
@@ -163,22 +144,22 @@ CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 �
 
 | 층 | 무엇인가 | labhq에서 |
 |---|---|---|
-| 어노테이션 | 데이터와 근거에 붙는 이름표 | 어휘 123개(PI 검토, 79개 key를 생물정보학 공용 사전 [EDAM](https://github.com/edamontology/edamontology) 용어와 연결), 근거의 종류·출처 수준, 산출 파일 sha256 |
-| 시맨틱 | 이름표로 무엇을 판정할지 정한 약속 | PI가 승인한 계획의 hash 동결(CP1), 분석 종류별 규칙 pack(단일세포 DE, 벌크 종양-정상; 요청의 topic 키로 적용), 단계 입력이 방법에 맞는지 맞음·틀림·모름 판정, 보고서 근거 앵커 |
-| 온톨로지 | 이름표 사이의 관계 | 상하위 관계 몇 개만 둡니다. 끝난 요청을 출처 모델("누가 만들었고 다시 써도 되나")과 객체 뷰("누가 무엇을 맡았고 무엇이 승인을 기다리나")로 묶는 지도는 그림자로만 계산합니다 |
+| 어노테이션 | 데이터와 근거에 붙는 이름표 | PI 검토 어휘 125개(79개 EDAM 연결), 근거 종류·출처 수준·파일 sha256 |
+| 시맨틱 | 이름표로 무엇을 판정할지 정한 약속 | 승인 계획 hash(CP1), topic별 규칙 pack, 입력 적합성 판정, 보고서 근거 앵커 |
+| 온톨로지 | 이름표 사이의 관계 | 작은 상하위 관계와 출처·담당·승인 상태의 객체 뷰. 현재는 그림자 계산 |
 
-그림자 계산은 기본 꺼짐이고 켜도 기록만 합니다. `semantics: ab`는 연구 요청 절반에만 재사용 후보를 CSO 계획에 참고로 줘서 효과를 견줍니다. 어휘는 생명정보 요청 전반으로 넓히는 중입니다(#375). 자세한 설명은 [매뉴얼](docs/manual.md#의미-모델과-온톨로지)에 있고, topic·점검표·어휘 키 전체는 [어휘·topic·점검표 표](docs/vocabulary.md)에 있습니다.
+그림자는 켜도 기록만 하며 `semantics: ab`는 연구 요청 절반에 재사용 후보를 참고로 줍니다. 현재는 효과 비교 단계입니다. [의미 모델](docs/manual.md#의미-모델과-온톨로지) · [어휘·topic·점검표](docs/vocabulary.md)
 
 ## 웹으로 시작하기
 
 ### 1. 먼저 둘러보기 (API 키·클러스터 없이)
 
-```bash
+```powershell
 git clone https://github.com/ehojune/bioinfo-team-3d.git
 cd bioinfo-team-3d
 py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\labhq demo --web
+.\labhq.cmd demo --web
 ```
 
 POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".[dev]"`, `./labhq.sh demo --web`을 씁니다.
@@ -187,14 +168,22 @@ POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".
 
 ### 2. 설치와 설정
 
-전제: Python 3.10+, Git, 직원 CLI(Claude Code·Codex) 설치·로그인. npm CLI는 Node.js도 필요합니다.
+전제: Python 3.10+와 Git. 위 설치 뒤 `.\labhq.cmd --help`로 CLI를 확인합니다.
 
-```bash
-.\labhq init
-.\labhq -c config\labhq.yaml doctor
+```powershell
+.\labhq.cmd init
+.\labhq.cmd -c config\labhq.yaml doctor
 ```
 
-`init`은 HPC·bioinfo-agent 경로와 AlphaGenome 키도 묻습니다(없으면 Enter). 실제 모델을 부르지 않는 격리 설치 검사는 `python scripts/clean_install_check.py`입니다.
+`init`은 `config/labhq.yaml`을 만들고 bioinfo-agent·HPC·선택형 API·개발 기록을 묻습니다. 기존 설정은 보존합니다. 실제 요청 전에는 직원 CLI(Claude Code·Codex)를 설치하고 **사람이 로그인**해야 합니다. npm CLI는 Node.js도 필요합니다. 그 뒤 `doctor`의 실행 준비를 확인합니다.
+
+로그인 없이 새 설치를 검사하려면 아래 명령을 씁니다. `..\labhq-clean-check`는 새 폴더나 빈 폴더여야 합니다.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\clean_install_check.py --work-dir ..\labhq-clean-check
+```
+
+단계별 PASS/FAIL과 인증·실제 모델 SKIP은 그 폴더의 `receipt.json`에 남습니다. 설치판·격리 state·stdout/stderr도 보존합니다. [재현 명령·판정](docs/reference/clean-install-922.md) · [설정 상세](docs/manual.md)
 
 ### 3. 띄우기
 
@@ -207,34 +196,26 @@ PowerShell이나 cmd의 새 창에서 실행합니다. `labhq.cmd`가 `.venv` Py
 
 `up`은 gateway와 runner를 창과 분리해 띄우고 state 폴더의 로그와 프로세스 기록으로 관리합니다. `down`은 진행 중 요청이 있거나 상태를 확인할 수 없으면 거부하며, 확인하고 끝내려면 `down --force`를 씁니다. POSIX 명령은 `./labhq.sh -c config/labhq.yaml up`과 `open`입니다.
 
-**PC를 다시 켰을 때**
-
-```powershell
-cd <labhq 저장소>
-.\labhq -c config\labhq.yaml up
-.\labhq -c config\labhq.yaml open
-```
+PC를 다시 켜도 저장소 폴더에서 같은 `up`·`open` 명령을 씁니다.
 
 러너가 꺼져 있으면 웹 상단에 **러너 꺼짐** 띠가 뜹니다. 그동안 보낸 요청은 실패하지 않고 러너가 붙을 때까지 기다립니다(최대 24시간).
 
 ### 4. 첫 요청
 
-1. 아래 입력창에 요청을 적습니다. 처음엔 작은 공개 데이터 요청이 좋습니다(예: "공개 펭귄 데이터 QC 요약").
-2. CSO가 확인 질문을 하면 선택지를 고르고 **답하고 진행**을 누릅니다.
-3. 승인할 일은 오른쪽 **결정** 탭(결정할 일)에 카드로 옵니다. 승인하면 이어 갑니다. 확인 질문·예산·재개·CP1 카드를 거절하거나 CP2 카드를 거부하면 요청이 끝납니다. 확인 질문·예산·CP1·CP2 카드는 7일까지 기다리므로(`policy.approvals.pi_decision_timeout_s`) 자리를 비워도 요청이 실패하지 않습니다.
-4. **작업판**에서 단계 진행과 산출을 보고, 끝나면 **최종 보고서**를 펼칩니다. 보고서를 두고 더 물을 땐 **이어 묻기**를 씁니다.
-5. 잘못 보낸 요청은 요청 줄의 **요청 취소**(또는 `labhq cancel <요청 ID>`)로 멈춥니다. 도는 작업을 끊고 끝난 단계까지의 부분 결과를 보고서로 남깁니다.
-6. CSO가 맡은 실행 중 요청을 고르면 입력창 기본값은 **이 요청에 메모**입니다. 메모는 이미 도는 turn이 아니라 다음 계획·단계부터 전달됩니다. 한 직원에게 바로 맡긴 요청은 끝난 뒤 **이어 묻기**를 씁니다.
+1. 입력창에 작은 공개 데이터 요청을 적습니다(예: “공개 펭귄 데이터 QC 요약”). CSO가 묻는 카드에는 **답하고 진행**을 누릅니다.
+2. **결정** 탭에서 승인하면 이어 갑니다. 확인 질문·예산·재개·CP1·CP2 거절은 요청을 끝냅니다. 확인 질문·예산·CP1·CP2는 기본 7일까지 기다립니다.
+3. **작업판**에서 진행·산출, **최종 보고서**에서 결과를 보고 **이어 묻기**로 더 묻습니다.
+4. **요청 취소**는 실행을 끊고 끝난 단계의 부분 보고서를 남깁니다. 실행 중 **이 요청에 메모**는 다음 계획·단계부터 전달됩니다.
 
-한 직원에게 바로 맡기려면 입력창에서 그 직원을 고르거나 노란 메모를 책상에 끌어다 놓습니다.
-GitHub URL·DOI·데이터 경로는 **참고** 버튼으로 붙입니다.
-폰 연결은 매뉴얼의 [띄우기와 접속](docs/manual.md#띄우기와-접속)(Tailscale)과 [웹 사무실](docs/manual.md#웹-사무실)(홈 화면에 추가)에 있습니다.
+직원을 고르거나 노란 메모를 책상에 끌면 직접 맡깁니다. GitHub URL·DOI·경로는 **참고**로 붙입니다.
+내 LLM-wiki 폴더는 `labhq wiki connect <폴더>`로 읽기 전용 참고자료로 연결할 수 있습니다(설정 `wiki:`, 기본 꺼짐). 지금은 색인과 검색 명령까지이며, 직원이 쓰는 도구와 보고 반영은 다음 단계입니다. 노트마다 상대 경로·줄·해시·수정 시각·원문 DOI를 기록하고, 요약 노트는 원논문 독해로 치지 않습니다. 실제 사용은 미검증입니다. ([#827](https://github.com/ehojune/bioinfo-team-3d/issues/827))
+[폰 접속](docs/manual.md#띄우기와-접속) · [화면·승인 상세](docs/manual.md#웹-사무실)
 
 ## 안전하게 쓰려면
 
 - HPC 제출, 위험한 셸 명령, 작업 폴더 밖 쓰기, 예산 초과, 파견직 채용은 PI가 정합니다.
 - 통제(DUA) 데이터 원본은 파일 도구로 열지 않고 HPC 잡 안에서만 다룹니다.
-- 직원은 PI 계정으로 돌지만 `~/.ssh`·브라우저 프로필 같은 개인 경로는 가립니다. 이 차단은 Claude 직원에게 세 겹으로 걸립니다. Codex 직원(기본 11명 중 3명)은 Windows elevated sandbox에서 sandbox 읽기 거부와 지침을, 그 밖 환경에서는 지침만 받습니다. 경로 가드는 sandbox가 아니어서 작정한 직원까지 막지는 못합니다.
+- 직원은 PI 계정으로 돌지만 `~/.ssh`·브라우저 프로필 같은 개인 경로는 가립니다. 이 차단은 Claude 직원에게 세 겹으로 걸립니다. Codex 직원(기본 13개 역할 중 5개)은 Windows elevated sandbox에서 sandbox 읽기 거부와 지침을, 그 밖 환경에서는 지침만 받습니다. 경로 가드는 sandbox가 아니어서 작정한 직원까지 막지는 못합니다.
 
 자세한 기준은 [안전 장치](docs/manual.md#안전-장치)에 있습니다.
 
@@ -250,7 +231,11 @@ GitHub URL·DOI·데이터 경로는 **참고** 버튼으로 붙입니다.
 | v1 | 다른 연구자가 자기 통제 데이터로 연구 문제를 두 개까지 푼다 |
 | v1.25 | 연구를 넘어 논문을 쓴다 |
 
-버전마다 통과 기준이 있고, 채우면 다음 버전으로 넘어갑니다. 기준과 지금 상태, 남은 일은 [매뉴얼의 로드맵](docs/manual.md#로드맵)에 있습니다.
+버전마다 통과 기준이 있고, 채우면 다음 버전으로 넘어갑니다. v0.5 선언 뒤 병합된 기능은 test·CI를 통과했지만 실제 연구 요청의 동작·과학적 효용은 미검증입니다. 기준과 지금 상태, 남은 일은 [매뉴얼의 로드맵](docs/manual.md#로드맵)에 있습니다.
+
+요청 하나의 전체 시간 상한(`orchestrator.request_wall_clock_s`, 기본 꺼짐)은 [요청 전체 시간 상한](docs/reference/request-deadline.md)에 정리했습니다. 상한을 켠 실제 요청은 아직 돌려 보지 않았습니다.
+
+시설팀 지원의 필수·선택 여부와 준비 증거는 [지원 요구 판정표](docs/reference/facilities-support-983.md)로 구분합니다. doctor의 준비 판정은 실제 지원 요청·복구 성공을 보증하지 않습니다.
 
 ## 더 읽기
 
@@ -262,6 +247,8 @@ GitHub URL·DOI·데이터 경로는 **참고** 버튼으로 붙입니다.
 | [참고 자료 (References)](docs/references.md) | 설계·구현·도구 연결에 참고한 문헌과 프로젝트 |
 | [어휘·topic·점검표](docs/vocabulary.md) | topic이 무엇인지, topic별 점검표, 핵심 단어(어휘 키)를 표로 보려는 사람 |
 | [패치노트](patch_notes/README.md) | 바뀐 내용 |
-| [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | 이 저장소를 개발하는 에이전트 |
+| [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | labhq를 고치는 개발자: 규칙·구조·현재 작업 순서 |
+| [CI 실행·시간 상한](docs/reference/ci-reuse.md) | CI가 시험을 어떻게 나눠 돌리는지, 시험마다 300초 상한이 있다는 것을 알고 싶은 개발자 |
+| [참고 기록](docs/reference/README.md) | 검증 근거와 이전 결정이 필요할 때만 조회 |
 
 코드는 [GPL-3.0-or-later](LICENSE), 문서·그림·데이터 표는 [CC BY-SA 4.0](LICENSE-CC-BY-SA-4.0.txt)입니다. 예외는 [매뉴얼의 라이선스](docs/manual.md#라이선스)에 있습니다.

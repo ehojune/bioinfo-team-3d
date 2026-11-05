@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -27,10 +28,10 @@ from contextlib import suppress
 from pathlib import Path, PurePath
 from typing import Any
 
-from .. import __version__
+from .. import __version__, durable
 from ..adapters.held_dir import HeldDir, NotPlainFolder
 from ..adapters.owned import (OwnedPathError, append_owned, case_sensitive_directory, plain_directory, read_owned,
-                              write_owned)
+                              awrite_owned, write_owned, write_owned_bytes)
 from ..adapters.owned import is_link as _is_link
 from ..adapters.owned import remove_entry as _remove_entry
 from ..adapters.read_only import SKILL_DIRS
@@ -175,17 +176,21 @@ class InputHashCache:
                     temp.unlink()
 
 
-def restricted_zones(settings: Any) -> list[Path]:
-    """Restricted zones as real paths: a zone written through a symlink or junction
-    (`/data/cohort` -> `/mnt/store/cohort`) must still block the real directory it points at."""
+def resolved_zones(settings: Any, levels: set[str] | frozenset[str]) -> list[Path]:
+    """Configured zones at ``levels`` as real paths, including a symlink/junction spelling."""
     zones: list[Path] = []
     for zone in settings.policy.data_zones:
-        if zone.level == "restricted":
+        if zone.level in levels:
             try:
                 zones.append(Path(os.path.expandvars(os.path.expanduser(zone.path))).resolve())
             except (OSError, RuntimeError, ValueError):
                 continue
     return zones
+
+
+def restricted_zones(settings: Any) -> list[Path]:
+    """Restricted zones as real paths for runner-side containment and link checks."""
+    return resolved_zones(settings, {"restricted"})
 
 
 class TaskWorkspace:
@@ -210,18 +215,31 @@ class TaskWorkspace:
         ws.prompt_pointer, ws._append_refused = None, True
         return ws
 
-    def write_task_md(self) -> str:
+    def _task_md(self) -> tuple[str, str]:
         t, a = self.task, self.agent
         body = f"# Task {t.id}\n\nAssigned to: {a.name} ({a.id}) — {a.role}\n\n## Instruction\n{t.prompt}\n"
         if t.context:
             body += f"\n## Context from teammates\n{t.context}\n"
         name = (f"TASK_wake_{t.id}.md" if t.resume_session_id else
                 f"TASK_{t.id}.md" if (self.dir / "TASK.md").exists() else "TASK.md")
-        write_owned(self.dir, name, body)
+        return body, name
+
+    def _task_md_written(self, body: str, name: str) -> str:
         # The adapter falls back to this when the inline prompt would overflow the command line (#222).
         self.prompt_pointer = (f"Read {name} in the current directory (it is long) and carry out the instruction "
-                               f"there.\n\nInstruction summary: {t.prompt[:2000]}")
+                               f"there.\n\nInstruction summary: {self.task.prompt[:2000]}")
         return body if len(body) <= INLINE_LIMIT else self.prompt_pointer
+
+    def write_task_md(self) -> str:
+        body, name = self._task_md()
+        write_owned(self.dir, name, body)
+        return self._task_md_written(body, name)
+
+    async def awrite_task_md(self) -> str:
+        """`write_task_md` for a coroutine: the fsync runs on the durable writer thread (#606)."""
+        body, name = self._task_md()
+        await awrite_owned(self.dir, name, body)
+        return self._task_md_written(body, name)
 
     def write_reference_files(self, files: Any) -> list[str]:
         """Write the reference tables named in ``task.meta["workspace_files"]`` next to TASK.md (#420).
@@ -238,6 +256,10 @@ class TaskWorkspace:
                 continue
             write_owned(self.dir, name, text)
         return refused
+
+    async def awrite_reference_files(self, files: Any) -> list[str]:
+        """`write_reference_files` for a coroutine: the whole loop runs as one job on the durable writer thread."""
+        return await durable.run(durable.FILES, self.write_reference_files, files)
 
     def link_inputs(self, upstream: dict[str, Path]) -> dict[str, str]:
         """Point ``inputs/<step id>`` at each upstream step's ``outputs/`` folder (#423).
@@ -265,8 +287,8 @@ class TaskWorkspace:
             return {step_id: "inputs is a link or not a folder in the workspace" for step_id in upstream}
         return failed
 
-    def install_skill(self, skill_dir: Path) -> str | None:
-        """Install a fresh contract skill copy for this run, without traversing workspace links.
+    def install_skill(self, skill_dir: Path, source_label: str = "contract skill") -> str | None:
+        """Install a fresh skill copy for this run, without traversing workspace links.
 
         A link at the copy itself is replaced. A link above it (`.agents`, `.claude/skills`) refuses the run and
         stays as it is (#190): replacing it would delete what an earlier step put there, and labhq cannot tell
@@ -274,7 +296,7 @@ class TaskWorkspace:
         """
         skill_dir = Path(skill_dir)
         if not skill_dir.name:
-            return "contract skill source has no directory name; execution refused"
+            return f"{source_label} source has no directory name; execution refused"
         destinations = []
         for base in SKILL_DIRS:
             dst = self.dir / base / skill_dir.name
@@ -286,7 +308,7 @@ class TaskWorkspace:
         if not (skill_dir / "SKILL.md").is_file():
             for _, dst in destinations:
                 _remove_entry(dst)
-            return "contract skill source is missing or unreadable; execution refused"
+            return f"{source_label} source is missing or unreadable; execution refused"
         for parent, dst in destinations:  # every run replaces every engine's copy from the source
             fresh = parent / f".{skill_dir.name}.labhq-{uuid.uuid4().hex}"
             try:
@@ -307,15 +329,31 @@ class TaskWorkspace:
         plugin = self.dir / ".labhq-paper-skills"
         installed = False
         for row in rows:
+            receipt = {k: row.get(k) for k in ("paper_id", "paper2agent_commit", "selection_sha256")}
+            receipt.update(called=False, call_status="not_attached", status=row.get("status"))
+            receipts.append(receipt)
             if (row.get("request_id") != self.task.request_id or row.get("agent_id") != self.agent.id
-                    or row.get("step_id") != self.task.meta.get("step_id")
-                    or row.get("runner_id") != runner_id or self.agent.contract):
+                    or row.get("step_id") != self.task.meta.get("step_id") or self.agent.contract):
                 warnings.append("논문 스킬 장착 범위 불일치")
+                receipt["reason"] = "scope_mismatch"
+                continue
+            if row.get("status") in {"failed", "unavailable", "skipped"}:
+                receipt["reason"] = "build_" + row["status"]
+                warnings.append("논문 스킬 생성 불가: " + str(row.get("paper_id")))
+                continue
+            if row.get('runner_id') != runner_id:
+                receipt['reason'] = 'runner_mismatch'
+                warnings.append('논문 스킬 러너 불일치')
+                continue
+            if 'paper_skills' in (self.task.meta.get('upstream_artifacts') or {}):
+                receipt['reason'] = 'input_namespace_conflict'
+                warnings.append('논문 스킬 입력 이름이 선행 단계와 겹쳐 장착하지 않음')
                 continue
             digest = row.get("skill_sha256")
             src = Path(row.get("skill_dir") or "")
             if not digest or not (src / "SKILL.md").is_file() or folder_sha256(src) != digest:
                 warnings.append("논문 스킬 hash 불일치: " + str(row.get("paper_id")))
+                receipt["reason"] = "hash_mismatch"
                 continue
             name = "paper-" + hashlib.sha256(str(row.get("paper_id")).encode()).hexdigest()[:24]
             destinations = []
@@ -331,15 +369,89 @@ class TaskWorkspace:
                     if folder_sha256(dst) != digest:
                         raise ValueError("논문 스킬 복사 hash 불일치")
                 write_owned(plugin, ".claude-plugin/plugin.json", '{"name":"labhq-paper-skills"}\n')
+                # An explicit owned input, not just an engine's optional skill discovery directory.
+                document = read_owned(destinations[0], "SKILL.md")
+                if document is None:
+                    raise ValueError("논문 스킬 문서를 읽을 수 없음")
+                input_ref = f"inputs/paper_skills/{name}.md"
+                target = write_owned_bytes(self.dir, input_ref, document.encode())
+                destinations.append(target)
                 self._paper_skill_copies.extend(destinations)
-                receipts.append({k: row.get(k) for k in ("paper_id", "paper2agent_commit", "skill_sha256")})
+                receipt.update(skill_id=name, skill_sha256=digest,
+                               document_sha256=hashlib.sha256(document.encode()).hexdigest(),
+                               document_bytes=len(document.encode()),
+                               input_ref=input_ref, call_status="pending")
                 installed = True
             except (OSError, ValueError, OwnedPathError) as exc:
                 for dst in destinations:
                     _remove_entry(dst)
                 warnings.append(f"논문 스킬 장착 실패 ({type(exc).__name__})")
+                receipt["reason"] = "installation_failed"
+        self._paper_skill_receipts = receipts
         self.update_run(self.task.id, paper_skills=receipts, paper_skill_warnings=warnings)
         return (plugin if installed else None), warnings
+
+    def paper_skill_read_files(self) -> list[str]:
+        """Recheck runner-owned receipts at policy composition; grant exact documents, never inputs/.
+
+        Use the existing no-link held handles and a recorded size bound. Mutable task metadata and the
+        workspace manifest cannot nominate another read path. Native/gate write protection remains separate.
+        """
+        verified = []
+        for row in getattr(self, '_paper_skill_receipts', []):
+            name = str(row.get('skill_id') or '')
+            relative = f'inputs/paper_skills/{name}.md'
+            if (not re.fullmatch(r'paper-[a-f0-9]{24}', name) or row.get('input_ref') != relative
+                    or row.get('call_status') != 'pending'):
+                continue
+            try:
+                with (HeldDir.hold(self.dir) as root, root.child('inputs') as inputs,
+                      inputs.child('paper_skills') as skills):
+                    with os.fdopen(skills.open_read_file(name + '.md'), 'rb') as opened:
+                        info = os.fstat(opened.fileno())
+                        if info.st_nlink != 1 or info.st_size != row['document_bytes']:
+                            continue
+                        data = opened.read(row['document_bytes'] + 1)
+                if hashlib.sha256(data).hexdigest() == row['document_sha256']:
+                    verified.append(str(self.dir / relative))
+            except (OSError, ValueError, KeyError):
+                continue
+        return verified
+
+    def paper_skill_instructions(self) -> str:
+        from ..recruit.paper_skills import reference_token
+        return "\n".join(
+            f"Paper advice {r['paper_id']}: read {r['input_ref']}. If you actually use this advice, "
+            f"include the exact attribution {reference_token(r)} in your result narrative. "
+            f"Supporting files: .agents/skills/{r['skill_id']}/. "
+            "Do not copy it merely because the skill was assigned. This records a result reference, not a tool call."
+            for r in getattr(self, "_paper_skill_receipts", []) if r.get("input_ref"))
+
+    def record_paper_skill_usage(self, result) -> None:
+        """Evaluate the current turn's result against the runner's original installation receipt."""
+        from ..recruit.paper_skills import reference_token
+        from ..recruit.provenance import folder_sha256
+        rows = copy.deepcopy(getattr(self, "_paper_skill_receipts", []))
+        for row in rows:
+            if not row.get("input_ref"):
+                continue
+            try:
+                document = read_owned(self.dir, row["input_ref"])
+                unchanged = (document is not None
+                             and folder_sha256(self.dir / row['input_ref']) == row['document_sha256']
+                             and all(plain_directory(self.dir, f"{base}/{row['skill_id']}") is not None
+                                     and folder_sha256(self.dir / base / row['skill_id']) == row['skill_sha256']
+                                     for base in ('.labhq-paper-skills/skills', '.agents/skills')))
+            except (OSError, ValueError, OwnedPathError):
+                unchanged = False
+            matched = reference_token(row) in result.text
+            row.update(called=bool(result.ok and unchanged and matched),
+                       call_status='referenced' if result.ok and unchanged and matched else 'unverified',
+                       reason='result_reference' if result.ok and unchanged and matched else
+                       'input_changed' if not unchanged else 'step_failed' if not result.ok else 'no_result_reference')
+            if row['called']:
+                row['evidence'] = reference_token(row)
+        self.update_run(self.task.id, paper_skills=rows)
 
     def clear_paper_skills(self) -> None:
         for dst in getattr(self, "_paper_skill_copies", []):
@@ -374,6 +486,11 @@ class TaskWorkspace:
         }
 
     def write_manifest(self, **fields: Any) -> None:
+        durable.call(durable.FILES, self._write_manifest_now, fields)
+
+    def _write_manifest_now(self, fields: dict[str, Any]) -> None:
+        # Read, change and write as one job: another write queued meanwhile cannot slip between the read and the
+        # replace and be lost.
         data = self._manifest()
         data.update(fields)
         write_owned(self.dir, "manifest.json", json.dumps(data, indent=2, ensure_ascii=False, default=str))
@@ -391,6 +508,56 @@ class TaskWorkspace:
         runs = {tid: {k: run[k] for k in keep if k in run}
                 for tid, run in (data.get("runs") or {}).items() if isinstance(run, dict)}
         return {"engine": data.get("engine"), "model": data.get("model"), "runs": runs}
+
+    def hpc_output_baseline(self, task: Task) -> dict[str, tuple] | None:
+        """The oldest submitted turn of this request, step and revision, persisted before CLI spawn."""
+        runs = self._manifest().get("runs") or {}
+        candidates = [run for tid, run in runs.items() if tid != task.id and isinstance(run, dict)
+                      and run.get("request_id") == task.request_id
+                      and run.get("hpc_step_id") == (task.meta.get("step_id") or "direct")
+                      and run.get("hpc_revision", 0) == task.meta.get("revision", 0)
+                      and run.get("hpc_submitted") and isinstance(run.get("hpc_output_baseline"), dict)]
+        if not candidates:
+            return None
+        first = min(candidates, key=lambda run: run.get("started_at", 0))
+        return {path: tuple(identity) for path, identity in first["hpc_output_baseline"].items()}
+
+    def publish_hpc_inputs(self, artifacts: dict, staged: list[str], max_file: int, max_total: int) -> dict[str, str]:
+        """Publish only already admitted input snapshots, never private producer workspaces.
+
+        Version by source task so parallel consumers and later revisions cannot replace each other's bytes.
+        The source task, original path and collected hash travel with each immutable snapshot."""
+        from .step_inputs import _copy
+        from ..util import INPUT_STEP_ID
+
+        request_root = self.dir.parent.parent
+        paths = {}
+        remaining = [max_total]
+        for directory in staged:
+            step = Path(directory).name
+            if step not in artifacts:
+                continue  # precedent text snapshots retain their separate input contract
+            artifact = artifacts[step]
+            task_id = artifact.get("task_id")
+            if not isinstance(task_id, str) or not INPUT_STEP_ID.fullmatch(task_id) or task_id in {".", ".."}:
+                raise ValueError("invalid shared data source task")
+            relative = Path("data") / step / task_id
+            if plain_directory(request_root, relative) is None:
+                raise ValueError("shared data destination is not a plain folder")
+            inventory = []
+            for raw in artifact["outputs"]:
+                # stage_inputs already validated names, source identity, policy, hashes and cumulative size.
+                name = raw.replace("\\", "/").removeprefix("./").removeprefix("outputs/")
+                expected = artifact["output_sha256"][raw]
+                _copy(self.dir, ("inputs", step, *name.split("/")), request_root,
+                      (relative / name).as_posix(), expected, max_file, remaining)
+                inventory.append({"producer_step": step, "task_id": task_id,
+                                  "original_path": str(Path(artifact["workdir"]) / raw),
+                                  "path": name, "sha256": expected})
+            write_owned(request_root, (Path(".labhq/hpc-inputs") / step / f"{task_id}.json").as_posix(),
+                        json.dumps(inventory, ensure_ascii=False))
+            paths[step] = str(request_root / relative)
+        return paths
 
     def scan_outputs(self, zones: list[Path], max_entries: int, max_depth: int,
                      max_files: int | None = None) -> tuple[list[str], str | None]:
@@ -742,8 +909,57 @@ class TaskWorkspace:
         stop = walk(top, PurePath(), 0)
         return found, stop or note
 
+    def stage_run(self, task_id: str, **fields: Any) -> None:
+        """Hold fields of this run's record in memory until the next write of that record (#1137). The record is read
+        only after the step has finished, so what the step's last writes record, right before its result is sent
+        (the outputs' environment, the input hashes), can ride in that final write instead of costing an fsync each.
+        Nothing is delayed past it: `update_run`/`aupdate_run` write what is staged together with their own fields,
+        and `aflush_run` writes it alone when a step ends without a final write (cancelled, crashed)."""
+        self._staged_runs.setdefault(task_id, {}).update(copy.deepcopy(fields))
+
+    @property
+    def _staged_runs(self) -> dict[str, dict[str, Any]]:
+        staged = self.__dict__.get("_staged")
+        if staged is None:
+            staged = self.__dict__["_staged"] = {}
+        return staged
+
+    def _take_staged(self, task_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        """The staged fields of `task_id` merged under `fields` (an explicit field wins), and nothing staged any more."""
+        return {**(self._staged_runs.pop(task_id, None) or {}), **fields}
+
     def update_run(self, task_id: str, **fields: Any) -> None:
         """A workspace can host several runs (original + wake-ups after HPC jobs)."""
+        merged = self._take_staged(task_id, fields)
+        try:
+            durable.call(durable.FILES, self._update_run_now, task_id, merged)
+        except BaseException:
+            self._restage(task_id, merged, fields)
+            raise
+
+    async def aupdate_run(self, task_id: str, **fields: Any) -> None:
+        """`update_run` for a coroutine: the fsync runs on the durable writer thread (#606). The fields are copied
+        first, so the caller may change them while the write is queued."""
+        merged = copy.deepcopy(self._take_staged(task_id, fields))
+        try:
+            await durable.run(durable.FILES, self._update_run_now, task_id, merged)
+        except BaseException:
+            self._restage(task_id, merged, fields)
+            raise
+
+    async def aflush_run(self, task_id: str) -> None:
+        """Write what is staged for `task_id`, if anything: the step ended without its final write."""
+        if self._staged_runs.get(task_id):
+            await self.aupdate_run(task_id)
+
+    def _restage(self, task_id: str, merged: dict[str, Any], explicit: dict[str, Any]) -> None:
+        """A write that failed keeps its staged fields for the next one (the explicit ones are the caller's to retry)."""
+        for key, value in merged.items():
+            if key not in explicit:
+                self._staged_runs.setdefault(task_id, {}).setdefault(key, value)
+
+    def _update_run_now(self, task_id: str, fields: dict[str, Any]) -> None:
+        # Read, change and write as one job (see _write_manifest_now).
         data = self._manifest()
         data.setdefault("runs", {}).setdefault(task_id, {}).update(fields)
         write_owned(self.dir, "manifest.json", json.dumps(data, indent=2, ensure_ascii=False, default=str))

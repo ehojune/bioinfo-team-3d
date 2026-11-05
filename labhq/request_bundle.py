@@ -21,6 +21,10 @@ from typing import Any, Iterator
 from .adapters.held_dir import HeldDir, NotPlainFolder
 from .evidence.audit import claims_record, locate_workdir
 from .evidence.claims import normalize_artifact_path
+from .report_figures import (FIGURE_PLAN_FILE, bundle_figure_check, drop_dead_abstract_links, figure_owners,
+                             link_workdir_figures, linked_figure_paths, output_exists)
+from .report_contract import (ReportPackage, build_report_package, reader_markdown, render_report_front,
+                              with_report_front)
 from .ro_crate import FORMAT_MARKER, METADATA_FILE, write_ro_crate
 
 
@@ -77,6 +81,10 @@ for step, upstream_ids in LINKS.items():
 UNREPORTED_TAG = " (unreported)"
 
 
+class NoStepWorkdirs(OSError):
+    """No step of the request left a work folder to bundle (a request cancelled before its first folder existed)."""
+
+
 class RemoteRunnerBundle(OSError):
     """The terminal result names a runner workspace that is not on the gateway host."""
 
@@ -126,12 +134,17 @@ def _safe_output_path(raw: str) -> PurePosixPath | None:
     return path
 
 
-def _clear_owned_dir(path: Path, parent: Path) -> None:
-    """Remove only the fixed plain directory directly below the resolved request-bundle parent."""
+def _clear_owned_dir(path: Path, parent: Path, held: HeldDir | None = None) -> None:
+    """Remove only the fixed plain directory directly below the resolved request-bundle parent.
+
+    With `held` (the parent, opened once without following a link), the parent must still be that folder: a swap for a
+    symlink between the check and the delete is refused instead of deleting below the new target (#405)."""
     from .adapters.owned import is_link
 
     if not path.exists() and not path.is_symlink():
         return
+    if held is not None and not held.same_as(parent):
+        raise OSError("request bundle parent changed while the bundle was being built")
     if is_link(path) or not path.is_dir() or path.resolve().parent != parent.resolve():
         raise OSError(f"request bundle target is not a plain child directory: {path}")
     shutil.rmtree(path)
@@ -186,7 +199,7 @@ def _open_recorded_output(outputs: HeldDir, path: PurePosixPath) -> Iterator[tup
 
 
 def _held_workdir(stack: ExitStack, root: Path,
-                  result: Mapping[str, Any]) -> tuple[HeldDir, Path, dict[str, Any]] | tuple[None, str, dict]:
+                  result: Mapping[str, Any], *, shared_wsl: bool = False) -> tuple[HeldDir, Path, dict[str, Any]] | tuple[None, str, dict]:
     """Hold one same-host workdir inside the configured root, or return its local lookup failure."""
     workdir, reason = locate_workdir(root, result)
     if workdir is None:
@@ -200,7 +213,7 @@ def _held_workdir(stack: ExitStack, root: Path,
         fd = held.open_read_file("manifest.json")
         with os.fdopen(fd, "rb") as source:
             manifest = json.loads(source.read(MANIFEST_MAX_BYTES + 1).decode("utf-8"))
-        if not isinstance(manifest, dict) or manifest.get("host") != platform.node():
+        if not isinstance(manifest, dict) or (manifest.get("host") != platform.node() and not shared_wsl):
             raise RemoteRunnerBundle(REMOTE_RUNNER_NOTE)
         return held, real_workdir, manifest
     except RemoteRunnerBundle:
@@ -259,7 +272,7 @@ def _copy_held(stream, info: os.stat_result, destination: Path) -> str:
     return digest.hexdigest()
 
 
-def _path_prefix_pattern(workdir: Any) -> re.Pattern[str]:
+def _path_prefix_pattern(workdir: Any, *, outputs: bool = True) -> re.Pattern[str]:
     raw = str(workdir)
     windows = bool(re.match(r"^[A-Za-z]:[\\/]", raw) or re.match(r"^[\\/]{2}[^\\/]", raw))
     separator = r"[\\/]+" if windows else "/"
@@ -272,11 +285,12 @@ def _path_prefix_pattern(workdir: Any) -> re.Pattern[str]:
     # Match the rest of a path until a common text delimiter so its separators can be made portable too.
     boundary = r"(?:^|(?<=[\s\"'=\(\[,:]))"
     flags = re.IGNORECASE if windows else 0
-    return re.compile(boundary + prefix + separator + r"outputs" + separator +
+    return re.compile(boundary + prefix + separator + (r"outputs" + separator if outputs else "") +
                       r"(?P<tail>[^\s<>\"'`|]*)", flags)
 
 
-def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]]) -> tuple[int, list[str]]:
+def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]],
+                  data_inputs: list[tuple[str, Path]] = ()) -> tuple[int, list[str]]:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
@@ -294,7 +308,21 @@ def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]]) -> tuple[int, li
         destination = bundle_root / "steps" / relative_path.parts[1]
     else:
         destination = bundle_root
-    for step_id, workdir in workdirs:
+    # hpc_submit's wrapper changes cwd to this step's outputs before the body executes. Preserve that
+    # working directory in the bundle, then rewrite its data operands relative to that same directory.
+    job_owner = None
+    if len(relative_path.parts) == 4 and relative_path.parts[0] == "steps" and relative_path.parts[2] == "jobs":
+        job_owner = next((folder for sid, folder in workdirs if sid == relative_path.parts[1]), None)
+        if job_owner is not None:
+            command = "cd " + shlex.quote(str(job_owner / "outputs"))
+            if command in text.splitlines() and len(re.findall(r"(?m)^cd ", text)) == 1:
+                text = text.replace(command + "\n", "cd outputs\n", 1)
+                replacements += 1
+                destination = bundle_root / "steps" / relative_path.parts[1] / "outputs"
+            else:
+                job_owner = None  # retain documented absolute paths when job cwd cannot be established
+    for step_id, workdir, is_outputs in [*( (sid, folder, True) for sid, folder in workdirs),
+                                         *( (sid, folder, False) for sid, folder in data_inputs)]:
         target = bundle_root / "steps" / step_id / "outputs"
         relative = os.path.relpath(target, destination).replace("\\", "/")
 
@@ -304,7 +332,10 @@ def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]]) -> tuple[int, li
             tail = match.group("tail").replace("\\", "/")
             return f"{relative}/{tail}"
 
-        text = _path_prefix_pattern(workdir).sub(replace, text)
+        text = _path_prefix_pattern(workdir, outputs=is_outputs).sub(replace, text)
+        if not is_outputs and job_owner is not None:
+            original_relative = Path(os.path.relpath(workdir, job_owner / "outputs"))
+            text = _path_prefix_pattern(original_relative, outputs=False).sub(replace, text)
     if text != original:
         path.write_text(text, encoding="utf-8", newline="\n")
     remaining = _absolute_paths(text)
@@ -352,6 +383,33 @@ def _topological_steps(steps: list[Mapping[str, Any]], results: Mapping[str, Any
         remaining.difference_update(layer)
     ordered.extend(sorted(str(step_id) for step_id in results if str(step_id) not in ordered))
     return ordered, [by_id[step_id] for step_id in ordered if step_id in by_id]
+
+
+def _tool_calls_section(ordered_ids: list[str], results: Mapping[str, Any]) -> str:
+    """Render aggregate tool names and counts only; raw inputs never enter the request bundle."""
+    rows: list[str] = []
+    for step_id in ordered_ids:
+        result = results.get(step_id)
+        if not isinstance(result, Mapping):
+            continue
+        agent = str(result.get("agent_id") or "-").replace("|", " ").replace("\n", " ")[:160]
+        calls = result.get("tool_calls")
+        if not isinstance(calls, Mapping):
+            continue
+        for tool, raw in sorted(calls.items(), key=lambda item: str(item[0])):
+            if not isinstance(raw, Mapping):
+                continue
+            count, failures = raw.get("calls"), raw.get("failures")
+            if (not isinstance(count, int) or isinstance(count, bool) or count < 0
+                    or not isinstance(failures, int) or isinstance(failures, bool)
+                    or failures < 0 or failures > count):
+                continue
+            name = str(tool).replace("|", " ").replace("\r", " ").replace("\n", " ")[:160]
+            rows.append(f"| {step_id} | {agent} | {name} | {count} | {failures} |")
+    if not rows:
+        return ""
+    return "\n".join(["## 직원별 도구 호출 수", "", "| 단계 | 직원 | 도구 | 호출 | 실패 |",
+                      "|---|---|---|---:|---:|", *rows])
 
 
 def _safe_script_path(path: PurePosixPath) -> bool:
@@ -438,12 +496,20 @@ def _bundle_claims(record: dict[str, Any], results: Mapping[str, Any], copied: s
 
 def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: list[str],
             unsafe_scripts: list[str], python_unknown: bool, linked: bool = False, claims: bool = False,
-            job_scripts: list[str] | None = None) -> str:
+            job_scripts: list[str] | None = None, semantic_report: bool = False) -> str:
+    stored = req.get("report_package")
+    package = (ReportPackage.from_dict(dict(stored)) if isinstance(stored, Mapping)
+               else build_report_package(dict(req), str(req.get("report") or ""),
+                                         dict(req.get("results") or {})))
     lines = [
-        "# 요청 묶음", "", f"- 요청: `{req.get('id')}`", "- `report.md`: PI용 본문",
+        "# 요청 묶음", "", render_report_front(package).rstrip(), "", "## 묶음 파일", "",
+        f"- 요청: `{req.get('id')}`", "- `report.md`: PI용 본문",
         *(["- `claims.json`: 연구 요청의 단계별 claim·근거 원장과 CP2 기록. 보고서의 `[[claim:<단계>/<claim>]]`은 "
            "`ledgers.<단계>.claims`의 `id`입니다"] if claims else []),
-        "- `report_appendix.md`: 실행 기록과 묶음 변환 기록", "- `steps/<step_id>/`: 단계 workdir 사본",
+        "- `report_appendix.md`: 과학 부록(점검표·리뷰·가정)",
+        *(["- `semantic_report.md`·`semantic_report.json`: 온톨로지·의미 장치의 요청별 판단과 영향"]
+          if semantic_report else []),
+        "- `execution_record.md`: 운전 기록과 묶음 변환 기록", "- `steps/<step_id>/`: 단계 workdir 사본",
         "- `MANIFEST.tsv`: 사본의 크기·sha256과 원래 위치",
         "- `INPUTS.tsv`: 단계가 읽을 수 있던 외부 입력의 크기·mtime·sha256 또는 생략 이유", "",
         FORMAT_MARKER, "", "## RO-Crate", "",
@@ -473,7 +539,11 @@ def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: lis
 def build_request_bundle(req: Mapping[str, Any], settings: Any,
                          tasks: Mapping[str, Any] | None = None,
                          runner_capabilities: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Build ``<workspace_root>/requests/<request_id>`` from the request's final stored results."""
+    """Build ``<workspace_root>/requests/<request_id>`` from the request's final stored results.
+
+    ``requests/`` is opened once, without following a link, and stays held for the whole build (#405): on Windows the
+    open handle keeps that folder, and every folder above it, from being renamed or replaced; elsewhere each delete and
+    the final replace first check that the path still names the held folder."""
     rid = str(req.get("id") or "")
     if not _SAFE_ID.fullmatch(rid):
         raise ValueError("unsafe request id for bundle")
@@ -483,14 +553,24 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     from .adapters.owned import is_link
     if is_link(requests_root) or requests_root.resolve().parent != root:
         raise OSError("request bundle parent is not a plain workspace directory")
+    with HeldDir.hold(requests_root) as requests_held:
+        return _build_request_bundle(req, settings, tasks, runner_capabilities, requests_held)
+
+
+def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[str, Any] | None,
+                          runner_capabilities: Mapping[str, Any] | None, requests_held: HeldDir) -> dict[str, Any]:
+    rid = str(req.get("id") or "")
+    root = settings.path(settings.runner.workspace_root).resolve()
+    requests_root = root / "requests"
     target = requests_root / rid
     temp = requests_root / f".{rid}.tmp"
-    _clear_owned_dir(temp, requests_root)
+    _clear_owned_dir(temp, requests_root, requests_held)
     temp.mkdir()
     rows: list[dict[str, Any]] = []
     input_rows: list[dict[str, Any]] = []
     run_records: dict[str, dict[str, Any]] = {}
     workdirs: list[tuple[str, Path]] = []
+    data_inputs: list[tuple[str, Path]] = []
     script_commands: dict[str, dict[str, str]] = {}
     unsafe_scripts: dict[str, set[str]] = {}
     copied_job_scripts: list[str] = []
@@ -499,8 +579,41 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     runner_capabilities = runner_capabilities or {}
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     rerun_receipt = _rerun_receipt(req)
+    # The report links a figure as <workdir_id>/outputs/<file>; the bundle names it steps/<step_id>/outputs/<file>, and
+    # a linked figure is kept even when the bundle's total limits are full (#584). The per-file limit still applies.
+    report_text = link_workdir_figures(str(req.get("report") or ""), figure_owners(results), output_exists(results))
+    # A graphical abstract the writer linked but no step produced is no bundle file: the link goes, and the PDF and the
+    # edition draw their own abstract (#608). Any other figure link stays as written.
+    report_text = drop_dead_abstract_links(report_text, lambda path: path.startswith("steps/"))
+    linked_figures = set(linked_figure_paths(report_text))
     plan_steps = [step for step in ((req.get("plan") or {}).get("steps") or []) if isinstance(step, Mapping)]
     ordered_ids, ordered_steps = _topological_steps(plan_steps, results)
+    # Keep a later cancelled attempt separate from the published result, including
+    # when both attempts wrote files with the same name in different workdirs.
+    bundle_results = dict(results)
+    bundle_ids = list(ordered_ids)
+    additional_names = []
+    additional = req.get("bundle_additional_results") or {}
+    if isinstance(additional, Mapping):
+        for index, (original_id, result) in enumerate(sorted(additional.items()), 1):
+            if original_id not in results or not isinstance(result, Mapping):
+                continue
+            name = f"cancelled_revision_{index}"
+            while name in bundle_ids or name in bundle_results:
+                name += "_"
+            bundle_results[name] = result
+            bundle_ids.append(name)
+            additional_names.append((original_id, name))
+    key_figures_declared = any("key_figures" in step for step in ordered_steps)
+    key_figures: list[str] = []
+    for step in ordered_steps:
+        step_id = str(step.get("id") or "")
+        outputs = {path for raw in step.get("outputs") or [] if isinstance(raw, str)
+                   and (path := _safe_output_path(raw)) is not None}
+        for raw in step.get("key_figures") or []:
+            path = _safe_output_path(raw) if isinstance(raw, str) else None
+            if path is not None and path in outputs:
+                key_figures.append(PurePosixPath("steps", step_id, *path.parts).as_posix())
     max_file_bytes = int(float(settings.runner.bundle_max_file_mb) * 1024 * 1024)
     max_total_bytes = int(float(settings.runner.bundle_max_total_mb) * 1024 * 1024)
     max_total_files = int(settings.runner.bundle_max_files)
@@ -526,7 +639,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 row["size"] = info.st_size
                 if info.st_size > max_file_bytes:
                     row["status"] = f"not copied{tag}: size"
-                elif copied_files >= max_total_files or copied_bytes + info.st_size > max_total_bytes:
+                elif ((copied_files >= max_total_files or copied_bytes + info.st_size > max_total_bytes)
+                      and rel.as_posix() not in linked_figures):
                     row["status"] = f"not copied{tag}: total limit"
                     total_limit_hit = total_limit_hit or not tag  # its appendix note counts recorded outputs
                 else:
@@ -597,14 +711,28 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     try:
         found_workdirs = 0
         with ExitStack() as stack:
-            for step_id in ordered_ids:
+            for step_id in bundle_ids:
                 if not _SAFE_ID.fullmatch(step_id):
                     raise ValueError(f"unsafe step id for bundle: {step_id!r}")
-                result = results.get(step_id)
+                result = bundle_results.get(step_id)
                 if not isinstance(result, Mapping):
                     continue
+                # A local WSL worker shares this exact drive root; unrelated remote hosts still refuse.
+                from .wsl_paths import message_paths, shared_path
+                task = (tasks or {}).get(str(result.get("task_id") or ""), {})
+                caps = (runner_capabilities or {}).get(str(task.get("runner_id") or ""), {})
+                shared_wsl = False
+                if caps.get("runtime_env") == "wsl":
+                    path_target = "windows" if os.name == "nt" else "wsl"
+                    try:
+                        shared_root = shared_path(str(caps.get("workspace_root") or ""), path_target)
+                        shared_wsl = Path(shared_root).resolve() == root
+                        if shared_wsl:
+                            result = message_paths(result, path_target)
+                    except ValueError:
+                        raise RemoteRunnerBundle(REMOTE_RUNNER_NOTE)
                 recorded = _recorded_outputs(result)
-                held, workdir_or_reason, manifest = _held_workdir(stack, root, result)
+                held, workdir_or_reason, manifest = _held_workdir(stack, root, result, shared_wsl=shared_wsl)
                 if held is None:
                     for index, (raw, safe, _expected) in enumerate(recorded, 1):
                         relative = (PurePosixPath("steps", step_id, *safe.parts).as_posix() if safe is not None
@@ -614,17 +742,25 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                                      "status": "not copied: missing", "rewritten": 0,
                                      "remaining_absolute_paths": "", "rewritten_files": ""})
                     continue
+                if shared_wsl:
+                    manifest = message_paths(manifest, path_target)
                 workdir = Path(workdir_or_reason)
                 found_workdirs += 1
                 workdirs.append((step_id, workdir))
                 task_id = str(result.get("task_id") or "")
                 run = (manifest.get("runs") or {}).get(task_id) if task_id else None
                 run = run if isinstance(run, Mapping) else {}
+                for producer, snapshot in (run.get("hpc_data_inputs") or {}).items():
+                    source_task = (bundle_results.get(producer) or {}).get("task_id")
+                    if (_SAFE_ID.fullmatch(str(producer)) and _SAFE_ID.fullmatch(str(source_task))
+                            and isinstance(snapshot, str)
+                            and Path(snapshot) == workdir.parent.parent / "data" / producer / source_task):
+                        data_inputs.append((producer, Path(snapshot)))
                 run_records[step_id] = {
                     key: value for key, value in {
-                        "agent_id": result.get("agent_id"),
-                        "engine": manifest.get("engine"),
-                        "model": manifest.get("model"),
+                        "agent_id": run.get("agent_id", result.get("agent_id")),
+                        "engine": run.get("engine", manifest.get("engine")),
+                        "model": run.get("model", manifest.get("model")),
                         "engine_cli_version": run.get("engine_cli_version"),
                         "started_at": run.get("started_at"),
                         "ended_at": run.get("ended_at"),
@@ -692,7 +828,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             for step_id, outputs, workdir, path, python_command in unreported:
                 rows.append(copy_output(step_id, outputs, workdir, path, None, python_command))
         if not found_workdirs:
-            raise OSError("단계 작업 폴더를 하나도 찾지 못했습니다")
+            raise NoStepWorkdirs("단계 작업 폴더를 하나도 찾지 못했습니다")
 
         with (temp / "INPUTS.tsv").open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=INPUT_FIELDS, delimiter="\t", lineterminator="\n")
@@ -706,25 +842,45 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             input_summary += " (" + ", ".join(
                 f"{reason} {count}" for reason, count in sorted(skipped_by_reason.items())) + ")"
 
-        report = str(req.get("report") or "")
-        appendix = str(req.get("report_appendix") or "")
+        stored_package = req.get("report_package")
+        package = (ReportPackage.from_dict(dict(stored_package)) if isinstance(stored_package, Mapping)
+                   else build_report_package(dict(req), report_text, dict(results)))
+        report = reader_markdown(with_report_front(report_text, package))
+        from .report_format import split_appendix
+        appendix, legacy = split_appendix(str(req.get("report_appendix") or ""))
+        tool_calls = _tool_calls_section(ordered_ids, results)
+        execution = "\n\n".join(p for p in [str(req.get("execution_record") or ""), legacy, tool_calls] if p)
+        if additional_names:
+            execution += "\n\n## Cancelled revision artifacts\n\n" + "\n".join(
+                f"- {original}: steps/{name}/ (partial revision outputs)"
+                for original, name in additional_names if _SAFE_ID.fullmatch(str(original)))
+        from .research import semantic_device_report
+        device_report = (semantic_device_report.build_report(req, settings)
+                         if semantic_device_report.applies(req, settings) else None)
         replaced = _superseded(req, tasks)
         if replaced:
-            appendix += ("\n\n## 요청 묶음: 대체됨\n\n" +
+            execution += ("\n\n## 요청 묶음: 대체됨\n\n" +
                          "\n".join(f"- {item}" for item in replaced))
         if total_limit_hit:
-            appendix += ("\n\n- 누적 상한으로 기록 산출 일부를 복사하지 않음 "
+            execution += ("\n\n- 누적 상한으로 기록 산출 일부를 복사하지 않음 "
                          f"(복사 {copied_files}개, {copied_bytes} bytes; "
                          f"상한 {max_total_files}개, {max_total_bytes} bytes)")
         not_copied = sum(str(row["status"]).startswith("not copied:") for row in rows)
         bundle_status = "incomplete" if not_copied else "complete"
         unreported_missed = sum(str(row["status"]).startswith(f"not copied{UNREPORTED_TAG}:") for row in rows)
         if unreported_missed:
-            appendix += f"\n\n- 보고하지 않은 산출 {unreported_missed}개 미복사(크기·누적 상한 등; MANIFEST.tsv 확인)"
+            execution += f"\n\n- 보고하지 않은 산출 {unreported_missed}개 미복사(크기·누적 상한 등; MANIFEST.tsv 확인)"
         if not_copied:
-            appendix += f"\n\n- 요청 묶음 상태: incomplete (기록 산출 {not_copied}개 미복사; MANIFEST.tsv 확인)"
+            execution += f"\n\n- 요청 묶음 상태: incomplete (기록 산출 {not_copied}개 미복사; MANIFEST.tsv 확인)"
         (temp / "report.md").write_text(report, encoding="utf-8", newline="\n")
         (temp / "report_appendix.md").write_text(appendix, encoding="utf-8", newline="\n")
+        (temp / "execution_record.md").write_text(execution, encoding="utf-8", newline="\n")
+        if device_report is not None:
+            (temp / semantic_device_report.REPORT_MD).write_text(
+                semantic_device_report.render_report(device_report), encoding="utf-8", newline="\n")
+            (temp / semantic_device_report.REPORT_JSON).write_text(
+                json.dumps(device_report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8", newline="\n")
         from .recruit.paper_skills import records as paper_skill_records
         paper_records = paper_skill_records(req.get("plan") or {}, results)
         if paper_records:
@@ -763,8 +919,12 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             (temp / RERUN_RECEIPT_FILE).write_text(
                 json.dumps(rerun_receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8", newline="\n")
+        if key_figures_declared:
+            (temp / FIGURE_PLAN_FILE).write_text(
+                json.dumps({"key_figures": list(dict.fromkeys(key_figures))}, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8", newline="\n")
         (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe, python_unknown, bool(links),
-                                                 claims, copied_job_scripts),
+                                                 claims, copied_job_scripts, device_report is not None),
                                           encoding="utf-8", newline="\n")
 
         rewritten_files = 0
@@ -773,12 +933,20 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         for path in sorted(p for p in temp.rglob("*") if p.is_file() and p.suffix.casefold() in TEXT_SUFFIXES):
             if path == temp / "final_checkpoint.json":
                 continue  # hash-bound PI draft: portable report.md may rewrite paths, this record never does
-            count, paths = _rewrite_text(path, workdirs)
+            count, paths = _rewrite_text(path, workdirs, data_inputs)
             if count:
                 rewritten_files += 1
             relative = path.relative_to(temp).as_posix()
             rewrite_by_file[relative] = (count, paths)
             remaining.update(paths)
+
+        # The figure check reads the rewritten report: an image linked by its absolute workdir path now points inside the
+        # bundle. It is the same check `labhq verify` runs later.
+        figure_check = bundle_figure_check(temp)
+        figure_findings = [*figure_check["problems"], *(f"WARN: {warning}" for warning in figure_check["warnings"])]
+        if figure_findings:
+            with (temp / "execution_record.md").open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write("\n\n## 보고서 그림 링크\n\n" + "\n".join(f"- {finding}" for finding in figure_findings))
 
         grade, grade_reasons = _grade(rows, ordered_steps, rewrite_by_file, not_copied, rerun_receipt)
         with (temp / "README.md").open("a", encoding="utf-8", newline="\n") as handle:
@@ -794,11 +962,14 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         bundle_note.append("- 남은 절대경로: " + (", ".join(sorted(remaining)) if remaining else "없음"))
         if replaced:
             bundle_note.append(f"- 대체되어 제외한 판: {len(replaced)}개")
-        appendix_path = temp / "report_appendix.md"
+        appendix_path = temp / "execution_record.md"
         with appendix_path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write("\n".join(bundle_note) + "\n")
 
-        generated = [temp / "README.md", temp / "report.md", appendix_path, temp / "INPUTS.tsv",
+        generated = [temp / "README.md", temp / "report.md", temp / "report_appendix.md", appendix_path, temp / "INPUTS.tsv",
+                      *([temp / semantic_device_report.REPORT_MD, temp / semantic_device_report.REPORT_JSON]
+                        if device_report is not None else []),
+                      *([temp / FIGURE_PLAN_FILE] if (temp / FIGURE_PLAN_FILE).is_file() else []),
                       *([temp / "paper_skills.json"] if paper_records else []),
                       *([temp / "claims.json"] if claims else []),
                       *([temp / "final_checkpoint.json"] if final_checkpoint else []),
@@ -847,17 +1018,21 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             writer.writeheader()
             writer.writerows(rows)
 
-        _clear_owned_dir(target, requests_root)
+        _clear_owned_dir(target, requests_root, requests_held)
+        if not requests_held.same_as(requests_root):
+            raise OSError("request bundle parent changed while the bundle was being built")
         _replace_dir(temp, target)
         return {"path": str(target), "status": bundle_status, "grade": grade, "grade_reasons": grade_reasons,
                 "not_copied": not_copied,
                 "rewritten_files": rewritten_files,
                 "remaining_absolute_paths": sorted(remaining), "superseded": replaced,
+                "conversion_record": "\n".join(bundle_note) + ("\n\n## 보고서 그림 링크\n" + "\n".join(figure_findings)
+                                                                  if figure_findings else ""),
                 **({"crate_warning": crate_warning} if crate_warning else {})}
     except Exception:
         if temp.exists():
             try:
-                _clear_owned_dir(temp, requests_root)
+                _clear_owned_dir(temp, requests_root, requests_held)
             except OSError:
                 pass
         raise

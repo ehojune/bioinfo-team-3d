@@ -1,5 +1,6 @@
 import {answerRequired, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText} from '../../ui/decide.js';
 import {bindShutdown} from '../../ui/shutdown.js';
+import {stepWaitLabel, facilitiesLines} from '../../ui/tasks.js';
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
@@ -34,6 +35,13 @@ export function startLiveOffice(onState) {
   }
   let noticeApproval = null;  // #184: the approval whose request the notice shows, cleared when it ends
   const notice = (value, approvalId = null) => { $('live-notice').textContent = value; noticeApproval = approvalId; };
+  const requestRows = () => {
+    const root = $('requests');
+    if (typeof root.querySelectorAll === 'function')
+      return [...root.querySelectorAll('[data-request-id]')];
+    return [...(root.children || [])].filter(row => row.dataset?.requestId);
+  };
+  const requestRow = rid => requestRows().find(row => row.dataset.requestId === rid);
   // #126: a snapshot holds the head of a long follow-up answer; the full request comes from the gateway on demand.
   async function loadFullAnswers(rid, quiet = false) {
     if (loadingAnswers.has(rid)) return;
@@ -53,6 +61,23 @@ export function startLiveOffice(onState) {
       const url = URL.createObjectURL(await response.blob()), link = document.createElement('a');
       link.href = url; link.download = `labhq-audit-${rid}.zip`; link.click(); URL.revokeObjectURL(url);
     } catch (error) { notice(`감사 번들을 받지 못했어요: ${error.message}`); }
+  }
+  async function downloadReportPdf(rid, button) {
+    if (button.disabled) return;
+    button.disabled = true; notice('PDF를 만드는 중이에요. 몇 초 걸려요.');
+    try {
+      const response = await fetch(`/api/requests/${encodeURIComponent(rid)}/report-pdf`,
+        {headers:{Authorization:`Bearer ${token}`}});
+      if (!response.ok) {
+        let detail = ''; try { detail = (await response.json()).detail; } catch {}
+        throw new Error(typeof detail === 'string' && detail ? detail : String(response.status));
+      }
+      const kind = response.headers.get('X-Labhq-Report-Kind') === 'pdf' ? 'pdf' : 'html';
+      const url = URL.createObjectURL(await response.blob()), link = document.createElement('a');
+      link.href = url; link.download = `labhq-report-${rid}.${kind}`; link.click(); URL.revokeObjectURL(url);
+      notice(decodeURIComponent(response.headers.get('X-Labhq-Reason') || '') || 'PDF를 받았어요.');
+    } catch (error) { notice(`PDF를 만들지 못했어요: ${error.message}`); }
+    finally { button.disabled = false; }
   }
   async function resumeLogin(hold) {
     try {
@@ -86,13 +111,31 @@ export function startLiveOffice(onState) {
       render(); notice('검토·확인을 마쳤어요');
     } catch (error) { notice(`기록하지 못했어요: ${error.message}`); }
   }
+  async function uploadLiteraturePdf(approval, paperIndex, file) {
+    const response = await fetch(`/api/approvals/${encodeURIComponent(approval.id)}/literature-pdf/${paperIndex}`,
+      {method:'POST', headers:{Authorization:`Bearer ${token}`, 'Content-Type':'application/pdf'}, body:file});
+    if (!response.ok) {
+      let detail = ''; try { detail = (await response.json()).detail; } catch {}
+      throw new Error(typeof detail === 'string' && detail ? detail : String(response.status));
+    }
+    notice('PDF를 작업 폴더에 보냈어요. 카드를 승인하면 바로 읽습니다.', approval.id);
+  }
   function openReview(rid) {
     selectRequest(rid); render();
-    [...$('requests').children].find(row => row.dataset.requestId === rid)?.scrollIntoView({block:'start'});
+    requestRow(rid)?.scrollIntoView({block:'start'});
     loadFullAnswers(rid, true);
   }
   function render() {
     $('connection').textContent = globalThis.LabHQState.connectionLabel(S.conn, demo);
+    const warning = globalThis.LabHQState.serviceWarning(S, demo);
+    $('service-warning').textContent = warning;
+    $('service-warning').hidden = !warning;
+    const allRequests = [...S.requests.values()];
+    const costRequests = globalThis.LabHQState.sessionCostRequests(allRequests, S.sessionStartedAt);
+    $('session-cost').textContent = S.conn === 'connecting' ? '사용 비용 불러오는 중' : globalThis.LabHQState.totalCostLabel(
+      costRequests, globalThis.LabHQState.requestsCostTotal(costRequests));
+    $('session-cost').title = `전체 ${globalThis.LabHQState.totalCostLabel(
+      allRequests, globalThis.LabHQState.requestsCostTotal(allRequests))}`;
     $('demo-banner').hidden = !demo;
     if (demo) $('demo-banner').textContent = globalThis.LabHQState.demoBannerText(S.demoStatus);
     $('token-form').hidden = S.conn !== 'auth' && S.conn !== 'offline';
@@ -108,7 +151,8 @@ export function startLiveOffice(onState) {
     $('login-holds').replaceChildren(...holdRows);
     syncDecisionCards($('approvals'), S.approvals.values(), [], { tagName:'article', listTag:'div', kindLabels:KIND_KO,
       nick, requests:S.requests, emptyText:'대기 승인 없음', disabled:a => S.conn !== 'live' || pending.has(a.id),
-      onDecision:(a, approved, note, _type, choice, storage) => {
+      onAttachment: uploadLiteraturePdf,
+      onDecision:(a, approved, note, _type, choice, storage, model_refusal) => {
         if (!ws || ws.readyState !== 1 || pending.has(a.id)) return;
         // Structured questions compose their answer in decide.js; an unanswered one yields ''.
         if (a.kind === 'clarify' && approved && !note) { notice(a.detail?.questions?.length ? '모든 질문에 답해 주세요.' : '답을 적어 주세요.'); return; }
@@ -120,25 +164,29 @@ export function startLiveOffice(onState) {
         const decision = choice ? {type:'approval.resolve', id:a.id, approved, note, choice}
           : {type:'approval.resolve', id:a.id, approved, note};
         if (storage) decision.storage = storage;
+        if (model_refusal) decision.model_refusal = model_refusal;
         ws.send(JSON.stringify(decision));
         pending.add(a.id); render();
       }});
     if ($('approval-history')) syncDecisionHistory($('approval-history'), decisionHistory, {
       kindLabels: KIND_KO, requests: S.requests, visibility: historyVisibility,
-      onOpenRequest: id => { selectRequest(id); render(); const row = [...$('requests').children].find(row => row.dataset.requestId === id); row?.scrollIntoView({block:'start'}); },
+      onOpenRequest: id => { selectRequest(id); render(); requestRow(id)?.scrollIntoView({block:'start'}); },
     });
-    const requests = $('requests'), oldRows = new Map([...requests.children]
+    const requests = $('requests'), oldRows = new Map(requestRows()
       .filter(row => row.dataset?.requestId).map(row => [row.dataset.requestId, row]));
-    const rows = [];
-    if (!S.requests.size) text({append: row => rows.push(row)}, 'p', '요청 없음');
+    const rows = [], pastRows = [];
+    if (!globalThis.LabHQState.officeRequests(S.requests.values()).length)
+      text({append: row => rows.push(row)}, 'p', '새 요청을 기다리는 중');
     for (const q of globalThis.LabHQState.sortRequests(S.requests.values())) {
       const status = globalThis.LabHQState.requestStatusText(q, S.approvals);  // R14: never a raw status
-      const key = JSON.stringify([q.text, q.status, status, q.phase, q.plan, q.steps, q.processing, q.review, q.error, q.report,
-        q.report_appendix, q.report_truncated, q.report_appendix_truncated, q.followups, q.piNotes,
+      const recovery = [...q.plan.map(step => S.stepDetails.get(`${q.id}:${step.id}`)?.facilities_projection || null), S.stepDetails.get(`${q.id}:direct`)?.facilities_projection || null];
+      const key = JSON.stringify([q.text, q.status, status, q.phase, q.plan, q.steps, q.stepJobs, recovery, q.processing, q.review, q.error, q.report,
+        q.report_appendix, q.execution_record, q.execution_record_truncated, q.report_truncated, q.report_appendix_truncated, q.followups, q.piNotes,
         q.assumptions, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, loadingAnswers.has(q.id)]);
       const prior = oldRows.get(q.id);
-      if (prior?.dataset.renderKey === key) { rows.push(prior); continue; }
-      const row = document.createElement('article'); row.dataset.requestId = q.id; row.dataset.renderKey = key; rows.push(row);
+      const target = globalThis.LabHQState.isPastRequest(q) ? pastRows : rows;
+      if (prior?.dataset.renderKey === key) { target.push(prior); continue; }
+      const row = document.createElement('article'); row.dataset.requestId = q.id; row.dataset.renderKey = key; target.push(row);
       text(row, 'strong', q.text || q.id);
       // Same labels as the 2.5D board. A finished request says 완료/실패 in its status already, so no phase then.
       text(row, 'p', [status, q.phase === 'done' ? '' : phaseLabel(q), globalThis.LabHQState.processingLabel(q)]
@@ -152,7 +200,13 @@ export function startLiveOffice(onState) {
         for (const value of q.assumptions) text(row, 'p', `· ${value}`);
         text(row, 'p', '바꾸려면 실행 중 메모로 알려 주세요.');
       }
-      for (const step of q.plan) text(row, 'p', `${step.id} · ${step.instruction || ''} · ${q.steps[step.id] || 'pending'}`);
+      for (const step of q.plan) {
+        text(row, 'p', `${step.id} · ${step.instruction || ''} · ${stepWaitLabel(q.steps[step.id] || 'pending', q.stepJobs[step.id])}`);
+        const p = S.stepDetails.get(`${q.id}:${step.id}`)?.facilities_projection;
+        if (p) for (const line of facilitiesLines(p)) text(row, 'p', line);
+      }
+      const direct = S.stepDetails.get(`${q.id}:direct`)?.facilities_projection;
+      if (direct && !q.plan.some(step => step.id === 'direct')) for (const line of facilitiesLines(direct)) text(row, 'p', line);
       if (q.review?.status === 'review_unparsed') text(row, 'p', '리뷰 판정 실패. PI 확인이 필요해요');
       if (q.error) text(row, 'p', q.error);
       if (globalThis.LabHQState.needsPiReview(q)) {
@@ -166,12 +220,25 @@ export function startLiveOffice(onState) {
           const more = text(row, 'button', '전문 보기'); more.type = 'button';
           more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
         }
+        if (globalThis.LabHQState.isTerminalRequest(q.status)) {
+          const pdf = text(row, 'button', 'PDF로 받기'); pdf.type = 'button';
+          pdf.onclick = () => downloadReportPdf(q.id, pdf);
+        }
       }
       if (q.report_appendix) {
         const details = text(row, 'details', ''), summary = text(details, 'summary', '실행 기록');
-        summary.textContent = '실행 기록';
+        summary.textContent = q.report_appendix.startsWith('## 부록\n') ? '과학 부록' : '실행 기록';
         text(details, 'pre', q.report_appendix + (q.report_appendix_truncated ? '…' : ''));
         if (q.report_appendix_truncated) {
+          const more = text(details, 'button', '전문 보기'); more.type = 'button';
+          more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
+        }
+      }
+      if (q.execution_record) {
+        const details = text(row, 'details', ''), summary = text(details, 'summary', '실행 기록');
+        summary.textContent = '실행 기록';
+        text(details, 'pre', q.execution_record + (q.execution_record_truncated ? '…' : ''));
+        if (q.execution_record_truncated) {
           const more = text(details, 'button', '전문 보기'); more.type = 'button';
           more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
         }
@@ -191,7 +258,15 @@ export function startLiveOffice(onState) {
         text(row, 'p', `실행 중 메모 · ${sent} · ${note.text}`);
       }
       for (const f of q.followups || []) {  // asked from the 2.5D request view; the shared reducer tracks them
-        if (f.pi_display?.status === 'translated') {
+        if (f.status === 'running') {
+          text(row, 'p', `이어 묻기: ${f.text} → 답 기다리는 중`);
+        } else if (f.status !== 'done') {
+          text(row, 'p', `이어 묻기: ${f.text} → 답하지 못함`).className = 'fu-err';
+          if (f.pi_display?.status === 'translated') {
+            expandableText(row, f.pi_display.text, {pi:true, original:f.error, forceOriginal:true,
+              attribution:'펭귄 비서실장 설명'});
+          } else text(row, 'p', f.error || '답하지 못함').className = 'fu-err';
+        } else if (f.pi_display?.status === 'translated') {
           text(row, 'p', `이어 묻기: ${f.text}`);
           expandableText(row, f.pi_display.text, {pi:true, original:f.answer || f.error, forceOriginal:true,
             attribution:'펭귄 비서실장 설명', truncated:f.answer_truncated, cutChars:f.answer_chars});
@@ -204,6 +279,13 @@ export function startLiveOffice(onState) {
           more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
         }
       }
+    }
+    if (pastRows.length) {
+      const past = document.createElement('details'), summary = document.createElement('summary');
+      const cumulative = globalThis.LabHQState.totalCostLabel(
+        allRequests, globalThis.LabHQState.requestsCostTotal(allRequests)).replace(/^사용 비용 /, '');
+      summary.textContent = `지난 요청 ${pastRows.length}건 · 누적 비용 ${cumulative}`;
+      past.append(summary, ...pastRows); rows.push(past);
     }
     requests.replaceChildren(...rows);
     onState(S, visual, stateText, currentTask);
@@ -218,6 +300,7 @@ export function startLiveOffice(onState) {
     ws.onmessage = event => {
       try {
         const ev = JSON.parse(event.data);
+        if (ev.type === 'snapshot' && !ev.replay_gap && Number.isFinite(ev.seq) && ev.seq < lastSeq) return;
         if (ev.type !== 'snapshot' && ev.seq && ev.seq <= lastSeq) return;
         for (const effect of apply(ev)) {
           if (effect.type === 'toast') notice(effect.text, effect.approval_id || null);
@@ -243,5 +326,25 @@ export function startLiveOffice(onState) {
     event.preventDefault(); token = $('token').value.trim(); saveToken(token); lastSeq = 0; open();
   });
   setInterval(() => { if (S.approvals.size || S.activeTasks.size) render(); }, 1000);
+  // #660: the fox's paper list for the inspector, from the same detail GET the 2.5D sheet reads. One read per
+  // request update, even when it fails, so a re-render never loops on a refused or broken response.
+  const literatureAt = new Map(), literatureLoading = new Set();
+  async function loadLiterature(rid) {
+    literatureLoading.add(rid);
+    try {
+      const response = await fetch(`/api/requests/${encodeURIComponent(rid)}`, {headers:{Authorization:`Bearer ${token}`}});
+      if (response.ok) fillRequestDetail(rid, await response.json());
+    } catch {}
+    finally { literatureLoading.delete(rid); render(); }
+  }
+  function paperLiterature() {
+    const rid = S.current, q = rid && S.requests.get(rid);
+    if (!q) return {rid: null, view: null, loading: false};
+    if (literatureAt.get(rid) !== q.updated_at && !literatureLoading.has(rid)) {
+      literatureAt.set(rid, q.updated_at); loadLiterature(rid);
+    }
+    return {rid, view: q.paperLiterature, loading: literatureLoading.has(rid) && !q.paperLiterature};
+  }
   open();
+  return {paperLiterature};
 }

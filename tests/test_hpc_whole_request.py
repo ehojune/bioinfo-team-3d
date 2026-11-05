@@ -42,7 +42,8 @@ async def test_choice_after_briefing_before_plan_and_recorded(mode):
             assert task.meta["execution_location"]["mode"] == mode
             if mode == "hpc":
                 assert task.meta["execution_location"]["workspace"] == "r"
-                assert task.meta["upstream_steps"] == {}
+                assert task.meta["upstream_steps"] == {}  # this synthetic plan produces no files
+                assert "upstream_artifacts" in task.meta
                 assert "hpc_submit" in task.prompt
         return result(task, text="done")
 
@@ -61,7 +62,7 @@ async def test_choice_after_briefing_before_plan_and_recorded(mode):
     req = hub.requests["r"]
     assert req["status"] == "done", req.get("error")
     assert req["execution_location"]["mode"] == mode
-    assert "실행 위치:" in req["report_appendix"]
+    assert "실행 위치:" in req["execution_record"]
     assert len(hub.approvals) == 1
     assert all(s["execution"] == mode for s in req["plan"]["steps"])
 
@@ -160,23 +161,25 @@ async def test_research_cp1_records_execution_choice(mode):
     cp1 = hub.approvals[-1]
     assert cp1["detail"]["execution_location"] == req["execution_location"]
     assert req["execution_location"]["approval_id"] == "choice-id"
-    assert "실행 위치:" in cp1["summary"] and "실행 위치:" in req["report_appendix"]
+    assert "실행 위치:" in cp1["summary"] and "실행 위치:" in req["execution_record"]
     assert all(step["execution"] == mode for step in req["plan"]["steps"])
 
 
-def test_hpc_plan_refuses_other_runner_and_overlapping_output_names():
+def test_hpc_plan_refuses_other_runner_but_isolates_step_output_names():
     from labhq.orchestrator.execution import plan_errors
 
     hub = hub_for(lambda task: None)
     choice = {"mode": "hpc", "runner_id": "cluster"}
     steps = [{"id": "s1", "agent_id": "worker", "execution": "hpc", "outputs": ["a.txt"]},
              {"id": "s2", "agent_id": "worker", "execution": "hpc", "outputs": ["outputs/a.txt"]}]
+    assert plan_errors(steps, choice, hub.agents) == []
+    steps[0]["outputs"] = ["outputs/a.txt", "outputs/a.txt/b.txt"]
     assert any("collision" in error for error in plan_errors(steps, choice, hub.agents))
     hub.agents["worker"]["runner_id"] = "other"
     assert any("selected runner" in error for error in plan_errors(steps[:1], choice, hub.agents))
 
 
-async def test_shared_workspace_mock_jobs_read_previous_output(tmp_path, monkeypatch):
+async def test_isolated_workspace_mock_jobs_read_verified_request_data(tmp_path, monkeypatch):
     import labhq.tools.hpc_mcp as hpc
     from labhq.adapters.mock import MockAdapter
 
@@ -196,13 +199,14 @@ async def test_shared_workspace_mock_jobs_read_previous_output(tmp_path, monkeyp
         if len(submissions) == 1:
             (output / "s1.txt").write_text("upstream", encoding="utf-8")
         else:
-            assert (output / "s1.txt").read_text(encoding="utf-8") == "upstream"
+            assert not (output / "s1.txt").exists()
             (output / "s2.txt").write_text("upstream processed", encoding="utf-8")
         return job_id
 
     monkeypatch.setattr(runner.scheduler, "submit", submit)
 
     async def run(adapter, ctx):
+        ctx.before_spawn()
         workdirs.append(ctx.workdir)
         monkeypatch.setattr(hpc, "S", settings)
         monkeypatch.setattr(hpc, "WORKDIR", ctx.workdir)
@@ -216,6 +220,14 @@ async def test_shared_workspace_mock_jobs_read_previous_output(tmp_path, monkeyp
 
         monkeypatch.setattr(hpc, "_broker", broker)
         step = ctx.task.meta["step_id"]
+        if step == "s2":
+            data = Path(ctx.task.meta["hpc_data_inputs"]["s1"])
+            assert (data / "s1.txt").read_text(encoding="utf-8") == "upstream"
+            source = json.loads((data.parents[2] / ".labhq/hpc-inputs/s1" /
+                                 f"{results[0].task_id}.json").read_text(encoding="utf-8"))[0]
+            assert source["producer_step"] == "s1" and source["task_id"] == results[0].task_id
+            assert source["sha256"] == results[0].output_sha256["outputs/s1.txt"]
+            assert not (data / "manifest.json").exists()
         receipt = json.loads(await hpc.hpc_submit("echo first > s1.txt" if step == "s1" else
                                                 "cat s1.txt > s2.txt", step))
         assert receipt["output_dir"] == str(ctx.workdir / "outputs")
@@ -225,14 +237,20 @@ async def test_shared_workspace_mock_jobs_read_previous_output(tmp_path, monkeyp
     location = {"mode": "hpc", "runner_id": "cluster", "workspace": "r"}
     results = []
     for sid in ("s1", "s2"):
+        upstream = {} if sid == "s1" else {"s1": {
+            "task_id": results[0].task_id, "workdir": results[0].workdir,
+            "outputs": results[0].outputs, "output_sha256": results[0].output_sha256}}
         results.append(await runner.run_task(Task(agent_id="worker", request_id="r", prompt="test",
-            meta={"kind": "step", "step_id": sid, "execution_location": location, "outputs": [f"outputs/{sid}.txt"]})))
-    assert len(submissions) == 2 and len(set(workdirs)) == 1
+            meta={"kind": "step", "step_id": sid, "execution_location": location,
+                  "upstream_artifacts": upstream,
+                  "upstream_steps": {key: row["workdir"] for key, row in upstream.items()},
+                  "outputs": [f"outputs/{sid}.txt"]})))
+    assert len(submissions) == 2 and len(set(workdirs)) == 2
     assert all(r.ok and r.pending_jobs for r in results)
-    assert results[0].workdir == results[1].workdir
+    assert results[0].workdir != results[1].workdir
     workdir = Path(results[0].workdir)
-    assert workdir == Path(settings.runner.workspace_root) / "hpc" / "r"
-    assert not (workdirs[0] / "inputs").exists()
+    assert workdir == Path(settings.runner.workspace_root) / "hpc" / "r" / "steps" / "s1"
+    assert (workdirs[1] / "inputs" / "s1" / "s1.txt").is_file()
     assert "outputs/s2.txt" in results[1].outputs
 
     request = {
@@ -252,7 +270,7 @@ async def test_shared_workspace_mock_jobs_read_previous_output(tmp_path, monkeyp
     assert (workdir / "manifest.json").read_bytes() == manifest
     assert sorted(path.relative_to(workdir) for path in (workdir / "jobs").rglob("*")) == job_records
     assert (workdir / "outputs/s1.txt").read_text(encoding="utf-8") == "upstream"
-    assert (workdir / "outputs/s2.txt").read_text(encoding="utf-8") == "upstream processed"
+    assert (Path(results[1].workdir) / "outputs/s2.txt").read_text(encoding="utf-8") == "upstream processed"
     assert verify_request(request, settings)["exit_code"] == 0
 
 
@@ -313,3 +331,151 @@ def test_shared_account_preserves_previous_job_outputs_and_private_control_files
     assert stat.S_IMODE((work / "outputs").stat().st_mode) == 0o2770
     assert stat.S_IMODE((work / "TASK.md").stat().st_mode) == 0o600
     assert (work / "outputs" / "first").read_text(encoding="utf-8") == "first"
+
+
+@pytest.mark.parametrize("note,mode", [("1: a", "hpc"), ("1: b", "local"), ("a", "hpc"), ("2", "local"),
+                                      ("1: a, 1: b", None), ("2: a", None), ("HPC maybe", None)])
+def test_cli_compute_selection(note, mode):
+    from labhq.orchestrator.execution import selection
+    assert selection(note) == mode
+
+
+@pytest.mark.parametrize("orchestrator", ["cso", "sci_reviewer", "editor", "facilities", "custom-chief"])
+def test_team_choice_excludes_orchestration_only_runners(orchestrator):
+    from labhq.orchestrator.execution import available_runner
+    hub = hub_for(lambda task: None, tools=False)
+    hub.s.orchestrator.chief_of_staff_agent = "custom-chief"
+    hub.agents[orchestrator] = dict(runner_id="cluster", hpc_tools=True, builtin_mcp=["hpc"])
+    assert available_runner(hub) is None
+    assert available_runner(hub, orchestrator) == "cluster"  # explicit direct target remains valid
+
+
+@pytest.mark.parametrize("paths", [
+    ["outputs/x", "outputs/x"], ["outputs/x", "outputs/x/y"], ["outputs/x/y", "outputs/x"],
+    ["outputs/A", "outputs/a"],
+])
+def test_same_step_file_collisions_include_ancestors_and_optional_outputs(paths):
+    from labhq.orchestrator.execution import plan_errors
+    hub = hub_for(lambda task: None)
+    choice = {"mode": "hpc", "runner_id": "cluster"}
+    step = {"id": "s1", "agent_id": "worker", "execution": "hpc",
+            "outputs": paths[:1], "optional_outputs": paths[1:]}
+    assert any("collision" in err for err in plan_errors([step], choice, hub.agents))
+    other = {**step, "id": "s2", "outputs": paths[1:], "optional_outputs": []}
+    assert plan_errors([{**step, "optional_outputs": []}, other], choice, hub.agents) == []
+
+
+async def test_waiting_job_outputs_survive_wake_and_runner_restart(tmp_path, monkeypatch):
+    from labhq.adapters.mock import MockAdapter
+    settings = _settings(tmp_path)
+    settings.hpc.scheduler = "mock"
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.mock, builtin_mcp=["hpc"])
+    location = {"mode": "hpc", "runner_id": settings.runner.id}
+    calls = []
+
+    async def turn(adapter, ctx):
+        ctx.before_spawn()
+        calls.append(ctx)
+        if len(calls) == 1:
+            # Synthetic submission receipt; actual broker/mock scheduler submission is covered above.
+            ctx.record_run(hpc_submitted=True, hpc_step_id="s1", hpc_revision=0)
+        return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, session_id="session-s1")
+
+    monkeypatch.setattr(MockAdapter, "run", turn)
+    first_runner = Runner(settings)
+    monkeypatch.setattr(first_runner.registry, "get", lambda _: agent)
+    first = await first_runner.run_task(Task(agent_id=agent.id, request_id="r", prompt="submit",
+        meta={"kind": "step", "step_id": "s1", "execution_location": location}))
+    workdir = Path(first.workdir)
+    (workdir / "outputs" / "table.tsv").write_text("v\n7\n", encoding="utf-8")
+    (workdir / "outputs" / "ancillary.tsv").write_text("gene\nTP53\n", encoding="utf-8")
+
+    restarted = Runner(settings)
+    monkeypatch.setattr(restarted.registry, "get", lambda _: agent)
+    wake_task = Task(agent_id=agent.id, request_id="r", resume_session_id="session-s1", prompt="wake",
+        meta={"kind": "step", "step_id": "s1", "execution_location": location,
+              "outputs": ["outputs/table.tsv"]})
+    wake = await restarted.run_task(wake_task)
+    assert wake.ok, wake.error
+    assert wake.workdir == first.workdir
+    assert "outputs/ancillary.tsv" in wake.unreported_outputs
+    manifest = json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))
+    assert "outputs/ancillary.tsv" in {row["path"] for row in manifest["runs"][wake_task.id]["observed_outputs"]}
+    baseline = restarted._resume_baseline(wake_task, agent, restarted.workspaces[wake_task.id])
+    assert baseline["request_id"] == "r" and baseline["step_id"] == "s1"
+    assert restarted._resume_baseline(wake_task.model_copy(update={"request_id": "other"}),
+                                      agent, restarted.workspaces[wake_task.id]) is None
+    revised = wake_task.model_copy(update={"meta": {**wake_task.meta, "revision": 1}})
+    assert restarted.workspaces[wake_task.id].hpc_output_baseline(revised) is None
+    req = {"id": "r", "status": "done", "mode": "team", "plan": {"steps": [{"id": "s1"}]},
+           "results": {"s1": wake.model_dump(mode="json")}}
+    bundle = Path(build_request_bundle(req, settings)["path"])
+    assert (bundle / "steps/s1/outputs/ancillary.tsv").read_text(encoding="utf-8") == "gene\nTP53\n"
+    assert verify_request(req, settings)["exit_code"] == 0
+
+
+async def test_legacy_shared_folder_is_preserved_without_adoption(tmp_path, monkeypatch):
+    from labhq.adapters.mock import MockAdapter
+    settings = _settings(tmp_path)
+    settings.hpc.scheduler = "mock"
+    legacy = Path(settings.runner.workspace_root) / "hpc/r"
+    legacy.mkdir(parents=True)
+    (legacy / "manifest.json").write_text('{"legacy": true}', encoding="utf-8")
+    (legacy / "outputs").mkdir()
+    (legacy / "outputs/old.txt").write_text("preserve", encoding="utf-8")
+    runner = Runner(settings)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.mock, builtin_mcp=["hpc"])
+    monkeypatch.setattr(runner.registry, "get", lambda _: agent)
+
+    async def no_job(adapter, ctx):
+        ctx.before_spawn()
+        assert not (ctx.workdir / "outputs/old.txt").exists()
+        return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True)
+
+    monkeypatch.setattr(MockAdapter, "run", no_job)
+    result = await runner.run_task(Task(agent_id=agent.id, request_id="r", prompt="new step",
+        meta={"kind": "step", "step_id": "s1",
+              "execution_location": {"mode": "hpc", "runner_id": settings.runner.id}}))
+    assert not result.ok and "잡 기록" in result.error
+    assert Path(result.workdir) == legacy / "steps/s1"
+    assert (legacy / "manifest.json").read_text(encoding="utf-8") == '{"legacy": true}'
+    assert (legacy / "outputs/old.txt").read_text(encoding="utf-8") == "preserve"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX group grants; covered by Linux CI")
+@pytest.mark.parametrize("problem", [None, "changed", "symlink", "hardlink"])
+def test_shared_job_data_grants_only_inventoried_verified_files(tmp_path, monkeypatch, problem):
+    import hashlib
+    import labhq.tools.hpc_mcp as hpc
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(hpc, "S", settings)
+    request = tmp_path / "hpc/r"
+    workdir = request / "steps/s2"
+    workdir.mkdir(parents=True)
+    data = request / "data/s1/t1"
+    data.mkdir(parents=True)
+    collected = data / "input.tsv"
+    collected.write_text("checked", encoding="utf-8")
+    unknown = data / "private.txt"
+    unknown.write_text("not shared", encoding="utf-8")
+    unknown.chmod(0o600)
+    records = [{"producer_step": "s1", "task_id": "t1", "path": "input.tsv",
+                "sha256": hashlib.sha256(b"checked").hexdigest()}]
+    meta = request / ".labhq/hpc-inputs/s1/t1.json"
+    meta.parent.mkdir(parents=True)
+    meta.write_text(json.dumps(records), encoding="utf-8")
+    if problem == "changed":
+        collected.write_text("changed", encoding="utf-8")
+    elif problem == "symlink":
+        collected.unlink()
+        collected.symlink_to(unknown)
+    elif problem == "hardlink":
+        collected.unlink()
+        os.link(unknown, collected)
+    if problem:
+        with pytest.raises((OSError, RuntimeError)):
+            hpc._share_data_inputs(workdir, {"s1": str(data)}, os.getgid())
+    else:
+        hpc._share_data_inputs(workdir, {"s1": str(data)}, os.getgid())
+        assert stat.S_IMODE(collected.stat().st_mode) == 0o440
+    assert stat.S_IMODE(unknown.stat().st_mode) == 0o600

@@ -77,16 +77,22 @@ def test_stale_pid_is_reported_with_last_records_without_deleting_it(tmp_path, m
 
 
 def test_up_redirects_both_streams_and_unbuffers_child(tmp_path, monkeypatch):
+    """`up` now starts the role's supervisor (#589), which starts the role: the supervisor's streams are checked here,
+    the role's own in tests/test_supervisor.py."""
+    from labhq import windows_launch
+    monkeypatch.setattr(windows_launch, "current_job", lambda: {"in_job": False})
+    monkeypatch.setattr(windows_launch, "child_job_membership", lambda child, **kw: False)
     settings = _settings(tmp_path)
     monkeypatch.setattr(cli, "_process_created", lambda pid: "created")
+    monkeypatch.setattr(cli, "_await_child_record", lambda *args, **kwargs: None)  # no supervisor runs in this test
     def spawn(command, **options):
         assert options["stderr"] == subprocess.STDOUT
-        assert options["stdout"].name.endswith("gateway.log")
+        assert options["stdout"].name.endswith("gateway-supervisor.log")
         assert options["env"]["PYTHONUNBUFFERED"] == "1"
         options["stdout"].write("child-output\n")
         return type("Child", (), {"pid": 99999999})()
     cli._start_background(settings, "gateway", popen=spawn)
-    assert "child-output" in (tmp_path / "state" / "logs" / "gateway.log").read_text()
+    assert "child-output" in (tmp_path / "state" / "logs" / "gateway-supervisor.log").read_text()
 
 
 @pytest.mark.parametrize("ending,reason,code", [
@@ -155,3 +161,34 @@ def test_cli_installs_diagnostics_for_each_role(tmp_path, monkeypatch, role):
     assert rows[-1]["reason"] == "returned" and rows[-1]["code"] == 0
     if role == "gateway":
         assert any(row["event"] == "uvicorn_end" for row in rows)
+
+
+def test_status_reads_the_heartbeat_of_the_launchers_child_not_a_stale_parent_orphan(tmp_path, monkeypatch):
+    """#589: `up` records the venv launcher's PID but the real interpreter, its child, writes the diagnostics, so
+    `status` said `heartbeat 기록 없음` for a live gateway. Only a child created after the launcher counts."""
+    from labhq import proc_tree
+
+    launcher, child, orphan = 910_000_010, 910_000_011, 910_000_012
+    settings = _settings(tmp_path)
+    state = settings.path(settings.gateway.state_dir)
+    (state / "logs").mkdir(parents=True)
+    cli._pid_file(settings, "gateway").write_text(json.dumps(
+        {"pid": launcher, "created": "windows:1000", "role": "gateway", "config": None}))
+
+    def rows(pid, stamp):
+        return [json.dumps({"event": event, "pid": pid, "time": stamp, "rss_bytes": 123, "handles": 5})
+                for event in ("start", "heartbeat")]
+
+    (state / "logs" / "gateway-diagnostics.jsonl").write_text(
+        chr(10).join(rows(child, "2026-10-14T01:00:00+00:00") + rows(orphan, "2026-10-14T02:00:00+00:00")) + chr(10))
+    monkeypatch.setattr(cli, "_process_created", lambda pid: "windows:1000")
+    monkeypatch.setattr(proc_tree, "_snapshot", lambda: [
+        proc_tree.Proc(launcher, 1, 1000), proc_tree.Proc(child, launcher, 1100),
+        proc_tree.Proc(orphan, launcher, 400)])  # the orphan only carries the launcher's PID as a stale parent
+
+    row = next(r for r in cli._local_process_diagnostics(settings) if r["name"] == "gateway")
+
+    assert "heartbeat 기록 없음" not in row["detail"]
+    assert "heartbeat 2026-10-14T01:00:00+00:00 RSS=123" in row["detail"]
+    assert "2026-10-14T02:00:00" not in row["detail"]
+    assert f"PID {launcher} 실행 중" in row["detail"] and row["status"] == "ok"

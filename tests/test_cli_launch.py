@@ -18,6 +18,7 @@ from labhq import cli, doctor
 from labhq.adapters.base import AgentAdapter, RunContext, RunState
 from labhq.models import AgentSpec, Engine, Task
 from labhq.settings import Settings
+from tests.proc_table_fake import FakeProcessTable
 
 
 def _config(tmp_path: Path, *, token: str = "private-client") -> Path:
@@ -159,6 +160,9 @@ def test_watch_shows_a_revise_choice_and_a_timeout_apart_from_a_refusal(capsys):
 
 
 def test_up_and_down_manage_only_their_process_records_and_clean_runner_path(tmp_path, monkeypatch, capsys):
+    from labhq import windows_launch
+    monkeypatch.setattr(windows_launch, "current_job", lambda: {"in_job": False})
+    monkeypatch.setattr(windows_launch, "child_job_membership", lambda child, **kw: False)
     settings = Settings.load(str(_config(tmp_path)))
     monkeypatch.setattr(cli, "_health", lambda _settings: None)
     monkeypatch.setattr(
@@ -184,16 +188,19 @@ def test_up_and_down_manage_only_their_process_records_and_clean_runner_path(tmp
         return Process(4100 + len(calls))
 
     monkeypatch.setattr(cli, "_process_created", lambda pid: f"created:{pid}")
+    # `up` starts each role's supervisor (#589) and the supervisor records the role: none runs in this test.
+    monkeypatch.setattr(cli, "_await_child_record", lambda *args, **kwargs: None)
     cli._up(settings, popen=popen)
     assert [call[0][-1] for call in calls] == ["gateway", "runner"]
+    assert all(call[0][1:3] == ["-m", "labhq.supervisor"] for call in calls)
     assert all(call[1]["creationflags"] & 0x00000208 == 0x00000208 for call in calls)
     runner_path = calls[1][1]["env"]["PATH"].casefold()
     assert "windowsapps" not in runner_path and "appdata\\local\\python\\bin" not in runner_path
-    gateway = json.loads(cli._pid_file(settings, "gateway").read_text())
-    runner = json.loads(cli._pid_file(settings, "runner").read_text())
-    assert gateway == {"pid": 4101, "role": "gateway", "created": "created:4101",
+    gateway = json.loads(cli._pid_file(settings, "gateway-supervisor").read_text())
+    runner = json.loads(cli._pid_file(settings, "runner-supervisor").read_text())
+    assert gateway == {"pid": 4101, "role": "gateway-supervisor", "created": "created:4101",
                        "config": settings.config_path}
-    assert runner == {"pid": 4102, "role": "runner", "created": "created:4102",
+    assert runner == {"pid": 4102, "role": "runner-supervisor", "created": "created:4102",
                       "config": settings.config_path}
     killed = []
     monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
@@ -202,8 +209,10 @@ def test_up_and_down_manage_only_their_process_records_and_clean_runner_path(tmp
                         lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
     monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: killed.append(pid))
     cli._down(settings, force=False)
-    assert killed == [4102, 4101]
+    assert killed == [4102, 4101]  # the supervisors: ending one ends the role under it
     assert not cli._pid_file(settings, "gateway").exists() and not cli._pid_file(settings, "runner").exists()
+    assert not cli._pid_file(settings, "gateway-supervisor").exists()
+    assert not cli._pid_file(settings, "runner-supervisor").exists()
     assert "웹 사무실:" in capsys.readouterr().out
 
 
@@ -485,6 +494,18 @@ def test_watch_renders_staff_warnings(capsys):
     assert "UAC 대기" in capsys.readouterr().out
 
 
+def test_cli_distinguishes_the_capybara_recruiter_from_the_beaver_editor(capsys):
+    cli.render({"type": "agent.status", "agent_id": "recruiter", "ts": 1, "data": {"state": "done"}})
+    cli.render({"type": "agent.status", "agent_id": "editor", "ts": 1, "data": {"state": "done"}})
+    cli.render({"type": "recruit.status", "ts": 1, "data": {"slug": "paper", "stage": "준비"}})
+    cli.render({"type": "recruit.failed", "ts": 1, "data": {"error": "중단"}})
+    lines = capsys.readouterr().out.splitlines()
+    assert "카피바라 recruiter" in lines[0]
+    assert "🦫 editor" in lines[1]
+    assert "카피바라 인사팀" in lines[2]
+    assert "카피바라 채용 실패" in lines[3]
+
+
 def test_repo_wrappers_use_the_local_venv():
     root = Path(__file__).resolve().parents[1]
     windows = (root / "labhq.cmd").read_text(encoding="utf-8")
@@ -589,8 +610,48 @@ def test_down_names_a_finished_request_whose_record_is_still_being_written(tmp_p
     error = capsys.readouterr().err
     assert stopped.value.code == 2 and killed == []
     assert "마무리 중인 요청: req_c · 취소 기록을 쓰는 중" in error
-    assert "마무리 중인 요청: req_b · 요청 묶음을 복사하는 중" in error
+    assert "마무리 중인 요청: req_b · 보고서 묶음 저장을 마무리하는 중" in error
+    assert "다음 시작 때 이어서 만듭니다" in error  # a bundle is rebuilt at the next start (#658)
     assert "gateway가 아직 끝나지 않은 일이 있다고" not in error
+
+
+def test_down_words_each_finishing_stage_with_its_age_and_does_not_wait_for_a_stuck_bundle(tmp_path, monkeypatch, capsys):
+    """#658: the refusal names what is being finished and for how long; a bundle worker past the gateway's limit is
+    reported as stuck and does not hold `down` back, because its bundle is rebuilt at the next start."""
+    settings = Settings.load(str(_config(tmp_path)))
+    _write_process_record(settings, "runner", 4244, "runner-generation")
+    monkeypatch.setattr(cli, "_process_created", lambda pid: "runner-generation")
+    killed = []
+    monkeypatch.setattr(cli, "_terminate_tree", lambda pid, **kwargs: killed.append(pid))
+    answers = {}
+
+    def gateway(method, url, **kwargs):
+        request = httpx.Request(method, url)
+        if "/api/requests" in url:
+            return httpx.Response(200, json=[], request=request)
+        return httpx.Response(200, request=request, json=answers["readiness"])
+
+    monkeypatch.setattr(httpx, "request", gateway)
+    answers["readiness"] = {"requests": [], "followups": [], "recruits": 0, "ready": False, "finishing": [
+        {"id": "req_b", "status": "done", "stage": "bundle", "elapsed_s": 300, "stuck": False},
+        {"id": "req_s", "status": "done", "stage": "result_storage"},
+        {"id": "req_p", "status": "done", "stage": "pi_interpretation"}]}
+    with pytest.raises(SystemExit) as stopped:
+        cli._down(settings, force=False)
+    error = capsys.readouterr().err
+    assert stopped.value.code == 2 and killed == []
+    assert "마무리 중인 요청: req_b · 보고서 묶음 저장을 마무리하는 중 (5분째)" in error
+    assert "마무리 중인 요청: req_s · 결과 저장을 마무리하는 중" in error
+    assert "마무리 중인 요청: req_p · PI 해석을 마무리하는 중" in error
+    assert "요청 묶음을 복사하는 중" not in error
+
+    answers["readiness"] = {"requests": [], "followups": [], "recruits": 0, "ready": True, "finishing": [
+        {"id": "req_b", "status": "done", "stage": "bundle", "elapsed_s": 900, "stuck": True}]}
+    cli._down(settings, force=False)
+    error = capsys.readouterr().err
+    assert killed == [4244]
+    assert "멈춘 마무리: req_b" in error and "15분째" in error and "다음 시작 때 이어서 마무리합니다" in error
+    assert "종료를 거부했습니다" not in error
 
 
 def test_down_refuses_when_readiness_fails_or_names_a_request_the_list_missed(tmp_path, monkeypatch, capsys):
@@ -623,30 +684,89 @@ def test_down_refuses_when_readiness_fails_or_names_a_request_the_list_missed(tm
     assert stopped.value.code == 2 and killed == [] and "req_new" in capsys.readouterr().err
 
 
-def test_taskkill_output_is_decoded_as_oem_and_a_failure_without_text_still_raises_oserror(monkeypatch):
-    """Trial-ready 2026-10-12: labhq.cmd sets PYTHONUTF8=1, taskkill answers in cp949, and a bare text=True killed both
-    reader threads with UnicodeDecodeError tracebacks and returned None, so the failure message code hit None.split()."""
-    seen = {}
-
-    def fake_run(command, **kwargs):
-        seen.update(kwargs)
-        return subprocess.CompletedProcess(command, 1, stdout=None, stderr=None)  # what a failed decode leaves
-
+def test_a_failed_windows_kill_still_raises_oserror_with_the_reason_and_never_starts_taskkill(monkeypatch):
+    """#589 replaced the Windows tree-kill command, whose output decoding this used to cover (trial-ready 2026-10-12):
+    a failure to end the recorded process must still reach `down` as an OSError carrying the reason."""
+    started = []
     monkeypatch.setattr(cli.sys, "platform", "win32")
-    monkeypatch.setattr(cli.subprocess, "run", fake_run)
-    monkeypatch.setattr(cli, "_process_created", lambda pid: "alive")
-    with pytest.raises(OSError, match="taskkill exit 1"):
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: started.append(args))
+    table = FakeProcessTable({4242: (1, 1000)}).install(monkeypatch)
+    table.refuse[4242] = "액세스가 거부되었습니다."
+    with pytest.raises(OSError, match="액세스가 거부되었습니다"):
         cli._terminate_tree(4242)
-    assert seen["encoding"] == "oem" and seen["errors"] == "replace" and not seen.get("text")
+    assert started == []
 
 
-def test_taskkill_failure_text_survives_when_one_stream_is_empty(monkeypatch):
+def test_down_on_windows_ends_the_recorded_tree_through_the_helper_and_checks_each_identity(tmp_path, monkeypatch):
+    """#589: `down` ended the PI's gateway and runner with a tree collected by parent PID alone; the tree it collects
+    now skips a process older than its claimed parent, and a recorded PID that changed hands before the kill is not
+    touched."""
+    gateway, runner, child, orphan = 910_000_245, 910_000_244, 910_000_246, 910_000_300
+    table = FakeProcessTable({
+        gateway: (1, 1000), child: (gateway, 1100),
+        orphan: (gateway, 400),  # older than the gateway: a stale parent PID, not its child
+        runner: (1, 3000),  # created after the record was written: the PID changed hands
+    }).install(monkeypatch)
+    settings = Settings.load(str(_config(tmp_path)))
+    _write_process_record(settings, "runner", runner, "windows:2000")
+    _write_process_record(settings, "gateway", gateway, "windows:1000")
     monkeypatch.setattr(cli.sys, "platform", "win32")
-    monkeypatch.setattr(cli.subprocess, "run", lambda command, **kwargs: subprocess.CompletedProcess(
-        command, 128, stdout="", stderr="오류: 프로세스를 찾을 수 없습니다."))
-    monkeypatch.setattr(cli, "_process_created", lambda pid: "alive")
-    with pytest.raises(OSError, match="프로세스를 찾을 수 없습니다"):
-        cli._terminate_tree(4242)
+    monkeypatch.setattr(cli, "_process_created", lambda pid: (
+        f"windows:{table.live[pid].created}" if pid in table.live else None
+    ))
+    monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
+    monkeypatch.setattr(cli, "_shutdown_readiness",
+                        lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
+    monkeypatch.setattr(cli, "_health", lambda _settings: None)
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: pytest.fail(f"taskkill started: {args}"))
+
+    cli._down(settings, force=False)
+
+    assert table.killed == [child, gateway]  # the reused runner PID and the stale-parent orphan were not touched
+    assert set(table.live) == {runner, orphan}
+    assert not cli._pid_file(settings, "gateway").exists() and not cli._pid_file(settings, "runner").exists()
+
+
+@pytest.mark.parametrize("failure", ["terminate", "open", None])
+def test_down_on_windows_keeps_the_records_when_a_child_of_the_launcher_cannot_be_ended(
+        tmp_path, monkeypatch, capsys, failure):
+    """The bot's P1s on #597: the venv interpreter under a launcher refused TerminateProcess, or could not even be
+    opened (Access denied), while the launcher itself was ended, and `down` removed the PID records and printed
+    success with the runner still alive."""
+    runner, runner_child, gateway = 910_000_244, 910_000_245, 910_000_246
+    table = FakeProcessTable({
+        runner: (1, 2000), runner_child: (runner, 2100), gateway: (1, 1000),
+    }).install(monkeypatch)
+    reason = {"terminate": "액세스가 거부되었습니다.", "open": "Access is denied"}.get(failure)
+    if failure == "terminate":
+        table.refuse[runner_child] = reason
+    elif failure == "open":
+        table.unreadable.add(runner_child)
+    settings = Settings.load(str(_config(tmp_path)))
+    _write_process_record(settings, "runner", runner, "windows:2000")
+    _write_process_record(settings, "gateway", gateway, "windows:1000")
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli, "_process_created",
+                        lambda pid: f"windows:{table.live[pid].created}" if pid in table.live else None)
+    monkeypatch.setattr(cli, "_active_requests", lambda _settings: [])
+    monkeypatch.setattr(cli, "_shutdown_readiness",
+                        lambda _settings: {"requests": [], "followups": [], "recruits": 0, "ready": True})
+    monkeypatch.setattr(cli, "_health", lambda _settings: None)
+    monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: pytest.fail(f"taskkill started: {args}"))
+
+    if failure:
+        with pytest.raises(SystemExit) as stopped:
+            cli._down(settings, force=False)
+        error = capsys.readouterr().err
+        assert stopped.value.code == 2
+        assert f"runner PID {runner}을 종료하지 못했습니다" in error
+        assert f"PID {runner_child}: {reason}" in error
+        assert cli._pid_file(settings, "runner").exists() and cli._pid_file(settings, "gateway").exists()
+        assert set(table.live) == {runner, runner_child, gateway}  # nothing half-stopped: the retry can reach it
+    else:
+        cli._down(settings, force=False)
+        assert table.killed == [runner_child, runner, gateway] and not table.live
+        assert not cli._pid_file(settings, "runner").exists() and not cli._pid_file(settings, "gateway").exists()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="the OEM code page is a Windows thing")
@@ -777,3 +897,28 @@ def test_down_on_a_runner_only_pc_fails_when_its_own_unrecorded_runner_is_still_
         cli._down(settings, force=False)
     assert stopped.value.code == 2
     assert f"runner({settings.runner.id})가 gateway" in capsys.readouterr().err
+
+
+def test_free_ports_holds_every_socket_until_all_ports_are_drawn(monkeypatch):
+    """Two `free_port()` calls in a row can return one number once the first socket is closed; a test that took the
+    gateway and the broker port that way could bind the same port twice (#1238)."""
+    import socket
+
+    from labhq import util
+
+    live, peak = set(), [0]
+    real = socket.socket
+
+    class Tracking(real):
+        def bind(self, address):
+            super().bind(address)
+            live.add(id(self))
+            peak[0] = max(peak[0], len(live))
+
+        def close(self):
+            live.discard(id(self))
+            super().close()
+
+    monkeypatch.setattr(socket, "socket", Tracking)
+    ports = util.free_ports(3)
+    assert peak[0] == 3 and len(set(ports)) == 3 and not live

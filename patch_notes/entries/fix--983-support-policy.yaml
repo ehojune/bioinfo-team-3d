@@ -1,0 +1,14 @@
+pr: 991
+rows:
+  - sha: '6ec0747'
+    at: '2026-10-26 22:27'
+    summary: 'manual에 시설팀 지원 선언과 준비 gate의 범위를 안내합니다.'
+    text: '#990 구현 종료 뒤 한 문단과 상세 reference 링크를 반영했습니다. LF 기준 194,939→195,168자입니다.'
+  - sha: '4d09a77'
+    at: '2026-10-26 22:25'
+    summary: '시설팀 지원 회귀를 Windows doctor cohort에 포함합니다.'
+    text: '기존 doctor 분류를 적용해 inventory 검사와 60건 회귀를 통과했습니다. patch-note SHA 형식도 바로잡았습니다.'
+  - sha: 'c59c231'
+    at: '2026-10-26 22:21'
+    summary: 'profile이 시설팀 지원 요구를 선언하고 doctor가 준비 증거를 판정합니다.'
+    text: 'required 미충족은 FAIL, optional+ready만 OK, unspecified는 WARN입니다. init 명시 값 보존과 격리 회귀로 확인했으며 실제 복구는 UNVERIFIED입니다.'

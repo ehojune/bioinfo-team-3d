@@ -67,3 +67,28 @@ test('a summary kept open survives unchanged card refresh',async()=>{
   assert.equal(nodes(row._decisionParts.summary).find(n=>n.tagName==='details'),fold);
   assert.equal(fold.open,true);
 });
+test('tool cards keep the trusted requester role in both office layouts',async()=>{
+  const {syncDecisionCards,decisionFacts}=await mod;
+  const card={id:'tool',kind:'tool_permission',agent_id:'recruiter',pi_summary:'파일 목록 보기.',
+    pi_reason:'논문으로 자문 스킬을 만드는 중입니다. 위험 등급: 낮음 · 읽기.',
+    pi_outcome:'승인하면 한 번 실행합니다. 거절하면 실행하지 않습니다.',
+    detail:{requester_name:'비버 인사팀',tool_name:'Bash',tool_input:{command:'ls -la'}}};
+  for (const tagName of ['div','article']) {
+    const parent=new Element();
+    const [row]=syncDecisionCards(parent,[card],[],{tagName,nick:()=> '비버'});
+    assert.equal(row._decisionParts.who.textContent,'비버 인사팀');
+    assert.ok(row.textContent.includes(card.pi_reason));
+    assert.ok(row.textContent.includes(card.pi_outcome));
+    assert.deepEqual(decisionFacts(card,'비버')[1],['요청 직원','비버 인사팀']);
+  }
+});
+test('CP2 semantic report is an actual Markdown link with its frozen content',async()=>{
+  const {renderDetail}=await mod, parent=new Element();
+  const content='# 온톨로지·의미 장치 보고서\n\n| 장치 | 상태 |\n|---|---|\n';
+  renderDetail(parent,'research_evidence',{semantic_report:{path:'semantic_report.md',content}});
+  const link=nodes(parent).find(n=>n.tagName==='a');
+  assert.ok(link);
+  assert.equal(link.download,'semantic_report.md');
+  assert.match(link.href,/^data:text\/markdown;charset=utf-8,/);
+  assert.ok(decodeURIComponent(link.href.split(',',2)[1]).includes('| 장치 | 상태 |'));
+});

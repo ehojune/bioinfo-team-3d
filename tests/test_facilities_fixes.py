@@ -385,3 +385,54 @@ async def test_disk_full_cache_is_cleared_before_any_reused_workspace_write(tmp_
     with pytest.raises(OSError, match="No space left"):
         await runner.run_task(task)
     assert not cache.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("slow", ["card_write", "request_save"])
+async def test_a_cancel_while_the_fix_card_is_being_stored_is_not_undone_and_leaves_no_card(tmp_path, slow):
+    """#1148: a write is slow and the request is cancelled meanwhile. When it returns the request is still cancelled,
+    no card is left for it, none is announced after it was withdrawn, and the caller is not told to wait. The slow
+    write is the card's own, or the request save that follows it (review: the cancel can land there too)."""
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.policy.approvals.timeout_s = 60
+    hub = create_app(settings).state.hub
+    hub.requests["r"] = {"id": "r", "status": "running", "mode": "team", "text": "x", "results": {}}
+    entered, go = asyncio.Event(), asyncio.Event()
+    real_add, real_save, saves = hub._add_approval, hub.asave_request, {"n": 0}
+
+    async def slow_add(*args, **kwargs):
+        if slow == "card_write":
+            entered.set()
+            await go.wait()  # a slow fsync while the card is stored
+        return await real_add(*args, **kwargs)
+
+    async def slow_save(rid):
+        saves["n"] += 1
+        if slow == "request_save" and saves["n"] == 1:  # the fix's own save, right after its card is stored
+            entered.set()
+            await go.wait()
+        return await real_save(rid)
+
+    hub._add_approval = slow_add
+    hub.asave_request = slow_save
+    proposal = {"fix_id": "clear_workspace_cache", "signature_id": "disk_full",
+                "action": "작업 폴더 캐시 비우기", "execution": "workspace_cache",
+                "reason": "디스크 공간 부족", "command": "작업 폴더 안 cache 비우기"}
+    fix = asyncio.create_task(hub.request_facilities_fix("r", "s1", proposal))
+    await asyncio.wait_for(entered.wait(), 5)
+    await hub.cancel_request("r")
+    assert hub.requests["r"]["status"] == "cancelled"
+    go.set()
+    outcome = await asyncio.wait_for(asyncio.gather(fix, return_exceptions=True), 5)
+    assert hub.requests["r"]["status"] == "cancelled"  # the late card write did not bring it back
+    entries = (hub.requests["r"].get("facilities_fixes") or {}).values()
+    assert not [entry for entry in entries if entry.get("status") in {"waiting", "approved", "running"}]  # none waits
+    assert not [card for card in hub.approvals.values() if card["approval"].get("kind") == "facilities_fix"]
+    kinds = [event.get("type") for event in hub.events if event.get("type") in {"approval.requested", "approval.expired"}]
+    if "approval.requested" in kinds:  # announced before the cancel: then it must be followed by its withdrawal
+        assert kinds.index("approval.requested") < kinds.index("approval.expired")
+    assert kinds.count("approval.requested") <= kinds.count("approval.expired") or not kinds  # never a ghost card
+    if slow == "card_write":
+        assert "approval.requested" not in kinds  # nothing was announced for a request that was already over
+    assert not (isinstance(outcome[0], dict) and outcome[0].get("approved"))

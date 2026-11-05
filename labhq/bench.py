@@ -11,11 +11,13 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import yaml
 
@@ -23,7 +25,10 @@ from .bench_permissions import inside
 from .costs import aggregate_costs, classify_cost, cost_detail, format_cost
 from .policy import WRITE_LIKE
 from .request_status import is_terminal_request
-from .util import atomic_write_text, free_port, merge_staff_env, parent_claude_markers
+from .reproduction_receipt import receipt_json, receipt_note, receipt_summary
+from .research import semantic_device_report
+from . import bench_metrics
+from .util import atomic_write_text, free_ports, merge_staff_env, parent_claude_markers
 
 REPO = Path(__file__).resolve().parents[1]
 BENCH_ROOT = Path(str(files("labhq").joinpath("bench_data")))
@@ -275,8 +280,22 @@ def _workdir_write(data: dict, workspaces: dict) -> bool:
     return inside(Path(workspace.dir).resolve(), path)
 
 
+def _create_fixed_plan_request(hub, body, plan):
+    """Use the stored-plan resume path in this isolated benchmark gateway."""
+    original = hub.orchestrator.run_request
+    selected = set()
+
+    async def resume_selected(rid, resume=False, continuation=False):
+        return await original(rid, resume=resume or rid in selected, continuation=continuation)
+
+    hub.orchestrator.run_request = resume_selected
+    rid = hub.create_request(body, extra={"plan": plan})
+    selected.add(rid)  # create_request schedules the coroutine; it cannot run until the loop yields.
+    return rid
+
+
 async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_settings,
-                     approve_budget_up_to: float | None = None) -> dict[str, Any]:
+                     approve_budget_up_to: float | None = None, fixed_plan=None) -> dict[str, Any]:
     import uvicorn
 
     from .gateway.server import RequestIn, create_app
@@ -288,14 +307,24 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
     staff_models = []
     for path in sorted((state / "agents").rglob("*.yaml")):
         spec = yaml.safe_load(path.read_text(encoding="utf-8"))
+        changed = False
         if spec.get("engine") == "claude_code" and spec.get("model") in settings.bench.staff_model:
             spec["model"] = settings.bench.staff_model[spec["model"]]
+            changed = True
+        if fixed_plan is not None and spec.get("id") == "analyst":
+            if spec.get("engine") != "claude_code" or spec.get("model_tier") != "reasoning":
+                raise ValueError("fixed tier fixture requires a reasoning-tier Claude analyst")
+            spec["model"] = settings.model_tiers.model_for("reasoning", "claude_code")
+            if not spec["model"]:
+                raise ValueError("fixed tier fixture needs a reasoning model")
+            changed = True
+        if changed:
             path.write_text(yaml.safe_dump(spec, allow_unicode=True, sort_keys=False), encoding="utf-8")
         staff_models.append({"id": spec["id"], "engine": spec.get("engine"), "model": spec.get("model")})
     if settings.recruit.contract_engine == "claude_code":
         settings.recruit.contract_model = settings.bench.staff_model.get(
             settings.recruit.contract_model, settings.recruit.contract_model)
-    port = free_port()
+    port, broker_port = free_ports(2)
     settings.gateway.state_dir = str(state / "gateway")
     settings.gateway.port = port
     settings.gateway.url = f"ws://127.0.0.1:{port}"
@@ -303,7 +332,7 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
     settings.runner.workspace_root = str(state / "runs")
     settings.runner.talent_dir = str(state / "talent")
     settings.runner.agents_dir = str(state / "agents")
-    settings.runner.broker_port = free_port()
+    settings.runner.broker_port = broker_port
     settings.runner.job_poll_s = 1
     settings.hpc.scheduler = "mock"
     if engines == "mock":
@@ -318,10 +347,12 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
     budget_approvals = 0
     workdir_write_approvals = 0
     original_publish = hub.publish
+    metrics = bench_metrics.Recorder("labhq")
 
     async def publish(event: dict, *args, **kwargs) -> None:
         nonlocal interventions, unscripted_approvals, budget_approvals, workdir_write_approvals
         await original_publish(event, *args, **kwargs)
+        metrics.event(event)
         if event.get("type") == "approval.requested":
             interventions += 1
             data = event.get("data") or {}
@@ -360,13 +391,29 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
         runner = Runner(settings)
         runner_task = asyncio.create_task(runner.run_forever())
         await _until(lambda: "cso" in hub.agents, 20, "benchmark runner did not register")
-        rid = hub.create_request(RequestIn(text=_prompt(case),
-                                           budget_usd=float(case["budget_usd"]),
-                                           meta={"case_id": case["id"]}))
+        body = RequestIn(text=_prompt(case), budget_usd=float(case["budget_usd"]),
+                         meta={"case_id": case["id"]})
+        rid = (_create_fixed_plan_request(hub, body, fixed_plan) if fixed_plan is not None
+               else hub.create_request(body))
+        metrics.request_id = rid
+        runner._bench_observer = metrics.spawn
         timeout = float(case.get("timeout_s", settings.runner.task_timeout_s))
+        request_started = time.monotonic()
         await _until(lambda: is_terminal_request(hub.requests[rid]["status"]), timeout,
                      f"benchmark request timed out after {timeout:g}s")
+        # Terminal status is committed before the asynchronous bundle/manifest.
+        # Use the remaining request budget and never cache a premature empty receipt.
+        await _until(lambda: not hub.requests[rid].get("bundle_pending"),
+                     max(0.0, timeout - (time.monotonic() - request_started)),
+                     f"benchmark bundle timed out after {timeout:g}s")
         request = hub.requests[rid]
+        if not request.get("reproduction_receipt"):
+            from .result_storage import collect_reproduction_receipt
+            request["reproduction_receipt"] = await asyncio.to_thread(
+                collect_reproduction_receipt, {**request, "id": rid}, settings)
+            save_request = getattr(hub, "save_request", None)
+            if callable(save_request):
+                save_request(rid)
         record = hub.rounds.write(rid)
         answer = case["mock_answer"].strip() if engines == "mock" else str(request.get("report") or "").strip()
         (arm_dir / "answer.md").write_text(answer + "\n", encoding="utf-8")
@@ -383,7 +430,16 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
             "duration_s": round(time.monotonic() - started, 3),
             "round_json": str(hub.rounds.directory / f"{rid}.json"),
             "round_status": record["result"]["status"],
+            "reproduction_receipt": request.get("reproduction_receipt"),
+            "semantic_impact_metrics": (semantic_device_report.build_report(
+                {**request, "id": rid}, settings).get("impact_metrics")
+                if semantic_device_report.applies(request, settings) else None),
         }
+        run["bench_metrics"] = bench_metrics.collect(
+            metrics, mode=engines, tasks=hub.store.all("task") if hasattr(hub, "store") else None,
+            approvals=({**hub.store.all("approval"), **hub.store.all("approval_decision")}
+                       if hasattr(hub, "store") else None))
+        bench_metrics.save(arm_dir, run["bench_metrics"])
         (arm_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return run
     finally:
@@ -434,6 +490,7 @@ def _parse_codex(raw: str, answer_path: Path) -> tuple[str, dict[str, int]]:
 async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: str,
                         command: list[str], settings) -> dict[str, Any]:
     started = time.monotonic()
+    metrics = bench_metrics.Recorder(arm)
     if engines == "mock":
         (arm_dir / "answer.md").write_text(case["mock_answer"].strip() + "\n", encoding="utf-8")
         run = {"engine": arm, "mode": "mock", "status": "done", "pi_interventions": 0,
@@ -460,10 +517,27 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
         timeout = float(case.get("timeout_s", settings.runner.task_timeout_s))
         group_args = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                       if os.name == "nt" else {"start_new_session": True})
-        process = await asyncio.create_subprocess_exec(*command, cwd=arm_dir, env=env,
-                                                       stdin=asyncio.subprocess.DEVNULL,
-                                                       stdout=asyncio.subprocess.PIPE,
-                                                       stderr=asyncio.subprocess.PIPE, **group_args)
+        spawn = {"task_id": arm, "request_id": None, "spawn_id": object(),
+                 "argv_bytes": sum(len(arg.encode("utf-8")) + 1 for arg in command)}
+        metrics.spawn(**spawn, state="attempt")
+        try:
+            process = await asyncio.create_subprocess_exec(*command, cwd=arm_dir, env=env,
+                                                           stdin=asyncio.subprocess.DEVNULL,
+                                                           stdout=asyncio.subprocess.PIPE,
+                                                           stderr=asyncio.subprocess.PIPE, **group_args)
+        except OSError:
+            metrics.spawn(**spawn, state="failed")
+            run = {"engine": arm, "mode": "real", "status": "failed", "error": "CLI spawn failed",
+                   "pi_interventions": 0, "cost_usd": None, "cost_known": False, "usage": {},
+                   "duration_s": round(time.monotonic() - started, 3),
+                   "bench_metrics": bench_metrics.collect(metrics)}
+            definition = settings.bench.arms[arm]
+            run.update(model=definition.model, effort=definition.effort, cli_engine=definition.engine,
+                       pi_questions_observable=False)
+            bench_metrics.save(arm_dir, run["bench_metrics"])
+            (arm_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return run
+        metrics.spawn(**spawn, state="started")
         drain = asyncio.create_task(process.communicate())
         error = None
         try:
@@ -504,6 +578,8 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
     run["pi_questions_observable"] = False  # Noninteractive CLI: no question/answer channel.
     definition = settings.bench.arms[arm]
     run.update(model=definition.model, effort=definition.effort, cli_engine=definition.engine)
+    run["bench_metrics"] = bench_metrics.collect(metrics, mode=engines)
+    bench_metrics.save(arm_dir, run["bench_metrics"])
     (arm_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return run
 
@@ -623,6 +699,10 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
         "staff_model": run.get("staff_model"), "staff_models": run.get("staff_models"),
         "artifact_exists": answer.is_file() and bool(answer_text.strip()),
         "checks_passed": bool(structured["format_passed"] and structured["content_passed"]),
+        "reproduction_verification": receipt_summary(run.get("reproduction_receipt"),
+                                                    path="reproduction_receipt.json" if run.get("reproduction_receipt") else ""),
+        "semantic_impact_metrics": run.get("semantic_impact_metrics"),
+        "bench_metrics": run.get("bench_metrics"),
         "format_passed": structured["format_passed"],
         "content_passed": structured["content_passed"],
         "narrative_passed": checked.returncode == 0,
@@ -663,8 +743,8 @@ def _cost_cell(row: dict[str, Any]) -> str:
     if summary:
         return format_cost(summary, digits=4).replace("$", "")
     if row["cost_usd"] is None:
-        return "미집계"
-    return f"{row['cost_usd']:.4f}" + (" + 미집계" if row.get("cost_known") is False else "")
+        return "비용 모름"
+    return f"{row['cost_usd']:.4f}" + (" + 비용 모름" if row.get("cost_known") is False else "")
 
 
 def _comparison_markdown(result: dict[str, Any]) -> str:
@@ -678,8 +758,8 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
         if ratio is None and row["cost_usd"] is not None and result.get("budget_usd"):
             ratio = float(row["cost_usd"]) / float(result["budget_usd"])
         # A ratio over a partly unaccounted cost is only a lower bound.
-        ratio_text = "미집계" if ratio is None else f"{'≥' if '미집계' in cost else ''}{ratio:.3f}"
-        cap = "미집계" if row["within_budget"] is None else "PASS" if row["within_budget"] else "FAIL"
+        ratio_text = "비용 모름" if ratio is None else f"{'≥' if '비용 모름' in cost else ''}{ratio:.3f}"
+        cap = "비용 모름" if row["within_budget"] is None else "PASS" if row["within_budget"] else "FAIL"
         pi_questions = "감지 가능" if row.get("pi_questions_observable") else "감지 불가·답변 미제공"
         structured = any(key in row for key in ("format_passed", "content_passed", "narrative_passed"))
         legacy_rows = legacy_rows or not structured
@@ -694,6 +774,16 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
                      f"{pi_questions} | "
                      f"{row.get('unscripted_approvals', 0)} | {row.get('budget_approvals', 0)} | {cost} | {ratio_text} | "
                      f"{cap} | {row['token_total']} | {row['duration_s']:.3f} |")
+    lines += ["", "## 재현 검증", "", *[
+        f"- {row['engine']}: {receipt_note(row.get('reproduction_verification') or receipt_summary(None))}"
+        for row in result["rows"]]]
+    lines += ['', '## 의미 장치 기여 비교 (저장된 기록만)', '']
+    for row in result['rows']:
+        lines += [f"### {row['engine']}", '',
+                  semantic_device_report.render_impact_metrics(row.get('semantic_impact_metrics'))]
+    lines += ["", "## Bench 기록 (저장된 관측만)", ""]
+    for row in result["rows"]:
+        lines += [f"### {row['engine']}", "", bench_metrics.render(row.get("bench_metrics"))]
     details = [f"- {row['engine']}: {format_cost(summary, digits=4)} {cost_detail(summary, digits=4)}"
                for row in result["rows"] if (summary := row.get("cost_summary") or {}).get("by_engine")
                and (len(summary["by_engine"]) > 1 or summary.get("estimated_usd") or summary.get("unknown_count"))]
@@ -781,8 +871,11 @@ async def rescore_case(case_id: str, output_root: Path, run_id: str | None = Non
             else:
                 row.update({key: checked[key] for key in (
                     "artifact_exists", "checks_passed", "format_passed", "content_passed",
-                    "narrative_passed", "format_detail", "content_detail", "check_output", "check")})
+                    "narrative_passed", "format_detail", "content_detail", "check_output", "check",
+                    "reproduction_verification")})
             row["run_id"] = run_dir.name
+            if "bench_metrics" not in row and "bench_metrics" in run:
+                row["bench_metrics"] = run["bench_metrics"]
             row["rescored_at"] = datetime.now(timezone.utc).isoformat()
             history = list(row.get("score_history") or [])
             if old is not None:
@@ -842,6 +935,11 @@ async def run_case(case_id: str, output_root: Path, engines: str = "real",
                    "duration_s": round(time.monotonic() - started, 3),
                    "error": f"{type(exc).__name__}: {exc}"}
         run["mode"] = engines
+        run.setdefault("reproduction_receipt", None)
+        verification = receipt_summary(run.get("reproduction_receipt"))
+        run["reproduction_verification"] = verification
+        if verification["present"]:
+            atomic_write_text(arm_dir / "reproduction_receipt.json", receipt_json(run["reproduction_receipt"]))
         if arm == "labhq":
             run["staff_model"] = dict(settings.bench.staff_model)
         else:
@@ -857,6 +955,145 @@ async def run_case(case_id: str, output_root: Path, engines: str = "real",
               "budget_usd": float(case["budget_usd"]), "mode": engines, "rows": rows}
     _write_comparison(case_dir, result)
     report_case(case_id, output_root, engines)
+    return result
+
+
+class MockTierCostControl:
+    """In-memory, single-control mock contract; never a provider billing guarantee.
+
+    Amounts use one caller-declared integer currency unit throughout. Verification
+    flags simulate trusted control/receipt verification, not provider authentication.
+    Share this instance across both arms, competing pairs and retries. Outstanding
+    reservations survive exceptions, cancellation and expiry; no timeout releases them.
+    """
+
+    def __init__(self, limit_units: int, *, valid_until: float, verified: bool = False,
+                 clock=time.monotonic):
+        if type(limit_units) is not int or limit_units < 0:
+            raise ValueError("cost control needs a nonnegative integer limit")
+        if type(valid_until) not in (int, float) or not math.isfinite(valid_until):
+            raise ValueError("cost control needs a finite validity deadline")
+        self._limit = limit_units
+        self._valid_until = valid_until
+        self._verified = verified is True
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._reservations: dict[str, dict[str, Any]] = {}
+        self._settled = 0
+        self._blocked = False
+
+    def _check(self):
+        if not self._verified or self._blocked:
+            raise ValueError("cost control is unverified or blocked")
+        try:
+            now = self._clock()
+            valid = type(now) in (int, float) and math.isfinite(now) and now < self._valid_until
+        except Exception as exc:
+            raise ValueError("cost control freshness is unverifiable") from exc
+        if not valid:
+            raise ValueError("cost control is stale")
+
+    def _outstanding(self) -> int:
+        return sum(r["bound"] for r in self._reservations.values() if r["charged"] is None)
+
+    def reserve_pair(self, worst_case_units: dict[str, int]) -> dict[str, str]:
+        """Atomically reserve BOTH arms before either can dispatch."""
+        if not isinstance(worst_case_units, dict) or set(worst_case_units) != {"reasoning", "balanced"}:
+            raise ValueError("both arms need known worst-case costs")
+        bounds = dict(worst_case_units)
+        if any(type(value) is not int or value < 0 for value in bounds.values()):
+            raise ValueError("worst-case costs must be nonnegative integer units")
+        with self._lock:
+            self._check()
+            if self._settled + self._outstanding() + sum(bounds.values()) > self._limit:
+                raise ValueError("aggregate cost limit exceeded")
+            ids = {tier: uuid4().hex for tier in bounds}
+            for tier, reservation_id in ids.items():
+                self._reservations[reservation_id] = {"bound": bounds[tier], "started": False,
+                                                       "charged": None}
+            return ids
+
+    def start(self, reservation_id: str):
+        """Consume a reservation once; retry dispatch needs a new reservation."""
+        with self._lock:
+            self._check()
+            reservation = self._reservations.get(reservation_id)
+            if reservation is None:
+                raise ValueError("unknown cost reservation")
+            if reservation["started"]:
+                raise ValueError("cost reservation already dispatched")
+            reservation["started"] = True
+
+    def settle(self, reservation_id: str, charged_units: int, *, verified: bool = False,
+               final: bool = False):
+        """Apply a simulated final receipt, even late. Identical redelivery is a no-op."""
+        if (verified is not True or final is not True or type(charged_units) is not int
+                or charged_units < 0):
+            raise ValueError("cost receipt must be verified, final and known in integer units")
+        with self._lock:
+            reservation = self._reservations.get(reservation_id)
+            if reservation is None or not reservation["started"]:
+                raise ValueError("receipt has no dispatched cost reservation")
+            previous = reservation["charged"]
+            if charged_units > reservation["bound"] or (previous is not None and previous != charged_units):
+                self._blocked = True
+                raise ValueError("cost receipt contradicts the bound or prior final receipt; control blocked")
+            if previous is None:
+                reservation["charged"] = charged_units
+                self._settled += charged_units
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {"mode": "mock", "limit_units": self._limit, "settled_units": self._settled,
+                    "outstanding_units": self._outstanding(), "blocked": self._blocked}
+
+
+async def run_fixed_tier_pair(output_root: Path, settings, models: dict[str, str],
+                              engines: str = "mock", *,
+                              cost_control: MockTierCostControl | None = None,
+                              worst_case_units: dict[str, int] | None = None) -> dict[str, Any]:
+    """Offline fixture only: provider-wide aggregate spending control is not yet available."""
+    if engines != "mock":
+        raise ValueError("live tier pair disabled: aggregate provider spending control is unverified")
+    if set(models) != {"reasoning", "balanced"} or any(not isinstance(v, str) or not v.strip()
+                                                         for v in models.values()):
+        raise ValueError("both reasoning and balanced model IDs are required")
+    if type(cost_control) is not MockTierCostControl:
+        raise ValueError("a verified mock cost control is required")
+    case = load_case("public-protein-qc")
+    root = Path(output_root).resolve()
+    if root.exists():
+        raise FileExistsError(root)
+    reservations = cost_control.reserve_pair(worst_case_units)
+    root.mkdir(parents=True, exist_ok=False)
+    # Persist IDs before dispatch so late mock receipts can be matched after interruption.
+    # This is evidence only, not a restartable ledger or permission to create a new control.
+    atomic_write_text(root / "cost-reservations.json", json.dumps(reservations, indent=2) + "\n")
+    rows = []
+    for tier in ("reasoning", "balanced"):
+        arm_dir = root / tier
+        arm_dir.mkdir()
+        arm_settings = settings.model_copy(deep=True)
+        arm_settings.orchestrator.step_model_tiers = True
+        arm_settings.model_tiers.reasoning = {"claude_code": models["reasoning"]}
+        arm_settings.model_tiers.balanced = {"claude_code": models["balanced"]}
+        plan = {"steps": [{"id": "s1", "agent_id": "analyst", "instruction": _prompt(case),
+                            "depends_on": [], "outputs": [], "model_tier": tier}]}
+        cost_control.start(reservations[tier])
+        run = await _run_labhq(case, arm_dir, engines, arm_settings, fixed_plan=plan)
+        receipt = run.get("mock_cost_receipt")
+        if receipt is not None:
+            if not isinstance(receipt, dict):
+                raise ValueError("invalid mock cost receipt")
+            cost_control.settle(reservations[tier], receipt.get("units"),
+                                verified=receipt.get("verified"), final=receipt.get("final"))
+        row = await _score(case, arm_dir, run)
+        rows.append({"tier": tier, "requested_model": models[tier], "run": run, "score": row,
+                     "cost_reservation": reservations[tier]})
+    result = {"case_id": case["id"], "mode": engines,
+              "notice": "Mock answers are fixtures, not model quality or cost measurements.", "rows": rows,
+              "cost_control": cost_control.snapshot()}
+    atomic_write_text(root / "pair.json", json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     return result
 
 

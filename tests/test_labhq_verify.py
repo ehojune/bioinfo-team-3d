@@ -39,6 +39,8 @@ async def _run(tmp_path: Path, monkeypatch, write, *, outputs: tuple[str, ...] =
     settings = _settings(tmp_path)
     if hash_max_bytes is not None:
         settings.runner.output_hash_max_bytes = hash_max_bytes
+        # Explicitly cap future-input hashing too; the missing/unrecorded assertions exercise this bound.
+        settings.runner.input_hash_max_file_bytes = hash_max_bytes
     runner = Runner(settings)
     agent = AgentSpec(id="analyst", name="Analyst", role="test", engine=Engine.claude_code, builtin_mcp=[])
     monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
@@ -128,14 +130,14 @@ async def test_deleted_output_without_a_recorded_hash_is_missing(tmp_path, monke
 
 
 async def test_declared_folder_output_is_present_while_it_holds_a_file(tmp_path, monkeypatch, capsys):
-    """The walker lists files only: a declared folder with a file under it is there; once removed it is missing."""
+    """A declared folder is collected as its hashed files (#1058): they verify, and once removed they are missing."""
     settings, result = await _run(tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/plots/volcano.png", BODY),
                                   outputs=("plots",))
-    assert result.outputs == ["outputs/plots"]
+    assert result.outputs == ["outputs/plots/volcano.png"]
 
     code, out = _verify(monkeypatch, capsys, settings, _request(result), "--json")
     assert code == 0, out
-    assert [(row["path"], row["status"]) for row in json.loads(out)["files"]] == [("outputs/plots", "unrecorded")]
+    assert [(row["path"], row["status"]) for row in json.loads(out)["files"]] == [("outputs/plots/volcano.png", "ok")]
 
     shutil.rmtree(Path(result.workdir) / "outputs" / "plots")
     code, out = _verify(monkeypatch, capsys, settings, _request(result), "--json")

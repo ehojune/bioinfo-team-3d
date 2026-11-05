@@ -13,10 +13,12 @@ import fnmatch
 import os
 import shutil
 import stat
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path, PurePath
 
+from .. import durable
 from .held_dir import HeldDir, NotPlainFolder
 
 # Folders labhq creates in a workspace and the files it writes there (TaskWorkspace, the adapters' prepare(), the
@@ -111,7 +113,45 @@ def _held_parent(root: Path, relative: PurePath):
 
 
 def write_owned(root: Path, relative: str, text: str) -> Path:
-    """Replace one labhq file in a workspace. A link at the file itself is replaced, not followed."""
+    """Replace one labhq file in a workspace. A link at the file itself is replaced, not followed.
+
+    While the files' durable writer (labhq.durable) has work queued this queues behind it, so it cannot overtake
+    a write; otherwise it writes directly. A coroutine uses `awrite_owned` instead, which does not stop
+    the event loop for the fsync (#606)."""
+    return durable.call(durable.FILES, _write_owned_now, root, relative, text)
+
+
+async def awrite_owned(root: Path, relative: str, text: str) -> Path:
+    """`write_owned` for a coroutine: the fsync runs on the durable writer thread, the caller resumes once the file
+    is replaced and its folder flushed, and the event loop serves other work meanwhile."""
+    return await durable.run(durable.FILES, _write_owned_now, root, relative, text)
+
+
+async def awrite_owned_bytes(root: Path, relative: str, data: bytes) -> Path:
+    """Binary counterpart used for a PI-uploaded file; it keeps the same link and atomic-write boundary."""
+    return await durable.run(durable.FILES, _write_owned_bytes_now, root, relative, data)
+
+
+def write_owned_bytes(root: Path, relative: str, data: bytes) -> Path:
+    """Synchronous binary write with the same held-parent and durable boundary."""
+    return durable.call(durable.FILES, _write_owned_bytes_now, root, relative, data)
+
+
+async def awrite_owned_many(root: Path, writes: list[tuple]) -> list[Path]:
+    """Several labhq files as ONE durable job, in order: a cancel cannot leave some of them written and the rest not.
+    A write is `(relative, text)`, or `(relative, text, False)` for a copy that is not worth an fsync of its own (see
+    `_write_owned_now`)."""
+    return await durable.run(durable.FILES, _write_owned_many_now, root, writes)
+
+
+def _write_owned_many_now(root: Path, writes: list[tuple]) -> list[Path]:
+    return [_write_owned_now(root, relative, text, *rest) for relative, text, *rest in writes]
+
+
+def _write_owned_now(root: Path, relative: str, text: str, sync: bool = True) -> Path:
+    """Replace one labhq file. `sync` False keeps the temporary file and the rename (the file is never half written)
+    but skips the fsync: for an alias of a file that is fsynced itself (#1154), so that a power cut can leave the alias
+    old or empty and never the only copy of anything."""
     rel = PurePath(relative)
     target = Path(root) / rel
     temporary = f".{rel.name}.labhq-{uuid.uuid4().hex}.tmp"
@@ -129,6 +169,37 @@ def write_owned(root: Path, relative: str, text: str) -> Path:
                     fd = -1
                     out.write(text)
                     out.flush()
+                    if sync:
+                        os.fsync(out.fileno())
+                parent.replace(temporary, rel.name)
+                if sync:
+                    parent.fsync()
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+                parent.unlink(temporary)
+    except OwnedPathError:
+        raise
+    except OSError as exc:
+        raise OwnedPathError(f"labhq does not write {rel.as_posix()}: {exc}") from exc
+    return target
+
+
+def _write_owned_bytes_now(root: Path, relative: str, data: bytes) -> Path:
+    rel = PurePath(relative)
+    target = Path(root) / rel
+    temporary = f".{rel.name}.labhq-{uuid.uuid4().hex}.tmp"
+    try:
+        with _held_parent(root, rel) as parent:
+            if os.path.lexists(target) and target.is_dir():
+                raise OwnedPathError(f"labhq does not write {rel.as_posix()}: a folder occupies it")
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+            fd = parent.open_file(temporary, flags, 0o666)
+            try:
+                with open(fd, "wb") as out:
+                    fd = -1
+                    out.write(data)
+                    out.flush()
                     os.fsync(out.fileno())
                 parent.replace(temporary, rel.name)
                 parent.fsync()
@@ -141,6 +212,23 @@ def write_owned(root: Path, relative: str, text: str) -> Path:
     except OSError as exc:
         raise OwnedPathError(f"labhq does not write {rel.as_posix()}: {exc}") from exc
     return target
+
+
+READ_RETRY = os.name == "nt"
+
+
+def _open_for_read(target: Path, *, attempts: int = 6, delay_s: float = 0.02) -> int:
+    """os.open for read. On Windows a file being replaced on the durable writer thread (#606) is refused for a
+    moment (a sharing violation, reported as PermissionError); wait it out instead of reading as "missing"."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    for attempt in range(1, attempts + 1):
+        try:
+            return os.open(target, flags)
+        except PermissionError:
+            if not READ_RETRY or attempt == attempts:
+                raise
+            time.sleep(delay_s)
+    raise AssertionError("unreachable")
 
 
 def read_owned(root: Path, relative: str) -> str | None:
@@ -157,7 +245,7 @@ def read_owned(root: Path, relative: str) -> str | None:
         target = current / rel.name
         if is_link(target) or not target.is_file():
             return None
-        fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+        fd = _open_for_read(target)
     except OSError:  # missing, or swapped for a link after the check (O_NOFOLLOW)
         return None
     with open(fd, encoding="utf-8") as source:

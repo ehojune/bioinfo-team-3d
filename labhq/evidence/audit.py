@@ -23,6 +23,7 @@ from typing import Any
 
 from .. import __version__
 from ..artifact_policy import unreported_warning_paths
+from ..report_format import split_appendix
 from .report_check import check_report
 
 OK, MISMATCH, MISSING, UNREADABLE, UNCHECKED, UNRECORDED = (
@@ -31,7 +32,7 @@ STATUS_ORDER = (OK, MISMATCH, MISSING, UNREADABLE, UNCHECKED, UNRECORDED)
 STATUS_KO = {OK: "일치", MISMATCH: "불일치", MISSING: "없음", UNREADABLE: "읽지 못함", UNCHECKED: "확인 못함",
              UNRECORDED: "기록된 해시 없음"}
 PROBLEM_STATUSES = frozenset({MISMATCH, MISSING, UNREADABLE, UNCHECKED})
-BUNDLE_FILES = ("README.md", "report.md", "report_appendix.md", "claims.json", "artifacts.json")
+BUNDLE_FILES = ("README.md", "report.md", "report_appendix.md", "execution_record.md", "claims.json", "artifacts.json")
 NO_FILES_LINE = "산출 파일 자체는 넣지 않았습니다(크기와 데이터 경계). 원본은 `artifacts.json`의 sha256으로 대조합니다."
 _SAFE_REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 
@@ -57,8 +58,8 @@ def _lexically_inside(path: str, root: Path) -> bool:
 def locate_workdir(root: Path, result: Mapping[str, Any]) -> tuple[Path | None, str | None]:
     """The step's work folder on this PC, inside ``runner.workspace_root``, or None and the reason.
 
-    A work folder is ``<root>/<YYYY-MM-DD>/<workdir_id>``. The recorded absolute path is tried first, then each
-    date folder; a link in the folder's place or a path that resolves outside the root is never used."""
+    Try the recorded path, legacy date folders, then task-bound HPC step folders. A repeated step name alone
+    cannot identify a request, so nested fallback requires a unique manifest containing the result's task."""
     workdir_id = result.get("workdir_id")
     # ':' would make `root / day / id` a drive-relative path on Windows.
     if (not isinstance(workdir_id, str) or workdir_id in ("", ".", "..")
@@ -77,10 +78,14 @@ def locate_workdir(root: Path, result: Mapping[str, Any]) -> tuple[Path | None, 
         candidates.append(Path(recorded))
     try:
         with os.scandir(root) as entries:
-            days = sorted(entry.name for entry in entries if entry.is_dir(follow_symlinks=False))
+            days = sorted(entry.name for entry in entries if entry.is_dir(follow_symlinks=False)
+                          and re.fullmatch(r"\d{4}-\d{2}-\d{2}", entry.name))
     except OSError:
         days = []
     candidates += [root / day / workdir_id for day in days]
+    if isinstance(result.get("task_id"), str) and _SAFE_REQUEST_ID.fullmatch(workdir_id):
+        candidates += list(root.glob(f"hpc/*/steps/{workdir_id}"))
+    found = set()
     for candidate in candidates:
         if not _is_plain_dir(candidate):
             continue
@@ -89,7 +94,30 @@ def locate_workdir(root: Path, result: Mapping[str, Any]) -> tuple[Path | None, 
         except (OSError, RuntimeError):
             continue
         if real != real_root and real.is_relative_to(real_root):
-            return real, None
+            from ..adapters.held_dir import HeldDir
+            try:
+                with contextlib.ExitStack() as stack:
+                    held = stack.enter_context(HeldDir.hold(root))
+                    parts = candidate.relative_to(root).parts
+                    for part in parts:
+                        held = stack.enter_context(held.child(part))
+                    if len(parts) == 4 and parts[0] == "hpc" and parts[2] == "steps":
+                        with os.fdopen(held.open_read_file("manifest.json"), "rb") as opened:
+                            manifest = json.loads(opened.read(8 * 1024 * 1024 + 1))
+                        task = manifest.get("task") or {}
+                        run = (manifest.get("runs") or {}).get(result.get("task_id"))
+                        if (not isinstance(run, dict) or task.get("request_id") != parts[1]
+                                or ((task.get("meta") or {}).get("step_id") or "direct") != parts[3]
+                                or run.get("request_id", task.get("request_id")) != parts[1]
+                                or (run.get("step_id") or (task.get("meta") or {}).get("step_id") or "direct") != parts[3]):
+                            continue
+                    found.add(real)
+            except (OSError, ValueError, TypeError, AttributeError):
+                continue
+    if len(found) == 1:
+        return found.pop(), None
+    if len(found) > 1:
+        return None, "작업 폴더 식별이 모호합니다(같은 task 기록이 여러 폴더에 있음)"
     return None, f"이 PC의 runner.workspace_root에 작업 폴더 {workdir_id}가 없습니다"
 
 
@@ -181,10 +209,12 @@ def rerun_report_check(req: Mapping[str, Any]) -> dict[str, Any] | None:
 async def _live_source_reports(req: Mapping[str, Any], settings: Any,
                                observed_artifacts: Mapping[str, Mapping[str, str]]) -> list[Any]:
     from ..research.contract import ResearchResult
+    from ..runner.lookup_admission import admission_for
     from .verify import LiveSourceResolver, verify_sources
 
     resolver = LiveSourceResolver(contact=settings.research.live_source_contact,
-                                  request_timeout_s=settings.research.live_source_timeout_s)
+                                  request_timeout_s=settings.research.live_source_timeout_s,
+                                  admission=admission_for(settings), request_id=str(req.get("id") or ""))
     scoped_artifacts = _live_observed_artifacts(req, observed_artifacts)
     parsed = [ResearchResult.model_validate(ledger) for ledger in research_ledgers(req).values()
               if isinstance(ledger, Mapping)]
@@ -254,6 +284,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     files: list[dict[str, Any]] = []
     reasons: list[str] = []
+    warnings: list[str] = []
     unreported: dict[str, list[str]] = {}
     scans: dict[str, tuple[list[dict[str, Any]], str | None]] = {}
     observed_artifacts: dict[str, dict[str, str]] = {}
@@ -330,10 +361,16 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
         if req.get("bundle_path") and not request_bundle["present"]:
             request_bundle["problems"].append("요청에 기록된 묶음 폴더가 없습니다")
         problems += [f"요청 묶음 사본: {problem}" for problem in request_bundle["problems"]]
+        if request_bundle["present"]:  # a figure the report links must be a file of the bundle (#584)
+            from ..report_figures import bundle_figure_check
+
+            request_bundle["figures"] = bundle_figure_check(root / "requests" / request_id)
+            problems += [f"보고서 그림: {problem}" for problem in request_bundle["figures"]["problems"]]
+            warnings += [f"보고서 그림 WARN: {warning}" for warning in request_bundle["figures"]["warnings"]]
     return {"request_id": req.get("id"), "text": req.get("text"), "status": req.get("status"),
             "outcome": req.get("outcome"), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "labhq_version": __version__, "files": files, "report_check": report_check,
-            "unreported_outputs": unreported, "problems": problems, "reasons": reasons,
+            "unreported_outputs": unreported, "problems": problems, "reasons": reasons, "warnings": warnings,
             "source_verification": [checked.model_dump(mode="json") for checked in source_reports],
             "request_bundle": request_bundle,
             "exit_code": 2 if reasons else 1 if problems else 0}
@@ -401,8 +438,13 @@ def render_verify(report: Mapping[str, Any]) -> str:
                 f"RO-Crate 없음(문제 {len(request_bundle['problems'])}건)"
                 if request_bundle["problems"] else "RO-Crate 없는 이전 형식"
             ))
+    figures = (request_bundle or {}).get("figures") or {}
+    if figures.get("linked") or figures.get("problems"):
+        lines.append(f"보고서 그림: 링크 {figures.get('linked', 0)}개, "
+                     + ("모두 묶음 안에 있음" if not figures.get("problems") else f"문제 {len(figures['problems'])}건"))
     if report.get("bundle"):
         lines.append(f"감사 번들: {report['bundle']}")
+    lines += [f"경고: {warning}" for warning in report.get("warnings") or []]
     lines += [f"확인 못함: {reason}" for reason in report["reasons"]]
     verdict = {0: "문제 없음", 1: f"문제 {len(report['problems'])}건", 2: "이 PC에서 끝까지 검사하지 못함"}
     lines.append(f"결과: {verdict[report['exit_code']]} (exit {report['exit_code']})")
@@ -437,9 +479,12 @@ def _bundle_readme(report: Mapping[str, Any]) -> str:
         lines += [f"파일 재해시는 러너 PC에서 `labhq verify {report.get('request_id')}`를 실행하세요.", ""]
     if report["problems"]:
         lines += ["## 문제", "", *[f"- {problem}" for problem in report["problems"]], ""]
+    if report.get("warnings"):
+        lines += ["## 경고", "", *[f"- {warning}" for warning in report["warnings"]], ""]
     lines += ["## 파일", "",
               "- `report.md`: PI용 본문(이 본문을 claim anchor 검사)",
-              "- `report_appendix.md`: 단계·경고·리뷰·비용 실행 기록",
+              "- `report_appendix.md`: 과학 부록(점검표·리뷰·가정)",
+              "- `execution_record.md`: 단계·경고·비용 운전 기록",
               "- `claims.json`: 단계 ledger, CP2 receipt(`artifact_sha256` 포함), 보고서 앵커 검사(기록과 다시 돌린 결과)",
               "- `artifacts.json`: 산출 파일마다 경로·크기·기록 sha256·지금 sha256·상태·만든 직원·task", ""]
     return "\n".join(lines)
@@ -478,9 +523,13 @@ def bundle_bytes(report: Mapping[str, Any], req: Mapping[str, Any]) -> bytes:
                  for row in report["files"]]
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as bundle:
+        appendix, legacy_execution = split_appendix(str(req.get("report_appendix") or ""))
+        execution = "\n\n".join(
+            part for part in (str(req.get("execution_record") or ""), legacy_execution) if part)
         bundle.writestr("README.md", _bundle_readme(report))
         bundle.writestr("report.md", str(req.get("report") or ""))
-        bundle.writestr("report_appendix.md", str(req.get("report_appendix") or ""))
+        bundle.writestr("report_appendix.md", appendix)
+        bundle.writestr("execution_record.md", execution)
         bundle.writestr("claims.json", json.dumps(claims, ensure_ascii=False, indent=2, default=str))
         bundle.writestr("artifacts.json", json.dumps(artifacts, ensure_ascii=False, indent=2))
     return stream.getvalue()

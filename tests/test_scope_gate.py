@@ -114,7 +114,7 @@ async def test_out_asks_before_any_step_and_proceed_runs_the_received_plan():
     assert len(kinds(hub, "plan")) == 1 and step_ids(hub) == ["A", "B"]  # no re-plan
     assert req["status"] == "done" and req["scope_check"]["decision"] == "proceed"
     assert "Scope verdict" not in req["report"]
-    assert f"Scope verdict: out; {REASON} PI decision: proceed." in req["report_appendix"]
+    assert f"Scope verdict: out; {REASON} PI decision: proceed." in req["execution_record"]
 
 
 @pytest.mark.asyncio
@@ -146,7 +146,7 @@ async def test_borderline_runs_and_leaves_one_report_line():
     req = hub.requests["r"]
     assert hub.approvals == [] and step_ids(hub) == ["A", "B"] and req["status"] == "done"
     assert "Scope verdict" not in req["report"]
-    lines = [line for line in req["report_appendix"].splitlines() if line.startswith("Scope verdict:")]
+    lines = [line for line in req["execution_record"].splitlines() if line.startswith("Scope verdict:")]
     assert lines == [f"Scope verdict: borderline; {REASON}"]
 
 
@@ -158,7 +158,7 @@ async def test_in_or_a_plan_without_a_verdict_runs_as_before(verdict):
     req = hub.requests["r"]
     assert hub.approvals == [] and step_ids(hub) == ["A", "B"] and req["status"] == "done"
     assert "Scope verdict" not in req["report"]
-    assert "Scope verdict" not in req["report_appendix"]
+    assert "Scope verdict" not in req["execution_record"]
     assert req.get("scope_check", {}).get("verdict") == verdict
 
 
@@ -197,6 +197,31 @@ async def test_restart_during_the_card_asks_again_from_the_stored_plan_and_runs_
     assert [a["kind"] for a in hub.approvals] == ["scope", "scope"]
     assert len(kinds(hub, "plan")) == 1 and step_ids(hub) == ["A", "B"]
     assert req["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_restart_during_scope_card_binds_environment_before_dispatch(monkeypatch):
+    env_steps = [
+        {"id": "env", "agent_id": "worker", "instruction": "install", "outputs": [cso.ENV_LOCK_OUTPUT], "depends_on": []},
+        {"id": "analysis", "agent_id": "worker", "instruction": "run", "outputs": [], "depends_on": ["env"]},
+    ]
+    monkeypatch.setattr(__import__(__name__, fromlist=["STEPS"]), "STEPS", env_steps)
+    monkeypatch.setattr(Orchestrator, "_prepare_runner_environments",
+                        lambda self, steps: cso.split_runner_environments(
+                            steps, {"worker": "wsl"}, {"wsl": "wsl"}, lambda _: True))
+    hub = Hub(decision="hang")
+    first = asyncio.create_task(Orchestrator(hub).run_request("r"))
+    await asyncio.wait_for(hub.asked.wait(), 5)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert not any("environment_binding" in s for s in hub.requests["r"]["plan"]["steps"])
+    hub.decision = {"approved": True}
+    await Orchestrator(hub).run_request("r", resume=True)
+    saved = hub.requests["r"]["plan"]["steps"]
+    assert saved[0]["environment_binding"]["runner_id"] == "wsl"
+    assert saved[1]["environment_bindings"] == [saved[0]["environment_binding"]]
+    assert kinds(hub, "step")[0].meta["session_runner"] == "wsl"
 
 
 @pytest.mark.parametrize("decision, steps", [("proceed", ["A", "B"]), ("declined", [])])
