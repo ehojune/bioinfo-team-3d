@@ -10,6 +10,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-04
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 11:30 | [`2a8ca6c`](https://github.com/ehojune/bioinfo-team-3d/pull/1268/commits/2a8ca6c) | **일찍 끝난 승인 작업의 예외도 진단에 담습니다.**<br>시험: action 완료·취소 상태와 예외를 출력한다 (#1076) |
+| 11:24 | [`d11c68c`](https://github.com/ehojune/bioinfo-team-3d/pull/1268/commits/d11c68c) | **시험 정리 작업이 지연 진단을 무기한 막지 않게 했습니다.**<br>시험: cleanup task 대기에 시간 제한을 둔다 (#1076) |
+| 11:15 | [`295283d`](https://github.com/ehojune/bioinfo-team-3d/pull/1268/commits/295283d) | **송신이 시작되지 않은 경우에도 지연 진단을 남깁니다.**<br>시험: send 진입 대기 timeout에도 task와 timer 상태를 출력한다 (#1076) |
+| 11:10 | [`25c8754`](https://github.com/ehojune/bioinfo-team-3d/pull/1268/commits/25c8754) | **승인 응답 시험이 지연될 때 어느 단계에서 멈췄는지 확인할 수 있게 했습니다.**<br>시험: 송신 취소·timer·task·lock·publish 진단과 publish barrier 회귀 추가 (#1076); 기존 실패 원인은 미확인 |
+| 10:42 | [`9bbc66e`](https://github.com/ehojune/bioinfo-team-3d/pull/1080/commits/9bbc66e) | **Windows 검사 목록을 최신 변경과 함께 유지합니다.**<br>Merge main and preserve Windows boundary test inventory |
+
 ## 2026-11-02
 
 | 시간 | 커밋 | 주요 변경사항 |
@@ -270,7 +280,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 14:40 | [`11c87ec`](https://github.com/ehojune/bioinfo-team-3d/pull/1146/commits/11c87ec) | **취소가 프로세스를 끝내는 도중에도 폴링이 작업을 완료로 잘못 기록하지 않습니다.**<br>로컬 job을 끝내는 동안(kill이 반환되기 전부터) 그 job을 끝내는 중으로 표시해, 그 사이에 읽은 낡은 상태가 job을 끝난 것으로 만들지 못하게 했다. kill이 성공하든 실패하든 같다 (#1144 리뷰 P1). |
 | 14:27 | [`b50bf20`](https://github.com/ehojune/bioinfo-team-3d/pull/1171/commits/b50bf20) | **이미 끝난 요청에 늦게 도착한 작업 시작 이벤트가 직원 상태와 작업 목록을 되살리지 못하게 한 곳에서 막았습니다.**<br>끝난 요청이 일을 새로 시작하거나 붙잡는 이벤트를 받지 않는 규칙을 apply() 입구 한 곳으로 모은다 (#1170). |
 | 14:20 | [`9ab45f7`](https://github.com/ehojune/bioinfo-team-3d/pull/1160/commits/9ab45f7) | **Claude 직원에게 미리 허용돼 있던 git clone·unzip·curl 같은 규칙도 이제 gate를 거쳐 디스크 여유 확인을 받습니다.**<br>사전 승인된 다운로드·압축 해제 규칙을 allowedTools에서 빼 gate의 디스크 확인을 받게 한다 (#678 리뷰 P1) |
+| 14:11 | [`427807f`](https://github.com/ehojune/bioinfo-team-3d/pull/1080/commits/427807f) | **ASCII 출력 환경에서도 fixture 계획 오류를 JSON으로 반환합니다.**<br>Preserve fixture JSON on legacy output encodings |
 | 14:10 | [`11471ae`](https://github.com/ehojune/bioinfo-team-3d/pull/1161/commits/11471ae) | **쓰기 문구를 해석하다 놓치던 변형을 없애고 계획이 labhq 기록 이름을 직원에게 맡기지 못하게 합니다.**<br>instruction에 예약 이름이 나오면 읽기·보고·쓰기를 가리지 않고 모두 거절하고, 앞 단계 산출물 경로(inputs/<단계>/outputs/<이름>)만 허용한다. 쓰기 동사를 해석하는 휴리스틱(_tells_staff_to_write 등)은 뺀다. 리뷰가 같은 부류의 변형(쓰기 동사와 목적지 사이의 출처 경로)을 또 짚어 구조로 닫는다. 파일명 경계 수정은 그대로다 |
+| 14:06 | [`8e7e601`](https://github.com/ehojune/bioinfo-team-3d/pull/1080/commits/8e7e601) | **fixture 계획의 offline 검사와 보호 검증 한계를 manual에 안내합니다.**<br>Explain offline fixture plan checks |
 | 14:00 | [`6509567`](https://github.com/ehojune/bioinfo-team-3d/pull/1146/commits/6509567) | **취소가 프로세스를 다 끝내지 못했을 때도 폴링이 작업을 끝난 것으로 잘못 기록해 살아 있는 프로세스를 놓치는 일이 없습니다.**<br>취소의 kill이 실패해 cancel_requested만 설정된 job도 낡은 상태 읽기가 끝난 것으로 만들지 않게, 가드를 terminal 또는 cancel_requested로 넓히고 시험을 더했다 (#1144 리뷰 P1). |
 | 14:00 | [`3249d98`](https://github.com/ehojune/bioinfo-team-3d/pull/1118/commits/3249d98) | **느린 Windows 러너에서 재개 시험이 대기 한도 때문에 실패하던 간헐 실패(#1076, 5회)를 막습니다.**<br>tests/test_state.py의 고정 횟수 대기(range 50~500 × sleep 0.01, 이론상 0.5~5초이고 Windows 타이머 해상도로는 더 김) 12곳을 시간 기준 helper(wait_until, wait_until_sync, 10초 한도, 조건이 서면 즉시 탈출)로 바꾼다. 단언과 시험 의도는 그대로이고, helper의 동작을 확인하는 시험 한 건을 더한다 |
 | 13:50 | [`c74af4e`](https://github.com/ehojune/bioinfo-team-3d/pull/1160/commits/c74af4e) | **디스크 확인이 tar의 모든 추출 표기와 git clone·fasterq-dump·aws·rsync가 쓰는 폴더도 읽습니다.**<br>tar의 모든 추출 표기와 git clone·bulk 도구의 대상 폴더를 읽는다 (#678 리뷰 P1) |
@@ -434,6 +446,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 20:51 | [`a3b1843`](https://github.com/ehojune/bioinfo-team-3d/pull/1087/commits/a3b1843) | **결과 폴더가 정리본에서 다른 위치로 옮겨지는 점까지 감안해 그런 스크립트를 그대로 실행되는 것으로 세지 않고, 스크립트가 빠진 이유를 한 가지로 단정하지 않게 했습니다.**<br>fix: 선언 outputs/ 경로를 쓰는 스크립트도 정리본만으로는 실행 불가로 분류하고 생략 사유를 단정하지 않음 (#792 리뷰) |
 | 20:44 | [`02fa9e6`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/02fa9e6) | **요청 전체 시간 상한 설정의 범위·고정 시점·PI 대기 처리·취소 기록을 한·영 조회 문서로 정리하고 README에서 링크했습니다.**<br>docs: 요청 전체 시간 상한 조회 문서(한·영)와 README 링크 (#877) |
 | 20:44 | [`dd81100`](https://github.com/ehojune/bioinfo-team-3d/pull/1094/commits/dd81100) | **저장된 선행 본문을 읽고 쓴 요청이 "조회 기록 없음"으로 표시되던 것을 실제 읽은 수준으로 바로잡을 재료가 생깁니다(호출 연결은 다음 단계).**<br>결론 근거 논문 표시와 문헌 접근 원장 줄이 선행 검색이 저장한 본문·초록 영수증(stored_access)을 별칭까지 합쳐 인정하고 출처를 함께 적는다(인자가 비면 기존 줄 그대로) |
+| 20:43 | [`0d2f46d`](https://github.com/ehojune/bioinfo-team-3d/pull/1080/commits/0d2f46d) | **fixture 계획 검사를 Windows CI inventory에 등록합니다.**<br>Register fixture plan test in Windows inventory |
 | 20:42 | [`c65931e`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/c65931e) | **PI 카드를 기다린 시간을 정확히 기한에 더하고, 시간 상한으로 취소한 요청의 보고서가 PI가 취소한 것처럼 적히던 것을 고쳤습니다. 취소 도중 gateway가 꺼져도 기한 기록이 남습니다.**<br>fix: waiting_pi를 전환 시각으로 정산하고 기한 취소 보고서·복구 영수증을 고친다 (#877) |
 | 20:40 | [`53e7455`](https://github.com/ehojune/bioinfo-team-3d/pull/1091/commits/53e7455) | **CSO와 직원에게 요청의 조회 사용량을 보여 줄 재료가 생깁니다(prompt 연결은 다음 단계).**<br>LookupAdmission.usage(request_id)와 usage_note를 더해 요청의 공개 조회 사용량·남은 횟수·담당별 소진을 사실값으로 내고, 상한이 꺼졌거나 읽지 못하면 0 대신 UNKNOWN으로 표시한다 |
 | 20:38 | [`4b5da2e`](https://github.com/ehojune/bioinfo-team-3d/pull/1087/commits/4b5da2e) | **스크립트가 입력 폴더를 읽는지 알아보는 방법을 경로 모양별이 아니라 입력 폴더 이름 하나를 찾는 방식으로 바꿔 윈도 경로도 놓치지 않게 했습니다.**<br>fix: 작업공간 입력 감지를 경로 모양이 아니라 단어 inputs 기준으로 일반화 (#792 리뷰 P1) |
@@ -445,7 +458,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 20:07 | [`a168e81`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/a168e81) | **요청 하나가 설정한 시간 상한을 넘으면 gateway가 그 요청을 취소하고 기록을 남깁니다. 설정은 기본으로 꺼져 있고, PI 카드를 기다린 시간은 기한에 더해지며 보고서 검토 단계부터는 끊지 않습니다.**<br>feat: 요청 전체 벽시계 상한을 gateway가 집행한다 (#877) |
 | 20:07 | [`65fce80`](https://github.com/ehojune/bioinfo-team-3d/pull/1085/commits/65fce80) | **패키지에 들어 있는 예시 설정 파일에도 새 설정 설명을 넣어 두 사본을 맞췄습니다.**<br>fix: 패키지 안 예시 설정에 같은 줄을 넣어 두 사본을 맞춘다 (#877) |
 | 20:00 | [`70374f6`](https://github.com/ehojune/bioinfo-team-3d/pull/1081/commits/70374f6) | **시설팀 문의부터 원 단계 복구까지 상태와 증거를 구분합니다.**<br>시설팀 복구 상태 계약과 격리 mock 회귀를 정리합니다 (#983). |
+| 19:57 | [`1d25e0c`](https://github.com/ehojune/bioinfo-team-3d/pull/1080/commits/1d25e0c) | **principal 이름의 공백 차이로 역할 중복을 놓치지 않습니다.**<br>Normalize fixture principals for separation (#1079) |
 | 19:55 | [`bce1707`](https://github.com/ehojune/bioinfo-team-3d/pull/1083/commits/bce1707) | **매뉴얼의 결과 저장 설명을, 보고서 검토를 기다리는 요청은 먼저 검토를 마쳐야 GitHub로 옮길 수 있다는 현재 동작에 맞췄습니다.**<br>docs: manual 한·영 저장 절을 검토 대기 요청의 --to github 거절 흐름에 맞춤 (#1077) |
+| 19:54 | [`bb04cc8`](https://github.com/ehojune/bioinfo-team-3d/pull/1080/commits/bb04cc8) | **날짜만 적힌 만료 시각을 검토 오류로 반환합니다.**<br>Reject date-only fixture expiry (#1079) |
+| 19:49 | [`f2d31c9`](https://github.com/ehojune/bioinfo-team-3d/pull/1080/commits/f2d31c9) | **실제 VM을 만들기 전 fixture 계획의 누락과 충돌을 검사합니다.**<br>Add offline fixture plan preflight (#1079) |
 | 19:36 | [`12f24f0`](https://github.com/ehojune/bioinfo-team-3d/pull/1078/commits/12f24f0) | **안내서의 검토 명령에도 보고서 카드에 적힌 번호와 확인값을 넣어야 한다는 점을 적었습니다.**<br>docs: README·status의 review-done 명령에 CP4가 요구하는 revision·hash를 적음 (#1077 리뷰 P2) |
 | 19:26 | [`ae942ab`](https://github.com/ehojune/bioinfo-team-3d/pull/1082/commits/ae942ab) | **Windows 시험 단계가 시간 상한에 걸려 끊겨도 어느 시험이 돌고 있었는지 기록이 남습니다.**<br>Windows pool 단계에 --ci-stall을 켜고 stack snapshot 간격을 CI_STALL_INTERVAL_S(기본 300, Windows 150초)로 정해, 9분에 끊긴 순간의 worker별 시험을 artifact에 남긴다 |
 | 19:25 | [`d91565c`](https://github.com/ehojune/bioinfo-team-3d/pull/1078/commits/d91565c) | **안내하는 검토 명령에 보고서 카드에 적힌 번호와 확인값을 함께 넣어야 한다는 점까지 적었습니다.**<br>fix: review-done 안내에 CP4가 요구하는 --revision과 --sha256을 함께 적음 (#1077 리뷰 P2) |

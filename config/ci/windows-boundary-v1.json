@@ -42,6 +42,7 @@
     "tests/test_bioinfo_pipeline_pr.py",
     "tests/test_bioinfo_plugin.py",
     "tests/test_blind_draft_889.py",
+    "tests/test_boundary_fixture_plan.py",
     "tests/test_boundary_observer.py",
     "tests/test_boundary_probe.py",
     "tests/test_boundary_wiring_666.py",
