@@ -50,28 +50,43 @@ _ASSIGNMENT = re.compile(
     r"(?im)\b((?:api[_-]?key|token|password|secret)\s*[:=]\s*)"
     r"(?!<redacted-secret>|&lt;redacted-secret&gt;|\[REDACTED\])[^\s,;<]+"
 )
-# In code a secret is a literal value: a quoted string, a long number, or a bare word in a shell script. An
-# expression, call or lookup on the right of `token =` holds no secret, and rewriting it breaks the script (#1278).
+# In code a secret is a literal value: a quoted string (single, triple, or several joined by `+` or by whitespace), a
+# whole-line number, or a bare word in a shell script. An expression, call or lookup on the right of `token =` holds
+# no secret, and rewriting it breaks the script (#1278).
 _CODE_SECRET_NAME = (r"\b(?:api[_-]?key|token|password|secret)[\"']?"
                      r"(?:\s*:\s*[A-Za-z_][\w.\[\], |]*?)?\s*(?:<-|[:=])\s*")
+_STRING_LITERAL = (r"[rbuf]{0,2}(?:\'\'\'[\s\S]*?\'\'\'|\"\"\"[\s\S]*?\"\"\""
+                   r"|\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*')")
 _CODE_SECRET_LITERAL = re.compile(
     r"(?im)(?P<name>" + _CODE_SECRET_NAME + r")(?:"
-    r"(?P<pre>[rbuf]{0,2})(?P<q>[\"'])(?P<text>(?:(?!(?P=q))[^\\\n]|\\.)+)(?P=q)"
-    r"|(?P<number>\d{6,}[\w.]*)(?![\w.(\[])"
+    r"(?P<paren>\(\s*)?(?P<strings>" + _STRING_LITERAL + r"(?:(?:\s*\+\s*|\s+)" + _STRING_LITERAL + r")*)(?P<close>\s*\))?"
+    r"|(?P<number>[+-]?(?:0[xXoObB][0-9a-fA-F_]{6,}|\d[\d_]{5,}(?:\.\d+)?(?:[eE][+-]?\d+)?)[jJlL]?)"
+    r"(?=\s*(?:[;#,)}\]]|$))"
     r"|(?P<word>(?![$\"'`])[^\s\"'`$;|&()<>={}\[\],]+))")
 _REDACTED_VALUES = ("<redacted-secret>", "&lt;redacted-secret&gt;", "[REDACTED]")
+_STRING_PIECE = re.compile(r"(?P<pre>[rbuf]{0,2})(?P<q>\'\'\'|\"\"\"|\"|')(?P<text>[\s\S]*?)(?P=q)\Z")
+
+
+def _string_parts(strings: str):
+    """The (prefix, quote, text) of each literal in a `+` or whitespace joined run of strings."""
+    pieces = re.findall(_STRING_LITERAL, strings)
+    return [m.groupdict() for m in map(_STRING_PIECE.match, pieces) if m]
 
 
 def _code_secret_literals(text: str, suffix: str):
     """The matches of `_CODE_SECRET_LITERAL` that hold a real literal (a bare word counts only in a shell script)
-    and are not already redacted."""
+    and are not already redacted or empty."""
     for match in _CODE_SECRET_LITERAL.finditer(text):
-        if match.group("word") is not None and suffix != ".sh":
+        if match.group("strings") is not None:
+            value = "".join(part["text"] for part in _string_parts(match.group("strings")))
+        elif match.group("number") is not None:
+            value = match.group("number")
+        elif suffix == ".sh":
+            value = match.group("word")
+        else:
             continue
-        value = match.group("text") or match.group("number") or match.group("word")
-        if value.startswith(_REDACTED_VALUES):
-            continue
-        yield match
+        if value and not value.startswith(_REDACTED_VALUES):
+            yield match
 
 
 def _redact_code_literals(text: str, suffix: str) -> str:
@@ -79,8 +94,10 @@ def _redact_code_literals(text: str, suffix: str) -> str:
     out, last = [], 0
     for match in _code_secret_literals(text, suffix):
         out.append(text[last:match.start()])
-        if match.group("text") is not None:
-            out.append(f'{match.group("name")}{match.group("pre")}{match.group("q")}<redacted-secret>{match.group("q")}')
+        if match.group("strings") is not None:
+            first = _string_parts(match.group("strings"))[0]
+            quoted = f'{first["pre"]}{first["q"]}<redacted-secret>{first["q"]}'
+            out.append(f'{match.group("name")}{match.group("paren") or ""}{quoted}{match.group("close") or ""}')
         else:
             out.append(f'{match.group("name")}"<redacted-secret>"')
         last = match.end()

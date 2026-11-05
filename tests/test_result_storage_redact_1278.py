@@ -68,3 +68,26 @@ def test_already_redacted_code_is_not_flagged_and_prose_keeps_its_rule():
     assert scan_publish_files({"README.md": 'token = "<redacted-secret>"\n'}) == []
     assert scan_publish_files({"README.md": "token = abc123xyz789\n"}) == [{"kind": "secret", "path": "README.md"}]
     assert scan_publish_files({NAME: 'API_KEY = "abc123xyz789"\n'}) == [{"kind": "secret", "path": NAME}]
+
+
+@pytest.mark.parametrize("line,leaked", [
+    ('token = """hunter2xyz"""', "hunter2xyz"),
+    ("password = '''line1\nhunter2xyz'''", "hunter2xyz"),
+    ('token = ("hunter2xyz")', "hunter2xyz"),
+    ('token = ("part1abc" "part2xyz")', "part2xyz"),
+    ('secret = "part1abc" + "part2xyz"', "part2xyz"),
+    ("password = -12345678", "12345678"),
+    ("secret = 0x123456789abcdef", "123456789abcdef"),
+    ("token = 1_234_567_890", "234_567"),
+])
+def test_every_python_literal_form_is_hidden(line, leaked):
+    cleaned = _clean(f"{line}\n")
+    assert leaked not in cleaned and "redacted-secret" in cleaned
+    assert code_syntax_issues({NAME: cleaned}) == []
+    assert scan_publish_files({NAME: cleaned}) == []
+    assert scan_publish_files({NAME: line + "\n"}) == [{"kind": "secret", "path": NAME}]
+
+
+def test_a_number_inside_an_expression_is_not_a_literal_secret():
+    code = "token = 12345678 + offset\n"
+    assert _clean(code) == code
