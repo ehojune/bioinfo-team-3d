@@ -47,3 +47,13 @@ def test_doctor_fails_the_login_row_when_status_passes_but_the_login_cannot_refr
     if status == "fail":
         assert "/login" in login["hint"] and "refresh" in login["detail"]
         assert "accessToken" not in json.dumps(seen) and str(staff) not in json.dumps(seen)
+
+
+@pytest.mark.parametrize("raw,active", [
+    ('{"loggedIn": true, "authMethod": "claude.ai"}', True),
+    ('{"loggedIn": true, "authMethod": "api_key"}', False),  # an old OAuth file does not matter when a key is in use
+    ('{"loggedIn": true, "authMethod": "oauth_token", "apiProvider": "firstParty"}', False),
+    ('{"loggedIn": true}', True), ("", True), ("Logged in using claude.ai", True), ("[]", True),
+])
+def test_the_saved_login_file_is_checked_only_when_it_is_the_active_source(raw, active):
+    assert doctor._saved_oauth_is_active(raw) is active

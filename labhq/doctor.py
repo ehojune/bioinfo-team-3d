@@ -802,6 +802,17 @@ def claude_session_expired(env: Mapping[str, str], now: float | None = None) -> 
             and not (isinstance(oauth.get("refreshToken"), str) and oauth["refreshToken"]))
 
 
+def _saved_oauth_is_active(raw: str) -> bool:
+    """False only when `claude auth status` names another source (an API key, a token, Bedrock/Vertex): then an old
+    OAuth file in the folder is not what the staff turn signs in with. Unreadable output keeps the file check."""
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        return True
+    method = payload.get("authMethod") if isinstance(payload, dict) else None
+    return not isinstance(method, str) or method == "claude.ai"
+
+
 def _login_evidence(code: int | None, raw: str) -> str:
     """Keep unavailable status separate from an explicit signed-out result; never publish raw auth output."""
     if code is None:
@@ -1045,7 +1056,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             code, auth_raw = _probe([*resolved, *LOGIN[name]], env)
             login_codes[name] = code
             login_evidence[name] = _login_evidence(code, auth_raw)
-            if name == "claude_code" and code == 0 and claude_session_expired(env):
+            if name == "claude_code" and code == 0 and _saved_oauth_is_active(auth_raw) and claude_session_expired(env):
                 login_evidence[name] = "blocked"
                 rows.append(_row("login", name, "fail", "status command succeeded, but the saved login can no longer refresh",
                                  f"Sign in again: {claude_login_command(os.name == 'nt')}"))
