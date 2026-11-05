@@ -49,7 +49,10 @@ Still frames: [2.5D](docs/media/office-25d.png) · [3D](docs/media/office-3d.png
 - If the team lacks a method, a paper or its code is turned into an agent with [Paper2Agent](https://github.com/jmiao24/Paper2Agent) and hired as a **contractor**.
 - When a job is submitted to HPC (SGE, PBS, Slurm), the staff session rests until the job ends, then resumes the same session.
 - The CSO asks only about permissions, cost, data access, choices only the PI knows (disease, cohort), and analysis depth. It decides the rest of the design itself and records it as **assumptions** in the plan and report.
-- Each step leaves a record in its work folder: instructions, outputs, engine, and cost.
+- A research step's result can hold only the claims in the `claim_ids` the plan declared for it, and a result-correction request states that list.
+- When a continuation reuses steps of a request that cites DOI or PMID references, only the identifiers were pinned, so the card and the report say "content not checked" in one line.
+- If a research request still waiting in the report review is moved to GitHub (`labhq storage <id> --to github`), the refusal now says to run `labhq review-done <id> --revision <number> --sha256 <hash>` first, with the numbers on the report card; adding `--storage github` to that command does the review and the storage choice in one step.
+- Each step leaves a record in its work folder: instructions, outputs, engine, and cost. A declared output folder is collected as its files, each with a hash; a folder with no hashed file, or with more than 200 files, ends the step incomplete.
 
 ## Four things labhq works hard on
 
@@ -123,7 +126,7 @@ Limits: the limit/login-wait fixes have only test evidence and re-login needs a 
 \* The default reviewer is Codex/GPT-6-Astra: another vendor for Claude analysis and the same vendor for Codex analysis. Workbench features came from documentation; the app was not run.
 
 **Fits**: handing over evidence and reproduction materials, or approving long analyses from the web or phone.
-**Remaining gaps**: standalone Astra led on total score and speed in the earlier blind bench. Reproduction materials and report length have since changed; a new comparison is pending. The optional solo route skips review by default. [Conditions, scores, and limits](docs/reference/readme-evidence.md#comparison-evidence)
+**Remaining gaps**: standalone Astra led on total score and speed in the earlier blind bench. Reproduction materials and report length have since changed, and the published README now states real limits, what each figure shows, how to run, and seeds; a new comparison is pending. The optional solo route skips review by default. [Conditions, scores, and limits](docs/reference/readme-evidence.md#comparison-evidence)
 
 ## Example: analyzing public lung adenocarcinoma data
 
@@ -229,6 +232,8 @@ Details are in [Safety measures](docs/manual.en.md#safety-measures).
 | v1.25 | Goes beyond research to write papers |
 
 Each version has pass criteria, and meeting them moves it on to the next version. Features merged since the v0.5 declaration passed tests and CI; their behavior and scientific benefit on real research requests remain unverified. The criteria, current status, and remaining work are in the [manual's roadmap](docs/manual.en.md#roadmap).
+
+The wall-clock limit for a whole request (`orchestrator.request_wall_clock_s`, off by default) is described in [Request wall-clock limit](docs/reference/request-deadline.en.md). No real request with the limit on has been run yet.
 
 Facilities support requirements and readiness evidence are distinguished in the [support policy table](docs/reference/facilities-support-983.md) (Korean). A doctor readiness result does not prove that a support request or recovery succeeded.
 

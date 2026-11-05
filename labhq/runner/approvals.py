@@ -67,11 +67,11 @@ class Broker:
         return f"http://127.0.0.1:{self.port}"
 
     def issue_task_token(self, task_id: str, agent_id: str, request_id: str | None, *,
-                         workdir: str | None = None, restricted: bool = False) -> str:
+                         workdir: str | None = None, restricted: bool = False, stage: str | None = None) -> str:
         token = secrets.token_urlsafe(24)
         # Always present, so a caller's body can never clear it: identity values override the body (#424).
         self.identities[token] = {"task_id": task_id, "agent_id": agent_id, "request_id": request_id,
-                                  "source_workdir": workdir, "source_restricted": restricted}
+                                  "source_workdir": workdir, "source_restricted": restricted, "stage": stage}
         return token
 
     def revoke_task_token(self, token: str) -> None:
@@ -136,7 +136,7 @@ class Broker:
                 raise HTTPException(409, "public lookup limit is not configured on this runner")
             return await asyncio.to_thread(self.lookup_admission.admit, identity["request_id"],
                                            identity["task_id"], identity["agent_id"], body.get("tool"),
-                                           body.get("host"))
+                                           body.get("host"), stage=identity["stage"])
 
         @app.post("/lookup/finish")
         async def lookup_finish(body: dict, x_labhq_token: str = Header(default="")) -> dict:
@@ -213,7 +213,14 @@ class Broker:
             return terminal(ask_result(reason="ask routing is unavailable"))
         fut = asyncio.get_running_loop().create_future()
         self.pending_asks[req.id] = fut
-        await self._on_ask(req)
+        try:
+            await self._on_ask(req)
+            if fut.done():  # answered while the ask was still being handed over (#1168)
+                self.pending_asks.pop(req.id, None)
+                return terminal(fut.result())
+        except BaseException:
+            self.pending_asks.pop(req.id, None)
+            raise
         target = "colleague" if req.to.startswith("colleague:") else req.to
         if target == "pi" and hard_stop_kind(req) is None:
             target = "cso"

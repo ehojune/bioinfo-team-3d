@@ -175,6 +175,8 @@ async def test_failed_branch_blocks_only_it_and_synthesis_gets_failure_memo_with
 
     hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
                                      text="compare literature and public omics")
+    # This test is about the failed branch, not the budget: room for every parallel branch's hold (#1139).
+    hub.requests["r"]["budget_usd"] = 100
     decisions = [{"approved": True, "note": "approved"},
                  {"approved": True, "choice": "approve", "note": ""}]
 
@@ -227,6 +229,7 @@ async def test_four_branch_plan_with_no_successful_terminal_stops_before_cp2():
 
     hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
                                      text="compare four independent evidence branches")
+    hub.requests["r"]["budget_usd"] = 100  # room for the four parallel branches' holds (#1139)
 
     async def approval(**kwargs):
         hub.approvals.append(kwargs)

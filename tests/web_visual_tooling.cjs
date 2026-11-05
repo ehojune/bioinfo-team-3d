@@ -279,20 +279,22 @@ test('one startup and load fit the trace bound while an incomplete startup inven
 
 // Evaluate the actual driver in an isolated VM with only owned synthetic
 // resources. These async contracts run in CI; they launch no browser/service.
-function startupFixture({port = 55921, listenError = null, closeError = null, platform, env = {}, existing = [],
+function startupFixture({port = 55921, ports = null, listenError = null, closeError = null, platform, env = {}, existing = [],
   wrapperPresent = false, spawned = null, globals = {}} = {}) {
   const events = [], profile = path.join('owned-root', 'owned-profile');
-  let onError;
+  let onError, listens = 0;
+  const drawn = ports || [port];  // #1072: the port each successive listen(0) is given; the last one repeats
   const server = {
     once(name, fn) { assert.equal(name, 'error'); onError = fn; },
     removeListener(name, fn) { assert.equal(name, 'error'); assert.equal(fn, onError); onError = null; },
     listen(port, host, ready) {
       assert.equal(port, 0); assert.equal(host, '127.0.0.1');
       events.push('listen');
+      listens += 1;
       if (listenError) { const fail = onError; onError = null; fail(listenError); }
       else ready();
     },
-    address: () => ({port}),
+    address: () => ({port: drawn[Math.min(listens, drawn.length) - 1]}),
     close(done) { events.push('server-close'); done(closeError); }
   };
   const fakeFs = {
@@ -321,11 +323,28 @@ function startupFixture({port = 55921, listenError = null, closeError = null, pl
     hasListenErrorHandler:() => Boolean(onError)};
 }
 
+// #1072: a reserved draw is closed and drawn again; only this many in a row are refused.
+const RESERVED_DRAWS = 8;
+const reservedDraws = (extra = []) => ['profile-create', ...Array(RESERVED_DRAWS - 1).fill(['listen', 'server-close']).flat(), 'listen',
+  ...extra];
+
 test('reserved-port startup failure closes its acquired server before removing the profile', async () => {
-  const f = startupFixture();
+  const f = startupFixture();  // every draw is 55921
   await assert.rejects(f.open(), /static server landed on a reserved port 55921/);
-  assert.deepEqual(f.events, ['profile-create','listen','timer-set','server-close','timer-clear','profile-remove']);
+  assert.deepEqual(f.events, reservedDraws(['timer-set','server-close','timer-clear','profile-remove']));
   assert.equal(f.hasListenErrorHandler(), false);
+});
+
+test('a reserved port drawn by the OS is closed and drawn again instead of failing the startup', async () => {
+  const spawned = [];
+  const f = startupFixture({ports:[55921, 8787, 40000], platform:'win32', env:{LABHQ_TEST_PYTHON:PYTHON}, existing:[PYTHON],
+    wrapperPresent:true, spawned});
+  await assert.rejects(f.open(), /stop after spawn/);  // startup went on to launch the browser on the third draw
+  assert.equal(spawned.length, 1);
+  assert.deepEqual(f.events.slice(0, 7), ['profile-create','listen','server-close','listen','server-close','listen','timer-set']);
+  assert.equal(f.events.filter(event => event === 'listen').length, 3);
+  assert.equal(f.events.filter(event => event === 'server-close').length, 3);  // two redraws, then the cleanup of the owned one
+  assert.deepEqual(f.events.slice(-2), ['timer-clear','profile-remove']);
 });
 
 test('listen failure rejects startup and removes the profile without pretending a server was acquired', async () => {
@@ -341,7 +360,9 @@ test('startup cleanup failure retains both errors and does not remove an unclose
   const f = startupFixture({closeError:failure});
   await assert.rejects(f.open(), error => error.message === 'demo startup and cleanup failed' &&
     error.errors[0].message.includes('reserved port 55921') && error.errors[1].errors.includes(failure));
-  assert.equal(f.events.filter(event => event === 'server-close').length, 1);
+  // The redraw's close already failed, so the server is handed over unchanged and its own close fails again.
+  assert.equal(f.events.filter(event => event === 'server-close').length, 2);
+  assert.equal(f.events.filter(event => event === 'listen').length, 1);
   assert.equal(f.events.includes('profile-remove'), false);
 });
 
@@ -981,3 +1002,124 @@ test('cleanup forces an owned Chrome whose graceful close never takes effect, wi
     await d.close();
     assert.deepEqual(stages, ['forced', 'closed']);
   });
+
+// #1107: the cleanup waits for ws.onclose, so a client that never reports one (a close during the upgrade) stalls it.
+const net = require('node:net'), http = require('node:http'), crypto = require('node:crypto');
+const {MiniWebSocket} = require('./support/mini_ws.cjs');
+const settle = ms => new Promise(resolve => setTimeout(resolve, ms));
+const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+
+test('MiniWebSocket reports one close when close() runs while the upgrade is still pending (#1107)', async () => {
+  const sockets = [];
+  const server = net.createServer(socket => { sockets.push(socket); socket.on('error', () => {}); });  // never answers
+  const port = await listen(server);
+  try {
+    const ws = new MiniWebSocket(`ws://127.0.0.1:${port}/devtools/page/x`), events = [];
+    ws.onerror = () => events.push('error');
+    // onclose follows the end of the transport, not the call that ended it: never inside close() itself (review).
+    let inside = false;
+    ws.onclose = () => events.push(inside ? 'close-inside-close()' : 'close');
+    await settle(100);
+    inside = true; ws.close(); inside = false; ws.close();
+    sockets.forEach(socket => socket.destroy());  // the peer then vanishes, as a killed Chrome does
+    await settle(200);
+    assert.deepEqual(events, ['close'], 'one close, and no error for the request close() itself ended');
+    assert.equal(ws.closed, true);
+  } finally { sockets.forEach(socket => socket.destroy()); server.close(); }
+});
+
+test('MiniWebSocket ends the request and reports one error and one close when the server answers with plain HTTP (#1107)', async () => {
+  const sockets = [];
+  const server = http.createServer((request, response) => {
+    sockets.push(request.socket);
+    response.writeHead(400, {Connection: 'keep-alive'});
+    response.write('no upgrade here');  // the answer stays open: only the client can end it
+  });
+  const port = await listen(server);
+  try {
+    const ws = new MiniWebSocket(`ws://127.0.0.1:${port}/devtools/page/x`), events = [];
+    ws.onerror = () => events.push('error'); ws.onclose = () => events.push('close');
+    await settle(500);
+    assert.deepEqual(events, ['error', 'close']);
+    assert.equal(ws.closed, true);
+    assert.equal(sockets.every(socket => socket.destroyed), true, 'the refused connection is really gone');
+  } finally { sockets.forEach(socket => socket.destroy()); server.close(); }
+});
+
+test('MiniWebSocket reports one error and one close for an upgrade answer with a wrong accept key (#1107)', async () => {
+  const peers = [];
+  const server = http.createServer();
+  server.on('upgrade', (request, socket) => {
+    peers.push(socket); socket.on('error', () => {});
+    const crlf = String.fromCharCode(13, 10);
+    socket.write(['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade',
+      'Sec-WebSocket-Accept: wrong', '', ''].join(crlf));
+  });
+  const port = await listen(server);
+  try {
+    const ws = new MiniWebSocket(`ws://127.0.0.1:${port}/devtools/page/x`), events = [];
+    ws.onerror = error => events.push('error: ' + error.message);
+    // The upgraded socket's own close reports it, not the request's earlier one (review): that socket has closed by now.
+    ws.onclose = () => events.push(ws.socket && ws.socket.closed ? 'close' : 'close-before-socket-close');
+    await settle(500);
+    assert.deepEqual(events, ['error: bad WebSocket handshake', 'close']);
+  } finally { peers.forEach(socket => socket.destroy()); server.close(); }
+});
+
+test('MiniWebSocket reports an error and one close when the connection fails before the upgrade (#1107)', async () => {
+  const probe = net.createServer();
+  const port = await listen(probe);
+  await new Promise(resolve => probe.close(resolve));  // nothing listens on this port now
+  const ws = new MiniWebSocket(`ws://127.0.0.1:${port}/devtools/page/x`), events = [];
+  ws.onerror = () => events.push('error'); ws.onclose = () => events.push('close');
+  await settle(500);
+  assert.deepEqual(events, ['error', 'close']);
+});
+
+test('MiniWebSocket still reports exactly one close for an upgraded socket, however it ends (#1107)', async () => {
+  const peers = [];
+  const server = http.createServer();
+  server.on('upgrade', (request, socket) => {
+    peers.push(socket);
+    socket.on('end', () => socket.end());  // a real DevTools endpoint answers the client's close
+    socket.on('error', () => {});
+    socket.resume();  // an upgraded socket is paused until read; the end of the client's stream needs it flowing
+    const accept = crypto.createHash('sha1').update(request.headers['sec-websocket-key'] +
+      '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+    const eol = String.fromCharCode(13, 10);
+    socket.write(['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade',
+      'Sec-WebSocket-Accept: ' + accept, '', ''].join(eol));
+  });
+  const port = await listen(server);
+  try {
+    for (const end of ['client', 'peer']) {
+      const ws = new MiniWebSocket(`ws://127.0.0.1:${port}/devtools/page/x`), events = [];
+      ws.onclose = () => events.push('close');
+      await new Promise(resolve => { ws.onopen = resolve; });
+      if (end === 'client') ws.close(); else peers[peers.length - 1].destroy();
+      await settle(200);
+      ws.close();
+      assert.deepEqual(events, ['close'], `${end} ended it`);
+    }
+  } finally { peers.forEach(socket => socket.destroy()); server.close(); }
+});
+
+test('the cleanup diagnostic names the Node version and which WebSocket client closes the CDP socket (#1107)', async () => {
+  const lines = [], original = console.error;
+  console.error = line => lines.push(String(line));
+  try {
+    for (const ws of [new MiniWebSocket('ws://127.0.0.1:9/x'), {close() {}, constructor: {name: 'WebSocket'}}]) {
+      const f = lateFixture();
+      const {diagnostic, ...options} = f.options;  // the default diagnostic prints to stderr
+      ws.onerror = () => {};
+      const closing = closeDemoResources({...f.resources, ws, wsClosed: new Promise(() => {})}, options);
+      await f.tick(); f.serverAck(); await f.tick(); f.timeout();
+      await assert.rejects(closing);
+      ws.close?.();
+    }
+  } finally { console.error = original; }
+  const rows = lines.filter(line => line.startsWith('demo cleanup: ')).map(line => JSON.parse(line.slice('demo cleanup: '.length)));
+  assert.ok(rows.length >= 2);
+  assert.ok(rows.every(row => row.node_version === process.version));
+  assert.deepEqual([...new Set(rows.map(row => row.ws_kind))].sort(), ['global', 'mini']);
+});

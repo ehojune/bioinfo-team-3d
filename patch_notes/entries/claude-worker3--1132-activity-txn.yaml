@@ -1,0 +1,22 @@
+pr: 1134
+rows:
+- sha: '37fe32f'
+  at: 2026-10-31 07:40
+  text: runner 메시지의 task activity를 따로 commit하지 않고 같은 메시지의 이벤트 publish에 실어 이벤트, request 저장본, activity, runner cursor를 한 transaction으로 저장한다. StateStore.aappend_event에 activity=(key, reducer)를 더하고 reducer는 writer thread에서 최신 task 행에 적용된다
+  summary: 요청 처리 중 commit(fsync)을 더 줄입니다. 이벤트와 activity가 함께 확정되므로 내구성 보장은 같거나 강해집니다.
+- sha: 'd23b0ee'
+  at: 2026-10-31 08:10
+  text: test_state_activity_durable의 publish stub을 실제 publish로 바꾸고 활동 저장이 이벤트 transaction에 실렸을 때의 의미(취소가 commit 중이면 이벤트와 activity가 함께 남고 cursor가 중복을 거름)를 시험에 명시한다. 한 publish는 한 commit이고 실패하면 이벤트·activity가 모두 없음, agent.tool 폭주에서 메시지당 한 commit과 순서 유지, 느린 client가 이벤트 락을 잡아도 timeout 안에 activity가 저장됨을 시험한다. manual 한영에 보장을 적는다
+  summary: 활동 저장 경로가 바뀌어 옛 구조에 묶여 있던 시험을 새 구조에 맞게 고치고 새 보장을 시험으로 고정합니다.
+- sha: '57e0fb7'
+  at: 2026-10-31 09:10
+  text: test_state_control_durable의 halt 시험이 publish를 빈 stub으로 바꿔 둬서 activity가 저장되지 않아 실패했다. stub이 aappend_event를 실제로 불러 activity를 이벤트와 함께 저장하게 하고 단언은 그대로 둔다. halt와 activity는 같은 writer lane의 최신 행 병합이라 committed tool이 사라지지 않는 제품 순서는 그대로다
+  summary: PR 리뷰·CI 실패(3.10·3.12·Windows)의 원인인 옛 구조에 묶인 시험 stub을 고칩니다.
+- sha: '3f2e712'
+  at: 2026-10-31 10:03
+  text: main을 반영한다. #1143의 중복 runner 메시지 건너뛰기(이미 저장된 seq면 None)와 activity가 같은 transaction에서 함께 동작하도록 충돌을 풀었다. 중복 복사본은 activity도 다시 적용하지 않는다
+  summary: main과 충돌 없이 합쳐 같은 transaction 보장을 유지합니다.
+- sha: '6df56b8'
+  at: 2026-10-31 10:04
+  text: on_runner_message가 activity 인자를 activity가 있는 메시지에만 publish에 넘긴다. 옛 시그니처로 publish를 감싼 시험 double(#1143의 test_state 시험)과 다른 메시지가 계속 동작한다
+  summary: 1143 병합본과 합친 뒤 실패한 시험 한 건을 제품 쪽 호출 방식으로 해결합니다.

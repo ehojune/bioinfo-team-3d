@@ -12,6 +12,7 @@ from labhq.login import is_login_error, login_command
 from labhq.models import Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator, failure_kind
 from labhq.settings import Settings
+from tests.support.time_proxy import RuntimeProxy
 
 
 CLAUDE_EXPIRED = "Failed to authenticate: OAuth session expired and could not be refreshed"
@@ -365,7 +366,9 @@ async def test_login_retry_expiry_ends_notice_and_next_failure_notifies_again(tm
     # retry slot (calls == 1, PR #457, 2026-10-07). So the cap is generous and each failed turn "takes" 20 s on a
     # skewed clock: the 50 s window ends after a few retries however slow the host is.
     real_time, skew = time.time, [0.0]
-    monkeypatch.setattr(time, "time", lambda: real_time() + skew[0])
+    skewed = RuntimeProxy(time, time=lambda: real_time() + skew[0])
+    for module in ("labhq.orchestrator.cso", "labhq.gateway.server"):  # the retry plan and Hub.wait_login read it
+        monkeypatch.setattr(f"{module}.time", skewed)
     hub = _hub(tmp_path, retry=0.05, maximum=50)
     calls = 0
 

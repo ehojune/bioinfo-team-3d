@@ -32,7 +32,20 @@ export function summaryText(view) {
     (view.damaged ? ' · 일부 스킬 기록이 손상돼 표시하지 않았어요' : '');
 }
 
-export function skillFacts(skill) {
+// Other requests' selections of the same skill (#660). Only shown when the gateway sent them, so an older gateway shows no row.
+function previousUsesText(skill, history) {
+  const uses = (Array.isArray(skill.previous_uses) ? skill.previous_uses : []).filter(use => use && typeof use === 'object');
+  const total = Number.isFinite(skill.previous_use_count) ? skill.previous_use_count : uses.length;
+  const basis = history && Number.isFinite(history.limit)
+    ? `최근 ${history.scanned ?? history.limit}건 기준${history.truncated ? ', 더 오래된 요청은 세지 않음' : ''}` : '';
+  if (!total) return `다른 요청에서 고른 기록 없음${basis ? ` (${basis})` : ''}`;
+  const day = use => (Number.isFinite(use.created_at) ? new Date(use.created_at * 1000).toISOString().slice(0, 10) : '날짜 없음');
+  const rows = uses.map(use => `${String(use.request_id).slice(0, 40)} ${day(use)} · 단계 ${(Array.isArray(use.attached_steps) ? use.attached_steps : []).join(', ') || '없음'}` +
+    ` · ${REFERENCE[use.reference] || REFERENCE.unverified}`);
+  return `${total}건${basis ? ` (${basis})` : ''}: ${rows.join(' / ')}${total > uses.length ? ` / 외 ${total - uses.length}건` : ''}`;
+}
+
+export function skillFacts(skill, history = null) {
   if (!skill || typeof skill !== 'object') return [];
   const version = [skill.skill_sha256 ? `skill ${String(skill.skill_sha256).slice(0, 12)}` : 'skill hash 없음',
     skill.paper2agent_commit ? `Paper2Agent ${String(skill.paper2agent_commit).slice(0, 7)}` : 'Paper2Agent commit 미기록'].join(' · ');
@@ -45,6 +58,7 @@ export function skillFacts(skill) {
     ['붙을 단계', steps(skill.selected_steps) + (skill.agents?.length ? ` → ${skill.agents.join(', ')}` : '')],
     ['붙은 단계', steps(skill.attached_steps)],
     ['결과 참조', (REFERENCE[skill.reference] || REFERENCE.unverified) + (reasons.length ? ` (${reasons.join(', ')})` : '')],
+    ...(Array.isArray(skill.previous_uses) ? [['이전 사용', previousUsesText(skill, history)]] : []),
   ];
 }
 
@@ -65,7 +79,7 @@ export function syncPaperLiterature(container, view, {loading = false} = {}) {
       const link = add(ids, 'a', id); link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer';
     });
     fact('쓰임', usesText(row));
-    for (const [label, value] of skillFacts(row.skill)) fact(label, value);
+    for (const [label, value] of skillFacts(row.skill, view.history)) fact(label, value);
     if (row.recruit) {
       const hire = row.recruit;
       fact('재현 채용', `${hire.status || '알 수 없음'}${hire.agent_id ? ` · ${hire.agent_id}` : ''}` +

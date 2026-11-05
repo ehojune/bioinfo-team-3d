@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from labhq.settings import DataZone, Settings
 from tests.semantics_shadow_lab import lab_record, run_lab, task_row
+from tests.support.time_proxy import RuntimeProxy
 
 ROOT = Path(__file__).resolve().parents[1]
 ON = {"mode": "shadow", "actions": "shadow"}
@@ -104,8 +105,8 @@ def test_actions_off_never_loads_the_module_and_writes_the_b1_line_only(tmp_path
 
 def _fixed_clock(monkeypatch):
     from labhq.research import semantics_shadow as shadow
-    monkeypatch.setattr(shadow.time, "time", lambda: 1790000500.0)
-    monkeypatch.setattr(shadow.time, "perf_counter", lambda: 42.0)
+    monkeypatch.setattr(shadow, "time", RuntimeProxy(shadow.time, time=lambda: 1790000500.0,
+                                                     perf_counter=lambda: 42.0))
 
 
 def _line(hub, cfg):
@@ -191,6 +192,9 @@ def test_an_asked_and_ended_followup_is_observed_once_each_and_changes_nothing(t
             assert response.status_code == 200
             _wait(lambda: hub.requests["req_f1"]["followups"][0]["status"] != "running")
             if hub.semantics_shadow is not None:
+                # `ended` is queued after the status flips, so a drain right after the status change can run first
+                # (seen on CI, 3.12). Wait for both lines before draining; the asserts below still require exactly two (#1076).
+                _wait(lambda: len([x for x in _lines(base) if x["type"] == "followup"]) >= 2)
                 assert hub.semantics_shadow.drain(10)
         entry = dict(hub.requests["req_f1"]["followups"][0])
         return {k: v for k, v in entry.items() if k not in ("id", "asked_at", "answered_at", "task_id")}, hub

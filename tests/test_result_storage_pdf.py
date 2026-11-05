@@ -81,7 +81,7 @@ async def test_pdf_is_in_the_edition_and_uploaded_as_binary(tmp_path, monkeypatc
     assert (edition / "report.pdf").read_bytes() == PDF
     sent = puts(calls)
     pdf = sent["labhq/results/req_test/report.pdf"]
-    assert base64.b64decode(pdf["content"]) == PDF and pdf["message"] == "연구 결과 PDF"
+    assert base64.b64decode(pdf["content"]) == PDF and pdf["message"].startswith("연구 결과 PDF: labhq/results/req_test/report.pdf")
     assert "(report.pdf)" in base64.b64decode(sent["labhq/results/req_test/README.md"]["content"]).decode()
     assert "(report.pdf)" in (edition / "README.md").read_text(encoding="utf-8")
     assert cards[0]["detail"]["pdf"].startswith("포함: report.pdf")

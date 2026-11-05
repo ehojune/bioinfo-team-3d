@@ -27,6 +27,8 @@ system_prompt: |
   - 내부 자료는 열 이름과 집계(10 미만 칸 가림)만 대화에 올린다. 원자료 행은 출력하지 않는다.
   - 백만 행 이상 회귀는 범주형 공변량 칸별 빈도로 묶은 이항 GLM(같은 MLE)이나 조각 처리를 먼저 쓴다.
   - Use graphical-abstract for report-facing SVG figures and humanizer before finalizing Korean prose.
+  - Name the source data file under each figure in the report, and read every number drawn in a figure from the result
+    table instead of typing it by hand.
   - Look up variant consequences, population frequencies and ClinVar classifications with the labhq_annot
     tools (vep, gnomad, clinvar), not ad-hoc scripts or web pages; they record each database release. For
     regions and genes use chipatlas / chipatlas_targets (public ChIP/ATAC enrichment, TF targets), encode

@@ -304,3 +304,93 @@ async def test_codex_multiple_snapshots_in_one_invocation_are_not_added_as_total
     result = adapter.finalize(state, ctx, 0)
     assert result.usage["input_tokens"] == 85978
     assert sum(data["tokens"]["input_tokens"] for kind, data in events if kind == "agent.usage") == 85978
+
+
+# ---- #1137: a step's record is written twice, and what it stages is never lost -------------------------------------
+def spy_run_writes(monkeypatch):
+    """The field names of every write of a run record, in order, with the real write still done."""
+    writes, real = [], TaskWorkspace._update_run_now
+
+    def spy(self, task_id, fields):
+        writes.append((task_id, set(fields)))
+        return real(self, task_id, fields)
+
+    monkeypatch.setattr(TaskWorkspace, "_update_run_now", spy)
+    return writes
+
+
+@pytest.mark.asyncio
+async def test_a_step_writes_its_record_at_the_start_and_once_more_with_everything_that_followed(tmp_path, monkeypatch):
+    runner, agent, _baselines, _calls = setup_runner(tmp_path, monkeypatch, "claude_code")
+    writes = spy_run_writes(monkeypatch)
+    task = Task(id="t0", agent_id=agent.id, prompt="fixture")
+    await runner.run_task(task)
+    mine = [fields for task_id, fields in writes if task_id == task.id]
+    assert "started_at" in mine[0]  # recorded before the CLI starts, as it always was
+    final = next(fields for fields in mine if "ended_at" in fields)
+    assert {"environment_record", "input_files", "ok", "cost_usd", "session_id"} <= final
+    earlier = mine[:mine.index(final)]
+    assert not any({"environment_record", "input_files"} & fields for fields in earlier)  # no write of their own
+    record = run_record(runner, task)
+    assert "environment_record" in record and "input_files" in record and "ended_at" in record
+
+
+@pytest.mark.asyncio
+async def test_a_step_cut_short_after_staging_still_records_what_it_staged(tmp_path, monkeypatch):
+    runner, agent, _baselines, _calls = setup_runner(tmp_path, monkeypatch, "claude_code")
+
+    async def refuse(*_args, **_kwargs):
+        raise RuntimeError("the result files cannot be written")
+
+    monkeypatch.setattr("labhq.runner.daemon.awrite_owned_many", refuse)
+    task = Task(id="t0", agent_id=agent.id, prompt="fixture")
+    with pytest.raises(RuntimeError, match="result files"):
+        await runner.run_task(task)
+    record = run_record(runner, task)
+    assert "environment_record" in record and "input_files" in record  # staged, then written by the exit path
+    assert "ended_at" not in record  # the step never reached its final write
+
+
+def make_workspace(tmp_path):
+    task = Task(id="t1", agent_id="worker", prompt="x")
+    return TaskWorkspace(tmp_path / "runs", task, AgentSpec(id="worker", name="Worker", role="test")), task
+
+
+def test_staged_fields_ride_in_the_next_write_and_an_explicit_field_wins(tmp_path, monkeypatch):
+    ws, task = make_workspace(tmp_path)
+    writes = spy_run_writes(monkeypatch)
+    ws.stage_run(task.id, environment_record={"n": 1}, input_files=[{"path": "a"}], ok="staged")
+    assert writes == []  # nothing is written yet
+    ws.update_run(task.id, ok=True, ended_at=5.0)
+    assert len(writes) == 1  # one write for the staged fields and the caller's own
+    record = json.loads((ws.dir / "manifest.json").read_text(encoding="utf-8"))["runs"][task.id]
+    assert record["environment_record"] == {"n": 1} and record["input_files"] == [{"path": "a"}]
+    assert record["ok"] is True and record["ended_at"] == 5.0  # the explicit value won
+    ws.update_run(task.id, later=1)
+    assert len(writes) == 2 and writes[1][1] == {"later"}  # nothing is staged any more
+
+
+@pytest.mark.asyncio
+async def test_a_failed_write_keeps_the_staged_fields_for_the_next_one_and_flush_writes_only_what_is_staged(
+        tmp_path, monkeypatch):
+    ws, task = make_workspace(tmp_path)
+    writes = spy_run_writes(monkeypatch)
+    await ws.aflush_run(task.id)
+    assert writes == []  # nothing staged, nothing written
+    ws.stage_run(task.id, environment_record={"n": 1}, input_files=[])
+    real = TaskWorkspace._update_run_now
+    state = {"fail": True}
+
+    def flaky(self, task_id, fields):
+        if state["fail"]:
+            raise OSError("the disk is full")
+        return real(self, task_id, fields)
+
+    monkeypatch.setattr(TaskWorkspace, "_update_run_now", flaky)
+    with pytest.raises(OSError):
+        await ws.aupdate_run(task.id, ended_at=1.0)
+    state["fail"] = False
+    await ws.aflush_run(task.id)  # the staged fields survived the failure
+    record = json.loads((ws.dir / "manifest.json").read_text(encoding="utf-8"))["runs"][task.id]
+    assert record["environment_record"] == {"n": 1} and record["input_files"] == []
+    assert "ended_at" not in record  # the failed write's own field is the caller's to retry

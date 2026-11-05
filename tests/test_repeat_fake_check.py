@@ -123,3 +123,45 @@ def test_real_gateway_runner_twice_and_missing_artifact_is_rejected(tmp_path):
     artifact.unlink()
     with pytest.raises(ValueError, match="artifact is missing"):
         fixture.collect_receipt(observed, root, tasks, fixture.OfflineAudit())
+
+
+class _Draws:
+    """A stand-in for socket.socket whose bind(0) is given the next scripted port."""
+
+    def __init__(self, ports):
+        self.ports = list(ports)
+        self.current = None
+
+    def __call__(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def bind(self, address):
+        self.current = self.ports.pop(0)
+
+    def getsockname(self):
+        return ("127.0.0.1", self.current)
+
+
+def _configured(ports, monkeypatch, tmp_path):
+    from labhq.settings import Settings
+
+    draws = _Draws(ports)
+    monkeypatch.setattr(fixture.socket, "socket", draws)
+    return fixture.configure(Settings(), tmp_path)
+
+
+def test_a_reserved_or_repeated_port_draw_is_drawn_again(monkeypatch, tmp_path):
+    # 55921 and 8787 are the PI's own ports; the broker must also differ from the gateway (#1076, as #1072).
+    settings = _configured([55921, 8787, 40001, 40001, 40002], monkeypatch, tmp_path)
+    assert (settings.gateway.port, settings.runner.broker_port) == (40001, 40002)
+
+
+def test_only_a_run_of_reserved_draws_is_refused(monkeypatch, tmp_path):
+    with pytest.raises(ValueError, match="reserved port"):
+        _configured([55921] * fixture.PORT_DRAWS + [40002], monkeypatch, tmp_path)

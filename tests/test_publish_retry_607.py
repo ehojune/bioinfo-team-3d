@@ -283,7 +283,7 @@ async def test_an_initialized_repository_updates_an_existing_file_with_its_sha(t
     hub.requests["req_test"].update(pi_reviewed_at=1, result_storage={**EXISTING, "status": "draft"})
     service = ResultStorage(hub, httpx.MockTransport(handle))
     await service.upload("req_test", {"README.md": "new"})
-    assert puts == [{"message": "연구 결과 정리", "branch": "main",
+    assert puts == [{"message": "연구 결과 정리: labhq/results/req_test/README.md — Compare public studies", "branch": "main",
                      "content": base64.b64encode(b"new").decode(), "sha": "old-sha"}]
     await service.close()
 

@@ -242,6 +242,9 @@ class ResearchStep(StrictModel):
     output_types: list[OutputTypeEntry] = Field(default_factory=list, max_length=MAX_ENTRIES)
     environment_binding: EnvironmentBinding | None = None
     environment_bindings: list[EnvironmentBinding] = Field(default_factory=list)
+    # #625: the model tier this step runs on, lowered from its staff member's declared tier. Optional and left out when
+    # unset, so a plan frozen before it keeps its canonical JSON and plan_sha256; not offered in the engine schema.
+    model_tier: Literal["fast", "balanced", "reasoning"] | None = None
 
     @model_serializer(mode="wrap")
     def _drop_empty_declarations(self, handler: Any) -> dict[str, Any]:
@@ -255,6 +258,8 @@ class ResearchStep(StrictModel):
             data.pop("optional_outputs", None)
         if data.get("branch") is None:
             data.pop("branch", None)
+        if data.get("model_tier") is None:
+            data.pop("model_tier", None)
         if data.get("environment_binding") is None:
             data.pop("environment_binding", None)
         if not data.get("environment_bindings"):
@@ -651,7 +656,7 @@ def _without(schema: dict[str, Any], definition: str, fields: tuple[str, ...], d
 
 
 # The engine-facing schemas stay those of main before #221: declarations are offered only when switched on.
-RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(ResearchPlan.model_json_schema(), "ResearchStep", ("output_types",),
+RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(ResearchPlan.model_json_schema(), "ResearchStep", ("output_types", "model_tier"),
                                                 ("OutputTypeEntry", "PackApplicabilityRecord"))
 for _system_field in ("pack_applicability", "warnings", "paper_skill_results", "recruit_results"):
     RESEARCH_PLAN_SCHEMA["properties"].pop(_system_field, None)

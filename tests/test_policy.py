@@ -1,6 +1,8 @@
 import ast
 import itertools
 import ntpath
+import os
+import posixpath
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,39 +35,55 @@ def _long_separator_runs(fraction=1):
 # only; it is not a proof of linearity for every input, and a quadratic regression of the full input would still
 # run long before failing.
 _MAX_SCALE = 8
-_MEASURE_FLOOR_S = 0.2  # each side runs until this much CPU, so a 15.6 ms Windows clock tick stays below 8 %
-_MAX_REPEATS = {"quarter": 16, "full": 4}  # bounds the work: at most 8 full-input equivalents per scan
+_BLOCK_S = 0.1  # a sample is a block of calls of at least this much CPU, so a 15.6 ms Windows clock tick stays below 16 %
+_MIN_SAMPLES = 3  # a single slow block cannot decide a side
+_MAX_BLOCK_CALLS = {"quarter": 16, "full": 4}  # bounds the work of one block: at most 12 full-input calls per scan
 _CLOCK_TICK_S = 0.0157  # the coarsest thread_time tick in use (Windows 15.6 ms): one tick of slack per average
 
 
-def _cost(call, text, repeats):
-    """Average calling-thread CPU per call, repeating only until the floor or the bound; every result kept."""
-    spent, results = 0.0, []
-    while len(results) < repeats and spent < _MEASURE_FLOOR_S:
-        started = time.thread_time()  # this thread only: other threads in a test worker do not count
-        results.append(call(text))
-        spent += time.thread_time() - started
-    return spent / len(results), results
+def _costs(call, texts, vary=True):
+    """Calling-thread CPU per call for each input, and every result. A sample is a block of calls, which keeps a coarse
+    clock from reading 0 for a cheap call; the fastest block counts, since a stall on a loaded CI runner only adds time
+    (run 41078175471 read 15.5x from one slow call, where this input costs about 4x) while a quadratic scan is slow in
+    every block. Blocks alternate between the sizes so one stall cannot hit one side only (run 41079954051: 9.1x)."""
+    samples = {name: [] for name in texts}
+    results = {name: [] for name in texts}
+    while any(len(values) < _MIN_SAMPLES for values in samples.values()):
+        for name, text in texts.items():
+            if len(samples[name]) >= _MIN_SAMPLES:
+                continue
+            spent, calls = 0.0, 0
+            while calls < _MAX_BLOCK_CALLS[name] and spent < _BLOCK_S:
+                # A fresh text of the same size each call, so a scan that is slow only the first time it sees a text
+                # (a cache, a warm-up) is measured at its cold cost every time.
+                fresh = f"{text} {'a' * (len(results[name]) + 1)}" if vary else text
+                started = time.thread_time()  # this thread only: other threads in a test worker do not count
+                results[name].append(call(fresh))
+                spent += time.thread_time() - started
+                calls += 1
+            samples[name].append(spent / calls)
+    return {name: min(values) for name, values in samples.items()}, results
 
 
-def _assert_linear(call, build=_long_separator_runs, expected=None):
-    quarter_cost, quarter_results = _cost(call, build(0.25), _MAX_REPEATS["quarter"])
-    full_cost, full_results = _cost(call, build(1), _MAX_REPEATS["full"])
-    assert all(result == expected for result in quarter_results + full_results), "the scan must keep its result"
+def _assert_linear(call, build=_long_separator_runs, expected=None, vary=True):
+    cost, results = _costs(call, {"quarter": build(0.25), "full": build(1)}, vary)
+    quarter_cost, full_cost = cost["quarter"], cost["full"]
+    assert all(result == expected for values in results.values() for result in values), \
+        "the scan must keep its result"
     assert full_cost <= _MAX_SCALE * quarter_cost + _CLOCK_TICK_S, (
         f"path scanning must stay linear in the text length: a 4x input cost {full_cost / max(quarter_cost, 1e-9):.1f}x"
         f" ({quarter_cost:.4f} s -> {full_cost:.4f} s per call)")
 
 
 @pytest.mark.parametrize("quarter_s,full_s,result,reject,expected_calls", [
-    (0.125, 0.5, None, False, {"quarter": 2, "full": 1}),      # linear: 4x
-    (0.125, 1.0, None, False, {"quarter": 2, "full": 1}),      # the bound itself
-    (0.125, 2.0, None, True, {"quarter": 2, "full": 1}),       # quadratic: 16x
-    (0.125, 1.0625, None, True, {"quarter": 2, "full": 1}),
-    (0.125, 0.5, False, True, {"quarter": 2, "full": 1}),      # wrong result: separator runs name no path
-    (0.0078125, 0.03125, None, False, {"quarter": 16, "full": 4}),  # fast machine: bounded repeats, then averages
-    (0.0, 0.0078125, None, False, {"quarter": 16, "full": 4}),  # quarter below one clock tick: one tick of slack
-    (0.0, 0.03125, None, True, {"quarter": 16, "full": 4}),     # but not more than one tick
+    (0.125, 0.5, None, False, {"quarter": 3, "full": 3}),      # linear: 4x
+    (0.125, 1.0, None, False, {"quarter": 3, "full": 3}),      # the bound itself
+    (0.125, 2.0, None, True, {"quarter": 3, "full": 3}),       # quadratic: 16x
+    (0.125, 1.0625, None, True, {"quarter": 3, "full": 3}),
+    (0.125, 0.5, False, True, {"quarter": 3, "full": 3}),      # wrong result: separator runs name no path
+    (0.0078125, 0.03125, None, False, {"quarter": 39, "full": 12}),  # fast machine: blocks of calls, then the fastest
+    (0.0, 0.0078125, None, False, {"quarter": 48, "full": 12}),  # quarter below one clock tick: one tick of slack
+    (0.0, 0.03125, None, True, {"quarter": 48, "full": 12}),     # but not more than one tick
 ])
 def test_linear_scan_budget_uses_cpu_and_preserves_result_and_strict_limit(
         monkeypatch, quarter_s, full_s, result, reject, expected_calls):
@@ -76,8 +94,8 @@ def test_linear_scan_budget_uses_cpu_and_preserves_result_and_strict_limit(
     assert len(full_text) == 731_072 and len(quarter_text) * 4 == len(full_text)  # the full CI input is kept
 
     def scan(text):
-        size = "full" if text == full_text else "quarter"
-        assert text in (full_text, quarter_text)
+        size = "full" if len(text) > len(full_text) // 2 else "quarter"
+        assert text.startswith((full_text, quarter_text))
         calls[size] += 1
         clock[0] += full_s if size == "full" else quarter_s
         return result
@@ -88,6 +106,54 @@ def test_linear_scan_budget_uses_cpu_and_preserves_result_and_strict_limit(
     else:
         _assert_linear(scan)
     assert calls == expected_calls  # the full input is always scanned, and never more than the bound
+
+
+@pytest.mark.parametrize("quarter_costs,full_costs,reject", [
+    ([0.125] * 3, [3.0, 0.5, 0.5], False),             # one stalled full call (the CI failure): the fastest decides
+    ([0.5, 0.125, 0.125], [0.5, 0.5, 0.5], False),     # one stalled quarter call
+    ([0.125] * 3, [2.0, 2.5, 2.0], True),              # quadratic: every full call is about 16x
+    ([0.125] * 3, [1.4, 2.0, 1.5], True),              # all full calls are over the bound
+])
+def test_linear_scan_budget_ignores_one_stalled_call_but_not_a_slow_scan(
+        monkeypatch, quarter_costs, full_costs, reject):
+    clock, queue = [0.0], {"quarter": list(quarter_costs), "full": list(full_costs)}
+    monkeypatch.setitem(globals(), "time", SimpleNamespace(thread_time=lambda: clock[0]))
+    full_text, quarter_text = _long_separator_runs(), _long_separator_runs(0.25)
+
+    def scan(text):
+        clock[0] += queue["full" if len(text) > len(full_text) // 2 else "quarter"].pop(0)
+        return None
+
+    if reject:
+        with pytest.raises(AssertionError):
+            _assert_linear(scan)
+    else:
+        _assert_linear(scan)
+
+
+def test_linear_scan_budget_still_rejects_a_really_quadratic_scan():
+    """The fastest-call estimate must keep its power: real CPU, work growing with the square of the text length."""
+    def quadratic(text):
+        n = len(text) // 150
+        return sum(sum(range(n)) for _ in range(n)) and None
+
+    with pytest.raises(AssertionError, match="must stay linear"):
+        _assert_linear(quadratic)
+
+
+def test_linear_scan_budget_still_rejects_a_scan_that_is_slow_only_the_first_time():
+    """A cache or warm-up must not hide a cold quadratic cost behind a fast repeat of the same input."""
+    seen = set()
+
+    def quadratic_once(text):
+        if text in seen:
+            return None
+        seen.add(text)
+        n = len(text) // 150
+        return sum(sum(range(n)) for _ in range(n)) and None
+
+    with pytest.raises(AssertionError, match="must stay linear"):
+        _assert_linear(quadratic_once)
 
 
 @pytest.mark.parametrize("tail,found", [
@@ -132,7 +198,7 @@ def test_windows_normpath_stays_linear_on_every_host(build):
     # The pure-Python stdlib normpath is quadratic on all of these; the native Windows one is not. The expected value
     # comes from the stdlib rules on a short input of the same shape, which normalizes to the same string.
     expected = _stdlib_pure_ntpath_normpath()(build(1 / 4096))
-    _assert_linear(policy_module._windows_normpath, build, expected)
+    _assert_linear(policy_module._windows_normpath, build, expected, vary=False)  # its result is the exact text
 
 
 def test_mentions_zone_stays_linear_on_long_separator_runs():
@@ -145,6 +211,78 @@ def test_touches_stays_linear_on_long_separator_runs():
 
 def test_touches_resolved_stays_linear_on_long_separator_runs():
     _assert_linear(lambda text: touches_resolved({"command": text}, ["/restricted"]))
+
+
+@pytest.mark.parametrize("path,expected", [
+    ("/a/b", "/a/b"),                  # nothing to merge
+    ("a//b///c", "a/b/c"),
+    ("//a///b", "//a/b"),              # a leading pair is kept: `//host` is implementation-defined on POSIX
+    ("//", "//"),
+    ("///a", "/a"),                    # three or more leading separators are one
+    ("////", "/"),
+    ("/a\\\\b", "/a\\\\b"),            # a backslash is an ordinary character on POSIX
+    ("", ""),
+])
+def test_separator_runs_merge_but_a_leading_pair_stays(path, expected):
+    assert policy_module._collapse_separators(path, nt=False) == expected
+
+
+@pytest.mark.parametrize("path", ["C:\\a//b", "\\\\server\\share\\x", "//?/C:/x", "//a//", "///a"])
+def test_a_windows_path_is_returned_as_written(path):
+    """Merging the separators of `//a//` (a UNC prefix with no share) changes what ntpath.realpath returns."""
+    assert policy_module._collapse_separators(path, nt=True) == path
+
+
+def test_merging_separator_runs_never_changes_what_posix_realpath_returns():
+    """The merged path names the same place: realpath's answer for it is the one it gives the original."""
+    cases = ["".join(chars) for n in range(7) for chars in itertools.product("/.ab", repeat=n)]
+    cases += ["///a//..//b", "a//b/./c", "//host//share/../x", "/a/b//../c///d"]
+    assert [posixpath.realpath(policy_module._collapse_separators(case, nt=False)) for case in cases] ==         [posixpath.realpath(case) for case in cases]
+
+
+def test_the_policy_realpath_stays_linear_on_long_separator_runs():
+    """#1158: CPython's POSIX realpath is quadratic in a run of separators (0.03 s, 0.12, 0.44, 1.75 s per doubling).
+    Windows' own is not, so this only shows on Linux and macOS, where it failed at 7-16x over four times the input."""
+    _assert_linear(lambda text: policy_module._real(text) and None)
+
+
+@pytest.fixture
+def posix_merge(monkeypatch):
+    """The merge as a POSIX host runs it, on any host: the merge itself returns a Windows path as written."""
+    merge = policy_module._collapse_separators
+    monkeypatch.setattr(policy_module, "_collapse_separators", lambda p, *, nt=None: merge(p, nt=False))
+
+
+def test_the_policy_realpath_takes_what_os_path_realpath_takes(tmp_path, posix_merge):
+    """#1159: `_root_rules` hands it a `Path`, and a `Path` has no `lstrip`."""
+    root = tmp_path / "work" / "run"
+    spelled = f"{tmp_path}//work///run"
+    assert policy_module._realpath(root) == os.path.realpath(root)
+    assert policy_module._realpath(spelled) == os.path.realpath(spelled)
+    assert policy_module._realpath(os.fsencode(spelled)) == os.path.realpath(os.fsencode(spelled))  # bytes pass through
+
+
+def test_root_rules_accept_path_roots_and_name_each_root_alike(tmp_path, posix_merge):
+    """A `Path` root and the same root as text give the same rules, with a run of separators in the text too."""
+    (tmp_path / "work").mkdir()
+    as_path = policy_module._root_rules("Read", [tmp_path / "work"])
+    as_text = policy_module._root_rules("Read", [str(tmp_path / "work")])
+    assert as_path and as_path == as_text
+    assert policy_module._root_rules("Read", [f"{tmp_path}///work"]) == as_text
+
+
+def test_a_collapsed_candidate_gives_the_same_policy_decision(monkeypatch):
+    """The policy decides alike with and without the merge, so long separator runs change its time, not its answer."""
+    run = "/" * 5000
+    spellings = [f"/data{run}cohort/a.vcf", f"/data/{run}cohort//a.vcf", "/data//cohort/a.vcf",
+                 f"/home/u{run}proj/README.md", "/home/u/README.md"]
+
+    def decided():
+        return [evaluate_tool("Read", {"file_path": spelling}, _policy()).action for spelling in spellings]
+
+    merged = decided()
+    monkeypatch.setattr(policy_module, "_collapse_separators", lambda p, *, nt=None: p)
+    assert merged == decided() == ["deny", "deny", "deny", "allow", "allow"]
 
 
 def test_restricted_read_denied_and_bash_asks():

@@ -14,7 +14,7 @@ def receipt_harness(harness, monkeypatch):
     case, _, _, _ = harness
     hub = case.pop("_harness_hub")
     monkeypatch.setattr(reproduction_receipt, "_version", lambda *args: "fixture")
-    monkeypatch.setattr(bench, "free_port", lambda: 19001)  # server/runner are doubles; never bind
+    monkeypatch.setattr(bench, "free_ports", lambda n: [19001 + i for i in range(n)])  # server/runner are doubles; never bind
     return case, hub
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import hmac
 import json
 import re
 from typing import Any
@@ -220,9 +221,60 @@ def validate(evidence: dict[str, Any], trusted: dict[str, Any]) -> Verdict:
     return Verdict("accepted", "synthetic_only", ())
 
 
-def adapt_producer(_receipt: object) -> Verdict:
-    """Reserved integration point: protected_launch has no trusted producer yet."""
-    return Verdict("rejected", "unsupported", ("producer_adapter_unavailable",))
+def adapt_producer(receipt: object, *, evidence=None, trusted=None, tags=None,
+                   producer_key=None, observer_key=None, consumed=None) -> Verdict:
+    """Offline authenticated-envelope model; does not authenticate a real producer.
+
+    The test authority must supply separate keys, expectations and replay state
+    outside the producer and observer. A synthetic MAC proves only possession of
+    those fixture keys, not process identity, isolation, or OS cleanup.
+    """
+    unsupported = Verdict("rejected", "unsupported", ("producer_adapter_unavailable",))
+    if any(value is None for value in (trusted, tags, producer_key, observer_key, consumed)):
+        return unsupported
+    rejected = Verdict("rejected", "unverified", ("authentication_or_receipt_invalid",))
+    fields = {"version", "run_id", "snapshot_digest", "runtime_digest", "policy_digest",
+              "supervisor_identity", "child_identity", "namespace_identities", "preparation",
+              "launch", "cleanup", "seal_status", "unsupported_reasons"}
+    if (not isinstance(trusted, dict)
+            or not isinstance(tags, dict) or set(tags) != {"producer", "observer"}
+            or not isinstance(consumed, set) or not isinstance(producer_key, bytes)
+            or not isinstance(observer_key, bytes) or len(producer_key) < 32
+            or len(observer_key) < 32 or hmac.compare_digest(producer_key, observer_key)):
+        return rejected
+    nonce = trusted.get("launch_nonce")
+    run_id = trusted.get("run_id")
+    if not _text(nonce) or not _text(run_id) or (run_id, nonce) in consumed:
+        return rejected
+    try:
+        def encoded(domain, value):
+            return json.dumps([domain, run_id, nonce, value], sort_keys=True,
+                              separators=(",", ":"), allow_nan=False).encode()
+        for role, key, value in (("producer", producer_key, receipt), ("observer", observer_key, evidence)):
+            tag = tags[role]
+            if not isinstance(tag, str) or not hmac.compare_digest(
+                    tag, hmac.new(key, encoded(role, value), hashlib.sha256).hexdigest()):
+                return rejected
+    except (TypeError, ValueError):
+        return rejected
+    # Consume even rejected observations so a signed failure cannot be retried
+    # with different evidence under the same independently issued nonce.
+    consumed.add((run_id, nonce))
+    if (not isinstance(receipt, dict) or set(receipt) != fields or type(receipt["version"]) is not int
+            or receipt["version"] != 1 or not isinstance(evidence, dict)):
+        return rejected
+    if (receipt["run_id"] != run_id or receipt["seal_status"] != "unsealed"
+            or receipt["preparation"] != "diagnostic_ready" or receipt["launch"] != "exited_0"
+            or receipt["cleanup"] != "broker_closed_socket_absent; descendants_unverified"
+            or any(receipt[key] is not None for key in ("snapshot_digest", "runtime_digest", "policy_digest",
+                                                          "supervisor_identity", "child_identity"))
+            or receipt["namespace_identities"] != {} or not isinstance(receipt["unsupported_reasons"], list)
+            or "diagnostic only; runtime and storage are unsealed" not in receipt["unsupported_reasons"]
+            or not all(isinstance(reason, str) for reason in receipt["unsupported_reasons"])
+            or not isinstance(evidence.get("child_receipt"), dict)
+            or evidence["child_receipt"].get("run_id") != receipt["run_id"]):
+        return rejected
+    return validate(evidence, trusted)
 
 
 def _validate_controls(witness, trusted, reject):

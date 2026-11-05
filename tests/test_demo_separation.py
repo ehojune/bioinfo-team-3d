@@ -21,6 +21,8 @@ from labhq.gateway.server import create_app
 from labhq.models import AgentSpec, ApprovalRequest, Engine, Task
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
+from tests.support.serve_task import serve_task, wait_event, wait_started
+from tests.support.time_proxy import RuntimeProxy
 
 
 DEADLOCK_TIMEOUT = 120
@@ -162,10 +164,10 @@ async def test_runner_dials_the_demo_server_when_live_port_is_busy(tmp_path, hos
         app = create_app(s, demo=True)
         server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="error"))
         runner = Runner(s)
-        serving = asyncio.create_task(server.serve())
+        serving = serve_task(server.serve())
         running = None
         try:
-            await asyncio.wait_for(demo_signals.started.wait(), DEADLOCK_TIMEOUT)
+            await wait_event(demo_signals.started, serving, DEADLOCK_TIMEOUT, "demo gateway")
             running = asyncio.create_task(runner.run_forever())
             await asyncio.wait_for(demo_signals.joined.wait(), DEADLOCK_TIMEOUT)
             assert len(app.state.hub.agents) >= 5
@@ -189,7 +191,7 @@ async def test_only_web_demo_slows_mock_steps(tmp_path, monkeypatch, web, delay)
     assert cli._approval_delay(False, 120, web=web) == (1.0 if web else 0.3)
     assert cli._approval_delay(True, 120, web=web) == 120
     sleep = AsyncMock()
-    monkeypatch.setattr("labhq.adapters.mock.asyncio.sleep", sleep)
+    monkeypatch.setattr("labhq.adapters.mock.asyncio", RuntimeProxy(asyncio, sleep=sleep))
     agent = AgentSpec(id="analyst", name="A", role="test", engine=Engine.mock)
     task = Task(agent_id=agent.id, prompt="mock test", meta={"kind": "direct"})
     ctx = RunContext(task=task, agent=agent, workdir=tmp_path, settings=s,
@@ -205,7 +207,7 @@ async def test_countdown_is_visible_in_reconnecting_snapshot(tmp_path, monkeypat
 
     async def sleep(_):
         snapshots.append(hub.snapshot()["data"]["demo_status"].copy())
-    monkeypatch.setattr(cli.asyncio, "sleep", sleep)
+    monkeypatch.setattr(cli, "asyncio", RuntimeProxy(cli.asyncio, sleep=sleep))
     try:
         await cli._demo_countdown(hub, 3)
         assert snapshots == [{"phase": "waiting", "remaining_s": n} for n in (3, 2, 1)]

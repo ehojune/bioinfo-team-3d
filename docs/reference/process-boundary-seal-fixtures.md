@@ -28,7 +28,9 @@ Required phases: monitor start → seal → execution start → normal exit → 
 | Timeout, supervisor failure, monitor gap/loss, descendant/socket remnant | Rejected, `unverified` |
 | Untrusted supervisor | Rejected, `unsupported` |
 | `synthetic-v1`, `synthetic-v2` or any adapter other than `synthetic-v3` | Rejected, `unsupported`, `producer_adapter_unavailable` |
-| Any receipt passed to `adapt_producer` | Rejected, `unsupported`, `producer_adapter_unavailable` |
+| `adapt_producer` without independently supplied keys, tags, pins or replay state | Rejected, `unsupported`, `producer_adapter_unavailable` |
+| Valid offline producer/observer HMAC envelopes and full v3 evidence | Accepted, `synthetic_only`; protection remains `unverified` |
+| Invalid envelopes, receipt binding or replay | Rejected, `unverified`, `authentication_or_receipt_invalid` |
 
 ## v3 lifecycle controls
 
@@ -44,10 +46,10 @@ Required phases: monitor start → seal → execution start → normal exit → 
 
 Each negative control rejects with its reason code against both the original ledger and independent re-recording. The same fixture's normal read/output control accepts. Expected labels never determine verdicts.
 
-## Future adapter boundary
+## Offline adapter boundary
 
-`validate(evidence, trusted)` assumes independent provenance only in this fixture. Hash chains model tamper/replay detection; they do not authenticate observers or enforce storage access. `adapt_producer` remains unsupported; `protected_launch` is unchanged.
+`validate(evidence, trusted)` assumes independent provenance only in this fixture. Hash chains model tamper/replay detection; they do not authenticate observers or enforce storage access. `adapt_producer` preserves main's offline HMAC envelope model: the test authority supplies distinct producer/observer keys, tags, trusted expectations and consumed-nonce state. Authenticated failures consume the nonce too. It accepts only the diagnostic, unsealed receipt shape plus valid v3 evidence; key possession does not prove real producer identity. `protected_launch` remains unsupported.
 
-A future adapter needs authenticated external observer/ledger inputs and supervisor request-deadline, stop-reason and cleanup evidence. Real OS seal, writable-handle revocation, continuous ancestry monitoring and independent resource inventory remain **UNVERIFIED**. Child receipts or endpoint hashes cannot replace them; execution approval is separate.
+A production adapter still needs authenticated external observer/ledger inputs and supervisor request-deadline, stop-reason and cleanup evidence. Real OS seal, writable-handle revocation, continuous ancestry monitoring and independent resource inventory remain **UNVERIFIED**. Child receipts or endpoint hashes cannot replace them; execution approval is separate.
 
-Validation: `python -m pytest tests/test_process_boundary_seal_contract.py -q`. Windows inventory retains all cases. Final-head CI/review and draft/hold release are tracked in PR #1064; coordinated #666 approval remains required.
+Validation: `python -m pytest tests/test_process_boundary_seal_contract.py tests/test_boundary_observer.py -q`. Windows inventory retains all seal cases. PR #1064 tracks code-only integration and final-head CI/review; real protection and execution approval remain separate #666 gates.

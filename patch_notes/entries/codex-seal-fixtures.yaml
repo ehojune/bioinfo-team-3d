@@ -1,7 +1,7 @@
 pr: 1064
-# Rev8: align the reference with synthetic-v3; legacy v2 is unsupported.
+# Rev10: integrate main without changing its offline adapter or inventory entries.
 # Final-head CI, manifest execution and actual review stay tracked in PR #1064.
-# Keep draft/hold; real protection remains UNVERIFIED.
+# Code-only merge requires final-head CI/review; real protection remains UNVERIFIED.
 rows:
   - sha: "b666bc4"
     at: "2026-10-31 04:20"
