@@ -13,11 +13,12 @@ from scripts import ci_suite as suite
 from scripts.ci_selection import ROOT
 
 
-@pytest.mark.parametrize('failure', [None, 'body', 'acquire'])
+@pytest.mark.parametrize('failure', [None, 'body', 'acquire', 'release', 'body_release'])
 def test_lock_observation_preserves_order_and_original_failure(tmp_path, monkeypatch, failure):
     from collections import defaultdict
     import filelock
     events = []
+    body_error, release_error = RuntimeError('body'), OSError('unlock')
 
     class Lock:
         def __init__(self, name, timeout):
@@ -30,6 +31,8 @@ def test_lock_observation_preserves_order_and_original_failure(tmp_path, monkeyp
 
         def __exit__(self, *args):
             events.append('lock_exit')
+            if failure in ('release', 'body_release'):
+                raise release_error
 
     observer = suite.LockDiagnostics(tmp_path / 'lock-state-gw0.json', 'gw0')
     record = observer.record
@@ -53,13 +56,21 @@ def test_lock_observation_preserves_order_and_original_failure(tmp_path, monkeyp
     else:
         next(protocol)
         assert 'lock held' in observation.context
-        if failure == 'body':
-            with pytest.raises(RuntimeError, match='body'):
-                protocol.throw(RuntimeError('body'))
+        if failure in ('body', 'release', 'body_release'):
+            expected = body_error if failure == 'body' else release_error
+            with pytest.raises(type(expected)) as raised:
+                if failure == 'release':
+                    next(protocol)
+                else:
+                    protocol.throw(body_error)
+            assert raised.value is expected
+            if failure == 'body_release':
+                assert raised.value.__context__ is body_error
         else:
             with pytest.raises(StopIteration):
                 next(protocol)
-        assert events == ['waiting', 'lock_enter', 'acquired', 'releasing', 'lock_exit', 'released']
+        terminal = 'release_failed' if failure in ('release', 'body_release') else 'released'
+        assert events == ['waiting', 'lock_enter', 'acquired', 'releasing', 'lock_exit', terminal]
     data = json.loads(observer.path.read_text())
     assert data['current']['worker'] == 'gw0' and data['current']['pid'] > 0
     assert data['current']['nodeid'] == item.nodeid and data['reusable'] is False

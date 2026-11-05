@@ -1,5 +1,6 @@
 """#430: request-wide compute choice; no live scheduler, CLI or cluster."""
 import json
+import asyncio
 import os
 import stat
 from pathlib import Path
@@ -24,6 +25,67 @@ def hub_for(dispatch, scheduler="mock", online=True, tools=True):
     hub.runner_capabilities = {"cluster": {"scheduler": scheduler}}
     hub.runners = {"cluster": object()} if online else {}
     return hub
+
+
+@pytest.mark.parametrize('mode', ['hpc', 'local'])
+@pytest.mark.parametrize('stored', [False, True])
+async def test_precedent_receipt_is_checked_before_planning_and_cp1(mode, stored):
+    from labhq.settings import Settings
+    from tests.test_research_protocol import MiniHub, valid_plan
+
+    chosen = asyncio.Event()
+    settings = Settings()
+    settings.research.enabled = True
+    settings.research.evidence_checkpoint = False
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    settings.orchestrator.precedent_agent = 'lit_scout'
+    receipt = {'coverage_version': 2, 'paper_id': 'synthetic', 'source': 'mock',
+               'access_level': 'full_text', 'extraction': 'complete',
+               'text_file': '/stored/paper.md', 'text_sha256': 'a' * 64,
+               'evidence': [], 'supplements_required': False, 'supplements': 'not applicable'}
+    precedents = {'status': 'ok', 'papers': [{'title': 'synthetic', 'citations': ['synthetic'],
+                   'fulltext_receipt': receipt}], 'required': [], 'recommended': [], 'limitations': []}
+
+    async def dispatch(task):
+        if task.meta['kind'] == 'precedent':
+            await chosen.wait()  # the scout returns a new receipt after the PI has chosen
+            return result(task, structured={key: value for key, value in precedents.items() if key != 'status'})
+        if task.meta['kind'] == 'plan':
+            assert mode == 'local', 'unsupported receipt reached planning'
+            plan = valid_plan()
+            for step in plan['steps']:
+                step['execution'] = mode
+            return result(task, structured=plan)
+        return result(task, text='done')
+
+    hub = MiniHub(settings, dispatch, mode='orchestrate', work_kind='research', text='compare conditions')
+    hub.agents['lit_scout'] = {'id': 'lit_scout', 'name': 'scout', 'engine': 'mock', 'role': 'test'}
+    hub.agents['worker'].update(runner_id='cluster', hpc_tools=True, whole_request_hpc=True, builtin_mcp=['hpc'])
+    hub.runners = {'cluster': object()}
+    hub.runner_capabilities = {'cluster': {'scheduler': 'mock'}}
+    if stored:
+        hub.requests['r']['analysis_precedents'] = precedents
+
+    async def answer(**card):
+        hub.approvals.append(card)
+        chosen.set()
+        return {'approved': True, 'note': '1: a' if mode == 'hpc' else '1: b'}
+
+    hub.request_approval = answer
+    await Orchestrator(hub).run_request('r')
+    req = hub.requests['r']
+    assert req['analysis_precedents']['papers'][0]['fulltext_receipt'] == receipt
+    assert req['execution_location']['mode'] == mode
+    if mode == 'hpc':
+        assert req['status'] == 'failed' and 'precedent snapshot' in req['report']
+        assert [card['kind'] for card in hub.approvals] == ['clarify']
+        assert all(task.meta['kind'] not in ('plan', 'step') for task in hub.calls)
+        assert 'plan' not in req
+    else:
+        assert req['status'] == 'done', req.get('error')
+        assert [card['kind'] for card in hub.approvals] == ['clarify', 'research_plan']
+        assert any(task.meta['kind'] == 'plan' for task in hub.calls)
 
 
 @pytest.mark.parametrize("mode", ["hpc", "local"])

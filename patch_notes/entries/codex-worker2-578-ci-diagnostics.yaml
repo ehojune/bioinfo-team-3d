@@ -1,6 +1,6 @@
 pr: 578
 rows:
 - sha: "92ed545"
-  at: 2026-11-05 20:22
+  at: 2026-11-05 20:15
   summary: Windows 시험 실패 뒤에도 읽을 수 있는 진단을 따로 보존합니다.
   text: 잠긴 파일을 제외한 snapshot과 bounded console 출력, worker별 host-resource lock 상태를 추가했다. 선택·상한·receipt 계약을 유지하며 mock 회귀 218건이 통과했다. 실제 timeout 원인은 새 CI에서 확인한다.

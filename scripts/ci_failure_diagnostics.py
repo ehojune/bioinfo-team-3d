@@ -59,7 +59,7 @@ def preserve(source, destination, *, emit=print):
                 raise ValueError('snapshot byte limit')
             target.parent.mkdir(parents=True, exist_ok=True)
             # Copy exactly the observed size, so an active stack writer cannot extend the read forever.
-            with path.open('rb') as reader, target.open('xb') as writer:
+            with path.open(mode='rb') as reader, target.open(mode='xb') as writer:
                 left = size
                 while left:
                     chunk = reader.read(min(left, 65536))
@@ -70,7 +70,7 @@ def preserve(source, destination, *, emit=print):
             total += size
             result['copied'].append(relative)
             if path.name.startswith(('checkpoints-', 'diagnostics-', 'lock-state-', 'stacks-')) or 'error' in path.name:
-                with target.open('rb') as reader:
+                with target.open(mode='rb') as reader:
                     reader.seek(max(0, size - TAIL_BYTES))
                     content = reader.read(TAIL_BYTES).decode('utf-8', 'replace')
                 if path.name.startswith('lock-state-'):

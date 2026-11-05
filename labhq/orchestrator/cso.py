@@ -3348,7 +3348,8 @@ class Orchestrator:
         req = self.hub.requests[rid]
         if req.get("execution_location"):
             problems = execution_policy.input_errors(
-                {**reference_meta(req), "project_dirs": req.get("project_dirs")}, req["execution_location"])
+                {**reference_meta(req), "project_dirs": req.get("project_dirs"),
+                 "precedent_texts": precedent_texts.rows(req.get("analysis_precedents"))}, req["execution_location"])
             if problems:
                 await self._finish(rid, "; ".join(problems), {}, ok=False)
                 return False
@@ -3370,7 +3371,8 @@ class Orchestrator:
                                          "approval_id": decision.get("approval_id") or decision.get("id"),
                                          **({"runner_id": host, "workspace": rid} if mode == "hpc" else {})}
         problems = execution_policy.input_errors(
-            {**reference_meta(req), "project_dirs": req.get("project_dirs")}, req["execution_location"])
+            {**reference_meta(req), "project_dirs": req.get("project_dirs"),
+             "precedent_texts": precedent_texts.rows(req.get("analysis_precedents"))}, req["execution_location"])
         if problems:
             await self._finish(rid, "; ".join(problems), {}, ok=False)
             return False
@@ -7625,6 +7627,10 @@ class Orchestrator:
                     req["analysis_precedents"] = (parsed if parsed is not None else precedent_warning(
                         "parse_failed" if precedent_result is not None and precedent_result.ok else "failed"))
                     await persist_request(self.hub, rid)
+                    # The scout can finish after the PI's execution choice. Recheck its
+                    # new receipts before planning/CP1 using the saved choice, without another card.
+                    if not await self._choose_execution(rid):
+                        return
                 req["checklist_contract"] = 1
                 await persist_request(self.hub, rid)
 

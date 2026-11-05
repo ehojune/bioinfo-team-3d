@@ -456,20 +456,34 @@ class Observation:
             started = time.perf_counter()
             self.context = f"{item.nodeid} [host-resource lock waiting]"
             self.lock_diagnostics.record('waiting', item.nodeid)
-            acquired = False
-            try:
-                with FileLock(str(self.directory / "host-resources.lock"), timeout=1500):
-                    acquired = True
-                    self.lock_diagnostics.record('acquired', item.nodeid)
-                    self.context = f"{item.nodeid} [host-resource lock held]"
-                    self.resource_waits[path.relative_to(ROOT).as_posix()] += time.perf_counter() - started
+            with contextlib.ExitStack() as stack:
+                try:
+                    lock = FileLock(str(self.directory / "host-resources.lock"), timeout=1500)
+                    lock.__enter__()
+                except BaseException:
+                    self.lock_diagnostics.record('acquire_failed', item.nodeid)
+                    raise
+
+                def release(*exc):
+                    # Observe __exit__ itself, including when the test body has raised.
+                    # ExitStack preserves its exception/suppression semantics.
                     try:
-                        with limit_notice(item):
-                            return (yield)
-                    finally:
-                        self.lock_diagnostics.record('releasing', item.nodeid)
-            finally:
-                self.lock_diagnostics.record('released' if acquired else 'acquire_failed', item.nodeid)
+                        suppressed = lock.__exit__(*exc)
+                    except BaseException:
+                        self.lock_diagnostics.record('release_failed', item.nodeid)
+                        raise
+                    self.lock_diagnostics.record('released', item.nodeid)
+                    return suppressed
+
+                stack.push(release)
+                self.lock_diagnostics.record('acquired', item.nodeid)
+                self.context = f"{item.nodeid} [host-resource lock held]"
+                self.resource_waits[path.relative_to(ROOT).as_posix()] += time.perf_counter() - started
+                try:
+                    with limit_notice(item):
+                        return (yield)
+                finally:
+                    self.lock_diagnostics.record('releasing', item.nodeid)
         with limit_notice(item):
             return (yield)
 
