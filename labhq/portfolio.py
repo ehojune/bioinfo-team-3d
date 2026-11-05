@@ -159,6 +159,14 @@ def _py_secret_spans(text: str) -> list[tuple[int, int, str]] | None:
             take(node.value)
         elif isinstance(node, ast.keyword) and node.arg and _SECRET_NAME.fullmatch(node.arg):
             take(node.value)
+        elif isinstance(node, ast.arguments):  # `def f(token="x")`, `lambda password="x": ...`
+            positional = [*node.posonlyargs, *node.args]
+            for arg, default in zip(positional[len(positional) - len(node.defaults):], node.defaults):
+                if _SECRET_NAME.fullmatch(arg.arg):
+                    take(default)
+            for arg, default in zip(node.kwonlyargs, node.kw_defaults):
+                if default is not None and _SECRET_NAME.fullmatch(arg.arg):
+                    take(default)
         elif isinstance(node, ast.Dict):
             for key, value in zip(node.keys, node.values):
                 if isinstance(key, ast.Constant) and isinstance(key.value, str) and _SECRET_NAME.fullmatch(key.value):

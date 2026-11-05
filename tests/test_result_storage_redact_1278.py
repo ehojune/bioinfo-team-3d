@@ -127,3 +127,13 @@ def test_shell_values_with_equals_are_whole_and_a_comment_is_not_a_value():
     assert "xyz789" not in _clean("TOKEN=abc123=xyz789\n", sh)
     comment = "TOKEN= # populated by caller\n"
     assert _clean(comment, sh) == comment
+
+
+@pytest.mark.parametrize("line", [
+    'def connect(host, token="hunter2xyz"):\n    return host',
+    'def connect(*, password="hunter2xyz"):\n    return 1',
+    'handler = lambda secret="hunter2xyz": secret',
+])
+def test_a_secret_default_of_a_function_parameter_is_hidden(line):
+    cleaned = _clean(line + "\n")
+    assert "hunter2xyz" not in cleaned and code_syntax_issues({NAME: cleaned}) == []
