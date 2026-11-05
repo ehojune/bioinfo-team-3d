@@ -8,3 +8,7 @@ rows:
   at: 2026-11-06 03:09
   text: demo driver가 작업 deadline에 걸리면 그때 기다리던 단계·label·응답 없는 CDP 호출·마지막 응답 이후 시간·요청 수를 deadline 행에 남기고, cleanup 진단에 경과 시간과 닫히지 않은 핸들별 대기 시간을 더한다. timeout·단언은 그대로다
   summary: web 시험이 deadline에서 실패하면 어느 단계가 느렸는지 로그로 알 수 있습니다.
+- sha: '74865f0'
+  at: 2026-11-06 03:23
+  text: 리뷰 지적 반영. deadline 행의 마지막 CDP 응답 시각은 id가 있는 응답으로만 갱신하고, 이벤트는 last_cdp_event_ago_ms로 따로 남긴다
+  summary: 호출은 응답이 없는데 이벤트만 오는 상황을 진단이 구별합니다.
