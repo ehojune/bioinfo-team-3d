@@ -761,6 +761,19 @@ def _ps_location(words: list[str], cwds: list[str], workdir: str) -> list[str]:
 _PS_DRIVE_FUNCTION = re.compile(r"^[A-Za-z]:$")
 
 
+_PS_WRITER = re.compile(r"(?<![\w.:/-])(?:[\w.]+[\\])?(" + "|".join(sorted(map(re.escape, _PS_DOWNLOADS | _PS_UNPACK | _PS_TRANSFER)))
+                        + r")(?![\w.-])", re.IGNORECASE)
+
+
+def _ps_unplaced(command: str, commands: list[list[str]]) -> bool:
+    """Whether the text names a download or unpack cmdlet more often than the tokenizer found one as a command name:
+    an assignment (`$r = iwr ...`), a cast (`[void](iwr ...)`), a quote that never closed, or any wrapping not read yet.
+    The closing net of the class: what is named but not placed is checked, never passed."""
+    named = sum(1 for _ in _PS_WRITER.finditer(command))
+    placed = sum(1 for words in commands if _ps_name(words[0]) in _PS_DOWNLOADS | _PS_UNPACK | _PS_TRANSFER)
+    return named > placed
+
+
 def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, warn_percent: float,
                      probe=None) -> ShellCheck | None:
     """`shell_check` for the PowerShell tool: `Invoke-WebRequest -OutFile`, `Invoke-RestMethod -OutFile`,
@@ -771,7 +784,8 @@ def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: flo
     probe = probe or usage
     worst: ShellCheck | None = None
     cwds = [workdir]
-    for words in _ps_commands(command):
+    commands = _ps_commands(command)
+    for words in commands:
         name = _ps_name(words[0])
         if name in _PS_LOCATION_NAMES:
             cwds = _ps_location(words, cwds, workdir)
@@ -795,6 +809,12 @@ def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: flo
                 seen.add(key)
                 worst = _worse(worst, _assess(what, folders[0], estimate, folders[1:], probe=probe, fail_gb=fail_gb,
                                               warn_gb=warn_gb, warn_percent=warn_percent))
+    if _ps_unplaced(command, commands):
+        # Where it writes is unknown: the folders the line may be in and every drive the text names are candidates.
+        drives = {Path(f"{m.group(1).upper()}:/") for m in re.finditer(r"(?<!\w)([A-Za-z]):[\\/]", command)}
+        folders = list(dict.fromkeys([*(Path(c) for c in cwds), *drives]))
+        worst = _worse(worst, _assess("다운로드·압축 해제", folders[0], None, folders[1:], probe=probe, fail_gb=fail_gb,
+                                      warn_gb=warn_gb, warn_percent=warn_percent))
     return worst
 
 

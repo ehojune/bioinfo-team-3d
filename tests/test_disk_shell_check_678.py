@@ -370,7 +370,9 @@ def test_powershell_words_are_read_as_powershell_reads_them(command, words):
 
 def test_an_unclosed_quote_is_not_read(tmp_path):
     assert disk_space._ps_commands("iwr 'x -OutFile a.zip") == []
-    assert ps_check("iwr 'x -OutFile a.zip", tmp_path, 0.5) is None
+    # Not read, but named: the closing net checks the current drive (#1269).
+    assert ps_check("iwr 'x -OutFile a.zip", tmp_path, 0.5).action == "ask"
+    assert ps_check("iwr 'x -OutFile a.zip", tmp_path, 50) is None
 
 
 def test_invoke_webrequest_to_a_full_drive_asks(tmp_path):
@@ -712,3 +714,27 @@ def test_ps_commands_inside_blocks_are_read(command):
 def test_ps_block_comment_is_not_a_command():
     assert disk_space._ps_commands("<# iwr https://h/a -OutFile D:\a.zip\nmore #>\nGet-Date") == [["Get-Date"]]
     assert disk_space._ps_commands("Get-Date <# note #> ; iwr u -OutFile x") == [["Get-Date"], ["iwr", "u", "-OutFile", "x"]]
+
+
+@pytest.mark.parametrize("command", [
+    r"$r = Invoke-WebRequest https://h/a.zip -OutFile D:\a.zip",
+    r"[void](iwr https://h/a.zip -OutFile D:\a.zip)",
+    r"$null = Expand-Archive raw.zip D:\out",
+    r"$x += Start-BitsTransfer https://h/a D:\a",
+    "iwr https://h/a.zip -OutFile 'D:\a.zip",  # a quote that never closes
+    r"Microsoft.PowerShell.Utility\Invoke-WebRequest https://h/a.zip -OutFile $env:T",  # placed: still read as before
+])
+def test_ps_named_but_unplaced_cmdlet_is_checked(tmp_path, command):
+    assert ps_check(command, tmp_path, 1).action == "ask"
+
+
+def test_ps_unplaced_cmdlet_with_room_asks_nothing(tmp_path):
+    assert ps_check(r"$r = iwr https://h/a.zip -OutFile D:\a.zip", tmp_path, 50) is None
+
+
+@pytest.mark.parametrize("command", [
+    "Get-Date", "iwr https://h/a.zip -OutFile x.zip", "Write-Host https://curl.se/a", "Get-ChildItem curl-cache",
+])
+def test_ps_net_leaves_placed_and_unrelated_text_alone(tmp_path, command):
+    placed = disk_space._ps_unplaced(command, disk_space._ps_commands(command))
+    assert not placed
