@@ -42,3 +42,7 @@ rows:
 - sha: "1128536"
   at: 2026-11-05 16:56
   text: configured 입력 없는 직원의 whole-request HPC capability를 경로 노출 없이 알리고 선택·계획에 반영한다.
+- sha: "33d1deb"
+  at: 2026-11-05 17:26
+  summary: 설치 안내에서 요청 전체의 HPC·이 PC 선택과 지원 제한을 확인하도록 정리했습니다.
+  text: 04장 한영에 단계별 원본·검증 입력 복사·선택 기록·snapshot 제한을 반영했다. 실제 HPC는 미검증이다.
