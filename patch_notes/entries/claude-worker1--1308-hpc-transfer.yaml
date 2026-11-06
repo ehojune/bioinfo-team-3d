@@ -12,3 +12,7 @@ rows:
     at: "2026-11-07 05:30"
     summary: "에이전트가 hpc_submit에 작은 입력 파일 목록을 줄 수 있고, 파일을 공유하지 않는 사이트에서는 그 파일이 클러스터 작업 폴더로 올라갑니다. 작업 번호를 읽지 못한 제출 출력과 Slurm 다른 클러스터 안내에 든 호스트 이름도 가립니다."
     text: "hpc_mcp.hpc_submit의 inputs 인자(상대 경로 20개 이하 검증)를 broker payload로 전달, submit_job이 inputs 형식 확인, scheduler의 job id 해석 실패·Slurm -M 문장에 _hide 적용, 도구 경로 시험과 가림 시험 (#1308)"
+  - sha: "b4d5a9a"
+    at: "2026-11-07 06:30"
+    summary: "결과를 가져올 로컬 폴더가 링크로 바뀌어 있으면 거부하고, 가져오다 전송이 실패하면 끝난 것으로 치지 않고 다시 시도합니다. 올리기는 시간 상한(300초)을 두고 도구의 기다리는 시간에 그만큼을 더했습니다."
+    text: "hpc_transfer.safe_local_root(링크·밖 폴더 거부)를 fetch_results가 base로 적용, 크기·이름 같은 영구 사유만 skipped하고 전송 오류는 전파, 없는 로그는 exists로 구분, Transfer.deadline·UPLOAD_BUDGET_S, hpc_mcp._submit_wait_s, 시험 6건 (#1308)"
