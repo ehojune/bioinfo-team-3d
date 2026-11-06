@@ -12,3 +12,7 @@ rows:
   at: 2026-11-07 09:00
   text: 새 규칙에 맞춰 기존 시험의 fixture를 고친다. 진행 게시 시험의 요청은 기록된 none으로 시작하고, wiki 시험은 task에 묶인 dispatch에서만 도구가 붙는다고 확인하며 묶이지 않으면 붙지 않는 단언을 더한다. 게시 시험은 이력 없음·possible·unknown·빈 값·문자열 아님 모두 올리지 않고 recorded none은 올리는 양성 대조를 둔다
   summary: 단언을 약하게 하지 않고 새 규칙에 맞게 시험 fixture를 바로잡습니다.
+- sha: '23c5906'
+  at: 2026-11-07 10:10
+  text: 엔진 결과 계약의 스키마 hash를 바꾸는 wiki_summary 증거 수준 초안(claims.py, report_check.py, wiki_contract.py, 시험)을 이 PR에서 되돌린다. 게이트웨이가 task의 wiki 허가를 정할 때 원시 roster가 아니라 effective roster(hosts)에서 그 runner의 항목을 읽게 하고, runner는 허가가 있을 때만 wiki_bound 인자를 넘겨 기존 호출 형태를 유지한다
+  summary: CI에서 드러난 스키마 hash·roster 규칙·호출 형태 충돌을 풀어 첫 단위를 진행 게시 차단으로 좁힙니다.
