@@ -1,0 +1,9 @@
+rows:
+- sha: '9e62f820'
+  at: 2026-11-06 23:15
+  text: "#1272 web_resizable_panels 실패 분석을 집계 문서(ci-1076-flake-tally.md)에 더한다. 60초가 어디에 쓰였는지(Node 시작 19.3초, Chrome 첫 /json 응답 17.6초 등), 같은 시각 WMI도 느렸다는 점, 원인 후보 네 가지와 고칠 범위"
+  summary: 실패한 web 시험의 시간이 어디서 사라졌는지 문서로 남깁니다.
+- sha: 'c0c2369'
+  at: 2026-11-06 23:15
+  text: web_resizable_panels 시험이 호출마다 Node 시작·모듈 읽기·openDemo 시점의 남은 시간을 성공해도 한 줄(resizable startup)로 남긴다. 시간 한계와 단언은 바꾸지 않는다. 직렬 실행의 CI 로그에서 보이고, 값 계산은 시험 두 개가 확인한다
+  summary: 느린 runner의 징후를 실패하기 전에 로그에서 볼 수 있습니다.
