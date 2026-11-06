@@ -240,7 +240,10 @@ _TEXTS = {
 
 def _ask_one(key: str, current, ask: Callable[[str, str], str]):
     """One answer. Empty keeps what is there (unknown stays unknown); anything unreadable is asked again."""
-    shown = " ".join(current) if isinstance(current, list) else "" if current is None else str(current)
+    if isinstance(current, bool):  # shown the way it is answered, so Enter (which hands the shown text back) keeps it
+        shown = "y" if current else "n"
+    else:
+        shown = " ".join(current) if isinstance(current, list) else "" if current is None else str(current)
     while True:
         raw = ask(_label(key), shown).strip()
         if raw == "":
@@ -251,9 +254,9 @@ def _ask_one(key: str, current, ask: Callable[[str, str], str]):
                     raise ValueError("다음 중 하나여야 합니다: " + ", ".join(_CHOICES[key][1]))
                 return raw
             if key in _YES_NO:
-                if raw.lower() not in ("y", "yes", "n", "no"):
+                if raw.lower() not in ("y", "yes", "true", "n", "no", "false"):
                     raise ValueError("y 또는 n으로 답하세요")
-                return raw.lower() in ("y", "yes")
+                return raw.lower() in ("y", "yes", "true")
             if key in _NUMBERS:
                 if not raw.isdigit() or int(raw) < 1:
                     raise ValueError("1 이상의 정수여야 합니다")
