@@ -9,7 +9,7 @@ Lookup-only. Behavior is described in [manual chapter 12](../manual/12-github-re
 | Record | `wiki_exposure` on the request record (`labhq/evidence/wiki_exposure.py`) |
 | `none` | The request was made by a gateway that records this, and no task has been sent to a staff member who could be given the wiki tool |
 | `possible` | A task was sent to such a staff member. It never goes back to `none` |
-| missing or any other value | **unknown**: no record, or one that cannot be read. Except that a numeric `created_at` before the `labhq_wiki` release (PR #1040 merge, 2026-10-29T21:01:56Z) counts as `none`, since the tool did not exist then. After the release, or with no `created_at`, it is unknown |
+| missing or any other value | **unknown**: no record, or one that cannot be read. Except that numeric `created_at` and `updated_at` (bumped on every save) both before the `labhq_wiki` release (PR #1040 merge, 2026-10-29T21:01:56Z) count as `none`, since the request was never touched while the tool existed. Created before but updated after it (a resume, for one), or with a time missing, it is unknown |
 | Public publication | Allowed only for `none`. `possible` and unknown are blocked |
 
 ## How it is bound

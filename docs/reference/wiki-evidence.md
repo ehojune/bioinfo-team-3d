@@ -9,7 +9,7 @@ lookup-only. 동작 설명은 [manual 12장](../manual/12-github-reports.md), �
 | 기록 | 요청 기록의 `wiki_exposure` (`labhq/evidence/wiki_exposure.py`) |
 | `none` | 이력을 적는 게이트웨이가 만든 요청이고, wiki 도구를 줄 수 있는 직원에게 task를 보낸 적이 없다 |
 | `possible` | 그런 직원에게 task를 보냈다. 다시 `none`이 되지 않는다 |
-| 없음·그 밖의 값 | **unknown**. 이력이 없거나 읽을 수 없다. 단 `created_at`이 숫자이고 `labhq_wiki` 출시(PR #1040 병합, 2026-10-29T21:01:56Z) 이전이면 `none`으로 본다(그때는 도구가 없었다). 출시 이후거나 `created_at`이 없으면 unknown |
+| 없음·그 밖의 값 | **unknown**. 이력이 없거나 읽을 수 없다. 단 `created_at`과 `updated_at`(저장할 때마다 갱신된다)이 모두 숫자이고 `labhq_wiki` 출시(PR #1040 병합, 2026-10-29T21:01:56Z) 이전이면 `none`으로 본다(그 뒤로 요청을 건드린 적이 없어 도구를 쓸 수 없었다). 생성만 이전이고 이후에 갱신됐거나(resume 등) 시각이 없으면 unknown |
 | 공개 게시 | `none`일 때만 허용한다. `possible`·unknown은 막는다 |
 
 ## 어떻게 묶었나
