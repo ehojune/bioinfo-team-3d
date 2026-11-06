@@ -1,6 +1,6 @@
-pr: null
+pr: 1318
 rows:
   - sha: "9d47769"
-    at: "2026-11-07 04:24"
+    at: "2026-11-07 04:22"
     summary: "HPC 상태·큐·취소 요청을 전용 경로로 나누고 직원의 소유 잡만 받습니다. 상태 확인의 두 명령에 각각 재접속 시간을 넣어 도구가 먼저 포기하지 않게 했습니다."
     text: "인증된 /jobs/scheduler/{op}, submit/op 우회 거부, 완료 잡 status·array 소유 범위·queue 필터, 명령별 전체 시간 예산과 프로필 기반 CLI 대기, mock/fake 356 passed·6 skipped (#1307)"
