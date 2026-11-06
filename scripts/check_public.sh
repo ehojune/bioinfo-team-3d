@@ -32,9 +32,9 @@ data=$(files | tr '\0' '\n' | { grep -E '\.(vcf|bam|cram|fastq|fq|bcf|h5ad|bed)(
 # A site profile names one user's hosts, ports and paths (#1300): it lives in ~/.labhq/sites, never in the repository.
 # Its first key marks it, and its folder is `.labhq/sites`; either one tracked fails. A line must start with the key.
 if git ls-files -z >/dev/null 2>&1; then
-  profiles=$({ git grep -lIE -e '^labhq_site_profile:' || [ $? -eq 1 ]; })     || { echo "✗ 추적 파일을 읽지 못해 사이트 프로필 검사를 끝내지 못했습니다"; fail=1; }
+  profiles=$({ git grep -lIE -e '^[[:space:]]*.?labhq_site_profile.?[[:space:]]*:' || [ $? -eq 1 ]; })     || { echo "✗ 추적 파일을 읽지 못해 사이트 프로필 검사를 끝내지 못했습니다"; fail=1; }
 else
-  profiles=$({ grep -rlIE --exclude-dir=.git -e '^labhq_site_profile:' . || [ $? -eq 1 ]; })     || { echo "✗ 파일을 읽지 못해 사이트 프로필 검사를 끝내지 못했습니다"; fail=1; }
+  profiles=$({ grep -rlIE --exclude-dir=.git -e '^[[:space:]]*.?labhq_site_profile.?[[:space:]]*:' . || [ $? -eq 1 ]; })     || { echo "✗ 파일을 읽지 못해 사이트 프로필 검사를 끝내지 못했습니다"; fail=1; }
 fi
 sitepaths=$(files | tr '\0' '\n' | { grep -E '(^|/)\.labhq/sites/' || [ $? -eq 1 ]; }) \
   || { echo "✗ 추적 파일 목록을 읽지 못했습니다"; fail=1; }

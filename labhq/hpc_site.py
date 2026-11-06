@@ -31,9 +31,10 @@ class SiteProfileError(ValueError):
 
 
 class SiteProfile(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    labhq_site_profile: int = VERSION
+    # The key in the file is MARKER; the attribute has another name so no source line looks like a profile to the public check.
+    format_version: int = Field(default=VERSION, alias=MARKER)
     name: str
     # How the login is reached. `connect_argv` is the command that opens it (no secret in it); a gateway whose local port
     # must be looked up says how in `port_discovery`.
@@ -53,7 +54,7 @@ class SiteProfile(BaseModel):
     login_limit_per_day: int | None = Field(default=None, ge=1)
     notes: str | None = None
 
-    @field_validator("labhq_site_profile")
+    @field_validator("format_version")
     @classmethod
     def known_version(cls, value: int) -> int:
         if value != VERSION:
@@ -134,7 +135,7 @@ def profile_path(name: str, directory: Path | None = None) -> Path:
 
 
 def dump(profile: SiteProfile) -> str:
-    data = profile.model_dump(mode="json")
+    data = profile.model_dump(mode="json", by_alias=True)
     ordered = {MARKER: data.pop(MARKER), **data}
     return yaml.safe_dump(ordered, allow_unicode=True, sort_keys=False)
 
@@ -165,6 +166,8 @@ def parse_profile(text: str) -> SiteProfile:
         raise SiteProfileError("not valid YAML") from error
     if not isinstance(data, dict):
         raise SiteProfileError("a profile is a YAML mapping")
+    if MARKER not in data:  # the public check looks for this key, so a profile without it would not be seen there
+        raise SiteProfileError(f"the first key of a profile is {MARKER}: {VERSION}")
     try:
         return SiteProfile.model_validate(data)
     except ValidationError as error:
@@ -198,6 +201,8 @@ def check_file(path: Path) -> list[str]:
         return ["cannot read the file"]
     except SiteProfileError as error:
         return [str(error)]
+    if profile.name != path.stem:
+        return [f"the file {path.name} names itself {profile.name}"]
     return problems(profile)
 
 

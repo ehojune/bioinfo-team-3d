@@ -96,19 +96,26 @@ def _ask_hpc_login_limits(hpc: dict, scheduler: str, yes: bool) -> None:
     hpc_login_budget.ask_limits(hpc, lambda label, default: _ask(label, default, yes))
 
 
-def _ask_hpc_site_profile(hpc: dict, scheduler: str, yes: bool, directory: Path | None = None) -> None:
+def _ask_hpc_site_profile(hpc: dict, scheduler: str, yes: bool, directory: Path | None = None, dry_run: bool = False) -> None:
     """Offer to write this user's site profile (#1300): how the cluster is reached differs by institution, so the answers are
     the user's and a blank one stays unknown. Saved outside the repository; only its name goes into the config. Not asked
     without a person at the terminal, and not again once the config names a profile."""
     if scheduler not in ("sge", "pbs", "slurm") or yes or not _interactive() or hpc.get("site_profile"):
         return
+    if dry_run:
+        print("dry-run: 사이트 프로필은 묻지 않고 저장하지 않습니다.")
+        return
     if _ask("이 클러스터의 접속 방법을 사이트 프로필로 적어 둘까요? (y/N)", "n", False).strip().lower() not in ("y", "yes"):
         return
     name = _ask("프로필 이름 (소문자·숫자·-_)", "my-cluster", False).strip()
     try:
-        hpc_site.profile_path(name, directory)
+        path = hpc_site.profile_path(name, directory)
+        existing = None
+        if path.exists():  # never replace a profile another config may use: its answers become the defaults
+            existing = hpc_site.load_profile(name, directory)
+            print(f"이미 있는 프로필 {name}입니다. 기존 값을 기본값으로 보여 드리니 바꿀 항목만 고치세요.")
         profile = hpc_site.ask_profile(
-            name, lambda label, default: _ask(label, default, False),
+            name, lambda label, default: _ask(label, default, False), existing=existing,
             preset={"scheduler": scheduler, "queue": hpc.get("default_queue"),
                     "login_limit_per_request": hpc.get("login_limit_per_request"),
                     "login_limit_per_day": hpc.get("login_limit_per_day")})
@@ -573,7 +580,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             existing.runner.workspace_root if existing else data["runner"]["workspace_root"], yes, instance)
         trial = _hpc_consult(hpc, scheduler, dry_run)
         _ask_hpc_login_limits(hpc, scheduler, yes)
-        _ask_hpc_site_profile(hpc, scheduler, yes)
+        _ask_hpc_site_profile(hpc, scheduler, yes, dry_run=dry_run)
         if _is_windows():
             policy = data.setdefault("policy", {})
             policy["data_zones"] = [z for z in policy.get("data_zones", [])

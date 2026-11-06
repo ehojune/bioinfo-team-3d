@@ -1,5 +1,6 @@
 """#1300: the site profile schema, checker, question flow, storage outside the repository and the public check."""
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,6 +11,7 @@ import yaml
 from labhq import hpc_site as site
 from labhq import init_wizard
 from labhq.settings import HpcSettings
+from tests.test_private_paths import BASH, needs_bash  # Git's bash on Windows: System32's bash.exe would start WSL
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -49,13 +51,13 @@ def test_the_empty_example_is_a_valid_profile_with_everything_unknown():
     ({"connect_argv": ["ssh", ""]}, "connect_argv"),
 ])
 def test_schema_rejects(change, message):
-    data = {"name": "site", **change}
+    data = {site.MARKER: 1, "name": "site", **change}
     with pytest.raises(site.SiteProfileError) as error:
         site.parse_profile(yaml.safe_dump(data))
     assert message in str(error.value)
 
 
-@pytest.mark.parametrize("text", ["", "- a\n- b\n", "a: [", "42\n"])
+@pytest.mark.parametrize("text", ["", "- a\n- b\n", "a: [", "42\n", "name: site\n"])  # the last has no marker key
 def test_a_file_that_is_not_a_profile_mapping_is_an_error(text):
     with pytest.raises(site.SiteProfileError):
         site.parse_profile(text)
@@ -123,6 +125,7 @@ def test_the_default_folder_is_under_the_home_and_outside_the_repository():
 
 def test_a_profile_file_that_names_another_profile_is_refused(tmp_path):
     (tmp_path / "one.yaml").write_text(site.dump(site.SiteProfile(name="two")), encoding="utf-8")
+    assert "names itself two" in site.check_file(tmp_path / "one.yaml")[0]  # the checker agrees with the loader
     with pytest.raises(site.SiteProfileError, match="names itself two"):
         site.load_profile("one", tmp_path)
     with pytest.raises(site.SiteProfileError):
@@ -197,6 +200,32 @@ def test_init_does_not_ask_without_a_person_or_a_scheduler_or_when_a_profile_is_
     assert hpc.get("site_profile") in (None, "already")
 
 
+def test_init_never_replaces_an_existing_profile_and_offers_its_values(monkeypatch, tmp_path, capsys):
+    site.save_profile(site.SiteProfile(name="lab", access_method="ssh", connect_argv=["ssh", "login"], remote_exec=True,
+                                       scheduler="slurm", queue="long"), tmp_path)
+    hpc, ask = _init(monkeypatch, tmp_path, "y", "lab", *[""] * 13)  # Enter on every question keeps the old answers
+    kept = site.load_profile("lab", tmp_path)
+    assert (kept.access_method, kept.connect_argv, kept.remote_exec, kept.queue) == ("ssh", ["ssh", "login"], True, "long")
+    defaults = {label: default for label, default in ask.asked}
+    assert defaults["접속 명령 (공백으로 나눈 단어, 비밀번호·토큰은 쓰지 마세요)"] == "ssh login"
+    assert "이미 있는 프로필" in capsys.readouterr().out and hpc["site_profile"] == "lab"
+
+
+def test_init_cannot_replace_an_unreadable_existing_profile(monkeypatch, tmp_path, capsys):
+    (tmp_path / "lab.yaml").write_text("not: a profile\n", encoding="utf-8")
+    hpc, _ = _init(monkeypatch, tmp_path, "y", "lab")
+    assert "site_profile" not in hpc and (tmp_path / "lab.yaml").read_text(encoding="utf-8") == "not: a profile\n"
+    assert "저장하지 못했습니다" in capsys.readouterr().out
+
+
+def test_init_dry_run_asks_nothing_and_writes_nothing(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(init_wizard, "_interactive", lambda: True)
+    monkeypatch.setattr(init_wizard, "_ask", lambda *a: pytest.fail("dry-run must not prompt"))
+    hpc = {}
+    init_wizard._ask_hpc_site_profile(hpc, "slurm", False, tmp_path, dry_run=True)
+    assert hpc == {} and list(tmp_path.iterdir()) == [] and "dry-run" in capsys.readouterr().out
+
+
 def test_init_declining_writes_nothing(monkeypatch, tmp_path):
     hpc, ask = _init(monkeypatch, tmp_path, "n")
     assert len(ask.asked) == 1 and "site_profile" not in hpc and list(tmp_path.iterdir()) == []
@@ -225,11 +254,14 @@ def test_the_hpc_setting_keeps_only_a_profile_name():
 
 # ----- the public check -----
 
-@pytest.mark.skipif(shutil.which("bash") is None or shutil.which("git") is None, reason="needs bash and git")
+@needs_bash
 @pytest.mark.parametrize("path,text,fails", [
     ("profile.yaml", site.example_text(), True),
     ("deep/dir/mine.yml", site.MARKER + ": 1\nname: x\n", True),
     (".labhq/sites/anything.txt", "x\n", True),
+    ("copy/quoted.yaml", "'" + site.MARKER + "': 1\nname: x\n", True),
+    ("copy/double.yaml", '"' + site.MARKER + '": 1\nname: x\n', True),
+    ("copy/indented.yaml", "  " + site.MARKER + ": 1\n  name: x\n", True),
     ("docs/note.md", "the key " + site.MARKER + ": is described here\n", False),
     ("tests/sample.py", 'TEXT = "' + site.MARKER + ': 1"\n', False),
 ])
@@ -244,10 +276,11 @@ def test_the_public_check_stops_a_tracked_site_profile(tmp_path, path, text, fai
     env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=env)
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True, env=env)
-    done = subprocess.run(["bash", "scripts/check_public.sh"], cwd=repo, capture_output=True, text=True, env=env)
-    assert (done.returncode != 0) is fails, done.stdout + done.stderr
+    done = subprocess.run([BASH, "scripts/check_public.sh"], cwd=repo, capture_output=True, env=env)
+    out = (done.stdout + done.stderr).decode("utf-8", "replace")
+    assert (done.returncode != 0) is fails, out
     if fails:
-        assert "사이트 프로필" in done.stdout
+        assert "사이트 프로필" in out
 
 
 def test_this_repository_tracks_no_site_profile():
@@ -259,5 +292,5 @@ def test_this_repository_tracks_no_site_profile():
         if not name or not path.is_file() or path.stat().st_size > 1_000_000:
             continue
         for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-            assert not line.startswith(site.MARKER + ":"), name
+            assert not re.match(r"^\s*.?" + site.MARKER + r".?\s*:", line), name
         assert ".labhq/sites/" not in name
