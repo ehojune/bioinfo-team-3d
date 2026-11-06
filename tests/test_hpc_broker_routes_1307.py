@@ -25,7 +25,7 @@ def routes(tmp_path, monkeypatch):
     runner.s = Settings.model_validate({"hpc": {"scheduler": "slurm", "user": "fixture"}})
     runner.workspaces = {"t1": object()}
     runner.active_roots = {"t1": (False,)}
-    runner.jobs = {"1": job(), "2": job(agent="other"), "3": job(terminal=True),
+    runner.jobs = {"1": job(), "2": job(agent="other"), "3": job(terminal=True, state="completed"),
                    "4": job(task="previous"), "5": job(task="other", request="other"),
                    "6": job(submitted_by_runner=False), "7": job(request=None, task="other"),
                    "8": job(), "local-fixture": job()}
@@ -98,7 +98,17 @@ def test_completed_jobs_are_readable_but_cannot_be_cancelled(routes):
                               headers=routes.headers).json()["status"]["state"] == "completed"
     assert "error" in routes.client.post("/jobs/scheduler/cancel", json={"job_id": "3"},
                                         headers=routes.headers).json()
-    assert routes.calls == [("status", "3")]
+    assert routes.calls == []
+
+
+@pytest.mark.parametrize("jid,state,exit_status", [("3", "failed", 7), ("3", "cancelled", 7),
+                                                   ("3_2", "unknown_finished", None)])
+def test_terminal_status_uses_the_record_instead_of_a_recycled_scheduler_id(routes, jid, state, exit_status):
+    routes.runner.jobs["3"].update(state="cancelled" if state == "cancelled" else "failed", name="old-job", exit_status=7)
+    status = routes.client.post("/jobs/scheduler/status", json={"job_id": jid}, headers=routes.headers).json()["status"]
+    assert status["state"] == state and status["terminal"] and routes.calls == []
+    assert status["name"] == "old-job" and status["job_id"] == jid
+    assert status["exit_status"] == exit_status
 
 
 def test_queue_returns_only_runner_recorded_owned_jobs_and_array_tasks(routes):

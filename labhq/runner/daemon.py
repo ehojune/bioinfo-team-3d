@@ -62,7 +62,7 @@ from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..staff_skills import install_required_skills
 from ..store import StateStore
-from ..tools.scheduler import (MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, close_sessions, command_env, job_in_family,
+from ..tools.scheduler import (MISSING_POLLS_BEFORE_FINISHED, TERMINAL, JobInfo, Scheduler, close_sessions, command_env, job_in_family,
                                next_poll_interval, sanitize_job_name)
 from ..util import INPUT_STEP_ID, output_relpath, short, tool_input_fingerprint
 from .. import vocab as output_vocab
@@ -3383,6 +3383,14 @@ class Runner:
         job_id = str(body.get("job_id") or "")
         if op in {"status", "cancel"} and not await self._owns_job(body, include_terminal=op == "status"):
             return {"error": f"job {job_id} was not submitted by you through hpc_submit; labhq {op} requires an owned job"}
+        if op == "status" and (record := self._hpc_job_record(body, job_id, include_terminal=True)) and record[1].get("terminal"):
+            tracked, saved = record
+            if tracked != job_id:
+                return {"status": JobInfo(job_id, "unknown_finished", name=saved.get("name", ""),
+                                          detail="array parent is terminal; child outcome was not recorded").to_dict()}
+            state = saved.get("state") if saved.get("state") in TERMINAL else "unknown_finished"
+            return {"status": JobInfo(job_id, state, raw_state=saved.get("raw_state", ""), name=saved.get("name", ""),
+                                      exit_status=saved.get("exit_status"), detail=saved.get("detail", "")).to_dict()}
 
         def work():
             with request_scope(body.get("request_id")), queue_wait():  # gives up unsent when the shell stays busy
@@ -3484,6 +3492,9 @@ class Runner:
         return self._hpc_job_owned(identity, str(identity.get("job_id") or ""), include_terminal=include_terminal)
 
     def _hpc_job_owned(self, identity: dict, job_id: str, *, include_terminal: bool = False) -> bool:
+        return self._hpc_job_record(identity, job_id, include_terminal=include_terminal) is not None
+
+    def _hpc_job_record(self, identity: dict, job_id: str, *, include_terminal: bool = False) -> tuple[str, dict] | None:
         """Only runner-recorded HPC jobs for this agent and task/request; completed jobs remain readable."""
         for tracked, j in self.jobs.items():
             if (local_jobs.is_local(tracked) or not j.get("submitted_by_runner")
@@ -3492,8 +3503,8 @@ class Runner:
                 continue
             if j.get("task_id") == identity.get("task_id") or (
                     identity.get("request_id") and j.get("request_id") == identity.get("request_id")):
-                return True
-        return False
+                return tracked, j
+        return None
 
     # ---------------- local jobs (#675) ----------------
     def _local_owned(self, identity: dict, job_id: str | None = None) -> list[tuple[str, dict]]:
