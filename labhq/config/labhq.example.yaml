@@ -42,6 +42,8 @@ runner:
   stall_warn_s: 600                 # 이 시간 동안 출력이 없으면 한 번 경고(0이면 끔)
   stall_retry_s: 1200               # 명령이 안 돌 때만 CLI를 끝내고 재시도(0이면 끔)
   job_poll_s: 60
+  job_poll_max_s: 300               # hpc.ssh_host일 때만: 변화 없는 확인 뒤 간격을 늘리는 상한(초). job_poll_s 이하면 끔
+  job_poll_backoff: 2.0             # 늘리는 배수. 변화·새 잡·실패가 있으면 job_poll_s로 돌아감
   reference_roots: []              # 참고 자료 path가 들어갈 수 있는 러너 쪽 폴더(읽기 전용). 프로젝트 local_dir은 자동 포함
   input_hash_max_file_bytes: 2147483648    # 단계 입력 파일 하나의 sha256 읽기 상한(2 GiB)
   input_hash_max_total_bytes: 21474836480  # 단계마다 cache miss 입력을 읽는 누적 상한(20 GiB)

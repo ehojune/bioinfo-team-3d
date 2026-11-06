@@ -311,6 +311,15 @@ def _local_user() -> str:
         return _windows_logon_user()
 
 
+def next_poll_interval(current: float, base: float, cap: float, factor: float, reset: bool) -> float:
+    """The wait before the next job poll (#1295). Every poll over ssh is a login, so a poll that found nothing new makes
+    the next one later, by ``factor`` up to ``cap``; any change (a new job, a state change, a job whose accounting is
+    still catching up, a failed poll) goes back to ``base``. The cap never goes below ``base``."""
+    if reset:
+        return float(base)
+    return float(min(max(cap, base), max(base, current * factor)))
+
+
 class Scheduler:
     def __init__(self, cfg: HpcSettings):
         self.cfg = cfg
@@ -423,15 +432,7 @@ class Scheduler:
             for j in self.queue():
                 if j.job_id == job_id:
                     return j
-            p = self._run(["qacct", "-j", job_id])
-            if p.returncode != 0:
-                detail = _detail(p)
-                if re.fullmatch(rf"error: job id {re.escape(job_id)} not found", detail, re.I):
-                    return JobInfo(job_id=job_id, state="missing")  # accounting can lag; watcher retries
-                raise RuntimeError(f"qacct failed ({p.returncode}): {detail}")
-            if "exit_status" not in p.stdout:
-                raise RuntimeError("qacct returned no exit_status; job state is unknown")
-            return parse_sge_qacct(job_id, p.stdout)
+            return self._sge_accounting(job_id)
         args = ["qstat", "-fx", job_id] if self.cfg.pbs.pro else ["qstat", "-f", job_id]
         p = self._run(args)
         if p.returncode != 0:
@@ -443,6 +444,123 @@ class Scheduler:
         if info is None:
             raise RuntimeError("qstat returned no job record; job state is unknown")
         return info
+
+    def _sge_accounting(self, job_id: str) -> JobInfo:
+        """A job that left the SGE queue: qacct for its final state."""
+        p = self._run(["qacct", "-j", job_id])
+        if p.returncode != 0:
+            detail = _detail(p)
+            if re.fullmatch(rf"error: job id {re.escape(job_id)} not found", detail, re.I):
+                return JobInfo(job_id=job_id, state="missing")  # accounting can lag; watcher retries
+            raise RuntimeError(f"qacct failed ({p.returncode}): {detail}")
+        if "exit_status" not in p.stdout:
+            raise RuntimeError("qacct returned no exit_status; job state is unknown")
+        return parse_sge_qacct(job_id, p.stdout)
+
+    def statuses(self, job_ids: list[str]) -> dict[str, "JobInfo | Exception"]:
+        """The state of several jobs with as few scheduler commands (so ssh logins) as possible (#1295).
+
+        Each id maps to its JobInfo, or to the exception ``status`` would have raised for it. The answer is the same
+        as asking one job at a time; only the number of commands differs:
+
+        - SGE: one ``qstat -u`` for every job still queued or running, then ``qacct`` only for a job that left it.
+        - Slurm: one ``squeue -j a,b,c``, then one ``sacct -j …`` for the jobs squeue no longer holds.
+        - PBS: one ``qstat -f a b c``.
+
+        Anything the batch cannot answer cleanly (a command that fails, a job it does not list) falls back to the
+        one-job path for that job, so an odd scheduler answer costs extra commands, never a wrong state."""
+        ids = list(dict.fromkeys(job_ids))
+        out: dict[str, JobInfo | Exception] = {}
+        if self.cfg.scheduler == "mock" or len(ids) < 2:
+            return self._one_by_one(ids)
+        self._require_enabled("status")
+        valid = []
+        for job_id in ids:
+            try:
+                valid.append(checked_job_id(job_id))
+            except Exception as exc:  # noqa: BLE001 - reported per job, like status()
+                out[job_id] = exc
+        try:
+            if self.cfg.scheduler == "sge":
+                out.update(self._sge_statuses(valid))
+            elif self.cfg.scheduler == "slurm":
+                out.update(self._slurm_statuses(valid))
+            else:
+                out.update(self._pbs_statuses(valid))
+        except Exception as exc:  # noqa: BLE001 - the batch itself failed: every job reports it, as one status would
+            for job_id in valid:
+                out.setdefault(job_id, exc)
+        return {job_id: out[job_id] for job_id in ids}
+
+    def _one_by_one(self, ids: list[str]) -> dict[str, "JobInfo | Exception"]:
+        out: dict[str, JobInfo | Exception] = {}
+        for job_id in ids:
+            try:
+                out[job_id] = self.status(job_id)
+            except Exception as exc:  # noqa: BLE001
+                out[job_id] = exc
+        return out
+
+    def _sge_statuses(self, ids: list[str]) -> dict[str, "JobInfo | Exception"]:
+        queued = {j.job_id: j for j in self.queue()}
+        out: dict[str, JobInfo | Exception] = {}
+        for job_id in ids:
+            if job_id in queued:
+                out[job_id] = queued[job_id]
+                continue
+            try:
+                out[job_id] = self._sge_accounting(job_id)
+            except Exception as exc:  # noqa: BLE001
+                out[job_id] = exc
+        return out
+
+    def _pbs_statuses(self, ids: list[str]) -> dict[str, "JobInfo | Exception"]:
+        flags = ["-fx"] if self.cfg.pbs.pro else ["-f"]
+        p = self._run(["qstat", *flags, *ids])
+        found: dict[str, JobInfo] = {}
+        if p.returncode == 0:
+            for block in re.split(r"(?m)^(?=Job Id:)", p.stdout):
+                info = parse_pbs_qstat_full(block) if block.strip() else None
+                if info is not None:
+                    found[info.job_id.split(".")[0]] = info
+        out: dict[str, JobInfo | Exception] = {}
+        for job_id in ids:
+            info = found.get(job_id.split(".")[0])
+            if info is not None:
+                out[job_id] = info
+                continue
+            try:
+                out[job_id] = self.status(job_id)  # not listed or the batch failed: ask for this job alone
+            except Exception as exc:  # noqa: BLE001
+                out[job_id] = exc
+        return out
+
+    def _slurm_statuses(self, ids: list[str]) -> dict[str, "JobInfo | Exception"]:
+        p = self._run(["squeue", "-h", "-r", "-t", "all", "-j", ",".join(ids), "-o", SQUEUE_FORMAT])
+        if p.returncode != 0 or (p.stdout.strip() and not parse_slurm_squeue(p.stdout)):
+            return self._one_by_one(ids)  # a purged id can fail the whole call: ask one job at a time
+        records = parse_slurm_squeue(p.stdout)
+        out: dict[str, JobInfo | Exception] = {}
+        live: dict[str, JobInfo | None] = {}
+        ended = []
+        for job_id in ids:
+            live[job_id] = slurm_job(job_id, records)
+            if live[job_id] and not live[job_id].terminal:
+                out[job_id] = live[job_id]
+            else:
+                ended.append(job_id)
+        if ended:
+            accounting = self._run(["sacct", "-n", "-P", "-X", "-j", ",".join(ended), "-o", SACCT_FIELDS])
+            batch_failed = accounting.returncode != 0 and not (
+                ACCOUNTING_DISABLED.search(accounting.stderr or "") or ACCOUNTING_DISABLED.search(accounting.stdout or ""))
+            for job_id in ended:
+                try:
+                    # One id a site rejects can fail the whole sacct: ask for that job alone, as before the batch.
+                    out[job_id] = (self._slurm_status(job_id) if batch_failed
+                                   else self._slurm_final(job_id, live[job_id], accounting))
+                except Exception as exc:  # noqa: BLE001
+                    out[job_id] = exc
+        return out
 
     def _slurm_status(self, job_id: str) -> JobInfo:
         """squeue while slurmctld holds the job, then sacct for the final state and exit code."""
@@ -457,7 +575,11 @@ class Scheduler:
                 return live
         elif not re.fullmatch(r"slurm_load_jobs error: Invalid job id specified", _detail(p), re.I):
             raise RuntimeError(f"squeue failed ({p.returncode}): {_detail(p)}")
-        p = self._run(["sacct", "-n", "-P", "-X", "-j", job_id, "-o", SACCT_FIELDS])
+        return self._slurm_final(job_id, live, self._run(["sacct", "-n", "-P", "-X", "-j", job_id, "-o", SACCT_FIELDS]))
+
+    def _slurm_final(self, job_id: str, live: "JobInfo | None", p: subprocess.CompletedProcess) -> JobInfo:
+        """One job's final state from a sacct answer (for this job alone or for several jobs at once) and what squeue
+        said about it."""
         if ACCOUNTING_DISABLED.search(p.stderr or "") or (not _slurm_rows(p.stdout or "")
                                                            and ACCOUNTING_DISABLED.search(p.stdout or "")):
             # No slurmdbd: squeue's final state is all there is. Once it is gone too, "missing" lets the
