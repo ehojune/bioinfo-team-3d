@@ -8,3 +8,7 @@ rows:
   at: 2026-11-06 23:50
   text: Windows WMI broker의 journal provider 행에 Python 측 subprocess.run 호출 시간(run_ms), 프로세스 안 launch 순번, OS 가동 시간을 더한다. subprocess.run 호출 형태와 기존 시계 읽기는 그대로이고 timeout·재시도 동작은 바뀌지 않는다
   summary: 다음 provider_timeout 때 시간이 provider 안에서 쓰였는지 호출 안에서 쓰였는지 가릴 수 있게 합니다.
+- sha: 'f951c92'
+  at: 2026-11-07 00:10
+  text: WMI 재발 문서의 첫 launch 대 둘째 launch header_read 배율을 기준선 표의 행별 계산값인 10–26배로 고친다
+  summary: 문서의 배율 수치를 표와 맞춥니다.
