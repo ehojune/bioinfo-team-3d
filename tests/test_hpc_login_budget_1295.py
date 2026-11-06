@@ -217,3 +217,123 @@ def test_the_example_config_documents_the_limits_without_a_value():
     assert "login_limit_per_request" in text and "login_limit_per_day" in text
     hpc = yaml.safe_load(text)["hpc"]
     assert hpc.get("login_limit_per_request") is None and hpc.get("login_limit_per_day") is None
+
+
+# ---- the runner and init ------------------------------------------------------------------------------------------
+
+import asyncio  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+from labhq.tools.scheduler import JobInfo  # noqa: E402
+
+
+def runner_for(tmp_path, jobs, scheduler, task_req, **hpc):
+    from labhq.runner.daemon import Runner
+
+    runner = Runner.__new__(Runner)
+    runner.s = Settings.model_validate({"runner": {"state_dir": str(tmp_path / "state")},
+                                        "hpc": {"scheduler": "slurm", "ssh_host": "login.example", "user": "lab", **hpc}})
+    runner.scheduler, runner.jobs, runner.task_req = scheduler, jobs, task_req
+    runner.notified, runner.tasks, runner.events = set(), {}, []
+    runner.store = SimpleNamespace(put=lambda *a, **k: None)
+
+    async def emit_all(events, after=()):
+        runner.events.extend(events)
+
+    async def emit(event):
+        runner.events.append(event)
+
+    async def wake():
+        return None
+
+    runner.emit_all, runner.emit, runner._wake_finished_jobs = emit_all, emit, wake
+    return runner
+
+
+def open_job(task):
+    return {"task_id": task, "agent_id": "a", "name": "n", "state": "queued", "terminal": False, "missing": 0}
+
+
+class Recording:
+    def __init__(self):
+        self.asked = []
+
+    def statuses(self, ids):
+        self.asked.append((hb.current_request(), list(ids)))
+        return {i: JobInfo(job_id=i, state="running") for i in ids}
+
+
+def test_the_runner_polls_each_request_inside_its_scope_and_in_its_own_call(tmp_path):
+    backend = Recording()
+    runner = runner_for(tmp_path, {"1": open_job("t1"), "2": open_job("t2"), "3": open_job("t1")}, backend,
+                        {"t1": "req_1", "t2": "req_2"})
+    asyncio.run(runner._poll_jobs())
+    assert sorted(backend.asked) == [("req_1", ["1", "3"]), ("req_2", ["2"])]
+    assert hb.current_request() is None
+
+
+def test_a_request_at_its_limit_is_not_polled_the_others_are_and_the_pi_is_told_once(tmp_path):
+    backend = Recording()
+    runner = runner_for(tmp_path, {"1": open_job("t1"), "2": open_job("t2")}, backend,
+                        {"t1": "req_1", "t2": "req_2"}, login_limit_per_request=1)
+    hb.budget_for(runner.s.hpc).admit("qstat", "req_1")  # req_1 has used its one login
+    asyncio.run(runner._poll_jobs())
+    asyncio.run(runner._poll_jobs())
+    assert [req for req, _ in backend.asked] == ["req_2", "req_2"]
+    notices = [e for e in runner.events if e.type == "agent.log"]
+    assert len(notices) == 1 and notices[0].request_id == "req_1"
+    assert notices[0].data["hpc_login_limit"] == {"scope": "request", "limit": 1, "used": 1}
+    assert "계속 돕니다" in notices[0].data["text"] and "멈췄습니다" in notices[0].data["text"]
+
+
+def test_the_day_limit_pauses_every_request_and_raising_it_resumes_polling(tmp_path):
+    backend = Recording()
+    runner = runner_for(tmp_path, {"1": open_job("t1"), "2": open_job("t2")}, backend,
+                        {"t1": "req_1", "t2": "req_2"}, login_limit_per_day=1)
+    hb.budget_for(runner.s.hpc).admit("qstat", "req_9")
+    asyncio.run(runner._poll_jobs())
+    assert backend.asked == []
+    assert {e.request_id for e in runner.events} == {"req_1", "req_2"}  # one notice per request
+    runner.s.hpc.login_limit_per_day = 5  # the user raised it
+    asyncio.run(runner._poll_jobs())
+    assert len(backend.asked) == 2
+
+
+def test_a_limit_reached_between_the_check_and_the_login_is_a_pause_not_an_error(tmp_path):
+    class Racing:
+        def statuses(self, ids):
+            return {i: hb.LoginLimitReached("day", 3, 3) for i in ids}
+
+    runner = runner_for(tmp_path, {"1": open_job("t1")}, Racing(), {"t1": "req_1"})
+    asyncio.run(runner._poll_jobs())  # no exception
+    assert [e.data["hpc_login_limit"]["scope"] for e in runner.events] == ["day"]
+
+
+def test_login_limit_is_none_without_ssh_host_and_when_there_is_room(tmp_path):
+    runner = runner_for(tmp_path, {}, Recording(), {}, login_limit_per_day=1)
+    assert runner._login_limit("req_1") is None
+    hb.budget_for(runner.s.hpc).admit("qstat", "req_1")
+    stop = runner._login_limit("req_1")
+    assert stop is not None and stop.scope == "day"
+    runner.s.hpc.ssh_host = None  # the runner is on the login node
+    assert runner._login_limit("req_1") is None
+
+
+def test_init_asks_the_limits_only_for_a_real_scheduler_with_a_person_at_the_terminal(monkeypatch):
+    from labhq import init_wizard
+
+    asked = []
+    answers = iter(["10", ""])
+    monkeypatch.setattr(init_wizard, "_interactive", lambda: True)
+    monkeypatch.setattr(init_wizard, "_ask", lambda label, default, yes: asked.append(label) or next(answers))
+    hpc = {"scheduler": "slurm"}
+    init_wizard._ask_hpc_login_limits(hpc, "slurm", yes=False)
+    assert hpc["login_limit_per_request"] == 10 and "login_limit_per_day" not in hpc and hpc["login_limits_decided"]
+    assert len(asked) == 2
+    for scheduler, yes, tty, decided in (("none", False, True, False), ("mock", False, True, False),
+                                         ("slurm", True, True, False), ("slurm", False, False, False),
+                                         ("slurm", False, True, True)):
+        monkeypatch.setattr(init_wizard, "_interactive", lambda tty=tty: tty)
+        before = len(asked)
+        init_wizard._ask_hpc_login_limits({"login_limits_decided": decided}, scheduler, yes=yes)
+        assert len(asked) == before, (scheduler, yes, tty, decided)  # nothing asked: --yes and pipes stay undecided

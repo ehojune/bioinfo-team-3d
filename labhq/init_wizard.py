@@ -14,7 +14,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 import yaml
 
-from . import bioinfo_link, disk_space, doctor, github_token, hpc_consult, init_defaults
+from . import bioinfo_link, disk_space, doctor, github_token, hpc_consult, hpc_login_budget, init_defaults
 from .adapters.base import _resolve_command
 from .runner.codex_sandbox import codex_command, powershell_executable, setup_hint
 from .settings import HpcSettings, LiteratureSettings, Settings
@@ -84,6 +84,16 @@ def _ask(prompt: str, default: str, yes: bool) -> str:
     # Paths are not echoed in prompts or reports.
     answer = input(prompt + " [Enter: 기본값] ").strip()
     return answer or default
+
+
+def _ask_hpc_login_limits(hpc: dict, scheduler: str, yes: bool) -> None:
+    """Ask the user's HPC login limits (#1295). A site records every ssh login, and each institution has its own limit,
+    so nothing is assumed: the answers are the user's, an empty one means no limit, and the question is asked once.
+    Not asked without a person at the terminal (--yes, a pipe): the limits stay undecided and are asked again at first use."""
+    if scheduler not in ("sge", "pbs", "slurm") or yes or not _interactive() or hpc.get("login_limits_decided"):
+        return
+    print("HPC에 ssh로 접속하면 접속마다 기관 전산팀에 로그인 기록이 남을 수 있습니다. 상한은 기관마다 다르니 직접 정하세요.")
+    hpc_login_budget.ask_limits(hpc, lambda label, default: _ask(label, default, yes))
 
 
 def _interactive() -> bool:
@@ -489,6 +499,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
         data["runner"]["workspace_root"] = _workspace_root(
             existing.runner.workspace_root if existing else data["runner"]["workspace_root"], yes, instance)
         trial = _hpc_consult(hpc, scheduler, dry_run)
+        _ask_hpc_login_limits(hpc, scheduler, yes)
         if _is_windows():
             policy = data.setdefault("policy", {})
             policy["data_zones"] = [z for z in policy.get("data_zones", [])
