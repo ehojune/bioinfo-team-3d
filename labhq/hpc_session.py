@@ -153,6 +153,9 @@ class HpcSession:
     def close(self, reason: str = "closed") -> None:
         """Close the shell. The next ``run`` opens a new connection (and counts a login)."""
         self._stop_ticker.set()
+        ticker = self._ticker
+        if ticker is not None and ticker is not threading.current_thread():
+            ticker.join(timeout=5)  # tick() never waits for the lock, so this ends within one step
         with self._lock:
             self._drop()
 
@@ -172,7 +175,9 @@ class HpcSession:
     def start(self, tick_s: float | None = None) -> None:
         """Keep the connection alive and close it when idle, from a background thread."""
         if self._ticker and self._ticker.is_alive():
-            return
+            if not self._stop_ticker.is_set():
+                return
+            self._ticker.join(timeout=5)  # a close() just asked it to stop: wait, then start a fresh one
         self._stop_ticker.clear()
         step = tick_s or max(0.05, min(self.cfg.heartbeat_s / 2, 30.0))
 
@@ -356,9 +361,10 @@ class HpcSession:
                 raise SessionLost("명령을 실행하는 동안 접속이 끊겼습니다")
             conn.seen = (conn.seen + chunk)[-4000:]
             if body is None:
-                pre = (pre + chunk)[-_OVERLAP * 4:]
-                at = pre.find(begin)
+                pre += chunk
+                at = pre.find(begin)  # search before trimming: the marker and a big output may arrive in one read
                 if at < 0:
+                    pre = pre[-len(begin):]  # keep only what could be the start of a marker split across reads
                     continue
                 body = pre[at + len(begin):]
             else:

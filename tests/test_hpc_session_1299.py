@@ -225,3 +225,38 @@ def test_commands_from_several_threads_run_one_at_a_time(made):
     for t in threads:
         t.join(30)
     assert results == {n: f"job{n}\n" for n in range(8)} and s.logins == 1
+
+
+def test_a_marker_and_a_big_output_in_one_read_are_found(made):
+    s = made()
+    s.run("echo up")
+    # the gateway answers a short command with the begin marker, ~100 KB and the end marker in a burst
+    result = s.run("big 100000")
+    assert result.exit_code == 0 and result.dropped_chars == 0 and len(result.output) > 99000
+    assert s.run("echo next").output == "next\n"
+
+
+def test_start_after_close_runs_a_fresh_ticker(made):
+    s = made("--lock-after", "0.8", heartbeat_s=0.1, idle_lock_s=1.0)
+    s.start(tick_s=0.05)
+    s.close()
+    s.start(tick_s=0.05)
+    assert s.run("echo first").output == "first\n"
+    time.sleep(1.6)
+    assert s.connected and s.run("echo still").output == "still\n" and s.logins == 1
+
+
+def test_exec_finds_begin_and_end_markers_that_arrive_in_a_single_read(monkeypatch):
+    import queue
+    import types
+
+    monkeypatch.setattr(hs.uuid, "uuid4", lambda: types.SimpleNamespace(hex="a" * 32))
+    token = "a" * 12
+    burst = f"banner\n__LABHQ_BEGIN_{token}__\n" + "x" * 5000 + f"\n\n__LABHQ_END_{token}_7__\n"
+    chunks = queue.Queue()
+    chunks.put(burst[:40])  # the begin marker split across two reads, then everything else at once
+    chunks.put(burst[40:])
+    stdin = types.SimpleNamespace(write=lambda data: None, flush=lambda: None)
+    conn = hs._Conn(types.SimpleNamespace(stdin=stdin, poll=lambda: None), chunks, None)
+    result = hs.HpcSession(hs.SessionConfig(argv=["x"]))._exec(conn, "anything", 5)
+    assert result.exit_code == 7 and result.output == "x" * 5000 + "\n"
