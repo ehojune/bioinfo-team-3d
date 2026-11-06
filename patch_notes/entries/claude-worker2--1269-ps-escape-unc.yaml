@@ -1,0 +1,5 @@
+rows:
+- sha: '5f3f9f2'
+  at: 2026-11-06 09:42
+  text: PowerShell 디스크 확인의 안전망이 cmdlet 이름 안의 backtick escape(iw`r)도 센다. 글에서 이름을 셀 때 backtick을 먼저 빼서 `$r = iw`r ...`처럼 감싼 다운로드도 현재 드라이브를 확인받는다. 쓰는 명령(iwr·Expand-Archive·BITS)의 UNC 대상(\server\share)도 후보로 모아, 여유를 읽을 수 있으면 기준 아래에서 ask, 읽지 못하면 경고만 남기고 막지 않는다. 읽지 않는 명령(Copy-Item 등)의 UNC와 URL의 //는 건드리지 않는다
+  summary: 남아 있던 두 우회(이름 속 backtick, 네트워크 경로)를 닫습니다. UNC는 여유를 모르면 경고만 합니다.
