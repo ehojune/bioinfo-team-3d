@@ -1,0 +1,9 @@
+rows:
+- sha: 'ae14765'
+  at: 2026-11-07 04:19
+  text: 열린 issue 정리 A 결과를 docs/reference/issue-hygiene-20261107-a.md에 남긴다. #912·#560·#618·#1070은 근거를 달아 닫고, #963·#674는 남은 일과 재개 조건을 적어 열어 둔다
+  summary: 완료된 issue를 근거와 함께 닫고, 막힌 issue의 남은 일을 한곳에 모았습니다.
+- sha: '849b9d6'
+  at: 2026-11-07 04:19
+  text: "#674 절을 바로잡는다. 열려 있다고 적은 작은 개선 두 건(cso.py의 stored_environment 전달, publish 뒤 runtime 재확인)은 PR #1254로 이미 main에 있고 시험이 통과한다"
+  summary: 이미 끝난 일을 남은 일로 적지 않게 정정했습니다.
