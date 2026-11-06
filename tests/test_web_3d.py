@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import time
+import warnings
 
 import pytest
 import uvicorn
@@ -214,8 +215,13 @@ def resizable_startup_summary(viewport, launch_epoch_ms, returned_after_ms, stde
     return 'resizable startup: ' + json.dumps(summary, sort_keys=True)
 
 
+def report_resizable_startup(viewport, launch_epoch_ms, returned_after_ms, stderr):
+    """A warning reaches the CI log's warnings summary in a serial and in an xdist run alike, and needs no fixture."""
+    warnings.warn(resizable_startup_summary(viewport, launch_epoch_ms, returned_after_ms, stderr), UserWarning, stacklevel=2)
+
+
 @pytest.mark.parametrize('filename,marker', NODE_WEB_TESTS)
-def test_office_in_node(filename, marker, capsys):
+def test_office_in_node(filename, marker):
     node = node_binary()
     if not node:
         pytest.skip('Node is optional')
@@ -271,10 +277,11 @@ def test_office_in_node(filename, marker, capsys):
         output = f'{label}{timing()}\n{result.stdout}{result.stderr}'
         assert result.returncode == 0, output
         if launch is not None:
-            # #1272: also on a pass. capsys.disabled keeps it in the CI log of a serial run (-n 0).
-            with capsys.disabled():
-                print('\n' + resizable_startup_summary(viewport, int(launch[0] * 1000),
-                                                       round((time.monotonic() - launch[1]) * 1000), result.stderr))
+            # #1272: also on a pass. test_ci_windows10m runs only this function in a stripped namespace, where the
+            # report does not exist; the real module always has it.
+            report = globals().get('report_resizable_startup')
+            if report:
+                report(viewport, int(launch[0] * 1000), round((time.monotonic() - launch[1]) * 1000), result.stderr)
         assert marker in result.stdout, output
         if viewport and os.environ.get('LABHQ_REQUIRE_RESIZABLE_BROWSER') == '1':
             # A Python PASS alone must not certify an optional inner Node skip, or another viewport's test.
