@@ -12,3 +12,7 @@ rows:
     at: "2026-11-06 18:00"
     summary: "HPC 로그인 상한에 닿았다는 알림이 웹 피드에 경고로 뜨고 토스트도 나옵니다. 전에는 에이전트 카드 줄에만 남았습니다."
     text: "_notify_login_limit의 agent.log level을 warn에서 alert로 바꿔 state.js가 피드와 toast로 올리게 함, manual과 시험 갱신 (#1295)"
+  - sha: "255733c"
+    at: "2026-11-06 18:40"
+    summary: "예전에 만든 설정이나 --yes로 만든 설정에서도 터미널에서 init을 다시 돌리면 HPC 로그인 상한을 한 번 묻습니다. 카운터 파일 위치는 설정 파일 기준이고, 올린 상한이 다시 차면 다시 알립니다."
+    text: "init_wizard가 미정인 기존 설정에서 세 키만 저장(주석 보존), Settings.load 뒤 ledger 재바인딩, 알림 중복 키에 limit 포함, manual 04 한영 (#1295)"
