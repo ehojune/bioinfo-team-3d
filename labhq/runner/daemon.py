@@ -2771,7 +2771,7 @@ class Runner:
                 task=task, agent=agent, workdir=ws.dir, settings=self.s,
                 # Read-only staff get only Claude's scoped permission gate; no ask/HPC or staff MCP servers.
                 mcp_servers=self._mcp_servers(agent, env, allow_ask=not read_only,
-                                              wiki_bound=task.meta.get("wiki_tools") is True),
+                                              **({"wiki_bound": True} if task.meta.get("wiki_tools") is True else {})),
                 env={**env, "MCP_TOOL_TIMEOUT": str(labhq_mcp_timeout_s(self.s) * 1000)},
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
                 read_dirs=read_dirs, read_only_inputs=([*staged_inputs, *paper_inputs] or

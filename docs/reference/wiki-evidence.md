@@ -1,6 +1,6 @@
 # wiki 노출 이력과 공개 게시 차단 (#1037)
 
-lookup-only. 동작 설명은 [manual 12장](../manual/12-github-reports.md), 증거 계약은 `labhq/evidence/wiki_contract.py`와 #827 댓글에 있다. 공개 보호는 아직 **UNVERIFIED**다.
+lookup-only. 동작 설명은 [manual 12장](../manual/12-github-reports.md), 증거 계약은 #827 댓글에 있다. 증거 수준 검사(`wiki_summary`를 원문 직접 독해로 승격하지 못하게 하는 규칙)의 초안은 이 PR에 넣지 않았고 브랜치 `codex-worker1/1037-lane`에 있다(스키마 변경이 엔진 결과 계약의 hash와 prompt 규칙에 닿아 따로 다룬다). 공개 보호는 아직 **UNVERIFIED**다.
 
 ## 정한 것
 
@@ -27,7 +27,7 @@ lookup-only. 동작 설명은 [manual 12장](../manual/12-github-reports.md), �
 | 보고서·업로드·라운드 게시, `ProjectReporter`의 pipeline 기여 | **아직 아님** |
 | CP2 | **아직 아님** |
 | 게시 검사와 외부 쓰기 사이의 경쟁, 재시작·구형 runner의 통합 시험 | **아직 아님** |
-| 독립 출처 인증, wiki 본문·경로 마스크 | 후속 |
+| 증거 수준 검사(`wiki_summary` 승격 금지)와 결과 계약 prompt 규칙, 독립 출처 인증, wiki 본문·경로 마스크 | 후속 |
 
 ## 한계
 

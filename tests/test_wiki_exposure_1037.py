@@ -42,7 +42,9 @@ def gateway(roster, *, exposure=wiki_exposure.NONE):
     async def update(rid, change):
         change(requests[rid])
 
-    return SimpleNamespace(runner_agents={"r1": roster}, requests=requests, aupdate_request=update)
+    view = {entry["id"]: {"r1": entry} for entry in roster}  # `effective_roster(hosts=True)`: per agent, runner -> entry
+    return SimpleNamespace(effective_roster=lambda hosts=False: view if hosts else {}, requests=requests,
+                           aupdate_request=update)
 
 
 def bind(hub, task=None):
@@ -77,7 +79,7 @@ def test_a_runner_that_cannot_be_read_counts_as_able_to_reach_the_wiki_and_gets_
 def test_the_exposure_is_never_lowered_by_a_later_dispatch():
     hub = gateway([{"id": "worker", "wiki_tools": True}])
     bind(hub)
-    hub.runner_agents["r1"] = [{"id": "worker", "wiki_tools": False}]
+    hub.effective_roster = lambda hosts=False: {"worker": {"r1": {"id": "worker", "wiki_tools": False}}}
     bind(hub)
     assert wiki_exposure.exposure(hub.requests["req_1"]) == wiki_exposure.POSSIBLE
 

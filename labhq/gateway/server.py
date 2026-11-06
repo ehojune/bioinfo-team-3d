@@ -4359,8 +4359,9 @@ class Hub:
         The runner attaches `labhq_wiki` only when the task says so (`meta["wiki_tools"]`), and this gateway says so only
         from the roster that runner sent. A runner that predates the roster key is unknown, so it counts as able to
         reach the wiki: the exposure is raised first and the task then carries no permission for it."""
-        capability = next((agent.get("wiki_tools", None) for agent in self.runner_agents.get(runner_id, [])
-                           if agent.get("id") == task.agent_id), None)
+        # The roster entry of the runner this task goes to, through the effective view (advertised rosters are input only).
+        entry = self.effective_roster(hosts=True).get(task.agent_id, {}).get(runner_id) or {}
+        capability = entry.get("wiki_tools", None)
         task.meta["wiki_tools"] = capability is True
         if capability is False or not task.request_id or task.request_id not in self.requests:
             return

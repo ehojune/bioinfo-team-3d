@@ -11,8 +11,11 @@
 ## 확인
 - Windows: wiki 증거·게시·노출 시험 49 passed. 관련 시험(wiki·annot·hpc·job·read-only profile·research cp2) 469 passed. `test_annot*.py` 2건은 이 변경과 무관하게 이미 실패한다(mcp 라이브러리의 `is_error`).
 
+## 이 PR에서 뺀 것
+- W1의 증거 수준 초안(`claims.py`의 `wiki_summary`, `wiki_contract.py`, `tests/test_wiki_evidence.py`)은 되돌렸다. 엔진 결과 계약의 스키마 hash(`test_output_types_research`)를 바꾸고 봇이 결과 계약 prompt 규칙에도 `wiki_summary`를 더하라고 지적했다. 초안은 `codex-worker1/1037-lane`에 있다.
+
 ## 하지 않은 것(다음 단위)
 - 보고서·업로드·라운드 게시, `ProjectReporter`의 pipeline 기여, CP2 차단.
 - 게시 검사와 외부 쓰기 사이 경쟁, 재시작·구형 runner 통합 시험, 이어 묻기 요청의 노출 상속.
 - 독립 출처 인증과 wiki 본문·경로 마스크.
-- 막힘: 기존 시험 두 개가 새 규칙에 맞춰 고쳐야 한다. `tests/test_step_progress_push.py`의 Hub 요청에 `wiki_exposure: none`이 없어 6건이, `tests/test_wiki_mcp.py::test_the_tool_attaches_only_with_the_opt_in`이 `wiki_bound=True` 없이 호출해 1건이 실패한다. 둘 다 claim 밖이다.
+- 기존 시험 두 개(`tests/test_step_progress_push.py`, `tests/test_wiki_mcp.py`)는 fixture만 새 규칙에 맞췄다.

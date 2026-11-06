@@ -1,6 +1,6 @@
 # Wiki exposure history and blocking public publication (#1037)
 
-Lookup-only. Behavior is described in [manual chapter 12](../manual/12-github-reports.en.md); the evidence contract is `labhq/evidence/wiki_contract.py` and the #827 comments. Public protection is still **UNVERIFIED**.
+Lookup-only. Behavior is described in [manual chapter 12](../manual/12-github-reports.en.md); the evidence contract is in the #827 comments. The draft of the evidence-level check (the rule that keeps `wiki_summary` from being promoted to direct reading of the original) is not in this PR and is on branch `codex-worker1/1037-lane`: it changes the engine result contract's hash and prompt rules, so it is handled separately. Public protection is still **UNVERIFIED**.
 
 ## What was decided
 
@@ -27,7 +27,7 @@ Lookup-only. Behavior is described in [manual chapter 12](../manual/12-github-re
 | Report, upload and round publishing, the pipeline contribution in `ProjectReporter` | **not yet** |
 | CP2 | **not yet** |
 | The race between the publication check and the outward write; restart and old-runner integration tests | **not yet** |
-| Independent source authentication; masking wiki text and paths | later |
+| The evidence-level check (no promotion of `wiki_summary`) and the result-contract prompt rules, independent source authentication, masking wiki text and paths | later |
 
 ## Limits
 
