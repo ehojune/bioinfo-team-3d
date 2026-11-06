@@ -5124,7 +5124,7 @@ class Hub:
         fields["meta"] = {key: value for key, value in (old.get("meta") or {}).items() if key != "revised_from"}
         body = RequestIn(**fields, text=text, cso_model=model, default_references=False,
                          budget_usd=old.get("requested_budget_usd", old.get("budget_usd")))
-        return self.create_request(body, extra={"model_refusal_from": rid})
+        return self.create_request(body, extra={"model_refusal_from": rid, wiki_exposure.KEY: wiki_exposure.inherited(old)})
 
     async def _amodel_refusal_request(self, rid: str, decision: dict | None, *,
                                approval_id: str | None = None, continuation: dict | None = None) -> str:
@@ -5180,7 +5180,7 @@ class Hub:
         fields["meta"] = {key: value for key, value in (old.get("meta") or {}).items() if key != "revised_from"}
         body = RequestIn(**fields, text=text, cso_model=model, default_references=False,
                          budget_usd=old.get("requested_budget_usd", old.get("budget_usd")))
-        return (await self.acreate_request(body, extra={"model_refusal_from": rid}))
+        return (await self.acreate_request(body, extra={"model_refusal_from": rid, wiki_exposure.KEY: wiki_exposure.inherited(old)}))
 
 
 
@@ -5816,7 +5816,7 @@ class Hub:
                       for ref in old.get("references") or [] if ref.get("source", "request") == "request"]
         contract = old.get("research_contract") or {}
         extra: dict[str, Any] = {
-            "revised_from": rid,
+            "revised_from": rid, wiki_exposure.KEY: wiki_exposure.inherited(old),
             "revision_of": {"request_id": rid, "plan_sha256": contract.get("plan_sha256"),
                             "plan": copy.deepcopy(old.get("plan")), "note": note.strip()}}
         if old.get("clarifications"):  # answered once; not counted against this request's own clarify cards
@@ -5880,7 +5880,7 @@ class Hub:
                       for ref in old.get("references") or [] if ref.get("source", "request") == "request"]
         contract = old.get("research_contract") or {}
         extra: dict[str, Any] = {
-            "revised_from": rid,
+            "revised_from": rid, wiki_exposure.KEY: wiki_exposure.inherited(old),
             "revision_of": {"request_id": rid, "plan_sha256": contract.get("plan_sha256"),
                             "plan": copy.deepcopy(old.get("plan")), "note": note.strip()}}
         if old.get("clarifications"):  # answered once; not counted against this request's own clarify cards

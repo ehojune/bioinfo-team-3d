@@ -47,6 +47,13 @@ def after_wiki_dispatch(request: Mapping[str, Any] | None) -> str | None:
     return None if exposure(request) == UNKNOWN else POSSIBLE
 
 
+def inherited(parent: Mapping[str, Any] | None) -> str:
+    """What a request opened from ``parent`` (a CP1 revision, a retry after a model refusal) starts with: the parent's
+    level, so it is never lower. The new request carries the parent's text, plan and answers, which may hold what the
+    parent's staff read from the wiki, so a parent that was ``possible`` or whose history is unknown passes that on."""
+    return exposure(parent)
+
+
 def cp2_warning(request: Mapping[str, Any] | None) -> str | None:
     """The line the CP2 evidence card and the report's limits carry when the request is not a recorded ``none``. CP2 is
     the PI's own review, not a publication, so it is not refused: the PI is told what the card cannot tell, and the

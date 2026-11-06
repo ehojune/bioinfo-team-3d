@@ -29,11 +29,13 @@ Lookup-only. Behavior is described in [manual chapter 12](../manual/12-github-re
 | `ResultStorage.upload`: the research-result upload (each document, figure and PDF file) | blocked (rechecked right before each write) |
 | The CP2 evidence card | not blocked; one warning line (it is the PI's review, not a publication) |
 | The race inside step progress publishing (the exposure rises mid-publication) | blocked: checked again right before each file is written |
-| Restart and old-runner integration tests; a follow-up request inheriting the exposure | **not yet** |
+| A request opened from another (a CP1 revision, a retry after a model refusal) | blocked: it starts at the parent's level (in its first save) |
+| Restart and old-runner | tested: the record is read back from the store (not recomputed), and a request sent to an old runner without the `wiki_tools` key becomes `possible` |
+| The recheck right before a new repository is created by the result upload | tested |
 | The evidence-level check (no promotion of `wiki_summary`) and the result-contract prompt rules, independent source authentication, masking wiki text and paths | later |
 
 ## Limits
 
 - The record says "the wiki tool could be used", not "something was copied". `possible` blocks whether or not anything was copied.
 - The result-storage choice card still offers publishing for a blocked request and the upload is refused when attempted (the card display is not changed yet).
-- There is no rule yet for a follow-up request to inherit the exposure of the original. A new request starts as `none`.
+- A follow-up runs inside the same request and uses the same record. The two paths that open a new request from a parent (the CP1 revision and the retry after a model refusal) inherit the parent's level. Any new code that creates a request another way must follow this rule. A task bound to no request id, or to an unknown one, has nowhere to record.

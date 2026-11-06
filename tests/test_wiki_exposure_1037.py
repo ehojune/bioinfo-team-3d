@@ -25,6 +25,7 @@ def test_roster_off_cannot_later_attach_wiki_without_new_bound_dispatch(tmp_path
 
 # ---- the gateway records the exposure and binds the decision at dispatch ----
 import asyncio  # noqa: E402
+import time  # noqa: E402
 
 import pytest  # noqa: E402
 
@@ -154,3 +155,77 @@ def test_an_old_unrecorded_request_dispatched_to_a_wiki_runner_becomes_possible(
 
 def test_a_recorded_possible_is_not_lowered_by_an_old_created_at():
     assert wiki_exposure.exposure({wiki_exposure.KEY: "possible", "created_at": 1.0, "updated_at": 1.0}) == wiki_exposure.POSSIBLE
+
+
+# ---- a request opened from another inherits its exposure; the record survives a restart (#1037 rev16) ----
+from tests.test_research_cp1_revise import _gateway, _old_request  # noqa: E402
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent,expected", [("none", "none"), ("possible", "possible"), (None, "unknown"),
+                                            ("unknown", "unknown"), ("NONE", "unknown")])
+async def test_a_cp1_revision_starts_at_the_exposure_of_the_request_it_continues(tmp_path, monkeypatch, parent, expected):
+    hub = _gateway(tmp_path, monkeypatch)
+    _old_request(hub, **({} if parent is None else {wiki_exposure.KEY: parent}))
+    new = hub.create_revised_request("old", "고칠 점")
+    await asyncio.sleep(0)
+    assert wiki_exposure.exposure(hub.requests[new]) == expected
+    assert (wiki_exposure.publication_blocker(hub.requests[new]) is None) is (expected == "none")
+    assert wiki_exposure.exposure(hub.store.get("request", new)) == expected  # in the first save, so a restart keeps it
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent,expected", [("none", "none"), ("possible", "possible"), (None, "unknown")])
+async def test_the_async_cp1_revision_inherits_the_same_way(tmp_path, monkeypatch, parent, expected):
+    hub = _gateway(tmp_path, monkeypatch)
+    _old_request(hub, **({} if parent is None else {wiki_exposure.KEY: parent}))
+    new = await hub.acreate_revised_request("old", "고칠 점")
+    assert wiki_exposure.exposure(hub.requests[new]) == expected
+
+
+@pytest.mark.parametrize("parent,expected", [("none", "none"), ("possible", "possible"), (None, "unknown")])
+def test_inherited_never_lowers_what_the_parent_had(parent, expected):
+    assert wiki_exposure.inherited({} if parent is None else {wiki_exposure.KEY: parent}) == expected
+
+
+def test_the_recorded_exposure_survives_a_gateway_restart_and_an_older_runner_raises_it(tmp_path, monkeypatch):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    hub = create_app(settings).state.hub
+    monkeypatch.setattr(hub, "track_request", lambda rid, coro: coro.close())
+    clean = hub.create_request(RequestIn(text="synthetic clean", mode="direct", agent_id="analyst"))
+    old_runner = hub.create_request(RequestIn(text="synthetic old runner", mode="direct", agent_id="analyst"))
+    capable = hub.create_request(RequestIn(text="synthetic capable", mode="direct", agent_id="analyst"))
+    rosters = {"analyst": {"old": {"id": "analyst"},  # a runner that predates the wiki_tools key
+                           "new": {"id": "analyst", "wiki_tools": True}, "off": {"id": "analyst", "wiki_tools": False}}}
+    monkeypatch.setattr(hub, "effective_roster", lambda hosts=False: rosters)
+
+    async def dispatch_to(rid, runner):
+        await hub._bind_wiki_exposure(Task(agent_id="analyst", prompt="x", request_id=rid), runner)
+
+    asyncio.run(dispatch_to(clean, "off"))
+    asyncio.run(dispatch_to(old_runner, "old"))
+    asyncio.run(dispatch_to(capable, "new"))
+    assert [wiki_exposure.exposure(hub.requests[r]) for r in (clean, old_runner, capable)] == ["none", "possible", "possible"]
+    hub.store.close()
+
+    restarted = create_app(settings).state.hub  # the record is read back, not recomputed
+    assert [wiki_exposure.exposure(restarted.requests[r]) for r in (clean, old_runner, capable)] == ["none", "possible", "possible"]
+    assert wiki_exposure.publication_blocker(restarted.requests[clean]) is None
+    assert wiki_exposure.publication_blocker(restarted.requests[old_runner]) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent,expected", [("none", "none"), ("possible", "possible"), (None, "unknown")])
+async def test_a_retry_after_a_model_refusal_starts_at_the_exposure_of_the_refused_request(tmp_path, monkeypatch, parent, expected):
+    hub = _gateway(tmp_path, monkeypatch)
+    hub.requests["r"] = {"id": "r", "text": "synthetic question", "mode": "orchestrate", "work_kind": "research",
+                         "status": "failed", "outcome": "model_refused", "created_at": time.time(),
+                         "requested_budget_usd": 2, "budget_usd": 3,
+                         **({} if parent is None else {wiki_exposure.KEY: parent})}
+    hub.save_request("r")
+    new = hub._model_refusal_request("r", {"action": "edit", "text": "synthetic edited question"})
+    await asyncio.sleep(0)
+    assert new != "r" and wiki_exposure.exposure(hub.requests[new]) == expected
+    assert wiki_exposure.exposure(hub.store.get("request", new)) == expected
