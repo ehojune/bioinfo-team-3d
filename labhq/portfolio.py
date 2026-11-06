@@ -53,7 +53,9 @@ _ASSIGNMENT = re.compile(
 # In code a secret is a literal value on the right of `token =` (or `{"token": ...}`, `f(token=...)`): any string or
 # number the language accepts, however it is quoted, joined or annotated. An expression, call or lookup there holds no
 # secret, and rewriting it breaks the script (#1278). Python is read with `ast`, so every literal form is the parser's
-# own; R and shell, which have no parser here, use a pattern and are checked in their own syntax.
+# own. Shell and R have no parser here, so a value there is hidden unless it is one of a few forms that are sure to
+# hold no secret (a variable, a command substitution, an environment or function lookup); Python that does not parse
+# falls back to a pattern.
 _SECRET_NAME = re.compile(r"(?:api[_-]?key|token|password|secret)", re.I)
 _REDACTED_VALUES = ("<redacted-secret>", "&lt;redacted-secret&gt;", "[REDACTED]")
 _REDACTED_LITERAL = '"<redacted-secret>"'
@@ -65,8 +67,7 @@ _CODE_SECRET_LITERAL = re.compile(
     r"(?im)(?P<name>" + _CODE_SECRET_NAME + r")(?:"
     r"(?P<paren>\(\s*)?(?P<strings>" + _STRING_LITERAL + r"(?:(?:\s*\+\s*|[ \t]*)" + _STRING_LITERAL + r")*)(?P<close>\s*\))?"
     r"|(?P<number>[+-]?(?:0[xXoObB][0-9a-fA-F_]{6,}|\d[\d_]{5,}(?:\.\d+)?(?:[eE][+-]?\d+)?)[jJlL]?)"
-    r"(?=\s*(?:[;#,)}\]]|$))"
-    r"|(?P<word>(?![$\"'`#])[^\s\"'`$;|&()<>{}\[\],]+))")
+    r"(?=\s*(?:[;#,)}\]]|$)))")
 _STRING_PIECE = re.compile(r"\$?[rbuf]{0,2}(?P<q>\'\'\'|\"\"\"|\"|')(?P<text>[\s\S]*?)(?P=q)\Z")
 
 
@@ -82,8 +83,6 @@ def _pattern_secret_spans(text: str, suffix: str) -> list[tuple[int, int, str]]:
             finish = match.end("strings")
         elif match.group("number") is not None:
             value, begin, finish = match.group("number"), match.start("number"), match.end("number")
-        elif suffix == ".sh":
-            value, begin, finish = match.group("word"), match.start("word"), match.end("word")
         else:
             continue
         if value and not value.startswith(_REDACTED_VALUES):
@@ -174,11 +173,197 @@ def _py_secret_spans(text: str) -> list[tuple[int, int, str]] | None:
     return [(begin, end, quoted) for (begin, end), quoted in sorted(found.items())]
 
 
+_SHELL_ASSIGNMENT = re.compile(r"(?im)(?<![\w$])(?:api[_-]?key|token|password|secret)[\"']?(?P<op>\+?=|:[ \t]*)")
+_SHELL_PARAMETER = re.compile(r"[A-Za-z_]\w*|[0-9@*#?!$-]")
+
+
+def _skip_quoted(text: str, i: int, quote: str, escapes: bool) -> int:
+    """The index just after the quote that closes the one opened before `i`; the end of text when it never closes."""
+    while i < len(text):
+        if escapes and text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == quote:
+            return i + 1
+        i += 1
+    return len(text)
+
+
+def _skip_balanced(text: str, i: int, opener: str, closer: str) -> int:
+    """The index just after the closer of a group whose opener is just before `i`, skipping quoted text."""
+    depth = 1
+    while i < len(text):
+        char = text[i]
+        if char == "\\":
+            i += 2
+            continue
+        if char in "'\"":
+            i = _skip_quoted(text, i + 1, char, char == '"')
+            continue
+        if char == opener:
+            depth += 1
+        elif char == closer:
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return len(text)
+
+
+def _shell_word(text: str, start: int) -> tuple[int, bool]:
+    """(end, holds_literal) of the shell word that begins at `start`. A word is safe only when everything in it is a
+    parameter (`$VAR`, `${VAR}`), a command substitution (`$(...)`, backticks) or quotes around those; any other
+    character, a quoted string, an escape, `${VAR:-x}` or an array is a literal that may be a secret."""
+    i, literal = start, False
+    while i < len(text):
+        char = text[i]
+        if char in " \t\r\n;&|)<>":
+            break
+        if char == "#" and i == start:
+            return start, False
+        if char == "\\":
+            literal = True
+            i += 2
+        elif char == "'":
+            literal = literal or text[i + 1:i + 2] != "'"
+            i = _skip_quoted(text, i + 1, "'", False)
+        elif char == "(":
+            literal = True
+            i = _skip_balanced(text, i + 1, "(", ")")
+        elif char == "`":
+            i = _skip_quoted(text, i + 1, "`", True)
+        elif char == "$":
+            nxt = text[i + 1:i + 2]
+            if nxt == "'":
+                literal = True
+                i = _skip_quoted(text, i + 2, "'", True)
+            elif nxt == "(":
+                literal = literal or text[i + 2:i + 3] == "("  # `$((1+2))` is arithmetic on literals
+                i = _skip_balanced(text, i + 2, "(", ")")
+            elif nxt == "{":
+                end = _skip_balanced(text, i + 2, "{", "}")
+                literal = literal or not _SHELL_PARAMETER.fullmatch(text[i + 2:end - 1])
+                i = end
+            else:
+                match = _SHELL_PARAMETER.match(text, i + 1)
+                if match is None:
+                    literal = True
+                    i += 1
+                else:
+                    i = match.end() if match.group().isidentifier() else i + 2
+        elif char == '"':
+            i += 1
+            while i < len(text) and text[i] != '"':
+                if text[i] == "\\":
+                    literal = True
+                    i += 2
+                elif text[i] == "$" and text[i + 1:i + 2] == "(":
+                    i = _skip_balanced(text, i + 2, "(", ")")
+                elif text[i] == "$" and text[i + 1:i + 2] == "{":
+                    end = _skip_balanced(text, i + 2, "{", "}")
+                    literal = literal or not _SHELL_PARAMETER.fullmatch(text[i + 2:end - 1])
+                    i = end
+                elif text[i] == "$" and _SHELL_PARAMETER.match(text, i + 1):
+                    match = _SHELL_PARAMETER.match(text, i + 1)
+                    i = match.end() if match.group().isidentifier() else i + 2
+                elif text[i] == "`":
+                    i = _skip_quoted(text, i + 1, "`", True)
+                else:
+                    literal = True
+                    i += 1
+            i += 1
+        else:
+            literal = True
+            i += 1
+    return min(i, len(text)), literal
+
+
+def _shell_secret_spans(text: str) -> list[tuple[int, int, str]]:
+    spans: list[tuple[int, int, str]] = []
+    last = 0
+    for match in _SHELL_ASSIGNMENT.finditer(text):
+        start = match.end()
+        if start < last:
+            continue
+        if match.group("op").startswith(":"):
+            start = match.end()  # `token: value` in a here-document; the blanks are part of the operator
+        end, literal = _shell_word(text, start)
+        word = text[start:end]
+        if literal and word and not word.strip("\"'").startswith(_REDACTED_VALUES):
+            spans.append((start, end, _REDACTED_LITERAL))
+            last = end
+    return spans
+
+
+_R_NAME = re.compile(r"(?<![\w.])(?:api[_-]?key|token|password|secret)[\"'`]?\s*(?:<<-|<-|=)(?!=)\s*", re.I)
+_R_SAFE_CALLS = frozenset({"sys.getenv", "getoption", "readline", "readlines", "readrds", "scan", "askpass",
+                           "key_get", "keyring::key_get", "get", "mget", "file.path", "normalizepath"})
+_R_ATOM = re.compile(r"(?:NULL|NA|NA_character_|TRUE|FALSE)|[A-Za-z.][\w.]*(?:(?:\$|@|::)[A-Za-z.][\w.]*)*")
+
+
+def _r_value_end(text: str, start: int) -> int:
+    """Where the R expression that begins at `start` ends: a comma, closing bracket, semicolon, comment or line end
+    at depth 0, with strings and brackets skipped."""
+    depth, i = 0, start
+    while i < len(text):
+        char = text[i]
+        if char in "'\"`":
+            raw = re.compile(r"[rR]([\"'])(-*)[\(\[\{]").match(text, i - 1) if i > start and text[i - 1] in "rR" else None
+            if raw is not None:
+                close = {"(": ")", "[": "]", "{": "}"}[text[raw.end() - 1]] + raw.group(2) + raw.group(1)
+                found = text.find(close, raw.end())
+                i = len(text) if found < 0 else found + len(close)
+            else:
+                i = _skip_quoted(text, i + 1, char, True)
+            continue
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            if depth == 0:
+                return i
+            depth -= 1
+        elif depth == 0 and char in ",;#\n":
+            return i
+        i += 1
+    return i
+
+
+def _r_value_is_safe(value: str) -> bool:
+    if not value or _R_ATOM.fullmatch(value):
+        return True
+    call = re.fullmatch(r"([A-Za-z.][\w.]*(?:::[A-Za-z.][\w.]*)?)\s*\((.*)\)", value, re.S)
+    if call is None:
+        return False
+    if call.group(1).lower() in _R_SAFE_CALLS:
+        return True
+    arguments = call.group(2)  # any other call is sure only when it takes no string or number
+    return not re.search(r"[\"'`]|(?<![\w.])\d", arguments)
+
+
+def _r_secret_spans(text: str) -> list[tuple[int, int, str]]:
+    spans: list[tuple[int, int, str]] = []
+    last = 0
+    for match in _R_NAME.finditer(text):
+        start = match.end()
+        if start < last:
+            continue
+        end = _r_value_end(text, start)
+        value = text[start:end].rstrip()
+        if value and not value.strip("\"'").startswith(_REDACTED_VALUES) and not _r_value_is_safe(value):
+            spans.append((start, start + len(value), _REDACTED_LITERAL))
+            last = end
+    return spans
+
+
 def _code_secret_spans(text: str, suffix: str) -> list[tuple[int, int, str]]:
     if suffix == ".py":
         spans = _py_secret_spans(text)
         if spans is not None:
             return spans
+    if suffix == ".sh":
+        return _shell_secret_spans(text)
+    if suffix == ".r":
+        return _r_secret_spans(text)
     return _pattern_secret_spans(text, suffix)
 
 
