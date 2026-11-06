@@ -1,0 +1,22 @@
+pr: 1320
+rows:
+- sha: 'ae14765'
+  at: 2026-11-07 04:19
+  text: 열린 issue 정리 A 결과를 docs/reference/issue-hygiene-20261107-a.md에 남긴다. #912·#560·#618·#1070은 근거를 달아 닫고, #963·#674는 남은 일과 재개 조건을 적어 열어 둔다
+  summary: 완료된 issue를 근거와 함께 닫고, 막힌 issue의 남은 일을 한곳에 모았습니다.
+- sha: '849b9d6'
+  at: 2026-11-07 04:19
+  text: "#674 절을 바로잡는다. 열려 있다고 적은 작은 개선 두 건(cso.py의 stored_environment 전달, publish 뒤 runtime 재확인)은 PR #1254로 이미 main에 있고 시험이 통과한다"
+  summary: 이미 끝난 일을 남은 일로 적지 않게 정정했습니다.
+- sha: 'ac50740'
+  at: 2026-11-07 05:23
+  text: 리뷰 지적 반영. #674 근거의 ENVIRONMENT_ENGINES·ENVIRONMENT_GRANT_ENGINES 위치를 daemon.py 331-332행으로 바로잡는다
+  summary: 근거가 가리키는 줄 번호를 실제 위치로 고칩니다.
+- sha: 'bc63851'
+  at: 2026-11-07 05:24
+  text: 리뷰 지적 반영. HANDOFF.md의 #618 줄이 broker port P2를 보류로 적고 있어, P1은 PR #967, P2는 PR #1024로 해소되어 issue를 닫았다고 고친다
+  summary: 새 세션이 읽는 HANDOFF가 끝난 일을 남은 일로 말하지 않게 합니다.
+- sha: '811d50c'
+  at: 2026-11-07 05:37
+  text: 리뷰 지적 반영. #618의 manual 근거 행을 15장 13행(runner 소유권, broker port 사전 거부 설명)으로 바로잡는다
+  summary: 근거가 가리키는 manual 행을 실제 위치로 고칩니다.
