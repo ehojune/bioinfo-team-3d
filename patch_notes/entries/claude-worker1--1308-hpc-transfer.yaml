@@ -4,3 +4,7 @@ rows:
     at: "2026-11-07 04:00"
     summary: "PC와 클러스터가 파일을 공유하지 않는 사이트에서도 제출할 수 있습니다. 사이트 프로필에 클러스터 작업 폴더를 적으면 열어 둔 셸로 잡 스크립트를 올리고 올린 파일의 sha256이 같을 때만 제출하며, 잡이 끝나면 로그와 작은 결과를 가져옵니다. 크기 상한을 넘거나 작업 폴더 밖으로 나가는 경로는 거부합니다. 로그인은 더 들지 않습니다."
     text: "hpc_transfer(Transfer: 청크 올리기·sha256 확인·가져오기·경로 가둠·링크 거부, job_spec·remote_script·upload_job·fetch_results), Scheduler.transfer와 session.profile, submit_job이 올린 뒤 제출, 끝난 잡 회수와 에이전트 깨움 대기(_fetch_finished_jobs), 가짜 gateway 샌드박스, manual 09·15 한영, 시험 29건 (#1308)"
+  - sha: "d73d450"
+    at: "2026-11-07 04:40"
+    summary: "클러스터에 폴더를 만들 때 한 단계씩 실제 위치를 확인해, 작업 폴더 밖으로 나가는 링크 뒤에는 폴더를 만들기 전에 거부합니다."
+    text: "Transfer.ensure_dir를 컴포넌트별 test -d / mkdir로 바꿔 pwd -P 검증 뒤에만 다음 단계 생성, 가짜 gateway에 test -d 형태 추가, 시험 1건 (#1308)"
