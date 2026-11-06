@@ -127,3 +127,30 @@ def test_only_a_dispatch_bound_to_the_wiki_attaches_the_tool(tmp_path):
     assert "labhq_wiki" in names(True) and "labhq_wiki" not in names(False)
     runner.s.wiki.enabled = False  # a runner that turned it off since keeps it off even for a bound dispatch
     assert "labhq_wiki" not in names(True)
+
+
+@pytest.mark.parametrize("created,state", [(wiki_exposure.WIKI_SHIPPED_AT - 1, "none"), (wiki_exposure.WIKI_SHIPPED_AT, "unknown"),
+                                         (wiki_exposure.WIKI_SHIPPED_AT + 1, "unknown"), (None, "unknown"), (0, "unknown"),
+                                         (-5, "unknown"), ("1700000000", "unknown"), (True, "unknown")])
+def test_a_request_without_a_record_is_none_only_when_it_predates_the_wiki_tool(created, state):
+    assert wiki_exposure.exposure({"created_at": created, "updated_at": created}) == state
+
+
+@pytest.mark.parametrize("created,updated,state", [(1.0, 2.0, "none"), (1.0, wiki_exposure.WIKI_SHIPPED_AT + 1, "unknown"),
+                                                 (1.0, None, "unknown"), (1.0, "2", "unknown"), (None, 2.0, "unknown")])
+def test_a_request_created_before_the_wiki_tool_but_updated_after_it_stays_unknown(created, updated, state):
+    """It can have been resumed while the tool existed, before exposure was recorded."""
+    assert wiki_exposure.exposure({"created_at": created, "updated_at": updated}) == state
+
+
+def test_an_old_unrecorded_request_dispatched_to_a_wiki_runner_becomes_possible():
+    hub = gateway([{"id": "worker", "wiki_tools": True}], exposure=None)
+    hub.requests["req_1"]["created_at"] = hub.requests["req_1"]["updated_at"] = wiki_exposure.WIKI_SHIPPED_AT - 100
+    assert wiki_exposure.publication_blocker(hub.requests["req_1"]) is None
+    bind(hub)
+    assert hub.requests["req_1"][wiki_exposure.KEY] == wiki_exposure.POSSIBLE
+    assert wiki_exposure.publication_blocker(hub.requests["req_1"]) is not None
+
+
+def test_a_recorded_possible_is_not_lowered_by_an_old_created_at():
+    assert wiki_exposure.exposure({wiki_exposure.KEY: "possible", "created_at": 1.0, "updated_at": 1.0}) == wiki_exposure.POSSIBLE

@@ -20,11 +20,11 @@ def test_request_list_health_auth_utf8_and_shutdown(tmp_path, caplog):
     settings.gateway.state_dir = str(tmp_path / "state")
     app = create_app(settings)
     hub = app.state.hub
-    hub.requests["r1"] = {"id": "r1", "text": "한글 요청 " * 30, "mode": "orchestrate",
+    hub.requests["r1"] = {"wiki_exposure": "none", "id": "r1", "text": "한글 요청 " * 30, "mode": "orchestrate",
                           "status": "running", "created_at": 1.0, "updated_at": 2.0,
                           "report": "private report", "plan": {"steps": [{"id": "s1"}, {"id": "s2"}]},
                           "results": {"s1": {"ok": True}}}
-    hub.requests["r2"] = {"id": "r2", "text": "finished", "status": "done", "created_at": 2.0}
+    hub.requests["r2"] = {"wiki_exposure": "none", "id": "r2", "text": "finished", "status": "done", "created_at": 2.0}
     hub.store.put("task", "t2", {"request_id": "r1", "step_id": "s2", "accepted": True, "completed": False,
                                   "payload": {"agent_id": "worker"}})
     with caplog.at_level(logging.WARNING), TestClient(app) as client:
@@ -54,7 +54,7 @@ def test_waiting_quota_request_stays_visible_and_active(tmp_path, caplog):
     settings.gateway.state_dir = str(tmp_path / "state")
     app = create_app(settings)
     hub = app.state.hub
-    hub.requests["quota"] = {"id": "quota", "text": "resume later", "mode": "orchestrate",
+    hub.requests["quota"] = {"wiki_exposure": "none", "id": "quota", "text": "resume later", "mode": "orchestrate",
                               "status": "waiting_quota", "created_at": 1.0, "results": {},
                               "quota_waits": {"s1": {"engine": "codex", "resume_at": 9999999999,
                                                        "deadline_at": 9999999999, "reason": "limit"}}}
@@ -78,7 +78,7 @@ def test_waiting_login_request_stays_visible_and_active(tmp_path, caplog):
     settings.gateway.state_dir = str(tmp_path / "state")
     app = create_app(settings)
     hub = app.state.hub
-    hub.requests["login"] = {"id": "login", "text": "resume after login", "mode": "orchestrate",
+    hub.requests["login"] = {"wiki_exposure": "none", "id": "login", "text": "resume after login", "mode": "orchestrate",
                               "status": "waiting_login", "created_at": 1.0, "results": {},
                               "login_waits": {"s1": {"engine": "codex", "resume_at": 9999999999,
                                                        "deadline_at": 9999999999, "reason": "expired"}}}
@@ -162,7 +162,7 @@ async def test_usage_sum_and_unknown_cost_are_idempotent(tmp_path):
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
     hub = create_app(settings).state.hub
-    hub.requests["r"] = {"id": "r", "status": "running", "created_at": 1, "cost_usd": 0,
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "status": "running", "created_at": 1, "cost_usd": 0,
                          "cost_known": True, "usage": {}}
     hub.save_request("r")
     hub.agents = {
@@ -198,7 +198,7 @@ async def test_abandoned_task_is_unaccounted_and_an_unrouted_task_is_a_real_zero
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
     hub = create_app(settings).state.hub
-    hub.requests["r"] = {"id": "r", "status": "running", "created_at": 1, "cost_usd": 0,
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "status": "running", "created_at": 1, "cost_usd": 0,
                          "cost_known": True, "usage": {}}
     hub.agents = {"worker": {"engine": "claude_code", "model": "opus"}}
     hub.store.put("task", "t1", {"request_id": "r", "step_id": "s1", "accepted": True, "completed": False,
@@ -280,7 +280,7 @@ def test_steps_asleep_on_hpc_count_as_active(tmp_path):
     settings.gateway.state_dir = str(tmp_path / "state")
     app = create_app(settings)
     hub = app.state.hub
-    hub.requests["r1"] = {"id": "r1", "text": "x", "status": "running", "created_at": 1.0,
+    hub.requests["r1"] = {"wiki_exposure": "none", "id": "r1", "text": "x", "status": "running", "created_at": 1.0,
                           "plan": {"steps": [{"id": "s1"}]}, "results": {}}
     hub.store.put("task", "t1", {"request_id": "r1", "step_id": "s1", "accepted": True, "completed": True,
                                   "result": {"pending_jobs": ["j1"]}, "payload": {"agent_id": "analyst"}})
@@ -294,7 +294,7 @@ def test_running_tasks_choose_state_priority_then_latest_dispatch(tmp_path):
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
     hub = create_app(settings).state.hub
-    hub.requests["r1"] = {"id": "r1", "status": "running", "results": {}}
+    hub.requests["r1"] = {"wiki_exposure": "none", "id": "r1", "status": "running", "results": {}}
     sleeping = {"request_id": "r1", "accepted": True, "completed": True,
                 "result": {"pending_jobs": ["j1"]}, "payload": {"agent_id": "analyst"}}
     running = {**sleeping, "completed": False, "result": None}
@@ -316,7 +316,7 @@ async def test_finished_jobs_do_not_count_as_sleeping_during_wake(tmp_path, wake
     settings.gateway.state_dir = str(tmp_path / "state")
     app = create_app(settings)
     hub = app.state.hub
-    hub.requests["r1"] = {"id": "r1", "text": "x", "status": "running", "created_at": 1.0,
+    hub.requests["r1"] = {"wiki_exposure": "none", "id": "r1", "text": "x", "status": "running", "created_at": 1.0,
                           "plan": {"steps": [{"id": "s1"}]}, "results": {}}
     sleeping = {"request_id": "r1", "step_id": "s1", "accepted": True, "completed": True,
                 "result": {"pending_jobs": ["j1"]}, "payload": {"agent_id": "analyst"}}
@@ -355,7 +355,7 @@ async def test_failure_comment_keeps_stored_accounting(tmp_path):
     settings.gateway.state_dir = str(tmp_path / "state")
     from labhq.gateway.server import Hub
     hub = Hub(settings, github_transport=httpx.MockTransport(api))
-    hub.requests["r"] = {"id": "r", "text": "t", "project_id": "p", "status": "failed",
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "text": "t", "project_id": "p", "status": "failed",
                          "cost_usd": 1.5, "cost_known": False}
     hub.reporter.issues["r"] = 7
     await hub.reporter.handle({"type": "request.failed", "request_id": "r", "data": {"error": "boom"}})

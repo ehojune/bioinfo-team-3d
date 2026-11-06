@@ -43,7 +43,7 @@ def test_publish_approval_requires_pi_review(tmp_path, channel):
     app = create_app(settings)
     hub = app.state.hub
     with TestClient(app) as client:
-        hub.requests["req_test"] = {"id": "req_test", "status": "done", "pi_review_pending": False}
+        hub.requests["req_test"] = {"wiki_exposure": "none", "id": "req_test", "status": "done", "pi_review_pending": False}
         hub.approvals["a"] = {"approval": {"id": "a", "kind": "result_publish", "request_id": "req_test"},
                               "origin": None}
         headers = {"Authorization": "Bearer test-token"}
@@ -66,7 +66,7 @@ async def test_restart_reuses_saved_draft_without_editor(tmp_path, monkeypatch):
     settings.gateway.state_dir = str(tmp_path / "state")
     settings.runner.workspace_root = str(tmp_path / "runs")
     hub = RealHub(settings)
-    hub.requests["req_test"] = {"id": "req_test", "status": "done", "report": "original report",
+    hub.requests["req_test"] = {"wiki_exposure": "none", "id": "req_test", "status": "done", "report": "original report",
         "pi_reviewed_at": 1, "result_storage": {"mode": "existing", "repo": "owner/study", "status": "selected"}}
     hub.agents["editor"] = {}
     editor = AsyncMock(return_value=SimpleNamespace(ok=True, structured={"readme": "original edition"}))
@@ -114,7 +114,7 @@ async def test_auto_publish_waits_for_review_and_resumes_draft(tmp_path, monkeyp
     settings.runner.workspace_root = str(tmp_path / "runs")
     settings.github.auto_publish_results = True
     hub = RealHub(settings)
-    hub.requests["req_test"] = {"id": "req_test", "status": "done", "report": "original report",
+    hub.requests["req_test"] = {"wiki_exposure": "none", "id": "req_test", "status": "done", "report": "original report",
         "result_storage": {"mode": "existing", "repo": "owner/study", "status": "selected"}}
     upload = AsyncMock()
     monkeypatch.setattr(hub.result_storage, "upload", upload)

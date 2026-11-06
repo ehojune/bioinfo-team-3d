@@ -48,7 +48,7 @@ async def close(hub):
 
 async def candidate(tmp_path, calls, agent="engineer"):
     hub = Hub(settings(tmp_path, pipeline_pr=True), github_transport=fake_pipeline_api(calls))
-    hub.requests["r"] = {"id": "r", "status": "done"}
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "status": "done"}
     hub.save_request("r")
     hub.store.put("pipeline_submission", "t", {"request_id": "r", "task_id": "t",
         "agent_id": agent, "state": "ready", "submission": pipeline()})
@@ -73,7 +73,7 @@ def test_every_planning_route_carries_the_three_way_assignment(prompt):
 async def test_missing_pipeline_consult_assigns_a_builder_and_keeps_contribution_separate(tmp_path):
     hub = Hub(settings(tmp_path))
     hub.agents = {"cso": {"engine": "mock"}}
-    hub.requests["r"] = {"id": "r", "text": "analysis", "status": "running"}
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "text": "analysis", "status": "running"}
     prompts = []
 
     async def dispatch(task):
@@ -142,7 +142,7 @@ async def test_card_fingerprint_and_upload_use_the_same_final_public_source(tmp_
     expected = [{"path": item["path"], "content": publish_clean(item["content"], configured,
                 [{"references": references}], limit=None)} for item in submission["files"]]
     hub = Hub(configured, github_transport=fake_pipeline_api(calls))
-    hub.requests["r"] = {"id": "r", "status": "done", "references": references}
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "status": "done", "references": references}
     hub.store.put("pipeline_submission", "t", {"request_id": "r", "task_id": "t",
         "agent_id": "engineer", "state": "ready", "submission": submission})
     try:

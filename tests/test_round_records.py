@@ -23,7 +23,7 @@ def settings(tmp_path):
 
 def round_request(hub, rid, status):
     hub.requests[rid] = {
-        "id": rid, "text": "Inspect /data/restricted/sample and ghp_" + "x" * 30,
+        "wiki_exposure": "none", "id": rid, "text": "Inspect /data/restricted/sample and ghp_" + "x" * 30,
         "mode": "orchestrate", "project_id": "demo", "status": status,
         "meta": {"case_id": "bench-case"},
         "created_at": 1.0, "finished_at": 3.0 if status != "interrupted" else None,

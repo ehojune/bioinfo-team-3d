@@ -86,7 +86,7 @@ def test_staff_keep_the_pi_identity_whatever_bot_marker_they_inherit(tmp_path, m
 async def test_bioinfo_questions_go_to_cso_except_three_hard_stops(tmp_path, question, pi):
     hub = Hub(settings(tmp_path))
     hub.agents = {"cso": {"engine": "mock"}}
-    hub.requests["r"] = {"id": "r", "text": "analysis", "status": "running"}
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "text": "analysis", "status": "running"}
     routed = []
 
     async def dispatch(task):
@@ -116,7 +116,7 @@ async def test_bioinfo_questions_go_to_cso_except_three_hard_stops(tmp_path, que
 async def test_ordinary_staff_questions_reach_the_cso(tmp_path, question):
     hub = Hub(settings(tmp_path))
     hub.agents = {"cso": {"engine": "mock"}}
-    hub.requests["r"] = {"id": "r", "text": "analysis", "status": "running"}
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "text": "analysis", "status": "running"}
     routed = []
 
     async def dispatch(task):
@@ -190,7 +190,7 @@ def fake_pipeline_api(calls, status=200):
 
 async def run_submission(tmp_path, submission, transport, pipeline_pr=True):
     hub = Hub(settings(tmp_path, pipeline_pr), github_transport=transport)
-    hub.requests["r"] = {"id": "r", "status": "done"}
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "status": "done"}
     hub.store.put("pipeline_submission", "t", {"request_id": "r", "task_id": "t",
                                                 "agent_id": "bioinfo-agent", "state": "ready",
                                                 "submission": submission})
@@ -462,7 +462,7 @@ async def test_runner_attaches_pipeline_files_only_when_the_gateway_asks(
 
 async def test_gateway_ignores_a_bundle_from_a_failed_or_unfinished_turn(tmp_path):
     hub = Hub(settings(tmp_path, pipeline_pr=True))
-    hub.requests["r"] = {"id": "r", "status": "running"}
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "status": "running"}
     try:
         for tid, extra in (("t1", {"ok": False}), ("t2", {"ok": True, "pending_jobs": ["job-1"]})):
             result = TaskResult(task_id=tid, agent_id="bioinfo-agent", text="", pipeline_submission=pipeline(), **extra)
@@ -476,7 +476,7 @@ async def test_gateway_ignores_a_bundle_from_a_failed_or_unfinished_turn(tmp_pat
 
 async def test_gateway_keeps_output_hashes_when_it_strips_pipeline_submission(tmp_path):
     hub = Hub(settings(tmp_path))
-    hub.requests["r"] = {"id": "r", "status": "running"}
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "status": "running"}
     hub.store.put("task", "t", {"request_id": "r", "payload": {"agent_id": "worker", "meta": {}}})
     result = TaskResult(task_id="t", agent_id="worker", ok=True, output_sha256={"outputs/a.tsv": "a" * 64},
                         unreported_outputs=["outputs/b.tsv"], pipeline_submission=pipeline())

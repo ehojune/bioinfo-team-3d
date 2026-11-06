@@ -385,7 +385,7 @@ def test_terminal_checkpoint_replays_once_to_reporter_after_restart(tmp_path):
     async def checkpoint_then_stop():
         first = Hub(s)
         first.requests["r"] = {"id": "r", "mode": "direct", "text": "study", "status": "running",
-                               "project_id": "p"}
+                               "project_id": "p", "wiki_exposure": "none"}
         first._queue_terminal_delivery = lambda event: None  # process exits just after commit
         (await first.orchestrator._finish("r", "finished", {}, ok=True))
         assert first.store.get("request", "r")["status"] == "done"
@@ -416,7 +416,7 @@ def test_restart_creates_missing_issue_before_terminal_report(tmp_path):
     async def checkpoint_then_stop():
         first = Hub(s)
         first.requests["r"] = {"id": "r", "mode": "direct", "text": "study", "status": "running",
-                               "project_id": "p", "created_at": time.time()}
+                               "project_id": "p", "created_at": time.time(), "wiki_exposure": "none"}
         first.save_request("r")
         first.reporter.submit = lambda event: None  # event persisted, issue not yet opened
         await first.publish({"type": "request.created", "request_id": "r", "data": {"text": "study"}})
@@ -1559,7 +1559,7 @@ async def test_github_issue_number_restored_for_final_report(tmp_path):
     s.projects = [ProjectSettings(id="p", repo="o/p", commit_reports=False)]
     first = Hub(s)
     first.requests["r1"] = {"id": "r1", "text": "study", "mode": "direct",
-                            "project_id": "p", "status": "running"}
+                            "project_id": "p", "status": "running", "wiki_exposure": "none"}
     first.save_request("r1")
 
     class GitHub:

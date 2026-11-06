@@ -540,7 +540,7 @@ async def test_full_reporter_flow_guards_every_outbound_string(tmp_path):
     s.gateway.state_dir = str(tmp_path / "state")
     hub = Hub(s, github_transport=httpx.MockTransport(api))
     rid = "r"
-    hub.requests[rid] = {"text": f"{zone}/sample.cram {secret}", "project_id": "p", "status": "done"}
+    hub.requests[rid] = {"wiki_exposure": "none", "text": f"{zone}/sample.cram {secret}", "project_id": "p", "status": "done"}
     events = [
         {"type": "request.created", "data": {}},
         {"type": "request.plan", "data": {"steps": [{"id": "s", "agent_id": "analyst",
@@ -607,7 +607,7 @@ async def test_title_and_report_heading_clean_before_shortening(tmp_path):
     s.policy.data_zones = [DataZone(path=zone, level="restricted")]
     s.gateway.state_dir = str(tmp_path / "state")
     hub = Hub(s, github_transport=fake_github(calls))
-    hub.requests["r"] = {"text": "x" * 62 + zone + "/sample.cram", "project_id": "p"}
+    hub.requests["r"] = {"wiki_exposure": "none", "text": "x" * 62 + zone + "/sample.cram", "project_id": "p"}
     await hub.reporter.handle({"type": "request.created", "request_id": "r", "data": {}})
     title = next(body["title"] for method, _, body in calls if method == "POST")
     assert "D:/res" not in title
@@ -634,7 +634,7 @@ async def test_issue_creation_replay_finds_remote_issue_before_reposting(tmp_pat
     s.gateway.state_dir = str(tmp_path / "state")
     transport = httpx.MockTransport(api)
     first = Hub(s, github_transport=transport)
-    first.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done"}
+    first.requests["r"] = {"wiki_exposure": "none", "id": "r", "text": "study", "project_id": "p", "status": "done"}
     first.save_request("r")
     event = {"type": "request.created", "request_id": "r", "data": {}}
     original_put = first.store.put
@@ -676,7 +676,7 @@ async def test_saved_plan_and_review_replay_in_order_after_restart(tmp_path):
     s.gateway.state_dir = str(tmp_path / "state")
     transport = reporter_comments_transport(remote)
     first = Hub(s, github_transport=transport)
-    first.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done"}
+    first.requests["r"] = {"wiki_exposure": "none", "id": "r", "text": "study", "project_id": "p", "status": "done"}
     first.save_request("r")
     first.store.put("github_issue", "r", {"number": 7})
     first.reporter.issues["r"] = 7
@@ -704,7 +704,7 @@ async def test_plan_delivery_waits_for_missing_request_issue(tmp_path):
     s.gateway.state_dir = str(tmp_path / "state")
     transport = reporter_comments_transport(remote)
     first = Hub(s, github_transport=transport)
-    first.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done"}
+    first.requests["r"] = {"wiki_exposure": "none", "id": "r", "text": "study", "project_id": "p", "status": "done"}
     first.save_request("r")
     await first.publish({"type": "request.plan", "request_id": "r", "data": {"steps": []}})
     await first.reporter.drain()
@@ -731,7 +731,7 @@ async def test_reporter_comment_replay_finds_posted_marker(tmp_path, kind, data)
     s.gateway.state_dir = str(tmp_path / "state")
     transport = reporter_comments_transport(remote)
     first = Hub(s, github_transport=transport)
-    first.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done"}
+    first.requests["r"] = {"wiki_exposure": "none", "id": "r", "text": "study", "project_id": "p", "status": "done"}
     first.save_request("r")
     first.store.put("github_issue", "r", {"number": 7})
     first.reporter.issues["r"] = 7
@@ -796,7 +796,7 @@ async def test_terminal_report_replay_skips_completed_external_actions(tmp_path,
     s.gateway.state_dir = str(tmp_path / "state")
     transport = httpx.MockTransport(api)
     first = Hub(s, github_transport=transport)
-    first.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done",
+    first.requests["r"] = {"wiki_exposure": "none", "id": "r", "text": "study", "project_id": "p", "status": "done",
                            "finished_at": 1_700_000_000, "cost_usd": 1.0}
     first.save_request("r")
     first.reporter.issues["r"] = 7
@@ -834,7 +834,7 @@ async def test_committed_github_appendix_uses_the_stored_request_not_the_truncat
     s.gateway.state_dir = str(tmp_path / "state")
     hub = Hub(s, github_transport=fake_github(calls))
     full = "긴 실행 기록\n" + "x" * 21_000 + "\n전문 끝"
-    hub.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done",
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "text": "study", "project_id": "p", "status": "done",
                          "finished_at": 1_700_000_000, "report": "full PI report",
                          "report_appendix": full}
     hub.reporter.issues["r"] = 7
@@ -859,7 +859,7 @@ async def test_unparsed_review_posts_failure_comment(tmp_path):
     s = Settings(projects=[ProjectSettings(id="demo", repo="o/p")])
     s.gateway.state_dir = str(tmp_path)
     hub = Hub(s, github_transport=fake_github(calls))
-    hub.requests["r"] = {"text": "example", "project_id": "demo"}
+    hub.requests["r"] = {"wiki_exposure": "none", "text": "example", "project_id": "demo"}
     await hub.reporter.handle({"type": "request.created", "request_id": "r", "data": {}})
     await hub.reporter.handle({"type": "request.review", "request_id": "r",
                                "data": {"revision": 0, "status": "review_unparsed",
@@ -892,7 +892,7 @@ async def test_root_zone_turns_github_reporting_off(tmp_path):
     s.policy.data_zones = [DataZone(path="/", level="restricted")]
     s.gateway.state_dir = str(tmp_path / "state")
     hub = Hub(s, github_transport=fake_github(calls))
-    hub.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done"}
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "text": "study", "project_id": "p", "status": "done"}
     assert not hub.reporter.enabled()
     for typ in ("request.created", "request.completed"):
         await hub.reporter.handle({"type": typ, "request_id": "r", "data": {"report": "x"}})
@@ -938,7 +938,7 @@ async def test_public_project_reports_hide_the_pis_default_github_and_url_refere
               "https://wiki.example.org:443/pi/notes/page2?rev=3, wiki.example.org/pi/notes, "
               "https:\\/\\/wiki.example.org\\/pi\\/notes and see owner/Yuan.")
     keep = "scverse/scanpy https://github.com/scverse/scanpy 10.1038/nature12373 https://wiki.example.org/public"
-    hub.requests["r"] = {"id": "r", "text": f"study with {quoted}", "project_id": "p", "status": "done",
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "text": f"study with {quoted}", "project_id": "p", "status": "done",
                          "references": [{"kind": "github", "value": "https://github.com/scverse/scanpy",
                                          "source": "request"},
                                         {"kind": "github", "value": "https://github.com/owner/Yuan",

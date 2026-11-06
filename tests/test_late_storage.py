@@ -24,7 +24,7 @@ def setup(tmp_path, monkeypatch):
     calls = []
     app = create_app(s, github_transport=fake_github(calls))
     hub = app.state.hub
-    hub.requests["r"] = {"id": "r", "status": "done", "text": "Public study", "report": "Result"}
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "status": "done", "text": "Public study", "report": "Result"}
     return app, hub, calls
 
 

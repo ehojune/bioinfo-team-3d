@@ -14,6 +14,7 @@ from tests.test_research_report import _hub, _kinds, REPORT, REVISE
 async def draft_hub(**kwargs):
     hub = _hub(**kwargs)
     hub.requests['r']['id'] = 'r'
+    hub.requests['r']['wiki_exposure'] = 'none'
     hub.requests['r']['research_options'] = {'contract_version': 2, 'final_checkpoint': True}
     await Orchestrator(hub).run_request('r')
     return hub

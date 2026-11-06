@@ -24,6 +24,7 @@ from urllib.parse import quote, unquote
 import httpx
 
 from ..costs import cost_detail, cost_text
+from ..evidence import wiki_exposure
 from ..intake import mask_published_references, public_url, url_pattern
 from ..models import ApprovalRequest
 from ..pipeline_pr import pipeline_fingerprint, pipeline_rejection
@@ -508,6 +509,15 @@ class ProjectReporter:
         bioinfo = self.s.policy.bioinfo_agent
         return bool((bioinfo.pipeline_pr and bioinfo.pipeline_repo) or any(p.repo for p in self.s.projects))
 
+    def _wiki_blocked(self, rid: str | None, what: str) -> bool:
+        """True when this request may have exposed the PI's LLM-wiki or its history is unknown: nothing is posted for it
+        (#1037). Called right before every write, with nothing awaited between the call and the send."""
+        blocker = wiki_exposure.publication_blocker(self.hub.requests.get(rid or ""))
+        if blocker and f"wiki:{rid}" not in self._warned:
+            self._warned.add(f"wiki:{rid}")
+            log.warning("GitHub %s for request %s withheld: %s", what, rid, blocker)
+        return bool(blocker)
+
     def client(self) -> GitHubClient | None:
         if self._client is None:
             token = os.environ.get(self.s.github.token_env, "")
@@ -574,6 +584,8 @@ class ProjectReporter:
         find_comment = getattr(gh, "find_issue_comment", None)
         comment = await find_comment(repo, number, marker) if saved and find_comment else None
         if comment is None:
+            if self._wiki_blocked(rid, kind):
+                return
             comment = await gh.comment(repo, number,
                                        f"{clip(self._clean(body), MAX_BODY - len(marker) - 2)}\n\n{marker}")
         self._save_action(ev, "comment", {"done": True, "marker": marker,
@@ -669,6 +681,10 @@ class ProjectReporter:
             entry["submission"] = public_submission
             self.hub.store.put("pipeline_submission", entry["task_id"], entry)
         submission = public_submission
+        if self._wiki_blocked(entry.get("request_id"), "pipeline contribution"):
+            await self._pipeline_status(entry, "rejected", wiki_exposure.publication_blocker(
+                self.hub.requests.get(entry.get("request_id") or "")))
+            return True
         if not await self._pipeline_approved(entry):
             return entry.get("state") == "declined"
         gh = self.client()
@@ -694,16 +710,28 @@ class ProjectReporter:
                 sha = await gh.branch_sha(repo, base)
                 if not sha:
                     raise RuntimeError("pipeline base branch has no commit")
+                if self._wiki_blocked(entry.get("request_id"), "pipeline branch"):
+                    await self._pipeline_status(entry, "rejected", wiki_exposure.publication_blocker(
+                self.hub.requests.get(entry.get("request_id") or "")))
+                    return True
                 try:
                     await gh.create_branch(repo, branch, sha)
                 except GitHubHTTPError as error:
                     if error.status_code != 422:
                         raise
                 for item in submission["files"]:
+                    if self._wiki_blocked(entry.get("request_id"), "pipeline file"):
+                        await self._pipeline_status(entry, "rejected", wiki_exposure.publication_blocker(
+                self.hub.requests.get(entry.get("request_id") or "")))
+                        return True
                     await gh.put_file(repo, item["path"], item["content"],
                                       f"{name} pipeline: add generated file", branch, content_cleaner=clean_source)
                 body = (f"labhq에서 구현하고 PI가 건별 기여를 승인한 `{name}` pipeline입니다.\n\n"
                         f"{submission.get('summary') or ''}\n\n{marker}")
+                if self._wiki_blocked(entry.get("request_id"), "pipeline pull request"):
+                    await self._pipeline_status(entry, "rejected", wiki_exposure.publication_blocker(
+                self.hub.requests.get(entry.get("request_id") or "")))
+                    return True
                 existing = await gh.create_pull(repo, submission.get("title") or f"{name} pipeline 추가",
                                                 body, branch, base)
             await self._pipeline_status(entry, "open", url=existing.get("html_url"),
@@ -746,6 +774,8 @@ class ProjectReporter:
                 self._warned.add(proj.id)
                 log.warning("project %s is public; set allow_public_reports: true to post updates", proj.id)
             return
+        if self._wiki_blocked(rid, typ):
+            return  # fail closed and final: the exposure never goes back to none (#1037)
         gh = self.client()
         if gh is None:
             return False  # keep a terminal delivery until credentials are available
@@ -756,6 +786,8 @@ class ProjectReporter:
                 return
             find_issue = getattr(gh, "find_request_issue", None)
             issue = await find_issue(proj.repo, rid) if find_issue else None
+            if self._wiki_blocked(rid, "issue"):
+                return
             if issue is None:
                 issue = await gh.create_issue(proj.repo, f"[labhq] {short(self._clean(req.get('text', '')), 70)}",
                                               self._clean(self._issue_body(rid, req)), proj.labels)
@@ -796,11 +828,15 @@ class ProjectReporter:
                              "appendix_done": bool(saved.get("appendix_done")), "done": False,
                              **({"url": saved.get("url")} if saved.get("url") else {})}
                     if not state["body_done"]:
+                        if self._wiki_blocked(rid, "report"):
+                            return
                         res = await gh.put_file(proj.repo, path, self._clean(self._report_md(rid, req, report)),
                                                 f"labhq: report for {rid}", proj.branch)
                         state.update(body_done=True, url=(res.get("content") or {}).get("html_url"))
                         self._save_action(ev, "report", state)
                     if not state["appendix_done"]:
+                        if self._wiki_blocked(rid, "report appendix"):
+                            return
                         res = await gh.put_file(proj.repo, appendix_path,
                                                 self._clean(self._report_appendix_md(rid, req, appendix)),
                                                 f"labhq: execution record for {rid}", proj.branch)
@@ -827,6 +863,8 @@ class ProjectReporter:
                     find_comment = getattr(gh, "find_issue_comment", None)
                     c = await find_comment(proj.repo, num, marker) if saved and find_comment else None
                     if c is None:
+                        if self._wiki_blocked(rid, "comment"):
+                            return
                         c = await gh.comment(proj.repo, num, self._clean(
                             f"{head}{cost}{link}\n\n{clip(report, 20000)}\n\n{marker}"))
                     self._save_action(ev, "comment", {"done": True, "marker": marker,
@@ -839,6 +877,8 @@ class ProjectReporter:
                     if not saved.get("done"):
                         is_closed = getattr(gh, "issue_is_closed", None)
                         if not (saved and is_closed and await is_closed(proj.repo, num)):
+                            if self._wiki_blocked(rid, "close"):
+                                return
                             await gh.close_issue(proj.repo, num)
                         self._save_action(ev, "close", {"done": True})
 

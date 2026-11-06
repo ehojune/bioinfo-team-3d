@@ -32,6 +32,7 @@ from ..costs import cost_detail, format_cost, historical_plan_cost_estimate, tas
 from ..interruption import ShutdownInterrupted, shutdown_interruption, stopping_marker
 from ..model_refusal import REASON as MODEL_REFUSAL_REASON, ModelRefused, is_model_refusal
 from ..pi_text import PI_TEXT_RULE
+from ..evidence import wiki_exposure
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups, claim_evidence_rows, claim_evidence_section)
@@ -6071,6 +6072,9 @@ class Orchestrator:
                                     f"{row.get('attempt_status') or 'unknown'} — {row.get('status_detail')}")
             warnings += tool_missing_lines(step["id"], ledger)
         warnings += output_checks.quality_lines(steps, results)  # shown on the CP2 card and under 한계 (#697, #710)
+        wiki_line = wiki_exposure.cp2_warning(req)  # the PI is told what this card cannot tell (#1037)
+        if wiki_line:
+            warnings.append(wiki_line)
         contract["result_warnings"] = warnings
         # CP2 approves these ledgers as results of the plan frozen at CP1, so each must validate under it. A reused
         # continuation result is a copy rebound to the new plan (``carry_over``); this catches any other drift
