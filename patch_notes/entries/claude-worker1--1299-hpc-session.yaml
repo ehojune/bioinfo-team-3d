@@ -8,3 +8,7 @@ rows:
     at: "2026-11-06 19:10"
     summary: "큰 출력이 한 번에 도착해도 시작 표지를 놓치지 않고, 세션을 닫았다가 바로 다시 시작해도 연결 유지 스레드가 새로 뜹니다."
     text: "hpc_session: begin 표지를 버퍼를 자르기 전에 검색, close()가 ticker를 join하고 start()가 종료 중인 ticker를 기다려 교체, 시험 3건 추가 (#1299)"
+  - sha: "46e2393"
+    at: "2026-11-06 19:30"
+    summary: "Windows 시험 목록에 #1300 사이트 프로필 시험 이름을 미리 등록했습니다."
+    text: "config/ci/windows-boundary-v1.json known_tests에 tests/test_hpc_site_profile_1300.py 추가(총괄 지시, #1300이 병합될 때 목록 검사를 통과하도록) (#1299)"
