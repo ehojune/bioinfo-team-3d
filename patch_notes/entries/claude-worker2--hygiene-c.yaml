@@ -2,5 +2,5 @@ pr: 1326
 rows:
 - sha: '107bbc0'
   at: 2026-11-07 07:36
-  text: 열린 issue 정리 C 결과를 docs/reference/issue-hygiene-20261107-c.md에 남긴다. #430은 PI 결정(HPC 요청은 처음부터 끝까지 HPC)을 PR #578이 구현해 닫고, #612·#151·#625·#621·#546은 완료된 부분의 근거와 남은 일·재개 조건을 적어 열어 둔다
+  text: 열린 issue 정리 C 결과를 docs/reference/issue-hygiene-20261107-c.md에 남긴다. #430은 PI 결정(HPC 요청은 처음부터 끝까지 HPC)과 첫 번째 안(검증된 앞 단계 산출의 staging 복사)을 PR #578이 구현해 닫고, #612·#151·#625·#621·#546은 완료된 부분의 근거와 남은 일·재개 조건을 적어 열어 둔다
   summary: 완료된 issue를 근거와 함께 닫고, 남은 issue의 남은 일을 한곳에 모았습니다.
