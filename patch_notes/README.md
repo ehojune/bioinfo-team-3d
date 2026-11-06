@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:10 | [`48a3fde`](https://github.com/ehojune/bioinfo-team-3d/pull/1294/commits/48a3fde) | **변수로 만든 네트워크 경로를 실제 공유처럼 조회하지 않습니다.**<br>리뷰 지적 반영. 서버·공유 이름에 PowerShell 변수가 든 UNC 대상은 실행 때 정해지므로 후보에서 뺀다. c$ 같은 관리 공유 이름은 그대로 읽는다 |
+| 09:56 | [`bff4055`](https://github.com/ehojune/bioinfo-team-3d/pull/1294/commits/bff4055) | **새 경고가 언제 뜨는지 manual이 설명합니다.**<br>리뷰 지적 반영. manual 04장 한·영에 PowerShell 확인이 cmdlet 이름 안의 backtick을 무시하고 세는 것과, 네트워크 경로는 쓰는 쪽 값에 있을 때만 보고 읽을 수 없으면 경고만 한다는 것을 적는다 |
+| 09:55 | [`a69a00f`](https://github.com/ehojune/bioinfo-team-3d/pull/1294/commits/a69a00f) | **원본 share 때문에 불필요한 승인 카드가 뜨지 않고, 공백 있는 share 이름도 바르게 읽습니다.**<br>리뷰 지적 반영. 자리가 정해진 명령의 UNC는 쓰는 쪽 값(-OutFile, -DestinationPath, -Destination)에서만 모아 읽기만 하는 원본 share가 카드를 만들지 않게 하고, 따옴표로 묶은 share 이름의 공백은 한 경로로 읽는다 |
+| 09:42 | [`5f3f9f2`](https://github.com/ehojune/bioinfo-team-3d/pull/1294/commits/5f3f9f2) | **남아 있던 두 우회(이름 속 backtick, 네트워크 경로)를 닫습니다. UNC는 여유를 모르면 경고만 합니다.**<br>PowerShell 디스크 확인의 안전망이 cmdlet 이름 안의 backtick escape(iw`r)도 센다. 글에서 이름을 셀 때 backtick을 먼저 빼서 `$r = iw`r ...`처럼 감싼 다운로드도 현재 드라이브를 확인받는다. 쓰는 명령(iwr·Expand-Archive·BITS)의 UNC 대상(\server\share)도 후보로 모아, 여유를 읽을 수 있으면 기준 아래에서 ask, 읽지 못하면 경고만 남기고 막지 않는다. 읽지 않는 명령(Copy-Item 등)의 UNC와 URL의 //는 건드리지 않는다 |
 | 07:30 | [`7447b66`](https://github.com/ehojune/bioinfo-team-3d/pull/1288/commits/7447b66) | **몫이 이미 바닥난 요청의 계획 경고가 남은 몫이 있다고 말하던 것을 바로잡습니다.**<br>CP1 계획 경고와 manual의 문구를 조회 몫이 남아 있다는 단정에서 보내지 않은 시도는 조회 몫을 쓰지 않는다는 사실로 바꾼다. 상한이 이미 소진된 요청에서도 경고가 사실과 어긋나지 않게 한다 |
 | 07:00 | [`6fe2425`](https://github.com/ehojune/bioinfo-team-3d/pull/1289/commits/6fe2425) | **이름으로 요청한 자동 설정도 보조 파일 사용으로 셉니다.**<br>helper 선택: usefixtures·getfixturevalue·indirect를 가리지 않고 node 범위의 fixture 이름 문자열을 사용으로 판정 (#1285) |
 | 07:00 | [`362c8ff`](https://github.com/ehojune/bioinfo-team-3d/pull/1288/commits/362c8ff) | **구현과 어긋난 manual 문장과 단계 보고를 바로잡습니다.**<br>manual 09장 한영의 옛 문장("차단 사실이 CP1 계획 경고에 오르지 않는다")을 쉬는 호스트가 계획 경고에 오른다는 설명으로 고치고, 단계 보고를 최종 범위로 갱신한다 |
