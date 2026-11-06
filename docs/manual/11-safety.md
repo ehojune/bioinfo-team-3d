@@ -30,7 +30,7 @@ Claude 직원의 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edi
 
 요청 전체 HPC 모드의 공유 계정에는 검증된 `data/<producer>/<source-task>/` 복사본만 읽기 권한을 주고 단계별 `outputs/`에 씁니다. manifest·제어 파일은 private으로 두며 입력 링크·hardlink 거부를 유지합니다. 실제 HPC 권한 동작과 OS 격리는 미검증입니다([범위](../reference/hpc-step-workspaces-578.md)).
 
-**HPC 접속과 agent 위치(#1295):** 기본 구성은 직원 agent와 runner가 HPC 밖(사용자 PC)에 있고 HPC에는 계산 스크립트만 보냅니다. 많은 기관이 HPC 안에서 agent를 막으므로, runner를 클러스터 안에 두기 전에 기관 규정과 사이트 프로필을 먼저 확인합니다. 접속하면 기관 전산팀에 로그인 기록이 남으니 `hpc.login_limit_per_request`·`hpc.login_limit_per_day`로 세고([15장](15-config.md)), 기관의 접속 주소·계정·게이트웨이는 저장소·로그·보고서에 넣지 않고 사용자 PC의 사이트 프로필이나 개인 skill에만 둡니다. 사이트 규칙이 labhq 기본보다 우선합니다. 자세한 정책은 [8장](08-structure.md)에 있습니다.
+**HPC 접속과 agent 위치(#1295):** 기본 구성은 직원 agent와 runner가 HPC 밖(사용자 PC)에 있고 HPC에는 계산 스크립트만 보냅니다. 많은 기관이 HPC 안에서 agent를 막으므로, runner를 클러스터 안에 두기 전에 기관 규정과 사이트 프로필을 먼저 확인합니다. 접속하면 기관 전산팀에 로그인 기록이 남으니 `hpc.login_limit_per_request`·`hpc.login_limit_per_day`로 세고([15장](15-config.md)), 기관의 접속 주소·계정·게이트웨이는 저장소·로그·보고서에 넣지 않고 사용자 PC에만 둡니다. 지금은 커밋하지 않는 `config/labhq.yaml`(`hpc.ssh_host`·`hpc.user` 등)이나 개인 skill이고, 사이트 프로필(#1300)이 들어오면 그쪽으로 옮깁니다. 사이트 규칙이 labhq 기본보다 우선합니다. 자세한 정책은 [8장](08-structure.md)에 있습니다.
 
 ### 데이터 구역
 
