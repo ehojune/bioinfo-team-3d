@@ -1,5 +1,9 @@
 pr: 1318
 rows:
+  - sha: "3d7d3db"
+    at: "2026-11-07 04:54"
+    summary: "완료된 잡의 ID가 재사용돼도 큐에서 제출 불확실성을 알립니다."
+    text: "P2 4496889563 수정: 현재 scheduler의 nonterminal 제출 기록만 인정, 완료·다른 scheduler·미상 scheduler 회귀 3건 fail→pass (#1307)"
   - sha: "33ac8d7"
     at: "2026-11-07 04:44"
     summary: "제출 결과가 모호한 잡을 빈 큐로 오인해 다시 제출하는 경로를 막았습니다."
