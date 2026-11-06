@@ -4,3 +4,7 @@ rows:
     at: "2026-11-06 16:30"
     summary: "HPC에 접속할 때마다 로그인 수를 세고, 사용자가 정한 요청당·하루 상한에 닿으면 새 접속을 하지 않습니다. 상한 값은 저장소에 없고 사용자가 정합니다."
     text: "hpc_login_budget(SQLite 카운터, request_scope, LoginLimitReached), HpcSettings 로그인 상한 두 개(기본 비움), Scheduler._run이 ssh 전에 admit, labhq hpc-logins (#1295)"
+  - sha: "85ec5c5"
+    at: "2026-11-06 17:30"
+    summary: "설정할 때 HPC 로그인 상한을 묻고, 요청마다 로그인을 따로 세며, 상한에 닿은 요청은 상태 확인을 멈추고 경고로 알립니다."
+    text: "init이 상한을 묻고(터미널·실제 scheduler일 때만), runner가 제출·상태 조회를 request_scope로 감싸 요청별로 세며, 상한 도달 시 그 요청 조회를 멈추고 agent.log 경고 한 번, 제출은 승인 전에 막음 (#1295)"
