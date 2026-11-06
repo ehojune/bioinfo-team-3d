@@ -72,7 +72,9 @@ def worst_case_s(cfg: "SessionConfig", command_timeout_s: float | None = None) -
     for _ in range(cfg.reconnect_attempts - 1):
         waits += wait
         wait = min(wait * 2, cfg.reconnect_wait_max_s)
-    return cfg.reconnect_attempts * cfg.connect_timeout_s + waits + (command_timeout_s or cfg.command_timeout_s)
+    # every attempt may wait for the gateway's first output before it is allowed its connect time
+    return (cfg.reconnect_attempts * (cfg.connect_timeout_s + cfg.first_output_wait_s) + waits
+            + (command_timeout_s or cfg.command_timeout_s))
 
 
 def call_budget_s(cfg: "SessionConfig", command_timeout_s: float, commands: int = 1) -> float:
@@ -472,13 +474,14 @@ class HpcSession:
             return
         try:
             target = Path(folder).expanduser()
-            target.mkdir(parents=True, exist_ok=True)
+            target.mkdir(parents=True, exist_ok=True, mode=0o700)
             name = f"hpc-connect-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}.log"
             body = (f"error: {type(error).__name__}\nprocess exit: {conn.proc.poll()}\n"
                     f"--- raw output (up to the last 4000 characters) ---\n{text}\n")
-            (target / name).write_text(body, encoding="utf-8")
-            if os.name != "nt":
-                os.chmod(target / name, 0o600)
+            # created private from the start: nothing of the raw output is ever readable by another user, even briefly
+            handle = os.open(target / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(handle, "w", encoding="utf-8") as out:
+                out.write(body)
         except OSError:
             pass  # diagnostics are a courtesy: a full disk must not change what the caller sees
 

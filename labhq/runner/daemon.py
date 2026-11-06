@@ -148,8 +148,15 @@ def labhq_mcp_timeout_s(settings: Settings) -> int:
     work = 120
     if settings.hpc.site_profile and settings.hpc.scheduler != "none":
         from ..hpc_session import SessionConfig, call_budget_s
+        from ..hpc_site import session_profile
 
-        hpc = call_budget_s(SessionConfig(argv=["x"]), float(settings.hpc.command_timeout_s), 2)  # a status is two commands
+        try:  # the profile's wait for the gateway's first output is part of every connect
+            profile = session_profile(settings.hpc.site_profile)
+            wait = float(profile.first_output_wait_s or 0.0) if profile is not None else 0.0
+        except Exception:  # noqa: BLE001 - an unreadable profile: assume the longest wait allowed
+            wait = 60.0
+        hpc = call_budget_s(SessionConfig(argv=["x"], first_output_wait_s=wait),
+                            float(settings.hpc.command_timeout_s), 2)  # a status is two commands
         work = max(work, int(hpc) + 90)  # the broker waits hpc + 30; the CLI waits longer still
     return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + work
 

@@ -1,4 +1,5 @@
 """The HPC session manager against a fake gateway (#1299). No real HPC, no real ssh."""
+import os
 import sys
 import time
 from pathlib import Path
@@ -358,3 +359,40 @@ def test_the_wait_settings_are_checked():
         hs.SessionConfig(argv=["x"], first_output_wait_s=-1)
     with pytest.raises(ValueError):
         hs.SessionConfig(argv=["x"], settle_s=0)
+
+
+def test_the_first_output_wait_is_part_of_every_connect_in_the_budget():
+    cfg = hs.SessionConfig(argv=["x"], first_output_wait_s=60, connect_timeout_s=30, reconnect_attempts=3,
+                           reconnect_wait_s=5)
+    assert hs.worst_case_s(cfg, 60) == 3 * (30 + 60) + 5 + 10 + 60
+    assert hs.call_budget_s(cfg, 60, 1) == (60 + 60) + (3 * (30 + 60) + 5 + 10)
+    assert hs.worst_case_s(hs.SessionConfig(argv=["x"]), 60) == 3 * 30 + 5 + 10 + 60  # no wait: as before
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_the_diagnostic_log_is_private_from_the_start(tmp_path):
+    os.umask(0o022)  # a permissive umask must not matter
+    diag = tmp_path / "diag"
+    s = hs.HpcSession(hs.SessionConfig(argv=argv("--kick-early-input", "0.6"), connect_timeout_s=10, reconnect_attempts=1,
+                                       diag_dir=str(diag)), sleep=lambda x: None)
+    with pytest.raises(hs.ReconnectFailed):
+        s.run("echo hello")
+    (log,) = diag.glob("hpc-connect-*.log")
+    assert oct(log.stat().st_mode & 0o777) == "0o600" and oct(diag.stat().st_mode & 0o777) == "0o700"
+
+
+def test_the_staff_cli_timeout_includes_the_profiles_first_output_wait(tmp_path, monkeypatch):
+    from labhq import hpc_site
+    from labhq.runner.daemon import labhq_mcp_timeout_s
+    from labhq.settings import Settings
+
+    monkeypatch.setenv("LABHQ_SITES_DIR", str(tmp_path / "sites"))
+    hpc_site.save_profile(hpc_site.SiteProfile(name="fake", access_method="gateway_tunnel", connect_argv=["ssh", "x"],
+                                               remote_exec=False, scheduler="slurm", first_output_wait_s=60))
+    waiting = Settings.model_validate({"hpc": {"scheduler": "slurm", "user": "lab", "site_profile": "fake"}})
+    hpc_site.save_profile(hpc_site.SiteProfile(name="plain", access_method="gateway_tunnel", connect_argv=["ssh", "x"],
+                                               remote_exec=False, scheduler="slurm"))
+    plain = Settings.model_validate({"hpc": {"scheduler": "slurm", "user": "lab", "site_profile": "plain"}})
+    assert labhq_mcp_timeout_s(waiting) - labhq_mcp_timeout_s(plain) >= 3 * 60  # a reconnect: three attempts, 60 s each
+    broken = Settings.model_validate({"hpc": {"scheduler": "slurm", "user": "lab", "site_profile": "missing"}})
+    assert labhq_mcp_timeout_s(broken) >= labhq_mcp_timeout_s(waiting)  # unreadable: the longest wait is assumed
