@@ -30,9 +30,11 @@ Claude 직원의 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edi
 
 요청 전체 HPC 모드의 공유 계정에는 검증된 `data/<producer>/<source-task>/` 복사본만 읽기 권한을 주고 단계별 `outputs/`에 씁니다. manifest·제어 파일은 private으로 두며 입력 링크·hardlink 거부를 유지합니다. 실제 HPC 권한 동작과 OS 격리는 미검증입니다([범위](../reference/hpc-step-workspaces-578.md)).
 
+**HPC 접속과 agent 위치(#1295):** 기본 구성은 직원 agent와 runner가 HPC 밖(사용자 PC)에 있고 HPC에는 계산 스크립트만 보냅니다. 많은 기관이 HPC 안에서 agent를 막으므로, runner를 클러스터 안에 두기 전에 기관 규정과 사이트 프로필을 먼저 확인합니다. 접속은 기관 전산팀에 로그인 기록으로 남을 수 있으니 `hpc.login_limit_per_request`·`hpc.login_limit_per_day`로 세고([15장](15-config.md)), 기관의 접속 주소·계정·게이트웨이는 저장소·로그·보고서에 넣지 않고 사용자 PC에만 둡니다. 지금은 커밋하지 않는 `config/labhq.yaml`(`hpc.ssh_host`·`hpc.user` 등)이고, 사이트 프로필(#1300)이 들어오면 그쪽으로 옮깁니다. 직원 세션이 읽을 수 있는 개인 skill에는 넣지 않습니다. ssh 접속 오류에 호스트 이름이 섞여 직원 세션에 전달될 수 있는 점은 아직 가리지 않았습니다(후속 작업). 사이트 규칙이 labhq 기본보다 우선합니다. 자세한 정책은 [8장](08-structure.md)에 있습니다.
+
 ### 데이터 구역
 
-`policy.data_zones`. 경로마다 public·internal·restricted 등급을 붙입니다. 통제 원본은 절대경로로 지정. 권장: Linux 러너 전용 계정, 데이터 계정 소유·권한 `0700`인 구역, `hpc.submit_prefix: ["sudo", "-n", "-u", "data-account"]`, 필수 설정 `hpc.user: data-account`·`hpc.job_group: lab-jobs`. 러너·data-account를 같은 그룹에 넣습니다. `sudoers`는 잡 제출·취소용 `qsub`와 `qdel`(Slurm은 `sbatch`와 `scancel`)만 허용합니다. 전환된 잡의 상대 출력은 반환값의 `output_dir`(`hpc_out/`)에 쓰며, 공유 폴더에는 집계 결과만 둡니다. restricted 구역이 설정되면 Windows 러너는 시작을 거부하며, POSIX 러너 계정이 원본을 읽거나 통과할 수 있어도 거부합니다. `policy.allow_runner_read_restricted: true`는 경고를 남기는 명시적 예외입니다.
+`policy.data_zones`. 경로마다 public·internal·restricted 등급을 붙입니다. 통제 원본은 절대경로로 지정. 클러스터 안 runner 구성(기본은 agent가 HPC 밖이고, 이 구성은 사이트 프로필이 허용할 때만 씁니다, #1295)의 권장: Linux 러너 전용 계정, 데이터 계정 소유·권한 `0700`인 구역, `hpc.submit_prefix: ["sudo", "-n", "-u", "data-account"]`, 필수 설정 `hpc.user: data-account`·`hpc.job_group: lab-jobs`. 러너·data-account를 같은 그룹에 넣습니다. `sudoers`는 잡 제출·취소용 `qsub`와 `qdel`(Slurm은 `sbatch`와 `scancel`)만 허용합니다. 전환된 잡의 상대 출력은 반환값의 `output_dir`(`hpc_out/`)에 쓰며, 공유 폴더에는 집계 결과만 둡니다. restricted 구역이 설정되면 Windows 러너는 시작을 거부하며, POSIX 러너 계정이 원본을 읽거나 통과할 수 있어도 거부합니다. `policy.allow_runner_read_restricted: true`는 경고를 남기는 명시적 예외입니다.
 
 internal 구역을 가리키는 작업·project·참고 폴더 별칭은 Claude의 Read 승인을 받습니다. 링크 검사가 끝나지 않아도 bare Read를 쓰지 않고 실제 경로를 gate에서 판정합니다. internal·restricted 구역과 겹치는 열린 root에는 폴더 단위 Read 사전 허용도 주지 않아, 실행 중 같은 root에 생긴 별칭도 gate로 보냅니다.
 
