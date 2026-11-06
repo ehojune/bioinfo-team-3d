@@ -32,7 +32,7 @@ lookup-only. 원인은 확정하지 못했다. 근거는 실패 run의 job 로�
 
 - 셋 다 **`create_entered`에 닿지 않았다.** WMI `Create`는 호출되지 않았다. 이름은 `provider_create`지만 막힌 곳은 PowerShell 시작과 stdin 읽기 구간이다.
 - 셋 다 **그 job(프로세스)의 첫 launch**였다. A·C는 이어진 launch가 `header_read` 105–114 ms로 지나갔고, B는 첫 `up`이다.
-- 첫 launch는 성공할 때도 `header_read` 1.0–2.2 s, 합계 2.9–7.4 s로 둘째(72–107 ms)나 로컬(약 85 ms)보다 **12–25배 느리다.** 실패한 A(4.2 s)와 C(9.7 s)는 그 느린 쪽 꼬리로 보인다.
+- 첫 launch는 성공할 때도 `header_read` 1.0–2.2 s, 합계 2.9–7.4 s로 둘째(72–107 ms)나 로컬(약 85 ms)보다 **10–26배 느리다.** 실패한 A(4.2 s)와 C(9.7 s)는 그 느린 쪽 꼬리로 보인다.
 - 멈춘 자리가 건마다 다르다(B는 `stdin_open` 전, A·C는 `header_read` 뒤). 한 호출이 막힌 것이 아니라 **일정 시간 동안 PowerShell 전체가 느렸던 것**과 맞는다.
 - A·C는 Python이 잰 시간이 `PROVIDER_TIMEOUT`(15 s)보다 9–10 s 길다. B는 0.06 s다. 이 초과분은 로그만으로 설명되지 않는다.
 - C와 같은 job에서 13:26쯤 `web_resizable_panels`도 실패했다. node 모듈 진입에 19.3 s, Chrome `target-ready`에 17.6 s가 걸렸다([#1272](https://github.com/ehojune/bioinfo-team-3d/issues/1272)). 같은 러너에서 별개의 느려진 구간이 겹쳤다.
@@ -41,7 +41,7 @@ lookup-only. 원인은 확정하지 못했다. 근거는 실패 run의 job 로�
 
 | 후보 | 근거 | 아직 모르는 것 |
 |---|---|---|
-| H1 첫 PowerShell·.NET 코드 경로의 cold start가 드물게 15 s를 넘는다 | 세 건 모두 첫 launch, 성공 run도 첫 launch가 12–25배 느림, 둘째 launch는 로컬과 같음 | 느린 것이 어셈블리 로드·JIT·백신 검사 중 무엇인지. CPU를 썼는지 기다렸는지 |
+| H1 첫 PowerShell·.NET 코드 경로의 cold start가 드물게 15 s를 넘는다 | 세 건 모두 첫 launch, 성공 run도 첫 launch가 10–26배 느림, 둘째 launch는 로컬과 같음 | 느린 것이 어셈블리 로드·JIT·백신 검사 중 무엇인지. CPU를 썼는지 기다렸는지 |
 | H2 러너 전체가 일시적으로 느려진다(CPU·디스크 경합) | 멈춘 단계가 건마다 다름, C의 같은 job에서 Chrome·node도 17–19 s 정지 | 러너 구성·이웃 부하. B는 pip 설치 직후라 디스크 부하 가능성만 있음 |
 | H3 Python 쪽 `subprocess.run` 흐름이 시간을 더 쓴다 | A·C의 +9–10 s(입력 쓰기, kill, 파이프 정리 중 어디인지 모름) | 시점별 Python 측 기록이 없다 |
 | H4 WMI 저장소·`Win32_Process.Create` 자체가 느리다 | (반대 근거) 세 건 모두 Create 호출 전 | 해당 없음 |
