@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:00 | [`3f7de89`](https://github.com/ehojune/bioinfo-team-3d/pull/1305/commits/3f7de89) | **미완성 프로필이 자동으로 보완될 것처럼 읽히던 안내를 실제 동작에 맞춥니다.**<br>manual 08장의 사이트 프로필 설명에서 비워 둔 항목이 저절로 다시 묻는다는 안내를 고쳐, hpc.site_profile을 설정에서 지우고 labhq init을 다시 실행해야 다시 묻는다고 적는다 |
+| 21:30 | [`8b31a41`](https://github.com/ehojune/bioinfo-team-3d/pull/1305/commits/8b31a41) | **개발 중으로 적었던 세션 관리자와 사이트 프로필의 현재 상태를 문서에 맞춥니다.**<br>manual 08장 한영의 HPC 범용 정책에서 세션 관리자(hpc_session.py, |
 | 20:50 | [`d32b568`](https://github.com/ehojune/bioinfo-team-3d/pull/1301/commits/d32b568) | **접속 정보를 로그에 넣지 않는다는 문장이 보장처럼 읽히지 않게 한계를 밝힙니다.**<br>manual 08·11장에 ssh 접속 오류 메시지의 기관 호스트 이름이 직원 세션에 전달될 수 있고 가리는 일은 후속 작업이라고 사실대로 적는다 |
 | 20:20 | [`4340d48`](https://github.com/ehojune/bioinfo-team-3d/pull/1301/commits/4340d48) | **지금 구현의 전제 조건과 접속 정보를 둘 곳의 안전 조건을 문서에 정확히 남깁니다.**<br>manual 08장에 hpc.ssh_host 구성이 PC와 로그인 노드의 runner.workspace_root 공유를 전제하고 파일 전송은 아직 없다는 조건을 적고, 11장에서 기관 접속 정보를 직원 세션이 읽을 수 있는 개인 skill에 넣지 않는다고 바로잡는다 |
 | 20:00 | [`216e519`](https://github.com/ehojune/bioinfo-team-3d/pull/1302/commits/216e519) | **연결 유지용 가벼운 명령은 사용자 활동으로 세지 않아, 열린 잡이 없으면 유휴 세션이 제때 닫힙니다. 일반 접속 실패는 사람을 기다리지 않고 재접속 횟수 상한 안에서 다시 시도합니다.**<br>hpc_session: _last_beat를 _last_activity와 분리, tunnel_texts 기본값을 비움(사이트 프로필이 명시한 문구만 NeedsHuman), 시험 2건 추가 (#1299) |
