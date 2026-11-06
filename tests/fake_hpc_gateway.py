@@ -114,6 +114,8 @@ def files(tokens: list[str]) -> tuple[str, int] | None:
         target = tokens[tokens.index("--") + 1]
         try:
             os.makedirs(_real(target), exist_ok="-p" in tokens)
+            if "-m" in tokens:  # mkdir -m MODE: the mode of the folder just made
+                os.chmod(_real(target), int(tokens[tokens.index("-m") + 1], 8))
         except OSError as error:
             return f"mkdir: {error}\n", 1
         return _shown(os.path.realpath(_real(target))) + "\n", 0

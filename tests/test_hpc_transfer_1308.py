@@ -257,10 +257,12 @@ def test_a_job_is_put_on_the_cluster_and_submitted_from_there(site):
     script = write_script(site)
     result = submit(site, script)
     assert result["submitted"] and result["job_id"] == "1000" and result["transfer"]["base"] == "t1"
-    remote = site.remote(f"t1/jobs/{script.name}").read_text(encoding="utf-8")
-    assert f"cd {ROOT}/t1/work" in remote and str(site.workdir) not in remote  # the local folder is gone from the script
-    assert f"cd {ROOT}/t1/work" in site.asked["detail"]["script_preview"]  # the PI saw what runs there
-    assert site.remote("t1/work").is_dir() and site.remote("t1/jobs/logs").is_dir()
+    spec = result["transfer"]
+    remote = site.remote(spec["script"]).read_text(encoding="utf-8")
+    assert f"cd {ROOT}/{spec['work']}" in remote and str(site.workdir) not in remote  # the local folder is gone
+    assert f"cd {ROOT}/{spec['work']}" in site.asked["detail"]["script_preview"]  # the PI saw what runs there
+    assert site.remote(spec["work"]).is_dir() and site.remote(spec["dir"] + "/logs").is_dir()
+    assert spec["dir"].startswith("t1/job-") and oct(site.remote(spec["dir"]).stat().st_mode & 0o777) in ("0o700", "0o777")
     assert result["script_sha256"] == sha(script.read_bytes())  # the record is of what the agent wrote
 
 
@@ -280,10 +282,10 @@ def test_small_inputs_go_along_and_a_path_out_of_the_task_folder_is_refused(site
     script = write_script(site)
     (site.workdir / "ref.txt").write_text("reference", encoding="utf-8")
     ok = submit(site, script, inputs=["ref.txt"])
-    assert ok["submitted"] and site.remote("t1/work/ref.txt").read_text(encoding="utf-8") == "reference"
+    assert ok["submitted"] and site.remote(ok["transfer"]["work"] + "/ref.txt").read_text(encoding="utf-8") == "reference"
     (site.tmp / "secret.txt").write_text("secret", encoding="utf-8")
     bad = submit(site, script, inputs=["../secret.txt"])
-    assert "error" in bad and not site.remote("t1/work/secret.txt").exists()
+    assert "error" in bad and not list((site.sandbox / "hpc" / "work" / "t1").glob("job-*/work/secret.txt"))
 
 
 def test_a_script_without_a_cd_line_is_refused(site):
@@ -325,7 +327,7 @@ def stub_runner(site, job):
 
 def test_a_finished_job_brings_its_logs_and_small_results_home(site):
     result = submit(site, write_script(site))
-    work, logs = site.remote("t1/work"), site.remote("t1/jobs/logs")
+    work, logs = site.remote(result["transfer"]["work"]), site.remote(result["transfer"]["dir"] + "/logs")
     (work / "result.txt").write_text("answer", encoding="utf-8")
     (work / "sub").mkdir()
     (work / "sub" / "table.tsv").write_bytes(b"a\tb\n")
@@ -408,7 +410,8 @@ def test_inputs_given_to_the_tool_reach_the_cluster(site, monkeypatch):
     (site.workdir / "data").mkdir()
     (site.workdir / "data" / "ref.txt").write_text("reference", encoding="utf-8")
     out = run_tool(site, monkeypatch, inputs=["data/ref.txt"])
-    assert out["submitted"] and site.remote("t1/work/data/ref.txt").read_text(encoding="utf-8") == "reference"
+    assert out["submitted"] and next((site.sandbox / "hpc" / "work" / "t1").glob("job-*/work/data/ref.txt")).read_text(
+        encoding="utf-8") == "reference"
 
 
 @pytest.mark.parametrize("bad", [["../secret.txt"], ["/etc/passwd"], ["a"] * 21, [""], "ref.txt", [1]])
@@ -461,7 +464,7 @@ def test_the_cluster_name_of_a_slurm_m_submit_is_hidden_when_it_is_the_site(tmp_
 
 def test_results_are_not_written_through_a_linked_output_folder(site, tmp_path):
     result = submit(site, write_script(site))
-    (site.remote("t1/work") / "escaped.txt").write_text("data", encoding="utf-8")
+    (site.remote(result["transfer"]["work"]) / "escaped.txt").write_text("data", encoding="utf-8")
     outside = tmp_path / "outside"
     outside.mkdir()
     link(outside, site.workdir / "outputs")  # the agent made output_dir a link out of its workspace
@@ -487,7 +490,7 @@ def test_a_linked_logs_folder_or_a_folder_outside_the_task_is_refused(site, tmp_
 
 def test_a_transient_fetch_error_fails_the_whole_fetch_but_a_lasting_reason_only_skips(site, monkeypatch):
     result = submit(site, write_script(site))
-    work = site.remote("t1/work")
+    work = site.remote(result["transfer"]["work"])
     (work / "a.txt").write_text("aa", encoding="utf-8")
     (work / "huge.bin").write_bytes(b"x" * (1024 * 1024 + 1))
     transfer = sched.Scheduler(site.settings.hpc).transfer()
@@ -564,7 +567,7 @@ def test_the_scheduler_gives_its_transfer_the_sites_redactor(site, monkeypatch):
 
 def test_results_deeper_than_the_listing_are_named_as_left_behind(site):
     result = submit(site, write_script(site))
-    work = site.remote("t1/work")
+    work = site.remote(result["transfer"]["work"])
     (work / "a" / "b" / "c").mkdir(parents=True)
     (work / "a" / "b" / "c" / "deep.txt").write_text("deep", encoding="utf-8")
     (work / "a" / "top.txt").write_text("top", encoding="utf-8")
@@ -637,7 +640,7 @@ def test_only_the_text_fields_are_hidden_not_ids_names_or_paths(site):
 
 def test_a_notice_and_a_fetch_error_in_the_feed_never_carry_the_site(site, monkeypatch):
     runner = leaky_runner(site)
-    runner.jobs["1000"].update(terminal=True, transfer={"base": "t1", "work": "t1/work", "logs": [], "stem": "x",
+    runner.jobs["1000"].update(terminal=True, transfer={"base": "t1", "dir": "t1/job-x", "work": "t1/job-x/work", "logs": [], "stem": "x",
                                                         "fetch_to": str(site.workdir / "outputs")})
     asyncio.run(runner._emit_hpc_notice("needs_human", LEAK))
 
@@ -696,7 +699,7 @@ def test_an_input_the_job_did_not_change_is_not_fetched_back_but_a_changed_one_i
     (site.workdir / "other.txt").write_text("other", encoding="utf-8")
     result = submit(site, write_script(site), inputs=["ref.txt", "other.txt"])
     assert set(result["transfer"]["inputs"]) == {"ref.txt", "other.txt"}
-    work = site.remote("t1/work")
+    work = site.remote(result["transfer"]["work"])
     (work / "other.txt").write_text("other, rewritten by the job", encoding="utf-8")
     (work / "result.txt").write_text("answer", encoding="utf-8")
     transfer = sched.Scheduler(site.settings.hpc).transfer()
@@ -704,3 +707,46 @@ def test_an_input_the_job_did_not_change_is_not_fetched_back_but_a_changed_one_i
                                 site.workdir / "outputs", base=site.workdir)
     assert sorted(f["path"] for f in manifest["fetched"]) == ["other.txt", "result.txt"]  # ref.txt stayed home
     assert not (site.workdir / "outputs" / "ref.txt").exists()
+
+
+# ---- the job folder is made fresh: nothing laid beforehand, no sharing between jobs ----
+
+def test_each_job_gets_its_own_unguessable_folder(site):
+    first, second = submit(site, write_script(site)), submit(site, write_script(site, name="call"))
+    one, two = first["transfer"], second["transfer"]
+    assert one["dir"] != two["dir"] and one["dir"].startswith("t1/job-") and two["dir"].startswith("t1/job-")
+    assert site.remote(one["dir"]).is_dir() and site.remote(two["dir"]).is_dir()
+    assert len(one["dir"].split("job-")[1]) == 12
+
+
+def test_a_job_folder_that_already_exists_is_refused_not_reused(cluster):
+    transfer = cluster.transfer()
+    transfer.ensure_dir("t1")
+    cluster.path("t1/job-seeded").mkdir()
+    (cluster.path("t1/job-seeded") / "planted.txt").write_text("planted", encoding="utf-8")
+    with pytest.raises(ht.TransferError, match="making the job folder"):
+        transfer.make_fresh_dir("t1/job-seeded")
+    assert (cluster.path("t1/job-seeded") / "planted.txt").exists()  # left alone, not written into
+
+
+def test_a_link_planted_at_the_job_folder_name_is_refused(cluster, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    transfer = cluster.transfer()
+    transfer.ensure_dir("t1")
+    link(outside, cluster.path("t1/job-planted"))
+    with pytest.raises(ht.TransferError):
+        transfer.make_fresh_dir("t1/job-planted")
+    assert not list(outside.iterdir())
+
+
+def test_a_fresh_folder_is_made_with_mode_700_and_nothing_else_is_in_it(cluster):
+    transfer = cluster.transfer()
+    real = transfer.make_fresh_dir("t1/job-new")
+    assert real.endswith("/hpc/work/t1/job-new")
+    assert list(cluster.path("t1/job-new").iterdir()) == []
+    seen = []
+    real_run = transfer.run
+    transfer.run = lambda command: (seen.append(command), real_run(command))[1]
+    transfer.make_fresh_dir("t1/job-other")
+    assert any(command.startswith("mkdir -m 700 -- ") and " -p" not in command for command in seen)  # strict, no -p

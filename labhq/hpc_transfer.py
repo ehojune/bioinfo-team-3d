@@ -133,6 +133,22 @@ class Transfer:
                 raise PathRejected(f"{rel_dir!r} leads outside the work folder")
         return real
 
+    def make_fresh_dir(self, rel_dir: str) -> str:
+        """Make a folder that did not exist (mode 700) and return its real path. ``mkdir`` without ``-p`` fails on any
+        existing name, a link included, so the folder is the one just made: nothing could be placed in it, and its name
+        is unguessable. Its parent is checked on the way; the real path must lie under the work folder."""
+        path = confine(rel_dir)
+        parent = str(path.parent) if str(path.parent) != "." else ""
+        self.ensure_dir(parent)
+        real_root = self.real_root()
+        target = self.path(rel_dir)
+        out = self._do(f"mkdir -m 700 -- {shlex.quote(target)} && cd -- {shlex.quote(target)} && pwd -P",
+                       "making the job folder").strip().splitlines()
+        real = out[-1] if out else ""
+        if real != real_root and not real.startswith(real_root.rstrip("/") + "/"):
+            raise PathRejected(f"{rel_dir!r} leads outside the work folder")
+        return real
+
     def _is_link(self, remote: str) -> bool:
         return self._do(f"test -L {shlex.quote(remote)} && echo link || echo plain", "checking a file").strip() == "link"
 
@@ -342,13 +358,16 @@ UPLOAD_BUDGET_S = 300.0  # all the commands of one job's upload together; the ca
 
 
 def job_spec(task_id: str, stem: str) -> dict:
-    """Where a job's files live on the cluster, relative to the work folder: its script, its logs and the folder it
-    runs in. The task id and the script name are checked like any path."""
+    """Where a job's files live on the cluster, relative to the work folder. Every job gets a folder of its own, named
+    with a random token and made fresh for it (``make_fresh_dir``): nothing can be laid there beforehand, and no other
+    job of the task shares it. Its script, logs and run folder are inside. The task id and the script name are checked
+    like any path."""
     base = str(confine(str(task_id or "task")))
     if "/" in base:
         raise PathRejected(f"task id {task_id!r} is not a plain name")
-    return {"base": base, "script": f"{base}/jobs/{confine(stem + '.sh')}", "work": f"{base}/work",
-            "logs": [f"{base}/jobs/logs/{confine(stem + '.out')}", f"{base}/jobs/logs/{confine(stem + '.err')}"],
+    folder = f"{base}/job-{uuid.uuid4().hex[:12]}"
+    return {"base": base, "dir": folder, "script": f"{folder}/{confine(stem + '.sh')}", "work": f"{folder}/work",
+            "logs": [f"{folder}/logs/{confine(stem + '.out')}", f"{folder}/logs/{confine(stem + '.err')}"],
             "stem": stem}
 
 
@@ -374,7 +393,8 @@ def upload_job(transfer: Transfer, spec: dict, script_text: str, local_root: Pat
     spec["inputs"] = {}  # work-relative name -> sha256 of what was uploaded: those are not results when the job ends
     transfer.deadline = time.monotonic() + budget_s  # a slow link stops the upload before the caller gives up waiting
     try:
-        transfer.ensure_dir(f"{spec['base']}/jobs/logs")
+        transfer.make_fresh_dir(spec["dir"])  # this job's own folder: nothing laid there beforehand, nobody else in it
+        transfer.ensure_dir(f"{spec['dir']}/logs")
         transfer.ensure_dir(spec["work"])
         for rel in inputs:
             name = str(confine(str(rel)))
