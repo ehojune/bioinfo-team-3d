@@ -371,12 +371,15 @@ def test_the_first_output_wait_is_part_of_every_connect_in_the_budget():
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
 def test_the_diagnostic_log_is_private_from_the_start(tmp_path):
-    os.umask(0o022)  # a permissive umask must not matter
-    diag = tmp_path / "diag"
-    s = hs.HpcSession(hs.SessionConfig(argv=argv("--kick-early-input", "0.6"), connect_timeout_s=10, reconnect_attempts=1,
-                                       diag_dir=str(diag)), sleep=lambda x: None)
-    with pytest.raises(hs.ReconnectFailed):
-        s.run("echo hello")
+    previous = os.umask(0o022)  # a permissive umask must not matter
+    try:
+        diag = tmp_path / "diag"
+        s = hs.HpcSession(hs.SessionConfig(argv=argv("--kick-early-input", "0.6"), connect_timeout_s=10,
+                                           reconnect_attempts=1, diag_dir=str(diag)), sleep=lambda x: None)
+        with pytest.raises(hs.ReconnectFailed):
+            s.run("echo hello")
+    finally:
+        os.umask(previous)
     (log,) = diag.glob("hpc-connect-*.log")
     assert oct(log.stat().st_mode & 0o777) == "0o600" and oct(diag.stat().st_mode & 0o777) == "0o700"
 
@@ -396,3 +399,27 @@ def test_the_staff_cli_timeout_includes_the_profiles_first_output_wait(tmp_path,
     assert labhq_mcp_timeout_s(waiting) - labhq_mcp_timeout_s(plain) >= 3 * 60  # a reconnect: three attempts, 60 s each
     broken = Settings.model_validate({"hpc": {"scheduler": "slurm", "user": "lab", "site_profile": "missing"}})
     assert labhq_mcp_timeout_s(broken) >= labhq_mcp_timeout_s(waiting)  # unreadable: the longest wait is assumed
+
+
+def test_a_banner_then_a_slow_login_needs_a_quiet_time_longer_than_the_login(tmp_path):
+    # the banner is out at once, the prompt only after 1.5 s of login
+    def session(settle):
+        return hs.HpcSession(hs.SessionConfig(argv=argv("--kick-early-input", "1.5", "--banner-first"), connect_timeout_s=10,
+                                              reconnect_attempts=1, first_output_wait_s=8, settle_s=settle),
+                             sleep=lambda x: None)
+
+    short = session(0.3)  # quiet for 0.3 s is taken for the end of the banner: the command goes out during the login
+    with pytest.raises(hs.ReconnectFailed):
+        short.run("echo early")
+    long = session(3.0)  # the profile's first_output_settle_s outlasts the login, and the prompt then ends the wait at once
+    try:
+        started = time.monotonic()
+        assert long.run("echo ready").output == "ready\n" and long.logins == 1
+        assert time.monotonic() - started < 3.0 + 1.5  # it did not sit out the whole quiet time after the prompt
+    finally:
+        long.close()
+
+
+def test_a_prompt_ends_the_wait_and_a_banner_alone_does_not():
+    assert hs.PROMPT.search("Welcome\nuser@host:~$ ") and hs.PROMPT.search("root@x # ") and hs.PROMPT.search("fake$ ")
+    assert not hs.PROMPT.search("Welcome, checking your account\n") and not hs.PROMPT.search("Last login: never\n")

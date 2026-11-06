@@ -37,6 +37,7 @@ from .hpc_login_budget import LoginBudget, LoginLimitReached
 HOST_KEY_TEXTS = ("REMOTE HOST IDENTIFICATION HAS CHANGED", "Host key verification failed")
 QUEUE_WAIT_S = 60.0  # how long a caller that asked for a bounded wait stands in line for the shell's one command at a time
 _QUEUE_WAIT: contextvars.ContextVar[float | None] = contextvars.ContextVar("labhq_hpc_queue_wait", default=None)
+PROMPT = re.compile(r"(?:^|\n)[^\n]*[$#%>] ?$")  # the last line ends like a shell prompt
 _OVERLAP = 512  # longer than any marker, so a marker split over two reads is still found
 
 
@@ -445,8 +446,9 @@ class HpcSession:
         return conn
 
     def _await_first_output(self, conn: _Conn) -> None:
-        """Wait for the gateway's banner or prompt before the first command goes out: until output has come and stayed
-        quiet for ``settle_s``, at most ``first_output_wait_s``. What arrives is kept in ``conn.seen`` for diagnostics."""
+        """Wait for the gateway's banner or prompt before the first command goes out: until a prompt shows, or output has
+        come and stayed quiet for ``settle_s``, at most ``first_output_wait_s``. What arrives is kept in ``conn.seen`` for
+        diagnostics."""
         wait = self.cfg.first_output_wait_s
         if wait <= 0:
             return
@@ -465,6 +467,8 @@ class HpcSession:
                 return
             conn.seen = (conn.seen + chunk)[-4000:]
             heard = True
+            if PROMPT.search(conn.seen):  # a prompt is the gateway saying it is ready: no need to wait for quiet
+                return
 
     def _keep_diagnostics(self, conn: _Conn, text: str, error: Exception) -> None:
         """The raw output of a connect that failed, in the local diagnostics folder when one is set. It is never put in an

@@ -47,6 +47,8 @@ class SiteProfile(BaseModel):
     # Seconds to wait for the gateway's banner or prompt before the first command is sent (a gateway that is still logging
     # the user in may drop input that arrives early). Empty or 0: send at once.
     first_output_wait_s: float | None = Field(default=None, ge=0, le=60)
+    # How long the output must stay quiet, once it started and showed no prompt, before the first command goes out.
+    first_output_settle_s: float | None = Field(default=None, gt=0, le=30)
     remote_exec: bool | None = None  # can commands be run on the login node from here
     file_transfer: Literal["scp", "sftp", "rsync", "gateway_window", "none", "other"] | None = None
     file_transfer_note: str | None = None
@@ -325,5 +327,6 @@ def session_config(profile: SiteProfile, command_timeout_s: float):
                          idle_lock_s=profile.idle_lock_minutes * 60.0 if profile.idle_lock_minutes else None,
                          command_timeout_s=float(command_timeout_s), tunnel_texts=tuple(profile.tunnel_texts),
                          first_output_wait_s=float(profile.first_output_wait_s or 0.0),
+                         settle_s=float(profile.first_output_settle_s or 1.0),
                          # raw output of a failed connect is kept outside any repository only
                          diag_dir=diag if diag and outside_repo(Path(diag)) else "")

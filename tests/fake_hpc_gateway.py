@@ -201,7 +201,7 @@ def files(tokens: list[str]) -> tuple[str, int] | None:
 
 def main(argv: list[str]) -> int:
     flags = {"echo": False, "banner": False, "lock": None, "drop": None, "hostkey": False, "tunnel": False,
-             "counter": None, "slurm": None, "kick": None,
+             "counter": None, "slurm": None, "kick": None, "banner_first": False,
              "fail_text": os.environ.get("SLURM_FAKE_FAIL_TEXT"), "sbatch_error": os.environ.get("SLURM_FAKE_SBATCH_ERROR")}
     i = 0
     while i < len(argv):
@@ -210,6 +210,8 @@ def main(argv: list[str]) -> int:
             flags["echo"] = True
         elif a == "--banner":
             flags["banner"] = True
+        elif a == "--banner-first":  # with --kick-early-input: the banner comes at once, the prompt only when login ends
+            flags["banner_first"] = True
         elif a == "--hostkey-changed":
             flags["hostkey"] = True
         elif a == "--tunnel-down":
@@ -257,8 +259,11 @@ def main(argv: list[str]) -> int:
         ready.clear()
 
         def greet() -> None:
+            if flags["banner_first"]:
+                out.write("Welcome to the fake gateway, checking your account\n")
+                out.flush()
             time.sleep(flags["kick"])
-            out.write("Welcome to the fake gateway\nfake$ ")
+            out.write("fake$ " if flags["banner_first"] else "Welcome to the fake gateway\nfake$ ")
             out.flush()
             ready.set()
 

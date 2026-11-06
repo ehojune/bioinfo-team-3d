@@ -356,6 +356,12 @@ def test_the_first_output_wait_comes_from_the_profile_and_defaults_to_none(tmp_p
     for bad in (-1, 61):
         with pytest.raises(Exception):
             site.SiteProfile(name="s", first_output_wait_s=bad)
+    assert site.session_config(plain, 30).settle_s == 1.0
+    tuned = site.SiteProfile(name="s", connect_argv=["ssh", "login"], first_output_wait_s=20, first_output_settle_s=4)
+    assert site.session_config(tuned, 30).settle_s == 4.0
+    for bad in (0, 31):
+        with pytest.raises(Exception):
+            site.SiteProfile(name="s", first_output_settle_s=bad)
 
 
 def test_the_diagnostics_folder_is_used_only_outside_a_repository(tmp_path, monkeypatch):
