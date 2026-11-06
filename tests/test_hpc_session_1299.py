@@ -197,8 +197,8 @@ def test_a_changed_host_key_stops_everything_until_reset(tmp_path):
 def test_a_missing_tunnel_asks_a_person_and_waits(tmp_path):
     budget = LoginBudget(tmp_path / "logins.sqlite3")
     notices = []
-    s = hs.HpcSession(hs.SessionConfig(argv=argv("--tunnel-down"), connect_timeout_s=5), budget=budget,
-                      sleep=lambda x: None, on_notice=lambda kind, text: notices.append(kind))
+    s = hs.HpcSession(hs.SessionConfig(argv=argv("--tunnel-down"), connect_timeout_s=5, tunnel_texts=("Connection refused",)),
+                      budget=budget, sleep=lambda x: None, on_notice=lambda kind, text: notices.append(kind))
     with pytest.raises(hs.NeedsHuman):
         s.run("echo x")
     with pytest.raises(hs.NeedsHuman):
@@ -260,3 +260,27 @@ def test_exec_finds_begin_and_end_markers_that_arrive_in_a_single_read(monkeypat
     conn = hs._Conn(types.SimpleNamespace(stdin=stdin, poll=lambda: None), chunks, None)
     result = hs.HpcSession(hs.SessionConfig(argv=["x"]))._exec(conn, "anything", 5)
     assert result.exit_code == 7 and result.output == "x" * 5000 + "\n"
+
+
+def test_heartbeats_do_not_count_as_activity_so_an_idle_session_still_closes():
+    now = [0.0]
+    s = hs.HpcSession(hs.SessionConfig(argv=argv(), idle_close_s=100, heartbeat_s=30, idle_lock_s=300),
+                      clock=lambda: now[0], sleep=lambda x: None)
+    try:
+        s.run("true")
+        seen = []
+        for t in (40, 80, 90, 120):
+            now[0] = t
+            seen.append(s.tick())
+        assert seen == ["heartbeat", "heartbeat", "none", "idle_close"] and not s.connected
+    finally:
+        s.close()
+
+
+def test_an_ordinary_connection_refusal_is_retried_not_parked_for_a_person(tmp_path):
+    budget = LoginBudget(tmp_path / "logins.sqlite3")
+    s = hs.HpcSession(hs.SessionConfig(argv=argv("--tunnel-down"), connect_timeout_s=5, reconnect_attempts=3),
+                      budget=budget, sleep=lambda x: None)
+    with pytest.raises(hs.ReconnectFailed):
+        s.run("echo x")
+    assert budget.usage()["today"] == 3  # all attempts were made; nobody is asked to open a tunnel

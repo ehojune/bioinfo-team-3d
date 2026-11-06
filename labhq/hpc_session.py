@@ -31,8 +31,6 @@ from typing import Callable, Sequence
 from .hpc_login_budget import LoginBudget, LoginLimitReached
 
 HOST_KEY_TEXTS = ("REMOTE HOST IDENTIFICATION HAS CHANGED", "Host key verification failed")
-TUNNEL_TEXTS = ("Connection refused", "Connection timed out", "No route to host", "Could not resolve hostname",
-                "Connection closed by", "Connection reset by")
 _OVERLAP = 512  # longer than any marker, so a marker split over two reads is still found
 
 
@@ -76,7 +74,9 @@ class SessionConfig:
     reconnect_wait_max_s: float = 60.0
     reconnect_cooldown_s: float = 60.0
     host_key_texts: tuple[str, ...] = HOST_KEY_TEXTS
-    tunnel_texts: tuple[str, ...] = TUNNEL_TEXTS
+    # Text that proves a person must open the connection first (a site that needs a manual tunnel). Empty by default:
+    # an ordinary network failure is retried by the reconnect limit, never parked as "wait for a person".
+    tunnel_texts: tuple[str, ...] = ()
     heartbeat_command: str = "true"
     ready_command: str = "stty -echo 2>/dev/null"  # first command: proves the shell answers and turns the terminal echo off
     login_label: str = "session"  # what the login counter records
@@ -125,7 +125,8 @@ class HpcSession:
         self.clock, self.sleep = clock, sleep
         self._lock = threading.RLock()  # one command at a time; also guards the connection
         self._conn: _Conn | None = None
-        self._last_activity = clock()
+        self._last_activity = clock()  # the last command a caller ran (or the connect): what "idle" means
+        self._last_beat = clock()  # the last heartbeat: it keeps the site awake but is not activity
         self._cooldown_until = 0.0
         self._failed_attempts = 0
         self._stopped: HostKeyChanged | None = None
@@ -206,12 +207,12 @@ class HpcSession:
             if idle >= self.cfg.idle_close_s and not (self.has_open_jobs and self.has_open_jobs()):
                 self._drop()
                 return "idle_close"
-            if idle >= self.cfg.heartbeat_s:
+            if self.clock() - max(self._last_activity, self._last_beat) >= self.cfg.heartbeat_s:
                 try:
                     self._exec(conn, self.cfg.heartbeat_command, self.cfg.command_timeout_s)
                 except SessionError:
                     return "closed"  # the beat does not reconnect: the next real command does, through the counter
-                self._last_activity = self.clock()
+                self._last_beat = self.clock()
                 return "heartbeat"
             return "none"
         finally:
