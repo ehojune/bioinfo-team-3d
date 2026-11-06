@@ -330,3 +330,49 @@ def test_a_poll_that_raises_is_retried_at_the_base_interval(monkeypatch):
     runner._poll_jobs = poll
     asyncio.run(runner._job_watch_loop())
     assert sleeps == [60, 120, 240, 60]  # the failed third poll sent the next wait back to the base
+
+
+def test_a_failed_sacct_for_several_ended_jobs_falls_back_to_each_job_alone():
+    def squeue(argv):
+        ids = argv[argv.index("-j") + 1].split(",")
+        return done(argv, "".join(f"{i}|COMPLETED|None|x\n" for i in ids) if len(ids) > 1 else "")
+
+    def sacct(argv):
+        ids = argv[argv.index("-j") + 1].split(",")
+        if len(ids) > 1:
+            return done(argv, stderr="sacct: error: Invalid job id 52", rc=1)  # one id the site rejects fails the call
+        return done(argv, f"{ids[0]}|COMPLETED|0:0|x\n") if ids[0] == "51" else done(argv, stderr="boom", rc=1)
+
+    backend, calls = slurm(squeue, sacct)
+    results = backend.statuses(["51", "52"])
+    assert results["51"].state == "completed"  # not lost with the failing one
+    assert isinstance(results["52"], RuntimeError)
+
+
+def test_an_error_for_one_job_does_not_stop_the_others_from_being_saved():
+    class Backend:
+        def statuses(self, ids):
+            return {"1": RuntimeError("qstat failed"), "2": JobInfo(job_id="2", state="completed", exit_status=0)}
+
+    runner = runner_with({"1": job("running"), "2": job("running")}, Backend())
+    with pytest.raises(RuntimeError, match="qstat failed"):
+        asyncio.run(runner._poll_jobs())
+    assert runner.jobs["2"]["terminal"] is True and runner.jobs["2"]["state"] == "completed"
+    assert runner.jobs["1"]["terminal"] is False
+
+
+def test_with_no_open_job_the_poll_asks_nothing_keeps_the_base_interval_and_still_wakes_finished_tasks():
+    woken = []
+
+    class Backend:
+        def statuses(self, ids):
+            raise AssertionError("nothing is open: nothing to ask")
+
+    runner = runner_with({"1": {**job("completed"), "terminal": True}}, Backend())
+
+    async def wake():
+        woken.append(1)
+
+    runner._wake_finished_jobs = wake
+    assert asyncio.run(runner._poll_jobs()) is True
+    assert woken == [1]

@@ -3622,12 +3622,17 @@ class Runner:
         if not known.issuperset(open_jobs):
             changed_any = True  # a job nobody has polled yet
         self._polled_open = set(open_jobs)
-        infos = await asyncio.to_thread(self.scheduler.statuses, open_jobs) if open_jobs else {}
+        if not open_jobs:
+            await self._wake_finished_jobs()  # a job that ended while its agent was still talking
+            return True  # nothing to ask, so nothing costs a login: keep the base interval for the next job to be submitted
+        infos = await asyncio.to_thread(self.scheduler.statuses, open_jobs)
+        failure: Exception | None = None
         for jid in open_jobs:
             j = self.jobs[jid]
             info = infos[jid]
             if isinstance(info, Exception):
-                raise info
+                failure = failure or info  # the other jobs of this batch are still saved and woken; the first error surfaces after
+                continue
             state = info.state
             if state == "missing":  # SGE accounting lag: give it a few polls
                 j["missing"] += 1
@@ -3652,6 +3657,8 @@ class Runner:
             else:
                 self.store.put("job", jid, j)
         await self._wake_finished_jobs()
+        if failure is not None:
+            raise failure
         return changed_any
 
     async def _wake_finished_jobs(self) -> None:

@@ -551,9 +551,13 @@ class Scheduler:
                 ended.append(job_id)
         if ended:
             accounting = self._run(["sacct", "-n", "-P", "-X", "-j", ",".join(ended), "-o", SACCT_FIELDS])
+            batch_failed = accounting.returncode != 0 and not (
+                ACCOUNTING_DISABLED.search(accounting.stderr or "") or ACCOUNTING_DISABLED.search(accounting.stdout or ""))
             for job_id in ended:
                 try:
-                    out[job_id] = self._slurm_final(job_id, live[job_id], accounting)
+                    # One id a site rejects can fail the whole sacct: ask for that job alone, as before the batch.
+                    out[job_id] = (self._slurm_status(job_id) if batch_failed
+                                   else self._slurm_final(job_id, live[job_id], accounting))
                 except Exception as exc:  # noqa: BLE001
                     out[job_id] = exc
         return out
