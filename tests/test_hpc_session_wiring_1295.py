@@ -330,7 +330,7 @@ def test_the_broker_waits_for_a_whole_reconnect(tmp_path, site, monkeypatch):
     # 3 connects of 30 s, waits of 5 s and 10 s, then the 60 s command: more than the old command timeout plus 60 s
     assert session.worst_case_s(60) == 3 * 30 + 5 + 10 + 60
     # the runner's wait for its turn (60 s) comes first, then the reconnect and the command
-    assert hpc._hpc_wait_s() == 60 + 165
+    assert hpc._hpc_wait_s() == 60 + 165 and hpc._hpc_wait_s(2) == 2 * 60 + 2 * 60 + 105
 
 
 def test_a_warning_on_stderr_after_the_job_id_is_not_the_job_id(tmp_path, site, monkeypatch):
@@ -467,3 +467,37 @@ def test_shutdown_during_a_connect_ends_it_and_sends_nothing(tmp_path, site):
     assert not session.connected
     with pytest.raises(hs.SessionError, match="종료"):
         session.run("echo after")
+
+
+def test_polling_backs_off_only_where_every_command_is_a_login(tmp_path, site, monkeypatch):
+    site()
+    # a profile with a connect command and also hpc.ssh_host: the shell is used, ssh_host is not, so polls cost no login
+    both = sched.Scheduler(settings(tmp_path, ssh_host="login.example").hpc)
+    assert both.session() is not None and not both.polls_cost_logins()
+    monkeypatch.setenv("LABHQ_SITES_DIR", str(tmp_path / "other-sites"))
+    plain = sched.Scheduler(Settings.model_validate({"runner": {"state_dir": str(tmp_path / "state")},
+                                                     "hpc": {"scheduler": "slurm", "ssh_host": "login.example"}}).hpc)
+    assert plain.polls_cost_logins()  # plain ssh_host: every poll is a login
+    assert not sched.Scheduler(Settings.model_validate({"hpc": {"scheduler": "slurm"}}).hpc).polls_cost_logins()
+
+
+def test_a_status_call_is_budgeted_for_its_two_commands(tmp_path, site, monkeypatch):
+    import labhq.tools.hpc_mcp as hpc
+
+    site()
+    cfg = settings(tmp_path)
+    monkeypatch.setattr(hpc, "S", cfg)
+    monkeypatch.setattr(hpc, "SCHED", sched.Scheduler(cfg.hpc))
+    monkeypatch.setattr(hpc, "SESSION_ERROR", None)
+    monkeypatch.setattr(hpc, "VIA_RUNNER", True)
+    seen = []
+
+    async def broker(path, payload, timeout):
+        seen.append((payload["op"], timeout))
+        return {"status": {"state": "running"}, "queue": [], "result": "ok"}
+
+    monkeypatch.setattr(hpc, "_broker", broker)
+    asyncio.run(hpc.hpc_status("1"))
+    asyncio.run(hpc.hpc_cancel("1"))
+    timeouts = dict(seen)
+    assert timeouts["status"] > timeouts["cancel"] and timeouts["status"] >= 2 * (60 + 60) + 105

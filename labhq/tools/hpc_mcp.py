@@ -19,7 +19,7 @@ import httpx
 
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import chmod_owned, plain_directory, read_owned, write_owned
-from ..hpc_session import QUEUE_WAIT_S
+from ..hpc_session import call_budget_s
 from ..settings import Settings
 from ._mcpcompat import make_server, tool_failure
 from .scheduler import (
@@ -59,7 +59,7 @@ async def _broker(path: str, payload: dict, timeout: float) -> dict:
         return r.json()
 
 
-def _hpc_wait_s() -> float:
+def _hpc_wait_s(commands: int = 1) -> float:
     """How long the runner may take for one scheduler command: a reconnect (every attempt and wait) plus the command.
     Giving up sooner would return "nothing ran" while the runner's command still goes through."""
     session = None if SESSION_ERROR else SCHED.session()
@@ -67,7 +67,7 @@ def _hpc_wait_s() -> float:
         return float(S.hpc.command_timeout_s)
     # the runner stands in line for the shell at most QUEUE_WAIT_S, then reconnects and runs: after that it gives up
     # without sending, so the tool never reports "nothing ran" for a command that runs later
-    return QUEUE_WAIT_S + session.worst_case_s(S.hpc.command_timeout_s)
+    return call_budget_s(session.cfg, float(S.hpc.command_timeout_s), commands)
 
 
 async def _runner_op(op: str, **fields) -> dict:
@@ -76,7 +76,7 @@ async def _runner_op(op: str, **fields) -> dict:
         raise tool_failure(SESSION_ERROR)
     try:
         out = await _broker("/jobs/submit", {"op": op, "task_id": TASK, "agent_id": AGENT, **fields},
-                            timeout=_hpc_wait_s() + 30)
+                            timeout=_hpc_wait_s(2 if op == "status" else 1) + 30)
     except Exception as e:  # fail closed: without the runner there is no shell to ask
         raise tool_failure(f"labhq broker failed; no HPC command was run: {e!r}") from e
     if out.get("error"):

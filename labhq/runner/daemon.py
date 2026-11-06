@@ -147,9 +147,9 @@ def labhq_mcp_timeout_s(settings: Settings) -> int:
     staff CLI must not give up before the runner does, or a submit that was reported as timed out still goes through."""
     work = 120
     if settings.hpc.site_profile and settings.hpc.scheduler != "none":
-        from ..hpc_session import QUEUE_WAIT_S, SessionConfig, worst_case_s
+        from ..hpc_session import SessionConfig, call_budget_s
 
-        hpc = QUEUE_WAIT_S + worst_case_s(SessionConfig(argv=["x"]), settings.hpc.command_timeout_s)
+        hpc = call_budget_s(SessionConfig(argv=["x"]), float(settings.hpc.command_timeout_s), 2)  # a status is two commands
         work = max(work, int(hpc) + 90)  # the broker waits hpc + 30; the CLI waits longer still
     return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + work
 
@@ -3715,7 +3715,8 @@ class Runner:
                 reset = bool(await self._poll_jobs())
             except Exception:
                 log.exception("job poll failed")
-            if self.s.hpc.ssh_host:  # every poll is a login there (#1295); on the login node the interval stays put
+            costs = getattr(self.scheduler, "polls_cost_logins", None)  # a stand-in scheduler (tests) has only ssh_host
+            if costs() if costs else self.s.hpc.ssh_host:  # every poll is a login there (#1295); over a live shell or on the login node the interval stays put
                 interval = next_poll_interval(interval, base, float(self.s.runner.job_poll_max_s),
                                               self.s.runner.job_poll_backoff, reset)
 

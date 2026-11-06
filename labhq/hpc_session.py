@@ -73,6 +73,13 @@ def worst_case_s(cfg: "SessionConfig", command_timeout_s: float | None = None) -
     return cfg.reconnect_attempts * cfg.connect_timeout_s + waits + (command_timeout_s or cfg.command_timeout_s)
 
 
+def call_budget_s(cfg: "SessionConfig", command_timeout_s: float, commands: int = 1) -> float:
+    """The longest a caller's call can take when it runs ``commands`` scheduler commands one after another (a status is a
+    squeue and then a sacct): each may stand in line for the shell, and the first may reconnect."""
+    reconnect = worst_case_s(cfg, command_timeout_s) - command_timeout_s
+    return commands * (QUEUE_WAIT_S + command_timeout_s) + reconnect
+
+
 @contextlib.contextmanager
 def queue_wait(seconds: float | None = QUEUE_WAIT_S):
     """Inside this block ``run`` waits at most ``seconds`` for its turn and then raises ``SessionBusy`` without sending

@@ -396,6 +396,13 @@ class Scheduler:
         session.start()
         return True
 
+    def polls_cost_logins(self) -> bool:
+        """Is every scheduler command a new login (plain ``hpc.ssh_host``)? Over a shell it is not, so polling needs no backoff."""
+        try:
+            return self.session() is None and bool(self.cfg.ssh_host)
+        except RuntimeError:
+            return bool(self.cfg.ssh_host)
+
     def needs_login(self) -> bool:
         """Would the next scheduler command open a new login? Over a live shell it would not; over ``hpc.ssh_host`` it
         always does; on the login node itself there is no login."""
