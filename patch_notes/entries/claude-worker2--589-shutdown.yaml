@@ -12,3 +12,7 @@ rows:
   at: 2026-11-07 07:02
   text: 리뷰 지적 반영. manual 05장 한·영에 supervisor도 gateway·runner처럼 10분마다 heartbeat를 남기고, 한 줄 약 150바이트로 감독 둘이 하루 약 42 KiB(전에는 약 7 KiB) 쓴다고 적는다
   summary: heartbeat 간격과 로그 증가를 정식 문서가 설명합니다.
+- sha: '4122e6d'
+  at: 2026-11-07 07:17
+  text: 리뷰 지적 반영. status·doctor가 보여 주는 마지막 child_exit를 감독 로그의 끝 256 KiB만이 아니라 끝에서 256 KiB씩 거슬러 올라가 찾는다(상한 16 MiB). 10분 heartbeat가 쌓여 약 12일 뒤 마지막 종료 기록을 밀어내던 회귀를 막는다. manual 05장 한·영에 한 줄
+  summary: 인스턴스가 오래 돌아도 마지막 종료 기록이 사라진 것으로 표시되지 않습니다.
