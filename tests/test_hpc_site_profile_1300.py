@@ -305,3 +305,38 @@ def test_init_names_the_override_folder_when_one_is_set(monkeypatch, tmp_path, c
     init_wizard._ask_hpc_site_profile(hpc, "slurm", False)
     out = capsys.readouterr().out
     assert hpc["site_profile"] == "lab" and "$LABHQ_SITES_DIR/lab.yaml" in out and str(tmp_path) not in out
+
+
+def test_enter_on_every_question_keeps_every_existing_answer_including_the_yes_no_ones():
+    """The terminal hands the shown default back on Enter, so a boolean has to be shown the way it is answered."""
+    existing = site.SiteProfile(name="lab", access_method="ssh", connect_argv=["ssh", "login"], remote_exec=True,
+                                file_transfer="scp", idle_lock_minutes=180, agent_inside_cluster=False, scheduler="slurm",
+                                queue="long", remote_workdir="/scratch/me", login_limit_per_day=30)
+    shown = {}
+
+    def enter(label, default):
+        shown[label] = default
+        return default
+
+    kept = site.ask_profile("lab", enter, existing=existing)
+    assert kept == existing
+    assert shown[site._label("remote_exec")] == "y" and shown[site._label("agent_inside_cluster")] == "n"
+
+
+@pytest.mark.parametrize("answer,expected", [("true", True), ("TRUE", True), ("false", False), ("yes", True), ("no", False),
+                                              ("y", True), ("n", False)])
+def test_yes_no_questions_accept_true_and_false_too(answer, expected):
+    profile = site.ask_profile("lab", answers("", "", "", answer))
+    assert profile.remote_exec is expected
+
+
+def test_init_keeps_an_existing_profiles_yes_no_answers_on_enter(monkeypatch, tmp_path):
+    """With the real prompt (`_ask` returns the default for an empty line), not a fake one."""
+    site.save_profile(site.SiteProfile(name="lab", remote_exec=False, agent_inside_cluster=True, scheduler="slurm"), tmp_path)
+    lines = iter(["y", "lab"] + [""] * 13)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(lines))
+    monkeypatch.setattr(init_wizard, "_interactive", lambda: True)
+    hpc = {}
+    init_wizard._ask_hpc_site_profile(hpc, "slurm", False, tmp_path)
+    kept = site.load_profile("lab", tmp_path)
+    assert (kept.remote_exec, kept.agent_inside_cluster) == (False, True) and hpc["site_profile"] == "lab"
