@@ -48,12 +48,33 @@ lookup-only. 원인은 확정하지 못했다. 근거는 실패 run의 job 로�
 
 ## 고칠 범위(제안, 순서대로)
 
-1. **진단 먼저.** 제품 동작은 바꾸지 않는다. `labhq/windows_broker.py::_create`가 Python 측 시각(Popen 반환, 입력 쓰기 끝, timeout 발화, kill 반환, 정리 끝)과 provider 프로세스의 CPU 시간(`GetProcessTimes`), 프로세스 안 launch 순번(첫/이후)을 diagnostics에 더한다. CPU 시간이 짧고 wall이 길면 H2, 길면 H1, 시각 사이가 벌어지면 H3을 가린다. 핸들이 필요해 `subprocess.run`을 `Popen`+`communicate`로 바꾸는 작은 변경이 든다. 시험은 `tests/test_windows_broker*.py`.
+1. **진단 먼저(이 PR에서 일부 함).** 제품 동작은 바꾸지 않았다. 아래 "추가한 진단"을 보라. provider 프로세스의 CPU 시간(`GetProcessTimes`)과 kill 시각은 `subprocess.run`을 `Popen`+`communicate`로 바꿔야 얻을 수 있어 뺐다. "한 번만 시도"(#825) 보안 경로의 호출 형태를 바꾸는 일이라 따로 정한다.
 2. **CI 워밍업으로 H1을 시험한다.** `.github/workflows/test.yml`의 Windows job과 clean-install에서 pytest·`up` 전에 같은 스크립트를 `create_entered` 직전까지 한 번 돌린다. 이 뒤에도 첫 launch가 늦으면 H1은 틀린 것이다. 제품 코드는 건드리지 않는다.
 3. **제품 변경은 위 데이터가 나온 뒤에 정한다.**
    - 재시도 한 번: `create_entered`에 닿기 전의 timeout은 `Create`가 호출되지 않았으므로 새 요청으로 다시 시도해도 안전하다는 근거가 있다. 다만 "단일 시도"(#825)와 요청 만료(`TIMEOUT` 20 s) 설계를 바꾸므로 총괄·PI 결정이 필요하다.
    - `PROVIDER_TIMEOUT` 상향은 권하지 않는다. B는 15 s 안에 `stdin_open`도 못 했고, 20 s 요청 만료와 맞물리며, 15 s는 #1029에서 "관측의 +50%"로 정한 값이다.
 4. 하지 않는다: timeout만 늘리기, 시험 완화, `test_windows_job_ci`를 skip.
+
+## 추가한 진단 (`labhq/windows_broker.py::_create`, 동작 불변)
+
+`subprocess.run` 호출 형태와 기존 시계 읽기는 그대로다. 아래 값이 journal의 `provider`(`wmi_failed`·`wmi_verified` 행)에 더해진다. 시험은 `tests/test_windows_broker_diag_1076.py`.
+
+| 필드 | 뜻 |
+|---|---|
+| `run_ms` | `subprocess.run` 호출이 걸린 시간(반환이나 timeout 예외까지). `perf_counter`로 잰다 |
+| `elapsed_ms` | 기존 값. 한 launch 전체. `time.monotonic`으로 잰다 |
+| `launch_ordinal` | 이 프로세스의 몇 번째 launch인가 |
+| `os_uptime_s` | Windows가 켜진 지 몇 초인가. 읽지 못하면 `null` |
+
+읽는 법:
+- `run_ms`가 15 000 ms 안팎이고 provider의 마지막 phase 시각이 훨씬 이르면 provider가 중간에 멈춘 것이다.
+- `run_ms`가 15 000 ms보다 크게 길면(A·C는 약 24–25 s) 시간이 호출 안, 곧 timeout 뒤 정리나 입력 쓰기에서 쓰인 것이다(H3).
+- `run_ms`가 짧은데 `elapsed_ms`가 길면 호출 밖(결과 해석)이다.
+- 두 시계의 해상도가 달라 `elapsed_ms`와 `run_ms`는 Windows에서 약 16 ms까지 어긋날 수 있다.
+
+한계:
+- 각 launch는 보통 새 Python 프로세스라 `launch_ordinal`은 대개 1이다. 첫/이후 구분은 로그의 시각 순서와 `os_uptime_s`로 한다.
+- `scripts/clean_install_check.py`와 `tests/test_web_shutdown_process.py`의 journal 투영은 허용 필드만 출력하므로 clean-install 실패 출력에는 새 필드가 보이지 않는다. `test_windows_job_ci.py` 실패 메시지는 journal 행 전체를 찍어 보인다. 투영에 넣으려면 그 두 파일을 따로 claim해야 한다.
 
 ## 한계
 
