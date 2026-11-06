@@ -137,5 +137,5 @@ resizable startup: {"before_open_ms": …, "module_load_ms": …, "node_start_ms
 
 - 이 PC에서 평소 값: `node_start_ms` 18~23, `before_open_ms` 49~122, `returned_after_ms` 735~1328. 실패 run은 `node_start_ms`가 19310이었다.
 - 출력은 `tests/test_web_3d.py`의 `resizable_startup_summary`가 스크립트의 `resizable timing:` 행(stderr)과 Python이 기록한 launch 시각으로 만든다. 행이 없으면 그 필드만 빠지고 시험을 실패시키지 않는다.
-- 한계: 줄은 `capsys.disabled()`로 찍는다. 직렬 실행(`-n 0`)에서는 CI 로그에 보이지만 xdist 병렬(`-n auto`)에서는 worker 출력이 전달되지 않아 보이지 않는다. Windows의 "Serial critical Windows contracts" 단계는 직렬이다.
+- 줄은 `warnings.warn`(`UserWarning`)으로 남긴다. pytest의 "warnings summary"에 나오므로 직렬 실행과 xdist 병렬 실행의 CI 로그에서 모두 보인다. 로그에서는 `UserWarning: resizable startup: {…}`로 찾는다. 시험 쪽 계약 시험(`test_ci_windows10m`)이 이 함수만 떼어 돌리는 축소된 namespace에서는 보고를 건너뛴다.
 - 다음 확인: 직렬 Windows 단계의 성공 run 몇 개에서 `node_start_ms`의 분포를 모은다. 평소 값이 수십 ms이고 실패 때만 수 초라면 후보 ①(runner에서 새 프로세스가 느려짐)이 강해지고, 평소에도 수 초라면 후보 ②(한계 기준)로 간다.

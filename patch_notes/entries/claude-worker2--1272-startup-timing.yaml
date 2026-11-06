@@ -6,7 +6,7 @@ rows:
   summary: 실패한 web 시험의 시간이 어디서 사라졌는지 문서로 남깁니다.
 - sha: 'c0c2369'
   at: 2026-11-06 23:15
-  text: web_resizable_panels 시험이 호출마다 Node 시작·모듈 읽기·openDemo 시점의 남은 시간을 성공해도 한 줄(resizable startup)로 남긴다. 시간 한계와 단언은 바꾸지 않는다. 직렬 실행의 CI 로그에서 보이고, 값 계산은 시험 두 개가 확인한다
+  text: web_resizable_panels 시험이 호출마다 Node 시작·모듈 읽기·openDemo 시점의 남은 시간을 성공해도 한 줄(resizable startup)로 남긴다. 시간 한계와 단언은 바꾸지 않는다. pytest의 warnings 요약(직렬·병렬 모두 CI 로그)에 나오고, 값 계산은 시험 두 개가 확인한다
   summary: 느린 runner의 징후를 실패하기 전에 로그에서 볼 수 있습니다.
 - sha: '9b76cb7'
   at: 2026-11-06 23:30
