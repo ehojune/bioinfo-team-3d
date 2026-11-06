@@ -3316,7 +3316,7 @@ class Runner:
         return budget.exhausted(request_id) if budget is not None else None
 
     async def _notify_login_limit(self, request_id: str | None, stop: LoginLimitReached, jobs: list[dict]) -> None:
-        """Tell the PI once per request and limit that polling is paused. The jobs keep running on the cluster."""
+        """Tell the PI once per request and limit that polling is paused. level "alert" is what the web feed shows and toasts (a "warn" is only the agent card line). The jobs keep running on the cluster."""
         notified = self.__dict__.setdefault("_login_limit_notified", set())
         key = (request_id, stop.scope, time.strftime("%Y-%m-%d"))
         if key in notified:
@@ -3326,7 +3326,7 @@ class Runner:
         again = "내일 다시 확인합니다" if stop.scope == "day" else "상한을 올리면 다시 확인합니다(hpc.login_limit_per_request)"
         await self.emit(Event(
             type="agent.log", task_id=first.get("task_id"), agent_id=first.get("agent_id"), request_id=request_id,
-            data={"level": "warn", "hpc_login_limit": {"scope": stop.scope, "limit": stop.limit, "used": stop.used},
+            data={"level": "alert", "hpc_login_limit": {"scope": stop.scope, "limit": stop.limit, "used": stop.used},
                   "text": f"{stop} 이 {'요청' if request_id else ''}의 HPC 잡 {len(jobs)}개 상태 조회를 멈췄습니다. "
                           f"제출한 잡은 클러스터에서 계속 돕니다. {again}."}))
 

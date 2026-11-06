@@ -283,6 +283,7 @@ def test_a_request_at_its_limit_is_not_polled_the_others_are_and_the_pi_is_told_
     notices = [e for e in runner.events if e.type == "agent.log"]
     assert len(notices) == 1 and notices[0].request_id == "req_1"
     assert notices[0].data["hpc_login_limit"] == {"scope": "request", "limit": 1, "used": 1}
+    assert notices[0].data["level"] == "alert"  # the web feed shows alerts (state.js agent.log); a warn stays on the card
     assert "계속 돕니다" in notices[0].data["text"] and "멈췄습니다" in notices[0].data["text"]
 
 
