@@ -8,3 +8,7 @@ rows:
   at: 2026-11-07 04:19
   text: "#674 절을 바로잡는다. 열려 있다고 적은 작은 개선 두 건(cso.py의 stored_environment 전달, publish 뒤 runtime 재확인)은 PR #1254로 이미 main에 있고 시험이 통과한다"
   summary: 이미 끝난 일을 남은 일로 적지 않게 정정했습니다.
+- sha: 'ac50740'
+  at: 2026-11-07 05:23
+  text: 리뷰 지적 반영. #674 근거의 ENVIRONMENT_ENGINES·ENVIRONMENT_GRANT_ENGINES 위치를 daemon.py 331-332행으로 바로잡는다
+  summary: 근거가 가리키는 줄 번호를 실제 위치로 고칩니다.
