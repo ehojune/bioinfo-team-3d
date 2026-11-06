@@ -173,7 +173,7 @@ def _py_secret_spans(text: str) -> list[tuple[int, int, str]] | None:
     return [(begin, end, quoted) for (begin, end), quoted in sorted(found.items())]
 
 
-_SHELL_ASSIGNMENT = re.compile(r"(?im)(?<![\w$])(?:api[_-]?key|token|password|secret)[\"']?(?P<op>\+?=|:[ \t]*)")
+_SHELL_ASSIGNMENT = re.compile(r"(?im)(?<![\w${])(?:api[_-]?key|token|password|secret)[\"']?(?P<op>\+?=|:[ \t]*)")
 _SHELL_PARAMETER = re.compile(r"[A-Za-z_]\w*|[0-9@*#?!$-]")
 
 
@@ -258,6 +258,7 @@ def _shell_word(text: str, start: int) -> tuple[int, bool]:
                     literal = True
                     i += 2
                 elif text[i] == "$" and text[i + 1:i + 2] == "(":
+                    literal = literal or text[i + 2:i + 3] == "("  # `"$((1+2))"` is arithmetic on literals
                     i = _skip_balanced(text, i + 2, "(", ")")
                 elif text[i] == "$" and text[i + 1:i + 2] == "{":
                     end = _skip_balanced(text, i + 2, "{", "}")
@@ -297,7 +298,7 @@ def _shell_secret_spans(text: str) -> list[tuple[int, int, str]]:
 
 _R_NAME = re.compile(r"(?<![\w.])(?:api[_-]?key|token|password|secret)[\"'`]?\s*(?:<<-|<-|=)(?!=)\s*", re.I)
 _R_SAFE_CALLS = frozenset({"sys.getenv", "getoption", "readline", "readlines", "readrds", "scan", "askpass",
-                           "key_get", "keyring::key_get", "get", "mget", "file.path", "normalizepath"})
+                           "key_get", "keyring::key_get", "get", "mget"})
 _R_ATOM = re.compile(r"(?:NULL|NA|NA_character_|TRUE|FALSE)|[A-Za-z.][\w.]*(?:(?:\$|@|::)[A-Za-z.][\w.]*)*")
 
 

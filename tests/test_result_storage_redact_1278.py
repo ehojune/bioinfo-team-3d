@@ -197,3 +197,13 @@ def test_r_values_that_are_surely_safe_are_left_alone(line):
     code = f"{line}\nprint(1)\n"
     assert _clean(code, R) == code
     assert scan_publish_files({R: code}) == []
+
+
+def test_a_parameter_expansion_is_not_read_as_an_assignment():
+    code = 'echo "${TOKEN:-fallback}" "${PASSWORD:=x}"\nexport PATH=$PATH:/bin\n'
+    assert _clean(code, SH) == code
+
+
+def test_arithmetic_in_double_quotes_is_a_literal_and_file_path_is_not_a_lookup():
+    assert "123456789" not in _clean('TOKEN="$((123456789))"\n', SH)
+    assert "hunter2" not in _clean('token <- file.path("hunter2", "xyz")\n', R)
