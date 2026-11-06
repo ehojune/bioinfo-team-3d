@@ -9,6 +9,9 @@ last exit code ``$?``, and a few fake commands:
     sleep S         wait S seconds              exit           end the connection
     count           print how many connections this gateway was started for (from --counter FILE)
 
+Files (with ``SLURM_FAKE_SANDBOX`` naming a folder that stands in for the cluster's file system): the commands
+``hpc_transfer`` sends (mkdir/cd/pwd, printf >>, base64, sha256sum, mv, rm, test -L, wc -c, tail|head|base64, find) run there.
+
 Fake Slurm (with ``--slurm-state FILE``, a JSON file the test can edit to finish a job): ``sbatch`` prints a new job id,
 ``squeue`` lists the jobs that are still active, ``sacct`` the ended ones, ``scancel ID`` ends one.
 
@@ -84,6 +87,91 @@ def command(words: list[str], flags: dict) -> tuple[str, str, int]:
     return "", f"sh: {head}: command not found\n", 127
 
 
+SANDBOX = os.environ.get("SLURM_FAKE_SANDBOX")  # the folder standing in for the cluster's file system
+
+
+def _real(path: str) -> str:
+    return os.path.join(os.path.realpath(SANDBOX), path.lstrip("/"))
+
+
+def _shown(real: str) -> str:
+    """A path inside the sandbox as the cluster would print it; a path outside it is printed as is (a link that leaves)."""
+    base = os.path.realpath(SANDBOX)
+    if real == base:
+        return "/"
+    if real.startswith(base + os.sep):
+        return "/" + real[len(base) + 1:].replace(os.sep, "/")
+    return real.replace(os.sep, "/")
+
+
+def files(tokens: list[str]) -> tuple[str, int] | None:
+    """The file commands of hpc_transfer, run against the sandbox. None when the line is not one of them."""
+    if not SANDBOX:
+        return None
+    if "&&" in tokens and tokens[0] == "mkdir":  # mkdir -p -- D && cd -- D && pwd -P
+        target = tokens[3]
+        os.makedirs(_real(target), exist_ok=True)
+        return _shown(os.path.realpath(_real(target))) + "\n", 0
+    head = tokens[0]
+    if head == ":" and tokens[1:2] == [">"]:
+        open(_real(tokens[2]), "wb").close()
+        return "", 0
+    if head == "printf" and ">>" in tokens and tokens[1] == "%s":
+        with open(_real(tokens[-1]), "ab") as f:
+            f.write(tokens[2].encode("ascii"))
+        return "", 0
+    if head == "base64" and tokens[1] == "-d":
+        import base64
+
+        with open(_real(tokens[3]), "rb") as src, open(_real(tokens[5]), "wb") as dst:
+            dst.write(base64.b64decode(src.read()))
+        return "", 0
+    if head == "sha256sum":
+        import hashlib
+
+        path = _real(tokens[-1])
+        if not os.path.isfile(path):
+            return f"sha256sum: {tokens[-1]}: No such file or directory\n", 1
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest() + "  " + tokens[-1] + "\n", 0
+    if head == "chmod":
+        return "", 0
+    if head == "mv":
+        os.replace(_real(tokens[3]), _real(tokens[4]))
+        return "", 0
+    if head == "rm":
+        for name in tokens[3:]:
+            try:
+                os.unlink(_real(name))
+            except OSError:
+                pass
+        return "", 0
+    if head == "test" and tokens[1] == "-L":
+        return ("link\n" if os.path.islink(_real(tokens[2])) else "plain\n"), 0
+    if head == "wc" and tokens[1] == "-c":
+        path = _real(tokens[-1])
+        return (f"{os.path.getsize(path)}\n", 0) if os.path.isfile(path) else (f"wc: {tokens[-1]}: No such file\n", 1)
+    if head == "tail" and "|" in tokens:  # tail -c +N F | head -c M | base64 | tr -d '\n'
+        import base64
+
+        start, path, count = int(tokens[2][1:]), _real(tokens[3]), int(tokens[7])
+        with open(path, "rb") as f:
+            f.seek(start - 1)
+            return base64.b64encode(f.read(count)).decode("ascii"), 0
+    if head == "find":
+        base, depth = _real(tokens[1]), int(tokens[3])
+        out = []
+        for root, dirs, names in os.walk(base):
+            if root[len(base):].count(os.sep) >= depth:
+                dirs[:] = []
+            for name in names:
+                full = os.path.join(root, name)
+                if os.path.isfile(full) and not os.path.islink(full):
+                    out.append(f"{os.path.getsize(full)} {os.path.relpath(full, base).replace(os.sep, '/')}\n")
+        return "".join(out), 0
+    return None
+
+
 def main(argv: list[str]) -> int:
     flags = {"echo": False, "banner": False, "lock": None, "drop": None, "hostkey": False, "tunnel": False,
              "counter": None, "slurm": None,
@@ -142,6 +230,12 @@ def main(argv: list[str]) -> int:
         if flags["echo"]:
             out.write(line + "\r\n")
         if not line.strip():
+            continue
+        handled = files(shlex.split(line)) if SANDBOX else None
+        if handled is not None:  # a file command of hpc_transfer against the sandbox folder
+            out.write(handled[0])
+            out.flush()
+            status = handled[1]
             continue
         wrapped = WRAPPER.match(line)
         if wrapped:  # the scheduler's one-liner that keeps stderr apart: run the command, stdout, marker, stderr, status

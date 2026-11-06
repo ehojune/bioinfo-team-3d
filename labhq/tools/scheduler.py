@@ -370,6 +370,7 @@ def site_session(cfg: HpcSettings):
             config = hpc_site.session_config(profile, cfg.command_timeout_s)
             config.env = command_env()  # the connection process gets only what scheduler commands get: no runner credentials
             session = _SESSIONS[key] = HpcSession(config, budget=budget_for(cfg))
+            session.profile = profile  # the transfer folder (remote_workdir) comes from it
     return session
 
 
@@ -384,6 +385,18 @@ class Scheduler:
         if not hasattr(self, "_session"):
             self._session = site_session(self.cfg)
         return self._session
+
+    def transfer(self):
+        """A ``hpc_transfer.Transfer`` over the shell when the site profile names a ``remote_workdir`` (the PC and the
+        cluster do not share files: the script and the results cross the shell), else None (the same paths are visible on
+        both sides, and files are used where they are)."""
+        session = self.session()
+        profile = getattr(session, "profile", None) if session is not None else None
+        if profile is None or not profile.remote_workdir:
+            return None
+        from ..hpc_transfer import Transfer
+
+        return Transfer(session.run, profile.remote_workdir)
 
     def attach_session(self, *, on_notice=None, has_open_jobs=None) -> bool:
         """Hook the runner into the shell: ``on_notice(kind, text)`` hears about login limits, a changed host key, a
