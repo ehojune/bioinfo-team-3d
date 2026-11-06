@@ -24,8 +24,11 @@
 ## 확인
 - Windows: `tests/test_wiki_publish.py` 포함 wiki·진행 게시·CP2 시험 133 passed.
 
+## 추가(rev14)
+- 기록 없는 요청은 `created_at`이 labhq_wiki 출시(2026-10-29 21:01:56Z) 이전일 때만 none. 그 뒤 업그레이드 전에 만든 요청은 막히므로 새로 요청해야 한다(manual 12장).
+
 ## 막힌 것
-- 새 규칙은 이력이 없는 요청을 막으므로, 요청을 손으로 만드는 기존 시험 fixture 12개 파일이 `wiki_exposure: none`을 갖도록 고쳐야 한다(약 63건 실패): `test_bioinfo_pipeline_pr.py`, `test_github_reporter.py`, `test_nfcore_default_732.py`, `test_ops_status_usage.py`, `test_pdf_figure_policy.py`, `test_publish_retry_607.py`, `test_research_cp4.py`, `test_result_storage.py`, `test_result_storage_end_ask.py`, `test_result_storage_review.py`, `test_round_records.py`, `test_state.py`. 모두 claim 밖이다.
+- (해결) 기존 시험 fixture 12개 파일은 rev14에서 none을 기록했다.
 
 ## 하지 않은 것
 - 재시작·구형 runner 통합 시험, 이어 묻기 요청의 노출 상속, 증거 수준 검사, 독립 출처 인증, wiki 본문 마스크. 결과 저장소 선택 카드의 표시.
