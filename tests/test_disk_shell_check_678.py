@@ -807,3 +807,27 @@ def test_ps_unc_target_that_can_be_read_asks_below_the_floor(tmp_path):
     roomy = disk_space.powershell_check(r"iwr https://h/a.zip -OutFile \\srv\share\a.zip", str(tmp_path),
                                         probe=drive(50), **CHECK)
     assert roomy is None  # a readable share with room says nothing
+
+
+@pytest.mark.parametrize("command", [
+    r"Expand-Archive \\srv\share\a.zip -DestinationPath C:\out",
+    r"Start-BitsTransfer \\srv\share\a.zip C:\out\a.zip",
+    r"Start-BitsTransfer -Source \\srv\share\a.zip -Destination C:\out\a.zip",
+])
+def test_ps_unc_that_is_only_the_source_is_not_a_write_target(tmp_path, command):
+    verdict = disk_space.powershell_check(command, str(tmp_path), probe=_unreadable, **CHECK)
+    assert verdict is None or r"\\srv\share" not in verdict.reason
+
+
+def test_ps_unc_share_name_with_a_space_is_kept_whole(tmp_path):
+    seen = []
+
+    def probe(folder):
+        seen.append(str(folder))
+        raise OSError("not reachable")
+
+    verdict = disk_space.powershell_check(r'iwr https://h/a.zip -OutFile "\\srv\my share\x\a.zip"', str(tmp_path),
+                                          probe=probe, **CHECK)
+    assert verdict is not None and r"\\srv\my share" in verdict.reason
+    assert disk_space._unc_roots(r"$r = iwr https://h/a -OutFile '\\srv\my share\a.zip'") == [r"\\srv\my share"]
+    assert disk_space._unc_roots(r"x \\srv\my share\a.zip") == [r"\\srv\my"]  # unquoted: a space ends the name

@@ -778,9 +778,42 @@ def _ps_unplaced(command: str, commands: list[list[str]]) -> bool:
 _UNC = re.compile(r"""(?<![\w:$.])(?:\\\\|//)[^\\/\s'"`,;|)(]+[\\/][^\\/\s'"`,;|)(]+""")
 
 
+# One value that is a share path as a whole: its server and share names may hold spaces (`"\\srv\my share\a.zip"`).
+_UNC_VALUE = re.compile(r"""^(?:\\\\|//)([^\\/]+)[\\/]([^\\/]+)""")
+
+
 def _unc_roots(text: str) -> list[str]:
-    r"""The `\\server\share` roots a PowerShell text names, written with backslashes."""
-    return list(dict.fromkeys(m.group(0).replace("/", "\\") for m in _UNC.finditer(text)))
+    r"""The `\\server\share` roots free PowerShell text names (a space ends a name, unless the path is quoted), written
+    with backslashes."""
+    quoted = re.compile(r"""["']((?:\\\\|//)[^"'\r\n]+)["']""")
+    found = [m.group(1) for m in quoted.finditer(text)]
+    found += [m.group(0) for m in _UNC.finditer(quoted.sub(" ", text))]  # a quoted path is read whole, not twice
+    return list(dict.fromkeys(root for item in found for root in _unc_value_roots(item)))
+
+
+def _unc_value_roots(value: str) -> list[str]:
+    """The share root of each comma-separated target in one parsed value."""
+    roots = []
+    for part in value.split(","):
+        m = _UNC_VALUE.match(part.strip())
+        if m:
+            roots.append("\\\\" + m.group(1) + "\\" + m.group(2))
+    return roots
+
+
+def _ps_targets(words: list[str]) -> list[str]:
+    """The values a download, unpack or transfer writes to, read through the same parameter binding as `_ps_write`: a
+    share that is only the source is read, not written, and does not count."""
+    name = _ps_name(words[0])
+    values: list[object] = []
+    if name in _PS_DOWNLOADS:
+        values = [bound.get("outfile") for bound in _ps_bind(words, _PS_WEB, ("uri",))]
+    elif name in _PS_UNPACK:
+        values = [bound.get("destinationpath") for bound in _ps_bind(words, _PS_ARCHIVE, ("path", "destinationpath"))]
+    elif name in _PS_TRANSFER:
+        values = [bound.get("destination") for bound in _ps_bind(words, _PS_BITS, ("source", "destination"))
+                  if not str(bound.get("transfertype") or "").casefold().startswith("upload")]
+    return [value for value in values if isinstance(value, str)]
 
 
 def _unc_check(root: str, *, probe, fail_gb: float, warn_gb: float, warn_percent: float) -> ShellCheck | None:
@@ -830,7 +863,7 @@ def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: flo
             ever = list(dict.fromkeys([*ever, *cwds]))
             continue
         if name in _PS_DOWNLOADS | _PS_UNPACK | _PS_TRANSFER:
-            for root in _unc_roots(" ".join(words[1:])):
+            for root in dict.fromkeys(root for target in _ps_targets(words) for root in _unc_value_roots(target)):
                 worst = _worse(worst, _unc_check(root, probe=probe, fail_gb=fail_gb, warn_gb=warn_gb,
                                                  warn_percent=warn_percent))
         seen = set()
