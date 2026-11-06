@@ -531,3 +531,71 @@ def test_the_last_exit_is_read_from_a_bounded_tail_and_skips_what_it_cannot_pars
     last = latest_child_exit(logs, ROLE)
 
     assert last["code"] == 4  # the row older than the tail window is out of reach, the newest one is not
+
+
+# ----- #589: the last child_exit stays findable under ten-minute heartbeats -----
+
+HEARTBEAT_LINE = json.dumps({"event": "heartbeat", "pid": SUP, "rss_bytes": 1, "handles": 2})
+
+
+def _supervisor_log(logs, rows):
+    logs.mkdir(exist_ok=True)
+    (logs / "gateway-supervisor-diagnostics.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def test_an_old_exit_is_found_past_a_tail_full_of_heartbeats(tmp_path):
+    """Twelve days of ten-minute heartbeats filled the old 256 KiB tail; the exit in front of them was reported as
+    missing although it was still in the file."""
+    from labhq import process_diagnostics
+
+    rows = [_exit_row("2026-01-01T00:00:00+00:00", 9)] + [HEARTBEAT_LINE] * 6000
+    _supervisor_log(tmp_path / "logs", rows)
+    assert sum(len(row) + 1 for row in rows) > process_diagnostics.CHILD_EXIT_CHUNK_BYTES  # the exit is past the old tail
+
+    assert latest_child_exit(tmp_path / "logs", ROLE)["code"] == 9
+
+
+def test_the_newest_exit_wins_when_several_are_in_the_log(tmp_path):
+    rows = [_exit_row("2026-01-01T00:00:00+00:00", 9)] + [HEARTBEAT_LINE] * 5000
+    rows += [_exit_row("2026-10-15T01:48:05+00:00", 4)] + [HEARTBEAT_LINE] * 50
+    _supervisor_log(tmp_path / "logs", rows)
+    assert latest_child_exit(tmp_path / "logs", ROLE)["code"] == 4
+
+
+def test_a_log_without_any_exit_or_without_a_file_gives_none(tmp_path):
+    assert latest_child_exit(tmp_path / "logs", ROLE) is None
+    _supervisor_log(tmp_path / "logs", [HEARTBEAT_LINE] * 4000)
+    assert latest_child_exit(tmp_path / "logs", ROLE) is None
+
+
+def test_an_exit_beyond_the_search_limit_is_not_reported(tmp_path, monkeypatch):
+    from labhq import process_diagnostics
+
+    monkeypatch.setattr(process_diagnostics, "CHILD_EXIT_SEARCH_BYTES", 64 * 1024)
+    rows = [_exit_row("2026-01-01T00:00:00+00:00", 9)] + [HEARTBEAT_LINE] * 3000
+    _supervisor_log(tmp_path / "logs", rows)
+    assert latest_child_exit(tmp_path / "logs", ROLE) is None
+    rows = [_exit_row("2026-01-01T00:00:00+00:00", 9)] + [HEARTBEAT_LINE] * 30  # inside the limit again
+    _supervisor_log(tmp_path / "logs", rows)
+    assert latest_child_exit(tmp_path / "logs", ROLE)["code"] == 9
+
+
+@pytest.mark.parametrize("chunk", [7, 50, 97, 211])
+def test_lines_cut_by_a_chunk_boundary_are_read_whole(tmp_path, monkeypatch, chunk):
+    """The exit row is longer than the chunk, so it is cut in several places; it must still parse."""
+    from labhq import process_diagnostics
+
+    monkeypatch.setattr(process_diagnostics, "CHILD_EXIT_CHUNK_BYTES", chunk)
+    rows = [HEARTBEAT_LINE] * 5 + [_exit_row("2026-10-15T01:48:05+00:00", 4)] + [HEARTBEAT_LINE] * 5
+    _supervisor_log(tmp_path / "logs", rows)
+    last = latest_child_exit(tmp_path / "logs", ROLE)
+    assert last is not None and last["code"] == 4
+
+
+def test_an_unparsable_line_between_the_chunks_is_skipped(tmp_path, monkeypatch):
+    from labhq import process_diagnostics
+
+    monkeypatch.setattr(process_diagnostics, "CHILD_EXIT_CHUNK_BYTES", 64)
+    rows = [_exit_row("2026-10-15T01:48:05+00:00", 4), "not json", '{"event": "child_ex']
+    _supervisor_log(tmp_path / "logs", rows)
+    assert latest_child_exit(tmp_path / "logs", ROLE)["code"] == 4
