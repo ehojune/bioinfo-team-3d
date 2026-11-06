@@ -1,5 +1,8 @@
 pr: 1318
 rows:
+  - sha: "6e66227"
+    at: "2026-11-07 05:17"
+    text: "완료 status의 저장 결과 반환을 한영 manual에 반영하고 main 통합 뒤 676 passed·17 skipped 기록 (#1307)"
   - sha: "1c502f9"
     at: "2026-11-07 05:15"
     text: "main의 첫 출력 대기와 명령별 전체 시간 예산을 함께 보존해 daemon 충돌 해결 (#1307)"
