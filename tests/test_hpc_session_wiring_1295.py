@@ -429,3 +429,41 @@ def test_the_staff_cli_waits_longer_than_the_runner_for_an_hpc_call(tmp_path):
     hpc = QUEUE_WAIT_S + worst_case_s(SessionConfig(argv=["x"]), with_session.hpc.command_timeout_s)
     assert labhq_mcp_timeout_s(with_session) >= max(with_session.policy.approvals.timeout_s, 1200) + hpc + 30 + 30
     assert labhq_mcp_timeout_s(plain) == labhq_mcp_timeout_s(Settings()) and approval  # no profile: unchanged
+
+
+def test_shutdown_during_a_connect_ends_it_and_sends_nothing(tmp_path, site):
+    import threading
+    import time
+
+    from labhq import hpc_session as hs
+
+    site("--banner", "--lock-after", "30")
+    session = sched.Scheduler(settings(tmp_path).hpc).session()
+    outcome = []
+
+    def first_command():
+        try:
+            session.run("echo never")
+        except hs.SessionError as error:
+            outcome.append(error)
+
+    # slow the handshake so shutdown() lands while the connection is still opening
+    original = session._exec
+
+    def slow_exec(conn, command, timeout_s):
+        if command == session.cfg.ready_command:
+            time.sleep(0.6)
+        return original(conn, command, timeout_s)
+
+    session._exec = slow_exec
+    thread = threading.Thread(target=first_command)
+    thread.start()
+    time.sleep(0.2)
+    started = time.monotonic()
+    session.shutdown()
+    thread.join(15)
+    assert not thread.is_alive() and outcome and time.monotonic() - started < 8
+    assert "종료" in str(outcome[0]) and session.logins == 1  # no second attempt
+    assert not session.connected
+    with pytest.raises(hs.SessionError, match="종료"):
+        session.run("echo after")

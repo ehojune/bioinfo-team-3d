@@ -345,7 +345,7 @@ def close_sessions() -> None:
         sessions = list(_SESSIONS.values())
         _SESSIONS.clear()
     for session in sessions:
-        session.close()
+        session.shutdown()
 
 
 def site_session(cfg: HpcSettings):

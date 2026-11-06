@@ -184,6 +184,8 @@ class HpcSession:
         self.clock, self.sleep = clock, sleep
         self._lock = threading.RLock()  # one command at a time; also guards the connection
         self._conn: _Conn | None = None
+        self._opening: _Conn | None = None  # a connection still being opened: shutdown must be able to end it too
+        self._shutdown = False  # set by shutdown(): nothing opens or runs after it
         self._last_activity = clock()  # the last command a caller ran (or the connect): what "idle" means
         self._last_beat = clock()  # the last heartbeat: it keeps the site awake but is not activity
         self._cooldown_until = 0.0
@@ -217,6 +219,9 @@ class HpcSession:
             self._lock.acquire()
         try:
             conn = self._ensure_open()
+            if self._shutdown:  # shutdown() came while the connection opened: do not send the command
+                self._drop()
+                raise SessionError("HPC 세션이 종료되어 명령을 보내지 않았습니다")
             result = self._exec(conn, command, timeout_s or self.cfg.command_timeout_s)
             self._last_activity = self.clock()
             return result
@@ -232,11 +237,24 @@ class HpcSession:
         conn = self._conn
         if conn is not None:
             self._kill(conn)  # outside the lock: a command in flight ends at once (SessionLost) and frees it
+        self._kill_opening()
         if self._lock.acquire(timeout=5):
             try:
                 self._drop()
             finally:
                 self._lock.release()
+
+    def shutdown(self) -> None:
+        """Close for good (the runner is stopping): a connection still opening is ended, and a command that was waiting for
+        its turn or for the connection is not sent afterwards."""
+        self._shutdown = True
+        self._kill_opening()
+        self.close()
+
+    def _kill_opening(self) -> None:
+        opening = self._opening
+        if opening is not None:
+            self._kill(opening)
 
     def resume(self) -> None:
         """A person opened the session (the tunnel): allow the next ``run`` to try the connection again."""
@@ -308,6 +326,8 @@ class HpcSession:
                 pass
 
     def _ensure_open(self) -> _Conn:
+        if self._shutdown:
+            raise SessionError("HPC 세션이 종료되어 명령을 보내지 않았습니다")
         if self._stopped:
             raise self._stopped
         if self._human:
@@ -323,9 +343,13 @@ class HpcSession:
         wait = self.cfg.reconnect_wait_s
         last: Exception | None = None
         for attempt in range(self.cfg.reconnect_attempts):
+            if self._shutdown:
+                raise SessionError("HPC 세션이 종료되어 명령을 보내지 않았습니다")
             if attempt:
                 self.sleep(wait)
                 wait = min(wait * 2, self.cfg.reconnect_wait_max_s)
+                if self._shutdown:
+                    raise SessionError("HPC 세션이 종료되어 명령을 보내지 않았습니다")
             try:
                 if self.budget is not None:
                     self.budget.admit(self.cfg.login_label)
@@ -334,13 +358,18 @@ class HpcSession:
                 raise
             self.logins += 1
             try:
-                self._conn = self._open()
+                try:
+                    self._conn = self._open()
+                finally:
+                    self._opening = None
                 self._failed_attempts = 0
                 self._last_activity = self.clock()
                 return self._conn
             except (HostKeyChanged, NeedsHuman):
                 raise
             except SessionError as error:
+                if self._shutdown:  # the connect failed because shutdown() ended it: no more attempts
+                    raise SessionError("HPC 세션이 종료되어 명령을 보내지 않았습니다") from error
                 last = error
         self._cooldown_until = self.clock() + self.cfg.reconnect_cooldown_s
         text = f"HPC 접속을 {self.cfg.reconnect_attempts}번 시도했으나 열지 못했습니다: {self._hide(str(last))}"
@@ -371,6 +400,9 @@ class HpcSession:
         reader = threading.Thread(target=pump, name="hpc-session-read", daemon=True)
         reader.start()
         conn = _Conn(proc, chunks, reader)
+        self._opening = conn
+        if self._shutdown:  # shutdown() came while the process started: end it before anything is sent
+            self._kill(conn)
         try:
             self._exec(conn, self.cfg.ready_command, self.cfg.connect_timeout_s)  # the echo of this one is ignored
         except SessionError as error:
