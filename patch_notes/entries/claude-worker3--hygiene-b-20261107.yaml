@@ -1,0 +1,14 @@
+pr: 1319
+rows:
+- sha: 'e705758'
+  at: 2026-11-07 06:00
+  text: 2026-11-07 issue 정리 B의 판단과 근거를 docs/reference/issue-hygiene-20261107-b.md에 남긴다. #1283·#1300·#1259·#1079는 완료 조건이 충족돼 닫았고 #1285·#1047·#1048·#1049·#1037은 열어 두며 남은 일과 재개 조건을 적는다. #1037은 막혔던 producer가 병합돼 풀렸다
+  summary: 정리한 이슈의 닫은 근거와 열어 둔 이유, 재개 조건을 한 문서에 모읍니다.
+- sha: 'c743c8b'
+  at: 2026-11-07 07:10
+  text: manual 17장 한영의 알려진 한계에 Windows 첫 detached launch가 드물게 WMI provider_timeout으로 실패한다는 항목을 더한다. 막 켜진 PC나 러너의 첫 PowerShell 실행이 평소보다 10~26배 느린 것과 맞고 원인은 확정하지 못했으며 journal의 run_ms·launch_ordinal·os_uptime_s와 CI 워밍업(1316)을 안내한다
+  summary: 간헐 실패를 사용자 문서의 알려진 한계에 올립니다.
+- sha: '70f86c8'
+  at: 2026-11-07 07:40
+  text: manual 17장 한영의 WMI provider_timeout 항목을 2026-11-06 GitHub CI Windows runner에서 관측된 세 건과 가설로 좁힌다. 로컬 재현과 runner 사양 확인이 없어 일반 PC의 원인으로 단정하지 않고 재실행으로 통과한 것은 한 건만 확인했다고 적는다
+  summary: 실측하지 않은 조건으로 일반화하던 문장을 관측 범위로 좁힙니다.
