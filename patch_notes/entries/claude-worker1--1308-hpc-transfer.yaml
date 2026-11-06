@@ -8,3 +8,7 @@ rows:
     at: "2026-11-07 04:40"
     summary: "클러스터에 폴더를 만들 때 한 단계씩 실제 위치를 확인해, 작업 폴더 밖으로 나가는 링크 뒤에는 폴더를 만들기 전에 거부합니다."
     text: "Transfer.ensure_dir를 컴포넌트별 test -d / mkdir로 바꿔 pwd -P 검증 뒤에만 다음 단계 생성, 가짜 gateway에 test -d 형태 추가, 시험 1건 (#1308)"
+  - sha: "c18cfde"
+    at: "2026-11-07 05:30"
+    summary: "에이전트가 hpc_submit에 작은 입력 파일 목록을 줄 수 있고, 파일을 공유하지 않는 사이트에서는 그 파일이 클러스터 작업 폴더로 올라갑니다. 작업 번호를 읽지 못한 제출 출력과 Slurm 다른 클러스터 안내에 든 호스트 이름도 가립니다."
+    text: "hpc_mcp.hpc_submit의 inputs 인자(상대 경로 20개 이하 검증)를 broker payload로 전달, submit_job이 inputs 형식 확인, scheduler의 job id 해석 실패·Slurm -M 문장에 _hide 적용, 도구 경로 시험과 가림 시험 (#1308)"
