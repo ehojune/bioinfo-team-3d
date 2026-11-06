@@ -410,8 +410,10 @@ class Scheduler:
                 result = session.run(shlex.join(args), self.cfg.command_timeout_s)
             except CommandTimeout as error:
                 raise subprocess.TimeoutExpired(args, self.cfg.command_timeout_s) from error
-            if result.truncated:
-                raise RuntimeError(f"{args[0]} printed more than the session keeps; the answer is incomplete")
+            if result.truncated:  # the command ran: a submit may have gone through, so this is "lost", not a plain failure
+                from ..hpc_session import SessionLost
+
+                raise SessionLost(f"{args[0]} printed more than the session keeps; the answer is incomplete")
             # The shell has one output stream: an error text arrives in stdout, and the parsers read both.
             done = subprocess.CompletedProcess(args, result.exit_code, result.output, "")
             done.redact = self._redactor(session)

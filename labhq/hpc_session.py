@@ -173,6 +173,16 @@ class HpcSession:
         conn = self._conn
         return conn is not None and conn.proc.poll() is None
 
+    def worst_case_s(self, command_timeout_s: float | None = None) -> float:
+        """The longest one ``run`` can take: every connect attempt with its wait, then the command. A caller that waits
+        for ``run`` (a broker call) must wait at least this long, or it gives up while the command still goes through."""
+        waits, wait = 0.0, self.cfg.reconnect_wait_s
+        for _ in range(self.cfg.reconnect_attempts - 1):
+            waits += wait
+            wait = min(wait * 2, self.cfg.reconnect_wait_max_s)
+        return (self.cfg.reconnect_attempts * self.cfg.connect_timeout_s + waits
+                + (command_timeout_s or self.cfg.command_timeout_s))
+
     def run(self, command: str, timeout_s: float | None = None) -> CommandResult:
         """Run one command in the shell and return its exit code and output. Opens (or reopens) the connection first."""
         if "\n" in command or "\r" in command:

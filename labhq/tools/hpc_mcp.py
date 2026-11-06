@@ -58,13 +58,20 @@ async def _broker(path: str, payload: dict, timeout: float) -> dict:
         return r.json()
 
 
+def _hpc_wait_s() -> float:
+    """How long the runner may take for one scheduler command: a reconnect (every attempt and wait) plus the command.
+    Giving up sooner would return "nothing ran" while the runner's command still goes through."""
+    session = None if SESSION_ERROR else SCHED.session()
+    return session.worst_case_s(S.hpc.command_timeout_s) if session is not None else float(S.hpc.command_timeout_s)
+
+
 async def _runner_op(op: str, **fields) -> dict:
     """Run a scheduler command through the runner's HPC shell. The runner decides; an error comes back as text."""
     if SESSION_ERROR:
         raise tool_failure(SESSION_ERROR)
     try:
         out = await _broker("/jobs/submit", {"op": op, "task_id": TASK, "agent_id": AGENT, **fields},
-                            timeout=S.hpc.command_timeout_s + 60)
+                            timeout=_hpc_wait_s() + 60)
     except Exception as e:  # fail closed: without the runner there is no shell to ask
         raise tool_failure(f"labhq broker failed; no HPC command was run: {e!r}") from e
     if out.get("error"):
@@ -291,7 +298,7 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
         out = await _broker("/jobs/submit", {
             "task_id": TASK, "agent_id": AGENT, "script": str(spath), "name": name, "cores": cores, "mem": mem,
             "walltime": walltime, "queue": queue, "reason": reason,
-        }, timeout=S.policy.approvals.timeout_s + S.hpc.command_timeout_s + 60)
+        }, timeout=S.policy.approvals.timeout_s + _hpc_wait_s() + 60)
     except (httpx.ConnectError, ConnectionError) as e:  # fail closed
         raise tool_failure(f"labhq broker unreachable; the job was not submitted: {e}") from e
     except Exception as e:  # the runner may have submitted before the answer was lost

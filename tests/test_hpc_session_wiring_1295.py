@@ -304,3 +304,29 @@ def test_redaction_words_and_ports():
     assert set(words) == {"2222", "jump.example.org", "bob", "login.example.org"}
     text = hs.redact("host Login.Example.org:2222 port 2222 user bob exit 22", words)
     assert text == "host <host>:<port> port <port> user <host> exit 22"
+
+
+def test_a_truncated_submit_answer_is_reported_as_maybe_submitted(tmp_path, site, monkeypatch):
+    site()
+    scheduler = sched.Scheduler(settings(tmp_path).hpc)
+    session = scheduler.session()
+    from labhq import hpc_session as hs
+
+    monkeypatch.setattr(session, "run", lambda *a, **k: hs.CommandResult(0, "x", truncated=True, dropped_chars=9))
+    with pytest.raises(RuntimeError, match="may have been submitted"):
+        scheduler.submit("/work/job.sh", "align")
+
+
+def test_the_broker_waits_for_a_whole_reconnect(tmp_path, site, monkeypatch):
+    import labhq.tools.hpc_mcp as hpc
+
+    site()
+    cfg = settings(tmp_path)
+    scheduler = sched.Scheduler(cfg.hpc)
+    monkeypatch.setattr(hpc, "S", cfg)
+    monkeypatch.setattr(hpc, "SCHED", scheduler)
+    monkeypatch.setattr(hpc, "SESSION_ERROR", None)
+    session = scheduler.session()
+    # 3 connects of 30 s, waits of 5 s and 10 s, then the 60 s command: more than the old command timeout plus 60 s
+    assert session.worst_case_s(60) == 3 * 30 + 5 + 10 + 60 and hpc._hpc_wait_s() == 165
+    assert hpc._hpc_wait_s() + 60 > 120
