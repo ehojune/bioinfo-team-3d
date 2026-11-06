@@ -88,7 +88,7 @@ from types import SimpleNamespace  # noqa: E402
 import httpx  # noqa: E402
 
 from labhq.evidence import wiki_exposure  # noqa: E402
-from labhq.integrations.github import ProjectReporter  # noqa: E402
+from labhq.integrations.github import GitHubClient, ProjectReporter  # noqa: E402
 from labhq.integrations.rounds import RoundRecorder  # noqa: E402
 from labhq.settings import ProjectSettings, Settings  # noqa: E402
 from tests.test_github_reporter import fake_github  # noqa: E402
@@ -217,6 +217,38 @@ async def test_the_round_recorder_rechecks_right_before_its_one_write(tmp_path):
     recorder = RoundRecorder(hub, httpx.MockTransport(lambda request: httpx.Response(404, json={})))
     hub.requests["req_1"][wiki_exposure.KEY] = "possible"  # raised after publish() began
     assert await recorder._may_post(gh=None, rid="req_1") is False
+
+
+async def test_the_round_recorder_judges_the_exposure_again_after_its_repository_read(tmp_path):
+    hub = round_hub(tmp_path, "none")
+
+    def answer(request):
+        hub.requests["req_1"][wiki_exposure.KEY] = "possible"  # raised while the repository metadata is read
+        return httpx.Response(200, json={"private": True})
+
+    recorder = RoundRecorder(hub, httpx.MockTransport(answer))
+    gh = GitHubClient("synthetic-token", "https://api.github.invalid", httpx.MockTransport(answer))
+    assert await recorder._may_post(gh, "req_1") is False
+
+
+@pytest.mark.parametrize("expose", [False, True], ids=["control-closes", "exposed-keeps-open"])
+async def test_an_exposure_raised_before_the_project_issue_is_closed_stops_the_close(monkeypatch, expose):
+    hub = reporter_hub("none")
+    calls = []
+    service = reporter(hub, calls, monkeypatch)
+    real_client = service.client()
+    real_comment = real_client.comment
+
+    async def comment_then_expose(repo, number, body, *args, **kwargs):
+        result = await real_comment(repo, number, body, *args, **kwargs)
+        if expose and "완료" in body:
+            hub.requests["req_1"][wiki_exposure.KEY] = "possible"  # raised after the final comment, before the close
+        return result
+
+    real_client.comment = comment_then_expose
+    for event in EVENTS:
+        await service.handle(event)
+    assert any(c[0] == "PATCH" for c in calls) is (not expose)
 
 
 async def test_the_final_result_upload_refuses_an_exposed_request_and_a_clean_one_goes_through(tmp_path, monkeypatch):

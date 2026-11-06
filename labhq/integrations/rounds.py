@@ -713,7 +713,8 @@ class RoundRecorder:
         if not private and not self.s.dev_log.allow_public:
             log.warning("round issue publication refused: configured repository is public")
             return False
-        return True
+        # The metadata read above was awaited: judge the exposure again, with nothing awaited before the caller's write.
+        return rid is None or not self._wiki_blocked(rid)
 
     async def publish(self, rid: str) -> bool:
         cfg = self.s.dev_log

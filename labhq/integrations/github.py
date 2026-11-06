@@ -877,6 +877,8 @@ class ProjectReporter:
                     if not saved.get("done"):
                         is_closed = getattr(gh, "issue_is_closed", None)
                         if not (saved and is_closed and await is_closed(proj.repo, num)):
+                            if self._wiki_blocked(rid, "close"):
+                                return
                             await gh.close_issue(proj.repo, num)
                         self._save_action(ev, "close", {"done": True})
 

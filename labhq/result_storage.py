@@ -1832,6 +1832,7 @@ class ResultStorage:
             if exc.status_code != 404 or saved["mode"] != "new":
                 denied(exc, write_denied_text(repo, rid))
                 raise
+            self._wiki_gate(rid)  # repo_info was awaited: creating the repository is a write too
             try:
                 info = await gh._req("POST", "/user/repos", json={"name": repo.split("/")[1],
                            "private": saved.get("visibility") != "public", "auto_init": True})
