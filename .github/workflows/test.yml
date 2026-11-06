@@ -185,7 +185,10 @@ jobs:
         run: |
           import json, shutil, subprocess, time
           rows = {}
-          commands = {'node': ['node', '-e', '0'], 'powershell': ['powershell', '-NoProfile', '-NonInteractive', '-Command', 'exit 0']}
+          ps = ['powershell', '-NoProfile', '-NonInteractive', '-Command']
+          # `wmi` goes through the CIM provider the Windows job broker uses (#1076), not only the PowerShell start
+          commands = {'node': ['node', '-e', '0'], 'powershell': [*ps, 'exit 0'],
+                      'wmi': [*ps, '(Get-CimInstance -ClassName Win32_OperatingSystem).Caption | Out-Null']}
           for name, argv in commands.items():
               if shutil.which(argv[0]) is None:
                   rows[name + '_cold_ms'] = rows[name + '_warm_ms'] = None
@@ -261,6 +264,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Warm Node and PowerShell (the first process of each is slow on a fresh runner; timed here, not in a test, #1272)
+        shell: python {0}
+        run: |
+          import json, shutil, subprocess, time
+          rows = {}
+          ps = ['powershell', '-NoProfile', '-NonInteractive', '-Command']
+          # `wmi` goes through the CIM provider the Windows job broker uses (#1076), not only the PowerShell start
+          commands = {'node': ['node', '-e', '0'], 'powershell': [*ps, 'exit 0'],
+                      'wmi': [*ps, '(Get-CimInstance -ClassName Win32_OperatingSystem).Caption | Out-Null']}
+          for name, argv in commands.items():
+              if shutil.which(argv[0]) is None:
+                  rows[name + '_cold_ms'] = rows[name + '_warm_ms'] = None
+                  continue
+              for phase in ('cold', 'warm'):  # the same call twice: the second shows what a warmed start costs
+                  start = time.monotonic()
+                  subprocess.run(argv, capture_output=True, timeout=60, check=False)
+                  rows[f'{name}_{phase}_ms'] = round((time.monotonic() - start) * 1000)
+          print('ci warmup: ' + json.dumps(rows, sort_keys=True))
+        timeout-minutes: 2
       - run: python scripts/clean_install_check.py
 
   ro-crate-validator:
