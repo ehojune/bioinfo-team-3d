@@ -20,3 +20,7 @@ rows:
     at: "2026-11-07 07:30"
     summary: "도구와 피드로 나가는 HPC 오류·알림 문구가 runner의 한 곳에서 호스트·포트·사용자 이름과 클러스터 작업 폴더를 가린 채 나갑니다. 결과 파일이 너무 깊이 있어 가져오지 못한 경우도 기록에 남습니다."
     text: "Runner._hide_hpc 경계(_on_submit 응답의 error·detail·result·reason·note, _emit_hpc_notice, fetch_error), Scheduler.redactor(work 폴더 마스킹 포함), Transfer 오류의 같은 가림, list_deeper로 깊이 밖 파일을 skipped에 기록, 시험 6건 (#1308)"
+  - sha: "c8e9ff5"
+    at: "2026-11-07 08:30"
+    summary: "올릴 입력 파일을 확인한 뒤 바꿔치기할 수 없게 폴더를 연 채로 읽고, 올린 입력 가운데 잡이 바꾸지 않은 것은 결과로 다시 가져오지 않습니다."
+    text: "hpc_transfer.read_confined(HeldDir로 링크를 따라가지 않고 같은 descriptor에서 fstat·read), upload_job이 spec['inputs']에 올린 파일 sha256을 기록하고 fetch_results가 같은 sha256이면 제외, 세션 시험의 로그인 횟수 단정을 느슨하게, 시험 3건 (#1308)"
