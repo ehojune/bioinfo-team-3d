@@ -67,3 +67,90 @@ lookup-only. 근거는 [#1076](https://github.com/ehojune/bioinfo-team-3d/issues
 - cleanup 진단(`demo cleanup: …`)에 추가: cleanup 시작 후 경과 ms, 닫히지 않은 핸들(`chrome-stdio`·`websocket`·`http-server`)별로 닫기 요청이 실제로 시작된 뒤 경과 ms(아직 시작 전이면 null). 기존 주입 진단이 받는 행은 바뀌지 않는다.
 - 다음 실패 로그에서 "어느 단계가 느렸나"(후보 ①), "cleanup이 먼저 걸렸나"(후보 ②)를 가린다.
 
+
+## web_resizable_panels 실패 분석 (#1272, main `3f018499`, 2026-11-06)
+
+실패: [run 42224884369](https://github.com/ehojune/bioinfo-team-3d/actions/runs/42224884369/job/127915899306), `pytest-windows` "Serial critical Windows contracts", `test_office_in_node[web_resizable_panels.cjs]` desktop. 오류는 `demo ui deadline reached during Runtime.evaluate`(`DEMO_WORK_DEADLINE`)이고, #1291이 넣은 진단 행이 처음으로 실패 로그에 찍혔다.
+
+### 60초가 어디에 쓰였나
+
+Python이 이 스크립트를 띄운 시각(`launch`)부터 바깥 한계가 60초이고, 브라우저 작업의 작업 한계는 거기서 닫기 예약 8초를 뺀 52초다.
+
+| 구간 | 걸린 시간 | 근거 |
+|---|---|---|
+| Node가 시작해 스크립트 첫 줄에 닿기까지 | **19.3초** | `module_entry_mono_ms: 19310`(Node 프로세스 시작 기준) |
+| 모듈 읽기 | 4.1초 | `module-ready` mono 23368 |
+| 앞의 시험 두 개(브라우저 없음) | 2.7초 | `open` mono 26025, 두 시험 합 2.65초 |
+| 소계: `openDemo` 시작 전 | **28.6초** (launch 기준) | `open` 행의 `epoch_ms` − `launch_epoch_ms` |
+| 작업 한계까지 남은 시간(open 시점) | 23.3초 | `work_remaining_ms: 23346` |
+| Chrome 기동~DevTools 포트 | 2.1초 | `debug-port-ready` 2115 |
+| **`/json`이 처음 답하기까지** | **17.6초** | `target-ready` since_previous 17648, `json_attempts: 1, json_unanswered: 0` |
+| 소켓·프로토콜 준비 | 0.4초 | `protocol-ready` 20186 |
+| 페이지 요청→응답 | 0.5초 + 1.7초 | `server-request` 20661, `server-response` 22393 |
+| boot 대기 | 0.9초에서 deadline | `ui-deadline` elapsed 23346, `wait: waitReal "demo boot" running_ms 910` |
+
+- ui 단계의 한계는 20초 예산이 아니라 **남은 작업 한계 23.3초**였다. 시작 단계가 20.2초를 쓰고 페이지 이동이 2.2초를 쓴 뒤 boot를 0.9초 기다렸을 때 끝났다.
+- deadline 순간: 응답 없는 CDP 호출은 `Runtime.evaluate` 1개(0.9초 전에 보냄), 마지막 응답은 0.9초 전, 마지막 이벤트는 0.5초 전. 미완료 요청 11개, 완료 6개, 실패 0, 정적 서버가 받은 요청 17개, 페이지 오류 0, Chrome은 살아 있었다. `port_reads`는 `{ENOENT: 1, EBUSY: 1}`로 포트 파일을 두 번 읽었고 곧 읽혔다(`debug-port-ready` 2.1초).
+- 미완료 11개는 페이지가 부팅하며 부르는 자기 서버의 자원 요청이다(정적 서버가 17개를 냈고 6개가 끝난 상태). 페이지 자체가 멈춘 증거는 없고 boot를 0.9초밖에 기다리지 못했다.
+- 정리(cleanup)는 정상이다: `closed`, 0.99초, 닫히지 않은 핸들 없음. 후보 ②(정리가 먼저 실패)는 이번에는 아니다.
+
+### 같은 시각 다른 시험도 느렸다
+
+같은 job, 같은 단계에서 바로 앞에 돈 `tests/test_windows_job_ci.py::test_allowed_breakaway_child_survives_parent_job_close`가 24.4초 걸렸고 WMI 부트스트랩이 `provider_timeout`(PowerShell 시작 후 `header_read` 9.7초)이었다. `test_real_wmi_bootstrap_…[receipt_timeout]`도 10.0초다. 새 프로세스를 띄우는 일(PowerShell, Node, Chrome)이 이 구간에 한꺼번에 10~20초씩 느렸다.
+
+### 원인 후보
+
+| 후보 | 근거 | 반증·미확인 |
+|---|---|---|
+| ① runner가 이 시각에 새 프로세스를 띄우는 데 평소보다 10~20초 더 걸림(백신 검사·디스크·CPU 경합) | Node 시작 19.3초, Chrome 첫 `/json` 응답 17.6초, PowerShell `header_read` 9.7초가 같은 3분 안에 겹침. 로컬 128회 재현에서 이 시험 전체(desktop+phone)가 1.7초였음(`--durations`) | 어느 자원이 막혔는지는 로그에 없음. runner 부하 지표를 모은 적이 없다 |
+| ② 스크립트의 60초 한계가 Node 시작(19.3초)을 포함해 시험이 쓰는 시간이 줄어듦 | Node 시작·앞선 두 시험만으로 28.6초(47%)가 `openDemo` 전에 사라짐. 같은 desktop 호출의 ui 단계는 3.1초만 남았다 | 한계를 늘리면 증상은 가리지만 원인(후보 ①)은 그대로 |
+| ③ 정리 실패가 먼저 | cleanup이 0.99초에 정상 종료 | — |
+| ④ 페이지·제품 결함 | boot를 0.9초만 기다림, 페이지 오류 0 | 판단 근거 없음 |
+
+#1076의 이전 5건(`web_visual_tooling`, `web_office_focus_layout`, `web_office_browser`, `web_resizable_panels` ×2)은 진단 행이 없어 이 표에 올릴 수 없다. 이번 1건만 단계 시각이 있다.
+
+### 고칠 범위 (제안, 이번에는 코드 수정 없음)
+
+1. **측정 먼저**: `tests/test_web_3d.py`가 Node 시작 시간을 따로 남기게 한다. 지금은 Python이 `launch` 시각만 알고, Node 안의 `module_entry_mono_ms`는 실패 로그에만 나온다. 성공한 run에도 같은 한 줄(Node 시작·모듈 읽기·open 시점의 남은 시간)을 찍으면 평소 값과 이번 값을 비교할 수 있다. 파일: `tests/test_web_3d.py`, `tests/web_resizable_panels.cjs`.
+2. **한계의 기준을 옮기는 안**: 바깥 한계를 `launch` 기준 60초로 두되 Node 시작이 느린 경우를 위해 작업 한계를 스크립트 진입 시각 기준으로 다시 계산한다. 한계 합(60초)은 늘리지 않으므로 하드 캡은 같다. 다만 이번처럼 Node 시작이 19초면 한계 자체가 줄어든 것이 아니라 시험이 쓸 시간이 줄어든 것이어서, 이 안은 후보 ②만 다룬다.
+3. **한계를 늘리는 안**: Windows CI에서만 `web_resizable_panels.cjs`의 바깥 한계를 60초에서 90초로 올린다. 이번 실패의 흐름대로면 Node 시작과 시험 앞부분 28.6초, 브라우저 열기 20.2초, 이동·boot 몇 초를 합쳐 70초 안팎이 필요하다. 기존 단언은 그대로다. 비용은 최악의 경우 이 시험이 30초 더 걸리는 것뿐이다. 후보 ①이 원인이면 근본 대책은 아니지만, 원인이 runner 쪽이면 다른 방법이 없다.
+4. **원인 확인 순서 권고**: 1 → 다음 실패 시 값 비교 → 3. 2와 3은 증상 완화이고 원인 후보 ①을 가리지 못한다. 권고는 1을 먼저 넣고, 그 사이 같은 단계에서 WMI 실패(#1076, `docs/reference/ci-1076-wmi-provider-timeout.md`)가 겹쳐 나는지 함께 본다.
+
+한계: 이 분석은 실패 run 로그 한 개에 근거한다. runner의 CPU·디스크 지표와 백신 설정은 볼 수 없었다.
+
+
+### 측정 추가 (#1272, 같은 PR)
+
+성공한 run의 로그에도 resizable 호출마다 한 줄이 남는다. 시간 한계와 단언은 바꾸지 않았다.
+
+```
+resizable startup: {"before_open_ms": …, "module_load_ms": …, "node_start_ms": …, "outer_remaining_at_open_ms": …, "returned_after_ms": …, "viewport": "desktop", "work_remaining_at_open_ms": …}
+```
+
+| 필드 | 뜻 |
+|---|---|
+| `node_start_ms` | Node 프로세스 시작부터 스크립트 첫 줄까지 (이번 실패에서 19310) |
+| `module_load_ms` | 첫 줄부터 모듈을 읽고 끝날 때까지 (4058) |
+| `before_open_ms` | Python이 띄운 시각부터 `openDemo` 시작까지 (28650) |
+| `work_remaining_at_open_ms`·`outer_remaining_at_open_ms` | 그 시점에 남은 작업·바깥 한계 (23346·31346) |
+| `returned_after_ms` | 호출이 끝나기까지 전체 |
+
+- 이 PC에서 평소 값: `node_start_ms` 18~23, `before_open_ms` 49~122, `returned_after_ms` 735~1328. 실패 run은 `node_start_ms`가 19310이었다.
+- 출력은 `tests/test_web_3d.py`의 `resizable_startup_summary`가 스크립트의 `resizable timing:` 행(stderr)과 Python이 기록한 launch 시각으로 만든다. 행이 없으면 그 필드만 빠지고 시험을 실패시키지 않는다.
+- 줄은 `warnings.warn`(`UserWarning`)으로 남긴다. pytest의 "warnings summary"에 나오므로 직렬 실행과 xdist 병렬 실행의 CI 로그에서 모두 보인다. 로그에서는 `UserWarning: resizable startup: {…}`로 찾는다. 시험 쪽 계약 시험(`test_ci_windows10m`)이 이 함수만 떼어 돌리는 축소된 namespace에서는 보고를 건너뛴다.
+- 다음 확인: 직렬 Windows 단계의 성공 run 몇 개에서 `node_start_ms`의 분포를 모은다. 평소 값이 수십 ms이고 실패 때만 수 초라면 후보 ①(runner에서 새 프로세스가 느려짐)이 강해지고, 평소에도 수 초라면 후보 ②(한계 기준)로 간다.
+
+
+### 첫 CI 측정값 (PR #1314 head `5d10ac8`, 통과한 resizable)
+
+[run 42240471072](https://github.com/ehojune/bioinfo-team-3d/actions/runs/42240471072)의 `pytest-windows` "Serial critical Windows contracts" 단계에서 두 줄이 찍혔다.
+
+| 호출 | `node_start_ms` | `module_load_ms` | `before_open_ms` | `returned_after_ms` |
+|---|---|---|---|---|
+| desktop (단계의 첫 Node) | **5521** | 1274 | **8294** | 19390 |
+| phone (바로 뒤) | 24 | 16 | 64 | 2407 |
+| 이 PC (평소) | 18~23 | 11~13 | 49~122 | 735~1328 |
+
+- 같은 단계, 같은 시험인데 첫 Node 프로세스만 시작이 5.5초 걸리고 바로 다음 것은 24 ms다. 이 PC와 같은 수준으로 돌아온다. 새 프로세스를 처음 띄울 때만 비싼 "차가운 시작"이 있다는 뜻이고, 실패 run(`node_start_ms` 19310)은 같은 현상이 더 크게 나온 것으로 읽힌다. 후보 ①(runner에서 새 프로세스가 느려짐)을 지지하고, 시험 코드·페이지의 문제는 아니다.
+- 통과한 run에서도 desktop은 `before_open_ms`가 8.3초로 한계 52초의 16%를 쓴다. 실패 run은 28.6초였다. 평소 값(위 표)과의 격차가 그 차이다.
+- 다음 확인: 직렬 Windows 단계의 성공·실패 run에서 desktop의 `node_start_ms`가 몇 초인지 몇 개 더 모은다. 첫 호출만 느리다는 패턴이 이어지면, 한계를 늘리기 전에 단계 첫머리에 가벼운 Node 호출을 한 번 두어 차가운 시작을 먼저 치르게 하는 안(고칠 범위 2·3 앞의 선택지)을 검토한다.
