@@ -56,6 +56,18 @@ A list built from the regular staff configs (`agents/core/*.yaml`) and labhq's w
 | Engine feature | Codex | Staff execution engine | [editor](../../agents/core/editor.yaml), [engineer](../../agents/core/engineer.yaml), [facilities](../../agents/core/facilities.yaml), [lit_scout](../../agents/core/lit_scout.yaml), [sci_reviewer](../../agents/core/sci_reviewer.yaml) | [staff config](../../agents/core/) |
 | Engine feature | Codex web search | WebSearch / WebFetch → web_search="live" | [lit_scout](../../agents/core/lit_scout.yaml), [sci_reviewer](../../agents/core/sci_reviewer.yaml) | [adapter](../../labhq/adapters/codex.py) · [staff config](../../agents/core/) |
 
+### HPC tools and the session (#1295)
+
+`labhq_hpc` gives `hpc_submit`, `hpc_status`, `hpc_queue` and `hpc_cancel`. Submission follows the PI approval policy (chapter 11), and cancel works only on jobs the staff member submitted with `hpc_submit`.
+
+When `hpc.site_profile` names a [site profile](15-config.en.md) that has a connect command (`connect_argv`), the runner **logs in once, keeps one shell open** and sends every scheduler command to it, one line at a time. The staff tools `hpc_status`, `hpc_queue` and `hpc_cancel` do not connect on their own either: they ask the runner and run in the same shell. Polling therefore adds no logins, and only reopening a dropped connection counts as one (per-request and per-day limits, [chapter 15](15-config.en.md)). A gateway that ignores remote commands is fine as long as it gives a shell.
+
+- **Each command has a time limit and an output size cap**, and they run one at a time. After a timeout the shell is closed and the next command connects again. A tool call that waits more than 60 seconds behind other commands fails without being sent (a command that gave up never runs later).
+- **A light command (`true`) goes out before the site's idle lock** to keep the connection alive. The interval is shorter than the profile's `idle_lock_minutes` (a quarter of it, at most 15 minutes). With no open job and 15 minutes unused, the shell is closed.
+- **Reconnecting has a count limit and a wait**: 3 tries, 5 seconds doubling. When they are used up, calls fail for one minute without any login. At a login limit nothing is opened and the web feed says so.
+- **Things the PI must know appear as web feed alerts**: a changed host key, a connection that a person has to open, a reconnect that failed. The recovery steps are in [chapter 15](15-config.en.md).
+- The current implementation **assumes the script and log paths look the same on the login node** (a shared file system). There is no upload path yet ([chapter 8](08-structure.en.md)).
+
 ### Public-resource lookup tools
 
 `labhq_annot` is a built-in MCP that looks up variants, regions, genes and papers in public databases (#435, #697, #720, #744). It is attached to staff that have `annot` in `builtin_mcp` (analyst, bioinfo-agent, biologist, lit_scout, and the narrowed chief_of_staff and sci_reviewer). It is not attached by default to read-only runs such as follow-ups, consultation and reviews; the one exception is the tools a staff file names in `annot_tools` that a read-only run may keep, `pdb` and `chembl`. The staff member that gets this exception today is sci_reviewer.

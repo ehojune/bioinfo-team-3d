@@ -19,6 +19,8 @@ profile). The module is standalone; the tools and the runner are wired to it els
 from __future__ import annotations
 
 import codecs
+import contextlib
+import contextvars
 import queue
 import re
 import subprocess
@@ -31,11 +33,70 @@ from typing import Callable, Sequence
 from .hpc_login_budget import LoginBudget, LoginLimitReached
 
 HOST_KEY_TEXTS = ("REMOTE HOST IDENTIFICATION HAS CHANGED", "Host key verification failed")
+QUEUE_WAIT_S = 60.0  # how long a caller that asked for a bounded wait stands in line for the shell's one command at a time
+_QUEUE_WAIT: contextvars.ContextVar[float | None] = contextvars.ContextVar("labhq_hpc_queue_wait", default=None)
 _OVERLAP = 512  # longer than any marker, so a marker split over two reads is still found
+
+
+def redaction_words(argv: Sequence[str]) -> tuple[str, ...]:
+    """What in a connect command names the site or the user: every word that is not the program or a bare option, split
+    at ``@``, ``=`` and ``,``. A host, a port, a user name and a ProxyJump chain all end up here."""
+    words: set[str] = set()
+    for word in list(argv)[1:]:
+        if word.startswith("-") and "=" not in word:
+            # An option carries nothing to hide, except a value glued to it (-Jbastion, -p2222, -lbob).
+            word = word[2:] if len(word) > 2 and word[1] in "plJLRDWwiFoBbcEeImOQSX" else ""
+        for part in re.split(r"[@=,]", word):
+            part = part.strip()
+            if len(part) >= 2 and part.lower() not in {"yes", "no", "true", "false", "user", "port", "hostname"}:
+                words.add(part)
+                words.update(piece for piece in part.split(":") if len(piece) >= 2)
+    return tuple(sorted(words, key=len, reverse=True))
+
+
+def redact(text: str, words: Sequence[str]) -> str:
+    """``text`` with the site's host, port and user names hidden. A port number is hidden only where it is a port (after
+    ``port`` or ``:``), so an exit code of the same digits stays readable."""
+    for word in words:
+        if word.isdigit():
+            text = re.sub(rf"(?i)(port\s+|:){re.escape(word)}\b", lambda m: m.group(1) + "<port>", text)
+        else:
+            text = re.sub(re.escape(word), "<host>", text, flags=re.IGNORECASE)
+    return text
+
+
+def worst_case_s(cfg: "SessionConfig", command_timeout_s: float | None = None) -> float:
+    waits, wait = 0.0, cfg.reconnect_wait_s
+    for _ in range(cfg.reconnect_attempts - 1):
+        waits += wait
+        wait = min(wait * 2, cfg.reconnect_wait_max_s)
+    return cfg.reconnect_attempts * cfg.connect_timeout_s + waits + (command_timeout_s or cfg.command_timeout_s)
+
+
+def call_budget_s(cfg: "SessionConfig", command_timeout_s: float, commands: int = 1) -> float:
+    """The longest a caller's call can take when it runs ``commands`` scheduler commands one after another (a status is a
+    squeue and then a sacct): each may stand in line for the shell, and the first may reconnect."""
+    reconnect = worst_case_s(cfg, command_timeout_s) - command_timeout_s
+    return commands * (QUEUE_WAIT_S + command_timeout_s) + reconnect
+
+
+@contextlib.contextmanager
+def queue_wait(seconds: float | None = QUEUE_WAIT_S):
+    """Inside this block ``run`` waits at most ``seconds`` for its turn and then raises ``SessionBusy`` without sending
+    anything. A caller with a deadline (the broker) uses it so a command that gave up is never run later."""
+    token = _QUEUE_WAIT.set(seconds)
+    try:
+        yield
+    finally:
+        _QUEUE_WAIT.reset(token)
 
 
 class SessionError(RuntimeError):
     """Base of what the session manager raises."""
+
+
+class SessionBusy(SessionError):
+    """The shell was busy with other commands for the whole wait. This command was not sent."""
 
 
 class CommandTimeout(SessionError):
@@ -73,19 +134,24 @@ class SessionConfig:
     reconnect_wait_s: float = 5.0
     reconnect_wait_max_s: float = 60.0
     reconnect_cooldown_s: float = 60.0
+    human_wait_s: float = 300.0  # after "a person must open the tunnel", the next command tries again only after this long
     host_key_texts: tuple[str, ...] = HOST_KEY_TEXTS
     # Text that proves a person must open the connection first (a site that needs a manual tunnel). Empty by default:
     # an ordinary network failure is retried by the reconnect limit, never parked as "wait for a person".
     tunnel_texts: tuple[str, ...] = ()
     heartbeat_command: str = "true"
+    env: dict[str, str] | None = None  # the connection process's whole environment; None = the caller's own (tests)
     ready_command: str = "stty -echo 2>/dev/null"  # first command: proves the shell answers and turns the terminal echo off
     login_label: str = "session"  # what the login counter records
+    redact_words: tuple[str, ...] | None = None  # hidden in every message; None: taken from argv (host, port, user)
 
     def __post_init__(self) -> None:
         if not self.argv:
             raise ValueError("접속 argv가 필요합니다(사이트 프로필의 값)")
         if self.idle_lock_s is not None and self.idle_lock_s <= 0:
             raise ValueError("idle_lock_s는 양수여야 합니다")
+        if self.redact_words is None:
+            self.redact_words = redaction_words(self.argv)
         if self.heartbeat_s is None:
             self.heartbeat_s = 900.0 if self.idle_lock_s is None else min(900.0, self.idle_lock_s / 4)
         if self.heartbeat_s <= 0:
@@ -125,12 +191,15 @@ class HpcSession:
         self.clock, self.sleep = clock, sleep
         self._lock = threading.RLock()  # one command at a time; also guards the connection
         self._conn: _Conn | None = None
+        self._opening: _Conn | None = None  # a connection still being opened: shutdown must be able to end it too
+        self._shutdown = False  # set by shutdown(): nothing opens or runs after it
         self._last_activity = clock()  # the last command a caller ran (or the connect): what "idle" means
         self._last_beat = clock()  # the last heartbeat: it keeps the site awake but is not activity
         self._cooldown_until = 0.0
         self._failed_attempts = 0
         self._stopped: HostKeyChanged | None = None
         self._human: NeedsHuman | None = None
+        self._human_until = 0.0
         self.logins = 0  # connections this manager opened
         self._ticker: threading.Thread | None = None
         self._stop_ticker = threading.Event()
@@ -141,15 +210,30 @@ class HpcSession:
         conn = self._conn
         return conn is not None and conn.proc.poll() is None
 
+    def worst_case_s(self, command_timeout_s: float | None = None) -> float:
+        """The longest one ``run`` can take: every connect attempt with its wait, then the command. A caller that waits
+        for ``run`` (a broker call) must wait at least this long, or it gives up while the command still goes through."""
+        return worst_case_s(self.cfg, command_timeout_s)
+
     def run(self, command: str, timeout_s: float | None = None) -> CommandResult:
         """Run one command in the shell and return its exit code and output. Opens (or reopens) the connection first."""
         if "\n" in command or "\r" in command:
             raise ValueError("명령은 한 줄이어야 합니다")
-        with self._lock:
+        wait = _QUEUE_WAIT.get()
+        if wait is not None and not self._lock.acquire(timeout=wait):
+            raise SessionBusy(f"HPC 셸이 {wait:g}초 동안 다른 명령을 처리 중이라 이 명령은 보내지 않았습니다")
+        if wait is None:
+            self._lock.acquire()
+        try:
             conn = self._ensure_open()
+            if self._shutdown:  # shutdown() came while the connection opened: do not send the command
+                self._drop()
+                raise SessionError("HPC 세션이 종료되어 명령을 보내지 않았습니다")
             result = self._exec(conn, command, timeout_s or self.cfg.command_timeout_s)
             self._last_activity = self.clock()
             return result
+        finally:
+            self._lock.release()
 
     def close(self, reason: str = "closed") -> None:
         """Close the shell. The next ``run`` opens a new connection (and counts a login)."""
@@ -157,13 +241,32 @@ class HpcSession:
         ticker = self._ticker
         if ticker is not None and ticker is not threading.current_thread():
             ticker.join(timeout=5)  # tick() never waits for the lock, so this ends within one step
-        with self._lock:
-            self._drop()
+        conn = self._conn
+        if conn is not None:
+            self._kill(conn)  # outside the lock: a command in flight ends at once (SessionLost) and frees it
+        self._kill_opening()
+        if self._lock.acquire(timeout=5):
+            try:
+                self._drop()
+            finally:
+                self._lock.release()
+
+    def shutdown(self) -> None:
+        """Close for good (the runner is stopping): a connection still opening is ended, and a command that was waiting for
+        its turn or for the connection is not sent afterwards."""
+        self._shutdown = True
+        self._kill_opening()
+        self.close()
+
+    def _kill_opening(self) -> None:
+        opening = self._opening
+        if opening is not None:
+            self._kill(opening)
 
     def resume(self) -> None:
         """A person opened the session (the tunnel): allow the next ``run`` to try the connection again."""
         with self._lock:
-            self._human = None
+            self._human, self._human_until = None, 0.0
             self._cooldown_until = 0.0
             self._failed_attempts = 0
 
@@ -219,6 +322,9 @@ class HpcSession:
             self._lock.release()
 
     # ---- connection --------------------------------------------------------------------------------------------
+    def _hide(self, text: str) -> str:
+        return redact(text, self.cfg.redact_words or ())
+
     def _notify(self, kind: str, text: str) -> None:
         if self.on_notice:
             try:
@@ -227,10 +333,14 @@ class HpcSession:
                 pass
 
     def _ensure_open(self) -> _Conn:
+        if self._shutdown:
+            raise SessionError("HPC 세션이 종료되어 명령을 보내지 않았습니다")
         if self._stopped:
             raise self._stopped
         if self._human:
-            raise self._human
+            if self.clock() < self._human_until:
+                raise self._human
+            self._human = None  # long enough: a person may have opened it; one more try (and one login) tells
         conn = self._conn
         if conn is not None and conn.proc.poll() is None:
             return conn
@@ -240,9 +350,13 @@ class HpcSession:
         wait = self.cfg.reconnect_wait_s
         last: Exception | None = None
         for attempt in range(self.cfg.reconnect_attempts):
+            if self._shutdown:
+                raise SessionError("HPC 세션이 종료되어 명령을 보내지 않았습니다")
             if attempt:
                 self.sleep(wait)
                 wait = min(wait * 2, self.cfg.reconnect_wait_max_s)
+                if self._shutdown:
+                    raise SessionError("HPC 세션이 종료되어 명령을 보내지 않았습니다")
             try:
                 if self.budget is not None:
                     self.budget.admit(self.cfg.login_label)
@@ -251,25 +365,30 @@ class HpcSession:
                 raise
             self.logins += 1
             try:
-                self._conn = self._open()
+                try:
+                    self._conn = self._open()
+                finally:
+                    self._opening = None
                 self._failed_attempts = 0
                 self._last_activity = self.clock()
                 return self._conn
             except (HostKeyChanged, NeedsHuman):
                 raise
             except SessionError as error:
+                if self._shutdown:  # the connect failed because shutdown() ended it: no more attempts
+                    raise SessionError("HPC 세션이 종료되어 명령을 보내지 않았습니다") from error
                 last = error
         self._cooldown_until = self.clock() + self.cfg.reconnect_cooldown_s
-        text = f"HPC 접속을 {self.cfg.reconnect_attempts}번 시도했으나 열지 못했습니다: {last}"
+        text = f"HPC 접속을 {self.cfg.reconnect_attempts}번 시도했으나 열지 못했습니다: {self._hide(str(last))}"
         self._notify("reconnect_failed", text)
         raise ReconnectFailed(text)
 
     def _open(self) -> _Conn:
         try:
             proc = subprocess.Popen(list(self.cfg.argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, bufsize=0)
+                                    stderr=subprocess.STDOUT, bufsize=0, env=self.cfg.env)
         except OSError as error:
-            raise SessionError(f"접속 명령을 실행하지 못했습니다: {error}") from error
+            raise SessionError(f"접속 명령을 실행하지 못했습니다: {self._hide(str(error))}") from error
         chunks: "queue.Queue[str | None]" = queue.Queue()
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
@@ -288,6 +407,9 @@ class HpcSession:
         reader = threading.Thread(target=pump, name="hpc-session-read", daemon=True)
         reader.start()
         conn = _Conn(proc, chunks, reader)
+        self._opening = conn
+        if self._shutdown:  # shutdown() came while the process started: end it before anything is sent
+            self._kill(conn)
         try:
             self._exec(conn, self.cfg.ready_command, self.cfg.connect_timeout_s)  # the echo of this one is ignored
         except SessionError as error:
@@ -298,7 +420,9 @@ class HpcSession:
                 self._notify("host_key_changed", str(self._stopped))
                 raise self._stopped from error
             if any(t in text for t in self.cfg.tunnel_texts):
-                self._human = NeedsHuman("HPC 접속 통로가 닫혀 있습니다. 세션(터널)을 열어 주세요. 열었으면 resume()을 부릅니다")
+                self._human = NeedsHuman("HPC 접속 통로가 닫혀 있습니다. 세션(터널)을 열어 주세요. 열었으면 다음 명령이 "
+                                         "곧 다시 시도합니다")
+                self._human_until = self.clock() + self.cfg.human_wait_s
                 self._notify("needs_human", str(self._human))
                 raise self._human from error
             raise
@@ -344,7 +468,7 @@ class HpcSession:
             conn.proc.stdin.flush()
         except (OSError, ValueError) as error:
             self._drop_if(conn)
-            raise SessionLost(f"명령을 보내지 못했습니다: {error}") from error
+            raise SessionLost(f"명령을 보내지 못했습니다: {self._hide(str(error))}") from error
         pre, body, lead = "", None, True
         kept: list[str] = []
         kept_len = dropped = 0

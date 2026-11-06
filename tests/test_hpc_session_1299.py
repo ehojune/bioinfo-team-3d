@@ -284,3 +284,20 @@ def test_an_ordinary_connection_refusal_is_retried_not_parked_for_a_person(tmp_p
     with pytest.raises(hs.ReconnectFailed):
         s.run("echo x")
     assert budget.usage()["today"] == 3  # all attempts were made; nobody is asked to open a tunnel
+
+
+def test_after_the_wait_for_a_person_the_next_command_tries_again(tmp_path):
+    now = [0.0]
+    budget = LoginBudget(tmp_path / "logins.sqlite3")
+    s = hs.HpcSession(hs.SessionConfig(argv=argv("--tunnel-down"), connect_timeout_s=5, tunnel_texts=("Connection refused",),
+                                       human_wait_s=300), budget=budget, clock=lambda: now[0], sleep=lambda x: None)
+    with pytest.raises(hs.NeedsHuman):
+        s.run("echo x")
+    now[0] = 100
+    with pytest.raises(hs.NeedsHuman):
+        s.run("echo y")  # still waiting: no login
+    assert budget.usage()["today"] == 1
+    s.cfg.argv = argv()  # the person opened the tunnel
+    now[0] = 400
+    assert s.run("echo up").output == "up\n" and budget.usage()["today"] == 2
+    s.close()

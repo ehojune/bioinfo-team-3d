@@ -19,6 +19,7 @@ import httpx
 
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import chmod_owned, plain_directory, read_owned, write_owned
+from ..hpc_session import call_budget_s
 from ..settings import Settings
 from ._mcpcompat import make_server, tool_failure
 from .scheduler import (
@@ -27,6 +28,13 @@ from .scheduler import (
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
 SCHED = Scheduler(S.hpc)
+# A site profile with a connect command means one HPC shell, owned by the runner: this process never opens a login of
+# its own. Status, queue and cancel are asked of the runner (#1295 C). A named profile that cannot be read fails closed.
+try:
+    VIA_RUNNER = SCHED.session() is not None
+    SESSION_ERROR = None
+except RuntimeError as _error:
+    VIA_RUNNER, SESSION_ERROR = True, str(_error)
 BROKER = os.environ.get("LABHQ_BROKER_URL", f"http://127.0.0.1:{S.runner.broker_port}")
 TOKEN = os.environ.get("LABHQ_BROKER_TOKEN", "")
 TASK = os.environ.get("LABHQ_TASK_ID")
@@ -49,6 +57,31 @@ async def _broker(path: str, payload: dict, timeout: float) -> dict:
         r = await c.post(f"{BROKER}{path}", json=payload, headers={"X-Labhq-Token": TOKEN})
         r.raise_for_status()
         return r.json()
+
+
+def _hpc_wait_s(commands: int = 1) -> float:
+    """How long the runner may take for one scheduler command: a reconnect (every attempt and wait) plus the command.
+    Giving up sooner would return "nothing ran" while the runner's command still goes through."""
+    session = None if SESSION_ERROR else SCHED.session()
+    if session is None:
+        return float(S.hpc.command_timeout_s)
+    # the runner stands in line for the shell at most QUEUE_WAIT_S, then reconnects and runs: after that it gives up
+    # without sending, so the tool never reports "nothing ran" for a command that runs later
+    return call_budget_s(session.cfg, float(S.hpc.command_timeout_s), commands)
+
+
+async def _runner_op(op: str, **fields) -> dict:
+    """Run a scheduler command through the runner's HPC shell. The runner decides; an error comes back as text."""
+    if SESSION_ERROR:
+        raise tool_failure(SESSION_ERROR)
+    try:
+        out = await _broker("/jobs/submit", {"op": op, "task_id": TASK, "agent_id": AGENT, **fields},
+                            timeout=_hpc_wait_s(2 if op == "status" else 1) + 30)
+    except Exception as e:  # fail closed: without the runner there is no shell to ask
+        raise tool_failure(f"labhq broker failed; no HPC command was run: {e!r}") from e
+    if out.get("error"):
+        raise tool_failure(str(out["error"]))
+    return out
 
 
 def _share_workspace_parents(workdir: Path, workspace_root: Path, gid: int,
@@ -270,7 +303,7 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
         out = await _broker("/jobs/submit", {
             "task_id": TASK, "agent_id": AGENT, "script": str(spath), "name": name, "cores": cores, "mem": mem,
             "walltime": walltime, "queue": queue, "reason": reason,
-        }, timeout=S.policy.approvals.timeout_s + S.hpc.command_timeout_s + 60)
+        }, timeout=S.policy.approvals.timeout_s + _hpc_wait_s() + 30)
     except (httpx.ConnectError, ConnectionError) as e:  # fail closed
         raise tool_failure(f"labhq broker unreachable; the job was not submitted: {e}") from e
     except Exception as e:  # the runner may have submitted before the answer was lost
@@ -293,6 +326,8 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
 @server.tool()
 async def hpc_status(job_id: str) -> str:
     """Current state of one job (queued/running/completed/failed/…) with exit status if known."""
+    if VIA_RUNNER:
+        return json.dumps((await _runner_op("status", job_id=job_id))["status"])
     try:
         info = await asyncio.to_thread(SCHED.status, job_id)
     except Exception as e:
@@ -303,6 +338,8 @@ async def hpc_status(job_id: str) -> str:
 @server.tool()
 async def hpc_queue() -> str:
     """All of the lab account's jobs currently known to the scheduler."""
+    if VIA_RUNNER:
+        return json.dumps((await _runner_op("queue"))["queue"])
     try:
         jobs = await asyncio.to_thread(SCHED.queue)
     except Exception as e:
@@ -318,6 +355,8 @@ async def hpc_cancel(job_id: str) -> str:
             checked_job_id(job_id)
     except RuntimeError as e:
         raise tool_failure(str(e)) from e
+    if VIA_RUNNER:  # the runner checks the ownership itself before it runs scancel/qdel in its shell
+        return json.dumps({"job_id": job_id, "result": (await _runner_op("cancel", job_id=job_id))["result"]})
     # The account may be shared (submit_prefix data account): a bare id could name someone else's job (#172).
     try:
         owned = await _broker("/jobs/owned", {"task_id": TASK, "agent_id": AGENT, "job_id": job_id}, timeout=30)

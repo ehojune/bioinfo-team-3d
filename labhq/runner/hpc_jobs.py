@@ -33,6 +33,20 @@ def _script(workdir: Path, raw: object) -> Path | None:
     return path if path.parent.resolve() == Path(workdir).resolve() / "jobs" else None
 
 
+def _submits_remotely(s: Settings, scheduler: Scheduler) -> bool:
+    """Does qsub run on another machine (over hpc.ssh_host, or in a site profile's shell)? The local environment says
+    nothing about a remote PBS_DPREFIX there. A profile that cannot be read counts as remote: ask the PI."""
+    if s.hpc.ssh_host:
+        return True
+    session = getattr(scheduler, "session", None)
+    if session is None:
+        return False
+    try:
+        return session() is not None
+    except RuntimeError:
+        return True
+
+
 async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dict, approve: Approve,
                      gate: Gate | None = None, record: Record | None = None) -> dict:
     """{"submitted": True, "job_id", …}, {"submitted": False, "reason"} after a PI denial, or {"error"}.
@@ -63,7 +77,7 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
     # line does not override all of them, so any directive sends the job to the PI whatever the threshold (#172).
     directives = script_directives(text)
     approval_reasons = []
-    if s.hpc.scheduler == "pbs" and s.hpc.ssh_host:
+    if s.hpc.scheduler == "pbs" and _submits_remotely(s, scheduler):
         approval_reasons.append("remote PBS_DPREFIX cannot be inspected locally")
     if hpc_needs_approval(cores, walltime, s.policy) or directives or approval_reasons:
         outside = f" · 스크립트 지시 {len(directives)}개는 core-h 계산 밖" if directives else ""

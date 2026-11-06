@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 import subprocess
+import threading
 from dataclasses import asdict, dataclass
 
 from ..settings import HpcSettings, slurm_cluster_option
@@ -168,8 +169,22 @@ def build_script(body: str, workdir: str, *, umask: str | None = None) -> str:
     return "\n".join([shebang, *header, *pre, *lines]) + "\n"
 
 
+STDERR_MARK = "__LABHQ_STDERR__"
+
+
+def _split_streams(command: str) -> str:
+    """One shell line that keeps stderr apart from stdout. The shell session has a single output stream, so the command's
+    stderr goes to a temporary file and comes back after a marker line; a warning printed after the job id of a submit can
+    then never be read as the id. The exit status is the command's own."""
+    return (f"E=$(mktemp); {command} 2>\"$E\"; S=$?; printf '\\n{STDERR_MARK}\\n'; cat \"$E\"; rm -f \"$E\"; (exit $S)")
+
+
 def _detail(p: subprocess.CompletedProcess) -> str:
-    return (p.stderr or "").strip() or (p.stdout or "").strip()
+    """What the command said, for an error message. ``_run`` hides the site's host, port and user in it (#1295): the
+    message goes to the staff agent, and a login host name is the institution's, not the agent's to know."""
+    text = (p.stderr or "").strip() or (p.stdout or "").strip()
+    hide = getattr(p, "redact", None)
+    return hide(text) if hide else text
 
 
 # ---------- parsers ----------
@@ -320,10 +335,84 @@ def next_poll_interval(current: float, base: float, cap: float, factor: float, r
     return float(min(max(cap, base), max(base, current * factor)))
 
 
+_SESSIONS: dict[tuple[str, str], object] = {}  # one shell per site profile in this process (#1295 C)
+_SESSIONS_LOCK = threading.Lock()
+
+
+def close_sessions() -> None:
+    """Close every session this process opened (shutdown, and tests)."""
+    with _SESSIONS_LOCK:
+        sessions = list(_SESSIONS.values())
+        _SESSIONS.clear()
+    for session in sessions:
+        session.shutdown()
+
+
+def site_session(cfg: HpcSettings):
+    """The shared ``HpcSession`` of the config's site profile, or None when the profile gives no connect command.
+
+    Every Scheduler of one profile in this process shares the session, so the runner's polling and its tools' commands go
+    over one login. Opening is lazy: nothing connects until a command runs."""
+    from .. import hpc_site
+    from ..hpc_login_budget import budget_for
+    from ..hpc_session import HpcSession
+
+    try:
+        profile = hpc_site.session_profile(cfg.site_profile)
+    except hpc_site.SiteProfileError as error:
+        raise RuntimeError(f"hpc.site_profile {cfg.site_profile!r} cannot be used: {error}") from error
+    if profile is None:
+        return None
+    key = (profile.name, str(hpc_site.sites_dir()))
+    with _SESSIONS_LOCK:
+        session = _SESSIONS.get(key)
+        if session is None:
+            config = hpc_site.session_config(profile, cfg.command_timeout_s)
+            config.env = command_env()  # the connection process gets only what scheduler commands get: no runner credentials
+            session = _SESSIONS[key] = HpcSession(config, budget=budget_for(cfg))
+    return session
+
+
 class Scheduler:
     def __init__(self, cfg: HpcSettings):
         self.cfg = cfg
         self.user = cfg.user or _local_user()
+
+    def session(self):
+        """This config's shared shell, or None (plain ssh_host, or commands run on this machine). The profile is read
+        once per Scheduler; an unreadable one raises each time until it is fixed."""
+        if not hasattr(self, "_session"):
+            self._session = site_session(self.cfg)
+        return self._session
+
+    def attach_session(self, *, on_notice=None, has_open_jobs=None) -> bool:
+        """Hook the runner into the shell: ``on_notice(kind, text)`` hears about login limits, a changed host key, a
+        missing tunnel and failed reconnects; ``has_open_jobs()`` keeps the shell open while jobs run. Starts the
+        keep-alive. False when there is no session."""
+        session = self.session()
+        if session is None:
+            return False
+        session.on_notice, session.has_open_jobs = on_notice, has_open_jobs
+        session.start()
+        return True
+
+    def polls_cost_logins(self) -> bool:
+        """Is every scheduler command a new login (plain ``hpc.ssh_host``)? Over a shell it is not, so polling needs no backoff."""
+        try:
+            return self.session() is None and bool(self.cfg.ssh_host)
+        except RuntimeError:
+            return bool(self.cfg.ssh_host)
+
+    def needs_login(self) -> bool:
+        """Would the next scheduler command open a new login? Over a live shell it would not; over ``hpc.ssh_host`` it
+        always does; on the login node itself there is no login."""
+        try:
+            session = self.session()
+        except RuntimeError:
+            return True
+        if session is not None:
+            return not session.connected
+        return bool(self.cfg.ssh_host)
 
     def _require_enabled(self, operation: str) -> None:
         if self.cfg.scheduler == "none":
@@ -331,6 +420,24 @@ class Scheduler:
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess:
         self._require_enabled("command execution")
+        session = self.session()
+        if session is not None:  # one shell for everything: a command is a line sent to it, not a login (#1295 C)
+            from ..hpc_session import CommandTimeout
+
+            try:
+                result = session.run(_split_streams(shlex.join(args)), self.cfg.command_timeout_s)
+            except CommandTimeout as error:
+                raise subprocess.TimeoutExpired(args, self.cfg.command_timeout_s) from error
+            if result.truncated:  # the command ran: a submit may have gone through, so this is "lost", not a plain failure
+                from ..hpc_session import SessionLost
+
+                raise SessionLost(f"{args[0]} printed more than the session keeps; the answer is incomplete")
+            out, _, err = result.output.rpartition(f"\n{STDERR_MARK}\n")
+            if not _:  # no marker: the shell did not run our wrapper; everything is output
+                out, err = result.output, ""
+            done = subprocess.CompletedProcess(args, result.exit_code, out, err)
+            done.redact = self._redactor(session)
+            return done
         if self.cfg.ssh_host:
             # Every ssh is a login the site records: count it, and refuse it when a limit the user set is used up (#1295).
             from ..hpc_login_budget import budget_for
@@ -339,8 +446,20 @@ class Scheduler:
             if budget is not None:
                 budget.admit(args[0])
             args = ["ssh", "-o", "BatchMode=yes", self.cfg.ssh_host, shlex.join(args)]
-        return subprocess.run(args, capture_output=True, text=True, timeout=self.cfg.command_timeout_s,
+        done = subprocess.run(args, capture_output=True, text=True, timeout=self.cfg.command_timeout_s,
                               env=command_env())
+        if self.cfg.ssh_host:
+            done.redact = self._redactor(None)  # ssh's own error text names the host and the user
+        return done
+
+    def _redactor(self, session):
+        """A function hiding this site's host, port and user names in a message: the profile's connect command, or
+        ``hpc.ssh_host``."""
+        from ..hpc_session import redact, redaction_words
+
+        words = (session.cfg.redact_words if session is not None
+                 else redaction_words(["ssh", *shlex.split(self.cfg.ssh_host or "")]))
+        return lambda text: redact(text, words or ())
 
     def submit_args(self, script: str, name: str, cores: int, mem: str, walltime: str,
                     queue: str | None, stdout: str, stderr: str) -> list[str]:
@@ -384,6 +503,12 @@ class Scheduler:
             p = self._run(self.submit_args(script, name, cores, mem, walltime, queue, stdout, stderr))
         except subprocess.TimeoutExpired as e:
             raise RuntimeError(f"{cmd} timed out after {self.cfg.command_timeout_s}s{MAYBE_SUBMITTED}") from e
+        except Exception as e:
+            from ..hpc_session import SessionLost
+
+            if isinstance(e, SessionLost):  # the shell dropped while qsub/sbatch ran: it may have gone through
+                raise RuntimeError(f"{e}{MAYBE_SUBMITTED}") from e
+            raise
         if p.returncode != 0:
             raise RuntimeError(f"{cmd} failed ({p.returncode}): {_detail(p)}")
         lines = [line.strip() for line in p.stdout.splitlines() if line.strip()]
@@ -618,7 +743,9 @@ class Scheduler:
         cmd = "scancel" if self.cfg.scheduler == "slurm" else "qdel"
         p = self._run([*self.cfg.submit_prefix, cmd, job_id])
         if p.returncode != 0:
-            detail = (p.stderr or p.stdout).strip()
+            detail = _detail(p)
             hint = f"; allow {cmd} in sudoers for hpc.submit_prefix" if self.cfg.submit_prefix else ""
             raise RuntimeError(f"{cmd} failed ({p.returncode}): {detail}{hint}")
-        return (p.stdout or p.stderr).strip()
+        text = (p.stdout or p.stderr).strip()
+        hide = getattr(p, "redact", None)
+        return hide(text) if hide else text
