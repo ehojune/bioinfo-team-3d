@@ -32,3 +32,7 @@ rows:
     at: "2026-11-07 00:50"
     summary: "runner가 멈추는 중에 HPC에 접속하고 있었다면 그 접속도 끝내고, 멈춘 뒤에는 기다리던 제출이나 취소 명령을 보내지 않습니다."
     text: "HpcSession.shutdown(진행 중 접속 종료, 이후 run·재접속 거부), close_sessions가 shutdown 호출, 시험 1건 (#1295)"
+  - sha: "d37d28a"
+    at: "2026-11-07 01:30"
+    summary: "접속 하나를 계속 쓰는 사이트에서는 상태 확인 간격을 늘리지 않아 완료를 더 빨리 알립니다. 상태 조회가 명령 두 개일 때의 대기 시간도 도구 시간 제한에 넣었습니다."
+    text: "Scheduler.polls_cost_logins로 backoff 판단, hpc_session.call_budget_s(명령 수만큼 줄서기·실행 시간)를 hpc_mcp와 labhq_mcp_timeout_s에 적용, 시험 2건 (#1295)"
