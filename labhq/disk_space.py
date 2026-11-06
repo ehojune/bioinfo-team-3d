@@ -769,9 +769,38 @@ def _ps_unplaced(command: str, commands: list[list[str]]) -> bool:
     """Whether the text names a download or unpack cmdlet more often than the tokenizer found one as a command name:
     an assignment (`$r = iwr ...`), a cast (`[void](iwr ...)`), a quote that never closed, or any wrapping not read yet.
     The closing net of the class: what is named but not placed is checked, never passed."""
-    named = sum(1 for _ in _PS_WRITER.finditer(command))
+    # A backtick inside a name is an escape PowerShell drops (`iw`r` is `iwr`), so it is dropped before counting too.
+    named = sum(1 for _ in _PS_WRITER.finditer(command.replace("`", "")))
     placed = sum(1 for words in commands if _ps_name(words[0]) in _PS_DOWNLOADS | _PS_UNPACK | _PS_TRANSFER)
     return named > placed
+
+
+_UNC = re.compile(r"""(?<![\w:$.])(?:\\\\|//)[^\\/\s'"`,;|)(]+[\\/][^\\/\s'"`,;|)(]+""")
+
+
+def _unc_roots(text: str) -> list[str]:
+    r"""The `\\server\share` roots a PowerShell text names, written with backslashes."""
+    return list(dict.fromkeys(m.group(0).replace("/", "\\") for m in _UNC.finditer(text)))
+
+
+def _unc_check(root: str, *, probe, fail_gb: float, warn_gb: float, warn_percent: float) -> ShellCheck | None:
+    """A network share is read when the machine can read it and is otherwise unknown, which only warns: a share's
+    free space is often hidden by quotas or not reachable from here, so it is never a reason to ask."""
+    note = f"네트워크 경로({root})는 여유를 알 수 없어 막지 않습니다"
+    if os.name != "nt" and probe is usage:
+        return ShellCheck("warn", note)  # only Windows reads a share; elsewhere the default probe would read a local folder
+    try:
+        space = probe(Path(root))
+    except (OSError, ValueError):
+        return ShellCheck("warn", note)
+    if space.total <= 0:
+        return ShellCheck("warn", note)
+    free = space.free / GIB
+    if fail_gb and space.free < fail_gb * GIB:
+        return ShellCheck("ask", f"다운로드·압축 해제 대상 네트워크 경로({root}) 여유가 {free:.1f} GiB로 기준 {fail_gb:g} GiB보다 적습니다")
+    if low(space, warn_gb, warn_percent):
+        return ShellCheck("warn", f"다운로드·압축 해제: 네트워크 경로({root}) 여유가 적습니다({free:.1f} GiB). 크기를 알 수 없어 막지 않습니다")
+    return None  # a share that can be read and has room says nothing
 
 
 def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: float, warn_percent: float,
@@ -800,6 +829,10 @@ def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: flo
             cwds = list(dict.fromkeys([f"{words[0].upper()}/", *cwds]))  # `D:` switches to that drive's folder
             ever = list(dict.fromkeys([*ever, *cwds]))
             continue
+        if name in _PS_DOWNLOADS | _PS_UNPACK | _PS_TRANSFER:
+            for root in _unc_roots(" ".join(words[1:])):
+                worst = _worse(worst, _unc_check(root, probe=probe, fail_gb=fail_gb, warn_gb=warn_gb,
+                                                 warn_percent=warn_percent))
         seen = set()
         for cwd in cwds:
             try:
@@ -816,6 +849,8 @@ def powershell_check(command: str, workdir: str, *, fail_gb: float, warn_gb: flo
     if _ps_unplaced(command, commands):
         # Where it writes is unknown: the folders the line may be in and every drive the text names are candidates.
         drives = {Path(f"{m.group(1).upper()}:/") for m in re.finditer(r"(?<![\w$])([A-Za-z]):", command)}  # `D:a.zip` and `D:\a.zip` alike
+        for root in _unc_roots(command):  # a share is read like a drive, and only warns when it cannot be read
+            worst = _worse(worst, _unc_check(root, probe=probe, fail_gb=fail_gb, warn_gb=warn_gb, warn_percent=warn_percent))
         folders = list(dict.fromkeys([*(Path(c) for c in ever), *drives]))
         worst = _worse(worst, _assess("다운로드·압축 해제", folders[0], None, [], probe=probe, fail_gb=fail_gb,
                                       warn_gb=warn_gb, warn_percent=warn_percent, mains=folders))
