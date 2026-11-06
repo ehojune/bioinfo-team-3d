@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: "2ead330"
+    at: "2026-11-06 21:00"
+    summary: "사이트 프로필에 접속 명령이 있으면 HPC에 한 번만 접속해 셸 하나를 열어 두고, 제출·상태·큐·취소와 runner의 상태 조회가 모두 그 셸로 돕니다. 직원 도구도 직접 접속하지 않고 runner에 요청합니다. 접속이 다시 열릴 때만 로그인으로 세고, 사람이 터널을 열어야 하는 문구는 프로필이 정합니다."
+    text: "Scheduler가 site_session(공유 HpcSession)으로 _run, hpc_mcp의 status·queue·cancel을 broker /jobs/submit op로 runner에 위임, runner의 _on_scheduler_op·세션 알림·needs_login, 프로필 tunnel_texts와 session_config, NeedsHuman 5분 대기 뒤 재시도, manual 09·15 한영 (#1295)"
