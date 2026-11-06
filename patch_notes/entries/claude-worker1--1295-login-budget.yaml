@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: "6a47c16"
+    at: "2026-11-06 16:30"
+    summary: "HPC에 접속할 때마다 로그인 수를 세고, 사용자가 정한 요청당·하루 상한에 닿으면 새 접속을 하지 않습니다. 상한 값은 저장소에 없고 사용자가 정합니다."
+    text: "hpc_login_budget(SQLite 카운터, request_scope, LoginLimitReached), HpcSettings 로그인 상한 두 개(기본 비움), Scheduler._run이 ssh 전에 admit, labhq hpc-logins (#1295)"
