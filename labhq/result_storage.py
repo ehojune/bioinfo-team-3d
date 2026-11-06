@@ -29,6 +29,7 @@ from .portfolio import (PRIVATE_PATH_PATTERN, EditionCheckError, broken_markdown
                         portfolio_root_file,
                         internal_data_steps, portfolio_report, publish_file_allowed, request_uses_internal_data,
                         scan_publish_files, source_uses_internal_data, table_allowed)
+from .evidence import wiki_exposure
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
 from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
@@ -1132,6 +1133,10 @@ class ResultStorage:
         if controlled_request(req, self.s):
             await self._progress_warning(
                 rid, saved, "통제 데이터 요청은 단계별 GitHub 진행 게시를 켤 수 없어 껐습니다.", disable=True)
+            return
+        blocker = wiki_exposure.publication_blocker(req)
+        if blocker:  # unknown or possible wiki exposure: nothing goes to GitHub (#1037)
+            await self._progress_warning(rid, saved, blocker + ". 단계별 진행 게시를 껐습니다.", disable=True)
             return
         gh = self.client()
         if gh is None:

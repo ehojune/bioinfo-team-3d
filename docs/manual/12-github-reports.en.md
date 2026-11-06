@@ -15,7 +15,7 @@ For a research request, after the briefing before CP1 and after the report **Rev
 When you first choose GitHub, you can turn on **Also upload progress at each step?** (off by default). If on, each time a step finishes it updates the status table `progress/README.md` of
 `github.progress_branch` (default `labhq/progress`) and the publishable Markdown, SVG and code.
 It does not carry internal-step outputs, and a file caught by the pre-publication check is left in the status table as **removed by check**. It cannot be turned on for a controlled-data request.
-A transient failure does not stop the request and is tried again at the next step. If the token or Contents permission is missing, it tells you once and turns off progress publishing for that request.
+A transient failure does not stop the request and is tried again at the next step. If the token or Contents permission is missing, it tells you once and turns off progress publishing for that request. It also tells you once and turns it off when a staff member of that request could use the PI's LLM-wiki tool (`wiki_exposure: possible`) or that history cannot be read (an older request with no record, `unknown`) (#1037). The gateway writes the wiki exposure for each request: a new request starts as `none`, becomes `possible` the moment a task goes to a staff member who has the wiki tool, and never goes back down. This stage blocks only step progress publishing; report, upload and round publishing and CP2 are not blocked yet.
 The final summary is published as is to main (or the chosen final branch) after review done and publication approval.
 
 A plan revision decided with `--project` or continued from that request does not ask again. An ordinary request asks when `github.ask_storage: true`.
