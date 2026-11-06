@@ -3281,7 +3281,30 @@ class Runner:
         await self.emit(Event(type=body.get("type", "agent.log"), task_id=tid, agent_id=body.get("agent_id"),
                               request_id=self.task_req.get(tid or ""), data=body.get("data") or {}))
 
+    HIDE_KEYS = frozenset({"error", "detail", "result", "reason", "note"})
+
+    def _hide_text(self, text: str) -> str:
+        """The site's host, port and user names (and the cluster work folder) hidden in a piece of HPC text."""
+        redactor = getattr(self.scheduler, "redactor", None)  # a stand-in scheduler (tests) hides nothing
+        return redactor()(text) if redactor else text
+
+    def _hide_hpc(self, value, key: str | None = None):
+        """The runner's boundary for HPC text: what goes back to a staff tool through the broker passes here once, so no
+        error, detail or result quoted from the cluster carries the site. Only the text fields are touched; ids, names
+        and paths are left as they are."""
+        if isinstance(value, str):
+            return self._hide_text(value) if key in self.HIDE_KEYS else value
+        if isinstance(value, dict):
+            return {k: self._hide_hpc(v, k if isinstance(k, str) and k in self.HIDE_KEYS else key if key in self.HIDE_KEYS
+                                      else None) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._hide_hpc(v, key) for v in value]
+        return value
+
     async def _on_submit(self, body: dict) -> dict:
+        return self._hide_hpc(await self._on_submit_raw(body))
+
+    async def _on_submit_raw(self, body: dict) -> dict:
         """hpc_submit runs here (#214 review): the id the runner's own scheduler call printed is the record. The status,
         queue and cancel tools reach the runner's one HPC shell through the same route (``op``, #1295 C)."""
         if body.get("op"):
@@ -3389,7 +3412,8 @@ class Runner:
         tid = job.get("task_id")
         await self.emit(Event(type="agent.log", task_id=tid, agent_id=job.get("agent_id"),
                               request_id=self.task_req.get(tid or ""),
-                              data={"level": "alert", "hpc_session": {"kind": kind}, "text": f"HPC 세션: {text}"}))
+                              data={"level": "alert", "hpc_session": {"kind": kind},
+                                    "text": f"HPC 세션: {self._hide_text(text)}"}))
 
     def _login_limit(self, request_id: str | None) -> LoginLimitReached | None:
         """The HPC login limit a new login for this request would hit now (#1295), else None. Over a live shell a command
@@ -3803,7 +3827,7 @@ class Runner:
             try:
                 manifest = await asyncio.to_thread(self._fetch_job_files, j, spec)
             except Exception as error:  # noqa: BLE001 - reported below; the files stay on the cluster
-                j["fetch_error"] = str(error)[:300]
+                j["fetch_error"] = self._hide_text(str(error))[:300]
                 if j["fetch_tries"] >= self.FETCH_TRIES:
                     await self._emit_hpc_notice("transfer", f"작업 {jid}의 로그·결과를 가져오지 못했습니다: {j['fetch_error']}")
             else:

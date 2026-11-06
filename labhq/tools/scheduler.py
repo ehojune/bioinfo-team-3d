@@ -402,7 +402,10 @@ class Scheduler:
             return None
         from ..hpc_transfer import Transfer
 
-        return Transfer(session.run, profile.remote_workdir)
+        from ..hpc_session import redact
+
+        words = session.cfg.redact_words or ()
+        return Transfer(session.run, profile.remote_workdir, redact=lambda text: redact(text, words))
 
     def attach_session(self, *, on_notice=None, has_open_jobs=None) -> bool:
         """Hook the runner into the shell: ``on_notice(kind, text)`` hears about login limits, a changed host key, a
@@ -473,12 +476,28 @@ class Scheduler:
 
     def _redactor(self, session):
         """A function hiding this site's host, port and user names in a message: the profile's connect command, or
-        ``hpc.ssh_host``."""
+        ``hpc.ssh_host``. With a profile it also hides the cluster work folder (it names the user's account there)."""
         from ..hpc_session import redact, redaction_words
 
         words = (session.cfg.redact_words if session is not None
                  else redaction_words(["ssh", *shlex.split(self.cfg.ssh_host or "")]))
-        return lambda text: redact(text, words or ())
+        profile = getattr(session, "profile", None) if session is not None else None
+        root = getattr(profile, "remote_workdir", None)
+
+        def hide(text: str) -> str:
+            if root:
+                text = text.replace(root, "<workdir>")  # first: the path holds the user name the words would cut up
+            return redact(text, words or ())
+
+        return hide
+
+    def redactor(self):
+        """The one function every HPC message bound for the agent or the feed passes through (see the runner's boundary)."""
+        try:
+            session = self.session()
+        except RuntimeError:
+            session = None
+        return self._redactor(session)
 
     def submit_args(self, script: str, name: str, cores: int, mem: str, walltime: str,
                     queue: str | None, stdout: str, stderr: str) -> list[str]:

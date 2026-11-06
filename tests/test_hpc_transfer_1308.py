@@ -538,3 +538,115 @@ def test_the_submit_wait_includes_the_whole_upload_allowance_only_where_files_cr
     sched.close_sessions()
     monkeypatch.setattr(hpc, "SCHED", sched.Scheduler(site.settings.hpc))
     assert hpc._submit_wait_s() == hpc._hpc_wait_s()
+
+
+# ---- review round: errors keep the site out, and results too deep to list are named ----
+
+def test_a_transfer_error_does_not_carry_the_site_or_the_work_folder(tmp_path, monkeypatch):
+    from types import SimpleNamespace as NS
+
+    words = ("gw.example.org", "bob")
+    seen = NS(output="mkdir: cannot create /scratch/bob/proj/t1: Permission denied (bob@gw.example.org)")
+    transfer = ht.Transfer(lambda command: NS(exit_code=1, output=seen.output), "/scratch/bob/proj",
+                           redact=lambda text: hs.redact(text, words))
+    with pytest.raises(ht.TransferError) as caught:
+        transfer.ensure_dir("t1")
+    message = str(caught.value)
+    assert "gw.example.org" not in message and "bob" not in message and "/scratch" not in message
+    assert "<workdir>" in message and "Permission denied" in message
+
+
+def test_the_scheduler_gives_its_transfer_the_sites_redactor(site, monkeypatch):
+    transfer = sched.Scheduler(site.settings.hpc).transfer()
+    assert transfer._redact is not None
+    assert transfer._hide("see " + ROOT + "/t1 for details") == "see <workdir>/t1 for details"
+
+
+def test_results_deeper_than_the_listing_are_named_as_left_behind(site):
+    result = submit(site, write_script(site))
+    work = site.remote("t1/work")
+    (work / "a" / "b" / "c").mkdir(parents=True)
+    (work / "a" / "b" / "c" / "deep.txt").write_text("deep", encoding="utf-8")
+    (work / "a" / "top.txt").write_text("top", encoding="utf-8")
+    transfer = sched.Scheduler(site.settings.hpc).transfer()
+    manifest = ht.fetch_results(transfer, {**result["transfer"]}, site.workdir / "jobs" / "logs",
+                                site.workdir / "outputs", base=site.workdir)
+    assert [f["path"] for f in manifest["fetched"]] == ["a/top.txt"]
+    deep = [s for s in manifest["skipped"] if s["path"] == "a/b/c/deep.txt"]
+    assert deep and "deeper than 3" in deep[0]["reason"]
+
+
+# ---- the boundary: nothing the runner sends out carries the site ----
+
+LEAK = "ssh: connect to gw.example.org port 2222 as bob failed in /hpc/work/t1: refused"
+
+
+def leaky_runner(site):
+    runner = stub_runner(site, {"job_id": "1000", "task_id": "t1", "agent_id": "a1", "terminal": False,
+                                "workdir": str(site.workdir)})
+    runner.workspaces = {"t1": SimpleNamespace(dir=site.workdir, task=SimpleNamespace(meta={}))}
+    runner.active_roots = {"t1": (False,)}
+    runner._owns_job = lambda identity: asyncio.sleep(0, result=True)
+    argv = [sys.executable, "-I", GATEWAY, "-p", "2222", "bob@gw.example.org"]
+    hpc_site.save_profile(hpc_site.SiteProfile(name="fake", access_method="ssh", connect_argv=argv, remote_exec=True,
+                                               scheduler="slurm", remote_workdir="/hpc/work"))
+    sched.close_sessions()
+    runner.s = Settings.model_validate({"runner": {"state_dir": str(site.tmp / "state")},
+                                        "hpc": {"scheduler": "slurm", "user": "lab", "site_profile": "fake"}})
+    runner.scheduler = sched.Scheduler(runner.s.hpc)
+    return runner
+
+
+def assert_clean(text):
+    for word in ("gw.example.org", "bob", "2222", "/hpc/work"):
+        assert word not in text, (word, text)
+
+
+def test_what_goes_back_to_a_tool_never_carries_the_site(site, monkeypatch):
+    runner = leaky_runner(site)
+
+    def boom(self, *a, **k):
+        raise RuntimeError(LEAK)
+
+    monkeypatch.setattr(sched.Scheduler, "status", boom)
+    monkeypatch.setattr(sched.Scheduler, "queue", boom)
+    monkeypatch.setattr(sched.Scheduler, "cancel", boom)
+    monkeypatch.setattr(sched.Scheduler, "submit", boom)
+    for op in ("status", "queue", "cancel"):
+        reply = asyncio.run(type(runner)._on_submit(runner, {"op": op, "task_id": "t1", "agent_id": "a1", "job_id": "1000"}))
+        assert_clean(reply["error"])
+        assert "refused" in reply["error"]  # the reason stays, the site goes
+    (site.workdir / "jobs").mkdir(exist_ok=True)
+    script = write_script(site)
+    runner.s.policy.approvals.hpc_core_hours_threshold = 1000
+    runner.submitting, runner.broker = {}, SimpleNamespace()
+    reply = asyncio.run(type(runner)._on_submit(runner, {"task_id": "t1", "agent_id": "a1", "script": str(script),
+                                                         "name": "align", "cores": 1, "mem": "1G", "walltime": "00:10:00"}))
+    assert "error" in reply
+    assert_clean(reply["error"])
+
+
+def test_only_the_text_fields_are_hidden_not_ids_names_or_paths(site):
+    runner = leaky_runner(site)
+    reply = runner._hide_hpc({"submitted": True, "job_id": "1000", "name": "bob_align", "script": "C:/Users/bob/job.sh",
+                              "status": {"state": "failed", "detail": "bob@gw.example.org said no"},
+                              "queue": [{"job_id": "1", "detail": "on gw.example.org"}], "result": "ok /hpc/work/x"})
+    assert reply["name"] == "bob_align" and reply["script"] == "C:/Users/bob/job.sh" and reply["job_id"] == "1000"
+    assert_clean(reply["status"]["detail"]) and assert_clean(reply["queue"][0]["detail"]) and assert_clean(reply["result"])
+
+
+def test_a_notice_and_a_fetch_error_in_the_feed_never_carry_the_site(site, monkeypatch):
+    runner = leaky_runner(site)
+    runner.jobs["1000"].update(terminal=True, transfer={"base": "t1", "work": "t1/work", "logs": [], "stem": "x",
+                                                        "fetch_to": str(site.workdir / "outputs")})
+    asyncio.run(runner._emit_hpc_notice("needs_human", LEAK))
+
+    def broken(self, *a, **k):
+        raise ht.TransferError(LEAK)
+
+    monkeypatch.setattr(ht.Transfer, "list_deeper", broken)
+    for _ in range(3):
+        asyncio.run(runner._fetch_finished_jobs())
+    texts = [e.data["text"] for e in runner.events]
+    assert len(texts) == 2 and all(assert_clean(text) is None for text in texts)
+    assert_clean(runner.jobs["1000"]["fetch_error"])

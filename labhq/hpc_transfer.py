@@ -74,12 +74,14 @@ def sha256_hex(data: bytes) -> str:
 
 
 class Transfer:
-    def __init__(self, run: Callable[[str], object], root: str, limits: Limits = Limits()):
+    def __init__(self, run: Callable[[str], object], root: str, limits: Limits = Limits(),
+                 redact: Callable[[str], str] | None = None):
         if not isinstance(root, str) or not root.startswith("/") or ".." in root.split("/") or "\n" in root:
             raise PathRejected("the remote work folder is an absolute POSIX path without '..'")
         self.run, self.root, self.limits = run, root.rstrip("/") or "/", limits
         self._real_root: str | None = None
         self.deadline: float | None = None  # time.monotonic() after which no further command is sent
+        self._redact = redact  # hides the site's host, port and user in what the cluster printed
 
     # ---- the far side ------------------------------------------------------------------------------------------
     def _do(self, command: str, what: str) -> str:
@@ -87,8 +89,16 @@ class Transfer:
             raise TransferError(f"{what}: the time allowed for this transfer is used up; nothing more was sent")
         result = self.run(command)
         if getattr(result, "exit_code", 1) != 0:
-            raise TransferError(f"{what} failed on the cluster: {str(getattr(result, 'output', ''))[:200].strip()}")
+            raise TransferError(f"{what} failed on the cluster: {self._hide(str(getattr(result, 'output', ''))[:200].strip())}")
         return str(result.output)
+
+    def _hide(self, text: str) -> str:
+        """What the cluster printed, for an error message the agent and the web feed may show: the site's host, port and
+        user names, and the work folder's own path (which names the user's account there), are hidden."""
+        for path in sorted({self.root, self._real_root or self.root}, key=len, reverse=True):
+            if path and path != "/":
+                text = text.replace(path, "<workdir>")  # first: the path holds the user name the redactor would cut up
+        return self._redact(text) if self._redact is not None else text
 
     def real_root(self) -> str:
         if self._real_root is None:
@@ -196,6 +206,13 @@ class Transfer:
             if size.isdigit() and name:
                 files.append((name, int(size)))
         return sorted(files, key=lambda item: item[0])
+
+    def list_deeper(self, rel_dir: str, limit: int = 50) -> list[str]:
+        """Files below the depth ``list_files`` looks at (at most ``limit`` names), so they can be named as left behind."""
+        folder = self.ensure_dir(rel_dir)
+        out = self._do(f"find {shlex.quote(folder)} -mindepth {self.limits.list_depth + 1} -type f -printf '%P\\n' | head -n {limit}",
+                       "listing deeper results")
+        return [line for line in out.splitlines() if line.strip()]
 
     def fetch_bytes(self, rel: str, *, tail: bool = False, max_bytes: int | None = None) -> tuple[bytes, dict]:
         """The file's bytes and ``{"sha256", "bytes", "truncated"}``. A file over the limit is refused, except with
@@ -372,6 +389,9 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
             continue
         manifest["logs"].append(transfer.fetch_file(rel, logs_dir, tail=True, name=PurePosixPath(rel).name))
     total = 0
+    for name in transfer.list_deeper(spec["work"]):  # too deep to list: not fetched, and said so
+        manifest["skipped"].append({"path": name, "reason": f"deeper than {transfer.limits.list_depth} folders: use the "
+                                                            "site profile's file transfer method"})
     for name, size in transfer.list_files(spec["work"]):
         rel = f"{spec['work']}/{name}"
         try:

@@ -169,12 +169,24 @@ def files(tokens: list[str]) -> tuple[str, int] | None:
         with open(path, "rb") as f:
             f.seek(start - 1)
             return base64.b64encode(f.read(count)).decode("ascii"), 0
+    if head == "find" and tokens[2] == "-mindepth":  # find D -mindepth N -type f -printf '%P\n' | head -n M
+        base, least, limit = _real(tokens[1]), int(tokens[3]), int(tokens[-1])
+        names = []
+        for root, _dirs, names_here in os.walk(base):
+            for name in names_here:
+                full = os.path.join(root, name)
+                rel = os.path.relpath(full, base).replace(os.sep, "/")
+                if rel.count("/") + 1 >= least and os.path.isfile(full) and not os.path.islink(full):
+                    names.append(rel + "\n")
+        return "".join(names[:limit]), 0
     if head == "find":
         base, depth = _real(tokens[1]), int(tokens[3])
         out = []
         for root, dirs, names in os.walk(base):
             if root[len(base):].count(os.sep) >= depth:
                 dirs[:] = []
+            if root[len(base):].count(os.sep) + 1 > depth:
+                continue  # its files are deeper than -maxdepth
             for name in names:
                 full = os.path.join(root, name)
                 if os.path.isfile(full) and not os.path.islink(full):
