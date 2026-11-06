@@ -9,7 +9,7 @@ lookup-only. 동작 설명은 [manual 12장](../manual/12-github-reports.md), �
 | 기록 | 요청 기록의 `wiki_exposure` (`labhq/evidence/wiki_exposure.py`) |
 | `none` | 이력을 적는 게이트웨이가 만든 요청이고, wiki 도구를 줄 수 있는 직원에게 task를 보낸 적이 없다 |
 | `possible` | 그런 직원에게 task를 보냈다. 다시 `none`이 되지 않는다 |
-| 없음·그 밖의 값 | **unknown**. 이력이 없는 옛 요청이거나 읽을 수 없다 |
+| 없음·그 밖의 값 | **unknown**. 이력이 없거나 읽을 수 없다. 단 `created_at`이 숫자이고 `labhq_wiki` 출시(PR #1040 병합, 2026-10-29T21:01:56Z) 이전이면 `none`으로 본다(그때는 도구가 없었다). 출시 이후거나 `created_at`이 없으면 unknown |
 | 공개 게시 | `none`일 때만 허용한다. `possible`·unknown은 막는다 |
 
 ## 어떻게 묶었나
@@ -17,7 +17,7 @@ lookup-only. 동작 설명은 [manual 12장](../manual/12-github-reports.md), �
 - 게이트웨이 `dispatch`가 task를 보내기 직전에(`_bind_wiki_exposure`) 그 runner가 보낸 roster의 `wiki_tools`로 task `meta["wiki_tools"]`를 정하고, wiki가 가능하거나 알 수 없으면 요청을 `possible`로 올린다. 저장은 전달보다 먼저다.
 - roster에 `wiki_tools` 키가 없거나(옛 runner), 그 직원이 roster에 없으면 알 수 없는 것이므로 `possible`로 올리고 task에는 허가를 주지 않는다.
 - runner는 `meta["wiki_tools"]`가 참인 dispatch에만 `labhq_wiki`를 붙인다(`_mcp_servers(..., wiki_bound=True)`). 전에 보낸 roster가 나중의 도구 구성을 허가하지 못한다.
-- 이력이 없는 요청은 dispatch가 와도 기록하지 않는다(unknown 그대로).
+- 이력이 없고 출시 이후인 요청은 dispatch가 와도 기록하지 않는다(unknown 그대로). 출시 이전 요청은 `none`으로 보므로 wiki 직원에게 task가 가면 `possible`이 된다.
 
 ## 이번 단계가 막는 것과 아직 아닌 것
 

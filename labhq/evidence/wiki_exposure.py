@@ -22,10 +22,21 @@ POSSIBLE = "possible"
 UNKNOWN = "unknown"
 
 
+# Merge time of PR #1040 (2026-10-29T21:01:56Z), which shipped `labhq_wiki`. A request without a record that was created
+# before it could not have reached the wiki, whatever was configured since; the record is then ``none`` by time.
+WIKI_SHIPPED_AT = 1793307716.0
+
+
 def exposure(request: Mapping[str, Any] | None) -> str:
-    """``none``, ``possible`` or ``unknown`` for a request record; anything not exactly written by the gateway is unknown."""
+    """``none``, ``possible`` or ``unknown`` for a request record. Anything not exactly written by the gateway is unknown,
+    except a request created before the wiki tool existed. A missing, non-numeric or later `created_at` stays unknown."""
     value = (request or {}).get(KEY)
-    return value if value in (NONE, POSSIBLE) else UNKNOWN
+    if value in (NONE, POSSIBLE):
+        return value
+    created = (request or {}).get("created_at")
+    if isinstance(created, (int, float)) and not isinstance(created, bool) and 0 < created < WIKI_SHIPPED_AT:
+        return NONE
+    return UNKNOWN
 
 
 def after_wiki_dispatch(request: Mapping[str, Any] | None) -> str | None:

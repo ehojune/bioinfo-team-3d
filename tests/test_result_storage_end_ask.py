@@ -22,7 +22,7 @@ def make(tmp_path, monkeypatch, *, create=422):
     calls = []
     app = create_app(settings, github_transport=github(calls, create=create))
     hub = app.state.hub
-    hub.requests["r"] = {"id": "r", "status": "running", "text": "Public study", "report": "Result"}
+    hub.requests["r"] = {"wiki_exposure": "none", "id": "r", "status": "running", "text": "Public study", "report": "Result"}
     hub.agents["editor"] = {}
     editor = AsyncMock(return_value=SimpleNamespace(ok=True, structured={"readme": "# Edited summary"}))
     monkeypatch.setattr(hub.orchestrator, "run_step", editor)

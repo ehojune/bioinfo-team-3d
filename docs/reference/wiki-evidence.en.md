@@ -9,7 +9,7 @@ Lookup-only. Behavior is described in [manual chapter 12](../manual/12-github-re
 | Record | `wiki_exposure` on the request record (`labhq/evidence/wiki_exposure.py`) |
 | `none` | The request was made by a gateway that records this, and no task has been sent to a staff member who could be given the wiki tool |
 | `possible` | A task was sent to such a staff member. It never goes back to `none` |
-| missing or any other value | **unknown**: an older request with no record, or one that cannot be read |
+| missing or any other value | **unknown**: no record, or one that cannot be read. Except that a numeric `created_at` before the `labhq_wiki` release (PR #1040 merge, 2026-10-29T21:01:56Z) counts as `none`, since the tool did not exist then. After the release, or with no `created_at`, it is unknown |
 | Public publication | Allowed only for `none`. `possible` and unknown are blocked |
 
 ## How it is bound
@@ -17,7 +17,7 @@ Lookup-only. Behavior is described in [manual chapter 12](../manual/12-github-re
 - Just before it sends a task, the gateway's `dispatch` (`_bind_wiki_exposure`) sets the task's `meta["wiki_tools"]` from the `wiki_tools` in the roster that runner sent. When the wiki is possible or unknown it raises the request to `possible`. The write comes before delivery.
 - A roster without the `wiki_tools` key (an older runner), or without that staff member, is unknown: the request is raised to `possible` and the task gets no permission.
 - The runner attaches `labhq_wiki` only to a dispatch whose `meta["wiki_tools"]` is true (`_mcp_servers(..., wiki_bound=True)`). A roster sent earlier cannot authorize a different tool set later.
-- A request with no history is not written to by a dispatch (it stays unknown).
+- A request with no history created after the release is not written to by a dispatch (it stays unknown). One created before it counts as `none`, so a task to a wiki-capable staff member makes it `possible`.
 
 ## What this stage blocks and what it does not
 

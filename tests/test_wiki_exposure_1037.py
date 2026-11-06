@@ -127,3 +127,23 @@ def test_only_a_dispatch_bound_to_the_wiki_attaches_the_tool(tmp_path):
     assert "labhq_wiki" in names(True) and "labhq_wiki" not in names(False)
     runner.s.wiki.enabled = False  # a runner that turned it off since keeps it off even for a bound dispatch
     assert "labhq_wiki" not in names(True)
+
+
+@pytest.mark.parametrize("created,state", [(wiki_exposure.WIKI_SHIPPED_AT - 1, "none"), (wiki_exposure.WIKI_SHIPPED_AT, "unknown"),
+                                         (wiki_exposure.WIKI_SHIPPED_AT + 1, "unknown"), (None, "unknown"), (0, "unknown"),
+                                         (-5, "unknown"), ("1700000000", "unknown"), (True, "unknown")])
+def test_a_request_without_a_record_is_none_only_when_it_predates_the_wiki_tool(created, state):
+    assert wiki_exposure.exposure({"created_at": created}) == state
+
+
+def test_an_old_unrecorded_request_dispatched_to_a_wiki_runner_becomes_possible():
+    hub = gateway([{"id": "worker", "wiki_tools": True}], exposure=None)
+    hub.requests["req_1"]["created_at"] = wiki_exposure.WIKI_SHIPPED_AT - 100
+    assert wiki_exposure.publication_blocker(hub.requests["req_1"]) is None
+    bind(hub)
+    assert hub.requests["req_1"][wiki_exposure.KEY] == wiki_exposure.POSSIBLE
+    assert wiki_exposure.publication_blocker(hub.requests["req_1"]) is not None
+
+
+def test_a_recorded_possible_is_not_lowered_by_an_old_created_at():
+    assert wiki_exposure.exposure({wiki_exposure.KEY: "possible", "created_at": 1.0}) == wiki_exposure.POSSIBLE

@@ -18,7 +18,7 @@ class Hub:
     def __init__(self, tmp_path, transport=None):
         self.s = Settings()
         self.s.runner.workspace_root = str(tmp_path / "runs")
-        self.requests = {"req_test": {"id": "req_test", "text": "Compare public studies",
+        self.requests = {"req_test": {"wiki_exposure": "none", "id": "req_test", "text": "Compare public studies",
                                      "intake": {"work_kind": "research"}}}
         self.agents = {}
         self.transport = transport
@@ -55,7 +55,7 @@ async def test_project_skips_question_and_inherits_choice(tmp_path):
     service = ResultStorage(hub)
     assert await service.card("req_test") is None
     assert hub.requests["req_test"]["result_storage"]["repo"] == "owner/study"
-    hub.requests["req_next"] = {"id": "req_next", "project_id": "study"}
+    hub.requests["req_next"] = {"wiki_exposure": "none", "id": "req_next", "project_id": "study"}
     assert await service.card("req_next") is None
     assert hub.requests["req_next"]["result_storage"]["repo"] == "owner/study"
 
