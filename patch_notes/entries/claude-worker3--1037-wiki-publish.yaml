@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: 'f50e110'
+  at: 2026-11-07 12:00
+  text: wiki 노출이 none이 아닌 요청이 GitHub에 쓰는 모든 경로를 막는다. ProjectReporter(프로젝트 issue·댓글·보고서·부록·종료, pipeline 기여는 승인 카드 전과 branch·파일·PR 직전), RoundRecorder(라운드 issue), ResultStorage.upload(연구 결과 파일마다)가 쓰기 직전에 다시 확인하고 막히면 다시 시도하지 않는다. CP2 근거 카드는 막지 않고 wiki 노출 경고 한 줄을 더한다. 막힌 요청의 결과를 올리는 길은 아직 없고 wiki 본문 마스크와 독립 출처 인증은 후속이다
+  summary: 노출됐거나 이력이 없는 요청의 보고서·라운드·결과 올리기·pipeline 기여가 GitHub에 나가지 않게 막습니다.
