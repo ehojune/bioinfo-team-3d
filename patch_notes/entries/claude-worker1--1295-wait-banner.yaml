@@ -4,3 +4,7 @@ rows:
     at: "2026-11-07 05:30"
     summary: "접속 직후 들어온 입력에 연결을 끊는 게이트웨이에서도 쓸 수 있도록, 사이트 프로필에 적은 시간만큼 배너나 프롬프트를 기다린 뒤 첫 명령을 보냅니다. 접속이 실패했을 때 받은 원문은 오류 문장이 아니라 로컬 진단 폴더에만 남기고, 셸이 열리는 사이트를 모순으로 표시하던 프로필 검사를 고쳤습니다."
     text: "SessionConfig.first_output_wait_s·settle_s·diag_dir와 _await_first_output·_keep_diagnostics, 프로필 first_output_wait_s와 session_config의 저장소 밖 진단 폴더(LABHQ_HPC_DIAG_DIR), problems()가 connect_argv가 있으면 remote_exec false+scheduler를 모순으로 보지 않음, 가짜 gateway --kick-early-input, manual 15 한영, D단계 기록 문서, 시험 8건 (#1295)"
+  - sha: "2453190"
+    at: "2026-11-07 06:20"
+    summary: "프로필에 적은 첫 출력 대기 시간이 접속마다 걸리는 시간으로 도구의 기다리는 시간에 들어가고, 접속 실패 진단 로그는 다른 사용자가 잠시도 읽지 못하게 처음부터 비공개로 만들어집니다."
+    text: "hpc_session.worst_case_s가 시도마다 first_output_wait_s를 더함, labhq_mcp_timeout_s가 프로필의 값을 읽음(못 읽으면 60초), 진단 로그를 os.open 0600·폴더 0700으로 생성, 시험 3건 (#1295)"
