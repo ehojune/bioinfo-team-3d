@@ -8,3 +8,7 @@ rows:
   at: 2026-11-06 11:20
   text: 셸의 ${TOKEN:-x}처럼 중괄호 안의 이름을 대입으로 읽어 닫는 중괄호를 깨던 것을 막고, 큰따옴표 안의 산술 $((...))도 리터럴로 가리며, R의 file.path·normalizePath는 문자열을 조합하므로 안전한 조회 목록에서 뺀다
   summary: 셸 parameter expansion 손상과 따옴표 안 산술·R 경로 조합 누출을 바로잡습니다.
+- sha: '16a7e3a'
+  at: 2026-11-06 12:00
+  text: 셸·R에서 문자열 안에 든 대입 모양(print("token = x"), echo "TOKEN=x")은 그 문자열의 닫는 따옴표까지만 값으로 읽고 따옴표 없이 가려 문법을 지킨다. R의 base::·utils::로 한정한 안전 조회(base::Sys.getenv 등)도 안전 목록에 포함한다
+  summary: 문자열 안의 대입 모양이 코드를 깨던 것과 base:: 조회가 가려지던 것을 바로잡습니다.
