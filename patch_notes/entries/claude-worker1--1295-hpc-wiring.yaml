@@ -12,3 +12,7 @@ rows:
     at: "2026-11-06 22:10"
     summary: "접속이 끊겨 다시 여는 동안에도 도구 호출이 먼저 포기하지 않도록 기다리는 시간을 늘렸고, 제출 출력이 너무 길어 잘려도 제출됐을 수 있다고 안내합니다."
     text: "HpcSession.worst_case_s, hpc_mcp의 broker timeout에 재접속 전체 포함, 잘린 출력은 SessionLost로 올려 MAYBE_SUBMITTED 안내, 시험 2건 (#1295)"
+  - sha: "ae2ce6a"
+    at: "2026-11-06 22:20"
+    summary: "설정 설명서에 사이트 프로필의 접속 명령이 대화형 셸을 여는 명령이어야 한다고 적었습니다."
+    text: "manual 15장 한영에 connect_argv는 터널만 여는 명령이 아니라 대화형 셸을 여는 명령이며 remote_exec가 false인 사이트도 셸이 열리면 이 경로를 쓴다고 명시 (#1295)"
