@@ -95,3 +95,90 @@ def test_access_record_keeps_uvicorn_args_after_redaction():
     line = AccessFormatter('%(client_addr)s - "%(request_line)s" %(status_code)s', use_colors=False).format(record)
     assert "plain-secret" not in line and "token=[REDACTED]" in line and "since=7" in line
     assert line.startswith('127.0.0.1:5 - "GET /ws/client?') and line.endswith(" 101 Switching Protocols")
+
+
+# ----- #37: the runner's and the CLI's own logs and messages -----
+
+CLIENT_TOKEN = "FAKECLIENTTOKEN_Hs7d2f5g8j1k4l6z9x3c0v"
+RUNNER_TOKEN = "FAKERUNNERTOKEN_Zk3q9v7m2x5c8b1n4w6y0p"
+
+
+def _wrong_scheme_error(path, token):
+    from websockets.exceptions import InvalidURI
+
+    return InvalidURI(f"http://127.0.0.1:8787{path}?token={token}", "scheme isn't ws or wss")
+
+
+def test_a_runner_connection_warning_with_the_token_url_is_masked_on_the_root_handlers(monkeypatch):
+    """The runner logs `gateway connection lost/failed: %s` with the exception; a wrong scheme in gateway.url makes
+    that exception the whole address, token included. Every command's root logging masks it (#37)."""
+    import io
+
+    from labhq import cli
+
+    root = logging.getLogger()
+    saved_handlers, saved_level = list(root.handlers), root.level
+    for handler in saved_handlers:
+        root.removeHandler(handler)
+    stream = io.StringIO()
+    try:
+        monkeypatch.setattr(logging, "basicConfig", lambda **kw: root.addHandler(_stream_handler(stream, kw)))
+        cli._configure_logging()
+        logging.getLogger("labhq.runner").warning("gateway connection lost/failed: %s (retry in %.0fs)",
+                                                  _wrong_scheme_error("/ws/runner", RUNNER_TOKEN), 1.0)
+    finally:
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+        for handler in saved_handlers:
+            root.addHandler(handler)
+        root.setLevel(saved_level)
+    out = stream.getvalue()
+    assert RUNNER_TOKEN not in out and "token=[REDACTED]" in out and "retry in 1s" in out
+
+
+def _stream_handler(stream, kwargs):
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter(kwargs.get("format")))
+    return handler
+
+
+def test_configuring_logging_twice_does_not_stack_filters():
+    from labhq import cli
+    from labhq.security import TokenRedactionFilter as Filter
+
+    cli._configure_logging()
+    cli._configure_logging()
+    for handler in logging.getLogger().handlers:
+        assert sum(isinstance(f, Filter) for f in handler.filters) <= 1
+
+
+def test_watch_with_a_wrong_scheme_prints_no_address_and_exits_2(capsys):
+    import types
+
+    from labhq import cli
+
+    async def watch():
+        raise _wrong_scheme_error("/ws/client", CLIENT_TOKEN)
+
+    settings = types.SimpleNamespace(config_path=None, gateway=types.SimpleNamespace(url="http://127.0.0.1:8787"))
+    with pytest.raises(SystemExit) as stop:
+        cli._run_websocket(settings, watch())
+    shown = capsys.readouterr()
+    assert stop.value.code == 2
+    assert CLIENT_TOKEN not in shown.out + shown.err and "token" not in (shown.out + shown.err).replace("gateway.url", "")
+    assert "ws://" in shown.err and "wss://" in shown.err
+
+
+def test_a_traceback_with_the_token_is_masked_by_the_filter_too():
+    import io
+    import traceback
+
+    from labhq.security import redact_tokens
+
+    try:
+        raise _wrong_scheme_error("/ws/client", CLIENT_TOKEN)
+    except Exception:  # noqa: BLE001
+        text = io.StringIO()
+        traceback.print_exc(file=text)
+    assert CLIENT_TOKEN in text.getvalue()  # what an unmasked traceback would print
+    assert CLIENT_TOKEN not in redact_tokens(text.getvalue())

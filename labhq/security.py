@@ -58,13 +58,19 @@ class TokenRedactionFilter(logging.Filter):
         return True
 
 
+def redact_root_logging() -> None:
+    """Put the token filter on every root handler, so a runner or CLI log line that carries a URL (a websockets
+    `InvalidURI` names the whole address, `?token=…` included) is masked the way the gateway's lines are (#37)."""
+    for handler in logging.getLogger().handlers:
+        if not any(isinstance(f, TokenRedactionFilter) for f in handler.filters):
+            handler.addFilter(TokenRedactionFilter())
+
+
 def gateway_log_config() -> dict:
     """Install on root handlers and every uvicorn handler, including access logs."""
     from uvicorn.config import LOGGING_CONFIG
 
-    for handler in logging.getLogger().handlers:
-        if not any(isinstance(f, TokenRedactionFilter) for f in handler.filters):
-            handler.addFilter(TokenRedactionFilter())
+    redact_root_logging()
     config = deepcopy(LOGGING_CONFIG)
     config["filters"] = {"tokens": {"()": TokenRedactionFilter}}
     for handler in config["handlers"].values():

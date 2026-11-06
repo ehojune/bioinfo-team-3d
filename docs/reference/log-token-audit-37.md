@@ -1,6 +1,6 @@
 # 로그의 토큰 노출 감사 (#37, 2026-11-07)
 
-lookup-only. #37 "로그의 토큰 노출" 항목의 현재 상태를 main `08074efb`에서 코드로 찾고, 가짜 토큰을 넣은 임시 인스턴스로 확인했다. 수정은 하지 않았다.
+lookup-only. #37 "로그의 토큰 노출" 항목의 현재 상태를 main `08074efb`에서 코드로 찾고, 가짜 토큰을 넣은 임시 인스턴스로 확인했다. 감사 때는 수정하지 않았고, 같은 PR에서 수정과 재확인을 했다(맨 아래).
 
 ## 결론
 
@@ -53,7 +53,7 @@ lookup-only. #37 "로그의 토큰 노출" 항목의 현재 상태를 main `0807
 - `bench.py:384`와 `runner/approvals.py:283`의 uvicorn은 가림 filter 없이 `log_level="warning"`이라 접근 로그를 내지 않는다. 코드로만 읽었다.
 - 브라우저 쪽(주소창·`Referer`·`localStorage`)과 HPC 세션 로그는 범위 밖이다.
 
-## 고칠 범위 (제안)
+## 고칠 범위 (감사 때의 제안, 아래 "수정과 재확인"에서 실제로 한 것)
 
 | 대상 | 변경 | 파일 |
 |---|---|---|
@@ -65,3 +65,17 @@ lookup-only. #37 "로그의 토큰 노출" 항목의 현재 상태를 main `0807
 
 - 한 PR로 묶을 수 있다(약 세 파일과 시험 한 파일, 코드는 수십 줄). `labhq/security.py`의 filter가 이미 있고 시험도 있어 위험은 낮다.
 - 이 감사가 닫는 것은 "gateway 콘솔 로그의 토큰"(이미 해소)이고, #37의 다른 항목(여러 인스턴스, 폰 접속)은 이 문서의 범위가 아니다.
+
+
+## 수정과 재확인 (같은 PR)
+
+| 항목 | 수정 | 파일 |
+|---|---|---|
+| E1 | 모든 명령의 루트 로그 handler에 `TokenRedactionFilter`를 단다. `_configure_logging()`이 `logging.basicConfig` 뒤에 `redact_root_logging()`을 부른다. gateway가 쓰던 같은 filter라 `daemon.py`의 warning도 이 filter를 지나가므로 `daemon.py`는 고치지 않았다 | `labhq/cli.py`, `labhq/security.py` |
+| E2 | `_run_websocket`이 `InvalidURI`를 따로 잡아 주소 없이 "gateway.url은 ws:// 또는 wss://로 시작해야 합니다"를 낸다. `watch`와 `_send_and_wait`가 모두 이 함수를 지난다 | `labhq/cli.py` |
+| 문서 | manual 15장 한·영에 `gateway.url`은 `ws://`·`wss://`만 쓴다는 한 줄 | `docs/manual/15-config.md`·`.en.md` |
+| 시험 | 루트 handler가 runner warning의 토큰을 가리는지, 필터가 중복되지 않는지, `watch`가 주소 없이 끝나는지, traceback을 `redact_tokens`가 가리는지 | `tests/test_security.py` 4건 |
+
+- 같은 임시 인스턴스 시나리오를 수정 코드로 다시 돌렸다. runner 로그는 `…/ws/runner?token=[REDACTED] isn't a valid URI…`이고, `labhq up`이 남긴 `gateway-state/logs/runner.log`와 `logs/` 아래 stderr에서 토큰은 0건이다. 검색에 걸린 것은 설정 파일(`cfg4.yaml`) 자신뿐이다. `watch`는 위 한 줄 안내만 내고 종료 코드 2다.
+- `tests/test_security.py` 19건, `-k "cli or security or send or watch or websocket"` 701건이 통과했다(Windows 로컬).
+- 남은 것: `labhq demo`의 의도된 출력은 그대로다. 엔진 CLI 실패 증거와 GitHub 오류 문장은 이번에도 코드로만 읽었다.
