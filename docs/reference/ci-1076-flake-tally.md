@@ -139,3 +139,18 @@ resizable startup: {"before_open_ms": …, "module_load_ms": …, "node_start_ms
 - 출력은 `tests/test_web_3d.py`의 `resizable_startup_summary`가 스크립트의 `resizable timing:` 행(stderr)과 Python이 기록한 launch 시각으로 만든다. 행이 없으면 그 필드만 빠지고 시험을 실패시키지 않는다.
 - 줄은 `warnings.warn`(`UserWarning`)으로 남긴다. pytest의 "warnings summary"에 나오므로 직렬 실행과 xdist 병렬 실행의 CI 로그에서 모두 보인다. 로그에서는 `UserWarning: resizable startup: {…}`로 찾는다. 시험 쪽 계약 시험(`test_ci_windows10m`)이 이 함수만 떼어 돌리는 축소된 namespace에서는 보고를 건너뛴다.
 - 다음 확인: 직렬 Windows 단계의 성공 run 몇 개에서 `node_start_ms`의 분포를 모은다. 평소 값이 수십 ms이고 실패 때만 수 초라면 후보 ①(runner에서 새 프로세스가 느려짐)이 강해지고, 평소에도 수 초라면 후보 ②(한계 기준)로 간다.
+
+
+### 첫 CI 측정값 (PR #1314 head `5d10ac8`, 통과한 resizable)
+
+[run 42240471072](https://github.com/ehojune/bioinfo-team-3d/actions/runs/42240471072)의 `pytest-windows` "Serial critical Windows contracts" 단계에서 두 줄이 찍혔다.
+
+| 호출 | `node_start_ms` | `module_load_ms` | `before_open_ms` | `returned_after_ms` |
+|---|---|---|---|---|
+| desktop (단계의 첫 Node) | **5521** | 1274 | **8294** | 19390 |
+| phone (바로 뒤) | 24 | 16 | 64 | 2407 |
+| 이 PC (평소) | 18~23 | 11~13 | 49~122 | 735~1328 |
+
+- 같은 단계, 같은 시험인데 첫 Node 프로세스만 시작이 5.5초 걸리고 바로 다음 것은 24 ms다. 이 PC와 같은 수준으로 돌아온다. 새 프로세스를 처음 띄울 때만 비싼 "차가운 시작"이 있다는 뜻이고, 실패 run(`node_start_ms` 19310)은 같은 현상이 더 크게 나온 것으로 읽힌다. 후보 ①(runner에서 새 프로세스가 느려짐)을 지지하고, 시험 코드·페이지의 문제는 아니다.
+- 통과한 run에서도 desktop은 `before_open_ms`가 8.3초로 한계 52초의 16%를 쓴다. 실패 run은 28.6초였다. 평소 값(위 표)과의 격차가 그 차이다.
+- 다음 확인: 직렬 Windows 단계의 성공·실패 run에서 desktop의 `node_start_ms`가 몇 초인지 몇 개 더 모은다. 첫 호출만 느리다는 패턴이 이어지면, 한계를 늘리기 전에 단계 첫머리에 가벼운 Node 호출을 한 번 두어 차가운 시작을 먼저 치르게 하는 안(고칠 범위 2·3 앞의 선택지)을 검토한다.
