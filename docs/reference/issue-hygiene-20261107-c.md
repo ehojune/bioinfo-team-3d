@@ -7,7 +7,7 @@ lookup-only. 기준은 [정리 A](issue-hygiene-20261107-a.md)와 같다. 완료
 | [#430](https://github.com/ehojune/bioinfo-team-3d/issues/430) 공유 계정 HPC 잡에 앞 단계 산출 전달 | **닫음** | 실제 클러스터 확인은 #1295(D단계)가 갖는다 |
 | [#612](https://github.com/ehojune/bioinfo-team-3d/issues/612) 로컬 WSL 분석 | 열어 둠 | 실제 WSL에서 `setup`·nf-core 시험 파이프라인 끝까지 |
 | [#151](https://github.com/ehojune/bioinfo-team-3d/issues/151) EDAM 부분집합과 input_fit | 열어 둠 | #99 gate 수치 또는 폐기 기록, 본문 정정, PI 라이선스 확인(#882 동결) |
-| [#625](https://github.com/ehojune/bioinfo-team-3d/issues/625) Freda·Moore 랩 조사에서 가져올 것 | 열어 둠 | 추출 캐시·재개, 요인 실험의 실제 실행(승인 필요) |
+| [#625](https://github.com/ehojune/bioinfo-team-3d/issues/625) Freda·Moore 랩 조사에서 가져올 것 | 열어 둠 | CSO의 단계별 등급 선택, 추출 캐시·재개, 요인 실험의 live 비용 경계 구현·검증과 활성화(승인보다 먼저) |
 | [#621](https://github.com/ehojune/bioinfo-team-3d/issues/621) AlphaMissense·AlphaGenome | 열어 둠 | 실제 Atlas 조회(키 위치·PI 확인) |
 | [#546](https://github.com/ehojune/bioinfo-team-3d/issues/546) 디자인 리뉴얼 | 열어 둠 | 3D 개편(PI가 나중으로 둠) |
 
@@ -37,10 +37,10 @@ lookup-only. 기준은 [정리 A](issue-hygiene-20261107-a.md)와 같다. 완료
 | 가져올 것 | 상태 | 근거 |
 |---|---|---|
 | 비용 모름 표시, 호출 없는 dry-run | 완료 | PR #651(`e383acbf`) |
-| 단계별 모델 등급과 가격 | 완료(기본 꺼짐) | 1단계 PR #1097(`af4220af`): 등급→모델 표, dry-run 모델 열, 선언 등급과 실제 모델 불일치 경고. 2단계 `c094a2c2`: 계획 단계 `model_tier`의 데이터 경로(꺼진 기본, 직원 등급 이하·validation/report 하한). `orchestrator.step_model_tiers: false`가 기본(`settings.py:522`) |
-| 요인 실험 벤치 | 코드 완료, 실제 실행 안 함 | PR #1188(`75eba3fe`): mock 전용, live 금지. 양 arm·모든 client·retry·in-flight 비용을 포함하는 provider/account 강제 상한과 확정 receipt가 미검증이라 실제 실행은 승인 전이다 |
+| 단계별 모델 등급과 가격 | **1단계 완료, 선택 기능은 미완** | 1단계 PR #1097(`af4220af`): 등급→모델 표, dry-run 모델 열, 선언 등급과 실제 모델 불일치 경고. 2단계 `c094a2c2`는 계획 단계 `model_tier`의 **데이터 경로**만이다(꺼진 기본 `orchestrator.step_model_tiers: false`, `settings.py:522`, 직원 등급 이하·validation/report 하한). 엔진 schema는 아직 `model_tier`를 노출하지 않고 `docs/manual/07-cli.md`도 "CSO가 등급을 고르는 기능은 아직 없다"고 적는다. 그래서 일반 요청의 CSO 계획은 이 값을 만들 수 없고 미리 만든 저장 계획에서만 데이터 경로를 시험할 수 있다 |
+| 요인 실험 벤치 | mock 전용 코드만 완료 | PR #1188(`75eba3fe`): `engines="mock"`만 받고 live 실행은 비활성이다. 지원되는 provider/account 총비용 경계(양 arm·모든 client·retry·in-flight 비용 포함)와 확정 receipt는 구현도 검증도 안 됐다(`docs/reference/model-tier-bench-625/README.md`). 그래서 승인만으로는 실제 실행할 수 없다 |
 | 논문별 추출 캐시와 실행 재개 | 미착수 | main에 추출 캐시 코드가 없다. 비슷한 것은 요청 간 기억(#60, OPEN)과 continuation 재사용(#797, 닫힘)뿐이다 |
-- 남은 일: 추출 캐시·재개 설계(별도 판단 필요), 요인 실험의 실제 실행 승인.
+- 남은 일: ① CSO가 단계마다 등급을 고르는 기능(계획 schema 변경이라 CP1 카드·plan hash·`PLAN_PROMPT_SHA`와 PI 승인 경로를 정해야 하며 별도 이슈로 설계, 설계 메모는 10-30 댓글), ② 추출 캐시·재개 설계(별도 판단), ③ 요인 실험의 provider/account 비용 경계와 확정 receipt 구현·검증, live 활성화. ③이 승인보다 먼저다.
 
 ### #621
 - 네 갈래가 모두 main에 있다: A(VEP에 AlphaMissense)·C(변이 효과 점검표) PR #626(`6c299527`), B(AlphaGenome 권장 변이 점수 `score_variant`) PR #631(`7c9249a3`)과 다중 염기 REF 창 중앙 보정 PR #1138(`6aac4455`), D(AlphaGenome Atlas 조회, 환경변수 키·필터·출처·cache·timeout) PR #1186(`bebac3e1`)·#1239·#1250(`17db8442`, 영속 credential cache 중단과 ontology 정규화). `labhq/tools/annot_alphagenome.py`에 `score_variant`가 있다.
