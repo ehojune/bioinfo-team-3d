@@ -141,8 +141,17 @@ async def _holding(semaphore: asyncio.Semaphore):
 
 def labhq_mcp_timeout_s(settings: Settings) -> int:
     """How long a staff CLI may wait on one labhq MCP call: the longest approval or ask wait, plus 120 s for the
-    tool's own work. Claude gets it as each server's `timeout` and MCP_TOOL_TIMEOUT, Codex as `tool_timeout_sec`."""
-    return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + 120
+    tool's own work. Claude gets it as each server's `timeout` and MCP_TOOL_TIMEOUT, Codex as `tool_timeout_sec`.
+
+    With an HPC session the tool's own work can be a wait for the shell's turn, a reconnect and the command (#1295): the
+    staff CLI must not give up before the runner does, or a submit that was reported as timed out still goes through."""
+    work = 120
+    if settings.hpc.site_profile and settings.hpc.scheduler != "none":
+        from ..hpc_session import QUEUE_WAIT_S, SessionConfig, worst_case_s
+
+        hpc = QUEUE_WAIT_S + worst_case_s(SessionConfig(argv=["x"]), settings.hpc.command_timeout_s)
+        work = max(work, int(hpc) + 90)  # the broker waits hpc + 30; the CLI waits longer still
+    return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + work
 
 
 def literature_mcp_timeout_s(settings: Settings) -> int:
@@ -405,7 +414,7 @@ class Runner:
         self.scheduler = Scheduler(settings.hpc)
         try:  # one shell for the runner's polling and the tools' commands, when the site profile gives a connect command
             self.scheduler.attach_session(on_notice=self._hpc_session_notice,
-                                          has_open_jobs=lambda: any(not j["terminal"] for j in self.jobs.values()))
+                                          has_open_jobs=self._has_open_hpc_jobs)
         except RuntimeError as error:  # an unusable profile: the first scheduler command says so, so the runner still starts
             log.warning("HPC session is not available: %s", error)
         self.annot_broker = AnnotBroker(self.broker, settings)
@@ -3319,6 +3328,10 @@ class Runner:
             return {"error": str(stop)}
         with request_scope(body.get("request_id")), queue_wait():
             return await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record)
+
+    def _has_open_hpc_jobs(self) -> bool:
+        """Does any HPC job still run? A local job is no reason to hold a login open."""
+        return any(not j["terminal"] and not local_jobs.is_local(jid) for jid, j in list(self.jobs.items()))
 
     async def _on_scheduler_op(self, body: dict) -> dict:
         """hpc_status, hpc_queue and hpc_cancel for a site whose commands go through the runner's shell (#1295 C). The

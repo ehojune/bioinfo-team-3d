@@ -403,3 +403,29 @@ def test_the_connection_process_gets_only_the_sanitized_environment(tmp_path, si
     session = sched.Scheduler(settings(tmp_path).hpc).session()
     assert session.run("printenv LABHQ_TEST_API_KEY").output.strip() == ""
     assert session.run("printenv SLURM_TEST_KEEP").output.strip() == "kept"
+
+
+def test_a_local_job_does_not_count_as_an_open_hpc_job(tmp_path, site):
+    from labhq.runner import local_jobs
+
+    site()
+    runner = stub_runner(tmp_path, settings(tmp_path))
+    local_id = local_jobs.new_id()
+    assert local_jobs.is_local(local_id)
+    runner.jobs = {"1000": {"terminal": True}, local_id: {"terminal": False}}
+    assert not runner._has_open_hpc_jobs()
+    runner.jobs["1001"] = {"terminal": False}
+    assert runner._has_open_hpc_jobs()
+
+
+def test_the_staff_cli_waits_longer_than_the_runner_for_an_hpc_call(tmp_path):
+    from labhq.hpc_session import QUEUE_WAIT_S, SessionConfig, worst_case_s
+    from labhq.runner.daemon import labhq_mcp_timeout_s
+
+    plain = settings(tmp_path)
+    plain.hpc.site_profile = None
+    with_session = settings(tmp_path)
+    approval = max(with_session.policy.approvals.timeout_s, 1200)
+    hpc = QUEUE_WAIT_S + worst_case_s(SessionConfig(argv=["x"]), with_session.hpc.command_timeout_s)
+    assert labhq_mcp_timeout_s(with_session) >= max(with_session.policy.approvals.timeout_s, 1200) + hpc + 30 + 30
+    assert labhq_mcp_timeout_s(plain) == labhq_mcp_timeout_s(Settings()) and approval  # no profile: unchanged
