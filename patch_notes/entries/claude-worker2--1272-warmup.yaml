@@ -4,3 +4,7 @@ rows:
   at: 2026-11-07 00:46
   text: Windows CI의 직렬 단계 앞에 Node와 PowerShell을 두 번씩 불러 첫(cold)·둘째(warm) 시작 시간을 로그 한 줄(ci warmup)로 남기는 단계를 더한다. 새 runner에서 각 프로그램의 첫 프로세스만 비싸다는 가설(#1272, #1076 H1)을 검증하고, 그 비용을 시험 밖으로 옮긴다. 시간 한계·시험·재시도는 그대로다
   summary: 새 runner의 차가운 첫 프로세스 비용을 시험 앞 단계에서 치르고 시간을 재서, 간헐 실패가 여기서 오는지 확인합니다.
+- sha: '5434ea0'
+  at: 2026-11-07 01:01
+  text: 리뷰 지적 반영. 워밍업이 PowerShell 시작과 따로 job broker가 쓰는 CIM(WMI) 호출도 재고(wmi_cold_ms·wmi_warm_ms), 같은 WMI 시간 초과가 난 clean-install job에도 같은 단계를 둔다
+  summary: WMI 쪽 차가운 시작도 직접 재고, 같은 증상이 난 다른 Windows job도 워밍업합니다.
