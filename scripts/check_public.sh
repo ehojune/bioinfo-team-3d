@@ -29,5 +29,12 @@ big=$(files | xargs -0 sh -c 'for f; do set -- "$@" "./$f"; shift; done; [ $# -e
 data=$(files | tr '\0' '\n' | { grep -E '\.(vcf|bam|cram|fastq|fq|bcf|h5ad|bed)(\.gz)?$' || [ $? -eq 1 ]; }) \
   || { echo "✗ 추적 파일 목록을 읽지 못했습니다"; fail=1; }
 [ -n "$data" ] && { echo "✗ 데이터 파일이 포함됨: $data"; fail=1; }
+# A site profile names one user's hosts, ports and paths (#1300): it lives in ~/.labhq/sites, never in the repository.
+# Its first key marks it, and its folder is `.labhq/sites`; either one tracked fails. A line must start with the key.
+profiles=$(files | xargs -0 sh -c '[ $# -eq 0 ] || LC_ALL=C grep -lIE "^labhq_site_profile:" -- "$@"; [ $? -le 1 ] || exit 255' sh) \
+  || { echo "✗ 추적 파일을 읽지 못해 사이트 프로필 검사를 끝내지 못했습니다"; fail=1; }
+sitepaths=$(files | tr '\0' '\n' | { grep -E '(^|/)\.labhq/sites/' || [ $? -eq 1 ]; }) \
+  || { echo "✗ 추적 파일 목록을 읽지 못했습니다"; fail=1; }
+[ -n "$profiles$sitepaths" ] && { printf '%s\n' "$profiles" "$sitepaths"; echo "✗ 사이트 프로필이 저장소에 들어 있습니다 (~/.labhq/sites에 두세요)"; fail=1; }
 [ $fail -eq 0 ] && echo "✓ 공개 저장소로 올려도 되는 상태입니다"
 exit $fail
