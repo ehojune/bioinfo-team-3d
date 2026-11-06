@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: "a7dccb0"
+    at: "2026-11-07 09:30"
+    summary: "잡마다 클러스터에 새 폴더(권한 700, 무작위 이름)를 만들어 그 안에만 쓰고 제출·회수합니다. 미리 깔아 둔 링크나 파일이 있을 수 없고 다른 잡과 폴더를 나누지 않아, 검사한 뒤 링크로 바꿔치는 경로가 닫힙니다."
+    text: "job_spec에 job-<12자> 폴더, Transfer.make_fresh_dir(mkdir -m 700 -- , -p 없음으로 기존 이름·링크 거부, pwd -P로 작업 폴더 아래 확인), upload_job이 새 폴더 안에 logs·work를 만듦, 가짜 gateway의 mkdir -m, manual 09·15, 시험 4건과 기존 시험의 폴더 경로 갱신 (#1308)"
