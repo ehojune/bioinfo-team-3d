@@ -16,3 +16,7 @@ rows:
   at: 2026-11-06 23:47
   text: CI 수정. config/ci/windows-boundary-v1.json의 tests/test_web_3d.py digest를 시작 시간 줄을 더한 파일에 맞춘다
   summary: 고친 시험 파일이 Windows 경계 목록의 검토 기준과 어긋나지 않게 합니다.
+- sha: 'e0962e6'
+  at: 2026-11-07 00:09
+  text: 리뷰 지적 반영. 집계 문서와 status가 시작 시간 줄을 warnings 요약에 남기는 최종 방식(직렬·xdist 모두 CI 로그에서 보임)대로 설명한다
+  summary: 평소 값을 어디서 찾는지 문서가 사실대로 말합니다.
