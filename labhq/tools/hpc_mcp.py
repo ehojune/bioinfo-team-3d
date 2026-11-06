@@ -20,6 +20,7 @@ import httpx
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import chmod_owned, plain_directory, read_owned, write_owned
 from ..hpc_session import call_budget_s
+from ..hpc_transfer import UPLOAD_BUDGET_S
 from ..settings import Settings
 from ._mcpcompat import make_server, tool_failure
 from .scheduler import (
@@ -68,6 +69,17 @@ def _hpc_wait_s(commands: int = 1) -> float:
     # the runner stands in line for the shell at most QUEUE_WAIT_S, then reconnects and runs: after that it gives up
     # without sending, so the tool never reports "nothing ran" for a command that runs later
     return call_budget_s(session.cfg, float(S.hpc.command_timeout_s), commands)
+
+
+def _submit_wait_s() -> float:
+    """The runner's time for a submit: the shell command, and where files cross the shell (no shared file system) the
+    whole upload (its own time allowance) before it."""
+    wait = _hpc_wait_s()
+    try:
+        transfers = not SESSION_ERROR and SCHED.transfer() is not None
+    except RuntimeError:
+        transfers = False
+    return wait + (wait + UPLOAD_BUDGET_S if transfers else 0)
 
 
 async def _runner_op(op: str, **fields) -> dict:
@@ -312,7 +324,7 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
         out = await _broker("/jobs/submit", {
             "task_id": TASK, "agent_id": AGENT, "script": str(spath), "name": name, "cores": cores, "mem": mem,
             "walltime": walltime, "queue": queue, "reason": reason, "inputs": upload_inputs,
-        }, timeout=S.policy.approvals.timeout_s + _hpc_wait_s() + 30)
+        }, timeout=S.policy.approvals.timeout_s + _submit_wait_s() + 30)
     except (httpx.ConnectError, ConnectionError) as e:  # fail closed
         raise tool_failure(f"labhq broker unreachable; the job was not submitted: {e}") from e
     except Exception as e:  # the runner may have submitted before the answer was lost

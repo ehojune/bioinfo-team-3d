@@ -455,3 +455,86 @@ def test_the_cluster_name_of_a_slurm_m_submit_is_hidden_when_it_is_the_site(tmp_
     with pytest.raises(RuntimeError) as caught:
         scheduler.submit("/work/job.sh", "align")
     assert "gw.example.org" not in str(caught.value) and "4100" in str(caught.value)
+
+
+# ---- review round: a fetch into a linked folder, transient fetch errors, the upload's time ----
+
+def test_results_are_not_written_through_a_linked_output_folder(site, tmp_path):
+    result = submit(site, write_script(site))
+    (site.remote("t1/work") / "escaped.txt").write_text("data", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link(outside, site.workdir / "outputs")  # the agent made output_dir a link out of its workspace
+    transfer = sched.Scheduler(site.settings.hpc).transfer()
+    spec = {**result["transfer"]}
+    with pytest.raises(ht.PathRejected):
+        ht.fetch_results(transfer, spec, site.workdir / "jobs" / "logs", site.workdir / "outputs", base=site.workdir)
+    assert not list(outside.iterdir())
+
+
+def test_a_linked_logs_folder_or_a_folder_outside_the_task_is_refused(site, tmp_path):
+    for bad in (tmp_path / "elsewhere", site.workdir / ".." / "x"):
+        with pytest.raises(ht.PathRejected):
+            ht.safe_local_root(site.workdir, bad)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link(outside, site.workdir / "jump")
+    with pytest.raises(ht.PathRejected):
+        ht.safe_local_root(site.workdir, site.workdir / "jump" / "deeper")
+    made = ht.safe_local_root(site.workdir, site.workdir / "hpc_out")
+    assert made.is_dir()
+
+
+def test_a_transient_fetch_error_fails_the_whole_fetch_but_a_lasting_reason_only_skips(site, monkeypatch):
+    result = submit(site, write_script(site))
+    work = site.remote("t1/work")
+    (work / "a.txt").write_text("aa", encoding="utf-8")
+    (work / "huge.bin").write_bytes(b"x" * (1024 * 1024 + 1))
+    transfer = sched.Scheduler(site.settings.hpc).transfer()
+    spec = {**result["transfer"], "fetch_to": str(site.workdir / "outputs")}
+    manifest = ht.fetch_results(transfer, spec, site.workdir / "jobs" / "logs", site.workdir / "outputs", base=site.workdir)
+    assert [f["path"] for f in manifest["fetched"]] == ["a.txt"] and manifest["skipped"][-1]["path"] == "huge.bin"
+    real = ht.Transfer.fetch_file
+
+    def flaky(self, rel, *a, **k):
+        if rel.endswith("a.txt"):
+            raise ht.HashMismatch("the shell garbled a block")
+        return real(self, rel, *a, **k)
+
+    monkeypatch.setattr(ht.Transfer, "fetch_file", flaky)
+    with pytest.raises(ht.HashMismatch):  # not "skipped": the runner retries the fetch
+        ht.fetch_results(transfer, spec, site.workdir / "jobs" / "logs", site.workdir / "outputs", base=site.workdir)
+
+
+def test_a_log_that_does_not_exist_is_skipped_not_an_error(site):
+    result = submit(site, write_script(site))
+    transfer = sched.Scheduler(site.settings.hpc).transfer()
+    manifest = ht.fetch_results(transfer, {**result["transfer"]}, site.workdir / "jobs" / "logs",
+                                site.workdir / "outputs", base=site.workdir)
+    assert manifest["logs"] == [] and len(manifest["skipped"]) == 2 and transfer.exists(result["transfer"]["script"])
+
+
+def test_an_upload_that_runs_out_of_time_stops_and_nothing_is_submitted(site):
+    script = write_script(site)
+    transfer = sched.Scheduler(site.settings.hpc).transfer()
+    spec = ht.job_spec("t1", script.stem)
+    with pytest.raises(ht.TransferError, match="time allowed"):
+        ht.upload_job(transfer, spec, script.read_text(encoding="utf-8"), site.workdir, budget_s=-1)
+    assert transfer.deadline is None  # the allowance does not leak into later commands
+    assert not (site.tmp / "slurm.json").exists()
+
+
+def test_the_submit_wait_includes_the_whole_upload_allowance_only_where_files_cross(site, monkeypatch):
+    import labhq.tools.hpc_mcp as hpc
+
+    monkeypatch.setattr(hpc, "S", site.settings)
+    monkeypatch.setattr(hpc, "SCHED", sched.Scheduler(site.settings.hpc))
+    monkeypatch.setattr(hpc, "SESSION_ERROR", None)
+    one = hpc._hpc_wait_s()
+    assert hpc._submit_wait_s() == one + one + ht.UPLOAD_BUDGET_S  # upload commands, the allowance, then the submit
+    hpc_site.save_profile(hpc_site.SiteProfile(
+        name="fake", access_method="gateway_tunnel", remote_exec=False, scheduler="slurm",
+        connect_argv=[sys.executable, "-I", GATEWAY, "--slurm-state", str(site.tmp / "slurm.json")]))  # no remote_workdir
+    sched.close_sessions()
+    monkeypatch.setattr(hpc, "SCHED", sched.Scheduler(site.settings.hpc))
+    assert hpc._submit_wait_s() == hpc._hpc_wait_s()

@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import re
 import shlex
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -77,9 +79,12 @@ class Transfer:
             raise PathRejected("the remote work folder is an absolute POSIX path without '..'")
         self.run, self.root, self.limits = run, root.rstrip("/") or "/", limits
         self._real_root: str | None = None
+        self.deadline: float | None = None  # time.monotonic() after which no further command is sent
 
     # ---- the far side ------------------------------------------------------------------------------------------
     def _do(self, command: str, what: str) -> str:
+        if self.deadline is not None and time.monotonic() > self.deadline:
+            raise TransferError(f"{what}: the time allowed for this transfer is used up; nothing more was sent")
         result = self.run(command)
         if getattr(result, "exit_code", 1) != 0:
             raise TransferError(f"{what} failed on the cluster: {str(getattr(result, 'output', ''))[:200].strip()}")
@@ -116,6 +121,10 @@ class Transfer:
 
     def _is_link(self, remote: str) -> bool:
         return self._do(f"test -L {shlex.quote(remote)} && echo link || echo plain", "checking a file").strip() == "link"
+
+    def exists(self, rel: str) -> bool:
+        """Is there a plain file at ``rel`` (a link does not count)?"""
+        return self._do(f"test -f {shlex.quote(self.path(rel))} && echo yes || echo no", "checking a file").strip() == "yes"
 
     def remote_sha256(self, rel: str) -> str:
         out = self._do(f"sha256sum -- {shlex.quote(self.path(rel))}", "reading a checksum").split()
@@ -274,6 +283,7 @@ def write_confined(root: Path, target: Path, data: bytes) -> None:
 
 MAX_INPUTS = 20
 INPUTS_TOTAL_BYTES = 4 * 1024 * 1024
+UPLOAD_BUDGET_S = 300.0  # all the commands of one job's upload together; the caller's wait is sized from it
 
 
 def job_spec(task_id: str, stem: str) -> dict:
@@ -298,34 +308,69 @@ def remote_script(text: str, remote_work: str) -> str:
     raise TransferError("the job script has no 'cd' line to point at the cluster's work folder")
 
 
-def upload_job(transfer: Transfer, spec: dict, script_text: str, local_root: Path, inputs: list | None = None) -> list[dict]:
+def upload_job(transfer: Transfer, spec: dict, script_text: str, local_root: Path, inputs: list | None = None,
+               budget_s: float = UPLOAD_BUDGET_S) -> list[dict]:
     """Put the script (and any small inputs, relative to ``local_root``) on the cluster. Raises before anything is
     submitted; what was written stays under the job's own folder."""
     inputs = list(inputs or [])
     if len(inputs) > MAX_INPUTS:
         raise TooLarge(f"{len(inputs)} inputs is more than {MAX_INPUTS}; use the site profile's file transfer method")
     sent, total = [], 0
-    transfer.ensure_dir(f"{spec['base']}/jobs/logs")
-    transfer.ensure_dir(spec["work"])
-    for rel in inputs:
-        local = Path(local_root) / confine(str(rel))
-        total += local.stat().st_size if local.is_file() else 0
-        if total > INPUTS_TOTAL_BYTES:
-            raise TooLarge(f"the inputs total more than {INPUTS_TOTAL_BYTES} bytes; use the site profile's file transfer method")
-        sent.append(transfer.upload_file(local, f"{spec['work']}/{confine(str(rel))}", root=Path(local_root)))
-    sent.append(transfer.upload_bytes(spec["script"], script_text.encode("utf-8"), executable=True))
+    transfer.deadline = time.monotonic() + budget_s  # a slow link stops the upload before the caller gives up waiting
+    try:
+        transfer.ensure_dir(f"{spec['base']}/jobs/logs")
+        transfer.ensure_dir(spec["work"])
+        for rel in inputs:
+            local = Path(local_root) / confine(str(rel))
+            total += local.stat().st_size if local.is_file() else 0
+            if total > INPUTS_TOTAL_BYTES:
+                raise TooLarge(f"the inputs total more than {INPUTS_TOTAL_BYTES} bytes; use the site profile's file "
+                               "transfer method")
+            sent.append(transfer.upload_file(local, f"{spec['work']}/{confine(str(rel))}", root=Path(local_root)))
+        sent.append(transfer.upload_bytes(spec["script"], script_text.encode("utf-8"), executable=True))
+    finally:
+        transfer.deadline = None
     return sent
 
 
-def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path) -> dict:
+def safe_local_root(base: Path, root: Path) -> Path:
+    """``root`` (a folder results are written into) made ready under ``base`` (the task's folder): every part of it from
+    ``base`` down is a real folder, not a link, so nothing written there can land elsewhere. Missing parts are made one
+    level at a time."""
+    base, root = Path(base), Path(root)
+    try:
+        relative = root.relative_to(base)
+    except ValueError as error:
+        raise PathRejected(f"{root} is not inside {base}") from error
+    if ".." in relative.parts or base.is_symlink():
+        raise PathRejected(f"{root} is not a plain folder inside {base}")
+    current = base
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise PathRejected(f"{current} is a link; results are not written through it")
+        if not current.exists():
+            current.mkdir()
+        elif not current.is_dir():
+            raise PathRejected(f"{current} is not a folder")
+    return root
+
+
+def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path, base: Path | None = None) -> dict:
     """Bring a finished job's logs and small results home. Logs come back as their tail when long; a result file over
-    the limit is left on the cluster and named in the manifest. Each file's sha256 is recorded."""
+    the limit is left on the cluster and named in the manifest. Each file's sha256 is recorded.
+
+    ``base`` is the task's folder: both local folders must be real folders under it. A file that cannot be brought for a
+    lasting reason (too large, a name not allowed) is skipped and named; a transfer that failed (the shell dropped, a
+    checksum differed) fails the whole fetch, so the caller retries instead of calling it done."""
+    if base is not None:
+        logs_dir, fetch_to = safe_local_root(base, logs_dir), safe_local_root(base, fetch_to)
     manifest: dict = {"logs": [], "fetched": [], "skipped": []}
     for rel in spec["logs"]:
-        try:
-            manifest["logs"].append(transfer.fetch_file(rel, logs_dir, tail=True, name=PurePosixPath(rel).name))
-        except TransferError as error:
-            manifest["skipped"].append({"path": rel, "reason": str(error)[:200]})  # a job that never started has no log
+        if not transfer.exists(rel):
+            manifest["skipped"].append({"path": rel, "reason": "no such log (the job may not have started)"})
+            continue
+        manifest["logs"].append(transfer.fetch_file(rel, logs_dir, tail=True, name=PurePosixPath(rel).name))
     total = 0
     for name, size in transfer.list_files(spec["work"]):
         rel = f"{spec['work']}/{name}"
@@ -339,13 +384,11 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
             continue
         try:
             info = transfer.fetch_file(rel, fetch_to, name=name)
-        except TransferError as error:
+        except (TooLarge, PathRejected) as error:  # lasting reasons: skip and say so
             manifest["skipped"].append({"path": name, "reason": str(error)[:200]})
             continue
         total += info["bytes"]
         manifest["fetched"].append({"path": name, "bytes": info["bytes"], "sha256": info["sha256"]})
-    import json
-
     write_confined(Path(logs_dir), Path(logs_dir) / f"{spec['stem']}.fetch.json",
                    json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
     return manifest

@@ -3828,7 +3828,7 @@ class Runner:
             raise RuntimeError("the HPC session is not available")
         workdir = Path(j["workdir"])
         with request_scope(self.task_req.get(j.get("task_id") or "")), queue_wait():
-            return fetch_results(transfer, spec, workdir / "jobs" / "logs", Path(spec["fetch_to"]))
+            return fetch_results(transfer, spec, workdir / "jobs" / "logs", Path(spec["fetch_to"]), base=workdir)
 
     async def _wake_finished_jobs(self) -> None:
         """Wake each task whose jobs have all ended, once: the agent was waiting on them (#281)."""

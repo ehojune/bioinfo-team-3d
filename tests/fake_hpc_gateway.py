@@ -154,6 +154,9 @@ def files(tokens: list[str]) -> tuple[str, int] | None:
             except OSError:
                 pass
         return "", 0
+    if head == "test" and tokens[1] == "-f":  # test -f F && echo yes || echo no
+        path = _real(tokens[2])
+        return ("yes\n" if os.path.isfile(path) and not os.path.islink(path) else "no\n"), 0
     if head == "test" and tokens[1] == "-L":
         return ("link\n" if os.path.islink(_real(tokens[2])) else "plain\n"), 0
     if head == "wc" and tokens[1] == "-c":
