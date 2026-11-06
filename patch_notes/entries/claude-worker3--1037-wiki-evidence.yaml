@@ -16,3 +16,7 @@ rows:
   at: 2026-11-07 10:10
   text: 엔진 결과 계약의 스키마 hash를 바꾸는 wiki_summary 증거 수준 초안(claims.py, report_check.py, wiki_contract.py, 시험)을 이 PR에서 되돌린다. 게이트웨이가 task의 wiki 허가를 정할 때 원시 roster가 아니라 effective roster(hosts)에서 그 runner의 항목을 읽게 하고, runner는 허가가 있을 때만 wiki_bound 인자를 넘겨 기존 호출 형태를 유지한다
   summary: CI에서 드러난 스키마 hash·roster 규칙·호출 형태 충돌을 풀어 첫 단위를 진행 게시 차단으로 좁힙니다.
+- sha: '0542a94'
+  at: 2026-11-07 10:50
+  text: 단계별 진행 게시가 파일마다 GitHub에 쓰기 직전에 wiki 노출을 다시 확인한다. 게시 중에 dispatch가 노출을 possible로 올리면 남은 파일을 보내지 않고 진행 게시를 끈다. 확인과 전송 사이에 await가 없다. 고치기 전 코드에서 실패하는 시험을 더했다
+  summary: 게시 도중 올라간 노출이 이미 시작한 업로드를 막지 못하던 경쟁을 닫습니다.

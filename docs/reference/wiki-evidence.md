@@ -26,7 +26,8 @@ lookup-only. 동작 설명은 [manual 12장](../manual/12-github-reports.md), �
 | 단계별 GitHub 진행 게시(`ResultStorage.progress_step`) | 막음 |
 | 보고서·업로드·라운드 게시, `ProjectReporter`의 pipeline 기여 | **아직 아님** |
 | CP2 | **아직 아님** |
-| 게시 검사와 외부 쓰기 사이의 경쟁, 재시작·구형 runner의 통합 시험 | **아직 아님** |
+| 진행 게시 안의 경쟁(게시 도중 노출이 올라감) | 막음: 파일마다 쓰기 직전에 다시 확인 |
+| 다른 게시 경로의 경쟁, 재시작·구형 runner의 통합 시험 | **아직 아님** |
 | 증거 수준 검사(`wiki_summary` 승격 금지)와 결과 계약 prompt 규칙, 독립 출처 인증, wiki 본문·경로 마스크 | 후속 |
 
 ## 한계

@@ -26,7 +26,8 @@ Lookup-only. Behavior is described in [manual chapter 12](../manual/12-github-re
 | Step progress publishing to GitHub (`ResultStorage.progress_step`) | blocked |
 | Report, upload and round publishing, the pipeline contribution in `ProjectReporter` | **not yet** |
 | CP2 | **not yet** |
-| The race between the publication check and the outward write; restart and old-runner integration tests | **not yet** |
+| The race inside step progress publishing (the exposure rises mid-publication) | blocked: checked again right before each file is written |
+| The race in the other publishing paths; restart and old-runner integration tests | **not yet** |
 | The evidence-level check (no promotion of `wiki_summary`) and the result-contract prompt rules, independent source authentication, masking wiki text and paths | later |
 
 ## Limits
