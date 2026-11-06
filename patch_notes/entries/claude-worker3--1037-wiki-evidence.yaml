@@ -8,3 +8,7 @@ rows:
   at: 2026-11-07 08:10
   text: 요청 기록에 wiki 노출 이력(wiki_exposure)을 적는다. 새 요청은 none으로 시작하고, wiki 도구를 줄 수 있는 직원에게 task를 보내는 순간(dispatch, 전달 전) possible로 올라 내려가지 않는다. task에는 roster로 정한 허가(meta wiki_tools)를 싣고 runner는 그 허가가 있는 dispatch에만 labhq_wiki를 붙인다. 이력이 없거나 읽을 수 없으면 unknown이다. none이 아니면 단계별 GitHub 진행 게시를 막는다. 보고서·업로드·라운드 게시와 CP2는 아직 막지 않는다
   summary: 이력이 없거나 노출될 수 있던 요청의 단계별 공개 진행 게시를 막고, 도구 구성을 task에 묶습니다.
+- sha: '2d34522'
+  at: 2026-11-07 09:00
+  text: 새 규칙에 맞춰 기존 시험의 fixture를 고친다. 진행 게시 시험의 요청은 기록된 none으로 시작하고, wiki 시험은 task에 묶인 dispatch에서만 도구가 붙는다고 확인하며 묶이지 않으면 붙지 않는 단언을 더한다. 게시 시험은 이력 없음·possible·unknown·빈 값·문자열 아님 모두 올리지 않고 recorded none은 올리는 양성 대조를 둔다
+  summary: 단언을 약하게 하지 않고 새 규칙에 맞게 시험 fixture를 바로잡습니다.
