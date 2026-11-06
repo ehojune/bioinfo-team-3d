@@ -5,6 +5,7 @@ import base64
 import ctypes as C
 import errno
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -317,6 +318,19 @@ def _request_frame(data):
     return len(payload).to_bytes(4, "little") + payload
 
 
+_LAUNCHES = itertools.count(1)  # launches made by this process, 1 for the first (#1076)
+
+
+def _os_uptime_s():
+    """Seconds since Windows booted, or None: a freshly provisioned runner is cold in ways a later launch is not."""
+    try:
+        kernel = C.WinDLL("kernel32")
+        kernel.GetTickCount64.restype = C.c_uint64
+        return round(kernel.GetTickCount64() / 1000, 1)
+    except (AttributeError, OSError):
+        return None
+
+
 def _create(command, cwd, environment, *, diagnostics=None):
     shell = _powershell()
     if not shell.is_absolute() or not shell.is_file():
@@ -327,14 +341,21 @@ def _create(command, cwd, environment, *, diagnostics=None):
     encoded = base64.b64encode(WMI_SCRIPT.encode("utf-16-le")).decode("ascii")
     diagnostics = {} if diagnostics is None else diagnostics
     started = time.monotonic()
+    # Python's own clock beside the provider's: `run_ms` is how long the `subprocess.run` call took, `elapsed_ms` the whole
+    # launch, so a call that ran past PROVIDER_TIMEOUT shows in `run_ms` and not in the provider's phases (#1076).
+    diagnostics["launch_ordinal"] = next(_LAUNCHES)
+    diagnostics["os_uptime_s"] = _os_uptime_s()
+    ran = time.perf_counter()  # not `time.monotonic`: the deadline tests count that clock's reads
     try:
         try:
             result = subprocess.run([str(shell), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
                                     input=_request_frame(data), stdout=subprocess.PIPE,
                                     stderr=subprocess.DEVNULL, timeout=PROVIDER_TIMEOUT, creationflags=0x08000000, check=False)
         except subprocess.TimeoutExpired as exc:
+            diagnostics["run_ms"] = round((time.perf_counter() - ran) * 1000, 3)
             _provider_output(exc.output, diagnostics, complete=False)
             raise  # Create may have succeeded. Never retry or use a partial returned PID.
+        diagnostics["run_ms"] = round((time.perf_counter() - ran) * 1000, 3)
         diagnostics["returncode"] = result.returncode if type(result.returncode) is int else None
         reply = _provider_output(result.stdout, diagnostics, complete=True)
     finally:
