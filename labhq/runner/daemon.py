@@ -147,9 +147,15 @@ def labhq_mcp_timeout_s(settings: Settings) -> int:
     staff CLI must not give up before the runner does, or a submit that was reported as timed out still goes through."""
     work = 120
     if settings.hpc.site_profile and settings.hpc.scheduler != "none":
-        from ..hpc_session import SessionConfig, call_budget_s
+        from ..hpc_session import SessionConfig
+        from ..tools.scheduler import scheduler_call_budget_s
 
-        hpc = call_budget_s(SessionConfig(argv=["x"]), float(settings.hpc.command_timeout_s), 2)  # a status is two commands
+        try:
+            session = Scheduler(settings.hpc).session()
+        except RuntimeError:  # an unreadable profile is reported by the tool, not while constructing CLI settings
+            session = None
+        cfg = session.cfg if session is not None else SessionConfig(argv=["x"])
+        hpc = scheduler_call_budget_s(cfg, float(settings.hpc.command_timeout_s), 2)
         work = max(work, int(hpc) + 90)  # the broker waits hpc + 30; the CLI waits longer still
     return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + work
 
@@ -408,6 +414,7 @@ class Runner:
                              self._on_submit, self._on_ask, self._owns_job,
                              on_approval_timeout=self._on_approval_timeout, on_local_job=self._on_local_job,
                              on_restricted=self._on_restricted,
+                             on_scheduler=self._on_scheduler_request,
                              lookup_admission=None if limit is None else LookupAdmission(
                                  settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit,
                                  precedent_share=settings.annot.precedent_lookup_share))
@@ -3305,10 +3312,9 @@ class Runner:
         return self._hide_hpc(await self._on_submit_raw(body))
 
     async def _on_submit_raw(self, body: dict) -> dict:
-        """hpc_submit runs here (#214 review): the id the runner's own scheduler call printed is the record. The status,
-        queue and cancel tools reach the runner's one HPC shell through the same route (``op``, #1295 C)."""
-        if body.get("op"):
-            return await self._on_scheduler_op(body)
+        """hpc_submit runs here (#214 review): the id the runner's own scheduler call printed is the record."""
+        if "op" in body:
+            return {"error": "use /jobs/scheduler/{op} for scheduler operations; the job was not submitted"}
         tid, aid = body.get("task_id"), body.get("agent_id")
         ws, running = self.workspaces.get(tid or ""), self.active_roots.get(tid or "")
         if ws is None or running is None:
@@ -3360,6 +3366,9 @@ class Runner:
         """Does any HPC job still run? A local job is no reason to hold a login open."""
         return any(not j["terminal"] and not local_jobs.is_local(jid) for jid, j in list(self.jobs.items()))
 
+    async def _on_scheduler_request(self, op: str, identity: dict) -> dict:
+        return self._hide_hpc(await self._on_scheduler_op({**identity, "op": op}))
+
     async def _on_scheduler_op(self, body: dict) -> dict:
         """hpc_status, hpc_queue and hpc_cancel for a site whose commands go through the runner's shell (#1295 C). The
         agent has no connection of its own to that site, so these run here, in the request's login scope."""
@@ -3372,16 +3381,16 @@ class Runner:
         if op not in {"status", "queue", "cancel"}:
             return {"error": f"unknown HPC operation {op!r}"}
         job_id = str(body.get("job_id") or "")
-        if op == "cancel" and not await self._owns_job(body):  # the shell is the runner's: check ownership here
-            return {"error": f"job {job_id} was not submitted by you through hpc_submit; labhq cancels only jobs it "
-                             "tracks for you. Ask the PI to cancel other jobs."}
+        if op in {"status", "cancel"} and not await self._owns_job(body, include_terminal=op == "status"):
+            return {"error": f"job {job_id} was not submitted by you through hpc_submit; labhq {op} requires an owned job"}
 
         def work():
             with request_scope(body.get("request_id")), queue_wait():  # gives up unsent when the shell stays busy
                 if op == "status":
                     return {"status": self.scheduler.status(job_id).to_dict()}
                 if op == "queue":
-                    return {"queue": [j.to_dict() for j in self.scheduler.queue()]}
+                    return {"queue": [j.to_dict() for j in self.scheduler.queue()
+                                      if self._hpc_job_owned(body, j.job_id)]}
                 return {"result": self.scheduler.cancel(job_id)}
 
         try:
@@ -3458,14 +3467,18 @@ class Runner:
                                          "core_hours": body.get("core_hours")})],
                             before=[("job", jid, self.jobs[jid])])
 
-    async def _owns_job(self, identity: dict) -> bool:
+    async def _owns_job(self, identity: dict, *, include_terminal: bool = False) -> bool:
         """hpc_cancel scope (#172): a job the runner submitted for this agent in this task or request.
 
         A record without the runner's mark came from an older broker that stored ids a task reported (#214 review).
         """
-        job_id = str(identity.get("job_id") or "")
+        return self._hpc_job_owned(identity, str(identity.get("job_id") or ""), include_terminal=include_terminal)
+
+    def _hpc_job_owned(self, identity: dict, job_id: str, *, include_terminal: bool = False) -> bool:
+        """Only runner-recorded HPC jobs for this agent and task/request; completed jobs remain readable."""
         for tracked, j in self.jobs.items():
-            if (not j.get("submitted_by_runner") or j.get("terminal") or not job_in_family(tracked, job_id)
+            if (local_jobs.is_local(tracked) or not j.get("submitted_by_runner")
+                    or (j.get("terminal") and not include_terminal) or not job_in_family(tracked, job_id)
                     or j.get("agent_id") != identity.get("agent_id")):
                 continue
             if j.get("task_id") == identity.get("task_id") or (

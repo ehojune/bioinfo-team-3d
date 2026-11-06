@@ -19,6 +19,16 @@ from ..settings import HpcSettings, slurm_cluster_option
 TERMINAL = {"completed", "failed", "cancelled", "unknown_finished"}
 MISSING_POLLS_BEFORE_FINISHED = 3
 
+
+def scheduler_call_budget_s(session_cfg, command_timeout_s: float, commands: int = 1) -> float:
+    """Every scheduler command can queue, reconnect and execute, including status's accounting query."""
+    if session_cfg is None:
+        return commands * command_timeout_s
+    from ..hpc_session import call_budget_s
+
+    return commands * call_budget_s(session_cfg, command_timeout_s)
+
+
 # Commands each backend runs on the runner (or hpc.ssh_host); doctor checks they are installed.
 COMMANDS = {
     "sge": ("qsub", "qstat"),

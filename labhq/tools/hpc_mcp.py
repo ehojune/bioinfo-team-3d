@@ -19,12 +19,12 @@ import httpx
 
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import chmod_owned, plain_directory, read_owned, write_owned
-from ..hpc_session import call_budget_s
 from ..hpc_transfer import UPLOAD_BUDGET_S
 from ..settings import Settings
 from ._mcpcompat import make_server, tool_failure
 from .scheduler import (
-    MAYBE_SUBMITTED, Scheduler, build_script, checked_job_id, sanitize_job_name, slurm_cluster_directive,
+    MAYBE_SUBMITTED, Scheduler, build_script, checked_job_id, sanitize_job_name, scheduler_call_budget_s,
+    slurm_cluster_directive,
 )
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
@@ -61,14 +61,11 @@ async def _broker(path: str, payload: dict, timeout: float) -> dict:
 
 
 def _hpc_wait_s(commands: int = 1) -> float:
-    """How long the runner may take for one scheduler command: a reconnect (every attempt and wait) plus the command.
-    Giving up sooner would return "nothing ran" while the runner's command still goes through."""
+    """Queueing, every reconnect attempt/backoff and execution for each command in this call."""
     session = None if SESSION_ERROR else SCHED.session()
-    if session is None:
-        return float(S.hpc.command_timeout_s)
     # the runner stands in line for the shell at most QUEUE_WAIT_S, then reconnects and runs: after that it gives up
-    # without sending, so the tool never reports "nothing ran" for a command that runs later
-    return call_budget_s(session.cfg, float(S.hpc.command_timeout_s), commands)
+    # without sending; every command in a multi-command status gets this full allowance
+    return scheduler_call_budget_s(session.cfg if session else None, float(S.hpc.command_timeout_s), commands)
 
 
 def _submit_wait_s() -> float:
@@ -87,10 +84,10 @@ async def _runner_op(op: str, **fields) -> dict:
     if SESSION_ERROR:
         raise tool_failure(SESSION_ERROR)
     try:
-        out = await _broker("/jobs/submit", {"op": op, "task_id": TASK, "agent_id": AGENT, **fields},
+        out = await _broker(f"/jobs/scheduler/{op}", {"task_id": TASK, "agent_id": AGENT, **fields},
                             timeout=_hpc_wait_s(2 if op == "status" else 1) + 30)
     except Exception as e:  # fail closed: without the runner there is no shell to ask
-        raise tool_failure(f"labhq broker failed; no HPC command was run: {e!r}") from e
+        raise tool_failure(f"labhq broker failed; the HPC command outcome is unknown: {e!r}") from e
     if out.get("error"):
         raise tool_failure(str(out["error"]))
     return out
