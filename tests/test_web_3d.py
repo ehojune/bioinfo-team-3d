@@ -186,8 +186,36 @@ NODE_WEB_TESTS = [
 ]
 
 
+def resizable_startup_summary(viewport, launch_epoch_ms, returned_after_ms, stderr):
+    """#1272: one line of where a resizable invocation's startup time went, from the script's own timing rows (stderr) and
+    the launch time Python recorded. Printed for a passing run too, so a slow runner shows up before it fails. Numbers
+    only; a row that is missing leaves its field out, and nothing here can fail a test."""
+    rows = {}
+    for line in stderr.splitlines():
+        if line.startswith('resizable timing: '):
+            try:
+                row = json.loads(line[len('resizable timing: '):])
+            except ValueError:
+                continue
+            if isinstance(row, dict) and row.get('stage') in ('module-ready', 'open') and row.get('viewport', viewport) == viewport:
+                rows.setdefault(row['stage'], row)
+    summary = {'viewport': viewport, 'returned_after_ms': returned_after_ms}
+    ready, opened = rows.get('module-ready'), rows.get('open')
+    if ready and isinstance(ready.get('module_entry_mono_ms'), (int, float)):
+        summary['node_start_ms'] = ready['module_entry_mono_ms']
+        if isinstance(ready.get('mono_ms'), (int, float)):
+            summary['module_load_ms'] = ready['mono_ms'] - ready['module_entry_mono_ms']
+    if opened:
+        if isinstance(opened.get('epoch_ms'), (int, float)):
+            summary['before_open_ms'] = opened['epoch_ms'] - launch_epoch_ms
+        for key in ('work_remaining_ms', 'outer_remaining_ms'):
+            if isinstance(opened.get(key), (int, float)):
+                summary[key.replace('_ms', '_at_open_ms')] = opened[key]
+    return 'resizable startup: ' + json.dumps(summary, sort_keys=True)
+
+
 @pytest.mark.parametrize('filename,marker', NODE_WEB_TESTS)
-def test_office_in_node(filename, marker):
+def test_office_in_node(filename, marker, capsys):
     node = node_binary()
     if not node:
         pytest.skip('Node is optional')
@@ -242,6 +270,11 @@ def test_office_in_node(filename, marker):
                                  f'\nstderr:\n{captured(exc.stderr)}') from exc
         output = f'{label}{timing()}\n{result.stdout}{result.stderr}'
         assert result.returncode == 0, output
+        if launch is not None:
+            # #1272: also on a pass. capsys.disabled keeps it in the CI log of a serial run (-n 0).
+            with capsys.disabled():
+                print('\n' + resizable_startup_summary(viewport, int(launch[0] * 1000),
+                                                       round((time.monotonic() - launch[1]) * 1000), result.stderr))
         assert marker in result.stdout, output
         if viewport and os.environ.get('LABHQ_REQUIRE_RESIZABLE_BROWSER') == '1':
             # A Python PASS alone must not certify an optional inner Node skip, or another viewport's test.
@@ -253,6 +286,26 @@ def test_office_in_node(filename, marker):
             # #842: on hosted Windows the real-Chrome cleanup regressions (forced path included) must run; an inner
             # node:test skip would otherwise still print "fail 0" and pass this parent. Chrome stays optional elsewhere.
             assert re.search(r'^# skipped 0\s*$', result.stdout, re.MULTILINE), result.stdout + result.stderr
+
+
+def test_resizable_startup_summary_reads_the_scripts_own_rows():
+    stderr = ('noise\n'
+              'resizable timing: {"stage":"module-ready","module_entry_mono_ms":19310,"mono_ms":23368,"epoch_ms":1000,'
+              '"outer_remaining_ms":34003,"work_remaining_ms":26003}\n'
+              'resizable timing: {"stage":"open","viewport":"desktop","mono_ms":26025,"epoch_ms":28650,'
+              '"outer_remaining_ms":31346,"work_remaining_ms":23346}\n'
+              'resizable timing: {"stage":"open","viewport":"phone","epoch_ms":99999,"work_remaining_ms":1}\n')
+    line = resizable_startup_summary('desktop', 0, 53094, stderr)
+    assert json.loads(line[len('resizable startup: '):]) == {
+        'viewport': 'desktop', 'returned_after_ms': 53094, 'node_start_ms': 19310, 'module_load_ms': 4058,
+        'before_open_ms': 28650, 'work_remaining_at_open_ms': 23346, 'outer_remaining_at_open_ms': 31346}
+
+
+@pytest.mark.parametrize('stderr', ['', 'resizable timing: not json\n', 'resizable timing: [1]\n',
+                                    'resizable timing: {"stage":"open","epoch_ms":"soon"}\n'])
+def test_resizable_startup_summary_never_raises_on_missing_or_odd_rows(stderr):
+    line = resizable_startup_summary('phone', 0, 5, stderr)
+    assert line.startswith('resizable startup: ') and '"returned_after_ms": 5' in line and 'before_open_ms' not in line
 
 
 def test_every_node_web_test_runs_in_ci():

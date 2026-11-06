@@ -117,3 +117,25 @@ Python이 이 스크립트를 띄운 시각(`launch`)부터 바깥 한계가 60�
 4. **원인 확인 순서 권고**: 1 → 다음 실패 시 값 비교 → 3. 2와 3은 증상 완화이고 원인 후보 ①을 가리지 못한다. 권고는 1을 먼저 넣고, 그 사이 같은 단계에서 WMI 실패(#1076, `docs/reference/ci-1076-wmi-provider-timeout.md`)가 겹쳐 나는지 함께 본다.
 
 한계: 이 분석은 실패 run 로그 한 개에 근거한다. runner의 CPU·디스크 지표와 백신 설정은 볼 수 없었다.
+
+
+### 측정 추가 (#1272, 같은 PR)
+
+성공한 run의 로그에도 resizable 호출마다 한 줄이 남는다. 시간 한계와 단언은 바꾸지 않았다.
+
+```
+resizable startup: {"before_open_ms": …, "module_load_ms": …, "node_start_ms": …, "outer_remaining_at_open_ms": …, "returned_after_ms": …, "viewport": "desktop", "work_remaining_at_open_ms": …}
+```
+
+| 필드 | 뜻 |
+|---|---|
+| `node_start_ms` | Node 프로세스 시작부터 스크립트 첫 줄까지 (이번 실패에서 19310) |
+| `module_load_ms` | 첫 줄부터 모듈을 읽고 끝날 때까지 (4058) |
+| `before_open_ms` | Python이 띄운 시각부터 `openDemo` 시작까지 (28650) |
+| `work_remaining_at_open_ms`·`outer_remaining_at_open_ms` | 그 시점에 남은 작업·바깥 한계 (23346·31346) |
+| `returned_after_ms` | 호출이 끝나기까지 전체 |
+
+- 이 PC에서 평소 값: `node_start_ms` 18~23, `before_open_ms` 49~122, `returned_after_ms` 735~1328. 실패 run은 `node_start_ms`가 19310이었다.
+- 출력은 `tests/test_web_3d.py`의 `resizable_startup_summary`가 스크립트의 `resizable timing:` 행(stderr)과 Python이 기록한 launch 시각으로 만든다. 행이 없으면 그 필드만 빠지고 시험을 실패시키지 않는다.
+- 한계: 줄은 `capsys.disabled()`로 찍는다. 직렬 실행(`-n 0`)에서는 CI 로그에 보이지만 xdist 병렬(`-n auto`)에서는 worker 출력이 전달되지 않아 보이지 않는다. Windows의 "Serial critical Windows contracts" 단계는 직렬이다.
+- 다음 확인: 직렬 Windows 단계의 성공 run 몇 개에서 `node_start_ms`의 분포를 모은다. 평소 값이 수십 ms이고 실패 때만 수 초라면 후보 ①(runner에서 새 프로세스가 느려짐)이 강해지고, 평소에도 수 초라면 후보 ②(한계 기준)로 간다.
