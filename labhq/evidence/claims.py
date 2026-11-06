@@ -218,8 +218,9 @@ class SourceRef(StrictModel):
 
     @model_validator(mode="after")
     def identifies_something(self) -> "SourceRef":
-        if self.wiki_freshness is not None and self.access_status != "wiki_summary":
-            raise ValueError("wiki_freshness requires wiki_summary access")
+        if (self.wiki_freshness is not None) != (self.access_status == "wiki_summary"):
+            raise ValueError("wiki_freshness and wiki_summary access go together: a wiki summary states its freshness "
+                             "and nothing else carries one")
         if (self.id_scheme is None) != (self.id_value is None or not self.id_value.strip()):
             raise ValueError("source id_scheme and id_value must be given together")
         if not any(_present(value) for value in (self.uri, self.id_value, self.artifact_id)):

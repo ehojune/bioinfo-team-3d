@@ -195,3 +195,10 @@ def test_the_result_contract_says_what_a_wiki_hit_is():
     text = " ".join(RESULT_CONTRACT_FIELD_RULES)
     for needle in ("wiki_summary", "tertiary", "indirect", "never as full_text", "wiki_freshness"):
         assert needle in text
+
+
+def test_a_wiki_summary_must_state_its_freshness():
+    row = wiki_row()
+    row["source"].pop("wiki_freshness")
+    with pytest.raises(ValidationError, match="wiki_freshness"):
+        Evidence.model_validate(row)
