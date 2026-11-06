@@ -501,3 +501,30 @@ def test_a_status_call_is_budgeted_for_its_two_commands(tmp_path, site, monkeypa
     asyncio.run(hpc.hpc_cancel("1"))
     timeouts = dict(seen)
     assert timeouts["status"] > timeouts["cancel"] and timeouts["status"] >= 2 * (60 + 60) + 105
+
+
+def test_a_pbs_submit_through_a_site_profile_is_sent_to_the_pi_like_one_over_ssh(tmp_path, site):
+    from labhq.runner.hpc_jobs import submit_job
+
+    site()
+    st = Settings.model_validate({"runner": {"state_dir": str(tmp_path / "state")},
+                                  "hpc": {"scheduler": "pbs", "user": "lab", "site_profile": "fake"}})
+    (tmp_path / "jobs").mkdir()
+    script = tmp_path / "jobs" / "job.sh"
+    script.write_text("echo hi\n", encoding="utf-8")
+    asked = []
+
+    async def approve(payload):
+        asked.append(payload)
+        return {"approved": False, "reason": "test"}
+
+    body = {"task_id": "t1", "agent_id": "a1", "script": str(script), "name": "j", "cores": 1, "mem": "1G",
+            "walltime": "00:10:00"}
+    st.policy.approvals.hpc_core_hours_threshold = 1000  # a cheap job: only the remote-directive reason can ask
+    asyncio.run(submit_job(st, sched.Scheduler(st.hpc), tmp_path, body, approve))
+    assert asked and asked[0]["detail"]["approval_reasons"] == ["remote PBS_DPREFIX cannot be inspected locally"]
+    plain = Settings.model_validate({"hpc": {"scheduler": "pbs", "user": "lab"}})
+    plain.policy.approvals.hpc_core_hours_threshold = 1000
+    asked.clear()
+    asyncio.run(submit_job(plain, sched.Scheduler(plain.hpc), tmp_path, body, approve))
+    assert not asked or asked[0]["detail"]["approval_reasons"] == []  # on the login node the local check is enough
