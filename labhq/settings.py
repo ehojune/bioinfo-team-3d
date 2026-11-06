@@ -300,6 +300,9 @@ class HpcSettings(BaseModel):
     login_limit_per_request: int | None = Field(default=None, ge=1)
     login_limit_per_day: int | None = Field(default=None, ge=1)
     login_limits_decided: bool = False
+    # Name of this user's site profile in ~/.labhq/sites/<name>.yaml (labhq/hpc_site.py, #1300). The profile holds how the
+    # cluster is reached and stays outside the repository; only its name is kept here.
+    site_profile: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
     _login_ledger: str | None = PrivateAttr(default=None)  # set by Settings from runner.state_dir
 
     @model_validator(mode="after")

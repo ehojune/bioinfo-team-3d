@@ -14,7 +14,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 import yaml
 
-from . import bioinfo_link, disk_space, doctor, github_token, hpc_consult, hpc_login_budget, init_defaults
+from . import bioinfo_link, disk_space, doctor, github_token, hpc_consult, hpc_login_budget, hpc_site, init_defaults
 from .adapters.base import _resolve_command
 from .runner.codex_sandbox import codex_command, powershell_executable, setup_hint
 from .settings import HpcSettings, LiteratureSettings, Settings
@@ -94,6 +94,39 @@ def _ask_hpc_login_limits(hpc: dict, scheduler: str, yes: bool) -> None:
         return
     print("HPC에 ssh로 접속하면 접속마다 기관 전산팀에 로그인 기록이 남을 수 있습니다. 상한은 기관마다 다르니 직접 정하세요.")
     hpc_login_budget.ask_limits(hpc, lambda label, default: _ask(label, default, yes))
+
+
+def _ask_hpc_site_profile(hpc: dict, scheduler: str, yes: bool, directory: Path | None = None, dry_run: bool = False) -> None:
+    """Offer to write this user's site profile (#1300): how the cluster is reached differs by institution, so the answers are
+    the user's and a blank one stays unknown. Saved outside the repository; only its name goes into the config. Not asked
+    without a person at the terminal, and not again once the config names a profile."""
+    if scheduler not in ("sge", "pbs", "slurm") or yes or not _interactive() or hpc.get("site_profile"):
+        return
+    if dry_run:
+        print("dry-run: 사이트 프로필은 묻지 않고 저장하지 않습니다.")
+        return
+    if _ask("이 클러스터의 접속 방법을 사이트 프로필로 적어 둘까요? (y/N)", "n", False).strip().lower() not in ("y", "yes"):
+        return
+    name = _ask("프로필 이름 (소문자·숫자·-_)", "my-cluster", False).strip()
+    try:
+        path = hpc_site.profile_path(name, directory)
+        existing = None
+        if path.exists():  # never replace a profile another config may use: its answers become the defaults
+            existing = hpc_site.load_profile(name, directory)
+            print(f"이미 있는 프로필 {name}입니다. 기존 값을 기본값으로 보여 드리니 바꿀 항목만 고치세요.")
+        profile = hpc_site.ask_profile(
+            name, lambda label, default: _ask(label, default, False), existing=existing,
+            preset={"scheduler": scheduler, "queue": hpc.get("default_queue"),
+                    "login_limit_per_request": hpc.get("login_limit_per_request"),
+                    "login_limit_per_day": hpc.get("login_limit_per_day")})
+        path = hpc_site.save_profile(profile, directory)
+    except hpc_site.SiteProfileError as error:
+        print(f"프로필을 저장하지 못했습니다: {error}")
+        return
+    hpc["site_profile"] = name
+    unknown = hpc_site.unknown_fields(profile)
+    where = "$LABHQ_SITES_DIR" if directory is None and os.environ.get("LABHQ_SITES_DIR") else "~/.labhq/sites"
+    print(f"사이트 프로필 저장: {where}/{name}.yaml" + (f" (아직 모르는 항목: {', '.join(unknown)})" if unknown else ""))
 
 
 def _save_hpc_login_limits(target: Path, hpc: dict) -> bool:
@@ -548,6 +581,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             existing.runner.workspace_root if existing else data["runner"]["workspace_root"], yes, instance)
         trial = _hpc_consult(hpc, scheduler, dry_run)
         _ask_hpc_login_limits(hpc, scheduler, yes)
+        _ask_hpc_site_profile(hpc, scheduler, yes, dry_run=dry_run)
         if _is_windows():
             policy = data.setdefault("policy", {})
             policy["data_zones"] = [z for z in policy.get("data_zones", [])
