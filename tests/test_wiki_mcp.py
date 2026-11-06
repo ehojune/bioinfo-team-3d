@@ -111,10 +111,11 @@ def test_the_tool_attaches_only_with_the_opt_in(tmp_path, allowed, attached):
     settings, root = make_settings(tmp_path)
     settings.wiki = WikiSettings(enabled=True, root=str(root), external_model_allowed=allowed)
     agent = AgentSpec(id="lit_scout", name="x", role="x", engine=Engine.claude_code, builtin_mcp=["wiki"])
-    names = [server.name for server in daemon(settings)._mcp_servers(agent, {}, allow_ask=False)]
+    names = [server.name for server in daemon(settings)._mcp_servers(agent, {}, allow_ask=False, wiki_bound=True)]  # bound by the gateway (#1037)
     assert ("labhq_wiki" in names) is attached
     plain = AgentSpec(id="other", name="x", role="x", engine=Engine.claude_code, builtin_mcp=["approval"])
-    assert "labhq_wiki" not in [s.name for s in daemon(settings)._mcp_servers(plain, {}, allow_ask=False)]
+    assert "labhq_wiki" not in [s.name for s in daemon(settings)._mcp_servers(plain, {}, allow_ask=False, wiki_bound=True)]
+    assert "labhq_wiki" not in [s.name for s in daemon(settings)._mcp_servers(agent, {}, allow_ask=False)]  # not bound: never attached
 
 
 def test_the_three_staff_carry_the_tool():

@@ -1372,7 +1372,8 @@ class Runner:
                 agent = agent.model_copy(update={"model": tier_model})
         return agent
 
-    def _mcp_servers(self, agent: AgentSpec, env: dict[str, str], allow_ask: bool = True) -> list[McpServerSpec]:
+    def _mcp_servers(self, agent: AgentSpec, env: dict[str, str], allow_ask: bool = True,
+                     wiki_bound: bool = False) -> list[McpServerSpec]:
         env = {**env, "PYTHONPATH": os.pathsep.join(filter(None, [str(REPO_ROOT), os.environ.get("PYTHONPATH")]))}
         servers: list[McpServerSpec] = []
         timeout_s = labhq_mcp_timeout_s(self.s)
@@ -1397,8 +1398,10 @@ class Runner:
             servers.append(McpServerSpec(name="labhq_annot", command=sys.executable,
                                          args=["-m", "labhq.tools.annot_mcp"], env=annot_env,
                                          auto_approve=True, timeout_s=literature_mcp_timeout_s(self.s)))
-        if "wiki" in agent.builtin_mcp and self._wiki_tool_ready():
-            # Read-only search over the PI's own notes; every call is logged to outputs/wiki_queries.jsonl.
+        if "wiki" in agent.builtin_mcp and wiki_bound and self._wiki_tool_ready():
+            # Read-only search over the PI's own notes; every call is logged to outputs/wiki_queries.jsonl. Only a
+            # dispatch the gateway bound to this tool (task.meta["wiki_tools"]) gets it, so a roster sent earlier
+            # cannot authorize a different tool set later: the gateway records the request's exposure from that roster (#1037).
             servers.append(McpServerSpec(name="labhq_wiki", command=sys.executable,
                                          args=["-m", "labhq.tools.wiki_mcp"], env=env,
                                          auto_approve=True, timeout_s=timeout_s))
@@ -2767,7 +2770,8 @@ class Runner:
             ctx = RunContext(
                 task=task, agent=agent, workdir=ws.dir, settings=self.s,
                 # Read-only staff get only Claude's scoped permission gate; no ask/HPC or staff MCP servers.
-                mcp_servers=self._mcp_servers(agent, env, allow_ask=not read_only),
+                mcp_servers=self._mcp_servers(agent, env, allow_ask=not read_only,
+                                              **({"wiki_bound": True} if task.meta.get("wiki_tools") is True else {})),
                 env={**env, "MCP_TOOL_TIMEOUT": str(labhq_mcp_timeout_s(self.s) * 1000)},
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
                 read_dirs=read_dirs, read_only_inputs=([*staged_inputs, *paper_inputs] or

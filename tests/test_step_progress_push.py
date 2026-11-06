@@ -19,6 +19,7 @@ class Hub:
         self.requests = {
             "req_progress": {
                 "id": "req_progress",
+                "wiki_exposure": "none",  # a request made by a gateway that records it, with no staff given the wiki (#1037)
                 "text": "Compare public studies",
                 "status": "running",
                 "intake": {"work_kind": "research"},

@@ -29,6 +29,7 @@ from .portfolio import (PRIVATE_PATH_PATTERN, EditionCheckError, broken_markdown
                         portfolio_root_file,
                         internal_data_steps, portfolio_report, publish_file_allowed, request_uses_internal_data,
                         scan_publish_files, source_uses_internal_data, table_allowed)
+from .evidence import wiki_exposure
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
 from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
@@ -1133,6 +1134,10 @@ class ResultStorage:
             await self._progress_warning(
                 rid, saved, "통제 데이터 요청은 단계별 GitHub 진행 게시를 켤 수 없어 껐습니다.", disable=True)
             return
+        blocker = wiki_exposure.publication_blocker(req)
+        if blocker:  # unknown or possible wiki exposure: nothing goes to GitHub (#1037)
+            await self._progress_warning(rid, saved, blocker + ". 단계별 진행 게시를 껐습니다.", disable=True)
+            return
         gh = self.client()
         if gh is None:
             await self._progress_warning(
@@ -1143,6 +1148,12 @@ class ResultStorage:
             branch = await self._progress_branch(rid, saved, gh)
             payload, omitted, internal_steps, published = self._progress_payload(req, step_id, result)
             for name, body in payload.items():
+                # The awaits above and between files can let a dispatch raise the exposure: look again right before every
+                # write, with nothing awaited between the look and the send (#1037).
+                blocker = wiki_exposure.publication_blocker(self.hub.requests[rid])
+                if blocker:
+                    await self._progress_warning(rid, saved, blocker + ". 단계별 진행 게시를 껐습니다.", disable=True)
+                    return
                 if isinstance(body, bytes):
                     await gh.put_binary(saved["repo"], name, body, branch, commit_message(f"labhq 진행 {step_id}", name))
                 else:
