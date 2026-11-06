@@ -115,7 +115,7 @@ flowchart LR
   end
   D & M & C <-->|/ws/client · REST| G[Gateway<br/>FastAPI]
   G --- O[CSO orchestrator<br/>DAG · review · budget]
-  R[Runner daemon<br/>workstation / HPC login node] -->|outbound /ws/runner| G
+  R[Runner daemon<br/>the user's PC by default; inside the cluster only when the site profile allows] -->|outbound /ws/runner| G
   R --> E1[claude -p] & E2[codex exec] & E3[gemini -p] & E4[agy -p]
   E1 & E2 & E3 --> T[MCP: labhq_hpc · labhq_approval · labhq_ask · labhq_annot · contract-staff paper MCP]
   T --> B[Local broker 127.0.0.1] --> R
@@ -123,6 +123,13 @@ flowchart LR
 ```
 
 The runner uses only **outbound** connections to the gateway, so no port needs to be opened on the lab PC or HPC.
+
+**General policy for using an HPC (#1295)**
+
+- **By default the agent stays outside the HPC.** Staff CLIs (`claude -p`, `codex exec` and so on) and the runner run on the user's PC, and only compute scripts (jobs) go to the HPC. Staff submit jobs through the `labhq_hpc` tool alone. Many institutions do not allow agents inside an HPC, so a runner placed inside the cluster (on the login node) is an exception used **only when the site profile allows it**. It is not the default. The permission setup for that layout is in [chapter 11](11-safety.md).
+- **A login leaves a record at the institution, so logins are kept few.** With `hpc.ssh_host`, every scheduler command opens one ssh connection and the institution's IT team records it as a login. labhq therefore counts every connection, and the per-request and per-day limits are chosen by the user at first setup. The repository holds no institution's value, and leaving a limit empty means no limit ([chapter 15](15-config.md)). The manager that opens one shell session and works through it (#1299) is under development and is not in yet.
+- **Sites differ in how you connect, so a site profile carries it.** The connection method (direct SSH, gateway tunnel, VPN), scheduler, queues, paths and site rules live in a profile on the user's PC outside the repository (under development, #1300). An institution's connection details are not put into the repository, logs or reports. The first time an HPC is used the user is asked how to connect, an item that is not known is not guessed, and the site's rules come before labhq's defaults.
+- A real HPC connection and job submission happen only after the PI approves. The basis and design of this policy are in the [survey note](../reference/hpc-login-survey-1295.md); it has not been checked on a real HPC yet.
 
 ### Overall layers and module architecture
 
