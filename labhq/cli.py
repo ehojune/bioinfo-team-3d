@@ -479,13 +479,27 @@ def _talent_skill_facts(folder: Path, receipt: Path, digest: str, origin: dict |
     return ("  " + " · ".join(facts)) if facts else ""
 
 
+def _configure_logging() -> None:
+    """Root logging for every command, with the token filter on its handlers (#37): the runner's connection warnings
+    name the gateway URL, and a wrong scheme in gateway.url makes that URL (token included) part of the message."""
+    from .security import redact_root_logging
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    redact_root_logging()
+
+
 def _run_websocket(s: Settings, command) -> None:
     """Run a command that holds the gateway's client websocket (`send` without --no-wait, `watch`). A gateway that is
     down, refuses the token or stops midway gives one line and exit 2 like _api, not a traceback (docs audit 10-09)."""
-    from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatus
+    from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatus, InvalidURI
 
     try:
         asyncio.run(command)
+    except InvalidURI:  # its message is the whole address, client token included: never print it (#37)
+        print("gateway.url은 ws:// 또는 wss://로 시작해야 합니다(http://는 안 됩니다). 설정을 고친 뒤 다시 실행하세요.",
+              file=sys.stderr)
+        raise SystemExit(2) from None
     except InvalidStatus as exc:
         status = getattr(exc.response, "status_code", None)
         print(f"gateway가 연결을 거부했습니다(HTTP {status}). gateway.client_token이 gateway 설정과 같은지 "
@@ -2207,8 +2221,7 @@ def main(argv: list[str] | None = None) -> None:
             p.error(f"instance '{args.instance}' is not initialised; run `labhq init --instance {args.instance}` first")
     if args.cmd == "demo" and (not math.isfinite(args.approve_timeout) or args.approve_timeout <= 0):
         p.error("--approve-timeout must be positive")
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    _configure_logging()
     if args.cmd == "init":
         from .init_wizard import InitError, run
         from yaml import YAMLError
