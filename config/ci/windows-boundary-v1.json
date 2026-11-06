@@ -157,6 +157,7 @@
     "tests/test_hpc_consult.py",
     "tests/test_hpc_failures.py",
     "tests/test_hpc_followups.py",
+    "tests/test_hpc_login_budget_1295.py",
     "tests/test_hpc_whole_request.py",
     "tests/test_init_defaults.py",
     "tests/test_init_wizard.py",

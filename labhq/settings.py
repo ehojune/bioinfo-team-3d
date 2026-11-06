@@ -12,7 +12,7 @@ from typing import Any  # semantics-hook
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, StrictBool, field_validator, model_validator
 
 from .intake import Reference
 from .test_guard import guard_test_path
@@ -294,6 +294,13 @@ class HpcSettings(BaseModel):
     command_timeout_s: int = 60
     submit_prefix: list[str] = Field(default_factory=list)  # argv before qsub/sbatch and qdel/scancel only
     job_group: str | None = None  # shared POSIX group for scripts and scheduler logs
+    # Every scheduler command over ssh_host is one login the site records. These are the user's limits, asked at `labhq
+    # init`: nothing here is a default for any institution, and empty means no limit (#1295). `login_limits_decided`
+    # says the user was asked, so an empty answer is final. The count lives in runner.state_dir/hpc_logins.sqlite3.
+    login_limit_per_request: int | None = Field(default=None, ge=1)
+    login_limit_per_day: int | None = Field(default=None, ge=1)
+    login_limits_decided: bool = False
+    _login_ledger: str | None = PrivateAttr(default=None)  # set by Settings from runner.state_dir
 
     @model_validator(mode="after")
     def require_job_group_for_submit_prefix(self) -> "HpcSettings":
@@ -845,6 +852,17 @@ class Settings(BaseModel):
         if value is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", value):
             raise ValueError("instance must use 1-64 letters, numbers, underscores or hyphens")
         return value
+
+    @model_validator(mode="after")
+    def bind_hpc_login_ledger(self) -> "Settings":
+        """Where the HPC login count lives, so a Scheduler built from settings.hpc alone counts and limits (#1295)."""
+        from .hpc_login_budget import FILE
+
+        try:
+            self.hpc._login_ledger = str(self.path(self.runner.state_dir) / FILE)
+        except RuntimeError:  # the test guard refusing an operator path: no ledger, no count
+            self.hpc._login_ledger = None
+        return self
 
     def project(self, project_id: str | None) -> ProjectSettings | None:
         return next((p for p in self.projects if p.id == project_id), None) if project_id else None

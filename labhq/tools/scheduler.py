@@ -332,6 +332,12 @@ class Scheduler:
     def _run(self, args: list[str]) -> subprocess.CompletedProcess:
         self._require_enabled("command execution")
         if self.cfg.ssh_host:
+            # Every ssh is a login the site records: count it, and refuse it when a limit the user set is used up (#1295).
+            from ..hpc_login_budget import budget_for
+
+            budget = budget_for(self.cfg)
+            if budget is not None:
+                budget.admit(args[0])
             args = ["ssh", "-o", "BatchMode=yes", self.cfg.ssh_host, shlex.join(args)]
         return subprocess.run(args, capture_output=True, text=True, timeout=self.cfg.command_timeout_s,
                               env=command_env())
