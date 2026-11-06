@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:30 | [`ae696de`](https://github.com/ehojune/bioinfo-team-3d/pull/1327/commits/ae696de) | **동작 변화 없이 노출 상속 계산을 한 곳으로 모았습니다.**<br>노출 상속을 호출하는 네 곳이 아니라 요청 생성 함수에서 revised_from·model_refusal_from 링크로 계산한다. 새 경로가 같은 링크를 쓰면 자동으로 따른다. 링크가 알 수 없는 요청을 가리키면 unknown이라 막는다. 동작은 앞 행과 같다 |
+| 19:00 | [`06c02f2`](https://github.com/ehojune/bioinfo-team-3d/pull/1327/commits/06c02f2) | **수정 요청이나 다시 시작으로 연 요청도 원래 요청의 wiki 노출 때문에 게시가 막힙니다.**<br>CP1 수정 요청과 모델 거부 뒤 다시 시작한 요청이 부모의 wiki 노출 수준으로 시작한다. 부모가 possible이거나 기록이 없으면 새 요청도 게시가 막힌다. 재시작 뒤에도 기록이 유지되고 wiki_tools 키가 없는 구형 runner에 보낸 요청은 possible이 되는 것과 결과 올리기의 새 저장소 생성 직전 재확인을 시험으로 고정했다. manual 12장과 참고 문서를 맞췄다 |
 | 17:40 | [`2b4ceb6`](https://github.com/ehojune/bioinfo-team-3d/pull/1325/commits/2b4ceb6) | **시험 fixture만 고쳤고 사용자에게 보이는 변화는 없습니다.**<br>라운드 기록 시험의 요청 fixture가 created_at이 작다는 우연에 기대고 있어 wiki 노출 none을 명시했다. 시험 코드만 바꿨다 |
 | 17:00 | [`36ed7f3`](https://github.com/ehojune/bioinfo-team-3d/pull/1325/commits/36ed7f3) | **출시 전에 만들었어도 그 뒤 이어서 실행한 요청은 기록이 없으면 게시가 막힙니다.**<br>wiki 노출 기록이 없는 요청을 none으로 보는 조건에 마지막 갱신 시각(updated_at)도 출시 전이어야 한다는 것을 더했다. 출시 전에 만들었어도 그 뒤 resume된 요청은 도구를 썼을 수 있어 unknown으로 남고 게시가 막힌다. manual 12장과 참고 문서를 맞췄다 |
 | 16:00 | [`1e37266`](https://github.com/ehojune/bioinfo-team-3d/pull/1325/commits/1e37266) | **시험 fixture만 고쳤고 사용자에게 보이는 변화는 없습니다.**<br>늦게 고르는 결과 저장소 시험의 요청 fixture에 wiki 노출 none을 기록했다. 시험 코드만 바꿨다 |
