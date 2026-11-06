@@ -26,7 +26,7 @@ Windows `up`은 실제 Python interpreter로 Job breakaway를 먼저 요청합�
 | `<role>-diagnostics.jsonl` | UTC 시각·PID·부모 PID, 시작, 10분 간격 heartbeat(RSS bytes·Windows handle 수), 예외 종류, signal, uvicorn 종료, exit reason/code |
 | `<role>-fault.log` | faulthandler의 native fault traceback, 잡히지 않은 Python 예외의 호출 스택 |
 | `<role>.log` | `up` 자식의 버퍼링을 끈 stdout/stderr, uvicorn·runner 일반 로그 |
-| `<role>-supervisor-diagnostics.jsonl` | 감독 자신의 시작·exit와 `parents_pinned`(고정한 조상 PID), `child_start`, `child_exit`(역할의 PID·종료 코드·가동 시간·`down` 요청 여부), `restart_scheduled`, `restart_giving_up` |
+| `<role>-supervisor-diagnostics.jsonl` | 감독 자신의 시작·exit와 `parents_pinned`(고정한 조상 PID), `child_start`, `child_exit`(역할의 PID·종료 코드·가동 시간·`down` 요청 여부), `restart_scheduled`, `restart_giving_up`, 10분마다 heartbeat(gateway·runner와 같은 간격이라 감독까지 기록 없이 사라져도 사라진 시각을 10분 창으로 좁힙니다). 한 줄이 약 150바이트이고 감독 둘이 합쳐 하루 약 42 KiB입니다(전에는 한 시간 간격, 하루 약 7 KiB). `status`와 `doctor`가 보여 주는 마지막 `child_exit`는 이 로그를 끝에서부터 거슬러 올라가 찾으므로(최대 16 MiB) heartbeat가 쌓여도 밀려나지 않습니다 |
 | `<role>-supervisor.log` | 감독의 stdout/stderr(감독이 시작하지 못했을 때의 오류가 여기 남습니다) |
 
 `status`의 종료 요청 표시는 요청 당시 종료됐다는 뜻이며, 종료 원인을 확정하지 않습니다. Windows 강제 종료도 code 1을 남길 수 있습니다.

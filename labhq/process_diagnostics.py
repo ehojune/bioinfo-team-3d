@@ -209,23 +209,35 @@ def latest_records(logs: Path, role: str, pid: int, *, also: Iterable[int] = ())
     return latest
 
 
+CHILD_EXIT_CHUNK_BYTES = 262144  # read this much at a time, from the end of the supervisor log
+CHILD_EXIT_SEARCH_BYTES = 16 * 1024 * 1024  # and look back no further than this: ten-minute heartbeats are about 21 KB a day
+
+
 def latest_child_exit(logs: Path, role: str) -> dict | None:
     """The newest `child_exit` row the role's supervisor wrote, from whichever supervisor process: how the gateway or
     runner ended, with its exit code. A forced kill leaves the child's own `exit` row unwritten, so this is the only
-    record of one. Reads a bounded tail."""
-    latest = None
+    record of one. Reads backwards from the end of the log, one chunk at a time, and stops at the first chunk that has
+    one: a role that keeps running writes a heartbeat every ten minutes, and a fixed tail would push its last
+    `child_exit` out of reach after about twelve days (#589). Gives up after `CHILD_EXIT_SEARCH_BYTES`."""
     try:
         with (logs / f"{role}{SUPERVISOR_SUFFIX}-diagnostics.jsonl").open(mode="rb") as source:
-            size = source.seek(0, 2)
-            source.seek(max(0, size - 262144))
-            lines = source.read().splitlines()
+            end = source.seek(0, 2)
+            floor = max(0, end - CHILD_EXIT_SEARCH_BYTES)
+            carry = b""  # the front of a line whose start is in an earlier chunk
+            while end > floor:
+                start = max(floor, end - CHILD_EXIT_CHUNK_BYTES)
+                source.seek(start)
+                lines = (source.read(end - start) + carry).split(b"\n")
+                # Unless this chunk starts the file (or the search window), its first piece is a line cut in two.
+                carry, lines = (lines[0], lines[1:]) if start > floor else (b"", lines)
+                for line in reversed(lines):
+                    try:
+                        row = json.loads(line)
+                    except (ValueError, UnicodeError):
+                        continue
+                    if isinstance(row, dict) and row.get("event") == "child_exit":
+                        return row
+                end = start
     except OSError:
         return None
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except (ValueError, UnicodeError):
-            continue
-        if isinstance(row, dict) and row.get("event") == "child_exit":
-            latest = row
-    return latest
+    return None
