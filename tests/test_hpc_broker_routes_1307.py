@@ -16,7 +16,7 @@ from labhq.tools import scheduler as sched
 
 def job(agent="a1", task="t1", request="r1", **fields):
     return {"agent_id": agent, "task_id": task, "request_id": request,
-            "submitted_by_runner": True, "terminal": False, **fields}
+            "submitted_by_runner": True, "terminal": False, "scheduler": "slurm", **fields}
 
 
 @pytest.fixture
@@ -112,6 +112,14 @@ def test_known_foreign_jobs_do_not_make_the_queue_uncertain(routes, monkeypatch)
                                                                   sched.JobInfo(job_id="8_2", state="running")])
     reply = routes.client.post("/jobs/scheduler/queue", json={}, headers=routes.headers).json()
     assert "error" not in reply and [j["job_id"] for j in reply["queue"]] == ["8_2"]
+
+
+@pytest.mark.parametrize("record", [job(terminal=True), job(scheduler="sge"), job(scheduler=None)])
+def test_stale_records_cannot_clear_uncertainty_for_a_reused_id(routes, monkeypatch, record):
+    routes.runner.jobs["999"] = record
+    monkeypatch.setattr(routes.runner.scheduler, "queue", lambda: [sched.JobInfo(job_id="999", state="running")])
+    reply = routes.client.post("/jobs/scheduler/queue", json={}, headers=routes.headers).json()
+    assert "cannot rule out" in reply["error"] and reply["queue"] == []
 
 
 @pytest.mark.parametrize("failure", ["submit command timed out", "cannot parse job id"])

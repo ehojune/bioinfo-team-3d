@@ -3396,11 +3396,13 @@ class Runner:
             reply = await asyncio.to_thread(work)
             if op == "queue":
                 # Job records belong to the event loop; submissions can change the dict while the worker queries HPC.
-                if any(not any(j.get("submitted_by_runner") and job_in_family(tracked, row["job_id"])
-                               for tracked, j in self.jobs.items()) for row in reply["queue"]):
+                tracked = [jid for jid, j in self.jobs.items() if j.get("submitted_by_runner") and not j.get("terminal")
+                           and j.get("scheduler") == self.s.hpc.scheduler]
+                known = [row for row in reply["queue"] if any(job_in_family(jid, row["job_id"]) for jid in tracked)]
+                if len(known) != len(reply["queue"]):
                     reply["error"] = ("the scheduler has jobs without a runner submission record; this queue cannot rule out "
                                       "an ambiguous submission. Do not resubmit until the PI reconciles the scheduler jobs")
-                reply["queue"] = [j for j in reply["queue"] if self._hpc_job_owned(body, j["job_id"])]
+                reply["queue"] = [j for j in known if self._hpc_job_owned(body, j["job_id"])]
             return reply
         except Exception as error:  # noqa: BLE001 - the tool reports it; a login limit or a lost shell is the usual cause
             return {"error": str(error)}

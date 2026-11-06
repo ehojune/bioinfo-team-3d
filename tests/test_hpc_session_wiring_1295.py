@@ -160,8 +160,10 @@ def test_the_runner_answers_status_queue_and_cancel_through_its_shell(tmp_path, 
     fake = site()
     runner = stub_runner(tmp_path, settings(tmp_path))
     job = runner.scheduler.submit("/work/job.sh", "align")
+    runner.jobs[job] = {"submitted_by_runner": True, "terminal": False, "scheduler": "slurm"}
     assert op(runner, "status", job_id=job)["status"]["state"] == "running"
-    assert [j["job_id"] for j in op(runner, "queue")["queue"]] == [job]
+    queue = op(runner, "queue")
+    assert "error" not in queue and [j["job_id"] for j in queue["queue"]] == [job]
     assert "error" not in op(runner, "cancel", job_id=job)
     assert op(runner, "status", job_id=job)["status"]["state"] in {"cancelled", "missing"}
     assert fake.logins() == 1
