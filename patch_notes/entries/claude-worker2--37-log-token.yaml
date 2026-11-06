@@ -1,0 +1,9 @@
+rows:
+- sha: 'ad8f94f'
+  at: 2026-11-07 06:13
+  text: "#37 로그의 토큰 노출 감사 문서를 더한다. 가짜 토큰을 넣은 임시 인스턴스로 확인해 gateway 로그는 이미 가려져 있고, gateway.url의 스킴이 잘못됐을 때 runner 로그와 labhq watch 출력에 토큰이 든 주소가 남는 두 경로를 재현했다"
+  summary: 로그에 토큰이 남는 곳을 실제로 돌려 찾았습니다.
+- sha: '78758c1'
+  at: 2026-11-07 06:13
+  text: runner를 포함한 모든 명령의 루트 로그 handler에 토큰 가림 filter를 단다. labhq watch와 send가 gateway.url의 잘못된 스킴(InvalidURI)을 만나면 토큰이 든 주소 대신 ws:// 또는 wss://로 시작해야 한다는 안내를 낸다. manual 15장에 gateway.url 한 줄을 적는다
+  summary: gateway.url을 http://로 잘못 써도 runner 로그와 watch 출력에 토큰이 찍히지 않습니다.
