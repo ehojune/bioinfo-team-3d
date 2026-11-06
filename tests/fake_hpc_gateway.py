@@ -78,6 +78,8 @@ def command(words: list[str], flags: dict) -> tuple[str, str, int]:
     head = words[0] if words else ""
     if head == "sbatch" and flags["sbatch_error"]:
         return "", flags["sbatch_error"] + "\n", 1
+    if head == "sbatch" and os.environ.get("SLURM_FAKE_SBATCH_OUT"):  # a successful sbatch that prints something odd
+        return os.environ["SLURM_FAKE_SBATCH_OUT"] + "\n", "", 0
     if head in ("sbatch", "squeue", "sacct", "scancel") and flags["slurm"]:
         text, status = slurm(words, flags["slurm"])
         warn = os.environ.get("SLURM_FAKE_SBATCH_WARN") if head == "sbatch" and status == 0 else None

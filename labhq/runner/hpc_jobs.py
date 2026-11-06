@@ -77,6 +77,9 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
     # Without a shared file system (the profile names a remote_workdir) the script crosses the session shell and runs in
     # the cluster's work folder; the PI is shown the script as it will run there (#1308).
     spec = upload_text = None
+    inputs = body.get("inputs")
+    if inputs is not None and not (isinstance(inputs, list) and all(isinstance(i, str) for i in inputs)):
+        return {"error": "inputs is a list of relative paths; the job was not submitted"}
     try:
         transfer = scheduler.transfer() if hasattr(scheduler, "transfer") else None
         if transfer is not None:
@@ -119,7 +122,7 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
         script_arg, out_arg, err_arg = str(spath), str(logs / f"{spath.stem}.out"), str(logs / f"{spath.stem}.err")
         if spec:
             try:  # nothing is submitted until the far side holds exactly these bytes
-                await asyncio.to_thread(upload_job, transfer, spec, upload_text, workdir, body.get("inputs"))
+                await asyncio.to_thread(upload_job, transfer, spec, upload_text, workdir, inputs)
             except Exception as e:  # noqa: BLE001 - a failed upload is reported with its reason; the job was not submitted
                 return {"error": f"the job could not be put on the cluster: {e}; the job was not submitted"}
             script_arg, out_arg, err_arg = (transfer.path(spec["script"]), transfer.path(spec["logs"][0]),

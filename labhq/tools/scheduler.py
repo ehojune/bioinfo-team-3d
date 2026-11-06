@@ -179,6 +179,12 @@ def _split_streams(command: str) -> str:
     return (f"E=$(mktemp); {command} 2>\"$E\"; S=$?; printf '\\n{STDERR_MARK}\\n'; cat \"$E\"; rm -f \"$E\"; (exit $S)")
 
 
+def _hide(p: subprocess.CompletedProcess, text: str) -> str:
+    """``text`` with the site's host, port and user names hidden, for a message that quotes what a command printed."""
+    hide = getattr(p, "redact", None)
+    return hide(text) if hide else text
+
+
 def _detail(p: subprocess.CompletedProcess) -> str:
     """What the command said, for an error message. ``_run`` hides the site's host, port and user in it (#1295): the
     message goes to the staff agent, and a login host name is the institution's, not the agent's to know."""
@@ -534,14 +540,14 @@ class Scheduler:
             m = re.fullmatch(r"(\d+)(?:;(\S+))?", out)  # --parsable → "12345", or "12345;cluster" under -M
             if m and m.group(2):
                 # The bare id names a different job (or none) on the cluster squeue/sacct/scancel query.
-                raise RuntimeError(f"sbatch submitted job {m.group(1)} to cluster {m.group(2)} (-M/--clusters or "
-                                   "SBATCH_CLUSTERS); labhq tracks the default cluster only, so this job is not "
-                                   f"tracked. Ask the PI before resubmitting; to stop it: scancel -M {m.group(2)} "
-                                   f"{m.group(1)}")
+                raise RuntimeError(_hide(p, f"sbatch submitted job {m.group(1)} to cluster {m.group(2)} (-M/--clusters or "
+                                          "SBATCH_CLUSTERS); labhq tracks the default cluster only, so this job is not "
+                                          f"tracked. Ask the PI before resubmitting; to stop it: scancel -M {m.group(2)} "
+                                          f"{m.group(1)}"))
         else:
             return out  # PBS → "12345.server"
         if not m:
-            raise RuntimeError(f"cannot parse job id from: {out!r}{MAYBE_SUBMITTED}")
+            raise RuntimeError(f"cannot parse job id from: {_hide(p, repr(out))}{MAYBE_SUBMITTED}")
         return m.group(1)
 
     def queue(self) -> list[JobInfo]:

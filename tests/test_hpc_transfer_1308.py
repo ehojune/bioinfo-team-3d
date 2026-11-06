@@ -374,3 +374,84 @@ def test_a_refused_upload_through_a_link_creates_nothing_outside(cluster, tmp_pa
     with pytest.raises(ht.PathRejected):
         transfer.upload_bytes("escape/new/file.txt", b"x")
     assert not list(outside.iterdir())  # the folder behind the link was not even created
+
+
+# ---- the tool's own path: hpc_submit -> broker -> submit_job -> the cluster ----
+
+def run_tool(site, monkeypatch, **tool_args):
+    import labhq.tools.hpc_mcp as hpc
+    from labhq.runner.hpc_jobs import submit_job
+
+    scheduler = sched.Scheduler(site.settings.hpc)
+
+    def prepare(workdir, script_path, logs, body, *args, **kwargs):
+        script_path.parent.mkdir(parents=True, exist_ok=True)
+        script_path.write_text(body, encoding="utf-8")
+
+    async def approve(payload):
+        return {"approved": True}
+
+    async def broker(path, payload, timeout):
+        return await submit_job(site.settings, scheduler, site.workdir, payload, approve)
+
+    monkeypatch.setattr(hpc, "S", site.settings)
+    monkeypatch.setattr(hpc, "WORKDIR", site.workdir)
+    monkeypatch.setattr(hpc, "SCHED", scheduler)
+    monkeypatch.setattr(hpc, "TASK", "t1")
+    monkeypatch.setattr(hpc, "AGENT", "a1")
+    monkeypatch.setattr(hpc, "_prepare_job_files", prepare)
+    monkeypatch.setattr(hpc, "_broker", broker)
+    return json.loads(asyncio.run(hpc.hpc_submit("echo hi", "align", **tool_args)))
+
+
+def test_inputs_given_to_the_tool_reach_the_cluster(site, monkeypatch):
+    (site.workdir / "data").mkdir()
+    (site.workdir / "data" / "ref.txt").write_text("reference", encoding="utf-8")
+    out = run_tool(site, monkeypatch, inputs=["data/ref.txt"])
+    assert out["submitted"] and site.remote("t1/work/data/ref.txt").read_text(encoding="utf-8") == "reference"
+
+
+@pytest.mark.parametrize("bad", [["../secret.txt"], ["/etc/passwd"], ["a"] * 21, [""], "ref.txt", [1]])
+def test_the_tool_refuses_inputs_that_are_not_a_short_list_of_workspace_paths(site, monkeypatch, bad):
+    with pytest.raises(Exception, match="inputs"):
+        run_tool(site, monkeypatch, inputs=bad)
+    assert not (site.tmp / "slurm.json").exists()
+
+
+def test_the_runner_refuses_an_inputs_value_that_is_not_a_list(site):
+    script = write_script(site)
+    result = submit(site, script, inputs="ref.txt")
+    assert "error" in result and "list" in result["error"]
+
+
+def test_an_unparseable_submit_answer_does_not_carry_the_site_to_the_agent(tmp_path, monkeypatch):
+    monkeypatch.setenv("LABHQ_SITES_DIR", str(tmp_path / "sites"))
+    monkeypatch.setenv("SLURM_FAKE_SBATCH_OUT", "Submitted on gw.example.org as user bob")
+    monkeypatch.setenv("SLURM_FAKE_SANDBOX", str(tmp_path))
+    argv = [sys.executable, "-I", GATEWAY, "--slurm-state", str(tmp_path / "slurm.json"),
+            "-p", "2222", "bob@gw.example.org"]
+    hpc_site.save_profile(hpc_site.SiteProfile(name="fake", access_method="ssh", connect_argv=argv, remote_exec=True,
+                                               scheduler="slurm"))
+    scheduler = sched.Scheduler(Settings.model_validate({
+        "runner": {"state_dir": str(tmp_path / "state")},
+        "hpc": {"scheduler": "slurm", "user": "lab", "site_profile": "fake"}}).hpc)
+    try:
+        with pytest.raises(RuntimeError) as caught:
+            scheduler.submit("/work/job.sh", "align")
+    finally:
+        sched.close_sessions()
+    message = str(caught.value)
+    assert "cannot parse job id" in message and "may have been submitted" in message
+    assert "gw.example.org" not in message and "bob" not in message
+
+
+def test_the_cluster_name_of_a_slurm_m_submit_is_hidden_when_it_is_the_site(tmp_path, monkeypatch):
+    from subprocess import CompletedProcess
+
+    monkeypatch.setattr(sched.subprocess, "run", lambda args, **k: CompletedProcess(args, 0, "4100;gw.example.org\n", ""))
+    scheduler = sched.Scheduler(Settings.model_validate({
+        "runner": {"state_dir": str(tmp_path / "state")},
+        "hpc": {"scheduler": "slurm", "user": "lab", "ssh_host": "bob@gw.example.org"}}).hpc)
+    with pytest.raises(RuntimeError) as caught:
+        scheduler.submit("/work/job.sh", "align")
+    assert "gw.example.org" not in str(caught.value) and "4100" in str(caught.value)
