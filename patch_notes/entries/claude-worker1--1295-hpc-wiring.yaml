@@ -20,3 +20,7 @@ rows:
     at: "2026-11-06 23:00"
     summary: "제출 뒤 경고가 stderr로 나와도 작업 번호로 잘못 읽지 않고, 도구 호출이 포기한 명령은 나중에 실행되지 않으며, runner 종료가 진행 중인 HPC 명령을 기다리며 멈추지 않습니다."
     text: "세션 명령을 stderr 분리 한 줄로 보내 stdout·stderr·종료 코드를 따로 받음, queue_wait로 줄서기 60초 뒤 보내지 않고 실패(SessionBusy), broker timeout에 줄서기 포함, close는 연결을 먼저 끊고 stop은 스레드로 닫음, manual 09·15, 시험 4건 (#1295)"
+  - sha: "4a1e67f"
+    at: "2026-11-06 23:30"
+    summary: "HPC 세션을 여는 접속 프로세스도 scheduler 명령과 같은 정제된 환경변수만 받아, runner의 API 키 같은 비밀이 원격 셸로 넘어가지 않습니다."
+    text: "SessionConfig.env, site_session이 command_env()를 넘김, 가짜 gateway printenv와 시험 1건 (#1295)"
