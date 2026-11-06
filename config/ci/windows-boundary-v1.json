@@ -161,6 +161,7 @@
     "tests/test_hpc_session_1299.py",
     "tests/test_hpc_session_wiring_1295.py",
     "tests/test_hpc_site_profile_1300.py",
+    "tests/test_hpc_transfer_1308.py",
     "tests/test_hpc_whole_request.py",
     "tests/test_init_defaults.py",
     "tests/test_init_wizard.py",

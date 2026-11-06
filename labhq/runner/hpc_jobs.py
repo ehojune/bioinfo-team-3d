@@ -13,6 +13,7 @@ import hashlib
 from pathlib import Path
 from typing import AsyncContextManager, Awaitable, Callable
 
+from ..hpc_transfer import TransferError, job_spec, remote_script, upload_job
 from ..policy import core_hours, hpc_needs_approval
 from ..settings import Settings
 from ..tools.scheduler import Scheduler, sanitize_job_name, script_directives, slurm_cluster_directive
@@ -73,6 +74,20 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
         return {"error": f"#SBATCH {option}: labhq tracks jobs on the default cluster only; "
                          "remove -M/--clusters and submit again"}
     name = sanitize_job_name(str(body.get("name") or spath.stem))
+    # Without a shared file system (the profile names a remote_workdir) the script crosses the session shell and runs in
+    # the cluster's work folder; the PI is shown the script as it will run there (#1308).
+    spec = upload_text = None
+    inputs = body.get("inputs")
+    if inputs is not None and not (isinstance(inputs, list) and all(isinstance(i, str) for i in inputs)):
+        return {"error": "inputs is a list of relative paths; the job was not submitted"}
+    try:
+        transfer = scheduler.transfer() if hasattr(scheduler, "transfer") else None
+        if transfer is not None:
+            spec = job_spec(str(body.get("task_id") or ""), spath.stem)
+            upload_text = remote_script(text, transfer.path(spec["work"]))
+            text = upload_text
+    except (TransferError, RuntimeError) as e:
+        return {"error": f"cannot prepare {spath.name} for the cluster: {e}; the job was not submitted"}
     # Directives (#SBATCH --array, #$ -pe, #PBS -J, …) can ask for more than cores × walltime and the command
     # line does not override all of them, so any directive sends the job to the PI whatever the threshold (#172).
     directives = script_directives(text)
@@ -104,13 +119,22 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
     async with (gate() if gate else contextlib.nullcontext(True)) as running:
         if not running:
             return {"error": "the task ended while waiting for the PI; the job was not submitted"}
+        script_arg, out_arg, err_arg = str(spath), str(logs / f"{spath.stem}.out"), str(logs / f"{spath.stem}.err")
+        if spec:
+            try:  # nothing is submitted until the far side holds exactly these bytes
+                await asyncio.to_thread(upload_job, transfer, spec, upload_text, workdir, inputs)
+            except Exception as e:  # noqa: BLE001 - a failed upload is reported with its reason; the job was not submitted
+                return {"error": f"the job could not be put on the cluster: {e}; the job was not submitted"}
+            script_arg, out_arg, err_arg = (transfer.path(spec["script"]), transfer.path(spec["logs"][0]),
+                                            transfer.path(spec["logs"][1]))
         try:
-            job_id = await asyncio.to_thread(scheduler.submit, str(spath), name, cores, mem, walltime, queue,
-                                             str(logs / f"{spath.stem}.out"), str(logs / f"{spath.stem}.err"))
+            job_id = await asyncio.to_thread(scheduler.submit, script_arg, name, cores, mem, walltime, queue,
+                                             out_arg, err_arg)
         except Exception as e:
             return {"error": str(e)}
         result = {"submitted": True, "job_id": job_id, "name": name, "script": str(spath),
-                  "script_sha256": hashlib.sha256(script_bytes).hexdigest(), "core_hours": ch}
+                  "script_sha256": hashlib.sha256(script_bytes).hexdigest(), "core_hours": ch,
+                  **({"transfer": spec} if spec else {})}
         if record:
             await record(result)
     return result

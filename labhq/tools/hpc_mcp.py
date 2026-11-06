@@ -20,6 +20,7 @@ import httpx
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import chmod_owned, plain_directory, read_owned, write_owned
 from ..hpc_session import call_budget_s
+from ..hpc_transfer import UPLOAD_BUDGET_S
 from ..settings import Settings
 from ._mcpcompat import make_server, tool_failure
 from .scheduler import (
@@ -68,6 +69,17 @@ def _hpc_wait_s(commands: int = 1) -> float:
     # the runner stands in line for the shell at most QUEUE_WAIT_S, then reconnects and runs: after that it gives up
     # without sending, so the tool never reports "nothing ran" for a command that runs later
     return call_budget_s(session.cfg, float(S.hpc.command_timeout_s), commands)
+
+
+def _submit_wait_s() -> float:
+    """The runner's time for a submit: the shell command, and where files cross the shell (no shared file system) the
+    whole upload (its own time allowance) before it."""
+    wait = _hpc_wait_s()
+    try:
+        transfers = not SESSION_ERROR and SCHED.transfer() is not None
+    except RuntimeError:
+        transfers = False
+    return wait + (wait + UPLOAD_BUDGET_S if transfers else 0)
 
 
 async def _runner_op(op: str, **fields) -> dict:
@@ -260,12 +272,16 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
 
 @server.tool()
 async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G",
-                     walltime: str = "04:00:00", queue: str | None = None, reason: str = "") -> str:
+                     walltime: str = "04:00:00", queue: str | None = None, reason: str = "",
+                     inputs: list[str] | None = None) -> str:
     """Submit a bash script as a batch job.
 
     script: the script body (commands; scheduler directives optional). With account switching,
     relative outputs go to hpc_out/; otherwise it runs from your workspace.
     cores / mem (total, e.g. "32G") / walltime ("HH:MM:SS"). reason: why this job is needed.
+    inputs: small files your script reads, as paths relative to your workspace (at most 20, 512 KiB each). A cluster
+    that does not share files with this machine gets them in the job's work folder under the same relative path; a
+    cluster that does share them ignores this list. Larger files are not sent: say so in your reason.
     Returns JSON: {"submitted": true, "job_id": ...} or a normal PI denial.
     Operational failures are MCP tool errors; denial must not trigger resubmission.
     """
@@ -275,6 +291,11 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     if S.hpc.scheduler == "slurm" and (option := slurm_cluster_directive(script)):
         raise tool_failure(f"#SBATCH {option}: labhq tracks jobs on the default cluster only; "
                            "remove -M/--clusters and submit again")
+    if inputs is not None and (not isinstance(inputs, list) or len(inputs) > 20
+                               or not all(isinstance(i, str) and i and not i.startswith("/") and ".." not in i.split("/")
+                                          for i in inputs)):
+        raise tool_failure("inputs is a list of at most 20 relative paths inside your workspace")
+    upload_inputs = inputs  # `inputs` is reused below for the shared data snapshots
     name = sanitize_job_name(job_name)
     logs = WORKDIR / "jobs" / "logs"
     output_dir = WORKDIR / "outputs" if mode == "hpc" else WORKDIR / "hpc_out" if S.hpc.submit_prefix else WORKDIR
@@ -302,8 +323,8 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     try:
         out = await _broker("/jobs/submit", {
             "task_id": TASK, "agent_id": AGENT, "script": str(spath), "name": name, "cores": cores, "mem": mem,
-            "walltime": walltime, "queue": queue, "reason": reason,
-        }, timeout=S.policy.approvals.timeout_s + _hpc_wait_s() + 30)
+            "walltime": walltime, "queue": queue, "reason": reason, "inputs": upload_inputs,
+        }, timeout=S.policy.approvals.timeout_s + _submit_wait_s() + 30)
     except (httpx.ConnectError, ConnectionError) as e:  # fail closed
         raise tool_failure(f"labhq broker unreachable; the job was not submitted: {e}") from e
     except Exception as e:  # the runner may have submitted before the answer was lost

@@ -179,6 +179,12 @@ def _split_streams(command: str) -> str:
     return (f"E=$(mktemp); {command} 2>\"$E\"; S=$?; printf '\\n{STDERR_MARK}\\n'; cat \"$E\"; rm -f \"$E\"; (exit $S)")
 
 
+def _hide(p: subprocess.CompletedProcess, text: str) -> str:
+    """``text`` with the site's host, port and user names hidden, for a message that quotes what a command printed."""
+    hide = getattr(p, "redact", None)
+    return hide(text) if hide else text
+
+
 def _detail(p: subprocess.CompletedProcess) -> str:
     """What the command said, for an error message. ``_run`` hides the site's host, port and user in it (#1295): the
     message goes to the staff agent, and a login host name is the institution's, not the agent's to know."""
@@ -370,6 +376,7 @@ def site_session(cfg: HpcSettings):
             config = hpc_site.session_config(profile, cfg.command_timeout_s)
             config.env = command_env()  # the connection process gets only what scheduler commands get: no runner credentials
             session = _SESSIONS[key] = HpcSession(config, budget=budget_for(cfg))
+            session.profile = profile  # the transfer folder (remote_workdir) comes from it
     return session
 
 
@@ -384,6 +391,21 @@ class Scheduler:
         if not hasattr(self, "_session"):
             self._session = site_session(self.cfg)
         return self._session
+
+    def transfer(self):
+        """A ``hpc_transfer.Transfer`` over the shell when the site profile names a ``remote_workdir`` (the PC and the
+        cluster do not share files: the script and the results cross the shell), else None (the same paths are visible on
+        both sides, and files are used where they are)."""
+        session = self.session()
+        profile = getattr(session, "profile", None) if session is not None else None
+        if profile is None or not profile.remote_workdir:
+            return None
+        from ..hpc_transfer import Transfer
+
+        from ..hpc_session import redact
+
+        words = session.cfg.redact_words or ()
+        return Transfer(session.run, profile.remote_workdir, redact=lambda text: redact(text, words))
 
     def attach_session(self, *, on_notice=None, has_open_jobs=None) -> bool:
         """Hook the runner into the shell: ``on_notice(kind, text)`` hears about login limits, a changed host key, a
@@ -454,12 +476,28 @@ class Scheduler:
 
     def _redactor(self, session):
         """A function hiding this site's host, port and user names in a message: the profile's connect command, or
-        ``hpc.ssh_host``."""
+        ``hpc.ssh_host``. With a profile it also hides the cluster work folder (it names the user's account there)."""
         from ..hpc_session import redact, redaction_words
 
         words = (session.cfg.redact_words if session is not None
                  else redaction_words(["ssh", *shlex.split(self.cfg.ssh_host or "")]))
-        return lambda text: redact(text, words or ())
+        profile = getattr(session, "profile", None) if session is not None else None
+        root = getattr(profile, "remote_workdir", None)
+
+        def hide(text: str) -> str:
+            if root:
+                text = text.replace(root, "<workdir>")  # first: the path holds the user name the words would cut up
+            return redact(text, words or ())
+
+        return hide
+
+    def redactor(self):
+        """The one function every HPC message bound for the agent or the feed passes through (see the runner's boundary)."""
+        try:
+            session = self.session()
+        except RuntimeError:
+            session = None
+        return self._redactor(session)
 
     def submit_args(self, script: str, name: str, cores: int, mem: str, walltime: str,
                     queue: str | None, stdout: str, stderr: str) -> list[str]:
@@ -521,14 +559,14 @@ class Scheduler:
             m = re.fullmatch(r"(\d+)(?:;(\S+))?", out)  # --parsable → "12345", or "12345;cluster" under -M
             if m and m.group(2):
                 # The bare id names a different job (or none) on the cluster squeue/sacct/scancel query.
-                raise RuntimeError(f"sbatch submitted job {m.group(1)} to cluster {m.group(2)} (-M/--clusters or "
-                                   "SBATCH_CLUSTERS); labhq tracks the default cluster only, so this job is not "
-                                   f"tracked. Ask the PI before resubmitting; to stop it: scancel -M {m.group(2)} "
-                                   f"{m.group(1)}")
+                raise RuntimeError(_hide(p, f"sbatch submitted job {m.group(1)} to cluster {m.group(2)} (-M/--clusters or "
+                                          "SBATCH_CLUSTERS); labhq tracks the default cluster only, so this job is not "
+                                          f"tracked. Ask the PI before resubmitting; to stop it: scancel -M {m.group(2)} "
+                                          f"{m.group(1)}"))
         else:
             return out  # PBS → "12345.server"
         if not m:
-            raise RuntimeError(f"cannot parse job id from: {out!r}{MAYBE_SUBMITTED}")
+            raise RuntimeError(f"cannot parse job id from: {_hide(p, repr(out))}{MAYBE_SUBMITTED}")
         return m.group(1)
 
     def queue(self) -> list[JobInfo]:

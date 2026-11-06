@@ -3281,7 +3281,30 @@ class Runner:
         await self.emit(Event(type=body.get("type", "agent.log"), task_id=tid, agent_id=body.get("agent_id"),
                               request_id=self.task_req.get(tid or ""), data=body.get("data") or {}))
 
+    HIDE_KEYS = frozenset({"error", "detail", "result", "reason", "note"})
+
+    def _hide_text(self, text: str) -> str:
+        """The site's host, port and user names (and the cluster work folder) hidden in a piece of HPC text."""
+        redactor = getattr(self.scheduler, "redactor", None)  # a stand-in scheduler (tests) hides nothing
+        return redactor()(text) if redactor else text
+
+    def _hide_hpc(self, value, key: str | None = None):
+        """The runner's boundary for HPC text: what goes back to a staff tool through the broker passes here once, so no
+        error, detail or result quoted from the cluster carries the site. Only the text fields are touched; ids, names
+        and paths are left as they are."""
+        if isinstance(value, str):
+            return self._hide_text(value) if key in self.HIDE_KEYS else value
+        if isinstance(value, dict):
+            return {k: self._hide_hpc(v, k if isinstance(k, str) and k in self.HIDE_KEYS else key if key in self.HIDE_KEYS
+                                      else None) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._hide_hpc(v, key) for v in value]
+        return value
+
     async def _on_submit(self, body: dict) -> dict:
+        return self._hide_hpc(await self._on_submit_raw(body))
+
+    async def _on_submit_raw(self, body: dict) -> dict:
         """hpc_submit runs here (#214 review): the id the runner's own scheduler call printed is the record. The status,
         queue and cancel tools reach the runner's one HPC shell through the same route (``op``, #1295 C)."""
         if body.get("op"):
@@ -3318,10 +3341,14 @@ class Runner:
             if location.get("mode") == "hpc":
                 ws.update_run(tid, hpc_step_id=ws.task.meta.get("step_id") or "direct", hpc_submitted=True,
                               hpc_revision=ws.task.meta.get("revision", 0))
+            # Where the finished job's results land locally: the folder hpc_submit told the agent (output_dir).
+            fetch_to = ws.dir / ("outputs" if location.get("mode") == "hpc" else "hpc_out" if self.s.hpc.submit_prefix else "")
             await self._track_job({"task_id": tid, "agent_id": aid, "job_id": result["job_id"],
                                    "name": result["name"], "script": result["script"],
                                    "script_sha256": result["script_sha256"],
-                                   "core_hours": result["core_hours"]})
+                                   "core_hours": result["core_hours"]},
+                                  {"transfer": {**result["transfer"], "fetch_to": str(fetch_to)}}
+                                  if result.get("transfer") else None)
 
         # Count this submit's login against its request, and say no before the PI is asked when a limit is already used up.
         if stop := self._login_limit(body.get("request_id")):
@@ -3385,7 +3412,8 @@ class Runner:
         tid = job.get("task_id")
         await self.emit(Event(type="agent.log", task_id=tid, agent_id=job.get("agent_id"),
                               request_id=self.task_req.get(tid or ""),
-                              data={"level": "alert", "hpc_session": {"kind": kind}, "text": f"HPC 세션: {text}"}))
+                              data={"level": "alert", "hpc_session": {"kind": kind},
+                                    "text": f"HPC 세션: {self._hide_text(text)}"}))
 
     def _login_limit(self, request_id: str | None) -> LoginLimitReached | None:
         """The HPC login limit a new login for this request would hit now (#1295), else None. Over a live shell a command
@@ -3786,13 +3814,54 @@ class Runner:
             raise failure
         return changed_any
 
+    FETCH_TRIES = 3
+
+    async def _fetch_finished_jobs(self) -> None:
+        """Bring home the logs and small results of each finished job that ran without a shared file system (#1308), before
+        its agent is woken. A failure is retried on the next poll and then reported; the agent is woken either way."""
+        for jid, j in list(self.jobs.items()):
+            spec = j.get("transfer")
+            if not (spec and j.get("terminal")) or j.get("fetched") or j.get("fetch_tries", 0) >= self.FETCH_TRIES:
+                continue
+            j["fetch_tries"] = j.get("fetch_tries", 0) + 1
+            try:
+                manifest = await asyncio.to_thread(self._fetch_job_files, j, spec)
+            except Exception as error:  # noqa: BLE001 - reported below; the files stay on the cluster
+                j["fetch_error"] = self._hide_text(str(error))[:300]
+                if j["fetch_tries"] >= self.FETCH_TRIES:
+                    await self._emit_hpc_notice("transfer", f"작업 {jid}의 로그·결과를 가져오지 못했습니다: {j['fetch_error']}")
+            else:
+                j["fetched"], j["fetch_error"] = True, None
+                if manifest["skipped"]:
+                    await self._emit_hpc_notice(
+                        "transfer", f"작업 {jid}: 파일 {len(manifest['skipped'])}개는 가져오지 않았습니다(크기 상한 등). "
+                                    "사이트 프로필의 전송 방법으로 직접 가져오세요")
+            self.store.put("job", jid, j)
+
+    def _fetch_settled(self, j: dict) -> bool:
+        """The agent waits for a job's files to come home, up to FETCH_TRIES polls."""
+        return not j.get("transfer") or bool(j.get("fetched")) or j.get("fetch_tries", 0) >= self.FETCH_TRIES
+
+    def _fetch_job_files(self, j: dict, spec: dict) -> dict:
+        from ..hpc_transfer import fetch_results
+
+        if not j.get("workdir"):
+            raise RuntimeError("the job's task folder is unknown")
+        transfer = self.scheduler.transfer()
+        if transfer is None:
+            raise RuntimeError("the HPC session is not available")
+        workdir = Path(j["workdir"])
+        with request_scope(self.task_req.get(j.get("task_id") or "")), queue_wait():
+            return fetch_results(transfer, spec, workdir / "jobs" / "logs", Path(spec["fetch_to"]), base=workdir)
+
     async def _wake_finished_jobs(self) -> None:
         """Wake each task whose jobs have all ended, once: the agent was waiting on them (#281)."""
+        await self._fetch_finished_jobs()
         by_task: dict[str, list[dict]] = {}
         for j in self.jobs.values():
             by_task.setdefault(j["task_id"], []).append(j)
         for tid, js in by_task.items():
-            if tid in self.notified or not all(x["terminal"] for x in js):
+            if tid in self.notified or not all(x["terminal"] and self._fetch_settled(x) for x in js):
                 continue
             t = self.tasks.get(tid)
             if t is not None and not t.done():  # the agent is still talking; wake it after it ends

@@ -1,0 +1,458 @@
+"""Put files on the HPC and bring small ones back, through the session's shell (#1308, #1295 E).
+
+Some sites do not share a file system with the user's PC: a job script written here does not exist on the cluster. The
+session shell (``hpc_session``) is already open, so files cross it as text, one command line at a time, and every
+transfer is checked by a sha256 taken on the far side. It costs no login: the shell is the same one the scheduler
+commands use.
+
+* Small files only. A file over the limit is refused with the way out: the site profile's own transfer method, which is
+  a login of its own and is the user's to run.
+* Paths. A remote path is relative to the profile's ``remote_workdir`` and stays under it: ``..``, absolute paths and odd
+  characters are refused here, and the far side resolves the folder (``pwd -P``) and refuses a link that leads out.
+  A local path written by a fetch stays under the folder the caller names, the same way.
+* A name is never put into a command unquoted.
+
+The module knows no site: it needs a ``run(command)`` that returns an object with ``exit_code`` and ``output`` (the
+session's ``run``), and the remote root.
+"""
+from __future__ import annotations
+
+import base64
+import contextlib
+import hashlib
+import json
+import os
+import re
+import shlex
+import stat
+import time
+import uuid
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Callable
+
+from .adapters.held_dir import HeldDir
+
+SAFE_PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@+=,:%-]*")  # one path component: no space, quote, glob or leading dash
+
+
+class TransferError(RuntimeError):
+    """A transfer did not happen. Nothing half-written is left in place."""
+
+
+class PathRejected(TransferError):
+    """A path leaves the allowed folder or has characters this module will not put into a command."""
+
+
+class TooLarge(TransferError):
+    """The file is over the limit. Use the site's own transfer method for it."""
+
+
+class HashMismatch(TransferError):
+    """The far side holds different bytes than were sent (or than it reports)."""
+
+
+@dataclass(frozen=True)
+class Limits:
+    upload_max_bytes: int = 512 * 1024  # one file; a larger one is the site transfer method's job
+    fetch_max_bytes: int = 1024 * 1024  # one file
+    fetch_total_bytes: int = 8 * 1024 * 1024  # all files of one job
+    chunk_chars: int = 2400  # one command line (a terminal line holds about 4096 characters)
+    fetch_chunk_bytes: int = 45000  # decoded bytes per fetch command (about 60,000 characters back)
+    list_depth: int = 3
+
+
+def confine(rel: str) -> PurePosixPath:
+    """A relative POSIX path made of safe components, or ``PathRejected``."""
+    if not isinstance(rel, str) or not rel or rel.startswith("/") or "\\" in rel or "\x00" in rel:
+        raise PathRejected(f"path must be relative and plain: {rel!r}")
+    parts = rel.split("/")
+    for part in parts:
+        if part in ("", ".", "..") or not SAFE_PART.fullmatch(part):
+            raise PathRejected(f"path component {part!r} is not allowed in {rel!r}")
+    return PurePosixPath(*parts)
+
+
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+class Transfer:
+    def __init__(self, run: Callable[[str], object], root: str, limits: Limits = Limits(),
+                 redact: Callable[[str], str] | None = None):
+        if not isinstance(root, str) or not root.startswith("/") or ".." in root.split("/") or "\n" in root:
+            raise PathRejected("the remote work folder is an absolute POSIX path without '..'")
+        self.run, self.root, self.limits = run, root.rstrip("/") or "/", limits
+        self._real_root: str | None = None
+        self.deadline: float | None = None  # time.monotonic() after which no further command is sent
+        self._redact = redact  # hides the site's host, port and user in what the cluster printed
+
+    # ---- the far side ------------------------------------------------------------------------------------------
+    def _do(self, command: str, what: str) -> str:
+        if self.deadline is not None and time.monotonic() > self.deadline:
+            raise TransferError(f"{what}: the time allowed for this transfer is used up; nothing more was sent")
+        result = self.run(command)
+        if getattr(result, "exit_code", 1) != 0:
+            raise TransferError(f"{what} failed on the cluster: {self._hide(str(getattr(result, 'output', ''))[:200].strip())}")
+        return str(result.output)
+
+    def _hide(self, text: str) -> str:
+        """What the cluster printed, for an error message the agent and the web feed may show: the site's host, port and
+        user names, and the work folder's own path (which names the user's account there), are hidden."""
+        for path in sorted({self.root, self._real_root or self.root}, key=len, reverse=True):
+            if path and path != "/":
+                text = text.replace(path, "<workdir>")  # first: the path holds the user name the redactor would cut up
+        return self._redact(text) if self._redact is not None else text
+
+    def real_root(self) -> str:
+        if self._real_root is None:
+            out = self._do(f"mkdir -p -- {shlex.quote(self.root)} && cd -- {shlex.quote(self.root)} && pwd -P",
+                           "opening the work folder").strip().splitlines()
+            if not out or not out[-1].startswith("/"):
+                raise TransferError("the cluster did not report the work folder")
+            self._real_root = out[-1]
+        return self._real_root
+
+    def path(self, rel: str) -> str:
+        return f"{self.root}/{confine(rel)}"
+
+    def ensure_dir(self, rel_dir: str) -> str:
+        """Make a folder under the root and return its real path. A folder that is, or leads through, a link out of the
+        root is refused."""
+        real_root = real = self.real_root()
+        parts = [] if rel_dir in ("", ".") else list(confine(rel_dir).parts)
+        current = self.root
+        for part in parts:  # one level at a time: a link that leads out is found before anything is made beyond it
+            current = f"{current}/{part}"
+            quoted = shlex.quote(current)
+            out = self._do(f"test -d {quoted} && cd -- {quoted} && pwd -P || echo missing", "checking a folder").strip().splitlines()
+            if not out or out[-1] == "missing":
+                out = self._do(f"mkdir -- {quoted} && cd -- {quoted} && pwd -P", "making a folder").strip().splitlines()
+            real = out[-1] if out else ""
+            if real != real_root and not real.startswith(real_root.rstrip("/") + "/"):
+                raise PathRejected(f"{rel_dir!r} leads outside the work folder")
+        return real
+
+    def _is_link(self, remote: str) -> bool:
+        return self._do(f"test -L {shlex.quote(remote)} && echo link || echo plain", "checking a file").strip() == "link"
+
+    def exists(self, rel: str) -> bool:
+        """Is there a plain file at ``rel`` (a link does not count)?"""
+        return self._do(f"test -f {shlex.quote(self.path(rel))} && echo yes || echo no", "checking a file").strip() == "yes"
+
+    def remote_sha256(self, rel: str) -> str:
+        out = self._do(f"sha256sum -- {shlex.quote(self.path(rel))}", "reading a checksum").split()
+        if not out or not re.fullmatch(r"[0-9a-f]{64}", out[0]):
+            raise TransferError("the cluster returned no checksum")
+        return out[0]
+
+    # ---- upload ------------------------------------------------------------------------------------------------
+    def upload_bytes(self, rel: str, data: bytes, *, executable: bool = False) -> dict:
+        """Write ``data`` to ``rel`` under the root. The file appears only once the far side's sha256 equals ours."""
+        if len(data) > self.limits.upload_max_bytes:
+            raise TooLarge(f"{rel}: {len(data)} bytes is over the {self.limits.upload_max_bytes} byte limit; use the site "
+                           "profile's file transfer method (a login of its own) and put it under the work folder")
+        path = confine(rel)
+        folder = str(path.parent) if str(path.parent) != "." else ""
+        self.ensure_dir(folder)
+        final = self.path(rel)
+        if self._is_link(final):
+            raise PathRejected(f"{rel!r} is a link on the cluster; it is not overwritten")
+        token = uuid.uuid4().hex[:10]
+        staged, encoded = f"{final}.up-{token}", f"{final}.up-{token}.b64"
+        want = sha256_hex(data)
+        text = base64.b64encode(data).decode("ascii")
+        try:
+            self._do(f": > {shlex.quote(encoded)}", "starting the upload")
+            for at in range(0, len(text), self.limits.chunk_chars):
+                self._do(f"printf %s {shlex.quote(text[at:at + self.limits.chunk_chars])} >> {shlex.quote(encoded)}",
+                         "sending a block")
+            self._do(f"base64 -d < {shlex.quote(encoded)} > {shlex.quote(staged)}", "decoding the upload")
+            got = self._do(f"sha256sum -- {shlex.quote(staged)}", "checking the upload").split()
+            if not got or got[0] != want:
+                raise HashMismatch(f"{rel}: the cluster holds {got[0] if got else 'nothing'}, sent {want}")
+            if executable:
+                self._do(f"chmod 0700 {shlex.quote(staged)}", "setting the mode")
+            self._do(f"mv -f -- {shlex.quote(staged)} {shlex.quote(final)}", "placing the file")
+        finally:
+            try:
+                self.run(f"rm -f -- {shlex.quote(encoded)} {shlex.quote(staged)}")
+            except Exception:  # noqa: BLE001 - the leftover is a temporary file; the original error is what matters
+                pass
+        return {"path": rel, "bytes": len(data), "sha256": want}
+
+    def upload_file(self, local: Path, rel: str, *, root: Path | None = None, executable: bool = False) -> dict:
+        """Upload a regular local file. With ``root``, the file is read inside it through folder handles held open (no
+        link on the way, none swapped in after the check, no ``..``)."""
+        local = Path(local)
+        if root is not None:
+            try:
+                relative = local.resolve(strict=False).relative_to(Path(root).resolve())
+            except (ValueError, OSError) as error:
+                raise PathRejected(f"{local} is outside {root}") from error
+            data = read_confined(Path(root), str(PurePosixPath(*relative.parts)), self.limits.upload_max_bytes)
+            return self.upload_bytes(rel, data, executable=executable)
+        try:
+            if local.is_symlink() or not local.is_file():
+                raise PathRejected(f"{local} is not a plain file")
+            size = local.stat().st_size
+            if size > self.limits.upload_max_bytes:
+                raise TooLarge(f"{local.name}: {size} bytes is over the {self.limits.upload_max_bytes} byte limit; use the "
+                               "site profile's file transfer method")
+            data = local.read_bytes()
+        except OSError as error:
+            raise TransferError(f"cannot read {local.name}: {error}") from error
+        return self.upload_bytes(rel, data, executable=executable)
+
+    # ---- fetch -------------------------------------------------------------------------------------------------
+    def list_files(self, rel_dir: str) -> list[tuple[str, int]]:
+        """(relative path, size) of the plain files under ``rel_dir``, a few levels deep. Links are not listed."""
+        folder = self.ensure_dir(rel_dir)
+        out = self._do(f"find {shlex.quote(folder)} -maxdepth {self.limits.list_depth} -type f -printf '%s %P\\n'",
+                       "listing results")
+        files = []
+        for line in out.splitlines():
+            size, _, name = line.partition(" ")
+            if size.isdigit() and name:
+                files.append((name, int(size)))
+        return sorted(files, key=lambda item: item[0])
+
+    def list_deeper(self, rel_dir: str, limit: int = 50) -> list[str]:
+        """Files below the depth ``list_files`` looks at (at most ``limit`` names), so they can be named as left behind."""
+        folder = self.ensure_dir(rel_dir)
+        out = self._do(f"find {shlex.quote(folder)} -mindepth {self.limits.list_depth + 1} -type f -printf '%P\\n' | head -n {limit}",
+                       "listing deeper results")
+        return [line for line in out.splitlines() if line.strip()]
+
+    def fetch_bytes(self, rel: str, *, tail: bool = False, max_bytes: int | None = None) -> tuple[bytes, dict]:
+        """The file's bytes and ``{"sha256", "bytes", "truncated"}``. A file over the limit is refused, except with
+        ``tail`` (a log): then its last ``max_bytes`` come back and ``truncated`` says so. The checksum is of what came."""
+        limit = max_bytes or self.limits.fetch_max_bytes
+        remote = self.path(rel)
+        self.ensure_dir(str(confine(rel).parent) if str(confine(rel).parent) != "." else "")
+        if self._is_link(remote):
+            raise PathRejected(f"{rel!r} is a link on the cluster; it is not read")
+        size_text = self._do(f"wc -c < {shlex.quote(remote)}", "reading the size").strip()
+        if not size_text.isdigit():
+            raise TransferError(f"the cluster did not report the size of {rel}")
+        size = int(size_text)
+        if size > limit and not tail:
+            raise TooLarge(f"{rel}: {size} bytes is over the {limit} byte limit; use the site profile's file transfer method")
+        start, take = (max(size - limit, 0), min(size, limit))
+        pieces, done = [], 0
+        while done < take:
+            n = min(self.limits.fetch_chunk_bytes, take - done)
+            out = self._do(f"tail -c +{start + done + 1} {shlex.quote(remote)} | head -c {n} | base64 | tr -d '\\n'",
+                           "reading a block").strip()
+            try:
+                block = base64.b64decode(out, validate=True)
+            except ValueError as error:
+                raise TransferError(f"{rel}: the cluster sent a block that is not valid") from error
+            if not block:
+                break
+            pieces.append(block)
+            done += len(block)
+        data = b"".join(pieces)
+        if len(data) != take:
+            raise HashMismatch(f"{rel}: expected {take} bytes, received {len(data)}")
+        if start == 0 and take == size:  # the whole file: compare with the cluster's own checksum
+            remote_sha = self.remote_sha256(rel)
+            if remote_sha != sha256_hex(data):
+                raise HashMismatch(f"{rel}: the received bytes do not match the cluster's checksum")
+        return data, {"sha256": sha256_hex(data), "bytes": len(data), "truncated": start > 0}
+
+    def fetch_file(self, rel: str, into: Path, *, tail: bool = False, max_bytes: int | None = None,
+                   name: str | None = None) -> dict:
+        """Fetch ``rel`` to ``into / name`` (default: the same relative path). The local path stays under ``into``."""
+        data, info = self.fetch_bytes(rel, tail=tail, max_bytes=max_bytes)
+        target = Path(into) / (name or str(confine(rel)))
+        write_confined(Path(into), target, data)
+        return {"path": str(confine(rel)), "local": str(target), **info}
+
+
+def read_confined(root: Path, rel: str, limit: int) -> bytes:
+    """The bytes of a regular file at ``rel`` under ``root``, read through handles: ``root`` and each folder are opened
+    once without following a link and the file is opened relative to its folder, so a link swapped in after any check
+    is refused (never followed). Size and type come from the same open descriptor that is read."""
+    parts = confine(rel).parts
+    try:
+        with contextlib.ExitStack() as stack:
+            held = stack.enter_context(HeldDir.hold(Path(root)))
+            for part in parts[:-1]:
+                held = stack.enter_context(held.child(part))
+            fd = held.open_read_file(parts[-1])
+            with os.fdopen(fd, "rb") as handle:
+                info = os.fstat(handle.fileno())
+                if not stat.S_ISREG(info.st_mode):
+                    raise PathRejected(f"{rel!r} is not a plain file")
+                if info.st_size > limit:
+                    raise TooLarge(f"{rel}: {info.st_size} bytes is over the {limit} byte limit; use the site profile's "
+                                   "file transfer method")
+                data = handle.read(limit + 1)
+    except TransferError:
+        raise
+    except OSError as error:  # a link, a missing file or folder, or one that is not what it was
+        raise PathRejected(f"{rel!r} is not a plain file inside the task folder: {error}") from error
+    if len(data) > limit:
+        raise TooLarge(f"{rel}: grew past the {limit} byte limit while it was read")
+    return data
+
+
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        resolved, base = path.resolve(), root.resolve()
+    except OSError:
+        return False
+    return resolved == base or base in resolved.parents
+
+
+def write_confined(root: Path, target: Path, data: bytes) -> None:
+    """Write ``data`` to ``target``, which must lie under ``root`` and must not pass through or replace a link."""
+    root, target = Path(root), Path(target)
+    try:
+        relative = target.relative_to(root)
+    except ValueError as error:
+        raise PathRejected(f"{target} is outside {root}") from error
+    if ".." in relative.parts:
+        raise PathRejected(f"{target} is outside {root}")
+    root.mkdir(parents=True, exist_ok=True)
+    current = root
+    for part in relative.parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise PathRejected(f"{current} is a link; nothing is written through it")
+        current.mkdir(exist_ok=True)
+    if target.is_symlink():
+        raise PathRejected(f"{target} is a link; it is not overwritten")
+    if not _inside(target.parent, root):
+        raise PathRejected(f"{target} is outside {root}")
+    staged = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.part")
+    try:
+        staged.write_bytes(data)
+        os.replace(staged, target)
+    finally:
+        staged.unlink(missing_ok=True)
+
+
+# ---- a job's files (the runner's side) ---------------------------------------------------------------------------------
+
+MAX_INPUTS = 20
+INPUTS_TOTAL_BYTES = 4 * 1024 * 1024
+UPLOAD_BUDGET_S = 300.0  # all the commands of one job's upload together; the caller's wait is sized from it
+
+
+def job_spec(task_id: str, stem: str) -> dict:
+    """Where a job's files live on the cluster, relative to the work folder: its script, its logs and the folder it
+    runs in. The task id and the script name are checked like any path."""
+    base = str(confine(str(task_id or "task")))
+    if "/" in base:
+        raise PathRejected(f"task id {task_id!r} is not a plain name")
+    return {"base": base, "script": f"{base}/jobs/{confine(stem + '.sh')}", "work": f"{base}/work",
+            "logs": [f"{base}/jobs/logs/{confine(stem + '.out')}", f"{base}/jobs/logs/{confine(stem + '.err')}"],
+            "stem": stem}
+
+
+def remote_script(text: str, remote_work: str) -> str:
+    """The job script with its ``cd`` (which build_script wrote with a local folder) pointing at the cluster's work
+    folder. A script without that line is refused: it would run wherever the shell happens to be."""
+    lines = text.split("\n")
+    for at, line in enumerate(lines):
+        if line.startswith("cd "):
+            lines[at] = f"cd {shlex.quote(remote_work)}"
+            return "\n".join(lines)
+    raise TransferError("the job script has no 'cd' line to point at the cluster's work folder")
+
+
+def upload_job(transfer: Transfer, spec: dict, script_text: str, local_root: Path, inputs: list | None = None,
+               budget_s: float = UPLOAD_BUDGET_S) -> list[dict]:
+    """Put the script (and any small inputs, relative to ``local_root``) on the cluster. Raises before anything is
+    submitted; what was written stays under the job's own folder."""
+    inputs = list(inputs or [])
+    if len(inputs) > MAX_INPUTS:
+        raise TooLarge(f"{len(inputs)} inputs is more than {MAX_INPUTS}; use the site profile's file transfer method")
+    sent, total = [], 0
+    spec["inputs"] = {}  # work-relative name -> sha256 of what was uploaded: those are not results when the job ends
+    transfer.deadline = time.monotonic() + budget_s  # a slow link stops the upload before the caller gives up waiting
+    try:
+        transfer.ensure_dir(f"{spec['base']}/jobs/logs")
+        transfer.ensure_dir(spec["work"])
+        for rel in inputs:
+            name = str(confine(str(rel)))
+            info = transfer.upload_file(Path(local_root) / name, f"{spec['work']}/{name}", root=Path(local_root))
+            total += info["bytes"]
+            if total > INPUTS_TOTAL_BYTES:
+                raise TooLarge(f"the inputs total more than {INPUTS_TOTAL_BYTES} bytes; use the site profile's file "
+                               "transfer method")
+            spec["inputs"][name] = info["sha256"]
+            sent.append(info)
+        sent.append(transfer.upload_bytes(spec["script"], script_text.encode("utf-8"), executable=True))
+    finally:
+        transfer.deadline = None
+    return sent
+
+
+def safe_local_root(base: Path, root: Path) -> Path:
+    """``root`` (a folder results are written into) made ready under ``base`` (the task's folder): every part of it from
+    ``base`` down is a real folder, not a link, so nothing written there can land elsewhere. Missing parts are made one
+    level at a time."""
+    base, root = Path(base), Path(root)
+    try:
+        relative = root.relative_to(base)
+    except ValueError as error:
+        raise PathRejected(f"{root} is not inside {base}") from error
+    if ".." in relative.parts or base.is_symlink():
+        raise PathRejected(f"{root} is not a plain folder inside {base}")
+    current = base
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise PathRejected(f"{current} is a link; results are not written through it")
+        if not current.exists():
+            current.mkdir()
+        elif not current.is_dir():
+            raise PathRejected(f"{current} is not a folder")
+    return root
+
+
+def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path, base: Path | None = None) -> dict:
+    """Bring a finished job's logs and small results home. Logs come back as their tail when long; a result file over
+    the limit is left on the cluster and named in the manifest. Each file's sha256 is recorded.
+
+    ``base`` is the task's folder: both local folders must be real folders under it. A file that cannot be brought for a
+    lasting reason (too large, a name not allowed) is skipped and named; a transfer that failed (the shell dropped, a
+    checksum differed) fails the whole fetch, so the caller retries instead of calling it done."""
+    if base is not None:
+        logs_dir, fetch_to = safe_local_root(base, logs_dir), safe_local_root(base, fetch_to)
+    manifest: dict = {"logs": [], "fetched": [], "skipped": []}
+    for rel in spec["logs"]:
+        if not transfer.exists(rel):
+            manifest["skipped"].append({"path": rel, "reason": "no such log (the job may not have started)"})
+            continue
+        manifest["logs"].append(transfer.fetch_file(rel, logs_dir, tail=True, name=PurePosixPath(rel).name))
+    total = 0
+    for name in transfer.list_deeper(spec["work"]):  # too deep to list: not fetched, and said so
+        manifest["skipped"].append({"path": name, "reason": f"deeper than {transfer.limits.list_depth} folders: use the "
+                                                            "site profile's file transfer method"})
+    uploaded = spec.get("inputs") or {}
+    for name, size in transfer.list_files(spec["work"]):
+        rel = f"{spec['work']}/{name}"
+        if name in uploaded and size <= transfer.limits.upload_max_bytes and transfer.remote_sha256(rel) == uploaded[name]:
+            continue  # an input the job did not change is not a result
+        try:
+            confine(name)
+        except PathRejected:
+            manifest["skipped"].append({"path": name, "reason": "name not allowed"})
+            continue
+        if size > transfer.limits.fetch_max_bytes or total + size > transfer.limits.fetch_total_bytes:
+            manifest["skipped"].append({"path": name, "reason": f"{size} bytes: use the site profile's file transfer method"})
+            continue
+        try:
+            info = transfer.fetch_file(rel, fetch_to, name=name)
+        except (TooLarge, PathRejected) as error:  # lasting reasons: skip and say so
+            manifest["skipped"].append({"path": name, "reason": str(error)[:200]})
+            continue
+        total += info["bytes"]
+        manifest["fetched"].append({"path": name, "bytes": info["bytes"], "sha256": info["sha256"]})
+    write_confined(Path(logs_dir), Path(logs_dir) / f"{spec['stem']}.fetch.json",
+                   json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
+    return manifest
