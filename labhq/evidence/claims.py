@@ -34,7 +34,8 @@ EvidenceStatus = Literal["observed", "unavailable", "not_found", "failed"]
 Relation = Literal["supports", "contradicts", "context"]
 Directness = Literal["direct", "indirect"]
 SourceLevel = Literal["primary", "secondary", "tertiary"]
-AccessStatus = Literal["full_text", "abstract_only", "not_obtained", "paywalled", "undetermined"]
+AccessStatus = Literal["full_text", "abstract_only", "wiki_summary", "not_obtained", "paywalled", "undetermined"]
+WikiFreshness = Literal["ok", "stale", "source_missing", "disputed"]
 SupplementaryStatus = Literal["available", "missing", "not_applicable", "undetermined"]
 LineageStatus = Literal["resolved", "undetermined", "cycle", "dangling"]
 
@@ -205,12 +206,15 @@ class SourceRef(StrictModel):
     locator: str | None = None  # where in the source: section, table, row, line, JSON pointer
     query: str | None = None  # search scope and filters, required for a zero-result search
     access_status: AccessStatus = "undetermined"  # reading scope, not the evidence retrieval outcome
+    wiki_freshness: WikiFreshness | None = None
     methods_locator: str | None = None
     qc_locator: str | None = None
     supplementary_status: SupplementaryStatus = "undetermined"
 
     @model_validator(mode="after")
     def identifies_something(self) -> "SourceRef":
+        if self.wiki_freshness is not None and self.access_status != "wiki_summary":
+            raise ValueError("wiki_freshness requires wiki_summary access")
         if (self.id_scheme is None) != (self.id_value is None or not self.id_value.strip()):
             raise ValueError("source id_scheme and id_value must be given together")
         if not any(_present(value) for value in (self.uri, self.id_value, self.artifact_id)):
@@ -404,6 +408,11 @@ class Evidence(StrictModel):
 
     @model_validator(mode="after")
     def kind_shape(self) -> "Evidence":
+        if self.source and self.source.access_status == "wiki_summary":
+            if (self.kind != "literature_claim" or self.source_level != "tertiary"
+                    or self.directness != "indirect" or (self.lineage and self.lineage.original)):
+                raise ValueError(f"evidence {self.id}: wiki_summary is indirect tertiary literature, "
+                                 "not direct reading or an original source")
         if self.origin is not None:
             # A code-written gap is an account of missing output, never a fabricated source or observation.
             if (self.kind != "observation" or self.status != "unavailable" or self.source is not None

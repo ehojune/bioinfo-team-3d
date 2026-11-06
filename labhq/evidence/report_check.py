@@ -24,7 +24,7 @@ FAILED_LOOKUP_STATUSES = frozenset({"failed", "unavailable", "not_found"})
 FAILED_LOOKUP_TITLE = "실패한 조회 — 증거도 부재 증명도 아님"
 SOURCE_EVIDENCE_TITLE = "주장별 원문 근거"
 
-ACCESS_LABELS = {"full_text": "전문", "abstract_only": "초록만", "not_obtained": "못 구함",
+ACCESS_LABELS = {"full_text": "전문", "abstract_only": "초록만", "wiki_summary": "wiki 요약", "not_obtained": "못 구함",
                  "paywalled": "유료 막힘", "undetermined": "미판정"}
 LINEAGE_LABELS = {"resolved": "확인", "undetermined": "미판정", "cycle": "순환 인용",
                   "dangling": "출처 ID 누락"}
@@ -149,7 +149,8 @@ def claim_evidence_rows(ledgers: Mapping[str, Any], *, refused: Iterable[Any] = 
                          "detail": refusal_reasons.get((step_id, evidence_id), "") if is_refused
                          else str(row.get("status_detail") or ""),
                          "source": source_description(source), "locator": _location(source.get("locator")),
-                         "access": ACCESS_LABELS.get(str(source.get("access_status")), "미판정"),
+                         "access": (ACCESS_LABELS.get(str(source.get("access_status")), "미판정")
+                                    + (f" ({source['wiki_freshness']})" if source.get("wiki_freshness") else "")),
                          "methods": _location(source.get("methods_locator")),
                          "qc": _location(source.get("qc_locator")),
                          "supplement": SUPPLEMENT_LABELS.get(str(source.get("supplementary_status")), "미판정"),
