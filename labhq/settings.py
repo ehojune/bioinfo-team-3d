@@ -855,14 +855,18 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def bind_hpc_login_ledger(self) -> "Settings":
-        """Where the HPC login count lives, so a Scheduler built from settings.hpc alone counts and limits (#1295)."""
+        self.rebind_hpc_login_ledger()
+        return self
+
+    def rebind_hpc_login_ledger(self) -> None:
+        """Where the HPC login count lives, so a Scheduler built from settings.hpc alone counts and limits (#1295).
+        Called again once ``config_path`` is known: a relative state_dir follows the config file, not the process cwd."""
         from .hpc_login_budget import FILE
 
         try:
             self.hpc._login_ledger = str(self.path(self.runner.state_dir) / FILE)
         except RuntimeError:  # the test guard refusing an operator path: no ledger, no count
             self.hpc._login_ledger = None
-        return self
 
     def project(self, project_id: str | None) -> ProjectSettings | None:
         return next((p for p in self.projects if p.id == project_id), None) if project_id else None
@@ -893,6 +897,7 @@ class Settings(BaseModel):
         s = cls.model_validate(data)
         if path:
             s.config_path = str(Path(path).resolve())
+            s.rebind_hpc_login_ledger()
         return s
 
 

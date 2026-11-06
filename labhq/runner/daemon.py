@@ -3318,7 +3318,7 @@ class Runner:
     async def _notify_login_limit(self, request_id: str | None, stop: LoginLimitReached, jobs: list[dict]) -> None:
         """Tell the PI once per request and limit that polling is paused. level "alert" is what the web feed shows and toasts (a "warn" is only the agent card line). The jobs keep running on the cluster."""
         notified = self.__dict__.setdefault("_login_limit_notified", set())
-        key = (request_id, stop.scope, time.strftime("%Y-%m-%d"))
+        key = (request_id, stop.scope, stop.limit, time.strftime("%Y-%m-%d"))  # a raised limit that fills again alerts again
         if key in notified:
             return
         notified.add(key)

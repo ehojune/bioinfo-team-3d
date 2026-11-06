@@ -338,3 +338,60 @@ def test_init_asks_the_limits_only_for_a_real_scheduler_with_a_person_at_the_ter
         before = len(asked)
         init_wizard._ask_hpc_login_limits({"login_limits_decided": decided}, scheduler, yes=yes)
         assert len(asked) == before, (scheduler, yes, tty, decided)  # nothing asked: --yes and pipes stay undecided
+
+
+def test_an_existing_undecided_config_is_asked_and_only_the_limit_keys_are_saved(tmp_path, monkeypatch):
+    from labhq import init_wizard
+
+    target = tmp_path / "labhq.yaml"
+    target.write_text("# my notes\r\nhpc:\r\n  scheduler: slurm\r\n  # keep this comment\r\n  ssh_host: login\r\n"
+                      "gateway:\r\n  port: 1\r\n", encoding="utf-8", newline="")
+    settings = Settings.load(str(target))
+    answers = iter(["7", ""])
+    monkeypatch.setattr(init_wizard, "_interactive", lambda: True)
+    monkeypatch.setattr(init_wizard, "_ask", lambda label, default, yes: next(answers))
+    init_wizard._ask_existing_hpc_login_limits(settings, target, yes=False)
+    text = target.read_bytes().decode()
+    assert "# my notes" in text and "# keep this comment" in text and "ssh_host: login" in text
+    assert "  login_limit_per_request: 7\r\n" in text and "login_limit_per_day" not in text
+    assert "login_limits_decided: True" in text or "login_limits_decided: true" in text.lower()
+    again = Settings.load(str(target)).hpc
+    assert again.login_limit_per_request == 7 and again.login_limit_per_day is None and again.login_limits_decided
+    asked = []
+    monkeypatch.setattr(init_wizard, "_ask", lambda label, default, yes: asked.append(label) or "")
+    init_wizard._ask_existing_hpc_login_limits(Settings.load(str(target)), target, yes=False)
+    assert asked == []  # decided once, never asked again
+
+
+def test_an_existing_config_is_not_asked_with_yes_or_without_a_terminal(tmp_path, monkeypatch):
+    from labhq import init_wizard
+
+    target = tmp_path / "labhq.yaml"
+    target.write_text("hpc:\n  scheduler: slurm\n", encoding="utf-8")
+    before = target.read_text(encoding="utf-8")
+    monkeypatch.setattr(init_wizard, "_ask", lambda *a: pytest.fail("asked"))
+    for yes, tty in ((True, True), (False, False)):
+        monkeypatch.setattr(init_wizard, "_interactive", lambda tty=tty: tty)
+        init_wizard._ask_existing_hpc_login_limits(Settings.load(str(target)), target, yes=yes)
+    assert target.read_text(encoding="utf-8") == before
+
+
+def test_the_ledger_follows_the_config_file_not_the_cwd(tmp_path, monkeypatch):
+    target = tmp_path / "conf" / "labhq.yaml"
+    target.parent.mkdir()
+    target.write_text("runner:\n  state_dir: state/runner\n", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    settings = Settings.load(str(target))
+    assert settings.hpc._login_ledger == str(target.parent / "state" / "runner" / hb.FILE)
+
+
+def test_a_raised_limit_that_fills_again_alerts_again(tmp_path):
+    runner = runner_for(tmp_path, {"1": open_job("t1")}, object(), {"t1": "req_1"})
+    stop1, stop2 = hb.LoginLimitReached("request", 1, 1, "req_1"), hb.LoginLimitReached("request", 3, 3, "req_1")
+    job = runner.jobs["1"]
+    asyncio.run(runner._notify_login_limit("req_1", stop1, [job]))
+    asyncio.run(runner._notify_login_limit("req_1", stop1, [job]))
+    asyncio.run(runner._notify_login_limit("req_1", stop2, [job]))
+    assert [e.data["hpc_login_limit"]["limit"] for e in runner.events] == [1, 3]
