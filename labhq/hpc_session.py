@@ -21,6 +21,7 @@ from __future__ import annotations
 import codecs
 import contextlib
 import contextvars
+import os
 import queue
 import re
 import subprocess
@@ -28,6 +29,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Sequence
 
 from .hpc_login_budget import LoginBudget, LoginLimitReached
@@ -142,6 +144,12 @@ class SessionConfig:
     heartbeat_command: str = "true"
     env: dict[str, str] | None = None  # the connection process's whole environment; None = the caller's own (tests)
     ready_command: str = "stty -echo 2>/dev/null"  # first command: proves the shell answers and turns the terminal echo off
+    # A gateway may still be logging the user in when the connection opens, and drop input that arrives meanwhile. With
+    # a wait set, nothing is sent until the first output (banner or prompt) came and then stayed quiet for ``settle_s``;
+    # no output in the whole wait goes on anyway (a silent shell). 0 sends at once.
+    first_output_wait_s: float = 0.0
+    settle_s: float = 1.0
+    diag_dir: str | None = None  # where the raw output of a failed connect is kept (a local folder; never in a message)
     login_label: str = "session"  # what the login counter records
     redact_words: tuple[str, ...] | None = None  # hidden in every message; None: taken from argv (host, port, user)
 
@@ -152,6 +160,10 @@ class SessionConfig:
             raise ValueError("idle_lock_s는 양수여야 합니다")
         if self.redact_words is None:
             self.redact_words = redaction_words(self.argv)
+        if self.first_output_wait_s < 0 or self.settle_s <= 0:
+            raise ValueError("first_output_wait_s는 0 이상, settle_s는 양수여야 합니다")
+        if self.diag_dir is None:
+            self.diag_dir = os.environ.get("LABHQ_HPC_DIAG_DIR") or None
         if self.heartbeat_s is None:
             self.heartbeat_s = 900.0 if self.idle_lock_s is None else min(900.0, self.idle_lock_s / 4)
         if self.heartbeat_s <= 0:
@@ -411,10 +423,12 @@ class HpcSession:
         if self._shutdown:  # shutdown() came while the process started: end it before anything is sent
             self._kill(conn)
         try:
+            self._await_first_output(conn)
             self._exec(conn, self.cfg.ready_command, self.cfg.connect_timeout_s)  # the echo of this one is ignored
         except SessionError as error:
             text = conn.seen
             self._kill(conn)
+            self._keep_diagnostics(conn, text, error)
             if any(t in text for t in self.cfg.host_key_texts):
                 self._stopped = HostKeyChanged("host key가 바뀌었습니다. 접속을 멈춥니다. 사람이 확인한 뒤 reset()으로 풉니다")
                 self._notify("host_key_changed", str(self._stopped))
@@ -427,6 +441,46 @@ class HpcSession:
                 raise self._human from error
             raise
         return conn
+
+    def _await_first_output(self, conn: _Conn) -> None:
+        """Wait for the gateway's banner or prompt before the first command goes out: until output has come and stayed
+        quiet for ``settle_s``, at most ``first_output_wait_s``. What arrives is kept in ``conn.seen`` for diagnostics."""
+        wait = self.cfg.first_output_wait_s
+        if wait <= 0:
+            return
+        deadline = time.monotonic() + wait
+        heard = False
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            try:
+                chunk = conn.chunks.get(timeout=min(remaining, self.cfg.settle_s) if heard else remaining)
+            except queue.Empty:
+                return  # quiet after output, or nothing at all within the wait
+            if chunk is None:
+                conn.chunks.put(None)  # the connection ended: the first command reports it
+                return
+            conn.seen = (conn.seen + chunk)[-4000:]
+            heard = True
+
+    def _keep_diagnostics(self, conn: _Conn, text: str, error: Exception) -> None:
+        """The raw output of a connect that failed, in the local diagnostics folder when one is set. It is never put in an
+        error message or the feed: it can name the site."""
+        folder = self.cfg.diag_dir
+        if not folder:
+            return
+        try:
+            target = Path(folder).expanduser()
+            target.mkdir(parents=True, exist_ok=True)
+            name = f"hpc-connect-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}.log"
+            body = (f"error: {type(error).__name__}\nprocess exit: {conn.proc.poll()}\n"
+                    f"--- raw output (up to the last 4000 characters) ---\n{text}\n")
+            (target / name).write_text(body, encoding="utf-8")
+            if os.name != "nt":
+                os.chmod(target / name, 0o600)
+        except OSError:
+            pass  # diagnostics are a courtesy: a full disk must not change what the caller sees
 
     def _kill(self, conn: _Conn) -> None:
         for stream in (conn.proc.stdin,):

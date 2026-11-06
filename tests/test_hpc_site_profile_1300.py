@@ -73,7 +73,10 @@ def test_contradictory_answers_are_reported_not_rejected():
     profile = site.SiteProfile(name="s", access_method="ssh", connect_argv=["ssh", "login"], remote_exec=False,
                                scheduler="slurm", file_transfer="none", remote_workdir="/scratch/me")
     found = site.problems(profile)
-    assert len(found) == 3 and any("scheduler" in item for item in found)
+    # with a connect command the shell carries the scheduler: remote_exec false is not a contradiction there
+    assert len(found) == 2 and not any("scheduler" in item for item in found)
+    no_way_in = site.SiteProfile(name="s", remote_exec=False, scheduler="slurm")
+    assert any("scheduler" in item for item in site.problems(no_way_in))
 
 
 # ----- storage -----
@@ -340,3 +343,27 @@ def test_init_keeps_an_existing_profiles_yes_no_answers_on_enter(monkeypatch, tm
     init_wizard._ask_hpc_site_profile(hpc, "slurm", False, tmp_path)
     kept = site.load_profile("lab", tmp_path)
     assert (kept.remote_exec, kept.agent_inside_cluster) == (False, True) and hpc["site_profile"] == "lab"
+
+
+# ----- the first-output wait and the diagnostics folder (#1295 D) -----
+
+def test_the_first_output_wait_comes_from_the_profile_and_defaults_to_none(tmp_path, monkeypatch):
+    monkeypatch.delenv("LABHQ_HPC_DIAG_DIR", raising=False)
+    plain = site.SiteProfile(name="s", connect_argv=["ssh", "login"])
+    assert site.session_config(plain, 30).first_output_wait_s == 0.0
+    waiting = site.SiteProfile(name="s", connect_argv=["ssh", "login"], first_output_wait_s=10)
+    assert site.session_config(waiting, 30).first_output_wait_s == 10.0
+    for bad in (-1, 61):
+        with pytest.raises(Exception):
+            site.SiteProfile(name="s", first_output_wait_s=bad)
+
+
+def test_the_diagnostics_folder_is_used_only_outside_a_repository(tmp_path, monkeypatch):
+    profile = site.SiteProfile(name="s", connect_argv=["ssh", "login"])
+    outside = tmp_path / "diag"
+    monkeypatch.setenv("LABHQ_HPC_DIAG_DIR", str(outside))
+    assert site.session_config(profile, 30).diag_dir == str(outside)
+    monkeypatch.setenv("LABHQ_HPC_DIAG_DIR", str(site.repo_root() / "diag"))  # inside this checkout: ignored
+    assert not site.session_config(profile, 30).diag_dir
+    monkeypatch.delenv("LABHQ_HPC_DIAG_DIR")
+    assert not site.session_config(profile, 30).diag_dir

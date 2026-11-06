@@ -301,3 +301,60 @@ def test_after_the_wait_for_a_person_the_next_command_tries_again(tmp_path):
     now[0] = 400
     assert s.run("echo up").output == "up\n" and budget.usage()["today"] == 2
     s.close()
+
+
+# ---- a gateway that is still logging the user in (#1295 D) ----
+
+def test_without_waiting_a_gateway_that_refuses_early_input_cuts_the_connection(tmp_path):
+    diag = tmp_path / "diag"
+    s = hs.HpcSession(hs.SessionConfig(argv=argv("--kick-early-input", "0.6"), connect_timeout_s=10, reconnect_attempts=1,
+                                       diag_dir=str(diag)), sleep=lambda x: None)
+    with pytest.raises(hs.ReconnectFailed) as caught:
+        s.run("echo hello")
+    assert "refused" not in str(caught.value) and "login still in progress" not in str(caught.value)  # never in a message
+    logs = list(diag.glob("hpc-connect-*.log"))
+    assert len(logs) == 1 and "login still in progress" in logs[0].read_text(encoding="utf-8")  # kept for the local reader
+
+
+def test_waiting_for_the_first_output_lets_the_same_gateway_through(tmp_path):
+    diag = tmp_path / "diag"
+    s = hs.HpcSession(hs.SessionConfig(argv=argv("--kick-early-input", "0.6"), connect_timeout_s=10, reconnect_attempts=1,
+                                       first_output_wait_s=8, settle_s=0.4, diag_dir=str(diag)), sleep=lambda x: None)
+    try:
+        assert s.run("echo hello").output == "hello\n" and s.logins == 1
+    finally:
+        s.close()
+    assert not diag.exists() or not list(diag.iterdir())  # nothing failed, nothing kept
+
+
+def test_a_silent_gateway_is_still_used_after_the_wait(tmp_path):
+    s = hs.HpcSession(hs.SessionConfig(argv=argv(), connect_timeout_s=10, first_output_wait_s=1.0, settle_s=0.3),
+                      sleep=lambda x: None)
+    try:
+        started = time.monotonic()
+        assert s.run("echo quiet").output == "quiet\n"
+        assert time.monotonic() - started >= 1.0  # it waited out the whole allowance, then went on
+    finally:
+        s.close()
+
+
+def test_no_diagnostics_folder_means_nothing_is_written(tmp_path, monkeypatch):
+    monkeypatch.delenv("LABHQ_HPC_DIAG_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    s = hs.HpcSession(hs.SessionConfig(argv=argv("--kick-early-input", "0.6"), connect_timeout_s=10, reconnect_attempts=1),
+                      sleep=lambda x: None)
+    with pytest.raises(hs.ReconnectFailed):
+        s.run("echo hello")
+    assert not list(tmp_path.rglob("hpc-connect-*.log"))
+
+
+def test_the_diagnostics_folder_may_come_from_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("LABHQ_HPC_DIAG_DIR", str(tmp_path / "from-env"))
+    assert hs.SessionConfig(argv=["x"]).diag_dir == str(tmp_path / "from-env")
+
+
+def test_the_wait_settings_are_checked():
+    with pytest.raises(ValueError):
+        hs.SessionConfig(argv=["x"], first_output_wait_s=-1)
+    with pytest.raises(ValueError):
+        hs.SessionConfig(argv=["x"], settle_s=0)
