@@ -27,7 +27,7 @@ lookup-only. 기준은 [#1076 댓글](https://github.com/ehojune/bioinfo-team-3d
 - 본문 두 지적: P1 `instance_guard.py:449` 동시 시작 경쟁, P2 `:78` broker port 충돌.
 - P1: PR #967(`4a25e06c`). state별 OS lock 안에서 조회·기록을 묶고, 살아 있는 owner 보호·stale owner 복구·실패 획득자가 다른 owner를 지우지 않음을 시험한다(이슈 댓글 10-26).
 - P2: PR #1024(`a6bdb88a`, 2026-10-29). `labhq/instance_guard.py:38` `BROKER_FILE = "labhq-broker-port-{port}.json"`로 `runner.broker_port`마다 소유 기록을 두고(`:221`), `:384-390`에서 이미 다른 설정이 쓰는 port면 시작 전에 막는다(`key == "broker_port"`).
-- 시험: `tests/test_instance_guard.py`의 `test_a_second_runner_on_the_same_broker_port_is_refused_before_it_starts`·`test_runners_on_different_broker_ports_do_not_conflict` 등 broker 관련 4건을 이번에 돌려 통과했다. manual: `docs/manual/15-config.md` 12행.
+- 시험: `tests/test_instance_guard.py`의 `test_a_second_runner_on_the_same_broker_port_is_refused_before_it_starts`·`test_runners_on_different_broker_ports_do_not_conflict` 등 broker 관련 4건을 이번에 돌려 통과했다. manual: `docs/manual/15-config.md` 13행(runner 소유권. 12행은 일반 포트 충돌 처리인 별도 기능이다).
 - 총괄의 이전 판단(10-26 "P2는 보류, 새 장애 근거가 있으면 재판단")은 그 뒤 #1024가 처리해 해소됐다.
 
 ### #1070
