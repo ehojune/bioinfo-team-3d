@@ -14,8 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 12:40 | [`a34dc18`](https://github.com/ehojune/bioinfo-team-3d/pull/1296/commits/a34dc18) | **끝남 확인을 한 번으로 끝내지 않고 간격을 늘려 가며 다시 확인하는 방식과 그 로그인 수를 문서에 더했습니다.**<br>완료 확인을 제한된 backoff 재확인(잡당 상한 12회)으로 바꾸고 로그인 추정에 반영 (#1295) |
+| 12:00 | [`6c8b77a`](https://github.com/ehojune/bioinfo-team-3d/pull/1296/commits/6c8b77a) | **조사 문서에서 마스터 연결이 없을 때 새 로그인을 막는 방법과, 작업 출력 줄을 끝남 표지로 믿지 않는다는 점을 바로잡았습니다.**<br>ControlMaster fail-closed(ProxyCommand=false, 로컬 확인)와 분리된 상태 파일(D) 설계로 문서 수정 (#1295) |
 | 12:00 | [`16a7e3a`](https://github.com/ehojune/bioinfo-team-3d/pull/1293/commits/16a7e3a) | **문자열 안의 대입 모양이 코드를 깨던 것과 base 네임스페이스 조회가 가려지던 것을 바로잡습니다.**<br>셸·R에서 문자열 안에 든 대입 모양(print("token = x"), echo "TOKEN=x")은 그 문자열의 닫는 따옴표까지만 값으로 읽고 따옴표 없이 가려 문법을 지킨다. R의 base::·utils::로 한정한 안전 조회(base::Sys.getenv 등)도 안전 목록에 포함한다 |
 | 11:20 | [`a4200a3`](https://github.com/ehojune/bioinfo-team-3d/pull/1293/commits/a4200a3) | **셸 parameter expansion 손상과 따옴표 안 산술·R 경로 조합 누출을 바로잡습니다.**<br>셸의 ${TOKEN:-x}처럼 중괄호 안의 이름을 대입으로 읽어 닫는 중괄호를 깨던 것을 막고, 큰따옴표 안의 산술 $((...))도 리터럴로 가리며, R의 file.path·normalizePath는 문자열을 조합하므로 안전한 조회 목록에서 뺀다 |
+| 11:00 | [`2d1f9cb`](https://github.com/ehojune/bioinfo-team-3d/pull/1296/commits/2d1f9cb) | **HPC에 접속하는 방식과 로그인이 얼마나 쌓이는지, 줄이는 방법을 코드만 읽어 정리한 문서를 추가했습니다. 동작은 바뀌지 않습니다.**<br>docs/reference/hpc-login-survey-1295.md 추가 (조사 전용, 코드 변경 없음) (#1295) |
 | 10:30 | [`1f213fe`](https://github.com/ehojune/bioinfo-team-3d/pull/1293/commits/1f213fe) | **셸·R에서 따옴표나 조각을 붙여 쓴 비밀값이 가려지지 않던 부류를 닫습니다. TOKEN=abc'xyz' 같은 사례를 포함합니다.**<br>셸과 R 코드의 비밀값 가리기를 기본값을 뒤집어 바꾼다. 셸은 값(따옴표·이스케이프·붙여 쓴 조각 포함)을 한 단어로 읽어 $VAR·${VAR}·$(...)·역따옴표만으로 이뤄진 경우에만 남기고 나머지는 전부 가린다. R은 변수·NULL 같은 원자와 Sys.getenv 등 조회·읽기 함수, 문자열·숫자 인자가 없는 호출만 남기고 나머지는 전부 가린다. scan_publish_files도 같은 판정을 쓴다. Python의 ast 판정과 문서 규칙, SECRET_PATTERNS는 그대로다 |
 | 10:10 | [`48a3fde`](https://github.com/ehojune/bioinfo-team-3d/pull/1294/commits/48a3fde) | **변수로 만든 네트워크 경로를 실제 공유처럼 조회하지 않습니다.**<br>리뷰 지적 반영. 서버·공유 이름에 PowerShell 변수가 든 UNC 대상은 실행 때 정해지므로 후보에서 뺀다. c$ 같은 관리 공유 이름은 그대로 읽는다 |
 | 09:56 | [`bff4055`](https://github.com/ehojune/bioinfo-team-3d/pull/1294/commits/bff4055) | **새 경고가 언제 뜨는지 manual이 설명합니다.**<br>리뷰 지적 반영. manual 04장 한·영에 PowerShell 확인이 cmdlet 이름 안의 backtick을 무시하고 세는 것과, 네트워크 경로는 쓰는 쪽 값에 있을 때만 보고 읽을 수 없으면 경고만 한다는 것을 적는다 |
