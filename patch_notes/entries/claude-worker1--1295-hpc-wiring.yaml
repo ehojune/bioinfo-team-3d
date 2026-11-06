@@ -16,3 +16,7 @@ rows:
     at: "2026-11-06 22:20"
     summary: "설정 설명서에 사이트 프로필의 접속 명령이 대화형 셸을 여는 명령이어야 한다고 적었습니다."
     text: "manual 15장 한영에 connect_argv는 터널만 여는 명령이 아니라 대화형 셸을 여는 명령이며 remote_exec가 false인 사이트도 셸이 열리면 이 경로를 쓴다고 명시 (#1295)"
+  - sha: "426d235"
+    at: "2026-11-06 23:00"
+    summary: "제출 뒤 경고가 stderr로 나와도 작업 번호로 잘못 읽지 않고, 도구 호출이 포기한 명령은 나중에 실행되지 않으며, runner 종료가 진행 중인 HPC 명령을 기다리며 멈추지 않습니다."
+    text: "세션 명령을 stderr 분리 한 줄로 보내 stdout·stderr·종료 코드를 따로 받음, queue_wait로 줄서기 60초 뒤 보내지 않고 실패(SessionBusy), broker timeout에 줄서기 포함, close는 연결을 먼저 끊고 stop은 스레드로 닫음, manual 09·15, 시험 4건 (#1295)"
