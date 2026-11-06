@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from .. import __version__
+from ..evidence import wiki_exposure
 from ..models import TaskResult
 from ..orchestrator.cso import environment_problem, failure_kind
 from ..util import replace_file, short
@@ -696,8 +697,17 @@ class RoundRecorder:
         await self._sleep(delay)
         self.queue.put_nowait((rid, generation))
 
-    async def _may_post(self, gh: GitHubClient) -> bool:
+    def _wiki_blocked(self, rid: str | None) -> bool:
+        """The request may have exposed the PI's LLM-wiki, or its history is unknown: no round issue for it (#1037)."""
+        blocker = wiki_exposure.publication_blocker(self.hub.requests.get(rid or ""))
+        if blocker:
+            log.warning("round issue for request %s withheld: %s", rid, blocker)
+        return bool(blocker)
+
+    async def _may_post(self, gh: GitHubClient, rid: str | None = None) -> bool:
         """Recheck before every write; the startup diagnostic never authorizes publication."""
+        if rid is not None and self._wiki_blocked(rid):
+            return False
         meta = await gh._req("GET", f"/repos/{self.s.dev_log.repo}")
         private = bool(meta.get("private") is True or meta.get("visibility") in {"private", "internal"})
         if not private and not self.s.dev_log.allow_public:
@@ -708,6 +718,8 @@ class RoundRecorder:
     async def publish(self, rid: str) -> bool:
         cfg = self.s.dev_log
         if not cfg.repo or root_zone_restricted(self.s.policy):
+            return False
+        if self._wiki_blocked(rid):
             return False
         if self.client is None:
             token = os.environ.get(self.s.github.token_env, "")
@@ -731,7 +743,7 @@ class RoundRecorder:
         existing = await gh.find_marked_issue(cfg.repo, marker)  # reads only; may page through many issues
         if existing and existing.get("body") == body:
             number = existing["number"]
-        elif not await self._may_post(gh):  # checked after paging, immediately before the one write
+        elif not await self._may_post(gh, rid):  # checked after paging, immediately before the one write
             return False
         elif existing:
             await gh.edit_issue(cfg.repo, existing["number"], body)

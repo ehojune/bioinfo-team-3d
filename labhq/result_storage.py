@@ -1804,9 +1804,17 @@ class ResultStorage:
                           else "브라우저가 PDF를 만들지 못했어요.")
         return built.data, " ".join(size_notes(built.data, pdf_cap_bytes(self.s)))
 
+    def _wiki_gate(self, rid: str) -> None:
+        """Refuse a write for a request that may have exposed the PI's LLM-wiki or whose history is unknown (#1037).
+        Called right before every outward write, with nothing awaited between the call and the send."""
+        blocker = wiki_exposure.publication_blocker(self.hub.requests.get(rid))
+        if blocker:
+            raise ValueError(blocker + ". 결과를 GitHub에 올리지 않았습니다.")
+
     async def upload(self, rid, docs, images=None, pdf=None):
         if not self.hub.requests[rid].get("pi_reviewed_at"):
             raise ValueError("보고서 검토 완료 뒤 게시해 주세요.")
+        self._wiki_gate(rid)
         saved = self.hub.requests[rid]["result_storage"]
         gh = self.client()
         if gh is None:
@@ -1886,15 +1894,18 @@ class ResultStorage:
                                  (_PDF_NAME, _PORTFOLIO_PDF_NAME) if pdf else ()))
             for base, payload_docs, payload_images, pdf_names in payloads:
                 for name, body in payload_docs.items():
+                    self._wiki_gate(rid)
                     await gh.put_file(repo, base + name, body, commit_message("연구 결과 정리", base + name, summary), write_branch)
                     write_branch = branch
                 for name, body in payload_images.items():
                     payload = (clean_svg_for_publish(body, self.s, self.hub.requests[rid])
                                if Path(name).suffix.lower() == ".svg" else body)
+                    self._wiki_gate(rid)
                     await gh.put_image(repo, base + name, payload, write_branch, commit_message("연구 결과 그림", base + name, summary))
                     write_branch = branch
                 if pdf:
                     for name in pdf_names:
+                        self._wiki_gate(rid)
                         await gh.put_binary(repo, base + name, pdf, write_branch, commit_message("연구 결과 PDF", base + name, summary))
                         write_branch = branch
         except (GitHubHTTPError, httpx.HTTPStatusError) as exc:

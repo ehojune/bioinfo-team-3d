@@ -34,6 +34,19 @@ def after_wiki_dispatch(request: Mapping[str, Any] | None) -> str | None:
     return None if exposure(request) == UNKNOWN else POSSIBLE
 
 
+def cp2_warning(request: Mapping[str, Any] | None) -> str | None:
+    """The line the CP2 evidence card and the report's limits carry when the request is not a recorded ``none``. CP2 is
+    the PI's own review, not a publication, so it is not refused: the PI is told what the card cannot tell, and the
+    request is not published (`publication_blocker`)."""
+    state = exposure(request)
+    if state == NONE:
+        return None
+    reason = ("이 요청의 직원이 PI의 LLM-wiki 도구를 쓸 수 있었습니다" if state == POSSIBLE
+              else "이 요청의 wiki 노출 이력을 확인할 수 없습니다")
+    return (f"wiki 노출: {reason}. wiki 요약은 원문을 직접 읽은 근거가 아닌데 이 단계는 그것을 가려내지 못하므로 "
+            "근거 승인을 원문 확인으로 읽지 마세요. 이 요청의 결과는 GitHub에 게시되지 않습니다.")
+
+
 def publication_blocker(request: Mapping[str, Any] | None) -> str | None:
     """Why this request must not publish to a public place, or None when it may. Only a recorded ``none`` may."""
     state = exposure(request)
