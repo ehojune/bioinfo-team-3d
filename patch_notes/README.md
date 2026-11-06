@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:00 | [`6ac40ba`](https://github.com/ehojune/bioinfo-team-3d/pull/1297/commits/6ac40ba) | **한꺼번에 묻다 실패하면 작업마다 다시 묻고, 한 작업의 오류가 다른 작업의 저장을 막지 않으며, 열린 작업이 없을 때는 확인 간격을 늘리지 않습니다.**<br>sacct 일괄 실패 시 잡별 조회로 되돌림, _poll_jobs가 한 잡의 오류를 모은 뒤 던져 나머지를 저장·깨움, 열린 잡이 없으면 base 간격 유지 (#1295) |
+| 15:20 | [`d84dbc6`](https://github.com/ehojune/bioinfo-team-3d/pull/1297/commits/d84dbc6) | **설정 설명서(한국어·영어)와 예시 설정에 HPC 상태 확인을 한 번에 묻는 방식과 확인 간격을 늘리는 두 설정을 적었습니다.**<br>docs/manual/15-config 한영과 예시 설정 두 벌에 job_poll_max_s·job_poll_backoff 추가 (#1295) |
+| 14:30 | [`e0cfc40`](https://github.com/ehojune/bioinfo-team-3d/pull/1297/commits/e0cfc40) | **HPC 작업의 상태를 작업마다 따로 묻지 않고 한 번에 묻고, ssh로 접속하는 구성에서는 확인 간격을 점점 늘려 로그인 기록을 줄입니다.**<br>Scheduler.statuses(SGE qstat 1회·Slurm squeue/sacct 일괄·PBS qstat 일괄, 이상 시 작업별 조회로 되돌림)와 next_poll_interval(60→300초 backoff, ssh_host일 때만), 설정 runner.job_poll_max_s·job_poll_backoff (#1295) |
 | 12:40 | [`a34dc18`](https://github.com/ehojune/bioinfo-team-3d/pull/1296/commits/a34dc18) | **끝남 확인을 한 번으로 끝내지 않고 간격을 늘려 가며 다시 확인하는 방식과 그 로그인 수를 문서에 더했습니다.**<br>완료 확인을 제한된 backoff 재확인(잡당 상한 12회)으로 바꾸고 로그인 추정에 반영 (#1295) |
 | 12:00 | [`6c8b77a`](https://github.com/ehojune/bioinfo-team-3d/pull/1296/commits/6c8b77a) | **조사 문서에서 마스터 연결이 없을 때 새 로그인을 막는 방법과, 작업 출력 줄을 끝남 표지로 믿지 않는다는 점을 바로잡았습니다.**<br>ControlMaster fail-closed(ProxyCommand=false, 로컬 확인)와 분리된 상태 파일(D) 설계로 문서 수정 (#1295) |
 | 12:00 | [`16a7e3a`](https://github.com/ehojune/bioinfo-team-3d/pull/1293/commits/16a7e3a) | **문자열 안의 대입 모양이 코드를 깨던 것과 base 네임스페이스 조회가 가려지던 것을 바로잡습니다.**<br>셸·R에서 문자열 안에 든 대입 모양(print("token = x"), echo "TOKEN=x")은 그 문자열의 닫는 따옴표까지만 값으로 읽고 따옴표 없이 가려 문법을 지킨다. R의 base::·utils::로 한정한 안전 조회(base::Sys.getenv 등)도 안전 목록에 포함한다 |
