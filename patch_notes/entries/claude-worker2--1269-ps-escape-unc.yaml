@@ -8,3 +8,7 @@ rows:
   at: 2026-11-06 09:55
   text: 리뷰 지적 반영. 자리가 정해진 명령의 UNC는 쓰는 쪽 값(-OutFile, -DestinationPath, -Destination)에서만 모아 읽기만 하는 원본 share가 카드를 만들지 않게 하고, 따옴표로 묶은 share 이름의 공백은 한 경로로 읽는다
   summary: 원본 share 때문에 불필요한 승인 카드가 뜨지 않고, 공백 있는 share 이름도 바르게 읽습니다.
+- sha: 'bff4055'
+  at: 2026-11-06 09:56
+  text: 리뷰 지적 반영. manual 04장 한·영에 PowerShell 확인이 cmdlet 이름 안의 backtick을 무시하고 세는 것과, 네트워크 경로는 쓰는 쪽 값에 있을 때만 보고 읽을 수 없으면 경고만 한다는 것을 적는다
+  summary: 새 경고가 언제 뜨는지 manual이 설명합니다.
