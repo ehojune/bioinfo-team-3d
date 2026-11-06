@@ -9,20 +9,63 @@ last exit code ``$?``, and a few fake commands:
     sleep S         wait S seconds              exit           end the connection
     count           print how many connections this gateway was started for (from --counter FILE)
 
+Fake Slurm (with ``--slurm-state FILE``, a JSON file the test can edit to finish a job): ``sbatch`` prints a new job id,
+``squeue`` lists the jobs that are still active, ``sacct`` the ended ones, ``scancel ID`` ends one.
+
 Flags: ``--echo`` (a terminal echoes what is typed), ``--banner`` (print a login banner), ``--lock-after S`` (lock the
 session when idle for S seconds), ``--drop-after N`` (end the connection after N commands), ``--hostkey-changed`` and
 ``--tunnel-down`` (print the ssh failure and exit 255), ``--counter FILE`` (append one line per start).
 No real network or HPC is touched.
 """
+import json
+import os
 import shlex
 import sys
 import threading
 import time
 
+ACTIVE = {"PENDING", "RUNNING"}
+
+
+def slurm(words: list[str], path: str) -> tuple[str, int]:
+    """One fake Slurm command against the state file. Returns (output, exit code)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            state = json.load(f)
+    except OSError:
+        state = {"next": 1000, "jobs": {}}
+    head, jobs, out, status = words[0], state["jobs"], "", 0
+
+    def option(flag: str) -> str:
+        return words[words.index(flag) + 1] if flag in words else ""
+
+    if head == "sbatch":
+        job_id = str(state["next"])
+        state["next"] += 1
+        name = next((w.split("=", 1)[1] for w in words if w.startswith("--job-name=")), "job")
+        jobs[job_id] = {"name": name, "state": "RUNNING", "exit": "0:0"}
+        out = job_id + "\n"
+    elif head == "squeue":
+        wanted = option("-j").split(",") if "-j" in words else list(jobs)
+        out = "".join(f"{i}|{jobs[i]['state']}|None|{jobs[i]['name']}\n" for i in wanted
+                      if i in jobs and jobs[i]["state"] in ACTIVE)
+    elif head == "sacct":
+        wanted = option("-j").split(",")
+        out = "".join(f"{i}|{jobs[i]['state']}|{jobs[i]['exit']}|{jobs[i]['name']}\n" for i in wanted
+                      if i in jobs and jobs[i]["state"] not in ACTIVE)
+    elif head == "scancel":
+        if words[-1] in jobs:
+            jobs[words[-1]]["state"] = "CANCELLED"
+        else:
+            out, status = "scancel: error: Invalid job id specified\n", 1
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    return out, status
+
 
 def main(argv: list[str]) -> int:
     flags = {"echo": False, "banner": False, "lock": None, "drop": None, "hostkey": False, "tunnel": False,
-             "counter": None}
+             "counter": None, "slurm": None}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -34,9 +77,9 @@ def main(argv: list[str]) -> int:
             flags["hostkey"] = True
         elif a == "--tunnel-down":
             flags["tunnel"] = True
-        elif a in ("--lock-after", "--drop-after", "--counter"):
+        elif a in ("--lock-after", "--drop-after", "--counter", "--slurm-state"):
             i += 1
-            key = {"--lock-after": "lock", "--drop-after": "drop", "--counter": "counter"}[a]
+            key = {"--lock-after": "lock", "--drop-after": "drop", "--counter": "counter", "--slurm-state": "slurm"}[a]
             flags[key] = float(argv[i]) if key == "lock" else int(argv[i]) if key == "drop" else argv[i]
         i += 1  # anything else is a remote command the gateway ignores
     if flags["counter"]:
@@ -108,6 +151,9 @@ def main(argv: list[str]) -> int:
         elif head == "exit":
             out.flush()
             return 0
+        elif head in ("sbatch", "squeue", "sacct", "scancel") and flags["slurm"]:
+            text, status = slurm(words, flags["slurm"])
+            out.write(text)
         elif head == "nonl":  # output that does not end in a newline
             out.write("tail-without-newline")
         else:

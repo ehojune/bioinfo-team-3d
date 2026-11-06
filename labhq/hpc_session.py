@@ -73,6 +73,7 @@ class SessionConfig:
     reconnect_wait_s: float = 5.0
     reconnect_wait_max_s: float = 60.0
     reconnect_cooldown_s: float = 60.0
+    human_wait_s: float = 300.0  # after "a person must open the tunnel", the next command tries again only after this long
     host_key_texts: tuple[str, ...] = HOST_KEY_TEXTS
     # Text that proves a person must open the connection first (a site that needs a manual tunnel). Empty by default:
     # an ordinary network failure is retried by the reconnect limit, never parked as "wait for a person".
@@ -131,6 +132,7 @@ class HpcSession:
         self._failed_attempts = 0
         self._stopped: HostKeyChanged | None = None
         self._human: NeedsHuman | None = None
+        self._human_until = 0.0
         self.logins = 0  # connections this manager opened
         self._ticker: threading.Thread | None = None
         self._stop_ticker = threading.Event()
@@ -163,7 +165,7 @@ class HpcSession:
     def resume(self) -> None:
         """A person opened the session (the tunnel): allow the next ``run`` to try the connection again."""
         with self._lock:
-            self._human = None
+            self._human, self._human_until = None, 0.0
             self._cooldown_until = 0.0
             self._failed_attempts = 0
 
@@ -230,7 +232,9 @@ class HpcSession:
         if self._stopped:
             raise self._stopped
         if self._human:
-            raise self._human
+            if self.clock() < self._human_until:
+                raise self._human
+            self._human = None  # long enough: a person may have opened it; one more try (and one login) tells
         conn = self._conn
         if conn is not None and conn.proc.poll() is None:
             return conn
@@ -298,7 +302,9 @@ class HpcSession:
                 self._notify("host_key_changed", str(self._stopped))
                 raise self._stopped from error
             if any(t in text for t in self.cfg.tunnel_texts):
-                self._human = NeedsHuman("HPC 접속 통로가 닫혀 있습니다. 세션(터널)을 열어 주세요. 열었으면 resume()을 부릅니다")
+                self._human = NeedsHuman("HPC 접속 통로가 닫혀 있습니다. 세션(터널)을 열어 주세요. 열었으면 다음 명령이 "
+                                         "곧 다시 시도합니다")
+                self._human_until = self.clock() + self.cfg.human_wait_s
                 self._notify("needs_human", str(self._human))
                 raise self._human from error
             raise

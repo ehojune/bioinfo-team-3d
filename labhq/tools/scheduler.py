@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 import subprocess
+import threading
 from dataclasses import asdict, dataclass
 
 from ..settings import HpcSettings, slurm_cluster_option
@@ -320,10 +321,76 @@ def next_poll_interval(current: float, base: float, cap: float, factor: float, r
     return float(min(max(cap, base), max(base, current * factor)))
 
 
+_SESSIONS: dict[tuple[str, str], object] = {}  # one shell per site profile in this process (#1295 C)
+_SESSIONS_LOCK = threading.Lock()
+
+
+def close_sessions() -> None:
+    """Close every session this process opened (shutdown, and tests)."""
+    with _SESSIONS_LOCK:
+        sessions = list(_SESSIONS.values())
+        _SESSIONS.clear()
+    for session in sessions:
+        session.close()
+
+
+def site_session(cfg: HpcSettings):
+    """The shared ``HpcSession`` of the config's site profile, or None when the profile gives no connect command.
+
+    Every Scheduler of one profile in this process shares the session, so the runner's polling and its tools' commands go
+    over one login. Opening is lazy: nothing connects until a command runs."""
+    from .. import hpc_site
+    from ..hpc_login_budget import budget_for
+    from ..hpc_session import HpcSession
+
+    try:
+        profile = hpc_site.session_profile(cfg.site_profile)
+    except hpc_site.SiteProfileError as error:
+        raise RuntimeError(f"hpc.site_profile {cfg.site_profile!r} cannot be used: {error}") from error
+    if profile is None:
+        return None
+    key = (profile.name, str(hpc_site.sites_dir()))
+    with _SESSIONS_LOCK:
+        session = _SESSIONS.get(key)
+        if session is None:
+            session = _SESSIONS[key] = HpcSession(hpc_site.session_config(profile, cfg.command_timeout_s),
+                                                  budget=budget_for(cfg))
+    return session
+
+
 class Scheduler:
     def __init__(self, cfg: HpcSettings):
         self.cfg = cfg
         self.user = cfg.user or _local_user()
+
+    def session(self):
+        """This config's shared shell, or None (plain ssh_host, or commands run on this machine). The profile is read
+        once per Scheduler; an unreadable one raises each time until it is fixed."""
+        if not hasattr(self, "_session"):
+            self._session = site_session(self.cfg)
+        return self._session
+
+    def attach_session(self, *, on_notice=None, has_open_jobs=None) -> bool:
+        """Hook the runner into the shell: ``on_notice(kind, text)`` hears about login limits, a changed host key, a
+        missing tunnel and failed reconnects; ``has_open_jobs()`` keeps the shell open while jobs run. Starts the
+        keep-alive. False when there is no session."""
+        session = self.session()
+        if session is None:
+            return False
+        session.on_notice, session.has_open_jobs = on_notice, has_open_jobs
+        session.start()
+        return True
+
+    def needs_login(self) -> bool:
+        """Would the next scheduler command open a new login? Over a live shell it would not; over ``hpc.ssh_host`` it
+        always does; on the login node itself there is no login."""
+        try:
+            session = self.session()
+        except RuntimeError:
+            return True
+        if session is not None:
+            return not session.connected
+        return bool(self.cfg.ssh_host)
 
     def _require_enabled(self, operation: str) -> None:
         if self.cfg.scheduler == "none":
@@ -331,6 +398,18 @@ class Scheduler:
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess:
         self._require_enabled("command execution")
+        session = self.session()
+        if session is not None:  # one shell for everything: a command is a line sent to it, not a login (#1295 C)
+            from ..hpc_session import CommandTimeout
+
+            try:
+                result = session.run(shlex.join(args), self.cfg.command_timeout_s)
+            except CommandTimeout as error:
+                raise subprocess.TimeoutExpired(args, self.cfg.command_timeout_s) from error
+            if result.truncated:
+                raise RuntimeError(f"{args[0]} printed more than the session keeps; the answer is incomplete")
+            # The shell has one output stream: an error text arrives in stdout, and the parsers read both.
+            return subprocess.CompletedProcess(args, result.exit_code, result.output, "")
         if self.cfg.ssh_host:
             # Every ssh is a login the site records: count it, and refuse it when a limit the user set is used up (#1295).
             from ..hpc_login_budget import budget_for
@@ -384,6 +463,12 @@ class Scheduler:
             p = self._run(self.submit_args(script, name, cores, mem, walltime, queue, stdout, stderr))
         except subprocess.TimeoutExpired as e:
             raise RuntimeError(f"{cmd} timed out after {self.cfg.command_timeout_s}s{MAYBE_SUBMITTED}") from e
+        except Exception as e:
+            from ..hpc_session import SessionLost
+
+            if isinstance(e, SessionLost):  # the shell dropped while qsub/sbatch ran: it may have gone through
+                raise RuntimeError(f"{e}{MAYBE_SUBMITTED}") from e
+            raise
         if p.returncode != 0:
             raise RuntimeError(f"{cmd} failed ({p.returncode}): {_detail(p)}")
         lines = [line.strip() for line in p.stdout.splitlines() if line.strip()]

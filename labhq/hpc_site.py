@@ -41,6 +41,9 @@ class SiteProfile(BaseModel):
     access_method: Literal["ssh", "gateway_tunnel", "vpn", "other"] | None = None
     connect_argv: list[str] = Field(default_factory=list)
     port_discovery: str | None = None
+    # Texts the connect command prints when a person has to open the tunnel first (a site with a manual tunnel). Only
+    # these make the session manager wait for a person; any other connect failure is retried (#1295 C).
+    tunnel_texts: list[str] = Field(default_factory=list)
     remote_exec: bool | None = None  # can commands be run on the login node from here
     file_transfer: Literal["scp", "sftp", "rsync", "gateway_window", "none", "other"] | None = None
     file_transfer_note: str | None = None
@@ -291,3 +294,24 @@ def ask_profile(name: str, ask: Callable[[str, str], str], existing: SiteProfile
         return SiteProfile.model_validate(values)
     except ValidationError as error:
         raise SiteProfileError("; ".join(e["msg"] for e in error.errors())) from None
+
+
+# ----- from a profile to the session manager (#1295 C) -----
+
+def session_profile(site_profile: str | None, directory: Path | None = None) -> SiteProfile | None:
+    """The profile a session is opened from: None when no profile is named or it gives no connect command (the old
+    ``hpc.ssh_host`` path, or a runner on the login node, applies). A named profile that cannot be read raises: the
+    session path fails closed instead of quietly falling back to a different way of logging in."""
+    if not site_profile:
+        return None
+    profile = load_profile(site_profile, directory)
+    return profile if profile.connect_argv else None
+
+
+def session_config(profile: SiteProfile, command_timeout_s: float):
+    """The ``hpc_session.SessionConfig`` for a profile. The site's idle lock and failure texts come from the profile."""
+    from .hpc_session import SessionConfig
+
+    return SessionConfig(argv=list(profile.connect_argv),
+                         idle_lock_s=profile.idle_lock_minutes * 60.0 if profile.idle_lock_minutes else None,
+                         command_timeout_s=float(command_timeout_s), tunnel_texts=tuple(profile.tunnel_texts))

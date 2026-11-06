@@ -62,7 +62,7 @@ from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..staff_skills import install_required_skills
 from ..store import StateStore
-from ..tools.scheduler import (MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, command_env, job_in_family,
+from ..tools.scheduler import (MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, close_sessions, command_env, job_in_family,
                                next_poll_interval, sanitize_job_name)
 from ..util import INPUT_STEP_ID, output_relpath, short, tool_input_fingerprint
 from .. import vocab as output_vocab
@@ -402,6 +402,11 @@ class Runner:
                                  settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit,
                                  precedent_share=settings.annot.precedent_lookup_share))
         self.scheduler = Scheduler(settings.hpc)
+        try:  # one shell for the runner's polling and the tools' commands, when the site profile gives a connect command
+            self.scheduler.attach_session(on_notice=self._hpc_session_notice,
+                                          has_open_jobs=lambda: any(not j["terminal"] for j in self.jobs.values()))
+        except RuntimeError as error:  # an unusable profile: the first scheduler command says so, so the runner still starts
+            log.warning("HPC session is not available: %s", error)
         self.annot_broker = AnnotBroker(self.broker, settings)
         self._local_procs: dict = {}  # job id -> the child this runner started (reaped when polled), #675
         self._local_watch: asyncio.Task | None = None  # the local job poller, started with the first job
@@ -504,6 +509,7 @@ class Runner:
 
     def stop(self) -> None:
         self._stopping = True
+        close_sessions()  # the HPC shell (and its keep-alive thread), if one was opened
         watch = getattr(self, "_local_watch", None)  # a Runner built without __init__ (tests) has none
         if watch is not None:
             watch.cancel()
@@ -3264,7 +3270,10 @@ class Runner:
                               request_id=self.task_req.get(tid or ""), data=body.get("data") or {}))
 
     async def _on_submit(self, body: dict) -> dict:
-        """hpc_submit runs here (#214 review): the id the runner's own scheduler call printed is the record."""
+        """hpc_submit runs here (#214 review): the id the runner's own scheduler call printed is the record. The status,
+        queue and cancel tools reach the runner's one HPC shell through the same route (``op``, #1295 C)."""
+        if body.get("op"):
+            return await self._on_scheduler_op(body)
         tid, aid = body.get("task_id"), body.get("agent_id")
         ws, running = self.workspaces.get(tid or ""), self.active_roots.get(tid or "")
         if ws is None or running is None:
@@ -3308,9 +3317,65 @@ class Runner:
         with request_scope(body.get("request_id")):
             return await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record)
 
+    async def _on_scheduler_op(self, body: dict) -> dict:
+        """hpc_status, hpc_queue and hpc_cancel for a site whose commands go through the runner's shell (#1295 C). The
+        agent has no connection of its own to that site, so these run here, in the request's login scope."""
+        op, tid = body.get("op"), body.get("task_id")
+        running = self.active_roots.get(tid or "")
+        if self.workspaces.get(tid or "") is None or running is None:
+            return {"error": "this task is not running on the runner; no HPC command was run"}
+        if running[0]:
+            return {"error": "a read-only task cannot use HPC"}
+        if op not in {"status", "queue", "cancel"}:
+            return {"error": f"unknown HPC operation {op!r}"}
+        job_id = str(body.get("job_id") or "")
+        if op == "cancel" and not await self._owns_job(body):  # the shell is the runner's: check ownership here
+            return {"error": f"job {job_id} was not submitted by you through hpc_submit; labhq cancels only jobs it "
+                             "tracks for you. Ask the PI to cancel other jobs."}
+
+        def work():
+            with request_scope(body.get("request_id")):
+                if op == "status":
+                    return {"status": self.scheduler.status(job_id).to_dict()}
+                if op == "queue":
+                    return {"queue": [j.to_dict() for j in self.scheduler.queue()]}
+                return {"result": self.scheduler.cancel(job_id)}
+
+        try:
+            return await asyncio.to_thread(work)
+        except Exception as error:  # noqa: BLE001 - the tool reports it; a login limit or a lost shell is the usual cause
+            return {"error": str(error)}
+
+    def _hpc_session_notice(self, kind: str, text: str) -> None:
+        """The HPC shell tells the PI something (called from its threads): a changed host key, a missing tunnel, failed
+        reconnects. A login limit is reported by the poller, which knows the request."""
+        if kind == "login_limit":
+            return
+        loop = self.__dict__.get("_loop")
+        if loop is None or loop.is_closed():
+            log.warning("HPC session %s: %s", kind, text)
+            return
+
+        def start() -> None:
+            loop.create_task(self._emit_hpc_notice(kind, text))
+
+        if threading.current_thread() is self.__dict__.get("_loop_thread"):
+            start()
+        else:
+            loop.call_soon_threadsafe(start)
+
+    async def _emit_hpc_notice(self, kind: str, text: str) -> None:
+        job = next((j for j in self.jobs.values() if not j["terminal"]), None) or {}
+        tid = job.get("task_id")
+        await self.emit(Event(type="agent.log", task_id=tid, agent_id=job.get("agent_id"),
+                              request_id=self.task_req.get(tid or ""),
+                              data={"level": "alert", "hpc_session": {"kind": kind}, "text": f"HPC 세션: {text}"}))
+
     def _login_limit(self, request_id: str | None) -> LoginLimitReached | None:
-        """The HPC login limit a new login for this request would hit now (#1295), else None. Only over ssh_host."""
-        if not self.s.hpc.ssh_host:
+        """The HPC login limit a new login for this request would hit now (#1295), else None. Over a live shell a command
+        opens no login, so nothing is checked."""
+        needs_login = getattr(self.scheduler, "needs_login", None)  # a stand-in scheduler (tests) has only ssh_host to go by
+        if not (needs_login() if needs_login else self.s.hpc.ssh_host):
             return None
         budget = budget_for(self.s.hpc)
         return budget.exhausted(request_id) if budget is not None else None

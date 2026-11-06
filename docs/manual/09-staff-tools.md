@@ -58,6 +58,18 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 | 엔진 기능 | Codex 웹 검색 | WebSearch / WebFetch → web_search="live" | [lit_scout](../../agents/core/lit_scout.yaml), [sci_reviewer](../../agents/core/sci_reviewer.yaml) | [adapter](../../labhq/adapters/codex.py) · [직원 설정](../../agents/core/) |
 <!-- integrations:end -->
 
+### HPC 도구와 세션 (#1295)
+
+`labhq_hpc`는 `hpc_submit`(제출), `hpc_status`(상태), `hpc_queue`(큐), `hpc_cancel`(취소)을 줍니다. 제출은 PI 승인 정책(11장)을 따르고, 취소는 직원이 `hpc_submit`으로 낸 잡만 됩니다.
+
+설정의 `hpc.site_profile`이 접속 명령(`connect_argv`)이 있는 [사이트 프로필](15-config.md)을 가리키면, runner가 HPC에 **한 번 접속해 셸 하나를 열어 두고** 모든 scheduler 명령을 그 셸에 한 줄씩 보냅니다. 직원의 `hpc_status`·`hpc_queue`·`hpc_cancel`도 도구 프로세스가 직접 접속하지 않고 runner에 요청해 같은 셸로 돕니다. 그래서 상태 조회를 아무리 해도 로그인은 늘지 않고, 연결이 끊겨 다시 열 때만 로그인으로 셉니다(요청당·하루 상한, [15장](15-config.md)). 원격 명령 실행을 무시하는 게이트웨이에서도 셸만 열리면 됩니다.
+
+- **명령 하나는 시간 제한과 출력 크기 상한**이 있고, 한 번에 하나씩 처리합니다. 시간이 지나면 셸을 닫고 다음 명령이 새로 접속합니다.
+- **유휴 잠김 전에 가벼운 명령**(`true`)을 보내 연결을 살려 둡니다. 간격은 프로필의 `idle_lock_minutes`보다 짧게(그 값의 4분의 1, 최대 15분) 잡습니다. 열린 잡이 없고 15분 동안 쓰지 않으면 셸을 닫습니다.
+- **다시 접속하는 횟수에 상한과 대기 간격**이 있습니다(3번, 5초에서 두 배씩). 다 쓰면 1분 동안은 로그인 없이 실패만 돌려줍니다. 로그인 상한에 닿았으면 접속하지 않고 웹 피드에 알립니다.
+- **알려야 할 일은 웹 피드 경고로 뜹니다**: host key가 바뀌었을 때, 접속 통로를 사람이 열어야 할 때, 다시 접속하지 못했을 때. 복구 절차는 [15장](15-config.md)입니다.
+- 지금 구현은 **스크립트와 로그 경로를 로그인 노드에서도 같은 경로로 볼 수 있다고 가정**합니다(공유 파일시스템). 파일을 올리는 경로는 아직 없습니다([8장](08-structure.md)).
+
 ### 공개 자원 조회 도구
 
 `labhq_annot`은 변이·영역·유전자와 논문을 공개 DB에서 조회하는 내장 MCP입니다(#435, #697, #720, #744). `builtin_mcp`에 `annot`이 있는 직원(analyst·bioinfo-agent·biologist·lit_scout, 그리고 도구를 좁힌 chief_of_staff·sci_reviewer)에게 붙습니다. 이어 묻기·상담·리뷰 같은 읽기 전용 실행에는 기본으로 붙지 않고, 직원 파일이 `annot_tools`에 명시한 도구 중 읽기 전용에 허용된 `pdb`·`chembl`만 예외로 붙습니다. 지금 이 예외를 받는 직원은 sci_reviewer입니다.
