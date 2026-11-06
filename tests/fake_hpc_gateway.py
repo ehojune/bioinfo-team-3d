@@ -108,10 +108,16 @@ def files(tokens: list[str]) -> tuple[str, int] | None:
     """The file commands of hpc_transfer, run against the sandbox. None when the line is not one of them."""
     if not SANDBOX:
         return None
-    if "&&" in tokens and tokens[0] == "mkdir":  # mkdir -p -- D && cd -- D && pwd -P
-        target = tokens[3]
-        os.makedirs(_real(target), exist_ok=True)
+    if "&&" in tokens and tokens[0] == "mkdir":  # mkdir [-p] -- D && cd -- D && pwd -P
+        target = tokens[tokens.index("--") + 1]
+        try:
+            os.makedirs(_real(target), exist_ok="-p" in tokens)
+        except OSError as error:
+            return f"mkdir: {error}\n", 1
         return _shown(os.path.realpath(_real(target))) + "\n", 0
+    if tokens[0] == "test" and tokens[1] == "-d" and "||" in tokens:  # test -d D && cd -- D && pwd -P || echo missing
+        path = _real(tokens[2])
+        return (_shown(os.path.realpath(path)) + "\n", 0) if os.path.isdir(path) else ("missing\n", 0)
     head = tokens[0]
     if head == ":" and tokens[1:2] == [">"]:
         open(_real(tokens[2]), "wb").close()

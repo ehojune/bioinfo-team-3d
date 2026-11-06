@@ -100,13 +100,18 @@ class Transfer:
     def ensure_dir(self, rel_dir: str) -> str:
         """Make a folder under the root and return its real path. A folder that is, or leads through, a link out of the
         root is refused."""
-        real_root = self.real_root()
-        target = self.root if rel_dir in ("", ".") else self.path(rel_dir)
-        out = self._do(f"mkdir -p -- {shlex.quote(target)} && cd -- {shlex.quote(target)} && pwd -P",
-                       "making a folder").strip().splitlines()
-        real = out[-1] if out else ""
-        if real != real_root and not real.startswith(real_root.rstrip("/") + "/"):
-            raise PathRejected(f"{rel_dir!r} leads outside the work folder")
+        real_root = real = self.real_root()
+        parts = [] if rel_dir in ("", ".") else list(confine(rel_dir).parts)
+        current = self.root
+        for part in parts:  # one level at a time: a link that leads out is found before anything is made beyond it
+            current = f"{current}/{part}"
+            quoted = shlex.quote(current)
+            out = self._do(f"test -d {quoted} && cd -- {quoted} && pwd -P || echo missing", "checking a folder").strip().splitlines()
+            if not out or out[-1] == "missing":
+                out = self._do(f"mkdir -- {quoted} && cd -- {quoted} && pwd -P", "making a folder").strip().splitlines()
+            real = out[-1] if out else ""
+            if real != real_root and not real.startswith(real_root.rstrip("/") + "/"):
+                raise PathRejected(f"{rel_dir!r} leads outside the work folder")
         return real
 
     def _is_link(self, remote: str) -> bool:

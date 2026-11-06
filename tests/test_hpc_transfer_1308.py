@@ -363,3 +363,14 @@ def test_a_failed_fetch_is_retried_then_reported_and_the_agent_waits_meanwhile(s
     assert any("가져오지 못했습니다" in e.data["text"] for e in runner.events)
     asyncio.run(runner._fetch_finished_jobs())
     assert job["fetch_tries"] == 3  # no fourth try
+
+
+def test_a_refused_upload_through_a_link_creates_nothing_outside(cluster, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    transfer = cluster.transfer()
+    transfer.ensure_dir("")
+    link(outside, cluster.path("escape"))
+    with pytest.raises(ht.PathRejected):
+        transfer.upload_bytes("escape/new/file.txt", b"x")
+    assert not list(outside.iterdir())  # the folder behind the link was not even created
