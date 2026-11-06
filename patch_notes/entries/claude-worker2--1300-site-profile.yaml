@@ -4,3 +4,7 @@ rows:
   at: 2026-11-06 17:12
   text: HPC 사이트 프로필을 더한다(labhq/hpc_site.py). 접속 방식·접속 명령·원격 명령 가능 여부·파일 전송·유휴 잠김 시간·클러스터 안 agent 허용·scheduler·큐·경로·로그인 상한을 담는 schema와 검사기, 모르는 항목은 비워 두고 다시 묻는 질문 흐름, 저장소 밖(~/.labhq/sites) 저장 경로(저장소·git 폴더 안이면 거부, 사용자만 읽는 파일)를 넣는다. labhq init이 HPC 접속법을 사이트 프로필로 적을지 묻고 설정에는 이름(hpc.site_profile)만 남긴다. 공개 검사(check_public.sh)가 프로필 표식이나 .labhq/sites 경로가 추적되면 실패한다. 기관 값은 넣지 않았고, 세션 관리자 연결은 C단계다
   summary: 기관마다 다른 HPC 접속법을 사용자 PC의 프로필로 적어 두고, 저장소에는 올라가지 않게 막습니다.
+- sha: '1a3066d'
+  at: 2026-11-06 17:23
+  text: CI 실패 수정. 공개 검사의 사이트 프로필 확인을 git grep으로 바꿔 check_public.sh의 xargs 배치 구조(시험이 센다)를 그대로 둔다
+  summary: 공개 검사 구조 시험을 깨지 않고 프로필 검사를 넣습니다.
