@@ -45,7 +45,7 @@ lookup-only. 기준은 [#1076 댓글](https://github.com/ehojune/bioinfo-team-3d
 
 ### #674
 - 닫지 않는 이유: 총괄의 rev11·rev13 판정이 "실제 WSL 실행과 #666 의존 항목이 남아 계속 연다"이다. 코드 결함은 못 찾았다.
-- 완료된 것: B안(읽기 grant, Claude 한정)은 PR #1176으로, Codex·Gemini 소비 단계의 경로·환경 변수·브리핑은 #1178(닫힘)로 main에 있다(`labhq/runner/daemon.py:313-314` `ENVIRONMENT_ENGINES`·`ENVIRONMENT_GRANT_ENGINES`).
+- 완료된 것: B안(읽기 grant, Claude 한정)은 PR #1176으로, Codex·Gemini 소비 단계의 경로·환경 변수·브리핑은 #1178(닫힘)로 main에 있다(`labhq/runner/daemon.py:331-332` `ENVIRONMENT_ENGINES`·`ENVIRONMENT_GRANT_ENGINES`).
 - 남은 일과 재개 조건
   1. 실제 WSL runner에서 Claude가 grant된 venv의 interpreter를 실행하는지(승인 카드 포함). 재개 조건: 시운전(#739·#910) 승인 또는 WSL runner 실측 승인.
   2. #666(OS 샌드박스) 의존 항목. 재개 조건: #666 진행.
