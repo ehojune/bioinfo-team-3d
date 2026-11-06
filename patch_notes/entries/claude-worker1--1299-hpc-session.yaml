@@ -4,3 +4,7 @@ rows:
     at: "2026-11-06 18:30"
     summary: "HPC에 한 번 접속해 셸 하나를 열어 두고 명령을 차례로 보내는 세션 관리자를 만들었습니다. 접속할 때마다 로그인 수를 세고, 연결이 끊기면 횟수와 대기 간격을 두고 다시 접속하며, 유휴 잠김 전에 가벼운 명령으로 연결을 살려 둡니다. 아직 도구와 runner에는 연결하지 않았습니다."
     text: "labhq/hpc_session.py(SessionConfig, HpcSession: sentinel 명령, 시간·출력 상한, heartbeat, 유휴 닫기, 재접속 상한·대기, 로그인 카운터, host key 변경 정지, 터널 없음 대기), tests/fake_hpc_gateway.py, tests/test_hpc_session_1299.py 16건 (#1299)"
+  - sha: "e26c1a2"
+    at: "2026-11-06 19:10"
+    summary: "큰 출력이 한 번에 도착해도 시작 표지를 놓치지 않고, 세션을 닫았다가 바로 다시 시작해도 연결 유지 스레드가 새로 뜹니다."
+    text: "hpc_session: begin 표지를 버퍼를 자르기 전에 검색, close()가 ticker를 join하고 start()가 종료 중인 ticker를 기다려 교체, 시험 3건 추가 (#1299)"
