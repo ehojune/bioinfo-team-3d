@@ -137,3 +137,87 @@ def test_shell_values_with_equals_are_whole_and_a_comment_is_not_a_value():
 def test_a_secret_default_of_a_function_parameter_is_hidden(line):
     cleaned = _clean(line + "\n")
     assert "hunter2xyz" not in cleaned and code_syntax_issues({NAME: cleaned}) == []
+
+
+SH = "steps/s1/outputs/scripts/a.sh"
+R = "steps/s1/outputs/scripts/a.R"
+
+
+@pytest.mark.parametrize("line", [
+    "TOKEN=abc'xyz'",
+    "TOKEN=abc\"xyz\"",
+    "TOKEN=\"abc\"'xyz'",
+    "TOKEN=prefix-$OTHER",
+    'TOKEN="prefix-$OTHER"',
+    "TOKEN=${OTHER:-hunter2xyz}",
+    "TOKEN=$((1+2))",
+    "TOKEN=(hunter2xyz)",
+    r"TOKEN=hunter2\ xyz",
+    "export PASSWORD=hunter2xyz",
+    "declare -x SECRET='hunter2xyz'",
+    "api_key=hunter2xyz",
+])
+def test_shell_values_are_hidden_unless_surely_safe(line):
+    cleaned = _clean(f"{line}\n", SH)
+    assert "hunter2" not in cleaned and "xyz'" not in cleaned and "xyz\"" not in cleaned
+    assert "redacted-secret" in cleaned
+    assert scan_publish_files({SH: cleaned}) == []
+    assert scan_publish_files({SH: line + "\n"}) == [{"kind": "secret", "path": SH}]
+
+
+@pytest.mark.parametrize("line", [
+    "TOKEN=$OTHER", "TOKEN=${OTHER}", 'TOKEN="$OTHER"', 'TOKEN="${OTHER}"', "TOKEN=$(cat /run/secret)",
+    'TOKEN="$(pass show x)"', "TOKEN=`cat file`", "TOKEN=", "TOKEN= # filled by the caller", "TOKEN=$1",
+    'TOKEN="<redacted-secret>"',
+])
+def test_shell_values_that_are_surely_safe_are_left_alone(line):
+    code = f"{line}\necho done\n"
+    assert _clean(code, SH) == code
+    assert scan_publish_files({SH: code}) == []
+
+
+@pytest.mark.parametrize("line", [
+    'token <- "hunter2xyz"', "password = 'hunter2xyz'", "secret <<- 123456789", 'api_key <- r"(hunter2xyz)"',
+    'config <- list(token = "hunter2xyz")', 'token <- paste0("hunter2", "xyz")', 'token <- c("hunter2xyz")',
+])
+def test_r_values_are_hidden_unless_surely_safe(line):
+    cleaned = _clean(f"{line}\n", R)
+    assert "hunter2xyz" not in cleaned and "123456789" not in cleaned and 'hunter2", "xyz' not in cleaned
+    assert "redacted-secret" in cleaned
+    assert scan_publish_files({R: cleaned}) == []
+    assert scan_publish_files({R: line + "\n"}) == [{"kind": "secret", "path": R}]
+
+
+@pytest.mark.parametrize("line", [
+    'token <- Sys.getenv("API_TOKEN")', "password <- readline()", "secret <- other_variable", "token <- cfg$token",
+    "token <- fetch_token(user)", "token <- NULL", "x <- token", 'if (token == "abc") 1',
+    'token = keyring::key_get("svc")',
+])
+def test_r_values_that_are_surely_safe_are_left_alone(line):
+    code = f"{line}\nprint(1)\n"
+    assert _clean(code, R) == code
+    assert scan_publish_files({R: code}) == []
+
+
+def test_a_parameter_expansion_is_not_read_as_an_assignment():
+    code = 'echo "${TOKEN:-fallback}" "${PASSWORD:=x}"\nexport PATH=$PATH:/bin\n'
+    assert _clean(code, SH) == code
+
+
+def test_arithmetic_in_double_quotes_is_a_literal_and_file_path_is_not_a_lookup():
+    assert "123456789" not in _clean('TOKEN="$((123456789))"\n', SH)
+    assert "hunter2" not in _clean('token <- file.path("hunter2", "xyz")\n', R)
+
+
+def test_an_assignment_shaped_text_inside_a_string_keeps_its_quotes():
+    assert _clean('print("token = example")\n', R) == 'print("token = example")\n'
+    cleaned = _clean('message <- "password = hunter2xyz and more"\nprint(1)\n', R)
+    assert "hunter2xyz" not in cleaned and cleaned.count('"') == 2 and "redacted-secret" in cleaned
+    cleaned = _clean('echo "TOKEN=hunter2xyz done"\n', SH)
+    assert "hunter2xyz" not in cleaned and cleaned.startswith('echo "TOKEN=') and cleaned.count('"') == 2
+    assert _clean('# token = abc123xyz\nx <- 1\n', R) == '# token = abc123xyz\nx <- 1\n'
+
+
+def test_namespaced_base_lookups_are_still_lookups():
+    code = 'token <- base::Sys.getenv("API_TOKEN")\npassword <- utils::readline()\n'
+    assert _clean(code, R) == code
