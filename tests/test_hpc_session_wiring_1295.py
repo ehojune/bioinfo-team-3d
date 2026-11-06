@@ -328,5 +328,69 @@ def test_the_broker_waits_for_a_whole_reconnect(tmp_path, site, monkeypatch):
     monkeypatch.setattr(hpc, "SESSION_ERROR", None)
     session = scheduler.session()
     # 3 connects of 30 s, waits of 5 s and 10 s, then the 60 s command: more than the old command timeout plus 60 s
-    assert session.worst_case_s(60) == 3 * 30 + 5 + 10 + 60 and hpc._hpc_wait_s() == 165
-    assert hpc._hpc_wait_s() + 60 > 120
+    assert session.worst_case_s(60) == 3 * 30 + 5 + 10 + 60
+    # the runner's wait for its turn (60 s) comes first, then the reconnect and the command
+    assert hpc._hpc_wait_s() == 60 + 165
+
+
+def test_a_warning_on_stderr_after_the_job_id_is_not_the_job_id(tmp_path, site, monkeypatch):
+    monkeypatch.setenv("FAKE_HPC_SBATCH_WARN", "warning: quota 80%")
+    site()
+    scheduler = sched.Scheduler(settings(tmp_path).hpc)
+    assert scheduler.submit("/work/job.sh", "align") == "1000"  # not "80"
+    assert scheduler.status("1000").state == "running"
+
+
+def test_stderr_comes_back_separately_with_the_exit_status(tmp_path, site, monkeypatch):
+    monkeypatch.setenv("FAKE_HPC_SBATCH_ERROR", "sbatch: error: invalid account")
+    site()
+    scheduler = sched.Scheduler(settings(tmp_path).hpc)
+    done = scheduler._run(["sbatch", "--parsable", "/work/job.sh"])
+    assert (done.returncode, done.stdout, done.stderr) == (1, "", "sbatch: error: invalid account\n")
+
+
+def test_a_caller_with_a_deadline_gives_up_unsent_when_the_shell_stays_busy(tmp_path, site):
+    import threading
+    import time
+
+    from labhq import hpc_session as hs
+
+    site()
+    session = sched.Scheduler(settings(tmp_path).hpc).session()
+    session.run("echo up")
+    slow = threading.Thread(target=lambda: session.run("sleep 2"))
+    slow.start()
+    time.sleep(0.3)
+    started = time.monotonic()
+    with hs.queue_wait(0.3), pytest.raises(hs.SessionBusy):
+        session.run("echo late")  # never sent: it cannot run after the caller gave up
+    assert time.monotonic() - started < 1.5
+    slow.join(10)
+    assert session.run("echo after").output == "after\n"  # and the shell never saw "late"
+
+
+def test_close_ends_a_command_in_flight_at_once(tmp_path, site):
+    import threading
+    import time
+
+    from labhq import hpc_session as hs
+
+    site()
+    session = sched.Scheduler(settings(tmp_path).hpc).session()
+    session.run("echo up")
+    seen = []
+
+    def slow():
+        try:
+            session.run("sleep 20")
+        except hs.SessionError as error:
+            seen.append(error)
+
+    thread = threading.Thread(target=slow)
+    thread.start()
+    time.sleep(0.4)
+    started = time.monotonic()
+    session.close()
+    assert time.monotonic() - started < 4
+    thread.join(10)
+    assert seen and isinstance(seen[0], hs.SessionLost)

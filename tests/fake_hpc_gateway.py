@@ -22,6 +22,7 @@ No real network or HPC is touched.
 """
 import json
 import os
+import re
 import shlex
 import sys
 import threading
@@ -64,6 +65,23 @@ def slurm(words: list[str], path: str) -> tuple[str, int]:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(state, f)
     return out, status
+
+
+WRAPPER = re.compile(r"""E=\$\(mktemp\); (.*) 2>"\$E"; S=\$\?; printf '(.*)'; cat "\$E"; rm -f "\$E"; \(exit \$S\)$""")
+
+
+def command(words: list[str], flags: dict) -> tuple[str, str, int]:
+    """A fake scheduler command with stdout and stderr apart: (stdout, stderr, exit status)."""
+    head = words[0] if words else ""
+    if head == "sbatch" and flags["sbatch_error"]:
+        return "", flags["sbatch_error"] + "\n", 1
+    if head in ("sbatch", "squeue", "sacct", "scancel") and flags["slurm"]:
+        text, status = slurm(words, flags["slurm"])
+        warn = os.environ.get("FAKE_HPC_SBATCH_WARN") if head == "sbatch" and status == 0 else None
+        return text, (warn + "\n") if warn else "", status
+    if head == "echo":
+        return " ".join(words[1:]) + "\n", "", 0
+    return "", f"sh: {head}: command not found\n", 127
 
 
 def main(argv: list[str]) -> int:
@@ -124,6 +142,15 @@ def main(argv: list[str]) -> int:
         if flags["echo"]:
             out.write(line + "\r\n")
         if not line.strip():
+            continue
+        wrapped = WRAPPER.match(line)
+        if wrapped:  # the scheduler's one-liner that keeps stderr apart: run the command, stdout, marker, stderr, status
+            count += 1
+            if flags["drop"] is not None and count > flags["drop"]:
+                return 0
+            text, err, status = command(shlex.split(wrapped.group(1)), flags)
+            out.write(text + wrapped.group(2).replace("\\n", "\n") + err)
+            out.flush()
             continue
         words = shlex.split(line)
         head = words[0] if words else ""

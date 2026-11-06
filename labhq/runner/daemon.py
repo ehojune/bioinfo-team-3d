@@ -74,6 +74,7 @@ from .codex_sandbox import SandboxWatch
 from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
 from . import local_jobs
 from ..hpc_login_budget import LoginLimitReached, budget_for, request_scope
+from ..hpc_session import queue_wait
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .lookup_admission import ENV as LOOKUP_ADMISSION_ENV, FILE as LOOKUP_ADMISSION_FILE, LookupAdmission
@@ -509,7 +510,9 @@ class Runner:
 
     def stop(self) -> None:
         self._stopping = True
-        close_sessions()  # the HPC shell (and its keep-alive thread), if one was opened
+        # The HPC shell and its keep-alive thread, if one was opened. Closed from a thread: a command in flight must not
+        # hold the event loop up while the runner shuts down.
+        threading.Thread(target=close_sessions, name="hpc-session-close", daemon=True).start()
         watch = getattr(self, "_local_watch", None)  # a Runner built without __init__ (tests) has none
         if watch is not None:
             watch.cancel()
@@ -3314,7 +3317,7 @@ class Runner:
         # Count this submit's login against its request, and say no before the PI is asked when a limit is already used up.
         if stop := self._login_limit(body.get("request_id")):
             return {"error": str(stop)}
-        with request_scope(body.get("request_id")):
+        with request_scope(body.get("request_id")), queue_wait():
             return await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record)
 
     async def _on_scheduler_op(self, body: dict) -> dict:
@@ -3334,7 +3337,7 @@ class Runner:
                              "tracks for you. Ask the PI to cancel other jobs."}
 
         def work():
-            with request_scope(body.get("request_id")):
+            with request_scope(body.get("request_id")), queue_wait():  # gives up unsent when the shell stays busy
                 if op == "status":
                     return {"status": self.scheduler.status(job_id).to_dict()}
                 if op == "queue":

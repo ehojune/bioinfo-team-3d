@@ -169,6 +169,16 @@ def build_script(body: str, workdir: str, *, umask: str | None = None) -> str:
     return "\n".join([shebang, *header, *pre, *lines]) + "\n"
 
 
+STDERR_MARK = "__LABHQ_STDERR__"
+
+
+def _split_streams(command: str) -> str:
+    """One shell line that keeps stderr apart from stdout. The shell session has a single output stream, so the command's
+    stderr goes to a temporary file and comes back after a marker line; a warning printed after the job id of a submit can
+    then never be read as the id. The exit status is the command's own."""
+    return (f"E=$(mktemp); {command} 2>\"$E\"; S=$?; printf '\\n{STDERR_MARK}\\n'; cat \"$E\"; rm -f \"$E\"; (exit $S)")
+
+
 def _detail(p: subprocess.CompletedProcess) -> str:
     """What the command said, for an error message. ``_run`` hides the site's host, port and user in it (#1295): the
     message goes to the staff agent, and a login host name is the institution's, not the agent's to know."""
@@ -407,15 +417,17 @@ class Scheduler:
             from ..hpc_session import CommandTimeout
 
             try:
-                result = session.run(shlex.join(args), self.cfg.command_timeout_s)
+                result = session.run(_split_streams(shlex.join(args)), self.cfg.command_timeout_s)
             except CommandTimeout as error:
                 raise subprocess.TimeoutExpired(args, self.cfg.command_timeout_s) from error
             if result.truncated:  # the command ran: a submit may have gone through, so this is "lost", not a plain failure
                 from ..hpc_session import SessionLost
 
                 raise SessionLost(f"{args[0]} printed more than the session keeps; the answer is incomplete")
-            # The shell has one output stream: an error text arrives in stdout, and the parsers read both.
-            done = subprocess.CompletedProcess(args, result.exit_code, result.output, "")
+            out, _, err = result.output.rpartition(f"\n{STDERR_MARK}\n")
+            if not _:  # no marker: the shell did not run our wrapper; everything is output
+                out, err = result.output, ""
+            done = subprocess.CompletedProcess(args, result.exit_code, out, err)
             done.redact = self._redactor(session)
             return done
         if self.cfg.ssh_host:

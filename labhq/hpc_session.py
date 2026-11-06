@@ -19,6 +19,8 @@ profile). The module is standalone; the tools and the runner are wired to it els
 from __future__ import annotations
 
 import codecs
+import contextlib
+import contextvars
 import queue
 import re
 import subprocess
@@ -31,6 +33,8 @@ from typing import Callable, Sequence
 from .hpc_login_budget import LoginBudget, LoginLimitReached
 
 HOST_KEY_TEXTS = ("REMOTE HOST IDENTIFICATION HAS CHANGED", "Host key verification failed")
+QUEUE_WAIT_S = 60.0  # how long a caller that asked for a bounded wait stands in line for the shell's one command at a time
+_QUEUE_WAIT: contextvars.ContextVar[float | None] = contextvars.ContextVar("labhq_hpc_queue_wait", default=None)
 _OVERLAP = 512  # longer than any marker, so a marker split over two reads is still found
 
 
@@ -61,8 +65,23 @@ def redact(text: str, words: Sequence[str]) -> str:
     return text
 
 
+@contextlib.contextmanager
+def queue_wait(seconds: float | None = QUEUE_WAIT_S):
+    """Inside this block ``run`` waits at most ``seconds`` for its turn and then raises ``SessionBusy`` without sending
+    anything. A caller with a deadline (the broker) uses it so a command that gave up is never run later."""
+    token = _QUEUE_WAIT.set(seconds)
+    try:
+        yield
+    finally:
+        _QUEUE_WAIT.reset(token)
+
+
 class SessionError(RuntimeError):
     """Base of what the session manager raises."""
+
+
+class SessionBusy(SessionError):
+    """The shell was busy with other commands for the whole wait. This command was not sent."""
 
 
 class CommandTimeout(SessionError):
@@ -187,11 +206,18 @@ class HpcSession:
         """Run one command in the shell and return its exit code and output. Opens (or reopens) the connection first."""
         if "\n" in command or "\r" in command:
             raise ValueError("명령은 한 줄이어야 합니다")
-        with self._lock:
+        wait = _QUEUE_WAIT.get()
+        if wait is not None and not self._lock.acquire(timeout=wait):
+            raise SessionBusy(f"HPC 셸이 {wait:g}초 동안 다른 명령을 처리 중이라 이 명령은 보내지 않았습니다")
+        if wait is None:
+            self._lock.acquire()
+        try:
             conn = self._ensure_open()
             result = self._exec(conn, command, timeout_s or self.cfg.command_timeout_s)
             self._last_activity = self.clock()
             return result
+        finally:
+            self._lock.release()
 
     def close(self, reason: str = "closed") -> None:
         """Close the shell. The next ``run`` opens a new connection (and counts a login)."""
@@ -199,8 +225,14 @@ class HpcSession:
         ticker = self._ticker
         if ticker is not None and ticker is not threading.current_thread():
             ticker.join(timeout=5)  # tick() never waits for the lock, so this ends within one step
-        with self._lock:
-            self._drop()
+        conn = self._conn
+        if conn is not None:
+            self._kill(conn)  # outside the lock: a command in flight ends at once (SessionLost) and frees it
+        if self._lock.acquire(timeout=5):
+            try:
+                self._drop()
+            finally:
+                self._lock.release()
 
     def resume(self) -> None:
         """A person opened the session (the tunnel): allow the next ``run`` to try the connection again."""
