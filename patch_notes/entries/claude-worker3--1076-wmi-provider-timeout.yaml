@@ -1,0 +1,9 @@
+rows:
+- sha: '01f3b21'
+  at: 2026-11-06 23:10
+  text: Windows WMI provider_timeout 재발 3건(2026-11-06)의 증거와 원인 후보, 고칠 범위를 docs/reference/ci-1076-wmi-provider-timeout.md에 정리한다. 세 건 모두 WMI Create 호출 전에 PowerShell 시작~stdin 읽기 구간에서 멈췄고 그 job의 첫 launch였다
+  summary: 간헐 실패의 증거와 원인 후보를 한 문서에 모읍니다.
+- sha: 'f7fe5aa'
+  at: 2026-11-06 23:50
+  text: Windows WMI broker의 journal provider 행에 Python 측 subprocess.run 호출 시간(run_ms), 프로세스 안 launch 순번, OS 가동 시간을 더한다. subprocess.run 호출 형태와 기존 시계 읽기는 그대로이고 timeout·재시도 동작은 바뀌지 않는다
+  summary: 다음 provider_timeout 때 시간이 provider 안에서 쓰였는지 호출 안에서 쓰였는지 가릴 수 있게 합니다.
