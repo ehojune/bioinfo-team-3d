@@ -1,6 +1,7 @@
 """Authenticated scheduler routes and complete call budgets; no network, process or HPC access."""
 import asyncio
 import subprocess
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -104,6 +105,38 @@ def test_queue_returns_only_runner_recorded_owned_jobs_and_array_tasks(routes):
     response = routes.client.post("/jobs/scheduler/queue", json={}, headers=routes.headers)
     assert [j["job_id"] for j in response.json()["queue"]] == ["1", "4", "8_2"]
     assert routes.calls == [("queue",)]
+
+
+def test_queue_ownership_runs_on_event_loop_during_concurrent_submission(routes, monkeypatch):
+    async def scenario():
+        entered, release = asyncio.Event(), threading.Event()
+        loop, owner_thread = asyncio.get_running_loop(), threading.get_ident()
+        owns = routes.runner._hpc_job_owned
+        checked = []
+
+        def ownership(*args, **kwargs):
+            checked.append(threading.get_ident())
+            assert threading.get_ident() == owner_thread
+            return owns(*args, **kwargs)
+
+        def queue():
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(2)
+            return [sched.JobInfo(job_id="10", state="running"), sched.JobInfo(job_id="2", state="running")]
+
+        async def submit():
+            await entered.wait()
+            routes.runner.jobs["10"] = job()
+            release.set()
+
+        monkeypatch.setattr(routes.runner, "_hpc_job_owned", ownership)
+        monkeypatch.setattr(routes.runner.scheduler, "queue", queue)
+        _, reply = await asyncio.gather(submit(), routes.runner._on_scheduler_request(
+            "queue", {"task_id": "t1", "agent_id": "a1", "request_id": "r1"}))
+        assert [j["job_id"] for j in reply["queue"]] == ["10"]
+        assert checked == [owner_thread, owner_thread]
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("op", ["status", "queue", "cancel"])

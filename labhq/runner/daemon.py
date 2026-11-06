@@ -3389,12 +3389,15 @@ class Runner:
                 if op == "status":
                     return {"status": self.scheduler.status(job_id).to_dict()}
                 if op == "queue":
-                    return {"queue": [j.to_dict() for j in self.scheduler.queue()
-                                      if self._hpc_job_owned(body, j.job_id)]}
+                    return {"queue": [j.to_dict() for j in self.scheduler.queue()]}
                 return {"result": self.scheduler.cancel(job_id)}
 
         try:
-            return await asyncio.to_thread(work)
+            reply = await asyncio.to_thread(work)
+            if op == "queue":
+                # Job records belong to the event loop; submissions can change the dict while the worker queries HPC.
+                reply["queue"] = [j for j in reply["queue"] if self._hpc_job_owned(body, j["job_id"])]
+            return reply
         except Exception as error:  # noqa: BLE001 - the tool reports it; a login limit or a lost shell is the usual cause
             return {"error": str(error)}
 
