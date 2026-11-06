@@ -49,10 +49,10 @@ lookup-only. 기준은 [#1076 댓글](https://github.com/ehojune/bioinfo-team-3d
 - 남은 일과 재개 조건
   1. 실제 WSL runner에서 Claude가 grant된 venv의 interpreter를 실행하는지(승인 카드 포함). 재개 조건: 시운전(#739·#910) 승인 또는 WSL runner 실측 승인.
   2. #666(OS 샌드박스) 의존 항목. 재개 조건: #666 진행.
-- 코드로 바로 고칠 수 있는 작은 개선 두 건(rev13이 총괄 판단을 요청해 둔 것). 결함은 아니고 어긋남을 더 일찍 잡는 것이다.
-  - `labhq/orchestrator/cso.py:7324`(`prepare_recruits`)에 `stored_environment=any("environment_binding" in s or "environment_bindings" in s for s in req["plan"]["steps"])`를 넘긴다(`7393`과 같은 식). 그러지 않으면 마지막 `extra`개 단계가 에이전트 가용성·외부 데이터 guard 검사를 건너뛴다. 시험: `tests/test_runner_env_plan_674.py`에 binding 든 저장 계획이 잘리지 않는 한 건.
-  - `labhq/gateway/server.py`의 `await self.publish("task.dispatched")`(약 4357행) 뒤, `send_runner`(약 4365행) 직전에 `_session_pin_refusal`을 한 번 더 부른다. runner 쪽이 이미 이중 방어하므로 안전상 필요는 아니고, 거절이 gateway에서 먼저 나게 하는 개선이다. 시험은 `tests/test_runner_env_plan_674.py:349`와 같은 모양.
-  - 묶어서 한 PR(약 두 파일과 시험 한 파일). 총괄이 필요하다고 판단하면 claim한다.
+- rev13이 총괄 판단을 요청해 둔 작은 개선 두 건은 **이미 main에 있다**(정리 중 확인, 처음에는 열려 있다고 적었다가 바로잡음). PR #1254(`b2d7d807`, 2026-11-01 "binding 든 저장 계획 검사와 publish 뒤 runtime 재확인")이 둘 다 넣었다.
+  - `labhq/orchestrator/cso.py`의 `prepare_recruits`가 `validate_steps(..., stored_environment=any("environment_binding" in s or "environment_bindings" in s ...))`를 넘긴다(`:7451`). 시험: `tests/test_runner_env_plan_674.py::test_a_resumed_bound_plan_is_checked_with_its_scheduler_made_environment_steps`(`:386`).
+  - gateway의 `publish` 뒤 runtime 재확인도 같은 PR에 있다. `labhq/gateway/server.py`가 `task.dispatched` 처리에서 task를 기록·전송하기 직전에 `_session_pin_refusal`을 다시 부른다(`:4431-4433`). 시험: `tests/test_runner_env_plan_674.py::test_a_runner_that_changes_runtime_while_task_dispatched_is_published_is_not_sent_the_stale_binding`(`:415`).
+  - `tests/test_runner_env_plan_674.py` 25건이 이번에 통과했다. 그래서 #674에 코드로 고칠 작은 일은 남아 있지 않다.
 
 ## 한계
 
