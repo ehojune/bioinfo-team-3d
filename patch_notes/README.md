@@ -10,12 +10,27 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-07
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 02:10 | [`bd91133`](https://github.com/ehojune/bioinfo-team-3d/pull/1306/commits/bd91133) | **사이트 프로필의 셸로 PBS 작업을 제출할 때도, ssh로 제출할 때처럼 로컬에서 볼 수 없는 원격 설정 때문에 PI 승인을 거칩니다.**<br>hpc_jobs._submits_remotely(ssh_host 또는 프로필 세션, 읽을 수 없는 프로필은 원격으로 간주)로 PBS 승인 사유 판단, 시험 1건 (#1295) |
+| 01:30 | [`d37d28a`](https://github.com/ehojune/bioinfo-team-3d/pull/1306/commits/d37d28a) | **접속 하나를 계속 쓰는 사이트에서는 상태 확인 간격을 늘리지 않아 완료를 더 빨리 알립니다. 상태 조회가 명령 두 개일 때의 대기 시간도 도구 시간 제한에 넣었습니다.**<br>Scheduler.polls_cost_logins로 backoff 판단, hpc_session.call_budget_s(명령 수만큼 줄서기·실행 시간)를 hpc_mcp와 labhq_mcp_timeout_s에 적용, 시험 2건 (#1295) |
+| 00:50 | [`1f57e49`](https://github.com/ehojune/bioinfo-team-3d/pull/1306/commits/1f57e49) | **runner가 멈추는 중에 HPC에 접속하고 있었다면 그 접속도 끝내고, 멈춘 뒤에는 기다리던 제출이나 취소 명령을 보내지 않습니다.**<br>HpcSession.shutdown(진행 중 접속 종료, 이후 run·재접속 거부), close_sessions가 shutdown 호출, 시험 1건 (#1295) |
+| 00:10 | [`ff09281`](https://github.com/ehojune/bioinfo-team-3d/pull/1306/commits/ff09281) | **직원 CLI가 HPC 도구 호출을 기다리는 시간에도 셸 줄서기와 재접속의 최악 시간을 넣어, CLI가 먼저 포기한 뒤 제출이 실행되는 일이 없게 했습니다. 로컬 job은 HPC 셸을 열어 두는 이유에서 뺐습니다.**<br>labhq_mcp_timeout_s가 사이트 프로필이 있으면 QUEUE_WAIT_S와 worst_case_s를 더함(hpc_session.worst_case_s 함수화), Runner._has_open_hpc_jobs가 local_jobs.is_local을 제외, 시험 2건 (#1295) |
+
 ## 2026-11-06
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:30 | [`4a1e67f`](https://github.com/ehojune/bioinfo-team-3d/pull/1306/commits/4a1e67f) | **HPC 세션을 여는 접속 프로세스도 scheduler 명령과 같은 정제된 환경변수만 받아, runner의 API 키 같은 비밀이 원격 셸로 넘어가지 않습니다.**<br>SessionConfig.env, site_session이 command_env()를 넘김, 가짜 gateway printenv와 시험 1건 (#1295) |
+| 23:00 | [`426d235`](https://github.com/ehojune/bioinfo-team-3d/pull/1306/commits/426d235) | **제출 뒤 경고가 stderr로 나와도 작업 번호로 잘못 읽지 않고, 도구 호출이 포기한 명령은 나중에 실행되지 않으며, runner 종료가 진행 중인 HPC 명령을 기다리며 멈추지 않습니다.**<br>세션 명령을 stderr 분리 한 줄로 보내 stdout·stderr·종료 코드를 따로 받음, queue_wait로 줄서기 60초 뒤 보내지 않고 실패(SessionBusy), broker timeout에 줄서기 포함, close는 연결을 먼저 끊고 stop은 스레드로 닫음, manual 09·15, 시험 4건 (#1295) |
+| 22:20 | [`ae2ce6a`](https://github.com/ehojune/bioinfo-team-3d/pull/1306/commits/ae2ce6a) | **설정 설명서에 사이트 프로필의 접속 명령이 대화형 셸을 여는 명령이어야 한다고 적었습니다.**<br>manual 15장 한영에 connect_argv는 터널만 여는 명령이 아니라 대화형 셸을 여는 명령이며 remote_exec가 false인 사이트도 셸이 열리면 이 경로를 쓴다고 명시 (#1295) |
+| 22:10 | [`116253c`](https://github.com/ehojune/bioinfo-team-3d/pull/1306/commits/116253c) | **접속이 끊겨 다시 여는 동안에도 도구 호출이 먼저 포기하지 않도록 기다리는 시간을 늘렸고, 제출 출력이 너무 길어 잘려도 제출됐을 수 있다고 안내합니다.**<br>HpcSession.worst_case_s, hpc_mcp의 broker timeout에 재접속 전체 포함, 잘린 출력은 SessionLost로 올려 MAYBE_SUBMITTED 안내, 시험 2건 (#1295) |
 | 22:00 | [`3f7de89`](https://github.com/ehojune/bioinfo-team-3d/pull/1305/commits/3f7de89) | **미완성 프로필이 자동으로 보완될 것처럼 읽히던 안내를 실제 동작에 맞춥니다.**<br>manual 08장의 사이트 프로필 설명에서 비워 둔 항목이 저절로 다시 묻는다는 안내를 고쳐, hpc.site_profile을 설정에서 지우고 labhq init을 다시 실행해야 다시 묻는다고 적는다 |
+| 21:40 | [`abc4759`](https://github.com/ehojune/bioinfo-team-3d/pull/1306/commits/abc4759) | **HPC 오류 메시지에 접속 호스트 이름과 포트, 사용자 이름이 섞여 직원 세션에 전달되던 것을 가렸습니다. 세션과 scheduler 둘 다, 직접 ssh 경로도 같습니다.**<br>hpc_session.redaction_words/redact(접속 명령의 호스트·포트·사용자), Scheduler._run이 결과에 redact를 붙이고 _detail·cancel이 적용, 세션 오류 문장도 적용, 시험 4건 (#1295) |
 | 21:30 | [`8b31a41`](https://github.com/ehojune/bioinfo-team-3d/pull/1305/commits/8b31a41) | **개발 중으로 적었던 세션 관리자와 사이트 프로필의 현재 상태를 문서에 맞춥니다.**<br>manual 08장 한영의 HPC 범용 정책에서 세션 관리자(hpc_session.py, |
+| 21:00 | [`2ead330`](https://github.com/ehojune/bioinfo-team-3d/pull/1306/commits/2ead330) | **사이트 프로필에 접속 명령이 있으면 HPC에 한 번만 접속해 셸 하나를 열어 두고, 제출·상태·큐·취소와 runner의 상태 조회가 모두 그 셸로 돕니다. 직원 도구도 직접 접속하지 않고 runner에 요청합니다. 접속이 다시 열릴 때만 로그인으로 세고, 사람이 터널을 열어야 하는 문구는 프로필이 정합니다.**<br>Scheduler가 site_session(공유 HpcSession)으로 _run, hpc_mcp의 status·queue·cancel을 broker /jobs/submit op로 runner에 위임, runner의 _on_scheduler_op·세션 알림·needs_login, 프로필 tunnel_texts와 session_config, NeedsHuman 5분 대기 뒤 재시도, manual 09·15 한영 (#1295) |
 | 20:50 | [`d32b568`](https://github.com/ehojune/bioinfo-team-3d/pull/1301/commits/d32b568) | **접속 정보를 로그에 넣지 않는다는 문장이 보장처럼 읽히지 않게 한계를 밝힙니다.**<br>manual 08·11장에 ssh 접속 오류 메시지의 기관 호스트 이름이 직원 세션에 전달될 수 있고 가리는 일은 후속 작업이라고 사실대로 적는다 |
 | 20:20 | [`4340d48`](https://github.com/ehojune/bioinfo-team-3d/pull/1301/commits/4340d48) | **지금 구현의 전제 조건과 접속 정보를 둘 곳의 안전 조건을 문서에 정확히 남깁니다.**<br>manual 08장에 hpc.ssh_host 구성이 PC와 로그인 노드의 runner.workspace_root 공유를 전제하고 파일 전송은 아직 없다는 조건을 적고, 11장에서 기관 접속 정보를 직원 세션이 읽을 수 있는 개인 skill에 넣지 않는다고 바로잡는다 |
 | 20:00 | [`216e519`](https://github.com/ehojune/bioinfo-team-3d/pull/1302/commits/216e519) | **연결 유지용 가벼운 명령은 사용자 활동으로 세지 않아, 열린 잡이 없으면 유휴 세션이 제때 닫힙니다. 일반 접속 실패는 사람을 기다리지 않고 재접속 횟수 상한 안에서 다시 시도합니다.**<br>hpc_session: _last_beat를 _last_activity와 분리, tunnel_texts 기본값을 비움(사이트 프로필이 명시한 문구만 NeedsHuman), 시험 2건 추가 (#1299) |
