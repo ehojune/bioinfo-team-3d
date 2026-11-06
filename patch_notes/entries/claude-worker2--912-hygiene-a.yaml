@@ -12,3 +12,7 @@ rows:
   at: 2026-11-07 05:23
   text: 리뷰 지적 반영. #674 근거의 ENVIRONMENT_ENGINES·ENVIRONMENT_GRANT_ENGINES 위치를 daemon.py 331-332행으로 바로잡는다
   summary: 근거가 가리키는 줄 번호를 실제 위치로 고칩니다.
+- sha: 'bc63851'
+  at: 2026-11-07 05:24
+  text: 리뷰 지적 반영. HANDOFF.md의 #618 줄이 broker port P2를 보류로 적고 있어, P1은 PR #967, P2는 PR #1024로 해소되어 issue를 닫았다고 고친다
+  summary: 새 세션이 읽는 HANDOFF가 끝난 일을 남은 일로 말하지 않게 합니다.
