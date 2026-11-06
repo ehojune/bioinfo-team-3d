@@ -107,6 +107,50 @@ def test_queue_returns_only_runner_recorded_owned_jobs_and_array_tasks(routes):
     assert routes.calls == [("queue",)]
 
 
+def test_known_foreign_jobs_do_not_make_the_queue_uncertain(routes, monkeypatch):
+    monkeypatch.setattr(routes.runner.scheduler, "queue", lambda: [sched.JobInfo(job_id="2", state="running"),
+                                                                  sched.JobInfo(job_id="8_2", state="running")])
+    reply = routes.client.post("/jobs/scheduler/queue", json={}, headers=routes.headers).json()
+    assert "error" not in reply and [j["job_id"] for j in reply["queue"]] == ["8_2"]
+
+
+@pytest.mark.parametrize("failure", ["submit command timed out", "cannot parse job id"])
+def test_ambiguous_submission_is_not_hidden_as_an_empty_queue(routes, tmp_path, monkeypatch, failure):
+    runner = routes.runner
+    (tmp_path / "jobs").mkdir()
+    script = tmp_path / "jobs" / "align.sh"
+    script.write_text("echo fixture\n", encoding="utf-8")
+    runner.workspaces["t1"] = SimpleNamespace(dir=tmp_path, task=SimpleNamespace(meta={}))
+    runner.submitting = {}
+    runner.s.policy.approvals.hpc_core_hours_threshold = 1000
+    monkeypatch.setattr(runner, "_login_limit", lambda request: None)
+    submitted = []
+
+    def submit(*args):
+        submitted.append(args)
+        raise RuntimeError(failure + sched.MAYBE_SUBMITTED)
+
+    monkeypatch.setattr(runner.scheduler, "submit", submit, raising=False)
+    monkeypatch.setattr(runner.scheduler, "queue", lambda: [sched.JobInfo(job_id="999", state="running")])
+    reply = asyncio.run(runner._on_submit({"task_id": "t1", "agent_id": "a1", "script": str(script),
+                                          "name": "align", "cores": 1, "mem": "1G", "walltime": "00:10:00"}))
+    assert "may have been submitted" in reply["error"] and len(submitted) == 1
+    queue = routes.client.post("/jobs/scheduler/queue", json={}, headers=routes.headers).json()
+    assert "cannot rule out" in queue["error"] and "resubmit" in queue["error"]
+    assert "999" not in str(queue) and not runner._hpc_job_owned({"task_id": "t1", "agent_id": "a1"}, "999")
+    assert len(submitted) == 1
+    from labhq.tools import hpc_mcp as hpc
+
+    async def broker(*args, **kwargs):
+        return queue
+
+    monkeypatch.setattr(hpc, "VIA_RUNNER", True)
+    monkeypatch.setattr(hpc, "SESSION_ERROR", None)
+    monkeypatch.setattr(hpc, "_broker", broker)
+    with pytest.raises(Exception, match="cannot rule out"):
+        asyncio.run(hpc.hpc_queue())
+
+
 def test_queue_ownership_runs_on_event_loop_during_concurrent_submission(routes, monkeypatch):
     async def scenario():
         entered, release = asyncio.Event(), threading.Event()

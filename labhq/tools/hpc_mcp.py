@@ -355,7 +355,7 @@ async def hpc_status(job_id: str) -> str:
 
 @server.tool()
 async def hpc_queue() -> str:
-    """All of the lab account's jobs currently known to the scheduler."""
+    """List owned tracked jobs through the runner. An empty queue cannot resolve a submission with an unknown outcome."""
     if VIA_RUNNER:
         return json.dumps((await _runner_op("queue"))["queue"])
     try:
