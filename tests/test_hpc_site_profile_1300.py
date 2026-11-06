@@ -294,3 +294,14 @@ def test_this_repository_tracks_no_site_profile():
         for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
             assert not re.match(r"^\s*.?" + site.MARKER + r".?\s*:", line), name
         assert ".labhq/sites/" not in name
+
+
+def test_init_names_the_override_folder_when_one_is_set(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("LABHQ_SITES_DIR", str(tmp_path))
+    monkeypatch.setattr(init_wizard, "_interactive", lambda: True)
+    ask = answers("y", "lab")
+    monkeypatch.setattr(init_wizard, "_ask", lambda label, default, _yes: ask(label, default))
+    hpc = {}
+    init_wizard._ask_hpc_site_profile(hpc, "slurm", False)
+    out = capsys.readouterr().out
+    assert hpc["site_profile"] == "lab" and "$LABHQ_SITES_DIR/lab.yaml" in out and str(tmp_path) not in out

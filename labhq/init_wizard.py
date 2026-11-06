@@ -125,7 +125,8 @@ def _ask_hpc_site_profile(hpc: dict, scheduler: str, yes: bool, directory: Path 
         return
     hpc["site_profile"] = name
     unknown = hpc_site.unknown_fields(profile)
-    print(f"사이트 프로필 저장: ~/.labhq/sites/{name}.yaml" + (f" (아직 모르는 항목: {', '.join(unknown)})" if unknown else ""))
+    where = "$LABHQ_SITES_DIR" if directory is None and os.environ.get("LABHQ_SITES_DIR") else "~/.labhq/sites"
+    print(f"사이트 프로필 저장: {where}/{name}.yaml" + (f" (아직 모르는 항목: {', '.join(unknown)})" if unknown else ""))
 
 
 def _save_hpc_login_limits(target: Path, hpc: dict) -> bool:
