@@ -12,6 +12,9 @@ last exit code ``$?``, and a few fake commands:
 Fake Slurm (with ``--slurm-state FILE``, a JSON file the test can edit to finish a job): ``sbatch`` prints a new job id,
 ``squeue`` lists the jobs that are still active, ``sacct`` the ended ones, ``scancel ID`` ends one.
 
+Environment: ``FAKE_HPC_FAIL_TEXT`` (the connect fails printing it) and ``FAKE_HPC_SBATCH_ERROR`` (sbatch fails printing it);
+they are not flags so that the text is not part of the connect command a profile would hide.
+
 Flags: ``--echo`` (a terminal echoes what is typed), ``--banner`` (print a login banner), ``--lock-after S`` (lock the
 session when idle for S seconds), ``--drop-after N`` (end the connection after N commands), ``--hostkey-changed`` and
 ``--tunnel-down`` (print the ssh failure and exit 255), ``--counter FILE`` (append one line per start).
@@ -65,7 +68,8 @@ def slurm(words: list[str], path: str) -> tuple[str, int]:
 
 def main(argv: list[str]) -> int:
     flags = {"echo": False, "banner": False, "lock": None, "drop": None, "hostkey": False, "tunnel": False,
-             "counter": None, "slurm": None}
+             "counter": None, "slurm": None,
+             "fail_text": os.environ.get("FAKE_HPC_FAIL_TEXT"), "sbatch_error": os.environ.get("FAKE_HPC_SBATCH_ERROR")}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -86,6 +90,10 @@ def main(argv: list[str]) -> int:
         with open(flags["counter"], "a", encoding="utf-8") as f:
             f.write("start\n")
     out = sys.stdout
+    if flags["fail_text"]:
+        out.write(flags["fail_text"] + "\n")
+        out.flush()
+        return 255
     if flags["hostkey"]:
         out.write("@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.\n")
         out.flush()
@@ -151,6 +159,9 @@ def main(argv: list[str]) -> int:
         elif head == "exit":
             out.flush()
             return 0
+        elif head == "sbatch" and flags["sbatch_error"]:
+            out.write(flags["sbatch_error"] + "\n")
+            status = 1
         elif head in ("sbatch", "squeue", "sacct", "scancel") and flags["slurm"]:
             text, status = slurm(words, flags["slurm"])
             out.write(text)

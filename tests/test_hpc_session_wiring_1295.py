@@ -233,3 +233,74 @@ def test_the_tools_route_status_queue_and_cancel_through_the_runner(tmp_path, mo
     monkeypatch.setattr(hpc, "SESSION_ERROR", "hpc.site_profile 'x' cannot be used")
     with pytest.raises(Exception, match="cannot be used"):
         asyncio.run(hpc.hpc_status("7"))
+
+
+# ---- the site's host, port and user never reach a message the agent sees ----
+
+SITE_WORDS = ("gw.example.org", "bob", "2222")
+
+
+def hidden(text):
+    return all(word not in text for word in SITE_WORDS)
+
+
+def leaky_site(tmp_path, monkeypatch, *flags):
+    monkeypatch.setenv("LABHQ_SITES_DIR", str(tmp_path / "sites"))
+    argv = [sys.executable, "-I", GATEWAY, "--slurm-state", str(tmp_path / "slurm.json"), *flags,
+            "-p", "2222", "-o", "User=bob", "bob@gw.example.org"]  # words the fake gateway ignores, as a real ssh would use them
+    hpc_site.save_profile(hpc_site.SiteProfile(name="fake", access_method="ssh", connect_argv=argv, remote_exec=True,
+                                               scheduler="slurm"))
+
+
+def test_a_submit_error_hides_the_host_port_and_user(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_HPC_SBATCH_ERROR", "sbatch: error: bob@gw.example.org: connect to port 2222 refused (exit 22)")
+    leaky_site(tmp_path, monkeypatch)
+    scheduler = sched.Scheduler(settings(tmp_path).hpc)
+    try:
+        with pytest.raises(RuntimeError) as caught:
+            scheduler.submit("/work/job.sh", "align")
+    finally:
+        sched.close_sessions()
+    message = str(caught.value)
+    assert hidden(message) and "sbatch failed (1)" in message and "exit 22" in message  # the exit code is not a port
+
+
+def test_a_connect_failure_message_hides_the_site(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_HPC_FAIL_TEXT", "ssh: connect to host gw.example.org port 2222: Connection refused (bob)")
+    leaky_site(tmp_path, monkeypatch)
+    scheduler = sched.Scheduler(settings(tmp_path).hpc)
+    notices = []
+    scheduler.session().on_notice = lambda kind, text: notices.append(text)
+    try:
+        with pytest.raises(RuntimeError) as caught:
+            scheduler.status("1000")
+    finally:
+        sched.close_sessions()
+    assert hidden(str(caught.value)) and all(hidden(text) for text in notices)
+
+
+def test_the_plain_ssh_path_hides_the_host_too(tmp_path, monkeypatch):
+    from subprocess import CompletedProcess
+
+    monkeypatch.setattr(sched.subprocess, "run", lambda args, **k: CompletedProcess(
+        args, 255, "", "ssh: Could not resolve hostname login.example.org: Name or service not known\n"))
+    scheduler = sched.Scheduler(Settings.model_validate({
+        "runner": {"state_dir": str(tmp_path / "state")},
+        "hpc": {"scheduler": "slurm", "user": "lab", "ssh_host": "bob@login.example.org"}}).hpc)
+    with pytest.raises(RuntimeError) as caught:
+        scheduler.submit("/work/job.sh", "align")
+    assert "login.example.org" not in str(caught.value) and "bob" not in str(caught.value)
+    assert "Could not resolve hostname" in str(caught.value)
+    with pytest.raises(RuntimeError) as cancelled:
+        scheduler.cancel("1000")
+    assert "login.example.org" not in str(cancelled.value)
+
+
+def test_redaction_words_and_ports():
+    from labhq import hpc_session as hs
+
+    words = hs.redaction_words(["ssh", "-tt", "-p", "2222", "-Jjump.example.org", "--flag", "-o", "User=bob",
+                                "bob@login.example.org"])
+    assert set(words) == {"2222", "jump.example.org", "bob", "login.example.org"}
+    text = hs.redact("host Login.Example.org:2222 port 2222 user bob exit 22", words)
+    assert text == "host <host>:<port> port <port> user <host> exit 22"

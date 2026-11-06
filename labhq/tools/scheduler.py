@@ -170,7 +170,11 @@ def build_script(body: str, workdir: str, *, umask: str | None = None) -> str:
 
 
 def _detail(p: subprocess.CompletedProcess) -> str:
-    return (p.stderr or "").strip() or (p.stdout or "").strip()
+    """What the command said, for an error message. ``_run`` hides the site's host, port and user in it (#1295): the
+    message goes to the staff agent, and a login host name is the institution's, not the agent's to know."""
+    text = (p.stderr or "").strip() or (p.stdout or "").strip()
+    hide = getattr(p, "redact", None)
+    return hide(text) if hide else text
 
 
 # ---------- parsers ----------
@@ -409,7 +413,9 @@ class Scheduler:
             if result.truncated:
                 raise RuntimeError(f"{args[0]} printed more than the session keeps; the answer is incomplete")
             # The shell has one output stream: an error text arrives in stdout, and the parsers read both.
-            return subprocess.CompletedProcess(args, result.exit_code, result.output, "")
+            done = subprocess.CompletedProcess(args, result.exit_code, result.output, "")
+            done.redact = self._redactor(session)
+            return done
         if self.cfg.ssh_host:
             # Every ssh is a login the site records: count it, and refuse it when a limit the user set is used up (#1295).
             from ..hpc_login_budget import budget_for
@@ -418,8 +424,20 @@ class Scheduler:
             if budget is not None:
                 budget.admit(args[0])
             args = ["ssh", "-o", "BatchMode=yes", self.cfg.ssh_host, shlex.join(args)]
-        return subprocess.run(args, capture_output=True, text=True, timeout=self.cfg.command_timeout_s,
+        done = subprocess.run(args, capture_output=True, text=True, timeout=self.cfg.command_timeout_s,
                               env=command_env())
+        if self.cfg.ssh_host:
+            done.redact = self._redactor(None)  # ssh's own error text names the host and the user
+        return done
+
+    def _redactor(self, session):
+        """A function hiding this site's host, port and user names in a message: the profile's connect command, or
+        ``hpc.ssh_host``."""
+        from ..hpc_session import redact, redaction_words
+
+        words = (session.cfg.redact_words if session is not None
+                 else redaction_words(["ssh", *shlex.split(self.cfg.ssh_host or "")]))
+        return lambda text: redact(text, words or ())
 
     def submit_args(self, script: str, name: str, cores: int, mem: str, walltime: str,
                     queue: str | None, stdout: str, stderr: str) -> list[str]:
@@ -703,7 +721,9 @@ class Scheduler:
         cmd = "scancel" if self.cfg.scheduler == "slurm" else "qdel"
         p = self._run([*self.cfg.submit_prefix, cmd, job_id])
         if p.returncode != 0:
-            detail = (p.stderr or p.stdout).strip()
+            detail = _detail(p)
             hint = f"; allow {cmd} in sudoers for hpc.submit_prefix" if self.cfg.submit_prefix else ""
             raise RuntimeError(f"{cmd} failed ({p.returncode}): {detail}{hint}")
-        return (p.stdout or p.stderr).strip()
+        text = (p.stdout or p.stderr).strip()
+        hide = getattr(p, "redact", None)
+        return hide(text) if hide else text

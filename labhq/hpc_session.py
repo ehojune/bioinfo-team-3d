@@ -34,6 +34,33 @@ HOST_KEY_TEXTS = ("REMOTE HOST IDENTIFICATION HAS CHANGED", "Host key verificati
 _OVERLAP = 512  # longer than any marker, so a marker split over two reads is still found
 
 
+def redaction_words(argv: Sequence[str]) -> tuple[str, ...]:
+    """What in a connect command names the site or the user: every word that is not the program or a bare option, split
+    at ``@``, ``=`` and ``,``. A host, a port, a user name and a ProxyJump chain all end up here."""
+    words: set[str] = set()
+    for word in list(argv)[1:]:
+        if word.startswith("-") and "=" not in word:
+            # An option carries nothing to hide, except a value glued to it (-Jbastion, -p2222, -lbob).
+            word = word[2:] if len(word) > 2 and word[1] in "plJLRDWwiFoBbcEeImOQSX" else ""
+        for part in re.split(r"[@=,]", word):
+            part = part.strip()
+            if len(part) >= 2 and part.lower() not in {"yes", "no", "true", "false", "user", "port", "hostname"}:
+                words.add(part)
+                words.update(piece for piece in part.split(":") if len(piece) >= 2)
+    return tuple(sorted(words, key=len, reverse=True))
+
+
+def redact(text: str, words: Sequence[str]) -> str:
+    """``text`` with the site's host, port and user names hidden. A port number is hidden only where it is a port (after
+    ``port`` or ``:``), so an exit code of the same digits stays readable."""
+    for word in words:
+        if word.isdigit():
+            text = re.sub(rf"(?i)(port\s+|:){re.escape(word)}\b", lambda m: m.group(1) + "<port>", text)
+        else:
+            text = re.sub(re.escape(word), "<host>", text, flags=re.IGNORECASE)
+    return text
+
+
 class SessionError(RuntimeError):
     """Base of what the session manager raises."""
 
@@ -81,12 +108,15 @@ class SessionConfig:
     heartbeat_command: str = "true"
     ready_command: str = "stty -echo 2>/dev/null"  # first command: proves the shell answers and turns the terminal echo off
     login_label: str = "session"  # what the login counter records
+    redact_words: tuple[str, ...] | None = None  # hidden in every message; None: taken from argv (host, port, user)
 
     def __post_init__(self) -> None:
         if not self.argv:
             raise ValueError("접속 argv가 필요합니다(사이트 프로필의 값)")
         if self.idle_lock_s is not None and self.idle_lock_s <= 0:
             raise ValueError("idle_lock_s는 양수여야 합니다")
+        if self.redact_words is None:
+            self.redact_words = redaction_words(self.argv)
         if self.heartbeat_s is None:
             self.heartbeat_s = 900.0 if self.idle_lock_s is None else min(900.0, self.idle_lock_s / 4)
         if self.heartbeat_s <= 0:
@@ -221,6 +251,9 @@ class HpcSession:
             self._lock.release()
 
     # ---- connection --------------------------------------------------------------------------------------------
+    def _hide(self, text: str) -> str:
+        return redact(text, self.cfg.redact_words or ())
+
     def _notify(self, kind: str, text: str) -> None:
         if self.on_notice:
             try:
@@ -264,7 +297,7 @@ class HpcSession:
             except SessionError as error:
                 last = error
         self._cooldown_until = self.clock() + self.cfg.reconnect_cooldown_s
-        text = f"HPC 접속을 {self.cfg.reconnect_attempts}번 시도했으나 열지 못했습니다: {last}"
+        text = f"HPC 접속을 {self.cfg.reconnect_attempts}번 시도했으나 열지 못했습니다: {self._hide(str(last))}"
         self._notify("reconnect_failed", text)
         raise ReconnectFailed(text)
 
@@ -273,7 +306,7 @@ class HpcSession:
             proc = subprocess.Popen(list(self.cfg.argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, bufsize=0)
         except OSError as error:
-            raise SessionError(f"접속 명령을 실행하지 못했습니다: {error}") from error
+            raise SessionError(f"접속 명령을 실행하지 못했습니다: {self._hide(str(error))}") from error
         chunks: "queue.Queue[str | None]" = queue.Queue()
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
@@ -350,7 +383,7 @@ class HpcSession:
             conn.proc.stdin.flush()
         except (OSError, ValueError) as error:
             self._drop_if(conn)
-            raise SessionLost(f"명령을 보내지 못했습니다: {error}") from error
+            raise SessionLost(f"명령을 보내지 못했습니다: {self._hide(str(error))}") from error
         pre, body, lead = "", None, True
         kept: list[str] = []
         kept_len = dropped = 0
