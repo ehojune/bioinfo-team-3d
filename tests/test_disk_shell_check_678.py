@@ -758,3 +758,89 @@ def test_ps_unplaced_cmdlet_reads_a_drive_relative_path(tmp_path):
     verdict = disk_space.powershell_check(r"$r = iwr https://h/a.zip -OutFile D:a.zip", str(tmp_path), probe=probe, **CHECK)
     assert verdict is not None and verdict.action == "ask"
     assert disk_space.powershell_check(r"$r = iwr https://h/a.zip -OutFile $env:TEMP\a.zip", str(tmp_path), probe=probe, **CHECK) is None
+
+
+# ----- #1269 rev2: an escaped cmdlet name, and a network (UNC) target -----
+
+@pytest.mark.parametrize("command", [
+    r"$r = iw`r https://h/a.zip -OutFile D:\a.zip",
+    r"[void](Invoke-WebRe`quest https://h/a.zip -OutFile D:\a.zip)",
+    r"$null = Exp`and-Archive raw.zip D:\out",
+    r"$x = Start-Bits`Transfer https://h/a D:\a",
+])
+def test_ps_backtick_escape_inside_a_cmdlet_name_is_still_counted(tmp_path, command):
+    assert ps_check(command, tmp_path, 1).action == "ask"
+
+
+def test_ps_backtick_escape_in_a_placed_name_is_read_as_before(tmp_path):
+    assert ps_check(r"iw`r https://h/a.zip -OutFile D:\a.zip", tmp_path, 1).action == "ask"
+    assert ps_check(r"$r = iw`r https://h/a.zip -OutFile D:\a.zip", tmp_path, 50) is None
+
+
+def _unreadable(folder):
+    raise OSError("share not reachable from here")
+
+
+@pytest.mark.parametrize("command", [
+    r"iwr https://h/a.zip -OutFile \\srv\share\a.zip",
+    r"Expand-Archive raw.zip -DestinationPath \\srv\share\out",
+    r"Start-BitsTransfer https://h/a //srv/share/a",
+    r"$r = iwr https://h/a.zip -OutFile \\srv\share\a.zip",  # not placed: the net still sees the share
+])
+def test_ps_unc_target_that_cannot_be_read_only_warns(tmp_path, command):
+    verdict = disk_space.powershell_check(command, str(tmp_path), probe=_unreadable, **CHECK)
+    assert verdict is not None and verdict.action == "warn" and r"\\srv\share" in verdict.reason
+
+
+def test_ps_unc_in_a_command_that_writes_nothing_is_left_alone(tmp_path):
+    assert disk_space.powershell_check(r"Copy-Item \\srv\share\a.zip x.zip; Get-ChildItem \\srv\share",
+                                       str(tmp_path), probe=_unreadable, **CHECK) is None
+    assert disk_space.powershell_check("iwr https://srv//share/a.zip -OutFile x.zip", str(tmp_path),
+                                       probe=_unreadable, **CHECK) is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="only Windows reads a share's free space")
+def test_ps_unc_target_that_can_be_read_asks_below_the_floor(tmp_path):
+    verdict = disk_space.powershell_check(r"iwr https://h/a.zip -OutFile \\srv\share\a.zip", str(tmp_path),
+                                          probe=drive(1), **CHECK)
+    assert verdict is not None and verdict.action == "ask" and r"\\srv\share" in verdict.reason
+    roomy = disk_space.powershell_check(r"iwr https://h/a.zip -OutFile \\srv\share\a.zip", str(tmp_path),
+                                        probe=drive(50), **CHECK)
+    assert roomy is None  # a readable share with room says nothing
+
+
+@pytest.mark.parametrize("command", [
+    r"Expand-Archive \\srv\share\a.zip -DestinationPath C:\out",
+    r"Start-BitsTransfer \\srv\share\a.zip C:\out\a.zip",
+    r"Start-BitsTransfer -Source \\srv\share\a.zip -Destination C:\out\a.zip",
+])
+def test_ps_unc_that_is_only_the_source_is_not_a_write_target(tmp_path, command):
+    verdict = disk_space.powershell_check(command, str(tmp_path), probe=_unreadable, **CHECK)
+    assert verdict is None or r"\\srv\share" not in verdict.reason
+
+
+def test_ps_unc_share_name_with_a_space_is_kept_whole(tmp_path):
+    seen = []
+
+    def probe(folder):
+        seen.append(str(folder))
+        raise OSError("not reachable")
+
+    verdict = disk_space.powershell_check(r'iwr https://h/a.zip -OutFile "\\srv\my share\x\a.zip"', str(tmp_path),
+                                          probe=probe, **CHECK)
+    assert verdict is not None and r"\\srv\my share" in verdict.reason
+    assert disk_space._unc_roots(r"$r = iwr https://h/a -OutFile '\\srv\my share\a.zip'") == [r"\\srv\my share"]
+    assert disk_space._unc_roots(r"x \\srv\my share\a.zip") == [r"\\srv\my"]  # unquoted: a space ends the name
+
+
+@pytest.mark.parametrize("command", [
+    r'iwr https://h/a.zip -OutFile "\\$server\share\a.zip"',
+    r'iwr https://h/a.zip -OutFile "\\srv\$name\a.zip"',
+    r'$r = iwr https://h/a.zip -OutFile "\\${srv}\share\a.zip"',
+])
+def test_ps_unc_root_built_from_a_variable_is_not_probed(tmp_path, command):
+    assert disk_space.powershell_check(command, str(tmp_path), probe=_unreadable, **CHECK) is None
+
+
+def test_ps_unc_admin_share_name_with_a_dollar_is_a_real_root():
+    assert disk_space._unc_value_roots(r"\\srv\c$\x\a.zip") == [r"\\srv\c$"]

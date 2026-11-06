@@ -1,0 +1,18 @@
+pr: 1294
+rows:
+- sha: '5f3f9f2'
+  at: 2026-11-06 09:42
+  text: PowerShell 디스크 확인의 안전망이 cmdlet 이름 안의 backtick escape(iw`r)도 센다. 글에서 이름을 셀 때 backtick을 먼저 빼서 `$r = iw`r ...`처럼 감싼 다운로드도 현재 드라이브를 확인받는다. 쓰는 명령(iwr·Expand-Archive·BITS)의 UNC 대상(\server\share)도 후보로 모아, 여유를 읽을 수 있으면 기준 아래에서 ask, 읽지 못하면 경고만 남기고 막지 않는다. 읽지 않는 명령(Copy-Item 등)의 UNC와 URL의 //는 건드리지 않는다
+  summary: 남아 있던 두 우회(이름 속 backtick, 네트워크 경로)를 닫습니다. UNC는 여유를 모르면 경고만 합니다.
+- sha: 'a69a00f'
+  at: 2026-11-06 09:55
+  text: 리뷰 지적 반영. 자리가 정해진 명령의 UNC는 쓰는 쪽 값(-OutFile, -DestinationPath, -Destination)에서만 모아 읽기만 하는 원본 share가 카드를 만들지 않게 하고, 따옴표로 묶은 share 이름의 공백은 한 경로로 읽는다
+  summary: 원본 share 때문에 불필요한 승인 카드가 뜨지 않고, 공백 있는 share 이름도 바르게 읽습니다.
+- sha: 'bff4055'
+  at: 2026-11-06 09:56
+  text: 리뷰 지적 반영. manual 04장 한·영에 PowerShell 확인이 cmdlet 이름 안의 backtick을 무시하고 세는 것과, 네트워크 경로는 쓰는 쪽 값에 있을 때만 보고 읽을 수 없으면 경고만 한다는 것을 적는다
+  summary: 새 경고가 언제 뜨는지 manual이 설명합니다.
+- sha: '48a3fde'
+  at: 2026-11-06 10:10
+  text: 리뷰 지적 반영. 서버·공유 이름에 PowerShell 변수가 든 UNC 대상은 실행 때 정해지므로 후보에서 뺀다. c$ 같은 관리 공유 이름은 그대로 읽는다
+  summary: 변수로 만든 네트워크 경로를 실제 공유처럼 조회하지 않습니다.
