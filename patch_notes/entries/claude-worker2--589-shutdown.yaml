@@ -8,3 +8,7 @@ rows:
   at: 2026-11-07 06:37
   text: supervisor의 heartbeat 간격을 한 시간에서 gateway·runner와 같은 10분으로 줄인다(HEARTBEAT_S). 프로세스가 기록 없이 사라질 때 시각을 한 시간이 아니라 10분 창으로 좁힐 수 있다. 로그는 supervisor 둘 합쳐 하루 약 7 KiB에서 약 42 KiB로 늘어난다
   summary: 인스턴스가 기록 없이 꺼져도 언제쯤인지 10분 단위로 알 수 있습니다.
+- sha: '4c5542e'
+  at: 2026-11-07 07:02
+  text: 리뷰 지적 반영. manual 05장 한·영에 supervisor도 gateway·runner처럼 10분마다 heartbeat를 남기고, 한 줄 약 150바이트로 감독 둘이 하루 약 42 KiB(전에는 약 7 KiB) 쓴다고 적는다
+  summary: heartbeat 간격과 로그 증가를 정식 문서가 설명합니다.
