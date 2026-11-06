@@ -12,3 +12,7 @@ rows:
     at: "2026-11-06 19:30"
     summary: "Windows 시험 목록에 #1300 사이트 프로필 시험 이름을 미리 등록했습니다."
     text: "config/ci/windows-boundary-v1.json known_tests에 tests/test_hpc_site_profile_1300.py 추가(총괄 지시, #1300이 병합될 때 목록 검사를 통과하도록) (#1299)"
+  - sha: "216e519"
+    at: "2026-11-06 20:00"
+    summary: "연결 유지용 가벼운 명령은 사용자 활동으로 세지 않아, 열린 잡이 없으면 유휴 세션이 제때 닫힙니다. 일반 접속 실패는 사람을 기다리지 않고 재접속 횟수 상한 안에서 다시 시도합니다."
+    text: "hpc_session: _last_beat를 _last_activity와 분리, tunnel_texts 기본값을 비움(사이트 프로필이 명시한 문구만 NeedsHuman), 시험 2건 추가 (#1299)"
