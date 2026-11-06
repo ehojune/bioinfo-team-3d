@@ -2105,6 +2105,9 @@ def main(argv: list[str] | None = None) -> None:
                     help="CP2 evidence review (research_evidence) decision; the note never decides it. CP1 "
                          "(research_plan) takes --choice revise --note: a new request plans again from the note")
     ap.add_argument("--note", default="")
+    hl = sub.add_parser("hpc-logins", help="HPC logins counted on this PC today and per request, with your limits (#1295)")
+    hl.add_argument("--request", help="also show this request's count")
+    hl.add_argument("--json", action="store_true")
     vp = sub.add_parser("verify", help="re-hash a request's outputs on this PC and recheck its report anchors (#58)")
     vp.add_argument("request_id")
     vp.add_argument("--json", action="store_true", help="print the result as JSON")
@@ -2580,6 +2583,24 @@ def main(argv: list[str] | None = None) -> None:
         if args.choice:
             body["choice"] = args.choice
         print(_api(s, "POST", f"/api/approvals/{args.id}", json=body))
+    elif args.cmd == "hpc-logins":
+        from .hpc_login_budget import budget_for
+
+        budget = budget_for(s.hpc)
+        if budget is None:
+            raise SystemExit("HPC 로그인 기록 위치를 정하지 못했습니다(runner.state_dir)")
+        usage = budget.usage(args.request)
+        if args.json:
+            print(json.dumps(usage, ensure_ascii=False, indent=2))
+        else:
+            cap = lambda value: "제한 없음" if value is None else f"상한 {value}"
+            print(f"오늘({usage['day']}) HPC 로그인 {usage['today']}회 ({cap(usage['per_day'])})")
+            if args.request:
+                print(f"요청 {args.request}: {usage['request']}회 ({cap(usage['per_request'])})")
+            for request_id, count in usage["requests_today"].items():
+                print(f"  오늘 {request_id}: {count}회")
+            if not s.hpc.login_limits_decided:
+                print("상한을 아직 정하지 않았습니다. labhq init으로 정하거나, 제한이 필요 없으면 비워 두세요.")
     elif args.cmd == "verify":
         raise SystemExit(_verify(s, args.request_id, as_json=args.json, bundle=args.bundle))
     elif args.cmd == "report":

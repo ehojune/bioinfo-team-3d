@@ -14,7 +14,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 import yaml
 
-from . import bioinfo_link, disk_space, doctor, github_token, hpc_consult, init_defaults
+from . import bioinfo_link, disk_space, doctor, github_token, hpc_consult, hpc_login_budget, init_defaults
 from .adapters.base import _resolve_command
 from .runner.codex_sandbox import codex_command, powershell_executable, setup_hint
 from .settings import HpcSettings, LiteratureSettings, Settings
@@ -84,6 +84,64 @@ def _ask(prompt: str, default: str, yes: bool) -> str:
     # Paths are not echoed in prompts or reports.
     answer = input(prompt + " [Enter: 기본값] ").strip()
     return answer or default
+
+
+def _ask_hpc_login_limits(hpc: dict, scheduler: str, yes: bool) -> None:
+    """Ask the user's HPC login limits (#1295). A site records every ssh login, and each institution has its own limit,
+    so nothing is assumed: the answers are the user's, an empty one means no limit, and the question is asked once.
+    Not asked without a person at the terminal (--yes, a pipe): the limits stay undecided and are asked again at first use."""
+    if scheduler not in ("sge", "pbs", "slurm") or yes or not _interactive() or hpc.get("login_limits_decided"):
+        return
+    print("HPC에 ssh로 접속하면 접속마다 기관 전산팀에 로그인 기록이 남을 수 있습니다. 상한은 기관마다 다르니 직접 정하세요.")
+    hpc_login_budget.ask_limits(hpc, lambda label, default: _ask(label, default, yes))
+
+
+def _save_hpc_login_limits(target: Path, hpc: dict) -> bool:
+    """Write only the three login-limit keys into an existing config, leaving its comments and other lines as they are.
+    Returns False, saving nothing, when the ``hpc:`` block is not a plain mapping or the result would change anything else."""
+    text = target.read_bytes().decode("utf-8")
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, line in enumerate(lines) if line.rstrip("\r\n") == "hpc:"), None)
+    if start is None:
+        return False
+    indent = next((len(line) - len(line.lstrip()) for line in lines[start + 1:]
+                   if line.strip() and not line.lstrip().startswith("#")), 0)
+    if indent == 0:
+        return False
+    pad, keys = " " * indent, ("login_limit_per_request", "login_limit_per_day", "login_limits_decided")
+    end = next((i for i in range(start + 1, len(lines))
+                if lines[i].strip() and not lines[i].startswith(" ") and not lines[i].startswith("#")), len(lines))
+    kept = [line for line in lines[start + 1:end] if not any(line.startswith(f"{pad}{key}:") for key in keys)]
+    eol = "\r\n" if "\r\n" in text else "\n"
+    added = [f"{pad}{key}: {str(hpc[key]).lower()}{eol}" for key in keys if hpc.get(key) is not None]
+    out = "".join(lines[:start + 1] + added + kept + lines[end:])
+    before, after = yaml.safe_load(text), yaml.safe_load(out)
+    expected = {k: v for k, v in (before.get("hpc") or {}).items() if k not in keys}
+    got = {k: v for k, v in (after.get("hpc") or {}).items() if k not in keys}
+    if expected != got or {k: v for k, v in before.items() if k != "hpc"} != {k: v for k, v in after.items() if k != "hpc"}:
+        return False
+    target.write_text(out, encoding="utf-8", newline="")
+    return True
+
+
+def _ask_existing_hpc_login_limits(settings: Settings, target: Path, yes: bool) -> None:
+    """An existing config left undecided (made before #1295, or with --yes or a pipe): a person at the terminal is asked
+    once, and only the three limit keys are saved. Not asked for a scheduler with no ssh login to count."""
+    hpc = settings.hpc
+    if hpc.login_limits_decided or hpc.scheduler not in ("sge", "pbs", "slurm") or yes or not _interactive():
+        return
+    answers = {"login_limit_per_request": hpc.login_limit_per_request, "login_limit_per_day": hpc.login_limit_per_day}
+    _ask_hpc_login_limits(answers, hpc.scheduler, yes)
+    if not answers.get("login_limits_decided"):
+        return
+    if _save_hpc_login_limits(target, answers):
+        hpc.login_limit_per_request = answers.get("login_limit_per_request")
+        hpc.login_limit_per_day = answers.get("login_limit_per_day")
+        hpc.login_limits_decided = True
+        print("HPC 로그인 상한을 설정 파일에 저장했습니다(다른 줄은 바꾸지 않았습니다).")
+    else:
+        print("설정 파일의 hpc 블록을 안전하게 고칠 수 없어 저장하지 않았습니다. 직접 hpc.login_limit_per_request·"
+              "hpc.login_limit_per_day를 넣고 hpc.login_limits_decided: true로 두세요.")
 
 
 def _interactive() -> bool:
@@ -489,6 +547,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
         data["runner"]["workspace_root"] = _workspace_root(
             existing.runner.workspace_root if existing else data["runner"]["workspace_root"], yes, instance)
         trial = _hpc_consult(hpc, scheduler, dry_run)
+        _ask_hpc_login_limits(hpc, scheduler, yes)
         if _is_windows():
             policy = data.setdefault("policy", {})
             policy["data_zones"] = [z for z in policy.get("data_zones", [])
@@ -544,6 +603,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
         # Validate the complete plan before creating anything. Relative paths follow the target config.
         settings = Settings.model_validate(data)
         settings.config_path = str(target)
+        settings.rebind_hpc_login_ledger()
         if dry_run:
             print("dry-run: 설정 파일과 직원 홈을 쓰지 않습니다.")
         else:
@@ -570,6 +630,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             print("Claude 직원 로그인은 직접 실행하세요(새 창에서): " + doctor.claude_login_command(_is_windows()))
     if not yes and not dry_run:
         if existing is not None and not force and _interactive():
+            _ask_existing_hpc_login_limits(settings, target, yes)
             _institution_existing(settings)
         _alphagenome_key(settings)
         _github_token(settings)

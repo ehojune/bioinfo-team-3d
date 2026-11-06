@@ -90,6 +90,10 @@ bench:
 hpc:
   scheduler: sge              # sge | pbs | slurm | mock | none
   ssh_host: null              # 로그인 노드에서 qsub·sbatch를 돌려야 하면 호스트 지정 (작업공간은 공유 FS에)
+  # ssh_host로 접속하면 scheduler 명령마다 로그인 기록이 하나 남습니다. 아래 상한은 기관마다 다르니 labhq init이 물어봅니다(비우면 제한 없음).
+  login_limit_per_request: null     # 요청 하나가 쓸 수 있는 HPC 로그인 수
+  login_limit_per_day: null         # 하루(이 PC의 날짜 기준)에 쓸 수 있는 HPC 로그인 수
+  login_limits_decided: false       # 상한을 물어봤으면 true(빈 답도 최종)
   user: null                  # null → 현재 계정
   default_queue: null         # Slurm은 partition
   sge: {pe: smp, mem_resource: h_vmem, mem_per_slot: true, runtime_resource: h_rt}
