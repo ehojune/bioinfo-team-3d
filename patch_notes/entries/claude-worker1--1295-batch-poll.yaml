@@ -4,3 +4,7 @@ rows:
     at: "2026-11-06 14:30"
     summary: "HPC 작업의 상태를 작업마다 따로 묻지 않고 한 번에 묻고, ssh로 접속하는 구성에서는 확인 간격을 점점 늘려 로그인 기록을 줄입니다."
     text: "Scheduler.statuses(SGE qstat 1회·Slurm squeue/sacct 일괄·PBS qstat 일괄, 이상 시 작업별 조회로 되돌림)와 next_poll_interval(60→300초 backoff, ssh_host일 때만), 설정 runner.job_poll_max_s·job_poll_backoff (#1295)"
+  - sha: "d84dbc6"
+    at: "2026-11-06 15:20"
+    summary: "설정 설명서(한국어·영어)와 예시 설정에 HPC 상태 확인을 한 번에 묻는 방식과 확인 간격을 늘리는 두 설정을 적었습니다."
+    text: "docs/manual/15-config 한영과 예시 설정 두 벌에 job_poll_max_s·job_poll_backoff 추가 (#1295)"
