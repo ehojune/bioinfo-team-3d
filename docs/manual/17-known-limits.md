@@ -7,6 +7,7 @@
 - 폭주 감지는 canonical 입력 앞 4,096자만 비교하므로 그 뒤의 차이는 구별하지 못합니다. 원본 fingerprint가 없는 legacy 이벤트는 잘리지 않은 입력만 비교합니다. 경고만 하는 그림자 모드이며 자동 중단은 아직 없습니다(#59 ②).
 - runner와 직원 CLI의 PATH에서는 Windows Store·Python Install Manager 실행 별칭 폴더를 뺍니다. doctor가 PATH의 `python3` 별칭을 찾으면 Windows 앱 실행 별칭에서 끄는 법을 경고합니다.
 - Windows는 직원 CLI 명령줄을 32,000자로 제한합니다. 긴 프롬프트는 작업 폴더의 TASK 파일로 넘기고, 그래도 넘치면(조상 단계가 많아 폴더별 규칙이 늘어난 경우 등) Claude 직원의 `--settings`를 작업 폴더 옆 `.labhq-settings/<task>.json` 파일로 넘깁니다. 직원의 쓰기 규칙은 자기 작업 폴더만 덮으므로 이 파일은 셸 쓰기 게이트를 거치지 않고는 고칠 수 없습니다. 그래도 넘치면 단계가 이유와 함께 실패합니다.
+- Windows에서 detached 실행(gateway·runner 기동)의 **첫 launch가 드물게 `Windows WMI bootstrap: provider_timeout`으로 실패**할 수 있습니다(#1076). WMI를 부르는 PowerShell이 막 켜진 PC나 CI 러너의 첫 실행에서는 평소(약 0.1초)보다 10~26배 느리고, 드물게 15초 제한을 넘습니다. 실패한 세 건 모두 WMI `Create`를 부르기 전에 멈췄고 CI에서는 같은 작업을 다시 돌리면 통과했습니다. 원인은 확정하지 못했습니다(첫 PowerShell·.NET 경로의 차가운 시작인지, 그 순간 PC 전체가 느린지). 실패 때 `<state>/logs/detached-launch.jsonl`의 `provider`에 호출 시간 `run_ms`, 프로세스 안 launch 순번 `launch_ordinal`, 부팅 뒤 경과 `os_uptime_s`가 남습니다. CI에는 직렬 단계 앞에 Node·PowerShell 워밍업이 들어갔습니다(#1316). [근거와 측정](../reference/ci-1076-wmi-provider-timeout.md).
 - 읽기 전용 workspace 지시 파일 차단은 adapter에 등록된 Claude Code·Codex 이름을 판정합니다. Windows·macOS에서는 대소문자를 무시하고 비교합니다(`claude.md`도 `CLAUDE.md`, #190). 새 CLI가 다른 이름을 도입하면 목록을 갱신해야 합니다.
 - Codex 0.155.0-alpha.16의 `exec` 기본 승인 정책 `never`는 MCP 호출을 실패시켰습니다 (#24135). labhq 내장 MCP에만 `default_tools_approval_mode="approve"`를 설정하고 도구 안에서 폰 승인을 받습니다.
 - Codex의 output schema는 실행 직전에 strict 복사본으로 바꾸고, 응답의 optional `null`은 원래 schema에 따라 지운 뒤 검증합니다.
