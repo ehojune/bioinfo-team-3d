@@ -1,6 +1,6 @@
 pr: null
 rows:
-  - sha: "2d1f9cbe"
+  - sha: "2d1f9cb"
     at: "2026-11-06 11:00"
     summary: "HPC에 접속하는 방식과 로그인이 얼마나 쌓이는지, 줄이는 방법을 코드만 읽어 정리한 문서를 추가했습니다. 동작은 바뀌지 않습니다."
     text: "docs/reference/hpc-login-survey-1295.md 추가 (조사 전용, 코드 변경 없음) (#1295)"
