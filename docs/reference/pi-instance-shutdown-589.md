@@ -51,7 +51,7 @@ lookup-only. 읽기 전용으로 PI 인스턴스의 로그를 읽었다. 인스�
 
 ## 고칠 범위 (제안, 이번에는 코드 수정 없음)
 
-1. **관측 간격 좁히기**: supervisor 시간당 heartbeat를 gateway·runner와 같은 10분으로 줄인다(`labhq/supervisor.py:247`의 `interval=3600`). 이번에는 사라진 시각을 10분 창(09:59~10:09)까지만 좁혔고 supervisor 쪽은 한 시간 창이라 쓸모가 적었다.
+1. **관측 간격 좁히기(같은 PR에서 함)**: supervisor 시간당 heartbeat를 gateway·runner와 같은 10분으로 줄였다(`labhq/supervisor.py`의 `HEARTBEAT_S = 600`, 전에는 `interval=3600`). 로그 증가는 supervisor 둘 합쳐 하루 48줄(약 7 KiB)에서 288줄(약 42 KiB)로, 줄당 약 150바이트다. 이번에는 사라진 시각을 10분 창(09:59~10:09)까지만 좁혔고 supervisor 쪽은 한 시간 창이라 쓸모가 적었다.
 2. **PI가 직접(보안 설정이라 labhq가 하지 않는다)**: `auditpol /set /subcategory:"Process Creation" /success:enable`로 프로세스 생성 기록을 켠다(#589 총괄 댓글 10-14에 명령이 있다). 종료 기록 4689가 필요하면 "Process Termination"도 켠다. 다음에 사라질 때 누가 끝냈는지 Security 로그에 남는다.
 3. **재개 조건**: PI가 인스턴스를 현재 main으로 다시 띄운다. 그 뒤 며칠(예: 3일) 돌려 `*-diagnostics.jsonl`의 `exit`·`child_exit` 없는 끝을 확인한다. 이 문서의 pid별 시간표 스크립트가 그대로 쓰인다(임시 폴더에 있고 저장소에는 없다).
 

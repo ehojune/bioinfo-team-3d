@@ -231,6 +231,12 @@ def _install_signal_flag(stop: threading.Event) -> None:
             signal.signal(number, lambda _signum, _frame: stop.set())
 
 
+# How often the supervisor writes its heartbeat. Ten minutes, like the gateway and runner it supervises: when all of them
+# vanish without a record (#589, 2026-10-20), the last heartbeats bound the time, and an hourly supervisor row left an
+# hour-wide window beside the ten-minute ones of its children.
+HEARTBEAT_S = 600
+
+
 def main(argv: list[str] | None = None) -> int:
     from .windows_launch import require_detached_job
     require_detached_job()
@@ -244,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
     # Before the diagnostics install theirs: they call this one after noting the signal, instead of ending the process.
     _install_signal_flag(stop)
     logs = cli._launch_state(settings) / "logs"
-    with ProcessDiagnostics(logs, role + SUPERVISOR_SUFFIX, interval=3600) as diagnostics:
+    with ProcessDiagnostics(logs, role + SUPERVISOR_SUFFIX, interval=HEARTBEAT_S) as diagnostics:
         try:
             code = Supervisor(settings, role, diagnostics, stop=stop).run()
         except Exception as exc:  # the type only: a message can carry configuration

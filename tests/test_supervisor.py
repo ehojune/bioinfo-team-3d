@@ -396,3 +396,51 @@ def test_main_writes_the_supervisors_own_diagnostics_and_returns_the_loops_code(
     assert rows[0]["event"] == "start" and rows[0]["role"] == "runner-supervisor"
     assert rows[-1]["event"] == "exit" and rows[-1]["code"] == 3
     assert seen["role"] == "runner" and not seen["stop"].is_set()
+
+
+# ----- #589: the supervisor's heartbeat is as frequent as its children's -----
+
+def test_the_supervisor_heartbeat_matches_the_gateway_and_runner_it_supervises():
+    import inspect
+
+    from labhq.process_diagnostics import ProcessDiagnostics
+
+    default = inspect.signature(ProcessDiagnostics.__init__).parameters["interval"].default
+    assert supervisor.HEARTBEAT_S == default == 600
+
+
+def test_main_gives_the_supervisor_diagnostics_that_interval(tmp_path, monkeypatch):
+    """The supervisor's own diagnostics were hourly, so when every process of an instance vanished without a record the
+    window for its death was an hour wide (#589, 2026-10-20). main passes the ten-minute constant."""
+    import labhq.windows_launch as windows_launch
+
+    seen = {}
+
+    class Recorder:
+        def __init__(self, logs, role, *, interval):
+            seen["role"], seen["interval"] = role, interval
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def write(self, *a, **k):
+            pass
+
+    class Done:
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self):
+            return 0
+
+    monkeypatch.setattr(windows_launch, "require_detached_job", lambda: None)
+    monkeypatch.setattr(supervisor, "ProcessDiagnostics", Recorder)
+    monkeypatch.setattr(supervisor, "Supervisor", Done)
+    monkeypatch.setattr(supervisor, "_install_signal_flag", lambda stop: None)
+    monkeypatch.setattr(supervisor.Settings, "load", classmethod(lambda cls, path=None: Settings()))
+    monkeypatch.setattr(cli, "_launch_state", lambda s: tmp_path)
+    assert supervisor.main(["config.yaml", "runner"]) == 0
+    assert seen["interval"] == supervisor.HEARTBEAT_S == 600 and seen["role"].startswith("runner")
