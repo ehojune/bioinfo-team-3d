@@ -28,3 +28,7 @@ rows:
     at: "2026-11-07 00:10"
     summary: "직원 CLI가 HPC 도구 호출을 기다리는 시간에도 셸 줄서기와 재접속의 최악 시간을 넣어, CLI가 먼저 포기한 뒤 제출이 실행되는 일이 없게 했습니다. 로컬 job은 HPC 셸을 열어 두는 이유에서 뺐습니다."
     text: "labhq_mcp_timeout_s가 사이트 프로필이 있으면 QUEUE_WAIT_S와 worst_case_s를 더함(hpc_session.worst_case_s 함수화), Runner._has_open_hpc_jobs가 local_jobs.is_local을 제외, 시험 2건 (#1295)"
+  - sha: "1f57e49"
+    at: "2026-11-07 00:50"
+    summary: "runner가 멈추는 중에 HPC에 접속하고 있었다면 그 접속도 끝내고, 멈춘 뒤에는 기다리던 제출이나 취소 명령을 보내지 않습니다."
+    text: "HpcSession.shutdown(진행 중 접속 종료, 이후 run·재접속 거부), close_sessions가 shutdown 호출, 시험 1건 (#1295)"
