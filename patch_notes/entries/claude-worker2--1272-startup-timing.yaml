@@ -1,5 +1,6 @@
+pr: 1314
 rows:
-- sha: '9e62f820'
+- sha: '9e62f82'
   at: 2026-11-06 23:15
   text: "#1272 web_resizable_panels 실패 분석을 집계 문서(ci-1076-flake-tally.md)에 더한다. 60초가 어디에 쓰였는지(Node 시작 19.3초, Chrome 첫 /json 응답 17.6초 등), 같은 시각 WMI도 느렸다는 점, 원인 후보 네 가지와 고칠 범위"
   summary: 실패한 web 시험의 시간이 어디서 사라졌는지 문서로 남깁니다.
