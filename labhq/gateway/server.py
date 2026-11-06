@@ -5687,6 +5687,15 @@ class Hub:
             raise ValueError("run_where=wsl는 bioinfo-agent를 직접 고르거나 팀에 보내는 요청에만 쓸 수 있습니다. "
                              "다른 직원은 WSL runner에서 일하지 않습니다")
 
+    def _inherited_wiki_exposure(self, extra: dict[str, Any] | None) -> dict[str, str]:
+        """A request opened from another (a CP1 revision, a retry after a model refusal) starts at the exposure of the
+        request it continues, never lower (#1037): it carries that request's text, plan and answers. The link is the
+        one the caller already records; one that points at no known request gives an unknown level, which blocks."""
+        link = next((key for key in ("revised_from", "model_refusal_from") if key in (extra or {})), None)
+        if link is None:
+            return {}
+        return {wiki_exposure.KEY: wiki_exposure.inherited(self.requests.get(extra[link]))}
+
     def create_request(self, body: RequestIn, extra: dict[str, Any] | None = None) -> str:
         """``extra``: request fields saved in the same first write (a CP1 수정 요청's links, plan and answers)."""
         self._check_run_where(body)
@@ -5705,7 +5714,7 @@ class Hub:
                # The budget the PI asked for; budget_usd may later rise on a budget card (a CP1 수정 요청 carries this).
                "requested_budget_usd": body.budget_usd,
                # No staff has run yet, so none could read the PI's wiki; a dispatch to a runner that offers it raises this (#1037).
-               wiki_exposure.KEY: wiki_exposure.NONE, **(extra or {})}
+               wiki_exposure.KEY: wiki_exposure.NONE, **(extra or {}), **self._inherited_wiki_exposure(extra)}
         proj = self.s.project(body.project_id)
         if body.project_id and proj is None:
             raise KeyError(f"unknown project {body.project_id!r}")
@@ -5755,7 +5764,7 @@ class Hub:
                # The budget the PI asked for; budget_usd may later rise on a budget card (a CP1 수정 요청 carries this).
                "requested_budget_usd": body.budget_usd,
                # No staff has run yet, so none could read the PI's wiki; a dispatch to a runner that offers it raises this (#1037).
-               wiki_exposure.KEY: wiki_exposure.NONE, **(extra or {})}
+               wiki_exposure.KEY: wiki_exposure.NONE, **(extra or {}), **self._inherited_wiki_exposure(extra)}
         proj = self.s.project(body.project_id)
         if body.project_id and proj is None:
             raise KeyError(f"unknown project {body.project_id!r}")

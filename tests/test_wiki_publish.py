@@ -275,6 +275,33 @@ async def test_the_final_result_upload_refuses_an_exposed_request_and_a_clean_on
             await service.close()
 
 
+@pytest.mark.parametrize("expose", [False, True], ids=["control-creates", "exposed-creates-nothing"])
+async def test_an_exposure_raised_while_the_new_repository_is_looked_up_stops_its_creation(tmp_path, monkeypatch, expose):
+    monkeypatch.setenv("GITHUB_TOKEN", "synthetic-token")
+    hub = Hub(tmp_path)
+    request = hub.requests["req_progress"]
+    request.update({"wiki_exposure": "none", "pi_reviewed_at": 1.0})
+    request["result_storage"]["mode"] = "new"
+    write_bundle(hub, {"steps/s1/outputs/result.md": "synthetic"})
+    calls = []
+
+    def handle(http):
+        calls.append((http.method, http.url.path))
+        if http.method == "GET" and http.url.path == "/repos/owner/study":
+            if expose:
+                request["wiki_exposure"] = "possible"  # raised while the repository is looked up
+            return httpx.Response(404, json={})
+        return httpx.Response(403, json={"message": "stop here"})
+
+    service = ResultStorage(hub, httpx.MockTransport(handle))
+    try:
+        with pytest.raises(Exception):
+            await service.upload("req_progress", {"report.md": "# synthetic report" + chr(10)})
+    finally:
+        await service.close()
+    assert (("POST", "/user/repos") in calls) is (not expose)
+
+
 def test_the_cp2_card_warns_instead_of_refusing_and_a_clean_request_gets_no_line():
     assert wiki_exposure.cp2_warning({wiki_exposure.KEY: "none"}) is None
     for request in ({wiki_exposure.KEY: "possible"}, {}, None):
