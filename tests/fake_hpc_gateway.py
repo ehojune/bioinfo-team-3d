@@ -12,7 +12,7 @@ last exit code ``$?``, and a few fake commands:
 Fake Slurm (with ``--slurm-state FILE``, a JSON file the test can edit to finish a job): ``sbatch`` prints a new job id,
 ``squeue`` lists the jobs that are still active, ``sacct`` the ended ones, ``scancel ID`` ends one.
 
-Environment: ``FAKE_HPC_FAIL_TEXT`` (the connect fails printing it) and ``FAKE_HPC_SBATCH_ERROR`` (sbatch fails printing it);
+Environment: ``SLURM_FAKE_FAIL_TEXT`` (the connect fails printing it) and ``SLURM_FAKE_SBATCH_ERROR`` (sbatch fails printing it);
 they are not flags so that the text is not part of the connect command a profile would hide.
 
 Flags: ``--echo`` (a terminal echoes what is typed), ``--banner`` (print a login banner), ``--lock-after S`` (lock the
@@ -77,7 +77,7 @@ def command(words: list[str], flags: dict) -> tuple[str, str, int]:
         return "", flags["sbatch_error"] + "\n", 1
     if head in ("sbatch", "squeue", "sacct", "scancel") and flags["slurm"]:
         text, status = slurm(words, flags["slurm"])
-        warn = os.environ.get("FAKE_HPC_SBATCH_WARN") if head == "sbatch" and status == 0 else None
+        warn = os.environ.get("SLURM_FAKE_SBATCH_WARN") if head == "sbatch" and status == 0 else None
         return text, (warn + "\n") if warn else "", status
     if head == "echo":
         return " ".join(words[1:]) + "\n", "", 0
@@ -87,7 +87,7 @@ def command(words: list[str], flags: dict) -> tuple[str, str, int]:
 def main(argv: list[str]) -> int:
     flags = {"echo": False, "banner": False, "lock": None, "drop": None, "hostkey": False, "tunnel": False,
              "counter": None, "slurm": None,
-             "fail_text": os.environ.get("FAKE_HPC_FAIL_TEXT"), "sbatch_error": os.environ.get("FAKE_HPC_SBATCH_ERROR")}
+             "fail_text": os.environ.get("SLURM_FAKE_FAIL_TEXT"), "sbatch_error": os.environ.get("SLURM_FAKE_SBATCH_ERROR")}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -170,6 +170,8 @@ def main(argv: list[str]) -> int:
         elif head == "stty":
             if "-echo" in words:
                 flags["echo"] = False
+        elif head == "printenv":
+            out.write(os.environ.get(words[1], "") + "\n")
         elif head == "echo":
             out.write(" ".join(words[1:]) + "\n")
         elif head == "fail":

@@ -253,7 +253,7 @@ def leaky_site(tmp_path, monkeypatch, *flags):
 
 
 def test_a_submit_error_hides_the_host_port_and_user(tmp_path, monkeypatch):
-    monkeypatch.setenv("FAKE_HPC_SBATCH_ERROR", "sbatch: error: bob@gw.example.org: connect to port 2222 refused (exit 22)")
+    monkeypatch.setenv("SLURM_FAKE_SBATCH_ERROR", "sbatch: error: bob@gw.example.org: connect to port 2222 refused (exit 22)")
     leaky_site(tmp_path, monkeypatch)
     scheduler = sched.Scheduler(settings(tmp_path).hpc)
     try:
@@ -266,7 +266,7 @@ def test_a_submit_error_hides_the_host_port_and_user(tmp_path, monkeypatch):
 
 
 def test_a_connect_failure_message_hides_the_site(tmp_path, monkeypatch):
-    monkeypatch.setenv("FAKE_HPC_FAIL_TEXT", "ssh: connect to host gw.example.org port 2222: Connection refused (bob)")
+    monkeypatch.setenv("SLURM_FAKE_FAIL_TEXT", "ssh: connect to host gw.example.org port 2222: Connection refused (bob)")
     leaky_site(tmp_path, monkeypatch)
     scheduler = sched.Scheduler(settings(tmp_path).hpc)
     notices = []
@@ -334,7 +334,7 @@ def test_the_broker_waits_for_a_whole_reconnect(tmp_path, site, monkeypatch):
 
 
 def test_a_warning_on_stderr_after_the_job_id_is_not_the_job_id(tmp_path, site, monkeypatch):
-    monkeypatch.setenv("FAKE_HPC_SBATCH_WARN", "warning: quota 80%")
+    monkeypatch.setenv("SLURM_FAKE_SBATCH_WARN", "warning: quota 80%")
     site()
     scheduler = sched.Scheduler(settings(tmp_path).hpc)
     assert scheduler.submit("/work/job.sh", "align") == "1000"  # not "80"
@@ -342,7 +342,7 @@ def test_a_warning_on_stderr_after_the_job_id_is_not_the_job_id(tmp_path, site, 
 
 
 def test_stderr_comes_back_separately_with_the_exit_status(tmp_path, site, monkeypatch):
-    monkeypatch.setenv("FAKE_HPC_SBATCH_ERROR", "sbatch: error: invalid account")
+    monkeypatch.setenv("SLURM_FAKE_SBATCH_ERROR", "sbatch: error: invalid account")
     site()
     scheduler = sched.Scheduler(settings(tmp_path).hpc)
     done = scheduler._run(["sbatch", "--parsable", "/work/job.sh"])
@@ -394,3 +394,12 @@ def test_close_ends_a_command_in_flight_at_once(tmp_path, site):
     assert time.monotonic() - started < 4
     thread.join(10)
     assert seen and isinstance(seen[0], hs.SessionLost)
+
+
+def test_the_connection_process_gets_only_the_sanitized_environment(tmp_path, site, monkeypatch):
+    monkeypatch.setenv("LABHQ_TEST_API_KEY", "super-secret")
+    monkeypatch.setenv("SLURM_TEST_KEEP", "kept")  # a scheduler variable scheduler commands may see
+    site()
+    session = sched.Scheduler(settings(tmp_path).hpc).session()
+    assert session.run("printenv LABHQ_TEST_API_KEY").output.strip() == ""
+    assert session.run("printenv SLURM_TEST_KEEP").output.strip() == "kept"

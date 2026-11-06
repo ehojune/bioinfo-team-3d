@@ -125,6 +125,7 @@ class SessionConfig:
     # an ordinary network failure is retried by the reconnect limit, never parked as "wait for a person".
     tunnel_texts: tuple[str, ...] = ()
     heartbeat_command: str = "true"
+    env: dict[str, str] | None = None  # the connection process's whole environment; None = the caller's own (tests)
     ready_command: str = "stty -echo 2>/dev/null"  # first command: proves the shell answers and turns the terminal echo off
     login_label: str = "session"  # what the login counter records
     redact_words: tuple[str, ...] | None = None  # hidden in every message; None: taken from argv (host, port, user)
@@ -346,7 +347,7 @@ class HpcSession:
     def _open(self) -> _Conn:
         try:
             proc = subprocess.Popen(list(self.cfg.argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, bufsize=0)
+                                    stderr=subprocess.STDOUT, bufsize=0, env=self.cfg.env)
         except OSError as error:
             raise SessionError(f"접속 명령을 실행하지 못했습니다: {self._hide(str(error))}") from error
         chunks: "queue.Queue[str | None]" = queue.Queue()

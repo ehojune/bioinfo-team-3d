@@ -367,8 +367,9 @@ def site_session(cfg: HpcSettings):
     with _SESSIONS_LOCK:
         session = _SESSIONS.get(key)
         if session is None:
-            session = _SESSIONS[key] = HpcSession(hpc_site.session_config(profile, cfg.command_timeout_s),
-                                                  budget=budget_for(cfg))
+            config = hpc_site.session_config(profile, cfg.command_timeout_s)
+            config.env = command_env()  # the connection process gets only what scheduler commands get: no runner credentials
+            session = _SESSIONS[key] = HpcSession(config, budget=budget_for(cfg))
     return session
 
 
