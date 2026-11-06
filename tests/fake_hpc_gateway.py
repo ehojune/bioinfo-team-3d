@@ -18,6 +18,8 @@ Fake Slurm (with ``--slurm-state FILE``, a JSON file the test can edit to finish
 Environment: ``SLURM_FAKE_FAIL_TEXT`` (the connect fails printing it) and ``SLURM_FAKE_SBATCH_ERROR`` (sbatch fails printing it);
 they are not flags so that the text is not part of the connect command a profile would hide.
 
+``--kick-early-input SECONDS`` (the greeting comes after SECONDS; input that arrives before it ends the connection).
+
 Flags: ``--echo`` (a terminal echoes what is typed), ``--banner`` (print a login banner), ``--lock-after S`` (lock the
 session when idle for S seconds), ``--drop-after N`` (end the connection after N commands), ``--hostkey-changed`` and
 ``--tunnel-down`` (print the ssh failure and exit 255), ``--counter FILE`` (append one line per start).
@@ -199,7 +201,7 @@ def files(tokens: list[str]) -> tuple[str, int] | None:
 
 def main(argv: list[str]) -> int:
     flags = {"echo": False, "banner": False, "lock": None, "drop": None, "hostkey": False, "tunnel": False,
-             "counter": None, "slurm": None,
+             "counter": None, "slurm": None, "kick": None, "banner_first": False,
              "fail_text": os.environ.get("SLURM_FAKE_FAIL_TEXT"), "sbatch_error": os.environ.get("SLURM_FAKE_SBATCH_ERROR")}
     i = 0
     while i < len(argv):
@@ -208,14 +210,17 @@ def main(argv: list[str]) -> int:
             flags["echo"] = True
         elif a == "--banner":
             flags["banner"] = True
+        elif a == "--banner-first":  # with --kick-early-input: the banner comes at once, the prompt only when login ends
+            flags["banner_first"] = True
         elif a == "--hostkey-changed":
             flags["hostkey"] = True
         elif a == "--tunnel-down":
             flags["tunnel"] = True
-        elif a in ("--lock-after", "--drop-after", "--counter", "--slurm-state"):
+        elif a in ("--lock-after", "--drop-after", "--counter", "--slurm-state", "--kick-early-input"):
             i += 1
-            key = {"--lock-after": "lock", "--drop-after": "drop", "--counter": "counter", "--slurm-state": "slurm"}[a]
-            flags[key] = float(argv[i]) if key == "lock" else int(argv[i]) if key == "drop" else argv[i]
+            key = {"--lock-after": "lock", "--drop-after": "drop", "--counter": "counter", "--slurm-state": "slurm",
+                   "--kick-early-input": "kick"}[a]
+            flags[key] = (float(argv[i]) if key in ("lock", "kick") else int(argv[i]) if key == "drop" else argv[i])
         i += 1  # anything else is a remote command the gateway ignores
     if flags["counter"]:
         with open(flags["counter"], "a", encoding="utf-8") as f:
@@ -248,8 +253,27 @@ def main(argv: list[str]) -> int:
                     os._exit(0)
 
         threading.Thread(target=lock_watch, daemon=True).start()
+    ready = threading.Event()
+    ready.set()
+    if flags["kick"] is not None:  # a gateway still logging the user in: it ends the connection on input that comes early
+        ready.clear()
+
+        def greet() -> None:
+            if flags["banner_first"]:
+                out.write("Welcome to the fake gateway, checking your account\n")
+                out.flush()
+            time.sleep(flags["kick"])
+            out.write("fake$ " if flags["banner_first"] else "Welcome to the fake gateway\nfake$ ")
+            out.flush()
+            ready.set()
+
+        threading.Thread(target=greet, daemon=True).start()
     status, count = 0, 0
     for line in sys.stdin:
+        if not ready.is_set():
+            out.write("login still in progress: input refused\n")
+            out.flush()
+            return 255
         last[0] = time.monotonic()
         line = line.rstrip("\r\n")
         if flags["echo"]:
