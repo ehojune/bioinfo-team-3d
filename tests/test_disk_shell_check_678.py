@@ -831,3 +831,16 @@ def test_ps_unc_share_name_with_a_space_is_kept_whole(tmp_path):
     assert verdict is not None and r"\\srv\my share" in verdict.reason
     assert disk_space._unc_roots(r"$r = iwr https://h/a -OutFile '\\srv\my share\a.zip'") == [r"\\srv\my share"]
     assert disk_space._unc_roots(r"x \\srv\my share\a.zip") == [r"\\srv\my"]  # unquoted: a space ends the name
+
+
+@pytest.mark.parametrize("command", [
+    r'iwr https://h/a.zip -OutFile "\\$server\share\a.zip"',
+    r'iwr https://h/a.zip -OutFile "\\srv\$name\a.zip"',
+    r'$r = iwr https://h/a.zip -OutFile "\\${srv}\share\a.zip"',
+])
+def test_ps_unc_root_built_from_a_variable_is_not_probed(tmp_path, command):
+    assert disk_space.powershell_check(command, str(tmp_path), probe=_unreadable, **CHECK) is None
+
+
+def test_ps_unc_admin_share_name_with_a_dollar_is_a_real_root():
+    assert disk_space._unc_value_roots(r"\\srv\c$\x\a.zip") == [r"\\srv\c$"]

@@ -796,7 +796,7 @@ def _unc_value_roots(value: str) -> list[str]:
     roots = []
     for part in value.split(","):
         m = _UNC_VALUE.match(part.strip())
-        if m:
+        if m and not re.search(r"\$[\w{(]", m.group(1) + m.group(2)):  # `$server` is built at run time; `c$` is a share name
             roots.append("\\\\" + m.group(1) + "\\" + m.group(2))
     return roots
 
