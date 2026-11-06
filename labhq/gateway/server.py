@@ -54,6 +54,7 @@ from ..research.packs import check_configured_packs
 from ..request_status import (failed_step_ids, has_active_followup, is_active_followup, is_active_request,
                               is_office_request, is_terminal_request)
 from ..request_persistence import apply_changes
+from ..evidence import wiki_exposure
 from ..settings import Settings
 from ..security import token_matches
 from .. import durable
@@ -4352,6 +4353,22 @@ class Hub:
         """Bind an internal caller's reservation/cancel handle before awaiting recovered work."""
         return await self.dispatch(task, bind_identity=bind_identity)
 
+    async def _bind_wiki_exposure(self, task: Task, runner_id: str) -> None:
+        """Bind the wiki decision to this dispatch and record the request's exposure before the task is delivered (#1037).
+
+        The runner attaches `labhq_wiki` only when the task says so (`meta["wiki_tools"]`), and this gateway says so only
+        from the roster that runner sent. A runner that predates the roster key is unknown, so it counts as able to
+        reach the wiki: the exposure is raised first and the task then carries no permission for it."""
+        # The roster entry of the runner this task goes to, through the effective view (advertised rosters are input only).
+        entry = self.effective_roster(hosts=True).get(task.agent_id, {}).get(runner_id) or {}
+        capability = entry.get("wiki_tools", None)
+        task.meta["wiki_tools"] = capability is True
+        if capability is False or not task.request_id or task.request_id not in self.requests:
+            return
+        if wiki_exposure.after_wiki_dispatch(self.requests[task.request_id]) is None:
+            return
+        await self.aupdate_request(task.request_id, lambda req: req.__setitem__(wiki_exposure.KEY, wiki_exposure.POSSIBLE))
+
     async def dispatch(self, task: Task, *, bind_identity=None) -> TaskResult:
         if bind_identity is not None:
             bind_identity(task.id)
@@ -4428,6 +4445,7 @@ class Hub:
                 await self._release_unpublished_attachment(key, task.id)
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0,
                                   cost_known=True, error="step ended before dispatch")
+        await self._bind_wiki_exposure(task, rid)  # before the frame can go out; the check below then judges what is sent
         # The awaits above (steer attachment) can let the runner re-register with another runtime: ask again just
         # before the task is recorded and sent, so the binding judged is the one that would be delivered (#674).
         refused = self._session_pin_refusal(task, rid, self.runner_capabilities.get(rid, {}).get("runtime_env"))
@@ -5685,7 +5703,9 @@ class Hub:
                "wall_clock": self._new_wall_clock(created_at),
                "cost_known": True, "usage": {}, **body.model_dump(),
                # The budget the PI asked for; budget_usd may later rise on a budget card (a CP1 수정 요청 carries this).
-               "requested_budget_usd": body.budget_usd, **(extra or {})}
+               "requested_budget_usd": body.budget_usd,
+               # No staff has run yet, so none could read the PI's wiki; a dispatch to a runner that offers it raises this (#1037).
+               wiki_exposure.KEY: wiki_exposure.NONE, **(extra or {})}
         proj = self.s.project(body.project_id)
         if body.project_id and proj is None:
             raise KeyError(f"unknown project {body.project_id!r}")
@@ -5733,7 +5753,9 @@ class Hub:
                "wall_clock": self._new_wall_clock(created_at),
                "cost_known": True, "usage": {}, **body.model_dump(),
                # The budget the PI asked for; budget_usd may later rise on a budget card (a CP1 수정 요청 carries this).
-               "requested_budget_usd": body.budget_usd, **(extra or {})}
+               "requested_budget_usd": body.budget_usd,
+               # No staff has run yet, so none could read the PI's wiki; a dispatch to a runner that offers it raises this (#1037).
+               wiki_exposure.KEY: wiki_exposure.NONE, **(extra or {})}
         proj = self.s.project(body.project_id)
         if body.project_id and proj is None:
             raise KeyError(f"unknown project {body.project_id!r}")
