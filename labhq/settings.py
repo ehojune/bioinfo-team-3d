@@ -115,6 +115,13 @@ class RunnerSettings(BaseModel):
     # retries a transient failure (#473). Values below stall_warn_s use stall_warn_s. 0 turns the retry off.
     stall_retry_s: float = Field(default=1200, ge=0)
     job_poll_s: int = 60
+    # Over ssh (hpc.ssh_host) every scheduler poll is a login the site records (#1295): a poll that finds nothing new
+    # waits `job_poll_backoff` times longer, up to job_poll_max_s, and any change goes back to job_poll_s. 300 s means an
+    # hours-long job is noticed within five minutes of ending and costs about 50 polls over four hours instead of 240.
+    # Without ssh_host (the runner is on the login node) the interval stays job_poll_s. job_poll_max_s at or below
+    # job_poll_s turns the backoff off.
+    job_poll_max_s: int = Field(default=300, ge=0)
+    job_poll_backoff: float = Field(default=2.0, ge=1)
     state_dir: str = Field(default_factory=lambda: os.environ.get("LABHQ_STATE_DIR", "~/.labhq/state"))
     outbox_limit: int = 20000
     force_engine: str | None = None  # "mock" runs every agent with the mock engine (demo/tests)

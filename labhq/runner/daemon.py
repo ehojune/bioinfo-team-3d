@@ -63,7 +63,7 @@ from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..staff_skills import install_required_skills
 from ..store import StateStore
 from ..tools.scheduler import (MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, command_env, job_in_family,
-                               sanitize_job_name)
+                               next_poll_interval, sanitize_job_name)
 from ..util import INPUT_STEP_ID, output_relpath, short, tool_input_fingerprint
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
@@ -3598,24 +3598,41 @@ class Runner:
     async def _job_watch_loop(self) -> None:
         if self.s.hpc.scheduler == "none":
             return
+        base = float(self.s.runner.job_poll_s)
+        interval = base
         while not self._stopping:
-            await asyncio.sleep(self.s.runner.job_poll_s)
+            await asyncio.sleep(interval)
+            reset = True  # a failed poll is retried at the base interval
             try:
-                await self._poll_jobs()
+                reset = bool(await self._poll_jobs())
             except Exception:
                 log.exception("job poll failed")
+            if self.s.hpc.ssh_host:  # every poll is a login there (#1295); on the login node the interval stays put
+                interval = next_poll_interval(interval, base, float(self.s.runner.job_poll_max_s),
+                                              self.s.runner.job_poll_backoff, reset)
 
-    async def _poll_jobs(self) -> None:
+    async def _poll_jobs(self) -> bool:
+        """Poll every open HPC job with one batched status call. True when something changed since the last poll: a
+        new job, a state change, or a job whose accounting is still catching up (the backoff restarts on it)."""
         if self.s.hpc.scheduler == "none":
-            return  # Retain saved state, missing counts and notifications; do not invent a final outcome.
-        for jid, j in list(self.jobs.items()):
-            if j["terminal"] or local_jobs.is_local(jid):  # a local job has its own watcher (#675)
-                continue
-            info = await asyncio.to_thread(self.scheduler.status, jid)
+            return False  # Retain saved state, missing counts and notifications; do not invent a final outcome.
+        changed_any = False
+        open_jobs = [jid for jid, j in list(self.jobs.items()) if not j["terminal"] and not local_jobs.is_local(jid)]
+        known = self.__dict__.setdefault("_polled_open", set())
+        if not known.issuperset(open_jobs):
+            changed_any = True  # a job nobody has polled yet
+        self._polled_open = set(open_jobs)
+        infos = await asyncio.to_thread(self.scheduler.statuses, open_jobs) if open_jobs else {}
+        for jid in open_jobs:
+            j = self.jobs[jid]
+            info = infos[jid]
+            if isinstance(info, Exception):
+                raise info
             state = info.state
             if state == "missing":  # SGE accounting lag: give it a few polls
                 j["missing"] += 1
                 self.store.put("job", jid, j)
+                changed_any = True
                 if j["missing"] < MISSING_POLLS_BEFORE_FINISHED:
                     continue
                 state = "unknown_finished"
@@ -3623,6 +3640,7 @@ class Runner:
                 j["missing"] = 0
             changed = state != j["state"]
             if changed:
+                changed_any = True
                 j.update(state=state, exit_status=info.exit_status)
             j["terminal"] = state in TERMINAL
             if changed:  # the event and the saved job state are one unit
@@ -3634,6 +3652,7 @@ class Runner:
             else:
                 self.store.put("job", jid, j)
         await self._wake_finished_jobs()
+        return changed_any
 
     async def _wake_finished_jobs(self) -> None:
         """Wake each task whose jobs have all ended, once: the agent was waiting on them (#281)."""
