@@ -44,6 +44,11 @@ class SiteProfile(BaseModel):
     # Texts the connect command prints when a person has to open the tunnel first (a site with a manual tunnel). Only
     # these make the session manager wait for a person; any other connect failure is retried (#1295 C).
     tunnel_texts: list[str] = Field(default_factory=list)
+    # Seconds to wait for the gateway's banner or prompt before the first command is sent (a gateway that is still logging
+    # the user in may drop input that arrives early). Empty or 0: send at once.
+    first_output_wait_s: float | None = Field(default=None, ge=0, le=60)
+    # How long the output must stay quiet, once it started and showed no prompt, before the first command goes out.
+    first_output_settle_s: float | None = Field(default=None, gt=0, le=30)
     remote_exec: bool | None = None  # can commands be run on the login node from here
     file_transfer: Literal["scp", "sftp", "rsync", "gateway_window", "none", "other"] | None = None
     file_transfer_note: str | None = None
@@ -100,8 +105,10 @@ def unknown_fields(profile: SiteProfile) -> list[str]:
 def problems(profile: SiteProfile) -> list[str]:
     """Contradictions between answers. Empty answers are not problems: `unknown_fields` lists them."""
     found = []
-    if profile.remote_exec is False and profile.scheduler not in (None, "none"):
-        found.append("remote_exec is false but a scheduler is set: a scheduler is driven by remote commands")
+    if profile.remote_exec is False and profile.scheduler not in (None, "none") and not profile.connect_argv:
+        # With a connect command the session shell carries the scheduler commands, so remote_exec false (the gateway
+        # ignores `ssh host command`) is not a contradiction; without any way in it is.
+        found.append("remote_exec is false and there is no connect command, but a scheduler is set")
     if profile.remote_exec is False and profile.connect_argv and profile.access_method == "ssh":
         found.append("access_method is ssh but remote_exec is false")
     if profile.file_transfer == "none" and profile.remote_workdir:
@@ -315,6 +322,11 @@ def session_config(profile: SiteProfile, command_timeout_s: float):
     """The ``hpc_session.SessionConfig`` for a profile. The site's idle lock and failure texts come from the profile."""
     from .hpc_session import SessionConfig
 
+    diag = os.environ.get("LABHQ_HPC_DIAG_DIR")
     return SessionConfig(argv=list(profile.connect_argv),
                          idle_lock_s=profile.idle_lock_minutes * 60.0 if profile.idle_lock_minutes else None,
-                         command_timeout_s=float(command_timeout_s), tunnel_texts=tuple(profile.tunnel_texts))
+                         command_timeout_s=float(command_timeout_s), tunnel_texts=tuple(profile.tunnel_texts),
+                         first_output_wait_s=float(profile.first_output_wait_s or 0.0),
+                         settle_s=float(profile.first_output_settle_s or 1.0),
+                         # raw output of a failed connect is kept outside any repository only
+                         diag_dir=diag if diag and outside_repo(Path(diag)) else "")

@@ -154,7 +154,7 @@ def labhq_mcp_timeout_s(settings: Settings) -> int:
             session = Scheduler(settings.hpc).session()
         except RuntimeError:  # an unreadable profile is reported by the tool, not while constructing CLI settings
             session = None
-        cfg = session.cfg if session is not None else SessionConfig(argv=["x"])
+        cfg = session.cfg if session is not None else SessionConfig(argv=["x"], first_output_wait_s=60)
         hpc = scheduler_call_budget_s(cfg, float(settings.hpc.command_timeout_s), 2)
         work = max(work, int(hpc) + 90)  # the broker waits hpc + 30; the CLI waits longer still
     return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + work
