@@ -1,6 +1,6 @@
 # wiki 노출 이력과 공개 게시 차단 (#1037)
 
-lookup-only. 동작 설명은 [manual 12장](../manual/12-github-reports.md), 증거 계약은 #827 댓글에 있다. 증거 수준 검사(`wiki_summary`를 원문 직접 독해로 승격하지 못하게 하는 규칙)의 초안은 이 PR에 넣지 않았고 브랜치 `codex-worker1/1037-lane`에 있다(스키마 변경이 엔진 결과 계약의 hash와 prompt 규칙에 닿아 따로 다룬다). 공개 보호는 아직 **UNVERIFIED**다.
+lookup-only. 동작 설명은 [manual 12장](../manual/12-github-reports.md), 증거 계약은 #827 댓글에 있다. 증거 수준 검사(`wiki_summary`를 원문 직접 독해로 승격하지 못하게 하는 규칙)는 W1 초안(`e2a36148`)을 되살려 넣었고, 결과 스키마 hash가 의도적으로 바뀐다. 공개 보호는 아직 **UNVERIFIED**다.
 
 ## 정한 것
 
@@ -32,7 +32,10 @@ lookup-only. 동작 설명은 [manual 12장](../manual/12-github-reports.md), �
 | CP1 수정 요청·모델 거부 뒤 다시 시작한 요청의 노출 상속 | 막음: 새 요청이 부모의 수준으로 시작한다(첫 저장에 들어간다) |
 | 재시작·구형 runner | 시험함: 기록은 저장소에서 다시 읽고(재계산하지 않는다), `wiki_tools` 키가 없는 구형 runner에 보낸 요청은 `possible`이 된다 |
 | 결과 올리기의 새 저장소 생성 직전 재확인 | 시험함 |
-| 증거 수준 검사(`wiki_summary` 승격 금지)와 결과 계약 prompt 규칙, 독립 출처 인증, wiki 본문·경로 마스크 | 후속 |
+| 증거 수준 검사: `wiki_summary` 행은 literature_claim·tertiary·indirect이고 원본(lineage.original)이 될 수 없다(`claims.py` 검증). 같은 주장에 `full_text` 읽기 기록이 없으면 wiki 요약만으로 `supported`·`partially_supported`를 채우지 못한다(`ledger_errors`). 요약이 반대 방향이면 그대로 세어 `supported`를 막는다(숨기지 않는다). 보고서 근거 표는 `wiki 요약 (신선도)`로 적는다 | 막음 |
+| 결과 계약 prompt 규칙(`RESULT_CONTRACT_FIELD_RULES`)과 결과 스키마(`access_status`에 `wiki_summary`, `wiki_freshness`) | 반영. 결과 스키마 hash를 의도적으로 갱신했다(계획 스키마·계획 prompt·`VALID_PLAN_SHA`는 그대로) |
+| `wiki_contract.py`의 감사 기록 대조(`check_wiki_ledger`) | 소비자만 있다. 단계 결과를 받는 쪽(`orchestrator/cso.py`)에서 `outputs/wiki_queries.jsonl`을 읽어 부르는 연결은 아직 없다 |
+| 독립 출처 인증, wiki 본문·경로 마스크 | 후속 |
 
 ## 한계
 

@@ -49,7 +49,10 @@ CANARY = "CANARY-research-91c2"
 # VALID_PLAN_SHA, and the prompt and result schema hashes are unchanged.
 RESEARCH_PLAN_SCHEMA_SHA = "71a0b1a00025027290ba8766fb57090972e5ad629b11d6e63d17c897788afd6c"
 # #905 extends only the result schema with optional source access metadata and citation lineage.
-RESEARCH_RESULT_SCHEMA_SHA = "596679add2478c0eff0eddaddd8d85604b0148770fb5a4aaa0a0235e836ca179"
+# #1037 changes only the result schema again, on purpose: source.access_status gains wiki_summary, SourceRef gains
+# wiki_freshness, and the contract rules say a wiki hit is indirect tertiary literature, never full text or an original.
+# The plan schema, the plan prompt and VALID_PLAN_SHA are unchanged.
+RESEARCH_RESULT_SCHEMA_SHA = "a8383b36345b40787c9dab1bacae28c87a5d99f691f4a4eef7b2b05acb56c4d8"
 # #798/#671 change only paper timing/parallel fallback; normalize that sentence to exact previous prompts.
 # #669 adds the task-local install rule to the planning prompt (no new packages is not a default limit).
 RESEARCH_PROMPT_SHA = "2f3c9d03e4a8cf8be46467140edc69b53abb8c45b46132fe35266ca6bda0567e"

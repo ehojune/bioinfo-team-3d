@@ -1,6 +1,6 @@
 # Wiki exposure history and blocking public publication (#1037)
 
-Lookup-only. Behavior is described in [manual chapter 12](../manual/12-github-reports.en.md); the evidence contract is in the #827 comments. The draft of the evidence-level check (the rule that keeps `wiki_summary` from being promoted to direct reading of the original) is not in this PR and is on branch `codex-worker1/1037-lane`: it changes the engine result contract's hash and prompt rules, so it is handled separately. Public protection is still **UNVERIFIED**.
+Lookup-only. Behavior is described in [manual chapter 12](../manual/12-github-reports.en.md); the evidence contract is in the #827 comments. The evidence-level check (the rule that keeps `wiki_summary` from being promoted to direct reading of the original) revives the W1 draft (`e2a36148`); the result schema hash changes on purpose. Public protection is still **UNVERIFIED**.
 
 ## What was decided
 
@@ -32,7 +32,10 @@ Lookup-only. Behavior is described in [manual chapter 12](../manual/12-github-re
 | A request opened from another (a CP1 revision, a retry after a model refusal) | blocked: it starts at the parent's level (in its first save) |
 | Restart and old-runner | tested: the record is read back from the store (not recomputed), and a request sent to an old runner without the `wiki_tools` key becomes `possible` |
 | The recheck right before a new repository is created by the result upload | tested |
-| The evidence-level check (no promotion of `wiki_summary`) and the result-contract prompt rules, independent source authentication, masking wiki text and paths | later |
+| The evidence-level check: a `wiki_summary` row is a literature_claim, tertiary and indirect and cannot be an original (`lineage.original`) (validated in `claims.py`). Without a recorded `full_text` reading on the same claim, a wiki summary alone does not fill `supported` or `partially_supported` (`ledger_errors`). A summary pointing the other way still counts and blocks `supported` (it is not hidden). The report's evidence table writes `wiki summary (freshness)` | blocked |
+| The result-contract prompt rules (`RESULT_CONTRACT_FIELD_RULES`) and the result schema (`wiki_summary` in `access_status`, `wiki_freshness`) | done. The result schema hash was updated on purpose (the plan schema, the plan prompt and `VALID_PLAN_SHA` are unchanged) |
+| Matching against the audit record in `wiki_contract.py` (`check_wiki_ledger`) | consumer only. Nothing yet reads `outputs/wiki_queries.jsonl` and calls it where a step result is accepted (`orchestrator/cso.py`) |
+| Independent source authentication, masking wiki text and paths | later |
 
 ## Limits
 
