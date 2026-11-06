@@ -4,22 +4,24 @@ lookup-only. 기준은 [정리 A](issue-hygiene-20261107-a.md)와 같다. 완료
 
 | issue | 판정 | 남은 일 |
 |---|---|---|
-| [#430](https://github.com/ehojune/bioinfo-team-3d/issues/430) 공유 계정 HPC 잡에 앞 단계 산출 전달 | **닫음** | 실제 클러스터 확인은 #1295(D단계)가 갖는다 |
+| [#430](https://github.com/ehojune/bioinfo-team-3d/issues/430) 공유 계정 HPC 잡에 앞 단계 산출 전달 | 열어 둠(처음에 닫았다가 다시 엶) | 쓰기가 있는 실제 클러스터 시운전 |
 | [#612](https://github.com/ehojune/bioinfo-team-3d/issues/612) 로컬 WSL 분석 | 열어 둠 | 실제 WSL에서 `setup`·nf-core 시험 파이프라인 끝까지 |
-| [#151](https://github.com/ehojune/bioinfo-team-3d/issues/151) EDAM 부분집합과 input_fit | 열어 둠 | #99 gate 수치 또는 폐기 기록, 본문 정정, PI 라이선스 확인(#882 동결) |
+| [#151](https://github.com/ehojune/bioinfo-team-3d/issues/151) EDAM 부분집합과 input_fit | 열어 둠 | #99 gate 수치 또는 폐기 기록, 본문 정정(#882 동결) |
 | [#625](https://github.com/ehojune/bioinfo-team-3d/issues/625) Freda·Moore 랩 조사에서 가져올 것 | 열어 둠 | CSO의 단계별 등급 선택, 추출 캐시·재개, 요인 실험의 live 비용 경계 구현·검증과 활성화(승인보다 먼저) |
 | [#621](https://github.com/ehojune/bioinfo-team-3d/issues/621) AlphaMissense·AlphaGenome | 열어 둠 | 실제 Atlas 조회(키 위치·PI 확인) |
 | [#546](https://github.com/ehojune/bioinfo-team-3d/issues/546) 디자인 리뉴얼 | 열어 둠 | 3D 개편(PI가 나중으로 둠) |
 
 ## 닫은 issue
 
+없음. 정리 C에서 #430을 먼저 닫았다가 아래 이유로 다시 열었다.
+
+## 열어 둔 issue
+
 ### #430
 - 문제: `hpc.submit_prefix` 모드에서 잡이 별도 `hpc.user`로 돌고, 앞 단계 작업 폴더는 private이라 앞 단계 산출을 읽는 HPC 잡이 permission denied로 실패한다. 제안은 산출을 복사(stage)하거나 `job_group` 읽기 권한을 주는 것이었다.
 - 결정(PI, 10-13, #435): **HPC가 필요한 요청은 처음부터 끝까지 HPC에서 진행**하고, 요청 시작 때 HPC·로컬을 PI에게 묻는다. 로컬과 HPC가 섞이지 않게 하려는 것이다.
-- main: PR #578(`cdd0a570`, 2026-11-05 병합) "HPC 요청 실행 위치를 선택하고 단계별 workspace·입력·기록 보존"이 이 결정을 구현했고, **이 issue의 첫 번째 안(staging)도 함께 구현했다**. 검증된 앞 단계 산출을 `hpc/<request>/data/<producer>/<source-task>/`에 hash 검증 복사본으로 두고 `.labhq/hpc-inputs/<producer>/<source-task>.json`에 생산 단계·원래 경로·hash를 적어 후속 HPC 잡이 읽게 한다. 공유 계정은 data 복사본만 읽고 단계 outputs에 쓰며, 입력 symlink·hardlink 거부와 `stage_inputs`의 요청·task·hash·용량·통제/개인 경로 검사는 유지한다(`docs/reference/hpc-step-workspaces-578.md`, `labhq/runner/workspace.py:557`, `labhq/tools/hpc_mcp.py:143`). PR #429(`inputs/<단계>` 연결)도 병합돼 있다.
-- 남은 것은 총괄 댓글이 이미 "실제 실행 확인은 서버 복구 뒤"로 나눠 둔 실제 클러스터 확인이다(공유 계정 전환, 상위 경로 traverse 권한은 운영자가 준비하는 부분이라 실제 클러스터에서만 맞다). 이는 HPC 세션 작업(D단계)에서 다루므로 #1295가 갖는다. 두 번째 안(읽기 권한)은 하지 않는다.
-
-## 열어 둔 issue
+- main: PR #578(`cdd0a570`, 2026-11-05 병합) "HPC 요청 실행 위치를 선택하고 단계별 workspace·입력·기록 보존"이 이 결정을 구현했고, **이 issue의 첫 번째 안(staging)도 함께 구현했다**. 검증된 앞 단계 산출을 `hpc/<request>/data/<producer>/<source-task>/`에 hash 검증 복사본으로 두고 `.labhq/hpc-inputs/<producer>/<source-task>.json`에 생산 단계·원래 경로·hash를 적어 후속 HPC 잡이 읽게 한다. 공유 계정은 data 복사본만 읽고 단계 outputs에 쓰며, 입력 symlink·hardlink 거부와 `stage_inputs`의 검사는 유지한다(`docs/reference/hpc-step-workspaces-578.md`, `labhq/runner/workspace.py:557`, `labhq/tools/hpc_mcp.py:143`). PR #429(`inputs/<단계>` 연결)도 병합돼 있다. 두 번째 안(읽기 권한)은 하지 않는다.
+- 열어 두는 이유: 남은 확인(공유 계정 전환, staged data 읽기, 단계 output 쓰기, 상위 경로 traverse 권한)은 실제 잡 제출과 쓰기가 있어야 가능하다. #1295 D단계는 읽기 전용 명령(`hostname`, `squeue`, `pwd -P`, `ls`)과 세션·heartbeat·redaction 확인으로 한정돼 있어(`docs/reference/hpc-d-stage-1295.md`) 이 확인을 추적하지 않는다. 그래서 이 issue가 "쓰기가 있는 실제 클러스터 시운전"을 명시적으로 맡는다. 재개 조건: HPC 접속이 열리고 PI가 잡 제출을 승인하는 것(D단계 뒤).
 
 ### #612
 - 완료: 1단계 `labhq setup-wsl`과 doctor WSL 절, 요청 단위 WSL 셋업 카드(PR #1038), 요청에 `run_where: auto|wsl`을 더해 WSL을 고르면 계획 전에 셋업 카드를 여는 것(PR #1189 `5eab2b0c`). `labhq/gateway/server.py:186`의 `RequestIn.run_where`, `labhq send --wsl`(`cli.py`), 웹 요청 폼의 `#wsl-only`(`labhq/web/index.html:990`), CSO 입력의 한 줄이 모두 main에 있다. `tests/test_wsl_setup_card_612.py` 39건을 이번에 돌려 통과했다.
@@ -29,7 +31,7 @@ lookup-only. 기준은 [정리 A](issue-hygiene-20261107-a.md)와 같다. 완료
 ### #151
 - core로 남아 있는 것을 확인했다(총괄 요청 사항): `labhq/vocab/edam_map.yaml`·`edam_subset.yaml`과 `scripts/edam_subset.py`가 main에 있고, `labhq/vocab/__init__.py`가 `edam_subset.yaml`을 선택 어휘로 읽는다(`SUBSET_FILE`, `Vocab.edam_id`). `scripts/semantics_shadow_remove.py`는 출력 종류 어휘를 "shadow보다 오래 남아야 하는 core(#221)"로 두고 제거 대상에서 뺀다. 그래서 EDAM 산출물이 제거 목록에 없는 것은 결함이 아니다(10-30 정정과 같음).
 - `tests/test_edam_subset.py`·`test_semantics_input_fit.py`·`test_semantics_shadow_remove.py` 51건을 이번에 돌려 통과했다.
-- 남은 일(10-29 대조 댓글과 같다): ① #99 gate(fixture 40·추가 적발 ≥4·18/20·오탐 ≤1)의 수치를 재는 시험과 기록, 또는 PI가 gate를 폐기한다는 기록. #99는 10-01에 닫히면서 정본을 #151로 넘겼으므로 이 gate는 여기에 남아 있다. ② 본문의 `≤40`과 파일 경로를 현재 값(`MAX_KEYS = 92`+topic, `labhq/vocab/`)으로 정정. ③ PI의 EDAM 라이선스 확인 기록. #882 동결 범위다.
+- 남은 일(10-29 대조 댓글과 같다): ① #99 gate(fixture 40·추가 적발 ≥4·18/20·오탐 ≤1)의 수치를 재는 시험과 기록, 또는 PI가 gate를 폐기한다는 기록. #99는 10-01에 닫히면서 정본을 #151로 넘겼으므로 이 gate는 여기에 남아 있다. ② 본문의 `≤40`과 파일 경로를 현재 값(`MAX_KEYS = 92`+topic, `labhq/vocab/`)으로 정정. #882 동결 범위다. 라이선스는 남은 일이 아니다: #252의 PI 결정으로 EDAM 표가 CC BY-SA 4.0 조건으로 병합됐고 `labhq/vocab/NOTICE.md`·`docs/manual/23-license.md`에 적혀 있다.
 
 ### #625
 네 항목의 현재 상태:
@@ -52,6 +54,6 @@ lookup-only. 기준은 [정리 A](issue-hygiene-20261107-a.md)와 같다. 완료
 - 남은 일: 3D 개편뿐이다. PI 결정(10-13)이 "3D는 나중, 지금은 2D부터"였고 아직 재개 지시가 없다. 재개 조건은 PI의 3D 착수 지시이다.
 
 ## 한계
-- 닫은 #430의 근거는 이슈 댓글, main의 PR 상태, #578 reference 문서이고, 실제 HPC 실행은 보지 않았다. 처음에는 #578을 "단계 간 전달을 없앤 것"으로 적었다가 봇 리뷰 뒤 "staging으로 푼 것"으로 바로잡았다.
+- #430의 근거는 이슈 댓글, main의 PR 상태, #578 reference 문서이고, 실제 HPC 실행은 보지 않았다. 처음에는 #578을 "단계 간 전달을 없앤 것"으로 적고 닫았다가 봇 리뷰 뒤 "staging으로 푼 것"으로 바로잡고 다시 열었다.
 - #612의 WSL, #621의 Atlas, #625의 요인 실험은 실제 실행을 하지 않았다. 코드와 시험 상태만 읽었다.
 - #151의 79개 매핑 개별 검수 기록(근거·검수자·날짜)이 있는지는 이번에도 열어 보지 않았다.
