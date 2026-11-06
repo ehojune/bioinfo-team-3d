@@ -5,6 +5,18 @@
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
 ## 단계
+#1299 rev5: manual 17장(알려진 한계)의 원격 PBS 승인 문장을 #1306 이후 동작에 맞춘다.
+
+## 한 일
+- `docs/manual/17-known-limits(.en).md`: "원격 PBS(`ssh_host`)의 `PBS_DPREFIX`는 로컬에서 확인할 수 없어 항상 PI 승인" 문장을 `ssh_host`로 접속하거나 사이트 프로필 셸로 제출하는 구성으로 넓히고, 읽을 수 없는 프로필도 원격으로 보고 승인을 받는다고 적었다. 근거는 `labhq/runner/hpc_jobs.py`의 `_submits_remotely`와 `tests/test_hpc_session_wiring_1295.py`다.
+
+## 확인
+- Windows: `-k manual` 시험 통과(아래 PR 본문 참조).
+
+## 하지 않은 것
+- 코드는 바꾸지 않았다.
+
+## 단계
 #1299 rev3: manual 08·11장을 #1306(C단계) 병합 상태에 맞춘다.
 
 ## 한 일
