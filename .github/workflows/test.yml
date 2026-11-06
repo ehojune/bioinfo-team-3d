@@ -180,6 +180,22 @@ jobs:
         run: Write-Output "::error title=Windows selection rejected::ci_selection refused this checkout. See selection-error.json in the Windows artifact."
       - name: Bind Windows execution identity
         run: python -m scripts.ci_skip windows-identity
+      - name: Warm Node and PowerShell (the first process of each is slow on a fresh runner; timed here, not in a test, #1272)
+        shell: python {0}
+        run: |
+          import json, shutil, subprocess, time
+          rows = {}
+          commands = {'node': ['node', '-e', '0'], 'powershell': ['powershell', '-NoProfile', '-NonInteractive', '-Command', 'exit 0']}
+          for name, argv in commands.items():
+              if shutil.which(argv[0]) is None:
+                  rows[name + '_cold_ms'] = rows[name + '_warm_ms'] = None
+                  continue
+              for phase in ('cold', 'warm'):  # the same call twice: the second shows what a warmed start costs
+                  start = time.monotonic()
+                  subprocess.run(argv, capture_output=True, timeout=60, check=False)
+                  rows[f'{name}_{phase}_ms'] = round((time.monotonic() - start) * 1000)
+          print('ci warmup: ' + json.dumps(rows, sort_keys=True))
+        timeout-minutes: 2
       - name: Warm Chrome (a cold start is timed here, not inside the 30 s browser test)
         run: python scripts/ci_chrome_warmup.py
         timeout-minutes: 2
