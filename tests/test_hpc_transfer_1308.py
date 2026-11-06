@@ -650,3 +650,57 @@ def test_a_notice_and_a_fetch_error_in_the_feed_never_carry_the_site(site, monke
     texts = [e.data["text"] for e in runner.events]
     assert len(texts) == 2 and all(assert_clean(text) is None for text in texts)
     assert_clean(runner.jobs["1000"]["fetch_error"])
+
+
+# ---- review round: inputs are read through held handles, and unchanged inputs are not results ----
+
+def test_a_local_input_is_read_through_handles_not_by_path(tmp_path, cluster, monkeypatch):
+    base = tmp_path / "work"
+    (base / "d").mkdir(parents=True)
+    (base / "d" / "in.txt").write_bytes(b"input")
+
+    def forbidden(self):
+        raise AssertionError("the file was read by its path")
+
+    monkeypatch.setattr(Path, "read_bytes", forbidden)
+    assert ht.read_confined(base, "d/in.txt", 100) == b"input"
+    info = cluster.transfer().upload_file(base / "d" / "in.txt", "t1/in.txt", root=base)
+    assert info["sha256"] == sha(b"input")
+
+
+def test_read_confined_refuses_links_and_big_files_and_other_kinds(tmp_path):
+    base = tmp_path / "work"
+    (base / "d").mkdir(parents=True)
+    (base / "d" / "big.bin").write_bytes(b"x" * 11)
+    with pytest.raises(ht.TooLarge):
+        ht.read_confined(base, "d/big.bin", 10)
+    with pytest.raises(ht.PathRejected):
+        ht.read_confined(base, "d", 10)  # a folder
+    with pytest.raises(ht.PathRejected):
+        ht.read_confined(base, "d/missing.txt", 10)
+    with pytest.raises(ht.PathRejected):
+        ht.read_confined(base, "../work/d/big.bin", 100)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_bytes(b"secret")
+    link(outside / "secret.txt", base / "d" / "alias.txt")
+    link(outside, base / "jump")
+    with pytest.raises(ht.PathRejected):
+        ht.read_confined(base, "d/alias.txt", 100)  # a link as the file
+    with pytest.raises(ht.PathRejected):
+        ht.read_confined(base, "jump/secret.txt", 100)  # a link as a folder on the way
+
+
+def test_an_input_the_job_did_not_change_is_not_fetched_back_but_a_changed_one_is(site):
+    (site.workdir / "ref.txt").write_text("reference", encoding="utf-8")
+    (site.workdir / "other.txt").write_text("other", encoding="utf-8")
+    result = submit(site, write_script(site), inputs=["ref.txt", "other.txt"])
+    assert set(result["transfer"]["inputs"]) == {"ref.txt", "other.txt"}
+    work = site.remote("t1/work")
+    (work / "other.txt").write_text("other, rewritten by the job", encoding="utf-8")
+    (work / "result.txt").write_text("answer", encoding="utf-8")
+    transfer = sched.Scheduler(site.settings.hpc).transfer()
+    manifest = ht.fetch_results(transfer, {**result["transfer"]}, site.workdir / "jobs" / "logs",
+                                site.workdir / "outputs", base=site.workdir)
+    assert sorted(f["path"] for f in manifest["fetched"]) == ["other.txt", "result.txt"]  # ref.txt stayed home
+    assert not (site.workdir / "outputs" / "ref.txt").exists()

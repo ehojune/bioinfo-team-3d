@@ -18,16 +18,20 @@ session's ``run``), and the remote root.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
 import re
 import shlex
+import stat
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable
+
+from .adapters.held_dir import HeldDir
 
 SAFE_PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@+=,:%-]*")  # one path component: no space, quote, glob or leading dash
 
@@ -178,10 +182,16 @@ class Transfer:
         return {"path": rel, "bytes": len(data), "sha256": want}
 
     def upload_file(self, local: Path, rel: str, *, root: Path | None = None, executable: bool = False) -> dict:
-        """Upload a regular local file. With ``root``, the file must lie inside it (no link, no ``..``)."""
+        """Upload a regular local file. With ``root``, the file is read inside it through folder handles held open (no
+        link on the way, none swapped in after the check, no ``..``)."""
         local = Path(local)
-        if root is not None and not _inside(local, Path(root)):
-            raise PathRejected(f"{local} is outside {root}")
+        if root is not None:
+            try:
+                relative = local.resolve(strict=False).relative_to(Path(root).resolve())
+            except (ValueError, OSError) as error:
+                raise PathRejected(f"{local} is outside {root}") from error
+            data = read_confined(Path(root), str(PurePosixPath(*relative.parts)), self.limits.upload_max_bytes)
+            return self.upload_bytes(rel, data, executable=executable)
         try:
             if local.is_symlink() or not local.is_file():
                 raise PathRejected(f"{local} is not a plain file")
@@ -260,6 +270,34 @@ class Transfer:
         return {"path": str(confine(rel)), "local": str(target), **info}
 
 
+def read_confined(root: Path, rel: str, limit: int) -> bytes:
+    """The bytes of a regular file at ``rel`` under ``root``, read through handles: ``root`` and each folder are opened
+    once without following a link and the file is opened relative to its folder, so a link swapped in after any check
+    is refused (never followed). Size and type come from the same open descriptor that is read."""
+    parts = confine(rel).parts
+    try:
+        with contextlib.ExitStack() as stack:
+            held = stack.enter_context(HeldDir.hold(Path(root)))
+            for part in parts[:-1]:
+                held = stack.enter_context(held.child(part))
+            fd = held.open_read_file(parts[-1])
+            with os.fdopen(fd, "rb") as handle:
+                info = os.fstat(handle.fileno())
+                if not stat.S_ISREG(info.st_mode):
+                    raise PathRejected(f"{rel!r} is not a plain file")
+                if info.st_size > limit:
+                    raise TooLarge(f"{rel}: {info.st_size} bytes is over the {limit} byte limit; use the site profile's "
+                                   "file transfer method")
+                data = handle.read(limit + 1)
+    except TransferError:
+        raise
+    except OSError as error:  # a link, a missing file or folder, or one that is not what it was
+        raise PathRejected(f"{rel!r} is not a plain file inside the task folder: {error}") from error
+    if len(data) > limit:
+        raise TooLarge(f"{rel}: grew past the {limit} byte limit while it was read")
+    return data
+
+
 def _inside(path: Path, root: Path) -> bool:
     try:
         resolved, base = path.resolve(), root.resolve()
@@ -333,17 +371,20 @@ def upload_job(transfer: Transfer, spec: dict, script_text: str, local_root: Pat
     if len(inputs) > MAX_INPUTS:
         raise TooLarge(f"{len(inputs)} inputs is more than {MAX_INPUTS}; use the site profile's file transfer method")
     sent, total = [], 0
+    spec["inputs"] = {}  # work-relative name -> sha256 of what was uploaded: those are not results when the job ends
     transfer.deadline = time.monotonic() + budget_s  # a slow link stops the upload before the caller gives up waiting
     try:
         transfer.ensure_dir(f"{spec['base']}/jobs/logs")
         transfer.ensure_dir(spec["work"])
         for rel in inputs:
-            local = Path(local_root) / confine(str(rel))
-            total += local.stat().st_size if local.is_file() else 0
+            name = str(confine(str(rel)))
+            info = transfer.upload_file(Path(local_root) / name, f"{spec['work']}/{name}", root=Path(local_root))
+            total += info["bytes"]
             if total > INPUTS_TOTAL_BYTES:
                 raise TooLarge(f"the inputs total more than {INPUTS_TOTAL_BYTES} bytes; use the site profile's file "
                                "transfer method")
-            sent.append(transfer.upload_file(local, f"{spec['work']}/{confine(str(rel))}", root=Path(local_root)))
+            spec["inputs"][name] = info["sha256"]
+            sent.append(info)
         sent.append(transfer.upload_bytes(spec["script"], script_text.encode("utf-8"), executable=True))
     finally:
         transfer.deadline = None
@@ -392,8 +433,11 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
     for name in transfer.list_deeper(spec["work"]):  # too deep to list: not fetched, and said so
         manifest["skipped"].append({"path": name, "reason": f"deeper than {transfer.limits.list_depth} folders: use the "
                                                             "site profile's file transfer method"})
+    uploaded = spec.get("inputs") or {}
     for name, size in transfer.list_files(spec["work"]):
         rel = f"{spec['work']}/{name}"
+        if name in uploaded and size <= transfer.limits.upload_max_bytes and transfer.remote_sha256(rel) == uploaded[name]:
+            continue  # an input the job did not change is not a result
         try:
             confine(name)
         except PathRejected:
