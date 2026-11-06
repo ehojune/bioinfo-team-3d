@@ -43,7 +43,7 @@ class Broker:
     def __init__(self, port: int, on_approval: Handler, on_event: Handler, on_submit: Submit,
                  on_ask: Handler | None = None, owns_job: Predicate | None = None,
                  on_approval_timeout: Handler | None = None, lookup_admission: Any = None,
-                 on_local_job: Any = None, on_restricted: Handler | None = None):
+                 on_local_job: Any = None, on_restricted: Handler | None = None, on_scheduler: Any = None):
         self.port = port
         self.lookup_admission = lookup_admission  # LookupAdmission when annot.request_lookup_limit is set (#858)
         self.pending: dict[str, asyncio.Future] = {}
@@ -59,6 +59,7 @@ class Broker:
         self._owns_job = owns_job  # without it no job counts as owned, so hpc_cancel refuses all
         self._on_approval_timeout = on_approval_timeout
         self._on_local_job = on_local_job  # (op, identity) -> dict, the runner's local job handler (#675)
+        self._on_scheduler = on_scheduler  # (op, identity) -> dict, authenticated scheduler operations (#1307)
         self.server: uvicorn.Server | None = None
         self.app = self._build_app()
 
@@ -114,7 +115,19 @@ class Broker:
 
         @app.post("/jobs/submit")
         async def submit(body: dict, x_labhq_token: str = Header(default="")) -> dict:
-            return await self._on_submit(self._identity(x_labhq_token, body))
+            identity = self._identity(x_labhq_token, body)
+            if "op" in body:
+                raise HTTPException(400, "use /jobs/scheduler/{op} for scheduler operations")
+            return await self._on_submit(identity)
+
+        @app.post("/jobs/scheduler/{op}")
+        async def scheduler(op: str, body: dict, x_labhq_token: str = Header(default="")) -> dict:
+            identity = self._identity(x_labhq_token, body)
+            if op not in {"status", "queue", "cancel"} or self._on_scheduler is None:
+                raise HTTPException(404, "scheduler operation is not available on this runner")
+            if "op" in body:
+                raise HTTPException(400, "the route selects the scheduler operation")
+            return await self._on_scheduler(op, identity)
 
         @app.post("/jobs/owned")
         async def owned(body: dict, x_labhq_token: str = Header(default="")) -> dict:

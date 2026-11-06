@@ -19,6 +19,16 @@ from ..settings import HpcSettings, slurm_cluster_option
 TERMINAL = {"completed", "failed", "cancelled", "unknown_finished"}
 MISSING_POLLS_BEFORE_FINISHED = 3
 
+
+def scheduler_call_budget_s(session_cfg, command_timeout_s: float, commands: int = 1) -> float:
+    """Every scheduler command can queue, reconnect and execute, including status's accounting query."""
+    if session_cfg is None:
+        return commands * command_timeout_s
+    from ..hpc_session import call_budget_s
+
+    return commands * call_budget_s(session_cfg, command_timeout_s)
+
+
 # Commands each backend runs on the runner (or hpc.ssh_host); doctor checks they are installed.
 COMMANDS = {
     "sge": ("qsub", "qstat"),
@@ -51,7 +61,9 @@ SACCT_FIELDS = "JobID,State,ExitCode,JobName"
 # Agent-supplied ids reach qdel/scancel argv. Every SGE/PBS/Slurm id starts with a digit, so neither
 # an option ("-u x", "--user=x") nor a selector of many jobs (Torque "all", SGE job names) gets through.
 JOB_ID = re.compile(r"[0-9][A-Za-z0-9_.\[\]+-]{0,127}")
-MAYBE_SUBMITTED = "; the job may have been submitted, check hpc_queue before resubmitting"
+MAYBE_SUBMITTED = ("; the job may have been submitted, check hpc_queue before resubmitting. "
+                   "Do not resubmit until the PI reconciles the scheduler jobs; "
+                   "an empty hpc_queue only describes tracked jobs and does not prove submission failed")
 # Script lines a scheduler reads as options. sbatch also reads #PBS and #BSUB unless --ignore-pbs is given.
 DIRECTIVE_PREFIXES = ("#SBATCH", "#PBS", "#BSUB", "#$")
 # The only variables scheduler commands receive (#172). A job submitted with -V or -v (SGE, PBS) copies qsub's

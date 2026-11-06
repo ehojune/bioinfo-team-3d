@@ -589,7 +589,7 @@ def leaky_runner(site):
                                 "workdir": str(site.workdir)})
     runner.workspaces = {"t1": SimpleNamespace(dir=site.workdir, task=SimpleNamespace(meta={}))}
     runner.active_roots = {"t1": (False,)}
-    runner._owns_job = lambda identity: asyncio.sleep(0, result=True)
+    runner._owns_job = lambda identity, **kwargs: asyncio.sleep(0, result=True)
     argv = [sys.executable, "-I", GATEWAY, "-p", "2222", "bob@gw.example.org"]
     hpc_site.save_profile(hpc_site.SiteProfile(name="fake", access_method="ssh", connect_argv=argv, remote_exec=True,
                                                scheduler="slurm", remote_workdir="/hpc/work"))
@@ -616,7 +616,7 @@ def test_what_goes_back_to_a_tool_never_carries_the_site(site, monkeypatch):
     monkeypatch.setattr(sched.Scheduler, "cancel", boom)
     monkeypatch.setattr(sched.Scheduler, "submit", boom)
     for op in ("status", "queue", "cancel"):
-        reply = asyncio.run(type(runner)._on_submit(runner, {"op": op, "task_id": "t1", "agent_id": "a1", "job_id": "1000"}))
+        reply = asyncio.run(runner._on_scheduler_request(op, {"task_id": "t1", "agent_id": "a1", "job_id": "1000"}))
         assert_clean(reply["error"])
         assert "refused" in reply["error"]  # the reason stays, the site goes
     (site.workdir / "jobs").mkdir(exist_ok=True)

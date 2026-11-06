@@ -62,7 +62,7 @@ from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..staff_skills import install_required_skills
 from ..store import StateStore
-from ..tools.scheduler import (MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, close_sessions, command_env, job_in_family,
+from ..tools.scheduler import (MISSING_POLLS_BEFORE_FINISHED, TERMINAL, JobInfo, Scheduler, close_sessions, command_env, job_in_family,
                                next_poll_interval, sanitize_job_name)
 from ..util import INPUT_STEP_ID, output_relpath, short, tool_input_fingerprint
 from .. import vocab as output_vocab
@@ -147,16 +147,15 @@ def labhq_mcp_timeout_s(settings: Settings) -> int:
     staff CLI must not give up before the runner does, or a submit that was reported as timed out still goes through."""
     work = 120
     if settings.hpc.site_profile and settings.hpc.scheduler != "none":
-        from ..hpc_session import SessionConfig, call_budget_s
-        from ..hpc_site import session_profile
+        from ..hpc_session import SessionConfig
+        from ..tools.scheduler import scheduler_call_budget_s
 
-        try:  # the profile's wait for the gateway's first output is part of every connect
-            profile = session_profile(settings.hpc.site_profile)
-            wait = float(profile.first_output_wait_s or 0.0) if profile is not None else 0.0
-        except Exception:  # noqa: BLE001 - an unreadable profile: assume the longest wait allowed
-            wait = 60.0
-        hpc = call_budget_s(SessionConfig(argv=["x"], first_output_wait_s=wait),
-                            float(settings.hpc.command_timeout_s), 2)  # a status is two commands
+        try:
+            session = Scheduler(settings.hpc).session()
+        except RuntimeError:  # an unreadable profile is reported by the tool, not while constructing CLI settings
+            session = None
+        cfg = session.cfg if session is not None else SessionConfig(argv=["x"], first_output_wait_s=60)
+        hpc = scheduler_call_budget_s(cfg, float(settings.hpc.command_timeout_s), 2)
         work = max(work, int(hpc) + 90)  # the broker waits hpc + 30; the CLI waits longer still
     return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + work
 
@@ -415,6 +414,7 @@ class Runner:
                              self._on_submit, self._on_ask, self._owns_job,
                              on_approval_timeout=self._on_approval_timeout, on_local_job=self._on_local_job,
                              on_restricted=self._on_restricted,
+                             on_scheduler=self._on_scheduler_request,
                              lookup_admission=None if limit is None else LookupAdmission(
                                  settings.path(settings.runner.state_dir) / LOOKUP_ADMISSION_FILE, limit,
                                  precedent_share=settings.annot.precedent_lookup_share))
@@ -3312,10 +3312,9 @@ class Runner:
         return self._hide_hpc(await self._on_submit_raw(body))
 
     async def _on_submit_raw(self, body: dict) -> dict:
-        """hpc_submit runs here (#214 review): the id the runner's own scheduler call printed is the record. The status,
-        queue and cancel tools reach the runner's one HPC shell through the same route (``op``, #1295 C)."""
-        if body.get("op"):
-            return await self._on_scheduler_op(body)
+        """hpc_submit runs here (#214 review): the id the runner's own scheduler call printed is the record."""
+        if "op" in body:
+            return {"error": "use /jobs/scheduler/{op} for scheduler operations; the job was not submitted"}
         tid, aid = body.get("task_id"), body.get("agent_id")
         ws, running = self.workspaces.get(tid or ""), self.active_roots.get(tid or "")
         if ws is None or running is None:
@@ -3367,6 +3366,9 @@ class Runner:
         """Does any HPC job still run? A local job is no reason to hold a login open."""
         return any(not j["terminal"] and not local_jobs.is_local(jid) for jid, j in list(self.jobs.items()))
 
+    async def _on_scheduler_request(self, op: str, identity: dict) -> dict:
+        return self._hide_hpc(await self._on_scheduler_op({**identity, "op": op}))
+
     async def _on_scheduler_op(self, body: dict) -> dict:
         """hpc_status, hpc_queue and hpc_cancel for a site whose commands go through the runner's shell (#1295 C). The
         agent has no connection of its own to that site, so these run here, in the request's login scope."""
@@ -3379,9 +3381,16 @@ class Runner:
         if op not in {"status", "queue", "cancel"}:
             return {"error": f"unknown HPC operation {op!r}"}
         job_id = str(body.get("job_id") or "")
-        if op == "cancel" and not await self._owns_job(body):  # the shell is the runner's: check ownership here
-            return {"error": f"job {job_id} was not submitted by you through hpc_submit; labhq cancels only jobs it "
-                             "tracks for you. Ask the PI to cancel other jobs."}
+        if op in {"status", "cancel"} and not await self._owns_job(body, include_terminal=op == "status"):
+            return {"error": f"job {job_id} was not submitted by you through hpc_submit; labhq {op} requires an owned job"}
+        if op == "status" and (record := self._hpc_job_record(body, job_id, include_terminal=True)) and record[1].get("terminal"):
+            tracked, saved = record
+            if tracked != job_id:
+                return {"status": JobInfo(job_id, "unknown_finished", name=saved.get("name", ""),
+                                          detail="array parent is terminal; child outcome was not recorded").to_dict()}
+            state = saved.get("state") if saved.get("state") in TERMINAL else "unknown_finished"
+            return {"status": JobInfo(job_id, state, raw_state=saved.get("raw_state", ""), name=saved.get("name", ""),
+                                      exit_status=saved.get("exit_status"), detail=saved.get("detail", "")).to_dict()}
 
         def work():
             with request_scope(body.get("request_id")), queue_wait():  # gives up unsent when the shell stays busy
@@ -3392,7 +3401,17 @@ class Runner:
                 return {"result": self.scheduler.cancel(job_id)}
 
         try:
-            return await asyncio.to_thread(work)
+            reply = await asyncio.to_thread(work)
+            if op == "queue":
+                # Job records belong to the event loop; submissions can change the dict while the worker queries HPC.
+                tracked = [jid for jid, j in self.jobs.items() if j.get("submitted_by_runner") and not j.get("terminal")
+                           and j.get("scheduler") == self.s.hpc.scheduler]
+                known = [row for row in reply["queue"] if any(job_in_family(jid, row["job_id"]) for jid in tracked)]
+                if len(known) != len(reply["queue"]):
+                    reply["error"] = ("the scheduler has jobs without a runner submission record; this queue cannot rule out "
+                                      "an ambiguous submission. Do not resubmit until the PI reconciles the scheduler jobs")
+                reply["queue"] = [j for j in known if self._hpc_job_owned(body, j["job_id"])]
+            return reply
         except Exception as error:  # noqa: BLE001 - the tool reports it; a login limit or a lost shell is the usual cause
             return {"error": str(error)}
 
@@ -3465,20 +3484,27 @@ class Runner:
                                          "core_hours": body.get("core_hours")})],
                             before=[("job", jid, self.jobs[jid])])
 
-    async def _owns_job(self, identity: dict) -> bool:
+    async def _owns_job(self, identity: dict, *, include_terminal: bool = False) -> bool:
         """hpc_cancel scope (#172): a job the runner submitted for this agent in this task or request.
 
         A record without the runner's mark came from an older broker that stored ids a task reported (#214 review).
         """
-        job_id = str(identity.get("job_id") or "")
+        return self._hpc_job_owned(identity, str(identity.get("job_id") or ""), include_terminal=include_terminal)
+
+    def _hpc_job_owned(self, identity: dict, job_id: str, *, include_terminal: bool = False) -> bool:
+        return self._hpc_job_record(identity, job_id, include_terminal=include_terminal) is not None
+
+    def _hpc_job_record(self, identity: dict, job_id: str, *, include_terminal: bool = False) -> tuple[str, dict] | None:
+        """Only runner-recorded HPC jobs for this agent and task/request; completed jobs remain readable."""
         for tracked, j in self.jobs.items():
-            if (not j.get("submitted_by_runner") or j.get("terminal") or not job_in_family(tracked, job_id)
+            if (local_jobs.is_local(tracked) or not j.get("submitted_by_runner")
+                    or (j.get("terminal") and not include_terminal) or not job_in_family(tracked, job_id)
                     or j.get("agent_id") != identity.get("agent_id")):
                 continue
             if j.get("task_id") == identity.get("task_id") or (
                     identity.get("request_id") and j.get("request_id") == identity.get("request_id")):
-                return True
-        return False
+                return tracked, j
+        return None
 
     # ---------------- local jobs (#675) ----------------
     def _local_owned(self, identity: dict, job_id: str | None = None) -> list[tuple[str, dict]]:

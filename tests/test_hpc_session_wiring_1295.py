@@ -140,13 +140,14 @@ def stub_runner(tmp_path, cfg, owned=True):
     runner.workspaces, runner.active_roots = {"t1": object()}, {"t1": (False,)}
     runner.jobs, runner.task_req, runner.events = {}, {"t1": "req_1"}, []
 
-    async def owns(identity):
+    async def owns(identity, **kwargs):
         return owned
 
     async def emit(event):
         runner.events.append(event)
 
     runner._owns_job, runner.emit = owns, emit
+    runner._hpc_job_owned = lambda *args, **kwargs: owned
     return runner
 
 
@@ -159,8 +160,10 @@ def test_the_runner_answers_status_queue_and_cancel_through_its_shell(tmp_path, 
     fake = site()
     runner = stub_runner(tmp_path, settings(tmp_path))
     job = runner.scheduler.submit("/work/job.sh", "align")
+    runner.jobs[job] = {"submitted_by_runner": True, "terminal": False, "scheduler": "slurm"}
     assert op(runner, "status", job_id=job)["status"]["state"] == "running"
-    assert [j["job_id"] for j in op(runner, "queue")["queue"]] == [job]
+    queue = op(runner, "queue")
+    assert "error" not in queue and [j["job_id"] for j in queue["queue"]] == [job]
     assert "error" not in op(runner, "cancel", job_id=job)
     assert op(runner, "status", job_id=job)["status"]["state"] in {"cancelled", "missing"}
     assert fake.logins() == 1
@@ -228,8 +231,8 @@ def test_the_tools_route_status_queue_and_cancel_through_the_runner(tmp_path, mo
     assert json.loads(asyncio.run(hpc.hpc_status("7")))["state"] == "running"
     assert json.loads(asyncio.run(hpc.hpc_queue())) == [{"job_id": "7"}]
     assert json.loads(asyncio.run(hpc.hpc_cancel("7")))["result"] == "ok"
-    assert [(p, b["op"]) for p, b in sent] == [("/jobs/submit", "status"), ("/jobs/submit", "queue"),
-                                               ("/jobs/submit", "cancel")]
+    assert [p for p, _ in sent] == ["/jobs/scheduler/status", "/jobs/scheduler/queue", "/jobs/scheduler/cancel"]
+    assert all("op" not in body for _, body in sent)
     monkeypatch.setattr(hpc, "SESSION_ERROR", "hpc.site_profile 'x' cannot be used")
     with pytest.raises(Exception, match="cannot be used"):
         asyncio.run(hpc.hpc_status("7"))
@@ -330,7 +333,7 @@ def test_the_broker_waits_for_a_whole_reconnect(tmp_path, site, monkeypatch):
     # 3 connects of 30 s, waits of 5 s and 10 s, then the 60 s command: more than the old command timeout plus 60 s
     assert session.worst_case_s(60) == 3 * 30 + 5 + 10 + 60
     # the runner's wait for its turn (60 s) comes first, then the reconnect and the command
-    assert hpc._hpc_wait_s() == 60 + 165 and hpc._hpc_wait_s(2) == 2 * 60 + 2 * 60 + 105
+    assert hpc._hpc_wait_s() == 60 + 165 and hpc._hpc_wait_s(2) == 2 * (60 + 165)
 
 
 def test_a_warning_on_stderr_after_the_job_id_is_not_the_job_id(tmp_path, site, monkeypatch):
@@ -493,7 +496,7 @@ def test_a_status_call_is_budgeted_for_its_two_commands(tmp_path, site, monkeypa
     seen = []
 
     async def broker(path, payload, timeout):
-        seen.append((payload["op"], timeout))
+        seen.append((path.rsplit("/", 1)[-1], timeout))
         return {"status": {"state": "running"}, "queue": [], "result": "ok"}
 
     monkeypatch.setattr(hpc, "_broker", broker)
