@@ -207,3 +207,17 @@ def test_a_parameter_expansion_is_not_read_as_an_assignment():
 def test_arithmetic_in_double_quotes_is_a_literal_and_file_path_is_not_a_lookup():
     assert "123456789" not in _clean('TOKEN="$((123456789))"\n', SH)
     assert "hunter2" not in _clean('token <- file.path("hunter2", "xyz")\n', R)
+
+
+def test_an_assignment_shaped_text_inside_a_string_keeps_its_quotes():
+    assert _clean('print("token = example")\n', R) == 'print("token = example")\n'
+    cleaned = _clean('message <- "password = hunter2xyz and more"\nprint(1)\n', R)
+    assert "hunter2xyz" not in cleaned and cleaned.count('"') == 2 and "redacted-secret" in cleaned
+    cleaned = _clean('echo "TOKEN=hunter2xyz done"\n', SH)
+    assert "hunter2xyz" not in cleaned and cleaned.startswith('echo "TOKEN=') and cleaned.count('"') == 2
+    assert _clean('# token = abc123xyz\nx <- 1\n', R) == '# token = abc123xyz\nx <- 1\n'
+
+
+def test_namespaced_base_lookups_are_still_lookups():
+    code = 'token <- base::Sys.getenv("API_TOKEN")\npassword <- utils::readline()\n'
+    assert _clean(code, R) == code

@@ -279,19 +279,45 @@ def _shell_word(text: str, start: int) -> tuple[int, bool]:
     return min(i, len(text)), literal
 
 
+def _quoted_ranges(text: str, comment_after_blank: bool) -> list[tuple[int, int]]:
+    """(open, close) indexes of every quoted string outside comments; the close index is the closing quote, or the
+    end of text when the string never closes. A `#` starts a comment at the start of a line or after a blank (shell),
+    or anywhere outside strings (R)."""
+    ranges, i = [], 0
+    while i < len(text):
+        char = text[i]
+        if char in "'\"":
+            end = _skip_quoted(text, i + 1, char, char == '"' or not comment_after_blank)
+            ranges.append((i, end - 1))
+            i = end
+        elif char == "\\" and comment_after_blank:
+            i += 2
+        elif char == "#" and (not comment_after_blank or i == 0 or text[i - 1] in " \t\r\n;&|("):
+            newline = text.find("\n", i)
+            i = len(text) if newline < 0 else newline
+        else:
+            i += 1
+    return ranges
+
+
+def _enclosing_quote(ranges: list[tuple[int, int]], position: int) -> int | None:
+    """The index of the closing quote of the string that holds `position`, else None."""
+    return next((close for opened, close in ranges if opened < position <= close), None)
+
+
 def _shell_secret_spans(text: str) -> list[tuple[int, int, str]]:
     spans: list[tuple[int, int, str]] = []
     last = 0
+    ranges = _quoted_ranges(text, True)
     for match in _SHELL_ASSIGNMENT.finditer(text):
         start = match.end()
         if start < last:
             continue
-        if match.group("op").startswith(":"):
-            start = match.end()  # `token: value` in a here-document; the blanks are part of the operator
-        end, literal = _shell_word(text, start)
+        close = _enclosing_quote(ranges, match.start())  # `echo "token=abc"`: the value ends at the closing quote
+        end, literal = _shell_word(text[:close] if close is not None else text, start)
         word = text[start:end]
         if literal and word and not word.strip("\"'").startswith(_REDACTED_VALUES):
-            spans.append((start, end, _REDACTED_LITERAL))
+            spans.append((start, end, "<redacted-secret>" if close is not None else _REDACTED_LITERAL))
             last = end
     return spans
 
@@ -335,7 +361,7 @@ def _r_value_is_safe(value: str) -> bool:
     call = re.fullmatch(r"([A-Za-z.][\w.]*(?:::[A-Za-z.][\w.]*)?)\s*\((.*)\)", value, re.S)
     if call is None:
         return False
-    if call.group(1).lower() in _R_SAFE_CALLS:
+    if re.sub(r"^(?:base|utils|methods)::", "", call.group(1).lower()) in _R_SAFE_CALLS:
         return True
     arguments = call.group(2)  # any other call is sure only when it takes no string or number
     return not re.search(r"[\"'`]|(?<![\w.])\d", arguments)
@@ -344,14 +370,16 @@ def _r_value_is_safe(value: str) -> bool:
 def _r_secret_spans(text: str) -> list[tuple[int, int, str]]:
     spans: list[tuple[int, int, str]] = []
     last = 0
+    ranges = _quoted_ranges(text, False)
     for match in _R_NAME.finditer(text):
         start = match.end()
         if start < last:
             continue
-        end = _r_value_end(text, start)
+        close = _enclosing_quote(ranges, match.start())  # `print("token = x")`: the value ends at the closing quote
+        end = _r_value_end(text[:close] if close is not None else text, start)
         value = text[start:end].rstrip()
         if value and not value.strip("\"'").startswith(_REDACTED_VALUES) and not _r_value_is_safe(value):
-            spans.append((start, start + len(value), _REDACTED_LITERAL))
+            spans.append((start, start + len(value), "<redacted-secret>" if close is not None else _REDACTED_LITERAL))
             last = end
     return spans
 
