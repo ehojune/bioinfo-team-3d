@@ -137,8 +137,10 @@ def request_without_wiki_audit(data: Any) -> Any:
     if isinstance(data, dict):
         if (isinstance(data.get("task_id"), str) and isinstance(data.get("agent_id"), str)
                 and isinstance(data.get("ok"), bool)):
-            data = result_without_wiki_audit(data)
-        return {key: request_without_wiki_audit(value) for key, value in data.items()}
+            return result_without_wiki_audit(data)
+        # Arbitrary business payloads can use the same keys and result-shaped objects.
+        return {key: value if key in {"structured", "metadata"} else request_without_wiki_audit(value)
+                for key, value in data.items()}
     if isinstance(data, list):
         return [request_without_wiki_audit(value) for value in data]
     return data

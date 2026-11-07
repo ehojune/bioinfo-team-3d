@@ -322,7 +322,9 @@ def test_request_detail_filters_archived_and_recovery_result_copies_without_muta
     settings.gateway.state_dir = str(tmp_path / "state")
     app = create_app(settings)
     hub = app.state.hub
-    business_data = {"wiki_audit": {"text": "business data"}, "nested": [{"wiki_audit": "keep"}],
+    business_data = {"task_id": "domain-task", "agent_id": "domain-agent", "ok": True,
+                     "wiki_audit": {"text": "business data"},
+                     "nested": [{"task_id": "nested", "agent_id": "domain", "ok": False, "wiki_audit": "keep"}],
                      "partial": {"task_id": "domain-item", "wiki_audit": 7}}
     result = _result(wiki_audit=_record(), structured=business_data).model_dump(mode="json")
     plain = _result(text="plain").model_dump(mode="json")
