@@ -34,7 +34,8 @@ EvidenceStatus = Literal["observed", "unavailable", "not_found", "failed"]
 Relation = Literal["supports", "contradicts", "context"]
 Directness = Literal["direct", "indirect"]
 SourceLevel = Literal["primary", "secondary", "tertiary"]
-AccessStatus = Literal["full_text", "abstract_only", "not_obtained", "paywalled", "undetermined"]
+AccessStatus = Literal["full_text", "abstract_only", "wiki_summary", "not_obtained", "paywalled", "undetermined"]
+WikiFreshness = Literal["ok", "stale", "source_missing", "disputed"]
 SupplementaryStatus = Literal["available", "missing", "not_applicable", "undetermined"]
 LineageStatus = Literal["resolved", "undetermined", "cycle", "dangling"]
 
@@ -52,9 +53,14 @@ RESULT_CONTRACT_FIELD_RULES = (
     "For those evidence kinds: observed requires source.locator; not_found requires source.query; "
     "failed/unavailable requires status_detail.",
     "inference/hypothesis leave status empty, require derived_from, and cannot fill evidence slots.",
-    "source.access_status records full_text/abstract_only/not_obtained/paywalled/undetermined separately from "
+    "source.access_status records full_text/abstract_only/wiki_summary/not_obtained/paywalled/undetermined separately from "
     "evidence.status; not obtaining full text is not a not_found search. Use source.methods_locator, "
     "source.qc_locator and source.supplementary_status for reading gaps and locations.",
+    "A labhq_wiki hit is never evidence of reading the source: record it as literature_claim with "
+    "source.access_status=wiki_summary, source_level=tertiary, directness=indirect, the hit's source.locator "
+    "(wiki:<path>#L<start>-L<end>@<sha>) and wiki_freshness, and never as full_text or an original source. A claim "
+    "rests on the origin only through a recorded full_text read of that origin; stale, source_missing and "
+    "disputed hits cannot support a claim.",
     "Optional evidence.lineage names cited_from evidence ids, or original=true with a basis for confirming "
     "the first empirical source. source_level=primary alone does not confirm an original source.",
     "Each quantity requires value, unit, conditions, denominator; for each missing field put an unknown entry "
@@ -205,12 +211,16 @@ class SourceRef(StrictModel):
     locator: str | None = None  # where in the source: section, table, row, line, JSON pointer
     query: str | None = None  # search scope and filters, required for a zero-result search
     access_status: AccessStatus = "undetermined"  # reading scope, not the evidence retrieval outcome
+    wiki_freshness: WikiFreshness | None = None
     methods_locator: str | None = None
     qc_locator: str | None = None
     supplementary_status: SupplementaryStatus = "undetermined"
 
     @model_validator(mode="after")
     def identifies_something(self) -> "SourceRef":
+        if (self.wiki_freshness is not None) != (self.access_status == "wiki_summary"):
+            raise ValueError("wiki_freshness and wiki_summary access go together: a wiki summary states its freshness "
+                             "and nothing else carries one")
         if (self.id_scheme is None) != (self.id_value is None or not self.id_value.strip()):
             raise ValueError("source id_scheme and id_value must be given together")
         if not any(_present(value) for value in (self.uri, self.id_value, self.artifact_id)):
@@ -404,6 +414,11 @@ class Evidence(StrictModel):
 
     @model_validator(mode="after")
     def kind_shape(self) -> "Evidence":
+        if self.source and self.source.access_status == "wiki_summary":
+            if (self.kind != "literature_claim" or self.source_level != "tertiary"
+                    or self.directness != "indirect" or (self.lineage and self.lineage.original)):
+                raise ValueError(f"evidence {self.id}: wiki_summary is indirect tertiary literature, "
+                                 "not direct reading or an original source")
         if self.origin is not None:
             # A code-written gap is an account of missing output, never a fabricated source or observation.
             if (self.kind != "observation" or self.status != "unavailable" or self.source is not None
@@ -532,6 +547,7 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
 
     seen_pairs: set[tuple[str, str]] = set()
     asserted: dict[str, set[str]] = {}
+    wiki_support: set[str] = set()
     lineage = assess_lineage(evidence, artifact_paths=artifact_paths)
     for link in links:
         claim = claim_by_id.get(link.claim_id)
@@ -558,6 +574,9 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
         elif row.lineage is not None and lineage[row.id].status != "resolved":
             errors.append(f"link {link.claim_id}->{row.id} has {lineage[row.id].status} citation lineage; "
                           "link it as context until the original empirical source is confirmed")
+        elif (link.relation == "supports" and row.source is not None
+              and row.source.access_status == "wiki_summary"):
+            wiki_support.add(link.claim_id)  # a wiki summary is not a reading of the source: it never fills a status
         else:
             asserted.setdefault(link.claim_id, set()).add(link.relation)
 
@@ -571,7 +590,9 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
         needed = STATUS_NEEDS.get(claim.status)
         relations = asserted.get(claim.id, set())
         if needed and needed not in relations:
-            errors.append(f"claim {claim.key} is {claim.status} but no observed countable evidence {needed} it")
+            errors.append(f"claim {claim.key} is {claim.status} but no observed countable evidence {needed} it"
+                          + ("; wiki_summary rows only point at a source and cannot support a claim without a "
+                             "recorded full_text reading" if claim.id in wiki_support else ""))
         if claim.status == "supported" and "contradicts" in relations:
             errors.append(f"claim {claim.key} has contradicting evidence; use partially_supported or contradicted")
     return errors

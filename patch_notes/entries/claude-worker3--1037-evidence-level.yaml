@@ -1,0 +1,10 @@
+pr: 1328
+rows:
+- sha: 'a6b0902'
+  at: 2026-11-07 21:00
+  text: 증거 장부에서 wiki 요약은 wiki_summary(literature_claim, tertiary, indirect)로만 적을 수 있고 원본으로 못 올린다. 같은 주장에 full_text 읽기 기록이 없으면 wiki 요약만으로 supported와 partially_supported를 채우지 못한다. 보고서 근거 표에 wiki 요약과 신선도를 적는다. 결과 계약 prompt 규칙과 결과 스키마(access_status, wiki_freshness)에 반영해 결과 스키마 hash를 의도적으로 바꿨고 계획 스키마·계획 prompt는 그대로다. W1 초안(wiki_contract)을 되살렸으나 단계 결과를 받는 쪽에는 아직 연결하지 않았다
+  summary: wiki 요약만으로는 연구 주장을 지지됨으로 올리지 못하고 보고서에 wiki 요약으로 표시됩니다.
+- sha: '858a420'
+  at: 2026-11-07 22:00
+  text: wiki_summary 접근은 wiki_freshness를 반드시 적어야 하고, wiki_freshness는 wiki_summary 접근에만 쓸 수 있다. 결과가 신선도를 빼면 거절한다
+  summary: wiki 요약 근거는 신선도를 반드시 적어야 합니다.
