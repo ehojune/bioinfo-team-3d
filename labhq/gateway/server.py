@@ -135,8 +135,10 @@ def result_without_wiki_audit(data: Any) -> Any:
 def request_without_wiki_audit(data: Any) -> Any:
     """Project nested result copies too, including archived rounds and continuation recovery."""
     if isinstance(data, dict):
-        return {key: request_without_wiki_audit(value)
-                for key, value in result_without_wiki_audit(data).items()}
+        if (isinstance(data.get("task_id"), str) and isinstance(data.get("agent_id"), str)
+                and isinstance(data.get("ok"), bool)):
+            data = result_without_wiki_audit(data)
+        return {key: request_without_wiki_audit(value) for key, value in data.items()}
     if isinstance(data, list):
         return [request_without_wiki_audit(value) for value in data]
     return data

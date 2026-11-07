@@ -322,9 +322,12 @@ def test_request_detail_filters_archived_and_recovery_result_copies_without_muta
     settings.gateway.state_dir = str(tmp_path / "state")
     app = create_app(settings)
     hub = app.state.hub
-    result = _result(wiki_audit=_record()).model_dump(mode="json")
+    business_data = {"wiki_audit": {"text": "business data"}, "nested": [{"wiki_audit": "keep"}],
+                     "partial": {"task_id": "domain-item", "wiki_audit": 7}}
+    result = _result(wiki_audit=_record(), structured=business_data).model_dump(mode="json")
     plain = _result(text="plain").model_dump(mode="json")
-    request = {"id": "r", "text": "synthetic", "status": "done", "research_contract": {"round": 1}}
+    request = {"id": "r", "text": "synthetic", "status": "done", "research_contract": {"round": 1},
+               "metadata": business_data}
     first = archive_round(request, {"s1": result, "plain": plain})
     request["research_contract"]["round"] = 2
     second = archive_round(request, {"s2": result})
@@ -354,6 +357,8 @@ def test_request_detail_filters_archived_and_recovery_result_copies_without_muta
             assert "results" not in projected
         for exported in copies:
             assert exported == {key: value for key, value in result.items() if key != "wiki_audit"}
+            assert exported["structured"] == business_data
+        assert projected["metadata"] == business_data
         assert archived[0]["results"]["plain"] == plain
         assert hub.requests["r"] == before
         assert hub.store.get("request", "r") == before
