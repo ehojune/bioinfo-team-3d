@@ -10,10 +10,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-08
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 01:00 | [`b6a5302`](https://github.com/ehojune/bioinfo-team-3d/pull/1329/commits/b6a5302) | **wiki 출처 비교가 여러 registry 주소 표기를 인식하고 감사 기록 수집이 더 엄격해졌습니다.**<br>wiki 행의 출처 uri는 SourceRef와 같은 registry 규칙(dx.doi.org, NCBI 주소 등)으로 doi·pmid로 읽어 hit의 기록과 비교한다. 감사 기록은 runner가 쓰였지만 수집하지 않은 파일로 보고한 것이고 심볼릭 링크·하드 링크·outputs 밖 경로가 아닐 때만 labhq가 수집 산출에 올린다 |
+| 00:00 | [`9cfe857`](https://github.com/ehojune/bioinfo-team-3d/pull/1329/commits/9cfe857) | **wiki 근거 행이 도구 기록의 출처를 정확히 적어야 하고 감사 기록은 자동으로 수집됩니다.**<br>wiki 도구는 감사 기록을 dispatch 뒤에 쓰고 runner는 선언된 산출만 수집하므로 단계 결과를 받을 때 labhq가 outputs/wiki_queries.jsonl을 수집 산출에 올리고 hash를 단다. 그렇지 않으면 맞게 적은 wiki 행도 미수집 산출 인용으로 거부됐다. 행이 적은 출처(id와 uri)는 모두 hit의 기록과 같아야 하고, 기록된 출처가 있으면 행이 그것을 적어야 한다 |
+
 ## 2026-11-07
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:00 | [`2c4e8be`](https://github.com/ehojune/bioinfo-team-3d/pull/1329/commits/2c4e8be) | **모델이 적은 wiki 위치·신선도가 도구 기록과 다르면 그 근거를 CP2에서 거부합니다.**<br>단계 결과를 받을 때 wiki를 인용한 근거 행을 그 단계 workdir의 outputs/wiki_queries.jsonl과 대조한다. 기록에 없는 locator, 신선도나 출처가 다른 행, 기록이 없거나 읽을 수 없거나 한 줄이라도 깨진 경우의 모든 wiki 행을 CP2에서 거부 행으로 올리고, 거기서 파생된 행과 그 행에만 기대는 claim도 뺀다. 단계 prompt에 wiki hit을 어떻게 인용할지 규칙을 더했다. 감사 기록은 직원 작업 폴더의 파일이라 독립 출처 인증은 아니다 |
 | 22:00 | [`858a420`](https://github.com/ehojune/bioinfo-team-3d/pull/1328/commits/858a420) | **wiki 요약 근거는 신선도를 반드시 적어야 합니다.**<br>wiki_summary 접근은 wiki_freshness를 반드시 적어야 하고, wiki_freshness는 wiki_summary 접근에만 쓸 수 있다. 결과가 신선도를 빼면 거절한다 |
 | 21:00 | [`a6b0902`](https://github.com/ehojune/bioinfo-team-3d/pull/1328/commits/a6b0902) | **wiki 요약만으로는 연구 주장을 지지됨으로 올리지 못하고 보고서에 wiki 요약으로 표시됩니다.**<br>증거 장부에서 wiki 요약은 wiki_summary(literature_claim, tertiary, indirect)로만 적을 수 있고 원본으로 못 올린다. 같은 주장에 full_text 읽기 기록이 없으면 wiki 요약만으로 supported와 partially_supported를 채우지 못한다. 보고서 근거 표에 wiki 요약과 신선도를 적는다. 결과 계약 prompt 규칙과 결과 스키마(access_status, wiki_freshness)에 반영해 결과 스키마 hash를 의도적으로 바꿨고 계획 스키마·계획 prompt는 그대로다. W1 초안(wiki_contract)을 되살렸으나 단계 결과를 받는 쪽에는 아직 연결하지 않았다 |
 | 19:30 | [`ae696de`](https://github.com/ehojune/bioinfo-team-3d/pull/1327/commits/ae696de) | **동작 변화 없이 노출 상속 계산을 한 곳으로 모았습니다.**<br>노출 상속을 호출하는 네 곳이 아니라 요청 생성 함수에서 revised_from·model_refusal_from 링크로 계산한다. 새 경로가 같은 링크를 쓰면 자동으로 따른다. 링크가 알 수 없는 요청을 가리키면 unknown이라 막는다. 동작은 앞 행과 같다 |
