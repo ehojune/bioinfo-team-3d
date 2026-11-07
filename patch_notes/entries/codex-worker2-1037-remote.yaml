@@ -36,3 +36,7 @@ rows:
   at: 2026-11-07 12:44
   summary: 결과 식별자까지 같은 업무 데이터도 원형으로 보존합니다.
   text: 실제 결과 사본 안과 structured·metadata의 임의 업무 데이터는 재귀 처리하지 않는다. TaskResult와 같은 식별자·동명 audit 키를 가진 업무 객체의 보존을 확인했다. 관련 회귀 247 passed, 1 skipped다.
+- sha: 'ddd928f'
+  at: 2026-11-07 12:56
+  summary: 원문 없는 감사 진단은 기존 API·저장 상태 계약대로 보존합니다.
+  text: 감사 원문이 없는 빈 기록·오류 진단까지 제거해 repeat fake의 API·저장 상태 대조가 실패한 회귀를 수정했다. 원문 payload는 계속 제외하며 관련 회귀와 실제 mock gateway·runner 반복 시험을 합쳐 277 passed, 1 skipped를 확인했다.
