@@ -291,7 +291,7 @@ async def _cp2_card(workdir, **wiki):
         path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
                           structured=_wiki_result(hub, task, **wiki),
-                          outputs=[path, "outputs/wiki_queries.jsonl"], workdir=workdir)
+                          outputs=[path], workdir=workdir)  # the audit is not declared: labhq collects it itself
 
     hub = holder["hub"] = MiniHub(_settings(), reply, mode="orchestrate", work_kind="research", text="compare")
     decisions = [CP1, {"approved": True, "choice": "approve", "note": ""}]
@@ -319,3 +319,47 @@ async def test_a_wiki_row_the_audit_cannot_bear_out_is_refused_at_cp2(tmp_path, 
     card = await _cp2_card(_workdir(tmp_path, _audit() if audit == "REC" else audit), **wiki)
     assert any(row["row_id"] == "e_wiki" and row["reason"].startswith("wiki audit: ") for row in card["refused_rows"])
     assert any(row["evidence_id"] == "e_wiki" for row in card["refused_evidence"])
+
+
+def test_the_wiki_tools_own_audit_file_is_collected_with_its_hash(tmp_path):
+    from labhq.evidence.wiki_contract import AUDIT, collect_audit
+    result = TaskResult(task_id="t", agent_id="a", ok=True, outputs=["outputs/x.tsv"], output_sha256={"outputs/x.tsv": "1"},
+                        unreported_outputs=[AUDIT, "outputs/other.md"], workdir=_workdir(tmp_path, _audit()))
+    collected = collect_audit(result)
+    assert collected.outputs == ["outputs/x.tsv", AUDIT] and collected.unreported_outputs == ["outputs/other.md"]
+    import hashlib
+    assert collected.output_sha256[AUDIT] == hashlib.sha256((tmp_path / AUDIT).read_bytes()).hexdigest()
+    assert collect_audit(collected) is collected  # already collected
+    missing = TaskResult(task_id="t", agent_id="a", ok=True, workdir=str(tmp_path / "nowhere"))
+    assert collect_audit(missing) is missing and collect_audit(TaskResult(task_id="t", agent_id="a", ok=True)).outputs == []
+
+
+def _origin_ledger(freshness="ok", **source):
+    ledger = _wiki_ledger(freshness=freshness)
+    ledger["evidence"][0]["source"].pop("id_scheme")
+    ledger["evidence"][0]["source"].pop("id_value")
+    ledger["evidence"][0]["source"].update(source)
+    return ledger
+
+
+@pytest.mark.parametrize("source,accepted", [
+    ({"id_scheme": "doi", "id_value": "10.1234/EXAMPLE"}, True),
+    ({"uri": "https://doi.org/10.1234/example"}, True),
+    ({"id_scheme": "doi", "id_value": "10.1234/example", "uri": "https://doi.org/10.1234/example/"}, True),
+    ({}, False),  # names only the audit artifact: the recorded origin is missing
+    ({"uri": "https://example.org/unrelated"}, False),
+    ({"id_scheme": "doi", "id_value": "10.1234/example", "uri": "https://example.org/unrelated"}, False),
+    ({"id_scheme": "pmid", "id_value": "123"}, False),
+], ids=["doi-id", "doi-uri", "doi-both", "no-origin", "unrelated-uri", "good-id-bad-uri", "other-scheme"])
+def test_a_row_must_name_the_origin_the_hit_recorded_and_nothing_else(tmp_path, source, accepted):
+    rows, _ = step_findings(_origin_ledger(**source), _workdir(tmp_path, _audit()))
+    assert (rows == []) is accepted, rows
+
+
+def test_a_hit_without_an_origin_cannot_be_given_one(tmp_path):
+    record = _json.loads(_audit(freshness="source_missing"))
+    record["hits"][0]["origin"] = None
+    text = _json.dumps(record) + chr(10)
+    assert step_findings(_origin_ledger(freshness="source_missing"), _workdir(tmp_path, text))[0] == []
+    rows, _ = step_findings(_wiki_ledger(freshness="source_missing"), _workdir(tmp_path, text))  # still names a DOI
+    assert rows and "origin does not match" in rows[0]["reason"]

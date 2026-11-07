@@ -1,6 +1,7 @@
 """Consumer of the v1 wiki audit record: checks wiki-linked evidence of a step result against it (#1037)."""
 
 import datetime
+import hashlib
 import json
 import re
 from pathlib import Path, PurePosixPath
@@ -152,6 +153,25 @@ AUDIT = "outputs/wiki_queries.jsonl"
 MAX_AUDIT_BYTES = 4 << 20
 
 
+def _stated_origins(source: dict) -> list[dict[str, str]]:
+    """Every origin a row's source names: its id pair and its uri, with doi.org and PubMed links read as doi and pmid."""
+    found: list[dict[str, str]] = []
+    scheme, value = source.get("id_scheme"), source.get("id_value")
+    if scheme or value:
+        found.append({str(scheme): value.lower() if scheme == "doi" and isinstance(value, str) else value})
+    uri = source.get("uri")
+    if isinstance(uri, str) and uri.strip():
+        text = uri.strip()
+        low = text.lower().rstrip("/")
+        if low.startswith("https://doi.org/"):
+            found.append({"doi": low[len("https://doi.org/"):]})
+        elif low.startswith("https://pubmed.ncbi.nlm.nih.gov/"):
+            found.append({"pmid": low[len("https://pubmed.ncbi.nlm.nih.gov/"):]})
+        else:
+            found.append({"url": text})
+    return found
+
+
 def _wiki_row(row: dict) -> bool:
     source = row.get("source") or {}
     return source.get("access_status") == "wiki_summary" or (source.get("locator") or "").startswith("wiki:")
@@ -187,12 +207,12 @@ def wiki_findings(ledger: dict, calls: list[WikiCall]) -> tuple[dict[str, str], 
         if source.get("wiki_freshness") != hit.freshness:
             bad_evidence[ident] = "freshness does not match hit"
             continue
-        scheme, value = source.get("id_scheme"), source.get("id_value")
-        if scheme or value:
-            expected = {scheme: value.lower() if scheme == "doi" and isinstance(value, str) else value}
-            if expected != hit.origin:
-                bad_evidence[ident] = "origin does not match hit"
-                continue
+        stated = _stated_origins(source)
+        # What the row names as the original must be what the hit recorded; a hit with a recorded origin cannot be
+        # cited without it, and a hit with none cannot be given one.
+        if any(origin != hit.origin for origin in stated) or (hit.origin is not None and not stated):
+            bad_evidence[ident] = "origin does not match hit"
+            continue
         wiki_hits[ident] = hit
     for claim in ledger.get("claims", []):
         links = [link for link in ledger.get("links", []) if link.get("claim_id") == claim.get("id")
@@ -218,6 +238,26 @@ def wiki_findings(ledger: dict, calls: list[WikiCall]) -> tuple[dict[str, str], 
             elif claim.get("status") == "supported" and len(hits) == len(linked) and not direct:
                 bad_claims[claim.get("id")] = "wiki-only support cannot be supported"
     return bad_evidence, bad_claims
+
+
+def collect_audit(result):
+    """The step result with the wiki tool's own audit file listed among its collected outputs, hashed as it is now.
+
+    The tool writes the file after dispatch, and the runner collects only declared paths, so without this a correctly
+    audited row would be refused as citing an uncollected artifact. Nothing changes when the file is absent, unreadable
+    here, over the size limit, or already collected."""
+    if AUDIT in result.outputs or not result.workdir:
+        return result
+    path = Path(result.workdir) / AUDIT
+    try:
+        if not path.is_file() or path.stat().st_size > MAX_AUDIT_BYTES:
+            return result
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return result
+    return result.model_copy(update={
+        "outputs": [*result.outputs, AUDIT], "output_sha256": {**result.output_sha256, AUDIT: digest},
+        "unreported_outputs": [name for name in result.unreported_outputs if name != AUDIT]})
 
 
 def check_wiki_ledger(ledger: dict, calls: list[WikiCall]) -> list[str]:

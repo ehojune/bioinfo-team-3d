@@ -34,6 +34,7 @@ from ..model_refusal import REASON as MODEL_REFUSAL_REASON, ModelRefused, is_mod
 from ..pi_text import PI_TEXT_RULE
 from ..evidence import wiki_exposure
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
+from ..evidence.wiki_contract import collect_audit as wiki_collect_audit
 from ..evidence.wiki_contract import step_findings as wiki_step_findings
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups, claim_evidence_rows, claim_evidence_section)
@@ -5675,6 +5676,7 @@ class Orchestrator:
                 if not outcome.ok:
                     return outcome
 
+                outcome = await asyncio.to_thread(wiki_collect_audit, outcome)  # the wiki tool's own file (#1037)
                 original = outcome
                 current = outcome
                 limit = self.hub.s.research.result_corrections
