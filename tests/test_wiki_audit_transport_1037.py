@@ -5,10 +5,13 @@ import os
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from labhq.evidence.wiki_contract import AUDIT, MAX_AUDIT_BYTES, capture_audit, collect_audit, step_findings
+from labhq.gateway.server import create_app, snapshot_event, SNAPSHOT_RESULT_CHARS
 from labhq.models import Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator
+from labhq.settings import Settings
 from tests.test_read_only_profile import _runner, _staff, _wire
 from tests.test_research_cp2 import CP1, _settings
 from tests.test_research_protocol import MiniHub, valid_plan
@@ -209,3 +212,73 @@ async def test_correction_cannot_replace_the_original_audit_or_its_error_state(f
 async def test_old_runner_local_record_is_frozen_before_correction(tmp_path, fault):
     workdir = _workdir(tmp_path, _audit() if fault == "changed-record" else None)
     await test_remote_result_reaches_actual_cp2_with_fail_closed_findings(fault, "correction", workdir)
+
+
+@pytest.mark.asyncio
+async def test_gateway_keeps_internal_audit_but_omits_it_from_durable_and_live_events(tmp_path):
+    import asyncio
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    result = _result(wiki_audit=_record())
+    event = {"type": "task.result", "task_id": result.task_id, "data": result.model_dump(mode="json")}
+    hub.store.put("task", result.task_id, {"payload": {"agent_id": result.agent_id}})
+    future = hub.futures[result.task_id] = asyncio.get_running_loop().create_future()
+    sent = []
+
+    class Client:
+        async def send_text(self, text):
+            sent.append(json.loads(text))
+
+    hub.clients.add(Client())
+    try:
+        await hub.on_runner_message("synthetic-runner", event)
+        internal = future.result()
+        assert internal.wiki_audit == result.wiki_audit
+        assert step_findings(_wiki_ledger(), None, collect_audit(internal)) == ([], [])
+        assert hub.store.get("task", result.task_id)["result"]["wiki_audit"] == result.wiki_audit.model_dump()
+        assert event["data"]["wiki_audit"] == result.wiki_audit.model_dump()
+        for events in (hub.store.events_since(0), list(hub.events), sent):
+            published = [item for item in events if item["type"] == "task.result"]
+            assert len(published) == 1
+            assert "wiki_audit" not in published[0]["data"]
+            assert published[0]["data"]["task_id"] == result.task_id
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize("text", ["brief", "x" * (SNAPSHOT_RESULT_CHARS + 1)])
+def test_snapshot_removes_legacy_audit_without_mutating_the_internal_event(text):
+    event = {"type": "task.result", "seq": 7, "data": {"text": text, "wiki_audit": _record()}}
+    snapshot = snapshot_event(event)
+    assert "wiki_audit" not in snapshot["data"]
+    assert snapshot["data"]["text"] == text[:SNAPSHOT_RESULT_CHARS]
+    assert snapshot["seq"] == 7
+    assert event["data"] == {"text": text, "wiki_audit": _record()}
+
+
+def test_legacy_stored_events_are_filtered_on_reconnect_and_http_replay(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    event = hub.store.append_event({"type": "task.result", "task_id": "t",
+                                   "data": {"text": "brief", "wiki_audit": _record()}},
+                                  settings.gateway.event_buffer)
+    hub.events.append(event)
+    headers = {"Authorization": f"Bearer {settings.gateway.client_token}"}
+    with TestClient(app) as client:
+        for suffix in ("", "?since=0"):
+            replay = client.get("/api/events" + suffix, headers=headers).json()
+            result = next(item for item in replay if item["type"] == "task.result")
+            assert "wiki_audit" not in result["data"]
+            assert result["seq"] == event["seq"]
+        for suffix in ("", "&since=0"):
+            with client.websocket_connect(f"/ws/client?token={settings.gateway.client_token}" + suffix) as ws:
+                replay = ws.receive_json()
+                if replay["type"] == "snapshot":
+                    replay = next(item for item in replay["data"]["recent_events"] if item["type"] == "task.result")
+                assert "wiki_audit" not in replay["data"]
+                assert replay["seq"] == event["seq"]
+        assert hub.store.events_since(0)[0]["data"]["wiki_audit"] == _record()

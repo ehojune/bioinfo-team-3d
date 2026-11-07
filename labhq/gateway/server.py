@@ -125,10 +125,19 @@ def snapshot_followup(entry: dict) -> dict:
     return {**entry, "answer": answer[:SNAPSHOT_ANSWER_CHARS], "answer_truncated": True, "answer_chars": len(answer)}
 
 
+def event_without_wiki_audit(event: dict) -> dict:
+    """Keep the audit transport on internal results, outside stored and replayed UI events."""
+    data = event.get("data")
+    if event.get("type") == "task.result" and isinstance(data, dict) and "wiki_audit" in data:
+        return {**event, "data": {key: value for key, value in data.items() if key != "wiki_audit"}}
+    return event
+
+
 def snapshot_event(event: dict) -> dict:
     """The snapshot copy of a replayed event. A follow-up's answer is also the text of its task's `task.result`,
     sent by the runner unclipped, so that text is cut too. A replay never shows it whole: the web keeps
     task.result text only for plan steps, and the snapshot's `step_details` replace it with the same head."""
+    event = event_without_wiki_audit(event)
     data = event.get("data")
     if not isinstance(data, dict):
         return event
@@ -3778,7 +3787,7 @@ class Hub:
 
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None,
                       activity: tuple[str, Callable[[dict], dict]] | None = None) -> None:
-        ev = copy.deepcopy(ev)
+        ev = copy.deepcopy(event_without_wiki_audit(ev))
         internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
         if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
             ev = {**ev, "data": {**ev.get("data", {}), "level": "debug"}}
@@ -6472,7 +6481,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                 await ws.send_text(json.dumps(snap, ensure_ascii=False, default=str))
             else:
                 for ev in hub.store.events_since(since):
-                    await ws.send_text(json.dumps(ev, ensure_ascii=False, default=str))
+                    await ws.send_text(json.dumps(event_without_wiki_audit(ev), ensure_ascii=False, default=str))
             hub.clients.add(ws)
         try:
             while True:
@@ -6940,13 +6949,13 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         # Match WebSocket replay: no partial buffer while publication awaits a commit.
         async with hub.event_lock:
             if since is None:
-                return list(hub.events)[-limit:]
+                return [event_without_wiki_audit(ev) for ev in list(hub.events)[-limit:]]
             oldest, latest = hub.store.event_bounds()
             if since < oldest - 1 or since > latest:
                 snap = hub.snapshot()
                 snap["replay_gap"] = {"requested_since": since, "oldest_seq": oldest}
                 return [snap]
-            return hub.store.events_since(since, max(1, limit))
+            return [event_without_wiki_audit(ev) for ev in hub.store.events_since(since, max(1, limit))]
 
     @app.get("/api/shutdown-readiness", dependencies=[Depends(auth)])
     async def shutdown_readiness() -> dict:
