@@ -128,7 +128,7 @@ def snapshot_followup(entry: dict) -> dict:
 def event_without_wiki_audit(event: dict) -> dict:
     """Keep the audit transport on internal results, outside stored and replayed UI events."""
     data = event.get("data")
-    if event.get("type") == "task.result" and isinstance(data, dict) and "wiki_audit" in data:
+    if event.get("type") == "task.result" and isinstance(data, dict) and data.get("wiki_audit") is not None:
         return {**event, "data": {key: value for key, value in data.items() if key != "wiki_audit"}}
     return event
 

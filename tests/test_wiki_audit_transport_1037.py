@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from labhq.evidence.wiki_contract import AUDIT, MAX_AUDIT_BYTES, capture_audit, collect_audit, step_findings
-from labhq.gateway.server import create_app, snapshot_event, SNAPSHOT_RESULT_CHARS
+from labhq.gateway.server import create_app, event_without_wiki_audit, snapshot_event, SNAPSHOT_RESULT_CHARS
 from labhq.models import Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator
 from labhq.settings import Settings
@@ -256,6 +256,13 @@ def test_snapshot_removes_legacy_audit_without_mutating_the_internal_event(text)
     assert snapshot["data"]["text"] == text[:SNAPSHOT_RESULT_CHARS]
     assert snapshot["seq"] == 7
     assert event["data"] == {"text": text, "wiki_audit": _record()}
+
+
+def test_empty_audit_preserves_the_existing_result_event_shape():
+    event = {"type": "task.result", "data": _result(text="brief").model_dump(mode="json")}
+    assert event["data"]["wiki_audit"] is None
+    assert event_without_wiki_audit(event) is event
+    assert snapshot_event(event) is event
 
 
 def test_legacy_stored_events_are_filtered_on_reconnect_and_http_replay(tmp_path):
