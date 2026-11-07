@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: 'f392267'
+  at: 2026-11-07 12:00
+  summary: 다른 머신에서 온 wiki 근거도 runner가 보낸 감사 기록과 대조합니다.
+  text: runner가 최대 4 MiB의 UTF-8 감사 원문과 SHA-256을 TaskResult에 싣고 수집 산출로 등록한다. gateway는 기존 행별 대조를 재사용하며 누락·손상·크기 초과·hash 불일치는 거부한다. 구형 결과의 로컬 읽기를 유지하고 결과 교정은 최초 수집 hash에 묶는다. 합성 시험만 확인했으며 실제 원격 runner와 공개 보호는 UNVERIFIED다.
