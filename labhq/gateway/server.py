@@ -125,11 +125,19 @@ def snapshot_followup(entry: dict) -> dict:
     return {**entry, "answer": answer[:SNAPSHOT_ANSWER_CHARS], "answer_truncated": True, "answer_chars": len(answer)}
 
 
+def result_without_wiki_audit(data: Any) -> Any:
+    """Project an internal result for UI delivery, preserving legacy null fields."""
+    if isinstance(data, dict) and data.get("wiki_audit") is not None:
+        return {key: value for key, value in data.items() if key != "wiki_audit"}
+    return data
+
+
 def event_without_wiki_audit(event: dict) -> dict:
     """Keep the audit transport on internal results, outside stored and replayed UI events."""
-    data = event.get("data")
-    if event.get("type") == "task.result" and isinstance(data, dict) and data.get("wiki_audit") is not None:
-        return {**event, "data": {key: value for key, value in data.items() if key != "wiki_audit"}}
+    if event.get("type") == "task.result":
+        data = result_without_wiki_audit(event.get("data"))
+        if data is not event.get("data"):
+            return {**event, "data": data}
     return event
 
 
@@ -6719,7 +6727,11 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         # requests' uses of each skill come from the most recent requests, and the view says how many were read.
         rows, truncated = history_rows(hub.requests)
         view = with_previous_uses(literature_view(hub.requests[rid]), skill_history(rows), rid, len(rows), truncated)
-        return {**hub.requests[rid], "paper_literature": view}
+        request = dict(hub.requests[rid])
+        if isinstance(request.get("results"), dict):
+            request["results"] = {sid: result_without_wiki_audit(result)
+                                  for sid, result in request["results"].items()}
+        return {**request, "paper_literature": view}
 
     @app.get("/api/requests/{rid}/audit-bundle", dependencies=[Depends(auth)])
     async def audit_bundle(rid: str) -> Response:

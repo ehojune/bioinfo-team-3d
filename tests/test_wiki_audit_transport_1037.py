@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from labhq.evidence.wiki_contract import AUDIT, MAX_AUDIT_BYTES, capture_audit, collect_audit, step_findings
-from labhq.gateway.server import create_app, event_without_wiki_audit, snapshot_event, SNAPSHOT_RESULT_CHARS
+from labhq.gateway.server import create_app, event_without_wiki_audit, SavedResults, snapshot_event, SNAPSHOT_RESULT_CHARS
 from labhq.models import Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator
 from labhq.settings import Settings
@@ -289,3 +289,26 @@ def test_legacy_stored_events_are_filtered_on_reconnect_and_http_replay(tmp_path
                 assert "wiki_audit" not in replay["data"]
                 assert replay["seq"] == event["seq"]
         assert hub.store.events_since(0)[0]["data"]["wiki_audit"] == _record()
+
+
+def test_request_detail_omits_all_audit_payloads_but_preserves_internal_saved_results(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.requests["r"] = {"id": "r", "text": "synthetic", "status": "done"}
+    results = SavedResults(hub, "r")
+    for sid in ("s1", "s2"):
+        results[sid] = _result(wiki_audit=_record())
+    results["plain"] = _result(text="plain")
+    headers = {"Authorization": f"Bearer {settings.gateway.client_token}"}
+    with TestClient(app) as client:
+        response = client.get("/api/requests/r", headers=headers)
+        assert response.status_code == 200
+        projected = response.json()["results"]
+        for sid in ("s1", "s2"):
+            assert "wiki_audit" not in projected[sid]
+            assert hub.requests["r"]["results"][sid]["wiki_audit"] == results[sid].wiki_audit.model_dump()
+            stored = TaskResult.model_validate(hub.store.get("request", "r")["results"][sid])
+            assert step_findings(_wiki_ledger(), None, collect_audit(stored)) == ([], [])
+        assert projected["plain"] == results["plain"].model_dump(mode="json")
