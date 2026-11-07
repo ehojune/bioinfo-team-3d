@@ -125,10 +125,44 @@ def snapshot_followup(entry: dict) -> dict:
     return {**entry, "answer": answer[:SNAPSHOT_ANSWER_CHARS], "answer_truncated": True, "answer_chars": len(answer)}
 
 
+def result_without_wiki_audit(data: Any) -> Any:
+    """Project an internal result for UI delivery, preserving empty audit diagnostics."""
+    if isinstance(data, dict) and data.get("wiki_audit") is not None:
+        audit = data["wiki_audit"]
+        if isinstance(audit, dict) and audit.get("text") == "":
+            return data
+        return {key: value for key, value in data.items() if key != "wiki_audit"}
+    return data
+
+
+def request_without_wiki_audit(data: Any) -> Any:
+    """Project nested result copies too, including archived rounds and continuation recovery."""
+    if isinstance(data, dict):
+        if (isinstance(data.get("task_id"), str) and isinstance(data.get("agent_id"), str)
+                and isinstance(data.get("ok"), bool)):
+            return result_without_wiki_audit(data)
+        # Arbitrary business payloads can use the same keys and result-shaped objects.
+        return {key: value if key in {"structured", "metadata"} else request_without_wiki_audit(value)
+                for key, value in data.items()}
+    if isinstance(data, list):
+        return [request_without_wiki_audit(value) for value in data]
+    return data
+
+
+def event_without_wiki_audit(event: dict) -> dict:
+    """Keep the audit transport on internal results, outside stored and replayed UI events."""
+    if event.get("type") == "task.result":
+        data = result_without_wiki_audit(event.get("data"))
+        if data is not event.get("data"):
+            return {**event, "data": data}
+    return event
+
+
 def snapshot_event(event: dict) -> dict:
     """The snapshot copy of a replayed event. A follow-up's answer is also the text of its task's `task.result`,
     sent by the runner unclipped, so that text is cut too. A replay never shows it whole: the web keeps
     task.result text only for plan steps, and the snapshot's `step_details` replace it with the same head."""
+    event = event_without_wiki_audit(event)
     data = event.get("data")
     if not isinstance(data, dict):
         return event
@@ -3778,7 +3812,7 @@ class Hub:
 
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None,
                       activity: tuple[str, Callable[[dict], dict]] | None = None) -> None:
-        ev = copy.deepcopy(ev)
+        ev = copy.deepcopy(event_without_wiki_audit(ev))
         internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
         if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
             ev = {**ev, "data": {**ev.get("data", {}), "level": "debug"}}
@@ -6472,7 +6506,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                 await ws.send_text(json.dumps(snap, ensure_ascii=False, default=str))
             else:
                 for ev in hub.store.events_since(since):
-                    await ws.send_text(json.dumps(ev, ensure_ascii=False, default=str))
+                    await ws.send_text(json.dumps(event_without_wiki_audit(ev), ensure_ascii=False, default=str))
             hub.clients.add(ws)
         try:
             while True:
@@ -6710,7 +6744,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         # requests' uses of each skill come from the most recent requests, and the view says how many were read.
         rows, truncated = history_rows(hub.requests)
         view = with_previous_uses(literature_view(hub.requests[rid]), skill_history(rows), rid, len(rows), truncated)
-        return {**hub.requests[rid], "paper_literature": view}
+        request = request_without_wiki_audit(hub.requests[rid])
+        return {**request, "paper_literature": view}
 
     @app.get("/api/requests/{rid}/audit-bundle", dependencies=[Depends(auth)])
     async def audit_bundle(rid: str) -> Response:
@@ -6940,13 +6975,13 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         # Match WebSocket replay: no partial buffer while publication awaits a commit.
         async with hub.event_lock:
             if since is None:
-                return list(hub.events)[-limit:]
+                return [event_without_wiki_audit(ev) for ev in list(hub.events)[-limit:]]
             oldest, latest = hub.store.event_bounds()
             if since < oldest - 1 or since > latest:
                 snap = hub.snapshot()
                 snap["replay_gap"] = {"requested_since": since, "oldest_seq": oldest}
                 return [snap]
-            return hub.store.events_since(since, max(1, limit))
+            return [event_without_wiki_audit(ev) for ev in hub.store.events_since(since, max(1, limit))]
 
     @app.get("/api/shutdown-readiness", dependencies=[Depends(auth)])
     async def shutdown_readiness() -> dict:

@@ -35,8 +35,8 @@ lookup-only. 동작 설명은 [manual 12장](../manual/12-github-reports.md), �
 | 증거 수준 검사: `wiki_summary` 행은 literature_claim·tertiary·indirect이고 원본(lineage.original)이 될 수 없다(`claims.py` 검증). 같은 주장에 `full_text` 읽기 기록이 없으면 wiki 요약만으로 `supported`·`partially_supported`를 채우지 못한다(`ledger_errors`). 요약이 반대 방향이면 그대로 세어 `supported`를 막는다(숨기지 않는다). 보고서 근거 표는 `wiki 요약 (신선도)`로 적는다 | 막음 |
 | 결과 계약 prompt 규칙(`RESULT_CONTRACT_FIELD_RULES`)과 결과 스키마(`access_status`에 `wiki_summary`, `wiki_freshness`) | 반영. 결과 스키마 hash를 의도적으로 갱신했다(계획 스키마·계획 prompt·`VALID_PLAN_SHA`는 그대로) |
 | 단계 결과를 받을 때 감사 기록 대조(`orchestrator/cso.py`의 `save_salvage` → `wiki_contract.step_findings`) | 연결함: wiki를 인용한 행은 그 단계 workdir의 `outputs/wiki_queries.jsonl`과 대조한다. 기록에 없는 locator, 신선도가 다른 행, 기록된 출처를 적지 않았거나(id·uri 어느 쪽이든 하나라도 다르면 포함) 기록에 없는 출처를 단 행, 기록을 읽을 수 없거나 한 줄이라도 깨진 경우의 모든 wiki 행은 CP2에서 거부 행(`wiki audit: …`)이 된다. 그 행에서 파생된 행과 그 행에만 기대는 claim도 함께 빠진다(fail-closed) |
-| 감사 기록의 수집 | wiki 도구는 감사 기록을 dispatch 뒤에 쓰고 runner는 선언된 산출만 수집하므로, 단계 결과를 받을 때 labhq가 그 파일(`outputs/wiki_queries.jsonl`)을 직접 수집 산출에 올리고 hash를 단다(`collect_audit`). 그렇지 않으면 맞게 적은 행도 미수집 산출을 인용한 것으로 거부된다 |
-| 한계 | 감사 기록은 직원의 작업 폴더 안 파일이라 직원이 고쳐 쓸 수 있다(독립 출처 인증이 아니다). gateway가 workdir를 직접 읽을 수 없는 runner(다른 머신·WSL)면 읽을 수 없어 wiki 행이 모두 거부된다 |
+| 감사 기록의 수집·전달 | runner가 `outputs/wiki_queries.jsonl`의 UTF-8 원문(최대 4 MiB)과 SHA-256을 `TaskResult.wiki_audit`에 싣고 수집 산출에도 등록한다. gateway는 전송 hash·수집 hash와 기존 행별 대조를 확인한다. 누락·손상·크기 초과·hash 불일치는 거부하며 전달값이 잘못됐다고 로컬 파일로 대체하지 않는다. 구형 결과만 기존 로컬 읽기를 쓴다 |
+| 한계 | 감사 기록은 직원의 작업 폴더 안 파일이라 직원이 고쳐 쓸 수 있다. 전송 hash는 독립 출처 인증이 아니다. 원격 전달은 합성 runner·CP2 시험으로만 확인했다. 실제 WSL·다른 머신과 공개 보호는 **UNVERIFIED**다 |
 | 독립 출처 인증, wiki 본문·경로 마스크 | 후속 |
 
 ## 한계

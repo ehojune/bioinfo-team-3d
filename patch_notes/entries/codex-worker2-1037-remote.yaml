@@ -1,0 +1,42 @@
+pr: 1330
+rows:
+- sha: 'f392267'
+  at: 2026-11-07 11:28
+  summary: 다른 머신에서 온 wiki 근거도 runner가 보낸 감사 기록과 대조합니다.
+  text: runner가 최대 4 MiB의 UTF-8 감사 원문과 SHA-256을 TaskResult에 싣고 수집 산출로 등록한다. gateway는 기존 행별 대조를 재사용하며 누락·손상·크기 초과·hash 불일치는 거부한다. 구형 결과의 로컬 읽기를 유지하고 결과 교정은 최초 수집 hash에 묶는다. 합성 시험만 확인했으며 실제 원격 runner와 공개 보호는 UNVERIFIED다.
+- sha: '12fae9c'
+  at: 2026-11-07 11:31
+  summary: 감사 기록의 binary 읽기를 encoding 검사에서도 올바르게 확인합니다.
+  text: 파일 열기의 mode를 키워드로 명시해 binary 읽기가 text I/O로 잘못 판정되지 않게 한다. encoding·전송 합성 시험은 56 passed, 1 skipped다.
+- sha: '1618a33'
+  at: 2026-11-07 11:34
+  summary: 결과 교정이 누락되거나 잘못된 최초 감사 기록을 바꿔 쓰지 못하게 합니다.
+  text: 최초 TaskResult의 감사 원문·hash뿐 아니라 누락·오류 상태도 고정한다. 구형 결과의 로컬 기록도 최초 수신 때 고정한다. 교정이 새 정상 기록을 보내더라도 최초 기록으로만 CP2에서 대조한다. 기록 교체·누락 보충·손상 보충 회귀를 포함해 wiki·CP2·encoding 합성 시험 198 passed, 1 skipped를 확인했다.
+- sha: '80396c8'
+  at: 2026-11-07 12:00
+  summary: wiki 감사 원문을 게시 event와 재접속 snapshot에서 제외합니다.
+  text: 내부 결과·CP2 대조 원문은 보존하며 task.result 영구 event와 구형 event의 snapshot·WebSocket·HTTP replay에서 wiki_audit를 제외한다. 관련 합성 시험 209 passed, 1 skipped와 runner·출력형 회귀 128 passed를 확인했다. 실제 원격 runner·공개 보호는 UNVERIFIED다.
+- sha: '00c41e6'
+  at: 2026-11-07 12:15
+  summary: 감사 원문이 없는 결과의 기존 null 필드를 보존합니다.
+  text: Linux CI에서 발견한 followup 응답 형식 회귀를 수정했다. 원문 payload만 제거하고 wiki_audit null은 유지한다. 기존 followup 시험과 전용 회귀를 포함해 244 passed, 1 skipped를 확인했다.
+- sha: '65e64df'
+  at: 2026-11-07 12:24
+  summary: 요청 상세 API에서도 wiki 감사 원문을 제외합니다.
+  text: 내부 request·저장 결과는 보존하고 요청 상세 응답의 각 results에서만 감사 payload를 제외한다. 기존 null 필드는 유지하며 저장된 결과의 CP2 대조 보존을 합성 시험으로 확인했다. 관련 회귀 245 passed, 1 skipped다.
+- sha: '81c6341'
+  at: 2026-11-07 12:31
+  summary: 보관 차수와 복구 기록의 감사 원문도 상세 응답에서 제외합니다.
+  text: 요청 상세 projection을 중첩 결과에도 적용해 보관 차수·continuation 복구·solo·교정 대기 사본의 payload를 제외한다. 현재 결과가 없는 요청도 확인했으며 내부·저장 원문과 CP2 대조를 보존한다. 관련 회귀 247 passed, 1 skipped다.
+- sha: 'c163a21'
+  at: 2026-11-07 12:37
+  summary: 업무 데이터에 쓰인 동명 audit 필드를 보존합니다.
+  text: 요청 상세 projection에서 task_id·agent_id·ok를 갖춘 결과 사본만 감사 transport 제거 대상으로 삼는다. structured·metadata의 동명 업무 데이터와 불완전한 식별 필드는 유지한다. 관련 회귀 247 passed, 1 skipped다.
+- sha: 'b40ffe2'
+  at: 2026-11-07 12:44
+  summary: 결과 식별자까지 같은 업무 데이터도 원형으로 보존합니다.
+  text: 실제 결과 사본 안과 structured·metadata의 임의 업무 데이터는 재귀 처리하지 않는다. TaskResult와 같은 식별자·동명 audit 키를 가진 업무 객체의 보존을 확인했다. 관련 회귀 247 passed, 1 skipped다.
+- sha: 'ddd928f'
+  at: 2026-11-07 12:56
+  summary: 원문 없는 감사 진단은 기존 API·저장 상태 계약대로 보존합니다.
+  text: 감사 원문이 없는 빈 기록·오류 진단까지 제거해 repeat fake의 API·저장 상태 대조가 실패한 회귀를 수정했다. 원문 payload는 계속 제외하며 관련 회귀와 실제 mock gateway·runner 반복 시험을 합쳐 277 passed, 1 skipped를 확인했다.
