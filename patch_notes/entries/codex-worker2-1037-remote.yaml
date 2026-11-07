@@ -24,3 +24,7 @@ rows:
   at: 2026-11-07 12:24
   summary: 요청 상세 API에서도 wiki 감사 원문을 제외합니다.
   text: 내부 request·저장 결과는 보존하고 요청 상세 응답의 각 results에서만 감사 payload를 제외한다. 기존 null 필드는 유지하며 저장된 결과의 CP2 대조 보존을 합성 시험으로 확인했다. 관련 회귀 245 passed, 1 skipped다.
+- sha: '81c6341'
+  at: 2026-11-07 12:31
+  summary: 보관 차수와 복구 기록의 감사 원문도 상세 응답에서 제외합니다.
+  text: 요청 상세 projection을 중첩 결과에도 적용해 보관 차수·continuation 복구·solo·교정 대기 사본의 payload를 제외한다. 현재 결과가 없는 요청도 확인했으며 내부·저장 원문과 CP2 대조를 보존한다. 관련 회귀 247 passed, 1 skipped다.
