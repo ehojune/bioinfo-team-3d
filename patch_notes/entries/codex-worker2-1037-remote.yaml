@@ -12,3 +12,7 @@ rows:
   at: 2026-11-07 11:34
   summary: 결과 교정이 누락되거나 잘못된 최초 감사 기록을 바꿔 쓰지 못하게 합니다.
   text: 최초 TaskResult의 감사 원문·hash뿐 아니라 누락·오류 상태도 고정한다. 구형 결과의 로컬 기록도 최초 수신 때 고정한다. 교정이 새 정상 기록을 보내더라도 최초 기록으로만 CP2에서 대조한다. 기록 교체·누락 보충·손상 보충 회귀를 포함해 wiki·CP2·encoding 합성 시험 198 passed, 1 skipped를 확인했다.
+- sha: '80396c8'
+  at: 2026-11-07 12:00
+  summary: wiki 감사 원문을 게시 event와 재접속 snapshot에서 제외합니다.
+  text: 내부 결과·CP2 대조 원문은 보존하며 task.result 영구 event와 구형 event의 snapshot·WebSocket·HTTP replay에서 wiki_audit를 제외한다. 관련 합성 시험 209 passed, 1 skipped와 runner·출력형 회귀 128 passed를 확인했다. 실제 원격 runner·공개 보호는 UNVERIFIED다.
