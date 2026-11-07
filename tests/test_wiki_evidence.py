@@ -291,7 +291,8 @@ async def _cp2_card(workdir, **wiki):
         path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
                           structured=_wiki_result(hub, task, **wiki),
-                          outputs=[path], workdir=workdir)  # the audit is not declared: labhq collects it itself
+                          outputs=[path], workdir=workdir,  # the audit is not declared: labhq collects it itself
+                          unreported_outputs=["outputs/wiki_queries.jsonl"])
 
     hub = holder["hub"] = MiniHub(_settings(), reply, mode="orchestrate", work_kind="research", text="compare")
     decisions = [CP1, {"approved": True, "choice": "approve", "note": ""}]
@@ -330,6 +331,21 @@ def test_the_wiki_tools_own_audit_file_is_collected_with_its_hash(tmp_path):
     import hashlib
     assert collected.output_sha256[AUDIT] == hashlib.sha256((tmp_path / AUDIT).read_bytes()).hexdigest()
     assert collect_audit(collected) is collected  # already collected
+    not_listed = result.model_copy(update={"unreported_outputs": []})
+    assert collect_audit(not_listed) is not_listed  # the runner did not see it written
+    shared = tmp_path / "shared.jsonl"
+    shared.write_text(_audit(), encoding="utf-8")
+    (tmp_path / AUDIT).unlink()
+    try:
+        (tmp_path / AUDIT).symlink_to(shared)
+    except OSError:  # no symlink privilege on this machine
+        pass
+    else:
+        assert collect_audit(result) is result  # a symlink is not the tool's file
+        (tmp_path / AUDIT).unlink()
+    import os
+    os.link(shared, tmp_path / AUDIT)
+    assert collect_audit(result) is result  # a hard link shares its inode with another path
     missing = TaskResult(task_id="t", agent_id="a", ok=True, workdir=str(tmp_path / "nowhere"))
     assert collect_audit(missing) is missing and collect_audit(TaskResult(task_id="t", agent_id="a", ok=True)).outputs == []
 
@@ -345,12 +361,14 @@ def _origin_ledger(freshness="ok", **source):
 @pytest.mark.parametrize("source,accepted", [
     ({"id_scheme": "doi", "id_value": "10.1234/EXAMPLE"}, True),
     ({"uri": "https://doi.org/10.1234/example"}, True),
+    ({"uri": "https://dx.doi.org/10.1234/EXAMPLE"}, True),
+    ({"uri": "https://doi.org/10.1234/other"}, False),
     ({"id_scheme": "doi", "id_value": "10.1234/example", "uri": "https://doi.org/10.1234/example/"}, True),
     ({}, False),  # names only the audit artifact: the recorded origin is missing
     ({"uri": "https://example.org/unrelated"}, False),
     ({"id_scheme": "doi", "id_value": "10.1234/example", "uri": "https://example.org/unrelated"}, False),
     ({"id_scheme": "pmid", "id_value": "123"}, False),
-], ids=["doi-id", "doi-uri", "doi-both", "no-origin", "unrelated-uri", "good-id-bad-uri", "other-scheme"])
+], ids=["doi-id", "doi-uri", "doi-dx-uri", "other-doi-uri", "doi-both", "no-origin", "unrelated-uri", "good-id-bad-uri", "other-scheme"])
 def test_a_row_must_name_the_origin_the_hit_recorded_and_nothing_else(tmp_path, source, accepted):
     rows, _ = step_findings(_origin_ledger(**source), _workdir(tmp_path, _audit()))
     assert (rows == []) is accepted, rows

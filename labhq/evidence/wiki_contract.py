@@ -2,6 +2,7 @@
 
 import datetime
 import hashlib
+import stat
 import json
 import re
 from pathlib import Path, PurePosixPath
@@ -10,7 +11,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, model_validator
 from typing import Literal
 
-from .claims import STATUS_NEEDS
+from .claims import STATUS_NEEDS, registry_id
 
 
 class StrictRecord(BaseModel):
@@ -154,21 +155,18 @@ MAX_AUDIT_BYTES = 4 << 20
 
 
 def _stated_origins(source: dict) -> list[dict[str, str]]:
-    """Every origin a row's source names: its id pair and its uri, with doi.org and PubMed links read as doi and pmid."""
+    """Every origin a row's source names: its id pair and its uri, a registry link read as the id it names."""
     found: list[dict[str, str]] = []
     scheme, value = source.get("id_scheme"), source.get("id_value")
     if scheme or value:
         found.append({str(scheme): value.lower() if scheme == "doi" and isinstance(value, str) else value})
     uri = source.get("uri")
     if isinstance(uri, str) and uri.strip():
-        text = uri.strip()
-        low = text.lower().rstrip("/")
-        if low.startswith("https://doi.org/"):
-            found.append({"doi": low[len("https://doi.org/"):]})
-        elif low.startswith("https://pubmed.ncbi.nlm.nih.gov/"):
-            found.append({"pmid": low[len("https://pubmed.ncbi.nlm.nih.gov/"):]})
+        named = registry_id(uri)
+        if named is not None:
+            found.append({named[0]: named[1].lower() if named[0] == "doi" else named[1]})
         else:
-            found.append({"url": text})
+            found.append({"url": uri.strip()})
     return found
 
 
@@ -244,14 +242,18 @@ def collect_audit(result):
     """The step result with the wiki tool's own audit file listed among its collected outputs, hashed as it is now.
 
     The tool writes the file after dispatch, and the runner collects only declared paths, so without this a correctly
-    audited row would be refused as citing an uncollected artifact. Nothing changes when the file is absent, unreadable
-    here, over the size limit, or already collected."""
-    if AUDIT in result.outputs or not result.workdir:
-        return result
+    audited row would be refused as citing an uncollected artifact. Only the runner's own unreported-output record
+    qualifies, and nothing changes when the file is absent, a symlink or hard link, outside outputs/, unreadable here,
+    over the size limit, or already collected."""
+    if AUDIT in result.outputs or AUDIT not in result.unreported_outputs or not result.workdir:
+        return result  # only a file the runner itself saw written and left uncollected
     path = Path(result.workdir) / AUDIT
     try:
-        if not path.is_file() or path.stat().st_size > MAX_AUDIT_BYTES:
-            return result
+        info = path.lstat()
+        real = path.resolve(strict=True)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_AUDIT_BYTES
+                or not real.is_relative_to((Path(result.workdir) / "outputs").resolve())):
+            return result  # a link, a shared inode or a path leaving outputs/ is not the tool's file
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return result
