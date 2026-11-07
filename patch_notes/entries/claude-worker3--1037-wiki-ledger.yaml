@@ -8,3 +8,7 @@ rows:
   at: 2026-11-08 00:00
   text: wiki 도구는 감사 기록을 dispatch 뒤에 쓰고 runner는 선언된 산출만 수집하므로 단계 결과를 받을 때 labhq가 outputs/wiki_queries.jsonl을 수집 산출에 올리고 hash를 단다. 그렇지 않으면 맞게 적은 wiki 행도 미수집 산출 인용으로 거부됐다. 행이 적은 출처(id와 uri)는 모두 hit의 기록과 같아야 하고, 기록된 출처가 있으면 행이 그것을 적어야 한다
   summary: wiki 근거 행이 도구 기록의 출처를 정확히 적어야 하고 감사 기록은 자동으로 수집됩니다.
+- sha: 'b6a5302'
+  at: 2026-11-08 01:00
+  text: wiki 행의 출처 uri는 SourceRef와 같은 registry 규칙(dx.doi.org, NCBI 주소 등)으로 doi·pmid로 읽어 hit의 기록과 비교한다. 감사 기록은 runner가 쓰였지만 수집하지 않은 파일로 보고한 것이고 심볼릭 링크·하드 링크·outputs 밖 경로가 아닐 때만 labhq가 수집 산출에 올린다
+  summary: wiki 출처 비교가 여러 registry 주소 표기를 인식하고 감사 기록 수집이 더 엄격해졌습니다.
