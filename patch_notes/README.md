@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:00 | [`858a420`](https://github.com/ehojune/bioinfo-team-3d/pull/1328/commits/858a420) | **wiki 요약 근거는 신선도를 반드시 적어야 합니다.**<br>wiki_summary 접근은 wiki_freshness를 반드시 적어야 하고, wiki_freshness는 wiki_summary 접근에만 쓸 수 있다. 결과가 신선도를 빼면 거절한다 |
+| 21:00 | [`a6b0902`](https://github.com/ehojune/bioinfo-team-3d/pull/1328/commits/a6b0902) | **wiki 요약만으로는 연구 주장을 지지됨으로 올리지 못하고 보고서에 wiki 요약으로 표시됩니다.**<br>증거 장부에서 wiki 요약은 wiki_summary(literature_claim, tertiary, indirect)로만 적을 수 있고 원본으로 못 올린다. 같은 주장에 full_text 읽기 기록이 없으면 wiki 요약만으로 supported와 partially_supported를 채우지 못한다. 보고서 근거 표에 wiki 요약과 신선도를 적는다. 결과 계약 prompt 규칙과 결과 스키마(access_status, wiki_freshness)에 반영해 결과 스키마 hash를 의도적으로 바꿨고 계획 스키마·계획 prompt는 그대로다. W1 초안(wiki_contract)을 되살렸으나 단계 결과를 받는 쪽에는 아직 연결하지 않았다 |
 | 19:30 | [`ae696de`](https://github.com/ehojune/bioinfo-team-3d/pull/1327/commits/ae696de) | **동작 변화 없이 노출 상속 계산을 한 곳으로 모았습니다.**<br>노출 상속을 호출하는 네 곳이 아니라 요청 생성 함수에서 revised_from·model_refusal_from 링크로 계산한다. 새 경로가 같은 링크를 쓰면 자동으로 따른다. 링크가 알 수 없는 요청을 가리키면 unknown이라 막는다. 동작은 앞 행과 같다 |
 | 19:00 | [`06c02f2`](https://github.com/ehojune/bioinfo-team-3d/pull/1327/commits/06c02f2) | **수정 요청이나 다시 시작으로 연 요청도 원래 요청의 wiki 노출 때문에 게시가 막힙니다.**<br>CP1 수정 요청과 모델 거부 뒤 다시 시작한 요청이 부모의 wiki 노출 수준으로 시작한다. 부모가 possible이거나 기록이 없으면 새 요청도 게시가 막힌다. 재시작 뒤에도 기록이 유지되고 wiki_tools 키가 없는 구형 runner에 보낸 요청은 possible이 되는 것과 결과 올리기의 새 저장소 생성 직전 재확인을 시험으로 고정했다. manual 12장과 참고 문서를 맞췄다 |
 | 17:40 | [`2b4ceb6`](https://github.com/ehojune/bioinfo-team-3d/pull/1325/commits/2b4ceb6) | **시험 fixture만 고쳤고 사용자에게 보이는 변화는 없습니다.**<br>라운드 기록 시험의 요청 fixture가 created_at이 작다는 우연에 기대고 있어 wiki 노출 none을 명시했다. 시험 코드만 바꿨다 |
