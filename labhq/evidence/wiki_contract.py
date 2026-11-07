@@ -1,13 +1,15 @@
-"""Consumer of the v1 wiki audit record; no producer or publication wiring yet."""
+"""Consumer of the v1 wiki audit record: checks wiki-linked evidence of a step result against it (#1037)."""
 
 import datetime
 import json
 import re
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, model_validator
 from typing import Literal
+
+from .claims import STATUS_NEEDS
 
 
 class StrictRecord(BaseModel):
@@ -146,38 +148,50 @@ def public_wiki_metadata(hit: WikiHit, *, approved_urls: set[str]) -> dict:
     return {"origin_url": url if url in approved_urls else None, "freshness": hit.freshness}
 
 
-def check_wiki_ledger(ledger: dict, calls: list[WikiCall]) -> list[str]:
-    """Check wiki-linked evidence against recorded hits and linked full-text evidence.
+AUDIT = "outputs/wiki_queries.jsonl"
+MAX_AUDIT_BYTES = 4 << 20
 
-    This function must be called with the actual trusted audit artifact, not model-generated JSON.
-    """
-    errors = []
+
+def _wiki_row(row: dict) -> bool:
+    source = row.get("source") or {}
+    return source.get("access_status") == "wiki_summary" or (source.get("locator") or "").startswith("wiki:")
+
+
+def wiki_findings(ledger: dict, calls: list[WikiCall]) -> tuple[dict[str, str], dict[str, str]]:
+    """Evidence ids and claim ids the audit record does not bear out, each with the reason.
+
+    Checks wiki-linked evidence against recorded hits and linked full-text evidence. ``calls`` must come from the
+    audit file the wiki tool wrote, never from model-generated JSON. A row that cites no recorded locator, states a
+    freshness the hit does not have, or names another origin is refused. A claim that a stale, source-missing or
+    disputed hit would support, or that rests on a wiki summary alone, is unsupported."""
+    bad_evidence: dict[str, str] = {}
+    bad_claims: dict[str, str] = {}
     refs = {ref.get("artifact_id"): ref.get("path") for ref in ledger.get("artifact_refs", [])}
     evidence = {row.get("id"): row for row in ledger.get("evidence", [])}
     wiki_hits = {}
     for ident, row in evidence.items():
         source = row.get("source") or {}
         locator = source.get("locator") or ""
-        if source.get("access_status") != "wiki_summary" and not locator.startswith("wiki:"):
+        if not _wiki_row(row):
             continue
         if (source.get("access_status") != "wiki_summary" or row.get("kind") != "literature_claim"
                 or row.get("source_level") != "tertiary" or row.get("directness") != "indirect"
-                or refs.get(source.get("artifact_id")) != "outputs/wiki_queries.jsonl"):
-            errors.append(f"evidence {ident}: invalid wiki classification or artifact reference")
+                or refs.get(source.get("artifact_id")) != AUDIT):
+            bad_evidence[ident] = "invalid wiki classification or artifact reference"
             continue
         try:
             hit = resolve_locator(calls, locator)
         except ValueError as exc:
-            errors.append(f"evidence {ident}: {exc}")
+            bad_evidence[ident] = str(exc)
             continue
         if source.get("wiki_freshness") != hit.freshness:
-            errors.append(f"evidence {ident}: freshness does not match hit")
+            bad_evidence[ident] = "freshness does not match hit"
             continue
         scheme, value = source.get("id_scheme"), source.get("id_value")
         if scheme or value:
             expected = {scheme: value.lower() if scheme == "doi" and isinstance(value, str) else value}
             if expected != hit.origin:
-                errors.append(f"evidence {ident}: origin does not match hit")
+                bad_evidence[ident] = "origin does not match hit"
                 continue
         wiki_hits[ident] = hit
     for claim in ledger.get("claims", []):
@@ -200,7 +214,64 @@ def check_wiki_ledger(ledger: dict, calls: list[WikiCall]) -> list[str]:
         for hit in hits:
             direct, limitations = wiki_support(hit, origins)
             if "excluded from support" in limitations:
-                errors.append(f"claim {claim.get('id')}: {hit.freshness} wiki hit cannot support")
+                bad_claims[claim.get("id")] = f"{hit.freshness} wiki hit cannot support"
             elif claim.get("status") == "supported" and len(hits) == len(linked) and not direct:
-                errors.append(f"claim {claim.get('id')}: wiki-only support cannot be supported")
-    return errors
+                bad_claims[claim.get("id")] = "wiki-only support cannot be supported"
+    return bad_evidence, bad_claims
+
+
+def check_wiki_ledger(ledger: dict, calls: list[WikiCall]) -> list[str]:
+    """`wiki_findings` as one line per defect."""
+    bad_evidence, bad_claims = wiki_findings(ledger, calls)
+    return ([f"evidence {ident}: {reason}" for ident, reason in bad_evidence.items()]
+            + [f"claim {ident}: {reason}" for ident, reason in bad_claims.items()])
+
+
+def load_audit(workdir: str | None) -> tuple[list[WikiCall] | None, str]:
+    """The step's audit record read from its workdir, or None with the reason. One malformed line rejects it all."""
+    if not workdir:
+        return None, "the step has no workdir"
+    path = Path(workdir) / AUDIT
+    try:
+        if not path.is_file():
+            return None, f"{AUDIT} is not readable by the gateway"
+        if path.stat().st_size > MAX_AUDIT_BYTES:
+            return None, f"{AUDIT} is larger than {MAX_AUDIT_BYTES} bytes"
+        return read_wiki_jsonl(path.read_text(encoding="utf-8")), ""
+    except (OSError, ValueError) as exc:  # UnicodeDecodeError and JSON errors are ValueErrors
+        return None, f"{AUDIT} is not a valid v1 record ({type(exc).__name__})"
+
+
+def step_findings(ledger: dict, workdir: str | None) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Rows and claims CP2 must refuse for one accepted step result, shaped as ``result_salvage`` records them.
+
+    Fail-closed: a ledger with wiki-linked evidence and no readable, valid audit record has every such row refused,
+    because the only proof of what the wiki returned is that record. Nothing is read when no row is wiki-linked."""
+    rows = [row for row in ledger.get("evidence", []) if isinstance(row, dict)]
+    if not any(_wiki_row(row) for row in rows):
+        return [], []
+    calls, reason = load_audit(workdir)
+    if calls is None:
+        bad_evidence = {row.get("id"): f"no usable wiki audit record: {reason}" for row in rows if _wiki_row(row)}
+        bad_claims: dict[str, str] = {}
+    else:
+        bad_evidence, bad_claims = wiki_findings(ledger, calls)
+    pending = True
+    while pending:  # everything derived from a refused row is refused with it
+        pending = False
+        for row in rows:
+            parents = sorted(ref for ref in row.get("derived_from") or [] if ref in bad_evidence)
+            if row.get("id") not in bad_evidence and parents:
+                bad_evidence[row.get("id")] = f"derived from refused evidence {', '.join(parents)}"
+                pending = True
+    unsupported = dict(bad_claims)
+    for claim in ledger.get("claims", []):
+        needed = STATUS_NEEDS.get(claim.get("status"))
+        cited = sorted({link.get("evidence_id") for link in ledger.get("links", [])
+                        if link.get("claim_id") == claim.get("id") and link.get("relation") == needed})
+        if needed and cited and all(ident in bad_evidence for ident in cited):
+            unsupported.setdefault(claim.get("id"), f"{claim.get('status')} rests only on refused evidence "
+                                                    f"{', '.join(cited)}")
+    return ([{"row_type": "evidence", "row_id": ident, "reason": "wiki audit: " + reason}
+             for ident, reason in bad_evidence.items()],
+            [{"claim_id": ident, "reason": "wiki audit: " + reason} for ident, reason in unsupported.items()])
