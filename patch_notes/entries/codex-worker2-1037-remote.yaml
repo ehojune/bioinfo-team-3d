@@ -28,3 +28,7 @@ rows:
   at: 2026-11-07 12:31
   summary: 보관 차수와 복구 기록의 감사 원문도 상세 응답에서 제외합니다.
   text: 요청 상세 projection을 중첩 결과에도 적용해 보관 차수·continuation 복구·solo·교정 대기 사본의 payload를 제외한다. 현재 결과가 없는 요청도 확인했으며 내부·저장 원문과 CP2 대조를 보존한다. 관련 회귀 247 passed, 1 skipped다.
+- sha: 'c163a21'
+  at: 2026-11-07 12:37
+  summary: 업무 데이터에 쓰인 동명 audit 필드를 보존합니다.
+  text: 요청 상세 projection에서 task_id·agent_id·ok를 갖춘 결과 사본만 감사 transport 제거 대상으로 삼는다. structured·metadata의 동명 업무 데이터와 불완전한 식별 필드는 유지한다. 관련 회귀 247 passed, 1 skipped다.
