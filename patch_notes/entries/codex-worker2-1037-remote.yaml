@@ -16,3 +16,7 @@ rows:
   at: 2026-11-07 12:00
   summary: wiki 감사 원문을 게시 event와 재접속 snapshot에서 제외합니다.
   text: 내부 결과·CP2 대조 원문은 보존하며 task.result 영구 event와 구형 event의 snapshot·WebSocket·HTTP replay에서 wiki_audit를 제외한다. 관련 합성 시험 209 passed, 1 skipped와 runner·출력형 회귀 128 passed를 확인했다. 실제 원격 runner·공개 보호는 UNVERIFIED다.
+- sha: '00c41e6'
+  at: 2026-11-07 12:15
+  summary: 감사 원문이 없는 결과의 기존 null 필드를 보존합니다.
+  text: Linux CI에서 발견한 followup 응답 형식 회귀를 수정했다. 원문 payload만 제거하고 wiki_audit null은 유지한다. 기존 followup 시험과 전용 회귀를 포함해 244 passed, 1 skipped를 확인했다.
