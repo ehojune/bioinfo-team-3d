@@ -34,6 +34,8 @@ from ..model_refusal import REASON as MODEL_REFUSAL_REASON, ModelRefused, is_mod
 from ..pi_text import PI_TEXT_RULE
 from ..evidence import wiki_exposure
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
+from ..evidence.wiki_contract import collect_audit as wiki_collect_audit
+from ..evidence.wiki_contract import step_findings as wiki_step_findings
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups, claim_evidence_rows, claim_evidence_section)
 from ..evidence.verify import LiveSourceResolver, verification_lines, verify_sources
@@ -1044,7 +1046,11 @@ RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_
     "(access_status, methods_locator, qc_locator, supplementary_status), with DOI/PMID and the exact "
     "source.locator you read. A stored receipt records access, not support: locate Methods/QC after reading, "
     "retain missing supplements, and set Evidence.lineage only from verified empirical origins or explicit "
-    "re-citation IDs; otherwise leave it unknown.")
+    "re-citation IDs; otherwise leave it unknown."
+    "\n- A labhq_wiki hit goes into artifact_refs as outputs/wiki_queries.jsonl and is cited with the hit's own "
+    "locator, wiki_freshness and origin. labhq checks them against that file, which the wiki tool wrote in your "
+    "workspace, and refuses a row the file does not bear out or when it cannot read it. Never edit that file or "
+    "write a locator or freshness the tool did not return.")
 
 # What both reviews are asked about the declared checklist (#586). The context block that follows the prompt lists
 # the ids (plan_review_context); labhq reads the answers in review_with_checklist and checklist_appendix.
@@ -5670,13 +5676,26 @@ class Orchestrator:
                 if not outcome.ok:
                     return outcome
 
+                outcome = await asyncio.to_thread(wiki_collect_audit, outcome)  # the wiki tool's own file (#1037)
                 original = outcome
                 current = outcome
                 limit = self.hub.s.research.result_corrections
 
-                async def save_salvage(refused_rows: list[dict], unsupported_claims: list[dict]) -> None:
+                async def save_salvage(refused_rows: list[dict], unsupported_claims: list[dict],
+                                       ledger: dict | None = None, workdir: str | None = None) -> None:
                     if req_state is None:
                         return
+                    if ledger is not None:
+                        # Wiki-linked evidence is judged against the audit record the wiki tool wrote in this step's
+                        # workdir, never against what the model says it saw; what the record does not bear out is
+                        # refused like any other row the contract refuses (#1037).
+                        wiki_rows, wiki_unsupported = await asyncio.to_thread(wiki_step_findings, ledger, workdir)
+                        seen = {(row["row_type"], row["row_id"]) for row in refused_rows}
+                        refused_rows = [*refused_rows, *(row for row in wiki_rows
+                                                         if (row["row_type"], row["row_id"]) not in seen)]
+                        claimed = {row["claim_id"] for row in unsupported_claims}
+                        unsupported_claims = [*unsupported_claims, *(row for row in wiki_unsupported
+                                                                     if row["claim_id"] not in claimed)]
                     contract = req_state.get("research_contract") or {}
                     salvage = contract.setdefault("result_salvage", {})
                     if refused_rows or unsupported_claims:
@@ -5701,7 +5720,7 @@ class Orchestrator:
 
                 async def accept(ledger: Any, via: TaskResult) -> TaskResult:
                     collect_paper_usage(via)
-                    await save_salvage([], [])
+                    await save_salvage([], [], ledger.model_dump(mode="json"), via.workdir or original.workdir)
                     return original.model_copy(update={
                         "structured": ledger.model_dump(mode="json"),
                         "session_id": via.session_id or original.session_id,
@@ -5822,10 +5841,12 @@ class Orchestrator:
                             slots = missing_result_slots(candidate, plan=research_plan, expected_step_id=step["id"])
                             if slots:
                                 repaired = await repair_slots(candidate, slots)
-                                await save_salvage(refused_rows, unsupported_claims)
+                                await save_salvage(refused_rows, unsupported_claims, candidate,
+                                                   current.workdir or original.workdir)
                                 return repaired
                         if salvaged is not None and refused_rows:
-                            await save_salvage(refused_rows, unsupported_claims)
+                            await save_salvage(refused_rows, unsupported_claims, candidate,
+                                               current.workdir or original.workdir)
                             return original.model_copy(update={
                                 "structured": salvaged.model_dump(mode="json"),
                                 "session_id": current.session_id or original.session_id,
