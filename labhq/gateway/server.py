@@ -126,8 +126,11 @@ def snapshot_followup(entry: dict) -> dict:
 
 
 def result_without_wiki_audit(data: Any) -> Any:
-    """Project an internal result for UI delivery, preserving legacy null fields."""
+    """Project an internal result for UI delivery, preserving empty audit diagnostics."""
     if isinstance(data, dict) and data.get("wiki_audit") is not None:
+        audit = data["wiki_audit"]
+        if isinstance(audit, dict) and audit.get("text") == "":
+            return data
         return {key: value for key, value in data.items() if key != "wiki_audit"}
     return data
 

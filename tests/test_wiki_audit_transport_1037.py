@@ -260,9 +260,10 @@ def test_snapshot_removes_legacy_audit_without_mutating_the_internal_event(text)
     assert event["data"] == {"text": text, "wiki_audit": _record()}
 
 
-def test_empty_audit_preserves_the_existing_result_event_shape():
-    event = {"type": "task.result", "data": _result(text="brief").model_dump(mode="json")}
-    assert event["data"]["wiki_audit"] is None
+@pytest.mark.parametrize("audit", [None, {"error": "missing audit file"}])
+def test_empty_audit_preserves_the_existing_result_event_shape(audit):
+    event = {"type": "task.result", "data": _result(text="brief", wiki_audit=audit).model_dump(mode="json")}
+    assert not (event["data"]["wiki_audit"] or {}).get("text")
     assert event_without_wiki_audit(event) is event
     assert snapshot_event(event) is event
 
@@ -302,7 +303,7 @@ def test_request_detail_omits_all_audit_payloads_but_preserves_internal_saved_re
     results = SavedResults(hub, "r")
     for sid in ("s1", "s2"):
         results[sid] = _result(wiki_audit=_record())
-    results["plain"] = _result(text="plain")
+    results["plain"] = _result(text="plain", wiki_audit={"error": "missing audit file"})
     headers = {"Authorization": f"Bearer {settings.gateway.client_token}"}
     with TestClient(app) as client:
         response = client.get("/api/requests/r", headers=headers)
