@@ -5682,14 +5682,19 @@ class Orchestrator:
                 limit = self.hub.s.research.result_corrections
 
                 async def save_salvage(refused_rows: list[dict], unsupported_claims: list[dict],
-                                       ledger: dict | None = None, workdir: str | None = None) -> None:
+                                       ledger: dict | None = None, workdir: str | None = None,
+                                       via: TaskResult | None = None) -> None:
                     if req_state is None:
                         return
                     if ledger is not None:
                         # Wiki-linked evidence is judged against the audit record the wiki tool wrote in this step's
                         # workdir, never against what the model says it saw; what the record does not bear out is
                         # refused like any other row the contract refuses (#1037).
-                        wiki_rows, wiki_unsupported = await asyncio.to_thread(wiki_step_findings, ledger, workdir)
+                        # Corrections cannot replace the bytes already collected for this step's artifact bindings.
+                        audit_result = (via.model_copy(update={"output_sha256": {
+                            **via.output_sha256, **original.output_sha256}}) if via is not None else None)
+                        wiki_rows, wiki_unsupported = await asyncio.to_thread(
+                            wiki_step_findings, ledger, workdir, audit_result)
                         seen = {(row["row_type"], row["row_id"]) for row in refused_rows}
                         refused_rows = [*refused_rows, *(row for row in wiki_rows
                                                          if (row["row_type"], row["row_id"]) not in seen)]
@@ -5720,7 +5725,7 @@ class Orchestrator:
 
                 async def accept(ledger: Any, via: TaskResult) -> TaskResult:
                     collect_paper_usage(via)
-                    await save_salvage([], [], ledger.model_dump(mode="json"), via.workdir or original.workdir)
+                    await save_salvage([], [], ledger.model_dump(mode="json"), via.workdir or original.workdir, via)
                     return original.model_copy(update={
                         "structured": ledger.model_dump(mode="json"),
                         "session_id": via.session_id or original.session_id,
@@ -5842,11 +5847,11 @@ class Orchestrator:
                             if slots:
                                 repaired = await repair_slots(candidate, slots)
                                 await save_salvage(refused_rows, unsupported_claims, candidate,
-                                                   current.workdir or original.workdir)
+                                                   current.workdir or original.workdir, current)
                                 return repaired
                         if salvaged is not None and refused_rows:
                             await save_salvage(refused_rows, unsupported_claims, candidate,
-                                               current.workdir or original.workdir)
+                                               current.workdir or original.workdir, current)
                             return original.model_copy(update={
                                 "structured": salvaged.model_dump(mode="json"),
                                 "session_id": current.session_id or original.session_id,

@@ -2,6 +2,7 @@
 
 import datetime
 import hashlib
+import os
 import stat
 import json
 import re
@@ -12,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Strict
 from typing import Literal
 
 from .claims import STATUS_NEEDS, registry_id
+from ..models import TaskResult, WikiAuditRecord, WIKI_AUDIT_MAX_BYTES
 
 
 class StrictRecord(BaseModel):
@@ -151,7 +153,7 @@ def public_wiki_metadata(hit: WikiHit, *, approved_urls: set[str]) -> dict:
 
 
 AUDIT = "outputs/wiki_queries.jsonl"
-MAX_AUDIT_BYTES = 4 << 20
+MAX_AUDIT_BYTES = WIKI_AUDIT_MAX_BYTES
 
 
 def _stated_origins(source: dict) -> list[dict[str, str]]:
@@ -245,6 +247,14 @@ def collect_audit(result):
     audited row would be refused as citing an uncollected artifact. Only the runner's own unreported-output record
     qualifies, and nothing changes when the file is absent, a symlink or hard link, outside outputs/, unreadable here,
     over the size limit, or already collected."""
+    if result.wiki_audit is not None:
+        calls, _ = transported_audit(result)
+        if calls is None:
+            return result
+        return result.model_copy(update={
+            "outputs": list(dict.fromkeys([*result.outputs, AUDIT])),
+            "output_sha256": {**result.output_sha256, AUDIT: result.wiki_audit.sha256},
+            "unreported_outputs": [name for name in result.unreported_outputs if name != AUDIT]})
     if AUDIT in result.outputs or AUDIT not in result.unreported_outputs or not result.workdir:
         return result  # only a file the runner itself saw written and left uncollected
     path = Path(result.workdir) / AUDIT
@@ -260,6 +270,50 @@ def collect_audit(result):
     return result.model_copy(update={
         "outputs": [*result.outputs, AUDIT], "output_sha256": {**result.output_sha256, AUDIT: digest},
         "unreported_outputs": [name for name in result.unreported_outputs if name != AUDIT]})
+
+
+def capture_audit(result: TaskResult) -> TaskResult:
+    """Read a bounded plain file on the runner. Always send a record, including failures, to prevent local fallback."""
+    try:
+        if not result.workdir:
+            raise ValueError("missing workdir")
+        root = Path(result.workdir).resolve(strict=True)
+        path = root / AUDIT
+        info = path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or info.st_size > MAX_AUDIT_BYTES or path.resolve(strict=True) != path):
+            raise ValueError("unsafe or oversized audit file")
+        with path.open("rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+                    or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)):
+                raise ValueError("audit file changed")
+            raw = stream.read(MAX_AUDIT_BYTES + 1)
+        if len(raw) > MAX_AUDIT_BYTES:
+            raise ValueError("oversized audit file")
+        record = WikiAuditRecord(text=raw.decode("utf-8"), sha256=hashlib.sha256(raw).hexdigest())
+    except (OSError, ValueError):
+        record = WikiAuditRecord(error="audit file missing, unsafe, unreadable or oversized")
+    return collect_audit(result.model_copy(update={"wiki_audit": record}))
+
+
+def transported_audit(result: TaskResult) -> tuple[list[WikiCall] | None, str]:
+    """Use only this result's transported bytes; validate both transport and collected-output hashes."""
+    record = result.wiki_audit
+    if record is None or record.error:
+        return None, "missing or invalid audit transport"
+    try:
+        raw = record.text.encode("utf-8")
+        if len(raw) > MAX_AUDIT_BYTES:
+            return None, "oversized audit transport"
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest != record.sha256:
+            return None, "audit transport hash mismatch"
+        if AUDIT in result.output_sha256 and result.output_sha256[AUDIT] != digest:
+            return None, "audit collected-output hash mismatch"
+        return read_wiki_jsonl(record.text), ""
+    except (ValueError, TypeError):
+        return None, "audit transport is not a valid v1 record"
 
 
 def check_wiki_ledger(ledger: dict, calls: list[WikiCall]) -> list[str]:
@@ -284,7 +338,8 @@ def load_audit(workdir: str | None) -> tuple[list[WikiCall] | None, str]:
         return None, f"{AUDIT} is not a valid v1 record ({type(exc).__name__})"
 
 
-def step_findings(ledger: dict, workdir: str | None) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+def step_findings(ledger: dict, workdir: str | None, result: TaskResult | None = None
+                  ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """Rows and claims CP2 must refuse for one accepted step result, shaped as ``result_salvage`` records them.
 
     Fail-closed: a ledger with wiki-linked evidence and no readable, valid audit record has every such row refused,
@@ -292,7 +347,8 @@ def step_findings(ledger: dict, workdir: str | None) -> tuple[list[dict[str, str
     rows = [row for row in ledger.get("evidence", []) if isinstance(row, dict)]
     if not any(_wiki_row(row) for row in rows):
         return [], []
-    calls, reason = load_audit(workdir)
+    calls, reason = (transported_audit(result) if result is not None and result.wiki_audit is not None
+                     else load_audit(workdir))
     if calls is None:
         bad_evidence = {row.get("id"): f"no usable wiki audit record: {reason}" for row in rows if _wiki_row(row)}
         bad_claims: dict[str, str] = {}

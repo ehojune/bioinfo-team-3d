@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, Any, Iterable, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 
 ASK_WAIT_SECONDS = {"cso": 300, "facilities": 1200, "colleague": 900, "pi": 0}
@@ -360,6 +360,17 @@ class ExternalLookupRecord(BaseModel):
     unreadable: bool = False
 
 
+WIKI_AUDIT_MAX_BYTES = 4 << 20
+
+
+class WikiAuditRecord(BaseModel):
+    """Runner-read UTF-8 bytes and their hash; transport integrity, not source authentication."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    text: str = Field(default="", max_length=WIKI_AUDIT_MAX_BYTES)
+    sha256: str = Field(default="", pattern=r"^(?:[0-9a-f]{64})?$")
+    error: str | None = Field(default=None, max_length=120)
+
+
 class TaskResult(BaseModel):
     task_id: str
     agent_id: str
@@ -390,6 +401,8 @@ class TaskResult(BaseModel):
     request_input_sha256: str | None = None  # runner-observed stable input manifest (#959)
     output_tool_use_ids: Annotated[dict[str, str], PathShape("keys")] = {}
     unreported_outputs: WirePaths = []
+    # None is an old runner; an error record must never fall back to gateway-local bytes.
+    wiki_audit: WikiAuditRecord | None = None
     # Parsed only for ordinary orchestration steps. Research steps keep their result v2 ledger in ``structured``.
     general_sections: dict[str, str] = {}
     evidence_path_warnings: list[str] = []
@@ -439,6 +452,19 @@ class TaskResult(BaseModel):
     def bounded_environment(cls, value: Any) -> dict[str, str] | None:
         from .facilities.signatures import clean_record
         return clean_record(value)
+
+    @field_validator("wiki_audit", mode="before")
+    @classmethod
+    def bounded_wiki_audit(cls, value: Any) -> WikiAuditRecord | None:
+        if value is None:
+            return None
+        try:
+            record = WikiAuditRecord.model_validate(value)
+            if len(record.text.encode("utf-8")) > WIKI_AUDIT_MAX_BYTES:
+                raise ValueError("oversized audit")
+            return record
+        except (ValueError, TypeError):
+            return WikiAuditRecord(error="invalid or oversized audit transport")
 
     @model_validator(mode="after")
     def infer_cost_known(self) -> "TaskResult":

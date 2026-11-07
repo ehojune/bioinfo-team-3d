@@ -3080,6 +3080,9 @@ class Runner:
         result.unreported_outputs = sorted(row["path"] for row in observed_outputs
                                            if row["path"] not in collected
                                            and "__pycache__" not in row["path"].replace("\\", "/").split("/"))
+        # Read on the runner: the gateway cannot open a WSL or another machine's workdir (#1037).
+        from ..evidence.wiki_contract import capture_audit
+        result = await asyncio.to_thread(capture_audit, result)
         warning_outputs = unreported_warning_paths(result.unreported_outputs)
         if warning_outputs:
             await emit("agent.log", {"level": "warn", "text": (
