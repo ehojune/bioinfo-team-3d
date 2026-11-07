@@ -133,7 +133,7 @@ async def test_actual_runner_captures_undeclared_audit_before_return(tmp_path, m
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fault", [None, "missing", "wrong-hash", "malformed", "oversized", "unrecorded"])
 @pytest.mark.parametrize("flow", ["accept", "salvage", "correction"])
-async def test_remote_result_reaches_actual_cp2_with_fail_closed_findings(fault, flow):
+async def test_remote_result_reaches_actual_cp2_with_fail_closed_findings(fault, flow, legacy_workdir=None):
     holder = {}
 
     async def reply(task):
@@ -150,8 +150,16 @@ async def test_remote_result_reaches_actual_cp2_with_fail_closed_findings(fault,
             record = _record("{broken")
         elif fault == "oversized":
             record = _record("x" * (MAX_AUDIT_BYTES + 1))
+        elif fault == "replaced-missing" and task.meta["kind"] == "step":
+            record = {"error": "missing"}
+        elif fault == "replaced-absent" and task.meta["kind"] == "step":
+            record = None
+        elif fault == "replaced-invalid" and task.meta["kind"] == "step":
+            record = {**_record(), "sha256": "f" * 64}
         elif fault == "changed-record" and task.meta["kind"] != "step":
-            record = _record(_audit() + "\n")
+            changed = json.loads(_audit())
+            changed["hits"][0]["line_start"] = 7
+            record = _record(json.dumps(changed))
         ledger = _wiki_result(hub, task)
         if flow == "salvage":
             ledger["evidence"].append({"id": "bad", "kind": "observation"})
@@ -159,8 +167,16 @@ async def test_remote_result_reaches_actual_cp2_with_fail_closed_findings(fault,
             ledger["step_id"] = "wrong_step"
         if fault == "unrecorded":
             next(row for row in ledger["evidence"] if row["id"] == "e_wiki")["source"]["locator"] += "bad"
+        if fault == "changed-record" and task.meta["kind"] != "step":
+            next(row for row in ledger["evidence"] if row["id"] == "e_wiki")["source"]["locator"] = (
+                "wiki:notes/example.md#L7-L8@" + "b" * 12)
+        if legacy_workdir is not None:
+            if task.meta["kind"] != "step":
+                (Path(legacy_workdir) / AUDIT).write_text(record["text"], encoding="utf-8")
+            record = None
         result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ledger,
-                            outputs=[path], workdir="/unavailable-remote-workdir", wiki_audit=record)
+                            outputs=[path], workdir=legacy_workdir or "/unavailable-remote-workdir", wiki_audit=record,
+                            unreported_outputs=[AUDIT] if legacy_workdir and task.meta["kind"] == "step" else [])
         return TaskResult.model_validate_json(result.model_dump_json())
 
     hub = holder["hub"] = MiniHub(_settings(), reply, mode="orchestrate", work_kind="research", text="compare")
@@ -183,5 +199,13 @@ async def test_remote_result_reaches_actual_cp2_with_fail_closed_findings(fault,
 
 
 @pytest.mark.asyncio
-async def test_correction_cannot_replace_the_original_collected_audit_bytes():
-    await test_remote_result_reaches_actual_cp2_with_fail_closed_findings("changed-record", "correction")
+@pytest.mark.parametrize("fault", ["changed-record", "replaced-missing", "replaced-invalid", "replaced-absent"])
+async def test_correction_cannot_replace_the_original_audit_or_its_error_state(fault):
+    await test_remote_result_reaches_actual_cp2_with_fail_closed_findings(fault, "correction")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["replaced-missing", "changed-record"])
+async def test_old_runner_local_record_is_frozen_before_correction(tmp_path, fault):
+    workdir = _workdir(tmp_path, _audit() if fault == "changed-record" else None)
+    await test_remote_result_reaches_actual_cp2_with_fail_closed_findings(fault, "correction", workdir)

@@ -297,6 +297,17 @@ def capture_audit(result: TaskResult) -> TaskResult:
     return collect_audit(result.model_copy(update={"wiki_audit": record}))
 
 
+def snapshot_audit(result: TaskResult) -> TaskResult:
+    """Freeze old runners' local bytes/errors at receipt too, without widening their collected outputs."""
+    collected = collect_audit(result)
+    if collected.wiki_audit is not None:
+        return collected
+    captured = capture_audit(collected)
+    return captured.model_copy(update={
+        "outputs": collected.outputs, "output_sha256": collected.output_sha256,
+        "unreported_outputs": collected.unreported_outputs})
+
+
 def transported_audit(result: TaskResult) -> tuple[list[WikiCall] | None, str]:
     """Use only this result's transported bytes; validate both transport and collected-output hashes."""
     record = result.wiki_audit

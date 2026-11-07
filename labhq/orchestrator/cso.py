@@ -34,7 +34,7 @@ from ..model_refusal import REASON as MODEL_REFUSAL_REASON, ModelRefused, is_mod
 from ..pi_text import PI_TEXT_RULE
 from ..evidence import wiki_exposure
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
-from ..evidence.wiki_contract import collect_audit as wiki_collect_audit
+from ..evidence.wiki_contract import snapshot_audit as wiki_collect_audit
 from ..evidence.wiki_contract import step_findings as wiki_step_findings
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups, claim_evidence_rows, claim_evidence_section)
@@ -5682,19 +5682,17 @@ class Orchestrator:
                 limit = self.hub.s.research.result_corrections
 
                 async def save_salvage(refused_rows: list[dict], unsupported_claims: list[dict],
-                                       ledger: dict | None = None, workdir: str | None = None,
-                                       via: TaskResult | None = None) -> None:
+                                       ledger: dict | None = None) -> None:
                     if req_state is None:
                         return
                     if ledger is not None:
                         # Wiki-linked evidence is judged against the audit record the wiki tool wrote in this step's
                         # workdir, never against what the model says it saw; what the record does not bear out is
                         # refused like any other row the contract refuses (#1037).
-                        # Corrections cannot replace the bytes already collected for this step's artifact bindings.
-                        audit_result = (via.model_copy(update={"output_sha256": {
-                            **via.output_sha256, **original.output_sha256}}) if via is not None else None)
+                        # Pin the first result's bytes AND missing/invalid state. A correction can repair JSON,
+                        # never replace the audit underlying the original collected artifact bindings.
                         wiki_rows, wiki_unsupported = await asyncio.to_thread(
-                            wiki_step_findings, ledger, workdir, audit_result)
+                            wiki_step_findings, ledger, original.workdir, original)
                         seen = {(row["row_type"], row["row_id"]) for row in refused_rows}
                         refused_rows = [*refused_rows, *(row for row in wiki_rows
                                                          if (row["row_type"], row["row_id"]) not in seen)]
@@ -5725,7 +5723,7 @@ class Orchestrator:
 
                 async def accept(ledger: Any, via: TaskResult) -> TaskResult:
                     collect_paper_usage(via)
-                    await save_salvage([], [], ledger.model_dump(mode="json"), via.workdir or original.workdir, via)
+                    await save_salvage([], [], ledger.model_dump(mode="json"))
                     return original.model_copy(update={
                         "structured": ledger.model_dump(mode="json"),
                         "session_id": via.session_id or original.session_id,
@@ -5846,12 +5844,10 @@ class Orchestrator:
                             slots = missing_result_slots(candidate, plan=research_plan, expected_step_id=step["id"])
                             if slots:
                                 repaired = await repair_slots(candidate, slots)
-                                await save_salvage(refused_rows, unsupported_claims, candidate,
-                                                   current.workdir or original.workdir, current)
+                                await save_salvage(refused_rows, unsupported_claims, candidate)
                                 return repaired
                         if salvaged is not None and refused_rows:
-                            await save_salvage(refused_rows, unsupported_claims, candidate,
-                                               current.workdir or original.workdir, current)
+                            await save_salvage(refused_rows, unsupported_claims, candidate)
                             return original.model_copy(update={
                                 "structured": salvaged.model_dump(mode="json"),
                                 "session_id": current.session_id or original.session_id,
