@@ -1,0 +1,6 @@
+pr: null
+rows:
+- sha: '2c4e8be'
+  at: 2026-11-07 23:00
+  text: 단계 결과를 받을 때 wiki를 인용한 근거 행을 그 단계 workdir의 outputs/wiki_queries.jsonl과 대조한다. 기록에 없는 locator, 신선도나 출처가 다른 행, 기록이 없거나 읽을 수 없거나 한 줄이라도 깨진 경우의 모든 wiki 행을 CP2에서 거부 행으로 올리고, 거기서 파생된 행과 그 행에만 기대는 claim도 뺀다. 단계 prompt에 wiki hit을 어떻게 인용할지 규칙을 더했다. 감사 기록은 직원 작업 폴더의 파일이라 독립 출처 인증은 아니다
+  summary: 모델이 적은 wiki 위치·신선도가 도구 기록과 다르면 그 근거를 CP2에서 거부합니다.
