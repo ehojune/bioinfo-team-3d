@@ -1,4 +1,5 @@
 """Synthetic audit transport, fake adapter, real result serialization and CP2; no wiki or staff process."""
+import copy
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ from labhq.evidence.wiki_contract import AUDIT, MAX_AUDIT_BYTES, capture_audit, 
 from labhq.gateway.server import create_app, event_without_wiki_audit, SavedResults, snapshot_event, SNAPSHOT_RESULT_CHARS
 from labhq.models import Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator
+from labhq.research.continuation import archive_round
 from labhq.settings import Settings
 from tests.test_read_only_profile import _runner, _staff, _wire
 from tests.test_research_cp2 import CP1, _settings
@@ -312,3 +314,49 @@ def test_request_detail_omits_all_audit_payloads_but_preserves_internal_saved_re
             stored = TaskResult.model_validate(hub.store.get("request", "r")["results"][sid])
             assert step_findings(_wiki_ledger(), None, collect_audit(stored)) == ([], [])
         assert projected["plain"] == results["plain"].model_dump(mode="json")
+
+
+@pytest.mark.parametrize("current_results", [True, False])
+def test_request_detail_filters_archived_and_recovery_result_copies_without_mutation(tmp_path, current_results):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    result = _result(wiki_audit=_record()).model_dump(mode="json")
+    plain = _result(text="plain").model_dump(mode="json")
+    request = {"id": "r", "text": "synthetic", "status": "done", "research_contract": {"round": 1}}
+    first = archive_round(request, {"s1": result, "plain": plain})
+    request["research_contract"]["round"] = 2
+    second = archive_round(request, {"s2": result})
+    request["research_contract"].update(
+        rounds=[first, second],
+        continuation={"ended_before_dispatch": {"task_results": {"plan": result}},
+                      "refusal_history": [{"task_results": {"plan": result}}]})
+    request.update(solo_result=result, pending_questions=[{"previous_result": result}])
+    if current_results:
+        request["results"] = {"current": result}
+    hub.requests["r"] = request
+    hub.save_request("r")
+    headers = {"Authorization": f"Bearer {settings.gateway.client_token}"}
+    with TestClient(app) as client:
+        before = copy.deepcopy(hub.requests["r"])
+        response = client.get("/api/requests/r", headers=headers)
+        assert response.status_code == 200
+        projected = response.json()
+        archived = projected["research_contract"]["rounds"]
+        copies = [archived[0]["results"]["s1"], archived[1]["results"]["s2"], projected["solo_result"],
+                  projected["pending_questions"][0]["previous_result"],
+                  projected["research_contract"]["continuation"]["ended_before_dispatch"]["task_results"]["plan"],
+                  projected["research_contract"]["continuation"]["refusal_history"][0]["task_results"]["plan"]]
+        if current_results:
+            copies.append(projected["results"]["current"])
+        else:
+            assert "results" not in projected
+        for exported in copies:
+            assert exported == {key: value for key, value in result.items() if key != "wiki_audit"}
+        assert archived[0]["results"]["plain"] == plain
+        assert hub.requests["r"] == before
+        assert hub.store.get("request", "r") == before
+        for original in hub.store.get("request", "r")["research_contract"]["rounds"]:
+            saved = next(iter(original["results"].values()))
+            assert step_findings(_wiki_ledger(), None, collect_audit(TaskResult.model_validate(saved))) == ([], [])

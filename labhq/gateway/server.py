@@ -132,6 +132,16 @@ def result_without_wiki_audit(data: Any) -> Any:
     return data
 
 
+def request_without_wiki_audit(data: Any) -> Any:
+    """Project nested result copies too, including archived rounds and continuation recovery."""
+    if isinstance(data, dict):
+        return {key: request_without_wiki_audit(value)
+                for key, value in result_without_wiki_audit(data).items()}
+    if isinstance(data, list):
+        return [request_without_wiki_audit(value) for value in data]
+    return data
+
+
 def event_without_wiki_audit(event: dict) -> dict:
     """Keep the audit transport on internal results, outside stored and replayed UI events."""
     if event.get("type") == "task.result":
@@ -6727,10 +6737,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         # requests' uses of each skill come from the most recent requests, and the view says how many were read.
         rows, truncated = history_rows(hub.requests)
         view = with_previous_uses(literature_view(hub.requests[rid]), skill_history(rows), rid, len(rows), truncated)
-        request = dict(hub.requests[rid])
-        if isinstance(request.get("results"), dict):
-            request["results"] = {sid: result_without_wiki_audit(result)
-                                  for sid, result in request["results"].items()}
+        request = request_without_wiki_audit(hub.requests[rid])
         return {**request, "paper_literature": view}
 
     @app.get("/api/requests/{rid}/audit-bundle", dependencies=[Depends(auth)])
