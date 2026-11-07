@@ -283,7 +283,7 @@ def capture_audit(result: TaskResult) -> TaskResult:
         if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                 or info.st_size > MAX_AUDIT_BYTES or path.resolve(strict=True) != path):
             raise ValueError("unsafe or oversized audit file")
-        with path.open("rb") as stream:
+        with path.open(mode="rb") as stream:
             opened = os.fstat(stream.fileno())
             if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
                     or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)):
