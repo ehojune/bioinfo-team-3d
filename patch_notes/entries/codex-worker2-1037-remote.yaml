@@ -1,10 +1,14 @@
 pr: 1330
 rows:
 - sha: 'f392267'
-  at: 2026-11-07 12:00
+  at: 2026-11-07 11:28
   summary: 다른 머신에서 온 wiki 근거도 runner가 보낸 감사 기록과 대조합니다.
   text: runner가 최대 4 MiB의 UTF-8 감사 원문과 SHA-256을 TaskResult에 싣고 수집 산출로 등록한다. gateway는 기존 행별 대조를 재사용하며 누락·손상·크기 초과·hash 불일치는 거부한다. 구형 결과의 로컬 읽기를 유지하고 결과 교정은 최초 수집 hash에 묶는다. 합성 시험만 확인했으며 실제 원격 runner와 공개 보호는 UNVERIFIED다.
 - sha: '12fae9c'
-  at: 2026-11-07 12:01
+  at: 2026-11-07 11:31
   summary: 감사 기록의 binary 읽기를 encoding 검사에서도 올바르게 확인합니다.
   text: 파일 열기의 mode를 키워드로 명시해 binary 읽기가 text I/O로 잘못 판정되지 않게 한다. encoding·전송 합성 시험은 56 passed, 1 skipped다.
+- sha: '1618a33'
+  at: 2026-11-07 11:34
+  summary: 결과 교정이 누락되거나 잘못된 최초 감사 기록을 바꿔 쓰지 못하게 합니다.
+  text: 최초 TaskResult의 감사 원문·hash뿐 아니라 누락·오류 상태도 고정한다. 구형 결과의 로컬 기록도 최초 수신 때 고정한다. 교정이 새 정상 기록을 보내더라도 최초 기록으로만 CP2에서 대조한다. 기록 교체·누락 보충·손상 보충 회귀를 포함해 wiki·CP2·encoding 합성 시험 198 passed, 1 skipped를 확인했다.
