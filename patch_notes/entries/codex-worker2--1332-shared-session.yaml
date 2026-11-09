@@ -1,5 +1,9 @@
 pr: 1335
 rows:
+  - sha: "4a648de"
+    at: "2026-11-09 17:53"
+    summary: "직원이 제출한 잡만 취소하는 검사를 공유 세션 경로에서도 확인합니다."
+    text: "취소 fixture를 인증 broker와 runner handler에 연결, 소유권·scancel·mock 검사 유지, 관련 mock 회귀 483 passed·12 skipped (#1332)"
   - sha: "8c39149"
     at: "2026-11-09 17:48"
     summary: "직원 HPC 명령의 오류가 도구 응답까지 전달되는 시험을 복구했습니다."
