@@ -192,7 +192,8 @@ async def test_cp2_refuses_evidence_whose_artifact_was_not_collected():
     assert "Refused evidence (not approved at CP2):\n- s1/e1:" in hub.requests["r"]["report"]
     # R18/R10: the card summary is Korean and says that 수정 요청 re-plans through a new CP1.
     summary = hub.approvals[1]["summary"]
-    assert summary.startswith("⚠ 의미 장치 중단: semantics configured_off")
+    # The card kind is the first line; semantics turned off in the settings adds no stop warning (#1336).
+    assert summary.startswith("CP2 근거 검토:") and "의미 장치 중단" not in summary
     assert ("CP2 근거 검토: 단계 1개, claim 1개, 근거 1행, 거부 1건. 증거 승인·수정 요청·거부 중 "
             "고르세요. 수정 요청은 메모에 적은 고칠 점으로 CSO가 새 계획을 세워 새 CP1을 "
             "받습니다(바뀐 단계만 다시 실행).") in summary
@@ -1331,3 +1332,14 @@ async def test_cp2_literature_lines_are_given_the_stored_precedent_access(monkey
     await Orchestrator(hub).run_request("r")
 
     assert seen == {"conclusion_literature_line": expected, "literature_ledger_line": expected}
+
+
+def test_card_warning_names_a_real_device_stop_but_not_semantics_turned_off():
+    """#1336: configured_off is a setting, not a stop; a failing device still warns on the card."""
+    off = {"code": "configured_off", "device": "semantics", "stage": "setting", "at": "t", "message": "off"}
+    failed = {"code": "vocabulary_load_failed", "device": "단어장", "stage": "load", "at": "t", "message": "x"}
+    assert cso._device_stop_warning({"errors": [off]}) == ""
+    assert cso._device_stop_warning({"errors": []}) == ""
+    assert cso._device_stop_warning(None) == ""
+    warning = cso._device_stop_warning({"errors": [off, failed]})
+    assert warning.startswith("⚠ 의미 장치 중단: 단어장 vocabulary_load_failed") and "configured_off" not in warning
