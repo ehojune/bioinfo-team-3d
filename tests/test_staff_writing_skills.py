@@ -218,3 +218,13 @@ def test_graphical_abstract_example_is_accessible_text_only_and_uses_tokens():
         if re.search(r"[가-힣]", own_text):
             assert element.tag in {f"{ns}title", f"{ns}desc", f"{ns}text"}
     assert "graphical-abstract-example.svg" in manual_text()
+
+
+
+def test_only_eh_isseoseo_is_must_zero_not_other_forms_of_the_verb():
+    """#910 11th run: "같은 축에 있어도" was read as "에 있어서" and the whole edition was refused."""
+    for text in ("같은 축에 있어도 판정 주체가 다릅니다.", "그 값은 표 2에 있었다.", "본문에 있어야 할 값입니다."):
+        result = check_document("# 보고서" + chr(10) * 2 + text)
+        assert result["status"] == "PASS" and result["must_zero"] == {}, text
+    hit = check_document("# 보고서" + chr(10) * 2 + "이 분석에 있어서 분모가 중요합니다.")
+    assert hit["status"] != "PASS" and hit["must_zero"] == {"에 있어서": 1}
