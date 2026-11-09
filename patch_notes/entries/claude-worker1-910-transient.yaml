@@ -1,0 +1,5 @@
+rows:
+  - sha: "627ac57"
+    at: "2026-11-09 17:46"
+    summary: "공개 서비스가 HTTP 5xx나 429로 답한 조회는 요청의 조회 상한을 쓰지 않습니다. 서비스 장애로 상한이 바닥나 정작 답하는 조회를 못 하던 일을 막습니다. 계속 실패하는 서비스는 조회 상한과 같은 횟수의 일시 오류에서 멈춥니다."
+    text: "LookupAdmission이 응답 기록된 5xx·429를 used·선행 몫에서 빼고 transient로 셈, transient_limit(기본 limit)과 reason transient exhausted, seq를 MAX(seq)+1로, usage_note·annot 도구·출처 확인 거절 문구, manual 09 한영, #1279·#891 시험 계수 단정 갱신, 시험 9건 (#910)"
