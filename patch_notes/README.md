@@ -15,6 +15,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 22:15 | [`8a448b9`](https://github.com/ehojune/bioinfo-team-3d/pull/1341/commits/8a448b9) | **셸 명령으로 다른 작업의 파일을 승인 없이 읽는 길을 막았습니다.**<br>labhq/policy.py: 자기 작업 폴더 예외를 경로가 구조화된 파일 도구(Read·Grep·Glob 등)에만 적용. 셸·인터프리터는 실행 중 경로 계산으로 다른 작업 폴더를 읽을 수 있어 그대로 승인을 묻는다(리뷰 P1). manual 11 한영판 반영 |
+| 22:15 | [`0631c74`](https://github.com/ehojune/bioinfo-team-3d/pull/1343/commits/0631c74) | **HPC 요청과 선행 논문 본문에 대한 설치 안내를 새 동작에 맞췄습니다.**<br>옛 거절을 단언하던 HPC 시험을 새 동작으로 바꾸고 manual 04 한·영 문구를 고친다 (#1336). |
+| 22:05 | [`5217982`](https://github.com/ehojune/bioinfo-team-3d/pull/1343/commits/5217982) | **선행 논문 본문이 있다는 이유로 HPC 요청을 막지 않고, 계산 잡에는 그 본문을 넘기지 않습니다.**<br>HPC 요청: 저장된 선행 전문이 있어도 거절하지 않고, HPC 단계 task에서만 precedent_texts를 뺀다. project·reference 입력 거절은 유지 (#1336). |
 | 22:00 | [`a2e38a9`](https://github.com/ehojune/bioinfo-team-3d/pull/1341/commits/a2e38a9) | **작업 폴더를 내부 자료 구역으로 둘 때 무엇이 승인 없이 읽히는지 매뉴얼에 적었습니다.**<br>manual 11 한영판: internal 구역이 작업 폴더 루트를 감싸도 작업 자신의 폴더는 승인 없이 읽고, 링크·junction 탈출·구역이 폴더 자체이거나 안에 있는 경우는 그대로 승인을 묻는다는 설명(리뷰 P1) |
 | 21:55 | [`5693855`](https://github.com/ehojune/bioinfo-team-3d/pull/1342/commits/5693855) | **잡 제출이 줄바꿈 때문에 거절될 때 무엇을 고치면 되는지 매뉴얼에 적었습니다.**<br>manual 09 한영판: 잡 스크립트는 LF로 쓰고, inputs의 CRLF 셸 스크립트는 제출 전에 파일 이름과 함께 거절한다는 설명(리뷰 P1) |
 | 21:40 | [`0f580ac`](https://github.com/ehojune/bioinfo-team-3d/pull/1342/commits/0f580ac) | **제출 전 줄바꿈 검사가 작업 폴더 밖 파일을 읽지 않습니다.**<br>tools/hpc_mcp.py: CRLF 입력 검사를 read_confined(링크를 따르지 않는 폴더 handle, 업로드 크기 상한)로 읽어 작업 폴더 밖·링크·절대경로·특수 파일은 열지 않는다(리뷰 P1) |
