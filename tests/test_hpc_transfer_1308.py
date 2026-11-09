@@ -830,6 +830,9 @@ def test_a_log_in_request_remote_data_comes_home_hidden_and_its_receipt_is_the_k
     ("see https://ftp.ebi.ac.uk/pub/x.gz, figures/a.svg and 1/2", "see https://ftp.ebi.ac.uk/pub/x.gz, figures/a.svg and 1/2"),
     ("\x1b]0;/private/title\x07ok", "ok"),
     ("sort >/private/out.txt", "sort ><remote-path>"),  # a redirect is not a placeholder
+    ("read file:///private/study/file", "read file:<remote-path>"),  # only public web schemes are kept
+    ("ssh://host/private/study and sftp://h/p", "ssh:<remote-path> and sftp:<remote-path>"),
+    ("HTTPS://ftp.ebi.ac.uk/a xhttp://evil/private", "HTTPS://ftp.ebi.ac.uk/a xhttp:<remote-path>"),
     (ROOT + "/t1/a.log and " + ROOT, "<workdir>/t1/a.log and <workdir>"),
 ])
 def test_every_absolute_path_in_a_log_is_hidden_whatever_precedes_it(line, kept):
