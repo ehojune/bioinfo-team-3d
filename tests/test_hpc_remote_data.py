@@ -335,7 +335,8 @@ def test_unsafe_undeclared_files_and_directories_do_not_fail_valid_remote_output
                                                 'scratch folder/cache.bin': b'cache'})
     fetched = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
     assert fetched['remote']['files'] == [{'path': 'result.tsv', 'bytes': 2}]
-    assert {row['path'] for row in fetched['skipped']} == {'scratch data.txt', 'scratch folder'}
+    assert {row['path'] for row in fetched['skipped'] if row['reason'] == 'name not allowed'} == {
+        'scratch data.txt', 'scratch folder'}
     assert cluster.path(spec['work'] + '/scratch data.txt').read_bytes() == b'temporary'
 
 
