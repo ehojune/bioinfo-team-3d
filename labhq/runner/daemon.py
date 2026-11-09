@@ -2524,8 +2524,10 @@ class Runner:
                         remote_mapping = {f"{sid}/{index}": manifest for sid, manifests in remote_ancestors.items()
                                           for index, manifest in enumerate(manifests)}
                         note += ("\nRemote ancestor outputs (use as inputs; leave producer files unchanged):\n" +
-                                 "\n".join(f"{key}: {transfer.path(manifest['data'])}"
-                                           for key, manifest in remote_mapping.items()))
+                                 "\n".join(f"{key}/{row['path']}: {transfer.path(manifest['data'] + '/' + row['path'])}"
+                                           for key, manifest in remote_mapping.items() for row in manifest['files']) +
+                                 "\nUse only these collected paths; do not glob the producer work directory. "
+                                 "Shared-account paths are not filesystem isolation.")
                     else:
                         remote_mapping = {}
                     task = ws.task = task.model_copy(update={"meta": {**task.meta, "hpc_data_inputs": shared,
@@ -4016,11 +4018,13 @@ class Runner:
                     if (rel := output_relpath(name))}
                 directories = set(manifest.get("directories", []))
                 declared_dirs = declared & directories
-                files = [row for row in manifest["files"] if row["path"] in declared or
+                collect_all = (ws.task.meta.get("kind") == "direct" or
+                               ws.task.meta.get("collect_direct_outputs") is True)
+                files = [row for row in manifest["files"] if collect_all or row["path"] in declared or
                          any(row["path"].startswith(d + "/") for d in declared_dirs)]
                 manifest = {**manifest, "retained_bytes": manifest["bytes"],
                             "files": files, "bytes": sum(row["bytes"] for row in files),
-                            "directories": [d for d in directories if d in declared_dirs or
+                            "directories": [d for d in directories if collect_all or d in declared_dirs or
                                             any(d.startswith(parent + "/") for parent in declared_dirs)]}
                 verify_remote_data(transfer, manifest, ws.task.request_id)
                 file_paths = {row["path"] for row in manifest["files"]}

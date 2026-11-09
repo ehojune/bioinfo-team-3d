@@ -167,7 +167,7 @@ def test_only_successful_same_request_ancestor_inventory_is_admitted(tmp_path):
         with pytest.raises(ValueError): remote_ancestor_inputs(ws, {'s1': bad_artifact}, root)
 
 
-@pytest.mark.parametrize('layout', ['file', 'directory', 'missing', 'file_prefix'])
+@pytest.mark.parametrize('layout', ['file', 'directory', 'missing', 'file_prefix', 'direct', 'collect_direct'])
 async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_after_restart(site, monkeypatch, layout):
     from labhq.adapters.mock import MockAdapter
     from labhq.models import AgentSpec, Engine, Task, TaskResult
@@ -198,6 +198,10 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             remote = ctx.task.meta['hpc_remote_inputs']['s1/0']
             assert remote in seen
             assert runner.scheduler.transfer().path(remote['data']) in ctx.task.context
+            assert 's1/0/tx2gene.tsv: ' in ctx.task.context or 's1/0/tx2gene.tsv/part.tsv: ' in ctx.task.context
+            if layout not in {'direct', 'collect_direct'}:
+                assert 'undeclared.bin' not in ctx.task.context
+            assert 'Shared-account paths are not filesystem isolation.' in ctx.task.context
             assert not (ctx.workdir / 'inputs/s1/tx2gene.tsv').exists()
         site.workdir = ctx.workdir
         path = write_script(site)
@@ -234,6 +238,13 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
                 'kind': 'step', 'step_id': step, 'execution_location': {'mode': 'hpc', 'runner_id': settings.runner.id},
                 'upstream_artifacts': upstream, 'upstream_steps': {s: x['workdir'] for s, x in upstream.items()},
                 'outputs': ['outputs/' + output]}
+            collect_all = step == 's1' and layout in {'direct', 'collect_direct'}
+            if collect_all:
+                meta['outputs'] = []
+                if layout == 'direct':
+                    meta['kind'] = 'direct'
+                else:
+                    meta['collect_direct_outputs'] = True
             pending = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='test', meta=meta))
             assert pending.ok and pending.pending_jobs
             runner.store.close()
@@ -241,7 +252,7 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             monkeypatch.setattr(runner.registry, 'get', lambda _: agent)
             result = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='wake', meta=meta,
                                                resume_session_id='session-' + step))
-            assert 'outputs/undeclared.bin' not in result.outputs
+            assert ('outputs/undeclared.bin' in result.outputs) is collect_all
             if step == 's1' and layout in {'missing', 'file_prefix'}:
                 assert not result.ok and result.missing_outputs == ['outputs/tx2gene.tsv']
                 return
@@ -251,7 +262,7 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             assert 'outputs/' + collected_output in result.outputs
             assert 'outputs/' + output not in result.output_sha256  # no hash invented for a remote-only file
             assert not (Path(result.workdir) / 'outputs' / output).exists()
-            assert result.provenance['hpc_remote_data'][0]['bytes'] == 20000000
+            assert result.provenance['hpc_remote_data'][0]['bytes'] == 20000000 + (9 if collect_all else 0)
             assert result.provenance['hpc_remote_data'][0]['retained_bytes'] == 20000000 + (9 if step == 's1' else 0)
             results.append(result)
             if step == 's1':
