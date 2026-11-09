@@ -94,7 +94,7 @@ def _submits_remotely(s: Settings, scheduler: Scheduler) -> bool:
 
 
 async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dict, approve: Approve,
-                     gate: Gate | None = None, record: Record | None = None) -> dict:
+                     gate: Gate | None = None, record: Record | None = None, *, remote_data: dict | None = None) -> dict:
     """{"submitted": True, "job_id", …}, {"submitted": False, "reason"} after a PI denial, or {"error"}.
 
     gate: entered right before the submit command, yielding whether the calling task run is still going; the
@@ -134,7 +134,10 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
     try:
         transfer = scheduler.transfer() if hasattr(scheduler, "transfer") else None
         if transfer is not None:
-            spec = job_spec(str(body.get("task_id") or ""), spath.stem)
+            spec = job_spec(str(body.get("task_id") or ""), spath.stem,
+                            remote_data.get("request_id") if remote_data else None)
+            if remote_data:
+                spec["remote_inputs"] = remote_data.get("inputs", {})
             upload_text = remote_script(text, transfer.path(spec["work"]))
             text = upload_text
     except (TransferError, RuntimeError) as e:

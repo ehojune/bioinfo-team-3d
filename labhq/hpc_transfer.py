@@ -27,9 +27,9 @@ import shlex
 import stat
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
-from typing import Callable
+from typing import Callable, Iterable
 
 from .adapters.held_dir import HeldDir
 
@@ -127,7 +127,8 @@ class Transfer:
             quoted = shlex.quote(current)
             out = self._do(f"test -d {quoted} && cd -- {quoted} && pwd -P || echo missing", "checking a folder").strip().splitlines()
             if not out or out[-1] == "missing":
-                out = self._do(f"mkdir -- {quoted} && cd -- {quoted} && pwd -P", "making a folder").strip().splitlines()
+                # Independent jobs can discover a missing request parent at the same time.
+                out = self._do(f"mkdir -p -- {quoted} && cd -- {quoted} && pwd -P", "making a folder").strip().splitlines()
             real = out[-1] if out else ""
             if real != real_root and not real.startswith(real_root.rstrip("/") + "/"):
                 raise PathRejected(f"{rel_dir!r} leads outside the work folder")
@@ -151,6 +152,15 @@ class Transfer:
 
     def _is_link(self, remote: str) -> bool:
         return self._do(f"test -L {shlex.quote(remote)} && echo link || echo plain", "checking a file").strip() == "link"
+
+    def plain_dir(self, rel: str) -> None:
+        """A persisted job folder must still have its original plain path, including links inside the root."""
+        parts = confine(rel).parts
+        for count in range(1, len(parts) + 1):
+            if self._is_link(self.path('/'.join(parts[:count]))):
+                raise PathRejected("remote job folder was replaced by a link")
+        if self.ensure_dir(rel) != self.real_root().rstrip('/') + '/' + rel:
+            raise PathRejected("remote job folder changed its physical path")
 
     def exists(self, rel: str) -> bool:
         """Is there a plain file at ``rel`` (a link does not count)?"""
@@ -357,7 +367,7 @@ INPUTS_TOTAL_BYTES = 4 * 1024 * 1024
 UPLOAD_BUDGET_S = 300.0  # all the commands of one job's upload together; the caller's wait is sized from it
 
 
-def job_spec(task_id: str, stem: str) -> dict:
+def job_spec(task_id: str, stem: str, request_id: str | None = None) -> dict:
     """Where a job's files live on the cluster, relative to the work folder. Every job gets a folder of its own, named
     with a random token and made fresh for it (``make_fresh_dir``): nothing can be laid there beforehand, and no other
     job of the task shares it. Its script, logs and run folder are inside. The task id and the script name are checked
@@ -366,9 +376,204 @@ def job_spec(task_id: str, stem: str) -> dict:
     if "/" in base:
         raise PathRejected(f"task id {task_id!r} is not a plain name")
     folder = f"{base}/job-{uuid.uuid4().hex[:12]}"
+    if request_id:
+        base = request_data_root(request_id)
+        folder = f"{base}/job-{uuid.uuid4().hex[:12]}"
     return {"base": base, "dir": folder, "script": f"{folder}/{confine(stem + '.sh')}", "work": f"{folder}/work",
             "logs": [f"{folder}/logs/{confine(stem + '.out')}", f"{folder}/logs/{confine(stem + '.err')}"],
-            "stem": stem}
+            "stem": stem, **({"request_id": request_id, "data": f"{folder}/work"} if request_id else {})}
+
+
+def request_data_root(request_id: str) -> str:
+    if not isinstance(request_id, str) or not request_id:
+        raise PathRejected("a remote data folder requires a request identity")
+    return "requests/" + hashlib.sha256(request_id.encode()).hexdigest()
+
+
+def bounded_path_preview(lines: Iterable[str], max_chars: int = 4096, max_entries: int = 32) -> str:
+    """Whole preview lines only; the runner supplies a separately readable full inventory."""
+    marker = "... (preview truncated; read the full inventory)"
+    kept, used = [], 0
+    for line in lines:
+        if len(kept) >= max_entries or used + len(line) + len(marker) + 2 > max_chars:
+            return "\n".join([*kept, marker])[:max_chars]
+        kept.append(line)
+        used += len(line) + 1
+    return "\n".join(kept)
+
+
+def local_copy_conflicts(root: Path, paths: list[str], hashes: dict, receipts: dict) -> list[str]:
+    """Reject local aliases without a matching small-file transport receipt; never hash large outputs."""
+    conflicts = []
+    try:
+        with HeldDir.hold(root) as base:
+            for path in paths:
+                if path in hashes and (path not in receipts or hashes[path] != receipts[path]):
+                    conflicts.append(path)
+                    continue
+                parts = confine(path).parts
+                with contextlib.ExitStack() as opened:
+                    parent = base
+                    try:
+                        for part in parts[:-1]:
+                            parent = opened.enter_context(parent.child(part))
+                        fd = parent.open_read_file(parts[-1])
+                        try:
+                            plain = os.fstat(fd).st_nlink == 1
+                        finally:
+                            os.close(fd)
+                    except FileNotFoundError:
+                        continue
+                    except OSError:
+                        conflicts.append(path)
+                        continue
+                    if not plain or path not in receipts or hashes.get(path) != receipts[path]:
+                        conflicts.append(path)
+    except OSError:
+        return list(paths)  # an unavailable local namespace cannot establish absence of aliases
+    return conflicts
+
+
+# List names and sizes through held directories. Large outputs stay exactly where the job wrote them;
+# listing never reads file contents, changes permissions, copies or moves them.
+REMOTE_DATA_HELPER = r'''
+import os, sys, json, stat, contextlib, uuid, re
+root, job, action = sys.argv[1:4]
+with contextlib.ExitStack() as stack:
+ skipped=[]
+ @contextlib.contextmanager
+ def folder(base, path, create=False):
+  with contextlib.ExitStack() as opened:
+   fd=base
+   for part in path.split('/') if path else []:
+    if not part or part in ('.','..'): raise ValueError('unsafe remote path')
+    if create:
+     try: os.mkdir(part, 0o700, dir_fd=fd)
+     except FileExistsError: pass
+    fd=os.open(part, os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW, dir_fd=fd)
+    opened.callback(os.close, fd)
+   yield fd
+ def read(base, name):
+  fd=os.open(name, os.O_RDONLY|os.O_NOFOLLOW, dir_fd=base)
+  s=os.fstat(fd)
+  if not stat.S_ISREG(s.st_mode) or s.st_nlink!=1:
+   os.close(fd); raise ValueError('not a plain remote file')
+  return fd, s
+ def walk(base, directories, prefix='', depth=0):
+  if depth>16:
+   skipped.append({'path':prefix.rstrip('/'),'reason':'depth limit'}); return
+  for name in sorted(os.listdir(base)):
+   if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._@+=,:%-]*',name):
+    skipped.append({'path':prefix+name,'reason':'name not allowed'}); continue
+   s=os.stat(name,dir_fd=base,follow_symlinks=False)
+   path=prefix+name
+   if stat.S_ISDIR(s.st_mode):
+    directories.append(path)
+    with folder(base,name) as child: yield from walk(child,directories,path+'/',depth+1)
+   elif stat.S_ISREG(s.st_mode) and s.st_nlink==1:
+    yield path,base,name
+   else: skipped.append({'path':path,'reason':'link or special file'})
+ def info(base,name):
+  fd,s=read(base,name)
+  try:
+   return {'bytes':s.st_size}
+  finally: os.close(fd)
+ r=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW); stack.callback(os.close,r)
+ j=stack.enter_context(folder(r,job))
+ f,_=read(j,sys.argv[4])
+ with os.fdopen(f,'rb') as cfg_file: cfg=json.loads(cfg_file.read(4*1024*1024+1))
+ data=stack.enter_context(folder(r,cfg['data']))
+ if action=='scan':
+  rows=[]; directories=[]
+  for path,parent,name in walk(data,directories):
+   rows.append(dict(path=path,**info(parent,name)))
+   if len(rows)>20000: raise ValueError('too many remote outputs')
+  cfg['files']=rows; cfg['directories']=directories; cfg['bytes']=sum(x['bytes'] for x in rows)
+  cfg['skipped']=skipped
+  cfg.pop('inputs',None)
+  payload=json.dumps(cfg,separators=(',',':')).encode()
+  if len(payload)>4*1024*1024: raise ValueError('remote manifest too large')
+  temporary='remote-data-'+uuid.uuid4().hex+'.tmp'
+  fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=j)
+  try:
+   with os.fdopen(fd,'wb') as out: out.write(payload)
+   os.rename(temporary,'remote-data.json',src_dir_fd=j,dst_dir_fd=j)
+  finally:
+   try: os.unlink(temporary,dir_fd=j)
+   except FileNotFoundError: pass
+ else:
+  for row in cfg['files']:
+   parts=row['path'].split('/')
+   with folder(data,'/'.join(parts[:-1])) as parent:
+    if info(parent,parts[-1])['bytes']!=row['bytes']: raise ValueError('remote input size differs')
+  for path in cfg.get('directories',[]):
+   with folder(data,path): pass
+'''
+
+
+def validate_remote_manifest(manifest: dict, request_id: str) -> dict:
+    """Validate the wire inventory before exposing any path to a consumer."""
+    base = request_data_root(request_id)
+    if (not isinstance(manifest, dict) or manifest.get("request_id") != request_id or
+            not re.fullmatch(re.escape(base) + r"/job-[a-f0-9]{12}/(?:work|data)", str(manifest.get("data", "")))):
+        raise PathRejected("remote data belongs to another request or has an invalid folder")
+    files = manifest.get("files")
+    if not isinstance(files, list) or len(files) > 20000:
+        raise TransferError("invalid remote manifest file count")
+    names = set()
+    for row in files:
+        if not isinstance(row, dict):
+            raise TransferError("invalid remote manifest file")
+        name = str(confine(row.get("path")))
+        if name.casefold() in names or type(row.get("bytes")) is not int or row["bytes"] < 0:
+            raise TransferError("invalid remote manifest file")
+        names.add(name.casefold())
+    directories = manifest.get("directories", [])
+    if not isinstance(directories, list) or len(directories) > 20000:
+        raise TransferError("invalid remote directory count")
+    for directory in directories:
+        name = str(confine(directory))
+        if name.casefold() in names:
+            raise TransferError("duplicate remote directory")
+        names.add(name.casefold())
+    if manifest.get("bytes") != sum(row["bytes"] for row in files):
+        raise TransferError("remote manifest total size differs")
+    unchanged = manifest.get("unchanged_inputs", [])
+    if (not isinstance(unchanged, list) or not all(isinstance(name, str) for name in unchanged) or
+            not set(unchanged).issubset({row["path"] for row in files})):
+        raise TransferError("invalid unchanged input listing")
+    skipped = manifest.get("skipped", [])
+    if not isinstance(skipped, list) or len(skipped) > 20000:
+        raise TransferError("invalid remote omission count")
+    for row in skipped:
+        path = row.get("path") if isinstance(row, dict) else None
+        if (not isinstance(path, str) or not path or len(path) > 4096 or path.startswith("/") or
+                "\x00" in path or any(p in ("", ".", "..") for p in path.split("/")) or
+                not isinstance(row.get("reason"), str) or len(row["reason"]) > 200):
+            raise TransferError("invalid remote omission")
+    return manifest
+
+
+def _remote_data_command(transfer: Transfer, folder: str, action: str, config: str) -> None:
+    transfer.plain_dir(folder)
+    transfer._do("python3 " + " ".join(map(shlex.quote, [transfer.path(folder + '/remote-data.py'),
+                 transfer.real_root(), folder, action, config])), "checking remote data")
+
+
+def verify_remote_data(transfer: Transfer, manifest: dict, request_id: str) -> str:
+    validate_remote_manifest(manifest, request_id)
+    folder = str(PurePosixPath(manifest["data"]).parent)
+    transfer.plain_dir(folder)
+    # Check the runner's saved names/sizes without reading the large files.
+    config = f"verify-{uuid.uuid4().hex[:12]}.json"
+    payload = json.dumps(manifest).encode()
+    metadata = Transfer(transfer.run, transfer.root, replace(transfer.limits, upload_max_bytes=4 * 1024 * 1024),
+                        redact=transfer._redact)
+    metadata.deadline = transfer.deadline
+    metadata.upload_bytes(f"{folder}/{config}", payload)
+    transfer.upload_bytes(f"{folder}/remote-data.py", REMOTE_DATA_HELPER.encode())
+    _remote_data_command(transfer, folder, "verify", config)
+    return transfer.path(manifest["data"])
 
 
 def remote_script(text: str, remote_work: str) -> str:
@@ -396,6 +601,9 @@ def upload_job(transfer: Transfer, spec: dict, script_text: str, local_root: Pat
         transfer.make_fresh_dir(spec["dir"])  # this job's own folder: nothing laid there beforehand, nobody else in it
         transfer.ensure_dir(f"{spec['dir']}/logs")
         transfer.ensure_dir(spec["work"])
+        if spec.get("request_id"):
+            for manifest in spec.get("remote_inputs", {}).values():
+                verify_remote_data(transfer, manifest, spec["request_id"])
         for rel in inputs:
             name = str(confine(str(rel)))
             info = transfer.upload_file(Path(local_root) / name, f"{spec['work']}/{name}", root=Path(local_root))
@@ -406,6 +614,10 @@ def upload_job(transfer: Transfer, spec: dict, script_text: str, local_root: Pat
             spec["inputs"][name] = info["sha256"]
             sent.append(info)
         sent.append(transfer.upload_bytes(spec["script"], script_text.encode("utf-8"), executable=True))
+        if spec.get("request_id"):
+            transfer.upload_bytes(f"{spec['dir']}/remote-data.py", REMOTE_DATA_HELPER.encode())
+            transfer.upload_bytes(f"{spec['dir']}/remote-config.json", json.dumps(
+                {"request_id": spec["request_id"], "data": spec["data"], "inputs": spec["inputs"]}).encode())
     finally:
         transfer.deadline = None
     return sent
@@ -449,6 +661,46 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
             manifest["skipped"].append({"path": rel, "reason": "no such log (the job may not have started)"})
             continue
         manifest["logs"].append(transfer.fetch_file(rel, logs_dir, tail=True, name=PurePosixPath(rel).name))
+    if spec.get("request_id"):
+        transfer.plain_dir(spec["dir"])
+        transfer.upload_bytes(f"{spec['dir']}/remote-data.py", REMOTE_DATA_HELPER.encode())
+        transfer.upload_bytes(f"{spec['dir']}/remote-config.json", json.dumps(
+            {"request_id": spec["request_id"], "data": spec["data"], "inputs": spec.get("inputs", {})}).encode())
+        _remote_data_command(transfer, spec["dir"], "scan", "remote-config.json")
+        data, _ = transfer.fetch_bytes(f"{spec['dir']}/remote-data.json", max_bytes=4 * 1024 * 1024)
+        remote = validate_remote_manifest(json.loads(data), spec["request_id"])
+        if remote["data"] != spec["data"]:
+            raise PathRejected("remote manifest folder differs from the submitted job")
+        manifest["skipped"].extend(remote.get("skipped", []))
+        # Reuse the existing small-upload checksum to distinguish an unchanged input from a produced file.
+        # This never hashes a large output; large files retain the name/size-only contract.
+        uploaded = spec.get("inputs") or {}
+        remote["unchanged_inputs"] = [row["path"] for row in remote["files"]
+            if row["path"] in uploaded and row["bytes"] <= transfer.limits.upload_max_bytes
+            and transfer.remote_sha256(f"{remote['data']}/{row['path']}") == uploaded[row["path"]]]
+        manifest["remote"] = remote
+        total = 0
+        for row in remote["files"]:
+            name, size = row["path"], row["bytes"]
+            if name in remote["unchanged_inputs"]:
+                continue
+            if size > transfer.limits.fetch_max_bytes or total + size > transfer.limits.fetch_total_bytes:
+                manifest["skipped"].append({"path": name, "bytes": size,
+                                             "reason": "retained in request remote data"})
+                continue
+            try:
+                info = transfer.fetch_file(f"{remote['data']}/{name}", fetch_to, name=name)
+            except (TooLarge, PathRejected) as error:
+                # Local retrieval is optional; the remote file is rechecked before admission/use.
+                manifest["skipped"].append({"path": name, "bytes": size, "reason": str(error)[:200]})
+                continue
+            if info["bytes"] != size:
+                raise TransferError(f"{name}: size differs from remote listing")
+            total += size
+            manifest["fetched"].append({"path": name, "bytes": size, "sha256": info["sha256"]})
+        write_confined(Path(logs_dir), Path(logs_dir) / f"{spec['stem']}.fetch.json",
+                       json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
+        return manifest
     total = 0
     for name in transfer.list_deeper(spec["work"]):  # too deep to list: not fetched, and said so
         manifest["skipped"].append({"path": name, "reason": f"deeper than {transfer.limits.list_depth} folders: use the "

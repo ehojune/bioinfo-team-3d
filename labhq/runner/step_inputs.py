@@ -262,12 +262,12 @@ def _folder(root, parts):
         yield held
 
 
-def _json(held, name):
+def _json(held, name, limit=1024 * 1024):
     with os.fdopen(held.open_read_file(name), 'rb') as opened:
         if os.fstat(opened.fileno()).st_nlink != 1:
             raise ValueError('input metadata is hard-linked')
-        data = opened.read(1024 * 1024 + 1)
-    if len(data) > 1024 * 1024:
+        data = opened.read(limit + 1)
+    if len(data) > limit:
         raise ValueError('input metadata exceeds limit')
     return json.loads(data)
 
@@ -416,6 +416,49 @@ def _copy_literature(root, source_parts, work, max_file, remaining):
                 remaining[0] -= len(data)
     except (OSError, ValueError, TypeError):
         return
+
+
+def remote_ancestor_inputs(ws, artifacts, workspace_root):
+    """Runner-persisted names/sizes from successful ancestors of the same request."""
+    from ..hpc_transfer import validate_remote_manifest
+
+    found = {}
+    root = Path(workspace_root).resolve(strict=True)
+    for step, artifact in artifacts.items():
+        if not isinstance(step, str) or not INPUT_STEP_ID.fullmatch(step) or step in {'.', '..'}:
+            raise ValueError('invalid remote ancestor identity')
+        source = Path(artifact['workdir']).absolute()
+        parts = source.relative_to(root).parts
+        if not parts or source != source.resolve(strict=True) or source == ws.dir.resolve():
+            raise ValueError('remote ancestor workspace is not plain')
+        with _folder(root, parts) as held:
+            record = _json(held, 'manifest.json', limit=16 * 1024 * 1024)
+        task = record.get('task') or {}
+        run = (record.get('runs') or {}).get(artifact['task_id']) or {}
+        if (not ws.task.request_id or task.get('request_id') != ws.task.request_id or
+                task.get('meta', {}).get('step_id') != step or run.get('ok') is not True or
+                run.get('request_id') != ws.task.request_id or run.get('step_id') != step):
+            raise ValueError('remote ancestor is not a successful step of this request')
+        manifests = run.get('hpc_remote_outputs')
+        if manifests is None:
+            continue  # a shared filesystem ancestor uses the existing local snapshot path
+        if not isinstance(manifests, list) or not manifests:
+            raise ValueError('remote ancestor inventory is missing')
+        rows = {}
+        for manifest in manifests:
+            validate_remote_manifest(manifest, ws.task.request_id)
+            for row in manifest['files']:
+                path = 'outputs/' + row['path']
+                if path in rows:
+                    raise ValueError('ambiguous remote output from multiple jobs')
+                rows[path] = row['bytes']
+        outputs = artifact.get('outputs')
+        if not isinstance(outputs, list):
+            raise ValueError('remote collected output mapping is missing')
+        if not set(rows).issubset(outputs):
+            raise ValueError('remote inventory contains uncollected outputs')
+        found[step] = manifests
+    return found
 
 
 def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, max_total, remaining=None):

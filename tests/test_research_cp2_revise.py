@@ -30,8 +30,21 @@ def _plans(hub):
 
 
 @pytest.mark.asyncio
-async def test_a_cp2_revise_with_a_note_replans_through_a_new_cp1_and_reruns_only_the_changed_step(tmp_path):
+@pytest.mark.parametrize('long_notices', [False, True])
+async def test_a_cp2_revise_with_a_note_replans_through_a_new_cp1_and_reruns_only_the_changed_step(tmp_path, monkeypatch, long_notices):
     hub = cont._hub(tmp_path, [CP1, REVISE, CP1, cont.APPROVE], reviews=[cont.ACCEPT])
+    if long_notices:
+        original = hub.reply
+
+        async def reply(task):
+            response = await original(task)
+            if task.meta['kind'] == 'plan':
+                response.structured.setdefault('warnings', []).append('재배정: worker ' + '안내 ' * 300)
+            return response
+
+        hub.reply = reply
+        monkeypatch.setattr('labhq.orchestrator.cso.paper_skills.card_text',
+                            lambda plan: 'Paper skill: fixture ' + 'notice ' * 300)
     await Orchestrator(hub).run_request("r")
 
     req = hub.requests["r"]
@@ -59,8 +72,12 @@ async def test_a_cp2_revise_with_a_note_replans_through_a_new_cp1_and_reruns_onl
     assert second.count(NOTE) == 1 and "P1 issues:" not in second
     assert first["plan_sha256"] in second
     cp1 = hub.approvals[2]
-    assert cp1["summary"].startswith("이어 가기 2차 계획(CP2 수정 요청 반영). 재사용: s1 · 다시 실행: s2. ")
+    assert cp1["summary"].startswith("CP1 연구 계획 승인:")
+    assert "이어 가기 2차 계획(CP2 수정 요청 반영). 재사용: s1 · 다시 실행: s2. " in cp1["summary"]
     assert '재사용 거부 이유: spec changed.' in cp1['summary']
+    if long_notices:
+        assert 'Paper skill: fixture' in cp1['summary'] and '재배정: worker' in cp1['summary']
+        assert len(cp1['summary']) <= 699
     assert cp1["detail"]["continuation"]["trigger"] == "cp2_revise"
     assert cp1["detail"]["continuation"]["pi_request"] == NOTE
     # The round-2 reviewer checks the revision the PI asked for, and the record keeps the request whole.

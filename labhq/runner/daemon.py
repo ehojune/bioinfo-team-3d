@@ -2483,10 +2483,23 @@ class Runner:
                 steps = upstream_steps if isinstance(upstream_steps, dict) else {}
                 accepted = {sid: row for sid, row in artifacts.items()
                             if isinstance(row, dict) and row.get("workdir") == steps.get(sid)}
+                remote_ancestors = {}
+                if whole_hpc and self.scheduler.transfer() is not None:
+                    from .step_inputs import remote_ancestor_inputs
+                    remote_ancestors = await asyncio.to_thread(remote_ancestor_inputs, ws, accepted, root)
+                local_ancestors = {}
+                for sid, row in accepted.items():
+                    if sid not in remote_ancestors:
+                        local_ancestors[sid] = row
+                        continue
+                    remote_paths = {"outputs/" + f["path"] for m in remote_ancestors.get(sid, []) for f in m["files"]}
+                    local_outputs = [path for path in row["outputs"] if path not in remote_paths]
+                    if local_outputs:
+                        local_ancestors[sid] = {**row, "outputs": local_outputs}
                 input_budget = [self.s.runner.input_hash_max_total_bytes]  # one cumulative limit for every input copy
                 private_now = (await asyncio.to_thread(resolve_private_paths, self.s, [], cwd=ws.dir)).paths
                 staged_inputs, unavailable = await asyncio.to_thread(
-                    stage_inputs, ws, accepted, root, [*zones, *internal_zones],
+                    stage_inputs, ws, local_ancestors, root, [*zones, *internal_zones],
                     list(private_now),
                     self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes, input_budget)
                 unavailable.update({str(sid): f"inputs/{sid} unavailable (ancestor mapping mismatch)"
@@ -2498,7 +2511,7 @@ class Runner:
                 if whole_hpc:
                     if unavailable:
                         raise ValueError("HPC ancestor snapshot unavailable: " + "; ".join(unavailable.values()))
-                    shared = await asyncio.to_thread(ws.publish_hpc_inputs, accepted, staged_inputs,
+                    shared = await asyncio.to_thread(ws.publish_hpc_inputs, local_ancestors, staged_inputs,
                                                      self.s.runner.input_hash_max_file_bytes,
                                                      self.s.runner.input_hash_max_total_bytes)
                     note = ("HPC job cwd is this step's outputs/. Read ancestor files only from these hash-verified "
@@ -2506,7 +2519,27 @@ class Runner:
                             "\n".join(f"{sid}: {path} (relative: {os.path.relpath(path, ws.dir / 'outputs')})"
                                       for sid, path in shared.items()) +
                             "\nDo not read sibling workspaces. These are runner copies, never input links.")
-                    task = ws.task = task.model_copy(update={"meta": {**task.meta, "hpc_data_inputs": shared}})
+                    if remote_ancestors:
+                        from ..hpc_transfer import bounded_path_preview
+                        transfer = self.scheduler.transfer()
+                        remote_mapping = {f"{sid}/{index}": manifest for sid, manifests in remote_ancestors.items()
+                                          for index, manifest in enumerate(manifests)}
+                        await awrite_owned_many(ws.dir, [(".tmp/hpc-remote-inputs.json",
+                            json.dumps({key: {**manifest, "absolute_data": transfer.path(manifest['data'])}
+                                        for key, manifest in remote_mapping.items()},
+                                       ensure_ascii=False, separators=(",", ":")))])
+                        preview = bounded_path_preview(
+                            (f"{key}/{row['path']}: {transfer.path(manifest['data'] + '/' + row['path'])}"
+                             for key, manifest in remote_mapping.items() for row in manifest['files']),
+                            max_chars=8192, max_entries=64)
+                        note += ("\nFull remote input inventory: .tmp/hpc-remote-inputs.json (read/query it as needed)."
+                                 "\nRemote ancestor outputs, bounded preview (leave producer files unchanged):\n" + preview +
+                                 "\nUse only these collected paths; do not glob the producer work directory. "
+                                 "Shared-account paths are not filesystem isolation.")
+                    else:
+                        remote_mapping = {}
+                    task = ws.task = task.model_copy(update={"meta": {**task.meta, "hpc_data_inputs": shared,
+                                                                     "hpc_remote_inputs": remote_mapping}})
                 if unavailable:
                     note += "\n" + "\n".join(unavailable.values())
                     for reason in unavailable.values():
@@ -3003,13 +3036,48 @@ class Runner:
         hashed = {row["path"]: row["sha256"] for row in output_records
                   if isinstance(row.get("sha256"), str) and row["path"] in result.outputs}
         result.output_sha256 = hashed
+        remote_manifests = []
+        retained_text = ""
+        if whole_hpc and _should_check_declared_outputs(result):
+            try:
+                remote_manifests = await asyncio.to_thread(self._remote_step_outputs, ws)
+            except Exception as exc:
+                result.ok = False
+                result.error = "incomplete: remote outputs could not be verified: " + self._hide_text(str(exc))[:300]
+            if remote_manifests:
+                from ..hpc_transfer import local_copy_conflicts
+                remote_paths = ["outputs/" + row["path"]
+                                for manifest in remote_manifests for row in manifest["files"]]
+                receipts = {"outputs/" + path: digest for manifest in remote_manifests
+                            for path, digest in manifest.pop("_local_copy_sha256", {}).items()}
+                conflicts = await asyncio.to_thread(local_copy_conflicts, ws.dir, remote_paths, hashed, receipts)
+                if conflicts:
+                    result.ok = False
+                    result.error = ("incomplete: local/remote output conflict or unverified local copy: " +
+                                    ", ".join(conflicts[:8])[:300])
+                    refused = set(conflicts)
+                    remote_paths = [path for path in remote_paths if path not in refused]
+                    found = [path for path in found if path not in refused]
+                    result.outputs = [path for path in result.outputs if path not in refused]
+                    result.output_sha256 = {path: digest for path, digest in result.output_sha256.items()
+                                            if path not in refused}
+                found = list(dict.fromkeys([*found, *remote_paths]))
+                result.outputs = list(dict.fromkeys([*result.outputs, *remote_paths]))
+                ws.stage_run(task.id, hpc_remote_outputs=remote_manifests)
+                transfer = self.scheduler.transfer()
+                retained_text = "\n\nRetained HPC data (delete only by user decision):\n" + "\n".join(
+                    f"{transfer.path(m['data'])}: {m.get('retained_bytes', m['bytes'])} known bytes retained "
+                    f"({m['bytes']} declared)" for m in remote_manifests)
+                result.text += retained_text
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
+        remote_files = {"outputs/" + row["path"] for manifest in remote_manifests for row in manifest["files"]}
         if _should_check_declared_outputs(result):
             def has_output(rel: str) -> bool:
                 # A declared folder is there when a file with a hash is under it: a later step stages only those.
-                return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in result.output_sha256)
+                return (rel in collected or any(path.startswith(rel.rstrip("/") + "/")
+                                               for path in result.output_sha256.keys() | remote_files))
 
             missing_required = [rel for name in required_declared
                                 if (rel := output_relpath(name)) and not has_output(rel)]
@@ -3019,7 +3087,7 @@ class Runner:
                 result.ok = False
                 result.missing_outputs = list(dict.fromkeys([*result.missing_outputs, *missing_required]))
                 result.error = "incomplete: missing outputs: " + ", ".join(result.missing_outputs)
-            if declared_dirs and result.ok and output_scan_notes:
+            if declared_dirs and result.ok and output_scan_notes and not remote_manifests:
                 # The bounded walk of outputs/ skipped something (too deep, too many entries, unreadable). That only
                 # matters for a declared folder the walk did not see whole: each folder is walked on its own, and an
                 # unrelated subtree or a note from an earlier scan does not fail it (#1058, #1065).
@@ -3039,7 +3107,7 @@ class Runner:
                     result.error = ("incomplete: the outputs scan is incomplete, so declared folder(s) "
                                     f"{', '.join(declared_dirs)} cannot be collected whole: "
                                     + "; ".join(folder_problems))
-            if declared_dirs and result.ok:
+            if declared_dirs and result.ok and not remote_manifests:
                 # A later step stages at most this many files and bytes of ONE ancestor, folder files and plain
                 # declared files together, and refuses the whole ancestor otherwise (#1058): the producer must not
                 # pass what no later step can take.
@@ -3136,7 +3204,7 @@ class Runner:
                 if direct_result is not None:
                     response = direct_result.get("response")
                     if isinstance(response, str):
-                        result.text = response
+                        result.text = response + retained_text
                     entries, issues = (output_types.normalize_entries(
                         found, direct_result.get("output_types"), current_vocab)
                         if current_vocab is not None and current_vocab.sha256 == task.meta.get("output_types_vocab")
@@ -3194,6 +3262,8 @@ class Runner:
         if task.meta.get("paper_skills"):
             ws.record_paper_skill_usage(result)
         result.provenance = ws.provenance()
+        if remote_manifests:
+            result.provenance["hpc_remote_data"] = remote_manifests
         if task.meta.get("paper_skills"):
             ws.clear_paper_skills()  # before task.result can release a dependent step
         if tool_errors:
@@ -3361,7 +3431,9 @@ class Runner:
                                    "name": result["name"], "script": result["script"],
                                    "script_sha256": result["script_sha256"],
                                    "core_hours": result["core_hours"]},
-                                  {"transfer": {**result["transfer"], "fetch_to": str(fetch_to)}}
+                                  {"transfer": {**result["transfer"], "fetch_to": str(fetch_to),
+                                                "step_id": ws.task.meta.get("step_id"),
+                                                "revision": ws.task.meta.get("revision", 0)}}
                                   if result.get("transfer") else None)
 
         # Count this submit's login against its request, and say no before the PI is asked when a limit is already used up.
@@ -3369,7 +3441,12 @@ class Runner:
             await self._notify_login_limit(body.get("request_id"), stop, [body], operation="submit")
             return {"error": str(stop)}
         with request_scope(body.get("request_id")), queue_wait():
-            result = await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record)
+            remote_data = None
+            if location.get("mode") == "hpc" and ws.task.request_id:
+                remote_data = {"request_id": ws.task.request_id,
+                               "inputs": ws.task.meta.get("hpc_remote_inputs", {})}
+            result = await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record,
+                                      remote_data=remote_data)
         if result.get("error") and (stop := self._login_limit(body.get("request_id"))):
             await self._notify_login_limit(body.get("request_id"), stop, [body], operation="submit")
         return result
@@ -3927,6 +4004,10 @@ class Runner:
                     await self._emit_hpc_notice("transfer", f"작업 {jid}의 로그·결과를 가져오지 못했습니다: {j['fetch_error']}")
             else:
                 j["fetched"], j["fetch_error"] = True, None
+                if "remote" in manifest:
+                    j["remote_manifest"] = manifest["remote"]
+                j["fetched_sha256"] = {row["path"]: row["sha256"] for row in manifest.get("fetched", [])
+                                       if isinstance(row.get("sha256"), str)}
                 if manifest["skipped"]:
                     await self._emit_hpc_notice(
                         "transfer", f"작업 {jid}: 파일 {len(manifest['skipped'])}개는 가져오지 않았습니다(크기 상한 등). "
@@ -3936,6 +4017,71 @@ class Runner:
     def _fetch_settled(self, j: dict) -> bool:
         """The agent waits for a job's files to come home, up to FETCH_TRIES polls."""
         return not j.get("transfer") or bool(j.get("fetched")) or j.get("fetch_tries", 0) >= self.FETCH_TRIES
+
+    def _remote_step_outputs(self, ws) -> list[dict]:
+        """Only runner-owned, successful remote jobs of this workspace and revision can satisfy outputs."""
+        from ..hpc_transfer import TransferError, validate_remote_manifest, verify_remote_data
+
+        manifests, paths, directory_paths = [], set(), set()
+        transfer = self.scheduler.transfer()
+        if transfer is None:
+            return manifests
+        with request_scope(ws.task.request_id), queue_wait():
+            for job in list(self.jobs.values()):
+                spec = job.get("transfer") or {}
+                if (job.get("workdir") != str(ws.dir) or spec.get("request_id") != ws.task.request_id or
+                        spec.get("step_id") != ws.task.meta.get("step_id") or
+                        spec.get("revision", 0) != ws.task.meta.get("revision", 0)):
+                    continue
+                if ws.task.resume_session_id and job.get("session_id") != ws.task.resume_session_id:
+                    continue
+                if (not job.get("submitted_by_runner") or not job.get("terminal") or job.get("state") != "completed"
+                        or not job.get("fetched") or not isinstance(job.get("remote_manifest"), dict)):
+                    raise TransferError("a remote job has no verified successful output manifest")
+                manifest = validate_remote_manifest(job["remote_manifest"], ws.task.request_id)
+                declared = {("" if rel == "outputs" else rel.removeprefix("outputs/")) for name in [
+                    *ws.task.meta.get("outputs", []), *ws.task.meta.get("optional_outputs", [])]
+                    if (rel := output_relpath(name))}
+                directories = set(manifest.get("directories", []))
+                declared_dirs = declared & directories
+                if "" in declared:
+                    declared_dirs.add("")  # the work directory itself is a valid explicit output root
+                if any(row["path"] in declared or any(path.startswith(row["path"] + "/") for path in declared)
+                       for row in manifest.get("skipped", [])) or any(
+                       not directory or row["path"].startswith(directory + "/")
+                       for row in manifest.get("skipped", []) for directory in declared_dirs):
+                    raise TransferError("a declared remote output directory is incomplete (unsupported entries)")
+                collect_all = (ws.task.meta.get("kind") == "direct" or
+                               ws.task.meta.get("collect_direct_outputs") is True)
+                unchanged = set(manifest.get("unchanged_inputs", []))
+                files = [row for row in manifest["files"] if (collect_all and row["path"] not in unchanged) or row["path"] in declared or
+                         any(not d or row["path"].startswith(d + "/") for d in declared_dirs)]
+                manifest = {**manifest, "retained_bytes": manifest["bytes"],
+                            "files": files, "bytes": sum(row["bytes"] for row in files),
+                            "skipped": [],
+                            "unchanged_inputs": [row["path"] for row in files if row["path"] in unchanged],
+                            "directories": [d for d in directories if collect_all or d in declared_dirs or
+                                            any(not parent or d.startswith(parent + "/") for parent in declared_dirs)]}
+                verify_remote_data(transfer, manifest, ws.task.request_id)
+                copied = {name: spec.get("inputs", {})[name] for name in manifest["unchanged_inputs"]
+                          if name in spec.get("inputs", {})}
+                copied.update(job.get("fetched_sha256", {}))
+                manifest["_local_copy_sha256"] = {row["path"]: copied[row["path"]]
+                                                  for row in files if row["path"] in copied}
+                file_paths = {row["path"].casefold() for row in manifest["files"]}
+                current_dirs = {directory.casefold() for directory in manifest["directories"]}
+                for path in file_paths:
+                    parts = path.split("/")
+                    current_dirs.update("/".join(parts[:i]) for i in range(1, len(parts)))
+                if file_paths & directory_paths or current_dirs & paths or file_paths & current_dirs:
+                    raise TransferError("remote jobs produced conflicting file and directory paths")
+                for row in manifest["files"]:
+                    if row["path"].casefold() in paths:
+                        raise TransferError("multiple remote jobs produced the same output path")
+                    paths.add(row["path"].casefold())
+                directory_paths.update(current_dirs)
+                manifests.append(manifest)
+        return manifests
 
     def _fetch_job_files(self, j: dict, spec: dict) -> dict:
         from ..hpc_transfer import fetch_results

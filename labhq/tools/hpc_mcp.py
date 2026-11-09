@@ -362,6 +362,10 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     return json.dumps({
         "submitted": True, "job_id": job_id, "script": str(spath), "logs": str(logs),
         "output_dir": str(output_dir),
+        **({"remote_output_dir": SCHED.transfer().path(out["transfer"]["work"]),
+            "remote_data_dir": SCHED.transfer().path(out["transfer"]["data"]),
+            "retention": "Remote outputs remain in the request data folder; only small files are fetched locally."}
+           if out.get("transfer", {}).get("request_id") else {}),
         "note": "Relative job outputs are in output_dir. Do not poll in a loop; "
                 "summarize what you are waiting for and end your turn; "
                 "you will be resumed when the job finishes.",
