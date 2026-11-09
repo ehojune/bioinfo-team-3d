@@ -62,6 +62,8 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 
 `labhq_hpc`는 `hpc_submit`(제출), `hpc_status`(상태), `hpc_queue`(큐), `hpc_cancel`(취소)을 줍니다. 제출은 PI 승인 정책(11장)을 따르고, 취소는 직원이 `hpc_submit`으로 낸 잡만 됩니다.
 
+잡 스크립트는 runner OS와 상관없이 LF 줄바꿈으로 씁니다. Windows runner의 텍스트 쓰기는 CRLF가 되어 sbatch가 "DOS line breaks"로 거절했습니다(#1331). `hpc_submit`의 `inputs`에 넣은 셸 스크립트(`.sh`·`.bash`, 또는 첫 줄이 sh 계열 shebang)에 CRLF가 있으면, 클러스터의 bash에서 명령마다 `\r`이 붙어 늦게 실패합니다. 그래서 아무것도 쓰기 전에 그 파일 이름을 대며 제출을 거절합니다. LF로 다시 저장한 뒤 제출하면 됩니다. 검사는 작업 폴더 안의 일반 파일만 링크를 따르지 않고 읽습니다.
+
 사이트 프로필에 큐·노드 고정이 있으면 모든 제출에 적용합니다. 다른 큐나 별도 노드 지정은 업로드·승인 요청 전에 거절합니다. 접속 명령이 없는 프로필에도 적용하며, 고정이 없으면 기존 제출 설정을 씁니다.
 
 설정의 `hpc.site_profile`이 접속 명령(`connect_argv`)이 있는 [사이트 프로필](15-config.md)을 가리키면, runner가 HPC에 **한 번 접속해 셸 하나를 열어 두고** 모든 scheduler 명령을 그 셸에 한 줄씩 보냅니다. 직원의 `hpc_status`·`hpc_queue`·`hpc_cancel`도 도구 프로세스가 직접 접속하지 않고 runner에 요청해 같은 셸로 돕니다. 그래서 상태 조회를 아무리 해도 로그인은 늘지 않고, 연결이 끊겨 다시 열 때만 로그인으로 셉니다(요청당·하루 상한, [15장](15-config.md)). 원격 명령 실행을 무시하는 게이트웨이에서도 셸만 열리면 됩니다.
