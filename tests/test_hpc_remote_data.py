@@ -1,5 +1,6 @@
 """Request remote data boundaries. Fake gateway/local helper only; never contact HPC."""
 import copy
+import hashlib
 import json
 import os
 import shlex
@@ -167,7 +168,7 @@ def test_only_successful_same_request_ancestor_inventory_is_admitted(tmp_path):
         with pytest.raises(ValueError): remote_ancestor_inputs(ws, {'s1': bad_artifact}, root)
 
 
-@pytest.mark.parametrize('layout', ['file', 'directory', 'partial_directory', 'root', 'partial_root', 'missing', 'file_prefix', 'empty_directory', 'direct', 'collect_direct'])
+@pytest.mark.parametrize('layout', ['file', 'directory', 'partial_directory', 'root', 'partial_root', 'missing', 'file_prefix', 'empty_directory', 'direct', 'collect_direct', 'local_conflict', 'changed_copy', 'fetched_copy', 'unchanged_copy', 'many_files'])
 async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_after_restart(site, monkeypatch, layout):
     from labhq.adapters.mock import MockAdapter
     from labhq.models import AgentSpec, Engine, Task, TaskResult
@@ -197,13 +198,22 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
         step = ctx.task.meta['step_id']
         if ctx.task.resume_session_id:
             typed_name = ('tx2gene.tsv/part.tsv' if layout == 'directory' else 'tx2gene.tsv') if step == 's1' else 'de.csv'
+            if step == 's1' and layout == 'many_files':
+                typed_name = 'index/file-00000.tsv'
             return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text='done', structured={
                 'response': 'done', 'output_types': [{'name': 'outputs/' + typed_name, 'data_type': 'table', 'format': 'tsv'}]})
         if step == 's2':
             remote = ctx.task.meta['hpc_remote_inputs']['s1/0']
             assert remote in seen
             assert runner.scheduler.transfer().path(remote['data']) in ctx.task.context
-            assert 's1/0/tx2gene.tsv: ' in ctx.task.context or 's1/0/tx2gene.tsv/part.tsv: ' in ctx.task.context
+            if layout == 'many_files':
+                assert len(ctx.task.context) < 16000
+                assert 'preview truncated' in ctx.task.context
+                full = json.loads((ctx.workdir / '.tmp/hpc-remote-inputs.json').read_text())
+                assert len(full['s1/0']['files']) == 3000
+                assert full['s1/0']['absolute_data'] == runner.scheduler.transfer().path(remote['data'])
+            else:
+                assert 's1/0/tx2gene.tsv: ' in ctx.task.context or 's1/0/tx2gene.tsv/part.tsv: ' in ctx.task.context
             if layout not in {'direct', 'collect_direct', 'root'}:
                 assert 'undeclared.bin' not in ctx.task.context
             assert 'Shared-account paths are not filesystem isolation.' in ctx.task.context
@@ -223,6 +233,20 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
                     m['skipped'] = [{'path': 'tx2gene.tsv/sample 1.tsv', 'reason': 'name not allowed'}]
             if layout == 'partial_root':
                 m['skipped'] = [{'path': 'sample 1.tsv', 'reason': 'name not allowed'}]
+            if layout == 'many_files':
+                m.update(files=[{'path': f'index/file-{i:05}.tsv', 'bytes': 2000} for i in range(3000)],
+                         directories=['index'], bytes=6000000)
+            if layout in {'local_conflict', 'changed_copy', 'fetched_copy', 'unchanged_copy'}:
+                if layout != 'local_conflict':
+                    m['files'][0]['bytes'] = m['bytes'] = 6
+                    if layout == 'unchanged_copy':
+                        m['unchanged_inputs'] = ['tx2gene.tsv']
+                        job['transfer']['inputs'] = {'tx2gene.tsv': hashlib.sha256(b'remote').hexdigest()}
+                    else:
+                        job['fetched_sha256'] = {'tx2gene.tsv': hashlib.sha256(b'remote').hexdigest()}
+                local = ctx.workdir / 'outputs/tx2gene.tsv'
+                local.parent.mkdir(parents=True, exist_ok=True)
+                local.write_bytes(b'remote' if layout in {'fetched_copy', 'unchanged_copy'} else b'local')
             if layout == 'file_prefix':
                 m['files'][0]['path'] = 'tx2gene.tsv/part.tsv'  # no real declared directory in the listing
             if layout in {'missing', 'empty_directory'}:
@@ -260,6 +284,9 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             if root_declared:
                 meta['outputs'] = ['outputs']
             typed_name = output + '/part.tsv' if step == 's1' and layout == 'directory' else output
+            if step == 's1' and layout == 'many_files':
+                meta['outputs'] = ['outputs/index']
+                typed_name = 'index/file-00000.tsv'
             meta.update(output_types_vocab=type_vocab.sha256,
                         output_types={'outputs/' + typed_name: {'data_type': 'table', 'format': 'tsv'}})
             pending = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='test', meta=meta))
@@ -269,6 +296,11 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             monkeypatch.setattr(runner.registry, 'get', lambda _: agent)
             result = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='wake', meta=meta,
                                                resume_session_id='session-' + step))
+            if step == 's1' and layout in {'local_conflict', 'changed_copy'}:
+                assert not result.ok and 'local/remote output conflict' in result.error
+                assert 'outputs/tx2gene.tsv' not in result.outputs
+                assert 'outputs/tx2gene.tsv' not in result.output_sha256
+                return
             if step == 's1' and layout in {'partial_directory', 'partial_root'}:
                 assert not result.ok and 'declared remote output directory is incomplete' in result.error
                 assert result.outputs == []
@@ -280,13 +312,17 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             assert result.ok, result.error
             assert not result.missing_outputs
             collected_output = output + '/part.tsv' if step == 's1' and layout == 'directory' else output
+            if step == 's1' and layout == 'many_files':
+                collected_output = 'index/file-00000.tsv'
             assert 'outputs/' + collected_output in result.outputs
             assert result.output_types['outputs/' + collected_output]['data_type']['value'] == 'table'
             assert 'Retained HPC data' in result.text
-            assert 'outputs/' + output not in result.output_sha256  # no hash invented for a remote-only file
-            assert not (Path(result.workdir) / 'outputs' / output).exists()
-            assert result.provenance['hpc_remote_data'][0]['bytes'] == 20000000 + (9 if collect_all or root_declared else 0)
-            assert result.provenance['hpc_remote_data'][0]['retained_bytes'] == 20000000 + (9 if step == 's1' else 0)
+            fetched_copy = step == 's1' and layout in {'fetched_copy', 'unchanged_copy'}
+            assert ('outputs/' + output in result.output_sha256) is fetched_copy
+            assert (Path(result.workdir) / 'outputs' / output).exists() is fetched_copy
+            expected_bytes = 6 if fetched_copy else 6000000 if step == 's1' and layout == 'many_files' else 20000000
+            assert result.provenance['hpc_remote_data'][0]['bytes'] == expected_bytes + (9 if collect_all or root_declared else 0)
+            assert result.provenance['hpc_remote_data'][0]['retained_bytes'] == expected_bytes + (9 if step == 's1' else 0)
             results.append(result)
             if step == 's1':
                 runner.store.close()
@@ -468,3 +504,22 @@ def test_permanent_local_retrieval_refusal_keeps_verified_remote_outputs(cluster
     assert [row['path'] for row in fetched['fetched']] == ['result.tsv']
     assert any(row['path'] == 'blocked.tsv' and 'not portable' in row['reason'] for row in fetched['skipped'])
     assert ht.verify_remote_data(transfer, fetched['remote'], 'r') == transfer.path(spec['data'])
+
+
+async def test_fetch_receipts_are_saved_with_the_job_for_local_copy_admission():
+    from unittest.mock import AsyncMock, Mock
+    from labhq.runner.daemon import Runner
+
+    runner = Runner.__new__(Runner)
+    job = {'task_id': 't', 'terminal': True, 'transfer': {'dir': 'mock'}}
+    runner.jobs = {'j': job}
+    runner.task_req = {'t': 'r'}
+    runner.store = Mock()
+    runner._login_limit = lambda _: None
+    runner._emit_hpc_notice = AsyncMock()
+    digest = hashlib.sha256(b'data').hexdigest()
+    runner._fetch_job_files = lambda *args: {'fetched': [{'path': 'x.tsv', 'bytes': 4, 'sha256': digest}],
+                                           'remote': inventory(path='x.tsv', data=b'data'), 'skipped': []}
+    await runner._fetch_finished_jobs()
+    assert job['fetched_sha256'] == {'x.tsv': digest}
+    assert runner.store.put.call_args.args[2]['fetched_sha256'] == {'x.tsv': digest}

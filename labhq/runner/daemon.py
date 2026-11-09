@@ -2520,12 +2520,20 @@ class Runner:
                                       for sid, path in shared.items()) +
                             "\nDo not read sibling workspaces. These are runner copies, never input links.")
                     if remote_ancestors:
+                        from ..hpc_transfer import bounded_path_preview
                         transfer = self.scheduler.transfer()
                         remote_mapping = {f"{sid}/{index}": manifest for sid, manifests in remote_ancestors.items()
                                           for index, manifest in enumerate(manifests)}
-                        note += ("\nRemote ancestor outputs (use as inputs; leave producer files unchanged):\n" +
-                                 "\n".join(f"{key}/{row['path']}: {transfer.path(manifest['data'] + '/' + row['path'])}"
-                                           for key, manifest in remote_mapping.items() for row in manifest['files']) +
+                        await awrite_owned_many(ws.dir, [(".tmp/hpc-remote-inputs.json",
+                            json.dumps({key: {**manifest, "absolute_data": transfer.path(manifest['data'])}
+                                        for key, manifest in remote_mapping.items()},
+                                       ensure_ascii=False, separators=(",", ":")))])
+                        preview = bounded_path_preview(
+                            (f"{key}/{row['path']}: {transfer.path(manifest['data'] + '/' + row['path'])}"
+                             for key, manifest in remote_mapping.items() for row in manifest['files']),
+                            max_chars=8192, max_entries=64)
+                        note += ("\nFull remote input inventory: .tmp/hpc-remote-inputs.json (read/query it as needed)."
+                                 "\nRemote ancestor outputs, bounded preview (leave producer files unchanged):\n" + preview +
                                  "\nUse only these collected paths; do not glob the producer work directory. "
                                  "Shared-account paths are not filesystem isolation.")
                     else:
@@ -3037,8 +3045,22 @@ class Runner:
                 result.ok = False
                 result.error = "incomplete: remote outputs could not be verified: " + self._hide_text(str(exc))[:300]
             if remote_manifests:
+                from ..hpc_transfer import local_copy_conflicts
                 remote_paths = ["outputs/" + row["path"]
                                 for manifest in remote_manifests for row in manifest["files"]]
+                receipts = {"outputs/" + path: digest for manifest in remote_manifests
+                            for path, digest in manifest.pop("_local_copy_sha256", {}).items()}
+                conflicts = await asyncio.to_thread(local_copy_conflicts, ws.dir, remote_paths, hashed, receipts)
+                if conflicts:
+                    result.ok = False
+                    result.error = ("incomplete: local/remote output conflict or unverified local copy: " +
+                                    ", ".join(conflicts[:8])[:300])
+                    refused = set(conflicts)
+                    remote_paths = [path for path in remote_paths if path not in refused]
+                    found = [path for path in found if path not in refused]
+                    result.outputs = [path for path in result.outputs if path not in refused]
+                    result.output_sha256 = {path: digest for path, digest in result.output_sha256.items()
+                                            if path not in refused}
                 found = list(dict.fromkeys([*found, *remote_paths]))
                 result.outputs = list(dict.fromkeys([*result.outputs, *remote_paths]))
                 ws.stage_run(task.id, hpc_remote_outputs=remote_manifests)
@@ -3984,6 +4006,8 @@ class Runner:
                 j["fetched"], j["fetch_error"] = True, None
                 if "remote" in manifest:
                     j["remote_manifest"] = manifest["remote"]
+                j["fetched_sha256"] = {row["path"]: row["sha256"] for row in manifest.get("fetched", [])
+                                       if isinstance(row.get("sha256"), str)}
                 if manifest["skipped"]:
                     await self._emit_hpc_notice(
                         "transfer", f"작업 {jid}: 파일 {len(manifest['skipped'])}개는 가져오지 않았습니다(크기 상한 등). "
@@ -4039,6 +4063,11 @@ class Runner:
                             "directories": [d for d in directories if collect_all or d in declared_dirs or
                                             any(not parent or d.startswith(parent + "/") for parent in declared_dirs)]}
                 verify_remote_data(transfer, manifest, ws.task.request_id)
+                copied = {name: spec.get("inputs", {})[name] for name in manifest["unchanged_inputs"]
+                          if name in spec.get("inputs", {})}
+                copied.update(job.get("fetched_sha256", {}))
+                manifest["_local_copy_sha256"] = {row["path"]: copied[row["path"]]
+                                                  for row in files if row["path"] in copied}
                 file_paths = {row["path"].casefold() for row in manifest["files"]}
                 current_dirs = {directory.casefold() for directory in manifest["directories"]}
                 for path in file_paths:

@@ -61,3 +61,32 @@ async def test_parallel_roots_keep_dependencies_outputs_and_one_login(cluster, t
         assert (tmp_path / sid / 'result.txt').read_text() == sid
         assert cluster.path(specs[sid]['work'] + '/result.txt').read_text() == sid
     assert cluster.logins() == 1
+
+
+async def test_cso_bounds_remote_artifact_context_and_leaves_full_inventory_to_runner(tmp_path):
+    names = [f'outputs/index/file-{i:05}.tsv' for i in range(10000)]
+    spec = ht.job_spec('producer', 'index', 'r')
+    remote = {'request_id': 'r', 'data': spec['data'], 'bytes': 10000,
+              'files': [{'path': name.removeprefix('outputs/'), 'bytes': 1} for name in names],
+              'directories': ['index']}
+
+    async def dispatch(task):
+        if task.meta['step_id'] == 'index':
+            return result(task, text='index ready', workdir=str(tmp_path / 'producer'), workdir_id='producer',
+                          outputs=names, provenance={'hpc_remote_data': [remote]})
+        assert len(task.context) <= 4096
+        assert '.tmp/hpc-remote-inputs.json' in task.context
+        assert 'preview truncated' in task.context
+        assert len(task.meta['upstream_artifacts']['index']['outputs']) == 10000
+        return result(task, text='done')
+
+    hub = FakeHub(dispatch)
+    hub.agents['worker'].update(runner_id='cluster', hpc_tools=True, whole_request_hpc=True, builtin_mcp=['hpc'])
+    hub.agent_runner = {'worker': 'cluster'}
+    hub.s.orchestrator.context_chars_per_step = 4096
+    hub.requests['r']['execution_location'] = {'mode': 'hpc', 'runner_id': 'cluster'}
+    steps = [dict(id=sid, agent_id='worker', instruction=sid, depends_on=deps, outputs=outputs)
+             for sid, deps, outputs in [('index', [], ['outputs/index']), ('consume', ['index'], [])]]
+    results = {}
+    await Orchestrator(hub)._run_dag('r', 'mock research', steps, results)
+    assert all(r.ok for r in results.values()), {s: r.error for s, r in results.items()}

@@ -1009,9 +1009,25 @@ def apply_declared_output_status(step: dict, result: TaskResult) -> TaskResult:
     required = [(str(name), rel) for name in step.get("outputs") or [] if (rel := output_relpath(name))]
     optional = [(str(name), rel) for name in step.get("optional_outputs") or [] if (rel := output_relpath(name))]
     hashed = {rel for name in result.output_sha256 if (rel := output_relpath(name))}
+    remote_files, remote_dirs = set(), set()
+    from ..hpc_transfer import TransferError, validate_remote_manifest
+    remote_manifests = result.provenance.get("hpc_remote_data")
+    for manifest in remote_manifests if isinstance(remote_manifests, list) else []:
+        if not isinstance(manifest, dict):
+            continue
+        try:
+            validate_remote_manifest(manifest, manifest.get("request_id"))
+        except TransferError:
+            continue
+        remote_files.update("outputs/" + row["path"] for row in manifest["files"]
+                            if "outputs/" + row["path"] in collected)
+        remote_dirs.update("outputs/" + name for name in manifest.get("directories", []))
+        remote_dirs.add("outputs")
 
     def has_output(rel: str) -> bool:  # a declared folder is collected as its hashed files (#1058)
-        return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in hashed)
+        prefix = rel.rstrip("/") + "/"
+        return (rel in collected or any(path.startswith(prefix) for path in hashed) or
+                rel in remote_dirs and any(path.startswith(prefix) for path in remote_files))
 
     missing = [name for name, rel in required if not has_output(rel)]
     missing_optional = [name for name, rel in optional if not has_output(rel)]
@@ -5493,12 +5509,29 @@ class Orchestrator:
             return direct + [s["id"] for s in steps if s["id"] in ancestors[step["id"]]
                              and s["id"] not in direct and local_environment(s)]
 
+        def remote_context(r: TaskResult, head: str, include_text: bool) -> str:
+            from ..hpc_transfer import bounded_path_preview
+
+            manifests = r.provenance.get("hpc_remote_data") or []
+            refs = bounded_path_preview((f"{r.workdir_id}/{path}" for path in r.outputs), max_chars=2048)
+            paths = bounded_path_preview((f"{m['data']}/{row['path']}" for m in manifests for row in m['files']))
+            text = (f"{head}\nCollected artifacts: {len(r.outputs)} files; bounded previews below. "
+                    "The runner supplies the full remote input inventory at .tmp/hpc-remote-inputs.json.\n"
+                    f"Artifact workdir_id: {r.workdir_id}\nArtifact reference preview:\n{refs}\n"
+                    f"Remote paths relative to site remote_workdir:\n{paths}")
+            if include_text:
+                text += "\n" + clip(r.text, self.cfg.context_chars_per_step)
+            return clip(text, self.cfg.context_chars_per_step)[:self.cfg.context_chars_per_step]
+
         def upstream(step: dict) -> str:
             parts = []
             for d in step["depends_on"]:
                 r = results.get(d)
                 if r and r.ok:
                     head = f"## {d} · {by_id[d]['agent_id']}"
+                    if whole_hpc and r.outputs and r.provenance.get("hpc_remote_data"):
+                        parts.append(remote_context(r, head, True))
+                        continue
                     artifacts = [{"workdir_id": r.workdir_id, "path": path}
                                  for path in r.outputs]
                     # Relative to the step folder, where the runner links inputs/<step id> (#423): a script that
@@ -5515,6 +5548,9 @@ class Orchestrator:
             for d in input_steps(step)[len(step["depends_on"]):]:
                 r = results.get(d)
                 if r and r.ok and r.workdir and r.outputs:
+                    if whole_hpc and r.provenance.get("hpc_remote_data"):
+                        parts.append(remote_context(r, f"## {d} · {by_id[d]['agent_id']} (earlier step, files only)", False))
+                        continue
                     artifacts = [{"workdir_id": r.workdir_id, "path": path} for path in r.outputs]
                     remote = r.provenance.get("hpc_remote_data") if whole_hpc else None
                     paths = ("Remote paths relative to site remote_workdir (absolute roots are in runner context):\n" +

@@ -29,7 +29,7 @@ import time
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
-from typing import Callable
+from typing import Callable, Iterable
 
 from .adapters.held_dir import HeldDir
 
@@ -390,6 +390,50 @@ def request_data_root(request_id: str) -> str:
     return "requests/" + hashlib.sha256(request_id.encode()).hexdigest()
 
 
+def bounded_path_preview(lines: Iterable[str], max_chars: int = 4096, max_entries: int = 32) -> str:
+    """Whole preview lines only; the runner supplies a separately readable full inventory."""
+    marker = "... (preview truncated; read the full inventory)"
+    kept, used = [], 0
+    for line in lines:
+        if len(kept) >= max_entries or used + len(line) + len(marker) + 2 > max_chars:
+            return "\n".join([*kept, marker])[:max_chars]
+        kept.append(line)
+        used += len(line) + 1
+    return "\n".join(kept)
+
+
+def local_copy_conflicts(root: Path, paths: list[str], hashes: dict, receipts: dict) -> list[str]:
+    """Reject local aliases without a matching small-file transport receipt; never hash large outputs."""
+    conflicts = []
+    try:
+        with HeldDir.hold(root) as base:
+            for path in paths:
+                if path in hashes and (path not in receipts or hashes[path] != receipts[path]):
+                    conflicts.append(path)
+                    continue
+                parts = confine(path).parts
+                with contextlib.ExitStack() as opened:
+                    parent = base
+                    try:
+                        for part in parts[:-1]:
+                            parent = opened.enter_context(parent.child(part))
+                        fd = parent.open_read_file(parts[-1])
+                        try:
+                            plain = os.fstat(fd).st_nlink == 1
+                        finally:
+                            os.close(fd)
+                    except FileNotFoundError:
+                        continue
+                    except OSError:
+                        conflicts.append(path)
+                        continue
+                    if not plain or path not in receipts or hashes.get(path) != receipts[path]:
+                        conflicts.append(path)
+    except OSError:
+        return list(paths)  # an unavailable local namespace cannot establish absence of aliases
+    return conflicts
+
+
 # List names and sizes through held directories. Large outputs stay exactly where the job wrote them;
 # listing never reads file contents, changes permissions, copies or moves them.
 REMOTE_DATA_HELPER = r'''
@@ -653,7 +697,7 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
             if info["bytes"] != size:
                 raise TransferError(f"{name}: size differs from remote listing")
             total += size
-            manifest["fetched"].append(row)
+            manifest["fetched"].append({"path": name, "bytes": size, "sha256": info["sha256"]})
         write_confined(Path(logs_dir), Path(logs_dir) / f"{spec['stem']}.fetch.json",
                        json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
         return manifest
