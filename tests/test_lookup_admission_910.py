@@ -158,9 +158,14 @@ def test_sends_in_flight_hold_places_under_the_transient_cap(tmp_path):
     assert admission.usage("req_1")["transient"] == 2
 
 
-def test_a_lost_send_does_not_hold_a_transient_place_for_ever(tmp_path):
-    admission, clock = ledger(tmp_path, limit=20, transient_limit=1)
-    assert admission.admit("req_1", "task_1", "lit_scout", "fulltext", OPENALEX)["admitted"]  # never finished
-    assert admission.admit("req_1", "task_1", "lit_scout", "fulltext", OPENALEX)["reason"] == "transient exhausted"
-    clock.now += la.PROBE_STALE_S + 1
-    assert admission.admit("req_1", "task_1", "lit_scout", "fulltext", OPENALEX)["admitted"]
+def test_a_long_tool_call_keeps_its_transient_places_until_it_reports(tmp_path):
+    """A tool reports its sends only when the whole call ends, which can take minutes of retries: its unanswered sends
+    keep their places however long that is, and a send never reported keeps it (as it keeps its place in `used`)."""
+    admission, clock = ledger(tmp_path, limit=20, transient_limit=2)
+    first = admission.admit("req_1", "task_1", "lit_scout", "fulltext", OPENALEX)
+    second = admission.admit("req_1", "task_1", "lit_scout", "fulltext", OPENALEX)
+    clock.now += 10 * 60
+    assert admission.admit("req_1", "task_2", "analyst", "fulltext", OPENALEX)["reason"] == "transient exhausted"
+    admission.finish("req_1", "task_1", [[first["seq"], 503], [second["seq"], 503]], "failed")
+    assert admission.usage("req_1")["transient"] == 2
+    assert admission.admit("req_1", "task_2", "analyst", "fulltext", OPENALEX)["reason"] == "transient exhausted"

@@ -178,14 +178,15 @@ class LookupAdmission:
             try:
                 used, transient, in_flight, last = db.execute(
                     f"SELECT COALESCE(SUM({_COUNTED}), 0), COALESCE(SUM({_TRANSIENT}), 0), "
-                    "COALESCE(SUM(http_status IS NULL AND outcome IS NULL AND admitted_at > ?), 0), COALESCE(MAX(seq), 0) "
-                    "FROM sends WHERE request_id = ?", (self.clock() - PROBE_STALE_S, request_id)).fetchone()
+                    "COALESCE(SUM(http_status IS NULL AND outcome IS NULL), 0), COALESCE(MAX(seq), 0) "
+                    "FROM sends WHERE request_id = ?", (request_id,)).fetchone()
                 if used >= self.limit:
                     db.execute("ROLLBACK")
                     return {"admitted": False, "used": used, "limit": self.limit, "reason": "exhausted"}
                 # A send still in flight may come back 5xx/429: it holds a place under the transient cap too, so
-                # concurrent sends near the cap cannot all pass and overshoot it. One unanswered past PROBE_STALE_S is
-                # lost (annot's request timeout is 120 s) and holds nothing.
+                # concurrent sends near the cap cannot all pass and overshoot it. The place is held until the answer is
+                # recorded, however long the tool call runs (it reports its sends only when it ends); a send that is
+                # never reported keeps it, as it keeps its place in `used`: fail closed.
                 if transient + in_flight >= self.transient_limit:
                     db.execute("ROLLBACK")
                     return {"admitted": False, "used": used, "limit": self.limit, "reason": "transient exhausted",
