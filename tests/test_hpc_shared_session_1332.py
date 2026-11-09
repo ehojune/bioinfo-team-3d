@@ -56,8 +56,8 @@ def test_pin_reaches_actual_submit(setup_submit, tmp_path, backend, connect, run
 
 @pytest.mark.parametrize("backend,options,queue", [
     ("slurm", {"slurm": {"sbatch_args": ["--nodelist=other"]}}, None),
-    ("slurm", {"submit_prefix": ["--partition=other"]}, None),
-    ("sge", {"submit_prefix": ["-l", "h=other"]}, None),
+    ("slurm", {"slurm": {"sbatch_args": ["--partition=other"]}}, None),
+    ("sge", {"sge": {"mem_resource": "h"}}, None),
     ("slurm", {}, "other"), ("sge", {}, "other"),
     ("pbs", {}, None),
 ])
@@ -74,6 +74,26 @@ def test_conflicting_pin_never_submits(setup_submit, tmp_path, backend, options,
         with pytest.raises(hpc_site.SiteProfileError):
             scheduler.submit(str(script), "job", queue=queue)
     scheduler._run.assert_not_called()
+
+
+@pytest.mark.parametrize("backend", ["sge", "slurm"])
+@pytest.mark.parametrize("runner", [False, True])
+def test_wrapper_options_are_preserved_outside_placement_parsing(setup_submit, tmp_path, backend, runner):
+    prefix = ["runuser", "-p", "-w", "PATH", "-u", "fixture", "--"]
+    settings, scheduler, script = setup_submit(backend, submit_prefix=prefix)
+    if runner:
+        result = asyncio.run(submit_job(settings, scheduler, tmp_path, {"script": str(script)},
+                                        AsyncMock(return_value={"approved": True})))
+        assert result["submitted"] and result["job_id"] == "123"
+    else:
+        assert scheduler.submit(str(script), "job") == "123"
+    args = scheduler._run.call_args.args[0]
+    assert args[:len(prefix)] == prefix
+    assert args[len(prefix)] == ("sbatch" if backend == "slurm" else "qsub")
+    if backend == "slurm":
+        assert "--partition=batch" in args and "--nodelist=node01" in args
+    else:
+        assert args[args.index("-q") + 1] == "batch@node01"
 
 
 @pytest.mark.parametrize("backend", ["sge", "pbs", "slurm"])

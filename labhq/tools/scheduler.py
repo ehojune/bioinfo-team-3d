@@ -548,7 +548,8 @@ class Scheduler:
             raise RuntimeError(f"submit not supported for scheduler={self.cfg.scheduler}")
         if queue and not pinned and self.cfg.scheduler != "slurm":
             args += ["-q", queue]
-        return pin_submit(profile, self.cfg.scheduler, [*self.cfg.submit_prefix, *args, script], queue)
+        # Wrapper flags belong to the account-switch command, not the scheduler.
+        return [*self.cfg.submit_prefix, *pin_submit(profile, self.cfg.scheduler, [*args, script], queue)]
 
     def submit(self, script: str, name: str, cores: int = 1, mem: str = "4G", walltime: str = "04:00:00",
                queue: str | None = None, stdout: str = "/dev/null", stderr: str = "/dev/null") -> str:
