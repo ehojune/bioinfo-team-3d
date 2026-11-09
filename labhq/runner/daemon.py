@@ -2249,7 +2249,8 @@ class Runner:
                          if whole_hpc and (agent.project_dirs or task.meta.get("project_dirs")
                                            or task.meta.get("reference_dirs")) else None)
         if whole_hpc and task.meta.get("precedent_texts"):
-            input_refusal = "HPC precedent texts require a verified scheduler-readable precedent snapshot"
+            # Scheduler jobs never read precedent texts; drop them instead of refusing the step (#1336).
+            task.meta = {key: value for key, value in task.meta.items() if key != "precedent_texts"}
         refusal = input_refusal or (read_only_refusal(agent.id, agent.engine) if read_only else None)
         # A contract hire works only once active, and staff that send data to external services never take restricted
         # inputs (#424); the gateway refuses both first.

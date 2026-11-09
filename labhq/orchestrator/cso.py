@@ -4138,6 +4138,10 @@ class Orchestrator:
         location = self.hub.requests.get(rid, {}).get("execution_location")
         if location:
             task = task.model_copy(update={"meta": {**task.meta, "execution_location": location}})
+            if location.get("mode") == "hpc" and "precedent_texts" in task.meta:
+                # Scheduler jobs never read stored precedent texts; the step goes without them (#1336).
+                task = task.model_copy(update={"meta": {key: value for key, value in task.meta.items()
+                                                        if key != "precedent_texts"}})
             request_row = self.hub.requests.get(rid) or {}
             problems = execution_policy.input_errors(
                 {**task.meta, **reference_meta(request_row),
@@ -5606,9 +5610,10 @@ class Orchestrator:
                 # A resumed session gets only these updates, and its earlier turn holds an older count (#1088).
                 updates.append(usage)
             linked = input_steps(step)
-            # The precedent search's stored texts reach every research step as read-only inputs (#951).
+            # The precedent search's stored texts reach every local research step as read-only inputs (#951).
+            # Whole-request HPC steps run in scheduler jobs that never read them, so they get none (#1336).
             stored_precedents = (precedent_texts.rows(self.hub.requests.get(rid, {}).get("analysis_precedents"))
-                                 if research_plan else [])
+                                 if research_plan and not whole_hpc else [])
             upstream_dirs = [results[d].workdir for d in linked
                              if d in results and results[d].ok and results[d].workdir and results[d].outputs]
             upstream_steps = {d: results[d].workdir for d in linked
