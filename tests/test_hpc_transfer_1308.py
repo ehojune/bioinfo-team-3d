@@ -831,6 +831,11 @@ def test_a_log_in_request_remote_data_comes_home_hidden_and_its_receipt_is_the_k
     ("\x1b]0;/private/title\x07ok", "ok"),
     ("sort >/private/out.txt", "sort ><remote-path>"),  # a redirect is not a placeholder
     ("read file:///private/study/file", "read file:<remote-path>"),  # only public web schemes are kept
+    ("https://example.org/data;/private/study/file", "https://example.org/data;<remote-path>"),
+    ("https://example.org/a,/p|/q (/r)", "https://example.org/a,<remote-path>|<remote-path> (<remote-path>)"),
+    ("https://example.org/a|/q", "https://example.org/a|<remote-path>"),
+    ("'https://example.org/a'/q", "'https://example.org/a'<remote-path>"),
+    (ROOT + "/t1;/private/x", "<workdir>/t1;<remote-path>"),
     ("ssh://host/private/study and sftp://h/p", "ssh:<remote-path> and sftp:<remote-path>"),
     ("HTTPS://ftp.ebi.ac.uk/a xhttp://evil/private", "HTTPS://ftp.ebi.ac.uk/a xhttp:<remote-path>"),
     (ROOT + "/t1/a.log and " + ROOT, "<workdir>/t1/a.log and <workdir>"),

@@ -84,7 +84,8 @@ _GENERIC_FOLDERS = {"home", "tmp", "scratch", "data", "work", "users", "user", "
 _ANSI = re.compile("\x1b\\[[0-?]*[ -/]*[@-~]|\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)?|\x1b[@-Z\\\\-_]")
 # Public web addresses stay readable. Any other scheme (file://, ssh://, s3://...) is not kept: its "//host/path" is
 # hidden like any other absolute path.
-_URL = re.compile(r"(?<![A-Za-z0-9+.\-])(?:https?|ftp)://[^\s\"'<>]+", re.I)
+# A kept segment ends at the same separators as a path, so nothing glued after it ("...;/private") rides along.
+_URL = re.compile(r"""(?<![A-Za-z0-9+.\-])(?:https?|ftp)://[^\s"'<>|;,()\[\]{}`]+""", re.I)
 # Any absolute POSIX path, one part or many, wherever it starts: after any character that cannot belong to a relative
 # path or a word (so "a/b" and "1/2" stay), up to whitespace, a quote, a bracket or a separator such as ':' or ';'.
 _ABSOLUTE_PATH = re.compile(r"""(?<![\w.~\-/])/[^\s"'<>|;,:()\[\]{}`]+""")
