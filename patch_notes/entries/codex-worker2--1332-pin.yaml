@@ -1,5 +1,9 @@
 pr: 1338
 rows:
+  - sha: "f5bfbd3"
+    at: "2026-11-09 18:22"
+    summary: "HPC 제출 위치를 검사할 때 계정 전환 명령의 옵션을 보존합니다."
+    text: "scheduler 인자만 pin_submit으로 검증한 뒤 wrapper 결합, Windows inventory 등록, 관련 mock·CI 정책 회귀 433 passed·11 skipped (#1332)"
   - sha: "56cd45f"
     at: "2026-11-09 18:14"
     summary: "HPC 작업을 사이트 프로필에서 정한 큐와 노드로 제출합니다."
