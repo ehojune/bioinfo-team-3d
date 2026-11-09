@@ -1,5 +1,9 @@
 pr: 1348
 rows:
+  - sha: "06a7355"
+    at: "2026-11-10 00:17"
+    summary: "선언 폴더의 일부 파일을 회수하지 못하면 완료로 표시하지 않습니다."
+    text: "누락 기록 보존·불완전 선언 폴더 거절·undeclared 특수 항목 제외. 관련 mock 244 passed·27 skipped, Linux 이름/link/FIFO/hardlink·5 GiB smoke PASS (#1347)"
   - sha: "0f748f1"
     at: "2026-11-10 00:04"
     summary: "큰 원격 산출의 유형과 보존 경로를 결과에서 잃지 않습니다."
