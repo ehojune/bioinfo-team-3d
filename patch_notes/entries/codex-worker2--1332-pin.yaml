@@ -1,6 +1,6 @@
-pr: null
+pr: 1338
 rows:
   - sha: "56cd45f"
-    at: "2026-11-09 18:23"
+    at: "2026-11-09 18:14"
     summary: "HPC 작업을 사이트 프로필에서 정한 큐와 노드로 제출합니다."
     text: "Scheduler에 pin_submit 연결, runner 업로드·승인 전 충돌 거절, 두 경로 mock 26건 통과 (#1332)"
