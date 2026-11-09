@@ -8,6 +8,7 @@
 - `labhq/result_storage.py`: `prepare_failed_text` 추가. 업로드 시작 전이고 GitHub 오류가 아닌 실패는 "이 PC에서 정리본을 만들지 못했다, 토큰 문제가 아니다"와 `--redraft` 안내
 - `tests/test_result_storage_errors_1336.py`(새, Windows inventory 등록): 로컬 준비 실패 문구, GitHub 실패 문구 유지, 반드시-0 표현이 있어도 게시되고 WARN으로 기록됨
 - `korean_qc.py`는 원래 WARN만 돌려줘서 고치지 않음
+- manual 01(문체 검사는 경고만)·12(준비 실패 `--redraft`, 업로드 실패 `--republish`) 한·영 (봇 리뷰 P1)
 
 ## 실행한 것
 - portfolio·result_storage·korean_qc 관련 시험 41개 파일: 1072 passed, 4 skipped
