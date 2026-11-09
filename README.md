@@ -44,7 +44,7 @@ mock 데모(`labhq demo --web`)입니다. 약 13초 영상에 계획·직원 작
 
 - 기본 역할 설정은 13개(Claude Code 8개·Codex 5개)입니다. 엔진·모델·도구는 [직원 YAML](agents/core/)이 기준이며, 로컬 단독 직원과 파견직은 별도입니다.
 - 반복·정형 분석은 [bioinfo-agent](https://github.com/ehojune/bioinfo-agent) 직원이 맡습니다. 분석에 맞는 nf-core Nextflow 파이프라인과 자원 계획을 내고 승인 뒤 실행·MultiQC 판정을 맡는 Claude Code 에이전트입니다.
-- 팀에 없는 방법이 필요하면 논문·코드를 [Paper2Agent](https://github.com/jmiao24/Paper2Agent)로 바꿔 **파견직**으로 채용합니다.
+- 팀에 없는 방법이 필요하면 논문·코드를 [Paper2Agent](https://github.com/jmiao24/Paper2Agent)로 바꿔 **파견직**으로 채용합니다. v1.0에서는 기본으로 꺼져 있고 `recruit.enabled: true`로 켭니다.
 - HPC(SGE·PBS·Slurm)에 잡을 내면 직원 세션은 잡이 끝날 때까지 쉬었다가 같은 세션으로 이어 갑니다. 채용 뒤 담당자가 HPC 실행 조건에 맞지 않으면 계획 승인(CP1)과 처리 단계 실행 전에 중단합니다.
 - CSO는 권한·비용·데이터 접근, PI만 아는 선택(질병·코호트), 분석 깊이만 묻습니다. 나머지 설계는 스스로 정하고 계획과 보고서에 **가정**으로 적습니다.
 - 연구 단계의 결과는 계획이 그 단계에 선언한 `claim_ids` 안의 주장만 담을 수 있고, 결과 교정 요청도 이 목록을 그대로 알려 줍니다.
@@ -148,7 +148,7 @@ SQLite에 요청·단계·승인을 남겨 중단 지점부터 잇고, 끝나면
 | 시맨틱 | 이름표로 무엇을 판정할지 정한 약속 | 승인 계획 hash(CP1), topic별 규칙 pack, 입력 적합성 판정, 보고서 근거 앵커 |
 | 온톨로지 | 이름표 사이의 관계 | 작은 상하위 관계와 출처·담당·승인 상태의 객체 뷰. 현재는 그림자 계산 |
 
-그림자는 켜도 기록만 하며 `semantics: ab`는 연구 요청 절반에 재사용 후보를 참고로 줍니다. 현재는 효과 비교 단계입니다. [의미 모델](docs/manual.md#의미-모델과-온톨로지) · [어휘·topic·점검표](docs/vocabulary.md)
+v1.0의 `labhq init`은 의미 모델을 꺼 둡니다(`semantics.mode: "off"`, #1336). 켜면 그림자는 기록만 하고, `semantics: ab`는 연구 요청 절반에 재사용 후보를 참고로 줍니다. 효과는 아직 비교 중입니다. [의미 모델](docs/manual.md#의미-모델과-온톨로지) · [어휘·topic·점검표](docs/vocabulary.md)
 
 ## 웹으로 시작하기
 
