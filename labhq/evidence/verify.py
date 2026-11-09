@@ -266,6 +266,9 @@ class LiveSourceResolver:
                 raise LookupFailed("host_paused", f"{paused} 호스트가 연속 실패로 쉬는 중이라 조회하지 않았습니다"
                                                   f"(확인 못 함, 요청의 조회 몫은 남아 있고 {when})",
                                    host=paused, retry_after_s=wait)
+            if isinstance(verdict, dict) and verdict.get("reason") == "transient exhausted":  # #910
+                raise LookupFailed("lookup_limit", f"요청에서 공개 서비스의 HTTP 5xx/429 응답이 상한"
+                                                   f"({verdict.get('transient_limit')})에 닿아 조회하지 않았습니다(확인 못 함)")
             limit = verdict.get("limit") if isinstance(verdict, dict) else None
             raise LookupFailed("lookup_limit", f"요청 HTTP 상한({limit})에 닿아 조회하지 않았습니다(확인 못 함)")
         return verdict.get("seq") if type(verdict.get("seq")) is int else None

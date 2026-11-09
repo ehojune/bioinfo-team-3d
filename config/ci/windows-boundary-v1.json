@@ -189,6 +189,7 @@
     "tests/test_local_jobs_675.py",
     "tests/test_login_wait.py",
     "tests/test_long_mcp_call.py",
+    "tests/test_lookup_admission_910.py",
     "tests/test_lookup_backend_cancellation.py",
     "tests/test_lookup_host_breaker_1279.py",
     "tests/test_loop_liveness_606.py",

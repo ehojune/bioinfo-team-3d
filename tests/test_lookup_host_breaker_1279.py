@@ -1,4 +1,5 @@
-"""#1279: a host that keeps answering HTTP 5xx/429 stops getting sends; the quota is still counted per send."""
+"""#1279: a host that keeps answering HTTP 5xx/429 stops getting sends. Since #910 such answers are given back to the
+quota and counted as `transient` instead; any other send is still counted."""
 
 import asyncio
 
@@ -40,7 +41,8 @@ def test_three_consecutive_5xx_pause_the_host_without_counting(tmp_path):
     refused = admission.admit("req_1", "task_1", "lit_scout", "fulltext", EBI)
     assert refused["admitted"] is False and refused["reason"] == "host_paused" and refused["host"] == EBI
     assert 0 < refused["retry_after_s"] <= la.BREAKER_COOLDOWN_S
-    assert admission.usage("req_1")["used"] == 3  # the refused one was neither sent nor counted
+    usage = admission.usage("req_1")
+    assert (usage["used"], usage["transient"]) == (0, 3)  # the 503s are transient; the refused one was not sent at all
 
 
 def test_other_hosts_and_other_requests_are_not_paused(tmp_path):
@@ -142,7 +144,7 @@ def test_only_one_probe_goes_after_the_cooldown_until_it_is_answered(tmp_path):
     assert probe["admitted"]
     second = admission.admit("req_1", "task_2", "analyst", "fulltext", EBI)
     assert second["admitted"] is False and second["reason"] == "host_paused"
-    assert admission.usage("req_1")["used"] == 4  # the held one was not counted
+    assert admission.usage("req_1")["used"] == 1 and admission.usage("req_1")["transient"] == 3  # the probe in flight counts, the held one does not
     admission.finish("req_1", "task_1", [[probe["seq"], 200]], "ok")
     assert admission.admit("req_1", "task_2", "analyst", "fulltext", EBI)["admitted"]  # the probe succeeded
 
@@ -176,11 +178,12 @@ def test_unrecorded_sends_are_not_evidence(tmp_path):
         assert admission.admit("req_1", "task_1", "lit_scout", "fulltext", EBI)["admitted"]  # status not reported yet
 
 
-def test_pause_does_not_change_how_the_quota_is_counted(tmp_path):
+def test_a_paused_hosts_failures_leave_the_quota_to_other_hosts(tmp_path):
     admission, _ = ledger(tmp_path, limit=4)
     for _ in range(3):
         send(admission, EBI, 503)
-    assert send(admission, OPENALEX, 200)["admitted"]
+    for _ in range(4):
+        assert send(admission, OPENALEX, 200)["admitted"]  # #910: the three 503s did not spend the quota
     assert admission.admit("req_1", "task_1", "lit_scout", "fulltext", OPENALEX)["reason"] == "exhausted"
 
 
@@ -191,7 +194,8 @@ def test_usage_note_names_a_paused_host(tmp_path):
         send(admission, EBI, 503)
     assert admission.paused_hosts("req_1") == {EBI: round(la.BREAKER_COOLDOWN_S)}
     note = usage_note(admission, "req_1")
-    assert "3 of 50 used" in note and f"{EBI} (300s left)" in note and "nothing is counted" in note
+    assert "0 of 50 used" in note and "3 of 50 such answers" in note and f"{EBI} (300s left)" in note
+    assert "nothing is counted" in note
 
 
 def test_breaker_wait_is_a_pure_rule():
@@ -308,7 +312,7 @@ def test_a_resting_host_is_host_paused_with_its_host_and_wait_and_keeps_the_quot
     assert (resolution.lookup, resolution.status, resolution.error_kind) == ("failed", "requires_verification",
                                                                              "host_paused")
     assert "api.crossref.org" in resolution.detail and "조회 몫은 남아 있고" in resolution.detail
-    assert not sent and admission.usage("req_1")["used"] == 3  # nothing was sent or counted for the refused ones
+    assert not sent and admission.usage("req_1")["transient"] == 3 and admission.usage("req_1")["used"] == 0  # nothing sent for the refused ones
     from labhq.evidence.verify import LookupFailed
     with pytest.raises(LookupFailed) as caught:
         asyncio.run(resolver.lookup("doi", "10.1093/nar/gks1195"))

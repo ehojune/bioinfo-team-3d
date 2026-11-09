@@ -1,0 +1,14 @@
+pr: 1337
+rows:
+  - sha: "627ac57"
+    at: "2026-11-09 17:46"
+    summary: "공개 서비스가 HTTP 5xx나 429로 답한 조회는 요청의 조회 상한을 쓰지 않습니다. 서비스 장애로 상한이 바닥나 정작 답하는 조회를 못 하던 일을 막습니다. 계속 실패하는 서비스는 조회 상한과 같은 횟수의 일시 오류에서 멈춥니다."
+    text: "LookupAdmission이 응답 기록된 5xx·429를 used·선행 몫에서 빼고 transient로 셈, transient_limit(기본 limit)과 reason transient exhausted, seq를 MAX(seq)+1로, usage_note·annot 도구·출처 확인 거절 문구, manual 09 한영, #1279·#891 시험 계수 단정 갱신, 시험 9건 (#910)"
+  - sha: "f0a6c5e"
+    at: "2026-11-09 17:59"
+    summary: "여러 조회가 동시에 나갈 때도 서비스 오류 상한을 넘지 않습니다. 응답을 기다리는 조회도 그 상한의 자리를 차지하고, 150초 넘게 답이 없으면 놓아 줍니다."
+    text: "admit이 transient + 응답 대기(PROBE_STALE_S 안) 송신으로 transient_limit을 판정, manual 09 기존 문단을 #910 규칙과 맞춤(한영), windows-boundary known_tests에 새 시험, 시험 2건 (#910)"
+  - sha: "c02204e"
+    at: "2026-11-09 18:04"
+    summary: "응답을 기다리는 조회는 오래 걸려도 서비스 오류 상한의 자리를 놓지 않습니다. 몇 분씩 재시도하는 도구 호출 중에도 상한을 넘지 않습니다."
+    text: "admit의 응답 대기 계수에서 PROBE_STALE_S 만료를 빼고 기록될 때까지 자리 유지(fail closed), 시험 1건 교체 (#910)"

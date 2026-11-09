@@ -6,6 +6,11 @@ of the tool's client. httpx runs that hook before every send, including each red
 annot's own retries, pagination, per-item fan-out and OA redirect hops each call the client again. So every failed,
 retried or redirected request is one attempt, and a refused one is not sent and not counted.
 
+A send the service answered with a server or rate-limit error (5xx, 429) is given back once its answer is recorded
+(#910): the service's outage does not spend the request's quota. Those sends have their own cap, ``transient_limit``
+(the request limit unless set), so a service that keeps failing still ends the lookups. A send still in flight, or one
+that ended without any answer (timeout, connection failure), stays counted.
+
 The runner's broker calls this with the request id bound to the task token it issued, never one a caller names.
 Rows live in one SQLite file under the runner state folder, so every agent and step of the request and a restarted
 runner share the count. ``BEGIN IMMEDIATE`` makes the count-and-insert one step for concurrent callers, including
@@ -43,6 +48,11 @@ BREAKER_COOLDOWN_S = 300.0  # after this long without a send the host gets one p
 
 def failing_status(status: int) -> bool:
     return status == 429 or 500 <= status <= 599
+
+
+# The SQL form of failing_status: such an answered send is not counted against the request limit (#910).
+_TRANSIENT = "(http_status = 429 OR http_status BETWEEN 500 AND 599)"
+_COUNTED = f"(http_status IS NULL OR NOT {_TRANSIENT})"
 
 
 PROBE_HOLD_S = 30.0         # while the one probe after a cooldown is still unanswered, nothing else is sent (half-open)
@@ -119,16 +129,21 @@ def usage_note(admission: "LookupAdmission | None", request_id: object, *, now=N
         hosts = ", ".join(f"{host} ({seconds}s left)" for host, seconds in paused.items())
         pause_note = (f" Paused after consecutive HTTP 5xx/429 answers (nothing is sent there and nothing is counted "
                       f"until the pause ends; use another source or report the lookup as missing): {hosts}.")
+    transient = (f" Sends answered with HTTP 5xx/429 are not counted: {usage['transient']} of "
+                 f"{usage['transient_limit']} such answers so far; at that cap lookups stop.") if usage.get("transient") else ""
     return (f"Public lookup usage of this request (labhq_annot and source-check HTTP requests; every retry and "
-            f"redirect counts): {usage['used']} of {usage['limit']} used, {usage['remaining']} left at {stamp} "
-            f"(by agent: {who}). This is the count of this PC's runner; a number written in the request text is a "
+            f"redirect counts, except one answered with HTTP 5xx/429): {usage['used']} of {usage['limit']} used, "
+            f"{usage['remaining']} left at {stamp} (by agent: {who}).{transient} This is the count of this PC's runner; a number written in the request text is a "
             f"separate statement that labhq does not enforce.{stage_note}{pause_note}")
 
 
 class LookupAdmission:
-    def __init__(self, path: str | Path, limit: int, *, precedent_share: float | None = None, clock=time.time):
+    def __init__(self, path: str | Path, limit: int, *, precedent_share: float | None = None,
+                 transient_limit: int | None = None, clock=time.time):
         self.path, self.limit, self.clock = Path(path), limit, clock
         self.precedent_share = precedent_share
+        # 5xx/429 answers are not counted against `limit`; this many of them end the request's lookups instead (#910).
+        self.transient_limit = limit if transient_limit is None else transient_limit
         self.path.parent.mkdir(parents=True, exist_ok=True)
         db = self._connect()
         try:
@@ -161,13 +176,24 @@ class LookupAdmission:
         try:
             db.execute("BEGIN IMMEDIATE")
             try:
-                used = db.execute("SELECT COUNT(*) FROM sends WHERE request_id = ?", (request_id,)).fetchone()[0]
+                used, transient, in_flight, last = db.execute(
+                    f"SELECT COALESCE(SUM({_COUNTED}), 0), COALESCE(SUM({_TRANSIENT}), 0), "
+                    "COALESCE(SUM(http_status IS NULL AND outcome IS NULL), 0), COALESCE(MAX(seq), 0) "
+                    "FROM sends WHERE request_id = ?", (request_id,)).fetchone()
                 if used >= self.limit:
                     db.execute("ROLLBACK")
                     return {"admitted": False, "used": used, "limit": self.limit, "reason": "exhausted"}
+                # A send still in flight may come back 5xx/429: it holds a place under the transient cap too, so
+                # concurrent sends near the cap cannot all pass and overshoot it. The place is held until the answer is
+                # recorded, however long the tool call runs (it reports its sends only when it ends); a send that is
+                # never reported keeps it, as it keeps its place in `used`: fail closed.
+                if transient + in_flight >= self.transient_limit:
+                    db.execute("ROLLBACK")
+                    return {"admitted": False, "used": used, "limit": self.limit, "reason": "transient exhausted",
+                            "transient": transient, "transient_limit": self.transient_limit}
                 if stage in PREPLAN_STAGES and self.precedent_share is not None:
-                    stage_used = db.execute("SELECT COUNT(*) FROM sends WHERE request_id = ? AND stage IN (?, ?)",
-                                            (request_id, *PREPLAN_STAGES)).fetchone()[0]
+                    stage_used = db.execute(f"SELECT COUNT(*) FROM sends WHERE request_id = ? AND stage IN (?, ?) "
+                                            f"AND {_COUNTED}", (request_id, *PREPLAN_STAGES)).fetchone()[0]
                     if stage_used >= share_cap(self.limit, self.precedent_share):
                         db.execute("ROLLBACK")
                         return {"admitted": False, "used": used, "limit": self.limit, "reason": "stage share exhausted"}
@@ -178,7 +204,7 @@ class LookupAdmission:
                             "host": host, "retry_after_s": round(wait)}
                 db.execute("INSERT INTO sends (request_id, seq, task_id, agent_id, tool, host, admitted_at, stage) "
                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                           (request_id, used + 1, str(task_id or ""), str(agent_id or ""), tool, host, self.clock(), stage))
+                           (request_id, last + 1, str(task_id or ""), str(agent_id or ""), tool, host, self.clock(), stage))
                 db.execute("COMMIT")
             except BaseException:
                 if db.in_transaction:
@@ -186,7 +212,8 @@ class LookupAdmission:
                 raise
         finally:
             db.close()
-        return {"admitted": True, "seq": used + 1, "used": used + 1, "limit": self.limit}
+        # seq numbers every send, given back or not; `used` is what counts against the limit now
+        return {"admitted": True, "seq": last + 1, "used": used + 1, "limit": self.limit}
 
     def _host_wait(self, db: sqlite3.Connection, request_id: str, host: str) -> float:
         """How long this host is paused for this request. Only answers already recorded count: a send's status is
@@ -223,7 +250,8 @@ class LookupAdmission:
         return {host: round(wait) for host, wait in sorted(waits.items()) if wait > 0}
 
     def finish(self, request_id: object, task_id: object, sends: object, outcome: object) -> int:
-        """Record each admitted send's HTTP status and the tool call's outcome; the sends stay counted regardless."""
+        """Record each admitted send's HTTP status and the tool call's outcome. A 5xx/429 answer gives the send back to
+        the request limit and counts it toward ``transient_limit`` instead; every other send stays counted."""
         if not isinstance(request_id, str) or outcome not in OUTCOMES or not isinstance(sends, list):
             return 0
         rows = []
@@ -249,17 +277,20 @@ class LookupAdmission:
         return changed
 
     def usage(self, request_id: object) -> dict | None:
-        """What this request has used: ``used``, ``limit``, ``remaining`` and the counts per agent and per tool.
+        """What this request has used: ``used``, ``limit``, ``remaining`` and the counts per agent and per tool, all
+        without the 5xx/429 answers, which are ``transient`` against ``transient_limit``.
 
         Read only. None for a request id that is not a non-empty string, so a caller never reads "no identity" as zero."""
         if not isinstance(request_id, str) or not request_id:
             return None
         db = self._connect()
         try:
-            precedent_used = db.execute("SELECT COUNT(*) FROM sends WHERE request_id = ? AND stage IN (?, ?)",
-                                        (request_id, *PREPLAN_STAGES)).fetchone()[0]
-            rows = db.execute("SELECT agent_id, tool, COUNT(*) FROM sends WHERE request_id = ? "
+            precedent_used = db.execute(f"SELECT COUNT(*) FROM sends WHERE request_id = ? AND stage IN (?, ?) "
+                                        f"AND {_COUNTED}", (request_id, *PREPLAN_STAGES)).fetchone()[0]
+            rows = db.execute(f"SELECT agent_id, tool, COUNT(*) FROM sends WHERE request_id = ? AND {_COUNTED} "
                               "GROUP BY agent_id, tool", (request_id,)).fetchall()
+            transient = db.execute(f"SELECT COUNT(*) FROM sends WHERE request_id = ? AND {_TRANSIENT}",
+                                   (request_id,)).fetchone()[0]
         finally:
             db.close()
         by_agent: dict[str, int] = {}
@@ -269,7 +300,8 @@ class LookupAdmission:
             by_tool[tool] = by_tool.get(tool, 0) + count
         used = sum(by_tool.values())
         result = {"used": used, "limit": self.limit, "remaining": max(0, self.limit - used),
-                  "by_agent": dict(sorted(by_agent.items())), "by_tool": dict(sorted(by_tool.items()))}
+                  "by_agent": dict(sorted(by_agent.items())), "by_tool": dict(sorted(by_tool.items())),
+                  "transient": transient, "transient_limit": self.transient_limit}
         if self.precedent_share is not None:
             result["precedent_used"] = precedent_used
         return result
