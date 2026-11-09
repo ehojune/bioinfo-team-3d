@@ -6205,10 +6205,9 @@ class Orchestrator:
             summary += f" 경고 {len(warnings)}건: 누락 칸·실패 단계는 한계로 남습니다."
         device_record = await self._semantic_devices_check(rid, "cp2")
         device_warning = semantic_devices.warning(device_record)
-        if device_warning:
-            summary = device_warning + "\n" + semantic_devices.card_line(device_record) + "\n\n" + summary
-        else:
-            summary = semantic_devices.card_line(device_record) + "\n" + summary
+        # The card kind stays the first line; the device state and any stop warning follow it (#1336).
+        summary += ("\n" + semantic_devices.card_line(device_record)
+                    + ("\n" + device_warning if device_warning else ""))
         device_report = None
         if semantic_device_report.applies(req, self.hub.s):
             device_report = semantic_device_report.build_report(req, self.hub.s)
@@ -7305,11 +7304,9 @@ class Orchestrator:
                     summary = ("CP1 연구 계획 승인: 고정할 질문·방법·완료/중단 조건·데이터 범위·적용 pack을 "
                                "확인하고 승인하세요." + (" 고칠 점이 있으면 메모와 함께 수정 요청을 고르세요."
                                                       if can_revise else ""))
-                    if device_warning:
-                        summary = (device_warning + "\n" + semantic_devices.card_line(device_record)
-                                   + "\n\n" + summary)
-                    else:
-                        summary = semantic_devices.card_line(device_record) + "\n" + summary
+                    # The card kind stays the first line; the device state and any stop warning follow it (#1336).
+                    summary += ("\n" + semantic_devices.card_line(device_record)
+                                + ("\n" + device_warning if device_warning else ""))
                     scope_warnings = [warning for warning in plan.get("warnings", [])
                                       if isinstance(warning, str) and warning.startswith(SCOPE_COVERAGE_WARNING)]
                     if scope_warnings:
