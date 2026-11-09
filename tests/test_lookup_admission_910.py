@@ -267,3 +267,27 @@ def test_stage_inputs_copies_the_papers_of_each_accepted_ancestor():
     body = source[source.index("def stage_inputs("):]
     assert body.index("staged.append(") < body.index("_copy_literature(")
     assert body.index("_copy_literature(") < body.index("except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="creating a symlink needs a privilege on Windows")
+def test_a_linked_literature_folder_in_the_step_is_never_written_through(tmp_path):
+    root, lit, step = _paper_folder(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (step / ".tmp").mkdir()
+    (step / ".tmp" / "literature").symlink_to(elsewhere, target_is_directory=True)
+    step_inputs._copy_literature(root.resolve(), lit.parent.parent.relative_to(root).parts, step, 1000, [10_000])
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_a_failed_write_leaves_no_partial_paper(tmp_path, monkeypatch):
+    root, lit, step = _paper_folder(tmp_path)
+
+    def broken(root_dir, relative, data):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(step_inputs, "write_owned_bytes", broken)
+    remaining = [10_000]
+    step_inputs._copy_literature(root.resolve(), lit.parent.parent.relative_to(root).parts, step, 1000, remaining)
+    assert remaining == [10_000]
+    assert [p for p in (step / ".tmp" / "literature").iterdir()] == []

@@ -394,22 +394,25 @@ def _copy_literature(root, source_parts, work, max_file, remaining):
     a step only receives its ancestors' outputs: the next step never saw the abstract the literature step read. Plain
     files only (links and folders skipped), within the step's size limits; a name already present is kept. Best
     effort: a paper that cannot be copied is left out and the step still runs."""
-    target = Path(work).joinpath(*LITERATURE)
     try:
         with _folder(root, (*source_parts, *LITERATURE)) as held:
-            for entry in held.entries(MAX_FILES):
-                if entry.kind != 'file' or entry.size is None or entry.size > max_file or entry.size > remaining[0]:
-                    continue
-                destination = target / entry.name
-                if destination.exists() or destination.is_symlink():
+            entries = [e for e in held.entries(MAX_FILES)
+                       if e.kind == 'file' and e.size is not None and e.size <= min(max_file, remaining[0])]
+            if not entries:
+                return
+            # A link or junction left at .tmp or .tmp/literature by an earlier turn is never written through.
+            target = plain_directory(Path(work), '/'.join(LITERATURE))
+            if target is None:
+                return
+            for entry in entries:
+                if os.path.lexists(target / entry.name):
                     continue
                 with os.fdopen(held.open_read_file(entry.name), 'rb') as opened:
                     data = opened.read(max_file + 1)
                 if len(data) > max_file or len(data) > remaining[0]:
                     continue
-                target.mkdir(parents=True, exist_ok=True)
-                with open(destination, 'xb') as out:
-                    out.write(data)
+                # Written whole or not at all (a temporary file renamed into place), through a held parent folder.
+                write_owned_bytes(Path(work), '/'.join((*LITERATURE, entry.name)), data)
                 remaining[0] -= len(data)
     except (OSError, ValueError, TypeError):
         return
