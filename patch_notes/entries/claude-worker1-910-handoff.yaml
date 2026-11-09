@@ -1,0 +1,5 @@
+rows:
+  - sha: "a3e0305"
+    at: "2026-11-09 21:53"
+    summary: "문헌 단계가 읽은 논문 본문·초록이 다음 단계에도 넘어갑니다. 공개되지 않도록 결과 폴더가 아닌 작업용 폴더로 복사합니다. 공개 문헌 조회에서 redirect 응답은 조회 몫을 쓰지 않고, 최종 응답을 받은 요청만 셉니다."
+    text: "step_inputs._copy_literature(받아들인 앞 단계 .tmp/literature → 이 단계 .tmp/literature, 보통 파일만, max_file·누적 상한), lookup_admission 3xx를 used에서 제외(일시 오류 상한·차단기 제외), 시험 7건 (#910)"
