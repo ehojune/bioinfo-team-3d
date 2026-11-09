@@ -433,3 +433,38 @@ def test_exact_declared_omission_cannot_be_masked_by_another_job(tmp_path, monke
     monkeypatch.setattr(ht, 'verify_remote_data', lambda *args: None)
     with pytest.raises(ht.TransferError, match='declared remote output directory is incomplete'):
         runner._remote_step_outputs(ws)
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX helper depth is exercised by Linux CI')
+def test_depth_limited_undeclared_subtree_is_an_omission_not_a_fetch_failure(cluster, tmp_path):
+    transfer = helper_transfer(cluster)
+    spec = prepare(cluster, transfer, tmp_path, {'result.tsv': b'ok'})
+    deep = cluster.path(spec['work'] + '/scratch')
+    for i in range(20):
+        deep /= f'd{i}'
+    deep.mkdir(parents=True)
+    (deep / 'cache').write_bytes(b'temporary')
+    fetched = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
+    assert fetched['remote']['files'] == [{'path': 'result.tsv', 'bytes': 2}]
+    omitted, = fetched['remote']['skipped']
+    assert omitted['reason'] == 'depth limit' and omitted['path'].startswith('scratch/')
+    assert (tmp_path / 'outputs/result.tsv').read_bytes() == b'ok'
+    assert (deep / 'cache').read_bytes() == b'temporary'
+
+
+def test_permanent_local_retrieval_refusal_keeps_verified_remote_outputs(cluster, tmp_path, monkeypatch):
+    transfer = helper_transfer(cluster)
+    spec = prepare(cluster, transfer, tmp_path, {'blocked.tsv': b'data', 'result.tsv': b'ok'})
+    original = transfer.fetch_file
+
+    def fetch(rel, *args, **kwargs):
+        if rel == spec['data'] + '/blocked.tsv':
+            raise ht.PathRejected('local filename is not portable')
+        return original(rel, *args, **kwargs)
+
+    monkeypatch.setattr(transfer, 'fetch_file', fetch)
+    fetched = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
+    assert {row['path'] for row in fetched['remote']['files']} == {'blocked.tsv', 'result.tsv'}
+    assert [row['path'] for row in fetched['fetched']] == ['result.tsv']
+    assert any(row['path'] == 'blocked.tsv' and 'not portable' in row['reason'] for row in fetched['skipped'])
+    assert ht.verify_remote_data(transfer, fetched['remote'], 'r') == transfer.path(spec['data'])

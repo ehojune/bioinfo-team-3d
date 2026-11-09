@@ -416,7 +416,8 @@ with contextlib.ExitStack() as stack:
    os.close(fd); raise ValueError('not a plain remote file')
   return fd, s
  def walk(base, directories, prefix='', depth=0):
-  if depth>16: raise ValueError('remote data too deep')
+  if depth>16:
+   skipped.append({'path':prefix.rstrip('/'),'reason':'depth limit'}); return
   for name in sorted(os.listdir(base)):
    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._@+=,:%-]*',name):
     skipped.append({'path':prefix+name,'reason':'name not allowed'}); continue
@@ -643,7 +644,12 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
                 manifest["skipped"].append({"path": name, "bytes": size,
                                              "reason": "retained in request remote data"})
                 continue
-            info = transfer.fetch_file(f"{remote['data']}/{name}", fetch_to, name=name)
+            try:
+                info = transfer.fetch_file(f"{remote['data']}/{name}", fetch_to, name=name)
+            except (TooLarge, PathRejected) as error:
+                # Local retrieval is optional; the remote file is rechecked before admission/use.
+                manifest["skipped"].append({"path": name, "bytes": size, "reason": str(error)[:200]})
+                continue
             if info["bytes"] != size:
                 raise TransferError(f"{name}: size differs from remote listing")
             total += size
