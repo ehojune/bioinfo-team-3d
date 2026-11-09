@@ -1,5 +1,5 @@
 rows:
-- sha: 058a0711
+- sha: 058a071
   at: 2026-11-09 19:30
   text: 'README 한·영: v1.0 labhq init은 semantics off·recruit 끔으로 시작하고 설정으로 켠다고 고친다 (#1339 리뷰 P2).'
   summary: 처음 읽는 안내에 v1.0에서는 의미 모델과 파견직 채용이 기본으로 꺼져 있다고 적었습니다.
