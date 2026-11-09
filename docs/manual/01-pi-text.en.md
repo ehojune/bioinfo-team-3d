@@ -2,7 +2,7 @@
 
 ## What the PI sees
 
-`labhq` rewrites every notice the PI reads in the web and mobile inbox and in messengers into easy plain Korean (`labhq/pi_language.py`), and checks the style of reports and summaries (`labhq/korean_qc.py`, built-in `humanizer` skill).
+`labhq` rewrites every notice the PI reads in the web and mobile inbox and in messengers into easy plain Korean (`labhq/pi_language.py`), and checks the style of reports and summaries (`labhq/korean_qc.py`, built-in `humanizer` skill). The check does not block publishing: when a must-be-zero expression such as translationese or a clipped statistics term remains, it is recorded as WARN under `korean_qc` in the edition record and publishing goes on (#1336).
 
 - Approval cards, questions, messenger messages and report notifications are shown as plain text in the order `what it wants to do → why → what happens if approved / when finished`.
 - Card summaries strip Markdown headings, bold and table marks. The command and the original code stay in the card's and messenger's "Details" fold.
