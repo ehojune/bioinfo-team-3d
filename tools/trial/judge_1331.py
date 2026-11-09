@@ -358,6 +358,9 @@ def check_verify(labhq_cmd: list[str], config: str, request_id: str) -> dict:
 SSH_VALUE_OPTS = set("BbcDEeFIiJLlmOoPpQRSWw")  # ssh options that take the next word as their value
 
 
+LOOPBACK = {"127.0.0.1", "localhost", "::1"}  # a tunnel's local end names no site
+
+
 def argv_terms(argv: list[str]) -> set[str]:
     """Login names and hosts in a connect command: ``user@host`` words, ``-l user``, ``-J jump``, ``-o User=/HostName=``
     and the destination (the first word that is not an option or an option's value). Ports and key files are left out:
@@ -366,7 +369,7 @@ def argv_terms(argv: list[str]) -> set[str]:
 
     def add(word: str) -> None:
         for part in re.split(r"[@,:]", word):
-            if part and not part.isdigit():
+            if part and not part.isdigit() and part.lower() not in LOOPBACK:
                 terms.add(part)
 
     words, i, destination = list(argv[1:]), 0, None
@@ -409,6 +412,9 @@ def node_terms(words: list[str]) -> set[str]:
 GENERIC = {"ssh", "sge", "pbs", "slurm", "mock", "none", "scp", "sftp", "rsync", "gateway_tunnel", "gateway_window",
            "vpn", "other", "true", "false"}
 PROSE = {"notes", "file_transfer_note", "port_discovery", "tunnel_texts"}  # sentences, not identifiers
+# A command line, read by argv_terms (login names and hosts only): split as plain values, its ssh options
+# ("-o BatchMode=yes" gave "BatchMode" and "yes") matched every report (4th run's public check).
+ARGV_FIELDS = {"connect_argv"}
 NODE_FIELD = "node"
 
 
@@ -445,7 +451,7 @@ def model_terms(model, nodes: set[str]) -> set[str]:
     except Exception:  # a model with required fields (a site profile): every value is the user's
         defaults = None
     for name in type(model).model_fields:
-        if name in PROSE:
+        if name in PROSE or name in ARGV_FIELDS:
             continue
         value = getattr(model, name, None)
         default = getattr(defaults, name, None) if defaults is not None else object()
