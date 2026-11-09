@@ -5,7 +5,7 @@ shell. So the manager opens the connection once, keeps one shell alive and sends
 Nothing here knows a site: the connection argv, the idle-lock time and the failure texts come from the caller (the site
 profile). The module is standalone; the tools and the runner are wired to it elsewhere.
 
-* Protocol: a command is wrapped between two ``printf`` lines. The first prints a begin marker and the second prints an
+* Protocol: a command and two ``printf`` calls share one physical input line. The first prints a begin marker and the second prints an
   end marker with ``$?``, so the output is exactly what lies between them, the exit code comes from the marker, and a
   login banner, the prompt or the terminal's echo of the typed line are all dropped. The markers are written so that the
   echoed command line never contains a complete marker.
@@ -24,10 +24,12 @@ import contextvars
 import os
 import queue
 import re
+import shlex
 import subprocess
 import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
@@ -36,7 +38,8 @@ from .hpc_login_budget import LoginBudget, LoginLimitReached
 
 HOST_KEY_TEXTS = ("REMOTE HOST IDENTIFICATION HAS CHANGED", "Host key verification failed")
 QUEUE_WAIT_S = 60.0  # how long a caller that asked for a bounded wait stands in line for the shell's one command at a time
-_QUEUE_WAIT: contextvars.ContextVar[float | None] = contextvars.ContextVar("labhq_hpc_queue_wait", default=None)
+_QUEUE_WAIT: contextvars.ContextVar[float | None] = contextvars.ContextVar("labhq_hpc_queue_wait", default=QUEUE_WAIT_S)
+_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar("labhq_hpc_deadline", default=None)
 PROMPT = re.compile(r"(?:^|\n)[^\n]*[$#%>] ?$")  # the last line ends like a shell prompt
 _OVERLAP = 512  # longer than any marker, so a marker split over two reads is still found
 
@@ -102,6 +105,28 @@ class SessionError(RuntimeError):
 
 class SessionBusy(SessionError):
     """The shell was busy with other commands for the whole wait. This command was not sent."""
+
+
+def remaining_s(maximum: float) -> float:
+    """Bound another wait/command by the caller's whole operation deadline. Expired work is never sent later."""
+    deadline = _DEADLINE.get()
+    remaining = maximum if deadline is None else min(maximum, deadline - time.monotonic())
+    if remaining <= 0:
+        raise SessionBusy("HPC operation deadline expired; no further command was sent")
+    return remaining
+
+
+@contextlib.contextmanager
+def command_deadline(seconds: float | None):
+    previous = _DEADLINE.get()
+    deadline = None if seconds is None else time.monotonic() + seconds
+    if previous is not None:
+        deadline = previous if deadline is None else min(deadline, previous)
+    token = _DEADLINE.set(deadline)
+    try:
+        yield
+    finally:
+        _DEADLINE.reset(token)
 
 
 class CommandTimeout(SessionError):
@@ -197,6 +222,63 @@ class _Conn:
     seen: str = ""  # the last text read, for classifying a failed connect
 
 
+class _FifoLock:
+    """Reentrant command lock. New commands and heartbeats cannot overtake a queued caller."""
+
+    def __init__(self):
+        self._condition = threading.Condition()
+        self._waiting = deque()
+        self._owner = None
+        self._depth = 0
+
+    def acquire(self, blocking=True, timeout=-1):
+        owner = threading.get_ident()
+        with self._condition:
+            if self._owner == owner:
+                self._depth += 1
+                return True
+            if not blocking:
+                if self._owner is not None or self._waiting:
+                    return False
+                self._owner, self._depth = owner, 1
+                return True
+            if self._owner is None and not self._waiting:
+                self._owner, self._depth = owner, 1
+                return True
+            ticket = object()
+            self._waiting.append(ticket)
+            deadline = None if timeout < 0 else time.monotonic() + timeout
+            try:
+                while self._owner is not None or self._waiting[0] is not ticket:
+                    remaining = None if deadline is None else deadline - time.monotonic()
+                    if remaining is not None and remaining <= 0:
+                        return False
+                    self._condition.wait(remaining)
+                if deadline is not None and time.monotonic() >= deadline:
+                    return False
+                self._owner, self._depth = owner, 1
+                return True
+            finally:
+                self._waiting.remove(ticket)
+                self._condition.notify_all()
+
+    def release(self):
+        with self._condition:
+            if self._owner != threading.get_ident():
+                raise RuntimeError("cannot release another caller's HPC command lock")
+            self._depth -= 1
+            if not self._depth:
+                self._owner = None
+                self._condition.notify_all()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *args):
+        self.release()
+
+
 class HpcSession:
     def __init__(self, config: SessionConfig, *, budget: LoginBudget | None = None,
                  has_open_jobs: Callable[[], bool] | None = None,
@@ -204,9 +286,10 @@ class HpcSession:
                  clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep):
         self.cfg, self.budget, self.has_open_jobs, self.on_notice = config, budget, has_open_jobs, on_notice
         self.clock, self.sleep = clock, sleep
-        self._lock = threading.RLock()  # one command at a time; also guards the connection
+        self._lock = _FifoLock()  # one command at a time in arrival order; also guards the connection
         self._conn: _Conn | None = None
         self._opening: _Conn | None = None  # a connection still being opened: shutdown must be able to end it too
+        self.connecting = False  # admission/handshake is already in progress; other callers wait for its result
         self._shutdown = False  # set by shutdown(): nothing opens or runs after it
         self._last_activity = clock()  # the last command a caller ran (or the connect): what "idle" means
         self._last_beat = clock()  # the last heartbeat: it keeps the site awake but is not activity
@@ -235,16 +318,23 @@ class HpcSession:
         if "\n" in command or "\r" in command:
             raise ValueError("명령은 한 줄이어야 합니다")
         wait = _QUEUE_WAIT.get()
+        if _DEADLINE.get() is not None:
+            wait = remaining_s(wait if wait is not None else float("inf"))
         if wait is not None and not self._lock.acquire(timeout=wait):
             raise SessionBusy(f"HPC 셸이 {wait:g}초 동안 다른 명령을 처리 중이라 이 명령은 보내지 않았습니다")
         if wait is None:
             self._lock.acquire()
         try:
-            conn = self._ensure_open()
+            remaining_s(timeout_s or self.cfg.command_timeout_s)
+            self.connecting = True
+            try:
+                conn = self._ensure_open()
+            finally:
+                self.connecting = False
             if self._shutdown:  # shutdown() came while the connection opened: do not send the command
                 self._drop()
                 raise SessionError("HPC 세션이 종료되어 명령을 보내지 않았습니다")
-            result = self._exec(conn, command, timeout_s or self.cfg.command_timeout_s)
+            result = self._exec(conn, command, remaining_s(timeout_s or self.cfg.command_timeout_s))
             self._last_activity = self.clock()
             return result
         finally:
@@ -368,10 +458,11 @@ class HpcSession:
             if self._shutdown:
                 raise SessionError("HPC 세션이 종료되어 명령을 보내지 않았습니다")
             if attempt:
-                self.sleep(wait)
+                self.sleep(remaining_s(wait))
                 wait = min(wait * 2, self.cfg.reconnect_wait_max_s)
                 if self._shutdown:
                     raise SessionError("HPC 세션이 종료되어 명령을 보내지 않았습니다")
+            remaining_s(self.cfg.connect_timeout_s)  # before admission: an expired operation opens no more logins
             try:
                 if self.budget is not None:
                     self.budget.admit(self.cfg.login_label)
@@ -427,7 +518,7 @@ class HpcSession:
             self._kill(conn)
         try:
             self._await_first_output(conn)
-            self._exec(conn, self.cfg.ready_command, self.cfg.connect_timeout_s)  # the echo of this one is ignored
+            self._exec(conn, self.cfg.ready_command, remaining_s(self.cfg.connect_timeout_s))
         except SessionError as error:
             text = conn.seen
             self._kill(conn)
@@ -452,6 +543,7 @@ class HpcSession:
         wait = self.cfg.first_output_wait_s
         if wait <= 0:
             return
+        wait = remaining_s(wait)
         deadline = time.monotonic() + wait
         heard = False
         while True:
@@ -520,7 +612,9 @@ class HpcSession:
         token = uuid.uuid4().hex[:12]
         begin = f"__LABHQ_BEGIN_{token}__"
         end = re.compile(rf"__LABHQ_END_{token}_(-?\d+)__")
-        line = (f"printf '__LABHQ_%s_%s__\\n' BEGIN {token}\n{command}\n"
+        # One physical shell line: an interactive prompt (including bracketed-paste controls) can appear only before
+        # BEGIN or after END. Three separate input lines put prompts inside the captured command output.
+        line = (f"printf '__LABHQ_%s_%s__\\n' BEGIN {token}; eval {shlex.quote(command)}; "
                 f"printf '\\n__LABHQ_%s_%s_%s__\\n' END {token} \"$?\"\n")
         started = time.monotonic()
         deadline = started + timeout_s

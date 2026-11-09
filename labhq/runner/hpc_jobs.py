@@ -23,6 +23,51 @@ Record = Callable[[dict], Awaitable[None]]
 Gate = Callable[[], AsyncContextManager[bool]]
 
 
+class SharedStatusQueries:
+    """Share only in-flight batches in the same request's login scope; never cache an old job state.
+
+    One cancelled waiter must not cancel the batch another employee or the poller still needs.
+    Calls arriving while a batch is running join it only when it covers their ids.
+    """
+
+    def __init__(self, scheduler):
+        self.scheduler = scheduler
+        self._pending = {}
+
+    async def get(self, request_id, job_ids):
+        from ..hpc_login_budget import request_scope
+        from ..hpc_session import command_deadline, queue_wait
+
+        ids = set(job_ids)
+        batch = self._pending.get(request_id)
+        if batch is None or batch[1].done() or not ids.issubset(batch[0]):
+            cfg = getattr(self.scheduler, "cfg", None)
+            session = self.scheduler.session() if cfg is not None else None
+            from ..tools.scheduler import scheduler_call_budget_s
+
+            budget_s = scheduler_call_budget_s(session.cfg if session else None, cfg.command_timeout_s, 2) if cfg else None
+
+            def work():
+                # Batching can fall back to per-id accounting. It must still finish within the staff status budget;
+                # after this deadline no fallback command or reconnect is sent, even if a waiter has gone away.
+                with request_scope(request_id), queue_wait(), command_deadline(budget_s):
+                    return self.scheduler.statuses(sorted(ids))
+
+            task = asyncio.create_task(asyncio.to_thread(work))
+            batch = (ids, task)
+            self._pending[request_id] = batch
+
+            def finished(done):
+                if self._pending.get(request_id) is batch:
+                    self._pending.pop(request_id, None)
+                if not done.cancelled():
+                    done.exception()  # also consume a failure if every waiter has left
+
+            task.add_done_callback(finished)
+        result = await asyncio.shield(batch[1])
+        return {jid: result[jid] for jid in job_ids}
+
+
 def _script(workdir: Path, raw: object) -> Path | None:
     """A .sh file directly in the task's jobs/ folder (where hpc_submit writes); neither may be a link."""
     if not isinstance(raw, str) or not raw:

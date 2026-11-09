@@ -75,7 +75,7 @@ from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
 from . import local_jobs
 from ..hpc_login_budget import LoginLimitReached, budget_for, request_scope
 from ..hpc_session import queue_wait
-from .hpc_jobs import submit_job
+from .hpc_jobs import SharedStatusQueries, submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .lookup_admission import ENV as LOOKUP_ADMISSION_ENV, FILE as LOOKUP_ADMISSION_FILE, LookupAdmission
 from .system_ca import CA_ENV, system_ca_pem
@@ -3365,9 +3365,13 @@ class Runner:
 
         # Count this submit's login against its request, and say no before the PI is asked when a limit is already used up.
         if stop := self._login_limit(body.get("request_id")):
+            await self._notify_login_limit(body.get("request_id"), stop, [body])
             return {"error": str(stop)}
         with request_scope(body.get("request_id")), queue_wait():
-            return await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record)
+            result = await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record)
+        if result.get("error") and (stop := self._login_limit(body.get("request_id"))):
+            await self._notify_login_limit(body.get("request_id"), stop, [body])
+        return result
 
     def _has_open_hpc_jobs(self) -> bool:
         """Does any HPC job still run? A local job is no reason to hold a login open."""
@@ -3375,6 +3379,12 @@ class Runner:
 
     async def _on_scheduler_request(self, op: str, identity: dict) -> dict:
         return self._hide_hpc(await self._on_scheduler_op({**identity, "op": op}))
+
+    async def _shared_hpc_statuses(self, request_id, ids):
+        queries = self.__dict__.get("_hpc_status_queries")
+        if queries is None:
+            queries = self._hpc_status_queries = SharedStatusQueries(self.scheduler)
+        return await queries.get(request_id, ids)
 
     async def _on_scheduler_op(self, body: dict) -> dict:
         """hpc_status, hpc_queue and hpc_cancel for a site whose commands go through the runner's shell (#1295 C). The
@@ -3408,7 +3418,20 @@ class Runner:
                 return {"result": self.scheduler.cancel(job_id)}
 
         try:
-            reply = await asyncio.to_thread(work)
+            if op == "status" and hasattr(self.scheduler, "statuses"):
+                # Read all open jobs of this request once, including other employees' jobs. Only the authorized
+                # requested row crosses the broker boundary. The background poller joins the same in-flight batch.
+                request_id = body.get("request_id")
+                ids = [jid for jid, j in self.jobs.items() if not j.get("terminal") and not local_jobs.is_local(jid)
+                       and j.get("submitted_by_runner") and j.get("scheduler") == self.s.hpc.scheduler
+                       and self.task_req.get(j.get("task_id") or "") == request_id]
+                infos = await self._shared_hpc_statuses(request_id, list(dict.fromkeys([*ids, job_id])))
+                info = infos[job_id]
+                if isinstance(info, Exception):
+                    raise info
+                reply = {"status": info.to_dict()}
+            else:
+                reply = await asyncio.to_thread(work)
             if op == "queue":
                 # Job records belong to the event loop; submissions can change the dict while the worker queries HPC.
                 tracked = [jid for jid, j in self.jobs.items() if j.get("submitted_by_runner") and not j.get("terminal")
@@ -3420,6 +3443,8 @@ class Runner:
                 reply["queue"] = [j for j in known if self._hpc_job_owned(body, j["job_id"])]
             return reply
         except Exception as error:  # noqa: BLE001 - the tool reports it; a login limit or a lost shell is the usual cause
+            if isinstance(error, LoginLimitReached):
+                await self._notify_login_limit(body.get("request_id"), error, [body])
             return {"error": str(error)}
 
     def _hpc_session_notice(self, kind: str, text: str) -> None:
@@ -3455,20 +3480,33 @@ class Runner:
         if not (needs_login() if needs_login else self.s.hpc.ssh_host):
             return None
         budget = budget_for(self.s.hpc)
-        return budget.exhausted(request_id) if budget is not None else None
+        stop = budget.exhausted(request_id) if budget is not None else None
+        # Admission and connection can happen while SQLite is read. A caller joining that connection costs no login;
+        # the session still checks admission under its command lock if the handshake fails and a reconnect is needed.
+        return stop if stop is not None and (needs_login() if needs_login else self.s.hpc.ssh_host) else None
 
     async def _notify_login_limit(self, request_id: str | None, stop: LoginLimitReached, jobs: list[dict]) -> None:
         """Tell the PI once per request and limit that polling is paused. level "alert" is what the web feed shows and toasts (a "warn" is only the agent card line). The jobs keep running on the cluster."""
         notified = self.__dict__.setdefault("_login_limit_notified", set())
         key = (request_id, stop.scope, stop.limit, time.strftime("%Y-%m-%d"))  # a raised limit that fills again alerts again
-        if key in notified:
-            return
-        notified.add(key)
+        if stop.scope == "window":
+            windows = self.__dict__.setdefault("_login_limit_window_notified", {})
+            now = time.time()
+            if now < windows.get(key, 0):
+                return
+            windows[key] = now + max(1, getattr(stop, "retry_after_s", None) or self.s.runner.job_poll_s)
+        else:
+            if key in notified:
+                return
+            notified.add(key)
         first = jobs[0]
-        again = "내일 다시 확인합니다" if stop.scope == "day" else "상한을 올리면 다시 확인합니다(hpc.login_limit_per_request)"
+        again = ("로그인 창이 지나면 자동으로 다시 확인합니다" if stop.scope == "window" else
+                 "내일 다시 확인합니다" if stop.scope == "day" else "상한을 올리면 다시 확인합니다(hpc.login_limit_per_request)")
         await self.emit(Event(
             type="agent.log", task_id=first.get("task_id"), agent_id=first.get("agent_id"), request_id=request_id,
-            data={"level": "alert", "hpc_login_limit": {"scope": stop.scope, "limit": stop.limit, "used": stop.used},
+            data={"level": "alert", "hpc_login_limit": {"scope": stop.scope, "limit": stop.limit, "used": stop.used,
+                                                        **({"retry_after_s": stop.retry_after_s}
+                                                           if getattr(stop, "retry_after_s", None) is not None else {})},
                   "text": f"{stop} 이 {'요청' if request_id else ''}의 HPC 잡 {len(jobs)}개 상태 조회를 멈췄습니다. "
                           f"제출한 잡은 클러스터에서 계속 돕니다. {again}."}))
 
@@ -3812,8 +3850,7 @@ class Runner:
             if stop := self._login_limit(request_id):
                 await self._notify_login_limit(request_id, stop, [self.jobs[i] for i in ids])
                 continue
-            with request_scope(request_id):
-                infos.update(await asyncio.to_thread(self.scheduler.statuses, ids))
+            infos.update(await self._shared_hpc_statuses(request_id, ids))
         failure: Exception | None = None
         for jid in open_jobs:
             j = self.jobs[jid]
@@ -3863,9 +3900,16 @@ class Runner:
             spec = j.get("transfer")
             if not (spec and j.get("terminal")) or j.get("fetched") or j.get("fetch_tries", 0) >= self.FETCH_TRIES:
                 continue
+            request_id = self.task_req.get(j.get("task_id") or "")
+            if stop := self._login_limit(request_id):
+                await self._notify_login_limit(request_id, stop, [j])
+                continue  # waiting for login admission does not consume file-recovery attempts or wake the employee
             j["fetch_tries"] = j.get("fetch_tries", 0) + 1
             try:
                 manifest = await asyncio.to_thread(self._fetch_job_files, j, spec)
+            except LoginLimitReached as stop:
+                j["fetch_tries"] -= 1
+                await self._notify_login_limit(request_id, stop, [j])
             except Exception as error:  # noqa: BLE001 - reported below; the files stay on the cluster
                 j["fetch_error"] = self._hide_text(str(error))[:300]
                 if j["fetch_tries"] >= self.FETCH_TRIES:

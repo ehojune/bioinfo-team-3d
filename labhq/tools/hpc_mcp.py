@@ -6,7 +6,6 @@ LABHQ_WORKDIR, LABHQ_CONFIG.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
@@ -29,13 +28,14 @@ from .scheduler import (
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
 SCHED = Scheduler(S.hpc)
-# A site profile with a connect command means one HPC shell, owned by the runner: this process never opens a login of
-# its own. Status, queue and cancel are asked of the runner (#1295 C). A named profile that cannot be read fails closed.
+# All scheduler operations belong to the runner, including plain ssh_host and local scheduler commands. An employee
+# process never opens a scheduler connection. Inspecting the profile below is lazy and opens no login.
+VIA_RUNNER = True
 try:
-    VIA_RUNNER = SCHED.session() is not None
+    SCHED.session()
     SESSION_ERROR = None
 except RuntimeError as _error:
-    VIA_RUNNER, SESSION_ERROR = True, str(_error)
+    SESSION_ERROR = str(_error)
 BROKER = os.environ.get("LABHQ_BROKER_URL", f"http://127.0.0.1:{S.runner.broker_port}")
 TOKEN = os.environ.get("LABHQ_BROKER_TOKEN", "")
 TASK = os.environ.get("LABHQ_TASK_ID")
@@ -344,25 +344,13 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
 @server.tool()
 async def hpc_status(job_id: str) -> str:
     """Current state of one job (queued/running/completed/failed/…) with exit status if known."""
-    if VIA_RUNNER:
-        return json.dumps((await _runner_op("status", job_id=job_id))["status"])
-    try:
-        info = await asyncio.to_thread(SCHED.status, job_id)
-    except Exception as e:
-        raise tool_failure(str(e)) from e
-    return json.dumps(info.to_dict())
+    return json.dumps((await _runner_op("status", job_id=job_id))["status"])
 
 
 @server.tool()
 async def hpc_queue() -> str:
     """List owned tracked jobs through the runner. An empty queue cannot resolve a submission with an unknown outcome."""
-    if VIA_RUNNER:
-        return json.dumps((await _runner_op("queue"))["queue"])
-    try:
-        jobs = await asyncio.to_thread(SCHED.queue)
-    except Exception as e:
-        raise tool_failure(str(e)) from e
-    return json.dumps([j.to_dict() for j in jobs])
+    return json.dumps((await _runner_op("queue"))["queue"])
 
 
 @server.tool()
@@ -373,21 +361,7 @@ async def hpc_cancel(job_id: str) -> str:
             checked_job_id(job_id)
     except RuntimeError as e:
         raise tool_failure(str(e)) from e
-    if VIA_RUNNER:  # the runner checks the ownership itself before it runs scancel/qdel in its shell
-        return json.dumps({"job_id": job_id, "result": (await _runner_op("cancel", job_id=job_id))["result"]})
-    # The account may be shared (submit_prefix data account): a bare id could name someone else's job (#172).
-    try:
-        owned = await _broker("/jobs/owned", {"task_id": TASK, "agent_id": AGENT, "job_id": job_id}, timeout=30)
-    except Exception as e:  # fail closed
-        raise tool_failure(f"cannot confirm that labhq tracks job {job_id}: {e}") from e
-    if not owned.get("owned"):
-        raise tool_failure(f"job {job_id} was not submitted by you through hpc_submit; labhq cancels only jobs it "
-                           "tracks for you. Ask the PI to cancel other jobs.")
-    try:
-        result = await asyncio.to_thread(SCHED.cancel, job_id)
-    except Exception as e:
-        raise tool_failure(str(e)) from e
-    return json.dumps({"job_id": job_id, "result": result})
+    return json.dumps({"job_id": job_id, "result": (await _runner_op("cancel", job_id=job_id))["result"]})
 
 
 if __name__ == "__main__":

@@ -73,6 +73,7 @@ def slurm(words: list[str], path: str) -> tuple[str, int]:
 
 
 WRAPPER = re.compile(r"""E=\$\(mktemp\); (.*) 2>"\$E"; S=\$\?; printf '(.*)'; cat "\$E"; rm -f "\$E"; \(exit \$S\)$""")
+FRAME = re.compile(r"^(printf [^;]+); eval (.*); (printf .*)$")
 
 
 def command(words: list[str], flags: dict) -> tuple[str, str, int]:
@@ -201,6 +202,7 @@ def files(tokens: list[str]) -> tuple[str, int] | None:
 
 def main(argv: list[str]) -> int:
     flags = {"echo": False, "banner": False, "lock": None, "drop": None, "hostkey": False, "tunnel": False,
+             "prompts": False,
              "counter": None, "slurm": None, "kick": None, "banner_first": False,
              "fail_text": os.environ.get("SLURM_FAKE_FAIL_TEXT"), "sbatch_error": os.environ.get("SLURM_FAKE_SBATCH_ERROR")}
     i = 0
@@ -208,6 +210,8 @@ def main(argv: list[str]) -> int:
         a = argv[i]
         if a == "--echo":
             flags["echo"] = True
+        elif a == "--interactive-prompts":
+            flags["prompts"] = True
         elif a == "--banner":
             flags["banner"] = True
         elif a == "--banner-first":  # with --kick-early-input: the banner comes at once, the prompt only when login ends
@@ -268,8 +272,23 @@ def main(argv: list[str]) -> int:
             ready.set()
 
         threading.Thread(target=greet, daemon=True).start()
+    def input_lines():
+        for physical in sys.stdin:
+            frame = FRAME.match(physical.rstrip("\r\n"))
+            if frame:
+                if flags["echo"]:
+                    out.write(physical.rstrip("\r\n") + "\r\n")
+                yield frame[1]
+                yield shlex.split(frame[2])[0]
+                yield frame[3]
+            else:
+                yield physical
+            if flags["prompts"]:
+                out.write("\x1b[?2004hfake$ \x1b[?2004l")
+                out.flush()
+
     status, count = 0, 0
-    for line in sys.stdin:
+    for line in input_lines():
         if not ready.is_set():
             out.write("login still in progress: input refused\n")
             out.flush()
