@@ -2792,7 +2792,7 @@ def _evaluate_tool(
         )
 
     # Internal-zone reads all use one approval flow. Output-shape classification only changes the card wording.
-    internal_hit = _zone_hit(tool_input, policy, {"internal"}, workdir, own_workdir=True)
+    internal_hit = _zone_hit(tool_input, policy, {"internal"}, workdir, own_workdir=tool_name in READ_LIKE)
     if internal_hit and tool_name in READ_LIKE | SHELL_TOOLS:
         return Decision("ask", f"internal data zone read requires approval: {internal_hit}")
 

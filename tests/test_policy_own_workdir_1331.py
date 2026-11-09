@@ -42,10 +42,20 @@ def test_own_task_md_does_not_ask(tmp_path):
     policy, mine, _, _ = _setup(tmp_path)
     for tool, tool_input in (("Read", {"file_path": str(mine / "TASK.md")}),
                              ("Read", {"file_path": "TASK.md"}),
-                             ("Grep", {"pattern": "thing", "path": str(mine)}),
-                             ("Bash", {"command": "cat TASK.md"})):
+                             ("Grep", {"pattern": "thing", "path": str(mine)})):
         decision = _decide(policy, mine, tool, tool_input)
         assert "internal data zone" not in decision.reason, (tool, tool_input, decision)
+
+
+def test_shell_reads_still_ask_even_inside_the_own_folder(tmp_path):
+    # A shell or interpreter can compute a path at run time (Path.cwd().parent / ...), so a command that only names
+    # the own folder proves nothing about what it reads: the exemption covers structured file tools only.
+    policy, mine, _, _ = _setup(tmp_path)
+    for command in ("cat TASK.md",
+                    "python -c \"from pathlib import Path; print((Path.cwd().parent / 'task_other/outputs.tsv')"
+                    ".read_text())\""):
+        decision = _decide(policy, mine, "Bash", {"command": command})
+        assert decision.action == "ask" and "internal data zone" in decision.reason, (command, decision)
 
 
 def test_other_task_folder_still_asks(tmp_path):
@@ -91,7 +101,7 @@ def test_spaced_runs_root_quoted_absolute_path(tmp_path):
     (other / "out.tsv").write_text("x", encoding="utf-8")
     settings = Settings()
     settings.policy.data_zones = [DataZone(path=str(spaced), level="internal")]
-    own = _decide(settings.policy, mine, "Bash", {"command": f'cat "{mine / "TASK.md"}"'})
+    own = _decide(settings.policy, mine, "Read", {"file_path": str(mine / "TASK.md")})
     assert "internal data zone" not in own.reason, own
-    theirs = _decide(settings.policy, mine, "Bash", {"command": f'cat "{other / "out.tsv"}"'})
+    theirs = _decide(settings.policy, mine, "Read", {"file_path": str(other / "out.tsv")})
     assert theirs.action == "ask" and "internal data zone" in theirs.reason, theirs
