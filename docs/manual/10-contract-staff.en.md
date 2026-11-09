@@ -4,6 +4,8 @@
 
 Since v1.0 the default of `recruit.enabled` is `false` (#1336). An instance that uses hiring or paper skills sets it to `true`. While it is off, direct hiring and installation, plan conversion and deferred preparation, attaching paper skills, and contract activation, extension and rehire are refused, while contract release is allowed. `doctor` skips the Paper2Agent check, and `--fix` does not install either. With it turned on, a missing recruiter or skill fails. Other staff's ordinary work and the authentication and runtime checks are unchanged.
 
+**Method notes (no hiring, #1353).** Whatever the recruit setting, when a local research step receives the precedent search's stored texts in `inputs/precedent/`, the runner quotes each copy's methods section (the abstract when it is not a full text) verbatim into `METHOD_NOTES.md` and points to it under `## Method notes` in TASK.md. No model call, network lookup, approval card or contract is involved. It reads only the copies already in this step's folder, rechecks their hashes, and keeps the paper, file and line of every excerpt. An abstract is labelled "not full-text evidence"; a missing or changed copy, or one without a recognisable section, is left out with its reason (run record `method_notes`). Commands in a paper are quoted text that labhq never runs. A later turn keeps the first turn's file. Steps of a request run whole as HPC jobs receive no stored texts, so they get no method notes either.
+
 ```mermaid
 flowchart LR
   N[Need arises<br/>CSO plan recruit · fox headhunting · PI directly] --> A{PI approval<br/>phone}
