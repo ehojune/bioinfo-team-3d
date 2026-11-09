@@ -4015,37 +4015,41 @@ class Runner:
                         or not job.get("fetched") or not isinstance(job.get("remote_manifest"), dict)):
                     raise TransferError("a remote job has no verified successful output manifest")
                 manifest = validate_remote_manifest(job["remote_manifest"], ws.task.request_id)
-                declared = {rel.removeprefix("outputs/") for name in [
+                declared = {("" if rel == "outputs" else rel.removeprefix("outputs/")) for name in [
                     *ws.task.meta.get("outputs", []), *ws.task.meta.get("optional_outputs", [])]
                     if (rel := output_relpath(name))}
                 directories = set(manifest.get("directories", []))
                 declared_dirs = declared & directories
-                if any(row["path"].startswith(directory + "/")
+                if "" in declared:
+                    declared_dirs.add("")  # the work directory itself is a valid explicit output root
+                if any(row["path"] in declared or any(path.startswith(row["path"] + "/") for path in declared)
+                       for row in manifest.get("skipped", [])) or any(
+                       not directory or row["path"].startswith(directory + "/")
                        for row in manifest.get("skipped", []) for directory in declared_dirs):
                     raise TransferError("a declared remote output directory is incomplete (unsupported entries)")
                 collect_all = (ws.task.meta.get("kind") == "direct" or
                                ws.task.meta.get("collect_direct_outputs") is True)
                 unchanged = set(manifest.get("unchanged_inputs", []))
                 files = [row for row in manifest["files"] if (collect_all and row["path"] not in unchanged) or row["path"] in declared or
-                         any(row["path"].startswith(d + "/") for d in declared_dirs)]
+                         any(not d or row["path"].startswith(d + "/") for d in declared_dirs)]
                 manifest = {**manifest, "retained_bytes": manifest["bytes"],
                             "files": files, "bytes": sum(row["bytes"] for row in files),
                             "skipped": [],
                             "unchanged_inputs": [row["path"] for row in files if row["path"] in unchanged],
                             "directories": [d for d in directories if collect_all or d in declared_dirs or
-                                            any(d.startswith(parent + "/") for parent in declared_dirs)]}
+                                            any(not parent or d.startswith(parent + "/") for parent in declared_dirs)]}
                 verify_remote_data(transfer, manifest, ws.task.request_id)
-                file_paths = {row["path"] for row in manifest["files"]}
-                current_dirs = set(manifest["directories"])
+                file_paths = {row["path"].casefold() for row in manifest["files"]}
+                current_dirs = {directory.casefold() for directory in manifest["directories"]}
                 for path in file_paths:
                     parts = path.split("/")
                     current_dirs.update("/".join(parts[:i]) for i in range(1, len(parts)))
                 if file_paths & directory_paths or current_dirs & paths or file_paths & current_dirs:
                     raise TransferError("remote jobs produced conflicting file and directory paths")
                 for row in manifest["files"]:
-                    if row["path"] in paths:
+                    if row["path"].casefold() in paths:
                         raise TransferError("multiple remote jobs produced the same output path")
-                    paths.add(row["path"])
+                    paths.add(row["path"].casefold())
                 directory_paths.update(current_dirs)
                 manifests.append(manifest)
         return manifests

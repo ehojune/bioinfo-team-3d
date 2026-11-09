@@ -167,7 +167,7 @@ def test_only_successful_same_request_ancestor_inventory_is_admitted(tmp_path):
         with pytest.raises(ValueError): remote_ancestor_inputs(ws, {'s1': bad_artifact}, root)
 
 
-@pytest.mark.parametrize('layout', ['file', 'directory', 'partial_directory', 'missing', 'file_prefix', 'empty_directory', 'direct', 'collect_direct'])
+@pytest.mark.parametrize('layout', ['file', 'directory', 'partial_directory', 'root', 'partial_root', 'missing', 'file_prefix', 'empty_directory', 'direct', 'collect_direct'])
 async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_after_restart(site, monkeypatch, layout):
     from labhq.adapters.mock import MockAdapter
     from labhq.models import AgentSpec, Engine, Task, TaskResult
@@ -204,7 +204,7 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             assert remote in seen
             assert runner.scheduler.transfer().path(remote['data']) in ctx.task.context
             assert 's1/0/tx2gene.tsv: ' in ctx.task.context or 's1/0/tx2gene.tsv/part.tsv: ' in ctx.task.context
-            if layout not in {'direct', 'collect_direct'}:
+            if layout not in {'direct', 'collect_direct', 'root'}:
                 assert 'undeclared.bin' not in ctx.task.context
             assert 'Shared-account paths are not filesystem isolation.' in ctx.task.context
             assert not (ctx.workdir / 'inputs/s1/tx2gene.tsv').exists()
@@ -221,6 +221,8 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
                 m['files'][0]['path'] = 'tx2gene.tsv/part.tsv'
                 if layout == 'partial_directory':
                     m['skipped'] = [{'path': 'tx2gene.tsv/sample 1.tsv', 'reason': 'name not allowed'}]
+            if layout == 'partial_root':
+                m['skipped'] = [{'path': 'sample 1.tsv', 'reason': 'name not allowed'}]
             if layout == 'file_prefix':
                 m['files'][0]['path'] = 'tx2gene.tsv/part.tsv'  # no real declared directory in the listing
             if layout in {'missing', 'empty_directory'}:
@@ -248,12 +250,15 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
                 'upstream_artifacts': upstream, 'upstream_steps': {s: x['workdir'] for s, x in upstream.items()},
                 'outputs': ['outputs/' + output]}
             collect_all = step == 's1' and layout in {'direct', 'collect_direct'}
+            root_declared = step == 's1' and layout in {'root', 'partial_root'}
             if collect_all:
                 meta['outputs'] = []
                 if layout == 'direct':
                     meta['kind'] = 'direct'
                 else:
                     meta['collect_direct_outputs'] = True
+            if root_declared:
+                meta['outputs'] = ['outputs']
             typed_name = output + '/part.tsv' if step == 's1' and layout == 'directory' else output
             meta.update(output_types_vocab=type_vocab.sha256,
                         output_types={'outputs/' + typed_name: {'data_type': 'table', 'format': 'tsv'}})
@@ -264,11 +269,11 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             monkeypatch.setattr(runner.registry, 'get', lambda _: agent)
             result = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='wake', meta=meta,
                                                resume_session_id='session-' + step))
-            assert ('outputs/undeclared.bin' in result.outputs) is collect_all
-            if step == 's1' and layout == 'partial_directory':
+            if step == 's1' and layout in {'partial_directory', 'partial_root'}:
                 assert not result.ok and 'declared remote output directory is incomplete' in result.error
                 assert result.outputs == []
                 return
+            assert ('outputs/undeclared.bin' in result.outputs) is (collect_all or root_declared)
             if step == 's1' and layout in {'missing', 'file_prefix', 'empty_directory'}:
                 assert not result.ok and result.missing_outputs == ['outputs/tx2gene.tsv']
                 return
@@ -280,7 +285,7 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             assert 'Retained HPC data' in result.text
             assert 'outputs/' + output not in result.output_sha256  # no hash invented for a remote-only file
             assert not (Path(result.workdir) / 'outputs' / output).exists()
-            assert result.provenance['hpc_remote_data'][0]['bytes'] == 20000000 + (9 if collect_all else 0)
+            assert result.provenance['hpc_remote_data'][0]['bytes'] == 20000000 + (9 if collect_all or root_declared else 0)
             assert result.provenance['hpc_remote_data'][0]['retained_bytes'] == 20000000 + (9 if step == 's1' else 0)
             results.append(result)
             if step == 's1':
@@ -316,7 +321,7 @@ def test_declared_uploaded_input_can_also_be_a_remote_output(cluster, tmp_path, 
     assert listing['unchanged_inputs'] == ([] if modified else ['table.tsv'])
 
 
-@pytest.mark.parametrize('layout', ['file_first', 'directory_first', 'siblings'])
+@pytest.mark.parametrize('layout', ['file_first', 'directory_first', 'siblings', 'case_alias'])
 def test_cross_job_file_directory_collisions_fail_but_distinct_children_can_share_a_directory(tmp_path, monkeypatch, layout):
     from labhq.models import Task
     from labhq.runner.daemon import Runner
@@ -328,8 +333,12 @@ def test_cross_job_file_directory_collisions_fail_but_distinct_children_can_shar
     elif layout == 'siblings':
         first['files'][0]['path'] = 'result/other.tsv'
         first['directories'] = ['result']
+    elif layout == 'case_alias':
+        first['files'][0]['path'] = 'Result.tsv'
+        second['files'][0]['path'] = 'result.tsv'
+        second['directories'] = []
     task = Task(agent_id='worker', request_id='r', prompt='mock',
-                meta={'step_id': 's1', 'outputs': ['outputs/result']})
+                meta={'step_id': 's1', 'outputs': ['outputs'] if layout == 'case_alias' else ['outputs/result']})
     ws = SimpleNamespace(dir=tmp_path, task=task)
     runner = Runner.__new__(Runner)
     runner.scheduler = SimpleNamespace(transfer=lambda: object())
@@ -341,7 +350,7 @@ def test_cross_job_file_directory_collisions_fail_but_distinct_children_can_shar
         found = runner._remote_step_outputs(ws)
         assert len(found) == 2
     else:
-        with pytest.raises(ht.TransferError, match='conflicting file and directory'):
+        with pytest.raises(ht.TransferError, match='conflicting file and directory|same output path'):
             runner._remote_step_outputs(ws)
 
 
@@ -399,3 +408,28 @@ def test_undeclared_special_entries_are_omitted_without_blocking_valid_outputs(c
     assert fetched['remote']['files'] == [{'path': 'result.tsv', 'bytes': 2}]
     assert fetched['remote']['skipped'] == [{'path': 'temporary', 'reason': 'link or special file'}]
     assert (tmp_path / 'outputs/result.tsv').read_bytes() == b'ok'
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+@pytest.mark.parametrize('valid_kind', ['file', 'directory', 'nested_file'])
+def test_exact_declared_omission_cannot_be_masked_by_another_job(tmp_path, monkeypatch, reverse, valid_kind):
+    from labhq.models import Task
+    from labhq.runner.daemon import Runner
+
+    omitted = inventory(path='result')
+    omitted.update(files=[], bytes=0, skipped=[{'path': 'result', 'reason': 'link or special file'}])
+    valid = inventory(path='result' if valid_kind == 'file' else 'result/part.tsv')
+    if valid_kind != 'file':
+        valid['directories'] = ['result']
+    manifests = [omitted, valid] if not reverse else [valid, omitted]
+    declaration = 'outputs/result/part.tsv' if valid_kind == 'nested_file' else 'outputs/result'
+    ws = SimpleNamespace(dir=tmp_path, task=Task(agent_id='worker', request_id='r', prompt='mock',
+                        meta={'step_id': 's1', 'outputs': [declaration]}))
+    runner = Runner.__new__(Runner)
+    runner.scheduler = SimpleNamespace(transfer=lambda: object())
+    runner.jobs = {str(i): {'workdir': str(tmp_path), 'transfer': {'request_id': 'r', 'step_id': 's1'},
+                  'submitted_by_runner': True, 'terminal': True, 'state': 'completed', 'fetched': True,
+                  'remote_manifest': manifest} for i, manifest in enumerate(manifests)}
+    monkeypatch.setattr(ht, 'verify_remote_data', lambda *args: None)
+    with pytest.raises(ht.TransferError, match='declared remote output directory is incomplete'):
+        runner._remote_step_outputs(ws)
