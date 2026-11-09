@@ -172,6 +172,7 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
     from labhq.adapters.mock import MockAdapter
     from labhq.models import AgentSpec, Engine, Task, TaskResult
     from labhq.runner.daemon import Runner
+    from labhq import vocab
     from tests.test_workspace_boundary import _settings
 
     settings = _settings(site.tmp)
@@ -181,6 +182,8 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
     runner = Runner(settings)
     agent = AgentSpec(id='worker', name='Worker', role='test', engine=Engine.mock, builtin_mcp=['hpc'])
     seen = []
+    type_vocab = vocab.load()
+    monkeypatch.setattr('labhq.runner.daemon.output_vocab.current', lambda: type_vocab)
 
     def verify(transfer, manifest, request_id):
         ht.validate_remote_manifest(manifest, request_id)
@@ -193,7 +196,9 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
         ctx.before_spawn()
         step = ctx.task.meta['step_id']
         if ctx.task.resume_session_id:
-            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text='done')
+            typed_name = ('tx2gene.tsv/part.tsv' if layout == 'directory' else 'tx2gene.tsv') if step == 's1' else 'de.csv'
+            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text='done', structured={
+                'response': 'done', 'output_types': [{'name': 'outputs/' + typed_name, 'data_type': 'table', 'format': 'tsv'}]})
         if step == 's2':
             remote = ctx.task.meta['hpc_remote_inputs']['s1/0']
             assert remote in seen
@@ -247,6 +252,9 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
                     meta['kind'] = 'direct'
                 else:
                     meta['collect_direct_outputs'] = True
+            typed_name = output + '/part.tsv' if step == 's1' and layout == 'directory' else output
+            meta.update(output_types_vocab=type_vocab.sha256,
+                        output_types={'outputs/' + typed_name: {'data_type': 'table', 'format': 'tsv'}})
             pending = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='test', meta=meta))
             assert pending.ok and pending.pending_jobs
             runner.store.close()
@@ -262,6 +270,8 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             assert not result.missing_outputs
             collected_output = output + '/part.tsv' if step == 's1' and layout == 'directory' else output
             assert 'outputs/' + collected_output in result.outputs
+            assert result.output_types['outputs/' + collected_output]['data_type']['value'] == 'table'
+            assert 'Retained HPC data' in result.text
             assert 'outputs/' + output not in result.output_sha256  # no hash invented for a remote-only file
             assert not (Path(result.workdir) / 'outputs' / output).exists()
             assert result.provenance['hpc_remote_data'][0]['bytes'] == 20000000 + (9 if collect_all else 0)

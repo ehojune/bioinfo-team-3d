@@ -3029,6 +3029,7 @@ class Runner:
                   if isinstance(row.get("sha256"), str) and row["path"] in result.outputs}
         result.output_sha256 = hashed
         remote_manifests = []
+        retained_text = ""
         if whole_hpc and _should_check_declared_outputs(result):
             try:
                 remote_manifests = await asyncio.to_thread(self._remote_step_outputs, ws)
@@ -3038,12 +3039,14 @@ class Runner:
             if remote_manifests:
                 remote_paths = ["outputs/" + row["path"]
                                 for manifest in remote_manifests for row in manifest["files"]]
+                found = list(dict.fromkeys([*found, *remote_paths]))
                 result.outputs = list(dict.fromkeys([*result.outputs, *remote_paths]))
                 ws.stage_run(task.id, hpc_remote_outputs=remote_manifests)
                 transfer = self.scheduler.transfer()
-                result.text += "\n\nRetained HPC data (delete only by user decision):\n" + "\n".join(
+                retained_text = "\n\nRetained HPC data (delete only by user decision):\n" + "\n".join(
                     f"{transfer.path(m['data'])}: {m.get('retained_bytes', m['bytes'])} bytes retained "
                     f"({m['bytes']} declared)" for m in remote_manifests)
+                result.text += retained_text
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
@@ -3179,7 +3182,7 @@ class Runner:
                 if direct_result is not None:
                     response = direct_result.get("response")
                     if isinstance(response, str):
-                        result.text = response
+                        result.text = response + retained_text
                     entries, issues = (output_types.normalize_entries(
                         found, direct_result.get("output_types"), current_vocab)
                         if current_vocab is not None and current_vocab.sha256 == task.meta.get("output_types_vocab")
