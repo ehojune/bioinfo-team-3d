@@ -1,6 +1,6 @@
 pr: 1335
 rows:
-  - sha: "2787986"
+  - sha: "8c39149"
     at: "2026-11-09 17:48"
     summary: "직원 HPC 명령의 오류가 도구 응답까지 전달되는 시험을 복구했습니다."
     text: "stdio fixture의 runner scheduler 경로 연결, #1334 병합 호환 회귀 480 passed·12 skipped, 범위 밖 취소 fixture 3건은 hold (#1332)"
