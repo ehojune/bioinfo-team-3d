@@ -77,6 +77,17 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+LOG_SUFFIXES = (".log", ".out", ".err")  # job logs and the logs a job writes among its results are hidden (#1357)
+_GENERIC_FOLDERS = {"home", "tmp", "scratch", "data", "work", "users", "user", "var", "mnt", "opt", "usr", "lib",
+                    "bin", "share", "local", "lustre", "gpfs", "project", "projects", "group", "groups"}
+# An absolute POSIX path of two or more parts, after a line start, space, quote, '=', ':' or '('.
+_ABSOLUTE_PATH = re.compile(r"""(^|[\s"'=:(\[,])/(?:[^\s"'/)\],:]+/)+[^\s"'/)\],:]*""", re.M)
+
+
+def is_log(name: str) -> bool:
+    return PurePosixPath(name).suffix.lower() in LOG_SUFFIXES
+
+
 class Transfer:
     def __init__(self, run: Callable[[str], object], root: str, limits: Limits = Limits(),
                  redact: Callable[[str], str] | None = None):
@@ -286,6 +297,29 @@ class Transfer:
             if remote_sha != sha256_hex(data):
                 raise HashMismatch(f"{rel}: the received bytes do not match the cluster's checksum")
         return data, {"sha256": sha256_hex(data), "bytes": len(data), "truncated": start > 0}
+
+    def hide_log(self, text: str) -> str:
+        """A job log as it may be kept on this PC (#1357): ``_hide``, then every folder name of the work folder's path
+        (the account and site names it carries) and every absolute path left. Stricter than an error message, because
+        a log is a file that can reach a report or a result repository."""
+        text = self._hide(text)
+        words = {part for path in {self.root, self._real_root or self.root} for part in path.split("/")
+                 if len(part) >= 3 and part.lower() not in _GENERIC_FOLDERS}
+        for word in sorted(words, key=len, reverse=True):
+            text = re.sub(rf"(?<![A-Za-z0-9_]){re.escape(word)}(?![A-Za-z0-9_])", "<site>", text, flags=re.I)
+        return _ABSOLUTE_PATH.sub(lambda m: m.group(1) + "<remote-path>", text)
+
+    def fetch_log(self, rel: str, into: Path, *, tail: bool = False, max_bytes: int | None = None,
+                  name: str | None = None) -> dict:
+        """``fetch_file`` for a log: the text is hidden with ``hide_log`` before anything is written, so the cluster's
+        bytes never land on this PC. ``sha256``/``bytes`` describe the kept file, ``remote_sha256`` what came."""
+        data, info = self.fetch_bytes(rel, tail=tail, max_bytes=max_bytes)
+        kept = self.hide_log(data.decode("utf-8", errors="replace")).encode("utf-8")
+        target = Path(into) / (name or str(confine(rel)))
+        write_confined(Path(into), target, kept)
+        return {"path": str(confine(rel)), "local": str(target), "sha256": sha256_hex(kept), "bytes": len(kept),
+                "truncated": info["truncated"], "remote_sha256": info["sha256"], "remote_bytes": info["bytes"],
+                "redacted": kept != data}
 
     def fetch_file(self, rel: str, into: Path, *, tail: bool = False, max_bytes: int | None = None,
                    name: str | None = None) -> dict:
@@ -660,7 +694,7 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
         if not transfer.exists(rel):
             manifest["skipped"].append({"path": rel, "reason": "no such log (the job may not have started)"})
             continue
-        manifest["logs"].append(transfer.fetch_file(rel, logs_dir, tail=True, name=PurePosixPath(rel).name))
+        manifest["logs"].append(transfer.fetch_log(rel, logs_dir, tail=True, name=PurePosixPath(rel).name))
     if spec.get("request_id"):
         transfer.plain_dir(spec["dir"])
         transfer.upload_bytes(f"{spec['dir']}/remote-data.py", REMOTE_DATA_HELPER.encode())
@@ -689,15 +723,18 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
                                              "reason": "retained in request remote data"})
                 continue
             try:
-                info = transfer.fetch_file(f"{remote['data']}/{name}", fetch_to, name=name)
+                fetch = transfer.fetch_log if is_log(name) else transfer.fetch_file
+                info = fetch(f"{remote['data']}/{name}", fetch_to, name=name)
             except (TooLarge, PathRejected) as error:
                 # Local retrieval is optional; the remote file is rechecked before admission/use.
                 manifest["skipped"].append({"path": name, "bytes": size, "reason": str(error)[:200]})
                 continue
-            if info["bytes"] != size:
+            if info.get("remote_bytes", info["bytes"]) != size:
                 raise TransferError(f"{name}: size differs from remote listing")
             total += size
-            manifest["fetched"].append({"path": name, "bytes": size, "sha256": info["sha256"]})
+            manifest["fetched"].append({"path": name, "bytes": info["bytes"], "sha256": info["sha256"],
+                                        **({"redacted": True, "remote_sha256": info["remote_sha256"]}
+                                           if info.get("redacted") else {})})
         write_confined(Path(logs_dir), Path(logs_dir) / f"{spec['stem']}.fetch.json",
                        json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
         return manifest
@@ -719,12 +756,14 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
             manifest["skipped"].append({"path": name, "reason": f"{size} bytes: use the site profile's file transfer method"})
             continue
         try:
-            info = transfer.fetch_file(rel, fetch_to, name=name)
+            info = (transfer.fetch_log if is_log(name) else transfer.fetch_file)(rel, fetch_to, name=name)
         except (TooLarge, PathRejected) as error:  # lasting reasons: skip and say so
             manifest["skipped"].append({"path": name, "reason": str(error)[:200]})
             continue
-        total += info["bytes"]
-        manifest["fetched"].append({"path": name, "bytes": info["bytes"], "sha256": info["sha256"]})
+        total += info.get("remote_bytes", info["bytes"])
+        manifest["fetched"].append({"path": name, "bytes": info["bytes"], "sha256": info["sha256"],
+                                    **({"redacted": True, "remote_sha256": info["remote_sha256"]}
+                                       if info.get("redacted") else {})})
     write_confined(Path(logs_dir), Path(logs_dir) / f"{spec['stem']}.fetch.json",
                    json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
     return manifest

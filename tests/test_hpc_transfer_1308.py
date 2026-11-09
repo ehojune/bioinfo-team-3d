@@ -750,3 +750,73 @@ def test_a_fresh_folder_is_made_with_mode_700_and_nothing_else_is_in_it(cluster)
     transfer.run = lambda command: (seen.append(command), real_run(command))[1]
     transfer.make_fresh_dir("t1/job-other")
     assert any(command.startswith("mkdir -m 700 -- ") and " -p" not in command for command in seen)  # strict, no -p
+
+
+# ---- #1357: a job log is hidden before it is written on this PC ----
+
+LEAKY_LOG = ("[labhq] cwd " + ROOT + "/t1/job-1/work start\n"
+             "Traceback (most recent call last):\n"
+             '  File "/opt/conda/lib/python3.11/site-packages/pydeseq2/dds.py", line 3, in fit\n'
+             "-rw-r--r-- 1 lab HPC 11690 figures/qc_summary.svg\n"
+             "fetched https://ftp.ebi.ac.uk/pub/databases/gencode/x.gtf.gz ok, exit=0\n")
+
+
+def test_a_log_is_hidden_before_it_is_written_and_the_cluster_bytes_stay_there(cluster, tmp_path):
+    cluster.path("t1").mkdir(parents=True)
+    cluster.path("t1/de_py.log").write_bytes(LEAKY_LOG.encode())
+    transfer = cluster.transfer()
+    info = transfer.fetch_log("t1/de_py.log", tmp_path / "logs", name="de_py.log")
+    kept = (tmp_path / "logs" / "de_py.log").read_text(encoding="utf-8")
+    assert ROOT not in kept and "/opt/conda" not in kept and " HPC " not in kept
+    assert "<workdir>/t1/job-1/work" in kept and '"<remote-path>", line 3' in kept
+    assert "figures/qc_summary.svg" in kept and "https://ftp.ebi.ac.uk/pub/databases/gencode/x.gtf.gz" in kept
+    assert "exit=0" in kept  # what the job said stays readable
+    assert info["redacted"] and info["remote_sha256"] == sha(LEAKY_LOG.encode())
+    assert info["sha256"] == sha(kept.encode()) and info["bytes"] == len(kept.encode())
+    assert not list((tmp_path / "logs").glob(".*"))  # no unhidden copy or temporary file was left beside it
+
+
+def test_a_clean_log_is_kept_as_it_came(cluster, tmp_path):
+    cluster.path("t1").mkdir(parents=True)
+    cluster.path("t1/ok.out").write_bytes(b"started\ndone\n")
+    info = cluster.transfer().fetch_log("t1/ok.out", tmp_path, name="ok.out")
+    assert not info["redacted"] and (tmp_path / "ok.out").read_bytes() == b"started\ndone\n"
+
+
+def test_job_logs_and_logs_among_results_come_home_hidden_but_data_is_untouched(site):
+    result = submit(site, write_script(site))
+    work, logs = site.remote(result["transfer"]["work"]), site.remote(result["transfer"]["dir"] + "/logs")
+    (work / "de_py.log").write_bytes(LEAKY_LOG.encode())
+    (work / "paths.tsv").write_bytes(f"cwd\t{ROOT}/t1\n".encode())  # data: never rewritten
+    (logs / "align_20261107.out").write_bytes(LEAKY_LOG.encode())
+    (logs / "align_20261107.err").write_bytes(("error in " + ROOT + "/t1/x.R\n").encode())
+    job = finished_job(site, result)
+    runner = stub_runner(site, job)
+    asyncio.run(runner._fetch_finished_jobs())
+    assert job["fetched"]
+    out, kept_logs = site.workdir / "outputs", site.workdir / "jobs" / "logs"
+    for path in (out / "de_py.log", kept_logs / "align_20261107.out", kept_logs / "align_20261107.err"):
+        text = path.read_text(encoding="utf-8")
+        assert ROOT not in text and "/opt/conda" not in text, path.name
+    assert (out / "paths.tsv").read_bytes() == f"cwd\t{ROOT}/t1\n".encode()
+    manifest = json.loads((kept_logs / "align_20261107.fetch.json").read_text(encoding="utf-8"))
+    rows = {row["path"]: row for row in manifest["fetched"]}
+    assert rows["de_py.log"]["redacted"] and rows["de_py.log"]["remote_sha256"] == sha(LEAKY_LOG.encode())
+    assert rows["de_py.log"]["sha256"] == sha((out / "de_py.log").read_bytes())  # the receipt is of the kept file
+    assert "redacted" not in rows["paths.tsv"] and rows["paths.tsv"]["sha256"] == sha((out / "paths.tsv").read_bytes())
+    assert all(row["redacted"] for row in manifest["logs"])
+
+
+def test_a_log_in_request_remote_data_comes_home_hidden_and_its_receipt_is_the_kept_file(cluster, tmp_path):
+    from tests.test_hpc_remote_data import helper_transfer, prepare
+
+    transfer = helper_transfer(cluster)
+    spec = prepare(cluster, transfer, tmp_path, {"de_py.log": LEAKY_LOG.encode(), "small.csv": b"a,b\n1,2\n"})
+    result = ht.fetch_results(transfer, spec, tmp_path / "logs", tmp_path / "outputs")
+    kept = (tmp_path / "outputs" / "de_py.log").read_bytes()
+    assert ROOT.encode() not in kept and b"/opt/conda" not in kept
+    rows = {row["path"]: row for row in result["fetched"]}
+    assert rows["de_py.log"]["redacted"] and rows["de_py.log"]["sha256"] == sha(kept)
+    assert rows["de_py.log"]["remote_sha256"] == sha(LEAKY_LOG.encode())
+    assert cluster.path(spec["data"] + "/de_py.log").read_bytes() == LEAKY_LOG.encode()  # the cluster copy is unchanged
+    assert (tmp_path / "outputs" / "small.csv").read_bytes() == b"a,b\n1,2\n" and "redacted" not in rows["small.csv"]
