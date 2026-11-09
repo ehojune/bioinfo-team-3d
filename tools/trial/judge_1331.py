@@ -41,7 +41,20 @@ SESSION_MAX = 1
 HPC_TOOL = re.compile(r"\bhpc_[a-z_]+\b|mcp__[A-Za-z0-9_-]*hpc[A-Za-z0-9_-]*")
 FC_NAMES = ("log2foldchange", "log2fc", "logfc", "log2_fold_change")
 PADJ_NAMES = ("padj", "fdr", "adj.p.val", "adj_p_val", "qvalue", "q_value", "p_adj", "adj_pval")
-TEXT_SUFFIXES = {".md", ".txt", ".html", ".json", ".csv", ".tsv", ".yaml", ".yml", ".log", ".py", ".r", ".sh", ".tex"}
+BINARY_SUFFIXES = {".gz", ".bgz", ".zip", ".bz2", ".xz", ".zst", ".bam", ".cram", ".bai", ".png", ".jpg", ".jpeg", ".gif",
+                   ".pdf", ".h5", ".h5ad", ".rds", ".sqlite3", ".db"}
+
+
+def is_text(path: Path) -> bool:
+    """By content, not by name: scheduler logs (.out/.err), notebooks and files without a suffix are text too. A file
+    with a NUL byte in its first 8 KiB is binary; known compressed and image formats are skipped by suffix."""
+    if path.suffix.lower() in BINARY_SUFFIXES:
+        return False
+    try:
+        with path.open("rb") as fh:
+            return b"\0" not in fh.read(8192)
+    except OSError:
+        return False
 
 
 def result(name: str, status: str, detail: str, **evidence) -> dict:
@@ -297,11 +310,14 @@ def check_session(tasks: list[dict], logins: list[tuple[float, str | None]]) -> 
         return result("session", "FAIL", "겹친 HPC 단계가 없어 세션 공유를 판정할 수 없습니다")
     worst = None
     for a, b in pairs:
-        # The overlap itself: from the later start to the earlier end (a step still running ends now).
+        # From the first of the two steps' start to the end of their overlap (a step still running ends now). One
+        # shared session is at most the one login that opened it; a second session opened by either step, before or
+        # during the overlap, is a second login here. A session opened before both steps started (0 here) is shared
+        # by definition. The ledger holds no session id, so this is the strongest proof the record allows.
         starts = [x for x in (a["start_ts"], b["start_ts"]) if x is not None]
         if not starts:
             continue
-        start = max(starts)
+        start = min(starts)
         end = min(x if x is not None else time.time() for x in (a["end_ts"], b["end_ts"]))
         n = sum(1 for at, _ in logins if start <= at <= end)
         if worst is None or n > worst["logins"]:
@@ -484,7 +500,7 @@ def check_public(roots: list[Path], terms: list[str], nodes: list[str] | None = 
             continue
         files = [root] if root.is_file() else [p for p in root.rglob("*") if p.is_file()]
         for path in files:
-            if path.suffix.lower() not in TEXT_SUFFIXES or path.stat().st_size > 20 << 20:
+            if path.stat().st_size > 50 << 20 or not is_text(path):
                 continue
             scanned += 1
             text = path.read_text(encoding="utf-8", errors="replace")

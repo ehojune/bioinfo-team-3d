@@ -163,8 +163,9 @@ def test_argv_terms_all_ssh_forms():
 
 def test_session_counts_only_the_overlap(tmp_path):
     tasks = J.step_intervals(two_overlapping(tmp_path), REQ, set())  # overlap: 110 (index starts) .. 300 (index ends)
-    assert J.check_session(tasks, [(100.0, REQ), (350.0, REQ)])["status"] == "PASS"  # before and after the overlap
+    assert J.check_session(tasks, [(90.0, REQ), (350.0, REQ)])["status"] == "PASS"  # before both, after the overlap
     assert J.check_session(tasks, [(120.0, REQ), (200.0, REQ)])["status"] == "FAIL"
+    assert J.check_session(tasks, [(102.0, REQ), (112.0, REQ)])["status"] == "FAIL"  # two sessions, one per step
 
 
 def test_genes_prefers_the_genome_wide_table(tmp_path):
@@ -220,3 +221,12 @@ def test_site_terms_include_the_fallback_account(monkeypatch):
     monkeypatch.setattr(getpass, "getuser", lambda: "hiddenacct")
     assert "hiddenacct" in J.site_terms(SimpleNamespace(hpc=HpcSettings(scheduler="sge")), None)[0]
     assert "hiddenacct" not in J.site_terms(SimpleNamespace(hpc=HpcSettings(scheduler="sge", user="u9x")), None)[0]
+
+
+def test_public_reads_logs_by_content(tmp_path):
+    (tmp_path / "job.out").write_text("running on n07", encoding="utf-8")
+    (tmp_path / "noext").write_text("user zq", encoding="utf-8")
+    (tmp_path / "blob.bin").write_bytes(b"\0\0 n07 zq")
+    (tmp_path / "x.gz").write_bytes(b"n07")
+    out = J.check_public([tmp_path], ["n07", "zq"], ["n07"])
+    assert out["status"] == "FAIL" and sorted(Path(f).name for f in out["files"]) == ["job.out", "noext"]
