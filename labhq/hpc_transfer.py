@@ -393,7 +393,7 @@ def request_data_root(request_id: str) -> str:
 # reads/moves. Output files move on the same filesystem, without copying their bytes. A retry also scans already moved
 # files, so an interrupted snapshot is recoverable. Only its completed manifest is admitted to another step.
 REMOTE_DATA_HELPER = r'''
-import os, sys, json, stat, hashlib, contextlib
+import os, sys, json, stat, hashlib, contextlib, uuid
 root, job, action = sys.argv[1:4]
 with contextlib.ExitStack() as stack:
  @contextlib.contextmanager
@@ -435,7 +435,7 @@ with contextlib.ExitStack() as stack:
    after=os.fstat(fd)
    if (s.st_size,s.st_mtime_ns,s.st_ctime_ns)!=(after.st_size,after.st_mtime_ns,after.st_ctime_ns) or size!=s.st_size:
     raise ValueError('remote file changed while hashing')
-   os.fchmod(fd,0o400)
+   os.fchmod(fd,0o500 if s.st_mode & 0o111 else 0o400)
    return {'bytes':size,'sha256':h.hexdigest()}
   finally: os.close(fd)
  r=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW); stack.callback(os.close,r)
@@ -460,12 +460,13 @@ with contextlib.ExitStack() as stack:
   cfg['files']=list(rows.values()); cfg['bytes']=sum(x['bytes'] for x in rows.values())
   payload=json.dumps(cfg,separators=(',',':')).encode()
   if len(payload)>4*1024*1024: raise ValueError('remote manifest too large')
-  fd=os.open('remote-data.tmp',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=j)
+  temporary='remote-data-'+uuid.uuid4().hex+'.tmp'
+  fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=j)
   try:
    with os.fdopen(fd,'wb') as out: out.write(payload)
-   os.rename('remote-data.tmp','remote-data.json',src_dir_fd=j,dst_dir_fd=j)
+   os.rename(temporary,'remote-data.json',src_dir_fd=j,dst_dir_fd=j)
   finally:
-   try: os.unlink('remote-data.tmp',dir_fd=j)
+   try: os.unlink(temporary,dir_fd=j)
    except FileNotFoundError: pass
  else:
   expected={x['path']:x for x in cfg['files']}; seen=set()

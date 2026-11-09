@@ -122,11 +122,21 @@ def test_next_job_rejects_remote_changes_before_scheduler_submit(cluster, tmp_pa
 def test_fetch_retry_recovers_after_snapshot_was_already_moved(cluster, tmp_path):
     transfer = helper_transfer(cluster)
     spec = prepare(cluster, transfer, tmp_path)
+    # A process killed while writing an older manifest must not reserve the next attempt's temporary name.
+    cluster.path(spec['dir'] + '/remote-data.tmp').write_bytes(b'interrupted')
     first = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
     # A restarted runner knows only the persisted spec. No in-memory transfer state is required.
     second = ht.fetch_results(helper_transfer(cluster), json.loads(json.dumps(spec)),
                               tmp_path / 'logs', tmp_path / 'outputs')
     assert first['remote'] == second['remote']
+
+
+def test_remote_executable_stays_executable_and_read_only(cluster, tmp_path):
+    transfer = helper_transfer(cluster)
+    spec = prepare(cluster, transfer, tmp_path, {'tool': b'#!/bin/sh\necho ok\n'})
+    cluster.path(spec['work'] + '/tool').chmod(0o700)
+    ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
+    assert cluster.path(spec['data'] + '/tool').stat().st_mode & 0o777 == 0o500
 
 
 def test_total_fetch_budget_does_not_limit_remote_completion(cluster, tmp_path):
