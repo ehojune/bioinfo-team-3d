@@ -2,7 +2,7 @@
 
 ## Roadmap
 
-The v1.0 scope was set by the PI's directive ([#1336](https://github.com/ehojune/bioinfo-team-3d/issues/1336), 2026-11-09). The earlier fine-grained roadmap (v0.25 to v1.25, PI decision ⑥ #298, 2026-10-03) moved into the past declarations and post-v1.0 goals below; the original table is in this file at `53a5b339`.
+The v1.0 scope was set by the PI's directive ([#1336](https://github.com/ehojune/bioinfo-team-3d/issues/1336), 2026-11-09). The earlier fine-grained roadmap (v0.25 to v1.25, PI decision ⑥ #298, 2026-10-03) moved into the past declarations and post-v1.0 goals below; the original table with its pass criteria and evidence is in [the version before 2026-11-10](https://github.com/ehojune/bioinfo-team-3d/blob/53a5b339/docs/manual/19-roadmap.en.md).
 
 | Version | Definition | Pass criteria | Now | Remaining |
 |---|---|---|---|---|
