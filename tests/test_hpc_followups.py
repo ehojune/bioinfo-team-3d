@@ -54,6 +54,21 @@ def _mcp(monkeypatch, tmp_path, scheduler, *, threshold, broker_reply=None):
             raise broker_reply
         if path == "/jobs/submit":  # the runner's side of the call, with this fake scheduler
             return await submit_job(settings, backend, tmp_path, payload, approve)
+        if path == "/jobs/scheduler/cancel":
+            runner, _, token = _submit_runner(tmp_path)
+            runner.scheduler = backend
+            runner.s.hpc = settings.hpc
+            if (broker_reply or {}).get("/jobs/owned", {}).get("owned"):
+                parent = "mock-123" if scheduler == "mock" else "4100"
+                runner.jobs[parent] = {"job_id": parent, "task_id": "t1", "agent_id": "analyst",
+                                       "request_id": "r1", "terminal": False, "submitted_by_runner": True,
+                                       "scheduler": scheduler}
+            try:
+                response = await _post(runner, token, path, payload)
+                assert response.status_code == 200
+                return response.json()
+            finally:
+                runner.store.close()
         return (broker_reply or {}).get(path, {})
 
     monkeypatch.setattr(hpc, "S", settings)
@@ -100,9 +115,9 @@ async def test_plain_script_below_the_threshold_still_needs_no_approval(monkeypa
 async def test_cancel_refuses_jobs_the_broker_did_not_track(monkeypatch, tmp_path):
     hpc, run, seen = _mcp(monkeypatch, tmp_path, "slurm", threshold=0,
                           broker_reply={"/jobs/owned": {"owned": False}})
-    with pytest.raises(Exception, match="cancels only jobs"):
+    with pytest.raises(Exception, match="cancel requires an owned job"):
         await hpc.hpc_cancel("4100")
-    assert run.calls == [] and seen == [("/jobs/owned", {"task_id": hpc.TASK, "agent_id": hpc.AGENT,
+    assert run.calls == [] and seen == [("/jobs/scheduler/cancel", {"task_id": hpc.TASK, "agent_id": hpc.AGENT,
                                                           "job_id": "4100"})]
 
 
@@ -122,7 +137,7 @@ async def test_cancel_of_a_tracked_job_reaches_scancel(monkeypatch, tmp_path):
 async def test_mock_job_ids_stay_cancellable_after_the_ownership_check(monkeypatch, tmp_path):
     hpc, _, seen = _mcp(monkeypatch, tmp_path, "mock", threshold=0, broker_reply={"/jobs/owned": {"owned": True}})
     assert json.loads(await hpc.hpc_cancel("mock-123"))["result"] == "cancelled (mock)"
-    assert [path for path, _ in seen] == ["/jobs/owned"]
+    assert [path for path, _ in seen] == ["/jobs/scheduler/cancel"]
 
 
 def _runner(tmp_path) -> Runner:
