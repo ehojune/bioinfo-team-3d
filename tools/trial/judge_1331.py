@@ -266,8 +266,8 @@ def overlapping_pairs(tasks: list[dict]) -> list[tuple[dict, dict]]:
     pairs = []
     for i, a in enumerate(hpc):
         for b in hpc[i + 1:]:
-            if a["step_id"] == b["step_id"]:
-                continue  # a retry of the same step is not two staff steps
+            if a["step_id"] == b["step_id"] or a["agent_id"] == b["agent_id"]:
+                continue  # a retry, or one employee with two steps, is not two staff working at once
             a_end = a["end_seq"] if a["end_seq"] is not None else float("inf")
             if b["start_seq"] < a_end:
                 pairs.append((a, b))
@@ -376,27 +376,66 @@ def argv_terms(argv: list[str]) -> set[str]:
     return terms
 
 
-def site_terms(settings, extra: Path | None) -> list[str]:
+def node_terms(words: list[str]) -> set[str]:
+    """Node names in scheduler arguments: ``-w n1``, ``--nodelist=n1``, ``-l h=n1``/``hostname=n1``, ``queue@n1``."""
+    terms: set[str] = set()
+    words = [str(w) for w in words]
+    for i, word in enumerate(words):
+        if word in {"-w", "--nodelist"} and i + 1 < len(words):
+            terms.update(x for x in re.split(r"[,\[\]]", words[i + 1]) if x)
+        for m in re.finditer(r"(?:^|[,:\s])(?:--nodelist|h|hostname|host)=([^:\s]+)", word):
+            terms.update(x for x in re.split(r"[,+|]", m.group(1)) if x)
+        if "@" in word and not word.startswith("-"):
+            terms.add(word.split("@", 1)[1])
+    return terms
+
+
+def site_terms(settings, extra: Path | None, nodes: list[str] | None = None) -> tuple[list[str], list[str]]:
+    """(every site term, the node terms among them). Nodes come from --node, scheduler arguments and any setting or
+    profile field whose name holds "node"; the public check refuses to pass without one, since the node is the site
+    detail a report is most likely to name."""
     terms: set[str] = set()
     hpc = settings.hpc
     for value in (hpc.ssh_host, hpc.user, hpc.default_queue):
         if value:
             terms.add(str(value))
+    found_nodes: set[str] = set(nodes or [])
+    found_nodes |= node_terms([*hpc.submit_prefix, *hpc.slurm.sbatch_args, hpc.pbs.resource_template,
+                               hpc.default_queue or ""])
+    for holder in (hpc,):
+        for name in type(holder).model_fields:
+            value = getattr(holder, name, None)
+            if "node" in name.lower() and value:
+                found_nodes.update(str(v) for v in (value if isinstance(value, (list, tuple)) else [value]))
     if hpc.site_profile:
         from labhq.hpc_site import load_profile
         profile = load_profile(hpc.site_profile)
         for value in (profile.remote_workdir, profile.queue):
             if value:
                 terms.add(value)
+        for name in type(profile).model_fields:
+            value = getattr(profile, name, None)
+            if "node" in name.lower() and value:
+                found_nodes.update(str(v) for v in (value if isinstance(value, (list, tuple)) else [value]))
         terms.update(argv_terms(profile.connect_argv))
     if extra:
         terms.update(line.strip() for line in extra.read_text(encoding="utf-8").splitlines() if line.strip())
-    return sorted(t for t in terms if len(t) >= 4)
+    terms |= found_nodes
+    return sorted(t for t in terms if t.strip()), sorted(found_nodes)
 
 
-def check_public(roots: list[Path], terms: list[str]) -> dict:
+def term_pattern(term: str) -> re.Pattern:
+    """The term as a whole word: no letter, digit or underscore right before or after it, so a short account name does
+    not match inside ordinary words, and a path still matches where it is written."""
+    return re.compile(r"(?<![A-Za-z0-9_])" + re.escape(term) + r"(?![A-Za-z0-9_])")
+
+
+def check_public(roots: list[Path], terms: list[str], nodes: list[str] | None = None) -> dict:
     if not terms:
         return result("public", "SKIP", "사이트 용어가 없어 검사하지 않았습니다(--site-terms 또는 hpc 설정 필요)")
+    if nodes is not None and not nodes:
+        return result("public", "FAIL", "고정 노드 이름을 설정에서 찾지 못했습니다. --node로 지정하세요")
+    patterns = [term_pattern(t) for t in terms]
     hits = {}
     scanned = 0
     for root in roots:
@@ -408,7 +447,7 @@ def check_public(roots: list[Path], terms: list[str]) -> dict:
                 continue
             scanned += 1
             text = path.read_text(encoding="utf-8", errors="replace")
-            n = sum(text.count(t) for t in terms)
+            n = sum(len(pat.findall(text)) for pat in patterns)
             if n:
                 hits[str(path)] = n
     ok = not hits
@@ -422,6 +461,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--request", required=True, help="request id (req_…)")
     ap.add_argument("--de", action="append", type=Path, default=[], help="DE table; default: search the request bundle")
     ap.add_argument("--hpc-step", action="append", default=[], help="step or task id to count as HPC-using")
+    ap.add_argument("--node", action="append", default=[], help="the pinned compute node (local; never committed)")
     ap.add_argument("--site-terms", type=Path, help="local file, one extra site term per line (never committed)")
     ap.add_argument("--labhq", default=None, help="labhq command (default: this python -m labhq.cli)")
     ap.add_argument("--skip", action="append", default=[], choices=["genes", "overlap", "session", "window", "verify", "public"])
@@ -462,7 +502,8 @@ def main(argv: list[str] | None = None) -> int:
     if "verify" not in args.skip:
         checks.append(check_verify(labhq_cmd, args.config, args.request))
     if "public" not in args.skip:
-        checks.append(check_public([bundle], site_terms(settings, args.site_terms)))
+        terms, nodes = site_terms(settings, args.site_terms, args.node)
+        checks.append(check_public([bundle], terms, nodes))
 
     for c in checks:
         print(f"{c['status']:4}  {c['check']:8} {c['detail']}")

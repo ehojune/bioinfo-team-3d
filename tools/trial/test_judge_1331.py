@@ -174,3 +174,26 @@ def test_genes_prefers_the_genome_wide_table(tmp_path):
     full = write_de(tmp_path / "b_full.csv", rows)
     out = J.check_genes([summary, full])
     assert out["status"] == "PASS" and out["table"] == str(full)
+
+
+def test_one_employee_with_two_steps_is_not_a_pair(tmp_path):
+    db = events_db(tmp_path, [
+        {**ev("task.dispatched", "t1", 1.0, step="fetch"), "agent_id": "same"},
+        {**ev("task.dispatched", "t2", 2.0, step="index"), "agent_id": "same"},
+        ev("agent.log", "t1", text="hpc_submit"), ev("agent.log", "t2", text="hpc_submit"),
+        ev("task.result", "t1", 3.0), ev("task.result", "t2", 4.0),
+    ])
+    assert J.check_overlap(J.step_intervals(db, REQ, set()))["status"] == "FAIL"
+
+
+def test_public_short_terms_match_whole_words(tmp_path):
+    (tmp_path / "report.md").write_text("ran as zq on n07; the zqx tool and an7 are not site words", encoding="utf-8")
+    out = J.check_public([tmp_path], ["zq", "n07"], ["n07"])
+    assert out["status"] == "FAIL" and list(out["files"].values()) == [2]
+    assert J.check_public([tmp_path], ["zz"], [])["status"] == "FAIL"  # no pinned node known: refuse to pass
+    assert J.check_public([tmp_path], ["zz"], ["n99"])["status"] == "PASS"
+
+
+def test_node_terms():
+    assert J.node_terms(["-w", "n01", "--nodelist=n02,n03", "-l", "h=n04", "all.q@n05", "--mem=4G"]) == \
+        {"n01", "n02", "n03", "n04", "n05"}

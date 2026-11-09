@@ -26,16 +26,18 @@ airway(GSE52778) RNA-seq를 원시 FASTQ부터 DE까지 PI 인스턴스에서 �
 4. 실패하면 원인을 #1331에 적은 뒤에만 다시 시도합니다. 시도 번호·원인·바꾼 것을 아래 표에 한 줄씩 남깁니다(최대 20회).
 
 ## 판정
-`python tools/trial/judge_1331.py --config <config> --request <id> --events-log <같은 파일> --json <로컬>/judge-<id>.json`
+`python tools/trial/judge_1331.py --config <config> --request <id> --events-log <같은 파일> --node <고정 노드> --json <로컬>/judge-<id>.json`
+
+`--node`는 셸에서만 넘기고 어디에도 적지 않습니다. 설정에서 노드를 찾지 못했는데 `--node`도 없으면 public 검사는 실패합니다.
 
 | 검사 | 기준 | 근거 |
 |---|---|---|
 | genes | DUSP1·KLF15·PER1·TSC22D3·ZBTB16·FKBP5 중 5개 이상 log2FC>0, padj<0.05. 표는 1만 행 이상 | 요청 묶음의 DE 표(`--de`로 지정 가능) |
-| overlap | HPC 도구를 쓴 서로 다른 단계 둘 이상이 겹침 | 단계 시작·끝 이벤트 순서 |
+| overlap | HPC 도구를 쓴 서로 다른 직원의 서로 다른 단계 둘 이상이 겹침 | 단계 시작·끝 이벤트 순서 |
 | session | 겹친 동안 로그인 1회 이하 | `hpc_logins.sqlite3` |
 | window | 어느 60분 구간에도 로그인 2회 이하 | 같은 기록, 요청 전후 1시간 포함 |
 | verify | `labhq verify` exit 0 | |
-| public | 사이트 용어가 보고서·묶음 텍스트에 없음 | 설정·사이트 프로필에서 용어를 뽑고 출력하지 않음 |
+| public | 사이트 용어(고정 노드 포함)가 보고서·묶음 텍스트에 단어로 나오지 않음 | 설정·사이트 프로필·스케줄러 인자·`--node`에서 용어를 뽑고 출력하지 않음 |
 
 판정은 읽기 전용입니다. 저장소 공개 검사(`scripts/check_public.sh`)는 PR마다 따로 돕니다.
 "HPC를 쓴 단계"는 그 단계의 로그·승인에 `hpc_*` 도구 이름이 나온 경우입니다. 판정이 고른 단계 목록을 결과 JSON의 `hpc_steps`에서 눈으로 확인합니다. 빠진 단계가 있으면 `--hpc-step <step_id>`로 지정하고, 그 사실을 보고에 적습니다.
