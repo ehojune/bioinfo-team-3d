@@ -1,0 +1,5 @@
+rows:
+- sha: 'dbcbb04'
+  at: 2026-11-09 21:05
+  text: 'HPC 잡 스크립트를 LF로 쓴다(tools/hpc_mcp.py write_owned_bytes, hpc_consult.py newline). Windows runner에서 CRLF가 되어 sbatch가 거절하던 문제(#1331 시운전 1회차). inputs로 넘긴 셸 스크립트에 CRLF가 있으면 제출 전에 파일 이름과 함께 거절. 새 시험을 Windows 시험 목록에 등록'
+  summary: Windows PC에서 낸 HPC 잡이 줄바꿈 형식 때문에 거절되지 않습니다.
