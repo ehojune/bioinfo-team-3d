@@ -1,0 +1,5 @@
+rows:
+  - sha: "6b99115"
+    at: "2026-11-10 04:54"
+    summary: "airway 시운전 판정에서 공개 산출물 검사가 Windows 경로의 드라이브 글자 하나를 사이트 정보로 잘못 잡던 문제를 고쳤습니다."
+    text: "tools/trial/judge_1331.py value_terms: 경로는 통째로, 3글자 미만 조각 제외 (#1331)"
