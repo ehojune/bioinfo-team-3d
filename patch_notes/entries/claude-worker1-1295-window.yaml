@@ -1,0 +1,5 @@
+rows:
+  - sha: "9ff0f33"
+    at: "2026-11-09 16:59"
+    summary: "HPC 사이트 규칙 \"어느 60분 동안에도 로그인 N회 이내\"를 사이트 프로필의 시간 창 상한으로 지킵니다. 프로필에 큐·노드 고정값을 적으면 제출에 붙일 인자를 만들고 다른 위치 지정을 거절하는 검사를 넣었고(제출 경로 연결은 후속), 게이트웨이 터널 사이트는 접속 전에 포트 주인과 원격 계정을 확인하는 방법을 프로필에 적습니다."
+    text: "LoginBudget per_window·window_minutes(지금부터 거슬러 올라간 창, LoginLimitReached scope window·retry_after_s, usage·exhausted), budget_for가 프로필 창 상한을 읽음, SiteProfile port_owner_check·pinned_nodes·login_limit_per_window·login_window_minutes와 질문 4개, hpc_site.pin_submit(Slurm·SGE, PBS 거절), manual 08·15 한영, D단계 3차 결과, 시험 25건 (#1295)"
