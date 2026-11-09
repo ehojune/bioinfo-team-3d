@@ -81,6 +81,7 @@ from .lookup_admission import ENV as LOOKUP_ADMISSION_ENV, FILE as LOOKUP_ADMISS
 from .system_ca import CA_ENV, system_ca_pem
 from .step_inputs import folder_files, linked_files, stage_inputs, stage_precedent_texts, staging_problem
 from ..research.precedent_texts import step_note as precedent_step_note
+from ..research import input_fit_hint
 from .workspace import (InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, resolved_zones,
                         restricted_zones)
 
@@ -2620,6 +2621,13 @@ class Runner:
                 task = ws.task = task.model_copy(update={"context": task.context + "\n\n" + (
                     ws.paper_skill_instructions()
                     if plugin else "논문 스킬 장착 불가; 제공된 선행 연구 요약으로 계속하세요.")})
+            if task.meta.get("kind") == "step":
+                # A short data–tool note for the files under inputs/; never blocks, empty on any error (#1352).
+                fit_note = await asyncio.to_thread(
+                    input_fit_hint.step_note, ws.dir / "inputs",
+                    operation=input_fit_hint.step_operation(agent.id, task.meta))
+                if fit_note:
+                    task = ws.task = task.model_copy(update={"context": f"{task.context}\n\n{fit_note}".strip()})
             prompt = await ws.awrite_task_md()
             if skill_error := await _settled_thread(install_required_skills, ws, agent):
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=skill_error)

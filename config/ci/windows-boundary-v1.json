@@ -170,6 +170,7 @@
     "tests/test_init_defaults.py",
     "tests/test_init_wizard.py",
     "tests/test_input_fit_boundary_796.py",
+    "tests/test_input_fit_hint.py",
     "tests/test_input_hashes.py",
     "tests/test_instance_guard.py",
     "tests/test_instances.py",
