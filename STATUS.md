@@ -4,6 +4,22 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 2026-11-10 claude-worker1 — #910 r12: 한국어 검사 '에 있어서' 오탐
+
+## 결론
+11차 결과 게시가 한국어 검사 오탐으로 막혔습니다. 금지 표현 패턴 `에 있어(?:서)?`가 "같은 축에 있어도"를 잡았기 때문입니다. 패턴을 `에 있어서`로 좁혔습니다.
+
+## 바뀐 것
+- `labhq/korean_qc.py`: "에 있어서" 패턴
+- `tests/test_staff_writing_skills.py`: 시험 1건
+
+## 실행한 것
+- `pytest tests/test_staff_writing_skills.py tests/test_portfolio_edition.py tests/test_result_storage_pdf.py`: 75 passed
+
+## 미해결
+- 저장 경고문이 이 실패를 토큰·권한 문제로 안내합니다(범위 밖, #910에 기록).
+- 병합 뒤 `labhq storage req_dc5c365ca9 --redraft`로 비공개 저장소에 게시합니다.
+
 # 2026-11-10 claude-worker3 — #1336 r10·r11: README·manual v1.0 정리
 
 ## 결론
