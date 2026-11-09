@@ -7319,8 +7319,8 @@ class Orchestrator:
                                "확인하고 승인하세요." + (" 고칠 점이 있으면 메모와 함께 수정 요청을 고르세요."
                                                       if can_revise else ""))
                     # The card kind stays the first line; the device state and any stop warning follow it (#1336).
-                    summary += ("\n" + semantic_devices.card_line(device_record)
-                                + ("\n" + device_warning if device_warning else ""))
+                    summary += "\n" + semantic_devices.card_line(device_record)
+                    approval_notices = [device_warning] if device_warning else []
                     scope_warnings = [warning for warning in plan.get("warnings", [])
                                       if isinstance(warning, str) and warning.startswith(SCOPE_COVERAGE_WARNING)]
                     if scope_warnings:
@@ -7328,10 +7328,10 @@ class Orchestrator:
                     summary += "\n" + _cost_estimate_line(req.get("plan_cost_estimate") or {})
                     paper_line = paper_skills.card_text(plan)
                     hiring_warnings = [w for w in plan.get("warnings", []) if "재배정" in w]
-                    if hiring_warnings:
-                        summary += "\n" + "\n".join(hiring_warnings)
                     if paper_line:
-                        summary += "\n" + paper_line
+                        approval_notices.append(paper_line)
+                    if hiring_warnings:
+                        approval_notices.append("\n".join(hiring_warnings))
                     if req.get("execution_location"):
                         summary += " " + execution_policy.record_line(req["execution_location"])
                     pinned_note = ""
@@ -7344,9 +7344,9 @@ class Orchestrator:
                         if pinned:  # kept whole beyond the cut below, like the budget line: the PI approves the reuse here
                             pinned_note = (f"재사용한 단계가 쓴 DOI·PMID 참조 {len(pinned)}건은 식별자만 고정했고 "
                                            "내용은 확인하지 않았습니다.")
-                        summary += "\n" + (f"이어 가기 {carried.get('round')}차 계획({source}). 재사용: "
+                        approval_notices.append((f"이어 가기 {carried.get('round')}차 계획({source}). 재사용: "
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
-                                   f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + reason_line
+                                   f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + reason_line)
                     budget, configured_source = self._research_budget(rid, req, plan)
                     # Kept whole beyond the 699-char cut: the web shows the summary, not detail.budget; the selection
                     # record line (#890) rides with it, so long paper-skill or continuation text cannot cut it off.
@@ -7354,10 +7354,16 @@ class Orchestrator:
                                    + (" " + pinned_note if pinned_note else ""))
 
                     async def ask_cp1(prefix: str = "") -> dict:
-                        card = prefix + summary
+                        first, _, details = summary.partition("\n")
+                        # Share the remaining space among every approval-critical notice before optional detail.
+                        per_notice = min(160, max(0, (698 - len(budget_line) - len(prefix) - len(first))
+                                                  // max(1, len(approval_notices)) - 1))
+                        notices = [line if len(line) <= per_notice else line[:max(0, per_notice - 1)] + "…"
+                                   for line in approval_notices]
+                        card = prefix + first + "\n" + "\n".join([*notices, details])
                         return await self.hub.request_approval(
                             kind="research_plan", request_id=rid,
-                            summary=f"{card[:699 - len(budget_line)]} {budget_line}",
+                            summary=f"{card[:698 - len(budget_line)]} {budget_line}",
                             detail={"gate": "research_plan", "target_sha256": plan_hash,
                                     "plan_canonical": canonical_plan_json(plan),
                                     "pack_applicability": plan.get("pack_applicability") or {},

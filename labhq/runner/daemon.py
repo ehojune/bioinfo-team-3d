@@ -3040,7 +3040,8 @@ class Runner:
                 ws.stage_run(task.id, hpc_remote_outputs=remote_manifests)
                 transfer = self.scheduler.transfer()
                 result.text += "\n\nRetained HPC data (delete only by user decision):\n" + "\n".join(
-                    f"{transfer.path(m['data'])}: {m['bytes']} bytes" for m in remote_manifests)
+                    f"{transfer.path(m['data'])}: {m.get('retained_bytes', m['bytes'])} bytes retained "
+                    f"({m['bytes']} declared)" for m in remote_manifests)
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
@@ -3993,7 +3994,7 @@ class Runner:
         """Only runner-owned, successful remote jobs of this workspace and revision can satisfy outputs."""
         from ..hpc_transfer import TransferError, validate_remote_manifest, verify_remote_data
 
-        manifests, paths = [], set()
+        manifests, paths, directory_paths = [], set(), set()
         transfer = self.scheduler.transfer()
         if transfer is None:
             return manifests
@@ -4017,14 +4018,23 @@ class Runner:
                 declared_dirs = declared & directories
                 files = [row for row in manifest["files"] if row["path"] in declared or
                          any(row["path"].startswith(d + "/") for d in declared_dirs)]
-                manifest = {**manifest, "files": files, "bytes": sum(row["bytes"] for row in files),
+                manifest = {**manifest, "retained_bytes": manifest["bytes"],
+                            "files": files, "bytes": sum(row["bytes"] for row in files),
                             "directories": [d for d in directories if d in declared_dirs or
                                             any(d.startswith(parent + "/") for parent in declared_dirs)]}
                 verify_remote_data(transfer, manifest, ws.task.request_id)
+                file_paths = {row["path"] for row in manifest["files"]}
+                current_dirs = set(manifest["directories"])
+                for path in file_paths:
+                    parts = path.split("/")
+                    current_dirs.update("/".join(parts[:i]) for i in range(1, len(parts)))
+                if file_paths & directory_paths or current_dirs & paths or file_paths & current_dirs:
+                    raise TransferError("remote jobs produced conflicting file and directory paths")
                 for row in manifest["files"]:
                     if row["path"] in paths:
                         raise TransferError("multiple remote jobs produced the same output path")
                     paths.add(row["path"])
+                directory_paths.update(current_dirs)
                 manifests.append(manifest)
         return manifests
 

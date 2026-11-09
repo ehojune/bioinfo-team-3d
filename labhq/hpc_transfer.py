@@ -438,7 +438,6 @@ with contextlib.ExitStack() as stack:
  if action=='scan':
   rows=[]; directories=[]
   for path,parent,name in walk(data,directories):
-   if path in cfg.get('inputs',{}): continue
    rows.append(dict(path=path,**info(parent,name)))
    if len(rows)>20000: raise ValueError('too many remote outputs')
   cfg['files']=rows; cfg['directories']=directories; cfg['bytes']=sum(x['bytes'] for x in rows)

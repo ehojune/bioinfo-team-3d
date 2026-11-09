@@ -252,6 +252,7 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             assert 'outputs/' + output not in result.output_sha256  # no hash invented for a remote-only file
             assert not (Path(result.workdir) / 'outputs' / output).exists()
             assert result.provenance['hpc_remote_data'][0]['bytes'] == 20000000
+            assert result.provenance['hpc_remote_data'][0]['retained_bytes'] == 20000000 + (9 if step == 's1' else 0)
             results.append(result)
             if step == 's1':
                 runner.store.close()
@@ -271,3 +272,44 @@ def test_listing_and_next_input_check_do_not_hash_or_modify_large_outputs(cluste
     path.write_bytes(b'modified')  # name/size contract deliberately does not promise content integrity
     assert ht.verify_remote_data(transfer, listing, 'r') == transfer.path(spec['work'])
     assert path.read_bytes() == b'modified'
+
+
+@pytest.mark.parametrize('modified', [False, True])
+def test_declared_uploaded_input_can_also_be_a_remote_output(cluster, tmp_path, modified):
+    transfer = helper_transfer(cluster)
+    (tmp_path / 'table.tsv').write_bytes(b'original')
+    spec = ht.job_spec('t', 'align', 'r')
+    ht.upload_job(transfer, spec, '#!/bin/sh\necho mock\n', tmp_path, inputs=['table.tsv'])
+    if modified:
+        cluster.path(spec['work'] + '/table.tsv').write_bytes(b'updated')
+    listing = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')['remote']
+    assert listing['files'] == [{'path': 'table.tsv', 'bytes': 7 if modified else 8}]
+
+
+@pytest.mark.parametrize('layout', ['file_first', 'directory_first', 'siblings'])
+def test_cross_job_file_directory_collisions_fail_but_distinct_children_can_share_a_directory(tmp_path, monkeypatch, layout):
+    from labhq.models import Task
+    from labhq.runner.daemon import Runner
+
+    first, second = inventory(path='result'), inventory(path='result/part.tsv')
+    second['directories'] = ['result']
+    if layout == 'directory_first':
+        first, second = second, first
+    elif layout == 'siblings':
+        first['files'][0]['path'] = 'result/other.tsv'
+        first['directories'] = ['result']
+    task = Task(agent_id='worker', request_id='r', prompt='mock',
+                meta={'step_id': 's1', 'outputs': ['outputs/result']})
+    ws = SimpleNamespace(dir=tmp_path, task=task)
+    runner = Runner.__new__(Runner)
+    runner.scheduler = SimpleNamespace(transfer=lambda: object())
+    runner.jobs = {str(i): {'workdir': str(tmp_path), 'transfer': {'request_id': 'r', 'step_id': 's1'},
+                  'submitted_by_runner': True, 'terminal': True, 'state': 'completed', 'fetched': True,
+                  'remote_manifest': manifest} for i, manifest in enumerate((first, second))}
+    monkeypatch.setattr(ht, 'verify_remote_data', lambda *args: None)
+    if layout == 'siblings':
+        found = runner._remote_step_outputs(ws)
+        assert len(found) == 2
+    else:
+        with pytest.raises(ht.TransferError, match='conflicting file and directory'):
+            runner._remote_step_outputs(ws)

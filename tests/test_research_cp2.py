@@ -1345,14 +1345,16 @@ def test_card_warning_names_a_real_device_stop_but_not_semantics_turned_off():
     assert warning.startswith("⚠ 의미 장치 중단: 단어장 vocabulary_load_failed") and "configured_off" not in warning
 
 
-async def test_cp1_kind_stays_first_with_paper_and_reassignment_warnings(monkeypatch):
+@pytest.mark.parametrize('long_notice', [False, True])
+async def test_cp1_kind_stays_first_with_paper_and_reassignment_warnings(monkeypatch, long_notice):
     hub = _research_hub(_settings(), [CP1, {'approved': False, 'choice': 'deny', 'note': 'stop'}])
     original = hub.reply
 
     async def reply(task):
         response = await original(task)
         if task.meta['kind'] == 'plan':
-            response.structured.setdefault('warnings', []).append('재배정: worker에게 단계 배정')
+            response.structured.setdefault('warnings', []).append(
+                '재배정: worker에게 단계 배정' + (' 긴 안내' * 200 if long_notice else ''))
         return response
 
     hub.reply = reply
