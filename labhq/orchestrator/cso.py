@@ -7354,8 +7354,7 @@ class Orchestrator:
                                    + (" " + pinned_note if pinned_note else ""))
 
                     async def ask_cp1(prefix: str = "") -> dict:
-                        first, separator, rest = summary.partition("\n")
-                        card = first + "\n" + prefix + (rest if separator else "")
+                        card = prefix + summary
                         return await self.hub.request_approval(
                             kind="research_plan", request_id=rid,
                             summary=f"{card[:699 - len(budget_line)]} {budget_line}",
