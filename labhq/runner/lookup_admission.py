@@ -176,13 +176,17 @@ class LookupAdmission:
         try:
             db.execute("BEGIN IMMEDIATE")
             try:
-                used, transient, last = db.execute(
-                    f"SELECT COALESCE(SUM({_COUNTED}), 0), COALESCE(SUM({_TRANSIENT}), 0), COALESCE(MAX(seq), 0) "
-                    "FROM sends WHERE request_id = ?", (request_id,)).fetchone()
+                used, transient, in_flight, last = db.execute(
+                    f"SELECT COALESCE(SUM({_COUNTED}), 0), COALESCE(SUM({_TRANSIENT}), 0), "
+                    "COALESCE(SUM(http_status IS NULL AND outcome IS NULL AND admitted_at > ?), 0), COALESCE(MAX(seq), 0) "
+                    "FROM sends WHERE request_id = ?", (self.clock() - PROBE_STALE_S, request_id)).fetchone()
                 if used >= self.limit:
                     db.execute("ROLLBACK")
                     return {"admitted": False, "used": used, "limit": self.limit, "reason": "exhausted"}
-                if transient >= self.transient_limit:
+                # A send still in flight may come back 5xx/429: it holds a place under the transient cap too, so
+                # concurrent sends near the cap cannot all pass and overshoot it. One unanswered past PROBE_STALE_S is
+                # lost (annot's request timeout is 120 s) and holds nothing.
+                if transient + in_flight >= self.transient_limit:
                     db.execute("ROLLBACK")
                     return {"admitted": False, "used": used, "limit": self.limit, "reason": "transient exhausted",
                             "transient": transient, "transient_limit": self.transient_limit}

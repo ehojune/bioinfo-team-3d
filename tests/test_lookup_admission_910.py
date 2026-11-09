@@ -142,3 +142,25 @@ def test_the_source_check_reports_the_transient_cap_as_could_not_verify(tmp_path
     with pytest.raises(LookupFailed) as caught:
         asyncio.run(resolver.lookup("doi", "10.1093/nar/gks1195"))
     assert caught.value.kind == "lookup_limit" and "5xx/429" in str(caught.value.detail) and not sent
+
+
+def test_sends_in_flight_hold_places_under_the_transient_cap(tmp_path):
+    """Concurrent sends near the cap: each one in flight may come back 503, so they cannot all pass and overshoot it."""
+    admission, clock = ledger(tmp_path, limit=20, transient_limit=3)
+    send(admission, clock, OPENALEX, 503)
+    send(admission, clock, OPENALEX, 503)
+    flying = admission.admit("req_1", "task_1", "lit_scout", "fulltext", OPENALEX)
+    assert flying["admitted"]
+    refused = admission.admit("req_1", "task_2", "analyst", "fulltext", OPENALEX)
+    assert refused["admitted"] is False and refused["reason"] == "transient exhausted"
+    admission.finish("req_1", "task_1", [[flying["seq"], 200]], "ok")  # it answered: the place is free again
+    assert admission.admit("req_1", "task_2", "analyst", "fulltext", OPENALEX)["admitted"]
+    assert admission.usage("req_1")["transient"] == 2
+
+
+def test_a_lost_send_does_not_hold_a_transient_place_for_ever(tmp_path):
+    admission, clock = ledger(tmp_path, limit=20, transient_limit=1)
+    assert admission.admit("req_1", "task_1", "lit_scout", "fulltext", OPENALEX)["admitted"]  # never finished
+    assert admission.admit("req_1", "task_1", "lit_scout", "fulltext", OPENALEX)["reason"] == "transient exhausted"
+    clock.now += la.PROBE_STALE_S + 1
+    assert admission.admit("req_1", "task_1", "lit_scout", "fulltext", OPENALEX)["admitted"]
