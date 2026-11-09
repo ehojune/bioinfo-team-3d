@@ -8,3 +8,7 @@ rows:
     at: "2026-11-09 22:05"
     summary: "앞 단계 문헌을 넘길 때 작업용 폴더가 다른 곳을 가리키는 링크면 복사하지 않고, 파일은 다 써진 뒤에만 보이게 합니다."
     text: "_copy_literature가 plain_directory로 대상 폴더 링크·junction을 거부하고 write_owned_bytes로 원자적 쓰기, 시험 2건 (#910)"
+  - sha: "df3c6e9"
+    at: "2026-11-09 22:07"
+    summary: "설명서에 redirect 응답이 조회 몫을 쓰지 않는다는 것과 앞 단계 문헌이 다음 단계 작업용 폴더로 넘어간다는 것을 적었습니다."
+    text: "manual 09 한영: 조회 상한 문단의 redirect 계수, 차단기 문단, #910 redirect·문헌 인계 항목 (#910)"
