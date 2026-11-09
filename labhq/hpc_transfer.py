@@ -425,9 +425,9 @@ with contextlib.ExitStack() as stack:
    if stat.S_ISDIR(s.st_mode):
     directories.append(path)
     with folder(base,name) as child: yield from walk(child,directories,path+'/',depth+1)
-   elif stat.S_ISREG(s.st_mode):
+   elif stat.S_ISREG(s.st_mode) and s.st_nlink==1:
     yield path,base,name
-   else: raise ValueError('remote data contains link or special file')
+   else: skipped.append({'path':path,'reason':'link or special file'})
  def info(base,name):
   fd,s=read(base,name)
   try:
@@ -497,6 +497,15 @@ def validate_remote_manifest(manifest: dict, request_id: str) -> dict:
     if (not isinstance(unchanged, list) or not all(isinstance(name, str) for name in unchanged) or
             not set(unchanged).issubset({row["path"] for row in files})):
         raise TransferError("invalid unchanged input listing")
+    skipped = manifest.get("skipped", [])
+    if not isinstance(skipped, list) or len(skipped) > 20000:
+        raise TransferError("invalid remote omission count")
+    for row in skipped:
+        path = row.get("path") if isinstance(row, dict) else None
+        if (not isinstance(path, str) or not path or len(path) > 4096 or path.startswith("/") or
+                "\x00" in path or any(p in ("", ".", "..") for p in path.split("/")) or
+                not isinstance(row.get("reason"), str) or len(row["reason"]) > 200):
+            raise TransferError("invalid remote omission")
     return manifest
 
 
@@ -617,7 +626,7 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
         remote = validate_remote_manifest(json.loads(data), spec["request_id"])
         if remote["data"] != spec["data"]:
             raise PathRejected("remote manifest folder differs from the submitted job")
-        manifest["skipped"].extend(remote.pop("skipped", []))
+        manifest["skipped"].extend(remote.get("skipped", []))
         # Reuse the existing small-upload checksum to distinguish an unchanged input from a produced file.
         # This never hashes a large output; large files retain the name/size-only contract.
         uploaded = spec.get("inputs") or {}

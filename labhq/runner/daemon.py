@@ -3044,7 +3044,7 @@ class Runner:
                 ws.stage_run(task.id, hpc_remote_outputs=remote_manifests)
                 transfer = self.scheduler.transfer()
                 retained_text = "\n\nRetained HPC data (delete only by user decision):\n" + "\n".join(
-                    f"{transfer.path(m['data'])}: {m.get('retained_bytes', m['bytes'])} bytes retained "
+                    f"{transfer.path(m['data'])}: {m.get('retained_bytes', m['bytes'])} known bytes retained "
                     f"({m['bytes']} declared)" for m in remote_manifests)
                 result.text += retained_text
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
@@ -4020,6 +4020,9 @@ class Runner:
                     if (rel := output_relpath(name))}
                 directories = set(manifest.get("directories", []))
                 declared_dirs = declared & directories
+                if any(row["path"].startswith(directory + "/")
+                       for row in manifest.get("skipped", []) for directory in declared_dirs):
+                    raise TransferError("a declared remote output directory is incomplete (unsupported entries)")
                 collect_all = (ws.task.meta.get("kind") == "direct" or
                                ws.task.meta.get("collect_direct_outputs") is True)
                 unchanged = set(manifest.get("unchanged_inputs", []))
@@ -4027,6 +4030,7 @@ class Runner:
                          any(row["path"].startswith(d + "/") for d in declared_dirs)]
                 manifest = {**manifest, "retained_bytes": manifest["bytes"],
                             "files": files, "bytes": sum(row["bytes"] for row in files),
+                            "skipped": [],
                             "unchanged_inputs": [row["path"] for row in files if row["path"] in unchanged],
                             "directories": [d for d in directories if collect_all or d in declared_dirs or
                                             any(d.startswith(parent + "/") for parent in declared_dirs)]}

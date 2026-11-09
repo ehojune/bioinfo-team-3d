@@ -167,7 +167,7 @@ def test_only_successful_same_request_ancestor_inventory_is_admitted(tmp_path):
         with pytest.raises(ValueError): remote_ancestor_inputs(ws, {'s1': bad_artifact}, root)
 
 
-@pytest.mark.parametrize('layout', ['file', 'directory', 'missing', 'file_prefix', 'empty_directory', 'direct', 'collect_direct'])
+@pytest.mark.parametrize('layout', ['file', 'directory', 'partial_directory', 'missing', 'file_prefix', 'empty_directory', 'direct', 'collect_direct'])
 async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_after_restart(site, monkeypatch, layout):
     from labhq.adapters.mock import MockAdapter
     from labhq.models import AgentSpec, Engine, Task, TaskResult
@@ -216,9 +216,11 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
         job = runner.jobs[submitted['job_id']]
         m = inventory(path='tx2gene.tsv' if step == 's1' else 'de.csv', data=b'x' * 20000000)
         if step == 's1':
-            if layout == 'directory':
+            if layout in {'directory', 'partial_directory'}:
                 m['directories'] = ['tx2gene.tsv']
                 m['files'][0]['path'] = 'tx2gene.tsv/part.tsv'
+                if layout == 'partial_directory':
+                    m['skipped'] = [{'path': 'tx2gene.tsv/sample 1.tsv', 'reason': 'name not allowed'}]
             if layout == 'file_prefix':
                 m['files'][0]['path'] = 'tx2gene.tsv/part.tsv'  # no real declared directory in the listing
             if layout in {'missing', 'empty_directory'}:
@@ -263,6 +265,10 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             result = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='wake', meta=meta,
                                                resume_session_id='session-' + step))
             assert ('outputs/undeclared.bin' in result.outputs) is collect_all
+            if step == 's1' and layout == 'partial_directory':
+                assert not result.ok and 'declared remote output directory is incomplete' in result.error
+                assert result.outputs == []
+                return
             if step == 's1' and layout in {'missing', 'file_prefix', 'empty_directory'}:
                 assert not result.ok and result.missing_outputs == ['outputs/tx2gene.tsv']
                 return
@@ -347,6 +353,7 @@ def test_unsafe_undeclared_files_and_directories_do_not_fail_valid_remote_output
     assert fetched['remote']['files'] == [{'path': 'result.tsv', 'bytes': 2}]
     assert {row['path'] for row in fetched['skipped'] if row['reason'] == 'name not allowed'} == {
         'scratch data.txt', 'scratch folder'}
+    assert {row['path'] for row in fetched['remote']['skipped']} == {'scratch data.txt', 'scratch folder'}
     assert cluster.path(spec['work'] + '/scratch data.txt').read_bytes() == b'temporary'
 
 
@@ -372,3 +379,23 @@ def test_direct_collection_excludes_unchanged_inputs_unless_explicitly_declared(
     found, = runner._remote_step_outputs(ws)
     assert {row['path'] for row in found['files']} == ({'input.tsv', 'result.tsv'} if declared else {'result.tsv'})
     ht.validate_remote_manifest(found, 'r')
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX special entries are exercised by Linux CI')
+@pytest.mark.parametrize('special', ['symlink', 'fifo', 'hardlink'])
+def test_undeclared_special_entries_are_omitted_without_blocking_valid_outputs(cluster, tmp_path, special):
+    transfer = helper_transfer(cluster)
+    spec = prepare(cluster, transfer, tmp_path, {'result.tsv': b'ok'})
+    target = tmp_path / 'intermediate'
+    target.write_bytes(b'not an output')
+    entry = cluster.path(spec['work'] + '/temporary')
+    if special == 'symlink':
+        entry.symlink_to(target)
+    elif special == 'fifo':
+        os.mkfifo(entry)
+    else:
+        os.link(target, entry)
+    fetched = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
+    assert fetched['remote']['files'] == [{'path': 'result.tsv', 'bytes': 2}]
+    assert fetched['remote']['skipped'] == [{'path': 'temporary', 'reason': 'link or special file'}]
+    assert (tmp_path / 'outputs/result.tsv').read_bytes() == b'ok'
