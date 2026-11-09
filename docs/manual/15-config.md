@@ -6,6 +6,7 @@
 
 테스트 요청 정리는 `python scripts/purge_test_requests.py --database <gateway.sqlite3>`로 후보만 확인합니다. 기본 표지는 정확한 문구 `save outputs/counts.tsv`·agent `worker`·mode `direct` 세 가지입니다. 삭제는 gateway를 끈 유지보수 시간에만 `--apply --gateway-stopped --config <설정> --backup <새 파일>`을 붙입니다. 먼저 SQLite 백업을 만들고 일치한 요청과 이벤트만 지웁니다. 데모 문구는 자동 선택하지 않습니다.
 
+- **v1.0 기본값** (#1336): 온톨로지(`semantics.mode`·`research.semantic_report`)와 Paper2Agent 채용(`recruit.enabled`)은 기본 꺼짐입니다. 코드는 남아 있어 설정에서 켜면 아래 설명대로 동작합니다.
 - **Live 출처 검사** (`research.live_source_check`, 기본 `false`): 켜면 CP2 카드 전과 `labhq verify`에서 Crossref·doi.org·NCBI를 확인합니다. 이어 가기를 결정해 보관한 차수는 새 계획 전 재시작에서 다시 묻지 않습니다. `labhq verify`는 각 단계가 인용한 자기 산출물과 계획상 모든 조상 단계 산출물의 hash도 다시 확인합니다. `research.live_source_contact`는 API User-Agent·mailto에 넣을 관리자 email이며 기본값은 빈 문자열입니다. `annot.request_lookup_limit`이 있으면 이 확인의 HTTP 요청도 그 상한에 셉니다(#891).
 - **PDF 보고서 브라우저** (`gateway.report_browser`, 기본 `null`): PDF를 인쇄할 Edge·Chrome 실행 파일 경로입니다. 비우면 PATH와 표준 설치 위치에서 찾습니다([보고서 PDF](08-structure.md#보고서-pdf)).
 - **PDF 크기 알림** (`github.edition_pdf_max_mb`, 기본 `null`): 선택한 MB를 넘으면 경고만 남깁니다. 보고서 PDF와 그림은 줄이지 않습니다([보고서 PDF](08-structure.md#보고서-pdf)).

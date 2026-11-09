@@ -1,7 +1,8 @@
 # 처음이면 `labhq init`이 이 파일로 config/labhq.yaml을 만들고 token을 무작위로 채움.
 # 직접 복사하면 runner_token·client_token을 바꾸고, Windows에서는 restricted data_zones를 빼고 둠.
-# 연구 모드(CP1·CP2·분야 팩), 의미 모델 ab, 산출물 종류 선언은 PI가 시험한 설정대로 켜 둠(#613).
-# 끄려면 research.enabled·semantics.mode·plan.declare_output_types를 바꿈. 이 값들은
+# 연구 모드(CP1·CP2·분야 팩), 산출물 종류 선언은 PI가 시험한 설정대로 켜 둠(#613).
+# 온톨로지(semantics·semantic_report)와 Paper2Agent 채용(recruit)은 v1.0에서 꺼 둠(#1336). 코드는 남아 있어 켜면 다시 씀.
+# 끄려면 research.enabled·plan.declare_output_types를 바꿈. 이 값들은
 # labhq/init_defaults.py의 목록과 tests/test_init_defaults.py가 같게 맞춰 둠.
 gateway:
   host: 127.0.0.1            # 폰에서 접속하려면 Tailscale IP나 0.0.0.0 + TLS 프록시
@@ -151,7 +152,7 @@ policy:
     pipeline_base_branch: main
 
 recruit:
-  enabled: true  # false refuses hiring, Paper2Agent setup/preparation and paper-skill attachments
+  enabled: false  # v1.0 기본 꺼짐(#1336). false refuses hiring, Paper2Agent setup/preparation and paper-skill attachments
   agent_id: recruiter
   permission_mode: auto       # 무인 변환. 가능하면 컨테이너/VM 안에서 runner를 돌리세요
   max_budget_usd: 25
@@ -251,6 +252,7 @@ pi_profile:
 research:
   enabled: true               # 끄려면 enabled·evidence_checkpoint를 함께 false로
   evidence_checkpoint: true   # true면 CP1 뒤 연구 단계를 실행하고 CP2 승인 뒤 리뷰·보고서까지
+  semantic_report: false      # v1.0 기본 꺼짐(#1336). true면 요청별 온톨로지·의미 장치 보고서(#737)
   live_source_check: false     # true면 CP2와 labhq verify에서 Crossref·NCBI를 live 조회
   blind_draft: false           # true면 CP1 승인 직후 리뷰어가 원 요청만으로 초안을 쓰고 봉인한 뒤 리뷰에서 대조(#889)
   live_source_contact: ""      # API User-Agent/mailto에 넣을 관리자 email(선택)
@@ -261,10 +263,10 @@ research:
 
 # 의미 모델 그림자 기록(#150): off | shadow | ab. shadow는 요청이 끝난 뒤 출처 모델·객체 뷰를 계산해
 # gateway.state_dir/semantics/에 ID·hash·개수만 남기고, CSO·승인·보고에는 아무것도 주지 않습니다.
-# ab는 연구 요청 절반에만 재사용 후보를 CSO 계획 참고로 줍니다. init 기본은 ab + actions: confirm(#613).
+# ab는 연구 요청 절반에만 재사용 후보를 CSO 계획 참고로 줍니다. v1.0 기본은 off(#1336), 켜면 ab + actions: confirm(#613).
 # actions: off | shadow | confirm. confirm이면 PI가 CLI에서 y/N으로 후속 질문을 보낼 수 있습니다.
 semantics:
-  mode: ab
+  mode: "off"
   actions: confirm
 pi_language:
   enabled: true

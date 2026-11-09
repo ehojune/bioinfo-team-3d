@@ -451,7 +451,7 @@ class PolicySettings(BaseModel):
 
 
 class RecruitSettings(BaseModel):
-    enabled: StrictBool = True  # explicit False disables hiring and Paper2Agent preparation, not ordinary staff
+    enabled: StrictBool = False  # v1.0 default off (#1336); False disables hiring and Paper2Agent preparation, not ordinary staff
     agent_id: str = "recruiter"
     permission_mode: str = "auto"  # unattended conversion; see docs/manual.md '파견직 제도' (run inside a container if you can)
     max_budget_usd: float = 25.0
@@ -660,7 +660,7 @@ class ResearchSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    semantic_report: bool = True  # request bundle + published run/ device audit (#737)
+    semantic_report: bool = False  # v1.0 default off (#1336); request bundle + published run/ device audit (#737)
     evidence_checkpoint: bool = False  # execute approved research steps and stop at CP2
     final_checkpoint: bool = False  # PI report review accepts a frozen final draft (CP4)
     # The science reviewer first answers the original request alone, sealed before the first step (#889).
