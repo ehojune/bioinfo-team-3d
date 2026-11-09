@@ -119,7 +119,7 @@ async def test_recruited_assignments_checked_before_cp1_and_processing(research,
 
 @pytest.mark.parametrize('mode', ['hpc', 'local'])
 @pytest.mark.parametrize('stored', [False, True])
-async def test_precedent_receipt_is_checked_before_planning_and_cp1(mode, stored):
+async def test_precedent_receipt_reaches_planning_and_cp1_in_either_location(mode, stored):
     from labhq.settings import Settings
     from tests.test_research_protocol import MiniHub, valid_plan
 
@@ -142,7 +142,6 @@ async def test_precedent_receipt_is_checked_before_planning_and_cp1(mode, stored
             await chosen.wait()  # the scout returns a new receipt after the PI has chosen
             return result(task, structured={key: value for key, value in precedents.items() if key != 'status'})
         if task.meta['kind'] == 'plan':
-            assert mode == 'local', 'unsupported receipt reached planning'
             plan = valid_plan()
             for step in plan['steps']:
                 step['execution'] = mode
@@ -167,15 +166,12 @@ async def test_precedent_receipt_is_checked_before_planning_and_cp1(mode, stored
     req = hub.requests['r']
     assert req['analysis_precedents']['papers'][0]['fulltext_receipt'] == receipt
     assert req['execution_location']['mode'] == mode
+    # Stored precedent texts no longer refuse HPC (#1336): only the HPC steps go without them.
+    assert req['status'] == 'done', req.get('error')
+    assert [card['kind'] for card in hub.approvals] == ['clarify', 'research_plan']
+    assert any(task.meta['kind'] == 'plan' for task in hub.calls)
     if mode == 'hpc':
-        assert req['status'] == 'failed' and 'precedent snapshot' in req['report']
-        assert [card['kind'] for card in hub.approvals] == ['clarify']
-        assert all(task.meta['kind'] not in ('plan', 'step') for task in hub.calls)
-        assert 'plan' not in req
-    else:
-        assert req['status'] == 'done', req.get('error')
-        assert [card['kind'] for card in hub.approvals] == ['clarify', 'research_plan']
-        assert any(task.meta['kind'] == 'plan' for task in hub.calls)
+        assert all('precedent_texts' not in task.meta for task in hub.calls if task.meta['kind'] == 'step')
 
 
 @pytest.mark.parametrize("mode", ["hpc", "local"])
@@ -666,7 +662,7 @@ async def test_saved_hpc_inputs_refuse_before_briefing_or_precedent(field, resum
     assert not hub.calls
 
 
-@pytest.mark.parametrize("source", ["staff", "project_dirs", "reference_dirs", "precedent_texts"])
+@pytest.mark.parametrize("source", ["staff", "project_dirs", "reference_dirs"])
 async def test_runner_refuses_unstaged_hpc_inputs_before_workspace_or_job(tmp_path, monkeypatch, source):
     from labhq.adapters.mock import MockAdapter
     settings = _settings(tmp_path)
@@ -683,31 +679,62 @@ async def test_runner_refuses_unstaged_hpc_inputs_before_workspace_or_job(tmp_pa
     result = await runner.run_task(Task(agent_id=agent.id, request_id="r", prompt="process input",
         meta={"kind": "step", "step_id": "s1", **({source: [str(tmp_path / "input")]} if source != "staff" else {}),
               "execution_location": {"mode": "hpc", "runner_id": settings.runner.id}}))
-    expected = "precedent snapshot" if source == "precedent_texts" else "request-input snapshot"
-    assert not result.ok and expected in result.error
+    assert not result.ok and "request-input snapshot" in result.error
     assert result.cost_known and result.cost_usd == 0
     assert not runner.workspaces and not runner.jobs
 
 
+PRECEDENT = [{"paper_id": "synthetic", "text_file": "/stored/paper.md", "text_sha256": "a" * 64}]
+
+
+def test_precedent_texts_do_not_refuse_hpc_but_request_inputs_still_do():
+    from labhq.orchestrator import execution as execution_policy
+    hpc = {"mode": "hpc", "runner_id": "cluster"}
+    assert execution_policy.input_errors({"precedent_texts": PRECEDENT}, hpc) == []  # #1336
+    assert execution_policy.input_errors({"project_dirs": ["/data"]}, hpc)
+    assert execution_policy.input_errors({"reference_dirs": ["/refs"]}, hpc)
+    assert "precedent full texts are likewise unsupported" not in execution_policy.plan_rule(hpc)
+
+
 @pytest.mark.parametrize("mode", ["hpc", "local"])
-async def test_precedent_texts_refuse_hpc_before_dispatch_without_local_downgrade(mode):
+async def test_hpc_step_is_dispatched_without_precedent_texts_local_keeps_them(mode):
+    seen = []
+
     async def dispatch(task):
-        assert task.meta["precedent_texts"]
-        return result(task, text="stored paper processed locally")
+        seen.append(dict(task.meta))
+        return result(task, text="stored paper processed")
 
     hub = hub_for(dispatch)
     hub.requests["r"]["execution_location"] = {"mode": mode, "runner_id": "cluster"}
     task = Task(agent_id="worker", request_id="r", prompt="read stored paper",
-                meta={"kind": "step", "step_id": "s1", "precedent_texts": [{
-                    "paper_id": "synthetic", "text_file": "/stored/paper.md", "text_sha256": "a" * 64}]})
+                meta={"kind": "step", "step_id": "s1", "precedent_texts": PRECEDENT})
+    assert (await Orchestrator(hub).run_step(task)).ok
+    assert len(seen) == 1 and hub.requests["r"]["execution_location"]["mode"] == mode
     if mode == "hpc":
-        with pytest.raises(ValueError, match="precedent snapshot"):
-            await Orchestrator(hub).run_step(task)
-        assert not hub.calls
-        assert hub.requests["r"]["execution_location"]["mode"] == "hpc"
+        assert "precedent_texts" not in seen[0]  # scheduler jobs never read them (#1336)
     else:
-        assert (await Orchestrator(hub).run_step(task)).ok
-        assert len(hub.calls) == 1
+        assert seen[0]["precedent_texts"] == PRECEDENT
+
+
+async def test_runner_drops_precedent_texts_from_a_whole_hpc_step_instead_of_refusing(tmp_path, monkeypatch):
+    from labhq.adapters.mock import MockAdapter
+    settings = _settings(tmp_path)
+    settings.hpc.scheduler = "mock"
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.mock, builtin_mcp=["hpc"])
+    runner = Runner(settings)
+    monkeypatch.setattr(runner.registry, "get", lambda _: agent)
+    seen = []
+
+    async def run(adapter, ctx):
+        seen.append(dict(ctx.task.meta))
+        return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=False, error="stop after the adapter saw it")
+
+    monkeypatch.setattr(MockAdapter, "run", run)
+    res = await runner.run_task(Task(agent_id=agent.id, request_id="r", prompt="process",
+        meta={"kind": "step", "step_id": "s1", "precedent_texts": PRECEDENT,
+              "execution_location": {"mode": "hpc", "runner_id": settings.runner.id}}))
+    assert "precedent snapshot" not in (res.error or "")
+    assert seen and "precedent_texts" not in seen[0]
 
 
 async def test_waiting_job_outputs_survive_wake_and_runner_restart(tmp_path, monkeypatch):
