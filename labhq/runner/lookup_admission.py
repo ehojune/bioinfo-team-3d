@@ -6,8 +6,9 @@ of the tool's client. httpx runs that hook before every send, including each red
 annot's own retries, pagination, per-item fan-out and OA redirect hops each call the client again. So every failed,
 retried or redirected request is one attempt, and a refused one is not sent and not counted.
 
-A send the service answered with a server or rate-limit error (5xx, 429) is given back once its answer is recorded
-(#910): the service's outage does not spend the request's quota. Those sends have their own cap, ``transient_limit``
+A send the service answered with a server or rate-limit error (5xx, 429) or a redirect (3xx) is given back once its
+answer is recorded (#910): an outage does not spend the request's quota, and a redirect chain costs the one send that
+gets the final answer. Those sends have their own cap, ``transient_limit``
 (the request limit unless set), so a service that keeps failing still ends the lookups. A send still in flight, or one
 that ended without any answer (timeout, connection failure), stays counted.
 
@@ -50,9 +51,11 @@ def failing_status(status: int) -> bool:
     return status == 429 or 500 <= status <= 599
 
 
-# The SQL form of failing_status: such an answered send is not counted against the request limit (#910).
+# Answers given back to the request limit (#910): a server or rate-limit error (these also count toward the transient
+# cap), and a redirect (3xx), whose next hop is a send of its own; httpx and the OA copy loop bound a redirect chain, so
+# redirects take no cap. Only failing_status feeds the host breaker: a redirect never pauses a host.
 _TRANSIENT = "(http_status = 429 OR http_status BETWEEN 500 AND 599)"
-_COUNTED = f"(http_status IS NULL OR NOT {_TRANSIENT})"
+_COUNTED = f"(http_status IS NULL OR NOT ({_TRANSIENT} OR http_status BETWEEN 300 AND 399))"
 
 
 PROBE_HOLD_S = 30.0         # while the one probe after a cooldown is still unanswered, nothing else is sent (half-open)
@@ -132,7 +135,7 @@ def usage_note(admission: "LookupAdmission | None", request_id: object, *, now=N
     transient = (f" Sends answered with HTTP 5xx/429 are not counted: {usage['transient']} of "
                  f"{usage['transient_limit']} such answers so far; at that cap lookups stop.") if usage.get("transient") else ""
     return (f"Public lookup usage of this request (labhq_annot and source-check HTTP requests; every retry and "
-            f"redirect counts, except one answered with HTTP 5xx/429): {usage['used']} of {usage['limit']} used, "
+            f"redirect hop counts, except one answered with HTTP 3xx/5xx/429): {usage['used']} of {usage['limit']} used, "
             f"{usage['remaining']} left at {stamp} (by agent: {who}).{transient} This is the count of this PC's runner; a number written in the request text is a "
             f"separate statement that labhq does not enforce.{stage_note}{pause_note}")
 

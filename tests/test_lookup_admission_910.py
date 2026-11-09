@@ -101,7 +101,7 @@ def test_the_usage_note_says_failures_are_not_counted(tmp_path):
     assert "such answers" not in usage_note(admission, "req_1")
     send(admission, clock, OPENALEX, 429)
     note = usage_note(admission, "req_1")
-    assert "0 of 20 used" in note and "1 of 20 such answers" in note and "except one answered with HTTP 5xx/429" in note
+    assert "0 of 20 used" in note and "1 of 20 such answers" in note and "except one answered with HTTP 3xx/5xx/429" in note
     assert la.failing_status(503) and la.failing_status(429) and not la.failing_status(404)
 
 
@@ -169,3 +169,101 @@ def test_a_long_tool_call_keeps_its_transient_places_until_it_reports(tmp_path):
     admission.finish("req_1", "task_1", [[first["seq"], 503], [second["seq"], 503]], "failed")
     assert admission.usage("req_1")["transient"] == 2
     assert admission.admit("req_1", "task_2", "analyst", "fulltext", OPENALEX)["reason"] == "transient exhausted"
+
+
+def test_a_redirect_is_given_back_and_the_hop_that_answers_is_the_one_counted(tmp_path):
+    """#910 10th run: 10 of 22 sends were 301/302 hops. A 302 then a 200 spends one send of the quota."""
+    admission, clock = ledger(tmp_path, limit=2)
+    send(admission, clock, "doi.org", 302)
+    send(admission, clock, "www.nejm.org", 301)
+    send(admission, clock, "www.nejm.org", 200)
+    usage = admission.usage("req_1")
+    assert (usage["used"], usage["remaining"], usage["transient"]) == (1, 1, 0)  # redirects take no transient cap
+    assert send(admission, clock, OPENALEX, 200)["admitted"]
+    assert admission.admit("req_1", "task_1", "lit_scout", "fulltext", OPENALEX)["reason"] == "exhausted"
+
+
+def test_redirects_never_pause_a_host(tmp_path):
+    admission, clock = ledger(tmp_path)
+    for _ in range(la.BREAKER_ANY + 2):
+        assert send(admission, clock, "doi.org", 301)["admitted"]
+    assert admission.paused_hosts("req_1") == {}
+
+
+# ---- #910 r9: an ancestor's .tmp/literature papers reach the next step's .tmp/literature ------------------------------
+# The 10th run's abstract stayed in the literature step's .tmp/literature/ (licensed text is never an output) and the
+# next step, which receives only its ancestors' outputs, never saw it.
+
+import os  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import pytest  # noqa: E402
+
+from labhq.runner import step_inputs  # noqa: E402
+
+
+def _paper_folder(tmp_path):
+    root = tmp_path / "runs"
+    lit = root / "d" / "task_1_lit_scout" / ".tmp" / "literature"
+    lit.mkdir(parents=True)
+    (lit / "doi-10.1200_jco.21.02752.md").write_bytes(b"KRYSTAL-1 abstract: ORR 53.3% (8/15)\n")
+    (lit / "doi-10.1200_jco.21.02752.md.receipt.json").write_bytes(b'{"paper_id": "doi:10.1200/jco.21.02752"}')
+    (lit / "big.md").write_bytes(b"x" * 300)
+    (lit / "inbox").mkdir()
+    (lit / "inbox" / "nested.pdf").write_bytes(b"%PDF")
+    step = root / "d" / "task_2_analyst"
+    step.mkdir(parents=True)
+    return root, lit, step
+
+
+def test_an_ancestors_papers_reach_the_step_tmp_not_its_outputs(tmp_path):
+    root, lit, step = _paper_folder(tmp_path)
+    remaining = [10_000]
+    step_inputs._copy_literature(root.resolve(), lit.parent.parent.relative_to(root).parts, step, 200, remaining)
+    copied = step / ".tmp" / "literature"
+    assert sorted(p.name for p in copied.iterdir()) == ["doi-10.1200_jco.21.02752.md",
+                                                       "doi-10.1200_jco.21.02752.md.receipt.json"]
+    assert "ORR 53.3%" in (copied / "doi-10.1200_jco.21.02752.md").read_text(encoding="utf-8")
+    assert not (step / "outputs").exists()  # big.md is over max_file, the inbox folder is not copied
+    assert remaining[0] == 10_000 - sum(p.stat().st_size for p in copied.iterdir())
+
+
+def test_a_paper_the_step_already_has_is_kept_and_the_budget_is_respected(tmp_path):
+    root, lit, step = _paper_folder(tmp_path)
+    mine = step / ".tmp" / "literature"
+    mine.mkdir(parents=True)
+    (mine / "doi-10.1200_jco.21.02752.md").write_bytes(b"the step's own copy")
+    remaining = [45]
+    step_inputs._copy_literature(root.resolve(), lit.parent.parent.relative_to(root).parts, step, 1000, remaining)
+    assert (mine / "doi-10.1200_jco.21.02752.md").read_bytes() == b"the step's own copy"
+    assert sorted(p.name for p in mine.iterdir()) == ["doi-10.1200_jco.21.02752.md",
+                                                     "doi-10.1200_jco.21.02752.md.receipt.json"]
+    assert remaining[0] == 45 - len(b'{"paper_id": "doi:10.1200/jco.21.02752"}')
+
+
+@pytest.mark.skipif(os.name == "nt", reason="creating a symlink needs a privilege on Windows")
+def test_a_link_in_the_ancestors_folder_is_not_followed(tmp_path):
+    root, lit, step = _paper_folder(tmp_path)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("private")
+    (lit / "link.md").symlink_to(secret)
+    step_inputs._copy_literature(root.resolve(), lit.parent.parent.relative_to(root).parts, step, 1000, [10_000])
+    assert not (step / ".tmp" / "literature" / "link.md").exists()
+
+
+def test_an_ancestor_without_papers_changes_nothing(tmp_path):
+    root = tmp_path / "runs"
+    ancestor = root / "d" / "task_1"
+    ancestor.mkdir(parents=True)
+    step = root / "d" / "task_2"
+    step.mkdir()
+    step_inputs._copy_literature(root.resolve(), ancestor.relative_to(root).parts, step, 1000, [10])
+    assert not (step / ".tmp").exists()
+
+
+def test_stage_inputs_copies_the_papers_of_each_accepted_ancestor():
+    """The copy runs where the ancestor's outputs are staged, only after that ancestor was accepted."""
+    source = Path(step_inputs.__file__).read_text(encoding="utf-8")
+    body = source[source.index("def stage_inputs("):]
+    assert body.index("staged.append(") < body.index("_copy_literature(")
+    assert body.index("_copy_literature(") < body.index("except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc")
