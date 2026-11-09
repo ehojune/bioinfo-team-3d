@@ -127,7 +127,8 @@ class Transfer:
             quoted = shlex.quote(current)
             out = self._do(f"test -d {quoted} && cd -- {quoted} && pwd -P || echo missing", "checking a folder").strip().splitlines()
             if not out or out[-1] == "missing":
-                out = self._do(f"mkdir -- {quoted} && cd -- {quoted} && pwd -P", "making a folder").strip().splitlines()
+                # Independent jobs can discover a missing request parent at the same time.
+                out = self._do(f"mkdir -p -- {quoted} && cd -- {quoted} && pwd -P", "making a folder").strip().splitlines()
             real = out[-1] if out else ""
             if real != real_root and not real.startswith(real_root.rstrip("/") + "/"):
                 raise PathRejected(f"{rel_dir!r} leads outside the work folder")
@@ -380,7 +381,7 @@ def job_spec(task_id: str, stem: str, request_id: str | None = None) -> dict:
         folder = f"{base}/job-{uuid.uuid4().hex[:12]}"
     return {"base": base, "dir": folder, "script": f"{folder}/{confine(stem + '.sh')}", "work": f"{folder}/work",
             "logs": [f"{folder}/logs/{confine(stem + '.out')}", f"{folder}/logs/{confine(stem + '.err')}"],
-            "stem": stem, **({"request_id": request_id, "data": f"{folder}/data"} if request_id else {})}
+            "stem": stem, **({"request_id": request_id, "data": f"{folder}/work"} if request_id else {})}
 
 
 def request_data_root(request_id: str) -> str:
@@ -389,11 +390,10 @@ def request_data_root(request_id: str) -> str:
     return "requests/" + hashlib.sha256(request_id.encode()).hexdigest()
 
 
-# Runs on the cluster with Python 3. Folder descriptors and O_NOFOLLOW keep a renamed folder or link from redirecting
-# reads/moves. Output files move on the same filesystem, without copying their bytes. A retry also scans already moved
-# files, so an interrupted snapshot is recoverable. Only its completed manifest is admitted to another step.
+# List names and sizes through held directories. Large outputs stay exactly where the job wrote them;
+# listing never reads file contents, changes permissions, copies or moves them.
 REMOTE_DATA_HELPER = r'''
-import os, sys, json, stat, hashlib, contextlib, uuid
+import os, sys, json, stat, contextlib, uuid
 root, job, action = sys.argv[1:4]
 with contextlib.ExitStack() as stack:
  @contextlib.contextmanager
@@ -414,50 +414,35 @@ with contextlib.ExitStack() as stack:
   if not stat.S_ISREG(s.st_mode) or s.st_nlink!=1:
    os.close(fd); raise ValueError('not a plain remote file')
   return fd, s
- def walk(base, prefix='', depth=0):
+ def walk(base, directories, prefix='', depth=0):
   if depth>16: raise ValueError('remote data too deep')
   for name in sorted(os.listdir(base)):
    s=os.stat(name,dir_fd=base,follow_symlinks=False)
    path=prefix+name
    if stat.S_ISDIR(s.st_mode):
-    with folder(base,name) as child: yield from walk(child,path+'/',depth+1)
+    directories.append(path)
+    with folder(base,name) as child: yield from walk(child,directories,path+'/',depth+1)
    elif stat.S_ISREG(s.st_mode):
     yield path,base,name
    else: raise ValueError('remote data contains link or special file')
- def digest(base,name):
+ def info(base,name):
   fd,s=read(base,name)
   try:
-   h=hashlib.sha256(); size=0
-   while True:
-    block=os.read(fd,1024*1024)
-    if not block: break
-    size+=len(block); h.update(block)
-   after=os.fstat(fd)
-   if (s.st_size,s.st_mtime_ns,s.st_ctime_ns)!=(after.st_size,after.st_mtime_ns,after.st_ctime_ns) or size!=s.st_size:
-    raise ValueError('remote file changed while hashing')
-   os.fchmod(fd,0o500 if s.st_mode & 0o111 else 0o400)
-   return {'bytes':size,'sha256':h.hexdigest()}
+   return {'bytes':s.st_size}
   finally: os.close(fd)
  r=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW); stack.callback(os.close,r)
  j=stack.enter_context(folder(r,job))
  f,_=read(j,sys.argv[4])
  with os.fdopen(f,'rb') as cfg_file: cfg=json.loads(cfg_file.read(4*1024*1024+1))
- data=stack.enter_context(folder(j,'data',action=='scan'))
+ data=stack.enter_context(folder(r,cfg['data']))
  if action=='scan':
-  work=stack.enter_context(folder(j,'work')); rows={}; pending=[]
-  for base,is_work in ((data,False),(work,True)):
-   for path,parent,name in walk(base):
-    info=digest(parent,name)
-    if is_work and cfg.get('inputs',{}).get(path)==info['sha256']: continue
-    if path in rows: raise ValueError('duplicate remote output')
-    rows[path]=dict(path=path,**info)
-    if len(rows)>20000: raise ValueError('too many remote outputs')
-    if is_work: pending.append(path)
-  for path in pending:
-   parts=path.split('/')
-   with folder(data,'/'.join(parts[:-1]),True) as dest, folder(work,'/'.join(parts[:-1])) as src:
-    os.rename(parts[-1],parts[-1],src_dir_fd=src,dst_dir_fd=dest)
-  cfg['files']=list(rows.values()); cfg['bytes']=sum(x['bytes'] for x in rows.values())
+  rows=[]; directories=[]
+  for path,parent,name in walk(data,directories):
+   if path in cfg.get('inputs',{}): continue
+   rows.append(dict(path=path,**info(parent,name)))
+   if len(rows)>20000: raise ValueError('too many remote outputs')
+  cfg['files']=rows; cfg['directories']=directories; cfg['bytes']=sum(x['bytes'] for x in rows)
+  cfg.pop('inputs',None)
   payload=json.dumps(cfg,separators=(',',':')).encode()
   if len(payload)>4*1024*1024: raise ValueError('remote manifest too large')
   temporary='remote-data-'+uuid.uuid4().hex+'.tmp'
@@ -469,12 +454,12 @@ with contextlib.ExitStack() as stack:
    try: os.unlink(temporary,dir_fd=j)
    except FileNotFoundError: pass
  else:
-  expected={x['path']:x for x in cfg['files']}; seen=set()
-  for path,parent,name in walk(data):
-   info=digest(parent,name)
-   if dict(path=path,**info)!=expected.get(path): raise ValueError('remote input hash or size differs')
-   seen.add(path)
-  if seen!=set(expected): raise ValueError('remote input missing')
+  for row in cfg['files']:
+   parts=row['path'].split('/')
+   with folder(data,'/'.join(parts[:-1])) as parent:
+    if info(parent,parts[-1])['bytes']!=row['bytes']: raise ValueError('remote input size differs')
+  for path in cfg.get('directories',[]):
+   with folder(data,path): pass
 '''
 
 
@@ -482,17 +467,26 @@ def validate_remote_manifest(manifest: dict, request_id: str) -> dict:
     """Validate the wire inventory before exposing any path to a consumer."""
     base = request_data_root(request_id)
     if (not isinstance(manifest, dict) or manifest.get("request_id") != request_id or
-            not re.fullmatch(re.escape(base) + r"/job-[a-f0-9]{12}/data", str(manifest.get("data", "")))):
+            not re.fullmatch(re.escape(base) + r"/job-[a-f0-9]{12}/(?:work|data)", str(manifest.get("data", "")))):
         raise PathRejected("remote data belongs to another request or has an invalid folder")
     files = manifest.get("files")
     if not isinstance(files, list) or len(files) > 20000:
         raise TransferError("invalid remote manifest file count")
     names = set()
     for row in files:
-        name = str(confine(row["path"]))
-        if (name.casefold() in names or type(row.get("bytes")) is not int or row["bytes"] < 0 or
-                not re.fullmatch(r"[a-f0-9]{64}", str(row.get("sha256", "")))):
+        if not isinstance(row, dict):
             raise TransferError("invalid remote manifest file")
+        name = str(confine(row.get("path")))
+        if name.casefold() in names or type(row.get("bytes")) is not int or row["bytes"] < 0:
+            raise TransferError("invalid remote manifest file")
+        names.add(name.casefold())
+    directories = manifest.get("directories", [])
+    if not isinstance(directories, list) or len(directories) > 20000:
+        raise TransferError("invalid remote directory count")
+    for directory in directories:
+        name = str(confine(directory))
+        if name.casefold() in names:
+            raise TransferError("duplicate remote directory")
         names.add(name.casefold())
     if manifest.get("bytes") != sum(row["bytes"] for row in files):
         raise TransferError("remote manifest total size differs")
@@ -509,7 +503,7 @@ def verify_remote_data(transfer: Transfer, manifest: dict, request_id: str) -> s
     validate_remote_manifest(manifest, request_id)
     folder = str(PurePosixPath(manifest["data"]).parent)
     transfer.plain_dir(folder)
-    # Use the runner's pinned inventory, not a manifest that a job might have replaced on the cluster.
+    # Check the runner's saved names/sizes without reading the large files.
     config = f"verify-{uuid.uuid4().hex[:12]}.json"
     payload = json.dumps(manifest).encode()
     metadata = Transfer(transfer.run, transfer.root, replace(transfer.limits, upload_max_bytes=4 * 1024 * 1024),
@@ -621,12 +615,12 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
         for row in remote["files"]:
             name, size = row["path"], row["bytes"]
             if size > transfer.limits.fetch_max_bytes or total + size > transfer.limits.fetch_total_bytes:
-                manifest["skipped"].append({"path": name, "bytes": size, "sha256": row["sha256"],
+                manifest["skipped"].append({"path": name, "bytes": size,
                                              "reason": "retained in request remote data"})
                 continue
             info = transfer.fetch_file(f"{remote['data']}/{name}", fetch_to, name=name)
-            if info["bytes"] != size or info["sha256"] != row["sha256"]:
-                raise HashMismatch(f"{name}: differs from remote manifest")
+            if info["bytes"] != size:
+                raise TransferError(f"{name}: size differs from remote listing")
             total += size
             manifest["fetched"].append(row)
         write_confined(Path(logs_dir), Path(logs_dir) / f"{spec['stem']}.fetch.json",

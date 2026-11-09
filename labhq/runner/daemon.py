@@ -2523,7 +2523,7 @@ class Runner:
                         transfer = self.scheduler.transfer()
                         remote_mapping = {f"{sid}/{index}": manifest for sid, manifests in remote_ancestors.items()
                                           for index, manifest in enumerate(manifests)}
-                        note += ("\nRemote ancestor outputs (read-only; validated again before job submission):\n" +
+                        note += ("\nRemote ancestor outputs (use as inputs; leave producer files unchanged):\n" +
                                  "\n".join(f"{key}: {transfer.path(manifest['data'])}"
                                            for key, manifest in remote_mapping.items()))
                     else:
@@ -3034,13 +3034,9 @@ class Runner:
                 result.ok = False
                 result.error = "incomplete: remote outputs could not be verified: " + self._hide_text(str(exc))[:300]
             if remote_manifests:
-                remote_hashes = {"outputs/" + row["path"]: row["sha256"]
-                                 for manifest in remote_manifests for row in manifest["files"]}
-                if any(path in hashed and hashed[path] != digest for path, digest in remote_hashes.items()):
-                    result.ok = False
-                    result.error = "incomplete: a fetched local output differs from the remote manifest"
-                result.outputs = list(dict.fromkeys([*result.outputs, *remote_hashes]))
-                result.output_sha256.update(remote_hashes)
+                remote_paths = ["outputs/" + row["path"]
+                                for manifest in remote_manifests for row in manifest["files"]]
+                result.outputs = list(dict.fromkeys([*result.outputs, *remote_paths]))
                 ws.stage_run(task.id, hpc_remote_outputs=remote_manifests)
                 transfer = self.scheduler.transfer()
                 result.text += "\n\nRetained HPC data (delete only by user decision):\n" + "\n".join(
@@ -3048,10 +3044,13 @@ class Runner:
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
+        remote_directories = {"outputs/" + directory for manifest in remote_manifests
+                              for directory in manifest.get("directories", [])}
         if _should_check_declared_outputs(result):
             def has_output(rel: str) -> bool:
                 # A declared folder is there when a file with a hash is under it: a later step stages only those.
-                return rel in collected or any(path.startswith(rel.rstrip("/") + "/") for path in result.output_sha256)
+                return (rel in collected or rel in remote_directories or
+                        any(path.startswith(rel.rstrip("/") + "/") for path in result.output_sha256))
 
             missing_required = [rel for name in required_declared
                                 if (rel := output_relpath(name)) and not has_output(rel)]
@@ -3992,14 +3991,14 @@ class Runner:
 
     def _remote_step_outputs(self, ws) -> list[dict]:
         """Only runner-owned, successful remote jobs of this workspace and revision can satisfy outputs."""
-        from ..hpc_transfer import TransferError, verify_remote_data
+        from ..hpc_transfer import TransferError, validate_remote_manifest, verify_remote_data
 
         manifests, paths = [], set()
         transfer = self.scheduler.transfer()
         if transfer is None:
             return manifests
         with request_scope(ws.task.request_id), queue_wait():
-            for job in self.jobs.values():
+            for job in list(self.jobs.values()):
                 spec = job.get("transfer") or {}
                 if (job.get("workdir") != str(ws.dir) or spec.get("request_id") != ws.task.request_id or
                         spec.get("step_id") != ws.task.meta.get("step_id") or
@@ -4010,7 +4009,17 @@ class Runner:
                 if (not job.get("submitted_by_runner") or not job.get("terminal") or job.get("state") != "completed"
                         or not job.get("fetched") or not isinstance(job.get("remote_manifest"), dict)):
                     raise TransferError("a remote job has no verified successful output manifest")
-                manifest = job["remote_manifest"]
+                manifest = validate_remote_manifest(job["remote_manifest"], ws.task.request_id)
+                declared = {rel.removeprefix("outputs/") for name in [
+                    *ws.task.meta.get("outputs", []), *ws.task.meta.get("optional_outputs", [])]
+                    if (rel := output_relpath(name))}
+                directories = set(manifest.get("directories", []))
+                declared_dirs = declared & directories
+                files = [row for row in manifest["files"] if row["path"] in declared or
+                         any(row["path"].startswith(d + "/") for d in declared_dirs)]
+                manifest = {**manifest, "files": files, "bytes": sum(row["bytes"] for row in files),
+                            "directories": [d for d in directories if d in declared_dirs or
+                                            any(d.startswith(parent + "/") for parent in declared_dirs)]}
                 verify_remote_data(transfer, manifest, ws.task.request_id)
                 for row in manifest["files"]:
                     if row["path"] in paths:

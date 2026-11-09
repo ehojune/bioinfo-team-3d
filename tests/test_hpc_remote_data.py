@@ -1,6 +1,5 @@
 """Request remote data boundaries. Fake gateway/local helper only; never contact HPC."""
 import copy
-import hashlib
 import json
 import os
 import shlex
@@ -18,7 +17,7 @@ from tests.test_hpc_transfer_1308 import cluster, site, write_script
 def inventory(request='r', data=b'large', path='tx2gene.tsv'):
     spec = ht.job_spec('t', 'align', request)
     return {'request_id': request, 'data': spec['data'], 'bytes': len(data),
-            'files': [{'path': path, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}]}
+            'files': [{'path': path, 'bytes': len(data)}], 'directories': []}
 
 
 def helper_transfer(cluster, **limits):
@@ -73,12 +72,11 @@ def test_persisted_job_folder_replaced_by_in_root_link_is_refused_before_any_wri
     assert not list(cluster.path('other-job').iterdir())
 
 
-@pytest.mark.parametrize('change', ['request', 'folder', 'hash', 'size', 'total', 'duplicate', 'traversal'])
+@pytest.mark.parametrize('change', ['request', 'folder', 'size', 'total', 'duplicate', 'traversal'])
 def test_invalid_manifest_never_becomes_an_input(change):
     m = inventory()
     if change == 'request': m['request_id'] = 'other'
     if change == 'folder': m['data'] = ht.job_spec('t', 'a', 'other')['data']
-    if change == 'hash': m['files'][0]['sha256'] = 'bad'
     if change == 'size': m['files'][0]['bytes'] = -1
     if change == 'total': m['bytes'] += 1
     if change == 'duplicate': m['files'] *= 2
@@ -99,7 +97,7 @@ def test_large_outputs_stay_remote_small_outputs_and_manifest_come_home(cluster,
     assert cluster.logins() == 1
 
 
-@pytest.mark.parametrize('problem', ['changed', 'missing', 'extra', 'link', 'directory_link'])
+@pytest.mark.parametrize('problem', ['changed', 'missing', 'link', 'directory_link'])
 def test_next_job_rejects_remote_changes_before_scheduler_submit(cluster, tmp_path, problem):
     transfer = helper_transfer(cluster)
     spec = prepare(cluster, transfer, tmp_path, {'result.txt': b'original'})
@@ -108,18 +106,19 @@ def test_next_job_rejects_remote_changes_before_scheduler_submit(cluster, tmp_pa
     path.chmod(0o600)
     if problem == 'changed': path.write_bytes(b'changed')
     if problem == 'missing': path.unlink()
-    if problem == 'extra': path.with_name('extra.txt').write_bytes(b'extra')
     if problem == 'link':
         path.unlink(); path.symlink_to(tmp_path / 'secret')
     if problem == 'directory_link':
+        path.unlink()
         cluster.path(spec['data'] + '/jump').symlink_to(tmp_path, target_is_directory=True)
+        m['files'][0]['path'] = 'jump/secret'
     consumer = ht.job_spec('next', 'consume', 'r')
     consumer['remote_inputs'] = {'s1': m}
     with pytest.raises(ht.TransferError): ht.upload_job(transfer, consumer, 'echo consume', tmp_path)
     assert not cluster.path(consumer['script']).exists()
 
 
-def test_fetch_retry_recovers_after_snapshot_was_already_moved(cluster, tmp_path):
+def test_fetch_retry_lists_the_same_files_without_moving_them(cluster, tmp_path):
     transfer = helper_transfer(cluster)
     spec = prepare(cluster, transfer, tmp_path)
     # A process killed while writing an older manifest must not reserve the next attempt's temporary name.
@@ -131,12 +130,14 @@ def test_fetch_retry_recovers_after_snapshot_was_already_moved(cluster, tmp_path
     assert first['remote'] == second['remote']
 
 
-def test_remote_executable_stays_executable_and_read_only(cluster, tmp_path):
+def test_remote_executable_permissions_and_location_are_unchanged(cluster, tmp_path):
     transfer = helper_transfer(cluster)
     spec = prepare(cluster, transfer, tmp_path, {'tool': b'#!/bin/sh\necho ok\n'})
     cluster.path(spec['work'] + '/tool').chmod(0o700)
     ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
-    assert cluster.path(spec['data'] + '/tool').stat().st_mode & 0o777 == 0o500
+    assert cluster.path(spec['data'] + '/tool').stat().st_mode & 0o777 == 0o700
+    assert spec['data'] == spec['work']
+    assert not cluster.path(spec['dir'] + '/data').exists()
 
 
 def test_total_fetch_budget_does_not_limit_remote_completion(cluster, tmp_path):
@@ -155,18 +156,19 @@ def test_only_successful_same_request_ancestor_inventory_is_admitted(tmp_path):
     (source / 'manifest.json').write_text(json.dumps(record))
     ws = SimpleNamespace(dir=root / 'consumer', task=SimpleNamespace(request_id='r'))
     artifact = {'task_id': 'producer', 'workdir': str(source), 'outputs': ['outputs/tx2gene.tsv'],
-                'output_sha256': {'outputs/tx2gene.tsv': m['files'][0]['sha256']}}
+                'output_sha256': {}}
     assert remote_ancestor_inputs(ws, {'s1': artifact}, root) == {'s1': [m]}
-    for change in ('request', 'failed', 'hash'):
+    for change in ('request', 'failed', 'outputs'):
         bad, bad_artifact = copy.deepcopy(record), copy.deepcopy(artifact)
         if change == 'request': bad['task']['request_id'] = 'other'
         if change == 'failed': bad['runs']['producer']['ok'] = False
-        if change == 'hash': bad_artifact['output_sha256']['outputs/tx2gene.tsv'] = '0' * 64
+        if change == 'outputs': bad_artifact['outputs'] = []
         (source / 'manifest.json').write_text(json.dumps(bad))
         with pytest.raises(ValueError): remote_ancestor_inputs(ws, {'s1': bad_artifact}, root)
 
 
-async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_after_restart(site, monkeypatch):
+@pytest.mark.parametrize('layout', ['file', 'directory', 'missing', 'file_prefix'])
+async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_after_restart(site, monkeypatch, layout):
     from labhq.adapters.mock import MockAdapter
     from labhq.models import AgentSpec, Engine, Task, TaskResult
     from labhq.runner.daemon import Runner
@@ -204,6 +206,16 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
         assert submitted.get('submitted'), submitted
         job = runner.jobs[submitted['job_id']]
         m = inventory(path='tx2gene.tsv' if step == 's1' else 'de.csv', data=b'x' * 20000000)
+        if step == 's1':
+            if layout == 'directory':
+                m['directories'] = ['tx2gene.tsv']
+                m['files'][0]['path'] = 'tx2gene.tsv/part.tsv'
+            if layout == 'file_prefix':
+                m['files'][0]['path'] = 'tx2gene.tsv/part.tsv'  # no real declared directory in the listing
+            if layout == 'missing':
+                m['files'][0]['path'] = 'unrelated.tsv'
+            m['files'].append({'path': 'undeclared.bin', 'bytes': 9})
+            m['bytes'] += 9
         m['data'] = submitted['transfer']['data']
         # Stand in only for remote compute and hashing; submission/tracking/result admission remain real runner code.
         job.update(terminal=True, state='completed', exit_status=0, fetched=True, remote_manifest=m)
@@ -229,9 +241,15 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             monkeypatch.setattr(runner.registry, 'get', lambda _: agent)
             result = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='wake', meta=meta,
                                                resume_session_id='session-' + step))
+            assert 'outputs/undeclared.bin' not in result.outputs
+            if step == 's1' and layout in {'missing', 'file_prefix'}:
+                assert not result.ok and result.missing_outputs == ['outputs/tx2gene.tsv']
+                return
             assert result.ok, result.error
             assert not result.missing_outputs
-            assert 'outputs/' + output in result.output_sha256
+            collected_output = output + '/part.tsv' if step == 's1' and layout == 'directory' else output
+            assert 'outputs/' + collected_output in result.outputs
+            assert 'outputs/' + output not in result.output_sha256  # no hash invented for a remote-only file
             assert not (Path(result.workdir) / 'outputs' / output).exists()
             assert result.provenance['hpc_remote_data'][0]['bytes'] == 20000000
             results.append(result)
@@ -240,3 +258,16 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
                 runner = Runner(settings)  # re-admit inventory from persisted run and job rows
     finally:
         runner.store.close()
+
+
+def test_listing_and_next_input_check_do_not_hash_or_modify_large_outputs(cluster, tmp_path):
+    transfer = helper_transfer(cluster, fetch_max_bytes=1)
+    spec = prepare(cluster, transfer, tmp_path, {'large.bin': b'original'})
+    path = cluster.path(spec['work'] + '/large.bin')
+    before = path.stat()
+    listing = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')['remote']
+    assert listing['files'] == [{'path': 'large.bin', 'bytes': 8}]
+    assert path.stat().st_mode == before.st_mode and path.stat().st_mtime_ns == before.st_mtime_ns
+    path.write_bytes(b'modified')  # name/size contract deliberately does not promise content integrity
+    assert ht.verify_remote_data(transfer, listing, 'r') == transfer.path(spec['work'])
+    assert path.read_bytes() == b'modified'

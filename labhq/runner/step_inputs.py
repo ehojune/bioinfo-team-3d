@@ -419,7 +419,7 @@ def _copy_literature(root, source_parts, work, max_file, remaining):
 
 
 def remote_ancestor_inputs(ws, artifacts, workspace_root):
-    """Runner-persisted inventories of successful ancestors, matched to the DAG's exact output hashes."""
+    """Runner-persisted names/sizes from successful ancestors of the same request."""
     from ..hpc_transfer import validate_remote_manifest
 
     found = {}
@@ -451,13 +451,10 @@ def remote_ancestor_inputs(ws, artifacts, workspace_root):
                 path = 'outputs/' + row['path']
                 if path in rows:
                     raise ValueError('ambiguous remote output from multiple jobs')
-                rows[path] = row['sha256']
+                rows[path] = row['bytes']
         outputs = artifact.get('outputs')
-        hashes = artifact.get('output_sha256')
-        if not isinstance(outputs, list) or not isinstance(hashes, dict):
+        if not isinstance(outputs, list):
             raise ValueError('remote collected output mapping is missing')
-        if any(rows[path] != hashes.get(path) for path in outputs if path in rows):
-            raise ValueError('remote ancestor differs from collected artifact')
         if not set(rows).issubset(outputs):
             raise ValueError('remote inventory contains uncollected outputs')
         found[step] = manifests

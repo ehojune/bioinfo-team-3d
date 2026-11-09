@@ -1,9 +1,7 @@
-# #1347 r2 — 요청별 원격 산출
+# #1347 r3 — HPC 단계 연결·동시 실행
 
-- 요청별 scratch 경로·잡별 새 폴더를 유지하고 산출은 원격 `data/`로 이동해 보존합니다.
-- runner가 파일·크기·SHA-256 manifest를 저장합니다. 다음 잡 제출 전 같은 요청의 성공한 선행 단계와 hash를 다시 확인합니다.
-- 큰 필수 산출은 로컬에 없어도 완료로 인정합니다. 작은 파일만 회수하고 경로·용량을 결과와 provenance에 남깁니다.
-- 검증: 관련 Windows mock·CI inventory 회귀 398 passed·25 skipped. WSL helper smoke: 1,200개 파일·중첩 경로·재시도·변조·symlink 거절 PASS. public 검사·Windows inventory·diff 검사 PASS. CI·리뷰는 PR에 기록합니다.
-- 미확인: 실제 HPC·다중 직원 운영. 원격 Linux `python3` 필요. `cso.py` 동시 dispatch·CP1 첫 줄 P2는 다음 revision 범위이며 이슈를 닫지 않습니다.
-- 인계: [PR #1348](https://github.com/ehojune/bioinfo-team-3d/pull/1348)에 `hold`. 총괄의 다음 revision claim을 위해 r2 쓰기를 마치며, 다음 revision 구현·최종 head CI·실제 리뷰·미해결 P1=0 뒤 해제합니다.
-- 후속 점검: 임시 manifest 이름 충돌과 실행 비트 유실 수정. 원격 데이터 회귀 10 passed·10 skipped, WSL 1,201개 파일·남은 임시 파일·실행 권한 포함 smoke PASS. 23:03 KST에 `9a8b36bd` 리뷰 요청. 이후 head가 바뀌어 최종 head 리뷰 완료 근거로 쓰지 않습니다.
+- 요청별 scratch 안의 잡별 `work/` 산출을 그대로 보존하고 다음 단계에 경로를 전달합니다. 이름·크기로 완료를 판정하며 새 hash·복사·권한 변경은 없습니다.
+- whole-HPC도 `max_parallel_steps` 안에서 독립 단계를 동시에 보냅니다. 요청 폴더 생성 경합을 고쳤습니다. CP1 종류 문장은 paper·재배정·이어 가기 안내보다 먼저 나옵니다.
+- 리뷰 P1: 선언 산출만 수집합니다. 선언 디렉터리는 실제 목록에 있어야 하며, 이름이 비슷한 하위 파일로 필수 파일 누락을 숨기지 않습니다.
+- 검증: Windows 관련 회귀 334 passed·21 skipped. Linux helper smoke: 1,201개 파일·5 GiB sparse 산출의 위치/권한/수정시각 보존·재시도·크기 변경/링크 거절 PASS. mock 병렬 루트·의존 실패 전파·출력 분리·로그인 1회 PASS.
+- 실제 HPC·다중 직원 운영은 UNVERIFIED. 원격 Linux `python3`가 필요하며 자동 삭제하지 않습니다. 최종 CI·실제 리뷰·병합 근거는 [PR #1348](https://github.com/ehojune/bioinfo-team-3d/pull/1348)에 기록합니다.

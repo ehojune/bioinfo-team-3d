@@ -5460,7 +5460,7 @@ class Orchestrator:
             ENV_LOCK_OUTPUT in step.get("outputs", []) for step in steps)
         # Answers to blocking questions survive a gateway restart (the re-run step still needs them).
         decisions: dict[str, Any] = dict((req_state or {}).get("step_decisions") or {})
-        sem = asyncio.Semaphore(1 if whole_hpc else self.cfg.max_parallel_steps)
+        sem = asyncio.Semaphore(self.cfg.max_parallel_steps)
         # Ancestors' instructions count as inputs; the runner sees only this step's text, so it gets the verdict (#424).
         restricted: set[str] = set()
         if self._external_guard(rid):
@@ -5503,9 +5503,12 @@ class Orchestrator:
                                  for path in r.outputs]
                     # Relative to the step folder, where the runner links inputs/<step id> (#423): a script that
                     # names these paths still runs from a request bundle on another machine.
-                    paths = "\n".join((f"../../../data/{d}/{r.task_id}/" + output_relpath(path).removeprefix("outputs/")
+                    remote = r.provenance.get("hpc_remote_data") if whole_hpc else None
+                    paths = ("Remote paths relative to site remote_workdir (absolute roots are in runner context):\n" +
+                             "\n".join(f"{m['data']}/{row['path']}" for m in remote for row in m['files']) if remote else
+                             "\n".join((f"../../../data/{d}/{r.task_id}/" + output_relpath(path).removeprefix("outputs/")
                                        if whole_hpc and output_relpath(path) else input_relpath(d, path)) or str(Path(r.workdir) / path)
-                                      for path in r.outputs) if r.workdir else ""
+                                      for path in r.outputs) if r.workdir else "")
                     parts.append(f"{head}\nDeclared output artifacts: {json.dumps(artifacts)}\n"
                                  f"Readable files (relative to {'HPC job cwd' if whole_hpc else 'your folder'}):\n{paths}\n"
                                  f"{clip(r.text, self.cfg.context_chars_per_step)}")
@@ -5513,9 +5516,12 @@ class Orchestrator:
                 r = results.get(d)
                 if r and r.ok and r.workdir and r.outputs:
                     artifacts = [{"workdir_id": r.workdir_id, "path": path} for path in r.outputs]
-                    paths = "\n".join((f"../../../data/{d}/{r.task_id}/" + output_relpath(path).removeprefix("outputs/")
+                    remote = r.provenance.get("hpc_remote_data") if whole_hpc else None
+                    paths = ("Remote paths relative to site remote_workdir (absolute roots are in runner context):\n" +
+                             "\n".join(f"{m['data']}/{row['path']}" for m in remote for row in m['files']) if remote else
+                             "\n".join((f"../../../data/{d}/{r.task_id}/" + output_relpath(path).removeprefix("outputs/")
                                        if whole_hpc and output_relpath(path) else input_relpath(d, path)) or str(Path(r.workdir) / path)
-                                      for path in r.outputs)
+                                      for path in r.outputs))
                     parts.append(f"## {d} · {by_id[d]['agent_id']} (earlier step, files only)\n"
                                  f"Declared output artifacts: {json.dumps(artifacts)}\n"
                                  f"Readable files (relative to {'HPC job cwd' if whole_hpc else 'your folder'}):\n{paths}")
@@ -7323,9 +7329,9 @@ class Orchestrator:
                     paper_line = paper_skills.card_text(plan)
                     hiring_warnings = [w for w in plan.get("warnings", []) if "재배정" in w]
                     if hiring_warnings:
-                        summary = "\n".join(hiring_warnings) + "\n" + summary
+                        summary += "\n" + "\n".join(hiring_warnings)
                     if paper_line:
-                        summary = paper_line + "\n" + summary
+                        summary += "\n" + paper_line
                     if req.get("execution_location"):
                         summary += " " + execution_policy.record_line(req["execution_location"])
                     pinned_note = ""
@@ -7338,9 +7344,9 @@ class Orchestrator:
                         if pinned:  # kept whole beyond the cut below, like the budget line: the PI approves the reuse here
                             pinned_note = (f"재사용한 단계가 쓴 DOI·PMID 참조 {len(pinned)}건은 식별자만 고정했고 "
                                            "내용은 확인하지 않았습니다.")
-                        summary = (f"이어 가기 {carried.get('round')}차 계획({source}). 재사용: "
+                        summary += "\n" + (f"이어 가기 {carried.get('round')}차 계획({source}). 재사용: "
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
-                                   f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + reason_line + summary
+                                   f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + reason_line
                     budget, configured_source = self._research_budget(rid, req, plan)
                     # Kept whole beyond the 699-char cut: the web shows the summary, not detail.budget; the selection
                     # record line (#890) rides with it, so long paper-skill or continuation text cannot cut it off.
@@ -7348,7 +7354,8 @@ class Orchestrator:
                                    + (" " + pinned_note if pinned_note else ""))
 
                     async def ask_cp1(prefix: str = "") -> dict:
-                        card = prefix + summary
+                        first, separator, rest = summary.partition("\n")
+                        card = first + "\n" + prefix + (rest if separator else "")
                         return await self.hub.request_approval(
                             kind="research_plan", request_id=rid,
                             summary=f"{card[:699 - len(budget_line)]} {budget_line}",
