@@ -820,3 +820,25 @@ def test_a_log_in_request_remote_data_comes_home_hidden_and_its_receipt_is_the_k
     assert rows["de_py.log"]["remote_sha256"] == sha(LEAKY_LOG.encode())
     assert cluster.path(spec["data"] + "/de_py.log").read_bytes() == LEAKY_LOG.encode()  # the cluster copy is unchanged
     assert (tmp_path / "outputs" / "small.csv").read_bytes() == b"a,b\n1,2\n" and "redacted" not in rows["small.csv"]
+
+
+@pytest.mark.parametrize("line, kept", [
+    ("failed;/private/study/file", "failed;<remote-path>"),
+    ("\x1b[31m/private/study/file\x1b[0m done", "<remote-path> done"),  # colour codes are dropped, not a hiding place
+    ("open /etc ok", "open <remote-path> ok"),  # one part is still a path
+    ("PATH=/a/b:/c", "PATH=<remote-path>:<remote-path>"),
+    ("see https://ftp.ebi.ac.uk/pub/x.gz, figures/a.svg and 1/2", "see https://ftp.ebi.ac.uk/pub/x.gz, figures/a.svg and 1/2"),
+    ("\x1b]0;/private/title\x07ok", "ok"),
+    ("sort >/private/out.txt", "sort ><remote-path>"),  # a redirect is not a placeholder
+    ("read file:///private/study/file", "read file:<remote-path>"),  # only public web schemes are kept
+    ("https://example.org/data;/private/study/file", "https://example.org/data;<remote-path>"),
+    ("https://example.org/a,/p|/q (/r)", "https://example.org/a,<remote-path>|<remote-path> (<remote-path>)"),
+    ("https://example.org/a|/q", "https://example.org/a|<remote-path>"),
+    ("'https://example.org/a'/q", "'https://example.org/a'<remote-path>"),
+    (ROOT + "/t1;/private/x", "<workdir>/t1;<remote-path>"),
+    ("ssh://host/private/study and sftp://h/p", "ssh:<remote-path> and sftp:<remote-path>"),
+    ("HTTPS://ftp.ebi.ac.uk/a xhttp://evil/private", "HTTPS://ftp.ebi.ac.uk/a xhttp:<remote-path>"),
+    (ROOT + "/t1/a.log and " + ROOT, "<workdir>/t1/a.log and <workdir>"),
+])
+def test_every_absolute_path_in_a_log_is_hidden_whatever_precedes_it(line, kept):
+    assert ht.Transfer(lambda command: None, ROOT).hide_log(line) == kept

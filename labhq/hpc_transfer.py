@@ -80,8 +80,16 @@ def sha256_hex(data: bytes) -> str:
 LOG_SUFFIXES = (".log", ".out", ".err")  # job logs and the logs a job writes among its results are hidden (#1357)
 _GENERIC_FOLDERS = {"home", "tmp", "scratch", "data", "work", "users", "user", "var", "mnt", "opt", "usr", "lib",
                     "bin", "share", "local", "lustre", "gpfs", "project", "projects", "group", "groups"}
-# An absolute POSIX path of two or more parts, after a line start, space, quote, '=', ':' or '('.
-_ABSOLUTE_PATH = re.compile(r"""(^|[\s"'=:(\[,])/(?:[^\s"'/)\],:]+/)+[^\s"'/)\],:]*""", re.M)
+# Terminal colour and control sequences: a log keeps its text, and a path cannot hide behind "\x1b[31m".
+_ANSI = re.compile("\x1b\\[[0-?]*[ -/]*[@-~]|\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)?|\x1b[@-Z\\\\-_]")
+# Public web addresses stay readable. Any other scheme (file://, ssh://, s3://...) is not kept: its "//host/path" is
+# hidden like any other absolute path.
+# A kept segment ends at the same separators as a path, so nothing glued after it ("...;/private") rides along.
+_URL = re.compile(r"""(?<![A-Za-z0-9+.\-])(?:https?|ftp)://[^\s"'<>|;,()\[\]{}`]+""", re.I)
+# Any absolute POSIX path, one part or many, wherever it starts: after any character that cannot belong to a relative
+# path or a word (so "a/b" and "1/2" stay), up to whitespace, a quote, a bracket or a separator such as ':' or ';'.
+_ABSOLUTE_PATH = re.compile(r"""(?<![\w.~\-/])/[^\s"'<>|;,:()\[\]{}`]+""")
+_WORKDIR_TAIL = re.compile(r"""<workdir>/[^\s"'<>|;,:()\[\]{}`]*""")  # inside the hidden work folder: kept as is
 
 
 def is_log(name: str) -> bool:
@@ -302,12 +310,19 @@ class Transfer:
         """A job log as it may be kept on this PC (#1357): ``_hide``, then every folder name of the work folder's path
         (the account and site names it carries) and every absolute path left. Stricter than an error message, because
         a log is a file that can reach a report or a result repository."""
-        text = self._hide(text)
+        text = self._hide(_ANSI.sub("", text).replace("\x00", ""))
         words = {part for path in {self.root, self._real_root or self.root} for part in path.split("/")
                  if len(part) >= 3 and part.lower() not in _GENERIC_FOLDERS}
         for word in sorted(words, key=len, reverse=True):
             text = re.sub(rf"(?<![A-Za-z0-9_]){re.escape(word)}(?![A-Za-z0-9_])", "<site>", text, flags=re.I)
-        return _ABSOLUTE_PATH.sub(lambda m: m.group(1) + "<remote-path>", text)
+        urls: list[str] = []
+
+        def keep(match: re.Match[str]) -> str:
+            urls.append(match.group(0))
+            return f"\x00{len(urls) - 1}\x00"
+
+        text = _ABSOLUTE_PATH.sub("<remote-path>", _WORKDIR_TAIL.sub(keep, _URL.sub(keep, text)))
+        return re.sub(r"\x00(\d+)\x00", lambda m: urls[int(m.group(1))], text)
 
     def fetch_log(self, rel: str, into: Path, *, tail: bool = False, max_bytes: int | None = None,
                   name: str | None = None) -> dict:
