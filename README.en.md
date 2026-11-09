@@ -150,7 +150,7 @@ Records get meaning in three layers. The lower the layer, the firmer; the higher
 | Semantics | Agreements on what to judge with the tags | CP1 approved-plan hash, rule packs per topic, input-fit verdicts, report evidence anchors |
 | Ontology | Relations between tags | A few parent-child relations and an object view of provenance, owner and approval state. Computed as a shadow for now |
 
-In v1.0, `labhq init` leaves the semantic model off (`semantics.mode: "off"`, #1336). When turned on, the shadow only records, and `semantics: ab` gives reuse candidates to half of research requests as a reference so the effect can be compared; the effect has not yet been evaluated. [Semantic model](docs/manual.en.md#semantic-model-and-ontology) · [Vocabulary, topics, checklists](docs/vocabulary.en.md)
+Layer 1, annotation (the vocabulary and the 45 topic checklists), and the output-kind declarations and input-fit checks before CP1 work by default in v1.0. What is off is the layer 2 and 3 shadow record with A/B reuse candidates, the per-request semantic-device report, and Paper2Agent hiring; they are v2.0 extensions that a setting turns on at any time (#1336). For semantics and ontology set `semantics.mode` to `ab`, and also set `research.semantic_report` to `true` to get the per-request report. Hiring is `recruit.enabled: true`. When turned on, the shadow only records, and `semantics: ab` gives reuse candidates to half of research requests as a reference so the effect can be compared; the effect has not yet been evaluated. [Semantic model](docs/manual.en.md#semantic-model-and-ontology) · [Vocabulary, topics, checklists](docs/vocabulary.en.md)
 
 ## Getting started on the web
 
@@ -223,15 +223,13 @@ Details are in [Safety measures](docs/manual.en.md#safety-measures).
 
 | Version | Goal |
 |---|---|
-| v0.25 | The PI trials labhq on public data — **declared 2026-10-04** |
-| v0.5 | The PI does research locally on their own public data — **declared 2026-10-08** |
-| v0.75 | The PI does research on public data on HPC |
-| v0.9 | The PI does research on controlled data (on HPC) |
-| v0.95 | Another researcher installs from the docs alone and finishes one case on public data |
-| v1 | Another researcher solves up to two research problems on their own controlled data |
-| v1.25 | Goes beyond research to write papers |
+| v1.0 | The core research team (CSO, literature scout, analysis, biological interpretation, cross review) finishes a public-data study locally, on WSL and on HPC. Closing tasks #1295, #1332 and #910 are closed; the #1331 trial remains |
+| v2.0 extensions | Semantic and ontology checks (layers 2 and 3) and Paper2Agent hiring. Off by default in v1.0; a setting turns them on |
+| After v1.0 | Controlled-data research, other researchers installing and doing research, manuscript drafts |
 
-Each version has pass criteria, and meeting them moves it on to the next version. Features merged since the v0.5 declaration passed tests and CI; their behavior and scientific benefit on real research requests remain unverified. The criteria, current status, and remaining work are in the [manual's roadmap](docs/manual.en.md#roadmap).
+Past declarations: v0.25 (2026-10-04), v0.5 (2026-10-08).
+
+The v1.0 scope was set by the PI's directive (#1336); the earlier fine-grained roadmap (v0.75 to v1.25) moved into the two rows above. Features not yet checked in a trial have only passed tests and CI; their behavior and scientific benefit on real research requests are still unknown. The criteria, current status, and remaining work are in the [manual's roadmap](docs/manual.en.md#roadmap).
 
 The wall-clock limit for a whole request (`orchestrator.request_wall_clock_s`, off by default) is described in [Request wall-clock limit](docs/reference/request-deadline.en.md). No real request with the limit on has been run yet.
 
