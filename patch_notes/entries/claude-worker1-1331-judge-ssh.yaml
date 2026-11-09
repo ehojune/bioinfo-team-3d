@@ -4,3 +4,7 @@ rows:
     at: "2026-11-10 06:02"
     summary: "airway 시운전 판정의 공개 산출물 검사가 접속 명령의 ssh 옵션 값(yes 같은 흔한 단어)을 사이트 정보로 잡던 오탐을 고쳤습니다."
     text: "judge_1331: connect_argv는 argv_terms로만, 루프백 제외, 시험 3건 (#1331)"
+  - sha: "71895cc"
+    at: "2026-11-10 06:16"
+    summary: "판정 스크립트의 기존 시험을 되살리고, 공백으로 쓴 ssh 옵션(-o 'User x')에서도 사용자·호스트를 찾게 했습니다."
+    text: "test_judge_1331.py 기존 23건 복원·새 시험 4건 추가, argv_terms의 -o 공백형 지원 (#1331)"
