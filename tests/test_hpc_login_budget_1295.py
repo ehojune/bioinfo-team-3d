@@ -395,3 +395,71 @@ def test_a_raised_limit_that_fills_again_alerts_again(tmp_path):
     asyncio.run(runner._notify_login_limit("req_1", stop1, [job]))
     asyncio.run(runner._notify_login_limit("req_1", stop2, [job]))
     assert [e.data["hpc_login_limit"]["limit"] for e in runner.events] == [1, 3]
+
+
+# ---- the sliding window (#1295 r14) -------------------------------------------------------------------------------
+
+def test_the_window_limit_counts_logins_in_any_window_not_the_clock_hour(tmp_path):
+    clock = Clock()
+    b = hb.LoginBudget(tmp_path / hb.FILE, per_window=2, window_minutes=60, clock=clock)
+    b.admit("session", "req_1")
+    clock.now += 50 * 60
+    b.admit("session", "req_2")  # another request shares the window: the site counts logins, not requests
+    clock.now += 5 * 60
+    with pytest.raises(hb.LoginLimitReached) as stopped:
+        b.admit("session", "req_1")
+    assert stopped.value.scope == "window" and stopped.value.used == 2 and stopped.value.limit == 2
+    assert stopped.value.retry_after_s == pytest.approx(5 * 60)  # the first login leaves the window 60 minutes after it
+    assert "최근 60분" in str(stopped.value) and "약 5분 뒤" in str(stopped.value)
+    assert b.usage()["window"] == 2 and b.usage()["today"] == 2  # the refused login was not counted
+    clock.now += 5 * 60 + 1
+    assert b.exhausted() is None
+    b.admit("session", "req_1")
+    assert b.usage()["window"] == 2
+
+
+def test_exhausted_and_usage_report_the_window_without_counting(tmp_path):
+    clock = Clock()
+    b = hb.LoginBudget(tmp_path / hb.FILE, per_window=1, window_minutes=30, clock=clock)
+    assert b.exhausted() is None and b.usage()["window_retry_after_s"] is None
+    b.admit("session")
+    clock.now += 10 * 60
+    stop = b.exhausted("req_1")
+    assert stop is not None and stop.scope == "window" and stop.retry_after_s == pytest.approx(20 * 60)
+    usage = b.usage()
+    assert (usage["window"], usage["per_window"], usage["window_minutes"]) == (1, 1, 30) and usage["today"] == 1
+
+
+def test_without_a_window_limit_the_window_is_only_reported(tmp_path):
+    b = budget(tmp_path)
+    for _ in range(4):
+        b.admit("session")
+    assert b.usage()["window"] == 4 and b.usage()["per_window"] is None and b.exhausted() is None
+
+
+def test_the_window_limit_comes_from_the_named_site_profile(tmp_path, monkeypatch):
+    from labhq import hpc_site
+
+    monkeypatch.setenv("LABHQ_SITES_DIR", str(tmp_path / "sites"))
+    hpc_site.save_profile(hpc_site.SiteProfile(name="lab", login_limit_per_window=2, login_window_minutes=45))
+    settings = Settings.model_validate({"runner": {"state_dir": str(tmp_path / "state")},
+                                        "hpc": {"scheduler": "slurm", "site_profile": "lab"}})
+    b = hb.budget_for(settings.hpc)
+    assert (b.per_window, b.window_minutes) == (2, 45)
+    plain = Settings.model_validate({"runner": {"state_dir": str(tmp_path / "state")}, "hpc": {"scheduler": "slurm"}})
+    assert hb.budget_for(plain.hpc).per_window is None
+    hpc_site.save_profile(hpc_site.SiteProfile(name="lab", login_limit_per_window=3))
+    assert (hb.budget_for(settings.hpc).per_window, hb.budget_for(settings.hpc).window_minutes) == (3, 60)
+
+
+def test_a_lowered_window_limit_waits_for_the_login_that_brings_the_count_below_it(tmp_path):
+    clock = Clock()
+    path = tmp_path / hb.FILE
+    loose = hb.LoginBudget(path, per_window=5, window_minutes=60, clock=clock)
+    for _ in range(3):
+        loose.admit("session")
+        clock.now += 10 * 60
+    tight = hb.LoginBudget(path, per_window=2, window_minutes=60, clock=clock)  # at +30 min, logins at 0, 10, 20 min
+    stop = tight.exhausted()
+    assert stop.scope == "window" and stop.used == 3
+    assert stop.retry_after_s == pytest.approx(40 * 60)  # the second login (10 min) leaves at 70 min, not the first at 60

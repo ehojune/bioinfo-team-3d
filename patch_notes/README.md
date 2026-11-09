@@ -10,6 +10,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-09
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 17:21 | [`471b377`](https://github.com/ehojune/bioinfo-team-3d/pull/1334/commits/471b377) | **사이트 프로필의 큐에 쉼표로 여러 개를 적은 기존 값도 그대로 읽히고 고정에도 쓰입니다. 시간 창 상한을 낮춘 뒤에는 다시 접속할 수 있는 시각을 정확히 알려 줍니다.**<br>SiteProfile.queue 검사 제거, pin_submit의 _queue_names(쉼표 목록·부분 요청 허용·이름 검사), SGE 큐×노드, LoginBudget._window가 OFFSET으로 상한 아래로 내려가는 행 기준 retry_after, 창 상한 질문 문구, manual 15 한영, 시험 2건 (#1295) |
+| 16:59 | [`9ff0f33`](https://github.com/ehojune/bioinfo-team-3d/pull/1334/commits/9ff0f33) | **HPC 사이트 규칙 "어느 60분 동안에도 로그인 N회 이내"를 사이트 프로필의 시간 창 상한으로 지킵니다. 프로필에 큐·노드 고정값을 적으면 제출에 붙일 인자를 만들고 다른 위치 지정을 거절하는 검사를 넣었고(제출 경로 연결은 후속), 게이트웨이 터널 사이트는 접속 전에 포트 주인과 원격 계정을 확인하는 방법을 프로필에 적습니다.**<br>LoginBudget per_window·window_minutes(지금부터 거슬러 올라간 창, LoginLimitReached scope window·retry_after_s, usage·exhausted), budget_for가 프로필 창 상한을 읽음, SiteProfile port_owner_check·pinned_nodes·login_limit_per_window·login_window_minutes와 질문 4개, hpc_site.pin_submit(Slurm·SGE, PBS 거절), manual 08·15 한영, D단계 3차 결과, 시험 25건 (#1295) |
+
 ## 2026-11-08
 
 | 시간 | 커밋 | 주요 변경사항 |
