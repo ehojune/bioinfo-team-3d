@@ -60,7 +60,8 @@ class SiteProfile(BaseModel):
     idle_lock_minutes: int | None = Field(default=None, ge=1)  # the site locks a session after this long without a command
     agent_inside_cluster: bool | None = None  # may an agent run on the cluster
     scheduler: Literal["sge", "pbs", "slurm", "none"] | None = None
-    # The queue or partition. When set, every submission goes there and a submission naming another one is refused.
+    # The queue or partition (Slurm and SGE take a comma list). When set, every submission goes there and a submission
+    # naming another one is refused. Free text as before #1295 r14: `pin_submit` checks the names when it pins.
     queue: str | None = None
     # Nodes jobs may run on, when the user pins them (#1295): added to every submission, and a submission choosing its own
     # node, partition or queue is refused. Empty: the scheduler picks within the queue.
@@ -105,13 +106,6 @@ class SiteProfile(BaseModel):
         for node in value:
             if not isinstance(node, str) or not _PLAIN.fullmatch(node):
                 raise ValueError("pinned_nodes holds plain host names (letters, digits, '.', '_', '-')")
-        return value
-
-    @field_validator("queue")
-    @classmethod
-    def queue_name(cls, value: str | None) -> str | None:
-        if value is not None and not _PLAIN.fullmatch(value):
-            raise ValueError("queue is one plain name (letters, digits, '.', '_', '-')")
         return value
 
     @field_validator("remote_workdir")
@@ -270,8 +264,9 @@ _NUMBERS = {
     "idle_lock_minutes": "유휴 잠김 시간(분): 이 시간 동안 명령이 없으면 세션이 잠깁니다",
     "login_limit_per_request": "로그인 상한: 요청당 (비우면 제한 없음)",
     "login_limit_per_day": "로그인 상한: 하루 (비우면 제한 없음)",
-    "login_limit_per_window": "로그인 상한: 시간 창 안에서 몇 번까지 (예: 어느 60분 동안에도 2회, 비우면 제한 없음)",
-    "login_window_minutes": "위 상한의 시간 창 길이(분, 비우면 60)",
+    "login_limit_per_window": "로그인 상한: 시간 창 안에서 몇 번까지 (예: 어느 60분 동안에도 2회, 처음에 비우면 제한 없음·"
+                              "이미 있는 값은 비우면 그대로, 없애려면 프로필 파일에서 지움)",
+    "login_window_minutes": "위 상한의 시간 창 길이(분, 처음에 비우면 60)",
 }
 _TEXTS = {
     "queue": "큐 또는 partition 이름 (적으면 모든 제출을 여기로 고정)",
@@ -309,8 +304,6 @@ def _ask_one(key: str, current, ask: Callable[[str, str], str]):
                 return SiteProfile.argv_without_secrets(raw.split())
             if key == "pinned_nodes":
                 return SiteProfile.node_names(raw.replace(",", " ").split())
-            if key == "queue":
-                return SiteProfile.queue_name(raw)
             return raw
         except ValueError as error:
             print(error)
@@ -410,7 +403,9 @@ def pin_submit(profile: SiteProfile | None, scheduler: str, args: list[str], que
     is the user's, and a job outside it would run on hardware the user did not agree to. No pin: ``args`` unchanged."""
     if profile is None or not (profile.queue or profile.pinned_nodes):
         return list(args)
-    if queue and queue != profile.queue:
+    pinned = _queue_names(profile.queue)
+    asked = _queue_names(queue)
+    if asked and not set(asked) <= set(pinned):
         raise SiteProfileError(f"사이트 프로필이 제출 위치를 고정했습니다. 요청한 큐 {queue}로는 내지 않습니다")
     if scheduler not in _PLACE_FLAGS:
         raise SiteProfileError(f"큐·노드 고정은 {scheduler} scheduler에서 지원하지 않아 제출하지 않습니다")
@@ -432,13 +427,23 @@ def pin_submit(profile: SiteProfile | None, scheduler: str, args: list[str], que
             continue
         raise SiteProfileError("사이트 프로필이 제출 위치를 고정했습니다. 제출에 따로 지정한 큐·노드는 받지 않습니다: "
                                + " ".join(words))
-    return [*kept, *_pin_args(profile, scheduler), script]
+    return [*kept, *_pin_args(asked or pinned, profile.pinned_nodes, scheduler), script]
 
 
-def _pin_args(profile: SiteProfile, scheduler: str) -> list[str]:
+def _queue_names(text: str | None) -> list[str]:
+    """A queue or a comma list of them, each a plain name; anything else cannot be pinned safely and is refused."""
+    names = [name.strip() for name in (text or "").split(",") if name.strip()]
+    for name in names:
+        if not _PLAIN.fullmatch(name):
+            raise SiteProfileError(f"큐 이름 {name!r}은 고정할 수 없습니다(영문·숫자·'.'·'_'·'-'만)")
+    return names
+
+
+def _pin_args(queues: list[str], nodes: list[str], scheduler: str) -> list[str]:
+    """``queues`` is the narrower of what was asked and what the profile pins."""
     if scheduler == "slurm":
-        out = [f"--partition={profile.queue}"] if profile.queue else []
-        return out + ([f"--nodelist={','.join(profile.pinned_nodes)}"] if profile.pinned_nodes else [])
-    if profile.pinned_nodes:  # SGE names queue and host together: queue@host, one list
-        return ["-q", ",".join(f"{profile.queue or '*'}@{node}" for node in profile.pinned_nodes)]
-    return ["-q", profile.queue]
+        out = [f"--partition={','.join(queues)}"] if queues else []
+        return out + ([f"--nodelist={','.join(nodes)}"] if nodes else [])
+    if nodes:  # SGE names queue and host together: queue@host, one list
+        return ["-q", ",".join(f"{q}@{node}" for q in (queues or ["*"]) for node in nodes)]
+    return ["-q", ",".join(queues)]

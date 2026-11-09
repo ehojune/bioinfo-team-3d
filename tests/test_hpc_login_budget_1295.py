@@ -450,3 +450,16 @@ def test_the_window_limit_comes_from_the_named_site_profile(tmp_path, monkeypatc
     assert hb.budget_for(plain.hpc).per_window is None
     hpc_site.save_profile(hpc_site.SiteProfile(name="lab", login_limit_per_window=3))
     assert (hb.budget_for(settings.hpc).per_window, hb.budget_for(settings.hpc).window_minutes) == (3, 60)
+
+
+def test_a_lowered_window_limit_waits_for_the_login_that_brings_the_count_below_it(tmp_path):
+    clock = Clock()
+    path = tmp_path / hb.FILE
+    loose = hb.LoginBudget(path, per_window=5, window_minutes=60, clock=clock)
+    for _ in range(3):
+        loose.admit("session")
+        clock.now += 10 * 60
+    tight = hb.LoginBudget(path, per_window=2, window_minutes=60, clock=clock)  # at +30 min, logins at 0, 10, 20 min
+    stop = tight.exhausted()
+    assert stop.scope == "window" and stop.used == 3
+    assert stop.retry_after_s == pytest.approx(40 * 60)  # the second login (10 min) leaves at 70 min, not the first at 60

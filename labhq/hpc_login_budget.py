@@ -113,16 +113,20 @@ class LoginBudget:
         return time.strftime("%Y-%m-%d", time.localtime(now))
 
     def _window(self, db: sqlite3.Connection, now: float) -> tuple[int, float | None]:
-        """Logins in the window ending now, and when the oldest of them drops out (None: none in the window)."""
+        """Logins in the window ending now, and the seconds until enough of them drop out for one more login under the
+        limit (None: no limit, or room now). With more logins than the limit (a limit lowered after the fact) that is
+        not the oldest login's exit but the one that brings the count below the limit."""
         since = now - self.window_minutes * 60
-        count, oldest = db.execute("SELECT COUNT(*), MIN(at) FROM logins WHERE at > ? AND at <= ?", (since, now)).fetchone()
-        return count, (None if oldest is None else oldest - since)
+        count = db.execute("SELECT COUNT(*) FROM logins WHERE at > ? AND at <= ?", (since, now)).fetchone()[0]
+        if self.per_window is None or count < self.per_window:
+            return count, None
+        clears = db.execute("SELECT at FROM logins WHERE at > ? AND at <= ? ORDER BY at LIMIT 1 OFFSET ?",
+                            (since, now, count - self.per_window)).fetchone()[0]
+        return count, clears - since
 
     def _window_stop(self, db: sqlite3.Connection, now: float, request_id: str | None) -> LoginLimitReached | None:
-        if self.per_window is None:
-            return None
         count, retry_after = self._window(db, now)
-        if count < self.per_window:
+        if retry_after is None:
             return None
         return LoginLimitReached("window", self.per_window, count, request_id, window_minutes=self.window_minutes,
                                  retry_after_s=retry_after)

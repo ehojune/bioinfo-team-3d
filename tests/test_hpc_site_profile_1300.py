@@ -401,7 +401,7 @@ def test_pin_contradictions_are_reported():
     assert any("login_window_minutes" in p for p in site.problems(site.SiteProfile(name="lab", login_window_minutes=30)))
 
 
-@pytest.mark.parametrize("change", [{"pinned_nodes": ["a b"]}, {"pinned_nodes": ["-w"]}, {"queue": "q;rm"},
+@pytest.mark.parametrize("change", [{"pinned_nodes": ["a b"]}, {"pinned_nodes": ["-w"]},
                                     {"login_window_minutes": 0}, {"login_limit_per_window": 0}])
 def test_pin_and_window_values_are_checked(change):
     with pytest.raises(Exception):
@@ -450,3 +450,17 @@ def test_sge_pin_names_queue_at_host_and_keeps_resource_requests():
 def test_a_pin_on_an_unsupported_scheduler_refuses_instead_of_submitting_unpinned():
     with pytest.raises(site.SiteProfileError, match="pbs"):
         site.pin_submit(site.SiteProfile(name="lab", queue="q"), "pbs", ["qsub", "run.sh"])
+
+
+def test_a_queue_list_stays_a_valid_profile_and_pins_as_a_list():
+    """A profile written before the pin keeps loading: `queue` is free text, checked only when it pins a submission."""
+    profile = site.SiteProfile(name="lab", queue="short,gpu")
+    assert site.pin_submit(profile, "slurm", SBATCH)[-2] == "--partition=short,gpu"
+    assert site.pin_submit(profile, "slurm", SBATCH, "gpu")[-2] == "--partition=gpu"  # a narrower ask inside the pin
+    with pytest.raises(site.SiteProfileError):
+        site.pin_submit(profile, "slurm", SBATCH, "gpu,long")
+    nodes = site.SiteProfile(name="lab", queue="a.q,b.q", pinned_nodes=["n1"])
+    assert site.pin_submit(nodes, "sge", ["qsub", "run.sh"]) == ["qsub", "-q", "a.q@n1,b.q@n1", "run.sh"]
+    assert site.SiteProfile(name="lab", queue="free text; as before").queue == "free text; as before"
+    with pytest.raises(site.SiteProfileError):  # but it cannot pin a submission
+        site.pin_submit(site.SiteProfile(name="lab", queue="q;rm -rf"), "slurm", SBATCH)
