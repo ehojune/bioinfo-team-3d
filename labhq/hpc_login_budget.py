@@ -11,6 +11,9 @@ state folder keeps its own.
 
 A caller that knows the request (the runner, for its own submit, poll and cancel) opens ``request_scope``; a login with
 no request counts against the day only, never against a request's limit.
+
+A site rule like "at most N logins in any 60 minutes" is a sliding window: the site profile's ``login_limit_per_window``
+and ``login_window_minutes`` (asked when the profile is written), checked against the same rows by login time.
 """
 from __future__ import annotations
 
@@ -28,8 +31,16 @@ _REQUEST: contextvars.ContextVar[str | None] = contextvars.ContextVar("labhq_hpc
 class LoginLimitReached(RuntimeError):
     """A new HPC login was refused: the user's request or day limit is used up. Nothing was sent."""
 
-    def __init__(self, scope: str, limit: int, used: int, request_id: str | None = None):
+    def __init__(self, scope: str, limit: int, used: int, request_id: str | None = None, *,
+                 window_minutes: int | None = None, retry_after_s: float | None = None):
         self.scope, self.limit, self.used, self.request_id = scope, limit, used, request_id
+        self.retry_after_s = retry_after_s  # window only: seconds until the oldest login in the window drops out
+        if scope == "window":
+            wait = max(1, round((retry_after_s or 0) / 60))
+            super().__init__(f"HPC 로그인 상한에 닿았습니다: 최근 {window_minutes}분 동안 로그인 {used}/{limit}회를 썼습니다. "
+                             f"새 접속을 하지 않았습니다. 약 {wait}분 뒤에 다시 접속할 수 있습니다. "
+                             "상한은 사이트 프로필의 login_limit_per_window입니다")
+            return
         where = "이 요청의" if scope == "request" else "오늘의"
         super().__init__(f"HPC 로그인 상한에 닿았습니다: {where} 로그인 {used}/{limit}회를 썼습니다. "
                          "새 접속을 하지 않았습니다. 상한은 hpc.login_limit_per_request·hpc.login_limit_per_day입니다")
@@ -80,8 +91,9 @@ def ask_limits(hpc: dict, ask: Callable[[str, str], str]) -> dict:
 
 class LoginBudget:
     def __init__(self, path: str | Path, per_request: int | None = None, per_day: int | None = None, *,
-                 clock: Callable[[], float] = time.time):
+                 per_window: int | None = None, window_minutes: int = 60, clock: Callable[[], float] = time.time):
         self.path, self.per_request, self.per_day, self.clock = Path(path), per_request, per_day, clock
+        self.per_window, self.window_minutes = per_window, int(window_minutes or 60)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         db = self._connect()
         try:
@@ -100,6 +112,21 @@ class LoginBudget:
     def _day(self, now: float) -> str:
         return time.strftime("%Y-%m-%d", time.localtime(now))
 
+    def _window(self, db: sqlite3.Connection, now: float) -> tuple[int, float | None]:
+        """Logins in the window ending now, and when the oldest of them drops out (None: none in the window)."""
+        since = now - self.window_minutes * 60
+        count, oldest = db.execute("SELECT COUNT(*), MIN(at) FROM logins WHERE at > ? AND at <= ?", (since, now)).fetchone()
+        return count, (None if oldest is None else oldest - since)
+
+    def _window_stop(self, db: sqlite3.Connection, now: float, request_id: str | None) -> LoginLimitReached | None:
+        if self.per_window is None:
+            return None
+        count, retry_after = self._window(db, now)
+        if count < self.per_window:
+            return None
+        return LoginLimitReached("window", self.per_window, count, request_id, window_minutes=self.window_minutes,
+                                 retry_after_s=retry_after)
+
     def admit(self, command: str, request_id: str | None = None) -> dict:
         """Count one login and allow it, or raise ``LoginLimitReached`` without counting. A login with no request is
         checked against the day's limit only."""
@@ -117,6 +144,9 @@ class LoginBudget:
                     raise LoginLimitReached("request", self.per_request, mine, request_id)
                 if self.per_day is not None and today >= self.per_day:
                     raise LoginLimitReached("day", self.per_day, today, request_id)
+                stop = self._window_stop(db, now, request_id)
+                if stop is not None:
+                    raise stop
                 db.execute("INSERT INTO logins (day, request_id, at, command) VALUES (?, ?, ?, ?)",
                            (day, request_id, now, str(command)[:40]))
                 db.execute("COMMIT")
@@ -138,10 +168,14 @@ class LoginBudget:
                     if request_id else None)
             requests = db.execute("SELECT request_id, COUNT(*) FROM logins WHERE day = ? AND request_id IS NOT NULL "
                                   "GROUP BY request_id ORDER BY 2 DESC", (self._day(now),)).fetchall()
+            window, _ = self._window(db, now)
+            window_stop = self._window_stop(db, now, request_id)
         finally:
             db.close()
         return {"day": self._day(now), "today": today, "per_day": self.per_day, "request": mine,
-                "per_request": self.per_request, "requests_today": dict(requests)}
+                "per_request": self.per_request, "requests_today": dict(requests),
+                "window": window, "per_window": self.per_window, "window_minutes": self.window_minutes,
+                "window_retry_after_s": None if window_stop is None else window_stop.retry_after_s}
 
     def exhausted(self, request_id: str | None = None) -> LoginLimitReached | None:
         """The limit a new login would hit right now, else None. Read only: it counts nothing."""
@@ -150,7 +184,25 @@ class LoginBudget:
             return LoginLimitReached("request", self.per_request, usage["request"], request_id)
         if self.per_day is not None and usage["today"] >= self.per_day:
             return LoginLimitReached("day", self.per_day, usage["today"], request_id)
+        if usage["window_retry_after_s"] is not None:
+            return LoginLimitReached("window", self.per_window, usage["window"], request_id,
+                                     window_minutes=self.window_minutes, retry_after_s=usage["window_retry_after_s"])
         return None
+
+
+def window_limit(hpc) -> tuple[int | None, int]:
+    """The site profile's window limit for an ``HpcSettings``: (logins, minutes). None when no profile is named or it
+    sets none. A profile that cannot be read sets none here; the session path refuses such a profile on its own."""
+    name = getattr(hpc, "site_profile", None)
+    if not name:
+        return None, 60
+    from . import hpc_site
+
+    try:
+        profile = hpc_site.load_profile(name)
+    except hpc_site.SiteProfileError:
+        return None, 60
+    return profile.login_limit_per_window, profile.login_window_minutes or 60
 
 
 def budget_for(hpc) -> LoginBudget | None:
@@ -158,4 +210,6 @@ def budget_for(hpc) -> LoginBudget | None:
     ledger = getattr(hpc, "_login_ledger", None)
     if not ledger:
         return None
-    return LoginBudget(ledger, hpc.login_limit_per_request, hpc.login_limit_per_day)
+    per_window, minutes = window_limit(hpc)
+    return LoginBudget(ledger, hpc.login_limit_per_request, hpc.login_limit_per_day, per_window=per_window,
+                       window_minutes=minutes)

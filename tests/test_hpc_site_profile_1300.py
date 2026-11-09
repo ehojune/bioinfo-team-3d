@@ -336,7 +336,7 @@ def test_yes_no_questions_accept_true_and_false_too(answer, expected):
 def test_init_keeps_an_existing_profiles_yes_no_answers_on_enter(monkeypatch, tmp_path):
     """With the real prompt (`_ask` returns the default for an empty line), not a fake one."""
     site.save_profile(site.SiteProfile(name="lab", remote_exec=False, agent_inside_cluster=True, scheduler="slurm"), tmp_path)
-    lines = iter(["y", "lab"] + [""] * 13)
+    lines = iter(["y", "lab"] + [""] * len(site.ORDER))
     monkeypatch.setattr("builtins.input", lambda prompt="": next(lines))
     monkeypatch.setattr(init_wizard, "_interactive", lambda: True)
     hpc = {}
@@ -373,3 +373,80 @@ def test_the_diagnostics_folder_is_used_only_outside_a_repository(tmp_path, monk
     assert not site.session_config(profile, 30).diag_dir
     monkeypatch.delenv("LABHQ_HPC_DIAG_DIR")
     assert not site.session_config(profile, 30).diag_dir
+
+
+# ----- #1295 r14: window limit, port owner check, submission pin -----
+
+def test_the_new_questions_come_last_and_are_typed(capsys):
+    ask = answers(*([""] * (len(site.ORDER) - 4)), "포털 로그의 장비 접속 기록과 포트 소유 프로세스를 대조", "node-1 bad/name",
+                  "node-1,node-2", "0", "2", "45")
+    profile = site.ask_profile("lab", ask)
+    assert profile.port_owner_check.startswith("포털") and profile.pinned_nodes == ["node-1", "node-2"]
+    assert (profile.login_limit_per_window, profile.login_window_minutes) == (2, 45)
+    out = capsys.readouterr().out
+    assert "plain host names" in out and "1 이상" in out
+
+
+def test_a_gateway_profile_without_a_port_owner_check_lists_it_as_unknown():
+    profile = site.SiteProfile(name="lab", access_method="gateway_tunnel", connect_argv=["ssh", "x"])
+    assert "port_owner_check" in site.unknown_fields(profile)
+    profile.port_owner_check = "check"
+    assert "port_owner_check" not in site.unknown_fields(profile)
+    assert "port_owner_check" not in site.unknown_fields(site.SiteProfile(name="lab", access_method="ssh",
+                                                                          connect_argv=["ssh", "x"]))
+
+
+def test_pin_contradictions_are_reported():
+    assert any("pbs" in p for p in site.problems(site.SiteProfile(name="lab", scheduler="pbs", queue="q")))
+    assert any("login_window_minutes" in p for p in site.problems(site.SiteProfile(name="lab", login_window_minutes=30)))
+
+
+@pytest.mark.parametrize("change", [{"pinned_nodes": ["a b"]}, {"pinned_nodes": ["-w"]}, {"queue": "q;rm"},
+                                    {"login_window_minutes": 0}, {"login_limit_per_window": 0}])
+def test_pin_and_window_values_are_checked(change):
+    with pytest.raises(Exception):
+        site.SiteProfile(name="lab", **change)
+
+
+SBATCH = ["sbatch", "--parsable", "--job-name=j", "--output=o", "--error=e", "--cpus-per-task=4", "run.sh"]
+
+
+def test_no_pin_leaves_the_submission_alone():
+    assert site.pin_submit(None, "slurm", SBATCH) == SBATCH
+    assert site.pin_submit(site.SiteProfile(name="lab"), "slurm", SBATCH, "any") == SBATCH
+
+
+def test_slurm_pin_adds_partition_and_nodes_before_the_script():
+    profile = site.SiteProfile(name="lab", queue="part", pinned_nodes=["n1", "n2"])
+    assert site.pin_submit(profile, "slurm", SBATCH) == [*SBATCH[:-1], "--partition=part", "--nodelist=n1,n2", "run.sh"]
+    assert site.pin_submit(profile, "slurm", SBATCH, "part")[-3:] == ["--partition=part", "--nodelist=n1,n2", "run.sh"]
+
+
+@pytest.mark.parametrize("extra", [["--partition=other"], ["-p", "part"], ["-pother"], ["--nodelist=n3"], ["-w", "n1"],
+                                   ["--exclude=n2"], ["-M", "c2"], ["--clusters=c2"]])
+def test_slurm_pin_refuses_a_submission_that_chooses_its_own_place(extra):
+    profile = site.SiteProfile(name="lab", queue="part", pinned_nodes=["n1"])
+    with pytest.raises(site.SiteProfileError):
+        site.pin_submit(profile, "slurm", [*SBATCH[:-1], *extra, "run.sh"])
+
+
+def test_a_different_queue_is_refused():
+    with pytest.raises(site.SiteProfileError, match="other"):
+        site.pin_submit(site.SiteProfile(name="lab", queue="part"), "slurm", SBATCH, "other")
+    with pytest.raises(site.SiteProfileError):  # nodes pinned, no queue: naming any queue is still a choice of place
+        site.pin_submit(site.SiteProfile(name="lab", pinned_nodes=["n1"]), "slurm", SBATCH, "part")
+
+
+def test_sge_pin_names_queue_at_host_and_keeps_resource_requests():
+    qsub = ["qsub", "-terse", "-N", "j", "-o", "o", "-e", "e", "-l", "h_vmem=4G", "run.sh"]
+    profile = site.SiteProfile(name="lab", queue="all.q", pinned_nodes=["n1", "n2"])
+    assert site.pin_submit(profile, "sge", qsub) == [*qsub[:-1], "-q", "all.q@n1,all.q@n2", "run.sh"]
+    assert site.pin_submit(site.SiteProfile(name="lab", queue="all.q"), "sge", qsub)[-3:] == ["-q", "all.q", "run.sh"]
+    for extra in (["-q", "other.q"], ["-l", "h=n3"], ["-l", "h_vmem=4G,hostname=n3"]):
+        with pytest.raises(site.SiteProfileError):
+            site.pin_submit(profile, "sge", [*qsub[:-1], *extra, "run.sh"])
+
+
+def test_a_pin_on_an_unsupported_scheduler_refuses_instead_of_submitting_unpinned():
+    with pytest.raises(site.SiteProfileError, match="pbs"):
+        site.pin_submit(site.SiteProfile(name="lab", queue="q"), "pbs", ["qsub", "run.sh"])
