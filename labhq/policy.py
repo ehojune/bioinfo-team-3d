@@ -1976,8 +1976,9 @@ def _strings(obj: Any, path_field: bool = False) -> Iterator[tuple[str, bool]]:
             yield from _strings(v, path_field)
 
 
-def _raw_spaced_zone(s: str, zone: str) -> bool:
-    """Conservatively find a spaced absolute zone in shell text at explicit boundaries."""
+def _raw_spaced_zone(s: str, zone: str, exempt: str | None = None) -> bool:
+    """Conservatively find a spaced absolute zone in shell text at explicit boundaries. A mention that continues into
+    ``exempt`` (the task's own folder, #1331) does not count; the resolved check still follows links from there."""
     if " " not in zone:
         return False
     raw = re.sub(r"\\([ \t])", r"\1", s)
@@ -1991,7 +1992,10 @@ def _raw_spaced_zone(s: str, zone: str) -> bool:
         before = start == 0 or raw[start - 1] in " \t\r\n'\"=:<>(),;|&" or raw[:start].endswith("file://")
         after = end == len(raw) or raw[end] in "/ \t\r\n'\"=:<>(),;|&"
         if before and after:
-            return True
+            own = exempt and raw.startswith(exempt, start) and (
+                start + len(exempt) == len(raw) or raw[start + len(exempt)] in "/ \t\r\n'\"=:<>(),;|&")
+            if not own:
+                return True
         start += 1
     return False
 
@@ -2044,7 +2048,7 @@ def touches(obj: Any, paths: Iterable[str], workdir: str | None = None, exempt: 
                     return original
         if not path_field:
             for original, zone in paths:
-                if _raw_spaced_zone(s, zone):
+                if _raw_spaced_zone(s, zone, exempt):
                     return original
     return None
 

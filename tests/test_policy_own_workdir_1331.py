@@ -80,3 +80,18 @@ def test_no_exemption_when_the_folder_is_or_holds_a_zone(tmp_path):
     policy.data_zones = [*policy.data_zones, DataZone(path=str(inner), level="internal")]
     decision = _decide(policy, mine, "Read", {"file_path": "TASK.md"})  # a zone inside the folder: no exemption
     assert decision.action == "ask" and "internal data zone" in decision.reason
+
+
+def test_spaced_runs_root_quoted_absolute_path(tmp_path):
+    spaced = tmp_path / "my runs"
+    mine, other = spaced / "task_mine", spaced / "task_other"
+    for folder in (mine, other):
+        folder.mkdir(parents=True)
+    (mine / "TASK.md").write_text("x", encoding="utf-8")
+    (other / "out.tsv").write_text("x", encoding="utf-8")
+    settings = Settings()
+    settings.policy.data_zones = [DataZone(path=str(spaced), level="internal")]
+    own = _decide(settings.policy, mine, "Bash", {"command": f'cat "{mine / "TASK.md"}"'})
+    assert "internal data zone" not in own.reason, own
+    theirs = _decide(settings.policy, mine, "Bash", {"command": f'cat "{other / "out.tsv"}"'})
+    assert theirs.action == "ask" and "internal data zone" in theirs.reason, theirs
