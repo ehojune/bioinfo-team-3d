@@ -445,7 +445,7 @@ class Scheduler:
         except RuntimeError:
             return True
         if session is not None:
-            return not session.connected
+            return not session.connected and not session.connecting
         return bool(self.cfg.ssh_host)
 
     def _require_enabled(self, operation: str) -> None:
@@ -454,6 +454,9 @@ class Scheduler:
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess:
         self._require_enabled("command execution")
+        from ..hpc_session import remaining_s
+
+        remaining_s(self.cfg.command_timeout_s)
         session = self.session()
         if session is not None:  # one shell for everything: a command is a line sent to it, not a login (#1295 C)
             from ..hpc_session import CommandTimeout
@@ -480,7 +483,7 @@ class Scheduler:
             if budget is not None:
                 budget.admit(args[0])
             args = ["ssh", "-o", "BatchMode=yes", self.cfg.ssh_host, shlex.join(args)]
-        done = subprocess.run(args, capture_output=True, text=True, timeout=self.cfg.command_timeout_s,
+        done = subprocess.run(args, capture_output=True, text=True, timeout=remaining_s(self.cfg.command_timeout_s),
                               env=command_env())
         if self.cfg.ssh_host:
             done.redact = self._redactor(None)  # ssh's own error text names the host and the user

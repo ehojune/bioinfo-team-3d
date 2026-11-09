@@ -2,15 +2,22 @@
 import asyncio
 import json
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
-from labhq import hpc_login_budget as hb
-from labhq import hpc_site
+from labhq import hpc_login_budget as hb, hpc_session as hs, hpc_site
+from labhq.runner.approvals import Broker
+from labhq.runner.daemon import Runner
+from labhq.runner.hpc_jobs import SharedStatusQueries
 from labhq.settings import Settings
 from labhq.tools import scheduler as sched
+
 
 GATEWAY = str(Path(__file__).with_name("fake_hpc_gateway.py"))
 
@@ -531,3 +538,311 @@ def test_a_pbs_submit_through_a_site_profile_is_sent_to_the_pi_like_one_over_ssh
     asked.clear()
     asyncio.run(submit_job(plain, sched.Scheduler(plain.hpc), tmp_path, body, approve))
     assert not asked or asked[0]["detail"]["approval_reasons"] == []  # on the login node the local check is enough
+
+
+# ---- Three concurrent employees sharing the authenticated runner (#1332) ----
+def wait_for(predicate):
+    deadline = time.monotonic() + 5
+    while not predicate():
+        assert time.monotonic() < deadline, "fixture did not reach the expected state"
+        time.sleep(0.005)
+
+
+@pytest.fixture
+def cluster(tmp_path, monkeypatch):
+    monkeypatch.setenv("LABHQ_SITES_DIR", str(tmp_path / "sites"))
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setenv("SLURM_FAKE_SANDBOX", str(sandbox))
+    counter, state = tmp_path / "starts.txt", tmp_path / "state.json"
+    hpc_site.save_profile(hpc_site.SiteProfile(
+        name="fake", scheduler="slurm", access_method="gateway_tunnel", remote_exec=False,
+        remote_workdir="/hpc/work", connect_argv=[sys.executable, "-I",
+            str(Path(__file__).with_name("fake_hpc_gateway.py")), "--slurm-state", str(state),
+            "--counter", str(counter), "--interactive-prompts"]))
+    cfg = Settings.model_validate({"runner": {"state_dir": str(tmp_path / "runner")},
+                                   "hpc": {"scheduler": "slurm", "user": "fixture", "site_profile": "fake",
+                                           "login_limit_per_day": 1}})
+    cfg.policy.approvals.hpc_core_hours_threshold = 1000
+    yield SimpleNamespace(s=cfg, sandbox=sandbox, state=state,
+                          logins=lambda: len(counter.read_text().splitlines()) if counter.exists() else 0)
+    sched.close_sessions()
+
+
+def runner_fixture(tmp_path, cluster):
+    r = Runner.__new__(Runner)
+    r.s, r.scheduler = cluster.s, sched.Scheduler(cluster.s.hpc)
+    r.jobs, r.task_req, r.workspaces, r.active_roots = {}, {}, {}, {}
+    r.events, r.submitting, r.notified, r.tasks = [], {}, set(), {}
+    r.store = SimpleNamespace(put=lambda *args: None)
+
+    async def emit(event):
+        r.events.append(event)
+
+    async def emit_all(events, **kwargs):
+        r.events.extend(events)
+
+    async def unused(*args):
+        raise AssertionError("unexpected approval")
+
+    r.emit, r.emit_all = emit, emit_all
+    r.broker = Broker(0, unused, unused, r._on_submit, owns_job=r._owns_job,
+                      on_scheduler=r._on_scheduler_request)
+    tokens = []
+    for i in range(3):
+        tid, aid = f"t{i}", f"employee{i}"
+        work = tmp_path / tid
+        (work / "jobs").mkdir(parents=True)
+        (work / "jobs" / "run.sh").write_text(sched.build_script(f"echo result-{i}", str(work)), encoding="utf-8")
+        r.workspaces[tid] = SimpleNamespace(dir=work, append_job=lambda *args: None,
+                                           task=SimpleNamespace(meta={}))
+        r.active_roots[tid], r.task_req[tid] = (False,), "request"
+        tokens.append({"X-Labhq-Token": r.broker.issue_task_token(tid, aid, "request")})
+    return r, tokens
+
+
+def test_three_employees_submit_query_cancel_and_fetch_isolated_files_on_one_login(tmp_path, cluster, monkeypatch):
+    r, tokens = runner_fixture(tmp_path, cluster)
+    batch_calls = []
+    statuses = r.scheduler.statuses
+
+    def batch(ids):
+        batch_calls.append(tuple(ids))
+        return statuses(ids)
+
+    monkeypatch.setattr(r.scheduler, "statuses", batch)
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=r.broker.app), base_url="http://fixture") as c:
+            replies = await asyncio.gather(*(c.post("/jobs/submit", headers=tokens[i], json={
+                "script": str(r.workspaces[f"t{i}"].dir / "jobs/run.sh"), "name": f"employee{i}",
+                "walltime": "00:01:00"}) for i in range(3)))
+            rows = [reply.json() for reply in replies]
+            assert all(row.get("submitted") for row in rows), rows
+            ids = [row["job_id"] for row in rows]
+            assert len(set(ids)) == 3 and cluster.logins() == 1
+            assert len({row["transfer"]["work"] for row in rows}) == 3
+            for i, row in enumerate(rows):
+                remote = cluster.sandbox / "hpc/work" / row["transfer"]["script"]
+                assert f"result-{i}" in remote.read_text(encoding="utf-8")
+                for other in set(range(3)) - {i}:
+                    assert f"result-{other}" not in remote.read_text(encoding="utf-8")
+
+            replies = await asyncio.gather(*(c.post("/jobs/scheduler/status", headers=tokens[i],
+                json={"job_id": ids[i]}) for i in range(3)))
+            assert [x.json()["status"]["job_id"] for x in replies] == ids
+            assert all(x.json()["status"]["state"] == "running" for x in replies)
+            assert len(batch_calls) == 1 and set(batch_calls[0]) == set(ids)
+            denied = (await c.post("/jobs/scheduler/status", headers=tokens[0], json={"job_id": ids[1]})).json()
+            assert "requires an owned job" in denied["error"] and len(batch_calls) == 1
+            assert "error" not in (await c.post("/jobs/scheduler/cancel", headers=tokens[2],
+                                                json={"job_id": ids[2]})).json()
+            data = json.loads(cluster.state.read_text())
+            for jid in ids[:2]:
+                data["jobs"][jid].update(state="COMPLETED", exit="0:0")
+            cluster.state.write_text(json.dumps(data))
+            for i, row in enumerate(rows):
+                remote = cluster.sandbox / "hpc/work" / row["transfer"]["work"]
+                (remote / "outputs").mkdir()
+                (remote / "outputs" / "answer.txt").write_text(f"employee-{i}")
+                # Fake sbatch does not run scripts; the fixture writes the remote job's result and logs.
+                for log in row["transfer"]["logs"]:
+                    path = cluster.sandbox / "hpc/work" / log
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(f"log-{i}")
+            await r._poll_jobs()
+            assert all(j["terminal"] and j["fetched"] for j in r.jobs.values())
+            assert r.jobs[ids[2]]["state"] == "cancelled"
+            # Three independent recoveries also interleave over the same command FIFO, with separate destinations.
+            manifests = await asyncio.gather(*(asyncio.to_thread(r._fetch_job_files, r.jobs[jid],
+                                                   r.jobs[jid]["transfer"]) for jid in ids))
+            assert all(m["fetched"] and not m["skipped"] for m in manifests)
+            for i in range(3):
+                assert (r.workspaces[f"t{i}"].dir / "outputs/answer.txt").read_text() == f"employee-{i}"
+            assert cluster.logins() == 1
+
+    asyncio.run(scenario())
+
+
+def test_fifo_commands_timeout_unsent_and_heartbeat_cannot_overtake(monkeypatch):
+    s = hs.HpcSession(hs.SessionConfig(argv=["fixture"]))
+    monkeypatch.setattr(s, "_ensure_open", lambda: object())
+    order = []
+    monkeypatch.setattr(s, "_exec", lambda conn, cmd, timeout: order.append(cmd) or hs.CommandResult(0, cmd))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        s._lock.acquire()
+        try:
+            futures = []
+            for i in range(3):
+                futures.append(pool.submit(s.run, f"echo {i}"))
+                wait_for(lambda: len(s._lock._waiting) == i + 1)
+            def short_wait():
+                with hs.queue_wait(0.03), pytest.raises(hs.SessionBusy):
+                    s.run("echo expired")
+            pool.submit(short_wait).result(2)
+            assert len(s._lock._waiting) == 3
+            assert pool.submit(s.tick).result(2) == "busy"
+        finally:
+            s._lock.release()
+        assert [f.result(2).output for f in futures] == ["echo 0", "echo 1", "echo 2"]
+    assert order == ["echo 0", "echo 1", "echo 2"]
+
+
+def test_command_timeout_releases_waiters_and_refuses_reconnect_at_shared_limit(tmp_path, cluster):
+    s = sched.Scheduler(cluster.s.hpc).session()
+    s.run("echo ready")
+    with pytest.raises(hs.CommandTimeout):
+        s.run("sleep 10", timeout_s=0.03)
+    assert not s.connected
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = [pool.submit(s.run, f"echo employee-{i}") for i in range(3)]
+        for f in futures:
+            with pytest.raises(hb.LoginLimitReached):
+                f.result(3)
+    assert cluster.logins() == 1
+
+
+def test_all_employees_wait_at_limit_with_one_pi_notice_and_fetch_attempts_preserved(tmp_path, cluster):
+    r, tokens = runner_fixture(tmp_path, cluster)
+    s = r.scheduler.session()
+    s.run("echo ready")
+    s.close()  # loss of the sole connection means the next command must pass login admission
+    for i in range(3):
+        r.jobs[str(i + 1)] = {"task_id": f"t{i}", "agent_id": f"employee{i}", "scheduler": "slurm",
+                             "submitted_by_runner": True, "terminal": False, "state": "running"}
+
+    async def scenario():
+        replies = await asyncio.gather(*(r._on_scheduler_request("status", {
+            "task_id": f"t{i}", "agent_id": f"employee{i}", "request_id": "request", "job_id": str(i + 1)
+        }) for i in range(3)))
+        assert all("로그인 상한" in x["error"] for x in replies)
+        assert len([e for e in r.events if "hpc_login_limit" in e.data]) == 1
+        r.jobs["1"].update(terminal=True, transfer={"work": "fixture"})
+        for _ in range(r.FETCH_TRIES + 1):
+            await r._fetch_finished_jobs()
+        assert r.jobs["1"].get("fetch_tries", 0) == 0
+        assert not r._fetch_settled(r.jobs["1"])
+        assert not any(e.type == "jobs.finished" for e in r.events)
+
+    asyncio.run(scenario())
+    assert cluster.logins() == 1
+
+
+def test_shared_batch_survives_one_cancelled_waiter_and_never_reuses_completed_results():
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def statuses(ids):
+        calls.append(ids)
+        entered.set()
+        assert release.wait(5)
+        return {jid: sched.JobInfo(jid, "running") for jid in ids}
+
+    async def scenario():
+        query = SharedStatusQueries(SimpleNamespace(statuses=statuses))
+        first = asyncio.create_task(query.get("request", ["1", "2", "3"]))
+        await asyncio.to_thread(entered.wait, 3)
+        second = asyncio.create_task(query.get("request", ["2"]))
+        await asyncio.sleep(0)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        release.set()
+        assert (await second)["2"].state == "running" and len(calls) == 1
+        await query.get("request", ["2"])
+        assert len(calls) == 2
+
+    asyncio.run(scenario())
+
+
+def test_every_staff_backend_uses_broker_and_never_its_scheduler(monkeypatch):
+    from labhq.tools import hpc_mcp as hpc
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("employee tried to run a scheduler command")
+
+    monkeypatch.setattr(hpc, "SCHED", SimpleNamespace(session=lambda: None, status=forbidden,
+                                                     queue=forbidden, cancel=forbidden))
+    monkeypatch.setattr(hpc, "SESSION_ERROR", None)
+    monkeypatch.setattr(hpc, "VIA_RUNNER", False)  # the old bypass flag must no longer enable direct execution
+    seen = []
+
+    async def broker(path, payload, timeout):
+        seen.append(path)
+        return {"status": {"job_id": "1"}, "queue": [], "result": "ok"}
+
+    monkeypatch.setattr(hpc, "_broker", broker)
+    async def scenario():
+        await hpc.hpc_status("1")
+        await hpc.hpc_queue()
+        await hpc.hpc_cancel("1")
+    asyncio.run(scenario())
+    assert seen == ["/jobs/scheduler/status", "/jobs/scheduler/queue", "/jobs/scheduler/cancel"]
+
+
+def test_shared_status_fallback_stops_at_the_whole_call_deadline(tmp_path, cluster):
+    s = sched.Scheduler(cluster.s.hpc).session()
+    s.run("echo ready")
+    with hs.command_deadline(0.03):
+        with pytest.raises(hs.CommandTimeout):
+            s.run("sleep 10")
+        with pytest.raises(hs.SessionBusy, match="deadline"):
+            s.run("echo must-not-reconnect")
+    assert cluster.logins() == 1 and not s.connected
+
+
+def test_poller_and_staff_share_a_batch_in_the_same_request_only():
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    def statuses(ids):
+        calls.append((hb.current_request(), ids))
+        entered.set()
+        assert release.wait(5)
+        return {jid: sched.JobInfo(jid, "running") for jid in ids}
+
+    async def scenario():
+        r = Runner.__new__(Runner)
+        r.scheduler = SimpleNamespace(statuses=statuses)
+        poll = asyncio.create_task(r._shared_hpc_statuses("r1", ["1", "2", "3"]))
+        await asyncio.to_thread(entered.wait, 3)
+        staff = asyncio.create_task(r._shared_hpc_statuses("r1", ["2"]))
+        other = asyncio.create_task(r._shared_hpc_statuses("r2", ["2"]))
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(poll, staff, other)
+        assert len(calls) == 2 and {row[0] for row in calls} == {"r1", "r2"}
+    asyncio.run(scenario())
+
+
+def test_window_limit_notice_resumes_automatically_and_alerts_again_for_a_later_window(tmp_path, cluster, monkeypatch):
+    r, _ = runner_fixture(tmp_path, cluster)
+    now = [1000.0]
+    monkeypatch.setattr("labhq.runner.daemon.time.time", lambda: now[0])
+    stop = hb.LoginLimitReached("window", 1, 1)
+    stop.retry_after_s = 60
+    async def scenario():
+        for _ in range(2):
+            await r._notify_login_limit("request", stop, [{"task_id": "t0"}])
+        assert len(r.events) == 1
+        assert "자동으로" in r.events[0].data["text"] and "상한을 올리면" not in r.events[0].data["text"]
+        assert r.events[0].data["hpc_login_limit"]["retry_after_s"] == 60
+        now[0] += 61
+        await r._notify_login_limit("request", stop, [{"task_id": "t0"}])
+        assert len(r.events) == 2
+    asyncio.run(scenario())
+
+
+def test_rejected_submission_does_not_tell_pi_a_nonexistent_job_is_running(tmp_path, cluster):
+    r, _ = runner_fixture(tmp_path, cluster)
+    r.scheduler.session().run("echo ready")
+    r.scheduler.session().close()
+    async def scenario():
+        reply = await r._on_submit({"task_id": "t0", "agent_id": "employee0", "request_id": "request",
+                                    "script": str(r.workspaces["t0"].dir / "jobs/run.sh")})
+        assert "로그인 상한" in reply["error"] and r.jobs == {}
+        text = r.events[-1].data["text"]
+        assert "제출 요청" in text and "계속 돕니다" not in text and "상태 조회를 멈췄습니다" not in text
+        await r._notify_login_limit("request", hb.LoginLimitReached("day", 1, 1),
+                                   [{"task_id": "t0"}], operation="fetch")
+        assert "파일 회수" in r.events[-1].data["text"] and "계속 돕니다" not in r.events[-1].data["text"]
+    asyncio.run(scenario())
