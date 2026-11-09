@@ -1,0 +1,18 @@
+pr: 1339
+rows:
+- sha: 6cef6a1
+  at: 2026-11-09 19:13
+  text: 'v1.0 기본값: recruit.enabled·semantics.mode·research.semantic_report를 끈다. 코드는 남기고 설정에서 켜면 그대로 동작한다 (#1336).'
+  summary: v1.0에서는 온톨로지와 Paper2Agent 채용을 기본으로 끄고, 설정으로 다시 켤 수 있게 남겼습니다.
+- sha: a5e07ac
+  at: 2026-11-09 19:13
+  text: '켜진 기본값에 기대던 시험은 pre_v1_defaults fixture로 명시해서 켜고, init 기준값도 semantics off로 맞춘다 (#1336).'
+  summary: 기존 기능 시험은 그대로 두고, 새 기본값에서도 같은 기능을 켜서 검사하게 했습니다.
+- sha: 15b5e23
+  at: 2026-11-09 19:13
+  text: 'manual 15: 큐·노드 고정이 접속 명령 없는 프로필을 포함해 모든 제출에 붙고 다른 위치 지정은 업로드·승인 전에 거절된다고 고친다 (#1338 리뷰).'
+  summary: HPC 큐·노드 고정이 이제 모든 제출에 적용된다는 설정 안내로 고쳤습니다.
+- sha: b3ed966
+  at: 2026-11-09 19:14
+  text: 'manual 04·10 한·영에 v1.0 기본값(semantics off, recruit 끔, 꺼지면 doctor Paper2Agent skip)을 반영하고 read_scope 시험도 pre_v1_defaults로 켠다 (#1336).'
+  summary: 설치·파견직 안내를 v1.0 기본값에 맞췄습니다.

@@ -7,6 +7,8 @@ import pytest
 
 from scripts import ci_selection as s, ci_suite as suite
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 @pytest.mark.parametrize('node', [
     *(f'test_verified_paper_read_composes_with_dag_protection_and_native_write_denial[{i}]' for i in range(4)),

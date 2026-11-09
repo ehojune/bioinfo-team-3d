@@ -24,7 +24,7 @@ PowerShell:
 POSIX에서는 `./labhq.sh init`, `./labhq.sh -c config/labhq.yaml doctor`를 씁니다.
 
 `labhq init`은 예시 설정을 복사해 gateway token을 무작위로 만들고 HPC·bioinfo-agent 경로를 묻습니다.
-새 설정은 PI가 시험한 동작으로 시작합니다(#613): `research.enabled`·`research.evidence_checkpoint`, 분야 팩 `bulk_tumor_normal@3`·`single_cell_de@3`, `semantics: {mode: ab, actions: confirm}`, `plan.declare_output_types: true`, 그리고 의미 모델이 산출물 hash를 재도록 `runner.workspace_root`를 `internal` 구역으로 둡니다. 끄려면 설정에서 각 값을 바꾸세요. 이 목록은 `labhq/init_defaults.py`의 `REFERENCE_BEHAVIOUR`이고, `tests/test_init_defaults.py`가 예시 설정·`init` 결과와 어긋나면 실패합니다. 토큰·경로·사람 이름 같은 개인 값은 목록에 없습니다. `pipeline_pr` 동의, `dev_log.repo`, `BIOINFO_AGENT_DIR`은 사람이나 PC마다 달라 기본값으로 켜지 않고 묻거나 찾습니다. 이미 있는 설정은 옮기지 않습니다.
+새 설정은 PI가 시험한 동작으로 시작합니다(#613): `research.enabled`·`research.evidence_checkpoint`, 분야 팩 `bulk_tumor_normal@3`·`single_cell_de@3`, `plan.declare_output_types: true`, 그리고 의미 모델이 산출물 hash를 재도록 `runner.workspace_root`를 `internal` 구역으로 둡니다. v1.0에서는 온톨로지(`semantics: {mode: "off", actions: confirm}`, `research.semantic_report: false`)와 Paper2Agent 채용(`recruit.enabled: false`)을 꺼 둡니다(#1336). 켜려면 `semantics.mode`를 `ab`로, 나머지를 `true`로 바꿉니다. 끄려면 설정에서 각 값을 바꾸세요. 이 목록은 `labhq/init_defaults.py`의 `REFERENCE_BEHAVIOUR`이고, `tests/test_init_defaults.py`가 예시 설정·`init` 결과와 어긋나면 실패합니다. 토큰·경로·사람 이름 같은 개인 값은 목록에 없습니다. `pipeline_pr` 동의, `dev_log.repo`, `BIOINFO_AGENT_DIR`은 사람이나 PC마다 달라 기본값으로 켜지 않고 묻거나 찾습니다. 이미 있는 설정은 옮기지 않습니다.
 bioinfo-agent 폴더는 `--bioinfo-agent <폴더>`, 이미 있는 `BIOINFO_AGENT_DIR`, `D:/bioinfo-agent`·`~/bioinfo-agent` 같은 흔한 위치, WSL의 `/mnt/d/bioinfo-agent` 순으로 찾습니다. 못 찾으면 묻고(`--yes`면 묻지 않음) 끝내 모르면 "bioinfo-agent 연결 안 됨 — …"을 알리고 연결 없이 설정을 씁니다. 찾거나 받은 경로는 상대 경로여도 절대 경로로 바꿔 저장합니다(직원 task는 자기 작업 폴더 기준으로 상대 경로를 읽어 연결이 깨지기 때문입니다). `doctor`의 `bioinfo-agent` 행이 연결 여부를 warn으로 알리고, 상대 경로로 적힌 설정도 warn합니다.
 `dev_log.repo`(개발 기록을 올릴 비공개 저장소)는 `init`이 owner/name으로 한 번 묻고 Enter면 비워 둡니다. 비어 있으면 기록은 이 PC에만 남고 `doctor`의 `dev log` 행이 설정하는 법을 알려 줍니다.
 새 설정에서는 pipeline 코드의 공개 PR 기여 동의도 묻습니다. `y`(대소문자 무관)만 동의이며 Enter·`--yes`·그 밖의 답은 끔입니다.
@@ -74,9 +74,9 @@ doctor는 roster가 쓰는 엔진만 검사하고, 생략한 네트워크·dry-r
 
 | doctor 항목 | 판정 | 고치는 명령 |
 |---|---|---|
-| Paper2Agent | recruiter·skill이 없거나 설정한 commit과 설치본이 다르면 fail. mock·데모는 skip | `labhq doctor --fix` |
+| Paper2Agent | `recruit.enabled: true`일 때 recruiter·skill이 없거나 설정한 commit과 설치본이 다르면 fail. 꺼져 있으면(v1.0 기본)·mock·데모는 skip | `labhq doctor --fix` |
 
-`--fix`는 설정한 `recruit.skill_commit`에 맞춰 Paper2Agent를 설치한 뒤 다시 검사합니다. 다운로드에 실패하면 네트워크·source/ref 확인 안내와 fail을 남깁니다. 별도 설정 파일을 쓴다면 같은 `-c <config>`를 붙이세요. `init`은 설치 검사를 미루며 skill을 내려받지 않습니다. 이후 실제 직원 실행 전에는 `doctor --fix`를 실행하세요.
+`--fix`는 설정한 `recruit.skill_commit`에 맞춰 Paper2Agent를 설치한 뒤 다시 검사합니다. 다운로드에 실패하면 네트워크·source/ref 확인 안내와 fail을 남깁니다. 별도 설정 파일을 쓴다면 같은 `-c <config>`를 붙이세요. `init`은 설치 검사를 미루며 skill을 내려받지 않습니다. 채용을 켠 인스턴스는 실제 직원 실행 전에 `doctor --fix`를 실행하세요.
 
 직원 모델도 함께 봅니다. Claude는 `haiku`·`sonnet`·`opus` 별칭과 `claude-<family>-<version>` 형식을 검사합니다. Codex는 직원 전용 `CODEX_HOME/models_cache.json`이 있을 때만 그 안의 slug와 대조하고, 파일이 없으면 skip합니다. 최소 CLI는 아래와 같습니다. 더 낮으면 adapter의 격리·결과 계약을 보장할 수 없어 fail, 판본을 읽지 못하면 warn입니다.
 

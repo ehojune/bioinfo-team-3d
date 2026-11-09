@@ -12,6 +12,8 @@ from labhq.research import continuation
 from labhq.settings import Settings
 from tests.test_research_protocol import valid_plan
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 def _settings(tmp_path):
     s = Settings()

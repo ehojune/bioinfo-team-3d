@@ -14,6 +14,8 @@ from tests.test_paper_skill_attach import runner
 from tests.test_recruit_before_plan import proposal, hire_task
 from tests.test_research_protocol import MiniHub, valid_plan
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 @pytest.mark.asyncio
 async def test_conversion_cost_reaches_budget_once_even_after_recovery(runner, monkeypatch):

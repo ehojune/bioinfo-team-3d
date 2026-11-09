@@ -11,6 +11,8 @@ from tests.test_paper_skill_attach import runner, deterministic_paper_io, build_
 from tests.test_ci807_research_regression import mock_native_boundaries  # noqa: F401
 from tests.test_step_inputs_665 import source, gate
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 async def run_paper(runner, monkeypatch, engine, ancestor=False, damage=None):
     r, _ = runner

@@ -1,10 +1,14 @@
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
+
 from labhq.portfolio import broken_markdown_links, build_portfolio_files, internal_data_steps
 from labhq.settings import DataZone, Settings
 
 from test_portfolio_edition import PAPER, portfolio_fixture
+
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
 
 
 def branched_fixture(tmp_path: Path):

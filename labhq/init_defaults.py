@@ -18,7 +18,7 @@ REFERENCE_BEHAVIOUR: tuple[tuple[str, Any], ...] = (
     ("research.enabled", True),
     ("research.evidence_checkpoint", True),
     ("research.active_packs", ["bulk_tumor_normal@3", "single_cell_de@3"]),
-    ("semantics.mode", "ab"),
+    ("semantics.mode", "off"),  # v1.0 keeps the ontology off (#1336); #613 tested "ab"
     ("semantics.actions", "confirm"),
     ("plan.declare_output_types", True),
 )

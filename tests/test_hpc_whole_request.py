@@ -15,6 +15,8 @@ from labhq.evidence.audit import verify_request
 from tests.test_cso import FakeHub, result
 from tests.test_workspace_boundary import _settings
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 def hub_for(dispatch, scheduler="mock", online=True, tools=True):
     hub = FakeHub(dispatch)

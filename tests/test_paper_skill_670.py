@@ -6,6 +6,8 @@ from labhq.recruit.paper_skills import attachments, cited_access, prepare_plan, 
 from labhq.settings import Settings
 from tests.test_paper_skill_attach import EVIDENCE, SELECTED
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 ROSTER = [{"id": "worker"}, {"id": "lit_scout"}]
 STEPS = [{"id": "s1", "agent_id": "worker"}, {"id": "s_lit", "agent_id": "lit_scout"},
          {"id": "s_lit2", "agent_id": "lit_scout"}]

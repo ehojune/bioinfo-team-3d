@@ -9,6 +9,8 @@ from labhq.orchestrator.cso import Orchestrator
 from labhq.recruit import paper_skills as ps
 from tests.test_paper_skill_waiting import Hub, ready, row
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 class RecoveredHub(Hub):
     dispatch = GatewayHub.dispatch

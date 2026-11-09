@@ -384,9 +384,9 @@ def test_the_report_skips_a_broken_section_and_proposes_removal_only_with_enough
     assert any(p.startswith("불일치") for p in acts.report(many, setting="shadow", on=True)["propose"])
 
 
-def test_the_example_config_a_new_init_copies_asks_for_ab_with_confirmed_actions():
-    """#613: `labhq init` turns the action layer on as `actions: confirm`; the settings test covers the rest."""
+def test_the_example_config_a_new_init_copies_keeps_semantics_off_with_confirmed_actions_ready():
+    """v1.0 ships semantics off (#1336); turning the mode back to ab gives #613's `actions: confirm`."""
     from labhq.settings import Settings
     settings = Settings.load(str(ROOT / "config" / "labhq.example.yaml"))
-    assert shadow.configured(settings) == "ab" and shadow.actions_setting(settings) == "confirm"
-    assert shadow.resolve(settings.semantics).actions is True
+    assert shadow.configured(settings) == "off" and settings.semantics["actions"] == "confirm"
+    assert shadow.resolve({**settings.semantics, "mode": "ab"}).actions is True

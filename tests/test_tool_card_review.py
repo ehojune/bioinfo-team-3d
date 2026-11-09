@@ -11,6 +11,8 @@ from tests.test_claude_staff_home import _staff
 from tests.test_private_paths import _capture_runner, _runner_settings
 from tests.test_tool_card_explain import system_commands
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures('system_commands')

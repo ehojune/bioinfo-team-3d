@@ -9,7 +9,7 @@ import yaml
 
 from labhq import bioinfo_link, cli, doctor, init_defaults, init_wizard as wizard
 from labhq.research.packs import check_configured_packs
-from labhq.settings import Settings
+from labhq.settings import RecruitSettings, ResearchSettings, Settings
 from labhq.tools.scheduler import Scheduler
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,7 +98,7 @@ def test_init_output_carries_the_reference_behaviour_and_loads(monkeypatch):
     assert settings.research.enabled and settings.research.evidence_checkpoint
     assert settings.research.active_packs == ["bulk_tumor_normal@3", "single_cell_de@3"]
     assert settings.plan.declare_output_types is True
-    assert settings.semantics == {"mode": "ab", "actions": "confirm"}
+    assert settings.semantics == {"mode": "off", "actions": "confirm"}  # v1.0 (#1336)
     check_configured_packs(settings)  # the gateway refuses to start on a pack it cannot load
 
 
@@ -359,3 +359,25 @@ def test_doctor_warns_when_the_configured_folder_is_relative_even_if_it_exists_h
                                                                     "env": {"BIOINFO_AGENT_DIR": "rel-config"}}}})
     row, = rows(settings, "bioinfo-agent")
     assert row["status"] == "warn" and "상대 경로" in row["detail"] and "절대 경로" in row["hint"]
+
+
+# v1.0 keeps the ontology and Paper2Agent hiring off by default; the code stays and an explicit setting turns it on (#1336).
+def test_v1_settings_without_the_keys_leave_hiring_and_the_ontology_off():
+    settings = Settings()
+    assert settings.recruit.enabled is False
+    assert settings.research.semantic_report is False
+    assert settings.semantics in (None, "off", False)
+
+
+@pytest.mark.parametrize("template", TEMPLATES, ids=["repository", "packaged"])
+def test_v1_example_configs_ship_hiring_and_the_ontology_off(template):
+    data = yaml.safe_load(template.read_text(encoding="utf-8"))
+    assert data["recruit"]["enabled"] is False
+    assert data["research"]["semantic_report"] is False
+    assert data["semantics"]["mode"] == "off"
+
+
+def test_v1_explicit_settings_still_turn_them_on():
+    assert RecruitSettings(enabled=True).enabled is True
+    assert ResearchSettings(semantic_report=True).semantic_report is True
+    assert Settings(semantics={"mode": "ab"}).semantics == {"mode": "ab"}

@@ -15,6 +15,8 @@ from labhq.models import AgentSpec, Engine, Task
 from labhq.recruit import paper2agent as p2a
 from labhq.settings import Settings
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 @pytest.fixture
 def case(tmp_path, monkeypatch):

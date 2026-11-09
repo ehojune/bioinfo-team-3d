@@ -61,14 +61,14 @@ class Refusal(Exception):
 
 
 class DisabledRecruit(unittest.TestCase):
-    def test_setting_defaults_on_and_rejects_coercion(self):
+    def test_setting_defaults_off_and_rejects_coercion(self):
         ns = extracted('labhq/settings.py', {'RecruitSettings'},
                        {'BaseModel': BaseModel, 'StrictBool': StrictBool, 'field_validator': field_validator,
                         'Literal': Literal, 're': re})
         cls = ns['RecruitSettings']
         cls.model_rebuild(_types_namespace=ns)
-        self.assertIs(cls().enabled, True)
-        self.assertIs(cls(enabled=False).enabled, False)
+        self.assertIs(cls().enabled, False)  # v1.0 (#1336)
+        self.assertIs(cls(enabled=True).enabled, True)
         for value in ('false', 'true', 0, 1, None, [], {}):
             with self.subTest(value=value), self.assertRaises(ValidationError): cls(enabled=value)
 

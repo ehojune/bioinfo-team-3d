@@ -81,3 +81,37 @@ def _no_host_wsl(monkeypatch):
     from labhq import wsl_setup
 
     monkeypatch.setattr(wsl_setup, "distributions", lambda: [])
+
+
+@pytest.fixture
+def pre_v1_defaults():
+    """Paper2Agent hiring and the semantic report on by default, as before #1336, for tests that exercise them.
+
+    v1.0 turns both off when the config omits them. A test that needs them on asks for this fixture by name.
+    """
+    from labhq.settings import RecruitSettings, ResearchSettings, Settings
+
+    fields = ((RecruitSettings, "enabled"), (ResearchSettings, "semantic_report"))
+    saved = [(model, name, model.model_fields[name].default) for model, name in fields]
+    nested = {name: Settings.model_fields[name].default for name in ("recruit", "research")}
+
+    def rebuild():
+        for model, _ in fields:
+            model.model_rebuild(force=True)
+        Settings.model_fields["recruit"].default = RecruitSettings()
+        Settings.model_fields["research"].default = ResearchSettings()
+        Settings.model_rebuild(force=True)
+
+    for model, name in fields:
+        model.model_fields[name].default = True
+    rebuild()
+    try:
+        yield
+    finally:
+        for model, name, value in saved:
+            model.model_fields[name].default = value
+        for model, _ in fields:
+            model.model_rebuild(force=True)
+        for name, value in nested.items():
+            Settings.model_fields[name].default = value
+        Settings.model_rebuild(force=True)

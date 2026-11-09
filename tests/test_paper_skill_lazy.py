@@ -17,6 +17,8 @@ from tests.test_paper_skill_attach import SELECTED, PRECEDENTS
 from tests.test_research_protocol import MiniHub, valid_plan
 from tests.test_ci807_research_regression import mock_native_boundaries  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 @pytest.fixture(autouse=True)
 def fake_host(monkeypatch):

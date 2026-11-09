@@ -2,7 +2,7 @@
 
 ## Contract staff (Paper2Agent)
 
-The default of `recruit.enabled` is `true`. An instance that does not use hiring or paper skills sets it to `false`. Then direct hiring and installation, plan conversion and deferred preparation, attaching paper skills, and contract activation, extension and rehire are refused, while contract release is allowed. `doctor` skips only the Paper2Agent check that is explicitly turned off, and `--fix` does not install either. With the default settings, a missing recruiter or skill keeps failing. Other staff's ordinary work and the authentication and runtime checks are unchanged.
+Since v1.0 the default of `recruit.enabled` is `false` (#1336). An instance that uses hiring or paper skills sets it to `true`. While it is off, direct hiring and installation, plan conversion and deferred preparation, attaching paper skills, and contract activation, extension and rehire are refused, while contract release is allowed. `doctor` skips the Paper2Agent check, and `--fix` does not install either. With it turned on, a missing recruiter or skill fails. Other staff's ordinary work and the authentication and runtime checks are unchanged.
 
 ```mermaid
 flowchart LR
