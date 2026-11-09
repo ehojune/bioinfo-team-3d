@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:40 | [`29903e3`](https://github.com/ehojune/bioinfo-team-3d/pull/1361/commits/29903e3) | **HPC 잡 로그와 잡이 남긴 .log·.out·.err 파일을 이 PC로 가져올 때, 쓰기 전에 원격 경로·계정·사이트 이름을 가립니다. 가리기 전 원본은 클러스터에만 남고 표 같은 데이터 파일은 바꾸지 않습니다.**<br>hpc_transfer에 Transfer.hide_log·fetch_log, fetch_results가 잡 로그와 로그 확장자 결과를 fetch_log로 받고 fetch.json에 redacted·remote_sha256 기록, manual 09 한영, 시험 4건 (#1357) |
+| 06:16 | [`71895cc`](https://github.com/ehojune/bioinfo-team-3d/pull/1358/commits/71895cc) | **판정 스크립트의 기존 시험을 되살리고, 공백으로 쓴 ssh 옵션(-o 'User x')에서도 사용자·호스트를 찾게 했습니다.**<br>test_judge_1331.py 기존 23건 복원·새 시험 4건 추가, argv_terms의 -o 공백형 지원 (#1331) |
+| 06:02 | [`3f4d968`](https://github.com/ehojune/bioinfo-team-3d/pull/1358/commits/3f4d968) | **airway 시운전 판정의 공개 산출물 검사가 접속 명령의 ssh 옵션 값(yes 같은 흔한 단어)을 사이트 정보로 잡던 오탐을 고쳤습니다.**<br>judge_1331: connect_argv는 argv_terms로만, 루프백 제외, 시험 3건 (#1331) |
 | 05:19 | [`559aaed`](https://github.com/ehojune/bioinfo-team-3d/pull/1356/commits/559aaed) | **옵션 값 안에 든 Windows 경로도 드라이브 글자로 쪼개지지 않게 했습니다.**<br>value_terms: 드라이브 경로를 먼저 findall로 떼어 내고 나머지만 분할 (#1331) |
 | 05:07 | [`52e5b9d`](https://github.com/ehojune/bioinfo-team-3d/pull/1356/commits/52e5b9d) | **판정의 공개 산출물 검사가 짧은 사이트 이름이나 옵션 안의 경로를 다시 빠뜨리지 않게, Windows 드라이브 경로만 통째로 다룹니다.**<br>value_terms: 길이 필터와 슬래시 규칙을 빼고 드라이브 경로만 분할 제외 (#1331) |
 | 04:54 | [`6b99115`](https://github.com/ehojune/bioinfo-team-3d/pull/1356/commits/6b99115) | **airway 시운전 판정에서 공개 산출물 검사가 Windows 경로의 드라이브 글자 하나를 사이트 정보로 잘못 잡던 문제를 고쳤습니다.**<br>tools/trial/judge_1331.py value_terms: 경로는 통째로, 3글자 미만 조각 제외 (#1331) |

@@ -4,6 +4,39 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1357 HPC 잡 로그 가림 (할 일 1, P1)
+
+## 결론
+잡 로그(`.out`·`.err`)와 잡이 결과로 남긴 `.log`·`.out`·`.err` 파일은 이 PC에 쓰기 전에 원격 경로·계정·사이트 이름을 가린다. #1331 4회차에서 `work/logs/de_py.log`·`figures.log`에 scratch 경로와 계정이 그대로 들어온 결함을 막는다.
+
+## 바뀐 것
+- `labhq/hpc_transfer.py`: `Transfer.hide_log`(기존 `_hide` + 원격 작업 폴더 경로의 폴더 이름 + 남은 절대 경로), `Transfer.fetch_log`(받은 바이트를 가린 뒤에만 기록). `fetch_results`가 잡 로그와 로그 확장자 결과를 이 경로로 받고, `fetch.json`에 가린 파일의 sha256과 원본 `remote_sha256`, `redacted`를 남긴다. 원격 데이터 폴더(#1348)와 옛 작업 폴더 경로 둘 다.
+- manual 09 한영 한 문장.
+
+## 실행한 것
+- 새 시험 4건(`tests/test_hpc_transfer_1308.py`): 가림 단위, 깨끗한 로그 무변화, runner 회수 통합(잡 로그·결과 로그 가림, 데이터 파일 무변화, 영수증), 원격 데이터 폴더 경로(Linux CI 전용, Windows에서는 skip).
+- `test_hpc_transfer_1308.py`·`test_hpc_remote_data.py`·`test_hpc_session_1299.py`·`test_hpc_whole_request.py` 220건 통과, 34건 skip(로컬 Windows).
+
+## 미해결
+- 할 일 2(끝난 단계에 늦게 온 잡 결과)는 이 PR에 없다. wake_limit으로 끝난 단계의 잡은 CSO가 살려 둔 채 runner에 알리지 않아, runner만으로는 "잡 대기 중"과 "단계 끝"을 가를 수 없다. `cso.py`와 `runner/daemon.py`가 필요해 총괄 판단을 기다린다.
+- 공유 파일시스템 사이트(`remote_workdir` 없음)는 scheduler가 로그를 직접 쓰므로 이 가림을 거치지 않는다.
+
+# 2026-11-10 claude-worker1 — #1331 r6: 판정 스크립트 ssh 옵션 오탐
+
+## 결론
+4회차 판정의 public FAIL 가운데 다수가 오탐이었습니다. 사이트 프로필의 접속 명령을 일반 설정값처럼 `=`에서 나눠 `yes`·`BatchMode` 같은 단어를 사이트 용어로 보았기 때문입니다. 접속 명령은 로그인 이름·호스트만 뽑게 고쳤습니다. 4회차의 실제 누출(잡 로그 2개의 원격 경로·계정)은 그대로 남고, #1357에서 다룹니다.
+
+## 바뀐 것
+- `tools/trial/judge_1331.py`: `connect_argv`는 `argv_terms`로만 읽고, 루프백 주소는 제외
+- `tools/trial/test_judge_1331.py`: 시험 3건
+
+## 실행한 것
+- `pytest tools/trial/test_judge_1331.py`: 3 passed
+- PI 설정으로 사이트 용어 확인: 남은 것은 원격 경로·계정·큐·노드·로컬 계정·프로필 이름뿐
+
+## 미해결
+- 5회차는 #1357 병합 뒤 진행합니다.
+
 # 2026-11-10 claude-worker1 — #1331 r5: 4회차 점검과 판정 스크립트 오탐
 
 ## 결론
