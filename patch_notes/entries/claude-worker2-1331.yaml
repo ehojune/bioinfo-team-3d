@@ -8,3 +8,7 @@ rows:
   at: 2026-11-09 17:40
   text: '#1331 과제를 scDRS(Zhang 2022 Nat Genet) 재현으로 바꿈. 판정표 tools/trial/scdrs_1331_table.tsv(저자 배포 supp_tables.xlsx ST14에서 연관 19쌍·비연관 5쌍, 실행 전 고정), 실행 결과 assoc_mcp 전체에 BH를 다시 적용하는 repro 검사와 Paper2Agent 파견직이 scDRS 단계를 수행했는지 보는 hire 검사, 새 요청문. 리뷰 지적 반영: session은 실제 겹친 구간만 세고, 사이트 용어는 ssh -l·-J·-o·목적지에서도 뽑는다'
   summary: 시운전 과제를 논문 방법 재현으로 바꾸고, 논문 결과를 미리 고정한 판정표로 재현 여부를 기계 판정합니다.
+- sha: '2cac628'
+  at: 2026-11-09 17:55
+  text: '#1331을 airway RNA-seq 다중 직원 HPC 시운전으로 되돌림(PI v1.0 범위 동결로 Paper2Agent 제외, 4d51f63의 scDRS 판정표·요청문 제거). 리뷰 수정은 유지: session은 실제 겹친 구간만, 사이트 용어는 ssh -l·-J·-o·목적지에서도 뽑고, DE 표가 여럿이면 1만 행·5개 상향을 모두 만족하는 표를 먼저 고른다. 실행 절차에 recruit·semantics 끔과 노드 고정 확인 추가'
+  summary: 시운전 과제를 airway RNA-seq로 되돌리고, 판정 스크립트의 로그인·공개 검사 오류를 고친 상태로 유지합니다.
