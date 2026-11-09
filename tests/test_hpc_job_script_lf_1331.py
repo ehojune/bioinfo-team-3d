@@ -51,3 +51,17 @@ async def test_submit_refuses_crlf_input_before_anything_is_written(tmp_path, mo
         await hpc_mcp.hpc_submit("bash scripts/fetch.sh", "s1", inputs=["scripts/fetch.sh"])
     assert "CRLF" in str(caught.value) and "scripts/fetch.sh" in str(caught.value)
     assert not (work / "jobs").exists()
+
+
+def test_crlf_check_stays_inside_the_workspace(tmp_path):
+    work, outside = tmp_path / "task", tmp_path / "outside"
+    work.mkdir()
+    outside.mkdir()
+    (outside / "x.sh").write_bytes(b"#!/bin/bash\r\n")
+    if os.name == "nt":
+        import _winapi
+
+        _winapi.CreateJunction(str(outside), str(work / "dir"))
+    else:
+        (work / "dir").symlink_to(outside, target_is_directory=True)
+    assert hpc_mcp.crlf_shell_inputs(work, ["dir/x.sh", str(outside / "x.sh")]) == []

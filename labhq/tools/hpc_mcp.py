@@ -18,7 +18,7 @@ import httpx
 
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import chmod_owned, plain_directory, read_owned, write_owned, write_owned_bytes
-from ..hpc_transfer import UPLOAD_BUDGET_S
+from ..hpc_transfer import UPLOAD_BUDGET_S, TransferError, read_confined
 from ..settings import Settings
 from ._mcpcompat import make_server, tool_failure
 from .scheduler import (
@@ -274,20 +274,18 @@ SHELL_SUFFIXES = {".sh", ".bash"}
 
 def crlf_shell_inputs(workdir: Path, inputs: list[str]) -> list[str]:
     """The shell scripts among ``inputs`` that have CRLF line endings (#1331). A script written on Windows with
-    PowerShell or a CRLF editor runs on the cluster's bash as `cmd\\r`, which fails with a confusing error long after the
-    submit. Only regular files are read (a link is skipped), and only the first 512 KiB, the upload limit."""
+    PowerShell or a CRLF editor runs on the cluster's bash as `cmd\r`, which fails with a confusing error long after the
+    submit. Each file is read with ``read_confined`` (held, no-follow folder handles inside the workspace, the upload
+    size limit), so a link, an absolute path or a special file is skipped, never followed or opened; the upload step
+    refuses those itself."""
     found = []
     for relative in inputs:
-        path = workdir / relative
         try:
-            info = os.lstat(path)
-            if not stat.S_ISREG(info.st_mode):
-                continue
-            with open(path, "rb") as fh:
-                head = fh.read(512 * 1024)
-        except OSError:
+            head = read_confined(workdir, relative, 512 * 1024)
+        except (TransferError, OSError, ValueError):
             continue
-        shell = path.suffix.lower() in SHELL_SUFFIXES or (head.startswith(b"#!") and b"sh" in head.split(b"\n", 1)[0])
+        shell = Path(relative).suffix.lower() in SHELL_SUFFIXES or (
+            head.startswith(b"#!") and b"sh" in head.split(b"\n", 1)[0])
         if shell and b"\r\n" in head:
             found.append(relative)
     return found
