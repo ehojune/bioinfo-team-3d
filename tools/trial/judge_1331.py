@@ -1,0 +1,438 @@
+"""Judge the #1331 trial: airway RNA-seq (GSE52778) run by several staff on one HPC node.
+
+Five checks, each PASS/FAIL/SKIP with its evidence; exit 0 only when every check that ran passed and none was skipped
+without --allow-skip.
+
+  genes     DUSP1, KLF15, PER1, TSC22D3, ZBTB16, FKBP5: at least 5 up (log2FC > 0) with padj < 0.05 (Himes 2014).
+  overlap   two or more HPC-using staff steps of the request ran at the same time.
+  session   while those steps overlapped, at most one HPC login was recorded (they shared one session).
+  window    no 60-minute window holds more than 2 HPC logins (whole ledger around the request).
+  verify    `labhq verify <request>` exits 0.
+  public    no site term (host, user, remote path, queue) appears in the request's report or bundle text files.
+
+Start ``--watch`` right after the request is created: the events table keeps only recent events, so
+dispatch/result times are recorded while the run goes (see read_events). Read only: the state database and the login ledger are opened with ``mode=ro``. Site terms are never printed, only
+which file held how many. Run it with the instance's python so ``labhq`` imports:
+
+    python -I tools/trial/judge_1331.py --config <labhq.yaml> --request <req_id> [--de <table>] [--json <out>]
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import re
+import sqlite3
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+GENES = {  # symbol -> Ensembl gene id (GRCh38; version suffix ignored)
+    "DUSP1": "ENSG00000120129", "KLF15": "ENSG00000163884", "PER1": "ENSG00000179094",
+    "TSC22D3": "ENSG00000157514", "ZBTB16": "ENSG00000109906", "FKBP5": "ENSG00000096060",
+}
+NEED_GENES = 5
+MIN_ROWS = 10000  # a genome-wide table, not six hand-picked rows
+PADJ = 0.05
+WINDOW_S = 3600
+WINDOW_MAX = 2
+SESSION_MAX = 1
+HPC_TOOL = re.compile(r"\bhpc_[a-z_]+\b|mcp__[A-Za-z0-9_-]*hpc[A-Za-z0-9_-]*")
+FC_NAMES = ("log2foldchange", "log2fc", "logfc", "log2_fold_change")
+PADJ_NAMES = ("padj", "fdr", "adj.p.val", "adj_p_val", "qvalue", "q_value", "p_adj", "adj_pval")
+TEXT_SUFFIXES = {".md", ".txt", ".html", ".json", ".csv", ".tsv", ".yaml", ".yml", ".log", ".py", ".r", ".sh", ".tex"}
+
+
+def result(name: str, status: str, detail: str, **evidence) -> dict:
+    return {"check": name, "status": status, "detail": detail, **evidence}
+
+
+# ----- genes -----
+def _pick(header: list[str], names: tuple[str, ...]) -> int | None:
+    low = [h.strip().strip('"').lower() for h in header]
+    for name in names:
+        if name in low:
+            return low.index(name)
+    return None
+
+
+def read_de(path: Path) -> dict[str, tuple[float, float]]:
+    """{symbol: (log2FC, padj)} for the six genes found in a CSV/TSV DE table. A row matches on any cell equal to the
+    symbol or the Ensembl id (version stripped); NA values are skipped."""
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    dialect = "excel-tab" if text.split("\n", 1)[0].count("\t") > text.split("\n", 1)[0].count(",") else "excel"
+    rows = list(csv.reader(text.splitlines(), dialect=dialect))
+    if not rows:
+        return {}
+    header = rows[0]
+    fc, padj = _pick(header, FC_NAMES), _pick(header, PADJ_NAMES)
+    if fc is None or padj is None:
+        return {}
+    by_key = {}
+    for symbol, ensg in GENES.items():
+        by_key[symbol.upper()] = symbol
+        by_key[ensg] = symbol
+    found: dict[str, tuple[float, float]] = {}
+    for row in rows[1:]:
+        if len(row) <= max(fc, padj):
+            continue
+        symbol = None
+        for cell in row:
+            key = cell.strip().strip('"').split(".")[0].upper()
+            if key in by_key:
+                symbol = by_key[key]
+                break
+        if symbol is None or symbol in found:
+            continue
+        try:
+            found[symbol] = (float(row[fc]), float(row[padj]))
+        except ValueError:
+            continue
+    return found
+
+
+def find_de_tables(root: Path) -> list[Path]:
+    """CSV/TSV files under ``root`` whose header has a fold-change and an adjusted-p column."""
+    out = []
+    for path in sorted(root.rglob("*")):
+        if path.suffix.lower() not in {".csv", ".tsv", ".txt"} or not path.is_file() or path.stat().st_size > 200 << 20:
+            continue
+        try:
+            with path.open(encoding="utf-8-sig", errors="replace") as fh:
+                first = fh.readline()
+        except OSError:
+            continue
+        header = re.split(r"[\t,]", first)
+        if _pick(header, FC_NAMES) is not None and _pick(header, PADJ_NAMES) is not None:
+            out.append(path)
+    return out
+
+
+def check_genes(tables: list[Path]) -> dict:
+    if not tables:
+        return result("genes", "FAIL", "DE 표(log2FC·padj 열)를 찾지 못했습니다")
+    best = None
+    for table in tables:
+        found = read_de(table)
+        up = sorted(s for s, (fc, p) in found.items() if fc > 0 and p < PADJ)
+        with table.open(encoding="utf-8-sig", errors="replace") as fh:
+            n_rows = max(sum(1 for _ in fh) - 1, 0)
+        row = {"table": str(table), "rows": n_rows, "up": up, "values": {s: {"log2fc": v[0], "padj": v[1]} for s, v in found.items()},
+               "missing": sorted(set(GENES) - set(found))}
+        if best is None or len(up) > len(best["up"]):
+            best = row
+    ok = len(best["up"]) >= NEED_GENES and best["rows"] >= MIN_ROWS
+    down = sorted(s for s, v in best["values"].items() if v["log2fc"] < 0 and v["padj"] < PADJ)
+    hint = " (유의하게 하향인 유전자가 많으면 대조 방향이 dex 대 untreated의 반대인지 확인)" if len(down) >= NEED_GENES else ""
+    return result("genes", "PASS" if ok else "FAIL", f"6개 중 {len(best['up'])}개 상향·padj<{PADJ}, 표 {best['rows']}행(하한 {MIN_ROWS}){hint}", **best)
+
+
+# ----- steps and logins -----
+def ro(path: Path) -> sqlite3.Connection:
+    return sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=10)
+
+
+STEP_TYPES = {"task.dispatched", "task.result"}
+DONE_TYPES = {"request.completed", "request.failed", "request.cancelled"}
+
+
+def _slim(ev: dict, raw: str) -> dict:
+    data = ev.get("data") or {}
+    slim = {k: ev.get(k) for k in ("type", "ts", "task_id", "agent_id", "request_id")}
+    slim["data"] = {"step_id": data.get("step_id"), "attempt": data.get("attempt")}
+    slim["hpc"] = bool(HPC_TOOL.search(raw))
+    return slim
+
+
+def read_events(db_path: Path, request_id: str, log: Path | None = None) -> list[tuple[int, dict, float | None]]:
+    """(seq, event, seen_at) for the request's task.dispatched/task.result and its other events that mention an HPC
+    tool, oldest first.
+
+    The ``events`` table keeps only the latest events (replay retention), and the per-request archive
+    (``messenger_events``) keeps logs and approvals but not dispatch/result. So a run is watched while it goes
+    (``--watch`` appends to ``log`` with the time each event was first seen) and the verdict merges that log with what
+    the database still holds. An event without ts and not in the log takes the ts of the next live event that has one."""
+    found: dict[int, tuple[dict, float | None]] = {}
+    if log and log.exists():
+        for line in log.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                found[int(row["seq"])] = (row["event"], row.get("seen_at"))
+    db = ro(db_path)
+    try:
+        live = db.execute("SELECT seq, body FROM events ORDER BY seq").fetchall()
+        try:
+            archived = db.execute("SELECT seq, body FROM messenger_events WHERE request_id = ? ORDER BY seq",
+                                  (request_id,)).fetchall()
+        except sqlite3.OperationalError:
+            archived = []
+    finally:
+        db.close()
+    next_ts: dict[int, float] = {}
+    later: float | None = None
+    for seq, raw in reversed(live):
+        try:
+            ts = json.loads(raw).get("ts")
+        except ValueError:
+            ts = None
+        if isinstance(ts, (int, float)):
+            later = float(ts)
+        if later is not None:
+            next_ts[seq] = later
+    for seq, raw in [*archived, *live]:
+        if seq in found:
+            continue
+        try:
+            ev = json.loads(raw)
+        except ValueError:
+            continue
+        if ev.get("request_id") == request_id and (ev.get("type") in STEP_TYPES or HPC_TOOL.search(raw)):
+            found[seq] = (_slim(ev, raw), None)
+    out = []
+    for seq in sorted(found):
+        ev, seen = found[seq]
+        if seen is None and not isinstance(ev.get("ts"), (int, float)):
+            seen = next_ts.get(seq)
+        out.append((seq, ev, seen))
+    return out
+
+
+def watch(db_path: Path, request_id: str, log: Path, every: float, until: float) -> int:
+    """Append the request's dispatch/result/HPC events to ``log`` with the time first seen, until the request ends or
+    ``until`` (epoch seconds) passes. Safe to restart: rows already in the log are skipped."""
+    log.parent.mkdir(parents=True, exist_ok=True)
+    seen: set[int] = set()
+    if log.exists():
+        seen = {int(json.loads(line)["seq"]) for line in log.read_text(encoding="utf-8").splitlines() if line.strip()}
+    while time.time() < until:
+        now = time.time()
+        db = ro(db_path)
+        try:
+            rows = db.execute("SELECT seq, body FROM events ORDER BY seq").fetchall()
+        finally:
+            db.close()
+        ended = False
+        with log.open("a", encoding="utf-8") as fh:
+            for seq, raw in rows:
+                if seq in seen:
+                    continue
+                try:
+                    ev = json.loads(raw)
+                except ValueError:
+                    continue
+                if ev.get("request_id") != request_id:
+                    continue
+                ended = ended or ev.get("type") in DONE_TYPES
+                if ev.get("type") in STEP_TYPES or HPC_TOOL.search(raw):
+                    fh.write(json.dumps({"seq": seq, "seen_at": now, "event": _slim(ev, raw)}, ensure_ascii=False) + "\n")
+                    seen.add(seq)
+        if ended:
+            return 0
+        time.sleep(every)
+    return 0
+
+
+def step_intervals(db_path: Path, request_id: str, forced: set[str], log: Path | None = None) -> list[dict]:
+    """Each task of the request: dispatch (seq, ts), result (seq, ts), agent, step id, and whether it used HPC.
+
+    Overlap is judged on event order (seq), which the gateway assigns in arrival order; times are for the ledger."""
+    tasks: dict[str, dict] = {}
+    hpc_ids: set[str] = set()
+    for seq, ev, seen in read_events(db_path, request_id, log):
+        tid = ev.get("task_id")
+        if not tid:
+            continue
+        typ = ev.get("type")
+        ts = float(ev["ts"]) if isinstance(ev.get("ts"), (int, float)) else seen
+        if ev.get("hpc"):
+            hpc_ids.add(tid)
+        if typ == "task.dispatched" and tid not in tasks:
+            data = ev.get("data") or {}
+            tasks[tid] = {"task_id": tid, "agent_id": ev.get("agent_id"), "step_id": data.get("step_id"),
+                          "attempt": data.get("attempt"), "start_seq": seq, "start_ts": ts, "end_seq": None,
+                          "end_ts": None, "hpc": False}
+        elif typ == "task.result" and tid in tasks and tasks[tid]["end_seq"] is None:
+            tasks[tid]["end_seq"], tasks[tid]["end_ts"] = seq, ts
+    for task in tasks.values():
+        if task["task_id"] in hpc_ids or task["step_id"] in forced or task["task_id"] in forced:
+            task["hpc"] = True
+    return sorted(tasks.values(), key=lambda t: t["start_seq"])
+
+
+def overlapping_pairs(tasks: list[dict]) -> list[tuple[dict, dict]]:
+    hpc = [t for t in tasks if t["hpc"]]
+    pairs = []
+    for i, a in enumerate(hpc):
+        for b in hpc[i + 1:]:
+            if a["step_id"] == b["step_id"]:
+                continue  # a retry of the same step is not two staff steps
+            a_end = a["end_seq"] if a["end_seq"] is not None else float("inf")
+            if b["start_seq"] < a_end:
+                pairs.append((a, b))
+    return pairs
+
+
+def check_overlap(tasks: list[dict]) -> dict:
+    pairs = overlapping_pairs(tasks)
+    hpc = [{k: t[k] for k in ("task_id", "agent_id", "step_id", "start_seq", "end_seq")} for t in tasks if t["hpc"]]
+    shown = [[a["step_id"], b["step_id"]] for a, b in pairs]
+    if pairs:
+        return result("overlap", "PASS", f"HPC 단계 겹침 {len(pairs)}쌍", pairs=shown, hpc_steps=hpc)
+    return result("overlap", "FAIL", f"HPC를 쓴 단계 {len(hpc)}개, 겹친 쌍 없음", pairs=[], hpc_steps=hpc)
+
+
+def ledger_times(ledger: Path) -> list[tuple[float, str | None]]:
+    db = ro(ledger)
+    try:
+        return [(float(at), rid) for at, rid in db.execute("SELECT at, request_id FROM logins ORDER BY at")]
+    finally:
+        db.close()
+
+
+def check_session(tasks: list[dict], logins: list[tuple[float, str | None]]) -> dict:
+    pairs = overlapping_pairs(tasks)
+    if not pairs:
+        return result("session", "FAIL", "겹친 HPC 단계가 없어 세션 공유를 판정할 수 없습니다")
+    worst = None
+    for a, b in pairs:
+        start = min(x for x in (a["start_ts"], b["start_ts"]) if x is not None)
+        ends = [x for x in (a["end_ts"], b["end_ts"])]
+        end = max(ends) if all(e is not None for e in ends) else time.time()
+        n = sum(1 for at, _ in logins if start <= at <= end)
+        if worst is None or n > worst["logins"]:
+            worst = {"steps": [a["step_id"], b["step_id"]], "from": start, "to": end, "logins": n}
+    ok = worst["logins"] <= SESSION_MAX
+    return result("session", "PASS" if ok else "FAIL",
+                  f"겹친 단계가 돈 동안 로그인 최대 {worst['logins']}회(상한 {SESSION_MAX})", worst=worst)
+
+
+def check_window(logins: list[tuple[float, str | None]], span: tuple[float, float]) -> dict:
+    lo, hi = span[0] - WINDOW_S, span[1] + WINDOW_S
+    times = sorted(at for at, _ in logins if lo <= at <= hi)
+    peak, at_peak, j = 0, None, 0
+    for i, t in enumerate(times):
+        while times[j] <= t - WINDOW_S:
+            j += 1
+        if i - j + 1 > peak:
+            peak, at_peak = i - j + 1, t
+    ok = peak <= WINDOW_MAX
+    return result("window", "PASS" if ok else "FAIL", f"60분 창 최대 {peak}회(상한 {WINDOW_MAX}), 범위 안 로그인 {len(times)}회",
+                  peak=peak, peak_at=at_peak, logins=len(times))
+
+
+# ----- verify and public -----
+def check_verify(labhq_cmd: list[str], config: str, request_id: str) -> dict:
+    try:
+        proc = subprocess.run([*labhq_cmd, "-c", config, "verify", request_id, "--json"], capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", timeout=900)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return result("verify", "FAIL", f"labhq verify를 실행하지 못했습니다: {error}")
+    tail = (proc.stdout or proc.stderr or "").strip().splitlines()[-5:]
+    return result("verify", "PASS" if proc.returncode == 0 else "FAIL", f"labhq verify exit {proc.returncode}",
+                  exit=proc.returncode, tail=tail)
+
+
+def site_terms(settings, extra: Path | None) -> list[str]:
+    terms: set[str] = set()
+    hpc = settings.hpc
+    for value in (hpc.ssh_host, hpc.user, hpc.default_queue):
+        if value:
+            terms.add(str(value))
+    if hpc.site_profile:
+        from labhq.hpc_site import load_profile
+        profile = load_profile(hpc.site_profile)
+        for value in (profile.remote_workdir, profile.queue):
+            if value:
+                terms.add(value)
+        for word in profile.connect_argv:
+            if "@" in word:
+                terms.update(p for p in word.split("@") if p)
+            elif re.search(r"[A-Za-z]", word) and ("." in word or "/" in word) and not word.startswith("-"):
+                terms.add(word)
+    if extra:
+        terms.update(line.strip() for line in extra.read_text(encoding="utf-8").splitlines() if line.strip())
+    return sorted(t for t in terms if len(t) >= 4)
+
+
+def check_public(roots: list[Path], terms: list[str]) -> dict:
+    if not terms:
+        return result("public", "SKIP", "사이트 용어가 없어 검사하지 않았습니다(--site-terms 또는 hpc 설정 필요)")
+    hits = {}
+    scanned = 0
+    for root in roots:
+        if not root.exists():
+            continue
+        files = [root] if root.is_file() else [p for p in root.rglob("*") if p.is_file()]
+        for path in files:
+            if path.suffix.lower() not in TEXT_SUFFIXES or path.stat().st_size > 20 << 20:
+                continue
+            scanned += 1
+            text = path.read_text(encoding="utf-8", errors="replace")
+            n = sum(text.count(t) for t in terms)
+            if n:
+                hits[str(path)] = n
+    ok = not hits
+    return result("public", "PASS" if ok else "FAIL",
+                  f"텍스트 {scanned}개 검사, 사이트 용어 {len(terms)}개, 걸린 파일 {len(hits)}개", files=hits)
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--config", required=True, help="the instance's labhq.yaml")
+    ap.add_argument("--request", required=True, help="request id (req_…)")
+    ap.add_argument("--de", action="append", type=Path, default=[], help="DE table; default: search the request bundle")
+    ap.add_argument("--hpc-step", action="append", default=[], help="step or task id to count as HPC-using")
+    ap.add_argument("--site-terms", type=Path, help="local file, one extra site term per line (never committed)")
+    ap.add_argument("--labhq", default=None, help="labhq command (default: this python -m labhq.cli)")
+    ap.add_argument("--skip", action="append", default=[], choices=["genes", "overlap", "session", "window", "verify", "public"])
+    ap.add_argument("--json", type=Path, help="also write the full result here")
+    ap.add_argument("--events-log", type=Path, help="JSONL written by --watch (local; read by the verdict too)")
+    ap.add_argument("--watch", action="store_true", help="record the request's step events until it ends, then exit")
+    ap.add_argument("--every", type=float, default=10.0, help="--watch poll seconds")
+    ap.add_argument("--hours", type=float, default=24.0, help="--watch gives up after this many hours")
+    args = ap.parse_args(argv)
+
+    from labhq.settings import Settings
+    settings = Settings.load(args.config)
+    db = settings.path(settings.gateway.state_dir) / "gateway.sqlite3"
+    ledger = Path(settings.hpc._login_ledger) if settings.hpc._login_ledger else None
+    bundle = settings.path(settings.runner.workspace_root) / "requests" / args.request
+    labhq_cmd = args.labhq.split() if args.labhq else [sys.executable, "-m", "labhq.cli"]
+    if args.watch:
+        if not args.events_log:
+            ap.error("--watch needs --events-log")
+        return watch(db, args.request, args.events_log, args.every, time.time() + args.hours * 3600)
+
+    checks: list[dict] = []
+    if "genes" not in args.skip:
+        checks.append(check_genes(args.de or find_de_tables(bundle)))
+    tasks = step_intervals(db, args.request, set(args.hpc_step), args.events_log)
+    logins = ledger_times(ledger) if ledger and ledger.exists() else []
+    if "overlap" not in args.skip:
+        checks.append(check_overlap(tasks))
+    if "session" not in args.skip:
+        checks.append(check_session(tasks, logins) if ledger else result("session", "FAIL", "로그인 기록 파일이 없습니다"))
+    if "window" not in args.skip:
+        starts = [t["start_ts"] for t in tasks if t["start_ts"]]
+        ends = [t["end_ts"] for t in tasks if t["end_ts"]] or [time.time()]
+        span = (min(starts), max(ends)) if starts else (time.time() - 86400, time.time())
+        checks.append(check_window(logins, span) if ledger else result("window", "FAIL", "로그인 기록 파일이 없습니다"))
+    if "verify" not in args.skip:
+        checks.append(check_verify(labhq_cmd, args.config, args.request))
+    if "public" not in args.skip:
+        checks.append(check_public([bundle], site_terms(settings, args.site_terms)))
+
+    for c in checks:
+        print(f"{c['status']:4}  {c['check']:8} {c['detail']}")
+    passed = all(c["status"] == "PASS" for c in checks)
+    print("판정:", "PASS" if passed else "FAIL", f"({sum(c['status'] == 'PASS' for c in checks)}/{len(checks)})",
+          "· 건너뜀: " + ",".join(args.skip) if args.skip else "")
+    if args.json:
+        args.json.write_text(json.dumps({"request": args.request, "passed": passed, "checks": checks},
+                                        ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
