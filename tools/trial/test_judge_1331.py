@@ -75,7 +75,7 @@ def test_retry_of_same_step_is_not_a_pair(tmp_path):
 def test_session_counts_logins_inside_overlap(tmp_path):
     tasks = J.step_intervals(two_overlapping(tmp_path), REQ, set())
     assert J.check_session(tasks, [(50.0, None), (105.0, REQ)])["status"] == "PASS"
-    assert J.check_session(tasks, [(105.0, REQ), (200.0, REQ)])["status"] == "FAIL"
+    assert J.check_session(tasks, [(115.0, REQ), (200.0, REQ)])["status"] == "FAIL"
 
 
 def test_window_sliding():
@@ -84,34 +84,98 @@ def test_window_sliding():
     assert J.check_window([(0.0, None), (1000.0, None), (3600.0, None)], (0, 10))["peak"] == 2
 
 
-def write_de(path, rows, sep=","):
-    path.write_text("\n".join(sep.join(map(str, r)) for r in rows), encoding="utf-8")
-    return path
+def full_run(tmp_path, hits_assoc=19, hits_none=0, pairs=J.MIN_PAIRS, as_group_files=True):
+    """A synthetic run: the table's pairs plus filler pairs with p=0.9 (filler keeps BH at the paper's scale)."""
+    table = J.load_table()
+    assoc = [r for r in table if r["expect"] == "assoc"]
+    none = [r for r in table if r["expect"] == "none"]
+    rows = {}
+    for i, r in enumerate(assoc):
+        rows[(r["trait"], r["cell_type"].replace("_", " "))] = 1e-6 if i < hits_assoc else 0.5
+    for i, r in enumerate(none):
+        rows[(r["trait"], r["cell_type"])] = 1e-6 if i < hits_none else 0.8
+    for i in range(pairs - len(rows)):
+        rows[(f"TRAIT{i % 74}", f"filler cell {i}")] = 0.9
+    out = tmp_path / "run"
+    out.mkdir()
+    if as_group_files:
+        by_trait = {}
+        for (trait, cell), p in rows.items():
+            by_trait.setdefault(trait, []).append((cell, p))
+        for trait, cells in by_trait.items():
+            (out / f"{trait}.scdrs_group.cell_ontology_class").write_text(
+                "group\tn_cell\tassoc_mcp\n" + "".join(f"{c}\t10\t{p}\n" for c, p in cells), encoding="utf-8")
+    else:
+        (out / "celltype_assoc.tsv").write_text(
+            "trait\tcell_type\tassoc_mcp\n" + "".join(f"{t}\t{c}\t{p}\n" for (t, c), p in rows.items()),
+            encoding="utf-8")
+    return J.find_assoc_files(out), table
 
 
-def test_genes_pass_by_ensembl_with_version(tmp_path):
-    rows = [["", "baseMean", "log2FoldChange", "lfcSE", "pvalue", "padj"]]
-    for i, ensg in enumerate(J.GENES.values()):
-        rows.append([f"{ensg}.{i}", 100, 2.0 if i < 5 else -0.1, 0.1, 1e-9, 1e-6 if i < 5 else 0.9])
-    short = write_de(tmp_path / "short" / "de.csv", rows) if (tmp_path / "short").mkdir() is None else None
-    assert J.check_genes([short])["status"] == "FAIL"  # six rows are not a genome-wide table
-    rows += [[f"ENSG9{i:010d}", 10, 0.0, 0.1, 0.5, 0.9] for i in range(J.MIN_ROWS)]
-    table = write_de(tmp_path / "de.csv", rows)
-    assert table in J.find_de_tables(tmp_path)
-    out = J.check_genes([table])
-    assert out["status"] == "PASS" and len(out["up"]) == 5
+def test_table_is_fixed_from_paper():
+    table = J.load_table()
+    assert sum(r["expect"] == "assoc" for r in table) == 19 and sum(r["expect"] == "none" for r in table) == 5
+    assert all(float(r["paper_assoc_fdr"]) < 0.05 for r in table if r["expect"] == "assoc")
+    assert all(float(r["paper_assoc_fdr"]) >= 0.5 for r in table if r["expect"] == "none")
 
 
-def test_genes_fail_on_reversed_contrast_with_hint(tmp_path):
-    rows = [["gene", "logFC", "FDR"]] + [[s, -3.0, 1e-8] for s in J.GENES]
-    out = J.check_genes([write_de(tmp_path / "de.tsv", rows, "\t")])
-    assert out["status"] == "FAIL" and "반대" in out["detail"]
+def test_repro_pass_from_group_files(tmp_path):
+    files, table = full_run(tmp_path)
+    out = J.check_repro(files, table)
+    assert out["status"] == "PASS" and out["n_pairs"] == J.MIN_PAIRS
 
 
-def test_genes_na_skipped(tmp_path):
-    rows = [["symbol", "log2FoldChange", "padj"]] + [[s, "NA", "NA"] for s in J.GENES]
-    out = J.check_genes([write_de(tmp_path / "de.csv", rows)])
-    assert out["status"] == "FAIL" and len(out["missing"]) == 6
+def test_repro_combined_table_and_thresholds(tmp_path):
+    files, table = full_run(tmp_path, hits_assoc=15, hits_none=1, as_group_files=False)
+    assert J.check_repro(files, table)["status"] == "PASS"
+    (tmp_path / "run").rename(tmp_path / "old")
+    files, table = full_run(tmp_path, hits_assoc=14)
+    assert J.check_repro(files, table)["status"] == "FAIL"
+
+
+def test_repro_fails_on_off_block_hits_or_small_run(tmp_path):
+    files, table = full_run(tmp_path, hits_none=2)
+    assert J.check_repro(files, table)["status"] == "FAIL"
+    (tmp_path / "run").rename(tmp_path / "old")
+    files, table = full_run(tmp_path, pairs=100)  # only the table's traits: BH is not the paper's scale
+    assert J.check_repro(files, table)["status"] == "FAIL"
+    assert J.check_repro([], table)["status"] == "FAIL"
+
+
+def test_bh():
+    q = J.bh({"a": 0.01, "b": 0.04, "c": 0.03, "d": 0.5})
+    want = {"a": 0.04, "c": 0.04 * 4 / 3, "b": 0.04 * 4 / 3, "d": 0.5}  # c is lifted to b's q (monotone step-up)
+    assert all(abs(q[k] - v) < 1e-12 for k, v in want.items())
+
+
+def hire_req(agent="scdrs-hire", step_agent="scdrs-hire", status="active"):
+    return {"plan": {"recruit_results": [{"paper": "https://doi.org/10.1038/s41588-022-01167-z", "status": status,
+                                          "agent_id": agent, "step_ids": ["score"]}],
+                     "steps": [{"id": "score", "agent_id": step_agent}, {"id": "fetch", "agent_id": "engineer"}]}}
+
+
+def task(step, agent, ended=True):
+    return {"task_id": f"t-{step}-{agent}", "step_id": step, "agent_id": agent, "end_seq": 5 if ended else None}
+
+
+def test_hire():
+    assert J.check_hire(hire_req(), [task("score", "scdrs-hire")])["status"] == "PASS"
+    assert J.check_hire(hire_req(status="failed"), [task("score", "scdrs-hire")])["status"] == "FAIL"
+    assert J.check_hire(hire_req(step_agent="analyst"), [task("score", "analyst")])["status"] == "FAIL"
+    assert J.check_hire(hire_req(), [task("score", "scdrs-hire", ended=False)])["status"] == "FAIL"
+    assert J.check_hire(hire_req(), [task("score", "scdrs-hire"), task("score", "analyst")])["status"] == "FAIL"
+    assert J.check_hire({}, [])["status"] == "FAIL"
+
+
+def test_request_state_reads_plan(tmp_path):
+    db = tmp_path / "g.sqlite3"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE state (kind TEXT, key TEXT, body TEXT, PRIMARY KEY(kind, key))")
+    con.execute("INSERT INTO state VALUES ('request', ?, ?)", (REQ, json.dumps(hire_req())))
+    con.commit()
+    con.close()
+    assert J.request_state(db, REQ)["plan"]["recruit_results"][0]["agent_id"] == "scdrs-hire"
+    assert J.request_state(db, "other") == {}
 
 
 def test_public_scan_hides_terms(tmp_path):
@@ -152,3 +216,16 @@ def test_archive_marks_hpc(tmp_path):
     con.commit()
     con.close()
     assert J.step_intervals(db, REQ, set())[0]["hpc"]
+
+
+def test_argv_terms_all_ssh_forms():
+    assert J.argv_terms(["ssh", "-l", "alice", "cluster"]) == {"alice", "cluster"}
+    assert J.argv_terms(["ssh", "-p", "2222", "bob@login.example.org", "qstat"]) == {"bob", "login.example.org"}
+    assert J.argv_terms(["ssh", "-lcarol", "-J", "dave@jump01", "-o", "HostName=node9", "-i", "k.pem", "gw"]) == \
+        {"carol", "dave", "jump01", "node9", "gw"}
+
+
+def test_session_counts_only_the_overlap(tmp_path):
+    tasks = J.step_intervals(two_overlapping(tmp_path), REQ, set())  # overlap: 110 (index starts) .. 300 (index ends)
+    assert J.check_session(tasks, [(100.0, REQ), (350.0, REQ)])["status"] == "PASS"  # before and after the overlap
+    assert J.check_session(tasks, [(120.0, REQ), (200.0, REQ)])["status"] == "FAIL"

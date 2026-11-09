@@ -1,20 +1,22 @@
-"""Judge the #1331 trial: airway RNA-seq (GSE52778) run by several staff on one HPC node.
+"""Judge the #1331 trial: reproduce scDRS (Zhang 2022 Nat Genet) on one HPC node with a Paper2Agent hire.
 
-Five checks, each PASS/FAIL/SKIP with its evidence; exit 0 only when every check that ran passed and none was skipped
-without --allow-skip.
+Seven checks, each PASS/FAIL/SKIP with its evidence; exit 0 only when every check that ran passed.
 
-  genes     DUSP1, KLF15, PER1, TSC22D3, ZBTB16, FKBP5: at least 5 up (log2FC > 0) with padj < 0.05 (Himes 2014).
+  repro     the run's scDRS cell type-trait associations reproduce the fixed table ``scdrs_1331_table.tsv``
+            (paper values, written before the run): >=15 of 19 expected pairs q<0.05, <=1 of 5 off-block pairs.
+  hire      an active Paper2Agent contract hire for the scDRS paper ran the steps the plan gave it.
   overlap   two or more HPC-using staff steps of the request ran at the same time.
   session   while those steps overlapped, at most one HPC login was recorded (they shared one session).
   window    no 60-minute window holds more than 2 HPC logins (whole ledger around the request).
   verify    `labhq verify <request>` exits 0.
   public    no site term (host, user, remote path, queue) appears in the request's report or bundle text files.
 
-Start ``--watch`` right after the request is created: the events table keeps only recent events, so
-dispatch/result times are recorded while the run goes (see read_events). Read only: the state database and the login ledger are opened with ``mode=ro``. Site terms are never printed, only
-which file held how many. Run it with the instance's python so ``labhq`` imports:
+Start ``--watch`` right after the request is created: the events table keeps only recent events, so dispatch/result
+times are recorded while the run goes (see read_events). Read only: the state database and the login ledger are opened
+with ``mode=ro``. Site terms are never printed, only which file held how many. Run it with the instance's python so
+``labhq`` imports:
 
-    python -I tools/trial/judge_1331.py --config <labhq.yaml> --request <req_id> [--de <table>] [--json <out>]
+    python -I tools/trial/judge_1331.py --config <labhq.yaml> --request <req_id> --events-log <jsonl> [--json <out>]
 """
 from __future__ import annotations
 
@@ -28,104 +30,15 @@ import sys
 import time
 from pathlib import Path
 
-GENES = {  # symbol -> Ensembl gene id (GRCh38; version suffix ignored)
-    "DUSP1": "ENSG00000120129", "KLF15": "ENSG00000163884", "PER1": "ENSG00000179094",
-    "TSC22D3": "ENSG00000157514", "ZBTB16": "ENSG00000109906", "FKBP5": "ENSG00000096060",
-}
-NEED_GENES = 5
-MIN_ROWS = 10000  # a genome-wide table, not six hand-picked rows
-PADJ = 0.05
 WINDOW_S = 3600
 WINDOW_MAX = 2
 SESSION_MAX = 1
 HPC_TOOL = re.compile(r"\bhpc_[a-z_]+\b|mcp__[A-Za-z0-9_-]*hpc[A-Za-z0-9_-]*")
-FC_NAMES = ("log2foldchange", "log2fc", "logfc", "log2_fold_change")
-PADJ_NAMES = ("padj", "fdr", "adj.p.val", "adj_p_val", "qvalue", "q_value", "p_adj", "adj_pval")
 TEXT_SUFFIXES = {".md", ".txt", ".html", ".json", ".csv", ".tsv", ".yaml", ".yml", ".log", ".py", ".r", ".sh", ".tex"}
 
 
 def result(name: str, status: str, detail: str, **evidence) -> dict:
     return {"check": name, "status": status, "detail": detail, **evidence}
-
-
-# ----- genes -----
-def _pick(header: list[str], names: tuple[str, ...]) -> int | None:
-    low = [h.strip().strip('"').lower() for h in header]
-    for name in names:
-        if name in low:
-            return low.index(name)
-    return None
-
-
-def read_de(path: Path) -> dict[str, tuple[float, float]]:
-    """{symbol: (log2FC, padj)} for the six genes found in a CSV/TSV DE table. A row matches on any cell equal to the
-    symbol or the Ensembl id (version stripped); NA values are skipped."""
-    text = path.read_text(encoding="utf-8-sig", errors="replace")
-    dialect = "excel-tab" if text.split("\n", 1)[0].count("\t") > text.split("\n", 1)[0].count(",") else "excel"
-    rows = list(csv.reader(text.splitlines(), dialect=dialect))
-    if not rows:
-        return {}
-    header = rows[0]
-    fc, padj = _pick(header, FC_NAMES), _pick(header, PADJ_NAMES)
-    if fc is None or padj is None:
-        return {}
-    by_key = {}
-    for symbol, ensg in GENES.items():
-        by_key[symbol.upper()] = symbol
-        by_key[ensg] = symbol
-    found: dict[str, tuple[float, float]] = {}
-    for row in rows[1:]:
-        if len(row) <= max(fc, padj):
-            continue
-        symbol = None
-        for cell in row:
-            key = cell.strip().strip('"').split(".")[0].upper()
-            if key in by_key:
-                symbol = by_key[key]
-                break
-        if symbol is None or symbol in found:
-            continue
-        try:
-            found[symbol] = (float(row[fc]), float(row[padj]))
-        except ValueError:
-            continue
-    return found
-
-
-def find_de_tables(root: Path) -> list[Path]:
-    """CSV/TSV files under ``root`` whose header has a fold-change and an adjusted-p column."""
-    out = []
-    for path in sorted(root.rglob("*")):
-        if path.suffix.lower() not in {".csv", ".tsv", ".txt"} or not path.is_file() or path.stat().st_size > 200 << 20:
-            continue
-        try:
-            with path.open(encoding="utf-8-sig", errors="replace") as fh:
-                first = fh.readline()
-        except OSError:
-            continue
-        header = re.split(r"[\t,]", first)
-        if _pick(header, FC_NAMES) is not None and _pick(header, PADJ_NAMES) is not None:
-            out.append(path)
-    return out
-
-
-def check_genes(tables: list[Path]) -> dict:
-    if not tables:
-        return result("genes", "FAIL", "DE 표(log2FC·padj 열)를 찾지 못했습니다")
-    best = None
-    for table in tables:
-        found = read_de(table)
-        up = sorted(s for s, (fc, p) in found.items() if fc > 0 and p < PADJ)
-        with table.open(encoding="utf-8-sig", errors="replace") as fh:
-            n_rows = max(sum(1 for _ in fh) - 1, 0)
-        row = {"table": str(table), "rows": n_rows, "up": up, "values": {s: {"log2fc": v[0], "padj": v[1]} for s, v in found.items()},
-               "missing": sorted(set(GENES) - set(found))}
-        if best is None or len(up) > len(best["up"]):
-            best = row
-    ok = len(best["up"]) >= NEED_GENES and best["rows"] >= MIN_ROWS
-    down = sorted(s for s, v in best["values"].items() if v["log2fc"] < 0 and v["padj"] < PADJ)
-    hint = " (유의하게 하향인 유전자가 많으면 대조 방향이 dex 대 untreated의 반대인지 확인)" if len(down) >= NEED_GENES else ""
-    return result("genes", "PASS" if ok else "FAIL", f"6개 중 {len(best['up'])}개 상향·padj<{PADJ}, 표 {best['rows']}행(하한 {MIN_ROWS}){hint}", **best)
 
 
 # ----- steps and logins -----
@@ -296,12 +209,17 @@ def check_session(tasks: list[dict], logins: list[tuple[float, str | None]]) -> 
         return result("session", "FAIL", "겹친 HPC 단계가 없어 세션 공유를 판정할 수 없습니다")
     worst = None
     for a, b in pairs:
-        start = min(x for x in (a["start_ts"], b["start_ts"]) if x is not None)
-        ends = [x for x in (a["end_ts"], b["end_ts"])]
-        end = max(ends) if all(e is not None for e in ends) else time.time()
+        # The overlap itself: from the later start to the earlier end (a step still running ends now).
+        starts = [x for x in (a["start_ts"], b["start_ts"]) if x is not None]
+        if not starts:
+            continue
+        start = max(starts)
+        end = min(x if x is not None else time.time() for x in (a["end_ts"], b["end_ts"]))
         n = sum(1 for at, _ in logins if start <= at <= end)
         if worst is None or n > worst["logins"]:
             worst = {"steps": [a["step_id"], b["step_id"]], "from": start, "to": end, "logins": n}
+    if worst is None:
+        return result("session", "FAIL", "겹친 단계의 시작 시각이 없어 판정할 수 없습니다(--watch 기록 필요)")
     ok = worst["logins"] <= SESSION_MAX
     return result("session", "PASS" if ok else "FAIL",
                   f"겹친 단계가 돈 동안 로그인 최대 {worst['logins']}회(상한 {SESSION_MAX})", worst=worst)
@@ -321,6 +239,135 @@ def check_window(logins: list[tuple[float, str | None]], span: tuple[float, floa
                   peak=peak, peak_at=at_peak, logins=len(times))
 
 
+# ----- reproduction (scDRS cell type-trait table) -----
+TABLE = Path(__file__).with_name("scdrs_1331_table.tsv")
+NEED_ASSOC = 15     # of 19 expected associations
+MAX_NONE_HITS = 1   # of 5 expected non-associations
+MIN_PAIRS = 7000    # the run covers (nearly) all 74 traits x 120 cell types, so BH matches the paper's scale
+Q = 0.05
+PAPER = re.compile(r"scdrs|s41588-022-01167|36050550|martinjzhang", re.I)
+
+
+def norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(text).lower()).strip("_")
+
+
+def load_table(path: Path = TABLE) -> list[dict]:
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line and not line.startswith("#")]
+    return list(csv.DictReader(lines, delimiter="\t"))
+
+
+def _rows(path: Path) -> list[dict]:
+    text = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+    if not text:
+        return []
+    sep = "\t" if text[0].count("\t") >= text[0].count(",") else ","
+    return list(csv.DictReader(text, delimiter=sep))
+
+
+def read_assoc(paths: list[Path]) -> dict[tuple[str, str], float]:
+    """{(trait, cell type): assoc_mcp}, both normalized. Reads scDRS ``<trait>.scdrs_group.<column>`` files (first
+    column = cell type) and combined tables with trait, cell_type (or group) and assoc_mcp columns."""
+    out: dict[tuple[str, str], float] = {}
+    for path in paths:
+        for row in _rows(path):
+            low = {norm(k): v for k, v in row.items() if k is not None}
+            p = low.get("assoc_mcp")
+            if p in (None, "", "NA", "nan"):
+                continue
+            if ".scdrs_group." in path.name:
+                trait = path.name.split(".scdrs_group.")[0]
+                cell = next(iter(row.values()))  # the unnamed index column
+            else:
+                trait = low.get("trait")
+                cell = low.get("cell_type") or low.get("group") or low.get("celltype")
+            if not trait or not cell:
+                continue
+            try:
+                out[(norm(trait), norm(cell))] = float(p)
+            except ValueError:
+                continue
+    return out
+
+
+def find_assoc_files(root: Path) -> list[Path]:
+    if not root.exists():
+        return []
+    named = [p for p in root.rglob("*") if p.is_file() and ".scdrs_group." in p.name]
+    combined = [p for p in root.rglob("celltype_assoc.*") if p.is_file() and p.suffix in {".tsv", ".csv"}]
+    return named or combined
+
+
+def bh(pvalues: dict) -> dict:
+    """Benjamini-Hochberg q for every key."""
+    items = sorted(pvalues.items(), key=lambda kv: kv[1])
+    n = len(items)
+    q, running = {}, 1.0
+    for rank in range(n, 0, -1):
+        key, p = items[rank - 1]
+        running = min(running, p * n / rank)
+        q[key] = running
+    return q
+
+
+def check_repro(paths: list[Path], table: list[dict]) -> dict:
+    assoc = read_assoc(paths)
+    if not assoc:
+        return result("repro", "FAIL", "scDRS 세포 유형 연관 결과(assoc_mcp)를 찾지 못했습니다", files=[str(p) for p in paths])
+    q = bh(assoc)
+    rows, got_assoc, none_hits, missing = [], 0, 0, 0
+    for row in table:
+        key = (norm(row["trait"]), norm(row["cell_type"]))
+        mine = q.get(key)
+        hit = mine is not None and mine < Q
+        missing += mine is None
+        if row["expect"] == "assoc":
+            got_assoc += hit
+        else:
+            none_hits += hit
+        rows.append({"label": row["label"], "expect": row["expect"], "paper_fdr": float(row["paper_assoc_fdr"]),
+                     "run_p": assoc.get(key), "run_q": mine, "reproduced": hit if row["expect"] == "assoc" else not hit})
+    n_assoc = sum(r["expect"] == "assoc" for r in table)
+    n_none = len(table) - n_assoc
+    ok = got_assoc >= NEED_ASSOC and none_hits <= MAX_NONE_HITS and len(assoc) >= MIN_PAIRS
+    return result("repro", "PASS" if ok else "FAIL",
+                  f"연관 {got_assoc}/{n_assoc}(기준 {NEED_ASSOC}), 비연관인데 유의 {none_hits}/{n_none}(상한 {MAX_NONE_HITS}), "
+                  f"전체 쌍 {len(assoc)}(하한 {MIN_PAIRS}), 표에 없는 쌍 {missing}", pairs=rows, n_pairs=len(assoc),
+                  files=[str(p) for p in paths[:5]] + ([f"… {len(paths) - 5} more"] if len(paths) > 5 else []))
+
+
+# ----- Paper2Agent hire -----
+def request_state(db_path: Path, request_id: str) -> dict:
+    db = ro(db_path)
+    try:
+        row = db.execute("SELECT body FROM state WHERE kind = 'request' AND key = ?", (request_id,)).fetchone()
+    finally:
+        db.close()
+    return json.loads(row[0]) if row else {}
+
+
+def check_hire(req: dict, tasks: list[dict]) -> dict:
+    """An active Paper2Agent contract hire for the scDRS paper, assigned to its steps, that ran at least one of them."""
+    plan = req.get("plan") or {}
+    hires = [r for r in plan.get("recruit_results") or []
+             if r.get("status") == "active" and r.get("agent_id") and PAPER.search(json.dumps(r, ensure_ascii=False))]
+    if not hires:
+        seen = [{k: r.get(k) for k in ("paper", "status", "error", "agent_id")} for r in plan.get("recruit_results") or []]
+        return result("hire", "FAIL", "scDRS 논문의 활성 파견직 채용 기록이 없습니다", recruit_results=seen)
+    steps = {s.get("id"): s for s in plan.get("steps") or []}
+    detail = []
+    for hire in hires:
+        aid, sids = hire["agent_id"], list(hire.get("step_ids") or [])
+        assigned = [sid for sid in sids if (steps.get(sid) or {}).get("agent_id") == aid]
+        ran = sorted({t["step_id"] for t in tasks if t["step_id"] in sids and t["agent_id"] == aid
+                      and t["end_seq"] is not None})
+        others = sorted({t["agent_id"] for t in tasks if t["step_id"] in sids and t["agent_id"] != aid})
+        detail.append({"agent_id": aid, "step_ids": sids, "assigned": assigned, "ran": ran, "other_agents": others})
+        if sids and len(assigned) == len(sids) and ran and not others:
+            return result("hire", "PASS", f"파견직 {aid}가 단계 {len(ran)}/{len(sids)}개를 수행", hires=detail)
+    return result("hire", "FAIL", "파견직이 있으나 scDRS 단계를 맡지 않았거나 다른 직원이 수행했습니다", hires=detail)
+
+
 # ----- verify and public -----
 def check_verify(labhq_cmd: list[str], config: str, request_id: str) -> dict:
     try:
@@ -331,6 +378,43 @@ def check_verify(labhq_cmd: list[str], config: str, request_id: str) -> dict:
     tail = (proc.stdout or proc.stderr or "").strip().splitlines()[-5:]
     return result("verify", "PASS" if proc.returncode == 0 else "FAIL", f"labhq verify exit {proc.returncode}",
                   exit=proc.returncode, tail=tail)
+
+
+SSH_VALUE_OPTS = set("BbcDEeFIiJLlmOoPpQRSWw")  # ssh options that take the next word as their value
+
+
+def argv_terms(argv: list[str]) -> set[str]:
+    """Login names and hosts in a connect command: ``user@host`` words, ``-l user``, ``-J jump``, ``-o User=/HostName=``
+    and the destination (the first word that is not an option or an option's value). Ports and key files are left out:
+    a port number would match ordinary numbers in a report."""
+    terms: set[str] = set()
+
+    def add(word: str) -> None:
+        for part in re.split(r"[@,:]", word):
+            if part and not part.isdigit():
+                terms.add(part)
+
+    words, i, destination = list(argv[1:]), 0, None
+    while i < len(words):
+        word = words[i]
+        if word.startswith("-") and len(word) >= 2 and word[1] in SSH_VALUE_OPTS:
+            flag, value = word[1], word[2:] or (words[i + 1] if i + 1 < len(words) else "")
+            i += 1 if word[2:] else 2
+            if flag in "lJ":
+                add(value)
+            elif flag == "o" and "=" in value and value.split("=", 1)[0].lower() in {"user", "hostname", "proxyjump"}:
+                add(value.split("=", 1)[1])
+            continue
+        if word.startswith("-"):
+            i += 1
+            continue
+        if destination is None:
+            destination = word
+            add(word)
+        elif "@" in word:
+            add(word)
+        i += 1
+    return terms
 
 
 def site_terms(settings, extra: Path | None) -> list[str]:
@@ -345,11 +429,7 @@ def site_terms(settings, extra: Path | None) -> list[str]:
         for value in (profile.remote_workdir, profile.queue):
             if value:
                 terms.add(value)
-        for word in profile.connect_argv:
-            if "@" in word:
-                terms.update(p for p in word.split("@") if p)
-            elif re.search(r"[A-Za-z]", word) and ("." in word or "/" in word) and not word.startswith("-"):
-                terms.add(word)
+        terms.update(argv_terms(profile.connect_argv))
     if extra:
         terms.update(line.strip() for line in extra.read_text(encoding="utf-8").splitlines() if line.strip())
     return sorted(t for t in terms if len(t) >= 4)
@@ -381,17 +461,21 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--config", required=True, help="the instance's labhq.yaml")
     ap.add_argument("--request", required=True, help="request id (req_…)")
-    ap.add_argument("--de", action="append", type=Path, default=[], help="DE table; default: search the request bundle")
+    ap.add_argument("--assoc", action="append", type=Path, default=[],
+                    help="scDRS *.scdrs_group.* files or a celltype_assoc table; default: search the request bundle")
+    ap.add_argument("--table", type=Path, default=TABLE, help="the fixed reproduction table")
     ap.add_argument("--hpc-step", action="append", default=[], help="step or task id to count as HPC-using")
     ap.add_argument("--site-terms", type=Path, help="local file, one extra site term per line (never committed)")
     ap.add_argument("--labhq", default=None, help="labhq command (default: this python -m labhq.cli)")
-    ap.add_argument("--skip", action="append", default=[], choices=["genes", "overlap", "session", "window", "verify", "public"])
+    ap.add_argument("--skip", action="append", default=[], choices=["repro", "hire", "overlap", "session", "window", "verify", "public"])
     ap.add_argument("--json", type=Path, help="also write the full result here")
     ap.add_argument("--events-log", type=Path, help="JSONL written by --watch (local; read by the verdict too)")
     ap.add_argument("--watch", action="store_true", help="record the request's step events until it ends, then exit")
     ap.add_argument("--every", type=float, default=10.0, help="--watch poll seconds")
     ap.add_argument("--hours", type=float, default=24.0, help="--watch gives up after this many hours")
     args = ap.parse_args(argv)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # -I ignores PYTHONUTF8; Korean lines stay readable
 
     from labhq.settings import Settings
     settings = Settings.load(args.config)
@@ -405,9 +489,14 @@ def main(argv: list[str] | None = None) -> int:
         return watch(db, args.request, args.events_log, args.every, time.time() + args.hours * 3600)
 
     checks: list[dict] = []
-    if "genes" not in args.skip:
-        checks.append(check_genes(args.de or find_de_tables(bundle)))
+    if "repro" not in args.skip:
+        files = []
+        for item in args.assoc:
+            files += find_assoc_files(item) if item.is_dir() else [item]
+        checks.append(check_repro(files or find_assoc_files(bundle), load_table(args.table)))
     tasks = step_intervals(db, args.request, set(args.hpc_step), args.events_log)
+    if "hire" not in args.skip:
+        checks.append(check_hire(request_state(db, args.request), tasks))
     logins = ledger_times(ledger) if ledger and ledger.exists() else []
     if "overlap" not in args.skip:
         checks.append(check_overlap(tasks))
