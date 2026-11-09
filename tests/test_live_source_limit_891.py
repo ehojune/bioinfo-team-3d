@@ -117,14 +117,15 @@ def _spend(admission, rid, agent, tool, count):
 
 def test_usage_reports_used_remaining_and_who_spent_it(tmp_path):
     admission = LookupAdmission(tmp_path / FILE, 60)
-    assert admission.usage("req_a") == {"used": 0, "limit": 60, "remaining": 60, "by_agent": {}, "by_tool": {}}
+    assert admission.usage("req_a") == {"used": 0, "limit": 60, "remaining": 60, "by_agent": {}, "by_tool": {},
+                                         "transient": 0, "transient_limit": 60}
     _spend(admission, "req_a", "chief_of_staff", "fulltext", 26)
     _spend(admission, "req_a", "lit_scout", "fulltext", 20)
     _spend(admission, "req_a", "lit_scout", "crossref_doi", 5)
     _spend(admission, "req_other", "analyst", "annot", 4)
     assert admission.usage("req_a") == {
         "used": 51, "limit": 60, "remaining": 9, "by_agent": {"chief_of_staff": 26, "lit_scout": 25},
-        "by_tool": {"crossref_doi": 5, "fulltext": 46}}
+        "by_tool": {"crossref_doi": 5, "fulltext": 46}, "transient": 0, "transient_limit": 60}
     assert admission.usage("req_other")["used"] == 4  # another request keeps its own count
 
 

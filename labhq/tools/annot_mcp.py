@@ -170,6 +170,10 @@ async def _admit(tool: str, host: str) -> int:
         raise LookupHostPaused(_paused_message(tool, str(answer.get("host") or host), float(answer.get("retry_after_s") or 0)))
     if not isinstance(answer, dict) or answer.get("admitted") is not True or type(answer.get("seq")) is not int:
         detail = answer if isinstance(answer, dict) else {}
+        if detail.get("reason") == "transient exhausted":  # #910: 5xx/429 answers are not the quota but have their own cap
+            raise LookupRefused(f"{tool}: 이 요청에서 공개 서비스가 HTTP 5xx/429로 답한 횟수가 상한"
+                                f"({detail.get('transient_limit')}회)에 닿아 보내지 않았습니다. 조회 몫은 남아 있지만 "
+                                "서비스가 계속 실패하고 있습니다. 다시 부르지 말고 빠진 조회를 보고서에 적으세요")
         raise LookupRefused(f"{tool}: 이 요청의 공개 조회 시도 상한({detail.get('limit')}회, 재시도·redirect 포함)에서 "
                             f"허용되지 않아 보내지 않았습니다({detail.get('reason') or 'refused'}). 다시 부르지 말고 "
                             "빠진 조회를 보고서에 적으세요")
@@ -182,7 +186,7 @@ async def _finish(sends: list[list], outcome: str) -> None:
             await client.post(f"{BROKER}/lookup/finish", headers={"X-Labhq-Token": BROKER_TOKEN},
                               json={"task_id": TASK_ID, "sends": sends, "outcome": outcome})
     except httpx.HTTPError:
-        pass  # every send was counted at admission; only its receipt fields stay empty
+        pass  # every send was counted at admission and stays counted: a 5xx/429 is given back only once it is recorded
 
 
 @asynccontextmanager
