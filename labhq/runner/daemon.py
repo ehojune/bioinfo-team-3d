@@ -4020,10 +4020,12 @@ class Runner:
                 declared_dirs = declared & directories
                 collect_all = (ws.task.meta.get("kind") == "direct" or
                                ws.task.meta.get("collect_direct_outputs") is True)
-                files = [row for row in manifest["files"] if collect_all or row["path"] in declared or
+                unchanged = set(manifest.get("unchanged_inputs", []))
+                files = [row for row in manifest["files"] if (collect_all and row["path"] not in unchanged) or row["path"] in declared or
                          any(row["path"].startswith(d + "/") for d in declared_dirs)]
                 manifest = {**manifest, "retained_bytes": manifest["bytes"],
                             "files": files, "bytes": sum(row["bytes"] for row in files),
+                            "unchanged_inputs": [row["path"] for row in files if row["path"] in unchanged],
                             "directories": [d for d in directories if collect_all or d in declared_dirs or
                                             any(d.startswith(parent + "/") for parent in declared_dirs)]}
                 verify_remote_data(transfer, manifest, ws.task.request_id)

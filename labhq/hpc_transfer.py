@@ -393,9 +393,10 @@ def request_data_root(request_id: str) -> str:
 # List names and sizes through held directories. Large outputs stay exactly where the job wrote them;
 # listing never reads file contents, changes permissions, copies or moves them.
 REMOTE_DATA_HELPER = r'''
-import os, sys, json, stat, contextlib, uuid
+import os, sys, json, stat, contextlib, uuid, re
 root, job, action = sys.argv[1:4]
 with contextlib.ExitStack() as stack:
+ skipped=[]
  @contextlib.contextmanager
  def folder(base, path, create=False):
   with contextlib.ExitStack() as opened:
@@ -417,6 +418,8 @@ with contextlib.ExitStack() as stack:
  def walk(base, directories, prefix='', depth=0):
   if depth>16: raise ValueError('remote data too deep')
   for name in sorted(os.listdir(base)):
+   if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._@+=,:%-]*',name):
+    skipped.append({'path':prefix+name,'reason':'name not allowed'}); continue
    s=os.stat(name,dir_fd=base,follow_symlinks=False)
    path=prefix+name
    if stat.S_ISDIR(s.st_mode):
@@ -441,6 +444,7 @@ with contextlib.ExitStack() as stack:
    rows.append(dict(path=path,**info(parent,name)))
    if len(rows)>20000: raise ValueError('too many remote outputs')
   cfg['files']=rows; cfg['directories']=directories; cfg['bytes']=sum(x['bytes'] for x in rows)
+  cfg['skipped']=skipped
   cfg.pop('inputs',None)
   payload=json.dumps(cfg,separators=(',',':')).encode()
   if len(payload)>4*1024*1024: raise ValueError('remote manifest too large')
@@ -489,6 +493,10 @@ def validate_remote_manifest(manifest: dict, request_id: str) -> dict:
         names.add(name.casefold())
     if manifest.get("bytes") != sum(row["bytes"] for row in files):
         raise TransferError("remote manifest total size differs")
+    unchanged = manifest.get("unchanged_inputs", [])
+    if (not isinstance(unchanged, list) or not all(isinstance(name, str) for name in unchanged) or
+            not set(unchanged).issubset({row["path"] for row in files})):
+        raise TransferError("invalid unchanged input listing")
     return manifest
 
 
@@ -609,10 +617,19 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
         remote = validate_remote_manifest(json.loads(data), spec["request_id"])
         if remote["data"] != spec["data"]:
             raise PathRejected("remote manifest folder differs from the submitted job")
+        manifest["skipped"].extend(remote.pop("skipped", []))
+        # Reuse the existing small-upload checksum to distinguish an unchanged input from a produced file.
+        # This never hashes a large output; large files retain the name/size-only contract.
+        uploaded = spec.get("inputs") or {}
+        remote["unchanged_inputs"] = [row["path"] for row in remote["files"]
+            if row["path"] in uploaded and row["bytes"] <= transfer.limits.upload_max_bytes
+            and transfer.remote_sha256(f"{remote['data']}/{row['path']}") == uploaded[row["path"]]]
         manifest["remote"] = remote
         total = 0
         for row in remote["files"]:
             name, size = row["path"], row["bytes"]
+            if name in remote["unchanged_inputs"]:
+                continue
             if size > transfer.limits.fetch_max_bytes or total + size > transfer.limits.fetch_total_bytes:
                 manifest["skipped"].append({"path": name, "bytes": size,
                                              "reason": "retained in request remote data"})

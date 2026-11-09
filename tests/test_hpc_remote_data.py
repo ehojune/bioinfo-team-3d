@@ -295,6 +295,7 @@ def test_declared_uploaded_input_can_also_be_a_remote_output(cluster, tmp_path, 
         cluster.path(spec['work'] + '/table.tsv').write_bytes(b'updated')
     listing = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')['remote']
     assert listing['files'] == [{'path': 'table.tsv', 'bytes': 7 if modified else 8}]
+    assert listing['unchanged_inputs'] == ([] if modified else ['table.tsv'])
 
 
 @pytest.mark.parametrize('layout', ['file_first', 'directory_first', 'siblings'])
@@ -324,3 +325,37 @@ def test_cross_job_file_directory_collisions_fail_but_distinct_children_can_shar
     else:
         with pytest.raises(ht.TransferError, match='conflicting file and directory'):
             runner._remote_step_outputs(ws)
+
+
+def test_unsafe_undeclared_files_and_directories_do_not_fail_valid_remote_outputs(cluster, tmp_path):
+    transfer = helper_transfer(cluster)
+    spec = prepare(cluster, transfer, tmp_path, {'result.tsv': b'ok', 'scratch data.txt': b'temporary',
+                                                'scratch folder/cache.bin': b'cache'})
+    fetched = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
+    assert fetched['remote']['files'] == [{'path': 'result.tsv', 'bytes': 2}]
+    assert {row['path'] for row in fetched['skipped']} == {'scratch data.txt', 'scratch folder'}
+    assert cluster.path(spec['work'] + '/scratch data.txt').read_bytes() == b'temporary'
+
+
+@pytest.mark.parametrize('kind', ['direct', 'collect_direct_outputs'])
+@pytest.mark.parametrize('declared', [False, True])
+def test_direct_collection_excludes_unchanged_inputs_unless_explicitly_declared(tmp_path, monkeypatch, kind, declared):
+    from labhq.models import Task
+    from labhq.runner.daemon import Runner
+
+    manifest = inventory(path='input.tsv')
+    manifest['files'].append({'path': 'result.tsv', 'bytes': 2})
+    manifest['bytes'] += 2
+    manifest['unchanged_inputs'] = ['input.tsv']
+    meta = {'step_id': 's1', 'outputs': ['outputs/input.tsv'] if declared else [],
+            'kind': 'direct' if kind == 'direct' else 'step', 'collect_direct_outputs': kind != 'direct'}
+    ws = SimpleNamespace(dir=tmp_path, task=Task(agent_id='worker', request_id='r', prompt='mock', meta=meta))
+    runner = Runner.__new__(Runner)
+    runner.scheduler = SimpleNamespace(transfer=lambda: object())
+    runner.jobs = {'1': {'workdir': str(tmp_path), 'transfer': {'request_id': 'r', 'step_id': 's1'},
+                        'submitted_by_runner': True, 'terminal': True, 'state': 'completed', 'fetched': True,
+                        'remote_manifest': manifest}}
+    monkeypatch.setattr(ht, 'verify_remote_data', lambda *args: None)
+    found, = runner._remote_step_outputs(ws)
+    assert {row['path'] for row in found['files']} == ({'input.tsv', 'result.tsv'} if declared else {'result.tsv'})
+    ht.validate_remote_manifest(found, 'r')
