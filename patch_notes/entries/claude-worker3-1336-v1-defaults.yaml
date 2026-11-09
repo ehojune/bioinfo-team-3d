@@ -1,0 +1,9 @@
+rows:
+- sha: 5fe70d1
+  at: 2026-11-09 18:42
+  text: 'v1.0 기본값: recruit.enabled·semantics.mode·research.semantic_report를 끈다. 코드는 남기고 설정에서 켜면 그대로 동작한다 (#1336).'
+  summary: v1.0에서는 온톨로지와 Paper2Agent 채용을 기본으로 끄고, 설정으로 다시 켤 수 있게 남겼습니다.
+- sha: ce53b8f
+  at: 2026-11-09 18:48
+  text: '켜진 기본값에 기대던 시험은 pre_v1_defaults fixture로 명시해서 켜고, init 기준값도 semantics off로 맞춘다 (#1336).'
+  summary: 기존 기능 시험은 그대로 두고, 새 기본값에서도 같은 기능을 켜서 검사하게 했습니다.
