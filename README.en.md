@@ -1,4 +1,4 @@
-# labhq — HQ for a one-person bioinformatics lab (v0.5)
+# labhq — HQ for a one-person bioinformatics lab (v1.0)
 
 <!-- badges:start -->
 [![Claude Code: 8 staff · opus/sonnet](https://img.shields.io/static/v1?label=Claude%20Code&message=8%20staff%20%C2%B7%20opus%2Fsonnet&color=D97757&logo=claude)](https://code.claude.com/docs/en/overview)
