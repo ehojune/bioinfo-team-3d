@@ -1,0 +1,5 @@
+rows:
+  - sha: "3f4d968"
+    at: "2026-11-10 06:02"
+    summary: "airway 시운전 판정의 공개 산출물 검사가 접속 명령의 ssh 옵션 값(yes 같은 흔한 단어)을 사이트 정보로 잡던 오탐을 고쳤습니다."
+    text: "judge_1331: connect_argv는 argv_terms로만, 루프백 제외, 시험 3건 (#1331)"
