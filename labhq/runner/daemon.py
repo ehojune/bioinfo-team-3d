@@ -3047,13 +3047,12 @@ class Runner:
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
-        remote_directories = {"outputs/" + directory for manifest in remote_manifests
-                              for directory in manifest.get("directories", [])}
+        remote_files = {"outputs/" + row["path"] for manifest in remote_manifests for row in manifest["files"]}
         if _should_check_declared_outputs(result):
             def has_output(rel: str) -> bool:
                 # A declared folder is there when a file with a hash is under it: a later step stages only those.
-                return (rel in collected or rel in remote_directories or
-                        any(path.startswith(rel.rstrip("/") + "/") for path in result.output_sha256))
+                return (rel in collected or any(path.startswith(rel.rstrip("/") + "/")
+                                               for path in result.output_sha256.keys() | remote_files))
 
             missing_required = [rel for name in required_declared
                                 if (rel := output_relpath(name)) and not has_output(rel)]

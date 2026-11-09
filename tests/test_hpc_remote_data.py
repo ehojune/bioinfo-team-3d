@@ -167,7 +167,7 @@ def test_only_successful_same_request_ancestor_inventory_is_admitted(tmp_path):
         with pytest.raises(ValueError): remote_ancestor_inputs(ws, {'s1': bad_artifact}, root)
 
 
-@pytest.mark.parametrize('layout', ['file', 'directory', 'missing', 'file_prefix', 'direct', 'collect_direct'])
+@pytest.mark.parametrize('layout', ['file', 'directory', 'missing', 'file_prefix', 'empty_directory', 'direct', 'collect_direct'])
 async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_after_restart(site, monkeypatch, layout):
     from labhq.adapters.mock import MockAdapter
     from labhq.models import AgentSpec, Engine, Task, TaskResult
@@ -216,8 +216,10 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
                 m['files'][0]['path'] = 'tx2gene.tsv/part.tsv'
             if layout == 'file_prefix':
                 m['files'][0]['path'] = 'tx2gene.tsv/part.tsv'  # no real declared directory in the listing
-            if layout == 'missing':
+            if layout in {'missing', 'empty_directory'}:
                 m['files'][0]['path'] = 'unrelated.tsv'
+                if layout == 'empty_directory':
+                    m['directories'] = ['tx2gene.tsv']
             m['files'].append({'path': 'undeclared.bin', 'bytes': 9})
             m['bytes'] += 9
         m['data'] = submitted['transfer']['data']
@@ -253,7 +255,7 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             result = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='wake', meta=meta,
                                                resume_session_id='session-' + step))
             assert ('outputs/undeclared.bin' in result.outputs) is collect_all
-            if step == 's1' and layout in {'missing', 'file_prefix'}:
+            if step == 's1' and layout in {'missing', 'file_prefix', 'empty_directory'}:
                 assert not result.ok and result.missing_outputs == ['outputs/tx2gene.tsv']
                 return
             assert result.ok, result.error
