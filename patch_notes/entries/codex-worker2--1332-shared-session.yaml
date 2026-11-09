@@ -1,6 +1,6 @@
 pr: 1335
 rows:
-  - sha: "a9a160b"
+  - sha: "3d51d38"
     at: "2026-11-09 17:30"
     summary: "여러 직원이 HPC 셸 하나에 순서대로 명령을 보내고 동시에 요청한 상태 조회를 나눠 씁니다."
     text: "직원 MCP의 runner 경로 통일, FIFO·대기 상한, 진행 중 status 공유, 연결 중 상한 경합·prompt 오염 수정 및 3직원 fake gateway 회귀 (#1332)"
