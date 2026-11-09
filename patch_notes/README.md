@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:19 | [`559aaed`](https://github.com/ehojune/bioinfo-team-3d/pull/1356/commits/559aaed) | **옵션 값 안에 든 Windows 경로도 드라이브 글자로 쪼개지지 않게 했습니다.**<br>value_terms: 드라이브 경로를 먼저 findall로 떼어 내고 나머지만 분할 (#1331) |
+| 05:07 | [`52e5b9d`](https://github.com/ehojune/bioinfo-team-3d/pull/1356/commits/52e5b9d) | **판정의 공개 산출물 검사가 짧은 사이트 이름이나 옵션 안의 경로를 다시 빠뜨리지 않게, Windows 드라이브 경로만 통째로 다룹니다.**<br>value_terms: 길이 필터와 슬래시 규칙을 빼고 드라이브 경로만 분할 제외 (#1331) |
+| 04:54 | [`6b99115`](https://github.com/ehojune/bioinfo-team-3d/pull/1356/commits/6b99115) | **airway 시운전 판정에서 공개 산출물 검사가 Windows 경로의 드라이브 글자 하나를 사이트 정보로 잘못 잡던 문제를 고쳤습니다.**<br>tools/trial/judge_1331.py value_terms: 경로는 통째로, 3글자 미만 조각 제외 (#1331) |
 | 02:33 | [`68cabfe`](https://github.com/ehojune/bioinfo-team-3d/pull/1349/commits/68cabfe) | **v1.0에서 켜진 검사와 꺼진 기능을 구분해 적었습니다.**<br>README 한·영: v1.0에서도 산출 종류 선언·입력 적합성 검사는 작동하고, 꺼지는 것은 그림자·A/B 재사용·의미 장치 보고서·채용이라고 구분한다 (#1349 리뷰). |
 | 02:23 | [`7d99d9f`](https://github.com/ehojune/bioinfo-team-3d/pull/1351/commits/7d99d9f) | **결과를 게시하기 전 한국어 검사가 '같은 축에 있어도' 같은 평범한 문장을 금지 표현 '에 있어서'로 잘못 잡아 게시를 막던 문제를 고쳤습니다.**<br>korean_qc '에 있어서' 패턴을 '에 있어서'로 좁힘, 시험 1건 (#910) |
 | 02:17 | [`73fcb3d`](https://github.com/ehojune/bioinfo-team-3d/pull/1349/commits/73fcb3d) | **v2.0 확장을 켜는 방법을 정확히 적고 옛 로드맵으로 가는 링크를 달았습니다.**<br>README 한·영에 research.semantic_report도 켜야 요청별 보고서가 나온다고 적고, manual 19의 옛 로드맵 표를 이전 판 링크로 가리킨다 (#1349 리뷰). |
