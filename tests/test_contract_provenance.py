@@ -20,6 +20,8 @@ from labhq.registry import Registry
 from labhq.runner.daemon import Runner
 from labhq.settings import DataZone, Settings
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 ZONE = "/srv/cohort"
 

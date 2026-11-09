@@ -18,6 +18,8 @@ from labhq.recruit import paper_skills as ps
 from labhq.settings import Settings
 from labhq.tools.annot_literature import fulltext_receipt
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 @pytest.fixture
 def sample(tmp_path):

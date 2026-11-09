@@ -10,6 +10,8 @@ from labhq.models import AskRequest, Task, TaskResult
 from labhq.recruit import paper_skills, planning
 from labhq.settings import Settings
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 @pytest.fixture
 def hub(tmp_path):

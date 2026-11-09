@@ -181,6 +181,7 @@ def test_shadow_report_separates_evaluation_states(
     assert decision in json.dumps(shadow_row["decisions"], ensure_ascii=False)
 
 
+@pytest.mark.usefixtures("pre_v1_defaults")
 def test_bundle_writes_markdown_json_and_portfolio_publishes_same_markdown(tmp_path):
     settings, request = fixed_request(tmp_path)
     bundle = Path(build_request_bundle(request, settings)["path"])
@@ -200,10 +201,9 @@ def test_bundle_writes_markdown_json_and_portfolio_publishes_same_markdown(tmp_p
     assert files["run/semantic_report.md"] == markdown
 
 
-def test_semantic_report_is_on_by_default_and_can_be_disabled(tmp_path):
+def test_semantic_report_is_off_by_default_since_v1(tmp_path):
     settings, request = fixed_request(tmp_path)
-    assert settings.research.semantic_report is True
-    settings.research.semantic_report = False
+    assert settings.research.semantic_report is False  # #1336
     bundle = Path(build_request_bundle(request, settings)["path"])
     assert not (bundle / "semantic_report.md").exists()
     assert not (bundle / "semantic_report.json").exists()

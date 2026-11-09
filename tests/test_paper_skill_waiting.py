@@ -14,6 +14,8 @@ from labhq.research.contract import plan_sha256
 from labhq.settings import Settings
 from tests.paper_skill_plan import plan_for_paper_rows
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 def row(number=1, sid='s1'):
     return {'paper_id': f'pmid:{number}', 'selection_sha256': str(number) * 64,

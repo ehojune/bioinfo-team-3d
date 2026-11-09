@@ -13,6 +13,8 @@ from tests.test_private_paths import (
     REAL_LABHQ_ENTRIES, _capture_runner, _home, _no_short_names, _runner_settings,
 )  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 async def _run(tmp_path, monkeypatch, engine, plugin=False):
     home = _home(tmp_path)

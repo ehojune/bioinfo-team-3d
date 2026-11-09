@@ -17,6 +17,8 @@ from tests.test_cso import FakeHub
 from tests.test_research_protocol import MiniHub, valid_plan
 from tests.test_request_bundle import pending_bundle_fixture, manifest_rows
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 SELECTED = {"paper_id": "PMID:12345678", "title": "Paired method", "reason": "Preserves donor pairing",
             "step_ids": ["s1"]}

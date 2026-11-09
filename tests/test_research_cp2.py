@@ -16,6 +16,8 @@ from labhq.research.contract import plan_sha256, research_result_errors, salvage
 from labhq.settings import Settings
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 CP1 = {"approved": True, "note": "approved"}
 
 

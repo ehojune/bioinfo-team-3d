@@ -20,6 +20,8 @@ import pytest
 from labhq.settings import DataZone, Settings
 from tests.semantics_shadow_lab import lab_record, run_lab
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 ROOT = Path(__file__).resolve().parents[1]
 TEXT = "CD276 세포유형 분석 [artifact] [revise] [question]"
 

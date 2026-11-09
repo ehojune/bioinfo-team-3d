@@ -16,6 +16,8 @@ from labhq.settings import Settings
 from labhq.util import free_port
 from tests.support.serve_task import serve_task, wait_started
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 REPO = Path(__file__).resolve().parents[1]
 
 

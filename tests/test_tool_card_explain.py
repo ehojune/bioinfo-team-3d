@@ -13,6 +13,8 @@ from labhq.private_paths import resolve_private_paths
 from labhq.settings import Settings
 from tests.test_private_paths import _link_dir
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 
 def _system_commands(monkeypatch):
     # Acceptance fixtures model a staff token that cannot write system binaries, including on admin CI.

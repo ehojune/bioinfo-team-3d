@@ -22,6 +22,8 @@ from labhq.private_paths import (CONFIG_LABEL, DEFAULT_HOME_ENTRIES, ENV_VAR, OU
 from labhq.runner.daemon import Runner
 from labhq.settings import DataZone, PolicySettings, Settings
 
+pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
+
 REAL_LABHQ_ENTRIES = private_paths._labhq_entries  # conftest replaces it for every other test
 REAL_SHORT_NAME = private_paths._short_name
 

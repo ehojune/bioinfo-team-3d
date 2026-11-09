@@ -67,16 +67,18 @@ def test_code_default_is_off():
     assert resolve(Settings().semantics) is None
 
 
-def test_the_example_configs_turn_ab_with_confirmed_actions_on_for_a_new_init():
-    """`labhq init` copies these: the PI's tested behaviour (#613). A config without a `semantics` key stays off."""
+def test_the_example_configs_keep_semantics_off_for_a_new_init():
+    """`labhq init` copies these. v1.0 ships the mode off (#1336); #613's ab with confirmed actions is one value away."""
     from labhq.research.semantics_shadow import resolve
     texts = [(ROOT / p).read_text(encoding="utf-8") for p in ("config/labhq.example.yaml",
                                                                "labhq/config/labhq.example.yaml")]
     assert texts[0] == texts[1]
     data = yaml.safe_load(texts[0])
-    assert data["semantics"] == {"mode": "ab", "actions": "confirm"}
+    assert data["semantics"] == {"mode": "off", "actions": "confirm"}
     # Without the `actions` key: this file also runs in the actions-layer-removed check, which has no such key.
-    config = resolve({key: value for key, value in data["semantics"].items() if key != "actions"})
+    options = {key: value for key, value in data["semantics"].items() if key != "actions"}
+    assert resolve(options) is None
+    config = resolve({**options, "mode": "ab"})
     assert config is not None and config.mode == "ab"
 
 
