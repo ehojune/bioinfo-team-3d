@@ -380,8 +380,10 @@ def argv_terms(argv: list[str]) -> set[str]:
             i += 1 if word[2:] else 2
             if flag in "lJ":
                 add(value)
-            elif flag == "o" and "=" in value and value.split("=", 1)[0].lower() in {"user", "hostname", "proxyjump"}:
-                add(value.split("=", 1)[1])
+            elif flag == "o":  # "-o User=alice" or "-o 'User alice'": both are valid OpenSSH forms
+                key, _, rest = value.replace("=", " ", 1).partition(" ")
+                if key.lower() in {"user", "hostname", "proxyjump"} and rest.strip():
+                    add(rest.strip())
             continue
         if word.startswith("-"):
             i += 1
