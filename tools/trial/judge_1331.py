@@ -420,7 +420,16 @@ def value_terms(value) -> set[str]:
     for word in words:
         if word is None or isinstance(word, (bool, int, float)):
             continue
-        for part in re.split(r"[\s=@,:]+", str(word)):
+        text = str(word)
+        # A Windows path stays whole wherever it sits (a value, or an option's value like --config=C:/x): splitting
+        # "C:/Users/..." on ':' left the drive letter "C", which matched every report (3rd run's public check). The
+        # rest is split as before, so an option's Unix path (--chdir=/x) and short site identifiers still count.
+        drives = re.findall(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s,@=]*", text)
+        for path in drives:
+            terms.add(path)
+            text = text.replace(path, " ")
+        parts = re.split(r"[\s=@,:]+", text)
+        for part in parts:
             if (part and not part.startswith("-") and not part.isdigit() and "{" not in part
                     and part.lower() not in GENERIC):
                 terms.add(part)
