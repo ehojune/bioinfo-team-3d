@@ -1920,11 +1920,23 @@ def non_public_paths(policy: PolicySettings) -> list[str]:
 
 
 def _zone_hit(tool_input: dict[str, Any], policy: PolicySettings, levels: set[str],
-              workdir: str | None = None):
+              workdir: str | None = None, *, own_workdir: bool = False):
+    """The zone a call touches, or None. ``own_workdir``: paths inside the task's own working folder do not count,
+    so a zone that holds every task folder (the runs root) does not make a task ask to read its own TASK.md (#1331).
+    Not when a zone is the folder itself or lies inside it.
+    The lexical check skips paths spelled inside the folder; the resolved check skips only paths whose real location
+    is inside the folder's real location, so a link or junction in the folder that leads into a zone, another task's
+    folder, or a `..` out of the folder still counts."""
     zones = [zone.path for zone in policy.data_zones if zone.level in levels]
     roots = [_norm(path) for path in zones]
-    return touches(tool_input, roots, workdir=workdir) or touches_resolved(
-        tool_input, zones, workdir=workdir,
+    own = (_norm(workdir), _real(workdir)) if own_workdir and workdir else (None, None)
+    # Only a folder below a zone is the task's own: when a zone is the folder itself or lies inside it (a task run in
+    # the data folder, or data placed in the task folder), every read still asks.
+    if own[0] and any(_inside(zone, folder) for zone in roots + [_real(z) or "" for z in zones]
+                      for folder in own if folder and zone):
+        own = (None, None)
+    return touches(tool_input, roots, workdir=workdir, exempt=own[0]) or touches_resolved(
+        tool_input, zones, workdir=workdir, exempt=own[1],
     )
 
 
@@ -2004,7 +2016,7 @@ def mentions_zone(text: str, zones: Iterable[str]) -> bool:
     return _scan_mentions_zone(text, zones, _scan_path_text(text))
 
 
-def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str | None:
+def touches(obj: Any, paths: Iterable[str], workdir: str | None = None, exempt: str | None = None) -> str | None:
     """Find lexical path references, preserving structured, quoted and escaped spaces.
 
     Drive-relative paths on a restricted zone's drive are treated as touching it,
@@ -2025,6 +2037,8 @@ def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str |
                 token = _norm(posixpath.join(_norm(workdir), token))
             else:
                 token = _norm(token)
+            if exempt and _inside(token, exempt):
+                continue  # spelled inside the exempt folder: the resolved check judges where it really leads
             for original, zone in paths:
                 if _inside(token, zone):
                     return original
@@ -2116,7 +2130,8 @@ def _entry_key(name: str) -> str:
     return unicodedata.normalize("NFD", name.rstrip(". ")).casefold()
 
 
-def touches_resolved(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str | None:
+def touches_resolved(obj: Any, paths: Iterable[str], workdir: str | None = None,
+                     exempt: str | None = None) -> str | None:
     """`touches` on this host's real filesystem: symlinks and junctions inside a candidate are followed.
 
     `reference/link/raw.tsv` names no zone, yet reads one when `link` points there. This only means something
@@ -2142,6 +2157,8 @@ def touches_resolved(obj: Any, paths: Iterable[str], workdir: str | None = None)
                     # as spelled and costs no resolution, so an inline script's hundreds of words do not hit the
                     # cap (13th mock trial).
                     spelled = _norm(os.path.join(_real(workdir) or workdir, token))
+                    if exempt and _inside(spelled, exempt):
+                        continue
                     for original, zone in zones:
                         if _inside(spelled, zone):
                             return original
@@ -2155,6 +2172,8 @@ def touches_resolved(obj: Any, paths: Iterable[str], workdir: str | None = None)
                 unresolved.path_field = path_field
                 return unresolved
             real = _real(token)
+            if exempt and real and _inside(real, exempt):
+                continue  # really inside the exempt folder, after every link was followed
             for original, zone in zones:
                 if real and _inside(real, zone):
                     return original
@@ -2769,7 +2788,7 @@ def _evaluate_tool(
         )
 
     # Internal-zone reads all use one approval flow. Output-shape classification only changes the card wording.
-    internal_hit = _zone_hit(tool_input, policy, {"internal"}, workdir)
+    internal_hit = _zone_hit(tool_input, policy, {"internal"}, workdir, own_workdir=True)
     if internal_hit and tool_name in READ_LIKE | SHELL_TOOLS:
         return Decision("ask", f"internal data zone read requires approval: {internal_hit}")
 
