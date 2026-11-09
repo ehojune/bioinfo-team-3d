@@ -45,6 +45,19 @@ async def broker(path, payload, timeout):
         return {"owned": scenario != "cancel_unowned"}
     if path == "/jobs/submit":  # the runner's side of hpc_submit, with the same fake scheduler
         return await submit_job(hpc.S, hpc.SCHED, hpc.WORKDIR, payload, deny)
+    if path.startswith("/jobs/scheduler/"):
+        op = path.rsplit("/", 1)[-1]
+        try:
+            if op == "cancel":
+                if scenario == "cancel_unowned":
+                    return {"error": "labhq cancels only jobs it tracks for you"}
+                return {"result": hpc.SCHED.cancel(payload["job_id"])}
+            if op == "status":
+                return {"status": hpc.SCHED.status(payload["job_id"]).to_dict()}
+            if op == "queue":
+                return {"queue": [job.to_dict() for job in hpc.SCHED.queue()]}
+        except Exception as error:
+            return {"error": str(error)}
     raise AssertionError(f"unexpected broker path {path}")
 
 
