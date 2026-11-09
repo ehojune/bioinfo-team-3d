@@ -135,6 +135,12 @@ def upload_failed_text(rid: str) -> str:
             f"고친 뒤 {_retry_command(rid)}로 다시 올릴 수 있습니다.")
 
 
+def prepare_failed_text(rid: str, error_type: str) -> str:
+    """A failure while labhq built the edition on this PC: not a token or repository problem (#1336)."""
+    return (f"게시할 정리본을 이 PC에서 만들지 못했습니다({error_type}). GitHub 토큰이나 저장소 권한 문제가 아닙니다. "
+            f"gateway 로그에서 원인을 확인한 뒤 `labhq storage {rid} --redraft`로 다시 준비하세요.")
+
+
 def plain_path(path):
     from .adapters.owned import is_link
     return not any((p.exists() or p.is_symlink()) and is_link(p) for p in [path, *path.parents])
@@ -1462,6 +1468,7 @@ class ResultStorage:
         scope_mode = saved.get("internal_publication_scope")
         publication_internal = set(saved.get("internal_files") or [])
         internal_allowed = set(saved.get("internal_allowed_files") or [])
+        reached_github = False  # until the upload starts, a failure is local preparation, not a token problem (#1336)
         try:
             # Controlled inputs never enter the editor prompt or the repository edition.
             if controlled_request(req, self.s):
@@ -1739,6 +1746,7 @@ class ResultStorage:
                     saved["status"] = "draft" if decision.get("state") in {"timed_out", "expired"} else "declined"
                     return
             self.uploading.add(rid)  # from here a redraft is refused: some files may already be in the repository
+            reached_github = True
             try:
                 await self.upload(rid, docs, images, pdf)
             finally:
@@ -1770,8 +1778,13 @@ class ResultStorage:
                 saved["reproduction_receipt"] = receipt_summary(receipt)
             saved["error_type"] = type(exc).__name__  # the warning never quotes the exception, only the texts above
             # A check that stopped the edition says which check and which files; before #713 it read as a token problem.
-            saved.update(status="failed", warning=str(exc) if isinstance(exc, (PublishAccessError, EditionCheckError))
-                         else upload_failed_text(rid))
+            if isinstance(exc, (PublishAccessError, EditionCheckError)):
+                warning = str(exc)
+            elif reached_github or isinstance(exc, (GitHubHTTPError, httpx.HTTPError)):
+                warning = upload_failed_text(rid)
+            else:
+                warning = prepare_failed_text(rid, type(exc).__name__)
+            saved.update(status="failed", warning=warning)
         finally:
             await persist_request(self.hub, rid)
             await self.hub.publish({"type": "request.storage", "request_id": rid,
