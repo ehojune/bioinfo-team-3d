@@ -5,3 +5,4 @@
 - 큰 필수 산출은 로컬에 없어도 완료로 인정합니다. 작은 파일만 회수하고 경로·용량을 결과와 provenance에 남깁니다.
 - 검증: 관련 Windows mock·CI inventory 회귀 398 passed·25 skipped. WSL helper smoke: 1,200개 파일·중첩 경로·재시도·변조·symlink 거절 PASS. public 검사·Windows inventory·diff 검사 PASS. CI·리뷰는 PR에 기록합니다.
 - 미확인: 실제 HPC·다중 직원 운영. 원격 Linux `python3` 필요. `cso.py` 동시 dispatch·CP1 첫 줄 P2는 다음 revision 범위이며 이슈를 닫지 않습니다.
+- 인계: [PR #1348](https://github.com/ehojune/bioinfo-team-3d/pull/1348)에 `hold`. 총괄의 다음 revision claim을 위해 r2 쓰기를 마치며, 다음 revision 구현·최종 head CI·실제 리뷰·미해결 P1=0 뒤 해제합니다.
