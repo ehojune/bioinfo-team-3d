@@ -390,34 +390,71 @@ def node_terms(words: list[str]) -> set[str]:
     return terms
 
 
-def site_terms(settings, extra: Path | None, nodes: list[str] | None = None) -> tuple[list[str], list[str]]:
-    """(every site term, the node terms among them). Nodes come from --node, scheduler arguments and any setting or
-    profile field whose name holds "node"; the public check refuses to pass without one, since the node is the site
-    detail a report is most likely to name."""
+GENERIC = {"ssh", "sge", "pbs", "slurm", "mock", "none", "scp", "sftp", "rsync", "gateway_tunnel", "gateway_window",
+           "vpn", "other", "true", "false"}
+PROSE = {"notes", "file_transfer_note", "port_discovery", "tunnel_texts"}  # sentences, not identifiers
+NODE_FIELD = "node"
+
+
+def value_terms(value) -> set[str]:
+    """Identifiers inside one setting value: split on space, '=', '@', ',' and ':', dropping option names, numbers,
+    templates and generic words. A path stays whole."""
+    words = value if isinstance(value, (list, tuple)) else [value]
     terms: set[str] = set()
+    for word in words:
+        if word is None or isinstance(word, (bool, int, float)):
+            continue
+        for part in re.split(r"[\s=@,:]+", str(word)):
+            if (part and not part.startswith("-") and not part.isdigit() and "{" not in part
+                    and part.lower() not in GENERIC):
+                terms.add(part)
+    return terms
+
+
+def model_terms(model, nodes: set[str]) -> set[str]:
+    """Every value the user set in a settings model (one that differs from the model's default), recursively. A value
+    left at its default is labhq's own text, not the site's. Fields whose name holds "node" also go to ``nodes``."""
+    terms: set[str] = set()
+    try:
+        defaults = type(model)()
+    except Exception:  # a model with required fields (a site profile): every value is the user's
+        defaults = None
+    for name in type(model).model_fields:
+        if name in PROSE:
+            continue
+        value = getattr(model, name, None)
+        default = getattr(defaults, name, None) if defaults is not None else object()
+        if hasattr(type(value), "model_fields"):
+            terms |= model_terms(value, nodes)
+            continue
+        if isinstance(value, (list, tuple)) and isinstance(default, (list, tuple)):
+            value = [v for v in value if v not in default]
+        elif value == default:
+            continue
+        found = value_terms(value)
+        terms |= found
+        if NODE_FIELD in name.lower():
+            nodes |= found
+    return terms
+
+
+def site_terms(settings, extra: Path | None, nodes: list[str] | None = None) -> tuple[list[str], list[str]]:
+    """(every site term, the node terms among them).
+
+    Terms are every value the user set under ``hpc`` and in the site profile (hosts, accounts, queues, scheduler
+    arguments such as an account or QOS, paths), the login names and hosts of the connect command, ``--site-terms`` and
+    ``--node``. Nodes come from --node, node-selection scheduler arguments and fields named "node"; the public check
+    refuses to pass without one, since the node is the site detail a report is most likely to name."""
     hpc = settings.hpc
-    for value in (hpc.ssh_host, hpc.user, hpc.default_queue):
-        if value:
-            terms.add(str(value))
     found_nodes: set[str] = set(nodes or [])
+    terms = model_terms(hpc, found_nodes)
     found_nodes |= node_terms([*hpc.submit_prefix, *hpc.slurm.sbatch_args, hpc.pbs.resource_template,
                                hpc.default_queue or ""])
-    for holder in (hpc,):
-        for name in type(holder).model_fields:
-            value = getattr(holder, name, None)
-            if "node" in name.lower() and value:
-                found_nodes.update(str(v) for v in (value if isinstance(value, (list, tuple)) else [value]))
     if hpc.site_profile:
         from labhq.hpc_site import load_profile
         profile = load_profile(hpc.site_profile)
-        for value in (profile.remote_workdir, profile.queue):
-            if value:
-                terms.add(value)
-        for name in type(profile).model_fields:
-            value = getattr(profile, name, None)
-            if "node" in name.lower() and value:
-                found_nodes.update(str(v) for v in (value if isinstance(value, (list, tuple)) else [value]))
-        terms.update(argv_terms(profile.connect_argv))
+        terms |= model_terms(profile, found_nodes)
+        terms |= argv_terms(profile.connect_argv)
     if extra:
         terms.update(line.strip() for line in extra.read_text(encoding="utf-8").splitlines() if line.strip())
     terms |= found_nodes
@@ -450,6 +487,9 @@ def check_public(roots: list[Path], terms: list[str], nodes: list[str] | None = 
             n = sum(len(pat.findall(text)) for pat in patterns)
             if n:
                 hits[str(path)] = n
+    if scanned == 0:
+        return result("public", "FAIL", "검사할 보고서·묶음 텍스트가 없습니다(요청 묶음이 아직 없거나 경로가 다름)",
+                      roots=[str(r) for r in roots])
     ok = not hits
     return result("public", "PASS" if ok else "FAIL",
                   f"텍스트 {scanned}개 검사, 사이트 용어 {len(terms)}개, 걸린 파일 {len(hits)}개", files=hits)

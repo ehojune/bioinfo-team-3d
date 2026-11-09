@@ -197,3 +197,17 @@ def test_public_short_terms_match_whole_words(tmp_path):
 def test_node_terms():
     assert J.node_terms(["-w", "n01", "--nodelist=n02,n03", "-l", "h=n04", "all.q@n05", "--mem=4G"]) == \
         {"n01", "n02", "n03", "n04", "n05"}
+
+
+def test_site_terms_take_every_user_set_value(tmp_path):
+    from types import SimpleNamespace
+    from labhq.settings import HpcSettings, SlurmSettings
+    sbatch = [*SlurmSettings().sbatch_args, "--account=private_lab", "--qos=pq7", "--nodelist=cn12"]
+    hpc = HpcSettings(scheduler="slurm", ssh_host="bob@login.example.org", slurm=SlurmSettings(sbatch_args=sbatch))
+    terms, nodes = J.site_terms(SimpleNamespace(hpc=hpc), None)
+    assert {"bob", "login.example.org", "private_lab", "pq7", "cn12"} <= set(terms) and nodes == ["cn12"]
+    assert not {"slurm", "NONE", "1", "smp", "h_vmem"} & set(terms)  # defaults and generic words stay out
+
+
+def test_public_fails_when_nothing_was_read(tmp_path):
+    assert J.check_public([tmp_path / "missing"], ["zz"], ["n99"])["status"] == "FAIL"
