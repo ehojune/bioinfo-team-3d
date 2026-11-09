@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:14 | [`b3ed966`](https://github.com/ehojune/bioinfo-team-3d/pull/1339/commits/b3ed966) | **설치·파견직 안내를 v1.0 기본값에 맞췄습니다.**<br>manual 04·10 한·영에 v1.0 기본값(semantics off, recruit 끔, 꺼지면 doctor Paper2Agent skip)을 반영하고 read_scope 시험도 pre_v1_defaults로 켠다 (#1336). |
+| 19:13 | [`6cef6a1`](https://github.com/ehojune/bioinfo-team-3d/pull/1339/commits/6cef6a1) | **v1.0에서는 온톨로지와 Paper2Agent 채용을 기본으로 끄고, 설정으로 다시 켤 수 있게 남겼습니다.**<br>v1.0 기본값: recruit.enabled·semantics.mode·research.semantic_report를 끈다. 코드는 남기고 설정에서 켜면 그대로 동작한다 (#1336). |
+| 19:13 | [`a5e07ac`](https://github.com/ehojune/bioinfo-team-3d/pull/1339/commits/a5e07ac) | **기존 기능 시험은 그대로 두고, 새 기본값에서도 같은 기능을 켜서 검사하게 했습니다.**<br>켜진 기본값에 기대던 시험은 pre_v1_defaults fixture로 명시해서 켜고, init 기준값도 semantics off로 맞춘다 (#1336). |
+| 19:13 | [`15b5e23`](https://github.com/ehojune/bioinfo-team-3d/pull/1339/commits/15b5e23) | **HPC 큐·노드 고정이 이제 모든 제출에 적용된다는 설정 안내로 고쳤습니다.**<br>manual 15: 큐·노드 고정이 접속 명령 없는 프로필을 포함해 모든 제출에 붙고 다른 위치 지정은 업로드·승인 전에 거절된다고 고친다 (#1338 리뷰). |
 | 18:22 | [`f5bfbd3`](https://github.com/ehojune/bioinfo-team-3d/pull/1338/commits/f5bfbd3) | **HPC 제출 위치를 검사할 때 계정 전환 명령의 옵션을 보존합니다.**<br>scheduler 인자만 pin_submit으로 검증한 뒤 wrapper 결합, Windows inventory 등록, 관련 mock·CI 정책 회귀 433 passed·11 skipped (#1332) |
 | 18:14 | [`56cd45f`](https://github.com/ehojune/bioinfo-team-3d/pull/1338/commits/56cd45f) | **HPC 작업을 사이트 프로필에서 정한 큐와 노드로 제출합니다.**<br>Scheduler에 pin_submit 연결, runner 업로드·승인 전 충돌 거절, 두 경로 mock 26건 통과 (#1332) |
 | 18:04 | [`c02204e`](https://github.com/ehojune/bioinfo-team-3d/pull/1337/commits/c02204e) | **응답을 기다리는 조회는 오래 걸려도 서비스 오류 상한의 자리를 놓지 않습니다. 몇 분씩 재시도하는 도구 호출 중에도 상한을 넘지 않습니다.**<br>admit의 응답 대기 계수에서 PROBE_STALE_S 만료를 빼고 기록될 때까지 자리 유지(fail closed), 시험 1건 교체 (#910) |
