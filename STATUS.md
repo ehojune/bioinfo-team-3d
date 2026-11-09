@@ -4,6 +4,23 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 2026-11-10 claude-worker3 — #1336 r10·r11: README·manual v1.0 정리
+
+## 결론
+README 한·영과 manual 19장의 로드맵을 v1.0 기준으로 정리했다. 온톨로지 절은 그대로 두고, 1층 어노테이션(어휘와 45개 분야 점검표)은 v1.0에서도 기본으로 작동하며 2·3층 시맨틱·온톨로지 검증과 Paper2Agent 채용은 기본으로 꺼 둔 v2.0 확장이라고 적었다.
+
+## 바뀐 것
+- `docs/manual/19-roadmap.md`·`.en.md`: v1.0 행(정의, 마감 과제 #1295·#1332·#1331·#910, 지금 상태), v2.0 확장, 지난 선언(v0.25·v0.5 한 줄씩), v1.0 이후 목표. 옛 표는 commit 53a5b339 판으로 링크
+- `README.md`·`README.en.md`: 로드맵 표와 설명 문장, 온톨로지 절의 v1.0 문장. 2·3층을 켤 때 `semantics.mode`와 `research.semantic_report`를 함께 켠다고 적음
+- 오늘 병합된 동작(#1335 #1338 #1341 #1342 #1343 #1345 #1348 #1337 #1344)은 각 PR이 manual에 이미 반영해서 추가로 고칠 것이 없었다. project·reference 입력의 HPC 거절은 코드에 남아 있어 그대로 둠
+
+## 실행한 것
+- `patch_notes.py check`, `notes_index.py --validate`, `check_public.sh`
+- 새 한국어 줄의 줄임 전문어 0건
+
+## 미해결
+- 버전 1.0.0은 PR #1350(hold)에 있고 #1331이 닫힐 때 병합한다
+
 # 2026-11-09 claude-worker3 — #1336 r9: 카드 경고 동작을 manual 15에 반영
 
 ## 결론

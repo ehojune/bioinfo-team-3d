@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:33 | [`68cabfe`](https://github.com/ehojune/bioinfo-team-3d/pull/1349/commits/68cabfe) | **v1.0에서 켜진 검사와 꺼진 기능을 구분해 적었습니다.**<br>README 한·영: v1.0에서도 산출 종류 선언·입력 적합성 검사는 작동하고, 꺼지는 것은 그림자·A/B 재사용·의미 장치 보고서·채용이라고 구분한다 (#1349 리뷰). |
+| 02:17 | [`73fcb3d`](https://github.com/ehojune/bioinfo-team-3d/pull/1349/commits/73fcb3d) | **v2.0 확장을 켜는 방법을 정확히 적고 옛 로드맵으로 가는 링크를 달았습니다.**<br>README 한·영에 research.semantic_report도 켜야 요청별 보고서가 나온다고 적고, manual 19의 옛 로드맵 표를 이전 판 링크로 가리킨다 (#1349 리뷰). |
+| 02:02 | [`213aeee`](https://github.com/ehojune/bioinfo-team-3d/pull/1349/commits/213aeee) | **로드맵을 v1.0 기준으로 다시 쓰고, 꺼 둔 기능을 v2.0 확장으로 표시했습니다.**<br>README 한·영과 manual 19를 v1.0 로드맵으로 정리한다. 1층 어노테이션은 기본으로 작동하고 2·3층 시맨틱·온톨로지와 Paper2Agent는 기본으로 꺼 둔 v2.0 확장이라고 적는다 (#1336). |
 | 01:27 | [`f227ae1`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/f227ae1) | **로컬·원격 출력이 다르면 완료를 거절하고 입력 경로 미리보기 길이를 제한합니다.**<br>기존 소용량 전송 영수증 재사용·전체 입력 목록 별도 저장·hash 없는 원격 폴더 완료 판정. 관련 mock 394 passed·29 skipped (#1347) |
 | 00:48 | [`ccc7936`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/ccc7936) | **깊은 임시 폴더나 선택적 로컬 회수 거절 때문에 유효한 원격 산출을 잃지 않습니다.**<br>깊이 상한은 누락으로 기록해 선언과 겹칠 때 거절, 영구 회수 거절은 기존 전송 규칙대로 건너뜀. 관련 mock 253 passed·29 skipped, Linux depth·5 GiB smoke PASS (#1347) |
 | 00:33 | [`57b72d9`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/57b72d9) | **전체 산출 폴더 선언을 지원하고 여러 잡이 같은 누락을 가리지 않도록 합니다.**<br>outputs 루트 수집·정확/상위 경로 누락 거절·잡 간 대소문자 중복 규칙 일치. 관련 mock 253 passed·27 skipped (#1347) |
