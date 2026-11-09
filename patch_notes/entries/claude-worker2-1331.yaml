@@ -4,3 +4,7 @@ rows:
   at: 2026-11-09 16:58
   text: '#1331 airway(GSE52778) 다중 직원 HPC 시운전 준비: 요청문(데이터 받기·참조 index 동시 단계), 판정 스크립트 tools/trial/judge_1331.py(유전자 6개 방향·padj, HPC 단계 겹침, 겹친 동안 로그인 수, 60분 창 로그인 수, labhq verify, 보고서의 사이트 용어)와 실행 절차 docs/reference/hpc-multiagent-trial-1331.md. events 표가 최근 2000건만 남겨 --watch로 단계 시작·끝을 실행 중에 기록'
   summary: 여러 직원이 HPC 세션 하나를 함께 쓰는 RNA-seq 시운전을 보낼 요청문과, 결과·로그인 조건을 기계로 판정하는 스크립트를 마련했습니다.
+- sha: '4d51f63'
+  at: 2026-11-09 17:40
+  text: '#1331 과제를 scDRS(Zhang 2022 Nat Genet) 재현으로 바꿈. 판정표 tools/trial/scdrs_1331_table.tsv(저자 배포 supp_tables.xlsx ST14에서 연관 19쌍·비연관 5쌍, 실행 전 고정), 실행 결과 assoc_mcp 전체에 BH를 다시 적용하는 repro 검사와 Paper2Agent 파견직이 scDRS 단계를 수행했는지 보는 hire 검사, 새 요청문. 리뷰 지적 반영: session은 실제 겹친 구간만 세고, 사이트 용어는 ssh -l·-J·-o·목적지에서도 뽑는다'
+  summary: 시운전 과제를 논문 방법 재현으로 바꾸고, 논문 결과를 미리 고정한 판정표로 재현 여부를 기계 판정합니다.
