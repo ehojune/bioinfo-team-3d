@@ -4,6 +4,25 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 단계
+#1332: 직원의 HPC 명령을 runner로 모으고 세션 대기·상태 조회를 공유합니다.
+
+## 한 일
+- FIFO·60초 대기 상한, 같은 요청의 진행 중 status 공유, reconnect 상한 대기와 파일 회수 보존.
+- 연결 중 마지막 로그인 횟수가 차감돼도 같은 셸을 기다립니다. prompt·bracketed-paste 오염을 한 줄 framing으로 막습니다.
+- manual 09 한영판과 [경로·검증 근거](../reference/hpc-shared-session-1332.md)를 갱신했습니다.
+
+## 테스트 결과
+- fake gateway 직원 3개: 동시 제출·조회·회수, 로그인 1회, 출력·파일 격리, 취소·소유 검사 통과.
+- stdio fixture에 runner의 scheduler 경로를 연결했습니다. 기존 오류 전파 assertion은 그대로입니다.
+- #1334 병합본을 포함한 관련 mock 회귀: **483 passed·12 skipped**.
+- 취소 fixture는 인증 broker와 실제 runner handler를 사용합니다. 미소유 잡 명령 0회·배열 scancel 호출·mock 취소를 유지했고 해당 파일은 104 passed·1 skipped입니다.
+- `scripts/check_public.sh`, Windows inventory, `git diff --check` 통과.
+- 리뷰 P1: 제출 거절을 실행 중인 잡으로 안내하던 알림을 요청 종류별로 수정. 새 회귀 fail→pass 확인.
+
+## 미확인
+- 실제 HPC 다중 직원 실행은 UNVERIFIED. 최종 head CI·실제 리뷰 통과와 head guard 확인 후 hold를 해제하고 병합합니다.
+
 # 2026-11-09 claude-worker1 — #1295 r14: D단계 3차와 60분 창 상한·노드 고정·포트 확인
 
 ## 결론

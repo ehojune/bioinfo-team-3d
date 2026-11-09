@@ -14,7 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:54 | [`9cff1f6`](https://github.com/ehojune/bioinfo-team-3d/pull/1335/commits/9cff1f6) | **공유 세션의 모의 검사 결과와 실제 실행의 미확인 범위를 정리했습니다.**<br>취소 fixture 복구와 #1334 호환 검증 근거 갱신, 실제 HPC 다중 직원 실행은 UNVERIFIED (#1332) |
+| 17:53 | [`4a648de`](https://github.com/ehojune/bioinfo-team-3d/pull/1335/commits/4a648de) | **직원이 제출한 잡만 취소하는 검사를 공유 세션 경로에서도 확인합니다.**<br>취소 fixture를 인증 broker와 runner handler에 연결, 소유권·scancel·mock 검사 유지, 관련 mock 회귀 483 passed·12 skipped (#1332) |
+| 17:48 | [`8c39149`](https://github.com/ehojune/bioinfo-team-3d/pull/1335/commits/8c39149) | **직원 HPC 명령의 오류가 도구 응답까지 전달되는 시험을 복구했습니다.**<br>stdio fixture의 runner scheduler 경로 연결, #1334 병합 호환 회귀 480 passed·12 skipped, 범위 밖 취소 fixture 3건은 hold (#1332) |
+| 17:30 | [`3d51d38`](https://github.com/ehojune/bioinfo-team-3d/pull/1335/commits/3d51d38) | **여러 직원이 HPC 셸 하나에 순서대로 명령을 보내고 동시에 요청한 상태 조회를 나눠 씁니다.**<br>직원 MCP의 runner 경로 통일, FIFO·대기 상한, 진행 중 status 공유, 연결 중 상한 경합·prompt 오염 수정 및 3직원 fake gateway 회귀 (#1332) |
 | 17:21 | [`471b377`](https://github.com/ehojune/bioinfo-team-3d/pull/1334/commits/471b377) | **사이트 프로필의 큐에 쉼표로 여러 개를 적은 기존 값도 그대로 읽히고 고정에도 쓰입니다. 시간 창 상한을 낮춘 뒤에는 다시 접속할 수 있는 시각을 정확히 알려 줍니다.**<br>SiteProfile.queue 검사 제거, pin_submit의 _queue_names(쉼표 목록·부분 요청 허용·이름 검사), SGE 큐×노드, LoginBudget._window가 OFFSET으로 상한 아래로 내려가는 행 기준 retry_after, 창 상한 질문 문구, manual 15 한영, 시험 2건 (#1295) |
+| 17:17 | [`6da2303`](https://github.com/ehojune/bioinfo-team-3d/pull/1335/commits/6da2303) | **로그인 상한으로 거절한 제출을 실행 중인 잡으로 안내하지 않게 고쳤습니다.**<br>리뷰 P1 4510661436: 제출·취소·파일 회수 알림을 상태 조회와 구분, 회귀 fail→pass (#1332) |
 | 16:59 | [`9ff0f33`](https://github.com/ehojune/bioinfo-team-3d/pull/1334/commits/9ff0f33) | **HPC 사이트 규칙 "어느 60분 동안에도 로그인 N회 이내"를 사이트 프로필의 시간 창 상한으로 지킵니다. 프로필에 큐·노드 고정값을 적으면 제출에 붙일 인자를 만들고 다른 위치 지정을 거절하는 검사를 넣었고(제출 경로 연결은 후속), 게이트웨이 터널 사이트는 접속 전에 포트 주인과 원격 계정을 확인하는 방법을 프로필에 적습니다.**<br>LoginBudget per_window·window_minutes(지금부터 거슬러 올라간 창, LoginLimitReached scope window·retry_after_s, usage·exhausted), budget_for가 프로필 창 상한을 읽음, SiteProfile port_owner_check·pinned_nodes·login_limit_per_window·login_window_minutes와 질문 4개, hpc_site.pin_submit(Slurm·SGE, PBS 거절), manual 08·15 한영, D단계 3차 결과, 시험 25건 (#1295) |
 
 ## 2026-11-08
