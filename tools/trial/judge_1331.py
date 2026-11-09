@@ -420,8 +420,12 @@ def value_terms(value) -> set[str]:
     for word in words:
         if word is None or isinstance(word, (bool, int, float)):
             continue
-        for part in re.split(r"[\s=@,:]+", str(word)):
-            if (part and not part.startswith("-") and not part.isdigit() and "{" not in part
+        text = str(word)
+        # A path stays whole: splitting "C:/Users/..." on ':' left the drive letter "C", which matched every report
+        # (3rd run's public check). Fragments under three characters are never a site identifier on their own.
+        parts = [text] if re.match(r"^[A-Za-z]:[\/]", text) or "/" in text or "\\" in text else re.split(r"[\s=@,:]+", text)
+        for part in parts:
+            if (len(part) >= 3 and not part.startswith("-") and not part.isdigit() and "{" not in part
                     and part.lower() not in GENERIC):
                 terms.add(part)
     return terms
