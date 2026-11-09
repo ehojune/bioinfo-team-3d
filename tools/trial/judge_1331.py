@@ -442,12 +442,16 @@ def site_terms(settings, extra: Path | None, nodes: list[str] | None = None) -> 
     """(every site term, the node terms among them).
 
     Terms are every value the user set under ``hpc`` and in the site profile (hosts, accounts, queues, scheduler
-    arguments such as an account or QOS, paths), the login names and hosts of the connect command, ``--site-terms`` and
+    arguments such as an account or QOS, paths), the account the scheduler falls back to when ``hpc.user`` is empty,
+    the login names and hosts of the connect command, ``--site-terms`` and
     ``--node``. Nodes come from --node, node-selection scheduler arguments and fields named "node"; the public check
     refuses to pass without one, since the node is the site detail a report is most likely to name."""
     hpc = settings.hpc
     found_nodes: set[str] = set(nodes or [])
     terms = model_terms(hpc, found_nodes)
+    if not hpc.user:  # the scheduler falls back to this PC's account (labhq/tools/scheduler.py)
+        import getpass
+        terms.add(getpass.getuser())
     found_nodes |= node_terms([*hpc.submit_prefix, *hpc.slurm.sbatch_args, hpc.pbs.resource_template,
                                hpc.default_queue or ""])
     if hpc.site_profile:

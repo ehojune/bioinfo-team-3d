@@ -211,3 +211,12 @@ def test_site_terms_take_every_user_set_value(tmp_path):
 
 def test_public_fails_when_nothing_was_read(tmp_path):
     assert J.check_public([tmp_path / "missing"], ["zz"], ["n99"])["status"] == "FAIL"
+
+
+def test_site_terms_include_the_fallback_account(monkeypatch):
+    from types import SimpleNamespace
+    import getpass
+    from labhq.settings import HpcSettings
+    monkeypatch.setattr(getpass, "getuser", lambda: "hiddenacct")
+    assert "hiddenacct" in J.site_terms(SimpleNamespace(hpc=HpcSettings(scheduler="sge")), None)[0]
+    assert "hiddenacct" not in J.site_terms(SimpleNamespace(hpc=HpcSettings(scheduler="sge", user="u9x")), None)[0]
