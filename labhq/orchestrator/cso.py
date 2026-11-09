@@ -1477,6 +1477,14 @@ def unreceipted_references(contract: dict, reused: list[str]) -> list[str]:
     return sorted(found)
 
 
+def _device_stop_warning(record: Any) -> str:
+    """A card's device warning; semantics turned off in the settings is a choice, not a stop (#1336)."""
+    errors = record.get("errors") if isinstance(record, dict) else None
+    stops = [error for error in errors or []
+             if not (isinstance(error, dict) and error.get("code") == "configured_off")]
+    return semantic_devices.warning({**record, "errors": stops}) if stops else ""
+
+
 def _cost_estimate_line(estimate: dict[str, Any]) -> str:
     """Short CP1 evidence for the request estimate; the enforced cap remains the separate budget line."""
     amount = estimate.get("estimate_usd")
@@ -6204,7 +6212,7 @@ class Orchestrator:
         if warnings:
             summary += f" 경고 {len(warnings)}건: 누락 칸·실패 단계는 한계로 남습니다."
         device_record = await self._semantic_devices_check(rid, "cp2")
-        device_warning = semantic_devices.warning(device_record)
+        device_warning = _device_stop_warning(device_record)
         # The card kind stays the first line; the device state and any stop warning follow it (#1336).
         summary += ("\n" + semantic_devices.card_line(device_record)
                     + ("\n" + device_warning if device_warning else ""))
@@ -7299,7 +7307,7 @@ class Orchestrator:
                     offered_reuse_sha = ((carried.get('reuse_snapshot') or {}).get('sha256')
                                          if reuse_pending else None)
                     device_record = await self._semantic_devices_check(rid, "cp1")
-                    device_warning = semantic_devices.warning(device_record)
+                    device_warning = _device_stop_warning(device_record)
                     # The hash stays in detail.target_sha256; the card shows the plan itself (PI 점검 R10).
                     summary = ("CP1 연구 계획 승인: 고정할 질문·방법·완료/중단 조건·데이터 범위·적용 pack을 "
                                "확인하고 승인하세요." + (" 고칠 점이 있으면 메모와 함께 수정 요청을 고르세요."
