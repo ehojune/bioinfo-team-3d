@@ -483,8 +483,9 @@ def site_terms(settings, extra: Path | None, nodes: list[str] | None = None) -> 
 
 def term_pattern(term: str) -> re.Pattern:
     """The term as a whole word: no letter, digit or underscore right before or after it, so a short account name does
-    not match inside ordinary words, and a path still matches where it is written."""
-    return re.compile(r"(?<![A-Za-z0-9_])" + re.escape(term) + r"(?![A-Za-z0-9_])")
+    not match inside ordinary words, and a path still matches where it is written. Case is ignored: host and node
+    names are written in either case."""
+    return re.compile(r"(?<![A-Za-z0-9_])" + re.escape(term) + r"(?![A-Za-z0-9_])", re.I)
 
 
 def check_public(roots: list[Path], terms: list[str], nodes: list[str] | None = None) -> dict:
@@ -500,11 +501,13 @@ def check_public(roots: list[Path], terms: list[str], nodes: list[str] | None = 
             continue
         files = [root] if root.is_file() else [p for p in root.rglob("*") if p.is_file()]
         for path in files:
-            if path.stat().st_size > 50 << 20 or not is_text(path):
+            if not is_text(path):
                 continue
             scanned += 1
-            text = path.read_text(encoding="utf-8", errors="replace")
-            n = sum(len(pat.findall(text)) for pat in patterns)
+            n = 0
+            with path.open(encoding="utf-8", errors="replace") as fh:  # line by line: a large job log is read whole
+                for line in fh:
+                    n += sum(len(pat.findall(line)) for pat in patterns)
             if n:
                 hits[str(path)] = n
     if scanned == 0:
@@ -567,13 +570,16 @@ def main(argv: list[str] | None = None) -> int:
 
     for c in checks:
         print(f"{c['status']:4}  {c['check']:8} {c['detail']}")
+    # A run with a skipped check is never a trial PASS: it is INCOMPLETE (exit 2) even when every check that ran passed.
     passed = all(c["status"] == "PASS" for c in checks)
-    print("판정:", "PASS" if passed else "FAIL", f"({sum(c['status'] == 'PASS' for c in checks)}/{len(checks)})",
+    verdict = "FAIL" if not passed else "INCOMPLETE" if args.skip else "PASS"
+    print("판정:", verdict, f"({sum(c['status'] == 'PASS' for c in checks)}/{len(checks)})",
           "· 건너뜀: " + ",".join(args.skip) if args.skip else "")
     if args.json:
-        args.json.write_text(json.dumps({"request": args.request, "passed": passed, "checks": checks},
+        args.json.write_text(json.dumps({"request": args.request, "verdict": verdict, "passed": verdict == "PASS",
+                                         "skipped": args.skip, "checks": checks},
                                         ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    return 0 if passed else 1
+    return {"PASS": 0, "FAIL": 1, "INCOMPLETE": 2}[verdict]
 
 
 if __name__ == "__main__":

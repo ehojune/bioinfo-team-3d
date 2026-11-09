@@ -230,3 +230,21 @@ def test_public_reads_logs_by_content(tmp_path):
     (tmp_path / "x.gz").write_bytes(b"n07")
     out = J.check_public([tmp_path], ["n07", "zq"], ["n07"])
     assert out["status"] == "FAIL" and sorted(Path(f).name for f in out["files"]) == ["job.out", "noext"]
+
+
+def test_public_ignores_case_and_reads_large_logs(tmp_path):
+    (tmp_path / "job.err").write_text("x" * 100 + "\n" * 10 + "landed on N07\n", encoding="utf-8")
+    out = J.check_public([tmp_path], ["n07"], ["n07"])
+    assert out["status"] == "FAIL" and list(out["files"].values()) == [1]
+
+
+def test_skip_is_incomplete_not_pass(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    two_overlapping(tmp_path)  # writes tmp_path/gateway.sqlite3, where the fake settings point
+    fake = SimpleNamespace(hpc=SimpleNamespace(_login_ledger=None), gateway=SimpleNamespace(state_dir="x"),
+                           runner=SimpleNamespace(workspace_root=str(tmp_path)), path=lambda v: tmp_path)
+    import labhq.settings
+    monkeypatch.setattr(labhq.settings.Settings, "load", classmethod(lambda cls, p=None: fake))
+    code = J.main(["--config", "c.yaml", "--request", REQ, "--skip", "genes", "--skip", "verify", "--skip", "public",
+                   "--skip", "session", "--skip", "window", "--hpc-step", "fetch", "--hpc-step", "index"])
+    assert code == 2

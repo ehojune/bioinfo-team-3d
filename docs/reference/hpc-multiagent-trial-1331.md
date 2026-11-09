@@ -39,7 +39,7 @@ airway(GSE52778) RNA-seq를 원시 FASTQ부터 DE까지 PI 인스턴스에서 �
 | verify | `labhq verify` exit 0 | |
 | public | 사이트 용어(고정 노드 포함)가 보고서·묶음 텍스트(확장자와 무관하게 내용으로 판별, `.out`·`.err` 포함)에 단어로 나오지 않음 | 설정·사이트 프로필·스케줄러 인자·`--node`에서 용어를 뽑고 출력하지 않음 |
 
-판정은 읽기 전용입니다. 저장소 공개 검사(`scripts/check_public.sh`)는 PR마다 따로 돕니다.
+판정은 읽기 전용입니다. 검사를 하나라도 `--skip`하면 판정은 PASS가 아니라 INCOMPLETE(exit 2)입니다. 저장소 공개 검사(`scripts/check_public.sh`)는 PR마다 따로 돕니다.
 "HPC를 쓴 단계"는 그 단계의 로그·승인에 `hpc_*` 도구 이름이 나온 경우입니다. 판정이 고른 단계 목록을 결과 JSON의 `hpc_steps`에서 눈으로 확인합니다. 빠진 단계가 있으면 `--hpc-step <step_id>`로 지정하고, 그 사실을 보고에 적습니다.
 
 ## 시도 기록
