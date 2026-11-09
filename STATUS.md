@@ -4,6 +4,21 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 단계
+#1332 rev5: #1331 선행 조건인 제출 위치 고정 연결. 실제 HPC 실행 없음.
+
+## 변경·검증
+- Scheduler 제출 인자에 기존 `hpc_site.pin_submit` 적용. 접속 명령 없는 프로필도 포함하며 고정 없는 큐 인자는 보존.
+- runner는 업로드·승인 요청 전에 같은 인자 검증. 실제 제출 때 다시 확인.
+- 새 mock 30건: 두 경로의 SGE/Slurm 노드·큐 고정, 충돌 시 명령·업로드·승인 0회, PBS 고정 거절, 고정 없는 기존 큐 유지, 계정 전환 wrapper 옵션 보존.
+- 리뷰 P2 r4511154934 수정: scheduler 인자만 검증한 뒤 submit_prefix를 붙임. Slurm wrapper 회귀 2건 fail→pass.
+- 새 시험·followups·Slurm 회귀: **229 passed·1 skipped**. session wiring·transfer·site·CI 정책 회귀는 **204 passed·10 skipped** (합산 433 passed·11 skipped).
+- Windows inventory 등록·validate_profile 통과. 새 시험은 외부 명령 없이 Mock으로 인자를 확인하는 일반 로직이며 기존 selector 분류를 유지함.
+- 실제 HPC 접속·제출은 **UNVERIFIED**이며 실행하지 않음.
+
+## hold
+최종 head CI·실제 리뷰·P1=0과 head guard 확인 후 해제한다. inventory 누락과 리뷰 P2 수정은 완료했다.
+
 # 2026-11-09 claude-worker1 — #910 r7: 5xx·429는 조회 상한에서 빼기
 
 ## 결론

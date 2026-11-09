@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:22 | [`f5bfbd3`](https://github.com/ehojune/bioinfo-team-3d/pull/1338/commits/f5bfbd3) | **HPC 제출 위치를 검사할 때 계정 전환 명령의 옵션을 보존합니다.**<br>scheduler 인자만 pin_submit으로 검증한 뒤 wrapper 결합, Windows inventory 등록, 관련 mock·CI 정책 회귀 433 passed·11 skipped (#1332) |
+| 18:14 | [`56cd45f`](https://github.com/ehojune/bioinfo-team-3d/pull/1338/commits/56cd45f) | **HPC 작업을 사이트 프로필에서 정한 큐와 노드로 제출합니다.**<br>Scheduler에 pin_submit 연결, runner 업로드·승인 전 충돌 거절, 두 경로 mock 26건 통과 (#1332) |
 | 18:04 | [`c02204e`](https://github.com/ehojune/bioinfo-team-3d/pull/1337/commits/c02204e) | **응답을 기다리는 조회는 오래 걸려도 서비스 오류 상한의 자리를 놓지 않습니다. 몇 분씩 재시도하는 도구 호출 중에도 상한을 넘지 않습니다.**<br>admit의 응답 대기 계수에서 PROBE_STALE_S 만료를 빼고 기록될 때까지 자리 유지(fail closed), 시험 1건 교체 (#910) |
 | 17:59 | [`f0a6c5e`](https://github.com/ehojune/bioinfo-team-3d/pull/1337/commits/f0a6c5e) | **여러 조회가 동시에 나갈 때도 서비스 오류 상한을 넘지 않습니다. 응답을 기다리는 조회도 그 상한의 자리를 차지하고, 150초 넘게 답이 없으면 놓아 줍니다.**<br>admit이 transient + 응답 대기(PROBE_STALE_S 안) 송신으로 transient_limit을 판정, manual 09 기존 문단을 #910 규칙과 맞춤(한영), windows-boundary known_tests에 새 시험, 시험 2건 (#910) |
 | 17:54 | [`9cff1f6`](https://github.com/ehojune/bioinfo-team-3d/pull/1335/commits/9cff1f6) | **공유 세션의 모의 검사 결과와 실제 실행의 미확인 범위를 정리했습니다.**<br>취소 fixture 복구와 #1334 호환 검증 근거 갱신, 실제 HPC 다중 직원 실행은 UNVERIFIED (#1332) |
