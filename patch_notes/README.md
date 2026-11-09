@@ -10,10 +10,29 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-10
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 01:27 | [`f227ae1`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/f227ae1) | **로컬·원격 출력이 다르면 완료를 거절하고 입력 경로 미리보기 길이를 제한합니다.**<br>기존 소용량 전송 영수증 재사용·전체 입력 목록 별도 저장·hash 없는 원격 폴더 완료 판정. 관련 mock 394 passed·29 skipped (#1347) |
+| 00:48 | [`ccc7936`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/ccc7936) | **깊은 임시 폴더나 선택적 로컬 회수 거절 때문에 유효한 원격 산출을 잃지 않습니다.**<br>깊이 상한은 누락으로 기록해 선언과 겹칠 때 거절, 영구 회수 거절은 기존 전송 규칙대로 건너뜀. 관련 mock 253 passed·29 skipped, Linux depth·5 GiB smoke PASS (#1347) |
+| 00:33 | [`57b72d9`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/57b72d9) | **전체 산출 폴더 선언을 지원하고 여러 잡이 같은 누락을 가리지 않도록 합니다.**<br>outputs 루트 수집·정확/상위 경로 누락 거절·잡 간 대소문자 중복 규칙 일치. 관련 mock 253 passed·27 skipped (#1347) |
+| 00:17 | [`06a7355`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/06a7355) | **선언 폴더의 일부 파일을 회수하지 못하면 완료로 표시하지 않습니다.**<br>누락 기록 보존·불완전 선언 폴더 거절·undeclared 특수 항목 제외. 관련 mock 244 passed·27 skipped, Linux 이름/link/FIFO/hardlink·5 GiB smoke PASS (#1347) |
+| 00:04 | [`0f748f1`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/0f748f1) | **큰 원격 산출의 유형과 보존 경로를 결과에서 잃지 않습니다.**<br>원격 파일을 output-type 정규화에 포함하고 structured direct 응답 뒤에도 경로·용량 안내를 유지. 관련 mock 83 passed·13 skipped (#1347) |
+
 ## 2026-11-09
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:59 | [`9f52202`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/9f52202) | **파일 이름 회귀에서 로그 누락 안내를 잘못 세지 않도록 시험을 고쳤습니다.**<br>지원하지 않는 이름 때문에 건너뛴 항목만 검증, fake scheduler 로그 누락의 기존 기록은 별도로 유지 (#1347) |
+| 23:56 | [`9e83b20`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/9e83b20) | **빈 원격 폴더만 만들어 놓은 단계는 완료로 표시하지 않습니다.**<br>필수 디렉터리 아래 수집 파일이 있어야 완료로 판정. 로컬과 동일한 전달 조건, 관련 mock 182 passed·24 skipped (#1347) |
+| 23:47 | [`98bd43f`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/98bd43f) | **원격 임시 파일의 이름 때문에 회수가 막히지 않고 원본 입력을 새 산출로 세지 않습니다.**<br>지원하지 않는 이름 제외·작은 업로드의 기존 checksum 재사용·명시한 입력/산출 경로 보존. 관련 mock 181 passed·24 skipped, 5 GiB helper smoke PASS (#1347) |
+| 23:39 | [`a3869ac`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/a3869ac) | **직접 실행의 큰 원격 산출도 수집하고 다음 단계에 파일별 경로를 안내합니다.**<br>direct/collect_direct_outputs 회수 상한 초과 산출과 재시작 회귀 17 passed·12 skipped. 공유 계정 경로 안내를 파일 목록으로 구체화, 별도 격리 구조 추가 없음 (#1347) |
+| 23:31 | [`68e1f68`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/68e1f68) | **선언 산출 누락과 이름 충돌을 막고 긴 계획 승인 안내도 카드 안에 남깁니다.**<br>업로드 입력의 산출 수집·잡 간 파일/디렉터리 충돌·보존 용량 표시·CP1 중요 안내 공간 배분. 후속 mock 회귀 151 passed·12 skipped, 실제 HPC 미검증 (#1347) |
+| 23:24 | [`c86b007`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/c86b007) | **계획 수정 메모가 비어 있으면 먼저 메모를 요청하는 안내를 유지합니다.**<br>일반 CP1의 카드 종류 우선 표시는 유지하고 빈 메모 재질문의 기존 순서를 보존. CP1·CP2·재개 회귀 132 passed (#1347) |
+| 23:21 | [`5cb4388`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/5cb4388) | **큰 HPC 산출을 제자리에 두고 다음 단계가 이어 읽으며 독립 단계는 동시에 실행합니다.**<br>원격 이름·크기 판정으로 대체, 선언 산출만 수집, 요청 폴더 생성 경합과 CP1 첫 줄 수정. mock 병렬·의존·출력 분리·로그인 1회 검증, 실제 HPC 미검증 (#1347) |
+| 23:05 | [`cdf7401`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/cdf7401) | **파일 회수가 끊겨도 다시 시도하고 원격 실행 파일의 실행 권한을 보존합니다.**<br>manifest 임시 이름 충돌 제거·실행 비트 보존, WSL 1,201개 파일 smoke와 관련 mock 회귀 (#1347) |
+| 23:01 | [`10b89eb`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/10b89eb) | **큰 HPC 산출을 원격에 보존하고 다음 단계가 검증한 파일을 이어 읽습니다.**<br>요청별 원격 데이터·크기/SHA-256 manifest·작은 파일 회수·재시작 회귀, 실제 HPC 미검증과 동시 dispatch 후속 분리 (#1347) |
 | 22:15 | [`8a448b9`](https://github.com/ehojune/bioinfo-team-3d/pull/1341/commits/8a448b9) | **셸 명령으로 다른 작업의 파일을 승인 없이 읽는 길을 막았습니다.**<br>labhq/policy.py: 자기 작업 폴더 예외를 경로가 구조화된 파일 도구(Read·Grep·Glob 등)에만 적용. 셸·인터프리터는 실행 중 경로 계산으로 다른 작업 폴더를 읽을 수 있어 그대로 승인을 묻는다(리뷰 P1). manual 11 한영판 반영 |
 | 22:15 | [`0631c74`](https://github.com/ehojune/bioinfo-team-3d/pull/1343/commits/0631c74) | **HPC 요청과 선행 논문 본문에 대한 설치 안내를 새 동작에 맞췄습니다.**<br>옛 거절을 단언하던 HPC 시험을 새 동작으로 바꾸고 manual 04 한·영 문구를 고친다 (#1336). |
 | 22:12 | [`7b7197c`](https://github.com/ehojune/bioinfo-team-3d/pull/1346/commits/7b7197c) | **승인 카드의 의미 장치 경고가 어떻게 보이는지 설정 안내에 적었습니다.**<br>manual 15 한·영: CP1·CP2 카드에서 의미 장치 상태·경고가 카드 종류 문장 뒤에 오고, 설정으로 끈 semantics는 경고하지 않는다고 적는다 (#1345 리뷰 P1). |
