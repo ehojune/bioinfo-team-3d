@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:40 | [`99892a1`](https://github.com/ehojune/bioinfo-team-3d/pull/1361/commits/99892a1) | **잡 로그에서 공개 웹 주소 뒤에 구분자(; , \| 괄호 따옴표)로 붙은 경로도 가립니다.**<br>_URL이 _ABSOLUTE_PATH와 같은 구분자에서 끝남, 시험 5건 (#1357 후속, PR #1362 리뷰 P1) |
+| 09:10 | [`b4d9322`](https://github.com/ehojune/bioinfo-team-3d/pull/1361/commits/b4d9322) | **잡 로그에서 공개 웹 주소(http·https·ftp)만 그대로 두고, file://·ssh:// 같은 다른 주소에 든 경로는 가립니다.**<br>hide_log의 URL 보존을 http·https·ftp로 제한, 시험 3건 (#1357 후속, PR #1362 리뷰 P1) |
+| 08:40 | [`f729d20`](https://github.com/ehojune/bioinfo-team-3d/pull/1361/commits/f729d20) | **잡 로그 가림이 세미콜론이나 색 코드 뒤에 붙은 경로, 한 단계짜리 절대 경로까지 가립니다. 공개 URL과 작업 폴더 안 상대 경로는 그대로 읽힙니다.**<br>hide_log가 ANSI·OSC 제어열 제거, 앞 글자 목록 대신 단어·상대 경로에 붙지 않은 모든 / 시작 토큰을 가림, URL·<workdir> 꼬리 보존, 시험 8건 (#1357 후속, PR #1361 리뷰 P1) |
 | 07:40 | [`29903e3`](https://github.com/ehojune/bioinfo-team-3d/pull/1361/commits/29903e3) | **HPC 잡 로그와 잡이 남긴 .log·.out·.err 파일을 이 PC로 가져올 때, 쓰기 전에 원격 경로·계정·사이트 이름을 가립니다. 가리기 전 원본은 클러스터에만 남고 표 같은 데이터 파일은 바꾸지 않습니다.**<br>hpc_transfer에 Transfer.hide_log·fetch_log, fetch_results가 잡 로그와 로그 확장자 결과를 fetch_log로 받고 fetch.json에 redacted·remote_sha256 기록, manual 09 한영, 시험 4건 (#1357) |
 | 06:16 | [`71895cc`](https://github.com/ehojune/bioinfo-team-3d/pull/1358/commits/71895cc) | **판정 스크립트의 기존 시험을 되살리고, 공백으로 쓴 ssh 옵션(-o 'User x')에서도 사용자·호스트를 찾게 했습니다.**<br>test_judge_1331.py 기존 23건 복원·새 시험 4건 추가, argv_terms의 -o 공백형 지원 (#1331) |
 | 06:02 | [`3f4d968`](https://github.com/ehojune/bioinfo-team-3d/pull/1358/commits/3f4d968) | **airway 시운전 판정의 공개 산출물 검사가 접속 명령의 ssh 옵션 값(yes 같은 흔한 단어)을 사이트 정보로 잡던 오탐을 고쳤습니다.**<br>judge_1331: connect_argv는 argv_terms로만, 루프백 제외, 시험 3건 (#1331) |
