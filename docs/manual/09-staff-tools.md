@@ -62,6 +62,8 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 
 `labhq_hpc`는 `hpc_submit`(제출), `hpc_status`(상태), `hpc_queue`(큐), `hpc_cancel`(취소)을 줍니다. 제출은 PI 승인 정책(11장)을 따르고, 취소는 직원이 `hpc_submit`으로 낸 잡만 됩니다.
 
+사이트 프로필에 큐·노드 고정이 있으면 모든 제출에 적용합니다. 다른 큐나 별도 노드 지정은 업로드·승인 요청 전에 거절합니다. 접속 명령이 없는 프로필에도 적용하며, 고정이 없으면 기존 제출 설정을 씁니다.
+
 설정의 `hpc.site_profile`이 접속 명령(`connect_argv`)이 있는 [사이트 프로필](15-config.md)을 가리키면, runner가 HPC에 **한 번 접속해 셸 하나를 열어 두고** 모든 scheduler 명령을 그 셸에 한 줄씩 보냅니다. 직원의 `hpc_status`·`hpc_queue`·`hpc_cancel`도 도구 프로세스가 직접 접속하지 않고 runner에 요청해 같은 셸로 돕니다. 그래서 상태 조회를 아무리 해도 로그인은 늘지 않고, 연결이 끊겨 다시 열 때만 로그인으로 셉니다(요청당·하루 상한, [15장](15-config.md)). 원격 명령 실행을 무시하는 게이트웨이에서도 셸만 열리면 됩니다.
 
 이때 status·queue·cancel은 전용 broker route를 씁니다. 토큰 신원과 실행 중인 쓰기 가능 task를 확인하며, status·cancel은 같은 직원의 task 또는 요청에서 runner가 제출한 잡만 받습니다. 완료 잡 status는 저장된 상태를 반환하며 queue는 소유 잡만 보여 줍니다. runner 제출 기록이 없는 잡을 scheduler가 반환하면 queue는 불확실성 오류를 냅니다. 제출 결과가 모호하면 빈 queue로 실패를 단정하지 말고 PI가 확인할 때까지 재제출을 멈춥니다. status 대기 한도에는 두 명령 각각의 줄서기·재접속·실행 시간을 넣습니다. [route·시간 계산](../reference/hpc-broker-routes-1307.md)을 참고하세요.

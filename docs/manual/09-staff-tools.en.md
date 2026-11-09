@@ -58,6 +58,8 @@ A list built from the regular staff configs (`agents/core/*.yaml`) and labhq's w
 
 ### HPC tools and the session (#1295)
 
+A site profile's queue and node pin applies to every submission, including profiles without a connect command. A conflicting queue or separate node selection is refused before upload or approval. Without a pin, existing submission settings apply.
+
 `labhq_hpc` gives `hpc_submit`, `hpc_status`, `hpc_queue` and `hpc_cancel`. Submission follows the PI approval policy (chapter 11), and cancel works only on jobs the staff member submitted with `hpc_submit`.
 
 When `hpc.site_profile` names a [site profile](15-config.en.md) that has a connect command (`connect_argv`), the runner **logs in once, keeps one shell open** and sends every scheduler command to it, one line at a time. The staff tools `hpc_status`, `hpc_queue` and `hpc_cancel` do not connect on their own either: they ask the runner and run in the same shell. Polling therefore adds no logins, and only reopening a dropped connection counts as one (per-request and per-day limits, [chapter 15](15-config.en.md)). A gateway that ignores remote commands is fine as long as it gives a shell.

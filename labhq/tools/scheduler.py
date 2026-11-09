@@ -517,6 +517,11 @@ class Scheduler:
     def submit_args(self, script: str, name: str, cores: int, mem: str, walltime: str,
                     queue: str | None, stdout: str, stderr: str) -> list[str]:
         self._require_enabled("submit")
+        from ..hpc_site import load_profile, pin_submit
+
+        # A pin also applies on shared filesystems and profiles without a connect command.
+        profile = load_profile(self.cfg.site_profile) if self.cfg.site_profile else None
+        pinned = profile is not None and bool(profile.queue or profile.pinned_nodes)
         name = sanitize_job_name(name)
         wt = normalize_walltime(walltime)
         if self.cfg.scheduler == "sge":
@@ -537,14 +542,13 @@ class Scheduler:
             args = ["sbatch", "--parsable", f"--job-name={name}",
                     f"--output={stdout.replace('%', '%%')}", f"--error={stderr.replace('%', '%%')}",
                     *(arg.format(**fields) for arg in self.cfg.slurm.sbatch_args)]
-            if queue:
+            if queue and not pinned:
                 args.append(f"--partition={queue}")  # sbatch -q is a QOS, not a queue
-            return [*self.cfg.submit_prefix, *args, script]
         else:
             raise RuntimeError(f"submit not supported for scheduler={self.cfg.scheduler}")
-        if queue:
+        if queue and not pinned and self.cfg.scheduler != "slurm":
             args += ["-q", queue]
-        return [*self.cfg.submit_prefix, *args, script]
+        return pin_submit(profile, self.cfg.scheduler, [*self.cfg.submit_prefix, *args, script], queue)
 
     def submit(self, script: str, name: str, cores: int = 1, mem: str = "4G", walltime: str = "04:00:00",
                queue: str | None = None, stdout: str = "/dev/null", stderr: str = "/dev/null") -> str:

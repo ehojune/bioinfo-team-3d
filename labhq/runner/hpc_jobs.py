@@ -119,6 +119,12 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
         return {"error": f"#SBATCH {option}: labhq tracks jobs on the default cluster only; "
                          "remove -M/--clusters and submit again"}
     name = sanitize_job_name(str(body.get("name") or spath.stem))
+    # Validate the site's submission pin before approval or any remote upload. Scheduler.submit checks again at send.
+    if s.hpc.scheduler != "mock" and hasattr(scheduler, "submit_args"):
+        try:
+            scheduler.submit_args(str(spath), name, cores, mem, walltime, queue, "/dev/null", "/dev/null")
+        except Exception as e:
+            return {"error": str(e)}
     # Without a shared file system (the profile names a remote_workdir) the script crosses the session shell and runs in
     # the cluster's work folder; the PI is shown the script as it will run there (#1308).
     spec = upload_text = None
