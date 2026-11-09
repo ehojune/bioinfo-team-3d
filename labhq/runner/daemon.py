@@ -3365,12 +3365,12 @@ class Runner:
 
         # Count this submit's login against its request, and say no before the PI is asked when a limit is already used up.
         if stop := self._login_limit(body.get("request_id")):
-            await self._notify_login_limit(body.get("request_id"), stop, [body])
+            await self._notify_login_limit(body.get("request_id"), stop, [body], operation="submit")
             return {"error": str(stop)}
         with request_scope(body.get("request_id")), queue_wait():
             result = await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record)
         if result.get("error") and (stop := self._login_limit(body.get("request_id"))):
-            await self._notify_login_limit(body.get("request_id"), stop, [body])
+            await self._notify_login_limit(body.get("request_id"), stop, [body], operation="submit")
         return result
 
     def _has_open_hpc_jobs(self) -> bool:
@@ -3444,7 +3444,8 @@ class Runner:
             return reply
         except Exception as error:  # noqa: BLE001 - the tool reports it; a login limit or a lost shell is the usual cause
             if isinstance(error, LoginLimitReached):
-                await self._notify_login_limit(body.get("request_id"), error, [body])
+                await self._notify_login_limit(body.get("request_id"), error, [body],
+                                               operation="cancel" if op == "cancel" else "poll")
             return {"error": str(error)}
 
     def _hpc_session_notice(self, kind: str, text: str) -> None:
@@ -3485,10 +3486,11 @@ class Runner:
         # the session still checks admission under its command lock if the handshake fails and a reconnect is needed.
         return stop if stop is not None and (needs_login() if needs_login else self.s.hpc.ssh_host) else None
 
-    async def _notify_login_limit(self, request_id: str | None, stop: LoginLimitReached, jobs: list[dict]) -> None:
+    async def _notify_login_limit(self, request_id: str | None, stop: LoginLimitReached, jobs: list[dict],
+                                 *, operation: str = "poll") -> None:
         """Tell the PI once per request and limit that polling is paused. level "alert" is what the web feed shows and toasts (a "warn" is only the agent card line). The jobs keep running on the cluster."""
         notified = self.__dict__.setdefault("_login_limit_notified", set())
-        key = (request_id, stop.scope, stop.limit, time.strftime("%Y-%m-%d"))  # a raised limit that fills again alerts again
+        key = (request_id, stop.scope, stop.limit, time.strftime("%Y-%m-%d"), operation)
         if stop.scope == "window":
             windows = self.__dict__.setdefault("_login_limit_window_notified", {})
             now = time.time()
@@ -3502,13 +3504,21 @@ class Runner:
         first = jobs[0]
         again = ("로그인 창이 지나면 자동으로 다시 확인합니다" if stop.scope == "window" else
                  "내일 다시 확인합니다" if stop.scope == "day" else "상한을 올리면 다시 확인합니다(hpc.login_limit_per_request)")
+        if operation == "poll":
+            detail = (f"이 {'요청' if request_id else ''}의 HPC 잡 {len(jobs)}개 상태 조회를 멈췄습니다. "
+                      "제출한 잡은 클러스터에서 계속 돕니다.")
+        elif operation == "fetch":
+            detail = "HPC 잡의 파일 회수를 기다립니다. 파일을 가져오기 전에는 직원을 깨우지 않습니다."
+        else:
+            label = "제출" if operation == "submit" else "취소"
+            detail = (f"HPC {label} 요청을 완료하지 못했습니다. 잡의 제출·취소 여부는 도구 응답을 확인하세요. "
+                      "제출 결과가 불명확하면 PI 확인 전까지 재제출하지 마세요.")
         await self.emit(Event(
             type="agent.log", task_id=first.get("task_id"), agent_id=first.get("agent_id"), request_id=request_id,
             data={"level": "alert", "hpc_login_limit": {"scope": stop.scope, "limit": stop.limit, "used": stop.used,
                                                         **({"retry_after_s": stop.retry_after_s}
                                                            if getattr(stop, "retry_after_s", None) is not None else {})},
-                  "text": f"{stop} 이 {'요청' if request_id else ''}의 HPC 잡 {len(jobs)}개 상태 조회를 멈췄습니다. "
-                          f"제출한 잡은 클러스터에서 계속 돕니다. {again}."}))
+                  "text": f"{stop} {detail} {again}."}))
 
     async def _track_job(self, body: dict, extra: dict | None = None) -> None:
         """Watch a job the runner submitted. No broker endpoint reaches this with a caller's id."""
@@ -3902,14 +3912,14 @@ class Runner:
                 continue
             request_id = self.task_req.get(j.get("task_id") or "")
             if stop := self._login_limit(request_id):
-                await self._notify_login_limit(request_id, stop, [j])
+                await self._notify_login_limit(request_id, stop, [j], operation="fetch")
                 continue  # waiting for login admission does not consume file-recovery attempts or wake the employee
             j["fetch_tries"] = j.get("fetch_tries", 0) + 1
             try:
                 manifest = await asyncio.to_thread(self._fetch_job_files, j, spec)
             except LoginLimitReached as stop:
                 j["fetch_tries"] -= 1
-                await self._notify_login_limit(request_id, stop, [j])
+                await self._notify_login_limit(request_id, stop, [j], operation="fetch")
             except Exception as error:  # noqa: BLE001 - reported below; the files stay on the cluster
                 j["fetch_error"] = self._hide_text(str(error))[:300]
                 if j["fetch_tries"] >= self.FETCH_TRIES:

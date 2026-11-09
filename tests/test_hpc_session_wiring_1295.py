@@ -830,3 +830,19 @@ def test_window_limit_notice_resumes_automatically_and_alerts_again_for_a_later_
         await r._notify_login_limit("request", stop, [{"task_id": "t0"}])
         assert len(r.events) == 2
     asyncio.run(scenario())
+
+
+def test_rejected_submission_does_not_tell_pi_a_nonexistent_job_is_running(tmp_path, cluster):
+    r, _ = runner_fixture(tmp_path, cluster)
+    r.scheduler.session().run("echo ready")
+    r.scheduler.session().close()
+    async def scenario():
+        reply = await r._on_submit({"task_id": "t0", "agent_id": "employee0", "request_id": "request",
+                                    "script": str(r.workspaces["t0"].dir / "jobs/run.sh")})
+        assert "로그인 상한" in reply["error"] and r.jobs == {}
+        text = r.events[-1].data["text"]
+        assert "제출 요청" in text and "계속 돕니다" not in text and "상태 조회를 멈췄습니다" not in text
+        await r._notify_login_limit("request", hb.LoginLimitReached("day", 1, 1),
+                                   [{"task_id": "t0"}], operation="fetch")
+        assert "파일 회수" in r.events[-1].data["text"] and "계속 돕니다" not in r.events[-1].data["text"]
+    asyncio.run(scenario())
