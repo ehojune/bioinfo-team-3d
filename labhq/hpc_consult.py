@@ -191,7 +191,8 @@ def trial_job(hpc: HpcSettings, trial_dir: Path, confirm: Callable[[str], bool],
             run_dir.rmdir()
             return refused
         script, job = files(run_dir)
-        with open(script, "x", encoding="utf-8") as f:  # never reuse or follow an existing path
+        # newline="\n": a Windows runner would write CRLF, which sbatch refuses (#1331)
+        with open(script, "x", encoding="utf-8", newline="\n") as f:  # never reuse or follow an existing path
             f.write(build_script("sleep 1", str(run_dir)))
         if os.name != "nt":
             script.chmod(0o750)

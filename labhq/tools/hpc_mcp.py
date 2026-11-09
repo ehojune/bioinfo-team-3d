@@ -17,7 +17,7 @@ from pathlib import Path
 import httpx
 
 from ..adapters.held_dir import HeldDir
-from ..adapters.owned import chmod_owned, plain_directory, read_owned, write_owned
+from ..adapters.owned import chmod_owned, plain_directory, read_owned, write_owned, write_owned_bytes
 from ..hpc_transfer import UPLOAD_BUDGET_S
 from ..settings import Settings
 from ._mcpcompat import make_server, tool_failure
@@ -260,11 +260,37 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
                 held_output.chmod(0o2770)
         except OSError as exc:
             raise RuntimeError("shared job path is a link or was replaced") from exc
-    write_owned(workdir, script_relative.as_posix(), body)
+    # Bytes, not text: a Windows runner's text mode writes CRLF, and sbatch refuses a script with DOS line breaks
+    # (#1331). build_script already joins with \n.
+    write_owned_bytes(workdir, script_relative.as_posix(), body.encode("utf-8"))
     if os.name != "nt":
         chmod_owned(workdir, script_relative.as_posix(), 0o750, gid if job_group else None)
     else:
         script_path.chmod(0o750)
+
+
+SHELL_SUFFIXES = {".sh", ".bash"}
+
+
+def crlf_shell_inputs(workdir: Path, inputs: list[str]) -> list[str]:
+    """The shell scripts among ``inputs`` that have CRLF line endings (#1331). A script written on Windows with
+    PowerShell or a CRLF editor runs on the cluster's bash as `cmd\\r`, which fails with a confusing error long after the
+    submit. Only regular files are read (a link is skipped), and only the first 512 KiB, the upload limit."""
+    found = []
+    for relative in inputs:
+        path = workdir / relative
+        try:
+            info = os.lstat(path)
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            with open(path, "rb") as fh:
+                head = fh.read(512 * 1024)
+        except OSError:
+            continue
+        shell = path.suffix.lower() in SHELL_SUFFIXES or (head.startswith(b"#!") and b"sh" in head.split(b"\n", 1)[0])
+        if shell and b"\r\n" in head:
+            found.append(relative)
+    return found
 
 
 @server.tool()
@@ -292,6 +318,9 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
                                or not all(isinstance(i, str) and i and not i.startswith("/") and ".." not in i.split("/")
                                           for i in inputs)):
         raise tool_failure("inputs is a list of at most 20 relative paths inside your workspace")
+    if crlf := crlf_shell_inputs(WORKDIR, inputs or []):
+        raise tool_failure("CRLF line endings in " + ", ".join(crlf) + ": bash on the cluster reads the \\r as part "
+                           "of each command and fails. Rewrite them with LF line endings and submit again")
     upload_inputs = inputs  # `inputs` is reused below for the shared data snapshots
     name = sanitize_job_name(job_name)
     logs = WORKDIR / "jobs" / "logs"
