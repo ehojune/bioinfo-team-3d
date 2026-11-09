@@ -1,0 +1,5 @@
+rows:
+  - sha: "29903e3"
+    at: "2026-11-10 07:40"
+    summary: "HPC 잡 로그와 잡이 남긴 .log·.out·.err 파일을 이 PC로 가져올 때, 쓰기 전에 원격 경로·계정·사이트 이름을 가립니다. 가리기 전 원본은 클러스터에만 남고 표 같은 데이터 파일은 바꾸지 않습니다."
+    text: "hpc_transfer에 Transfer.hide_log·fetch_log, fetch_results가 잡 로그와 로그 확장자 결과를 fetch_log로 받고 fetch.json에 redacted·remote_sha256 기록, manual 09 한영, 시험 4건 (#1357)"
