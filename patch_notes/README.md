@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:55 | [`5693855`](https://github.com/ehojune/bioinfo-team-3d/pull/1342/commits/5693855) | **잡 제출이 줄바꿈 때문에 거절될 때 무엇을 고치면 되는지 매뉴얼에 적었습니다.**<br>manual 09 한영판: 잡 스크립트는 LF로 쓰고, inputs의 CRLF 셸 스크립트는 제출 전에 파일 이름과 함께 거절한다는 설명(리뷰 P1) |
+| 21:40 | [`0f580ac`](https://github.com/ehojune/bioinfo-team-3d/pull/1342/commits/0f580ac) | **제출 전 줄바꿈 검사가 작업 폴더 밖 파일을 읽지 않습니다.**<br>tools/hpc_mcp.py: CRLF 입력 검사를 read_confined(링크를 따르지 않는 폴더 handle, 업로드 크기 상한)로 읽어 작업 폴더 밖·링크·절대경로·특수 파일은 열지 않는다(리뷰 P1) |
+| 21:05 | [`dbcbb04`](https://github.com/ehojune/bioinfo-team-3d/pull/1342/commits/dbcbb04) | **Windows PC에서 낸 HPC 잡이 줄바꿈 형식 때문에 거절되지 않습니다.**<br>HPC 잡 스크립트를 LF로 쓴다(tools/hpc_mcp.py write_owned_bytes, hpc_consult.py newline). Windows runner에서 CRLF가 되어 sbatch가 거절하던 문제(#1331 시운전 1회차). inputs로 넘긴 셸 스크립트에 CRLF가 있으면 제출 전에 파일 이름과 함께 거절. 새 시험을 Windows 시험 목록에 등록 |
 | 19:50 | [`8507e94`](https://github.com/ehojune/bioinfo-team-3d/pull/1333/commits/8507e94) | **대문자로 적힌 노드 이름이나 큰 잡 로그도 공개 검사가 놓치지 않고, 일부 검사만 돈 결과를 통과로 내지 않습니다.**<br>#1331 판정: public은 사이트 용어를 대소문자 없이 찾고 크기 제한 없이 줄 단위로 읽으며, 검사를 하나라도 건너뛰면 전체 판정을 INCOMPLETE(exit 2)로 낸다 |
 | 19:30 | [`c8f7b6c`](https://github.com/ehojune/bioinfo-team-3d/pull/1333/commits/c8f7b6c) | **직원마다 따로 접속하거나 잡 로그에 사이트 정보가 남은 경우도 시운전 판정이 잡아냅니다.**<br>#1331 판정: session 검사는 두 단계 중 먼저 시작한 때부터 겹침 끝까지 로그인을 세어 단계마다 세션을 연 경우를 잡고, public 검사는 확장자 대신 내용으로 텍스트를 가려 스케줄러 로그(.out·.err)도 읽는다 |
 | 19:30 | [`058a071`](https://github.com/ehojune/bioinfo-team-3d/pull/1340/commits/058a071) | **처음 읽는 안내에 v1.0에서는 의미 모델과 파견직 채용이 기본으로 꺼져 있다고 적었습니다.**<br>README 한·영: v1.0 labhq init은 semantics off·recruit 끔으로 시작하고 설정으로 켠다고 고친다 (#1339 리뷰 P2). |

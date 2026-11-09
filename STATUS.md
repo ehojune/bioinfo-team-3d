@@ -4,6 +4,26 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1331 r3 — HPC 잡 스크립트를 LF로 쓴다
+
+## 결론
+Windows runner에서 낸 HPC 잡을 sbatch가 "Batch script contains DOS line breaks"로 거절하던 문제를 고쳤습니다. 시운전 1회차(`req_0b689f1868`)가 이 이유로 실패했습니다.
+
+## 바뀐 것
+- `labhq/tools/hpc_mcp.py`: 잡 스크립트를 bytes로 써서 줄바꿈이 항상 LF입니다(`write_owned_bytes`). 텍스트 모드 `write_owned`는 Windows에서 CRLF를 씁니다.
+- `labhq/tools/hpc_mcp.py`: `hpc_submit`의 `inputs` 중 셸 스크립트(.sh·.bash, sh shebang)에 CRLF가 있으면 아무것도 쓰기 전에 파일 이름과 함께 거절합니다. 링크는 따라가지 않고 처음 512 KiB만 읽습니다.
+- `labhq/hpc_consult.py`: 시험 잡 스크립트도 `newline="\n"`.
+- `tests/test_hpc_job_script_lf_1331.py`, Windows 시험 목록 등록.
+
+## 실행한 것
+- 새 시험 3 passed, 1 skipped(Windows에서 파일 symlink 권한). 옛 쓰기로 되돌리면 LF 시험이 실패(red 확인, Windows).
+- 관련 HPC 시험(`test_mcp_servers`·`test_hpc_followups`·`test_hpc_whole_request`·`test_hpc_broker_routes_1307`·`test_hpc_session_wiring_1295`·`test_hpc_transfer_1308`) 포함 379 passed, 27 skipped.
+- `ci_selection.validate_profile`, `patch_notes.py check`, `check_public.sh` 통과.
+
+## 미해결
+- `hpc_consult.py`의 변경은 시험으로 덮지 않았습니다(실제 클러스터 시험 잡 경로라 mock이 큼).
+- 실제 클러스터 제출은 다음 시운전(2회차)에서 확인합니다.
+
 # 2026-11-09 claude-worker3 — #1336: v1.0 기본값에서 온톨로지·Paper2Agent 채용 끄기
 
 ## 결론
