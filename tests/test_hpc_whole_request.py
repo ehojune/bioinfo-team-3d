@@ -978,3 +978,25 @@ async def test_committed_results_move_out_and_replaced_files_come_back_on_releas
     assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "the step's own table"
     assert (workdir / "outputs" / "kept.tsv").exists() and job["late"] is True
     assert any((event.data or {}).get("job_late") == {"job_id": "7682"} for event in events)
+
+
+async def test_a_wake_limit_release_is_replayed_with_its_release_mark_after_a_reconnect(tmp_path):
+    """The runner was away when the step was released: the replay must still say `release` (#1364)."""
+    import time
+    from labhq.gateway.server import create_app
+    from labhq.settings import Settings
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path)
+    hub = create_app(settings).state.hub
+    hub.store.put("jobs_cancel", "released", {"runner_id": "r1", "requested_at": time.time(), "release": True})
+    hub.store.put("jobs_cancel", "cancelled", {"runner_id": "r1", "requested_at": time.time()})
+    sent = []
+
+    async def send(runner_id, message):
+        sent.append((runner_id, message))
+
+    hub.send_runner = send
+    await hub.flush_task_cancels("r1")  # it reconnects
+    assert ("r1", {"type": "task.jobs_cancel", "task_id": "released", "release": True}) in sent
+    assert ("r1", {"type": "task.jobs_cancel", "task_id": "cancelled"}) in sent  # a request cancel stays plain
