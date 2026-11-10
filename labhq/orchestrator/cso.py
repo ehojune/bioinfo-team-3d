@@ -4844,9 +4844,10 @@ class Orchestrator:
         if not runner_id:
             return
         if store is not None:
-            store.put("jobs_cancel", task_id, {"runner_id": runner_id, "requested_at": time.time()})
+            store.put("jobs_cancel", task_id, {"runner_id": runner_id, "requested_at": time.time(), "release": True})
         try:
-            await self.hub.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": task_id})
+            # `release`: these jobs were never consumed, so results already fetched into outputs/ move to jobs/late/.
+            await self.hub.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": task_id, "release": True})
         except Exception:  # noqa: BLE001 - the store entry is resent when the runner reconnects
             pass
 

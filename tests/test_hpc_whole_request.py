@@ -908,7 +908,7 @@ async def test_endless_resubmission_stops_at_the_hard_cap_and_releases_the_live_
     cap = hub.s.orchestrator.max_wake_cycles * cso.WAKE_HARD_CAP_FACTOR
     assert res.error_kind == "wake_limit" and len(dispatched) == 1 + cap and res.pending_jobs == []
     last = dispatched[-1].id
-    assert sent == [("cluster", {"type": "task.jobs_cancel", "task_id": last})]
+    assert sent == [("cluster", {"type": "task.jobs_cancel", "task_id": last, "release": True})]
     assert stored[("jobs_cancel", last)]["runner_id"] == "cluster"  # resent on reconnect until confirmed
 
 
@@ -950,7 +950,9 @@ async def test_results_fetched_into_outputs_before_the_release_move_to_jobs_late
     runner.jobs = {"7682": {"task_id": "t1", "job_id": "7682", "agent_id": "a", "workdir": str(workdir),
                             "terminal": True, "fetched": True, "fetched_into": str(workdir / "outputs"),
                             "fetched_paths": ["sub/index.tsv"]}}
-    assert await runner._cancel_local_jobs("t1")
+    assert await runner._cancel_local_jobs("t1")  # a request cancel: consumed results stay (#1363 review)
+    assert (workdir / "outputs" / "sub" / "index.tsv").exists() and not runner.jobs["7682"].get("late")
+    assert await runner._cancel_local_jobs("t1", relocate=True)  # a wake-limit release
     late = workdir / "jobs" / "late" / "7682" / "sub" / "index.tsv"
     assert late.read_text(encoding="utf-8") == "late" and not (workdir / "outputs" / "sub" / "index.tsv").exists()
     assert (workdir / "outputs" / "kept.tsv").exists()  # only the job's fetched files move

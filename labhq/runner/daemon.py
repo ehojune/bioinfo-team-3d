@@ -947,7 +947,9 @@ class Runner:
             await self._cancel_local_jobs(cancel_id)
         elif typ == "task.jobs_cancel":  # the step is parked on its jobs and its request was cancelled (#675)
             tid = str(msg.get("task_id") or "")
-            if await self._cancel_local_jobs(tid):
+            # Only a wake-limit release (#1357) moves results already fetched: a request cancel also reaches steps
+            # whose jobs were long consumed, and their outputs stay.
+            if await self._cancel_local_jobs(tid, relocate=msg.get("release") is True):
                 self.send({"type": "task.jobs_cancelled", "task_id": tid})  # durable: the gateway stops resending on it
         elif typ == "task.control":
             await self._on_control(msg)
@@ -3884,7 +3886,7 @@ class Runner:
                 await self.store.adelete("cancelled_task", tid)
         await self.store.aput("cancelled_task", task_id, {"at": now})
 
-    async def _cancel_local_jobs(self, task_id: str) -> bool:
+    async def _cancel_local_jobs(self, task_id: str, relocate: bool = False) -> bool:
         """The step was cancelled: end its running local jobs so no process outlives it, and do not wake the step.
         False when some job's processes could not be ended, so the cancel is not confirmed."""
         if not task_id:
@@ -3895,7 +3897,7 @@ class Runner:
         remember = getattr(self.store, "aput", None)
         if callable(remember):
             await remember("jobs_released", task_id, {"at": time.time()})
-        for jid, j in list(getattr(self, "jobs", {}).items()):
+        for jid, j in list(getattr(self, "jobs", {}).items()) if relocate else ():
             if j.get("task_id") == task_id and j.get("fetched") and self._move_late(j):
                 self.store.put("job", jid, j)
                 await self._say_late(jid, j)
