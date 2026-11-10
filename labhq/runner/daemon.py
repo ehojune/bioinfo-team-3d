@@ -3891,10 +3891,23 @@ class Runner:
             return True
         ended = True
         self.__dict__.setdefault("_jobs_cancelled", set()).add(task_id)  # a submit that is mid-start sees this
+        # Kept across a restart: a job of this step that ends later is fetched into jobs/late/, never outputs/ (#1357).
+        remember = getattr(self.store, "aput", None)
+        if callable(remember):
+            await remember("jobs_released", task_id, {"at": time.time()})
         for jid, j in list(getattr(self, "jobs", {}).items()):
             if local_jobs.is_local(jid) and j.get("task_id") == task_id and not j.get("terminal"):
                 ended = await self._end_local_job(jid, j, "cancelled", wake=False) and ended
         return ended
+
+    def _jobs_released(self, task_id: str) -> bool:
+        """The step no longer waits on its jobs (cancelled, or ended at its wake limit): late results are kept apart."""
+        if not task_id:
+            return False
+        if task_id in self.__dict__.get("_jobs_cancelled", ()):
+            return True
+        lookup = getattr(self.store, "get", None)
+        return callable(lookup) and lookup("jobs_released", task_id) is not None
 
     # ---------------- HPC job watcher ----------------
     async def _job_watch_loop(self) -> None:
@@ -4012,6 +4025,13 @@ class Runner:
                     await self._emit_hpc_notice(
                         "transfer", f"작업 {jid}: 파일 {len(manifest['skipped'])}개는 가져오지 않았습니다(크기 상한 등). "
                                     "사이트 프로필의 전송 방법으로 직접 가져오세요")
+                if j.get("late"):
+                    tid = j.get("task_id")
+                    await self.emit(Event(type="agent.log", task_id=tid, agent_id=j.get("agent_id"),
+                                          request_id=self.task_req.get(tid or ""),
+                                          data={"level": "warn", "job_late": {"job_id": jid},
+                                                "text": f"작업 {jid}는 단계가 끝난 뒤에 끝났습니다. 결과는 단계 산출에 "
+                                                        "넣지 않고 jobs/late/에만 두었습니다"}))
             self.store.put("job", jid, j)
 
     def _fetch_settled(self, j: dict) -> bool:
@@ -4035,7 +4055,8 @@ class Runner:
                     continue
                 if ws.task.resume_session_id and job.get("session_id") != ws.task.resume_session_id:
                     continue
-                if (not job.get("submitted_by_runner") or not job.get("terminal") or job.get("state") != "completed"
+                if (job.get("late") or not job.get("submitted_by_runner") or not job.get("terminal")
+                        or job.get("state") != "completed"
                         or not job.get("fetched") or not isinstance(job.get("remote_manifest"), dict)):
                     raise TransferError("a remote job has no verified successful output manifest")
                 manifest = validate_remote_manifest(job["remote_manifest"], ws.task.request_id)
@@ -4092,8 +4113,13 @@ class Runner:
         if transfer is None:
             raise RuntimeError("the HPC session is not available")
         workdir = Path(j["workdir"])
+        fetch_to = Path(spec["fetch_to"])
+        if self._jobs_released(j.get("task_id") or ""):
+            # The step already ended: its outputs/ is final, so a late job's files land beside it (#1357).
+            fetch_to = workdir / "jobs" / "late" / (re.sub(r"[^A-Za-z0-9._-]", "_", str(j.get("job_id") or "job")) or "job")
+            j["late"] = True
         with request_scope(self.task_req.get(j.get("task_id") or "")), queue_wait():
-            return fetch_results(transfer, spec, workdir / "jobs" / "logs", Path(spec["fetch_to"]), base=workdir)
+            return fetch_results(transfer, spec, workdir / "jobs" / "logs", fetch_to, base=workdir)
 
     async def _wake_finished_jobs(self) -> None:
         """Wake each task whose jobs have all ended, once: the agent was waiting on them (#281)."""

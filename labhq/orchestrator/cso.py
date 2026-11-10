@@ -1655,6 +1655,10 @@ def merged_tool_calls(*results: TaskResult) -> dict[str, ToolCallCount]:
     return merged_tool_call_update(*results)["tool_calls"]
 
 
+# A step that keeps resubmitting HPC jobs still ends after this many times max_wake_cycles wakes (#1357).
+WAKE_HARD_CAP_FACTOR = 4
+
+
 def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
     """A later turn of the same step in the same workspace. The runner lists and hashes the declared outputs as they
     are after that turn, so that view replaces the first turn's: a file the later turn removed, or grew past the hash
@@ -4774,9 +4778,13 @@ class Orchestrator:
                                              "error": f"{res.error or 'error_max_turns'}; wrap-up: {note}"})
             except BudgetExceeded:
                 pass
-        cycles = 0
-        while res.ok and waiting(res) and cycles < self.cfg.max_wake_cycles:
-            cycles += 1
+        # A wake that resubmitted HPC work (new job ids after the jobs it woke on) is progress and does not count
+        # toward max_wake_cycles; a hard cap still ends a step that keeps resubmitting (#1357, 5th airway trial).
+        cycles = wakes = 0
+        hard_cap = self.cfg.max_wake_cycles * WAKE_HARD_CAP_FACTOR
+        while res.ok and waiting(res) and cycles < self.cfg.max_wake_cycles and wakes < hard_cap:
+            wakes += 1
+            awaited_jobs = set(res.pending_jobs)
             prompts = []
             if res.pending_asks:
                 answers = await self.hub.wait_asks(res.pending_asks)
@@ -4803,10 +4811,15 @@ class Orchestrator:
                 meta=meta, resume_session_id=res.session_id if can_resume else None,
             )
             res = merged_turn(res, await dispatch_turn(wake))
+            if not (awaited_jobs and set(res.pending_jobs) - awaited_jobs):
+                cycles += 1
         if res.ok and waiting(res):
+            if res.pending_jobs:
+                # The step ends with jobs still queued or running: the runner keeps their late results apart (#1357).
+                await self._release_step_jobs(res.task_id)
             res = res.model_copy(update={
                 "ok": False, "error_kind": "wake_limit",
-                "error": f"wake cycle limit ({self.cfg.max_wake_cycles}) reached; "
+                "error": f"wake cycle limit ({self.cfg.max_wake_cycles}, {wakes} wakes) reached; "
                          f"pending asks: {res.pending_asks}; pending jobs: {res.pending_jobs}",
                 "pending_asks": [], "pending_jobs": [], "blocking_decision": None,
             })
@@ -4819,6 +4832,23 @@ class Orchestrator:
                                        "options": ["확인"], "allow_free_text": False}],
                         "tool_errors": res.tool_errors, "error": res.error})
         return res
+
+    async def _release_step_jobs(self, task_id: str) -> None:
+        """Tell the step's runner it no longer waits on these jobs, through the request-cancel path (#675): local jobs
+        end, and an HPC job that finishes later is fetched into jobs/late/, never into outputs/ (#1357). Kept in the
+        store until the runner confirms, so a runner that is away gets it when it reconnects."""
+        runner_id = (getattr(self.hub, "task_runner", {}) or {}).get(task_id)
+        store = getattr(self.hub, "store", None)
+        if not runner_id and store is not None:
+            runner_id = (store.get("task", task_id) or {}).get("runner_id")
+        if not runner_id:
+            return
+        if store is not None:
+            store.put("jobs_cancel", task_id, {"runner_id": runner_id, "requested_at": time.time()})
+        try:
+            await self.hub.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": task_id})
+        except Exception:  # noqa: BLE001 - the store entry is resent when the runner reconnects
+            pass
 
     async def _check_budget(self, rid: str, *, block: bool = True, final_turn: bool = False,
                             reserve: float = 0.0) -> None:

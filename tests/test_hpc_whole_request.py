@@ -851,3 +851,83 @@ def test_shared_job_data_grants_only_inventoried_verified_files(tmp_path, monkey
         hpc._share_data_inputs(workdir, {"s1": str(data)}, os.getgid())
         assert stat.S_IMODE(collected.stat().st_mode) == 0o440
     assert stat.S_IMODE(unknown.stat().st_mode) == 0o600
+
+
+def _job_turns(ids):
+    """A step whose turns submit these job ids in order (None: finish), with wait_jobs answering at once."""
+    dispatched = []
+
+    async def dispatch(task):
+        dispatched.append(task)
+        index = len(dispatched) - 1
+        job = ids[index] if index < len(ids) else None
+        return result(task, text="done" if job is None else "waiting", workdir="/w",
+                      pending_jobs=[] if job is None else [job])
+
+    hub = FakeHub(dispatch)
+
+    async def wait_jobs(task_id):
+        await asyncio.sleep(0)
+        return {"jobs": [{"job_id": "j", "state": "failed", "exit_status": 1}]}
+
+    hub.wait_jobs = wait_jobs
+    return hub, dispatched
+
+
+async def test_a_wake_that_resubmits_hpc_work_does_not_count_toward_the_wake_limit():
+    """5th airway trial: build_index fixed and resubmitted its job five times, then died at the limit (#1357)."""
+    hub, dispatched = _job_turns([f"j{i}" for i in range(7)])  # 7 submissions, each wake a new job
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="index"))
+    assert res.ok and res.text == "done" and len(dispatched) == 8
+
+
+async def test_a_wake_that_submits_nothing_new_still_counts():
+    hub, dispatched = _job_turns(["j0"] * 20)  # the same job keeps being reported: no progress
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="index"))
+    assert res.error_kind == "wake_limit" and len(dispatched) == 1 + hub.s.orchestrator.max_wake_cycles
+
+
+async def test_endless_resubmission_stops_at_the_hard_cap_and_releases_the_live_jobs():
+    from labhq.orchestrator import cso
+    hub, dispatched = _job_turns([f"j{i}" for i in range(1000)])
+    sent, stored = [], {}
+    hub.task_runner = {}
+
+    async def send_runner(runner_id, msg):
+        sent.append((runner_id, msg))
+
+    class Store:
+        def get(self, kind, key):
+            return {"runner_id": "cluster"} if kind == "task" else None
+
+        def put(self, kind, key, body):
+            stored[(kind, key)] = body
+
+    hub.send_runner, hub.store = send_runner, Store()
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="index"))
+    cap = hub.s.orchestrator.max_wake_cycles * cso.WAKE_HARD_CAP_FACTOR
+    assert res.error_kind == "wake_limit" and len(dispatched) == 1 + cap and res.pending_jobs == []
+    last = dispatched[-1].id
+    assert sent == [("cluster", {"type": "task.jobs_cancel", "task_id": last})]
+    assert stored[("jobs_cancel", last)]["runner_id"] == "cluster"  # resent on reconnect until confirmed
+
+
+async def test_a_released_steps_late_job_is_fetched_into_jobs_late_not_outputs(tmp_path, monkeypatch):
+    from labhq import hpc_transfer
+    settings = _settings(tmp_path)
+    runner = Runner(settings)
+    seen = []
+    monkeypatch.setattr(hpc_transfer, "fetch_results",
+                        lambda transfer, spec, logs, fetch_to, base=None: seen.append(fetch_to) or {"fetched": [], "skipped": []})
+    monkeypatch.setattr(runner.scheduler, "transfer", lambda: object(), raising=False)
+    workdir = tmp_path / "step"
+    job = {"task_id": "t1", "job_id": "7682", "workdir": str(workdir)}
+    spec = {"fetch_to": str(workdir / "outputs")}
+    runner._fetch_job_files(dict(job), spec)
+    assert seen[-1] == workdir / "outputs"
+    assert await runner._cancel_local_jobs("t1")  # the gateway released the step's jobs
+    late = dict(job)
+    runner._fetch_job_files(late, spec)
+    assert seen[-1] == workdir / "jobs" / "late" / "7682" and late["late"] is True
+    runner.__dict__["_jobs_cancelled"] = set()  # a restarted runner still knows from its store
+    assert runner._jobs_released("t1")
