@@ -3896,6 +3896,10 @@ class Runner:
         if callable(remember):
             await remember("jobs_released", task_id, {"at": time.time()})
         for jid, j in list(getattr(self, "jobs", {}).items()):
+            if j.get("task_id") == task_id and j.get("fetched") and self._move_late(j):
+                self.store.put("job", jid, j)
+                await self._say_late(jid, j)
+        for jid, j in list(getattr(self, "jobs", {}).items()):
             if local_jobs.is_local(jid) and j.get("task_id") == task_id and not j.get("terminal"):
                 ended = await self._end_local_job(jid, j, "cancelled", wake=False) and ended
         return ended
@@ -3908,6 +3912,35 @@ class Runner:
             return True
         lookup = getattr(self.store, "get", None)
         return callable(lookup) and lookup("jobs_released", task_id) is not None
+
+    @staticmethod
+    def _late_dir(j: dict) -> Path:
+        return Path(j["workdir"]) / "jobs" / "late" / (re.sub(r"[^A-Za-z0-9._-]", "_", str(j.get("job_id") or "job")) or "job")
+
+    def _move_late(self, j: dict) -> bool:
+        """Move a released job's files that were fetched into outputs/ to jobs/late/<job>/ (#1357 review): the fetch
+        may have started, or even finished, before the release arrived. True when the job was moved."""
+        if j.get("late") or not j.get("fetched_into") or not j.get("workdir"):
+            return False
+        source, late = Path(j["fetched_into"]), self._late_dir(j)
+        for rel in j.get("fetched_paths") or []:
+            src, dst = source / rel, late / rel
+            try:
+                if src.is_file() and not src.is_symlink():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(src, dst)
+            except OSError:
+                log.warning("could not move a late job file of %s", j.get("job_id"))
+        j["late"], j["fetched_into"] = True, str(late)
+        return True
+
+    async def _say_late(self, jid: str, j: dict) -> None:
+        tid = j.get("task_id")
+        await self.emit(Event(type="agent.log", task_id=tid, agent_id=j.get("agent_id"),
+                              request_id=self.task_req.get(tid or ""),
+                              data={"level": "warn", "job_late": {"job_id": jid},
+                                    "text": f"작업 {jid}는 단계가 끝난 뒤에 끝났습니다. 결과는 단계 산출에 "
+                                            "넣지 않고 jobs/late/에만 두었습니다"}))
 
     # ---------------- HPC job watcher ----------------
     async def _job_watch_loop(self) -> None:
@@ -4021,17 +4054,15 @@ class Runner:
                     j["remote_manifest"] = manifest["remote"]
                 j["fetched_sha256"] = {row["path"]: row["sha256"] for row in manifest.get("fetched", [])
                                        if isinstance(row.get("sha256"), str)}
+                j["fetched_paths"] = [row["path"] for row in manifest.get("fetched", []) if isinstance(row.get("path"), str)]
+                if not j.get("late") and self._jobs_released(j.get("task_id") or ""):
+                    self._move_late(j)  # released while the transfer ran: outputs/ must not keep these
                 if manifest["skipped"]:
                     await self._emit_hpc_notice(
                         "transfer", f"작업 {jid}: 파일 {len(manifest['skipped'])}개는 가져오지 않았습니다(크기 상한 등). "
                                     "사이트 프로필의 전송 방법으로 직접 가져오세요")
                 if j.get("late"):
-                    tid = j.get("task_id")
-                    await self.emit(Event(type="agent.log", task_id=tid, agent_id=j.get("agent_id"),
-                                          request_id=self.task_req.get(tid or ""),
-                                          data={"level": "warn", "job_late": {"job_id": jid},
-                                                "text": f"작업 {jid}는 단계가 끝난 뒤에 끝났습니다. 결과는 단계 산출에 "
-                                                        "넣지 않고 jobs/late/에만 두었습니다"}))
+                    await self._say_late(jid, j)
             self.store.put("job", jid, j)
 
     def _fetch_settled(self, j: dict) -> bool:
@@ -4116,8 +4147,9 @@ class Runner:
         fetch_to = Path(spec["fetch_to"])
         if self._jobs_released(j.get("task_id") or ""):
             # The step already ended: its outputs/ is final, so a late job's files land beside it (#1357).
-            fetch_to = workdir / "jobs" / "late" / (re.sub(r"[^A-Za-z0-9._-]", "_", str(j.get("job_id") or "job")) or "job")
+            fetch_to = self._late_dir(j)
             j["late"] = True
+        j["fetched_into"] = str(fetch_to)
         with request_scope(self.task_req.get(j.get("task_id") or "")), queue_wait():
             return fetch_results(transfer, spec, workdir / "jobs" / "logs", fetch_to, base=workdir)
 

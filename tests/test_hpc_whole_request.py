@@ -931,3 +931,28 @@ async def test_a_released_steps_late_job_is_fetched_into_jobs_late_not_outputs(t
     assert seen[-1] == workdir / "jobs" / "late" / "7682" and late["late"] is True
     runner.__dict__["_jobs_cancelled"] = set()  # a restarted runner still knows from its store
     assert runner._jobs_released("t1")
+
+
+async def test_results_fetched_into_outputs_before_the_release_move_to_jobs_late(tmp_path):
+    """The fetch can finish before the step's last wake reports, or run while the release arrives (#1357 review)."""
+    settings = _settings(tmp_path)
+    runner = Runner(settings)
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    runner.emit = emit
+    workdir = tmp_path / "step"
+    (workdir / "outputs" / "sub").mkdir(parents=True)
+    (workdir / "outputs" / "sub" / "index.tsv").write_text("late", encoding="utf-8")
+    (workdir / "outputs" / "kept.tsv").write_text("the step's own", encoding="utf-8")
+    runner.jobs = {"7682": {"task_id": "t1", "job_id": "7682", "agent_id": "a", "workdir": str(workdir),
+                            "terminal": True, "fetched": True, "fetched_into": str(workdir / "outputs"),
+                            "fetched_paths": ["sub/index.tsv"]}}
+    assert await runner._cancel_local_jobs("t1")
+    late = workdir / "jobs" / "late" / "7682" / "sub" / "index.tsv"
+    assert late.read_text(encoding="utf-8") == "late" and not (workdir / "outputs" / "sub" / "index.tsv").exists()
+    assert (workdir / "outputs" / "kept.tsv").exists()  # only the job's fetched files move
+    assert runner.jobs["7682"]["late"] is True
+    assert any((event.data or {}).get("job_late") == {"job_id": "7682"} for event in events)
