@@ -215,11 +215,13 @@ class TaskWorkspace:
         ws.prompt_pointer, ws._append_refused = None, True
         return ws
 
-    def _task_md(self) -> tuple[str, str]:
+    def _task_md(self, method_note: str = "") -> tuple[str, str]:
         t, a = self.task, self.agent
         body = f"# Task {t.id}\n\nAssigned to: {a.name} ({a.id}) — {a.role}\n\n## Instruction\n{t.prompt}\n"
         if t.context:
             body += f"\n## Context from teammates\n{t.context}\n"
+        if method_note:
+            body += f"\n## Method notes\n{method_note}\n"
         name = (f"TASK_wake_{t.id}.md" if t.resume_session_id else
                 f"TASK_{t.id}.md" if (self.dir / "TASK.md").exists() else "TASK.md")
         return body, name
@@ -230,14 +232,31 @@ class TaskWorkspace:
                                f"there.\n\nInstruction summary: {self.task.prompt[:2000]}")
         return body if len(body) <= INLINE_LIMIT else self.prompt_pointer
 
+    def write_method_notes(self) -> str:
+        """Quote the staged precedent texts' methods into METHOD_NOTES.md on a first turn (#1353); the TASK.md note.
+
+        No hiring, model turn or lookup: only the copies already staged in this folder's inputs/precedent/ are read,
+        and their hashes are rechecked. A woken turn keeps the file its first turn was given."""
+        rows = self.task.meta.get("precedent_texts") if isinstance(self.task.meta, dict) else None
+        if self.task.resume_session_id or not isinstance(rows, list) or not rows:
+            return ""
+        from ..recruit import method_notes
+        text, records = method_notes.build(self.dir, rows)
+        if text:
+            write_owned(self.dir, method_notes.FILE, text)
+        if records:
+            self.update_run(self.task.id, method_notes=records)
+        return method_notes.task_note(records) if text else ""
+
     def write_task_md(self) -> str:
-        body, name = self._task_md()
+        body, name = self._task_md(self.write_method_notes())
         write_owned(self.dir, name, body)
         return self._task_md_written(body, name)
 
     async def awrite_task_md(self) -> str:
         """`write_task_md` for a coroutine: the fsync runs on the durable writer thread (#606)."""
-        body, name = self._task_md()
+        note = await durable.run(durable.FILES, self.write_method_notes)
+        body, name = self._task_md(note)
         await awrite_owned(self.dir, name, body)
         return self._task_md_written(body, name)
 
@@ -504,7 +523,7 @@ class TaskWorkspace:
         if not isinstance(data, dict):
             return {}
         keep = ("started_at", "ended_at", "engine", "model", "model_id", "engine_cli_version", "plugins", "turns",
-                "paper_skills", "paper_skill_warnings")
+                "paper_skills", "paper_skill_warnings", "method_notes")
         runs = {tid: {k: run[k] for k in keep if k in run}
                 for tid, run in (data.get("runs") or {}).items() if isinstance(run, dict)}
         return {"engine": data.get("engine"), "model": data.get("model"), "runs": runs}
