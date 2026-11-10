@@ -1169,3 +1169,19 @@ def test_verify_takes_remote_evidence_only_from_the_results_own_run_read_without
     status = {row["path"]: row["status"] for row in report["files"]}
     assert status["outputs/de_results.csv"] != "remote"
     assert report["exit_code"] != 0
+
+
+def test_verify_reads_the_remote_record_of_a_direct_hpc_run(tmp_path):
+    """A direct task has no meta.step_id; the request files it under "direct" (#1370 review)."""
+    import json
+    settings = _settings(tmp_path)
+    workdir = Path(settings.runner.workspace_root) / "hpc" / "r" / "steps" / "direct"
+    (workdir / "outputs").mkdir(parents=True)
+    (workdir / "manifest.json").write_text(json.dumps({
+        "task": {"id": "t1", "request_id": "r", "meta": {}},
+        "runs": {"t1": {"ok": True, "request_id": "r", "hpc_remote_outputs": [
+            {"files": [{"path": "big.tsv", "bytes": 5}]}]}}}), encoding="utf-8")
+    result = {"task_id": "t1", "workdir": str(workdir), "workdir_id": "direct", "ok": True,
+              "outputs": ["outputs/big.tsv"], "output_sha256": {}}
+    report = verify_request({"id": "r", "status": "done", "results": {"direct": result}}, settings)
+    assert [row["status"] for row in report["files"]] == ["remote"] and report["exit_code"] == 0

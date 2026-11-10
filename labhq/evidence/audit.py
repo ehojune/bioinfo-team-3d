@@ -147,7 +147,7 @@ def remote_outputs(root: Path, workdir: Path, result: Mapping[str, Any], request
     run = (manifest.get("runs") or {}).get(task_id) if isinstance(manifest.get("runs"), Mapping) else None
     if (not isinstance(run, Mapping) or run.get("ok") is not True
             or run.get("request_id", task.get("request_id")) != request_id
-            or (run.get("step_id") or (task.get("meta") or {}).get("step_id")) != step_id):
+            or (run.get("step_id") or (task.get("meta") or {}).get("step_id") or "direct") != step_id):
         return {}
     found: dict[str, int] = {}
     manifests = run.get("hpc_remote_outputs")
