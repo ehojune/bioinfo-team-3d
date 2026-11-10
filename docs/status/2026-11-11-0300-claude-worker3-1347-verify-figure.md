@@ -8,7 +8,7 @@
 - `tests/test_hpc_whole_request.py`: 묶음 형식·미매핑 형식 통과, 기록 없는 그림은 문제
 
 ## 실행한 것
-- verify·audit·그림 관련 시험 통과(아래 PR 본문)
+- verify·audit·그림 관련 시험 통과: 583 passed, 11 skipped
 
 ## 미해결
 - 그림 검사 자체(`report_figures.py`)는 바꾸지 않았다. 문제 문구를 audit이 해석하므로, 문구가 바뀌면 같이 고쳐야 한다
