@@ -18,7 +18,7 @@ import re
 from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .. import __version__
@@ -169,6 +169,26 @@ def _remote(path: str, remote: Mapping[str, int]) -> dict[str, Any] | None:
         return {"size": sum(below), "sha256": None, "status": REMOTE,
                 "detail": f"HPC 원격 데이터 폴더에 있습니다(아래 파일 {len(below)}개)"}
     return None
+
+
+_MISSING_FIGURE = re.compile(r"[^:]+: 링크한 그림이 묶음에 없습니다: (?P<path>\S+)")
+
+
+def _remote_figure(problem: str, remote_by_step: Mapping[str, Mapping[str, int]],
+                   step_of_workdir: Mapping[str, str]) -> bool:
+    """A missing-figure problem whose link names a step output the HPC data folder keeps (#1347). The report links a
+    figure as ``steps/<step_id>/outputs/...`` in the bundle, or as ``<workdir_id>/outputs/...`` when it was not mapped."""
+    found = _MISSING_FIGURE.fullmatch(problem)
+    if not found:
+        return False
+    parts = PurePosixPath(found["path"].replace("\\", "/")).parts
+    if len(parts) >= 3 and parts[0] == "steps":
+        step, rest = parts[1], parts[2:]
+    elif len(parts) >= 2 and parts[0] in step_of_workdir:
+        step, rest = step_of_workdir[parts[0]], parts[1:]
+    else:
+        return False
+    return rest[:1] == ("outputs",) and "/".join(rest) in remote_by_step.get(step, {})
 
 
 def _compare(recorded: str | None, row: Mapping[str, Any] | None, note: str | None, *,
@@ -338,6 +358,8 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     unreported: dict[str, list[str]] = {}
     scans: dict[str, tuple[list[dict[str, Any]], str | None]] = {}
     observed_artifacts: dict[str, dict[str, str]] = {}
+    remote_by_step: dict[str, Mapping[str, int]] = {}  # step id -> outputs kept in the HPC data folder (#1347)
+    step_of_workdir: dict[str, str] = {}
     for step_id, result in results.items():
         if not isinstance(result, Mapping):
             continue
@@ -365,6 +387,9 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                 settings.runner.output_hash_max_bytes)
         records, note = scans[str(workdir)]
         remote = remote_outputs(root, workdir, result, str(req.get("id") or ""), str(step_id))
+        remote_by_step[str(step_id)] = remote
+        if isinstance(result.get("workdir_id"), str):
+            step_of_workdir[result["workdir_id"]] = str(step_id)
         if note is None and all(isinstance(row.get("sha256"), str) for row in records):
             observed_artifacts[str(step_id)] = {str(row["path"]): row["sha256"] for row in records}
         # A declared name matched a differently cased file on a case-insensitive volume when it was collected.
@@ -418,7 +443,15 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
             from ..report_figures import bundle_figure_check
 
             request_bundle["figures"] = bundle_figure_check(root / "requests" / request_id)
-            problems += [f"보고서 그림: {problem}" for problem in request_bundle["figures"]["problems"]]
+            # A figure the step left in the HPC data folder (over the fetch cap) is not in the bundle by design: it is
+            # kept remotely, not missing (#1347, 10th airway trial). A link no record explains stays a problem.
+            figures = request_bundle["figures"]
+            kept_remote = [problem for problem in figures["problems"]
+                           if _remote_figure(problem, remote_by_step, step_of_workdir)]
+            figures["problems"] = [problem for problem in figures["problems"] if problem not in kept_remote]
+            figures["remote"] = kept_remote
+            warnings += [f"보고서 그림 원격 보관: {problem}" for problem in kept_remote]
+            problems += [f"보고서 그림: {problem}" for problem in figures["problems"]]
             warnings += [f"보고서 그림 WARN: {warning}" for warning in request_bundle["figures"]["warnings"]]
     return {"request_id": req.get("id"), "text": req.get("text"), "status": req.get("status"),
             "outcome": req.get("outcome"), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),

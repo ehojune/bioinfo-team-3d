@@ -1185,3 +1185,24 @@ def test_verify_reads_the_remote_record_of_a_direct_hpc_run(tmp_path):
               "outputs": ["outputs/big.tsv"], "output_sha256": {}}
     report = verify_request({"id": "r", "status": "done", "results": {"direct": result}}, settings)
     assert [row["status"] for row in report["files"]] == ["remote"] and report["exit_code"] == 0
+
+
+@pytest.mark.parametrize("figure,remote", [
+    ("steps/s1/outputs/figures/qc.svg", True),   # bundle form
+    ("s1/outputs/figures/qc.svg", True),          # unmapped <workdir_id>/outputs form
+    ("steps/s1/outputs/figures/gone.svg", False),  # no record explains it: still a problem
+])
+def test_verify_counts_a_report_figure_kept_in_the_hpc_data_folder_as_remote(tmp_path, monkeypatch, figure, remote):
+    """10th airway trial: a 2.1 MB QC figure stayed remote and the figure check read it as missing (#1347)."""
+    from labhq import report_figures, ro_crate
+    monkeypatch.setattr(ro_crate, "verify_bundle_copy", lambda path, rid: {"present": True, "problems": []})
+    monkeypatch.setattr(report_figures, "bundle_figure_check", lambda root: {
+        "problems": [f"report.md: 링크한 그림이 묶음에 없습니다: {figure}"], "warnings": []})
+    report = _verify_remote_request(tmp_path, remote_files={"figures/qc.svg": 2_100_000},
+                                    outputs=["outputs/local.tsv", "outputs/figures/qc.svg"])
+    figure_problems = [p for p in report["problems"] if p.startswith("보고서 그림:")]
+    if remote:
+        assert not figure_problems and report["exit_code"] == 0
+        assert any("원격 보관" in warning for warning in report["warnings"])
+    else:
+        assert figure_problems and report["exit_code"] == 1
