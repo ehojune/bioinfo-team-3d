@@ -274,12 +274,56 @@ def step_intervals(db_path: Path, request_id: str, forced: set[str], log: Path |
     return sorted(tasks.values(), key=lambda t: t["start_seq"])
 
 
+def file_intervals(steps_dir: Path, forced: set[str]) -> list[dict]:
+    """The same intervals from the runner's per-step ``events.jsonl`` files, for a run whose dispatch/result events the
+    gateway no longer keeps and that was not watched. The step id is the folder name; a task starts at its first event
+    and ends at its ``task.result``; it used HPC if one of its events names an HPC tool. Times stand in for seq."""
+    tasks: dict[str, dict] = {}
+    for events in sorted(steps_dir.glob("*/events.jsonl")):
+        step = events.parent.name
+        for line in events.read_text(encoding="utf-8").splitlines():
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            tid, ts = ev.get("task_id"), ev.get("ts")
+            if not tid or not isinstance(ts, (int, float)):
+                continue
+            task = tasks.setdefault(tid, {"task_id": tid, "agent_id": ev.get("agent_id"), "step_id": step,
+                                          "attempt": None, "start_seq": float(ts), "start_ts": float(ts),
+                                          "end_seq": None, "end_ts": None, "hpc": False})
+            if ev.get("type") == "task.result" and task["end_seq"] is None:
+                task["end_seq"] = task["end_ts"] = float(ts)
+            if ev.get("type") != "task.result" and HPC_TOOL.search(line):
+                task["hpc"] = True
+    for task in tasks.values():
+        task["hpc"] = task["hpc"] or task["step_id"] in forced or task["task_id"] in forced
+    return sorted(tasks.values(), key=lambda t: t["start_seq"])
+
+
+def prefer_complete(tasks: list[dict], workspace_root: Path, bundle: Path, request_id: str, forced: set[str]) -> list[dict]:
+    """The gateway's intervals when they cover the whole request, else the step files'. Retention can cut a request in
+    the middle (early steps gone, a late one still complete), so the test is per task: every task the step files know
+    must have a dispatch and a result in the gateway's view."""
+    steps = next((d for d in (workspace_root / "hpc" / request_id / "steps", bundle / "steps")
+                  if any(d.glob("*/events.jsonl"))), None)
+    if steps is None:
+        return tasks
+    from_files = file_intervals(steps, forced)
+    complete = {t["task_id"] for t in tasks if t["end_seq"] is not None}
+    if all(t["task_id"] in complete for t in from_files):
+        return tasks
+    print(f"단계 시간: gateway 이벤트가 요청 전체를 담고 있지 않아 단계별 events.jsonl에서 읽습니다 ({steps.parent.name})")
+    return from_files
+
+
 def overlapping_pairs(tasks: list[dict]) -> list[tuple[dict, dict]]:
     hpc = [t for t in tasks if t["hpc"]]
     pairs = []
     for i, a in enumerate(hpc):
         for b in hpc[i + 1:]:
-            if a["step_id"] == b["step_id"] or a["agent_id"] == b["agent_id"]:
+            same_step = a["step_id"] is not None and a["step_id"] == b["step_id"]  # an unknown step is not the same step
+            if same_step or a["agent_id"] == b["agent_id"]:
                 continue  # a retry, or one employee with two steps, is not two staff working at once
             a_end = a["end_seq"] if a["end_seq"] is not None else float("inf")
             if b["start_seq"] < a_end:
@@ -569,6 +613,8 @@ def main(argv: list[str] | None = None) -> int:
     if "genes" not in args.skip:
         checks.append(check_genes(args.de or find_de_tables(bundle)))
     tasks = step_intervals(db, args.request, set(args.hpc_step), args.events_log)
+    tasks = prefer_complete(tasks, settings.path(settings.runner.workspace_root), bundle, args.request,
+                            set(args.hpc_step))
     logins = ledger_times(ledger) if ledger and ledger.exists() else []
     if "overlap" not in args.skip:
         checks.append(check_overlap(tasks))
