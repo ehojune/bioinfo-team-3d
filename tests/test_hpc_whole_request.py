@@ -1000,3 +1000,40 @@ async def test_a_wake_limit_release_is_replayed_with_its_release_mark_after_a_re
     await hub.flush_task_cancels("r1")  # it reconnects
     assert ("r1", {"type": "task.jobs_cancel", "task_id": "released", "release": True}) in sent
     assert ("r1", {"type": "task.jobs_cancel", "task_id": "cancelled"}) in sent  # a request cancel stays plain
+
+
+def _attempts(tmp_path, states):
+    """A step's remote jobs, submitted in this order with these terminal states (None: still running)."""
+    from types import SimpleNamespace
+    from tests.test_hpc_remote_data import inventory
+
+    ws = SimpleNamespace(dir=tmp_path, task=Task(agent_id="worker", request_id="r", prompt="fetch",
+                                                 meta={"step_id": "s1", "outputs": ["outputs/tx2gene.tsv"]}))
+    runner = Runner.__new__(Runner)
+    runner.scheduler = SimpleNamespace(transfer=lambda: object())
+    runner.jobs = {}
+    for index, state in enumerate(states):
+        runner.jobs[str(7677 + index)] = {
+            "workdir": str(tmp_path), "transfer": {"request_id": "r", "step_id": "s1"}, "submitted_by_runner": True,
+            "submitted_at": 1000.0 + index, "terminal": state is not None, "state": state or "running",
+            "fetched": state == "completed", **({"remote_manifest": inventory()} if state == "completed" else {})}
+    return runner, ws
+
+
+@pytest.mark.parametrize("states,ok", [
+    (["failed", "completed"], True),             # walltime-killed 7677, then 7687 exit 0 (#1366)
+    (["cancelled", "failed", "completed"], True),
+    (["failed"], False),                          # every attempt failed: refused as before
+    (["completed", "failed"], False),             # a failure after the success still refuses
+    ([None, "completed"], False),                 # an earlier attempt still running still refuses
+])
+def test_a_failed_attempt_replaced_by_a_later_success_does_not_refuse_the_outputs(tmp_path, monkeypatch, states, ok):
+    from labhq import hpc_transfer as ht
+    monkeypatch.setattr(ht, "verify_remote_data", lambda *args: None)
+    runner, ws = _attempts(tmp_path, states)
+    if ok:
+        found, = runner._remote_step_outputs(ws)
+        assert [row["path"] for row in found["files"]] == ["tx2gene.tsv"]
+    else:
+        with pytest.raises(ht.TransferError, match="no verified successful output manifest"):
+            runner._remote_step_outputs(ws)

@@ -4100,14 +4100,30 @@ class Runner:
         transfer = self.scheduler.transfer()
         if transfer is None:
             return manifests
+        def mine(job: dict) -> bool:
+            spec = job.get("transfer") or {}
+            return not (job.get("workdir") != str(ws.dir) or spec.get("request_id") != ws.task.request_id or
+                        spec.get("step_id") != ws.task.meta.get("step_id") or
+                        spec.get("revision", 0) != ws.task.meta.get("revision", 0) or
+                        (ws.task.resume_session_id and job.get("session_id") != ws.task.resume_session_id))
+
+        def submitted(job: dict) -> float:
+            value = job.get("submitted_at")
+            return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+        # A failed or cancelled attempt that a later successful resubmission replaced is history, not evidence: the
+        # step's outputs come from the success (#1366, 5th airway trial: walltime-killed 7677, then 7687 exit 0). An
+        # attempt still running, or one that failed after the last success, still refuses the outputs.
+        succeeded = [submitted(job) for job in self.jobs.values()
+                     if mine(job) and job.get("terminal") and job.get("state") == "completed"]
+        last_success = max(succeeded) if succeeded else None
         with request_scope(ws.task.request_id), queue_wait():
             for job in list(self.jobs.values()):
-                spec = job.get("transfer") or {}
-                if (job.get("workdir") != str(ws.dir) or spec.get("request_id") != ws.task.request_id or
-                        spec.get("step_id") != ws.task.meta.get("step_id") or
-                        spec.get("revision", 0) != ws.task.meta.get("revision", 0)):
+                if not mine(job):
                     continue
-                if ws.task.resume_session_id and job.get("session_id") != ws.task.resume_session_id:
+                spec = job.get("transfer") or {}
+                if (last_success is not None and job.get("terminal") and job.get("state") != "completed"
+                        and submitted(job) < last_success):
                     continue
                 if (job.get("late") or not job.get("submitted_by_runner") or not job.get("terminal")
                         or job.get("state") != "completed"
