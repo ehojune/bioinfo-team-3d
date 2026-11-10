@@ -6,6 +6,7 @@ HPC 단계가 잡을 고쳐 다시 낸 깨우기는 깨우기 상한(`max_wake_c
 ## 바뀐 것
 - `labhq/orchestrator/cso.py`: 깨우기 전후 잡 id를 비교해 새 잡을 냈으면 상한에 세지 않음, `WAKE_HARD_CAP_FACTOR = 4`, 상한 도달 시 `_release_step_jobs`가 기존 `task.jobs_cancel` 경로(store `jobs_cancel` + `send_runner`, 재연결 때 재전송)로 알림
 - `labhq/runner/daemon.py`: 해제된 단계를 store `jobs_released`에 남겨 재시작 뒤에도 기억. 해제된 단계의 잡은 `jobs/late/<job>/`로 회수하고 `job_late` 로그 이벤트, 산출 판정(`_remote_step_outputs`)에서 제외
+- 리뷰 반영: 해제 전·전송 중에 `outputs/`로 회수된 그 잡의 파일도 `jobs/late/<job>/`로 옮김, manual 15 한·영
 - `tests/test_hpc_whole_request.py`: 재제출 깨우기, 진전 없는 깨우기, 하드 캡과 해제 알림, 늦은 잡 회수 위치
 
 ## 실행한 것
