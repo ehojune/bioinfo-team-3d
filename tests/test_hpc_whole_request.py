@@ -1103,5 +1103,5 @@ def test_the_remote_scan_leaves_out_a_conda_environment_and_still_caps_real_outp
         ("env", "environment folder"), ("venv", "environment folder")}
     many = {f"out/r{i:05d}.tsv": b"" for i in range(20001)}  # real outputs over the cap still refuse
     spec = prepare(cluster, transfer, tmp_path, many)
-    with pytest.raises(Exception, match="too many remote outputs|remote manifest too large|exit"):
+    with pytest.raises(Exception, match="checking remote data failed|too many remote outputs"):
         ht.fetch_results(transfer, spec, tmp_path / "logs2", tmp_path / "outputs2")
