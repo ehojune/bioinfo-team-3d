@@ -1107,3 +1107,44 @@ def test_the_remote_scan_leaves_out_a_conda_environment_and_still_caps_real_outp
     spec = prepare(cluster, transfer, tmp_path, many)
     with pytest.raises(Exception, match="checking remote data failed|too many remote outputs"):
         ht.fetch_results(transfer, spec, tmp_path / "logs2", tmp_path / "outputs2")
+
+
+def _verify_remote_request(tmp_path, *, remote_files, outputs):
+    """A finished whole-HPC step whose `outputs/local.tsv` is on this PC and whose other outputs stayed remote."""
+    import hashlib
+    import json
+    settings = _settings(tmp_path)
+    workdir = Path(settings.runner.workspace_root) / "hpc" / "r" / "steps" / "s1"
+    (workdir / "outputs").mkdir(parents=True)
+    (workdir / "outputs" / "local.tsv").write_bytes(b"gene\n")
+    (workdir / "manifest.json").write_text(json.dumps({
+        "task": {"id": "t1", "request_id": "r", "meta": {"step_id": "s1"}},
+        "runs": {"t1": {"ok": True, "request_id": "r", "step_id": "s1",
+                        "hpc_remote_outputs": [{"request_id": "r", "data": "r/data", "bytes": 0,
+                                                "files": [{"path": p, "bytes": b} for p, b in remote_files.items()],
+                                                "directories": []}]}}}), encoding="utf-8")
+    result = {"task_id": "t1", "agent_id": "worker", "workdir": str(workdir), "workdir_id": "s1", "ok": True,
+              "outputs": outputs,
+              "output_sha256": {"outputs/local.tsv": hashlib.sha256(b"gene\n").hexdigest()}}
+    request = {"id": "r", "text": "t", "status": "done", "results": {"s1": result}}
+    return verify_request(request, settings)
+
+
+def test_verify_counts_outputs_kept_in_the_hpc_data_folder_as_remote_not_missing(tmp_path):
+    """10th airway trial: three outputs over the fetch cap stayed remote by design and read as missing (#1347)."""
+    report = _verify_remote_request(tmp_path, remote_files={"de_results.csv": 9_000_000, "quant/a.sf": 10},
+                                    outputs=["outputs/local.tsv", "outputs/de_results.csv", "outputs/quant"])
+    status = {row["path"]: row["status"] for row in report["files"]}
+    assert status == {"outputs/local.tsv": "ok", "outputs/de_results.csv": "remote", "outputs/quant": "remote"}
+    sizes = {row["path"]: row["size"] for row in report["files"]}
+    assert sizes["outputs/de_results.csv"] == 9_000_000 and report["exit_code"] == 0
+    from labhq.evidence.audit import render_verify
+    assert "원격 보관 2" in render_verify(report)
+
+
+def test_verify_still_reports_an_output_neither_here_nor_in_the_remote_record_as_missing(tmp_path):
+    report = _verify_remote_request(tmp_path, remote_files={"de_results.csv": 10},
+                                    outputs=["outputs/local.tsv", "outputs/de_results.csv", "outputs/gone.tsv"])
+    status = {row["path"]: row["status"] for row in report["files"]}
+    assert status["outputs/gone.tsv"] == "missing" and status["outputs/de_results.csv"] == "remote"
+    assert report["exit_code"] == 1
