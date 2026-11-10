@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:51 | [`c867655`](https://github.com/ehojune/bioinfo-team-3d/pull/1369/commits/c867655) | **숨김 이름의 환경 폴더도 결과 확인을 막지 않습니다.**<br>원격 scan이 __pycache__·.venv를 이름 규칙보다 먼저 environment folder로 분류한다 (#1369 리뷰). |
+| 20:35 | [`e12d405`](https://github.com/ehojune/bioinfo-team-3d/pull/1369/commits/e12d405) | **시험 문구만 고쳤습니다.**<br>원격 scan 상한 초과 시험이 helper 실패 문구를 확인하게 고친다 (#1368). |
+| 20:14 | [`6d6eaf5`](https://github.com/ehojune/bioinfo-team-3d/pull/1369/commits/6d6eaf5) | **HPC 잡이 작업 폴더에 환경을 설치해도 결과 확인이 막히지 않습니다.**<br>원격 산출 목록에서 잡이 만든 conda·mamba 환경, Python venv, __pycache__를 빼고, 목록을 못 읽은 잡도 같은 이름으로 다시 낸 성공 잡이 있으면 단계를 막지 않는다 (#1368). |
 | 15:21 | [`7c478aa`](https://github.com/ehojune/bioinfo-team-3d/pull/1367/commits/7c478aa) | **여러 잡으로 나눈 단계에서 한 조각이 실패하면 계속 실패로 판정합니다.**<br>재시도는 같은 이름으로 나중에 낸 잡으로만 보고, 다른 shard의 성공은 실패를 대신하지 않는다 (#1367 리뷰). |
 | 15:03 | [`f684181`](https://github.com/ehojune/bioinfo-team-3d/pull/1367/commits/f684181) | **HPC 잡을 다시 내서 성공하면 앞선 실패 때문에 단계가 실패하지 않습니다.**<br>같은 단계에서 실패·취소된 시도 뒤 다시 낸 잡이 성공하면, 앞선 실패는 원격 산출 판정에서 빼고 기록에만 남긴다. 성공 뒤 실패와 도는 중인 앞 시도는 그대로 거절한다 (#1366). |
 | 10:31 | [`2160175`](https://github.com/ehojune/bioinfo-team-3d/pull/1365/commits/2160175) | **runner가 잠시 끊겨 있어도 깨우기 상한 해제가 그대로 전달됩니다.**<br>flush_task_cancels가 재접속한 runner에 jobs_cancel을 다시 보낼 때 저장된 release 표시를 그대로 싣는다 (#1364, #1363 리뷰 후속). |
