@@ -329,3 +329,32 @@ def test_file_intervals_sequential_steps_fail(tmp_path):
         {"type": "agent.tool", "ts": 3.0, "task_id": "t2", "agent_id": "b", "data": {"name": "hpc_submit"}},
         {"type": "task.result", "ts": 4.0, "task_id": "t2", "agent_id": "b", "data": {}}])
     assert J.check_overlap(J.file_intervals(steps, set()))["status"] == "FAIL"
+
+
+def test_partly_aged_out_events_fall_back_to_step_files(tmp_path):
+    # retention cut the request: only the late step t3 is still complete in the gateway's view
+    steps = tmp_path / "hpc" / REQ / "steps"
+    step_file(steps, "fetch", [
+        {"type": "agent.tool", "ts": 10.0, "task_id": "t1", "agent_id": "steward", "data": {"name": "hpc_submit"}},
+        {"type": "task.result", "ts": 20.0, "task_id": "t1", "agent_id": "steward", "data": {}}])
+    step_file(steps, "index", [
+        {"type": "agent.tool", "ts": 12.0, "task_id": "t2", "agent_id": "engineer", "data": {"name": "hpc_submit"}},
+        {"type": "task.result", "ts": 30.0, "task_id": "t2", "agent_id": "engineer", "data": {}}])
+    step_file(steps, "quant", [
+        {"type": "agent.tool", "ts": 40.0, "task_id": "t3", "agent_id": "analyst", "data": {"name": "hpc_submit"}},
+        {"type": "task.result", "ts": 50.0, "task_id": "t3", "agent_id": "analyst", "data": {}}])
+    db = events_db(tmp_path, [ev("task.dispatched", "t3", 40.0, step="quant"), ev("agent.log", "t3", text="hpc_submit"),
+                              ev("task.result", "t3", 50.0)])
+    partial = J.step_intervals(db, REQ, set())
+    assert J.check_overlap(partial)["status"] == "FAIL"
+    tasks = J.prefer_complete(partial, tmp_path, tmp_path / "bundle", REQ, set())
+    assert {t["task_id"] for t in tasks} == {"t1", "t2", "t3"}
+    assert J.check_overlap(tasks)["status"] == "PASS"
+
+
+def test_complete_gateway_view_is_kept(tmp_path):
+    steps = tmp_path / "hpc" / REQ / "steps"
+    step_file(steps, "fetch", [{"type": "task.result", "ts": 20.0, "task_id": "t1", "agent_id": "a", "data": {}}])
+    db = events_db(tmp_path, [ev("task.dispatched", "t1", 10.0, step="fetch"), ev("task.result", "t1", 20.0)])
+    tasks = J.step_intervals(db, REQ, set())
+    assert J.prefer_complete(tasks, tmp_path, tmp_path / "bundle", REQ, set()) is tasks
