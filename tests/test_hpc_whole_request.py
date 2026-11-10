@@ -1204,5 +1204,18 @@ def test_verify_counts_a_report_figure_kept_in_the_hpc_data_folder_as_remote(tmp
     if remote:
         assert not figure_problems and report["exit_code"] == 0
         assert any("원격 보관" in warning for warning in report["warnings"])
+        from labhq.evidence.audit import render_verify
+        report["request_bundle"]["figures"]["linked"] = 1
+        assert "원격 보관 1개, 나머지는 묶음 안에 있음" in render_verify(report)
     else:
         assert figure_problems and report["exit_code"] == 1
+
+
+def test_an_empty_remote_figure_is_still_a_problem(tmp_path, monkeypatch):
+    from labhq import report_figures, ro_crate
+    monkeypatch.setattr(ro_crate, "verify_bundle_copy", lambda path, rid: {"present": True, "problems": []})
+    monkeypatch.setattr(report_figures, "bundle_figure_check", lambda root: {
+        "problems": ["report.md: 링크한 그림이 묶음에 없습니다: steps/s1/outputs/figures/qc.svg"], "warnings": []})
+    report = _verify_remote_request(tmp_path, remote_files={"figures/qc.svg": 0},
+                                    outputs=["outputs/local.tsv", "outputs/figures/qc.svg"])
+    assert any(p.startswith("보고서 그림:") for p in report["problems"]) and report["exit_code"] == 1

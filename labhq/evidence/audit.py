@@ -188,7 +188,8 @@ def _remote_figure(problem: str, remote_by_step: Mapping[str, Mapping[str, int]]
         step, rest = step_of_workdir[parts[0]], parts[1:]
     else:
         return False
-    return rest[:1] == ("outputs",) and "/".join(rest) in remote_by_step.get(step, {})
+    # An empty remote file stays a problem, as an empty local figure is (#1372 review).
+    return rest[:1] == ("outputs",) and remote_by_step.get(step, {}).get("/".join(rest), 0) > 0
 
 
 def _compare(recorded: str | None, row: Mapping[str, Any] | None, note: str | None, *,
@@ -526,8 +527,10 @@ def render_verify(report: Mapping[str, Any]) -> str:
             ))
     figures = (request_bundle or {}).get("figures") or {}
     if figures.get("linked") or figures.get("problems"):
+        remote = len(figures.get("remote") or [])
         lines.append(f"보고서 그림: 링크 {figures.get('linked', 0)}개, "
-                     + ("모두 묶음 안에 있음" if not figures.get("problems") else f"문제 {len(figures['problems'])}건"))
+                     + (f"문제 {len(figures['problems'])}건" if figures.get("problems")
+                        else f"원격 보관 {remote}개, 나머지는 묶음 안에 있음" if remote else "모두 묶음 안에 있음"))
     if report.get("bundle"):
         lines.append(f"감사 번들: {report['bundle']}")
     lines += [f"경고: {warning}" for warning in report.get("warnings") or []]
