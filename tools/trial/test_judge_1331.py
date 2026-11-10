@@ -280,3 +280,52 @@ def test_windows_paths_stay_whole_and_short_identifiers_stay():
 
 def test_space_form_ssh_options_still_give_user_and_host():
     assert j.argv_terms(["ssh", "-o", "HostName private.example", "-o", "User alice", "alias"]) >= {"private.example", "alice"}
+
+
+def test_unknown_step_ids_are_not_one_step(tmp_path):
+    # dispatch events without data.step_id (the gateway's form): two staff still make a pair
+    db = events_db(tmp_path, [
+        ev("task.dispatched", "t1", 1.0), ev("task.dispatched", "t2", 2.0),
+        ev("agent.log", "t1", text="hpc_submit"), ev("agent.log", "t2", text="hpc_submit"),
+        ev("task.result", "t1", 3.0), ev("task.result", "t2", 4.0),
+    ])
+    assert J.check_overlap(J.step_intervals(db, REQ, set()))["status"] == "PASS"
+
+
+def step_file(steps, step, rows):
+    folder = steps / step
+    folder.mkdir(parents=True)
+    (folder / "events.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def test_file_intervals_find_overlap_from_step_events(tmp_path):
+    steps = tmp_path / "steps"
+    step_file(steps, "fetch", [
+        {"type": "agent.status", "ts": 10.0, "task_id": "t1", "agent_id": "steward", "data": {"state": "queued"}},
+        {"type": "agent.tool", "ts": 11.0, "task_id": "t1", "agent_id": "steward", "data": {"name": "mcp__labhq_hpc__hpc_submit"}},
+        {"type": "task.result", "ts": 20.0, "task_id": "t1", "agent_id": "steward", "data": {}},
+        {"type": "agent.status", "ts": 50.0, "task_id": "t3", "agent_id": "steward", "data": {"state": "queued"}},
+        {"type": "task.result", "ts": 60.0, "task_id": "t3", "agent_id": "steward", "data": {}},
+    ])
+    step_file(steps, "index", [
+        {"type": "agent.status", "ts": 12.0, "task_id": "t2", "agent_id": "engineer", "data": {"state": "queued"}},
+        {"type": "agent.tool", "ts": 13.0, "task_id": "t2", "agent_id": "engineer", "data": {"name": "mcp__labhq_hpc__hpc_submit"}},
+        {"type": "task.result", "ts": 30.0, "task_id": "t2", "agent_id": "engineer", "data": {}},
+    ])
+    tasks = J.file_intervals(steps, set())
+    by = {t["task_id"]: t for t in tasks}
+    assert by["t1"]["step_id"] == "fetch" and by["t1"]["end_ts"] == 20.0 and by["t1"]["hpc"]
+    assert not by["t3"]["hpc"]
+    check = J.check_overlap(tasks)
+    assert check["status"] == "PASS" and len(check["pairs"]) == 1
+
+
+def test_file_intervals_sequential_steps_fail(tmp_path):
+    steps = tmp_path / "steps"
+    step_file(steps, "fetch", [
+        {"type": "agent.tool", "ts": 1.0, "task_id": "t1", "agent_id": "a", "data": {"name": "hpc_submit"}},
+        {"type": "task.result", "ts": 2.0, "task_id": "t1", "agent_id": "a", "data": {}}])
+    step_file(steps, "index", [
+        {"type": "agent.tool", "ts": 3.0, "task_id": "t2", "agent_id": "b", "data": {"name": "hpc_submit"}},
+        {"type": "task.result", "ts": 4.0, "task_id": "t2", "agent_id": "b", "data": {}}])
+    assert J.check_overlap(J.file_intervals(steps, set()))["status"] == "FAIL"
