@@ -1,0 +1,6 @@
+pr: 1365
+rows:
+- sha: '2160175'
+  at: 2026-11-10 10:31
+  text: 'flush_task_cancels가 재접속한 runner에 jobs_cancel을 다시 보낼 때 저장된 release 표시를 그대로 싣는다 (#1364, #1363 리뷰 후속).'
+  summary: runner가 잠시 끊겨 있어도 깨우기 상한 해제가 그대로 전달됩니다.
