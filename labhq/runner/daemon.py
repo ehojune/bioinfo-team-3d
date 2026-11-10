@@ -947,7 +947,9 @@ class Runner:
             await self._cancel_local_jobs(cancel_id)
         elif typ == "task.jobs_cancel":  # the step is parked on its jobs and its request was cancelled (#675)
             tid = str(msg.get("task_id") or "")
-            if await self._cancel_local_jobs(tid):
+            # Only a wake-limit release (#1357) moves results already fetched: a request cancel also reaches steps
+            # whose jobs were long consumed, and their outputs stay.
+            if await self._cancel_local_jobs(tid, relocate=msg.get("release") is True):
                 self.send({"type": "task.jobs_cancelled", "task_id": tid})  # durable: the gateway stops resending on it
         elif typ == "task.control":
             await self._on_control(msg)
@@ -3884,17 +3886,84 @@ class Runner:
                 await self.store.adelete("cancelled_task", tid)
         await self.store.aput("cancelled_task", task_id, {"at": now})
 
-    async def _cancel_local_jobs(self, task_id: str) -> bool:
+    async def _cancel_local_jobs(self, task_id: str, relocate: bool = False) -> bool:
         """The step was cancelled: end its running local jobs so no process outlives it, and do not wake the step.
         False when some job's processes could not be ended, so the cancel is not confirmed."""
         if not task_id:
             return True
         ended = True
         self.__dict__.setdefault("_jobs_cancelled", set()).add(task_id)  # a submit that is mid-start sees this
+        # Kept across a restart: a job of this step that ends later is fetched into jobs/late/, never outputs/ (#1357).
+        remember = getattr(self.store, "aput", None)
+        if callable(remember):
+            await remember("jobs_released", task_id, {"at": time.time()})
+        for jid, j in list(getattr(self, "jobs", {}).items()) if relocate else ():
+            if j.get("task_id") == task_id and j.get("fetched") and self._move_late(j):
+                self.store.put("job", jid, j)
+                await self._say_late(jid, j)
         for jid, j in list(getattr(self, "jobs", {}).items()):
             if local_jobs.is_local(jid) and j.get("task_id") == task_id and not j.get("terminal"):
                 ended = await self._end_local_job(jid, j, "cancelled", wake=False) and ended
         return ended
+
+    def _jobs_released(self, task_id: str) -> bool:
+        """The step no longer waits on its jobs (cancelled, or ended at its wake limit): late results are kept apart."""
+        if not task_id:
+            return False
+        if task_id in self.__dict__.get("_jobs_cancelled", ()):
+            return True
+        lookup = getattr(self.store, "get", None)
+        return callable(lookup) and lookup("jobs_released", task_id) is not None
+
+    @staticmethod
+    def _job_dir(j: dict, kind: str) -> Path:
+        """``jobs/<kind>/<job>/`` of the job's task folder: ``fetch`` (staging), ``late``, ``replaced``."""
+        name = re.sub(r"[^A-Za-z0-9._-]", "_", str(j.get("job_id") or "job")) or "job"
+        return Path(j["workdir"]) / "jobs" / kind / name
+
+    @staticmethod
+    def _move_files(source: Path, target: Path, paths: list[str], job_id: Any) -> None:
+        for rel in paths:
+            src, dst = source / rel, target / rel
+            try:
+                if src.is_file() and not src.is_symlink():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(src, dst)
+            except OSError:
+                log.warning("could not move a fetched file of job %s", job_id)
+
+    def _commit_fetch(self, j: dict, commit_to: Path) -> None:
+        """Every job fetch lands in jobs/fetch/<job>/ first (#1357). Here, on the event loop where a release is applied,
+        the files go to jobs/late/<job>/ when the step was released, else into the step's folder. A step-owned file a
+        result replaces is kept in jobs/replaced/<job>/ so a later release can put it back."""
+        staging, paths = self._job_dir(j, "fetch"), list(j.get("fetched_paths") or [])
+        if self._jobs_released(j.get("task_id") or ""):
+            self._move_files(staging, self._job_dir(j, "late"), paths, j.get("job_id"))
+            j["late"], j["fetched_into"] = True, str(self._job_dir(j, "late"))
+            return
+        replaced = [rel for rel in paths if (commit_to / rel).is_file() and not (commit_to / rel).is_symlink()]
+        self._move_files(commit_to, self._job_dir(j, "replaced"), replaced, j.get("job_id"))
+        self._move_files(staging, commit_to, paths, j.get("job_id"))
+        j["fetched_into"], j["replaced_paths"] = str(commit_to), replaced
+
+    def _move_late(self, j: dict) -> bool:
+        """A released job whose results were already committed: they go to jobs/late/<job>/ and any step-owned file
+        they replaced comes back (#1357 review). True when the job was moved."""
+        if j.get("late") or not j.get("fetched_into") or not j.get("workdir"):
+            return False
+        source = Path(j["fetched_into"])
+        self._move_files(source, self._job_dir(j, "late"), list(j.get("fetched_paths") or []), j.get("job_id"))
+        self._move_files(self._job_dir(j, "replaced"), source, list(j.get("replaced_paths") or []), j.get("job_id"))
+        j["late"], j["fetched_into"] = True, str(self._job_dir(j, "late"))
+        return True
+
+    async def _say_late(self, jid: str, j: dict) -> None:
+        tid = j.get("task_id")
+        await self.emit(Event(type="agent.log", task_id=tid, agent_id=j.get("agent_id"),
+                              request_id=self.task_req.get(tid or ""),
+                              data={"level": "warn", "job_late": {"job_id": jid},
+                                    "text": f"작업 {jid}는 단계가 끝난 뒤에 끝났습니다. 결과는 단계 산출에 "
+                                            "넣지 않고 jobs/late/에만 두었습니다"}))
 
     # ---------------- HPC job watcher ----------------
     async def _job_watch_loop(self) -> None:
@@ -4008,10 +4077,15 @@ class Runner:
                     j["remote_manifest"] = manifest["remote"]
                 j["fetched_sha256"] = {row["path"]: row["sha256"] for row in manifest.get("fetched", [])
                                        if isinstance(row.get("sha256"), str)}
+                j["fetched_paths"] = [row["path"] for row in manifest.get("fetched", []) if isinstance(row.get("path"), str)]
+                if j.get("workdir") and spec.get("fetch_to"):
+                    self._commit_fetch(j, Path(spec["fetch_to"]))  # no await since the release check: one decision
                 if manifest["skipped"]:
                     await self._emit_hpc_notice(
                         "transfer", f"작업 {jid}: 파일 {len(manifest['skipped'])}개는 가져오지 않았습니다(크기 상한 등). "
                                     "사이트 프로필의 전송 방법으로 직접 가져오세요")
+                if j.get("late"):
+                    await self._say_late(jid, j)
             self.store.put("job", jid, j)
 
     def _fetch_settled(self, j: dict) -> bool:
@@ -4035,7 +4109,8 @@ class Runner:
                     continue
                 if ws.task.resume_session_id and job.get("session_id") != ws.task.resume_session_id:
                     continue
-                if (not job.get("submitted_by_runner") or not job.get("terminal") or job.get("state") != "completed"
+                if (job.get("late") or not job.get("submitted_by_runner") or not job.get("terminal")
+                        or job.get("state") != "completed"
                         or not job.get("fetched") or not isinstance(job.get("remote_manifest"), dict)):
                     raise TransferError("a remote job has no verified successful output manifest")
                 manifest = validate_remote_manifest(job["remote_manifest"], ws.task.request_id)
@@ -4092,8 +4167,9 @@ class Runner:
         if transfer is None:
             raise RuntimeError("the HPC session is not available")
         workdir = Path(j["workdir"])
+        # Staged, never straight into outputs/: whether the step still wants these is decided after the transfer (#1357).
         with request_scope(self.task_req.get(j.get("task_id") or "")), queue_wait():
-            return fetch_results(transfer, spec, workdir / "jobs" / "logs", Path(spec["fetch_to"]), base=workdir)
+            return fetch_results(transfer, spec, workdir / "jobs" / "logs", self._job_dir(j, "fetch"), base=workdir)
 
     async def _wake_finished_jobs(self) -> None:
         """Wake each task whose jobs have all ended, once: the agent was waiting on them (#281)."""
