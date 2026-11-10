@@ -26,11 +26,11 @@ from ..artifact_policy import unreported_warning_paths
 from ..report_format import split_appendix
 from .report_check import check_report
 
-OK, MISMATCH, MISSING, UNREADABLE, UNCHECKED, UNRECORDED = (
-    "ok", "mismatch", "missing", "unreadable", "unchecked", "unrecorded")
-STATUS_ORDER = (OK, MISMATCH, MISSING, UNREADABLE, UNCHECKED, UNRECORDED)
+OK, MISMATCH, MISSING, UNREADABLE, UNCHECKED, UNRECORDED, REMOTE = (
+    "ok", "mismatch", "missing", "unreadable", "unchecked", "unrecorded", "remote")
+STATUS_ORDER = (OK, MISMATCH, MISSING, UNREADABLE, UNCHECKED, UNRECORDED, REMOTE)
 STATUS_KO = {OK: "일치", MISMATCH: "불일치", MISSING: "없음", UNREADABLE: "읽지 못함", UNCHECKED: "확인 못함",
-             UNRECORDED: "기록된 해시 없음"}
+             UNRECORDED: "기록된 해시 없음", REMOTE: "원격 보관"}
 PROBLEM_STATUSES = frozenset({MISMATCH, MISSING, UNREADABLE, UNCHECKED})
 BUNDLE_FILES = ("README.md", "report.md", "report_appendix.md", "execution_record.md", "claims.json", "artifacts.json")
 NO_FILES_LINE = "산출 파일 자체는 넣지 않았습니다(크기와 데이터 경계). 원본은 `artifacts.json`의 sha256으로 대조합니다."
@@ -119,6 +119,56 @@ def locate_workdir(root: Path, result: Mapping[str, Any]) -> tuple[Path | None, 
     if len(found) > 1:
         return None, "작업 폴더 식별이 모호합니다(같은 task 기록이 여러 폴더에 있음)"
     return None, f"이 PC의 runner.workspace_root에 작업 폴더 {workdir_id}가 없습니다"
+
+
+def remote_outputs(root: Path, workdir: Path, result: Mapping[str, Any], request_id: str,
+                   step_id: str) -> dict[str, int]:
+    """Outputs this result's run left in the request's HPC data folder on purpose (#1348): ``outputs/<path>`` → bytes.
+
+    Only the run the result names (its ``task_id``: a wake turn or a revision has a run of its own) counts, and only
+    when that run succeeded for this request and step (#1370 review). The work folder's ``manifest.json`` is read
+    through held folders that never follow a link, as ``locate_workdir`` does. Empty when anything does not hold."""
+    from ..adapters.held_dir import HeldDir
+
+    task_id = result.get("task_id")
+    if not isinstance(task_id, str) or not task_id:
+        return {}
+    try:
+        parts = workdir.relative_to(root).parts
+        with contextlib.ExitStack() as stack:
+            held = stack.enter_context(HeldDir.hold(root))
+            for part in parts:
+                held = stack.enter_context(held.child(part))
+            with os.fdopen(held.open_read_file("manifest.json"), "rb") as opened:
+                manifest = json.loads(opened.read(16 * 1024 * 1024 + 1))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+    task = manifest.get("task") if isinstance(manifest.get("task"), Mapping) else {}
+    run = (manifest.get("runs") or {}).get(task_id) if isinstance(manifest.get("runs"), Mapping) else None
+    if (not isinstance(run, Mapping) or run.get("ok") is not True
+            or run.get("request_id", task.get("request_id")) != request_id
+            or (run.get("step_id") or (task.get("meta") or {}).get("step_id") or "direct") != step_id):
+        return {}
+    found: dict[str, int] = {}
+    manifests = run.get("hpc_remote_outputs")
+    for remote in manifests if isinstance(manifests, list) else ():
+        for row in (remote.get("files") if isinstance(remote, Mapping) else None) or []:
+            if (isinstance(row, Mapping) and isinstance(row.get("path"), str) and isinstance(row.get("bytes"), int)
+                    and not isinstance(row.get("bytes"), bool)):
+                found["outputs/" + row["path"]] = row["bytes"]
+    return found
+
+
+def _remote(path: str, remote: Mapping[str, int]) -> dict[str, Any] | None:
+    """A recorded output that is not on this PC but sits in the HPC data folder: kept there, not missing (#1347)."""
+    if path in remote:
+        return {"size": remote[path], "sha256": None, "status": REMOTE,
+                "detail": "HPC 원격 데이터 폴더에 크기와 함께 기록되어 있습니다"}
+    below = [size for name, size in remote.items() if name.startswith(path.rstrip("/") + "/")]
+    if below:
+        return {"size": sum(below), "sha256": None, "status": REMOTE,
+                "detail": f"HPC 원격 데이터 폴더에 있습니다(아래 파일 {len(below)}개)"}
+    return None
 
 
 def _compare(recorded: str | None, row: Mapping[str, Any] | None, note: str | None, *,
@@ -314,6 +364,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                 zones, settings.runner.reference_scan_max_entries, settings.runner.reference_scan_max_depth,
                 settings.runner.output_hash_max_bytes)
         records, note = scans[str(workdir)]
+        remote = remote_outputs(root, workdir, result, str(req.get("id") or ""), str(step_id))
         if note is None and all(isinstance(row.get("sha256"), str) for row in records):
             observed_artifacts[str(step_id)] = {str(row["path"]): row["sha256"] for row in records}
         # A declared name matched a differently cased file on a case-insensitive volume when it was collected.
@@ -322,10 +373,12 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
         for path in paths:
             row = by_path.get(key(path))
             below = 0 if row else sum(1 for name in by_path if name.startswith(key(path) + "/"))
+            # A file on this PC is hashed as before; one only the HPC data folder holds is "원격 보관" (#1347).
+            kept = _remote(path, remote) if row is None and not below else None
             files.append({**base, "path": path, "tool_use_id": tool_ids.get(path),
                           "recorded_sha256": recorded.get(path),
-                          **_compare(recorded.get(path), row, note, files_below=below,
-                                     in_zone=row is None and overlaps_zone(workdir / path, zones))})
+                          **(kept or _compare(recorded.get(path), row, note, files_below=below,
+                                              in_zone=row is None and overlaps_zone(workdir / path, zones)))})
     report_check = rerun_report_check(req)
     source_reports = _run_live_source_reports(req, settings, observed_artifacts)
     problems = [f"{row['step_id']}: {row['path']} {row['status']} ({row['detail']})"
