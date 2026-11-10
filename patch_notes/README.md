@@ -10,10 +10,50 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-11
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 01:42 | [`0ac8add`](https://github.com/ehojune/bioinfo-team-3d/pull/1372/commits/0ac8add) | **검증 안내에 원격 보관 그림 처리를 적었습니다.**<br>manual 07 한·영에 verify가 원격 목록에 크기가 있는 보고서 그림을 원격 보관 경고로 센다고 적는다 (#1372 리뷰). |
+| 01:41 | [`b955c5d`](https://github.com/ehojune/bioinfo-team-3d/pull/1372/commits/b955c5d) | **빈 그림은 여전히 실패하고, 원격에 둔 그림은 요약에 따로 표시합니다.**<br>크기 0인 원격 그림은 계속 문제로 세고, verify 요약 줄에 원격 보관 그림 수를 따로 보인다 (#1372 리뷰). |
+| 01:22 | [`635832e`](https://github.com/ehojune/bioinfo-team-3d/pull/1372/commits/635832e) | **HPC에만 둔 큰 그림 때문에 검증이 실패하지 않습니다.**<br>verify의 보고서 그림 링크 검사에서 단계의 원격 목록에 기록된 그림은 원격 보관 경고로 돌리고, 기록이 없는 그림 링크만 문제로 센다 (#1347). |
+| 01:05 | [`f056c1e`](https://github.com/ehojune/bioinfo-team-3d/pull/1370/commits/f056c1e) | **단독 요청의 HPC 원격 결과도 원격 보관으로 셉니다.**<br>verify가 step_id 없는 direct HPC 실행의 원격 기록도 direct 단계로 읽는다 (#1370 리뷰). |
+| 00:48 | [`001fada`](https://github.com/ehojune/bioinfo-team-3d/pull/1370/commits/001fada) | **앞 턴의 기록이나 바꿔치기한 파일이 원격 보관 판정을 속이지 못합니다.**<br>verify의 원격 근거를 결과 task_id의 성공한 실행 기록(같은 요청·단계)에서만 읽고, manifest.json은 링크를 따르지 않는 held 폴더로 연다 (#1370 리뷰). |
+| 00:46 | [`67950b5`](https://github.com/ehojune/bioinfo-team-3d/pull/1371/commits/67950b5) | **판정 스크립트가 일부만 남은 gateway 이벤트로 겹침을 판정하지 않고, 단계별 기록으로 요청 전체를 봅니다.**<br>judge_1331: prefer_complete — 단계 기록의 모든 작업이 gateway에서 완료로 보일 때만 gateway 시간 사용, 시험 2건 (#1331) |
+| 00:34 | [`7d147f6`](https://github.com/ehojune/bioinfo-team-3d/pull/1370/commits/7d147f6) | **HPC에 일부러 남긴 큰 결과 파일 때문에 검증이 실패하지 않습니다.**<br>labhq verify가 요청 전체 HPC 단계의 원격 목록(hpc_remote_outputs)에 기록된 산출을 원격 보관(크기 기록)으로 세고 문제로 보지 않는다. 어디에도 없는 산출은 그대로 없음 (#1347). |
+| 00:32 | [`a689115`](https://github.com/ehojune/bioinfo-team-3d/pull/1371/commits/a689115) | **airway 시운전 판정이 단계 id 없는 이벤트를 모두 같은 단계로 보던 문제를 고치고, 이벤트가 지난 회차는 단계별 기록에서 시간을 읽게 했습니다.**<br>judge_1331: step_id 없음은 다른 단계로 보고, 결과 이벤트가 없으면 단계별 events.jsonl로 겹침 판정, 시험 3건 (#1331) |
+
 ## 2026-11-10
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:51 | [`c867655`](https://github.com/ehojune/bioinfo-team-3d/pull/1369/commits/c867655) | **숨김 이름의 환경 폴더도 결과 확인을 막지 않습니다.**<br>원격 scan이 __pycache__·.venv를 이름 규칙보다 먼저 environment folder로 분류한다 (#1369 리뷰). |
+| 20:35 | [`e12d405`](https://github.com/ehojune/bioinfo-team-3d/pull/1369/commits/e12d405) | **시험 문구만 고쳤습니다.**<br>원격 scan 상한 초과 시험이 helper 실패 문구를 확인하게 고친다 (#1368). |
+| 20:14 | [`6d6eaf5`](https://github.com/ehojune/bioinfo-team-3d/pull/1369/commits/6d6eaf5) | **HPC 잡이 작업 폴더에 환경을 설치해도 결과 확인이 막히지 않습니다.**<br>원격 산출 목록에서 잡이 만든 conda·mamba 환경, Python venv, __pycache__를 빼고, 목록을 못 읽은 잡도 같은 이름으로 다시 낸 성공 잡이 있으면 단계를 막지 않는다 (#1368). |
+| 15:21 | [`7c478aa`](https://github.com/ehojune/bioinfo-team-3d/pull/1367/commits/7c478aa) | **여러 잡으로 나눈 단계에서 한 조각이 실패하면 계속 실패로 판정합니다.**<br>재시도는 같은 이름으로 나중에 낸 잡으로만 보고, 다른 shard의 성공은 실패를 대신하지 않는다 (#1367 리뷰). |
+| 15:03 | [`f684181`](https://github.com/ehojune/bioinfo-team-3d/pull/1367/commits/f684181) | **HPC 잡을 다시 내서 성공하면 앞선 실패 때문에 단계가 실패하지 않습니다.**<br>같은 단계에서 실패·취소된 시도 뒤 다시 낸 잡이 성공하면, 앞선 실패는 원격 산출 판정에서 빼고 기록에만 남긴다. 성공 뒤 실패와 도는 중인 앞 시도는 그대로 거절한다 (#1366). |
+| 10:31 | [`2160175`](https://github.com/ehojune/bioinfo-team-3d/pull/1365/commits/2160175) | **runner가 잠시 끊겨 있어도 깨우기 상한 해제가 그대로 전달됩니다.**<br>flush_task_cancels가 재접속한 runner에 jobs_cancel을 다시 보낼 때 저장된 release 표시를 그대로 싣는다 (#1364, #1363 리뷰 후속). |
+| 10:15 | [`bd46cf9`](https://github.com/ehojune/bioinfo-team-3d/pull/1363/commits/bd46cf9) | **늦게 끝난 잡 결과가 단계 파일을 덮어쓰거나 섞이지 않게 회수 방식을 바꿨습니다.**<br>잡 결과를 늘 jobs/fetch/<job>/에 먼저 받고 단계가 기다릴 때만 제자리로 옮긴다. 덮어쓴 단계 파일은 jobs/replaced/에 두었다가 해제되면 되돌린다 (#1363 리뷰). |
+| 09:57 | [`58f6e5c`](https://github.com/ehojune/bioinfo-team-3d/pull/1363/commits/58f6e5c) | **요청을 취소해도 이미 끝난 단계의 결과는 옮겨지지 않습니다.**<br>이미 회수된 잡 결과의 jobs/late/ 이동을 깨우기 상한 해제(release 표시)에만 적용하고, 요청 취소에서는 앞 단계 결과를 그대로 둔다 (#1363 리뷰). |
+| 09:40 | [`99892a1`](https://github.com/ehojune/bioinfo-team-3d/pull/1361/commits/99892a1) | **잡 로그에서 공개 웹 주소 뒤에 구분자(; , \| 괄호 따옴표)로 붙은 경로도 가립니다.**<br>_URL이 _ABSOLUTE_PATH와 같은 구분자에서 끝남, 시험 5건 (#1357 후속, PR #1362 리뷰 P1) |
+| 09:24 | [`38f4b90`](https://github.com/ehojune/bioinfo-team-3d/pull/1363/commits/38f4b90) | **잡을 다시 낼 때의 깨우기 상한과 늦게 끝난 잡 결과의 위치를 설정 안내에 적었습니다.**<br>manual 15 한·영에 HPC 깨우기 상한(재제출 깨우기 제외, 4배 하드 캡)과 늦게 끝난 잡의 jobs/late/ 회수를 적는다 (#1363 리뷰). |
+| 09:22 | [`2ba55b9`](https://github.com/ehojune/bioinfo-team-3d/pull/1363/commits/2ba55b9) | **단계가 끝날 즈음 회수된 잡 결과가 산출에 섞이지 않게 했습니다.**<br>해제보다 먼저 또는 전송 중에 outputs/로 회수된 잡 결과도 jobs/late/<job>/로 옮긴다 (#1363 리뷰). |
+| 09:10 | [`b4d9322`](https://github.com/ehojune/bioinfo-team-3d/pull/1361/commits/b4d9322) | **잡 로그에서 공개 웹 주소(http·https·ftp)만 그대로 두고, file://·ssh:// 같은 다른 주소에 든 경로는 가립니다.**<br>hide_log의 URL 보존을 http·https·ftp로 제한, 시험 3건 (#1357 후속, PR #1362 리뷰 P1) |
+| 09:06 | [`6f27da6`](https://github.com/ehojune/bioinfo-team-3d/pull/1363/commits/6f27da6) | **HPC 잡을 고쳐 다시 내다 단계가 실패하지 않게 하고, 늦게 끝난 잡이 결과를 덮어쓰지 않게 했습니다.**<br>HPC 단계에서 새 잡을 낸 깨우기는 상한에 세지 않고(상한 4배 하드 캡), 잡을 남긴 채 끝난 단계의 늦은 결과는 outputs/가 아닌 jobs/late/에 받고 이벤트를 남긴다 (#1357). |
+| 08:40 | [`f729d20`](https://github.com/ehojune/bioinfo-team-3d/pull/1361/commits/f729d20) | **잡 로그 가림이 세미콜론이나 색 코드 뒤에 붙은 경로, 한 단계짜리 절대 경로까지 가립니다. 공개 URL과 작업 폴더 안 상대 경로는 그대로 읽힙니다.**<br>hide_log가 ANSI·OSC 제어열 제거, 앞 글자 목록 대신 단어·상대 경로에 붙지 않은 모든 / 시작 토큰을 가림, URL·<workdir> 꼬리 보존, 시험 8건 (#1357 후속, PR #1361 리뷰 P1) |
+| 07:40 | [`29903e3`](https://github.com/ehojune/bioinfo-team-3d/pull/1361/commits/29903e3) | **HPC 잡 로그와 잡이 남긴 .log·.out·.err 파일을 이 PC로 가져올 때, 쓰기 전에 원격 경로·계정·사이트 이름을 가립니다. 가리기 전 원본은 클러스터에만 남고 표 같은 데이터 파일은 바꾸지 않습니다.**<br>hpc_transfer에 Transfer.hide_log·fetch_log, fetch_results가 잡 로그와 로그 확장자 결과를 fetch_log로 받고 fetch.json에 redacted·remote_sha256 기록, manual 09 한영, 시험 4건 (#1357) |
+| 06:16 | [`71895cc`](https://github.com/ehojune/bioinfo-team-3d/pull/1358/commits/71895cc) | **판정 스크립트의 기존 시험을 되살리고, 공백으로 쓴 ssh 옵션(-o 'User x')에서도 사용자·호스트를 찾게 했습니다.**<br>test_judge_1331.py 기존 23건 복원·새 시험 4건 추가, argv_terms의 -o 공백형 지원 (#1331) |
+| 06:02 | [`3f4d968`](https://github.com/ehojune/bioinfo-team-3d/pull/1358/commits/3f4d968) | **airway 시운전 판정의 공개 산출물 검사가 접속 명령의 ssh 옵션 값(yes 같은 흔한 단어)을 사이트 정보로 잡던 오탐을 고쳤습니다.**<br>judge_1331: connect_argv는 argv_terms로만, 루프백 제외, 시험 3건 (#1331) |
+| 05:19 | [`559aaed`](https://github.com/ehojune/bioinfo-team-3d/pull/1356/commits/559aaed) | **옵션 값 안에 든 Windows 경로도 드라이브 글자로 쪼개지지 않게 했습니다.**<br>value_terms: 드라이브 경로를 먼저 findall로 떼어 내고 나머지만 분할 (#1331) |
+| 05:07 | [`52e5b9d`](https://github.com/ehojune/bioinfo-team-3d/pull/1356/commits/52e5b9d) | **판정의 공개 산출물 검사가 짧은 사이트 이름이나 옵션 안의 경로를 다시 빠뜨리지 않게, Windows 드라이브 경로만 통째로 다룹니다.**<br>value_terms: 길이 필터와 슬래시 규칙을 빼고 드라이브 경로만 분할 제외 (#1331) |
+| 04:54 | [`6b99115`](https://github.com/ehojune/bioinfo-team-3d/pull/1356/commits/6b99115) | **airway 시운전 판정에서 공개 산출물 검사가 Windows 경로의 드라이브 글자 하나를 사이트 정보로 잘못 잡던 문제를 고쳤습니다.**<br>tools/trial/judge_1331.py value_terms: 경로는 통째로, 3글자 미만 조각 제외 (#1331) |
+| 04:52 | [`438cf32`](https://github.com/ehojune/bioinfo-team-3d/pull/1355/commits/438cf32) | **문체 경고와 게시 실패 복구 방법을 안내서에 적었습니다.**<br>manual 01·12 한·영: 한국어 검사는 게시를 막지 않고 WARN으로 남기며, 로컬 준비 실패는 --redraft, GitHub 업로드 실패는 --republish로 복구한다고 적는다 (#1355 리뷰). |
+| 04:38 | [`f7bc058`](https://github.com/ehojune/bioinfo-team-3d/pull/1355/commits/f7bc058) | **한국어 문체 검사는 이제 경고만 남기고 결과 게시를 막지 않습니다.**<br>게시 전 한국어 반드시-0 표현(번역투·줄임 전문어)은 게시를 막지 않고 korean_qc 경고로 기록한다 (#1336). |
+| 04:35 | [`a06da3a`](https://github.com/ehojune/bioinfo-team-3d/pull/1355/commits/a06da3a) | **결과 게시가 이 PC의 준비 단계에서 실패하면 토큰 문제가 아니라고 정확히 알려 줍니다.**<br>결과 저장: GitHub 업로드 전 로컬 정리본 준비 실패를 토큰·저장소 권한 문제로 안내하지 않고 --redraft를 안내한다 (#1336). |
+| 02:33 | [`68cabfe`](https://github.com/ehojune/bioinfo-team-3d/pull/1349/commits/68cabfe) | **v1.0에서 켜진 검사와 꺼진 기능을 구분해 적었습니다.**<br>README 한·영: v1.0에서도 산출 종류 선언·입력 적합성 검사는 작동하고, 꺼지는 것은 그림자·A/B 재사용·의미 장치 보고서·채용이라고 구분한다 (#1349 리뷰). |
+| 02:23 | [`7d99d9f`](https://github.com/ehojune/bioinfo-team-3d/pull/1351/commits/7d99d9f) | **결과를 게시하기 전 한국어 검사가 '같은 축에 있어도' 같은 평범한 문장을 금지 표현 '에 있어서'로 잘못 잡아 게시를 막던 문제를 고쳤습니다.**<br>korean_qc '에 있어서' 패턴을 '에 있어서'로 좁힘, 시험 1건 (#910) |
+| 02:17 | [`73fcb3d`](https://github.com/ehojune/bioinfo-team-3d/pull/1349/commits/73fcb3d) | **v2.0 확장을 켜는 방법을 정확히 적고 옛 로드맵으로 가는 링크를 달았습니다.**<br>README 한·영에 research.semantic_report도 켜야 요청별 보고서가 나온다고 적고, manual 19의 옛 로드맵 표를 이전 판 링크로 가리킨다 (#1349 리뷰). |
+| 02:02 | [`213aeee`](https://github.com/ehojune/bioinfo-team-3d/pull/1349/commits/213aeee) | **로드맵을 v1.0 기준으로 다시 쓰고, 꺼 둔 기능을 v2.0 확장으로 표시했습니다.**<br>README 한·영과 manual 19를 v1.0 로드맵으로 정리한다. 1층 어노테이션은 기본으로 작동하고 2·3층 시맨틱·온톨로지와 Paper2Agent는 기본으로 꺼 둔 v2.0 확장이라고 적는다 (#1336). |
 | 01:27 | [`f227ae1`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/f227ae1) | **로컬·원격 출력이 다르면 완료를 거절하고 입력 경로 미리보기 길이를 제한합니다.**<br>기존 소용량 전송 영수증 재사용·전체 입력 목록 별도 저장·hash 없는 원격 폴더 완료 판정. 관련 mock 394 passed·29 skipped (#1347) |
 | 00:48 | [`ccc7936`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/ccc7936) | **깊은 임시 폴더나 선택적 로컬 회수 거절 때문에 유효한 원격 산출을 잃지 않습니다.**<br>깊이 상한은 누락으로 기록해 선언과 겹칠 때 거절, 영구 회수 거절은 기존 전송 규칙대로 건너뜀. 관련 mock 253 passed·29 skipped, Linux depth·5 GiB smoke PASS (#1347) |
 | 00:33 | [`57b72d9`](https://github.com/ehojune/bioinfo-team-3d/pull/1348/commits/57b72d9) | **전체 산출 폴더 선언을 지원하고 여러 잡이 같은 누락을 가리지 않도록 합니다.**<br>outputs 루트 수집·정확/상위 경로 누락 거절·잡 간 대소문자 중복 규칙 일치. 관련 mock 253 passed·27 skipped (#1347) |

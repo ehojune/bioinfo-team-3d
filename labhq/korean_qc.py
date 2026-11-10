@@ -18,7 +18,8 @@ QUOTE_OR_CODE = re.compile(r'`[^`\n]*`|"[^"\n]*"|“[^”\n]*”')
 PATTERNS: dict[str, tuple[re.Pattern[str], bool]] = {
     "에 대해/대한": (re.compile(r"에 대(?:해|하여|한)"), False),
     "통해/통한": (re.compile(r"[을를] 통(?:해|하여|한)"), False),
-    "에 있어서": (re.compile(r"에 있어(?:서)?"), True),
+    # "에 있어서" only: "같은 축에 있어도", "표에 있었다" are ordinary Korean, and a must-zero hit blocks publishing (#910)
+    "에 있어서": (re.compile(r"에 있어서"), True),
     "되어진다": (re.compile(r"되어지|되어진"), True),
     "가지고 있다": (re.compile(r"가지고 있"), True),
     "에 의해/의한": (re.compile(r"에 의(?:해|하여|한)"), False),

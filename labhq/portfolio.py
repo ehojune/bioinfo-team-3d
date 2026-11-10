@@ -19,7 +19,7 @@ from urllib.parse import quote, unquote
 from .integrations.github import SECRET_PATTERNS, publish_clean, redact_url_credentials, sanitize
 from .evidence.report_check import (SOURCE_EVIDENCE_TITLE, claim_evidence_rows, claim_evidence_section,
                                     evidence_literals, evidence_note)
-from .korean_qc import check_document, check_preservation
+from .korean_qc import check_preservation
 from .models import RunnerPathFields
 from .policy import touches
 from .research.contract import branch_plan_topology
@@ -2436,8 +2436,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
             table_repairs[name] = rows
     report = portfolio_report(req, settings, assets)
     revision_history = portfolio_revision_history(req, settings, assets)
-    if check_document(report)["status"] != "PASS":
-        raise ValueError("과학 보고서에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
+    # Korean style markers are a warning, not a stop: result_storage records check_document() as korean_qc (#1336).
     files: dict[str, str | bytes] = {"report/report.md": report}
     used = set(files)
     source_targets: dict[str, str] = {}
@@ -2630,8 +2629,6 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         readme_req, report, _step_rows(req, assets), figure_names, table_names, omitted_tables,
         run_documents, branch_rows, source_targets, run_summary, files, abstract_source is None,
         bool(_citation_authors(req, settings))))
-    if check_document(readme)["status"] != "PASS":
-        raise ValueError("README에 반드시 0이어야 하는 한국어 표현이 남았습니다.")
     files["README.md"] = _clean(readme, settings, req)
     repairs = [(source_targets[name], rows) for name, rows in table_repairs.items() if name in source_targets]
     if repairs:

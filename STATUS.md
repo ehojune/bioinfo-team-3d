@@ -4,6 +4,221 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 2026-11-11 claude-worker3 — #1347 r5: verify의 원격 보관 그림
+
+## 결론
+`labhq verify`의 보고서 그림 링크 검사가, 단계의 원격 목록(`hpc_remote_outputs`)에 기록된 그림을 "원격 보관" 경고로 돌리고 문제로 세지 않는다. 어디에도 기록이 없는 그림 링크는 지금처럼 문제다. #1331 10회차 verify의 남은 1건(2.1MB QC 그림)이다.
+
+## 바뀐 것
+- `labhq/evidence/audit.py`: 단계별 원격 목록을 모아, "링크한 그림이 묶음에 없습니다" 문제 가운데 `steps/<step>/outputs/...` 또는 `<workdir_id>/outputs/...`가 원격 목록에 있는 것만 경고로 옮김
+- `tests/test_hpc_whole_request.py`: 묶음 형식·미매핑 형식 통과, 기록 없는 그림은 문제
+
+## 실행한 것
+- verify·audit·그림 관련 시험 통과: 583 passed, 11 skipped
+
+## 미해결
+- 그림 검사 자체(`report_figures.py`)는 바꾸지 않았다. 문제 문구를 audit이 해석하므로, 문구가 바뀌면 같이 고쳐야 한다
+
+# 2026-11-11 claude-worker3 — #1347 r4: verify의 원격 보관 산출
+
+## 결론
+`labhq verify`가 요청 전체 HPC 단계가 HPC 데이터 폴더에 일부러 남긴 산출을 "원격 보관"(크기 기록)으로 세고 문제로 보지 않는다. 로컬 파일은 sha256을 그대로 대조하고, 이 PC에도 원격 목록에도 없는 산출은 "없음"이다. #1331 10회차 verify FAIL(원격에만 있는 산출 3개)의 원인이다.
+
+## 바뀐 것
+- `labhq/evidence/audit.py`: 상태 `remote`("원격 보관") 추가(문제 상태 아님), 단계 작업 폴더 `manifest.json`의 `runs[*].hpc_remote_outputs`에서 원격 산출과 크기를 읽는 `remote_outputs`, 폴더 산출은 아래 원격 파일 합으로
+- `tests/test_hpc_whole_request.py`: 원격 보관·로컬 일치·폴더 산출, 어디에도 없는 산출은 없음
+- manual 07 한·영
+
+## 실행한 것
+- verify·audit 관련 시험: 550 passed, 10 skipped
+
+## 미해결
+- 원격 파일의 hash는 대조하지 않는다(원격 목록에는 크기만 있음)
+
+# 2026-11-11 claude-worker1 — #1331 r7: 판정 스크립트 겹침 기준
+
+## 결론
+5회차(req_9190753bcd)를 다시 판정해 overlap·session·window가 PASS입니다. 겹친 쌍은 데이터 받기(data_steward)와 index(engineer) 1쌍, 겹친 동안 로그인 1회입니다. 전에는 두 가지 때문에 FAIL이었습니다.
+- gateway 이벤트에 step_id가 없어 `None == None`으로 모든 쌍을 같은 단계로 건너뛰었습니다.
+- 지난 회차는 이벤트 보존 기간이 지나 결과 시간이 없었습니다. step_id만 고치면 모든 단계가 끝나지 않은 것으로 보여 모든 쌍이 겹친다는 거짓 PASS가 나옵니다.
+
+## 바뀐 것
+- `tools/trial/judge_1331.py`: step_id가 없으면 같은 단계로 보지 않음. 결과 이벤트가 하나도 없으면 단계 폴더의 `events.jsonl`에서 단계 이름·시작·결과 시간·HPC 도구 사용을 읽음(`file_intervals`)
+- `tools/trial/test_judge_1331.py`: 시험 3건
+
+## 실행한 것
+- `pytest tools/trial/test_judge_1331.py`: 30 passed
+- 5회차 판정: overlap·session·window PASS (genes·verify·public 건너뜀)
+- 10회차 판정: genes·window·public PASS, overlap·session FAIL(재사용 회차라 겹칠 단계 없음), verify FAIL(원격 보관 산출 3개, #1347 r4)
+
+## 미해결
+- 10회차 verify는 #1347 r4 병합 뒤 다시 돌립니다.
+
+# 2026-11-10 claude-worker3 — #1368: 원격 산출 목록의 범위
+
+## 결론
+원격 산출 목록은 잡이 작업 폴더에 만든 conda·mamba 환경(`conda-meta`), Python venv(`pyvenv.cfg`), `__pycache__`를 세지 않고 "environment folder"로만 적는다. 목록을 읽지 못한 잡(completed지만 manifest 없음)도 같은 이름으로 다시 낸 성공 잡이 있으면 단계를 막지 않는다. 선언 산출이 환경 폴더 안에 있거나 실제 산출이 상한을 넘으면 그대로 거절한다. #1331 6회차(잡 8960)가 이 경로로 실패했다.
+
+## 바뀐 것
+- `labhq/hpc_transfer.py` `REMOTE_DATA_HELPER`: scan에서 환경 폴더를 내려가지 않고 skipped에 `environment folder`로 남김
+- `labhq/runner/daemon.py` `_remote_step_outputs`: 환경 폴더 skip은 선언 디렉터리를 incomplete로 만들지 않음(선언 산출이 그 안이면 여전히 거절), 짝짓기의 "성공"을 회수·manifest까지 된 잡으로 한정하고 그보다 먼저 낸 같은 이름의 쓸 수 없는 잡은 건너뜀
+- `tests/test_hpc_whole_request.py`: 목록 못 읽은 잡 대체, 환경 폴더 skip과 선언 산출, 원격 scan(Linux CI)
+- manual 15 한·영
+
+## 실행한 것
+- 원격 산출·회수 관련 시험: 220 passed, 35 skipped (POSIX helper 시험은 Windows에서 건너뜀, Linux CI에서 확인)
+
+## 미해결
+- 진행 중인 계획 세션에 승인한 예산 상향이 적용되지 않는 문제(#1368 후속 후보)는 범위 밖
+
+# 2026-11-10 claude-worker3 — #1366: 실패 뒤 성공한 재제출
+
+## 결론
+같은 단계에서 실패·취소된 시도 뒤에 다시 낸 잡이 성공하면, 앞선 실패는 원격 산출 판정에서 빠지고 기록에만 남는다. 성공 뒤에 실패한 시도와 아직 도는 앞 시도는 지금처럼 거절한다. #1331 5회차가 이 경로로 실패했다(7677 walltime, 7687 exit 0).
+
+## 바뀐 것
+- `labhq/runner/daemon.py` `_remote_step_outputs`: 같은 단계·revision·session의 마지막 성공보다 먼저 제출되어 끝난 비성공 시도는 건너뜀(`submitted_at` 기준)
+- `tests/test_hpc_whole_request.py`: 실패→성공·취소→실패→성공 통과, 실패만·성공→실패·도는 중→성공 거절
+- manual 15 한·영
+
+## 실행한 것
+- 원격 산출·회수·HPC 관련 시험: 1554 passed, 38 skipped
+
+## 미해결
+- 없음
+
+# 2026-11-10 claude-worker3 — #1364: release 표시 재전송
+
+## 결론
+runner가 끊겨 있던 동안 깨우기 상한으로 해제된 단계는, 재접속 때 다시 보내는 `task.jobs_cancel`에도 `release: true`가 실린다. 그래서 runner가 이미 회수한 결과를 `jobs/late/`로 옮긴다. 요청 취소의 cancel은 그대로 표시 없이 간다.
+
+## 바뀐 것
+- `labhq/gateway/server.py`: `flush_task_cancels`가 store `jobs_cancel` 기록의 `release`를 재전송 메시지에 싣는다
+- `tests/test_hpc_whole_request.py`: 재접속 재전송 시험 1건
+
+## 실행한 것
+- `tests/test_local_jobs_675.py`, `tests/test_hpc_whole_request.py`, `tests/test_gateway*.py`: 186 passed
+
+## 미해결
+- 없음
+
+# 2026-11-10 claude-worker3 — #1357 r2: HPC 깨우기 상한과 늦게 끝난 잡
+
+## 결론
+HPC 단계가 잡을 고쳐 다시 낸 깨우기는 깨우기 상한(`max_wake_cycles`, 기본 5)에 세지 않는다. 끝없는 재제출은 상한의 4배에서 멈춘다. 잡을 남긴 채 상한으로 끝난 단계는 runner에 알리고, runner는 로컬 잡을 끝내며 HPC 잡 결과를 `outputs/`가 아니라 `jobs/late/<job>/`로 받고 이벤트를 남긴다. 5회차 build_index 실패와 4회차 verify 실패의 경로를 막는다.
+
+## 바뀐 것
+- `labhq/orchestrator/cso.py`: 깨우기 전후 잡 id를 비교해 새 잡을 냈으면 상한에 세지 않음, `WAKE_HARD_CAP_FACTOR = 4`, 상한 도달 시 `_release_step_jobs`가 기존 `task.jobs_cancel` 경로(store `jobs_cancel` + `send_runner`, 재연결 때 재전송)로 알림
+- `labhq/runner/daemon.py`: 해제된 단계를 store `jobs_released`에 남겨 재시작 뒤에도 기억. 해제된 단계의 잡은 `jobs/late/<job>/`로 회수하고 `job_late` 로그 이벤트, 산출 판정(`_remote_step_outputs`)에서 제외
+- 리뷰 반영: 해제 전·전송 중에 `outputs/`로 회수된 그 잡의 파일도 `jobs/late/<job>/`로 옮김, manual 15 한·영
+- `tests/test_hpc_whole_request.py`: 재제출 깨우기, 진전 없는 깨우기, 하드 캡과 해제 알림, 늦은 잡 회수 위치
+
+## 실행한 것
+- 깨우기·잡·회수 관련 시험 41개 파일: 2283 passed, 42 skipped
+
+## 미해결
+- 공유 파일 시스템에서 잡이 `outputs/`에 직접 쓰는 경우는 회수 경로를 거치지 않아 막지 못한다. 잡 자체 취소(scancel)는 로그인이 들어서 하지 않았다
+- 해제 알림 재전송은 gateway의 기존 `jobs_cancel` flush에 기댄다
+
+# #1357 HPC 잡 로그 가림 (할 일 1, P1)
+
+## 결론
+잡 로그(`.out`·`.err`)와 잡이 결과로 남긴 `.log`·`.out`·`.err` 파일은 이 PC에 쓰기 전에 원격 경로·계정·사이트 이름을 가린다. #1331 4회차에서 `work/logs/de_py.log`·`figures.log`에 scratch 경로와 계정이 그대로 들어온 결함을 막는다.
+
+## 바뀐 것
+- `labhq/hpc_transfer.py`: `Transfer.hide_log`(기존 `_hide` + 원격 작업 폴더 경로의 폴더 이름 + 남은 절대 경로), `Transfer.fetch_log`(받은 바이트를 가린 뒤에만 기록). `fetch_results`가 잡 로그와 로그 확장자 결과를 이 경로로 받고, `fetch.json`에 가린 파일의 sha256과 원본 `remote_sha256`, `redacted`를 남긴다. 원격 데이터 폴더(#1348)와 옛 작업 폴더 경로 둘 다.
+- manual 09 한영 한 문장.
+
+## 실행한 것
+- 새 시험 4건(`tests/test_hpc_transfer_1308.py`): 가림 단위, 깨끗한 로그 무변화, runner 회수 통합(잡 로그·결과 로그 가림, 데이터 파일 무변화, 영수증), 원격 데이터 폴더 경로(Linux CI 전용, Windows에서는 skip).
+- `test_hpc_transfer_1308.py`·`test_hpc_remote_data.py`·`test_hpc_session_1299.py`·`test_hpc_whole_request.py` 220건 통과, 34건 skip(로컬 Windows).
+
+## 미해결
+- 할 일 2(끝난 단계에 늦게 온 잡 결과)는 이 PR에 없다. wake_limit으로 끝난 단계의 잡은 CSO가 살려 둔 채 runner에 알리지 않아, runner만으로는 "잡 대기 중"과 "단계 끝"을 가를 수 없다. `cso.py`와 `runner/daemon.py`가 필요해 총괄 판단을 기다린다.
+- 공유 파일시스템 사이트(`remote_workdir` 없음)는 scheduler가 로그를 직접 쓰므로 이 가림을 거치지 않는다.
+
+# 2026-11-10 claude-worker1 — #1331 r6: 판정 스크립트 ssh 옵션 오탐
+
+## 결론
+4회차 판정의 public FAIL 가운데 다수가 오탐이었습니다. 사이트 프로필의 접속 명령을 일반 설정값처럼 `=`에서 나눠 `yes`·`BatchMode` 같은 단어를 사이트 용어로 보았기 때문입니다. 접속 명령은 로그인 이름·호스트만 뽑게 고쳤습니다. 4회차의 실제 누출(잡 로그 2개의 원격 경로·계정)은 그대로 남고, #1357에서 다룹니다.
+
+## 바뀐 것
+- `tools/trial/judge_1331.py`: `connect_argv`는 `argv_terms`로만 읽고, 루프백 주소는 제외
+- `tools/trial/test_judge_1331.py`: 시험 3건
+
+## 실행한 것
+- `pytest tools/trial/test_judge_1331.py`: 3 passed
+- PI 설정으로 사이트 용어 확인: 남은 것은 원격 경로·계정·큐·노드·로컬 계정·프로필 이름뿐
+
+## 미해결
+- 5회차는 #1357 병합 뒤 진행합니다.
+
+# 2026-11-10 claude-worker1 — #1331 r5: 4회차 점검과 판정 스크립트 오탐
+
+## 결론
+4회차(`req_b70329f77a`)는 멈춘 것이 아니었습니다. 잡 7670이 지정 노드에서 FASTQ 받기(약 3시간)부터 정량까지 정상으로 돌고 있었고 04:53경 끝났습니다. 판정 스크립트의 공개 검사 오탐('C')을 고쳤습니다.
+
+## 바뀐 것
+- `tools/trial/judge_1331.py`: `value_terms`가 Windows 경로를 ':'에서 자르지 않고, 3글자 미만 조각을 버림
+
+## 실행한 것
+- HPC 로그인 1회(04:37)로 `squeue`·`sacct`·잡 로그 확인
+- `value_terms` 수동 확인(경로·노드 이름은 남고 'C' 같은 조각은 빠짐)
+
+## 미해결
+- 4회차 완주와 판정 결과는 #1331에 따로 남깁니다.
+
+# 2026-11-10 claude-worker3 — #1336 r12·r13: 게시 검사 비차단화
+
+## 결론
+한국어 반드시-0 표현(번역투·줄임 전문어)이 남아도 결과 게시를 막지 않고 `korean_qc` 경고로 기록한다. 게시가 실패하면 GitHub 업로드 전의 로컬 준비 실패와 GitHub 응답 실패를 다른 문구로 안내한다.
+
+## 바뀐 것
+- `labhq/portfolio.py`: 보고서·README의 `check_document` 실패 시 `ValueError` 두 곳 제거. 결과는 `result_storage`가 이미 `saved["korean_qc"]`에 남김
+- `labhq/result_storage.py`: `prepare_failed_text` 추가. 업로드 시작 전이고 GitHub 오류가 아닌 실패는 "이 PC에서 정리본을 만들지 못했다, 토큰 문제가 아니다"와 `--redraft` 안내
+- `tests/test_result_storage_errors_1336.py`(새, Windows inventory 등록): 로컬 준비 실패 문구, GitHub 실패 문구 유지, 반드시-0 표현이 있어도 게시되고 WARN으로 기록됨
+- `korean_qc.py`는 원래 WARN만 돌려줘서 고치지 않음
+- manual 01(문체 검사는 경고만)·12(준비 실패 `--redraft`, 업로드 실패 `--republish`) 한·영 (봇 리뷰 P1)
+
+## 실행한 것
+- portfolio·result_storage·korean_qc 관련 시험 41개 파일: 1072 passed, 4 skipped
+
+## 미해결
+- 없음. 전체 suite는 CI
+
+# 2026-11-10 claude-worker1 — #910 r12: 한국어 검사 '에 있어서' 오탐
+
+## 결론
+11차 결과 게시가 한국어 검사 오탐으로 막혔습니다. 금지 표현 패턴 `에 있어(?:서)?`가 "같은 축에 있어도"를 잡았기 때문입니다. 패턴을 `에 있어서`로 좁혔습니다.
+
+## 바뀐 것
+- `labhq/korean_qc.py`: "에 있어서" 패턴
+- `tests/test_staff_writing_skills.py`: 시험 1건
+
+## 실행한 것
+- `pytest tests/test_staff_writing_skills.py tests/test_portfolio_edition.py tests/test_result_storage_pdf.py`: 75 passed
+
+## 미해결
+- 저장 경고문이 이 실패를 토큰·권한 문제로 안내합니다(범위 밖, #910에 기록).
+- 병합 뒤 `labhq storage req_dc5c365ca9 --redraft`로 비공개 저장소에 게시합니다.
+
+# 2026-11-10 claude-worker3 — #1336 r10·r11: README·manual v1.0 정리
+
+## 결론
+README 한·영과 manual 19장의 로드맵을 v1.0 기준으로 정리했다. 온톨로지 절은 그대로 두고, 1층 어노테이션(어휘와 45개 분야 점검표)은 v1.0에서도 기본으로 작동하며 2·3층 시맨틱·온톨로지 검증과 Paper2Agent 채용은 기본으로 꺼 둔 v2.0 확장이라고 적었다.
+
+## 바뀐 것
+- `docs/manual/19-roadmap.md`·`.en.md`: v1.0 행(정의, 마감 과제 #1295·#1332·#1331·#910, 지금 상태), v2.0 확장, 지난 선언(v0.25·v0.5 한 줄씩), v1.0 이후 목표. 옛 표는 commit 53a5b339 판으로 링크
+- `README.md`·`README.en.md`: 로드맵 표와 설명 문장, 온톨로지 절의 v1.0 문장. 2·3층을 켤 때 `semantics.mode`와 `research.semantic_report`를 함께 켠다고 적음
+- 오늘 병합된 동작(#1335 #1338 #1341 #1342 #1343 #1345 #1348 #1337 #1344)은 각 PR이 manual에 이미 반영해서 추가로 고칠 것이 없었다. project·reference 입력의 HPC 거절은 코드에 남아 있어 그대로 둠
+
+## 실행한 것
+- `patch_notes.py check`, `notes_index.py --validate`, `check_public.sh`
+- 새 한국어 줄의 줄임 전문어 0건
+
+## 미해결
+- 버전 1.0.0은 PR #1350(hold)에 있고 #1331이 닫힐 때 병합한다
+
 # 2026-11-09 claude-worker3 — #1336 r9: 카드 경고 동작을 manual 15에 반영
 
 ## 결론

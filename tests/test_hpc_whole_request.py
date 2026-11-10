@@ -14,6 +14,7 @@ from labhq.runner.daemon import Runner
 from labhq.evidence.audit import verify_request
 from tests.test_cso import FakeHub, result
 from tests.test_workspace_boundary import _settings
+from tests.test_hpc_transfer_1308 import cluster  # noqa: F401 - fixture for the remote-scan test
 
 pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
 
@@ -851,3 +852,370 @@ def test_shared_job_data_grants_only_inventoried_verified_files(tmp_path, monkey
         hpc._share_data_inputs(workdir, {"s1": str(data)}, os.getgid())
         assert stat.S_IMODE(collected.stat().st_mode) == 0o440
     assert stat.S_IMODE(unknown.stat().st_mode) == 0o600
+
+
+def _job_turns(ids):
+    """A step whose turns submit these job ids in order (None: finish), with wait_jobs answering at once."""
+    dispatched = []
+
+    async def dispatch(task):
+        dispatched.append(task)
+        index = len(dispatched) - 1
+        job = ids[index] if index < len(ids) else None
+        return result(task, text="done" if job is None else "waiting", workdir="/w",
+                      pending_jobs=[] if job is None else [job])
+
+    hub = FakeHub(dispatch)
+
+    async def wait_jobs(task_id):
+        await asyncio.sleep(0)
+        return {"jobs": [{"job_id": "j", "state": "failed", "exit_status": 1}]}
+
+    hub.wait_jobs = wait_jobs
+    return hub, dispatched
+
+
+async def test_a_wake_that_resubmits_hpc_work_does_not_count_toward_the_wake_limit():
+    """5th airway trial: build_index fixed and resubmitted its job five times, then died at the limit (#1357)."""
+    hub, dispatched = _job_turns([f"j{i}" for i in range(7)])  # 7 submissions, each wake a new job
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="index"))
+    assert res.ok and res.text == "done" and len(dispatched) == 8
+
+
+async def test_a_wake_that_submits_nothing_new_still_counts():
+    hub, dispatched = _job_turns(["j0"] * 20)  # the same job keeps being reported: no progress
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="index"))
+    assert res.error_kind == "wake_limit" and len(dispatched) == 1 + hub.s.orchestrator.max_wake_cycles
+
+
+async def test_endless_resubmission_stops_at_the_hard_cap_and_releases_the_live_jobs():
+    from labhq.orchestrator import cso
+    hub, dispatched = _job_turns([f"j{i}" for i in range(1000)])
+    sent, stored = [], {}
+    hub.task_runner = {}
+
+    async def send_runner(runner_id, msg):
+        sent.append((runner_id, msg))
+
+    class Store:
+        def get(self, kind, key):
+            return {"runner_id": "cluster"} if kind == "task" else None
+
+        def put(self, kind, key, body):
+            stored[(kind, key)] = body
+
+    hub.send_runner, hub.store = send_runner, Store()
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="index"))
+    cap = hub.s.orchestrator.max_wake_cycles * cso.WAKE_HARD_CAP_FACTOR
+    assert res.error_kind == "wake_limit" and len(dispatched) == 1 + cap and res.pending_jobs == []
+    last = dispatched[-1].id
+    assert sent == [("cluster", {"type": "task.jobs_cancel", "task_id": last, "release": True})]
+    assert stored[("jobs_cancel", last)]["runner_id"] == "cluster"  # resent on reconnect until confirmed
+
+
+def _staged_job(runner, tmp_path, *, step_file=None):
+    """A finished job whose fetch landed in jobs/fetch/<job>/ with one result, outputs/ holding the step's own file."""
+    workdir = tmp_path / "step"
+    staged = workdir / "jobs" / "fetch" / "7682" / "sub"
+    staged.mkdir(parents=True)
+    (staged / "index.tsv").write_text("job result", encoding="utf-8")
+    (workdir / "outputs" / "sub").mkdir(parents=True)
+    if step_file is not None:
+        (workdir / "outputs" / "sub" / "index.tsv").write_text(step_file, encoding="utf-8")
+    (workdir / "outputs" / "kept.tsv").write_text("the step's own", encoding="utf-8")
+    job = {"task_id": "t1", "job_id": "7682", "agent_id": "a", "workdir": str(workdir), "terminal": True,
+           "fetched": True, "fetched_paths": ["sub/index.tsv"]}
+    runner.jobs = {"7682": job}
+    return workdir, job
+
+
+def _late_runner(tmp_path):
+    runner = Runner(_settings(tmp_path))
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    runner.emit = emit
+    return runner, events
+
+
+async def test_job_files_are_staged_and_committed_only_while_the_step_still_waits(tmp_path, monkeypatch):
+    from labhq import hpc_transfer
+    runner, _ = _late_runner(tmp_path)
+    seen = []
+    monkeypatch.setattr(hpc_transfer, "fetch_results",
+                        lambda transfer, spec, logs, fetch_to, base=None: seen.append(fetch_to) or {"fetched": [], "skipped": []})
+    monkeypatch.setattr(runner.scheduler, "transfer", lambda: object(), raising=False)
+    workdir, job = _staged_job(runner, tmp_path, step_file="the step's earlier table")
+    runner._fetch_job_files(dict(job), {"fetch_to": str(workdir / "outputs")})
+    assert seen == [workdir / "jobs" / "fetch" / "7682"]  # never straight into outputs/ (#1357)
+    runner._commit_fetch(job, workdir / "outputs")
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job result"
+    assert (workdir / "jobs" / "replaced" / "7682" / "sub" / "index.tsv").read_text(encoding="utf-8") ==         "the step's earlier table"
+
+
+async def test_a_released_steps_staged_files_go_to_jobs_late_and_outputs_stay(tmp_path):
+    runner, _ = _late_runner(tmp_path)
+    workdir, job = _staged_job(runner, tmp_path, step_file="the step's own table")
+    assert await runner._cancel_local_jobs("t1", relocate=True)  # the release arrived during the transfer
+    runner._commit_fetch(job, workdir / "outputs")
+    assert (workdir / "jobs" / "late" / "7682" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job result"
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "the step's own table"
+    assert job["late"] is True
+    runner.__dict__["_jobs_cancelled"] = set()  # a restarted runner still knows from its store
+    assert runner._jobs_released("t1")
+
+
+async def test_committed_results_move_out_and_replaced_files_come_back_on_release(tmp_path):
+    """The fetch finished before the step's last wake reported (#1363 review)."""
+    runner, events = _late_runner(tmp_path)
+    workdir, job = _staged_job(runner, tmp_path, step_file="the step's own table")
+    runner._commit_fetch(job, workdir / "outputs")
+    assert await runner._cancel_local_jobs("t1")  # a request cancel: consumed results stay
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job result"
+    assert await runner._cancel_local_jobs("t1", relocate=True)  # a wake-limit release
+    assert (workdir / "jobs" / "late" / "7682" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job result"
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "the step's own table"
+    assert (workdir / "outputs" / "kept.tsv").exists() and job["late"] is True
+    assert any((event.data or {}).get("job_late") == {"job_id": "7682"} for event in events)
+
+
+async def test_a_wake_limit_release_is_replayed_with_its_release_mark_after_a_reconnect(tmp_path):
+    """The runner was away when the step was released: the replay must still say `release` (#1364)."""
+    import time
+    from labhq.gateway.server import create_app
+    from labhq.settings import Settings
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path)
+    hub = create_app(settings).state.hub
+    hub.store.put("jobs_cancel", "released", {"runner_id": "r1", "requested_at": time.time(), "release": True})
+    hub.store.put("jobs_cancel", "cancelled", {"runner_id": "r1", "requested_at": time.time()})
+    sent = []
+
+    async def send(runner_id, message):
+        sent.append((runner_id, message))
+
+    hub.send_runner = send
+    await hub.flush_task_cancels("r1")  # it reconnects
+    assert ("r1", {"type": "task.jobs_cancel", "task_id": "released", "release": True}) in sent
+    assert ("r1", {"type": "task.jobs_cancel", "task_id": "cancelled"}) in sent  # a request cancel stays plain
+
+
+def _attempts(tmp_path, states, names=None):
+    """A step's remote jobs, submitted in this order with these terminal states (None: still running)."""
+    from types import SimpleNamespace
+    from tests.test_hpc_remote_data import inventory
+
+    ws = SimpleNamespace(dir=tmp_path, task=Task(agent_id="worker", request_id="r", prompt="fetch",
+                                                 meta={"step_id": "s1", "outputs": ["outputs/tx2gene.tsv"]}))
+    runner = Runner.__new__(Runner)
+    runner.scheduler = SimpleNamespace(transfer=lambda: object())
+    runner.jobs = {}
+    for index, state in enumerate(states):
+        runner.jobs[str(7677 + index)] = {
+            "workdir": str(tmp_path), "transfer": {"request_id": "r", "step_id": "s1"}, "submitted_by_runner": True,
+            "name": (names or ["fetch_fastq"] * len(states))[index],
+            "submitted_at": 1000.0 + index, "terminal": state is not None, "state": state or "running",
+            "fetched": state == "completed", **({"remote_manifest": inventory()} if state == "completed" else {})}
+    return runner, ws
+
+
+@pytest.mark.parametrize("states,ok", [
+    (["failed", "completed"], True),             # walltime-killed 7677, then 7687 exit 0 (#1366)
+    (["cancelled", "failed", "completed"], True),
+    (["failed"], False),                          # every attempt failed: refused as before
+    (["completed", "failed"], False),             # a failure after the success still refuses
+    ([None, "completed"], False),                 # an earlier attempt still running still refuses
+])
+def test_a_failed_attempt_replaced_by_a_later_success_does_not_refuse_the_outputs(tmp_path, monkeypatch, states, ok):
+    from labhq import hpc_transfer as ht
+    monkeypatch.setattr(ht, "verify_remote_data", lambda *args: None)
+    runner, ws = _attempts(tmp_path, states)
+    if ok:
+        found, = runner._remote_step_outputs(ws)
+        assert [row["path"] for row in found["files"]] == ["tx2gene.tsv"]
+    else:
+        with pytest.raises(ht.TransferError, match="no verified successful output manifest"):
+            runner._remote_step_outputs(ws)
+
+
+def test_a_failed_shard_is_not_replaced_by_another_jobs_success(tmp_path, monkeypatch):
+    """Only a later job of the same name is a resubmission (#1367 review): a failed shard keeps refusing."""
+    from labhq import hpc_transfer as ht
+    monkeypatch.setattr(ht, "verify_remote_data", lambda *args: None)
+    runner, ws = _attempts(tmp_path, ["failed", "completed"], names=["shard_1", "shard_2"])
+    with pytest.raises(ht.TransferError, match="no verified successful output manifest"):
+        runner._remote_step_outputs(ws)
+    runner, ws = _attempts(tmp_path, ["failed", "completed"], names=["", ""])  # unnamed jobs are never paired
+    with pytest.raises(ht.TransferError):
+        runner._remote_step_outputs(ws)
+
+
+def test_an_unreadable_manifest_replaced_by_a_same_name_success_does_not_refuse(tmp_path, monkeypatch):
+    """6th airway trial: 8960 exited 0 but its manifest was too large to read; a same-name success replaces it (#1368)."""
+    from labhq import hpc_transfer as ht
+    monkeypatch.setattr(ht, "verify_remote_data", lambda *args: None)
+    runner, ws = _attempts(tmp_path, ["completed", "completed"])
+    first = runner.jobs["7677"]
+    first["fetched"] = False
+    first.pop("remote_manifest", None)
+    found, = runner._remote_step_outputs(ws)
+    assert [row["path"] for row in found["files"]] == ["tx2gene.tsv"]
+    runner, ws = _attempts(tmp_path, ["completed"])  # alone, the unreadable manifest still refuses
+    runner.jobs["7677"]["fetched"] = False
+    with pytest.raises(ht.TransferError):
+        runner._remote_step_outputs(ws)
+
+
+@pytest.mark.parametrize("declared,ok", [(["outputs"], True), (["outputs/env/result.tsv"], False)])
+def test_an_environment_folder_left_out_of_the_manifest_does_not_make_outputs_incomplete(
+        tmp_path, monkeypatch, declared, ok):
+    from labhq import hpc_transfer as ht
+    monkeypatch.setattr(ht, "verify_remote_data", lambda *args: None)
+    runner, ws = _attempts(tmp_path, ["completed"])
+    ws.task.meta["outputs"] = declared
+    runner.jobs["7677"]["remote_manifest"]["skipped"] = [{"path": "env", "reason": "environment folder"}]
+    if ok:
+        assert runner._remote_step_outputs(ws)
+    else:  # a declared output inside the environment folder is still missing
+        with pytest.raises(ht.TransferError, match="incomplete"):
+            runner._remote_step_outputs(ws)
+
+
+
+def test_the_remote_scan_leaves_out_a_conda_environment_and_still_caps_real_outputs(cluster, tmp_path):
+    """Runs the POSIX helper (Linux CI): a job-folder conda env made the 6th trial's manifest exceed 4 MB (#1368)."""
+    import os
+    if os.name == "nt":
+        pytest.skip("remote POSIX descriptor helper is exercised by Linux CI")
+    from labhq import hpc_transfer as ht
+    from tests.test_hpc_remote_data import helper_transfer, prepare
+    transfer = helper_transfer(cluster)
+    env = {f"env/conda-meta/pkg{i}.json": b"{}" for i in range(3)}
+    env.update({f"env/lib/f{i:05d}.py": b"" for i in range(25000)})  # more rows than the scan allows
+    spec = prepare(cluster, transfer, tmp_path, {"de_results.csv": b"gene,lfc", **env,
+                                                 "venv/pyvenv.cfg": b"home=/x", "venv/lib/a.py": b"",
+                                                 ".venv/pyvenv.cfg": b"home=/x", "__pycache__/a.pyc": b""})
+    remote = ht.fetch_results(transfer, spec, tmp_path / "logs", tmp_path / "outputs")["remote"]
+    assert [row["path"] for row in remote["files"]] == ["de_results.csv"]
+    assert {(row["path"], row["reason"]) for row in remote["skipped"]} >= {
+        ("env", "environment folder"), ("venv", "environment folder"), (".venv", "environment folder"),
+        ("__pycache__", "environment folder")}
+    many = {f"out/r{i:05d}.tsv": b"" for i in range(20001)}  # real outputs over the cap still refuse
+    spec = prepare(cluster, transfer, tmp_path, many)
+    with pytest.raises(Exception, match="checking remote data failed|too many remote outputs"):
+        ht.fetch_results(transfer, spec, tmp_path / "logs2", tmp_path / "outputs2")
+
+
+def _verify_remote_request(tmp_path, *, remote_files, outputs, run_task="t1", link_manifest=False):
+    """A finished whole-HPC step whose `outputs/local.tsv` is on this PC and whose other outputs stayed remote."""
+    import hashlib
+    import json
+    settings = _settings(tmp_path)
+    workdir = Path(settings.runner.workspace_root) / "hpc" / "r" / "steps" / "s1"
+    (workdir / "outputs").mkdir(parents=True)
+    (workdir / "outputs" / "local.tsv").write_bytes(b"gene\n")
+    body = json.dumps({
+        "task": {"id": "t1", "request_id": "r", "meta": {"step_id": "s1"}},
+        "runs": {"t1": {"ok": True, "request_id": "r", "step_id": "s1"},
+                 run_task: {"ok": True, "request_id": "r", "step_id": "s1",
+                        "hpc_remote_outputs": [{"request_id": "r", "data": "r/data", "bytes": 0,
+                                                "files": [{"path": p, "bytes": b} for p, b in remote_files.items()],
+                                                "directories": []}]}}})
+    if link_manifest:  # the agent swapped the record for a link: it is never followed (#1370 review)
+        (tmp_path / "elsewhere.json").write_text(body, encoding="utf-8")
+        try:
+            (workdir / "manifest.json").symlink_to(tmp_path / "elsewhere.json")
+        except OSError:
+            pytest.skip("this account cannot create symlinks")
+    else:
+        (workdir / "manifest.json").write_text(body, encoding="utf-8")
+    result = {"task_id": "t1", "agent_id": "worker", "workdir": str(workdir), "workdir_id": "s1", "ok": True,
+              "outputs": outputs,
+              "output_sha256": {"outputs/local.tsv": hashlib.sha256(b"gene\n").hexdigest()}}
+    request = {"id": "r", "text": "t", "status": "done", "results": {"s1": result}}
+    return verify_request(request, settings)
+
+
+def test_verify_counts_outputs_kept_in_the_hpc_data_folder_as_remote_not_missing(tmp_path):
+    """10th airway trial: three outputs over the fetch cap stayed remote by design and read as missing (#1347)."""
+    report = _verify_remote_request(tmp_path, remote_files={"de_results.csv": 9_000_000, "quant/a.sf": 10},
+                                    outputs=["outputs/local.tsv", "outputs/de_results.csv", "outputs/quant"])
+    status = {row["path"]: row["status"] for row in report["files"]}
+    assert status == {"outputs/local.tsv": "ok", "outputs/de_results.csv": "remote", "outputs/quant": "remote"}
+    sizes = {row["path"]: row["size"] for row in report["files"]}
+    assert sizes["outputs/de_results.csv"] == 9_000_000 and report["exit_code"] == 0
+    from labhq.evidence.audit import render_verify
+    assert "원격 보관 2" in render_verify(report)
+
+
+def test_verify_still_reports_an_output_neither_here_nor_in_the_remote_record_as_missing(tmp_path):
+    report = _verify_remote_request(tmp_path, remote_files={"de_results.csv": 10},
+                                    outputs=["outputs/local.tsv", "outputs/de_results.csv", "outputs/gone.tsv"])
+    status = {row["path"]: row["status"] for row in report["files"]}
+    assert status["outputs/gone.tsv"] == "missing" and status["outputs/de_results.csv"] == "remote"
+    assert report["exit_code"] == 1
+
+
+@pytest.mark.parametrize("variant", ["earlier_run", "linked_manifest"])
+def test_verify_takes_remote_evidence_only_from_the_results_own_run_read_without_links(tmp_path, variant):
+    """An earlier wake turn's inventory, or a manifest replaced by a link, never makes a missing output remote."""
+    report = _verify_remote_request(tmp_path, remote_files={"de_results.csv": 10},
+                                    outputs=["outputs/local.tsv", "outputs/de_results.csv"],
+                                    run_task="t0" if variant == "earlier_run" else "t1",
+                                    link_manifest=variant == "linked_manifest")
+    status = {row["path"]: row["status"] for row in report["files"]}
+    assert status["outputs/de_results.csv"] != "remote"
+    assert report["exit_code"] != 0
+
+
+def test_verify_reads_the_remote_record_of_a_direct_hpc_run(tmp_path):
+    """A direct task has no meta.step_id; the request files it under "direct" (#1370 review)."""
+    import json
+    settings = _settings(tmp_path)
+    workdir = Path(settings.runner.workspace_root) / "hpc" / "r" / "steps" / "direct"
+    (workdir / "outputs").mkdir(parents=True)
+    (workdir / "manifest.json").write_text(json.dumps({
+        "task": {"id": "t1", "request_id": "r", "meta": {}},
+        "runs": {"t1": {"ok": True, "request_id": "r", "hpc_remote_outputs": [
+            {"files": [{"path": "big.tsv", "bytes": 5}]}]}}}), encoding="utf-8")
+    result = {"task_id": "t1", "workdir": str(workdir), "workdir_id": "direct", "ok": True,
+              "outputs": ["outputs/big.tsv"], "output_sha256": {}}
+    report = verify_request({"id": "r", "status": "done", "results": {"direct": result}}, settings)
+    assert [row["status"] for row in report["files"]] == ["remote"] and report["exit_code"] == 0
+
+
+@pytest.mark.parametrize("figure,remote", [
+    ("steps/s1/outputs/figures/qc.svg", True),   # bundle form
+    ("s1/outputs/figures/qc.svg", True),          # unmapped <workdir_id>/outputs form
+    ("steps/s1/outputs/figures/gone.svg", False),  # no record explains it: still a problem
+])
+def test_verify_counts_a_report_figure_kept_in_the_hpc_data_folder_as_remote(tmp_path, monkeypatch, figure, remote):
+    """10th airway trial: a 2.1 MB QC figure stayed remote and the figure check read it as missing (#1347)."""
+    from labhq import report_figures, ro_crate
+    monkeypatch.setattr(ro_crate, "verify_bundle_copy", lambda path, rid: {"present": True, "problems": []})
+    monkeypatch.setattr(report_figures, "bundle_figure_check", lambda root: {
+        "problems": [f"report.md: 링크한 그림이 묶음에 없습니다: {figure}"], "warnings": []})
+    report = _verify_remote_request(tmp_path, remote_files={"figures/qc.svg": 2_100_000},
+                                    outputs=["outputs/local.tsv", "outputs/figures/qc.svg"])
+    figure_problems = [p for p in report["problems"] if p.startswith("보고서 그림:")]
+    if remote:
+        assert not figure_problems and report["exit_code"] == 0
+        assert any("원격 보관" in warning for warning in report["warnings"])
+        from labhq.evidence.audit import render_verify
+        report["request_bundle"]["figures"]["linked"] = 1
+        assert "원격 보관 1개, 나머지는 묶음 안에 있음" in render_verify(report)
+    else:
+        assert figure_problems and report["exit_code"] == 1
+
+
+def test_an_empty_remote_figure_is_still_a_problem(tmp_path, monkeypatch):
+    from labhq import report_figures, ro_crate
+    monkeypatch.setattr(ro_crate, "verify_bundle_copy", lambda path, rid: {"present": True, "problems": []})
+    monkeypatch.setattr(report_figures, "bundle_figure_check", lambda root: {
+        "problems": ["report.md: 링크한 그림이 묶음에 없습니다: steps/s1/outputs/figures/qc.svg"], "warnings": []})
+    report = _verify_remote_request(tmp_path, remote_files={"figures/qc.svg": 0},
+                                    outputs=["outputs/local.tsv", "outputs/figures/qc.svg"])
+    assert any(p.startswith("보고서 그림:") for p in report["problems"]) and report["exit_code"] == 1
