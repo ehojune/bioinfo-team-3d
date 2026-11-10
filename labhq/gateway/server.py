@@ -2706,7 +2706,9 @@ class Hub:
             if now - float(entry.get("requested_at") or 0) > JOBS_CANCEL_KEEP_S:
                 self.store.delete("jobs_cancel", tid)
                 continue
-            await self.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": tid})
+            # A wake-limit release (#1357) is replayed as one: its runner moves results it already fetched (#1364).
+            await self.send_runner(runner_id, {"type": "task.jobs_cancel", "task_id": tid,
+                                               **({"release": True} if entry.get("release") is True else {})})
 
     # ----- staff control (#59 ①) -----
     @staticmethod
