@@ -508,14 +508,23 @@ with contextlib.ExitStack() as stack:
   if not stat.S_ISREG(s.st_mode) or s.st_nlink!=1:
    os.close(fd); raise ValueError('not a plain remote file')
   return fd, s
+ def env(base, name):
+  # A conda/mamba environment or a Python venv a job built in its folder is tooling, not an output (#1368).
+  with folder(base, name) as d:
+   try: names=set(os.listdir(d))
+   except OSError: return False
+  return 'conda-meta' in names or 'pyvenv.cfg' in names
  def walk(base, directories, prefix='', depth=0):
   if depth>16:
    skipped.append({'path':prefix.rstrip('/'),'reason':'depth limit'}); return
   for name in sorted(os.listdir(base)):
-   if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._@+=,:%-]*',name):
-    skipped.append({'path':prefix+name,'reason':'name not allowed'}); continue
    s=os.stat(name,dir_fd=base,follow_symlinks=False)
    path=prefix+name
+   # Before the name rule: __pycache__ and .venv would otherwise read as "name not allowed" (#1369 review).
+   if stat.S_ISDIR(s.st_mode) and name not in ('.','..') and (name=='__pycache__' or env(base,name)):
+    skipped.append({'path':path,'reason':'environment folder'}); continue
+   if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._@+=,:%-]*',name):
+    skipped.append({'path':path,'reason':'name not allowed'}); continue
    if stat.S_ISDIR(s.st_mode):
     directories.append(path)
     with folder(base,name) as child: yield from walk(child,directories,path+'/',depth+1)
