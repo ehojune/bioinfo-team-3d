@@ -1096,11 +1096,13 @@ def test_the_remote_scan_leaves_out_a_conda_environment_and_still_caps_real_outp
     env = {f"env/conda-meta/pkg{i}.json": b"{}" for i in range(3)}
     env.update({f"env/lib/f{i:05d}.py": b"" for i in range(25000)})  # more rows than the scan allows
     spec = prepare(cluster, transfer, tmp_path, {"de_results.csv": b"gene,lfc", **env,
-                                                 "venv/pyvenv.cfg": b"home=/x", "venv/lib/a.py": b""})
+                                                 "venv/pyvenv.cfg": b"home=/x", "venv/lib/a.py": b"",
+                                                 ".venv/pyvenv.cfg": b"home=/x", "__pycache__/a.pyc": b""})
     remote = ht.fetch_results(transfer, spec, tmp_path / "logs", tmp_path / "outputs")["remote"]
     assert [row["path"] for row in remote["files"]] == ["de_results.csv"]
     assert {(row["path"], row["reason"]) for row in remote["skipped"]} >= {
-        ("env", "environment folder"), ("venv", "environment folder")}
+        ("env", "environment folder"), ("venv", "environment folder"), (".venv", "environment folder"),
+        ("__pycache__", "environment folder")}
     many = {f"out/r{i:05d}.tsv": b"" for i in range(20001)}  # real outputs over the cap still refuse
     spec = prepare(cluster, transfer, tmp_path, many)
     with pytest.raises(Exception, match="checking remote data failed|too many remote outputs"):
