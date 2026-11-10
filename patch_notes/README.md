@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:42 | [`0ac8add`](https://github.com/ehojune/bioinfo-team-3d/pull/1372/commits/0ac8add) | **검증 안내에 원격 보관 그림 처리를 적었습니다.**<br>manual 07 한·영에 verify가 원격 목록에 크기가 있는 보고서 그림을 원격 보관 경고로 센다고 적는다 (#1372 리뷰). |
+| 01:41 | [`b955c5d`](https://github.com/ehojune/bioinfo-team-3d/pull/1372/commits/b955c5d) | **빈 그림은 여전히 실패하고, 원격에 둔 그림은 요약에 따로 표시합니다.**<br>크기 0인 원격 그림은 계속 문제로 세고, verify 요약 줄에 원격 보관 그림 수를 따로 보인다 (#1372 리뷰). |
+| 01:22 | [`635832e`](https://github.com/ehojune/bioinfo-team-3d/pull/1372/commits/635832e) | **HPC에만 둔 큰 그림 때문에 검증이 실패하지 않습니다.**<br>verify의 보고서 그림 링크 검사에서 단계의 원격 목록에 기록된 그림은 원격 보관 경고로 돌리고, 기록이 없는 그림 링크만 문제로 센다 (#1347). |
 | 01:05 | [`f056c1e`](https://github.com/ehojune/bioinfo-team-3d/pull/1370/commits/f056c1e) | **단독 요청의 HPC 원격 결과도 원격 보관으로 셉니다.**<br>verify가 step_id 없는 direct HPC 실행의 원격 기록도 direct 단계로 읽는다 (#1370 리뷰). |
 | 00:48 | [`001fada`](https://github.com/ehojune/bioinfo-team-3d/pull/1370/commits/001fada) | **앞 턴의 기록이나 바꿔치기한 파일이 원격 보관 판정을 속이지 못합니다.**<br>verify의 원격 근거를 결과 task_id의 성공한 실행 기록(같은 요청·단계)에서만 읽고, manifest.json은 링크를 따르지 않는 held 폴더로 연다 (#1370 리뷰). |
 | 00:46 | [`67950b5`](https://github.com/ehojune/bioinfo-team-3d/pull/1371/commits/67950b5) | **판정 스크립트가 일부만 남은 gateway 이벤트로 겹침을 판정하지 않고, 단계별 기록으로 요청 전체를 봅니다.**<br>judge_1331: prefer_complete — 단계 기록의 모든 작업이 gateway에서 완료로 보일 때만 gateway 시간 사용, 시험 2건 (#1331) |
