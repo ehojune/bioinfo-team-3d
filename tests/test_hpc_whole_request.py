@@ -912,49 +912,69 @@ async def test_endless_resubmission_stops_at_the_hard_cap_and_releases_the_live_
     assert stored[("jobs_cancel", last)]["runner_id"] == "cluster"  # resent on reconnect until confirmed
 
 
-async def test_a_released_steps_late_job_is_fetched_into_jobs_late_not_outputs(tmp_path, monkeypatch):
-    from labhq import hpc_transfer
-    settings = _settings(tmp_path)
-    runner = Runner(settings)
-    seen = []
-    monkeypatch.setattr(hpc_transfer, "fetch_results",
-                        lambda transfer, spec, logs, fetch_to, base=None: seen.append(fetch_to) or {"fetched": [], "skipped": []})
-    monkeypatch.setattr(runner.scheduler, "transfer", lambda: object(), raising=False)
+def _staged_job(runner, tmp_path, *, step_file=None):
+    """A finished job whose fetch landed in jobs/fetch/<job>/ with one result, outputs/ holding the step's own file."""
     workdir = tmp_path / "step"
-    job = {"task_id": "t1", "job_id": "7682", "workdir": str(workdir)}
-    spec = {"fetch_to": str(workdir / "outputs")}
-    runner._fetch_job_files(dict(job), spec)
-    assert seen[-1] == workdir / "outputs"
-    assert await runner._cancel_local_jobs("t1")  # the gateway released the step's jobs
-    late = dict(job)
-    runner._fetch_job_files(late, spec)
-    assert seen[-1] == workdir / "jobs" / "late" / "7682" and late["late"] is True
-    runner.__dict__["_jobs_cancelled"] = set()  # a restarted runner still knows from its store
-    assert runner._jobs_released("t1")
+    staged = workdir / "jobs" / "fetch" / "7682" / "sub"
+    staged.mkdir(parents=True)
+    (staged / "index.tsv").write_text("job result", encoding="utf-8")
+    (workdir / "outputs" / "sub").mkdir(parents=True)
+    if step_file is not None:
+        (workdir / "outputs" / "sub" / "index.tsv").write_text(step_file, encoding="utf-8")
+    (workdir / "outputs" / "kept.tsv").write_text("the step's own", encoding="utf-8")
+    job = {"task_id": "t1", "job_id": "7682", "agent_id": "a", "workdir": str(workdir), "terminal": True,
+           "fetched": True, "fetched_paths": ["sub/index.tsv"]}
+    runner.jobs = {"7682": job}
+    return workdir, job
 
 
-async def test_results_fetched_into_outputs_before_the_release_move_to_jobs_late(tmp_path):
-    """The fetch can finish before the step's last wake reports, or run while the release arrives (#1357 review)."""
-    settings = _settings(tmp_path)
-    runner = Runner(settings)
+def _late_runner(tmp_path):
+    runner = Runner(_settings(tmp_path))
     events = []
 
     async def emit(event):
         events.append(event)
 
     runner.emit = emit
-    workdir = tmp_path / "step"
-    (workdir / "outputs" / "sub").mkdir(parents=True)
-    (workdir / "outputs" / "sub" / "index.tsv").write_text("late", encoding="utf-8")
-    (workdir / "outputs" / "kept.tsv").write_text("the step's own", encoding="utf-8")
-    runner.jobs = {"7682": {"task_id": "t1", "job_id": "7682", "agent_id": "a", "workdir": str(workdir),
-                            "terminal": True, "fetched": True, "fetched_into": str(workdir / "outputs"),
-                            "fetched_paths": ["sub/index.tsv"]}}
-    assert await runner._cancel_local_jobs("t1")  # a request cancel: consumed results stay (#1363 review)
-    assert (workdir / "outputs" / "sub" / "index.tsv").exists() and not runner.jobs["7682"].get("late")
+    return runner, events
+
+
+async def test_job_files_are_staged_and_committed_only_while_the_step_still_waits(tmp_path, monkeypatch):
+    from labhq import hpc_transfer
+    runner, _ = _late_runner(tmp_path)
+    seen = []
+    monkeypatch.setattr(hpc_transfer, "fetch_results",
+                        lambda transfer, spec, logs, fetch_to, base=None: seen.append(fetch_to) or {"fetched": [], "skipped": []})
+    monkeypatch.setattr(runner.scheduler, "transfer", lambda: object(), raising=False)
+    workdir, job = _staged_job(runner, tmp_path, step_file="the step's earlier table")
+    runner._fetch_job_files(dict(job), {"fetch_to": str(workdir / "outputs")})
+    assert seen == [workdir / "jobs" / "fetch" / "7682"]  # never straight into outputs/ (#1357)
+    runner._commit_fetch(job, workdir / "outputs")
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job result"
+    assert (workdir / "jobs" / "replaced" / "7682" / "sub" / "index.tsv").read_text(encoding="utf-8") ==         "the step's earlier table"
+
+
+async def test_a_released_steps_staged_files_go_to_jobs_late_and_outputs_stay(tmp_path):
+    runner, _ = _late_runner(tmp_path)
+    workdir, job = _staged_job(runner, tmp_path, step_file="the step's own table")
+    assert await runner._cancel_local_jobs("t1", relocate=True)  # the release arrived during the transfer
+    runner._commit_fetch(job, workdir / "outputs")
+    assert (workdir / "jobs" / "late" / "7682" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job result"
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "the step's own table"
+    assert job["late"] is True
+    runner.__dict__["_jobs_cancelled"] = set()  # a restarted runner still knows from its store
+    assert runner._jobs_released("t1")
+
+
+async def test_committed_results_move_out_and_replaced_files_come_back_on_release(tmp_path):
+    """The fetch finished before the step's last wake reported (#1363 review)."""
+    runner, events = _late_runner(tmp_path)
+    workdir, job = _staged_job(runner, tmp_path, step_file="the step's own table")
+    runner._commit_fetch(job, workdir / "outputs")
+    assert await runner._cancel_local_jobs("t1")  # a request cancel: consumed results stay
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job result"
     assert await runner._cancel_local_jobs("t1", relocate=True)  # a wake-limit release
-    late = workdir / "jobs" / "late" / "7682" / "sub" / "index.tsv"
-    assert late.read_text(encoding="utf-8") == "late" and not (workdir / "outputs" / "sub" / "index.tsv").exists()
-    assert (workdir / "outputs" / "kept.tsv").exists()  # only the job's fetched files move
-    assert runner.jobs["7682"]["late"] is True
+    assert (workdir / "jobs" / "late" / "7682" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job result"
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "the step's own table"
+    assert (workdir / "outputs" / "kept.tsv").exists() and job["late"] is True
     assert any((event.data or {}).get("job_late") == {"job_id": "7682"} for event in events)
