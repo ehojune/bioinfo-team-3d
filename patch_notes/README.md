@@ -14,7 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:05 | [`f056c1e`](https://github.com/ehojune/bioinfo-team-3d/pull/1370/commits/f056c1e) | **단독 요청의 HPC 원격 결과도 원격 보관으로 셉니다.**<br>verify가 step_id 없는 direct HPC 실행의 원격 기록도 direct 단계로 읽는다 (#1370 리뷰). |
+| 00:48 | [`001fada`](https://github.com/ehojune/bioinfo-team-3d/pull/1370/commits/001fada) | **앞 턴의 기록이나 바꿔치기한 파일이 원격 보관 판정을 속이지 못합니다.**<br>verify의 원격 근거를 결과 task_id의 성공한 실행 기록(같은 요청·단계)에서만 읽고, manifest.json은 링크를 따르지 않는 held 폴더로 연다 (#1370 리뷰). |
 | 00:46 | [`67950b5`](https://github.com/ehojune/bioinfo-team-3d/pull/1371/commits/67950b5) | **판정 스크립트가 일부만 남은 gateway 이벤트로 겹침을 판정하지 않고, 단계별 기록으로 요청 전체를 봅니다.**<br>judge_1331: prefer_complete — 단계 기록의 모든 작업이 gateway에서 완료로 보일 때만 gateway 시간 사용, 시험 2건 (#1331) |
+| 00:34 | [`7d147f6`](https://github.com/ehojune/bioinfo-team-3d/pull/1370/commits/7d147f6) | **HPC에 일부러 남긴 큰 결과 파일 때문에 검증이 실패하지 않습니다.**<br>labhq verify가 요청 전체 HPC 단계의 원격 목록(hpc_remote_outputs)에 기록된 산출을 원격 보관(크기 기록)으로 세고 문제로 보지 않는다. 어디에도 없는 산출은 그대로 없음 (#1347). |
 | 00:32 | [`a689115`](https://github.com/ehojune/bioinfo-team-3d/pull/1371/commits/a689115) | **airway 시운전 판정이 단계 id 없는 이벤트를 모두 같은 단계로 보던 문제를 고치고, 이벤트가 지난 회차는 단계별 기록에서 시간을 읽게 했습니다.**<br>judge_1331: step_id 없음은 다른 단계로 보고, 결과 이벤트가 없으면 단계별 events.jsonl로 겹침 판정, 시험 3건 (#1331) |
 
 ## 2026-11-10
