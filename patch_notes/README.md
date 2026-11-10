@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:21 | [`7c478aa`](https://github.com/ehojune/bioinfo-team-3d/pull/1367/commits/7c478aa) | **여러 잡으로 나눈 단계에서 한 조각이 실패하면 계속 실패로 판정합니다.**<br>재시도는 같은 이름으로 나중에 낸 잡으로만 보고, 다른 shard의 성공은 실패를 대신하지 않는다 (#1367 리뷰). |
+| 15:03 | [`f684181`](https://github.com/ehojune/bioinfo-team-3d/pull/1367/commits/f684181) | **HPC 잡을 다시 내서 성공하면 앞선 실패 때문에 단계가 실패하지 않습니다.**<br>같은 단계에서 실패·취소된 시도 뒤 다시 낸 잡이 성공하면, 앞선 실패는 원격 산출 판정에서 빼고 기록에만 남긴다. 성공 뒤 실패와 도는 중인 앞 시도는 그대로 거절한다 (#1366). |
 | 10:31 | [`2160175`](https://github.com/ehojune/bioinfo-team-3d/pull/1365/commits/2160175) | **runner가 잠시 끊겨 있어도 깨우기 상한 해제가 그대로 전달됩니다.**<br>flush_task_cancels가 재접속한 runner에 jobs_cancel을 다시 보낼 때 저장된 release 표시를 그대로 싣는다 (#1364, #1363 리뷰 후속). |
 | 10:15 | [`bd46cf9`](https://github.com/ehojune/bioinfo-team-3d/pull/1363/commits/bd46cf9) | **늦게 끝난 잡 결과가 단계 파일을 덮어쓰거나 섞이지 않게 회수 방식을 바꿨습니다.**<br>잡 결과를 늘 jobs/fetch/<job>/에 먼저 받고 단계가 기다릴 때만 제자리로 옮긴다. 덮어쓴 단계 파일은 jobs/replaced/에 두었다가 해제되면 되돌린다 (#1363 리뷰). |
 | 09:57 | [`58f6e5c`](https://github.com/ehojune/bioinfo-team-3d/pull/1363/commits/58f6e5c) | **요청을 취소해도 이미 끝난 단계의 결과는 옮겨지지 않습니다.**<br>이미 회수된 잡 결과의 jobs/late/ 이동을 깨우기 상한 해제(release 표시)에만 적용하고, 요청 취소에서는 앞 단계 결과를 그대로 둔다 (#1363 리뷰). |
