@@ -121,25 +121,41 @@ def locate_workdir(root: Path, result: Mapping[str, Any]) -> tuple[Path | None, 
     return None, f"이 PC의 runner.workspace_root에 작업 폴더 {workdir_id}가 없습니다"
 
 
-def remote_outputs(workdir: Path) -> dict[str, int]:
-    """Outputs the runner left in the request's HPC data folder on purpose (#1348): ``outputs/<path>`` → bytes, from
-    the ``hpc_remote_outputs`` the step's runs recorded in its work folder's ``manifest.json``. Empty when there is none
-    or the record cannot be read."""
+def remote_outputs(root: Path, workdir: Path, result: Mapping[str, Any], request_id: str,
+                   step_id: str) -> dict[str, int]:
+    """Outputs this result's run left in the request's HPC data folder on purpose (#1348): ``outputs/<path>`` → bytes.
+
+    Only the run the result names (its ``task_id``: a wake turn or a revision has a run of its own) counts, and only
+    when that run succeeded for this request and step (#1370 review). The work folder's ``manifest.json`` is read
+    through held folders that never follow a link, as ``locate_workdir`` does. Empty when anything does not hold."""
+    from ..adapters.held_dir import HeldDir
+
+    task_id = result.get("task_id")
+    if not isinstance(task_id, str) or not task_id:
+        return {}
     try:
-        path = workdir / "manifest.json"
-        if not path.is_file() or path.is_symlink() or path.stat().st_size > 16 * 1024 * 1024:
-            return {}
-        runs = json.loads(path.read_text(encoding="utf-8")).get("runs") or {}
-    except (OSError, ValueError, AttributeError):
+        parts = workdir.relative_to(root).parts
+        with contextlib.ExitStack() as stack:
+            held = stack.enter_context(HeldDir.hold(root))
+            for part in parts:
+                held = stack.enter_context(held.child(part))
+            with os.fdopen(held.open_read_file("manifest.json"), "rb") as opened:
+                manifest = json.loads(opened.read(16 * 1024 * 1024 + 1))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+    task = manifest.get("task") if isinstance(manifest.get("task"), Mapping) else {}
+    run = (manifest.get("runs") or {}).get(task_id) if isinstance(manifest.get("runs"), Mapping) else None
+    if (not isinstance(run, Mapping) or run.get("ok") is not True
+            or run.get("request_id", task.get("request_id")) != request_id
+            or (run.get("step_id") or (task.get("meta") or {}).get("step_id")) != step_id):
         return {}
     found: dict[str, int] = {}
-    for run in runs.values() if isinstance(runs, Mapping) else ():
-        manifests = run.get("hpc_remote_outputs") if isinstance(run, Mapping) else None
-        for manifest in manifests if isinstance(manifests, list) else ():
-            for row in (manifest.get("files") if isinstance(manifest, Mapping) else None) or []:
-                if (isinstance(row, Mapping) and isinstance(row.get("path"), str) and isinstance(row.get("bytes"), int)
-                        and not isinstance(row.get("bytes"), bool)):
-                    found["outputs/" + row["path"]] = row["bytes"]
+    manifests = run.get("hpc_remote_outputs")
+    for remote in manifests if isinstance(manifests, list) else ():
+        for row in (remote.get("files") if isinstance(remote, Mapping) else None) or []:
+            if (isinstance(row, Mapping) and isinstance(row.get("path"), str) and isinstance(row.get("bytes"), int)
+                    and not isinstance(row.get("bytes"), bool)):
+                found["outputs/" + row["path"]] = row["bytes"]
     return found
 
 
@@ -348,7 +364,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                 zones, settings.runner.reference_scan_max_entries, settings.runner.reference_scan_max_depth,
                 settings.runner.output_hash_max_bytes)
         records, note = scans[str(workdir)]
-        remote = remote_outputs(workdir)
+        remote = remote_outputs(root, workdir, result, str(req.get("id") or ""), str(step_id))
         if note is None and all(isinstance(row.get("sha256"), str) for row in records):
             observed_artifacts[str(step_id)] = {str(row["path"]): row["sha256"] for row in records}
         # A declared name matched a differently cased file on a case-insensitive volume when it was collected.

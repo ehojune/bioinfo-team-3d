@@ -1109,7 +1109,7 @@ def test_the_remote_scan_leaves_out_a_conda_environment_and_still_caps_real_outp
         ht.fetch_results(transfer, spec, tmp_path / "logs2", tmp_path / "outputs2")
 
 
-def _verify_remote_request(tmp_path, *, remote_files, outputs):
+def _verify_remote_request(tmp_path, *, remote_files, outputs, run_task="t1", link_manifest=False):
     """A finished whole-HPC step whose `outputs/local.tsv` is on this PC and whose other outputs stayed remote."""
     import hashlib
     import json
@@ -1117,12 +1117,21 @@ def _verify_remote_request(tmp_path, *, remote_files, outputs):
     workdir = Path(settings.runner.workspace_root) / "hpc" / "r" / "steps" / "s1"
     (workdir / "outputs").mkdir(parents=True)
     (workdir / "outputs" / "local.tsv").write_bytes(b"gene\n")
-    (workdir / "manifest.json").write_text(json.dumps({
+    body = json.dumps({
         "task": {"id": "t1", "request_id": "r", "meta": {"step_id": "s1"}},
-        "runs": {"t1": {"ok": True, "request_id": "r", "step_id": "s1",
+        "runs": {"t1": {"ok": True, "request_id": "r", "step_id": "s1"},
+                 run_task: {"ok": True, "request_id": "r", "step_id": "s1",
                         "hpc_remote_outputs": [{"request_id": "r", "data": "r/data", "bytes": 0,
                                                 "files": [{"path": p, "bytes": b} for p, b in remote_files.items()],
-                                                "directories": []}]}}}), encoding="utf-8")
+                                                "directories": []}]}}})
+    if link_manifest:  # the agent swapped the record for a link: it is never followed (#1370 review)
+        (tmp_path / "elsewhere.json").write_text(body, encoding="utf-8")
+        try:
+            (workdir / "manifest.json").symlink_to(tmp_path / "elsewhere.json")
+        except OSError:
+            pytest.skip("this account cannot create symlinks")
+    else:
+        (workdir / "manifest.json").write_text(body, encoding="utf-8")
     result = {"task_id": "t1", "agent_id": "worker", "workdir": str(workdir), "workdir_id": "s1", "ok": True,
               "outputs": outputs,
               "output_sha256": {"outputs/local.tsv": hashlib.sha256(b"gene\n").hexdigest()}}
@@ -1148,3 +1157,15 @@ def test_verify_still_reports_an_output_neither_here_nor_in_the_remote_record_as
     status = {row["path"]: row["status"] for row in report["files"]}
     assert status["outputs/gone.tsv"] == "missing" and status["outputs/de_results.csv"] == "remote"
     assert report["exit_code"] == 1
+
+
+@pytest.mark.parametrize("variant", ["earlier_run", "linked_manifest"])
+def test_verify_takes_remote_evidence_only_from_the_results_own_run_read_without_links(tmp_path, variant):
+    """An earlier wake turn's inventory, or a manifest replaced by a link, never makes a missing output remote."""
+    report = _verify_remote_request(tmp_path, remote_files={"de_results.csv": 10},
+                                    outputs=["outputs/local.tsv", "outputs/de_results.csv"],
+                                    run_task="t0" if variant == "earlier_run" else "t1",
+                                    link_manifest=variant == "linked_manifest")
+    status = {row["path"]: row["status"] for row in report["files"]}
+    assert status["outputs/de_results.csv"] != "remote"
+    assert report["exit_code"] != 0
