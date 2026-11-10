@@ -4115,17 +4115,22 @@ class Runner:
         # step's outputs come from the success (#1366, 5th airway trial: walltime-killed 7677, then 7687 exit 0). A
         # resubmission is a later job of the same name; an independent job (another shard) never replaces a failure,
         # and an attempt still running, or one that failed after its last success, still refuses the outputs.
+        # #1368: an earlier completed job whose remote manifest could not be read (too large) is replaced the same way.
+        def usable(job: dict) -> bool:
+            return bool(job.get("terminal") and job.get("state") == "completed" and job.get("fetched")
+                        and isinstance(job.get("remote_manifest"), dict))
+
         last_success: dict[str, float] = {}
         for job in self.jobs.values():
             name = job.get("name")
-            if mine(job) and isinstance(name, str) and name and job.get("terminal") and job.get("state") == "completed":
+            if mine(job) and isinstance(name, str) and name and usable(job):
                 last_success[name] = max(last_success.get(name, 0.0), submitted(job))
         with request_scope(ws.task.request_id), queue_wait():
             for job in list(self.jobs.values()):
                 if not mine(job):
                     continue
                 spec = job.get("transfer") or {}
-                if (job.get("terminal") and job.get("state") != "completed"
+                if (job.get("terminal") and not usable(job)
                         and submitted(job) < last_success.get(str(job.get("name") or ""), float("-inf"))):
                     continue
                 if (job.get("late") or not job.get("submitted_by_runner") or not job.get("terminal")
@@ -4140,10 +4145,13 @@ class Runner:
                 declared_dirs = declared & directories
                 if "" in declared:
                     declared_dirs.add("")  # the work directory itself is a valid explicit output root
+                # An environment folder the job built (#1368) is left out on purpose: it never makes a declared output
+                # directory incomplete, but a declared output inside one is still missing.
+                blocking = [row for row in manifest.get("skipped", []) if row.get("reason") != "environment folder"]
                 if any(row["path"] in declared or any(path.startswith(row["path"] + "/") for path in declared)
                        for row in manifest.get("skipped", [])) or any(
                        not directory or row["path"].startswith(directory + "/")
-                       for row in manifest.get("skipped", []) for directory in declared_dirs):
+                       for row in blocking for directory in declared_dirs):
                     raise TransferError("a declared remote output directory is incomplete (unsupported entries)")
                 collect_all = (ws.task.meta.get("kind") == "direct" or
                                ws.task.meta.get("collect_direct_outputs") is True)

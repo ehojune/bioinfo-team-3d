@@ -14,6 +14,7 @@ from labhq.runner.daemon import Runner
 from labhq.evidence.audit import verify_request
 from tests.test_cso import FakeHub, result
 from tests.test_workspace_boundary import _settings
+from tests.test_hpc_transfer_1308 import cluster  # noqa: F401 - fixture for the remote-scan test
 
 pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or report; v1.0 turns both off (#1336)
 
@@ -1050,3 +1051,57 @@ def test_a_failed_shard_is_not_replaced_by_another_jobs_success(tmp_path, monkey
     runner, ws = _attempts(tmp_path, ["failed", "completed"], names=["", ""])  # unnamed jobs are never paired
     with pytest.raises(ht.TransferError):
         runner._remote_step_outputs(ws)
+
+
+def test_an_unreadable_manifest_replaced_by_a_same_name_success_does_not_refuse(tmp_path, monkeypatch):
+    """6th airway trial: 8960 exited 0 but its manifest was too large to read; a same-name success replaces it (#1368)."""
+    from labhq import hpc_transfer as ht
+    monkeypatch.setattr(ht, "verify_remote_data", lambda *args: None)
+    runner, ws = _attempts(tmp_path, ["completed", "completed"])
+    first = runner.jobs["7677"]
+    first["fetched"] = False
+    first.pop("remote_manifest", None)
+    found, = runner._remote_step_outputs(ws)
+    assert [row["path"] for row in found["files"]] == ["tx2gene.tsv"]
+    runner, ws = _attempts(tmp_path, ["completed"])  # alone, the unreadable manifest still refuses
+    runner.jobs["7677"]["fetched"] = False
+    with pytest.raises(ht.TransferError):
+        runner._remote_step_outputs(ws)
+
+
+@pytest.mark.parametrize("declared,ok", [(["outputs"], True), (["outputs/env/result.tsv"], False)])
+def test_an_environment_folder_left_out_of_the_manifest_does_not_make_outputs_incomplete(
+        tmp_path, monkeypatch, declared, ok):
+    from labhq import hpc_transfer as ht
+    monkeypatch.setattr(ht, "verify_remote_data", lambda *args: None)
+    runner, ws = _attempts(tmp_path, ["completed"])
+    ws.task.meta["outputs"] = declared
+    runner.jobs["7677"]["remote_manifest"]["skipped"] = [{"path": "env", "reason": "environment folder"}]
+    if ok:
+        assert runner._remote_step_outputs(ws)
+    else:  # a declared output inside the environment folder is still missing
+        with pytest.raises(ht.TransferError, match="incomplete"):
+            runner._remote_step_outputs(ws)
+
+
+
+def test_the_remote_scan_leaves_out_a_conda_environment_and_still_caps_real_outputs(cluster, tmp_path):
+    """Runs the POSIX helper (Linux CI): a job-folder conda env made the 6th trial's manifest exceed 4 MB (#1368)."""
+    import os
+    if os.name == "nt":
+        pytest.skip("remote POSIX descriptor helper is exercised by Linux CI")
+    from labhq import hpc_transfer as ht
+    from tests.test_hpc_remote_data import helper_transfer, prepare
+    transfer = helper_transfer(cluster)
+    env = {f"env/conda-meta/pkg{i}.json": b"{}" for i in range(3)}
+    env.update({f"env/lib/f{i:05d}.py": b"" for i in range(25000)})  # more rows than the scan allows
+    spec = prepare(cluster, transfer, tmp_path, {"de_results.csv": b"gene,lfc", **env,
+                                                 "venv/pyvenv.cfg": b"home=/x", "venv/lib/a.py": b""})
+    remote = ht.fetch_results(transfer, spec, tmp_path / "logs", tmp_path / "outputs")["remote"]
+    assert [row["path"] for row in remote["files"]] == ["de_results.csv"]
+    assert {(row["path"], row["reason"]) for row in remote["skipped"]} >= {
+        ("env", "environment folder"), ("venv", "environment folder")}
+    many = {f"out/r{i:05d}.tsv": b"" for i in range(20001)}  # real outputs over the cap still refuse
+    spec = prepare(cluster, transfer, tmp_path, many)
+    with pytest.raises(Exception, match="too many remote outputs|remote manifest too large|exit"):
+        ht.fetch_results(transfer, spec, tmp_path / "logs2", tmp_path / "outputs2")
