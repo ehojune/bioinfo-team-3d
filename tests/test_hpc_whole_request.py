@@ -1002,7 +1002,7 @@ async def test_a_wake_limit_release_is_replayed_with_its_release_mark_after_a_re
     assert ("r1", {"type": "task.jobs_cancel", "task_id": "cancelled"}) in sent  # a request cancel stays plain
 
 
-def _attempts(tmp_path, states):
+def _attempts(tmp_path, states, names=None):
     """A step's remote jobs, submitted in this order with these terminal states (None: still running)."""
     from types import SimpleNamespace
     from tests.test_hpc_remote_data import inventory
@@ -1015,6 +1015,7 @@ def _attempts(tmp_path, states):
     for index, state in enumerate(states):
         runner.jobs[str(7677 + index)] = {
             "workdir": str(tmp_path), "transfer": {"request_id": "r", "step_id": "s1"}, "submitted_by_runner": True,
+            "name": (names or ["fetch_fastq"] * len(states))[index],
             "submitted_at": 1000.0 + index, "terminal": state is not None, "state": state or "running",
             "fetched": state == "completed", **({"remote_manifest": inventory()} if state == "completed" else {})}
     return runner, ws
@@ -1037,3 +1038,15 @@ def test_a_failed_attempt_replaced_by_a_later_success_does_not_refuse_the_output
     else:
         with pytest.raises(ht.TransferError, match="no verified successful output manifest"):
             runner._remote_step_outputs(ws)
+
+
+def test_a_failed_shard_is_not_replaced_by_another_jobs_success(tmp_path, monkeypatch):
+    """Only a later job of the same name is a resubmission (#1367 review): a failed shard keeps refusing."""
+    from labhq import hpc_transfer as ht
+    monkeypatch.setattr(ht, "verify_remote_data", lambda *args: None)
+    runner, ws = _attempts(tmp_path, ["failed", "completed"], names=["shard_1", "shard_2"])
+    with pytest.raises(ht.TransferError, match="no verified successful output manifest"):
+        runner._remote_step_outputs(ws)
+    runner, ws = _attempts(tmp_path, ["failed", "completed"], names=["", ""])  # unnamed jobs are never paired
+    with pytest.raises(ht.TransferError):
+        runner._remote_step_outputs(ws)

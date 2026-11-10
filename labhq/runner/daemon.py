@@ -4112,18 +4112,21 @@ class Runner:
             return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
 
         # A failed or cancelled attempt that a later successful resubmission replaced is history, not evidence: the
-        # step's outputs come from the success (#1366, 5th airway trial: walltime-killed 7677, then 7687 exit 0). An
-        # attempt still running, or one that failed after the last success, still refuses the outputs.
-        succeeded = [submitted(job) for job in self.jobs.values()
-                     if mine(job) and job.get("terminal") and job.get("state") == "completed"]
-        last_success = max(succeeded) if succeeded else None
+        # step's outputs come from the success (#1366, 5th airway trial: walltime-killed 7677, then 7687 exit 0). A
+        # resubmission is a later job of the same name; an independent job (another shard) never replaces a failure,
+        # and an attempt still running, or one that failed after its last success, still refuses the outputs.
+        last_success: dict[str, float] = {}
+        for job in self.jobs.values():
+            name = job.get("name")
+            if mine(job) and isinstance(name, str) and name and job.get("terminal") and job.get("state") == "completed":
+                last_success[name] = max(last_success.get(name, 0.0), submitted(job))
         with request_scope(ws.task.request_id), queue_wait():
             for job in list(self.jobs.values()):
                 if not mine(job):
                     continue
                 spec = job.get("transfer") or {}
-                if (last_success is not None and job.get("terminal") and job.get("state") != "completed"
-                        and submitted(job) < last_success):
+                if (job.get("terminal") and job.get("state") != "completed"
+                        and submitted(job) < last_success.get(str(job.get("name") or ""), float("-inf"))):
                     continue
                 if (job.get("late") or not job.get("submitted_by_runner") or not job.get("terminal")
                         or job.get("state") != "completed"
