@@ -1,0 +1,5 @@
+rows:
+  - sha: "2f53ea1"
+    at: "2026-11-12 03:36"
+    summary: "평가 묶음(#1381 3절) 설계를 정리하고, 모델 호출 없이 도는 인용 감사 스크립트와 리뷰 보정·반증 반영 시험용 합성 묶음을 더했습니다."
+    text: "citation_audit.py(기록된 DOI·PMID 응답, literal_check 재사용), review_calibration clean/seeded(오류 10종), falsification 사례 틀 6건, docs/reference/eval-suite.md (#1383)"
