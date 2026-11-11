@@ -104,6 +104,14 @@ def test_scientific_notation_is_numeric_prose():
         "세포는 1e6개였습니다.", "p값은 2E-5였습니다."]
 
 
+def test_commonmark_code_boundaries_do_not_mask_or_create_numeric_prose():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    assert _unanchored_numeric_sentences("미완성 `\n\n결과는 42입니다.\n\n다른 문단 `") == ["결과는 42입니다."]
+    assert _unanchored_numeric_sentences("    x = 42\n\n- ```python\n  y = 9\n  ```\n\n결과는 7입니다.") == [
+        "결과는 7입니다."]
+
+
 def test_legacy_summary_rows_do_not_bypass_cp2_refusal():
     ledger = _ledger()
     del ledger["evidence"][0]["status"]

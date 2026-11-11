@@ -12,6 +12,7 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from ..report_markdown import markdown_body
 from .claims import STATUS_NEEDS
 
 # Case and spaces vary in what a model writes ([[Claim: s1/c1]]); a variant is checked, not skipped.
@@ -276,21 +277,7 @@ def failed_lookup_lines(rows: list[dict[str, str]]) -> list[str]:
 
 def _unanchored_numeric_sentences(report: str) -> list[str]:
     """Flag numeric prose for review; this is not a semantic conclusion classifier."""
-    kept = []
-    fence = ""
-    for line in report.splitlines():
-        if fence:
-            if re.fullmatch(r" {0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}\s*", line):
-                fence = ""
-            continue
-        opening = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
-        if opening:
-            fence = opening.group(1)
-            kept.append("")
-        else:
-            kept.append(line)
-    text = "\n".join(kept)
-    text = re.sub(r"(?<!`)(`+)(?!`)(.*?)(?<!`)\1(?!`)", " ", text, flags=re.DOTALL)
+    text = markdown_body(report)
     text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
     text = re.sub(r"(?m)^ {0,3}\[\^[^\]\n]+\]:[^\n]*(?:\n(?: {4}|\t)[^\n]*)*", "", text)
     text = re.sub(r"\[\^[^\]\n]+\]", "", text)
