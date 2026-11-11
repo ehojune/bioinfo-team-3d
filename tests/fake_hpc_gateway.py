@@ -200,6 +200,23 @@ def files(tokens: list[str]) -> tuple[str, int] | None:
     return None
 
 
+
+def _input_pending() -> bool:
+    """Bytes waiting in stdin that nothing has read yet: PeekNamedPipe on Windows, select elsewhere."""
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        available = wintypes.DWORD(0)
+        handle = wintypes.HANDLE(msvcrt.get_osfhandle(sys.stdin.fileno()))
+        ok = ctypes.windll.kernel32.PeekNamedPipe(handle, None, 0, None, ctypes.byref(available), None)
+        return bool(ok) and available.value > 0
+    import select
+
+    return bool(select.select([sys.stdin], [], [], 0)[0])
+
+
 def main(argv: list[str]) -> int:
     flags = {"echo": False, "banner": False, "lock": None, "drop": None, "hostkey": False, "tunnel": False,
              "prompts": False,
@@ -257,21 +274,23 @@ def main(argv: list[str]) -> int:
                     os._exit(0)
 
         threading.Thread(target=lock_watch, daemon=True).start()
-    ready = threading.Event()
-    ready.set()
-    if flags["kick"] is not None:  # a gateway still logging the user in: it ends the connection on input that comes early
-        ready.clear()
-
-        def greet() -> None:
-            if flags["banner_first"]:
-                out.write("Welcome to the fake gateway, checking your account\n")
-                out.flush()
-            time.sleep(flags["kick"])
-            out.write("fake$ " if flags["banner_first"] else "Welcome to the fake gateway\nfake$ ")
+    if flags["kick"] is not None:
+        # A gateway still logging the user in ends the connection on input that comes early. "Early" is decided by an
+        # explicit signal, not by which thread a loaded runner schedules first (#1373): nothing has read stdin yet, so
+        # input the client sent before the greeting is still in the pipe when the login time is up. The greeting goes
+        # out only after that check, so input sent after seeing it is never early.
+        if flags["banner_first"]:
+            out.write("Welcome to the fake gateway, checking your account\n")
             out.flush()
-            ready.set()
-
-        threading.Thread(target=greet, daemon=True).start()
+        deadline = time.monotonic() + flags["kick"]
+        while time.monotonic() < deadline and not _input_pending():
+            time.sleep(0.01)
+        if _input_pending():
+            out.write("login still in progress: input refused\n")
+            out.flush()
+            return 255
+        out.write("fake$ " if flags["banner_first"] else "Welcome to the fake gateway\nfake$ ")
+        out.flush()
     def input_lines():
         for physical in sys.stdin:
             frame = FRAME.match(physical.rstrip("\r\n"))
@@ -289,10 +308,6 @@ def main(argv: list[str]) -> int:
 
     status, count = 0, 0
     for line in input_lines():
-        if not ready.is_set():
-            out.write("login still in progress: input refused\n")
-            out.flush()
-            return 255
         last[0] = time.monotonic()
         line = line.rstrip("\r\n")
         if flags["echo"]:
