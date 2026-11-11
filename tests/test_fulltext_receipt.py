@@ -156,7 +156,8 @@ async def test_automatic_oa_coverage_reaches_original_receipt_plan_and_build(
     if mode == "literal_pdf":
         monkeypatch.setitem(sys.modules, "pypdf", None)  # force the real bounded regex fallback
     elif mode in {"missing_page", "nonempty_pages"}:
-        values = ["Methods and QC synthetic text", "" if mode == "missing_page" else "Results synthetic text"]
+        values = ["Sex ratio and paternal work.\nDOI 10.1000/test\nMethods and QC synthetic text",
+                  "" if mode == "missing_page" else "Results synthetic text"]
         pages = [SimpleNamespace(extract_text=lambda value=value: value) for value in values]
         monkeypatch.setitem(sys.modules, "pypdf", SimpleNamespace(
             PdfReader=lambda _stream: SimpleNamespace(pages=pages)))
@@ -338,7 +339,8 @@ async def test_oa_copy_keeps_byte_hash_and_extraction_without_inventing_reading(
     import sys
     monkeypatch.setitem(sys.modules, "pypdf", None)
     content = complete_fallback_pdf() if format == "PDF" else (
-        '<html><body><h1>Introduction</h1><h2>Methods</h2>' + 'synthetic study body ' * 100 + '</body></html>').encode()
+        '<html><body><h1>Sex ratio and paternal work.</h1><p>DOI 10.1000/test</p>'
+        '<h2>Introduction</h2><h2>Methods</h2>' + 'synthetic study body ' * 100 + '</body></html>').encode()
 
     def handler(request):
         if request.url.host == "www.ebi.ac.uk":
