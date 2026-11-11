@@ -71,4 +71,6 @@ test('stored source report receives the shared first screen at display time', ()
   assert.match(html, /본문/);
   const code = globalThis.LabHQState.reportMarkdownHTML('```\n<!-- labhq-report-package:v1 -->\n```');
   assert.match(code, /&lt;!-- labhq-report-package:v1 --&gt;/);
+  const indented = globalThis.LabHQState.reportMarkdownHTML('    <!-- labhq-report-package:v1 -->');
+  assert.match(indented, /&lt;!-- labhq-report-package:v1 --&gt;/);
 });

@@ -12,6 +12,8 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from markdown_it import MarkdownIt
+
 from ..report_markdown import markdown_body
 from .claims import STATUS_NEEDS
 
@@ -283,6 +285,9 @@ def _unanchored_numeric_sentences(report: str) -> list[str]:
     text = re.sub(r"\[\^[^\]\n]+\]", "", text)
     sentences = []
     lines = text.splitlines()
+    heading_lines = {i for token in MarkdownIt("commonmark").parse(text)
+                     if token.type == "heading_open" and token.map
+                     for i in range(*token.map)}
     table_lines: set[int] = set()
     for i in range(1, len(lines)):
         if "|" in lines[i - 1] and re.fullmatch(r"\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*", lines[i]):
@@ -296,11 +301,11 @@ def _unanchored_numeric_sentences(report: str) -> list[str]:
     for i, line in enumerate(lines):
         line = line.strip()
         is_list_item = bool(re.match(r"(?:[-*+]\s+|\d+[.)]\s+)", line))
-        if i in table_lines or not line or line.startswith(("#", "|")) or is_list_item:
+        if i in table_lines or i in heading_lines or not line or line.startswith(("#", "|")) or is_list_item:
             if current:
                 paragraphs.append(" ".join(current))
                 current = []
-        if i in table_lines or not line or line.startswith(("#", "|")):
+        if i in table_lines or i in heading_lines or not line or line.startswith(("#", "|")):
             continue
         line = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", "", line)
         current.append(line)
