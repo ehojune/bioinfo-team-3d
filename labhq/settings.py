@@ -32,7 +32,11 @@ def _load_config(text: str):
     return yaml.load(text, Loader=_ConfigLoader)
 
 
-class GatewaySettings(BaseModel):
+class _SettingsModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class GatewaySettings(_SettingsModel):
     host: str = "127.0.0.1"
     port: int = 8787
     url: str = "ws://127.0.0.1:8787"  # what runners dial (outbound, so no inbound port on your PC/HPC)
@@ -47,7 +51,7 @@ class GatewaySettings(BaseModel):
     report_browser: str | None = None
 
 
-class WslSettings(BaseModel):
+class WslSettings(_SettingsModel):
     enabled: bool = False
     distro: str = "Ubuntu-22.04"
     user: str | None = None
@@ -63,7 +67,7 @@ def _default_step_memory_limit_gb() -> float:
     return default_step_memory_limit_gb()
 
 
-class RunnerSettings(BaseModel):
+class RunnerSettings(_SettingsModel):
     id: str = "local"
     wsl: WslSettings = Field(default_factory=WslSettings)
     environment: Literal["native", "wsl"] = "native"
@@ -152,7 +156,7 @@ class RunnerSettings(BaseModel):
         return self
 
 
-class EngineBin(BaseModel):
+class EngineBin(_SettingsModel):
     model_config = ConfigDict(extra="forbid")  # a misspelled or unsupported option must not pass silently
 
     bin: str
@@ -179,14 +183,14 @@ class CodexBin(IsolatedEngineBin):
     allow_global_agents_md: bool = False
 
 
-class EnginesSettings(BaseModel):
+class EnginesSettings(_SettingsModel):
     claude_code: IsolatedEngineBin = IsolatedEngineBin(bin="claude")
     codex: CodexBin = CodexBin(bin="codex")
     gemini: EngineBin = EngineBin(bin="gemini")
     antigravity: EngineBin = EngineBin(bin="agy")
 
 
-class BenchArm(BaseModel):
+class BenchArm(_SettingsModel):
     model_config = ConfigDict(extra="forbid")
 
     engine: Literal["claude_code", "codex"]
@@ -194,7 +198,7 @@ class BenchArm(BaseModel):
     effort: str = Field(min_length=1)
 
 
-class BenchSettings(BaseModel):
+class BenchSettings(_SettingsModel):
     model_config = ConfigDict(extra="forbid")
 
     arms: dict[str, BenchArm] = Field(default_factory=lambda: {
@@ -221,14 +225,14 @@ class BenchSettings(BaseModel):
         return value
 
 
-class SgeSettings(BaseModel):
+class SgeSettings(_SettingsModel):
     pe: str = "smp"  # parallel environment name differs per cluster (smp, threads, openmp, make…)
     mem_resource: str = "h_vmem"  # or mem_free
     mem_per_slot: bool = True  # h_vmem is usually per slot → total mem is divided by cores
     runtime_resource: str = "h_rt"  # set "" if your cluster rejects h_rt
 
 
-class PbsSettings(BaseModel):
+class PbsSettings(_SettingsModel):
     resource_template: str = "nodes=1:ppn={cores},mem={mem},walltime={walltime}"  # Torque
     pro: bool = False  # PBS Pro: finished jobs need `qstat -x`; use "select=1:ncpus={cores}:mem={mem}" template
 
@@ -263,7 +267,7 @@ def _default_sbatch_args() -> list[str]:
             "--export=NONE"]
 
 
-class SlurmSettings(BaseModel):
+class SlurmSettings(_SettingsModel):
     # sbatch options; {cores} {mem} {walltime} are filled per job. Partition comes from queue/default_queue.
     sbatch_args: list[str] = Field(default_factory=_default_sbatch_args)
 
@@ -283,7 +287,7 @@ class SlurmSettings(BaseModel):
         return value
 
 
-class HpcSettings(BaseModel):
+class HpcSettings(_SettingsModel):
     scheduler: Literal["sge", "pbs", "slurm", "mock", "none"] = "sge"
     ssh_host: str | None = None  # run qsub/qstat on a login node via ssh (workspace must be on shared FS)
     user: str | None = None  # None → current account
@@ -314,7 +318,7 @@ class HpcSettings(BaseModel):
         return self
 
 
-class DataZone(BaseModel):
+class DataZone(_SettingsModel):
     path: str
     level: Literal["restricted", "internal", "public"] = "restricted"
     note: str = ""
@@ -366,7 +370,7 @@ def _default_auto_allow() -> list[str]:
             "StructuredOutput", "ToolSearch", "BashOutput", "KillShell", "TaskOutput", "TaskStop"]
 
 
-class ApprovalRules(BaseModel):
+class ApprovalRules(_SettingsModel):
     hpc_core_hours_threshold: float = 0.0  # 0 → every HPC submission asks the PI
     bash_ask_patterns: list[str] = Field(default_factory=_default_bash_ask)
     auto_allow_tools: list[str] = Field(default_factory=_default_auto_allow)
@@ -391,7 +395,7 @@ _AUTO_ALLOW_518 = frozenset({"Read", "Glob", "Grep", "LS", "WebSearch", "WebFetc
 _BACKGROUND_SHELL_TOOLS = ("BashOutput", "KillShell", "TaskOutput", "TaskStop")
 
 
-class BudgetSettings(BaseModel):
+class BudgetSettings(_SettingsModel):
     per_task_usd: float = 5.0
     per_request_usd: float = 30.0
     # On by default since #1139 (#862): hold each charged turn's cap before it is sent, so in-flight turns and the
@@ -413,7 +417,7 @@ class BudgetSettings(BaseModel):
         return self
 
 
-class BioinfoAgentPolicy(BaseModel):
+class BioinfoAgentPolicy(_SettingsModel):
     """Unattended gates and the public upstream for bioinfo-agent pipeline contributions."""
 
     hard_stops: list[Literal["data_zone", "budget_cap", "installation", "out_of_scope", "destructive"]] = [
@@ -438,7 +442,7 @@ class BioinfoAgentPolicy(BaseModel):
         return self
 
 
-class PolicySettings(BaseModel):
+class PolicySettings(_SettingsModel):
     data_zones: list[DataZone] = []
     allow_runner_read_restricted: bool = False
     # PI personal files staff must not open while they run under the PI's account (PI decision 2026-10-03).
@@ -450,7 +454,7 @@ class PolicySettings(BaseModel):
     bioinfo_agent: BioinfoAgentPolicy = BioinfoAgentPolicy()
 
 
-class RecruitSettings(BaseModel):
+class RecruitSettings(_SettingsModel):
     enabled: StrictBool = False  # v1.0 default off (#1336); False disables hiring and Paper2Agent preparation, not ordinary staff
     agent_id: str = "recruiter"
     permission_mode: str = "auto"  # unattended conversion; see docs/manual.md '파견직 제도' (run inside a container if you can)
@@ -475,7 +479,7 @@ class RecruitSettings(BaseModel):
 MODEL_NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}"
 
 
-class PiLanguageSettings(BaseModel):
+class PiLanguageSettings(_SettingsModel):
     enabled: bool = True
     model: str | None = Field(default="haiku", pattern="^" + MODEL_NAME_PATTERN + "$")
     per_request_usd: float = Field(default=0.50, ge=0, allow_inf_nan=False)
@@ -483,7 +487,7 @@ class PiLanguageSettings(BaseModel):
     timeout_s: float = Field(default=30, gt=0, le=120)
 
 
-class OrchestratorSettings(BaseModel):
+class OrchestratorSettings(_SettingsModel):
     wait_for_clarification: bool = True
     cso_agent: str = "cso"
     chief_of_staff_agent: str | None = "chief_of_staff"
@@ -551,7 +555,7 @@ class OrchestratorSettings(BaseModel):
         return models
 
 
-class PlanSettings(BaseModel):
+class PlanSettings(_SettingsModel):
     """CSO plan options. ``declare_output_types`` asks the CSO to declare each output's data type and format
     from ``labhq/vocab/output_types.yaml`` (#221 todo 2). Off by default until a schema probe on both engines
     and a limited real CLI run pass; off sends today's prompt and schema unchanged, and stored declarations
@@ -560,7 +564,7 @@ class PlanSettings(BaseModel):
     declare_output_types: bool = False
 
 
-class ModelTierRate(BaseModel):
+class ModelTierRate(_SettingsModel):
     """Operator-supplied USD range for one model call; blank means unknown."""
 
     model_config = ConfigDict(extra="forbid")
@@ -577,7 +581,7 @@ class ModelTierRate(BaseModel):
         return self
 
 
-class ModelTierPrices(BaseModel):
+class ModelTierPrices(_SettingsModel):
     """One configurable table for dry-run call ranges. No source means every range stays unknown."""
 
     model_config = ConfigDict(extra="forbid")
@@ -596,7 +600,7 @@ class ModelTierPrices(BaseModel):
         return self
 
 
-class ModelTierModels(BaseModel):
+class ModelTierModels(_SettingsModel):
     """Which model each tier means on each engine (#625). Empty by default: a tier then names no model, nothing is
     invented, and every agent runs the model its own YAML gives. An agent's explicit ``model`` always wins."""
 
@@ -637,7 +641,7 @@ def models_match(declared: str | None, actual: str | None) -> bool:
     return bool(re.fullmatch(re.escape(short) + r"(?:-\d+(?:\.\d+)?)+", long))
 
 
-class PiProfileSettings(BaseModel):
+class PiProfileSettings(_SettingsModel):
     """The PI's default reference pointers, added to every request unless the request turns them off.
 
     Private pointers (a local knowledge base, unpublished notes) belong only in the uncommitted config.
@@ -646,14 +650,14 @@ class PiProfileSettings(BaseModel):
     references: list[Reference] = Field(default_factory=list, max_length=20)
 
 
-class LabSettings(BaseModel):
+class LabSettings(_SettingsModel):
     """The lab itself. ``scope`` is what the CSO judges each general request against (#36); empty uses the
     one-PI bioinformatics default in ``labhq.orchestrator.cso.DEFAULT_LAB_SCOPE``."""
 
     scope: str | None = None
 
 
-class ResearchSettings(BaseModel):
+class ResearchSettings(_SettingsModel):
     """Opt-in research contract pilot."""
 
     # A misspelled key (`evidence_checkpiont`) used to load silently and leave the lane half on (readiness R1).
@@ -678,7 +682,7 @@ class ResearchSettings(BaseModel):
     active_packs: list[str] = []  # exact ``id@version`` keys, fixed into the approved plan
 
 
-class LiteratureSettings(BaseModel):
+class LiteratureSettings(_SettingsModel):
     """Opt-in access to a PI-prepared institution session and the bounded PDF request fallback.
 
     The browser profile is passed only to Edge/Chrome. labhq never reads or copies its cookies or credentials.
@@ -710,7 +714,7 @@ class LiteratureSettings(BaseModel):
         return self
 
 
-class WikiSettings(BaseModel):
+class WikiSettings(_SettingsModel):
     """A user LLM-wiki folder linked as a local reference whose notes keep their provenance (#827). Off by default.
 
     The root must be inside ``runner.reference_roots``; it is only read, never changed. ``external_model_allowed``
@@ -734,7 +738,7 @@ class WikiSettings(BaseModel):
         return self
 
 
-class AnnotSettings(BaseModel):
+class AnnotSettings(_SettingsModel):
     """labhq_annot lookups (#435). The AlphaGenome API key lives only in this file, which `labhq init` writes for the
     runner account alone (POSIX 0600, Windows without inherited access); the config holds the location, never the
     key. No key file: the alphagenome tool is not registered."""
@@ -750,13 +754,13 @@ class AnnotSettings(BaseModel):
     precedent_lookup_share: Decimal | None = Field(default=Decimal("0.5"), ge=0, le=1, allow_inf_nan=False)
 
 
-class ResultStorageSettings(BaseModel):
+class ResultStorageSettings(_SettingsModel):
     """What the published result repository records about its authors (#1104)."""
     # Names for CITATION.cff. Empty by default: no author is invented, and without a name no CITATION.cff is written.
     authors: list[str] = []
 
 
-class GitHubSettings(BaseModel):
+class GitHubSettings(_SettingsModel):
     ask_storage: bool = False  # general requests opt in; research requests always ask
     auto_publish_results: bool = False  # otherwise review the editor draft in the web office
     progress_branch: str = "labhq/progress"  # optional per-step edition, separate from the approved final branch
@@ -779,7 +783,7 @@ class GitHubSettings(BaseModel):
         return value
 
 
-class DevLogSettings(BaseModel):
+class DevLogSettings(_SettingsModel):
     enabled: bool = True
     repo: str | None = None
     source_repo: str | None = None  # owner/name used to link the labhq commit in each round
@@ -788,7 +792,7 @@ class DevLogSettings(BaseModel):
     improvement_notes: bool = False
 
 
-class ProjectSettings(BaseModel):
+class ProjectSettings(_SettingsModel):
     """One research project = one GitHub repo where the lab posts its updates."""
 
     id: str
@@ -805,7 +809,7 @@ class ProjectSettings(BaseModel):
     labels: list[str] = ["labhq"]
 
 
-class SupervisorSettings(BaseModel):
+class SupervisorSettings(_SettingsModel):
     """The per-role supervisor `labhq up` starts (#589). It always records how its gateway or runner ended."""
 
     # On: a gateway or runner that ended on its own with a non-zero code is started again. Off by default, so a crash
@@ -817,7 +821,7 @@ class SupervisorSettings(BaseModel):
     backoff_cap_s: float = Field(default=120, ge=0)
 
 
-class Settings(BaseModel):
+class Settings(_SettingsModel):
     instance: str | None = None
     gateway: GatewaySettings = Field(default_factory=GatewaySettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)

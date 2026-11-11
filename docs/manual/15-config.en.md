@@ -4,6 +4,10 @@
 
 The items of the config file (`config/labhq.yaml`). Safety-related items are in [Safety measures](11-safety.en.md#safety-measures), and the research protocol is in [Research lane](13-research-lane.en.md#research-lane-and-verification).
 
+Unknown or misspelled configuration keys stop loading with an error. `labhq up` and `labhq gateway` reject the published defaults for both `gateway.client_token` and `gateway.runner_token`; change both values.
+
+Use client-token-authenticated `GET /api/runner-inbox/{runner_id}` to inspect held runner message status; the response omits message contents. `POST /api/runner-inbox/{runner_id}/{seq}/retry` accepts log and activity events and asks whose publication failed before starting; `/resume` handles unexecuted entries after earlier holds are resolved. The `incarnation` query selects a generation. Operations with unknown outcomes are not retried automatically.
+
 For cleaning up test requests, only list the candidates with `python scripts/purge_test_requests.py --database <gateway.sqlite3>`. The default markers are three: the exact phrase `save outputs/counts.tsv`, agent `worker` and mode `direct`. Deletion adds `--apply --gateway-stopped --config <config> --backup <new file>` only during maintenance with the gateway off. It first makes a SQLite backup and deletes only matching requests and events. Demo phrases are not selected automatically.
 
 - **v1.0 defaults** (#1336): the ontology (`semantics.mode`, `research.semantic_report`) and Paper2Agent hiring (`recruit.enabled`) are off by default. The code stays; turning them on in the config works as described below.

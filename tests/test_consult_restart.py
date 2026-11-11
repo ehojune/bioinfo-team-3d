@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from labhq.gateway.server import Hub
+from labhq.gateway.server import ConsultOutcomeUnknown, Hub
 from labhq.models import AskRequest, Task, TaskResult
 from labhq.settings import Settings
 
@@ -202,7 +202,7 @@ async def _restart_adopts_running_consult(tmp_path, runner, monkeypatch):
         second.store.close()
 
 
-async def test_restart_isolates_consult_when_runner_generation_changed(tmp_path):
+async def test_restart_holds_consult_when_runner_generation_changed(tmp_path):
     s = settings(tmp_path)
     workdir = str(tmp_path / "cso-workdir")
     ask, running = await start_consult_then_crash(s, workdir)
@@ -213,14 +213,33 @@ async def test_restart_isolates_consult_when_runner_generation_changed(tmp_path)
         # The runner restarted too: the old consult's outcome is unknown, so it is not adopted.
         second.register_runner("local", socket, ROSTER, "inc-2")
         await approve_resume(second)
-        await eventually(lambda: consults(socket))
-        retry = consults(socket)[0]
-        assert retry["id"] != running["id"]
-        assert retry["resume_session_id"] is None and "workdir" not in retry["meta"]
-        await second.on_runner_message("local", result_frame(retry["id"], "Use cohort C9", "isolated-session"))
-        await settle(second)
-        answer = second.store.get("ask", ask.id)["answer"]
-        assert answer["status"] == "answered" and answer["answer"] == "Use cohort C9"
+        await eventually(lambda: (second.store.get("ask", ask.id) or {}).get("recovery_blocked"))
+        assert not consults(socket)
+        assert second.store.get("ask", ask.id)["state"] == "pending"
+        assert second.store.get("task", running["id"])["abandoned"]
+    finally:
+        second.store.close()
+
+
+async def test_unknown_consult_outcome_stays_held_after_restart(tmp_path):
+    s = settings(tmp_path)
+    ask, running = await start_consult_then_crash(s, str(tmp_path / "cso-workdir"))
+    second = Hub(s)
+    socket = CaptureSocket()
+    try:
+        second.register_runner("local", socket, ROSTER, "inc-2")
+        await approve_resume(second)
+        await eventually(lambda: (second.store.get("ask", ask.id) or {}).get("recovery_blocked"))
+        held = second.store.get("ask", ask.id)
+        assert held["state"] == "pending" and held["recovery_blocked"] == "consult outcome unknown"
+        assert not consults(socket)
+        prior = second.store.get("task", running["id"])
+        assert prior["abandoned"] and "outcome unknown" in prior["result"]["error"]
+        reopened = Hub(s)
+        try:
+            assert reopened.store.get("ask", ask.id)["recovery_blocked"] == "consult outcome unknown"
+        finally:
+            reopened.store.close()
     finally:
         second.store.close()
 
@@ -310,7 +329,7 @@ async def test_adoption_prefers_the_latest_consult_over_a_higher_attempt(tmp_pat
 @pytest.mark.parametrize("completion", ["before_adoption", "while_waiting"])
 @pytest.mark.parametrize("max_attempts", [1, 3])
 @pytest.mark.parametrize("old_cost", [0.75, None])
-async def test_interrupted_consult_resumes_at_last_attempt_with_new_task(
+async def test_interrupted_consult_holds_unknown_outcome(
         tmp_path, monkeypatch, completion, max_attempts, old_cost):
     s = settings(tmp_path)
     s.orchestrator.step_max_attempts = max_attempts
@@ -358,17 +377,12 @@ async def test_interrupted_consult_resumes_at_last_attempt_with_new_task(
             return result
 
         monkeypatch.setattr(hub, "dispatch", dispatch)
-        await asyncio.wait_for(hub.orchestrator.answer_ask(question("the-ask"), "local"), 5)
-        assert len(calls) == 1, "the interrupted last attempt needs one fresh consult"
-        fresh = calls[0]
-        assert fresh.id not in {"interrupted", "stale"}
-        assert fresh.meta["attempt"] == max_attempts
-        assert fresh.resume_session_id is None and "workdir" not in fresh.meta
-        assert hub.store.get("ask", "the-ask")["answer"]["answer"] == "Use cohort C7"
-        assert {"interrupted", "stale"} <= hub.recovered_tasks
+        with pytest.raises(ConsultOutcomeUnknown):
+            await asyncio.wait_for(hub.orchestrator.answer_ask(question("the-ask"), "local"), 5)
+        assert calls == [], "a dead process does not prove absence of external effects"
         assert hub.store.get("task", "interrupted")["result"] == interrupted.model_dump(mode="json")
-        assert req["cost_by_task"] == {"interrupted": old_cost, fresh.id: 0.25}
-        assert req["cost_usd"] == (old_cost or 0) + 0.25
+        assert req["cost_by_task"] == {"interrupted": old_cost}
+        assert req["cost_usd"] == (old_cost or 0)
         assert req["cost_known"] is (old_cost is not None)
         assert req["cost_items"]["interrupted"]["status"] == ("actual" if old_cost is not None else "unknown")
     finally:
@@ -388,8 +402,9 @@ async def test_interrupted_consult_result_received_during_reconnect_is_not_adopt
             ledger_consult(hub, "interrupted", attempt=3, dispatched_at=1, completed=True, result=done)
 
         monkeypatch.setattr(hub, "wait_agent_online", reconnect)
-        assert await hub.adopt_consult("the-ask", "cso") == (3, None)
-        assert "interrupted" in hub.recovered_tasks
+        with pytest.raises(ConsultOutcomeUnknown):
+            await hub.adopt_consult("the-ask", "cso")
+        assert hub.store.get("task", "interrupted")["result"] == done.model_dump(mode="json")
     finally:
         await hub.pi_interpreter.close()
         hub.store.close()
@@ -455,6 +470,23 @@ async def test_adopted_consult_cost_reaches_the_request_budget_total(tmp_path):
         await asyncio.wait_for(routed, 2)
         assert hub.requests["r"]["cost_usd"] == 0.75
         assert hub.orchestrator.cost["r"] == 0.75, "budget checks and _finish use this total"
+    finally:
+        hub.store.close()
+
+
+async def test_legacy_unknown_adoption_is_held_before_dispatch(tmp_path, monkeypatch):
+    hub = Hub(settings(tmp_path))
+    try:
+        hub.agents = {aid["id"]: aid for aid in ROSTER}
+        hub.requests["r"] = {"id": "r", "text": "compare cohorts", "status": "running"}
+        async def unknown(*args):
+            return 1, None
+        async def dispatch(task):
+            pytest.fail("an uncertain prior consult must not be dispatched again")
+        monkeypatch.setattr(hub, "adopt_consult", unknown)
+        monkeypatch.setattr(hub, "dispatch", dispatch)
+        with pytest.raises(ConsultOutcomeUnknown):
+            await hub.orchestrator.answer_ask(question("the-ask"), "local")
     finally:
         hub.store.close()
 

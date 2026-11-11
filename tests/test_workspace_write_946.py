@@ -15,6 +15,113 @@ from labhq.settings import Settings
 REAL_LABHQ_ENTRIES = private_paths._labhq_entries  # conftest replaces it for every test
 
 
+def test_manifest_lock_survives_file_replacement_and_owner_exit(tmp_path):
+    import os
+    import subprocess
+    import sys
+    import time
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    first_ready, second_ready = tmp_path / "first", tmp_path / "second"
+    script = """import sys, time
+from pathlib import Path
+from labhq.runner.workspace import _manifest_lock
+Path(sys.argv[2] + '.attempt').write_text('waiting')
+with _manifest_lock(Path(sys.argv[1])):
+    Path(sys.argv[2]).write_text('acquired')
+    time.sleep(60)
+"""
+
+    def wait_for(path, process):
+        deadline = time.monotonic() + 15
+        while not path.exists() and time.monotonic() < deadline:
+            assert process.poll() is None, process.communicate(timeout=1)
+            time.sleep(0.02)
+        assert path.exists(), "process did not acquire manifest lock"
+
+    first = subprocess.Popen([sys.executable, "-c", script, str(root), str(first_ready)])
+    second = None
+    try:
+        wait_for(first_ready, first)
+        lock = root / ".manifest.lock"
+        if os.name == "nt":
+            with pytest.raises(PermissionError):
+                lock.unlink()
+        else:
+            lock.write_text("replacement")
+            lock.unlink()
+            lock.write_text("replaced")
+        second = subprocess.Popen([sys.executable, "-c", script, str(root), str(second_ready)])
+        wait_for(tmp_path / "second.attempt", second)
+        time.sleep(0.25)
+        assert second.poll() is None and not second_ready.exists()
+        first.terminate()
+        first.wait(timeout=10)
+        wait_for(second_ready, second)
+    finally:
+        for process in (first, second):
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+
+
+def test_manifest_update_rejects_replaced_workspace(tmp_path):
+    import os
+    from labhq.adapters.owned import OwnedPathError
+    from labhq.runner.workspace import _manifest_lock, _manifest_write
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    with _manifest_lock(root) as held:
+        if os.name == "nt":
+            with pytest.raises(PermissionError):
+                root.rename(tmp_path / "old")
+        else:
+            root.rename(tmp_path / "old")
+            root.mkdir()
+            with pytest.raises(OwnedPathError, match="replaced"):
+                _manifest_write(held, root, {"not": "new workspace"})
+            assert not (root / "manifest.json").exists()
+
+
+def test_hook_receipt_and_runner_manifest_update_do_not_overwrite_each_other(tmp_path, monkeypatch):
+    import json
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from labhq.runner import workspace
+
+    (tmp_path / "manifest.json").write_text('{"runs": {"t1": {}}}', encoding="utf-8")
+    ws = workspace.TaskWorkspace.existing(tmp_path, "t1")
+    read_done, resume = threading.Event(), threading.Event()
+    original = workspace._manifest_read
+
+    def held_read(held):
+        text = original(held)
+        if threading.current_thread().name.startswith("hook"):
+            read_done.set()
+            assert resume.wait(5)
+        return text
+
+    monkeypatch.setattr(workspace, "_manifest_read", held_read)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="hook") as hooks, \
+         ThreadPoolExecutor(max_workers=1, thread_name_prefix="runner") as runners:
+        receipt = hooks.submit(workspace.record_tool_use, tmp_path, "t1", "id1", "Write", 123)
+        assert read_done.wait(5)
+        update = runners.submit(ws._update_run_now, "t1", {"result": "done"})
+        try:
+            update.result(timeout=0.25)
+        except TimeoutError:
+            pass  # a lock correctly waits for the hook
+        finally:
+            resume.set()
+        receipt.result(timeout=5)
+        update.result(timeout=5)
+    run = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))["runs"]["t1"]
+    assert run["result"] == "done"
+    assert run["tool_uses"][0]["tool_use_id"] == "id1"
+
+
 def _setup(tmp_path, monkeypatch):
     monkeypatch.setattr(private_paths, "_labhq_entries", REAL_LABHQ_ENTRIES)
     home = tmp_path / "home"

@@ -1299,8 +1299,7 @@ function startLive() {
       const decision = choice ? { approved: ok, note, choice } : { approved: ok, note };
       if (storage) decision.storage = storage;
       if (model_refusal) decision.model_refusal = model_refusal;
-      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'approval.resolve', id, ...decision }));
-      else await post(`/api/approvals/${encodeURIComponent(id)}`, decision);
+      await post(`/api/approvals/${encodeURIComponent(id)}`, decision);
     },
     uploadLiteraturePdf: async (approval, paperIndex, file) => {
       const response = await fetch(`/api/approvals/${encodeURIComponent(approval.id)}/literature-pdf/${paperIndex}`,
