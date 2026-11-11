@@ -76,7 +76,7 @@ def _copy_identity(text: str, meta: dict) -> bool:
     doi = str(meta.get("doi") or "").casefold()
     dois = {match.rstrip('.,;:)') for match in re.findall(r'10\.\d{4,9}/[^\s<>"\]]+', front.casefold())}
     title = normalize(str(meta.get("title") or ""))
-    if dois and (not doi or doi not in dois):
+    if doi and dois and doi not in dois:
         return False
     if title:
         return title in normalize(front)

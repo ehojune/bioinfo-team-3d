@@ -552,6 +552,14 @@ async def test_fulltext_tries_oa_providers_when_europe_pmc_has_no_record(tmp_pat
     assert any(call.url.host == "api.unpaywall.org" for call in calls)
 
 
+def test_title_identifies_a_copy_when_metadata_has_no_doi():
+    meta = {"title": "A specific study of kinase inhibition"}
+    text = "A specific study of kinase inhibition\n10.1000/printed-only\nAbstract and methods"
+    assert lit._copy_identity(text, meta)
+    assert not lit._copy_identity(text, {"title": "An unrelated study"})
+    assert not lit._copy_identity(text, {**meta, "doi": "10.1000/expected"})
+
+
 @pytest.mark.parametrize("identifier", ["PMID:123", "PMC123"])
 @pytest.mark.parametrize("wrong_copy", [False, True])
 async def test_openalex_identity_survives_without_europe_pmc_record(tmp_path, identifier, wrong_copy):
