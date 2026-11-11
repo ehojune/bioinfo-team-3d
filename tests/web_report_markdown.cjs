@@ -66,4 +66,9 @@ test('stored source report receives the shared first screen at display time', ()
   const headings = [...packaged.matchAll(/^## (.+)$/gm)].map(match => match[1]);
   assert.deepEqual(headings.slice(0, 8), ['질문', '답', '한계', '대표 그림', '결과표', '재현 안내', '근거 각주', '실행 기록']);
   assert.match(packaged, /## 결과\n\n본문/);
+  const html = globalThis.LabHQState.reportMarkdownHTML(packaged);
+  assert.doesNotMatch(html, /labhq-report-package/);
+  assert.match(html, /본문/);
+  const code = globalThis.LabHQState.reportMarkdownHTML('```\n<!-- labhq-report-package:v1 -->\n```');
+  assert.match(code, /&lt;!-- labhq-report-package:v1 --&gt;/);
 });

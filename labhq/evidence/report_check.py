@@ -274,6 +274,28 @@ def failed_lookup_lines(rows: list[dict[str, str]]) -> list[str]:
     return lines
 
 
+def _unanchored_numeric_sentences(report: str) -> list[str]:
+    """Flag numeric prose for review; this is not a semantic conclusion classifier."""
+    text = CODE.sub(" ", report)
+    text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
+    sentences = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("#", "|")):
+            continue
+        line = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", "", line)
+        line = re.sub(r"\]\([^)]*\)", "]", line)
+        line = re.sub(r"https?://\S+", " ", line)
+        pattern = r".*?(?:[.!?](?:\s*\[\[\s*claim\s*:[^\[\]\n]*\]\])*(?=\s|$)|$)"
+        for match in re.finditer(pattern, line, re.IGNORECASE):
+            sentence = match.group().strip()
+            if not sentence or ANCHOR.search(sentence):
+                continue
+            if re.search(r"(?<![A-Za-z0-9_])\d+(?:[.,]\d+)*(?![A-Za-z0-9_])", sentence):
+                sentences.append(sentence)
+    return sentences
+
+
 def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterable[Any] = (),
                  refused: Iterable[Any] = (), artifact_sha256: Mapping[str, str | None] | None = None) -> dict:
     """``{"anchors": n, "problems": [...]}`` for one report against the CP2-approved ledgers.
@@ -329,4 +351,6 @@ def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterab
     if not found and claim_rows(ledgers, unsupported, refused=refused)[0]:
         problems.append("the report anchors no claim while the ledgers hold citable claims; every conclusion "
                         "needs [[claim:<step_id>/<claim_id>]]")
+    for sentence in _unanchored_numeric_sentences(report or ""):
+        problems.append(f"numeric prose needs a claim anchor (review context): {sentence[:200]}")
     return {"anchors": len(found), "problems": problems}
