@@ -342,7 +342,7 @@ def _sha_file(path: Path) -> str | None:
         if path.is_symlink() or not path.is_file():
             return None
         digest = hashlib.sha256()
-        with path.open("rb") as handle:
+        with path.open(mode="rb") as handle:
             for block in iter(lambda: handle.read(1 << 20), b""):
                 digest.update(block)
         return digest.hexdigest()
