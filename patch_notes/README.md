@@ -10,6 +10,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-12
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 04:17 | [`6a8ba5e`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/6a8ba5e) | **인용 감사가 원문의 유니코드 마이너스·en dash 지수도 한 값으로 읽습니다.**<br>citation_audit: source_numbers가 원문 부호를 먼저 정규화, 시험 4건 (#1383) |
+| 04:14 | [`c69f909`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/c69f909) | **리뷰 보정 묶음에서 서로 상쇄되던 두 오류(대조 뒤집힘·방향)를 다른 묶음으로 나누고, 인용 오류를 묶음만으로 찾도록 조회 기록을 넣었습니다. 인용 감사는 유니코드 마이너스와 0도 맞게 대조합니다.**<br>review_calibration: seeded(9종)+seeded_contrast(E07), 묶음별 records.json; citation_audit: 유니코드 부호 정규화·정확한 0, 시험 8건 (#1383) |
+| 04:08 | [`b99b1c5`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/b99b1c5) | **인용 감사가 수치를 문자열로만 받아 적힌 자릿수 그대로 대조하고, 형식이 틀린 항목은 조용히 버리지 않고 major로 표시합니다.**<br>citation_audit: numbers는 str만(JSON 숫자 거절), audit_one이 잘못된 항목을 major로, eval-suite.md 입력 규칙, 시험 5건 (#1383) |
+| 04:04 | [`7cc29cd`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/7cc29cd) | **인용 감사가 원문의 1e-5 같은 수를 통째로만 읽어, 그 부분(1이나 5)을 인용 값의 근거로 잘못 쓰지 않습니다. 형식이 틀린 인용문·수치 항목은 입력 오류입니다.**<br>citation_audit: source_numbers(과학 표기 구간 제외 후 평문 수), 목록 항목 형식 검증, 시험 7건 (#1383) |
+| 03:59 | [`f6c0ca9`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/f6c0ca9) | **인용 감사가 1e-5 같은 과학 표기 수치를 유효숫자로 대조하고, 비어 있는(null) 인용문·수치 목록을 입력 오류로 알립니다.**<br>citation_audit: number_held(과학 표기·× 10^ 형식), quotes·numbers 목록 검증(exit 2), 시험 11건 (#1383) |
+| 03:39 | [`e59452e`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/e59452e) | **새 인용 감사 시험을 Windows CI 시험 목록에 올렸습니다.**<br>config/ci/windows-boundary-v1.json에 tests/test_citation_audit.py 등록 (#1383) |
+| 03:36 | [`2f53ea1`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/2f53ea1) | **평가 묶음(#1381 3절) 설계를 정리하고, 모델 호출 없이 도는 인용 감사 스크립트와 리뷰 보정·반증 반영 시험용 합성 묶음을 더했습니다.**<br>citation_audit.py(기록된 DOI·PMID 응답, literal_check 재사용), review_calibration clean/seeded(오류 10종), falsification 사례 틀 6건, docs/reference/eval-suite.md (#1383) |
+
 ## 2026-11-11
 
 | 시간 | 커밋 | 주요 변경사항 |
