@@ -147,3 +147,18 @@ def test_invalid_list_entries_are_bad_input(tmp_path, entries):
     run = subprocess.run([sys.executable, str(ROOT / "scripts" / "citation_audit.py"), str(cites),
                           "--records", str(AUDIT / "records.json")], capture_output=True, text=True, encoding="utf-8")
     assert run.returncode == 2 and "every entry of" in run.stderr
+
+
+@pytest.mark.parametrize("entries", [{"numbers": [2.970]}, {"numbers": [1]}, {"quotes": [123]}, {"quotes": [""]}])
+def test_malformed_entries_are_major_not_dropped(tmp_path, entries):
+    row = A.audit_one({"id": "m", "doi": "10.5555/x", "source": "s.txt", **entries},
+                      {"doi:10.5555/x": {"found": True, "title": "T"}}, tmp_path)
+    assert row["grade"] == "major" and row["findings"][0]["check"] in ("quotes", "numbers")
+
+
+def test_json_numbers_are_bad_input_on_the_command_line(tmp_path):
+    cites = tmp_path / "c.json"
+    cites.write_text('{"citations": [{"id": "x", "doi": "10.5555/x", "numbers": [2.970]}]}', encoding="utf-8")
+    run = subprocess.run([sys.executable, str(ROOT / "scripts" / "citation_audit.py"), str(cites),
+                          "--records", str(AUDIT / "records.json")], capture_output=True, text=True, encoding="utf-8")
+    assert run.returncode == 2 and "numbers must be str" in run.stderr

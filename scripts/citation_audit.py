@@ -10,6 +10,8 @@ Input (``citations.json``)::
                     "title": "RNA-Seq transcriptome profiling ...", "source": "sources/himes2014.txt",
                     "quotes": ["... exact words ..."], "numbers": ["2.97", "1.5"]}]}
 
+Numbers are strings: a JSON number has already lost how it was written (2.970 reads as 2.97).
+
 Records (``records.json``)::
 
     {"doi:10.1371/journal.pone.0099625": {"found": true, "title": "..."}, "pmid:24926665": {"found": false}}
@@ -136,8 +138,17 @@ def audit_one(citation: dict, records: dict, root: Path) -> dict:
     if len(titles) == 2 and title_match(titles["doi"], titles["pmid"]) == "mismatch":
         note("major", "identifier", "DOI and PMID are registered as different works")
 
-    quotes = [q for q in citation.get("quotes") or [] if isinstance(q, str) and q.strip()]
-    numbers = [n for n in citation.get("numbers") or [] if isinstance(n, (str, int, float))]
+    quotes, numbers = [], []
+    for key, kept in (("quotes", quotes), ("numbers", numbers)):
+        entries = citation.get(key) or []
+        if not isinstance(entries, list):
+            note("major", key, f"{key} must be a list")
+            continue
+        for entry in entries:
+            if isinstance(entry, str) and entry.strip():
+                kept.append(entry)
+            else:  # a JSON number has already lost its written precision (2.970 -> 2.97), so numbers are strings
+                note("major", key, f"entry is not a non-empty string: {entry!r}")
     if quotes or numbers:
         source_path = citation.get("source")
         text = None
@@ -153,7 +164,7 @@ def audit_one(citation: dict, records: dict, root: Path) -> dict:
                 if not source.holds_quote(quote):
                     note("major", "quote", f"source does not hold: {quote[:120]!r}")
             for number in numbers:
-                held = number_held(str(number), source)
+                held = number_held(number, source)
                 if held is None:
                     note("major", "number", f"not a number: {number!r}")
                 elif not held:
@@ -188,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(citations, list) or not all(isinstance(c, dict) for c in citations) or not isinstance(records, dict):
             raise ValueError("citations must be {'citations': [...]} and records an object")
         for c in citations:
-            for key, kinds in (("quotes", (str,)), ("numbers", (str, int, float))):
+            for key, kinds in (("quotes", (str,)), ("numbers", (str,))):
                 entries = c.get(key)
                 if entries is None:
                     continue
