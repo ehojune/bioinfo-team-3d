@@ -1,0 +1,3 @@
+step	command	status	outputs
+quant	salmon quant (8 samples)	completed	mapping_rates.tsv
+de	DESeq2 design ~ dex; contrast dex trt vs untrt	completed	de_results.csv

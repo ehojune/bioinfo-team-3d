@@ -1,0 +1,5 @@
+Glucocorticoid exposure of cultured airway smooth muscle cells (synthetic example text).
+
+Treatment with the steroid increased expression of the target transcript by a log2 fold change of 2.97 relative to untreated cells.
+Four donor lines were sequenced, giving 8 libraries in total. The mapping rate ranged from 93.9 to 95.7 percent.
+Expression of the second transcript decreased by 1.5 log2 units after treatment.

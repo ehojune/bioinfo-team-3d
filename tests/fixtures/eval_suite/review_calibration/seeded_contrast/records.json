@@ -1,0 +1,15 @@
+{
+ "_note": "Recorded DOI lookups for this bundle (synthetic, 10.5555 example prefix).",
+ "doi:10.5555/eval.0001": {
+  "found": true,
+  "title": "Glucocorticoid response of cultured airway smooth muscle cells"
+ },
+ "doi:10.5555/eval.0005": {
+  "found": true,
+  "title": "An independent glucocorticoid response dataset in bronchial cells"
+ },
+ "doi:10.5555/eval.0003": {
+  "found": true,
+  "title": "Deep learning for protein structure prediction"
+ }
+}

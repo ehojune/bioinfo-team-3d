@@ -1,0 +1,3 @@
+A synthetic cohort study of serum markers (example text, not a real publication).
+
+Of 120 participants, 45 showed elevated levels. The hazard ratio was 1.82 (95% interval 1.10 to 3.01).

@@ -1,0 +1,128 @@
+{
+ "_note": "Case frames for the falsification-response test (#1383). The PI writes answer (continue | redesign | abstain) and answer_rationale before any run; this file must stay unanswered until then.",
+ "answer_values": [
+  "continue",
+  "redesign",
+  "abstain"
+ ],
+ "target_split": {
+  "continue": 2,
+  "redesign": 2,
+  "abstain": 2
+ },
+ "arms": [
+  "single_agent",
+  "labhq_now",
+  "labhq_plus_one_reconsideration"
+ ],
+ "cases": [
+  {
+   "id": "F1",
+   "question": "Does drug X raise expression of gene G in cultured cell line Y?",
+   "initial_hypothesis": "X induces G (log2FC > 1) through its known receptor.",
+   "fixed_next_action": "Run the planned DE contrast X vs vehicle and report G.",
+   "stage": "after quantification, before DE",
+   "counterevidence": "The vehicle control turns out to contain 0.1% of the same solvent that independently induces G in published data.",
+   "answer": null,
+   "answer_rationale": null,
+   "recovery_counts_if_changed": [
+    "premise",
+    "comparator",
+    "data",
+    "experiment",
+    "decision"
+   ],
+   "not_recovery": "wording softened (e.g. 'may', 'suggests') while premise, comparator, data, experiment and decision stay the same"
+  },
+  {
+   "id": "F2",
+   "question": "Is mutation M enriched in tumour type T compared with population controls?",
+   "initial_hypothesis": "M is enriched (odds ratio > 2).",
+   "fixed_next_action": "Compare tumour cohort frequency against the population database.",
+   "stage": "after cohort frequencies are computed",
+   "counterevidence": "Population frequency of M differs threefold between ancestry groups and the tumour cohort is 90% one ancestry.",
+   "answer": null,
+   "answer_rationale": null,
+   "recovery_counts_if_changed": [
+    "premise",
+    "comparator",
+    "data",
+    "experiment",
+    "decision"
+   ],
+   "not_recovery": "wording softened (e.g. 'may', 'suggests') while premise, comparator, data, experiment and decision stay the same"
+  },
+  {
+   "id": "F3",
+   "question": "Do two published datasets agree on the top 50 responder genes?",
+   "initial_hypothesis": "They agree (overlap > 30 of 50).",
+   "fixed_next_action": "Re-analyse both datasets with the same pipeline and compare top lists.",
+   "stage": "after both datasets are downloaded",
+   "counterevidence": "The second 'independent' dataset re-deposits the same raw runs as the first under a new accession.",
+   "answer": null,
+   "answer_rationale": null,
+   "recovery_counts_if_changed": [
+    "premise",
+    "comparator",
+    "data",
+    "experiment",
+    "decision"
+   ],
+   "not_recovery": "wording softened (e.g. 'may', 'suggests') while premise, comparator, data, experiment and decision stay the same"
+  },
+  {
+   "id": "F4",
+   "question": "Does knockout K shorten survival in mouse model Z?",
+   "initial_hypothesis": "K knockout shortens median survival by at least 20%.",
+   "fixed_next_action": "Fit a Cox model to the published survival table.",
+   "stage": "after the survival table is parsed",
+   "counterevidence": "The table lists 6 knockout and 5 wild-type animals, and 3 knockout deaths are marked as censored for unrelated injury.",
+   "answer": null,
+   "answer_rationale": null,
+   "recovery_counts_if_changed": [
+    "premise",
+    "comparator",
+    "data",
+    "experiment",
+    "decision"
+   ],
+   "not_recovery": "wording softened (e.g. 'may', 'suggests') while premise, comparator, data, experiment and decision stay the same"
+  },
+  {
+   "id": "F5",
+   "question": "Is pathway P activated after treatment in single-cell data?",
+   "initial_hypothesis": "P score rises in responding cells.",
+   "fixed_next_action": "Score P per cell and compare treated vs control clusters.",
+   "stage": "after clustering",
+   "counterevidence": "Treated and control samples were processed on different days and the batch separates the clusters completely.",
+   "answer": null,
+   "answer_rationale": null,
+   "recovery_counts_if_changed": [
+    "premise",
+    "comparator",
+    "data",
+    "experiment",
+    "decision"
+   ],
+   "not_recovery": "wording softened (e.g. 'may', 'suggests') while premise, comparator, data, experiment and decision stay the same"
+  },
+  {
+   "id": "F6",
+   "question": "Does supplement S lower marker B in the reported trial?",
+   "initial_hypothesis": "S lowers B by at least 10% versus placebo.",
+   "fixed_next_action": "Extract group means and recompute the effect from the trial table.",
+   "stage": "after the trial table is extracted",
+   "counterevidence": "The trial's supplementary errata state that the placebo and treatment columns were swapped in the published table.",
+   "answer": null,
+   "answer_rationale": null,
+   "recovery_counts_if_changed": [
+    "premise",
+    "comparator",
+    "data",
+    "experiment",
+    "decision"
+   ],
+   "not_recovery": "wording softened (e.g. 'may', 'suggests') while premise, comparator, data, experiment and decision stay the same"
+  }
+ ]
+}

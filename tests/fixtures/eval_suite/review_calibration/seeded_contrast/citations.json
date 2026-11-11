@@ -1,0 +1,19 @@
+{
+ "citations": [
+  {
+   "id": "himes",
+   "doi": "10.5555/eval.0001",
+   "title": "Glucocorticoid response of cultured airway smooth muscle cells",
+   "dataset": "GSE-SYNTH-1",
+   "numbers": [
+    "2.97"
+   ]
+  },
+  {
+   "id": "replication",
+   "doi": "10.5555/eval.0005",
+   "title": "An independent glucocorticoid response dataset in bronchial cells",
+   "dataset": "GSE-SYNTH-2"
+  }
+ ]
+}

@@ -1,0 +1,77 @@
+{
+ "_note": "Answer key for the reviewer test; never shown to the reviewer. E07 (contrast_reversed) is in ../seeded_contrast because a reversed contrast flips every sign and would cancel E01.",
+ "errors": [
+  {
+   "id": "E01",
+   "type": "direction",
+   "file": "de_results.csv",
+   "where": "FKBP5 log2FoldChange",
+   "change": "4.02 -> -4.02; report still says all six responders increased",
+   "conclusion_changing": true
+  },
+  {
+   "id": "E02",
+   "type": "table_text_mismatch",
+   "file": "report.md",
+   "where": "Results, KLF15",
+   "change": "text says 5.41, table says 4.51",
+   "conclusion_changing": false
+  },
+  {
+   "id": "E03",
+   "type": "denominator",
+   "file": "report.md",
+   "where": "Results, other genes",
+   "change": "'two of the four other genes changed (50%)' while only GENE_A has padj < 0.05 (1 of 4)",
+   "conclusion_changing": false
+  },
+  {
+   "id": "E04",
+   "type": "citation",
+   "file": "citations.json",
+   "where": "himes DOI",
+   "change": "DOI points to an unrelated registered work",
+   "conclusion_changing": false
+  },
+  {
+   "id": "E05",
+   "type": "shared_source",
+   "file": "citations.json",
+   "where": "replication dataset",
+   "change": "'independent' replication uses the same dataset as the primary study (GSE-SYNTH-1)",
+   "conclusion_changing": false
+  },
+  {
+   "id": "E06",
+   "type": "missing_run",
+   "file": "run_log.tsv",
+   "where": "sensitivity step",
+   "change": "sensitivity model reported in text but never run and its output is absent",
+   "conclusion_changing": true
+  },
+  {
+   "id": "E08",
+   "type": "multiple_testing",
+   "file": "report.md",
+   "where": "Methods and Results",
+   "change": "significance by unadjusted pvalue; GENE_B and GENE_D called changed",
+   "conclusion_changing": false
+  },
+  {
+   "id": "E09",
+   "type": "covariate_dropped",
+   "file": "run_log.tsv",
+   "where": "de design",
+   "change": "main model was ~ dex although the report says ~ cell + dex",
+   "conclusion_changing": true
+  },
+  {
+   "id": "E10",
+   "type": "outlier_unreported",
+   "file": "mapping_rates.tsv",
+   "where": "S6 mapping rate",
+   "change": "61.20 percent, while the report says 93.91 to 95.68 and nothing excluded",
+   "conclusion_changing": false
+  }
+ ]
+}
