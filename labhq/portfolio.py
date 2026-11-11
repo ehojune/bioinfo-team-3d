@@ -28,7 +28,7 @@ from .report_contract import (ReportAsset, ReportPackage, build_report_package, 
                               render_report_front, research_question, with_report_front)
 from .report_markdown import READER_FILENAMES, render_marker_message, rendered_markers
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
-from .reproduction_receipt import (RECEIPT_PATH, build_receipt, expected_outputs, is_lock_file,
+from .reproduction_receipt import (RECEIPT_PATH, attach_rerun, build_receipt, expected_outputs, is_lock_file,
                                    receipt_json, receipt_note, receipt_summary)
 from . import run_report
 from .run_report import nextflow_kind
@@ -2600,7 +2600,7 @@ def build_portfolio_files(req: dict, settings, assets: Mapping[str, str], images
         files["docs/reference/README.md"] = (
             "# 상세 근거 문서\n\n이 폴더는 lookup-only입니다. 보고서 각주가 가리키는 근거만 확인하세요.\n"
         )
-    receipt = build_receipt(files, outputs=expected_outputs(req))
+    receipt = attach_rerun(build_receipt(files, outputs=expected_outputs(req)), req, settings)  # #1374
     files[RECEIPT_PATH] = receipt_json(receipt)
     if "run/reproduce.md" in files:
         files["run/reproduce.md"] = re.sub(r"\n\n## 재현 검증\n.*?(?=\n## |\Z)", "",

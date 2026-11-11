@@ -878,3 +878,22 @@ def test_a_linked_upstream_input_is_restored_from_its_recorded_outputs(tmp_path)
 def test_an_upstream_output_that_changed_since_the_run_stops_the_rerun(tmp_path):
     record = rr.rerun(rr.rerun_plan([_linked_step(tmp_path, b"9\n")], tools={"python": sys.executable}))
     assert record["status"] == "input_changed" and record["steps"][0]["changed_input"] == "s0/outputs/counts.tsv"
+
+
+
+def test_a_publication_receipt_carries_the_rerun_only_for_the_same_results(tmp_path):
+    from types import SimpleNamespace
+    settings = SimpleNamespace(path=lambda value: Path(value), runner=SimpleNamespace(state_dir=str(tmp_path / "state")))
+    results = {"s1": {"output_sha256": {"outputs/total.tsv": "1" * 64}}}
+    record = {**rr.rerun(rr.rerun_plan([_step(tmp_path / "p")], tools={"python": sys.executable})),
+              "results_sha256": rr.results_digest(results)}
+    target = rr.rerun_path(tmp_path / "state", "req_pub")
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps(record), encoding="utf-8")
+    same = rr.attach_rerun(rr.build_receipt({}, tools={}), {"id": "req_pub", "results": results}, settings)
+    assert rr.receipt_summary(same)["execution"] == "pass"
+    later = {**results, "s2": {"output_sha256": {"outputs/b.tsv": "2" * 64}}}
+    stale = rr.attach_rerun(rr.build_receipt({}, tools={}), {"id": "req_pub", "results": later}, settings)
+    assert "rerun" not in stale and rr.receipt_summary(stale)["execution"] == "not_rerun"
+    none = rr.attach_rerun(rr.build_receipt({}, tools={}), {"id": "req_none", "results": results}, settings)
+    assert "rerun" not in none

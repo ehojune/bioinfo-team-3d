@@ -513,3 +513,19 @@ def results_digest(results: Any) -> str:
     rows = sorted((str(step_id), sorted((str(path), str(sha)) for path, sha in (result.get("output_sha256") or {}).items()))
                   for step_id, result in (results or {}).items() if isinstance(result, Mapping))
     return hashlib.sha256(json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def attach_rerun(receipt: dict[str, Any], req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
+    """Put the PI's last `labhq verify --rerun` of this request into ``receipt`` when it reran these exact results.
+
+    Every receipt a publication builds goes through here (the result repository edition and the bench copy), so the
+    published receipt and the report front say whether the analysis actually reproduced (#1374)."""
+    try:
+        stored = json.loads(rerun_path(settings.path(settings.runner.state_dir), str(req.get("id") or "")).read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError, AttributeError):
+        return receipt
+    # Only a rerun of these exact results counts: one taken before a later step or a revision finished is stale.
+    if rerun_summary(stored) is not None and stored.get("results_sha256") == results_digest(req.get("results")):
+        receipt["rerun"] = stored
+    return receipt
