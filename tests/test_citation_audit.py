@@ -33,9 +33,41 @@ def test_recorded_fixture_gets_the_expected_grade_for_every_citation():
     ("A synthetic cohort study of serum marker: worked example",
      "A synthetic cohort study of serum markers: a worked example", "near"),
     ("Deep learning for proteins", "Soil microbiome diversity", "mismatch"),
+    # Registry markup is formatting, not a different title (#910 11th run: Europe PMC "<i>KRAS</i>").
+    ("Sotorasib for Lung Cancers with KRAS p.G12C Mutation.",
+     "Sotorasib for Lung Cancers with <i>KRAS</i> p.G12C Mutation.", "match"),
+    ("Outcomes in KRAS(G12C) & STK11 tumors", "Outcomes in <sup>KRAS</sup>(G12C) &amp; STK11 tumors", "match"),
+    ("treated with KRAS(G12C) mutation", "treated with KRAS<sup>G12C</sup> mutation", "match"),
+    ("treated with KRAS(G12C) inhibitors", "treated with KRAS&lt;sup&gt;G12C&lt;/sup&gt; inhibitors", "match"),
+    ("CO2 effects on stomata", "CO<sub>2</sub> effects on stomata", "match"),  # a tag inside a word joins it
+    ("Ca2+ signalling in neurons", "Ca<sup>2+</sup> signalling in neurons", "match"),
+    ("KRAS(G12C) and CO2", "KRAS<sup>G12C</sup> and CO<sub>2</sub>", "match"),  # one tag breaks, one joins
+    ("Deep learning for proteins", "<i>Soil</i> microbiome diversity", "mismatch"),
 ])
 def test_title_match(cited, registered, verdict):
     assert A.title_match(cited, registered) == verdict
+
+
+@pytest.mark.parametrize("pointer", ["# 포인터: CodeBreaK 100 (10.1056/NEJMoa2103695)\n\n- 초록 파일: inputs/x.md\n",
+                                     "\n# Pointer: trial (10.5555/x)\n- text file: .tmp/literature/x.md\n"])
+def test_a_pointer_file_is_no_source_text_not_a_missing_number(tmp_path, pointer):
+    """#910 11th run: the bundle keeps only a pointer to a third-party text, whose numbers are therefore unchecked."""
+    (tmp_path / "texts").mkdir()
+    (tmp_path / "texts" / "p.md").write_text(pointer + "ORR 37.1%\n", encoding="utf-8")
+    row = A.audit_one({"id": "p", "doi": "10.5555/x", "source": "texts/p.md", "numbers": ["37.1", "6.8"],
+                       "quotes": ["not in the pointer"]}, {"doi:10.5555/x": {"found": True, "title": "T"}}, tmp_path)
+    assert row["grade"] == "minor"
+    assert [f["check"] for f in row["findings"]] == ["source"] and "only points at" in row["findings"][0]["detail"]
+
+
+@pytest.mark.parametrize("heading", ["# Methods\nThe pointer heuristic is not used here.",
+                                     "# Pointer analysis of the cohort", "# 포인터 기법의 한계"])
+def test_a_text_that_merely_mentions_a_pointer_is_still_a_source(tmp_path, heading):
+    """Only the marker with its colon ("# Pointer:") makes a pointer; a real heading that starts with the word does not."""
+    (tmp_path / "s.md").write_text(heading + "\nORR 37.1%\n", encoding="utf-8")
+    row = A.audit_one({"id": "s", "doi": "10.5555/x", "source": "s.md", "numbers": ["37.1", "6.8"]},
+                      {"doi:10.5555/x": {"found": True, "title": "T"}}, tmp_path)
+    assert row["grade"] == "major" and [f["check"] for f in row["findings"]] == ["number"]
 
 
 def test_numbers_are_checked_at_written_precision_and_sign():
