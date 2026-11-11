@@ -83,7 +83,12 @@ def _copy_identity(text: str, meta: dict) -> bool:
     if doi and dois and not doi_matches:
         return False
     if title:
-        return title in normalize(front)
+        if doi_matches:
+            return title in normalize(front)
+        # Without a matching DOI, a phrase in an abstract or journal header is
+        # insufficient. Require the complete leading title, allowing wrapped lines.
+        lines = [line.strip() for line in front.splitlines() if line.strip()]
+        return any(normalize(' '.join(lines[:end])) == title for end in range(1, min(3, len(lines)) + 1))
     return doi_matches
 
 _PMID = re.compile(r"^(?:pmid:?\s*)?([0-9]{1,9})$", re.IGNORECASE)

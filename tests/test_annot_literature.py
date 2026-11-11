@@ -591,6 +591,18 @@ def test_copy_identity_preserves_doi_suffix_punctuation(doi, suffix):
     assert not lit._copy_identity(f"A specific study\n{doi}another\nAbstract", meta)
 
 
+@pytest.mark.parametrize("text", ["An unrelated oncology study\nAbstract\nCancer is common.",
+                                  "Cancer genetics in adult cells\nAbstract", "Journal\nCancer\nAbstract"])
+def test_title_only_identity_does_not_search_body_substrings(text):
+    assert not lit._copy_identity(text, {"title": "Cancer"})
+
+
+def test_title_only_identity_accepts_a_complete_wrapped_title():
+    assert lit._copy_identity("Mechanisms of cancer\nprogression in adult cells\nAbstract",
+                              {"title": "Mechanisms of cancer progression in adult cells"})
+    assert lit._copy_identity("Cancer\nAbstract", {"title": "Cancer"})
+
+
 def test_title_identifies_a_copy_when_metadata_has_no_doi():
     meta = {"title": "A specific study of kinase inhibition"}
     text = "A specific study of kinase inhibition\n10.1000/printed-only\nAbstract and methods"
