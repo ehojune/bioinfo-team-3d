@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:20 | [`19d3eaf`](https://github.com/ehojune/bioinfo-team-3d/pull/1394/commits/19d3eaf) | 제목 비교에 띄어쓰기 무시 일치 추가(한 제목에 붙여야 할 태그와 띄워야 할 태그가 섞인 경우), 시험 1건 (#1383, PR #1394 리뷰 P2) |
+| 05:50 | [`f6e6bb0`](https://github.com/ehojune/bioinfo-team-3d/pull/1394/commits/f6e6bb0) | **인용 감사가 CO&lt;sub&gt;2&lt;/sub&gt;처럼 단어 안에 든 서식 태그도 같은 제목으로 보고, '# Pointer analysis' 같은 진짜 제목을 포인터로 오인하지 않습니다.**<br>제목을 태그 제거(붙임·띄움) 두 방식으로 읽어 더 나은 판정, 포인터 표지에 콜론 필수, 시험 4건 (#1383, PR #1394 리뷰 P1 2) |
+| 05:30 | [`aa56fe6`](https://github.com/ehojune/bioinfo-team-3d/pull/1394/commits/aa56fe6) | manual 07 한영에 인용 감사 스크립트 사용법과 서식 태그·포인터 판정 (#1383) |
+| 04:55 | [`ef3e647`](https://github.com/ehojune/bioinfo-team-3d/pull/1394/commits/ef3e647) | **인용 감사가 등록 제목에 섞인 서식 태그(&lt;i&gt;, &lt;sup&gt;, &amp;lt;sup&amp;gt;)를 제목 차이로 세지 않습니다. 원문 자리에 포인터 파일만 있으면 수치가 원문에 없다고 하지 않고 '원문 없음, 확인 못 함'으로 적습니다.**<br>scripts/citation_audit.py 제목 비교 전 HTML 엔티티 해제·태그를 공백으로, '# 포인터:'·'# Pointer:'로 시작하는 원문은 minor source, eval-suite.md 등급표, 시험 7건 (#1383) |
 | 04:34 | [`a315010`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/a315010) | **제목과 코드 예시를 보고서의 일반 숫자 문장과 구분합니다.**<br>Setext 제목과 들여쓴 package 표식 예시를 처리한다. |
 | 04:28 | [`09e6688`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/09e6688) | **보고서의 코드 영역을 공통 Markdown 검사와 같은 기준으로 구분합니다.**<br>문단과 들여쓰기 경계를 CommonMark parser로 구분한다. |
 | 04:23 | [`4078a78`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/4078a78) | **지수 표기로 쓴 숫자도 보고서 근거 검사에서 확인합니다.**<br>정수 지수 표기에 대한 누락 회귀 시험을 추가했다. |
