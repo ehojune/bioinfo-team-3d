@@ -11,3 +11,7 @@ rows:
   - sha: "29b9603"
     at: "2026-11-11 13:20"
     text: "_sha_file의 이진 열기를 path.open(mode=\"rb\")로, test_text_encoding 통과 (#1374)"
+  - sha: "98751a4"
+    at: "2026-11-11 13:50"
+    summary: "재현 재실행은 끝난 요청에만 돌고, 기록은 그때의 결과에 묶여서 결과가 바뀐 뒤 게시하면 쓰이지 않습니다. 스크립트가 없는 단계가 있으면 '재현됨'이 아니라 '일부 단계만 재현'으로 적습니다."
+    text: "results_digest로 기록 결속(result_storage가 일치할 때만 사용), cli가 비종료 요청 거부, 전체 pass는 모든 단계 pass일 때만, manual 07 한영, 시험 4건 (#1374, PR #1378 리뷰 P1 2)"
