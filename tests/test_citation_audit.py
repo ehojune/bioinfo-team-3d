@@ -109,3 +109,27 @@ def test_falsification_frames_stay_unanswered():
     for case in frames["cases"]:
         assert case["answer"] is None and case["answer_rationale"] is None
         assert case["question"] and case["counterevidence"] and case["fixed_next_action"]
+
+
+@pytest.mark.parametrize("number, held", [
+    ("1e-5", True), ("1.0e-5", True), ("2.3e-8", True), ("1e4", True), ("0.00001", True),
+    ("1e-4", False), ("1e-6", False), ("2.4e-8", False), ("0.3", False),
+])
+def test_scientific_notation_is_compared_at_its_significant_digits(number, held):
+    source = A.Source("p was 1e-5, q 2.3 × 10^-8, r = 0.2 and s 1.0E+04")
+    assert A.number_held(number, source) is held
+
+
+def test_a_tiny_claim_is_not_held_by_a_value_that_rounds_to_zero():
+    assert A.number_held("1e-5", A.Source("the effect was 0.2")) is False
+
+
+def test_null_quote_or_number_lists_are_bad_input(tmp_path):
+    cites = tmp_path / "c.json"
+    cites.write_text(json.dumps({"citations": [{"id": "x", "doi": "10.5555/x", "quotes": None, "numbers": "1.5"}]}),
+                     encoding="utf-8")
+    run = subprocess.run([sys.executable, str(ROOT / "scripts" / "citation_audit.py"), str(cites),
+                          "--records", str(AUDIT / "records.json")], capture_output=True, text=True, encoding="utf-8")
+    assert run.returncode == 2 and "numbers must be a list" in run.stderr
+    assert A.audit_one({"id": "y", "doi": "10.5555/x", "quotes": None, "numbers": None},
+                       {"doi:10.5555/x": {"found": True, "title": "T"}}, tmp_path)["grade"] == "ok"

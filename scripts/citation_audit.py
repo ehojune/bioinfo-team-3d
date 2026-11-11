@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -34,6 +35,40 @@ from labhq.evidence.literal_check import Quantity, Source, is_supported, normali
 # Title tokens shared (Jaccard) at or above this are a near match: punctuation, a subtitle or a typo, not another work.
 NEAR_TITLE = 0.8
 GRADES = ("ok", "minor", "major")
+# Scientific notation, in the claim ("1e-5", "2.3E+04") and in source text (also "1.2 × 10^-5", "1.2x10-5").
+_SCI_CLAIM = re.compile(r"[-+]?(\d+(?:\.\d+)?)[eE]([-+]?\d+)")
+_SCI_TEXT = re.compile(r"(?<![\w.])([-+−]?\d+(?:\.\d+)?)(?:[eE]|\s*[×xX]\s*10\^?)([-+−]?\d+)(?![\w.])")
+
+
+def _significant(mantissa: str) -> int:
+    digits = mantissa.replace(".", "").lstrip("0")
+    return max(len(digits), 1)
+
+
+def _sci_values(text: str) -> list[float]:
+    return [float(m.group(1).replace("−", "-")) * 10 ** int(m.group(2).replace("−", "-"))
+            for m in _SCI_TEXT.finditer(text)]
+
+
+def number_held(number: str, source: Source) -> bool | None:
+    """Whether the source holds ``number`` at its written precision; None when it is not a number.
+
+    A plain number is compared at its decimal places (``literal_check``). A number in scientific notation is compared
+    at its significant digits against every number the source writes, so ``1e-5`` matches ``1e-05`` or ``1 × 10^-5``
+    and never a value that merely rounds to zero, such as ``0.2``."""
+    text = number.strip()
+    sci = _SCI_CLAIM.fullmatch(text)
+    if sci:
+        value, sig = float(text), _significant(sci.group(1))
+        candidates = [q.value for q in source.quantities] + _sci_values(source.text)
+        return any(v != 0 and f"{v:.{sig - 1}e}" == f"{value:.{sig - 1}e}" for v in candidates)
+    claim = Quantity.parse(text)
+    if claim is None:
+        return None
+    if is_supported(claim, source.quantities):
+        return True
+    return claim.value != 0 and any(round(v, claim.decimals) == round(claim.value, claim.decimals)
+                                    for v in _sci_values(source.text))
 
 
 def _tokens(text: str) -> set[str]:
@@ -93,8 +128,8 @@ def audit_one(citation: dict, records: dict, root: Path) -> dict:
     if len(titles) == 2 and title_match(titles["doi"], titles["pmid"]) == "mismatch":
         note("major", "identifier", "DOI and PMID are registered as different works")
 
-    quotes = [q for q in citation.get("quotes", []) if isinstance(q, str) and q.strip()]
-    numbers = [n for n in citation.get("numbers", []) if isinstance(n, (str, int, float))]
+    quotes = [q for q in citation.get("quotes") or [] if isinstance(q, str) and q.strip()]
+    numbers = [n for n in citation.get("numbers") or [] if isinstance(n, (str, int, float))]
     if quotes or numbers:
         source_path = citation.get("source")
         text = None
@@ -110,10 +145,10 @@ def audit_one(citation: dict, records: dict, root: Path) -> dict:
                 if not source.holds_quote(quote):
                     note("major", "quote", f"source does not hold: {quote[:120]!r}")
             for number in numbers:
-                claim = Quantity.parse(str(number))
-                if claim is None:
+                held = number_held(str(number), source)
+                if held is None:
                     note("major", "number", f"not a number: {number!r}")
-                elif not is_supported(claim, source.quantities):
+                elif not held:
                     note("major", "number", f"source does not hold {number} at its written precision")
 
     grade = max((f["grade"] for f in findings), key=GRADES.index, default="ok")
@@ -144,6 +179,10 @@ def main(argv: list[str] | None = None) -> int:
         citations = data.get("citations") if isinstance(data, dict) else None
         if not isinstance(citations, list) or not all(isinstance(c, dict) for c in citations) or not isinstance(records, dict):
             raise ValueError("citations must be {'citations': [...]} and records an object")
+        for c in citations:
+            for key in ("quotes", "numbers"):
+                if c.get(key) is not None and not isinstance(c[key], list):
+                    raise ValueError(f"{c.get('id')!r}: {key} must be a list")
     except (OSError, ValueError) as error:
         print(f"입력 오류: {error}", file=sys.stderr)
         return 2
