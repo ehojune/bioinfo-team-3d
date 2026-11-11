@@ -276,7 +276,20 @@ def failed_lookup_lines(rows: list[dict[str, str]]) -> list[str]:
 
 def _unanchored_numeric_sentences(report: str) -> list[str]:
     """Flag numeric prose for review; this is not a semantic conclusion classifier."""
-    text = re.sub(r"(?ms)^ {0,3}~{3,}[^\n]*\n.*?^ {0,3}~{3,}[^\n]*(?:\n|$)", " ", report)
+    kept = []
+    fence = ""
+    for line in report.splitlines():
+        if fence:
+            if re.fullmatch(r" {0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}\s*", line):
+                fence = ""
+            continue
+        opening = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if opening:
+            fence = opening.group(1)
+            kept.append("")
+        else:
+            kept.append(line)
+    text = "\n".join(kept)
     text = CODE.sub(" ", text)
     text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
     sentences = []

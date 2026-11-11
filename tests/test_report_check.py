@@ -70,6 +70,13 @@ def test_numeric_units_and_soft_wrapped_sentences():
     assert _unanchored_numeric_sentences("DUSP1과 123abc는 식별자입니다.") == []
 
 
+def test_nested_short_fences_do_not_end_a_long_code_fence():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    report = "````markdown\n```python\nx = 42\n```\nmore = 5\n````\n결과는 7입니다."
+    assert _unanchored_numeric_sentences(report) == ["결과는 7입니다."]
+
+
 def test_legacy_summary_rows_do_not_bypass_cp2_refusal():
     ledger = _ledger()
     del ledger["evidence"][0]["status"]
