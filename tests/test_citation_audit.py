@@ -190,3 +190,14 @@ def test_json_numbers_are_bad_input_on_the_command_line(tmp_path):
 ])
 def test_unicode_signs_and_exact_zero(number, source, held):
     assert A.number_held(number, A.Source(source)) is held
+
+
+@pytest.mark.parametrize("source", ["p 1e–5", "p 1 × 10–5", "p 1e−5"])
+def test_dash_variants_in_source_exponents(source):
+    assert A.number_held("1e-5", A.Source(source)) is True
+    assert A.number_held("5", A.Source(source)) is False
+
+
+def test_a_range_written_with_an_en_dash_still_holds_both_ends():
+    source = A.Source("mapping rate 93.9–95.7 percent")
+    assert A.number_held("93.9", source) and A.number_held("95.7", source)

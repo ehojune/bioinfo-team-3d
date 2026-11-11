@@ -62,6 +62,7 @@ def source_numbers(text: str) -> tuple[tuple[Quantity, ...], list[float]]:
 
     A scientific span is taken out before the plain numbers are read, so ``1e-5`` is one value and never the plain
     numbers ``1`` and ``5``."""
+    text = _ascii_signs(text)  # one spelling of signs for both readers, claim and source alike
     return quantities_in(_SCI_TEXT.sub(" ", text)), _sci_values(text)
 
 
