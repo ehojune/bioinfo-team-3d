@@ -814,3 +814,16 @@ def test_the_receipt_reports_the_stored_rerun_as_its_execution(tmp_path):
     assert rr.rerun_path(tmp_path, "req_ab12").name == "req_ab12.json"
     with pytest.raises(ValueError):
         rr.rerun_path(tmp_path, "../x")
+
+
+def test_the_report_front_says_what_the_pi_rerun_found(tmp_path):
+    from labhq.evidence.report_consistency import front_lines
+    receipt = rr.build_receipt({}, tools={})
+    assert front_lines(None, rr.receipt_summary(receipt)) == [
+        "- 재현 실행 안 함 — 영수증 실행 상태 not_rerun"]
+    passed = rr.rerun(rr.rerun_plan([_step(tmp_path / "p")], tools={"python": sys.executable}))
+    [line] = front_lines(None, rr.receipt_summary({**receipt, "rerun": passed}))
+    assert line.startswith("- 재현 재실행: 재현됨(산출 hash 일치)")
+    mismatch = rr.rerun(rr.rerun_plan([_step(tmp_path / "m", recorded="0" * 64)], tools={"python": sys.executable}))
+    [line] = front_lines(None, rr.receipt_summary({**receipt, "rerun": mismatch}))
+    assert "산출 hash 불일치" in line and "실행 안 함" not in line
