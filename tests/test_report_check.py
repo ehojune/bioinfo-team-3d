@@ -59,6 +59,17 @@ def test_each_numeric_prose_sentence_requires_its_own_anchor():
     assert "12.3" in check["problems"][0] and "anchor" in check["problems"][0]
 
 
+def test_numeric_units_and_soft_wrapped_sentences():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    assert _unanchored_numeric_sentences("세포를 24h 배양했습니다.\n약물은 5mg, 부피는 10mL였습니다.") == [
+        "세포를 24h 배양했습니다.", "약물은 5mg, 부피는 10mL였습니다."]
+    assert _unanchored_numeric_sentences("첫 결과는 3이며\n유의했습니다. [[claim:s1/c1]]") == []
+    assert _unanchored_numeric_sentences("첫 결과는 3입니다.\n둘째는 4입니다. [[claim:s1/c1]]") == [
+        "첫 결과는 3입니다."]
+    assert _unanchored_numeric_sentences("DUSP1과 123abc는 식별자입니다.") == []
+
+
 def test_legacy_summary_rows_do_not_bypass_cp2_refusal():
     ledger = _ledger()
     del ledger["evidence"][0]["status"]

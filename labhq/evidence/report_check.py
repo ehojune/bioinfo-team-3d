@@ -289,21 +289,30 @@ def _unanchored_numeric_sentences(report: str) -> list[str]:
             while j < len(lines) and "|" in lines[j] and lines[j].strip():
                 table_lines.add(j)
                 j += 1
+    paragraphs: list[str] = []
+    current: list[str] = []
     for i, line in enumerate(lines):
-        if i in table_lines:
-            continue
         line = line.strip()
-        if not line or line.startswith(("#", "|")):
+        is_list_item = bool(re.match(r"(?:[-*+]\s+|\d+[.)]\s+)", line))
+        if i in table_lines or not line or line.startswith(("#", "|")) or is_list_item:
+            if current:
+                paragraphs.append(" ".join(current))
+                current = []
+        if i in table_lines or not line or line.startswith(("#", "|")):
             continue
         line = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", "", line)
-        line = re.sub(r"\]\([^)]*\)", "]", line)
-        line = re.sub(r"https?://\S+", " ", line)
+        current.append(line)
+    if current:
+        paragraphs.append(" ".join(current))
+    for paragraph in paragraphs:
+        paragraph = re.sub(r"\]\([^)]*\)", "]", paragraph)
+        paragraph = re.sub(r"https?://\S+", " ", paragraph)
         pattern = r".*?(?:[.!?](?:\s*\[\[\s*claim\s*:[^\[\]\n]*\]\])*(?=\s|$)|$)"
-        for match in re.finditer(pattern, line, re.IGNORECASE):
+        for match in re.finditer(pattern, paragraph, re.IGNORECASE):
             sentence = match.group().strip()
             if not sentence or ANCHOR.search(sentence):
                 continue
-            if re.search(r"(?<![A-Za-z0-9_])\d+(?:[.,]\d+)*(?![A-Za-z0-9_])", sentence):
+            if re.search(r"(?<![A-Za-z0-9_])\d+(?:[.,]\d+)*(?:(?:kg|mg|ng|µg|ug|mL|ml|µL|uL|L|h|min|s|mm|cm)(?![A-Za-z0-9_])|(?![A-Za-z0-9_]))", sentence):
                 sentences.append(sentence)
     return sentences
 
