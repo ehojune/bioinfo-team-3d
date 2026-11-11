@@ -1,0 +1,13 @@
+{
+ "_note": "Answer key for the reviewer test; never shown to the reviewer.",
+ "errors": [
+  {
+   "id": "E07",
+   "type": "contrast_reversed",
+   "file": "run_log.tsv",
+   "where": "de contrast",
+   "change": "contrast untrt vs trt, so signs mean the opposite of the report's reading",
+   "conclusion_changing": true
+  }
+ ]
+}

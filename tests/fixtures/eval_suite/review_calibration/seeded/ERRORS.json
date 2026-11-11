@@ -1,5 +1,5 @@
 {
- "_note": "Answer key for the reviewer test; never shown to the reviewer.",
+ "_note": "Answer key for the reviewer test; never shown to the reviewer. E07 (contrast_reversed) is in ../seeded_contrast because a reversed contrast flips every sign and would cancel E01.",
  "errors": [
   {
    "id": "E01",
@@ -47,14 +47,6 @@
    "file": "run_log.tsv",
    "where": "sensitivity step",
    "change": "sensitivity model reported in text but never run and its output is absent",
-   "conclusion_changing": true
-  },
-  {
-   "id": "E07",
-   "type": "contrast_reversed",
-   "file": "run_log.tsv",
-   "where": "de contrast",
-   "change": "contrast untrt vs trt, so signs mean the opposite of the report's reading",
    "conclusion_changing": true
   },
   {

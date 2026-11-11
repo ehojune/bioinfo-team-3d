@@ -42,6 +42,11 @@ _SCI_CLAIM = re.compile(r"[-+]?(\d+(?:\.\d+)?)[eE]([-+]?\d+)")
 _SCI_TEXT = re.compile(r"(?<![\w.])([-+−]?\d+(?:\.\d+)?)(?:[eE]|\s*[×xX]\s*10\^?)([-+−]?\d+)(?![\w.])")
 
 
+def _ascii_signs(text: str) -> str:
+    """Typographic minus and en dash written as ``-``, so a claim and a source spell signs the same way."""
+    return text.replace("−", "-").replace("–", "-")
+
+
 def _significant(mantissa: str) -> int:
     digits = mantissa.replace(".", "").lstrip("0")
     return max(len(digits), 1)
@@ -66,12 +71,13 @@ def number_held(number: str, source: Source) -> bool | None:
     A plain number is compared at its decimal places (``literal_check``). A number in scientific notation is compared
     at its significant digits against every number the source writes, so ``1e-5`` matches ``1e-05`` or ``1 × 10^-5``
     and never a value that merely rounds to zero, such as ``0.2``."""
-    text = number.strip()
+    text = _ascii_signs(number.strip())
     plain, scientific = source_numbers(source.text)
     sci = _SCI_CLAIM.fullmatch(text)
     if sci:
         value, sig = float(text), _significant(sci.group(1))
-        return any(v != 0 and f"{v:.{sig - 1}e}" == f"{value:.{sig - 1}e}"
+        # an exact value always counts; otherwise a nonzero value must agree at the claim's significant digits
+        return any(v == value or (v != 0 and value != 0 and f"{v:.{sig - 1}e}" == f"{value:.{sig - 1}e}")
                    for v in [q.value for q in plain] + scientific)
     claim = Quantity.parse(text)
     if claim is None:

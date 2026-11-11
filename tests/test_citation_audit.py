@@ -75,18 +75,38 @@ def test_cli_exit_codes(tmp_path):
     assert run(bad, "--records", AUDIT / "records.json").returncode == 2
 
 
-def test_seeded_bundle_differs_from_clean_only_where_the_answer_key_says():
-    key = load(CAL / "seeded" / "ERRORS.json")["errors"]
+def files(folder):
+    return {p.relative_to(folder).as_posix() for p in folder.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("bundle, missing", [("seeded", {"sensitivity.csv"}), ("seeded_contrast", set())])
+def test_each_seeded_bundle_differs_from_clean_only_where_its_answer_key_says(bundle, missing):
+    key = load(CAL / bundle / "ERRORS.json")["errors"]
+    clean, seeded = files(CAL / "clean"), files(CAL / bundle)
+    assert seeded - clean == {"ERRORS.json"}
+    assert clean - seeded == missing  # the missing_run error removes the sensitivity output
+    changed = {name for name in clean & seeded
+               if (CAL / "clean" / name).read_bytes() != (CAL / bundle / name).read_bytes()}
+    assert changed == {e["file"] for e in key}
+
+
+def test_the_answer_keys_cover_ten_error_types_four_changing_the_conclusion():
+    key = load(CAL / "seeded" / "ERRORS.json")["errors"] + load(CAL / "seeded_contrast" / "ERRORS.json")["errors"]
     assert len(key) == 10 and {e["type"] for e in key} == ERROR_TYPES
     assert len({e["id"] for e in key}) == 10
     assert sum(e["conclusion_changing"] for e in key) == 4
-    clean = {p.relative_to(CAL / "clean").as_posix() for p in (CAL / "clean").rglob("*") if p.is_file()}
-    seeded = {p.relative_to(CAL / "seeded").as_posix() for p in (CAL / "seeded").rglob("*") if p.is_file()}
-    assert seeded - clean == {"ERRORS.json"}
-    assert clean - seeded == {"sensitivity.csv"}  # the missing_run error removes the output
-    changed = {name for name in clean & seeded
-               if (CAL / "clean" / name).read_bytes() != (CAL / "seeded" / name).read_bytes()}
-    assert changed == {e["file"] for e in key}
+    # a reversed contrast flips every sign, so it never shares a bundle with a direction error
+    main = {e["type"] for e in load(CAL / "seeded" / "ERRORS.json")["errors"]}
+    assert "contrast_reversed" not in main and "direction" in main
+
+
+def test_citation_errors_are_detectable_from_the_bundle_alone():
+    seeded = CAL / "seeded"
+    rows = A.audit(load(seeded / "citations.json")["citations"], load(seeded / "records.json"), seeded)["citations"]
+    assert {r["id"]: r["grade"] for r in rows}["himes"] == "major"  # E04: the DOI names another registered work
+    clean = A.audit(load(CAL / "clean" / "citations.json")["citations"], load(CAL / "clean" / "records.json"),
+                    CAL / "clean")
+    assert clean["counts"]["major"] == 0
 
 
 def test_clean_bundle_is_internally_consistent():
@@ -162,3 +182,11 @@ def test_json_numbers_are_bad_input_on_the_command_line(tmp_path):
     run = subprocess.run([sys.executable, str(ROOT / "scripts" / "citation_audit.py"), str(cites),
                           "--records", str(AUDIT / "records.json")], capture_output=True, text=True, encoding="utf-8")
     assert run.returncode == 2 and "numbers must be str" in run.stderr
+
+
+@pytest.mark.parametrize("number, source, held", [
+    ("1e−5", "r = 0.2", False), ("1e−5", "p 1e-5", True), ("−2.97", "fold -2.97", True),
+    ("0e0", "z 0e0", True), ("0e0", "r = 0.2", False),
+])
+def test_unicode_signs_and_exact_zero(number, source, held):
+    assert A.number_held(number, A.Source(source)) is held
