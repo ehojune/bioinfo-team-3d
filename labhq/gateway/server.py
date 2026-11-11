@@ -4274,6 +4274,43 @@ class Hub:
             self.runner_inbox_admission_lock = asyncio.Lock()
         return self.runner_inbox_admission_lock
 
+    def _inbox_has_earlier_blocker(self, row: dict) -> bool:
+        """Apply the same conservative dependency boundary on admission and resume."""
+        def scope(message):
+            data = message.get("data") if isinstance(message.get("data"), dict) else {}
+            task_id = message.get("task_id") or data.get("task_id")
+            request_id = message.get("request_id") or data.get("request_id")
+            if ((message.get("task_id") and data.get("task_id") and message["task_id"] != data["task_id"]) or
+                    (message.get("request_id") and data.get("request_id") and
+                     message["request_id"] != data["request_id"])):
+                return task_id, None
+            task = self.store.get("task", task_id) if task_id else None
+            stored_request = task.get("request_id") if task else None
+            if not stored_request or (request_id and request_id != stored_request):
+                return task_id, None
+            return task_id, stored_request
+
+        msg = row["message"]
+        task_id, request_id = scope(msg)
+        activity_types = {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}
+        for previous in self.store.active_runner_inbox():
+            if (previous["runner_id"], previous["incarnation"], previous["seq"]) == (
+                    row["runner_id"], row["incarnation"], row["seq"]):
+                continue
+            if (previous.get("admission_order") is not None and row.get("admission_order") is not None and
+                    previous["admission_order"] > row["admission_order"]):
+                continue
+            if previous["state"] not in {"pending", "failed", "processing", "blocked"}:
+                continue
+            old_task, old_request = scope(previous["message"])
+            prior_type = previous["message"].get("type")
+            prior_local = (prior_type in activity_types or prior_type == "task.accepted" or
+                           (prior_type == "ask.requested" and previous.get("error") == "ask_publication_incomplete"))
+            if (not task_id or not old_task or task_id == old_task or not request_id or not old_request or
+                    request_id == old_request or msg.get("type") not in activity_types or not prior_local):
+                return True
+        return False
+
     async def _admit_runner_inbox(self, runner_id: str, incarnation: str | None, seq: int, msg: dict) -> tuple[dict, bool]:
         async with self._inbox_admission_lock():
             row = await self.store.aaccept_runner_inbox(runner_id, incarnation, seq, msg)
@@ -4285,42 +4322,10 @@ class Hub:
                 return row, True  # The per-runner lock ensures the earlier attempt has stopped.
             if row["state"] != "pending":
                 return row, False
-            msg = row["message"]  # classify the same immutable snapshot that will be executed
-
-            def scope(message):
-                data = message.get("data") if isinstance(message.get("data"), dict) else {}
-                task_id = message.get("task_id") or data.get("task_id")
-                request_id = message.get("request_id") or data.get("request_id")
-                if ((message.get("task_id") and data.get("task_id") and message["task_id"] != data["task_id"]) or
-                        (message.get("request_id") and data.get("request_id") and
-                         message["request_id"] != data["request_id"])):
-                    return task_id, None
-                task = self.store.get("task", task_id) if task_id else None
-                stored_request = task.get("request_id") if task else None
-                if not stored_request or (request_id and request_id != stored_request):
-                    return task_id, None
-                return task_id, stored_request
-
-            task_id, request_id = scope(msg)
-            activity_types = {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}
-            for previous in self.store.active_runner_inbox():
-                if (previous["runner_id"], previous["incarnation"], previous["seq"]) == (runner_id, incarnation, seq):
-                    continue
-                if (previous.get("admission_order") is not None and row.get("admission_order") is not None and
-                        previous["admission_order"] > row["admission_order"]):
-                    continue
-                if previous["state"] not in {"pending", "failed", "processing", "blocked"}:
-                    continue
-                old_task, old_request = scope(previous["message"])
-                prior_type = previous["message"].get("type")
-                prior_local = (prior_type in activity_types or prior_type == "task.accepted" or
-                               (prior_type == "ask.requested" and
-                                previous.get("error") == "ask_publication_incomplete"))
-                if (not task_id or not old_task or task_id == old_task or not request_id or not old_request or
-                        request_id == old_request or msg.get("type") not in activity_types or not prior_local):
-                    blocked = await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "blocked",
-                                                                       "earlier outcome unresolved", expected="pending")
-                    return blocked, False
+            if self._inbox_has_earlier_blocker(row):
+                blocked = await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "blocked",
+                                                                   "earlier outcome unresolved", expected="pending")
+                return blocked, False
             claimed = await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "processing", expected="pending")
             return claimed, True
 
@@ -4341,7 +4346,7 @@ class Hub:
             await self._run_claimed_runner_inbox(row)
 
     async def resume_blocked_runner_inbox(self, runner_id: str, incarnation: str | None, seq: int) -> None:
-        """Run an unexecuted held delivery only after all earlier deliveries are resolved."""
+        """Run a held delivery after its earlier dependencies are resolved."""
         if not hasattr(self, "runner_inbox_locks"):
             self.runner_inbox_locks = {}
         lock = self.runner_inbox_locks.setdefault(runner_id, asyncio.Lock())
@@ -4353,13 +4358,8 @@ class Hub:
                 target = self.store.runner_inbox(runner_id, incarnation, seq)
                 if target is None:
                     raise KeyError(seq)
-                for previous in self.store.active_runner_inbox():
-                    if (previous["runner_id"], previous["incarnation"], previous["seq"]) == (runner_id, incarnation, seq):
-                        continue
-                    if (previous["state"] != "completed" and
-                            (previous.get("admission_order") is None or target.get("admission_order") is None or
-                             previous["admission_order"] < target["admission_order"])):
-                        raise ValueError("earlier runner inbox outcome unresolved")
+                if self._inbox_has_earlier_blocker(target):
+                    raise ValueError("earlier runner inbox outcome unresolved")
                 row = await self.store.aclaim_blocked_runner_inbox(runner_id, incarnation, seq)
             await self._run_claimed_runner_inbox(row)
 

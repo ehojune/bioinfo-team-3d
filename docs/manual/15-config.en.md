@@ -6,7 +6,7 @@ The items of the config file (`config/labhq.yaml`). Safety-related items are in 
 
 Unknown or misspelled configuration keys stop loading with an error. `labhq up` and `labhq gateway` reject the published defaults for both `gateway.client_token` and `gateway.runner_token`; change both values.
 
-Use client-token-authenticated `GET /api/runner-inbox/{runner_id}` to inspect held runner message status; the response omits message contents. `POST /api/runner-inbox/{runner_id}/{seq}/retry` accepts log and activity events and asks whose publication failed before starting; `/resume` handles unexecuted entries after earlier holds are resolved. The `incarnation` query selects a generation. Operations with unknown outcomes are not retried automatically. The inbox keeps the latest 256 completed entries; unfinished entries and pending deliveries are retained.
+Use client-token-authenticated `GET /api/runner-inbox/{runner_id}` to inspect held runner message status; the response omits message contents. `POST /api/runner-inbox/{runner_id}/{seq}/retry` accepts log and activity events and asks whose publication failed before starting; `/resume` handles unexecuted entries after earlier dependencies are resolved. It applies the same independence check as admission; an ask with an unknown start remains a blocker. The `incarnation` query selects a generation. Operations with unknown outcomes are not retried automatically. The inbox keeps the latest 256 completed entries; unfinished entries and pending deliveries are retained.
 
 After a storage error during a manual retry, safe entries can be retried once storage recovers. If an ask's start is uncertain, it is held as `ask_start_unknown`.
 

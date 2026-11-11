@@ -1548,6 +1548,39 @@ async def test_manual_ask_retry_storage_failure_before_dispatch_can_retry(gatewa
     assert hub.store.runner_inbox("runner", None, 1)["state"] == "completed"
 
 
+@pytest.mark.parametrize("prior_type,prior_error,should_resume", [
+    ("agent.log", "RuntimeError", True),
+    ("ask.requested", "ask_start_unknown", False),
+])
+async def test_resume_checks_same_dependency_boundary_as_admission(gateway, monkeypatch, prior_type, prior_error, should_resume):
+    hub = gateway
+    hub.store.put("task", "old", {"request_id": "r1"})
+    hub.store.put("task", "blocker", {"request_id": "r2"})
+    hub.store.put("task", "target", {"request_id": "r2"})
+    for runner, task, typ, err in [("r1", "old", prior_type, prior_error),
+                                    ("r2", "blocker", "agent.log", "RuntimeError")]:
+        hub.store.accept_runner_inbox(runner, None, 1, {"type": typ, "runner_seq": 1, "task_id": task, "data": {}})
+        hub.store.set_runner_inbox_state(runner, None, 1, "processing", expected="pending")
+        hub.store.set_runner_inbox_state(runner, None, 1, "failed", err, expected="processing")
+    hub.store.accept_runner_inbox("r3", None, 1, {"type": "agent.log", "runner_seq": 1, "task_id": "target", "data": {}})
+    hub.store.set_runner_inbox_state("r3", None, 1, "blocked", "earlier outcome unresolved", expected="pending")
+    # Simulate resolution of the actual same-request blocker.
+    await hub.store.aclaim_runner_publication_retry("r2", None, 1)
+    hub.store.set_runner_inbox_state("r2", None, 1, "completed", expected="processing")
+    calls = []
+    async def handler(*args, **kwargs):
+        calls.append(True)
+    monkeypatch.setattr(hub, "_on_runner_message", handler)
+    if should_resume:
+        await hub.resume_blocked_runner_inbox("r3", None, 1)
+        assert calls == [True]
+        assert hub.store.runner_inbox("r3", None, 1)["state"] == "completed"
+    else:
+        with pytest.raises(ValueError, match="earlier"):
+            await hub.resume_blocked_runner_inbox("r3", None, 1)
+        assert not calls
+
+
 @pytest.mark.parametrize("second_request", ["r1", None])
 async def test_inbox_holds_different_task_when_request_is_same_or_unknown(gateway, monkeypatch, second_request):
     hub = gateway
