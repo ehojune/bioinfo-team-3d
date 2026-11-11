@@ -1,0 +1,5 @@
+rows:
+  - sha: "d1ffa95"
+    at: "2026-11-11 12:40"
+    summary: "labhq verify <요청> --rerun으로 끝난 요청을 이 PC에서 다시 돌려 봅니다. 실행할 명령을 먼저 보여 주고 물은 뒤, 단계마다 입력과 스크립트만 복사한 임시 폴더에서 스크립트를 돌려 산출 sha256을 원래 기록과 비교합니다. 결과는 게시 영수증의 실행 상태가 됩니다."
+    text: "reproduction_receipt에 rerun_plan·rerun·rerun_summary·rerun_path, receipt_summary가 저장된 재실행을 실행 상태로, result_storage가 게시 때 state/reproduction/<id>.json을 영수증에 붙임, audit rerun_steps·render_rerun_plan·render_verify 재실행 줄, cli --rerun·--yes·--rerun-timeout, manual 07·13 한영, 시험 8건 (#1374)"
