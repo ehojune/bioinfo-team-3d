@@ -22,3 +22,7 @@ rows:
     at: "2026-11-11 14:30"
     summary: "재현 재실행이 앞 단계 산출을 링크로 받는 단계도 돌립니다. 링크를 따라가지 않고 앞 단계가 기록한 산출을 hash를 확인해 복사합니다. 실행 뒤 바뀐 스크립트나 기록과 달라진 앞 단계 산출이 있으면 돌리지 않고 그렇게 적습니다."
     text: "_copy_inputs가 inputs/<step> 링크를 upstream 기록 산출로 복원(input_changed), 스크립트 hash 확인(script_changed), audit rerun_steps upstream 지도, 상태 문구, 시험 3건 (#1374, PR #1378 리뷰 P1 2)"
+  - sha: "a677531"
+    at: "2026-11-11 15:00"
+    summary: "결과 저장소에 실제로 게시하는 영수증에도 PI의 재현 재실행 결과가 들어갑니다. 전에는 bench 사본에만 붙었습니다."
+    text: "reproduction_receipt.attach_rerun을 portfolio.build_portfolio_files와 result_storage가 함께 씀, 시험 1건 (#1374, PR #1378 리뷰 P1)"
