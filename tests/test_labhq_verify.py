@@ -598,3 +598,18 @@ async def test_json_rerun_needs_yes_because_nobody_can_confirm(tmp_path, monkeyp
     settings, result = await _run(tmp_path, monkeypatch, _with_script(BODY), outputs=("table.tsv", "scripts/make.py"))
     code, out = _verify(monkeypatch, capsys, settings, _request(result), "--rerun", "--json")
     assert code == 2 and "--yes" in json.loads(out)["reasons"][-1]
+
+
+async def test_rerun_is_refused_until_the_request_has_finished(tmp_path, monkeypatch, capsys):
+    settings, result = await _run(tmp_path, monkeypatch, _with_script(BODY), outputs=("table.tsv", "scripts/make.py"))
+    code, out = _verify(monkeypatch, capsys, settings, _request(result, status="running"), "--rerun", "--yes")
+    assert code == 2 and "요청이 끝나지 않아" in out
+
+
+async def test_the_rerun_record_is_bound_to_the_results_it_reran(tmp_path, monkeypatch, capsys):
+    from labhq.reproduction_receipt import rerun_path, results_digest
+    settings, result = await _run(tmp_path, monkeypatch, _with_script(BODY), outputs=("table.tsv", "scripts/make.py"))
+    request = _request(result)
+    _verify(monkeypatch, capsys, settings, request, "--rerun", "--yes")
+    stored = json.loads(rerun_path(settings.path(settings.runner.state_dir), "req_v").read_text(encoding="utf-8"))
+    assert stored["results_sha256"] == results_digest(request["results"])

@@ -1476,8 +1476,13 @@ def _verify(s: Settings, request_id: str, *, as_json: bool, bundle: str | None, 
 def _verify_rerun(s: Settings, req: dict, report: dict, *, as_json: bool, yes: bool, timeout: float) -> None:
     """`labhq verify --rerun`: show what will run, ask the PI, run it in temporary copies and keep the record (#1374)."""
     from .evidence.audit import RERUN_PROBLEMS, render_rerun_plan, rerun_steps
-    from .reproduction_receipt import rerun as run_again, rerun_path, rerun_plan
+    from .reproduction_receipt import rerun as run_again, rerun_path, rerun_plan, results_digest
+    from .request_status import TERMINAL_REQUEST_STATES
 
+    if req.get("status") not in TERMINAL_REQUEST_STATES or req.get("status") == "cancelled":
+        report["reasons"].append(f"요청이 끝나지 않아(상태 {req.get('status')}) 재현 재실행을 하지 않았습니다")
+        report["exit_code"] = 2
+        return
     plan = rerun_plan(rerun_steps(req, s))
     if not any(row["status"] == "planned" for row in plan):
         report["rerun"] = run_again(plan)  # nothing executes: records why each step is not rerun
@@ -1497,6 +1502,7 @@ def _verify_rerun(s: Settings, req: dict, report: dict, *, as_json: bool, yes: b
                 report["rerun"] = {"schema_version": 1, "status": "declined", "steps": []}
                 return
         report["rerun"] = run_again(plan, timeout=timeout)
+    report["rerun"]["results_sha256"] = results_digest(req.get("results"))  # bound to these results only
     try:
         target = rerun_path(s.path(s.runner.state_dir), str(req.get("id") or ""))
         target.parent.mkdir(parents=True, exist_ok=True)

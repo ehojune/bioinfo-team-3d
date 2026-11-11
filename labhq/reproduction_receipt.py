@@ -450,7 +450,8 @@ def rerun(plan: Sequence[Mapping[str, Any]], *, timeout: float = 600,
     overall = next((s for s in ("wrote_outside", "fail", "timeout", "unavailable", "missing_output", "hash_mismatch",
                                 "inputs_too_large", "not_located") if s in statuses), None)
     if overall is None:
-        overall = ("pass" if "pass" in statuses and all(s in {"pass", "no_scripts"} for s in statuses) else
+        # "pass" means every step with outputs was regenerated and matched; a step without scripts was not checked.
+        overall = ("pass" if statuses and all(s == "pass" for s in statuses) else
                    "hpc" if "hpc" in statuses and "pass" not in statuses else
                    "partial" if "pass" in statuses else "not_rerun")
     return {"schema_version": 1, "checked_at": datetime.now(timezone.utc).isoformat(), "status": overall,
@@ -464,3 +465,10 @@ def rerun_summary(record: Any) -> dict[str, Any] | None:
     steps = [step for step in record["steps"] if isinstance(step, Mapping) and step.get("status") in RERUN_STATUSES]
     return {"status": str(record.get("status") or "not_rerun"), "checked_at": str(record.get("checked_at") or ""),
             "steps": {str(step.get("step_id")): step["status"] for step in steps}}
+
+
+def results_digest(results: Any) -> str:
+    """One hash of every step's recorded output hashes: a rerun record counts only for the results it reran."""
+    rows = sorted((str(step_id), sorted((str(path), str(sha)) for path, sha in (result.get("output_sha256") or {}).items()))
+                  for step_id, result in (results or {}).items() if isinstance(result, Mapping))
+    return hashlib.sha256(json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()

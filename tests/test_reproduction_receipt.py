@@ -827,3 +827,18 @@ def test_the_report_front_says_what_the_pi_rerun_found(tmp_path):
     mismatch = rr.rerun(rr.rerun_plan([_step(tmp_path / "m", recorded="0" * 64)], tools={"python": sys.executable}))
     [line] = front_lines(None, rr.receipt_summary({**receipt, "rerun": mismatch}))
     assert "산출 hash 불일치" in line and "실행 안 함" not in line
+
+
+def test_a_step_without_scripts_keeps_the_request_from_counting_as_reproduced(tmp_path):
+    passing = _step(tmp_path / "p")
+    unscripted = {**_step(tmp_path / "u"), "step_id": "s2", "outputs": ["outputs/total.tsv"]}
+    record = rr.rerun(rr.rerun_plan([passing, unscripted], tools={"python": sys.executable}))
+    assert [step["status"] for step in record["steps"]] == ["pass", "no_scripts"]
+    assert record["status"] == "partial"
+
+
+def test_the_results_digest_changes_when_any_recorded_output_changes():
+    results = {"s1": {"output_sha256": {"outputs/a.tsv": "1" * 64}}}
+    later = {**results, "s2": {"output_sha256": {"outputs/b.tsv": "2" * 64}}}
+    assert rr.results_digest(results) == rr.results_digest(dict(results))
+    assert rr.results_digest(results) != rr.results_digest(later)
