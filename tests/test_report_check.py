@@ -47,6 +47,77 @@ def test_anchor_variants_are_checked_and_code_is_not_a_conclusion():
     assert check_report(shown, {"s1": _ledger()}, artifact_sha256=hashes) == {"anchors": 1, "problems": []}
 
 
+def test_each_numeric_prose_sentence_requires_its_own_anchor():
+    report = ("# 결과 2026\n\n첫 결과는 3입니다. [[claim:s1/c1]] 두 번째 결과는 12.3입니다.\n"
+              "셋째 결과는 4%입니다 [[claim:s1/c1]].\n\n"
+              "| 값 | 9 |\n|---|---|\n| A | 7 |\n\n"
+              "Name | Value\n--- | ---\nfoo | 12.3\n\n"
+              "`42`와 DUSP1 및 [자료](https://example.org/123)는 식별자입니다.\n"
+              "~~~\n값은 99입니다.\n~~~\n")
+    check = check_report(report, {"s1": _ledger()}, artifact_sha256={"s1/a1": "a" * 64})
+    assert len(check["problems"]) == 1
+    assert "12.3" in check["problems"][0] and "anchor" in check["problems"][0]
+
+
+def test_numeric_units_and_soft_wrapped_sentences():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    assert _unanchored_numeric_sentences("세포를 24h 배양했습니다.\n약물은 5mg, 부피는 10mL였습니다.") == [
+        "세포를 24h 배양했습니다.", "약물은 5mg, 부피는 10mL였습니다."]
+    assert _unanchored_numeric_sentences("첫 결과는 3이며\n유의했습니다. [[claim:s1/c1]]") == []
+    assert _unanchored_numeric_sentences("첫 결과는 3입니다.\n둘째는 4입니다. [[claim:s1/c1]]") == [
+        "첫 결과는 3입니다."]
+    assert _unanchored_numeric_sentences("DUSP1과 123abc는 식별자입니다.") == []
+
+
+def test_nested_short_fences_do_not_end_a_long_code_fence():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    report = "````markdown\n```python\nx = 42\n```\nmore = 5\n````\n결과는 7입니다."
+    assert _unanchored_numeric_sentences(report) == ["결과는 7입니다."]
+
+
+def test_figure_alt_number_is_not_numeric_prose():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    assert _unanchored_numeric_sentences("![그림 1. 발현량](plots/expression.png)\n\n결과는 7입니다.") == [
+        "결과는 7입니다."]
+
+
+def test_inline_code_with_multiple_backticks_is_not_numeric_prose():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    assert _unanchored_numeric_sentences("예: ``x = 42``. 결과는 7입니다.") == ["결과는 7입니다."]
+
+
+def test_footnotes_are_not_numeric_prose():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    report = "설명입니다.[^1]\n\n[^1]: 출처 2020\n    추가 42\n\n결과는 7입니다."
+    assert _unanchored_numeric_sentences(report) == ["결과는 7입니다."]
+
+
+def test_scientific_notation_is_numeric_prose():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    assert _unanchored_numeric_sentences("세포는 1e6개였습니다. p값은 2E-5였습니다.") == [
+        "세포는 1e6개였습니다.", "p값은 2E-5였습니다."]
+
+
+def test_commonmark_code_boundaries_do_not_mask_or_create_numeric_prose():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    assert _unanchored_numeric_sentences("미완성 `\n\n결과는 42입니다.\n\n다른 문단 `") == ["결과는 42입니다."]
+    assert _unanchored_numeric_sentences("    x = 42\n\n- ```python\n  y = 9\n  ```\n\n결과는 7입니다.") == [
+        "결과는 7입니다."]
+
+
+def test_setext_headings_are_not_numeric_prose():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    assert _unanchored_numeric_sentences("결과 2026\n==========\n\n값은 7입니다.") == ["값은 7입니다."]
+
+
 def test_legacy_summary_rows_do_not_bypass_cp2_refusal():
     ledger = _ledger()
     del ledger["evidence"][0]["status"]

@@ -80,6 +80,7 @@ function reportMarkdownHTML(markdown) {
       while (i < lines.length && !lines[i].trim().startsWith(fence[1])) code.push(lines[i++]);
       i++; out.push(`<pre><code>${reportEsc(code.join('\n'))}</code></pre>`); continue;
     }
+    if (/^ {0,3}<!-- labhq-report-package:(?:v1|end) -->\s*$/.test(line)) { i++; continue; }
     const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
     if (heading) { const level = Math.min(6, heading[1].length + 1); out.push(`<h${level}>${reportInline(heading[2])}</h${level}>`); i++; continue; }
     if (i + 1 < lines.length && /^\s*\|?.+\|.+\|?\s*$/.test(line) && /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[i + 1])) {
