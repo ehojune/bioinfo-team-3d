@@ -586,6 +586,25 @@ async def test_malformed_single_metadata_is_a_lookup_failure(tmp_path, malformed
         await annotator.fulltext(["123"])
 
 
+@pytest.mark.parametrize("provider", ["api.openalex.org", "api.unpaywall.org"])
+@pytest.mark.parametrize("malformed", [None, []])
+async def test_provider_parse_failure_preserves_abstract_and_is_not_cached(tmp_path, provider, malformed):
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([record("123", None, "N", None)])
+        assert request.url.host == provider
+        return httpx.Response(200, text="not json") if malformed is None else httpx.Response(200, json=malformed)
+
+    annotator, calls = make(handler, tmp_path, unpaywall_email=(
+        "owner@example.org" if provider == "api.unpaywall.org" else ""))
+    for _ in range(2):
+        row = (await annotator.fulltext(["123"]))["results"][0]
+        assert row["ok"] and row["access_level"] == "abstract" and row["fulltext_error"]
+        assert "Boys were 51.2% of births." in (tmp_path / "work" / row["text_file"]).read_text(encoding="utf-8")
+        assert row["fulltext_receipt"]["access_level"] == "abstract"
+    assert sum(request.url.host == "www.ebi.ac.uk" for request in calls) == 2
+
+
 @pytest.mark.parametrize("doi", ["10.1002/(SICI)1097-0312(199605)49:5<235::AID-CPA2>3.0.CO;2-1",
                                 "10.1000/kinase(1)"])
 @pytest.mark.parametrize("suffix", ["", ".", ")"])

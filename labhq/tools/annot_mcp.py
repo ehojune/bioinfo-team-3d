@@ -180,12 +180,15 @@ async def _admit(tool: str, host: str) -> int:
 
 
 async def _finish(sends: list[list], outcome: str) -> None:
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(f"{BROKER}/lookup/finish", headers={"X-Labhq-Token": BROKER_TOKEN},
-                              json={"task_id": TASK_ID, "sends": sends, "outcome": outcome})
-    except httpx.HTTPError:
-        pass  # every send was counted at admission and stays counted: a 5xx/429 is given back only once it is recorded
+    async with httpx.AsyncClient(timeout=10) as client:
+        for _ in range(2):  # idempotent receipt: retry an unconfirmed settlement before the next send
+            try:
+                response = await client.post(f"{BROKER}/lookup/finish", headers={"X-Labhq-Token": BROKER_TOKEN},
+                                             json={"task_id": TASK_ID, "sends": sends, "outcome": outcome})
+                response.raise_for_status()
+                return
+            except httpx.HTTPError:
+                pass  # until recorded, the send stays counted; the next admission remains authoritative
 
 
 @asynccontextmanager

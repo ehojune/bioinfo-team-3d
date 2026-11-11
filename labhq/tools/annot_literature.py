@@ -1197,7 +1197,10 @@ class LiteratureAnnotator(Annotator):
                 else:
                     item.error, lookup_errors = str(exc), lookup_errors + 1
             except Exception as exc:  # noqa: BLE001 - one paper's failure must not fail the other IDs (#954)
-                item.error, lookup_errors = f"{type(exc).__name__}: {exc}", lookup_errors + 1
+                if item.answer:
+                    item.answer["fulltext_error"], item.volatile = f"{type(exc).__name__}: {exc}", True
+                else:
+                    item.error, lookup_errors = f"{type(exc).__name__}: {exc}", lookup_errors + 1
             finally:
                 self._body_sends_left = None
         if self._all_failed(items, lookup_errors):
