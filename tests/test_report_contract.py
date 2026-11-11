@@ -191,9 +191,9 @@ def test_bundle_edition_pdf_and_original_use_the_same_first_screen_order() -> No
     )
     pdf_html, _missing = build_report_html(request, None)
 
-    assert headings(original)[:8] == expected
-    assert headings(bundle)[:8] == expected
-    assert headings(edition)[:8] == expected
+    assert headings(original)[:len(expected)] == expected
+    assert headings(bundle)[:len(expected)] == expected
+    assert headings(edition)[:len(expected)] == expected
     assert all(pdf_html.index(f">{title}</h") < pdf_html.index(f">{next_title}</h")
                for title, next_title in zip(expected, expected[1:]))
     assert "[[claim:" not in pdf_html

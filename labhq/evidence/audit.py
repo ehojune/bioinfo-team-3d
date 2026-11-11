@@ -361,6 +361,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     observed_artifacts: dict[str, dict[str, str]] = {}
     remote_by_step: dict[str, Mapping[str, int]] = {}  # step id -> outputs kept in the HPC data folder (#1347)
     step_of_workdir: dict[str, str] = {}
+    located: dict[str, Any] = {}  # each step with the folder found on this PC, for the report-table check (#1374)
     for step_id, result in results.items():
         if not isinstance(result, Mapping):
             continue
@@ -382,6 +383,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                        "recorded_sha256": recorded.get(path), "size": None, "sha256": None,
                        "status": UNCHECKED, "detail": reason} for path in paths]
             continue
+        located[str(step_id)] = {**result, "workdir": str(workdir)}
         if str(workdir) not in scans:  # a revision reuses its step's folder: one walk serves both
             scans[str(workdir)] = TaskWorkspace.existing(workdir, str(result.get("task_id") or "")).scan_output_records(
                 zones, settings.runner.reference_scan_max_entries, settings.runner.reference_scan_max_depth,
@@ -454,12 +456,22 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
             warnings += [f"보고서 그림 원격 보관: {problem}" for problem in kept_remote]
             problems += [f"보고서 그림: {problem}" for problem in figures["problems"]]
             warnings += [f"보고서 그림 WARN: {warning}" for warning in request_bundle["figures"]["warnings"]]
+    # The report's numbers and directions against the tables it links, recomputed here (#1374). A mismatch is shown,
+    # not counted as a problem: the report front already calls such a report an unverified draft.
+    from .report_consistency import check as consistency_check, tables_for
+
+    consistency = (consistency_check(str(req.get("report") or ""), tables_for(str(req.get("report") or ""), located))
+                   if req.get("report") else None)
+    if consistency and consistency["findings"]:
+        warnings += [f"본문·결과표: {row['detail']} — \"{row['sentence'][:120]}\"" for row in consistency["findings"]]
+        if consistency["more"]:
+            warnings.append(f"본문·결과표: 외 {consistency['more']}건")
     return {"request_id": req.get("id"), "text": req.get("text"), "status": req.get("status"),
             "outcome": req.get("outcome"), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "labhq_version": __version__, "files": files, "report_check": report_check,
             "unreported_outputs": unreported, "problems": problems, "reasons": reasons, "warnings": warnings,
             "source_verification": [checked.model_dump(mode="json") for checked in source_reports],
-            "request_bundle": request_bundle,
+            "request_bundle": request_bundle, "report_consistency": consistency,
             "exit_code": 2 if reasons else 1 if problems else 0}
 
 
@@ -496,6 +508,12 @@ def render_verify(report: Mapping[str, Any]) -> str:
         lines.append(f"보고서 앵커(다시 돌림): 앵커 {check['rerun']['anchors']}개, 문제 {len(found)}건"
                      + ("" if check["same"] else f" — {check['note']}"))
         lines += [f"  - {problem}" for problem in found]
+    consistency = report.get("report_consistency")
+    if isinstance(consistency, Mapping):
+        checked, left = consistency.get("checked") or {}, consistency.get("findings") or []
+        lines.append(f"본문·결과표 대조: 표 {len(checked.get('tables') or [])}개, 수치 {checked.get('numbers', 0)}·"
+                     f"방향 {checked.get('directions', 0)}건 확인, 불일치 {len(left) + int(consistency.get('more') or 0)}건"
+                     + (" — 보고서는 검증 전 초안입니다(경고)" if left else ""))
     unreported = {sid: shown for sid, paths in report["unreported_outputs"].items()
                   if (shown := unreported_warning_paths(list(paths)))}
     if unreported:

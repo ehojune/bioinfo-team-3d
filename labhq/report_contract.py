@@ -15,10 +15,12 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from .report_markdown import markdown_body, render_marker_message, rendered_markers, replace_markdown_body
+from .evidence.report_consistency import front_lines as consistency_front_lines
 from .reproduction_receipt import receipt_note, receipt_summary
 
 
 FRONT_SECTION_TITLES = (
+    "검증 상태",  # body vs result tables and whether a rerun reproduced it (#1374)
     "질문",
     "답",
     "한계",
@@ -120,6 +122,8 @@ class ReportPackage:
     markdown_warnings: dict[str, list[str]] = field(default_factory=dict)
     pipeline: list[ReportAsset] = field(default_factory=list)
     pipeline_note: list[str] = field(default_factory=list)
+    consistency: dict[str, Any] = field(default_factory=dict)  # body vs result tables (#1374)
+    hpc: bool = False  # the analysis ran as cluster jobs: a local rerun cannot reproduce it
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -260,7 +264,16 @@ def build_report_package(request: dict[str, Any], report: str | None = None,
         required=dict(REQUIRED_BY_KIND[kind]),
         markdown_warnings={step_id: result["markdown_warnings"] for step_id, result in (results or {}).items()
                            if isinstance(result, dict) and result.get("markdown_warnings")},
+        consistency=_consistency_summary(request.get("report_consistency")),
+        hpc=(request.get("execution_location") or {}).get("mode") == "hpc",
     )
+
+
+def _consistency_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or not isinstance(value.get("findings"), list):
+        return {}
+    return {"findings": value["findings"], "more": int(value.get("more") or 0),
+            "checked": dict(value.get("checked") or {})}
 
 
 def _asset_lines(rows: list[ReportAsset], omission: str, label: str, *, image: bool = False) -> list[str]:
@@ -281,7 +294,10 @@ def render_report_front(package: ReportPackage, *, figures_as_images: bool = Fal
         if path := package.reproduction_receipt.get("path"):
             reproduction += f"\n- [재현 검증 receipt]({path})"
     execution = (f"- [실행 기록]({package.execution_record})" if package.execution_record else "- 실행 기록이 없습니다.")
+    status = (["- 해당 없음 — 실패 요청은 결과를 검증하지 않습니다."] if package.kind == "failure" else
+              consistency_front_lines(package.consistency or None, package.reproduction_receipt, hpc=package.hpc))
     sections: list[tuple[str, list[str]]] = [
+        ("검증 상태", status or ["- 기록 없음"]),
         ("질문", [package.question]),
         ("답", [package.answer]),
         *([(PIPELINE_TITLE, pipeline_lines(package, images=pipeline_images))] if package.pipeline else []),
