@@ -552,6 +552,25 @@ async def test_fulltext_tries_oa_providers_when_europe_pmc_has_no_record(tmp_pat
     assert any(call.url.host == "api.unpaywall.org" for call in calls)
 
 
+@pytest.mark.parametrize("malformed", [None, [], {"resultList": [1]}, {"resultList": {"result": [1]}},
+                                       {"resultList": {"result": {"pmid": "123"}}}])
+async def test_malformed_batch_metadata_falls_back_without_losing_other_papers(tmp_path, malformed):
+    def handler(request):
+        if request.url.path.endswith("/fullTextXML"):
+            return httpx.Response(200, text=JATS)
+        query = request.url.params["query"]
+        if " OR " in query:
+            return httpx.Response(200, text="not json") if malformed is None else httpx.Response(200, json=malformed)
+        if "EXT_ID:123 " in query:
+            return httpx.Response(200, text="still malformed")
+        return search_answer([record("456")])
+
+    annotator, _ = make(handler, tmp_path)
+    rows = (await annotator.fulltext(["123", "456"]))["results"]
+    assert rows[0]["ok"] is False
+    assert rows[1]["ok"] and rows[1]["access_level"] == "full_text"
+
+
 def test_title_identifies_a_copy_when_metadata_has_no_doi():
     meta = {"title": "A specific study of kinase inhibition"}
     text = "A specific study of kinase inhibition\n10.1000/printed-only\nAbstract and methods"

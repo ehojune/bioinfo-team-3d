@@ -1290,8 +1290,17 @@ class LiteratureAnnotator(Annotator):
             'format': 'json', 'pageSize': MAX_PER_CALL})
         if response.status_code != 200:
             raise LookupFailed(f'Europe PMC batch search HTTP {response.status_code}')
-        data = response.json()
-        hits = (data.get('resultList') or {}).get('result') or []
+        version = None
+        try:
+            data = response.json()
+            hits = (data.get('resultList') or {}).get('result') or []
+            if not isinstance(hits, list) or any(not isinstance(row, dict) for row in hits):
+                raise ValueError('malformed Europe PMC batch records')
+            version = data.get('version')
+        except (ValueError, AttributeError, TypeError):
+            # A shared decode/schema error must not abort every paper. Empty hits
+            # select the existing isolated follow-ups below, with their normal admission.
+            hits = []
         records = {}
         for paper in papers:
             records[paper.key] = next((row for row in hits
@@ -1302,7 +1311,7 @@ class LiteratureAnnotator(Annotator):
                     records[paper.key], _ = await self._record_for(paper)
                 except Exception as exc:  # noqa: BLE001
                     records[paper.key] = exc
-        return records, data.get('version')
+        return records, version
 
     def _abstract(self, paper: PaperId, rec: dict) -> dict:
         abstract = re.sub(r'<[^>]+>', '', ' '.join(str(rec.get('abstractText') or '').split()))
