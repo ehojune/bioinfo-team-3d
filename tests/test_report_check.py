@@ -148,3 +148,41 @@ def test_the_report_front_says_draft_and_no_rerun():
     assert lines[1].startswith("- 재현 실행 안 함(HPC)")
     clean = front_lines(_consistency("KLF15 log2FC 4.49 ([표](steps/s3/outputs/de.tsv))."), {"execution": "pass"})
     assert clean == [clean[0]] and "불일치 없음" in clean[0]
+
+
+async def test_a_correction_that_drops_a_link_heading_or_most_of_the_report_is_not_kept(tmp_path):
+    from labhq.evidence.report_consistency import correct_once
+    step = tmp_path / "s3"
+    (step / "outputs").mkdir(parents=True)
+    (step / "outputs" / "de.tsv").write_text(DE_TABLE, encoding="utf-8")
+    results = {"s3": {"workdir": str(step), "outputs": ["outputs/de.tsv"]}}
+    wrong = ("## 결과\n\nFOO1은 증가했습니다([표](steps/s3/outputs/de.tsv)).\n\n"
+             "## 한계\n\n표본이 작습니다. " + "근거 문장입니다. " * 20 + "\n")
+    for fixed in (
+        wrong.replace("([표](steps/s3/outputs/de.tsv))", ""),  # hides the number instead of fixing it
+        wrong.replace("## 한계", "## 기타"),  # a heading changed
+        "## 결과\n\nFOO1은 감소했습니다([표](steps/s3/outputs/de.tsv)).\n\n## 한계\n\n짧게.\n",  # most text gone
+    ):
+        async def run(prompt, fixed=fixed):
+            return fixed
+
+        body, record = await correct_once(wrong, results, run)
+        assert body == wrong and record["correction"] == "rejected_structure"
+
+
+def test_scientific_notation_is_compared_at_its_own_scale():
+    sentence = "DUSP1의 padj는 {}였습니다([표](steps/s3/outputs/de.tsv))."
+    assert _consistency(sentence.format("1.06e-139"))["findings"] == []
+    assert _consistency(sentence.format("1.1e-139"))["findings"] == []  # rounding at the shown scale
+    assert [row["value"] for row in _consistency(sentence.format("1.2e-5"))["findings"]] == ["1.2e-5"]
+
+
+def test_an_angle_bracket_link_with_spaces_is_read(tmp_path):
+    from labhq.evidence.report_consistency import check, tables_for
+    step = tmp_path / "s3"
+    (step / "outputs").mkdir(parents=True)
+    (step / "outputs" / "my de.tsv").write_text(DE_TABLE, encoding="utf-8")
+    report = "FOO1은 증가했습니다([표](<steps/s3/outputs/my de.tsv>)).\n"
+    tables = tables_for(report, {"s3": {"workdir": str(step), "outputs": ["outputs/my de.tsv"]}})
+    assert list(tables) == ["steps/s3/outputs/my de.tsv"]
+    assert [row["kind"] for row in check(report, tables)["findings"]] == ["direction"]

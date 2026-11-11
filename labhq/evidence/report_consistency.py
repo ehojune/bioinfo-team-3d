@@ -27,7 +27,8 @@ from typing import Any, Iterable, Mapping
 TABLE_SUFFIXES = {".tsv", ".csv"}
 MAX_TABLE_BYTES = 2_000_000  # a larger table is not read for the check (said so in the result)
 MAX_FINDINGS = 40
-_LINK = re.compile(r"!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+# A Markdown link: "<...>" destinations may hold spaces (the report contract allows them), plain ones may not.
+_LINK = re.compile(r"!?\[[^\]]*\]\(\s*(?:<([^<>\n]+)>|([^()\s<>]+))(?:\s+\"[^\"]*\")?\s*\)")
 _CODE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
 _ANCHOR = re.compile(r"\[\[[^\]]*\]\]")
 # Korean particles follow a number directly ("43%였고", "4.9였다"), so only Latin letters and digits end it badly.
@@ -59,8 +60,18 @@ def _value(text: str) -> float | None:
 
 
 def _decimals(text: str) -> int:
-    raw = text.strip().rstrip("%").strip().split("e")[0].split("E")[0]
-    return len(raw.split(".", 1)[1]) if "." in raw else 0
+    """Places after the point the number shows, counting its exponent: "1.2e-5" shows 6, "3.4e2" shows -1."""
+    raw = text.strip().rstrip("%").strip()
+    mantissa, _, exponent = raw.replace("E", "e").partition("e")
+    places = len(mantissa.split(".", 1)[1]) if "." in mantissa else 0
+    try:
+        return places - int(exponent) if exponent else places
+    except ValueError:
+        return places
+
+
+def _targets(text: str) -> list[str]:
+    return [(angle or plain).strip() for angle, plain in _LINK.findall(text)]
 
 
 def _sentences(report: str) -> list[str]:
@@ -71,7 +82,7 @@ def _sentences(report: str) -> list[str]:
 
 def _linked_tables(sentence: str, tables: Mapping[str, list[list[str]]]) -> list[str]:
     found = []
-    for target in _LINK.findall(sentence):
+    for target in _targets(sentence):
         path = target.replace("\\", "/").removeprefix("./")
         for name in tables:
             if path == name or path.endswith("/" + name) or name.endswith("/" + path):
@@ -201,7 +212,7 @@ def tables_for(report: str, results: Mapping[str, Any]) -> dict[str, str]:
 
     A link names ``steps/<step>/<output>``, ``<workdir_id>/<output>`` or just ``<output>``; only an output a step
     declared is read, from that step's own folder, without following links."""
-    wanted = {target.replace("\\", "/").removeprefix("./") for target in _LINK.findall(report)
+    wanted = {target.replace("\\", "/").removeprefix("./") for target in _targets(report)
               if PurePosixPath(target).suffix.casefold() in TABLE_SUFFIXES}
     found: dict[str, str] = {}
     for step_id, result in (results or {}).items():
@@ -230,8 +241,8 @@ def correction_prompt(findings: list[dict[str, Any]], report: str) -> str:
         "labhq compared the report below with the result tables it links and found sentences that do not match them.",
         "For each item, correct the sentence so its numbers and its direction (increase/decrease, higher/lower) match "
         "the linked table exactly, or remove the number if the table does not contain it. Do not redo the analysis, "
-        "change a finding, add a conclusion, or touch claim anchors [[claim:...]] and links. Return the complete "
-        "corrected report.", "", "Mismatches:", *lines, "", "Report to correct:", report])
+        "change a finding, add a conclusion, or remove or change any link, heading or claim anchor [[claim:...]]. "
+        "Return the complete corrected report.", "", "Mismatches:", *lines, "", "Report to correct:", report])
 
 
 def front_lines(consistency: Mapping[str, Any] | None, receipt: Mapping[str, Any] | None, *,
@@ -260,15 +271,28 @@ def record_lines(consistency: Mapping[str, Any] | None) -> str:
     return "## 본문·결과표 대조\n\n" + "\n".join(rows) + (f"\n- 외 {more}건" if more else "")
 
 
+MIN_KEPT_SHARE = 0.8  # a correction rewrites sentences; one that drops a fifth of the report is not a correction
+
+
+def structure(text: str) -> tuple[list[str], list[str], list[str]]:
+    """What a sentence-level correction must leave as it was: the links, the headings and the claim anchors."""
+    body = _CODE.sub(" ", text)
+    headings = [line.strip() for line in body.splitlines() if re.match(r"\s{0,3}#{1,6}\s", line)]
+    return sorted(_targets(body)), headings, sorted(_ANCHOR.findall(body))
+
+
 async def correct_once(body: str, results: Mapping[str, Any], run_fix, accept=None) -> tuple[str, dict[str, Any]]:
     """Check ``body``; with findings, ask the writer once (``run_fix(prompt) -> text | None``) and keep the fix only
-    when it leaves fewer findings and ``accept(text)`` (the caller's own checks, e.g. claim anchors) allows it."""
+    when it leaves fewer findings, keeps every link, heading and claim anchor and nearly all of the text (removing a
+    table link would "fix" a number by hiding it), and ``accept(text)`` (the caller's own checks) allows it."""
     found = check(body, tables_for(body, results))
     if not found["findings"]:
         return body, found
     fixed = await run_fix(correction_prompt(found["findings"], body))
     if not isinstance(fixed, str) or not fixed.strip():
         return body, {**found, "correction": "not_returned"}
+    if structure(fixed) != structure(body) or len(fixed.strip()) < MIN_KEPT_SHARE * len(body.strip()):
+        return body, {**found, "correction": "rejected_structure"}
     again = check(fixed, tables_for(fixed, results))
     if (len(again["findings"]) + again["more"] < len(found["findings"]) + found["more"]
             and (accept is None or accept(fixed))):
