@@ -328,7 +328,7 @@ def _unanchored_numeric_sentences(report: str) -> list[str]:
             sentence = match.group().strip()
             if not sentence or ANCHOR.search(sentence):
                 continue
-            if re.search(r"(?<![A-Za-z0-9_])\d+(?:[.,]\d+)*(?:(?:kg|mg|ng|µg|ug|mL|ml|µL|uL|L|h|min|s|mm|cm)(?![A-Za-z0-9_])|(?![A-Za-z0-9_]))", sentence):
+            if re.search(r"(?<![A-Za-z0-9_])\d+(?:[.,]\d+)*(?:[eE][+-]?\d+)?(?:(?:kg|mg|ng|µg|ug|mL|ml|µL|uL|L|h|min|s|mm|cm)(?![A-Za-z0-9_])|(?![A-Za-z0-9_]))", sentence):
                 sentences.append(sentence)
     return sentences
 

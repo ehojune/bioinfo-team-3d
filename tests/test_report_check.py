@@ -97,6 +97,13 @@ def test_footnotes_are_not_numeric_prose():
     assert _unanchored_numeric_sentences(report) == ["결과는 7입니다."]
 
 
+def test_scientific_notation_is_numeric_prose():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    assert _unanchored_numeric_sentences("세포는 1e6개였습니다. p값은 2E-5였습니다.") == [
+        "세포는 1e6개였습니다.", "p값은 2E-5였습니다."]
+
+
 def test_legacy_summary_rows_do_not_bypass_cp2_refusal():
     ledger = _ledger()
     del ledger["evidence"][0]["status"]
