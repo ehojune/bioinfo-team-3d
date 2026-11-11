@@ -571,6 +571,15 @@ async def test_malformed_batch_metadata_falls_back_without_losing_other_papers(t
     assert rows[1]["ok"] and rows[1]["access_level"] == "full_text"
 
 
+@pytest.mark.parametrize("doi", ["10.1002/(SICI)1097-0312(199605)49:5<235::AID-CPA2>3.0.CO;2-1",
+                                "10.1000/kinase(1)"])
+@pytest.mark.parametrize("suffix", ["", ".", ")"])
+def test_copy_identity_preserves_doi_suffix_punctuation(doi, suffix):
+    meta = {"doi": doi, "title": "A specific study"}
+    assert lit._copy_identity(f"A specific study\n{doi}{suffix}\nAbstract", meta)
+    assert not lit._copy_identity(f"A specific study\n{doi}another\nAbstract", meta)
+
+
 def test_title_identifies_a_copy_when_metadata_has_no_doi():
     meta = {"title": "A specific study of kinase inhibition"}
     text = "A specific study of kinase inhibition\n10.1000/printed-only\nAbstract and methods"

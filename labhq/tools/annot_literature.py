@@ -74,13 +74,17 @@ def _copy_identity(text: str, meta: dict) -> bool:
     # References can mention the target paper: only the front of the downloaded copy identifies it.
     front = text[:6000]
     doi = str(meta.get("doi") or "").casefold()
-    dois = {match.rstrip('.,;:)') for match in re.findall(r'10\.\d{4,9}/[^\s<>"\]]+', front.casefold())}
+    dois = re.findall(r'10\.\d{4,9}/[^\s"\]]+', front.casefold())
     title = normalize(str(meta.get("title") or ""))
-    if doi and dois and doi not in dois:
+    # Compare the complete expected suffix before tolerating surrounding prose
+    # punctuation: angle brackets and a final ')' can belong to the DOI itself.
+    doi_matches = bool(doi and any(token.startswith(doi) and not token[len(doi):].strip('.,;:)')
+                                  for token in dois))
+    if doi and dois and not doi_matches:
         return False
     if title:
         return title in normalize(front)
-    return bool(doi and doi in dois)
+    return doi_matches
 
 _PMID = re.compile(r"^(?:pmid:?\s*)?([0-9]{1,9})$", re.IGNORECASE)
 _PMCID = re.compile(r"^(?:pmcid:?\s*)?(PMC[0-9]{1,9})$", re.IGNORECASE)
