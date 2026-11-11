@@ -133,3 +133,17 @@ def test_null_quote_or_number_lists_are_bad_input(tmp_path):
     assert run.returncode == 2 and "numbers must be a list" in run.stderr
     assert A.audit_one({"id": "y", "doi": "10.5555/x", "quotes": None, "numbers": None},
                        {"doi:10.5555/x": {"found": True, "title": "T"}}, tmp_path)["grade"] == "ok"
+
+
+@pytest.mark.parametrize("number", ["5", "1", "10", "8"])
+def test_parts_of_a_scientific_number_are_not_plain_numbers(number):
+    assert A.number_held(number, A.Source("p = 1e-5 and q = 2.3 × 10^-8")) is False
+
+
+@pytest.mark.parametrize("entries", [{"quotes": [123]}, {"numbers": [None]}, {"numbers": [True]}])
+def test_invalid_list_entries_are_bad_input(tmp_path, entries):
+    cites = tmp_path / "c.json"
+    cites.write_text(json.dumps({"citations": [{"id": "x", "doi": "10.5555/x", **entries}]}), encoding="utf-8")
+    run = subprocess.run([sys.executable, str(ROOT / "scripts" / "citation_audit.py"), str(cites),
+                          "--records", str(AUDIT / "records.json")], capture_output=True, text=True, encoding="utf-8")
+    assert run.returncode == 2 and "every entry of" in run.stderr

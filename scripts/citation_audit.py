@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from labhq.evidence.literal_check import Quantity, Source, is_supported, normalize  # noqa: E402
+from labhq.evidence.literal_check import Quantity, Source, is_supported, normalize, quantities_in  # noqa: E402
 
 # Title tokens shared (Jaccard) at or above this are a near match: punctuation, a subtitle or a typo, not another work.
 NEAR_TITLE = 0.8
@@ -50,6 +50,14 @@ def _sci_values(text: str) -> list[float]:
             for m in _SCI_TEXT.finditer(text)]
 
 
+def source_numbers(text: str) -> tuple[tuple[Quantity, ...], list[float]]:
+    """The numbers a source writes: plain ones (with their decimal places) and scientific ones as whole values.
+
+    A scientific span is taken out before the plain numbers are read, so ``1e-5`` is one value and never the plain
+    numbers ``1`` and ``5``."""
+    return quantities_in(_SCI_TEXT.sub(" ", text)), _sci_values(text)
+
+
 def number_held(number: str, source: Source) -> bool | None:
     """Whether the source holds ``number`` at its written precision; None when it is not a number.
 
@@ -57,18 +65,18 @@ def number_held(number: str, source: Source) -> bool | None:
     at its significant digits against every number the source writes, so ``1e-5`` matches ``1e-05`` or ``1 × 10^-5``
     and never a value that merely rounds to zero, such as ``0.2``."""
     text = number.strip()
+    plain, scientific = source_numbers(source.text)
     sci = _SCI_CLAIM.fullmatch(text)
     if sci:
         value, sig = float(text), _significant(sci.group(1))
-        candidates = [q.value for q in source.quantities] + _sci_values(source.text)
-        return any(v != 0 and f"{v:.{sig - 1}e}" == f"{value:.{sig - 1}e}" for v in candidates)
+        return any(v != 0 and f"{v:.{sig - 1}e}" == f"{value:.{sig - 1}e}"
+                   for v in [q.value for q in plain] + scientific)
     claim = Quantity.parse(text)
     if claim is None:
         return None
-    if is_supported(claim, source.quantities):
+    if is_supported(claim, plain):
         return True
-    return claim.value != 0 and any(round(v, claim.decimals) == round(claim.value, claim.decimals)
-                                    for v in _sci_values(source.text))
+    return claim.value != 0 and any(round(v, claim.decimals) == round(claim.value, claim.decimals) for v in scientific)
 
 
 def _tokens(text: str) -> set[str]:
@@ -180,9 +188,14 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(citations, list) or not all(isinstance(c, dict) for c in citations) or not isinstance(records, dict):
             raise ValueError("citations must be {'citations': [...]} and records an object")
         for c in citations:
-            for key in ("quotes", "numbers"):
-                if c.get(key) is not None and not isinstance(c[key], list):
+            for key, kinds in (("quotes", (str,)), ("numbers", (str, int, float))):
+                entries = c.get(key)
+                if entries is None:
+                    continue
+                if not isinstance(entries, list):
                     raise ValueError(f"{c.get('id')!r}: {key} must be a list")
+                if any(isinstance(e, bool) or not isinstance(e, kinds) for e in entries):
+                    raise ValueError(f"{c.get('id')!r}: every entry of {key} must be {' or '.join(k.__name__ for k in kinds)}")
     except (OSError, ValueError) as error:
         print(f"입력 오류: {error}", file=sys.stderr)
         return 2
