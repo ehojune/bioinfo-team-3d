@@ -20,3 +20,7 @@ rows:
     at: "2026-11-12 04:08"
     summary: "인용 감사가 수치를 문자열로만 받아 적힌 자릿수 그대로 대조하고, 형식이 틀린 항목은 조용히 버리지 않고 major로 표시합니다."
     text: "citation_audit: numbers는 str만(JSON 숫자 거절), audit_one이 잘못된 항목을 major로, eval-suite.md 입력 규칙, 시험 5건 (#1383)"
+  - sha: "c69f909"
+    at: "2026-11-12 04:14"
+    summary: "리뷰 보정 묶음에서 서로 상쇄되던 두 오류(대조 뒤집힘·방향)를 다른 묶음으로 나누고, 인용 오류를 묶음만으로 찾도록 조회 기록을 넣었습니다. 인용 감사는 유니코드 마이너스와 0도 맞게 대조합니다."
+    text: "review_calibration: seeded(9종)+seeded_contrast(E07), 묶음별 records.json; citation_audit: 유니코드 부호 정규화·정확한 0, 시험 8건 (#1383)"
