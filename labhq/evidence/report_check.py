@@ -290,7 +290,7 @@ def _unanchored_numeric_sentences(report: str) -> list[str]:
         else:
             kept.append(line)
     text = "\n".join(kept)
-    text = CODE.sub(" ", text)
+    text = re.sub(r"(?<!`)(`+)(?!`)(.*?)(?<!`)\1(?!`)", " ", text, flags=re.DOTALL)
     text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
     sentences = []
     lines = text.splitlines()
