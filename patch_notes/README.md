@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:20 | [`17d013a`](https://github.com/ehojune/bioinfo-team-3d/commit/17d013a) | **벤치마크 결과와 채용 기록을 처리하는 중복 코드를 정리했습니다.**<br>bench 결과 표식 처리와 채용 receipt 상태 계산의 중복을 정리하고 기존 저장·보고 동작을 회귀 시험으로 확인했다. |
 | 15:00 | [`a677531`](https://github.com/ehojune/bioinfo-team-3d/pull/1378/commits/a677531) | **결과 저장소에 실제로 게시하는 영수증에도 PI의 재현 재실행 결과가 들어갑니다. 전에는 bench 사본에만 붙었습니다.**<br>reproduction_receipt.attach_rerun을 portfolio.build_portfolio_files와 result_storage가 함께 씀, 시험 1건 (#1374, PR #1378 리뷰 P1) |
 | 14:30 | [`d60bfc2`](https://github.com/ehojune/bioinfo-team-3d/pull/1378/commits/d60bfc2) | **재현 재실행이 앞 단계 산출을 링크로 받는 단계도 돌립니다. 링크를 따라가지 않고 앞 단계가 기록한 산출을 hash를 확인해 복사합니다. 실행 뒤 바뀐 스크립트나 기록과 달라진 앞 단계 산출이 있으면 돌리지 않고 그렇게 적습니다.**<br>_copy_inputs가 inputs/<step> 링크를 upstream 기록 산출로 복원(input_changed), 스크립트 hash 확인(script_changed), audit rerun_steps upstream 지도, 상태 문구, 시험 3건 (#1374, PR #1378 리뷰 P1 2) |
 | 13:55 | [`95e652a`](https://github.com/ehojune/bioinfo-team-3d/pull/1378/commits/95e652a) | manual 07 한영에 재실행 기록의 결과 결속, 끝나지 않은 요청 거부, 스크립트 없는 단계가 있으면 일부 재현 (#1374) |
