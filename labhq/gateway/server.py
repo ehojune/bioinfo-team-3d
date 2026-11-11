@@ -3422,7 +3422,7 @@ class Hub:
         return any(row["state"] in {"failed", "processing", "blocked"} and
                    row["message"].get("type") == "ask.requested" and
                    (row["message"].get("data") or {}).get("id") == ask_id
-                   for row in self.store.all("runner_inbox").values())
+                   for row in self.store.active_runner_inbox())
 
     def _ask_generation_current(self, entry: dict) -> bool:
         key = entry.get("inbox_key")
@@ -3430,7 +3430,12 @@ class Hub:
             return True
         inbox = self.store.get("runner_inbox", key)
         if not inbox:
-            return False
+            try:
+                runner_id, incarnation, _ = json.loads(key)
+            except (ValueError, TypeError):
+                return False
+            current = self.store.get("runner_incarnation", runner_id)
+            return current is None or current.get("id") == incarnation
         current = self.store.get("runner_incarnation", inbox["runner_id"])
         return current is None or current.get("id") == inbox["incarnation"]
 
@@ -3941,7 +3946,7 @@ class Hub:
             except Exception:
                 log.warning("runner inbox recovery held sequence %s", inbox["seq"])
 
-        inboxes = sorted(self.store.all("runner_inbox").values(), key=lambda row: row.get("admission_order", 0))
+        inboxes = sorted(self.store.active_runner_inbox(), key=lambda row: row.get("admission_order", 0))
         for inbox in inboxes:
             if inbox["state"] != "processing":
                 continue
@@ -4236,7 +4241,14 @@ class Hub:
                     return
                 try:
                     await self._on_runner_message(runner_id, row["message"], ws, incarnation, inbox_owned=True)
-                except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+                except (OSError, sqlite3.Error, ValueError, KeyError, TypeError) as exc:
+                    try:
+                        await self._publication_write(self.store.aset_runner_inbox_state(
+                            runner_id, incarnation, seq, "failed",
+                            "storage_interrupted" if isinstance(exc, (OSError, sqlite3.Error)) else "invalid_message",
+                            expected="processing"))
+                    except (OSError, sqlite3.Error):
+                        pass  # Keep processing and do not ACK if the failure cannot be persisted.
                     raise
                 except Exception as exc:
                     await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "failed",
@@ -4245,9 +4257,16 @@ class Hub:
                 else:
                     await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "completed",
                                                             expected="processing")
+            elif row["state"] == "processing" or (row["state"] == "failed" and row.get("error") == "invalid_message"):
+                return  # An uncertain execution must not lose its runner copy.
             if ws is not None and (self.runners.get(runner_id) is not ws or
                                    self.runner_incarnations.get(runner_id) != incarnation):
                 return
+            for prior in self.store.active_runner_inbox():
+                if (prior["runner_id"] == runner_id and prior["incarnation"] == incarnation and prior["seq"] <= seq and
+                        (prior["state"] == "processing" or
+                         (prior["state"] == "failed" and prior.get("error") == "invalid_message"))):
+                    return  # A cumulative ACK must not discard an earlier unacknowledged copy.
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": seq})
 
     def _inbox_admission_lock(self):
@@ -4258,6 +4277,12 @@ class Hub:
     async def _admit_runner_inbox(self, runner_id: str, incarnation: str | None, seq: int, msg: dict) -> tuple[dict, bool]:
         async with self._inbox_admission_lock():
             row = await self.store.aaccept_runner_inbox(runner_id, incarnation, seq, msg)
+            if (row["state"] == "failed" and row.get("error") == "storage_interrupted" and
+                    row["message"].get("type") in {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}):
+                return await self.store.aclaim_runner_publication_retry(runner_id, incarnation, seq), True
+            if (row["state"] == "processing" and row["message"].get("type") in
+                    {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}):
+                return row, True  # The per-runner lock ensures the earlier attempt has stopped.
             if row["state"] != "pending":
                 return row, False
             msg = row["message"]  # classify the same immutable snapshot that will be executed
@@ -4278,7 +4303,7 @@ class Hub:
 
             task_id, request_id = scope(msg)
             activity_types = {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}
-            for previous in self.store.all("runner_inbox").values():
+            for previous in self.store.active_runner_inbox():
                 if (previous["runner_id"], previous["incarnation"], previous["seq"]) == (runner_id, incarnation, seq):
                     continue
                 if (previous.get("admission_order") is not None and row.get("admission_order") is not None and
@@ -4325,7 +4350,7 @@ class Hub:
                 target = self.store.runner_inbox(runner_id, incarnation, seq)
                 if target is None:
                     raise KeyError(seq)
-                for previous in self.store.all("runner_inbox").values():
+                for previous in self.store.active_runner_inbox():
                     if (previous["runner_id"], previous["incarnation"], previous["seq"]) == (runner_id, incarnation, seq):
                         continue
                     if (previous["state"] != "completed" and

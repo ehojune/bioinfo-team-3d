@@ -88,7 +88,7 @@ def test_manifest_update_rejects_replaced_workspace(tmp_path):
 def test_hook_receipt_and_runner_manifest_update_do_not_overwrite_each_other(tmp_path, monkeypatch):
     import json
     import threading
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
     from labhq.runner import workspace
 
     (tmp_path / "manifest.json").write_text('{"runs": {"t1": {}}}', encoding="utf-8")
@@ -111,7 +111,7 @@ def test_hook_receipt_and_runner_manifest_update_do_not_overwrite_each_other(tmp
         update = runners.submit(ws._update_run_now, "t1", {"result": "done"})
         try:
             update.result(timeout=0.25)
-        except TimeoutError:
+        except FutureTimeout:
             pass  # a lock correctly waits for the hook
         finally:
             resume.set()

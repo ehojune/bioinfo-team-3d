@@ -454,7 +454,8 @@ class PolicySettings(_SettingsModel):
     bioinfo_agent: BioinfoAgentPolicy = BioinfoAgentPolicy()
 
 
-class RecruitSettings(_SettingsModel):
+class RecruitSettings(BaseModel):
+    model_config = {"extra": "forbid"}
     enabled: StrictBool = False  # v1.0 default off (#1336); False disables hiring and Paper2Agent preparation, not ordinary staff
     agent_id: str = "recruiter"
     permission_mode: str = "auto"  # unattended conversion; see docs/manual.md '파견직 제도' (run inside a container if you can)

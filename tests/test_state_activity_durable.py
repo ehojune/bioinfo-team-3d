@@ -323,10 +323,13 @@ async def test_cancel_during_event_and_activity_commit_keeps_both_without_ack(
         monkeypatch.setattr(hub.store, "_transaction", original)
         # The runner never got its ack, so it sends the message again.
         await hub.on_runner_message("r", activity_message())
-        assert hub.store.get("task", "t") == after
-        assert len(hub.store.events_since(0)) == (0 if fail else 1)
-        assert hub.store.runner_inbox("r", None, 1)["state"] == "processing"
-        assert trace == ["ack"]
+        recovered = hub.store.get("task", "t")
+        assert recovered["activity"]["tools"]["one"]["input"] == {"value": "original"}
+        if not fail:
+            assert recovered == after
+        assert len(hub.store.events_since(0)) == 1
+        assert hub.store.runner_inbox("r", None, 1)["state"] == "completed"
+        assert trace == ["publish", "ack"]
     finally:
         release.set()
         await asyncio.gather(pending, return_exceptions=True)

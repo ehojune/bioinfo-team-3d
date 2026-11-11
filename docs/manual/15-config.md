@@ -6,7 +6,7 @@
 
 설정 이름이 틀리거나 지원하지 않는 항목이 있으면 오류로 중단합니다. `labhq up`과 `labhq gateway`는 `gateway.client_token`과 `gateway.runner_token`의 공개 기본값을 거부하므로 두 값을 모두 바꾸세요.
 
-Runner 메시지 보류 상태는 client token으로 인증한 `GET /api/runner-inbox/{runner_id}`에서 확인합니다. 응답에는 원문이 없습니다. `POST /api/runner-inbox/{runner_id}/{seq}/retry`는 log·activity 또는 시작 전 발행에 실패한 ask에만 허용하고, `/resume`은 앞선 보류가 해소된 미실행 항목만 처리합니다. `incarnation` query로 세대를 지정합니다. 결과를 알 수 없는 작업은 자동 재실행하지 않습니다.
+Runner 메시지 보류 상태는 client token으로 인증한 `GET /api/runner-inbox/{runner_id}`에서 확인합니다. 응답에는 원문이 없습니다. `POST /api/runner-inbox/{runner_id}/{seq}/retry`는 log·activity 또는 시작 전 발행에 실패한 ask에만 허용하고, `/resume`은 앞선 보류가 해소된 미실행 항목만 처리합니다. `incarnation` query로 세대를 지정합니다. 결과를 알 수 없는 작업은 자동 재실행하지 않습니다. 완료된 inbox는 최근 256건을 유지하며, 미완료·전달 대기 기록은 정리하지 않습니다.
 
 테스트 요청 정리는 `python scripts/purge_test_requests.py --database <gateway.sqlite3>`로 후보만 확인합니다. 기본 표지는 정확한 문구 `save outputs/counts.tsv`·agent `worker`·mode `direct` 세 가지입니다. 삭제는 gateway를 끈 유지보수 시간에만 `--apply --gateway-stopped --config <설정> --backup <새 파일>`을 붙입니다. 먼저 SQLite 백업을 만들고 일치한 요청과 이벤트만 지웁니다. 데모 문구는 자동 선택하지 않습니다.
 

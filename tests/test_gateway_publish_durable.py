@@ -242,6 +242,162 @@ async def test_failed_unpublished_log_can_be_retried_explicitly(gateway, monkeyp
     assert [e["data"]["text"] for e in hub.store.events_since(0)] == ["retained"]
 
 
+async def test_transient_store_error_retries_safe_activity_on_redelivery(gateway, monkeypatch):
+    hub = gateway
+    sent, calls = [], []
+    message = {"type": "agent.log", "runner_seq": 1, "data": {"text": "retained"}}
+
+    async def process(*args, **kwargs):
+        calls.append(True)
+        if len(calls) == 1:
+            raise OSError("temporary storage failure")
+
+    async def send(_runner, msg):
+        sent.append(msg)
+
+    monkeypatch.setattr(hub, "_on_runner_message", process)
+    monkeypatch.setattr(hub, "send_runner", send)
+    with pytest.raises(OSError):
+        await hub.on_runner_message("runner", message)
+    assert sent == []
+    assert hub.store.runner_inbox("runner", None, 1)["state"] == "failed"
+    await hub.on_runner_message("runner", message)
+    assert len(calls) == 2
+    assert hub.store.runner_inbox("runner", None, 1)["state"] == "completed"
+    assert sent == [{"type": "runner.ack", "runner_seq": 1}]
+
+
+async def test_no_ack_for_processing_row_when_failure_cannot_be_recorded(gateway, monkeypatch):
+    hub = gateway
+    sent = []
+    message = {"type": "task.accepted", "runner_seq": 1, "data": {}}
+    set_state = hub.store.aset_runner_inbox_state
+
+    async def process(*args, **kwargs):
+        raise OSError("storage failure")
+
+    async def unavailable(runner, generation, seq, state, *args, **kwargs):
+        if state == "failed":
+            raise OSError("cannot persist failure")
+        return await set_state(runner, generation, seq, state, *args, **kwargs)
+
+    async def send(_runner, msg):
+        sent.append(msg)
+
+    monkeypatch.setattr(hub, "_on_runner_message", process)
+    monkeypatch.setattr(hub.store, "aset_runner_inbox_state", unavailable)
+    monkeypatch.setattr(hub, "send_runner", send)
+    with pytest.raises(OSError):
+        await hub.on_runner_message("runner", message)
+    assert hub.store.runner_inbox("runner", None, 1)["state"] == "processing"
+    await hub.on_runner_message("runner", message)
+    await hub.on_runner_message("runner", {"type": "agent.log", "runner_seq": 2, "data": {"text": "later"}})
+    assert sent == []
+
+
+async def test_protocol_failure_is_not_acknowledged_on_redelivery(gateway, monkeypatch):
+    hub = gateway
+    sent = []
+
+    async def invalid(*args, **kwargs):
+        raise ValueError("invalid runner message")
+
+    async def send(_runner, msg):
+        sent.append(msg)
+
+    monkeypatch.setattr(hub, "_on_runner_message", invalid)
+    monkeypatch.setattr(hub, "send_runner", send)
+    msg = {"type": "task.accepted", "runner_seq": 1, "data": {}}
+    with pytest.raises(ValueError):
+        await hub.on_runner_message("runner", msg)
+    await hub.on_runner_message("runner", msg)
+    await hub.on_runner_message("runner", {"type": "agent.log", "runner_seq": 2, "data": {"text": "later"}})
+    assert hub.store.runner_inbox("runner", None, 1)["error"] == "invalid_message"
+    assert sent == []
+
+
+async def test_completed_inbox_retention_is_bounded_without_losing_holds(gateway, monkeypatch):
+    import labhq.store as store_module
+
+    monkeypatch.setattr(store_module, "RUNNER_INBOX_COMPLETED_LIMIT", 3)
+    store = gateway.store
+    held = {"type": "agent.log", "runner_seq": 1, "data": {"text": "held"}}
+    store.accept_runner_inbox("runner", None, 1, held)
+    store.set_runner_inbox_state("runner", None, 1, "failed", "unknown")
+    for seq in range(2, 8):
+        msg = {"type": "agent.log", "runner_seq": seq, "data": {"text": str(seq)}}
+        store.accept_runner_inbox("runner", None, seq, msg)
+        store.set_runner_inbox_state("runner", None, seq, "processing", expected="pending")
+        key = store._runner_inbox_key("runner", None, seq)
+        store.prepare_runner_publication(key, "message", msg)
+        store.commit_runner_publication(key, "message", 100)
+        await store.amark_runner_publication_done(key, "message", "delivery_state")
+        await store.amark_runner_publication_done(key, "message", "interpreter_state")
+        store.set_runner_inbox_state("runner", None, seq, "completed", expected="processing")
+    assert store.runner_inbox("runner", None, 1)["message"] == held
+    assert len(store.all("runner_inbox")) <= 4
+    assert len(store.all("runner_publication")) <= 3
+    duplicate = {"type": "agent.log", "runner_seq": 2, "data": {"text": "2"}}
+    assert store.accept_runner_inbox("runner", None, 2, duplicate)["state"] == "completed"
+    assert len(store.all("runner_inbox")) <= 4
+    reopened = StateStore(store.path)
+    try:
+        assert reopened.runner_inbox("runner", None, 1)["message"] == held
+        assert len(reopened.all("runner_inbox")) <= 4
+    finally:
+        reopened.close()
+
+
+async def test_retention_keeps_pending_effects_and_compacts_resolved_ask(gateway, monkeypatch):
+    import labhq.store as store_module
+
+    monkeypatch.setattr(store_module, "RUNNER_INBOX_COMPLETED_LIMIT", 1)
+    store = gateway.store
+    store.runner_incarnation("runner", "old")
+    ask = {"type": "ask.requested", "runner_seq": 1, "data": {"id": "a"}}
+    store.accept_runner_inbox("runner", "old", 1, ask)
+    store.set_runner_inbox_state("runner", "old", 1, "processing", expected="pending")
+    key = store._runner_inbox_key("runner", "old", 1)
+    store.put("ask", "a", {"state": "resolved", "origin": "runner", "answer": {"answer": "ok"},
+                           "inbox_key": key, "answer_publish_intent": True})
+    for name, event in (("message", ask), ("agent.answer", {"type": "agent.answer", "data": {"answer": "ok"}})):
+        store.prepare_runner_publication(key, name, event)
+        store.commit_runner_publication(key, name, 100)
+        await store.amark_runner_publication_done(key, name, "delivery_state")
+        if name == "message":
+            await store.amark_runner_publication_done(key, name, "interpreter_state")
+    store.set_runner_inbox_state("runner", "old", 1, "completed", expected="processing")
+    msg = {"type": "agent.log", "runner_seq": 2, "data": {"text": "new"}}
+    store.accept_runner_inbox("runner", "old", 2, msg)
+    store.set_runner_inbox_state("runner", "old", 2, "processing", expected="pending")
+    store.set_runner_inbox_state("runner", "old", 2, "completed", expected="processing")
+    assert store.runner_inbox("runner", "old", 1) is not None  # interpreter is still pending
+    await store.amark_runner_publication_done(key, "agent.answer", "interpreter_state")
+    assert store.runner_inbox("runner", "old", 1) is None
+    entry = store.get("ask", "a")
+    assert entry["answer"]["answer"] == "ok" and not entry["answer_publish_intent"]
+    assert gateway._ask_generation_current(entry)
+    store.runner_incarnation("runner", "new")
+    assert not gateway._ask_generation_current(entry)
+
+
+async def test_admission_does_not_scan_completed_inbox(gateway, monkeypatch):
+    hub = gateway
+    plan = hub.store.db.execute("EXPLAIN QUERY PLAN SELECT body FROM state INDEXED BY runner_inbox_status_idx WHERE kind='runner_inbox' "
+                                "AND json_extract(body, '$.state') IN ('pending','processing','failed','blocked')").fetchall()
+    assert any("runner_inbox_status_idx" in row[-1] for row in plan)
+    all_rows = hub.store.all
+
+    def no_full_scan(kind):
+        assert kind != "runner_inbox", "admission scanned every retained inbox row"
+        return all_rows(kind)
+
+    monkeypatch.setattr(hub.store, "all", no_full_scan)
+    row, claimed = await hub._admit_runner_inbox("runner", None, 1,
+                                                {"type": "agent.log", "runner_seq": 1, "data": {}})
+    assert claimed and row["state"] == "processing"
+
+
 async def test_startup_recovers_committed_runner_publication(gateway):
     hub = gateway
     store = hub.store
@@ -1426,7 +1582,7 @@ async def test_reconnect_does_not_reexecute_inflight_delivery(gateway, monkeypat
     hub = gateway
     hub.runner_capabilities = {}
     hub.recruits_running = {}
-    message = {"type": "agent.log", "runner_seq": 1, "data": {"text": "uncertain"}}
+    message = {"type": "task.accepted", "runner_seq": 1, "data": {}}
     hub.store.accept_runner_inbox("runner", None, 1, message)
     hub.store.set_runner_inbox_state("runner", None, 1, "processing", expected="pending")
     called = []

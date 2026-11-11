@@ -1986,7 +1986,7 @@ async def test_a_resend_waits_for_the_first_copy_so_the_next_seq_cannot_overtake
         gateway.store.close()
 
 
-async def test_a_cancelled_first_copy_does_not_block_the_resend(tmp_path):
+async def test_cancelled_unknown_copy_is_held_without_ack(tmp_path):
     s = settings(tmp_path)
     gateway = Hub(s)
     gateway.register_runner("local", _AckSocket(), [])
@@ -2009,7 +2009,7 @@ async def test_a_cancelled_first_copy_does_not_block_the_resend(tmp_path):
         assert not [e for e in gateway.events if e["type"] == "test.note"]
         assert gateway.store.runner_seen("local") == 0
         assert gateway.store.runner_inbox("local", None, 9)["state"] == "processing"
-        assert gateway.runners["local"].sent[-1] == {"type": "runner.ack", "runner_seq": 9}
+        assert gateway.runners["local"].sent == []  # unknown side effects and the runner copy remain held
     finally:
         gateway.store.close()
 
