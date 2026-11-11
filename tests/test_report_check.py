@@ -210,3 +210,35 @@ def test_a_linked_table_that_could_not_be_read_is_not_reported_as_clean():
     assert result["findings"] == [] and result["checked"]["unread_tables"] == ["steps/s3/outputs/big.tsv"]
     lines = front_lines(result, {"execution": "pass"})
     assert lines == ["- 본문·결과표 대조: 연결된 표 1개는 읽지 못해 대조하지 않았습니다(steps/s3/outputs/big.tsv)"]
+
+
+@pytest.mark.parametrize("sentence", [
+    "OR 1.5로 반응률이 증가했습니다([임상](steps/s2/outputs/clinical.tsv)).",  # response odds: event not stated
+    "OR 1.5로 반응률이 감소했습니다([임상](steps/s2/outputs/clinical.tsv)).",
+    "RR 0.58로 생존이 증가했습니다([임상](steps/s2/outputs/clinical.tsv)).",  # a non-hazard ratio of survival
+])
+def test_a_ratio_whose_modelled_event_is_not_stated_is_not_checked(sentence):
+    assert [row for row in _consistency(sentence)["findings"] if row["kind"] == "direction"] == []
+
+
+async def test_a_correction_that_swaps_links_between_sentences_is_not_kept(tmp_path):
+    from labhq.evidence.report_consistency import correct_once
+    step = tmp_path / "s3"
+    (step / "outputs").mkdir(parents=True)
+    (step / "outputs" / "de.tsv").write_text(DE_TABLE, encoding="utf-8")
+    (step / "outputs" / "other.tsv").write_text("x\ty\n1.0\t2.0\n", encoding="utf-8")
+    results = {"s3": {"workdir": str(step), "outputs": ["outputs/de.tsv", "outputs/other.tsv"]}}
+    wrong = ("FOO1은 증가했습니다([표](steps/s3/outputs/de.tsv)). 다른 값은 2.0입니다([b](steps/s3/outputs/other.tsv)). "
+             + "근거 문장입니다. " * 10)
+    swapped = ("FOO1은 감소했습니다([b](steps/s3/outputs/other.tsv)). 다른 값은 2.0입니다([표](steps/s3/outputs/de.tsv)). "
+               + "근거 문장입니다. " * 10)
+
+    async def run(prompt):
+        return swapped
+
+    body, record = await correct_once(wrong, results, run)
+    assert body == wrong and record["correction"] == "rejected_structure"
+
+
+def test_tilde_fenced_examples_are_not_checked():
+    assert _consistency("~~~\nKLF15 log2FC 9.9 ([표](steps/s3/outputs/de.tsv)).\n~~~\n")["findings"] == []

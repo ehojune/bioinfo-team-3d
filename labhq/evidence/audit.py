@@ -361,6 +361,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     observed_artifacts: dict[str, dict[str, str]] = {}
     remote_by_step: dict[str, Mapping[str, int]] = {}  # step id -> outputs kept in the HPC data folder (#1347)
     step_of_workdir: dict[str, str] = {}
+    located: dict[str, Any] = {}  # each step with the folder found on this PC, for the report-table check (#1374)
     for step_id, result in results.items():
         if not isinstance(result, Mapping):
             continue
@@ -382,6 +383,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                        "recorded_sha256": recorded.get(path), "size": None, "sha256": None,
                        "status": UNCHECKED, "detail": reason} for path in paths]
             continue
+        located[str(step_id)] = {**result, "workdir": str(workdir)}
         if str(workdir) not in scans:  # a revision reuses its step's folder: one walk serves both
             scans[str(workdir)] = TaskWorkspace.existing(workdir, str(result.get("task_id") or "")).scan_output_records(
                 zones, settings.runner.reference_scan_max_entries, settings.runner.reference_scan_max_depth,
@@ -458,7 +460,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     # not counted as a problem: the report front already calls such a report an unverified draft.
     from .report_consistency import check as consistency_check, tables_for
 
-    consistency = (consistency_check(str(req.get("report") or ""), tables_for(str(req.get("report") or ""), results))
+    consistency = (consistency_check(str(req.get("report") or ""), tables_for(str(req.get("report") or ""), located))
                    if req.get("report") else None)
     if consistency and consistency["findings"]:
         warnings += [f"본문·결과표: {row['detail']} — \"{row['sentence'][:120]}\"" for row in consistency["findings"]]

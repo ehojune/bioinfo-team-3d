@@ -29,7 +29,7 @@ MAX_TABLE_BYTES = 2_000_000  # a larger table is not read for the check (said so
 MAX_FINDINGS = 40
 # A Markdown link: "<...>" destinations may hold spaces (the report contract allows them), plain ones may not.
 _LINK = re.compile(r"!?\[[^\]]*\]\(\s*(?:<([^<>\n]+)>|([^()\s<>]+))(?:\s+\"[^\"]*\")?\s*\)")
-_CODE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
+_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.S)  # backtick and tilde fences, inline code
 _ANCHOR = re.compile(r"\[\[[^\]]*\]\]")
 # Korean particles follow a number directly ("43%였고", "4.9였다"), so only Latin letters and digits end it badly.
 _NUMBER = re.compile(r"(?<![A-Za-z0-9_.])[-−–]?\d+(?:[.,]\d+)*(?:[eE][-+]?\d+)?\s*%?(?![A-Za-z0-9_.])")
@@ -43,7 +43,13 @@ _LOG_EFFECT = re.compile(r"\b(?:log2\s*\(?\s*fc\)?|log2\s*fold[\s-]*change|log2F
 _RATIO_EFFECT = re.compile(r"\b(?:HR|OR|RR|IRR|hazard\s+ratio|odds\s+ratio|risk\s+ratio|fold[\s-]*change|FC)\b"
                            r"\s*(?:\(|=|:|of|은|는|이|가|값)?\s*(\d+(?:\.\d+)?)", re.I)
 # Words that flip what "up" means for a ratio (a hazard ratio below 1 is a lower risk but a longer survival).
-_FLIPS = re.compile(r"생존|survival|\bOS\b|\bPFS\b|\bDFS\b|\bEFS\b|반응률|response|관해|remission", re.I)
+# A ratio's direction is checked only where its meaning is plain. A hazard ratio about survival (OS, PFS, ...) means
+# the event is death or progression: HR < 1 is survival going up, so the check inverts it. Any other ratio about a
+# survival or response endpoint (an odds ratio of response, an HR of response) has a modelled event the sentence does
+# not state, so it is not checked: a wrong "mismatch" would send a valid conclusion back for rewriting.
+_SURVIVAL = re.compile(r"생존|survival|\bOS\b|\bPFS\b|\bDFS\b|\bEFS\b|\bRFS\b", re.I)
+_ENDPOINT = re.compile(r"반응|response|관해|remission|\bORR\b|\bCR\b|\bPR\b", re.I)
+_HAZARD = re.compile(r"^(?:HR|hazard\s+ratio)", re.I)
 _LOG_COLUMN = re.compile(r"^(?:log2[\s_.]*f(?:old)?[\s_.]*c(?:hange)?|log2fc|l2fc|lfc|logfc|log2foldchange)$", re.I)
 _YEARS = range(1900, 2101)
 
@@ -190,10 +196,16 @@ def check(report: str, tables: Mapping[str, str | None]) -> dict[str, Any]:
             continue
         effects = [("log2FC", value, value > 0, value < 0) for value in
                    (_value(m.group(1)) for m in _LOG_EFFECT.finditer(sentence)) if value is not None]
-        flipped = bool(_FLIPS.search(sentence))  # HR < 1 means survival or response went up, risk went down
-        effects += [(m.group(0).split()[0], value, (value < 1) if flipped else (value > 1),
-                     (value > 1) if flipped else (value < 1)) for m in _RATIO_EFFECT.finditer(sentence)
-                    if (value := _value(m.group(1))) is not None]
+        survival, endpoint = bool(_SURVIVAL.search(sentence)), bool(_ENDPOINT.search(sentence))
+        for m in _RATIO_EFFECT.finditer(sentence):
+            if (value := _value(m.group(1))) is None:
+                continue
+            hazard = bool(_HAZARD.match(m.group(0)))
+            if endpoint or (survival and not hazard):
+                continue  # the modelled event is not stated: not checked
+            flipped = survival and hazard
+            effects.append((m.group(0).split()[0], value, (value < 1) if flipped else (value > 1),
+                            (value > 1) if flipped else (value < 1)))
         effects += [(identifier, value, value > 0, value < 0)
                     for identifier, value in _row_effects(sentence, parsed, linked)]
         for label, value, up, down in effects:
@@ -301,7 +313,10 @@ def structure(text: str) -> tuple[list[str], list[str], list[str]]:
     """What a sentence-level correction must leave as it was: the links, the headings and the claim anchors."""
     body = _CODE.sub(" ", text)
     headings = [line.strip() for line in body.splitlines() if re.match(r"\s{0,3}#{1,6}\s", line)]
-    return sorted(_targets(body)), headings, sorted(_ANCHOR.findall(body))
+    # In document order: a fix that swaps two sentences' links or anchors keeps the multiset but not the order.
+    marks = [m.group(0) for m in re.finditer(r"\[\[[^\]]*\]\]|!?\[[^\]]*\]\([^)]*\)", body)]
+    return ([mark for mark in marks if not mark.startswith("[[")], headings,
+            [mark for mark in marks if mark.startswith("[[")])
 
 
 async def correct_once(body: str, results: Mapping[str, Any], run_fix, accept=None) -> tuple[str, dict[str, Any]]:

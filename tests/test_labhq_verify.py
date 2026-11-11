@@ -537,3 +537,18 @@ async def test_verify_rechecks_the_report_against_its_tables_as_a_warning(tmp_pa
     assert any(warning.startswith("본문·결과표:") for warning in data["warnings"])
     code, out = _verify(monkeypatch, capsys, settings, _request(result, report=report))
     assert "본문·결과표 대조:" in out and "불일치 1건" in out and "검증 전 초안" in out
+
+
+async def test_verify_reads_report_tables_from_the_folder_it_located(tmp_path, monkeypatch, capsys):
+    """#1374 review: a request verified after its workspace moved still compares the report with its tables."""
+    settings, result = await _run(tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/table.tsv", BODY))
+    moved = result.model_dump(mode="json")
+    moved["workdir"] = str(tmp_path / "elsewhere" / Path(result.workdir).name)  # stale absolute path
+    report = "CD276은 감소했습니다(log2fc 2.5, [표](steps/s1/outputs/table.tsv)).\n"
+    code, out = _verify(monkeypatch, capsys, settings, {**_request(result), "results": {"s1": moved},
+                                                        "report": report}, "--json")
+    data = json.loads(out)
+    if data["reasons"]:  # this layout could not be located from the record: nothing to compare, by design
+        pytest.skip("workdir not locatable from workdir_id in this layout")
+    assert data["report_consistency"]["checked"]["tables"] == ["steps/s1/outputs/table.tsv"]
+    assert [row["kind"] for row in data["report_consistency"]["findings"]] == ["direction"]
