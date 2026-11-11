@@ -51,6 +51,7 @@ def test_each_numeric_prose_sentence_requires_its_own_anchor():
     report = ("# 결과 2026\n\n첫 결과는 3입니다. [[claim:s1/c1]] 두 번째 결과는 12.3입니다.\n"
               "셋째 결과는 4%입니다 [[claim:s1/c1]].\n\n"
               "| 값 | 9 |\n|---|---|\n| A | 7 |\n\n"
+              "Name | Value\n--- | ---\nfoo | 12.3\n\n"
               "`42`와 DUSP1 및 [자료](https://example.org/123)는 식별자입니다.\n"
               "~~~\n값은 99입니다.\n~~~\n")
     check = check_report(report, {"s1": _ledger()}, artifact_sha256={"s1/a1": "a" * 64})

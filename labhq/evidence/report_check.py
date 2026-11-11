@@ -280,7 +280,18 @@ def _unanchored_numeric_sentences(report: str) -> list[str]:
     text = CODE.sub(" ", text)
     text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
     sentences = []
-    for line in text.splitlines():
+    lines = text.splitlines()
+    table_lines: set[int] = set()
+    for i in range(1, len(lines)):
+        if "|" in lines[i - 1] and re.fullmatch(r"\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*", lines[i]):
+            table_lines.update((i - 1, i))
+            j = i + 1
+            while j < len(lines) and "|" in lines[j] and lines[j].strip():
+                table_lines.add(j)
+                j += 1
+    for i, line in enumerate(lines):
+        if i in table_lines:
+            continue
         line = line.strip()
         if not line or line.startswith(("#", "|")):
             continue
