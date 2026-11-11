@@ -111,7 +111,10 @@ def test_tables_are_read_only_from_a_steps_declared_outputs_in_its_own_folder(tm
     (step / "outputs" / "secret.tsv").write_text("x\n", encoding="utf-8")
     report = "[a](steps/s3/outputs/de.tsv) [b](steps/s3/outputs/secret.tsv) [c](steps/s3/outputs/../../x.tsv)"
     found = tables_for(report, {"s3": {"workdir": str(step), "outputs": ["outputs/de.tsv"]}})
-    assert found == {"steps/s3/outputs/de.tsv": DE_TABLE}  # undeclared or escaping links are not read
+    assert {k: v for k, v in found.items() if v is not None} == {"steps/s3/outputs/de.tsv": DE_TABLE}
+    # undeclared or escaping links are not read, and are kept as "linked but not compared"
+    assert sorted(k for k, v in found.items() if v is None) == [
+        "steps/s3/outputs/../../x.tsv", "steps/s3/outputs/secret.tsv"]
 
 
 async def test_the_writer_gets_one_correction_and_a_worse_fix_is_not_kept(tmp_path):
@@ -186,3 +189,24 @@ def test_an_angle_bracket_link_with_spaces_is_read(tmp_path):
     tables = tables_for(report, {"s3": {"workdir": str(step), "outputs": ["outputs/my de.tsv"]}})
     assert list(tables) == ["steps/s3/outputs/my de.tsv"]
     assert [row["kind"] for row in check(report, tables)["findings"]] == ["direction"]
+
+
+def test_a_flipped_sign_without_a_direction_word_is_found():
+    [finding] = _consistency("FOO1의 log2FC는 1.8이었습니다([표](steps/s3/outputs/de.tsv)).")["findings"]
+    assert finding["kind"] == "sign" and finding["value"] == "1.8"
+    assert _consistency("FOO1의 log2FC는 -1.8이었습니다([표](steps/s3/outputs/de.tsv)).")["findings"] == []
+    assert _consistency("FOO1은 1.8만큼 감소했습니다([표](steps/s3/outputs/de.tsv)).")["findings"] == []  # words carry it
+
+
+def test_survival_inverts_a_ratio_instead_of_skipping_it():
+    [finding] = _consistency("HR 0.58로 생존이 감소했습니다([임상](steps/s2/outputs/clinical.tsv)).")["findings"]
+    assert finding["kind"] == "direction" and finding["value"] == "HR 0.58"
+    assert _consistency("HR 0.58로 생존이 증가했습니다([임상](steps/s2/outputs/clinical.tsv)).")["findings"] == []
+
+
+def test_a_linked_table_that_could_not_be_read_is_not_reported_as_clean():
+    from labhq.evidence.report_consistency import check, front_lines
+    result = check("KLF15 log2FC 4.49 ([표](steps/s3/outputs/big.tsv)).", {"steps/s3/outputs/big.tsv": None})
+    assert result["findings"] == [] and result["checked"]["unread_tables"] == ["steps/s3/outputs/big.tsv"]
+    lines = front_lines(result, {"execution": "pass"})
+    assert lines == ["- 본문·결과표 대조: 연결된 표 1개는 읽지 못해 대조하지 않았습니다(steps/s3/outputs/big.tsv)"]
