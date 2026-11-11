@@ -1,0 +1,6 @@
+pr: 1376
+rows:
+- sha: '673ff4d'
+  at: 2026-11-11 10:15
+  text: '시험용 fake gateway가 이른 입력을 시간·스레드 경쟁이 아니라 인사말 전 stdin에 남은 입력(PeekNamedPipe·select)으로 판정한다. 번갈아 실패하던 HPC 세션 시험 2건의 원인 (#1373).'
+  summary: 부하가 큰 Windows 자동 검사에서 HPC 세션 시험이 들쭉날쭉 실패하던 문제를 고쳤습니다.
