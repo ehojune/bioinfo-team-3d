@@ -551,6 +551,13 @@ def render_verify(report: Mapping[str, Any]) -> str:
                         else f"원격 보관 {remote}개, 나머지는 묶음 안에 있음" if remote else "모두 묶음 안에 있음"))
     if report.get("bundle"):
         lines.append(f"감사 번들: {report['bundle']}")
+    if isinstance(report.get("rerun"), Mapping):
+        rerun = report["rerun"]
+        lines.append(f"재현 재실행: {RERUN_KO.get(rerun.get('status'), rerun.get('status'))}")
+        for step in rerun.get("steps") or []:
+            bad = [row["path"] for row in step.get("outputs") or [] if row.get("status") != "match"]
+            lines.append(f"  - {step.get('step_id')}: {RERUN_KO.get(step.get('status'), step.get('status'))}"
+                         + (f" ({', '.join(bad[:5])})" if bad else ""))
     lines += [f"경고: {warning}" for warning in report.get("warnings") or []]
     lines += [f"확인 못함: {reason}" for reason in report["reasons"]]
     verdict = {0: "문제 없음", 1: f"문제 {len(report['problems'])}건", 2: "이 PC에서 끝까지 검사하지 못함"}
@@ -662,3 +669,56 @@ def write_bundle(report: Mapping[str, Any], req: Mapping[str, Any], out: Path) -
             os.unlink(partial)
         raise
     return out
+
+
+# ----- `labhq verify --rerun` (#1374) -----
+
+RERUN_KO = {"pass": "재현됨(산출 hash 일치)", "hash_mismatch": "산출 hash 불일치", "missing_output": "산출 없음",
+            "fail": "스크립트 실패", "timeout": "시간 초과", "unavailable": "실행 도구 없음",
+            "wrote_outside": "임시 폴더 밖 파일이 바뀜", "hpc": "재현 실행 안 함(HPC)", "no_scripts": "스크립트 없음",
+            "no_recorded_outputs": "비교할 기록 없음", "inputs_too_large": "입력이 커서 복사하지 않음",
+            "not_located": "작업 폴더를 찾지 못함", "partial": "일부 단계만 재현(나머지 HPC 등)",
+            "not_rerun": "실행한 단계 없음", "declined": "PI가 실행하지 않기로 함",
+            "script_changed": "스크립트가 실행 뒤 바뀌어 실행 안 함", "input_changed": "선행 단계 산출이 기록과 달라 실행 안 함"}
+RERUN_PROBLEMS = {"hash_mismatch", "missing_output", "fail", "timeout", "unavailable", "wrote_outside",
+                  "inputs_too_large", "not_located", "script_changed", "input_changed"}
+
+
+def rerun_steps(req: Mapping[str, Any], settings: Any) -> list[dict[str, Any]]:
+    """Each step with outputs, its folder on this PC, its declared outputs and recorded hashes, and whether it ran
+    as cluster jobs (a whole-HPC request, or outputs kept in the HPC data folder)."""
+    root = settings.path(settings.runner.workspace_root)
+    whole_hpc = (req.get("execution_location") or {}).get("mode") == "hpc"
+    steps = []
+    located: dict[str, dict[str, Any]] = {}  # every step's own folder and recorded outputs, for linked inputs (#423)
+    for step_id, result in (req.get("results") or {}).items():
+        if isinstance(result, Mapping):
+            folder, _ = locate_workdir(root, result)
+            hashes = result.get("output_sha256") if isinstance(result.get("output_sha256"), Mapping) else {}
+            located[str(step_id)] = {"workdir": str(folder) if folder else None, "recorded": dict(hashes)}
+    for step_id, result in (req.get("results") or {}).items():
+        if not isinstance(result, Mapping) or not result.get("outputs"):
+            continue
+        workdir, _reason = locate_workdir(root, result)
+        remote = (remote_outputs(root, workdir, result, str(req.get("id") or ""), str(step_id))
+                  if workdir is not None else {})
+        recorded = result.get("output_sha256") if isinstance(result.get("output_sha256"), Mapping) else {}
+        steps.append({"step_id": str(step_id), "workdir": str(workdir) if workdir else None,
+                      "outputs": [p for p in result["outputs"] if isinstance(p, str)],
+                      "recorded": {p: h for p, h in recorded.items() if isinstance(p, str) and isinstance(h, str)},
+                      "hpc": whole_hpc or bool(remote),
+                      "upstream": {sid: row for sid, row in located.items() if sid != str(step_id)}})
+    return steps
+
+
+def render_rerun_plan(plan: list[Mapping[str, Any]]) -> str:
+    """What `--rerun` will execute, shown before the PI confirms."""
+    lines = ["재현 재실행 계획 — 아래 명령을 이 PC에서 PI 계정으로 실행합니다. 단계마다 입력(inputs/)과 스크립트만 새 임시 "
+             "폴더에 복사해 그 안에서 돌리고, 선언된 산출의 sha256을 기록과 비교합니다. OS 격리(sandbox)는 아닙니다."]
+    for row in plan:
+        if row["status"] != "planned":
+            lines.append(f"- {row['step_id']}: 실행하지 않음 — {RERUN_KO.get(row['status'], row['status'])}")
+            continue
+        lines.append(f"- {row['step_id']}: 비교할 산출 {len(row['compare'])}개")
+        lines += [f"    {command['tool']} {' '.join(command['args'])}" for command in row["commands"]]
+    return "\n".join(lines)

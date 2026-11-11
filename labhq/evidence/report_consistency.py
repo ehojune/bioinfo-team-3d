@@ -291,10 +291,23 @@ def front_lines(consistency: Mapping[str, Any] | None, receipt: Mapping[str, Any
             lines.append(f"- 본문·결과표 대조: 불일치 없음(문장 {checked.get('sentences', 0)}, 수치 "
                          f"{checked.get('numbers', 0)}, 방향 {checked.get('directions', 0)}건 확인; 읽지 못한 문장은 건너뜀)")
     execution = (receipt or {}).get("execution") if isinstance(receipt, Mapping) else None
-    if execution != "pass":
+    rerun = (receipt or {}).get("rerun") if isinstance(receipt, Mapping) else None
+    if isinstance(rerun, Mapping) and rerun.get("status"):  # the PI's `labhq verify --rerun` (#1374)
+        status = str(rerun["status"])
+        checked = str(rerun.get("checked_at") or "")[:10]
+        lines.append(f"- 재현 재실행: {RERUN_FRONT.get(status, status)}" + (f" ({checked})" if checked else ""))
+    elif execution != "pass":
         lines.append("- 재현 실행 안 함" + ("(HPC)" if hpc else "") +
                      (f" — 영수증 실행 상태 {execution}" if execution else " — 재현 스크립트를 다시 실행한 기록이 없습니다"))
     return lines
+
+
+RERUN_FRONT = {"pass": "재현됨(산출 hash 일치)", "partial": "일부 단계만 재현(나머지는 HPC 등으로 실행 안 함)",
+               "hash_mismatch": "**산출 hash 불일치**", "missing_output": "**산출 없음**", "fail": "**스크립트 실패**",
+               "timeout": "**시간 초과**", "unavailable": "실행 도구 없음", "wrote_outside": "**임시 폴더 밖 파일이 바뀜**",
+               "hpc": "재현 실행 안 함(HPC)", "inputs_too_large": "입력이 커서 실행 안 함",
+               "not_located": "작업 폴더를 찾지 못해 실행 안 함", "not_rerun": "실행한 단계 없음",
+               "script_changed": "**스크립트가 실행 뒤 바뀜**", "input_changed": "**선행 산출이 기록과 다름**"}
 
 
 def record_lines(consistency: Mapping[str, Any] | None) -> str:

@@ -753,3 +753,147 @@ def test_a_blocked_name_is_redacted_never_staged_and_keeps_its_result_unknown(tm
     assert "\u202e" not in text and "CON.py" not in text and "C:run" not in text
     assert rr.receipt_summary(receipt)["syntax"] == "blocked_path"
     assert not any(tmp_path.rglob("*.py"))  # nothing was written under any name
+
+
+# ----- #1374: the PI's rerun of a finished request -----
+
+_SCRIPT = ("import pathlib\n"
+           "rows = pathlib.Path('inputs/s0/counts.tsv').read_text().splitlines()\n"
+           "pathlib.Path('outputs').mkdir(exist_ok=True)\n"
+           "pathlib.Path('outputs/total.tsv').write_bytes(('total\\n%d\\n' % sum(int(r) for r in rows)).encode())\n")
+
+
+def _step(tmp_path: Path, script: str = _SCRIPT, *, recorded: str | None = None, hpc: bool = False) -> dict:
+    """A finished local step folder: staged input, its script and its recorded output, as the runner leaves them."""
+    workdir = tmp_path / "step_s1"
+    (workdir / "inputs" / "s0").mkdir(parents=True)
+    (workdir / "inputs" / "s0" / "counts.tsv").write_text("1\n2\n3\n", encoding="utf-8")
+    (workdir / "outputs" / "scripts").mkdir(parents=True)
+    (workdir / "outputs" / "scripts" / "total.py").write_bytes(script.encode())
+    (workdir / "outputs" / "total.tsv").write_bytes(b"total\n6\n")
+    digest = recorded or hashlib.sha256(b"total\n6\n").hexdigest()
+    return {"step_id": "s1", "workdir": str(workdir), "outputs": ["outputs/scripts/total.py", "outputs/total.tsv"],
+            "recorded": {"outputs/total.tsv": digest,
+                         "outputs/scripts/total.py": hashlib.sha256(script.encode()).hexdigest()}, "hpc": hpc}
+
+
+def test_rerun_plan_lists_the_scripts_and_commands_before_anything_runs(tmp_path):
+    [row] = rr.rerun_plan([_step(tmp_path)], tools={"python": sys.executable})
+    assert row["status"] == "planned" and row["scripts"] == ["outputs/scripts/total.py"]
+    assert row["compare"] == ["outputs/total.tsv"]
+    assert row["commands"][0]["tool"] == "python" and row["commands"][0]["args"][-1] == "outputs/scripts/total.py"
+    hpc, = rr.rerun_plan([_step(tmp_path / "h", hpc=True)], tools={"python": sys.executable})
+    assert hpc["status"] == "hpc"
+
+
+def test_a_rerun_that_reproduces_the_recorded_output_passes(tmp_path):
+    record = rr.rerun(rr.rerun_plan([_step(tmp_path)], tools={"python": sys.executable}), temp_root=tmp_path)
+    assert record["status"] == "pass"
+    [step] = record["steps"]
+    assert step["outputs"] == [{"path": "outputs/total.tsv", "recorded_sha256": hashlib.sha256(b"total\n6\n").hexdigest(),
+                                "sha256": hashlib.sha256(b"total\n6\n").hexdigest(), "status": "match"}]
+    assert not list(tmp_path.glob("labhq-rerun-*"))  # the temporary copy is removed
+
+
+def test_a_different_output_a_failing_script_and_a_write_outside_are_reported(tmp_path):
+    mismatch = rr.rerun(rr.rerun_plan([_step(tmp_path / "a", recorded="0" * 64)], tools={"python": sys.executable}))
+    assert mismatch["status"] == "hash_mismatch" and mismatch["steps"][0]["outputs"][0]["status"] == "mismatch"
+    failing = rr.rerun(rr.rerun_plan([_step(tmp_path / "b", "raise SystemExit(3)\n")], tools={"python": sys.executable}))
+    assert failing["status"] == "fail" and failing["steps"][0]["runs"][0]["returncode"] == 3
+    original = tmp_path / "c" / "step_s1" / "outputs" / "total.tsv"
+    outside = _SCRIPT + f"pathlib.Path({str(original)!r}).write_text('changed')\n"
+    wrote = rr.rerun(rr.rerun_plan([_step(tmp_path / "c", outside)], tools={"python": sys.executable}))
+    assert wrote["status"] == "wrote_outside"
+
+
+def test_the_receipt_reports_the_stored_rerun_as_its_execution(tmp_path):
+    record = rr.rerun(rr.rerun_plan([_step(tmp_path)], tools={"python": sys.executable}))
+    receipt = rr.build_receipt({}, tools={})
+    assert rr.receipt_summary(receipt)["execution"] == "not_rerun"
+    summary = rr.receipt_summary({**receipt, "rerun": record})
+    assert summary["execution"] == "pass" and summary["rerun"]["steps"] == {"s1": "pass"}
+    assert rr.rerun_path(tmp_path, "req_ab12").name == "req_ab12.json"
+    with pytest.raises(ValueError):
+        rr.rerun_path(tmp_path, "../x")
+
+
+def test_the_report_front_says_what_the_pi_rerun_found(tmp_path):
+    from labhq.evidence.report_consistency import front_lines
+    receipt = rr.build_receipt({}, tools={})
+    assert front_lines(None, rr.receipt_summary(receipt)) == [
+        "- 재현 실행 안 함 — 영수증 실행 상태 not_rerun"]
+    passed = rr.rerun(rr.rerun_plan([_step(tmp_path / "p")], tools={"python": sys.executable}))
+    [line] = front_lines(None, rr.receipt_summary({**receipt, "rerun": passed}))
+    assert line.startswith("- 재현 재실행: 재현됨(산출 hash 일치)")
+    mismatch = rr.rerun(rr.rerun_plan([_step(tmp_path / "m", recorded="0" * 64)], tools={"python": sys.executable}))
+    [line] = front_lines(None, rr.receipt_summary({**receipt, "rerun": mismatch}))
+    assert "산출 hash 불일치" in line and "실행 안 함" not in line
+
+
+def test_a_step_without_scripts_keeps_the_request_from_counting_as_reproduced(tmp_path):
+    passing = _step(tmp_path / "p")
+    unscripted = {**_step(tmp_path / "u"), "step_id": "s2", "outputs": ["outputs/total.tsv"]}
+    record = rr.rerun(rr.rerun_plan([passing, unscripted], tools={"python": sys.executable}))
+    assert [step["status"] for step in record["steps"]] == ["pass", "no_scripts"]
+    assert record["status"] == "partial"
+
+
+def test_the_results_digest_changes_when_any_recorded_output_changes():
+    results = {"s1": {"output_sha256": {"outputs/a.tsv": "1" * 64}}}
+    later = {**results, "s2": {"output_sha256": {"outputs/b.tsv": "2" * 64}}}
+    assert rr.results_digest(results) == rr.results_digest(dict(results))
+    assert rr.results_digest(results) != rr.results_digest(later)
+
+
+
+def test_a_script_edited_after_the_run_is_not_rerun(tmp_path):
+    step = _step(tmp_path)
+    Path(step["workdir"], "outputs", "scripts", "total.py").write_text(_SCRIPT + "# edited\n", encoding="utf-8")
+    record = rr.rerun(rr.rerun_plan([step], tools={"python": sys.executable}))
+    assert record["status"] == "script_changed"
+    assert record["steps"][0]["changed_scripts"] == ["outputs/scripts/total.py"]
+
+
+def _linked_step(tmp_path: Path, upstream_body: bytes) -> dict:
+    """A step whose inputs/s0 is a link to the upstream step's outputs/, as the runner makes it (#423)."""
+    upstream = tmp_path / "step_s0"
+    (upstream / "outputs").mkdir(parents=True)
+    step = _step(tmp_path)
+    shutil.rmtree(Path(step["workdir"], "inputs", "s0"))
+    try:
+        os.symlink(upstream / "outputs", Path(step["workdir"], "inputs", "s0"), target_is_directory=True)
+    except OSError:
+        pytest.skip("this account cannot create a directory symlink")
+    (upstream / "outputs" / "counts.tsv").write_bytes(upstream_body)
+    step["upstream"] = {"s0": {"workdir": str(upstream),
+                               "recorded": {"outputs/counts.tsv": hashlib.sha256(b"1\n2\n3\n").hexdigest()}}}
+    return step
+
+
+def test_a_linked_upstream_input_is_restored_from_its_recorded_outputs(tmp_path):
+    record = rr.rerun(rr.rerun_plan([_linked_step(tmp_path, b"1\n2\n3\n")], tools={"python": sys.executable}))
+    assert record["status"] == "pass"
+
+
+def test_an_upstream_output_that_changed_since_the_run_stops_the_rerun(tmp_path):
+    record = rr.rerun(rr.rerun_plan([_linked_step(tmp_path, b"9\n")], tools={"python": sys.executable}))
+    assert record["status"] == "input_changed" and record["steps"][0]["changed_input"] == "s0/outputs/counts.tsv"
+
+
+
+def test_a_publication_receipt_carries_the_rerun_only_for_the_same_results(tmp_path):
+    from types import SimpleNamespace
+    settings = SimpleNamespace(path=lambda value: Path(value), runner=SimpleNamespace(state_dir=str(tmp_path / "state")))
+    results = {"s1": {"output_sha256": {"outputs/total.tsv": "1" * 64}}}
+    record = {**rr.rerun(rr.rerun_plan([_step(tmp_path / "p")], tools={"python": sys.executable})),
+              "results_sha256": rr.results_digest(results)}
+    target = rr.rerun_path(tmp_path / "state", "req_pub")
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps(record), encoding="utf-8")
+    same = rr.attach_rerun(rr.build_receipt({}, tools={}), {"id": "req_pub", "results": results}, settings)
+    assert rr.receipt_summary(same)["execution"] == "pass"
+    later = {**results, "s2": {"output_sha256": {"outputs/b.tsv": "2" * 64}}}
+    stale = rr.attach_rerun(rr.build_receipt({}, tools={}), {"id": "req_pub", "results": later}, settings)
+    assert "rerun" not in stale and rr.receipt_summary(stale)["execution"] == "not_rerun"
+    none = rr.attach_rerun(rr.build_receipt({}, tools={}), {"id": "req_none", "results": results}, settings)
+    assert "rerun" not in none

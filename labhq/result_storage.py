@@ -39,7 +39,7 @@ from .report_figures import (ABSTRACT_FILE, classify, figure_owners, has_abstrac
 from .report_pdf import NO_BROWSER, ReportRefused, build_report_file, pdf_cap_bytes, size_notes
 from .report_contract import reader_markdown, research_question
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
-from .reproduction_receipt import (LANGUAGES, RECEIPT_PATH, build_receipt, expected_outputs, is_lock_file, receipt_json,
+from .reproduction_receipt import (LANGUAGES, attach_rerun, RECEIPT_PATH, build_receipt, expected_outputs, is_lock_file, receipt_json,
                                    receipt_note, receipt_summary)
 
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
@@ -264,6 +264,7 @@ def collect_reproduction_receipt(req, settings) -> dict:
             continue
     receipt = build_receipt(sources, outputs=expected_outputs(req))
     receipt["omitted_files"].extend(omitted)
+    attach_rerun(receipt, req, settings)  # the PI's `labhq verify --rerun`, when it reran these results (#1374)
     return receipt
 
 

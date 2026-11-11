@@ -1436,7 +1436,8 @@ def _terminal_report(data: dict) -> str:
     return body
 
 
-def _verify(s: Settings, request_id: str, *, as_json: bool, bundle: str | None) -> int:
+def _verify(s: Settings, request_id: str, *, as_json: bool, bundle: str | None, rerun: bool = False,
+            yes: bool = False, rerun_timeout: float = 600) -> int:
     """`labhq verify`: 0 when the outputs and report check hold, 1 with problems, 2 when it cannot check (#58 ⑥)."""
     import httpx
     from urllib.parse import quote
@@ -1458,6 +1459,8 @@ def _verify(s: Settings, request_id: str, *, as_json: bool, bundle: str | None) 
     if not isinstance(req, dict):
         return cannot("gateway가 요청 기록 대신 다른 값을 돌려줬습니다")
     report = verify_request(req, s)
+    if rerun:
+        _verify_rerun(s, req, report, as_json=as_json, yes=yes, timeout=rerun_timeout)
     if bundle and report["exit_code"] == 2:
         report["reasons"].append("끝까지 검사하지 못해 감사 번들을 만들지 않았습니다")
     elif bundle:
@@ -1468,6 +1471,48 @@ def _verify(s: Settings, request_id: str, *, as_json: bool, bundle: str | None) 
             report["exit_code"] = 2
     print(json.dumps(report, ensure_ascii=False, indent=2) if as_json else render_verify(report))
     return report["exit_code"]
+
+
+def _verify_rerun(s: Settings, req: dict, report: dict, *, as_json: bool, yes: bool, timeout: float) -> None:
+    """`labhq verify --rerun`: show what will run, ask the PI, run it in temporary copies and keep the record (#1374)."""
+    from .evidence.audit import RERUN_PROBLEMS, render_rerun_plan, rerun_steps
+    from .reproduction_receipt import rerun as run_again, rerun_path, rerun_plan, results_digest
+    from .request_status import TERMINAL_REQUEST_STATES
+
+    if req.get("status") not in TERMINAL_REQUEST_STATES or req.get("status") == "cancelled":
+        report["reasons"].append(f"요청이 끝나지 않아(상태 {req.get('status')}) 재현 재실행을 하지 않았습니다")
+        report["exit_code"] = 2
+        return
+    plan = rerun_plan(rerun_steps(req, s))
+    if not any(row["status"] == "planned" for row in plan):
+        report["rerun"] = run_again(plan)  # nothing executes: records why each step is not rerun
+    else:
+        shown = render_rerun_plan(plan)
+        if as_json and not yes:
+            report["reasons"].append("--json에서는 --yes가 있어야 재현 재실행을 합니다(실행할 명령을 확인할 수 없음)")
+            report["exit_code"] = 2
+            return
+        print(shown, file=sys.stderr if as_json else sys.stdout)
+        if not yes:
+            try:
+                answer = input("이 명령들을 실행할까요? [y/N] ").strip().lower()
+            except EOFError:
+                answer = ""
+            if answer not in {"y", "yes"}:
+                report["rerun"] = {"schema_version": 1, "status": "declined", "steps": []}
+                return
+        report["rerun"] = run_again(plan, timeout=timeout)
+    report["rerun"]["results_sha256"] = results_digest(req.get("results"))  # bound to these results only
+    try:
+        target = rerun_path(s.path(s.runner.state_dir), str(req.get("id") or ""))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(report["rerun"], ensure_ascii=False, indent=2), encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        report["warnings"].append(f"재현 재실행 기록을 저장하지 못했습니다: {exc}")
+    failed = [step for step in report["rerun"].get("steps") or [] if step.get("status") in RERUN_PROBLEMS]
+    report["problems"] += [f"재현 재실행: {step['step_id']} {step['status']}" for step in failed]
+    if failed and report["exit_code"] == 0:
+        report["exit_code"] = 1
 
 
 def _report(s: Settings, request_id: str, *, pdf: bool, out: str | None) -> int:
@@ -2127,6 +2172,10 @@ def main(argv: list[str] | None = None) -> None:
     vp.add_argument("--json", action="store_true", help="print the result as JSON")
     vp.add_argument("--bundle", metavar="OUT.zip", help="also write README.md, claims.json and artifacts.json "
                     "into a zip (the output files themselves are not included)")
+    vp.add_argument("--rerun", action="store_true", help="run each local step's published scripts again in a "
+                    "temporary copy of its inputs and compare the outputs' sha256 (shows the commands and asks first)")
+    vp.add_argument("--yes", action="store_true", help="with --rerun: do not ask before running the listed commands")
+    vp.add_argument("--rerun-timeout", type=float, default=600, help="seconds per script for --rerun (default 600)")
     rep = sub.add_parser("report", help="print a request's PI report, or save it as a PDF with its figures (--pdf)")
     rep.add_argument("request_id")
     rep.add_argument("--pdf", action="store_true", help="save a PDF with the figures (an HTML page and the reason "
@@ -2615,7 +2664,8 @@ def main(argv: list[str] | None = None) -> None:
             if not s.hpc.login_limits_decided:
                 print("상한을 아직 정하지 않았습니다. labhq init으로 정하거나, 제한이 필요 없으면 비워 두세요.")
     elif args.cmd == "verify":
-        raise SystemExit(_verify(s, args.request_id, as_json=args.json, bundle=args.bundle))
+        raise SystemExit(_verify(s, args.request_id, as_json=args.json, bundle=args.bundle, rerun=args.rerun,
+                                 yes=args.yes, rerun_timeout=args.rerun_timeout))
     elif args.cmd == "report":
         raise SystemExit(_report(s, args.request_id, pdf=args.pdf, out=args.out))
     elif args.cmd == "recruit":
