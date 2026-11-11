@@ -8,7 +8,7 @@ Unknown or misspelled configuration keys stop loading with an error. `labhq up` 
 
 Use client-token-authenticated `GET /api/runner-inbox/{runner_id}` to inspect held runner message status; the response omits message contents. `POST /api/runner-inbox/{runner_id}/{seq}/retry` accepts log and activity events and asks whose publication failed before starting; `/resume` handles unexecuted entries after earlier holds are resolved. The `incarnation` query selects a generation. Operations with unknown outcomes are not retried automatically. The inbox keeps the latest 256 completed entries; unfinished entries and pending deliveries are retained.
 
-After a storage error during a manual retry, retry once storage recovers. If an ask already exists and its start is uncertain, it is held as `ask_start_unknown`.
+After a storage error during a manual retry, safe entries can be retried once storage recovers. If an ask's start is uncertain, it is held as `ask_start_unknown`.
 
 For cleaning up test requests, only list the candidates with `python scripts/purge_test_requests.py --database <gateway.sqlite3>`. The default markers are three: the exact phrase `save outputs/counts.tsv`, agent `worker` and mode `direct`. Deletion adds `--apply --gateway-stopped --config <config> --backup <new file>` only during maintenance with the gateway off. It first makes a SQLite backup and deletes only matching requests and events. Demo phrases are not selected automatically.
 

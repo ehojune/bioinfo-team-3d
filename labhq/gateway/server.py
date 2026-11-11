@@ -4369,10 +4369,15 @@ class Hub:
         typ = message.get("type")
         if typ == "ask.requested":
             ask_id = (message.get("data") or {}).get("id")
-            # Once an ask row exists its start may already be scheduled. Do not
-            # infer safety from a pending state while that task can still run.
-            error = ("ask_publication_incomplete" if ask_id and not self.store.get("ask", str(ask_id))
-                     else "ask_start_unknown")
+            entry = self.store.get("ask", str(ask_id)) if ask_id else None
+            task = getattr(self, "ask_tasks", {}).get(str(ask_id))
+            key = self.store._runner_inbox_key(row["runner_id"], row["incarnation"], row["seq"])
+            # A pending row is safe only when this inbox owns it and no task can
+            # still start. The task persists "working" before any external effect.
+            safe = bool(ask_id) and (entry is None or (
+                entry.get("inbox_key") == key and entry.get("state") == "pending"
+                and not entry.get("recovery_blocked") and (task is None or task.done())))
+            error = "ask_publication_incomplete" if safe else "ask_start_unknown"
         elif typ in {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}:
             error = "storage_interrupted"
         else:

@@ -1464,11 +1464,15 @@ async def test_manual_ask_retry_storage_failure_holds_uncertain_effect(gateway, 
     hub.store.set_runner_inbox_state("runner", None, 1, "processing", expected="pending")
     hub.store.set_runner_inbox_state("runner", None, 1, "failed", "ask_publication_incomplete", expected="processing")
     calls = []
+    scheduled = asyncio.get_running_loop().create_future() if ask_state == "pending" else None
+    if scheduled is not None:
+        hub.ask_tasks = {"retry-ask": scheduled}
 
     async def fail(*args, **kwargs):
         calls.append(1)
         if ask_state:
-            hub.store.put("ask", "retry-ask", {"state": ask_state})
+            hub.store.put("ask", "retry-ask", {"state": ask_state,
+                "inbox_key": hub.store._runner_inbox_key("runner", None, 1)})
         raise OSError("storage failed")
 
     monkeypatch.setattr(hub, "_on_runner_message", fail)
@@ -1481,6 +1485,8 @@ async def test_manual_ask_retry_storage_failure_holds_uncertain_effect(gateway, 
         with pytest.raises(ValueError, match="not safe"):
             await hub.retry_runner_inbox("runner", None, 1)
         assert len(calls) == 1
+    if scheduled is not None:
+        scheduled.cancel()
 
 
 async def test_manual_retry_recovers_when_failure_state_cannot_be_saved(gateway, monkeypatch):
@@ -1504,6 +1510,41 @@ async def test_manual_retry_recovers_when_failure_state_cannot_be_saved(gateway,
         return None
     monkeypatch.setattr(hub, "_on_runner_message", succeed)
     await hub.retry_runner_inbox("runner", None, 1)
+    assert hub.store.runner_inbox("runner", None, 1)["state"] == "completed"
+
+
+async def test_manual_ask_retry_storage_failure_before_dispatch_can_retry(gateway, monkeypatch):
+    hub = gateway
+    hub.runner_capabilities = {}
+    hub.recruits_running = {}
+    original_publish = hub.publish
+    attempts = []
+    started = []
+
+    async def publish(event, *args, **kwargs):
+        if event.get("type") == "agent.ask":
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise RuntimeError("first publication failed")
+            if len(attempts) == 2:
+                raise OSError("storage failed before dispatch")
+        return await original_publish(event, *args, **kwargs)
+
+    async def send(*args):
+        pass
+
+    monkeypatch.setattr(hub, "publish", publish)
+    monkeypatch.setattr(hub, "send_runner", send)
+    monkeypatch.setattr(hub, "_start_ask", lambda ask, origin: started.append(ask.id))
+    msg = {"type": "ask.requested", "runner_seq": 1,
+           "data": {"id": "a", "to": "pi", "question": "Why?", "why_blocked": "Waiting"}}
+    await hub.on_runner_message("runner", msg)
+    with pytest.raises(OSError):
+        await hub.retry_runner_inbox("runner", None, 1)
+    assert hub.store.runner_inbox("runner", None, 1)["error"] == "ask_publication_incomplete"
+    assert started == []
+    await hub.retry_runner_inbox("runner", None, 1)
+    assert started == ["a"]
     assert hub.store.runner_inbox("runner", None, 1)["state"] == "completed"
 
 
