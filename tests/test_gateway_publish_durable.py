@@ -197,6 +197,32 @@ async def test_unknown_partial_task_accept_is_held_without_duplicate_send(gatewa
         reopened.close()
 
 
+async def test_independent_log_continues_after_uncertain_task_accept(gateway, monkeypatch):
+    hub = gateway
+    hub.runner_capabilities = {}
+    hub.runner_incarnations = {}
+    hub.recruits_running = {}
+    hub.store.put("task", "one", {"kind": "step", "step_id": "s1", "request_id": "r1"})
+    hub.store.put("task", "two", {"kind": "step", "step_id": "s2", "request_id": "r2"})
+    monkeypatch.setattr(hub, "_session_state_changed", lambda: None)
+    monkeypatch.setattr(hub, "controllable", lambda *args: True)
+    monkeypatch.setattr(hub, "_push_task_state", lambda *args: asyncio.sleep(0))
+    monkeypatch.setattr(hub, "send_runner", lambda *args: asyncio.sleep(0))
+    commit = hub.store.acommit_runner_publication
+
+    async def fail_first(key, name, *args, **kwargs):
+        if json.loads(key)[2] == 1:
+            raise RuntimeError("after control send")
+        return await commit(key, name, *args, **kwargs)
+
+    monkeypatch.setattr(hub.store, "acommit_runner_publication", fail_first)
+    await hub.on_runner_message("runner", {"type": "task.accepted", "runner_seq": 1, "task_id": "one"})
+    await hub.on_runner_message("runner", {"type": "agent.log", "runner_seq": 2, "task_id": "two",
+                                           "data": {"text": "independent"}})
+    assert hub.store.runner_inbox("runner", None, 1)["state"] == "failed"
+    assert hub.store.runner_inbox("runner", None, 2)["state"] == "completed"
+
+
 async def test_failed_unpublished_log_can_be_retried_explicitly(gateway, monkeypatch):
     hub = gateway
     hub.runner_capabilities = {}

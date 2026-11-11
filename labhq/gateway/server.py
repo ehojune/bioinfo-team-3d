@@ -4288,7 +4288,7 @@ class Hub:
                     continue
                 old_task, old_request = scope(previous["message"])
                 prior_type = previous["message"].get("type")
-                prior_local = (prior_type in activity_types or
+                prior_local = (prior_type in activity_types or prior_type == "task.accepted" or
                                (prior_type == "ask.requested" and
                                 previous.get("error") == "ask_publication_incomplete"))
                 if (not task_id or not old_task or task_id == old_task or not request_id or not old_request or
