@@ -8,3 +8,6 @@ rows:
     at: "2026-11-11 13:00"
     summary: "보고서 머리의 재현 줄이 PI가 돌린 재실행 결과를 보입니다. 재현됨, 산출 hash 불일치, 스크립트 실패처럼 결과대로 적고, 재실행 기록이 없을 때만 '재현 실행 안 함'이라고 씁니다."
     text: "report_consistency.front_lines가 영수증 rerun 요약을 읽어 RERUN_FRONT 문구로, 시험 1건 (#1374)"
+  - sha: "29b9603"
+    at: "2026-11-11 13:20"
+    text: "_sha_file의 이진 열기를 path.open(mode=\"rb\")로, test_text_encoding 통과 (#1374)"
