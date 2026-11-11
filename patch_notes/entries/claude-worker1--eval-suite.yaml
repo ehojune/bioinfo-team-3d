@@ -16,3 +16,7 @@ rows:
     at: "2026-11-12 04:04"
     summary: "인용 감사가 원문의 1e-5 같은 수를 통째로만 읽어, 그 부분(1이나 5)을 인용 값의 근거로 잘못 쓰지 않습니다. 형식이 틀린 인용문·수치 항목은 입력 오류입니다."
     text: "citation_audit: source_numbers(과학 표기 구간 제외 후 평문 수), 목록 항목 형식 검증, 시험 7건 (#1383)"
+  - sha: "b99b1c5"
+    at: "2026-11-12 04:08"
+    summary: "인용 감사가 수치를 문자열로만 받아 적힌 자릿수 그대로 대조하고, 형식이 틀린 항목은 조용히 버리지 않고 major로 표시합니다."
+    text: "citation_audit: numbers는 str만(JSON 숫자 거절), audit_one이 잘못된 항목을 major로, eval-suite.md 입력 규칙, 시험 5건 (#1383)"
