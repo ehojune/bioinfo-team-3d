@@ -26,6 +26,7 @@ Usage: python scripts/citation_audit.py citations.json --records records.json [-
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import re
 import sys
@@ -88,13 +89,33 @@ def number_held(number: str, source: Source) -> bool | None:
     return claim.value != 0 and any(round(v, claim.decimals) == round(claim.value, claim.decimals) for v in scientific)
 
 
+# A registry title can carry markup (Europe PMC: "<i>KRAS</i>"); that is formatting, not a different title.
+_TAG = re.compile(r"</?[A-Za-z][A-Za-z0-9]*(?:\s[^<>]*)?/?>")
+# A stored text that only points at another file. A step that does not copy third-party text into a bundle writes
+# "# 포인터: ..." or "# Pointer: ..." in its place, so the source itself is not in the bundle (#910 11th run).
+_POINTER = re.compile(r"\s*#\s*(?:포인터|pointer)\b", re.I)
+
+
+def _plain_title(text: str) -> str:
+    # Entities first, so an escaped tag ("&lt;sup&gt;") is a tag too; a tag becomes a space, so "KRAS<sup>G12C</sup>"
+    # reads as "KRAS G12C", the same words as "KRAS(G12C)".
+    return normalize(_TAG.sub(" ", html.unescape(text)))
+
+
 def _tokens(text: str) -> set[str]:
-    return set(normalize(text).split())
+    return set(_plain_title(text).split())
+
+
+def is_pointer(text: str) -> bool:
+    """Whether a stored text is only a pointer to the source (its first non-empty line is a pointer heading)."""
+    first = next((line for line in text.splitlines() if line.strip()), "")
+    return bool(_POINTER.match(first))
 
 
 def title_match(cited: str, registered: str) -> str:
-    """``match`` (equal after folding), ``near`` (token overlap at least NEAR_TITLE) or ``mismatch``."""
-    if normalize(cited) == normalize(registered):
+    """``match`` (equal after folding and dropping markup), ``near`` (token overlap at least NEAR_TITLE) or
+    ``mismatch``."""
+    if _plain_title(cited) == _plain_title(registered):
         return "match"
     a, b = _tokens(cited), _tokens(registered)
     if a and b and len(a & b) / len(a | b) >= NEAR_TITLE:
@@ -163,7 +184,10 @@ def audit_one(citation: dict, records: dict, root: Path) -> dict:
             path = (root / source_path).resolve()
             if path.is_file() and root.resolve() in path.parents:
                 text = path.read_text(encoding="utf-8")
-        if text is None:
+        if text is not None and is_pointer(text):
+            note("minor", "source", f"{source_path} only points at the source, which is not in the bundle; "
+                                    "quotes and numbers not checked")
+        elif text is None:
             note("minor", "source", "no source text in the bundle; quotes and numbers not checked")
         else:
             source = Source(text)
