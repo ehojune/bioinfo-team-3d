@@ -4334,6 +4334,9 @@ class Hub:
             if (current or {}).get("id") != incarnation:
                 raise ValueError("runner generation changed; inspect held message")
             async with self._inbox_admission_lock():
+                previous = self.store.runner_inbox(runner_id, incarnation, seq)
+                if previous and previous["state"] == "processing":
+                    await self._hold_failed_inbox_retry(previous)
                 row = await self.store.aclaim_runner_publication_retry(runner_id, incarnation, seq)
             await self._run_claimed_runner_inbox(row)
 
@@ -4360,19 +4363,43 @@ class Hub:
                 row = await self.store.aclaim_blocked_runner_inbox(runner_id, incarnation, seq)
             await self._run_claimed_runner_inbox(row)
 
+    async def _hold_failed_inbox_retry(self, row: dict) -> None:
+        """Keep a storage-interrupted retry available, or hold an uncertain ask."""
+        message = row["message"]
+        typ = message.get("type")
+        if typ == "ask.requested":
+            ask_id = (message.get("data") or {}).get("id")
+            # Once an ask row exists its start may already be scheduled. Do not
+            # infer safety from a pending state while that task can still run.
+            error = ("ask_publication_incomplete" if ask_id and not self.store.get("ask", str(ask_id))
+                     else "ask_start_unknown")
+        elif typ in {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}:
+            error = "storage_interrupted"
+        else:
+            error = "interrupted_unknown"
+        await self.store.aset_runner_inbox_state(row["runner_id"], row["incarnation"], row["seq"],
+                                                 "failed", error, expected="processing")
+
     async def _run_claimed_runner_inbox(self, row: dict) -> None:
         runner_id, incarnation, seq = row["runner_id"], row["incarnation"], row["seq"]
         try:
             await self._on_runner_message(runner_id, row["message"], incarnation=incarnation, inbox_owned=True)
-        except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+            await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "completed", expected="processing")
+        except (OSError, sqlite3.Error):
+            try:
+                current = self.store.runner_inbox(runner_id, incarnation, seq)
+                if current and current["state"] == "processing":
+                    await self._hold_failed_inbox_retry(current)
+            except (OSError, sqlite3.Error):
+                pass  # Reconcile the retained processing row after storage recovers.
+            raise
+        except (ValueError, KeyError, TypeError):
             raise
         except Exception as exc:
             await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "failed",
                 "ask_publication_incomplete" if isinstance(exc, AskPublicationIncomplete)
                 else type(exc).__name__, expected="processing")
             raise
-        else:
-            await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "completed", expected="processing")
 
     async def _on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                  incarnation: str | None = None, *, inbox_owned: bool = False) -> None:

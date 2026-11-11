@@ -8,6 +8,8 @@
 
 Runner 메시지 보류 상태는 client token으로 인증한 `GET /api/runner-inbox/{runner_id}`에서 확인합니다. 응답에는 원문이 없습니다. `POST /api/runner-inbox/{runner_id}/{seq}/retry`는 log·activity 또는 시작 전 발행에 실패한 ask에만 허용하고, `/resume`은 앞선 보류가 해소된 미실행 항목만 처리합니다. `incarnation` query로 세대를 지정합니다. 결과를 알 수 없는 작업은 자동 재실행하지 않습니다. 완료된 inbox는 최근 256건을 유지하며, 미완료·전달 대기 기록은 정리하지 않습니다.
 
+수동 재시도 중 저장 오류가 나면 저장소 복구 후 다시 시도할 수 있습니다. ask가 이미 만들어져 시작 여부를 알 수 없으면 `ask_start_unknown`으로 보류합니다.
+
 테스트 요청 정리는 `python scripts/purge_test_requests.py --database <gateway.sqlite3>`로 후보만 확인합니다. 기본 표지는 정확한 문구 `save outputs/counts.tsv`·agent `worker`·mode `direct` 세 가지입니다. 삭제는 gateway를 끈 유지보수 시간에만 `--apply --gateway-stopped --config <설정> --backup <새 파일>`을 붙입니다. 먼저 SQLite 백업을 만들고 일치한 요청과 이벤트만 지웁니다. 데모 문구는 자동 선택하지 않습니다.
 
 - **v1.0 기본값** (#1336): 온톨로지(`semantics.mode`·`research.semantic_report`)와 Paper2Agent 채용(`recruit.enabled`)은 기본 꺼짐입니다. 코드는 남아 있어 설정에서 켜면 아래 설명대로 동작합니다.

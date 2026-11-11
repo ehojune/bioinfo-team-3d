@@ -314,8 +314,11 @@ async def test_sweep_adopting_a_pinned_consult_waits_for_its_own_runner_not_the_
     hub.s.gateway.resume_wait_s = 30
     adopting = asyncio.ensure_future(hub.adopt_consult("a1", AGENT))
     await until(lambda: "held" in hub.futures)  # past the guard: it did not sit out resume_wait_s for the away owner
-    hub.futures["held"].set_result(TaskResult(task_id="held", agent_id=AGENT, ok=True))
-    await asyncio.wait_for(adopting, 3)
+    result = TaskResult(task_id="held", agent_id=AGENT, ok=True)
+    hub.store.put("task", "held", {**held, "completed": True, "result": result.model_dump()})
+    hub.futures["held"].set_result(result)
+    attempt, adopted = await asyncio.wait_for(adopting, 3)
+    assert attempt == 1 and adopted.task_id == "held" and adopted.ok
 
 
 async def test_a_pin_is_what_the_request_chose_not_what_is_connected_plan_and_runner_stay_wsl_while_it_is_away(hub):

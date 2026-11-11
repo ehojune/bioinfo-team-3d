@@ -133,6 +133,7 @@ def test_signal_preserves_existing_handler_and_records_reason(tmp_path):
 def test_cli_installs_diagnostics_for_each_role(tmp_path, monkeypatch, role):
     settings = _settings(tmp_path)
     settings.gateway.client_token = "test-token"
+    settings.gateway.runner_token = "test-runner-token"
     monkeypatch.setattr(Settings, "load", lambda *args: settings)
     if role == "gateway":
         import uvicorn

@@ -1456,6 +1456,57 @@ async def test_ask_retry_refuses_replaced_generation_without_mutation(gateway, m
     assert hub.store.runner_seen("runner") == 1
 
 
+@pytest.mark.parametrize("ask_state", [None, "pending", "working"])
+async def test_manual_ask_retry_storage_failure_holds_uncertain_effect(gateway, monkeypatch, ask_state):
+    hub = gateway
+    message = {"type": "ask.requested", "runner_seq": 1, "data": {"id": "retry-ask"}}
+    hub.store.accept_runner_inbox("runner", None, 1, message)
+    hub.store.set_runner_inbox_state("runner", None, 1, "processing", expected="pending")
+    hub.store.set_runner_inbox_state("runner", None, 1, "failed", "ask_publication_incomplete", expected="processing")
+    calls = []
+
+    async def fail(*args, **kwargs):
+        calls.append(1)
+        if ask_state:
+            hub.store.put("ask", "retry-ask", {"state": ask_state})
+        raise OSError("storage failed")
+
+    monkeypatch.setattr(hub, "_on_runner_message", fail)
+    with pytest.raises(OSError):
+        await hub.retry_runner_inbox("runner", None, 1)
+    row = hub.store.runner_inbox("runner", None, 1)
+    assert row["state"] == "failed"
+    assert row["error"] == ("ask_start_unknown" if ask_state else "ask_publication_incomplete")
+    if ask_state:
+        with pytest.raises(ValueError, match="not safe"):
+            await hub.retry_runner_inbox("runner", None, 1)
+        assert len(calls) == 1
+
+
+async def test_manual_retry_recovers_when_failure_state_cannot_be_saved(gateway, monkeypatch):
+    hub = gateway
+    message = {"type": "ask.requested", "runner_seq": 1, "data": {"id": "retry-ask"}}
+    hub.store.accept_runner_inbox("runner", None, 1, message)
+    hub.store.set_runner_inbox_state("runner", None, 1, "processing", expected="pending")
+    hub.store.set_runner_inbox_state("runner", None, 1, "failed", "ask_publication_incomplete", expected="processing")
+    original_set = hub.store.aset_runner_inbox_state
+
+    async def fail(*args, **kwargs):
+        raise OSError("storage unavailable")
+
+    monkeypatch.setattr(hub, "_on_runner_message", fail)
+    monkeypatch.setattr(hub.store, "aset_runner_inbox_state", fail)
+    with pytest.raises(OSError):
+        await hub.retry_runner_inbox("runner", None, 1)
+    assert hub.store.runner_inbox("runner", None, 1)["state"] == "processing"
+    monkeypatch.setattr(hub.store, "aset_runner_inbox_state", original_set)
+    async def succeed(*args, **kwargs):
+        return None
+    monkeypatch.setattr(hub, "_on_runner_message", succeed)
+    await hub.retry_runner_inbox("runner", None, 1)
+    assert hub.store.runner_inbox("runner", None, 1)["state"] == "completed"
+
+
 @pytest.mark.parametrize("second_request", ["r1", None])
 async def test_inbox_holds_different_task_when_request_is_same_or_unknown(gateway, monkeypatch, second_request):
     hub = gateway

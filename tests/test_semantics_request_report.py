@@ -15,7 +15,7 @@ def config(tmp_path, mode="ab", name="labhq.yaml"):
     path = tmp_path / name
     path.write_text(
         f"gateway:\n  state_dir: '{tmp_path.as_posix()}/state'\n"
-        "  client_token: unit-client\n"
+        "  client_token: unit-client\n  runner_token: unit-runner\n"
         f"semantics: {{mode: '{mode}', actions: confirm}}\n", encoding="utf-8")
     return Settings.load(str(path))
 
