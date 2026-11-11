@@ -254,6 +254,28 @@ async def test_recovery_does_not_complete_other_message_transformed_to_log(gatew
     assert retained["state"] == "failed" and retained["error"] == "interrupted_unknown"
 
 
+@pytest.mark.parametrize("kind", [
+    "approval.attachment.ack", "approval.ack", "approval.requested", "approval.timed_out",
+    "ask.ack", "control.nack", "agent.breaker", "agent.control", "task.result", "restricted.requested",
+    "jobs.finished", "task.jobs_cancelled", "task.accepted", "job.submitted", "recruit.done", "recruit.failed",
+])
+async def test_startup_holds_interrupted_side_effect_types(gateway, monkeypatch, kind):
+    hub = gateway
+    hub.pi_interpreter = SimpleNamespace(schedule=lambda event: None, tasks={})
+    msg = {"type": kind, "runner_seq": 1, "data": {}}
+    hub.store.accept_runner_inbox("runner", None, 1, msg)
+    hub.store.set_runner_inbox_state("runner", None, 1, "processing", expected="pending")
+
+    async def unexpected(*args, **kwargs):
+        raise AssertionError("unknown side effects were reexecuted")
+
+    monkeypatch.setattr(hub, "_on_runner_message", unexpected)
+    await hub.recover_runner_publications()
+    row = hub.store.runner_inbox("runner", None, 1)
+    assert row["state"] == "failed" and row["error"] == "interrupted_unknown"
+    assert hub.store.events_since(0) == []
+
+
 @pytest.mark.parametrize("main_committed", [False, True])
 async def test_pipeline_event_waits_for_result_commit_and_recovers(gateway, main_committed):
     hub = gateway
@@ -956,6 +978,30 @@ async def test_failed_runner_message_is_held_before_later_independent_message(ga
                                            "task_id": "two", "request_id": "r2", "data": {"text": "independent"}})
     assert sent[-1] == {"type": "runner.ack", "runner_seq": 2}
     assert hub.store.runner_seen("runner") == 2
+
+
+async def test_independent_activity_continues_after_failed_log(gateway, monkeypatch):
+    hub = gateway
+    hub.runner_capabilities = {}
+    hub.recruits_running = {}
+    hub.store.put("task", "one", {"request_id": "r1"})
+    hub.store.put("task", "two", {"request_id": "r2"})
+    monkeypatch.setattr(hub, "send_runner", lambda *args: asyncio.sleep(0))
+    commit = hub.store.acommit_runner_publication
+
+    async def fail_first(key, name, *args, **kwargs):
+        if json.loads(key)[2] == 1:
+            raise RuntimeError("injected first failure")
+        return await commit(key, name, *args, **kwargs)
+
+    monkeypatch.setattr(hub.store, "acommit_runner_publication", fail_first)
+    await hub.on_runner_message("runner", {"type": "agent.log", "runner_seq": 1, "task_id": "one",
+                                           "request_id": "r1", "data": {"text": "first"}})
+    await hub.on_runner_message("runner", {"type": "agent.status", "runner_seq": 2, "task_id": "two",
+                                           "request_id": "r2", "data": {"state": "working"}})
+    assert hub.store.runner_inbox("runner", None, 1)["state"] == "failed"
+    assert hub.store.runner_inbox("runner", None, 2)["state"] == "completed"
+    assert hub.store.get("task", "two")["activity"]["state"] == "working"
 
 
 async def test_inbox_owned_publication_after_later_cursor_is_not_lost(gateway, monkeypatch):

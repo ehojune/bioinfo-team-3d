@@ -4277,6 +4277,7 @@ class Hub:
                 return task_id, stored_request
 
             task_id, request_id = scope(msg)
+            activity_types = {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}
             for previous in self.store.all("runner_inbox").values():
                 if (previous["runner_id"], previous["incarnation"], previous["seq"]) == (runner_id, incarnation, seq):
                     continue
@@ -4287,11 +4288,11 @@ class Hub:
                     continue
                 old_task, old_request = scope(previous["message"])
                 prior_type = previous["message"].get("type")
-                prior_local = (prior_type == "agent.log" or
+                prior_local = (prior_type in activity_types or
                                (prior_type == "ask.requested" and
                                 previous.get("error") == "ask_publication_incomplete"))
                 if (not task_id or not old_task or task_id == old_task or not request_id or not old_request or
-                        request_id == old_request or msg.get("type") != "agent.log" or not prior_local):
+                        request_id == old_request or msg.get("type") not in activity_types or not prior_local):
                     blocked = await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "blocked",
                                                                        "earlier outcome unresolved", expected="pending")
                     return blocked, False
