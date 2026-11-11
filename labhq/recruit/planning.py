@@ -144,8 +144,7 @@ def _restore_fallbacks(plan, batch):
     return changed
 
 
-def pending_receipt_agents(req, hub):
-    """Reconcile all remaining assignments before waiting for a runner, including frozen plans."""
+def _reconcile_receipts(req, hub):
     plan = req.get("plan") or {}
     frozen = bool(req.get("research_contract") or req.get("results"))
     # Read legacy frozen proposals as saved; validation is for new plans, not canonical snapshots.
@@ -170,8 +169,10 @@ def pending_receipt_agents(req, hub):
                                    if s["id"] not in (req.get("results") or {}))
     if unresolved:
         req["recruit_contract_failure"] = sorted(unresolved)
-    if any(changed) or restored or unresolved:
-        hub.save_request(req["id"])
+    return plan, batch, bool(any(changed) or restored or unresolved)
+
+
+def _pending_receipts(req, plan, batch):
     remaining_steps = {s["id"] for s in plan.get("steps", [])
                        if s["id"] not in (req.get("results") or {})}
     pending_papers = set()
@@ -183,44 +184,20 @@ def pending_receipt_agents(req, hub):
     return {row["agent_id"] for pid, row in batch.get("results", {}).items()
             if pid in pending_papers and row.get("status") == "active" and row.get("agent_id")}
 
+def pending_receipt_agents(req, hub):
+    """Reconcile all remaining assignments before waiting for a runner, including frozen plans."""
+    plan, batch, changed = _reconcile_receipts(req, hub)
+    if changed:
+        hub.save_request(req["id"])
+    return _pending_receipts(req, plan, batch)
+
+
 async def apending_receipt_agents(req, hub):
     """Reconcile all remaining assignments before waiting for a runner, including frozen plans."""
-    plan = req.get("plan") or {}
-    frozen = bool(req.get("research_contract") or req.get("results"))
-    # Read legacy frozen proposals as saved; validation is for new plans, not canonical snapshots.
-    batch = (req.get("plan_recruitment") or {}).get(_batch_key(plan.get("recruit") or []), {})
-    changed = [_refresh_receipt(row, hub) for row in batch.get("results", {}).values()]
-    remaining = {s["agent_id"] for s in plan.get("steps", []) if s["id"] not in (req.get("results") or {})}
-    ended = set()
-    for aid in remaining:
-        probe = {"status": "active", "agent_id": aid}
-        if _refresh_receipt(probe, hub):
-            ended.add(aid)
-    restored = False if frozen else _restore_fallbacks(plan, batch)
-    if not frozen:
-        for step in plan.get("steps", []):
-            if step["id"] in (req.get("results") or {}) or step["agent_id"] not in ended:
-                continue
-            fallback = batch.get("fallback_agents", {}).get(step["id"])
-            if fallback and fallback not in ended:
-                step["agent_id"] = fallback
-                restored = True
-    unresolved = ended.intersection(s["agent_id"] for s in plan.get("steps", [])
-                                   if s["id"] not in (req.get("results") or {}))
-    if unresolved:
-        req["recruit_contract_failure"] = sorted(unresolved)
-    if any(changed) or restored or unresolved:
+    plan, batch, changed = _reconcile_receipts(req, hub)
+    if changed:
         await persist_request(hub, req["id"])
-    remaining_steps = {s["id"] for s in plan.get("steps", [])
-                       if s["id"] not in (req.get("results") or {})}
-    pending_papers = set()
-    for proposal in plan.get("recruit") or []:
-        step_ids = proposal.get("step_ids")
-        # Legacy proposals without target metadata keep the conservative wait.
-        if not isinstance(step_ids, list) or not step_ids or remaining_steps.intersection(step_ids):
-            pending_papers.add(paper_key(proposal.get("paper") or proposal.get("repo")))
-    return {row["agent_id"] for pid, row in batch.get("results", {}).items()
-            if pid in pending_papers and row.get("status") == "active" and row.get("agent_id")}
+    return _pending_receipts(req, plan, batch)
 
 
 
