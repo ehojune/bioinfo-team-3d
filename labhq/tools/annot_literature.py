@@ -1281,8 +1281,13 @@ class LiteratureAnnotator(Annotator):
             "query": paper.query(), "resultType": "core", "format": "json", "pageSize": 1})
         if response.status_code != 200:
             raise LookupFailed(f"Europe PMC 검색이 HTTP {response.status_code}로 답했습니다")
-        data = response.json()
-        hits = (data.get("resultList") or {}).get("result") or []
+        try:
+            data = response.json()
+            hits = (data.get("resultList") or {}).get("result") or []
+            if not isinstance(hits, list) or any(not isinstance(row, dict) for row in hits):
+                raise ValueError('malformed Europe PMC records')
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise LookupFailed('Europe PMC metadata JSON/schema is malformed') from exc
         return (hits[0] if hits else None), data.get("version")
 
     async def _records_for(self, papers: list[PaperId]) -> tuple[dict, str | None]:

@@ -571,6 +571,17 @@ async def test_malformed_batch_metadata_falls_back_without_losing_other_papers(t
     assert rows[1]["ok"] and rows[1]["access_level"] == "full_text"
 
 
+@pytest.mark.parametrize("malformed", [None, [], {"resultList": [1]}, {"resultList": {"result": [1]}},
+                                       {"resultList": {"result": {"pmid": "123"}}}])
+async def test_malformed_single_metadata_is_a_lookup_failure(tmp_path, malformed):
+    def handler(request):
+        return httpx.Response(200, text="not json") if malformed is None else httpx.Response(200, json=malformed)
+
+    annotator, _ = make(handler, tmp_path)
+    with pytest.raises(annot.LookupFailed):
+        await annotator.fulltext(["123"])
+
+
 @pytest.mark.parametrize("doi", ["10.1002/(SICI)1097-0312(199605)49:5<235::AID-CPA2>3.0.CO;2-1",
                                 "10.1000/kinase(1)"])
 @pytest.mark.parametrize("suffix", ["", ".", ")"])
