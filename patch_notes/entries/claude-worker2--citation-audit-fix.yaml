@@ -1,0 +1,6 @@
+pr: 0
+rows:
+  - sha: "ef3e647"
+    at: "2026-11-12 04:55"
+    summary: "인용 감사가 등록 제목에 섞인 서식 태그(<i>, <sup>, &lt;sup&gt;)를 제목 차이로 세지 않습니다. 원문 자리에 포인터 파일만 있으면 수치가 원문에 없다고 하지 않고 '원문 없음, 확인 못 함'으로 적습니다."
+    text: "scripts/citation_audit.py 제목 비교 전 HTML 엔티티 해제·태그를 공백으로, '# 포인터:'·'# Pointer:'로 시작하는 원문은 minor source, eval-suite.md 등급표, 시험 7건 (#1383)"
