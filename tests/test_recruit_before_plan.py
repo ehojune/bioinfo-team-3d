@@ -554,3 +554,49 @@ async def test_scope_decision_precedes_recruitment(resume, approved, mode):
         assert not {"recruit_check", "recruit_plan", "plan_recruit", "step"}.intersection(order)
         assert "plan_recruitment" not in hub.requests["r"]
         assert hub.requests["r"]["outcome"] == "out_of_scope_declined"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('asynchronous', [False, True])
+@pytest.mark.parametrize('save_fails', [False, True])
+async def test_receipt_reconciliation_saves_mutations_before_return_or_failure(monkeypatch, asynchronous, save_fails):
+    from types import SimpleNamespace
+    from labhq.recruit import planning
+
+    recruit = {'paper': 'PMID:12345678', 'step_ids': ['s1']}
+    batch = {'results': {planning.paper_key(recruit['paper']): {'status': 'active', 'agent_id': 'expired'}},
+             'fallback_agents': {'s1': 'worker'}}
+    req = {'id': 'r', 'plan': {'recruit': [recruit], 'steps': [{'id': 's1', 'agent_id': 'expired'}]},
+           'plan_recruitment': {planning._batch_key([recruit]): batch}}
+    saves = []
+
+    def refresh(row, hub):
+        if row.get('agent_id') == 'expired':
+            row.update(status='failed', error='contract_ended')
+            return True
+        return False
+
+    def save(rid):
+        saves.append((rid, batch['results'][planning.paper_key(recruit['paper'])]['status'],
+                      req['plan']['steps'][0]['agent_id']))
+        if save_fails:
+            raise RuntimeError('save failed')
+
+    async def persist(hub, rid):
+        save(rid)
+
+    monkeypatch.setattr(planning, '_refresh_receipt', refresh)
+    monkeypatch.setattr(planning, 'persist_request', persist)
+    hub = SimpleNamespace(save_request=save)
+
+    async def call():
+        if asynchronous:
+            return await planning.apending_receipt_agents(req, hub)
+        return planning.pending_receipt_agents(req, hub)
+
+    if save_fails:
+        with pytest.raises(RuntimeError, match='save failed'):
+            await call()
+    else:
+        assert await call() == set()
+    assert saves == [('r', 'failed', 'worker')]

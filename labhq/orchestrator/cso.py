@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 from .. import output_checks
 from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
+from ..bench_report import restore_trailing_result, split_trailing_result
 from ..artifact_policy import (OUTPUT_ENV_DIR, OUTPUT_REFERENCE_DIR, OUTPUT_SCRIPTS_DIR,
                                unreported_warning_paths)
 from ..costs import cost_detail, format_cost, historical_plan_cost_estimate, task_cost_item
@@ -1890,17 +1891,12 @@ def _append_report_metadata(report: str, sections: list[str]) -> str:
     metadata = "\n\n".join(section.strip() for section in sections if section.strip())
     if not metadata:
         return report
-    marker = re.compile(r"<!-- LABHQ_BENCH_RESULT -->.*?<!-- /LABHQ_BENCH_RESULT -->", re.DOTALL)
-    blocks = list(marker.finditer(report))
-    benchmark = ""
-    if len(blocks) == 1 and not report[blocks[0].end():].strip():
-        benchmark = blocks[0].group(0)
-        report = report[:blocks[0].start()].rstrip()
+    report, benchmark = split_trailing_result(report)
     if EXECUTION_APPENDIX_TITLE in report:
         report = report.rstrip() + "\n\n" + metadata
     else:
         report = report.rstrip() + "\n\n" + EXECUTION_APPENDIX_TITLE + "\n\n" + metadata
-    return report + (("\n\n" + benchmark) if benchmark else "")
+    return restore_trailing_result(report, benchmark)
 
 
 def _split_report_appendix(report: str) -> tuple[str, str]:
@@ -1913,12 +1909,9 @@ def _split_report_appendix(report: str) -> tuple[str, str]:
     body, raw = report[:match.start()], report[match.end():]
     appendix = raw.strip()
     # #229 benchmark parsers require their machine block to remain the last part of the PI report.
-    marker = re.compile(r"<!-- LABHQ_BENCH_RESULT -->.*?<!-- /LABHQ_BENCH_RESULT -->", re.DOTALL)
-    blocks = list(marker.finditer(appendix))
-    if len(blocks) == 1 and not appendix[blocks[0].end():].strip():
-        benchmark = blocks[0].group(0)
-        appendix = appendix[:blocks[0].start()].rstrip()
-        body = body.rstrip() + "\n\n" + benchmark
+    appendix, benchmark = split_trailing_result(appendix)
+    if benchmark:
+        body = restore_trailing_result(body.rstrip(), benchmark)
     return body.strip(), (title + ("\n\n" + appendix if appendix else ""))
 
 
@@ -1938,12 +1931,7 @@ def _execution_warning_summary(report: str) -> str:
     """Ensure a warning moved out of the PI report still leaves one visible limitation line."""
     if "실행 기록 참고" in report:
         return report
-    marker = re.compile(r"<!-- LABHQ_BENCH_RESULT -->.*?<!-- /LABHQ_BENCH_RESULT -->", re.DOTALL)
-    blocks = list(marker.finditer(report))
-    benchmark = ""
-    if len(blocks) == 1 and not report[blocks[0].end():].strip():
-        benchmark = blocks[0].group(0)
-        report = report[:blocks[0].start()].rstrip()
+    report, benchmark = split_trailing_result(report)
     line = "실행 경고가 있습니다. 실행 기록 참고."
     limitations = re.search(r"(?m)^## (?:한계|논의)\s*$", report)
     if not limitations:
@@ -1952,7 +1940,7 @@ def _execution_warning_summary(report: str) -> str:
         following = re.search(r"(?m)^## ", report[limitations.end():])
         end = limitations.end() + (following.start() if following else len(report[limitations.end():]))
         report = report[:end].rstrip() + "\n\n" + line + "\n\n" + report[end:].lstrip()
-    return report + (("\n\n" + benchmark) if benchmark else "")
+    return restore_trailing_result(report, benchmark)
 
 
 def _review_reference(review: dict | None) -> str:
@@ -2003,11 +1991,8 @@ def _before_bench_block(report: str, section: str) -> str:
         end = discussion.end() + (following.start() if following else len(report[discussion.end():]))
         section = re.sub(r"(?m)^## ", "### ", section)
         return report[:end].rstrip() + "\n\n" + section + "\n\n" + report[end:]
-    marker = re.compile(r"<!-- LABHQ_BENCH_RESULT -->.*?<!-- /LABHQ_BENCH_RESULT -->", re.DOTALL)
-    blocks = list(marker.finditer(report))
-    if len(blocks) == 1 and not report[blocks[0].end():].strip():
-        return report[:blocks[0].start()].rstrip() + "\n\n" + section + "\n\n" + blocks[0].group(0)
-    return report.rstrip() + "\n\n" + section
+    report, benchmark = split_trailing_result(report)
+    return restore_trailing_result(report.rstrip() + "\n\n" + section, benchmark)
 
 
 def _with_review_reference(report: str, review: dict | None) -> str:
@@ -2015,12 +2000,7 @@ def _with_review_reference(report: str, review: dict | None) -> str:
     reference = _review_reference(review)
     if not reference:
         return report
-    marker = re.compile(r"<!-- LABHQ_BENCH_RESULT -->.*?<!-- /LABHQ_BENCH_RESULT -->", re.DOTALL)
-    blocks = list(marker.finditer(report))
-    benchmark = ""
-    if len(blocks) == 1 and not report[blocks[0].end():].strip():
-        benchmark = blocks[0].group(0)
-        report = report[:blocks[0].start()].rstrip()
+    report, benchmark = split_trailing_result(report)
     report = re.sub(r"(?ms)^#{1,6}[ \t]*리뷰 참고[ \t]*$.*?(?=^#{1,6} |\Z)", "", report).rstrip()
     discussion = re.search(r"(?m)^## 논의[ \t]*$", report)
     if discussion:
@@ -2029,7 +2009,7 @@ def _with_review_reference(report: str, review: dict | None) -> str:
         report = report[:end].rstrip() + "\n\n" + reference.replace("## 리뷰 참고", "### 리뷰 참고", 1) + "\n\n" + report[end:]
     else:
         report = report + "\n\n" + reference
-    return report + (("\n\n" + benchmark) if benchmark else "")
+    return restore_trailing_result(report, benchmark)
 
 
 def _appendix_sections(existing: str, sections: list[str]) -> str:
