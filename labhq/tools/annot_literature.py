@@ -1302,17 +1302,17 @@ class LiteratureAnnotator(Annotator):
         response = await self.http.request('europepmc', 'GET', f'{EUROPEPMC}/search', params={
             'query': ' OR '.join(f'({paper.query()})' for paper in papers), 'resultType': 'core',
             'format': 'json', 'pageSize': MAX_PER_CALL})
-        if response.status_code != 200:
-            raise LookupFailed(f'Europe PMC batch search HTTP {response.status_code}')
         version = None
         try:
+            if response.status_code != 200:
+                raise ValueError(f'Europe PMC batch search HTTP {response.status_code}')
             data = response.json()
             hits = (data.get('resultList') or {}).get('result') or []
             if not isinstance(hits, list) or any(not isinstance(row, dict) for row in hits):
                 raise ValueError('malformed Europe PMC batch records')
             version = data.get('version')
         except (ValueError, AttributeError, TypeError):
-            # A shared decode/schema error must not abort every paper. Empty hits
+            # A shared HTTP/decode/schema error must not abort every paper. Empty hits
             # select the existing isolated follow-ups below, with their normal admission.
             hits = []
         records = {}
@@ -1322,7 +1322,8 @@ class LiteratureAnnotator(Annotator):
             if records[paper.key] is None:
                 # Search may truncate aliases or omit a record; isolate a failed follow-up to that paper.
                 try:
-                    records[paper.key], _ = await self._record_for(paper)
+                    records[paper.key], seen = await self._record_for(paper)
+                    version = version or seen
                 except Exception as exc:  # noqa: BLE001
                     records[paper.key] = exc
         return records, version
