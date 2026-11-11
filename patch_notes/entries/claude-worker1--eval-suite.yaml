@@ -8,3 +8,7 @@ rows:
     at: "2026-11-12 03:39"
     summary: "새 인용 감사 시험을 Windows CI 시험 목록에 올렸습니다."
     text: "config/ci/windows-boundary-v1.json에 tests/test_citation_audit.py 등록 (#1383)"
+  - sha: "f6c0ca9"
+    at: "2026-11-12 03:59"
+    summary: "인용 감사가 1e-5 같은 과학 표기 수치를 유효숫자로 대조하고, 비어 있는(null) 인용문·수치 목록을 입력 오류로 알립니다."
+    text: "citation_audit: number_held(과학 표기·× 10^ 형식), quotes·numbers 목록 검증(exit 2), 시험 11건 (#1383)"
