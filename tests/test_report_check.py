@@ -90,6 +90,13 @@ def test_inline_code_with_multiple_backticks_is_not_numeric_prose():
     assert _unanchored_numeric_sentences("예: ``x = 42``. 결과는 7입니다.") == ["결과는 7입니다."]
 
 
+def test_footnotes_are_not_numeric_prose():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    report = "설명입니다.[^1]\n\n[^1]: 출처 2020\n    추가 42\n\n결과는 7입니다."
+    assert _unanchored_numeric_sentences(report) == ["결과는 7입니다."]
+
+
 def test_legacy_summary_rows_do_not_bypass_cp2_refusal():
     ledger = _ledger()
     del ledger["evidence"][0]["status"]

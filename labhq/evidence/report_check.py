@@ -292,6 +292,8 @@ def _unanchored_numeric_sentences(report: str) -> list[str]:
     text = "\n".join(kept)
     text = re.sub(r"(?<!`)(`+)(?!`)(.*?)(?<!`)\1(?!`)", " ", text, flags=re.DOTALL)
     text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
+    text = re.sub(r"(?m)^ {0,3}\[\^[^\]\n]+\]:[^\n]*(?:\n(?: {4}|\t)[^\n]*)*", "", text)
+    text = re.sub(r"\[\^[^\]\n]+\]", "", text)
     sentences = []
     lines = text.splitlines()
     table_lines: set[int] = set()
