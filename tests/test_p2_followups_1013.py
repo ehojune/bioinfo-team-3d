@@ -168,7 +168,7 @@ async def test_recall_searches_past_filtered_candidates(tmp_path):
         for i in range(101):
             request(hub, f"req_filtered{i}", text="유전자 /later study")
         await hub.knowledge.drain()
-        hub.s.policy.data_zones = [DataZone(path="/later", classification="restricted")]
+        hub.s.policy.data_zones = [DataZone(path="/later", level="restricted")]
         assert [r["request_id"] for r in hub.knowledge.search("유전자")] == ["req_aaa_safe"]
     finally:
         hub.store.close()

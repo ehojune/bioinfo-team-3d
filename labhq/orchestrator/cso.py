@@ -88,6 +88,10 @@ from ..vocab import topics as topic_types
 if TYPE_CHECKING:
     from ..gateway.server import Hub
 
+
+class ConsultOutcomeUnknown(Exception):
+    """A prior consult may have external effects whose outcome is not known."""
+
 # The CSO's judgment of a general request against lab.scope (#36 PI decision 2026-10-01, option C): "out" waits for
 # the PI's go-ahead before any step runs, "borderline" runs with one report line, "in" runs as before.
 SCOPE_VERDICTS = ("in", "borderline", "out")
@@ -3922,20 +3926,16 @@ class Orchestrator:
                     **{"from": "labhq", "routed_to": routed}))
                 return
             # After a gateway restart the runner may still be running this ask's consult.
-            # Adopt its result; when its outcome is unknown, isolate the new consult.
+            # Adopt its result; an unknown outcome must remain held.
             adopt = getattr(self.hub, "adopt_consult", None)
             prior, result = await adopt(ask.id, routed) if adopt else (0, None)
-            if automatic and prior and result is None:
-                await self.hub.resolve_ask(ask, runner_id, ask_result(
-                    reason="이전 시설팀 진단 결과를 확인할 수 없어 다시 실행하지 않습니다", **{"from": "labhq"}))
-                return
+            if prior and result is None:
+                raise ConsultOutcomeUnknown(ask.id)
             first_attempt = 1
             if result is not None:
                 self._count_adopted_cost(ask.request_id, result.task_id)
                 if not automatic and failure_kind(result) == "transient" and prior < self.cfg.step_max_attempts:
                     result, first_attempt = None, prior + 1  # only the retries that are left
-            elif prior:
-                first_attempt = min(prior, self.cfg.step_max_attempts)  # its outcome was never observed
             if result is None:
                 session_id, workdir = self._last_agent_session(ask.request_id, routed)
                 if automatic or requested.startswith("colleague:"):

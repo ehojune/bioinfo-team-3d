@@ -169,13 +169,13 @@ async def test_activity_reads_latest_row_after_queued_write(activity_hub, monkey
 
     blocker = asyncio.create_task(durable.run(hub.store.lane, block))
     queued = asyncio.Event()
-    original = hub.store.aappend_event
+    original = hub.store.aaccept_runner_inbox
 
     async def observed(*args, **kwargs):
         queued.set()
         return await original(*args, **kwargs)
 
-    monkeypatch.setattr(hub.store, "aappend_event", observed)
+    monkeypatch.setattr(hub.store, "aaccept_runner_inbox", observed)
     pending = []
     try:
         assert await asyncio.to_thread(entered.wait, 3)
@@ -226,13 +226,13 @@ async def test_concurrent_activity_merges_tools_and_owns_inputs(activity_hub, mo
 
     blocker = asyncio.create_task(durable.run(hub.store.lane, block))
     queued = asyncio.Event()
-    original = hub.store.aappend_event
+    original = hub.store.aaccept_runner_inbox
 
     async def observed(*args, **kwargs):
-        queued.set()  # the first publication reached the writer; the second waits for it on the event lock
+        queued.set()  # the first admission reached the writer; the second waits on the runner lock
         return await original(*args, **kwargs)
 
-    monkeypatch.setattr(hub.store, "aappend_event", observed)
+    monkeypatch.setattr(hub.store, "aaccept_runner_inbox", observed)
     pending = []
     try:
         assert await asyncio.to_thread(entered.wait, 3)
@@ -260,8 +260,7 @@ async def test_cancel_during_event_and_activity_commit_keeps_both_without_ack(
     """#1132: the activity is saved with its event, the runner cursor and nothing else, in one transaction.
 
     A cancel during that commit leaves either everything (the commit finished) or nothing (it failed), and the runner
-    is not acknowledged. The cursor then tells a replay apart: a finished commit makes it a duplicate that is only
-    acknowledged, a rolled-back one is applied again."""
+    is not acknowledged. The uncertain inbox entry is held on replay in both cases."""
     import anyio
 
     hub, trace = activity_hub
@@ -269,15 +268,24 @@ async def test_cancel_during_event_and_activity_commit_keeps_both_without_ack(
     hub.store.put("task", "t", initial)
     entered, release = threading.Event(), threading.Event()
     original = hub.store._transaction
+    original_append = hub.store.acommit_runner_publication
+    event_commit = threading.Event()
+
+    async def observe_append(*args, **kwargs):
+        event_commit.set()
+        return await original_append(*args, **kwargs)
+
+    monkeypatch.setattr(hub.store, "acommit_runner_publication", observe_append)
 
     @contextmanager
     def blocked_commit():
         with original() as conn:
             yield conn
-            entered.set()
-            assert release.wait(3)
-            if fail:
-                raise OSError("mock cancelled activity failure")
+            if event_commit.is_set():
+                entered.set()
+                assert release.wait(3)
+                if fail:
+                    raise OSError("mock cancelled activity failure")
 
     monkeypatch.setattr(hub.store, "_transaction", blocked_commit)
     scope = anyio.CancelScope()
@@ -315,9 +323,13 @@ async def test_cancel_during_event_and_activity_commit_keeps_both_without_ack(
         monkeypatch.setattr(hub.store, "_transaction", original)
         # The runner never got its ack, so it sends the message again.
         await hub.on_runner_message("r", activity_message())
-        assert set(hub.store.get("task", "t")["activity"]["tools"]) == {"one"}
+        recovered = hub.store.get("task", "t")
+        assert recovered["activity"]["tools"]["one"]["input"] == {"value": "original"}
+        if not fail:
+            assert recovered == after
         assert len(hub.store.events_since(0)) == 1
-        assert trace == (["publish", "ack"] if fail else ["ack"])  # a finished commit made the replay a duplicate
+        assert hub.store.runner_inbox("r", None, 1)["state"] == "completed"
+        assert trace == ["publish", "ack"]
     finally:
         release.set()
         await asyncio.gather(pending, return_exceptions=True)

@@ -42,20 +42,23 @@ def test_manifest_updates_use_atomic_write(tmp_path, monkeypatch):
     import labhq.runner.workspace as workspace_module
 
     writes = []
-    original = workspace_module.write_owned
+    original = workspace_module.HeldDir.replace
 
-    def record(root, relative, text):
-        writes.append(Path(root) / relative)
-        return original(root, relative, text)
+    def record(held, source, destination):
+        writes.append((source, destination))
+        return original(held, source, destination)
 
-    monkeypatch.setattr(workspace_module, "write_owned", record)
+    monkeypatch.setattr(workspace_module.HeldDir, "replace", record)
     agent = AgentSpec(id="a", name="A", role="test", builtin_mcp=[])
     task = Task(agent_id="a", prompt="x")
     workspace = TaskWorkspace(tmp_path / "runs", task, agent)
     workspace.update_run(task.id, started_at=1.0)
     workspace.update_run(task.id, ended_at=2.0)
     manifest = workspace.dir / "manifest.json"
-    assert writes == [manifest, manifest], "one atomic write per update; a missing manifest is not written twice"
+    assert len(writes) == 2
+    assert all(src.startswith(".manifest.json.labhq-") and src.endswith(".tmp") and dest == "manifest.json"
+               for src, dest in writes)
+    assert writes[0][0] != writes[1][0]
     assert not list(manifest.parent.glob(f".{manifest.name}.*.tmp"))
 
 

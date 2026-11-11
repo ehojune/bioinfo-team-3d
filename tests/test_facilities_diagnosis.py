@@ -204,7 +204,12 @@ async def test_restart_adopts_prior_diagnosis_without_redispatch(tmp_path, known
         second._restart_request_asks("r")
         await asyncio.gather(*list(second.ask_tasks.values()))
         assert not calls
-        assert second.store.get("ask", ask_id)["state"] == "resolved"
+        entry = second.store.get("ask", ask_id)
+        if known:
+            assert entry["state"] == "resolved"
+        else:
+            assert entry["state"] == "pending"
+            assert entry["recovery_blocked"] == "consult outcome unknown"
         await second.orchestrator.run_step(step())
         assert len(calls) == 1
     finally:
