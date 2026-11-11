@@ -264,6 +264,15 @@ def collect_reproduction_receipt(req, settings) -> dict:
             continue
     receipt = build_receipt(sources, outputs=expected_outputs(req))
     receipt["omitted_files"].extend(omitted)
+    # The PI's last `labhq verify --rerun` of this request, if any, says whether the analysis actually reproduced (#1374).
+    from .reproduction_receipt import rerun_path, rerun_summary
+    try:
+        stored = json.loads(rerun_path(settings.path(settings.runner.state_dir), str(req.get("id") or "")).read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        stored = None
+    if rerun_summary(stored) is not None:
+        receipt["rerun"] = stored
     return receipt
 
 

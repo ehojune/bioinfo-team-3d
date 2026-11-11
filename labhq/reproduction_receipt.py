@@ -289,7 +289,11 @@ def receipt_summary(receipt: Any, *, path: str = "") -> dict[str, Any]:
                   "not_checked" if omitted else "pass" if rows else "not_applicable")
     execution = next((s for s in ("fail", "timeout", "unavailable", "missing_output", "blocked_input", "blocked_syntax", "not_rerun")
                       if s in executed), "pass" if rows and not omitted else "not_rerun")
+    rerun = rerun_summary(receipt.get("rerun"))
+    if rerun is not None:  # the PI's own rerun of the whole request (#1374) is what "execution" reports
+        execution = rerun["status"]
     return {**missing, "present": True, "syntax": syntax, "execution": execution,
+            **({"rerun": rerun} if rerun is not None else {}),
             "lock_status": "present" if receipt.get("lock_status") == "present" else "missing",
             "omitted_files": omitted,
             "failed_files": [_path(row.get("path")) or "redacted" for row in rows
@@ -310,3 +314,153 @@ def receipt_note(summary: Mapping[str, Any]) -> str:
 
 def receipt_json(receipt: Mapping[str, Any]) -> str:
     return json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+# ----- PI-run reproduction of a finished request (#1374) -----
+# `labhq verify <request> --rerun` runs each local step's own published scripts again in a fresh temporary copy of
+# that step's inputs and compares the declared outputs with the sha256 recorded when the step ran. It runs only when
+# the PI asks and confirms the listed commands; it is the PI's own process, not an OS sandbox. A step that ran as
+# cluster jobs is not rerun here.
+
+RERUN_DIR = "reproduction"
+RERUN_INPUT_MAX_BYTES = 2_000_000_000  # a step whose staged inputs are larger is not copied for a rerun
+RERUN_STATUSES = {"pass", "hash_mismatch", "missing_output", "fail", "timeout", "unavailable", "wrote_outside",
+                  "hpc", "no_scripts", "no_recorded_outputs", "inputs_too_large", "not_located"}
+_RUNTIME = {"python": ["-E", "-s", "-B"], "r": ["--vanilla"], "bash": ["--noprofile", "--norc"]}
+_TOOL = {"python": "python", "r": "Rscript", "bash": "bash"}
+
+
+def rerun_path(state_dir: str | Path, request_id: str) -> Path:
+    """Where the last PI rerun of a request is kept, for the publication receipt to read."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", str(request_id or "")):
+        raise ValueError("invalid request id")
+    return Path(state_dir) / RERUN_DIR / f"{request_id}.json"
+
+
+def _sha_file(path: Path) -> str | None:
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def rerun_plan(steps: Sequence[Mapping[str, Any]], tools: Mapping[str, str | None] | None = None) -> list[dict]:
+    """What a rerun would execute, before anything runs: per step its scripts in order, the commands and the outputs
+    it will compare. ``steps`` rows: step_id, workdir (or None), outputs, recorded (path -> sha256), hpc."""
+    supplied = dict(tools) if tools is not None else {
+        "python": sys.executable, "r": shutil.which("Rscript"), "bash": shutil.which("bash")}
+    plan = []
+    for step in steps:
+        outputs = [str(p).replace("\\", "/") for p in step.get("outputs") or []]
+        scripts = sorted(p for p in outputs if PurePosixPath(p).suffix.casefold() in LANGUAGES and _path(p))
+        recorded = {p: h for p, h in (step.get("recorded") or {}).items()
+                    if PurePosixPath(p).suffix.casefold() not in LANGUAGES and _path(p) and isinstance(h, str)}
+        row = {"step_id": str(step.get("step_id")), "workdir": str(step.get("workdir") or ""),
+               "scripts": scripts, "compare": sorted(recorded), "recorded": recorded, "commands": []}
+        status = ("not_located" if not step.get("workdir") else "hpc" if step.get("hpc") else
+                  "no_scripts" if not scripts else "no_recorded_outputs" if not recorded else "planned")
+        for script in scripts:
+            language = LANGUAGES[PurePosixPath(script).suffix.casefold()]
+            executable = supplied.get(language)
+            row["commands"].append({"script": script, "tool": _TOOL[language], "executable": executable,
+                                    "args": [*_RUNTIME[language], script]})
+            if status == "planned" and not executable:
+                status = "unavailable"
+        row["status"] = status
+        plan.append(row)
+    return plan
+
+
+def _copy_inputs(source: Path, target: Path, scripts: Sequence[str]) -> int:
+    """The step folder's staged ``inputs/`` and its scripts, copied without following any link. Returns bytes."""
+    total = 0
+    inputs = source / "inputs"
+    if inputs.is_dir() and not inputs.is_symlink():
+        for path in inputs.rglob("*"):
+            if path.is_symlink() or any(parent.is_symlink() for parent in path.parents if parent != source):
+                continue
+            if path.is_file():
+                total += path.stat().st_size
+                if total > RERUN_INPUT_MAX_BYTES:
+                    raise OverflowError
+                destination = target / path.relative_to(source)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, destination)
+    for script in scripts:
+        path = source / script
+        if path.is_symlink() or not path.is_file():
+            continue
+        destination = target / script
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, destination)
+    return total
+
+
+def rerun(plan: Sequence[Mapping[str, Any]], *, timeout: float = 600,
+          temp_root: Path | None = None) -> dict[str, Any]:
+    """Run each planned step's scripts in order in a fresh copy of its inputs; compare the declared outputs' sha256 with
+    the recorded ones. The original step folder's outputs are hashed before and after: a change there means a script
+    wrote outside its temporary copy (``wrote_outside``)."""
+    steps = []
+    for row in plan:
+        result = {key: row[key] for key in ("step_id", "scripts", "compare")}
+        result.update(status=row["status"], runs=[], outputs=[])
+        if row["status"] != "planned":
+            steps.append(result)
+            continue
+        source = Path(row["workdir"])
+        before = {name: _sha_file(source / name) for name in row["compare"]}
+        with tempfile.TemporaryDirectory(prefix="labhq-rerun-", dir=temp_root) as temporary:
+            root = Path(temporary)
+            work, home = root / "step", root / "home"
+            work.mkdir()
+            home.mkdir()
+            try:
+                _copy_inputs(source, work, row["scripts"])
+            except OverflowError:
+                result["status"] = "inputs_too_large"
+                steps.append(result)
+                continue
+            env = _environment(home, {})
+            for command in row["commands"]:
+                ran = _run([command["executable"], *command["args"]], work, env, timeout)
+                result["runs"].append({"script": command["script"], **ran})
+                if ran["status"] != "pass":
+                    result["status"] = ran["status"]
+                    break
+            if result["status"] == "planned":
+                for name in row["compare"]:
+                    got = _sha_file(work / name)
+                    result["outputs"].append({"path": name, "recorded_sha256": row["recorded"][name], "sha256": got,
+                                              "status": "missing" if got is None else
+                                              "match" if got == row["recorded"][name] else "mismatch"})
+                states = {item["status"] for item in result["outputs"]}
+                result["status"] = ("missing_output" if "missing" in states else
+                                    "hash_mismatch" if "mismatch" in states else "pass")
+        if {name: _sha_file(source / name) for name in row["compare"]} != before:
+            result["status"] = "wrote_outside"
+        steps.append(result)
+    statuses = [step["status"] for step in steps]
+    overall = next((s for s in ("wrote_outside", "fail", "timeout", "unavailable", "missing_output", "hash_mismatch",
+                                "inputs_too_large", "not_located") if s in statuses), None)
+    if overall is None:
+        overall = ("pass" if "pass" in statuses and all(s in {"pass", "no_scripts"} for s in statuses) else
+                   "hpc" if "hpc" in statuses and "pass" not in statuses else
+                   "partial" if "pass" in statuses else "not_rerun")
+    return {"schema_version": 1, "checked_at": datetime.now(timezone.utc).isoformat(), "status": overall,
+            "steps": steps, "scope": "pi_confirmed_local_rerun"}
+
+
+def rerun_summary(record: Any) -> dict[str, Any] | None:
+    """A bounded summary of a stored rerun for the receipt and report front, or None when there is none."""
+    if not isinstance(record, Mapping) or record.get("schema_version") != 1 or not isinstance(record.get("steps"), list):
+        return None
+    steps = [step for step in record["steps"] if isinstance(step, Mapping) and step.get("status") in RERUN_STATUSES]
+    return {"status": str(record.get("status") or "not_rerun"), "checked_at": str(record.get("checked_at") or ""),
+            "steps": {str(step.get("step_id")): step["status"] for step in steps}}

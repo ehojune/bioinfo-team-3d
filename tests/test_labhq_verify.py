@@ -552,3 +552,49 @@ async def test_verify_reads_report_tables_from_the_folder_it_located(tmp_path, m
         pytest.skip("workdir not locatable from workdir_id in this layout")
     assert data["report_consistency"]["checked"]["tables"] == ["steps/s1/outputs/table.tsv"]
     assert [row["kind"] for row in data["report_consistency"]["findings"]] == ["direction"]
+
+
+
+def _with_script(body: bytes):
+    """A step that leaves its table and the script that makes it, as a reproducible step does (#1374)."""
+    script = ("import pathlib\npathlib.Path('outputs').mkdir(exist_ok=True)\n"
+              f"pathlib.Path('outputs/table.tsv').write_bytes({body!r})\n")
+
+    def write(wd: Path) -> None:
+        _write(wd, "outputs/table.tsv", BODY)
+        _write(wd, "outputs/scripts/make.py", script.encode())
+    return write
+
+
+async def test_rerun_shows_the_commands_and_runs_nothing_when_the_pi_says_no(tmp_path, monkeypatch, capsys):
+    settings, result = await _run(tmp_path, monkeypatch, _with_script(BODY), outputs=("table.tsv", "scripts/make.py"))
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or "n")
+    code, out = _verify(monkeypatch, capsys, settings, _request(result), "--rerun")
+    assert code == 0 and asked and "outputs/scripts/make.py" in out and "재현 재실행 계획" in out
+    assert "PI가 실행하지 않기로 함" in out
+
+
+async def test_rerun_with_yes_reproduces_the_outputs_and_keeps_the_record(tmp_path, monkeypatch, capsys):
+    from labhq.reproduction_receipt import rerun_path
+    settings, result = await _run(tmp_path, monkeypatch, _with_script(BODY), outputs=("table.tsv", "scripts/make.py"))
+    code, out = _verify(monkeypatch, capsys, settings, _request(result), "--rerun", "--yes")
+    assert code == 0, out
+    assert "재현 재실행: 재현됨(산출 hash 일치)" in out
+    stored = json.loads(rerun_path(settings.path(settings.runner.state_dir), "req_v").read_text(encoding="utf-8"))
+    assert stored["status"] == "pass" and stored["steps"][0]["outputs"][0]["status"] == "match"
+
+
+async def test_rerun_that_does_not_reproduce_is_a_problem(tmp_path, monkeypatch, capsys):
+    settings, result = await _run(tmp_path, monkeypatch, _with_script(b"gene\tlog2fc\nCD276\t-2.5\n"),
+                                  outputs=("table.tsv", "scripts/make.py"))
+    code, out = _verify(monkeypatch, capsys, settings, _request(result), "--rerun", "--yes", "--json")
+    data = json.loads(out)
+    assert code == 1 and data["rerun"]["status"] == "hash_mismatch"
+    assert any(problem.startswith("재현 재실행: s1") for problem in data["problems"])
+
+
+async def test_json_rerun_needs_yes_because_nobody_can_confirm(tmp_path, monkeypatch, capsys):
+    settings, result = await _run(tmp_path, monkeypatch, _with_script(BODY), outputs=("table.tsv", "scripts/make.py"))
+    code, out = _verify(monkeypatch, capsys, settings, _request(result), "--rerun", "--json")
+    assert code == 2 and "--yes" in json.loads(out)["reasons"][-1]

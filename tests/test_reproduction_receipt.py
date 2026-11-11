@@ -753,3 +753,64 @@ def test_a_blocked_name_is_redacted_never_staged_and_keeps_its_result_unknown(tm
     assert "\u202e" not in text and "CON.py" not in text and "C:run" not in text
     assert rr.receipt_summary(receipt)["syntax"] == "blocked_path"
     assert not any(tmp_path.rglob("*.py"))  # nothing was written under any name
+
+
+# ----- #1374: the PI's rerun of a finished request -----
+
+_SCRIPT = ("import pathlib\n"
+           "rows = pathlib.Path('inputs/s0/counts.tsv').read_text().splitlines()\n"
+           "pathlib.Path('outputs').mkdir(exist_ok=True)\n"
+           "pathlib.Path('outputs/total.tsv').write_bytes(('total\\n%d\\n' % sum(int(r) for r in rows)).encode())\n")
+
+
+def _step(tmp_path: Path, script: str = _SCRIPT, *, recorded: str | None = None, hpc: bool = False) -> dict:
+    """A finished local step folder: staged input, its script and its recorded output, as the runner leaves them."""
+    workdir = tmp_path / "step_s1"
+    (workdir / "inputs" / "s0").mkdir(parents=True)
+    (workdir / "inputs" / "s0" / "counts.tsv").write_text("1\n2\n3\n", encoding="utf-8")
+    (workdir / "outputs" / "scripts").mkdir(parents=True)
+    (workdir / "outputs" / "scripts" / "total.py").write_text(script, encoding="utf-8")
+    (workdir / "outputs" / "total.tsv").write_bytes(b"total\n6\n")
+    digest = recorded or hashlib.sha256(b"total\n6\n").hexdigest()
+    return {"step_id": "s1", "workdir": str(workdir), "outputs": ["outputs/scripts/total.py", "outputs/total.tsv"],
+            "recorded": {"outputs/total.tsv": digest}, "hpc": hpc}
+
+
+def test_rerun_plan_lists_the_scripts_and_commands_before_anything_runs(tmp_path):
+    [row] = rr.rerun_plan([_step(tmp_path)], tools={"python": sys.executable})
+    assert row["status"] == "planned" and row["scripts"] == ["outputs/scripts/total.py"]
+    assert row["compare"] == ["outputs/total.tsv"]
+    assert row["commands"][0]["tool"] == "python" and row["commands"][0]["args"][-1] == "outputs/scripts/total.py"
+    hpc, = rr.rerun_plan([_step(tmp_path / "h", hpc=True)], tools={"python": sys.executable})
+    assert hpc["status"] == "hpc"
+
+
+def test_a_rerun_that_reproduces_the_recorded_output_passes(tmp_path):
+    record = rr.rerun(rr.rerun_plan([_step(tmp_path)], tools={"python": sys.executable}), temp_root=tmp_path)
+    assert record["status"] == "pass"
+    [step] = record["steps"]
+    assert step["outputs"] == [{"path": "outputs/total.tsv", "recorded_sha256": hashlib.sha256(b"total\n6\n").hexdigest(),
+                                "sha256": hashlib.sha256(b"total\n6\n").hexdigest(), "status": "match"}]
+    assert not list(tmp_path.glob("labhq-rerun-*"))  # the temporary copy is removed
+
+
+def test_a_different_output_a_failing_script_and_a_write_outside_are_reported(tmp_path):
+    mismatch = rr.rerun(rr.rerun_plan([_step(tmp_path / "a", recorded="0" * 64)], tools={"python": sys.executable}))
+    assert mismatch["status"] == "hash_mismatch" and mismatch["steps"][0]["outputs"][0]["status"] == "mismatch"
+    failing = rr.rerun(rr.rerun_plan([_step(tmp_path / "b", "raise SystemExit(3)\n")], tools={"python": sys.executable}))
+    assert failing["status"] == "fail" and failing["steps"][0]["runs"][0]["returncode"] == 3
+    original = tmp_path / "c" / "step_s1" / "outputs" / "total.tsv"
+    outside = _SCRIPT + f"pathlib.Path({str(original)!r}).write_text('changed')\n"
+    wrote = rr.rerun(rr.rerun_plan([_step(tmp_path / "c", outside)], tools={"python": sys.executable}))
+    assert wrote["status"] == "wrote_outside"
+
+
+def test_the_receipt_reports_the_stored_rerun_as_its_execution(tmp_path):
+    record = rr.rerun(rr.rerun_plan([_step(tmp_path)], tools={"python": sys.executable}))
+    receipt = rr.build_receipt({}, tools={})
+    assert rr.receipt_summary(receipt)["execution"] == "not_rerun"
+    summary = rr.receipt_summary({**receipt, "rerun": record})
+    assert summary["execution"] == "pass" and summary["rerun"]["steps"] == {"s1": "pass"}
+    assert rr.rerun_path(tmp_path, "req_ab12").name == "req_ab12.json"
+    with pytest.raises(ValueError):
+        rr.rerun_path(tmp_path, "../x")
