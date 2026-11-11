@@ -306,7 +306,8 @@ RERUN_FRONT = {"pass": "재현됨(산출 hash 일치)", "partial": "일부 단�
                "hash_mismatch": "**산출 hash 불일치**", "missing_output": "**산출 없음**", "fail": "**스크립트 실패**",
                "timeout": "**시간 초과**", "unavailable": "실행 도구 없음", "wrote_outside": "**임시 폴더 밖 파일이 바뀜**",
                "hpc": "재현 실행 안 함(HPC)", "inputs_too_large": "입력이 커서 실행 안 함",
-               "not_located": "작업 폴더를 찾지 못해 실행 안 함", "not_rerun": "실행한 단계 없음"}
+               "not_located": "작업 폴더를 찾지 못해 실행 안 함", "not_rerun": "실행한 단계 없음",
+               "script_changed": "**스크립트가 실행 뒤 바뀜**", "input_changed": "**선행 산출이 기록과 다름**"}
 
 
 def record_lines(consistency: Mapping[str, Any] | None) -> str:

@@ -769,11 +769,12 @@ def _step(tmp_path: Path, script: str = _SCRIPT, *, recorded: str | None = None,
     (workdir / "inputs" / "s0").mkdir(parents=True)
     (workdir / "inputs" / "s0" / "counts.tsv").write_text("1\n2\n3\n", encoding="utf-8")
     (workdir / "outputs" / "scripts").mkdir(parents=True)
-    (workdir / "outputs" / "scripts" / "total.py").write_text(script, encoding="utf-8")
+    (workdir / "outputs" / "scripts" / "total.py").write_bytes(script.encode())
     (workdir / "outputs" / "total.tsv").write_bytes(b"total\n6\n")
     digest = recorded or hashlib.sha256(b"total\n6\n").hexdigest()
     return {"step_id": "s1", "workdir": str(workdir), "outputs": ["outputs/scripts/total.py", "outputs/total.tsv"],
-            "recorded": {"outputs/total.tsv": digest}, "hpc": hpc}
+            "recorded": {"outputs/total.tsv": digest,
+                         "outputs/scripts/total.py": hashlib.sha256(script.encode()).hexdigest()}, "hpc": hpc}
 
 
 def test_rerun_plan_lists_the_scripts_and_commands_before_anything_runs(tmp_path):
@@ -842,3 +843,38 @@ def test_the_results_digest_changes_when_any_recorded_output_changes():
     later = {**results, "s2": {"output_sha256": {"outputs/b.tsv": "2" * 64}}}
     assert rr.results_digest(results) == rr.results_digest(dict(results))
     assert rr.results_digest(results) != rr.results_digest(later)
+
+
+
+def test_a_script_edited_after_the_run_is_not_rerun(tmp_path):
+    step = _step(tmp_path)
+    Path(step["workdir"], "outputs", "scripts", "total.py").write_text(_SCRIPT + "# edited\n", encoding="utf-8")
+    record = rr.rerun(rr.rerun_plan([step], tools={"python": sys.executable}))
+    assert record["status"] == "script_changed"
+    assert record["steps"][0]["changed_scripts"] == ["outputs/scripts/total.py"]
+
+
+def _linked_step(tmp_path: Path, upstream_body: bytes) -> dict:
+    """A step whose inputs/s0 is a link to the upstream step's outputs/, as the runner makes it (#423)."""
+    upstream = tmp_path / "step_s0"
+    (upstream / "outputs").mkdir(parents=True)
+    step = _step(tmp_path)
+    shutil.rmtree(Path(step["workdir"], "inputs", "s0"))
+    try:
+        os.symlink(upstream / "outputs", Path(step["workdir"], "inputs", "s0"), target_is_directory=True)
+    except OSError:
+        pytest.skip("this account cannot create a directory symlink")
+    (upstream / "outputs" / "counts.tsv").write_bytes(upstream_body)
+    step["upstream"] = {"s0": {"workdir": str(upstream),
+                               "recorded": {"outputs/counts.tsv": hashlib.sha256(b"1\n2\n3\n").hexdigest()}}}
+    return step
+
+
+def test_a_linked_upstream_input_is_restored_from_its_recorded_outputs(tmp_path):
+    record = rr.rerun(rr.rerun_plan([_linked_step(tmp_path, b"1\n2\n3\n")], tools={"python": sys.executable}))
+    assert record["status"] == "pass"
+
+
+def test_an_upstream_output_that_changed_since_the_run_stops_the_rerun(tmp_path):
+    record = rr.rerun(rr.rerun_plan([_linked_step(tmp_path, b"9\n")], tools={"python": sys.executable}))
+    assert record["status"] == "input_changed" and record["steps"][0]["changed_input"] == "s0/outputs/counts.tsv"

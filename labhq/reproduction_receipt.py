@@ -325,7 +325,12 @@ def receipt_json(receipt: Mapping[str, Any]) -> str:
 RERUN_DIR = "reproduction"
 RERUN_INPUT_MAX_BYTES = 2_000_000_000  # a step whose staged inputs are larger is not copied for a rerun
 RERUN_STATUSES = {"pass", "hash_mismatch", "missing_output", "fail", "timeout", "unavailable", "wrote_outside",
-                  "hpc", "no_scripts", "no_recorded_outputs", "inputs_too_large", "not_located"}
+                  "hpc", "no_scripts", "no_recorded_outputs", "inputs_too_large", "not_located", "script_changed",
+                  "input_changed"}
+
+
+class _InputChanged(Exception):
+    """An upstream output differs from the hash recorded when that step ran: the rerun would not use the same input."""
 _RUNTIME = {"python": ["-E", "-s", "-B"], "r": ["--vanilla"], "bash": ["--noprofile", "--norc"]}
 _TOOL = {"python": "python", "r": "Rscript", "bash": "bash"}
 
@@ -361,8 +366,13 @@ def rerun_plan(steps: Sequence[Mapping[str, Any]], tools: Mapping[str, str | Non
         scripts = sorted(p for p in outputs if PurePosixPath(p).suffix.casefold() in LANGUAGES and _path(p))
         recorded = {p: h for p, h in (step.get("recorded") or {}).items()
                     if PurePosixPath(p).suffix.casefold() not in LANGUAGES and _path(p) and isinstance(h, str)}
+        everything = step.get("recorded") or {}
         row = {"step_id": str(step.get("step_id")), "workdir": str(step.get("workdir") or ""),
-               "scripts": scripts, "compare": sorted(recorded), "recorded": recorded, "commands": []}
+               "scripts": scripts, "compare": sorted(recorded), "recorded": recorded, "commands": [],
+               # The script as it was when the step ran: a script edited later is not what produced the outputs.
+               "script_sha256": {p: everything.get(p) for p in scripts},
+               # inputs/<step id> links point at upstream outputs/ (#423): restored from their recorded hashes.
+               "upstream": {str(k): v for k, v in (step.get("upstream") or {}).items()}}
         status = ("not_located" if not step.get("workdir") else "hpc" if step.get("hpc") else
                   "no_scripts" if not scripts else "no_recorded_outputs" if not recorded else "planned")
         for script in scripts:
@@ -377,11 +387,31 @@ def rerun_plan(steps: Sequence[Mapping[str, Any]], tools: Mapping[str, str | Non
     return plan
 
 
-def _copy_inputs(source: Path, target: Path, scripts: Sequence[str]) -> int:
-    """The step folder's staged ``inputs/`` and its scripts, copied without following any link. Returns bytes."""
+def _copy_inputs(source: Path, target: Path, scripts: Sequence[str],
+                 upstream: Mapping[str, Mapping[str, Any]] | None = None) -> int:
+    """The step folder's staged ``inputs/`` and its scripts, copied without following any link. Returns bytes.
+
+    An ``inputs/<step id>`` link to an upstream step's ``outputs/`` (#423) is not followed: that step's recorded
+    outputs are copied from its own folder instead, each checked against the hash recorded when it ran."""
     total = 0
     inputs = source / "inputs"
     if inputs.is_dir() and not inputs.is_symlink():
+        for name, step in (upstream or {}).items():
+            if not (inputs / name).is_symlink() or not step.get("workdir"):
+                continue
+            for output, expected in (step.get("recorded") or {}).items():
+                relative = _path(str(output))
+                if not relative or not relative.startswith("outputs/"):
+                    continue
+                origin = Path(step["workdir"]) / relative
+                if _sha_file(origin) != expected:
+                    raise _InputChanged(f"{name}/{relative}")
+                total += origin.stat().st_size
+                if total > RERUN_INPUT_MAX_BYTES:
+                    raise OverflowError
+                destination = target / "inputs" / name / relative.removeprefix("outputs/")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(origin, destination)
         for path in inputs.rglob("*"):
             if path.is_symlink() or any(parent.is_symlink() for parent in path.parents if parent != source):
                 continue
@@ -415,6 +445,12 @@ def rerun(plan: Sequence[Mapping[str, Any]], *, timeout: float = 600,
             steps.append(result)
             continue
         source = Path(row["workdir"])
+        changed = [name for name, expected in row.get("script_sha256", {}).items()
+                   if not expected or _sha_file(source / name) != expected]
+        if changed:
+            result.update(status="script_changed", changed_scripts=changed)
+            steps.append(result)
+            continue
         before = {name: _sha_file(source / name) for name in row["compare"]}
         with tempfile.TemporaryDirectory(prefix="labhq-rerun-", dir=temp_root) as temporary:
             root = Path(temporary)
@@ -422,9 +458,13 @@ def rerun(plan: Sequence[Mapping[str, Any]], *, timeout: float = 600,
             work.mkdir()
             home.mkdir()
             try:
-                _copy_inputs(source, work, row["scripts"])
+                _copy_inputs(source, work, row["scripts"], row.get("upstream"))
             except OverflowError:
                 result["status"] = "inputs_too_large"
+                steps.append(result)
+                continue
+            except _InputChanged as changed_input:
+                result.update(status="input_changed", changed_input=str(changed_input))
                 steps.append(result)
                 continue
             env = _environment(home, {})
@@ -447,8 +487,9 @@ def rerun(plan: Sequence[Mapping[str, Any]], *, timeout: float = 600,
             result["status"] = "wrote_outside"
         steps.append(result)
     statuses = [step["status"] for step in steps]
-    overall = next((s for s in ("wrote_outside", "fail", "timeout", "unavailable", "missing_output", "hash_mismatch",
-                                "inputs_too_large", "not_located") if s in statuses), None)
+    overall = next((s for s in ("wrote_outside", "script_changed", "input_changed", "fail", "timeout", "unavailable",
+                                "missing_output", "hash_mismatch", "inputs_too_large", "not_located")
+                    if s in statuses), None)
     if overall is None:
         # "pass" means every step with outputs was regenerated and matched; a step without scripts was not checked.
         overall = ("pass" if statuses and all(s == "pass" for s in statuses) else

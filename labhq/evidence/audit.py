@@ -678,9 +678,10 @@ RERUN_KO = {"pass": "재현됨(산출 hash 일치)", "hash_mismatch": "산출 ha
             "wrote_outside": "임시 폴더 밖 파일이 바뀜", "hpc": "재현 실행 안 함(HPC)", "no_scripts": "스크립트 없음",
             "no_recorded_outputs": "비교할 기록 없음", "inputs_too_large": "입력이 커서 복사하지 않음",
             "not_located": "작업 폴더를 찾지 못함", "partial": "일부 단계만 재현(나머지 HPC 등)",
-            "not_rerun": "실행한 단계 없음", "declined": "PI가 실행하지 않기로 함"}
+            "not_rerun": "실행한 단계 없음", "declined": "PI가 실행하지 않기로 함",
+            "script_changed": "스크립트가 실행 뒤 바뀌어 실행 안 함", "input_changed": "선행 단계 산출이 기록과 달라 실행 안 함"}
 RERUN_PROBLEMS = {"hash_mismatch", "missing_output", "fail", "timeout", "unavailable", "wrote_outside",
-                  "inputs_too_large", "not_located"}
+                  "inputs_too_large", "not_located", "script_changed", "input_changed"}
 
 
 def rerun_steps(req: Mapping[str, Any], settings: Any) -> list[dict[str, Any]]:
@@ -689,6 +690,12 @@ def rerun_steps(req: Mapping[str, Any], settings: Any) -> list[dict[str, Any]]:
     root = settings.path(settings.runner.workspace_root)
     whole_hpc = (req.get("execution_location") or {}).get("mode") == "hpc"
     steps = []
+    located: dict[str, dict[str, Any]] = {}  # every step's own folder and recorded outputs, for linked inputs (#423)
+    for step_id, result in (req.get("results") or {}).items():
+        if isinstance(result, Mapping):
+            folder, _ = locate_workdir(root, result)
+            hashes = result.get("output_sha256") if isinstance(result.get("output_sha256"), Mapping) else {}
+            located[str(step_id)] = {"workdir": str(folder) if folder else None, "recorded": dict(hashes)}
     for step_id, result in (req.get("results") or {}).items():
         if not isinstance(result, Mapping) or not result.get("outputs"):
             continue
@@ -699,7 +706,8 @@ def rerun_steps(req: Mapping[str, Any], settings: Any) -> list[dict[str, Any]]:
         steps.append({"step_id": str(step_id), "workdir": str(workdir) if workdir else None,
                       "outputs": [p for p in result["outputs"] if isinstance(p, str)],
                       "recorded": {p: h for p, h in recorded.items() if isinstance(p, str) and isinstance(h, str)},
-                      "hpc": whole_hpc or bool(remote)})
+                      "hpc": whole_hpc or bool(remote),
+                      "upstream": {sid: row for sid, row in located.items() if sid != str(step_id)}})
     return steps
 
 
