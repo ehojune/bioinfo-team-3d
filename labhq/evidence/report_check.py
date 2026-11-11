@@ -318,6 +318,7 @@ def _unanchored_numeric_sentences(report: str) -> list[str]:
     if current:
         paragraphs.append(" ".join(current))
     for paragraph in paragraphs:
+        paragraph = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", paragraph)
         paragraph = re.sub(r"\]\([^)]*\)", "]", paragraph)
         paragraph = re.sub(r"https?://\S+", " ", paragraph)
         pattern = r".*?(?:[.!?](?:\s*\[\[\s*claim\s*:[^\[\]\n]*\]\])*(?=\s|$)|$)"

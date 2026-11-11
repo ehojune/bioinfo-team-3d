@@ -77,6 +77,13 @@ def test_nested_short_fences_do_not_end_a_long_code_fence():
     assert _unanchored_numeric_sentences(report) == ["결과는 7입니다."]
 
 
+def test_figure_alt_number_is_not_numeric_prose():
+    from labhq.evidence.report_check import _unanchored_numeric_sentences
+
+    assert _unanchored_numeric_sentences("![그림 1. 발현량](plots/expression.png)\n\n결과는 7입니다.") == [
+        "결과는 7입니다."]
+
+
 def test_legacy_summary_rows_do_not_bypass_cp2_refusal():
     ledger = _ledger()
     del ledger["evidence"][0]["status"]
