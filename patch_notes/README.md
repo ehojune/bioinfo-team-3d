@@ -14,7 +14,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:00 | [`69e2a09`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/69e2a09) | **보류된 메시지를 재개할 때 관련 없는 기록이 막지 않게 고쳤습니다.**<br>최초 인수와 같은 의존성 기준을 적용하며 결과가 불확실한 ask는 계속 보류합니다. |
+| 06:52 | [`97761b0`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/97761b0) | **시작 전 실패한 질의는 저장소 복구 뒤 다시 처리합니다.**<br>pending ask와 실행 중인 작업을 구분해 안전한 경우에만 수동 retry를 허용합니다. |
+| 06:46 | [`dbe8309`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/dbe8309) | **저장 오류 뒤 메시지 재시도와 기존 설정 호환을 복구합니다.**<br>수동 재시도에서 불확실한 ask는 보류하고 semantics 제거 뒤에도 기존 설정을 읽습니다. |
+| 06:28 | [`7ad0991`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/7ad0991) | **완료된 메시지 기록을 정리하고 안전한 재전달을 복구합니다.**<br>미확정 작업은 보류하고 완료 기록만 제한하며 처리 오류의 재전달을 검증합니다. |
 | 06:20 | [`19d3eaf`](https://github.com/ehojune/bioinfo-team-3d/pull/1394/commits/19d3eaf) | 제목 비교에 띄어쓰기 무시 일치 추가(한 제목에 붙여야 할 태그와 띄워야 할 태그가 섞인 경우), 시험 1건 (#1383, PR #1394 리뷰 P2) |
+| 06:07 | [`1990b72`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/1990b72) | **작업 수락 결과가 불확실해도 다른 요청의 활동을 표시합니다.**<br>요청과 task가 모두 다른 경우에만 activity를 진행하고 기존 보류는 유지한다. |
+| 06:01 | [`f2fa9c8`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/f2fa9c8) | **한 작업의 메시지가 보류돼도 다른 작업의 활동 표시를 계속합니다.**<br>서로 다른 요청의 activity는 진행하고, 부수효과가 불확실한 16종은 재시작 시 보류한다. |
+| 05:56 | [`097dbc4`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/097dbc4) | **서버가 끊겨도 실행기 메시지를 보존하고 승인 거절을 정확히 알립니다.**<br>메시지 인수·공개·전달을 분리하고 미확정 작업을 보류한다. 설정 오타와 기본 토큰을 거부하고 manifest 동시 갱신을 직렬화한다. |
 | 05:50 | [`f6e6bb0`](https://github.com/ehojune/bioinfo-team-3d/pull/1394/commits/f6e6bb0) | **인용 감사가 CO&lt;sub&gt;2&lt;/sub&gt;처럼 단어 안에 든 서식 태그도 같은 제목으로 보고, '# Pointer analysis' 같은 진짜 제목을 포인터로 오인하지 않습니다.**<br>제목을 태그 제거(붙임·띄움) 두 방식으로 읽어 더 나은 판정, 포인터 표지에 콜론 필수, 시험 4건 (#1383, PR #1394 리뷰 P1 2) |
 | 05:30 | [`aa56fe6`](https://github.com/ehojune/bioinfo-team-3d/pull/1394/commits/aa56fe6) | manual 07 한영에 인용 감사 스크립트 사용법과 서식 태그·포인터 판정 (#1383) |
 | 04:55 | [`ef3e647`](https://github.com/ehojune/bioinfo-team-3d/pull/1394/commits/ef3e647) | **인용 감사가 등록 제목에 섞인 서식 태그(&lt;i&gt;, &lt;sup&gt;, &amp;lt;sup&amp;gt;)를 제목 차이로 세지 않습니다. 원문 자리에 포인터 파일만 있으면 수치가 원문에 없다고 하지 않고 '원문 없음, 확인 못 함'으로 적습니다.**<br>scripts/citation_audit.py 제목 비교 전 HTML 엔티티 해제·태그를 공백으로, '# 포인터:'·'# Pointer:'로 시작하는 원문은 minor source, eval-suite.md 등급표, 시험 7건 (#1383) |
