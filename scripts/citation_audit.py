@@ -93,17 +93,21 @@ def number_held(number: str, source: Source) -> bool | None:
 _TAG = re.compile(r"</?[A-Za-z][A-Za-z0-9]*(?:\s[^<>]*)?/?>")
 # A stored text that only points at another file. A step that does not copy third-party text into a bundle writes
 # "# 포인터: ..." or "# Pointer: ..." in its place, so the source itself is not in the bundle (#910 11th run).
-_POINTER = re.compile(r"\s*#\s*(?:포인터|pointer)\b", re.I)
+# The marker word must be followed by a colon: "# Pointer analysis" is a real heading of a real source.
+_POINTER = re.compile(r"\s*#\s*(?:포인터|pointer)\s*[:：]", re.I)
 
 
-def _plain_title(text: str) -> str:
-    # Entities first, so an escaped tag ("&lt;sup&gt;") is a tag too; a tag becomes a space, so "KRAS<sup>G12C</sup>"
-    # reads as "KRAS G12C", the same words as "KRAS(G12C)".
-    return normalize(_TAG.sub(" ", html.unescape(text)))
+def _plain_titles(text: str) -> tuple[str, str]:
+    """The title without markup, read two ways: the tag joining its neighbours ("CO<sub>2</sub>" -> "CO2") and the tag
+    as a word break ("KRAS<sup>G12C</sup>" -> "KRAS G12C", the same words as "KRAS(G12C)"). Entities come first, so an
+    escaped tag ("&lt;sup&gt;") is a tag too."""
+    text = html.unescape(text)
+    return normalize(_TAG.sub("", text)), normalize(_TAG.sub(" ", text))
 
 
-def _tokens(text: str) -> set[str]:
-    return set(_plain_title(text).split())
+def _overlap(a: str, b: str) -> float:
+    x, y = set(a.split()), set(b.split())
+    return len(x & y) / len(x | y) if x and y else 0.0
 
 
 def is_pointer(text: str) -> bool:
@@ -115,10 +119,10 @@ def is_pointer(text: str) -> bool:
 def title_match(cited: str, registered: str) -> str:
     """``match`` (equal after folding and dropping markup), ``near`` (token overlap at least NEAR_TITLE) or
     ``mismatch``."""
-    if _plain_title(cited) == _plain_title(registered):
+    pairs = [(a, b) for a in _plain_titles(cited) for b in _plain_titles(registered)]
+    if any(a == b for a, b in pairs):
         return "match"
-    a, b = _tokens(cited), _tokens(registered)
-    if a and b and len(a & b) / len(a | b) >= NEAR_TITLE:
+    if max(_overlap(a, b) for a, b in pairs) >= NEAR_TITLE:
         return "near"
     return "mismatch"
 

@@ -39,6 +39,8 @@ def test_recorded_fixture_gets_the_expected_grade_for_every_citation():
     ("Outcomes in KRAS(G12C) & STK11 tumors", "Outcomes in <sup>KRAS</sup>(G12C) &amp; STK11 tumors", "match"),
     ("treated with KRAS(G12C) mutation", "treated with KRAS<sup>G12C</sup> mutation", "match"),
     ("treated with KRAS(G12C) inhibitors", "treated with KRAS&lt;sup&gt;G12C&lt;/sup&gt; inhibitors", "match"),
+    ("CO2 effects on stomata", "CO<sub>2</sub> effects on stomata", "match"),  # a tag inside a word joins it
+    ("Ca2+ signalling in neurons", "Ca<sup>2+</sup> signalling in neurons", "match"),
     ("Deep learning for proteins", "<i>Soil</i> microbiome diversity", "mismatch"),
 ])
 def test_title_match(cited, registered, verdict):
@@ -57,8 +59,11 @@ def test_a_pointer_file_is_no_source_text_not_a_missing_number(tmp_path, pointer
     assert [f["check"] for f in row["findings"]] == ["source"] and "only points at" in row["findings"][0]["detail"]
 
 
-def test_a_text_that_merely_mentions_a_pointer_is_still_a_source(tmp_path):
-    (tmp_path / "s.md").write_text("# Methods\nThe pointer heuristic is not used here. ORR 37.1%\n", encoding="utf-8")
+@pytest.mark.parametrize("heading", ["# Methods\nThe pointer heuristic is not used here.",
+                                     "# Pointer analysis of the cohort", "# 포인터 기법의 한계"])
+def test_a_text_that_merely_mentions_a_pointer_is_still_a_source(tmp_path, heading):
+    """Only the marker with its colon ("# Pointer:") makes a pointer; a real heading that starts with the word does not."""
+    (tmp_path / "s.md").write_text(heading + "\nORR 37.1%\n", encoding="utf-8")
     row = A.audit_one({"id": "s", "doi": "10.5555/x", "source": "s.md", "numbers": ["37.1", "6.8"]},
                       {"doi:10.5555/x": {"found": True, "title": "T"}}, tmp_path)
     assert row["grade"] == "major" and [f["check"] for f in row["findings"]] == ["number"]
