@@ -41,6 +41,7 @@ def test_recorded_fixture_gets_the_expected_grade_for_every_citation():
     ("treated with KRAS(G12C) inhibitors", "treated with KRAS&lt;sup&gt;G12C&lt;/sup&gt; inhibitors", "match"),
     ("CO2 effects on stomata", "CO<sub>2</sub> effects on stomata", "match"),  # a tag inside a word joins it
     ("Ca2+ signalling in neurons", "Ca<sup>2+</sup> signalling in neurons", "match"),
+    ("KRAS(G12C) and CO2", "KRAS<sup>G12C</sup> and CO<sub>2</sub>", "match"),  # one tag breaks, one joins
     ("Deep learning for proteins", "<i>Soil</i> microbiome diversity", "mismatch"),
 ])
 def test_title_match(cited, registered, verdict):

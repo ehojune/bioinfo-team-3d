@@ -120,7 +120,9 @@ def title_match(cited: str, registered: str) -> str:
     """``match`` (equal after folding and dropping markup), ``near`` (token overlap at least NEAR_TITLE) or
     ``mismatch``."""
     pairs = [(a, b) for a in _plain_titles(cited) for b in _plain_titles(registered)]
-    if any(a == b for a, b in pairs):
+    # Spacing aside, so a title whose tags need different treatment ("KRAS<sup>G12C</sup> and CO<sub>2</sub>")
+    # still equals "KRAS(G12C) and CO2": markup and punctuation decide where words break, not what the words are.
+    if any(a == b or a.replace(" ", "") == b.replace(" ", "") for a, b in pairs):
         return "match"
     if max(_overlap(a, b) for a, b in pairs) >= NEAR_TITLE:
         return "near"
