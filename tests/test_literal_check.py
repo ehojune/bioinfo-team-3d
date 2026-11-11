@@ -13,6 +13,24 @@ import ast
 import inspect
 
 import labhq.evidence.literal_check as literal_check
+
+
+def test_evidence_literal_checks_use_read_text_and_preserve_missing_status():
+    ledger = {"evidence": [{"id": "e1", "observation": 'Reported "hazard ratio was 1.84".',
+                            "quantities": [{"value": "1.84"}]}]}
+    assert literal_check.check_evidence(ledger, {})[0]["state"] == "unverified"
+    bad = literal_check.check_evidence(ledger, {"e1": "The hazard ratio was 1.44."})[0]
+    assert bad["state"] == "mismatch" and len(bad["problems"]) == 2
+    good = literal_check.check_evidence(ledger, {"e1": "The hazard ratio was 1.84."})[0]
+    assert good["state"] == "matched" and not good["problems"]
+
+
+def test_evidence_literal_check_keeps_written_precision_and_ignores_plain_paraphrases():
+    ledger = {"evidence": [{"id": "e1", "observation": "A paraphrase of the result.",
+                            "quantities": [{"value": "1.840"}]}]}
+    assert literal_check.check_evidence(ledger, {"e1": "The ratio was 1.84."})[0]["state"] == "matched"
+    ledger["evidence"][0]["quantities"] = []
+    assert literal_check.check_evidence(ledger, {}) == []
 from labhq.evidence.literal_check import (
     EN_DASH,
     MAX_LOCATED_QUOTE_WORDS,

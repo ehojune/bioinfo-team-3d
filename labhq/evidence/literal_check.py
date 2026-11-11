@@ -12,6 +12,7 @@ and preserved Unicode letters and numbers while normalizing quotes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 import re
 from typing import Sequence
 import unicodedata
@@ -50,6 +51,47 @@ _TRAILING_PUNCT = "\"'()[]"
 
 # A larger located span is usually a flattened table rather than one sentence.
 MAX_LOCATED_QUOTE_WORDS = 80
+
+
+def check_evidence(ledger: Mapping, source_texts: Mapping[str, str]) -> list[dict]:
+    """Check explicit quotations and declared quantities against already-read evidence text.
+
+    ``matched`` means literal presence, never scientific support. Missing text and nonliteral
+    quantities remain unverified. Callers supply text keyed by evidence ID after checking provenance.
+    """
+    results = []
+    for row in ledger.get("evidence") or []:
+        if not isinstance(row, Mapping):
+            continue
+        quotes = [a or b for a, b in re.findall(r'"([^"\n]+)"|“([^”\n]+)”', str(row.get("observation") or ""))]
+        values = [q.get("value") for q in row.get("quantities") or []
+                  if isinstance(q, Mapping) and q.get("value") is not None]
+        if not quotes and not values:
+            continue
+        ident = str(row.get("id") or "")
+        text = source_texts.get(ident)
+        problems = []
+        state = "matched"
+        if not isinstance(text, str) or not text.strip():
+            state, problems = "unverified", ["source text unavailable for literal check"]
+        else:
+            source = Source(text)
+            for quote in quotes:
+                if not source.holds_quote(quote):
+                    problems.append(f"quote not found in source: {quote}")
+            unknown = False
+            for value in values:
+                literal = str(value).strip()
+                quantity = Quantity.parse(literal) if _NUMBER.fullmatch(literal) else None
+                if quantity is None:
+                    unknown = True
+                    problems.append(f"quantity requires reviewer interpretation: {literal}")
+                elif not is_supported(quantity, source.quantities):
+                    problems.append(f"quantity not found in source: {literal}")
+            state = ("mismatch" if any("not found" in p for p in problems) else
+                     "unverified" if unknown else "matched")
+        results.append({"evidence_id": ident, "state": state, "problems": problems})
+    return results
 
 
 @dataclass(frozen=True, slots=True)

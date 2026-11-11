@@ -54,7 +54,7 @@ LIT_DIR = ".tmp/literature"  # never outputs/: see the module docstring
 LIT_ACCESS_LOG = "outputs/literature_access.jsonl"  # metadata/status only; never a paper body
 TOOL = "fulltext"
 CACHE_RELEASE = "europepmc-rest"  # Europe PMC has no data release; answers age out instead (annot.CACHE_MAX_AGE_S)
-FULLTEXT_CACHE_RELEASE = "europepmc-rest-oa-v4"
+FULLTEXT_CACHE_RELEASE = "europepmc-rest-oa-v5-identity"
 MAX_PER_CALL = 20
 MAX_XML_BYTES = 20_000_000
 MAX_CITATION_RESULTS = 1000
@@ -64,6 +64,23 @@ MAX_DOI_RESULTS = 50
 MAX_OA_COPY_BYTES = 25_000_000
 MAX_PDF_EXPANDED_BYTES = 50_000_000
 MAX_OA_REDIRECTS = 5
+MAX_OA_LOCATIONS_PER_PAPER = 3
+MAX_BODY_SENDS_PER_PAPER = 8
+
+
+def _copy_identity(text: str, meta: dict) -> bool:
+    """A repository URL is a candidate, never identity proof. Check body text before adding our header."""
+    from ..evidence.literal_check import normalize
+    # References can mention the target paper: only the front of the downloaded copy identifies it.
+    front = text[:6000]
+    doi = str(meta.get("doi") or "").casefold()
+    dois = {match.rstrip('.,;:)') for match in re.findall(r'10\.\d{4,9}/[^\s<>"\]]+', front.casefold())}
+    title = normalize(str(meta.get("title") or ""))
+    if dois and (not doi or doi not in dois):
+        return False
+    if title:
+        return title in normalize(front)
+    return bool(doi and doi in dois)
 
 _PMID = re.compile(r"^(?:pmid:?\s*)?([0-9]{1,9})$", re.IGNORECASE)
 _PMCID = re.compile(r"^(?:pmcid:?\s*)?(PMC[0-9]{1,9})$", re.IGNORECASE)
@@ -984,6 +1001,15 @@ class LiteratureAnnotator(Annotator):
     def __init__(self, *args: Any, unpaywall_email: str = "", **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.unpaywall_email = str(unpaywall_email or "").strip()
+        self._body_sends_left: int | None = None
+
+        async def bound_paper(request):
+            if self._body_sends_left is not None:
+                if self._body_sends_left <= 0:
+                    raise LookupFailed(f'논문당 본문 조회 상한({MAX_BODY_SENDS_PER_PAPER}회)에 닿았습니다')
+                self._body_sends_left -= 1
+        # Count actual sends, including annot retries and httpx redirects, before broker admission.
+        self.http.client.event_hooks['request'].insert(0, bound_paper)
 
     @staticmethod
     def _doi_items(values: object) -> list[Item]:
@@ -1125,16 +1151,46 @@ class LiteratureAnnotator(Annotator):
         options = {"unpaywall_enabled": bool(self.unpaywall_email and "@" in self.unpaywall_email)}
         self._from_cache(TOOL, FULLTEXT_CACHE_RELEASE, options, items)
         version, lookup_errors = None, 0
-        for item in valid:
-            if item.cached_at is not None:
+        pending = [item for item in valid if item.cached_at is None]
+        records = {}
+        if pending:
+            try:
+                records, version = await self._records_for([item.variant for item in pending])
+                # Save all available abstracts before spending any slots on body/provider lookups.
+                for item in pending:
+                    rec = records.get(item.variant.key)
+                    if isinstance(rec, Exception):
+                        item.error = f'{type(rec).__name__}: {rec}'
+                        lookup_errors += 1
+                        continue
+                    if rec is not None:
+                        item.answer = self._abstract(item.variant, rec)
+                        self._write_text(item.variant, item.answer)
+            except LookupFailed as exc:
+                for item in pending:
+                    item.error = str(exc)
+                lookup_errors += len(pending)
+        def pmc_first(item):
+            rec = records.get(item.variant.key)
+            return not (isinstance(rec, dict) and rec.get('pmcid')
+                        and (rec.get('isOpenAccess') == 'Y' or rec.get('inEPMC') == 'Y'))
+
+        for item in sorted(valid, key=pmc_first):
+            if item.cached_at is not None or item.error is not None:
                 continue
             try:
-                item.answer, seen, item.volatile = await self._paper(item.variant)
+                self._body_sends_left = MAX_BODY_SENDS_PER_PAPER
+                item.answer, seen, item.volatile = await self._paper(item.variant, records.get(item.variant.key), version)
                 version = version or seen
             except LookupFailed as exc:
-                item.error, lookup_errors = str(exc), lookup_errors + 1
+                if item.answer:
+                    item.answer["fulltext_error"], item.volatile = str(exc), True
+                else:
+                    item.error, lookup_errors = str(exc), lookup_errors + 1
             except Exception as exc:  # noqa: BLE001 - one paper's failure must not fail the other IDs (#954)
                 item.error, lookup_errors = f"{type(exc).__name__}: {exc}", lookup_errors + 1
+            finally:
+                self._body_sends_left = None
         if self._all_failed(items, lookup_errors):
             raise LookupFailed("; ".join(item.error for item in items if item.error))
         self._to_cache(TOOL, FULLTEXT_CACHE_RELEASE, options, items, _now())
@@ -1225,6 +1281,37 @@ class LiteratureAnnotator(Annotator):
         hits = (data.get("resultList") or {}).get("result") or []
         return (hits[0] if hits else None), data.get("version")
 
+    async def _records_for(self, papers: list[PaperId]) -> tuple[dict, str | None]:
+        if len(papers) == 1:
+            record, version = await self._record_for(papers[0])
+            return {papers[0].key: record}, version
+        response = await self.http.request('europepmc', 'GET', f'{EUROPEPMC}/search', params={
+            'query': ' OR '.join(f'({paper.query()})' for paper in papers), 'resultType': 'core',
+            'format': 'json', 'pageSize': MAX_PER_CALL})
+        if response.status_code != 200:
+            raise LookupFailed(f'Europe PMC batch search HTTP {response.status_code}')
+        data = response.json()
+        hits = (data.get('resultList') or {}).get('result') or []
+        records = {}
+        for paper in papers:
+            records[paper.key] = next((row for row in hits
+                                      if str(row.get(paper.kind) or '').casefold() == paper.value.casefold()), None)
+            if records[paper.key] is None:
+                # Search may truncate aliases or omit a record; isolate a failed follow-up to that paper.
+                try:
+                    records[paper.key], _ = await self._record_for(paper)
+                except Exception as exc:  # noqa: BLE001
+                    records[paper.key] = exc
+        return records, data.get('version')
+
+    def _abstract(self, paper: PaperId, rec: dict) -> dict:
+        abstract = re.sub(r'<[^>]+>', '', ' '.join(str(rec.get('abstractText') or '').split()))
+        meta = {key: rec.get(key) for key in ('pmid', 'pmcid', 'doi', 'title', 'license')}
+        level = 'abstract' if abstract else 'metadata'
+        return {**meta, 'found': True, 'access_level': level,
+                'markdown': '\n'.join([f"# {meta['title'] or paper.value}", '', self._identifier_line(meta),
+                                       f'- access_level: {level}', '', '## Abstract', '', abstract, ''])}
+
     @staticmethod
     def _canonical_id(record: dict) -> tuple[str, str]:
         source = str(record.get("source") or "").upper()
@@ -1253,10 +1340,9 @@ class LiteratureAnnotator(Annotator):
         return {"found_count": int(data.get("hitCount") or len(records)), "returned_count": len(records),
                 "candidates": [_bibliography(record) for record in records]}, data.get("version")
 
-    async def _paper(self, paper: PaperId) -> tuple[dict, str | None, bool]:
+    async def _paper(self, paper: PaperId, rec: dict | None, version: str | None) -> tuple[dict, str | None, bool]:
         """The answer, the REST version, and whether the answer must not be cached: a body that should exist but
         could not be read this time (server error, unusable XML) falls back to the abstract for this call only."""
-        rec, version = await self._record_for(paper)
         if rec is None:
             meta = {
                 "found": True,
@@ -1440,7 +1526,7 @@ class LiteratureAnnotator(Annotator):
         state["oa_locations"] = unique[:20]
 
         failures: list[tuple[str, str]] = []
-        for location in unique:
+        for location in unique[:MAX_OA_LOCATIONS_PER_PAPER]:
             try:
                 response = await self._request_oa_copy(
                     location["url"],
@@ -1478,6 +1564,9 @@ class LiteratureAnnotator(Annotator):
             except ValueError as exc:
                 failures.append(("format_failure", str(exc)))
                 continue
+            if not _copy_identity(text, meta):
+                failures.append(('identity_mismatch', 'OA 사본의 DOI·제목을 요청 논문과 대조하지 못했습니다'))
+                continue
             markdown = "\n".join(header + [
                 f"- access_level: full_text ({location['provider']} legal OA {body_format})",
                 f"- source_url: {location['url']}", "", "## Full text", "", text, "",
@@ -1489,7 +1578,8 @@ class LiteratureAnnotator(Annotator):
         if temporary:
             state["temporary_error"] = "; ".join(temporary)
         if failures:
-            priority = {"access_denied": 0, "format_failure": 1, "subscription_required": 2, "no_copy": 3}
+            priority = {"identity_mismatch": 0, "access_denied": 1, "format_failure": 2,
+                        "subscription_required": 3, "no_copy": 4}
             code, detail = min(failures, key=lambda row: priority[row[0]])
             state.update(unread_reason=code, unread_detail=detail)
         return None, state

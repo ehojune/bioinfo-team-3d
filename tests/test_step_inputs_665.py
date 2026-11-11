@@ -178,6 +178,17 @@ def _staging(tmp_path):
     return root, folder, artifact, TaskWorkspace(root, task, AgentSpec(id='worker', name='Worker', role='test'))
 
 
+def test_literature_copy_failure_is_visible_without_losing_ancestor_outputs(tmp_path):
+    from labhq.runner.step_inputs import stage_inputs
+    root, folder, artifact, ws = _staging(tmp_path)
+    papers = folder / '.tmp/literature'
+    papers.mkdir(parents=True)
+    (papers / 'paper.md').write_bytes(b'x' * 1025)
+    staged, refused = stage_inputs(ws, {'fetch': artifact}, root, [], [], 1024, 4096)
+    assert staged and (ws.dir / 'inputs/fetch/table.tsv').exists()
+    assert 'literature' in refused['fetch:literature'] and 'paper.md' in refused['fetch:literature']
+
+
 def test_inputs_the_drive_cannot_hold_are_refused_before_any_byte_is_copied(tmp_path, monkeypatch):
     # #678: the known size decides before writing; the drive is never filled by a copy that cannot finish.
     from collections import namedtuple

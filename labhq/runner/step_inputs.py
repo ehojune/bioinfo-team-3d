@@ -393,29 +393,42 @@ def _copy_literature(root, source_parts, work, max_file, remaining):
     The fulltext tool keeps paper text in ``.tmp`` so it is never an output, bundled or published (licensed text), and
     a step only receives its ancestors' outputs: the next step never saw the abstract the literature step read. Plain
     files only (links and folders skipped), within the step's size limits; a name already present is kept. Best
-    effort: a paper that cannot be copied is left out and the step still runs."""
+    effort: a paper that cannot be copied is reported and the step still runs."""
+    warnings = []
     try:
         with _folder(root, (*source_parts, *LITERATURE)) as held:
-            entries = [e for e in held.entries(MAX_FILES)
-                       if e.kind == 'file' and e.size is not None and e.size <= min(max_file, remaining[0])]
+            entries = held.entries(MAX_FILES)
             if not entries:
-                return
+                return warnings
             # A link or junction left at .tmp or .tmp/literature by an earlier turn is never written through.
             target = plain_directory(Path(work), '/'.join(LITERATURE))
             if target is None:
-                return
+                return ['literature destination is not a plain folder']
             for entry in entries:
-                if os.path.lexists(target / entry.name):
+                if entry.kind != 'file' or entry.size is None or entry.size > min(max_file, remaining[0]):
+                    warnings.append(f'{entry.name}: unsafe file or literature byte limit')
                     continue
-                with os.fdopen(held.open_read_file(entry.name), 'rb') as opened:
-                    data = opened.read(max_file + 1)
-                if len(data) > max_file or len(data) > remaining[0]:
-                    continue
-                # Written whole or not at all (a temporary file renamed into place), through a held parent folder.
-                write_owned_bytes(Path(work), '/'.join((*LITERATURE, entry.name)), data)
-                remaining[0] -= len(data)
-    except (OSError, ValueError, TypeError):
-        return
+                try:
+                    with os.fdopen(held.open_read_file(entry.name), 'rb') as opened:
+                        if os.fstat(opened.fileno()).st_nlink != 1:
+                            raise ValueError('hard-linked paper')
+                        data = opened.read(max_file + 1)
+                    if len(data) > max_file or len(data) > remaining[0]:
+                        raise ValueError('literature byte limit')
+                    if os.path.lexists(target / entry.name):
+                        with _folder(work, LITERATURE) as dst, os.fdopen(dst.open_read_file(entry.name), 'rb') as old:
+                            if old.read(max_file + 1) != data:
+                                raise ValueError('different paper already staged under this name')
+                        continue
+                    write_owned_bytes(Path(work), '/'.join((*LITERATURE, entry.name)), data)
+                    remaining[0] -= len(data)
+                except (OSError, ValueError, TypeError) as exc:
+                    warnings.append(f'{entry.name}: literature copy unavailable ({type(exc).__name__})')
+    except FileNotFoundError:
+        pass  # Ancestors without literature are ordinary inputs.
+    except (OSError, ValueError, TypeError) as exc:
+        warnings.append(f'literature folder unavailable ({type(exc).__name__})')
+    return warnings
 
 
 def remote_ancestor_inputs(ws, artifacts, workspace_root):
@@ -526,7 +539,8 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
                 _copy(root, (*source_parts, *_parts(relative)), ws.dir,
                       f'inputs/{step}/{name}', expected, max_file, remaining)
             staged.append(str(ws.dir / 'inputs' / step))
-            _copy_literature(root, source_parts, ws.dir, max_file, remaining)
+            if warnings := _copy_literature(root, source_parts, ws.dir, max_file, remaining):
+                refused[f'{step}:literature'] = 'literature handoff incomplete: ' + '; '.join(warnings[:10])
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
             # The refused ancestor's copies are removed below, so the bytes they used are not spent: a later
             # ancestor that fits must not be refused for them (#1065).

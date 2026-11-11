@@ -17,6 +17,7 @@ from labhq.settings import Settings
 from labhq.tools import annot, annot_literature as lit
 from tests.test_annot import FakeTime
 from tests.test_direct_outputs import _workspace as direct_workspace
+from tests.test_external_wait import mcp_module, limited  # admission fixtures use the real offline ledger
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -79,9 +80,103 @@ def search_answer(records):
     return httpx.Response(200, json={"version": "6.9", "hitCount": len(records), "resultList": {"result": records}})
 
 
-def complete_fallback_pdf(label="Repository full text"):
-    body = f"Introduction {label}. Methods " + ("complete study body " * 80) + " Results complete findings."
+def complete_fallback_pdf(label="Repository full text", doi="10.1000/test"):
+    body = f"Sex ratio and paternal work. DOI {doi}. Introduction {label}. Methods " + ("complete study body " * 80) + " Results complete findings."
     return b"%PDF-1.4\nBT (" + body.encode("ascii") + b") Tj ET\n%%EOF"
+
+
+@pytest.mark.asyncio
+async def test_oa_copy_with_another_identity_is_not_full_text(tmp_path):
+    def handler(request):
+        if request.url.path.endswith('/search'):
+            return search_answer([record(pmcid=None, oa='N')])
+        if request.url.host == 'api.openalex.org':
+            return httpx.Response(200, json={'results': [{
+                'doi': 'https://doi.org/10.1000/test', 'title': 'Sex ratio and paternal work',
+                'best_oa_location': {'pdf_url': 'http://93.184.216.34/wrong.pdf'}}]})
+        return httpx.Response(200, content=complete_fallback_pdf('Unrelated study', doi='10.1000/wrong'),
+                              headers={'content-type': 'application/pdf'})
+    annotator, _ = make(handler, tmp_path)
+    row = (await annotator.fulltext(['123']))['results'][0]
+    assert row['access_level'] == 'abstract'
+    assert row['unread_reason'] == 'identity_mismatch'
+
+
+@pytest.mark.asyncio
+async def test_batch_gets_every_abstract_before_any_body(tmp_path):
+    events = []
+    records = [record(pmid=str(i), pmcid=f'PMC{i}') for i in range(1, 10)]
+    def handler(request):
+        if request.url.path.endswith('/search'):
+            events.append('metadata')
+            return search_answer(records)
+        events.append('body')
+        if request.url.path.endswith('/fullTextXML'):
+            i = int(request.url.path.split('/')[-2][3:])
+            return httpx.Response(200, text=JATS) if i <= 6 else httpx.Response(404)
+        return httpx.Response(200, json={'results': []})
+    annotator, _ = make(handler, tmp_path)
+    rows = (await annotator.fulltext([str(i) for i in range(1, 10)]))['results']
+    assert events.count('metadata') == 1
+    assert [row['pmid'] for row in rows] == [str(i) for i in range(1, 10)]
+    assert sum(row['access_level'] == 'full_text' for row in rows) == 6
+    assert sum('## Abstract' in (tmp_path / 'work' / row['text_file']).read_text(encoding='utf-8')
+               for row in rows) == 9
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', [302, 503])
+async def test_refundable_response_returns_quota_before_the_next_send(mcp_module, limited, monkeypatch, status):
+    monkeypatch.setattr(mcp_module, 'HOST_ANSWERS', {})
+    limited.ledger.limit = 1
+    limited.provider = lambda request: httpx.Response(status)
+    async with mcp_module._admitted('fulltext') as hooks, httpx.AsyncClient(**hooks) as client:
+        assert (await client.get('https://www.ebi.ac.uk/a')).status_code == status
+        assert limited.ledger.usage('req-1')['used'] == 0
+        assert (await client.get('https://www.ebi.ac.uk/b')).status_code == status
+    assert len(limited.sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_per_paper_send_limit_preserves_the_abstract(tmp_path, monkeypatch):
+    def handler(request):
+        if request.url.path.endswith('/search'):
+            return search_answer([record(pmcid=None)])
+        if request.url.host == 'api.openalex.org':
+            return httpx.Response(200, json={'results': [{'best_oa_location': {
+                'pdf_url': 'http://93.184.216.34/paper.pdf'}}]})
+        return httpx.Response(302, headers={'location': '/next.pdf'})
+    monkeypatch.setattr(lit, 'MAX_BODY_SENDS_PER_PAPER', 3)
+    annotator, calls = make(handler, tmp_path)
+    row = (await annotator.fulltext(['123']))['results'][0]
+    assert len(calls) == 4  # one metadata request, then exactly three body/provider sends
+    assert row['access_level'] == 'abstract' and '상한' in row['fulltext_error']
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('Sex ratio and paternal work. DOI 10.1000/test', True),
+    ('Sex ratio and paternal work.', True),
+    ('Unrelated title. DOI 10.1000/test', False),
+    ('Sex ratio and paternal work. DOI 10.1000/other', False),
+    ('Introduction Methods Results ' * 100, False),
+])
+def test_oa_identity_checks_downloaded_text_before_adding_our_header(text, expected):
+    assert lit._copy_identity(text, record()) is expected
+
+
+@pytest.mark.asyncio
+async def test_pmc_bodies_precede_provider_fanout_even_when_closed_paper_is_first(tmp_path):
+    def handler(request):
+        if request.url.path.endswith('/search'):
+            return search_answer([record('1', None, 'N'), record('2')])
+        if request.url.path.endswith('/fullTextXML'):
+            assert (tmp_path / 'work/.tmp/literature/pmid-1.md').is_file()
+            return httpx.Response(200, text=JATS)
+        return httpx.Response(200, json={'results': []})
+    annotator, calls = make(handler, tmp_path)
+    rows = (await annotator.fulltext(['1', '2']))['results']
+    assert [row['pmid'] for row in rows] == ['1', '2']  # retain caller order
+    assert calls[1].url.path.endswith('/fullTextXML')
 
 
 def by_query(table, xml=JATS):
@@ -91,7 +186,10 @@ def by_query(table, xml=JATS):
             return httpx.Response(200, json={"meta": {"count": 0}, "results": []})
         if request.url.path.endswith("/fullTextXML"):
             return httpx.Response(200, text=xml) if "PMC999" in request.url.path else httpx.Response(404)
-        return search_answer(table.get(request.url.params["query"], []))
+        query = request.url.params['query']
+        if ' OR ' in query:
+            return search_answer([row for key in query.split(' OR ') for row in table.get(key[1:-1], [])])
+        return search_answer(table.get(query, []))
     return handler
 
 
@@ -430,7 +528,7 @@ def test_pdf_fallback_rejects_a_single_partial_literal():
 
 
 async def test_fulltext_tries_oa_providers_when_europe_pmc_has_no_record(tmp_path):
-    pdf = complete_fallback_pdf("Open access paper outside Europe PMC")
+    pdf = complete_fallback_pdf("Open access paper outside Europe PMC", doi="10.1000/outside")
 
     def handler(request):
         if request.url.host == "www.ebi.ac.uk":

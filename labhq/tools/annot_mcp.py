@@ -226,6 +226,10 @@ async def _admitted(tool: str):
         if seq in sends:
             sends[seq] = response.status_code
             _note_answer((response.request.url.host or "").lower(), response.status_code)
+            # Settle before httpx follows a redirect or annot retries: this call may need
+            # the returned slot for its very next request. Broker settlement is idempotent.
+            if 300 <= response.status_code < 400 or response.status_code == 429 or response.status_code >= 500:
+                await _finish([[seq, response.status_code]], "ok" if response.status_code < 400 else "failed")
 
     outcome = "failed"
     try:
