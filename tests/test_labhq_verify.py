@@ -524,3 +524,16 @@ def test_bundle_path_without_a_file_name_is_refused(tmp_path):
 
     with pytest.raises(ValueError):
         write_bundle(EMPTY_REPORT, {"id": "req_v"}, tmp_path)
+
+
+async def test_verify_rechecks_the_report_against_its_tables_as_a_warning(tmp_path, monkeypatch, capsys):
+    """#1374: a sentence whose direction contradicts its own table is shown by verify, without failing the hashes."""
+    settings, result = await _run(tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/table.tsv", BODY))
+    report = "CD276은 감소했습니다(log2fc 2.5, [표](steps/s1/outputs/table.tsv)).\n"
+    code, out = _verify(monkeypatch, capsys, settings, _request(result, report=report), "--json")
+    data = json.loads(out)
+    assert code == 0 and data["exit_code"] == 0  # a mismatch is a warning: the outputs themselves are intact
+    assert [row["kind"] for row in data["report_consistency"]["findings"]] == ["direction"]
+    assert any(warning.startswith("본문·결과표:") for warning in data["warnings"])
+    code, out = _verify(monkeypatch, capsys, settings, _request(result, report=report))
+    assert "본문·결과표 대조:" in out and "불일치 1건" in out and "검증 전 초안" in out

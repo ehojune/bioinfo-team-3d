@@ -55,3 +55,96 @@ def test_legacy_summary_rows_do_not_bypass_cp2_refusal():
     assert not claim_rows({"s1": ledger}, refused=refused)[0]
     assert "no CP2-accepted support" in check_report("x [[claim:s1/c1]]", {"s1": ledger},
                                                     refused=refused)["problems"][0]
+
+
+# ----- #1374: the report's numbers and directions against the tables it links (synthetic, #910-like) -----
+
+DE_TABLE = ("gene_id\tsymbol\tbaseMean\tlog2FoldChange\tpadj\n"
+            "E1\tDUSP1\t3445\t2.959\t1.06e-139\nE2\tKLF15\t604.4\t4.486\t4.2e-87\nE3\tFOO1\t100\t-1.8\t0.001\n")
+CLINICAL = "trial\torr\tci_low\tci_high\tpfs_months\thr\nTRIAL-A\t0.43\t0.30\t0.60\t6.5\t0.58\n"
+TABLES = {"steps/s3/outputs/de.tsv": DE_TABLE, "steps/s2/outputs/clinical.tsv": CLINICAL}
+
+
+def _consistency(text):
+    from labhq.evidence.report_consistency import check
+    return check(text, TABLES)
+
+
+@pytest.mark.parametrize("sentence", [
+    "DUSP1은 dexamethasone에서 증가했습니다(log2FC 2.96, [표](steps/s3/outputs/de.tsv)).",
+    "ORR은 43%였고(95% CI 30–60%) PFS 중앙값은 6.5개월이었습니다([임상](steps/s2/outputs/clinical.tsv)).",
+    "HR 0.58로 진행 위험이 감소했습니다([임상](steps/s2/outputs/clinical.tsv)).",
+    "HR 0.58로 무진행 생존이 길어졌습니다([임상](steps/s2/outputs/clinical.tsv)).",  # survival flips a ratio
+    "padj < 0.05, |log2FC| > 1 기준으로 골랐습니다([표](steps/s3/outputs/de.tsv)).",  # thresholds are settings
+    "DUSP1 baseMean은 3,445였습니다 [표](steps/s3/outputs/de.tsv).",
+    "Upregulated genes included KLF15 ([table](steps/s3/outputs/de.tsv)).",
+])
+def test_a_sentence_that_matches_its_table_is_not_flagged(sentence):
+    assert _consistency(sentence)["findings"] == []
+
+
+@pytest.mark.parametrize("sentence, kind, value", [
+    ("KLF15의 log2FC는 4.9였습니다([표](steps/s3/outputs/de.tsv)).", "number", "4.9"),
+    ("ORR은 48%였습니다([임상](steps/s2/outputs/clinical.tsv)).", "number", "48%"),
+    ("FOO1은 처리 뒤 증가했습니다([표](steps/s3/outputs/de.tsv)).", "direction", "FOO1 -1.8"),
+    ("HR 0.58로 진행 위험이 증가했습니다([임상](steps/s2/outputs/clinical.tsv)).", "direction", "HR 0.58"),
+    ("The log2FC of 2.96 shows DUSP1 was downregulated ([table](steps/s3/outputs/de.tsv)).", "direction",
+     "log2FC 2.96"),
+])
+def test_the_910_kinds_of_mismatch_are_found(sentence, kind, value):
+    findings = _consistency(sentence)["findings"]
+    assert {row["kind"] for row in findings} == {kind} and value in [row["value"] for row in findings]
+
+
+def test_only_sentences_that_link_a_table_are_compared_and_counts_are_kept():
+    result = _consistency("## 결과\n\n본문에 표가 없는 수치 12.3입니다.\n\n| a | 9.99 |\n|---|---|\n"
+                          "KLF15 log2FC 4.49 ([표](steps/s3/outputs/de.tsv)).\n")
+    assert result["findings"] == []
+    assert result["checked"]["numbers"] == 1 and "steps/s3/outputs/de.tsv" in result["checked"]["tables"]
+
+
+def test_tables_are_read_only_from_a_steps_declared_outputs_in_its_own_folder(tmp_path):
+    from labhq.evidence.report_consistency import tables_for
+    step = tmp_path / "s3"
+    (step / "outputs").mkdir(parents=True)
+    (step / "outputs" / "de.tsv").write_text(DE_TABLE, encoding="utf-8")
+    (step / "outputs" / "secret.tsv").write_text("x\n", encoding="utf-8")
+    report = "[a](steps/s3/outputs/de.tsv) [b](steps/s3/outputs/secret.tsv) [c](steps/s3/outputs/../../x.tsv)"
+    found = tables_for(report, {"s3": {"workdir": str(step), "outputs": ["outputs/de.tsv"]}})
+    assert found == {"steps/s3/outputs/de.tsv": DE_TABLE}  # undeclared or escaping links are not read
+
+
+async def test_the_writer_gets_one_correction_and_a_worse_fix_is_not_kept(tmp_path):
+    from labhq.evidence.report_consistency import correct_once
+    step = tmp_path / "s3"
+    (step / "outputs").mkdir(parents=True)
+    (step / "outputs" / "de.tsv").write_text(DE_TABLE, encoding="utf-8")
+    results = {"s3": {"workdir": str(step), "outputs": ["outputs/de.tsv"]}}
+    wrong = "FOO1은 증가했습니다([표](steps/s3/outputs/de.tsv))."
+    prompts = []
+
+    async def good(prompt):
+        prompts.append(prompt)
+        return "FOO1은 감소했습니다([표](steps/s3/outputs/de.tsv))."
+
+    body, record = await correct_once(wrong, results, good)
+    assert "감소" in body and record["correction"] == "applied" and record["findings"] == []
+    assert len(prompts) == 1 and "FOO1" in prompts[0] and "Do not redo the analysis" in prompts[0]
+
+    async def same(prompt):
+        return wrong
+
+    body, record = await correct_once(wrong, results, same)
+    assert body == wrong and record["correction"] == "rejected" and len(record["findings"]) == 1
+    body, record = await correct_once(wrong, results, good, accept=lambda text: False)  # the claim check said no
+    assert body == wrong and record["correction"] == "rejected"
+
+
+def test_the_report_front_says_draft_and_no_rerun():
+    from labhq.evidence.report_consistency import front_lines
+    left = _consistency("FOO1은 증가했습니다([표](steps/s3/outputs/de.tsv)).")
+    lines = front_lines(left, {"execution": "not_rerun"}, hpc=True)
+    assert "검증 전 초안" in lines[0] and "1건" in lines[0]
+    assert lines[1].startswith("- 재현 실행 안 함(HPC)")
+    clean = front_lines(_consistency("KLF15 log2FC 4.49 ([표](steps/s3/outputs/de.tsv))."), {"execution": "pass"})
+    assert clean == [clean[0]] and "불일치 없음" in clean[0]

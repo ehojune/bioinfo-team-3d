@@ -32,7 +32,7 @@ from ..costs import cost_detail, format_cost, historical_plan_cost_estimate, tas
 from ..interruption import ShutdownInterrupted, shutdown_interruption, stopping_marker
 from ..model_refusal import REASON as MODEL_REFUSAL_REASON, ModelRefused, is_model_refusal
 from ..pi_text import PI_TEXT_RULE
-from ..evidence import wiki_exposure
+from ..evidence import report_consistency, wiki_exposure
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.wiki_contract import snapshot_audit as wiki_collect_audit
 from ..evidence.wiki_contract import step_findings as wiki_step_findings
@@ -6638,6 +6638,24 @@ class Orchestrator:
                                  artifact_sha256=artifact_sha256)
         if corrections:
             contract["report_corrections"] = corrections
+
+        async def fix_consistency(prompt: str) -> str | None:  # the body vs its tables, sent back once (#1374)
+            if rid in self.budget_denials:
+                return None
+            try:
+                done = await self.run_step(Task(
+                    agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id, prompt=prompt,
+                    meta={**refs, "kind": "synthesis", "request": text, "title": "보고서 수치·방향 교정",
+                          "final_budget_turn": True, **({"workdir": workdir} if workdir else {})}))
+            except BudgetExceeded:
+                return None
+            return _split_report_appendix(report_body(done.text))[0] if done.ok else None
+
+        body, contract["report_consistency"] = await report_consistency.correct_once(
+            body, results, fix_consistency, accept=lambda fixed: len(check_report(
+                fixed, ledgers, unsupported=unsupported, refused=refused,
+                artifact_sha256=artifact_sha256)["problems"]) <= len(check["problems"]))
+        check = check_report(body, ledgers, unsupported=unsupported, refused=refused, artifact_sha256=artifact_sha256)
         contract["report_check"] = check
         claim_check = (["Claim check: the report is incomplete.\n" +
                         "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])
@@ -8683,6 +8701,20 @@ class Orchestrator:
                 for issue in reference_issues)) if reference_issues else ""
             body = (final.text if final.ok else self.report_results(steps, results, n) +
                     f"\n\nSynthesis failed: {final.error}")
+            if final.ok:  # the body vs its tables, sent back once (#1374); _finish records what is left
+
+                async def fix_consistency(prompt: str) -> str | None:
+                    if rid in self.budget_denials:
+                        return None
+                    try:
+                        done = await self.run_step(Task(
+                            agent_id=synthesis.agent_id, request_id=rid, resume_session_id=synthesis.resume_session_id,
+                            prompt=prompt, meta={**synthesis.meta, "title": "보고서 수치·방향 교정"}))
+                    except BudgetExceeded:
+                        return None
+                    return done.text if done.ok else None
+
+                body, _ = await report_consistency.correct_once(body, results, fix_consistency)
             reference = _review_reference(review)
             if reference and not REVIEW_REFERENCE_HEADING.search(body):
                 body = _before_bench_block(body, reference)
@@ -8979,6 +9011,10 @@ class Orchestrator:
         report, style_note = check_report(report)
         if style_note:
             req["execution_record"] += "\n\n" + style_note
+        # What is left after the writer's one correction: the report front shows it as an unverified draft (#1374).
+        req["report_consistency"] = report_consistency.check(report, report_consistency.tables_for(report, results))
+        if left := report_consistency.record_lines(req["report_consistency"]):
+            req["execution_record"] += "\n\n" + left
         package = build_report_package(req, report, results)
         contract_check = validate_report_package(
             package,
