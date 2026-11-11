@@ -135,9 +135,8 @@ class LookupHostPaused(annot.LookupFailed):
     refusal by the limit, it concerns this host only; requests to other hosts of the same call go on."""
 
 
-# This process's recent answers per host, newest first, and when the last one came. The admission file holds the same
-# for the whole request, but a send's status reaches it only when its tool call ends, so the retries inside one call
-# need this copy. The server process lives as long as its task, so the copy also spans that task's tool calls.
+# This process's recent answers per host, newest first, and when the last one came. Keep this local copy even if
+# immediate broker settlement fails, so retries in one call still stop. It also spans this task's tool calls.
 HOST_ANSWERS: dict[str, tuple[list[int], float]] = {}
 
 

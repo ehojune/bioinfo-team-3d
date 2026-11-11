@@ -1502,6 +1502,11 @@ class LiteratureAnnotator(Annotator):
                 if records:
                     record = records[0]
                     candidate = _openalex_candidate(record)
+                    # An exact identifier lookup may be our only identity source when
+                    # Europe PMC has no record. Preserve it for the downloaded-body check.
+                    for key in ("doi", "title", "pmid"):
+                        if not meta.get(key) and candidate.get(key):
+                            meta[key] = candidate[key]
                     state["oa_known"] = state["oa_known"] or bool(candidate.get("is_oa"))
                     for location in [candidate.get("best_oa_location"), *_openalex_oa_locations(record)]:
                         if isinstance(location, dict):
@@ -1567,6 +1572,7 @@ class LiteratureAnnotator(Annotator):
             if not _copy_identity(text, meta):
                 failures.append(('identity_mismatch', 'OA 사본의 DOI·제목을 요청 논문과 대조하지 못했습니다'))
                 continue
+            header = [f"# {meta.get('title') or paper.value}", "", self._identifier_line(meta), *header[3:]]
             markdown = "\n".join(header + [
                 f"- access_level: full_text ({location['provider']} legal OA {body_format})",
                 f"- source_url: {location['url']}", "", "## Full text", "", text, "",

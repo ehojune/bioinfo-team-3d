@@ -552,6 +552,37 @@ async def test_fulltext_tries_oa_providers_when_europe_pmc_has_no_record(tmp_pat
     assert any(call.url.host == "api.unpaywall.org" for call in calls)
 
 
+@pytest.mark.parametrize("identifier", ["PMID:123", "PMC123"])
+@pytest.mark.parametrize("wrong_copy", [False, True])
+async def test_openalex_identity_survives_without_europe_pmc_record(tmp_path, identifier, wrong_copy):
+    title = "Open access paper outside Europe PMC"
+
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([])
+        if request.url.host == "api.openalex.org":
+            expected = "pmid:123" if identifier.startswith("PMID") else "pmcid:PMC123"
+            assert request.url.params["filter"] == expected
+            return httpx.Response(200, json={"results": [{
+                "id": "https://openalex.org/W1", "doi": "https://doi.org/10.1000/outside",
+                "title": title, "open_access": {"is_oa": True},
+                "best_oa_location": {"is_oa": True, "pdf_url": "http://93.184.216.34/paper.pdf"},
+            }]})
+        if request.url.host == "93.184.216.34":
+            pdf = complete_fallback_pdf("Another paper" if wrong_copy else title,
+                                        doi="10.1000/wrong" if wrong_copy else "10.1000/outside")
+            return httpx.Response(200, content=pdf, headers={"content-type": "application/pdf"})
+        raise AssertionError(request.url)
+
+    annotator, _ = make(handler, tmp_path)
+    row = (await annotator.fulltext([identifier]))["results"][0]
+    if wrong_copy:
+        assert row.get("access_level") != "full_text" and row["unread_reason"] == "identity_mismatch"
+    else:
+        assert row["access_level"] == "full_text" and row["read_source"] == "OpenAlex"
+        assert row["doi"] == "10.1000/outside" and row["title"] == title
+
+
 async def test_fulltext_tries_alternate_openalex_oa_locations(tmp_path):
     def handler(request):
         if request.url.host == "www.ebi.ac.uk":

@@ -206,8 +206,7 @@ def test_breaker_wait_is_a_pure_rule():
     assert breaker_wait([200, 503, 503, 503], 0, 1) == 0
 
 
-# The tool process keeps the last answers itself: a send's status reaches the file only when its tool call ends, so the
-# retries inside one call would otherwise go on.
+# The tool process also keeps recent answers, so retries in one call stop without consulting the broker again.
 @pytest.fixture
 def annot_mcp(monkeypatch):
     from labhq.tools import annot_mcp as module
@@ -245,7 +244,10 @@ def test_in_call_retries_stop_at_the_third_503_and_never_reach_the_broker(annot_
 
     assert asyncio.run(scenario()) == [503, 503, 503, "paused", "paused"]
     assert admitted == [EBI] * 3  # the two paused ones were not even offered to the counter
-    assert [sends for sends, _ in finished] == [[[1, 503], [2, 503], [3, 503]]]  # one receipt, three counted sends
+    assert finished == [
+        ([[1, 503]], "failed"), ([[2, 503]], "failed"), ([[3, 503]], "failed"),
+        ([[1, 503], [2, 503], [3, 503]], "ok"),
+    ]  # release each transient answer immediately, then send the idempotent closing receipt
 
 
 def test_pause_of_one_host_does_not_refuse_the_rest_of_the_call(annot_mcp, monkeypatch):
