@@ -405,6 +405,8 @@ def _copy_literature(root, source_parts, work, max_file, remaining):
             if target is None:
                 return ['literature destination is not a plain folder']
             for entry in entries:
+                if entry.kind == 'dir':
+                    continue  # inbox/ holds PI uploads; it is not a paper to hand off.
                 if entry.kind != 'file' or entry.size is None or entry.size > min(max_file, remaining[0]):
                     warnings.append(f'{entry.name}: unsafe file or literature byte limit')
                     continue
