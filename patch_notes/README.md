@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:15 | [`673ff4d`](https://github.com/ehojune/bioinfo-team-3d/pull/1376/commits/673ff4d) | **부하가 큰 Windows 자동 검사에서 HPC 세션 시험이 들쭉날쭉 실패하던 문제를 고쳤습니다.**<br>시험용 fake gateway가 이른 입력을 시간·스레드 경쟁이 아니라 인사말 전 stdin에 남은 입력(PeekNamedPipe·select)으로 판정한다. 번갈아 실패하던 HPC 세션 시험 2건의 원인 (#1373). |
 | 01:42 | [`0ac8add`](https://github.com/ehojune/bioinfo-team-3d/pull/1372/commits/0ac8add) | **검증 안내에 원격 보관 그림 처리를 적었습니다.**<br>manual 07 한·영에 verify가 원격 목록에 크기가 있는 보고서 그림을 원격 보관 경고로 센다고 적는다 (#1372 리뷰). |
 | 01:41 | [`b955c5d`](https://github.com/ehojune/bioinfo-team-3d/pull/1372/commits/b955c5d) | **빈 그림은 여전히 실패하고, 원격에 둔 그림은 요약에 따로 표시합니다.**<br>크기 0인 원격 그림은 계속 문제로 세고, verify 요약 줄에 원격 보관 그림 수를 따로 보인다 (#1372 리뷰). |
 | 01:22 | [`635832e`](https://github.com/ehojune/bioinfo-team-3d/pull/1372/commits/635832e) | **HPC에만 둔 큰 그림 때문에 검증이 실패하지 않습니다.**<br>verify의 보고서 그림 링크 검사에서 단계의 원격 목록에 기록된 그림은 원격 보관 경고로 돌리고, 기록이 없는 그림 링크만 문제로 센다 (#1347). |
