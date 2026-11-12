@@ -1,6 +1,19 @@
 # #1389 경계 골격 조사
 
-## r2 결과
+## r3 판단과 assertion 보존표
+
+고유 계약을 다른 boundary로 옮길 동등 근거가 없어 r2 삭제를 되돌렸다. 아래 시험과 구현은 원본 그대로 보존한다. Windows inventory와 현재 안내도 복원했다. 제품·시험 순삭제는 0줄이다.
+
+| 기존 시험 | 보존하는 assertion | r3 처리 |
+|---|---|---|
+| `test_boundary_fixture_plan.py` | 닫힌 schema·유형·만료·principal 충돌 거부, command 미실행, malformed JSON fail-closed | fixture plan과 시험 원본 복원 |
+| `test_protected_transport.py` | schema 거부, 인증·run/policy binding, replay 및 동시성·ledger 오류 fail-closed, env/stdio 허용 목록 | synthetic transport와 시험 원본 복원 |
+| `test_claude_sandbox.py` | 충돌·약화 정책 거부 및 launcher fail-closed | sandbox 초안과 시험 원본 복원 |
+| `test_claude_sandbox_boundary.py` | positive control 없는 결과·timeout은 UNVERIFIED, 위반은 FAIL, launcher 차단 | 시험 원본 복원; 실제 보호는 UNVERIFIED |
+
+`test_auth_broker.py`와 `test_boundary_probe.py`도 혼합 계약 때문에 그대로 유지한다. 구현 제거와 계약 이관 여부는 별도 판단이 필요하다. 이 표는 시험 통과나 실제 격리의 증거가 아니다.
+
+## r2 당시 결과 (r3에서 삭제 취소)
 
 - `claude_sandbox.py`, `protected_transport.py`, fixture plan과 전용 시험을 제거했다. 제품 302줄, plan script 101줄, 시험 491줄 삭제.
 - `tests/test_auth_broker.py:315`는 보존 중인 process boundary와 observer의 lifecycle도 검증한다. broker와 시험을 보류한다.
