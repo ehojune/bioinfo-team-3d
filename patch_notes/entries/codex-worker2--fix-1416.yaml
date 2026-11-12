@@ -84,3 +84,7 @@ rows:
     at: "2026-11-12 20:06"
     summary: "숫자형 사이트 식별자와 SSH port를 구분해 가립니다."
     text: "#1416 r2: user·queue·pinned node의 숫자 문자열은 일반 식별자로 가림. SSH port 문맥·exit code·record ID·hash 보존 포함 277 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS·원본 동일."
+  - sha: "a412336"
+    at: "2026-11-12 20:13"
+    summary: "텍스트 checksum의 완전한 hash token을 보존합니다."
+    text: "#1416 r2: text·TSV·script에서 64자리 hex token을 사이트 치환과 분리. 숫자·문자 사이트 ID 충돌 회귀 포함 283 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS·원본 동일."
