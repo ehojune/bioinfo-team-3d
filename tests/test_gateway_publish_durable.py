@@ -31,6 +31,39 @@ def gateway(tmp_path):
     hub.store.close()
 
 
+@pytest.mark.parametrize("prior_type,error", [("agent.log", None), ("task.accepted", None),
+    ("ask.requested", "ask_start_unknown"), ("ask.requested", "ask_publication_incomplete")])
+def test_inbox_summary_reads_backlog_once_and_matches_admission_boundary(gateway, monkeypatch, prior_type, error):
+    hub = gateway
+    hub.store.put("task", "old", {"request_id": "old"})
+    for i in range(40):
+        runner = "other" if i == 39 else "runner"
+        task = f"task{i}"
+        hub.store.put("task", task, {"request_id": "old" if i == 3 else f"request{i}"})
+        msg = {"type": "agent.log", "runner_seq": i + 1, "task_id": task, "data": {}}
+        if i == 0:
+            msg["task_id"] = "old"
+            msg["type"] = prior_type
+        row = hub.store.accept_runner_inbox(runner, None, i + 1, msg)
+        hub.store.set_runner_inbox_state(runner, None, i + 1, "blocked", error if i == 0 else None, expected="pending")
+        # Exercise legacy missing orders and equal admission orders as well as normal append order.
+        if i in {5, 6, 7}:
+            row = hub.store.runner_inbox(runner, None, i + 1)
+            row["admission_order"] = None if i == 5 else 2
+            hub.store.put("runner_inbox", hub.store._runner_inbox_key(runner, None, i + 1), row)
+    rows = hub.store.active_runner_inbox()
+    expected = {(r["runner_id"], r["seq"]): not hub._inbox_has_earlier_blocker(r) for r in rows}
+    original = hub.store.active_runner_inbox
+    calls = []
+    def read_once():
+        calls.append(True)
+        return original()
+    monkeypatch.setattr(hub.store, "active_runner_inbox", read_once)
+    actual = hub.runner_inbox_summary()
+    assert len(calls) == 1
+    assert {(r["runner_id"], r["seq"]): r["action"] == "resume" for r in actual} == expected
+
+
 def stall_commit(hub, monkeypatch, number=1, fail=False):
     entered, release = threading.Event(), threading.Event()
     transaction = hub.store._transaction

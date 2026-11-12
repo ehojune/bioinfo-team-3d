@@ -4233,24 +4233,28 @@ class Hub:
             self.runner_inbox_admission_lock = asyncio.Lock()
         return self.runner_inbox_admission_lock
 
+    def _inbox_scope(self, message: dict, tasks: dict | None = None) -> tuple:
+        data = message.get("data") if isinstance(message.get("data"), dict) else {}
+        task_id = message.get("task_id") or data.get("task_id")
+        request_id = message.get("request_id") or data.get("request_id")
+        if ((message.get("task_id") and data.get("task_id") and message["task_id"] != data["task_id"]) or
+                (message.get("request_id") and data.get("request_id") and message["request_id"] != data["request_id"])):
+            return task_id, None
+        if tasks is None:
+            task = self.store.get("task", task_id) if task_id else None
+        else:
+            if task_id not in tasks:
+                tasks[task_id] = self.store.get("task", task_id) if task_id else None
+            task = tasks[task_id]
+        stored_request = task.get("request_id") if task else None
+        if not stored_request or (request_id and request_id != stored_request):
+            return task_id, None
+        return task_id, stored_request
+
     def _inbox_has_earlier_blocker(self, row: dict) -> bool:
         """Apply the same conservative dependency boundary on admission and resume."""
-        def scope(message):
-            data = message.get("data") if isinstance(message.get("data"), dict) else {}
-            task_id = message.get("task_id") or data.get("task_id")
-            request_id = message.get("request_id") or data.get("request_id")
-            if ((message.get("task_id") and data.get("task_id") and message["task_id"] != data["task_id"]) or
-                    (message.get("request_id") and data.get("request_id") and
-                     message["request_id"] != data["request_id"])):
-                return task_id, None
-            task = self.store.get("task", task_id) if task_id else None
-            stored_request = task.get("request_id") if task else None
-            if not stored_request or (request_id and request_id != stored_request):
-                return task_id, None
-            return task_id, stored_request
-
         msg = row["message"]
-        task_id, request_id = scope(msg)
+        task_id, request_id = self._inbox_scope(msg)
         activity_types = {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}
         for previous in self.store.active_runner_inbox():
             if previous["runner_id"] != row["runner_id"]:
@@ -4263,7 +4267,7 @@ class Hub:
                 continue
             if previous["state"] not in {"pending", "failed", "processing", "blocked"}:
                 continue
-            old_task, old_request = scope(previous["message"])
+            old_task, old_request = self._inbox_scope(previous["message"])
             prior_type = previous["message"].get("type")
             prior_local = (prior_type in activity_types or prior_type == "task.accepted" or
                            (prior_type == "ask.requested" and previous.get("error") == "ask_publication_incomplete"))
@@ -6479,6 +6483,61 @@ class Hub:
                       "reason": e.get("reason"), "url": e.get("url"), "number": e.get("number")}
                 for rid, e in latest.items()}
 
+    def _inbox_resume_candidates(self, rows: list[dict]) -> set[tuple]:
+        """Evaluate the admission boundary with prefix counts, without rescanning the backlog."""
+        from collections import Counter, defaultdict
+        from itertools import groupby
+
+        activity = {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}
+        groups, scopes, tasks = defaultdict(list), {}, {}
+        key = lambda row: (row["runner_id"], row["incarnation"], row["seq"])
+        for row in rows:
+            task, request = self._inbox_scope(row["message"], tasks)
+            typ = row["message"].get("type")
+            local = typ in activity or typ == "task.accepted" or (
+                typ == "ask.requested" and row.get("error") == "ask_publication_incomplete")
+            scopes[key(row)] = task, request, not (task and request and local)
+            groups[row["runner_id"]].append(row)
+
+        def index():
+            return {"count": 0, "unsafe": 0, "tasks": Counter(), "requests": Counter()}
+
+        def add(counts, row):
+            task, request, unsafe = scopes[key(row)]
+            counts["count"] += 1
+            counts["unsafe"] += bool(unsafe)
+            counts["tasks"][task] += 1
+            counts["requests"][request] += 1
+
+        eligible = set()
+        def consider(counts, row):
+            if row["state"] != "blocked":
+                return
+            task, request, unsafe = scopes[key(row)]
+            # Counts include the target itself; all equal-order rows are predecessors to each other.
+            if counts["count"] == 1 or (task and request and row["message"].get("type") in activity and
+                    counts["unsafe"] == bool(unsafe) and counts["tasks"][task] == 1 and
+                    counts["requests"][request] == 1):
+                eligible.add(key(row))
+
+        for group in groups.values():
+            total, prefix = index(), index()
+            unordered = [row for row in group if row.get("admission_order") is None]
+            for row in group:
+                add(total, row)
+            for row in unordered:
+                add(prefix, row)  # Missing orders are predecessors of every ordered delivery.
+                consider(total, row)  # A target with no order must consider every other delivery.
+            ordered = sorted((row for row in group if row.get("admission_order") is not None),
+                             key=lambda row: row["admission_order"])
+            for _, batch in groupby(ordered, key=lambda row: row["admission_order"]):
+                batch = list(batch)
+                for row in batch:
+                    add(prefix, row)
+                for row in batch:
+                    consider(prefix, row)
+        return eligible
+
     def runner_inbox_summary(self) -> list[dict]:
         """Payload-free recovery advice; observation never claims or replays a delivery."""
         from urllib.parse import urlencode
@@ -6488,12 +6547,14 @@ class Hub:
                   "interrupted_unknown", "earlier outcome unresolved", "RuntimeError", "ValueError", "TypeError",
                   "KeyError", "OSError", "OperationalError"}
         rows = []
-        for row in self.store.active_runner_inbox():
+        active = self.store.active_runner_inbox()
+        resumable = self._inbox_resume_candidates(active)
+        for row in active:
             runner, incarnation = row["runner_id"], row["incarnation"]
             current = (self.store.get("runner_incarnation", runner) or {}).get("id") == incarnation
             typ, error, state = row["message"].get("type"), row.get("error"), row["state"]
             action = None
-            if current and state == "blocked" and not self._inbox_has_earlier_blocker(row):
+            if current and state == "blocked" and (runner, incarnation, row["seq"]) in resumable:
                 action = "resume"
             elif (current and state == "failed" and error != "invalid_message" and
                   (typ in activity or (typ == "ask.requested" and error == "ask_publication_incomplete"))):
