@@ -24,3 +24,7 @@ rows:
     at: "2026-11-12 17:44"
     summary: "공개 묶음을 가린 뒤에도 검토 기록과 입력 연결이 맞게 유지됩니다."
     text: "#1416 r2: claims 식별자·CP4·rerun receipt·생성 helper 보존과 서술 가림을 구분. 합성 CP4/rerun bundle 검증·helper 실행 포함 187 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS."
+  - sha: "20c89c1"
+    at: "2026-11-12 17:53"
+    summary: "사이트 가림 뒤에도 실행 도구와 환경 상태 기록을 보존합니다."
+    text: "#1416 r2: run provenance key·engine·model·CLI version·환경 상태 보존, 설명 값만 가림. 충돌 값 회귀 포함 191 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS."
