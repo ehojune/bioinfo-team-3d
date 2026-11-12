@@ -200,9 +200,6 @@ def snapshot_reports(request: dict) -> dict:
     return snapshot_event({"type": "request.completed", "request_id": request.get("id"), "data": data})["data"]
 
 
-def _semantics_wanted(raw: Any) -> bool:  # semantics-hook: off in any spelling, options or not, skips the import
-    mode = raw.get("mode", "off") if isinstance(raw, dict) else raw  # semantics-hook
-    return mode not in (None, False, "off")  # semantics-hook
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -599,10 +596,6 @@ class Hub:
         from ..result_storage import ResultStorage
         self.result_storage = ResultStorage(self, github_transport)
         self.rounds = RoundRecorder(self, github_transport)
-        self.semantics_shadow = None  # semantics-hook
-        if _semantics_wanted(getattr(settings, "semantics", None)):  # semantics-hook: any spelling of off never imports it
-            from ..research.semantics_shadow import ShadowService  # semantics-hook
-            self.semantics_shadow = ShadowService.start(self)  # semantics-hook
         for rid, req in self.requests.items():
             if req.get("status") == "interrupted":
                 self.rounds.write(rid)
@@ -1637,8 +1630,6 @@ class Hub:
                 asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
             if not review_pending:
                 await self._aqueue_terminal_delivery(event)
-            if getattr(self, "semantics_shadow", None) is not None:  # semantics-hook
-                self.semantics_shadow.after_request(rid)  # semantics-hook
         await self.publish_facilities_projection(rid)
         try:
             await self.rounds.awrite(rid)
@@ -1685,9 +1676,6 @@ class Hub:
 
     async def _commit_terminal_async(self, rid: str, data: dict, request: dict, tasks: dict,
                                      runner_capabilities: dict) -> None:
-        from ..research import semantic_device_report
-        freeze_pending = semantic_device_report.freeze_pending_observation
-        await freeze_pending(self.semantics_shadow, request, self.requests[rid], self.s)  # semantics-hook
         while True:
             outcome = await asyncio.to_thread(
                 self._bundle_outcome, rid, request, tasks, runner_capabilities)
@@ -1756,8 +1744,6 @@ class Hub:
             if not self.requests[rid].get("bundle_pending"):
                 self.result_storage.schedule(rid)
             self._queue_terminal_delivery(event)
-        if getattr(self, "semantics_shadow", None) is not None:  # semantics-hook: after the request ended
-            self.semantics_shadow.after_request(rid)  # semantics-hook: copies rows, queues, never raises
 
     def _queue_terminal_delivery(self, event: dict) -> None:
         seq = event["seq"]
@@ -7182,11 +7168,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         try:
             entry = (await hub.astart_followup(rid, body.text))
         except ValueError as e:  # still running, one already pending, or no runner hosts the agent
-            if hub.semantics_shadow is not None:  # semantics-hook: actions
-                hub.semantics_shadow.after_followup(rid, None, "refused")  # semantics-hook: actions
             raise HTTPException(409, str(e))
-        if hub.semantics_shadow is not None:  # semantics-hook: actions
-            hub.semantics_shadow.after_followup(rid, entry["id"], "asked")  # semantics-hook: actions
         return {"request_id": rid, "followup_id": entry["id"]}
 
     @app.post("/api/requests/{rid}/notes", dependencies=[Depends(auth)])
