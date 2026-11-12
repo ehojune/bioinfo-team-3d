@@ -8,3 +8,7 @@ rows:
     at: "2026-11-12 17:05"
     summary: "사이트 가림이 짧은 설정 값이나 산출 파일명 때문에 묶음을 망가뜨리지 않게 고쳤습니다."
     text: "#1416 r2: 한 글자 가림 제외, inventory 경로·step ID 보존, root checkpoint만 변경 거절. 관련 시험 172 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS."
+  - sha: "23f7f6e"
+    at: "2026-11-12 17:15"
+    summary: "사이트 가림 뒤에도 요청 ID와 파일 복사 상태를 보존합니다."
+    text: "#1416 r2 최종 리뷰: 요청 ID 일치·copied 상태와 사본 hash 회귀 수정. 관련 시험 174 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS."
