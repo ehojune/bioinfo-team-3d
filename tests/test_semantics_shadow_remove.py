@@ -110,6 +110,16 @@ def test_a_failed_inner_run_names_its_failures_above_a_long_tail():
                     "FAILED tests/test_x.py::test_y - boom"]
 
 
+def test_missing_settings_anchor_stops_before_deleting_files(tmp_path):
+    (tmp_path / "labhq" / "research").mkdir(parents=True)
+    (tmp_path / "labhq" / "settings.py").write_text("x = 1  # semantics-hook\n", encoding="utf-8")
+    owned = tmp_path / "labhq" / "research" / "semantics_shadow.py"
+    owned.write_text("preserve", encoding="utf-8")
+    with pytest.raises(SystemExit, match="settings validation anchor"):
+        removal.remove(tmp_path)
+    assert owned.read_text(encoding="utf-8") == "preserve"
+
+
 def test_off_comparisons_reuse_only_an_immutable_record(tmp_path, monkeypatch):
     from tests import test_semantics_shadow_worker as worker
     calls, closed = [], []

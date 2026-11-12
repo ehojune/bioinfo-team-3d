@@ -4,6 +4,75 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1383 인용 감사 도구 오판정 두 건
+
+## 결론
+#910 11차 평가 1차에서 찾은 인용 감사 스크립트의 오판정 두 건을 고쳤다. 같은 묶음을 다시 감사하면, 원문 사본을 쓸 때 ok 14·major 1(조회하지 못한 5편을 모은 식별자 없는 증거 한 줄)이다. 묶음만 쓰면 ok 4·minor 10·major 1이고, 이때 minor 10은 포인터라 확인하지 못한 것이다.
+
+## 바뀐 것
+- `scripts/citation_audit.py`
+  - 제목 비교 전에 HTML 엔티티를 풀고 서식 태그를 공백으로 바꾼다. `KRAS<sup>G12C</sup>`는 `KRAS(G12C)`와 같은 제목이다.
+  - 원문의 첫 줄이 `# 포인터:` 또는 `# Pointer:`이면 원문이 묶음에 없는 것으로 보고 minor(인용문·수치 확인 못 함)로 적는다. 전에는 포인터를 원문으로 읽어 수치를 major로 판정했다.
+- `docs/reference/eval-suite.md` 등급표.
+
+## 실행한 것
+- `tests/test_citation_audit.py` 시험 7건 추가(제목 서식 4, 포인터 2, 포인터를 언급만 하는 원문 1), 70건 통과.
+- #910 11차 입력으로 재감사: 위 결론의 숫자.
+
+## 미해결
+- 포인터 판별은 첫 줄 표지만 본다. 다른 형식의 포인터는 원문으로 읽는다.
+
+# Runner 메시지 복구와 설정 검증 (#1386)
+
+## 결론
+
+Runner 메시지를 먼저 보존하고 공개·처리 상태를 나눴다. 결과가 불확실한 작업은 보류한다.
+
+## 변경
+
+- 누적 ACK 전 inbox에 원문을 저장하고, 이벤트 공개와 전달 의도를 기록한다.
+- 재시작 시 안전한 activity와 미실행 ask를 복구한다. 시작 결과가 불확실한 ask는 다시 실행하지 않는다.
+- 승인 응답은 HTTP 결과를 확인한다. 공개 기본 토큰과 알 수 없는 설정을 거부한다.
+- manifest 갱신을 프로세스 간 잠금으로 직렬화한다.
+- semantics 제거 후 기존 설정은 읽고 다른 미등록 키는 거부한다. 수동 재시도 저장 오류는 복구하며 시작이 불확실한 ask는 보류한다.
+- `/resume`과 최초 인수에 같은 의존성 검사를 적용한다. 시작 결과가 불확실한 ask는 계속 보류한다.
+
+## 확인과 경계
+
+- Windows 관련 회귀와 Linux 잠금 경쟁 시험을 실행했다. 상세 수치와 최종 head 검사는 PR에 기록한다.
+- 별도 gateway 프로세스를 강제 종료한 뒤 log·ask·답변 공개를 복구했다. 외부 ask 실행은 시험용 함수로 대체했다.
+- 외부 부수효과의 결과를 알 수 없으면 자동 재실행하지 않는다. 실제 PI 인스턴스와 운영 환경은 검증하지 않았다.
+- 제거 회귀 14건, gateway 관련 137건, 기존 회귀 95건 통과(2건 skip). 최종 CI와 리뷰는 PR에서 확인한다.
+- 독립 activity 재개 회귀는 수정 전 실패, 수정 후 gateway 관련 141건 통과. 불확실한 ask는 여전히 재개를 막는다.
+
+# #1384 보고서 검사와 웹 표식
+
+## 결과
+- 숫자가 든 본문 문장마다 claim 표식을 확인하고, 웹 보고서에서 package 주석 표식을 숨긴다.
+- 수정 전 회귀 시험은 누락, 주석 노출, 제목·code·그림 순번·각주 오탐으로 실패했다. 수정 후 Python 105건과 Node 7건이 통과했다.
+- 리뷰에 따라 자주 쓰는 단위가 붙은 수치를 감지하고 줄바꿈된 문장의 표식을 보존한다. 단위 목록은 완전하지 않다.
+- 이 검사는 휴리스틱이다. 숫자가 없는 결론과 표 안의 주장, 원본 근거와의 의미 일치는 검사하지 않는다. 식별자·설정은 오탐할 수 있다.
+- 실제 request·ledger·리뷰 원본, 상대 자산 경로, PDF 각주 재현은 미검증이다. #1384 전체 완료는 아니다.
+
+# 2026-11-12 claude-worker1 — #1383 평가 묶음 설계와 오프라인 도구
+
+## 결론
+#1381 3절 평가 묶음의 설계(`docs/reference/eval-suite.md`)와 실행 없이 도는 도구·fixture를 넣었습니다. 모델 호출·조회·HPC·PI 인스턴스 실행은 없습니다. 실행은 PI가 반증 사례 정답·짝 비교 질문·예산을 정한 뒤 별도 issue로 합니다.
+
+## 바뀐 것
+- `scripts/citation_audit.py`: 기록된 DOI·PMID 응답과 묶음 안 원문으로 인용을 ok/minor/major로 매김(`literal_check` 재사용)
+- `tests/fixtures/eval_suite/`: 인용 감사 10건, 리뷰 보정 clean·seeded 묶음(오류 10종, 정답 키), 반증 반영 사례 틀 6건(정답 칸 비움)
+- `tests/test_citation_audit.py`(10건), `config/ci/windows-boundary-v1.json`에 등록
+- `docs/reference/eval-suite.md`
+
+## 실행한 것
+- `pytest tests/test_citation_audit.py`: 10 passed
+- Windows 목록 검증(`ci_selection.validate_profile`) 통과, `check_public.sh`·`patch_notes.py check` 통과
+
+## 미해결
+- PI 결정 셋: 반증 반영 정답, 짝 비교 고정 질문 10개, 예산 상한([#1383 댓글](https://github.com/ehojune/bioinfo-team-3d/issues/1383#issuecomment-6804191591))
+- 인용 감사는 문장의 증감 방향을 보지 않음(#1374 몫)
+
 # #1375 bench 표식과 receipt 정리
 
 ## 결론

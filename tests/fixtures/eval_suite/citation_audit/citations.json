@@ -1,0 +1,28 @@
+{
+  "citations": [
+    {"id": "ok_all", "doi": "10.5555/eval.0001", "pmid": "90000001",
+     "title": "Glucocorticoid response of cultured airway smooth muscle cells", "source": "sources/paper_a.txt",
+     "quotes": ["increased expression of the target transcript"], "numbers": ["2.97", "93.9", "8"]},
+    {"id": "title_near", "doi": "10.5555/eval.0002",
+     "title": "A synthetic cohort study of serum marker: worked example", "source": "sources/paper_b.txt",
+     "numbers": ["1.82"]},
+    {"id": "doi_not_found", "doi": "10.5555/eval.0404", "title": "Anything"},
+    {"id": "title_other_work", "doi": "10.5555/eval.0003",
+     "title": "Glucocorticoid response of cultured airway smooth muscle cells"},
+    {"id": "doi_pmid_disagree", "doi": "10.5555/eval.0001", "pmid": "90000002",
+     "title": "Glucocorticoid response of cultured airway smooth muscle cells"},
+    {"id": "quote_absent", "doi": "10.5555/eval.0001", "title": "Glucocorticoid response of cultured airway smooth muscle cells",
+     "source": "sources/paper_a.txt", "quotes": ["decreased expression of the target transcript"]},
+    {"id": "number_wrong", "doi": "10.5555/eval.0001", "title": "Glucocorticoid response of cultured airway smooth muscle cells",
+     "source": "sources/paper_a.txt", "numbers": ["3.97", "-2.97"]},
+    {"id": "no_record", "doi": "10.5555/eval.0999", "title": "Not looked up yet"},
+    {"id": "no_source", "doi": "10.5555/eval.0002", "title": "A synthetic cohort study of serum markers: a worked example",
+     "quotes": ["45 showed elevated levels"]},
+    {"id": "no_identifier", "title": "Cited without DOI or PMID"}
+  ],
+  "expected": {
+    "ok_all": "ok", "title_near": "minor", "doi_not_found": "major", "title_other_work": "major",
+    "doi_pmid_disagree": "major", "quote_absent": "major", "number_wrong": "major", "no_record": "minor",
+    "no_source": "minor", "no_identifier": "major"
+  }
+}

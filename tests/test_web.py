@@ -1,12 +1,33 @@
 """The gateway serves the web office and keeps phone sockets alive on stale approvals."""
 
 import json
+import shutil
+import subprocess
 
 from fastapi.testclient import TestClient
 
 from labhq.gateway.server import create_app
 from labhq.models import ApprovalRequest
 from labhq.settings import Settings
+
+
+def test_live_approval_surfaces_server_refusal_even_with_open_socket():
+    from labhq.gateway import server
+    import pytest
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node unavailable")
+    html = (server.WEB / "index.html").read_text(encoding="utf-8")
+    approve = html.split("    approve: ", 1)[1].split("\n    uploadLiteraturePdf:", 1)[0].rstrip().removesuffix(",")
+    script = """
+const ws = {readyState: 1, send: () => {}};
+const post = async () => { throw new Error('server refused'); };
+const approve = APPROVE;
+approve('appr', true).then(() => process.exit(1), e => process.exit(e.message === 'server refused' ? 0 : 2));
+""".replace("APPROVE", approve)
+    result = subprocess.run([node, "-e", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
 
 def test_snapshot_preserves_request_activity_for_initial_focus(tmp_path):

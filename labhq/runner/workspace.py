@@ -21,10 +21,11 @@ import os
 import platform
 import re
 import shutil
+import stat
 import threading
 import time
 import uuid
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from pathlib import Path, PurePath
 from typing import Any
 
@@ -46,6 +47,78 @@ TOOL_USE_MATCH_WINDOW_NS = 5_000_000_000
 REFERENCE_FILE = re.compile(r"^[a-z][a-z0-9_]{0,63}[.]tsv$")
 REFERENCE_FILE_MAX_CHARS = 256_000
 WRITE_TOOLS = frozenset({"Write", "Edit", "Bash", "PowerShell"})
+
+
+@contextmanager
+def _manifest_lock(root: Path):
+    """Serialize cooperating manifest writers on the held workspace directory."""
+    with HeldDir.hold(root) as held:
+        # POSIX locks the directory itself: replacing a named lock file cannot
+        # split the lock domain. Windows holds the directory against replacement.
+        fd = (held.open_file(".manifest.lock", os.O_CREAT | os.O_WRONLY, 0o600)
+              if os.name == "nt" else None)
+        try:
+            if os.name == "nt":
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise OwnedPathError("manifest lock is not a plain file")
+                import msvcrt
+                deadline = time.monotonic() + 30
+                while True:
+                    try:
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise
+                        time.sleep(0.02)
+            else:
+                import fcntl
+                fcntl.flock(held._handle, fcntl.LOCK_EX)
+            try:
+                if not held.same_as(root):
+                    raise OwnedPathError("workspace was replaced while waiting for manifest lock")
+                yield held
+            finally:
+                if os.name == "nt":
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(held._handle, fcntl.LOCK_UN)
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+
+def _manifest_read(held: HeldDir) -> str | None:
+    try:
+        fd = held.open_read_file("manifest.json")
+    except OSError:
+        return None
+    with open(fd, encoding="utf-8") as source:
+        return source.read()
+
+
+def _manifest_write(held: HeldDir, root: Path, data: dict) -> None:
+    temporary = f".manifest.json.labhq-{uuid.uuid4().hex}.tmp"
+    if not held.same_as(root):
+        raise OwnedPathError("workspace was replaced during manifest update")
+    fd = held.open_file(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o666)
+    try:
+        with open(fd, "w", encoding="utf-8") as out:
+            fd = -1
+            json.dump(data, out, indent=2, ensure_ascii=False, default=str)
+            out.flush()
+            os.fsync(out.fileno())
+        held.replace(temporary, "manifest.json")
+        held.fsync()
+        if not held.same_as(root):
+            raise OwnedPathError("workspace was replaced during manifest update")
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        held.unlink(temporary)
 
 
 def _utf8_name(name: str) -> bool:
@@ -493,10 +566,10 @@ class TaskWorkspace:
     def append_job(self, job: dict[str, Any]) -> None:
         self._append("jobs.jsonl", json.dumps(job, ensure_ascii=False) + "\n")
 
-    def _manifest(self) -> dict[str, Any]:
+    def _manifest(self, held: HeldDir | None = None) -> dict[str, Any]:
         """The manifest as labhq wrote it. A link in its place is never read: its target would be copied into the
         workspace by the next write (#165); a fresh manifest replaces the link instead."""
-        text = read_owned(self.dir, "manifest.json")
+        text = _manifest_read(held) if held is not None else read_owned(self.dir, "manifest.json")
         return json.loads(text) if text is not None else {
             "labhq_version": __version__, "host": platform.node(),
             "task": self.task.model_dump(mode="json", exclude={"context"}),
@@ -510,9 +583,10 @@ class TaskWorkspace:
     def _write_manifest_now(self, fields: dict[str, Any]) -> None:
         # Read, change and write as one job: another write queued meanwhile cannot slip between the read and the
         # replace and be lost.
-        data = self._manifest()
-        data.update(fields)
-        write_owned(self.dir, "manifest.json", json.dumps(data, indent=2, ensure_ascii=False, default=str))
+        with _manifest_lock(self.dir) as held:
+            data = self._manifest(held)
+            data.update(fields)
+            _manifest_write(held, self.dir, data)
 
     def provenance(self) -> dict[str, Any]:
         """The manifest fields round records need, sent with the result instead of read from this disk."""
@@ -979,9 +1053,10 @@ class TaskWorkspace:
 
     def _update_run_now(self, task_id: str, fields: dict[str, Any]) -> None:
         # Read, change and write as one job (see _write_manifest_now).
-        data = self._manifest()
-        data.setdefault("runs", {}).setdefault(task_id, {}).update(fields)
-        write_owned(self.dir, "manifest.json", json.dumps(data, indent=2, ensure_ascii=False, default=str))
+        with _manifest_lock(self.dir) as held:
+            data = self._manifest(held)
+            data.setdefault("runs", {}).setdefault(task_id, {}).update(fields)
+            _manifest_write(held, self.dir, data)
 
     def run_tool_uses(self, task_id: str) -> list[dict[str, Any]]:
         run = (self._manifest().get("runs") or {}).get(task_id) or {}
@@ -992,22 +1067,23 @@ class TaskWorkspace:
 def record_tool_use(workdir: Path, task_id: str, tool_use_id: str, tool_name: str, time_ns: int) -> None:
     """Append one bounded Claude PostToolUse receipt to this run's manifest."""
     root = Path(workdir)
-    text = read_owned(root, "manifest.json")
-    data = json.loads(text) if text is not None else {}
-    if not isinstance(data, dict):
-        raise ValueError("manifest is not an object")
-    runs = data.setdefault("runs", {})
-    if not isinstance(runs, dict):
-        raise ValueError("manifest runs is not an object")
-    run = runs.setdefault(task_id, {})
-    if not isinstance(run, dict):
-        raise ValueError("manifest run is not an object")
-    rows = run.setdefault("tool_uses", [])
-    if not isinstance(rows, list):
-        raise ValueError("manifest tool_uses is not a list")
-    rows.append({"tool_use_id": tool_use_id[:200], "tool_name": tool_name, "time_ns": int(time_ns)})
-    del rows[:-4096]
-    write_owned(root, "manifest.json", json.dumps(data, indent=2, ensure_ascii=False, default=str))
+    with _manifest_lock(root) as held:
+        text = _manifest_read(held)
+        data = json.loads(text) if text is not None else {}
+        if not isinstance(data, dict):
+            raise ValueError("manifest is not an object")
+        runs = data.setdefault("runs", {})
+        if not isinstance(runs, dict):
+            raise ValueError("manifest runs is not an object")
+        run = runs.setdefault(task_id, {})
+        if not isinstance(run, dict):
+            raise ValueError("manifest run is not an object")
+        rows = run.setdefault("tool_uses", [])
+        if not isinstance(rows, list):
+            raise ValueError("manifest tool_uses is not a list")
+        rows.append({"tool_use_id": tool_use_id[:200], "tool_name": tool_name, "time_ns": int(time_ns)})
+        del rows[:-4096]
+        _manifest_write(held, root, data)
 
 
 def nearest_tool_use_id(mtime_ns: Any, rows: list[dict[str, Any]], observed_at_ns: int) -> str | None:

@@ -2,7 +2,7 @@
 
 Deletes the files the shadow owns, every line marked ``# semantics-hook`` and every block between
 ``# semantics-shadow: begin`` and ``# semantics-shadow: end``. A ``semantics:`` key left in a user's config
-still loads (Settings ignores unknown top-level keys). PR #136's model files stay; folding them is #143's step.
+still loads without enabling the shadow; other unknown settings are rejected. PR #136's model files stay.
 
 ``--only actions`` takes out just the action layer (#149 결정 13 A1, 결정 16 A2): its files, the lines marked
 ``# semantics-hook: actions`` and the ``# semantics-actions: begin``/``end`` blocks. B1 stays as it was; a config
@@ -103,6 +103,13 @@ config.write_text("semantics: {mode: shadow, timeout_s: 2}\\ngateway: {state_dir
                   encoding="utf-8")
 s = Settings.load(str(config))
 assert not hasattr(s, "semantics"), "the semantics field is still there"
+config.write_text("unrelated_typo: true\\n", encoding="utf-8")
+try:
+    Settings.load(str(config))
+except ValueError:
+    pass
+else:
+    raise AssertionError("an unrelated unknown setting was accepted")
 
 async def main():
     hub = Hub(s)
@@ -184,6 +191,12 @@ def strip_hooks(text: str, only: str | None = None) -> tuple[str, int, int]:
 
 def remove(root: Path, only: str | None = None) -> dict:
     owned, hook, pairs = _scope(only)
+    settings_path = root / "labhq" / "settings.py"
+    anchor = "        s = cls.model_validate(data)"
+    if only is None and settings_path.exists():
+        settings_text = settings_path.read_text(encoding="utf-8")
+        if HOOK in settings_text and settings_text.count(anchor) != 1:
+            raise SystemExit("settings validation anchor missing or ambiguous")
     removed = [rel for rel in owned if (root / rel).exists()]
     for rel in removed:
         (root / rel).unlink()
@@ -198,6 +211,10 @@ def remove(root: Path, only: str | None = None) -> dict:
             raise SystemExit(f"{path.relative_to(root)}: {exc}") from exc
         lines += count_lines
         blocks += count_blocks
+        if only is None and path == root / "labhq" / "settings.py":
+            stripped = stripped.replace(anchor, '        if isinstance(data, dict):\n'
+                                        '            data = {k: v for k, v in data.items() if k != "semantics"}\n'
+                                        + anchor, 1)
         path.write_text(stripped, encoding="utf-8", newline="")
     return {"files": removed, "hook_lines": lines, "blocks": blocks}
 

@@ -10,6 +10,40 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-12
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 07:00 | [`69e2a09`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/69e2a09) | **보류된 메시지를 재개할 때 관련 없는 기록이 막지 않게 고쳤습니다.**<br>최초 인수와 같은 의존성 기준을 적용하며 결과가 불확실한 ask는 계속 보류합니다. |
+| 06:52 | [`97761b0`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/97761b0) | **시작 전 실패한 질의는 저장소 복구 뒤 다시 처리합니다.**<br>pending ask와 실행 중인 작업을 구분해 안전한 경우에만 수동 retry를 허용합니다. |
+| 06:46 | [`dbe8309`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/dbe8309) | **저장 오류 뒤 메시지 재시도와 기존 설정 호환을 복구합니다.**<br>수동 재시도에서 불확실한 ask는 보류하고 semantics 제거 뒤에도 기존 설정을 읽습니다. |
+| 06:28 | [`7ad0991`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/7ad0991) | **완료된 메시지 기록을 정리하고 안전한 재전달을 복구합니다.**<br>미확정 작업은 보류하고 완료 기록만 제한하며 처리 오류의 재전달을 검증합니다. |
+| 06:20 | [`19d3eaf`](https://github.com/ehojune/bioinfo-team-3d/pull/1394/commits/19d3eaf) | 제목 비교에 띄어쓰기 무시 일치 추가(한 제목에 붙여야 할 태그와 띄워야 할 태그가 섞인 경우), 시험 1건 (#1383, PR #1394 리뷰 P2) |
+| 06:07 | [`1990b72`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/1990b72) | **작업 수락 결과가 불확실해도 다른 요청의 활동을 표시합니다.**<br>요청과 task가 모두 다른 경우에만 activity를 진행하고 기존 보류는 유지한다. |
+| 06:01 | [`f2fa9c8`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/f2fa9c8) | **한 작업의 메시지가 보류돼도 다른 작업의 활동 표시를 계속합니다.**<br>서로 다른 요청의 activity는 진행하고, 부수효과가 불확실한 16종은 재시작 시 보류한다. |
+| 05:56 | [`097dbc4`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/097dbc4) | **서버가 끊겨도 실행기 메시지를 보존하고 승인 거절을 정확히 알립니다.**<br>메시지 인수·공개·전달을 분리하고 미확정 작업을 보류한다. 설정 오타와 기본 토큰을 거부하고 manifest 동시 갱신을 직렬화한다. |
+| 05:50 | [`f6e6bb0`](https://github.com/ehojune/bioinfo-team-3d/pull/1394/commits/f6e6bb0) | **인용 감사가 CO&lt;sub&gt;2&lt;/sub&gt;처럼 단어 안에 든 서식 태그도 같은 제목으로 보고, '# Pointer analysis' 같은 진짜 제목을 포인터로 오인하지 않습니다.**<br>제목을 태그 제거(붙임·띄움) 두 방식으로 읽어 더 나은 판정, 포인터 표지에 콜론 필수, 시험 4건 (#1383, PR #1394 리뷰 P1 2) |
+| 05:30 | [`aa56fe6`](https://github.com/ehojune/bioinfo-team-3d/pull/1394/commits/aa56fe6) | manual 07 한영에 인용 감사 스크립트 사용법과 서식 태그·포인터 판정 (#1383) |
+| 04:55 | [`ef3e647`](https://github.com/ehojune/bioinfo-team-3d/pull/1394/commits/ef3e647) | **인용 감사가 등록 제목에 섞인 서식 태그(&lt;i&gt;, &lt;sup&gt;, &amp;lt;sup&amp;gt;)를 제목 차이로 세지 않습니다. 원문 자리에 포인터 파일만 있으면 수치가 원문에 없다고 하지 않고 '원문 없음, 확인 못 함'으로 적습니다.**<br>scripts/citation_audit.py 제목 비교 전 HTML 엔티티 해제·태그를 공백으로, '# 포인터:'·'# Pointer:'로 시작하는 원문은 minor source, eval-suite.md 등급표, 시험 7건 (#1383) |
+| 04:34 | [`a315010`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/a315010) | **제목과 코드 예시를 보고서의 일반 숫자 문장과 구분합니다.**<br>Setext 제목과 들여쓴 package 표식 예시를 처리한다. |
+| 04:28 | [`09e6688`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/09e6688) | **보고서의 코드 영역을 공통 Markdown 검사와 같은 기준으로 구분합니다.**<br>문단과 들여쓰기 경계를 CommonMark parser로 구분한다. |
+| 04:23 | [`4078a78`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/4078a78) | **지수 표기로 쓴 숫자도 보고서 근거 검사에서 확인합니다.**<br>정수 지수 표기에 대한 누락 회귀 시험을 추가했다. |
+| 04:17 | [`6a8ba5e`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/6a8ba5e) | **인용 감사가 원문의 유니코드 마이너스·en dash 지수도 한 값으로 읽습니다.**<br>citation_audit: source_numbers가 원문 부호를 먼저 정규화, 시험 4건 (#1383) |
+| 04:17 | [`8a8125a`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/8a8125a) | **각주 표식과 출처는 보고서 숫자 문장 검사에서 제외합니다.**<br>각주 참조와 정의를 건너뛰는 회귀 시험을 추가했다. |
+| 04:14 | [`c69f909`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/c69f909) | **리뷰 보정 묶음에서 서로 상쇄되던 두 오류(대조 뒤집힘·방향)를 다른 묶음으로 나누고, 인용 오류를 묶음만으로 찾도록 조회 기록을 넣었습니다. 인용 감사는 유니코드 마이너스와 0도 맞게 대조합니다.**<br>review_calibration: seeded(9종)+seeded_contrast(E07), 묶음별 records.json; citation_audit: 유니코드 부호 정규화·정확한 0, 시험 8건 (#1383) |
+| 04:13 | [`65991d5`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/65991d5) | **여러 backtick으로 감싼 코드의 숫자도 근거 검사에서 제외합니다.**<br>같은 길이의 inline code 구분자를 찾아 회귀 시험으로 확인했다. |
+| 04:08 | [`b99b1c5`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/b99b1c5) | **인용 감사가 수치를 문자열로만 받아 적힌 자릿수 그대로 대조하고, 형식이 틀린 항목은 조용히 버리지 않고 major로 표시합니다.**<br>citation_audit: numbers는 str만(JSON 숫자 거절), audit_one이 잘못된 항목을 major로, eval-suite.md 입력 규칙, 시험 5건 (#1383) |
+| 04:08 | [`e9c580b`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/e9c580b) | **그림 설명의 순번은 보고서 근거 검사에서 제외합니다.**<br>Markdown 이미지의 alt 텍스트를 숫자 본문 검사에서 제외한다. |
+| 04:04 | [`7cc29cd`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/7cc29cd) | **인용 감사가 원문의 1e-5 같은 수를 통째로만 읽어, 그 부분(1이나 5)을 인용 값의 근거로 잘못 쓰지 않습니다. 형식이 틀린 인용문·수치 항목은 입력 오류입니다.**<br>citation_audit: source_numbers(과학 표기 구간 제외 후 평문 수), 목록 항목 형식 검증, 시험 7건 (#1383) |
+| 04:02 | [`992e562`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/992e562) | **긴 코드 블록 안의 숫자는 보고서 근거 검사에서 제외합니다.**<br>여는 fence 길이에 맞는 닫는 fence까지 건너뛰고 회귀 시험을 추가했다. |
+| 03:59 | [`f6c0ca9`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/f6c0ca9) | **인용 감사가 1e-5 같은 과학 표기 수치를 유효숫자로 대조하고, 비어 있는(null) 인용문·수치 목록을 입력 오류로 알립니다.**<br>citation_audit: number_held(과학 표기·× 10^ 형식), quotes·numbers 목록 검증(exit 2), 시험 11건 (#1383) |
+| 03:56 | [`579992c`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/579992c) | **줄바꿈된 보고서 문장과 단위가 붙은 숫자의 근거 표식을 확인합니다.**<br>문단을 합쳐 검사하고 일부 측정 단위를 인식한다. 단위 목록은 완전하지 않다. |
+| 03:47 | [`644d924`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/644d924) | **앞에 구분선이 없는 Markdown 표도 숫자 문장 검사에서 제외합니다.**<br>선행 파이프 없는 표를 블록으로 식별하고 회귀 시험을 추가했다. |
+| 03:46 | [`6d9a7d9`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/6d9a7d9) | **물결표 코드 블록의 숫자는 보고서 근거 검사에서 제외합니다.**<br>숫자 문장 검사에 tilde fenced code 예외와 회귀 시험을 추가했다. |
+| 03:43 | [`499b543`](https://github.com/ehojune/bioinfo-team-3d/pull/1392/commits/499b543) | **보고서의 숫자 문장에서 빠진 근거 표식을 확인하고 웹의 내부 표식을 숨깁니다.**<br>숫자 본문 검사와 package 주석 렌더링을 수정했다. 결론의 의미와 근거 일치는 사람이 확인한다. |
+| 03:39 | [`e59452e`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/e59452e) | **새 인용 감사 시험을 Windows CI 시험 목록에 올렸습니다.**<br>config/ci/windows-boundary-v1.json에 tests/test_citation_audit.py 등록 (#1383) |
+| 03:36 | [`2f53ea1`](https://github.com/ehojune/bioinfo-team-3d/pull/1391/commits/2f53ea1) | **평가 묶음(#1381 3절) 설계를 정리하고, 모델 호출 없이 도는 인용 감사 스크립트와 리뷰 보정·반증 반영 시험용 합성 묶음을 더했습니다.**<br>citation_audit.py(기록된 DOI·PMID 응답, literal_check 재사용), review_calibration clean/seeded(오류 10종), falsification 사례 틀 6건, docs/reference/eval-suite.md (#1383) |
+
 ## 2026-11-11
 
 | 시간 | 커밋 | 주요 변경사항 |

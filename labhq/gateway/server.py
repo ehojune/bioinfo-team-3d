@@ -15,6 +15,7 @@ import logging
 import math
 import mimetypes
 import os
+import sqlite3
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -46,7 +47,7 @@ from ..recruit.provenance import not_yet_active, probation_refusal
 from ..recruit import paper2agent
 from ..adapters import enforces_read_only, get_adapter, read_only_refusal
 from ..hooks.control import STEER_LIMIT
-from ..orchestrator.cso import Orchestrator, _terminal_reports, environment_problem, holds_session, solo_phase
+from ..orchestrator.cso import ConsultOutcomeUnknown, Orchestrator, _terminal_reports, environment_problem, holds_session, solo_phase
 from ..research import continuation as research_continuation
 from ..research import final_checkpoint as cp4
 from ..research.contract import classify_intake, plan_sha256
@@ -430,6 +431,10 @@ def _request_ready(hub: "Hub", agent_id: str, request_id: str | None) -> bool:
 def _pin_kwargs(meta: dict | None) -> dict:
     """What ``wait_agent_online`` is told about a WSL-pinned task; nothing for any other task."""
     return {"meta": meta} if _wsl_pin(meta) else {}
+
+
+class AskPublicationIncomplete(Exception):
+    """Publication failed before the ask was started; its event has a durable key."""
 
 
 class Hub:
@@ -2420,6 +2425,16 @@ class Hub:
     async def aregister_runner(self, runner_id: str, ws: WebSocket, agents: list[dict],
                         incarnation: str | None = None, capabilities: dict | None = None,
                         process: str | None = None) -> None:
+        # A previous generation must finish its cursor write before replacement resets it.
+        if not hasattr(self, "runner_inbox_locks"):
+            self.runner_inbox_locks = {}
+        lock = self.runner_inbox_locks.setdefault(runner_id, asyncio.Lock())
+        async with lock:
+            await self._aregister_runner_locked(runner_id, ws, agents, incarnation, capabilities, process)
+
+    async def _aregister_runner_locked(self, runner_id: str, ws: WebSocket, agents: list[dict],
+                         incarnation: str | None = None, capabilities: dict | None = None,
+                         process: str | None = None) -> None:
         old = self.runners.get(runner_id)
         if old is not None and old is not ws and hasattr(old, "close"):
             async def close_old() -> None:
@@ -2879,7 +2894,7 @@ class Hub:
 
     async def _control_state(self, tid: str, data: dict | None, *, replace: bool = False,
                              lifecycle: tuple[dict | None] | None = None,
-                             event: dict | None = None, runner_id=None, runner_seq=None) -> None:
+                             event: dict | None = None, runner_id=None, runner_seq=None, inbox_key=None) -> None:
         """Serialize this row's PI/runner/result/expiry writers through publication.
 
         Deletion blocks late runner updates even after reload. A fresh PI action
@@ -2915,7 +2930,8 @@ class Hub:
                     return
                 self.task_controls[tid] = merged
                 if event is not None:
-                    await self.publish(event, runner_id=runner_id, runner_seq=runner_seq)
+                    carried = {"inbox_key": inbox_key} if inbox_key is not None else {}
+                    await self.publish(event, runner_id=runner_id, runner_seq=runner_seq, **carried)
 
         _, cancelled = await self._publication_write(commit())
         if cancelled:
@@ -3370,18 +3386,76 @@ class Hub:
                 raise asyncio.CancelledError
         return resumed
 
+    async def _recover_ask_publication(self, ask_id: str) -> None:
+        if not hasattr(self, "_ask_publication_locks"):
+            self._ask_publication_locks = WeakValueDictionary()
+        lock = self._ask_publication_locks.setdefault(ask_id, asyncio.Lock())
+        async with lock:
+            entry = self.store.get("ask", ask_id)
+            if not entry or entry.get("state") not in {"pending", "working"}:
+                return
+            if not self._ask_generation_current(entry):
+                self.store.put("ask", ask_id, {**entry, "recovery_blocked": "runner generation changed"})
+                return
+            ask = AskRequest.model_validate(entry["ask"])
+            if entry.get("publish_intent"):
+                previous_publication = self.store.get("ask_publication", ask_id)
+                try:
+                    staged = ({"inbox_key": entry["inbox_key"], "publication_name": "agent.ask"}
+                              if entry.get("inbox_key") else {})
+                    await self.publish({"type": "agent.ask", "ts": time.time(), "task_id": ask.task_id,
+                                        "agent_id": ask.agent_id, "request_id": ask.request_id,
+                                        "data": ask.model_dump(mode="json")}, **staged)
+                except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+                    raise
+                except Exception as exc:
+                    raise AskPublicationIncomplete from exc
+                if previous_publication:
+                    saved_event = previous_publication.get("event")
+                    if not saved_event:
+                        raise ValueError("ask publication evidence missing; inspect before retry")
+                    # PiInterpreter uses the event sequence for its durable reservation and suppresses duplicates.
+                    self.pi_interpreter.schedule(saved_event)
+            self._start_ask(ask, entry.get("origin"))
+
+    def _ask_inbox_held(self, ask_id: str) -> bool:
+        return any(row["state"] in {"failed", "processing", "blocked"} and
+                   row["message"].get("type") == "ask.requested" and
+                   (row["message"].get("data") or {}).get("id") == ask_id
+                   for row in self.store.active_runner_inbox())
+
+    def _ask_generation_current(self, entry: dict) -> bool:
+        key = entry.get("inbox_key")
+        if not key:
+            return True
+        inbox = self.store.get("runner_inbox", key)
+        if not inbox:
+            try:
+                runner_id, incarnation, _ = json.loads(key)
+            except (ValueError, TypeError):
+                return False
+            current = self.store.get("runner_incarnation", runner_id)
+            return current is None or current.get("id") == incarnation
+        current = self.store.get("runner_incarnation", inbox["runner_id"])
+        return current is None or current.get("id") == inbox["incarnation"]
+
     async def flush_ask_answers(self, runner_id: str) -> None:
         for ask_id, entry in self.store.all("ask").items():
             if (entry.get("origin") == runner_id and entry.get("state") == "resolved"
-                    and not entry.get("delivered")):
+                    and not entry.get("delivered") and self._ask_generation_current(entry)):
                 await self.send_runner(runner_id, {"type": "ask.resolved", "id": ask_id,
                                                    "answer": entry["answer"]})
             elif entry.get("origin") == runner_id and entry.get("state") in {"pending", "working"}:
-                self._start_ask(AskRequest.model_validate(entry["ask"]), runner_id)
+                if not self._ask_inbox_held(ask_id):
+                    await self._recover_ask_publication(ask_id)
 
     def _restart_request_asks(self, rid: str) -> None:
-        for entry in self.store.all("ask").values():
+        for ask_id, entry in self.store.all("ask").items():
             if (entry.get("ask") or {}).get("request_id") == rid and entry.get("state") in {"pending", "working"}:
+                if self._ask_inbox_held(ask_id):
+                    continue
+                if entry.get("publish_intent") and not self.store.get("ask_publication", ask_id):
+                    continue  # startup or runner reconnect recovers publication before starting
                 self._start_ask(AskRequest.model_validate(entry["ask"]), entry.get("origin"))
 
     def effective_roster(self, *, include_history: bool = False, hosts: bool = False) -> dict[str, Any]:
@@ -3802,6 +3876,115 @@ class Hub:
         self.pending_committed.clear()
         self.pending_committed.extend(queued)
 
+    async def _schedule_runner_publication_interpreter(self, record: dict) -> None:
+        event = record["published_event"]
+        if str(event["seq"]) in getattr(self.pi_interpreter, "_reserving", set()):
+            return
+        tasks = getattr(self.pi_interpreter, "tasks", {})
+        before = set(tasks)
+        self.pi_interpreter.schedule(event)
+        created = set(tasks) - before
+        if not created:
+            await self.store.amark_runner_publication_done(record["inbox_key"], record["name"], "interpreter_state")
+            return
+
+        async def finish_interpreter():
+            try:
+                await asyncio.gather(*created)
+            except (Exception, asyncio.CancelledError):
+                return  # pending survives so startup can reconcile a missing reservation
+            await self.store.amark_runner_publication_done(record["inbox_key"], record["name"], "interpreter_state")
+
+        if not hasattr(self, "runner_publication_tasks"):
+            self.runner_publication_tasks = set()
+        pending = asyncio.create_task(finish_interpreter())
+        self.runner_publication_tasks.add(pending)
+        pending.add_done_callback(self.runner_publication_tasks.discard)
+
+    async def recover_runner_publications(self) -> None:
+        """Resume committed delivery intents; a reconnect can also replay their event sequence."""
+        async with self.event_lock:
+            records = sorted((r for r in self.store.all("runner_publication").values()
+                              if r.get("state") == "published"),
+                             key=lambda r: r["published_event"]["seq"])
+            deliveries = [r for r in records if r.get("delivery_state") == "pending"]
+            for record in deliveries:
+                self._queue_committed_event(record["published_event"])
+            delivered = []
+            await self._flush_committed_events(delivered)
+            recovered_seqs = {r["published_event"]["seq"] for r in records}
+            for event in delivered:
+                if event["seq"] not in recovered_seqs:
+                    self.pi_interpreter.schedule(event)
+            for record in deliveries:
+                await self.store.amark_runner_publication_done(record["inbox_key"], record["name"], "delivery_state")
+            activity_types = {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}
+            for record in records:
+                if record["name"] == "message" and record["published_event"].get("type") in activity_types:
+                    inbox = self.store.get("runner_inbox", record["inbox_key"])
+                    if (inbox and inbox["state"] == "processing" and
+                            inbox["message"].get("type") == record["published_event"]["type"]):
+                        await self.store.aset_runner_inbox_state(inbox["runner_id"], inbox["incarnation"], inbox["seq"],
+                                                               "completed", expected="processing")
+            for record in records:
+                if record.get("interpreter_state") != "pending":
+                    continue
+                await self._schedule_runner_publication_interpreter(record)
+        for record in self.store.all("runner_publication").values():
+            if record.get("name") != "pipeline.ready" or record.get("state") != "prepared":
+                continue
+            primary = self.store.runner_publication(record["inbox_key"], "message")
+            if primary and primary.get("state") == "published":
+                await self.publish(record["event"], inbox_key=record["inbox_key"], publication_name="pipeline.ready")
+        # A pending ask cannot have entered its external effect: route() stores
+        # "working" before calling it. A working ask has an unknown outcome.
+        async def resume_safe(inbox):
+            try:
+                await self._run_claimed_runner_inbox(inbox)
+            except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+                raise
+            except Exception:
+                log.warning("runner inbox recovery held sequence %s", inbox["seq"])
+
+        inboxes = sorted(self.store.active_runner_inbox(), key=lambda row: row.get("admission_order", 0))
+        for inbox in inboxes:
+            if inbox["state"] != "processing":
+                continue
+            typ = inbox["message"].get("type")
+            if typ in activity_types:
+                await resume_safe(inbox)
+                continue
+            if typ != "ask.requested":
+                await self.store.aset_runner_inbox_state(inbox["runner_id"], inbox["incarnation"], inbox["seq"],
+                                                       "failed", "interrupted_unknown", expected="processing")
+                continue
+            current = self.store.get("runner_incarnation", inbox["runner_id"])
+            if current is not None and current.get("id") != inbox["incarnation"]:
+                await self.store.aset_runner_inbox_state(inbox["runner_id"], inbox["incarnation"], inbox["seq"],
+                                                       "failed", "runner_generation_changed", expected="processing")
+                continue
+            ask_id = (inbox["message"].get("data") or {}).get("id")
+            entry = self.store.get("ask", str(ask_id))
+            key = self.store._runner_inbox_key(inbox["runner_id"], inbox["incarnation"], inbox["seq"])
+            if entry and entry.get("inbox_key") != key:
+                continue
+            if entry and (entry.get("state") == "working" or
+                          (entry.get("state") == "pending" and entry.get("recovery_blocked"))):
+                await self.store.aput("ask", str(ask_id), {**entry, "recovery_blocked": "ask start outcome unknown"})
+                await self.store.aset_runner_inbox_state(inbox["runner_id"], inbox["incarnation"], inbox["seq"],
+                                                       "failed", "ask_start_unknown", expected="processing")
+            elif not entry or entry.get("state") == "pending":
+                await resume_safe(inbox)
+            elif entry.get("state") == "resolved":
+                await self.publish(inbox["message"], runner_id=inbox["runner_id"], runner_seq=inbox["seq"],
+                                   inbox_key=key)
+                await self._recover_ask_answer(str(ask_id), entry)
+                await self.store.aset_runner_inbox_state(inbox["runner_id"], inbox["incarnation"], inbox["seq"],
+                                                       "completed", expected="processing")
+        for ask_id, entry in self.store.all("ask").items():
+            if entry.get("state") == "resolved" and entry.get("answer_publish_intent"):
+                await self._recover_ask_answer(ask_id, entry)
+
     def _record_published_event(self, ev: dict) -> None:
         # A synchronous checkpoint can commit a higher sequence while publish
         # awaits its writer. Keep the newest buffer entries in database order.
@@ -3813,7 +3996,8 @@ class Hub:
         self.events.extend(ordered)
 
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None,
-                      activity: tuple[str, Callable[[dict], dict]] | None = None) -> None:
+                      activity: tuple[str, Callable[[dict], dict]] | None = None, *, inbox_key: str | None = None,
+                      publication_name: str | None = None) -> None:
         ev = copy.deepcopy(event_without_wiki_audit(ev))
         internal = self.store.get("task", ev.get("task_id")) if ev.get("task_id") else None
         if (internal or {}).get("kind") == "pi_interpretation" and ev.get("type") == "agent.log":
@@ -3835,8 +4019,9 @@ class Hub:
                         self._facilities_visible.discard(ev["request_id"])
                 durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
                                   ev.get("type") in ProjectReporter.HANDLED)
+                extra = {"publication_name": publication_name} if publication_name else {}
                 ev, cancelled = await self._append_event_with_request(ev, runner_id, runner_seq, durable_report,
-                                                                      activity)
+                                                                      activity, inbox_key=inbox_key, **extra)
                 if ev is None:  # a copy of a runner message that is already stored (#1143): nothing to publish again
                     if cancelled:
                         raise asyncio.CancelledError
@@ -3854,6 +4039,13 @@ class Hub:
         if self.reporter.enabled():
             self.reporter.submit(ev)
         for event in delivered:
+            if inbox_key is not None and event["seq"] == ev["seq"]:
+                name = publication_name or "message"
+                record = self.store.runner_publication(inbox_key, name)
+                if record and record.get("state") == "published":
+                    await self.store.amark_runner_publication_done(inbox_key, name, "delivery_state")
+                    await self._schedule_runner_publication_interpreter(record)
+                    continue
             self.pi_interpreter.schedule(event)
         if cancelled:
             raise asyncio.CancelledError
@@ -3949,11 +4141,35 @@ class Hub:
         return result
 
     async def _append_event_with_request(self, ev: dict, runner_id: str | None, runner_seq: int | None,
-                                         durable_report: bool, activity=None):
+                                         durable_report: bool, activity=None, *, inbox_key: str | None = None,
+                                         publication_name: str | None = None):
         """Append the event and save its request in one transaction (#1129): both land or neither does."""
         def append(request=None):
+            if inbox_key is not None:
+                async def staged_event():
+                    name = publication_name or "message"
+                    old = self.store.runner_publication(inbox_key, name)
+                    candidate = ev
+                    if old and name == "agent.ask":
+                        candidate = {**ev, "ts": old["event"].get("ts")}
+                    record = await self.store.aprepare_runner_publication(inbox_key, name, candidate)
+                    if record["state"] == "published":
+                        return None
+                    try:
+                        saved = await self.store.acommit_runner_publication(
+                            inbox_key, name, self.s.gateway.event_buffer,
+                            reporter_delivery=durable_report, request=request, activity=activity)
+                    except Exception:
+                        record = self.store.runner_publication(inbox_key, name)
+                        if record and record["state"] == "published":
+                            return None if record.get("delivery_state") == "shared" else record["published_event"]
+                        raise
+                    record = self.store.runner_publication(inbox_key, name)
+                    return None if record and record.get("delivery_state") == "shared" else saved
+                return staged_event()
             return self.store.aappend_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
-                                            reporter_delivery=durable_report, request=request, activity=activity)
+                                            reporter_delivery=durable_report, request=request, activity=activity,
+                                            inbox_key=inbox_key)
         rid = ev.get("request_id")
         if rid not in self.requests:
             return await self._publication_write(append())
@@ -4002,34 +4218,196 @@ class Hub:
 
     async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                 incarnation: str | None = None) -> None:
-        """One runner message, once (#1143).
-
-        Within one connection the messages are handled in order, but the old and the new connection of a runner can both
-        be handling the same outbox row while it is still being committed: the resend passed the `runner_seen` check
-        before the first copy's commit, and both stored it. The row being handled is noted here before the first await.
-        A second copy WAITS for the first to finish (it must not return at once: the new connection would go on to the
-        next seq, commit its cursor first, and the first copy's event would then be dropped as "already seen"); when the
-        first is done the copy takes the ordinary path, which finds the seq stored, acks it and returns. If the first
-        one failed or was cancelled the copy processes the row itself. The store refuses a seq it already holds as the
-        last guard."""
+        """Durably take responsibility for sequenced messages before cumulative ACK."""
         seq = msg.get("runner_seq") if isinstance(msg, dict) else None
         if seq is None:
             return await self._on_runner_message(runner_id, msg, ws, incarnation)
-        if not hasattr(self, "runner_seq_inflight"):
-            self.runner_seq_inflight = {}
-        key = (runner_id, incarnation, seq)
-        while key in self.runner_seq_inflight:
-            await asyncio.wait([self.runner_seq_inflight[key]])  # returns when it is done, whatever the outcome
-        done = asyncio.get_running_loop().create_future()
-        self.runner_seq_inflight[key] = done
+        if ws is None and incarnation is None:
+            incarnation = getattr(self, "runner_incarnations", {}).get(runner_id)
+        if not hasattr(self, "runner_inbox_locks"):
+            self.runner_inbox_locks = {}
+        lock = self.runner_inbox_locks.setdefault(runner_id, asyncio.Lock())
+        async with lock:
+            if ws is not None and (self.runners.get(runner_id) is not ws or
+                                   self.runner_incarnations.get(runner_id) != incarnation):
+                return
+            (row, claimed), cancelled = await self._publication_write(
+                self._admit_runner_inbox(runner_id, incarnation, seq, msg))
+            if cancelled:
+                raise asyncio.CancelledError
+            if claimed:
+                if ws is not None and (self.runners.get(runner_id) is not ws or
+                                       self.runner_incarnations.get(runner_id) != incarnation):
+                    return
+                try:
+                    await self._on_runner_message(runner_id, row["message"], ws, incarnation, inbox_owned=True)
+                except (OSError, sqlite3.Error, ValueError, KeyError, TypeError) as exc:
+                    try:
+                        await self._publication_write(self.store.aset_runner_inbox_state(
+                            runner_id, incarnation, seq, "failed",
+                            "storage_interrupted" if isinstance(exc, (OSError, sqlite3.Error)) else "invalid_message",
+                            expected="processing"))
+                    except (OSError, sqlite3.Error):
+                        pass  # Keep processing and do not ACK if the failure cannot be persisted.
+                    raise
+                except Exception as exc:
+                    await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "failed",
+                        "ask_publication_incomplete" if isinstance(exc, AskPublicationIncomplete)
+                        else type(exc).__name__, expected="processing")
+                else:
+                    await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "completed",
+                                                            expected="processing")
+            elif row["state"] == "processing" or (row["state"] == "failed" and row.get("error") == "invalid_message"):
+                return  # An uncertain execution must not lose its runner copy.
+            if ws is not None and (self.runners.get(runner_id) is not ws or
+                                   self.runner_incarnations.get(runner_id) != incarnation):
+                return
+            for prior in self.store.active_runner_inbox():
+                if (prior["runner_id"] == runner_id and prior["incarnation"] == incarnation and prior["seq"] <= seq and
+                        (prior["state"] == "processing" or
+                         (prior["state"] == "failed" and prior.get("error") == "invalid_message"))):
+                    return  # A cumulative ACK must not discard an earlier unacknowledged copy.
+            await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": seq})
+
+    def _inbox_admission_lock(self):
+        if not hasattr(self, "runner_inbox_admission_lock"):
+            self.runner_inbox_admission_lock = asyncio.Lock()
+        return self.runner_inbox_admission_lock
+
+    def _inbox_has_earlier_blocker(self, row: dict) -> bool:
+        """Apply the same conservative dependency boundary on admission and resume."""
+        def scope(message):
+            data = message.get("data") if isinstance(message.get("data"), dict) else {}
+            task_id = message.get("task_id") or data.get("task_id")
+            request_id = message.get("request_id") or data.get("request_id")
+            if ((message.get("task_id") and data.get("task_id") and message["task_id"] != data["task_id"]) or
+                    (message.get("request_id") and data.get("request_id") and
+                     message["request_id"] != data["request_id"])):
+                return task_id, None
+            task = self.store.get("task", task_id) if task_id else None
+            stored_request = task.get("request_id") if task else None
+            if not stored_request or (request_id and request_id != stored_request):
+                return task_id, None
+            return task_id, stored_request
+
+        msg = row["message"]
+        task_id, request_id = scope(msg)
+        activity_types = {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}
+        for previous in self.store.active_runner_inbox():
+            if (previous["runner_id"], previous["incarnation"], previous["seq"]) == (
+                    row["runner_id"], row["incarnation"], row["seq"]):
+                continue
+            if (previous.get("admission_order") is not None and row.get("admission_order") is not None and
+                    previous["admission_order"] > row["admission_order"]):
+                continue
+            if previous["state"] not in {"pending", "failed", "processing", "blocked"}:
+                continue
+            old_task, old_request = scope(previous["message"])
+            prior_type = previous["message"].get("type")
+            prior_local = (prior_type in activity_types or prior_type == "task.accepted" or
+                           (prior_type == "ask.requested" and previous.get("error") == "ask_publication_incomplete"))
+            if (not task_id or not old_task or task_id == old_task or not request_id or not old_request or
+                    request_id == old_request or msg.get("type") not in activity_types or not prior_local):
+                return True
+        return False
+
+    async def _admit_runner_inbox(self, runner_id: str, incarnation: str | None, seq: int, msg: dict) -> tuple[dict, bool]:
+        async with self._inbox_admission_lock():
+            row = await self.store.aaccept_runner_inbox(runner_id, incarnation, seq, msg)
+            if (row["state"] == "failed" and row.get("error") == "storage_interrupted" and
+                    row["message"].get("type") in {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}):
+                return await self.store.aclaim_runner_publication_retry(runner_id, incarnation, seq), True
+            if (row["state"] == "processing" and row["message"].get("type") in
+                    {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}):
+                return row, True  # The per-runner lock ensures the earlier attempt has stopped.
+            if row["state"] != "pending":
+                return row, False
+            if self._inbox_has_earlier_blocker(row):
+                blocked = await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "blocked",
+                                                                   "earlier outcome unresolved", expected="pending")
+                return blocked, False
+            claimed = await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "processing", expected="pending")
+            return claimed, True
+
+    async def retry_runner_inbox(self, runner_id: str, incarnation: str | None, seq: int) -> None:
+        """Retry an activity event or a publication known to have failed before ask start."""
+        if not hasattr(self, "runner_inbox_locks"):
+            self.runner_inbox_locks = {}
+        lock = self.runner_inbox_locks.setdefault(runner_id, asyncio.Lock())
+        async with lock:
+            current = self.store.get("runner_incarnation", runner_id)
+            if (current or {}).get("id") != incarnation:
+                raise ValueError("runner generation changed; inspect held message")
+            async with self._inbox_admission_lock():
+                previous = self.store.runner_inbox(runner_id, incarnation, seq)
+                if previous and previous["state"] == "processing":
+                    await self._hold_failed_inbox_retry(previous)
+                row = await self.store.aclaim_runner_publication_retry(runner_id, incarnation, seq)
+            await self._run_claimed_runner_inbox(row)
+
+    async def resume_blocked_runner_inbox(self, runner_id: str, incarnation: str | None, seq: int) -> None:
+        """Run a held delivery after its earlier dependencies are resolved."""
+        if not hasattr(self, "runner_inbox_locks"):
+            self.runner_inbox_locks = {}
+        lock = self.runner_inbox_locks.setdefault(runner_id, asyncio.Lock())
+        async with lock:
+            current = self.store.get("runner_incarnation", runner_id)
+            if (current or {}).get("id") != incarnation:
+                raise ValueError("runner generation changed; inspect held message")
+            async with self._inbox_admission_lock():
+                target = self.store.runner_inbox(runner_id, incarnation, seq)
+                if target is None:
+                    raise KeyError(seq)
+                if self._inbox_has_earlier_blocker(target):
+                    raise ValueError("earlier runner inbox outcome unresolved")
+                row = await self.store.aclaim_blocked_runner_inbox(runner_id, incarnation, seq)
+            await self._run_claimed_runner_inbox(row)
+
+    async def _hold_failed_inbox_retry(self, row: dict) -> None:
+        """Keep a storage-interrupted retry available, or hold an uncertain ask."""
+        message = row["message"]
+        typ = message.get("type")
+        if typ == "ask.requested":
+            ask_id = (message.get("data") or {}).get("id")
+            entry = self.store.get("ask", str(ask_id)) if ask_id else None
+            task = getattr(self, "ask_tasks", {}).get(str(ask_id))
+            key = self.store._runner_inbox_key(row["runner_id"], row["incarnation"], row["seq"])
+            # A pending row is safe only when this inbox owns it and no task can
+            # still start. The task persists "working" before any external effect.
+            safe = bool(ask_id) and (entry is None or (
+                entry.get("inbox_key") == key and entry.get("state") == "pending"
+                and not entry.get("recovery_blocked") and (task is None or task.done())))
+            error = "ask_publication_incomplete" if safe else "ask_start_unknown"
+        elif typ in {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}:
+            error = "storage_interrupted"
+        else:
+            error = "interrupted_unknown"
+        await self.store.aset_runner_inbox_state(row["runner_id"], row["incarnation"], row["seq"],
+                                                 "failed", error, expected="processing")
+
+    async def _run_claimed_runner_inbox(self, row: dict) -> None:
+        runner_id, incarnation, seq = row["runner_id"], row["incarnation"], row["seq"]
         try:
-            await self._on_runner_message(runner_id, msg, ws, incarnation)
-        finally:
-            self.runner_seq_inflight.pop(key, None)
-            done.set_result(None)
+            await self._on_runner_message(runner_id, row["message"], incarnation=incarnation, inbox_owned=True)
+            await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "completed", expected="processing")
+        except (OSError, sqlite3.Error):
+            try:
+                current = self.store.runner_inbox(runner_id, incarnation, seq)
+                if current and current["state"] == "processing":
+                    await self._hold_failed_inbox_retry(current)
+            except (OSError, sqlite3.Error):
+                pass  # Reconcile the retained processing row after storage recovers.
+            raise
+        except (ValueError, KeyError, TypeError):
+            raise
+        except Exception as exc:
+            await self.store.aset_runner_inbox_state(runner_id, incarnation, seq, "failed",
+                "ask_publication_incomplete" if isinstance(exc, AskPublicationIncomplete)
+                else type(exc).__name__, expected="processing")
+            raise
 
     async def _on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
-                                 incarnation: str | None = None) -> None:
+                                 incarnation: str | None = None, *, inbox_owned: bool = False) -> None:
         pipeline_event = None
         if ws is not None and (self.runners.get(runner_id) is not ws or
                                self.runner_incarnations.get(runner_id) != incarnation):
@@ -4038,8 +4416,9 @@ class Hub:
             from ..wsl_paths import message_paths
             msg = message_paths(msg, "windows")
         runner_seq = msg.get("runner_seq")
-        if runner_seq is not None and runner_seq <= self.store.runner_seen(runner_id):
-            await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
+        if not inbox_owned and runner_seq is not None and runner_seq <= self.store.runner_seen(runner_id):
+            if not inbox_owned:
+                await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
             return
         typ = msg.get("type")
         activity_update = None
@@ -4136,7 +4515,9 @@ class Hub:
                 await self._note_runner_halt(msg["task_id"])
         if typ == "agent.control" and msg.get("task_id"):  # the staff sheet's paused/halted line survives a reload
             await self._control_state(msg["task_id"], msg.get("data") or {}, event=msg,
-                                      runner_id=runner_id, runner_seq=runner_seq)
+                                      runner_id=runner_id, runner_seq=runner_seq,
+                                      inbox_key=(self.store._runner_inbox_key(runner_id, incarnation, runner_seq)
+                                                 if inbox_owned else None))
         if typ == "ask.ack":
             entry = self.store.get("ask", str(msg["id"]))
             if entry:
@@ -4291,7 +4672,7 @@ class Hub:
             aid = str((msg.get("data") or {}).get("id") or "")
             decision = await self._timeout_approval(aid, runner_id=runner_id)
             if decision is None:
-                if runner_seq is not None:
+                if runner_seq is not None and not inbox_owned:
                     await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
                 return
             msg = {**msg, "type": "approval.resolved", "data": {"id": aid,
@@ -4309,18 +4690,30 @@ class Hub:
                             "text": f"제한 중 {data.get('tool_name') or '도구'} 호출을 CSO가 "
                                     f"{'허용' if approved else '거절'}했어요: {note}"}}
         elif typ == "ask.requested":
+            if inbox_owned and not msg["data"].get("id"):
+                raise ValueError("ask identity missing")
             ask = AskRequest.model_validate(msg["data"])
             existing = self.store.get("ask", ask.id)
+            if existing:
+                if not self._ask_generation_current(existing):
+                    raise ValueError("ask belongs to an earlier runner generation")
+                prior_ask = AskRequest.model_validate(existing["ask"])
+                if "created_at" not in msg["data"]:
+                    ask = ask.model_copy(update={"created_at": prior_ask.created_at})
+                if existing.get("origin") != runner_id or prior_ask.model_dump(mode="json") != ask.model_dump(mode="json"):
+                    raise ValueError("ask identity conflicts with retained ask")
             if existing and existing.get("state") == "resolved":
                 await self.send_runner(runner_id, {"type": "ask.resolved", "id": ask.id,
                                                    "answer": existing["answer"]})
             elif existing is None:
                 self.store.put("ask", ask.id, {"state": "pending", "origin": runner_id,
-                                                "ask": ask.model_dump(mode="json")})
-                await self.publish({"type": "agent.ask", "ts": time.time(), "task_id": ask.task_id,
-                                    "agent_id": ask.agent_id, "request_id": ask.request_id,
-                                    "data": ask.model_dump(mode="json")})
-                self._start_ask(ask, runner_id)
+                                                "ask": ask.model_dump(mode="json"), "publish_intent": True,
+                                                "inbox_controlled": inbox_owned,
+                                                "inbox_key": self.store._runner_inbox_key(runner_id, incarnation, runner_seq)
+                                                if inbox_owned else None})
+                existing = self.store.get("ask", ask.id)
+            if existing and existing.get("state") in {"pending", "working"} and existing.get("publish_intent"):
+                await self._recover_ask_publication(ask.id)
         elif typ == "jobs.finished":
             tid = msg.get("task_id") or ""
             self.store.put("jobs_done", tid, msg["data"])
@@ -4348,14 +4741,21 @@ class Hub:
                  else None)
         if entry and entry.get("count"):
             entry["count"] -= 1
+        if pipeline_event is not None and inbox_owned:
+            key = self.store._runner_inbox_key(runner_id, incarnation, runner_seq)
+            await self.store.aprepare_runner_publication(key, "pipeline.ready",
+                                                         event_without_wiki_audit(pipeline_event))
         if typ != "agent.control" or not msg.get("task_id"):
             # Only a message that carries task activity passes the argument: a publish that wraps this one with the
             # older signature (a test double, a decorator) keeps working for every other message.
             carried = {} if activity_update is None else {"activity": activity_update}
+            if inbox_owned:
+                carried["inbox_key"] = self.store._runner_inbox_key(runner_id, incarnation, runner_seq)
             await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq, **carried)
         if pipeline_event is not None:
-            await self.publish(pipeline_event)
-        if runner_seq is not None:
+            staged = ({"inbox_key": key, "publication_name": "pipeline.ready"} if inbox_owned else {})
+            await self.publish(pipeline_event, **staged)
+        if runner_seq is not None and not inbox_owned:
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
 
     # ----- tasks -----
@@ -4644,9 +5044,7 @@ class Hub:
         """Adopt the consult a previous gateway started for this ask (#93).
 
         Returns ``(attempt, result)`` for the latest prior consult, or ``(0, None)`` without one.
-        ``result`` is ``None`` when its outcome is unknown (another runner generation, or
-        abandoned) or shutdown interrupted it. The caller then runs a new consult in a
-        separate session and workdir, because the old one may still hold them.
+        An unknown outcome is held for recovery, not re-executed.
         """
         prior = self.consult_attempts(ask_id, agent_id)
         if not prior:
@@ -4665,13 +5063,13 @@ class Hub:
         if not entry.get("completed"):
             runner = self._holder_runner(agent_id, entry)
             if not self._same_runner_generation(entry, runner, self.runner_incarnations.get(runner)):
-                return attempt, None
+                raise ConsultOutcomeUnknown(tid)
             await self._await_prior_task(tid, entry, agent_id, entry.get("request_id"), "consult",
                                          reason="adopting consult started before gateway restart")
             entry = self.store.get("task", tid) or entry
         if (not entry.get("completed") or entry.get("abandoned") or not entry.get("result")
                 or self._interrupted_recovery_result(entry.get("result"))):
-            return attempt, None
+            raise ConsultOutcomeUnknown(tid)
         # The task.result handler already added its cost to the durable request total; the
         # orchestrator adds it by task ID, which this ledger entry owns.
         return attempt, TaskResult.model_validate(entry["result"]).model_copy(update={"cost_usd": 0.0,
@@ -4802,6 +5200,14 @@ class Hub:
             if not is_active_request(status):
                 return
             entry = self.store.get("ask", ask.id) or {}
+            if not self._ask_generation_current(entry):
+                self.store.put("ask", ask.id, {**entry, "recovery_blocked": "runner generation changed"})
+                return
+            if entry.get("recovery_blocked"):
+                return
+            if entry.get("inbox_controlled") and entry.get("state") == "working":
+                self.store.put("ask", ask.id, {**entry, "recovery_blocked": "ask start outcome unknown"})
+                return
             self.store.put("ask", ask.id, {**entry, "state": "working"})
             try:
                 if entry.get("facilities_diagnosis"):
@@ -4809,11 +5215,21 @@ class Hub:
                     await asyncio.wait_for(self.orchestrator.answer_ask(ask, runner_id), remaining)
                 else:
                     await self.orchestrator.answer_ask(ask, runner_id)
+            except ConsultOutcomeUnknown:
+                if (self.store.get("ask", ask.id) or {}).get("state") == "resolved":
+                    return
+                entry = self.store.get("ask", ask.id) or entry
+                self.store.put("ask", ask.id, {**entry, "state": "pending",
+                                               "recovery_blocked": "consult outcome unknown"})
             except ShutdownInterrupted as exc:
+                if (self.store.get("ask", ask.id) or {}).get("state") == "resolved":
+                    return
                 await self.resolve_ask(ask, runner_id, ask_result(
                     reason="runner 종료로 상담이 중단됐습니다. 연결된 뒤 다시 요청해 주세요.",
                     interrupted=True, retryable=True, shutdown_evidence=exc.evidence, **{"from": "labhq"}))
             except asyncio.TimeoutError as exc:
+                if (self.store.get("ask", ask.id) or {}).get("state") == "resolved":
+                    return
                 if entry.get("facilities_diagnosis"):
                     for tid, prior in self.consult_attempts(ask.id, "facilities"):
                         if not prior.get("completed"):
@@ -4822,6 +5238,11 @@ class Hub:
                     reason="시설팀 진단 시간 초과" if entry.get("facilities_diagnosis") else f"질의 처리 실패: {exc}",
                     **{"from": "labhq"}))
             except Exception as exc:
+                if (self.store.get("ask", ask.id) or {}).get("state") == "resolved":
+                    if isinstance(exc, (OSError, sqlite3.Error, ValueError, KeyError, TypeError)):
+                        raise
+                    log.warning("ask answer publication remains pending")
+                    return
                 await self.resolve_ask(ask, runner_id, ask_result(
                     reason=f"질의 처리 실패: {exc}", **{"from": "labhq"}))
 
@@ -4832,20 +5253,39 @@ class Hub:
                 self.ask_tasks.pop(ask.id, None)
         task.add_done_callback(finished)
 
+    async def _recover_ask_answer(self, ask_id: str, entry: dict) -> None:
+        if not entry.get("answer_publish_intent") or not entry.get("inbox_key"):
+            return
+        ask = AskRequest.model_validate(entry["ask"])
+        answer = entry["answer"]
+        await self.publish({"type": "agent.answer", "ts": entry["resolved_at"], "task_id": ask.task_id,
+                            "agent_id": answer.get("from"), "request_id": ask.request_id,
+                            "data": {**answer, "to": ask.agent_id, "question": ask.question}},
+                           inbox_key=entry["inbox_key"], publication_name="agent.answer")
+
     async def resolve_ask(self, ask: AskRequest, runner_id: str, answer: dict) -> None:
         answer = ask_result(**{**answer, "ask_id": ask.id})
         entry = self.store.get("ask", ask.id) or {"ask": ask.model_dump(mode="json"), "origin": runner_id}
-        self.store.put("ask", ask.id, {**entry, "state": "resolved", "answer": answer,
-                                       "resolved_at": time.time()})
+        if entry.get("inbox_key") and entry.get("state") == "resolved":
+            if entry.get("answer") != answer or entry.get("origin") != runner_id:
+                raise ValueError("ask answer conflict")
+            await self._recover_ask_answer(ask.id, entry)
+            return
+        resolved = {**entry, "state": "resolved", "answer": answer, "resolved_at": time.time(),
+                    "answer_publish_intent": bool(entry.get("inbox_key"))}
+        self.store.put("ask", ask.id, resolved)
         waiter = self.ask_waiters.pop(ask.id, None)
         if waiter and not waiter.done():
             waiter.set_result(answer)
-        await self.publish({"type": "agent.answer", "ts": time.time(), "task_id": ask.task_id,
-                            "agent_id": answer.get("from"), "request_id": ask.request_id,
-                            "data": {**answer, "to": ask.agent_id, "question": ask.question}})
+        if resolved["answer_publish_intent"]:
+            await self._recover_ask_answer(ask.id, resolved)
+        else:
+            await self.publish({"type": "agent.answer", "ts": resolved["resolved_at"], "task_id": ask.task_id,
+                                "agent_id": answer.get("from"), "request_id": ask.request_id,
+                                "data": {**answer, "to": ask.agent_id, "question": ask.question}})
         if ask.to == "facilities" and ask.request_id in self.requests:
             await self.publish_facilities_projection(ask.request_id, force=True)
-        if runner_id in self.runners:
+        if runner_id in self.runners and self._ask_generation_current(resolved):
             await self.send_runner(runner_id, {"type": "ask.resolved", "id": ask.id, "answer": answer})
 
     async def wait_asks(self, ask_ids: list[str]) -> list[dict]:
@@ -6393,6 +6833,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         nonlocal visibility_checked
         if visibility_checked:
             return
+        await hub.recover_runner_publications()
         visibility_checked = True
         visibility = await dev_log_visibility(settings, github_transport)
         if visibility not in {"public", "unknown"}:
@@ -6407,6 +6848,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.on_event("startup")
     async def recover_terminal_deliveries() -> None:
         hub.knowledge.start()
+        for ask_id, entry in hub.store.all("ask").items():
+            if (entry.get("publish_intent") and entry.get("state") in {"pending", "working"}
+                    and not hub._ask_inbox_held(ask_id)):
+                await hub._recover_ask_publication(ask_id)
         hub.recover_terminal_deliveries()
         await hub.finish_interrupted_cancels()
         hub.start_deadline_watch()
@@ -6433,6 +6878,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             with contextlib.suppress(asyncio.CancelledError):
                 await hub._deadline_task
         await hub.pi_interpreter.close()
+        pending_publications = list(getattr(hub, "runner_publication_tasks", ()))
+        if pending_publications:
+            await asyncio.gather(*pending_publications, return_exceptions=True)
         for timer in hub.final_review_timers.values():
             timer.cancel()
         await hub.result_storage.close()
@@ -6544,6 +6992,31 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/api/agents", dependencies=[Depends(auth)])
     async def agents() -> list[dict]:
         return list(hub.agents.values())
+
+    @app.get("/api/runner-inbox/{runner_id}", dependencies=[Depends(auth)])
+    async def runner_inbox_status(runner_id: str, incarnation: str | None = None) -> list[dict]:
+        if incarnation is None:
+            incarnation = (hub.store.get("runner_incarnation", runner_id) or {}).get("id")
+        return [{"runner_id": row["runner_id"], "incarnation": row["incarnation"], "seq": row["seq"],
+                 "type": row["message"].get("type"), "state": row["state"], "error": row["error"]}
+                for row in hub.store.runner_inbox_entries(runner_id, incarnation) if row["state"] != "completed"]
+
+    @app.post("/api/runner-inbox/{runner_id}/{seq}/{action}", dependencies=[Depends(auth)])
+    async def recover_runner_inbox(runner_id: str, seq: int, action: str, incarnation: str | None = None) -> dict:
+        if action not in {"retry", "resume"}:
+            raise HTTPException(404, "unknown recovery action")
+        if incarnation is None:
+            incarnation = (hub.store.get("runner_incarnation", runner_id) or {}).get("id")
+        try:
+            if action == "retry":
+                await hub.retry_runner_inbox(runner_id, incarnation, seq)
+            else:
+                await hub.resume_blocked_runner_inbox(runner_id, incarnation, seq)
+        except KeyError:
+            raise HTTPException(404, "runner inbox entry not found")
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
+        return {"state": "completed"}
 
     @app.post("/api/requests", dependencies=[Depends(auth)])
     @idempotent

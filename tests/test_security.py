@@ -5,6 +5,38 @@ import pytest
 from labhq.security import TokenRedactionFilter, gateway_log_config, token_matches
 
 
+def test_up_rejects_default_runner_token_before_start(monkeypatch, capsys):
+    from labhq import cli
+    from labhq.settings import Settings
+
+    settings = Settings()
+    settings.gateway.client_token = "valid-client-token"
+    monkeypatch.setattr(cli.instance_guard, "check", lambda *_args, **_kwargs: pytest.fail("started checks"))
+    with pytest.raises(SystemExit) as exc:
+        cli._up_unlocked(settings)
+    assert exc.value.code == 2
+    assert "runner_token" in capsys.readouterr().err
+
+
+def test_settings_rejects_unknown_gateway_key():
+    from pydantic import ValidationError
+    from labhq.settings import Settings
+
+    with pytest.raises(ValidationError, match="client_tokne"):
+        Settings.model_validate({"gateway": {"client_tokne": "secret"}})
+
+
+def test_gateway_command_rejects_default_runner_token(tmp_path, monkeypatch, capsys):
+    from labhq import cli
+    config = tmp_path / "config.yaml"
+    config.write_text(f"gateway:\n  client_token: valid-client-token\n  state_dir: '{tmp_path.as_posix()}/state'\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "_claim_or_exit", lambda *_args: pytest.fail("gateway tried to start"))
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["-c", str(config), "gateway"])
+    assert exc.value.code == 2
+    assert "runner_token" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("provided,expected,match", [
     ("client-secret", "client-secret", True),
     ("runner-secret", "other-secret", False),

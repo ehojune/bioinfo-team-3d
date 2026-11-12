@@ -1,0 +1,9 @@
+{
+  "_note": "Recorded lookup responses for tests. Synthetic identifiers (10.5555 is the DOI example prefix); nothing here was fetched.",
+  "doi:10.5555/eval.0001": {"found": true, "title": "Glucocorticoid response of cultured airway smooth muscle cells"},
+  "pmid:90000001": {"found": true, "title": "Glucocorticoid response of cultured airway smooth muscle cells"},
+  "doi:10.5555/eval.0002": {"found": true, "title": "A synthetic cohort study of serum markers: a worked example"},
+  "doi:10.5555/eval.0404": {"found": false},
+  "doi:10.5555/eval.0003": {"found": true, "title": "Deep learning for protein structure prediction"},
+  "pmid:90000002": {"found": true, "title": "Soil microbiome diversity in alpine meadows"}
+}

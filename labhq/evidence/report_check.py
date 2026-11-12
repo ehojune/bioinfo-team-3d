@@ -12,6 +12,9 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from markdown_it import MarkdownIt
+
+from ..report_markdown import markdown_body
 from .claims import STATUS_NEEDS
 
 # Case and spaces vary in what a model writes ([[Claim: s1/c1]]); a variant is checked, not skipped.
@@ -274,6 +277,54 @@ def failed_lookup_lines(rows: list[dict[str, str]]) -> list[str]:
     return lines
 
 
+def _unanchored_numeric_sentences(report: str) -> list[str]:
+    """Flag numeric prose for review; this is not a semantic conclusion classifier."""
+    text = markdown_body(report)
+    text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
+    text = re.sub(r"(?m)^ {0,3}\[\^[^\]\n]+\]:[^\n]*(?:\n(?: {4}|\t)[^\n]*)*", "", text)
+    text = re.sub(r"\[\^[^\]\n]+\]", "", text)
+    sentences = []
+    lines = text.splitlines()
+    heading_lines = {i for token in MarkdownIt("commonmark").parse(text)
+                     if token.type == "heading_open" and token.map
+                     for i in range(*token.map)}
+    table_lines: set[int] = set()
+    for i in range(1, len(lines)):
+        if "|" in lines[i - 1] and re.fullmatch(r"\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*", lines[i]):
+            table_lines.update((i - 1, i))
+            j = i + 1
+            while j < len(lines) and "|" in lines[j] and lines[j].strip():
+                table_lines.add(j)
+                j += 1
+    paragraphs: list[str] = []
+    current: list[str] = []
+    for i, line in enumerate(lines):
+        line = line.strip()
+        is_list_item = bool(re.match(r"(?:[-*+]\s+|\d+[.)]\s+)", line))
+        if i in table_lines or i in heading_lines or not line or line.startswith(("#", "|")) or is_list_item:
+            if current:
+                paragraphs.append(" ".join(current))
+                current = []
+        if i in table_lines or i in heading_lines or not line or line.startswith(("#", "|")):
+            continue
+        line = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", "", line)
+        current.append(line)
+    if current:
+        paragraphs.append(" ".join(current))
+    for paragraph in paragraphs:
+        paragraph = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", paragraph)
+        paragraph = re.sub(r"\]\([^)]*\)", "]", paragraph)
+        paragraph = re.sub(r"https?://\S+", " ", paragraph)
+        pattern = r".*?(?:[.!?](?:\s*\[\[\s*claim\s*:[^\[\]\n]*\]\])*(?=\s|$)|$)"
+        for match in re.finditer(pattern, paragraph, re.IGNORECASE):
+            sentence = match.group().strip()
+            if not sentence or ANCHOR.search(sentence):
+                continue
+            if re.search(r"(?<![A-Za-z0-9_])\d+(?:[.,]\d+)*(?:[eE][+-]?\d+)?(?:(?:kg|mg|ng|µg|ug|mL|ml|µL|uL|L|h|min|s|mm|cm)(?![A-Za-z0-9_])|(?![A-Za-z0-9_]))", sentence):
+                sentences.append(sentence)
+    return sentences
+
+
 def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterable[Any] = (),
                  refused: Iterable[Any] = (), artifact_sha256: Mapping[str, str | None] | None = None) -> dict:
     """``{"anchors": n, "problems": [...]}`` for one report against the CP2-approved ledgers.
@@ -329,4 +380,6 @@ def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterab
     if not found and claim_rows(ledgers, unsupported, refused=refused)[0]:
         problems.append("the report anchors no claim while the ledgers hold citable claims; every conclusion "
                         "needs [[claim:<step_id>/<claim_id>]]")
+    for sentence in _unanchored_numeric_sentences(report or ""):
+        problems.append(f"numeric prose needs a claim anchor (review context): {sentence[:200]}")
     return {"anchors": len(found), "problems": problems}

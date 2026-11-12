@@ -25,6 +25,7 @@ async def test_halt_after_activity_read_keeps_committed_tool(tmp_path, monkeypat
     transaction = hub.store._transaction
     get = hub.store.get
     block_once = True
+    event_commit = threading.Event()
     sent = []
 
     @contextmanager
@@ -32,7 +33,7 @@ async def test_halt_after_activity_read_keeps_committed_tool(tmp_path, monkeypat
         nonlocal block_once
         with transaction() as conn:
             yield conn
-            if block_once:
+            if block_once and event_commit.is_set():
                 block_once = False
                 entered.set()
                 assert control_read.wait(3)
@@ -53,9 +54,10 @@ async def test_halt_after_activity_read_keeps_committed_tool(tmp_path, monkeypat
     monkeypatch.setattr(hub, "_turn_waits", lambda *args: False)
     monkeypatch.setattr(hub, "_save_step", AsyncMock())
     monkeypatch.setattr(hub, "_push", AsyncMock(return_value=True))
-    async def publish(ev, runner_id=None, runner_seq=None, activity=None):
+    async def publish(ev, runner_id=None, runner_seq=None, activity=None, *, inbox_key=None):
         # The real append: the runner message's task activity is saved with its event in one transaction (#1132).
-        await hub.store.aappend_event(ev, 100, runner_id, runner_seq, activity=activity)
+        event_commit.set()
+        await hub.store.aappend_event(ev, 100, runner_id, runner_seq, activity=activity, inbox_key=inbox_key)
 
     monkeypatch.setattr(hub, "publish", publish)
     monkeypatch.setattr(hub, "send_runner", send)

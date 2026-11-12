@@ -525,6 +525,10 @@ def _default_client_token(token: str) -> bool:
     return normalized in {"changeme", "changemeclient"}
 
 
+def _default_runner_token(token: str) -> bool:
+    return re.sub(r"[^a-z0-9]", "", token.casefold()) in {"changeme", "changemerunner"}
+
+
 def _config_command(s: Settings, command: str) -> str:
     launcher = os.environ.get("LABHQ_LAUNCHER") or "labhq"
     return f'{launcher} -c "{s.config_path}" {command}' if s.config_path else f"{launcher} {command}"
@@ -1018,6 +1022,9 @@ def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None
     s.runner.validate_wsl()
     if _default_client_token(s.gateway.client_token):
         print("gateway 시작 거부: gateway.client_token의 change-me 기본값을 바꾸세요.", file=sys.stderr)
+        raise SystemExit(2)
+    if _default_runner_token(s.gateway.runner_token):
+        print("gateway 시작 거부: gateway.runner_token의 change-me 기본값을 바꾸세요.", file=sys.stderr)
         raise SystemExit(2)
     # Another config on the same state folder or port is named, with the command that fixes it (#613). A live one
     # stops `up`: it would otherwise report that other config's gateway as this one.
@@ -2371,6 +2378,8 @@ def main(argv: list[str] | None = None) -> None:
                 p.exit(1, f"gateway: {exc}\n")
             if _default_client_token(s.gateway.client_token):
                 p.exit(2, "gateway: gateway.client_token의 change-me 기본값을 바꾸세요.\n")
+            if _default_runner_token(s.gateway.runner_token):
+                p.exit(2, "gateway: gateway.runner_token의 change-me 기본값을 바꾸세요.\n")
             # The web office asks for the client token; say how to get in without printing it (PI visit 2026-10-04).
             print(f"웹 사무실: {_http_base(s)}/  (다른 창에서 `{_config_command(s, 'open')}`을 실행하세요)",
                   flush=True)

@@ -1960,10 +1960,10 @@ async def test_a_resend_waits_for_the_first_copy_so_the_next_seq_cannot_overtake
     release = asyncio.Event()
     real = gateway.publish
 
-    async def slow_five(ev, runner_id=None, runner_seq=None):
+    async def slow_five(ev, runner_id=None, runner_seq=None, **kwargs):
         if runner_seq == 5:
             await release.wait()
-        return await real(ev, runner_id=runner_id, runner_seq=runner_seq)
+        return await real(ev, runner_id=runner_id, runner_seq=runner_seq, **kwargs)
 
     gateway.publish = slow_five
 
@@ -1986,7 +1986,7 @@ async def test_a_resend_waits_for_the_first_copy_so_the_next_seq_cannot_overtake
         gateway.store.close()
 
 
-async def test_a_cancelled_first_copy_does_not_block_the_resend(tmp_path):
+async def test_cancelled_unknown_copy_is_held_without_ack(tmp_path):
     s = settings(tmp_path)
     gateway = Hub(s)
     gateway.register_runner("local", _AckSocket(), [])
@@ -2006,8 +2006,10 @@ async def test_a_cancelled_first_copy_does_not_block_the_resend(tmp_path):
         await asyncio.gather(first, return_exceptions=True)
         gateway.publish = real
         await gateway.on_runner_message("local", dict(message))  # the runner resends what was never acked
-        assert len([e for e in gateway.events if e["type"] == "test.note"]) == 1
-        assert gateway.store.runner_seen("local") == 9
+        assert not [e for e in gateway.events if e["type"] == "test.note"]
+        assert gateway.store.runner_seen("local") == 0
+        assert gateway.store.runner_inbox("local", None, 9)["state"] == "processing"
+        assert gateway.runners["local"].sent == []  # unknown side effects and the runner copy remain held
     finally:
         gateway.store.close()
 

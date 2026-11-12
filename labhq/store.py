@@ -19,6 +19,7 @@ T = TypeVar("T")
 
 
 SCHEMA_VERSION = 1
+RUNNER_INBOX_COMPLETED_LIMIT = 256
 
 # Only conversation and report notifications, never tool output or debug traces.
 MESSENGER_TYPES = (
@@ -88,6 +89,9 @@ class StateStore:
                 self.db.execute("CREATE INDEX messenger_request_seq ON messenger_events(request_id, seq)")
                 for (raw,) in self.db.execute("SELECT body FROM events ORDER BY seq"):
                     self._archive_message(json.loads(raw))
+        with self.db:
+            self.db.execute("CREATE INDEX IF NOT EXISTS runner_inbox_status_idx "
+                            "ON state(json_extract(body, '$.state')) WHERE kind='runner_inbox'")
 
     # ----- connections -----
     def _write_connection(self) -> sqlite3.Connection:
@@ -316,23 +320,24 @@ class StateStore:
     def append_event(self, body: dict, limit: int, runner_id: str | None = None,
                      runner_seq: int | None = None, reporter_delivery: bool = False,
                      request: tuple[str, dict] | None = None,
-                     activity: tuple[str, Callable[[dict], dict]] | None = None) -> dict:
+                     activity: tuple[str, Callable[[dict], dict]] | None = None, *, inbox_key: str | None = None) -> dict:
         return durable.call(self.lane, self._append_event_now, body, limit, runner_id, runner_seq, reporter_delivery,
-                            request, activity)
+                            request, activity, inbox_key)
 
     async def aappend_event(self, body: dict, limit: int, runner_id: str | None = None,
                             runner_seq: int | None = None, reporter_delivery: bool = False,
                             request: tuple[str, dict] | None = None,
-                            activity: tuple[str, Callable[[dict], dict]] | None = None) -> dict:
+                            activity: tuple[str, Callable[[dict], dict]] | None = None, *, inbox_key: str | None = None) -> dict:
         # Serialize before yielding: the writer must never inspect mutable gateway state.
         snapshot = json.loads(_dumps(body))
         request = None if request is None else (request[0], json.loads(_dumps(request[1])))
         return await durable.run(self.lane, self._append_event_now, snapshot, limit,
-                                 runner_id, runner_seq, reporter_delivery, request, activity)
+                                 runner_id, runner_seq, reporter_delivery, request, activity, inbox_key)
 
     def _append_event_now(self, body: dict, limit: int, runner_id: str | None, runner_seq: int | None,
                           reporter_delivery: bool, request: tuple[str, dict] | None = None,
-                          activity: tuple[str, Callable[[dict], dict]] | None = None) -> dict | None:
+                          activity: tuple[str, Callable[[dict], dict]] | None = None,
+                          inbox_key: str | None = None) -> dict | None:
         """The event, the request snapshot and the task activity it belongs to, and the runner cursor commit together
         (#1129, #1132): all or none. The activity reducer runs here, on the writer thread, against the latest task row.
 
@@ -340,7 +345,18 @@ class StateStore:
         itself that committed first (a resend racing its original), so nothing is added again, activity included
         (#1143)."""
         with self._transaction() as conn:
-            if runner_id is not None and runner_seq is not None:
+            ask_id = (body.get("data") or {}).get("id") if body.get("type") == "agent.ask" else None
+            if ask_id and conn.execute("SELECT 1 FROM state WHERE kind='ask_publication' AND key=?",
+                                       (str(ask_id),)).fetchone():
+                return None
+            if inbox_key is not None:
+                row = conn.execute("SELECT body FROM state WHERE kind='runner_inbox' AND key=?", (inbox_key,)).fetchone()
+                record = json.loads(row[0]) if row else None
+                if not record or record["runner_id"] != runner_id or record["seq"] != runner_seq:
+                    raise ValueError("runner inbox identity mismatch")
+                if conn.execute("SELECT 1 FROM state WHERE kind='runner_inbox_event' AND key=?", (inbox_key,)).fetchone():
+                    return None
+            elif runner_id is not None and runner_seq is not None:
                 seen = conn.execute("SELECT seq FROM runner_cursor WHERE runner_id=?", (runner_id,)).fetchone()
                 if seen is not None and runner_seq <= seen[0]:
                     return None
@@ -349,6 +365,12 @@ class StateStore:
             if activity is not None:
                 self._apply_activity(conn, activity[0], activity[1])
             body = self._insert_event(conn, body, limit)
+            if inbox_key is not None:
+                conn.execute("INSERT INTO state VALUES ('runner_inbox_event', ?, ?)",
+                             (inbox_key, _dumps({"seq": body["seq"]})))
+            if ask_id:
+                conn.execute("INSERT INTO state VALUES ('ask_publication', ?, ?)",
+                             (str(ask_id), _dumps({"seq": body["seq"], "event": body})))
             if reporter_delivery:
                 conn.execute("INSERT OR REPLACE INTO state VALUES ('reporter_delivery', ?, ?)",
                              (str(body["seq"]), _dumps(body)))
@@ -494,6 +516,289 @@ class StateStore:
     def _ack_now(self, seq: int) -> None:
         with self._transaction() as conn:
             conn.execute("DELETE FROM outbox WHERE seq<=?", (seq,))
+
+    @staticmethod
+    def _runner_inbox_key(runner_id: str, incarnation: str | None, seq: int) -> str:
+        if not runner_id or isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
+            raise ValueError("invalid runner inbox identity")
+        return _dumps([runner_id, incarnation, seq])
+
+    def runner_inbox(self, runner_id: str, incarnation: str | None, seq: int) -> dict | None:
+        return self.get("runner_inbox", self._runner_inbox_key(runner_id, incarnation, seq))
+
+    def active_runner_inbox(self) -> list[dict]:
+        return [json.loads(row[0]) for row in self.db.execute(
+            "SELECT body FROM state INDEXED BY runner_inbox_status_idx WHERE kind='runner_inbox' "
+            "AND json_extract(body, '$.state') IN ('pending','processing','failed','blocked')")]
+
+    def _prune_completed_runner_inbox(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute("SELECT key, body FROM state INDEXED BY runner_inbox_status_idx WHERE kind='runner_inbox' "
+                            "AND json_extract(body, '$.state')='completed' ORDER BY rowid DESC LIMIT -1 OFFSET ?",
+                            (RUNNER_INBOX_COMPLETED_LIMIT,)).fetchall()
+        for key, raw in rows:
+            inbox = json.loads(raw)
+            generation = conn.execute("SELECT body FROM state WHERE kind='runner_incarnation' AND key=?",
+                                      (inbox["runner_id"],)).fetchone()
+            current = json.loads(generation[0])["id"] if generation else None
+            cursor = conn.execute("SELECT seq FROM runner_cursor WHERE runner_id=?", (inbox["runner_id"],)).fetchone()
+            if (generation is None or current == inbox["incarnation"]) and (not cursor or cursor[0] < inbox["seq"]):
+                continue
+            publications = []
+            for name in ("message", "agent.ask", "agent.answer", "pipeline.ready"):
+                pubkey = self._runner_publication_key(key, name)
+                pub = conn.execute("SELECT body FROM state WHERE kind='runner_publication' AND key=?", (pubkey,)).fetchone()
+                if pub:
+                    publications.append((pubkey, json.loads(pub[0])))
+            if any(p.get("state") != "published" or p.get("delivery_state") not in {"done", "shared"} or
+                   p.get("interpreter_state") not in {"done", "shared"} for _, p in publications):
+                continue
+            if inbox["message"].get("type") == "ask.requested":
+                ask_id = (inbox["message"].get("data") or {}).get("id")
+                row = conn.execute("SELECT body FROM state WHERE kind='ask' AND key=?", (str(ask_id),)).fetchone()
+                if not row:
+                    continue
+                ask = json.loads(row[0])
+                if ask.get("state") != "resolved":
+                    continue
+                if not any(p.get("name") == "agent.answer" for _, p in publications):
+                    continue
+                ask["answer_publish_intent"] = False
+                conn.execute("UPDATE state SET body=? WHERE kind='ask' AND key=?", (_dumps(ask), str(ask_id)))
+                conn.execute("DELETE FROM state WHERE kind='ask_publication' AND key=?", (str(ask_id),))
+            for pubkey, _ in publications:
+                conn.execute("DELETE FROM state WHERE kind='runner_publication' AND key=?", (pubkey,))
+            conn.execute("DELETE FROM state WHERE kind='runner_inbox_event' AND key=?", (key,))
+            conn.execute("DELETE FROM state WHERE kind='runner_inbox' AND key=?", (key,))
+
+    @staticmethod
+    def _runner_publication_key(inbox_key: str, name: str) -> str:
+        if not inbox_key or not name:
+            raise ValueError("invalid runner publication identity")
+        return _dumps([inbox_key, name])
+
+    def runner_publication(self, inbox_key: str, name: str) -> dict | None:
+        return self.get("runner_publication", self._runner_publication_key(inbox_key, name))
+
+    async def amark_runner_publication_done(self, inbox_key: str, name: str, field: str) -> None:
+        await durable.run(self.lane, self._mark_runner_publication_done_now, inbox_key, name, field)
+
+    def _mark_runner_publication_done_now(self, inbox_key: str, name: str, field: str) -> None:
+        if field not in {"delivery_state", "interpreter_state"}:
+            raise ValueError("invalid publication effect")
+        key = self._runner_publication_key(inbox_key, name)
+        with self._transaction() as conn:
+            row = conn.execute("SELECT body FROM state WHERE kind='runner_publication' AND key=?", (key,)).fetchone()
+            if row is None:
+                raise KeyError(key)
+            record = json.loads(row[0])
+            if record.get("state") != "published" or record.get(field) not in {"pending", "done"}:
+                raise ValueError("publication effect is not pending")
+            record[field] = "done"
+            conn.execute("UPDATE state SET body=? WHERE kind='runner_publication' AND key=?", (_dumps(record), key))
+            self._prune_completed_runner_inbox(conn)
+
+    def prepare_runner_publication(self, inbox_key: str, name: str, event: dict) -> dict:
+        snapshot = json.loads(_dumps(event))
+        return durable.call(self.lane, self._prepare_runner_publication_now, inbox_key, name, snapshot)
+
+    async def aprepare_runner_publication(self, inbox_key: str, name: str, event: dict) -> dict:
+        snapshot = json.loads(_dumps(event))
+        return await durable.run(self.lane, self._prepare_runner_publication_now, inbox_key, name, snapshot)
+
+    def _prepare_runner_publication_now(self, inbox_key: str, name: str, event: dict) -> dict:
+        key = self._runner_publication_key(inbox_key, name)
+        with self._transaction() as conn:
+            if not conn.execute("SELECT 1 FROM state WHERE kind='runner_inbox' AND key=?", (inbox_key,)).fetchone():
+                raise ValueError("runner inbox identity missing")
+            row = conn.execute("SELECT body FROM state WHERE kind='runner_publication' AND key=?", (key,)).fetchone()
+            if row:
+                record = json.loads(row[0])
+                if record["event"] != event:
+                    raise ValueError("runner publication identity conflict")
+                return record
+            record = {"inbox_key": inbox_key, "name": name, "event": event, "state": "prepared"}
+            conn.execute("INSERT INTO state VALUES ('runner_publication', ?, ?)", (key, _dumps(record)))
+            return record
+
+    def commit_runner_publication(self, inbox_key: str, name: str, limit: int, *,
+                                  reporter_delivery: bool = False, request: tuple[str, dict] | None = None,
+                                  activity: tuple[str, Callable[[dict], dict]] | None = None) -> dict:
+        return durable.call(self.lane, self._commit_runner_publication_now, inbox_key, name, limit,
+                            reporter_delivery, request, activity)
+
+    async def acommit_runner_publication(self, inbox_key: str, name: str, limit: int, *,
+                                         reporter_delivery: bool = False, request: tuple[str, dict] | None = None,
+                                         activity: tuple[str, Callable[[dict], dict]] | None = None) -> dict:
+        request = None if request is None else (request[0], json.loads(_dumps(request[1])))
+        return await durable.run(self.lane, self._commit_runner_publication_now, inbox_key, name, limit,
+                                 reporter_delivery, request, activity)
+
+    def _commit_runner_publication_now(self, inbox_key: str, name: str, limit: int,
+                                       reporter_delivery: bool, request: tuple[str, dict] | None,
+                                       activity: tuple[str, Callable[[dict], dict]] | None) -> dict:
+        key = self._runner_publication_key(inbox_key, name)
+        with self._transaction() as conn:
+            row = conn.execute("SELECT body FROM state WHERE kind='runner_publication' AND key=?", (key,)).fetchone()
+            if not row:
+                raise KeyError(key)
+            record = json.loads(row[0])
+            if record["state"] == "published":
+                return record["published_event"]
+            if record["state"] != "prepared":
+                raise ValueError("invalid runner publication state")
+            ask_id = ((record["event"].get("data") or {}).get("id")
+                      if record["event"].get("type") == "agent.ask" else None)
+            prior = (conn.execute("SELECT body FROM state WHERE kind='ask_publication' AND key=?", (str(ask_id),)).fetchone()
+                     if ask_id else None)
+            if prior:
+                previous = json.loads(prior[0]).get("event")
+                if not previous or previous.get("data") != record["event"].get("data"):
+                    raise ValueError("ask publication identity conflict")
+                record.update(state="published", published_event=previous,
+                              delivery_state="shared", interpreter_state="shared")
+                conn.execute("UPDATE state SET body=? WHERE kind='runner_publication' AND key=?", (_dumps(record), key))
+                return previous
+            if request is not None:
+                conn.execute("INSERT OR REPLACE INTO state VALUES ('request', ?, ?)", (request[0], _dumps(request[1])))
+            if activity is not None:
+                self._apply_activity(conn, activity[0], activity[1])
+            event = self._insert_event(conn, record["event"], limit)
+            if ask_id:
+                conn.execute("INSERT INTO state VALUES ('ask_publication', ?, ?)",
+                             (str(ask_id), _dumps({"seq": event["seq"], "event": event})))
+            if reporter_delivery:
+                conn.execute("INSERT OR REPLACE INTO state VALUES ('reporter_delivery', ?, ?)",
+                             (str(event["seq"]), _dumps(event)))
+            if name == "message":
+                row = conn.execute("SELECT body FROM state WHERE kind='runner_inbox' AND key=?", (inbox_key,)).fetchone()
+                if row is None:
+                    raise ValueError("runner inbox identity missing")
+                inbox = json.loads(row[0])
+                conn.execute("INSERT INTO state VALUES ('runner_inbox_event', ?, ?)",
+                             (inbox_key, _dumps({"seq": event["seq"]})))
+                generation = conn.execute("SELECT body FROM state WHERE kind='runner_incarnation' AND key=?",
+                                          (inbox["runner_id"],)).fetchone()
+                if generation is None or json.loads(generation[0])["id"] == inbox["incarnation"]:
+                    conn.execute("INSERT INTO runner_cursor VALUES (?, ?) ON CONFLICT(runner_id) DO UPDATE SET seq=excluded.seq "
+                                 "WHERE excluded.seq > runner_cursor.seq", (inbox["runner_id"], inbox["seq"]))
+            record.update(state="published", published_event=event,
+                          delivery_state="pending", interpreter_state="pending")
+            conn.execute("UPDATE state SET body=? WHERE kind='runner_publication' AND key=?", (_dumps(record), key))
+            return event
+
+    def runner_inbox_entries(self, runner_id: str, incarnation: str | None) -> list[dict]:
+        """Inspect retained entries in delivery order, including uncertain executions."""
+        return sorted((entry for entry in self.active_runner_inbox()
+                       if entry["runner_id"] == runner_id and entry["incarnation"] == incarnation),
+                      key=lambda entry: entry["seq"])
+
+    def accept_runner_inbox(self, runner_id: str, incarnation: str | None, seq: int, message: dict) -> dict:
+        snapshot = json.loads(_dumps(message))
+        return durable.call(self.lane, self._accept_runner_inbox_now, runner_id, incarnation, seq, snapshot)
+
+    async def aaccept_runner_inbox(self, runner_id: str, incarnation: str | None, seq: int, message: dict) -> dict:
+        snapshot = json.loads(_dumps(message))
+        return await durable.run(self.lane, self._accept_runner_inbox_now, runner_id, incarnation, seq, snapshot)
+
+    def _accept_runner_inbox_now(self, runner_id: str, incarnation: str | None, seq: int, message: dict) -> dict:
+        key = self._runner_inbox_key(runner_id, incarnation, seq)
+        if message.get("runner_seq") != seq:
+            raise ValueError("runner inbox sequence mismatch")
+        with self._transaction() as conn:
+            row = conn.execute("SELECT body FROM state WHERE kind='runner_inbox' AND key=?", (key,)).fetchone()
+            if row:
+                record = json.loads(row[0])
+                if record["message"] != message:
+                    raise ValueError("conflicting runner inbox delivery")
+                return record
+            seen = conn.execute("SELECT seq FROM runner_cursor WHERE runner_id=?", (runner_id,)).fetchone()
+            # A previously processed delivery may be resent after upgrading from the cursor-only gateway.
+            state = "completed" if seen is not None and seq <= seen[0] else "pending"
+            record = {"runner_id": runner_id, "incarnation": incarnation, "seq": seq,
+                      "message": message, "state": state, "error": None}
+            cursor = conn.execute("INSERT INTO state VALUES ('runner_inbox', ?, ?)", (key, _dumps(record)))
+            record["admission_order"] = cursor.lastrowid
+            conn.execute("UPDATE state SET body=? WHERE kind='runner_inbox' AND key=?", (_dumps(record), key))
+            if state == "completed":
+                self._prune_completed_runner_inbox(conn)
+            return record
+
+    def set_runner_inbox_state(self, runner_id: str, incarnation: str | None, seq: int,
+                               state: str, error: str | None = None, *, expected: str | None = None) -> dict:
+        return durable.call(self.lane, self._set_runner_inbox_state_now, runner_id, incarnation, seq, state, error,
+                            expected)
+
+    async def aset_runner_inbox_state(self, runner_id: str, incarnation: str | None, seq: int,
+                                      state: str, error: str | None = None, *, expected: str | None = None) -> dict:
+        return await durable.run(self.lane, self._set_runner_inbox_state_now, runner_id, incarnation, seq,
+                                 state, error, expected)
+
+    async def aclaim_runner_publication_retry(self, runner_id: str, incarnation: str | None, seq: int) -> dict:
+        return await durable.run(self.lane, self._claim_runner_publication_retry_now, runner_id, incarnation, seq)
+
+    async def aclaim_blocked_runner_inbox(self, runner_id: str, incarnation: str | None, seq: int) -> dict:
+        return await durable.run(self.lane, self._claim_blocked_runner_inbox_now, runner_id, incarnation, seq)
+
+    def _claim_blocked_runner_inbox_now(self, runner_id: str, incarnation: str | None, seq: int) -> dict:
+        key = self._runner_inbox_key(runner_id, incarnation, seq)
+        with self._transaction() as conn:
+            row = conn.execute("SELECT body FROM state WHERE kind='runner_inbox' AND key=?", (key,)).fetchone()
+            if not row:
+                raise KeyError(key)
+            record = json.loads(row[0])
+            if record["state"] != "blocked":
+                raise ValueError("runner inbox entry is not blocked")
+            record.update(state="processing", error=None)
+            conn.execute("UPDATE state SET body=? WHERE kind='runner_inbox' AND key=?", (_dumps(record), key))
+            return record
+
+    def _claim_runner_publication_retry_now(self, runner_id: str, incarnation: str | None, seq: int) -> dict:
+        key = self._runner_inbox_key(runner_id, incarnation, seq)
+        with self._transaction() as conn:
+            row = conn.execute("SELECT body FROM state WHERE kind='runner_inbox' AND key=?", (key,)).fetchone()
+            if not row:
+                raise KeyError(key)
+            record = json.loads(row[0])
+            typ = record["message"].get("type")
+            safe = (typ in {"agent.log", "agent.status", "agent.tool", "agent.tool_result"} or
+                    (typ == "ask.requested" and record["error"] == "ask_publication_incomplete"))
+            if record["state"] != "failed" or not safe:
+                raise ValueError("runner inbox outcome is not safe to retry")
+            record.update(state="processing", error=None)
+            conn.execute("UPDATE state SET body=? WHERE kind='runner_inbox' AND key=?", (_dumps(record), key))
+            return record
+
+    def _set_runner_inbox_state_now(self, runner_id: str, incarnation: str | None, seq: int,
+                                    state: str, error: str | None, expected: str | None) -> dict:
+        if state not in {"pending", "processing", "failed", "blocked", "completed"}:
+            raise ValueError("invalid runner inbox state")
+        key = self._runner_inbox_key(runner_id, incarnation, seq)
+        with self._transaction() as conn:
+            row = conn.execute("SELECT body FROM state WHERE kind='runner_inbox' AND key=?", (key,)).fetchone()
+            if row is None:
+                raise KeyError(key)
+            record = json.loads(row[0])
+            if expected is not None and record["state"] != expected:
+                raise ValueError("runner inbox state changed")
+            if state == "processing" and (record["state"] != "pending" or expected != "pending"):
+                raise ValueError("runner inbox processing requires a pending claim")
+            transitions = {"pending": {"processing", "blocked", "failed"},
+                           "blocked": {"pending"}, "processing": {"completed", "failed"},
+                           "failed": set(), "completed": set()}
+            if state != record["state"] and state not in transitions[record["state"]]:
+                raise ValueError("unsafe runner inbox state transition")
+            if record["state"] in {"blocked", "processing"} and state != record["state"] and expected is None:
+                raise ValueError("runner inbox transition requires expected state")
+            record.update(state=state, error=error)
+            conn.execute("UPDATE state SET body=? WHERE kind='runner_inbox' AND key=?", (_dumps(record), key))
+            if state == "completed":
+                generation = conn.execute("SELECT body FROM state WHERE kind='runner_incarnation' AND key=?",
+                                          (runner_id,)).fetchone()
+                if generation is None or json.loads(generation[0])["id"] == incarnation:
+                    conn.execute("INSERT INTO runner_cursor VALUES (?, ?) ON CONFLICT(runner_id) DO UPDATE SET seq=excluded.seq "
+                                 "WHERE excluded.seq > runner_cursor.seq", (runner_id, seq))
+                self._prune_completed_runner_inbox(conn)
+            return record
 
     def runner_seen(self, runner_id: str) -> int:
         row = self.db.execute("SELECT seq FROM runner_cursor WHERE runner_id=?", (runner_id,)).fetchone()
