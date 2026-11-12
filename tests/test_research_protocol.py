@@ -141,19 +141,17 @@ class MiniHub:
 
 
 @pytest.mark.asyncio
-async def test_stopped_semantics_is_large_on_cp1_feed_and_execution_record(tmp_path):
-    from labhq.research import semantics_shadow as shadow
+async def test_core_device_failure_reaches_cp1_feed_and_execution_record(tmp_path, monkeypatch):
+    from labhq.research import semantic_devices
 
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
-    settings.semantics = {"mode": "ab"}
     settings.research.enabled = True
     settings.research.evidence_checkpoint = False
     settings.orchestrator.chief_of_staff_agent = None
     settings.orchestrator.reviewer_agent = None
-    paths = shadow.ShadowPaths(tmp_path / "state" / "semantics")
-    shadow.write_disabled(paths, "info_boundary", 3, ts=1_797_000_000,
-                          boundary=[{"field": "objects", "class": "path"}])
+    monkeypatch.setattr(semantic_devices, "configured_packs",
+                        lambda *a: (_ for _ in ()).throw(ValueError("private error body")))
 
     async def reply(task):
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
@@ -162,9 +160,9 @@ async def test_stopped_semantics_is_large_on_cp1_feed_and_execution_record(tmp_p
     await Orchestrator(hub).run_request("r")
 
     card = hub.approvals[0]
-    assert "의미 장치 중단:" in card["summary"] and "info_boundary" in card["summary"]
-    assert "labhq semantics enable" in card["summary"]
-    assert card["detail"]["semantic_devices"]["semantics"]["epoch"] == 3
+    assert "의미 장치 중단:" in card["summary"] and "pack_load_failed" in card["summary"]
+    assert "semantics" not in card["detail"]["semantic_devices"]
+    assert card["detail"]["semantic_devices"]["packs"]["status"] == "error"
     assert any(event["type"] == "request.semantic_devices" for event in hub.events)
     assert "의미 장치 중단:" in hub.requests["r"]["execution_record"]
 
@@ -1013,18 +1011,17 @@ async def test_cp2_records_approve_revision_or_rejection(cp2, outcome, status):
 
 
 @pytest.mark.asyncio
-async def test_auto_off_reason_is_repeated_on_cp1_cp2_and_execution_record(tmp_path):
-    from labhq.research import semantics_shadow as shadow
+async def test_core_error_is_repeated_on_cp1_cp2_and_execution_record(tmp_path, monkeypatch):
+    from labhq.research import semantic_devices
 
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
-    settings.semantics = {"mode": "ab"}
     settings.research.enabled = True
     settings.research.evidence_checkpoint = True
     settings.orchestrator.chief_of_staff_agent = None
     settings.orchestrator.reviewer_agent = None
-    shadow.write_disabled(shadow.ShadowPaths(tmp_path / "state" / "semantics"),
-                          "worker_stuck", 4, ts=1_797_000_000)
+    monkeypatch.setattr(semantic_devices, "configured_packs",
+                        lambda *a: (_ for _ in ()).throw(ValueError("private error body")))
     hub = None
 
     async def reply(task):
@@ -1040,9 +1037,9 @@ async def test_auto_off_reason_is_repeated_on_cp1_cp2_and_execution_record(tmp_p
     cards = {card["kind"]: card for card in hub.approvals}
     for kind in ("research_plan", "research_evidence"):
         assert "의미 장치 중단:" in cards[kind]["summary"]
-        assert "worker_stuck" in cards[kind]["summary"]
-        assert cards[kind]["detail"]["semantic_devices"]["semantics"]["epoch"] == 4
-    assert "worker_stuck" in hub.requests["r"]["execution_record"]
+        assert "pack_load_failed" in cards[kind]["summary"]
+        assert cards[kind]["detail"]["semantic_devices"]["packs"]["status"] == "error"
+    assert "pack_load_failed" in hub.requests["r"]["execution_record"]
 
 
 @pytest.mark.asyncio

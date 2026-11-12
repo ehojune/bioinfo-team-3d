@@ -462,7 +462,7 @@ def test_unknown_listener_callback_and_conditional_port_are_not_certified_local(
 
 @pytest.mark.parametrize('file', ['test_research_bulk_pack.py','test_research_notes_budget.py',
     'test_research_continue.py','test_semantics_public.py','test_gif_encode.py','test_notes_index.py',
-    'test_edition_check_713.py','test_evidence_verify.py','test_semantics_objects.py'])
+    'test_edition_check_713.py','test_evidence_verify.py','test_input_fit.py'])
 def test_hybrid_encoding_atomic_redaction_and_path_contracts_remain_windows_boundaries(file):
     path='tests/'+file; data=s.policy(); source=(s.ROOT/path).read_text(encoding='utf-8')
     if path in data['mixed_nodes']:

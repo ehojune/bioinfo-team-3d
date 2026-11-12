@@ -20,8 +20,7 @@ def no_native_workers(monkeypatch):
 
 async def run_plans(types, *, missing_check=False, budget=None, orchestrator=Orchestrator, observer=None):
     settings = Settings()
-    if 'semantics' in Settings.model_fields:  # the optional switch is absent after full removal
-        settings.semantics = observer
+    assert "semantics" not in Settings.model_fields
     settings.research.enabled = True
     settings.research.active_packs = [PACK]
     settings.plan.declare_output_types = True

@@ -14,42 +14,17 @@ from ..vocab import topic_checklists
 from .packs import configured_packs, pack_snapshot
 
 
-REENABLE = "labhq semantics enable"
-DEVICE = "seman" + "tics"
 log = logging.getLogger("labhq.semantic_devices")
 
 _ERRORS: dict[str, tuple[str, str, str]] = {
-    "configured_off": (DEVICE, "setting", "semantics 평가가 설정으로 꺼져 있습니다."),
-    "semantics_config_invalid": (DEVICE, "startup", "semantics 설정을 읽지 못했습니다. 설정을 고친 뒤 gateway를 다시 시작하세요."),
-    "semantics_worker_unavailable": (DEVICE, "startup", "semantics worker를 시작하지 못했습니다. doctor 결과를 확인하세요."),
     "vocabulary_edam_invalid": ("EDAM map", "load", "EDAM map을 적용하지 못해 local vocabulary만 사용합니다."),
     "vocabulary_load_failed": ("단어장", "load", "단어장을 불러오지 못했습니다."),
     "checklist_load_failed": ("체크리스트", "load", "체크리스트를 불러오지 못했습니다."),
     "checklist_render_failed": ("체크리스트", "render", "체크리스트 판정을 보고서 부록에 만들지 못했습니다."),
+    "device_check_failed": ("의미 장치", "check", "의미 장치를 점검하지 못했습니다."),
     "pack_load_failed": ("research pack", "load", "research pack을 불러오지 못했습니다."),
     "pack_snapshot_missing": ("research pack", "resume", "CP1에서 고정한 research pack snapshot을 복원하지 못했습니다."),
-    "semantics_advisory_snapshot_failed": (DEVICE, "advisory_snapshot", "재사용 후보 snapshot을 만들지 못했습니다."),
-    "semantics_observed_state_failed": (DEVICE, "advisory_projection", "재사용 후보 관측 상태를 읽지 못했습니다."),
-    "semantics_provenance_failed": (DEVICE, "advisory_projection", "재사용 후보 provenance 요약을 만들지 못했습니다."),
-    "semantics_advisory_projection_failed": (DEVICE, "advisory_projection", "재사용 후보를 평가하지 못했습니다."),
-    "semantics_advisory_boundary_failed": (DEVICE, "advisory_boundary", "재사용 후보가 정보 경계를 통과하지 못했습니다."),
 }
-_STOP_REASONS = frozenset({"info_boundary", "consecutive_failures", "recent_failures", "worker_stuck",
-                           "worker_busy", "wrong_identity", "breaker_storage", "sqlite_json1_missing"})
-_ADVISORY_REASONS = _STOP_REASONS | frozenset({"configured_off", "mode_not_ab", "snapshot_unavailable",
-                                                "worker_unavailable", "missing_evaluation_evidence"})
-
-
-def _semantics_state(settings: Any) -> dict[str, Any]:
-    """Keep every spelling of ``off`` from importing the removable semantics model."""
-    raw = getattr(settings, DEVICE, None)
-    mode = raw.get("mode", "off") if isinstance(raw, Mapping) else raw
-    if mode in (None, False, "off"):
-        return {"setting": "off", "stopped": False, "reason": None, "stopped_at": None,
-                "epoch": None, "last_recorded_at": None, "last_ok_at": None, "boundary": [],
-                "reenable_command": REENABLE, "legacy_false_positive": False}
-    from . import semantics_shadow  # semantics-hook
-    return semantics_shadow.runtime_state(settings)  # semantics-hook
 
 
 def _stamp(value: Any = None) -> str:
@@ -78,44 +53,10 @@ def _checklist_digest(catalog: Mapping[str, list[Any]]) -> str:
                                      separators=(",", ":")).encode()).hexdigest()
 
 
-def inspect(settings: Any, *, service: Any = None, worker_known: bool = False,
-            phase: str = "start") -> dict[str, Any]:
-    """Load every device and return only hashes, counts and public-safe errors.
-
-    ``worker_known`` distinguishes a live gateway check from doctor, which cannot inspect another
-    process's worker object. No request text, path, vocabulary definition or pack body is retained.
-    """
+def inspect(settings: Any, *, phase: str = "start") -> dict[str, Any]:
+    """Keep core vocabulary, checklist and pack failures public-safe and request-scoped."""
     checked_at = _stamp()
     issues: list[dict[str, str]] = []
-    sem = _semantics_state(settings)
-    setting = sem["setting"]
-    if sem["stopped"]:
-        sem_status = "off"
-        reason = str(sem["reason"] or "")
-        code = reason if reason in _STOP_REASONS else "semantics_auto_off"
-        _ERRORS.setdefault(code, (DEVICE, "auto_off", f"semantics 평가가 자동으로 중단됐습니다. {REENABLE}로 다시 켜세요."))
-        issues.append(_issue(code, at=sem["stopped_at"] or checked_at))
-    elif setting in {"invalid", "refused"}:
-        sem_status = "error"
-        issues.append(_issue("semantics_config_invalid", at=checked_at))
-    elif setting == "off":
-        sem_status = "off"
-        issues.append(_issue("configured_off", at=checked_at))
-    elif worker_known and service is None:
-        sem_status = "error"
-        issues.append(_issue("semantics_worker_unavailable", at=checked_at))
-    elif service is not None and getattr(service, "latched", None):
-        sem_status = "off"
-        reason = str(service.latched)
-        code = reason if reason in _STOP_REASONS else "semantics_auto_off"
-        _ERRORS.setdefault(code, (DEVICE, "auto_off", f"semantics 평가가 자동으로 중단됐습니다. {REENABLE}로 다시 켜세요."))
-        issues.append(_issue(code, at=checked_at))
-    else:
-        sem_status = "on"
-    sem_record = {**sem, "status": sem_status,
-                  "worker": ("running" if service is not None and not getattr(service, "latched", None)
-                             else "off" if service is not None else "unknown")}
-
     vocabulary: dict[str, Any]
     vocab = None
     try:
@@ -154,16 +95,14 @@ def inspect(settings: Any, *, service: Any = None, worker_known: bool = False,
         packs = {"status": "error", "error_code": "pack_load_failed"}
         issues.append(_issue("pack_load_failed", at=checked_at))
 
-    status = "error" if any(item["stage"] not in {"setting", "auto_off"} for item in issues) else (
-        "warning" if issues else "ok")
-    return {"version": 1, "phase": phase, "checked_at": checked_at, "status": status,
-            DEVICE: sem_record, "vocabulary": vocabulary, "checklist": checklist,
-            "packs": packs, "errors": issues}
+    return {"version": 1, "phase": phase, "checked_at": checked_at,
+            "status": "error" if issues else "ok", "vocabulary": vocabulary,
+            "checklist": checklist, "packs": packs, "errors": issues}
 
 
 def add_error(record: dict[str, Any], *, code: str) -> dict[str, Any]:
     if code not in _ERRORS:
-        code = "semantics_advisory_projection_failed"
+        code = "device_check_failed"
     issue = _issue(code)
     errors = record.setdefault("errors", [])
     if not any(row.get("code") == code for row in errors if isinstance(row, Mapping)):
@@ -172,39 +111,16 @@ def add_error(record: dict[str, Any], *, code: str) -> dict[str, Any]:
     return issue
 
 
-def advisory_state(value: Any, semantics: Any = None) -> dict[str, Any]:
-    """Normalize the request's plan-time evidence without turning an absent evaluation into zero candidates."""
-    frozen = value if isinstance(value, Mapping) else {}
-    sem = semantics if isinstance(semantics, Mapping) else {}
-    arm = frozen.get("arm") if frozen.get("arm") in {"advisory", "shadow"} else None
-    raw_status = frozen.get("status")
-    status = str(raw_status or ("ok" if isinstance(frozen.get("offered"), list) else "not_evaluated"))
-    if status == "error":
-        error = frozen.get("error") if isinstance(frozen.get("error"), Mapping) else {}
-        code = str(error.get("code") or "semantics_advisory_projection_failed")
-        return {"status": "error", "label": f"오류({code})", "code": code,
-                **({"arm": arm} if arm else {})}
-    if status != "ok":
-        reason = str(frozen.get("reason") or sem.get("reason") or
-                     ("configured_off" if sem.get("status") == "off" or sem.get("setting") == "off"
-                      else "missing_evaluation_evidence"))
-        if reason not in _ADVISORY_REASONS:
-            reason = "snapshot_unavailable"
-        return {"status": "not_evaluated", "label": f"미평가({reason})", "reason": reason,
-                **({"arm": arm} if arm else {})}
-    offered = [item for item in frozen.get("offered") or [] if isinstance(item, str)]
-    label = "정상인데 후보 0건" if not offered else f"정상 · 후보 {len(offered)}건"
-    return {"status": "ok", "label": label, "offered_count": len(offered),
-            **({"arm": arm} if arm else {})}
-
-
 def card_line(record: Mapping[str, Any] | None) -> str:
     if not isinstance(record, Mapping):
         return ""
-    sem = record.get(DEVICE) if isinstance(record.get(DEVICE), Mapping) else {}
-    sem_label = "꺼짐" if sem.get("status") == "off" else "오류" if sem.get("status") == "error" else "켜짐"
-    advisory = record.get("advisory") if isinstance(record.get("advisory"), Mapping) else {}
-    return f"의미 장치 상태: semantics {sem_label} · 그림자 요청 {advisory.get('label') or '미평가(missing_evaluation_evidence)'}"
+    labels = {"ok": "정상", "error": "오류"}
+    rows = []
+    for key, label in (("vocabulary", "단어장"), ("checklist", "점검표"), ("packs", "분야 팩")):
+        device = record.get(key)
+        status = device.get("status") if isinstance(device, Mapping) else None
+        rows.append(f"{label} {labels.get(status, '미확인')}")
+    return "의미 장치 상태: " + " · ".join(rows)
 
 
 def warning(record: Mapping[str, Any] | None) -> str:

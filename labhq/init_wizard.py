@@ -587,7 +587,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             policy["data_zones"] = [z for z in policy.get("data_zones", [])
                                     if z.get("level", "restricted") != "restricted"]
             print("Windows: restricted data_zones 제외")
-        init_defaults.ensure_workspace_zone(data)  # semantics hashes outputs only inside a public or internal zone
+        init_defaults.ensure_workspace_zone(data)
         engines = data.setdefault("engines", {})
         codex = engines.setdefault("codex", {})
         codex["bin"] = "auto"
@@ -630,7 +630,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             bioinfo["pipeline_pr"] = _ask("공개 pipeline 기여에 동의하나요? (y/N)", "n", yes).lower() == "y"
             print("policy.bioinfo_agent.pipeline_pr: " + str(bioinfo["pipeline_pr"]).lower())
         print("켜 둔 기본 설정: 연구 모드(CP1·CP2, 분야 팩 " + ", ".join(data["research"]["active_packs"]) + "), "
-              "의미 모델 ab(actions confirm), 산출물 종류 선언. 끄려면 설정의 research.enabled·semantics.mode·"
+              "산출물 종류 선언. 끄려면 설정의 research.enabled·"
               "plan.declare_output_types를 바꾸세요.")
         if not yes and not dry_run and _interactive():  # a person at the terminal; Enter skips each question (#826)
             _apply_institution(data, _institution_answers())

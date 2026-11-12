@@ -15,7 +15,7 @@ labhq/
   gateway/      server (FastAPI, WS, REST) · shutdown (shutdown handling)
   orchestrator/ cso (briefing → prior research/contract staff → plan DAG → CP1/CP2 → review → report)
   research/     contract (CP1, CP2, result v2) · continuation (step reuse) · packs (domain rules) ·
-                semantics* (provenance/object shadow, input fit, A/B) · semantic_device_report (meaning-device report)
+                 input_fit · input_fit_hint · semantic_devices (core checks); semantics (offline #136 model)
   evidence/     claims (claim and evidence ledger validation) · literal_check (citation and number matching)
   recruit/      paper2agent (paper MCP hiring, probation, contracts) · paper_skills (paper-methodology advisory skills)
   facilities/   signatures · fixes · packages (environment-failure error signatures, automatic-recovery allowlist)

@@ -17,8 +17,8 @@ def rows(meta=None, records=None, *, outputs=("outputs/a.tsv",), extra=None):
                        "workdir_id": "task_a1_analyst", "outputs": list(outputs),
                        **({"output_types": records} if records is not None else {})}}
     tasks = {"task_a1": task, **(extra or {})}
-    records_, invalid = sem.records_from_rows({"req_a": {"id": "req_a", "project_id": "p1"}}, tasks)
-    assert invalid == 0
+    records_ = sem.Records(requests={"req_a": {"id": "req_a", "project_id": "p1"}},
+                           tasks=tasks, plans={}, results={}, manifests={}, observed={}, contracts={})
     return sem.project(MODEL, records_, types_vocab=V)
 
 
@@ -67,8 +67,9 @@ def test_legacy_bare_keys_use_the_shared_output_vocabulary():
 
 
 def test_without_a_vocabulary_typed_declarations_are_unknown():
-    records_, _ = sem.records_from_rows({"req_a": {"id": "req_a"}}, {"task_a1": {
+    records_ = sem.Records(requests={"req_a": {"id": "req_a"}}, tasks={"task_a1": {
         "request_id": "req_a", "step_id": "s1", "payload": {"meta": typed({"outputs/a.tsv": {"data_type": "table"}})[0]},
-        "result": {"ok": True, "workdir_id": "w1", "outputs": ["outputs/a.tsv"]}}})
+        "result": {"ok": True, "workdir_id": "w1", "outputs": ["outputs/a.tsv"]}}},
+        plans={}, results={}, manifests={}, observed={}, contracts={})
     row = artifact(sem.project(MODEL, records_, types_vocab=None))
     assert row["unknown"]["data_type"] == "no_vocab"

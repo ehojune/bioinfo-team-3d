@@ -31,7 +31,7 @@ def environment(tmp_path, monkeypatch):
     monkeypatch.setattr(doctor, "_adapter_check", lambda s, agent: evidence["preflight"].get(agent.id))
     monkeypatch.setattr(doctor.subprocess, "Popen", lambda *a, **kw: pytest.fail("subprocess forbidden"))
     monkeypatch.setattr(doctor, "_network_check", lambda *a: pytest.fail("network forbidden"))
-    for name in ("_memory_limit_row", "_research_row", "_semantics_row", "_bioinfo_row", "_github_token_row",
+    for name in ("_memory_limit_row", "_research_row", "_bioinfo_row", "_github_token_row",
                  "_private_paths_row", "_alphagenome_row", "_paper2agent_row"):
         monkeypatch.setattr(doctor, name, lambda *a, **kw: doctor._row("fixture", "synthetic", "ok", "", ""))
     for name in ("_semantic_device_rows", "_instance_rows", "_disk_rows", "_sandbox_homes_row", "_sandbox_version_rows"):

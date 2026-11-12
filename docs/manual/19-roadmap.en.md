@@ -8,8 +8,7 @@ The v1.0 scope was set by the PI's directive ([#1336](https://github.com/ehojune
 |---|---|---|---|---|
 | v1.0 | A core research team that a bioinformatician trusts and uses every day. CSO → literature scout → analysis (bioinfo-agent) → biological interpretation → a cross-vendor reviewer finish a public-data study locally, on WSL and on HPC while sharing one HPC session | Four closing tasks done: HPC access stage D (#1295), session sharing (#1332), multi-staff HPC trial (#1331), one completed KRAS literature study (#910) | #1295, #1332 and #910 closed. #1331 is running the airway RNA-seq trial | Finish #1331 |
 
-**v2.0 extensions that v1.0 keeps off by default.** The code stays; a setting turns them on.
-- Semantic and ontology checks (layers 2 and 3): `semantics.mode`, `research.semantic_report` ([Semantic model](14-semantic-model.en.md))
+**Opt-in extensions.** Paper2Agent hiring remains optional. [#1388](14-semantic-model.en.md) tracks the pending live-shadow removal.
 - Paper2Agent contractor hiring: `recruit.enabled` ([Contract staff](10-contract-staff.en.md))
 
 **Past declarations.**

@@ -1,7 +1,7 @@
 # 처음이면 `labhq init`이 이 파일로 config/labhq.yaml을 만들고 token을 무작위로 채움.
 # 직접 복사하면 runner_token·client_token을 바꾸고, Windows에서는 restricted data_zones를 빼고 둠.
 # 연구 모드(CP1·CP2·분야 팩), 산출물 종류 선언은 PI가 시험한 설정대로 켜 둠(#613).
-# 온톨로지(semantics·semantic_report)와 Paper2Agent 채용(recruit)은 v1.0에서 꺼 둠(#1336). 코드는 남아 있어 켜면 다시 씀.
+# Paper2Agent 채용(recruit)은 v1.0에서 꺼 둠(#1336).
 # 끄려면 research.enabled·plan.declare_output_types를 바꿈. 이 값들은
 # labhq/init_defaults.py의 목록과 tests/test_init_defaults.py가 같게 맞춰 둠.
 gateway:
@@ -107,8 +107,8 @@ hpc:
 policy:
   data_zones:                 # Windows 러너는 restricted 구역이 있으면 시작 거부. Windows 체험: restricted 줄을 지움
     - {path: /data/restricted, level: restricted, note: "DUA 적용 코호트 데이터"}
-    # 의미 모델(semantics)이 산출물 hash를 재려면 작업 폴더가 public·internal 구역이어야 함. init이 runner.workspace_root에 맞춰 둠.
-    - {path: ~/.labhq/runs, level: internal, note: "labhq 작업 폴더 — 의미 모델 hash용"}
+    # init이 runner.workspace_root를 internal 작업 구역으로 맞춰 둠.
+    - {path: ~/.labhq/runs, level: internal, note: "labhq 작업 폴더"}
   # PI 개인 경로(docs/manual.md 'PI 개인 경로'): 직원이 PI 계정으로 돌 때 열면 안 되는 곳. 키를 빼면 아래 기본 목록,
   # [] 이면 끔. ~는 runner PC에서 펼치고, 없는 경로는 건너뜀. 작업 폴더를 담은 경로는 그 task에서 빠짐.
   # private_paths:
@@ -252,7 +252,6 @@ pi_profile:
 research:
   enabled: true               # 끄려면 enabled·evidence_checkpoint를 함께 false로
   evidence_checkpoint: true   # true면 CP1 뒤 연구 단계를 실행하고 CP2 승인 뒤 리뷰·보고서까지
-  semantic_report: false      # v1.0 기본 꺼짐(#1336). true면 요청별 온톨로지·의미 장치 보고서(#737)
   live_source_check: false     # true면 CP2와 labhq verify에서 Crossref·NCBI를 live 조회
   blind_draft: false           # true면 CP1 승인 직후 리뷰어가 원 요청만으로 초안을 쓰고 봉인한 뒤 리뷰에서 대조(#889)
   live_source_contact: ""      # API User-Agent/mailto에 넣을 관리자 email(선택)
@@ -261,13 +260,6 @@ research:
   revise_continuations: 2     # 리뷰 revise·CP2 수정 요청 뒤 새 CP1로 이어 가는 횟수, 둘을 합산(0이면 revise에서 끝)
   active_packs: [bulk_tumor_normal@3, single_cell_de@3]   # 기본 분야 팩. 정확한 id@version 키
 
-# 의미 모델 그림자 기록(#150): off | shadow | ab. shadow는 요청이 끝난 뒤 출처 모델·객체 뷰를 계산해
-# gateway.state_dir/semantics/에 ID·hash·개수만 남기고, CSO·승인·보고에는 아무것도 주지 않습니다.
-# ab는 연구 요청 절반에만 재사용 후보를 CSO 계획 참고로 줍니다. v1.0 기본은 off(#1336), 켜면 ab + actions: confirm(#613).
-# actions: off | shadow | confirm. confirm이면 PI가 CLI에서 y/N으로 후속 질문을 보낼 수 있습니다.
-semantics:
-  mode: "off"
-  actions: confirm
 pi_language:
   enabled: true
   model: haiku

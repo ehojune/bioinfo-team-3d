@@ -15,7 +15,7 @@ labhq/
   gateway/      server (FastAPI · WS · REST) · shutdown (종료 처리)
   orchestrator/ cso (브리핑 → 선행 연구/파견직 → 계획 DAG → CP1/CP2 → 리뷰 → 보고)
   research/     contract (CP1·CP2·result v2) · continuation (단계 재사용) · packs (도메인 규칙) ·
-                semantics* (출처/객체 그림자·입력 적합성·A/B) · semantic_device_report (의미 장치 보고서)
+                 input_fit · input_fit_hint · semantic_devices (core 점검); semantics (오프라인 #136 모델)
   evidence/     claims (주장·근거 원장 검증) · literal_check (인용·수치 대조)
   recruit/      paper2agent (논문 MCP 채용·수습·계약) · paper_skills (논문 방법론 자문 스킬)
   facilities/   signatures · fixes · packages (환경 실패 오류 서명·자동 복구 allowlist)

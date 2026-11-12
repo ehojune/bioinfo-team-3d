@@ -26,7 +26,6 @@ from .costs import aggregate_costs, classify_cost, cost_detail, format_cost
 from .policy import WRITE_LIKE
 from .request_status import is_terminal_request
 from .reproduction_receipt import receipt_json, receipt_note, receipt_summary
-from .research import semantic_device_report
 from . import bench_metrics
 from .util import atomic_write_text, free_ports, merge_staff_env, parent_claude_markers
 
@@ -431,9 +430,6 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
             "round_json": str(hub.rounds.directory / f"{rid}.json"),
             "round_status": record["result"]["status"],
             "reproduction_receipt": request.get("reproduction_receipt"),
-            "semantic_impact_metrics": (semantic_device_report.build_report(
-                {**request, "id": rid}, settings).get("impact_metrics")
-                if semantic_device_report.applies(request, settings) else None),
         }
         run["bench_metrics"] = bench_metrics.collect(
             metrics, mode=engines, tasks=hub.store.all("task") if hasattr(hub, "store") else None,
@@ -777,10 +773,6 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
     lines += ["", "## 재현 검증", "", *[
         f"- {row['engine']}: {receipt_note(row.get('reproduction_verification') or receipt_summary(None))}"
         for row in result["rows"]]]
-    lines += ['', '## 의미 장치 기여 비교 (저장된 기록만)', '']
-    for row in result['rows']:
-        lines += [f"### {row['engine']}", '',
-                  semantic_device_report.render_impact_metrics(row.get('semantic_impact_metrics'))]
     lines += ["", "## Bench 기록 (저장된 관측만)", ""]
     for row in result["rows"]:
         lines += [f"### {row['engine']}", "", bench_metrics.render(row.get("bench_metrics"))]
