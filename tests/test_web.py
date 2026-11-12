@@ -45,7 +45,8 @@ def test_both_inbox_views_refresh_after_recovery_and_reconnect(tmp_path):
     for page in [server.WEB / "index.html", server.WEB / "lab3d/src/live.js"]:
         source = page.read_text(encoding="utf-8")
         refresh = source.split("  async function refreshInbox() {", 1)[1].split("\n  }", 1)[0]
-        assert "setInterval(refreshInbox, 5000)" in source
+        assert ("setInterval(refreshInbox, 5000)" if page.suffix == ".html" else
+                "inboxNextRefresh = Date.now() + 5000; refreshInbox();") in source
         assert "runnerInboxText(S)" in source
         script = state + """
 const assert = require('node:assert/strict');

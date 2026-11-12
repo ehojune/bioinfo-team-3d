@@ -13,11 +13,8 @@ export function startLiveOffice(onState) {
   const readToken = () => { try { return localStorage.getItem(tokenKey) || ''; } catch { return ''; } };
   const saveToken = value => { try { localStorage.setItem(tokenKey, value); } catch {} };
   let token = params.get('token') || readToken(), lastSeq = 0, ws, retry, backoff = 1000;
-  const inboxView = document.createElement('pre');
-  inboxView.id = 'runner-inbox'; inboxView.setAttribute('role', 'status'); inboxView.hidden = true;
-  inboxView.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere';
-  $('service-warning').after(inboxView);
-  let inboxLoading = false, inboxEpoch = 0;
+  $('service-warning').style = 'white-space:pre-wrap;overflow-wrap:anywhere';
+  let inboxLoading = false, inboxEpoch = 0, inboxNextRefresh = Date.now() + 5000;
   async function refreshInbox() {
     if (demo || S.conn !== 'live' || inboxLoading) return;
     inboxLoading = true;
@@ -147,10 +144,9 @@ export function startLiveOffice(onState) {
   function render() {
     $('connection').textContent = globalThis.LabHQState.connectionLabel(S.conn, demo);
     const warning = globalThis.LabHQState.serviceWarning(S, demo);
-    $('service-warning').textContent = warning;
-    $('service-warning').hidden = !warning;
     const inboxText = demo ? '' : globalThis.LabHQState.runnerInboxText(S);
-    inboxView.textContent = inboxText; inboxView.hidden = !inboxText;
+    $('service-warning').textContent = [warning, inboxText].filter(Boolean).join('\n');
+    $('service-warning').hidden = !warning && !inboxText;
     const allRequests = [...S.requests.values()];
     const costRequests = globalThis.LabHQState.sessionCostRequests(allRequests, S.sessionStartedAt);
     $('session-cost').textContent = S.conn === 'connecting' ? '사용 비용 불러오는 중' : globalThis.LabHQState.totalCostLabel(
@@ -317,13 +313,13 @@ export function startLiveOffice(onState) {
     if (!token) { S.conn = 'auth'; render(); return; }
     S.conn = 'connecting'; render();
     ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}${lastSeq ? `&since=${lastSeq}` : ''}`);
-    ws.onopen = () => { S.conn = 'live'; backoff = 1000; refreshHistory(); refreshInbox(); render(); };
+    ws.onopen = () => { S.conn = 'live'; backoff = 1000; refreshHistory(); render(); };
     ws.onmessage = event => {
       try {
         const ev = JSON.parse(event.data);
-        if (ev.type === 'snapshot') inboxEpoch++;
         if (ev.type === 'snapshot' && !ev.replay_gap && Number.isFinite(ev.seq) && ev.seq < lastSeq) return;
         if (ev.type !== 'snapshot' && ev.seq && ev.seq <= lastSeq) return;
+        if (ev.type === 'snapshot') inboxEpoch++;
         for (const effect of apply(ev)) {
           if (effect.type === 'toast') notice(effect.text, effect.approval_id || null);
           if (effect.type === 'toast.clear' && noticeApproval && noticeApproval === effect.approval_id) notice('');
@@ -347,8 +343,10 @@ export function startLiveOffice(onState) {
   $('token-form').addEventListener('submit', event => {
     event.preventDefault(); token = $('token').value.trim(); saveToken(token); lastSeq = 0; open();
   });
-  setInterval(() => { if (S.approvals.size || S.activeTasks.size) render(); }, 1000);
-  setInterval(refreshInbox, 5000);
+  setInterval(() => {
+    if (S.approvals.size || S.activeTasks.size) render();
+    if (Date.now() >= inboxNextRefresh) { inboxNextRefresh = Date.now() + 5000; refreshInbox(); }
+  }, 1000);
   // #660: the fox's paper list for the inspector, from the same detail GET the 2.5D sheet reads. One read per
   // request update, even when it fails, so a re-render never loops on a refused or broken response.
   const literatureAt = new Map(), literatureLoading = new Set();
