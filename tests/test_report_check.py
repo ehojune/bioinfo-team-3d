@@ -55,8 +55,25 @@ def test_each_numeric_prose_sentence_requires_its_own_anchor():
               "`42`와 DUSP1 및 [자료](https://example.org/123)는 식별자입니다.\n"
               "~~~\n값은 99입니다.\n~~~\n")
     check = check_report(report, {"s1": _ledger()}, artifact_sha256={"s1/a1": "a" * 64})
-    assert len(check["problems"]) == 1
+    assert len(check["problems"]) == 3
     assert "12.3" in check["problems"][0] and "anchor" in check["problems"][0]
+    assert any("A | 7" in problem for problem in check["problems"])
+    assert any("foo | 12.3" in problem for problem in check["problems"])
+
+
+def test_unnumbered_conclusions_and_each_table_row_need_anchors():
+    report = ("가설은 기각됩니다.\n지지 여부는 불확실합니다. [[claim:s1/c1]]\n\n"
+              "| 결과 | 판정 |\n|---|---|\n| A | 증가 |\n| B | 감소 [[claim:s1/c1]] |\n")
+    problems = check_report(report, {"s1": _ledger()}, artifact_sha256={"s1/a1": "a" * 64})["problems"]
+    assert any("가설은 기각" in problem for problem in problems)
+    assert any("A | 증가" in problem for problem in problems)
+    assert not any("B | 감소" in problem for problem in problems)
+    assert not any("지지 여부는 불확실" in problem for problem in problems)
+
+
+def test_commented_out_table_is_not_a_visible_claim():
+    report = '<!--\n| Claim | Value |\n|---|---|\n| hidden | 7 |\n-->\n'
+    assert check_report(report, {})['problems'] == []
 
 
 def test_numeric_units_and_soft_wrapped_sentences():
@@ -313,3 +330,31 @@ async def test_a_correction_that_swaps_links_between_sentences_is_not_kept(tmp_p
 
 def test_tilde_fenced_examples_are_not_checked():
     assert _consistency("~~~\nKLF15 log2FC 9.9 ([표](steps/s3/outputs/de.tsv)).\n~~~\n")["findings"] == []
+
+
+def test_review_flags_preserve_original_claims_without_deciding_resolution():
+    from copy import deepcopy
+    from labhq.evidence.report_check import claim_evidence_rows, claim_evidence_section
+
+    ledgers = {"s1": {"claims": [
+        {"id": "direction", "statement": "A is higher than B", "status": "supported"},
+        {"id": "count", "statement": "There were 10 lookups", "status": "supported"},
+        {"id": "other", "statement": "Unrelated", "status": "supported"},
+    ]}}
+    before = deepcopy(ledgers)
+    issues = [
+        {"step_id": "s1", "claim_id": "direction", "problem": "Direction reversed", "request": "Correct direction"},
+        {"step_id": "s1", "claim_id": "count", "problem": "Counts conflict", "request": "Reconcile counts"},
+        {"step_id": "s1", "claim_id": "", "problem": "General concern"},
+    ]
+    rows = claim_evidence_rows(ledgers, review_issues=issues)
+    by_id = {row["claim_id"]: row for row in rows}
+    assert ledgers == before
+    for claim_id in ("direction", "count"):
+        assert "검토 지적" in by_id[claim_id]["claim_status"]
+        assert "해결 여부 미확인" in by_id[claim_id]["claim_status"]
+    assert "검토 지적" not in by_id["other"]["claim_status"]
+    section = claim_evidence_section(rows)
+    assert "Direction reversed" in section and "Counts conflict" in section
+    assert "Correct direction" in section and "Reconcile counts" in section
+    assert "General concern" in section and "claim 연결 미확인" in section

@@ -98,19 +98,26 @@ def is_log(name: str) -> bool:
 
 class Transfer:
     def __init__(self, run: Callable[[str], object], root: str, limits: Limits = Limits(),
-                 redact: Callable[[str], str] | None = None):
+                 redact: Callable[[str], str] | None = None,
+                 long_run: Callable[[str, float], object] | None = None):
         if not isinstance(root, str) or not root.startswith("/") or ".." in root.split("/") or "\n" in root:
             raise PathRejected("the remote work folder is an absolute POSIX path without '..'")
         self.run, self.root, self.limits = run, root.rstrip("/") or "/", limits
         self._real_root: str | None = None
         self.deadline: float | None = None  # time.monotonic() after which no further command is sent
+        self.long_run = long_run
         self._redact = redact  # hides the site's host, port and user in what the cluster printed
 
     # ---- the far side ------------------------------------------------------------------------------------------
-    def _do(self, command: str, what: str) -> str:
+    def _do(self, command: str, what: str, *, long: bool = False) -> str:
         if self.deadline is not None and time.monotonic() > self.deadline:
             raise TransferError(f"{what}: the time allowed for this transfer is used up; nothing more was sent")
-        result = self.run(command)
+        allowance = HASH_BUDGET_S if self.deadline is None else min(HASH_BUDGET_S, self.deadline - time.monotonic())
+        if allowance <= 0:
+            raise TransferError(f"{what}: the time allowed for this transfer is used up; nothing more was sent")
+        result = self.long_run(command, allowance) if long and self.long_run is not None else self.run(command)
+        if self.deadline is not None and time.monotonic() > self.deadline:
+            raise TransferError(f"{what}: the time allowed for this transfer is used up")
         if getattr(result, "exit_code", 1) != 0:
             raise TransferError(f"{what} failed on the cluster: {self._hide(str(getattr(result, 'output', ''))[:200].strip())}")
         return str(result.output)
@@ -413,7 +420,8 @@ def write_confined(root: Path, target: Path, data: bytes) -> None:
 
 MAX_INPUTS = 20
 INPUTS_TOTAL_BYTES = 4 * 1024 * 1024
-UPLOAD_BUDGET_S = 300.0  # all the commands of one job's upload together; the caller's wait is sized from it
+HASH_BUDGET_S = 3600.0  # one bounded full scan; partial manifests are never accepted
+UPLOAD_BUDGET_S = HASH_BUDGET_S + 300.0  # includes input re-verification and ordinary upload commands
 
 
 def job_spec(task_id: str, stem: str, request_id: str | None = None) -> dict:
@@ -486,7 +494,7 @@ def local_copy_conflicts(root: Path, paths: list[str], hashes: dict, receipts: d
 # List names and sizes through held directories. Large outputs stay exactly where the job wrote them;
 # listing never reads file contents, changes permissions, copies or moves them.
 REMOTE_DATA_HELPER = r'''
-import os, sys, json, stat, contextlib, uuid, re
+import os, sys, json, stat, contextlib, uuid, re, hashlib
 root, job, action = sys.argv[1:4]
 with contextlib.ExitStack() as stack:
  skipped=[]
@@ -534,7 +542,15 @@ with contextlib.ExitStack() as stack:
  def info(base,name):
   fd,s=read(base,name)
   try:
-   return {'bytes':s.st_size}
+   digest=hashlib.sha256()
+   while True:
+    block=os.read(fd,1024*1024)
+    if not block: break
+    digest.update(block)
+   after=os.fstat(fd)
+   if (s.st_size,s.st_mtime_ns,s.st_ctime_ns)!=(after.st_size,after.st_mtime_ns,after.st_ctime_ns):
+    raise ValueError('remote file changed while hashing')
+   return {'bytes':s.st_size,'sha256':digest.hexdigest()}
   finally: os.close(fd)
  r=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW); stack.callback(os.close,r)
  j=stack.enter_context(folder(r,job))
@@ -563,7 +579,8 @@ with contextlib.ExitStack() as stack:
   for row in cfg['files']:
    parts=row['path'].split('/')
    with folder(data,'/'.join(parts[:-1])) as parent:
-    if info(parent,parts[-1])['bytes']!=row['bytes']: raise ValueError('remote input size differs')
+    if info(parent,parts[-1])!={'bytes':row['bytes'],'sha256':row['sha256']}:
+     raise ValueError('remote input size or sha256 differs')
   for path in cfg.get('directories',[]):
    with folder(data,path): pass
 '''
@@ -615,18 +632,25 @@ def validate_remote_manifest(manifest: dict, request_id: str) -> dict:
 def _remote_data_command(transfer: Transfer, folder: str, action: str, config: str) -> None:
     transfer.plain_dir(folder)
     transfer._do("python3 " + " ".join(map(shlex.quote, [transfer.path(folder + '/remote-data.py'),
-                 transfer.real_root(), folder, action, config])), "checking remote data")
+                 transfer.real_root(), folder, action, config])), "checking remote data", long=True)
+
+
+def _require_remote_hashes(manifest: dict) -> None:
+    if any(not isinstance(row.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", row["sha256"])
+           for row in manifest["files"]):
+        raise TransferError("remote input has no valid recorded sha256; it cannot be verified")
 
 
 def verify_remote_data(transfer: Transfer, manifest: dict, request_id: str) -> str:
     validate_remote_manifest(manifest, request_id)
+    _require_remote_hashes(manifest)
     folder = str(PurePosixPath(manifest["data"]).parent)
     transfer.plain_dir(folder)
     # Check the runner's saved names/sizes without reading the large files.
     config = f"verify-{uuid.uuid4().hex[:12]}.json"
     payload = json.dumps(manifest).encode()
     metadata = Transfer(transfer.run, transfer.root, replace(transfer.limits, upload_max_bytes=4 * 1024 * 1024),
-                        redact=transfer._redact)
+                        redact=transfer._redact, long_run=transfer.long_run)
     metadata.deadline = transfer.deadline
     metadata.upload_bytes(f"{folder}/{config}", payload)
     transfer.upload_bytes(f"{folder}/remote-data.py", REMOTE_DATA_HELPER.encode())
@@ -649,6 +673,15 @@ def upload_job(transfer: Transfer, spec: dict, script_text: str, local_root: Pat
                budget_s: float = UPLOAD_BUDGET_S) -> list[dict]:
     """Put the script (and any small inputs, relative to ``local_root``) on the cluster. Raises before anything is
     submitted; what was written stays under the job's own folder."""
+    from .hpc_session import command_deadline
+
+    # Include shell queueing and reconnects in the upload budget, not just command execution.
+    with command_deadline(budget_s):
+        return _upload_job(transfer, spec, script_text, local_root, inputs, budget_s)
+
+
+def _upload_job(transfer: Transfer, spec: dict, script_text: str, local_root: Path,
+                inputs: list | None, budget_s: float) -> list[dict]:
     inputs = list(inputs or [])
     if len(inputs) > MAX_INPUTS:
         raise TooLarge(f"{len(inputs)} inputs is more than {MAX_INPUTS}; use the site profile's file transfer method")
@@ -727,15 +760,15 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
         _remote_data_command(transfer, spec["dir"], "scan", "remote-config.json")
         data, _ = transfer.fetch_bytes(f"{spec['dir']}/remote-data.json", max_bytes=4 * 1024 * 1024)
         remote = validate_remote_manifest(json.loads(data), spec["request_id"])
+        _require_remote_hashes(remote)
         if remote["data"] != spec["data"]:
             raise PathRejected("remote manifest folder differs from the submitted job")
         manifest["skipped"].extend(remote.get("skipped", []))
-        # Reuse the existing small-upload checksum to distinguish an unchanged input from a produced file.
-        # This never hashes a large output; large files retain the name/size-only contract.
+        # Compare the scan's digest with the uploaded input's digest.
         uploaded = spec.get("inputs") or {}
         remote["unchanged_inputs"] = [row["path"] for row in remote["files"]
             if row["path"] in uploaded and row["bytes"] <= transfer.limits.upload_max_bytes
-            and transfer.remote_sha256(f"{remote['data']}/{row['path']}") == uploaded[row["path"]]]
+            and row["sha256"] == uploaded[row["path"]]]
         manifest["remote"] = remote
         total = 0
         for row in remote["files"]:
@@ -755,6 +788,8 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
                 continue
             if info.get("remote_bytes", info["bytes"]) != size:
                 raise TransferError(f"{name}: size differs from remote listing")
+            if info.get("remote_sha256", info["sha256"]) != row["sha256"]:
+                raise HashMismatch(f"{name}: content differs from remote listing")
             total += size
             manifest["fetched"].append({"path": name, "bytes": info["bytes"], "sha256": info["sha256"],
                                         **({"redacted": True, "remote_sha256": info["remote_sha256"]}

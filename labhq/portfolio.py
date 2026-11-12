@@ -1091,9 +1091,25 @@ def _source_evidence_rows(req: dict, settings) -> list[dict[str, str]]:
     ledgers = {step_id: _claim_ledger(result) for step_id, result in results.items()
                if (active is None or step_id in active)
                and not step_uses_internal_data(step_id, req, settings, scope)}
-    cp2 = ((req.get("research_contract") or {}).get("checkpoints") or {}).get("cp2") or {}
+    contract = req.get("research_contract") or {}
+    cp2 = (contract.get("checkpoints") or {}).get("cp2") or {}
+    review = req.get("review") or (req.get("review_progress") or {}).get("review") or {}
+    issues = list(review.get("issues") or ())
+    for archived in contract.get("rounds") or ():
+        if not isinstance(archived, Mapping) or not isinstance(archived.get("review"), Mapping):
+            continue
+        for issue in archived["review"].get("issues") or ():
+            if isinstance(issue, Mapping):
+                issues.append({**issue, "problem": f"이전 차수 {archived.get('round', '미기록')}: "
+                                                   f"{issue.get('problem') or ''}"})
+    # Unlinked issues have no claim row to enforce publication scope. Do not expose an internal or
+    # unscoped review's text in the public evidence table.
+    internal = request_uses_internal_data(req, settings)
+    issues = [issue for issue in issues if isinstance(issue, Mapping) and
+              (str(issue.get("step_id")) in ledgers if issue.get("step_id") else not internal)]
     return claim_evidence_rows(ledgers, refused=cp2.get("refused_evidence") or (),
-                               unsupported=cp2.get("unsupported_claims") or ())
+                               unsupported=cp2.get("unsupported_claims") or (),
+                               review_issues=issues)
 
 
 def _publication_claim_footnotes(report: str, req: dict, settings) -> str:
@@ -1166,7 +1182,9 @@ def portfolio_revision_history(req: dict, settings, assets: Mapping[str, str]) -
     return _plain_korean(_clean("# 수정 이력\n\n" + history + "\n", settings, req))
 
 
-_VERDICT = re.compile(r"지지(?:되지|하지)\s*않|지지(?:됐|했|된다|한다|합니다|됩니다)|기각")
+_VERDICT = re.compile(r"지지(?:되지|하지)\s*않|지지(?:됐|했|된다|한다|합니다|됩니다)|"
+                      r"기각(?:되었|되지\s*않|된\s*것으로\s*판단|됐|했|된다|한다|합니다|됩니다|"
+                      r"할\s*수\s*없|하지\s*(?:못|않))")
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _CONNECTIVE = re.compile(r"^(?:그래서|따라서|그러므로|결국|즉)\s*,?\s*")
 
@@ -1219,8 +1237,7 @@ def _result_text(result: Any) -> str:
 
 def _first_answer(report: str, req: Mapping[str, Any] | None = None) -> str:
     """The README's one-line answer: the first verdict sentence ("…지지되지 않습니다") of the abstract or the synthesis
-    claims, else the abstract's first paragraph. The 10-17 abstract opened with "세 근거로 살폈습니다", which is not an
-    answer (#718)."""
+    claims. An introductory paragraph is not necessarily an answer; do not present it as one (#718, #1384)."""
     abstract: list[str] = []
     in_abstract = False
     for block in report.split("\n\n"):
@@ -1241,7 +1258,7 @@ def _first_answer(report: str, req: Mapping[str, Any] | None = None) -> str:
         for sentence in _SENTENCE_END.split(paragraph):  # not after 다: "단태아보다 여아" is one sentence
             if _VERDICT.search(sentence):
                 return _CONNECTIVE.sub("", sentence.strip())
-    return abstract[0] if abstract else "결과와 한계는 과학 보고서에 정리했다."
+    return "확인된 답을 추출하지 못했습니다. 과학 보고서의 결과와 한계를 확인하세요."
 
 
 def _claim_summary(result: Any) -> str:
@@ -1250,6 +1267,31 @@ def _claim_summary(result: Any) -> str:
     if not statements:
         return _result_sentence(_result_text(result))
     return " ".join(_SENTENCE_END.split(" ".join(statements[0].split()))[:2])[:380]
+
+
+def _reviewed_summary(req: Mapping[str, Any], step_id: str, result: Any, summary: str) -> str:
+    """Keep an old ledger claim visible without implying that review was resolved."""
+    claims = _claim_ledger(result).get("claims") or []
+    first = next((c for c in claims if isinstance(c, Mapping) and str(c.get("statement") or "").strip()), None)
+    reviews = [req.get("review") or (req.get("review_progress") or {}).get("review") or {}]
+    reviews += [r.get("review") or {} for r in (req.get("research_contract") or {}).get("rounds") or []
+                if isinstance(r, Mapping)]
+    fallback = ""
+    for review in reviews:
+        if not isinstance(review, Mapping):
+            continue
+        for issue in review.get("issues") or []:
+            if not isinstance(issue, Mapping):
+                continue
+            issue_step, issue_claim = issue.get("step_id"), issue.get("claim_id")
+            if not issue_claim and (not issue_step or str(issue_step) == step_id):
+                fallback = "이전 기록 · 검토 지적(주장 연결 미확인) · 해결 여부 미확인: "
+            if (first and first.get("id") and str(issue_step) == step_id
+                    and str(issue_claim) == str(first["id"])):
+                return "이전 기록 · 검토 지적 · 해결 여부 미확인: " + summary
+            if not fallback and issue_step and str(issue_step) == step_id:
+                fallback = "이전 기록 · 같은 단계 검토 지적(주장 연결 확인 필요) · 해결 여부 미확인: "
+    return fallback + summary
 
 
 def _result_sentence(text: str) -> str:
@@ -1286,7 +1328,8 @@ def _step_rows(req: dict, assets: Mapping[str, str]) -> list[tuple[str, str, str
         text = _result_text(result)
         if not text and "report" in sid.casefold():
             text = str(req.get("report") or "")
-        rows.append((sid, data, _result_sentence(text)))
+        summary = _result_sentence(text)
+        rows.append((sid, data, _reviewed_summary(req, sid, result, summary)))
     return rows or [("종합", "요청에 기록된 자료", _result_sentence(str(req.get("report") or "")))]
 
 
@@ -1376,7 +1419,8 @@ def _branch_rows(req: dict, specs: list[dict[str, Any]],
                          if result.get("ok") is not False]
             if not completed:
                 failures = [("terminal", "terminal 결과 없음")]
-        summaries = [_claim_summary(result) for _step_id, result in completed]
+        summaries = [_reviewed_summary(req, str(step_id), result, _claim_summary(result))
+                     for step_id, result in completed]
         scientific = [summary for summary in summaries if not _operational_result(summary)]
         if scientific:
             summaries = scientific

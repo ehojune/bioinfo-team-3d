@@ -11,6 +11,18 @@ import pytest
 from labhq.adapters.claude_code import ClaudeCodeAdapter
 from labhq.adapters.codex import CodexAdapter
 from labhq.models import AgentSpec, Engine, McpServerSpec, Task, TaskResult
+
+
+def test_core_read_only_instructions_match_available_capabilities():
+    import yaml
+    from labhq.adapters.read_only import read_only_profile
+    base = Path(__file__).resolve().parents[1] / 'agents/core'
+    specs = {name: AgentSpec.model_validate(yaml.safe_load((base / f'{name}.yaml').read_text(encoding='utf-8')))
+             for name in ('cso', 'editor', 'sci_reviewer')}
+    cso = read_only_profile(specs['cso'])
+    assert not cso.allow_skills and '스킬 도구가 없는 읽기 전용' in cso.system_prompt
+    assert '2000 characters' not in specs['editor'].system_prompt
+    assert specs['sci_reviewer'].mcp == []
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 from labhq.util import merge_staff_env

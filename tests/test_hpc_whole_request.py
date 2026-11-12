@@ -1146,7 +1146,8 @@ def test_verify_counts_outputs_kept_in_the_hpc_data_folder_as_remote_not_missing
     status = {row["path"]: row["status"] for row in report["files"]}
     assert status == {"outputs/local.tsv": "ok", "outputs/de_results.csv": "remote", "outputs/quant": "remote"}
     sizes = {row["path"]: row["size"] for row in report["files"]}
-    assert sizes["outputs/de_results.csv"] == 9_000_000 and report["exit_code"] == 0
+    assert sizes["outputs/de_results.csv"] == 9_000_000 and report["exit_code"] == 2
+    assert any("무결성 미확인" in reason for reason in report["reasons"])
     from labhq.evidence.audit import render_verify
     assert "원격 보관 2" in render_verify(report)
 
@@ -1156,7 +1157,8 @@ def test_verify_still_reports_an_output_neither_here_nor_in_the_remote_record_as
                                     outputs=["outputs/local.tsv", "outputs/de_results.csv", "outputs/gone.tsv"])
     status = {row["path"]: row["status"] for row in report["files"]}
     assert status["outputs/gone.tsv"] == "missing" and status["outputs/de_results.csv"] == "remote"
-    assert report["exit_code"] == 1
+    assert report["exit_code"] == 2
+    assert any("gone.tsv" in problem for problem in report["problems"])
 
 
 @pytest.mark.parametrize("variant", ["earlier_run", "linked_manifest"])
@@ -1184,7 +1186,7 @@ def test_verify_reads_the_remote_record_of_a_direct_hpc_run(tmp_path):
     result = {"task_id": "t1", "workdir": str(workdir), "workdir_id": "direct", "ok": True,
               "outputs": ["outputs/big.tsv"], "output_sha256": {}}
     report = verify_request({"id": "r", "status": "done", "results": {"direct": result}}, settings)
-    assert [row["status"] for row in report["files"]] == ["remote"] and report["exit_code"] == 0
+    assert [row["status"] for row in report["files"]] == ["remote"] and report["exit_code"] == 2
 
 
 @pytest.mark.parametrize("figure,remote", [
@@ -1202,13 +1204,13 @@ def test_verify_counts_a_report_figure_kept_in_the_hpc_data_folder_as_remote(tmp
                                     outputs=["outputs/local.tsv", "outputs/figures/qc.svg"])
     figure_problems = [p for p in report["problems"] if p.startswith("보고서 그림:")]
     if remote:
-        assert not figure_problems and report["exit_code"] == 0
+        assert not figure_problems and report["exit_code"] == 2
         assert any("원격 보관" in warning for warning in report["warnings"])
         from labhq.evidence.audit import render_verify
         report["request_bundle"]["figures"]["linked"] = 1
         assert "원격 보관 1개, 나머지는 묶음 안에 있음" in render_verify(report)
     else:
-        assert figure_problems and report["exit_code"] == 1
+        assert figure_problems and report["exit_code"] == 2
 
 
 def test_an_empty_remote_figure_is_still_a_problem(tmp_path, monkeypatch):
@@ -1218,4 +1220,4 @@ def test_an_empty_remote_figure_is_still_a_problem(tmp_path, monkeypatch):
         "problems": ["report.md: 링크한 그림이 묶음에 없습니다: steps/s1/outputs/figures/qc.svg"], "warnings": []})
     report = _verify_remote_request(tmp_path, remote_files={"figures/qc.svg": 0},
                                     outputs=["outputs/local.tsv", "outputs/figures/qc.svg"])
-    assert any(p.startswith("보고서 그림:") for p in report["problems"]) and report["exit_code"] == 1
+    assert any(p.startswith("보고서 그림:") for p in report["problems"]) and report["exit_code"] == 2

@@ -150,14 +150,15 @@ def labhq_mcp_timeout_s(settings: Settings) -> int:
     if settings.hpc.site_profile and settings.hpc.scheduler != "none":
         from ..hpc_session import SessionConfig
         from ..tools.scheduler import scheduler_call_budget_s
+        from ..hpc_transfer import UPLOAD_BUDGET_S
 
         try:
             session = Scheduler(settings.hpc).session()
         except RuntimeError:  # an unreadable profile is reported by the tool, not while constructing CLI settings
             session = None
         cfg = session.cfg if session is not None else SessionConfig(argv=["x"], first_output_wait_s=60)
-        hpc = scheduler_call_budget_s(cfg, float(settings.hpc.command_timeout_s), 2)
-        work = max(work, int(hpc) + 90)  # the broker waits hpc + 30; the CLI waits longer still
+        hpc = scheduler_call_budget_s(cfg, float(settings.hpc.command_timeout_s), 1)
+        work = max(work, int(2 * hpc + UPLOAD_BUDGET_S) + 90)  # submit includes upload and remote input verification
     return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + work
 
 

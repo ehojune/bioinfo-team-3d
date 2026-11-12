@@ -14,6 +14,22 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 12:52 | [`df6152b`](https://github.com/ehojune/bioinfo-team-3d/pull/1404/commits/df6152b) | **영문 도구 목록을 리뷰어 설정에 맞춥니다.**<br>PubMed와 bioRxiv 사용자 목록에서 과학 리뷰어를 제외합니다. |
+| 12:50 | [`a010c8f`](https://github.com/ehojune/bioinfo-team-3d/pull/1403/commits/a010c8f) | **평가 묶음 짝 비교 4번 질문을 labhq 전용 진행 지시를 뺀 문장으로 두 갈래에 똑같이 주고, 뺀 문장을 문서에 남겼습니다. 반증 정답은 공개 저장소 밖에 있다고 fixture 안내도 고쳤습니다.**<br>eval-suite.md 4번 중립판·뺀 문장 5개와 바꾼 절 1개·원문, tests/fixtures/eval_suite/README.md 정답 위치, manual 07 한영 평가 묶음 한 문단 (#1383, PR #1403 리뷰 P2) |
+| 12:47 | [`026fd9e`](https://github.com/ehojune/bioinfo-team-3d/pull/1404/commits/026fd9e) | **해시 시간 제한과 검증 범위를 기록합니다.**<br>중단 후 재시도와 실제 HPC 미검증 범위를 명시합니다. |
+| 12:46 | [`4163ca7`](https://github.com/ehojune/bioinfo-team-3d/pull/1404/commits/4163ca7) | **큰 원격 산출을 해시할 시간을 따로 확보합니다.**<br>산출 수집과 입력 확인에 최대 1시간을 두고 업로드와 호출자 대기 시간도 맞춥니다. |
+| 12:20 | [`e33015c`](https://github.com/ehojune/bioinfo-team-3d/pull/1403/commits/e33015c) | 반증 사례 facts를 반증과 함께 주도록 바꿈(F3·F5·F6에서 반증을 미리 알려 주던 문제), 짝 비교 4번 원문 고정 (#1383, PR #1403 리뷰) |
+| 12:08 | [`1c05217`](https://github.com/ehojune/bioinfo-team-3d/commit/1c05217) | **보이지 않는 표 초안은 보고서 검사에서 제외합니다.**<br>HTML 주석 안의 표 데이터 행은 claim 표식 누락으로 취급하지 않는다. |
+| 12:02 | [`c5d0c54`](https://github.com/ehojune/bioinfo-team-3d/commit/c5d0c54) | **표시된 주장과 정확히 일치하는 리뷰 지적을 먼저 보여 줍니다.**<br>같은 단계의 다른 지적이 앞에 있어도 정확한 claim 일치를 우선한다. |
+| 11:52 | [`db7aaba`](https://github.com/ehojune/bioinfo-team-3d/commit/db7aaba) | **기각하지 못한 판정도 결과 요약에서 찾을 수 있습니다.**<br>기각 불가·실패·판정 표현을 인식하고 기각 여부만 검토한 문장은 제외한다. |
+| 11:50 | [`7c9e981`](https://github.com/ehojune/bioinfo-team-3d/pull/1403/commits/7c9e981) | **평가 묶음 2차 준비입니다. 반증 반영 사례 6건에 사례 사실을 한 줄씩 더하고, 짝 비교 질문 10개와 갈래당 $25 상한, 응답의 이름이 아니라 행동으로 채점하는 규칙을 문서에 고정했습니다.**<br>falsification/cases.json에 facts, eval-suite.md 3~6절(고정 질문 10개, 갈래당 $25·합계 $500, 1·4번 따로 집계, 행동 채점·과잉 반응, 반증 먼저 실행), 정답 파일은 저장소 밖 (#1383) |
+| 11:47 | [`4109c88`](https://github.com/ehojune/bioinfo-team-3d/pull/1404/commits/4109c88) | **원격 산출의 해시 검증 회귀 시험을 보강합니다.**<br>기존 원격 산출과 로컬 검증 시험을 해시 확인 계약에 맞춥니다. |
+| 11:34 | [`fa22073`](https://github.com/ehojune/bioinfo-team-3d/pull/1404/commits/fa22073) | **원격 산출의 해시를 기록하고 읽기 전용 직원의 지시를 정리합니다.**<br>후속 입력을 쓰기 전 해시를 대조하고 로컬 검사에서 원격 파일의 미확인 상태를 표시합니다. |
+| 11:30 | [`801bc45`](https://github.com/ehojune/bioinfo-team-3d/commit/801bc45) | **보고서의 답과 검토가 필요한 옛 주장을 더 분명히 구분합니다.**<br>판정 없는 요약을 답으로 쓰지 않고 리뷰 지적과 표 행·결론 후보의 근거 표식 누락을 알린다. |
+| 11:10 | [`ae10d2f`](https://github.com/ehojune/bioinfo-team-3d/commit/ae10d2f) | **검토 지적을 받은 이전 주장을 결과 요약에서 구분할 수 있습니다.**<br>단계·갈래 요약과 웹 수정 이력에 해결 여부 미확인 표시를 붙인다. |
+| 10:54 | [`8092a21`](https://github.com/ehojune/bioinfo-team-3d/pull/1401/commits/8092a21) | **승인된 코드 지우기에서 그 코드만 검사하던 시험을 함께 지울 수 있게 개발 규칙을 고쳤습니다.**<br>AGENTS.md: PI가 승인한 지우기 PR에서는 지우는 코드만 검사하는 시험을 함께 지우고, PR 본문에 대응표를 싣는다는 예외를 넣는다 (#1400, PI 2026-11-12 #1375). |
+| 10:37 | [`368661f`](https://github.com/ehojune/bioinfo-team-3d/commit/368661f) | **이전 차수의 리뷰 지적도 근거 표에서 확인할 수 있습니다.**<br>이전 리뷰를 함께 표시하고 리뷰 문구의 Markdown 링크가 실제 링크로 처리되지 않게 했다. |
+| 10:28 | [`89acf70`](https://github.com/ehojune/bioinfo-team-3d/commit/89acf70) | **보고서 근거 표에서 원장 주장과 관련 리뷰 지적을 함께 볼 수 있습니다.**<br>같은 단계와 claim의 리뷰 지적을 표시하고 해결 여부는 미확인으로 남긴다. |
 | 09:52 | [`287a586`](https://github.com/ehojune/bioinfo-team-3d/pull/1393/commits/287a586) | **제목의 글자를 보존하고 같은 논문의 식별자를 연결해 원문을 찾습니다.**<br>#1385 r4 P2: 제목 markup·entity·inline 공백 보정, 문헌·선례 receipt의 DOI/PMID/PMCID 대응과 registry URL 확인. 미기록 별칭·hash 불일치 거부. 관련 317건 통과. |
 | 09:43 | [`4b3f49c`](https://github.com/ehojune/bioinfo-team-3d/pull/1393/commits/4b3f49c) | **논문 페이지의 메뉴 대신 첫 논문 제목으로 사본을 대조합니다.**<br>#1385 r4 리뷰 P2: HTML의 첫 비탐색 h1과 inline 글자를 보존해 제목 확인. 뒤쪽 제목 대체 거부 유지. 재현 1건 실패 → 문헌 관련 199건 통과, 마지막 경계 시험 6건 통과. |
 | 09:36 | [`9850b0d`](https://github.com/ehojune/bioinfo-team-3d/pull/1393/commits/9850b0d) | **인용한 제목과 DOI만 보고 다른 논문을 전문으로 인정하지 않습니다.**<br>#1385 r4 P1: DOI 일치 때도 첫 제목 전체를 요구하고 제목 미확인은 거부. Unpaywall 제목 보존·이전 identity 캐시 제외. 재현 4건 실패 → 문헌 관련 197건 통과. |

@@ -13,6 +13,45 @@ from labhq.result_storage import draft_documents
 from labhq.settings import DataZone, Settings
 
 
+def test_review_issues_follow_claim_ids_into_publication_evidence():
+    ledger = {"claims": [{"id": "direction", "statement": "A > B", "status": "supported"},
+                         {"id": "count", "statement": "10 lookups", "status": "supported"}]}
+    req = {"id": "req_review", "text": "Check", "results": {"s1": {"structured": ledger}},
+           "review": {"issues": [
+               {"step_id": "s1", "claim_id": "direction", "problem": "Wrong direction", "request": "Correct"},
+               {"step_id": "s1", "claim_id": "count", "problem": "Conflicting counts", "request": "Reconcile"},
+           ]}}
+    rows = portfolio._source_evidence_rows(req, Settings())
+    rendered = claim_evidence_section(rows)
+    assert "Wrong direction" in rendered and "Conflicting counts" in rendered
+    assert rendered.count("해결 여부 미확인") >= 2
+    assert ledger["claims"][0]["statement"] == "A > B"
+
+
+def test_prior_round_review_is_shown_with_current_claim():
+    issue = {"step_id": "s1", "claim_id": "c1", "problem": "Prior concern"}
+    req = {"id": "req_review", "results": {"s1": {"structured": {
+        "claims": [{"id": "c1", "statement": "A", "status": "supported"}]}}},
+        "research_contract": {"rounds": [{"round": 1, "review": {"issues": [issue]}}]},
+        "review": {"issues": []}}
+    rows = portfolio._source_evidence_rows(req, Settings())
+    assert "Prior concern" in claim_evidence_section(rows)
+    assert "해결 여부 미확인" in rows[0]["claim_status"]
+
+
+def test_review_markdown_links_are_not_active_in_evidence_or_footnotes():
+    req = {"id": "req_review", "results": {"s1": {"structured": {
+        "claims": [{"id": "c1", "statement": "A", "status": "supported"}]}}},
+        "review": {"issues": [{"step_id": "s1", "claim_id": "c1",
+                               "problem": "See [table](../missing.tsv)", "request": "Check"}]}}
+    rows = portfolio._source_evidence_rows(req, Settings())
+    table = claim_evidence_section(rows)
+    footnotes = portfolio._publication_claim_footnotes("Claim [[claim:s1/c1]]", req, Settings())
+    assert not portfolio.broken_markdown_links({"docs/reference/claim_evidence.md": table,
+                                                "report/report.md": footnotes})
+    assert "missing.tsv" in table and "missing.tsv" in footnotes
+
+
 PAPER = """# 공개 오믹스 대체 분석
 
 ## 요약(Abstract)
@@ -718,3 +757,49 @@ def test_no_env_example_without_input_variables(tmp_path):
     settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
     files = build_portfolio_files(request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
     assert ".env.example" not in files
+def test_reviewed_ledger_summary_marks_historical_unresolved_claim():
+    from labhq.portfolio import _step_rows, _branch_rows
+
+    req = {"plan": {"steps": [{"id": "s1"}]},
+           "results": {"s1": {"structured": {"claims": [{"id": "c1", "statement": "Old direction."}]}}},
+           "research_contract": {"rounds": [{"round": 1, "review": {"issues": [
+               {"step_id": "s1", "claim_id": "c1", "problem": "Direction reversed"}]}}]}}
+    step = _step_rows(req, {})[0][2]
+    branch = _branch_rows(req, [{"folder": "b", "terminals": ["s1"]}], {"s1": "b"})[0]["result"]
+    for text in (step, branch):
+        assert "Old direction" in text
+        assert "이전 기록" in text and "검토 지적" in text and "해결 여부 미확인" in text
+    req["research_contract"]["rounds"][0]["review"]["issues"][0]["claim_id"] = "other"
+    summary = _step_rows(req, {})[0][2]
+    assert "같은 단계 검토 지적" in summary and "주장 연결 확인 필요" in summary
+
+
+def test_review_without_claim_id_is_visible_without_inventing_a_claim_match():
+    req = {"plan": {"steps": [{"id": "s1"}]}, "results": {"s1": {"text": "과거 결과."}},
+           "review": {"issues": [{"step_id": "s1", "problem": "방향 재확인"}]}}
+    assert "검토 지적" in portfolio._step_rows(req, {})[0][2]
+    rows = portfolio._source_evidence_rows(req, Settings())
+    assert "방향 재확인" in claim_evidence_section(rows)
+    assert "claim 연결 미확인" in claim_evidence_section(rows)
+
+
+def test_exact_review_match_takes_priority_over_earlier_unlinked_or_other_claim():
+    result = {'structured': {'claims': [{'id': 'c1', 'statement': 'Old direction.'}]}}
+    for first in ({'step_id': 's1', 'claim_id': 'other'}, {'step_id': 's1'}):
+        req = {'review': {'issues': [first, {'step_id': 's1', 'claim_id': 'c1'}]}}
+        summary = portfolio._reviewed_summary(req, 's1', result, 'Old direction.')
+        assert summary.startswith('이전 기록 · 검토 지적 · 해결 여부 미확인:')
+
+
+def test_unlinked_review_does_not_expose_internal_or_unscoped_content(monkeypatch):
+    monkeypatch.setattr(portfolio, 'internal_data_steps', lambda *args: {'private'})
+    monkeypatch.setattr(portfolio, 'step_uses_internal_data', lambda step, *args: step == 'private')
+    monkeypatch.setattr(portfolio, 'request_uses_internal_data', lambda *args: True)
+    req = {'results': {'public': {'text': 'x'}, 'private': {'text': 'y'}}, 'review': {'issues': [
+        {'step_id': 'public', 'problem': 'public concern'},
+        {'step_id': 'private', 'problem': 'private concern'},
+        {'problem': 'unscoped concern'},
+    ]}}
+    text = claim_evidence_section(portfolio._source_evidence_rows(req, Settings()))
+    assert 'public concern' in text
+    assert 'private concern' not in text and 'unscoped concern' not in text
