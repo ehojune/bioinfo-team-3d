@@ -326,7 +326,8 @@ def _unanchored_numeric_sentences(report: str) -> list[str]:
 
 
 def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterable[Any] = (),
-                 refused: Iterable[Any] = (), artifact_sha256: Mapping[str, str | None] | None = None) -> dict:
+                 refused: Iterable[Any] = (), artifact_sha256: Mapping[str, str | None] | None = None,
+                 literal_checks: Iterable[Mapping] = ()) -> dict:
     """``{"anchors": n, "problems": [...]}`` for one report against the CP2-approved ledgers.
 
     ``unsupported`` and ``refused`` are the CP2 receipt rows (``step_id`` with ``claim_id`` or ``evidence_id``);
@@ -341,6 +342,8 @@ def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterab
     no_support = _claims_without_accepted_support(ledgers, refused)
     hashes = artifact_sha256 or {}
     problems: list[str] = []
+    literal_mismatches = {(str(row.get('step_id')), str(row.get('evidence_id'))): row
+                          for row in literal_checks if row.get('state') == 'mismatch'}
     for raw in dict.fromkeys(found):
         mark = f"[[claim:{raw}]]"
         step_id, separator, claim_id = (part.strip() for part in raw.rpartition("/"))
@@ -372,6 +375,9 @@ def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterab
             row = evidence.get(link.get("evidence_id"))
             if row is None or str(row.get("id")) not in accepted:
                 continue
+            if mismatch := literal_mismatches.get((step_id, str(row.get('id')))):
+                problems.append(f"{mark}: evidence {row.get('id')} literal mismatch: "
+                                + '; '.join(mismatch.get('problems') or []))
             source = row.get("source") if isinstance(row.get("source"), Mapping) else {}
             artifact = source.get("artifact_id")
             if artifact and not hashes.get(f"{step_id}/{artifact}"):

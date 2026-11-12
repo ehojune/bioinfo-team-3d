@@ -206,8 +206,7 @@ def test_breaker_wait_is_a_pure_rule():
     assert breaker_wait([200, 503, 503, 503], 0, 1) == 0
 
 
-# The tool process keeps the last answers itself: a send's status reaches the file only when its tool call ends, so the
-# retries inside one call would otherwise go on.
+# The tool process also keeps recent answers, so retries in one call stop without consulting the broker again.
 @pytest.fixture
 def annot_mcp(monkeypatch):
     from labhq.tools import annot_mcp as module
@@ -245,7 +244,10 @@ def test_in_call_retries_stop_at_the_third_503_and_never_reach_the_broker(annot_
 
     assert asyncio.run(scenario()) == [503, 503, 503, "paused", "paused"]
     assert admitted == [EBI] * 3  # the two paused ones were not even offered to the counter
-    assert [sends for sends, _ in finished] == [[[1, 503], [2, 503], [3, 503]]]  # one receipt, three counted sends
+    assert finished == [
+        ([[1, 503]], "failed"), ([[2, 503]], "failed"), ([[3, 503]], "failed"),
+        ([[1, 503], [2, 503], [3, 503]], "ok"),
+    ]  # release each transient answer immediately, then send the idempotent closing receipt
 
 
 def test_pause_of_one_host_does_not_refuse_the_rest_of_the_call(annot_mcp, monkeypatch):
@@ -268,6 +270,55 @@ def test_pause_of_one_host_does_not_refuse_the_rest_of_the_call(annot_mcp, monke
             return (await client.get(f"https://{OPENALEX}/works")).status_code
 
     assert asyncio.run(scenario()) == 200
+
+
+@pytest.mark.parametrize("status", [301, 429, 503])
+@pytest.mark.parametrize("recovers", [True, False])
+def test_immediate_settlement_checks_http_and_retries_before_next_send(
+        tmp_path, annot_mcp, monkeypatch, status, recovers):
+    import json
+
+    admission, _ = ledger(tmp_path, limit=2)
+    assert send(admission, OPENALEX, 200)["admitted"]  # one slot left, with room under the separate transient cap
+    receipts, sent = [], []
+    real = httpx.AsyncClient
+    monkeypatch.setattr(annot_mcp, "BROKER", "http://broker.test")
+
+    def broker(request):
+        body = json.loads(request.content)
+        if request.url.path == "/lookup/admit":
+            return httpx.Response(200, json=admission.admit(
+                "req_1", body["task_id"], body["agent_id"], body["tool"], body["host"]))
+        assert request.url.path == "/lookup/finish"
+        receipts.append(body["sends"])
+        if not recovers or len(receipts) == 1:
+            return httpx.Response(503)
+        admission.finish("req_1", body["task_id"], body["sends"], body["outcome"])
+        return httpx.Response(200, json={"ok": True})
+
+    monkeypatch.setattr(annot_mcp.httpx, "AsyncClient", lambda **kw: real(
+        transport=httpx.MockTransport(broker), **kw))
+
+    def provider(request):
+        sent.append(request.url.path)
+        return httpx.Response(status, headers={"location": f"https://{EBI}/second"}) if len(sent) == 1 else httpx.Response(200)
+
+    async def scenario():
+        async with annot_mcp._admitted("fulltext") as hooks, real(
+                transport=httpx.MockTransport(provider), follow_redirects=True, **hooks) as client:
+            response = await client.get(f"https://{EBI}/first")
+            if status != 301:
+                response = await client.get(f"https://{EBI}/second")
+            return response.status_code
+
+    if recovers:
+        assert asyncio.run(scenario()) == 200
+        assert sent == ["/first", "/second"]
+        assert receipts[:2] == [[[2, status]], [[2, status]]]
+    else:
+        with pytest.raises(annot_mcp.LookupRefused):
+            asyncio.run(scenario())
+        assert sent == ["/first"]  # an unconfirmed receipt never creates quota
 
 
 def test_a_paused_answer_from_the_broker_becomes_a_host_pause_not_a_limit_refusal(annot_mcp, monkeypatch):

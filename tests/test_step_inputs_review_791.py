@@ -211,3 +211,48 @@ async def test_reused_workspace_inputs_remain_protected_without_new_artifact_met
         meta={'kind': 'result_correction', 'workdir': str(ctx.workdir)}))
     assert result.ok
     assert seen['ctx'].read_only_inputs == [str(ctx.workdir / 'inputs')]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failure', ['literature', 'artifact'])
+async def test_whole_hpc_only_artifact_failure_blocks_dispatch(tmp_path, monkeypatch, failure):
+    from tests.test_private_paths import _capture_runner, _runner_settings
+    from tests.test_step_inputs_665 import source
+    from tests.test_tool_card_explain import _system_commands
+    from labhq.runner.workspace import TaskWorkspace
+    settings = _runner_settings(tmp_path, None)
+    settings.runner.id, settings.hpc.scheduler = 'local', 'mock'
+    _system_commands(monkeypatch)
+    runner, seen = _capture_runner(settings, monkeypatch, Engine.mock)
+    agent = runner.registry.get('worker')
+    agent.builtin_mcp = ['hpc']
+    monkeypatch.setattr(runner.registry, 'get', lambda *_: agent)
+    root = Path(settings.runner.workspace_root)
+    root.mkdir(exist_ok=True)
+    folder, artifact = source(root)
+    if failure == 'literature':
+        lit = folder / '.tmp/literature'
+        lit.mkdir(parents=True)
+        (lit / 'too-large.md').write_bytes(b'x' * 2048)
+        settings.runner.input_hash_max_file_bytes = 1024
+    else:
+        artifact['output_sha256'] = {}
+    published = []
+    def publish(self, *args):
+        published.append(True)
+        return {'fetch': str(self.dir / 'inputs/fetch')}
+    monkeypatch.setattr(TaskWorkspace, 'publish_hpc_inputs', publish)
+    task = Task(id='down', agent_id='worker', request_id='r', prompt='fixture',
+        meta={'kind': 'step', 'step_id': 'qc', 'execution_location': {'mode': 'hpc', 'runner_id': 'local'},
+              'upstream_steps': {'fetch': str(folder)}, 'upstream_artifacts': {'fetch': artifact}})
+    if failure == 'artifact':
+        with pytest.raises(ValueError, match='HPC ancestor snapshot unavailable'):
+            await runner.run_task(task)
+        assert not published
+        return
+    result = await runner.run_task(task)
+    assert bool(published) is (failure == 'literature'), result.error
+    if failure == 'literature':
+        assert 'literature handoff incomplete' in seen['ctx'].task.context
+    else:
+        assert not result.ok and 'HPC ancestor snapshot unavailable' in result.error

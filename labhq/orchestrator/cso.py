@@ -33,7 +33,7 @@ from ..costs import cost_detail, format_cost, historical_plan_cost_estimate, tas
 from ..interruption import ShutdownInterrupted, shutdown_interruption, stopping_marker
 from ..model_refusal import REASON as MODEL_REFUSAL_REASON, ModelRefused, is_model_refusal
 from ..pi_text import PI_TEXT_RULE
-from ..evidence import report_consistency, wiki_exposure
+from ..evidence import literal_check, report_consistency, wiki_exposure
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.wiki_contract import snapshot_audit as wiki_collect_audit
 from ..evidence.wiki_contract import step_findings as wiki_step_findings
@@ -6190,6 +6190,7 @@ class Orchestrator:
                            if (shown := unreported_warning_paths(paths))}
         source_verification: list[str] = []
         source_reports: list[dict[str, Any]] = []
+        literal_checks: list[dict[str, Any]] = []
         live_resolver = None
         if self.hub.s.research.live_source_check:
             live_resolver = LiveSourceResolver(
@@ -6213,6 +6214,19 @@ class Orchestrator:
             unsupported += [{"step_id": step["id"], **row} for row in bound["unsupported_claims"]]
             artifact_sha256.update({f"{step['id']}/{artifact_id}": value
                                     for artifact_id, value in bound["artifact_sha256"].items()})
+            if self.hub.s.research.literal_source_check:
+                texts = await asyncio.to_thread(literal_check.source_texts_for, result.structured, result,
+                    [results[sid] for sid in ancestors[step['id']] if sid in results and results[sid].ok],
+                    req.get('analysis_precedents') or ())
+                checked_literals = await asyncio.to_thread(literal_check.check_evidence, result.structured, texts)
+                for item in checked_literals:
+                    literal_checks.append({'step_id': step['id'], **item})
+                    if item['state'] != 'matched':
+                        reason = 'literal ' + item['state'] + ': ' + '; '.join(item['problems'])
+                        warnings.append(f"{step['id']}/{item['evidence_id']}: {reason}")
+                        if item['state'] == 'mismatch':
+                            refused.append({'step_id': step['id'], 'evidence_id': item['evidence_id'],
+                                            'reason': reason})
             if live_resolver is not None:
                 parsed = validate_research_result(result.structured, plan=req["plan"])
                 checked = await verify_sources(
@@ -6285,6 +6299,7 @@ class Orchestrator:
                    **({"refused_evidence": refused} if refused else {}),
                   **({"unsupported_claims": unsupported} if unsupported else {}),
                   **({"source_verification": source_verification} if source_verification else {}),
+                  **({'literal_checks': literal_checks} if literal_checks else {}),
                    "artifact_sha256": artifact_sha256, "unreported_outputs": warning_outputs,
                   "results": ledgers,
                   **({"branches": req["plan"].get("branches"),
@@ -6307,13 +6322,16 @@ class Orchestrator:
                                    f"only; their content was not checked ({', '.join(pinned[:5])}"
                                    f"{', ...' if len(pinned) > 5 else ''}).")
         recorded = (contract.get("checkpoints") or {}).get("cp2") or {}
-        source_changed = (live_resolver is not None and bool(recorded.get("decision"))
+        source_changed = ((live_resolver is not None or self.hub.s.research.literal_source_check)
+                          and bool(recorded.get("decision"))
                           and recorded.get("plan_sha256") == contract["plan_sha256"]
                           and not self._archived_continuation_decision(req)
-                          and list(recorded.get("source_verification") or []) != source_verification)
+                          and (list(recorded.get("source_verification") or []) != source_verification
+                               or list(recorded.get('literal_checks') or []) != literal_checks))
         if source_changed:
             detail["previous_source_verification"] = list(recorded.get("source_verification") or [])
-            summary = "Live source verification changed after the recorded CP2 decision. " + summary
+            prefix = 'Live source' if live_resolver is not None else 'Saved source'
+            summary = prefix + " verification changed after the recorded CP2 decision. " + summary
         if (recorded.get("decision") and recorded.get("plan_sha256") == contract["plan_sha256"]
                 and not source_changed):
             # A restart after the receipt was saved: the PI already decided this plan's CP2, so it is not asked again.
@@ -6322,6 +6340,7 @@ class Orchestrator:
             refused_rows = recorded.get("refused_rows") or []
             unsupported = recorded.get("unsupported_claims") or []
             source_verification = recorded.get("source_verification") or source_verification
+            literal_checks = recorded.get('literal_checks') or literal_checks
             update_conclusion_depth()  # the saved CP2 refusal set is authoritative after a restart
         else:
             cp2: str | None = None
@@ -6353,6 +6372,7 @@ class Orchestrator:
                 **({"refused_rows": refused_rows} if refused_rows else {}),
                 "refused_evidence": refused, "unsupported_claims": unsupported,
                 "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
+                **({'literal_checks': literal_checks} if literal_checks else {}),
                 **({"source_verification": source_verification,
                     "source_verification_reports": source_reports} if live_resolver is not None else {}),
                 **({"result_salvage": salvage} if salvage else {})}
@@ -6467,6 +6487,7 @@ class Orchestrator:
         """
         req = self.hub.requests[rid]
         contract = req["research_contract"]
+        literal_checks = (contract.get('checkpoints', {}).get('cp2') or {}).get('literal_checks') or []
         from ..research import final_checkpoint as cp4
         if cp4.enabled(req) and contract.get("final_draft"):
             cp4.reconcile(req)
@@ -6594,7 +6615,7 @@ class Orchestrator:
         # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).
         body, model_appendix = _split_report_appendix(report_body(final.text))
         check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
-                             artifact_sha256=artifact_sha256)
+                             artifact_sha256=artifact_sha256, literal_checks=literal_checks)
         # One failed claim check used to end the request after the whole study ran (17th run: no anchor at all).
         # The writer gets the problems and the citable anchors back, up to REPORT_CORRECTIONS times (#956).
         corrections = 0
@@ -6615,7 +6636,7 @@ class Orchestrator:
                 break  # the report written so far and its problems stand
             body, model_appendix = _split_report_appendix(report_body(fixed.text))
             check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
-                                 artifact_sha256=artifact_sha256)
+                                 artifact_sha256=artifact_sha256, literal_checks=literal_checks)
         if corrections:
             contract["report_corrections"] = corrections
 
@@ -6634,8 +6655,9 @@ class Orchestrator:
         body, contract["report_consistency"] = await report_consistency.correct_once(
             body, results, fix_consistency, accept=lambda fixed: len(check_report(
                 fixed, ledgers, unsupported=unsupported, refused=refused,
-                artifact_sha256=artifact_sha256)["problems"]) <= len(check["problems"]))
-        check = check_report(body, ledgers, unsupported=unsupported, refused=refused, artifact_sha256=artifact_sha256)
+                artifact_sha256=artifact_sha256, literal_checks=literal_checks)["problems"]) <= len(check["problems"]))
+        check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
+                             artifact_sha256=artifact_sha256, literal_checks=literal_checks)
         contract["report_check"] = check
         claim_check = (["Claim check: the report is incomplete.\n" +
                         "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])

@@ -135,9 +135,8 @@ class LookupHostPaused(annot.LookupFailed):
     refusal by the limit, it concerns this host only; requests to other hosts of the same call go on."""
 
 
-# This process's recent answers per host, newest first, and when the last one came. The admission file holds the same
-# for the whole request, but a send's status reaches it only when its tool call ends, so the retries inside one call
-# need this copy. The server process lives as long as its task, so the copy also spans that task's tool calls.
+# This process's recent answers per host, newest first, and when the last one came. Keep this local copy even if
+# immediate broker settlement fails, so retries in one call still stop. It also spans this task's tool calls.
 HOST_ANSWERS: dict[str, tuple[list[int], float]] = {}
 
 
@@ -181,12 +180,15 @@ async def _admit(tool: str, host: str) -> int:
 
 
 async def _finish(sends: list[list], outcome: str) -> None:
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(f"{BROKER}/lookup/finish", headers={"X-Labhq-Token": BROKER_TOKEN},
-                              json={"task_id": TASK_ID, "sends": sends, "outcome": outcome})
-    except httpx.HTTPError:
-        pass  # every send was counted at admission and stays counted: a 5xx/429 is given back only once it is recorded
+    async with httpx.AsyncClient(timeout=10) as client:
+        for _ in range(2):  # idempotent receipt: retry an unconfirmed settlement before the next send
+            try:
+                response = await client.post(f"{BROKER}/lookup/finish", headers={"X-Labhq-Token": BROKER_TOKEN},
+                                             json={"task_id": TASK_ID, "sends": sends, "outcome": outcome})
+                response.raise_for_status()
+                return
+            except httpx.HTTPError:
+                pass  # until recorded, the send stays counted; the next admission remains authoritative
 
 
 @asynccontextmanager
@@ -226,6 +228,10 @@ async def _admitted(tool: str):
         if seq in sends:
             sends[seq] = response.status_code
             _note_answer((response.request.url.host or "").lower(), response.status_code)
+            # Settle before httpx follows a redirect or annot retries: this call may need
+            # the returned slot for its very next request. Broker settlement is idempotent.
+            if 300 <= response.status_code < 400 or response.status_code == 429 or response.status_code >= 500:
+                await _finish([[seq, response.status_code]], "ok" if response.status_code < 400 else "failed")
 
     outcome = "failed"
     try:
