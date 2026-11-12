@@ -12,3 +12,7 @@ rows:
     at: "2026-11-12 17:15"
     summary: "사이트 가림 뒤에도 요청 ID와 파일 복사 상태를 보존합니다."
     text: "#1416 r2 최종 리뷰: 요청 ID 일치·copied 상태와 사본 hash 회귀 수정. 관련 시험 174 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS."
+  - sha: "8b1711c"
+    at: "2026-11-12 17:23"
+    summary: "입력 목록의 경로를 가려도 열 이름과 단계 식별자가 유지됩니다."
+    text: "#1416 r2: INPUTS.tsv는 path 값만 가리고 schema·step ID·hash를 보존. 충돌 값 4종 포함 178 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS."
