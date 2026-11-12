@@ -2394,7 +2394,27 @@ def test_streamed_bundle_transformations_preserve_late_invalid_utf8(tmp_path, op
     path.parent.mkdir(parents=True)
     path.write_bytes(original)
     if operation == 'redact':
-        assert not _redact_bundle_text(path, lambda text, **_kwargs: text.replace('data.tsv', 'hidden'))
+        with pytest.raises(ValueError, match='UTF-8'):
+            _redact_bundle_text(path, lambda text, **_kwargs: text.replace('data.tsv', 'hidden'))
     else:
         assert _rewrite_text(path, [('s1', workdir)]) == (0, [])
     assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize('invalid', ['late', 'early', 'nul'])
+def test_hpc_bundle_refuses_unredactable_text_without_publishing_private_copies(tmp_path, invalid):
+    settings, request, task = pending_bundle_fixture(tmp_path, 'req_invalid_text')
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    work = Path(request['results']['direct']['workdir'])
+    path = work / 'outputs/job.out'
+    payload = b'/scratch/fixture-user/private.txt\n' * 1000
+    original = payload + b'\xff' if invalid == 'late' else b'\xff' + payload if invalid == 'early' else payload + b'\0'
+    path.write_bytes(original)
+    request['results']['direct']['outputs'].append('outputs/job.out')
+    request['results']['direct']['output_sha256']['outputs/job.out'] = digest(path)
+
+    with pytest.raises(ValueError, match='public bundle withheld'):
+        build_request_bundle(request, settings, {'t': task})
+
+    assert path.read_bytes() == original
+    assert not (Path(settings.runner.workspace_root) / 'requests' / request['id']).exists()

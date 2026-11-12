@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import codecs
 import hashlib
 import json
 import os
@@ -489,18 +490,31 @@ def _public_values(value, hide, *, redact_keys=True, preserve_fields=()):
 def _redact_bundle_text(path, hide, *, hash_bound=False, record_fields=()):
     """Content-based UTF-8 detection includes suffixless configs and scheduler .out/.err files."""
     with path.open(mode='rb') as handle:
-        if b'\0' in handle.read(8192):
-            return False
+        prefix = handle.read(8192)
+    text_candidate = path.suffix.casefold() in TEXT_SUFFIXES | {'.out', '.err', '.log', ''}
+    if b'\0' in prefix:
+        if text_candidate:
+            raise ValueError('text artifact contains NUL bytes; public bundle withheld')
+        return False
+    try:
+        codecs.getincrementaldecoder('utf-8')().decode(prefix, final=False)
+    except UnicodeError as exc:
+        if text_candidate:
+            raise ValueError('text artifact is not valid UTF-8; public bundle withheld') from exc
+        return False
     if path.suffix.casefold() != '.json':
-        return bool(_transform_text(path, lambda line: hide(line, script=path.suffix.casefold() in SCRIPT_SUFFIXES)))
+        transformed = _transform_text(path, lambda line: hide(line, script=path.suffix.casefold() in SCRIPT_SUFFIXES))
+        if transformed is None:
+            raise ValueError('text artifact is not valid UTF-8 or contains NUL bytes; public bundle withheld')
+        return transformed
     with path.open(mode='rb') as handle:
         data = handle.read(_JSON_REDACTION_MAX_BYTES + 1)
     if len(data) > _JSON_REDACTION_MAX_BYTES:
         raise ValueError('JSON artifact exceeds bounded structural-redaction limit; bundle withheld')
     try:
         text = data.decode('utf-8')
-    except UnicodeError:
-        return False
+    except UnicodeError as exc:
+        raise ValueError('JSON artifact is not valid UTF-8; public bundle withheld') from exc
     if path.suffix.casefold() == '.json':
         try:
             value = json.loads(text)
