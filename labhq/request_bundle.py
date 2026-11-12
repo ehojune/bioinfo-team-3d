@@ -67,9 +67,15 @@ _UNC_ABS = re.compile(r'''(?<![A-Za-z0-9_:/\\])(?:/{2,}|\\{2,})[^/\\\s<>"'`|]+[/
 _PRIVATE_URI = re.compile(r'''(?i)\b(?!(?:http|https)://)[a-z][a-z0-9+.-]*://(?:\\[^\r\n]|[^\s<>"'`|\\])+''')
 _POSIX_ABS = re.compile(r"(?:^|(?<=[\s=(\[{:>\"'`]))(?P<path>/(?!/|\.\.?/)[^\s<>\"'`|]+)", re.MULTILINE)
 _SCRIPT_QUOTED = re.compile(r'''(?P<quote>["'])(?P<body>(?:\\[^\r\n]|(?!(?P=quote))[^\r\n\\])*)(?P=quote)''')
-_SCRIPT_POSIX_ABS = re.compile(
-    r'''(?:^|(?<=[\s=(\[{:>"'`]))/(?!/|\.\.?/)(?:\\[^\r\n]|"(?:\\[^\r\n]|[^"\r\n\\])*"|'[^'\r\n]*'|[^\s<>"'`|\\;])+''',
-    re.MULTILINE)
+_PRIVATE_PATH_START = (
+    r'''(?:(?<![A-Za-z0-9_])[A-Za-z]:[\\/]|(?<![A-Za-z0-9_:/\\])(?:/{2,}|\\{2,})'''
+    r'''|(?:^|(?<=[\s=(\[{:>"'`]))/(?!/|\.\.?/)'''
+    r'''|(?i:\b(?!(?:http|https)://)[a-z][a-z0-9+.-]*://))''')
+_SCRIPT_ABS = re.compile(_PRIVATE_PATH_START +
+    r'''(?:\\[^\r\n]|"(?:\\[^\r\n]|[^"\r\n\\])*"|'[^'\r\n]*'|[^\s<>"'`|\\;])+''', re.MULTILINE)
+# Without shell quoting, a log/JSON value cannot distinguish path spaces from trailing prose.
+# Hide that whole span conservatively, stopping at explicit markup or a protected bundle reference.
+_TEXT_ABS = re.compile(_PRIVATE_PATH_START + r'''[^\r\n<>"'`|\x01]+''', re.MULTILINE)
 _SYSTEM_OPERAND = re.compile(r'/(?:((?:usr/(?:local/)?)?s?bin)/[A-Za-z0-9_.+-]+|dev/(?:null|stdin|stdout|stderr))\Z')
 _BINARY_PREFIXES = (b'%PDF-', b'\x89PNG', b'\xff\xd8\xff', b'GIF87a', b'GIF89a', b'PK\x03\x04',
                     b'\x1f\x8b', b'BAM\x01', b'\x89HDF', b'\x93NUMPY', b'ARROW1\0\0', b'SQLite format 3\0')
@@ -481,16 +487,16 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
 
     def hide(text, *, script=False):
         nonlocal portable_count, portable_pattern
-        if script:
-            def quoted_operand(match):
-                value = match.group('body')
-                if _WINDOWS_ABS.search(value) or _UNC_ABS.search(value) or _PRIVATE_URI.search(value) \
-                        or any(not _SYSTEM_OPERAND.fullmatch(found.group('path')) for found in _POSIX_ABS.finditer(value)):
-                    return match.group('quote') + '<remote-path>' + match.group('quote')
-                return match.group(0)
+        def quoted_operand(match):
+            value = match.group('body')
+            if _WINDOWS_ABS.search(value) or _UNC_ABS.search(value) or _PRIVATE_URI.search(value) \
+                    or any(not script or not _SYSTEM_OPERAND.fullmatch(found.group('path'))
+                           for found in _POSIX_ABS.finditer(value)):
+                return match.group('quote') + '<remote-path>' + match.group('quote')
+            return match.group(0)
 
+        if script:
             text = _SCRIPT_QUOTED.sub(quoted_operand, text)
-            text = _UNC_ABS.sub('<remote-path>', _PRIVATE_URI.sub('<remote-path>', text))
             sentinel = '\x01'
             while sentinel in text:
                 sentinel *= 2
@@ -506,7 +512,7 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
 
             # Keep only system interpreters/executables/devices; shared-site paths outside the configured root are private.
             text = re.sub(r'(?<=#!)/[^\s]+', operand, text)
-            text = _SCRIPT_POSIX_ABS.sub(operand, text)
+            text = _SCRIPT_ABS.sub(operand, text)
             text = _WINDOWS_ABS.sub('<local-path>', transfer._hide(text))
             for index, value in enumerate(systems):
                 text = text.replace(f'{sentinel}{index}{sentinel}', value)
@@ -532,7 +538,8 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
                 if token in text:
                     references.append(token)
                     text = text.replace(token, f'{sentinel}{len(references) - 1}{sentinel}')
-        text = _UNC_ABS.sub('<remote-path>', _PRIVATE_URI.sub('<remote-path>', text))
+        text = _SCRIPT_QUOTED.sub(quoted_operand, text)
+        text = _TEXT_ABS.sub('<remote-path>', text)
         text = _WINDOWS_ABS.sub("<local-path>", transfer.hide_log(text))
         for index, token in enumerate(references):
             text = text.replace(f'{sentinel}{index}{sentinel}', token)

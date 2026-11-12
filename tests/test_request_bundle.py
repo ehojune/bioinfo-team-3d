@@ -2591,6 +2591,7 @@ def test_structured_identifiers_do_not_preserve_absolute_paths(tmp_path, private
     r'/project/private\ cohort/patient.vcf', '/project/"private cohort"/patient.vcf',
     r'"C:\private cohort\patient.vcf"', r'"\\nas\private cohort\patient.vcf"',
     '"s3://bucket/private cohort/patient.vcf"', r's3://bucket/private\ cohort/patient.vcf',
+    r'C:\private\ cohort\patient.vcf', r'\\nas\private" cohort"\patient.vcf',
 ])
 def test_hpc_bundle_redacts_whole_script_operands_with_spaces(tmp_path, operand):
     settings, request, task = pending_bundle_fixture(tmp_path, 'req_script_spaces')
@@ -2611,3 +2612,26 @@ def test_hpc_bundle_redacts_whole_script_operands_with_spaces(tmp_path, operand)
     assert manifest_rows(bundle)['steps/direct/' + relative]['redacted'] == 'yes'
     assert manifest_rows(bundle)['.']['reproducibility_grade'] == 'documented'
     assert verify_bundle_copy(bundle)['problems'] == []
+
+
+@pytest.mark.parametrize('private_path', [
+    '/project/private cohort/patient.vcf', r'C:\private cohort\patient.vcf',
+    r'\\nas\private cohort\patient.vcf', 's3://bucket/private cohort/patient.vcf',
+])
+@pytest.mark.parametrize('suffix', ['.out', '.txt', '.json'])
+def test_non_script_artifacts_redact_entire_paths_with_spaces(tmp_path, private_path, suffix):
+    from labhq.request_bundle import _PUBLIC_RECORD_FIELDS, _public_hpc_text, _redact_bundle_text
+
+    settings = Settings()
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    path = tmp_path / ('artifact' + suffix)
+    if suffix == '.json':
+        write(path, json.dumps({'id': 'c_main', 'path': private_path, 'message': 'read ' + private_path}))
+    else:
+        write(path, 'read "' + private_path + '"\nread ' + private_path + '\n')
+
+    assert _redact_bundle_text(path, _public_hpc_text(settings), record_fields=_PUBLIC_RECORD_FIELDS)
+    copied = path.read_text(encoding='utf-8')
+    assert not any(part in copied for part in ('cohort', 'patient.vcf', 'bucket', 'nas'))
+    if suffix == '.json':
+        assert json.loads(copied)['id'] == 'c_main'
