@@ -36,7 +36,7 @@
 
 ## main 대조와 정확한 통합 경로
 
-`git merge-tree --write-tree HEAD origin/main`: exit 0, 예상 tree `325ad1c9389192fae959ada24c138d99649807ee`. branch/index/worktree는 바꾸지 않았다. 공통 기준 이후 양쪽에서 동시에 바뀐 경로는 0개다. 이 snapshot의 텍스트 충돌 검사이며 W1 r14 종료 뒤 재확인해야 한다.
+`git merge-tree --write-tree 1ed8764f92c4a9306ba0a22ee8d233411ffed19d f849ef66832c753d6a84d63b7368467fa21f0e2b`: exit 0, 예상 tree `325ad1c9389192fae959ada24c138d99649807ee`. 검증 대상은 위 r2/main snapshot이다. branch/index/worktree는 바꾸지 않았다. 공통 기준 이후 양쪽에서 동시에 바뀐 경로는 0개다. W1 r14 종료 뒤 텍스트 충돌을 다시 확인해야 한다.
 
 main 제품/시험 6경로: `labhq/portfolio.py`, `labhq/evidence/report_check.py`, `labhq/web/state.js`, `tests/test_portfolio_edition.py`, `tests/test_report_check.py`, `tests/web_report_markdown.cjs`. 이전 차수 review·claim ID 연결·미해결 표시·literal link 안전성 수정을 보존한다. `AGENTS.md`의 #1401 삭제 시험 예외와 한영 12장·status·patch note 기록도 merge로 가져온다.
 
