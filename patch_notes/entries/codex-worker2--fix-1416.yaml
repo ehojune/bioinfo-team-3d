@@ -64,3 +64,7 @@ rows:
     at: "2026-11-12 19:22"
     summary: "Bash 스크립트의 비공개 경로를 가립니다."
     text: "#1416 r2: .bash를 text/script 형식과 재실행 명령에 포함. 대소문자 확장자·시스템 실행 경로 보존·가림 표시·재현 등급 하향 확인. 관련 시험 240 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS·원본 동일."
+  - sha: "a82aba1"
+    at: "2026-11-12 19:29"
+    summary: "공개 묶음의 비웹 저장소 URI를 가립니다."
+    text: "#1416 r2: HTTP(S) 이외 URI operand를 script·구조화된 값에서 가림. s3·ssh·gs·az·ftp·확장 scheme 회귀 포함 248 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS·원본 동일."
