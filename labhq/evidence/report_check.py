@@ -356,7 +356,8 @@ def _unanchored_numeric_sentences(report: str, *, conclusions: bool = False) -> 
 
 def _unanchored_table_rows(report: str) -> list[str]:
     """Flag each Markdown table data row independently, including unnumbered conclusions."""
-    lines = markdown_body(report).splitlines()
+    text = re.sub(r"<!--.*?-->", " ", markdown_body(report), flags=re.DOTALL)
+    lines = text.splitlines()
     rows = []
     for i in range(1, len(lines)):
         if "|" not in lines[i - 1] or not re.fullmatch(

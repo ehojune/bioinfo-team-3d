@@ -71,6 +71,11 @@ def test_unnumbered_conclusions_and_each_table_row_need_anchors():
     assert not any("지지 여부는 불확실" in problem for problem in problems)
 
 
+def test_commented_out_table_is_not_a_visible_claim():
+    report = '<!--\n| Claim | Value |\n|---|---|\n| hidden | 7 |\n-->\n'
+    assert check_report(report, {})['problems'] == []
+
+
 def test_numeric_units_and_soft_wrapped_sentences():
     from labhq.evidence.report_check import _unanchored_numeric_sentences
 
