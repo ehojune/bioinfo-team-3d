@@ -4,7 +4,7 @@
 PI 위임(11-12)에 따라 정한 것을 평가 문서와 반증 사례 틀에 고정했다. 정답과 채점 참고는 저장소 밖(채점자 전용)에 두고, sha256만 #1383에 있다.
 
 ## 바뀐 것
-- `tests/fixtures/eval_suite/falsification/cases.json`: 사례마다 `facts` 한 줄(사례 설명의 일부, 반증보다 먼저 모든 갈래에 줌). `answer`는 비워 둔다.
+- `tests/fixtures/eval_suite/falsification/cases.json`: 사례마다 `facts` 한 줄(반증과 함께 별도 블록으로 모든 갈래에 줌. 먼저 주면 반증을 미리 알려 준다). `answer`는 비워 둔다.
 - `docs/reference/eval-suite.md`: 짝 비교 고정 질문 10개와 입력·집계 규칙, 갈래당 $25(질문당 두 갈래 합계 $50), 반증 반영의 행동 채점과 과잉 반응 집계, 2차 실행 순서(반증 반영 먼저), "PI가 정한 것" 절.
 
 ## 실행한 것
