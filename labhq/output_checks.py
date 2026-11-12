@@ -91,7 +91,7 @@ def table_problem(path: Path) -> str | None:
         text = _head_text(path)
     except OSError as exc:
         return f"읽지 못했습니다({type(exc).__name__})"
-    # A "##" metadata line may hold a tab. A one-column TSV may hold an escaped "\t" in a cell: the warning needs a
+    # A one-column TSV may hold an escaped "\t" in a cell: the warning needs a
     # header and every row split by the two characters, as in the 10-17 table (PR #712 review).
     prefix, table = leading_tsv_comments(text, path.suffix.lower())
     body = [line for line in table.splitlines() if line.strip()

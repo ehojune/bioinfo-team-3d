@@ -466,13 +466,13 @@ def available_result_files(results: dict[str, Any] | None) -> set[str]:
 
 
 def leading_tsv_comments(text: str, suffix: str) -> tuple[str, str]:
-    """Separate only physical # lines before the first TSV header, keeping their bytes as text."""
+    """Separate leading blank and tab-free # lines from a TSV without changing the text."""
     if suffix.lower() != ".tsv":
         return "", text
     lines = text.splitlines(keepends=True)
     count = 0
     for line in lines:
-        if line.startswith("#") or not line.strip():
+        if (line.startswith("#") and "\t" not in line) or not line.strip():
             count += 1
         else:
             break

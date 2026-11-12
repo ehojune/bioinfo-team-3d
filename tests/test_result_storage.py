@@ -33,6 +33,8 @@ class Hub:
 
 @pytest.mark.parametrize(("body", "expected"), [
     ("# method\n# source\na\tb\nc\td\n", "local"),
+    ("# method\n#patient_id\tmean\np1\t2\n", "local"),
+    ("#patient_id\tmean\np1\n", "failed"),
     ("# method\na\tb\nc\n", "failed"),
 ])
 async def test_local_storage_checks_commented_tsv(tmp_path, body, expected):

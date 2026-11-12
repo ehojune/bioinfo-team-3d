@@ -254,13 +254,17 @@ def test_contract_check_catches_missing_table_bad_shape_and_reader_marker() -> N
 
 
 def test_table_shape_only_skips_leading_tsv_comments():
-    from labhq.report_contract import _table_shape
+    from labhq.report_contract import _table_shape, leading_tsv_comments
 
     assert _table_shape("# first\n# second\na\tb\n1\t2\n", ".tsv")
     assert not _table_shape("a\tb\n# later\n", ".tsv")
     assert not _table_shape("# comment\na\tb\n1\n", ".tsv")
     assert not _table_shape("# comment\n", ".tsv")
     assert not _table_shape("# comment\na,b\n1,2\n", ".csv")
+    header = "#patient_id\tmean\np1\t2\n"
+    assert leading_tsv_comments("# source\n" + header, ".tsv") == ("# source\n", header)
+    assert _table_shape(header, ".tsv")
+    assert not _table_shape("#patient_id\tmean\np1\n", ".tsv")
 
 
 @pytest.mark.parametrize("document", [
