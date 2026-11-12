@@ -87,7 +87,7 @@ README·report.md·RESULT.md 산출물과 웹 보고를 CommonMark로 렌더해 
 | `rerun_receipt.json` | 다른 곳에서 묶음을 다시 실행해 검증한 경우만 생기는 receipt |
 | `README.md` | 단계 의존 순서와 스크립트 재실행 명령 |
 | `MANIFEST.tsv` | 상대경로·크기·sha256·단계·원래 절대경로·복사 상태 |
-| `INPUTS.tsv` | 단계에 연 외부 입력 파일의 경로·크기·mtime·sha256 또는 생략 이유 |
+| `INPUTS.tsv` | 단계에 연 외부 입력 파일의 경로·크기·mtime·sha256 또는 생략 이유. 단계에 열린 Python·conda 환경(runner가 검증해 연 앞 단계 `.venv`, `pyvenv.cfg`나 `conda-meta/`가 있는 폴더)은 파일별이 아니라 폴더 한 행으로 적고 생략 이유는 `environment`입니다. 수천 개 행이 기록을 키워 다음 단계 인계가 막히지 않게 하려는 것입니다(#1421). restricted·private 경로 안의 환경은 다른 보호 경로처럼 이름 없이 적습니다. 입력 폴더 안쪽에 든 환경은 아직 파일별로 적힙니다 |
 | `ro-crate-metadata.json` | RO-Crate 1.1·Process Run Crate 0.5 JSON-LD metadata |
 
 요청 전체 HPC 실행은 `hpc/<request>/steps/<step>/`, 검증한 조상 입력은 `data/<producer>/<source-task>/`, 묶음은 `requests/<request>/`에 보관합니다. 기존 프로젝트·경로 참고 입력과 루트 `.venv` binding은 scheduler용 snapshot이 없어 dispatch 전에 거부합니다. [wake·provenance·권한·호환·미검증 범위](../reference/hpc-step-workspaces-578.md).

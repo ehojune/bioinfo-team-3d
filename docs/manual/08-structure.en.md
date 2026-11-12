@@ -87,7 +87,7 @@ When a request ends, the terminal state and report are saved first, and `runner.
 | `rerun_receipt.json` | A receipt created only when the bundle was rerun elsewhere and verified |
 | `README.md` | The step dependency order and the script rerun commands |
 | `MANIFEST.tsv` | Relative path, size, sha256, step, original absolute path, copy status |
-| `INPUTS.tsv` | Path, size, mtime, sha256 or the reason for omission, of external input files opened by a step |
+| `INPUTS.tsv` | Path, size, mtime, sha256 or the reason for omission, of external input files opened by a step. A Python or conda environment opened to the step (the earlier step's `.venv` the runner verified and opened, or a folder with `pyvenv.cfg` or `conda-meta/`) is one row for the folder, not one per file, with the reason `environment`, so thousands of rows cannot grow the record until the next step's handoff refuses it (#1421). An environment inside a restricted or private path is recorded without its name, like other protected paths. An environment nested inside an input folder is still listed file by file |
 | `ro-crate-metadata.json` | RO-Crate 1.1 and Process Run Crate 0.5 JSON-LD metadata |
 
 Whole-request HPC originals live in `hpc/<request>/steps/<step>/`, verified ancestor inputs in `data/<producer>/<source-task>/`, and bundles in `requests/<request>/`. Existing project/path-reference inputs and runner-root `.venv` bindings are refused before dispatch until scheduler-readable snapshots exist. [Wake, provenance, permissions, compatibility and unverified scope](../reference/hpc-step-workspaces-578.md).
