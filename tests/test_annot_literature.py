@@ -657,6 +657,30 @@ async def test_oa_copy_citing_target_near_start_is_not_stored_as_its_fulltext(tm
     assert 'A different leading title' not in (tmp_path / 'work' / row['text_file']).read_text(encoding='utf-8')
 
 
+@pytest.mark.parametrize('first_heading', ['correct', 'different'])
+async def test_html_article_heading_is_used_after_page_chrome_without_searching_later_titles(tmp_path, first_heading):
+    title = 'Sex ratio and pater<em>nal</em> work.'
+    heading = title if first_heading == 'correct' else 'An unrelated study'
+    html = (f'<html><head><title>Sex ratio and paternal work. | Journal</title></head>'
+            f'<body><nav><h1>Journal</h1>Home Search Papers</nav><h1>{heading}</h1><p>DOI 10.1000/test</p>'
+            '<h2>Introduction</h2><p>' + 'study body ' * 150 + '</p><h2>Methods</h2>'
+            f'<p>Results</p><h1>{title}</h1></body></html>')
+    def handler(request):
+        if request.url.host == 'www.ebi.ac.uk':
+            return search_answer([record(pmcid=None)])
+        if request.url.host == 'api.openalex.org':
+            return httpx.Response(200, json={'results': [{'best_oa_location': {
+                'landing_page_url': 'http://93.184.216.34/paper.html'}}]})
+        return httpx.Response(200, text=html, headers={'content-type': 'text/html'})
+    annotator, _ = make(handler, tmp_path)
+    row = (await annotator.fulltext(['123']))['results'][0]
+    if first_heading == 'correct':
+        assert row['access_level'] == 'full_text'
+        assert row['oa_copy']['format'] == 'HTML'
+    else:
+        assert row['access_level'] == 'abstract' and row['unread_reason'] == 'identity_mismatch'
+
+
 def test_title_identifies_a_copy_when_metadata_has_no_doi():
     meta = {"title": "A specific study of kinase inhibition"}
     text = "A specific study of kinase inhibition\n10.1000/printed-only\nAbstract and methods"

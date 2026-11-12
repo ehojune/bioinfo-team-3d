@@ -742,18 +742,32 @@ class _HTMLText(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.skip = 0
         self.parts: list[str] = []
+        self.navigation = 0
+        self.heading: list[str] | None = None
+        self.heading_end: int | None = None
+        self.in_heading = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in {"script", "style", "noscript", "svg"}:
             self.skip += 1
+        if tag == 'nav':
+            self.navigation += 1
+        if tag == 'h1' and not self.skip and not self.navigation and self.heading is None:
+            self.heading, self.in_heading = [], True
 
     def handle_endtag(self, tag: str) -> None:
         if tag in {"script", "style", "noscript", "svg"} and self.skip:
             self.skip -= 1
+        if tag == 'nav' and self.navigation:
+            self.navigation -= 1
+        if tag == 'h1' and self.in_heading:
+            self.heading_end, self.in_heading = len(self.parts), False
 
     def handle_data(self, data: str) -> None:
         if not self.skip and data.strip():
             self.parts.append(data.strip())
+            if self.in_heading:
+                self.heading.append(data)
 
 
 def _pdf_unescape(value: bytes) -> str:
@@ -835,6 +849,12 @@ def _copy_text(content: bytes, content_type: str) -> tuple[str, str, str]:
             raise LookupFailed("OA 주소가 구독·로그인 화면을 돌려줬습니다")
         if "institutional login" in folded:
             raise PermissionError("OA 주소가 기관 로그인 화면을 돌려줬습니다")
+        if parser.heading and parser.heading_end is not None:
+            # Keep the first article heading, including inline markup, above its body. Site title/navigation
+            # are not article identity; a later matching heading must not replace a different first heading.
+            heading = ' '.join(''.join(parser.heading).split())
+            text = '\n'.join([heading, *parser.parts[parser.heading_end:]])
+            folded = text.casefold()
         compact = "".join(text.split())
         sections = sum(term in folded for term in ("introduction", "method", "result", "discussion", "references"))
         if len(compact) < 1000 or sections < 2:
