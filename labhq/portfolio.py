@@ -1092,8 +1092,10 @@ def _source_evidence_rows(req: dict, settings) -> list[dict[str, str]]:
                if (active is None or step_id in active)
                and not step_uses_internal_data(step_id, req, settings, scope)}
     cp2 = ((req.get("research_contract") or {}).get("checkpoints") or {}).get("cp2") or {}
+    review = req.get("review") or (req.get("review_progress") or {}).get("review") or {}
     return claim_evidence_rows(ledgers, refused=cp2.get("refused_evidence") or (),
-                               unsupported=cp2.get("unsupported_claims") or ())
+                               unsupported=cp2.get("unsupported_claims") or (),
+                               review_issues=review.get("issues") or ())
 
 
 def _publication_claim_footnotes(report: str, req: dict, settings) -> str:

@@ -13,6 +13,21 @@ from labhq.result_storage import draft_documents
 from labhq.settings import DataZone, Settings
 
 
+def test_review_issues_follow_claim_ids_into_publication_evidence():
+    ledger = {"claims": [{"id": "direction", "statement": "A > B", "status": "supported"},
+                         {"id": "count", "statement": "10 lookups", "status": "supported"}]}
+    req = {"id": "req_review", "text": "Check", "results": {"s1": {"structured": ledger}},
+           "review": {"issues": [
+               {"step_id": "s1", "claim_id": "direction", "problem": "Wrong direction", "request": "Correct"},
+               {"step_id": "s1", "claim_id": "count", "problem": "Conflicting counts", "request": "Reconcile"},
+           ]}}
+    rows = portfolio._source_evidence_rows(req, Settings())
+    rendered = claim_evidence_section(rows)
+    assert "Wrong direction" in rendered and "Conflicting counts" in rendered
+    assert rendered.count("해결 여부 미확인") >= 2
+    assert ledger["claims"][0]["statement"] == "A > B"
+
+
 PAPER = """# 공개 오믹스 대체 분석
 
 ## 요약(Abstract)
