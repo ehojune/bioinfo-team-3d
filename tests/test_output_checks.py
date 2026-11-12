@@ -43,6 +43,13 @@ def test_a_tab_in_a_metadata_line_does_not_hide_literal_separators(tmp_path):
     assert table_problem(path) == "칸 구분이 탭이 아니라 글자 \\t입니다"
 
 
+def test_leading_comments_do_not_hide_later_ragged_rows(tmp_path):
+    path = _write(tmp_path / "comments.tsv", "# one\n# two\na\tb\tc\n1\t2\t3\n# later\n")
+    assert "5번째 줄" in table_problem(path)
+    path = _write(tmp_path / "comments.tsv", "# one\n# two\na\tb\nc\td\n")
+    assert table_problem(path) is None
+
+
 def test_a_long_field_is_read_and_a_check_that_breaks_is_a_warning_not_an_error(tmp_path, monkeypatch):
     long_cell = "A" * 200_000  # above Python's default csv field limit of 131,072
     assert table_problem(_write(tmp_path / "seq.csv", f"id,seq\n1,\"{long_cell}\"\n2,ACGT\n")) is None
