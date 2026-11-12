@@ -6,7 +6,18 @@
 
 설정 이름이 틀리거나 지원하지 않는 항목이 있으면 오류로 중단합니다. `labhq up`과 `labhq gateway`는 `gateway.client_token`과 `gateway.runner_token`의 공개 기본값을 거부하므로 두 값을 모두 바꾸세요.
 
-Runner 메시지 보류 상태는 client token으로 인증한 `GET /api/runner-inbox/{runner_id}`에서 확인합니다. 응답에는 원문이 없습니다. `POST /api/runner-inbox/{runner_id}/{seq}/retry`는 log·activity 또는 시작 전 발행에 실패한 ask에만 허용하고, `/resume`은 앞선 의존 항목이 해소된 미실행 항목을 처리합니다. 독립 activity 여부는 최초 인수와 같은 기준으로 판정하며 시작 결과를 모르는 ask는 계속 막습니다. `incarnation` query로 세대를 지정합니다. 결과를 알 수 없는 작업은 자동 재실행하지 않습니다. 앞선 항목이 모두 해소된 보류 항목은 같은 runner의 다음 메시지가 올 때와 gateway 재기동 때 자동으로 다시 판정해 처리합니다. 시작 결과를 모르는 ask 뒤의 항목은 계속 보류합니다. 완료된 inbox는 최근 256건을 유지하며, 미완료·전달 대기 기록은 정리하지 않습니다.
+Runner 메시지 복구 상태는 두 웹 화면 상단과 `labhq doctor --network`에서 확인합니다. 웹은 5초마다 갱신하며 조회 실패를 별도로 표시합니다. runner·세대·seq·state·error만 표시하고 메시지 원문과 token은 보내지 않습니다. doctor의 원격 조회에는 `wss://`가 필요하며 `ws://`는 loopback만 허용합니다. redirect는 따르지 않습니다.
+
+- 인증 조회: `GET /api/runner-inbox`는 이전 세대를 포함한 미완료 목록, `GET /api/runner-inbox/{runner_id}`는 지정 세대의 목록입니다.
+- `retry`는 실패한 activity나 시작 전 발행에 실패한 ask에만 안내합니다. `resume`은 같은 runner의 앞선 보류가 해소된 미실행 항목에만 안내합니다. 다른 runner의 보류는 전파하지 않습니다. 안내 URL은 `runner_id`를 query로 넘겨 `/`나 `..`가 든 ID도 보존합니다. 세대 ID 없는 항목의 `legacy=true` 표식은 세대가 바뀌면 거부됩니다.
+- 결과 불명 작업·이전 세대는 수동 확인이 필요합니다. 같은 runner의 ACK 순서와 세대 보호는 유지합니다. 앞선 보류가 해소되면 같은 runner의 다음 메시지나 gateway 재기동 때도 다시 판정합니다. 완료 inbox는 최근 256건을 유지하며 미완료 기록은 남깁니다.
+
+안내된 `recovery_path`를 확인한 뒤 client token으로 직접 POST합니다. 아래는 Bash 예시이며 실제 token은 환경변수에 둡니다. `incarnation`에는 조회에서 받은 현재 세대를 넣으세요. 결과 불명 ask는 재실행하지 않습니다.
+
+```bash
+curl -X POST -H "Authorization: Bearer $LABHQ_CLIENT_TOKEN" "http://127.0.0.1:8787/api/runner-inbox/SEQ/retry?runner_id=RUNNER&incarnation=GENERATION"
+# 보류 해소 뒤에는 안내에 따라 retry 대신 resume을 씁니다.
+```
 
 수동 재시도 중 저장 오류가 나면 저장소 복구 후 안전한 항목을 다시 시도할 수 있습니다. ask의 시작 여부를 알 수 없으면 `ask_start_unknown`으로 보류합니다.
 
@@ -46,6 +57,7 @@ Runner 메시지 보류 상태는 client token으로 인증한 `GET /api/runner-
   **터널이 없을 때**: 프로필의 `tunnel_texts`가 나오면 "세션(터널)을 열어 주세요"를 웹 피드에 알리고, 5분 동안은 새 접속을 시도하지 않고, 사람이 연 뒤 그 시간이 지나면 다음 명령이 한 번 다시 시도합니다(그때 로그인 하나를 셉니다). 같은 조건이라도 `tunnel_texts`가 비어 있으면 일반 실패로 보고 재접속 횟수 상한 안에서 다시 시도합니다.
   **HPC 비활성**: `scheduler: none`이면 HPC 제출·큐·상태·취소와 내부 명령 실행을 오류로 거부하고 HPC job을 갱신하지 않습니다.
   **로컬 job**(#675): 10분 넘는 계산은 `labhq_job`의 `job_submit(command, name, expected_minutes)`·`job_status`·`job_list`·`job_cancel`로 냅니다([analyst](../../agents/core/analyst.yaml)·[bioinfo-agent](../../agents/core/bioinfo-agent.yaml), Claude 직원만). Codex 등 다른 엔진은 OS sandbox 밖 실행을 막기 위해 거절하며, 그 직원에게는 `labhq_job`을 연결하지 않고 프롬프트도 이 도구를 안내하지 않습니다(#1003). 이 엔진의 직원은 10분 넘는 계산에 `labhq_hpc`(있을 때), 끝까지 끝나는 조각으로 나누기, PI에게 묻기를 따릅니다. 떼어 내는 명령(`nohup`·뒤쪽 `&`)을 카드 없이 거절하는 승인 gate는 Claude 직원에게만 적용됩니다. HPC scheduler 없이도 쓰지만 WSL runner는 지원하지 않습니다. runner가 승인 gate로 명령을 판정하고 슬롯을 잡아 작은 wrapper로 시작합니다. 동시 실행은 `runner.max_parallel`개이며 로그·종료 코드 `exit`는 runner 상태 폴더에 둡니다. 직원은 제출 뒤 턴을 끝내고 단계는 완료 시 `jobs.finished`로 깨어납니다. 단계 흐름·task card·3D 요청 줄은 계산명·관측 상태를, 직원·캐릭터는 로컬/HPC 대기를 구분해 표시합니다. 진행률·완료 예정 시각은 추정하지 않습니다. 재접속 때 제출 event가 없으면 `pending_jobs`의 ID·상태 확인 중만 표시합니다. 단계·요청 취소(`task.cancel`·`task.jobs_cancel`)는 확인된 job 트리를 종료하고 단계를 깨우지 않습니다. 시작 중 취소도 적용하며 끝난 job의 상태는 취소로 바꾸지 않습니다. runner 재시작은 PID·생성 시각을 대조해 이어받고, 종료됐으면 `exit`로 완료·실패를 읽으며 근거가 없으면 `unknown_finished`입니다. `labhq down` 뒤에도 job은 돌고 다음 runner가 이어받으므로 runner를 다시 켜지 않으면 남습니다. 제출 응답이 끊기면 재제출 전에 `job_list`로 확인합니다. `nohup … &`·뒤쪽 `&`·`setsid`·`disown`·`Start-Process`(`-Wait`·`-Verb` 없이)·`Start-Job`과 중첩 셸의 같은 명령은 카드 없이 거절하고 `job_submit`을 안내합니다. 공유 환경 설치도 일반 셸처럼 거절합니다. 다만 Claude의 사전 허용 셸 명령(예: `python *`)은 gate를 거치지 않을 수 있어 모든 우회를 막는다는 보장은 없습니다. 잡을 기다리는 단계는 잡이 끝나면 같은 세션으로 다시 깨어납니다. 깨어난 턴이 새 잡을 다시 냈으면 깨우기 상한(`orchestrator.max_wake_cycles`, 기본 5)에 세지 않고, 계속 다시 내면 상한의 4배에서 멈춥니다. 잡을 남긴 채 상한으로 끝난 단계의 잡 결과는 `outputs/`가 아니라 `jobs/late/<job>/`에 받고 피드에 알립니다. 잡 결과는 늘 `jobs/fetch/<job>/`로 먼저 받고 단계가 아직 기다릴 때만 제자리로 옮기며, 그때 덮어쓴 단계 파일은 `jobs/replaced/<job>/`에 두었다가 해제되면 되돌립니다(#1357). 같은 단계에서 실패하거나 취소된 시도 뒤에 같은 이름으로 다시 낸 잡이 성공하면, 앞선 실패는 기록에만 남고 단계 산출 판정을 막지 않습니다. 이름이 다른 잡(다른 shard)의 성공은 실패를 대신하지 않고, 성공 뒤에 실패했거나 앞 시도가 아직 돌고 있으면 지금처럼 거절합니다(#1366). 원격 산출 목록은 잡이 작업 폴더에 만든 conda·mamba 환경(`conda-meta`가 있는 폴더)과 Python venv(`pyvenv.cfg`), `__pycache__`를 세지 않고 "environment folder"로만 적습니다. 그 안에 선언한 산출이 있으면 빠진 것으로 보고 거절합니다. 목록을 읽지 못한 잡도 같은 이름으로 다시 낸 잡이 성공하면 단계를 막지 않습니다(#1368).
+  conda 패키지 캐시도 `pkgs/urls.txt`와 압축 해제된 패키지의 `info/index.json`이 모두 일반 파일이고 각각 hard link가 없을 때 목록에서 제외합니다. 심볼릭 링크는 따르지 않으며 빈 캐시와 다른 이름의 캐시는 제외하지 않습니다.
   저장된 job은 마지막 상태 그대로 남으며 완료·빈 큐로 간주하지 않습니다. 로컬 runner 연결과 분석 경로는 유지하지만 임의 shell의 HPC 접근을 막는 OS sandbox는 아닙니다([검증 범위](../reference/scheduler-none-829.md)).
 - **직원** (`agents/core/*.yaml`): `engine`, `model`, `effort`(Claude Code·Codex만), `tools`(사전 허용), `builtin_mcp`(`approval`, `hpc`, `annot`),
   `permission_mode`, `project_dirs`.
