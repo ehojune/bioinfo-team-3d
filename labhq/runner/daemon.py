@@ -2506,9 +2506,9 @@ class Runner:
                     stage_inputs, ws, local_ancestors, root, [*zones, *internal_zones],
                     list(private_now),
                     self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes, input_budget)
-                unavailable.update({f"{sid}:literature":
-                                    f"literature handoff incomplete: {sid} is remote-only; literature copies were not staged"
-                                    for sid in remote_ancestors if sid not in local_ancestors})
+                if remote_only := {sid: accepted[sid] for sid in remote_ancestors if sid not in local_ancestors}:
+                    from .step_inputs import remote_literature_warnings
+                    unavailable.update(await asyncio.to_thread(remote_literature_warnings, remote_only, root))
                 unavailable.update({str(sid): f"inputs/{sid} unavailable (ancestor mapping mismatch)"
                                     for sid in artifacts if sid not in accepted})
                 note = ("Read collected ancestor artifacts only through inputs/<step_id>/. "

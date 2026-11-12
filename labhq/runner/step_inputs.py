@@ -435,6 +435,29 @@ def _copy_literature(root, source_parts, work, max_file, remaining):
     return warnings
 
 
+def remote_literature_warnings(artifacts, workspace_root):
+    """Inspect skipped literature listings without copying files or following links."""
+    warnings = {}
+    root = Path(workspace_root).resolve(strict=True)
+    for step, artifact in artifacts.items():  # Caller has validated these remote-only ancestors.
+        try:
+            source = Path(artifact['workdir']).absolute()
+            parts = source.relative_to(root).parts
+            if not parts or source != source.resolve(strict=True):
+                raise ValueError('source is not a plain ancestor workspace')
+            with _folder(root, (*parts, *LITERATURE)) as held:
+                entries = held.entries(MAX_FILES + 1)
+            if not any(entry.kind != 'dir' for entry in entries) and len(entries) <= MAX_FILES:
+                continue
+            detail = 'literature copies were not staged'
+        except FileNotFoundError:
+            continue  # No literature directory is a normal computational ancestor.
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            detail = 'literature listing could not be inspected'
+        warnings[f'{step}:literature'] = f'literature handoff incomplete: {step} is remote-only; {detail}'
+    return warnings
+
+
 def remote_ancestor_inputs(ws, artifacts, workspace_root):
     """Runner-persisted names/sizes from successful ancestors of the same request."""
     from ..hpc_transfer import validate_remote_manifest

@@ -259,7 +259,8 @@ async def test_whole_hpc_only_artifact_failure_blocks_dispatch(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_remote_only_ancestor_literature_skip_is_visible_and_does_not_block(tmp_path, monkeypatch):
+@pytest.mark.parametrize('literature', ['paper', 'absent', 'empty', 'inbox'])
+async def test_remote_only_ancestor_literature_skip_is_visible_and_does_not_block(tmp_path, monkeypatch, literature):
     from types import SimpleNamespace
     from labhq.hpc_transfer import job_spec
     settings = _runner_settings(tmp_path, None)
@@ -281,8 +282,12 @@ async def test_remote_only_ancestor_literature_skip_is_visible_and_does_not_bloc
     (folder / 'outputs/table.tsv').unlink()  # Only the remote inventory can supply this artifact.
     artifact['output_sha256'] = {}
     papers = folder / '.tmp/literature'
-    papers.mkdir(parents=True)
-    (papers / 'paper.md').write_bytes(b'saved paper')
+    if literature != 'absent':
+        papers.mkdir(parents=True)
+    if literature == 'paper':
+        (papers / 'paper.md').write_bytes(b'saved paper')
+    elif literature == 'inbox':
+        (papers / 'inbox').mkdir()
     published = []
     def publish(self, artifacts, staged, *args):
         assert artifacts == {} and staged == []
@@ -297,9 +302,10 @@ async def test_remote_only_ancestor_literature_skip_is_visible_and_does_not_bloc
     assert not result.ok and '러너가 제출한 잡 기록이 없습니다' in result.error
     assert seen['ctx'].task.meta['hpc_remote_inputs']
     assert not (seen['ctx'].workdir / '.tmp/literature/paper.md').exists()
-    assert 'literature handoff incomplete' in seen['ctx'].task.context
-    assert 'remote-only' in seen['ctx'].task.context
+    assert ('literature handoff incomplete' in seen['ctx'].task.context) is (literature == 'paper')
+    assert ('remote-only' in seen['ctx'].task.context) is (literature == 'paper')
     warnings = [event['data']['text'] for event in runner.store.pending()
                 if event['type'] == 'agent.log' and event['data'].get('level') == 'warn']
-    assert any('literature handoff incomplete' in text and 'remote-only' in text for text in warnings)
-    assert (papers / 'paper.md').read_bytes() == b'saved paper'
+    assert any('literature handoff incomplete' in text and 'remote-only' in text for text in warnings) is (literature == 'paper')
+    if literature == 'paper':
+        assert (papers / 'paper.md').read_bytes() == b'saved paper'
