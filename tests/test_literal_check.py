@@ -10,9 +10,17 @@ normalization and Python 3.10 grammar checks.
 """
 
 import ast
+import hashlib
 import inspect
+import json
+from pathlib import Path
+
+import pytest
 
 import labhq.evidence.literal_check as literal_check
+from labhq.evidence import report_check
+from labhq.orchestrator.cso import Orchestrator
+from tests.test_research_cp2 import CP1, _research_hub, _settings
 
 
 def test_evidence_literal_checks_use_read_text_and_preserve_missing_status():
@@ -116,3 +124,125 @@ def test_long_prose_sentence_below_cap_is_left_whole() -> None:
 def test_module_parses_with_python_3_10_grammar() -> None:
     source = inspect.getsource(literal_check)
     ast.parse(source, feature_version=(3, 10))
+
+
+def saved_paper(tmp_path, *, body='The response was 1.84.', paper_id='doi:10.1000/example'):
+    from labhq.tools.annot_literature import parse_paper_id
+    relative = '.tmp/literature/' + parse_paper_id(paper_id).file_name()
+    path = tmp_path / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body.encode())
+    receipt = {'paper_id': paper_id, 'text_file': str(path), 'access_level': 'abstract',
+               'text_sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+    Path(str(path) + '.receipt.json').write_text(json.dumps(receipt), encoding='utf-8')
+    return path, receipt
+
+
+def ledger(value='1.84'):
+    return {'evidence': [{'id': 'e1', 'kind': 'literature_claim', 'status': 'observed',
+        'observation': '"The response was 1.84."', 'quantities': [{'value': value}],
+        'source': {'id_scheme': 'doi', 'id_value': '10.1000/example'}}],
+        'claims': [{'id': 'c1', 'status': 'supported'}],
+        'links': [{'claim_id': 'c1', 'evidence_id': 'e1', 'relation': 'supports'}]}
+
+
+@pytest.mark.parametrize('problem', ['none', 'hash', 'identity', 'missing', 'hardlink'])
+def test_saved_source_requires_matching_receipt_and_bytes(tmp_path, problem):
+    path, receipt = saved_paper(tmp_path)
+    if problem == 'hash':
+        path.write_text('changed', encoding='utf-8')
+    elif problem == 'identity':
+        receipt['paper_id'] = 'doi:10.1000/other'
+        Path(str(path) + '.receipt.json').write_text(json.dumps(receipt), encoding='utf-8')
+    elif problem == 'missing':
+        path.unlink()
+    elif problem == 'hardlink':
+        (tmp_path / 'alias.md').hardlink_to(path)
+    texts = literal_check.source_texts_for(ledger(), {'workdir': str(tmp_path)})
+    checked = literal_check.check_evidence(ledger(), texts)
+    assert checked[0]['state'] == ('matched' if problem == 'none' else 'unverified')
+    assert texts == ({'e1': 'The response was 1.84.'} if problem == 'none' else {})
+
+
+def test_collected_artifact_uses_runner_hash_and_not_observation(tmp_path):
+    (tmp_path / 'outputs').mkdir()
+    text = 'The response was 1.84.'
+    (tmp_path / 'outputs/result.txt').write_bytes(text.encode())
+    rows = ledger('2.50')
+    rows['artifact_refs'] = [{'artifact_id': 'a1', 'path': 'outputs/result.txt'}]
+    rows['evidence'][0]['source'] = {'artifact_id': 'a1'}
+    result = {'workdir': str(tmp_path), 'outputs': ['outputs/result.txt'],
+              'output_sha256': {'outputs/result.txt': hashlib.sha256(text.encode()).hexdigest()}}
+    texts = literal_check.source_texts_for(rows, result)
+    checked = literal_check.check_evidence(rows, texts)
+    assert checked[0]['state'] == 'mismatch'
+    assert 'quantity not found' in checked[0]['problems'][0]
+    checked[0]['step_id'] = 's1'
+    gate = report_check.check_report('Result [[claim:s1/c1]]', {'s1': rows}, literal_checks=checked,
+                                   artifact_sha256={'s1/a1': result['output_sha256']['outputs/result.txt']})
+    assert any('literal' in item and 'e1' in item for item in gate['problems'])
+    result['output_sha256']['outputs/result.txt'] = '0' * 64
+    assert literal_check.source_texts_for(rows, result) == {}
+
+
+def test_precedent_source_is_read_only_from_staged_verified_copy(tmp_path):
+    from labhq.research.precedent_texts import file_name
+    body = 'The response was 1.84.'
+    receipt = {'paper_id': 'doi:10.1000/example', 'access_level': 'abstract',
+               'text_sha256': hashlib.sha256(body.encode()).hexdigest()}
+    staged = tmp_path / 'inputs/precedent' / file_name(receipt, 1)
+    staged.parent.mkdir(parents=True)
+    staged.write_bytes(body.encode())
+    texts = literal_check.source_texts_for(ledger(), {'workdir': str(tmp_path)}, precedents=[receipt])
+    assert texts == {'e1': body}
+    staged.write_text('changed', encoding='utf-8')
+    assert literal_check.source_texts_for(ledger(), {'workdir': str(tmp_path)}, precedents=[receipt]) == {}
+
+
+def test_ancestor_artifact_needs_the_collected_owner_path(tmp_path):
+    (tmp_path / 'outputs').mkdir()
+    text = 'The response was 1.84.'
+    (tmp_path / 'outputs/result.txt').write_bytes(text.encode())
+    rows = ledger()
+    rows['artifact_refs'] = [{'artifact_id': 'a1', 'path': 'parent/outputs/result.txt'}]
+    rows['evidence'][0]['source'] = {'artifact_id': 'a1'}
+    ancestor = {'workdir': str(tmp_path), 'workdir_id': 'parent', 'outputs': ['outputs/result.txt'],
+                'output_sha256': {'outputs/result.txt': hashlib.sha256(text.encode()).hexdigest()}}
+    assert literal_check.source_texts_for(rows, {}, [ancestor]) == {'e1': text}
+    assert literal_check.source_texts_for(rows, {}) == {}
+
+
+def test_unverified_literal_is_not_a_source_refusal():
+    checks = [{'step_id': 's1', 'evidence_id': 'e1', 'state': 'unverified',
+               'problems': ['source text unavailable for literal check']}]
+    assert not report_check.check_report('Result [[claim:s1/c1]]', {'s1': ledger()},
+                                        literal_checks=checks)['problems']
+
+
+@pytest.mark.usefixtures('pre_v1_defaults')
+@pytest.mark.asyncio
+async def test_default_cp2_checks_saved_source_without_live_lookup(tmp_path, monkeypatch):
+    settings = _settings()
+    assert settings.research.literal_source_check is True
+    settings.research.live_source_check = False
+    hub = _research_hub(settings, [CP1, {'approved': True, 'choice': 'approve', 'note': ''}])
+    original = hub.reply
+    saved_paper(tmp_path)
+    async def reply(task):
+        response = await original(task)
+        if task.meta['kind'] == 'step':
+            response.workdir = str(tmp_path)
+            row = response.structured['evidence'][0]
+            row['observation'] = '"The response was 9.99."'
+            row['source'].update(id_scheme='doi', id_value='10.1000/example', accessed_at='2026-11-12')
+            row['source'].pop('artifact_id', None)
+        return response
+    hub.reply = reply
+    def forbidden(*args, **kwargs):
+        pytest.fail('offline literal check must not start live lookup')
+    monkeypatch.setattr('labhq.orchestrator.cso.LiveSourceResolver', forbidden)
+    await Orchestrator(hub).run_request('r')
+    cp2 = hub.approvals[1]['detail']
+    assert cp2['literal_checks'][0]['state'] == 'mismatch'
+    assert any('literal' in row['reason'] for row in cp2['refused_evidence'])
+    assert hub.requests['r']['research_contract']['checkpoints']['cp2']['literal_checks'] == cp2['literal_checks']

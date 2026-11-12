@@ -670,7 +670,8 @@ class ResearchSettings(_SettingsModel):
     final_checkpoint: bool = False  # PI report review accepts a frozen final draft (CP4)
     # The science reviewer first answers the original request alone, sealed before the first step (#889).
     blind_draft: bool = False
-    live_source_check: bool = False  # Crossref/NCBI verification before CP2 and in labhq verify
+    literal_source_check: StrictBool = True  # local saved text/hash checks at CP2; never sends HTTP
+    live_source_check: bool = False  # opt-in Crossref/NCBI ID checks; respects existing lookup budgets
     live_source_contact: str = ""  # optional maintainer email for API User-Agent/mailto etiquette
     live_source_timeout_s: float = Field(default=10.0, gt=0)
     live_source_deadline_s: float = Field(default=60.0, gt=0)

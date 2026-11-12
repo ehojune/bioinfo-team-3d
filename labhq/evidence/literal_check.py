@@ -13,6 +13,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Mapping
+import contextlib
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
 import re
 from typing import Sequence
 import unicodedata
@@ -51,6 +56,96 @@ _TRAILING_PUNCT = "\"'()[]"
 
 # A larger located span is usually a flattened table rather than one sentence.
 MAX_LOCATED_QUOTE_WORDS = 80
+MAX_SOURCE_BYTES = 2_000_000
+
+
+def _source_bytes(root, relative: str, limit: int = MAX_SOURCE_BYTES) -> bytes:
+    """Bounded read through held directories; never follow a link or accept a hard link."""
+    from ..adapters.held_dir import HeldDir
+
+    parts = PurePosixPath(relative.replace('\\', '/')).parts
+    if not parts or any(p in {'', '.', '..'} or ':' in p or p.startswith('/') for p in parts):
+        raise ValueError('source path is not workspace-relative')
+    with contextlib.ExitStack() as stack:
+        held = stack.enter_context(HeldDir.hold(Path(root)))
+        for part in parts[:-1]:
+            held = stack.enter_context(held.child(part))
+        with os.fdopen(held.open_read_file(parts[-1]), 'rb') as opened:
+            info = os.fstat(opened.fileno())
+            if info.st_nlink != 1 or info.st_size > limit:
+                raise ValueError('source is linked or too large')
+            data = opened.read(limit + 1)
+            if len(data) > limit:
+                raise ValueError('source grew beyond limit')
+            return data
+
+
+def source_texts_for(ledger: Mapping, result, upstream=(), precedents=()) -> dict[str, str]:
+    """Read only collected/hash-bound artifacts or the cited paper's saved hash receipt.
+
+    ``upstream`` contains successful DAG ancestors only. A source's observation, URI and arbitrary locator
+    never become file paths. Missing, changed, unsafe or oversized text remains unavailable; no network lookup.
+    """
+    from .claims import normalize_artifact_path
+    from ..research.precedent_texts import file_name
+    from ..tools.annot_literature import parse_paper_id
+
+    def get(row, key):
+        return row.get(key) if isinstance(row, Mapping) else getattr(row, key, None)
+
+    artifacts = {}
+    for owner in (result, *upstream):
+        root = get(owner, 'workdir')
+        if not root:
+            continue
+        hashes = get(owner, 'output_sha256') or {}
+        for path in get(owner, 'outputs') or []:
+            names = [f'{root}/{path}']
+            if get(owner, 'workdir_id'):
+                names.append(f"{get(owner, 'workdir_id')}/{path}")
+            if owner is result:
+                names.append(path)
+            for name in names:
+                artifacts[normalize_artifact_path(name)] = (root, path, hashes.get(path))
+    refs = {str(row.get('artifact_id')): str(row.get('path') or '')
+            for row in ledger.get('artifact_refs') or [] if isinstance(row, Mapping)}
+    texts, cache = {}, {}
+    remaining = 16 * MAX_SOURCE_BYTES
+    for row in ledger.get('evidence') or []:
+        if not isinstance(row, Mapping) or row.get('status') not in (None, 'observed'):
+            continue
+        source = row.get('source') or {}
+        if not isinstance(source, Mapping):
+            continue
+        try:
+            if source.get('artifact_id'):
+                root, path, digest = artifacts[normalize_artifact_path(refs[str(source['artifact_id'])])]
+            else:
+                paper = parse_paper_id(f"{source.get('id_scheme')}:{source.get('id_value')}")
+                root = get(result, 'workdir')
+                path = '.tmp/literature/' + paper.file_name()
+                try:
+                    receipt = json.loads(_source_bytes(root, path + '.receipt.json', 128_000))
+                except FileNotFoundError:
+                    index, receipt = next((i, item) for i, item in enumerate(precedents, 1)
+                                          if item.get('paper_id') == paper.key)
+                    path = 'inputs/precedent/' + file_name(receipt, index)
+                if receipt.get('paper_id') != paper.key or receipt.get('access_level') not in {'full_text', 'abstract'}:
+                    continue
+                digest = receipt.get('text_sha256')
+            if not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest):
+                continue
+            key = (str(root), path, digest)
+            if key not in cache:
+                data = _source_bytes(root, path, min(MAX_SOURCE_BYTES, remaining))
+                remaining -= len(data)
+                if hashlib.sha256(data).hexdigest() != digest:
+                    continue
+                cache[key] = data.decode('utf-8')
+            texts[str(row.get('id') or '')] = cache[key]
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, StopIteration):
+            continue
+    return texts
 
 
 def check_evidence(ledger: Mapping, source_texts: Mapping[str, str]) -> list[dict]:
