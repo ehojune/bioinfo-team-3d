@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: e9fdb40
+    at: '2026-11-12 12:55'
+    summary: 호출되지 않는 gateway 내부 코드를 정리했습니다.
+    text: 참조가 없는 동기 메서드 다섯 개를 삭제하고 대응 async 경로는 유지했다 (Refs #1390).
