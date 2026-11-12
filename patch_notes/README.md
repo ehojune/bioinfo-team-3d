@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:30 | [`6347773`](https://github.com/ehojune/bioinfo-team-3d/commit/6347773) | **보고서 각주에서 근거 파일을 열 수 있게 했습니다.**<br>각주 Markdown과 인증된 자산 링크를 렌더링하고 관련 CI fixture와 Windows 시험 목록을 고쳤다. |
+| 09:19 | [`39be86c`](https://github.com/ehojune/bioinfo-team-3d/commit/39be86c) | **보고서에서 해당 요청의 그림과 파일을 열고 각주 번호를 읽기 쉽게 표시합니다.**<br>2.5D 요청별 자산 인증과 PDF·웹 각주 표시를 고쳤다. 묶음이 없거나 통제 데이터면 자산을 제공하지 않는다. |
 | 07:00 | [`69e2a09`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/69e2a09) | **보류된 메시지를 재개할 때 관련 없는 기록이 막지 않게 고쳤습니다.**<br>최초 인수와 같은 의존성 기준을 적용하며 결과가 불확실한 ask는 계속 보류합니다. |
 | 06:52 | [`97761b0`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/97761b0) | **시작 전 실패한 질의는 저장소 복구 뒤 다시 처리합니다.**<br>pending ask와 실행 중인 작업을 구분해 안전한 경우에만 수동 retry를 허용합니다. |
 | 06:46 | [`dbe8309`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/dbe8309) | **저장 오류 뒤 메시지 재시도와 기존 설정 호환을 복구합니다.**<br>수동 재시도에서 불확실한 ask는 보류하고 semantics 제거 뒤에도 기존 설정을 읽습니다. |
