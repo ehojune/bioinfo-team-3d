@@ -4,6 +4,32 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1421 환경 폴더 입력 기록 (claude-worker2, 11-13)
+
+**결론**: 단계에 열린 Python·conda 환경을 입력 기록에 폴더 한 행으로 적습니다. 그래서 manifest가 1 MiB 인계 한도를 넘지 않습니다. 한도는 그대로입니다.
+
+| 바뀐 것 | 내용 |
+|---|---|
+| `labhq/runner/daemon.py` | 입력 root 가운데 runner가 검증해 연 앞 단계 `.venv`(환경 grant)와 `pyvenv.cfg` 또는 `conda-meta/`가 있는 폴더는 파일을 훑지 않고 `{"path", "skipped": "environment"}` 한 행으로 적습니다. 이름만 `.venv`인 일반 폴더와 실제 입력 자료는 지금처럼 파일별로 적습니다. |
+| `labhq/runner/step_inputs.py` | `environment_folder()`: #1368 원격 목록과 같은 표식을 쓰고, link는 따라가지 않습니다. `_json` 거절 문구에 파일 이름과 크기를 넣었습니다. 예: `inputs/s3 unavailable (input metadata exceeds limit: manifest.json is 6478547 bytes, over 1048576)` |
+| 시험 | 환경 표식 폴더와 이름만 비슷한 폴더 구분, 검증 grant 한 행, 거절 문구 — 3건 |
+
+**실행한 것**
+
+- `pytest tests/test_input_hashes.py tests/test_step_inputs_665.py`: 42 passed
+- 수정을 되돌린 상태에서는 새 시험 3건이 모두 실패하는 것을 확인했습니다.
+
+**읽는 쪽 확인**
+
+- 요청 묶음(`request_bundle.py`)은 이 행을 생략 사유 `environment`로 셉니다. 입력 표에도 경로와 사유가 남습니다.
+- 실행 중 변경 비교는 sha256이 없는 행을 건너뜁니다. 그래서 환경 행은 비교에 들어가지 않습니다.
+- 재사용 판정(`research/input_proof`)은 `input_files`를 읽지 않습니다.
+
+**미해결**
+
+- 입력 root 안쪽에 들어 있는 환경(예: 프로젝트 폴더 아래 `.venv`)은 여전히 파일별로 적힙니다. 이를 고치려면 `workspace.py`의 입력 walker를 바꿔야 하는데, 이번 claim 범위 밖입니다.
+- 실제 trial 재실행(짝 비교 3번)은 병합 뒤에 합니다.
+
 # #1419 Claude 5시간 한도 문구를 대기로 분류
 
 - `labhq/quota.py`가 `5-hour limit · resets 6:30pm (Asia/Seoul)`을 한도로 분류하지 못해 요청이 대기 대신 실패로 끝났습니다. `<N>-hour limit`을 Claude 한도로 보고, 문구에 적힌 zone으로 풀리는 시각을 읽게 했습니다.

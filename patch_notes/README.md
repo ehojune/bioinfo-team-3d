@@ -10,6 +10,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-13
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 01:05 | [`43198ba`](https://github.com/ehojune/bioinfo-team-3d/pull/1422/commits/43198ba) | manual 08 한영 INPUTS.tsv 행에 환경 폴더 한 행(environment), 보호 경로 안 환경, 입력 폴더 안쪽 환경은 아직 파일별 (#1421, PR #1422 리뷰 P1) |
+| 01:02 | [`1e4fd62`](https://github.com/ehojune/bioinfo-team-3d/pull/1422/commits/1e4fd62) | restricted·private 판정을 환경 분류보다 먼저 해 보호 경로 안 환경은 이름 없는 보호 행으로, 시험 1건 (#1421, PR #1422 리뷰 P1) |
+| 00:47 | [`ff46bd6`](https://github.com/ehojune/bioinfo-team-3d/pull/1422/commits/ff46bd6) | **앞 단계가 만든 Python 환경으로 분석하는 단계가 다음 단계로 결과를 넘기지 못하던 문제를 고쳤습니다. 단계에 열린 가상환경·conda 환경은 입력 기록에 폴더 한 줄로 적고, 인계가 거절되면 어느 기록이 얼마나 커서인지 알려 줍니다.**<br>daemon이 runner 검증 .venv grant와 pyvenv.cfg·conda-meta/ 표식 폴더를 input_files에 skipped=environment 한 행으로, step_inputs.environment_folder, _json 거절 문구에 파일명·크기, 1 MiB 한도 유지, 시험 3건 (#1421) |
+
 ## 2026-11-12
 
 | 시간 | 커밋 | 주요 변경사항 |
