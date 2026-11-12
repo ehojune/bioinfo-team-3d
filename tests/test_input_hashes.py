@@ -422,3 +422,27 @@ async def test_the_runner_verified_environment_grant_is_one_input_row(tmp_path, 
     rows = manifest["runs"][task.id]["input_files"]
     assert rows == [{"path": portable_input_path(venv.resolve()), "size": None, "mtime_ns": None, "sha256": None,
                      "skipped": "environment"}]
+
+
+@pytest.mark.asyncio
+async def test_an_environment_in_a_restricted_zone_is_recorded_without_its_path(tmp_path, monkeypatch):
+    """PR #1422 review: a protected root keeps the scanner's nameless row; an environment row would show the path."""
+    from labhq.settings import DataZone
+
+    zone = tmp_path / "controlled"
+    venv = _venv(zone / "env", 3)
+    (venv / "pyvenv.cfg").write_text("home = C:/Python312\n", encoding="utf-8")
+
+    class Adapter:
+        async def run(self, ctx):
+            return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, text="done")
+
+    runner, agent = _project_runner(tmp_path, monkeypatch, Adapter())
+    runner.s.policy.data_zones = [DataZone(path=str(zone), level="restricted")]
+    task = Task(id="task-zone-env", request_id="request-zone-env", agent_id=agent.id, prompt="read",
+                meta={"kind": "step", "step_id": "s2", "project_dirs": [str(venv)]})
+    result = await runner.run_task(task)
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    rows = manifest["runs"][task.id].get("input_files") or []
+    assert rows and all(row.get("skipped") != "environment" for row in rows)
+    assert all(str(zone.name) not in row["path"] for row in rows)

@@ -2881,6 +2881,20 @@ class Runner:
                 except (KeyError, TypeError, OSError, RuntimeError, ValueError):
                     continue
             environment_rows: list[dict[str, Any]] = []
+            hash_private = await asyncio.to_thread(resolve_private_paths, self.s, [], cwd=ws.dir)
+            protected_roots = [Path(p) for p in [*zones, *hash_private.paths]]
+
+            def protected(path: Path) -> bool:
+                # Restricted and private roots stay with the scanner, which records them without a name; an
+                # environment row would show the path (PR #1422 review).
+                for root in protected_roots:
+                    try:
+                        if path == root or path.is_relative_to(root):
+                            return True
+                    except (OSError, RuntimeError, ValueError):
+                        continue
+                return False
+
             for directory in [*extra_dirs, *read_dirs]:
                 try:
                     path = Path(directory).resolve()
@@ -2891,14 +2905,14 @@ class Runner:
                 if os.path.normcase(str(path)) == own_dir or os.path.normcase(str(path)).startswith(own_dir + os.sep):
                     continue
                 upstream = upstream_roots.get(os.path.normcase(str(path)))
-                if upstream is None and (os.path.normcase(str(path)) in granted_envs or environment_folder(path)):
+                if (upstream is None and not protected(path) and not protected(Path(os.path.abspath(directory)))
+                        and (os.path.normcase(str(path)) in granted_envs or environment_folder(path))):
                     shown = portable_input_path(path)
                     if all(row["path"] != shown for row in environment_rows):
                         environment_rows.append({"path": shown, "size": None, "mtime_ns": None, "sha256": None,
                                                  "skipped": "environment"})
                     continue
                 input_roots.append(upstream or (path, portable_input_path(path)))
-            hash_private = await asyncio.to_thread(resolve_private_paths, self.s, [], cwd=ws.dir)
 
             async def scan_inputs() -> tuple[list[dict[str, Any]], list[str]]:
                 rows, notes = await asyncio.to_thread(
