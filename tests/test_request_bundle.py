@@ -1106,7 +1106,7 @@ def test_a_bundle_with_scripts_and_an_inherited_environment_record_is_replayable
     assert "`rerun_verified`는 다른 곳에서 다시 돌린 기록이 있을 때만" in readme
 
 
-@pytest.mark.parametrize("hpc_user", [None, 'grade', 'status', 'engine', 'engine_cli_version', 'complete'])
+@pytest.mark.parametrize("hpc_user", [None, 'grade', 'de', 'status', 'engine', 'engine_cli_version', 'complete'])
 def test_rerun_verified_requires_a_valid_receipt_and_is_exposed_by_verify(tmp_path, hpc_user):
     files = {
         "env": {"outputs/env/requirements.lock.txt": "pandas==2.2.2\n"},
@@ -1141,12 +1141,17 @@ def test_rerun_verified_requires_a_valid_receipt_and_is_exposed_by_verify(tmp_pa
     request = {"id": "grade_receipt", "report": "ok", "report_appendix": "",
                "plan": {"steps": [{"id": "env", "depends_on": []}, {"id": "de", "depends_on": ["env"]}]},
                "results": results, "rerun_receipt": receipt}
+    if hpc_user:
+        request['text'] = 'Inspect /scratch/fixture-user/private.txt'
 
     built = build_request_bundle(request, settings)
     bundle = Path(built["path"])
     verified = verify_bundle_copy(bundle)
 
     assert built["grade"] == verified["grade"] == "rerun_verified"
+    readme = (bundle / 'README.md').read_text(encoding='utf-8')
+    assert '`grade_receipt`' in readme and 'cd steps/de' in readme
+    assert 'fixture-user' not in readme
     assert json.loads((bundle / "rerun_receipt.json").read_text(encoding="utf-8")) == receipt
     summary = manifest_rows(bundle)["."]
     assert summary["reproducibility_grade"] == "rerun_verified"

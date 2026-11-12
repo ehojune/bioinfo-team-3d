@@ -729,13 +729,16 @@ def _bundle_claims(record: dict[str, Any], results: Mapping[str, Any], copied: s
 
 def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: list[str],
             unsafe_scripts: list[str], python_unknown: bool, linked: bool = False, claims: bool = False,
-            job_scripts: list[str] | None = None) -> str:
+            job_scripts: list[str] | None = None, *, hide_front=None) -> str:
     stored = req.get("report_package")
     package = (ReportPackage.from_dict(dict(stored)) if isinstance(stored, Mapping)
                else build_report_package(dict(req), str(req.get("report") or ""),
                                          dict(req.get("results") or {})))
+    front = render_report_front(package).rstrip()
+    if hide_front:
+        front = hide_front(front)
     lines = [
-        "# 요청 묶음", "", render_report_front(package).rstrip(), "", "## 묶음 파일", "",
+        "# 요청 묶음", "", front, "", "## 묶음 파일", "",
         f"- 요청: `{req.get('id')}`", "- `report.md`: PI용 본문",
         *(["- `claims.json`: 연구 요청의 단계별 claim·근거 원장과 CP2 기록. 보고서의 `[[claim:<단계>/<claim>]]`은 "
            "`ledgers.<단계>.claims`의 `id`입니다"] if claims else []),
@@ -1155,8 +1158,17 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             (temp / FIGURE_PLAN_FILE).write_text(
                 json.dumps({"key_figures": list(dict.fromkeys(key_figures))}, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8", newline="\n")
+        redacted_files = set()
+
+        def hide_readme_front(front):
+            cleaned = public_text(front)
+            if cleaned != front:
+                redacted_files.add('README.md')
+            return cleaned
+
         (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe, python_unknown, bool(links),
-                                                 claims, copied_job_scripts),
+                                                 claims, copied_job_scripts,
+                                                 hide_front=hide_readme_front if public_text else None),
                                           encoding="utf-8", newline="\n")
 
         rewritten_files = 0
@@ -1172,10 +1184,9 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             rewrite_by_file[relative] = (count, paths)
             remaining.update(paths)
 
-        redacted_files = set()
         if public_text:
             for path in sorted(p for p in temp.rglob('*') if p.is_file()):
-                if path in (temp / 'INPUTS.tsv', temp / LINK_SCRIPT, temp / RERUN_RECEIPT_FILE,
+                if path in (temp / 'README.md', temp / 'INPUTS.tsv', temp / LINK_SCRIPT, temp / RERUN_RECEIPT_FILE,
                             temp / FIGURE_PLAN_FILE):
                     continue  # typed inventory, path-free receipt and generated relative-path helpers
                 record_fields = ()
@@ -1208,6 +1219,7 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             rewrite_by_file = {name: (count, [public_text(p) for p in paths])
                                for name, (count, paths) in rewrite_by_file.items()}
             remaining = {public_text(p) for p in remaining}
+            input_summary = public_text(input_summary)
 
         # The figure check reads the rewritten report: an image linked by its absolute workdir path now points inside the
         # bundle. It is the same check `labhq verify` runs later.
