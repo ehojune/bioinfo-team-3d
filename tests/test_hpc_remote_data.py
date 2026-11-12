@@ -18,7 +18,7 @@ from tests.test_hpc_transfer_1308 import cluster, site, write_script
 def inventory(request='r', data=b'large', path='tx2gene.tsv'):
     spec = ht.job_spec('t', 'align', request)
     return {'request_id': request, 'data': spec['data'], 'bytes': len(data),
-            'files': [{'path': path, 'bytes': len(data)}], 'directories': []}
+            'files': [{'path': path, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}], 'directories': []}
 
 
 def helper_transfer(cluster, **limits):
@@ -83,6 +83,13 @@ def test_invalid_manifest_never_becomes_an_input(change):
     if change == 'duplicate': m['files'] *= 2
     if change == 'traversal': m['files'][0]['path'] = '../secret'
     with pytest.raises(ht.TransferError): ht.validate_remote_manifest(m, 'r')
+
+
+def test_remote_input_without_hash_is_rejected_before_remote_access():
+    m = inventory()
+    del m['files'][0]['sha256']
+    with pytest.raises(ht.TransferError, match='sha256'):
+        ht.verify_remote_data(None, m, 'r')
 
 
 def test_large_outputs_stay_remote_small_outputs_and_manifest_come_home(cluster, tmp_path):
@@ -331,16 +338,18 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
         runner.store.close()
 
 
-def test_listing_and_next_input_check_do_not_hash_or_modify_large_outputs(cluster, tmp_path):
+def test_listing_hashes_large_outputs_and_next_input_rejects_same_size_change(cluster, tmp_path):
     transfer = helper_transfer(cluster, fetch_max_bytes=1)
     spec = prepare(cluster, transfer, tmp_path, {'large.bin': b'original'})
     path = cluster.path(spec['work'] + '/large.bin')
     before = path.stat()
     listing = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')['remote']
-    assert listing['files'] == [{'path': 'large.bin', 'bytes': 8}]
+    assert listing['files'] == [{'path': 'large.bin', 'bytes': 8, 'sha256': hashlib.sha256(b'original').hexdigest()}]
     assert path.stat().st_mode == before.st_mode and path.stat().st_mtime_ns == before.st_mtime_ns
-    path.write_bytes(b'modified')  # name/size contract deliberately does not promise content integrity
     assert ht.verify_remote_data(transfer, listing, 'r') == transfer.path(spec['work'])
+    path.write_bytes(b'modified')
+    with pytest.raises(ht.TransferError, match='checking remote data failed'):
+        ht.verify_remote_data(transfer, listing, 'r')
     assert path.read_bytes() == b'modified'
 
 
@@ -353,7 +362,8 @@ def test_declared_uploaded_input_can_also_be_a_remote_output(cluster, tmp_path, 
     if modified:
         cluster.path(spec['work'] + '/table.tsv').write_bytes(b'updated')
     listing = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')['remote']
-    assert listing['files'] == [{'path': 'table.tsv', 'bytes': 7 if modified else 8}]
+    expected = b'updated' if modified else b'original'
+    assert listing['files'] == [{'path': 'table.tsv', 'bytes': len(expected), 'sha256': hashlib.sha256(expected).hexdigest()}]
     assert listing['unchanged_inputs'] == ([] if modified else ['table.tsv'])
 
 
@@ -395,7 +405,7 @@ def test_unsafe_undeclared_files_and_directories_do_not_fail_valid_remote_output
     spec = prepare(cluster, transfer, tmp_path, {'result.tsv': b'ok', 'scratch data.txt': b'temporary',
                                                 'scratch folder/cache.bin': b'cache'})
     fetched = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
-    assert fetched['remote']['files'] == [{'path': 'result.tsv', 'bytes': 2}]
+    assert fetched['remote']['files'] == [{'path': 'result.tsv', 'bytes': 2, 'sha256': hashlib.sha256(b'ok').hexdigest()}]
     assert {row['path'] for row in fetched['skipped'] if row['reason'] == 'name not allowed'} == {
         'scratch data.txt', 'scratch folder'}
     assert {row['path'] for row in fetched['remote']['skipped']} == {'scratch data.txt', 'scratch folder'}
@@ -441,7 +451,7 @@ def test_undeclared_special_entries_are_omitted_without_blocking_valid_outputs(c
     else:
         os.link(target, entry)
     fetched = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
-    assert fetched['remote']['files'] == [{'path': 'result.tsv', 'bytes': 2}]
+    assert fetched['remote']['files'] == [{'path': 'result.tsv', 'bytes': 2, 'sha256': hashlib.sha256(b'ok').hexdigest()}]
     assert fetched['remote']['skipped'] == [{'path': 'temporary', 'reason': 'link or special file'}]
     assert (tmp_path / 'outputs/result.tsv').read_bytes() == b'ok'
 
@@ -481,7 +491,7 @@ def test_depth_limited_undeclared_subtree_is_an_omission_not_a_fetch_failure(clu
     deep.mkdir(parents=True)
     (deep / 'cache').write_bytes(b'temporary')
     fetched = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
-    assert fetched['remote']['files'] == [{'path': 'result.tsv', 'bytes': 2}]
+    assert fetched['remote']['files'] == [{'path': 'result.tsv', 'bytes': 2, 'sha256': hashlib.sha256(b'ok').hexdigest()}]
     omitted, = fetched['remote']['skipped']
     assert omitted['reason'] == 'depth limit' and omitted['path'].startswith('scratch/')
     assert (tmp_path / 'outputs/result.tsv').read_bytes() == b'ok'
