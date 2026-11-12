@@ -72,3 +72,7 @@ rows:
     at: "2026-11-12 19:39"
     summary: "공백이 든 스크립트 경로 전체를 가립니다."
     text: "#1416 r2: 따옴표·escaped space·인접 인용 구간을 포함한 POSIX·Windows·UNC·저장소 URI 가림. 회귀 포함 256 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS·원본 동일."
+  - sha: "b9e631b"
+    at: "2026-11-12 19:48"
+    summary: "일반 텍스트와 구조화 기록에서도 공백 경로 전체를 가립니다."
+    text: "#1416 r2: script의 Windows·UNC escaped/인접 인용 경로와 일반 text·JSON 공백 경로 가림 통합. 경계가 모호한 일반 text는 후행 문구도 가림. 관련 시험 270 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS·원본 동일."
