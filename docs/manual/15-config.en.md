@@ -9,13 +9,13 @@ Unknown or misspelled configuration keys stop loading with an error. `labhq up` 
 Both web views show runner recovery status at the top; `labhq doctor --network` reads the same status. The web refreshes every five seconds and marks failed status queries. Only runner, generation, sequence, state and error are shown; message contents and tokens are excluded. Remote doctor queries require `wss://`; `ws://` is allowed only for loopback. Redirects are not followed.
 
 - Authenticated reads: `GET /api/runner-inbox` includes unfinished entries from old generations; `GET /api/runner-inbox/{runner_id}` lists a selected generation.
-- `retry` is suggested only for failed activity events or asks whose publication failed before starting. `resume` is suggested only for unexecuted entries whose earlier same-runner blockers are resolved. Holds do not propagate across runners.
+- `retry` is suggested only for failed activity events or asks whose publication failed before starting. `resume` is suggested only for unexecuted entries whose earlier same-runner blockers are resolved. Holds do not propagate across runners. Suggested URLs pass `runner_id` in the query so IDs containing `/` or `..` are preserved. The `legacy=true` marker is refused after a generation change.
 - Unknown outcomes and old generations require manual inspection. Same-runner cumulative ACK ordering and generation protection remain. Resolved holds are also rechecked on the same runner's next message and on gateway restart. Keep the latest 256 completed inbox entries and all unfinished entries.
 
 Inspect the suggested `recovery_path`, then POST manually with the client token. This Bash example keeps the real token in an environment variable. Use the current generation returned by the query. Never replay an ask with an unknown outcome.
 
 ```bash
-curl -X POST -H "Authorization: Bearer $LABHQ_CLIENT_TOKEN" "http://127.0.0.1:8787/api/runner-inbox/RUNNER/SEQ/retry?incarnation=GENERATION"
+curl -X POST -H "Authorization: Bearer $LABHQ_CLIENT_TOKEN" "http://127.0.0.1:8787/api/runner-inbox/SEQ/retry?runner_id=RUNNER&incarnation=GENERATION"
 # After blockers are resolved, use resume instead of retry when suggested.
 ```
 

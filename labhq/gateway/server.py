@@ -6481,7 +6481,7 @@ class Hub:
 
     def runner_inbox_summary(self) -> list[dict]:
         """Payload-free recovery advice; observation never claims or replays a delivery."""
-        from urllib.parse import quote, urlencode
+        from urllib.parse import urlencode
 
         activity = {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}
         errors = {"storage_interrupted", "invalid_message", "ask_publication_incomplete", "ask_start_unknown",
@@ -6500,9 +6500,9 @@ class Hub:
                 action = "retry"
             path = None
             if action:
-                path = f"/api/runner-inbox/{quote(runner, safe='')}/{row['seq']}/{action}"
-                if incarnation is not None:
-                    path += "?" + urlencode({"incarnation": incarnation})
+                query = {"runner_id": runner}
+                query.update({"incarnation": incarnation} if incarnation is not None else {"legacy": "true"})
+                path = f"/api/runner-inbox/{row['seq']}/{action}?" + urlencode(query)
             rows.append({"runner_id": runner, "incarnation": incarnation, "seq": row["seq"],
                          "state": state, "error": error if error in errors or error is None else "unknown_error",
                          "current_generation": current, "action": action, "recovery_path": path})
@@ -7009,11 +7009,13 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                  "type": row["message"].get("type"), "state": row["state"], "error": row["error"]}
                 for row in hub.store.runner_inbox_entries(runner_id, incarnation) if row["state"] != "completed"]
 
+    @app.post("/api/runner-inbox/{seq}/{action}", dependencies=[Depends(auth)])
     @app.post("/api/runner-inbox/{runner_id}/{seq}/{action}", dependencies=[Depends(auth)])
-    async def recover_runner_inbox(runner_id: str, seq: int, action: str, incarnation: str | None = None) -> dict:
+    async def recover_runner_inbox(runner_id: str, seq: int, action: str, incarnation: str | None = None,
+                                   legacy: bool = False) -> dict:
         if action not in {"retry", "resume"}:
             raise HTTPException(404, "unknown recovery action")
-        if incarnation is None:
+        if incarnation is None and not legacy:
             incarnation = (hub.store.get("runner_incarnation", runner_id) or {}).get("id")
         try:
             if action == "retry":

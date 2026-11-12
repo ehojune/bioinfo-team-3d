@@ -51,7 +51,7 @@ def test_inbox_doctor_only_reads_and_never_exposes_credentials(tmp_path, monkeyp
             raise httpx.ConnectError("PRIVATE_CLIENT_TOKEN", request=request)
         rows = [{"runner_id": "runner", "incarnation": "new", "seq": 3, "state": "failed",
                  "error": "storage_interrupted", "action": "retry", "current_generation": True,
-                 "recovery_path": "/api/runner-inbox/runner/3/retry?incarnation=new"},
+                 "recovery_path": "/api/runner-inbox/3/retry?runner_id=runner&incarnation=new"},
                 {"runner_id": "runner", "incarnation": "old", "seq": 2, "state": "blocked",
                  "error": "ask_start_unknown", "action": None, "current_generation": False}]
         return httpx.Response(404 if outcome == "old_server" else 200,
@@ -62,7 +62,7 @@ def test_inbox_doctor_only_reads_and_never_exposes_credentials(tmp_path, monkeyp
     assert len(requests) == 1
     assert "PRIVATE_CLIENT_TOKEN" not in json.dumps(result)
     if outcome == "held":
-        assert "curl -X POST" in result[0]["hint"] and "/3/retry?incarnation=new" in result[0]["hint"]
+        assert "curl -X POST" in result[0]["hint"] and "/3/retry?runner_id=runner&incarnation=new" in result[0]["hint"]
         assert "old generation" in result[1]["detail"] and "curl" not in result[1]["hint"]
     else:
         assert result[0]["status"] == ("ok" if outcome == "empty" else "warn")
@@ -78,8 +78,8 @@ def test_inbox_doctor_never_sends_client_token_over_remote_plaintext(tmp_path, m
     assert rows[0]["status"] == "warn" and "wss://" in rows[0]["hint"]
 
 
-@pytest.mark.parametrize("path", ["/api/runner-inbox/$(touch%20bad)/1/retry",
-                                  "/api/runner-inbox/`id`/1/retry"])
+@pytest.mark.parametrize("path", ["/api/runner-inbox/1/retry?runner_id=$(touch%20bad)&legacy=true",
+                                  "/api/runner-inbox/1/retry?runner_id=`id`&legacy=true"])
 def test_inbox_doctor_rejects_shell_substitution_in_recovery_path(tmp_path, monkeypatch, path):
     import httpx
     client = httpx.Client

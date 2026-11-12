@@ -3,6 +3,7 @@
 import json
 import shutil
 import subprocess
+import pytest
 
 from fastapi.testclient import TestClient
 
@@ -11,7 +12,9 @@ from labhq.models import ApprovalRequest
 from labhq.settings import Settings
 
 
-def test_inbox_summary_auth_snapshot_and_manual_recovery_refresh(tmp_path):
+@pytest.mark.parametrize("runner_id", ["runner", "..", "nested/runner"])
+@pytest.mark.parametrize("incarnation", [None, "generation with/&"])
+def test_inbox_summary_auth_snapshot_and_manual_recovery_refresh(tmp_path, runner_id, incarnation):
     s = Settings()
     s.gateway.state_dir = str(tmp_path / "state")
     app = create_app(s)
@@ -19,10 +22,12 @@ def test_inbox_summary_auth_snapshot_and_manual_recovery_refresh(tmp_path):
     client = TestClient(app)
     headers = {"Authorization": f"Bearer {s.gateway.client_token}"}
     try:
+        if incarnation is not None:
+            hub.store.put("runner_incarnation", runner_id, {"id": incarnation})
         message = {"type": "agent.log", "runner_seq": 1, "data": {"text": "PRIVATE_PAYLOAD", "token": "PRIVATE_TOKEN"}}
-        hub.store.accept_runner_inbox("runner", None, 1, message)
-        hub.store.set_runner_inbox_state("runner", None, 1, "processing", expected="pending")
-        hub.store.set_runner_inbox_state("runner", None, 1, "failed", "storage_interrupted", expected="processing")
+        hub.store.accept_runner_inbox(runner_id, incarnation, 1, message)
+        hub.store.set_runner_inbox_state(runner_id, incarnation, 1, "processing", expected="pending")
+        hub.store.set_runner_inbox_state(runner_id, incarnation, 1, "failed", "storage_interrupted", expected="processing")
         assert client.get("/api/runner-inbox").status_code == 401
         response = client.get("/api/runner-inbox", headers=headers)
         assert response.status_code == 200 and response.json() == hub.snapshot()["data"]["runner_inbox"]
@@ -31,6 +36,29 @@ def test_inbox_summary_auth_snapshot_and_manual_recovery_refresh(tmp_path):
         assert client.post(path, headers=headers).status_code == 200
         assert client.get("/api/runner-inbox", headers=headers).json() == []
         assert hub.snapshot()["data"]["runner_inbox"] == []
+    finally:
+        hub.store.close()
+
+
+def test_inbox_legacy_recovery_hint_cannot_select_a_new_generation(tmp_path):
+    s = Settings()
+    s.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(s)
+    hub = app.state.hub
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {s.gateway.client_token}"}
+    try:
+        for generation in [None, "new"]:
+            message = {"type": "agent.log", "runner_seq": 1, "data": {}}
+            hub.store.accept_runner_inbox("runner", generation, 1, message)
+            hub.store.set_runner_inbox_state("runner", generation, 1, "processing", expected="pending")
+            hub.store.set_runner_inbox_state("runner", generation, 1, "failed", "storage_interrupted", expected="processing")
+        path = client.get("/api/runner-inbox", headers=headers).json()[0]["recovery_path"]
+        assert "legacy=true" in path
+        hub.store.put("runner_incarnation", "runner", {"id": "new"})
+        assert client.post(path, headers=headers).status_code == 409
+        assert hub.store.runner_inbox("runner", "new", 1)["state"] == "failed"
+        assert hub.store.runner_inbox("runner", None, 1)["state"] == "failed"
     finally:
         hub.store.close()
 

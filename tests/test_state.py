@@ -63,7 +63,7 @@ def test_snapshot_runner_inbox_advice_excludes_payload_and_old_generation_action
         rows = hub.snapshot()["data"]["runner_inbox"]
         assert [r["action"] for r in rows] == [None, None, "retry"]
         assert not rows[0]["current_generation"]
-        assert rows[2]["recovery_path"] == "/api/runner-inbox/runner/3/retry?incarnation=new"
+        assert rows[2]["recovery_path"] == "/api/runner-inbox/3/retry?runner_id=runner&incarnation=new"
         assert "PAYLOAD_SECRET" not in json.dumps(rows)
         assert "PRIVATE_QUESTION" not in json.dumps(rows)
         hub.store.put("runner_incarnation", "runner", {"id": "next"})

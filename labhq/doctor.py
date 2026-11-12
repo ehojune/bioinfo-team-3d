@@ -912,7 +912,8 @@ def _runner_inbox_rows(settings: Settings, *, network: bool, dry_run: bool) -> l
                 # Accept only the percent-encoded shape our gateway generates, then quote the entire URL.
                 segment = r"(?:[A-Za-z0-9_.~-]|%[0-9A-Fa-f]{2})"
                 safe_path = isinstance(path, str) and re.fullmatch(
-                    rf"/api/runner-inbox/{segment}+/[0-9]+/(?:retry|resume)(?:\?incarnation=(?:{segment}|\+)*)?", path)
+                    rf"/api/runner-inbox/[0-9]+/(?:retry|resume)\?runner_id=(?:{segment}|\+)*"
+                    rf"(?:&incarnation=(?:{segment}|\+)*|&legacy=true)", path)
                 hint = (f'Bash: curl -X POST -H "Authorization: Bearer $LABHQ_CLIENT_TOKEN" {shlex.quote(base + path)}'
                         if entry.get("current_generation") and action in {"retry", "resume"} and safe_path else
                         "Manual inspection required; inspect earlier holds and uncertain effects. Do not replay unknown outcomes.")
