@@ -240,3 +240,157 @@ def test_mutation_probe_rejects_unowned_launcher_before_spawn(monkeypatch, tmp_p
                                           tmp_path, tmp_path, {}, "run-a", 0.01)
             assert result == {"status": "unsupported",
                               "reason": "trusted descendant lifecycle ownership unavailable"}
+
+
+def test_synthetic_seal_adapter_contract():
+    from copy import deepcopy
+    import hashlib
+    import hmac
+    import importlib.util
+    import json
+    import sys
+    root = Path(__file__).parent / "fixtures" / "process_boundary_seal"
+    spec = importlib.util.spec_from_file_location("offline_seal_adapter", root / "validator.py")
+    validator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = validator
+    spec.loader.exec_module(validator)
+    CORPUS = json.loads((root / "cases.json").read_text(encoding="utf-8"))
+    def record_external_ledger(evidence, trusted):
+        """Test-only observer recording, never called by validate or a child adapter."""
+        witness = evidence["witness"]
+        previous, hashes = "0" * 64, []
+        for event in witness["events"]:
+            payload = [witness["run_id"], witness["launch_nonce"], previous, event]
+            previous = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            hashes.append(previous)
+        trusted["ledger"] = {
+            "store_id": trusted["store_id"], "observer_id": witness["observer_id"],
+            "run_id": witness["run_id"], "launch_nonce": witness["launch_nonce"], "hashes": hashes,
+        }
+
+
+    def test_authenticated_offline_adapter_and_independent_cleanup():
+        trusted, evidence = deepcopy(CORPUS["trusted"]), deepcopy(CORPUS["positive"])
+        receipt = dict(version=1, run_id=trusted["run_id"], snapshot_digest=None, runtime_digest=None,
+                       policy_digest=None, supervisor_identity=None, child_identity=None, namespace_identities={},
+                       preparation="diagnostic_ready", launch="exited_0",
+                       cleanup="broker_closed_socket_absent; descendants_unverified", seal_status="unsealed",
+                       unsupported_reasons=["diagnostic only; runtime and storage are unsealed"])
+        producer_key, observer_key = b"p" * 32, b"o" * 32
+
+        def tags_for(r, e):
+            def sign(domain, value, key):
+                data = json.dumps([domain, trusted["run_id"], trusted["launch_nonce"], value],
+                                  sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+                return hmac.new(key, data, hashlib.sha256).hexdigest()
+            return {"producer": sign("producer", r, producer_key), "observer": sign("observer", e, observer_key)}
+
+        def run(r=receipt, e=evidence, tags=None, seen=None, expectations=trusted):
+            return validator.adapt_producer(r, evidence=e, trusted=expectations, tags=tags or tags_for(r, e),
+                                            producer_key=producer_key, observer_key=observer_key,
+                                            consumed=set() if seen is None else seen)
+
+        seen = set()
+        assert run(seen=seen).status == "synthetic_only"
+        assert run(seen=seen).contract == "rejected"
+        assert run(tags={"producer": "0" * 64, "observer": tags_for(receipt, evidence)["observer"]}).contract == "rejected"
+        retry = set()
+        assert run(tags={"producer": "0" * 64, "observer": tags_for(receipt, evidence)["observer"]}, seen=retry).contract == "rejected"
+        assert not retry
+        failed_receipt = deepcopy(receipt)
+        failed_receipt["launch"] = "failed"
+        assert run(r=failed_receipt, seen=retry).contract == "rejected"
+        assert retry == {(trusted["run_id"], trusted["launch_nonce"])}
+        assert run(seen=retry).contract == "rejected"
+        malformed_seen = set()
+        assert run(r={}, seen=malformed_seen).contract == "rejected"
+        assert malformed_seen == {(trusted["run_id"], trusted["launch_nonce"])}
+        forged = deepcopy(evidence)
+        forged["witness"]["observer_id"] = "producer"
+        assert run(e=forged, tags=tags_for(receipt, evidence)).contract == "rejected"
+        for change in (lambda r: r.update(run_id="wrong"), lambda r: r.pop("cleanup"),
+                       lambda r: r.update(launch="failed"), lambda r: r.update(seal_status="sealed")):
+            bad = deepcopy(receipt)
+            change(bad)
+            assert run(r=bad).contract == "rejected"
+        for resource in ("descendants", "sockets", "mounts", "handles", "broker_endpoints", "active_tokens"):
+            bad = deepcopy(evidence)
+            cleanup = next(event for event in bad["witness"]["events"] if event["type"] == "cleanup")
+            cleanup[resource] = ["remaining"]
+            # An independent ledger and signature record the failure, rather than
+            # making the test pass merely because a stale signature was rejected.
+            updated = deepcopy(trusted)
+            record_external_ledger(bad, updated)
+            verdict = run(e=bad, expectations=updated)
+            assert "cleanup_resources_not_cleared" in verdict.reasons
+        for failure in ("broker_timeout", "observer_death", "supervisor_interrupted", "deadline_expired"):
+            bad = deepcopy(evidence)
+            events = bad["witness"]["events"]
+            fault = deepcopy(events[2])
+            fault["type"] = failure
+            events.insert(3, fault)
+            for index, event in enumerate(events):
+                event["sequence"] = index
+                event["time_ns"] = index
+            updated = deepcopy(trusted)
+            record_external_ledger(bad, updated)
+            verdict = run(e=bad, expectations=updated)
+            assert failure + "_observed" in verdict.reasons
+            assert "reasoned_stop_unverified" in verdict.reasons
+
+
+    test_authenticated_offline_adapter_and_independent_cleanup()
+
+
+def test_imported_seal_negative_corpora():
+    from copy import deepcopy
+    import hashlib
+    import importlib.util
+    import json
+    import sys
+
+    root = Path(__file__).parent / "fixtures" / "process_boundary_seal"
+    spec = importlib.util.spec_from_file_location("corpus_validator", root / "validator.py")
+    validator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = validator
+    spec.loader.exec_module(validator)
+    corpus = json.loads((root / "cases.json").read_text(encoding="utf-8"))
+    controls = json.loads((root / "controls.json").read_text(encoding="utf-8"))["cases"]
+
+    def materialize(case):
+        evidence = deepcopy(corpus["positive"])
+        for change in case["changes"]:
+            parent = evidence
+            for part in change["path"][:-1]:
+                parent = parent[part]
+            key = change["path"][-1]
+            if change.get("remove"):
+                del parent[key]
+            elif "insert" in change:
+                parent.insert(key, deepcopy(change["insert"]))
+                for i, event in enumerate(parent):
+                    event["sequence"] = i
+            else:
+                parent[key] = deepcopy(change["value"])
+        return evidence
+
+    for case in corpus["cases"]:
+        verdict = validator.validate(materialize(case), deepcopy(corpus["trusted"]))
+        assert (verdict.contract, verdict.status) == (case["expected"]["contract"], case["expected"]["status"]), case["id"]
+        assert (case["expected"]["reason"] in verdict.reasons if case["expected"]["reason"] else not verdict.reasons), case["id"]
+        assert verdict.protection == "unverified"
+    for case in controls:
+        for rerecord in (False, True):
+            evidence, trusted = materialize(case), deepcopy(corpus["trusted"])
+            if rerecord:
+                witness = evidence["witness"]
+                previous, hashes = "0" * 64, []
+                for event in witness["events"]:
+                    payload = [witness["run_id"], witness["launch_nonce"], previous, event]
+                    previous = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                    hashes.append(previous)
+                trusted["ledger"] = {"store_id": trusted["store_id"], "observer_id": witness["observer_id"],
+                                     "run_id": witness["run_id"], "launch_nonce": witness["launch_nonce"], "hashes": hashes}
+            verdict = validator.validate(evidence, trusted)
+            assert verdict.contract == "rejected" and case["reason"] in verdict.reasons, case["id"]
+            assert verdict.protection == "unverified"
