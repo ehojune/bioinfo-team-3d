@@ -397,14 +397,16 @@ def _copy_literature(root, source_parts, work, max_file, remaining):
     warnings = []
     try:
         with _folder(root, (*source_parts, *LITERATURE)) as held:
-            entries = held.entries(MAX_FILES)
+            entries = held.entries(MAX_FILES + 1)
             if not entries:
                 return warnings
+            if len(entries) > MAX_FILES:
+                warnings.append(f'literature listing truncated at {MAX_FILES} entries; additional entries were not copied')
             # A link or junction left at .tmp or .tmp/literature by an earlier turn is never written through.
             target = plain_directory(Path(work), '/'.join(LITERATURE))
             if target is None:
                 return ['literature destination is not a plain folder']
-            for entry in entries:
+            for entry in entries[:MAX_FILES]:
                 if entry.kind == 'dir':
                     continue  # inbox/ holds PI uploads; it is not a paper to hand off.
                 if entry.kind != 'file' or entry.size is None or entry.size > min(max_file, remaining[0]):
