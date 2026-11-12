@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:20 | [`b455e27`](https://github.com/ehojune/bioinfo-team-3d/pull/1418/commits/b455e27) | **경로 가림 범위와 검증 결과를 참고 문서에 남겼습니다.**<br>기록: #1416 검증 기록·status·패치노트 |
+| 21:15 | [`677cbbb`](https://github.com/ehojune/bioinfo-team-3d/pull/1418/commits/677cbbb) | **공개 요청 묶음에서 HPC 작업 폴더 경로를 가리고, 임시 폴더 파일을 HPC 잡 입력으로 넣으면 제출 전에 막습니다.**<br>수정: #1416 요청 묶음은 설정된 원격 작업 폴더 경로만 가리고 .tmp/ 잡 입력을 거절한다 |
 | 16:52 | [`10bfefd`](https://github.com/ehojune/bioinfo-team-3d/pull/1396/commits/10bfefd) | **최신 main을 격리 실험 정리에 반영했습니다.**<br>다른 작업의 변경을 보존하며 충돌 없이 통합했습니다. |
 | 16:38 | [`6916b1b`](https://github.com/ehojune/bioinfo-team-3d/pull/1415/commits/6916b1b) | **패키지 캐시를 결과 목록에서 빼는 조건을 설명합니다.**<br>캐시 제외 조건을 한·영 설정 매뉴얼에 반영한다 (#1413). |
 | 16:27 | [`40da055`](https://github.com/ehojune/bioinfo-team-3d/pull/1415/commits/40da055) | **콘솔 종료 조사 결과를 기록했습니다.**<br>Windows 콘솔 종료를 독립 mock에서 재현한 조사 결과와 실제 장애 원인의 미확인 범위를 기록한다 (#1413). |
