@@ -8,6 +8,7 @@ sha256 labhq recorded.
 
 from __future__ import annotations
 
+import html
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -189,10 +190,11 @@ def claim_evidence_rows(ledgers: Mapping[str, Any], *, refused: Iterable[Any] = 
 
 def evidence_note(row: Mapping[str, str]) -> str:
     """One readable evidence note, shared by report tables and publication footnotes."""
+    review = html.escape(row.get("review") or "").replace("[", "&#91;").replace("]", "&#93;")
     return (f"{row['source']}; 위치: {row['locator']}; 접근: {row['access']}; "
             f"Methods: {row['methods']}; QC: {row['qc']}; 보충자료: {row['supplement']}; "
             f"계보: {row['lineage']}" +
-            (f"; 리뷰 지적 (해결 여부 미확인): {row['review']}" if row.get("review") else ""))
+            (f"; 리뷰 지적 (해결 여부 미확인): {review}" if review else ""))
 
 
 def evidence_literals(value: str) -> str:

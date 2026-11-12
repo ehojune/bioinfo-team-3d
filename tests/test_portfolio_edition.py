@@ -28,6 +28,30 @@ def test_review_issues_follow_claim_ids_into_publication_evidence():
     assert ledger["claims"][0]["statement"] == "A > B"
 
 
+def test_prior_round_review_is_shown_with_current_claim():
+    issue = {"step_id": "s1", "claim_id": "c1", "problem": "Prior concern"}
+    req = {"id": "req_review", "results": {"s1": {"structured": {
+        "claims": [{"id": "c1", "statement": "A", "status": "supported"}]}}},
+        "research_contract": {"rounds": [{"round": 1, "review": {"issues": [issue]}}]},
+        "review": {"issues": []}}
+    rows = portfolio._source_evidence_rows(req, Settings())
+    assert "Prior concern" in claim_evidence_section(rows)
+    assert "해결 여부 미확인" in rows[0]["claim_status"]
+
+
+def test_review_markdown_links_are_not_active_in_evidence_or_footnotes():
+    req = {"id": "req_review", "results": {"s1": {"structured": {
+        "claims": [{"id": "c1", "statement": "A", "status": "supported"}]}}},
+        "review": {"issues": [{"step_id": "s1", "claim_id": "c1",
+                               "problem": "See [table](../missing.tsv)", "request": "Check"}]}}
+    rows = portfolio._source_evidence_rows(req, Settings())
+    table = claim_evidence_section(rows)
+    footnotes = portfolio._publication_claim_footnotes("Claim [[claim:s1/c1]]", req, Settings())
+    assert not portfolio.broken_markdown_links({"docs/reference/claim_evidence.md": table,
+                                                "report/report.md": footnotes})
+    assert "missing.tsv" in table and "missing.tsv" in footnotes
+
+
 PAPER = """# 공개 오믹스 대체 분석
 
 ## 요약(Abstract)

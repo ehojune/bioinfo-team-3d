@@ -1091,11 +1091,20 @@ def _source_evidence_rows(req: dict, settings) -> list[dict[str, str]]:
     ledgers = {step_id: _claim_ledger(result) for step_id, result in results.items()
                if (active is None or step_id in active)
                and not step_uses_internal_data(step_id, req, settings, scope)}
-    cp2 = ((req.get("research_contract") or {}).get("checkpoints") or {}).get("cp2") or {}
+    contract = req.get("research_contract") or {}
+    cp2 = (contract.get("checkpoints") or {}).get("cp2") or {}
     review = req.get("review") or (req.get("review_progress") or {}).get("review") or {}
+    issues = list(review.get("issues") or ())
+    for archived in contract.get("rounds") or ():
+        if not isinstance(archived, Mapping) or not isinstance(archived.get("review"), Mapping):
+            continue
+        for issue in archived["review"].get("issues") or ():
+            if isinstance(issue, Mapping):
+                issues.append({**issue, "problem": f"이전 차수 {archived.get('round', '미기록')}: "
+                                                   f"{issue.get('problem') or ''}"})
     return claim_evidence_rows(ledgers, refused=cp2.get("refused_evidence") or (),
                                unsupported=cp2.get("unsupported_claims") or (),
-                               review_issues=review.get("issues") or ())
+                               review_issues=issues)
 
 
 def _publication_claim_footnotes(report: str, req: dict, settings) -> str:
