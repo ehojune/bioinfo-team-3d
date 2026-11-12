@@ -6,7 +6,7 @@ The items of the config file (`config/labhq.yaml`). Safety-related items are in 
 
 Unknown or misspelled configuration keys stop loading with an error. `labhq up` and `labhq gateway` reject the published defaults for both `gateway.client_token` and `gateway.runner_token`; change both values.
 
-Both web views show runner recovery status at the top; `labhq doctor --network` reads the same status. The web refreshes every five seconds and marks failed status queries. Only runner, generation, sequence, state and error are shown; message contents and tokens are excluded.
+Both web views show runner recovery status at the top; `labhq doctor --network` reads the same status. The web refreshes every five seconds and marks failed status queries. Only runner, generation, sequence, state and error are shown; message contents and tokens are excluded. Remote doctor queries require `wss://`; `ws://` is allowed only for loopback. Redirects are not followed.
 
 - Authenticated reads: `GET /api/runner-inbox` includes unfinished entries from old generations; `GET /api/runner-inbox/{runner_id}` lists a selected generation.
 - `retry` is suggested only for failed activity events or asks whose publication failed before starting. `resume` is suggested only for unexecuted entries whose earlier same-runner blockers are resolved. Holds do not propagate across runners.

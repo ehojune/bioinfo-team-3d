@@ -68,6 +68,48 @@ def test_inbox_doctor_only_reads_and_never_exposes_credentials(tmp_path, monkeyp
         assert result[0]["status"] == ("ok" if outcome == "empty" else "warn")
 
 
+@pytest.mark.parametrize("url", ["ws://192.0.2.1:8787", "ws://gateway.example:8787"])
+def test_inbox_doctor_never_sends_client_token_over_remote_plaintext(tmp_path, monkeypatch, url):
+    import httpx
+    s = _settings(tmp_path)
+    s.gateway.url = url
+    monkeypatch.setattr(httpx, "Client", lambda **kw: pytest.fail("client token would leave loopback without TLS"))
+    rows = doctor._runner_inbox_rows(s, network=True, dry_run=False)
+    assert rows[0]["status"] == "warn" and "wss://" in rows[0]["hint"]
+
+
+@pytest.mark.parametrize("path", ["/api/runner-inbox/$(touch%20bad)/1/retry",
+                                  "/api/runner-inbox/`id`/1/retry"])
+def test_inbox_doctor_rejects_shell_substitution_in_recovery_path(tmp_path, monkeypatch, path):
+    import httpx
+    client = httpx.Client
+    def handle(request):
+        return httpx.Response(200, json=[{"runner_id": "runner", "incarnation": "new", "seq": 1,
+            "state": "failed", "action": "retry", "current_generation": True, "recovery_path": path}])
+    monkeypatch.setattr(httpx, "Client", lambda **kw: client(transport=httpx.MockTransport(handle), **kw))
+    rows = doctor._runner_inbox_rows(_settings(tmp_path), network=True, dry_run=False)
+    assert "curl" not in rows[0]["hint"]
+
+
+@pytest.mark.parametrize("url", ["ws://127.0.0.2:8787", "ws://localhost:8787", "ws://[::1]:8787",
+                                 "wss://gateway.example:8787"])
+def test_inbox_doctor_accepts_loopback_or_tls_without_following_redirects(tmp_path, monkeypatch, url):
+    import httpx
+    s = _settings(tmp_path)
+    s.gateway.url = url
+    s.gateway.client_token = "PRIVATE_CLIENT_TOKEN"
+    requests = []
+    def handle(request):
+        requests.append(request)
+        assert request.url.scheme == ("https" if url.startswith("wss:") else "http")
+        return httpx.Response(302, headers={"Location": "http://untrusted.example/api/runner-inbox"})
+    client = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: client(transport=httpx.MockTransport(handle), **kw))
+    rows = doctor._runner_inbox_rows(s, network=True, dry_run=False)
+    assert len(requests) == 1 and rows[0]["status"] == "warn"
+    assert "PRIVATE_CLIENT_TOKEN" not in json.dumps(rows)
+
+
 def test_doctor_reads_custom_contract_roster(tmp_path):
     settings = _settings(tmp_path)
     settings.runner.contract_dir = str(tmp_path / "instance-contracts")

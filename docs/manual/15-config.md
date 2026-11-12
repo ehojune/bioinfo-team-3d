@@ -6,7 +6,7 @@
 
 설정 이름이 틀리거나 지원하지 않는 항목이 있으면 오류로 중단합니다. `labhq up`과 `labhq gateway`는 `gateway.client_token`과 `gateway.runner_token`의 공개 기본값을 거부하므로 두 값을 모두 바꾸세요.
 
-Runner 메시지 복구 상태는 두 웹 화면 상단과 `labhq doctor --network`에서 확인합니다. 웹은 5초마다 갱신하며 조회 실패를 별도로 표시합니다. runner·세대·seq·state·error만 표시하고 메시지 원문과 token은 보내지 않습니다.
+Runner 메시지 복구 상태는 두 웹 화면 상단과 `labhq doctor --network`에서 확인합니다. 웹은 5초마다 갱신하며 조회 실패를 별도로 표시합니다. runner·세대·seq·state·error만 표시하고 메시지 원문과 token은 보내지 않습니다. doctor의 원격 조회에는 `wss://`가 필요하며 `ws://`는 loopback만 허용합니다. redirect는 따르지 않습니다.
 
 - 인증 조회: `GET /api/runner-inbox`는 이전 세대를 포함한 미완료 목록, `GET /api/runner-inbox/{runner_id}`는 지정 세대의 목록입니다.
 - `retry`는 실패한 activity나 시작 전 발행에 실패한 ask에만 안내합니다. `resume`은 같은 runner의 앞선 보류가 해소된 미실행 항목에만 안내합니다. 다른 runner의 보류는 전파하지 않습니다.

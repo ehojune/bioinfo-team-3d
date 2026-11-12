@@ -875,16 +875,26 @@ def _runner_inbox_rows(settings: Settings, *, network: bool, dry_run: bool) -> l
         return [_row("gateway", "runner inbox", "skip", "not queried",
                      "Use labhq doctor --network to read held runner messages.")]
     import httpx
+    import ipaddress
+    import shlex
     from urllib.parse import urlsplit
 
     raw = settings.gateway.url
     try:
         parsed = urlsplit(raw)
+        parsed.port  # Reject malformed ports before constructing a client.
     except ValueError:
         return [_row("gateway", "runner inbox", "warn", "invalid gateway URL", "Check gateway.url without credentials.")]
     if parsed.scheme not in {"ws", "wss"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
         return [_row("gateway", "runner inbox", "warn", "invalid gateway URL", "Check gateway.url without credentials.")]
-    base = raw.replace("wss://", "https://", 1).replace("ws://", "http://", 1).rstrip("/")
+    try:
+        loopback = ipaddress.ip_address(parsed.hostname).is_loopback
+    except ValueError:
+        loopback = parsed.hostname.lower().rstrip(".") == "localhost"
+    if parsed.scheme == "ws" and not loopback:
+        return [_row("gateway", "runner inbox", "warn", "remote plaintext status query refused",
+                     "Use wss:// for a remote gateway; the client token was not sent.")]
+    base = parsed._replace(scheme="https" if parsed.scheme == "wss" else "http").geturl().rstrip("/")
     try:
         with httpx.Client(timeout=4, trust_env=False, follow_redirects=False) as client:
             response = client.get(base + "/api/runner-inbox",
@@ -899,10 +909,11 @@ def _runner_inbox_rows(settings: Settings, *, network: bool, dry_run: bool) -> l
                     raise ValueError("invalid inbox status")
                 identity = f"{entry['runner_id']} generation={entry['incarnation']} seq={entry['seq']}"
                 action, path = entry.get("action"), entry.get("recovery_path")
-                # The status API supplies encoded paths, never credentials or payload.
-                safe_path = isinstance(path, str) and path.startswith("/api/runner-inbox/") and not any(
-                    ch in path for ch in '\r\n"\\')
-                hint = (f'Bash: curl -X POST -H "Authorization: Bearer $LABHQ_CLIENT_TOKEN" "{base}{path}"'
+                # Accept only the percent-encoded shape our gateway generates, then quote the entire URL.
+                segment = r"(?:[A-Za-z0-9_.~-]|%[0-9A-Fa-f]{2})"
+                safe_path = isinstance(path, str) and re.fullmatch(
+                    rf"/api/runner-inbox/{segment}+/[0-9]+/(?:retry|resume)(?:\?incarnation=(?:{segment}|\+)*)?", path)
+                hint = (f'Bash: curl -X POST -H "Authorization: Bearer $LABHQ_CLIENT_TOKEN" {shlex.quote(base + path)}'
                         if entry.get("current_generation") and action in {"retry", "resume"} and safe_path else
                         "Manual inspection required; inspect earlier holds and uncertain effects. Do not replay unknown outcomes.")
                 rows.append(_row("gateway", "runner inbox " + identity, "warn",
