@@ -80,8 +80,8 @@ def search_answer(records):
     return httpx.Response(200, json={"version": "6.9", "hitCount": len(records), "resultList": {"result": records}})
 
 
-def complete_fallback_pdf(label="Repository full text", doi="10.1000/test"):
-    body = f"Sex ratio and paternal work. DOI {doi}. Introduction {label}. Methods " + ("complete study body " * 80) + " Results complete findings."
+def complete_fallback_pdf(label="Repository full text", doi="10.1000/test", title="Sex ratio and paternal work."):
+    body = f"{title} DOI {doi}. Introduction {label}. Methods " + ("complete study body " * 80) + " Results complete findings."
     return b"%PDF-1.4\nBT (" + body.encode("ascii") + b") Tj ET\n%%EOF"
 
 
@@ -528,14 +528,15 @@ def test_pdf_fallback_rejects_a_single_partial_literal():
 
 
 async def test_fulltext_tries_oa_providers_when_europe_pmc_has_no_record(tmp_path):
-    pdf = complete_fallback_pdf("Open access paper outside Europe PMC", doi="10.1000/outside")
+    title = 'Open access paper outside Europe PMC'
+    pdf = complete_fallback_pdf(title, doi="10.1000/outside", title=title)
 
     def handler(request):
         if request.url.host == "www.ebi.ac.uk":
             return search_answer([])
         if request.url.host == "api.unpaywall.org":
             return httpx.Response(200, json={
-                "doi": "10.1000/outside", "is_oa": True, "oa_status": "gold",
+                "doi": "10.1000/outside", "title": title, "is_oa": True, "oa_status": "gold",
                 "best_oa_location": {"url_for_pdf": "http://93.184.216.34/paper.pdf",
                                      "host_type": "publisher", "license": "cc-by"},
                 "oa_locations": [],
@@ -626,6 +627,36 @@ def test_title_only_identity_accepts_a_complete_wrapped_title():
     assert lit._copy_identity("Cancer\nAbstract", {"title": "Cancer"})
 
 
+@pytest.mark.parametrize('text', [
+    'A different leading title\nReferences\nSex ratio and paternal work. DOI 10.1000/test',
+    'A different leading title. Cites Sex ratio and paternal work. DOI 10.1000/test',
+    'Journal\nSex ratio and paternal work.\nDOI 10.1000/test',
+])
+def test_matching_doi_cannot_replace_leading_title_proof(text):
+    assert not lit._copy_identity(text, record())
+
+
+def test_doi_alone_cannot_identify_a_full_copy_without_a_title():
+    assert not lit._copy_identity('Unrelated study. Cites DOI 10.1000/test', {'doi': '10.1000/test'})
+
+
+async def test_oa_copy_citing_target_near_start_is_not_stored_as_its_fulltext(tmp_path):
+    def handler(request):
+        if request.url.host == 'www.ebi.ac.uk':
+            return search_answer([record(pmcid=None)])
+        if request.url.host == 'api.openalex.org':
+            return httpx.Response(200, json={'results': [{'best_oa_location': {
+                'pdf_url': 'http://93.184.216.34/paper.pdf'}}]})
+        body = ('A different leading title. References: Sex ratio and paternal work. DOI 10.1000/test. '
+                'Introduction Methods Results ' + 'unrelated study body ' * 80)
+        return httpx.Response(200, content=b'%PDF-1.4\nBT (' + body.encode() + b') Tj ET\n%%EOF',
+                              headers={'content-type': 'application/pdf'})
+    annotator, _ = make(handler, tmp_path)
+    row = (await annotator.fulltext(['123']))['results'][0]
+    assert row['access_level'] == 'abstract' and row['unread_reason'] == 'identity_mismatch'
+    assert 'A different leading title' not in (tmp_path / 'work' / row['text_file']).read_text(encoding='utf-8')
+
+
 def test_title_identifies_a_copy_when_metadata_has_no_doi():
     meta = {"title": "A specific study of kinase inhibition"}
     text = "A specific study of kinase inhibition\n10.1000/printed-only\nAbstract and methods"
@@ -652,7 +683,8 @@ async def test_openalex_identity_survives_without_europe_pmc_record(tmp_path, id
             }]})
         if request.url.host == "93.184.216.34":
             pdf = complete_fallback_pdf("Another paper" if wrong_copy else title,
-                                        doi="10.1000/wrong" if wrong_copy else "10.1000/outside")
+                                        doi="10.1000/wrong" if wrong_copy else "10.1000/outside",
+                                        title="Another paper" if wrong_copy else title)
             return httpx.Response(200, content=pdf, headers={"content-type": "application/pdf"})
         raise AssertionError(request.url)
 
@@ -719,7 +751,8 @@ async def test_fulltext_never_requests_a_private_oa_destination(tmp_path, blocke
     assert not any(call.url.host == "169.254.169.254" for call in calls)
 
 
-async def test_fulltext_uses_a_new_cache_release_after_oa_fallback(tmp_path, monkeypatch):
+@pytest.mark.parametrize('previous_release', ['europepmc-rest', 'europepmc-rest-oa-v5-identity'])
+async def test_fulltext_uses_a_new_cache_release_after_oa_fallback(tmp_path, monkeypatch, previous_release):
     current_release = lit.FULLTEXT_CACHE_RELEASE
     calls = []
     cached_handler = by_query({'EXT_ID:123 AND SRC:MED': [record()]})
@@ -728,7 +761,7 @@ async def test_fulltext_uses_a_new_cache_release_after_oa_fallback(tmp_path, mon
         calls.append(request)
         return cached_handler(request)
 
-    monkeypatch.setattr(lit, "FULLTEXT_CACHE_RELEASE", lit.CACHE_RELEASE)
+    monkeypatch.setattr(lit, "FULLTEXT_CACHE_RELEASE", previous_release)
     first, _first_calls = make(handler, tmp_path)
     await first.fulltext(["123"])
     monkeypatch.setattr(lit, "FULLTEXT_CACHE_RELEASE", current_release)

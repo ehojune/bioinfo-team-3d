@@ -54,7 +54,7 @@ LIT_DIR = ".tmp/literature"  # never outputs/: see the module docstring
 LIT_ACCESS_LOG = "outputs/literature_access.jsonl"  # metadata/status only; never a paper body
 TOOL = "fulltext"
 CACHE_RELEASE = "europepmc-rest"  # Europe PMC has no data release; answers age out instead (annot.CACHE_MAX_AGE_S)
-FULLTEXT_CACHE_RELEASE = "europepmc-rest-oa-v5-identity"
+FULLTEXT_CACHE_RELEASE = "europepmc-rest-oa-v6-leading-title"
 MAX_PER_CALL = 20
 MAX_XML_BYTES = 20_000_000
 MAX_CITATION_RESULTS = 1000
@@ -83,13 +83,17 @@ def _copy_identity(text: str, meta: dict) -> bool:
     if doi and dois and not doi_matches:
         return False
     if title:
-        if doi_matches:
-            return title in normalize(front)
-        # Without a matching DOI, a phrase in an abstract or journal header is
-        # insufficient. Require the complete leading title, allowing wrapped lines.
+        # A matching DOI can belong to a citation too. Require the complete leading title on every path.
+        # Flattened PDFs can put the DOI and the rest of the body on the title's line; trim that metadata.
         lines = [line.strip() for line in front.splitlines() if line.strip()]
-        return any(normalize(' '.join(lines[:end])) == title for end in range(1, min(3, len(lines)) + 1))
-    return doi_matches
+        def leading(end):
+            text = ' '.join(lines[:end])
+            if doi_matches:
+                text = re.split(r'\s+(?:doi\s*:?\s*|https?://(?:dx\.)?doi\.org/|(?=10\.\d{4,9}/))\S.*',
+                                text, maxsplit=1, flags=re.IGNORECASE)[0]
+            return normalize(text)
+        return any(leading(end) == title for end in range(1, min(3, len(lines)) + 1))
+    return False
 
 _PMID = re.compile(r"^(?:pmid:?\s*)?([0-9]{1,9})$", re.IGNORECASE)
 _PMCID = re.compile(r"^(?:pmcid:?\s*)?(PMC[0-9]{1,9})$", re.IGNORECASE)
@@ -1510,6 +1514,9 @@ class LiteratureAnnotator(Annotator):
                     "unpaywall", "GET", f"{UNPAYWALL}/{quote(doi, safe='')}", params={"email": self.unpaywall_email})
                 if response.status_code == 200:
                     answer = _unpaywall_answer(response.json())
+                    for key in ('doi', 'title'):
+                        if not meta.get(key) and answer.get(key):
+                            meta[key] = answer[key]
                     state["oa_known"] = state["oa_known"] or bool(answer.get("is_oa"))
                     state["closed"] = state.get("closed", False) or answer.get("oa_status") == "closed"
                     for row in [answer.get("best_oa_location"), *(answer.get("oa_locations") or [])]:
