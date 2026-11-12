@@ -4253,6 +4253,8 @@ class Hub:
         task_id, request_id = scope(msg)
         activity_types = {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}
         for previous in self.store.active_runner_inbox():
+            if previous["runner_id"] != row["runner_id"]:
+                continue  # Runner delivery order is local; task dependencies belong to the orchestrator.
             if (previous["runner_id"], previous["incarnation"], previous["seq"]) == (
                     row["runner_id"], row["incarnation"], row["seq"]):
                 continue
@@ -6477,6 +6479,35 @@ class Hub:
                       "reason": e.get("reason"), "url": e.get("url"), "number": e.get("number")}
                 for rid, e in latest.items()}
 
+    def runner_inbox_summary(self) -> list[dict]:
+        """Payload-free recovery advice; observation never claims or replays a delivery."""
+        from urllib.parse import quote, urlencode
+
+        activity = {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}
+        errors = {"storage_interrupted", "invalid_message", "ask_publication_incomplete", "ask_start_unknown",
+                  "interrupted_unknown", "earlier outcome unresolved", "RuntimeError", "ValueError", "TypeError",
+                  "KeyError", "OSError", "OperationalError"}
+        rows = []
+        for row in self.store.active_runner_inbox():
+            runner, incarnation = row["runner_id"], row["incarnation"]
+            current = (self.store.get("runner_incarnation", runner) or {}).get("id") == incarnation
+            typ, error, state = row["message"].get("type"), row.get("error"), row["state"]
+            action = None
+            if current and state == "blocked" and not self._inbox_has_earlier_blocker(row):
+                action = "resume"
+            elif (current and state == "failed" and error != "invalid_message" and
+                  (typ in activity or (typ == "ask.requested" and error == "ask_publication_incomplete"))):
+                action = "retry"
+            path = None
+            if action:
+                path = f"/api/runner-inbox/{quote(runner, safe='')}/{row['seq']}/{action}"
+                if incarnation is not None:
+                    path += "?" + urlencode({"incarnation": incarnation})
+            rows.append({"runner_id": runner, "incarnation": incarnation, "seq": row["seq"],
+                         "state": state, "error": error if error in errors or error is None else "unknown_error",
+                         "current_generation": current, "action": action, "recovery_path": path})
+        return rows
+
     def snapshot(self) -> dict[str, Any]:
         # Read the task ledger once for every request below; one read per request stalled the loop (2026-10-08).
         tasks = self.store.all("task")
@@ -6527,6 +6558,7 @@ class Hub:
             **({"demo_status": self.demo_status} if getattr(self, "demo_status", None) is not None else {}),
             "agents": list(self.agents.values()),
             "runners": list(self.runners),
+            "runner_inbox": self.runner_inbox_summary(),
             "approvals": [e["approval"] for e in self.approvals.values()],
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at", "updated_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
@@ -6964,6 +6996,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/api/agents", dependencies=[Depends(auth)])
     async def agents() -> list[dict]:
         return list(hub.agents.values())
+
+    @app.get("/api/runner-inbox", dependencies=[Depends(auth)])
+    async def runner_inbox_summary() -> list[dict]:
+        return hub.runner_inbox_summary()
 
     @app.get("/api/runner-inbox/{runner_id}", dependencies=[Depends(auth)])
     async def runner_inbox_status(runner_id: str, incarnation: str | None = None) -> list[dict]:

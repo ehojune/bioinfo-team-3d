@@ -31,6 +31,18 @@ function demoBannerText(status) {
     : status?.phase === 'running' ? 'mock 요청 진행 중' : 'mock 데모 준비 중';
   return `${base} · ${progress}`;
 }
+function runnerInboxText(S) {
+  const rows = S.runnerInbox || [];
+  const lines = rows.map(row => {
+    const identity = `${row.runner_id} · 세대 ${row.incarnation ?? 'legacy'} · seq ${row.seq} · ${row.state} · ${row.error || '-'}`;
+    const advice = !row.current_generation ? '이전 세대 · 수동 확인 필요'
+      : row.action && row.recovery_path ? `${row.action}: POST ${row.recovery_path} (client token 인증 필요)`
+      : '수동 확인 필요 · 앞선 보류·시작 결과를 확인하세요. 결과 불명 작업은 재실행하지 마세요.';
+    return `${identity}\n${advice}`;
+  });
+  if (S.runnerInboxUnavailable) lines.unshift('Runner 메시지 상태 조회 실패 · labhq doctor --network로 확인하세요.');
+  return lines.length ? `Runner 메시지 복구\n${lines.join('\n')}` : '';
+}
 const reportEsc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 function safeReportHref(value) {
   const href = String(value || '').trim().replace(/^<|>$/g, '');
@@ -361,6 +373,8 @@ Object.defineProperty(S, 'defaultRefs', { value: [], writable: true, enumerable:
 // Connected runner ids (R15), known once a snapshot said so; the page shows 러너 꺼짐 while it is empty.
 Object.defineProperty(S, 'runners', { value: new Set(), writable: true, enumerable: false });
 Object.defineProperty(S, 'runnersKnown', { value: false, writable: true, enumerable: false });
+Object.defineProperty(S, 'runnerInbox', { value: [], writable: true, enumerable: false });
+Object.defineProperty(S, 'runnerInboxUnavailable', { value: false, writable: true, enumerable: false });
 // #59 ①: each task's steer/pause/halt state (agent.control), for the staff sheet; out of the legacy digests too.
 Object.defineProperty(S, 'taskControl', { value: new Map(), enumerable: false });
 // Each task's kind from its dispatch (#59 ①): only step and direct turns get a control row.
@@ -809,6 +823,8 @@ function apply(ev, replay = false) {
       resetSnapshotState();
       S.lastSeq = Number(ev.seq) || 0;
       S.sessionStartedAt = Number(d.session_started_at) || 0;
+      S.runnerInbox = d.runner_inbox || [];
+      S.runnerInboxUnavailable = false;
       (d.agents || []).forEach(upsertAgent);
       S.projects = d.projects || [];
       S.defaultRefs = d.default_references || [];
@@ -1397,6 +1413,6 @@ return { S, apply, selectRequest, ag, visual, stateText, currentTask, currentToo
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel, deadlineLabel,
   isActiveRequest, isTerminalRequest, isPastRequest, officeRequests, sessionCostRequests, requestsCostTotal,
   REQUEST_STATUS_KO, requestStatusLabel, requestStatusText, partialFailureSteps, processingLabel,
-  needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, serviceWarning, demoBannerText,
+  needsPiReview, needsStorage, reviewLabel, staffCharacter, STAFF_NAMES, websocketCloseAction, officeStorageKey, createRequestFocusStorage, sortRequests, requestActivity, requestResumeLabel, connectionLabel, serviceWarning, runnerInboxText, demoBannerText,
   safeReportHref, safeReportImageHref, reportMarkdownHTML, reportWithPackage };
 })(globalThis);

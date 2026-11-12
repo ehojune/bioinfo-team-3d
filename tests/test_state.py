@@ -49,6 +49,29 @@ def settings(tmp_path):
     return s
 
 
+def test_snapshot_runner_inbox_advice_excludes_payload_and_old_generation_actions(tmp_path):
+    hub = Hub(settings(tmp_path))
+    try:
+        hub.store.put("runner_incarnation", "runner", {"id": "new"})
+        for seq, generation, typ, error in [(1, "old", "agent.log", "storage_interrupted"),
+                                             (2, "new", "ask.requested", "ask_start_unknown"),
+                                             (3, "new", "agent.log", "storage_interrupted")]:
+            hub.store.accept_runner_inbox("runner", generation, seq,
+                {"type": typ, "runner_seq": seq, "data": {"token": "PAYLOAD_SECRET", "question": "PRIVATE_QUESTION"}})
+            hub.store.set_runner_inbox_state("runner", generation, seq, "processing", expected="pending")
+            hub.store.set_runner_inbox_state("runner", generation, seq, "failed", error, expected="processing")
+        rows = hub.snapshot()["data"]["runner_inbox"]
+        assert [r["action"] for r in rows] == [None, None, "retry"]
+        assert not rows[0]["current_generation"]
+        assert rows[2]["recovery_path"] == "/api/runner-inbox/runner/3/retry?incarnation=new"
+        assert "PAYLOAD_SECRET" not in json.dumps(rows)
+        assert "PRIVATE_QUESTION" not in json.dumps(rows)
+        hub.store.put("runner_incarnation", "runner", {"id": "next"})
+        assert all(r["action"] is None for r in hub.snapshot()["data"]["runner_inbox"])
+    finally:
+        hub.store.close()
+
+
 async def wait_for_dispatch(socket, task_id):
     async def ready():
         while not any(m.get("type") == "task.dispatch" and m["task"]["id"] == task_id for m in socket.sent):

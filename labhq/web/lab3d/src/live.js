@@ -13,6 +13,25 @@ export function startLiveOffice(onState) {
   const readToken = () => { try { return localStorage.getItem(tokenKey) || ''; } catch { return ''; } };
   const saveToken = value => { try { localStorage.setItem(tokenKey, value); } catch {} };
   let token = params.get('token') || readToken(), lastSeq = 0, ws, retry, backoff = 1000;
+  const inboxView = document.createElement('pre');
+  inboxView.id = 'runner-inbox'; inboxView.setAttribute('role', 'status'); inboxView.hidden = true;
+  inboxView.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere';
+  $('service-warning').after(inboxView);
+  let inboxLoading = false, inboxEpoch = 0;
+  async function refreshInbox() {
+    if (demo || S.conn !== 'live' || inboxLoading) return;
+    inboxLoading = true;
+    const epoch = inboxEpoch, credential = token;
+    try {
+      const response = await fetch('/api/runner-inbox', {headers:{Authorization:`Bearer ${credential}`}, cache:'no-store', signal:AbortSignal.timeout(4000)});
+      if (!response.ok) throw new Error('inbox unavailable');
+      const rows = await response.json();
+      if (!Array.isArray(rows)) throw new Error('invalid inbox status');
+      if (epoch === inboxEpoch && credential === token && S.conn === 'live') { S.runnerInbox = rows; S.runnerInboxUnavailable = false; }
+    } catch {
+      if (epoch === inboxEpoch && credential === token) S.runnerInboxUnavailable = true;
+    } finally { inboxLoading = false; render(); }
+  }
   bindShutdown($('shutdown'), {token: () => token});
   if (params.has('token')) {
     saveToken(token); params.delete('token');
@@ -130,6 +149,8 @@ export function startLiveOffice(onState) {
     const warning = globalThis.LabHQState.serviceWarning(S, demo);
     $('service-warning').textContent = warning;
     $('service-warning').hidden = !warning;
+    const inboxText = demo ? '' : globalThis.LabHQState.runnerInboxText(S);
+    inboxView.textContent = inboxText; inboxView.hidden = !inboxText;
     const allRequests = [...S.requests.values()];
     const costRequests = globalThis.LabHQState.sessionCostRequests(allRequests, S.sessionStartedAt);
     $('session-cost').textContent = S.conn === 'connecting' ? '사용 비용 불러오는 중' : globalThis.LabHQState.totalCostLabel(
@@ -296,10 +317,11 @@ export function startLiveOffice(onState) {
     if (!token) { S.conn = 'auth'; render(); return; }
     S.conn = 'connecting'; render();
     ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}${lastSeq ? `&since=${lastSeq}` : ''}`);
-    ws.onopen = () => { S.conn = 'live'; backoff = 1000; refreshHistory(); render(); };
+    ws.onopen = () => { S.conn = 'live'; backoff = 1000; refreshHistory(); refreshInbox(); render(); };
     ws.onmessage = event => {
       try {
         const ev = JSON.parse(event.data);
+        if (ev.type === 'snapshot') inboxEpoch++;
         if (ev.type === 'snapshot' && !ev.replay_gap && Number.isFinite(ev.seq) && ev.seq < lastSeq) return;
         if (ev.type !== 'snapshot' && ev.seq && ev.seq <= lastSeq) return;
         for (const effect of apply(ev)) {
@@ -326,6 +348,7 @@ export function startLiveOffice(onState) {
     event.preventDefault(); token = $('token').value.trim(); saveToken(token); lastSeq = 0; open();
   });
   setInterval(() => { if (S.approvals.size || S.activeTasks.size) render(); }, 1000);
+  setInterval(refreshInbox, 5000);
   // #660: the fox's paper list for the inspector, from the same detail GET the 2.5D sheet reads. One read per
   // request update, even when it fails, so a re-render never loops on a refused or broken response.
   const literatureAt = new Map(), literatureLoading = new Set();

@@ -6,7 +6,18 @@ The items of the config file (`config/labhq.yaml`). Safety-related items are in 
 
 Unknown or misspelled configuration keys stop loading with an error. `labhq up` and `labhq gateway` reject the published defaults for both `gateway.client_token` and `gateway.runner_token`; change both values.
 
-Use client-token-authenticated `GET /api/runner-inbox/{runner_id}` to inspect held runner message status; the response omits message contents. `POST /api/runner-inbox/{runner_id}/{seq}/retry` accepts log and activity events and asks whose publication failed before starting; `/resume` handles unexecuted entries after earlier dependencies are resolved. It applies the same independence check as admission; an ask with an unknown start remains a blocker. The `incarnation` query selects a generation. Operations with unknown outcomes are not retried automatically. Held entries whose earlier dependencies are all resolved are re-judged and processed automatically when the same runner sends its next message and when the gateway restarts; entries behind an ask with an unknown start stay held. The inbox keeps the latest 256 completed entries; unfinished entries and pending deliveries are retained.
+Both web views show runner recovery status at the top; `labhq doctor --network` reads the same status. The web refreshes every five seconds and marks failed status queries. Only runner, generation, sequence, state and error are shown; message contents and tokens are excluded.
+
+- Authenticated reads: `GET /api/runner-inbox` includes unfinished entries from old generations; `GET /api/runner-inbox/{runner_id}` lists a selected generation.
+- `retry` is suggested only for failed activity events or asks whose publication failed before starting. `resume` is suggested only for unexecuted entries whose earlier same-runner blockers are resolved. Holds do not propagate across runners.
+- Unknown outcomes and old generations require manual inspection. Same-runner cumulative ACK ordering and generation protection remain. Resolved holds are also rechecked on the same runner's next message and on gateway restart. Keep the latest 256 completed inbox entries and all unfinished entries.
+
+Inspect the suggested `recovery_path`, then POST manually with the client token. This Bash example keeps the real token in an environment variable. Use the current generation returned by the query. Never replay an ask with an unknown outcome.
+
+```bash
+curl -X POST -H "Authorization: Bearer $LABHQ_CLIENT_TOKEN" "http://127.0.0.1:8787/api/runner-inbox/RUNNER/SEQ/retry?incarnation=GENERATION"
+# After blockers are resolved, use resume instead of retry when suggested.
+```
 
 After a storage error during a manual retry, safe entries can be retried once storage recovers. If an ask's start is uncertain, it is held as `ask_start_unknown`.
 

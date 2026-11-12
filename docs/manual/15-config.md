@@ -6,7 +6,18 @@
 
 설정 이름이 틀리거나 지원하지 않는 항목이 있으면 오류로 중단합니다. `labhq up`과 `labhq gateway`는 `gateway.client_token`과 `gateway.runner_token`의 공개 기본값을 거부하므로 두 값을 모두 바꾸세요.
 
-Runner 메시지 보류 상태는 client token으로 인증한 `GET /api/runner-inbox/{runner_id}`에서 확인합니다. 응답에는 원문이 없습니다. `POST /api/runner-inbox/{runner_id}/{seq}/retry`는 log·activity 또는 시작 전 발행에 실패한 ask에만 허용하고, `/resume`은 앞선 의존 항목이 해소된 미실행 항목을 처리합니다. 독립 activity 여부는 최초 인수와 같은 기준으로 판정하며 시작 결과를 모르는 ask는 계속 막습니다. `incarnation` query로 세대를 지정합니다. 결과를 알 수 없는 작업은 자동 재실행하지 않습니다. 앞선 항목이 모두 해소된 보류 항목은 같은 runner의 다음 메시지가 올 때와 gateway 재기동 때 자동으로 다시 판정해 처리합니다. 시작 결과를 모르는 ask 뒤의 항목은 계속 보류합니다. 완료된 inbox는 최근 256건을 유지하며, 미완료·전달 대기 기록은 정리하지 않습니다.
+Runner 메시지 복구 상태는 두 웹 화면 상단과 `labhq doctor --network`에서 확인합니다. 웹은 5초마다 갱신하며 조회 실패를 별도로 표시합니다. runner·세대·seq·state·error만 표시하고 메시지 원문과 token은 보내지 않습니다.
+
+- 인증 조회: `GET /api/runner-inbox`는 이전 세대를 포함한 미완료 목록, `GET /api/runner-inbox/{runner_id}`는 지정 세대의 목록입니다.
+- `retry`는 실패한 activity나 시작 전 발행에 실패한 ask에만 안내합니다. `resume`은 같은 runner의 앞선 보류가 해소된 미실행 항목에만 안내합니다. 다른 runner의 보류는 전파하지 않습니다.
+- 결과 불명 작업·이전 세대는 수동 확인이 필요합니다. 같은 runner의 ACK 순서와 세대 보호는 유지합니다. 앞선 보류가 해소되면 같은 runner의 다음 메시지나 gateway 재기동 때도 다시 판정합니다. 완료 inbox는 최근 256건을 유지하며 미완료 기록은 남깁니다.
+
+안내된 `recovery_path`를 확인한 뒤 client token으로 직접 POST합니다. 아래는 Bash 예시이며 실제 token은 환경변수에 둡니다. `incarnation`에는 조회에서 받은 현재 세대를 넣으세요. 결과 불명 ask는 재실행하지 않습니다.
+
+```bash
+curl -X POST -H "Authorization: Bearer $LABHQ_CLIENT_TOKEN" "http://127.0.0.1:8787/api/runner-inbox/RUNNER/SEQ/retry?incarnation=GENERATION"
+# 보류 해소 뒤에는 안내에 따라 retry 대신 resume을 씁니다.
+```
 
 수동 재시도 중 저장 오류가 나면 저장소 복구 후 안전한 항목을 다시 시도할 수 있습니다. ask의 시작 여부를 알 수 없으면 `ask_start_unknown`으로 보류합니다.
 
