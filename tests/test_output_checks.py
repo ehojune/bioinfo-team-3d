@@ -38,9 +38,16 @@ def test_well_formed_tables_pass(tmp_path, name, text):
     assert table_problem(_write(tmp_path / name, text)) is None
 
 
-def test_a_tab_in_a_metadata_line_does_not_hide_literal_separators(tmp_path):
+def test_a_tab_in_a_hash_header_is_not_a_comment(tmp_path):
     path = _write(tmp_path / "meta.tsv", "##source\tpipeline\ntheme\\tPMID\nheat\\t123\n")
-    assert table_problem(path) == "칸 구분이 탭이 아니라 글자 \\t입니다"
+    assert "칸 수가 다릅니다" in table_problem(path)
+
+
+def test_leading_comments_do_not_hide_later_ragged_rows(tmp_path):
+    path = _write(tmp_path / "comments.tsv", "# one\n# two\na\tb\tc\n1\t2\t3\n# later\n")
+    assert "5번째 줄" in table_problem(path)
+    path = _write(tmp_path / "comments.tsv", "# one\n# two\na\tb\nc\td\n")
+    assert table_problem(path) is None
 
 
 def test_a_long_field_is_read_and_a_check_that_breaks_is_a_warning_not_an_error(tmp_path, monkeypatch):

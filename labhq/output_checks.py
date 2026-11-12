@@ -32,6 +32,7 @@ from .evidence.report_check import accepted_evidence_ids, claim_rows
 from .models import (EXTERNAL_LOOKUP_MAX_S, EXTERNAL_LOOKUP_MAX_TOOLS, EXTERNAL_LOOKUP_TOOL, ExternalLookupRecord,
                      ExternalLookupTool)
 from .report_markdown import READER_FILENAMES, render_marker_message, rendered_markers
+from .report_contract import leading_tsv_comments
 from .tools.external_wait import STATUS_FILE as LOOKUP_STATUS_LOG
 
 TABLE_SEPARATORS = {".tsv": "\t", ".tab": "\t", ".csv": ","}
@@ -90,18 +91,21 @@ def table_problem(path: Path) -> str | None:
         text = _head_text(path)
     except OSError as exc:
         return f"읽지 못했습니다({type(exc).__name__})"
-    # A "##" metadata line may hold a tab. A one-column TSV may hold an escaped "\t" in a cell: the warning needs a
+    # A one-column TSV may hold an escaped "\t" in a cell: the warning needs a
     # header and every row split by the two characters, as in the 10-17 table (PR #712 review).
-    body = [line for line in text.splitlines() if line.strip() and not line.startswith("##")]
+    prefix, table = leading_tsv_comments(text, path.suffix.lower())
+    body = [line for line in table.splitlines() if line.strip()
+            and not (path.suffix.lower() != ".tsv" and line.startswith("##"))]
     if (separator == "\t" and len(body) >= 2 and not any("\t" in line for line in body)
             and all("\\t" in line for line in body)):
         return "칸 구분이 탭이 아니라 글자 \\t입니다"
     # A hand-joined TSV may hold a lone quote mark in a cell; only CSV quoting is read as quoting.
     quoting = csv.QUOTE_NONE if separator == "\t" else csv.QUOTE_MINIMAL
     try:
-        rows = [(number, row) for number, row in enumerate(csv.reader(io.StringIO(text), delimiter=separator,
-                                                                      quoting=quoting), start=1)
-                if row and any(cell.strip() for cell in row) and not row[0].startswith("##")]
+        rows = [(number, row) for number, row in enumerate(csv.reader(io.StringIO(table), delimiter=separator,
+                                                                      quoting=quoting), start=1 + len(prefix.splitlines()))
+                if row and any(cell.strip() for cell in row)
+                and not (path.suffix.lower() != ".tsv" and row[0].startswith("##"))]
     except csv.Error as exc:  # a NUL byte or a broken quote; a long field fits CSV_FIELD_LIMIT
         return f"표로 읽지 못했습니다({exc})"
     if len(rows) < 2:

@@ -88,6 +88,24 @@ PMID:21674046 · DOI:10.1371/journal.pone.0020280 · GEO:GSE26982
 """
 
 
+def test_edition_preserves_leading_tsv_comments():
+    name = "steps/clinical/outputs/result.tsv"
+    original = "# method: synthetic\r\n# second\r\nmetric\tgroup\tvalue\r\nA\tB\t10\r\n"
+    request = {"id": "req_shape", "text": "표 확인", "report": "# 결과\n\n[표](steps/clinical/outputs/result.tsv)"}
+    assets = {name: original}
+    files = build_portfolio_files(request, Settings(), assets, {})
+    assert assets[name] == original
+    assert files["tables/result.tsv"] == original
+    assert portfolio._table_metadata(name, original) == (1, ["metric", "group", "value"], True)
+
+
+def test_hash_header_is_retained_for_metadata_and_note_repair():
+    name = "result.tsv"
+    original = "# source\n#patient_id\tmean\tnotes\np1\t2\n"
+    assert portfolio._table_metadata(name, original) == (1, ["#patient_id", "mean", "notes"], False)
+    assert portfolio._edition_note_cells(name, original) == (original.replace("p1\t2\n", "p1\t2\t\n"), [3])
+
+
 def test_edition_repairs_only_missing_final_note_and_records_it():
     name = "steps/clinical/outputs/access_ledger.tsv"
     original = "candidate\taccess\t비고\nA\tunavailable\nB\tfulltext\tchecked\n"
@@ -110,6 +128,11 @@ def test_edition_repairs_only_missing_final_note_and_records_it():
     "candidate\tresult\tnotes\nA\n",  # More than a final note is missing.
     "candidate\tnotes\nA\tB\tC\n",  # Extra fields are never discarded.
     "candidate\tnotes\nA\nB\tC\tD\n",  # Do not partially repair a broken table.
+    "# method\na\tb\tc\nA\tB\n",
+    "a\tb\tc\n# not a leading comment\n",
+    "# comment only\n",
+    "",
+    "# comment\na\ta\n1\t2\n",
 ])
 def test_edition_keeps_blocking_other_table_shape_errors(body):
     name = "steps/clinical/outputs/result.tsv"

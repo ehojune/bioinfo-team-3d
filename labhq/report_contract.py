@@ -465,8 +465,23 @@ def available_result_files(results: dict[str, Any] | None) -> set[str]:
     return available
 
 
+def leading_tsv_comments(text: str, suffix: str) -> tuple[str, str]:
+    """Separate leading blank and tab-free # lines from a TSV without changing the text."""
+    if suffix.lower() != ".tsv":
+        return "", text
+    lines = text.splitlines(keepends=True)
+    count = 0
+    for line in lines:
+        if (line.startswith("#") and "\t" not in line) or not line.strip():
+            count += 1
+        else:
+            break
+    return "".join(lines[:count]), "".join(lines[count:])
+
+
 def _table_shape(text: str, suffix: str) -> bool:
     delimiter = "\t" if suffix == ".tsv" else ","
+    _, text = leading_tsv_comments(text, suffix)
     try:
         rows = [row for row in csv.reader(io.StringIO(text), delimiter=delimiter)
                 if any(cell.strip() for cell in row)]

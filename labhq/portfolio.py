@@ -24,7 +24,7 @@ from .models import RunnerPathFields
 from .policy import touches
 from .research.contract import branch_plan_topology
 from .report_abstract import build_graphical_abstract
-from .report_contract import (ReportAsset, ReportPackage, build_report_package, mask_code as _mask_code, reader_markdown,
+from .report_contract import (ReportAsset, ReportPackage, build_report_package, leading_tsv_comments, mask_code as _mask_code, reader_markdown,
                               render_report_front, research_question, with_report_front)
 from .report_markdown import READER_FILENAMES, render_marker_message, rendered_markers
 from .request_bundle import _POSIX_ABS, _WINDOWS_ABS
@@ -2310,6 +2310,7 @@ def _table_metadata(name: str, body: str | bytes) -> tuple[int | None, list[str]
     if suffix not in {".tsv", ".csv"}:
         return None, [], True
     text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body
+    _, text = leading_tsv_comments(text, suffix)
     delimiter = "\t" if suffix == ".tsv" else ","
     try:
         parsed = [row for row in csv.reader(io.StringIO(text), delimiter=delimiter) if any(cell.strip() for cell in row)]
@@ -2328,9 +2329,10 @@ def _edition_note_cells(name: str, body: str) -> tuple[str, list[int]]:
     suffix = PurePosixPath(name).suffix.lower()
     if suffix not in {".tsv", ".csv"}:
         return body, []
+    prefix, table = leading_tsv_comments(body, suffix)
     delimiter = "\t" if suffix == ".tsv" else ","
     try:
-        rows = list(csv.reader(io.StringIO(body), delimiter=delimiter, strict=True))
+        rows = list(csv.reader(io.StringIO(table), delimiter=delimiter, strict=True))
     except csv.Error:
         return body, []
     if not rows or not rows[0] or rows[0][-1].strip().casefold() not in {"비고", "note", "notes", "comment", "comments"}:
@@ -2345,12 +2347,12 @@ def _edition_note_cells(name: str, body: str) -> tuple[str, list[int]]:
     for number, row in enumerate(rows[1:], 2):
         if any(cell.strip() for cell in row) and len(row) == width - 1:
             row.append("")
-            repaired.append(number)
+            repaired.append(number + len(prefix.splitlines()))
     if not repaired:
         return body, []
     output = io.StringIO(newline="")
     csv.writer(output, delimiter=delimiter, lineterminator="\n").writerows(rows)
-    return output.getvalue(), repaired
+    return prefix + output.getvalue(), repaired
 
 
 def legacy_aggregate_tables(req: Mapping[str, Any], assets: Mapping[str, str | bytes]) -> set[str]:
