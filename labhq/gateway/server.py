@@ -4370,7 +4370,8 @@ class Hub:
 
         A row is held when admission saw an unresolved earlier one. That view could be stale, and a held row holds
         every later one, so without this one stale read stops the runner for good, across restarts too. The rule is
-        `_inbox_has_earlier_blocker`, the same as the manual resume: a held row behind an unknown ask stays held.
+        `_inbox_has_earlier_blocker`, checked for every held row, the same as the manual resume: a held row behind an
+        unknown ask stays held.
         The caller holds the runner lock (or runs at startup before runners connect)."""
         held = sorted((row for row in self.store.active_runner_inbox()
                        if row["state"] == "blocked" and (runner_id is None or row["runner_id"] == runner_id)),
@@ -4384,16 +4385,22 @@ class Hub:
                 if target is None or target["state"] != "blocked":
                     continue
                 if self._inbox_has_earlier_blocker(target):
-                    return  # later held rows wait behind this one
+                    continue  # each later row runs its own dependency check
                 claimed = await self.store.aclaim_blocked_runner_inbox(row["runner_id"], row["incarnation"],
                                                                        row["seq"])
             try:
                 await self._run_claimed_runner_inbox(claimed)
             except (OSError, sqlite3.Error):
                 raise
+            except (ValueError, KeyError, TypeError):
+                # Same outcome as the receive path: a message the handler rejects is kept as invalid, not processing.
+                log.warning("held runner inbox sequence %s is invalid", row["seq"], exc_info=True)
+                current_row = self.store.runner_inbox(row["runner_id"], row["incarnation"], row["seq"])
+                if current_row and current_row["state"] == "processing":
+                    await self.store.aset_runner_inbox_state(row["runner_id"], row["incarnation"], row["seq"],
+                                                             "failed", "invalid_message", expected="processing")
             except Exception:
                 log.warning("held runner inbox sequence %s could not be resumed", row["seq"], exc_info=True)
-                return
 
     async def _hold_failed_inbox_retry(self, row: dict) -> None:
         """Keep a storage-interrupted retry available, or hold an uncertain ask."""

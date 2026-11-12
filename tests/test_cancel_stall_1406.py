@@ -151,3 +151,38 @@ async def test_thread_scan_does_not_share_the_loop_connection(hub):
     seen = await asyncio.to_thread(lambda: (store._reader() is store.db, store.all("task")))
     assert seen[0] is False and set(seen[1]) == {"task_plan", "task_closed", "task_brief"}
     assert store._reader() is store.db
+
+
+async def test_independent_held_row_resumes_behind_a_still_held_row(hub):
+    """A held row whose own dependency check passes is not stopped by an earlier row that is still held."""
+    store = hub.store
+    store.put("task", "task_a", {"request_id": "req_a"})
+    store.put("task", "task_b", {"request_id": "req_b"})
+    failed = {"type": "agent.log", "runner_seq": 1, "task_id": "task_a", "request_id": "req_a", "data": {"text": "a"}}
+    store.accept_runner_inbox("trial", None, 1, failed)
+    store.set_runner_inbox_state("trial", None, 1, "processing", expected="pending")
+    store.set_runner_inbox_state("trial", None, 1, "failed", "storage_interrupted", expected="processing")
+    behind_a = {"type": "task.accepted", "runner_seq": 2, "task_id": "task_a", "request_id": "req_a"}
+    other_b = {"type": "agent.log", "runner_seq": 3, "task_id": "task_b", "request_id": "req_b", "data": {"text": "b"}}
+    for row in (behind_a, other_b):
+        store.accept_runner_inbox("trial", None, row["runner_seq"], row)
+        store.set_runner_inbox_state("trial", None, row["runner_seq"], "blocked", "earlier outcome unresolved",
+                                     expected="pending")
+    hub.ask_tasks = {}
+    await hub.recover_runner_publications()
+    assert {seq: store.runner_inbox("trial", None, seq)["state"] for seq in (1, 2, 3)} == {
+        1: "failed", 2: "blocked", 3: "completed"}
+
+
+async def test_invalid_held_row_is_marked_invalid_not_left_processing(hub, monkeypatch):
+    store = hub.store
+    held_store(store)
+
+    async def reject(*args, **kwargs):
+        raise ValueError("malformed")
+
+    monkeypatch.setattr(hub, "_on_runner_message", reject)
+    hub.ask_tasks = {}
+    await hub.recover_runner_publications()
+    row = store.runner_inbox("trial", None, 2)
+    assert (row["state"], row["error"]) == ("failed", "invalid_message")
