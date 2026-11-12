@@ -16,3 +16,7 @@ rows:
     at: "2026-11-12 17:23"
     summary: "입력 목록의 경로를 가려도 열 이름과 단계 식별자가 유지됩니다."
     text: "#1416 r2: INPUTS.tsv는 path 값만 가리고 schema·step ID·hash를 보존. 충돌 값 4종 포함 178 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS."
+  - sha: "e640dd9"
+    at: "2026-11-12 17:29"
+    summary: "요청 ID가 사이트 이름과 겹쳐도 고정 검토 기록이 잘못 거절되지 않습니다."
+    text: "#1416 r2: canonical checkpoint의 구조 필드를 보존하고 draft·receipt 내용의 가림 필요 여부만 검사. 관련 시험 181 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS."
