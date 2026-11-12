@@ -39,6 +39,34 @@ def test_subscription_quota_fixtures_parse_reset_time(engine, fixture, expected)
     assert failure_kind(TaskResult(task_id="t", agent_id="a", ok=False, error=text)) == "quota"
 
 
+@pytest.mark.parametrize("engine", ["claude_code", "claude", ""])
+def test_claude_hour_window_limit_waits_until_the_named_zone_reset(engine):
+    """#1419: the 5-hour window message failed the request instead of waiting for its reset."""
+    text = (FIXTURES / "claude-5hour.txt").read_text(encoding="utf-8")
+    now = datetime(2026, 11, 12, 18, 0, tzinfo=KST).timestamp()
+    expected = datetime(2026, 11, 12, 18, 30, tzinfo=KST).timestamp()
+    parsed = parse_quota_wait(engine, text, now=now, tz=KST)
+    assert parsed and parsed.parsed and parsed.resume_at == expected
+    # The message names its zone, so a runner in another zone still reads the same instant. Without a tz
+    # database (Windows without tzdata) the reading falls back to the runner's own zone.
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo("Asia/Seoul")
+    except Exception:
+        assert quota_reset_instant(engine, text, now=now, tz=timezone.utc) is not None
+    else:
+        assert quota_reset_instant(engine, text, now=now, tz=timezone.utc) == expected
+    assert failure_kind(TaskResult(task_id="t", agent_id="a", ok=False, error=text)) == "quota"
+
+
+def test_hour_window_wording_does_not_widen_burst_or_other_engine_matching():
+    now = datetime(2026, 10, 2, 12, 0).astimezone().timestamp()
+    assert parse_quota_wait("claude_code", "Rate limited: 5-hour limit not your usage limit · resets 6:30pm",
+                            now=now) is None
+    assert parse_quota_wait("claude_code", "API Error: 429 rate limit exceeded", now=now) is None
+    assert parse_quota_wait("codex", "You've hit your 5-hour limit · resets 6:30pm", now=now) is None
+
+
 def test_unreadable_reset_uses_bounded_default_but_burst_limit_does_not():
     now = datetime(2026, 10, 2, 12, 0).astimezone().timestamp()
     parsed = parse_quota_wait("codex", "You've hit your usage limit; try again later",
