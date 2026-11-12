@@ -19,6 +19,16 @@ PI 위임(11-12)에 따라 정한 것을 평가 문서와 반증 사례 틀에 �
 ## 미해결
 - 실행(리뷰 보정 재측정, 반증 반영, 짝 비교)은 이 PR 뒤에 trial 인스턴스에서 한다. 결과는 #1383 댓글.
 
+# #1387 r1 — 진행 중
+
+- 2: 합성 QC 위치 정정이 원장에 반영되지 않음. 구조화 정정 계약과 범위 요청.
+- 7: 원격 목록에 SHA-256 기록, 후속 입력에서 대조. 로컬 verify는 원격 파일 무결성을 미확인으로 반환.
+- 16: 읽기 전용 스킬 안내와 편집자·리뷰어 지시를 실행 조건에 맞춤.
+- Windows: transfer 75 passed·12 skipped, read-only 86 passed·1 skipped, remote-data 38 passed·18 skipped. Linux 로컬 helper는 정상 파일과 같은 크기 변조를 확인.
+- Windows 관련 두 파일은 수정 전 7 failed → 수정 후 156 passed·25 skipped. [근거와 잔여](../reference/fix-1387.md). 실제 HPC 미검증.
+- r10: 해시 별도 시간 제한과 registry 기대값 수정. Windows 관련 시험 329 passed·38 skipped; Linux helper 중단·재시도 등 5 passed. 최종 CI·리뷰 대기.
+- 실제 원자료 정정과 HPC 성능은 미검증. PR은 부분 완료이며 2번 잔여는 열린 채 둔다.
+
 # #1384 r14 보고 조립
 
 - 판정 표현이 없거나 판정 여부만 검토한 문장을 답으로 쓰지 않는다. 기존 시험의 첫 문단 기대값은 결함을 고정하므로 바꿨다.
