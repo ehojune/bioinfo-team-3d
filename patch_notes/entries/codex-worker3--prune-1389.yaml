@@ -1,6 +1,6 @@
 pr: 1396
 rows:
-  - sha: efc9e7a8
+  - sha: efc9e7a
     at: "2026-11-12 15:30"
     summary: 보존한 fixture의 데이터 검사를 복원했습니다.
     text: 제품 연결 없이 validator와 corpus를 검사하고 Windows 목록에 되돌렸습니다.
