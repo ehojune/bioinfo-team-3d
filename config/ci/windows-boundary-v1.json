@@ -53,6 +53,7 @@
     "tests/test_budget_headroom_940.py",
     "tests/test_budget_parallel_1255.py",
     "tests/test_canary_process.py",
+    "tests/test_cancel_stall_1406.py",
     "tests/test_cgroup_memory.py",
     "tests/test_checklist_review.py",
     "tests/test_ci807_research_regression.py",
@@ -511,6 +512,7 @@
     "tests/test_recovery_fake_check.py": "Owned native gateway/runner force-kill, restart, SQLite replay, receipt accounting and process-handle cleanup; deterministic mock, loopback only.",
     "tests/test_recovery_interrupted_selection_924.py": "Interrupted result/direct checkpoint selection, live task adoption and preserved cost history; in-process fake dispatch.",
     "tests/test_gateway_publish_durable.py": "Gateway SQLite publication, cancellation and durable delivery ordering.",
+    "tests/test_cancel_stall_1406.py": "Runner inbox admission reads a fresh SQLite view during threaded scans; held rows resume after restart (#1406).",
     "tests/test_approval_durable_606.py": "Approval SQLite transactions, commit failure, repeated cancellation, per-card races and reconnect/ACK ordering; in-process fake commits.",
     "tests/test_task_cancel_durable_606.py": "Task cancel SQLite intent ordering, heartbeat, rollback, repeated cancellation, completion races and restart replay; in-process fake commits.",
     "tests/test_request_persistence_965.py": "Awaited request/result changes, SQLite FIFO, cancellation, review receipts and restart persistence; in-process fake commits."

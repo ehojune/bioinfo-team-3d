@@ -3941,6 +3941,7 @@ class Hub:
         for ask_id, entry in self.store.all("ask").items():
             if entry.get("state") == "resolved" and entry.get("answer_publish_intent"):
                 await self._recover_ask_answer(ask_id, entry)
+        await self._resume_unblocked_runner_inbox()
 
     def _record_published_event(self, ev: dict) -> None:
         # A synchronous checkpoint can commit a higher sequence while publish
@@ -4188,6 +4189,7 @@ class Hub:
             if ws is not None and (self.runners.get(runner_id) is not ws or
                                    self.runner_incarnations.get(runner_id) != incarnation):
                 return
+            await self._resume_unblocked_runner_inbox(runner_id)
             (row, claimed), cancelled = await self._publication_write(
                 self._admit_runner_inbox(runner_id, incarnation, seq, msg))
             if cancelled:
@@ -4319,6 +4321,43 @@ class Hub:
                     raise ValueError("earlier runner inbox outcome unresolved")
                 row = await self.store.aclaim_blocked_runner_inbox(runner_id, incarnation, seq)
             await self._run_claimed_runner_inbox(row)
+
+    async def _resume_unblocked_runner_inbox(self, runner_id: str | None = None) -> None:
+        """Run held deliveries, in admission order, whose earlier outcomes are all resolved now (#1406).
+
+        A row is held when admission saw an unresolved earlier one. That view could be stale, and a held row holds
+        every later one, so without this one stale read stops the runner for good, across restarts too. The rule is
+        `_inbox_has_earlier_blocker`, checked for every held row, the same as the manual resume: a held row behind an
+        unknown ask stays held.
+        The caller holds the runner lock (or runs at startup before runners connect)."""
+        held = sorted((row for row in self.store.active_runner_inbox()
+                       if row["state"] == "blocked" and (runner_id is None or row["runner_id"] == runner_id)),
+                      key=lambda row: row.get("admission_order", 0))
+        for row in held:
+            current = self.store.get("runner_incarnation", row["runner_id"])
+            if (current or {}).get("id") != row["incarnation"]:
+                continue  # a previous generation's message waits for inspection
+            async with self._inbox_admission_lock():
+                target = self.store.runner_inbox(row["runner_id"], row["incarnation"], row["seq"])
+                if target is None or target["state"] != "blocked":
+                    continue
+                if self._inbox_has_earlier_blocker(target):
+                    continue  # each later row runs its own dependency check
+                claimed = await self.store.aclaim_blocked_runner_inbox(row["runner_id"], row["incarnation"],
+                                                                       row["seq"])
+            try:
+                await self._run_claimed_runner_inbox(claimed)
+            except (OSError, sqlite3.Error):
+                raise
+            except (ValueError, KeyError, TypeError):
+                # Same outcome as the receive path: a message the handler rejects is kept as invalid, not processing.
+                log.warning("held runner inbox sequence %s is invalid", row["seq"], exc_info=True)
+                current_row = self.store.runner_inbox(row["runner_id"], row["incarnation"], row["seq"])
+                if current_row and current_row["state"] == "processing":
+                    await self.store.aset_runner_inbox_state(row["runner_id"], row["incarnation"], row["seq"],
+                                                             "failed", "invalid_message", expected="processing")
+            except Exception:
+                log.warning("held runner inbox sequence %s could not be resumed", row["seq"], exc_info=True)
 
     async def _hold_failed_inbox_retry(self, row: dict) -> None:
         """Keep a storage-interrupted retry available, or hold an uncertain ask."""

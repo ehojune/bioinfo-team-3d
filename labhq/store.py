@@ -65,6 +65,14 @@ class StateStore:
         self._batch_conn: sqlite3.Connection | None = None  # set while `batch()` holds the open transaction
         self._lane_owner: threading.Thread | None = None  # the thread running `_batch_now` for this store
         self._closed = False
+        # `db` belongs to the thread that made the store (the gateway's event loop). A read from another thread
+        # (`asyncio.to_thread`) keeps that connection's read snapshot open while it iterates, so the loop would
+        # read old rows meanwhile (#1406); such reads get a connection of their own.
+        self._owner_thread = threading.get_ident()
+        self._thread_readers = threading.local()
+        self._readers: list[sqlite3.Connection] = []
+        self._readers_lock = threading.Lock()
+        self._inbox_db: sqlite3.Connection | None = None
         self.db = sqlite3.connect(path, timeout=5, check_same_thread=False)
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         if version not in (0, SCHEMA_VERSION):
@@ -94,6 +102,29 @@ class StateStore:
                             "ON state(json_extract(body, '$.state')) WHERE kind='runner_inbox'")
 
     # ----- connections -----
+    def _reader(self) -> sqlite3.Connection:
+        if threading.get_ident() == self._owner_thread:
+            return self.db
+        conn = getattr(self._thread_readers, "conn", None)
+        if conn is None:
+            if self._closed:
+                raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+            conn = sqlite3.connect(self.path, timeout=5, check_same_thread=False)
+            with self._readers_lock:
+                self._readers.append(conn)
+            self._thread_readers.conn = conn
+        return conn
+
+    def _inbox_reader(self) -> sqlite3.Connection:
+        """Runner inbox ordering decisions read only here, never through a shared scan's snapshot (#1406)."""
+        if threading.get_ident() != self._owner_thread:
+            return self._reader()
+        if self._inbox_db is None:
+            if self._closed:
+                raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+            self._inbox_db = sqlite3.connect(self.path, timeout=5, check_same_thread=False)
+        return self._inbox_db
+
     def _write_connection(self) -> sqlite3.Connection:
         # Opened on first write, on whichever thread writes first; `_write_lock` keeps one user at a time.
         if self._closed:
@@ -173,6 +204,13 @@ class StateStore:
             if self._wdb is not None:
                 self._wdb.close()
                 self._wdb = None
+        with self._readers_lock:
+            readers, self._readers = self._readers, []
+        for conn in readers:
+            conn.close()
+        if self._inbox_db is not None:
+            self._inbox_db.close()
+            self._inbox_db = None
         self.db.close()
 
     # ----- state rows -----
@@ -300,10 +338,10 @@ class StateStore:
 
     def all(self, kind: str) -> dict[str, dict]:
         return {key: json.loads(body) for key, body in
-                self.db.execute("SELECT key, body FROM state WHERE kind=?", (kind,))}
+                self._reader().execute("SELECT key, body FROM state WHERE kind=?", (kind,))}
 
     def get(self, kind: str, key: str) -> dict | None:
-        return self._get_on(self.db, kind, key)
+        return self._get_on(self._reader(), kind, key)
 
     @staticmethod
     def _get_on(conn: sqlite3.Connection, kind: str, key: str) -> dict | None:
@@ -524,10 +562,10 @@ class StateStore:
         return _dumps([runner_id, incarnation, seq])
 
     def runner_inbox(self, runner_id: str, incarnation: str | None, seq: int) -> dict | None:
-        return self.get("runner_inbox", self._runner_inbox_key(runner_id, incarnation, seq))
+        return self._get_on(self._inbox_reader(), "runner_inbox", self._runner_inbox_key(runner_id, incarnation, seq))
 
     def active_runner_inbox(self) -> list[dict]:
-        return [json.loads(row[0]) for row in self.db.execute(
+        return [json.loads(row[0]) for row in self._inbox_reader().execute(
             "SELECT body FROM state INDEXED BY runner_inbox_status_idx WHERE kind='runner_inbox' "
             "AND json_extract(body, '$.state') IN ('pending','processing','failed','blocked')")]
 
