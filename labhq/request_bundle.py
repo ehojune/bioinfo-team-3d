@@ -76,6 +76,7 @@ _SCRIPT_ABS = re.compile(_PRIVATE_PATH_START +
 # Without shell quoting, a log/JSON value cannot distinguish path spaces from trailing prose.
 # Hide that whole span conservatively, stopping at explicit markup or a protected bundle reference.
 _TEXT_ABS = re.compile(_PRIVATE_PATH_START + r'''[^\r\n<>"'`|\x01]+''', re.MULTILINE)
+_HASH_TOKEN = re.compile(r'(?<![A-Za-z0-9_])([0-9a-fA-F]{64})(?![A-Za-z0-9_])')
 _SYSTEM_OPERAND = re.compile(r'/(?:((?:usr/(?:local/)?)?s?bin)/[A-Za-z0-9_.+-]+|dev/(?:null|stdin|stdout|stderr))\Z')
 _BINARY_PREFIXES = (b'%PDF-', b'\x89PNG', b'\xff\xd8\xff', b'GIF87a', b'GIF89a', b'PK\x03\x04',
                     b'\x1f\x8b', b'BAM\x01', b'\x89HDF', b'\x93NUMPY', b'ARROW1\0\0', b'SQLite format 3\0')
@@ -477,10 +478,12 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
     root = getattr(profile, "remote_workdir", None) or "/"
 
     def site_words(text):
-        text = redact(text, sorted(words, key=len, reverse=True))
-        for identifier in site_identifiers:
-            text = re.sub(re.escape(identifier), '<host>', text, flags=re.IGNORECASE)
-        return text
+        parts = _HASH_TOKEN.split(text)
+        for index in range(0, len(parts), 2):
+            parts[index] = redact(parts[index], sorted(words, key=len, reverse=True))
+            for identifier in site_identifiers:
+                parts[index] = re.sub(re.escape(identifier), '<host>', parts[index], flags=re.IGNORECASE)
+        return ''.join(parts)
 
     def no_remote_command(command):
         raise RuntimeError("bundle redaction cannot execute remote commands")

@@ -2676,3 +2676,21 @@ def test_numeric_site_identifiers_are_not_treated_as_connect_ports(tmp_path, mon
     record = json.loads(path.read_text(encoding='utf-8'))
     assert record['id'] == 'req_12345' and record['status'] == 'completed' and record['sha256'] == identity
     assert record['description'] == cleaned
+
+
+@pytest.mark.parametrize('identifier', ['abc', '12345'])
+@pytest.mark.parametrize('suffix', ['.txt', '.tsv', '.sh'])
+def test_streamed_text_preserves_complete_hash_tokens(tmp_path, identifier, suffix):
+    from labhq.request_bundle import _public_hpc_text, _redact_bundle_text
+
+    settings = Settings()
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    settings.hpc.user = identifier
+    checksum = '0' * 20 + identifier + '1' * (44 - len(identifier))
+    path = tmp_path / ('checksums' + suffix)
+    write(path, checksum + '  data.tsv\nsite ' + identifier + '\n')
+
+    assert _redact_bundle_text(path, _public_hpc_text(settings))
+    lines = path.read_text(encoding='utf-8').splitlines()
+    assert lines[0] == checksum + '  data.tsv'
+    assert identifier not in lines[1]
