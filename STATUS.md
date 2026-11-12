@@ -4,6 +4,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1419 Claude 5시간 한도 문구를 대기로 분류
+
+- `labhq/quota.py`가 `5-hour limit · resets 6:30pm (Asia/Seoul)`을 한도로 분류하지 못해 요청이 대기 대신 실패로 끝났습니다. `<N>-hour limit`을 Claude 한도로 보고, 문구에 적힌 zone으로 풀리는 시각을 읽게 했습니다.
+- 다른 엔진 판정과 일반 속도 제한 분류는 바꾸지 않았습니다.
+- 실제 문구 fixture로 수정 전 실패 3건을 재현했고 수정 후 `tests/test_quota_wait.py` 25 passed.
+- 출력 없이 끝난 CLI는 조사만 했습니다. 같은 시각 lit_scout가 정상이라 한도 근거가 없고, 재현하지 않아 고치지 않았습니다([기록](../reference/fix-1419.md)).
+
 # #1416 묶음 사이트 경로 가림·임시 입력 거절 (r3)
 
 - PR #1417을 대체합니다. 그 PR의 첫 커밋에서 출발해, 설정에 적힌 원격 작업 폴더(`remote_workdir`)로 시작하는 경로만 텍스트 사본에서 `<remote-path>`로 바꿉니다. 보고서·README·HTML·이진 파일은 건드리지 않습니다.

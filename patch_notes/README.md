@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:11 | [`7220352`](https://github.com/ehojune/bioinfo-team-3d/pull/1420/commits/7220352) | **시간대 자료가 없는 Windows에서도 한도 시험이 맞게 동작하도록 고쳤습니다.**<br>시험: #1419 tz 데이터가 없는 Windows에서는 문구 zone 대신 실행기 zone 읽기를 확인한다 |
+| 21:58 | [`8c5f031`](https://github.com/ehojune/bioinfo-team-3d/pull/1420/commits/8c5f031) | **Claude의 5시간 사용 한도에 걸리면 요청을 실패로 끝내지 않고 풀리는 시각까지 기다립니다.**<br>수정: #1419 Claude의 5시간 한도 문구를 한도 대기로 분류하고 문구의 zone으로 풀리는 시각을 읽는다 |
+| 21:58 | [`1d80c58`](https://github.com/ehojune/bioinfo-team-3d/pull/1420/commits/1d80c58) | **출력 없이 끝난 실행의 조사 결과를 참고 문서에 남겼습니다.**<br>기록: #1419 조사 기록·status |
 | 21:20 | [`b455e27`](https://github.com/ehojune/bioinfo-team-3d/pull/1418/commits/b455e27) | **경로 가림 범위와 검증 결과를 참고 문서에 남겼습니다.**<br>기록: #1416 검증 기록·status·패치노트 |
 | 21:15 | [`677cbbb`](https://github.com/ehojune/bioinfo-team-3d/pull/1418/commits/677cbbb) | **공개 요청 묶음에서 HPC 작업 폴더 경로를 가리고, 임시 폴더 파일을 HPC 잡 입력으로 넣으면 제출 전에 막습니다.**<br>수정: #1416 요청 묶음은 설정된 원격 작업 폴더 경로만 가리고 .tmp/ 잡 입력을 거절한다 |
 | 16:52 | [`10bfefd`](https://github.com/ehojune/bioinfo-team-3d/pull/1396/commits/10bfefd) | **최신 main을 격리 실험 정리에 반영했습니다.**<br>다른 작업의 변경을 보존하며 충돌 없이 통합했습니다. |
