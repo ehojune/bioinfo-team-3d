@@ -1106,7 +1106,8 @@ def test_a_bundle_with_scripts_and_an_inherited_environment_record_is_replayable
     assert "`rerun_verified`는 다른 곳에서 다시 돌린 기록이 있을 때만" in readme
 
 
-def test_rerun_verified_requires_a_valid_receipt_and_is_exposed_by_verify(tmp_path):
+@pytest.mark.parametrize("hpc", [False, True])
+def test_rerun_verified_requires_a_valid_receipt_and_is_exposed_by_verify(tmp_path, hpc):
     files = {
         "env": {"outputs/env/requirements.lock.txt": "pandas==2.2.2\n"},
         "de": {"outputs/scripts/de.py": "import pandas\n", "outputs/de.tsv": "gene\tlogFC\n"},
@@ -1115,6 +1116,9 @@ def test_rerun_verified_requires_a_valid_receipt_and_is_exposed_by_verify(tmp_pa
     assert built["grade"] == "replayable"
 
     settings = configured(tmp_path / "with")
+    if hpc:
+        settings.hpc.ssh_host = 'fixture-user@fixture-host'
+        settings.hpc.user = 'grade'
     root = Path(settings.runner.workspace_root)
     results = {}
     for step_id, outputs in files.items():
@@ -1770,10 +1774,14 @@ def test_bundle_rename_gives_up_after_the_retries_or_off_windows(monkeypatch, wi
     assert locked.calls == calls
 
 
-def test_a_research_bundle_carries_the_claims_its_report_anchors_name(tmp_path):
+@pytest.mark.parametrize('site_value', [None, 'c_main', 's2', 'up'])
+def test_a_research_bundle_carries_the_claims_its_report_anchors_name(tmp_path, site_value):
     """Readiness R24 (2026-10-08): claims lived only in the audit bundle, so a colleague holding the request bundle
     could not follow a report anchor to its evidence."""
     settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    if site_value:
+        settings.hpc.ssh_host = 'fixture-user@fixture-host'
+        settings.hpc.user = site_value
     request["research_contract"] = {"plan_sha256": "f" * 64, "report_check": {"anchors": 1, "problems": []},
                                     "checkpoints": {"cp2": {"decision": "approved", "refused_evidence": []}}}
     upstream_ref = f"{request['results']['s1']['workdir_id']}/outputs/data/input.tsv"
@@ -1783,10 +1791,16 @@ def test_a_research_bundle_carries_the_claims_its_report_anchors_name(tmp_path):
                                                                 {"artifact_id": "up", "path": upstream_ref},
                                                                 {"artifact_id": "gone", "path": "outputs/missing.tsv"}]}
     request["report"] = "Main finding [[claim:s2/c_main]]."
+    if site_value:
+        request['results']['s2']['structured']['claims'][0]['statement'] += ' /scratch/fixture-user/private.txt `fixture-user/private`'
     bundle = Path(build_request_bundle(request, settings, tasks)["path"])
 
     claims = json.loads((bundle / "claims.json").read_text(encoding="utf-8"))
     assert claims["ledgers"]["s2"]["claims"][0]["id"] == "c_main"
+    assert claims['ledgers']['s2']['claims'][0]['status'] == 'supported'
+    if site_value:
+        assert 'fixture-user' not in claims['ledgers']['s2']['claims'][0]['statement']
+    assert '`s2/c_main`' in (bundle / 'report.md').read_text(encoding='utf-8')
     refs = {ref["artifact_id"]: ref for ref in claims["ledgers"]["s2"]["artifact_refs"]}
     # #497 review: each cited file is found at its place in the bundle; the ledger's own path is kept.
     assert refs["own"]["bundle_path"] == "steps/s2/outputs/final.txt" and (bundle / refs["own"]["bundle_path"]).is_file()
@@ -2255,14 +2269,20 @@ def test_hpc_bundle_redacts_input_paths_without_changing_inventory_schema(tmp_pa
     assert verify_bundle_copy(bundle)["problems"] == []
 
 
-@pytest.mark.parametrize("site_value", ["ab", "draft", "request_id"])
+@pytest.mark.parametrize("site_value", ["ab", "draft", "request_id", "accepted"])
 def test_hpc_bundle_checkpoint_preserves_structural_request_ids(tmp_path, site_value):
+    from labhq.research.final_checkpoint import freeze, decide
+
     settings, request, task = pending_bundle_fixture(tmp_path, "req_ab_control")
     settings.hpc.ssh_host = "fixture-user@fixture-host"
     settings.hpc.user = site_value
     request["research_contract"] = {"schema_version": 2, "final_checkpoint": True,
-        "final_draft": {"request_id": request["id"], "content": {"report": "public result"}},
-        "final_receipt": {"request_id": request["id"], "decision": "accepted"}}
+        "plan_sha256": 'f' * 64, "review": {"verdict": "accept", "issues": []},
+        "report_check": {"problems": []}, "checkpoints": {"cp2": {"decision": "approved"}}}
+    freeze(request, 3600)
+    request['status'] = 'review_pending'
+    draft = request['research_contract']['final_draft']
+    decide(request, 'accepted', revision=1, target_sha256=draft['target_sha256'])
 
     bundle = Path(build_request_bundle(request, settings, {"t": task})["path"])
 
@@ -2271,3 +2291,18 @@ def test_hpc_bundle_checkpoint_preserves_structural_request_ids(tmp_path, site_v
                       "draft": request["research_contract"]["final_draft"],
                       "receipt": request["research_contract"]["final_receipt"]}
     assert manifest_rows(bundle)["final_checkpoint.json"]["redacted"] == ""
+    assert verify_bundle_copy(bundle)["problems"] == []
+
+
+def test_hpc_bundle_dependency_helper_preserves_step_ids_and_links_inputs(tmp_path):
+    import runpy
+
+    settings, request, tasks, upstream, _outside, _old = request_fixture(tmp_path)
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    settings.hpc.user = 's1'
+
+    bundle = Path(build_request_bundle(request, settings, tasks)['path'])
+    runpy.run_path(str(bundle / 'link_inputs.py'), run_name='__main__')
+
+    linked = bundle / 'steps/s2/inputs/s1/data/input.tsv'
+    assert linked.read_bytes() == upstream.read_bytes()

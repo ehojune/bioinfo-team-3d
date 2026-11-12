@@ -44,6 +44,11 @@ MANIFEST_FIELDS = (
     "redacted", "source_sha256", "source_size",
 )
 INPUT_FIELDS = ("step_id", "path", "size", "mtime_ns", "sha256", "skipped", "cached")
+_PUBLIC_RECORD_FIELDS = frozenset({
+    'request_id', 'id', 'step_id', 'task_id', 'workdir_id', 'agent_id', 'skill_id',
+    'artifact_id', 'claim_id', 'evidence_id', 'source_id', 'status', 'decision', 'verdict', 'priority',
+    'path', 'bundle_path', 'artifact_sha256',
+})
 MANIFEST_MAX_BYTES = 16 * 1024 * 1024
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _SAFE_SCRIPT_COMPONENT = re.compile(r"[A-Za-z0-9._-]+\Z")
@@ -343,7 +348,7 @@ def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]],
     return replacements, remaining
 
 
-def _public_hpc_text(settings):
+def _public_hpc_text(settings, *, claim_refs=()):
     """Offline job-log policy for a configured remote site's bundle copies; never opens a session."""
     from .hpc_session import redact, redaction_words
     from .hpc_transfer import Transfer
@@ -375,30 +380,46 @@ def _public_hpc_text(settings):
         # Code keeps system operands and shebangs; site-specific operands are still hidden.
         if script:
             return transfer._hide(text)
-        return _WINDOWS_ABS.sub("<local-path>", transfer.hide_log(text))
+        # Preserve only references to declared ledger IDs, never arbitrary relative-looking site text.
+        sentinel = '\x01'
+        while sentinel in text:
+            sentinel += '\x01'
+        references = [token for ref in claim_refs for token in (f'[[claim:{ref}]]', f'`{ref}`') if token in text]
+        for index, token in enumerate(references):
+            text = text.replace(token, f'{sentinel}{index}{sentinel}')
+        text = _WINDOWS_ABS.sub("<local-path>", transfer.hide_log(text))
+        for index, token in enumerate(references):
+            text = text.replace(f'{sentinel}{index}{sentinel}', token)
+        return text
 
     return hide
 
 
-def _public_values(value, hide, *, redact_keys=True):
+def _public_values(value, hide, *, redact_keys=True, preserve_fields=()):
     """Transform JSON values structurally so Windows escapes and quoted text stay valid JSON."""
     if isinstance(value, str):
         if re.fullmatch(r'[0-9a-fA-F]{64}', value):
             return value  # hashes are integrity evidence, even when a short account matches their digits
         return hide(value)
     if isinstance(value, Mapping):
-        transformed = {hide(key) if redact_keys and isinstance(key, str) else key:
-                       _public_values(item, hide, redact_keys=redact_keys)
-                       for key, item in value.items()}
+        transformed = {}
+        for key, item in value.items():
+            preserve = key in preserve_fields
+            if key in ('path', 'bundle_path') and isinstance(item, str) \
+                    and (item.startswith('/') or _WINDOWS_ABS.match(item)):
+                preserve = False
+            public_key = hide(key) if redact_keys and isinstance(key, str) else key
+            transformed[public_key] = item if preserve else _public_values(
+                item, hide, redact_keys=redact_keys, preserve_fields=preserve_fields)
         if len(transformed) != len(value):
             raise ValueError('site redaction would merge JSON keys; bundle withheld')
         return transformed
     if isinstance(value, list):
-        return [_public_values(item, hide, redact_keys=redact_keys) for item in value]
+        return [_public_values(item, hide, redact_keys=redact_keys, preserve_fields=preserve_fields) for item in value]
     return value
 
 
-def _redact_bundle_text(path, hide, *, hash_bound=False):
+def _redact_bundle_text(path, hide, *, hash_bound=False, record_fields=()):
     """Content-based UTF-8 detection includes suffixless configs and scheduler .out/.err files."""
     data = path.read_bytes()
     if b'\0' in data[:8192]:
@@ -415,13 +436,17 @@ def _redact_bundle_text(path, hide, *, hash_bound=False):
         else:
             if hash_bound and isinstance(value, Mapping):
                 # Canonical checkpoint metadata names the immutable request. Inspect only its payloads,
-                # retaining schema keys and the request IDs repeated in the draft and receipt.
-                value = {key: ({k: v for k, v in section.items() if k != 'request_id'}
+                # retaining the typed, path-free fields produced by final_checkpoint.freeze/decide.
+                metadata = {'request_id', 'revision', 'target_sha256', 'report_sha256', 'audit_sha256',
+                            'claims_sha256', 'created_at', 'deadline_at', 'gate', 'decision', 'decider',
+                            'decided_at', 'delegation_scope'}
+                value = {key: ({k: v for k, v in section.items() if k not in metadata}
                                if isinstance(section, Mapping) else section)
                          for key in ('draft', 'receipt') if (section := value.get(key)) is not None}
-                transformed = _public_values(value, hide, redact_keys=False)
+                transformed = _public_values(value, hide, redact_keys=False, preserve_fields=_PUBLIC_RECORD_FIELDS)
             else:
-                transformed = _public_values(value, hide)
+                transformed = _public_values(value, hide, redact_keys=not bool(record_fields),
+                                             preserve_fields=record_fields)
             cleaned = json.dumps(transformed, ensure_ascii=False, indent=2) + '\n' if transformed != value else text
     else:
         cleaned = hide(text, script=path.suffix.casefold() in SCRIPT_SUFFIXES)
@@ -668,7 +693,14 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
     runner_capabilities = runner_capabilities or {}
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     rerun_receipt = _rerun_receipt(req)
-    public_text = _public_hpc_text(settings)
+    claim_refs = []
+    for step_id, result in results.items():
+        structured = result.get('structured') if isinstance(result, Mapping) else None
+        if not _SAFE_ID.fullmatch(str(step_id)) or not isinstance(structured, Mapping):
+            continue
+        claim_refs.extend(f"{step_id}/{claim['id']}" for claim in structured.get('claims') or []
+                          if isinstance(claim, Mapping) and _SAFE_ID.fullmatch(str(claim.get('id') or '')))
+    public_text = _public_hpc_text(settings, claim_refs=claim_refs)
     # The report links a figure as <workdir_id>/outputs/<file>; the bundle names it steps/<step_id>/outputs/<file>, and
     # a linked figure is kept even when the bundle's total limits are full (#584). The per-file limit still applies.
     report_text = link_workdir_figures(str(req.get("report") or ""), figure_owners(results), output_exists(results))
@@ -1026,9 +1058,16 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
         redacted_files = set()
         if public_text:
             for path in sorted(p for p in temp.rglob('*') if p.is_file()):
-                if path == temp / 'INPUTS.tsv':
-                    continue  # typed inventory: preserve headers, step IDs and integrity fields
-                if _redact_bundle_text(path, public_text, hash_bound=path == temp / 'final_checkpoint.json'):
+                if path in (temp / 'INPUTS.tsv', temp / LINK_SCRIPT, temp / RERUN_RECEIPT_FILE,
+                            temp / FIGURE_PLAN_FILE):
+                    continue  # typed inventory, path-free receipt and generated relative-path helpers
+                record_fields = ()
+                if path.parent == temp and path.name in ('claims.json', 'paper_skills.json'):
+                    record_fields = _PUBLIC_RECORD_FIELDS
+                    if path.name == 'claims.json' and final_checkpoint:
+                        record_fields |= {'final_draft', 'final_receipt'}  # checked by the canonical checkpoint
+                if _redact_bundle_text(path, public_text, hash_bound=path == temp / 'final_checkpoint.json',
+                                       record_fields=record_fields):
                     redacted_files.add(path.relative_to(temp).as_posix())
             for row in rows:
                 row['redacted'] = 'yes' if row['relative_path'] in redacted_files else ''
