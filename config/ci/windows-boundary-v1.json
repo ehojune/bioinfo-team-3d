@@ -282,6 +282,7 @@
     "tests/test_registry.py",
     "tests/test_repeat_fake_check.py",
     "tests/test_replace_file.py",
+    "tests/test_report_assets_1384.py",
     "tests/test_report_check.py",
     "tests/test_report_contract.py",
     "tests/test_report_figures_svg.py",

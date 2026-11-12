@@ -148,7 +148,10 @@ def _without_front(report: str) -> str:
 def _plain(value: str) -> str:
     value = _ANCHOR.sub("", value)
     value = re.sub(r"!?\[([^\]]*)\]\([^)]+\)", r"\1", value)
-    value = re.sub(r"[`*_>#]", "", value)
+    # A footnote label is an identifier: stripping its underscores breaks the reference in the front page.
+    parts = re.split(r"(\[\^[^\]\n]+\])", value)
+    value = "".join(part if index % 2 else re.sub(r"[`*_>#]", "", part)
+                    for index, part in enumerate(parts))
     return " ".join(value.split()).strip()
 
 
@@ -286,7 +289,7 @@ def render_report_front(package: ReportPackage, *, figures_as_images: bool = Fal
                         pipeline_images: bool = False) -> str:
     """Compact first screen shared by the stored report, bundle, edition, PDF and web view."""
     evidence = ([f"- [근거 {index}] 근거 원장 `{value}`" for index, value in enumerate(package.evidence_notes, 1)]
-                or ["- 근거 각주가 없습니다."])
+                or ["- 근거 원장 표식이 없습니다."])
     reproduction = (f"- [요청 묶음 재현 안내]({package.reproduction})" if package.reproduction else
                     "- 해당 없음 — 실패 요청은 재현 절차를 요구하지 않습니다.")
     if package.reproduction_receipt:

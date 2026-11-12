@@ -192,6 +192,8 @@ def _sections(report: str) -> list[tuple[str, list[str]]]:
 def _findings(report: str) -> list[str]:
     """Up to three conclusion lines: the "결론" section's bullets or sentences, else the first section with text."""
     sections = _sections(report)
+    sections = [(head, [line for line in lines if not re.match(r"^\s*\[\^[^\]]+\]:", line)])
+                for head, lines in sections]
     body = next((lines for head, lines in sections if "결론" in head or "conclusion" in head.casefold()), None)
     if body is None or not any(line.strip() for line in body):
         body = next((lines for _head, lines in sections if any(line.strip() and not line.lstrip().startswith("|")
@@ -202,7 +204,7 @@ def _findings(report: str) -> list[str]:
     else:
         paragraphs = _SPACES.sub(" ", " ".join(line for line in body if not line.lstrip().startswith("|")))
         items = _SENTENCE.split(paragraphs)
-    cleaned = [_plain(item) for item in items]
+    cleaned = [_plain(re.sub(r"\[\^[^\]]+\]", "", item)) for item in items]
     return [item for item in cleaned if _width(item) >= 6][:MAX_FINDINGS]
 
 

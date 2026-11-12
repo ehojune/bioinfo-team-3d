@@ -738,7 +738,7 @@ function followupHTML(q) {
   return list || form ? `<section class="followups" aria-label="이어 묻기">${list ? `<ol>${list}</ol>` : ''}${form}</section>` : '';
 }
 const reportHTML = q => !q.report ? '' : `<section class="pi-report"><h3>PI용 보고서</h3>${
-  globalThis.LabHQState?.reportMarkdownHTML?.(globalThis.LabHQState?.reportWithPackage?.(q.report, q.reportPackage) + (q.report_truncated ? '\n\n…' : '')) || `<pre>${esc(q.report)}${q.report_truncated ? '…' : ''}</pre>`}${
+  globalThis.LabHQState?.reportMarkdownHTML?.(globalThis.LabHQState?.reportWithPackage?.(q.report, q.reportPackage) + (q.report_truncated ? '\n\n…' : ''), api?.reportAsset ? q.id : null) || `<pre>${esc(q.report)}${q.report_truncated ? '…' : ''}</pre>`}${
   q.report_truncated ? `<p class="fu-more">앞 ${[...q.report].length.toLocaleString()}자만 보여요${q.report_chars ? ` (전체 ${Number(q.report_chars).toLocaleString()}자)` : ''}${
     api?.requestDetail ? ` <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button>` : ''}</p>` : ''}${q.report_appendix ?
     `<details class="report-appendix"><summary>${q.report_appendix.startsWith('## 부록\n') ? '과학 부록' : '실행 기록'}</summary><pre>${esc(q.report_appendix)}${q.report_appendix_truncated ? '…' : ''}</pre>${q.report_appendix_truncated && api?.requestDetail ?
@@ -775,6 +775,20 @@ ${q.status === 'interrupted' ? '<button type="button" class="btn" data-outcome-n
 <button type="button" class="btn" data-outcome-next="request">새 요청으로 다시 시작</button>
 ${FOLLOWUP_STATUSES.includes(q.status) && api?.followup ? '<button type="button" class="btn" data-outcome-next="followup">남은 결과에 이어 묻기</button>' : ''}</section>`;
 let reqKey = '';
+let reportImageUrls = [];
+function loadReportImages(el, rid) {
+  if (!api?.reportAsset) return;
+  const imageTypes = {png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', webp:'image/webp', svg:'image/svg+xml'};
+  for (const img of el.querySelectorAll('img[data-report-asset]')) {
+    const path = img.dataset.reportAsset, ext = path.split(/[?#]/)[0].split('.').pop().toLowerCase();
+    if (!imageTypes[ext]) continue;
+    api.reportAsset(rid, path).then(blob => {
+      if (!img.isConnected) return;
+      const url = URL.createObjectURL(new Blob([blob], {type:imageTypes[ext]}));
+      reportImageUrls.push(url); img.src = url;
+    }).catch(() => { img.alt += ' (그림을 불러오지 못했어요)'; });
+  }
+}
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
   const details = q ? [...q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)), S.stepDetails.get(`${q.id}:direct`)] : [];
@@ -789,6 +803,7 @@ function renderRequest() {
   const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, deadlineText, requestDigest, q.id, q.phase, q.status, q.error, q.steps, q.stepJobs, details, q.github.length, q.pipelinePr, q.report, q.reportPackage, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? `none:${JSON.stringify(requestDigest)}` : `loading:${S.conn}`;
   if (key === reqKey) return;
   reqKey = key;
+  reportImageUrls.forEach(url => URL.revokeObjectURL(url)); reportImageUrls = [];
   const current = all.filter(r => !LabHQState.isPastRequest(r)), past = all.filter(LabHQState.isPastRequest);
   const choice = r => `<button type="button" class="request-choice" data-request-id="${esc(r.id)}" value="${esc(r.id)}" aria-current="${r.id === q?.id}"><span class="request-title">${esc(r.text || r.id)}</span><span class="status-label ${LabHQState.needsPiReview(r) ? 'status-decision' : LabHQState.partialFailureSteps(r).length ? 'status-partial status-halted' : 'status-neutral'}"><span class="status-dot" aria-hidden="true"></span>${esc(LabHQState.requestStatusText(r, S.approvals))}</span></button>`;
   const cumulative = LabHQState.totalCostLabel(all, LabHQState.requestsCostTotal(all)).replace(/^사용 비용 /, '');
@@ -803,6 +818,7 @@ function renderRequest() {
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${deadlineText ? `<span>${esc(deadlineText)}</span>` : ''}${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}${q.costSummary && q.costSummary.by_agent ? `<span>${esc(LabHQState.agentCostLabel(q.costSummary, nick))}</span>` : ''}<span class="req-status status-label st-${esc(q.status)}"><span class="status-dot" aria-hidden="true"></span>${esc(statusText)}</span></p>
   ${api?.cancelRequest && (LabHQState.isActiveRequest(q.status) || q.status === 'interrupted') ? `<p class="req-actions"><button class="btn" id="req-cancel" type="button" data-rid="${esc(q.id)}">요청 취소</button></p>` : ''}
   ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${hasOutcome(q) ? '' : reportHTML(q)}${reportPdfHTML(q)}${LabHQState.needsPiReview(q) ? `<p><button class="btn go" data-review-done="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '검토 완료' : '확인 완료'}</button></p>` : ''}${bundleHTML(q)}${auditHTML(q)}${followupHTML(q)}`;
+  loadReportImages(el, q.id);
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick,
     onCancel: api?.cancel ? id => api.cancel(id).then(() => toast('취소 요청을 보냈어요')).catch(err => toast(`취소하지 못했어요: ${err.message}`)) : null,
@@ -1035,6 +1051,17 @@ $('#approvals').addEventListener('click', async e => {
 $('#request').addEventListener('click', e => { const choice = e.target.closest('[data-request-id]'); if (choice) { officeState.selectRequest(choice.dataset.requestId); schedule(); } });
 $('#request').addEventListener('input', e => { if (e.target.id === 'fu-text') fuDrafts.set(e.target.dataset.rid, e.target.value); });
 $('#request').addEventListener('click', async e => {
+  const asset = e.target.closest('a[data-report-asset]');
+  if (asset && api?.reportAsset) {
+    e.preventDefault();
+    try {
+      const blob = await api.reportAsset(S.current, asset.dataset.reportAsset);
+      const url = URL.createObjectURL(blob), link = document.createElement('a');
+      link.href = url; link.download = asset.dataset.reportAsset.split(/[?#]/)[0].split('/').pop() || 'asset';
+      link.click(); URL.revokeObjectURL(url);
+    } catch (err) { toast(`파일을 받지 못했어요: ${err.message}`); }
+    return;
+  }
   if (e.target.classList?.contains('audit-bundle')) {
     e.preventDefault();
     try {
@@ -1285,6 +1312,7 @@ function startLive() {
     note: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/notes`, { text }),
     followup: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/followup`, { text }),
     requestDetail: rid => get(`/api/requests/${encodeURIComponent(rid)}`),
+    reportAsset: (rid, path) => getBlob(`/api/requests/${encodeURIComponent(rid)}/report-asset?path=${encodeURIComponent(path)}`),
     auditBundle: rid => getBlob(`/api/requests/${encodeURIComponent(rid)}/audit-bundle`),
     reportPdf: async rid => {
       const r = await fetch(`/api/requests/${encodeURIComponent(rid)}/report-pdf`, { headers: { Authorization: `Bearer ${token}` } });
