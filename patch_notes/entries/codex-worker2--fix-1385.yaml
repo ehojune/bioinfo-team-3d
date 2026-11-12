@@ -1,5 +1,9 @@
 pr: 1393
 rows:
+  - sha: "287a586"
+    at: "2026-11-12 09:52"
+    summary: "제목의 글자를 보존하고 같은 논문의 식별자를 연결해 원문을 찾습니다."
+    text: "#1385 r4 P2: 제목 markup·entity·inline 공백 보정, 문헌·선례 receipt의 DOI/PMID/PMCID 대응과 registry URL 확인. 미기록 별칭·hash 불일치 거부. 관련 317건 통과."
   - sha: "4b3f49c"
     at: "2026-11-12 09:43"
     summary: "논문 페이지의 메뉴 대신 첫 논문 제목으로 사본을 대조합니다."
