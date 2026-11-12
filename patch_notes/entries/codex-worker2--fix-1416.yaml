@@ -1,0 +1,6 @@
+pr: 1417
+rows:
+  - sha: "a346ef0"
+    at: "2026-11-12 16:50"
+    summary: "요청 묶음의 사이트 경로를 가리고 임시 파일의 HPC 제출을 막습니다."
+    text: "#1416: 텍스트 사본·manifest 가림과 원본 hash 기록, .tmp 입력 거절. 비공개 사본 public 실패 파일 6→0·bundle 검증 PASS. PI CLI·연구 재실행은 미실행."
