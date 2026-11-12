@@ -357,3 +357,92 @@ def test_request_bundle_lists_inputs_and_adds_the_hash_skip_summary(tmp_path):
     assert rows[0]["path"] == "steps/s1/inputs/s0/table.tsv" and rows[0]["sha256"] == "a" * 64
     assert rows[1]["path"] == "" and rows[1]["sha256"] == "" and rows[1]["skipped"] == "private"
     assert "입력 1개 hash, 1개 생략 (private 1)" in (bundle / "README.md").read_text(encoding="utf-8")
+
+
+def _venv(folder: Path, files: int) -> Path:
+    (folder / "Lib" / "site-packages" / "pkg").mkdir(parents=True)
+    for index in range(files):
+        (folder / "Lib" / "site-packages" / "pkg" / f"m{index}.py").write_text("x = 1\n", encoding="utf-8")
+    return folder
+
+
+@pytest.mark.asyncio
+async def test_an_environment_folder_is_one_input_row_not_one_per_file(tmp_path, monkeypatch):
+    """#1421: a venv opened to the step put 18,050 rows in its manifest, over the 1 MiB the next step reads."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "cohort.tsv").write_text("sample,S1", encoding="utf-8")
+    venv = _venv(tmp_path / "env", 30)
+    (venv / "pyvenv.cfg").write_text("home = C:/Python312\n", encoding="utf-8")
+    conda = _venv(tmp_path / "conda", 30)
+    (conda / "conda-meta").mkdir()
+    named = _venv(tmp_path / ".venv", 2)  # only named like an environment: still an ordinary input
+
+    class Adapter:
+        async def run(self, ctx):
+            return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, text="done")
+
+    runner, agent = _project_runner(tmp_path, monkeypatch, Adapter())
+    task = Task(id="task-env", request_id="request-env", agent_id=agent.id, prompt="read",
+                meta={"kind": "step", "step_id": "s2",
+                      "project_dirs": [str(project), str(venv), str(conda), str(named)]})
+    result = await runner.run_task(task)
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    rows = manifest["runs"][task.id]["input_files"]
+    environments = sorted(row["path"] for row in rows if row.get("skipped") == "environment")
+    assert environments == sorted([portable_input_path(venv.resolve()), portable_input_path(conda.resolve())])
+    assert all(row["sha256"] is None for row in rows if row.get("skipped") == "environment")
+    assert portable_input_path(project.resolve()) + "/cohort.tsv" in [row["path"] for row in rows]
+    assert sum(row["path"].startswith(portable_input_path(named.resolve()) + "/") for row in rows) == 2
+    assert len(rows) == 5
+
+
+@pytest.mark.asyncio
+async def test_the_runner_verified_environment_grant_is_one_input_row(tmp_path, monkeypatch):
+    """#1421: the producer's .venv the runner opens to a consumer step is recorded as one row, marker or not."""
+    venv = _venv(tmp_path / "producer" / ".venv", 30)
+
+    class Adapter:
+        async def run(self, ctx):
+            assert str(venv.resolve()) in [str(Path(d).resolve()) for d in ctx.extra_dirs + ctx.read_dirs]
+            return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, text="done")
+
+    runner, agent = _project_runner(tmp_path, monkeypatch, Adapter())
+
+    def grant(task):
+        runner.__dict__.setdefault("_env_grants", {})[task.id] = [
+            {"step_id": "s1", "venv": str(venv), "python": str(venv / "Scripts" / "python.exe"), "read_dir": True}]
+        return None
+
+    monkeypatch.setattr(runner, "_environment_refusal_reason", grant)
+    task = Task(id="task-grant", request_id="request-grant", agent_id=agent.id, prompt="read",
+                meta={"kind": "step", "step_id": "s3"})
+    result = await runner.run_task(task)
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    rows = manifest["runs"][task.id]["input_files"]
+    assert rows == [{"path": portable_input_path(venv.resolve()), "size": None, "mtime_ns": None, "sha256": None,
+                     "skipped": "environment"}]
+
+
+@pytest.mark.asyncio
+async def test_an_environment_in_a_restricted_zone_is_recorded_without_its_path(tmp_path, monkeypatch):
+    """PR #1422 review: a protected root keeps the scanner's nameless row; an environment row would show the path."""
+    from labhq.settings import DataZone
+
+    zone = tmp_path / "controlled"
+    venv = _venv(zone / "env", 3)
+    (venv / "pyvenv.cfg").write_text("home = C:/Python312\n", encoding="utf-8")
+
+    class Adapter:
+        async def run(self, ctx):
+            return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, text="done")
+
+    runner, agent = _project_runner(tmp_path, monkeypatch, Adapter())
+    runner.s.policy.data_zones = [DataZone(path=str(zone), level="restricted")]
+    task = Task(id="task-zone-env", request_id="request-zone-env", agent_id=agent.id, prompt="read",
+                meta={"kind": "step", "step_id": "s2", "project_dirs": [str(venv)]})
+    result = await runner.run_task(task)
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    rows = manifest["runs"][task.id].get("input_files") or []
+    assert rows and all(row.get("skipped") != "environment" for row in rows)
+    assert all(str(zone.name) not in row["path"] for row in rows)

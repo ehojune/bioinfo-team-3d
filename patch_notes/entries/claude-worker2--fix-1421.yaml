@@ -1,0 +1,12 @@
+pr: 1422
+rows:
+  - sha: "ff46bd6"
+    at: "2026-11-13 00:47"
+    summary: "앞 단계가 만든 Python 환경으로 분석하는 단계가 다음 단계로 결과를 넘기지 못하던 문제를 고쳤습니다. 단계에 열린 가상환경·conda 환경은 입력 기록에 폴더 한 줄로 적고, 인계가 거절되면 어느 기록이 얼마나 커서인지 알려 줍니다."
+    text: "daemon이 runner 검증 .venv grant와 pyvenv.cfg·conda-meta/ 표식 폴더를 input_files에 skipped=environment 한 행으로, step_inputs.environment_folder, _json 거절 문구에 파일명·크기, 1 MiB 한도 유지, 시험 3건 (#1421)"
+  - sha: "1e4fd62"
+    at: "2026-11-13 01:02"
+    text: "restricted·private 판정을 환경 분류보다 먼저 해 보호 경로 안 환경은 이름 없는 보호 행으로, 시험 1건 (#1421, PR #1422 리뷰 P1)"
+  - sha: "43198ba"
+    at: "2026-11-13 01:05"
+    text: "manual 08 한영 INPUTS.tsv 행에 환경 폴더 한 행(environment), 보호 경로 안 환경, 입력 폴더 안쪽 환경은 아직 파일별 (#1421, PR #1422 리뷰 P1)"
