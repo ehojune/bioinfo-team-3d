@@ -3,9 +3,7 @@
 ## Installation and first setup
 
 
-**Experimental wiring (#666):** The process boundary is off by default and can only be requested through the embedding Python API. Requests still refuse execution as unsupported; offline observer results remain synthetic evidence. Actual protection and authenticated cleanup are unverified. [Wiring scope](../reference/sandbox-666-phase2.md).
-
-The VM-free transport draft is also off by default and disconnected from the ordinary CLI. It tests request authentication, replay rejection and env/FD allowlists with fake peers; it provides no OS authentication or protected execution. [Draft scope and limits](../reference/sandbox-666-transport.md).
+**Process boundary (#666):** It is off by default and refuses requests through the embedding Python API as unsupported. Actual OS protection and authenticated cleanup remain unverified.
 
 **VM preparation draft (#666, PR #1267 under review; draft/hold):** Following the [Hyper-V installation and cleanup guide](../reference/sandbox-666-vm-install.md) (Korean), the user manually runs `Inspect` → `EnableFeature` → any required manual reboot → `Provision` in an elevated Windows PowerShell 5.1 session. There is no automatic elevation, reboot or VM start; the prepared VM remains powered OFF with zero NICs.
 
