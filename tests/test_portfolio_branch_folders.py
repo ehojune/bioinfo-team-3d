@@ -309,7 +309,7 @@ def test_zone_basename_in_plain_prose_is_not_internal_provenance():
     assert internal_data_steps(request, settings) == set()
 
 
-def test_unbranched_request_adds_the_semantic_report_to_the_existing_file_list(tmp_path):
+def test_unbranched_request_keeps_existing_files_without_creating_a_device_report(tmp_path):
     settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
     request = deepcopy(request)
     request["research_contract"] = {"schema_version": 1}
@@ -323,7 +323,7 @@ def test_unbranched_request_adds_the_semantic_report_to_the_existing_file_list(t
     assert set(files) == {
         "README.md", "report/report.md", "run/requests.md", "run/decisions.md",
         "run/execution_record.md", "run/costs.md", "run/progress.md", "run/reproduce.md",
-        "run/semantic_report.md", "run/reproduction_receipt.json",
+        "run/reproduction_receipt.json",
         "code/analysis/outputs/scripts/analyze.py", "figures/graphical_abstract.svg", "figures/volcano.svg",
         "run/revision_history.md", "docs/reference/README.md",
         "run/run_report.md", "run/pipeline_diagram.svg", "run/run_timeline.svg",

@@ -18,13 +18,11 @@ REFERENCE_BEHAVIOUR: tuple[tuple[str, Any], ...] = (
     ("research.enabled", True),
     ("research.evidence_checkpoint", True),
     ("research.active_packs", ["bulk_tumor_normal@3", "single_cell_de@3"]),
-    ("semantics.mode", "off"),  # v1.0 keeps the ontology off (#1336); #613 tested "ab"
-    ("semantics.actions", "confirm"),
     ("plan.declare_output_types", True),
 )
 
-# The semantics model reads an output's hash only inside a public or internal zone, so the run folder is one.
-WORKSPACE_ZONE_NOTE = "labhq 작업 폴더 — 의미 모델 hash용"
+# Keep the generated workspace inside the configured internal data zone.
+WORKSPACE_ZONE_NOTE = "labhq 작업 폴더"
 DEFAULT_WORKSPACE = "~/.labhq/runs"
 
 MISSING = object()

@@ -67,7 +67,6 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
 from ..research import blind_draft
 from ..research import precedent_texts
 from ..research import continuation as research_continuation
-from ..research import semantic_device_report
 from ..research import input_fit
 from ..research import semantic_devices
 from ..security import redact_tokens
@@ -3277,19 +3276,15 @@ class Orchestrator:
         previous = req.get("semantic_devices") if isinstance(req.get("semantic_devices"), dict) else {}
         previous_errors = {(row.get("code"), row.get("stage"))
                            for row in previous.get("errors") or [] if isinstance(row, dict)}
-        service = None
-        service = getattr(self.hub, "semantics_shadow", None)  # semantics-hook
-        record = semantic_devices.inspect(self.hub.s, service=service, worker_known=True, phase=phase)
-        # Runtime-only errors such as an advisory projection failure must survive the next durable health refresh.
+        record = semantic_devices.inspect(self.hub.s, phase=phase)
+        # Core load/render/resume failures must survive the next durable health refresh.
         durable = {(row.get("code"), row.get("stage")) for row in record["errors"]}
         for row in previous.get("errors") or []:
             key = (row.get("code"), row.get("stage")) if isinstance(row, dict) else None
             if key and key not in durable and row.get("stage") in {
-                    "advisory_snapshot", "advisory_projection", "advisory_boundary", "load", "render", "resume"}:
+                    "load", "render", "resume"}:
                 record["errors"].append(row)
                 record["status"] = "error"
-        record["advisory"] = semantic_devices.advisory_state(
-            req.get("semantics_ab"), record.get(semantic_devices.DEVICE))
         req["semantic_devices"] = record
         checks = req.setdefault("semantic_device_checks", [])
         checks.append(record)
@@ -3301,17 +3296,6 @@ class Orchestrator:
         if current_errors and current_errors != previous_errors:
             await self._emit(rid, "request.semantic_devices", record)
         return record
-
-    async def _semantic_device_error(self, rid: str, *, code: str) -> None:
-        req = self.hub.requests[rid]
-        record = req.get("semantic_devices") if isinstance(req.get("semantic_devices"), dict) else {
-            "version": 1, "phase": "runtime", "checked_at": time.time(), "status": "ok", "errors": []}
-        semantic_devices.add_error(record, code=code)
-        record["advisory"] = semantic_devices.advisory_state(
-            req.get("semantics_ab"), record.get(semantic_devices.DEVICE))
-        req["semantic_devices"] = record
-        await persist_request(self.hub, rid)
-        await self._emit(rid, "request.semantic_devices", record)
 
     async def _plan_clarification(self, rid: str, candidate: dict) -> tuple[str, dict | None]:
         """Expose only new plan questions and store one answered card; the caller performs the next re-plan."""
@@ -3982,8 +3966,6 @@ class Orchestrator:
         async def refuse(reason: str, outcome: str) -> None:
             entry.update(status="failed", answer="", error=reason, answered_at=time.time())
             await persist_request(self.hub, rid)
-            if getattr(self.hub, "semantics_shadow", None) is not None:  # semantics-hook: actions
-                self.hub.semantics_shadow.after_followup(rid, fid, "ended", outcome)  # semantics-hook: actions
             await self._emit(rid, "request.followup_done", {
                 "id": fid, "ok": False, "answer": "", "error": reason,
                 "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True),
@@ -4062,8 +4044,6 @@ class Orchestrator:
         if not direct and result.session_id and self.hub.supports_resume(agent):
             req["cso_session_id"], req["cso_workdir"] = result.session_id, result.workdir or workdir
         await persist_request(self.hub, rid)
-        if getattr(self.hub, "semantics_shadow", None) is not None:  # semantics-hook: actions
-            self.hub.semantics_shadow.after_followup(rid, fid, "ended", status)  # semantics-hook: actions
         await self._emit(rid, "request.followup_done", {
             "id": fid, "ok": answered, "answer": clip(entry["answer"], 20000), "error": entry["error"],
             **({"status": status} if status == "interrupted" else {}),
@@ -6283,16 +6263,8 @@ class Orchestrator:
         # The card kind stays the first line; the device state and any stop warning follow it (#1336).
         summary += ("\n" + semantic_devices.card_line(device_record)
                     + ("\n" + device_warning if device_warning else ""))
-        device_report = None
-        if semantic_device_report.applies(req, self.hub.s):
-            device_report = semantic_device_report.build_report(req, self.hub.s)
-            summary += "\n\n" + semantic_device_report.summary(device_report)
         detail = {"gate": "research_evidence", "plan_sha256": contract["plan_sha256"],
                   "semantic_devices": device_record,
-                  **({"semantic_report": {"summary": semantic_device_report.summary(device_report),
-                                            "path": semantic_device_report.REPORT_MD,
-                                            "content": semantic_device_report.render_report(device_report)}}
-                     if device_report is not None else {}),
                   **({"warnings": warnings} if warnings else {}),
                    "choices": list(EVIDENCE_CHOICES), "revise_continues": revise_continues,
                    **({"refused_rows": refused_rows} if refused_rows else {}),
@@ -7800,7 +7772,6 @@ class Orchestrator:
                 req["checklist_contract"] = 1
                 await persist_request(self.hub, rid)
 
-                reuse_advisory = ""  # semantics-hook
 
                 async def make_plan(plan_request: str) -> TaskResult:
                     continuation = self.hub.supports_resume(self.cfg.cso_agent)
@@ -7825,7 +7796,6 @@ class Orchestrator:
                                          if topic_vocab else ""))
                         prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
                         prompt += self._lookup_usage_line(rid)
-                        prompt += reuse_advisory  # semantics-hook
                         prompt += continuation_note
                         schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
                     else:
@@ -7915,84 +7885,6 @@ class Orchestrator:
                     # Kept for a later plan (clarification, correction, A/B) that comes back without a verdict from an
                     # engine that does not enforce the schema: an out request must not run unasked (#346 review).
                     req["scope_first"] = scope_verdict(plan)
-                # semantics-shadow: begin (#149 decision 15 advisory A/B)
-                if research_lane and not continuation:  # the A/B arm was fixed by the request's first plan
-                    service = getattr(self.hub, "semantics_" + "shadow", None)
-                    if service is None:
-                        health = req.get("semantic_devices") if isinstance(req.get("semantic_devices"), dict) else {}
-                        sem = health.get(semantic_devices.DEVICE)
-                        sem = sem if isinstance(sem, dict) else {}
-                        reasons = [row.get("code") for row in health.get("errors") or []
-                                   if isinstance(row, dict) and row.get("device") == semantic_devices.DEVICE]
-                        reason = str(sem.get("reason") or (reasons[0] if reasons else "worker_unavailable"))
-                        exclusion = "not_evaluated" if sem.get("status") == "off" else "error"
-                        arm = None
-                        if sem.get("setting") == "ab":
-                            shadow_module = __import__(f"labhq.research.{semantic_devices.DEVICE}_shadow",
-                                                       fromlist=["record_ab_evaluation"])
-                            arm = shadow_module.record_ab_evaluation(self.hub.s, rid, exclusion)
-                        offer = ({"status": "not_evaluated", "reason": reason}
-                                 if sem.get("status") == "off" else
-                                 {"status": "error", "error": {"code": reasons[0] if reasons else
-                                                                  "semantics_worker_unavailable"}})
-                        if arm:
-                            offer["arm"] = arm
-                    else:
-                        try:
-                            draft, _ = _normalize_plan_outputs(plan)
-                            draft = prepare_research_declarations(draft, self._output_vocab(), {})
-                            snap = service.advisory_snapshot(rid, draft)  # live state, copied on the loop
-                            offer = await asyncio.to_thread(service.advisory_offer, rid, snap)
-                            if offer is None:
-                                offer = {"status": "not_evaluated",
-                                         "reason": str(getattr(service, "latched", None) or
-                                                       "snapshot_unavailable")}
-                        except (ValueError, TypeError, PlanOutputsError) as exc:
-                            offer = {"status": "error",
-                                     "error": {"code": "semantics_advisory_snapshot_failed"}}
-                            semantic_devices.log_exception("semantics_advisory_snapshot_failed", exc)
-                    if offer is not None and offer.get("status") == "error":
-                        error = offer.get("error") if isinstance(offer.get("error"), dict) else {}
-                        req["semantics_ab"] = {"arm": offer.get("arm"), "offered": [], "status": "error",
-                                               "error": {"code": error.get("code") or
-                                                         "semantics_advisory_projection_failed"}}
-                        await persist_request(self.hub, rid)
-                        await self._semantic_device_error(
-                            rid, code=str(error.get("code") or "semantics_advisory_projection_failed"))
-                    elif offer is not None and offer.get("status") == "not_evaluated":
-                        req["semantics_ab"] = {
-                            **({"arm": offer["arm"]} if offer.get("arm") else {}),
-                            "status": "not_evaluated",
-                            "reason": str(offer.get("reason") or "snapshot_unavailable"),
-                        }
-                        await persist_request(self.hub, rid)
-                    elif offer is not None:  # ab: ids offered (shadow arm: would be), frozen for the end record
-                        req["semantics_ab"] = {"arm": offer["arm"], "offered": list(offer["offered"]),
-                                               "status": "ok"}
-                        await persist_request(self.hub, rid)
-                    if offer is not None and offer.get("status", "ok") == "ok" and offer["offered"]:
-                        # Both arms re-plan once, so they pay for the same CSO calls. Only the advisory arm's
-                        # prompt gains the list; the shadow arm sends its first prompt again.
-                        candidates = offer["candidates"]
-                        if candidates:
-                            lines = ["\n\nOptional reusable artifacts (advisory only; ignore any or all of them).",
-                                     "If you use one, copy its artifact_id exactly into the relevant step's "
-                                     "input_refs:"]
-                            lines += [f"- artifact_id={c['artifact_id']} data_type={c['data_type']} "
-                                      f"created_request_id={c['request_id']}" for c in candidates[:5]]
-                            reuse_advisory = "\n".join(lines)
-                        plan_res = await make_plan(text)
-                        if not plan_res.ok:
-                            (await self._finish(rid, f"A/B re-plan failed: {plan_res.error}", {}, ok=False))
-                            return
-                        if rid in self.budget_denials:
-                            (await self._finish(rid, "A/B 재계획 뒤 예산 승인 거부",
-                                         {"plan": plan_res.model_dump(mode="json")}, ok=False))
-                            return
-                        plan = _carry_assumptions(
-                            plan, plan_res.structured if isinstance(plan_res.structured, dict)
-                            else extract_json(plan_res.text) or {})
-                # semantics-shadow: end
                 plan, plan_res = await resolve_plan_questions(plan, plan_res)
                 if plan is None:
                     return
@@ -8944,10 +8836,6 @@ class Orchestrator:
         metadata = []
         if req.get("semantic_devices"):
             metadata.append(semantic_devices.execution_record(req["semantic_devices"]))
-        if semantic_device_report.applies(req, self.hub.s):
-            report_request = {**req, "results": results, "review": review}
-            metadata.append(semantic_device_report.summary(
-                semantic_device_report.build_report(report_request, self.hub.s)))
         paper_record = paper_skills.appendix(req.get("plan") or {}, results)
         if paper_record:
             metadata.append(paper_record)

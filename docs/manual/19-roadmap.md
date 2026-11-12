@@ -8,8 +8,7 @@ v1.0 범위는 PI 지침([#1336](https://github.com/ehojune/bioinfo-team-3d/issu
 |---|---|---|---|---|
 | v1.0 | 생명정보 연구자가 날마다 믿고 쓰는 코어 연구팀. CSO → 문헌 조사 → 분석(bioinfo-agent) → 생물학 해석 → 다른 회사 모델의 교차 리뷰가 로컬·WSL·HPC에서 한 HPC 세션을 나눠 쓰며 공개 데이터 연구를 끝낸다 | 마감 과제 네 건 종료: HPC 접속 D단계(#1295), 세션 공유(#1332), 다중 직원 HPC 시운전(#1331), KRAS 문헌 연구 완주(#910) | #1295·#1332·#910 종료. #1331은 airway RNA-seq 시운전 중 | #1331 완주 |
 
-**v1.0에서 기본으로 꺼 둔 v2.0 확장.** 코드는 남아 있고 설정으로 켭니다.
-- 시맨틱·온톨로지 2·3층 검증: `semantics.mode`, `research.semantic_report` ([의미 모델](14-semantic-model.md))
+**설정으로 켜는 확장.** Paper2Agent 채용은 opt-in입니다. 그림자 계열 제거안은 [#1388](14-semantic-model.md)에서 검증 중입니다.
 - Paper2Agent 파견직 채용: `recruit.enabled` ([파견직 제도](10-contract-staff.md))
 
 **지난 선언.**

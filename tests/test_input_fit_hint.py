@@ -112,7 +112,7 @@ async def test_a_runner_step_gets_the_note_in_its_prompt_without_extra_calls_or_
     from tests.test_tool_card_explain import _system_commands
 
     settings = _runner_settings(tmp_path, None)
-    assert settings.semantics in (None, "off", False)  # works with semantics off (v1.0 default)
+    assert "semantics" not in settings.model_fields  # hints do not depend on the removed observer
     root = Path(settings.runner.workspace_root)
     root.mkdir(exist_ok=True)
     folder = root / "source-fetch"

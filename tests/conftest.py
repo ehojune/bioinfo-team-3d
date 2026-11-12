@@ -85,13 +85,13 @@ def _no_host_wsl(monkeypatch):
 
 @pytest.fixture
 def pre_v1_defaults():
-    """Paper2Agent hiring and the semantic report on by default, as before #1336, for tests that exercise them.
+    """Enable legacy Paper2Agent hiring only for tests that explicitly need it.
 
-    v1.0 turns both off when the config omits them. A test that needs them on asks for this fixture by name.
+    Production keeps hiring off unless configured.
     """
     from labhq.settings import RecruitSettings, ResearchSettings, Settings
 
-    fields = ((RecruitSettings, "enabled"), (ResearchSettings, "semantic_report"))
+    fields = ((RecruitSettings, "enabled"),)
     saved = [(model, name, model.model_fields[name].default) for model, name in fields]
     nested = {name: Settings.model_fields[name].default for name in ("recruit", "research")}
 

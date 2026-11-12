@@ -197,22 +197,21 @@ async def test_cp2_refuses_evidence_whose_artifact_was_not_collected():
     assert ("CP2 근거 검토: 단계 1개, claim 1개, 근거 1행, 거부 1건. 증거 승인·수정 요청·거부 중 "
             "고르세요. 수정 요청은 메모에 적은 고칠 점으로 CSO가 새 계획을 세워 새 CP1을 "
             "받습니다(바뀐 단계만 다시 실행).") in summary
-    assert "온톨로지·의미 장치 보고서:" in summary
-    assert hub.approvals[1]["detail"]["semantic_report"]["path"] == "semantic_report.md"
-    assert "[semantic_report.md](semantic_report.md)" in hub.requests["r"]["execution_record"]
+    assert "semantic_report" not in hub.approvals[1]["detail"]
+    assert "semantic_report.md" not in hub.requests["r"]["execution_record"]
     assert hub.approvals[1]["detail"]["revise_continues"] is True
 
 
 @pytest.mark.asyncio
-async def test_cp2_card_carries_the_actual_semantic_report():
+async def test_cp2_keeps_frozen_checklist_and_core_health_without_a_new_device_report():
     hub = _research_hub(_settings(), [CP1, {"approved": True, "choice": "approve", "note": ""}])
 
     await Orchestrator(hub).run_request("r")
 
-    document = hub.approvals[1]["detail"]["semantic_report"]
-    assert document["path"] == "semantic_report.md"
-    assert document["content"].startswith("# 온톨로지·의미 장치 보고서")
-    assert "| 장치 | 상태 |" in document["content"]
+    detail = hub.approvals[1]["detail"]
+    assert "semantic_report" not in detail
+    assert detail["semantic_devices"]["vocabulary"]["status"] == "ok"
+    assert detail["semantic_devices"]["checklist"]["status"] == "ok"
     assert isinstance(hub.requests["r"]["research_contract"]["checklist_snapshot"], list)
 
 

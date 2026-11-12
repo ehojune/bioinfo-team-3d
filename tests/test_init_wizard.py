@@ -225,9 +225,9 @@ def test_yes_accepts_defaults_and_summarizes_doctor(monkeypatch, capsys):
     cli.main(["init", "--yes"])
     data = _data()
     assert data["hpc"]["scheduler"] == "none"
-    # Windows keeps no restricted zone; the run folder is the one internal zone the semantics model needs (#613).
+    # Windows keeps no restricted zone; the run folder is its internal workspace data zone.
     assert data["policy"]["data_zones"] == [
-        {"path": "~/.labhq/runs", "level": "internal", "note": "labhq 작업 폴더 — 의미 모델 hash용"}]
+        {"path": "~/.labhq/runs", "level": "internal", "note": "labhq 작업 폴더"}]
     assert data["engines"]["codex"]["bin"] == "auto"
     output = capsys.readouterr().out
     assert "doctor: ok" in output and "fail 0" in output

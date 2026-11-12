@@ -16,7 +16,6 @@ from labhq.gateway.server import Hub, SavedResults
 from labhq.models import Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator
 from labhq.research import continuation
-from labhq.research import semantics as sem
 from labhq.research.contract import plan_sha256, validate_research_result
 from labhq.util import output_relpath
 from tests.test_research_cp2 import CP1, _settings
@@ -208,8 +207,12 @@ async def test_every_cp2_result_of_a_continuation_validates_under_the_current_pl
     rows = {result["task_id"]: {"request_id": "r", "step_id": calls[result["task_id"]].meta["step_id"],
                                 "kind": "step", "payload": calls[result["task_id"]].model_dump(mode="json"),
                                 "result": result} for result in stored.values()}
-    records, invalid = sem.records_from_rows({"r": req}, rows)
-    assert invalid == 0 and set(records.results) == set(rows)
+    from labhq.research.contract import task_round_plan
+    # Each archived/current task still validates against its own round after the live shadow reader is removed.
+    validated = {tid: validate_research_result(row["result"]["structured"], plan=task_round_plan(req, row)[0])
+                 for tid, row in rows.items()}
+    assert set(validated) == set(rows)
+    assert {row.plan_sha256 for row in validated.values()} == {first["plan_sha256"], contract["plan_sha256"]}
 
 
 @pytest.mark.asyncio

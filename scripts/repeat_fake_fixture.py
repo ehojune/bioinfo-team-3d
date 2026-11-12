@@ -74,7 +74,6 @@ def configure(settings, root: Path):
     settings.policy.budget.per_request_usd = 1.0
     settings.policy.budget.reserve_before_dispatch = True
     settings.annot.request_lookup_limit = 0
-    settings.semantics = {"mode": "off"}
     return settings
 
 
