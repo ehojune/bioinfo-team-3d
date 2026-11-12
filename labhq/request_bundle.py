@@ -1018,6 +1018,8 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
         redacted_files = set()
         if public_text:
             for path in sorted(p for p in temp.rglob('*') if p.is_file()):
+                if path == temp / 'INPUTS.tsv':
+                    continue  # typed inventory: preserve headers, step IDs and integrity fields
                 if _redact_bundle_text(path, public_text, hash_bound=path == temp / 'final_checkpoint.json'):
                     redacted_files.add(path.relative_to(temp).as_posix())
             for row in rows:
@@ -1028,6 +1030,14 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
                         row[key] = public_text(row[key])
             for row in input_rows:
                 row['path'] = public_text(row['path'])
+            inputs_path = temp / 'INPUTS.tsv'
+            previous_inputs = inputs_path.read_bytes()
+            with inputs_path.open('w', encoding='utf-8', newline='') as handle:
+                writer = csv.DictWriter(handle, fieldnames=INPUT_FIELDS, delimiter='\t', lineterminator='\n')
+                writer.writeheader()
+                writer.writerows(input_rows)
+            if inputs_path.read_bytes() != previous_inputs:
+                redacted_files.add('INPUTS.tsv')
             run_records = {step_id: _public_values(run, public_text) for step_id, run in run_records.items()}
             rewrite_by_file = {name: (count, [public_text(p) for p in paths])
                                for name, (count, paths) in rewrite_by_file.items()}

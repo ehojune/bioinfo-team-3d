@@ -2227,3 +2227,28 @@ def test_hpc_bundle_site_words_preserve_request_id_and_manifest_status(tmp_path,
     assert row["sha256"] == digest(bundle / row["relative_path"])
     assert row["source_sha256"] == digest(path) and path.read_bytes() == original
     assert verify_bundle_copy(bundle)["problems"] == []
+
+
+@pytest.mark.parametrize("site_value", ["step", "direct", "size", "sha256"])
+def test_hpc_bundle_redacts_input_paths_without_changing_inventory_schema(tmp_path, site_value):
+    from labhq.request_bundle import INPUT_FIELDS
+
+    settings, request, task = pending_bundle_fixture(tmp_path, "req_input_schema")
+    settings.hpc.ssh_host = "fixture-user@fixture-host"
+    settings.hpc.user = site_value
+    work = Path(request["results"]["direct"]["workdir"])
+    run = {"input_files": [{"path": "/scratch/fixture-user/table.tsv", "size": 7,
+                            "mtime_ns": 1, "sha256": "f" * 64}]}
+    write(work / "manifest.json", json.dumps({"host": platform.node(),
+                                             "runs": {task["result"]["task_id"]: run}}))
+
+    bundle = Path(build_request_bundle(request, settings, {"t": task})["path"])
+
+    with (bundle / "INPUTS.tsv").open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        assert reader.fieldnames == list(INPUT_FIELDS)
+        row, = reader
+    assert row["step_id"] == "direct" and row["size"] == "7" and row["sha256"] == "f" * 64
+    assert "fixture-user" not in row["path"]
+    assert manifest_rows(bundle)["INPUTS.tsv"]["redacted"] == "yes"
+    assert verify_bundle_copy(bundle)["problems"] == []
