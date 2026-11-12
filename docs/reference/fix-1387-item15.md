@@ -23,3 +23,5 @@ An in-memory `MiniHub`/`Orchestrator.run_request` mock captured the actual `kind
 [Decision](https://github.com/ehojune/bioinfo-team-3d/issues/1387#issuecomment-6816105231): change instructions only. OFF replaces the general and research hiring and paper-skill rules with a disabled notice and an empty `recruit` instruction; general replan receives the same notice. ON prompts and both schemas remain unchanged. Stored plans, normalization and hashes are unchanged.
 
 Captured mock Tasks compare OFF and ON prompts and schemas in both lanes and general replan. Actual model compliance and operational results remain unverified until the separately authorized baseline run.
+
+The Korean and English contract-staff manuals describe the OFF planning instructions and this verification limit.
