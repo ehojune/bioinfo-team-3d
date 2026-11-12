@@ -201,6 +201,25 @@ def test_literature_inbox_directory_is_not_a_missing_paper(tmp_path):
     assert not (ws.dir / '.tmp/literature/inbox').exists()
 
 
+@pytest.mark.parametrize('count', [200, 201])
+def test_literature_entry_limit_warns_only_when_handoff_is_truncated(tmp_path, count):
+    from labhq.runner.step_inputs import stage_inputs
+    root, folder, artifact, ws = _staging(tmp_path)
+    papers = folder / '.tmp/literature'
+    papers.mkdir(parents=True)
+    for index in range(count):
+        (papers / f'paper-{index}.md').write_bytes(b'paper')
+    staged, refused = stage_inputs(ws, {'fetch': artifact}, root, [], [], 1024, 4096)
+    assert staged and (ws.dir / 'inputs/fetch/table.tsv').exists()
+    copies = list((ws.dir / '.tmp/literature').iterdir())
+    assert len(copies) == 200
+    if count > 200:
+        assert '200' in refused['fetch:literature'] and 'truncated' in refused['fetch:literature']
+    else:
+        assert not refused
+    assert len(list(papers.iterdir())) == count
+
+
 def test_inputs_the_drive_cannot_hold_are_refused_before_any_byte_is_copied(tmp_path, monkeypatch):
     # #678: the known size decides before writing; the drive is never filled by a copy that cannot finish.
     from collections import namedtuple

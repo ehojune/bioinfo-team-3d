@@ -256,3 +256,56 @@ async def test_whole_hpc_only_artifact_failure_blocks_dispatch(tmp_path, monkeyp
         assert 'literature handoff incomplete' in seen['ctx'].task.context
     else:
         assert not result.ok and 'HPC ancestor snapshot unavailable' in result.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('literature', ['paper', 'absent', 'empty', 'inbox'])
+async def test_remote_only_ancestor_literature_skip_is_visible_and_does_not_block(tmp_path, monkeypatch, literature):
+    from types import SimpleNamespace
+    from labhq.hpc_transfer import job_spec
+    settings = _runner_settings(tmp_path, None)
+    settings.runner.id, settings.hpc.scheduler = 'local', 'mock'
+    _system_commands(monkeypatch)
+    runner, seen = _capture_runner(settings, monkeypatch, Engine.mock)
+    agent = runner.registry.get('worker')
+    agent.builtin_mcp = ['hpc']
+    monkeypatch.setattr(runner.registry, 'get', lambda *_: agent)
+    monkeypatch.setattr(runner.scheduler, 'transfer', lambda: SimpleNamespace(path=lambda path: '/remote/' + path))
+    root = Path(settings.runner.workspace_root)
+    root.mkdir(exist_ok=True)
+    folder, artifact = source(root)
+    manifest = {'request_id': 'r', 'data': job_spec('t-fetch', 'align', 'r')['data'], 'bytes': 13,
+                'files': [{'path': 'table.tsv', 'bytes': 13, 'sha256': hashlib.sha256(b'gene\nfixture\n').hexdigest()}]}
+    record = json.loads((folder / 'manifest.json').read_text())
+    record['runs']['t-fetch'].update(request_id='r', step_id='fetch', hpc_remote_outputs=[manifest])
+    (folder / 'manifest.json').write_text(json.dumps(record), encoding='utf-8')
+    (folder / 'outputs/table.tsv').unlink()  # Only the remote inventory can supply this artifact.
+    artifact['output_sha256'] = {}
+    papers = folder / '.tmp/literature'
+    if literature != 'absent':
+        papers.mkdir(parents=True)
+    if literature == 'paper':
+        (papers / 'paper.md').write_bytes(b'saved paper')
+    elif literature == 'inbox':
+        (papers / 'inbox').mkdir()
+    published = []
+    def publish(self, artifacts, staged, *args):
+        assert artifacts == {} and staged == []
+        published.append(True)
+        return {}
+    monkeypatch.setattr(TaskWorkspace, 'publish_hpc_inputs', publish)
+    task = Task(id='down', agent_id='worker', request_id='r', prompt='fixture',
+        meta={'kind': 'step', 'step_id': 'qc', 'execution_location': {'mode': 'hpc', 'runner_id': 'local'},
+              'upstream_steps': {'fetch': str(folder)}, 'upstream_artifacts': {'fetch': artifact}})
+    result = await runner.run_task(task)
+    assert published and 'ctx' in seen  # The mock adapter is reached; no native HPC job is submitted.
+    assert not result.ok and '러너가 제출한 잡 기록이 없습니다' in result.error
+    assert seen['ctx'].task.meta['hpc_remote_inputs']
+    assert not (seen['ctx'].workdir / '.tmp/literature/paper.md').exists()
+    assert ('literature handoff incomplete' in seen['ctx'].task.context) is (literature == 'paper')
+    assert ('remote-only' in seen['ctx'].task.context) is (literature == 'paper')
+    warnings = [event['data']['text'] for event in runner.store.pending()
+                if event['type'] == 'agent.log' and event['data'].get('level') == 'warn']
+    assert any('literature handoff incomplete' in text and 'remote-only' in text for text in warnings) is (literature == 'paper')
+    if literature == 'paper':
+        assert (papers / 'paper.md').read_bytes() == b'saved paper'

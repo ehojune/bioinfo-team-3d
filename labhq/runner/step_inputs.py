@@ -397,14 +397,16 @@ def _copy_literature(root, source_parts, work, max_file, remaining):
     warnings = []
     try:
         with _folder(root, (*source_parts, *LITERATURE)) as held:
-            entries = held.entries(MAX_FILES)
+            entries = held.entries(MAX_FILES + 1)
             if not entries:
                 return warnings
+            if len(entries) > MAX_FILES:
+                warnings.append(f'literature listing truncated at {MAX_FILES} entries; additional entries were not copied')
             # A link or junction left at .tmp or .tmp/literature by an earlier turn is never written through.
             target = plain_directory(Path(work), '/'.join(LITERATURE))
             if target is None:
                 return ['literature destination is not a plain folder']
-            for entry in entries:
+            for entry in entries[:MAX_FILES]:
                 if entry.kind == 'dir':
                     continue  # inbox/ holds PI uploads; it is not a paper to hand off.
                 if entry.kind != 'file' or entry.size is None or entry.size > min(max_file, remaining[0]):
@@ -430,6 +432,29 @@ def _copy_literature(root, source_parts, work, max_file, remaining):
         pass  # Ancestors without literature are ordinary inputs.
     except (OSError, ValueError, TypeError) as exc:
         warnings.append(f'literature folder unavailable ({type(exc).__name__})')
+    return warnings
+
+
+def remote_literature_warnings(artifacts, workspace_root):
+    """Inspect skipped literature listings without copying files or following links."""
+    warnings = {}
+    root = Path(workspace_root).resolve(strict=True)
+    for step, artifact in artifacts.items():  # Caller has validated these remote-only ancestors.
+        try:
+            source = Path(artifact['workdir']).absolute()
+            parts = source.relative_to(root).parts
+            if not parts or source != source.resolve(strict=True):
+                raise ValueError('source is not a plain ancestor workspace')
+            with _folder(root, (*parts, *LITERATURE)) as held:
+                entries = held.entries(MAX_FILES + 1)
+            if not any(entry.kind != 'dir' for entry in entries) and len(entries) <= MAX_FILES:
+                continue
+            detail = 'literature copies were not staged'
+        except FileNotFoundError:
+            continue  # No literature directory is a normal computational ancestor.
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            detail = 'literature listing could not be inspected'
+        warnings[f'{step}:literature'] = f'literature handoff incomplete: {step} is remote-only; {detail}'
     return warnings
 
 
