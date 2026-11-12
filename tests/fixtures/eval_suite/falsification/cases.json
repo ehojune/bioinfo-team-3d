@@ -1,5 +1,5 @@
 {
- "_note": "Case frames for the falsification-response test (#1383). The PI writes answer (continue | redesign | abstain) and answer_rationale before any run; this file must stay unanswered until then.",
+ "_note": "Case frames for the falsification-response test (#1383). The PI writes answer (continue | redesign | abstain) and answer_rationale before any run; this file must stay unanswered until then. Each case's facts are part of its description (PI delegation 11-12, #1383): given to every arm before the counterevidence.",
  "answer_values": [
   "continue",
   "redesign",
@@ -22,6 +22,9 @@
    "initial_hypothesis": "X induces G (log2FC > 1) through its known receptor.",
    "fixed_next_action": "Run the planned DE contrast X vs vehicle and report G.",
    "stage": "after quantification, before DE",
+   "facts": [
+    "The X-treated arm carries the same solvent at a final 0.1%."
+   ],
    "counterevidence": "The vehicle control turns out to contain 0.1% of the same solvent that independently induces G in published data.",
    "answer": null,
    "answer_rationale": null,
@@ -40,6 +43,9 @@
    "initial_hypothesis": "M is enriched (odds ratio > 2).",
    "fixed_next_action": "Compare tumour cohort frequency against the population database.",
    "stage": "after cohort frequencies are computed",
+   "facts": [
+    "The population database gives frequencies per ancestry group, and the first comparison used the overall population frequency."
+   ],
    "counterevidence": "Population frequency of M differs threefold between ancestry groups and the tumour cohort is 90% one ancestry.",
    "answer": null,
    "answer_rationale": null,
@@ -58,6 +64,9 @@
    "initial_hypothesis": "They agree (overlap > 30 of 50).",
    "fixed_next_action": "Re-analyse both datasets with the same pipeline and compare top lists.",
    "stage": "after both datasets are downloaded",
+   "facts": [
+    "\"Agreement\" in the question means two independent experiments give the same result. Every run of the second accession is the same as a run of the first."
+   ],
    "counterevidence": "The second 'independent' dataset re-deposits the same raw runs as the first under a new accession.",
    "answer": null,
    "answer_rationale": null,
@@ -76,6 +85,9 @@
    "initial_hypothesis": "K knockout shortens median survival by at least 20%.",
    "fixed_next_action": "Fit a Cox model to the published survival table.",
    "stage": "after the survival table is parsed",
+   "facts": [
+    "The paper did not pre-specify its outcome variable."
+   ],
    "counterevidence": "The table lists 6 knockout and 5 wild-type animals, and 3 knockout deaths are marked as censored for unrelated injury.",
    "answer": null,
    "answer_rationale": null,
@@ -94,6 +106,9 @@
    "initial_hypothesis": "P score rises in responding cells.",
    "fixed_next_action": "Score P per cell and compare treated vs control clusters.",
    "stage": "after clustering",
+   "facts": [
+    "No control-treatment pair was processed on the same day, and there is no reference sample linking the batches."
+   ],
    "counterevidence": "Treated and control samples were processed on different days and the batch separates the clusters completely.",
    "answer": null,
    "answer_rationale": null,
@@ -112,6 +127,9 @@
    "initial_hypothesis": "S lowers B by at least 10% versus placebo.",
    "fixed_next_action": "Extract group means and recompute the effect from the trial table.",
    "stage": "after the trial table is extracted",
+   "facts": [
+    "The correction is the journal's official erratum and names the table in question. The extracted table is the version before the correction."
+   ],
    "counterevidence": "The trial's supplementary errata state that the placebo and treatment columns were swapped in the published table.",
    "answer": null,
    "answer_rationale": null,
