@@ -7,7 +7,6 @@ from labhq.settings import Settings
 def _settings(tmp_path):
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
-    settings.semantics = {"mode": "off"}
     return settings
 
 

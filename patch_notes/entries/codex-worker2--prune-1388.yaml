@@ -1,0 +1,22 @@
+pr: 1399
+rows:
+- sha: 55bc136
+  at: 2026-11-12 12:32
+  summary: 쓰지 않는 기록 기능을 지우고 기존 보고서 읽기와 안전 검사를 유지합니다.
+  text: '#1388 r4: 최신 main 표시 수정 보존, server·portfolio 연결과 doctor·CI 목록·기록 이름 정리. 통합 477건·관련 회귀 768건 통과(2 skipped), mock 종단·bench 포함. #1375 실제 비교 전 draft/hold.'
+- sha: 10d9fc9
+  at: 2026-11-12 11:50
+  summary: 통합 전 비교에 쓴 판본을 고정했습니다.
+  text: '#1388 r3: merge-tree 입력을 r2/main SHA로 고정하고 같은 예상 tree를 재현했습니다.'
+- sha: 140eed1
+  at: 2026-11-12 11:50
+  summary: 삭제할 기능과 시험의 대응 관계를 기록했습니다.
+  text: '#1388 r3: 삭제 전용 시험과 보존 계약 대응표, 최신 main 통합 경로를 정리했습니다. 제품 변경 없음.'
+- sha: a9bceea
+  at: 2026-11-12 10:50
+  summary: 삭제안의 검증 결과와 통합에 필요한 경로를 기록했습니다.
+  text: '#1388 r2: 실제 가지 742통과·25실패·2skip, 격리 진단 27통과. 제품 5,406줄·시험 5,985줄 삭제 실측. 미소유 연결·inventory·status 이름 통합 전 draft/hold 유지.'
+- sha: 3acda3f
+  at: 2026-11-12 10:39
+  summary: 입력 종류 검사는 남기고 쓰지 않는 기록 기능을 정리합니다.
+  text: '#1388 r2: live 그림자·객체 뷰·액션·A/B·새 장치 보고서의 소유 경로 제거. core input-fit 6시험 이관, CP1/CP2·typed-output·continuation·오류 로그·공개 redaction 계약 보존. server·portfolio·inventory 통합 전 draft/hold.'

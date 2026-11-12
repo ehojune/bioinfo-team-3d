@@ -265,6 +265,40 @@ def portfolio_fixture(tmp_path: Path):
     return settings, request, bundle, assets, images, decisions, tasks
 
 
+@pytest.mark.parametrize("source", ["bundle", "documents", "absent"])
+def test_legacy_semantic_report_is_scrubbed_without_generation(tmp_path, monkeypatch, source):
+    settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
+    import builtins
+
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if "semantic_device_report" in name or "semantic_device_report" in (kwargs.get("fromlist") or ()):
+            pytest.fail("removed report generator imported")
+        if len(args) > 2 and "semantic_device_report" in (args[2] or ()):
+            pytest.fail("removed report generator imported")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    report = "# Legacy report\n\nBearer legacy-secret-1388\nC:/Users/alice/private.tsv\n"
+    documents = {}
+    if source == "bundle":
+        (bundle / "semantic_report.md").write_text(report, encoding="utf-8")
+    elif source == "documents":
+        documents["run/semantic_report.md"] = report
+    files = build_portfolio_files(request, settings, assets, images, decisions=decisions,
+                                  tasks=tasks, bundle=bundle, run_documents=documents)
+    if source == "absent":
+        assert "run/semantic_report.md" not in files
+        assert "run/semantic_report.md" not in files["README.md"]
+    else:
+        assert "Legacy report" in files["run/semantic_report.md"]
+        assert "legacy-secret-1388" not in files["run/semantic_report.md"]
+        assert "C:/Users/alice/private.tsv" not in files["run/semantic_report.md"]
+        assert "run/semantic_report.md" in files["README.md"]
+        assert not scan_publish_files({"run/semantic_report.md": files["run/semantic_report.md"]})
+
+
 def test_fixed_request_bundle_builds_the_portfolio_contract(tmp_path):
     settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
     files = build_portfolio_files(

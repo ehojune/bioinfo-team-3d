@@ -2079,3 +2079,21 @@ async def test_a_run_cancelled_after_its_work_folder_was_made_reports_that_folde
     after = next(e for e in sent if e.type == "task.result").data
     assert after["workdir_id"] == "task_made" and after["workdir"].endswith("task_made")
     assert "outputs/partial.txt" in after["unreported_outputs"]
+
+
+# Public safety contracts migrated from the retired device report.
+
+def test_public_cleanup_redacts_authorization_bearer_and_basic_credentials():
+    original = 'Authorization: Bearer bearer-value Bearer standalone-value\nAuthorization: Basic basic-value'
+    from labhq.portfolio import _clean
+    cleaned = _clean(original, Settings(), {})
+    assert all(value not in cleaned for value in ('bearer-value', 'standalone-value', 'basic-value'))
+
+
+def test_public_cleanup_redacts_arbitrary_absolute_paths():
+    paths = ['/workspace/team/private.tsv', '/scratch/run/secret.txt',
+             '/project/cohort/sample.csv', '/root/.config/credential', 'C:/Users/alice/private.tsv']
+    from labhq.portfolio import _clean
+    cleaned = _clean(' '.join(paths), Settings(), {})
+    assert all(path not in cleaned for path in paths)
+    assert '<local-path>' in cleaned

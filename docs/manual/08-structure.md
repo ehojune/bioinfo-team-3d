@@ -159,7 +159,7 @@ flowchart TB
         Contract["Research Contract / CP1·CP2<br/>(labhq/research/contract.py)"]:::darkNode
         Cont["Continuation & Step Reuse<br/>(labhq/research/continuation.py)"]:::darkNode
         Vocab["Data Annotation / EDAM / Checklists<br/>(labhq/vocab/)"]:::darkNode
-        Sem["Semantics / Input-Fit / Shadow<br/>(labhq/research/semantics*)"]:::darkNode
+        Sem["Vocabulary / Input-Fit / Packs<br/>(labhq/vocab, labhq/research)"]:::darkNode
         Recruit["Paper2Agent & Paper2Skill<br/>(labhq/recruit/)"]:::darkNode
     end
 
@@ -196,7 +196,7 @@ flowchart TB
 | **Runner & Adapters** | `labhq/runner/daemon.py`, `workspace.py`, `labhq/adapters/` | 단계별 격리 작업 폴더(`inputs/`·`outputs/`), JSON schema 정형 출력 계약과 슬롯 복구(`slot_repair`), CLI·WSL·HPC 실행 |
 | **CLI & Lifecycle** | `labhq/cli.py`, `supervisor.py`, `doctor.py` | 백그라운드 데몬 기동·중지·상태 확인, 자식 프로세스 감시·종료 코드 기록, 환경·로그인·런타임 준비도 점검 |
 | **Research Contract** | `labhq/research/contract.py`, `continuation.py`, `labhq/evidence/claims.py` | CP1 계획 해시 동결, `result v2` 주장·근거·산출물 sha256 대조, 독립 근거 그룹 판정, 이어 가기(continuation) 재사용 |
-| **Meaning Devices (6종)** | `labhq/vocab/`, `labhq/research/packs.py`, `semantics*`, `semantic_device_report.py` | 단어장·EDAM 어노테이션(`output_types.yaml`), 45개 분야 점검표(`topic_checklists.yaml`), 도메인 분석 pack, 입력–연산 적합성(`input_fit`), 의미 장치 감사 보고서(`semantic_report.md`), 출처·객체 그림자 및 A/B 관측 |
+| **core 점검** | `labhq/vocab/`, `labhq/research/packs.py`, `input_fit.py`, `semantic_devices.py` | 어휘·EDAM, 분야 점검표, 고정 pack, CP1 입력 적합성, 공개 안전 오류. live 그림자 제거는 #1388에서 검증 중입니다. |
 | **Bundle & Publication** | `labhq/request_bundle.py`, `portfolio.py`, `result_storage.py`, `reproduction_receipt.py`, `verify.py` | 요청 묶음·RO-Crate 생성, 오프라인 무결성 재검증(`labhq verify`), 재현 검증 receipt, GitHub 연구소 정리본·PDF 출판 |
 
 단계 산출은 그 단계 작업 폴더의 `outputs/` 아래에서만 셉니다. 계획의 `outputs`는 필수이며, 로그·변환 기록·미리보기는 `optional_outputs`로 선언할 수 있습니다. 선택 산출이 빠지면 단계는 진행하고 단계·보고서 경고에 남기지만, 필수 산출 누락은 지금처럼 incomplete입니다. 폴더를 산출로 선언하면(`outputs/literature`) 폴더 한 줄이 아니라 그 안의 파일이 파일마다 hash와 함께 수집됩니다(#1058). 다음 단계는 hash가 있는 파일만 받으므로, hash가 있는 파일이 하나도 없는 폴더(비어 있거나 너무 크거나 링크뿐), 수집 파일이 200개를 넘거나 한 단계의 수집 크기 합이 `runner.input_hash_max_total_bytes`를 넘는 단계, 그리고 선언한 폴더가 하류에서 받지 못하는 hard link 파일을 담은 단계, 선언한 폴더를 끝까지 보지 못한 단계는 incomplete입니다. `outputs/` 전체 스캔이 상한에서 멈췄을 때는 선언한 폴더 하나하나를 그 폴더만 따로 같은 상한으로 걸어 다 보았는지 확인하므로, 선언하지 않은 다른 하위 폴더나 이전 스캔의 기록 때문에 실패하지 않습니다(#1065). 하류 단계가 받는 상류 입력은 단계 하나당 한 합계(`runner.input_hash_max_total_bytes`)를 나눠 쓰며, 앞 상류가 쓰고 남은 양보다 큰 상류는 "누적 입력 예산"(필요량·남은 양·합계)을 사유로 그 상류만 통째로 거절됩니다. 일부 파일만 복사하지 않고, 거절된 상류가 복사하며 쓴 byte는 합계에 돌려주어 뒤의 상류가 그 때문에 거절되지 않습니다. 전에는 폴더 한 줄이 hash 없이 목록에 올라 단계가 통과한 뒤 다음 단계가 그 단계의 산출 전체를 거절했습니다. CSO 계획이 선언한 산출을 작업 폴더 루트(`./answer.md`)에 쓰라고 하면 실행 전에 `./outputs/answer.md`로 고치고 `request.plan` 경고에 남깁니다. 단계 prompt에도 선언한 산출 경로가 그대로 실립니다. 절대 경로나 `..`처럼 `outputs/` 밖을 선언한 계획은 CSO에게 한 번 다시 받고, 그래도 틀리면 어떤 단계도 보내지 않고 요청을 실패로 끝냅니다(#220). labhq가 `outputs/`에 직접 쓰고 읽는 기록(`outputs/external_lookup_status.jsonl`, `outputs/annotation_queries.jsonl`, `outputs/literature_access.jsonl`)은 계획이 산출로 선언할 수도, 단계 instruction에 이름으로 적을 수도 없습니다. 읽기·보고·쓰기 지시를 가리지 않고 같은 방식으로 CSO에게 한 번 다시 받습니다. 앞 단계의 기록을 읽는 `inputs/<단계>/outputs/<이름>` 경로만 허용하고, `external_lookup_status.jsonl.md`처럼 이름이 더 긴 다른 파일은 예약 이름이 아닙니다(#676). 직원이 이 파일에 직접 쓴 줄 가운데 `tool` 키가 없는 JSON 객체 줄은 CP2의 "읽지 않은 잘못된 기록" 줄 수에 세지 않고, labhq 형식인데 규칙에 어긋난 줄과 JSON이 아닌 줄만 셉니다. 글자 치환·형식 변환은 직원이 자기 작업 폴더의 Python 스크립트 하나로 처리합니다(#716).

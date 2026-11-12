@@ -240,7 +240,6 @@ def test_status_prints_refusal_without_bundle_or_private_provider_text(setup, mo
     assert summary["outcome"] == "model_refused" and summary["error"] == REASON
     monkeypatch.setattr(Settings, "load", lambda *args: hub.s)
     monkeypatch.setattr("labhq.cli._local_process_diagnostics", lambda *args: [])
-    monkeypatch.setattr("labhq.research.semantics_shadow.status_line", lambda *args: None)
 
     def api(_settings, method, path):
         if path == "/api/health": return {"runners": []}

@@ -13,6 +13,8 @@ Staff assignment, delegation and merge judgment, and the current limit and admis
 
 ### Where do the semantic model, EDAM, ontology, shadow and A/B come into a real request? (10-02)
 
+Historical answer below. The [#1388 removal proposal](manual/14-semantic-model.en.md) is under validation; do not use these old activation instructions for that version.
+
 | Term | Meaning |
 |---|---|
 | Semantic model | A map tying together the records of past requests. The provenance model answers "who made this result and can it be reused", and the object view answers "who has what now and what is waiting for approval" |

@@ -496,7 +496,7 @@ def _bundle_claims(record: dict[str, Any], results: Mapping[str, Any], copied: s
 
 def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: list[str],
             unsafe_scripts: list[str], python_unknown: bool, linked: bool = False, claims: bool = False,
-            job_scripts: list[str] | None = None, semantic_report: bool = False) -> str:
+            job_scripts: list[str] | None = None) -> str:
     stored = req.get("report_package")
     package = (ReportPackage.from_dict(dict(stored)) if isinstance(stored, Mapping)
                else build_report_package(dict(req), str(req.get("report") or ""),
@@ -507,8 +507,6 @@ def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: lis
         *(["- `claims.json`: 연구 요청의 단계별 claim·근거 원장과 CP2 기록. 보고서의 `[[claim:<단계>/<claim>]]`은 "
            "`ledgers.<단계>.claims`의 `id`입니다"] if claims else []),
         "- `report_appendix.md`: 과학 부록(점검표·리뷰·가정)",
-        *(["- `semantic_report.md`·`semantic_report.json`: 온톨로지·의미 장치의 요청별 판단과 영향"]
-          if semantic_report else []),
         "- `execution_record.md`: 운전 기록과 묶음 변환 기록", "- `steps/<step_id>/`: 단계 workdir 사본",
         "- `MANIFEST.tsv`: 사본의 크기·sha256과 원래 위치",
         "- `INPUTS.tsv`: 단계가 읽을 수 있던 외부 입력의 크기·mtime·sha256 또는 생략 이유", "",
@@ -854,9 +852,6 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             execution += "\n\n## Cancelled revision artifacts\n\n" + "\n".join(
                 f"- {original}: steps/{name}/ (partial revision outputs)"
                 for original, name in additional_names if _SAFE_ID.fullmatch(str(original)))
-        from .research import semantic_device_report
-        device_report = (semantic_device_report.build_report(req, settings)
-                         if semantic_device_report.applies(req, settings) else None)
         replaced = _superseded(req, tasks)
         if replaced:
             execution += ("\n\n## 요청 묶음: 대체됨\n\n" +
@@ -875,12 +870,6 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
         (temp / "report.md").write_text(report, encoding="utf-8", newline="\n")
         (temp / "report_appendix.md").write_text(appendix, encoding="utf-8", newline="\n")
         (temp / "execution_record.md").write_text(execution, encoding="utf-8", newline="\n")
-        if device_report is not None:
-            (temp / semantic_device_report.REPORT_MD).write_text(
-                semantic_device_report.render_report(device_report), encoding="utf-8", newline="\n")
-            (temp / semantic_device_report.REPORT_JSON).write_text(
-                json.dumps(device_report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8", newline="\n")
         from .recruit.paper_skills import records as paper_skill_records
         paper_records = paper_skill_records(req.get("plan") or {}, results)
         if paper_records:
@@ -924,7 +913,7 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
                 json.dumps({"key_figures": list(dict.fromkeys(key_figures))}, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8", newline="\n")
         (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe, python_unknown, bool(links),
-                                                 claims, copied_job_scripts, device_report is not None),
+                                                 claims, copied_job_scripts),
                                           encoding="utf-8", newline="\n")
 
         rewritten_files = 0
@@ -967,8 +956,6 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             handle.write("\n".join(bundle_note) + "\n")
 
         generated = [temp / "README.md", temp / "report.md", temp / "report_appendix.md", appendix_path, temp / "INPUTS.tsv",
-                      *([temp / semantic_device_report.REPORT_MD, temp / semantic_device_report.REPORT_JSON]
-                        if device_report is not None else []),
                       *([temp / FIGURE_PLAN_FILE] if (temp / FIGURE_PLAN_FILE).is_file() else []),
                       *([temp / "paper_skills.json"] if paper_records else []),
                       *([temp / "claims.json"] if claims else []),

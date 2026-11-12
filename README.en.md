@@ -138,19 +138,13 @@ Limits: the limit/login-wait fixes have only test evidence and re-login needs a 
 
 [See the original request, cards, figures, and report](docs/examples/gse10072/README.md)
 
-## Annotation, semantics, ontology
+## Vocabulary and input fit
 
-![Semantic model and ontology: after a request ends, a shadow computation groups it into a provenance model and an object view, and counts whether step inputs fit using output-kind tags (labhq vocabulary, EDAM). A/B gives reuse candidates to only half of research requests](docs/media/en/semantics-model.svg)
+- Output declarations use local vocabulary keys with EDAM metadata. Topic checklists and domain packs guide planning and review.
+- Before CP1, known input–method mismatches trigger plan correction. Missing declarations stay `unknown`.
+- Step prompts include a short file-format and input-fit hint (#1352).
 
-Records get meaning in three layers. The lower the layer, the firmer; the higher, the lighter we keep it.
-
-| Layer | What it is | In labhq |
-|---|---|---|
-| Annotation | Tags attached to data and evidence | A PI-reviewed 125-key vocabulary (79 keys linked to [EDAM](https://github.com/edamontology/edamontology)), evidence kind and source level, output file sha256 |
-| Semantics | Agreements on what to judge with the tags | CP1 approved-plan hash, rule packs per topic, input-fit verdicts, report evidence anchors |
-| Ontology | Relations between tags | A few parent-child relations and an object view of provenance, owner and approval state. Computed as a shadow for now |
-
-Layer 1, annotation (the vocabulary and the 45 topic checklists), and the output-kind declarations and input-fit checks before CP1 work by default in v1.0. What is off is the layer 2 and 3 shadow record with A/B reuse candidates, the per-request semantic-device report, and Paper2Agent hiring; they are v2.0 extensions that a setting turns on at any time (#1336). For semantics and ontology set `semantics.mode` to `ab`, and also set `research.semantic_report` to `true` to get the per-request report. Hiring is `recruit.enabled: true`. When turned on, the shadow only records, and `semantics: ab` gives reuse candidates to half of research requests as a reference so the effect can be compared; the effect has not yet been evaluated. [Semantic model](docs/manual.en.md#semantic-model-and-ontology) · [Vocabulary, topics, checklists](docs/vocabulary.en.md)
+The shadow, object view, actions, A/B and new device-report removal is pending validation in [#1388](https://github.com/ehojune/bioinfo-team-3d/issues/1388). Core checks remain. [Details](docs/manual/14-semantic-model.en.md).
 
 ## Getting started on the web
 
@@ -224,7 +218,7 @@ Details are in [Safety measures](docs/manual.en.md#safety-measures).
 | Version | Goal |
 |---|---|
 | v1.0 | The core research team (CSO, literature scout, analysis, biological interpretation, cross review) finishes a public-data study locally, on WSL and on HPC. Closing tasks #1295, #1332 and #910 are closed; the #1331 trial remains |
-| v2.0 extensions | Semantic and ontology checks (layers 2 and 3) and Paper2Agent hiring. Off by default in v1.0; a setting turns them on |
+| v2.0 extensions | Paper2Agent hiring remains opt-in (`recruit.enabled`). Shadow removal is tracked in #1388. |
 | After v1.0 | Controlled-data research, other researchers installing and doing research, manuscript drafts |
 
 Past declarations: v0.25 (2026-10-04), v0.5 (2026-10-08).

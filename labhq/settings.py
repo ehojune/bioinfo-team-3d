@@ -8,7 +8,7 @@ import stat
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from typing import Any  # semantics-hook
+from typing import Any
 from typing import Literal
 
 import yaml
@@ -664,8 +664,15 @@ class ResearchSettings(_SettingsModel):
     # A misspelled key (`evidence_checkpiont`) used to load silently and leave the lane half on (readiness R1).
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def discard_retired_report_setting(cls, value: Any) -> Any:
+        # Accept this legacy key only; extra="forbid" still rejects every other unknown key.
+        if isinstance(value, dict):
+            return {key: item for key, item in value.items() if key != "semantic_report"}
+        return value
+
     enabled: bool = False
-    semantic_report: bool = False  # v1.0 default off (#1336); request bundle + published run/ device audit (#737)
     evidence_checkpoint: bool = False  # execute approved research steps and stop at CP2
     final_checkpoint: bool = False  # PI report review accepts a frozen final draft (CP4)
     # The science reviewer first answers the original request alone, sealed before the first step (#889).
@@ -824,6 +831,13 @@ class SupervisorSettings(_SettingsModel):
 
 
 class Settings(_SettingsModel):
+    @model_validator(mode="before")
+    @classmethod
+    def discard_retired_shadow_setting(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: item for key, item in value.items() if key != "semantics"}
+        return value
+
     instance: str | None = None
     gateway: GatewaySettings = Field(default_factory=GatewaySettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)
@@ -848,7 +862,6 @@ class Settings(_SettingsModel):
     annot: AnnotSettings = AnnotSettings()
     dev_log: DevLogSettings = DevLogSettings()
     projects: list[ProjectSettings] = []
-    semantics: Any = None  # semantics-hook: off | shadow | ab, read only by labhq.research.semantics_shadow (#150)
     config_path: str | None = None
     # Set only in the staff copy (write_staff_config): the folder its relative paths still resolve from.
     config_base: str | None = None

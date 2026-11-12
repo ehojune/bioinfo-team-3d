@@ -200,9 +200,6 @@ def snapshot_reports(request: dict) -> dict:
     return snapshot_event({"type": "request.completed", "request_id": request.get("id"), "data": data})["data"]
 
 
-def _semantics_wanted(raw: Any) -> bool:  # semantics-hook: off in any spelling, options or not, skips the import
-    mode = raw.get("mode", "off") if isinstance(raw, dict) else raw  # semantics-hook
-    return mode not in (None, False, "off")  # semantics-hook
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -599,10 +596,6 @@ class Hub:
         from ..result_storage import ResultStorage
         self.result_storage = ResultStorage(self, github_transport)
         self.rounds = RoundRecorder(self, github_transport)
-        self.semantics_shadow = None  # semantics-hook
-        if _semantics_wanted(getattr(settings, "semantics", None)):  # semantics-hook: any spelling of off never imports it
-            from ..research.semantics_shadow import ShadowService  # semantics-hook
-            self.semantics_shadow = ShadowService.start(self)  # semantics-hook
         for rid, req in self.requests.items():
             if req.get("status") == "interrupted":
                 self.rounds.write(rid)
@@ -674,10 +667,6 @@ class Hub:
         self.retire_resume_cards(rid, note)
         return self._commit_review(rid, plan)
 
-    def _final_review(self, rid: str, decision: str, **target) -> dict:
-        plan = self._review_plan(rid, decision, final=True, **target)
-        self.retire_resume_cards(rid, "보고서를 검토해 재개 카드를 닫았습니다")
-        return self._commit_review(rid, plan)
 
     def _review_plan(self, rid: str, decision: str, *, revision=None, target_sha256=None, final=False):
         before = copy.deepcopy(self.requests[rid])
@@ -967,14 +956,6 @@ class Hub:
             await self.publish({"type": "request.status", "ts": time.time(), "request_id": rid,
                                 "data": {"status": req.get("status"), "previous": before}})
 
-    def _remove_quota_wait(self, rid: str, step_id: str) -> dict | None:
-        req = self.requests[rid]
-        entry = (req.get("quota_waits") or {}).pop(step_id, None)
-        if not req.get("quota_waits"):
-            req.pop("quota_waits", None)
-        self._sync_hold_status(req)
-        self.save_request(rid)
-        return entry
 
     async def _aremove_quota_wait(self, rid: str, step_id: str) -> dict | None:
         def update(req):
@@ -986,14 +967,6 @@ class Hub:
         return await self.aupdate_request(rid, update)
 
 
-    def _remove_login_wait(self, rid: str, step_id: str) -> dict | None:
-        req = self.requests[rid]
-        entry = (req.get("login_waits") or {}).pop(step_id, None)
-        if not req.get("login_waits"):
-            req.pop("login_waits", None)
-        self._sync_hold_status(req)
-        self.save_request(rid)
-        return entry
 
     async def _aremove_login_wait(self, rid: str, step_id: str) -> dict | None:
         def update(req):
@@ -1637,8 +1610,6 @@ class Hub:
                 asyncio.get_running_loop().create_task(self.close_publish_cards(rid))
             if not review_pending:
                 await self._aqueue_terminal_delivery(event)
-            if getattr(self, "semantics_shadow", None) is not None:  # semantics-hook
-                self.semantics_shadow.after_request(rid)  # semantics-hook
         await self.publish_facilities_projection(rid)
         try:
             await self.rounds.awrite(rid)
@@ -1685,9 +1656,6 @@ class Hub:
 
     async def _commit_terminal_async(self, rid: str, data: dict, request: dict, tasks: dict,
                                      runner_capabilities: dict) -> None:
-        from ..research import semantic_device_report
-        freeze_pending = semantic_device_report.freeze_pending_observation
-        await freeze_pending(self.semantics_shadow, request, self.requests[rid], self.s)  # semantics-hook
         while True:
             outcome = await asyncio.to_thread(
                 self._bundle_outcome, rid, request, tasks, runner_capabilities)
@@ -1756,8 +1724,6 @@ class Hub:
             if not self.requests[rid].get("bundle_pending"):
                 self.result_storage.schedule(rid)
             self._queue_terminal_delivery(event)
-        if getattr(self, "semantics_shadow", None) is not None:  # semantics-hook: after the request ended
-            self.semantics_shadow.after_request(rid)  # semantics-hook: copies rows, queues, never raises
 
     def _queue_terminal_delivery(self, event: dict) -> None:
         seq = event["seq"]
@@ -1985,15 +1951,6 @@ class Hub:
         self._schedule_resume_expiry(approval.id)
         return approval
 
-    def _record_resume_cp1(self, card: dict, approval_id: str, note: str = "") -> None:
-        """An approved resume card that showed the plan is the PI's CP1 answer for that plan hash, once (#654)."""
-        rid = card.get("request_id")
-        target = (card.get("detail") or {}).get("cp1_target_sha256")
-        plan = (self.requests.get(rid or "") or {}).get("plan")
-        if target and isinstance(plan, dict) and plan_sha256(plan) == target:
-            self.requests[rid]["resume_cp1"] = {"approved": True, "target_sha256": target, "note": note or "",
-                                                "approval_id": approval_id, "decided_at": time.time()}
-            self.save_request(rid)
 
     async def _arecord_resume_cp1(self, card: dict, approval_id: str, note: str = "") -> None:
         """An approved resume card that showed the plan is the PI's CP1 answer for that plan hash, once (#654)."""
@@ -3984,6 +3941,7 @@ class Hub:
         for ask_id, entry in self.store.all("ask").items():
             if entry.get("state") == "resolved" and entry.get("answer_publish_intent"):
                 await self._recover_ask_answer(ask_id, entry)
+        await self._resume_unblocked_runner_inbox()
 
     def _record_published_event(self, ev: dict) -> None:
         # A synchronous checkpoint can commit a higher sequence while publish
@@ -4231,6 +4189,7 @@ class Hub:
             if ws is not None and (self.runners.get(runner_id) is not ws or
                                    self.runner_incarnations.get(runner_id) != incarnation):
                 return
+            await self._resume_unblocked_runner_inbox(runner_id)
             (row, claimed), cancelled = await self._publication_write(
                 self._admit_runner_inbox(runner_id, incarnation, seq, msg))
             if cancelled:
@@ -4362,6 +4321,43 @@ class Hub:
                     raise ValueError("earlier runner inbox outcome unresolved")
                 row = await self.store.aclaim_blocked_runner_inbox(runner_id, incarnation, seq)
             await self._run_claimed_runner_inbox(row)
+
+    async def _resume_unblocked_runner_inbox(self, runner_id: str | None = None) -> None:
+        """Run held deliveries, in admission order, whose earlier outcomes are all resolved now (#1406).
+
+        A row is held when admission saw an unresolved earlier one. That view could be stale, and a held row holds
+        every later one, so without this one stale read stops the runner for good, across restarts too. The rule is
+        `_inbox_has_earlier_blocker`, checked for every held row, the same as the manual resume: a held row behind an
+        unknown ask stays held.
+        The caller holds the runner lock (or runs at startup before runners connect)."""
+        held = sorted((row for row in self.store.active_runner_inbox()
+                       if row["state"] == "blocked" and (runner_id is None or row["runner_id"] == runner_id)),
+                      key=lambda row: row.get("admission_order", 0))
+        for row in held:
+            current = self.store.get("runner_incarnation", row["runner_id"])
+            if (current or {}).get("id") != row["incarnation"]:
+                continue  # a previous generation's message waits for inspection
+            async with self._inbox_admission_lock():
+                target = self.store.runner_inbox(row["runner_id"], row["incarnation"], row["seq"])
+                if target is None or target["state"] != "blocked":
+                    continue
+                if self._inbox_has_earlier_blocker(target):
+                    continue  # each later row runs its own dependency check
+                claimed = await self.store.aclaim_blocked_runner_inbox(row["runner_id"], row["incarnation"],
+                                                                       row["seq"])
+            try:
+                await self._run_claimed_runner_inbox(claimed)
+            except (OSError, sqlite3.Error):
+                raise
+            except (ValueError, KeyError, TypeError):
+                # Same outcome as the receive path: a message the handler rejects is kept as invalid, not processing.
+                log.warning("held runner inbox sequence %s is invalid", row["seq"], exc_info=True)
+                current_row = self.store.runner_inbox(row["runner_id"], row["incarnation"], row["seq"])
+                if current_row and current_row["state"] == "processing":
+                    await self.store.aset_runner_inbox_state(row["runner_id"], row["incarnation"], row["seq"],
+                                                             "failed", "invalid_message", expected="processing")
+            except Exception:
+                log.warning("held runner inbox sequence %s could not be resumed", row["seq"], exc_info=True)
 
     async def _hold_failed_inbox_retry(self, row: dict) -> None:
         """Keep a storage-interrupted retry available, or hold an uncertain ask."""
@@ -5976,30 +5972,6 @@ class Hub:
                 log.exception("request deadline watch failed")
             await asyncio.sleep(self.request_deadline_tick_s)
 
-    def _finish_cancel(self, rid: str) -> None:
-        """Write a cancelled request's report and terminal record. ``cancelling`` leaves in that same commit."""
-        req = self.requests[rid]
-        pending = req.pop("cancelling", None) or {}
-        report, appendix = self._cancel_report(req, list(req.get("cancelled_tasks") or []),
-                                               dict.fromkeys(pending.get("quota_steps") or []))
-        from ..report_format import split_appendix
-        from ..report_contract import (available_result_files, build_report_package, reader_markdown,
-                                       validate_report_package, with_report_front)
-        appendix, execution = split_appendix(appendix)
-        req.update(report=report, report_appendix=appendix, execution_record=execution)
-        package = build_report_package(req, report, dict(req.get("results") or {}))
-        req["report_package"] = package.to_dict()
-        req["report_contract_check"] = validate_report_package(
-            package,
-            available_files=available_result_files(dict(req.get("results") or {})),
-            reader_documents={"web·bundle·PDF": reader_markdown(with_report_front(report, package))},
-        )
-        data = {"ok": False, "status": "cancelled", "error": req["error"],
-                "report_package": req["report_package"], **_terminal_reports(rid, report, appendix, execution),
-                "cost_usd": req.get("cost_usd", 0), "cost_known": req.get("cost_known", True),
-                "cost_summary": req.get("cost_summary"), "usage": req.get("usage", {}),
-                "usage_known": req.get("usage_known", True)}
-        self.schedule_terminal(rid, "request.completed", data)
 
     async def _afinish_cancel(self, rid: str) -> None:
         """Write a cancelled request's report and terminal record. ``cancelling`` leaves in that same commit."""
@@ -7182,11 +7154,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         try:
             entry = (await hub.astart_followup(rid, body.text))
         except ValueError as e:  # still running, one already pending, or no runner hosts the agent
-            if hub.semantics_shadow is not None:  # semantics-hook: actions
-                hub.semantics_shadow.after_followup(rid, None, "refused")  # semantics-hook: actions
             raise HTTPException(409, str(e))
-        if hub.semantics_shadow is not None:  # semantics-hook: actions
-            hub.semantics_shadow.after_followup(rid, entry["id"], "asked")  # semantics-hook: actions
         return {"request_id": rid, "followup_id": entry["id"]}
 
     @app.post("/api/requests/{rid}/notes", dependencies=[Depends(auth)])

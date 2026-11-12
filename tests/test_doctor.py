@@ -156,7 +156,7 @@ def test_doctor_checks_custom_contract_effective_engine_readonly(tmp_path, monke
     monkeypatch.setattr(doctor, "_probe", lambda *a, **kw: pytest.fail("real CLI probe forbidden"))
     monkeypatch.setattr(doctor.subprocess, "Popen", lambda *a, **kw: pytest.fail("subprocess forbidden"))
     monkeypatch.setattr(doctor, "_network_check", lambda *a: pytest.fail("network forbidden"))
-    for name in ("_memory_limit_row", "_research_row", "_semantics_row", "_bioinfo_row", "_github_token_row",
+    for name in ("_memory_limit_row", "_research_row", "_bioinfo_row", "_github_token_row",
                  "_private_paths_row", "_alphagenome_row", "_paper2agent_row"):
         monkeypatch.setattr(doctor, name, lambda *a, **kw: doctor._row("fixture", "mock", "ok", "", ""))
     for name in ("_semantic_device_rows", "_instance_rows", "_disk_rows", "_sandbox_homes_row", "_sandbox_version_rows"):
@@ -181,34 +181,8 @@ def test_doctor_checks_custom_contract_effective_engine_readonly(tmp_path, monke
     assert [(a["id"], a["engine"]) for a in daemon.Runner.roster(runner)] == checked
 
 
-def test_doctor_shows_semantics_stop_time_reason_and_reenable_command(tmp_path):
-    from labhq.research import semantics_shadow as shadow
-
-    settings = _settings(tmp_path)
-    settings.semantics = {"mode": "ab"}
-    paths = shadow.ShadowPaths(settings.path(settings.gateway.state_dir) / "semantics")
-    shadow.write_disabled(paths, "info_boundary", 1,
-                          boundary=[{"field": "request_id", "class": "identifier"}], ts=1_797_000_000)
-
-    row = doctor._semantics_row(settings)
-
-    assert row["status"] == "warn"
-    assert "info_boundary" in row["detail"] and "2026-" in row["detail"]
-    assert "request_id:identifier" in row["detail"]
-    assert row["hint"] == "labhq semantics enable"
-    assert "해제 가능" in row["detail"]
-    assert "epoch 1" in row["detail"] and "마지막 정상 기록" in row["detail"]
 
 
-def test_doctor_warns_when_semantics_is_configured_off(tmp_path):
-    settings = _settings(tmp_path)
-    settings.semantics = {"mode": "off"}
-
-    row = doctor._semantics_row(settings)
-
-    assert row["status"] == "warn"
-    assert "설정 off" in row["detail"]
-    assert "shadow 또는 ab" in row["hint"]
 
 
 @pytest.mark.parametrize("empty_roster", [False, True])

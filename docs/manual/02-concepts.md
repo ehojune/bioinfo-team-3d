@@ -24,11 +24,8 @@
 | 라운드 기록 | 요청마다 남는 개발 기록. `dev_log.repo`(private)에 올릴 수 있다 | [설정](15-config.md#설정-포인트) · [HANDOFF](../../HANDOFF.md) |
 | 인스턴스 | `--instance <이름>`으로 한 PC에 연구소를 여럿 띄운다. 설정·state·포트·token은 나뉘고 엔진 로그인·한도는 공유한다 | [설치](04-install.md#설치와-첫-설정) |
 | 구독 한도 대기 | 엔진 구독 한도에 걸린 단계를 reset 시각까지 세워 두었다가 자동으로 재개한다 | [구성요소](18-components.md#구성요소와-상태) |
-| 의미 모델 | 끝난 요청의 기록을 다시 읽는 두 모델. 출처 모델은 산출의 계보와 재사용 후보를, 객체 뷰는 직원·요청·잡·승인 사이의 연결을 센다 | [의미 모델](14-semantic-model.md#의미-모델과-온톨로지) · [설정](15-config.md#설정-포인트) |
+| 의미 모델 | 오프라인 #136 출처 모델·pilot. live 그림자 계열 제거안은 #1388에서 검증 중 | [설명](14-semantic-model.md) |
 | ontology·EDAM | PI가 검토한 어휘 125개 key(`labhq/vocab/`)와, 그중 79개 key를 이은 공개 생명정보 ontology EDAM(용어 75개) | [의미 모델](14-semantic-model.md#의미-모델과-온톨로지) · [설정](15-config.md#설정-포인트) |
 | 데이터 종류 선언 | CSO가 단계 산출에 data_type·format key를 적는 선택 기능(`plan.declare_output_types`, 기본 꺼짐) | [설정](15-config.md#설정-포인트) |
-| 입력–방법 적합성 | 단계 입력의 선언 종류가 그 방법에 맞는지 `fit`·`mismatch`·`unknown`으로 세는 판정. 그림자로만 돈다 | [의미 모델](14-semantic-model.md#의미-모델과-온톨로지) · [설정](15-config.md#설정-포인트) |
-| 그림자(shadow) | 계산해 기록만 하고 계획·승인·실행에는 쓰지 않는 방식. 기본은 `semantics: off` | [의미 모델](14-semantic-model.md#의미-모델과-온톨로지) · [설정](15-config.md#설정-포인트) |
-| A/B·판단 창 | `semantics: ab`는 연구 요청 절반에만 재사용 후보를 CSO 참고로 준다. 10건 또는 3주 단위로 두 arm을 비교한다 | [의미 모델](14-semantic-model.md#의미-모델과-온톨로지) · [설정](15-config.md#설정-포인트) |
+| 입력–방법 적합성 | 단계 입력의 선언 종류가 그 방법에 맞는지 `fit`·`mismatch`·`unknown`으로 세는 판정. CP1 전 계획 검증에서 쓴다 | [의미 모델](14-semantic-model.md#의미-모델과-온톨로지) · [설정](15-config.md#설정-포인트) |
 | 액션 A1·A2 | A1은 기존 액션 7종이 그때 가능했는지 기록만 한다. A2는 PI가 터미널에서 확인한 `request.followup` 하나만 실행한다 | [설정](15-config.md#설정-포인트) |
-| 재사용 후보 | 앞선 요청의 산출 가운데 입력 hash와 목표 data type이 같아 다시 쓸 만한 것 | [의미 모델](14-semantic-model.md#의미-모델과-온톨로지) · [설정](15-config.md#설정-포인트) |

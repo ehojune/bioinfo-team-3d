@@ -23,7 +23,7 @@ This page is the index. The text lives in one file per chapter under `docs/manua
 | [Safety measures](manual/11-safety.en.md#safety-measures) | Approval gates, data zones, PI private paths, budget |
 | [Per-project GitHub reports](manual/12-github-reports.en.md#per-project-github-reports) | Issues, report commits, public guard |
 | [Research lane and verification](manual/13-research-lane.en.md#research-lane-and-verification) | CP1 and CP2, claim anchors, `labhq verify` |
-| [Semantic model and ontology](manual/14-semantic-model.en.md#semantic-model-and-ontology) | Preparing to reuse earlier results: provenance model, EDAM, shadow, A/B |
+| [Semantic model and ontology](manual/14-semantic-model.en.md#semantic-model-and-ontology) | EDAM, input-fit checks and the offline provenance model |
 | [Configuration reference](manual/15-config.en.md#configuration-reference) | State, HPC, staff, engines, reference material, semantic model |
 | [Comparison bench](manual/16-bench.en.md#comparison-bench) | labhq versus a single session |
 | [Known limits](manual/17-known-limits.en.md#known-limits) | What to check on first run |

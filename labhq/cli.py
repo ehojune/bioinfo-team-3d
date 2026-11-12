@@ -2241,25 +2241,6 @@ def main(argv: list[str] | None = None) -> None:
     rescoring.add_argument("--run-id", help="saved run to rescore (default: latest run)")
     rescoring.add_argument("--all", action="store_true", help="rescore every saved run of this case")
     bs.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
-    sem = sub.add_parser("semantics", help="shadow semantics records: report | enable | mark (local only)")  # semantics-hook
-    sem_sub = sem.add_subparsers(dest="semantics_cmd", required=True)  # semantics-hook
-    sem_report = sem_sub.add_parser("report", help="requests, both models, auto-off history, removal proposal")  # semantics-hook
-    sem_report.add_argument("--json", action="store_true")  # semantics-hook
-    sem_report.add_argument("--today", help="YYYY-MM-DD (default: today)")  # semantics-hook
-    sem_report.add_argument("--request", dest="request_id", help="compare one request's shadow with its progress")  # semantics-hook
-    sem_sub.add_parser("enable", help="show why semantics turned off and open a new epoch")  # semantics-hook
-    sem_mark = sem_sub.add_parser("mark", help="mark a reuse candidate ref (sem:<8 hex>)")  # semantics-hook
-    sem_mark.add_argument("request_id")  # semantics-hook
-    sem_mark.add_argument("ref")  # semantics-hook
-    sem_mark.add_argument("verdict", choices=["ok", "wrong_identity", "wrong_other", "irrelevant"])  # semantics-hook
-    sem_act = sem_sub.add_parser("action", help="A2: the PI runs request.followup after a y/N (actions: confirm)")  # semantics-hook: actions
-    act_sub = sem_act.add_subparsers(dest="action_cmd", required=True)  # semantics-hook: actions
-    act_run = act_sub.add_parser("run", help="send one follow-up through the existing REST path, never resent")  # semantics-hook: actions
-    act_run.add_argument("action")  # semantics-hook: actions
-    act_run.add_argument("request_id")  # semantics-hook: actions
-    act_run.add_argument("--text-file", help="UTF-8 file with the question (default: asked at the prompt)")  # semantics-hook: actions
-    act_check = act_sub.add_parser("check", help="list runs, read completion, or close an unknown one")  # semantics-hook: actions
-    act_check.add_argument("exec_id", nargs="?")  # semantics-hook: actions
     try:
         normalized = _normalize_instance_arg(list(sys.argv[1:] if argv is None else argv))
     except ValueError as exc:
@@ -2425,9 +2406,6 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "status":
         for row in _local_process_diagnostics(s):
             print(row["detail"])
-        from .research.semantics_shadow import status_line as semantics_status_line  # semantics-hook
-        semantics_line = semantics_status_line(s)  # semantics-hook
-        if semantics_line: print(semantics_line)  # semantics-hook
         health = _api(s, "GET", "/api/health")
         print("러너: " + (", ".join(health["runners"]) or
                          f"없음 — `{_config_command(s, 'up')}`로 켜야 요청이 진행됩니다"))
@@ -2708,9 +2686,6 @@ def main(argv: list[str] | None = None) -> None:
         commit = json.loads((installed[0] / SOURCE_MARKER).read_text(encoding="utf-8")).get("commit") if installed else None
         print(f"Paper2Agent commit {commit or 'unknown'}" + ("" if pin else
               " (not pinned: set recruit.skill_commit or pass --commit to keep this one)"))
-    elif args.cmd == "semantics":  # semantics-hook
-        from .research.semantics_shadow import run_cli as semantics_cli  # semantics-hook
-        raise SystemExit(semantics_cli(args, s))  # semantics-hook
     elif args.cmd == "demo":
         logging.getLogger().setLevel(logging.WARNING)
         asyncio.run(_demo(args.web or args.phone, args.port, args.phone,

@@ -58,7 +58,7 @@ def no_input(monkeypatch):
 def test_reference_list_is_small_explicit_and_has_no_personal_value():
     paths = [path for path, _ in init_defaults.REFERENCE_BEHAVIOUR]
     assert paths == ["research.enabled", "research.evidence_checkpoint", "research.active_packs",
-                     "semantics.mode", "semantics.actions", "plan.declare_output_types"]
+                     "plan.declare_output_types"]
     text = repr(init_defaults.REFERENCE_BEHAVIOUR)
     assert not any(word in text for word in ("token", "key", "/", "\\", "@codex"))
 
@@ -78,11 +78,9 @@ def test_drift_names_every_setting_a_config_stops_carrying():
         node[leaf] = value
     assert init_defaults.drift(data) == []
     data["research"]["enabled"] = False
-    data["semantics"] = "off"
     del data["plan"]
     problems = init_defaults.drift(data)
-    assert [line.split(":")[0] for line in problems] == ["research.enabled", "semantics.mode",
-                                                         "semantics.actions", "plan.declare_output_types"]
+    assert [line.split(":")[0] for line in problems] == ["research.enabled", "plan.declare_output_types"]
 
 
 def test_the_two_example_copies_stay_identical():
@@ -98,12 +96,12 @@ def test_init_output_carries_the_reference_behaviour_and_loads(monkeypatch):
     assert settings.research.enabled and settings.research.evidence_checkpoint
     assert settings.research.active_packs == ["bulk_tumor_normal@3", "single_cell_de@3"]
     assert settings.plan.declare_output_types is True
-    assert settings.semantics == {"mode": "off", "actions": "confirm"}  # v1.0 (#1336)
+    assert "semantics" not in data and not hasattr(settings, "semantics")
     check_configured_packs(settings)  # the gateway refuses to start on a pack it cannot load
 
 
 @pytest.mark.parametrize("windows", [True, False])
-def test_the_run_folder_is_an_internal_zone_so_semantics_can_hash_outputs(monkeypatch, windows):
+def test_the_run_folder_keeps_its_internal_data_zone(monkeypatch, windows):
     monkeypatch.setattr(wizard, "_is_windows", lambda: windows)
     no_input(monkeypatch)
     wizard.run(yes=True)
@@ -361,23 +359,42 @@ def test_doctor_warns_when_the_configured_folder_is_relative_even_if_it_exists_h
     assert row["status"] == "warn" and "상대 경로" in row["detail"] and "절대 경로" in row["hint"]
 
 
-# v1.0 keeps the ontology and Paper2Agent hiring off by default; the code stays and an explicit setting turns it on (#1336).
-def test_v1_settings_without_the_keys_leave_hiring_and_the_ontology_off():
+# Retired keys load as inert compatibility input, never as settings or runtime features.
+def test_hiring_stays_opt_in_and_retired_settings_are_absent():
     settings = Settings()
     assert settings.recruit.enabled is False
-    assert settings.research.semantic_report is False
-    assert settings.semantics in (None, "off", False)
+    assert not hasattr(settings, "semantics")
+    assert not hasattr(settings.research, "semantic_report")
+    assert RecruitSettings(enabled=True).enabled is True
 
 
 @pytest.mark.parametrize("template", TEMPLATES, ids=["repository", "packaged"])
-def test_v1_example_configs_ship_hiring_and_the_ontology_off(template):
+def test_examples_omit_retired_keys_and_keep_hiring_off(template):
     data = yaml.safe_load(template.read_text(encoding="utf-8"))
     assert data["recruit"]["enabled"] is False
-    assert data["research"]["semantic_report"] is False
-    assert data["semantics"]["mode"] == "off"
+    assert "semantics" not in data
+    assert "semantic_report" not in data["research"]
 
 
-def test_v1_explicit_settings_still_turn_them_on():
-    assert RecruitSettings(enabled=True).enabled is True
-    assert ResearchSettings(semantic_report=True).semantic_report is True
-    assert Settings(semantics={"mode": "ab"}).semantics == {"mode": "ab"}
+@pytest.mark.parametrize("legacy", [None, False, "off", {"mode": "ab", "actions": "confirm"}])
+def test_only_explicit_legacy_keys_are_ignored_in_all_load_paths(tmp_path, legacy):
+    import copy
+    data = {"semantics": legacy, "research": {"semantic_report": True, "enabled": True}}
+    original = copy.deepcopy(data)
+    config = tmp_path / "legacy.yaml"
+    config.write_text(yaml.safe_dump(data), encoding="utf-8")
+    for settings in (Settings.model_validate(data), Settings.load(str(config)), Settings(**data)):
+        assert not hasattr(settings, "semantics")
+        assert not hasattr(settings.research, "semantic_report")
+        assert settings.research.enabled is True
+        dumped = settings.model_dump()
+        assert "semantics" not in dumped and "semantic_report" not in dumped["research"]
+    assert data == original
+    assert not hasattr(ResearchSettings(semantic_report=True), "semantic_report")
+    for bad in ({"semantic_report": True}, {"semantics_typo": {}}, {"research": {"semantics": {}}},
+                {"research": {"semantic_reprot": True}}, {"research": {"enabled": True, "unknown": 1}}):
+        with pytest.raises(ValueError):
+            Settings.model_validate(bad)
+        config.write_text(yaml.safe_dump(bad), encoding="utf-8")
+        with pytest.raises(ValueError):
+            Settings.load(str(config))
