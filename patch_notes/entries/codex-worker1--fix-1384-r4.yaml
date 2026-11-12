@@ -1,6 +1,6 @@
 pr: null
 rows:
-  - sha: 63477735
+  - sha: "63477735"
     at: "2026-11-12 09:30"
     summary: "보고서 각주에서 근거 파일을 열 수 있게 했습니다."
     text: "각주 Markdown과 인증된 자산 링크를 렌더링하고 관련 CI fixture와 Windows 시험 목록을 고쳤다."
