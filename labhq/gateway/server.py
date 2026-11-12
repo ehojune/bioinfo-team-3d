@@ -674,10 +674,6 @@ class Hub:
         self.retire_resume_cards(rid, note)
         return self._commit_review(rid, plan)
 
-    def _final_review(self, rid: str, decision: str, **target) -> dict:
-        plan = self._review_plan(rid, decision, final=True, **target)
-        self.retire_resume_cards(rid, "보고서를 검토해 재개 카드를 닫았습니다")
-        return self._commit_review(rid, plan)
 
     def _review_plan(self, rid: str, decision: str, *, revision=None, target_sha256=None, final=False):
         before = copy.deepcopy(self.requests[rid])
@@ -967,14 +963,6 @@ class Hub:
             await self.publish({"type": "request.status", "ts": time.time(), "request_id": rid,
                                 "data": {"status": req.get("status"), "previous": before}})
 
-    def _remove_quota_wait(self, rid: str, step_id: str) -> dict | None:
-        req = self.requests[rid]
-        entry = (req.get("quota_waits") or {}).pop(step_id, None)
-        if not req.get("quota_waits"):
-            req.pop("quota_waits", None)
-        self._sync_hold_status(req)
-        self.save_request(rid)
-        return entry
 
     async def _aremove_quota_wait(self, rid: str, step_id: str) -> dict | None:
         def update(req):
@@ -986,14 +974,6 @@ class Hub:
         return await self.aupdate_request(rid, update)
 
 
-    def _remove_login_wait(self, rid: str, step_id: str) -> dict | None:
-        req = self.requests[rid]
-        entry = (req.get("login_waits") or {}).pop(step_id, None)
-        if not req.get("login_waits"):
-            req.pop("login_waits", None)
-        self._sync_hold_status(req)
-        self.save_request(rid)
-        return entry
 
     async def _aremove_login_wait(self, rid: str, step_id: str) -> dict | None:
         def update(req):
@@ -1985,15 +1965,6 @@ class Hub:
         self._schedule_resume_expiry(approval.id)
         return approval
 
-    def _record_resume_cp1(self, card: dict, approval_id: str, note: str = "") -> None:
-        """An approved resume card that showed the plan is the PI's CP1 answer for that plan hash, once (#654)."""
-        rid = card.get("request_id")
-        target = (card.get("detail") or {}).get("cp1_target_sha256")
-        plan = (self.requests.get(rid or "") or {}).get("plan")
-        if target and isinstance(plan, dict) and plan_sha256(plan) == target:
-            self.requests[rid]["resume_cp1"] = {"approved": True, "target_sha256": target, "note": note or "",
-                                                "approval_id": approval_id, "decided_at": time.time()}
-            self.save_request(rid)
 
     async def _arecord_resume_cp1(self, card: dict, approval_id: str, note: str = "") -> None:
         """An approved resume card that showed the plan is the PI's CP1 answer for that plan hash, once (#654)."""
@@ -5976,30 +5947,6 @@ class Hub:
                 log.exception("request deadline watch failed")
             await asyncio.sleep(self.request_deadline_tick_s)
 
-    def _finish_cancel(self, rid: str) -> None:
-        """Write a cancelled request's report and terminal record. ``cancelling`` leaves in that same commit."""
-        req = self.requests[rid]
-        pending = req.pop("cancelling", None) or {}
-        report, appendix = self._cancel_report(req, list(req.get("cancelled_tasks") or []),
-                                               dict.fromkeys(pending.get("quota_steps") or []))
-        from ..report_format import split_appendix
-        from ..report_contract import (available_result_files, build_report_package, reader_markdown,
-                                       validate_report_package, with_report_front)
-        appendix, execution = split_appendix(appendix)
-        req.update(report=report, report_appendix=appendix, execution_record=execution)
-        package = build_report_package(req, report, dict(req.get("results") or {}))
-        req["report_package"] = package.to_dict()
-        req["report_contract_check"] = validate_report_package(
-            package,
-            available_files=available_result_files(dict(req.get("results") or {})),
-            reader_documents={"web·bundle·PDF": reader_markdown(with_report_front(report, package))},
-        )
-        data = {"ok": False, "status": "cancelled", "error": req["error"],
-                "report_package": req["report_package"], **_terminal_reports(rid, report, appendix, execution),
-                "cost_usd": req.get("cost_usd", 0), "cost_known": req.get("cost_known", True),
-                "cost_summary": req.get("cost_summary"), "usage": req.get("usage", {}),
-                "usage_known": req.get("usage_known", True)}
-        self.schedule_terminal(rid, "request.completed", data)
 
     async def _afinish_cancel(self, rid: str) -> None:
         """Write a cancelled request's report and terminal record. ``cancelling`` leaves in that same commit."""
