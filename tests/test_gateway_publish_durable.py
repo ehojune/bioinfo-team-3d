@@ -64,15 +64,20 @@ def test_inbox_summary_reads_backlog_once_and_matches_admission_boundary(gateway
     assert {(r["runner_id"], r["seq"]): r["action"] == "resume" for r in actual} == expected
 
 
-@pytest.mark.parametrize("state", ["pending", "blocked"])
-@pytest.mark.parametrize("task_id,typ", [({"invalid": "scope"}, "agent.log"), ("task", ["agent.log"])])
-def test_inbox_summary_keeps_malformed_retained_scope_visible(gateway, state, task_id, typ):
+@pytest.mark.parametrize("state", ["pending", "processing", "blocked", "failed"])
+@pytest.mark.parametrize("task_id,typ,request_id", [({"invalid": "scope"}, "agent.log", None),
+    ("task", ["agent.log"], None), ("task", "agent.log", {"invalid": "request"})])
+def test_inbox_summary_keeps_malformed_retained_scope_visible(gateway, state, task_id, typ, request_id):
     hub = gateway
     hub.store.put("task", "task", {"request_id": "request"})
     hub.store.accept_runner_inbox("runner", None, 1,
-        {"type": typ, "runner_seq": 1, "task_id": task_id, "data": {}})
+        {"type": typ, "runner_seq": 1, "task_id": task_id, "request_id": request_id, "data": {}})
     if state == "blocked":
         hub.store.set_runner_inbox_state("runner", None, 1, "blocked", expected="pending")
+    elif state in {"processing", "failed"}:
+        hub.store.set_runner_inbox_state("runner", None, 1, "processing", expected="pending")
+        if state == "failed":
+            hub.store.set_runner_inbox_state("runner", None, 1, "failed", "storage_interrupted", expected="processing")
     rows = hub.runner_inbox_summary()
     assert len(rows) == 1 and rows[0]["state"] == state and rows[0]["action"] is None
 

@@ -6483,7 +6483,7 @@ class Hub:
                       "reason": e.get("reason"), "url": e.get("url"), "number": e.get("number")}
                 for rid, e in latest.items()}
 
-    def _inbox_resume_candidates(self, rows: list[dict]) -> set[tuple]:
+    def _inbox_resume_candidates(self, rows: list[dict]) -> tuple[set[tuple], set[tuple]]:
         """Evaluate the admission boundary with prefix counts, without rescanning the backlog."""
         from collections import Counter, defaultdict
         from itertools import groupby
@@ -6492,8 +6492,13 @@ class Hub:
         groups, scopes, tasks, malformed = defaultdict(list), {}, {}, set()
         key = lambda row: (row["runner_id"], row["incarnation"], row["seq"])
         for row in rows:
+            message = row["message"]
+            data = message.get("data") if isinstance(message.get("data"), dict) else {}
+            identities = [source.get(field) for source in (message, data) for field in ("task_id", "request_id")]
             try:
-                task, request = self._inbox_scope(row["message"], tasks)
+                if any(value is not None and not isinstance(value, str) for value in identities):
+                    raise TypeError("invalid inbox identity")
+                task, request = self._inbox_scope(message, tasks)
             except TypeError:
                 task, request = None, None
                 malformed.add(key(row))  # Retained invalid identities must not break a status read.
@@ -6543,7 +6548,7 @@ class Hub:
                     add(prefix, row)
                 for row in batch:
                     consider(prefix, row)
-        return eligible
+        return eligible, malformed
 
     def runner_inbox_summary(self) -> list[dict]:
         """Payload-free recovery advice; observation never claims or replays a delivery."""
@@ -6555,7 +6560,7 @@ class Hub:
                   "KeyError", "OSError", "OperationalError"}
         rows = []
         active = self.store.active_runner_inbox()
-        resumable = self._inbox_resume_candidates(active)
+        resumable, malformed = self._inbox_resume_candidates(active)
         for row in active:
             runner, incarnation = row["runner_id"], row["incarnation"]
             current = (self.store.get("runner_incarnation", runner) or {}).get("id") == incarnation
@@ -6565,6 +6570,7 @@ class Hub:
             if current and state == "blocked" and (runner, incarnation, row["seq"]) in resumable:
                 action = "resume"
             elif (current and state == "failed" and error != "invalid_message" and
+                  (runner, incarnation, row["seq"]) not in malformed and
                   (typ in activity or (typ == "ask.requested" and error == "ask_publication_incomplete"))):
                 action = "retry"
             path = None
