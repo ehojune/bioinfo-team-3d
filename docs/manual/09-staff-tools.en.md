@@ -83,6 +83,7 @@ A staff file's `annot_tools` narrows which of these tools that staff member gets
 A read-only run (review, blind draft, consult, follow-up, slot repair) cannot use some of the tools a staff prompt tells it to use. So the read-only profile appends `## Tools in this read-only run` once at the end of the prompt, naming the tools this run really has (for Claude the file tools; for Codex the read-only shell, which may write only in `outputs/` and `.tmp/`; the web tools a Codex staff member kept; and the `labhq_annot` tools on its allowlist), and tells the model not to call any other tool and to say what it could not check (#1224). A tool the staff file denies outright with `disallowed_tools` (such as `Write`) is left out of the list; a tool denied only in part (`Read(./data/**)`) stays. No staff prompt has to be edited one by one. Skill calls are replaced by supplied writing rules. The editor preserves supplied facts and limitations. The scientific reviewer has no PubMed or bioRxiv MCP.
 
 Remote output inventories record SHA-256 at collection and compare it before use as a later input. Older inventories without hashes cannot be admitted as verified inputs. Hashing reads every file and may take time. Local `labhq verify` reports remote-only files as unverified and returns an incomplete status; it does not connect to the cluster or prove their current integrity.
+Files read by HPC jobs are not guaranteed to remain unchanged while queued or running; output hashes reflect collection time.
 
 | Tool | DB | Accepts | Version recorded |
 |---|---|---|---|

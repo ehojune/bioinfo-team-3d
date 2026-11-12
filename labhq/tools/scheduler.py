@@ -417,7 +417,8 @@ class Scheduler:
         from ..hpc_session import redact
 
         words = session.cfg.redact_words or ()
-        return Transfer(session.run, profile.remote_workdir, redact=lambda text: redact(text, words))
+        return Transfer(session.run, profile.remote_workdir, redact=lambda text: redact(text, words),
+                        long_run=lambda command, timeout: session.run(command, timeout_s=timeout))
 
     def attach_session(self, *, on_notice=None, has_open_jobs=None) -> bool:
         """Hook the runner into the shell: ``on_notice(kind, text)`` hears about login limits, a changed host key, a

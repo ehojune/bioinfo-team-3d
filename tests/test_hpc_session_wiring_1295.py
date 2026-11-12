@@ -428,6 +428,23 @@ def test_a_local_job_does_not_count_as_an_open_hpc_job(tmp_path, site):
     assert runner._has_open_hpc_jobs()
 
 
+def test_remote_hash_allowance_reaches_the_session(tmp_path, site, monkeypatch):
+    from labhq.hpc_transfer import HASH_BUDGET_S
+
+    site(remote_workdir='/work')
+    scheduler = sched.Scheduler(settings(tmp_path).hpc)
+    session = scheduler.session()
+    calls = []
+    def run(command, timeout_s=None):
+        calls.append((command, timeout_s))
+        raise hs.CommandTimeout('hash timed out')
+    monkeypatch.setattr(session, 'run', run)
+    transfer = scheduler.transfer()
+    with pytest.raises(hs.CommandTimeout, match='hash timed out'):
+        transfer._do('hash', 'checking remote data', long=True)
+    assert calls == [('hash', HASH_BUDGET_S)]
+
+
 def test_the_staff_cli_waits_longer_than_the_runner_for_an_hpc_call(tmp_path):
     from labhq.hpc_session import QUEUE_WAIT_S, SessionConfig, worst_case_s
     from labhq.runner.daemon import labhq_mcp_timeout_s
@@ -437,7 +454,9 @@ def test_the_staff_cli_waits_longer_than_the_runner_for_an_hpc_call(tmp_path):
     with_session = settings(tmp_path)
     approval = max(with_session.policy.approvals.timeout_s, 1200)
     hpc = QUEUE_WAIT_S + worst_case_s(SessionConfig(argv=["x"]), with_session.hpc.command_timeout_s)
-    assert labhq_mcp_timeout_s(with_session) >= max(with_session.policy.approvals.timeout_s, 1200) + hpc + 30 + 30
+    from labhq.hpc_transfer import UPLOAD_BUDGET_S
+    # Submit waits for queue/reconnect both before upload and before scheduler dispatch.
+    assert labhq_mcp_timeout_s(with_session) >= approval + 2 * hpc + UPLOAD_BUDGET_S + 30
     assert labhq_mcp_timeout_s(plain) == labhq_mcp_timeout_s(Settings()) and approval  # no profile: unchanged
 
 

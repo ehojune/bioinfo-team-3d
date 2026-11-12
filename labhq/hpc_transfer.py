@@ -98,19 +98,26 @@ def is_log(name: str) -> bool:
 
 class Transfer:
     def __init__(self, run: Callable[[str], object], root: str, limits: Limits = Limits(),
-                 redact: Callable[[str], str] | None = None):
+                 redact: Callable[[str], str] | None = None,
+                 long_run: Callable[[str, float], object] | None = None):
         if not isinstance(root, str) or not root.startswith("/") or ".." in root.split("/") or "\n" in root:
             raise PathRejected("the remote work folder is an absolute POSIX path without '..'")
         self.run, self.root, self.limits = run, root.rstrip("/") or "/", limits
         self._real_root: str | None = None
         self.deadline: float | None = None  # time.monotonic() after which no further command is sent
+        self.long_run = long_run
         self._redact = redact  # hides the site's host, port and user in what the cluster printed
 
     # ---- the far side ------------------------------------------------------------------------------------------
-    def _do(self, command: str, what: str) -> str:
+    def _do(self, command: str, what: str, *, long: bool = False) -> str:
         if self.deadline is not None and time.monotonic() > self.deadline:
             raise TransferError(f"{what}: the time allowed for this transfer is used up; nothing more was sent")
-        result = self.run(command)
+        allowance = HASH_BUDGET_S if self.deadline is None else min(HASH_BUDGET_S, self.deadline - time.monotonic())
+        if allowance <= 0:
+            raise TransferError(f"{what}: the time allowed for this transfer is used up; nothing more was sent")
+        result = self.long_run(command, allowance) if long and self.long_run is not None else self.run(command)
+        if self.deadline is not None and time.monotonic() > self.deadline:
+            raise TransferError(f"{what}: the time allowed for this transfer is used up")
         if getattr(result, "exit_code", 1) != 0:
             raise TransferError(f"{what} failed on the cluster: {self._hide(str(getattr(result, 'output', ''))[:200].strip())}")
         return str(result.output)
@@ -413,7 +420,8 @@ def write_confined(root: Path, target: Path, data: bytes) -> None:
 
 MAX_INPUTS = 20
 INPUTS_TOTAL_BYTES = 4 * 1024 * 1024
-UPLOAD_BUDGET_S = 300.0  # all the commands of one job's upload together; the caller's wait is sized from it
+HASH_BUDGET_S = 3600.0  # one bounded full scan; partial manifests are never accepted
+UPLOAD_BUDGET_S = HASH_BUDGET_S + 300.0  # includes input re-verification and ordinary upload commands
 
 
 def job_spec(task_id: str, stem: str, request_id: str | None = None) -> dict:
@@ -624,7 +632,7 @@ def validate_remote_manifest(manifest: dict, request_id: str) -> dict:
 def _remote_data_command(transfer: Transfer, folder: str, action: str, config: str) -> None:
     transfer.plain_dir(folder)
     transfer._do("python3 " + " ".join(map(shlex.quote, [transfer.path(folder + '/remote-data.py'),
-                 transfer.real_root(), folder, action, config])), "checking remote data")
+                 transfer.real_root(), folder, action, config])), "checking remote data", long=True)
 
 
 def _require_remote_hashes(manifest: dict) -> None:
@@ -642,7 +650,7 @@ def verify_remote_data(transfer: Transfer, manifest: dict, request_id: str) -> s
     config = f"verify-{uuid.uuid4().hex[:12]}.json"
     payload = json.dumps(manifest).encode()
     metadata = Transfer(transfer.run, transfer.root, replace(transfer.limits, upload_max_bytes=4 * 1024 * 1024),
-                        redact=transfer._redact)
+                        redact=transfer._redact, long_run=transfer.long_run)
     metadata.deadline = transfer.deadline
     metadata.upload_bytes(f"{folder}/{config}", payload)
     transfer.upload_bytes(f"{folder}/remote-data.py", REMOTE_DATA_HELPER.encode())
@@ -665,6 +673,15 @@ def upload_job(transfer: Transfer, spec: dict, script_text: str, local_root: Pat
                budget_s: float = UPLOAD_BUDGET_S) -> list[dict]:
     """Put the script (and any small inputs, relative to ``local_root``) on the cluster. Raises before anything is
     submitted; what was written stays under the job's own folder."""
+    from .hpc_session import command_deadline
+
+    # Include shell queueing and reconnects in the upload budget, not just command execution.
+    with command_deadline(budget_s):
+        return _upload_job(transfer, spec, script_text, local_root, inputs, budget_s)
+
+
+def _upload_job(transfer: Transfer, spec: dict, script_text: str, local_root: Path,
+                inputs: list | None, budget_s: float) -> list[dict]:
     inputs = list(inputs or [])
     if len(inputs) > MAX_INPUTS:
         raise TooLarge(f"{len(inputs)} inputs is more than {MAX_INPUTS}; use the site profile's file transfer method")

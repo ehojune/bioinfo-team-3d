@@ -21,6 +21,78 @@ def inventory(request='r', data=b'large', path='tx2gene.tsv'):
             'files': [{'path': path, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}], 'directories': []}
 
 
+def test_remote_hash_uses_a_separate_bounded_allowance(monkeypatch):
+    clock, calls = [0.0], []
+    monkeypatch.setattr(ht.time, 'monotonic', lambda: clock[0])
+
+    def normal(command):
+        raise AssertionError('hash must not use the ordinary command timeout')
+
+    def slow(command, timeout):
+        calls.append(timeout)
+        clock[0] += 61 if len(calls) == 1 else 58
+        return SimpleNamespace(exit_code=0, output='')
+
+    transfer = ht.Transfer(normal, '/fixture', long_run=slow)
+    transfer._real_root = '/fixture'
+    transfer.plain_dir = lambda _: None
+    transfer.deadline = 120
+    ht._remote_data_command(transfer, 'job', 'verify', 'manifest.json')
+    ht._remote_data_command(transfer, 'job', 'verify', 'manifest.json')
+    assert calls == [120, 59]
+    clock[0] = 120
+    with pytest.raises(ht.TransferError, match='time allowed'):
+        ht._remote_data_command(transfer, 'job', 'verify', 'manifest.json')
+    assert len(calls) == 2
+
+
+def test_hash_timeout_propagates_without_reading_a_manifest():
+    from labhq.hpc_session import CommandTimeout
+    def timed_out(command, timeout):
+        assert timeout == ht.HASH_BUDGET_S
+        raise CommandTimeout('hash timed out')
+    transfer = ht.Transfer(lambda _: pytest.fail('ordinary timeout used'), '/fixture', long_run=timed_out)
+    transfer._real_root = '/fixture'
+    transfer.plain_dir = lambda _: None
+    with pytest.raises(CommandTimeout, match='hash timed out'):
+        ht._remote_data_command(transfer, 'job', 'scan', 'config.json')
+
+
+def test_upload_budget_covers_session_waits(monkeypatch, tmp_path):
+    from labhq import hpc_session as hs
+
+    clock = [100.0]
+    monkeypatch.setattr(hs.time, 'monotonic', lambda: clock[0])
+    def probe(*args):
+        assert hs.remaining_s(500) == 10
+        clock[0] += 10
+        with pytest.raises(hs.SessionBusy, match='deadline'):
+            hs.remaining_s(1)
+        return []
+    monkeypatch.setattr(ht, '_upload_job', probe)
+    assert ht.upload_job(None, {}, '', tmp_path, budget_s=10) == []
+    assert hs.remaining_s(500) == 500  # deadline does not leak to another operation
+
+
+def test_interrupted_scan_does_not_admit_old_manifest_and_retry_succeeds(cluster, tmp_path):
+    transfer = helper_transfer(cluster)
+    spec = prepare(cluster, transfer, tmp_path, {'a.txt': b'one', 'b.txt': b'two'})
+    first = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')['remote']
+    cluster.path(spec['work'] + '/b.txt').write_bytes(b'new')
+    run = transfer.run
+    def interrupted(command):
+        if command.startswith('python3 '):
+            return SimpleNamespace(exit_code=1, output='interrupted')
+        return run(command)
+    transfer.run = interrupted
+    with pytest.raises(ht.TransferError, match='checking remote data failed'):
+        ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
+    transfer.run = run
+    retry = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')['remote']
+    assert first != retry
+    assert {r['path']: r['sha256'] for r in retry['files']}['b.txt'] == hashlib.sha256(b'new').hexdigest()
+
+
 def helper_transfer(cluster, **limits):
     """Run the Linux helper against the gateway sandbox, using local Python instead of any remote shell."""
     transfer = cluster.transfer(**limits)
