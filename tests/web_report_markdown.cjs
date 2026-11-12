@@ -6,6 +6,12 @@ const vm = require('node:vm');
 
 require(path.join(__dirname, '../labhq/web/state.js'));
 
+test('review history is visibly marked as historical and unresolved', () => {
+  const html = globalThis.LabHQState.reportMarkdownHTML('## 결과\n\nCorrected.\n\n### 리뷰 참고\n\nOld direction.\n\n## 결론\n\nFinal.');
+  assert.match(html, /이전 기록.*검토 지적.*해결 여부 미확인/);
+  assert.match(html, /Old direction/);
+});
+
 test('report markdown renders the common first screen, tables and safe relative links', () => {
   const markdown = `# 결과
 
