@@ -6217,7 +6217,7 @@ class Orchestrator:
             if self.hub.s.research.literal_source_check:
                 texts = await asyncio.to_thread(literal_check.source_texts_for, result.structured, result,
                     [results[sid] for sid in ancestors[step['id']] if sid in results and results[sid].ok],
-                    precedent_texts.rows(req.get('analysis_precedents')))
+                    req.get('analysis_precedents') or ())
                 checked_literals = await asyncio.to_thread(literal_check.check_evidence, result.structured, texts)
                 for item in checked_literals:
                     literal_checks.append({'step_id': step['id'], **item})

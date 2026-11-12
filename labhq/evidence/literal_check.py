@@ -80,19 +80,67 @@ def _source_bytes(root, relative: str, limit: int = MAX_SOURCE_BYTES) -> bytes:
             return data
 
 
+def _paper_keys(receipt):
+    from ..tools.annot_literature import parse_paper_id
+    aliases = receipt.get('paper_ids')
+    aliases = aliases[:4] if isinstance(aliases, list) else []
+    keys = set()
+    for raw in [receipt.get('paper_id'), *aliases]:
+        try:
+            keys.add(parse_paper_id(raw).key)
+        except ValueError:
+            pass
+    return keys
+
+
+def _saved_papers(root):
+    """Index bounded plain sidecars. Aliases come from the tool's receipt, never a title or ledger guess."""
+    from ..adapters.held_dir import HeldDir
+    from ..tools.annot_literature import parse_paper_id
+    found = {}
+    try:
+        with HeldDir.hold(Path(root)) as held, held.child('.tmp') as tmp, tmp.child('literature') as papers:
+            entries = papers.entries(512)
+        for entry in entries:
+            if entry.kind != 'file' or not entry.name.endswith('.md.receipt.json'):
+                continue
+            try:
+                path = '.tmp/literature/' + entry.name.removesuffix('.receipt.json')
+                receipt = json.loads(_source_bytes(root, path + '.receipt.json', 128_000))
+                original = parse_paper_id(receipt.get('paper_id'))
+                if original.file_name() != entry.name.removesuffix('.receipt.json'):
+                    continue
+                if receipt.get('access_level') not in {'full_text', 'abstract'}:
+                    continue
+                for key in _paper_keys(receipt):
+                    found.setdefault(key, []).append((root, path, receipt.get('text_sha256')))
+            except (OSError, ValueError, TypeError, AttributeError):
+                continue
+    except (OSError, ValueError, TypeError):
+        pass
+    return found
+
+
 def source_texts_for(ledger: Mapping, result, upstream=(), precedents=()) -> dict[str, str]:
     """Read only collected/hash-bound artifacts or the cited paper's saved hash receipt.
 
     ``upstream`` contains successful DAG ancestors only. A source's observation, URI and arbitrary locator
     never become file paths. Missing, changed, unsafe or oversized text remains unavailable; no network lookup.
     """
-    from .claims import normalize_artifact_path
-    from ..research.precedent_texts import file_name
+    from .claims import normalize_artifact_path, registry_id
+    from ..research.precedent_texts import file_name, rows as precedent_rows
     from ..tools.annot_literature import parse_paper_id
 
     def get(row, key):
         return row.get(key) if isinstance(row, Mapping) else getattr(row, key, None)
 
+    if isinstance(precedents, Mapping):
+        aliases = {receipt.get('text_sha256'): _paper_keys(receipt)
+            for item in precedents.get('papers') or [] if isinstance(item, Mapping)
+            and isinstance(receipt := item.get('fulltext_receipt'), Mapping)
+            and isinstance(receipt.get('text_sha256'), str)}
+        precedents = [{**row, 'paper_ids': list(aliases.get(row['text_sha256'], ())) }
+                      for row in precedent_rows(precedents)]
     artifacts = {}
     for owner in (result, *upstream):
         root = get(owner, 'workdir')
@@ -109,7 +157,7 @@ def source_texts_for(ledger: Mapping, result, upstream=(), precedents=()) -> dic
                 artifacts[normalize_artifact_path(name)] = (root, path, hashes.get(path))
     refs = {str(row.get('artifact_id')): str(row.get('path') or '')
             for row in ledger.get('artifact_refs') or [] if isinstance(row, Mapping)}
-    texts, cache = {}, {}
+    texts, cache, saved = {}, {}, None
     remaining = 16 * MAX_SOURCE_BYTES
     for row in ledger.get('evidence') or []:
         if not isinstance(row, Mapping) or row.get('status') not in (None, 'observed'):
@@ -122,20 +170,20 @@ def source_texts_for(ledger: Mapping, result, upstream=(), precedents=()) -> dic
             if source.get('artifact_id'):
                 candidates.append(artifacts[normalize_artifact_path(refs[str(source['artifact_id'])])])
             else:
-                paper = parse_paper_id(f"{source.get('id_scheme')}:{source.get('id_value')}")
+                scheme, value = ((source['id_scheme'], source['id_value'])
+                    if source.get('id_scheme') and source.get('id_value')
+                    else registry_id(str(source.get('uri') or '')) or ('', ''))
+                paper = parse_paper_id(f'{scheme}:{value}')
                 root = get(result, 'workdir')
-                path = '.tmp/literature/' + paper.file_name()
-                try:
-                    receipt = json.loads(_source_bytes(root, path + '.receipt.json', 128_000))
-                    if receipt.get('paper_id') == paper.key and receipt.get('access_level') in {'full_text', 'abstract'}:
-                        candidates.append((root, path, receipt.get('text_sha256')))
-                except (OSError, ValueError, TypeError, AttributeError):
-                    pass
+                if saved is None:
+                    saved = _saved_papers(root)
+                candidates.extend(sorted(saved.get(paper.key, []), key=lambda item: item[1] !=
+                                         '.tmp/literature/' + paper.file_name()))
                 # A repeat lookup can leave only metadata, a corrupt receipt, or unreadable text. Each is
                 # one failed candidate, not a reason to hide an already-staged precedent of the same paper.
                 candidates.extend((root, 'inputs/precedent/' + file_name(item, index), item.get('text_sha256'))
                     for index, item in enumerate(precedents, 1)
-                    if item.get('paper_id') == paper.key and item.get('access_level') in {'full_text', 'abstract'})
+                    if paper.key in _paper_keys(item) and item.get('access_level') in {'full_text', 'abstract'})
         except (ValueError, TypeError, KeyError, AttributeError):
             continue
         for root, path, digest in candidates:

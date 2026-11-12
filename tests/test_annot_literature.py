@@ -640,6 +640,22 @@ def test_doi_alone_cannot_identify_a_full_copy_without_a_title():
     assert not lit._copy_identity('Unrelated study. Cites DOI 10.1000/test', {'doi': '10.1000/test'})
 
 
+@pytest.mark.parametrize('metadata,heading', [
+    ('Role of <i>TP53</i>', 'Role of TP53'), ('AT&amp;T results', 'AT&T results'),
+    ('Role of H<sub>2</sub>O', 'Role of H2O'),
+])
+def test_metadata_title_markup_is_rendered_before_identity_check(metadata, heading):
+    assert lit._copy_identity(heading + '\nDOI 10.1000/test', {'title': metadata, 'doi': '10.1000/test'})
+
+
+def test_html_heading_keeps_whitespace_only_nodes_between_inline_elements():
+    body = ('<html><h1><span>Effect</span> <span>of</span> KRAS</h1><p>DOI 10.1000/test</p>'
+            '<h2>Methods</h2><p>' + 'study body ' * 150 + '</p><h2>Results</h2></html>')
+    text, _, _ = lit._copy_text(body.encode(), 'text/html')
+    assert text.splitlines()[0] == 'Effect of KRAS'
+    assert lit._copy_identity(text, {'title': 'Effect of KRAS', 'doi': '10.1000/test'})
+
+
 async def test_oa_copy_citing_target_near_start_is_not_stored_as_its_fulltext(tmp_path):
     def handler(request):
         if request.url.host == 'www.ebi.ac.uk':

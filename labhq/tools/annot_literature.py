@@ -37,6 +37,7 @@ import zlib
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
+from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -75,7 +76,7 @@ def _copy_identity(text: str, meta: dict) -> bool:
     front = text[:6000]
     doi = str(meta.get("doi") or "").casefold()
     dois = re.findall(r'10\.\d{4,9}/[^\s"\]]+', front.casefold())
-    title = normalize(str(meta.get("title") or ""))
+    title = normalize(unescape(re.sub(r'<[^>]+>', '', str(meta.get('title') or ''))))
     # Compare the complete expected suffix before tolerating surrounding prose
     # punctuation: angle brackets and a final ')' can belong to the DOI itself.
     doi_matches = bool(doi and any(token.startswith(doi) and not token[len(doi):].strip('.,;:)')
@@ -764,10 +765,11 @@ class _HTMLText(HTMLParser):
             self.heading_end, self.in_heading = len(self.parts), False
 
     def handle_data(self, data: str) -> None:
-        if not self.skip and data.strip():
-            self.parts.append(data.strip())
+        if not self.skip:
             if self.in_heading:
                 self.heading.append(data)
+            if data.strip():
+                self.parts.append(data.strip())
 
 
 def _pdf_unescape(value: bytes) -> str:
@@ -1739,6 +1741,15 @@ def fulltext_receipt(paper_id: str, row: dict, workdir: Path | None) -> dict | N
             "text_sha256": digest, "evidence": [],
             "supplements_required": row.get("supplements_required") if type(row.get("supplements_required")) is bool else None,
             "supplements": row.get("supplements") if row.get("supplements") in {"missing", "complete", "not_applicable"} else "unknown"}
+    receipt['paper_ids'] = [paper_id]
+    for scheme in ('doi', 'pmid', 'pmcid'):
+        if row.get(scheme):
+            try:
+                alias = parse_paper_id(f'{scheme}:{row[scheme]}').key
+            except ValueError:
+                continue
+            if alias not in receipt['paper_ids']:
+                receipt['paper_ids'].append(alias)
     for key in ("pdf_file", "pdf_sha256", "oa_copy", "unread_reason", "unread_detail"):
         if row.get(key) is not None:
             receipt[key] = row[key]

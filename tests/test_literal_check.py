@@ -226,6 +226,54 @@ def test_ancestor_artifact_needs_the_collected_owner_path(tmp_path):
     assert literal_check.source_texts_for(rows, {}) == {}
 
 
+@pytest.mark.parametrize('stored_id', ['pmid:123', 'pmcid:PMC123'])
+def test_source_alias_requires_receipt_metadata_and_matching_bytes(tmp_path, stored_id):
+    path, receipt = saved_paper(tmp_path, paper_id=stored_id)
+    receipt['paper_ids'] = [stored_id, 'doi:10.1000/example']
+    sidecar = Path(str(path) + '.receipt.json')
+    sidecar.write_text(json.dumps(receipt), encoding='utf-8')
+    assert literal_check.source_texts_for(ledger(), {'workdir': str(tmp_path)}) == {'e1': 'The response was 1.84.'}
+    receipt['paper_ids'] = [stored_id, 'doi:10.1000/other']
+    sidecar.write_text(json.dumps(receipt), encoding='utf-8')
+    assert literal_check.source_texts_for(ledger(), {'workdir': str(tmp_path)}) == {}
+    receipt['paper_ids'] = [stored_id, 'doi:10.1000/example']
+    sidecar.write_text(json.dumps(receipt), encoding='utf-8')
+    path.write_bytes(b'changed')
+    assert literal_check.source_texts_for(ledger(), {'workdir': str(tmp_path)}) == {}
+
+
+def test_fulltext_receipt_records_provider_identifier_aliases(tmp_path):
+    from labhq.tools.annot_literature import fulltext_receipt
+    path, prior = saved_paper(tmp_path, paper_id='pmid:123')
+    receipt = fulltext_receipt('pmid:123', {'text_file': path.relative_to(tmp_path).as_posix(), 'text_sha256': prior['text_sha256'],
+        'access_level': 'abstract', 'pmid': '123', 'pmcid': 'PMC123', 'doi': '10.1000/example'}, tmp_path)
+    assert set(receipt['paper_ids']) == {'pmid:123', 'pmcid:PMC123', 'doi:10.1000/example'}
+
+
+def test_precedent_alias_record_uses_staged_copy_and_never_original_path(tmp_path):
+    from labhq.research.precedent_texts import file_name
+    body = 'The response was 1.84.'
+    receipt = {'paper_id': 'pmid:123', 'paper_ids': ['pmid:123', 'doi:10.1000/example'],
+               'access_level': 'abstract', 'text_file': str(tmp_path / 'unavailable-original.md'),
+               'text_sha256': hashlib.sha256(body.encode()).hexdigest()}
+    staged = tmp_path / 'inputs/precedent' / file_name(receipt, 1)
+    staged.parent.mkdir(parents=True)
+    staged.write_bytes(body.encode())
+    record = {'status': 'ok', 'papers': [{'fulltext_receipt': receipt}]}
+    assert literal_check.source_texts_for(ledger(), {'workdir': str(tmp_path)}, precedents=record) == {'e1': body}
+    staged.write_bytes(b'changed')
+    assert literal_check.source_texts_for(ledger(), {'workdir': str(tmp_path)}, precedents=record) == {}
+    receipt['text_sha256'] = []
+    assert literal_check.source_texts_for(ledger(), {'workdir': str(tmp_path)}, precedents=record) == {}
+
+
+def test_registry_uri_can_name_a_saved_source_without_duplicate_id_fields(tmp_path):
+    saved_paper(tmp_path)
+    rows = ledger()
+    rows['evidence'][0]['source'] = {'uri': 'https://doi.org/10.1000/example'}
+    assert literal_check.source_texts_for(rows, {'workdir': str(tmp_path)}) == {'e1': 'The response was 1.84.'}
+
+
 def test_unverified_literal_is_not_a_source_refusal():
     checks = [{'step_id': 's1', 'evidence_id': 'e1', 'state': 'unverified',
                'problems': ['source text unavailable for literal check']}]
