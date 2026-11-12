@@ -65,14 +65,14 @@ _SAFE_SCRIPT_COMPONENT = re.compile(r"[A-Za-z0-9._-]+\Z")
 _WINDOWS_ABS = re.compile(r"(?i)(?<![A-Za-z0-9_])(?:[A-Z]:[\\/])[^\s<>\"'|]+")
 _UNC_ABS = re.compile(r'''(?<![A-Za-z0-9_:/\\])(?:/{2,}|\\{2,})[^/\\\s<>"'`|]+[/\\]+[^\s<>"'`|]+''')
 _PRIVATE_URI = re.compile(r'''(?i)\b(?!(?:http|https)://)[a-z][a-z0-9+.-]*://(?:\\[^\r\n]|[^\s<>"'`|\\])+''')
-_POSIX_ABS = re.compile(r"(?:^|(?<=[\s=(\[{:>\"'`]))(?P<path>/(?!/|\.\.?/)[^\s<>\"'`|]+)", re.MULTILINE)
+_POSIX_ABS = re.compile(r"(?<![\w./\\-])(?P<path>/(?!/|\.\.?/)[^\s<>\"'`|]+)", re.MULTILINE)
 _SCRIPT_QUOTED = re.compile(r'''(?P<quote>["'])(?P<body>(?:\\[^\r\n]|(?!(?P=quote))[^\r\n\\])*)(?P=quote)''')
 _PRIVATE_PATH_START = (
     r'''(?:(?<![A-Za-z0-9_])[A-Za-z]:[\\/]|(?<![A-Za-z0-9_:/\\])(?:/{2,}|\\{2,})'''
-    r'''|(?:^|(?<=[\s=(\[{:>"'`]))/(?!/|\.\.?/)'''
+    r'''|(?<![\w./\\-])/(?!/|\.\.?/)'''
     r'''|(?i:\b(?!(?:http|https)://)[a-z][a-z0-9+.-]*://))''')
 _SCRIPT_ABS = re.compile(_PRIVATE_PATH_START +
-    r'''(?:\\[^\r\n]|"(?:\\[^\r\n]|[^"\r\n\\])*"|'[^'\r\n]*'|[^\s<>"'`|\\;])+''', re.MULTILINE)
+    r'''(?:\\[^\r\n]|"(?:\\[^\r\n]|[^"\r\n\\])*"|'[^'\r\n]*'|[^\s<>"'`|\\;&])+''', re.MULTILINE)
 # Without shell quoting, a log/JSON value cannot distinguish path spaces from trailing prose.
 # Hide that whole span conservatively, stopping at explicit markup or a protected bundle reference.
 _TEXT_ABS = re.compile(_PRIVATE_PATH_START + r'''[^\r\n<>"'`|\x01]+''', re.MULTILINE)

@@ -2635,3 +2635,18 @@ def test_non_script_artifacts_redact_entire_paths_with_spaces(tmp_path, private_
     assert not any(part in copied for part in ('cohort', 'patient.vcf', 'bucket', 'nas'))
     if suffix == '.json':
         assert json.loads(copied)['id'] == 'c_main'
+
+
+@pytest.mark.parametrize('prefix', ['--files=relative,', 'true;', 'true&&', 'true||', 'true&', 'true|'])
+def test_script_redaction_finds_paths_after_argument_and_shell_separators(tmp_path, prefix):
+    from labhq.request_bundle import _public_hpc_text, _redact_bundle_text
+
+    settings = Settings()
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    path = tmp_path / 'separators.bash'
+    original = '#!/bin/bash\n' + prefix + '/project/cohort/private.vcf\n/usr/bin/true&&/usr/bin/false\n'
+    write(path, original)
+    assert _redact_bundle_text(path, _public_hpc_text(settings))
+    copied = path.read_text(encoding='utf-8')
+    assert 'cohort' not in copied and 'private.vcf' not in copied
+    assert prefix in copied and '/usr/bin/true&&/usr/bin/false' in copied
