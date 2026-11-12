@@ -12,6 +12,11 @@ test('review history is visibly marked as historical and unresolved', () => {
   assert.match(html, /Old direction/);
 });
 
+test('stored evidence table warns that ledger claims and review may differ', () => {
+  const html = globalThis.LabHQState.reportMarkdownHTML('## 주장별 원문 근거\n\n| Claim | Evidence |\n|---|---|\n| Old claim | Source |');
+  assert.match(html, /원장 기록.*리뷰 지적.*해결 여부/);
+});
+
 test('report markdown renders the common first screen, tables and safe relative links', () => {
   const markdown = `# 결과
 

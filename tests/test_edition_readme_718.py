@@ -35,7 +35,15 @@ def test_claims_replace_the_ledger_json_whether_structured_or_only_text():
 def test_answer_is_the_verdict_sentence_without_a_connective_or_anchor():
     answer = p._first_answer(REPORT, research_request())
     assert answer == "주 가설 '아버지의 직업 쪽 단태아보다 여아가 많다.'는 지지되지 않습니다."
-    assert p._first_answer(REPORT) == "속설을 세 근거로 살폈습니다."  # no verdict anywhere: the first abstract paragraph
+    assert p._first_answer(REPORT) == "확인된 답을 추출하지 못했습니다. 과학 보고서의 결과와 한계를 확인하세요."
+
+
+def test_answer_does_not_mistake_unsupported_word_for_a_verdict():
+    report = "## 요약\n\n지원하지 않는 형식으로 자료를 변환했습니다.\n"
+    assert p._first_answer(report) == "확인된 답을 추출하지 못했습니다. 과학 보고서의 결과와 한계를 확인하세요."
+    report = "## 요약\n\n가설 기각 여부를 검토했습니다.\n"
+    assert p._first_answer(report) == "확인된 답을 추출하지 못했습니다. 과학 보고서의 결과와 한계를 확인하세요."
+    assert p._first_answer("## 요약\n\n가설은 기각되었습니다.\n") == "가설은 기각되었습니다."
 
 
 def test_branch_table_never_prints_ledger_json():

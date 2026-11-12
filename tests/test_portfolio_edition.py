@@ -770,4 +770,28 @@ def test_reviewed_ledger_summary_marks_historical_unresolved_claim():
         assert "Old direction" in text
         assert "이전 기록" in text and "검토 지적" in text and "해결 여부 미확인" in text
     req["research_contract"]["rounds"][0]["review"]["issues"][0]["claim_id"] = "other"
-    assert "검토 지적" not in _step_rows(req, {})[0][2]
+    summary = _step_rows(req, {})[0][2]
+    assert "같은 단계 검토 지적" in summary and "주장 연결 확인 필요" in summary
+
+
+def test_review_without_claim_id_is_visible_without_inventing_a_claim_match():
+    req = {"plan": {"steps": [{"id": "s1"}]}, "results": {"s1": {"text": "과거 결과."}},
+           "review": {"issues": [{"step_id": "s1", "problem": "방향 재확인"}]}}
+    assert "검토 지적" in portfolio._step_rows(req, {})[0][2]
+    rows = portfolio._source_evidence_rows(req, Settings())
+    assert "방향 재확인" in claim_evidence_section(rows)
+    assert "claim 연결 미확인" in claim_evidence_section(rows)
+
+
+def test_unlinked_review_does_not_expose_internal_or_unscoped_content(monkeypatch):
+    monkeypatch.setattr(portfolio, 'internal_data_steps', lambda *args: {'private'})
+    monkeypatch.setattr(portfolio, 'step_uses_internal_data', lambda step, *args: step == 'private')
+    monkeypatch.setattr(portfolio, 'request_uses_internal_data', lambda *args: True)
+    req = {'results': {'public': {'text': 'x'}, 'private': {'text': 'y'}}, 'review': {'issues': [
+        {'step_id': 'public', 'problem': 'public concern'},
+        {'step_id': 'private', 'problem': 'private concern'},
+        {'problem': 'unscoped concern'},
+    ]}}
+    text = claim_evidence_section(portfolio._source_evidence_rows(req, Settings()))
+    assert 'public concern' in text
+    assert 'private concern' not in text and 'unscoped concern' not in text

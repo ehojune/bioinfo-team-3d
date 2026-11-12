@@ -106,6 +106,8 @@ function reportMarkdownHTML(markdown, requestId) {
       out.push(`<h${level}>${inline(heading[2])}</h${level}>`);
       if (/^(?:정정|수정 이력|이전 차수에서 고친 것|리뷰 참고)$/i.test(heading[2].trim()))
         out.push('<p>이전 기록 · 검토 지적 · 해결 여부 미확인</p>');
+      if (heading[2].trim() === '주장별 원문 근거')
+        out.push('<p>원장 기록입니다. 리뷰 지적과 해결 여부를 확인하세요.</p>');
       i++; continue;
     }
     if (i + 1 < lines.length && /^\s*\|?.+\|.+\|?\s*$/.test(line) && /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[i + 1])) {
