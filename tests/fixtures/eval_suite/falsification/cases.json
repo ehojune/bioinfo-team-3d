@@ -1,5 +1,5 @@
 {
- "_note": "Case frames for the falsification-response test (#1383). The PI writes answer (continue | redesign | abstain) and answer_rationale before any run; this file must stay unanswered until then. Each case's facts are part of its description (PI delegation 11-12, #1383): given to every arm before the counterevidence.",
+ "_note": "Case frames for the falsification-response test (#1383). The PI writes answer (continue | redesign | abstain) and answer_rationale before any run; this file must stay unanswered until then. Each case's facts (PI delegation 11-12, #1383) are given to every arm together with the counterevidence, as a separate block next to it, never before it: several facts only make sense once the counterevidence is known (F3, F5, F6) and would otherwise reveal it early.",
  "answer_values": [
   "continue",
   "redesign",
