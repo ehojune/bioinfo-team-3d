@@ -4,6 +4,16 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1390 gateway 동기 메서드 정리
+
+## 결과
+저장소에서 정의 외 참조가 없는 동기 메서드 5개를 삭제했다. 대응 async 경로와 호출되는 동기 경로는 유지했다. 근거와 대응표는 [reference](../reference/prune-gateway-1390.md)에 있다.
+
+## 검증
+- quota·login·resume CP1·CP4·취소·종료 회귀와 mock 종단: 174 passed, 1 skipped.
+- `labhq.gateway.server` import가 이 worktree를 가리키고 async 대응 5개가 존재함을 확인했다.
+- 전체 CI, 최종 head 리뷰, 병합 전 trial 비교는 진행 전이다.
+
 # #1383 평가 2차 준비
 
 ## 결론
@@ -58,6 +68,30 @@ PI 위임(11-12)에 따라 정한 것을 평가 문서와 반증 사례 틀에 �
 - 수정 전 회귀 Python·Node 각 1건 실패, 수정 후 관련 Python 188건·Node 18건 통과.
 - 저장 입력으로 미승인 격리 초안을 생성했다. 재계산 표 9행의 원래 값은 보존하고 DOI·출처 접근은 미확인으로 두었다. 59쪽 PDF의 표지 표시, 빈 페이지와 대체 문자 부재를 기계적으로 확인했다.
 - 실제 앱·인증 자산 경로, PDF 개별 페이지 정밀 검토, 원본 전체 과학 대조와 정정·철회 판단은 미완료다. 과학 승인·배포 전 원본을 교체하지 않는다. Issue #1384는 열린 상태다.
+
+## #1388 r4 — 삭제안 통합
+
+최신 main `f30179b9`(#1405 포함)을 반영하고 server·portfolio의 삭제 모듈 연결, doctor stub, Windows inventory와 기록 파일명을 정리했습니다. 기존 표시·자산·각주·안전 assertion을 보존했습니다. **draft/hold 유지**: #1375의 main/세 PR 통합 trial 비교가 남았습니다.
+
+| 삭제 코드 | 삭제·교체 시험 | 남긴 계약 |
+|---|---|---|
+| live shadow | shadow helper·settings·worker·provenance·hash·breaker·report | legacy 설정 두 키만 수용·unknown 거부, 일반 진단 |
+| objects | objects 전용 시험 | core input-fit·EDAM·typed/unknown |
+| actions/run | actions·actions_shadow·actions_run | runner·승인·continuation binding·#1352 hint |
+| request report·A/B | request_report·ab | 순수 #136 모델·CP1/CP2·checklist·pack |
+| input-fit adapter·row reader | core 6시험 이관·boundary 교체 | fresh CP1 import 차단·교정·budget·unknown |
+| 새 device report | report/impact 생성 검사 교체 | 기존 사본 읽기·공개 정리, 새 생성 부재 |
+| 제거 도구 | remove 전용 시험 | import 추적·mock 종단·최종 CI |
+
+정확한 파일명과 근거는 [전체 대응표](https://github.com/ehojune/bioinfo-team-3d/blob/55bc13669b21d40b4b2e6033be600b87055a18c0/docs/reference/prune-semantics-1388.md)를 봅니다. 남는 동작의 assertion은 삭제하지 않았습니다.
+
+- 통합·시설·거절·CI 정책 **477 passed**. 관련 회귀·mock 종단·bench: **768 passed, 2 skipped, 90 warnings in 177.11s (0:02:57)**.
+- Node: 8+10시험·request bundle script 통과. Python 3.10 AST·삭제 모듈 import/모듈명 문자열 0곳, Windows inventory·notes-index 통과.
+- main 대비 rename 감지 없이 제품 **5,429 삭제·46 추가**, 시험 **5,988 삭제·258 추가**, 도구 **296 삭제**. README·manual 22파일 **404,832자 → 372,546자**.
+- 기존 `.venv`의 timeout plugin 누락으로 첫 넓은 실행을 중단·보존하고 r2와 같은 기존 Python으로 검증했습니다. 불완전한 실행은 PASS에 세지 않았습니다.
+- 최종 head 전체 CI·실제 리뷰 P1=0 및 #1375 같은 입력 trial 비교 전에는 병합하지 않습니다. 실제 모델·PI/HPC 실행 없음.
+
+[r2 기록](https://github.com/ehojune/bioinfo-team-3d/issues/1388#issuecomment-6812128276) · [r3 기록](https://github.com/ehojune/bioinfo-team-3d/issues/1388#issuecomment-6813051549). #1388은 열어 둡니다.
 
 # #1384 원장과 리뷰 지적
 
