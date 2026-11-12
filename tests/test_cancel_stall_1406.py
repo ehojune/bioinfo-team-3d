@@ -33,11 +33,14 @@ def hub(tmp_path, monkeypatch):
     hub.pi_interpreter = SimpleNamespace(schedule=lambda event: None)
     hub.runner_capabilities = {}
     hub.recruits_running = {}
+    hub.runner_incarnations = {}
 
     async def send(*args):
         pass
 
     monkeypatch.setattr(hub, "send_runner", send)
+    # task.accepted for a stored task refreshes the session view; this hub has no web session.
+    monkeypatch.setattr(hub, "_session_state_changed", lambda: None)
     yield hub
     hub.store.close()
 
