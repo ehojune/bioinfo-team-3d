@@ -31,6 +31,40 @@ class Hub:
         pass
 
 
+@pytest.mark.parametrize(("body", "expected"), [
+    ("# method\n# source\na\tb\nc\td\n", "local"),
+    ("# method\n#patient_id\tmean\np1\t2\n", "local"),
+    ("#patient_id\tmean\np1\n", "failed"),
+    ("# method\na\tb\nc\n", "failed"),
+])
+async def test_local_storage_checks_commented_tsv(tmp_path, body, expected):
+    hub = Hub(tmp_path)
+    service = ResultStorage(hub)
+    await service.select("req_test", {"mode": "local"})
+    bundle = Path(hub.s.runner.workspace_root) / "requests/req_test"
+    output = bundle / "steps/s1/outputs/result.tsv"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(body.encode())
+    (bundle / "MANIFEST.tsv").write_text(
+        "relative_path\tstatus\nsteps/s1/outputs/result.tsv\tcopied\n", encoding="utf-8")
+    hub.requests["req_test"].update(status="done", report="# 결과\n\n[표](steps/s1/outputs/result.tsv)")
+
+    async def no_pdf(*args, **kwargs):
+        return None, "test"
+
+    service.edition_pdf = no_pdf
+    await service.finish("req_test")
+    saved = hub.requests["req_test"]["result_storage"]
+    assert saved["status"] == expected, saved
+    assert output.read_bytes() == body.encode()
+    if expected == "local":
+        assert (Path(saved["draft_path"]) / "tables/result.tsv").read_bytes() == body.encode()
+    else:
+        assert saved["error_type"] == "EditionCheckError"
+        assert not (bundle.parent / "req_test-editor").exists()
+    await service.close()
+
+
 async def test_card_conditions_and_no_token(tmp_path, monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     hub = Hub(tmp_path)

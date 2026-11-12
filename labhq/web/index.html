@@ -55,7 +55,8 @@ a{color:var(--sleep-ink)}
 .note{max-width:1280px;margin:0 auto;padding:0 16px 8px;font-size:13px;color:var(--muted)}
 .note:not([hidden]){padding:10px 16px;background:#fff3ce;color:#654c20;border-bottom:1px solid #e4cc91}
 .runner-off{max-width:1280px;margin:0 auto 8px;padding:6px 16px;font-size:13px;color:var(--error-ink);border-left:3px solid var(--error-ink);box-sizing:border-box}.runner-off[hidden]{display:none}
-.req-actions{margin:6px 0 0}
+  .req-actions{margin:6px 0 0}
+  #runner-inbox{white-space:pre-wrap;overflow-wrap:anywhere}
 .tokenbar{display:none;max-width:1280px;margin:0 auto;padding:0 16px 10px;gap:8px;align-items:center;flex-wrap:wrap}
 .tokenbar.show{display:flex}
 .tokenbar input{min-height:40px;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:6px 10px;width:min(320px,100%)}
@@ -339,7 +340,8 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
   </div>
   <p class="note" id="note" role="status" hidden></p>
   <p class="runner-off" id="runner-off" role="status" hidden>러너 꺼짐 — 터미널에서 <code>labhq up</code>(또는 <code>labhq runner</code>)을 실행하세요. 그동안 보낸 요청은 러너를 기다려요.</p>
-  <div class="tokenbar" id="tokenbar">
+    <pre class="runner-off" id="runner-inbox" role="status" hidden></pre>
+    <div class="tokenbar" id="tokenbar">
     <label for="tok">게이트웨이 토큰</label>
     <input id="tok" type="password" autocomplete="off" placeholder="client_token">
     <button class="btn primary" id="tok-go" type="button">연결</button>
@@ -580,6 +582,9 @@ function renderHeader() {
   const warning = LabHQState.serviceWarning(S, IS_DEMO);
   $('#runner-off').textContent = warning;
   $('#runner-off').hidden = !warning;
+  const inboxText = IS_DEMO ? '' : LabHQState.runnerInboxText(S);
+  $('#runner-inbox').textContent = inboxText;
+  $('#runner-inbox').hidden = !inboxText;
   $('#office').classList.toggle('offline', S.conn === 'offline');
   const n = S.approvals.size;
   const title = `${n ? `(${n}) ` : ''}labhq${INSTANCE ? ` ${INSTANCE}` : ''} 사무실`;
@@ -1286,6 +1291,22 @@ function startLive() {
   let token = QS.get('token') || store.get('labhq_token') || '';
   bindShutdown($('#shutdown'), {token: () => token});
   let lastSeq = 0;
+  let inboxLoading = false, inboxEpoch = 0;
+  async function refreshInbox() {
+    if (IS_DEMO || S.conn !== 'live' || inboxLoading) return;
+    inboxLoading = true;
+    const epoch = inboxEpoch, credential = token;
+    try {
+      const response = await fetch('/api/runner-inbox', {headers:{Authorization:`Bearer ${credential}`}, cache:'no-store', signal:AbortSignal.timeout(4000)});
+      if (!response.ok) throw new Error('inbox unavailable');
+      const rows = await response.json();
+      if (!Array.isArray(rows)) throw new Error('invalid inbox status');
+      if (epoch === inboxEpoch && credential === token && S.conn === 'live') { S.runnerInbox = rows; S.runnerInboxUnavailable = false; }
+    } catch {
+      if (epoch === inboxEpoch && credential === token) S.runnerInboxUnavailable = true;
+    } finally { inboxLoading = false; schedule(); }
+  }
+  setInterval(refreshInbox, 5000);
   if (QS.get('token')) { store.set('labhq_token', token); history.replaceState(null, '', location.pathname); }
   const link = (rel, href) => { const l = document.createElement('link'); l.rel = rel; l.href = href; document.head.appendChild(l); };
   link('manifest', '/manifest.webmanifest'); link('icon', '/icon.svg'); link('apple-touch-icon', '/icon.svg');
@@ -1358,6 +1379,7 @@ function startLive() {
       const ev = JSON.parse(e.data);
       if (ev.type === 'snapshot' && !ev.replay_gap && Number.isFinite(ev.seq) && ev.seq < lastSeq) return;
       if (ev.type !== 'snapshot' && ev.seq && ev.seq <= lastSeq) return;
+      if (ev.type === 'snapshot') inboxEpoch++;
       apply(ev);
       if (ev.type === 'snapshot') { lastSeq = ev.seq || 0; snapshotLoaded = true; schedule(); return; }
       if (ev.seq && ev.seq > lastSeq) lastSeq = ev.seq;

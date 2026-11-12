@@ -30,6 +30,86 @@ def _settings(tmp_path):
                                     "hpc": {"scheduler": "none"}})
 
 
+@pytest.mark.parametrize("network,dry_run", [(False, False), (True, True)])
+def test_inbox_doctor_skips_network_without_opt_in(tmp_path, monkeypatch, network, dry_run):
+    import httpx
+    monkeypatch.setattr(httpx, "Client", lambda **kw: pytest.fail("unexpected connection"))
+    assert doctor._runner_inbox_rows(_settings(tmp_path), network=network, dry_run=dry_run)[0]["status"] == "skip"
+
+
+@pytest.mark.parametrize("outcome", ["empty", "held", "unreachable", "old_server", "malformed"])
+def test_inbox_doctor_only_reads_and_never_exposes_credentials(tmp_path, monkeypatch, outcome):
+    import httpx
+    s = _settings(tmp_path)
+    s.gateway.client_token = "PRIVATE_CLIENT_TOKEN"
+    requests = []
+    def handle(request):
+        requests.append(request)
+        assert request.method == "GET" and request.url.path == "/api/runner-inbox"
+        assert request.headers["Authorization"] == "Bearer PRIVATE_CLIENT_TOKEN"
+        if outcome == "unreachable":
+            raise httpx.ConnectError("PRIVATE_CLIENT_TOKEN", request=request)
+        rows = [{"runner_id": "runner", "incarnation": "new", "seq": 3, "state": "failed",
+                 "error": "storage_interrupted", "action": "retry", "current_generation": True,
+                 "recovery_path": "/api/runner-inbox/3/retry?runner_id=runner&incarnation=new"},
+                {"runner_id": "runner", "incarnation": "old", "seq": 2, "state": "blocked",
+                 "error": "ask_start_unknown", "action": None, "current_generation": False}]
+        return httpx.Response(404 if outcome == "old_server" else 200,
+                              json={} if outcome == "malformed" else rows if outcome == "held" else [])
+    client = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: client(transport=httpx.MockTransport(handle), **kw))
+    result = doctor._runner_inbox_rows(s, network=True, dry_run=False)
+    assert len(requests) == 1
+    assert "PRIVATE_CLIENT_TOKEN" not in json.dumps(result)
+    if outcome == "held":
+        assert "curl -X POST" in result[0]["hint"] and "/3/retry?runner_id=runner&incarnation=new" in result[0]["hint"]
+        assert "old generation" in result[1]["detail"] and "curl" not in result[1]["hint"]
+    else:
+        assert result[0]["status"] == ("ok" if outcome == "empty" else "warn")
+
+
+@pytest.mark.parametrize("url", ["ws://192.0.2.1:8787", "ws://gateway.example:8787"])
+def test_inbox_doctor_never_sends_client_token_over_remote_plaintext(tmp_path, monkeypatch, url):
+    import httpx
+    s = _settings(tmp_path)
+    s.gateway.url = url
+    monkeypatch.setattr(httpx, "Client", lambda **kw: pytest.fail("client token would leave loopback without TLS"))
+    rows = doctor._runner_inbox_rows(s, network=True, dry_run=False)
+    assert rows[0]["status"] == "warn" and "wss://" in rows[0]["hint"]
+
+
+@pytest.mark.parametrize("path", ["/api/runner-inbox/1/retry?runner_id=$(touch%20bad)&legacy=true",
+                                  "/api/runner-inbox/1/retry?runner_id=`id`&legacy=true"])
+def test_inbox_doctor_rejects_shell_substitution_in_recovery_path(tmp_path, monkeypatch, path):
+    import httpx
+    client = httpx.Client
+    def handle(request):
+        return httpx.Response(200, json=[{"runner_id": "runner", "incarnation": "new", "seq": 1,
+            "state": "failed", "action": "retry", "current_generation": True, "recovery_path": path}])
+    monkeypatch.setattr(httpx, "Client", lambda **kw: client(transport=httpx.MockTransport(handle), **kw))
+    rows = doctor._runner_inbox_rows(_settings(tmp_path), network=True, dry_run=False)
+    assert "curl" not in rows[0]["hint"]
+
+
+@pytest.mark.parametrize("url", ["ws://127.0.0.2:8787", "ws://localhost:8787", "ws://[::1]:8787",
+                                 "wss://gateway.example:8787"])
+def test_inbox_doctor_accepts_loopback_or_tls_without_following_redirects(tmp_path, monkeypatch, url):
+    import httpx
+    s = _settings(tmp_path)
+    s.gateway.url = url
+    s.gateway.client_token = "PRIVATE_CLIENT_TOKEN"
+    requests = []
+    def handle(request):
+        requests.append(request)
+        assert request.url.scheme == ("https" if url.startswith("wss:") else "http")
+        return httpx.Response(302, headers={"Location": "http://untrusted.example/api/runner-inbox"})
+    client = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: client(transport=httpx.MockTransport(handle), **kw))
+    rows = doctor._runner_inbox_rows(s, network=True, dry_run=False)
+    assert len(requests) == 1 and rows[0]["status"] == "warn"
+    assert "PRIVATE_CLIENT_TOKEN" not in json.dumps(rows)
+
+
 def test_doctor_reads_custom_contract_roster(tmp_path):
     settings = _settings(tmp_path)
     settings.runner.contract_dir = str(tmp_path / "instance-contracts")
@@ -396,6 +476,7 @@ def test_network_only_when_requested(tmp_path, monkeypatch):
     called = []
     monkeypatch.setattr(doctor, "_network_check", lambda url: called.append(url) or True)
     monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+    monkeypatch.setattr(doctor, "_runner_inbox_rows", lambda *a, **kw: [])
     result = doctor.collect(settings, network=True)
     assert called == list(doctor.SOURCES.values())
     assert all(r["status"] == "ok" for r in result["checks"] if r["group"] == "data")

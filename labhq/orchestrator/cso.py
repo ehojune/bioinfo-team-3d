@@ -78,7 +78,7 @@ from ..research.packs import (assess_pack_applicability, configured_packs, norma
 from ..util import INPUT_STEP_ID, clip, extract_json, input_relpath, output_relpath, short
 from . import execution as execution_policy
 from .. import vocab as output_vocab
-from ..recruit import paper_skills, planning as recruit_planning
+from ..recruit import paper2agent, paper_skills, planning as recruit_planning
 from ..bioinfo_policy import BIOINFO_ASSIGNMENT_RULE
 from ..vocab import declare as output_types
 from ..vocab import public_resources, topic_checklists
@@ -902,6 +902,21 @@ RESEARCH_CP2_RULE = (
     "and last completed step. A requested revision or a reviewer's revise ends the request, and a changed plan "
     "needs a new CP1 approval.")
 RESEARCH_CP2_PLAN_PROMPT = RESEARCH_PLAN_PROMPT.replace(RESEARCH_CP1_ONLY_RULE, RESEARCH_CP2_RULE)
+
+RECRUIT_DISABLED_RULE = "Recruitment and paper skills are disabled. Leave `recruit` as an empty array."
+GENERAL_RECRUIT_RULES = ("If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +\n"
+                         "  focus) and plan the step for whoever is closest; the PI decides whether to hire.\n- "
+                         + recruit_planning.PLAN_RULE + "\n- " + paper_skills.PLAN_RULE)
+RESEARCH_RECRUIT_RULES = recruit_planning.PLAN_RULE + "\n\n" + paper_skills.PLAN_RULE
+
+
+def _planning_prompt(template: str, settings, *, research: bool = False, replan: bool = False) -> str:
+    if paper2agent.enabled(settings):
+        return template
+    if replan:
+        return template + "\n\n" + RECRUIT_DISABLED_RULE
+    rules = RESEARCH_RECRUIT_RULES if research else GENERAL_RECRUIT_RULES
+    return template.replace(rules, RECRUIT_DISABLED_RULE)
 # CP2 cards an answer without a readable choice gets before the request ends as not approved.
 CP2_MAX_ASKS = 3
 # One readable reason per research ending that is not a success. The office feed prints it after "요청이 실패했어요: ",
@@ -7782,6 +7797,7 @@ class Orchestrator:
                         vocab = self._output_vocab()
                         topic_vocab = output_vocab.current()
                         template = RESEARCH_CP2_PLAN_PROMPT if research_execution else RESEARCH_PLAN_PROMPT
+                        template = _planning_prompt(template, self.hub.s, research=True)
                         prompt = template.format(
                             request=plan_request, roster=format_roster(roster, alphagenome=self._alphagenome_ready),
                             capabilities=capabilities or "No workers available",
@@ -7801,7 +7817,7 @@ class Orchestrator:
                     else:
                         vocab = self._output_vocab()
                         topic_vocab = output_vocab.current()
-                        prompt = PLAN_PROMPT.format(request=plan_request,
+                        prompt = _planning_prompt(PLAN_PROMPT, self.hub.s).format(request=plan_request,
                                                     roster=format_roster(roster, alphagenome=self._alphagenome_ready),
                                                     capabilities=capabilities or "No workers available",
                                                     briefing=clip(briefing, 4000) or "(none)",
@@ -8275,7 +8291,7 @@ class Orchestrator:
                     planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=replan_schema(vocab is not None),
                         resume_session_id=session_id,
-                        prompt=REPLAN_PROMPT.format(
+                        prompt=_planning_prompt(REPLAN_PROMPT, self.hub.s, replan=True).format(
                             roster=format_roster(roster, alphagenome=self._alphagenome_ready),
                             capabilities=capabilities or "No workers available",
                             trigger=why, retired=", ".join(unfinished) or "none", drop_rule=drop_rule,

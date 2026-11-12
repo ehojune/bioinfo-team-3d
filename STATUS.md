@@ -4,6 +4,54 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1413 — TSV 선행 주석
+
+## 결론
+TSV 머리줄 앞 탭 없는 `#` 행을 주석으로 제외하고 탭이 있는 머리줄과 원본은 보존합니다.
+
+## 한 일
+- 저장·보고서 검사와 runner 경고를 맞추고 malformed 표 거절을 유지했습니다.
+
+## 테스트 결과
+- P1 회귀를 추가했습니다. 최신 시험과 CI 결과는 PR에서 확인합니다. 실제 모델·HPC·PI 인스턴스는 실행하지 않았습니다.
+
+## 막힌 점
+- 없음. 전체 CI와 최종 head 리뷰는 PR에서 확인합니다.
+
+# #1387 채용 OFF 계획 지시
+
+- 일반·연구 계획과 일반 replan에서 채용 OFF 안내와 빈 `recruit` 지시를 사용한다. ON 지시와 schema는 유지한다.
+- 한영 contract-staff 매뉴얼에 OFF 계획 지시와 모델 준수 미검증을 반영했다.
+- mock Task·disabled guard 시험: `python -m pytest tests/test_research_protocol.py tests/test_recruit_disabled_static.py -q` — 102 passed, 7 subtests passed.
+- 실제 모델 응답과 운영 효과는 별도 기준선 실행 전까지 미검증이다. [재현과 판단](../reference/fix-1387-item15.md)
+
+# #1386 r16 — runner 메시지 복구 안내
+
+## 결과
+- 보류 판정을 runner별로 제한했다. 같은 runner의 ACK·세대·결과 불명 효과 보호는 유지했다.
+- 원문 없는 인증 상태 API와 snapshot을 추가했다. 두 UI는 5초마다 갱신하고 조회 실패를 표시한다.
+- doctor는 `--network`에서 읽기만 한다. 안전한 retry/resume에만 POST 명령을 안내하고 이전 세대·결과 불명 작업은 수동 확인으로 남긴다.
+- 옛 cross-runner 보류 기대를 승인 계약에 맞췄다. 같은 runner의 admission 순서와 unknown ask 보류 회귀는 유지했다.
+
+## 검증
+- 관련 mock/offline 회귀 310건: 최초 309 passed, UI 시험 1건은 Windows 명령 길이 오류. JS를 임시 파일로 실행하도록 고친 뒤 해당 시험 통과.
+- API 인증·수동 복구 뒤 갱신·재접속 snapshot·두 UI 조회·원문/token 제외와 doctor 오류 경계를 검증했다.
+- 리뷰 P1·P2 재현 4건이 수정 전 실패했다. 원격 평문 token 전송을 거부하고 복구 경로 형식 검사·Bash URL quoting을 추가했다. loopback·TLS·redirect 경계를 포함한 web·doctor 98건이 통과했다.
+- CI의 UI 실패 8건을 재현·수정했다. 3D는 기존 경고 영역과 단일 timer를 재사용하고 초기 조회는 snapshot으로 받는다. web·3D·시설 표시 회귀 116 passed, 1 skipped. 기존 harness와 assertions는 바꾸지 않았다.
+- ID 경로 P2 재현 2건이 수정 전 404였다. 안내 URL은 ID를 query로 전달한다. 특수 ID·세대 교체를 포함한 API·doctor·snapshot 회귀 105건 통과. 기존 경로형 POST도 유지했다.
+- 상태 조회 성능 P2: inbox를 한 번 읽고 runner별 누적 집계로 안내를 판정한다. 40행의 읽기 41→1회. 알려진·결과 불명 ask, activity, acceptance, 누락·동일 순서 4개 경우에서 admission과 같은 판정이며 관련 회귀 157건도 통과했다.
+- 잘못된 식별자가 남은 행의 조회 실패도 재현·수정했다. 최종 누적 집계·malformed 경계 8건 통과. 잘못된 행은 수동 확인으로 남긴다.
+- failed malformed activity의 retry 안내 P2도 재현·수정했다. task·request 식별자와 type의 잘못된 형식을 모든 retained 상태에서 수동 확인으로 남긴다. 누적 집계·상태·API·doctor 회귀 120건 통과.
+- `scripts/check_public.sh`, `git diff --check` 통과.
+- manual 길이: 한국어 22,158→22,719자, 영어 37,897→38,723자. 자세한 과거 진단은 [reference](../reference/fix-1386-item10.md)에 둔다.
+
+## 남은 검증
+- 최종 head CI·실제 Codex 리뷰·병합 대기.
+- 브라우저 host 연결 불가로 시각 확인은 미검증. UI JS 동작은 Node로 확인했다.
+- 실제 외부 효과·운영 복구는 UNVERIFIED. 모델·연구·HPC·PI 인스턴스 실행은 하지 않았다.
+
+Refs #1386; closes neither #1386 nor #1380.
+
 # #1385 r7 — 문헌 전달 경고
 
 - 201개 목록은 처음 200개만 처리하고 잘림을 알린다. 정확히 200개는 경고하지 않는다.
