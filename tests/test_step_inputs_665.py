@@ -281,3 +281,17 @@ def test_an_unreadable_drive_keeps_the_bounded_copy_and_a_full_drive_says_so(tmp
     assert not staged and refused['fetch'] == 'inputs/fetch unavailable (disk full during copy)'
     assert not (ws.dir / 'inputs/fetch/table.tsv').exists()
     assert (folder / 'outputs/table.tsv').read_bytes() == b'gene\nfixture\n'
+
+
+def test_an_oversized_ancestor_record_names_the_file_and_its_size(tmp_path):
+    """#1421: the refused step only saw 'input metadata exceeds limit'; it now says which record and how large."""
+    from labhq.adapters.held_dir import HeldDir
+    from labhq.runner import step_inputs
+
+    (tmp_path / 'manifest.json').write_text(json.dumps({'runs': {'t': {'input_files': ['x' * 64]}}}),
+                                            encoding='utf-8')
+    size = (tmp_path / 'manifest.json').stat().st_size
+    with HeldDir.hold(tmp_path) as held:
+        with pytest.raises(ValueError) as caught:
+            step_inputs._json(held, 'manifest.json', limit=32)
+    assert str(caught.value) == f'input metadata exceeds limit: manifest.json is {size} bytes, over 32'

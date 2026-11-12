@@ -19,6 +19,23 @@ from ..private_paths import _managed_operand, credential_path
 from ..util import INPUT_STEP_ID, output_relpath
 
 INVENTORY = '.labhq-inputs.json'
+
+
+def environment_folder(path) -> bool:
+    """A Python venv (``pyvenv.cfg``) or a conda/mamba environment (``conda-meta/``) at the top of ``path``.
+
+    The same markers the remote inventory uses (#1368): a plain marker, never followed through a link. A folder
+    only named like one (``.venv``, ``env``) is an ordinary input (#1421)."""
+    try:
+        marker = os.lstat(os.path.join(path, 'pyvenv.cfg'))
+        if stat.S_ISREG(marker.st_mode):
+            return True
+    except (OSError, ValueError):
+        pass
+    try:
+        return stat.S_ISDIR(os.lstat(os.path.join(path, 'conda-meta')).st_mode)
+    except (OSError, ValueError):
+        return False
 MAX_FILES = 200
 
 
@@ -267,8 +284,10 @@ def _json(held, name, limit=1024 * 1024):
         if os.fstat(opened.fileno()).st_nlink != 1:
             raise ValueError('input metadata is hard-linked')
         data = opened.read(limit + 1)
-    if len(data) > limit:
-        raise ValueError('input metadata exceeds limit')
+        if len(data) > limit:
+            # Say whose record and how large, so the refused step can tell what blocked it (#1421).
+            size = os.fstat(opened.fileno()).st_size
+            raise ValueError(f'input metadata exceeds limit: {name} is {size} bytes, over {limit}')
     return json.loads(data)
 
 

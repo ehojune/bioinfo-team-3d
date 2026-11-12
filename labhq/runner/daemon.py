@@ -79,7 +79,8 @@ from .hpc_jobs import SharedStatusQueries, submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .lookup_admission import ENV as LOOKUP_ADMISSION_ENV, FILE as LOOKUP_ADMISSION_FILE, LookupAdmission
 from .system_ca import CA_ENV, system_ca_pem
-from .step_inputs import folder_files, linked_files, stage_inputs, stage_precedent_texts, staging_problem
+from .step_inputs import (environment_folder, folder_files, linked_files, stage_inputs, stage_precedent_texts,
+                          staging_problem)
 from ..research.precedent_texts import step_note as precedent_step_note
 from ..research import input_fit_hint
 from .workspace import (InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, resolved_zones,
@@ -2871,6 +2872,15 @@ class Runner:
             input_roots.extend((Path(directory), "inputs/" + Path(directory).name)
                                for directory in staged_inputs)
             own_dir = os.path.normcase(str(ws.dir.resolve()))
+            # A Python or conda environment opened to the step is tooling: one row, not a row per file (#1421).
+            # Thousands of rows made the manifest too large for the next step to take as an input.
+            granted_envs = set()
+            for grant in self.__dict__.get("_env_grants", {}).get(task.id) or []:
+                try:
+                    granted_envs.add(os.path.normcase(str(Path(grant["venv"]).resolve())))
+                except (KeyError, TypeError, OSError, RuntimeError, ValueError):
+                    continue
+            environment_rows: list[dict[str, Any]] = []
             for directory in [*extra_dirs, *read_dirs]:
                 try:
                     path = Path(directory).resolve()
@@ -2881,15 +2891,22 @@ class Runner:
                 if os.path.normcase(str(path)) == own_dir or os.path.normcase(str(path)).startswith(own_dir + os.sep):
                     continue
                 upstream = upstream_roots.get(os.path.normcase(str(path)))
+                if upstream is None and (os.path.normcase(str(path)) in granted_envs or environment_folder(path)):
+                    shown = portable_input_path(path)
+                    if all(row["path"] != shown for row in environment_rows):
+                        environment_rows.append({"path": shown, "size": None, "mtime_ns": None, "sha256": None,
+                                                 "skipped": "environment"})
+                    continue
                 input_roots.append(upstream or (path, portable_input_path(path)))
             hash_private = await asyncio.to_thread(resolve_private_paths, self.s, [], cwd=ws.dir)
 
             async def scan_inputs() -> tuple[list[dict[str, Any]], list[str]]:
-                return await asyncio.to_thread(
+                rows, notes = await asyncio.to_thread(
                     ws.scan_input_records, input_roots, zones, list(hash_private.paths),
                     self.s.runner.reference_scan_max_entries, self.s.runner.reference_scan_max_depth,
                     self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes,
                     self.input_hash_cache, [self.ws_root.resolve()])
+                return [*rows, *(dict(row) for row in environment_rows)], notes
 
             # Hash before the CLI starts (PR #442 review): writable inputs (project and upstream folders) may change.
             input_files, input_notes = await scan_inputs()
