@@ -1,3 +1,5 @@
+> Historical: the experimental implementation described below was removed in #1389. APIs, tests and file paths are no longer current. Actual OS protection remains UNVERIFIED.
+
 # Authentication broker: stage 1
 
 **Prototype only; real protection and CLI compatibility are UNVERIFIED.** No launcher or CLI is connected. Do not use real credentials or enable this code.

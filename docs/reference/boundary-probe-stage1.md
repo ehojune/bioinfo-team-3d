@@ -26,6 +26,10 @@ A fixture file the child cannot read (for example the socket port or the descrip
 
 Pending: positive interop controls in a suitable disposable environment, authenticated proof of detached-child cleanup, actual hook invocation, MCP operation inside the namespace and launcher-driven adversarial probes. Engine compatibility and protection are UNVERIFIED. Do not use this harness to enable the capability or claim protection.
 
+## Historical: removed offline seal fixtures
+
+The seal adapter, lifecycle vector, observer and integration harness described below were removed in #1389. They are not part of the retained probe above.
+
 The offline seal fixture adapter models separate producer and observer MACs, externally supplied expectations and a one-use run/nonce set. Its accepted verdict is `synthetic_only`: keys, observer, ledger and resource inventory are test inputs, not authenticated OS observations. Replay state is in-memory and not a production replay store. The pinned producer emits only unsealed diagnostics and has no authenticated observer or sealed-storage interface. Actual producer authentication, independent whole-tree cleanup and protection remain UNVERIFIED.
 
 ## Offline lifecycle event v1
