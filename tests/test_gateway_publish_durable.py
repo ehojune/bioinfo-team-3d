@@ -31,6 +31,57 @@ def gateway(tmp_path):
     hub.store.close()
 
 
+@pytest.mark.parametrize("prior_type,error", [("agent.log", None), ("task.accepted", None),
+    ("ask.requested", "ask_start_unknown"), ("ask.requested", "ask_publication_incomplete")])
+def test_inbox_summary_reads_backlog_once_and_matches_admission_boundary(gateway, monkeypatch, prior_type, error):
+    hub = gateway
+    hub.store.put("task", "old", {"request_id": "old"})
+    for i in range(40):
+        runner = "other" if i == 39 else "runner"
+        task = f"task{i}"
+        hub.store.put("task", task, {"request_id": "old" if i == 3 else f"request{i}"})
+        msg = {"type": "agent.log", "runner_seq": i + 1, "task_id": task, "data": {}}
+        if i == 0:
+            msg["task_id"] = "old"
+            msg["type"] = prior_type
+        row = hub.store.accept_runner_inbox(runner, None, i + 1, msg)
+        hub.store.set_runner_inbox_state(runner, None, i + 1, "blocked", error if i == 0 else None, expected="pending")
+        # Exercise legacy missing orders and equal admission orders as well as normal append order.
+        if i in {5, 6, 7}:
+            row = hub.store.runner_inbox(runner, None, i + 1)
+            row["admission_order"] = None if i == 5 else 2
+            hub.store.put("runner_inbox", hub.store._runner_inbox_key(runner, None, i + 1), row)
+    rows = hub.store.active_runner_inbox()
+    expected = {(r["runner_id"], r["seq"]): not hub._inbox_has_earlier_blocker(r) for r in rows}
+    original = hub.store.active_runner_inbox
+    calls = []
+    def read_once():
+        calls.append(True)
+        return original()
+    monkeypatch.setattr(hub.store, "active_runner_inbox", read_once)
+    actual = hub.runner_inbox_summary()
+    assert len(calls) == 1
+    assert {(r["runner_id"], r["seq"]): r["action"] == "resume" for r in actual} == expected
+
+
+@pytest.mark.parametrize("state", ["pending", "processing", "blocked", "failed"])
+@pytest.mark.parametrize("task_id,typ,request_id", [({"invalid": "scope"}, "agent.log", None),
+    ("task", ["agent.log"], None), ("task", "agent.log", {"invalid": "request"})])
+def test_inbox_summary_keeps_malformed_retained_scope_visible(gateway, state, task_id, typ, request_id):
+    hub = gateway
+    hub.store.put("task", "task", {"request_id": "request"})
+    hub.store.accept_runner_inbox("runner", None, 1,
+        {"type": typ, "runner_seq": 1, "task_id": task_id, "request_id": request_id, "data": {}})
+    if state == "blocked":
+        hub.store.set_runner_inbox_state("runner", None, 1, "blocked", expected="pending")
+    elif state in {"processing", "failed"}:
+        hub.store.set_runner_inbox_state("runner", None, 1, "processing", expected="pending")
+        if state == "failed":
+            hub.store.set_runner_inbox_state("runner", None, 1, "failed", "storage_interrupted", expected="processing")
+    rows = hub.runner_inbox_summary()
+    assert len(rows) == 1 and rows[0]["state"] == state and rows[0]["action"] is None
+
+
 def stall_commit(hub, monkeypatch, number=1, fail=False):
     entered, release = threading.Event(), threading.Event()
     transaction = hub.store._transaction
@@ -1548,22 +1599,23 @@ async def test_manual_ask_retry_storage_failure_before_dispatch_can_retry(gatewa
     assert hub.store.runner_inbox("runner", None, 1)["state"] == "completed"
 
 
+@pytest.mark.parametrize("prior_runner", ["r1", "r3"])
 @pytest.mark.parametrize("prior_type,prior_error,should_resume", [
     ("agent.log", "RuntimeError", True),
     ("ask.requested", "ask_start_unknown", False),
 ])
-async def test_resume_checks_same_dependency_boundary_as_admission(gateway, monkeypatch, prior_type, prior_error, should_resume):
+async def test_resume_checks_same_dependency_boundary_as_admission(gateway, monkeypatch, prior_type, prior_error, should_resume, prior_runner):
     hub = gateway
     hub.store.put("task", "old", {"request_id": "r1"})
     hub.store.put("task", "blocker", {"request_id": "r2"})
     hub.store.put("task", "target", {"request_id": "r2"})
-    for runner, task, typ, err in [("r1", "old", prior_type, prior_error),
+    for runner, task, typ, err in [(prior_runner, "old", prior_type, prior_error),
                                     ("r2", "blocker", "agent.log", "RuntimeError")]:
         hub.store.accept_runner_inbox(runner, None, 1, {"type": typ, "runner_seq": 1, "task_id": task, "data": {}})
         hub.store.set_runner_inbox_state(runner, None, 1, "processing", expected="pending")
         hub.store.set_runner_inbox_state(runner, None, 1, "failed", err, expected="processing")
-    hub.store.accept_runner_inbox("r3", None, 1, {"type": "agent.log", "runner_seq": 1, "task_id": "target", "data": {}})
-    hub.store.set_runner_inbox_state("r3", None, 1, "blocked", "earlier outcome unresolved", expected="pending")
+    hub.store.accept_runner_inbox("r3", None, 2, {"type": "agent.log", "runner_seq": 2, "task_id": "target", "data": {}})
+    hub.store.set_runner_inbox_state("r3", None, 2, "blocked", "earlier outcome unresolved", expected="pending")
     # Simulate resolution of the actual same-request blocker.
     await hub.store.aclaim_runner_publication_retry("r2", None, 1)
     hub.store.set_runner_inbox_state("r2", None, 1, "completed", expected="processing")
@@ -1571,13 +1623,13 @@ async def test_resume_checks_same_dependency_boundary_as_admission(gateway, monk
     async def handler(*args, **kwargs):
         calls.append(True)
     monkeypatch.setattr(hub, "_on_runner_message", handler)
-    if should_resume:
-        await hub.resume_blocked_runner_inbox("r3", None, 1)
+    if should_resume or prior_runner != "r3":
+        await hub.resume_blocked_runner_inbox("r3", None, 2)
         assert calls == [True]
-        assert hub.store.runner_inbox("r3", None, 1)["state"] == "completed"
+        assert hub.store.runner_inbox("r3", None, 2)["state"] == "completed"
     else:
         with pytest.raises(ValueError, match="earlier"):
-            await hub.resume_blocked_runner_inbox("r3", None, 1)
+            await hub.resume_blocked_runner_inbox("r3", None, 2)
         assert not calls
 
 
@@ -1649,7 +1701,7 @@ async def test_inbox_does_not_assume_runner_wide_message_is_request_local(gatewa
     assert hub.store.runner_inbox("runner", None, 2)["state"] == "blocked"
 
 
-async def test_inbox_holds_same_request_across_runners(gateway, monkeypatch):
+async def test_inbox_does_not_hold_same_request_across_runners(gateway, monkeypatch):
     hub = gateway
     hub.runner_capabilities = {}
     hub.recruits_running = {}
@@ -1667,13 +1719,12 @@ async def test_inbox_holds_same_request_across_runners(gateway, monkeypatch):
                                              "task_id": "one", "request_id": "r1", "data": {}})
     await hub.on_runner_message("runner2", {"type": "agent.log", "runner_seq": 1,
                                              "task_id": "two", "request_id": "r1", "data": {}})
-    assert len(calls) == 1
-    assert hub.store.runner_inbox("runner2", None, 1)["state"] == "blocked"
-    with pytest.raises(ValueError, match="earlier"):
-        await hub.resume_blocked_runner_inbox("runner2", None, 1)
+    assert len(calls) == 2
+    assert hub.store.runner_inbox("runner1", None, 1)["state"] == "failed"
+    assert hub.store.runner_inbox("runner2", None, 1)["state"] == "failed"
 
 
-async def test_blocked_cross_runner_entries_resume_in_admission_order(gateway, monkeypatch):
+async def test_blocked_same_runner_entries_resume_in_admission_order(gateway, monkeypatch):
     hub = gateway
     hub.runner_capabilities = {}
     hub.recruits_running = {}
@@ -1694,12 +1745,12 @@ async def test_blocked_cross_runner_entries_resume_in_admission_order(gateway, m
                     "question": "Why?", "why_blocked": "Waiting"}}
     await hub.on_runner_message("runner1", ask)
     for number, task in ((2, "two"), (3, "three")):
-        await hub.on_runner_message(f"runner{number}", {"type": "agent.log", "runner_seq": 1,
+        await hub.on_runner_message("runner1", {"type": "agent.log", "runner_seq": number,
                                     "task_id": task, "request_id": "r1", "data": {"text": task}})
     monkeypatch.setattr(hub, "publish", publish)
     await hub.retry_runner_inbox("runner1", None, 1)
-    await hub.resume_blocked_runner_inbox("runner2", None, 1)
-    await hub.resume_blocked_runner_inbox("runner3", None, 1)
+    await hub.resume_blocked_runner_inbox("runner1", None, 2)
+    await hub.resume_blocked_runner_inbox("runner1", None, 3)
     assert [e["data"].get("text") for e in hub.store.events_since(0) if e["type"] == "agent.log"] == ["two", "three"]
 
 
@@ -1743,7 +1794,7 @@ async def test_ask_id_cannot_alias_another_runners_ask(gateway, monkeypatch):
     assert hub.store.events_since(0) == []
 
 
-async def test_concurrent_runner_claims_cannot_both_cross_same_request_hold(gateway, monkeypatch):
+async def test_concurrent_runners_do_not_share_inbox_holds(gateway, monkeypatch):
     hub = gateway
     hub.store.put("task", "one", {"request_id": "r1"})
     hub.store.put("task", "two", {"request_id": "r1"})
@@ -1761,14 +1812,21 @@ async def test_concurrent_runner_claims_cannot_both_cross_same_request_hold(gate
     a = {"type": "agent.log", "runner_seq": 1, "task_id": "one", "request_id": "r1", "data": {}}
     b = {"type": "agent.log", "runner_seq": 1, "task_id": "two", "request_id": "r1", "data": {}}
     first = asyncio.create_task(hub.on_runner_message("runner1", a))
+    second = None
     try:
         await asyncio.wait_for(entered.wait(), 5)
-        await hub.on_runner_message("runner2", b)
-        assert calls == ["one"]
-        assert hub.store.runner_inbox("runner2", None, 1)["state"] == "blocked"
+        second = asyncio.create_task(hub.on_runner_message("runner2", b))
+        async def both_started():
+            while len(calls) < 2:
+                await asyncio.sleep(0)
+        await asyncio.wait_for(both_started(), 5)
+        assert calls == ["one", "two"]
+        assert hub.store.runner_inbox("runner2", None, 1)["state"] == "processing"
     finally:
         release.set()
         await first
+        if second is not None:
+            await second
 
 
 async def test_inbox_rejects_ack_when_acceptance_fails(gateway, monkeypatch):

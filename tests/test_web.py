@@ -3,12 +3,113 @@
 import json
 import shutil
 import subprocess
+import pytest
 
 from fastapi.testclient import TestClient
 
 from labhq.gateway.server import create_app
 from labhq.models import ApprovalRequest
 from labhq.settings import Settings
+
+
+@pytest.mark.parametrize("runner_id", ["runner", "..", "nested/runner"])
+@pytest.mark.parametrize("incarnation", [None, "generation with/&"])
+def test_inbox_summary_auth_snapshot_and_manual_recovery_refresh(tmp_path, runner_id, incarnation):
+    s = Settings()
+    s.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(s)
+    hub = app.state.hub
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {s.gateway.client_token}"}
+    try:
+        if incarnation is not None:
+            hub.store.put("runner_incarnation", runner_id, {"id": incarnation})
+        message = {"type": "agent.log", "runner_seq": 1, "data": {"text": "PRIVATE_PAYLOAD", "token": "PRIVATE_TOKEN"}}
+        hub.store.accept_runner_inbox(runner_id, incarnation, 1, message)
+        hub.store.set_runner_inbox_state(runner_id, incarnation, 1, "processing", expected="pending")
+        hub.store.set_runner_inbox_state(runner_id, incarnation, 1, "failed", "storage_interrupted", expected="processing")
+        assert client.get("/api/runner-inbox").status_code == 401
+        response = client.get("/api/runner-inbox", headers=headers)
+        assert response.status_code == 200 and response.json() == hub.snapshot()["data"]["runner_inbox"]
+        assert "PRIVATE_PAYLOAD" not in response.text and "PRIVATE_TOKEN" not in response.text
+        path = response.json()[0]["recovery_path"]
+        assert client.post(path, headers=headers).status_code == 200
+        assert client.get("/api/runner-inbox", headers=headers).json() == []
+        assert hub.snapshot()["data"]["runner_inbox"] == []
+    finally:
+        hub.store.close()
+
+
+def test_inbox_legacy_recovery_hint_cannot_select_a_new_generation(tmp_path):
+    s = Settings()
+    s.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(s)
+    hub = app.state.hub
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {s.gateway.client_token}"}
+    try:
+        for generation in [None, "new"]:
+            message = {"type": "agent.log", "runner_seq": 1, "data": {}}
+            hub.store.accept_runner_inbox("runner", generation, 1, message)
+            hub.store.set_runner_inbox_state("runner", generation, 1, "processing", expected="pending")
+            hub.store.set_runner_inbox_state("runner", generation, 1, "failed", "storage_interrupted", expected="processing")
+        path = client.get("/api/runner-inbox", headers=headers).json()[0]["recovery_path"]
+        assert "legacy=true" in path
+        hub.store.put("runner_incarnation", "runner", {"id": "new"})
+        assert client.post(path, headers=headers).status_code == 409
+        assert hub.store.runner_inbox("runner", "new", 1)["state"] == "failed"
+        assert hub.store.runner_inbox("runner", None, 1)["state"] == "failed"
+    finally:
+        hub.store.close()
+
+
+def test_both_inbox_views_refresh_after_recovery_and_reconnect(tmp_path):
+    from labhq.gateway import server
+    import pytest
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node unavailable")
+    state = (server.WEB / "state.js").read_text(encoding="utf-8")
+    for page in [server.WEB / "index.html", server.WEB / "lab3d/src/live.js"]:
+        source = page.read_text(encoding="utf-8")
+        refresh = source.split("  async function refreshInbox() {", 1)[1].split("\n  }", 1)[0]
+        assert ("setInterval(refreshInbox, 5000)" if page.suffix == ".html" else
+                "inboxNextRefresh = Date.now() + 5000; refreshInbox();") in source
+        assert "runnerInboxText(S)" in source
+        script = state + """
+const assert = require('node:assert/strict');
+const {S, apply} = LabHQState.createOfficeState();
+const row = {runner_id:'runner', incarnation:'new', seq:2, state:'blocked', error:'ask_start_unknown', current_generation:true, action:null};
+apply({type:'snapshot', seq:1, data:{runner_inbox:[row]}});
+assert.match(LabHQState.runnerInboxText(S), /runner.*new.*seq 2.*blocked/);
+assert.ok(!LabHQState.runnerInboxText(S).includes('POST'));
+let token='PRIVATE_TOKEN', inboxLoading=false, inboxEpoch=0, demo=false, IS_DEMO=false;
+let renders=0; const render=()=>renders++, schedule=render;
+let replies=[[row], []], fetches=[];
+let fetch=async (url, options)=>{ fetches.push([url,options]); return {ok:true,json:async()=>replies.shift()}; };
+async function refreshInbox() { REFRESH }
+(async()=>{
+  S.conn='live'; await refreshInbox(); assert.equal(S.runnerInbox.length,1);
+  await refreshInbox(); assert.equal(LabHQState.runnerInboxText(S),'');
+  apply({type:'snapshot',seq:2,data:{runner_inbox:[{...row, current_generation:false}]}});
+  assert.ok(!LabHQState.runnerInboxText(S).includes('POST'));
+  fetch=async()=>{throw Error('unreachable')}; await refreshInbox();
+  assert.match(LabHQState.runnerInboxText(S), /doctor --network/);
+  assert.ok(!LabHQState.runnerInboxText(S).includes(token));
+  assert.equal(fetches[0][0],'/api/runner-inbox');
+  assert.equal(fetches[0][1].headers.Authorization,'Bearer PRIVATE_TOKEN');
+  // A pending HTTP response cannot overwrite a newer reconnect snapshot.
+  let finish; fetch=()=>new Promise(resolve=>finish=resolve);
+  const pending=refreshInbox(); inboxEpoch++;
+  apply({type:'snapshot',seq:3,data:{runner_inbox:[]}});
+  finish({ok:true,json:async()=>[row]}); await pending;
+  assert.equal(S.runnerInbox.length,0);
+})().catch(e=>{console.error(e);process.exitCode=1});
+""".replace("REFRESH", refresh)
+        script_path = tmp_path / "inbox-view.cjs"
+        script_path.write_text(script, encoding="utf-8")
+        result = subprocess.run([node, str(script_path)], capture_output=True, text=True, encoding="utf-8")
+        assert result.returncode == 0, result.stderr
 
 
 def test_live_approval_surfaces_server_refusal_even_with_open_socket():

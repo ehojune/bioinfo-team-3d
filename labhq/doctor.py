@@ -869,6 +869,63 @@ def _facilities_support_row(settings: Settings, agents: list[AgentSpec], forced:
                 "runner.facilities_support: required/optional/unspecified; optional은 직원 비활성화 명령이 아닙니다.")
 
 
+def _runner_inbox_rows(settings: Settings, *, network: bool, dry_run: bool) -> list[dict]:
+    """Read only the configured gateway; never connect to or modify SQLite."""
+    if dry_run or not network:
+        return [_row("gateway", "runner inbox", "skip", "not queried",
+                     "Use labhq doctor --network to read held runner messages.")]
+    import httpx
+    import ipaddress
+    import shlex
+    from urllib.parse import urlsplit
+
+    raw = settings.gateway.url
+    try:
+        parsed = urlsplit(raw)
+        parsed.port  # Reject malformed ports before constructing a client.
+    except ValueError:
+        return [_row("gateway", "runner inbox", "warn", "invalid gateway URL", "Check gateway.url without credentials.")]
+    if parsed.scheme not in {"ws", "wss"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        return [_row("gateway", "runner inbox", "warn", "invalid gateway URL", "Check gateway.url without credentials.")]
+    try:
+        loopback = ipaddress.ip_address(parsed.hostname).is_loopback
+    except ValueError:
+        loopback = parsed.hostname.lower().rstrip(".") == "localhost"
+    if parsed.scheme == "ws" and not loopback:
+        return [_row("gateway", "runner inbox", "warn", "remote plaintext status query refused",
+                     "Use wss:// for a remote gateway; the client token was not sent.")]
+    base = parsed._replace(scheme="https" if parsed.scheme == "wss" else "http").geturl().rstrip("/")
+    try:
+        with httpx.Client(timeout=4, trust_env=False, follow_redirects=False) as client:
+            response = client.get(base + "/api/runner-inbox",
+                                  headers={"Authorization": f"Bearer {settings.gateway.client_token}"})
+            response.raise_for_status()
+            entries = response.json()
+            if not isinstance(entries, list):
+                raise ValueError("invalid inbox status")
+            rows = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise ValueError("invalid inbox status")
+                identity = f"{entry['runner_id']} generation={entry['incarnation']} seq={entry['seq']}"
+                action, path = entry.get("action"), entry.get("recovery_path")
+                # Accept only the percent-encoded shape our gateway generates, then quote the entire URL.
+                segment = r"(?:[A-Za-z0-9_.~-]|%[0-9A-Fa-f]{2})"
+                safe_path = isinstance(path, str) and re.fullmatch(
+                    rf"/api/runner-inbox/[0-9]+/(?:retry|resume)\?runner_id=(?:{segment}|\+)*"
+                    rf"(?:&incarnation=(?:{segment}|\+)*|&legacy=true)", path)
+                hint = (f'Bash: curl -X POST -H "Authorization: Bearer $LABHQ_CLIENT_TOKEN" {shlex.quote(base + path)}'
+                        if entry.get("current_generation") and action in {"retry", "resume"} and safe_path else
+                        "Manual inspection required; inspect earlier holds and uncertain effects. Do not replay unknown outcomes.")
+                rows.append(_row("gateway", "runner inbox " + identity, "warn",
+                                 f"{entry['state']}; error={entry.get('error') or '-'}; " +
+                                 ("current generation" if entry.get("current_generation") else "old generation"), hint))
+            return rows or [_row("gateway", "runner inbox", "ok", "no held messages", "")]
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return [_row("gateway", "runner inbox", "warn", "status unavailable; recovery unverified",
+                     "Check gateway connectivity, version and client token. No recovery action was sent.")]
+
+
 def collect(settings: Settings, *, requested_config: str | None = None, network: bool = False,
             dry_run: bool = False, require_roster: bool = False, fix: bool = False,
             require_paper2agent: bool = True, github_transport=None, runtime: bool = False) -> dict:
@@ -876,6 +933,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     from .cli import _local_process_diagnostics
 
     rows.extend(_local_process_diagnostics(settings))
+    rows.extend(_runner_inbox_rows(settings, network=network, dry_run=dry_run))
     config = settings.config_path
     if requested_config and not config:
         rows.append(_row("config", "file", "fail", "configured file missing", "Set --config to an existing YAML file."))
