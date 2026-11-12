@@ -68,3 +68,7 @@ rows:
     at: "2026-11-12 19:29"
     summary: "공개 묶음의 비웹 저장소 URI를 가립니다."
     text: "#1416 r2: HTTP(S) 이외 URI operand를 script·구조화된 값에서 가림. s3·ssh·gs·az·ftp·확장 scheme 회귀 포함 248 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS·원본 동일."
+  - sha: "3eee7c1"
+    at: "2026-11-12 19:39"
+    summary: "공백이 든 스크립트 경로 전체를 가립니다."
+    text: "#1416 r2: 따옴표·escaped space·인접 인용 구간을 포함한 POSIX·Windows·UNC·저장소 URI 가림. 회귀 포함 256 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS·원본 동일."
