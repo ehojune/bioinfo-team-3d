@@ -6,8 +6,10 @@
 - 어휘·EDAM·점검표·pack 진단과 code-only 오류 로그·CP1/CP2 경고를 보존했다.
 - live 그림자·객체 뷰·액션·A/B·새 장치 보고서 생성과 CLI 연결을 소유 경로에서 제거했다.
 - legacy 두 키만 무시한다. 직접 `model_validate`, 생성자, 파일 load와 다른 unknown key 거부를 시험한다.
-- 전체 수집 15,642건, Node 웹 8시험 통과. 관련 회귀 결과는 PR·이슈에 갱신한다.
-- README·매뉴얼 19파일: 309,559자 → 281,963자(초기 정리 실측). 삭제안이 아직 검증 중임을 명시했다.
+- 실제 checkout 관련 회귀: 742 통과·25 실패·2 skip. 격리 사본에서 server·portfolio의 남은 두 연결만 정리하면 실패 25건과 mock 종단·bench가 27건 통과했다. 실제 가지 통합 PASS는 아니다.
+- 전체 수집 15,642건, Node 웹 8시험, Python 3.10 AST 통과.
+- 제품 5,406줄 삭제·46줄 추가, 시험 5,985줄 삭제·222줄 추가, 도구 296줄 삭제(rename 감지 없음).
+- README·매뉴얼 19파일: 309,559자 → 281,974자. 삭제안이 아직 검증 중임을 명시했다.
 
 ## 다음 claim에서 통합할 경로
 
@@ -17,6 +19,8 @@
 | `labhq/portfolio.py` | 새 report fallback 생성만 제거하고 과거 보고서 사본 판독 보존 |
 | `tests/test_portfolio_edition.py` | 과거 사본 호환·공개 안전성 통합 회귀 |
 | `config/ci/windows-boundary-v1.json` | 삭제 시험 정리와 이관 시험 등록. CI 선택 규칙은 보존 |
+| `docs/status/2026-11-12-1048-codex-worker2-prune-1388.md` | 배정된 옛 파일명에 HHMM이 없어 CI 실패. 새 이름으로 옮길 claim 필요 |
+| `docs/manual.en.md` | 영문 목차의 옛 live 그림자 안내 정합 |
 | `tests/test_model_refusal_682.py` | 삭제된 `status_line` stub 정리. CLI 모델 거절 assertion은 보존 |
 | `docs/manual/04-install.md`, `04-install.en.md` | W3 소유 설치 안내의 옛 활성화 설명 정합 |
 | `docs/manual/17-known-limits.md`, `17-known-limits.en.md` | 제거될 live 그림자·액션 안내 정합 |

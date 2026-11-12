@@ -1,0 +1,6 @@
+pr: 1399
+rows:
+  - sha: "3acda3f"
+    at: "2026-11-12 10:39"
+    summary: "입력 종류 검사는 남기고 쓰지 않는 기록 기능을 정리합니다."
+    text: "#1388 r2: live 그림자·객체 뷰·액션·A/B·새 장치 보고서의 소유 경로 제거. core input-fit 6시험 이관, CP1/CP2·typed-output·continuation·오류 로그·공개 redaction 계약 보존. server·portfolio·inventory 통합 전 draft/hold."
