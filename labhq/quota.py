@@ -12,6 +12,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,20 @@ _MONTHS = {name.casefold(): number for number, name in enumerate(calendar.month_
 _MONTHS.update({name.casefold(): number for number, name in enumerate(calendar.month_name) if name})
 _WEEKDAYS = {name.casefold(): number for number, name in enumerate(calendar.day_abbr)}
 _WEEKDAYS.update({name.casefold(): number for number, name in enumerate(calendar.day_name)})
+# Claude Code names its window: "session limit", "weekly limit", "5-hour limit" (#1419).
+_CLAUDE_LIMIT = r"(?:usage|session|weekly|\d+[- ]hour) limit"
+_NAMED_ZONE = re.compile(r"\(([A-Za-z]+(?:/[A-Za-z0-9_+\-]+)+)\)")
+
+
+def _named_zone(text: str) -> tzinfo | None:
+    """A zone the message names after its reset time, e.g. "resets 6:30pm (Asia/Seoul)"."""
+    match = _NAMED_ZONE.search(text)
+    if not match:
+        return None
+    try:
+        return ZoneInfo(match.group(1))
+    except (ZoneInfoNotFoundError, ValueError):
+        return None  # no tz database here: read it as before, in the machine's zone
 
 
 def local_zone() -> tzinfo | None:
@@ -112,14 +127,14 @@ def is_quota_error(engine: str, error: str | None) -> bool:
     if "not your usage limit" in folded:
         return False
     if name in {"claude", "claude_code"}:
-        return bool(re.search(r"(?:usage|session|weekly) limit", folded) and "reset" in folded)
+        return bool(re.search(_CLAUDE_LIMIT, folded) and "reset" in folded)
     if name == "codex":
         return "hit your usage limit" in folded
     if name in {"agy", "antigravity"}:
         return (("exhausted your capacity" in folded or "quota exhausted" in folded
                  or "usage limit" in folded) and "reset" in folded)
     return ("hit your usage limit" in folded or
-            bool(re.search(r"(?:usage|session|weekly) limit", folded) and "reset" in folded) or
+            bool(re.search(_CLAUDE_LIMIT, folded) and "reset" in folded) or
             bool(("exhausted your capacity" in folded or "quota exhausted" in folded)
                  and "reset" in folded))
 
@@ -137,7 +152,7 @@ def parse_quota_wait(engine: str, error: str | None, *, now: float | None = None
     seconds = _relative_seconds(text)
     if seconds:
         return QuotaWait(stamp + seconds, True)
-    target = _clock_reset(text, stamp, tz or local_zone())
+    target = _clock_reset(text, stamp, _named_zone(text) or tz or local_zone())
     return QuotaWait(stamp + default_wait_s if target is None else target, target is not None)
 
 
@@ -171,5 +186,5 @@ def received_quota_wait(engine: str, error: str | None, reset_at: object, *, now
     if seconds:
         return QuotaWait(stamp + seconds, True)
     cap = stamp + default_wait_s
-    target = _clock_reset(text, stamp, local_zone())
+    target = _clock_reset(text, stamp, _named_zone(text) or local_zone())
     return QuotaWait(cap if target is None else min(target, cap), False)
