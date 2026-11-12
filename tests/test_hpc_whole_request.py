@@ -1109,6 +1109,31 @@ def test_the_remote_scan_leaves_out_a_conda_environment_and_still_caps_real_outp
         ht.fetch_results(transfer, spec, tmp_path / "logs2", tmp_path / "outputs2")
 
 
+def test_remote_scan_excludes_only_identified_conda_package_cache(cluster, tmp_path):
+    import os
+    if os.name == "nt":
+        pytest.skip("remote POSIX descriptor helper is exercised by Linux CI")
+    from labhq import hpc_transfer as ht
+    from tests.test_hpc_remote_data import helper_transfer, prepare
+    transfer = helper_transfer(cluster)
+    spec = prepare(cluster, transfer, tmp_path, {
+        "env/pkgs/urls.txt": b"https://example.invalid/pkg.tar.bz2\n",
+        "env/pkgs/example-1/info/index.json": b"{}",
+        "env/pkgs/example-1/lib/cache.dat": b"cache",
+        "ordinary/pkgs/urls.txt": b"a normal output",
+        "ordinary/pkgs/result.tsv": b"x\n1\n",
+        "other/urls.txt": b"urls",
+        "other/pkg/info/index.json": b"{}",
+        "result.tsv": b"x\n1\n",
+    })
+    remote = ht.fetch_results(transfer, spec, tmp_path / "logs", tmp_path / "outputs")["remote"]
+    paths = {row["path"] for row in remote["files"]}
+    assert "env/pkgs/example-1/lib/cache.dat" not in paths
+    assert {"ordinary/pkgs/urls.txt", "ordinary/pkgs/result.tsv", "other/urls.txt",
+            "other/pkg/info/index.json", "result.tsv"} <= paths
+    assert {"path": "env/pkgs", "reason": "environment folder"} in remote["skipped"]
+
+
 def _verify_remote_request(tmp_path, *, remote_files, outputs, run_task="t1", link_manifest=False):
     """A finished whole-HPC step whose `outputs/local.tsv` is on this PC and whose other outputs stayed remote."""
     import hashlib

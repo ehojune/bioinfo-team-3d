@@ -521,7 +521,21 @@ with contextlib.ExitStack() as stack:
   with folder(base, name) as d:
    try: names=set(os.listdir(d))
    except OSError: return False
-  return 'conda-meta' in names or 'pyvenv.cfg' in names
+   if 'conda-meta' in names or 'pyvenv.cfg' in names: return True
+   # A conda package cache has both its URL record and an extracted package's metadata (#1413).
+   # Do not exclude ordinary directories merely because they are named pkgs or contain urls.txt.
+   if name!='pkgs' or 'urls.txt' not in names: return False
+   try:
+    marker=os.stat('urls.txt',dir_fd=d,follow_symlinks=False)
+    if not stat.S_ISREG(marker.st_mode) or marker.st_nlink!=1: return False
+    for entry in names:
+     try:
+      with folder(d,entry+'/info') as info_dir:
+       meta=os.stat('index.json',dir_fd=info_dir,follow_symlinks=False)
+       if stat.S_ISREG(meta.st_mode) and meta.st_nlink==1: return True
+     except (OSError,ValueError): continue
+   except OSError: return False
+   return False
  def walk(base, directories, prefix='', depth=0):
   if depth>16:
    skipped.append({'path':prefix.rstrip('/'),'reason':'depth limit'}); return
