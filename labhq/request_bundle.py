@@ -19,6 +19,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterator
+from urllib.parse import quote
 
 from .adapters.held_dir import HeldDir, NotPlainFolder
 from .evidence.audit import claims_record, locate_workdir
@@ -426,7 +427,7 @@ def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]],
     return (0, []) if transformed is None else (replacements, sorted(remaining))
 
 
-def _public_hpc_text(settings, *, claim_refs=()):
+def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
     """Offline job-log policy for a configured remote site's bundle copies; never opens a session."""
     from .hpc_session import redact, redaction_words
     from .hpc_transfer import Transfer
@@ -453,8 +454,10 @@ def _public_hpc_text(settings, *, claim_refs=()):
         raise RuntimeError("bundle redaction cannot execute remote commands")
 
     transfer = Transfer(no_remote_command, root, redact=site_words)
+    portable_count, portable_pattern = -1, None
 
     def hide(text, *, script=False):
+        nonlocal portable_count, portable_pattern
         if script:
             sentinel = '\x01'
             while sentinel in text:
@@ -480,9 +483,23 @@ def _public_hpc_text(settings, *, claim_refs=()):
         sentinel = '\x01'
         while sentinel in text:
             sentinel *= 2
-        references = [token for ref in claim_refs for token in (f'[[claim:{ref}]]', f'`{ref}`') if token in text]
-        for index, token in enumerate(references):
-            text = text.replace(token, f'{sentinel}{index}{sentinel}')
+        references = []
+        if portable_count != len(portable_refs):
+            known = {token for ref in portable_refs for token in (ref, quote(ref, safe='/-._~'))}
+            portable_pattern = re.compile('|'.join(re.escape(ref) for ref in sorted(known, key=len, reverse=True))) if known else None
+            portable_count = len(portable_refs)
+
+        def keep_reference(match):
+            references.append(match.group(0))
+            return f'{sentinel}{len(references) - 1}{sentinel}'
+
+        if portable_pattern:
+            text = portable_pattern.sub(keep_reference, text)
+        for ref in claim_refs:
+            for token in (f'[[claim:{ref}]]', f'`{ref}`'):
+                if token in text:
+                    references.append(token)
+                    text = text.replace(token, f'{sentinel}{len(references) - 1}{sentinel}')
         text = _WINDOWS_ABS.sub("<local-path>", transfer.hide_log(text))
         for index, token in enumerate(references):
             text = text.replace(f'{sentinel}{index}{sentinel}', token)
@@ -820,7 +837,8 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             continue
         claim_refs.extend(f"{step_id}/{claim['id']}" for claim in structured.get('claims') or []
                           if isinstance(claim, Mapping) and _SAFE_ID.fullmatch(str(claim.get('id') or '')))
-    public_text = _public_hpc_text(settings, claim_refs=claim_refs)
+    portable_refs = set()
+    public_text = _public_hpc_text(settings, claim_refs=claim_refs, portable_refs=portable_refs)
     # The report links a figure as <workdir_id>/outputs/<file>; the bundle names it steps/<step_id>/outputs/<file>, and
     # a linked figure is kept even when the bundle's total limits are full (#584). The per-file limit still applies.
     report_text = link_workdir_figures(str(req.get("report") or ""), figure_owners(results), output_exists(results))
@@ -1158,6 +1176,11 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             (temp / FIGURE_PLAN_FILE).write_text(
                 json.dumps({"key_figures": list(dict.fromkeys(key_figures))}, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8", newline="\n")
+        portable_refs.update(str(row['relative_path']) for row in rows
+                             if str(row.get('status', '')).startswith('copied'))
+        portable_refs.update(name for name in ('report.md', 'report_appendix.md', 'execution_record.md', 'INPUTS.tsv',
+                                              'claims.json', 'paper_skills.json', LINK_SCRIPT,
+                                              RERUN_RECEIPT_FILE, FIGURE_PLAN_FILE) if (temp / name).is_file())
         redacted_files = set()
 
         def hide_readme_front(front):

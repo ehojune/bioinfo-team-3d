@@ -2465,3 +2465,27 @@ def test_hpc_bundle_scripts_hide_shared_paths_and_keep_system_executables(tmp_pa
     assert path.read_text(encoding='utf-8') == original
     assert manifest_rows(bundle)['steps/direct/' + relative]['redacted'] == 'yes'
     assert verify_bundle_copy(bundle)['problems'] == []
+
+
+def test_hpc_bundle_keeps_links_to_its_actual_figure_inventory(tmp_path):
+    from labhq.report_figures import bundle_figure_check
+
+    settings, request, task = pending_bundle_fixture(tmp_path, 'req_figure_link')
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    settings.hpc.user = 'direct'
+    work = Path(request['results']['direct']['workdir'])
+    relative = 'outputs/figure.png'
+    path = work / relative
+    path.write_bytes(b'\x89PNG\r\n\x1a\nfigure-fixture')
+    request['results']['direct']['outputs'].append(relative)
+    request['results']['direct']['output_sha256'][relative] = digest(path)
+    request['report'] = ('## 결과\n\n![Figure](steps/direct/outputs/figure.png)\n\n'
+                         '/scratch/fixture-user/private.txt\n/project/private/steps/direct/outputs/figure.png\n')
+
+    bundle = Path(build_request_bundle(request, settings, {'t': task})['path'])
+
+    report = (bundle / 'report.md').read_text(encoding='utf-8')
+    assert 'steps/direct/outputs/figure.png' in report and 'fixture-user' not in report
+    assert '/project/private' not in report
+    assert bundle_figure_check(bundle)['problems'] == []
+    assert verify_bundle_copy(bundle)['problems'] == []
