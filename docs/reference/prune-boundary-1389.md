@@ -1,5 +1,19 @@
 # #1389 경계 골격 조사
 
+## r4 연결 조사
+
+기준 main `b03e8548`. opt-in을 제거하면 다음 고유 거절이 사라진다. 동등 대체 없이 연결과 시험을 보존한다.
+
+| 계약 | 증거 |
+|---|---|
+| bool만 opt-in; runner 두 진입점이 준비 전에 거절 | `test_boundary_wiring_666.py`의 `test_opt_in_requires_an_explicit_bool`, `test_opt_in_runner_refuses_before_workspace_or_adapter` |
+| adapter는 자격증명·준비·spawn 전에 거절; producer 예외·성공에도 fallback 금지 | `test_opt_in_adapter_cannot_prepare_or_spawn`, `test_producer_error_or_success_never_falls_back` |
+| synthetic 관측은 실행 권한을 주지 않고 replay·취소·불완전 결과를 거부 | `test_observer_success_cannot_authorize_engine_and_replay_is_rejected`, `test_observer_failure_is_not_swallowed_or_reusable` |
+
+최소 보존안은 현재 gate와 producer·observer, 위 시험 및 혼합 broker/probe 시험을 유지하는 것이다. 연결 제거에는 동일한 거절과 observer 계약을 구현·검증하는 별도 설계가 필요하다. 이번 배정에는 대체 구현이 없다.
+
+`git grep`에서 daemon의 두 진입점과 adapter가 gate를 쓰고, settings에는 이름 참조가 없었다. `integration_probe.py`는 경로 기반 동적 import를 받으며 seal fixture 시험도 validator를 동적 로드한다. 문자열 검색은 임의 외부 호출의 부재를 증명하지 못한다. `codex_sandbox.py`와 실제 doctor/runner 경로는 유지한다. main 대비 제품·시험 삭제는 각 0줄이다.
+
 ## r3 판단과 assertion 보존표
 
 고유 계약을 다른 boundary로 옮길 동등 근거가 없어 r2 삭제를 되돌렸다. 아래 시험과 구현은 원본 그대로 보존한다. Windows inventory와 현재 안내도 복원했다. 제품·시험 순삭제는 0줄이다.

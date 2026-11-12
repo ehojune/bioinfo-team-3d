@@ -12,6 +12,12 @@ and preserved Unicode letters and numbers while normalizing quotes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
+import contextlib
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
 import re
 from typing import Sequence
 import unicodedata
@@ -50,6 +56,193 @@ _TRAILING_PUNCT = "\"'()[]"
 
 # A larger located span is usually a flattened table rather than one sentence.
 MAX_LOCATED_QUOTE_WORDS = 80
+MAX_SOURCE_BYTES = 2_000_000
+
+
+def _source_bytes(root, relative: str, limit: int = MAX_SOURCE_BYTES) -> bytes:
+    """Bounded read through held directories; never follow a link or accept a hard link."""
+    from ..adapters.held_dir import HeldDir
+
+    parts = PurePosixPath(relative.replace('\\', '/')).parts
+    if not parts or any(p in {'', '.', '..'} or ':' in p or p.startswith('/') for p in parts):
+        raise ValueError('source path is not workspace-relative')
+    with contextlib.ExitStack() as stack:
+        held = stack.enter_context(HeldDir.hold(Path(root)))
+        for part in parts[:-1]:
+            held = stack.enter_context(held.child(part))
+        with os.fdopen(held.open_read_file(parts[-1]), 'rb') as opened:
+            info = os.fstat(opened.fileno())
+            if info.st_nlink != 1 or info.st_size > limit:
+                raise ValueError('source is linked or too large')
+            data = opened.read(limit + 1)
+            if len(data) > limit:
+                raise ValueError('source grew beyond limit')
+            return data
+
+
+def _paper_keys(receipt):
+    from ..tools.annot_literature import parse_paper_id
+    aliases = receipt.get('paper_ids')
+    aliases = aliases[:4] if isinstance(aliases, list) else []
+    keys = set()
+    for raw in [receipt.get('paper_id'), *aliases]:
+        try:
+            keys.add(parse_paper_id(raw).key)
+        except ValueError:
+            pass
+    return keys
+
+
+def _saved_papers(root):
+    """Index bounded plain sidecars. Aliases come from the tool's receipt, never a title or ledger guess."""
+    from ..adapters.held_dir import HeldDir
+    from ..tools.annot_literature import parse_paper_id
+    found = {}
+    try:
+        with HeldDir.hold(Path(root)) as held, held.child('.tmp') as tmp, tmp.child('literature') as papers:
+            entries = papers.entries(512)
+        for entry in entries:
+            if entry.kind != 'file' or not entry.name.endswith('.md.receipt.json'):
+                continue
+            try:
+                path = '.tmp/literature/' + entry.name.removesuffix('.receipt.json')
+                receipt = json.loads(_source_bytes(root, path + '.receipt.json', 128_000))
+                original = parse_paper_id(receipt.get('paper_id'))
+                if original.file_name() != entry.name.removesuffix('.receipt.json'):
+                    continue
+                if receipt.get('access_level') not in {'full_text', 'abstract'}:
+                    continue
+                for key in _paper_keys(receipt):
+                    found.setdefault(key, []).append((root, path, receipt.get('text_sha256')))
+            except (OSError, ValueError, TypeError, AttributeError):
+                continue
+    except (OSError, ValueError, TypeError):
+        pass
+    return found
+
+
+def source_texts_for(ledger: Mapping, result, upstream=(), precedents=()) -> dict[str, str]:
+    """Read only collected/hash-bound artifacts or the cited paper's saved hash receipt.
+
+    ``upstream`` contains successful DAG ancestors only. A source's observation, URI and arbitrary locator
+    never become file paths. Missing, changed, unsafe or oversized text remains unavailable; no network lookup.
+    """
+    from .claims import normalize_artifact_path, registry_id
+    from ..research.precedent_texts import file_name, rows as precedent_rows
+    from ..tools.annot_literature import parse_paper_id
+
+    def get(row, key):
+        return row.get(key) if isinstance(row, Mapping) else getattr(row, key, None)
+
+    if isinstance(precedents, Mapping):
+        aliases = {receipt.get('text_sha256'): _paper_keys(receipt)
+            for item in precedents.get('papers') or [] if isinstance(item, Mapping)
+            and isinstance(receipt := item.get('fulltext_receipt'), Mapping)
+            and isinstance(receipt.get('text_sha256'), str)}
+        precedents = [{**row, 'paper_ids': list(aliases.get(row['text_sha256'], ())) }
+                      for row in precedent_rows(precedents)]
+    artifacts = {}
+    for owner in (result, *upstream):
+        root = get(owner, 'workdir')
+        if not root:
+            continue
+        hashes = get(owner, 'output_sha256') or {}
+        for path in get(owner, 'outputs') or []:
+            names = [f'{root}/{path}']
+            if get(owner, 'workdir_id'):
+                names.append(f"{get(owner, 'workdir_id')}/{path}")
+            if owner is result:
+                names.append(path)
+            for name in names:
+                artifacts[normalize_artifact_path(name)] = (root, path, hashes.get(path))
+    refs = {str(row.get('artifact_id')): str(row.get('path') or '')
+            for row in ledger.get('artifact_refs') or [] if isinstance(row, Mapping)}
+    texts, cache, saved = {}, {}, None
+    remaining = 16 * MAX_SOURCE_BYTES
+    for row in ledger.get('evidence') or []:
+        if not isinstance(row, Mapping) or row.get('status') not in (None, 'observed'):
+            continue
+        source = row.get('source') or {}
+        if not isinstance(source, Mapping):
+            continue
+        candidates = []
+        try:
+            if source.get('artifact_id'):
+                candidates.append(artifacts[normalize_artifact_path(refs[str(source['artifact_id'])])])
+            else:
+                scheme, value = ((source['id_scheme'], source['id_value'])
+                    if source.get('id_scheme') and source.get('id_value')
+                    else registry_id(str(source.get('uri') or '')) or ('', ''))
+                paper = parse_paper_id(f'{scheme}:{value}')
+                root = get(result, 'workdir')
+                if saved is None:
+                    saved = _saved_papers(root)
+                candidates.extend(sorted(saved.get(paper.key, []), key=lambda item: item[1] !=
+                                         '.tmp/literature/' + paper.file_name()))
+                # A repeat lookup can leave only metadata, a corrupt receipt, or unreadable text. Each is
+                # one failed candidate, not a reason to hide an already-staged precedent of the same paper.
+                candidates.extend((root, 'inputs/precedent/' + file_name(item, index), item.get('text_sha256'))
+                    for index, item in enumerate(precedents, 1)
+                    if paper.key in _paper_keys(item) and item.get('access_level') in {'full_text', 'abstract'})
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+        for root, path, digest in candidates:
+            try:
+                if not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest):
+                    continue
+                key = (str(root), path, digest)
+                if key not in cache:
+                    data = _source_bytes(root, path, min(MAX_SOURCE_BYTES, remaining))
+                    remaining -= len(data)
+                    if hashlib.sha256(data).hexdigest() != digest:
+                        continue
+                    cache[key] = data.decode('utf-8')
+                texts[str(row.get('id') or '')] = cache[key]
+                break
+            except (OSError, ValueError, TypeError, AttributeError):
+                continue
+    return texts
+
+
+def check_evidence(ledger: Mapping, source_texts: Mapping[str, str]) -> list[dict]:
+    """Check explicit quotations and declared quantities against already-read evidence text.
+
+    ``matched`` means literal presence, never scientific support. Missing text and nonliteral
+    quantities remain unverified. Callers supply text keyed by evidence ID after checking provenance.
+    """
+    results = []
+    for row in ledger.get("evidence") or []:
+        if not isinstance(row, Mapping):
+            continue
+        quotes = [a or b for a, b in re.findall(r'"([^"\n]+)"|“([^”\n]+)”', str(row.get("observation") or ""))]
+        values = [q.get("value") for q in row.get("quantities") or []
+                  if isinstance(q, Mapping) and q.get("value") is not None]
+        if not quotes and not values:
+            continue
+        ident = str(row.get("id") or "")
+        text = source_texts.get(ident)
+        problems = []
+        state = "matched"
+        if not isinstance(text, str) or not text.strip():
+            state, problems = "unverified", ["source text unavailable for literal check"]
+        else:
+            source = Source(text)
+            for quote in quotes:
+                if not source.holds_quote(quote):
+                    problems.append(f"quote not found in source: {quote}")
+            unknown = False
+            for value in values:
+                literal = str(value).strip()
+                quantity = Quantity.parse(literal) if _NUMBER.fullmatch(literal) else None
+                if quantity is None:
+                    unknown = True
+                    problems.append(f"quantity requires reviewer interpretation: {literal}")
+                elif not is_supported(quantity, source.quantities):
+                    problems.append(f"quantity not found in source: {literal}")
+            state = ("mismatch" if any("not found" in p for p in problems) else
+                     "unverified" if unknown else "matched")
+        results.append({"evidence_id": ident, "state": state, "problems": problems})
+    return results
 
 
 @dataclass(frozen=True, slots=True)

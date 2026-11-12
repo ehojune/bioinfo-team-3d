@@ -45,12 +45,14 @@ function safeReportImageHref(value) {
   const href = safeReportHref(raw);
   return href && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(href) && !href.startsWith('#') ? href : '';
 }
-function reportInline(value) {
+function reportInline(value, requestId, footnotes) {
   const kept = [];
   const keep = html => `\u0000${kept.push(html) - 1}\u0000`;
   let text = String(value ?? '').replace(/\u0000/g, '');
   text = text.replace(/!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_all, alt, raw) => {
     const imageHref = safeReportImageHref(raw);
+    if (requestId && imageHref && !/^data:/i.test(imageHref))
+      return keep(`<figure><img data-report-asset="${reportEsc(imageHref)}" alt="${reportEsc(alt)}"><figcaption>${reportEsc(alt)}</figcaption></figure>`);
     if (imageHref) return keep(`<figure><img src="${reportEsc(imageHref)}" alt="${reportEsc(alt)}"><figcaption>${reportEsc(alt)}</figcaption></figure>`);
     const linkHref = safeReportHref(raw);
     return keep(linkHref ? `<a href="${reportEsc(linkHref)}" target="_blank" rel="noopener noreferrer">${reportEsc(alt || raw)}</a>`
@@ -58,19 +60,36 @@ function reportInline(value) {
   });
   text = text.replace(/\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_all, label, raw) => {
     const href = safeReportHref(raw);
+    if (requestId && href && !/^(?:https?:|mailto:|#)/i.test(href))
+      return keep(`<a href="#" data-report-asset="${reportEsc(href)}">${reportEsc(label)}</a>`);
     return keep(href ? `<a href="${reportEsc(href)}" target="_blank" rel="noopener noreferrer">${reportEsc(label)}</a>`
       : reportEsc(label));
   });
   text = text.replace(/`([^`\n]+)`/g, (_all, code) => keep(`<code>${reportEsc(code)}</code>`));
+  text = text.replace(/\[\^([^\]\n]+)\]/g, (_all, label) => {
+    const key = label.trim();
+    if (!footnotes.has(key)) footnotes.set(key, footnotes.size + 1);
+    return keep(`[근거 ${footnotes.get(key)}]`);
+  });
   text = reportEsc(text)
     .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '<strong>$1</strong>')
     .replace(/~~(?=\S)(.+?)(?<=\S)~~/g, '<del>$1</del>')
     .replace(/(?<![A-Za-z0-9_*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![A-Za-z0-9_*])/g, '<em>$1</em>');
   return text.replace(/\u0000(\d+)\u0000/g, (_all, index) => kept[Number(index)] || '');
 }
-function reportMarkdownHTML(markdown) {
+function reportMarkdownHTML(markdown, requestId) {
+  const footnotes = new Map(), definitions = new Map();
+  const inline = value => reportInline(value, requestId, footnotes);
+  let fenced = '';
   const lines = String(markdown || '').replace(/\r\n?/g, '\n')
     .replace(/\[\[\s*claim\s*:[^\[\]\n]+\]\]/gi, '[근거]').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const fence = lines[i].match(/^\s{0,3}(`{3,}|~{3,})/);
+    if (fence) { if (!fenced) fenced = fence[1]; else if (fence[1][0] === fenced[0] && fence[1].length >= fenced.length) fenced = ''; continue; }
+    if (fenced) continue;
+    const definition = lines[i].match(/^\[\^([^\]\n]+)\]:\s*(.*)$/);
+    if (definition) { if (!definitions.has(definition[1].trim())) definitions.set(definition[1].trim(), definition[2]); lines[i] = ''; }
+  }
   const out = [];
   for (let i = 0; i < lines.length;) {
     const line = lines[i];
@@ -82,25 +101,26 @@ function reportMarkdownHTML(markdown) {
     }
     if (/^ {0,3}<!-- labhq-report-package:(?:v1|end) -->\s*$/.test(line)) { i++; continue; }
     const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
-    if (heading) { const level = Math.min(6, heading[1].length + 1); out.push(`<h${level}>${reportInline(heading[2])}</h${level}>`); i++; continue; }
+    if (heading) { const level = Math.min(6, heading[1].length + 1); out.push(`<h${level}>${inline(heading[2])}</h${level}>`); i++; continue; }
     if (i + 1 < lines.length && /^\s*\|?.+\|.+\|?\s*$/.test(line) && /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[i + 1])) {
       const cells = row => row.trim().replace(/^\||\|$/g, '').split('|').map(cell => cell.trim());
       const header = cells(line); i += 2; const rows = [];
       while (i < lines.length && lines[i].includes('|') && lines[i].trim()) rows.push(cells(lines[i++]));
-      out.push(`<table><thead><tr>${header.map(cell => `<th>${reportInline(cell)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${header.map((_cell, n) => `<td>${reportInline(row[n] || '')}</td>`).join('')}</tr>`).join('')}</tbody></table>`); continue;
+      out.push(`<table><thead><tr>${header.map(cell => `<th>${inline(cell)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${header.map((_cell, n) => `<td>${inline(row[n] || '')}</td>`).join('')}</tr>`).join('')}</tbody></table>`); continue;
     }
     const item = line.match(/^\s*[-*+]\s+(.+)$/);
     if (item) {
       const items = [];
       while (i < lines.length) { const found = lines[i].match(/^\s*[-*+]\s+(.+)$/); if (!found) break; items.push(found[1]); i++; }
-      out.push(`<ul>${items.map(value => `<li>${reportInline(value)}</li>`).join('')}</ul>`); continue;
+      out.push(`<ul>${items.map(value => `<li>${inline(value)}</li>`).join('')}</ul>`); continue;
     }
     if (!line.trim()) { i++; continue; }
-    if (/^!\[[^\]\n]*\]\([^)]+\)$/.test(line.trim())) { out.push(reportInline(line.trim())); i++; continue; }
+    if (/^!\[[^\]\n]*\]\([^)]+\)$/.test(line.trim())) { out.push(inline(line.trim())); i++; continue; }
     const paragraph = [line.trim()]; i++;
     while (i < lines.length && lines[i].trim() && !/^\s*(?:#{1,6}\s|[-*+]\s|```|~~~)/.test(lines[i])) paragraph.push(lines[i++].trim());
-    out.push(`<p>${reportInline(paragraph.join(' '))}</p>`);
+    out.push(`<p>${inline(paragraph.join(' '))}</p>`);
   }
+  if (footnotes.size) out.push(`<h3>Claim 근거</h3><ol>${[...footnotes.keys()].map(key => `<li>${inline(definitions.get(key) || '근거 원장은 저장소의 docs/reference/claim_evidence.md에 있습니다.')}</li>`).join('')}</ol>`);
   return `<div class="report-markdown">${out.join('\n')}</div>`;
 }
 function reportWithPackage(markdown, reportPackage) {
@@ -112,7 +132,7 @@ function reportWithPackage(markdown, reportPackage) {
     : `- 해당 없음 — ${omission || '이 항목이 기록되지 않았습니다.'}`;
   const evidence = Array.isArray(p.evidence_notes) && p.evidence_notes.length
     ? p.evidence_notes.map((value, index) => `- [근거 ${index + 1}] 근거 원장 \`${String(value)}\``).join('\n')
-    : '- 근거 각주가 없습니다.';
+    : '- 근거 원장 표식이 없습니다.';
   const front = [
     ['질문', String(p.question || '질문 기록 없음')],
     ['답', String(p.answer || '답이 기록되지 않았습니다.')],

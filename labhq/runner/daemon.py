@@ -2512,8 +2512,10 @@ class Runner:
                         "Save scripts and intermediate files only in outputs/ or .tmp/. "
                         "If an input is unavailable, ask the CSO; there is no direct-path fallback.")
                 if whole_hpc:
-                    if unavailable:
-                        raise ValueError("HPC ancestor snapshot unavailable: " + "; ".join(unavailable.values()))
+                    # Literature copies are advisory; only a missing artifact snapshot prevents dispatch (#1385).
+                    missing_artifacts = {sid: reason for sid, reason in unavailable.items() if sid in artifacts}
+                    if missing_artifacts:
+                        raise ValueError("HPC ancestor snapshot unavailable: " + "; ".join(missing_artifacts.values()))
                     shared = await asyncio.to_thread(ws.publish_hpc_inputs, local_ancestors, staged_inputs,
                                                      self.s.runner.input_hash_max_file_bytes,
                                                      self.s.runner.input_hash_max_total_bytes)

@@ -7233,6 +7233,43 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return Response(payload, media_type="application/zip",
                         headers={"Content-Disposition": 'attachment; filename="labhq-audit.zip"'})
 
+    @app.get("/api/requests/{rid}/report-asset", dependencies=[Depends(auth)])
+    async def report_asset(rid: str, path: str) -> Response:
+        """Read an asset only from this request's completed, non-controlled bundle."""
+        import re
+
+        from ..report_figures import classify, figure_owners
+        from ..report_pdf import ReportRefused, _plain_dir, check_buildable
+        from ..ro_crate import _plain_file
+
+        if rid not in hub.requests or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", rid):
+            raise HTTPException(404)
+        req = hub.requests[rid]
+        tasks = {key: task for key, task in hub.store.all("task").items()
+                 if isinstance(task, dict) and task.get("request_id") == rid}
+        try:
+            check_buildable(req, settings, tasks)
+        except ReportRefused as exc:
+            raise HTTPException(409, str(exc)) from exc
+        root = settings.path(settings.runner.workspace_root).resolve() / "requests"
+        bundle = root / rid
+        if not _plain_dir(root) or not _plain_dir(bundle):
+            raise HTTPException(404)
+        kind, relative = classify(path)
+        if kind != "local":
+            raise HTTPException(404)
+        owner, _, rest = relative.partition("/")
+        owners = figure_owners(req.get("results") or {})
+        if owner in owners and rest.startswith("outputs/"):
+            relative = f"steps/{owners[owner]}/{rest}"
+        try:
+            payload = await asyncio.to_thread(_plain_file(bundle, relative).read_bytes)
+        except (OSError, ValueError):
+            raise HTTPException(404) from None
+        return Response(payload, media_type="application/octet-stream", headers={
+            "Content-Disposition": "attachment", "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'"})
+
     @app.get("/api/requests/{rid}/report-pdf", dependencies=[Depends(auth)])
     async def report_pdf(rid: str) -> Response:
         """The finished request's report with its figures as a PDF; the HTML and a reason when no browser can print (#584)."""

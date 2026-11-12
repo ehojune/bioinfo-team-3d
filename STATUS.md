@@ -4,6 +4,31 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1385 r4 — 저장 원문 대조 연결
+
+| 항목 | 결과 |
+|---|---|
+| 4 | 기본 로컬 대조 → CP2 거부·한계 → 보고서 검사 연결. 수집 산출·문헌·선례 사본의 hash 확인. 외부 ID 조회는 opt-in 유지 |
+| 6·8 | OA 첫 제목·DOI 대조, 이전 캐시 제외. 초록 일괄 보존·PMC 우선·논문당 상한·응답 직후 몫 반환 |
+| 9 | HPC의 문헌 전달 경고와 산출 입력 누락 분리. 경고는 전달하고 누락은 계속 거부 |
+| 회귀 | 초기 통합 시험 9 failed → 12 passed. 관련 11개 파일 554 passed·7 skipped. 최종 head CI/리뷰는 PR #1393에서 추적 |
+| 리뷰 수정 | metadata·파손·hash 불일치 사본이 있어도 검증된 선례 사본을 시도. 수정 전 5 failed·1 passed → 관련 132 passed |
+| P1 수정 | DOI·제목을 인용한 다른 논문 거부. 재현 4 failed → 문헌 관련 197 passed |
+| HTML 수정 | 탐색 메뉴를 제외한 첫 h1을 제목으로 대조. 재현 1 failed·1 passed → 문헌 관련 199 passed. 뒤쪽 제목으로 첫 제목을 대체하지 않음 |
+| 후속 P2 | 제목 표식·entity·inline 공백 보존, receipt의 DOI/PMID/PMCID 대응·registry URL로 문헌·선례 사본 조회. 미기록 별칭·hash 불일치는 거부 |
+| 실제 자료 | 저장된 KRAS 11차 후보표·사본 receipt 대조. 목표 미충족, 상세와 필요한 자료는 #1385에 기록 |
+
+PR #1393 draft·hold 유지. 실제 확보율을 합성 fixture 통과로 대체하지 않는다. 외부 조회·HPC·PI 인스턴스 실행 없음.
+
+# #1384 보고서 자산과 각주
+
+## 결과
+- 2.5D 상대 자산을 인증된 요청 묶음에서 불러오고 웹·PDF 각주와 내부 표식을 정리했다.
+- 수정 전 자산 경로 회귀 실패. 수정 후 Python 91건, Node 10건 통과. 인증·경로 이탈·통제 데이터 차단을 합성 요청으로 확인했다.
+- 합성 보고서를 Edge로 PDF 출력해 앞부분과 본문의 같은 각주 번호, 출처와 내부 표식 제거를 확인했다.
+- 실제 2.5D 화면과 원본 request/results·ledger·review 대조는 미검증이다. #1384 전체 완료는 아니다.
+- 각주 정의의 Markdown·인증 자산 링크를 수정했다. Linux fixture와 cache 버전 기대 실패를 재현해 고쳤으며 관련 Python 85건·Node 17건이 통과했다. Windows inventory에 자산 시험을 등록했다.
+
 # #1383 인용 감사 도구 오판정 두 건
 
 ## 결론
@@ -44,6 +69,25 @@ Runner 메시지를 먼저 보존하고 공개·처리 상태를 나눴다. 결�
 - 외부 부수효과의 결과를 알 수 없으면 자동 재실행하지 않는다. 실제 PI 인스턴스와 운영 환경은 검증하지 않았다.
 - 제거 회귀 14건, gateway 관련 137건, 기존 회귀 95건 통과(2건 skip). 최종 CI와 리뷰는 PR에서 확인한다.
 - 독립 activity 재개 회귀는 수정 전 실패, 수정 후 gateway 관련 141건 통과. 불확실한 ask는 여전히 재개를 막는다.
+
+# #1385 B — draft/hold, 통합 대기
+
+| 항목 | 구현·잔여 |
+|---|---|
+| 4 | literal_check API 구현. A report gate·C settings 연결 대기 |
+| 6 | OA 본문 DOI·제목 대조, OpenAlex fallback 정체성 보존 |
+| 8 | 초록 일괄 저장·PMC 우선·논문당 송신 8회·OA 3곳·응답 즉시 몫 반환 |
+| 9 | 문헌 전달 경고. whole-HPC 경고를 중단 사유로 삼는 P2 잔여 |
+
+- r3: receipt fixture에 metadata와 같은 제목·DOI를 넣음. 수정 전 3 failed/50 passed → 관련 7개 파일 262 passed. 빈 페이지·coverage·receipt/plan/build·hash 단언 유지. 제품 검사는 변경 없음.
+- 후속 P2: 일괄 HTTP 오류를 논문별 재조회로 격리하고 fallback REST 버전 보존. 수정 전 회귀 7 failed → 문헌·receipt·차단기 193 passed. fix `313b9ff2`.
+- 후속 P2: 제공자 파싱 오류에도 초록 보존·캐시 제외. 몫 반환 HTTP 오류는 재시도하며 미확인 몫의 추가 송신 거부. 회귀 7 failed/3 passed → 관련 203 passed. fix `128f1dae`.
+- 이전 CI: Linux 3.10/3.12·Windows 공통 fixture 3건 실패. Linux 3.12의 Gateway timeout 1건은 로컬 단독 1 passed이며 원인 미확인. 새 head CI·실제 리뷰 추적 중.
+- r2 리뷰 P1 2건·P2 5건 수정. 실패 재현·fix SHA는 PR #1393 리뷰 답글 참조. 차단기 송신 3회·이후 차단 단언 유지.
+- A/C 연결·whole-HPC P2·실제 KRAS 사본 대조·최종 검증·병합 미완료. 합성 9편/6편은 실제 확보율 근거가 아님.
+- 외부 문헌 조회·HPC·PI 인스턴스 실행 없음. r2 cwd check 거절 뒤 편집한 절차 오류는 issue에 보존.
+
+관련: #1380, #1384, #1386, PR #1393. 통합·실제 대조·검증 전 draft/hold 유지.
 
 # #1384 보고서 검사와 웹 표식
 

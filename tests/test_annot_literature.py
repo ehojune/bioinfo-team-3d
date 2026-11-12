@@ -17,6 +17,7 @@ from labhq.settings import Settings
 from labhq.tools import annot, annot_literature as lit
 from tests.test_annot import FakeTime
 from tests.test_direct_outputs import _workspace as direct_workspace
+from tests.test_external_wait import mcp_module, limited  # admission fixtures use the real offline ledger
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -79,9 +80,103 @@ def search_answer(records):
     return httpx.Response(200, json={"version": "6.9", "hitCount": len(records), "resultList": {"result": records}})
 
 
-def complete_fallback_pdf(label="Repository full text"):
-    body = f"Introduction {label}. Methods " + ("complete study body " * 80) + " Results complete findings."
+def complete_fallback_pdf(label="Repository full text", doi="10.1000/test", title="Sex ratio and paternal work."):
+    body = f"{title} DOI {doi}. Introduction {label}. Methods " + ("complete study body " * 80) + " Results complete findings."
     return b"%PDF-1.4\nBT (" + body.encode("ascii") + b") Tj ET\n%%EOF"
+
+
+@pytest.mark.asyncio
+async def test_oa_copy_with_another_identity_is_not_full_text(tmp_path):
+    def handler(request):
+        if request.url.path.endswith('/search'):
+            return search_answer([record(pmcid=None, oa='N')])
+        if request.url.host == 'api.openalex.org':
+            return httpx.Response(200, json={'results': [{
+                'doi': 'https://doi.org/10.1000/test', 'title': 'Sex ratio and paternal work',
+                'best_oa_location': {'pdf_url': 'http://93.184.216.34/wrong.pdf'}}]})
+        return httpx.Response(200, content=complete_fallback_pdf('Unrelated study', doi='10.1000/wrong'),
+                              headers={'content-type': 'application/pdf'})
+    annotator, _ = make(handler, tmp_path)
+    row = (await annotator.fulltext(['123']))['results'][0]
+    assert row['access_level'] == 'abstract'
+    assert row['unread_reason'] == 'identity_mismatch'
+
+
+@pytest.mark.asyncio
+async def test_batch_gets_every_abstract_before_any_body(tmp_path):
+    events = []
+    records = [record(pmid=str(i), pmcid=f'PMC{i}') for i in range(1, 10)]
+    def handler(request):
+        if request.url.path.endswith('/search'):
+            events.append('metadata')
+            return search_answer(records)
+        events.append('body')
+        if request.url.path.endswith('/fullTextXML'):
+            i = int(request.url.path.split('/')[-2][3:])
+            return httpx.Response(200, text=JATS) if i <= 6 else httpx.Response(404)
+        return httpx.Response(200, json={'results': []})
+    annotator, _ = make(handler, tmp_path)
+    rows = (await annotator.fulltext([str(i) for i in range(1, 10)]))['results']
+    assert events.count('metadata') == 1
+    assert [row['pmid'] for row in rows] == [str(i) for i in range(1, 10)]
+    assert sum(row['access_level'] == 'full_text' for row in rows) == 6
+    assert sum('## Abstract' in (tmp_path / 'work' / row['text_file']).read_text(encoding='utf-8')
+               for row in rows) == 9
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', [302, 503])
+async def test_refundable_response_returns_quota_before_the_next_send(mcp_module, limited, monkeypatch, status):
+    monkeypatch.setattr(mcp_module, 'HOST_ANSWERS', {})
+    limited.ledger.limit = 1
+    limited.provider = lambda request: httpx.Response(status)
+    async with mcp_module._admitted('fulltext') as hooks, httpx.AsyncClient(**hooks) as client:
+        assert (await client.get('https://www.ebi.ac.uk/a')).status_code == status
+        assert limited.ledger.usage('req-1')['used'] == 0
+        assert (await client.get('https://www.ebi.ac.uk/b')).status_code == status
+    assert len(limited.sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_per_paper_send_limit_preserves_the_abstract(tmp_path, monkeypatch):
+    def handler(request):
+        if request.url.path.endswith('/search'):
+            return search_answer([record(pmcid=None)])
+        if request.url.host == 'api.openalex.org':
+            return httpx.Response(200, json={'results': [{'best_oa_location': {
+                'pdf_url': 'http://93.184.216.34/paper.pdf'}}]})
+        return httpx.Response(302, headers={'location': '/next.pdf'})
+    monkeypatch.setattr(lit, 'MAX_BODY_SENDS_PER_PAPER', 3)
+    annotator, calls = make(handler, tmp_path)
+    row = (await annotator.fulltext(['123']))['results'][0]
+    assert len(calls) == 4  # one metadata request, then exactly three body/provider sends
+    assert row['access_level'] == 'abstract' and '상한' in row['fulltext_error']
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('Sex ratio and paternal work. DOI 10.1000/test', True),
+    ('Sex ratio and paternal work.', True),
+    ('Unrelated title. DOI 10.1000/test', False),
+    ('Sex ratio and paternal work. DOI 10.1000/other', False),
+    ('Introduction Methods Results ' * 100, False),
+])
+def test_oa_identity_checks_downloaded_text_before_adding_our_header(text, expected):
+    assert lit._copy_identity(text, record()) is expected
+
+
+@pytest.mark.asyncio
+async def test_pmc_bodies_precede_provider_fanout_even_when_closed_paper_is_first(tmp_path):
+    def handler(request):
+        if request.url.path.endswith('/search'):
+            return search_answer([record('1', None, 'N'), record('2')])
+        if request.url.path.endswith('/fullTextXML'):
+            assert (tmp_path / 'work/.tmp/literature/pmid-1.md').is_file()
+            return httpx.Response(200, text=JATS)
+        return httpx.Response(200, json={'results': []})
+    annotator, calls = make(handler, tmp_path)
+    rows = (await annotator.fulltext(['1', '2']))['results']
+    assert [row['pmid'] for row in rows] == ['1', '2']  # retain caller order
+    assert calls[1].url.path.endswith('/fullTextXML')
 
 
 def by_query(table, xml=JATS):
@@ -91,7 +186,10 @@ def by_query(table, xml=JATS):
             return httpx.Response(200, json={"meta": {"count": 0}, "results": []})
         if request.url.path.endswith("/fullTextXML"):
             return httpx.Response(200, text=xml) if "PMC999" in request.url.path else httpx.Response(404)
-        return search_answer(table.get(request.url.params["query"], []))
+        query = request.url.params['query']
+        if ' OR ' in query:
+            return search_answer([row for key in query.split(' OR ') for row in table.get(key[1:-1], [])])
+        return search_answer(table.get(query, []))
     return handler
 
 
@@ -430,14 +528,15 @@ def test_pdf_fallback_rejects_a_single_partial_literal():
 
 
 async def test_fulltext_tries_oa_providers_when_europe_pmc_has_no_record(tmp_path):
-    pdf = complete_fallback_pdf("Open access paper outside Europe PMC")
+    title = 'Open access paper outside Europe PMC'
+    pdf = complete_fallback_pdf(title, doi="10.1000/outside", title=title)
 
     def handler(request):
         if request.url.host == "www.ebi.ac.uk":
             return search_answer([])
         if request.url.host == "api.unpaywall.org":
             return httpx.Response(200, json={
-                "doi": "10.1000/outside", "is_oa": True, "oa_status": "gold",
+                "doi": "10.1000/outside", "title": title, "is_oa": True, "oa_status": "gold",
                 "best_oa_location": {"url_for_pdf": "http://93.184.216.34/paper.pdf",
                                      "host_type": "publisher", "license": "cc-by"},
                 "oa_locations": [],
@@ -452,6 +551,190 @@ async def test_fulltext_tries_oa_providers_when_europe_pmc_has_no_record(tmp_pat
     row = (await annotator.fulltext(["10.1000/outside"]))["results"][0]
     assert row["access_level"] == "full_text" and row["doi"] == "10.1000/outside"
     assert any(call.url.host == "api.unpaywall.org" for call in calls)
+
+
+@pytest.mark.parametrize("malformed", [None, [], {"resultList": [1]}, {"resultList": {"result": [1]}},
+                                       {"resultList": {"result": {"pmid": "123"}}}, 400, 414])
+async def test_malformed_batch_metadata_falls_back_without_losing_other_papers(tmp_path, malformed):
+    def handler(request):
+        if request.url.path.endswith("/fullTextXML"):
+            return httpx.Response(200, text=JATS)
+        query = request.url.params["query"]
+        if " OR " in query:
+            if isinstance(malformed, int):
+                return httpx.Response(malformed)
+            return httpx.Response(200, text="not json") if malformed is None else httpx.Response(200, json=malformed)
+        if "EXT_ID:123 " in query:
+            return httpx.Response(200, text="still malformed")
+        return search_answer([record("456")])
+
+    annotator, _ = make(handler, tmp_path)
+    out = await annotator.fulltext(["123", "456"])
+    rows = out["results"]
+    assert rows[0]["ok"] is False
+    assert rows[1]["ok"] and rows[1]["access_level"] == "full_text"
+    assert out["source"]["release_or_version"] == "REST 6.9"
+
+
+@pytest.mark.parametrize("malformed", [None, [], {"resultList": [1]}, {"resultList": {"result": [1]}},
+                                       {"resultList": {"result": {"pmid": "123"}}}])
+async def test_malformed_single_metadata_is_a_lookup_failure(tmp_path, malformed):
+    def handler(request):
+        return httpx.Response(200, text="not json") if malformed is None else httpx.Response(200, json=malformed)
+
+    annotator, _ = make(handler, tmp_path)
+    with pytest.raises(annot.LookupFailed):
+        await annotator.fulltext(["123"])
+
+
+@pytest.mark.parametrize("provider", ["api.openalex.org", "api.unpaywall.org"])
+@pytest.mark.parametrize("malformed", [None, []])
+async def test_provider_parse_failure_preserves_abstract_and_is_not_cached(tmp_path, provider, malformed):
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([record("123", None, "N", None)])
+        assert request.url.host == provider
+        return httpx.Response(200, text="not json") if malformed is None else httpx.Response(200, json=malformed)
+
+    annotator, calls = make(handler, tmp_path, unpaywall_email=(
+        "owner@example.org" if provider == "api.unpaywall.org" else ""))
+    for _ in range(2):
+        row = (await annotator.fulltext(["123"]))["results"][0]
+        assert row["ok"] and row["access_level"] == "abstract" and row["fulltext_error"]
+        assert "Boys were 51.2% of births." in (tmp_path / "work" / row["text_file"]).read_text(encoding="utf-8")
+        assert row["fulltext_receipt"]["access_level"] == "abstract"
+    assert sum(request.url.host == "www.ebi.ac.uk" for request in calls) == 2
+
+
+@pytest.mark.parametrize("doi", ["10.1002/(SICI)1097-0312(199605)49:5<235::AID-CPA2>3.0.CO;2-1",
+                                "10.1000/kinase(1)"])
+@pytest.mark.parametrize("suffix", ["", ".", ")"])
+def test_copy_identity_preserves_doi_suffix_punctuation(doi, suffix):
+    meta = {"doi": doi, "title": "A specific study"}
+    assert lit._copy_identity(f"A specific study\n{doi}{suffix}\nAbstract", meta)
+    assert not lit._copy_identity(f"A specific study\n{doi}another\nAbstract", meta)
+
+
+@pytest.mark.parametrize("text", ["An unrelated oncology study\nAbstract\nCancer is common.",
+                                  "Cancer genetics in adult cells\nAbstract", "Journal\nCancer\nAbstract"])
+def test_title_only_identity_does_not_search_body_substrings(text):
+    assert not lit._copy_identity(text, {"title": "Cancer"})
+
+
+def test_title_only_identity_accepts_a_complete_wrapped_title():
+    assert lit._copy_identity("Mechanisms of cancer\nprogression in adult cells\nAbstract",
+                              {"title": "Mechanisms of cancer progression in adult cells"})
+    assert lit._copy_identity("Cancer\nAbstract", {"title": "Cancer"})
+
+
+@pytest.mark.parametrize('text', [
+    'A different leading title\nReferences\nSex ratio and paternal work. DOI 10.1000/test',
+    'A different leading title. Cites Sex ratio and paternal work. DOI 10.1000/test',
+    'Journal\nSex ratio and paternal work.\nDOI 10.1000/test',
+])
+def test_matching_doi_cannot_replace_leading_title_proof(text):
+    assert not lit._copy_identity(text, record())
+
+
+def test_doi_alone_cannot_identify_a_full_copy_without_a_title():
+    assert not lit._copy_identity('Unrelated study. Cites DOI 10.1000/test', {'doi': '10.1000/test'})
+
+
+@pytest.mark.parametrize('metadata,heading', [
+    ('Role of <i>TP53</i>', 'Role of TP53'), ('AT&amp;T results', 'AT&T results'),
+    ('Role of H<sub>2</sub>O', 'Role of H2O'),
+])
+def test_metadata_title_markup_is_rendered_before_identity_check(metadata, heading):
+    assert lit._copy_identity(heading + '\nDOI 10.1000/test', {'title': metadata, 'doi': '10.1000/test'})
+
+
+def test_html_heading_keeps_whitespace_only_nodes_between_inline_elements():
+    body = ('<html><h1><span>Effect</span> <span>of</span> KRAS</h1><p>DOI 10.1000/test</p>'
+            '<h2>Methods</h2><p>' + 'study body ' * 150 + '</p><h2>Results</h2></html>')
+    text, _, _ = lit._copy_text(body.encode(), 'text/html')
+    assert text.splitlines()[0] == 'Effect of KRAS'
+    assert lit._copy_identity(text, {'title': 'Effect of KRAS', 'doi': '10.1000/test'})
+
+
+async def test_oa_copy_citing_target_near_start_is_not_stored_as_its_fulltext(tmp_path):
+    def handler(request):
+        if request.url.host == 'www.ebi.ac.uk':
+            return search_answer([record(pmcid=None)])
+        if request.url.host == 'api.openalex.org':
+            return httpx.Response(200, json={'results': [{'best_oa_location': {
+                'pdf_url': 'http://93.184.216.34/paper.pdf'}}]})
+        body = ('A different leading title. References: Sex ratio and paternal work. DOI 10.1000/test. '
+                'Introduction Methods Results ' + 'unrelated study body ' * 80)
+        return httpx.Response(200, content=b'%PDF-1.4\nBT (' + body.encode() + b') Tj ET\n%%EOF',
+                              headers={'content-type': 'application/pdf'})
+    annotator, _ = make(handler, tmp_path)
+    row = (await annotator.fulltext(['123']))['results'][0]
+    assert row['access_level'] == 'abstract' and row['unread_reason'] == 'identity_mismatch'
+    assert 'A different leading title' not in (tmp_path / 'work' / row['text_file']).read_text(encoding='utf-8')
+
+
+@pytest.mark.parametrize('first_heading', ['correct', 'different'])
+async def test_html_article_heading_is_used_after_page_chrome_without_searching_later_titles(tmp_path, first_heading):
+    title = 'Sex ratio and pater<em>nal</em> work.'
+    heading = title if first_heading == 'correct' else 'An unrelated study'
+    html = (f'<html><head><title>Sex ratio and paternal work. | Journal</title></head>'
+            f'<body><nav><h1>Journal</h1>Home Search Papers</nav><h1>{heading}</h1><p>DOI 10.1000/test</p>'
+            '<h2>Introduction</h2><p>' + 'study body ' * 150 + '</p><h2>Methods</h2>'
+            f'<p>Results</p><h1>{title}</h1></body></html>')
+    def handler(request):
+        if request.url.host == 'www.ebi.ac.uk':
+            return search_answer([record(pmcid=None)])
+        if request.url.host == 'api.openalex.org':
+            return httpx.Response(200, json={'results': [{'best_oa_location': {
+                'landing_page_url': 'http://93.184.216.34/paper.html'}}]})
+        return httpx.Response(200, text=html, headers={'content-type': 'text/html'})
+    annotator, _ = make(handler, tmp_path)
+    row = (await annotator.fulltext(['123']))['results'][0]
+    if first_heading == 'correct':
+        assert row['access_level'] == 'full_text'
+        assert row['oa_copy']['format'] == 'HTML'
+    else:
+        assert row['access_level'] == 'abstract' and row['unread_reason'] == 'identity_mismatch'
+
+
+def test_title_identifies_a_copy_when_metadata_has_no_doi():
+    meta = {"title": "A specific study of kinase inhibition"}
+    text = "A specific study of kinase inhibition\n10.1000/printed-only\nAbstract and methods"
+    assert lit._copy_identity(text, meta)
+    assert not lit._copy_identity(text, {"title": "An unrelated study"})
+    assert not lit._copy_identity(text, {**meta, "doi": "10.1000/expected"})
+
+
+@pytest.mark.parametrize("identifier", ["PMID:123", "PMC123"])
+@pytest.mark.parametrize("wrong_copy", [False, True])
+async def test_openalex_identity_survives_without_europe_pmc_record(tmp_path, identifier, wrong_copy):
+    title = "Open access paper outside Europe PMC"
+
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            return search_answer([])
+        if request.url.host == "api.openalex.org":
+            expected = "pmid:123" if identifier.startswith("PMID") else "pmcid:PMC123"
+            assert request.url.params["filter"] == expected
+            return httpx.Response(200, json={"results": [{
+                "id": "https://openalex.org/W1", "doi": "https://doi.org/10.1000/outside",
+                "title": title, "open_access": {"is_oa": True},
+                "best_oa_location": {"is_oa": True, "pdf_url": "http://93.184.216.34/paper.pdf"},
+            }]})
+        if request.url.host == "93.184.216.34":
+            pdf = complete_fallback_pdf("Another paper" if wrong_copy else title,
+                                        doi="10.1000/wrong" if wrong_copy else "10.1000/outside",
+                                        title="Another paper" if wrong_copy else title)
+            return httpx.Response(200, content=pdf, headers={"content-type": "application/pdf"})
+        raise AssertionError(request.url)
+
+    annotator, _ = make(handler, tmp_path)
+    row = (await annotator.fulltext([identifier]))["results"][0]
+    if wrong_copy:
+        assert row.get("access_level") != "full_text" and row["unread_reason"] == "identity_mismatch"
+    else:
+        assert row["access_level"] == "full_text" and row["read_source"] == "OpenAlex"
+        assert row["doi"] == "10.1000/outside" and row["title"] == title
 
 
 async def test_fulltext_tries_alternate_openalex_oa_locations(tmp_path):
@@ -508,7 +791,8 @@ async def test_fulltext_never_requests_a_private_oa_destination(tmp_path, blocke
     assert not any(call.url.host == "169.254.169.254" for call in calls)
 
 
-async def test_fulltext_uses_a_new_cache_release_after_oa_fallback(tmp_path, monkeypatch):
+@pytest.mark.parametrize('previous_release', ['europepmc-rest', 'europepmc-rest-oa-v5-identity'])
+async def test_fulltext_uses_a_new_cache_release_after_oa_fallback(tmp_path, monkeypatch, previous_release):
     current_release = lit.FULLTEXT_CACHE_RELEASE
     calls = []
     cached_handler = by_query({'EXT_ID:123 AND SRC:MED': [record()]})
@@ -517,7 +801,7 @@ async def test_fulltext_uses_a_new_cache_release_after_oa_fallback(tmp_path, mon
         calls.append(request)
         return cached_handler(request)
 
-    monkeypatch.setattr(lit, "FULLTEXT_CACHE_RELEASE", lit.CACHE_RELEASE)
+    monkeypatch.setattr(lit, "FULLTEXT_CACHE_RELEASE", previous_release)
     first, _first_calls = make(handler, tmp_path)
     await first.fulltext(["123"])
     monkeypatch.setattr(lit, "FULLTEXT_CACHE_RELEASE", current_release)
