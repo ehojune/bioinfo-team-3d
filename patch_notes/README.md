@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:52 | [`10bfefd`](https://github.com/ehojune/bioinfo-team-3d/pull/1396/commits/10bfefd) | **최신 main을 격리 실험 정리에 반영했습니다.**<br>다른 작업의 변경을 보존하며 충돌 없이 통합했습니다. |
 | 16:38 | [`6916b1b`](https://github.com/ehojune/bioinfo-team-3d/pull/1415/commits/6916b1b) | **패키지 캐시를 결과 목록에서 빼는 조건을 설명합니다.**<br>캐시 제외 조건을 한·영 설정 매뉴얼에 반영한다 (#1413). |
 | 16:27 | [`40da055`](https://github.com/ehojune/bioinfo-team-3d/pull/1415/commits/40da055) | **콘솔 종료 조사 결과를 기록했습니다.**<br>Windows 콘솔 종료를 독립 mock에서 재현한 조사 결과와 실제 장애 원인의 미확인 범위를 기록한다 (#1413). |
 | 16:23 | [`cdef98e`](https://github.com/ehojune/bioinfo-team-3d/pull/1415/commits/cdef98e) | **HPC 잡의 패키지 캐시가 결과 목록 상한을 차지하지 않게 합니다.**<br>원격 산출 목록에서 urls.txt와 압축 해제 패키지 메타데이터가 있는 conda pkgs 캐시를 제외한다 (#1413). |
@@ -23,11 +24,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 15:59 | [`e5b3d58`](https://github.com/ehojune/bioinfo-team-3d/pull/1414/commits/e5b3d58) | **탭이 있는 표 머리줄을 주석으로 지우지 않습니다.**<br>TSV에서 탭 없는 선행 # 행만 주석으로 처리하고 한 열짜리 # 머리줄의 제한을 문서화했습니다. |
 | 15:59 | [`9c00166`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/9c00166) | **메시지가 많이 보류돼도 상태 조회가 inbox를 반복해서 읽지 않도록 고쳤습니다.**<br>#1411 P2: runner별 누적 집계로 복구 안내를 판정한다. 40행 읽기 41→1회, 누락·동일 순서와 unknown ask 경계 4개 경우 일치, 관련 회귀 157건 통과. |
 | 15:46 | [`051bab0`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/051bab0) | **특수 문자가 든 runner 이름도 안내된 URL로 메시지를 복구하도록 고쳤습니다.**<br>#1411 P2: runner_id를 query로 전달하고 legacy 세대 표식을 고정한다. 특수 ID 재현 2건 실패 뒤 관련 105건과 기존 경로형 API 회귀 1건 통과. |
+| 15:36 | [`cea332e`](https://github.com/ehojune/bioinfo-team-3d/pull/1396/commits/cea332e) | **보존한 fixture의 참고 문서를 바로잡았습니다.**<br>남은 데이터 검사와 삭제한 integration을 구분했습니다. |
 | 15:36 | [`c856089`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/c856089) | **메시지 복구 안내가 기존 웹 화면의 시작·갱신 동작과 함께 작동하도록 고쳤습니다.**<br>#1411 CI: 3D 경고 영역과 단일 timer를 재사용하고 초기 snapshot을 상태 원본으로 유지한다. 기존 UI 실패 8건 수정 뒤 web·3D·시설 표시 116 passed, 1 skipped. 기존 harness·assertions는 유지했다. |
+| 15:30 | [`efc9e7a`](https://github.com/ehojune/bioinfo-team-3d/pull/1396/commits/efc9e7a) | **보존한 fixture의 데이터 검사를 복원했습니다.**<br>제품 연결 없이 validator와 corpus를 검사하고 Windows 목록에 되돌렸습니다. |
 | 15:25 | [`149ac28`](https://github.com/ehojune/bioinfo-team-3d/commit/149ac28) | **채용이 꺼졌을 때의 계획 안내를 매뉴얼에 적습니다.**<br>한영 매뉴얼에 빈 recruit 요청과 논문 스킬 선택 안내 생략을 설명하고 모델 준수는 미검증으로 남깁니다. |
 | 15:25 | [`d7defe6`](https://github.com/ehojune/bioinfo-team-3d/commit/d7defe6) | **채용이 꺼져 있을 때 계획에 채용 불가 안내를 넣습니다.**<br>일반·연구 계획과 일반 재계획에서 채용 및 논문 스킬 OFF를 안내하고 recruit를 빈 배열로 요청합니다. |
 | 15:19 | [`228d28a`](https://github.com/ehojune/bioinfo-team-3d/commit/228d28a) | **재계획 검사를 기존 시험 파일에서 실행합니다.**<br>Windows CI의 시험 목록에 맞춰 동일한 mock Task 검증을 기존 파일로 옮겼습니다. |
 | 15:14 | [`b928d11`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/b928d11) | **doctor가 원격 서버를 조회할 때 token을 보호하고 복구 명령을 안전하게 안내합니다.**<br>#1411 P1·P2: 원격 평문 조회 거부, redirect 금지, percent-encoded 복구 경로 검사와 Bash URL quoting을 적용했다. 재현 4건 실패 뒤 web·doctor 회귀 98건 통과. |
+| 15:10 | [`10b8d4c`](https://github.com/ehojune/bioinfo-team-3d/pull/1396/commits/10b8d4c) | **Windows 검사 경로를 위해 기존 fixture를 보존했습니다.**<br>당시 전용 시험을 삭제한 채 fixture 네 개를 원본으로 남겼습니다. 이후 데이터 검사를 복원했습니다. |
 | 15:05 | [`ebf078e`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/ebf078e) | **다른 runner의 메시지 보류가 전파되지 않게 하고 복구 안내를 웹과 doctor에 표시합니다.**<br>#1386 10번: 같은 runner의 ACK·세대·결과 불명 보류는 유지한다. 원문 없는 상태 조회와 두 UI의 5초 갱신, doctor --network 읽기와 수동 retry/resume 안내를 추가했다. 관련 mock 310건과 web·doctor 재검증 90건으로 확인했으며 운영 복구는 미검증이다. |
 | 15:00 | [`3c5731b`](https://github.com/ehojune/bioinfo-team-3d/pull/1410/commits/3c5731b) | **다음 단계로 넘기지 못한 문헌이 있으면 경고합니다.**<br>#1385 9번: 200개 초과 문헌 목록의 잘림과 원격 전용 조상의 문헌 미복사를 알린다. 문헌 경고만으로 HPC 배정을 막지 않으며 산출 입력 누락은 계속 거부한다. 관련 mock 회귀 45건 통과. |
 | 14:35 | [`fb72621`](https://github.com/ehojune/bioinfo-team-3d/pull/1410/commits/fb72621) | **문헌이 없는 원격 계산 단계에는 문헌 누락 경고를 띄우지 않습니다.**<br>#1410 P2: 링크를 따라가지 않고 문헌 목록만 확인한다. 문헌 없음·빈 폴더·inbox만 있는 경우의 오탐 재현 3건 실패 → 관련 48건 통과. 목록 검사 실패는 경고로 남긴다. |
@@ -37,6 +41,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 13:59 | [`4111e08`](https://github.com/ehojune/bioinfo-team-3d/pull/1408/commits/4111e08) | **설정 설명서에 멈춘 메시지를 자동으로 다시 처리하는 조건을 적었습니다.**<br>기록·CI: #1406 시험을 Windows 목록에 등록하고 manual에 보류 항목 자동 재판정을 적는다 |
 | 13:46 | [`a9d8896`](https://github.com/ehojune/bioinfo-team-3d/pull/1408/commits/a9d8896) | **재현 시험이 수정 뒤에는 실제로 통과하도록 시험 환경을 보완했습니다.**<br>시험: #1406 재현 hub에 session·incarnation 상태를 채워 수정 뒤 통과 경로를 연다 |
 | 13:32 | [`ace9294`](https://github.com/ehojune/bioinfo-team-3d/pull/1408/commits/ace9294) | **요청을 취소한 뒤 다음 요청의 결과가 반영되지 않던 문제를 재현하는 시험을 추가했습니다.**<br>시험: #1406 취소 뒤 runner inbox 막힘 재현 (strict xfail) |
+| 13:28 | [`b85b416`](https://github.com/ehojune/bioinfo-team-3d/pull/1396/commits/b85b416) | **삭제한 격리 실험의 참고 기록을 구분했습니다.**<br>남은 probe와 삭제된 observer·broker·transport·seal 설명을 구분했습니다. |
+| 13:19 | [`f274904`](https://github.com/ehojune/bioinfo-team-3d/pull/1396/commits/f274904) | **삭제한 격리 실험의 안내를 바로잡았습니다.**<br>남지 않은 observer·transport·검증 기능을 현재 매뉴얼에서 뺐습니다. |
+| 13:11 | [`7a4b849`](https://github.com/ehojune/bioinfo-team-3d/pull/1396/commits/7a4b849) | **사용하지 않는 격리 실험 코드를 정리했습니다.**<br>실행 전 거절은 유지하고 제거한 실험과 전용 시험 및 안내를 정리했습니다. |
+| 13:08 | [`7a3aae7`](https://github.com/ehojune/bioinfo-team-3d/pull/1396/commits/7a3aae7) | **최신 변경을 격리 실험 정리 작업에 반영했습니다.**<br>다른 작업의 변경을 보존하며 최신 main을 통합했습니다. |
 | 12:55 | [`e9fdb40`](https://github.com/ehojune/bioinfo-team-3d/commit/e9fdb40) | **호출되지 않는 gateway 내부 코드를 정리했습니다.**<br>참조가 없는 동기 메서드 다섯 개를 삭제하고 대응 async 경로는 유지했다 (Refs |
 | 12:52 | [`df6152b`](https://github.com/ehojune/bioinfo-team-3d/pull/1404/commits/df6152b) | **영문 도구 목록을 리뷰어 설정에 맞춥니다.**<br>PubMed와 bioRxiv 사용자 목록에서 과학 리뷰어를 제외합니다. |
 | 12:50 | [`a010c8f`](https://github.com/ehojune/bioinfo-team-3d/pull/1403/commits/a010c8f) | **평가 묶음 짝 비교 4번 질문을 labhq 전용 진행 지시를 뺀 문장으로 두 갈래에 똑같이 주고, 뺀 문장을 문서에 남겼습니다. 반증 정답은 공개 저장소 밖에 있다고 fixture 안내도 고쳤습니다.**<br>eval-suite.md 4번 중립판·뺀 문장 5개와 바꾼 절 1개·원문, tests/fixtures/eval_suite/README.md 정답 위치, manual 07 한영 평가 묶음 한 문단 (#1383, PR #1403 리뷰 P2) |
@@ -59,13 +67,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 10:39 | [`3acda3f`](https://github.com/ehojune/bioinfo-team-3d/pull/1399/commits/3acda3f) | **입력 종류 검사는 남기고 쓰지 않는 기록 기능을 정리합니다.**<br>#1388 r2: live 그림자·객체 뷰·액션·A/B·새 장치 보고서의 소유 경로 제거. core input-fit 6시험 이관, CP1/CP2·typed-output·continuation·오류 로그·공개 redaction 계약 보존. server·portfolio·inventory 통합 전 draft/hold. |
 | 10:37 | [`368661f`](https://github.com/ehojune/bioinfo-team-3d/commit/368661f) | **이전 차수의 리뷰 지적도 근거 표에서 확인할 수 있습니다.**<br>이전 리뷰를 함께 표시하고 리뷰 문구의 Markdown 링크가 실제 링크로 처리되지 않게 했다. |
 | 10:28 | [`89acf70`](https://github.com/ehojune/bioinfo-team-3d/commit/89acf70) | **보고서 근거 표에서 원장 주장과 관련 리뷰 지적을 함께 볼 수 있습니다.**<br>같은 단계와 claim의 리뷰 지적을 표시하고 해결 여부는 미확인으로 남긴다. |
+| 10:18 | [`0b947a4`](https://github.com/ehojune/bioinfo-team-3d/pull/1396/commits/0b947a4) | **실행 전 거절 검사와 관측 계약을 보존했습니다.**<br>최신 main을 반영하고 연결 제거가 없앨 안전 계약과 시험을 기록했습니다. |
 | 09:52 | [`287a586`](https://github.com/ehojune/bioinfo-team-3d/pull/1393/commits/287a586) | **제목의 글자를 보존하고 같은 논문의 식별자를 연결해 원문을 찾습니다.**<br>#1385 r4 P2: 제목 markup·entity·inline 공백 보정, 문헌·선례 receipt의 DOI/PMID/PMCID 대응과 registry URL 확인. 미기록 별칭·hash 불일치 거부. 관련 317건 통과. |
 | 09:43 | [`4b3f49c`](https://github.com/ehojune/bioinfo-team-3d/pull/1393/commits/4b3f49c) | **논문 페이지의 메뉴 대신 첫 논문 제목으로 사본을 대조합니다.**<br>#1385 r4 리뷰 P2: HTML의 첫 비탐색 h1과 inline 글자를 보존해 제목 확인. 뒤쪽 제목 대체 거부 유지. 재현 1건 실패 → 문헌 관련 199건 통과, 마지막 경계 시험 6건 통과. |
 | 09:36 | [`9850b0d`](https://github.com/ehojune/bioinfo-team-3d/pull/1393/commits/9850b0d) | **인용한 제목과 DOI만 보고 다른 논문을 전문으로 인정하지 않습니다.**<br>#1385 r4 P1: DOI 일치 때도 첫 제목 전체를 요구하고 제목 미확인은 거부. Unpaywall 제목 보존·이전 identity 캐시 제외. 재현 4건 실패 → 문헌 관련 197건 통과. |
 | 09:30 | [`6347773`](https://github.com/ehojune/bioinfo-team-3d/commit/6347773) | **보고서 각주에서 근거 파일을 열 수 있게 했습니다.**<br>각주 Markdown과 인증된 자산 링크를 렌더링하고 관련 CI fixture와 Windows 시험 목록을 고쳤다. |
 | 09:28 | [`b11c3c6`](https://github.com/ehojune/bioinfo-team-3d/pull/1393/commits/b11c3c6) | **재조회가 실패해도 앞서 저장한 논문으로 원문을 대조합니다.**<br>#1385 r4 리뷰 P2: metadata·파손·hash 불일치인 로컬 사본 뒤에 검증된 선례 사본을 시도. 수정 전 5건 실패, 수정 후 관련 132건 통과. |
+| 09:20 | [`737f399`](https://github.com/ehojune/bioinfo-team-3d/pull/1396/commits/737f399) | **격리 실험의 안전 검사와 초안을 다시 보존했습니다.**<br>동등한 검사 이관 근거가 없어 삭제를 보류하고 기존 시험과 안내를 복원했습니다. |
 | 09:19 | [`39be86c`](https://github.com/ehojune/bioinfo-team-3d/commit/39be86c) | **보고서에서 해당 요청의 그림과 파일을 열고 각주 번호를 읽기 쉽게 표시합니다.**<br>2.5D 요청별 자산 인증과 PDF·웹 각주 표시를 고쳤다. 묶음이 없거나 통제 데이터면 자산을 제공하지 않는다. |
 | 09:18 | [`c7d2157`](https://github.com/ehojune/bioinfo-team-3d/pull/1393/commits/c7d2157) | **저장 원문의 인용문과 수치를 결과 승인 전에 대조합니다.**<br>#1385 r4: 수집 산출·문헌·선례 사본 hash를 확인해 CP2와 보고서 검사에 연결. 문헌 전달 경고만으로 HPC를 막지 않으며 실제 산출 누락 거부는 유지. 관련 회귀 554건 통과. 실제 자료 기준은 미충족으로 보류. |
+| 09:12 | [`429273c`](https://github.com/ehojune/bioinfo-team-3d/pull/1396/commits/429273c) | **사용하지 않는 격리 실험 초안 일부를 정리했습니다.**<br>연결되지 않은 sandbox·transport와 fixture 계획 검사를 제거하고 관련 안내를 정리했습니다. |
 | 07:00 | [`69e2a09`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/69e2a09) | **보류된 메시지를 재개할 때 관련 없는 기록이 막지 않게 고쳤습니다.**<br>최초 인수와 같은 의존성 기준을 적용하며 결과가 불확실한 ask는 계속 보류합니다. |
 | 06:52 | [`97761b0`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/97761b0) | **시작 전 실패한 질의는 저장소 복구 뒤 다시 처리합니다.**<br>pending ask와 실행 중인 작업을 구분해 안전한 경우에만 수동 retry를 허용합니다. |
 | 06:46 | [`dbe8309`](https://github.com/ehojune/bioinfo-team-3d/pull/1395/commits/dbe8309) | **저장 오류 뒤 메시지 재시도와 기존 설정 호환을 복구합니다.**<br>수동 재시도에서 불확실한 ask는 보류하고 semantics 제거 뒤에도 기존 설정을 읽습니다. |

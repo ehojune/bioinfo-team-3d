@@ -180,6 +180,14 @@ PI 위임(11-12)에 따라 정한 것을 평가 문서와 반증 사례 틀에 �
 - 실제 교정·철회, 전체 문장 대조, PDF 전체와 실제 웹 검증은 남았다. Issue #1384는 열린 상태를 유지한다.
 - 리뷰 P2 두 건: 이전 차수 지적 누락과 리뷰 문구의 활성 Markdown 링크를 수정했다. 신규 회귀 2건은 수정 전 실패, 수정 후 통과했다.
 
+# #1389 r7 — boundary removal
+
+Experimental boundary modules and their dedicated tests are removed. Explicit opt-in still fails before preparation, credentials or spawn. Independent hook/local job probe coverage remains. See [the scope](../reference/prune-boundary-1389.md).
+
+Windows inventory excludes the removed tests. Reference pages distinguish removed APIs and integration from the retained seal fixtures, data tests and probe. Relevant regression and mock E2E: 242 passed, 4 skipped; boundary/probe regression: 29 passed. Final CI/review and #1375 comparison remain; actual OS protection is UNVERIFIED.
+
+The four original seal fixtures and two data test paths are retained together to avoid the Windows full-suite fallback and preserve data validation. Final CI, review and the single combined-install comparison remain open.
+
 # #1385 r4 — 저장 원문 대조 연결
 
 | 항목 | 결과 |
