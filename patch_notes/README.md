@@ -15,6 +15,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 11:10 | [`ae10d2f`](https://github.com/ehojune/bioinfo-team-3d/commit/ae10d2f) | **검토 지적을 받은 이전 주장을 결과 요약에서 구분할 수 있습니다.**<br>단계·갈래 요약과 웹 수정 이력에 해결 여부 미확인 표시를 붙인다. |
+| 10:54 | [`8092a21`](https://github.com/ehojune/bioinfo-team-3d/pull/1401/commits/8092a21) | **승인된 코드 지우기에서 그 코드만 검사하던 시험을 함께 지울 수 있게 개발 규칙을 고쳤습니다.**<br>AGENTS.md: PI가 승인한 지우기 PR에서는 지우는 코드만 검사하는 시험을 함께 지우고, PR 본문에 대응표를 싣는다는 예외를 넣는다 (#1400, PI 2026-11-12 #1375). |
 | 10:37 | [`368661f`](https://github.com/ehojune/bioinfo-team-3d/commit/368661f) | **이전 차수의 리뷰 지적도 근거 표에서 확인할 수 있습니다.**<br>이전 리뷰를 함께 표시하고 리뷰 문구의 Markdown 링크가 실제 링크로 처리되지 않게 했다. |
 | 10:28 | [`89acf70`](https://github.com/ehojune/bioinfo-team-3d/commit/89acf70) | **보고서 근거 표에서 원장 주장과 관련 리뷰 지적을 함께 볼 수 있습니다.**<br>같은 단계와 claim의 리뷰 지적을 표시하고 해결 여부는 미확인으로 남긴다. |
 | 09:52 | [`287a586`](https://github.com/ehojune/bioinfo-team-3d/pull/1393/commits/287a586) | **제목의 글자를 보존하고 같은 논문의 식별자를 연결해 원문을 찾습니다.**<br>#1385 r4 P2: 제목 markup·entity·inline 공백 보정, 문헌·선례 receipt의 DOI/PMID/PMCID 대응과 registry URL 확인. 미기록 별칭·hash 불일치 거부. 관련 317건 통과. |
