@@ -1106,8 +1106,8 @@ def test_a_bundle_with_scripts_and_an_inherited_environment_record_is_replayable
     assert "`rerun_verified`는 다른 곳에서 다시 돌린 기록이 있을 때만" in readme
 
 
-@pytest.mark.parametrize("hpc", [False, True])
-def test_rerun_verified_requires_a_valid_receipt_and_is_exposed_by_verify(tmp_path, hpc):
+@pytest.mark.parametrize("hpc_user", [None, 'grade', 'status', 'engine', 'engine_cli_version', 'complete'])
+def test_rerun_verified_requires_a_valid_receipt_and_is_exposed_by_verify(tmp_path, hpc_user):
     files = {
         "env": {"outputs/env/requirements.lock.txt": "pandas==2.2.2\n"},
         "de": {"outputs/scripts/de.py": "import pandas\n", "outputs/de.tsv": "gene\tlogFC\n"},
@@ -1116,9 +1116,9 @@ def test_rerun_verified_requires_a_valid_receipt_and_is_exposed_by_verify(tmp_pa
     assert built["grade"] == "replayable"
 
     settings = configured(tmp_path / "with")
-    if hpc:
+    if hpc_user:
         settings.hpc.ssh_host = 'fixture-user@fixture-host'
-        settings.hpc.user = 'grade'
+        settings.hpc.user = hpc_user
     root = Path(settings.runner.workspace_root)
     results = {}
     for step_id, outputs in files.items():
@@ -1129,7 +1129,8 @@ def test_rerun_verified_requires_a_valid_receipt_and_is_exposed_by_verify(tmp_pa
         environment = ({"status": "complete", "sha256": digest(workdir / "outputs/env/requirements.lock.txt")}
                        if step_id == "env" else {"status": "unavailable", "reason": "lock 없음"})
         write(workdir / "manifest.json", json.dumps({
-            "host": platform.node(), "runs": {task_id: {"environment_record": environment}}}))
+            "host": platform.node(), "runs": {task_id: {"environment_record": environment,
+                "engine": "codex", "model": "model-test", "engine_cli_version": "1.2.3"}}}))
         results[step_id] = {"task_id": task_id, "workdir": str(workdir), "workdir_id": workdir.name,
                             "outputs": list(outputs),
                             "output_sha256": {rel: digest(workdir / rel) for rel in outputs}}
@@ -1153,6 +1154,8 @@ def test_rerun_verified_requires_a_valid_receipt_and_is_exposed_by_verify(tmp_pa
     assert json.loads(summary["environment_records"])["env"]["status"] == "complete"
     entities = crate_entities(bundle)
     assert entities["#environment-env-status"]["value"] == "complete"
+    software = next(entity for entity in entities.values() if entity.get('@type') == 'SoftwareApplication')
+    assert software['name'] == 'labhq staff CLI (codex)' and software['softwareVersion'] == '1.2.3'
     assert "재현 등급: rerun_verified" in render_verify({
         "request_id": request["id"], "status": "done", "outcome": None, "files": [],
         "report_check": None, "unreported_outputs": {}, "source_verification": [],

@@ -47,6 +47,7 @@ INPUT_FIELDS = ("step_id", "path", "size", "mtime_ns", "sha256", "skipped", "cac
 _PUBLIC_RECORD_FIELDS = frozenset({
     'request_id', 'id', 'step_id', 'task_id', 'workdir_id', 'agent_id', 'skill_id',
     'artifact_id', 'claim_id', 'evidence_id', 'source_id', 'status', 'decision', 'verdict', 'priority',
+    'engine', 'model', 'engine_cli_version', 'started_at', 'ended_at',
     'path', 'bundle_path', 'artifact_sha256',
 })
 MANIFEST_MAX_BYTES = 16 * 1024 * 1024
@@ -1085,7 +1086,9 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
                 writer.writerows(input_rows)
             if inputs_path.read_bytes() != previous_inputs:
                 redacted_files.add('INPUTS.tsv')
-            run_records = {step_id: _public_values(run, public_text) for step_id, run in run_records.items()}
+            run_records = {step_id: _public_values(run, public_text, redact_keys=False,
+                                                 preserve_fields=_PUBLIC_RECORD_FIELDS)
+                           for step_id, run in run_records.items()}
             rewrite_by_file = {name: (count, [public_text(p) for p in paths])
                                for name, (count, paths) in rewrite_by_file.items()}
             remaining = {public_text(p) for p in remaining}
@@ -1149,11 +1152,8 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
         crate_warning = None
         try:
             crate_path = temp / METADATA_FILE
-            # Request mapping keys include step IDs and output paths, not free text.
-            public_req = _public_values(req, public_text, redact_keys=False) if public_text else req
-            if public_text:
-                public_req['id'] = req.get('id')  # identifier is bound to the bundle directory name
-            write_ro_crate(crate_path, public_req, rows, input_rows, run_records, grade, grade_reasons, rerun_receipt)
+            # RO-Crate selects request identifiers/status/engine metadata; descriptive run values are sanitized above.
+            write_ro_crate(crate_path, req, rows, input_rows, run_records, grade, grade_reasons, rerun_receipt)
             rows.append({"relative_path": METADATA_FILE, "size": crate_path.stat().st_size,
                          "sha256": _sha256(crate_path), "step_id": "", "original_path": "",
                          "status": "generated", "rewritten": 0, "remaining_absolute_paths": "",
