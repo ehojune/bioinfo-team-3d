@@ -56,3 +56,7 @@ rows:
     at: "2026-11-12 18:57"
     summary: "공유 네트워크 경로를 가리고 미등록 파일 형식의 bytes를 보존합니다."
     text: "#1416 r2: UNC/local URI 가림, 명시 text 형식·설정 이름만 변환. PPM 보존·짧은 형식 prefix 오판정·HTTPS 보존 포함 235 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS."
+  - sha: "1505ec4"
+    at: "2026-11-12 19:13"
+    summary: "구조화된 식별자 값에서도 비공개 절대경로를 가립니다."
+    text: "#1416 r2: path 보존 분기의 UNC/local URI 우회 수정. CLI version 안의 절대경로도 가림. 관련 시험 238 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS·원본 동일."
