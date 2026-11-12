@@ -1183,7 +1183,8 @@ def portfolio_revision_history(req: dict, settings, assets: Mapping[str, str]) -
 
 
 _VERDICT = re.compile(r"지지(?:되지|하지)\s*않|지지(?:됐|했|된다|한다|합니다|됩니다)|"
-                      r"기각(?:되었|되지\s*않|됐|했|된다|한다|합니다|됩니다)")
+                      r"기각(?:되었|되지\s*않|된\s*것으로\s*판단|됐|했|된다|한다|합니다|됩니다|"
+                      r"할\s*수\s*없|하지\s*(?:못|않))")
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _CONNECTIVE = re.compile(r"^(?:그래서|따라서|그러므로|결국|즉)\s*,?\s*")
 
