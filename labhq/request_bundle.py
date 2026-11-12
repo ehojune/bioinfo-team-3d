@@ -473,11 +473,14 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
         words.update(redaction_words(profile.connect_argv))
     site_values = (cfg.user, cfg.default_queue, getattr(profile, "queue", None),
                    *(getattr(profile, "pinned_nodes", []) or []))
-    words.update(redaction_words(["site", *(word for word in site_values if word)]))
+    site_identifiers = redaction_words(["site", *(word for word in site_values if word)])
     root = getattr(profile, "remote_workdir", None) or "/"
 
     def site_words(text):
-        return redact(text, sorted(words, key=len, reverse=True))
+        text = redact(text, sorted(words, key=len, reverse=True))
+        for identifier in site_identifiers:
+            text = re.sub(re.escape(identifier), '<host>', text, flags=re.IGNORECASE)
+        return text
 
     def no_remote_command(command):
         raise RuntimeError("bundle redaction cannot execute remote commands")

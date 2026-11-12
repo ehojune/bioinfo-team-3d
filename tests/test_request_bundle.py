@@ -2650,3 +2650,29 @@ def test_script_redaction_finds_paths_after_argument_and_shell_separators(tmp_pa
     copied = path.read_text(encoding='utf-8')
     assert 'cohort' not in copied and 'private.vcf' not in copied
     assert prefix in copied and '/usr/bin/true&&/usr/bin/false' in copied
+
+
+def test_numeric_site_identifiers_are_not_treated_as_connect_ports(tmp_path, monkeypatch):
+    from labhq.hpc_site import SiteProfile
+    from labhq.request_bundle import _PUBLIC_RECORD_FIELDS, _public_hpc_text, _redact_bundle_text
+
+    settings = Settings()
+    settings.hpc.site_profile = 'synthetic'
+    settings.hpc.user, settings.hpc.default_queue = '12345', '23456'
+    profile = SiteProfile(name='synthetic', access_method='ssh', scheduler='slurm',
+                          connect_argv=['ssh', '-p', '2222', 'fixture-user@fixture-host'],
+                          remote_workdir='/scratch/fixture-team/run', queue='34567', pinned_nodes=['45678'])
+    monkeypatch.setattr('labhq.hpc_site.load_profile', lambda name: profile)
+    hide = _public_hpc_text(settings)
+    prose = 'user 12345 queue 23456 profile queue 34567 node 45678 port 2222 exit 2222'
+    cleaned = hide(prose)
+    assert all(value not in cleaned for value in ('12345', '23456', '34567', '45678'))
+    assert 'port <port>' in cleaned and 'exit 2222' in cleaned
+
+    path = tmp_path / 'run.json'
+    identity = 'a' * 59 + '12345'
+    write(path, json.dumps({'id': 'req_12345', 'status': 'completed', 'description': prose, 'sha256': identity}))
+    assert _redact_bundle_text(path, hide, record_fields=_PUBLIC_RECORD_FIELDS)
+    record = json.loads(path.read_text(encoding='utf-8'))
+    assert record['id'] == 'req_12345' and record['status'] == 'completed' and record['sha256'] == identity
+    assert record['description'] == cleaned
