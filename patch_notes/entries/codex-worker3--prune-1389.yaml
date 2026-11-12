@@ -1,0 +1,6 @@
+pr: 1396
+rows:
+  - sha: 429273c
+    at: "2026-11-12 09:12"
+    summary: 사용하지 않는 격리 실험 초안 일부를 정리했습니다.
+    text: 연결되지 않은 sandbox·transport와 fixture 계획 검사를 제거하고 관련 안내를 정리했습니다.
