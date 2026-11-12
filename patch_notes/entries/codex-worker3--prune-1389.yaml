@@ -1,6 +1,6 @@
 pr: 1396
 rows:
-  - sha: 1332381
+  - sha: cea332e
     at: "2026-11-12 15:36"
     summary: 보존한 fixture의 참고 문서를 바로잡았습니다.
     text: 남은 데이터 검사와 삭제한 integration을 구분했습니다.
