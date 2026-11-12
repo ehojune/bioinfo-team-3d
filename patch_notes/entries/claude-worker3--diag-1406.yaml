@@ -1,0 +1,5 @@
+rows:
+- sha: c4064b2
+  at: 2026-11-12 13:32
+  text: '시험: #1406 취소 뒤 runner inbox 막힘 재현 (strict xfail)'
+  summary: 요청을 취소한 뒤 다음 요청의 결과가 반영되지 않던 문제를 재현하는 시험을 추가했습니다.
