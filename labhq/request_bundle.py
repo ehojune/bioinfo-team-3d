@@ -10,6 +10,7 @@ import platform
 import re
 import shlex
 import shutil
+import tempfile
 import time
 from collections import Counter
 from contextlib import ExitStack, contextmanager
@@ -51,6 +52,8 @@ _PUBLIC_RECORD_FIELDS = frozenset({
     'path', 'bundle_path', 'artifact_sha256',
 })
 MANIFEST_MAX_BYTES = 16 * 1024 * 1024
+_JSON_REDACTION_MAX_BYTES = 16 * 1024 * 1024
+_TEXT_LINE_MAX_CHARS = 1024 * 1024
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _SAFE_SCRIPT_COMPONENT = re.compile(r"[A-Za-z0-9._-]+\Z")
 _WINDOWS_ABS = re.compile(r"(?i)(?<![A-Za-z0-9_])(?:[A-Z]:[\\/])[^\s<>\"'|]+")
@@ -296,57 +299,120 @@ def _path_prefix_pattern(workdir: Any, *, outputs: bool = True) -> re.Pattern[st
                       r"(?P<tail>[^\s<>\"'`|]*)", flags)
 
 
+def _text_lines(path: Path, *, newline=''):
+    with path.open('r', encoding='utf-8', newline=newline) as handle:
+        while line := handle.readline(_TEXT_LINE_MAX_CHARS + 1):
+            if len(line) > _TEXT_LINE_MAX_CHARS:
+                raise ValueError('text line exceeds bounded bundle transformation limit; bundle withheld')
+            yield line
+
+
+def _transform_text(path: Path, transform, *, newline='') -> bool | None:
+    """Bounded UTF-8 transformation; invalid/binary text leaves the derived copy untouched."""
+    with path.open('rb') as handle:
+        if b'\0' in handle.read(8192):
+            return None
+    try:
+        with tempfile.TemporaryFile(dir=path.parent) as staged:
+            changed = False
+            for line in _text_lines(path, newline=newline):
+                if '\0' in line:
+                    return None
+                cleaned = transform(line)
+                changed |= cleaned != line
+                staged.write(cleaned.encode('utf-8'))
+            if changed:
+                staged.seek(0)
+                with path.open('wb') as target:
+                    shutil.copyfileobj(staged, target, length=1024 * 1024)
+            return changed
+    except UnicodeError:
+        return None
+
+
 def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]],
                   data_inputs: list[tuple[str, Path]] = ()) -> tuple[int, list[str]]:
     try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
+        with path.open('rb') as handle:
+            if b'\0' in handle.read(8192):
+                return 0, []
+    except OSError:
         return 0, []
-    original = text
     replacements = 0
+    remaining = set()
+    remaining_chars = 0
+
+    def record_paths(line):
+        nonlocal remaining_chars
+        for value in _absolute_paths(line):
+            if value not in remaining:
+                remaining.add(value)
+                remaining_chars += len(value)
+        if len(remaining) > 10000 or remaining_chars > 16 * 1024 * 1024:
+            raise ValueError('too many absolute paths for bounded bundle transformation; bundle withheld')
+
     bundle_root = next((parent for parent in path.parents if (parent / "steps").is_dir()), None)
     if bundle_root is None:
-        return 0, _absolute_paths(text)
-    # Commands run in their step folder. Markdown links remain relative to the document that contains them.
+        try:
+            for line in _text_lines(path):
+                record_paths(line)
+        except UnicodeError:
+            return 0, []
+        return 0, sorted(remaining)
     relative_path = path.relative_to(bundle_root)
     if path.suffix.casefold() in DOCUMENT_SUFFIXES:
         destination = path.parent
-    elif len(relative_path.parts) >= 3 and relative_path.parts[0] == "steps":
-        destination = bundle_root / "steps" / relative_path.parts[1]
+    elif len(relative_path.parts) >= 3 and relative_path.parts[0] == 'steps':
+        destination = bundle_root / 'steps' / relative_path.parts[1]
     else:
         destination = bundle_root
-    # hpc_submit's wrapper changes cwd to this step's outputs before the body executes. Preserve that
-    # working directory in the bundle, then rewrite its data operands relative to that same directory.
-    job_owner = None
-    if len(relative_path.parts) == 4 and relative_path.parts[0] == "steps" and relative_path.parts[2] == "jobs":
+    job_owner, command = None, None
+    if len(relative_path.parts) == 4 and relative_path.parts[0] == 'steps' and relative_path.parts[2] == 'jobs':
         job_owner = next((folder for sid, folder in workdirs if sid == relative_path.parts[1]), None)
         if job_owner is not None:
-            command = "cd " + shlex.quote(str(job_owner / "outputs"))
-            if command in text.splitlines() and len(re.findall(r"(?m)^cd ", text)) == 1:
-                text = text.replace(command + "\n", "cd outputs\n", 1)
-                replacements += 1
-                destination = bundle_root / "steps" / relative_path.parts[1] / "outputs"
+            expected = 'cd ' + shlex.quote(str(job_owner / 'outputs'))
+            count, matched = 0, False
+            try:
+                for line in _text_lines(path):
+                    if line.startswith('cd '):
+                        count += 1
+                        matched |= line.rstrip('\r\n') == expected
+                        if count > 1:
+                            break
+            except UnicodeError:
+                return 0, []
+            if count == 1 and matched:
+                command = expected
+                destination = bundle_root / 'steps' / relative_path.parts[1] / 'outputs'
             else:
-                job_owner = None  # retain documented absolute paths when job cwd cannot be established
-    for step_id, workdir, is_outputs in [*( (sid, folder, True) for sid, folder in workdirs),
-                                         *( (sid, folder, False) for sid, folder in data_inputs)]:
-        target = bundle_root / "steps" / step_id / "outputs"
-        relative = os.path.relpath(target, destination).replace("\\", "/")
-
-        def replace(match: re.Match[str]) -> str:
-            nonlocal replacements
-            replacements += 1
-            tail = match.group("tail").replace("\\", "/")
-            return f"{relative}/{tail}"
-
-        text = _path_prefix_pattern(workdir, outputs=is_outputs).sub(replace, text)
+                job_owner = None
+    patterns = []
+    for step_id, workdir, is_outputs in [*((sid, folder, True) for sid, folder in workdirs),
+                                        *((sid, folder, False) for sid, folder in data_inputs)]:
+        target = bundle_root / 'steps' / step_id / 'outputs'
+        relative = os.path.relpath(target, destination).replace('\\', '/')
+        patterns.append((_path_prefix_pattern(workdir, outputs=is_outputs), relative))
         if not is_outputs and job_owner is not None:
-            original_relative = Path(os.path.relpath(workdir, job_owner / "outputs"))
-            text = _path_prefix_pattern(original_relative, outputs=False).sub(replace, text)
-    if text != original:
-        path.write_text(text, encoding="utf-8", newline="\n")
-    remaining = _absolute_paths(text)
-    return replacements, remaining
+            original_relative = Path(os.path.relpath(workdir, job_owner / 'outputs'))
+            patterns.append((_path_prefix_pattern(original_relative, outputs=False), relative))
+
+    def rewrite(line):
+        nonlocal replacements
+        if command and line.rstrip('\r\n') == command:
+            line = 'cd outputs\n'
+            replacements += 1
+        for pattern, relative in patterns:
+            def replace(match):
+                nonlocal replacements
+                replacements += 1
+                tail = match.group('tail').replace('\\', '/')
+                return f'{relative}/{tail}'
+            line = pattern.sub(replace, line)
+        record_paths(line)
+        return line
+
+    transformed = _transform_text(path, rewrite, newline=None)
+    return (0, []) if transformed is None else (replacements, sorted(remaining))
 
 
 def _public_hpc_text(settings, *, claim_refs=()):
@@ -422,9 +488,15 @@ def _public_values(value, hide, *, redact_keys=True, preserve_fields=()):
 
 def _redact_bundle_text(path, hide, *, hash_bound=False, record_fields=()):
     """Content-based UTF-8 detection includes suffixless configs and scheduler .out/.err files."""
-    data = path.read_bytes()
-    if b'\0' in data[:8192]:
-        return False
+    with path.open('rb') as handle:
+        if b'\0' in handle.read(8192):
+            return False
+    if path.suffix.casefold() != '.json':
+        return bool(_transform_text(path, lambda line: hide(line, script=path.suffix.casefold() in SCRIPT_SUFFIXES)))
+    with path.open('rb') as handle:
+        data = handle.read(_JSON_REDACTION_MAX_BYTES + 1)
+    if len(data) > _JSON_REDACTION_MAX_BYTES:
+        raise ValueError('JSON artifact exceeds bounded structural-redaction limit; bundle withheld')
     try:
         text = data.decode('utf-8')
     except UnicodeError:

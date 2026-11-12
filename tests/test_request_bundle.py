@@ -2309,3 +2309,92 @@ def test_hpc_bundle_dependency_helper_preserves_step_ids_and_links_inputs(tmp_pa
 
     linked = bundle / 'steps/s2/inputs/s1/data/input.tsv'
     assert linked.read_bytes() == upstream.read_bytes()
+
+
+def test_bundle_redaction_reads_only_a_small_prefix_of_binary_artifacts(tmp_path, monkeypatch):
+    from labhq.request_bundle import _redact_bundle_text
+
+    path = tmp_path / 'large.bam'
+    path.write_bytes(b'\0binary')
+    original_open = Path.open
+    reads = []
+
+    class PrefixOnly:
+        def __enter__(self):
+            self.handle = original_open(path, 'rb')
+            return self
+
+        def __exit__(self, *_args):
+            self.handle.close()
+
+        def read(self, size=-1):
+            assert 0 < size <= 8192
+            reads.append(size)
+            return self.handle.read(size)
+
+    monkeypatch.setattr(Path, 'open', lambda self, *args, **kwargs: PrefixOnly() if self == path
+                        else original_open(self, *args, **kwargs))
+    assert not _redact_bundle_text(path, lambda *_args, **_kwargs: pytest.fail('binary reached text redaction'))
+    assert reads == [8192]
+
+
+def test_bundle_text_transformations_stream_without_whole_file_readers(tmp_path, monkeypatch):
+    from labhq.request_bundle import _redact_bundle_text, _rewrite_text
+
+    root = tmp_path / 'bundle'
+    output = root / 'steps/s1/outputs'
+    output.mkdir(parents=True)
+    path = output / 'large.out'
+    workdir = tmp_path / 'source'
+    line = f'{workdir.as_posix()}/outputs/data.tsv /scratch/fixture-user/data.tsv\n'
+    with path.open('w', encoding='utf-8') as handle:
+        for _ in range(10000):
+            handle.write(line)
+    original_text, original_bytes = Path.read_text, Path.read_bytes
+
+    def forbid_text(self, *args, **kwargs):
+        assert self != path, 'whole-file text read'
+        return original_text(self, *args, **kwargs)
+
+    def forbid_bytes(self, *args, **kwargs):
+        assert self != path, 'whole-file binary read'
+        return original_bytes(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', forbid_text)
+    monkeypatch.setattr(Path, 'read_bytes', forbid_bytes)
+    replacements, _remaining = _rewrite_text(path, [('s1', workdir)])
+    assert replacements == 10000
+    assert _redact_bundle_text(path, lambda text, **_kwargs: text.replace('/scratch/fixture-user/data.tsv', '<remote-path>'))
+    with path.open(encoding='utf-8') as handle:
+        assert all(row == 'outputs/data.tsv <remote-path>\n' for row in handle)
+
+
+@pytest.mark.parametrize('kind', ['json', 'long_line'])
+def test_bundle_transformations_reject_oversized_structure_without_mutation(tmp_path, monkeypatch, kind):
+    from labhq.request_bundle import _redact_bundle_text
+
+    monkeypatch.setattr(request_bundle_module, '_JSON_REDACTION_MAX_BYTES', 64)
+    monkeypatch.setattr(request_bundle_module, '_TEXT_LINE_MAX_CHARS', 64)
+    path = tmp_path / ('large.json' if kind == 'json' else 'large.out')
+    original = json.dumps({'data': 'x' * 128}).encode()
+    path.write_bytes(original)
+    with pytest.raises(ValueError, match='bounded'):
+        _redact_bundle_text(path, lambda text, **_kwargs: text.replace('x', 'y'))
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize('operation', ['redact', 'rewrite'])
+def test_streamed_bundle_transformations_preserve_late_invalid_utf8(tmp_path, operation):
+    from labhq.request_bundle import _redact_bundle_text, _rewrite_text
+
+    root = tmp_path / 'bundle'
+    path = root / 'steps/s1/outputs/invalid.out'
+    workdir = tmp_path / 'source'
+    original = (f'{workdir.as_posix()}/outputs/data.tsv\n' * 1000).encode() + b'\xff'
+    path.parent.mkdir(parents=True)
+    path.write_bytes(original)
+    if operation == 'redact':
+        assert not _redact_bundle_text(path, lambda text, **_kwargs: text.replace('data.tsv', 'hidden'))
+    else:
+        assert _rewrite_text(path, [('s1', workdir)]) == (0, [])
+    assert path.read_bytes() == original
