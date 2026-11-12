@@ -4,6 +4,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1387 채용 OFF 계획 지시
+
+- 일반·연구 계획과 일반 replan에서 채용 OFF 안내와 빈 `recruit` 지시를 사용한다. ON 지시와 schema는 유지한다.
+- 한영 contract-staff 매뉴얼에 OFF 계획 지시와 모델 준수 미검증을 반영했다.
+- mock Task·disabled guard 시험: `python -m pytest tests/test_research_protocol.py tests/test_recruit_disabled_static.py -q` — 102 passed, 7 subtests passed.
+- 실제 모델 응답과 운영 효과는 별도 기준선 실행 전까지 미검증이다. [재현과 판단](../reference/fix-1387-item15.md)
+
 # #1385 r7 — 문헌 전달 경고
 
 - 201개 목록은 처음 200개만 처리하고 잘림을 알린다. 정확히 200개는 경고하지 않는다.

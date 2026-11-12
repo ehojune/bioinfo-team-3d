@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:25 | [`149ac28`](https://github.com/ehojune/bioinfo-team-3d/commit/149ac28) | **채용이 꺼졌을 때의 계획 안내를 매뉴얼에 적습니다.**<br>한영 매뉴얼에 빈 recruit 요청과 논문 스킬 선택 안내 생략을 설명하고 모델 준수는 미검증으로 남깁니다. |
+| 15:25 | [`d7defe6`](https://github.com/ehojune/bioinfo-team-3d/commit/d7defe6) | **채용이 꺼져 있을 때 계획에 채용 불가 안내를 넣습니다.**<br>일반·연구 계획과 일반 재계획에서 채용 및 논문 스킬 OFF를 안내하고 recruit를 빈 배열로 요청합니다. |
+| 15:19 | [`228d28a`](https://github.com/ehojune/bioinfo-team-3d/commit/228d28a) | **재계획 검사를 기존 시험 파일에서 실행합니다.**<br>Windows CI의 시험 목록에 맞춰 동일한 mock Task 검증을 기존 파일로 옮겼습니다. |
 | 15:00 | [`3c5731b`](https://github.com/ehojune/bioinfo-team-3d/pull/1410/commits/3c5731b) | **다음 단계로 넘기지 못한 문헌이 있으면 경고합니다.**<br>#1385 9번: 200개 초과 문헌 목록의 잘림과 원격 전용 조상의 문헌 미복사를 알린다. 문헌 경고만으로 HPC 배정을 막지 않으며 산출 입력 누락은 계속 거부한다. 관련 mock 회귀 45건 통과. |
 | 14:35 | [`fb72621`](https://github.com/ehojune/bioinfo-team-3d/pull/1410/commits/fb72621) | **문헌이 없는 원격 계산 단계에는 문헌 누락 경고를 띄우지 않습니다.**<br>#1410 P2: 링크를 따라가지 않고 문헌 목록만 확인한다. 문헌 없음·빈 폴더·inbox만 있는 경우의 오탐 재현 3건 실패 → 관련 48건 통과. 목록 검사 실패는 경고로 남긴다. |
 | 14:23 | [`90fdb84`](https://github.com/ehojune/bioinfo-team-3d/commit/90fdb84) | **QC 정정 뒤 표와 근거를 확인하는 방법을 안내합니다.**<br>앞 단계 값이나 위치를 바로잡아야 하면 CP2에서 수정 요청으로 해당 단계를 다시 실행하도록 설명합니다. |
