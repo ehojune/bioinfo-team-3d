@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:38 | [`6916b1b`](https://github.com/ehojune/bioinfo-team-3d/pull/1415/commits/6916b1b) | **패키지 캐시를 결과 목록에서 빼는 조건을 설명합니다.**<br>캐시 제외 조건을 한·영 설정 매뉴얼에 반영한다 (#1413). |
+| 16:27 | [`40da055`](https://github.com/ehojune/bioinfo-team-3d/pull/1415/commits/40da055) | **콘솔 종료 조사 결과를 기록했습니다.**<br>Windows 콘솔 종료를 독립 mock에서 재현한 조사 결과와 실제 장애 원인의 미확인 범위를 기록한다 (#1413). |
+| 16:23 | [`cdef98e`](https://github.com/ehojune/bioinfo-team-3d/pull/1415/commits/cdef98e) | **HPC 잡의 패키지 캐시가 결과 목록 상한을 차지하지 않게 합니다.**<br>원격 산출 목록에서 urls.txt와 압축 해제 패키지 메타데이터가 있는 conda pkgs 캐시를 제외한다 (#1413). |
 | 16:16 | [`0117d06`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/0117d06) | **잘못된 식별자가 남은 실패 메시지에는 재시도를 안내하지 않습니다.**<br>#1411 P2: malformed 판정을 failed retry에도 적용한다. 잘못된 task·request 식별자와 type은 모든 retained 상태에서 수동 확인으로 남긴다. 관련 API·doctor·상태 회귀 120건 통과. |
 | 16:05 | [`518e610`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/518e610) | **잘못된 식별자가 남은 메시지도 상태 화면에서 확인하도록 고쳤습니다.**<br>#1411 집계 경계: malformed 식별자·type을 수동 확인으로 남긴다. 조회 실패 재현 뒤 누적 집계·malformed 경계 8건 통과. |
 | 16:00 | [`da39d80`](https://github.com/ehojune/bioinfo-team-3d/pull/1414/commits/da39d80) | **표 앞 주석이 있어도 결과를 저장합니다.**<br>TSV 머리줄 앞 탭 없는 # 행을 주석으로 처리하고 탭이 있는 머리줄과 원본을 보존합니다. |
