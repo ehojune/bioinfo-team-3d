@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:37 | [`368661f`](https://github.com/ehojune/bioinfo-team-3d/commit/368661f) | **이전 차수의 리뷰 지적도 근거 표에서 확인할 수 있습니다.**<br>이전 리뷰를 함께 표시하고 리뷰 문구의 Markdown 링크가 실제 링크로 처리되지 않게 했다. |
+| 10:28 | [`89acf70`](https://github.com/ehojune/bioinfo-team-3d/commit/89acf70) | **보고서 근거 표에서 원장 주장과 관련 리뷰 지적을 함께 볼 수 있습니다.**<br>같은 단계와 claim의 리뷰 지적을 표시하고 해결 여부는 미확인으로 남긴다. |
 | 09:52 | [`287a586`](https://github.com/ehojune/bioinfo-team-3d/pull/1393/commits/287a586) | **제목의 글자를 보존하고 같은 논문의 식별자를 연결해 원문을 찾습니다.**<br>#1385 r4 P2: 제목 markup·entity·inline 공백 보정, 문헌·선례 receipt의 DOI/PMID/PMCID 대응과 registry URL 확인. 미기록 별칭·hash 불일치 거부. 관련 317건 통과. |
 | 09:43 | [`4b3f49c`](https://github.com/ehojune/bioinfo-team-3d/pull/1393/commits/4b3f49c) | **논문 페이지의 메뉴 대신 첫 논문 제목으로 사본을 대조합니다.**<br>#1385 r4 리뷰 P2: HTML의 첫 비탐색 h1과 inline 글자를 보존해 제목 확인. 뒤쪽 제목 대체 거부 유지. 재현 1건 실패 → 문헌 관련 199건 통과, 마지막 경계 시험 6건 통과. |
 | 09:36 | [`9850b0d`](https://github.com/ehojune/bioinfo-team-3d/pull/1393/commits/9850b0d) | **인용한 제목과 DOI만 보고 다른 논문을 전문으로 인정하지 않습니다.**<br>#1385 r4 P1: DOI 일치 때도 첫 제목 전체를 요구하고 제목 미확인은 거부. Unpaywall 제목 보존·이전 identity 캐시 제외. 재현 4건 실패 → 문헌 관련 197건 통과. |
