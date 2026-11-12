@@ -117,34 +117,42 @@ def source_texts_for(ledger: Mapping, result, upstream=(), precedents=()) -> dic
         source = row.get('source') or {}
         if not isinstance(source, Mapping):
             continue
+        candidates = []
         try:
             if source.get('artifact_id'):
-                root, path, digest = artifacts[normalize_artifact_path(refs[str(source['artifact_id'])])]
+                candidates.append(artifacts[normalize_artifact_path(refs[str(source['artifact_id'])])])
             else:
                 paper = parse_paper_id(f"{source.get('id_scheme')}:{source.get('id_value')}")
                 root = get(result, 'workdir')
                 path = '.tmp/literature/' + paper.file_name()
                 try:
                     receipt = json.loads(_source_bytes(root, path + '.receipt.json', 128_000))
-                except FileNotFoundError:
-                    index, receipt = next((i, item) for i, item in enumerate(precedents, 1)
-                                          if item.get('paper_id') == paper.key)
-                    path = 'inputs/precedent/' + file_name(receipt, index)
-                if receipt.get('paper_id') != paper.key or receipt.get('access_level') not in {'full_text', 'abstract'}:
-                    continue
-                digest = receipt.get('text_sha256')
-            if not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest):
-                continue
-            key = (str(root), path, digest)
-            if key not in cache:
-                data = _source_bytes(root, path, min(MAX_SOURCE_BYTES, remaining))
-                remaining -= len(data)
-                if hashlib.sha256(data).hexdigest() != digest:
-                    continue
-                cache[key] = data.decode('utf-8')
-            texts[str(row.get('id') or '')] = cache[key]
-        except (OSError, ValueError, TypeError, KeyError, AttributeError, StopIteration):
+                    if receipt.get('paper_id') == paper.key and receipt.get('access_level') in {'full_text', 'abstract'}:
+                        candidates.append((root, path, receipt.get('text_sha256')))
+                except (OSError, ValueError, TypeError, AttributeError):
+                    pass
+                # A repeat lookup can leave only metadata, a corrupt receipt, or unreadable text. Each is
+                # one failed candidate, not a reason to hide an already-staged precedent of the same paper.
+                candidates.extend((root, 'inputs/precedent/' + file_name(item, index), item.get('text_sha256'))
+                    for index, item in enumerate(precedents, 1)
+                    if item.get('paper_id') == paper.key and item.get('access_level') in {'full_text', 'abstract'})
+        except (ValueError, TypeError, KeyError, AttributeError):
             continue
+        for root, path, digest in candidates:
+            try:
+                if not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest):
+                    continue
+                key = (str(root), path, digest)
+                if key not in cache:
+                    data = _source_bytes(root, path, min(MAX_SOURCE_BYTES, remaining))
+                    remaining -= len(data)
+                    if hashlib.sha256(data).hexdigest() != digest:
+                        continue
+                    cache[key] = data.decode('utf-8')
+                texts[str(row.get('id') or '')] = cache[key]
+                break
+            except (OSError, ValueError, TypeError, AttributeError):
+                continue
     return texts
 
 

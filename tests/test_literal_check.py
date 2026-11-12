@@ -185,7 +185,8 @@ def test_collected_artifact_uses_runner_hash_and_not_observation(tmp_path):
     assert literal_check.source_texts_for(rows, result) == {}
 
 
-def test_precedent_source_is_read_only_from_staged_verified_copy(tmp_path):
+@pytest.mark.parametrize('local', ['missing', 'metadata', 'identity', 'hash', 'malformed', 'directory'])
+def test_precedent_source_is_read_only_from_staged_verified_copy(tmp_path, local):
     from labhq.research.precedent_texts import file_name
     body = 'The response was 1.84.'
     receipt = {'paper_id': 'doi:10.1000/example', 'access_level': 'abstract',
@@ -193,6 +194,19 @@ def test_precedent_source_is_read_only_from_staged_verified_copy(tmp_path):
     staged = tmp_path / 'inputs/precedent' / file_name(receipt, 1)
     staged.parent.mkdir(parents=True)
     staged.write_bytes(body.encode())
+    if local != 'missing':
+        path, local_receipt = saved_paper(tmp_path)
+        if local == 'metadata':
+            local_receipt['access_level'] = 'metadata'
+        elif local == 'identity':
+            local_receipt['paper_id'] = 'doi:10.1000/other'
+        elif local == 'hash':
+            path.write_bytes(b'changed local text')
+        elif local == 'directory':
+            path.unlink()
+            path.mkdir()
+        Path(str(path) + '.receipt.json').write_text(
+            '{bad json' if local == 'malformed' else json.dumps(local_receipt), encoding='utf-8')
     texts = literal_check.source_texts_for(ledger(), {'workdir': str(tmp_path)}, precedents=[receipt])
     assert texts == {'e1': body}
     staged.write_text('changed', encoding='utf-8')
