@@ -1,7 +1,7 @@
 pr: 1396
 rows:
-  - sha: f7dcab01
-    at: "2026-11-12 13:29"
+  - sha: b85b416
+    at: "2026-11-12 13:28"
     summary: 삭제한 격리 실험의 참고 기록을 구분했습니다.
     text: 남은 probe와 삭제된 observer·broker·transport·seal 설명을 구분했습니다.
   - sha: f274904
