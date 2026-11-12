@@ -1,0 +1,5 @@
+rows:
+  - sha: "ff46bd6"
+    at: "2026-11-13 00:47"
+    summary: "앞 단계가 만든 Python 환경으로 분석하는 단계가 다음 단계로 결과를 넘기지 못하던 문제를 고쳤습니다. 단계에 열린 가상환경·conda 환경은 입력 기록에 폴더 한 줄로 적고, 인계가 거절되면 어느 기록이 얼마나 커서인지 알려 줍니다."
+    text: "daemon이 runner 검증 .venv grant와 pyvenv.cfg·conda-meta/ 표식 폴더를 input_files에 skipped=environment 한 행으로, step_inputs.environment_folder, _json 거절 문구에 파일명·크기, 1 MiB 한도 유지, 시험 3건 (#1421)"
