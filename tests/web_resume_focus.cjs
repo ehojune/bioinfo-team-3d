@@ -57,7 +57,7 @@ test('task selector redraws in activity order and labels terminal states', () =>
   const html = fs.readFileSync(path.join(__dirname, '../labhq/web/index.html'), 'utf8');
   const render = html.slice(html.indexOf('function renderRequest()'), html.indexOf('  const proj = S.projects.find'));
   const ctx = vm.createContext({S:office.S, LabHQState:state, $:() => ({}), reqKey:'', snapshotLoaded:true,
-    esc:String, short:String, nick:String});
+    esc:String, short:String, nick:String, reportImageUrls:[]});
   vm.runInContext(render + '\nglobalThis.pick = pick; }\nrenderRequest();', ctx);
   assert.match(ctx.pick, /request-title">Save output<\/span>.*완료<\/span>/);
   assert.match(ctx.pick, /data-request-id="old"/);

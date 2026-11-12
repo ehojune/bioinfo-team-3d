@@ -120,7 +120,7 @@ function reportMarkdownHTML(markdown, requestId) {
     while (i < lines.length && lines[i].trim() && !/^\s*(?:#{1,6}\s|[-*+]\s|```|~~~)/.test(lines[i])) paragraph.push(lines[i++].trim());
     out.push(`<p>${inline(paragraph.join(' '))}</p>`);
   }
-  if (footnotes.size) out.push(`<h3>Claim 근거</h3><ol>${[...footnotes.keys()].map(key => `<li>${reportEsc(definitions.get(key) || '근거 원장은 저장소의 docs/reference/claim_evidence.md에 있습니다.')}</li>`).join('')}</ol>`);
+  if (footnotes.size) out.push(`<h3>Claim 근거</h3><ol>${[...footnotes.keys()].map(key => `<li>${inline(definitions.get(key) || '근거 원장은 저장소의 docs/reference/claim_evidence.md에 있습니다.')}</li>`).join('')}</ol>`);
   return `<div class="report-markdown">${out.join('\n')}</div>`;
 }
 function reportWithPackage(markdown, reportPackage) {

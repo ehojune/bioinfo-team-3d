@@ -83,6 +83,14 @@ test('footnote labels agree across report and front without rewriting code', () 
   assert.match(html, /<code>\[\^step_1\]<\/code>/);
 });
 
+test('footnote definitions render safe inline markup and authenticated assets', () => {
+  const html = globalThis.LabHQState.reportMarkdownHTML(
+    'Result[^s].\n\n[^s]: Step `analysis` · [Evidence](steps/s/outputs/evidence.md) · <script>alert(1)</script>', 'req_1');
+  assert.match(html, /<code>analysis<\/code>/);
+  assert.match(html, /data-report-asset="steps\/s\/outputs\/evidence.md"/);
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+});
+
 test('stored source report receives the shared first screen at display time', () => {
   const packaged = globalThis.LabHQState.reportWithPackage('# 원본\n\n## 결과\n\n본문', {
     title: '원본', question: '질문', answer: '답', limitations: '한계',
