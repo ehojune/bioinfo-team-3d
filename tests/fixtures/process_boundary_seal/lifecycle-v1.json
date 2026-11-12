@@ -1,0 +1,37 @@
+{
+  "test_key_utf8": "fixture-only-producer-key",
+  "events": [
+    {
+      "version": 1,
+      "run_id": "fixture-run",
+      "nonce": "fixture-nonce",
+      "sequence": 1,
+      "kind": "launch",
+      "identity": {
+        "pid": 1234,
+        "birth_id": "fixture-birth"
+      },
+      "auth": {
+        "key_id": "fixture-producer",
+        "algorithm": "hmac-sha256",
+        "tag": "6757471661c5aa8e249183960730c87bae2466ebccf5a6912121e7568ffb6ec3"
+      }
+    },
+    {
+      "version": 1,
+      "run_id": "fixture-run",
+      "nonce": "fixture-nonce",
+      "sequence": 2,
+      "kind": "termination",
+      "identity": {
+        "pid": 1234,
+        "birth_id": "fixture-birth"
+      },
+      "auth": {
+        "key_id": "fixture-producer",
+        "algorithm": "hmac-sha256",
+        "tag": "3deb53adf003f8508ae31419504aecd068fe9db1b4b581eb0d3ee8fd6db4a9cc"
+      }
+    }
+  ]
+}
